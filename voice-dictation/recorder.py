@@ -130,10 +130,16 @@ def list_devices() -> None:
 # Transcription helpers
 # ---------------------------------------------------------------------------
 
-def _transcribe(wav_path: str) -> str:
-    """Send wav_path to transcribe_server.py over TCP. Returns '' on error."""
+def _transcribe(wav_path: str) -> tuple:
+    """Send wav_path to transcribe_server.py over TCP.
+
+    Returns (text, error). On success error is None and text may be '' (genuine
+    silence). On failure text is '' and error is a short human-readable reason,
+    so callers can distinguish "no speech" from a broken transcription pipeline
+    instead of reporting every failure as silence.
+    """
     try:
-        with socket.create_connection((TRANSCRIBE_HOST, TRANSCRIBE_PORT), timeout=30) as s:
+        with socket.create_connection((TRANSCRIBE_HOST, TRANSCRIBE_PORT), timeout=60) as s:
             s.sendall(wav_path.encode("utf-8"))
             s.shutdown(socket.SHUT_WR)
             chunks = []
@@ -143,9 +149,15 @@ def _transcribe(wav_path: str) -> str:
                     break
                 chunks.append(buf)
         text = b"".join(chunks).decode("utf-8", errors="replace").strip()
-        return "" if text.startswith("ERROR:") else text
-    except Exception:
-        return ""
+        if text.startswith("ERROR:"):
+            return "", text[len("ERROR:"):].strip() or "transcription server error"
+        return text, None
+    except ConnectionRefusedError:
+        return "", "transcription server offline"
+    except socket.timeout:
+        return "", "transcription timed out"
+    except Exception as exc:
+        return "", str(exc) or exc.__class__.__name__
 
 
 # ---------------------------------------------------------------------------
@@ -249,7 +261,7 @@ class AudioRecorder:
                 snapshot = list(self._frames)
             try:
                 _write_wav(PREVIEW_WAV, snapshot)
-                text = _transcribe(PREVIEW_WAV)
+                text, _err = _transcribe(PREVIEW_WAV)
                 if text and text != last_text:
                     last_text = text
                     if self._overlay:
@@ -351,9 +363,17 @@ def _recording_thread(recorder: AudioRecorder, overlay) -> None:
         overlay.set_status("Transcribing...")
 
     t0 = time.time()
-    text = _transcribe(wav_path)
+    text, err = _transcribe(wav_path)
     t_whisper = time.time() - t0
     recorder.cleanup()
+
+    if err:
+        # Audio was captured but transcription itself failed — say so plainly
+        # instead of the misleading "No speech detected".
+        if overlay:
+            overlay.set_status(f"Transcription failed: {err}")
+            overlay.close(delay_ms=3500)
+        return
 
     if not text:
         if overlay:
@@ -436,9 +456,9 @@ def run() -> None:
             cancelled, wav_path = recorder.record()
             if cancelled or not wav_path:
                 return
-            text = _transcribe(wav_path)
+            text, err = _transcribe(wav_path)
             recorder.cleanup()
-            if not text:
+            if err or not text:
                 return
             try:
                 from llm_cleanup import cleanup as llm_cleanup

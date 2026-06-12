@@ -35,13 +35,31 @@ _model = None
 _lock = threading.Lock()
 _last_used = 0.0
 
+# Device the model is actually loaded on. Starts as the configured device but
+# is downgraded to CPU permanently (for this process) once a GPU error is seen,
+# so a transient/﻿persistent CUDA failure self-heals instead of breaking every
+# request until restart.
+_active_device = DEVICE
+_active_compute = COMPUTE
+_cuda_disabled = False
+
+
+def _is_gpu_error(exc: Exception) -> bool:
+    s = str(exc).lower()
+    return any(k in s for k in ("cuda", "cublas", "cudnn", "out of memory", "gpu", "nvrtc"))
+
 
 def _load() -> None:
-    global _model, _last_used
+    global _model, _last_used, _active_device, _active_compute
     if _model is None:
-        print(f"Loading {MODEL_NAME} on {DEVICE} ({COMPUTE})...", flush=True)
-        _model = WhisperModel(MODEL_NAME, device=DEVICE, compute_type=COMPUTE)
-        print("Model loaded.", flush=True)
+        if _cuda_disabled or DEVICE == "cpu":
+            _active_device, _active_compute = "cpu", "int8"
+        else:
+            _active_device, _active_compute = DEVICE, COMPUTE
+        print(f"Loading {MODEL_NAME} on {_active_device} ({_active_compute})...", flush=True)
+        _model = WhisperModel(MODEL_NAME, device=_active_device, compute_type=_active_compute)
+        _write_info_file()
+        print(f"Model loaded on {_active_device}.", flush=True)
     _last_used = time.time()
 
 
@@ -68,20 +86,33 @@ def _idle_watcher() -> None:
 
 
 def _transcribe(audio_path: str) -> str:
-    global _last_used
+    global _last_used, _model, _cuda_disabled
     with _lock:
-        _load()
-        lang = None if LANGUAGE == "auto" else LANGUAGE
-        segments, _info = _model.transcribe(audio_path, language=lang, beam_size=1)
-        _last_used = time.time()
-        return " ".join(seg.text.strip() for seg in segments)
+        for attempt in (1, 2):
+            try:
+                _load()
+                lang = None if LANGUAGE == "auto" else LANGUAGE
+                segments, _info = _model.transcribe(audio_path, language=lang, beam_size=1)
+                text = " ".join(seg.text.strip() for seg in segments)
+                _last_used = time.time()
+                return text
+            except Exception as exc:
+                # First GPU failure: drop the model, disable CUDA for the rest
+                # of this process, and retry once on CPU. Anything else (or a
+                # second failure) propagates to the client.
+                if attempt == 1 and not _cuda_disabled and DEVICE != "cpu" and _is_gpu_error(exc):
+                    print(f"GPU transcription failed ({exc}); falling back to CPU.", flush=True)
+                    _cuda_disabled = True
+                    _unload()
+                    continue
+                raise
 
 
 def _write_info_file() -> None:
     import json
     path = os.path.join(tempfile.gettempdir(), "vd-server-info.json")
     with open(path, "w") as f:
-        json.dump({"model": MODEL_NAME, "device": DEVICE, "compute": COMPUTE}, f)
+        json.dump({"model": MODEL_NAME, "device": _active_device, "compute": _active_compute}, f)
 
 
 def main() -> int:
