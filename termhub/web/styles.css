@@ -1,0 +1,167 @@
+:root {
+  --bg: #15171c;
+  --bg-2: #1b1e25;
+  --bg-3: #23272f;
+  --border: #2c313a;
+  --fg: #d7dae0;
+  --fg-dim: #8b93a1;
+  --accent: #6aa9ff;
+  --accent-2: #f0b35a;
+  --danger: #e06c75;
+  --ok: #98c379;
+  --sidebar-w: 250px;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--fg);
+  font: 14px/1.4 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+  overflow: hidden;
+  -webkit-text-size-adjust: 100%;
+}
+
+#app { display: flex; height: 100vh; height: 100dvh; }
+
+/* ---- sidebar ---- */
+#sidebar {
+  width: var(--sidebar-w);
+  flex: 0 0 var(--sidebar-w);
+  background: var(--bg-2);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+}
+
+.sidebar-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border);
+}
+.brand { font-weight: 600; letter-spacing: 0.5px; }
+.machine-name { color: var(--accent); font-size: 12px; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#sidebar-close { display: none; background: none; border: none; color: var(--fg-dim); font-size: 16px; cursor: pointer; }
+
+.actions { display: flex; flex-direction: column; gap: 6px; padding: 10px; }
+.actions button {
+  width: 100%; text-align: left; padding: 10px; font-size: 14px;
+  background: var(--bg-3); color: var(--fg);
+  border: 1px solid var(--border); border-radius: 6px; cursor: pointer;
+}
+.actions button:hover { border-color: var(--accent); }
+#new-claude-btn { color: var(--accent-2); }
+
+#session-list { flex: 1; overflow-y: auto; padding: 6px 0; }
+.list-empty { padding: 8px 14px; color: var(--fg-dim); font-size: 13px; }
+
+.session-item {
+  display: flex; align-items: center; gap: 8px;
+  padding: 9px 14px; cursor: pointer; color: var(--fg);
+}
+.session-item:hover { background: var(--bg-3); }
+.session-item.active { background: var(--bg-3); box-shadow: inset 3px 0 0 var(--accent); }
+.session-item .title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.session-item.dead .title { color: var(--fg-dim); text-decoration: line-through; }
+.session-item .kill {
+  background: none; border: none; color: var(--fg-dim); cursor: pointer; font-size: 14px; padding: 4px 6px;
+}
+.session-item .kill:hover { color: var(--danger); }
+
+.sidebar-foot { padding: 8px 14px; border-top: 1px solid var(--border); font-size: 12px; color: var(--fg-dim); }
+
+/* ---- main ---- */
+#main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+
+#topbar { display: none; align-items: center; gap: 10px; padding: 8px 10px; background: var(--bg-2); border-bottom: 1px solid var(--border); }
+#topbar button { background: var(--bg-3); border: 1px solid var(--border); color: var(--fg); font-size: 18px; line-height: 1; padding: 6px 12px; border-radius: 6px; cursor: pointer; }
+#active-title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; }
+
+#tabbar { display: flex; gap: 2px; padding: 6px 8px 0; background: var(--bg-2); overflow-x: auto; }
+.tab {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 12px; background: var(--bg-3); color: var(--fg-dim);
+  border: 1px solid var(--border); border-bottom: none;
+  border-radius: 6px 6px 0 0; cursor: pointer; white-space: nowrap;
+}
+.tab.active { background: var(--bg); color: var(--fg); }
+.tab .tab-close { background: none; border: none; color: var(--fg-dim); cursor: pointer; }
+.tab .tab-close:hover { color: var(--danger); }
+
+#terminals { flex: 1; position: relative; background: var(--bg); min-height: 0; }
+.term-pane { position: absolute; inset: 0; padding: 6px 8px; display: none; }
+.term-pane.active { display: block; }
+.term-pane .xterm { height: 100%; }
+
+#empty-state {
+  position: absolute; inset: 0; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; color: var(--fg-dim); gap: 4px; text-align: center; padding: 20px;
+}
+#empty-state.hidden { display: none; }
+
+/* ---- on-screen key bar ---- */
+#keybar {
+  display: flex; gap: 4px; padding: 6px; background: var(--bg-2);
+  border-top: 1px solid var(--border); overflow-x: auto;
+}
+#keybar .key {
+  flex: 1 0 auto; min-width: 44px; min-height: 38px; padding: 6px 10px;
+  background: var(--bg-3); color: var(--fg); border: 1px solid var(--border);
+  border-radius: 6px; font-size: 14px; cursor: pointer; touch-action: manipulation; user-select: none;
+}
+#keybar .key.wide { color: var(--danger); }
+#keybar .key.armed { background: var(--accent); color: #0d1117; border-color: var(--accent); }
+#keybar .key:active { background: var(--accent); color: #0d1117; }
+
+/* ---- dialog ---- */
+#dialog-backdrop {
+  position: fixed; inset: 0; background: rgba(0,0,0,0.5);
+  display: flex; align-items: center; justify-content: center; z-index: 30; padding: 16px;
+}
+#dialog-backdrop.hidden { display: none; }
+#dialog {
+  background: var(--bg-2); border: 1px solid var(--border); border-radius: 10px;
+  padding: 20px; width: 400px; max-width: 100%;
+}
+#dialog h2 { margin: 0 0 14px; font-size: 16px; }
+#dialog label { display: block; margin-bottom: 12px; font-size: 13px; color: var(--fg-dim); }
+#dialog .hint { color: var(--fg-dim); font-weight: normal; opacity: 0.7; }
+#dialog input {
+  width: 100%; margin-top: 4px; padding: 10px;
+  background: var(--bg-3); color: var(--fg);
+  border: 1px solid var(--border); border-radius: 6px; font: inherit; font-size: 16px; /* 16px avoids iOS zoom */
+}
+.dialog-buttons { display: flex; justify-content: flex-end; gap: 8px; margin-top: 6px; }
+.dialog-buttons button {
+  padding: 10px 18px; border-radius: 6px; border: 1px solid var(--border);
+  background: var(--accent); color: #0d1117; font-weight: 600; cursor: pointer; font-size: 15px;
+}
+.dialog-buttons button.secondary { background: var(--bg-3); color: var(--fg); }
+#dlg-error { color: var(--danger); font-size: 13px; margin-top: 8px; min-height: 16px; }
+
+.hidden { display: none; }
+
+/* ---- scrim (mobile drawer backdrop) ---- */
+#scrim { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 18; }
+
+/* ---- mobile ---- */
+@media (max-width: 760px) {
+  #topbar { display: flex; }
+  #sidebar {
+    position: fixed; top: 0; bottom: 0; left: 0; z-index: 20;
+    transform: translateX(-100%); transition: transform 0.2s ease;
+    box-shadow: 2px 0 12px rgba(0,0,0,0.4);
+  }
+  body.drawer-open #sidebar { transform: translateX(0); }
+  body.drawer-open #scrim { display: block; }
+  #sidebar-close { display: block; margin-left: auto; }
+}
+
+/* On desktop the key bar is handy but optional; keep it compact. */
+@media (min-width: 761px) {
+  #keybar .key { flex: 0 0 auto; min-height: 32px; }
+}

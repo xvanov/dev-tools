@@ -10,6 +10,7 @@ Internal tooling for AI-assisted workflows: push-to-talk dictation, batch transc
 | [summarize-recording](./summarize-recording/) | Transcribe and summarize audio recordings via Azure OpenAI |
 | [claude-ctx-statusline](./claude-ctx-statusline/) | Shows context window usage in the Claude Code status bar |
 | [keep-awake](./keep-awake/) | Keeps a Windows session awake (F15 tap + execution-state) so it never idle-logs-out; auto-starts at logon |
+| [termhub](./termhub/) | Mobile-friendly web terminal over Tailscale — one server per machine; open/reattach shell sessions, incl. Claude Code (Windows + Linux) |
 
 ## Quick start
 
@@ -69,13 +70,30 @@ Set-ExecutionPolicy -Scope Process Bypass
 
 Starts immediately and auto-starts at every logon (hidden). Remove with `.\install.ps1 -Uninstall`.
 
+### termhub (web terminal over Tailscale)
+
+Install on each machine you want terminal access to:
+
+```bash
+cd termhub
+./linux/install.sh        # Linux (systemd user service)
+# Windows: .\windows\install.ps1  (elevated PowerShell)
+```
+
+Then open `http://<machine-tailscale-ip>:7000` in a browser tab per machine (works on your
+phone). Open terminals, switch between them, scroll back, and reattach after disconnects.
+Mobile-friendly, with an on-screen key bar (Ctrl-C, arrows, Esc, Tab) and a one-click
+Claude Code launcher.
+
 ## Repo layout
 
 ```
 dev-tools/
 ├── voice-dictation/          # real-time dictation (recorder + overlay + warm server)
 ├── summarize-recording/      # transcribe + Azure summarization CLI
-└── claude-ctx-statusline/    # Claude Code statusLine helper
+├── claude-ctx-statusline/    # Claude Code statusLine helper
+├── keep-awake/               # Windows keep-session-awake helper
+└── termhub/                  # web terminal over Tailscale (agent + hub + xterm.js UI)
 ```
 
 Each tool has its own README, requirements, and install scripts.

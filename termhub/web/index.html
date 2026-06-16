@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <title>termhub</title>
+  <link rel="stylesheet" href="/vendor/xterm.css" />
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <div id="app">
+    <div id="scrim"></div>
+
+    <aside id="sidebar">
+      <div class="sidebar-head">
+        <span class="brand">termhub</span>
+        <span id="machine-name" class="machine-name">…</span>
+        <button id="sidebar-close" title="Close">✕</button>
+      </div>
+      <div class="actions">
+        <button id="new-term-btn">+ New terminal</button>
+        <button id="new-claude-btn">★ Claude Code</button>
+      </div>
+      <div id="session-list"></div>
+      <div class="sidebar-foot"><span id="status-line">connecting…</span></div>
+    </aside>
+
+    <main id="main">
+      <div id="topbar">
+        <button id="menu-btn" title="Menu">☰</button>
+        <span id="active-title">termhub</span>
+        <button id="topbar-new" title="New terminal">＋</button>
+      </div>
+
+      <div id="tabbar"></div>
+
+      <div id="terminals">
+        <div id="empty-state">
+          <p>No terminal open.</p>
+          <p>Tap <strong>＋</strong> or open the menu (<strong>☰</strong>) to start one.</p>
+        </div>
+      </div>
+
+      <!-- On-screen keys (essential on phones; phone keyboards lack these) -->
+      <div id="keybar">
+        <button data-key="esc" class="key">Esc</button>
+        <button data-key="ctrl" class="key" id="ctrl-key">Ctrl</button>
+        <button data-key="tab" class="key">Tab</button>
+        <button data-key="left" class="key">&#8592;</button>
+        <button data-key="up" class="key">&#8593;</button>
+        <button data-key="down" class="key">&#8595;</button>
+        <button data-key="right" class="key">&#8594;</button>
+        <button data-key="ctrl-c" class="key wide">^C</button>
+        <button id="kbd-key" class="key" title="Show keyboard">&#9000;</button>
+      </div>
+    </main>
+  </div>
+
+  <!-- New terminal / Claude Code dialog -->
+  <div id="dialog-backdrop" class="hidden">
+    <div id="dialog">
+      <h2 id="dialog-title">New terminal</h2>
+      <label>Directory <span class="hint">(blank = home)</span>
+        <input id="dlg-cwd" list="dlg-recents" placeholder="~/projects/app" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" />
+        <datalist id="dlg-recents"></datalist>
+      </label>
+      <label id="dlg-cmd-row">Command
+        <input id="dlg-cmd" value="claude" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" />
+      </label>
+      <label>Title <span class="hint">(optional)</span>
+        <input id="dlg-title" placeholder="auto" autocomplete="off" />
+      </label>
+      <div class="dialog-buttons">
+        <button id="dlg-cancel" class="secondary">Cancel</button>
+        <button id="dlg-open">Open</button>
+      </div>
+      <div id="dlg-error"></div>
+    </div>
+  </div>
+
+  <script src="/vendor/xterm.js"></script>
+  <script src="/vendor/addon-fit.js"></script>
+  <script src="/app.js"></script>
+</body>
+</html>

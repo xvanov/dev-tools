@@ -17,3 +17,7 @@ node_modules/
 *.json
 *.summary.md
 combined-summary.md
+
+# but keep package manifests/locks (the *.json rule above would hide them)
+!package.json
+!package-lock.json

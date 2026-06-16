@@ -1,0 +1,22 @@
+{
+  "name": "termhub",
+  "version": "0.2.0",
+  "private": true,
+  "description": "Web terminal over Tailscale — open and reattach to shell sessions on a machine from your browser, including Claude Code. One standalone server per machine.",
+  "license": "MIT",
+  "scripts": {
+    "start": "node server.js",
+    "vendor": "cp node_modules/@xterm/xterm/lib/xterm.js web/vendor/xterm.js && cp node_modules/@xterm/xterm/css/xterm.css web/vendor/xterm.css && cp node_modules/@xterm/addon-fit/lib/addon-fit.js web/vendor/addon-fit.js"
+  },
+  "dependencies": {
+    "node-pty": "^1.0.0",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@xterm/addon-fit": "^0.10.0",
+    "@xterm/xterm": "^5.5.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

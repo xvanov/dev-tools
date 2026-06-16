@@ -1,0 +1,18 @@
+[Unit]
+Description=termhub (web terminal for this machine)
+After=network-online.target tailscaled.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=__DIR__
+ExecStart=__NODE__ __DIR__/server.js
+Restart=on-failure
+RestartSec=2
+# Override with `systemctl --user edit termhub` if needed:
+# Environment=TERMHUB_PORT=7000
+# Environment=TERMHUB_BIND=100.x.y.z
+# Environment=TERMHUB_MACHINE=myhost
+
+[Install]
+WantedBy=default.target
