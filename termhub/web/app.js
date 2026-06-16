@@ -4,6 +4,7 @@
 
 const Term = window.Terminal;
 const FitAddonCtor = (window.FitAddon && (window.FitAddon.FitAddon || window.FitAddon)) || null;
+const WebglAddonCtor = (window.WebglAddon && (window.WebglAddon.WebglAddon || window.WebglAddon)) || null;
 
 const TERM_THEME = {
   background: '#15171c', foreground: '#d7dae0', cursor: '#6aa9ff',
@@ -117,8 +118,27 @@ function openTerminal(id, title) {
   if (fit) term.loadAddon(fit);
   term.open(pane);
 
-  const t = { id, title, term, fit, pane, ws: null, attempts: 0, closing: false, reconnectTimer: null };
+  // GPU renderer — far faster redraws on mobile (smoother when Claude repaints on
+  // scroll). Falls back to the default DOM renderer if WebGL is unavailable/lost.
+  if (WebglAddonCtor) {
+    try {
+      const webgl = new WebglAddonCtor();
+      webgl.onContextLoss(() => { try { webgl.dispose(); } catch {} });
+      term.loadAddon(webgl);
+    } catch {}
+  }
+
+  const t = { id, title, term, fit, pane, ws: null, attempts: 0, closing: false, reconnectTimer: null, ro: null };
   state.open.set(id, t);
+  wireTouchScroll(t);
+
+  // Keep the PTY in lock-step with the rendered size: any layout change (rotate,
+  // keyboard open/close, font reflow) refits and pushes a resize. Without this
+  // the terminal and PTY drift apart and output gets mangled.
+  if (window.ResizeObserver) {
+    t.ro = new ResizeObserver(() => scheduleFit(t));
+    t.ro.observe(pane);
+  }
 
   term.onData((data) => {
     // Apply a pending Ctrl modifier from the on-screen key bar to the next char.
@@ -133,10 +153,126 @@ function openTerminal(id, title) {
     if (t.ws && t.ws.readyState === WebSocket.OPEN) t.ws.send(JSON.stringify({ type: 'resize', cols, rows }));
   });
 
-  connect(t);
+  // Make the pane visible and fit it to the device BEFORE connecting, so the
+  // very first thing the terminal knows is its real size.
+  setActive(id);
+  requestAnimationFrame(() => { if (t.fit) { try { t.fit.fit(); } catch {} } connect(t); });
   renderTabs();
   renderSessions();
-  setActive(id);
+}
+
+// Debounced refit: coalesces bursts of layout changes (iOS keyboard animations
+// fire dozens of resize events) into one fit + one resize message.
+const fitTimers = new WeakMap();
+function scheduleFit(t) {
+  clearTimeout(fitTimers.get(t));
+  fitTimers.set(t, setTimeout(() => {
+    if (!state.open.has(t.id) || !t.fit) return;
+    try { t.fit.fit(); } catch {}
+  }, 80));
+}
+
+// ---- touch scrolling ------------------------------------------------------
+// Full-screen apps (Claude Code, vim, less) run on the alternate screen with
+// mouse tracking on. There, xterm.js has no scrollback to swipe and only relays
+// raw touch as mouse moves — which feels dead. We instead translate a vertical
+// drag into scroll-wheel events (with flick momentum) so the app scrolls its own
+// history smoothly. On the normal buffer we leave xterm's native touch scroll be.
+
+const now = () => (window.performance && performance.now ? performance.now() : Date.now());
+
+function appWantsMouse(t) {
+  const m = t.term.modes && t.term.modes.mouseTrackingMode;
+  return !!m && m !== 'none';
+}
+
+function cellSize(t) {
+  const d = t.term._core && t.term._core._renderService && t.term._core._renderService.dimensions;
+  const css = d && d.css && d.css.cell;
+  return { w: (css && css.width) || 9, h: (css && css.height) || 18 };
+}
+
+function touchCell(t, touch) {
+  const rect = t.term.element.getBoundingClientRect();
+  const { w, h } = cellSize(t);
+  const col = Math.max(1, Math.min(t.term.cols, Math.floor((touch.clientX - rect.left) / w) + 1));
+  const row = Math.max(1, Math.min(t.term.rows, Math.floor((touch.clientY - rect.top) / h) + 1));
+  return { col, row };
+}
+
+// SGR mouse encoding (mode 1006), which every modern TUI (incl. Claude Code) uses.
+function wheelSeq(notchesUp, col, row) {
+  const btn = notchesUp > 0 ? 64 : 65; // 64 = wheel up (older), 65 = wheel down
+  let seq = '';
+  for (let i = 0; i < Math.min(Math.abs(notchesUp), 8); i++) seq += `\x1b[<${btn};${col};${row}M`;
+  return seq;
+}
+
+function wireTouchScroll(t) {
+  const el = t.pane;
+  let tracking = false, scrolling = false, startX = 0, startY = 0, lastY = 0, accum = 0;
+  let cell = { col: 1, row: 1 }, vel = 0, lastT = 0, raf = 0, startedAt = 0;
+  const stopMomentum = () => { if (raf) { cancelAnimationFrame(raf); raf = 0; } };
+
+  function emit(deltaPx) {
+    const step = Math.max(8, cellSize(t).h);     // one wheel notch per line of drag
+    const notches = Math.trunc(deltaPx / step);
+    if (!notches) return 0;
+    sendInput(t, wheelSeq(notches, cell.col, cell.row)); // finger down → wheel up (older)
+    return notches * step;
+  }
+
+  el.addEventListener('touchstart', (e) => {
+    if (!appWantsMouse(t) || e.touches.length !== 1) { tracking = false; return; }
+    stopMomentum();
+    tracking = true; scrolling = false;
+    const tch = e.touches[0];
+    startX = tch.clientX; startY = lastY = tch.clientY;
+    accum = 0; vel = 0; lastT = now(); startedAt = lastT;
+    cell = touchCell(t, tch);
+    // Don't let xterm relay this as a mouse-down/move; we own the gesture.
+    e.stopPropagation();
+  }, { capture: true, passive: false });
+
+  el.addEventListener('touchmove', (e) => {
+    if (!tracking) return;
+    const tch = e.touches[0];
+    const dy = tch.clientY - lastY;
+    const dx = tch.clientX - startX;
+    if (!scrolling) {
+      // Decide intent on first real movement: mostly-vertical → scroll.
+      if (Math.abs(tch.clientY - startY) < 6 && Math.abs(dx) < 6) { e.stopPropagation(); return; }
+      if (Math.abs(tch.clientY - startY) <= Math.abs(dx)) { tracking = false; return; }
+      scrolling = true;
+    }
+    e.preventDefault(); e.stopPropagation();
+    const tNow = now(); const dt = Math.max(1, tNow - lastT);
+    vel = dy / dt; lastT = tNow; lastY = tch.clientY;
+    accum += dy;
+    accum -= emit(accum);
+  }, { capture: true, passive: false });
+
+  function end(e) {
+    if (!tracking) return;
+    const wasTap = !scrolling && (now() - startedAt) < 250;
+    tracking = false;
+    if (wasTap) { sendInput(t, `\x1b[<0;${cell.col};${cell.row}M\x1b[<0;${cell.col};${cell.row}m`); return; }
+    if (!scrolling) return;
+    // Flick momentum: keep emitting wheel events, decaying, until it dies.
+    let v = vel; let acc = 0;
+    const step = () => {
+      if (Math.abs(v) < 0.015) { raf = 0; return; }
+      acc += v * 16;                 // px advanced this ~frame
+      acc -= emit(acc);
+      v *= 0.95;
+      raf = requestAnimationFrame(step);
+    };
+    if (Math.abs(v) > 0.05) step();
+  }
+  el.addEventListener('touchend', end, { capture: true, passive: false });
+  el.addEventListener('touchcancel', () => { tracking = false; stopMomentum(); }, { capture: true });
+
+  t._stopMomentum = stopMomentum;
 }
 
 function sendInput(t, data) {
@@ -147,10 +283,20 @@ function connect(t) {
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
   const ws = new WebSocket(`${proto}://${location.host}/ws/term/${encodeURIComponent(t.id)}`);
   t.ws = ws;
-  ws.onopen = () => { t.attempts = 0; if (t.fit) { try { t.fit.fit(); } catch {} } };
+  ws.onopen = () => { t.attempts = 0; };
   ws.onmessage = (ev) => {
     let msg; try { msg = JSON.parse(ev.data); } catch { return; }
-    if (msg.type === 'replay') { t.term.reset(); t.term.write(msg.data); }
+    if (msg.type === 'replay') {
+      // Render the buffered bytes at the width the PTY produced them, so wrapping
+      // and absolute cursor positioning line up. Then refit to this device and
+      // send a resize — full-screen apps (Claude Code, vim) redraw cleanly on the
+      // resulting SIGWINCH, and a plain shell just reflows.
+      if (msg.cols && msg.rows) { try { t.term.resize(msg.cols, msg.rows); } catch {} }
+      t.term.reset();
+      t.term.write(msg.data, () => {
+        requestAnimationFrame(() => { if (t.fit) { try { t.fit.fit(); } catch {} } });
+      });
+    }
     else if (msg.type === 'output') t.term.write(msg.data);
     else if (msg.type === 'exit') t.term.write(`\r\n\x1b[90m[process exited${msg.code != null ? ' (' + msg.code + ')' : ''}]\x1b[0m\r\n`);
   };
@@ -177,6 +323,8 @@ function closeTab(id) {
   if (!t) return;
   t.closing = true;
   if (t.reconnectTimer) clearTimeout(t.reconnectTimer);
+  if (t._stopMomentum) { try { t._stopMomentum(); } catch {} }
+  if (t.ro) { try { t.ro.disconnect(); } catch {} }
   try { t.ws && t.ws.close(); } catch {}
   t.term.dispose();
   t.pane.remove();
@@ -212,15 +360,14 @@ function handleKey(key) {
   t.term.focus();
 }
 
-// ---- new terminal / claude dialog -----------------------------------------
+// ---- new terminal dialog --------------------------------------------------
 
-let dialogMode = 'term';
+const DEFAULT_COMMAND = 'claude --dangerously-skip-permissions';
 
-function openDialog(mode) {
-  dialogMode = mode;
-  $('#dialog-title').textContent = mode === 'claude' ? 'Open Claude Code' : 'New terminal';
-  $('#dlg-cmd-row').classList.toggle('hidden', mode !== 'claude');
-  $('#dlg-cmd').value = 'claude';
+function openDialog() {
+  $('#dialog-title').textContent = 'New terminal';
+  $('#dlg-cmd').value = DEFAULT_COMMAND; // editable; clear it for a plain shell
+  $('#dlg-preset').value = DEFAULT_COMMAND;
   $('#dlg-cwd').value = '';
   $('#dlg-title').value = '';
   $('#dlg-error').textContent = '';
@@ -229,17 +376,46 @@ function openDialog(mode) {
   setTimeout(() => $('#dlg-cwd').focus(), 50);
 }
 
-async function loadRecents() {
+function setDirOptions(values) {
   const dl = $('#dlg-recents');
   dl.innerHTML = '';
-  try {
-    const { recents } = await api('/api/recents');
-    for (const dir of recents || []) {
-      const opt = document.createElement('option');
-      opt.value = dir;
-      dl.appendChild(opt);
-    }
-  } catch {}
+  for (const v of values || []) {
+    const opt = document.createElement('option');
+    opt.value = v;
+    dl.appendChild(opt);
+  }
+}
+
+async function loadRecents() {
+  try { setDirOptions((await api('/api/recents')).recents); } catch {}
+}
+
+// As the user types a path, suggest matching subdirectories from the filesystem;
+// fall back to recents when the field is empty.
+let dirSuggestTimer = null;
+function scheduleDirSuggest() {
+  clearTimeout(dirSuggestTimer);
+  dirSuggestTimer = setTimeout(updateDirSuggestions, 140);
+}
+async function updateDirSuggestions() {
+  const v = $('#dlg-cwd').value;
+  if (!v.trim()) { loadRecents(); return; }
+  try { setDirOptions((await api('/api/dirs?path=' + encodeURIComponent(v))).dirs); } catch {}
+}
+
+// Preset dropdown drives the command field; picking "Custom…" just lets the user
+// type freely, and typing a command that doesn't match a preset flips the select
+// to "Custom…" so the two stay consistent.
+function applyPreset() {
+  const v = $('#dlg-preset').value;
+  if (v === '__custom__') { $('#dlg-cmd').focus(); return; }
+  $('#dlg-cmd').value = v;
+}
+function syncPresetFromCommand() {
+  const cmd = $('#dlg-cmd').value;
+  const sel = $('#dlg-preset');
+  const match = [...sel.options].some((o) => o.value === cmd && o.value !== '__custom__');
+  sel.value = match ? cmd : '__custom__';
 }
 
 function closeDialog() { $('#dialog-backdrop').classList.add('hidden'); }
@@ -247,7 +423,7 @@ function closeDialog() { $('#dialog-backdrop').classList.add('hidden'); }
 async function submitDialog() {
   const cwd = $('#dlg-cwd').value.trim();
   const title = $('#dlg-title').value.trim();
-  const command = dialogMode === 'claude' ? $('#dlg-cmd').value.trim() : null;
+  const command = $('#dlg-cmd').value.trim();
   $('#dlg-open').disabled = true;
   try {
     const body = { cols: 80, rows: 24 };
@@ -281,13 +457,25 @@ function escapeHtml(s) {
 
 function refitActive() {
   const t = state.open.get(state.activeId);
-  if (t && t.fit) { try { t.fit.fit(); } catch {} }
+  if (t) scheduleFit(t);
+}
+
+// On iOS the on-screen keyboard shrinks the visual viewport but not the layout
+// viewport, which pushes the terminal and key bar under the keyboard. Pin the
+// app height to the visual viewport so everything stays on-screen and sized right.
+function syncViewportHeight() {
+  const vv = window.visualViewport;
+  const h = vv ? vv.height : window.innerHeight;
+  document.documentElement.style.setProperty('--vvh', h + 'px');
+  refitActive();
 }
 
 function wireEvents() {
-  $('#new-term-btn').onclick = () => openDialog('term');
-  $('#new-claude-btn').onclick = () => openDialog('claude');
-  $('#topbar-new').onclick = () => openDialog('term');
+  $('#new-term-btn').onclick = () => openDialog();
+  $('#topbar-new').onclick = () => openDialog();
+  $('#dlg-cwd').addEventListener('input', scheduleDirSuggest);
+  $('#dlg-preset').addEventListener('change', applyPreset);
+  $('#dlg-cmd').addEventListener('input', syncPresetFromCommand);
   $('#menu-btn').onclick = openDrawer;
   $('#sidebar-close').onclick = closeDrawer;
   $('#scrim').onclick = closeDrawer;
@@ -307,11 +495,15 @@ function wireEvents() {
     if (e.key === 'Enter' && dlgOpen) submitDialog();
   });
 
-  window.addEventListener('resize', refitActive);
-  window.addEventListener('orientationchange', () => setTimeout(refitActive, 200));
-  if (window.visualViewport) window.visualViewport.addEventListener('resize', refitActive);
+  window.addEventListener('resize', syncViewportHeight);
+  window.addEventListener('orientationchange', () => setTimeout(syncViewportHeight, 200));
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener('resize', syncViewportHeight);
+    window.visualViewport.addEventListener('scroll', syncViewportHeight);
+  }
 }
 
 wireEvents();
+syncViewportHeight();
 refresh();
 setInterval(refresh, 8000);

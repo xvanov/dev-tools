@@ -21,7 +21,6 @@
       </div>
       <div class="actions">
         <button id="new-term-btn">+ New terminal</button>
-        <button id="new-claude-btn">★ Claude Code</button>
       </div>
       <div id="session-list"></div>
       <div class="sidebar-foot"><span id="status-line">connecting…</span></div>
@@ -66,8 +65,16 @@
         <input id="dlg-cwd" list="dlg-recents" placeholder="~/projects/app" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" />
         <datalist id="dlg-recents"></datalist>
       </label>
-      <label id="dlg-cmd-row">Command
-        <input id="dlg-cmd" value="claude" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" />
+      <label>Preset
+        <select id="dlg-preset">
+          <option value="claude --dangerously-skip-permissions">Claude — skip permissions</option>
+          <option value="claude --dangerously-skip-permissions --resume">Claude — skip permissions + resume</option>
+          <option value="">Plain shell</option>
+          <option value="__custom__">Custom…</option>
+        </select>
+      </label>
+      <label id="dlg-cmd-row">Command <span class="hint">(blank = just a shell)</span>
+        <input id="dlg-cmd" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" />
       </label>
       <label>Title <span class="hint">(optional)</span>
         <input id="dlg-title" placeholder="auto" autocomplete="off" />
@@ -82,6 +89,7 @@
 
   <script src="/vendor/xterm.js"></script>
   <script src="/vendor/addon-fit.js"></script>
+  <script src="/vendor/addon-webgl.js"></script>
   <script src="/app.js"></script>
 </body>
 </html>

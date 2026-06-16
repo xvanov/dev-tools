@@ -1,8 +1,27 @@
 'use strict';
 
 const os = require('os');
+const fs = require('fs');
+const path = require('path');
 const pty = require('node-pty');
 const { defaultShell } = require('./shell');
+
+// Resolve a requested working directory: expand a leading ~, and fall back to
+// the home directory (with an explanatory notice) when it's missing or not a
+// directory — so a typo opens a usable shell instead of failing the session.
+function resolveCwd(input) {
+  const home = os.homedir();
+  let dir = input && String(input).trim();
+  if (!dir) return { cwd: home, notice: null };
+  if (dir === '~') dir = home;
+  else if (dir.startsWith('~/') || dir.startsWith('~\\')) dir = path.join(home, dir.slice(2));
+  try {
+    if (fs.statSync(dir).isDirectory()) return { cwd: dir, notice: null };
+    return { cwd: home, notice: `'${dir}' is not a directory — starting in ${home}` };
+  } catch {
+    return { cwd: home, notice: `directory '${dir}' not found — starting in ${home}` };
+  }
+}
 
 // Default scrollback kept in memory per session, for replay on reconnect.
 const DEFAULT_SCROLLBACK_BYTES = Number(process.env.TERMHUB_SCROLLBACK_BYTES) || 2 * 1024 * 1024;
@@ -17,7 +36,10 @@ class Session {
   constructor({ cwd, command, title, cols, rows, maxBytes } = {}) {
     this.id = genId();
     this.shell = defaultShell();
-    this.cwd = cwd && String(cwd).trim() ? String(cwd).trim() : os.homedir();
+    const resolved = resolveCwd(cwd);
+    this.cwd = resolved.cwd;
+    this._cwdNotice = resolved.notice;
+    this.cwdFallback = !!resolved.notice;
     this.command = command && String(command).trim() ? String(command).trim() : null;
     this.cols = cols || 80;
     this.rows = rows || 24;
@@ -45,7 +67,19 @@ class Session {
     });
     this.alive = true;
 
+    // Surface a bad working directory in the terminal itself (buffered so it also
+    // shows up in replay on reconnect) rather than failing session creation.
+    if (this._cwdNotice) {
+      const notice = `\x1b[33m[termhub] ${this._cwdNotice}\x1b[0m\r\n`;
+      this._buffer(notice);
+      this._broadcast({ type: 'output', data: notice });
+    }
+
     this.pty.onData((data) => {
+      // Run the initial command once the shell has actually produced its prompt,
+      // rather than after a fixed delay — a guessed timeout races the shell's
+      // startup (rc files, etc.) and the keystrokes get dropped.
+      this._maybeRunCommand();
       this._buffer(data);
       this._broadcast({ type: 'output', data });
     });
@@ -56,14 +90,22 @@ class Session {
       this._broadcast({ type: 'exit', code: exitCode });
     });
 
-    // If an initial command was requested (e.g. `claude`), run it in the shell
-    // once it has settled. Running it *inside* the shell (rather than as the PTY
-    // process) means the user still has a shell after the command exits.
+    // If an initial command was requested (e.g. `claude …`), run it *inside* the
+    // shell (not as the PTY process) so the user still has a shell after it exits.
     if (this.command) {
-      setTimeout(() => {
-        if (this.alive) this.pty.write(this.command + '\r');
-      }, 350);
+      this._pendingCommand = this.command;
+      // Fallback in case the shell emits no startup output before going quiet.
+      this._cmdFallback = setTimeout(() => this._maybeRunCommand(), 1500);
     }
+  }
+
+  _maybeRunCommand() {
+    if (!this._pendingCommand || !this.alive) return;
+    const cmd = this._pendingCommand;
+    this._pendingCommand = null;
+    if (this._cmdFallback) { clearTimeout(this._cmdFallback); this._cmdFallback = null; }
+    // A short settle lets the prompt finish drawing before we type into it.
+    setTimeout(() => { if (this.alive) this.pty.write(cmd + '\r'); }, 120);
   }
 
   _buffer(data) {
@@ -93,7 +135,10 @@ class Session {
   attach(send) {
     this._clients.add(send);
     // Send accumulated scrollback first, then the client receives live output.
-    send({ type: 'replay', data: this.replay() });
+    // Include the PTY's current dimensions: the buffered bytes were produced at
+    // this width, so the client must render them at the same width or wrapping
+    // and absolute cursor positioning will be mangled (esp. full-screen apps).
+    send({ type: 'replay', data: this.replay(), cols: this.cols, rows: this.rows });
     if (!this.alive) send({ type: 'exit', code: this.exitCode });
     return () => this._clients.delete(send);
   }

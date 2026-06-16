@@ -21,10 +21,13 @@ html, body {
   color: var(--fg);
   font: 14px/1.4 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
   overflow: hidden;
+  overscroll-behavior: none; /* don't let the page rubber-band and steal scroll */
   -webkit-text-size-adjust: 100%;
 }
 
-#app { display: flex; height: 100vh; height: 100dvh; }
+/* --vvh tracks the visual viewport (set in JS) so the iOS keyboard never covers
+   the terminal or key bar; falls back to dynamic vh where --vvh is unset. */
+#app { display: flex; height: 100dvh; height: var(--vvh, 100dvh); }
 
 /* ---- sidebar ---- */
 #sidebar {
@@ -97,6 +100,14 @@ html, body {
 .term-pane.active { display: block; }
 .term-pane .xterm { height: 100%; }
 
+/* Smooth, contained touch scrolling of the scrollback on iOS — without this the
+   gesture tends to scroll the page (nothing) instead of the terminal buffer. */
+.xterm .xterm-viewport {
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+  touch-action: pan-y;
+}
+
 #empty-state {
   position: absolute; inset: 0; display: flex; flex-direction: column;
   align-items: center; justify-content: center; color: var(--fg-dim); gap: 4px; text-align: center; padding: 20px;
@@ -130,7 +141,7 @@ html, body {
 #dialog h2 { margin: 0 0 14px; font-size: 16px; }
 #dialog label { display: block; margin-bottom: 12px; font-size: 13px; color: var(--fg-dim); }
 #dialog .hint { color: var(--fg-dim); font-weight: normal; opacity: 0.7; }
-#dialog input {
+#dialog input, #dialog select {
   width: 100%; margin-top: 4px; padding: 10px;
   background: var(--bg-3); color: var(--fg);
   border: 1px solid var(--border); border-radius: 6px; font: inherit; font-size: 16px; /* 16px avoids iOS zoom */
