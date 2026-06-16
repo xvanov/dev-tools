@@ -9,6 +9,7 @@ Internal tooling for AI-assisted workflows: push-to-talk dictation, batch transc
 | [voice-dictation](./voice-dictation/) | Push-to-talk voice transcription via faster-whisper → auto-paste (Windows + Linux) |
 | [summarize-recording](./summarize-recording/) | Transcribe and summarize audio recordings via Azure OpenAI |
 | [claude-ctx-statusline](./claude-ctx-statusline/) | Shows context window usage in the Claude Code status bar |
+| [keep-awake](./keep-awake/) | Keeps a Windows session awake (F15 tap + execution-state) so it never idle-logs-out; auto-starts at logon |
 
 ## Quick start
 
@@ -57,6 +58,16 @@ cd claude-ctx-statusline
 ```
 
 Restart Claude Code to see `Ctx: 30k/200k (15%)` in the status bar.
+
+### keep-awake (Windows)
+
+```powershell
+cd keep-awake
+Set-ExecutionPolicy -Scope Process Bypass
+.\install.ps1
+```
+
+Starts immediately and auto-starts at every logon (hidden). Remove with `.\install.ps1 -Uninstall`.
 
 ## Repo layout
 
