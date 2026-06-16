@@ -74,6 +74,18 @@ setx TERMHUB_BIND 100.x.y.z              # then restart the task
 To see errors, run `node server.js` in a console manually (the task has no log redirection
 by default). The installer removes old `TermhubAgent` / `TermhubHub` tasks if present.
 
+The Windows installer binds termhub to loopback (`TERMHUB_BIND=127.0.0.1`, set via `setx`) and
+publishes it with Tailscale Serve. Manage the published endpoint with:
+
+```powershell
+tailscale serve status
+tailscale serve --https=7000 off        # stop publishing
+```
+
+Non-admin installs use a hidden Startup-folder launcher instead of a task; the installer writes
+it with the absolute project path baked in (a path resolved relative to the .vbs breaks once the
+file is copied into the Startup folder).
+
 ## node-pty build prerequisites
 
 `node-pty` is a native addon and compiles on install:
@@ -112,6 +124,7 @@ If building by hand, reproduce both: clear `NoDefaultCurrentDirectoryInExePath`,
 | Symptom | Likely cause | Fix |
 |---|---|---|
 | Bound to `127.0.0.1`, unreachable from other devices | No Tailscale IP detected | Set `TERMHUB_BIND` to the tailnet IP; ensure `tailscaled` is up |
+| Can't reach `:7000` from phone (loads forever) | Windows firewall drops raw ports on the Tailscale interface | Use Tailscale Serve (Windows installer does this): bind loopback + `tailscale serve --bg --https=7000 http://127.0.0.1:7000`, then open `https://<host>.<tailnet>.ts.net:7000/` |
 | Can't reach `:7000` from phone | Tailnet ACL or firewall | Confirm both devices are on the tailnet and ACLs allow the port |
 | Terminal opens but no output | WebSocket blocked | Ensure nothing between browser and server strips WebSocket upgrades |
 | Input ignored after sleep/wake | WebSocket dropped; reconnecting | Output replays on reconnect; if it gave up ("session no longer available"), the server restarted — open a new terminal |

@@ -64,7 +64,7 @@ cd dev-tools/termhub
 Compiles `node-pty`, writes `~/.config/systemd/user/termhub.service`, and starts it. The
 installer prints the URL (`http://<tailscale-ip>:7000`).
 
-### Windows (scheduled task or Startup-folder launcher)
+### Windows (Tailscale Serve)
 
 ```powershell
 cd termhub
@@ -72,12 +72,15 @@ Set-ExecutionPolicy -Scope Process Bypass
 .\windows\install.ps1
 ```
 
-The installer adapts to your privileges:
+On Windows the installer binds termhub to **loopback** and publishes it on your tailnet with
+**Tailscale Serve** (HTTPS), giving you `https://<machine>.<tailnet>.ts.net:7000/`. This is the
+mechanism that actually works from a phone: a raw port on the Tailscale interface is dropped by
+Windows' default inbound-block firewall and just hangs. Requires the Tailscale CLI signed in,
+and HTTPS/MagicDNS enabled for your tailnet (the default).
 
-- **Elevated PowerShell** → auto-start via a **Scheduled Task** (runs at logon, auto-restarts
-  on crash) plus a Windows Firewall rule (inbound TCP 7000, restricted to the tailnet).
-- **Non-admin PowerShell** → auto-start via a hidden launcher in your **Startup folder**, then
-  it self-elevates *only* the firewall step (one UAC prompt).
+Auto-start adapts to privileges: **elevated** → a Scheduled Task (at logon, auto-restart);
+**non-admin** → a hidden launcher in your Startup folder. The Serve config is persisted by
+`tailscaled` and restored on boot.
 
 It also compiles `node-pty` itself, working around two common Windows build failures
 (`GetCommitHash.bat` and Spectre-lib `MSB8040`) — see [AGENT.md](./AGENT.md). Needs the Visual
