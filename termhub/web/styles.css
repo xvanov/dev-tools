@@ -154,6 +154,23 @@ html, body {
 .dialog-buttons button.secondary { background: var(--bg-3); color: var(--fg); }
 #dlg-error { color: var(--danger); font-size: 13px; margin-top: 8px; min-height: 16px; }
 
+/* ---- paste fallback overlay ---- */
+#paste-backdrop {
+  position: fixed; inset: 0; background: rgba(0,0,0,0.5);
+  display: flex; align-items: center; justify-content: center; z-index: 40; padding: 16px;
+}
+#paste-box {
+  background: var(--bg-2); border: 1px solid var(--border); border-radius: 10px;
+  padding: 20px; width: 420px; max-width: 100%;
+}
+.paste-title { font-size: 13px; color: var(--fg-dim); margin-bottom: 10px; }
+#paste-area {
+  width: 100%; height: 140px; padding: 10px; resize: vertical;
+  background: var(--bg-3); color: var(--fg);
+  border: 1px solid var(--border); border-radius: 6px;
+  font: inherit; font-size: 16px; /* 16px avoids iOS zoom */
+}
+
 .hidden { display: none; }
 
 /* ---- scrim (mobile drawer backdrop) ---- */

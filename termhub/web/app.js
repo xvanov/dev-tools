@@ -360,6 +360,51 @@ function handleKey(key) {
   t.term.focus();
 }
 
+// ---- paste (mobile) -------------------------------------------------------
+// iOS Safari doesn't surface the long-press "Paste" menu over xterm's hidden
+// helper textarea (worse with the WebGL renderer + our touch capture), so the
+// Paste key reads the clipboard directly (works because Serve gives us HTTPS).
+// If the Clipboard API is blocked/denied, fall back to a real textarea the user
+// can paste into manually — native paste always works there.
+async function doPaste() {
+  const t = state.open.get(state.activeId);
+  if (!t) return;
+  try {
+    if (navigator.clipboard && navigator.clipboard.readText) {
+      const text = await navigator.clipboard.readText();
+      if (text) { sendInput(t, text); t.term.focus(); return; }
+    }
+    throw new Error('clipboard unavailable');
+  } catch {
+    pasteFallback(t);
+  }
+}
+
+function pasteFallback(t) {
+  const back = document.createElement('div');
+  back.id = 'paste-backdrop';
+  back.innerHTML =
+    '<div id="paste-box">' +
+    '<div class="paste-title">Paste your text below, then tap Send</div>' +
+    '<textarea id="paste-area" autocapitalize="off" autocorrect="off" spellcheck="false"></textarea>' +
+    '<div class="dialog-buttons">' +
+    '<button class="secondary" id="paste-cancel">Cancel</button>' +
+    '<button id="paste-send">Send</button>' +
+    '</div></div>';
+  document.body.appendChild(back);
+  const ta = back.querySelector('#paste-area');
+  const close = () => back.remove();
+  back.querySelector('#paste-cancel').onclick = close;
+  back.querySelector('#paste-send').onclick = () => {
+    const v = ta.value;
+    close();
+    if (v) sendInput(t, v);
+    t.term.focus();
+  };
+  back.onclick = (e) => { if (e.target === back) close(); };
+  setTimeout(() => ta.focus(), 50);
+}
+
 // ---- new terminal dialog --------------------------------------------------
 
 const DEFAULT_COMMAND = 'claude --dangerously-skip-permissions';
@@ -484,6 +529,9 @@ function wireEvents() {
   $('#dialog-backdrop').onclick = (e) => { if (e.target.id === 'dialog-backdrop') closeDialog(); };
 
   $('#kbd-key').onclick = () => { const t = state.open.get(state.activeId); if (t) t.term.focus(); };
+  // Plain click (not pointerdown) so iOS counts it as the user gesture the
+  // Clipboard API requires before it will hand over clipboard contents.
+  $('#paste-key').onclick = doPaste;
   document.querySelectorAll('#keybar .key[data-key]').forEach((btn) => {
     // Use pointerdown so focus stays on the terminal and the key registers on phones.
     btn.addEventListener('pointerdown', (e) => { e.preventDefault(); handleKey(btn.dataset.key); });
