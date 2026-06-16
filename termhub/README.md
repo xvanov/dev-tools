@@ -64,9 +64,7 @@ cd dev-tools/termhub
 Compiles `node-pty`, writes `~/.config/systemd/user/termhub.service`, and starts it. The
 installer prints the URL (`http://<tailscale-ip>:7000`).
 
-### Windows (scheduled task)
-
-Open an **elevated PowerShell** in the tool directory:
+### Windows (scheduled task or Startup-folder launcher)
 
 ```powershell
 cd termhub
@@ -74,8 +72,16 @@ Set-ExecutionPolicy -Scope Process Bypass
 .\windows\install.ps1
 ```
 
-Building `node-pty` on Windows needs the Visual Studio Build Tools (Desktop development
-with C++ workload).
+The installer adapts to your privileges:
+
+- **Elevated PowerShell** → auto-start via a **Scheduled Task** (runs at logon, auto-restarts
+  on crash) plus a Windows Firewall rule (inbound TCP 7000, restricted to the tailnet).
+- **Non-admin PowerShell** → auto-start via a hidden launcher in your **Startup folder**, then
+  it self-elevates *only* the firewall step (one UAC prompt).
+
+It also compiles `node-pty` itself, working around two common Windows build failures
+(`GetCommitHash.bat` and Spectre-lib `MSB8040`) — see [AGENT.md](./AGENT.md). Needs the Visual
+Studio Build Tools (Desktop development with C++ workload).
 
 ### Run manually (no service)
 

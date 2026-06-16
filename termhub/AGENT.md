@@ -82,6 +82,21 @@ by default). The installer removes old `TermhubAgent` / `TermhubHub` tasks if pr
 - **Windows:** **Visual Studio Build Tools** with the *Desktop development with C++* workload,
   plus a matching Python. After installing, delete `node_modules` and re-run `npm install`.
 
+`windows\install.ps1` builds the native addon itself (npm runs with `--ignore-scripts`, then
+the installer drives `node-gyp configure` + MSBuild) so it can work around two stock-Windows
+build failures automatically:
+
+- **`'GetCommitHash.bat' is not recognized`** — caused by the environment variable
+  `NoDefaultCurrentDirectoryInExePath=1`, which stops `cmd` from running winpty's batch file
+  from the current directory. The installer clears it for the build.
+- **`MSB8040: Spectre-mitigated libraries are required`** — newer VS toolsets (e.g. 2022/2026)
+  demand Spectre libs that aren't installed by default. The installer passes
+  `/p:SpectreMitigation=false` to MSBuild. To keep the mitigation instead, install
+  *MSVC … Spectre-mitigated libs* from the VS Installer (Individual components) and drop that flag.
+
+If building by hand, reproduce both: clear `NoDefaultCurrentDirectoryInExePath`, then
+`npx node-gyp configure` and `MSBuild build\binding.sln /p:Configuration=Release /p:Platform=x64 /p:SpectreMitigation=false`.
+
 ## Mobile notes
 
 - The on-screen key bar sends real escape sequences: `Esc` (`\x1b`), `Tab` (`\t`), arrows
