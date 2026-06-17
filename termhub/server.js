@@ -141,6 +141,15 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, 200, { ok: true });
     }
 
+    if (req.method === 'PATCH' && killMatch) {
+      const id = decodeURIComponent(killMatch[1]);
+      const session = sessions.get(id);
+      if (!session) return sendJson(res, 404, { error: 'no such session' });
+      const body = await readBody(req);
+      session.rename(body.title);
+      return sendJson(res, 200, session.info());
+    }
+
     if (req.method === 'GET' && pathname === '/api/recents') {
       return sendJson(res, 200, { recents: recents.list() });
     }

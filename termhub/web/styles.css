@@ -70,10 +70,28 @@ html, body {
 .session-item.active { background: var(--bg-3); box-shadow: inset 3px 0 0 var(--accent); }
 .session-item .title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .session-item.dead .title { color: var(--fg-dim); text-decoration: line-through; }
-.session-item .kill {
+.session-item .rename, .session-item .kill {
   background: none; border: none; color: var(--fg-dim); cursor: pointer; font-size: 14px; padding: 4px 6px;
 }
+.session-item .rename:hover { color: var(--accent); }
 .session-item .kill:hover { color: var(--danger); }
+
+/* Status dot: a pulsing green dot when the session is actively producing
+   output ("working"); invisible when idle so idle sessions show nothing. */
+.session-item .status {
+  flex: 0 0 auto; width: 8px; height: 8px; border-radius: 50%;
+  background: transparent;
+}
+.session-item .status.busy {
+  background: var(--ok);
+  box-shadow: 0 0 0 0 rgba(152, 195, 121, 0.6);
+  animation: termhub-pulse 1.2s ease-out infinite;
+}
+@keyframes termhub-pulse {
+  0%   { box-shadow: 0 0 0 0 rgba(152, 195, 121, 0.6); }
+  70%  { box-shadow: 0 0 0 6px rgba(152, 195, 121, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(152, 195, 121, 0); }
+}
 
 .sidebar-foot { padding: 8px 14px; border-top: 1px solid var(--border); font-size: 12px; color: var(--fg-dim); }
 

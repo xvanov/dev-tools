@@ -73,9 +73,13 @@ function renderSessions() {
   for (const s of state.sessions) {
     const item = document.createElement('div');
     item.className = 'session-item' + (s.alive ? '' : ' dead') + (s.id === state.activeId ? ' active' : '');
-    item.innerHTML = `<span class="title">${escapeHtml(s.title || s.id)}</span>` +
+    item.innerHTML =
+      `<span class="status${s.busy ? ' busy' : ''}" title="${s.busy ? 'working' : 'idle'}"></span>` +
+      `<span class="title">${escapeHtml(s.title || s.id)}</span>` +
+      `<button class="rename" title="Rename session">&#9998;</button>` +
       `<button class="kill" title="Kill session">&#10005;</button>`;
     item.querySelector('.title').onclick = () => { openTerminal(s.id, s.title); if (isMobile()) closeDrawer(); };
+    item.querySelector('.rename').onclick = (ev) => { ev.stopPropagation(); renameSession(s.id, s.title); };
     item.querySelector('.kill').onclick = (ev) => { ev.stopPropagation(); killSession(s.id); };
     list.appendChild(item);
   }
@@ -344,6 +348,21 @@ async function killSession(id) {
   refresh();
 }
 
+async function renameSession(id, current) {
+  const name = window.prompt('Rename session', current || '');
+  if (name == null) return;            // cancelled
+  const title = name.trim();
+  if (!title) return;
+  try {
+    await api(`/api/sessions/${encodeURIComponent(id)}`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title }),
+    });
+  } catch {}
+  const t = state.open.get(id);        // keep the open tab's label in sync
+  if (t) t.title = title;
+  refresh();
+}
+
 // ---- on-screen key bar ----------------------------------------------------
 
 function setCtrlArmed(on) {
@@ -354,10 +373,14 @@ function setCtrlArmed(on) {
 function handleKey(key) {
   const t = state.open.get(state.activeId);
   if (!t) return;
-  if (key === 'ctrl') { setCtrlArmed(!state.ctrlArmed); t.term.focus(); return; }
+  if (key === 'ctrl') { setCtrlArmed(!state.ctrlArmed); return; }
   const seq = KEY_SEQ[key];
   if (seq != null) sendInput(t, seq);
-  t.term.focus();
+  // Deliberately do NOT focus the terminal here. On iOS focusing summons the
+  // on-screen keyboard, which resizes the viewport and shifts the key bar
+  // mid-tap — that made rapid arrow presses (e.g. cycling a Claude prompt's
+  // options) land on the wrong key or get dropped. The ⌨ key opens the
+  // keyboard when the user actually wants to type.
 }
 
 // ---- paste (mobile) -------------------------------------------------------
@@ -554,4 +577,4 @@ function wireEvents() {
 wireEvents();
 syncViewportHeight();
 refresh();
-setInterval(refresh, 8000);
+setInterval(refresh, 2000); // keep the sidebar "working" status roughly live

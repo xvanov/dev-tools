@@ -45,6 +45,7 @@ class Session {
     this.rows = rows || 24;
     this.title = title || this.command || baseName(this.shell);
     this.created = Date.now();
+    this.lastActivity = Date.now();
     this.alive = false;
     this.exitCode = null;
 
@@ -80,6 +81,7 @@ class Session {
       // rather than after a fixed delay — a guessed timeout races the shell's
       // startup (rc files, etc.) and the keystrokes get dropped.
       this._maybeRunCommand();
+      this.lastActivity = Date.now();
       this._buffer(data);
       this._broadcast({ type: 'output', data });
     });
@@ -159,6 +161,12 @@ class Session {
     }
   }
 
+  rename(title) {
+    const t = title && String(title).trim();
+    if (t) this.title = t;
+    return this.title;
+  }
+
   kill() {
     if (this.alive) {
       try {
@@ -181,6 +189,10 @@ class Session {
       created: this.created,
       alive: this.alive,
       exitCode: this.exitCode,
+      // "busy" = the PTY produced output very recently. A working Claude session
+      // (or any active process) streams output continuously; an idle prompt is
+      // silent. Good enough to show a "working" dot vs nothing when idle.
+      busy: this.alive && (Date.now() - this.lastActivity) < 1500,
     };
   }
 }
