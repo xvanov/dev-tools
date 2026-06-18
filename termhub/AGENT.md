@@ -1,19 +1,31 @@
 # termhub — install & troubleshooting (detailed)
 
-Companion to [README.md](./README.md). termhub is **one self-contained server per machine**:
-it serves the web UI and owns that machine's terminals (PTYs). There is no hub/proxy and no
-list of other machines — you reach each machine directly at its own URL.
+Companion to [README.md](./README.md). termhub runs **two processes per machine**: a persistent
+**`sessiond`** that owns that machine's terminals (PTYs), and a swappable **`front`** that serves
+the web UI and proxies to `sessiond`. This split is what lets updates swap the front without
+killing terminals. There is no cross-machine hub — you reach each machine directly at its own URL.
 
 ## Mental model
 
 ```
-browser tab ──► http://<machine>:7000 ──► termhub server ──► node-pty PTYs
+                         Tailscale Serve (stable public :7000)
+                                    │   (re-pointed atomically on update)
+                                    ▼
+browser tab ──http+ws──►  front  (UI + proxy, 127.0.0.1:7001 or 7002)
+                              │   proxies /api/* and /ws/term/* to ↓
+                              ▼
+                          sessiond  (127.0.0.1:7010)  ──► node-pty PTYs
 ```
 
-- Run it on every machine you want terminals on.
+- Run termhub on every machine you want terminals on.
 - Open one browser tab per machine (bookmark each Tailscale URL on your phone).
-- A session = one PTY living in the server process, with an in-memory scrollback buffer.
-  Browser (re)connections attach to it and get a replay of the buffer, then live output.
+- A session = one PTY living in **`sessiond`**, with an in-memory scrollback buffer. Browser
+  (re)connections attach to it via the `front` proxy and get a replay of the buffer, then live
+  output.
+- **Updates** (`windows/update.ps1`): start a new `front` on the alternate loopback port,
+  health-check it, re-point Tailscale Serve to it, stop the old one. `sessiond` is never touched,
+  so terminals survive. See *Two-tier layout & safe updates* below.
+- For **local dev**, `node server.js` runs both tiers in one process on `:7000`.
 
 ## Ports & binding
 
@@ -25,25 +37,57 @@ browser tab ──► http://<machine>:7000 ──► termhub server ──► n
 
 ## Manual run / smoke test
 
+Single-process dev (both tiers in one process on :7000):
+
 ```bash
 npm install
 node server.js
 # browser → http://<tailscale-ip>:7000
 ```
 
-API quick checks:
+Or the two tiers separately (the production layout):
 
 ```bash
+node sessiond.js            # 127.0.0.1:7010 — owns the PTYs
+TERMHUB_FRONT_PORT=7001 node front.js   # 127.0.0.1:7001 — proxies to sessiond
+```
+
+API quick checks (against the front, which proxies to sessiond):
+
+```bash
+curl -s http://<host>:7000/api/health | jq   # front up + sessiond reachable
 curl -s http://<host>:7000/api/info | jq
 curl -s http://<host>:7000/api/sessions | jq
 curl -s -X POST http://<host>:7000/api/sessions \
   -H 'content-type: application/json' -d '{"cwd":"'"$HOME"'"}' | jq
 ```
 
-HTTP API: `GET /api/info`, `GET /api/sessions`, `POST /api/sessions`
-(`{cwd?, command?, title?, cols, rows}`), `DELETE /api/sessions/:id`, `GET /api/recents`.
-Terminal stream: WebSocket `/ws/term/:id` with JSON `{type:'input'|'resize'}` up and
-`{type:'replay'|'output'|'exit'}` down.
+HTTP API (served by `sessiond`, proxied by `front`): `GET /api/info`, `GET /api/sessions`,
+`POST /api/sessions` (`{cwd?, command?, title?, cols, rows}`), `DELETE /api/sessions/:id`,
+`PATCH /api/sessions/:id` (`{title}`), `GET /api/recents`, `GET /api/dirs?path=`,
+`GET /api/ping` (sessiond liveness). The `front` answers `GET /api/health` itself (front up +
+sessiond reachable) for the updater's probe. Terminal stream: WebSocket `/ws/term/:id` with JSON
+`{type:'input'|'resize'}` up and `{type:'replay'|'output'|'exit'}` down.
+
+## Two-tier layout & safe updates
+
+`sessiond` (the PTY supervisor) and `front` (the UI + proxy) coordinate through a few files in
+the data dir (`%LOCALAPPDATA%\termhub` on Windows, `~/.local/termhub` on Linux):
+
+- `state.json` — `{ sessiondPort, activeFrontPort, publishPort }`: which loopback port Tailscale
+  Serve currently targets. Written by `start.ps1` / `update.ps1`, read by both.
+- `sessiond.pid`, `front-<port>.pid` — two-line (`PID`\n`PORT`) files each process writes on
+  startup and removes on a clean exit; the scripts read them to find/stop the right process.
+
+`windows/update.ps1` does a blue-green swap: `git pull --ff-only` (rollback ref saved) → start a
+green `front` on the alternate of `{7001, 7002}` → health-check (`/api/health`, then the proxied
+`/api/sessions` and static `/`) → on success re-point `tailscale serve --https=<publishPort>` to
+green and stop blue; on failure kill green, `git reset --hard` to the rollback ref, leave blue
+serving. `sessiond` is never restarted, so PTYs (and the terminal running the updater) survive.
+
+`node-pty` lives only in `sessiond`, so routine front updates need **no native rebuild**. A
+`node-pty` version bump only takes effect on a deliberate `sessiond` restart (which does clear
+sessions — do it intentionally).
 
 ## Linux service management
 
@@ -64,15 +108,22 @@ The installer also auto-removes units from the older two-process layout
 
 ## Windows task management
 
+The `Termhub` scheduled task runs `windows\start.ps1` at logon, which ensures `sessiond` is up,
+starts the active `front`, and (re-)publishes it via Tailscale Serve. It's idempotent — re-running
+`start.ps1` reuses a live `sessiond`/`front` instead of restarting it.
+
 ```powershell
 Get-ScheduledTask Termhub | Get-ScheduledTaskInfo
-Start-ScheduledTask Termhub
+Start-ScheduledTask Termhub              # = run start.ps1 (boots both tiers, idempotent)
 Stop-ScheduledTask  Termhub
-setx TERMHUB_BIND 100.x.y.z              # then restart the task
+.\windows\update.ps1                     # safe blue-green update (run from any terminal)
+.\windows\start.ps1                      # bring tiers up / re-publish by hand
 ```
 
-To see errors, run `node server.js` in a console manually (the task has no log redirection
-by default). The installer removes old `TermhubAgent` / `TermhubHub` tasks if present.
+Stopping the task does **not** stop the running `node` processes (they're detached); kill them by
+pid (see `sessiond.pid` / `front-<port>.pid` in the data dir) or by command line. To see errors,
+run `node sessiond.js` / `node front.js` in a console manually (the task has no log redirection by
+default). The installer removes old `TermhubAgent` / `TermhubHub` tasks if present.
 
 The Windows installer binds termhub to loopback (`TERMHUB_BIND=127.0.0.1`, set via `setx`) and
 publishes it with Tailscale Serve. Manage the published endpoint with:
@@ -127,7 +178,7 @@ If building by hand, reproduce both: clear `NoDefaultCurrentDirectoryInExePath`,
 | Can't reach `:7000` from phone (loads forever) | Windows firewall drops raw ports on the Tailscale interface | Use Tailscale Serve (Windows installer does this): bind loopback + `tailscale serve --bg --https=7000 http://127.0.0.1:7000`, then open `https://<host>.<tailnet>.ts.net:7000/` |
 | Can't reach `:7000` from phone | Tailnet ACL or firewall | Confirm both devices are on the tailnet and ACLs allow the port |
 | Terminal opens but no output | WebSocket blocked | Ensure nothing between browser and server strips WebSocket upgrades |
-| Input ignored after sleep/wake | WebSocket dropped; reconnecting | Output replays on reconnect; if it gave up ("session no longer available"), the server restarted — open a new terminal |
+| Input ignored after sleep/wake | WebSocket dropped; reconnecting | Output replays on reconnect (incl. across a front update). "Session no longer available" means `sessiond` itself restarted (reboot, or a deliberate sessiond restart) — open a new terminal |
 | Wrong size / wrapping | Pane resized while backgrounded | Switch tabs or rotate to force a refit |
 | `npm install` errors on `node-pty` | Missing build toolchain | See prerequisites above |
 
