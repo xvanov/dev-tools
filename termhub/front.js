@@ -20,6 +20,7 @@ const { URL } = require('url');
 
 const { resolveBindAddress } = require('./lib/bind');
 const { DEFAULT_FRONT_PORT, DEFAULT_SESSIOND_PORT, claimPidFile } = require('./lib/state');
+const { checkForUpdate } = require('./lib/update');
 
 const WEB_DIR = path.join(__dirname, 'web');
 
@@ -76,6 +77,15 @@ function createFront({ sessiondPort }) {
       return pingSessiond(sessiondPort)
         .then((info) => sendJson(res, 200, { ok: true, front: true, sessiond: info }))
         .catch((e) => sendJson(res, 503, { ok: false, front: true, error: String(e.message || e) }));
+    }
+
+    // Update check is the front's own business (it owns the git checkout and is
+    // the tier that gets swapped) — answer it here, don't proxy to sessiond.
+    if (req.method === 'GET' && pathname === '/api/update/check') {
+      const force = url.searchParams.get('force') === '1';
+      return checkForUpdate({ force })
+        .then((info) => sendJson(res, 200, info))
+        .catch((e) => sendJson(res, 500, { available: false, error: String(e.message || e) }));
     }
 
     // Everything under /api/* is the supervisor's — proxy it.

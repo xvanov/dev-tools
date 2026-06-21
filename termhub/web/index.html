@@ -17,6 +17,7 @@
       <div class="sidebar-head">
         <span class="brand">termhub</span>
         <span id="machine-name" class="machine-name">…</span>
+        <button id="update-btn" title="Check for updates">⟳ Update</button>
         <button id="sidebar-close" title="Close">✕</button>
       </div>
       <div class="actions">
@@ -62,29 +63,37 @@
   <div id="dialog-backdrop" class="hidden">
     <div id="dialog">
       <h2 id="dialog-title">New terminal</h2>
-      <label>Directory <span class="hint">(blank = home)</span>
-        <input id="dlg-cwd" list="dlg-recents" placeholder="~/projects/app" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" />
-        <datalist id="dlg-recents"></datalist>
-      </label>
-      <label>Preset
-        <select id="dlg-preset">
-          <option value="claude --dangerously-skip-permissions">Claude — skip permissions</option>
-          <option value="claude --dangerously-skip-permissions --resume">Claude — skip permissions + resume</option>
-          <option value="">Plain shell</option>
-          <option value="__custom__">Custom…</option>
-        </select>
-      </label>
-      <label id="dlg-cmd-row">Command <span class="hint">(blank = just a shell)</span>
-        <input id="dlg-cmd" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" />
-      </label>
-      <label>Title <span class="hint">(optional)</span>
-        <input id="dlg-title" placeholder="auto" autocomplete="off" />
-      </label>
+      <label for="dlg-cwd">Directory <span class="hint">(blank = home)</span></label>
+      <div class="combo">
+        <input id="dlg-cwd" placeholder="~/projects/app" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" />
+        <div class="combo-list" id="dlg-cwd-list" hidden></div>
+      </div>
+      <label for="dlg-cmd">Command <span class="hint">(type or pick; blank = just a shell)</span></label>
+      <div class="combo">
+        <input id="dlg-cmd" placeholder="claude --dangerously-skip-permissions" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" />
+        <div class="combo-list" id="dlg-cmd-list" hidden></div>
+      </div>
+      <label for="dlg-title">Title <span class="hint">(optional)</span></label>
+      <input id="dlg-title" placeholder="auto" autocomplete="off" />
       <div class="dialog-buttons">
         <button id="dlg-cancel" class="secondary">Cancel</button>
         <button id="dlg-open">Open</button>
       </div>
       <div id="dlg-error"></div>
+    </div>
+  </div>
+
+  <!-- Update panel -->
+  <div id="update-backdrop" class="hidden">
+    <div id="update-dialog">
+      <h2>Update termhub</h2>
+      <div id="update-status">Checking…</div>
+      <div id="update-commits"></div>
+      <div class="dialog-buttons">
+        <button id="update-close" class="secondary">Close</button>
+        <button id="update-check" class="secondary">Check again</button>
+        <button id="update-apply" disabled>Update now</button>
+      </div>
     </div>
   </div>
 

@@ -428,65 +428,128 @@ function pasteFallback(t) {
   setTimeout(() => ta.focus(), 50);
 }
 
+// ---- combobox (custom autocomplete) ---------------------------------------
+// A suggestion dropdown we fully control. The native <datalist> popup is
+// unreliable for filesystem paths — on Windows it routinely fails to surface
+// backslash paths as you type — so we render and filter the list ourselves.
+// Used for both the directory field (async, server-backed) and the command
+// field (static presets). The input stays free-text: type a new value, pick one,
+// or leave it blank.
+function makeCombobox(input, listEl, opts) {
+  const getItems = opts.getItems;          // (value) => string[] | Promise<string[]>
+  const keepOpenOnPick = !!opts.keepOpenOnPick;
+  let items = [];
+  let active = -1;
+  let token = 0;                           // guards against out-of-order async results
+
+  function close() { listEl.hidden = true; active = -1; }
+
+  function render() {
+    listEl.innerHTML = '';
+    if (!items.length) { close(); return; }
+    items.forEach((val, i) => {
+      const row = document.createElement('div');
+      row.className = 'combo-item' + (i === active ? ' active' : '');
+      row.textContent = val;
+      // mousedown (not click) so it fires before the input's blur closes the list.
+      row.addEventListener('mousedown', (e) => { e.preventDefault(); pick(val); });
+      listEl.appendChild(row);
+    });
+    listEl.hidden = false;
+  }
+
+  function pick(val) {
+    if (keepOpenOnPick) {
+      // Dirs: append the path separator so the next suggestion lists its children
+      // and the user can keep drilling in. Infer the separator from the value
+      // (backslash on Windows, slash elsewhere).
+      const sep = val.includes('\\') ? '\\' : '/';
+      input.value = val.endsWith(sep) ? val : val + sep;
+      input.focus();
+      update();
+    } else {
+      input.value = val;
+      close();
+      input.focus();
+    }
+  }
+
+  async function update() {
+    const my = ++token;
+    let result;
+    try { result = await getItems(input.value); } catch { result = []; }
+    if (my !== token) return;              // a newer query superseded this one
+    items = (result || []).slice(0, 50);
+    active = -1;
+    render();
+  }
+
+  input.addEventListener('input', update);
+  input.addEventListener('focus', update);
+  input.addEventListener('blur', () => setTimeout(close, 120)); // let a click land first
+  input.addEventListener('keydown', (e) => {
+    if (listEl.hidden || !items.length) {
+      if (e.key === 'ArrowDown') update();
+      return;                              // let Enter/Escape bubble (submit/close dialog)
+    }
+    if (e.key === 'ArrowDown') { e.preventDefault(); active = (active + 1) % items.length; render(); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); active = (active - 1 + items.length) % items.length; render(); }
+    else if (e.key === 'Enter' && active >= 0) { e.preventDefault(); e.stopPropagation(); pick(items[active]); }
+    else if (e.key === 'Escape') { e.stopPropagation(); close(); } // close list, not dialog
+  });
+
+  return { update, close };
+}
+
 // ---- new terminal dialog --------------------------------------------------
 
 const DEFAULT_COMMAND = 'claude --dangerously-skip-permissions';
+const COMMAND_PRESETS = [
+  'claude --dangerously-skip-permissions',
+  'claude --dangerously-skip-permissions --resume',
+  'claude',
+  'claude --resume',
+];
+
+let cwdCombo = null;
+let cmdCombo = null;
+
+// Suggestions for the directory field: recents when empty, else live filesystem
+// subdirectories matching what's typed.
+async function dirItems(value) {
+  if (!value.trim()) {
+    try { return (await api('/api/recents')).recents || []; } catch { return []; }
+  }
+  try { return (await api('/api/dirs?path=' + encodeURIComponent(value))).dirs || []; }
+  catch { return []; }
+}
+
+// Suggestions for the command field: the presets, filtered by what's typed.
+function commandItems(value) {
+  const v = value.trim().toLowerCase();
+  const matches = COMMAND_PRESETS.filter((c) => c.toLowerCase().includes(v));
+  // Don't bother showing a lone suggestion identical to what's already typed.
+  if (matches.length === 1 && matches[0].toLowerCase() === v) return [];
+  return matches;
+}
 
 function openDialog() {
   $('#dialog-title').textContent = 'New terminal';
   $('#dlg-cmd').value = DEFAULT_COMMAND; // editable; clear it for a plain shell
-  $('#dlg-preset').value = DEFAULT_COMMAND;
   $('#dlg-cwd').value = '';
   $('#dlg-title').value = '';
   $('#dlg-error').textContent = '';
-  loadRecents();
+  if (cwdCombo) cwdCombo.close();
+  if (cmdCombo) cmdCombo.close();
   $('#dialog-backdrop').classList.remove('hidden');
   setTimeout(() => $('#dlg-cwd').focus(), 50);
 }
 
-function setDirOptions(values) {
-  const dl = $('#dlg-recents');
-  dl.innerHTML = '';
-  for (const v of values || []) {
-    const opt = document.createElement('option');
-    opt.value = v;
-    dl.appendChild(opt);
-  }
+function closeDialog() {
+  $('#dialog-backdrop').classList.add('hidden');
+  if (cwdCombo) cwdCombo.close();
+  if (cmdCombo) cmdCombo.close();
 }
-
-async function loadRecents() {
-  try { setDirOptions((await api('/api/recents')).recents); } catch {}
-}
-
-// As the user types a path, suggest matching subdirectories from the filesystem;
-// fall back to recents when the field is empty.
-let dirSuggestTimer = null;
-function scheduleDirSuggest() {
-  clearTimeout(dirSuggestTimer);
-  dirSuggestTimer = setTimeout(updateDirSuggestions, 140);
-}
-async function updateDirSuggestions() {
-  const v = $('#dlg-cwd').value;
-  if (!v.trim()) { loadRecents(); return; }
-  try { setDirOptions((await api('/api/dirs?path=' + encodeURIComponent(v))).dirs); } catch {}
-}
-
-// Preset dropdown drives the command field; picking "Custom…" just lets the user
-// type freely, and typing a command that doesn't match a preset flips the select
-// to "Custom…" so the two stay consistent.
-function applyPreset() {
-  const v = $('#dlg-preset').value;
-  if (v === '__custom__') { $('#dlg-cmd').focus(); return; }
-  $('#dlg-cmd').value = v;
-}
-function syncPresetFromCommand() {
-  const cmd = $('#dlg-cmd').value;
-  const sel = $('#dlg-preset');
-  const match = [...sel.options].some((o) => o.value === cmd && o.value !== '__custom__');
-  sel.value = match ? cmd : '__custom__';
-}
-
-function closeDialog() { $('#dialog-backdrop').classList.add('hidden'); }
 
 async function submitDialog() {
   const cwd = $('#dlg-cwd').value.trim();
@@ -509,6 +572,112 @@ async function submitDialog() {
     $('#dlg-error').textContent = e.message;
   } finally {
     $('#dlg-open').disabled = false;
+  }
+}
+
+// ---- update check ---------------------------------------------------------
+// Asks the front (which owns the git checkout) whether HEAD is behind upstream
+// and whether termhub itself changed. Runs once a day in the background to nudge
+// the user; the panel lets them check on demand and apply. Applying just opens a
+// terminal running the platform updater (windows/update.ps1) — the blue-green
+// swap survives the front being replaced under it, so the update is visible and
+// the running terminals keep their sessions.
+
+const UPDATE_POLL_MS = 24 * 60 * 60 * 1000; // once a day
+let lastUpdateInfo = null;
+
+async function fetchUpdate(force) {
+  const info = await api('/api/update/check' + (force ? '?force=1' : ''));
+  lastUpdateInfo = info;
+  reflectUpdateButton(info);
+  return info;
+}
+
+function reflectUpdateButton(info) {
+  const btn = $('#update-btn');
+  if (!btn) return;
+  const avail = !!(info && info.available);
+  btn.classList.toggle('available', avail);
+  btn.textContent = avail ? '⟳ Update ●' : '⟳ Update';
+  btn.title = avail
+    ? `Update available (${info.behind} commit${info.behind === 1 ? '' : 's'})`
+    : 'Check for updates';
+}
+
+async function backgroundUpdateCheck() {
+  try { await fetchUpdate(false); } catch {}
+}
+
+function renderUpdatePanel(info, loading) {
+  const status = $('#update-status');
+  const commits = $('#update-commits');
+  const apply = $('#update-apply');
+  commits.innerHTML = '';
+  apply.disabled = true;
+  status.className = '';
+  if (loading) { status.textContent = 'Checking…'; return; }
+  if (!info) { status.textContent = 'Could not check for updates.'; return; }
+  if (info.error) {
+    status.className = 'warn';
+    status.textContent = 'Update check unavailable: ' + info.error;
+    return;
+  }
+  if (!info.available) {
+    status.className = 'ok';
+    status.textContent = `Up to date (at ${info.current}).`
+      + (info.fetchOk === false ? ' (offline — compared cached refs)' : '');
+    return;
+  }
+  status.className = 'warn';
+  status.textContent =
+    `${info.behind} commit${info.behind === 1 ? '' : 's'} behind ${info.upstream || 'upstream'} — `
+    + (info.toolChanged ? 'termhub itself changed.' : 'no termhub changes (other tools in the repo).');
+  if (info.subjects && info.subjects.length) {
+    const ul = document.createElement('ul');
+    ul.className = 'commit-list';
+    for (const c of info.subjects) {
+      const li = document.createElement('li');
+      li.innerHTML = `<code>${escapeHtml(c.hash)}</code> ${escapeHtml(c.subject)}`;
+      ul.appendChild(li);
+    }
+    commits.appendChild(ul);
+  }
+  apply.disabled = false;
+}
+
+async function openUpdatePanel() {
+  $('#update-backdrop').classList.remove('hidden');
+  renderUpdatePanel(lastUpdateInfo, !lastUpdateInfo); // show cached info immediately
+  try { await fetchUpdate(false); } catch {}
+  renderUpdatePanel(lastUpdateInfo, false);
+}
+
+function closeUpdatePanel() { $('#update-backdrop').classList.add('hidden'); }
+
+async function recheckUpdate() {
+  renderUpdatePanel(null, true);
+  try { await fetchUpdate(true); } catch {}
+  renderUpdatePanel(lastUpdateInfo, false);
+}
+
+async function applyUpdate() {
+  const info = lastUpdateInfo;
+  if (!info || !info.command) return;
+  $('#update-apply').disabled = true;
+  try {
+    const body = { cols: 80, rows: 24, command: info.command, title: 'termhub update' };
+    if (info.cwd) body.cwd = info.cwd;
+    const session = await api('/api/sessions', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+    });
+    closeUpdatePanel();
+    await refresh();
+    openTerminal(session.id, session.title);
+    if (isMobile()) closeDrawer();
+  } catch (e) {
+    $('#update-status').className = 'warn';
+    $('#update-status').textContent = 'Could not start update: ' + e.message;
+    $('#update-apply').disabled = false;
   }
 }
 
@@ -541,15 +710,20 @@ function syncViewportHeight() {
 function wireEvents() {
   $('#new-term-btn').onclick = () => openDialog();
   $('#topbar-new').onclick = () => openDialog();
-  $('#dlg-cwd').addEventListener('input', scheduleDirSuggest);
-  $('#dlg-preset').addEventListener('change', applyPreset);
-  $('#dlg-cmd').addEventListener('input', syncPresetFromCommand);
+  cwdCombo = makeCombobox($('#dlg-cwd'), $('#dlg-cwd-list'), { getItems: dirItems, keepOpenOnPick: true });
+  cmdCombo = makeCombobox($('#dlg-cmd'), $('#dlg-cmd-list'), { getItems: commandItems, keepOpenOnPick: false });
   $('#menu-btn').onclick = openDrawer;
   $('#sidebar-close').onclick = closeDrawer;
   $('#scrim').onclick = closeDrawer;
   $('#dlg-cancel').onclick = closeDialog;
   $('#dlg-open').onclick = submitDialog;
   $('#dialog-backdrop').onclick = (e) => { if (e.target.id === 'dialog-backdrop') closeDialog(); };
+
+  $('#update-btn').onclick = openUpdatePanel;
+  $('#update-close').onclick = closeUpdatePanel;
+  $('#update-check').onclick = recheckUpdate;
+  $('#update-apply').onclick = applyUpdate;
+  $('#update-backdrop').onclick = (e) => { if (e.target.id === 'update-backdrop') closeUpdatePanel(); };
 
   $('#kbd-key').onclick = () => { const t = state.open.get(state.activeId); if (t) t.term.focus(); };
   // Plain click (not pointerdown) so iOS counts it as the user gesture the
@@ -564,6 +738,7 @@ function wireEvents() {
     const dlgOpen = !$('#dialog-backdrop').classList.contains('hidden');
     if (e.key === 'Escape' && dlgOpen) closeDialog();
     if (e.key === 'Enter' && dlgOpen) submitDialog();
+    if (e.key === 'Escape' && !$('#update-backdrop').classList.contains('hidden')) closeUpdatePanel();
   });
 
   window.addEventListener('resize', syncViewportHeight);
@@ -578,3 +753,5 @@ wireEvents();
 syncViewportHeight();
 refresh();
 setInterval(refresh, 2000); // keep the sidebar "working" status roughly live
+backgroundUpdateCheck();
+setInterval(backgroundUpdateCheck, UPDATE_POLL_MS); // nudge ~once a day

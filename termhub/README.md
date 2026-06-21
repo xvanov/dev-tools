@@ -34,8 +34,13 @@ other machines to maintain.
   supervisor (`sessiond`), separate from the swappable web/proxy tier (`front`). Close your
   phone and reopen later, *or* deploy a new version with `update.ps1`, and your sessions keep
   running; the browser auto-reconnects and replays scrollback either way.
-- **Claude Code launcher** — pick a directory (dropdown of recently used dirs) and an
-  editable command (default `claude`); it opens a terminal there and runs it.
+- **Claude Code launcher** — a directory field that autocompletes against the filesystem
+  as you type (recents when blank), and a single editable command box (default
+  `claude --dangerously-skip-permissions`, with presets you can pick or type over, or clear
+  for a plain shell); it opens a terminal there and runs it.
+- **Update from the UI** — a ⟳ Update button checks GitHub (once a day in the background, and
+  on demand) and, when the termhub tool itself has changed, opens a terminal that runs the
+  safe blue-green updater. See [Updating safely](#updating-safely-terminals-survive).
 - **Mobile-friendly** — responsive layout, slide-out session drawer, on-screen keys.
 - **Tailscale-native** — binds to the Tailscale interface only; no login screen, trust is
   delegated to your tailnet ACLs.
@@ -112,7 +117,9 @@ Then browse to `http://<this-machine-tailscale-ip>:7000`.
 
 ## Updating safely (terminals survive)
 
-From **any termhub terminal on the machine** (so you can do it remotely from your phone/laptop):
+The easiest way is the **⟳ Update** button in the sidebar header — it opens a terminal that
+runs the updater for you. To do it by hand instead, from **any termhub terminal on the machine**
+(so you can do it remotely from your phone/laptop):
 
 ```powershell
 cd <project-dir>
@@ -138,10 +145,14 @@ running `update.ps1` survives the update.
 
 ## Using it
 
-- **+ New terminal** — optionally a starting directory; opens a shell.
-- **★ Claude Code** — pick a directory (dropdown remembers recent ones) and an editable
-  command (default `claude`, e.g. `claude --resume`). The command runs in a fresh shell, so
-  when it exits you still have a shell.
+- **+ New terminal** — optionally a starting directory (it autocompletes against the
+  filesystem as you type; leave blank for home) and a command. The **Command** box is a
+  single editable combobox: type a command, pick a preset from the list, or clear it for a
+  plain shell. The command runs in a fresh shell, so when it exits you still have a shell.
+- **⟳ Update** (sidebar header) — opens a panel showing whether termhub is behind GitHub and
+  whether the tool itself changed, with the incoming commit list. **Update now** opens a
+  terminal that runs the safe updater (see below). It also checks once a day in the background
+  and highlights the button when an update is waiting.
 - Switch terminals via the sidebar or tabs. Closing a **tab** detaches (the session keeps
   running); the **✕** next to a session **kills** it.
 - On mobile: tap **☰** for the session drawer, **＋** for a new terminal, and use the key bar

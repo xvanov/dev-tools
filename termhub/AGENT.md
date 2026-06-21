@@ -66,7 +66,8 @@ HTTP API (served by `sessiond`, proxied by `front`): `GET /api/info`, `GET /api/
 `POST /api/sessions` (`{cwd?, command?, title?, cols, rows}`), `DELETE /api/sessions/:id`,
 `PATCH /api/sessions/:id` (`{title}`), `GET /api/recents`, `GET /api/dirs?path=`,
 `GET /api/ping` (sessiond liveness). The `front` answers `GET /api/health` itself (front up +
-sessiond reachable) for the updater's probe. Terminal stream: WebSocket `/ws/term/:id` with JSON
+sessiond reachable) for the updater's probe, and `GET /api/update/check` (`?force=1` to skip the
+60s cache) — both are handled by the front and never proxied. Terminal stream: WebSocket `/ws/term/:id` with JSON
 `{type:'input'|'resize'}` up and `{type:'replay'|'output'|'exit'}` down.
 
 ## Two-tier layout & safe updates
@@ -78,6 +79,12 @@ the data dir (`%LOCALAPPDATA%\termhub` on Windows, `~/.local/termhub` on Linux):
   Serve currently targets. Written by `start.ps1` / `update.ps1`, read by both.
 - `sessiond.pid`, `front-<port>.pid` — two-line (`PID`\n`PORT`) files each process writes on
   startup and removes on a clean exit; the scripts read them to find/stop the right process.
+
+The **⟳ Update** button in the UI is a front-end over this: the front answers
+`GET /api/update/check` (it `git fetch`es and reports how far HEAD is behind `@{u}`, plus a
+`toolChanged` flag set when a changed file lives under the `termhub/` prefix), and **Update
+now** just opens a normal session whose command is `update.ps1` — so the updater runs inside a
+`sessiond`-owned PTY and survives the front swap it triggers, exactly like running it by hand.
 
 `windows/update.ps1` does a blue-green swap: `git pull --ff-only` (rollback ref saved) → start a
 green `front` on the alternate of `{7001, 7002}` → health-check (`/api/health`, then the proxied
