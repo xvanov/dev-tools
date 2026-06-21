@@ -200,6 +200,14 @@ html, body {
 #update-btn:hover { border-color: var(--accent); color: var(--fg); }
 #update-btn.available { color: var(--accent-2); border-color: var(--accent-2); }
 
+/* Sits just under the header (and the Update button), right-aligned. */
+#version-line {
+  padding: 4px 14px 0; text-align: right;
+  font-size: 11px; color: var(--fg-dim); font-variant-numeric: tabular-nums;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+#version-line:empty { display: none; }
+
 #update-backdrop {
   position: fixed; inset: 0; background: rgba(0,0,0,0.5);
   display: flex; align-items: center; justify-content: center; z-index: 35; padding: 16px;

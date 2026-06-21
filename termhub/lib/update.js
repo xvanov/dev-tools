@@ -28,6 +28,14 @@ function git(args, timeoutMs = 10000) {
   });
 }
 
+// Human-facing version string: the nearest git tag (e.g. "v0.3.0"), with a
+// "-<n>-g<sha>" suffix when HEAD is past the tag and "-dirty" when the tree has
+// uncommitted changes; falls back to the short sha when no tags exist yet.
+async function gitDescribe() {
+  const r = await git(['describe', '--tags', '--always', '--dirty']);
+  return r.ok && r.out ? r.out : null;
+}
+
 // The command that performs the actual update, run inside a terminal the user
 // watches. Absolute -File path so it works regardless of the shell's cwd.
 function updateCommand() {
@@ -42,8 +50,9 @@ function updateCommand() {
 
 async function compute() {
   const head = await git(['rev-parse', 'HEAD']);
+  const version = await gitDescribe();
   if (!head.ok) {
-    return { available: false, error: 'not a git checkout', checkedAt: Date.now() };
+    return { available: false, version, error: 'not a git checkout', checkedAt: Date.now() };
   }
 
   // Best-effort fetch; if it fails (offline, auth), fall back to comparing the
@@ -54,6 +63,7 @@ async function compute() {
   if (!upstreamRef.ok || !upstreamRef.out) {
     return {
       available: false,
+      version,
       current: head.out.slice(0, 7),
       error: 'no upstream branch tracked',
       fetchOk: fetched.ok,
@@ -88,6 +98,7 @@ async function compute() {
 
   return {
     available: behind > 0,
+    version,
     behind,
     toolChanged,
     current: head.out.slice(0, 7),

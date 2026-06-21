@@ -595,13 +595,16 @@ async function fetchUpdate(force) {
 
 function reflectUpdateButton(info) {
   const btn = $('#update-btn');
-  if (!btn) return;
-  const avail = !!(info && info.available);
-  btn.classList.toggle('available', avail);
-  btn.textContent = avail ? '⟳ Update ●' : '⟳ Update';
-  btn.title = avail
-    ? `Update available (${info.behind} commit${info.behind === 1 ? '' : 's'})`
-    : 'Check for updates';
+  if (btn) {
+    const avail = !!(info && info.available);
+    btn.classList.toggle('available', avail);
+    btn.textContent = avail ? '⟳ Update ●' : '⟳ Update';
+    btn.title = avail
+      ? `Update available (${info.behind} commit${info.behind === 1 ? '' : 's'})`
+      : 'Check for updates';
+  }
+  const ver = $('#version-line');
+  if (ver) ver.textContent = info && info.version ? info.version : '';
 }
 
 async function backgroundUpdateCheck() {
@@ -624,7 +627,7 @@ function renderUpdatePanel(info, loading) {
   }
   if (!info.available) {
     status.className = 'ok';
-    status.textContent = `Up to date (at ${info.current}).`
+    status.textContent = `Up to date — ${info.version || info.current}.`
       + (info.fetchOk === false ? ' (offline — compared cached refs)' : '');
     return;
   }

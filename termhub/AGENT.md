@@ -96,6 +96,23 @@ serving. `sessiond` is never restarted, so PTYs (and the terminal running the up
 `node-pty` version bump only takes effect on a deliberate `sessiond` restart (which does clear
 sessions — do it intentionally).
 
+## Versioning & tagging
+
+The version shown under the **⟳ Update** button (and in the update panel) is `git describe
+--tags --always --dirty`, computed by `lib/update.js` and returned in `/api/update/check` as
+`version`. So a release is just an annotated tag:
+
+```bash
+# bump package.json "version" to match, commit, then tag that commit:
+git tag -a v0.3.0 -m "termhub v0.3.0"
+git push --follow-tags        # or: git push && git push --tags
+```
+
+On a tagged commit the UI shows `v0.3.0`; commits past the tag show `v0.3.0-<n>-g<sha>`, and an
+uncommitted tree shows a `-dirty` suffix — so the displayed string always tells you exactly what
+that machine is running. Use `vMAJOR.MINOR.PATCH` (semver): patch for fixes, minor for additive
+features, major for breaking changes. Keep `package.json`'s `version` in step with the latest tag.
+
 ## Linux service management
 
 ```bash
