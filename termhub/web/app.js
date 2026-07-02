@@ -72,13 +72,17 @@ function renderSessions() {
   }
   for (const s of state.sessions) {
     const item = document.createElement('div');
-    item.className = 'session-item' + (s.alive ? '' : ' dead') + (s.id === state.activeId ? ' active' : '');
+    item.className = 'session-item' + (s.alive ? '' : ' dead')
+      + (state.open.has(s.id) ? ' open' : '')
+      + (s.id === state.activeId ? ' active' : '');
     item.innerHTML =
       `<span class="status${s.busy ? ' busy' : ''}" title="${s.busy ? 'working' : 'idle'}"></span>` +
       `<span class="title">${escapeHtml(s.title || s.id)}</span>` +
       `<button class="rename" title="Rename session">&#9998;</button>` +
       `<button class="kill" title="Kill session">&#10005;</button>`;
-    item.querySelector('.title').onclick = () => { openTerminal(s.id, s.title); if (isMobile()) closeDrawer(); };
+    // The whole row opens the terminal — clicking anywhere but the two buttons
+    // (which stop propagation) counts, so you don't have to hit the text exactly.
+    item.onclick = () => { openTerminal(s.id, s.title); if (isMobile()) closeDrawer(); };
     item.querySelector('.rename').onclick = (ev) => { ev.stopPropagation(); renameSession(s.id, s.title); };
     item.querySelector('.kill').onclick = (ev) => { ev.stopPropagation(); killSession(s.id); };
     list.appendChild(item);
