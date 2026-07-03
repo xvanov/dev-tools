@@ -149,6 +149,23 @@ html, body {
 .tab .tab-close { background: none; border: none; color: var(--fg-dim); cursor: pointer; }
 .tab .tab-close:hover { color: var(--danger); }
 
+/* ---- mouse-mode copy hint ---- */
+#mouse-hint {
+  display: flex; align-items: center; gap: 8px;
+  padding: 5px 10px; background: var(--bg-3); border-bottom: 1px solid var(--border);
+  font-size: 12px; color: var(--fg-dim);
+}
+#mouse-hint.hidden { display: none; }
+#mouse-hint span { flex: 1; }
+#mouse-hint kbd {
+  background: var(--bg); border: 1px solid var(--border); border-radius: 4px;
+  padding: 1px 5px; font: 11px/1.4 ui-monospace, Menlo, Consolas, monospace; color: var(--fg);
+}
+#mouse-hint-dismiss {
+  background: none; border: none; color: var(--fg-dim); font-size: 13px; cursor: pointer; padding: 2px 4px;
+}
+#mouse-hint-dismiss:hover { color: var(--fg); }
+
 #terminals { flex: 1; position: relative; background: var(--bg); min-height: 0; }
 .term-pane { position: absolute; inset: 0; padding: 6px 8px; display: none; }
 .term-pane.active { display: block; }

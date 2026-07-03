@@ -37,6 +37,14 @@
 
       <div id="tabbar"></div>
 
+      <!-- Shown only on desktop while the active terminal runs a full-screen
+           mouse-mode app (Claude Code, vim, less), where a plain drag is sent to
+           the app instead of selecting text. Explains the Shift-to-select trick. -->
+      <div id="mouse-hint" class="hidden">
+        <span>Full-screen app: hold <kbd>Shift</kbd> and drag to select, then <kbd>Ctrl/⌘</kbd>+<kbd>C</kbd> to copy to your local clipboard.</span>
+        <button id="mouse-hint-dismiss" title="Don't show again">✕</button>
+      </div>
+
       <div id="terminals">
         <div id="empty-state">
           <p>No terminal open.</p>

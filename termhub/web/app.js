@@ -200,6 +200,32 @@ function openTerminal(id, title) {
     } catch {}
   }
 
+  // Bridge the remote clipboard to THIS browser's clipboard. Full-screen TUIs
+  // (Claude Code, vim, tmux) that run over SSH can't reach your local clipboard
+  // directly, so they emit OSC 52 ("set clipboard") escape sequences. xterm.js
+  // ignores those by default; we decode the base64 payload and write it to the
+  // local clipboard so "copied to clipboard" in a remote Claude session actually
+  // lands on the machine where you're viewing termhub. (Selection copy in a
+  // mouse-mode TUI still works too: hold Shift while dragging to force a browser
+  // selection, then Ctrl/Cmd-C.)
+  try {
+    term.parser.registerOscHandler(52, (payload) => {
+      // payload is "<selection>;<base64|?>" e.g. "c;SGVsbG8=". "?" is a read
+      // query, which we can't answer from the browser — let it pass through.
+      const semi = payload.indexOf(';');
+      const b64 = semi >= 0 ? payload.slice(semi + 1) : payload;
+      if (!b64 || b64 === '?') return false;
+      try {
+        const bytes = Uint8Array.from(atob(b64), (ch) => ch.charCodeAt(0));
+        const text = new TextDecoder().decode(bytes);
+        if (text && navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(text).catch(() => {});
+        }
+      } catch {}
+      return true; // handled — don't let the raw sequence hit the screen
+    });
+  } catch {}
+
   const t = { id, title, term, fit, pane, ws: null, attempts: 0, closing: false, reconnectTimer: null, ro: null };
   state.open.set(id, t);
   wireTouchScroll(t);
@@ -388,6 +414,7 @@ function setActive(id) {
   if (t) requestAnimationFrame(() => { if (t.fit) { try { t.fit.fit(); } catch {} } t.term.focus(); });
   renderTabs();
   renderSessions();
+  updateMouseHint();
 }
 
 function closeTab(id) {
@@ -788,6 +815,22 @@ function refitActive() {
   if (t) scheduleFit(t);
 }
 
+// Nudge the user about Shift-select, but only when it's actually relevant: on
+// desktop (Shift-drag is meaningless on touch) and while the active terminal is
+// running a full-screen app that has grabbed the mouse, so a plain drag won't
+// select text. Dismissing it hides it for good on this browser.
+const HINT_DISMISSED = 'termhub-hide-mouse-hint';
+function updateMouseHint() {
+  const el = $('#mouse-hint');
+  if (!el) return;
+  let show = false;
+  if (!isMobile() && localStorage.getItem(HINT_DISMISSED) !== '1') {
+    const t = state.open.get(state.activeId);
+    show = !!(t && appWantsMouse(t));
+  }
+  el.classList.toggle('hidden', !show);
+}
+
 // On iOS the on-screen keyboard shrinks the visual viewport but not the layout
 // viewport, which pushes the terminal and key bar under the keyboard. Pin the
 // app height to the visual viewport so everything stays on-screen and sized right.
@@ -815,6 +858,11 @@ function wireEvents() {
   $('#update-check').onclick = recheckUpdate;
   $('#update-apply').onclick = applyUpdate;
   $('#update-backdrop').onclick = (e) => { if (e.target.id === 'update-backdrop') closeUpdatePanel(); };
+
+  $('#mouse-hint-dismiss').onclick = () => {
+    try { localStorage.setItem(HINT_DISMISSED, '1'); } catch {}
+    updateMouseHint();
+  };
 
   $('#kbd-key').onclick = () => { const t = state.open.get(state.activeId); if (t) t.term.focus(); };
   // Plain click (not pointerdown) so iOS counts it as the user gesture the
@@ -844,5 +892,6 @@ wireEvents();
 syncViewportHeight();
 refresh();
 setInterval(refresh, 2000); // keep the sidebar "working" status roughly live
+setInterval(updateMouseHint, 1000); // reflect entering/leaving a full-screen app
 backgroundUpdateCheck();
 setInterval(backgroundUpdateCheck, UPDATE_POLL_MS); // nudge ~once a day
