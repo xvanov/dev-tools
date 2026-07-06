@@ -31,6 +31,36 @@ const state = {
 const $ = (sel) => document.querySelector(sel);
 const isMobile = () => window.matchMedia('(max-width: 760px)').matches;
 
+// Write text to the local clipboard, working in BOTH secure and insecure
+// contexts. navigator.clipboard only exists over HTTPS/localhost — on a plain
+// HTTP origin (e.g. termhub bound to a tailnet IP with no Serve) it's undefined,
+// so we fall back to the legacy execCommand('copy') trick via a hidden textarea.
+// The fallback needs a fresh user gesture in some browsers; it lands when the
+// copy round-trips quickly, which is the common case for OSC 52 from a TUI.
+function copyToClipboard(text) {
+  if (!text) return;
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).catch(() => execCopyFallback(text));
+    return;
+  }
+  execCopyFallback(text);
+}
+
+function execCopyFallback(text) {
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    // Keep it out of view and out of the layout, but still selectable.
+    ta.setAttribute('readonly', '');
+    ta.style.cssText = 'position:fixed;top:-9999px;left:-9999px;opacity:0;';
+    document.body.appendChild(ta);
+    ta.select();
+    ta.setSelectionRange(0, text.length);
+    document.execCommand('copy');
+    document.body.removeChild(ta);
+  } catch {}
+}
+
 async function api(path, opts) {
   const res = await fetch(path, opts);
   const text = await res.text();
@@ -218,9 +248,7 @@ function openTerminal(id, title) {
       try {
         const bytes = Uint8Array.from(atob(b64), (ch) => ch.charCodeAt(0));
         const text = new TextDecoder().decode(bytes);
-        if (text && navigator.clipboard && navigator.clipboard.writeText) {
-          navigator.clipboard.writeText(text).catch(() => {});
-        }
+        copyToClipboard(text);
       } catch {}
       return true; // handled — don't let the raw sequence hit the screen
     });
