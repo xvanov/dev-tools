@@ -6,6 +6,7 @@ Internal tooling for AI-assisted workflows: push-to-talk dictation, batch transc
 
 | Tool | Description |
 |------|-------------|
+| [bootstrap](./bootstrap/) | One-shot provisioning for a new Linux machine (Raspberry Pi / Ubuntu): base packages, Node.js, Tailscale, SSH key + git repos, and the dev-tools — all from one script |
 | [voice-dictation](./voice-dictation/) | Push-to-talk voice transcription via faster-whisper → auto-paste (Windows + Linux) |
 | [summarize-recording](./summarize-recording/) | Transcribe and summarize audio recordings via Azure OpenAI |
 | [claude-ctx-statusline](./claude-ctx-statusline/) | Shows context window usage in the Claude Code status bar |
@@ -20,6 +21,20 @@ Clone:
 git clone https://github.com/xvanov/dev-tools.git
 cd dev-tools
 ```
+
+### Bootstrap a new Linux machine (Raspberry Pi / Ubuntu)
+
+Provision a fresh box end-to-end — base packages, Node.js, Tailscale, an SSH key
++ your git repos, and the dev-tools — with one self-contained script. Flash
+Ubuntu, then:
+
+```bash
+scp bootstrap/pi-setup.sh <user>@<pi>:~/
+ssh <user>@<pi>
+TS_AUTHKEY=tskey-auth-xxxx ./pi-setup.sh
+```
+
+See [bootstrap/README.md](./bootstrap/) for options. Re-runnable and idempotent.
 
 ### Voice dictation (Windows)
 
@@ -89,6 +104,7 @@ Claude Code launcher.
 
 ```
 dev-tools/
+├── bootstrap/                # provision a new Linux machine (Pi/Ubuntu) end-to-end
 ├── voice-dictation/          # real-time dictation (recorder + overlay + warm server)
 ├── summarize-recording/      # transcribe + Azure summarization CLI
 ├── claude-ctx-statusline/    # Claude Code statusLine helper
