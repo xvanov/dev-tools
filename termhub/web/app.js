@@ -22,6 +22,7 @@ const KEY_SEQ = {
 const state = {
   machine: '',
   sessions: [],
+  restorable: [],  // sessions from a previous run (e.g. before a reboot)
   open: new Map(), // id -> term object
   activeId: null,
   ctrlArmed: false,
@@ -40,6 +41,21 @@ async function api(path, opts) {
 
 // ---- data refresh ---------------------------------------------------------
 
+// A cheap fingerprint of everything the sidebar/tabs render from. The 2s poll
+// rebuilt the whole sidebar + tab DOM every tick even when nothing changed —
+// steady-state layout/paint churn that competed with the terminal's own redraws
+// and showed up as input that "spazzes out" for a moment after a tap. Now we
+// only rebuild when this signature actually changes.
+function uiSignature() {
+  const live = state.sessions
+    .map((s) => `${s.id}:${s.alive ? 1 : 0}:${s.busy ? 1 : 0}:${s.title || ''}`).join('|');
+  const rest = state.restorable
+    .map((r) => `${r.id}:${r.kind}:${(r.history || []).length}`).join('|');
+  const open = [...state.open.values()].map((t) => `${t.id}:${t.title || ''}`).join(',');
+  return `${state.activeId}||${live}||${rest}||${open}`;
+}
+
+let lastUiSig = '';
 let refreshing = null;
 function refresh() {
   if (refreshing) return refreshing;
@@ -48,14 +64,18 @@ function refresh() {
       const s = await api('/api/sessions');
       state.machine = s.machine || '';
       state.sessions = s.sessions || [];
+      state.restorable = s.restorable || [];
       $('#machine-name').textContent = state.machine;
+      const n = state.sessions.length;
       const live = state.sessions.filter((x) => x.alive).length;
-      $('#status-line').textContent = `${state.sessions.length} session${state.sessions.length === 1 ? '' : 's'} (${live} running)`;
+      const r = state.restorable.length;
+      $('#status-line').textContent =
+        `${n} session${n === 1 ? '' : 's'} (${live} running)` + (r ? ` · ${r} restorable` : '');
     } catch (e) {
       $('#status-line').textContent = 'server unreachable';
     }
-    renderSessions();
-    renderTabs();
+    const sig = uiSignature();
+    if (sig !== lastUiSig) { lastUiSig = sig; renderSessions(); renderTabs(); }
   })().finally(() => { refreshing = null; });
   return refreshing;
 }
@@ -63,7 +83,7 @@ function refresh() {
 function renderSessions() {
   const list = $('#session-list');
   list.innerHTML = '';
-  if (!state.sessions.length) {
+  if (!state.sessions.length && !state.restorable.length) {
     const empty = document.createElement('div');
     empty.className = 'list-empty';
     empty.textContent = 'No sessions yet.';
@@ -87,6 +107,50 @@ function renderSessions() {
     item.querySelector('.kill').onclick = (ev) => { ev.stopPropagation(); killSession(s.id); };
     list.appendChild(item);
   }
+
+  if (state.restorable.length) {
+    const head = document.createElement('div');
+    head.className = 'list-section';
+    head.textContent = 'Restorable (after restart)';
+    list.appendChild(head);
+    for (const r of state.restorable) list.appendChild(renderRestorable(r));
+  }
+}
+
+// A session that survived a reboot only as metadata. Restore re-spawns it:
+// Claude sessions with `--resume`, shell sessions with their recorded command
+// history printed so the user can rebuild state by hand. ✕ forgets it.
+function renderRestorable(r) {
+  const isClaude = r.kind === 'claude';
+  const item = document.createElement('div');
+  item.className = 'restore-item';
+  item.innerHTML =
+    `<div class="restore-row">` +
+      `<span class="restore-kind ${isClaude ? 'claude' : 'shell'}" title="${isClaude ? 'Claude session — resumes' : 'shell session'}">${isClaude ? '◈' : '$'}</span>` +
+      `<span class="restore-title">${escapeHtml(r.title || r.id)}</span>` +
+      `<button class="restore-go" title="Restore session">&#8635;</button>` +
+      `<button class="restore-forget" title="Forget">&#10005;</button>` +
+    `</div>` +
+    `<div class="restore-sub" title="${escapeHtml(r.cwd || '')}">${escapeHtml(r.cwd || '')}</div>`;
+
+  if (!isClaude && r.history && r.history.length) {
+    const n = r.history.length;
+    const label = (open) => `${open ? '▾' : '▸'} ${n} command${n === 1 ? '' : 's'}`;
+    const toggle = document.createElement('button');
+    toggle.className = 'restore-hist-toggle';
+    toggle.textContent = label(false);
+    const box = document.createElement('div');
+    box.className = 'restore-hist';
+    box.hidden = true;
+    box.innerHTML = r.history.map((h) => `<code>${escapeHtml(h)}</code>`).join('');
+    toggle.onclick = () => { box.hidden = !box.hidden; toggle.textContent = label(!box.hidden); };
+    item.appendChild(toggle);
+    item.appendChild(box);
+  }
+
+  item.querySelector('.restore-go').onclick = () => restoreSession(r.id);
+  item.querySelector('.restore-forget').onclick = () => forgetSession(r.id);
+  return item;
 }
 
 function renderTabs() {
@@ -349,6 +413,26 @@ function closeTab(id) {
 async function killSession(id) {
   try { await api(`/api/sessions/${encodeURIComponent(id)}`, { method: 'DELETE' }); } catch {}
   if (state.open.has(id)) closeTab(id);
+  refresh();
+}
+
+// Re-open a session archived from a previous run, then focus it.
+async function restoreSession(id) {
+  try {
+    const session = await api(`/api/sessions/${encodeURIComponent(id)}/restore`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ cols: 80, rows: 24 }),
+    });
+    await refresh();
+    openTerminal(session.id, session.title);
+    if (isMobile()) closeDrawer();
+  } catch (e) {
+    window.alert('Restore failed: ' + e.message);
+  }
+}
+
+// Drop a restorable entry without re-opening it (a DELETE forgets the archive).
+async function forgetSession(id) {
+  try { await api(`/api/sessions/${encodeURIComponent(id)}`, { method: 'DELETE' }); } catch {}
   refresh();
 }
 

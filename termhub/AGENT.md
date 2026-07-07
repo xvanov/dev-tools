@@ -62,9 +62,11 @@ curl -s -X POST http://<host>:7000/api/sessions \
   -H 'content-type: application/json' -d '{"cwd":"'"$HOME"'"}' | jq
 ```
 
-HTTP API (served by `sessiond`, proxied by `front`): `GET /api/info`, `GET /api/sessions`,
-`POST /api/sessions` (`{cwd?, command?, title?, cols, rows}`), `DELETE /api/sessions/:id`,
-`PATCH /api/sessions/:id` (`{title}`), `GET /api/recents`, `GET /api/dirs?path=`,
+HTTP API (served by `sessiond`, proxied by `front`): `GET /api/info`, `GET /api/sessions`
+(returns `{sessions, restorable}` — live PTYs plus archived sessions from a previous run),
+`POST /api/sessions` (`{cwd?, command?, title?, cols, rows}`), `POST /api/sessions/:id/restore`
+(re-open an archived session), `DELETE /api/sessions/:id` (kill a live session and/or forget an
+archived one), `PATCH /api/sessions/:id` (`{title}`), `GET /api/recents`, `GET /api/dirs?path=`,
 `GET /api/ping` (sessiond liveness). The `front` answers `GET /api/health` itself (front up +
 sessiond reachable) for the updater's probe, and `GET /api/update/check` (`?force=1` to skip the
 60s cache) — both are handled by the front and never proxied. Terminal stream: WebSocket `/ws/term/:id` with JSON
@@ -79,6 +81,30 @@ the data dir (`%LOCALAPPDATA%\termhub` on Windows, `~/.local/termhub` on Linux):
   Serve currently targets. Written by `start.ps1` / `update.ps1`, read by both.
 - `sessiond.pid`, `front-<port>.pid` — two-line (`PID`\n`PORT`) files each process writes on
   startup and removes on a clean exit; the scripts read them to find/stop the right process.
+- `sessions.json` — the session archive (`lib/archive.js`). Mirrors each session's metadata
+  (cwd, command, `kind`, and — for shell sessions — the command lines typed in it) so it
+  survives a reboot. Written by `sessiond` on create / rename / exit / input.
+
+### Session persistence (surviving reboots)
+
+PTYs live only in `sessiond`'s memory, so a machine reboot kills every terminal and the sidebar
+comes up empty. `sessiond` mirrors session *metadata* to `sessions.json`; on the next start those
+entries (no longer matched by a live PTY) are returned as `restorable` and the sidebar shows a
+**Restorable (after restart)** section. The processes themselves can't be resurrected, so
+"restore" re-spawns: a `claude` session re-opens as `claude --dangerously-skip-permissions
+--resume` in its old cwd (Claude's resume picker, scoped to that directory); any other session
+re-opens as a plain shell in its old cwd with its recorded command history printed in as a
+dim, commented block to re-run by hand. Killing a live session (✕) or forgetting a restorable one
+both `DELETE` it, removing it from the archive. **This is a `sessiond`-tier change**: restart
+`sessiond` once to activate it (which clears the *current* live sessions — but from then on every
+session is persisted). Sessions lost to a reboot that happened *before* this was running are gone;
+nothing was recorded for them.
+
+Caveat on shell history: it's reassembled from the raw keystroke stream (printable bytes accumulate,
+Backspace/Ctrl-C edit, escape sequences are skipped, Enter flushes a line). A command recalled with
+the Up-arrow comes back as terminal *output*, not input, so a re-run won't be re-captured — it's a
+memory-jogger, not an exact transcript. Only shell-kind sessions record history; Claude/TUI
+sessions don't (they restore via `--resume`, and their keystrokes would be noise).
 
 The **⟳ Update** button in the UI is a front-end over this: the front answers
 `GET /api/update/check` (it `git fetch`es and reports how far HEAD is behind `@{u}`, plus a
@@ -202,7 +228,8 @@ If building by hand, reproduce both: clear `NoDefaultCurrentDirectoryInExePath`,
 | Can't reach `:7000` from phone (loads forever) | Windows firewall drops raw ports on the Tailscale interface | Use Tailscale Serve (Windows installer does this): bind loopback + `tailscale serve --bg --https=7000 http://127.0.0.1:7000`, then open `https://<host>.<tailnet>.ts.net:7000/` |
 | Can't reach `:7000` from phone | Tailnet ACL or firewall | Confirm both devices are on the tailnet and ACLs allow the port |
 | Terminal opens but no output | WebSocket blocked | Ensure nothing between browser and server strips WebSocket upgrades |
-| Input ignored after sleep/wake | WebSocket dropped; reconnecting | Output replays on reconnect (incl. across a front update). "Session no longer available" means `sessiond` itself restarted (reboot, or a deliberate sessiond restart) — open a new terminal |
+| Input ignored after sleep/wake | WebSocket dropped; reconnecting | Output replays on reconnect (incl. across a front update). "Session no longer available" means `sessiond` itself restarted (reboot, or a deliberate sessiond restart) — restore it from the sidebar's **Restorable** section, or open a new terminal |
+| Sidebar empty after a reboot | `sessiond` (and its PTYs) died with the machine | Sessions created while the persistence build was running reappear under **Restorable (after restart)** — restore re-opens Claude with `--resume` or a shell with its command history. Sessions from before the build was deployed weren't recorded |
 | Wrong size / wrapping | Pane resized while backgrounded | Switch tabs or rotate to force a refit |
 | `npm install` errors on `node-pty` | Missing build toolchain | See prerequisites above |
 

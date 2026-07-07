@@ -26,6 +26,38 @@ function resolveCwd(input) {
 // Default scrollback kept in memory per session, for replay on reconnect.
 const DEFAULT_SCROLLBACK_BYTES = Number(process.env.TERMHUB_SCROLLBACK_BYTES) || 2 * 1024 * 1024;
 
+// Classify a session by its initial command so the archive knows how to restore
+// it: a `claude` invocation resumes via `--resume`; anything else is a plain
+// shell we rebuild by replaying recorded history. Matches `claude`, `claude.exe`,
+// a path ending in claude, or a quoted form — but not `claude-foo` or `myclaude`.
+function classifyCommand(command) {
+  if (!command) return 'shell';
+  return /(^|[\\/\s"'])claude(\.exe|\.cmd)?(?=$|[\s"'])/i.test(command) ? 'claude' : 'shell';
+}
+
+// Strip leftover control bytes from an assembled input line.
+function stripControl(s) {
+  return s.replace(/[\x00-\x1f\x7f]/g, '');
+}
+
+// Given `data` with an ESC at index i, return the index of the last byte of the
+// escape sequence (so the caller's i++ resumes just after it). Handles CSI
+// (ESC [ … final) and SS3 (ESC O x); treats a lone trailing ESC gracefully.
+function skipEscape(data, i) {
+  if (i + 1 >= data.length) return i;
+  const next = data[i + 1];
+  if (next === '[' || next === 'O') {
+    let j = i + 2;
+    while (j < data.length) {
+      const c = data.charCodeAt(j);
+      if (c >= 0x40 && c <= 0x7e) return j; // final byte of a CSI/SS3 sequence
+      j++;
+    }
+    return data.length - 1;
+  }
+  return i + 1; // ESC + a single char
+}
+
 let counter = 0;
 function genId() {
   counter += 1;
@@ -33,7 +65,7 @@ function genId() {
 }
 
 class Session {
-  constructor({ cwd, command, title, cols, rows, maxBytes } = {}) {
+  constructor({ cwd, command, title, cols, rows, maxBytes, onExit, onInputLine } = {}) {
     this.id = genId();
     this.shell = defaultShell();
     const resolved = resolveCwd(cwd);
@@ -41,6 +73,7 @@ class Session {
     this._cwdNotice = resolved.notice;
     this.cwdFallback = !!resolved.notice;
     this.command = command && String(command).trim() ? String(command).trim() : null;
+    this.kind = classifyCommand(this.command);
     this.cols = cols || 80;
     this.rows = rows || 24;
     this.title = title || this.command || baseName(this.shell);
@@ -48,6 +81,12 @@ class Session {
     this.lastActivity = Date.now();
     this.alive = false;
     this.exitCode = null;
+
+    // Lifecycle hooks (sessiond wires these to the on-disk archive). Public so
+    // they can also be assigned after construction.
+    this.onExit = onExit || null;
+    this.onInputLine = onInputLine || null;
+    this._inputLine = ''; // partial command line being assembled from keystrokes
 
     this.maxBytes = maxBytes || DEFAULT_SCROLLBACK_BYTES;
     this._chunks = [];
@@ -90,6 +129,7 @@ class Session {
       this.alive = false;
       this.exitCode = exitCode;
       this._broadcast({ type: 'exit', code: exitCode });
+      if (this.onExit) { try { this.onExit(exitCode); } catch { /* hook must not break exit */ } }
     });
 
     // If an initial command was requested (e.g. `claude …`), run it *inside* the
@@ -146,7 +186,62 @@ class Session {
   }
 
   write(data) {
-    if (this.alive) this.pty.write(data);
+    if (!this.alive) return;
+    // Record typed command lines for shell sessions so a post-reboot restore can
+    // show what was run. Skipped for `claude` (and other TUI) sessions — those
+    // restore via --resume, and their raw keystrokes would just be noise.
+    if (this.onInputLine && this.kind === 'shell') this._recordInput(data);
+    this.pty.write(data);
+  }
+
+  // Reassemble command lines from the raw keystroke stream: printable bytes
+  // accumulate, Backspace/Del erase, Ctrl-C abandons the line, and escape
+  // sequences (arrows etc.) are skipped. Flushes a line on Enter. This is
+  // best-effort: lines recalled with the Up-arrow come back as terminal *output*
+  // (not input), so a re-run history entry won't be re-captured — good enough to
+  // jog the user's memory when rebuilding state by hand.
+  _recordInput(data) {
+    for (let i = 0; i < data.length; i++) {
+      const ch = data[i];
+      const code = data.charCodeAt(i);
+      if (ch === '\r' || ch === '\n') {
+        const line = stripControl(this._inputLine).trim();
+        this._inputLine = '';
+        if (line) { try { this.onInputLine(line); } catch { /* hook is best-effort */ } }
+      } else if (code === 0x7f || code === 0x08) { // Del / Backspace
+        this._inputLine = this._inputLine.slice(0, -1);
+      } else if (ch === '\x1b') {
+        i = skipEscape(data, i);
+      } else if (code === 0x03) { // Ctrl-C abandons the current line
+        this._inputLine = '';
+      } else if (code >= 0x20) {
+        this._inputLine += ch;
+      }
+    }
+  }
+
+  // Print an informational line into the terminal (buffered so it also appears in
+  // replay) without sending it to the shell as input.
+  notice(text) {
+    const msg = text.endsWith('\r\n') ? text : text + '\r\n';
+    this._buffer(msg);
+    this._broadcast({ type: 'output', data: msg });
+  }
+
+  // The snapshot persisted to the archive at creation time (history accumulates
+  // there afterwards, keyed by id).
+  archiveEntry() {
+    return {
+      id: this.id,
+      title: this.title,
+      cwd: this.cwd,
+      command: this.command,
+      shell: this.shell,
+      kind: this.kind,
+      created: this.created,
+      endedAt: null,
+      history: [],
+    };
   }
 
   resize(cols, rows) {
@@ -183,6 +278,7 @@ class Session {
       title: this.title,
       cwd: this.cwd,
       command: this.command,
+      kind: this.kind,
       shell: this.shell,
       cols: this.cols,
       rows: this.rows,
