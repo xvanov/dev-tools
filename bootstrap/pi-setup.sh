@@ -2,21 +2,22 @@
 # =============================================================================
 # dev-tools :: Raspberry Pi (Ubuntu) bootstrap
 # =============================================================================
-# Turns a freshly-flashed, freshly-booted Ubuntu Pi into a working dev machine:
-# base packages -> Node.js -> Tailscale (joined) -> an SSH key + your git repos
-# -> the dev-tools that make sense on a headless box (termhub, statusline).
+# Turns a freshly-flashed, freshly-booted Ubuntu/Debian Pi into a working dev
+# machine: base packages -> Node.js -> Tailscale (joined) -> a GitHub login
+# (via the gh CLI) + your git repos -> the dev-tools that make sense on a
+# headless box (termhub, statusline).
 #
 # It is SELF-CONTAINED: copy just this one file to the Pi and run it. It does
-# not need the repo to be present first — it clones dev-tools itself (over SSH,
-# once the key you generate here is added to GitHub) and runs each tool's own
-# installer from that clone.
+# not need the repo to be present first — it logs in to GitHub with `gh auth
+# login` (an interactive copy-a-code / approve-in-browser flow), then clones
+# dev-tools over authenticated HTTPS and runs each tool's own installer.
 #
 #   scp bootstrap/pi-setup.sh  ubuntu@<pi>:~/
 #   ssh ubuntu@<pi>
 #   TS_AUTHKEY=tskey-auth-xxxx  ./pi-setup.sh
 #
 # Every step is idempotent — re-running skips what is already done, so it is
-# safe to run again after fixing a value or adding the SSH key to GitHub.
+# safe to run again after fixing a value or completing the GitHub login.
 #
 # Configure via environment variables (all optional except where noted):
 #   TS_AUTHKEY   Tailscale auth key for unattended join. If unset, falls back
@@ -24,8 +25,9 @@
 #   REPOS        Space-separated GitHub <owner>/<repo> to clone.
 #                Default: "xvanov/dev-tools"
 #   REPO_ROOT    Where to clone them.                 Default: "$HOME/repos"
-#   GIT_NAME     git user.name.                        Default: current $USER
-#   GIT_EMAIL    git user.email.                       Default: "$USER@$(hostname)"
+#   GIT_NAME     git user.name.   Default: your GitHub account's name (via gh).
+#   GIT_EMAIL    git user.email.  Default: your GitHub account's email (via gh),
+#                else <login>@users.noreply.github.com.
 #   NEW_HOSTNAME If set, renames the machine (sudo hostnamectl).
 #   TOOLS        Space-separated tools to install.
 #                Default: "termhub claude-ctx-statusline"
@@ -33,7 +35,8 @@
 #
 # Flags:
 #   --skip-upgrade   don't run `apt-get upgrade` (faster re-runs)
-#   --yes            don't pause for the "add the SSH key to GitHub" step
+#   --yes            reserved (kept for compatibility; no longer skips any
+#                    prompt — GitHub login is always interactive when needed)
 # =============================================================================
 set -euo pipefail
 
@@ -41,8 +44,8 @@ set -euo pipefail
 TS_AUTHKEY="${TS_AUTHKEY:-}"
 REPOS="${REPOS:-xvanov/dev-tools}"
 REPO_ROOT="${REPO_ROOT:-$HOME/repos}"
-GIT_NAME="${GIT_NAME:-$USER}"
-GIT_EMAIL="${GIT_EMAIL:-$USER@$(hostname)}"
+GIT_NAME="${GIT_NAME:-}"     # resolved from the GitHub account after gh login
+GIT_EMAIL="${GIT_EMAIL:-}"   # resolved from the GitHub account after gh login
 NEW_HOSTNAME="${NEW_HOSTNAME:-}"
 TOOLS="${TOOLS:-termhub claude-ctx-statusline}"
 NODE_MAJOR="${NODE_MAJOR:-20}"
@@ -145,50 +148,56 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 5. Git identity + SSH key for GitHub
+# 5. GitHub login (gh CLI) + git identity
 # ---------------------------------------------------------------------------
+# We authenticate to GitHub with the gh CLI rather than a hand-managed SSH key:
+# `gh auth login` walks you through an interactive device-code flow (copy a
+# code, open a URL, approve). gh then becomes git's credential helper, and we
+# rewrite git@github.com: URLs to authenticated HTTPS so that even SSH-style
+# clone commands work with no SSH key registered on your account.
+if ! command -v gh >/dev/null 2>&1; then
+  step "Installing GitHub CLI (gh)"
+  if ! sudo DEBIAN_FRONTEND=noninteractive apt-get install -y gh; then
+    warn "gh not in the distro repos — adding GitHub's official apt repo."
+    sudo mkdir -p -m 755 /etc/apt/keyrings
+    curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+      | sudo tee /etc/apt/keyrings/githubcli-archive-keyring.gpg >/dev/null
+    sudo chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
+      | sudo tee /etc/apt/sources.list.d/github-cli.list >/dev/null
+    sudo apt-get update -y
+    sudo DEBIAN_FRONTEND=noninteractive apt-get install -y gh
+  fi
+fi
+
+if gh auth status >/dev/null 2>&1; then
+  step "GitHub already authenticated as $(gh api user --jq '.login' 2>/dev/null || echo '?')"
+else
+  step "Logging in to GitHub (gh auth login)"
+  info "Copy the one-time code shown below, open the URL, and approve. Waiting…"
+  gh auth login --hostname github.com --git-protocol https --web \
+    || warn "gh auth login did not complete — private clones may be skipped below."
+fi
+
+# Make gh git's credential helper, and let git@github.com: URLs use HTTPS.
+gh auth setup-git 2>/dev/null || true
+git config --global url."https://github.com/".insteadOf "git@github.com:"
+
 step "Configuring git identity"
+# Default the identity to the authenticated GitHub account so commits are not
+# attributed to a junk "$USER@$(hostname)" address.
+if [[ -z "$GIT_NAME" ]]; then
+  GIT_NAME="$(gh api user --jq '.name // .login' 2>/dev/null || echo "$USER")"
+fi
+if [[ -z "$GIT_EMAIL" ]]; then
+  gh_login="$(gh api user --jq '.login' 2>/dev/null || true)"
+  GIT_EMAIL="$(gh api user --jq '.email // empty' 2>/dev/null || true)"
+  [[ -z "$GIT_EMAIL" && -n "$gh_login" ]] && GIT_EMAIL="${gh_login}@users.noreply.github.com"
+  [[ -z "$GIT_EMAIL" ]] && GIT_EMAIL="$USER@$(hostname)"
+fi
 git config --global user.name  "$GIT_NAME"
 git config --global user.email "$GIT_EMAIL"
 info "user.name = $GIT_NAME, user.email = $GIT_EMAIL"
-
-SSH_KEY="$HOME/.ssh/id_ed25519"
-if [[ ! -f "$SSH_KEY" ]]; then
-  step "Generating an SSH key for GitHub"
-  mkdir -p "$HOME/.ssh" && chmod 700 "$HOME/.ssh"
-  ssh-keygen -t ed25519 -N "" -C "$GIT_EMAIL" -f "$SSH_KEY"
-else
-  step "SSH key already exists: $SSH_KEY"
-fi
-
-# Trust github.com's host key so the clone below isn't an interactive prompt.
-if ! ssh-keygen -F github.com >/dev/null 2>&1; then
-  ssh-keyscan -t ed25519 github.com >> "$HOME/.ssh/known_hosts" 2>/dev/null || true
-fi
-
-# Verify GitHub can see the key; if not, show it and wait.
-# NOTE: `ssh -T git@github.com` always exits non-zero (even on success), so we
-# must capture its output first — piping it directly would make `pipefail`
-# report failure regardless of whether authentication succeeded.
-github_ok() {
-  local out
-  out="$(ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new -T git@github.com 2>&1 || true)"
-  grep -q "successfully authenticated" <<<"$out"
-}
-
-if ! github_ok; then
-  step "Add this public key to GitHub, then continue"
-  echo "-------------------------------------------------------------------"
-  cat "$SSH_KEY.pub"
-  echo "-------------------------------------------------------------------"
-  info "Add it at: https://github.com/settings/ssh/new"
-  if [[ "$ASSUME_YES" -eq 0 ]]; then
-    read -r -p "    Press Enter once the key is added (Ctrl-C to abort)... " _
-  fi
-  github_ok || warn "GitHub auth still failing — private clones may be skipped below."
-else
-  step "GitHub SSH auth already working"
-fi
 
 # ---------------------------------------------------------------------------
 # 6. Clone repos
@@ -205,7 +214,7 @@ for slug in $REPOS; do
     if git clone "git@github.com:${slug}.git" "$dest"; then
       info "cloned $slug -> $dest"
     else
-      warn "failed to clone $slug (SSH key added to GitHub? repo access?) — skipping"
+      warn "failed to clone $slug (GitHub login completed? repo access?) — skipping"
       continue
     fi
   fi
@@ -223,7 +232,7 @@ fi
 # ---------------------------------------------------------------------------
 if [[ -z "$DEVTOOLS_DIR" ]]; then
   warn "dev-tools checkout not found — skipping tool installs ($TOOLS)."
-  warn "Add the SSH key to GitHub and re-run, or clone dev-tools manually."
+  warn "Complete the GitHub login and re-run, or clone dev-tools manually."
 else
   for tool in $TOOLS; do
     installer="$DEVTOOLS_DIR/$tool/linux/install.sh"
