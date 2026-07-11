@@ -103,8 +103,17 @@ if have_node_ge 18; then
   step "Node.js already present: $(node --version)"
 else
   step "Installing Node.js ${NODE_MAJOR}.x via NodeSource"
-  curl -fsSL "https://deb.nodesource.com/setup_${NODE_MAJOR}.x" | sudo -E bash -
-  sudo DEBIAN_FRONTEND=noninteractive apt-get install -y nodejs
+  # NodeSource may not yet publish a repo for very new distro releases (e.g.
+  # Debian trixie). If its setup script fails, fall back to the distro's own
+  # nodejs package — modern Debian/Ubuntu ship Node >= 18, which is enough.
+  if curl -fsSL "https://deb.nodesource.com/setup_${NODE_MAJOR}.x" | sudo -E bash - \
+     && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y nodejs; then
+    info "node $(node --version), npm $(npm --version) (NodeSource)"
+  else
+    warn "NodeSource install failed — falling back to the distro nodejs/npm packages."
+    sudo DEBIAN_FRONTEND=noninteractive apt-get install -y nodejs npm
+  fi
+  have_node_ge 18 || die "Node.js >= 18 still not available after install."
   info "node $(node --version), npm $(npm --version)"
 fi
 
@@ -122,13 +131,17 @@ if tailscale status >/dev/null 2>&1; then
   step "Tailscale already up: $(tailscale ip -4 2>/dev/null | head -n1)"
 else
   step "Joining the tailnet"
+  # Non-fatal: a rejected/expired key or a skipped interactive login must not
+  # abort the whole bootstrap (git config + tool installs come after this).
   if [[ -n "$TS_AUTHKEY" ]]; then
-    sudo tailscale up --authkey "$TS_AUTHKEY" --hostname "$(hostname)"
+    sudo tailscale up --authkey "$TS_AUTHKEY" --hostname "$(hostname)" \
+      || warn "tailscale up failed (bad/expired auth key?) — continuing without a tailnet."
   else
     warn "no TS_AUTHKEY set — starting interactive login."
-    sudo tailscale up --hostname "$(hostname)"
+    sudo tailscale up --hostname "$(hostname)" \
+      || warn "tailscale up did not complete — continuing without a tailnet."
   fi
-  info "tailscale ip: $(tailscale ip -4 2>/dev/null | head -n1)"
+  info "tailscale ip: $(tailscale ip -4 2>/dev/null | head -n1 || echo 'none')"
 fi
 
 # ---------------------------------------------------------------------------
@@ -154,8 +167,14 @@ if ! ssh-keygen -F github.com >/dev/null 2>&1; then
 fi
 
 # Verify GitHub can see the key; if not, show it and wait.
-github_ok() { ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new -T git@github.com 2>&1 \
-  | grep -q "successfully authenticated"; }
+# NOTE: `ssh -T git@github.com` always exits non-zero (even on success), so we
+# must capture its output first — piping it directly would make `pipefail`
+# report failure regardless of whether authentication succeeded.
+github_ok() {
+  local out
+  out="$(ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new -T git@github.com 2>&1 || true)"
+  grep -q "successfully authenticated" <<<"$out"
+}
 
 if ! github_ok; then
   step "Add this public key to GitHub, then continue"
