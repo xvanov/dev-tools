@@ -1,0 +1,12 @@
+[Unit]
+Description=Run disk-janitor daily
+
+[Timer]
+# Daily, plus a catch-up run 3 min after boot if a scheduled run was missed.
+OnCalendar=daily
+OnBootSec=3min
+Persistent=true
+RandomizedDelaySec=5min
+
+[Install]
+WantedBy=timers.target

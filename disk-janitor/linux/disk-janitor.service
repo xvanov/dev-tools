@@ -1,0 +1,9 @@
+[Unit]
+Description=disk-janitor (safe automatic cache/temp cleanup)
+
+[Service]
+Type=oneshot
+# __ARGS__ is replaced by the installer (empty for active cleanup, or --dry-run).
+ExecStart=__PYTHON__ __DIR__/disk_janitor.py __ARGS__
+Nice=10
+IOSchedulingClass=idle
