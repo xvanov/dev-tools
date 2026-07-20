@@ -37,6 +37,16 @@ html, body {
   border-right: 1px solid var(--border);
   display: flex;
   flex-direction: column;
+  overflow: hidden; /* clips content during the collapse/expand width transition */
+}
+
+/* Floating button that brings the sidebar back once collapsed — lives outside
+   #sidebar since the sidebar (and everything in it) is width:0 at that point. */
+#sidebar-expand {
+  display: none;
+  position: fixed; top: 10px; left: 10px; z-index: 15;
+  background: var(--bg-3); border: 1px solid var(--border); color: var(--fg);
+  padding: 6px 10px; border-radius: 6px; cursor: pointer; font-size: 14px;
 }
 
 .sidebar-head {
@@ -49,6 +59,8 @@ html, body {
 .brand { font-weight: 600; letter-spacing: 0.5px; }
 .machine-name { color: var(--accent); font-size: 12px; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #sidebar-close { display: none; background: none; border: none; color: var(--fg-dim); font-size: 16px; cursor: pointer; }
+#sidebar-collapse { background: none; border: none; color: var(--fg-dim); font-size: 16px; cursor: pointer; }
+#sidebar-collapse:hover { color: var(--accent); }
 
 .actions { display: flex; flex-direction: column; gap: 6px; padding: 10px; }
 .actions button {
@@ -67,12 +79,21 @@ html, body {
   padding: 9px 14px; cursor: pointer; color: var(--fg);
 }
 .session-item:hover { background: var(--bg-3); }
-/* Open in a tab (but not the active one): a dimmed accent bar, so the sidebar
-   shows at a glance which sessions have a tab open up top. */
+/* Open (has a live xterm instance client-side) but not the active one: a
+   dimmed accent bar, so the sidebar shows at a glance what's open in the
+   background vs. just archived/restorable. */
 .session-item.open { box-shadow: inset 3px 0 0 rgba(106, 169, 255, 0.35); }
 .session-item.active { background: var(--bg-3); box-shadow: inset 3px 0 0 var(--accent); }
-.session-item .title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Title + (for Claude sessions) a dim model-name line underneath, e.g. "Sonnet 5" —
+   read from Claude's own transcript, see lib/claudeModel.js. min-width:0 lets the
+   ellipsis truncation below actually kick in inside the flex row. */
+.session-item .title-wrap { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.session-item .title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .session-item.dead .title { color: var(--fg-dim); text-decoration: line-through; }
+.session-item .model-badge {
+  font-size: 10px; color: var(--fg-dim);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 .session-item .rename, .session-item .kill {
   background: none; border: none; color: var(--fg-dim); cursor: pointer; font-size: 14px; padding: 4px 6px;
 }
@@ -106,6 +127,7 @@ html, body {
 .restore-row { display: flex; align-items: center; gap: 8px; }
 .restore-kind { flex: 0 0 auto; width: 14px; text-align: center; font-size: 12px; color: var(--fg-dim); }
 .restore-kind.claude { color: var(--accent); }
+.restore-kind.opencode { color: var(--accent-2); }
 .restore-kind.shell { color: var(--ok); }
 .restore-title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg); }
 .restore-go, .restore-forget {
@@ -137,17 +159,6 @@ html, body {
 #topbar { display: none; align-items: center; gap: 10px; padding: 8px 10px; background: var(--bg-2); border-bottom: 1px solid var(--border); }
 #topbar button { background: var(--bg-3); border: 1px solid var(--border); color: var(--fg); font-size: 18px; line-height: 1; padding: 6px 12px; border-radius: 6px; cursor: pointer; }
 #active-title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; }
-
-#tabbar { display: flex; gap: 2px; padding: 6px 8px 0; background: var(--bg-2); overflow-x: auto; }
-.tab {
-  display: flex; align-items: center; gap: 8px;
-  padding: 6px 12px; background: var(--bg-3); color: var(--fg-dim);
-  border: 1px solid var(--border); border-bottom: none;
-  border-radius: 6px 6px 0 0; cursor: pointer; white-space: nowrap;
-}
-.tab.active { background: var(--bg); color: var(--fg); }
-.tab .tab-close { background: none; border: none; color: var(--fg-dim); cursor: pointer; }
-.tab .tab-close:hover { color: var(--danger); }
 
 /* ---- mouse-mode copy hint ---- */
 #mouse-hint {
@@ -315,9 +326,17 @@ html, body {
   body.drawer-open #sidebar { transform: translateX(0); }
   body.drawer-open #scrim { display: block; }
   #sidebar-close { display: block; margin-left: auto; }
+  /* Collapsing is a desktop concept (mobile already keeps the sidebar tucked
+     away behind the drawer by default) — hide the toggle here. */
+  #sidebar-collapse { display: none; }
 }
 
 /* On desktop the key bar is handy but optional; keep it compact. */
 @media (min-width: 761px) {
   #keybar .key { flex: 0 0 auto; min-height: 32px; }
+
+  /* ---- collapsible sidebar (desktop) ---- */
+  #sidebar { transition: flex-basis 0.2s ease, width 0.2s ease; }
+  body.sidebar-collapsed #sidebar { width: 0; flex: 0 0 0; border-right: none; }
+  body.sidebar-collapsed #sidebar-expand { display: block; }
 }

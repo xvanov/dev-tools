@@ -23,6 +23,15 @@ const recents = require('./lib/recents');
 const archive = require('./lib/archive');
 const { DEFAULT_SESSIOND_PORT, claimPidFile } = require('./lib/state');
 const { suggestDirs } = require('./lib/dirs');
+const { setClipboardImage } = require('./lib/clipboard');
+const { saveUploadedFile } = require('./lib/uploads');
+
+// A pasted/dropped image, base64-inflated in transit — cap comfortably above a
+// full-screen screenshot (a few MB as PNG) while still bounding memory use.
+const MAX_CLIPBOARD_IMAGE_BYTES = 15 * 1024 * 1024;
+
+// Generic dropped/pasted files (PDFs, docs, …) run bigger than screenshots.
+const MAX_UPLOAD_FILE_BYTES = 100 * 1024 * 1024;
 
 const MACHINE_NAME = process.env.TERMHUB_MACHINE || os.hostname();
 
@@ -43,15 +52,50 @@ function readBody(req) {
   });
 }
 
+// Raw binary body reader for image uploads — readBody's 1MB cap and JSON parse
+// are too small/wrong-shaped for a pasted screenshot.
+function readBinaryBody(req, maxBytes) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    let total = 0;
+    req.on('data', (c) => {
+      total += c.length;
+      if (total > maxBytes) { reject(new Error('image too large')); req.destroy(); return; }
+      chunks.push(c);
+    });
+    req.on('end', () => resolve(Buffer.concat(chunks)));
+    req.on('error', reject);
+  });
+}
+
 // Build the command used to bring a Claude session back: keep whatever it was
 // started with, but ensure it resumes a prior conversation and stays
-// non-interactive on permissions. `--resume` with no id makes Claude show its
-// resume picker scoped to the cwd, which is the most we can target without
-// knowing the conversation id.
-function restoreClaudeCommand(command) {
+// non-interactive on permissions. When we tracked the original conversation's
+// real UUID (see lib/session.js), resume that exact one directly; otherwise
+// fall back to a bare `--resume`, which makes Claude show its resume picker
+// scoped to the cwd — the most we can target without knowing the id.
+function restoreClaudeCommand(command, agentSessionId) {
   let cmd = (command && String(command).trim()) || 'claude';
   if (!/--dangerously-skip-permissions\b/.test(cmd)) cmd += ' --dangerously-skip-permissions';
-  if (!/(^|\s)(--resume|-r|--continue|-c)(\s|$)/.test(cmd)) cmd += ' --resume';
+  if (agentSessionId) {
+    if (!/(^|\s)(--resume|-r)(\s|$)/.test(cmd)) cmd += ` --resume ${agentSessionId}`;
+  } else if (!/(^|\s)(--resume|-r|--continue|-c)(\s|$)/.test(cmd)) {
+    cmd += ' --resume';
+  }
+  return cmd;
+}
+
+// Same idea for opencode: resume the exact tracked session with `--session
+// <id>` when we discovered it (see lib/opencodeModel.js); otherwise fall back
+// to `--continue` (opencode's closest equivalent — there's no interactive
+// picker like Claude's bare `--resume` to fall back to).
+function restoreOpencodeCommand(command, agentSessionId) {
+  let cmd = (command && String(command).trim()) || 'opencode';
+  if (agentSessionId) {
+    if (!/(^|\s)(--session|-s)(\s|$)/.test(cmd)) cmd += ` --session ${agentSessionId}`;
+  } else if (!/(^|\s)(--continue|-c|--session|-s)(\s|$)/.test(cmd)) {
+    cmd += ' --continue';
+  }
   return cmd;
 }
 
@@ -126,8 +170,13 @@ function createSessiond() {
         if (!entry) return sendJson(res, 404, { error: 'no such session to restore' });
         const body = await readBody(req).catch(() => ({}));
 
-        const command = entry.kind === 'claude' ? restoreClaudeCommand(entry.command) : null;
-        const session = new Session({ cwd: entry.cwd, command, title: entry.title, cols: body.cols, rows: body.rows });
+        let command = null;
+        if (entry.kind === 'claude') command = restoreClaudeCommand(entry.command, entry.agentSessionId);
+        else if (entry.kind === 'opencode') command = restoreOpencodeCommand(entry.command, entry.agentSessionId);
+        const session = new Session({
+          cwd: entry.cwd, command, title: entry.title, cols: body.cols, rows: body.rows,
+          agentSessionId: (entry.kind === 'claude' || entry.kind === 'opencode') ? entry.agentSessionId : null,
+        });
         trackSession(session);
         sessions.set(session.id, session);
 
@@ -159,6 +208,65 @@ function createSessiond() {
         session.rename(body.title);
         archive.patch(id, { title: session.title });
         return sendJson(res, 200, session.info());
+      }
+
+      // Stage a browser-pasted/dropped image onto THIS machine's OS clipboard, so
+      // the Claude session running in this PTY can pick it up via its own
+      // clipboard-image paste hotkey (Alt+V on Windows, Ctrl+V on Linux/macOS).
+      const clipboardImageMatch = /^\/api\/sessions\/([^/]+)\/clipboard-image$/.exec(pathname);
+      if (req.method === 'POST' && clipboardImageMatch) {
+        const id = decodeURIComponent(clipboardImageMatch[1]);
+        const session = sessions.get(id);
+        if (!session) return sendJson(res, 404, { error: 'no such session' });
+        let buffer;
+        try {
+          buffer = await readBinaryBody(req, MAX_CLIPBOARD_IMAGE_BYTES);
+        } catch (e) {
+          return sendJson(res, 413, { error: e.message });
+        }
+        const mimeType = (req.headers['content-type'] || 'image/png').split(';')[0].trim();
+        try {
+          await setClipboardImage(buffer, mimeType);
+          session.notice('[termhub] image copied to clipboard');
+          return sendJson(res, 200, { ok: true });
+        } catch (e) {
+          const msg = e && e.message ? e.message : String(e);
+          session.notice(`\x1b[33m[termhub] couldn't set clipboard image: ${msg}\x1b[0m`);
+          return sendJson(res, 502, { error: msg });
+        }
+      }
+
+      // Save a browser-dropped/pasted non-image file (PDF, .md, .txt, …) into
+      // this session's own working directory — same idea as clipboard-image
+      // above, but for files that have no "paste hotkey" a running agent can
+      // pick up. The client inserts the returned path into the terminal input,
+      // same as a native OS file drag-drop would.
+      const uploadFileMatch = /^\/api\/sessions\/([^/]+)\/upload-file$/.exec(pathname);
+      if (req.method === 'POST' && uploadFileMatch) {
+        const id = decodeURIComponent(uploadFileMatch[1]);
+        const session = sessions.get(id);
+        if (!session) return sendJson(res, 404, { error: 'no such session' });
+        let buffer;
+        try {
+          buffer = await readBinaryBody(req, MAX_UPLOAD_FILE_BYTES);
+        } catch (e) {
+          return sendJson(res, 413, { error: e.message });
+        }
+        let rawName = 'upload';
+        try {
+          if (req.headers['x-file-name']) rawName = decodeURIComponent(req.headers['x-file-name']);
+        } catch {
+          // malformed header — fall back to the default name
+        }
+        try {
+          const { path: savedPath, name } = await saveUploadedFile(session.cwd, rawName, buffer);
+          session.notice(`[termhub] saved ${name} to ${session.cwd}`);
+          return sendJson(res, 200, { ok: true, path: savedPath, name });
+        } catch (e) {
+          const msg = e && e.message ? e.message : String(e);
+          session.notice(`\x1b[33m[termhub] couldn't save ${rawName}: ${msg}\x1b[0m`);
+          return sendJson(res, 502, { error: msg });
+        }
       }
 
       if (req.method === 'GET' && pathname === '/api/recents') {

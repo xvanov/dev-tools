@@ -230,7 +230,7 @@ If building by hand, reproduce both: clear `NoDefaultCurrentDirectoryInExePath`,
 | Terminal opens but no output | WebSocket blocked | Ensure nothing between browser and server strips WebSocket upgrades |
 | Input ignored after sleep/wake | WebSocket dropped; reconnecting | Output replays on reconnect (incl. across a front update). "Session no longer available" means `sessiond` itself restarted (reboot, or a deliberate sessiond restart) — restore it from the sidebar's **Restorable** section, or open a new terminal |
 | Sidebar empty after a reboot | `sessiond` (and its PTYs) died with the machine | Sessions created while the persistence build was running reappear under **Restorable (after restart)** — restore re-opens Claude with `--resume` or a shell with its command history. Sessions from before the build was deployed weren't recorded |
-| Wrong size / wrapping | Pane resized while backgrounded | Switch tabs or rotate to force a refit |
+| Wrong size / wrapping | Pane resized while backgrounded | Switch sessions or rotate to force a refit |
 | `npm install` errors on `node-pty` | Missing build toolchain | See prerequisites above |
 
 ## Security notes

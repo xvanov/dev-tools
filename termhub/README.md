@@ -153,8 +153,15 @@ running `update.ps1` survives the update.
   whether the tool itself changed, with the incoming commit list. **Update now** opens a
   terminal that runs the safe updater (see below). It also checks once a day in the background
   and highlights the button when an update is waiting.
-- Switch terminals via the sidebar or tabs. Closing a **tab** detaches (the session keeps
-  running); the **✕** next to a session **kills** it.
+- Switch terminals via the sidebar — the only place session control lives. The **✕** next
+  to a session **kills** it; there's no separate soft-close, so what you see is what happens.
+- **Collapse** (« in the sidebar header, desktop only) tucks the sidebar away for full-width
+  terminal real estate; a floating **»** button brings it back. Remembered across reloads.
+- **Paste or drag-and-drop a file onto a terminal** to get it onto the remote machine: an
+  image is staged onto that machine's own OS clipboard and pasted into the running agent
+  (Claude Code / opencode) exactly like a local screenshot paste would; any other file (PDF,
+  `.md`, `.txt`, …) is saved into the session's working directory and its path is typed into
+  the terminal input for you to use.
 - On mobile: tap **☰** for the session drawer, **＋** for a new terminal, and use the key bar
   at the bottom for `Esc` / `Ctrl` / `Tab` / arrows / `^C`. Tap **⌨** to bring the keyboard back.
 
@@ -189,7 +196,7 @@ On Linux set these with `systemctl --user edit termhub`; on Windows via `setx` +
 | `lib/recents.js` | Recent-directory persistence |
 | `lib/bind.js` | Tailscale-address detection |
 | `lib/paths.js` | Per-user data directory resolution |
-| `web/` | xterm.js single-page UI (sidebar, tabs, key bar, dialogs) + vendored xterm assets |
+| `web/` | xterm.js single-page UI (sidebar, key bar, dialogs) + vendored xterm assets |
 | `windows/start.ps1` | Boots both tiers and publishes the front via Tailscale Serve (run by the scheduled task) |
 | `windows/update.ps1` | Safe blue-green updater (run from any terminal; terminals survive) |
 | `windows/common.ps1` | Shared PowerShell helpers (state, pid files, health checks) |
@@ -206,6 +213,6 @@ On Linux set these with `systemctl --user edit termhub`; on Windows via `setx` +
 - **On iPhone the page zooms when typing** — inputs use 16px font to avoid this; if it still
   happens, ensure you're on the current build (hard-refresh the tab).
 - **Garbled output / wrong size** — the terminal refits on focus, rotate, and keyboard
-  show/hide; switch tabs or resize to force a refit.
+  show/hide; switch sessions or resize to force a refit.
 
 See [AGENT.md](./AGENT.md) for a deeper walkthrough.

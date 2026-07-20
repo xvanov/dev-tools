@@ -18,6 +18,7 @@
         <span class="brand">termhub</span>
         <span id="machine-name" class="machine-name">…</span>
         <button id="update-btn" title="Check for updates">⟳ Update</button>
+        <button id="sidebar-collapse" title="Collapse sidebar">&laquo;</button>
         <button id="sidebar-close" title="Close">✕</button>
       </div>
       <div id="version-line" title="current version"></div>
@@ -28,14 +29,16 @@
       <div class="sidebar-foot"><span id="status-line">connecting…</span></div>
     </aside>
 
+    <!-- Shown only on desktop while the sidebar is collapsed — the sidebar
+         itself is gone, so this floating button is the only way back. -->
+    <button id="sidebar-expand" title="Show sidebar">&raquo;</button>
+
     <main id="main">
       <div id="topbar">
         <button id="menu-btn" title="Menu">☰</button>
         <span id="active-title">termhub</span>
         <button id="topbar-new" title="New terminal">＋</button>
       </div>
-
-      <div id="tabbar"></div>
 
       <!-- Shown only on desktop while the active terminal runs a full-screen
            mouse-mode app (Claude Code, vim, less), where a plain drag is sent to

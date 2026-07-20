@@ -3,8 +3,17 @@
 const os = require('os');
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const pty = require('node-pty');
 const { defaultShell } = require('./shell');
+const { transcriptPath, readLastModel, formatModelName } = require('./claudeModel');
+const opencodeModel = require('./opencodeModel');
+
+// How often to actually shell out to `opencode export` to refresh a session's
+// model (lib/opencodeModel.js's getModel is a ~1.4s subprocess spawn — far too
+// slow to call on every 2s sidebar poll). currentModel() serves the cached
+// value between refreshes.
+const OPENCODE_MODEL_REFRESH_MS = 10000;
 
 // Resolve a requested working directory: expand a leading ~, and fall back to
 // the home directory (with an explanatory notice) when it's missing or not a
@@ -27,12 +36,32 @@ function resolveCwd(input) {
 const DEFAULT_SCROLLBACK_BYTES = Number(process.env.TERMHUB_SCROLLBACK_BYTES) || 2 * 1024 * 1024;
 
 // Classify a session by its initial command so the archive knows how to restore
-// it: a `claude` invocation resumes via `--resume`; anything else is a plain
-// shell we rebuild by replaying recorded history. Matches `claude`, `claude.exe`,
-// a path ending in claude, or a quoted form — but not `claude-foo` or `myclaude`.
+// it: a `claude` invocation resumes via `--resume`, an `opencode` one via
+// `--session`/`--continue`; anything else is a plain shell we rebuild by
+// replaying recorded history. Matches the bare command, `<exe>.exe`/`.cmd`, a
+// path ending in it, or a quoted form — but not `claude-foo` or `myclaude`.
 function classifyCommand(command) {
   if (!command) return 'shell';
-  return /(^|[\\/\s"'])claude(\.exe|\.cmd)?(?=$|[\s"'])/i.test(command) ? 'claude' : 'shell';
+  if (/(^|[\\/\s"'])claude(\.exe|\.cmd)?(?=$|[\s"'])/i.test(command)) return 'claude';
+  if (/(^|[\\/\s"'])opencode(\.exe|\.cmd)?(?=$|[\s"'])/i.test(command)) return 'opencode';
+  return 'shell';
+}
+
+// True if the command already pins down its own Claude session identity —
+// termhub shouldn't guess a --session-id on top of a --resume/--continue/-c/-r,
+// since the resulting conversation id isn't ours to predict.
+function hasOwnSessionIdentity(command) {
+  return /(^|\s)(--session-id|--resume|-r|--continue|-c)(\s|=|$)/.test(command);
+}
+
+// Insert `--session-id <uuid>` right after the claude executable token (same
+// position classifyCommand's own regex matches), so it lands before any
+// trailing prompt argument rather than tacked onto the end of the string.
+function injectSessionId(command, uuid) {
+  return command.replace(
+    /(^|[\\/\s"'])(claude(?:\.exe|\.cmd)?)(?=$|[\s"'])/i,
+    (m, pre, exe) => `${pre}${exe} --session-id ${uuid}`
+  );
 }
 
 // Strip leftover control bytes from an assembled input line.
@@ -65,7 +94,7 @@ function genId() {
 }
 
 class Session {
-  constructor({ cwd, command, title, cols, rows, maxBytes, onExit, onInputLine } = {}) {
+  constructor({ cwd, command, title, cols, rows, maxBytes, onExit, onInputLine, agentSessionId } = {}) {
     this.id = genId();
     this.shell = defaultShell();
     const resolved = resolveCwd(cwd);
@@ -74,6 +103,31 @@ class Session {
     this.cwdFallback = !!resolved.notice;
     this.command = command && String(command).trim() ? String(command).trim() : null;
     this.kind = classifyCommand(this.command);
+
+    // Track the launched agent's own conversation/session id so we can later
+    // read which model it's using (see currentModel()). `agentSessionId` passed
+    // in means a restore already knows it; otherwise:
+    //  - claude: generate a UUID and splice `--session-id <uuid>` into the
+    //    command so Claude writes its transcript to a file we know up front.
+    //  - opencode: there's no such flag (its `-s/--session` only continues an
+    //    EXISTING session), so instead kick off a best-effort background
+    //    discovery that asks opencode's own CLI which session it just created
+    //    in this directory (see lib/opencodeModel.js).
+    this.agentSessionId = agentSessionId || null;
+    this._discoveryAborted = false;
+    this._opencodeModelCache = { checkedAt: 0, model: null, modelLabel: null };
+    if (this.kind === 'claude' && !this.agentSessionId && !hasOwnSessionIdentity(this.command)) {
+      const uuid = crypto.randomUUID();
+      this.command = injectSessionId(this.command, uuid);
+      this.agentSessionId = uuid;
+    } else if (this.kind === 'opencode' && !this.agentSessionId) {
+      const spawnedAtMs = Date.now(); // this.created isn't assigned yet at this point in the constructor
+      opencodeModel.discoverSessionId(this.cwd, spawnedAtMs, () => this._discoveryAborted)
+        .then((id) => { if (id && !this._discoveryAborted) this.agentSessionId = id; })
+        .catch(() => {});
+    }
+    this._modelCache = { mtimeMs: -1, model: null, modelLabel: null };
+
     this.cols = cols || 80;
     this.rows = rows || 24;
     this.title = title || this.command || baseName(this.shell);
@@ -238,10 +292,64 @@ class Session {
       command: this.command,
       shell: this.shell,
       kind: this.kind,
+      agentSessionId: this.agentSessionId,
       created: this.created,
       endedAt: null,
       history: [],
     };
+  }
+
+  // Which model this session is currently using — dispatches per agent kind,
+  // since each exposes that very differently (see currentModel()'s two
+  // implementations below).
+  currentModel() {
+    if (this.kind === 'claude') return this._claudeModel();
+    if (this.kind === 'opencode') return this._opencodeModel();
+    return { model: null, modelLabel: null };
+  }
+
+  // Read straight from Claude's own transcript file — the CLI doesn't expose
+  // this any other way. Cached on the transcript's mtime so an idle session
+  // (polled every couple seconds by the sidebar) doesn't re-read/re-parse the
+  // file on every call.
+  _claudeModel() {
+    if (!this.agentSessionId) return { model: null, modelLabel: null };
+    const file = transcriptPath(this.cwd, this.agentSessionId);
+    let mtimeMs;
+    try {
+      mtimeMs = fs.statSync(file).mtimeMs;
+    } catch {
+      return { model: null, modelLabel: null }; // not written yet
+    }
+    if (mtimeMs !== this._modelCache.mtimeMs) {
+      const raw = readLastModel(file);
+      this._modelCache = { mtimeMs, model: raw, modelLabel: formatModelName(raw) };
+    }
+    return { model: this._modelCache.model, modelLabel: this._modelCache.modelLabel };
+  }
+
+  // opencode has no local file to tail — reading its model means shelling out
+  // to `opencode export` (~1.4s, measured), so this always returns whatever's
+  // cached and only kicks off a background refresh when the cache goes stale.
+  // Never awaits the subprocess inline: info() (which calls this) is called
+  // synchronously from sessiond's request handlers.
+  _opencodeModel() {
+    if (!this.agentSessionId) return { model: null, modelLabel: null };
+    const cache = this._opencodeModelCache;
+    if (!this._opencodeRefreshing && Date.now() - cache.checkedAt > OPENCODE_MODEL_REFRESH_MS) {
+      this._opencodeRefreshing = true;
+      opencodeModel.getModel(this.cwd, this.agentSessionId)
+        .then((info) => {
+          this._opencodeModelCache = {
+            checkedAt: Date.now(),
+            model: info ? info.id : null,
+            modelLabel: info ? opencodeModel.formatModelLabel(info.id) : null,
+          };
+        })
+        .catch(() => { this._opencodeModelCache = { ...this._opencodeModelCache, checkedAt: Date.now() }; })
+        .finally(() => { this._opencodeRefreshing = false; });
+    }
+    return { model: cache.model, modelLabel: cache.modelLabel };
   }
 
   resize(cols, rows) {
@@ -263,6 +371,7 @@ class Session {
   }
 
   kill() {
+    this._discoveryAborted = true; // stop an in-flight opencode session-id discovery loop
     if (this.alive) {
       try {
         this.pty.kill();
@@ -289,6 +398,7 @@ class Session {
       // (or any active process) streams output continuously; an idle prompt is
       // silent. Good enough to show a "working" dot vs nothing when idle.
       busy: this.alive && (Date.now() - this.lastActivity) < 1500,
+      ...this.currentModel(), // { model, modelLabel } — null/null for non-claude sessions
     };
   }
 }

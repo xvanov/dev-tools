@@ -21,6 +21,7 @@ const KEY_SEQ = {
 
 const state = {
   machine: '',
+  platform: '',    // sessiond host's process.platform, from /api/info
   sessions: [],
   restorable: [],  // sessions from a previous run (e.g. before a reboot)
   open: new Map(), // id -> term object
@@ -71,14 +72,14 @@ async function api(path, opts) {
 
 // ---- data refresh ---------------------------------------------------------
 
-// A cheap fingerprint of everything the sidebar/tabs render from. The 2s poll
-// rebuilt the whole sidebar + tab DOM every tick even when nothing changed —
+// A cheap fingerprint of everything the sidebar renders from. The 2s poll
+// rebuilt the whole sidebar DOM every tick even when nothing changed —
 // steady-state layout/paint churn that competed with the terminal's own redraws
 // and showed up as input that "spazzes out" for a moment after a tap. Now we
 // only rebuild when this signature actually changes.
 function uiSignature() {
   const live = state.sessions
-    .map((s) => `${s.id}:${s.alive ? 1 : 0}:${s.busy ? 1 : 0}:${s.title || ''}`).join('|');
+    .map((s) => `${s.id}:${s.alive ? 1 : 0}:${s.busy ? 1 : 0}:${s.title || ''}:${s.modelLabel || ''}`).join('|');
   const rest = state.restorable
     .map((r) => `${r.id}:${r.kind}:${(r.history || []).length}`).join('|');
   const open = [...state.open.values()].map((t) => `${t.id}:${t.title || ''}`).join(',');
@@ -105,7 +106,7 @@ function refresh() {
       $('#status-line').textContent = 'server unreachable';
     }
     const sig = uiSignature();
-    if (sig !== lastUiSig) { lastUiSig = sig; renderSessions(); renderTabs(); }
+    if (sig !== lastUiSig) { lastUiSig = sig; renderSessions(); updateChrome(); }
   })().finally(() => { refreshing = null; });
   return refreshing;
 }
@@ -125,14 +126,22 @@ function renderSessions() {
     item.className = 'session-item' + (s.alive ? '' : ' dead')
       + (state.open.has(s.id) ? ' open' : '')
       + (s.id === state.activeId ? ' active' : '');
+    // Claude sessions get a second, dim line under the title showing which
+    // model they're currently talking to (read from Claude's own transcript —
+    // see lib/claudeModel.js). Absent for shells and for Claude sessions whose
+    // model isn't known yet (just spawned, or launched with a hand-typed
+    // --resume/--continue whose resulting conversation id we can't predict).
     item.innerHTML =
       `<span class="status${s.busy ? ' busy' : ''}" title="${s.busy ? 'working' : 'idle'}"></span>` +
-      `<span class="title">${escapeHtml(s.title || s.id)}</span>` +
+      `<span class="title-wrap">` +
+        `<span class="title">${escapeHtml(s.title || s.id)}</span>` +
+        (s.modelLabel ? `<span class="model-badge">${escapeHtml(s.modelLabel)}</span>` : '') +
+      `</span>` +
       `<button class="rename" title="Rename session">&#9998;</button>` +
       `<button class="kill" title="Kill session">&#10005;</button>`;
     // The whole row opens the terminal — clicking anywhere but the two buttons
     // (which stop propagation) counts, so you don't have to hit the text exactly.
-    item.onclick = () => { openTerminal(s.id, s.title); if (isMobile()) closeDrawer(); };
+    item.onclick = () => { openTerminal(s.id, s.title, s.kind); if (isMobile()) closeDrawer(); };
     item.querySelector('.rename').onclick = (ev) => { ev.stopPropagation(); renameSession(s.id, s.title); };
     item.querySelector('.kill').onclick = (ev) => { ev.stopPropagation(); killSession(s.id); };
     list.appendChild(item);
@@ -148,22 +157,28 @@ function renderSessions() {
 }
 
 // A session that survived a reboot only as metadata. Restore re-spawns it:
-// Claude sessions with `--resume`, shell sessions with their recorded command
-// history printed so the user can rebuild state by hand. ✕ forgets it.
+// Claude sessions with `--resume`, opencode sessions with `--session`/
+// `--continue`, shell sessions with their recorded command history printed so
+// the user can rebuild state by hand. ✕ forgets it.
+const RESTORE_KIND_META = {
+  claude: { icon: '◈', label: 'Claude session — resumes' },
+  opencode: { icon: '◆', label: 'opencode session — resumes' },
+};
 function renderRestorable(r) {
-  const isClaude = r.kind === 'claude';
+  const meta = RESTORE_KIND_META[r.kind] || { icon: '$', label: 'shell session' };
+  const isShell = !RESTORE_KIND_META[r.kind];
   const item = document.createElement('div');
   item.className = 'restore-item';
   item.innerHTML =
     `<div class="restore-row">` +
-      `<span class="restore-kind ${isClaude ? 'claude' : 'shell'}" title="${isClaude ? 'Claude session — resumes' : 'shell session'}">${isClaude ? '◈' : '$'}</span>` +
+      `<span class="restore-kind ${isShell ? 'shell' : r.kind}" title="${meta.label}">${meta.icon}</span>` +
       `<span class="restore-title">${escapeHtml(r.title || r.id)}</span>` +
       `<button class="restore-go" title="Restore session">&#8635;</button>` +
       `<button class="restore-forget" title="Forget">&#10005;</button>` +
     `</div>` +
     `<div class="restore-sub" title="${escapeHtml(r.cwd || '')}">${escapeHtml(r.cwd || '')}</div>`;
 
-  if (!isClaude && r.history && r.history.length) {
+  if (isShell && r.history && r.history.length) {
     const n = r.history.length;
     const label = (open) => `${open ? '▾' : '▸'} ${n} command${n === 1 ? '' : 's'}`;
     const toggle = document.createElement('button');
@@ -183,18 +198,13 @@ function renderRestorable(r) {
   return item;
 }
 
-function renderTabs() {
-  const bar = $('#tabbar');
-  bar.innerHTML = '';
-  for (const [id, t] of state.open) {
-    const tab = document.createElement('div');
-    tab.className = 'tab' + (id === state.activeId ? ' active' : '');
-    tab.innerHTML = `<span>${escapeHtml(t.title || id)}</span>` +
-      `<button class="tab-close" title="Close tab">&#10005;</button>`;
-    tab.onclick = () => setActive(id);
-    tab.querySelector('.tab-close').onclick = (ev) => { ev.stopPropagation(); closeTab(id); };
-    bar.appendChild(tab);
-  }
+// The top tab strip is gone — the sidebar's session list is now the only way
+// to switch terminals (it already showed an "open" indicator per session
+// independent of any tab strip, and its ✕ actually kills the session, unlike
+// the old tab-close which only detached — a common point of confusion). This
+// just keeps the mobile topbar's title and the terminal area's empty-state in
+// sync with what's open.
+function updateChrome() {
   $('#empty-state').classList.toggle('hidden', state.open.size > 0);
   const active = state.open.get(state.activeId);
   $('#active-title').textContent = active ? (active.title || active.id) : 'termhub';
@@ -202,7 +212,7 @@ function renderTabs() {
 
 // ---- terminal lifecycle ---------------------------------------------------
 
-function openTerminal(id, title) {
+function openTerminal(id, title, kind) {
   if (state.open.has(id)) { setActive(id); return; }
 
   const pane = document.createElement('div');
@@ -254,9 +264,10 @@ function openTerminal(id, title) {
     });
   } catch {}
 
-  const t = { id, title, term, fit, pane, ws: null, attempts: 0, closing: false, reconnectTimer: null, ro: null };
+  const t = { id, title, kind, term, fit, pane, ws: null, attempts: 0, closing: false, reconnectTimer: null, ro: null };
   state.open.set(id, t);
   wireTouchScroll(t);
+  wireImagePaste(t);
 
   // Keep the PTY in lock-step with the rendered size: any layout change (rotate,
   // keyboard open/close, font reflow) refits and pushes a resize. Without this
@@ -283,7 +294,7 @@ function openTerminal(id, title) {
   // very first thing the terminal knows is its real size.
   setActive(id);
   requestAnimationFrame(() => { if (t.fit) { try { t.fit.fit(); } catch {} } connect(t); });
-  renderTabs();
+  updateChrome();
   renderSessions();
 }
 
@@ -435,17 +446,132 @@ function connect(t) {
   ws.onerror = () => { try { ws.close(); } catch {} };
 }
 
+// ---- file paste / drop (images + generic attachments) ----------------------
+// A screenshot (or any other file) copied on THIS (browser) machine can't reach
+// a remote terminal the way pasted text can — there's no character stream to
+// carry file bytes. Both paths below upload the file to sessiond so it lands
+// on the REMOTE host, then get it in front of the running agent:
+//  - images: staged onto the remote's own OS clipboard, then we fire whichever
+//    hotkey the running agent listens for to pick up a clipboard image, so it
+//    attaches exactly as a local paste would. Claude Code uses Alt+V on native
+//    Windows (Ctrl+V is reserved there for normal text paste) and Ctrl+V
+//    elsewhere; opencode uses Ctrl+V on every OS (confirmed against a real
+//    install — no platform split).
+//  - everything else (PDF, .md, .txt, …): saved into the session's own working
+//    directory, then its path is typed into the terminal input — same as what
+//    a native OS drag-and-drop of a file onto a terminal does — so the running
+//    shell or agent can pick it up by reference.
+const IMAGE_TYPE_RE = /^image\//;
+
+function pasteImageSeq(t) {
+  if (t && t.kind === 'opencode') return '\x16';
+  return state.platform === 'win32' ? '\x1bv' : '\x16';
+}
+
+function filesFromClipboard(cd) {
+  if (!cd || !cd.items) return [];
+  const out = [];
+  for (const item of cd.items) {
+    if (item.kind !== 'file') continue;
+    const file = item.getAsFile();
+    if (file) out.push(file);
+  }
+  return out;
+}
+
+function filesFromDrop(dt) {
+  if (!dt || !dt.files) return [];
+  return Array.from(dt.files);
+}
+
+async function sendImage(t, file) {
+  try {
+    const res = await fetch(`/api/sessions/${encodeURIComponent(t.id)}/clipboard-image`, {
+      method: 'POST',
+      headers: { 'Content-Type': file.type || 'image/png' },
+      body: file,
+    });
+    // Success or failure, sessiond prints a notice straight into the terminal —
+    // only fire the paste hotkey once the clipboard is actually staged.
+    if (res.ok) sendInput(t, pasteImageSeq(t));
+  } catch {
+    // network hiccup — nothing more to do; the terminal shows no confirmation,
+    // which is enough of a signal that the paste didn't happen.
+  }
+  t.term.focus();
+}
+
+// Upload a non-image file to sessiond, which drops it into the session's cwd
+// on the REMOTE machine, then type its path into the terminal input line
+// (without pressing Enter) so the user can finish the prompt around it.
+async function sendFile(t, file) {
+  try {
+    const res = await fetch(`/api/sessions/${encodeURIComponent(t.id)}/upload-file`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': file.type || 'application/octet-stream',
+        'X-File-Name': encodeURIComponent(file.name || 'upload'),
+      },
+      body: file,
+    });
+    // sessiond prints its own success/failure notice into the terminal; only
+    // insert the path once the file has actually landed there.
+    if (res.ok) {
+      const body = await res.json().catch(() => null);
+      if (body && body.path) {
+        const needsQuoting = /\s/.test(body.path);
+        sendInput(t, needsQuoting ? `"${body.path}" ` : `${body.path} `);
+      }
+    }
+  } catch {
+    // network hiccup — nothing more to do; the terminal shows no confirmation,
+    // which is enough of a signal that the upload didn't happen.
+  }
+  t.term.focus();
+}
+
+function sendDroppedFile(t, file) {
+  if (IMAGE_TYPE_RE.test(file.type)) sendImage(t, file);
+  else sendFile(t, file);
+}
+
+// Capture in the CAPTURE phase so this runs before xterm's own paste listener
+// on its hidden textarea — for a file we fully take over the event; for plain
+// text (the common case) we do nothing and let xterm's native handling proceed.
+function wireImagePaste(t) {
+  t.pane.addEventListener('paste', (e) => {
+    const files = filesFromClipboard(e.clipboardData);
+    if (!files.length) return;
+    e.preventDefault();
+    e.stopPropagation();
+    for (const file of files) sendDroppedFile(t, file);
+  }, true);
+
+  t.pane.addEventListener('dragover', (e) => { e.preventDefault(); });
+  t.pane.addEventListener('drop', (e) => {
+    const files = filesFromDrop(e.dataTransfer);
+    if (!files.length) return;
+    e.preventDefault();
+    for (const file of files) sendDroppedFile(t, file);
+  });
+}
+
 function setActive(id) {
   state.activeId = id;
   for (const [key, t] of state.open) t.pane.classList.toggle('active', key === id);
   const t = state.open.get(id);
   if (t) requestAnimationFrame(() => { if (t.fit) { try { t.fit.fit(); } catch {} } t.term.focus(); });
-  renderTabs();
+  updateChrome();
   renderSessions();
   updateMouseHint();
 }
 
-function closeTab(id) {
+// Local-only cleanup after a session is killed server-side: tear down its
+// xterm instance and websocket and drop it from state.open. No longer exposed
+// as its own user-facing action (there used to be a top tab-bar ✕ for this —
+// removed because "closes the tab but doesn't kill the session" was exactly
+// the confusing half-close the sidebar's ✕ didn't have).
+function detachTerminal(id) {
   const t = state.open.get(id);
   if (!t) return;
   t.closing = true;
@@ -461,13 +587,13 @@ function closeTab(id) {
     state.activeId = next.done ? null : next.value;
     if (state.activeId) setActive(state.activeId);
   }
-  renderTabs();
+  updateChrome();
   renderSessions();
 }
 
 async function killSession(id) {
   try { await api(`/api/sessions/${encodeURIComponent(id)}`, { method: 'DELETE' }); } catch {}
-  if (state.open.has(id)) closeTab(id);
+  if (state.open.has(id)) detachTerminal(id);
   refresh();
 }
 
@@ -478,7 +604,7 @@ async function restoreSession(id) {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ cols: 80, rows: 24 }),
     });
     await refresh();
-    openTerminal(session.id, session.title);
+    openTerminal(session.id, session.title, session.kind);
     if (isMobile()) closeDrawer();
   } catch (e) {
     window.alert('Restore failed: ' + e.message);
@@ -501,7 +627,7 @@ async function renameSession(id, current) {
       method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title }),
     });
   } catch {}
-  const t = state.open.get(id);        // keep the open tab's label in sync
+  const t = state.open.get(id);        // keep the open terminal's label in sync
   if (t) t.title = title;
   refresh();
 }
@@ -652,6 +778,8 @@ const COMMAND_PRESETS = [
   'claude --dangerously-skip-permissions --resume',
   'claude',
   'claude --resume',
+  'opencode',
+  'opencode --auto',
 ];
 
 let cwdCombo = null;
@@ -709,7 +837,7 @@ async function submitDialog() {
     });
     closeDialog();
     await refresh();
-    openTerminal(session.id, session.title);
+    openTerminal(session.id, session.title, session.kind);
     if (isMobile()) closeDrawer();
   } catch (e) {
     $('#dlg-error').textContent = e.message;
@@ -818,7 +946,7 @@ async function applyUpdate() {
     });
     closeUpdatePanel();
     await refresh();
-    openTerminal(session.id, session.title);
+    openTerminal(session.id, session.title, session.kind);
     if (isMobile()) closeDrawer();
   } catch (e) {
     $('#update-status').className = 'warn';
@@ -831,6 +959,16 @@ async function applyUpdate() {
 
 function openDrawer() { document.body.classList.add('drawer-open'); }
 function closeDrawer() { document.body.classList.remove('drawer-open'); }
+
+// ---- sidebar collapse (desktop) --------------------------------------------
+// Desktop-only max-real-estate toggle — mobile already keeps the sidebar out of
+// the way by default via the drawer above. Remembered across reloads the same
+// way the mouse-select hint dismissal is (see HINT_DISMISSED below).
+const SIDEBAR_COLLAPSED_KEY = 'termhub-sidebar-collapsed';
+function setSidebarCollapsed(on) {
+  document.body.classList.toggle('sidebar-collapsed', on);
+  try { localStorage.setItem(SIDEBAR_COLLAPSED_KEY, on ? '1' : '0'); } catch {}
+}
 
 // ---- misc -----------------------------------------------------------------
 
@@ -877,6 +1015,8 @@ function wireEvents() {
   $('#menu-btn').onclick = openDrawer;
   $('#sidebar-close').onclick = closeDrawer;
   $('#scrim').onclick = closeDrawer;
+  $('#sidebar-collapse').onclick = () => setSidebarCollapsed(true);
+  $('#sidebar-expand').onclick = () => setSidebarCollapsed(false);
   $('#dlg-cancel').onclick = closeDialog;
   $('#dlg-open').onclick = submitDialog;
   $('#dialog-backdrop').onclick = (e) => { if (e.target.id === 'dialog-backdrop') closeDialog(); };
@@ -915,6 +1055,14 @@ function wireEvents() {
     window.visualViewport.addEventListener('scroll', syncViewportHeight);
   }
 }
+
+// Learn the sessiond host's OS once at startup — determines which hotkey
+// triggers Claude Code's clipboard-image paste (see wireImagePaste above).
+api('/api/info').then((info) => { state.platform = info.platform || ''; }).catch(() => {});
+
+// Restore a persisted sidebar-collapse choice — desktop-only concept (see
+// setSidebarCollapsed above), so it's a no-op on mobile regardless of what's stored.
+if (!isMobile() && localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === '1') setSidebarCollapsed(true);
 
 wireEvents();
 syncViewportHeight();
