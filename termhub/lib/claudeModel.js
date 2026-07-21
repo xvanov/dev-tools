@@ -11,7 +11,14 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-const TAIL_BYTES = 8192; // plenty for the last couple of turns without reading a whole long transcript
+// Progressively larger tail windows. A single Claude turn — thinking, tool
+// calls, tool results, or an inline image attachment — can be tens of KB to
+// megabytes, so a small fixed window often lands entirely inside one line and
+// sees no complete assistant entry at all (measured: an 8 KB window missed the
+// model on ~22% of real transcripts). Start small for the common case and grow
+// only when the model isn't yet in view, up to reading the whole file. Cheap in
+// practice: readLastModel runs only when the transcript's mtime changes.
+const TAIL_STEPS_BYTES = [65536, 524288, 4194304];
 
 // Claude Code's own project-folder naming: every non-alphanumeric character
 // (path separators, drive-letter colon, dots, …) becomes a hyphen. Verified
@@ -25,9 +32,24 @@ function transcriptPath(cwd, claudeSessionId) {
   return path.join(os.homedir(), '.claude', 'projects', projectDirFor(cwd), `${claudeSessionId}.jsonl`);
 }
 
-// Scan the tail of the transcript for the most recent assistant turn's model.
-// Reads only the last TAIL_BYTES (these files grow large over a long session)
-// rather than the whole thing every time this is polled.
+// Scan the tail of the transcript for the most recent assistant turn's model,
+// reading progressively larger windows rather than the whole file up front
+// (these grow large over a long session). Each window is read from the file's
+// end; the first (partial) line of a window that doesn't start at byte 0 is
+// discarded as it may be a fragment cut by the window boundary.
+function findModelInBuffer(buf, windowStartsAtFileStart) {
+  const lines = buf.toString('utf8').split('\n');
+  const lastIdx = windowStartsAtFileStart ? 0 : 1; // skip a boundary-truncated first line
+  for (let i = lines.length - 1; i >= lastIdx; i--) {
+    const line = lines[i].trim();
+    if (!line) continue;
+    let entry;
+    try { entry = JSON.parse(line); } catch { continue; }
+    if (entry.type === 'assistant' && entry.message && entry.message.model) return entry.message.model;
+  }
+  return null;
+}
+
 function readLastModel(filePath) {
   let fd;
   try {
@@ -37,16 +59,13 @@ function readLastModel(filePath) {
   }
   try {
     const size = fs.fstatSync(fd).size;
-    const start = Math.max(0, size - TAIL_BYTES);
-    const buf = Buffer.alloc(size - start);
-    fs.readSync(fd, buf, 0, buf.length, start);
-    const lines = buf.toString('utf8').split('\n');
-    for (let i = lines.length - 1; i >= 0; i--) {
-      const line = lines[i].trim();
-      if (!line) continue;
-      let entry;
-      try { entry = JSON.parse(line); } catch { continue; } // a truncated first line from the tail cut, e.g. — skip it
-      if (entry.type === 'assistant' && entry.message && entry.message.model) return entry.message.model;
+    for (const window of TAIL_STEPS_BYTES) {
+      const start = Math.max(0, size - window);
+      const buf = Buffer.alloc(size - start);
+      fs.readSync(fd, buf, 0, buf.length, start);
+      const model = findModelInBuffer(buf, start === 0);
+      if (model) return model;
+      if (start === 0) break; // already read the whole file; no larger window would help
     }
     return null;
   } catch {
