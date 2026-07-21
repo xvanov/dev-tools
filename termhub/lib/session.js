@@ -6,7 +6,7 @@ const path = require('path');
 const crypto = require('crypto');
 const pty = require('node-pty');
 const { defaultShell } = require('./shell');
-const { transcriptPath, readLastModel, formatModelName } = require('./claudeModel');
+const { transcriptPath, findActiveTranscript, readLastModel, formatModelName } = require('./claudeModel');
 const opencodeModel = require('./opencodeModel');
 
 // How often to actually shell out to `opencode export` to refresh a session's
@@ -126,7 +126,7 @@ class Session {
         .then((id) => { if (id && !this._discoveryAborted) this.agentSessionId = id; })
         .catch(() => {});
     }
-    this._modelCache = { mtimeMs: -1, model: null, modelLabel: null };
+    this._modelCache = { file: null, mtimeMs: -1, model: null, modelLabel: null };
 
     this.cols = cols || 80;
     this.rows = rows || 24;
@@ -303,9 +303,10 @@ class Session {
   // since each exposes that very differently (see currentModel()'s two
   // implementations below).
   currentModel() {
-    if (this.kind === 'claude') return this._claudeModel();
     if (this.kind === 'opencode') return this._opencodeModel();
-    return { model: null, modelLabel: null };
+    // claude sessions, and shell sessions that may be running `claude` by hand
+    // (the transcript fallback below only fires when one actually is).
+    return this._claudeModel();
   }
 
   // Read straight from Claude's own transcript file — the CLI doesn't expose
@@ -313,17 +314,31 @@ class Session {
   // (polled every couple seconds by the sidebar) doesn't re-read/re-parse the
   // file on every call.
   _claudeModel() {
-    if (!this.agentSessionId) return { model: null, modelLabel: null };
-    const file = transcriptPath(this.cwd, this.agentSessionId);
+    // Preferred source: the transcript for the session id termhub itself pinned
+    // via `--session-id` at launch. Absent for shell sessions and for claude
+    // commands that carried their own --resume/-c id — those fall back to the
+    // cwd's active transcript (see findActiveTranscript), so a hand-launched
+    // `claude` in any terminal still gets a badge.
+    let file = null;
+    if (this.agentSessionId) {
+      const f = transcriptPath(this.cwd, this.agentSessionId);
+      try { fs.statSync(f); file = f; } catch { file = null; } // not written yet
+    }
+    if (!file) {
+      const active = findActiveTranscript(this.cwd, this.created);
+      if (active) file = active.file;
+    }
+    if (!file) return { model: null, modelLabel: null };
+
     let mtimeMs;
     try {
       mtimeMs = fs.statSync(file).mtimeMs;
     } catch {
-      return { model: null, modelLabel: null }; // not written yet
+      return { model: null, modelLabel: null };
     }
-    if (mtimeMs !== this._modelCache.mtimeMs) {
+    if (file !== this._modelCache.file || mtimeMs !== this._modelCache.mtimeMs) {
       const raw = readLastModel(file);
-      this._modelCache = { mtimeMs, model: raw, modelLabel: formatModelName(raw) };
+      this._modelCache = { file, mtimeMs, model: raw, modelLabel: formatModelName(raw) };
     }
     return { model: this._modelCache.model, modelLabel: this._modelCache.modelLabel };
   }

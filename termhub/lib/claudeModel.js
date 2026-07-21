@@ -32,6 +32,32 @@ function transcriptPath(cwd, claudeSessionId) {
   return path.join(os.homedir(), '.claude', 'projects', projectDirFor(cwd), `${claudeSessionId}.jsonl`);
 }
 
+// Fallback for when termhub didn't launch claude itself — a plain shell session
+// where the user ran `claude` by hand, or a claude command that pinned its own
+// --resume/-c/-r id we can't predict. There's no session id to map to a
+// transcript, so attribute the cwd instead: Claude Code files every
+// conversation under ~/.claude/projects/<encoded cwd>/, so the most-recently-
+// written *.jsonl there is almost certainly the claude running in this
+// directory now. `minMtimeMs` (the session's start time) rejects transcripts
+// that predate this terminal — those belong to some earlier/other session, not
+// this one — which is what keeps a bare shell from wearing a stale badge.
+// Returns { file, mtimeMs } or null.
+function findActiveTranscript(cwd, minMtimeMs) {
+  const dir = path.join(os.homedir(), '.claude', 'projects', projectDirFor(cwd));
+  let entries;
+  try { entries = fs.readdirSync(dir); } catch { return null; }
+  let best = null;
+  for (const name of entries) {
+    if (!name.endsWith('.jsonl')) continue;
+    let mtimeMs;
+    try { mtimeMs = fs.statSync(path.join(dir, name)).mtimeMs; } catch { continue; }
+    if (!best || mtimeMs > best.mtimeMs) best = { file: path.join(dir, name), mtimeMs };
+  }
+  if (!best) return null;
+  if (minMtimeMs && best.mtimeMs < minMtimeMs) return null;
+  return best;
+}
+
 // Scan the tail of the transcript for the most recent assistant turn's model,
 // reading progressively larger windows rather than the whole file up front
 // (these grow large over a long session). Each window is read from the file's
@@ -86,4 +112,4 @@ function formatModelName(raw) {
   return parts.length ? `${family} ${parts.join('.')}` : family;
 }
 
-module.exports = { transcriptPath, readLastModel, formatModelName };
+module.exports = { transcriptPath, findActiveTranscript, readLastModel, formatModelName };
