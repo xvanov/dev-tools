@@ -188,14 +188,40 @@ running `update.ps1` survives the update.
     immediately, rather than after a long upload.
   - Pasting text that happens to carry an image (copied out of a document or a web page) pastes
     the **text** — attach the image with 📎 if you wanted the picture.
-- **🔊 next to a session** arms spoken announcements for it (Claude sessions only). When that
-  session finishes a turn and is waiting on you, termhub speaks a short summary of what it said;
-  with more than one session armed, the summary is prefixed with the session's title so you know
+- **🔊 next to a session** arms spoken announcements for it (Claude sessions only — nothing
+  else writes a transcript to read, and the toggle says so if you tap it). When that session
+  finishes a turn and is waiting on you, termhub speaks a short summary of what it said; with
+  more than one session armed, the summary is prefixed with the session's title so you know
   who's talking. A session that starts working again cancels an announcement that hasn't been
   spoken yet. Toggling it off is immediate and forgets nothing else.
+- **Enable voice** — browsers (iOS Safari especially) refuse to play audio until you've tapped
+  something, so the first armed session puts an amber **Enable voice** strip above the key bar.
+  One tap unlocks audio for the rest of the page's life; until you tap it, the 🔊 toggles glow
+  amber to say *armed, but you won't hear it*. Announcements still appear as text.
+- **Hands-free replies.** After an announcement finishes speaking, termhub opens the microphone
+  on its own. Talk normally; what it hears appears live under the status line. When you stop,
+  it reads back the first few words — *"sending: yes, open a pull request…"* — and gives you
+  **three seconds** with a big red **Cancel** button to stop it. Saying "stop", "cancel",
+  "wait" or "no" does the same thing, and is caught as you say it rather than after. Cancelling
+  keeps what you said in an editable box, so you can fix a word and send rather than start over.
+  Otherwise the text is typed into that session and Enter is pressed for you.
+  - You get a short chime the instant a session finishes, ahead of the speech — writing the
+    summary can take several seconds, and the chime is how you know it's coming.
+  - The mic is never open while audio is playing (on Bluetooth headphones every switch flips
+    the audio route, so termhub does it as rarely as it can), and it closes itself after 45
+    seconds of silence rather than listening to an empty room. A toast tells you when it does.
+- **🎤 (key bar)** — talk to the session you're looking at without waiting to be asked. Tap
+  once to listen, again to stop. On a browser with no speech recognition it opens a text box
+  that sends the same way, so the button always does something.
 - On mobile: tap **☰** for the session drawer, **＋** for a new terminal, and use the key bar
   at the bottom for `Esc` / `Ctrl` / `Tab` / arrows / `^C` (swipe it sideways for `Paste` and
-  **⌨**, which brings the keyboard back). **📎** is pinned to the right of the bar, always visible.
+  **⌨**, which brings the keyboard back). **🎤** and **📎** are pinned to the right of the bar,
+  always visible.
+
+> **Voice input needs the HTTPS address.** Speech recognition is only exposed to a secure
+> origin, so on the plain `http://<tailnet-ip>:7000` URL you get announcements but no
+> microphone — termhub says so and shows you the `https://…:7443/` address to switch to. If
+> you have an old bookmark, this is why. (Clipboard paste has the same limitation.)
 
 ## Configuration
 

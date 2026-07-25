@@ -80,12 +80,16 @@ async function api(path, opts) {
 // only rebuild when this signature actually changes.
 function uiSignature() {
   const live = state.sessions
-    .map((s) => `${s.id}:${s.alive ? 1 : 0}:${s.busy ? 1 : 0}:${s.title || ''}:${s.modelLabel || ''}`).join('|');
+    .map((s) => `${s.id}:${s.alive ? 1 : 0}:${s.busy ? 1 : 0}:${s.title || ''}:${s.modelLabel || ''}:${voice.armed.has(s.id) ? 1 : 0}`).join('|');
   const rest = state.restorable
     .map((r) => `${r.id}:${r.kind}:${(r.history || []).length}`).join('|');
   const open = [...state.open.values()].map((t) => `${t.id}:${t.title || ''}`).join(',');
-  return `${state.activeId}||${live}||${rest}||${open}`;
+  return `${state.activeId}|${voice.unlocked ? 1 : 0}||${live}||${rest}||${open}`;
 }
+
+// Redraw the sidebar right now and keep the poll's change detector in step, so
+// the next 2 s tick doesn't immediately redraw it a second time.
+function syncSidebar() { renderSessions(); lastUiSig = uiSignature(); }
 
 let lastUiSig = '';
 let refreshing = null;
@@ -97,6 +101,12 @@ function refresh() {
       state.machine = s.machine || '';
       state.sessions = s.sessions || [];
       state.restorable = s.restorable || [];
+      // /api/sessions is the authority on which sessions are armed; the `armed`
+      // WS event only makes a change instant. Rebuilding here every poll means a
+      // missed socket message can't leave the 🔊 toggles lying. Non-Claude
+      // sessions are filtered out: they have no transcript, so an armed flag on
+      // one can only ever be a lie the sidebar would have to render.
+      voice.armed = new Set(state.sessions.filter((x) => x.voiceArmed && x.kind === 'claude').map((x) => x.id));
       $('#machine-name').textContent = state.machine;
       const n = state.sessions.length;
       const live = state.sessions.filter((x) => x.alive).length;
@@ -107,7 +117,7 @@ function refresh() {
       $('#status-line').textContent = 'server unreachable';
     }
     const sig = uiSignature();
-    if (sig !== lastUiSig) { lastUiSig = sig; renderSessions(); updateChrome(); }
+    if (sig !== lastUiSig) { lastUiSig = sig; renderSessions(); updateChrome(); renderVoice(); }
   })().finally(() => { refreshing = null; });
   return refreshing;
 }
@@ -132,17 +142,37 @@ function renderSessions() {
     // see lib/claudeModel.js). Absent for shells and for Claude sessions whose
     // model isn't known yet (just spawned, or launched with a hand-typed
     // --resume/--continue whose resulting conversation id we can't predict).
+    // 🔊 arms spoken announcements for the session. Only Claude sessions have a
+    // transcript to read, so on anything else it's dimmed — but still tappable,
+    // because a control that does nothing and says nothing is worse than one
+    // that explains itself.
+    const canSpeak = s.kind === 'claude';
+    // A non-Claude session can never announce anything, so never paint one as
+    // armed even if the API let something arm it.
+    const armed = canSpeak && voice.armed.has(s.id);
+    const voiceTitle = !canSpeak
+      ? 'Spoken announcements need a Claude session'
+      : armed
+        ? (voice.unlocked ? 'Speaking this session — tap to stop' : 'Armed, but audio is locked — tap "Enable voice" below')
+        : 'Speak this session when it needs you';
     item.innerHTML =
       `<span class="status${s.busy ? ' busy' : ''}" title="${s.busy ? 'working' : 'idle'}"></span>` +
       `<span class="title-wrap">` +
         `<span class="title">${escapeHtml(s.title || s.id)}</span>` +
         (s.modelLabel ? `<span class="model-badge">${escapeHtml(s.modelLabel)}</span>` : '') +
       `</span>` +
+      `<button class="voice${canSpeak ? '' : ' unsupported'}${armed ? (voice.unlocked ? ' armed' : ' armed locked') : ''}"` +
+        ` title="${escapeHtml(voiceTitle)}">&#128266;</button>` +
       `<button class="rename" title="Rename session">&#9998;</button>` +
       `<button class="kill" title="Kill session">&#10005;</button>`;
-    // The whole row opens the terminal — clicking anywhere but the two buttons
+    // The whole row opens the terminal — clicking anywhere but the buttons
     // (which stop propagation) counts, so you don't have to hit the text exactly.
     item.onclick = () => { openTerminal(s.id, s.title, s.kind); if (isMobile()) closeDrawer(); };
+    item.querySelector('.voice').onclick = (ev) => {
+      ev.stopPropagation();
+      if (!canSpeak) { toast('Spoken announcements only work for Claude sessions', 'err').close(4000); return; }
+      toggleVoiceArm(s.id, !armed);
+    };
     item.querySelector('.rename').onclick = (ev) => { ev.stopPropagation(); renameSession(s.id, s.title); };
     item.querySelector('.kill').onclick = (ev) => { ev.stopPropagation(); killSession(s.id); };
     list.appendChild(item);
@@ -1115,6 +1145,782 @@ async function applyUpdate() {
   }
 }
 
+// ---- voice: spoken announcements + hands-free replies -----------------------
+// Two halves that share one strip of UI:
+//   OUT — sessiond says an armed Claude session is waiting on you (`/ws/voice`),
+//         we chime, ask /api/tts for a WAV and play it.
+//   IN  — once the clip ends we open the mic, transcribe with the Web Speech
+//         API, read the first few words back, and after a 3 s undo window type
+//         the text into that session's terminal.
+//
+// Everything here is measured against the user's actual iPhone (iOS 18.7 /
+// Safari 26.5.2), and three of those measurements shape the whole design:
+//   1. Gesture-free `recognition.start()` works, so the loop can genuinely run
+//      hands-free — but the FIRST start of a page load costs 3.05 s, so we spend
+//      that inside the "Enable voice" tap.
+//   2. `onerror: 'aborted'` and `'no-speech'` are the normal rhythm of that loop
+//      (they fire whenever a recogniser is stopped or hears nothing), not
+//      failures. Treating them as failures kills the feature on the first quiet
+//      moment.
+//   3. `continuous` is ignored: each recognition is exactly one utterance, so we
+//      re-arm on every `onend`.
+// And one hardware fact: the user is on Bluetooth headphones, where opening the
+// mic flips iOS to the mono HFP route. Never hold the mic open while audio is
+// playing, and don't re-open it more often than the conversation needs.
+
+const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+
+// termhub answers on two URLs at once: plain HTTP on the tailnet IP, and HTTPS
+// via Tailscale Serve. Only the second is a secure context, and the Web Speech
+// API lives only there — so an old bookmark on the HTTP address can hear
+// announcements (an <audio> element doesn't care) but can never talk back.
+// Rather than let the mic silently do nothing, we say so and hand over the
+// address to switch to. navigator.clipboard has exactly the same constraint;
+// see execCopyFallback near the top of this file.
+const SERVE_HTTPS_PORT = 7443;   // the port Tailscale Serve publishes this host on
+const SECURE = window.isSecureContext !== false;
+const secureUrl = () => `https://${location.hostname}:${SERVE_HTTPS_PORT}${location.pathname}`;
+const canListen = () => !!SpeechRec && SECURE;
+
+// Matched against INTERIM results. The final transcript lands ~1.9 s after the
+// last word on device — most of a 3 s window — so waiting for it would make
+// saying "stop" useless.
+const ABORT_RE = /\b(stop|cancel|wait|no|nope|nevermind|never mind|hold on)\b/i;
+
+const UNDO_MS = 3000;
+// A ceiling on an open mic with nothing said. Because each recognition is one
+// utterance, an idle session would otherwise cycle the recogniser — and the
+// Bluetooth audio route — forever. Ends with a visible "tap 🎤" prompt.
+const LISTEN_IDLE_MS = 45000;
+const REARM_MS = 250;          // breathing room for iOS to release the mic
+// How long a freshly-opened mic is immune to a `busy` closing it (see onBusy).
+const BUSY_GRACE_MS = 2500;
+const VOICE_PING_MS = 25000;
+const SPOKEN_TURNS_MAX = 200;  // bound on the reconnect-dedupe set
+// Arming several already-idle sessions in a row makes the server announce each
+// one's last turn at once. Two summaries back to back is a briefing; four is
+// noise you tune out — past this the rest collapse into a single line.
+const QUEUE_SPEAK_MAX = 2;
+
+const voice = {
+  ws: null, attempts: 0, pingTimer: null, reconnectTimer: null,
+  unlocked: false,       // the one required user gesture has happened
+  pumping: false,        // guards the queue against two concurrent drains
+  ctx: null,             // AudioContext kept alive purely for the chime
+  audio: null,           // the single <audio> element every announcement uses
+  tts: { available: false, voice: '' },
+  armed: new Set(),      // session ids, mirrored from /api/sessions + `armed` events
+  queue: [],             // pending `waiting` messages, spoken one at a time
+  playing: false,
+  spokenTurns: new Set(),
+  pending: null,         // {sessionId, text, timer, endsAt} during the undo window
+  editing: null,         // {sessionId} while the aborted-text editor is open
+  status: '',
+  line: '',              // the 🔊/🎤 line under the status
+};
+
+const rec = {
+  sr: null,              // the live SpeechRecognition, or null between utterances
+  want: false,           // we want the mic open (survives across re-arms)
+  sessionId: null,       // where a transcript would be sent
+  idleUntil: 0,
+  idleTimer: null,
+  openedAt: 0,           // when this listening stretch began (see onBusy)
+  restartTimer: null,
+  errors: 0,             // consecutive REAL errors ('aborted'/'no-speech' don't count)
+  denied: false,
+  warmed: false,
+};
+
+// ---- audio out --------------------------------------------------------------
+
+// Real (silent) 8-bit PCM samples. Played through the very <audio> element every
+// announcement will use, from inside the unlock gesture — belt and braces over
+// the AudioContext ritual below, and cheaper than shipping an audio asset.
+function silentWav(ms) {
+  const rate = 8000;
+  const n = Math.round((rate * ms) / 1000);
+  const buf = new ArrayBuffer(44 + n);
+  const v = new DataView(buf);
+  const put = (off, s) => { for (let i = 0; i < s.length; i++) v.setUint8(off + i, s.charCodeAt(i)); };
+  put(0, 'RIFF'); v.setUint32(4, 36 + n, true); put(8, 'WAVEfmt ');
+  v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+  v.setUint32(24, rate, true); v.setUint32(28, rate, true);
+  v.setUint16(32, 1, true); v.setUint16(34, 8, true);
+  put(36, 'data'); v.setUint32(40, n, true);
+  new Uint8Array(buf, 44).fill(128); // 8-bit PCM silence is 0x80, not 0
+  return new Blob([buf], { type: 'audio/wav' });
+}
+
+// The chime is load-bearing, not decoration. From "Claude finished" to "audio
+// starts" is ~7.5 s whenever the turn is long enough to go through the
+// summariser model, which is the common case; seven seconds of dead air reads
+// as broken. So this fires synchronously the instant the event lands — before
+// the /api/tts round-trip, and independent of whatever the playback queue is
+// doing — and it's an oscillator rather than a file so there's nothing to load.
+function chime() {
+  const ctx = voice.ctx;
+  if (!ctx) return;
+  // iOS suspends the context when the tab is backgrounded. Nudging it is free,
+  // and the notes below are scheduled on the clock, so they land on resume.
+  if (ctx.state === 'suspended') { try { ctx.resume(); } catch {} }
+  try {
+    const t0 = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(880, t0);          // two quick notes, rising:
+    osc.frequency.setValueAtTime(1318.5, t0 + 0.09); // reads as "ready", not "error"
+    // Quiet, and shaped rather than square, because this fires often and lands
+    // straight in the user's headphones.
+    gain.gain.setValueAtTime(0.0001, t0);
+    gain.gain.exponentialRampToValueAtTime(0.07, t0 + 0.012);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.18);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start(t0);
+    osc.stop(t0 + 0.2);
+  } catch {}
+}
+
+// The one gesture iOS demands. Must stay fully synchronous: every unlock here
+// only counts while we're still inside the tap's call stack.
+function enableVoice() {
+  const Ctx = window.AudioContext || window.webkitAudioContext;
+  if (Ctx && !voice.ctx) { try { voice.ctx = new Ctx(); } catch {} }
+  if (voice.ctx) {
+    try { voice.ctx.resume(); } catch {}
+    // Producing one buffer inside a gesture is what flips the context from
+    // `suspended` to `running` for the rest of the page's life.
+    try {
+      const src = voice.ctx.createBufferSource();
+      src.buffer = voice.ctx.createBuffer(1, 1, 22050);
+      src.connect(voice.ctx.destination);
+      src.start(0);
+    } catch {}
+  }
+  if (!voice.audio) {
+    const el = document.createElement('audio');
+    el.setAttribute('playsinline', '');
+    el.preload = 'auto';
+    document.body.appendChild(el);
+    voice.audio = el;
+    playBlob(silentWav(60));
+  }
+  warmUpRecognition();
+  voice.unlocked = true;
+  voice.status = voice.tts.available
+    ? 'voice ready'
+    : 'voice ready — no speech synthesis on this machine, announcements will be text only';
+  // Playback works fine on the plain-HTTP origin; only the microphone doesn't.
+  // Say which half the user is getting, and where the other half lives.
+  if (!SECURE) voice.line = `🎤 Voice input needs the secure address: ${secureUrl()}`;
+  else if (!SpeechRec) voice.line = '🎤 This browser has no speech recognition — 🎤 opens a text box instead';
+  renderVoice();
+  syncSidebar();
+}
+
+// Absorb the measured 3.05 s cost of a page's first `start()` here, in the tap,
+// so it can't land in the middle of a conversation later. Every start after
+// this one was ~10 ms on device.
+function warmUpRecognition() {
+  if (!SpeechRec || rec.warmed) return;
+  rec.warmed = true;
+  let sr;
+  try { sr = new SpeechRec(); } catch { return; }
+  sr.continuous = false;
+  sr.interimResults = false;
+  sr.onerror = () => {};                // 'aborted' is the expected outcome here
+  sr.onstart = () => { setTimeout(() => { try { sr.abort(); } catch {} }, 50); };
+  try { sr.start(); } catch { rec.warmed = false; return; }
+  // If onstart never comes (permission prompt dismissed, engine unavailable),
+  // don't leave a recogniser sitting on the mic.
+  setTimeout(() => { try { sr.abort(); } catch {} }, 4000);
+}
+
+function playBlob(blob) {
+  return new Promise((resolve) => {
+    const el = voice.audio;
+    if (!el) return resolve();
+    const url = URL.createObjectURL(blob);
+    let settled = false;
+    const done = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(guard);
+      el.removeEventListener('ended', done);
+      el.removeEventListener('error', done);
+      URL.revokeObjectURL(url);
+      resolve();
+    };
+    // A clip that never fires `ended` (a decode that quietly stalls) would wedge
+    // the queue for good, so cap it well past any plausible announcement.
+    const guard = setTimeout(done, 90000);
+    el.addEventListener('ended', done);
+    el.addEventListener('error', done);
+    el.src = url;
+    const p = el.play();
+    if (p && p.catch) p.catch(() => done());
+  });
+}
+
+// Synthesize and play, start to finish. Returns when the audio has stopped —
+// the mic is never opened before that (see the echo-guard note at the top).
+// Returns 'ok', 'skip' (nothing to say, or no synthesis on this machine) or
+// 'fail' (we tried and got nothing audible) so callers can tell the user which.
+async function speak(text) {
+  const say = (text || '').trim();
+  if (!say || !voice.unlocked || !voice.tts.available) return 'skip';
+  stopListening();
+  voice.playing = true;
+  renderVoice();
+  try {
+    const res = await fetch('/api/tts', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: say }),
+    });
+    if (!res.ok) {
+      // 503 means piper went away under us — stop asking, and keep announcing on
+      // screen. A 400 is this one string's problem (empty, or over the cap), so
+      // leave synthesis enabled for the next announcement.
+      if (res.status === 503) voice.tts.available = false;
+      return 'fail';
+    }
+    await playBlob(await res.blob());
+    return 'ok';
+  } catch {
+    return 'fail';   // connection lost mid-synthesis; the summary is on screen
+  } finally {
+    voice.playing = false;
+    renderVoice();
+  }
+}
+
+// ---- announcement queue -----------------------------------------------------
+
+function firstWords(text, n) {
+  const words = String(text).trim().split(/\s+/);
+  return words.slice(0, n).join(' ') + (words.length > n ? '…' : '');
+}
+
+// A summary can legitimately come back empty — a reply that was nothing but a
+// fenced code block flattens to "" — and /api/tts rejects an empty string with
+// a 400. Announcing "it's done" is still the useful half of the message, so
+// never let an empty summary turn into silence.
+function speakableSummary(msg) {
+  const s = (msg.summary || '').trim();
+  if (s) return s;
+  return `${msg.title ? msg.title + ' is' : 'Claude is'} waiting on you.`;
+}
+
+function onWaiting(msg) {
+  if (!msg.turnUuid) return;
+  // The server already announces a turn exactly once; this second guard makes a
+  // browser reconnect (or two tabs' worth of history) equally harmless.
+  if (voice.spokenTurns.has(msg.turnUuid)) return;
+  voice.spokenTurns.add(msg.turnUuid);
+  while (voice.spokenTurns.size > SPOKEN_TURNS_MAX) {
+    voice.spokenTurns.delete(voice.spokenTurns.values().next().value);
+  }
+  const summary = speakableSummary(msg);
+  if (!voice.unlocked) {
+    // Nothing can play yet. Queueing it would mean an announcement arriving
+    // minutes stale whenever the user finally taps, so show it instead.
+    voice.line = `🔊 ${msg.title ? msg.title + ': ' : ''}${summary}`;
+    renderVoice();
+    return;
+  }
+  // Before anything else, and before the /api/tts round-trip: the gap between
+  // the turn ending and audio starting is ~7.5 s whenever the summariser model
+  // runs, and this is what fills it.
+  chime();
+  // A newer turn for the same session supersedes an older unspoken one — the
+  // stale one is only ever going to confuse.
+  voice.queue = voice.queue.filter((m) => m.sessionId !== msg.sessionId);
+  voice.queue.push({ sessionId: msg.sessionId, title: msg.title, turnUuid: msg.turnUuid, summary });
+  pumpQueue();
+}
+
+async function pumpQueue() {
+  // `voice.playing` alone isn't enough: when there's no synthesis to do, speak()
+  // returns without ever setting it, and two announcements landing together
+  // would each drain the queue.
+  if (voice.pumping || voice.playing || voice.pending || voice.editing || !voice.queue.length) return;
+  voice.pumping = true;
+  try { await drainQueue(); } finally { voice.pumping = false; }
+}
+
+async function drainQueue() {
+  if (!voice.queue.length) return;
+  // Absorb a burst (arming several idle sessions at once) rather than reading
+  // every summary at the user. The collapsed entry has no sessionId, so it
+  // can't open the mic — you go look at the sidebar for those.
+  if (voice.queue.length > QUEUE_SPEAK_MAX) {
+    const rest = voice.queue.splice(QUEUE_SPEAK_MAX);
+    const names = rest.map((m) => m.title).filter(Boolean).join(', ');
+    voice.queue.push({
+      sessionId: null, title: '', turnUuid: null,
+      summary: `${rest.length} more sessions are waiting${names ? ': ' + names : ''}.`,
+    });
+  }
+  const item = voice.queue.shift();
+  // Only say whose turn it is when it's ambiguous — a title on every single
+  // announcement gets old fast when you're only listening to one session.
+  const prefix = voice.armed.size > 1 && item.title ? `${item.title}. ` : '';
+  voice.status = `speaking${item.title ? ' — ' + item.title : ''}`;
+  voice.line = `🔊 ${item.summary}`;
+  const spoke = await speak(prefix + item.summary);
+  // Speech can fail (piper gone, a 400, a dropped connection) long after the
+  // chime already promised something. Mark the line so the user knows the text
+  // on screen is all they're getting, instead of waiting for audio.
+  if (spoke === 'fail') voice.line = `🔊 (couldn't speak this) ${item.summary}`;
+  // Anything queued behind this one speaks first: opening the mic just to shut
+  // it again for the next clip would flip the Bluetooth route twice for nothing.
+  if (voice.queue.length) return drainQueue();
+  if (!item.sessionId || !voice.armed.has(item.sessionId)) { voice.status = 'voice ready'; renderVoice(); return; }
+  listenFor(item.sessionId);
+}
+
+function onBusy(sessionId) {
+  voice.queue = voice.queue.filter((m) => m.sessionId !== sessionId);
+  // The user is driving that session by hand — get off its mic. (Our own
+  // committed text also makes the PTY chatter, but `pending` is already cleared
+  // and the mic already closed by then, so this can't cancel our own send.)
+  //
+  // The grace window is not paranoia: `busy` is driven off PTY output, and
+  // Claude Code repaints its own status line for a beat after finishing a turn.
+  // A real run here produced a `busy` 117 ms after the announcement started
+  // playing. Landing one of those just as the mic opens would close it before
+  // the user got a word out, and they'd have no idea why.
+  const micSettled = rec.openedAt && Date.now() - rec.openedAt > BUSY_GRACE_MS;
+  if (rec.want && rec.sessionId === sessionId && micSettled) stopListening('busy');
+  renderVoice();
+}
+
+// "Read that again" — recompute the current summary for whichever session we
+// last heard from and speak it. Cheap when the server still has it cached.
+async function readAgain() {
+  const id = rec.sessionId || state.activeId;
+  if (!id) return;
+  stopListening();
+  try {
+    const r = await api(`/api/sessions/${encodeURIComponent(id)}/voice/summary`);
+    if (!r.summary) { voice.line = '🔊 nothing to read back'; renderVoice(); return; }
+    voice.line = `🔊 ${r.summary}`;
+    renderVoice();
+    await speak(r.summary);
+    listenFor(id);
+  } catch {
+    voice.line = '🔊 could not re-read that turn';
+    renderVoice();
+  }
+}
+
+// `hello` says who is armed, not who is currently waiting — and the server
+// won't re-announce a turn it has already announced once. So a page reload (or
+// iOS discarding the tab in the background) while a session sits waiting means
+// that `waiting` never arrives again. Ask each armed session directly instead.
+// Sequentially: each of these can spawn a summariser on the server.
+async function catchUpArmed(ids) {
+  for (const id of ids) {
+    try {
+      const r = await api(`/api/sessions/${encodeURIComponent(id)}/voice/summary`);
+      if (!r.waiting || !r.turnUuid) continue;
+      const s = state.sessions.find((x) => x.id === id);
+      // Straight through onWaiting, so the uuid dedupe applies and a reconnect
+      // that happens to race a live `waiting` can't announce the turn twice.
+      onWaiting({ sessionId: id, title: (s && s.title) || '', turnUuid: r.turnUuid, summary: r.summary });
+    } catch {
+      // session gone, or the summariser failed — nothing to catch up on
+    }
+  }
+}
+
+// ---- speech in --------------------------------------------------------------
+
+// Push the idle deadline out. Two mechanisms on purpose: `idleUntil` is checked
+// on every `onend` (the cheap path, since iOS ends a recognition after each
+// utterance anyway), and `idleTimer` is a watchdog for the case where a
+// recogniser never ends at all — without it a stuck engine would sit on the
+// microphone indefinitely, which is exactly the failure the user can't see.
+function bumpIdle() {
+  rec.idleUntil = Date.now() + LISTEN_IDLE_MS;
+  clearTimeout(rec.idleTimer);
+  rec.idleTimer = setTimeout(() => { if (rec.want) stopListening('idle'); }, LISTEN_IDLE_MS + 500);
+}
+
+function listenFor(sessionId) {
+  if (!canListen() || rec.denied || !sessionId || !voice.unlocked) { renderVoice(); return; }
+  if (!rec.want) rec.openedAt = Date.now();   // a new stretch, not a re-arm
+  rec.want = true;
+  rec.sessionId = sessionId;
+  rec.errors = 0;
+  bumpIdle();
+  armRecognition();
+  renderVoice();
+}
+
+function armRecognition() {
+  if (!rec.want || rec.sr || voice.playing) return;
+  let sr;
+  try { sr = new SpeechRec(); } catch { rec.want = false; renderVoice(); return; }
+  sr.lang = navigator.language || 'en-US';
+  sr.continuous = false;     // ignored on iOS anyway — one utterance per start
+  sr.interimResults = true;  // the undo window is driven off these
+  sr.maxAlternatives = 1;
+  rec.sr = sr;
+
+  sr.onstart = () => renderVoice();
+  sr.onresult = (ev) => handleResult(ev);
+  sr.onerror = (ev) => {
+    const err = ev && ev.error;
+    if (err === 'not-allowed' || err === 'service-not-allowed') {
+      // The only genuinely terminal one: the user (or the OS) said no.
+      rec.denied = true;
+      rec.want = false;
+      voice.status = 'microphone blocked for this site';
+      return;
+    }
+    // 'aborted' is what you get for stopping a recogniser that heard nothing,
+    // and 'no-speech' is a quiet room. Both are ordinary punctuation in a
+    // hands-free loop — re-arm (in onend) and say nothing about it.
+    if (err !== 'aborted' && err !== 'no-speech') rec.errors += 1;
+  };
+  sr.onend = () => {
+    if (rec.sr === sr) rec.sr = null;   // a newer instance may already be live
+    if (!rec.want) { renderVoice(); return; }
+    if (Date.now() > rec.idleUntil) { stopListening('idle'); return; }
+    if (rec.errors >= 5) { stopListening('error'); return; }
+    // Back off on real errors so a broken speech service can't become a spin
+    // loop; otherwise just enough of a pause for iOS to hand the mic back.
+    const delay = rec.errors ? Math.min(4000, 500 * rec.errors) : REARM_MS;
+    rec.restartTimer = setTimeout(armRecognition, delay);
+  };
+
+  try { sr.start(); }
+  catch { rec.sr = null; rec.restartTimer = setTimeout(armRecognition, 500); }
+}
+
+function stopListening(reason) {
+  const wasOn = rec.want;
+  rec.want = false;
+  clearTimeout(rec.restartTimer);
+  clearTimeout(rec.idleTimer);
+  rec.restartTimer = null;
+  rec.idleTimer = null;
+  const sr = rec.sr;
+  rec.sr = null;
+  if (sr) { try { (sr.abort || sr.stop).call(sr); } catch {} }  // → onerror 'aborted', benign
+  if (reason === 'idle' && wasOn) {
+    voice.status = 'mic off — quiet for a while. Tap 🎤 to talk';
+    toast('Mic closed after 45s of silence — tap 🎤 to talk', 'ok').close(6000);
+  } else if (reason === 'error' && wasOn) {
+    voice.status = 'speech recognition keeps failing — tap 🎤 to retry';
+  } else if (reason === 'off' && wasOn) {
+    voice.status = 'mic off';
+  }
+  renderVoice();
+}
+
+function handleResult(ev) {
+  let interim = '';
+  let final = '';
+  for (let i = ev.resultIndex; i < ev.results.length; i++) {
+    const r = ev.results[i];
+    const txt = (r[0] && r[0].transcript) || '';
+    if (r.isFinal) final += txt; else interim += txt;
+  }
+  rec.errors = 0;
+  bumpIdle();                       // someone's talking; keep the mic open
+  const heard = (final || interim).trim();
+  if (!heard) return;
+
+  if (voice.pending) {
+    // Undo window. Anything that isn't an abort word is ignored rather than
+    // treated as a new utterance — you're mid-send, not mid-sentence.
+    if (ABORT_RE.test(heard)) abortPending();
+    return;
+  }
+  voice.line = '🎤 ' + heard;
+  renderVoice();
+  if (final.trim()) beginConfirm(rec.sessionId, final.trim());
+}
+
+// ---- the undo window --------------------------------------------------------
+
+function beginConfirm(sessionId, text) {
+  if (!sessionId || !text) return;
+  stopListening();                     // echo guard: the read-back is about to play
+  voice.pending = { sessionId, text, timer: null, endsAt: 0 };
+  voice.status = 'sending';
+  voice.line = '🎤 ' + text;
+  renderVoice();
+  // Speak the read-back FIRST, then start the countdown and re-open the mic.
+  // We can't do both at once (mic open during playback is the one thing the
+  // Bluetooth route can't take), and three seconds of listening is only worth
+  // anything once the clip has stopped talking over it.
+  speak('sending: ' + firstWords(text, 6)).then(() => {
+    if (!voice.pending || voice.pending.text !== text) return;
+    startCountdown();
+    listenFor(sessionId);
+  });
+}
+
+function startCountdown() {
+  const p = voice.pending;
+  if (!p) return;
+  p.endsAt = Date.now() + UNDO_MS;
+  const tick = () => {
+    if (voice.pending !== p) return;
+    const left = Math.ceil((p.endsAt - Date.now()) / 1000);
+    if (left <= 0) { clearInterval(p.timer); commitPending(); return; }
+    $('#voice-count').textContent = left;
+  };
+  p.timer = setInterval(tick, 100);
+  tick();
+}
+
+async function commitPending() {
+  const p = voice.pending;
+  if (!p) return;
+  clearInterval(p.timer);
+  voice.pending = null;
+  stopListening();
+  renderVoice();
+  const t = await ensureTerminal(p.sessionId);
+  if (!t) {
+    // Don't lose the words just because the terminal went away.
+    openVoiceEditor(p.sessionId, p.text);
+    toast('Could not reach that session — text kept below', 'err').close(6000);
+    return;
+  }
+  typeAndSubmit(t, p.text);
+  voice.status = 'sent';
+  voice.line = '';
+  renderVoice();
+  // Don't leave "sent" as the standing label — the next thing to happen is the
+  // session going busy, and the strip should read as idle-and-ready by then.
+  setTimeout(() => { if (voice.status === 'sent') { voice.status = 'voice ready'; renderVoice(); } }, 4000);
+}
+
+function abortPending() {
+  const p = voice.pending;
+  if (!p) return;
+  clearInterval(p.timer);
+  voice.pending = null;
+  stopListening();
+  // Keep the text. The user managed to say "stop" inside three seconds; binning
+  // what they'd just dictated would make them say all of it again.
+  voice.status = 'cancelled — edit and send, or discard';
+  openVoiceEditor(p.sessionId, p.text);
+}
+
+// ---- sending ----------------------------------------------------------------
+
+// Voice replies go out over the session's own terminal WebSocket, which only
+// exists once the terminal is open in this page — an announcement can easily
+// arrive for a session the user hasn't opened, so open it and wait for the
+// socket rather than dropping the text.
+// Claude Code's TUI treats a large input burst as a *paste*, so a "\r" riding
+// along in the same write lands as a newline inside the prompt box instead of
+// submitting it. Measured against a live session on this machine: 96 characters
+// plus "\r" in one write sat there unsent; the identical text with the "\r" as
+// its own write 150 ms later went straight through. Voice transcripts are
+// routinely that long, so always send the Enter separately.
+const SUBMIT_DELAY_MS = 200;
+function typeAndSubmit(t, text) {
+  sendInput(t, text);
+  setTimeout(() => sendInput(t, '\r'), SUBMIT_DELAY_MS);
+}
+
+function ensureTerminal(id) {
+  let t = state.open.get(id);
+  if (!t) {
+    const s = state.sessions.find((x) => x.id === id);
+    if (!s || !s.alive) return Promise.resolve(null);
+    openTerminal(id, s.title, s.kind);
+    t = state.open.get(id);
+  }
+  if (!t) return Promise.resolve(null);
+  if (t.ws && t.ws.readyState === WebSocket.OPEN) return Promise.resolve(t);
+  return new Promise((resolve) => {
+    const started = Date.now();
+    const poll = setInterval(() => {
+      if (t.ws && t.ws.readyState === WebSocket.OPEN) { clearInterval(poll); resolve(t); }
+      else if (Date.now() - started > 5000) { clearInterval(poll); resolve(null); }
+    }, 100);
+  });
+}
+
+function openVoiceEditor(sessionId, text) {
+  if (!sessionId) { toast('Open a terminal first', 'err').close(3000); return; }
+  voice.editing = { sessionId };
+  $('#voice-edit-text').value = text || '';
+  voice.line = '';   // the words are in the box now; don't print them twice
+  renderVoice();
+  setTimeout(() => $('#voice-edit-text').focus(), 50);
+}
+
+async function sendVoiceEditor() {
+  const ed = voice.editing;
+  if (!ed) return;
+  const text = $('#voice-edit-text').value.trim();
+  voice.editing = null;
+  voice.line = '';
+  voice.status = text ? 'sent' : 'voice ready';
+  renderVoice();
+  if (!text) return;
+  const t = await ensureTerminal(ed.sessionId);
+  if (!t) { toast('That session is gone — nothing sent', 'err').close(5000); return; }
+  typeAndSubmit(t, text);
+  pumpQueue();  // an announcement may have queued up behind the editor
+}
+
+function discardVoiceEditor() {
+  voice.editing = null;
+  voice.line = '';
+  voice.status = 'voice ready';
+  renderVoice();
+  pumpQueue();
+}
+
+// ---- arming -----------------------------------------------------------------
+
+async function toggleVoiceArm(id, on) {
+  try {
+    const r = await api(`/api/sessions/${encodeURIComponent(id)}/voice`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ armed: on }),
+    });
+    if (r.armed) voice.armed.add(id); else voice.armed.delete(id);
+  } catch (e) {
+    toast('Could not change announcements: ' + e.message, 'err').close(5000);
+    return;
+  }
+  if (!on) onBusy(id);   // disarming drops anything queued for it, same as busy
+  syncSidebar();
+  renderVoice();
+}
+
+// ---- the voice strip --------------------------------------------------------
+
+function renderVoice() {
+  const bar = $('#voice-bar');
+  if (!bar) return;
+  const show = voice.armed.size > 0 || rec.want || !!voice.pending || !!voice.editing || voice.playing;
+  bar.classList.toggle('hidden', !show);
+  if (!show) return;
+
+  const locked = !voice.unlocked;
+  bar.classList.toggle('locked', locked);
+
+  let status;
+  if (locked) {
+    const n = voice.armed.size;
+    status = n
+      ? `${n} session${n === 1 ? '' : 's'} armed — audio is locked until you tap`
+      : 'audio is locked until you tap';
+  } else if (voice.pending) status = 'sending — say "stop" or tap Cancel';
+  else if (rec.want) status = 'listening…';
+  else status = voice.status || 'voice ready';
+  $('#voice-status').textContent = status;
+
+  $('#voice-unlock').classList.toggle('hidden', !locked);
+  $('#voice-off').classList.toggle('hidden', !rec.want);
+  $('#voice-again').classList.toggle('hidden', locked || !voice.tts.available || !rec.sessionId);
+
+  const heard = $('#voice-heard');
+  heard.textContent = voice.line;
+  heard.classList.toggle('hidden', !voice.line);
+
+  $('#voice-cancel').classList.toggle('hidden', !voice.pending);
+  $('#voice-edit').classList.toggle('hidden', !voice.editing);
+
+  const mic = $('#mic-key');
+  if (mic) mic.classList.toggle('armed', rec.want);
+  $('#voice-dot').className =
+    locked ? 'locked' : rec.want ? 'listening' : voice.playing ? 'speaking' : 'ready';
+  measureChrome();
+}
+
+// Toasts sit above the bottom chrome, which is now the key bar *plus* however
+// tall the voice strip currently is (it grows an editor). Measured rather than
+// guessed, because a toast landing on top of the voice status is at its most
+// annoying exactly when both have something to say.
+function measureChrome() {
+  const bar = $('#voice-bar');
+  const keys = $('#keybar');
+  const h = (keys ? keys.offsetHeight : 0) + (bar && !bar.classList.contains('hidden') ? bar.offsetHeight : 0);
+  document.documentElement.style.setProperty('--chrome-h', h + 'px');
+}
+
+function onMicKey() {
+  // This tap is a user gesture — the only place the audio unlock can happen —
+  // so do it here too rather than making the user find the other button.
+  if (!voice.unlocked) enableVoice();
+  if (rec.want) { stopListening('off'); return; }
+  // Whatever you're looking at is what you're talking to; only fall back to the
+  // last-announced session when nothing is open in front of you. Checked before
+  // anything else so "open a terminal first" can't shout over a more specific
+  // explanation below.
+  const target = state.activeId
+    || (rec.sessionId && state.sessions.some((s) => s.id === rec.sessionId && s.alive) ? rec.sessionId : null);
+  if (!target) { toast('Open a terminal first', 'err').close(3000); return; }
+  if (!canListen()) {
+    // No Web Speech at all (desktop Firefox), or an insecure origin where the
+    // API simply isn't exposed. Either way: fall back to typing into the same
+    // box a cancelled utterance lands in — same destination, same Enter.
+    if (!SECURE) toast(`Voice input needs ${secureUrl()}`, 'err').close(9000);
+    else toast('This browser has no speech recognition — type it instead', 'err').close(6000);
+    openVoiceEditor(target, '');
+    return;
+  }
+  // A tap after fixing the permission is the user asking again — clear the
+  // sticky refusal and let the browser answer, rather than making them reload.
+  if (rec.denied) { rec.denied = false; toast('Asking for microphone access again…').close(3000); }
+  voice.line = '';
+  listenFor(target);
+}
+
+// ---- /ws/voice --------------------------------------------------------------
+
+// Same reconnect shape as the terminal socket (see connect() above), with one
+// deliberate difference: no attempt cap. A terminal socket gives up because its
+// session can genuinely be gone; the voice feed belongs to the page, so it
+// should still be trying when the laptop comes back from sleep.
+function connectVoice() {
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  const ws = new WebSocket(`${proto}://${location.host}/ws/voice`);
+  voice.ws = ws;
+  ws.onopen = () => {
+    voice.attempts = 0;
+    clearInterval(voice.pingTimer);
+    voice.pingTimer = setInterval(() => {
+      if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'ping' }));
+    }, VOICE_PING_MS);
+  };
+  ws.onmessage = (ev) => {
+    let msg; try { msg = JSON.parse(ev.data); } catch { return; }
+    if (msg.type === 'hello') {
+      voice.tts = msg.tts || { available: false, voice: '' };
+      voice.armed = new Set((msg.sessions || []).filter((s) => s.armed).map((s) => s.id));
+      syncSidebar();
+      renderVoice();
+      catchUpArmed([...voice.armed]);
+    } else if (msg.type === 'waiting') onWaiting(msg);
+    else if (msg.type === 'busy') onBusy(msg.sessionId);
+    else if (msg.type === 'armed') {
+      if (msg.armed) voice.armed.add(msg.sessionId); else { voice.armed.delete(msg.sessionId); onBusy(msg.sessionId); }
+      syncSidebar();
+      renderVoice();
+    }
+  };
+  ws.onclose = () => {
+    clearInterval(voice.pingTimer);
+    voice.attempts += 1;
+    voice.reconnectTimer = setTimeout(connectVoice, Math.min(5000, 400 * voice.attempts));
+  };
+  ws.onerror = () => { try { ws.close(); } catch {} };
+}
+
 // ---- drawer (mobile) ------------------------------------------------------
 
 function openDrawer() { document.body.classList.add('drawer-open'); }
@@ -1198,6 +2004,15 @@ function wireEvents() {
   // for 📎: Safari only opens a file picker from inside a real click.
   $('#paste-key').onclick = doPaste;
   $('#attach-key').onclick = openFilePicker;
+  // Voice buttons are all plain clicks on purpose: iOS only counts a real click
+  // as the gesture that unlocks audio and the microphone.
+  $('#mic-key').onclick = onMicKey;
+  $('#voice-unlock').onclick = enableVoice;
+  $('#voice-off').onclick = () => stopListening('off');
+  $('#voice-again').onclick = readAgain;
+  $('#voice-cancel').onclick = abortPending;
+  $('#voice-edit-send').onclick = sendVoiceEditor;
+  $('#voice-edit-discard').onclick = discardVoiceEditor;
   $('#file-input').onchange = (e) => onFilesPicked(e.target);
   document.querySelectorAll('#keybar .key[data-key]').forEach((btn) => {
     // Use pointerdown so focus stays on the terminal and the key registers on phones.
@@ -1209,6 +2024,8 @@ function wireEvents() {
     if (e.key === 'Escape' && dlgOpen) closeDialog();
     if (e.key === 'Enter' && dlgOpen) submitDialog();
     if (e.key === 'Escape' && !$('#update-backdrop').classList.contains('hidden')) closeUpdatePanel();
+    // Escape is the desktop equivalent of saying "stop" during the undo window.
+    if (e.key === 'Escape' && voice.pending) { e.preventDefault(); abortPending(); }
   });
 
   window.addEventListener('resize', syncViewportHeight);
@@ -1233,6 +2050,10 @@ if (!isMobile() && localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === '1') setSideb
 
 wireEvents();
 syncViewportHeight();
+// One voice feed for the whole page (not one per terminal): `waiting` is about
+// a session, but the speaker and the microphone belong to the browser.
+connectVoice();
+renderVoice();
 refresh();
 setInterval(refresh, 2000); // keep the sidebar "working" status roughly live
 setInterval(updateMouseHint, 1000); // reflect entering/leaving a full-screen app
