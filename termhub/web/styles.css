@@ -94,11 +94,21 @@ html, body {
   font-size: 10px; color: var(--fg-dim);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.session-item .rename, .session-item .kill {
-  background: none; border: none; color: var(--fg-dim); cursor: pointer; font-size: 14px; padding: 4px 6px;
+.session-item .voice, .session-item .rename, .session-item .kill {
+  background: none; border: none; color: var(--fg-dim); cursor: pointer; font-size: 14px; padding: 4px 5px;
 }
 .session-item .rename:hover { color: var(--accent); }
 .session-item .kill:hover { color: var(--danger); }
+/* 🔊 arm toggle. Off: nearly invisible, so a sidebar of shells doesn't look
+   like a control panel. On: accent. On but the page hasn't been unlocked yet:
+   amber — armed and silent is the state worth flagging. */
+.session-item .voice { opacity: 0.35; filter: grayscale(1); }
+.session-item .voice:hover { opacity: 0.8; }
+.session-item .voice.armed { opacity: 1; filter: none; }
+.session-item .voice.armed.locked { filter: none; opacity: 1; text-shadow: 0 0 6px var(--accent-2); }
+/* Not a Claude session: no transcript to read, so there's nothing to arm. Says
+   so on tap (and on hover) rather than being inert. */
+.session-item .voice.unsupported { opacity: 0.15; }
 
 /* Status dot: a pulsing green dot when the session is actively producing
    output ("working"); invisible when idle so idle sessions show nothing. */
@@ -209,7 +219,10 @@ html, body {
   scrollbar-width: none;
 }
 #keybar-keys::-webkit-scrollbar { display: none; }
-#keybar > #attach-key { flex: 0 0 auto; }
+#keybar > #attach-key, #keybar > #mic-key { flex: 0 0 auto; }
+/* Listening is a mode, not a keypress — keep 🎤 lit for as long as the mic is
+   open so "am I being heard?" is answerable without reading anything. */
+#keybar > #mic-key.armed { background: var(--danger); border-color: var(--danger); color: #0d1117; }
 #keybar .key {
   flex: 1 0 auto; min-width: 44px; min-height: 38px; padding: 6px 10px;
   background: var(--bg-3); color: var(--fg); border: 1px solid var(--border);
@@ -219,11 +232,71 @@ html, body {
 #keybar .key.armed { background: var(--accent); color: #0d1117; border-color: var(--accent); }
 #keybar .key:active { background: var(--accent); color: #0d1117; }
 
+/* ---- voice strip ---- */
+#voice-bar {
+  padding: 6px 8px; background: var(--bg-2); border-top: 1px solid var(--border);
+  display: flex; flex-direction: column; gap: 6px; font-size: 13px;
+}
+#voice-bar.hidden { display: none; }
+/* Armed-but-locked is the one state the user must not mistake for working:
+   announcements are coming and nothing will play. Paint the whole strip amber. */
+#voice-bar.locked { background: rgba(240, 179, 90, 0.10); border-top-color: var(--accent-2); }
+.voice-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
+#voice-status { flex: 1; min-width: 0; color: var(--fg-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#voice-dot { flex: 0 0 auto; width: 8px; height: 8px; border-radius: 50%; background: var(--fg-dim); }
+#voice-dot.locked { background: var(--accent-2); }
+#voice-dot.ready { background: var(--ok); }
+#voice-dot.speaking { background: var(--accent); }
+/* The mic being open is the state with a privacy cost — make it the loud one. */
+#voice-dot.listening { background: var(--danger); animation: termhub-pulse-mic 1.2s ease-out infinite; }
+@keyframes termhub-pulse-mic {
+  0%   { box-shadow: 0 0 0 0 rgba(224, 108, 117, 0.6); }
+  70%  { box-shadow: 0 0 0 6px rgba(224, 108, 117, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(224, 108, 117, 0); }
+}
+#voice-unlock {
+  flex: 0 0 auto; padding: 6px 12px; border-radius: 6px; cursor: pointer; font: inherit; font-weight: 600;
+  background: var(--accent-2); color: #0d1117; border: 1px solid var(--accent-2);
+}
+#voice-bar .voice-sub {
+  flex: 0 0 auto; background: none; border: none; color: var(--fg-dim);
+  font-size: 14px; cursor: pointer; padding: 4px 6px;
+}
+#voice-bar .voice-sub:hover { color: var(--fg); }
+#voice-bar .hidden { display: none; }
+#voice-heard {
+  color: var(--fg); font-size: 13px; max-height: 3.6em; overflow: hidden;
+  border-left: 2px solid var(--border); padding-left: 8px;
+}
+/* The undo affordance. Deliberately the biggest tap target on the page: it has
+   to be hittable without looking, in three seconds, one-handed. */
+#voice-cancel {
+  width: 100%; padding: 14px; border-radius: 8px; cursor: pointer;
+  background: var(--danger); color: #0d1117; border: none;
+  font: inherit; font-size: 16px; font-weight: 700;
+}
+#voice-edit { display: flex; flex-direction: column; gap: 6px; }
+#voice-edit-text {
+  width: 100%; padding: 8px; resize: vertical;
+  background: var(--bg-3); color: var(--fg);
+  border: 1px solid var(--border); border-radius: 6px;
+  font: inherit; font-size: 16px; /* 16px avoids iOS zoom */
+}
+.voice-edit-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.voice-edit-actions button {
+  padding: 8px 16px; border-radius: 6px; border: 1px solid var(--border);
+  background: var(--accent); color: #0d1117; font-weight: 600; cursor: pointer; font: inherit;
+}
+.voice-edit-actions button.secondary { background: var(--bg-3); color: var(--fg); }
+
 /* ---- toasts (upload progress / errors) ---- */
 /* Bottom-centre, above the key bar and clear of the iOS home indicator. */
+/* --chrome-h is the measured height of the key bar plus the voice strip (set in
+   JS, since the strip appears, disappears and grows an editor). Without it a
+   toast lands on top of the voice status it is often commenting on. */
 #toasts {
   position: fixed; left: 50%; transform: translateX(-50%);
-  bottom: calc(env(safe-area-inset-bottom, 0px) + 64px);
+  bottom: calc(env(safe-area-inset-bottom, 0px) + var(--chrome-h, 56px) + 8px);
   z-index: 45; display: flex; flex-direction: column; gap: 6px;
   align-items: center; pointer-events: none; width: max-content; max-width: 92vw;
 }

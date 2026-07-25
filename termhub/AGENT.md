@@ -180,6 +180,81 @@ for a short turn (poll tick + quiet window) and **~7 s** for one that goes throu
 concurrent `/api/tts` requests left `/api/ping` round-trips at a worst case of 11 ms — every
 child is spawned asynchronously and nothing blocks `sessiond`'s event loop.
 
+### In the browser (`web/app.js`)
+
+One `/ws/voice` socket per page, not per session — the speaker and the microphone belong to
+the browser, not to a terminal. It reconnects with the same backoff shape as the terminal
+socket, minus the ten-attempt cap: a terminal socket gives up because its session can genuinely
+be gone, whereas the voice feed should still be retrying when the laptop wakes up.
+
+**The unlock tap.** Safari will not play audio, and iOS will not warm the speech engine, outside
+a user gesture — so the first armed session raises an amber **Enable voice** strip. That one tap
+does three things synchronously: resumes an `AudioContext` and plays a silent buffer through it,
+plays 60 ms of generated silence through the single `<audio>` element every announcement will
+reuse, and fires one throwaway `SpeechRecognition`. That last one matters: on the user's iPhone
+the *first* `start()` of a page load cost **3.05 s** and every one after it ~10 ms, so the cost
+is spent in the tap rather than mid-conversation. Until it happens, announcements arrive as text
+and the 🔊 toggles glow amber.
+
+**The loop.** `waiting` → chime → `/api/tts` → play → open mic → transcribe → read back
+"sending: …" → 3 s undo window → `text + '\r'` down that session's existing terminal socket.
+Announcements are queued, never overlapped, and `busy` (or disarming) drops a session's unspoken
+one. A `waiting` for a session already in the queue replaces it rather than queueing twice.
+Arming several idle sessions at once makes the server announce each one's last turn immediately,
+so past two queued announcements the rest collapse into "3 more sessions are waiting: …".
+
+**Things that are easy to get wrong here**, all learned from a real-device probe:
+
+- `onerror: 'aborted'` and `'no-speech'` are the *normal* rhythm of the loop — they fire whenever
+  a recogniser is stopped or hears nothing. They must re-arm, not tear down. Only `not-allowed`
+  / `service-not-allowed` is terminal; anything else backs off and retries five times.
+- `continuous` is ignored on iOS. Each recognition is exactly one utterance, so the loop re-arms
+  on every `onend` (250 ms later, to let iOS hand the mic back).
+- The undo window is matched against **interim** results. The final transcript lands ~1.9 s after
+  the last word, which is most of a 3 s window, so waiting for it would make "stop" useless.
+- **Never open the mic while audio is playing.** The user is on Bluetooth headphones, where the
+  mic flips iOS to the mono HFP route. `speak()` closes the recogniser before it starts, and the
+  undo countdown only begins once the read-back clip has finished — which is also why tapping
+  Cancel works during the read-back but saying "stop" doesn't quite yet.
+- The chime is load-bearing, not decoration. Announcing takes ~7.5 s whenever the summariser
+  model runs, and seven seconds of dead air reads as broken. It's an oscillator on the unlocked
+  context, fired synchronously the instant the event lands — ahead of the `/api/tts` round-trip
+  and independent of the queue.
+- The mic closes after 45 s of silence, enforced both on `onend` and by a watchdog timer (a
+  recogniser that never ends would otherwise sit on the microphone forever). A toast says so.
+- `hello` reports who is *armed*, not who is *waiting*, and the server never re-announces a turn.
+  So on every connect the page asks `/api/sessions/:id/voice/summary` for each armed session —
+  without it, reloading (or iOS discarding the tab) while Claude waits means permanent silence.
+- A summary can come back empty (a reply that was only a code block flattens to `""`, and
+  `/api/tts` rejects that with a 400). It falls back to "<title> is waiting on you."
+
+**Typing into an agent prompt and actually submitting it.** `sendInput(t, text + '\r')` does
+**not** work, and fails silently in a way short test strings won't show you. Claude Code's TUI
+treats a large input burst as a *paste*, so a `\r` inside the same burst lands as a newline in
+the prompt box and the text just sits there. Measured against a live `claude` session on this
+machine:
+
+| what was sent | result |
+|---|---|
+| 35 chars + `\r`, one write | submits — which is why this is easy to dismiss |
+| 96 chars + `\r`, one write | **not submitted**, still in the box 10 s later |
+| 111 chars, then `\r` as a second write in the same tick | **not submitted** — the two writes coalesce into one PTY read |
+| 111 chars, then `\r` after **20 ms** | submits |
+| …after 50 / 100 / 200 / 400 ms | submits |
+
+So the fix is not a delay so much as making the `\r` arrive in its own PTY read; 20 ms was
+already enough to break the coalescing. `typeAndSubmit()` in `web/app.js` uses **200 ms**, 10×
+the measured floor. Note which way the risk runs: the hazard is the two writes being *coalesced*,
+which network latency (phone → Tailscale → front → sessiond) makes less likely rather than more,
+and the 200 ms is applied in the browser so it is a floor on the separation before the second
+write is even sent. Ordering is guaranteed regardless — both go down the same WebSocket.
+
+**Secure context.** `SpeechRecognition` is only exposed to a secure origin, so on the plain
+`http://<tailnet-ip>:7000` URL there is no microphone. Playback works there and is left enabled;
+voice *input* is disabled with the derived `https://<host>:7443/` address shown, and 🎤 falls
+back to the same text box a browser without speech recognition gets. This is the same constraint
+`navigator.clipboard` has (see `execCopyFallback`).
+
 ### Voice API
 
 | Method | Path | Body | Response |
@@ -301,8 +376,10 @@ If building by hand, reproduce both: clear `NoDefaultCurrentDirectoryInExePath`,
 - The terminal refits on focus, `orientationchange`, and `visualViewport` resize (soft
   keyboard show/hide).
 - The keys scroll sideways when they don't fit (they don't, on a phone: eleven keys want
-  ~550px). **📎** lives outside that scroller, pinned to the right edge, so the one way to
-  attach a file from a phone is never off-screen.
+  ~550px). **🎤** and **📎** live outside that scroller, pinned to the right edge, so neither
+  the one way to attach a file from a phone nor the one way to start talking is ever off-screen.
+- The voice strip sits directly above the key bar so the undo window's **Cancel** button lands
+  under your thumb — the only reason to look at that strip in a hurry is to stop a send.
 - Add the tab to your home screen for an app-like, full-screen experience.
 
 ## Attachments (📎, paste, drag-drop)
@@ -348,6 +425,10 @@ never escapes its directory, and never becomes an NTFS alternate data stream) an
 | 📎 upload does nothing on a phone | File over the cap (15 MB image / 100 MB other) | The red notice above the key bar says so; shrink the file. A silent failure instead means the connection dropped — the notice says that too |
 | 🔊 armed but never speaks | No transcript to read | Session must be `kind: claude`; `⚠ Transcript saving is off` in the banner means an inherited `CLAUDE_CODE_CHILD_SESSION` — restart `sessiond` from a clean environment |
 | 🔊 reports speech unavailable | No `piper` or no usable voice model | `curl localhost:7010/api/voice/status`; install piper and put `<voice>.onnx` + `.onnx.json` in `TERMHUB_TTS_VOICE_DIR` (files under 4 KB are treated as broken stubs and skipped) |
+| Armed, but the strip stays amber and nothing plays | Browsers won't play audio before a user gesture | Tap **Enable voice**. Once per page load; the toggles turn from amber to blue |
+| 🎤 does nothing but open a text box | No `SpeechRecognition`, or an insecure origin | Speech recognition needs a secure context — use `https://<host>:7443/`, not `http://<tailnet-ip>:7000`. The strip names the address. Desktop Firefox has no Web Speech at all; the text box is the fallback |
+| Mic keeps closing on its own | Working as intended | It closes after 45 s of silence rather than listening to an empty room, and while an announcement is playing (opening it then would flip a Bluetooth headset's audio route mid-sentence). Tap 🎤 to reopen |
+| Voice reply went to the wrong session | 🎤 targets whatever terminal is in front of you | An announcement's reply goes to the session that announced; a 🎤 tap goes to the active terminal |
 | Announcements sound like a rewrite, not the answer | Turn was long enough to go through `claude -p --model haiku` | Expected; turns under ~240 chars are spoken verbatim. `claude -p` failing just falls back to a local trim |
 | `npm install` errors on `node-pty` | Missing build toolchain | See prerequisites above |
 
