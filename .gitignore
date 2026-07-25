@@ -6,8 +6,10 @@ venv/
 .env
 .DS_Store
 Thumbs.db
-# match both a real directory and a symlink of that name (the trailing-slash
-# form cannot match a symlink, which is how one got committed once)
+# Both spellings on purpose: the trailing slash matches a real directory, the
+# bare name also matches a SYMLINK to one. Agents working in git worktrees
+# symlink node_modules rather than rebuild node-pty, and a symlink slips past
+# the `node_modules/` form — one got committed into a branch that way.
 node_modules/
 node_modules
 *.log

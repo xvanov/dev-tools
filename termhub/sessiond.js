@@ -60,32 +60,55 @@ function readBody(req) {
   });
 }
 
-// Raw binary body reader for image uploads — readBody's 1MB cap and JSON parse
-// are too small/wrong-shaped for a pasted screenshot.
+const mb = (n) => (n / (1024 * 1024)).toFixed(1);
+
+// Raw binary body reader for uploads — readBody's 1MB cap and JSON parse are
+// too small/wrong-shaped for a pasted screenshot. Over the cap it stops
+// buffering and rejects, but does NOT tear the connection down: the caller
+// still has to get a 413 onto the wire first (see sendTooLarge).
 function readBinaryBody(req, maxBytes) {
   return new Promise((resolve, reject) => {
     const chunks = [];
     let total = 0;
+    let over = false;
     req.on('data', (c) => {
+      if (over) return;                    // keep draining, stop keeping
       total += c.length;
-      if (total > maxBytes) { reject(new Error('image too large')); req.destroy(); return; }
+      if (total > maxBytes) {
+        over = true;
+        chunks.length = 0;                 // release what we already buffered
+        reject(new Error(`${mb(total)} MB is over the ${mb(maxBytes)} MB limit`));
+        return;
+      }
       chunks.push(c);
     });
-    req.on('end', () => resolve(Buffer.concat(chunks)));
+    req.on('end', () => { if (!over) resolve(Buffer.concat(chunks)); });
     req.on('error', reject);
   });
 }
 
-// Refuse an oversized upload from its Content-Length instead of reading the
-// whole thing first: the streaming guard in readBinaryBody has to destroy the
-// request to stop it, which takes the response down with it and leaves the
-// browser with an unexplained network error. Answering up front means the user
-// gets a real message — and a phone doesn't spend two minutes uploading a file
-// that was always going to be rejected.
+// Answer 413 without tearing the connection down. Destroying the request (which
+// is what the streaming guard used to do) kills the response with it: the
+// browser gets an unexplained network error, and through the front — which is
+// still piping the body upstream when the socket dies — it surfaces as a
+// thoroughly misleading `502 sessiond unreachable: write ECONNRESET`.
+//
+// So we reply and then just drain whatever else the client sends. Nothing is
+// buffered past the cap (see readBinaryBody), so an oversize body costs
+// bandwidth, never memory, and Node's own requestTimeout bounds how long a
+// client can dribble one at us.
+function sendTooLarge(req, res, body) {
+  sendJson(res, 413, body);
+  req.resume();
+}
+
+// Refuse an oversized upload from its Content-Length rather than reading the
+// whole thing first, so a phone doesn't spend two minutes uploading a file that
+// was always going to be rejected. Only chunked bodies (no Content-Length) get
+// as far as the streaming guard above.
 function oversizeError(req, maxBytes) {
   const len = Number(req.headers['content-length']);
   if (!Number.isFinite(len) || len <= maxBytes) return null;
-  const mb = (n) => (n / (1024 * 1024)).toFixed(1);
   return `${mb(len)} MB is over the ${mb(maxBytes)} MB limit`;
 }
 
@@ -98,6 +121,18 @@ function uploadedName(req, fallback) {
     // malformed header — fall back to the default name
   }
   return fallback;
+}
+
+// Scrub a client-supplied string before it is printed into a terminal.
+// session.notice() writes to the live PTY view AND appends to the replay
+// buffer, so an escape sequence smuggled in through a filename doesn't just
+// scribble on the screen once — it re-fires on every reconnect for the life of
+// the session. `X-File-Name: <ESC>[2J<ESC>]0;PWNED<BEL>evil.png` cleared the
+// screen and rewrote the window title, repeatedly. Strip C0/C1 controls (ESC
+// among them) and cap the length so a 4000-character name can't flood the view.
+function safeForNotice(value, max = 120) {
+  const clean = String(value == null ? '' : value).replace(/[\x00-\x1f\x7f-\x9f]/g, '');
+  return clean.length > max ? `${clean.slice(0, max - 1)}…` : clean;
 }
 
 // Build the command used to bring a Claude session back: keep whatever it was
@@ -182,16 +217,25 @@ function createSessiond() {
       }
 
       if (req.method === 'GET' && pathname === '/api/info') {
-        // `clipboardImage` and `limits` let the UI tell the user what will happen
-        // BEFORE a slow upload: whether a pasted image will land on this host's
-        // clipboard or as a file, and whether the file is too big to bother
-        // sending at all.
+        // `limits` lets the UI refuse a too-big file before spending a phone's
+        // uplink on it. `imageBytes` is the EFFECTIVE image cap for this host,
+        // not the constant: without a clipboard an image is written to disk and
+        // gets the file cap (see the clipboard-image route). Reporting the
+        // effective number keeps the client's copy of the rule honest without
+        // making the client re-derive it.
+        // `clipboardImage` has no reader in the UI — it's a diagnostic, quoted
+        // in AGENT.md's troubleshooting matrix as the way to tell from a single
+        // curl whether this host will paste an image or save it.
+        const canClip = clipboardTarget().available;
         return sendJson(res, 200, {
           machine: MACHINE_NAME,
           platform: process.platform,
           home: os.homedir(),
-          clipboardImage: clipboardTarget().available,
-          limits: { imageBytes: MAX_CLIPBOARD_IMAGE_BYTES, fileBytes: MAX_UPLOAD_FILE_BYTES },
+          clipboardImage: canClip,
+          limits: {
+            imageBytes: canClip ? MAX_CLIPBOARD_IMAGE_BYTES : MAX_UPLOAD_FILE_BYTES,
+            fileBytes: MAX_UPLOAD_FILE_BYTES,
+          },
         });
       }
 
@@ -273,20 +317,30 @@ function createSessiond() {
         const id = decodeURIComponent(clipboardImageMatch[1]);
         const session = sessions.get(id);
         if (!session) return sendJson(res, 404, { error: 'no such session' });
-        const oversize = oversizeError(req, MAX_CLIPBOARD_IMAGE_BYTES);
+        const rawImageName = safeForNotice(uploadedName(req, '') || 'image');
+        // Which cap applies depends on where the bytes are actually going. The
+        // 15 MB limit exists because a clipboard image has to be inflated onto
+        // an OS clipboard; on a host with no clipboard this route writes a file,
+        // exactly like /upload-file, so it gets the file cap. Recent iPhones
+        // shoot 15-25 MB photos — capping those at 15 MB refused the whiteboard
+        // photo on the one kind of host where the constraint doesn't exist.
+        const target = clipboardTarget();
+        const imageCap = target.available ? MAX_CLIPBOARD_IMAGE_BYTES : MAX_UPLOAD_FILE_BYTES;
+
+        const oversize = oversizeError(req, imageCap);
         if (oversize) {
-          session.notice(`\x1b[33m[termhub] image not sent — ${oversize}\x1b[0m`);
-          return sendJson(res, 413, { error: `image ${oversize}` });
+          session.notice(`\x1b[33m[termhub] ${rawImageName} not sent — ${oversize}\x1b[0m`);
+          return sendTooLarge(req, res, { error: `image ${oversize}` });
         }
         let buffer;
         try {
-          buffer = await readBinaryBody(req, MAX_CLIPBOARD_IMAGE_BYTES);
+          buffer = await readBinaryBody(req, imageCap);
         } catch (e) {
-          return sendJson(res, 413, { error: e.message });
+          session.notice(`\x1b[33m[termhub] ${rawImageName} not sent — ${safeForNotice(e.message)}\x1b[0m`);
+          return sendTooLarge(req, res, { error: `image ${e.message}` });
         }
         const mimeType = (req.headers['content-type'] || 'image/png').split(';')[0].trim();
 
-        const target = clipboardTarget();
         // Only worth naming the cause when a host that looked capable failed
         // anyway; "this box has no display" is not news worth a line of terminal.
         let failure = null;
@@ -301,12 +355,12 @@ function createSessiond() {
         }
         try {
           const saved = await saveImageAttachment(uploadedName(req, null), mimeType, buffer);
-          const why = failure ? `clipboard failed (${failure})` : 'no clipboard on this host';
-          session.notice(`[termhub] ${why} — saved image to ${saved.path}`);
+          const why = failure ? `clipboard failed (${safeForNotice(failure)})` : 'no clipboard on this host';
+          session.notice(`[termhub] ${why} — saved image to ${safeForNotice(saved.path, 200)}`);
           return sendJson(res, 200, { ok: true, kind: 'file', path: saved.path, name: saved.name });
         } catch (e) {
           const msg = e && e.message ? e.message : String(e);
-          session.notice(`\x1b[33m[termhub] couldn't save the image: ${msg}\x1b[0m`);
+          session.notice(`\x1b[33m[termhub] couldn't save ${rawImageName}: ${safeForNotice(msg, 200)}\x1b[0m`);
           return sendJson(res, 502, { error: msg });
         }
       }
@@ -322,24 +376,26 @@ function createSessiond() {
         const session = sessions.get(id);
         if (!session) return sendJson(res, 404, { error: 'no such session' });
         const rawName = uploadedName(req, 'upload');
+        const shownName = safeForNotice(rawName);   // never print the raw header
         const oversize = oversizeError(req, MAX_UPLOAD_FILE_BYTES);
         if (oversize) {
-          session.notice(`\x1b[33m[termhub] ${rawName} not sent — ${oversize}\x1b[0m`);
-          return sendJson(res, 413, { error: `${rawName} ${oversize}` });
+          session.notice(`\x1b[33m[termhub] ${shownName} not sent — ${oversize}\x1b[0m`);
+          return sendTooLarge(req, res, { error: `${shownName} ${oversize}` });
         }
         let buffer;
         try {
           buffer = await readBinaryBody(req, MAX_UPLOAD_FILE_BYTES);
         } catch (e) {
-          return sendJson(res, 413, { error: e.message });
+          session.notice(`\x1b[33m[termhub] ${shownName} not sent — ${safeForNotice(e.message)}\x1b[0m`);
+          return sendTooLarge(req, res, { error: `${shownName} ${e.message}` });
         }
         try {
           const { path: savedPath, name } = await saveUploadedFile(session.cwd, rawName, buffer);
-          session.notice(`[termhub] saved ${name} to ${session.cwd}`);
+          session.notice(`[termhub] saved ${safeForNotice(name)} to ${safeForNotice(session.cwd, 200)}`);
           return sendJson(res, 200, { ok: true, kind: 'file', path: savedPath, name });
         } catch (e) {
           const msg = e && e.message ? e.message : String(e);
-          session.notice(`\x1b[33m[termhub] couldn't save ${rawName}: ${msg}\x1b[0m`);
+          session.notice(`\x1b[33m[termhub] couldn't save ${shownName}: ${safeForNotice(msg, 200)}\x1b[0m`);
           return sendJson(res, 502, { error: msg });
         }
       }
