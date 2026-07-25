@@ -5,6 +5,11 @@
 // the existing "chat:imagePaste" hotkey in Claude Code (Alt+V on native
 // Windows/WSL, Ctrl+V on Linux/macOS) picks it up exactly as if the user had
 // copied a screenshot on this machine and pressed it.
+//
+// Not every host HAS a clipboard, though — a headless Linux server has no X or
+// Wayland display for a clipboard to live on, and no amount of installed tooling
+// changes that. `clipboardTarget()` says so up front so the caller can take the
+// save-to-a-file route instead of failing at the user (see sessiond.js).
 
 const fs = require('fs');
 const os = require('os');
@@ -13,21 +18,12 @@ const crypto = require('crypto');
 const { spawn, execFile } = require('child_process');
 const { promisify } = require('util');
 const { findOnPath } = require('./shell');
+const { extForImageMime } = require('./uploads');
 
 const execFileP = promisify(execFile);
 
-const EXT_BY_MIME = {
-  'image/png': '.png',
-  'image/jpeg': '.jpg',
-  'image/jpg': '.jpg',
-  'image/gif': '.gif',
-  'image/webp': '.webp',
-  'image/bmp': '.bmp',
-};
-
 function tempImagePath(mimeType) {
-  const ext = EXT_BY_MIME[mimeType] || '.png';
-  const name = `termhub-clip-${Date.now().toString(36)}-${crypto.randomBytes(4).toString('hex')}${ext}`;
+  const name = `termhub-clip-${Date.now().toString(36)}-${crypto.randomBytes(4).toString('hex')}${extForImageMime(mimeType)}`;
   return path.join(os.tmpdir(), name);
 }
 
@@ -88,18 +84,42 @@ async function setClipboardImageMacOS(buffer) {
   });
 }
 
-async function setClipboardImageLinux(buffer, mimeType) {
+// Pick the Linux clipboard tool for this session, or explain why there isn't one.
+// The display check matters as much as the tool check: xclip ships by default on
+// plenty of servers, exits non-zero with "Can't open display" when there is no X
+// running, and there is nothing the user can install to fix that.
+function linuxClipboardTool(mimeType) {
+  const hasDisplay = !!(process.env.DISPLAY || process.env.WAYLAND_DISPLAY);
+  if (!hasDisplay) return { reason: 'no X or Wayland display on this host' };
   if (process.env.WAYLAND_DISPLAY && findOnPath(['wl-copy'])) {
-    return runPiped('wl-copy', ['--type', mimeType], buffer);
+    return { cmd: 'wl-copy', args: ['--type', mimeType] };
   }
-  if (findOnPath(['xclip'])) {
-    return runPiped('xclip', ['-selection', 'clipboard', '-t', mimeType], buffer);
+  if (process.env.DISPLAY && findOnPath(['xclip'])) {
+    return { cmd: 'xclip', args: ['-selection', 'clipboard', '-t', mimeType] };
   }
-  if (findOnPath(['xsel'])) {
+  if (process.env.DISPLAY && findOnPath(['xsel'])) {
     // xsel has no MIME-type option — best-effort, text tools mostly ignore it anyway.
-    return runPiped('xsel', ['--clipboard', '--input'], buffer);
+    return { cmd: 'xsel', args: ['--clipboard', '--input'] };
   }
-  throw new Error('no clipboard tool found — install xclip (or wl-clipboard under Wayland)');
+  return { reason: 'no clipboard tool found — install xclip (or wl-clipboard under Wayland)' };
+}
+
+async function setClipboardImageLinux(buffer, mimeType) {
+  const tool = linuxClipboardTool(mimeType);
+  if (!tool.cmd) throw new Error(tool.reason);
+  return runPiped(tool.cmd, tool.args, buffer);
+}
+
+// Can this host stage an image on a native clipboard at all? Windows and macOS
+// always can (the APIs are part of the OS); Linux only with a display plus a
+// tool to talk to it. MIME type only affects which Linux tool is picked, so the
+// answer is the same for every image format we accept.
+function clipboardTarget() {
+  if (process.platform === 'win32') return { available: true, tool: 'powershell' };
+  if (process.platform === 'darwin') return { available: true, tool: 'osascript' };
+  const tool = linuxClipboardTool('image/png');
+  if (tool.cmd) return { available: true, tool: tool.cmd };
+  return { available: false, reason: tool.reason };
 }
 
 async function setClipboardImage(buffer, mimeType) {
@@ -109,4 +129,4 @@ async function setClipboardImage(buffer, mimeType) {
   return setClipboardImageLinux(buffer, mime);
 }
 
-module.exports = { setClipboardImage };
+module.exports = { setClipboardImage, clipboardTarget };

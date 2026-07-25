@@ -55,21 +55,37 @@
         </div>
       </div>
 
-      <!-- On-screen keys (essential on phones; phone keyboards lack these) -->
+      <!-- On-screen keys (essential on phones; phone keyboards lack these).
+           The keys scroll sideways when they don't fit (they don't, on a
+           phone) — 📎 lives OUTSIDE that scroller so it is always on screen,
+           since a button you have to go looking for is no fix for "I can't
+           attach a file". -->
       <div id="keybar">
-        <button data-key="esc" class="key">Esc</button>
-        <button data-key="ctrl" class="key" id="ctrl-key">Ctrl</button>
-        <button data-key="tab" class="key">Tab</button>
-        <button data-key="left" class="key">&#8592;</button>
-        <button data-key="up" class="key">&#8593;</button>
-        <button data-key="down" class="key">&#8595;</button>
-        <button data-key="right" class="key">&#8594;</button>
-        <button data-key="ctrl-c" class="key wide">^C</button>
-        <button id="paste-key" class="key" title="Paste from clipboard">Paste</button>
-        <button id="kbd-key" class="key" title="Show keyboard">&#9000;</button>
+        <div id="keybar-keys">
+          <button data-key="esc" class="key">Esc</button>
+          <button data-key="ctrl" class="key" id="ctrl-key">Ctrl</button>
+          <button data-key="tab" class="key">Tab</button>
+          <button data-key="left" class="key">&#8592;</button>
+          <button data-key="up" class="key">&#8593;</button>
+          <button data-key="down" class="key">&#8595;</button>
+          <button data-key="right" class="key">&#8594;</button>
+          <button data-key="ctrl-c" class="key wide">^C</button>
+          <button id="paste-key" class="key" title="Paste from clipboard">Paste</button>
+          <button id="kbd-key" class="key" title="Show keyboard">&#9000;</button>
+        </div>
+        <button id="attach-key" class="key" title="Attach a file">&#128206;</button>
       </div>
+
+      <!-- The 📎 key's picker. No `accept` filter on purpose: iOS Safari hides
+           the "Browse" (Files) option as soon as one is set, leaving only the
+           photo library. -->
+      <input id="file-input" type="file" multiple hidden />
     </main>
   </div>
+
+  <!-- Upload progress / failure notices. Deliberately DOM, not terminal output:
+       a full-screen TUI repaints over anything written into the terminal. -->
+  <div id="toasts"></div>
 
   <!-- New terminal / Claude Code dialog -->
   <div id="dialog-backdrop" class="hidden">

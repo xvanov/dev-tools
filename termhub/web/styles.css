@@ -199,8 +199,17 @@ html, body {
 /* ---- on-screen key bar ---- */
 #keybar {
   display: flex; gap: 4px; padding: 6px; background: var(--bg-2);
-  border-top: 1px solid var(--border); overflow-x: auto;
+  border-top: 1px solid var(--border); overflow: hidden;
 }
+/* The keys scroll; #attach-key, its sibling, does not. `flex: 0 1 auto` keeps
+   the row its natural width on desktop (so 📎 sits right after ⌨ rather than
+   stranded at the far right) and lets it shrink and scroll on a phone. */
+#keybar-keys {
+  display: flex; gap: 4px; flex: 0 1 auto; min-width: 0; overflow-x: auto;
+  scrollbar-width: none;
+}
+#keybar-keys::-webkit-scrollbar { display: none; }
+#keybar > #attach-key { flex: 0 0 auto; }
 #keybar .key {
   flex: 1 0 auto; min-width: 44px; min-height: 38px; padding: 6px 10px;
   background: var(--bg-3); color: var(--fg); border: 1px solid var(--border);
@@ -209,6 +218,23 @@ html, body {
 #keybar .key.wide { color: var(--danger); }
 #keybar .key.armed { background: var(--accent); color: #0d1117; border-color: var(--accent); }
 #keybar .key:active { background: var(--accent); color: #0d1117; }
+
+/* ---- toasts (upload progress / errors) ---- */
+/* Bottom-centre, above the key bar and clear of the iOS home indicator. */
+#toasts {
+  position: fixed; left: 50%; transform: translateX(-50%);
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 64px);
+  z-index: 45; display: flex; flex-direction: column; gap: 6px;
+  align-items: center; pointer-events: none; width: max-content; max-width: 92vw;
+}
+.toast {
+  background: var(--bg-3); color: var(--fg); border: 1px solid var(--border);
+  border-radius: 8px; padding: 8px 12px; font-size: 13px;
+  box-shadow: 0 6px 18px rgba(0,0,0,0.5);
+  max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.toast.err { border-color: var(--danger); color: var(--danger); }
+.toast.ok { border-color: var(--ok); }
 
 /* ---- dialog ---- */
 #dialog-backdrop {

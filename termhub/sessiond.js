@@ -23,8 +23,8 @@ const recents = require('./lib/recents');
 const archive = require('./lib/archive');
 const { DEFAULT_SESSIOND_PORT, claimPidFile } = require('./lib/state');
 const { suggestDirs } = require('./lib/dirs');
-const { setClipboardImage } = require('./lib/clipboard');
-const { saveUploadedFile } = require('./lib/uploads');
+const { setClipboardImage, clipboardTarget } = require('./lib/clipboard');
+const { saveUploadedFile, saveImageAttachment } = require('./lib/uploads');
 
 // A pasted/dropped image, base64-inflated in transit — cap comfortably above a
 // full-screen screenshot (a few MB as PNG) while still bounding memory use.
@@ -66,6 +66,30 @@ function readBinaryBody(req, maxBytes) {
     req.on('end', () => resolve(Buffer.concat(chunks)));
     req.on('error', reject);
   });
+}
+
+// Refuse an oversized upload from its Content-Length instead of reading the
+// whole thing first: the streaming guard in readBinaryBody has to destroy the
+// request to stop it, which takes the response down with it and leaves the
+// browser with an unexplained network error. Answering up front means the user
+// gets a real message — and a phone doesn't spend two minutes uploading a file
+// that was always going to be rejected.
+function oversizeError(req, maxBytes) {
+  const len = Number(req.headers['content-length']);
+  if (!Number.isFinite(len) || len <= maxBytes) return null;
+  const mb = (n) => (n / (1024 * 1024)).toFixed(1);
+  return `${mb(len)} MB is over the ${mb(maxBytes)} MB limit`;
+}
+
+// The browser sends the filename URI-encoded (headers are latin-1 only, and
+// filenames are routinely not). A malformed one is not worth failing over.
+function uploadedName(req, fallback) {
+  try {
+    if (req.headers['x-file-name']) return decodeURIComponent(req.headers['x-file-name']);
+  } catch {
+    // malformed header — fall back to the default name
+  }
+  return fallback;
 }
 
 // Build the command used to bring a Claude session back: keep whatever it was
@@ -144,7 +168,17 @@ function createSessiond() {
       }
 
       if (req.method === 'GET' && pathname === '/api/info') {
-        return sendJson(res, 200, { machine: MACHINE_NAME, platform: process.platform, home: os.homedir() });
+        // `clipboardImage` and `limits` let the UI tell the user what will happen
+        // BEFORE a slow upload: whether a pasted image will land on this host's
+        // clipboard or as a file, and whether the file is too big to bother
+        // sending at all.
+        return sendJson(res, 200, {
+          machine: MACHINE_NAME,
+          platform: process.platform,
+          home: os.homedir(),
+          clipboardImage: clipboardTarget().available,
+          limits: { imageBytes: MAX_CLIPBOARD_IMAGE_BYTES, fileBytes: MAX_UPLOAD_FILE_BYTES },
+        });
       }
 
       if (req.method === 'GET' && pathname === '/api/sessions') {
@@ -213,11 +247,23 @@ function createSessiond() {
       // Stage a browser-pasted/dropped image onto THIS machine's OS clipboard, so
       // the Claude session running in this PTY can pick it up via its own
       // clipboard-image paste hotkey (Alt+V on Windows, Ctrl+V on Linux/macOS).
+      //
+      // On a host with no clipboard to stage it on (headless Linux — see
+      // lib/clipboard.js), and equally when the clipboard write fails on a host
+      // that looked capable, save the image as a file instead and tell the
+      // client so: `kind` decides whether it fires the paste hotkey or types the
+      // path. Either way the image reaches the agent; the old behaviour here was
+      // to fail with a yellow warning the user could do nothing about.
       const clipboardImageMatch = /^\/api\/sessions\/([^/]+)\/clipboard-image$/.exec(pathname);
       if (req.method === 'POST' && clipboardImageMatch) {
         const id = decodeURIComponent(clipboardImageMatch[1]);
         const session = sessions.get(id);
         if (!session) return sendJson(res, 404, { error: 'no such session' });
+        const oversize = oversizeError(req, MAX_CLIPBOARD_IMAGE_BYTES);
+        if (oversize) {
+          session.notice(`\x1b[33m[termhub] image not sent — ${oversize}\x1b[0m`);
+          return sendJson(res, 413, { error: `image ${oversize}` });
+        }
         let buffer;
         try {
           buffer = await readBinaryBody(req, MAX_CLIPBOARD_IMAGE_BYTES);
@@ -225,13 +271,28 @@ function createSessiond() {
           return sendJson(res, 413, { error: e.message });
         }
         const mimeType = (req.headers['content-type'] || 'image/png').split(';')[0].trim();
+
+        const target = clipboardTarget();
+        // Only worth naming the cause when a host that looked capable failed
+        // anyway; "this box has no display" is not news worth a line of terminal.
+        let failure = null;
+        if (target.available) {
+          try {
+            await setClipboardImage(buffer, mimeType);
+            session.notice('[termhub] image copied to clipboard');
+            return sendJson(res, 200, { ok: true, kind: 'clipboard' });
+          } catch (e) {
+            failure = e && e.message ? e.message : String(e);
+          }
+        }
         try {
-          await setClipboardImage(buffer, mimeType);
-          session.notice('[termhub] image copied to clipboard');
-          return sendJson(res, 200, { ok: true });
+          const saved = await saveImageAttachment(uploadedName(req, null), mimeType, buffer);
+          const why = failure ? `clipboard failed (${failure})` : 'no clipboard on this host';
+          session.notice(`[termhub] ${why} — saved image to ${saved.path}`);
+          return sendJson(res, 200, { ok: true, kind: 'file', path: saved.path, name: saved.name });
         } catch (e) {
           const msg = e && e.message ? e.message : String(e);
-          session.notice(`\x1b[33m[termhub] couldn't set clipboard image: ${msg}\x1b[0m`);
+          session.notice(`\x1b[33m[termhub] couldn't save the image: ${msg}\x1b[0m`);
           return sendJson(res, 502, { error: msg });
         }
       }
@@ -246,22 +307,22 @@ function createSessiond() {
         const id = decodeURIComponent(uploadFileMatch[1]);
         const session = sessions.get(id);
         if (!session) return sendJson(res, 404, { error: 'no such session' });
+        const rawName = uploadedName(req, 'upload');
+        const oversize = oversizeError(req, MAX_UPLOAD_FILE_BYTES);
+        if (oversize) {
+          session.notice(`\x1b[33m[termhub] ${rawName} not sent — ${oversize}\x1b[0m`);
+          return sendJson(res, 413, { error: `${rawName} ${oversize}` });
+        }
         let buffer;
         try {
           buffer = await readBinaryBody(req, MAX_UPLOAD_FILE_BYTES);
         } catch (e) {
           return sendJson(res, 413, { error: e.message });
         }
-        let rawName = 'upload';
-        try {
-          if (req.headers['x-file-name']) rawName = decodeURIComponent(req.headers['x-file-name']);
-        } catch {
-          // malformed header — fall back to the default name
-        }
         try {
           const { path: savedPath, name } = await saveUploadedFile(session.cwd, rawName, buffer);
           session.notice(`[termhub] saved ${name} to ${session.cwd}`);
-          return sendJson(res, 200, { ok: true, path: savedPath, name });
+          return sendJson(res, 200, { ok: true, kind: 'file', path: savedPath, name });
         } catch (e) {
           const msg = e && e.message ? e.message : String(e);
           session.notice(`\x1b[33m[termhub] couldn't save ${rawName}: ${msg}\x1b[0m`);

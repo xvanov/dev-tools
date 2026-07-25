@@ -157,13 +157,26 @@ running `update.ps1` survives the update.
   to a session **kills** it; there's no separate soft-close, so what you see is what happens.
 - **Collapse** (« in the sidebar header, desktop only) tucks the sidebar away for full-width
   terminal real estate; a floating **»** button brings it back. Remembered across reloads.
-- **Paste or drag-and-drop a file onto a terminal** to get it onto the remote machine: an
-  image is staged onto that machine's own OS clipboard and pasted into the running agent
-  (Claude Code / opencode) exactly like a local screenshot paste would; any other file (PDF,
-  `.md`, `.txt`, …) is saved into the session's working directory and its path is typed into
-  the terminal input for you to use.
+- **📎 (key bar) attaches a file** — the reliable way to get something onto the remote machine,
+  and the only one that works on a phone. It opens the normal file picker (on iOS: Photo
+  Library / Take Photo / Browse), takes several files at once, and shows upload progress and
+  any failure as a notice above the key bar. **Pasting or dragging** a file onto the terminal
+  does the same thing where the browser allows it.
+  - An **image** is staged onto the remote machine's own OS clipboard and pasted into the
+    running agent (Claude Code / opencode) exactly like a local screenshot paste would.
+    On a machine with no clipboard to stage it on — a headless Linux box has no X or Wayland
+    display, and no installed tool changes that — the image is saved to
+    `<data dir>/attachments/` instead and its **path** is typed into the terminal input;
+    Claude Code and opencode both read an image given a path. Attachments older than a week
+    are cleaned up on the next paste. They deliberately do *not* go in the session's working
+    directory: that's usually a git checkout, and pasted screenshots have no business in it.
+  - **Any other file** (PDF, `.md`, `.txt`, …) is saved into the session's working directory
+    and its path is typed into the terminal input for you to use.
+  - Caps: 15 MB per image, 100 MB per file. Over that you get told immediately, rather than
+    after a long upload.
 - On mobile: tap **☰** for the session drawer, **＋** for a new terminal, and use the key bar
-  at the bottom for `Esc` / `Ctrl` / `Tab` / arrows / `^C`. Tap **⌨** to bring the keyboard back.
+  at the bottom for `Esc` / `Ctrl` / `Tab` / arrows / `^C` (swipe it sideways for `Paste` and
+  **⌨**, which brings the keyboard back). **📎** is pinned to the right of the bar, always visible.
 
 ## Configuration
 
@@ -178,7 +191,7 @@ All optional environment variables:
 | `TERMHUB_MACHINE` | hostname | Name shown in the UI |
 | `TERMHUB_SHELL` | `$SHELL` / `pwsh`→`powershell` | Shell to spawn |
 | `TERMHUB_SCROLLBACK_BYTES` | `2097152` (2 MB) | Per-session replay buffer size |
-| `TERMHUB_DATA_DIR` | `~/.local/termhub` (Win: `%LOCALAPPDATA%\termhub`) | Where recent dirs are stored |
+| `TERMHUB_DATA_DIR` | `~/.local/termhub` (Win: `%LOCALAPPDATA%\termhub`) | Where recent dirs, the session archive and `attachments/` are stored |
 
 On Linux set these with `systemctl --user edit termhub`; on Windows via `setx` + restart the task.
 
@@ -196,6 +209,8 @@ On Linux set these with `systemctl --user edit termhub`; on Windows via `setx` +
 | `lib/recents.js` | Recent-directory persistence |
 | `lib/bind.js` | Tailscale-address detection |
 | `lib/paths.js` | Per-user data directory resolution |
+| `lib/clipboard.js` | Native OS clipboard image staging, and whether this host has a clipboard at all |
+| `lib/uploads.js` | Saving attachments: files into the session cwd, images into `<data dir>/attachments/` |
 | `web/` | xterm.js single-page UI (sidebar, key bar, dialogs) + vendored xterm assets |
 | `windows/start.ps1` | Boots both tiers and publishes the front via Tailscale Serve (run by the scheduled task) |
 | `windows/update.ps1` | Safe blue-green updater (run from any terminal; terminals survive) |

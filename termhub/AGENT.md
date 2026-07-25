@@ -67,7 +67,14 @@ HTTP API (served by `sessiond`, proxied by `front`): `GET /api/info`, `GET /api/
 `POST /api/sessions` (`{cwd?, command?, title?, cols, rows}`), `POST /api/sessions/:id/restore`
 (re-open an archived session), `DELETE /api/sessions/:id` (kill a live session and/or forget an
 archived one), `PATCH /api/sessions/:id` (`{title}`), `GET /api/recents`, `GET /api/dirs?path=`,
-`GET /api/ping` (sessiond liveness). The `front` answers `GET /api/health` itself (front up +
+`GET /api/ping` (sessiond liveness). Attachments take a **raw binary body** with the filename in
+an URI-encoded `X-File-Name` header: `POST /api/sessions/:id/clipboard-image` →
+`{ok, kind:'clipboard'|'file', path?, name?}` (see *Attachments* below) and
+`POST /api/sessions/:id/upload-file` → `{ok, kind:'file', path, name}`; both answer `413` with a
+readable `{error}` when the `Content-Length` exceeds the cap, without reading the body.
+`GET /api/info` reports `clipboardImage` (can this host stage a clipboard image?) and
+`limits: {imageBytes, fileBytes}` so the UI can refuse an over-cap file before uploading it.
+The `front` answers `GET /api/health` itself (front up +
 sessiond reachable) for the updater's probe, and `GET /api/update/check` (`?force=1` to skip the
 60s cache) — both are handled by the front and never proxied. Terminal stream: WebSocket `/ws/term/:id` with JSON
 `{type:'input'|'resize'}` up and `{type:'replay'|'output'|'exit'}` down.
@@ -218,7 +225,38 @@ If building by hand, reproduce both: clear `NoDefaultCurrentDirectoryInExePath`,
 - Inputs use a 16px font so iOS Safari doesn't zoom on focus.
 - The terminal refits on focus, `orientationchange`, and `visualViewport` resize (soft
   keyboard show/hide).
+- The keys scroll sideways when they don't fit (they don't, on a phone: eleven keys want
+  ~550px). **📎** lives outside that scroller, pinned to the right edge, so the one way to
+  attach a file from a phone is never off-screen.
 - Add the tab to your home screen for an app-like, full-screen experience.
+
+## Attachments (📎, paste, drag-drop)
+
+All three routes end in the same place: `sendAttachment()` in `web/app.js`, which uploads with
+`XMLHttpRequest` (the only browser API that reports upload progress — a phone pushing a photo
+over cellular needs to see *something*) and reports through a DOM toast rather than by writing
+into the terminal, which a full-screen TUI would repaint over within a frame.
+
+**Images** go to `POST /api/sessions/:id/clipboard-image`, and `sessiond` decides what actually
+happens to them:
+
+- Host has a clipboard → staged on it, reply `{kind:'clipboard'}`, and the client fires the
+  agent's clipboard-image hotkey (`Alt+V` on native Windows Claude Code, `Ctrl+V` otherwise).
+- Host has none, **or** the clipboard write fails anyway → saved under `<data dir>/attachments/`,
+  reply `{kind:'file', path}`, and the client types the path in. `clipboardTarget()` in
+  `lib/clipboard.js` is what decides: Windows and macOS always qualify, Linux only with
+  `DISPLAY`/`WAYLAND_DISPLAY` *and* a tool (`wl-copy`/`xclip`/`xsel`). Checking for the tool
+  alone is not enough — a headless Linux box very often has `xclip` installed, where it can only
+  ever exit 1 with *Can't open display*, which is what this used to surface to the user as a
+  yellow warning they could do nothing about.
+
+Attachments live in the data dir, not the session cwd, because the cwd is usually a git checkout;
+anything there older than a week is pruned on the next save. **Everything else** goes to
+`POST /api/sessions/:id/upload-file`, which saves into the session's cwd — that *is* the point
+for a file the agent is meant to work on. Both paths run through `sanitizeFileName` (a filename
+never escapes its directory, and never becomes an NTFS alternate data stream) and `uniquePath`
+(never clobbers). A clipboard image has no name of its own, so the client stamps it
+`pasted-image-<local timestamp>.<ext>`; `sessiond` does the same if the header is missing.
 
 ## Troubleshooting matrix
 
@@ -231,6 +269,8 @@ If building by hand, reproduce both: clear `NoDefaultCurrentDirectoryInExePath`,
 | Input ignored after sleep/wake | WebSocket dropped; reconnecting | Output replays on reconnect (incl. across a front update). "Session no longer available" means `sessiond` itself restarted (reboot, or a deliberate sessiond restart) — restore it from the sidebar's **Restorable** section, or open a new terminal |
 | Sidebar empty after a reboot | `sessiond` (and its PTYs) died with the machine | Sessions created while the persistence build was running reappear under **Restorable (after restart)** — restore re-opens Claude with `--resume` or a shell with its command history. Sessions from before the build was deployed weren't recorded |
 | Wrong size / wrapping | Pane resized while backgrounded | Switch sessions or rotate to force a refit |
+| Pasted image lands as a file path instead of in the agent's prompt | The host has no usable clipboard (`curl /api/info` → `"clipboardImage": false`) | Expected on a headless Linux box. The path works — both Claude Code and opencode read an image given one. To get the clipboard route instead, run a session with a real display |
+| 📎 upload does nothing on a phone | File over the cap (15 MB image / 100 MB other) | The red notice above the key bar says so; shrink the file. A silent failure instead means the connection dropped — the notice says that too |
 | `npm install` errors on `node-pty` | Missing build toolchain | See prerequisites above |
 
 ## Security notes

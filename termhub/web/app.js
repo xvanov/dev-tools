@@ -22,6 +22,7 @@ const KEY_SEQ = {
 const state = {
   machine: '',
   platform: '',    // sessiond host's process.platform, from /api/info
+  limits: null,    // upload size caps from /api/info: {imageBytes, fileBytes}
   sessions: [],
   restorable: [],  // sessions from a previous run (e.g. before a reboot)
   open: new Map(), // id -> term object
@@ -267,7 +268,7 @@ function openTerminal(id, title, kind) {
   const t = { id, title, kind, term, fit, pane, ws: null, attempts: 0, closing: false, reconnectTimer: null, ro: null };
   state.open.set(id, t);
   wireTouchScroll(t);
-  wireImagePaste(t);
+  wireAttachments(t);
 
   // Keep the PTY in lock-step with the rendered size: any layout change (rotate,
   // keyboard open/close, font reflow) refits and pushes a resize. Without this
@@ -446,7 +447,34 @@ function connect(t) {
   ws.onerror = () => { try { ws.close(); } catch {} };
 }
 
-// ---- file paste / drop (images + generic attachments) ----------------------
+// ---- toasts ----------------------------------------------------------------
+// Short-lived status strip for things the terminal can't tell you about: an
+// upload that's still going, one that failed. It has to live in the DOM rather
+// than be written into the terminal, because a full-screen TUI (Claude Code,
+// vim) repaints the whole screen and would wipe the line within a frame.
+
+function toast(text, kind) {
+  const el = document.createElement('div');
+  el.className = 'toast' + (kind ? ' ' + kind : '');
+  el.textContent = text;
+  $('#toasts').appendChild(el);
+  let timer = null;
+  const handle = {
+    set(next, nextKind) {
+      el.textContent = next;
+      el.className = 'toast' + (nextKind ? ' ' + nextKind : '');
+      return handle;
+    },
+    close(afterMs) {
+      clearTimeout(timer);
+      if (afterMs) timer = setTimeout(() => el.remove(), afterMs);
+      else el.remove();
+    },
+  };
+  return handle;
+}
+
+// ---- file paste / drop / attach (images + generic attachments) --------------
 // A screenshot (or any other file) copied on THIS (browser) machine can't reach
 // a remote terminal the way pasted text can — there's no character stream to
 // carry file bytes. Both paths below upload the file to sessiond so it lands
@@ -456,25 +484,60 @@ function connect(t) {
 //    attaches exactly as a local paste would. Claude Code uses Alt+V on native
 //    Windows (Ctrl+V is reserved there for normal text paste) and Ctrl+V
 //    elsewhere; opencode uses Ctrl+V on every OS (confirmed against a real
-//    install — no platform split).
+//    install — no platform split). On a host with no clipboard at all (a
+//    headless Linux box has no display for one to live on) sessiond saves the
+//    image as a file instead and says so in its reply — then we take the path
+//    route below, which both agents understand just as well.
 //  - everything else (PDF, .md, .txt, …): saved into the session's own working
 //    directory, then its path is typed into the terminal input — same as what
 //    a native OS drag-and-drop of a file onto a terminal does — so the running
 //    shell or agent can pick it up by reference.
+//
+// Three ways in, one path through: the 📎 key, a paste, and a drop all end up
+// in sendAttachment().
 const IMAGE_TYPE_RE = /^image\//;
+const BROWSER_PLACEHOLDER_IMAGE_RE = /^image\.(png|jpe?g|gif|webp|bmp)$/i;
 
 function pasteImageSeq(t) {
   if (t && t.kind === 'opencode') return '\x16';
   return state.platform === 'win32' ? '\x1bv' : '\x16';
 }
 
+function humanBytes(n) {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+// A clipboard image has no filename of its own — every browser calls it
+// "image.png" — so stamp it with the time instead, which is what the user will
+// have to recognise it by later. Real files (dropped, or picked with 📎) keep
+// their own name.
+function namedForUpload(file) {
+  if (!IMAGE_TYPE_RE.test(file.type)) return file;
+  if (file.name && !BROWSER_PLACEHOLDER_IMAGE_RE.test(file.name)) return file;
+  const ext = (file.type.split('/')[1] || 'png').replace('jpeg', 'jpg');
+  const d = new Date();
+  const p = (n) => String(n).padStart(2, '0');
+  // Local time, matching the name sessiond falls back to (lib/uploads.js) — a
+  // UTC stamp on a file the user has to find later is just a puzzle.
+  const stamp = `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
+  try { return new File([file], `pasted-image-${stamp}.${ext}`, { type: file.type }); }
+  catch { return file; }   // very old Safari: no File constructor — let the server name it
+}
+
 function filesFromClipboard(cd) {
-  if (!cd || !cd.items) return [];
+  if (!cd) return [];
   const out = [];
-  for (const item of cd.items) {
+  for (const item of cd.items || []) {
     if (item.kind !== 'file') continue;
     const file = item.getAsFile();
     if (file) out.push(file);
+  }
+  // Some browsers populate only clipboardData.files (and Safari populates both,
+  // hence the de-dupe by name+size).
+  for (const file of cd.files || []) {
+    if (!out.some((f) => f.name === file.name && f.size === file.size)) out.push(file);
   }
   return out;
 }
@@ -484,67 +547,108 @@ function filesFromDrop(dt) {
   return Array.from(dt.files);
 }
 
-async function sendImage(t, file) {
-  try {
-    const res = await fetch(`/api/sessions/${encodeURIComponent(t.id)}/clipboard-image`, {
-      method: 'POST',
-      headers: { 'Content-Type': file.type || 'image/png' },
-      body: file,
-    });
-    // Success or failure, sessiond prints a notice straight into the terminal —
-    // only fire the paste hotkey once the clipboard is actually staged.
-    if (res.ok) sendInput(t, pasteImageSeq(t));
-  } catch {
-    // network hiccup — nothing more to do; the terminal shows no confirmation,
-    // which is enough of a signal that the paste didn't happen.
+// fetch() cannot report upload progress, and a phone pushing a 5 MB photo over
+// cellular takes long enough that silence reads as "nothing happened" — XHR is
+// the only browser API that says how many bytes have gone out.
+function uploadWithProgress(url, headers, file, onProgress) {
+  return new Promise((resolve) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', url, true);
+    for (const [k, v] of Object.entries(headers)) xhr.setRequestHeader(k, v);
+    xhr.upload.onprogress = (e) => { if (e.lengthComputable) onProgress(e.loaded / e.total); };
+    xhr.onload = () => {
+      let body = null;
+      try { body = JSON.parse(xhr.responseText); } catch {}
+      resolve({ ok: xhr.status >= 200 && xhr.status < 300, status: xhr.status, body });
+    };
+    xhr.onerror = () => resolve({ ok: false, status: 0, body: null });
+    xhr.onabort = () => resolve({ ok: false, status: 0, body: null });
+    xhr.send(file);
+  });
+}
+
+// Type a path into the terminal input line (without pressing Enter) so the user
+// can finish the prompt around it — same as a native OS file drag-drop.
+function insertPath(t, p) {
+  const needsQuoting = /\s/.test(p);
+  sendInput(t, needsQuoting ? `"${p}" ` : `${p} `);
+}
+
+function errorText(res, fallback) {
+  if (res.body && res.body.error) return res.body.error;
+  if (!res.status) return 'upload failed — connection lost';
+  return `${fallback} (HTTP ${res.status})`;
+}
+
+async function sendImage(t, file, note) {
+  const res = await uploadWithProgress(
+    `/api/sessions/${encodeURIComponent(t.id)}/clipboard-image`,
+    { 'Content-Type': file.type || 'image/png', 'X-File-Name': encodeURIComponent(file.name || '') },
+    file,
+    (frac) => note.set(`${file.name} — ${Math.round(frac * 100)}%`),
+  );
+  if (!res.ok) { note.set(errorText(res, 'image upload failed'), 'err').close(6000); return; }
+  // sessiond decides what actually happened to the image: staged on the host's
+  // clipboard (fire the agent's paste hotkey) or written to a file (type its
+  // path). Either way it prints its own notice into the terminal.
+  if (res.body && res.body.kind === 'file' && res.body.path) {
+    insertPath(t, res.body.path);
+    note.set(`saved ${res.body.name} — path inserted`, 'ok').close(4000);
+  } else {
+    sendInput(t, pasteImageSeq(t));
+    note.set('image pasted', 'ok').close(2500);
   }
   t.term.focus();
 }
 
 // Upload a non-image file to sessiond, which drops it into the session's cwd
-// on the REMOTE machine, then type its path into the terminal input line
-// (without pressing Enter) so the user can finish the prompt around it.
-async function sendFile(t, file) {
-  try {
-    const res = await fetch(`/api/sessions/${encodeURIComponent(t.id)}/upload-file`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': file.type || 'application/octet-stream',
-        'X-File-Name': encodeURIComponent(file.name || 'upload'),
-      },
-      body: file,
-    });
-    // sessiond prints its own success/failure notice into the terminal; only
-    // insert the path once the file has actually landed there.
-    if (res.ok) {
-      const body = await res.json().catch(() => null);
-      if (body && body.path) {
-        const needsQuoting = /\s/.test(body.path);
-        sendInput(t, needsQuoting ? `"${body.path}" ` : `${body.path} `);
-      }
-    }
-  } catch {
-    // network hiccup — nothing more to do; the terminal shows no confirmation,
-    // which is enough of a signal that the upload didn't happen.
+// on the REMOTE machine, then type its path in.
+async function sendFile(t, file, note) {
+  const res = await uploadWithProgress(
+    `/api/sessions/${encodeURIComponent(t.id)}/upload-file`,
+    {
+      'Content-Type': file.type || 'application/octet-stream',
+      'X-File-Name': encodeURIComponent(file.name || 'upload'),
+    },
+    file,
+    (frac) => note.set(`${file.name} — ${Math.round(frac * 100)}%`),
+  );
+  if (!res.ok) { note.set(errorText(res, 'upload failed'), 'err').close(6000); return; }
+  if (res.body && res.body.path) {
+    insertPath(t, res.body.path);
+    note.set(`saved ${res.body.name} — path inserted`, 'ok').close(4000);
+  } else {
+    note.close(0);
   }
   t.term.focus();
 }
 
-function sendDroppedFile(t, file) {
-  if (IMAGE_TYPE_RE.test(file.type)) sendImage(t, file);
-  else sendFile(t, file);
+function sendAttachment(t, file) {
+  const isImage = IMAGE_TYPE_RE.test(file.type);
+  // Refuse an over-cap file here rather than after a long upload the server was
+  // always going to reject. The caps come from /api/info; if we never got them,
+  // let the server be the judge.
+  const cap = state.limits && (isImage ? state.limits.imageBytes : state.limits.fileBytes);
+  if (cap && file.size > cap) {
+    toast(`${file.name || 'file'} is ${humanBytes(file.size)} — over the ${humanBytes(cap)} limit`, 'err').close(8000);
+    return;
+  }
+  const named = namedForUpload(file);
+  const note = toast(`${named.name} — uploading…`);
+  if (isImage) sendImage(t, named, note);
+  else sendFile(t, named, note);
 }
 
 // Capture in the CAPTURE phase so this runs before xterm's own paste listener
 // on its hidden textarea — for a file we fully take over the event; for plain
 // text (the common case) we do nothing and let xterm's native handling proceed.
-function wireImagePaste(t) {
+function wireAttachments(t) {
   t.pane.addEventListener('paste', (e) => {
     const files = filesFromClipboard(e.clipboardData);
     if (!files.length) return;
     e.preventDefault();
     e.stopPropagation();
-    for (const file of files) sendDroppedFile(t, file);
+    for (const file of files) sendAttachment(t, file);
   }, true);
 
   t.pane.addEventListener('dragover', (e) => { e.preventDefault(); });
@@ -552,8 +656,27 @@ function wireImagePaste(t) {
     const files = filesFromDrop(e.dataTransfer);
     if (!files.length) return;
     e.preventDefault();
-    for (const file of files) sendDroppedFile(t, file);
+    for (const file of files) sendAttachment(t, file);
   });
+}
+
+// The 📎 key. Pasting a file is unreliable on desktop and impossible on a phone,
+// so this is the sanctioned way in: a plain file picker, no `accept` filter (see
+// index.html), routed through exactly the same code as a drop.
+function openFilePicker() {
+  if (!state.open.get(state.activeId)) {
+    toast('Open a terminal first', 'err').close(3000);
+    return;
+  }
+  $('#file-input').click();
+}
+
+function onFilesPicked(input) {
+  const t = state.open.get(state.activeId);
+  const files = Array.from(input.files || []);
+  input.value = '';   // so picking the same file twice in a row fires again
+  if (!t) return;
+  for (const file of files) sendAttachment(t, file);
 }
 
 function setActive(id) {
@@ -1034,8 +1157,11 @@ function wireEvents() {
 
   $('#kbd-key').onclick = () => { const t = state.open.get(state.activeId); if (t) t.term.focus(); };
   // Plain click (not pointerdown) so iOS counts it as the user gesture the
-  // Clipboard API requires before it will hand over clipboard contents.
+  // Clipboard API requires before it will hand over clipboard contents. Same
+  // for 📎: Safari only opens a file picker from inside a real click.
   $('#paste-key').onclick = doPaste;
+  $('#attach-key').onclick = openFilePicker;
+  $('#file-input').onchange = (e) => onFilesPicked(e.target);
   document.querySelectorAll('#keybar .key[data-key]').forEach((btn) => {
     // Use pointerdown so focus stays on the terminal and the key registers on phones.
     btn.addEventListener('pointerdown', (e) => { e.preventDefault(); handleKey(btn.dataset.key); });
@@ -1056,9 +1182,13 @@ function wireEvents() {
   }
 }
 
-// Learn the sessiond host's OS once at startup — determines which hotkey
-// triggers Claude Code's clipboard-image paste (see wireImagePaste above).
-api('/api/info').then((info) => { state.platform = info.platform || ''; }).catch(() => {});
+// Learn the sessiond host's OS and upload caps once at startup — the OS
+// determines which hotkey triggers Claude Code's clipboard-image paste, the caps
+// let us reject a too-big file before uploading it (see sendAttachment above).
+api('/api/info').then((info) => {
+  state.platform = info.platform || '';
+  state.limits = info.limits || null;
+}).catch(() => {});
 
 // Restore a persisted sidebar-collapse choice — desktop-only concept (see
 // setSidebarCollapsed above), so it's a no-op on mobile regardless of what's stored.
