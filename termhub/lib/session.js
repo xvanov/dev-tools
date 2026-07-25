@@ -6,7 +6,7 @@ const path = require('path');
 const crypto = require('crypto');
 const pty = require('node-pty');
 const { defaultShell } = require('./shell');
-const { transcriptPath, findActiveTranscript, readLastModel, formatModelName } = require('./claudeModel');
+const { resolveTranscript, readLastModel, formatModelName } = require('./claudeModel');
 const opencodeModel = require('./opencodeModel');
 
 // How often to actually shell out to `opencode export` to refresh a session's
@@ -135,6 +135,12 @@ class Session {
     this.lastActivity = Date.now();
     this.alive = false;
     this.exitCode = null;
+
+    // Spoken announcements are opt-in per session (the sidebar's 🔊 toggle).
+    // The flag lives here rather than in lib/voiceHub.js so info() can report it
+    // without a lookup, and so it dies with the session — no armed-id set to
+    // keep in sync with the session map.
+    this.voiceArmed = false;
 
     // Lifecycle hooks (sessiond wires these to the on-disk archive). Public so
     // they can also be assigned after construction.
@@ -309,25 +315,20 @@ class Session {
     return this._claudeModel();
   }
 
+  // The Claude Code conversation transcript backing this session, or null. The
+  // model badge reads it for the model; lib/voiceHub.js tails the same file for
+  // turn boundaries — they must agree on which conversation this session is,
+  // hence one shared resolver (see lib/claudeModel.js resolveTranscript).
+  transcriptFile() {
+    return resolveTranscript(this.cwd, this.agentSessionId, this.created);
+  }
+
   // Read straight from Claude's own transcript file — the CLI doesn't expose
   // this any other way. Cached on the transcript's mtime so an idle session
   // (polled every couple seconds by the sidebar) doesn't re-read/re-parse the
   // file on every call.
   _claudeModel() {
-    // Preferred source: the transcript for the session id termhub itself pinned
-    // via `--session-id` at launch. Absent for shell sessions and for claude
-    // commands that carried their own --resume/-c id — those fall back to the
-    // cwd's active transcript (see findActiveTranscript), so a hand-launched
-    // `claude` in any terminal still gets a badge.
-    let file = null;
-    if (this.agentSessionId) {
-      const f = transcriptPath(this.cwd, this.agentSessionId);
-      try { fs.statSync(f); file = f; } catch { file = null; } // not written yet
-    }
-    if (!file) {
-      const active = findActiveTranscript(this.cwd, this.created);
-      if (active) file = active.file;
-    }
+    const file = this.transcriptFile();
     if (!file) return { model: null, modelLabel: null };
 
     let mtimeMs;
@@ -413,6 +414,7 @@ class Session {
       // (or any active process) streams output continuously; an idle prompt is
       // silent. Good enough to show a "working" dot vs nothing when idle.
       busy: this.alive && (Date.now() - this.lastActivity) < 1500,
+      voiceArmed: this.voiceArmed,
       ...this.currentModel(), // { model, modelLabel } — null/null for non-claude sessions
     };
   }

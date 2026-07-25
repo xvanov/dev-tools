@@ -38,6 +38,13 @@ other machines to maintain.
   as you type (recents when blank), and a single editable command box (default
   `claude --dangerously-skip-permissions`, with presets you can pick or type over, or clear
   for a plain shell); it opens a terminal there and runs it.
+- **Spoken announcements (opt-in per session)** — arm a Claude session with the 🔊 toggle and
+  termhub tells you, out loud, when that session stops and is waiting on you. It watches Claude
+  Code's own conversation transcript for the end of a turn, condenses the reply into two or
+  three speakable sentences, and synthesises it locally with [piper](https://github.com/OHF-Voice/piper1-gpl).
+  Nothing leaves the machine, and each turn is announced exactly once. Needs no setup beyond
+  having `piper` and a voice model installed — without them the toggle simply reports that
+  speech is unavailable and everything else works as before.
 - **Update from the UI** — a ⟳ Update button checks GitHub (once a day in the background, and
   on demand) and, when the termhub tool itself has changed, opens a terminal that runs the
   safe blue-green updater. See [Updating safely](#updating-safely-terminals-survive).
@@ -55,7 +62,7 @@ updates don't kill terminals:
                                     │   (re-pointed atomically on update)
                                     ▼
 browser tab ──http+ws──►  front  (UI + proxy, 127.0.0.1:7001⇆7002)
-                              │   proxies /api/* and /ws/term/* to ↓
+                              │   proxies /api/*, /ws/term/* and /ws/voice to ↓
                               ▼
                           sessiond  (127.0.0.1:7010)
                               └─► PTYs (node-pty) + scrollback  ← survive every update
@@ -174,6 +181,11 @@ running `update.ps1` survives the update.
     and its path is typed into the terminal input for you to use.
   - Caps: 15 MB per image, 100 MB per file. Over that you get told immediately, rather than
     after a long upload.
+- **🔊 next to a session** arms spoken announcements for it (Claude sessions only). When that
+  session finishes a turn and is waiting on you, termhub speaks a short summary of what it said;
+  with more than one session armed, the summary is prefixed with the session's title so you know
+  who's talking. A session that starts working again cancels an announcement that hasn't been
+  spoken yet. Toggling it off is immediate and forgets nothing else.
 - On mobile: tap **☰** for the session drawer, **＋** for a new terminal, and use the key bar
   at the bottom for `Esc` / `Ctrl` / `Tab` / arrows / `^C` (swipe it sideways for `Paste` and
   **⌨**, which brings the keyboard back). **📎** is pinned to the right of the bar, always visible.
@@ -192,6 +204,8 @@ All optional environment variables:
 | `TERMHUB_SHELL` | `$SHELL` / `pwsh`→`powershell` | Shell to spawn |
 | `TERMHUB_SCROLLBACK_BYTES` | `2097152` (2 MB) | Per-session replay buffer size |
 | `TERMHUB_DATA_DIR` | `~/.local/termhub` (Win: `%LOCALAPPDATA%\termhub`) | Where recent dirs, the session archive and `attachments/` are stored |
+| `TERMHUB_TTS_VOICE` | `~/.claude/tts-voice.txt`, else `en_US-lessac-medium` | piper voice used for spoken announcements |
+| `TERMHUB_TTS_VOICE_DIR` | `~/.claude/piper-voices` | Directory holding `<voice>.onnx` + `<voice>.onnx.json` |
 
 On Linux set these with `systemctl --user edit termhub`; on Windows via `setx` + restart the task.
 
@@ -200,9 +214,14 @@ On Linux set these with `systemctl --user edit termhub`; on Windows via `setx` +
 | Path | Purpose |
 |---|---|
 | `sessiond.js` | **Persistent supervisor**: HTTP API + terminal WebSocket; owns the PTYs (loopback) |
-| `front.js` | **Swappable front**: serves the static UI + reverse-proxies `/api/*` and `/ws/term/*` to `sessiond` |
+| `front.js` | **Swappable front**: serves the static UI + reverse-proxies `/api/*`, `/ws/term/*` and `/ws/voice` to `sessiond` |
 | `server.js` | Single-process dev entrypoint — runs both tiers in one process (`npm start`) |
 | `lib/session.js` | PTY lifecycle (`node-pty`), scrollback ring buffer, replay |
+| `lib/claudeModel.js` | Locates a Claude session's transcript and tails it for the model badge |
+| `lib/claudeTranscript.js` | Reads the last turn from that transcript and decides whether it's waiting on you |
+| `lib/summarize.js` | Condenses a turn into speakable prose (`claude -p --model haiku`, with a local fallback) |
+| `lib/tts.js` | piper speech synthesis — voice discovery, WAV rendering, small LRU |
+| `lib/voiceHub.js` | Watches armed sessions and broadcasts `waiting`/`busy` over `/ws/voice` |
 | `lib/state.js` | Deployment state (`state.json`) + pid-file helpers shared by the tiers and scripts |
 | `lib/dirs.js` | Directory autocomplete for the new-terminal dialog |
 | `lib/shell.js` | Default-shell resolution per OS |
@@ -229,5 +248,15 @@ On Linux set these with `systemctl --user edit termhub`; on Windows via `setx` +
   happens, ensure you're on the current build (hard-refresh the tab).
 - **Garbled output / wrong size** — the terminal refits on focus, rotate, and keyboard
   show/hide; switch sessions or resize to force a refit.
+- **🔊 says speech is unavailable** — `GET /api/voice/status` tells you which half is missing:
+  `tts.available` false means no `piper` on `PATH` (or no usable `.onnx` in
+  `TERMHUB_TTS_VOICE_DIR` — note that partially-downloaded voice files are skipped on purpose),
+  `summarizer.available` false only means summaries will be trimmed locally instead of by
+  `claude -p`, which still speaks fine.
+- **Armed but never speaks** — announcements come from Claude Code's transcript, so the session
+  must be `kind: claude` and Claude must actually be writing one. `⚠ Transcript saving is off`
+  in the session banner (caused by an inherited `CLAUDE_CODE_CHILD_SESSION`, i.e. termhub was
+  started from inside another Claude session) means there's nothing to read. Subagent turns are
+  never announced, and neither is a session that's mid-tool-call.
 
 See [AGENT.md](./AGENT.md) for a deeper walkthrough.
