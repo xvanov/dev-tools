@@ -35,6 +35,17 @@ function resolveCwd(input) {
 // Default scrollback kept in memory per session, for replay on reconnect.
 const DEFAULT_SCROLLBACK_BYTES = Number(process.env.TERMHUB_SCROLLBACK_BYTES) || 2 * 1024 * 1024;
 
+// Environment variables that identify the agent session termhub itself was
+// launched from. Stripped from every PTY we spawn — see _spawn().
+const PARENT_AGENT_ENV = [
+  'CLAUDECODE',
+  'CLAUDE_CODE_CHILD_SESSION',
+  'CLAUDE_CODE_SESSION_ID',
+  'CLAUDE_CODE_ENTRYPOINT',
+  'CLAUDE_PID',
+  'CLAUDE_EFFORT',
+];
+
 // Classify a session by its initial command so the archive knows how to restore
 // it: a `claude` invocation resumes via `--resume`, an `opencode` one via
 // `--session`/`--continue`; anything else is a plain shell we rebuild by
@@ -158,6 +169,15 @@ class Session {
 
   _spawn() {
     const env = { ...process.env, TERM: 'xterm-256color', COLORTERM: 'truecolor' };
+    // A termhub terminal is a *fresh* terminal, never a continuation of whatever
+    // launched termhub. If termhub was started from inside a Claude Code session
+    // (easy to do — run `node server.js` from a termhub terminal), these inherited
+    // vars tell every nested `claude` it is a child of that session: it prints
+    // "⚠ Transcript saving is off" and writes no transcript at all, which silently
+    // breaks the model badge and spoken announcements, both of which read it.
+    // Only the parent-identity vars go; user preferences (CLAUDE_CONFIG_DIR,
+    // CLAUDE_CODE_ENABLE_TELEMETRY, …) are deliberately left alone.
+    for (const key of PARENT_AGENT_ENV) delete env[key];
     this.pty = pty.spawn(this.shell, [], {
       name: 'xterm-256color',
       cols: this.cols,
