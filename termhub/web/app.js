@@ -1185,7 +1185,6 @@ const canListen = () => !!SpeechRec && SECURE;
 // Matched against INTERIM results. The final transcript lands ~1.9 s after the
 // last word on device — most of a 3 s window — so waiting for it would make
 // saying "stop" useless.
-const ABORT_RE = /\b(stop|cancel|wait|no|nope|nevermind|never mind|hold on)\b/i;
 
 // ---- voice diagnostics ------------------------------------------------------
 // The voice loop's failure mode is invisible: the strip says "listening" while
@@ -1198,13 +1197,17 @@ function vlog(msg) {
   if (!VOICE_DEBUG) return;
   const t = new Date().toISOString().slice(14, 23);
   vlogLines.push(`${t} ${msg} [want=${rec.want ? 1 : 0} sr=${rec.sr ? 1 : 0} play=${voice.playing ? 1 : 0}`
-    + ` pend=${voice.pending ? 1 : 0} q=${voice.queue.length}]`);
+    + ` draft=${voice.draft ? voice.draft.text.length : 0} q=${voice.queue.length}]`);
   while (vlogLines.length > 40) vlogLines.shift();
   const box = document.getElementById('voice-debug');
   if (box) { box.textContent = vlogLines.join('\n'); box.scrollTop = 1e9; }
 }
 
-const UNDO_MS = 3000;
+// How long a silence ends your turn. Measured against real speech: iOS returns
+// a final transcript ~1.9 s after your last word, so anything under ~3 s cuts
+// people off mid-thought. Four seconds leaves room to think without making the
+// end of every turn feel like a wait.
+const SEND_SILENCE_MS = 4000;
 // A ceiling on an open mic with nothing said. Because each recognition is one
 // utterance, an idle session would otherwise cycle the recogniser — and the
 // Bluetooth audio route — forever. Ends with a visible "tap 🎤" prompt.
@@ -1230,7 +1233,7 @@ const voice = {
   queue: [],             // pending `waiting` messages, spoken one at a time
   playing: false,
   spokenTurns: new Set(),
-  pending: null,         // {sessionId, text, timer, endsAt} during the undo window
+  draft: null,           // {sessionId, text, timer} — dictation accumulating between silences
   editing: null,         // {sessionId} while the aborted-text editor is open
   status: '',
   line: '',              // the 🔊/🎤 line under the status
@@ -1297,6 +1300,29 @@ function chime() {
     gain.connect(ctx.destination);
     osc.start(t0);
     osc.stop(t0 + 0.2);
+  } catch {}
+}
+
+// A single soft note on send. The user asked for the spoken "sending: …"
+// read-back to go away, but silence after speaking reads as "did that work?" —
+// so acknowledge with a sound that costs no time.
+function sendBlip() {
+  const ctx = voice.ctx;
+  if (!ctx) return;
+  if (ctx.state === 'suspended') { try { ctx.resume(); } catch {} }
+  try {
+    const t0 = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(660, t0);   // one note, falling away — "gone"
+    gain.gain.setValueAtTime(0.0001, t0);
+    gain.gain.exponentialRampToValueAtTime(0.05, t0 + 0.01);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.14);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start(t0);
+    osc.stop(t0 + 0.16);
   } catch {}
 }
 
@@ -1416,11 +1442,6 @@ async function speak(text) {
 
 // ---- announcement queue -----------------------------------------------------
 
-function firstWords(text, n) {
-  const words = String(text).trim().split(/\s+/);
-  return words.slice(0, n).join(' ') + (words.length > n ? '…' : '');
-}
-
 // A summary can legitimately come back empty — a reply that was nothing but a
 // fenced code block flattens to "" — and /api/tts rejects an empty string with
 // a 400. Announcing "it's done" is still the useful half of the message, so
@@ -1463,7 +1484,7 @@ async function pumpQueue() {
   // `voice.playing` alone isn't enough: when there's no synthesis to do, speak()
   // returns without ever setting it, and two announcements landing together
   // would each drain the queue.
-  if (voice.pumping || voice.playing || voice.pending || voice.editing || !voice.queue.length) return;
+  if (voice.pumping || voice.playing || voice.draft || voice.editing || !voice.queue.length) return;
   voice.pumping = true;
   try { await drainQueue(); } finally { voice.pumping = false; }
 }
@@ -1638,6 +1659,10 @@ function armRecognition() {
 }
 
 function stopListening(reason) {
+  // The 45 s watchdog firing mid-dictation must not bin what was already said —
+  // send it rather than lose it. (sendDraft calls back in here with no reason,
+  // after clearing the draft, so this can't recurse.)
+  if (reason === 'idle' && voice.draft && voice.draft.text) { sendDraft(); return; }
   const wasOn = rec.want;
   rec.want = false;
   clearTimeout(rec.restartTimer);
@@ -1671,84 +1696,79 @@ function handleResult(ev) {
   const heard = (final || interim).trim();
   if (!heard) return;
 
-  if (voice.pending) {
-    // Undo window. Anything that isn't an abort word is ignored rather than
-    // treated as a new utterance — you're mid-send, not mid-sentence.
-    if (ABORT_RE.test(heard)) abortPending();
-    return;
-  }
-  voice.line = '🎤 ' + heard;
+  // Any speech at all — even a half-word interim — means the user is still
+  // going, so push the send back. This is what makes a mid-sentence pause safe.
+  if (final.trim()) addToDraft(rec.sessionId, final.trim());
+  else showDraft(interim.trim());
+  restartSendTimer();
+}
+
+// ---- dictation draft: accumulate across utterances, send after a silence -----
+//
+// iOS ends a recognition after every utterance, so a natural pause mid-sentence
+// arrives as `onend` + a brand-new recogniser rather than as one continuous
+// result. Committing on each final transcript therefore sent half a sentence
+// every time the user drew breath. Instead, text accumulates HERE, across
+// recogniser instances, and is only sent once SEND_SILENCE_MS passes with
+// nothing new heard. A pause extends the window; it never ends the turn.
+
+function addToDraft(sessionId, text) {
+  if (!sessionId) return;
+  const d = voice.draft;
+  if (d && d.sessionId === sessionId) d.text = `${d.text} ${text}`.trim();
+  else voice.draft = { sessionId, text, timer: null };
+  showDraft('');
+}
+
+// The line under the status shows what's banked plus whatever is being said
+// right now, so the user can watch their sentence build.
+function showDraft(interim) {
+  const banked = voice.draft ? voice.draft.text : '';
+  const shown = [banked, interim].filter(Boolean).join(' ');
+  voice.line = shown ? '🎤 ' + shown : '';
+  voice.status = banked ? 'listening — will send when you stop' : 'listening';
   renderVoice();
-  if (final.trim()) beginConfirm(rec.sessionId, final.trim());
 }
 
-// ---- the undo window --------------------------------------------------------
-
-function beginConfirm(sessionId, text) {
-  if (!sessionId || !text) return;
-  stopListening();                     // echo guard: the read-back is about to play
-  voice.pending = { sessionId, text, timer: null, endsAt: 0 };
-  voice.status = 'sending';
-  voice.line = '🎤 ' + text;
-  renderVoice();
-  // Speak the read-back FIRST, then start the countdown and re-open the mic.
-  // We can't do both at once (mic open during playback is the one thing the
-  // Bluetooth route can't take), and three seconds of listening is only worth
-  // anything once the clip has stopped talking over it.
-  speak('sending: ' + firstWords(text, 6)).then(() => {
-    if (!voice.pending || voice.pending.text !== text) return;
-    startCountdown();
-    listenFor(sessionId);
-  });
+function restartSendTimer() {
+  const d = voice.draft;
+  if (!d) return;
+  clearTimeout(d.timer);
+  d.timer = setTimeout(() => sendDraft(), SEND_SILENCE_MS);
 }
 
-function startCountdown() {
-  const p = voice.pending;
-  if (!p) return;
-  p.endsAt = Date.now() + UNDO_MS;
-  const tick = () => {
-    if (voice.pending !== p) return;
-    const left = Math.ceil((p.endsAt - Date.now()) / 1000);
-    if (left <= 0) { clearInterval(p.timer); commitPending(); return; }
-    $('#voice-count').textContent = left;
-  };
-  p.timer = setInterval(tick, 100);
-  tick();
+function cancelDraft() {
+  if (!voice.draft) return;
+  clearTimeout(voice.draft.timer);
+  voice.draft = null;
 }
 
-async function commitPending() {
-  const p = voice.pending;
-  if (!p) return;
-  clearInterval(p.timer);
-  voice.pending = null;
+async function sendDraft() {
+  const d = voice.draft;
+  if (!d || !d.text) return;
+  clearTimeout(d.timer);
+  voice.draft = null;
+  // Close the mic before typing: our own text makes the PTY chatter, and an
+  // open mic would also catch the room while the send is in flight.
   stopListening();
+  voice.status = 'sending';
   renderVoice();
-  const t = await ensureTerminal(p.sessionId);
+  const t = await ensureTerminal(d.sessionId);
   if (!t) {
     // Don't lose the words just because the terminal went away.
-    openVoiceEditor(p.sessionId, p.text);
+    openVoiceEditor(d.sessionId, d.text);
     toast('Could not reach that session — text kept below', 'err').close(6000);
     return;
   }
-  typeAndSubmit(t, p.text);
+  typeAndSubmit(t, d.text);
+  sendBlip();            // the only feedback on send; no spoken read-back
+  vlog('sent: ' + d.text.slice(0, 40));
   voice.status = 'sent';
   voice.line = '';
   renderVoice();
   // Don't leave "sent" as the standing label — the next thing to happen is the
   // session going busy, and the strip should read as idle-and-ready by then.
   setTimeout(() => { if (voice.status === 'sent') { voice.status = 'voice ready'; renderVoice(); } }, 4000);
-}
-
-function abortPending() {
-  const p = voice.pending;
-  if (!p) return;
-  clearInterval(p.timer);
-  voice.pending = null;
-  stopListening();
-  // Keep the text. The user managed to say "stop" inside three seconds; binning
-  // what they'd just dictated would make them say all of it again.
-  voice.status = 'cancelled — edit and send, or discard';
-  openVoiceEditor(p.sessionId, p.text);
 }
 
 // ---- sending ----------------------------------------------------------------
@@ -1846,7 +1866,7 @@ function renderVoice() {
   }
   const bar = $('#voice-bar');
   if (!bar) return;
-  const show = voice.armed.size > 0 || rec.want || !!voice.pending || !!voice.editing || voice.playing;
+  const show = voice.armed.size > 0 || rec.want || !!voice.draft || !!voice.editing || voice.playing;
   bar.classList.toggle('hidden', !show);
   if (!show) return;
 
@@ -1859,8 +1879,10 @@ function renderVoice() {
     status = n
       ? `${n} session${n === 1 ? '' : 's'} armed — audio is locked until you tap`
       : 'audio is locked until you tap';
-  } else if (voice.pending) status = 'sending — say "stop" or tap Cancel';
-  else if (rec.want) status = 'listening…';
+  } else if (voice.draft) {
+    // showDraft() owns the wording while dictation is accumulating.
+    status = voice.status || 'listening';
+  } else if (rec.want) status = 'listening…';
   else status = voice.status || 'voice ready';
   $('#voice-status').textContent = status;
 
@@ -1872,7 +1894,6 @@ function renderVoice() {
   heard.textContent = voice.line;
   heard.classList.toggle('hidden', !voice.line);
 
-  $('#voice-cancel').classList.toggle('hidden', !voice.pending);
   $('#voice-edit').classList.toggle('hidden', !voice.editing);
 
   const mic = $('#mic-key');
@@ -2051,7 +2072,6 @@ function wireEvents() {
   $('#voice-unlock').onclick = enableVoice;
   $('#voice-off').onclick = () => stopListening('off');
   $('#voice-again').onclick = readAgain;
-  $('#voice-cancel').onclick = abortPending;
   $('#voice-edit-send').onclick = sendVoiceEditor;
   $('#voice-edit-discard').onclick = discardVoiceEditor;
   $('#file-input').onchange = (e) => onFilesPicked(e.target);
@@ -2066,7 +2086,6 @@ function wireEvents() {
     if (e.key === 'Enter' && dlgOpen) submitDialog();
     if (e.key === 'Escape' && !$('#update-backdrop').classList.contains('hidden')) closeUpdatePanel();
     // Escape is the desktop equivalent of saying "stop" during the undo window.
-    if (e.key === 'Escape' && voice.pending) { e.preventDefault(); abortPending(); }
   });
 
   window.addEventListener('resize', syncViewportHeight);

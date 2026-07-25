@@ -270,11 +270,6 @@ html, body {
 }
 /* The undo affordance. Deliberately the biggest tap target on the page: it has
    to be hittable without looking, in three seconds, one-handed. */
-#voice-cancel {
-  width: 100%; padding: 14px; border-radius: 8px; cursor: pointer;
-  background: var(--danger); color: #0d1117; border: none;
-  font: inherit; font-size: 16px; font-weight: 700;
-}
 #voice-edit { display: flex; flex-direction: column; gap: 6px; }
 #voice-edit-text {
   width: 100%; padding: 8px; resize: vertical;

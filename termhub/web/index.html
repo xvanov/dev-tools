@@ -55,10 +55,9 @@
         </div>
       </div>
 
-      <!-- Voice strip. Sits directly above the key bar because the only reason
-           to look at it in a hurry is to hit Cancel during the undo window, and
-           that wants to be under your thumb. Hidden entirely until voice is in
-           play, so it costs nothing for anyone not using it. -->
+      <!-- Voice strip. Sits directly above the key bar: it's what you glance at
+           to confirm the mic is live and your words are landing. Hidden entirely
+           until voice is in play, so it costs nothing for anyone not using it. -->
       <div id="voice-bar" class="hidden">
         <div class="voice-row">
           <span id="voice-dot"></span>
@@ -71,9 +70,9 @@
              (live, from interim results — seeing the words appear is how you
              know the mic is actually on). -->
         <div id="voice-heard" class="hidden"></div>
-        <button id="voice-cancel" class="hidden">Cancel &mdash; sending in <span id="voice-count">3</span>s</button>
-        <!-- Where an aborted utterance lands. Throwing the words away after the
-             user managed to say "stop" in three seconds would be its own bug. -->
+        <!-- Where dictation lands when it couldn't be delivered (the session
+             went away mid-send). Binning what someone just said would be its
+             own bug, so it stays here, editable. -->
         <div id="voice-edit" class="hidden">
           <textarea id="voice-edit-text" rows="3" autocorrect="on" spellcheck="false"></textarea>
           <div class="voice-edit-actions">
