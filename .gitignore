@@ -6,7 +6,10 @@ venv/
 .env
 .DS_Store
 Thumbs.db
+# match both a real directory and a symlink of that name (the trailing-slash
+# form cannot match a symlink, which is how one got committed once)
 node_modules/
+node_modules
 *.log
 
 # audio / transcript artifacts
