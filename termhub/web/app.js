@@ -1187,6 +1187,23 @@ const canListen = () => !!SpeechRec && SECURE;
 // saying "stop" useless.
 const ABORT_RE = /\b(stop|cancel|wait|no|nope|nevermind|never mind|hold on)\b/i;
 
+// ---- voice diagnostics ------------------------------------------------------
+// The voice loop's failure mode is invisible: the strip says "listening" while
+// no recogniser is actually live, and there is no console on a phone. Append
+// `?voicedebug=1` to the URL for an on-screen event log that can be read (or
+// screenshotted) straight off the device. Off — and free — otherwise.
+const VOICE_DEBUG = /[?&]voicedebug=1\b/.test(location.search);
+const vlogLines = [];
+function vlog(msg) {
+  if (!VOICE_DEBUG) return;
+  const t = new Date().toISOString().slice(14, 23);
+  vlogLines.push(`${t} ${msg} [want=${rec.want ? 1 : 0} sr=${rec.sr ? 1 : 0} play=${voice.playing ? 1 : 0}`
+    + ` pend=${voice.pending ? 1 : 0} q=${voice.queue.length}]`);
+  while (vlogLines.length > 40) vlogLines.shift();
+  const box = document.getElementById('voice-debug');
+  if (box) { box.textContent = vlogLines.join('\n'); box.scrollTop = 1e9; }
+}
+
 const UNDO_MS = 3000;
 // A ceiling on an open mic with nothing said. Because each recognition is one
 // utterance, an idle session would otherwise cycle the recogniser — and the
@@ -1373,6 +1390,7 @@ async function speak(text) {
   if (!say || !voice.unlocked || !voice.tts.available) return 'skip';
   stopListening();
   voice.playing = true;
+  vlog('speak start');
   renderVoice();
   try {
     const res = await fetch('/api/tts', {
@@ -1391,6 +1409,7 @@ async function speak(text) {
     return 'fail';   // connection lost mid-synthesis; the summary is on screen
   } finally {
     voice.playing = false;
+    vlog('speak done');
     renderVoice();
   }
 }
@@ -1549,6 +1568,7 @@ function bumpIdle() {
 }
 
 function listenFor(sessionId) {
+  vlog('listenFor');
   if (!canListen() || rec.denied || !sessionId || !voice.unlocked) { renderVoice(); return; }
   if (!rec.want) rec.openedAt = Date.now();   // a new stretch, not a re-arm
   rec.want = true;
@@ -1560,7 +1580,21 @@ function listenFor(sessionId) {
 }
 
 function armRecognition() {
-  if (!rec.want || rec.sr || voice.playing) return;
+  if (!rec.want) return;
+  // Our own audio is still playing and the mic must never open over it. This is
+  // transient, so come BACK — returning here would be a dead end: the only
+  // things that call armRecognition are listenFor() and an onend that has
+  // already fired, so bailing leaves rec.want true with nothing scheduled. The
+  // user sees a mic stuck on "listening" that can never hear anything, forever.
+  if (voice.playing) {
+    clearTimeout(rec.restartTimer);
+    rec.restartTimer = setTimeout(armRecognition, REARM_MS);
+    vlog('rearm deferred: audio still playing');
+    return;
+  }
+  // A recogniser is already live — safe to return, because its own onend
+  // re-arms, and the idle watchdog catches it if it never ends.
+  if (rec.sr) { vlog('rearm skipped: recogniser already live'); return; }
   let sr;
   try { sr = new SpeechRec(); } catch { rec.want = false; renderVoice(); return; }
   sr.lang = navigator.language || 'en-US';
@@ -1569,7 +1603,8 @@ function armRecognition() {
   sr.maxAlternatives = 1;
   rec.sr = sr;
 
-  sr.onstart = () => renderVoice();
+  sr.onstart = () => { vlog('onstart'); renderVoice(); };
+  sr.onaudiostart = () => vlog('onaudiostart (mic live)');
   sr.onresult = (ev) => handleResult(ev);
   sr.onerror = (ev) => {
     const err = ev && ev.error;
@@ -1583,9 +1618,11 @@ function armRecognition() {
     // 'aborted' is what you get for stopping a recogniser that heard nothing,
     // and 'no-speech' is a quiet room. Both are ordinary punctuation in a
     // hands-free loop — re-arm (in onend) and say nothing about it.
+    vlog('onerror ' + err);
     if (err !== 'aborted' && err !== 'no-speech') rec.errors += 1;
   };
   sr.onend = () => {
+    vlog('onend');
     if (rec.sr === sr) rec.sr = null;   // a newer instance may already be live
     if (!rec.want) { renderVoice(); return; }
     if (Date.now() > rec.idleUntil) { stopListening('idle'); return; }
@@ -1596,8 +1633,8 @@ function armRecognition() {
     rec.restartTimer = setTimeout(armRecognition, delay);
   };
 
-  try { sr.start(); }
-  catch { rec.sr = null; rec.restartTimer = setTimeout(armRecognition, 500); }
+  try { sr.start(); vlog('start() called'); }
+  catch { vlog('start() THREW'); rec.sr = null; rec.restartTimer = setTimeout(armRecognition, 500); }
 }
 
 function stopListening(reason) {
@@ -1803,6 +1840,10 @@ async function toggleVoiceArm(id, on) {
 // ---- the voice strip --------------------------------------------------------
 
 function renderVoice() {
+  if (VOICE_DEBUG) {
+    const dbg = document.getElementById('voice-debug');
+    if (dbg) dbg.classList.remove('hidden');
+  }
   const bar = $('#voice-bar');
   if (!bar) return;
   const show = voice.armed.size > 0 || rec.want || !!voice.pending || !!voice.editing || voice.playing;

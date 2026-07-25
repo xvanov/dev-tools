@@ -81,6 +81,11 @@
             <button id="voice-edit-send">Send</button>
           </div>
         </div>
+
+        <!-- Diagnostics for the voice loop, shown only with ?voicedebug=1. The
+             failure it exists for is invisible: the strip reads "listening"
+             while no recogniser is live, and a phone has no console. -->
+        <pre id="voice-debug" class="hidden"></pre>
       </div>
 
       <!-- On-screen keys (essential on phones; phone keyboards lack these).
