@@ -58,25 +58,17 @@ function findActiveTranscript(cwd, minMtimeMs) {
   return best;
 }
 
-// Scan the tail of the transcript for the most recent assistant turn's model,
-// reading progressively larger windows rather than the whole file up front
-// (these grow large over a long session). Each window is read from the file's
-// end; the first (partial) line of a window that doesn't start at byte 0 is
-// discarded as it may be a fragment cut by the window boundary.
-function findModelInBuffer(buf, windowStartsAtFileStart) {
-  const lines = buf.toString('utf8').split('\n');
-  const lastIdx = windowStartsAtFileStart ? 0 : 1; // skip a boundary-truncated first line
-  for (let i = lines.length - 1; i >= lastIdx; i--) {
-    const line = lines[i].trim();
-    if (!line) continue;
-    let entry;
-    try { entry = JSON.parse(line); } catch { continue; }
-    if (entry.type === 'assistant' && entry.message && entry.message.model) return entry.message.model;
-  }
-  return null;
-}
-
-function readLastModel(filePath) {
+// Scan the tail of a transcript for the most recent entry of interest, reading
+// progressively larger windows rather than the whole file up front (these grow
+// large over a long session). Each window is read from the file's end; the
+// first (partial) line of a window that doesn't start at byte 0 is discarded as
+// it may be a fragment cut by the window boundary. `scan(lines)` gets the
+// window's complete lines in file order and returns its find, or null to ask
+// for a bigger window — it should parse lazily from the end, since a window can
+// hold megabytes of JSON and the answer is almost always in the last few lines.
+// Shared with lib/claudeTranscript.js, which needs the same "find the newest
+// entry of some shape" walk over the same files.
+function scanTail(filePath, scan) {
   let fd;
   try {
     fd = fs.openSync(filePath, 'r');
@@ -89,8 +81,10 @@ function readLastModel(filePath) {
       const start = Math.max(0, size - window);
       const buf = Buffer.alloc(size - start);
       fs.readSync(fd, buf, 0, buf.length, start);
-      const model = findModelInBuffer(buf, start === 0);
-      if (model) return model;
+      const lines = buf.toString('utf8').split('\n');
+      if (start !== 0) lines.shift(); // drop a boundary-truncated first line
+      const found = scan(lines);
+      if (found) return found;
       if (start === 0) break; // already read the whole file; no larger window would help
     }
     return null;
@@ -99,6 +93,34 @@ function readLastModel(filePath) {
   } finally {
     fs.closeSync(fd);
   }
+}
+
+function readLastModel(filePath) {
+  return scanTail(filePath, (lines) => {
+    for (let i = lines.length - 1; i >= 0; i--) {
+      const line = lines[i].trim();
+      if (!line) continue;
+      let entry;
+      try { entry = JSON.parse(line); } catch { continue; }
+      if (entry.type === 'assistant' && entry.message && entry.message.model) return entry.message.model;
+    }
+    return null;
+  });
+}
+
+// Which transcript file backs a live session, by the same two-step rule the
+// model badge uses: the conversation termhub pinned with `--session-id` at
+// launch if it exists on disk, else the most recently written transcript in
+// this cwd (a hand-launched or --resume'd claude). Returns a path or null.
+// Shared so the model badge and the voice watcher never disagree about which
+// conversation a session is.
+function resolveTranscript(cwd, agentSessionId, minMtimeMs) {
+  if (agentSessionId) {
+    const f = transcriptPath(cwd, agentSessionId);
+    try { fs.statSync(f); return f; } catch { /* not written yet — fall through */ }
+  }
+  const active = findActiveTranscript(cwd, minMtimeMs);
+  return active ? active.file : null;
 }
 
 // "claude-sonnet-5" -> "Sonnet 5"; "claude-opus-4-8" -> "Opus 4.8";
@@ -112,4 +134,6 @@ function formatModelName(raw) {
   return parts.length ? `${family} ${parts.join('.')}` : family;
 }
 
-module.exports = { transcriptPath, findActiveTranscript, readLastModel, formatModelName };
+module.exports = {
+  transcriptPath, findActiveTranscript, resolveTranscript, scanTail, readLastModel, formatModelName,
+};

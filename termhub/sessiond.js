@@ -25,6 +25,9 @@ const { DEFAULT_SESSIOND_PORT, claimPidFile } = require('./lib/state');
 const { suggestDirs } = require('./lib/dirs');
 const { setClipboardImage } = require('./lib/clipboard');
 const { saveUploadedFile } = require('./lib/uploads');
+const tts = require('./lib/tts');
+const summarizer = require('./lib/summarize');
+const { VoiceHub } = require('./lib/voiceHub');
 
 // A pasted/dropped image, base64-inflated in transit — cap comfortably above a
 // full-screen screenshot (a few MB as PNG) while still bounding memory use.
@@ -32,6 +35,11 @@ const MAX_CLIPBOARD_IMAGE_BYTES = 15 * 1024 * 1024;
 
 // Generic dropped/pasted files (PDFs, docs, …) run bigger than screenshots.
 const MAX_UPLOAD_FILE_BYTES = 100 * 1024 * 1024;
+
+// Anything past this in a /api/tts body is a mistake, not an announcement — the
+// client is meant to send a summary. (lib/tts.js separately truncates what it
+// actually speaks; this is only the "you clearly didn't mean this" guard.)
+const MAX_TTS_REQUEST_CHARS = 4000;
 
 const MACHINE_NAME = process.env.TERMHUB_MACHINE || os.hostname();
 
@@ -132,6 +140,12 @@ function createSessiond() {
         history: Array.isArray(e.history) ? e.history.slice(-30) : [],
       }));
   };
+
+  // Watches armed Claude sessions for finished turns and fans the result out to
+  // /ws/voice clients. Lives in sessiond (not the front) so the "already
+  // announced this turn" bookkeeping survives browser reloads and front swaps.
+  const voice = new VoiceHub(sessions);
+  voice.start();
 
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, 'http://localhost');
@@ -269,6 +283,60 @@ function createSessiond() {
         }
       }
 
+      // ---- voice ------------------------------------------------------------
+      // What the browser needs to decide what its voice UI can offer: whether
+      // there's a piper to speak with, whether summaries will be model-written
+      // or rule-based, and which sessions are currently armed.
+      if (req.method === 'GET' && pathname === '/api/voice/status') {
+        return sendJson(res, 200, {
+          tts: { available: tts.available(), voice: tts.defaultVoice(), voices: tts.voices() },
+          summarizer: { available: summarizer.available() },
+          sessions: voice.sessionList().map((s) => ({ id: s.id, armed: s.armed })),
+        });
+      }
+
+      const voiceArmMatch = /^\/api\/sessions\/([^/]+)\/voice$/.exec(pathname);
+      if (req.method === 'POST' && voiceArmMatch) {
+        const id = decodeURIComponent(voiceArmMatch[1]);
+        const body = await readBody(req);
+        const armed = voice.setArmed(id, !!body.armed);
+        if (armed === null) return sendJson(res, 404, { error: 'no such session' });
+        return sendJson(res, 200, { ok: true, armed });
+      }
+
+      // Re-read the current turn on demand ("read that again"). Can take a few
+      // seconds when the summary isn't already cached for this turn — that's the
+      // summarizer subprocess, and it's awaited off the event loop.
+      const voiceSummaryMatch = /^\/api\/sessions\/([^/]+)\/voice\/summary$/.exec(pathname);
+      if (req.method === 'GET' && voiceSummaryMatch) {
+        const id = decodeURIComponent(voiceSummaryMatch[1]);
+        const session = sessions.get(id);
+        if (!session) return sendJson(res, 404, { error: 'no such session' });
+        const result = await voice.summaryFor(session).catch(() => ({ summary: '', turnUuid: null, waiting: false }));
+        return sendJson(res, 200, result);
+      }
+
+      // Synthesize speech. Returned uncached: these are one-off announcements,
+      // and lib/tts.js already keeps its own in-memory LRU for repeats.
+      if (req.method === 'POST' && pathname === '/api/tts') {
+        const body = await readBody(req);
+        const text = typeof body.text === 'string' ? body.text.trim() : '';
+        if (!text) return sendJson(res, 400, { error: 'text is required' });
+        if (text.length > MAX_TTS_REQUEST_CHARS) return sendJson(res, 400, { error: 'text too long' });
+        if (!tts.available()) return sendJson(res, 503, { error: 'no text-to-speech on this machine' });
+        try {
+          const wav = await tts.synthesize(text, { voice: body.voice });
+          res.writeHead(200, {
+            'Content-Type': 'audio/wav',
+            'Content-Length': wav.length,
+            'Cache-Control': 'no-store',
+          });
+          return res.end(wav);
+        } catch (e) {
+          return sendJson(res, 503, { error: String(e && e.message ? e.message : e) });
+        }
+      }
+
       if (req.method === 'GET' && pathname === '/api/recents') {
         return sendJson(res, 200, { recents: recents.list() });
       }
@@ -283,11 +351,18 @@ function createSessiond() {
     }
   });
 
-  // ---- terminal WebSocket ---------------------------------------------------
+  // ---- WebSockets -----------------------------------------------------------
+  // One server for both endpoints: /ws/term/:id streams a single PTY,
+  // /ws/voice is a page-wide announcement feed that belongs to no session.
   const wss = new WebSocketServer({ noServer: true });
 
   server.on('upgrade', (req, socket, head) => {
     const url = new URL(req.url, 'http://localhost');
+
+    if (url.pathname === '/ws/voice') {
+      return wss.handleUpgrade(req, socket, head, (ws) => bindVoice(ws, voice));
+    }
+
     const match = /^\/ws\/term\/([^/]+)$/.exec(url.pathname);
     if (!match) return socket.destroy();
     const id = decodeURIComponent(match[1]);
@@ -308,6 +383,23 @@ function bindTerminal(ws, session) {
     try { msg = JSON.parse(raw.toString()); } catch { return; }
     if (msg.type === 'input') session.write(msg.data);
     else if (msg.type === 'resize') session.resize(Number(msg.cols) || session.cols, Number(msg.rows) || session.rows);
+  });
+  ws.on('close', () => detach());
+  ws.on('error', () => detach());
+}
+
+// The voice feed. Read-mostly: the client gets a `hello` snapshot on connect and
+// then `waiting`/`busy`/`armed` events, and only ever sends keepalive pings.
+// Arming happens over REST so it survives a dropped socket.
+function bindVoice(ws, voice) {
+  const send = (msg) => { if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(msg)); };
+  const detach = voice.addClient(send);
+  send(voice.hello());
+
+  ws.on('message', (raw) => {
+    let msg;
+    try { msg = JSON.parse(raw.toString()); } catch { return; }
+    if (msg.type === 'ping') send({ type: 'pong' });
   });
   ws.on('close', () => detach());
   ws.on('error', () => detach());

@@ -5,6 +5,7 @@
 // Serves the web UI (web/) and reverse-proxies everything else to sessiond:
 //   - HTTP  /api/*        -> http://127.0.0.1:<sessiondPort>/api/*
 //   - WS    /ws/term/:id  -> raw socket pipe to the same sessiond
+//   - WS    /ws/voice     -> same, the voice-announcement feed
 // It owns no terminals, so it can be restarted/replaced at will. Updates start a
 // second front on the alternate loopback port, health-check it, then re-point
 // Tailscale Serve at it — the browser reconnects through the new front to the
@@ -109,7 +110,8 @@ function createFront({ sessiondPort }) {
   // does the actual WebSocket handshake. The front never parses WS frames.
   server.on('upgrade', (req, clientSocket, head) => {
     const url = new URL(req.url, 'http://localhost');
-    if (!/^\/ws\/term\/[^/]+$/.test(url.pathname)) return clientSocket.destroy();
+    // /ws/term/:id is a PTY stream; /ws/voice is the page-wide announcement feed.
+    if (!/^\/ws\/(term\/[^/]+|voice)$/.test(url.pathname)) return clientSocket.destroy();
 
     const upstream = net.connect(sessiondPort, '127.0.0.1', () => {
       // Replay the request line + headers verbatim so sessiond's WebSocketServer
