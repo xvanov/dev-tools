@@ -227,11 +227,15 @@ html, body {
   z-index: 45; display: flex; flex-direction: column; gap: 6px;
   align-items: center; pointer-events: none; width: max-content; max-width: 92vw;
 }
+/* Wrap rather than ellipsize: the whole point of an error toast is the text,
+   and "EACCES: permission denied, open '/…'" truncated at one line is useless.
+   Tappable so it can be dismissed once read (the container isn't). */
 .toast {
   background: var(--bg-3); color: var(--fg); border: 1px solid var(--border);
   border-radius: 8px; padding: 8px 12px; font-size: 13px;
   box-shadow: 0 6px 18px rgba(0,0,0,0.5);
-  max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  max-width: 100%; white-space: normal; overflow-wrap: anywhere;
+  pointer-events: auto; cursor: pointer;
 }
 .toast.err { border-color: var(--danger); color: var(--danger); }
 .toast.ok { border-color: var(--ok); }

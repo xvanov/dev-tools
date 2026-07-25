@@ -70,10 +70,15 @@ archived one), `PATCH /api/sessions/:id` (`{title}`), `GET /api/recents`, `GET /
 `GET /api/ping` (sessiond liveness). Attachments take a **raw binary body** with the filename in
 an URI-encoded `X-File-Name` header: `POST /api/sessions/:id/clipboard-image` →
 `{ok, kind:'clipboard'|'file', path?, name?}` (see *Attachments* below) and
-`POST /api/sessions/:id/upload-file` → `{ok, kind:'file', path, name}`; both answer `413` with a
-readable `{error}` when the `Content-Length` exceeds the cap, without reading the body.
+`POST /api/sessions/:id/upload-file` → `{ok, kind:'file', path, name}`. Both answer `413` with a
+readable `{error}`: from `Content-Length` before reading anything when the client sends one, and
+otherwise — a chunked body has no length to check — from a streaming guard that stops buffering at
+the cap. Neither destroys the request before replying; doing that used to take the response down
+with it and surface through the front's proxy as a misleading
+`502 sessiond unreachable: write ECONNRESET`.
 `GET /api/info` reports `clipboardImage` (can this host stage a clipboard image?) and
 `limits: {imageBytes, fileBytes}` so the UI can refuse an over-cap file before uploading it.
+`imageBytes` is the cap that actually applies **on this host**, not a constant — see below.
 The `front` answers `GET /api/health` itself (front up +
 sessiond reachable) for the updater's probe, and `GET /api/update/check` (`?force=1` to skip the
 60s cache) — both are handled by the front and never proxied. Terminal stream: WebSocket `/ws/term/:id` with JSON
@@ -326,12 +331,42 @@ happens to them:
   yellow warning they could do nothing about.
 
 Attachments live in the data dir, not the session cwd, because the cwd is usually a git checkout;
-anything there older than a week is pruned on the next save. **Everything else** goes to
+anything there older than a week is pruned, at most hourly and never synchronously (this process
+owns every live PTY — a `readdirSync` + `statSync` sweep of a few thousand entries stalls all
+terminal I/O for milliseconds). **Everything else** goes to
 `POST /api/sessions/:id/upload-file`, which saves into the session's cwd — that *is* the point
-for a file the agent is meant to work on. Both paths run through `sanitizeFileName` (a filename
-never escapes its directory, and never becomes an NTFS alternate data stream) and `uniquePath`
-(never clobbers). A clipboard image has no name of its own, so the client stamps it
-`pasted-image-<local timestamp>.<ext>`; `sessiond` does the same if the header is missing.
+for a file the agent is meant to work on.
+
+Three rules hold on both paths, and each exists because breaking it was tried:
+
+- `sanitizeFileName` — a filename never escapes its directory, and never becomes an NTFS
+  alternate data stream.
+- `writeUnique` — the name is claimed by an **exclusive-create write** (`flag: 'wx'`) that
+  retries on `EEXIST`. A look-then-write (`existsSync`, then an awaited `writeFile`) yields the
+  event loop in between, so concurrent uploads of the same name both win the check and the second
+  overwrites the first while both clients are told `{ok:true}` with the same path. Measured on the
+  old code: 12 simultaneous uploads named `race.png` lost 3 payloads. It is the *common* case, not
+  an exotic one — a multi-file pick uploads everything at once, and iOS hands back the same
+  `image.jpg` for every photo in a selection.
+- `safeForNotice` — anything client-supplied is stripped of C0/C1 controls and length-capped
+  before it reaches `session.notice()`. Notices go to the live terminal *and* the replay buffer,
+  so an `X-File-Name` carrying `ESC [2J` cleared the user's screen on every reconnect for the
+  life of the session.
+
+The image cap is **`MAX_CLIPBOARD_IMAGE_BYTES` only where there is a clipboard**. That 15 MB
+number exists because the bytes get inflated onto an OS clipboard; where the image is instead
+written to disk it is just a file and takes the 100 MB file cap. Recent iPhones shoot 15-25 MB
+photos, so the old flat 15 MB refused a whiteboard photo on the one kind of host where the
+constraint doesn't apply. `/api/info` publishes the *effective* number so the client's pre-flight
+check can't drift from the server's.
+
+A clipboard image has no name of its own, so the client stamps it
+`pasted-image-<local timestamp>.<ext>`; `sessiond` does the same if the header is missing. That
+stamp is only second-resolution, which is exactly why `writeUnique` has to be correct.
+
+A paste that carries **both** a file and non-empty `text/plain` is left to xterm: rich text with
+an inline image is the common shape, and taking the image would silently swallow the text the
+user actually meant to paste.
 
 ## Troubleshooting matrix
 
@@ -345,7 +380,8 @@ never escapes its directory, and never becomes an NTFS alternate data stream) an
 | Sidebar empty after a reboot | `sessiond` (and its PTYs) died with the machine | Sessions created while the persistence build was running reappear under **Restorable (after restart)** — restore re-opens Claude with `--resume` or a shell with its command history. Sessions from before the build was deployed weren't recorded |
 | Wrong size / wrapping | Pane resized while backgrounded | Switch sessions or rotate to force a refit |
 | Pasted image lands as a file path instead of in the agent's prompt | The host has no usable clipboard (`curl /api/info` → `"clipboardImage": false`) | Expected on a headless Linux box. The path works — both Claude Code and opencode read an image given one. To get the clipboard route instead, run a session with a real display |
-| 📎 upload does nothing on a phone | File over the cap (15 MB image / 100 MB other) | The red notice above the key bar says so; shrink the file. A silent failure instead means the connection dropped — the notice says that too |
+| 📎 upload does nothing on a phone | File over the cap (100 MB, or 15 MB for an image on a host with a real clipboard — `curl /api/info` shows the effective `limits`) | The red notice above the key bar says so; tap it to dismiss, shrink the file. A silent failure instead means the connection dropped — the notice says that too |
+| Pasted an image and got text instead | The paste carried `text/plain` too (rich text with an inline image), and text wins | Deliberate — taking the image would swallow the text. Use 📎 for the image |
 | 🔊 armed but never speaks | No transcript to read | Session must be `kind: claude`; `⚠ Transcript saving is off` in the banner means an inherited `CLAUDE_CODE_CHILD_SESSION` — restart `sessiond` from a clean environment |
 | 🔊 reports speech unavailable | No `piper` or no usable voice model | `curl localhost:7010/api/voice/status`; install piper and put `<voice>.onnx` + `.onnx.json` in `TERMHUB_TTS_VOICE_DIR` (files under 4 KB are treated as broken stubs and skipped) |
 | Announcements sound like a rewrite, not the answer | Turn was long enough to go through `claude -p --model haiku` | Expected; turns under ~240 chars are spoken verbatim. `claude -p` failing just falls back to a local trim |

@@ -174,13 +174,17 @@ running `update.ps1` survives the update.
     On a machine with no clipboard to stage it on — a headless Linux box has no X or Wayland
     display, and no installed tool changes that — the image is saved to
     `<data dir>/attachments/` instead and its **path** is typed into the terminal input;
-    Claude Code and opencode both read an image given a path. Attachments older than a week
-    are cleaned up on the next paste. They deliberately do *not* go in the session's working
+    Claude Code and opencode both read an image given a path. Attachments older than a week are
+    cleaned up in the background. They deliberately do *not* go in the session's working
     directory: that's usually a git checkout, and pasted screenshots have no business in it.
   - **Any other file** (PDF, `.md`, `.txt`, …) is saved into the session's working directory
     and its path is typed into the terminal input for you to use.
-  - Caps: 15 MB per image, 100 MB per file. Over that you get told immediately, rather than
-    after a long upload.
+  - Caps: **100 MB** per file, and per image too on a machine that saves images to disk — so a
+    20 MB phone photo is fine. The tighter **15 MB** image cap applies only where the image goes
+    onto a real OS clipboard, which is what can't take a larger one. Over the cap you're told
+    immediately, rather than after a long upload.
+  - Pasting text that happens to carry an image (copied out of a document or a web page) pastes
+    the **text** — attach the image with 📎 if you wanted the picture.
 - **🔊 next to a session** arms spoken announcements for it (Claude sessions only). When that
   session finishes a turn and is waiting on you, termhub speaks a short summary of what it said;
   with more than one session armed, the summary is prefixed with the session's title so you know

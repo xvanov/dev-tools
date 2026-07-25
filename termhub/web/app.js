@@ -453,11 +453,21 @@ function connect(t) {
 // than be written into the terminal, because a full-screen TUI (Claude Code,
 // vim) repaints the whole screen and would wipe the line within a frame.
 
+// Picking 20 files should not paper the terminal over with 20 notices, least of
+// all on a phone — keep the newest few and let the older ones go. A dropped
+// toast's handle still works, it just updates an element nobody can see.
+const MAX_TOASTS = 4;
+
 function toast(text, kind) {
+  const box = $('#toasts');
+  while (box.children.length >= MAX_TOASTS) box.firstChild.remove();
   const el = document.createElement('div');
   el.className = 'toast' + (kind ? ' ' + kind : '');
   el.textContent = text;
-  $('#toasts').appendChild(el);
+  // Tap to dismiss — an error can be several lines long, and the user needs a
+  // way to get it off the screen once they've read it.
+  el.addEventListener('click', () => el.remove());
+  box.appendChild(el);
   let timer = null;
   const handle = {
     set(next, nextKind) {
@@ -588,6 +598,7 @@ async function sendImage(t, file, note) {
     (frac) => note.set(`${file.name} — ${Math.round(frac * 100)}%`),
   );
   if (!res.ok) { note.set(errorText(res, 'image upload failed'), 'err').close(6000); return; }
+  if (!stillOpen(t, note)) return;
   // sessiond decides what actually happened to the image: staged on the host's
   // clipboard (fire the agent's paste hotkey) or written to a file (type its
   // path). Either way it prints its own notice into the terminal.
@@ -614,6 +625,7 @@ async function sendFile(t, file, note) {
     (frac) => note.set(`${file.name} — ${Math.round(frac * 100)}%`),
   );
   if (!res.ok) { note.set(errorText(res, 'upload failed'), 'err').close(6000); return; }
+  if (!stillOpen(t, note)) return;
   if (res.body && res.body.path) {
     insertPath(t, res.body.path);
     note.set(`saved ${res.body.name} — path inserted`, 'ok').close(4000);
@@ -623,11 +635,25 @@ async function sendFile(t, file, note) {
   t.term.focus();
 }
 
+// An upload can outlive the terminal it was for — a multi-megabyte photo on a
+// phone takes long enough for the user to kill the session first. The socket is
+// gone by then, so the path insertion silently goes nowhere while the toast
+// still claims "path inserted"; say what actually happened instead. (Calling
+// focus() on the disposed xterm turns out not to throw with the vendored
+// build — measured — but there is no reason to keep poking at it either.)
+function stillOpen(t, note) {
+  if (state.open.has(t.id)) return true;
+  note.set('terminal closed — upload discarded', 'err').close(5000);
+  return false;
+}
+
 function sendAttachment(t, file) {
   const isImage = IMAGE_TYPE_RE.test(file.type);
   // Refuse an over-cap file here rather than after a long upload the server was
-  // always going to reject. The caps come from /api/info; if we never got them,
-  // let the server be the judge.
+  // always going to reject. The caps come from /api/info, which reports the cap
+  // that actually applies to THIS host — an image goes by the file cap where
+  // there's no clipboard to squeeze it through. If we never got them, let the
+  // server be the judge.
   const cap = state.limits && (isImage ? state.limits.imageBytes : state.limits.fileBytes);
   if (cap && file.size > cap) {
     toast(`${file.name || 'file'} is ${humanBytes(file.size)} — over the ${humanBytes(cap)} limit`, 'err').close(8000);
@@ -635,8 +661,10 @@ function sendAttachment(t, file) {
   }
   const named = namedForUpload(file);
   const note = toast(`${named.name} — uploading…`);
-  if (isImage) sendImage(t, named, note);
-  else sendFile(t, named, note);
+  // Nothing awaits these, so an unexpected throw would otherwise surface as an
+  // unhandled rejection and the toast would hang on "uploading…" forever.
+  const done = isImage ? sendImage(t, named, note) : sendFile(t, named, note);
+  done.catch((e) => note.set(`upload failed: ${e && e.message ? e.message : e}`, 'err').close(6000));
 }
 
 // Capture in the CAPTURE phase so this runs before xterm's own paste listener
@@ -644,6 +672,15 @@ function sendAttachment(t, file) {
 // text (the common case) we do nothing and let xterm's native handling proceed.
 function wireAttachments(t) {
   t.pane.addEventListener('paste', (e) => {
+    // Text wins. A rich-text paste (from a doc, a chat client, a web page)
+    // routinely carries an inline image alongside the words, and since we
+    // preventDefault() the moment we decide to take a file, treating that as an
+    // attachment would upload the decoration and silently swallow the text the
+    // user actually meant to paste. If there's text, let xterm have the event.
+    let text = '';
+    try { text = (e.clipboardData && e.clipboardData.getData('text/plain')) || ''; } catch {}
+    if (text) return;
+
     const files = filesFromClipboard(e.clipboardData);
     if (!files.length) return;
     e.preventDefault();

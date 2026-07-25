@@ -1,14 +1,17 @@
 'use strict';
 
-// Save a browser-dropped/pasted non-image file (PDF, .md, .txt, whatever)
-// into a session's own working directory, mirroring what a native OS
-// drag-and-drop of a file onto a terminal window does: the file lands where
-// the terminal — and whatever agent is running inside it — can see it. The
-// caller (sessiond.js) then has the client insert the resulting path as
+// Save a browser-dropped/pasted/attached file where the session can see it.
+// Ordinary files (PDF, .md, .txt, whatever) go into the session's own working
+// directory, mirroring what a native OS drag-and-drop of a file onto a terminal
+// window does: the file lands where the terminal — and whatever agent is
+// running inside it — can see it. Images that could not be staged on an OS
+// clipboard go to the data dir instead (see saveImageAttachment below). Either
+// way the caller (sessiond.js) has the client insert the resulting path as
 // terminal input, same as a real drag-drop would.
 
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const { dataDir } = require('./paths');
 
 // Extension per image MIME type, shared with lib/clipboard.js (which needs the
@@ -42,23 +45,36 @@ function sanitizeFileName(name) {
 }
 
 // Never clobber an existing file: "notes.pdf" -> "notes (1).pdf" -> ...
-function uniquePath(dir, fileName) {
+//
+// The name is claimed by the write ITSELF, with the exclusive-create flag, and
+// we retry on EEXIST. Looking first with fs.existsSync and writing afterwards
+// looks equivalent and is not: the write is awaited, so the event loop turns
+// between the check and the create, and two uploads racing for the same name
+// both pass the check and the second silently overwrites the first — while both
+// clients are told `{ok:true}` with the same path. That is not a rare
+// interleaving here: a multi-file pick uploads everything at once, and iOS
+// hands back the same "image.jpg" for every photo in a selection.
+const MAX_NAME_ATTEMPTS = 1000;
+async function writeUnique(dir, fileName, buffer) {
   const ext = path.extname(fileName);
   const stem = fileName.slice(0, fileName.length - ext.length);
-  let candidate = path.join(dir, fileName);
-  let n = 1;
-  while (fs.existsSync(candidate)) {
-    candidate = path.join(dir, `${stem} (${n})${ext}`);
-    n += 1;
+  for (let n = 0; n < MAX_NAME_ATTEMPTS; n++) {
+    const candidate = path.join(dir, n === 0 ? fileName : `${stem} (${n})${ext}`);
+    try {
+      await fs.promises.writeFile(candidate, buffer, { flag: 'wx' }); // O_CREAT|O_EXCL
+      return { path: candidate, name: path.basename(candidate) };
+    } catch (e) {
+      if (e.code !== 'EEXIST') throw e;    // a real failure (EACCES, ENOSPC, …)
+    }
   }
-  return candidate;
+  // A thousand files of the same name. Take a random suffix rather than spin.
+  const candidate = path.join(dir, `${stem} (${crypto.randomBytes(4).toString('hex')})${ext}`);
+  await fs.promises.writeFile(candidate, buffer, { flag: 'wx' });
+  return { path: candidate, name: path.basename(candidate) };
 }
 
 async function saveUploadedFile(dir, rawName, buffer) {
-  const fileName = sanitizeFileName(rawName);
-  const dest = uniquePath(dir, fileName);
-  await fs.promises.writeFile(dest, buffer);
-  return { path: dest, name: path.basename(dest) };
+  return writeUnique(dir, sanitizeFileName(rawName), buffer);
 }
 
 // ---- image attachments ------------------------------------------------------
@@ -74,20 +90,41 @@ function attachmentsDir() {
 
 // Nobody ever tidies this directory by hand and a month of pasted screenshots
 // adds up, so drop anything older than a week — long past the turn it was for.
-// Best-effort: a failure here must never cost the user their paste.
+//
+// Async and throttled, because this runs inside the process that owns every
+// live PTY: the synchronous version stat'd every entry on each save (6 ms for
+// 3000 files) and blocked all terminal I/O while it did. Once an hour is plenty
+// for a week-old cutoff. Best-effort throughout — a failure here must never
+// cost the user their paste, so nothing awaits it and nothing throws.
 const ATTACHMENT_TTL_MS = 7 * 24 * 60 * 60 * 1000;
-function pruneOldAttachments(dir) {
+const PRUNE_INTERVAL_MS = 60 * 60 * 1000;
+let lastPruneAt = 0;
+
+async function pruneOldAttachments(dir) {
   const cutoff = Date.now() - ATTACHMENT_TTL_MS;
   let names;
-  try { names = fs.readdirSync(dir); } catch { return; }
+  try { names = await fs.promises.readdir(dir); } catch { return; }
   for (const name of names) {
     const file = path.join(dir, name);
-    try { if (fs.statSync(file).mtimeMs < cutoff) fs.unlinkSync(file); } catch {}
+    try {
+      const st = await fs.promises.stat(file);
+      if (st.mtimeMs < cutoff) await fs.promises.unlink(file);
+    } catch {
+      // vanished under us, or not ours to delete — either way, skip it
+    }
   }
 }
 
+function maybePrune(dir) {
+  if (Date.now() - lastPruneAt < PRUNE_INTERVAL_MS) return;
+  lastPruneAt = Date.now();
+  pruneOldAttachments(dir).catch(() => {});   // deliberately not awaited
+}
+
 // A clipboard image arrives with no filename of its own, so stamp it with the
-// time it was pasted: sortable, obvious in a listing, and no two collide.
+// time it was pasted: sortable, and obvious in a listing. Only second
+// resolution, so two images pasted in the same second DO collide by name —
+// writeUnique is what keeps that from costing anyone their data.
 function defaultImageName(mimeType) {
   const d = new Date();
   const p = (n) => String(n).padStart(2, '0');
@@ -98,16 +135,12 @@ function defaultImageName(mimeType) {
 async function saveImageAttachment(rawName, mimeType, buffer) {
   const dir = attachmentsDir();
   await fs.promises.mkdir(dir, { recursive: true });
-  pruneOldAttachments(dir);
+  maybePrune(dir);
   let fileName = sanitizeFileName(rawName || defaultImageName(mimeType));
   // A name the browser handed us may have no extension at all; without one
   // neither an agent nor an image viewer can tell what it is looking at.
   if (!path.extname(fileName)) fileName += extForImageMime(mimeType);
-  const dest = uniquePath(dir, fileName);
-  await fs.promises.writeFile(dest, buffer);
-  return { path: dest, name: path.basename(dest) };
+  return writeUnique(dir, fileName, buffer);
 }
 
-module.exports = {
-  saveUploadedFile, sanitizeFileName, saveImageAttachment, attachmentsDir, extForImageMime,
-};
+module.exports = { saveUploadedFile, sanitizeFileName, saveImageAttachment, extForImageMime };

@@ -6,7 +6,12 @@ venv/
 .env
 .DS_Store
 Thumbs.db
+# Both spellings on purpose: the trailing slash matches a real directory, the
+# bare name also matches a SYMLINK to one. Agents working in git worktrees
+# symlink node_modules rather than rebuild node-pty, and a symlink slips past
+# the `node_modules/` form — one got committed into a branch that way.
 node_modules/
+node_modules
 *.log
 
 # audio / transcript artifacts
