@@ -23,7 +23,7 @@ const { EventEmitter } = require('events');
 
 const tts = require('./tts');
 const { summarize } = require('./summarize');
-const { readLastTurn, isWaitingForInput } = require('./claudeTranscript');
+const { readLastTurn, isWaitingForInput, hasSpeakableContent } = require('./claudeTranscript');
 
 const POLL_MS = 1000;
 
@@ -32,6 +32,17 @@ const POLL_MS = 1000;
 // streaming can be a partial assistant entry that looks finished. Matches the
 // `busy` window in lib/session.js info() on purpose.
 const QUIET_MS = 1500;
+
+// How long a claude PTY must be silent before we conclude it is parked on an
+// interactive prompt rather than working (see _maybeAnnounceBlocked). Well
+// clear of QUIET_MS: the cost of being wrong is a spurious announcement, and
+// the spinner means a working session is never silent for anywhere near this
+// long. Deliberately not tunable — it's a heuristic, not a preference.
+const BLOCKED_MS = 12000;
+
+// What we can honestly say about a session parked on an interactive prompt: the
+// question itself is only on screen, never in the transcript.
+const BLOCKED_SUMMARY = 'This session is asking you something in the terminal.';
 
 class VoiceHub extends EventEmitter {
   // `sessions` is sessiond's live Map<id, Session>; the hub only reads it. The
@@ -77,7 +88,15 @@ class VoiceHub extends EventEmitter {
 
   // ---- arming ----------------------------------------------------------------
 
-  // Returns the new armed state, or null when there's no such session.
+  // Announcements come from a Claude Code transcript, so only a `claude`
+  // session can ever produce one. Arming anything else used to succeed and then
+  // silently do nothing — a toggle the UI would light up that could never fire.
+  static canArm(session) {
+    return !!session && session.kind === 'claude';
+  }
+
+  // Returns the new armed state, or null when there's no such session. Callers
+  // must check canArm() first; this asserts nothing.
   setArmed(id, armed) {
     const session = this.sessions.get(id);
     if (!session) return null;
@@ -110,7 +129,12 @@ class VoiceHub extends EventEmitter {
     if (!st) {
       // announcedUuid persists for the life of the session: it is the entire
       // dedupe mechanism, and must outlive browser reconnects.
-      st = { mtimeMs: -1, announcedUuid: null, waiting: false, busy: false, inFlight: false, summary: '', summaryUuid: null };
+      st = {
+        mtimeMs: -1, announcedUuid: null, waiting: false, inFlight: false,
+        summary: '', summaryUuid: null,
+        pendingUuid: null, pending: null, // in-flight summarize, shared by watcher and /voice/summary
+        lastTurn: null, blockedUuid: null, // see _maybeAnnounceBlocked
+      };
       this._state.set(id, st);
     }
     return st;
@@ -141,10 +165,19 @@ class VoiceHub extends EventEmitter {
     // browser uses `busy` to drop an announcement it hasn't spoken yet, so it
     // has to fire the instant the user replies — seconds before the transcript
     // records a new turn. Same window as info()'s `busy` dot.
-    if (Date.now() - session.lastActivity < QUIET_MS) {
+    const idleMs = Date.now() - session.lastActivity;
+    if (idleMs < QUIET_MS) {
       this._markBusy(session, st);
       return; // and don't read a transcript that's mid-write
     }
+
+    this._readTranscript(session, st);
+    // Runs on every tick, not just when the file changes — a session parked on
+    // an interactive prompt writes nothing at all (see _maybeAnnounceBlocked).
+    this._maybeAnnounceBlocked(session, st, idleMs);
+  }
+
+  _readTranscript(session, st) {
     if (st.inFlight) return; // one summarize per session at a time
 
     const file = session.transcriptFile();
@@ -159,18 +192,66 @@ class VoiceHub extends EventEmitter {
 
     const turn = readLastTurn(file);
     if (!turn) return;
+    st.lastTurn = turn; // cached so the blocked check needn't re-read
 
-    // Mid-tool-call, or a thinking-only fragment with nothing to read out. Also
-    // covers a session working silently (a long tool with no terminal output),
-    // which the PTY check above can't see.
-    if (!isWaitingForInput(turn) || !turn.text) {
+    // Mid-tool-call, or a session working silently (a long tool producing no
+    // terminal output), which the PTY check above can't see.
+    if (!isWaitingForInput(turn)) {
       this._markBusy(session, st);
       return;
     }
 
-    if (turn.uuid && turn.uuid === st.announcedUuid) return; // already spoken
+    // Waiting, but nothing to say yet: Claude writes a thinking-only entry with
+    // `stop_reason: null` before the text lands, and announcing that would say
+    // nothing AND burn the turn's uuid. Deliberately not marked busy — the
+    // session isn't working again, it's mid-sentence. The next append to the
+    // transcript (moments away) brings the text and we announce then.
+    if (!hasSpeakableContent(turn)) return;
+
+    // Fail closed on a uuid-less entry. Dedupe is the whole design here, and an
+    // entry we can't key would re-announce on every mtime bump. No real entry
+    // lacks one (0 of 73,701 on this machine), so silence is the safe answer.
+    if (!turn.uuid || turn.uuid === st.announcedUuid) return;
+
     st.inFlight = true;
     this._announce(session, st, turn).catch(() => {}).then(() => { st.inFlight = false; });
+  }
+
+  // The one case the transcript genuinely cannot tell us about.
+  //
+  // When Claude stops on an AskUserQuestion or ExitPlanMode — or a permission
+  // prompt — it writes NOTHING to the transcript until the user answers.
+  // Measured on this machine: all 98 asking-tool entries are flushed together
+  // with their answer, a median 194 s after the question was created, and a
+  // live session sitting on the picker showed zero new transcript lines. So the
+  // moment the user most needs to be told is the moment there is nothing to
+  // read. Announcing from the transcript would always be too late.
+  //
+  // The PTY does know. Claude's TUI animates a spinner continuously while it
+  // works, so a terminal that has been silent this long is not working; if the
+  // conversation's last recorded turn also isn't a finished assistant turn,
+  // Claude is parked on something interactive. We can't say what it's asking —
+  // that text exists only on screen — so we say that it's asking.
+  _maybeAnnounceBlocked(session, st, idleMs) {
+    if (idleMs < BLOCKED_MS) return;
+    const turn = st.lastTurn;
+    if (!turn || !turn.uuid) return;          // no conversation yet, or unkeyable
+    if (isWaitingForInput(turn)) return;      // a finished turn: the normal path owns it
+    if (st.blockedUuid === turn.uuid) return; // said once already
+
+    st.blockedUuid = turn.uuid;
+    st.waiting = true; // so replying to it produces the usual `busy`
+    const msg = {
+      type: 'waiting',
+      sessionId: session.id,
+      title: session.title,
+      // Distinct from a real turn announcement of the same entry, so a browser
+      // deduping on turnUuid can't confuse the two.
+      turnUuid: `${turn.uuid}:blocked`,
+      summary: BLOCKED_SUMMARY,
+    };
+    this.broadcast(msg);
+    this.emit('waiting', msg);
   }
 
   // Tell the browser an announced session is working again — once per
@@ -183,13 +264,46 @@ class VoiceHub extends EventEmitter {
     this.emit('busy', { sessionId: session.id });
   }
 
+  // The one place a turn is turned into spoken text, shared by the watcher and
+  // by GET /voice/summary. Coalesces: a result already computed for this uuid is
+  // returned as-is, and concurrent callers for the same uuid await ONE
+  // summarize rather than each forking a `claude -p`. Without this, a frontend
+  // retry loop on /voice/summary spawns a child per request — measured at 6
+  // concurrent haiku processes from 6 GETs — inside the process holding the
+  // user's terminals.
+  _summaryForTurn(session, turn) {
+    const st = this._stateFor(session.id);
+    if (st.summaryUuid && st.summaryUuid === turn.uuid) return Promise.resolve(st.summary);
+    if (st.pending && st.pendingUuid === turn.uuid) return st.pending;
+
+    // A question from AskUserQuestion/ExitPlanMode is the point of the
+    // announcement, so it's appended verbatim rather than run through the
+    // summarizer, which would paraphrase away the actual options.
+    const pending = summarize(turn.text)
+      .then((summary) => {
+        const spoken = [summary, turn.prompt].filter(Boolean).join(' ').trim();
+        st.summary = spoken;
+        st.summaryUuid = turn.uuid;
+        return spoken;
+      })
+      .finally(() => {
+        if (st.pendingUuid === turn.uuid) { st.pending = null; st.pendingUuid = null; }
+      });
+    st.pending = pending;
+    st.pendingUuid = turn.uuid;
+    return pending;
+  }
+
   async _announce(session, st, turn) {
-    const summary = await summarize(turn.text);
-    st.summary = summary;
-    st.summaryUuid = turn.uuid;
+    const summary = await this._summaryForTurn(session, turn);
     // Claim the uuid regardless of what happens next: if we bail below, the
     // moment has passed and re-announcing it later would be worse than silence.
     st.announcedUuid = turn.uuid;
+
+    // Belt to summarize()'s braces. A `waiting` with an empty summary gives the
+    // browser nothing to play and would 400 if it posted it to /api/tts, so it
+    // is strictly worse than staying quiet.
+    if (!summary) return;
 
     // Summarizing takes seconds. If the user replied in the meantime, or the
     // session is gone or disarmed, the announcement is stale — drop it.
@@ -212,21 +326,35 @@ class VoiceHub extends EventEmitter {
   // ---- on-demand summary ("read that again") ----------------------------------
 
   // Returns { summary, turnUuid, waiting } for the session's current turn,
-  // reusing the summary already computed for that turn when there is one. Does
-  // NOT mark the turn announced — asking to hear it again shouldn't change
-  // whether the watcher would have announced it.
+  // reusing (or joining) the summary already being computed for it. Does NOT
+  // mark the turn announced — asking to hear it again shouldn't change whether
+  // the watcher would have announced it.
+  //
+  // Restricted to `kind === 'claude'` so this agrees with what can be armed and
+  // with what the watcher will actually announce. The cwd fallback in
+  // transcriptFile() would happily hand back the transcript of a claude the
+  // user started by hand inside a shell session, and answering for a session
+  // that can never produce a `waiting` event is just a lie.
   async summaryFor(session) {
+    const empty = { summary: '', turnUuid: null, waiting: false };
+    if (session.kind !== 'claude') return empty;
     const file = session.transcriptFile();
     const turn = file ? readLastTurn(file) : null;
-    if (!turn) return { summary: '', turnUuid: null, waiting: false };
-    const waiting = isWaitingForInput(turn) && !!turn.text;
-    const st = this._stateFor(session.id);
-    if (st.summaryUuid && st.summaryUuid === turn.uuid) {
-      return { summary: st.summary, turnUuid: turn.uuid, waiting };
+    if (!turn) return empty;
+
+    // "Read that again" means read back what CLAUDE said. A `user` turn last
+    // means either Claude is mid-work or it's parked on an interactive prompt —
+    // reciting the user's own message back at them is never the answer.
+    if (turn.role !== 'assistant') {
+      const st = this._stateFor(session.id);
+      if (st.blockedUuid && st.blockedUuid === turn.uuid) {
+        return { summary: BLOCKED_SUMMARY, turnUuid: `${turn.uuid}:blocked`, waiting: true };
+      }
+      return empty;
     }
-    const summary = await summarize(turn.text);
-    st.summary = summary;
-    st.summaryUuid = turn.uuid;
+    if (!hasSpeakableContent(turn)) return empty;
+    const waiting = isWaitingForInput(turn);
+    const summary = await this._summaryForTurn(session, turn);
     return { summary, turnUuid: turn.uuid, waiting };
   }
 }

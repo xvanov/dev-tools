@@ -415,9 +415,16 @@ function createSessiond() {
       const voiceArmMatch = /^\/api\/sessions\/([^/]+)\/voice$/.exec(pathname);
       if (req.method === 'POST' && voiceArmMatch) {
         const id = decodeURIComponent(voiceArmMatch[1]);
+        const session = sessions.get(id);
+        if (!session) return sendJson(res, 404, { error: 'no such session' });
         const body = await readBody(req);
+        // Refuse rather than accept-and-do-nothing: only a claude session has a
+        // transcript to watch, so arming a shell would light a toggle in the UI
+        // that could never fire.
+        if (body.armed && !VoiceHub.canArm(session)) {
+          return sendJson(res, 400, { error: 'voice announcements need a claude session' });
+        }
         const armed = voice.setArmed(id, !!body.armed);
-        if (armed === null) return sendJson(res, 404, { error: 'no such session' });
         return sendJson(res, 200, { ok: true, armed });
       }
 
@@ -450,6 +457,9 @@ function createSessiond() {
           });
           return res.end(wav);
         } catch (e) {
+          // Includes the limiter's "too many syntheses queued" rejection — 503
+          // with Retry-After is the honest answer to that, not a 500.
+          if (e && e.busy) res.setHeader('Retry-After', '2');
           return sendJson(res, 503, { error: String(e && e.message ? e.message : e) });
         }
       }
@@ -511,7 +521,15 @@ function bindTerminal(ws, session) {
 function bindVoice(ws, voice) {
   const send = (msg) => { if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(msg)); };
   const detach = voice.addClient(send);
-  send(voice.hello());
+  // hello() touches the filesystem (piper/voice discovery) and the session map.
+  // This runs on the upgrade path, outside any request handler's try/catch, so
+  // a throw here would be an uncaught exception that takes sessiond — and every
+  // live terminal — down. A client that misses its snapshot just reconnects.
+  try {
+    send(voice.hello());
+  } catch {
+    // leave the socket open; the next waiting/busy event still reaches it
+  }
 
   ws.on('message', (raw) => {
     let msg;

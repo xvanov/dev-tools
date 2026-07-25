@@ -147,11 +147,37 @@ have `--session-id <uuid>` spliced in, so their transcript path is known exactly
 hand-launched `claude` falls back to the newest transcript in that cwd.
 
 **What counts as "waiting"** (`lib/claudeTranscript.js`): the last real turn is an *assistant*
-turn whose `stop_reason` is `end_turn`, `stop_sequence` or `null`, and which actually has text.
-A `tool_use` stop is mid-work and is **not** announced — except `AskUserQuestion` and
-`ExitPlanMode`, whose whole purpose is to ask. Subagent turns (`isSidechain`) are skipped
-wholesale: one request can spawn a dozen and each one "finishes". `thinking` blocks never make
+turn whose `stop_reason` is `end_turn`, `stop_sequence` or `null`, and which has something
+speakable. A `tool_use` stop is mid-work and is **not** announced. `thinking` blocks never make
 it into the spoken text.
+
+One assistant response is written as **several** transcript entries — thinking, then text, then
+each `tool_use` — all sharing one `requestId` and one `stop_reason`. `readLastTurn` therefore
+reassembles the whole response by walking back over same-`requestId` entries instead of reading
+the last line, because the last line on its own is regularly empty.
+
+Subagent turns are skipped via `isSidechain`, but note what actually protects us: that flag is
+set on **0 of 73,701** entries here. Subagent conversations are filed under
+`<session-uuid>/subagents/`, and they stay out because `findActiveTranscript` lists one
+directory *non-recursively*. Those files are full of `stop_reason: null` entries that would all
+read as "waiting", so **do not make that readdir recursive**; the flag check is only the belt.
+
+**Questions are invisible to the transcript.** When Claude stops on an `AskUserQuestion`, an
+`ExitPlanMode` or a permission prompt, it writes **nothing** until you answer: measured here,
+all 98 asking-tool entries in 680 transcripts were flushed together with their answer, a median
+194 s (max 16 h) after the question was created, and a live session sitting on the picker
+produced zero new transcript lines. So the moment you most need to be told is the moment there
+is nothing on disk to read, and by the time there is, you've already answered. The transcript
+path cannot fix this at any level of cleverness.
+
+What can: the PTY. Claude's TUI animates a spinner continuously while it works, so a terminal
+silent for `BLOCKED_MS` (12 s) is not working — and if the conversation's last recorded turn
+isn't a finished assistant turn either, Claude is parked on something interactive. The hub then
+sends a `waiting` whose summary says the session is asking something, with a `turnUuid` of
+`<uuid>:blocked` so it can't collide with a real turn announcement. It cannot say *what* is
+being asked; that text exists only on screen. This is a heuristic and the one part of the voice
+layer that isn't derived from a recorded fact — measured behaviour: fires 15.4 s after the
+question appears, and zero false positives over a 60 s idle following a normal turn.
 
 **Not being chatty.** The hub polls every second, but only looks at armed, alive,
 `kind: claude` sessions; skips any whose transcript mtime hasn't moved; and skips any whose PTY
@@ -170,7 +196,8 @@ to answer it rather than condense it. Longer turns go to `claude -p --model haik
 `$TMPDIR/termhub-summarize` — its own directory, so the summarizer's conversations can't be
 mistaken for "the active transcript in /tmp" by the cwd fallback above. Claude Code's inherited
 `CLAUDE*`/`AI_AGENT` env vars are stripped first. Any failure or a 25 s timeout falls back to a
-local markdown-stripping reduction; it never throws.
+local markdown-stripping reduction; it never throws. Each run leaves transcripts of its own
+behind, so all but the newest 10 are deleted after every call.
 
 **Speech** (`lib/tts.js`). `piper -m <voice>.onnx -f -` — the `-f -` matters, with no `-f`
 piper 1.6 writes a timestamped file into the cwd instead of streaming to stdout. Voice models
@@ -179,20 +206,31 @@ skipped because partially-downloaded stubs crash piper. piper's onnxruntime GPU 
 stderr are drained and ignored. 30 s timeout with the child killed, and a small LRU keyed on
 sha1(voice + text) so re-reads are free.
 
+**Bounded child processes** (`lib/limit.js`). Both subprocess paths are reachable by any
+tailnet peer through the front's generic `/api/*` proxy, in the process that owns the PTYs, so
+concurrency is capped rather than merely typical: **2** concurrent `piper` (queue 8) and **2**
+concurrent `claude -p` (queue 6). Past the queue depth callers get a 503 with `Retry-After` —
+a late announcement is worthless anyway. `/voice/summary` additionally *coalesces*: concurrent
+requests for the same turn await one summarize instead of forking one each, and the result is
+cached per turn uuid. Without these, 10 concurrent `/api/tts` spawned 10 pipers and 6
+concurrent `/voice/summary` spawned 6 haiku processes.
+
 Measured on the dev box: piper ~0.9 s for a 5 s clip, `claude -p --model haiku` ~3.8 s. End to
-end, from the finished turn appearing in the transcript to `waiting` reaching a browser: **~1.7–2.2 s**
-for a short turn (poll tick + quiet window) and **~7 s** for one that goes through haiku. Four
-concurrent `/api/tts` requests left `/api/ping` round-trips at a worst case of 11 ms — every
-child is spawned asynchronously and nothing blocks `sessiond`'s event loop.
+end, from the finished turn appearing in the transcript to `waiting` reaching a browser:
+**~1.7–2.2 s** for a short turn (poll tick + quiet window) and **~7 s** for one that goes
+through haiku. Every child is spawned asynchronously, and with the caps in place 10 concurrent
+`/api/tts` plus 6 concurrent `/voice/summary` left `/api/ping` round-trips at a worst case of
+**9 ms** (median 1 ms) — versus 148 ms before the caps existed. That figure is a property of
+the caps, not of the load: without them the fan-out is unbounded and so is the latency.
 
 ### Voice API
 
 | Method | Path | Body | Response |
 |---|---|---|---|
 | `GET` | `/api/voice/status` | — | `{tts:{available,voice,voices:[{id,label}]}, summarizer:{available}, sessions:[{id,armed}]}` |
-| `POST` | `/api/sessions/:id/voice` | `{armed}` | `{ok:true, armed}`; 404 if no such session |
-| `GET` | `/api/sessions/:id/voice/summary` | — | `{summary, turnUuid, waiting}` — recompute on demand ("read that again") |
-| `POST` | `/api/tts` | `{text, voice?}` | `audio/wav`, `Cache-Control: no-store`; 400 empty/over 4000 chars, 503 if piper is unavailable |
+| `POST` | `/api/sessions/:id/voice` | `{armed}` | `{ok:true, armed}`; 404 unknown session, 400 arming a non-`claude` one |
+| `GET` | `/api/sessions/:id/voice/summary` | — | `{summary, turnUuid, waiting}` — on demand ("read that again"); empty for a non-`claude` session or when Claude hasn't spoken yet |
+| `POST` | `/api/tts` | `{text, voice?}` | `audio/wav`, `Cache-Control: no-store`; 400 empty/over 4000 chars, 503 if piper is unavailable or too busy. `voice` must be an id from `voices()` — anything with a path separator is refused |
 
 `GET /api/sessions` gains `voiceArmed` per session.
 
@@ -204,10 +242,13 @@ Arming goes over REST, not the socket, so it survives a dropped connection.
 
 **When it stays silent.** No `piper`, no voice models, no `claude` CLI, no transcript, a
 session that isn't `kind: claude`, or a mid-tool-call turn — all of these degrade to silence,
-never to an error. If a session banner shows `⚠ Transcript saving is off`, Claude was started
-with an inherited `CLAUDE_CODE_CHILD_SESSION` (i.e. termhub itself was launched from inside
-another Claude Code session) and writes no transcript at all; start `sessiond` from a clean
-environment. Production's systemd unit already is one.
+never to an error. A turn whose text flattens to nothing (a reply that is only a code block)
+is announced as such rather than as an empty summary, which the browser couldn't play.
+
+Claude writes no transcript at all when it thinks it's a child of another Claude session, and
+warns about that in its own banner. `lib/session.js` strips the inherited `CLAUDE_CODE_*`
+identity from every PTY termhub spawns, so this can't be caused by how termhub itself was
+started; it only shows up for a `claude` launched some other way.
 
 ## Versioning & tagging
 
@@ -382,7 +423,8 @@ user actually meant to paste.
 | Pasted image lands as a file path instead of in the agent's prompt | The host has no usable clipboard (`curl /api/info` → `"clipboardImage": false`) | Expected on a headless Linux box. The path works — both Claude Code and opencode read an image given one. To get the clipboard route instead, run a session with a real display |
 | 📎 upload does nothing on a phone | File over the cap (100 MB, or 15 MB for an image on a host with a real clipboard — `curl /api/info` shows the effective `limits`) | The red notice above the key bar says so; tap it to dismiss, shrink the file. A silent failure instead means the connection dropped — the notice says that too |
 | Pasted an image and got text instead | The paste carried `text/plain` too (rich text with an inline image), and text wins | Deliberate — taking the image would swallow the text. Use 📎 for the image |
-| 🔊 armed but never speaks | No transcript to read | Session must be `kind: claude`; `⚠ Transcript saving is off` in the banner means an inherited `CLAUDE_CODE_CHILD_SESSION` — restart `sessiond` from a clean environment |
+| 🔊 armed but never speaks | No transcript to read | Only `kind: claude` sessions can be armed at all (the endpoint 400s otherwise). If Claude's banner says transcript saving is off, it was launched as a child of another Claude session — termhub's own PTYs are scrubbed of that, so it came from elsewhere |
+| Told "asking you something" but nothing is | PTY-idle heuristic misfired | A claude terminal silent for 12 s with no finished turn recorded is assumed to be on a prompt. A session wedged some other way looks the same; the announcement is generic by design because the question is never written to the transcript |
 | 🔊 reports speech unavailable | No `piper` or no usable voice model | `curl localhost:7010/api/voice/status`; install piper and put `<voice>.onnx` + `.onnx.json` in `TERMHUB_TTS_VOICE_DIR` (files under 4 KB are treated as broken stubs and skipped) |
 | Announcements sound like a rewrite, not the answer | Turn was long enough to go through `claude -p --model haiku` | Expected; turns under ~240 chars are spoken verbatim. `claude -p` failing just falls back to a local trim |
 | `npm install` errors on `node-pty` | Missing build toolchain | See prerequisites above |

@@ -16,6 +16,7 @@ const os = require('os');
 const path = require('path');
 const fs = require('fs');
 const { execFile } = require('child_process');
+const { createLimiter } = require('./limit');
 
 const INSTRUCTION = "Summarize the assistant's message in 2-3 short spoken sentences for text-to-speech. "
   + 'Plain prose, no markdown, no code, no lists. '
@@ -40,6 +41,23 @@ const SHORT_ENOUGH_CHARS = 240;
 const RESOLVE_TTL_MS = 30000;
 let binCache = { checkedAt: 0, bin: null };
 
+// `claude -p` is a whole Node process and ~4 s of work. The voice hub already
+// serialises per session, but N armed sessions finishing together — or a
+// browser hammering /api/sessions/:id/voice/summary — must not fork N of these
+// inside the process that owns the user's terminals. Two at a time is enough to
+// keep two sessions announcing promptly; the rest queue briefly or give up.
+const MAX_CONCURRENT_SUMMARIES = 2;
+const MAX_QUEUED_SUMMARIES = 6;
+
+const limit = createLimiter({ max: MAX_CONCURRENT_SUMMARIES, queue: MAX_QUEUED_SUMMARIES, name: 'summarizer' });
+
+// Every `claude -p` run leaves conversation transcripts behind in
+// ~/.claude/projects/<encoded workDir>/ (~15 KB each, and more than one per
+// invocation). Nothing ever reads them, so they'd grow without bound; keep a
+// handful for debugging and drop the rest after each run — a readdir of a
+// directory this small next to a ~4 s subprocess costs nothing.
+const KEEP_SUMMARY_TRANSCRIPTS = 10;
+
 // Environment variables Claude Code exports into the shells it spawns. sessiond
 // is often started from inside one (a dev run launched from a termhub session),
 // and a nested `claude` that thinks it's a child of another `claude` behaves
@@ -60,6 +78,28 @@ const INHERITED_AGENT_VARS = [
 function workDir() {
   const dir = path.join(os.tmpdir(), 'termhub-summarize');
   try { fs.mkdirSync(dir, { recursive: true }); return dir; } catch { return os.tmpdir(); }
+}
+
+// Delete all but the newest KEEP_SUMMARY_TRANSCRIPTS of our own leftovers.
+// Best-effort and never throws — it runs in a .finally() and must not turn a
+// good summary into a rejected promise. Mirrors lib/claudeModel.js's cwd
+// encoding to find the directory Claude Code filed them under.
+function pruneTranscripts() {
+  const projects = path.join(os.homedir(), '.claude', 'projects',
+    workDir().replace(/[^a-zA-Z0-9]/g, '-'));
+  let entries;
+  try { entries = fs.readdirSync(projects); } catch { return; }
+  const files = [];
+  for (const name of entries) {
+    if (!name.endsWith('.jsonl')) continue;
+    const full = path.join(projects, name);
+    try { files.push({ full, mtimeMs: fs.statSync(full).mtimeMs }); } catch { /* vanished */ }
+  }
+  if (files.length <= KEEP_SUMMARY_TRANSCRIPTS) return;
+  files.sort((a, b) => b.mtimeMs - a.mtimeMs);
+  for (const f of files.slice(KEEP_SUMMARY_TRANSCRIPTS)) {
+    try { fs.unlinkSync(f.full); } catch { /* already gone, or not ours to delete */ }
+  }
 }
 
 function isExecutable(file) {
@@ -162,25 +202,36 @@ function runClaude(bin, text) {
     });
     child.stdin.on('error', () => {}); // the CLI can exit before reading stdin
     child.stdin.end(text);
-  });
+  }).finally(pruneTranscripts);
 }
 
-// Always resolves to a string — possibly the rule-based fallback, possibly ''
-// if there was nothing to summarize in the first place.
+// What to say about a turn that had real content but nothing speakable in it —
+// a reply that is only a fenced code block flattens to the empty string, and
+// broadcasting an empty summary means the browser has nothing to play and the
+// user never learns the turn ended. Naming what happened is the useful answer.
+function describeUnspeakable(raw) {
+  if (/```/.test(raw)) return 'The reply is code, with nothing to read out.';
+  return 'Finished, with nothing to read out.';
+}
+
+// Always resolves to a string — the model's summary, the rule-based fallback,
+// or a description of why there's nothing to read. Only ever '' when the input
+// was itself empty, which callers treat as "not a turn worth announcing".
 async function summarize(text) {
   const input = (typeof text === 'string' ? text : '').trim().slice(0, MAX_INPUT_CHARS);
   if (!input) return '';
   const flat = tidy(input);
-  if (!flat) return '';
+  // Had content, but it all flattened away (a code-only reply).
+  if (!flat) return describeUnspeakable(input);
   if (flat.length <= SHORT_ENOUGH_CHARS) return flat;
   const bin = claudeBin();
-  if (!bin) return ruleBasedSummary(input);
+  if (!bin) return ruleBasedSummary(input) || describeUnspeakable(input);
   try {
-    const raw = await runClaude(bin, input);
+    const raw = await limit(() => runClaude(bin, input));
     const cleaned = tidy(raw).slice(0, MAX_SUMMARY_CHARS).trim();
-    return cleaned || ruleBasedSummary(input);
+    return cleaned || ruleBasedSummary(input) || describeUnspeakable(input);
   } catch {
-    return ruleBasedSummary(input);
+    return ruleBasedSummary(input) || describeUnspeakable(input);
   }
 }
 

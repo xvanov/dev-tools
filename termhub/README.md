@@ -42,9 +42,12 @@ other machines to maintain.
   termhub tells you, out loud, when that session stops and is waiting on you. It watches Claude
   Code's own conversation transcript for the end of a turn, condenses the reply into two or
   three speakable sentences, and synthesises it locally with [piper](https://github.com/OHF-Voice/piper1-gpl).
-  Nothing leaves the machine, and each turn is announced exactly once. Needs no setup beyond
-  having `piper` and a voice model installed — without them the toggle simply reports that
-  speech is unavailable and everything else works as before.
+  Nothing leaves the machine, and each turn is announced exactly once. When Claude stops on a
+  question or a permission prompt it writes nothing to the transcript until you answer, so
+  termhub notices that differently — a silent terminal — and tells you the session is asking
+  something, without being able to say what. Needs no setup beyond having `piper` and a voice
+  model installed; without them the toggle simply reports that speech is unavailable and
+  everything else works as before.
 - **Update from the UI** — a ⟳ Update button checks GitHub (once a day in the background, and
   on demand) and, when the termhub tool itself has changed, opens a terminal that runs the
   safe blue-green updater. See [Updating safely](#updating-safely-terminals-survive).
@@ -226,6 +229,7 @@ On Linux set these with `systemctl --user edit termhub`; on Windows via `setx` +
 | `lib/summarize.js` | Condenses a turn into speakable prose (`claude -p --model haiku`, with a local fallback) |
 | `lib/tts.js` | piper speech synthesis — voice discovery, WAV rendering, small LRU |
 | `lib/voiceHub.js` | Watches armed sessions and broadcasts `waiting`/`busy` over `/ws/voice` |
+| `lib/limit.js` | Concurrency gate bounding the piper / `claude -p` children sessiond will fork |
 | `lib/state.js` | Deployment state (`state.json`) + pid-file helpers shared by the tiers and scripts |
 | `lib/dirs.js` | Directory autocomplete for the new-terminal dialog |
 | `lib/shell.js` | Default-shell resolution per OS |
@@ -258,9 +262,11 @@ On Linux set these with `systemctl --user edit termhub`; on Windows via `setx` +
   `summarizer.available` false only means summaries will be trimmed locally instead of by
   `claude -p`, which still speaks fine.
 - **Armed but never speaks** — announcements come from Claude Code's transcript, so the session
-  must be `kind: claude` and Claude must actually be writing one. `⚠ Transcript saving is off`
-  in the session banner (caused by an inherited `CLAUDE_CODE_CHILD_SESSION`, i.e. termhub was
-  started from inside another Claude session) means there's nothing to read. Subagent turns are
-  never announced, and neither is a session that's mid-tool-call.
+  must be `kind: claude` (the 🔊 toggle refuses anything else) and Claude must actually be
+  writing one. If Claude warns in the terminal that transcript saving is off, it was started as
+  a child of another Claude session and writes nothing; termhub strips the inherited
+  `CLAUDE_CODE_*` identity from every terminal it spawns to prevent exactly that, so this should
+  only show up for a `claude` you launched some other way. A session that's mid-tool-call is
+  never announced either — that's deliberate.
 
 See [AGENT.md](./AGENT.md) for a deeper walkthrough.
