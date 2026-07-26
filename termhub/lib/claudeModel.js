@@ -24,8 +24,20 @@ const TAIL_STEPS_BYTES = [65536, 524288, 4194304];
 // (path separators, drive-letter colon, dots, …) becomes a hyphen. Verified
 // against this machine's real ~/.claude/projects entries, e.g.
 // `C:\source\dev-tools\termhub` -> `C--source-dev-tools-termhub`.
+//
+// A TRAILING SEPARATOR MUST GO FIRST. Claude Code encodes its own resolved cwd,
+// which never carries one; termhub encodes whatever the user typed into the
+// new-terminal dialog, and the directory autocomplete hands back paths ending
+// in `/`. Encoding that produces `-home-k-project-` where Claude wrote
+// `-home-k-project`, so the transcript is never found: no model badge, and no
+// spoken announcements, for every session started from the picker. Cost a real
+// debugging session — measured against a live one whose cwd was
+// `/home/k/software-factory/`.
 function projectDirFor(cwd) {
-  return String(cwd).replace(/[^a-zA-Z0-9]/g, '-');
+  // Keep the last separator when it's all there is (`/`, or `C:\`), since
+  // that path really is the directory rather than a stray suffix.
+  const trimmed = String(cwd).replace(/(?<=.)[\\/]+$/, '');
+  return trimmed.replace(/[^a-zA-Z0-9]/g, '-');
 }
 
 function transcriptPath(cwd, claudeSessionId) {

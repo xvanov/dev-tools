@@ -1352,6 +1352,12 @@ function enableVoice() {
   }
   warmUpRecognition();
   voice.unlocked = true;
+  // "Enable voice" is one button, so it had better mean voice is on. Requiring
+  // a second, separate 🔊 tap on the session row is a distinction the user does
+  // not have in their head — they turned voice on, then sat waiting for an
+  // announcement that was never armed. Arm whatever they're looking at. The
+  // per-session 🔊 stays for running several sessions and choosing between them.
+  armActiveSessionForVoice();
   voice.status = voice.tts.available
     ? 'voice ready'
     : 'voice ready — no speech synthesis on this machine, announcements will be text only';
@@ -1841,6 +1847,18 @@ function discardVoiceEditor() {
 }
 
 // ---- arming -----------------------------------------------------------------
+
+// Called from "Enable voice" so that one tap is genuinely all it takes. Only
+// claude sessions can announce (nothing else writes a transcript), so a shell
+// is skipped silently rather than reported as a failure — the strip already
+// says voice is ready, and there is nothing the user did wrong.
+function armActiveSessionForVoice() {
+  const id = state.activeId;
+  if (!id || voice.armed.has(id)) return;
+  const info = state.sessions.find((s) => s.id === id);
+  if (!info || info.kind !== 'claude') return;
+  toggleVoiceArm(id, true);
+}
 
 async function toggleVoiceArm(id, on) {
   try {
