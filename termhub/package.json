@@ -8,7 +8,8 @@
     "start": "node server.js",
     "sessiond": "node sessiond.js",
     "front": "node front.js",
-    "vendor": "cp node_modules/@xterm/xterm/lib/xterm.js web/vendor/xterm.js && cp node_modules/@xterm/xterm/css/xterm.css web/vendor/xterm.css && cp node_modules/@xterm/addon-fit/lib/addon-fit.js web/vendor/addon-fit.js && cp node_modules/@xterm/addon-webgl/lib/addon-webgl.js web/vendor/addon-webgl.js"
+    "vendor": "cp node_modules/@xterm/xterm/lib/xterm.js web/vendor/xterm.js && cp node_modules/@xterm/xterm/css/xterm.css web/vendor/xterm.css && cp node_modules/@xterm/addon-fit/lib/addon-fit.js web/vendor/addon-fit.js && cp node_modules/@xterm/addon-webgl/lib/addon-webgl.js web/vendor/addon-webgl.js",
+    "test": "node test/voiceCommands.test.js"
   },
   "dependencies": {
     "node-pty": "^1.0.0",

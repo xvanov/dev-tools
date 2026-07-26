@@ -1229,7 +1229,7 @@ const voice = {
   pumping: false,        // guards the queue against two concurrent drains
   ctx: null,             // AudioContext kept alive purely for the chime
   audio: null,           // the single <audio> element every announcement uses
-  tts: { available: false, voice: '' },
+  tts: { available: false, engine: null, voice: '', voices: [] },
   armed: new Set(),      // session ids, mirrored from /api/sessions + `armed` events
   queue: [],             // pending `waiting` messages, spoken one at a time
   playing: false,
@@ -1238,6 +1238,12 @@ const voice = {
   editing: null,         // {sessionId} while the aborted-text editor is open
   status: '',
   line: '',              // the 🔊/🎤 line under the status
+  // --- voice commands (see the section near the bottom of this file) ---------
+  muted: false,          // "Sputnik, quiet" — stay armed, stop announcing
+  volume: 1,             // "louder" / "quieter"
+  rate: 1,               // "faster" / "slower"
+  confirm: null,         // {kind, sessionId, title, timer} awaiting a spoken yes
+  commandHold: false,    // an interim opened with the wake word: send timer frozen
 };
 
 const rec = {
@@ -1409,6 +1415,11 @@ function playBlob(blob) {
     el.addEventListener('ended', done);
     el.addEventListener('error', done);
     el.src = url;
+    // Re-applied per clip rather than set once: assigning `src` resets
+    // playbackRate in some engines, and "Sputnik, slower" has to still be in
+    // force three announcements later.
+    try { el.volume = voice.volume; } catch {}
+    try { el.playbackRate = voice.rate; } catch {}
     const p = el.play();
     if (p && p.catch) p.catch(() => done());
   });
@@ -1418,9 +1429,14 @@ function playBlob(blob) {
 // the mic is never opened before that (see the echo-guard note at the top).
 // Returns 'ok', 'skip' (nothing to say, or no synthesis on this machine) or
 // 'fail' (we tried and got nothing audible) so callers can tell the user which.
-async function speak(text) {
+//
+// `force` is for speech the user just explicitly asked for — a command
+// acknowledgement, "read that again". Muting silences ANNOUNCEMENTS; it would
+// be perverse for it to also silence the answer to a question.
+async function speak(text, { force } = {}) {
   const say = (text || '').trim();
   if (!say || !voice.unlocked || !voice.tts.available) return 'skip';
+  if (voice.muted && !force) return 'skip';
   stopListening();
   voice.playing = true;
   vlog('speak start');
@@ -1491,7 +1507,10 @@ async function pumpQueue() {
   // `voice.playing` alone isn't enough: when there's no synthesis to do, speak()
   // returns without ever setting it, and two announcements landing together
   // would each drain the queue.
-  if (voice.pumping || voice.playing || voice.draft || voice.editing || !voice.queue.length) return;
+  // `voice.confirm` blocks too: an announcement talking over "Close sw-factory?
+  // Say yes." would make the user answer a question they never heard in full.
+  if (voice.pumping || voice.playing || voice.draft || voice.editing
+    || voice.confirm || !voice.queue.length) return;
   voice.pumping = true;
   try { await drainQueue(); } finally { voice.pumping = false; }
 }
@@ -1539,26 +1558,47 @@ function onBusy(sessionId) {
   // playing. Landing one of those just as the mic opens would close it before
   // the user got a word out, and they'd have no idea why.
   const micSettled = rec.openedAt && Date.now() - rec.openedAt > BUSY_GRACE_MS;
-  if (rec.want && rec.sessionId === sessionId && micSettled) stopListening('busy');
+  // …unless we're mid-confirmation. We asked a direct question and the answer
+  // is a single word; closing the mic under it would silently cancel a command
+  // the user is in the middle of confirming.
+  if (rec.want && rec.sessionId === sessionId && micSettled && !voice.confirm) stopListening('busy');
   renderVoice();
 }
 
 // "Read that again" — recompute the current summary for whichever session we
 // last heard from and speak it. Cheap when the server still has it cached.
-async function readAgain() {
+//
+// `full` asks for the assistant's verbatim last turn instead of the two-sentence
+// summary ("Sputnik, read the last message in full"). That path skips the
+// summariser model entirely, so it is also the fast one.
+async function readAgain({ full } = {}) {
   const id = rec.sessionId || state.activeId;
   if (!id) return;
   stopListening();
   try {
-    const r = await api(`/api/sessions/${encodeURIComponent(id)}/voice/summary`);
-    if (!r.summary) { voice.line = '🔊 nothing to read back'; renderVoice(); return; }
-    voice.line = `🔊 ${r.summary}`;
+    const r = await api(`/api/sessions/${encodeURIComponent(id)}/voice/summary${full ? '?full=1' : ''}`);
+    const say = full ? (r.text || r.summary) : r.summary;
+    if (!say) {
+      // stopListening() above already closed the mic. Bailing here without
+      // re-opening it leaves a hands-free loop with no way back in — the strip
+      // says nothing is wrong and the user talks to a dead microphone. Say so,
+      // then listen again.
+      voice.line = '';
+      await ackCommand('nothing to read back', { sessionId: id, status: 'nothing to read back' });
+      return;
+    }
+    voice.line = `🔊 ${say}`;
     renderVoice();
-    await speak(r.summary);
+    // Forced: the user asked for this out loud, so muting announcements must
+    // not silence the answer.
+    await speak(say, { force: true });
+    // Same reason as in ackCommand: a `waiting` that arrived while we were
+    // reading would otherwise never be drained.
+    if (voice.queue.length && !voice.draft && !voice.confirm) { pumpQueue(); return; }
     listenFor(id);
   } catch {
-    voice.line = '🔊 could not re-read that turn';
-    renderVoice();
+    voice.line = '';
+    await ackCommand("couldn't re-read that", { sessionId: id, status: 'could not re-read that turn' });
   }
 }
 
@@ -1664,6 +1704,14 @@ function armRecognition() {
   sr.onend = () => {
     vlog('onend');
     if (rec.sr === sr) rec.sr = null;   // a newer instance may already be live
+    // An interim that opened with the wake word froze the send timer, but this
+    // utterance ended without ever producing a final (a dropped recognition, a
+    // 'no-speech'). Nothing will unfreeze it, so the draft would sit there
+    // forever. Put the timer back.
+    if (voice.commandHold) {
+      voice.commandHold = false;
+      if (voice.draft) { showDraft(''); restartSendTimer(); }
+    }
     if (!rec.want) { renderVoice(); return; }
     if (Date.now() > rec.idleUntil) { stopListening('idle'); return; }
     if (rec.errors >= 5) { stopListening('error'); return; }
@@ -1702,6 +1750,25 @@ function stopListening(reason) {
   renderVoice();
 }
 
+// Where dictation and commands part company.
+//
+// COMMANDS FIRE ON FINALS ONLY. An interim is a guess the engine is still
+// revising: "Sputnik wait" can resolve to "spot the weight", and firing on that
+// would cancel a send the user never asked to cancel.
+//
+// BUT the send timer is frozen on the INTERIM. The two facts that force this:
+// the send window is 4 s, and iOS returns a final ~1.9 s after the last word.
+// Say "Sputnik, send it" a beat after finishing a sentence and the 4 s timer
+// can expire while the command is still being spoken — the draft goes, and the
+// command then applies to nothing. So the moment an interim opens with the wake
+// word we clear the pending timer and remember it (`commandHold`).
+//
+// The asymmetry is the whole point, because the two mistakes cost different
+// amounts. Acting early on a bad guess is unrecoverable; pausing early on a bad
+// guess costs nothing — when the final turns out to be ordinary dictation it
+// falls through to addToDraft below, which re-arms the timer from now. The
+// worst case for a mis-heard interim is that a send is deferred by the length
+// of one utterance.
 function handleResult(ev) {
   let interim = '';
   let final = '';
@@ -1712,13 +1779,39 @@ function handleResult(ev) {
   }
   rec.errors = 0;
   bumpIdle();                       // someone's talking; keep the mic open
-  const heard = (final || interim).trim();
-  if (!heard) return;
+  const heardFinal = final.trim();
+  const heardInterim = interim.trim();
+  if (!heardFinal && !heardInterim) return;
 
-  // Any speech at all — even a half-word interim — means the user is still
-  // going, so push the send back. This is what makes a mid-sentence pause safe.
-  if (final.trim()) addToDraft(rec.sessionId, final.trim());
-  else showDraft(interim.trim());
+  // A pending destructive confirmation owns the next final outright — no wake
+  // word needed, because we just asked a direct question. Nothing said while a
+  // confirmation is open can reach the agent.
+  if (voice.confirm) {
+    if (!heardFinal) { voice.line = '🎙 ' + heardInterim; renderVoice(); return; }
+    resolveConfirm(heardFinal);
+    return;
+  }
+
+  if (!heardFinal) {
+    if (VoiceCommands.startsWithWake(heardInterim)) {
+      holdSendTimer({ pendingFinal: true });
+      voice.line = '🎙 ' + heardInterim;
+      voice.status = 'command…';
+      renderVoice();
+      return;                       // an interim is never banked anyway
+    }
+    showDraft(heardInterim);
+    restartSendTimer();
+    return;
+  }
+
+  const cmd = VoiceCommands.parse(heardFinal);
+  if (cmd) { runVoiceCommand(cmd); return; }
+
+  // Not a command after all. If an interim froze the timer, this is where it
+  // comes back — restartSendTimer() re-arms the full window from now.
+  voice.commandHold = false;
+  addToDraft(rec.sessionId, heardFinal);
   restartSendTimer();
 }
 
@@ -1754,6 +1847,20 @@ function restartSendTimer() {
   if (!d) return;
   clearTimeout(d.timer);
   d.timer = setTimeout(() => sendDraft(), SEND_SILENCE_MS);
+}
+
+// Freeze a pending send without touching the draft: the words already banked
+// stay banked, and the next thing said appends to them. Used by "Sputnik, wait"
+// and — via the interim path — by a command that is still being spoken.
+//
+// `pendingFinal` marks the second case, where the freeze is provisional and
+// something MUST unfreeze it: either the final (in handleResult) or, if the
+// recognition dies without producing one, the onend recovery in
+// armRecognition(). An explicit "wait" is not provisional and must not be
+// undone by onend — hence the distinction.
+function holdSendTimer({ pendingFinal } = {}) {
+  if (pendingFinal) voice.commandHold = true;
+  if (voice.draft) clearTimeout(voice.draft.timer);
 }
 
 function cancelDraft() {
@@ -1859,6 +1966,351 @@ function discardVoiceEditor() {
   pumpQueue();
 }
 
+// ---- voice commands ---------------------------------------------------------
+//
+// Say "Sputnik" and the rest of the utterance drives termhub itself instead of
+// being typed at the agent. Parsing lives in web/voiceCommands.js (pure, and
+// tested by test/voiceCommands.test.js); this half is the part with side
+// effects.
+//
+// Two rules run through everything below:
+//
+//   NOTHING SILENTLY SUCCEEDS. Every command is acknowledged — a few spoken
+//   words, or the blip for the ones where speaking would take longer than the
+//   command saved. A command that works without saying so is indistinguishable
+//   from one that was never heard, and the user's only recourse is to say it
+//   again, which is how you end up killing a session twice.
+//
+//   NOTHING DESTRUCTIVE HAPPENS ON ONE UTTERANCE. Closing a session or
+//   interrupting a running turn asks first, by name, and waits for a spoken
+//   yes. Mishearing "close this session" is not a hypothetical, and the work it
+//   destroys is not recoverable.
+
+// A command is worth a spoken word or two, not a sentence — these interrupt.
+const VOLUME_STEP = 0.2;
+const RATE_STEP = 0.15;
+const RATE_MIN = 0.7;      // below this it's slurred, not slow
+const RATE_MAX = 1.8;      // above this it stops being intelligible on a phone
+const VOLUME_MIN = 0.15;   // "quieter" should never reach actual silence
+// Long enough to think about whether you meant it, short enough that a
+// forgotten confirmation doesn't sit there waiting to eat the next "yes".
+const CONFIRM_TIMEOUT_MS = 15000;
+// A spoken session list stops being useful well before it stops being long.
+const LIST_SPEAK_MAX = 6;
+
+const clamp = (n, lo, hi) => Math.min(hi, Math.max(lo, n));
+
+function liveSessions() { return state.sessions.filter((s) => s.alive); }
+
+// A title only has to be long enough to identify the session out loud. A
+// session created from the dialog with no title gets one derived from its whole
+// command line — including the spliced-in `--session-id <uuid>` — and reading
+// forty characters of hex at somebody is not an acknowledgement, it's a
+// punishment.
+const SPEAK_TITLE_MAX = 40;
+function speakableTitle(title) {
+  const t = String(title || '').trim();
+  if (!t) return 'that session';
+  if (t.length <= SPEAK_TITLE_MAX) return t;
+  const cut = t.slice(0, SPEAK_TITLE_MAX);
+  const space = cut.lastIndexOf(' ');
+  return (space > 12 ? cut.slice(0, space) : cut) + '…';
+}
+
+// The session a command acts on: whatever you're talking to, else whatever is
+// on screen.
+function commandTarget() {
+  const id = rec.sessionId || state.activeId;
+  return state.sessions.find((s) => s.id === id) || null;
+}
+
+// Acknowledge, then put the mic back. `speak()` closes the mic (it must — the
+// echo guard), so every spoken acknowledgement has to re-open it or the loop
+// dead-ends silently.
+async function ackCommand(said, { blip, resume = true, sessionId, status } = {}) {
+  const target = sessionId || rec.sessionId || state.activeId;
+  if (status || said) { voice.status = status || said; renderVoice(); }
+  // While muted, an acknowledgement is exactly the announcement the user asked
+  // us to stop making — the blip still says "heard you".
+  if (blip || voice.muted || !voice.tts.available || !voice.unlocked) sendBlip();
+  else await speak(said, { force: true });
+  // An announcement can land WHILE an acknowledgement is being spoken;
+  // pumpQueue() refuses to start a second drain while audio is playing, so
+  // without this it would sit in the queue until the next unrelated event and
+  // the user would never hear that Claude finished. drainQueue re-opens the mic
+  // itself when it's done, so don't do both.
+  if (voice.queue.length && !voice.draft && !voice.confirm) { pumpQueue(); return; }
+  if (resume && target) listenFor(target);
+  else renderVoice();
+}
+
+function runVoiceCommand(cmd) {
+  vlog('command: ' + cmd.command + (cmd.arg ? ' ' + cmd.arg : ''));
+  voice.commandHold = false;
+  voice.line = '';
+  switch (cmd.command) {
+    case 'wait': return cmdWait();
+    case 'send': return cmdSendNow();
+    case 'scratch': return cmdScratch();
+    case 'nevermind': return cmdNeverMind();
+    case 'switch': return cmdSwitch(cmd.arg);
+    case 'list': return cmdList();
+    case 'new': return cmdNewTerminal(cmd.arg);
+    case 'close': return cmdConfirmDestructive('close');
+    case 'stop': return cmdConfirmDestructive('stop');
+    case 'mute': return cmdMute(true);
+    case 'unmute': return cmdMute(false);
+    case 'again': return readAgain();
+    case 'full': return readAgain({ full: true });
+    case 'louder': return cmdVolume(+VOLUME_STEP);
+    case 'quieter': return cmdVolume(-VOLUME_STEP);
+    case 'slower': return cmdRate(+RATE_STEP);   // bigger step = slower speech
+    case 'faster': return cmdRate(-RATE_STEP);
+    default:
+      // The wake word landed but the rest didn't parse. Say so and drop it:
+      // passing a half-heard command through to the agent is the one outcome
+      // the wake word exists to prevent.
+      return ackCommand("didn't catch that", { status: "didn't catch that" });
+  }
+}
+
+// ---- turn control ------------------------------------------------------------
+
+function cmdWait() {
+  holdSendTimer();
+  const banked = voice.draft && voice.draft.text;
+  // Trivial and mid-flow: a spoken "holding" would cost more time than the
+  // pause it grants. The blip is the acknowledgement.
+  ackCommand('', {
+    blip: true,
+    status: banked ? 'holding — carry on when you\'re ready' : 'holding — listening',
+  });
+}
+
+function cmdSendNow() {
+  if (!voice.draft || !voice.draft.text) {
+    ackCommand('nothing to send', { status: 'nothing to send' });
+    return;
+  }
+  // sendDraft() blips and closes the mic itself; the announcement loop reopens
+  // it when the agent replies.
+  sendDraft();
+}
+
+function cmdScratch() {
+  cancelDraft();
+  voice.line = '';
+  ackCommand('', { blip: true, status: 'cleared — still listening' });
+}
+
+async function cmdNeverMind() {
+  cancelDraft();
+  voice.line = '';
+  // Spoken rather than blipped: this one closes the mic, and silence plus a
+  // dead mic is the exact ambiguity these acknowledgements exist to remove.
+  await ackCommand('okay', { resume: false, status: 'mic off' });
+  stopListening('off');
+}
+
+// ---- session switching -------------------------------------------------------
+
+async function cmdSwitch(name) {
+  if (!name) { ackCommand('switch to which session?', { status: 'switch to which?' }); return; }
+  const found = VoiceCommands.matchSession(name, liveSessions());
+  if (found.kind === 'none') {
+    await ackCommand(`I don't have a session called ${name}`, { status: `no session called "${name}"` });
+    return;
+  }
+  if (found.kind === 'ambiguous') {
+    // Never guess between two plausible sessions — switching to the wrong one
+    // means the next thing dictated goes to the wrong agent.
+    const names = found.sessions.map((s) => speakableTitle(s.title)).join(', or ');
+    await ackCommand(`Did you mean ${names}?`, { status: 'which one?' });
+    return;
+  }
+  const s = found.session;
+  openTerminal(s.id, s.title, s.kind);
+  if (isMobile()) closeDrawer();
+  await ackCommand(speakableTitle(s.title), { sessionId: s.id, status: `switched to ${s.title}` });
+}
+
+function describeSession(s) {
+  const state_ = s.busy ? 'working' : 'idle';
+  return `${speakableTitle(s.title)}, ${state_}${voice.armed.has(s.id) ? ', armed' : ''}`;
+}
+
+async function cmdList() {
+  const live = liveSessions();
+  if (!live.length) { await ackCommand('nothing is running', { status: 'nothing running' }); return; }
+  const shown = live.slice(0, LIST_SPEAK_MAX);
+  const rest = live.length - shown.length;
+  const body = shown.map(describeSession).join('. ');
+  const tail = rest ? ` And ${rest} more.` : '';
+  const said = `${live.length} session${live.length === 1 ? '' : 's'}. ${body}.${tail}`;
+  voice.line = `🔊 ${said}`;
+  // Forced: this is an answer to a question, not an announcement.
+  await ackCommand(said, { status: 'listing sessions' });
+}
+
+// ---- session lifecycle -------------------------------------------------------
+
+// Turn "dev tools" into a real directory. Speech gives us words, never a path,
+// so match those words against places the user actually works — the recents
+// list and the working directories of the open sessions — rather than trying to
+// reconstruct slashes nobody can dictate.
+async function resolveSpokenDir(spoken) {
+  const candidates = new Map();   // path -> the name we'll match against
+  for (const s of state.sessions) if (s.cwd) candidates.set(s.cwd, s.cwd);
+  try {
+    for (const p of (await api('/api/recents')).recents || []) candidates.set(p, p);
+  } catch { /* no recents endpoint answer — the session cwds may still do it */ }
+
+  // Match on the last path segment, which is what anyone says out loud.
+  const rows = [...candidates.keys()].map((p) => ({
+    id: p, title: (p.replace(/[/\\]+$/, '').split(/[/\\]/).pop() || p),
+  }));
+  const found = VoiceCommands.matchSession(spoken, rows);
+  if (found.kind === 'match') return { path: found.session.id };
+  if (found.kind === 'ambiguous') return { ambiguous: found.sessions.map((r) => r.title) };
+  return {};
+}
+
+async function cmdNewTerminal(where) {
+  if (!where) { await ackCommand('a new terminal where?', { status: 'new terminal where?' }); return; }
+  const hit = await resolveSpokenDir(where);
+  if (hit.ambiguous) {
+    await ackCommand(`Did you mean ${hit.ambiguous.join(', or ')}?`, { status: 'which directory?' });
+    return;
+  }
+  if (!hit.path) {
+    // Refusing beats opening a Claude session in the wrong tree and having the
+    // user find out three instructions later.
+    await ackCommand(`I don't know a directory called ${where}`, { status: `no directory "${where}"` });
+    return;
+  }
+  // Name it after the directory. Left untitled, a session takes its name from
+  // its whole command line — which for a claude session includes the spliced-in
+  // `--session-id <uuid>` — and the user would then have to say that uuid back
+  // to switch to it. The directory is what they called it in the first place.
+  const title = hit.path.replace(/[/\\]+$/, '').split(/[/\\]/).pop() || hit.path;
+  try {
+    const session = await api('/api/sessions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cwd: hit.path, command: DEFAULT_COMMAND, title, cols: 80, rows: 24 }),
+    });
+    await refresh();
+    openTerminal(session.id, session.title, session.kind);
+    if (isMobile()) closeDrawer();
+    await ackCommand(`started ${speakableTitle(session.title)}`, { sessionId: session.id, status: `started ${session.title}` });
+  } catch (e) {
+    await ackCommand("couldn't start that", { status: 'could not start a terminal: ' + e.message });
+  }
+}
+
+// ---- destructive commands: ask first -----------------------------------------
+
+// Name what will happen and to what, then stop and wait. The question is spoken
+// even when muted: a confirmation you can't hear is a confirmation you can't
+// give, and the alternative is a session dying to a mis-heard word.
+async function cmdConfirmDestructive(kind) {
+  const s = commandTarget();
+  if (!s) { await ackCommand('nothing is open', { status: 'nothing to act on' }); return; }
+  if (voice.confirm) clearTimeout(voice.confirm.timer);
+
+  const question = kind === 'close'
+    ? `Close ${speakableTitle(s.title)}? That kills it. Say yes.`
+    : `Interrupt ${speakableTitle(s.title)}? Say yes.`;
+  voice.confirm = { kind, sessionId: s.id, title: s.title, timer: null };
+  voice.status = kind === 'close' ? `close ${s.title}? say yes` : `interrupt ${s.title}? say yes`;
+  voice.line = `❓ ${question}`;
+  renderVoice();
+
+  await speak(question, { force: true });
+  // Armed only once the question has actually been asked — starting the clock
+  // before the audio finishes would spend it talking.
+  if (voice.confirm) {
+    voice.confirm.timer = setTimeout(() => {
+      if (!voice.confirm) return;
+      voice.confirm = null;
+      ackCommand('', { blip: true, status: 'nothing done' });
+    }, CONFIRM_TIMEOUT_MS);
+  }
+  listenFor(s.id);
+}
+
+// Anything that isn't a clear yes cancels. Deliberately ungenerous: the cost of
+// a missed yes is saying it again, and the cost of a generous one is a dead
+// Claude session.
+async function resolveConfirm(said) {
+  const c = voice.confirm;
+  voice.confirm = null;
+  if (!c) return;
+  clearTimeout(c.timer);
+  voice.line = '';
+
+  if (!VoiceCommands.isAffirmative(said)) {
+    await ackCommand('cancelled', { status: 'cancelled — nothing done' });
+    return;
+  }
+  if (c.kind === 'close') {
+    await killSession(c.sessionId);
+    rec.sessionId = null;   // it's gone; don't keep aiming dictation at it
+    await ackCommand(`closed ${speakableTitle(c.title)}`, { sessionId: state.activeId, status: `closed ${c.title}` });
+    return;
+  }
+  await interruptSession(c.sessionId);
+  await ackCommand(`stopped ${speakableTitle(c.title)}`, { sessionId: c.sessionId, status: `interrupted ${c.title}` });
+}
+
+// "Stop this session" interrupts what the agent is doing without destroying the
+// session — Escape is Claude Code's cancel. Twice, spaced, because the first
+// one is swallowed while a tool call is settling. Deliberately NOT a kill: if
+// the user meant "close it" they can say so next, whereas the reverse mistake
+// can't be undone.
+async function interruptSession(id) {
+  const t = await ensureTerminal(id);
+  if (!t) return;
+  sendInput(t, '\x1b');
+  await new Promise((r) => setTimeout(r, 120));
+  sendInput(t, '\x1b');
+}
+
+// ---- announcements -----------------------------------------------------------
+
+function cmdMute(on) {
+  voice.muted = on;
+  if (on) {
+    // Dropping whatever is queued is the point — "quiet" that still reads out
+    // the backlog isn't quiet.
+    voice.queue = [];
+    // Blip, obviously: speaking an acknowledgement to "be quiet" is a joke.
+    ackCommand('', { blip: true, status: 'muted — still armed' });
+  } else {
+    ackCommand('announcements on', { status: 'announcements on' });
+    pumpQueue();
+  }
+  renderVoice();
+}
+
+// The acknowledgement is spoken AT the new setting, so the change is the
+// confirmation — you hear the difference rather than being told about it.
+function cmdVolume(delta) {
+  voice.volume = clamp(voice.volume + delta, VOLUME_MIN, 1);
+  const pct = Math.round(voice.volume * 100);
+  const atLimit = voice.volume >= 1 || voice.volume <= VOLUME_MIN;
+  ackCommand(atLimit ? (delta > 0 ? 'that is as loud as it goes' : 'that is as quiet as it goes') : 'okay',
+    { status: `volume ${pct}%` });
+}
+
+function cmdRate(delta) {
+  // delta > 0 means "slower", which is a LOWER playback rate.
+  voice.rate = clamp(voice.rate - delta, RATE_MIN, RATE_MAX);
+  const atLimit = voice.rate <= RATE_MIN || voice.rate >= RATE_MAX;
+  ackCommand(atLimit ? 'that is as far as it goes' : 'okay',
+    { status: `speed ${voice.rate.toFixed(2)}×` });
+}
+
 // ---- arming -----------------------------------------------------------------
 
 // Called from "Enable voice" so that one tap is genuinely all it takes. Only
@@ -1897,7 +2349,8 @@ function renderVoice() {
   }
   const bar = $('#voice-bar');
   if (!bar) return;
-  const show = voice.armed.size > 0 || rec.want || !!voice.draft || !!voice.editing || voice.playing;
+  const show = voice.armed.size > 0 || rec.want || !!voice.draft || !!voice.editing
+    || voice.playing || !!voice.confirm;
   bar.classList.toggle('hidden', !show);
   if (!show) return;
 
@@ -1910,12 +2363,17 @@ function renderVoice() {
     status = n
       ? `${n} session${n === 1 ? '' : 's'} armed — audio is locked until you tap`
       : 'audio is locked until you tap';
+  } else if (voice.confirm) {
+    // A pending confirmation outranks everything: it is the only state where
+    // the next word said has consequences.
+    status = voice.status || 'say yes to confirm';
   } else if (voice.draft) {
     // showDraft() owns the wording while dictation is accumulating.
     status = voice.status || 'listening';
   } else if (rec.want) status = 'listening…';
   else status = voice.status || 'voice ready';
-  $('#voice-status').textContent = status;
+  // Muting is silent by definition, so the strip is the only place it shows.
+  $('#voice-status').textContent = voice.muted && !locked ? `🔇 ${status}` : status;
 
   $('#voice-unlock').classList.toggle('hidden', !locked);
   $('#voice-off').classList.toggle('hidden', !rec.want);
@@ -1993,7 +2451,11 @@ function connectVoice() {
   ws.onmessage = (ev) => {
     let msg; try { msg = JSON.parse(ev.data); } catch { return; }
     if (msg.type === 'hello') {
-      voice.tts = msg.tts || { available: false, voice: '' };
+      voice.tts = msg.tts || { available: false, engine: null, voice: '', voices: [] };
+      // The server only sends a wake word when TERMHUB_WAKE_WORD overrides the
+      // default; web/voiceCommands.js owns the default and its variant list, so
+      // there is exactly one place to change it.
+      if (msg.wakeWord) VoiceCommands.configure({ wakeWord: msg.wakeWord });
       voice.armed = new Set((msg.sessions || []).filter((s) => s.armed).map((s) => s.id));
       syncSidebar();
       renderVoice();

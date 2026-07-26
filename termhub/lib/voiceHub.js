@@ -44,6 +44,20 @@ const BLOCKED_MS = 12000;
 // question itself is only on screen, never in the transcript.
 const BLOCKED_SUMMARY = 'This session is asking you something in the terminal.';
 
+// Ceiling on "read the last message in full". Comfortably above a normal
+// assistant turn and comfortably below /api/tts's 4000-char request cap, so a
+// long turn comes back readable rather than 400ing on the way to synthesis.
+const FULL_TEXT_MAX = 3200;
+
+// The spoken wake word, if this host overrides it. Returning null (rather than
+// the default) is deliberate: web/voiceCommands.js owns the default and its
+// variant list, and two copies of a default are one too many. The server only
+// ever speaks up when it has been told something different.
+function wakeWord() {
+  const w = String(process.env.TERMHUB_WAKE_WORD || '').trim();
+  return w || null;
+}
+
 class VoiceHub extends EventEmitter {
   // `sessions` is sessiond's live Map<id, Session>; the hub only reads it. The
   // armed flag lives on the sessions themselves (session.voiceArmed) so it can
@@ -115,9 +129,13 @@ class VoiceHub extends EventEmitter {
   }
 
   hello() {
+    // tts.status() carries the engine and its voice list as well as
+    // availability, so the browser can say what is speaking without a second
+    // round-trip to /api/voice/status.
     return {
       type: 'hello',
-      tts: { available: tts.available(), voice: tts.defaultVoice() },
+      tts: tts.status(),
+      wakeWord: wakeWord(),
       sessions: this.sessionList(),
     };
   }
@@ -357,6 +375,31 @@ class VoiceHub extends EventEmitter {
     const summary = await this._summaryForTurn(session, turn);
     return { summary, turnUuid: turn.uuid, waiting };
   }
+
+  // "Read the last message in full" — the assistant's actual words, not the
+  // two-sentence summary the announcement used. Same turn selection as
+  // summaryFor() so the two can never disagree about which message "the last
+  // one" is; it just skips the summariser entirely, which also makes it the
+  // fast path (no `claude -p`, no 3.8 s).
+  //
+  // Capped, because a turn can run to tens of kilobytes and the caller is going
+  // to read it out loud. Truncation is announced in the text itself rather than
+  // silently cutting mid-sentence — being told there's more is the useful part.
+  fullTurnFor(session, maxChars) {
+    const empty = { text: '', turnUuid: null, truncated: false };
+    if (session.kind !== 'claude') return empty;
+    const file = session.transcriptFile();
+    const turn = file ? readLastTurn(file) : null;
+    if (!turn || turn.role !== 'assistant' || !hasSpeakableContent(turn)) return empty;
+    const whole = [turn.text, turn.prompt].filter(Boolean).join(' ').trim();
+    const cap = Math.max(200, Number(maxChars) || FULL_TEXT_MAX);
+    if (whole.length <= cap) return { text: whole, turnUuid: turn.uuid, truncated: false };
+    // Back up to a sentence end so the clip doesn't stop mid-word.
+    const cut = whole.slice(0, cap);
+    const stop = Math.max(cut.lastIndexOf('. '), cut.lastIndexOf('? '), cut.lastIndexOf('! '));
+    const body = stop > cap * 0.5 ? cut.slice(0, stop + 1) : cut;
+    return { text: `${body} That's as far as I can read; the rest is on screen.`, turnUuid: turn.uuid, truncated: true };
+  }
 }
 
-module.exports = { VoiceHub, POLL_MS, QUIET_MS };
+module.exports = { VoiceHub, POLL_MS, QUIET_MS, FULL_TEXT_MAX, wakeWord };

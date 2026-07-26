@@ -27,7 +27,7 @@ const { setClipboardImage, clipboardTarget } = require('./lib/clipboard');
 const { saveUploadedFile, saveImageAttachment } = require('./lib/uploads');
 const tts = require('./lib/tts');
 const summarizer = require('./lib/summarize');
-const { VoiceHub } = require('./lib/voiceHub');
+const { VoiceHub, wakeWord: voiceWakeWord } = require('./lib/voiceHub');
 
 // A pasted/dropped image, base64-inflated in transit — cap comfortably above a
 // full-screen screenshot (a few MB as PNG) while still bounding memory use.
@@ -401,12 +401,17 @@ function createSessiond() {
       }
 
       // ---- voice ------------------------------------------------------------
-      // What the browser needs to decide what its voice UI can offer: whether
-      // there's a piper to speak with, whether summaries will be model-written
-      // or rule-based, and which sessions are currently armed.
+      // What the browser needs to decide what its voice UI can offer: which
+      // engine is speaking (kokoro or piper) and with which of its voices,
+      // whether summaries will be model-written or rule-based, and which
+      // sessions are currently armed. `tts.status()` is one call on purpose —
+      // engine, voice and voice list have to agree with each other.
       if (req.method === 'GET' && pathname === '/api/voice/status') {
         return sendJson(res, 200, {
-          tts: { available: tts.available(), voice: tts.defaultVoice(), voices: tts.voices() },
+          tts: tts.status(),
+          // null unless TERMHUB_WAKE_WORD overrides it — the client owns the
+          // default ("sputnik") along with its list of known mishearings.
+          wakeWord: voiceWakeWord(),
           summarizer: { available: summarizer.available() },
           sessions: voice.sessionList().map((s) => ({ id: s.id, armed: s.armed })),
         });
@@ -436,7 +441,18 @@ function createSessiond() {
         const id = decodeURIComponent(voiceSummaryMatch[1]);
         const session = sessions.get(id);
         if (!session) return sendJson(res, 404, { error: 'no such session' });
+        // `?full=1` adds the assistant's verbatim last turn ("termhub, read the
+        // last message in full"). Opt-in rather than always present: the
+        // reconnect catch-up hits this route once per armed session, and
+        // shipping kilobytes of transcript on every one of those to answer a
+        // "is anything waiting?" question would be pure waste.
         const result = await voice.summaryFor(session).catch(() => ({ summary: '', turnUuid: null, waiting: false }));
+        if (url.searchParams.get('full')) {
+          let full = { text: '', truncated: false };
+          try { full = voice.fullTurnFor(session); } catch { /* unreadable transcript — summary still stands */ }
+          result.text = full.text;
+          result.truncated = full.truncated;
+        }
         return sendJson(res, 200, result);
       }
 

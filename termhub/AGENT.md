@@ -199,12 +199,51 @@ mistaken for "the active transcript in /tmp" by the cwd fallback above. Claude C
 local markdown-stripping reduction; it never throws. Each run leaves transcripts of its own
 behind, so all but the newest 10 are deleted after every call.
 
-**Speech** (`lib/tts.js`). `piper -m <voice>.onnx -f -` — the `-f -` matters, with no `-f`
-piper 1.6 writes a timestamped file into the cwd instead of streaming to stdout. Voice models
-come from `TERMHUB_TTS_VOICE_DIR` (default `~/.claude/piper-voices`); files under 4 KB are
-skipped because partially-downloaded stubs crash piper. piper's onnxruntime GPU warnings on
-stderr are drained and ignored. 30 s timeout with the child killed, and a small LRU keyed on
-sha1(voice + text) so re-reads are free.
+**Speech** (`lib/tts.js`) — two engines behind one door, chosen by `TERMHUB_TTS_ENGINE` and
+defaulting to whichever is installed, kokoro first. Neither being present is not an error:
+`available()` goes false, `/api/tts` 503s, and the UI already handles that. An engine named
+explicitly but not installed silently yields to the other one, because a robotic announcement
+beats no announcement.
+
+*kokoro* is the good one and the default. It runs through a **resident python worker**
+(`lib/kokoro_helper.py`): spawning a fresh interpreter per announcement pays the model load
+every time, and that load is most of the cost. Measured on this box, same 11.9 s clip:
+
+| | latency |
+|---|---|
+| fresh python per request | 2944–3273 ms (median 3153) |
+| warm worker | 2015–2101 ms (median 2032) |
+| piper, same text | 1025–1091 ms |
+| LRU cache hit | 6 ms |
+
+Model load alone is 0.73 s; the worker turns that from per-clip into once. The wire format is
+deliberately dumb — one JSON request per line on stdin, and a JSON header line plus exactly
+`bytes` raw bytes of WAV back on stdout — so the node side needs a framing loop and no parser.
+The worker holds **~745 MB** resident, so it is evicted after `TERMHUB_TTS_IDLE_MS` (10 min)
+of nothing to say, killed on process exit, and respawned lazily. Deliberately *not* `unref`'d:
+unref'ing the pipes lets node exit with a synthesis in flight, and a promise that never settles
+is worse than a resident worker. A worker that dies mid-request is retried once; one that fails
+at *import* time (`fatal`) demotes kokoro for five minutes and the in-flight request finishes
+on piper. Both the death-before-`ready` case and a worker that never reports `ready` settle the
+startup promise — an early version hung forever when `TERMHUB_KOKORO_PYTHON` pointed at
+`/bin/false`.
+
+Voices: kokoro's are enumerated from the worker's own `ready` frame once it has run, and from a
+static English list before that — `/api/voice/status` is polled, and loading a 325 MB graph to
+list names is not an option. Only the `a*`/`b*` (American/British) voices are offered; the model
+has Japanese and Chinese ones too, but everything termhub speaks is English.
+
+*piper* is unchanged: `piper -m <voice>.onnx -f -` — the `-f -` matters, with no `-f` piper 1.6
+writes a timestamped file into the cwd instead of streaming to stdout. Voice models come from
+`TERMHUB_TTS_VOICE_DIR` (default `~/.claude/piper-voices`); files under 4 KB are skipped because
+partially-downloaded stubs crash piper. onnxruntime GPU warnings on stderr are drained and
+ignored (both engines emit them).
+
+Shared by both: a 30 s timeout with the child killed — for kokoro that means killing the *worker*,
+since an ONNX run in progress can't be cancelled — and an LRU keyed on sha1(engine + voice + text)
+so re-reads are free. `TERMHUB_TTS_VOICE` selects within the *active* engine and is ignored when
+it names something that engine doesn't have; this is what stops `~/.claude/tts-voice.txt`
+(a piper model name) from being handed to kokoro as a voice id.
 
 **Bounded child processes** (`lib/limit.js`). Both subprocess paths are reachable by any
 tailnet peer through the front's generic `/api/*` proxy, in the process that owns the PTYs, so
@@ -215,7 +254,8 @@ requests for the same turn await one summarize instead of forking one each, and 
 cached per turn uuid. Without these, 10 concurrent `/api/tts` spawned 10 pipers and 6
 concurrent `/voice/summary` spawned 6 haiku processes.
 
-Measured on the dev box: piper ~0.9 s for a 5 s clip, `claude -p --model haiku` ~3.8 s. End to
+Measured on the dev box: kokoro ~2.0 s through the warm worker (piper ~1.0 s) for a 12 s clip,
+`claude -p --model haiku` ~3.8 s. End to
 end, from the finished turn appearing in the transcript to `waiting` reaching a browser:
 **~1.7–2.2 s** for a short turn (poll tick + quiet window) and **~7 s** for one that goes
 through haiku. Every child is spawned asynchronously, and with the caps in place 10 concurrent
@@ -271,6 +311,75 @@ so past two queued announcements the rest collapse into "3 more sessions are wai
 - A summary can come back empty (a reply that was only a code block flattens to `""`, and
   `/api/tts` rejects that with a 400). It falls back to "<title> is waiting on you."
 
+### Voice commands (`web/voiceCommands.js` + the command section of `web/app.js`)
+
+An utterance that **begins** with the wake word drives termhub and never reaches the agent;
+everything else is dictation, unchanged. Parsing is a separate, pure file precisely so it can be
+tested off the browser — `npm test` (`test/voiceCommands.test.js`, no framework, no deps).
+
+**The wake word is `Sputnik`, and that choice is the design.** The first attempt was `termhub`,
+which is the worst possible wake word: the recogniser has never heard it, so it guesses, and
+differently every time — `term hub`, `turn hub`, `thermo`, `term up`. Catching that needs fuzzy
+matching, and fuzzy matching on a seven-letter target is what starts eating ordinary speech.
+`Sputnik` is a proper noun already in iOS's vocabulary and in nobody's engineering dictation, so
+it is matched **exactly**, against a short curated list of plausible mishearings (`sputnick`,
+`spudnik`, `sput nik`, `spot nick`). There is no edit-distance fallback on the wake word on
+purpose; with a word this distinctive it buys nothing and costs false positives. Add observed
+mishearings to `KNOWN_VARIANTS`; don't reach for fuzziness instead. Change the word itself with
+`TERMHUB_WAKE_WORD` — it arrives on the `hello` frame and drives `VoiceCommands.configure()`;
+the default and its variants live in exactly one place.
+
+Of the two failure modes only one is expensive, and the whole matcher is biased accordingly:
+
+| | cost |
+|---|---|
+| **miss** | the user says it again — annoying, visible, recoverable |
+| **false fire** | an instruction meant for Claude is swallowed and silently never sent |
+
+Three rules enforce that bias:
+1. **Prefix-anchored.** "we launched Sputnik in 1957" is text.
+2. **Two tiers.** Clean variants are *strong* and wake termhub even when what follows is
+   gibberish (which is then acknowledged and dropped — a half-heard command must never be typed
+   at the agent). Variants that could be real speech (`spot nick`) are *weak* and wake it only
+   when a recognised command follows.
+3. **A leading function word disqualifies the match.** Nobody says "the Sputnik".
+
+**Commands fire on FINAL transcripts only; the send timer is frozen on the INTERIM.** This
+asymmetry is the one non-obvious decision here. The send window is 4 s and iOS returns a final
+~1.9 s after the last word, so saying "Sputnik, send it" a beat after finishing a sentence can
+let the timer expire mid-command — the draft goes, and the command then applies to nothing. So
+an interim that opens with the wake word clears the pending timer and sets `voice.commandHold`;
+the final either runs a command or falls through to dictation, which re-arms the timer from now.
+Acting early on a bad guess is unrecoverable; *pausing* early on a bad guess costs one utterance
+of delay. `commandHold` also has a recovery path in `onend`: an utterance that freezes the timer
+and then dies without ever producing a final would otherwise strand the draft forever. An
+explicit "Sputnik wait" deliberately does *not* set the flag, so that same `onend` can't undo it.
+
+**Destructive commands ask.** `close` (kills the session) and `stop` (sends Escape twice —
+Claude Code's cancel — leaving the session alive) name the target out loud and wait for a spoken
+yes. `isAffirmative()` is deliberately ungenerous: the cost of a missed yes is saying it again,
+the cost of a generous one is a dead Claude session. While a confirmation is open the next final
+is consumed as the answer regardless of wake word, `pumpQueue()` refuses to talk over the
+question, and `onBusy` won't close the mic under it. It times out after 15 s.
+
+`stop` being an interrupt rather than a kill is a judgement call worth knowing about: if the
+user meant "close it" they can say so next, whereas the reverse mistake can't be undone.
+
+**Everything is acknowledged** — a couple of spoken words, or `sendBlip()` for the trivial ones
+(*wait*, *scratch that*, *mute*) where speaking would cost more time than the command saved. A
+command that silently succeeded is indistinguishable from one that was never heard. `speak()`
+takes `{force}` so an acknowledgement, "read that again" and a confirmation question still speak
+while announcements are muted. `ackCommand()` must re-open the mic afterwards, because `speak()`
+closes it (the echo guard) — and must drain a `waiting` that landed *during* the acknowledgement,
+or `pumpQueue()`'s "already playing" guard silently loses it. Both were bugs found by driving the
+UI, not by reading it.
+
+Session and directory names are matched loosely (`matchSession()`, which *is* edit-distance based
+— unlike the wake word, a title genuinely is mangled), and two close candidates produce a spoken
+question rather than a guess. Spoken acknowledgements run titles through `speakableTitle()`: an
+untitled claude session takes its name from its whole command line including the spliced-in
+`--session-id <uuid>`, and reading forty characters of hex at somebody is not an acknowledgement.
+
 **Typing into an agent prompt and actually submitting it.** `sendInput(t, text + '\r')` does
 **not** work, and fails silently in a way short test strings won't show you. Claude Code's TUI
 treats a large input burst as a *paste*, so a `\r` inside the same burst lands as a newline in
@@ -302,20 +411,20 @@ back to the same text box a browser without speech recognition gets. This is the
 
 | Method | Path | Body | Response |
 |---|---|---|---|
-| `GET` | `/api/voice/status` | — | `{tts:{available,voice,voices:[{id,label}]}, summarizer:{available}, sessions:[{id,armed}]}` |
+| `GET` | `/api/voice/status` | — | `{tts:{available,engine,voice,voices:[{id,label}]}, wakeWord, summarizer:{available}, sessions:[{id,armed}]}` — `engine` is `'kokoro'`/`'piper'`/`null`; `wakeWord` is `null` unless `TERMHUB_WAKE_WORD` overrides the client default |
 | `POST` | `/api/sessions/:id/voice` | `{armed}` | `{ok:true, armed}`; 404 unknown session, 400 arming a non-`claude` one |
-| `GET` | `/api/sessions/:id/voice/summary` | — | `{summary, turnUuid, waiting}` — on demand ("read that again"); empty for a non-`claude` session or when Claude hasn't spoken yet |
-| `POST` | `/api/tts` | `{text, voice?}` | `audio/wav`, `Cache-Control: no-store`; 400 empty/over 4000 chars, 503 if piper is unavailable or too busy. `voice` must be an id from `voices()` — anything with a path separator is refused |
+| `GET` | `/api/sessions/:id/voice/summary[?full=1]` | — | `{summary, turnUuid, waiting}` — on demand ("read that again"); empty for a non-`claude` session or when Claude hasn't spoken yet. `?full=1` adds `{text, truncated}`, the assistant's verbatim last turn capped at 3200 chars ("read the last message in full"). Opt-in because the reconnect catch-up hits this route per armed session and doesn't want kilobytes of transcript |
+| `POST` | `/api/tts` | `{text, voice?}` | `audio/wav`, `Cache-Control: no-store`; 400 empty/over 4000 chars, 503 if no engine is available or too busy. `voice` must be an id from `voices()` for the active engine — anything with a path separator (piper) or outside `[a-z]{2}_[a-z]+` (kokoro) is refused |
 
 `GET /api/sessions` gains `voiceArmed` per session.
 
 `WS /ws/voice` is a page-wide feed (not per session). Server → client:
-`{type:'hello', tts:{available,voice}, sessions:[{id,title,armed}]}` on connect, then
+`{type:'hello', tts:{available,engine,voice,voices}, wakeWord, sessions:[{id,title,armed}]}` on connect, then
 `{type:'waiting', sessionId, title, turnUuid, summary}`, `{type:'busy', sessionId}` and
 `{type:'armed', sessionId, armed}`. Client → server: `{type:'ping'}` → `{type:'pong'}`.
 Arming goes over REST, not the socket, so it survives a dropped connection.
 
-**When it stays silent.** No `piper`, no voice models, no `claude` CLI, no transcript, a
+**When it stays silent.** No speech engine at all, no `claude` CLI, no transcript, a
 session that isn't `kind: claude`, or a mid-tool-call turn — all of these degrade to silence,
 never to an error. A turn whose text flattens to nothing (a reply that is only a code block)
 is announced as such rather than as an empty summary, which the browser couldn't play.
@@ -502,7 +611,10 @@ user actually meant to paste.
 | Pasted an image and got text instead | The paste carried `text/plain` too (rich text with an inline image), and text wins | Deliberate — taking the image would swallow the text. Use 📎 for the image |
 | 🔊 armed but never speaks | No transcript to read | Only `kind: claude` sessions can be armed at all (the endpoint 400s otherwise). If Claude's banner says transcript saving is off, it was launched as a child of another Claude session — termhub's own PTYs are scrubbed of that, so it came from elsewhere |
 | Told "asking you something" but nothing is | PTY-idle heuristic misfired | A claude terminal silent for 12 s with no finished turn recorded is assumed to be on a prompt. A session wedged some other way looks the same; the announcement is generic by design because the question is never written to the transcript |
-| 🔊 reports speech unavailable | No `piper` or no usable voice model | `curl localhost:7010/api/voice/status`; install piper and put `<voice>.onnx` + `.onnx.json` in `TERMHUB_TTS_VOICE_DIR` (files under 4 KB are treated as broken stubs and skipped) |
+| 🔊 reports speech unavailable | Neither engine usable | `curl localhost:7010/api/voice/status` — `tts.engine` names the winner. kokoro needs `TERMHUB_KOKORO_PYTHON` to import `kokoro_onnx` + `soundfile` and the two model files under `TERMHUB_KOKORO_DIR`; piper needs the binary on `PATH` and `<voice>.onnx` + `.onnx.json` in `TERMHUB_TTS_VOICE_DIR` (files under 4 KB are treated as broken stubs and skipped) |
+| Announcements sound robotic | Fell back to piper | `tts.engine` says `piper`. A kokoro worker that fails at import demotes the engine for 5 minutes; run `TERMHUB_KOKORO_PYTHON -c 'import kokoro_onnx'` by hand to see why |
+| A voice command did nothing | Wake word missed, or wasn't at the start | Commands fire on finals only and only utterance-initial. A parsed-but-unknown command says "didn't catch that" and is dropped. `npm test` covers the matcher; add real mishearings to `KNOWN_VARIANTS` in `web/voiceCommands.js` |
+| A dictated sentence vanished | A false wake-word fire would do this | It shouldn't — `npm test` asserts against a near-miss list. If you find one, add it to `NEAR_MISSES` and tighten the variants; do not add fuzzy matching |
 | Armed, but the strip stays amber and nothing plays | Browsers won't play audio before a user gesture | Tap **Enable voice**. Once per page load; the toggles turn from amber to blue |
 | 🎤 does nothing but open a text box | No `SpeechRecognition`, or an insecure origin | Speech recognition needs a secure context — use `https://<host>:7443/`, not `http://<tailnet-ip>:7000`. The strip names the address. Desktop Firefox has no Web Speech at all; the text box is the fallback |
 | Mic keeps closing on its own | Working as intended | It closes after 45 s of silence rather than listening to an empty room, and while an announcement is playing (opening it then would flip a Bluetooth headset's audio route mid-sentence). Tap 🎤 to reopen |

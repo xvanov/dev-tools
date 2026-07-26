@@ -41,13 +41,18 @@ other machines to maintain.
 - **Spoken announcements (opt-in per session)** — arm a Claude session with the 🔊 toggle and
   termhub tells you, out loud, when that session stops and is waiting on you. It watches Claude
   Code's own conversation transcript for the end of a turn, condenses the reply into two or
-  three speakable sentences, and synthesises it locally with [piper](https://github.com/OHF-Voice/piper1-gpl).
-  Nothing leaves the machine, and each turn is announced exactly once. When Claude stops on a
-  question or a permission prompt it writes nothing to the transcript until you answer, so
-  termhub notices that differently — a silent terminal — and tells you the session is asking
-  something, without being able to say what. Needs no setup beyond having `piper` and a voice
-  model installed; without them the toggle simply reports that speech is unavailable and
-  everything else works as before.
+  three speakable sentences, and synthesises it locally with
+  [kokoro](https://github.com/thewh1teagle/kokoro-onnx) — or [piper](https://github.com/OHF-Voice/piper1-gpl)
+  where kokoro isn't installed. Nothing leaves the machine, and each turn is announced exactly
+  once. When Claude stops on a question or a permission prompt it writes nothing to the
+  transcript until you answer, so termhub notices that differently — a silent terminal — and
+  tells you the session is asking something, without being able to say what. Needs no setup
+  beyond having one of the two engines installed; without either, the toggle simply reports
+  that speech is unavailable and everything else works as before.
+- **Voice commands** — say **"Sputnik"** and the rest of the sentence drives termhub itself
+  instead of being typed at the agent: hold a send, switch sessions, ask what's running, mute,
+  read the last message in full. Anything that destroys work asks first and waits for a spoken
+  *yes*. See [Voice commands](#voice-commands).
 - **Update from the UI** — a ⟳ Update button checks GitHub (once a day in the background, and
   on demand) and, when the termhub tool itself has changed, opens a terminal that runs the
   safe blue-green updater. See [Updating safely](#updating-safely-terminals-survive).
@@ -213,6 +218,51 @@ running `update.ps1` survives the update.
 - **🎤 (key bar)** — talk to the session you're looking at without waiting to be asked. Tap
   once to listen, again to stop. On a browser with no speech recognition it opens a text box
   that sends the same way, so the button always does something.
+### Voice commands
+
+Say **"Sputnik"** and the rest of the sentence drives termhub instead of being typed at the
+agent. Anything that does *not* start with the wake word is dictation, exactly as before.
+
+| Say | What happens |
+|---|---|
+| **Sputnik wait** · *hold on* · *hang on* | Cancels the pending send. Keeps listening, keeps what you've said; the next thing you say is added to it |
+| **Sputnik send it** · *send that* | Sends now, skipping the 4-second wait |
+| **Sputnik scratch that** · *clear* · *start over* | Throws the draft away, keeps listening |
+| **Sputnik never mind** · *forget it* | Throws the draft away and closes the mic |
+| **Sputnik switch to \<name\>** · *go to \<name\>* | Opens that session. Names are matched loosely against the sidebar; if two are close it reads back the candidates rather than guessing |
+| **Sputnik what's running** · *list sessions* | Reads the session list with each one's state |
+| **Sputnik new terminal in \<dir\>** | Starts a Claude session there. The directory is matched against your recents and the open sessions' working directories; an unknown one is refused rather than guessed |
+| **Sputnik close this session** | ⚠ Kills it. Names it and waits for a spoken **yes** first |
+| **Sputnik stop this session** · *interrupt* | ⚠ Interrupts what the agent is doing (Escape) without destroying the session. Also asks first |
+| **Sputnik mute** · *quiet* | Stops announcing. The session stays armed and the mic still opens — you just don't get read to |
+| **Sputnik unmute** | Announcements back on |
+| **Sputnik read that again** · *repeat* | Re-reads the last summary |
+| **Sputnik read the last message in full** | Reads Claude's actual last message rather than the summary. Skips the summariser, so it's also the fast one |
+| **Sputnik louder** / **quieter** | Playback volume, in steps |
+| **Sputnik slower** / **faster** | Playback speed, 0.7× to 1.8× |
+
+Four things worth knowing:
+
+- **Every command is acknowledged** — a couple of spoken words, or a blip for the trivial ones
+  (*wait*, *scratch that*, *mute*). A command that succeeded silently is indistinguishable from
+  one that was never heard.
+- **Destructive commands ask.** *Close* and *stop* name the session out loud and wait. Anything
+  that isn't a clear yes cancels, and the question times out after 15 seconds.
+- **Commands are recognised on the final transcript only**, never on the interim guesses that
+  stream while you're still talking — an interim "Sputnik wait" that resolves to something else
+  must not cancel a send. But the pending send timer *is* frozen the moment an interim starts
+  with the wake word, because the 4-second window can otherwise expire while you're still
+  saying the command. If the final turns out to be ordinary dictation, the timer simply re-arms.
+- **The wake word only counts at the start of an utterance.** "We launched Sputnik in 1957" is
+  text. If the wake word lands but the command doesn't parse, termhub says "didn't catch that"
+  and drops it rather than typing a half-heard command at the agent.
+
+Change the word with `TERMHUB_WAKE_WORD`. It is matched exactly (against a short list of
+plausible mishearings — *sputnick*, *spud nik*, *sput nick*) rather than fuzzily: "Sputnik" is
+a proper noun the recogniser already knows, so it comes back clean, and a loose matcher would
+only buy false positives. `npm test` runs the matcher against both the accepted variants and a
+list of near-miss dictation that must *not* trigger.
+
 - On mobile: tap **☰** for the session drawer, **＋** for a new terminal, and use the key bar
   at the bottom for `Esc` / `Ctrl` / `Tab` / arrows / `^C` (swipe it sideways for `Paste` and
   **⌨**, which brings the keyboard back). **🎤** and **📎** are pinned to the right of the bar,
@@ -237,8 +287,13 @@ All optional environment variables:
 | `TERMHUB_SHELL` | `$SHELL` / `pwsh`→`powershell` | Shell to spawn |
 | `TERMHUB_SCROLLBACK_BYTES` | `2097152` (2 MB) | Per-session replay buffer size |
 | `TERMHUB_DATA_DIR` | `~/.local/termhub` (Win: `%LOCALAPPDATA%\termhub`) | Where recent dirs, the session archive and `attachments/` are stored |
-| `TERMHUB_TTS_VOICE` | `~/.claude/tts-voice.txt`, else `en_US-lessac-medium` | piper voice used for spoken announcements |
-| `TERMHUB_TTS_VOICE_DIR` | `~/.claude/piper-voices` | Directory holding `<voice>.onnx` + `<voice>.onnx.json` |
+| `TERMHUB_TTS_ENGINE` | `kokoro` if installed, else `piper` | Which speech engine to use. An engine that isn't installed silently yields to the other one |
+| `TERMHUB_TTS_VOICE` | `af_heart` (kokoro) / `~/.claude/tts-voice.txt`, else `en_US-lessac-medium` (piper) | Voice **within the active engine**. A value the active engine doesn't have is ignored rather than fatal |
+| `TERMHUB_TTS_VOICE_DIR` | `~/.claude/piper-voices` | piper: directory holding `<voice>.onnx` + `<voice>.onnx.json` |
+| `TERMHUB_KOKORO_PYTHON` | `~/.local/kokoro-venv/bin/python` | kokoro: interpreter with `kokoro_onnx` + `soundfile` |
+| `TERMHUB_KOKORO_DIR` | `~/.claude/kokoro` | kokoro: directory holding `kokoro-v1.0.onnx` + `voices-v1.0.bin` |
+| `TERMHUB_TTS_IDLE_MS` | `600000` (10 min) | How long the resident kokoro worker stays loaded with nothing to say. It holds ~750 MB |
+| `TERMHUB_WAKE_WORD` | `sputnik` | The spoken wake word for voice commands |
 
 On Linux set these with `systemctl --user edit termhub`; on Windows via `setx` + restart the task.
 
@@ -253,9 +308,12 @@ On Linux set these with `systemctl --user edit termhub`; on Windows via `setx` +
 | `lib/claudeModel.js` | Locates a Claude session's transcript and tails it for the model badge |
 | `lib/claudeTranscript.js` | Reads the last turn from that transcript and decides whether it's waiting on you |
 | `lib/summarize.js` | Condenses a turn into speakable prose (`claude -p --model haiku`, with a local fallback) |
-| `lib/tts.js` | piper speech synthesis — voice discovery, WAV rendering, small LRU |
+| `lib/tts.js` | Speech synthesis — kokoro or piper, engine selection, voice discovery, WAV rendering, small LRU |
+| `lib/kokoro_helper.py` | The resident kokoro worker `lib/tts.js` spawns: loads the model once, takes text on stdin, writes WAV on stdout |
+| `web/voiceCommands.js` | Wake-word matching and command parsing (pure, no DOM — see `test/voiceCommands.test.js`) |
 | `lib/voiceHub.js` | Watches armed sessions and broadcasts `waiting`/`busy` over `/ws/voice` |
-| `lib/limit.js` | Concurrency gate bounding the piper / `claude -p` children sessiond will fork |
+| `lib/limit.js` | Concurrency gate bounding the synthesis / `claude -p` children sessiond will fork |
+| `test/voiceCommands.test.js` | Wake-word and command-parser tests — `npm test`, no framework, no deps |
 | `lib/state.js` | Deployment state (`state.json`) + pid-file helpers shared by the tiers and scripts |
 | `lib/dirs.js` | Directory autocomplete for the new-terminal dialog |
 | `lib/shell.js` | Default-shell resolution per OS |
@@ -283,10 +341,19 @@ On Linux set these with `systemctl --user edit termhub`; on Windows via `setx` +
 - **Garbled output / wrong size** — the terminal refits on focus, rotate, and keyboard
   show/hide; switch sessions or resize to force a refit.
 - **🔊 says speech is unavailable** — `GET /api/voice/status` tells you which half is missing:
-  `tts.available` false means no `piper` on `PATH` (or no usable `.onnx` in
-  `TERMHUB_TTS_VOICE_DIR` — note that partially-downloaded voice files are skipped on purpose),
-  `summarizer.available` false only means summaries will be trimmed locally instead of by
-  `claude -p`, which still speaks fine.
+  `tts.available` false means neither engine is usable — no kokoro venv/model under
+  `TERMHUB_KOKORO_DIR` **and** no `piper` on `PATH` (or no usable `.onnx` in
+  `TERMHUB_TTS_VOICE_DIR` — note that partially-downloaded voice files are skipped on purpose).
+  `tts.engine` says which one won. `summarizer.available` false only means summaries will be
+  trimmed locally instead of by `claude -p`, which still speaks fine.
+- **Announcements sound robotic** — you're on piper. `tts.engine` in `/api/voice/status` will
+  say so; kokoro wasn't found. If it *is* installed, check that `TERMHUB_KOKORO_PYTHON` can
+  `import kokoro_onnx` — a worker that fails to load demotes the engine to piper for five
+  minutes rather than failing the announcement.
+- **A voice command wasn't heard** — commands only fire on the *final* transcript, and only
+  when the utterance **begins** with the wake word. "We launched Sputnik in 1957" is dictation,
+  by design. If the wake word landed but the command didn't parse, termhub says "didn't catch
+  that" and drops it — it will never type a half-heard command at the agent.
 - **Armed but never speaks** — announcements come from Claude Code's transcript, so the session
   must be `kind: claude` (the 🔊 toggle refuses anything else) and Claude must actually be
   writing one. If Claude warns in the terminal that transcript saving is off, it was started as
