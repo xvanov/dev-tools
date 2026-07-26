@@ -1208,9 +1208,10 @@ function vlog(msg) {
 // people off mid-thought. Four seconds leaves room to think without making the
 // end of every turn feel like a wait.
 const SEND_SILENCE_MS = 4000;
-// A ceiling on an open mic with nothing said. Because each recognition is one
-// utterance, an idle session would otherwise cycle the recogniser — and the
-// Bluetooth audio route — forever. Ends with a visible "tap 🎤" prompt.
+// A ceiling on an open mic MID-DICTATION — words are banked but nothing more
+// has been heard for this long, which means the recogniser wedged rather than
+// that the user is thinking. Waiting to *start* talking is unlimited (see
+// bumpIdle). Hitting this sends the draft; it never discards it.
 const LISTEN_IDLE_MS = 45000;
 const REARM_MS = 250;          // breathing room for iOS to release the mic
 // How long a freshly-opened mic is immune to a `busy` closing it (see onBusy).
@@ -1588,9 +1589,21 @@ async function catchUpArmed(ids) {
 // utterance anyway), and `idleTimer` is a watchdog for the case where a
 // recogniser never ends at all — without it a stuck engine would sit on the
 // microphone indefinitely, which is exactly the failure the user can't see.
+// The watchdog only applies ONCE YOU HAVE STARTED TALKING. Before that the mic
+// waits indefinitely: after an announcement you may want a minute to think, and
+// a mic that quietly gives up while you are thinking is the same failure as one
+// that never opened. Once there is a draft, the deadline exists purely to catch
+// a recogniser that wedged mid-dictation — and even then stopListening('idle')
+// SENDS what was said rather than binning it.
 function bumpIdle() {
-  rec.idleUntil = Date.now() + LISTEN_IDLE_MS;
+  const dictating = !!(voice.draft && voice.draft.text);
   clearTimeout(rec.idleTimer);
+  if (!dictating) {
+    rec.idleUntil = Infinity;   // thinking time is unlimited by design
+    rec.idleTimer = null;
+    return;
+  }
+  rec.idleUntil = Date.now() + LISTEN_IDLE_MS;
   rec.idleTimer = setTimeout(() => { if (rec.want) stopListening('idle'); }, LISTEN_IDLE_MS + 500);
 }
 
