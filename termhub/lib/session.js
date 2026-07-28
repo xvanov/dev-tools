@@ -47,15 +47,33 @@ const PARENT_AGENT_ENV = [
   'CLAUDE_EFFORT',
 ];
 
+// The command's first token — the program actually being run — unquoted so a
+// path can be matched against without the wrapping ' or ".
+function firstToken(command) {
+  const s = String(command).trim();
+  if (s[0] === '"' || s[0] === "'") {
+    const end = s.indexOf(s[0], 1);
+    return end === -1 ? s.slice(1) : s.slice(1, end);
+  }
+  const m = /^\S+/.exec(s);
+  return m ? m[0] : '';
+}
+
 // Classify a session by its initial command so the archive knows how to restore
 // it: a `claude` invocation resumes via `--resume`, an `opencode` one via
 // `--session`/`--continue`; anything else is a plain shell we rebuild by
-// replaying recorded history. Matches the bare command, `<exe>.exe`/`.cmd`, a
-// path ending in it, or a quoted form — but not `claude-foo` or `myclaude`.
+// replaying recorded history. Matched against the first token only — a `claude`
+// mentioned later in a compound command (e.g. `git pull && { claude update; }
+// && systemctl restart …`, termhub's own updater) is not a claude session, it's
+// a shell script that happens to say the word; matching it anywhere in the
+// string spliced --resume/--session-id into an unrelated updater command (see
+// test/restore.test.js history). Matches the bare command, `<exe>.exe`/`.cmd`,
+// or a path ending in it — but not `claude-foo` or `myclaude`.
 function classifyCommand(command) {
   if (!command) return 'shell';
-  if (/(^|[\\/\s"'])claude(\.exe|\.cmd)?(?=$|[\s"'])/i.test(command)) return 'claude';
-  if (/(^|[\\/\s"'])opencode(\.exe|\.cmd)?(?=$|[\s"'])/i.test(command)) return 'opencode';
+  const tok = firstToken(command);
+  if (/(^|[\\/])claude(\.exe|\.cmd)?$/i.test(tok)) return 'claude';
+  if (/(^|[\\/])opencode(\.exe|\.cmd)?$/i.test(tok)) return 'opencode';
   return 'shell';
 }
 
