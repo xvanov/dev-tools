@@ -21,6 +21,7 @@ const { WebSocketServer } = require('ws');
 const { Session } = require('./lib/session');
 const recents = require('./lib/recents');
 const archive = require('./lib/archive');
+const { restoreClaudeCommand, restoreOpencodeCommand } = require('./lib/restore');
 const { DEFAULT_SESSIOND_PORT, claimPidFile } = require('./lib/state');
 const { suggestDirs } = require('./lib/dirs');
 const { setClipboardImage, clipboardTarget } = require('./lib/clipboard');
@@ -133,37 +134,6 @@ function uploadedName(req, fallback) {
 function safeForNotice(value, max = 120) {
   const clean = String(value == null ? '' : value).replace(/[\x00-\x1f\x7f-\x9f]/g, '');
   return clean.length > max ? `${clean.slice(0, max - 1)}…` : clean;
-}
-
-// Build the command used to bring a Claude session back: keep whatever it was
-// started with, but ensure it resumes a prior conversation and stays
-// non-interactive on permissions. When we tracked the original conversation's
-// real UUID (see lib/session.js), resume that exact one directly; otherwise
-// fall back to a bare `--resume`, which makes Claude show its resume picker
-// scoped to the cwd — the most we can target without knowing the id.
-function restoreClaudeCommand(command, agentSessionId) {
-  let cmd = (command && String(command).trim()) || 'claude';
-  if (!/--dangerously-skip-permissions\b/.test(cmd)) cmd += ' --dangerously-skip-permissions';
-  if (agentSessionId) {
-    if (!/(^|\s)(--resume|-r)(\s|$)/.test(cmd)) cmd += ` --resume ${agentSessionId}`;
-  } else if (!/(^|\s)(--resume|-r|--continue|-c)(\s|$)/.test(cmd)) {
-    cmd += ' --resume';
-  }
-  return cmd;
-}
-
-// Same idea for opencode: resume the exact tracked session with `--session
-// <id>` when we discovered it (see lib/opencodeModel.js); otherwise fall back
-// to `--continue` (opencode's closest equivalent — there's no interactive
-// picker like Claude's bare `--resume` to fall back to).
-function restoreOpencodeCommand(command, agentSessionId) {
-  let cmd = (command && String(command).trim()) || 'opencode';
-  if (agentSessionId) {
-    if (!/(^|\s)(--session|-s)(\s|$)/.test(cmd)) cmd += ` --session ${agentSessionId}`;
-  } else if (!/(^|\s)(--continue|-c|--session|-s)(\s|$)/.test(cmd)) {
-    cmd += ' --continue';
-  }
-  return cmd;
 }
 
 // Render a shell session's recorded history as a dim, commented block to print

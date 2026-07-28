@@ -8,6 +8,7 @@ const pty = require('node-pty');
 const { defaultShell } = require('./shell');
 const { resolveTranscript, readLastModel, formatModelName } = require('./claudeModel');
 const opencodeModel = require('./opencodeModel');
+const { injectAfterClaudeExe } = require('./restore');
 
 // How often to actually shell out to `opencode export` to refresh a session's
 // model (lib/opencodeModel.js's getModel is a ~1.4s subprocess spawn — far too
@@ -65,14 +66,10 @@ function hasOwnSessionIdentity(command) {
   return /(^|\s)(--session-id|--resume|-r|--continue|-c)(\s|=|$)/.test(command);
 }
 
-// Insert `--session-id <uuid>` right after the claude executable token (same
-// position classifyCommand's own regex matches), so it lands before any
-// trailing prompt argument rather than tacked onto the end of the string.
+// Insert `--session-id <uuid>` right after the claude executable token — see
+// injectAfterClaudeExe in lib/restore.js, which restore shares for --resume.
 function injectSessionId(command, uuid) {
-  return command.replace(
-    /(^|[\\/\s"'])(claude(?:\.exe|\.cmd)?)(?=$|[\s"'])/i,
-    (m, pre, exe) => `${pre}${exe} --session-id ${uuid}`
-  );
+  return injectAfterClaudeExe(command, `--session-id ${uuid}`);
 }
 
 // Strip leftover control bytes from an assembled input line.
