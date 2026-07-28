@@ -160,6 +160,17 @@ confirm green is the process it started, running the commit it just pulled.
 anything else is blue/green. `start.ps1 -SinglePort` / `-BlueGreen` switches (and stops the other
 mode's fronts, which would otherwise keep serving stale code on a port nothing points at).
 
+**Equal ports are ambiguous, though**, and anything that re-binds a front has to know it:
+`start-http.ps1` *also* writes `activeFrontPort == publishPort`, because it binds the front to the
+tailnet IP itself and turns Serve **off** for that port. Single-port and plain-HTTP are therefore
+recorded identically, and only Serve's own config tells them apart — `Test-ServePublished` in
+`common.ps1` (`tailscale serve status --json`), which answers `$null` rather than `$false` when it
+can't consult Serve at all, because guessing "not published" is the dangerous direction.
+`restart-front.ps1` used to read equal ports as plain-HTTP and so, on the *default* layout, tried to
+bind `<tailnet-ip>:7000` — a port `tailscaled` already holds for Serve. It failed the health check
+and left no front at all; since `restart-sessiond.ps1` calls it, a deliberate sessiond restart took
+the UI down with it, after the terminals had already been ended. Fix: `.\windows\start.ps1`.
+
 | | single-port (default) | blue/green |
 |---|---|---|
 | front binds | `127.0.0.1:7000` | `127.0.0.1:7001` or `7002` |
@@ -645,6 +656,7 @@ Start-ScheduledTask Termhub              # = run start.ps1 (boots both tiers, id
 Stop-ScheduledTask  Termhub
 .\windows\update.ps1                     # safe blue-green update (run from any terminal)
 .\windows\start.ps1                      # bring tiers up / re-publish by hand
+.\windows\restart-front.ps1              # reload front.js / web assets; terminals survive
 .\windows\restart-sessiond.ps1           # ENDS all terminals; for sessiond-side changes
 ```
 

@@ -47,6 +47,34 @@ function Set-TermhubState {
   return $state
 }
 
+# Is Tailscale Serve publishing <port>?
+#
+# This exists because state.json records TWO different layouts identically - both
+# leave activeFrontPort == publishPort:
+#   single-port (start.ps1)   - front on 127.0.0.1:<port>, Serve proxies the same
+#                               number to it from the tailnet IP.
+#   plain HTTP  (start-http.ps1) - Serve is turned OFF for the port and the front
+#                               binds the tailnet IP itself.
+# Serve's own config is the only thing that tells them apart, so anything that has
+# to re-bind a front must ask it rather than infer from the port numbers.
+#
+# Returns $true / $false, or $null when Serve could not be consulted at all
+# (no tailscale on PATH, command failed, unparseable output). $null is NOT folded
+# into $false on purpose: a failed probe answered as "not published" would send a
+# single-port machine down the plain-HTTP path and straight into tailscaled, which
+# already holds that port.
+function Test-ServePublished {
+  param([int]$Port)
+  try {
+    $raw = (& tailscale serve status --json 2>$null | Out-String)
+    if ($LASTEXITCODE -ne 0 -or -not $raw.Trim()) { return $null }
+    $j = $raw | ConvertFrom-Json
+    if (-not $j) { return $null }
+    if (-not $j.TCP) { return $false }
+    return ($j.TCP.PSObject.Properties.Name -contains "$Port")
+  } catch { return $null }
+}
+
 # Read a "<name>.pid" file ("PID`nPORT"). Returns @{Pid;Port} or $null.
 function Get-PidInfo {
   param([string]$Name)
