@@ -4,14 +4,27 @@
 # Because only the front is swapped - sessiond and its PTYs are never touched -
 # even the terminal running this script survives the update.
 #
-# Two deploy shapes, chosen by state.json (activeFrontPort vs publishPort):
+# THREE deploy shapes share state.json, and it only distinguishes one of them
+# (see restart-front.ps1 for the full writeup - this mirrors it):
 #
-#   SINGLE-PORT (activeFrontPort == publishPort, the default)
+#   SINGLE-PORT (activeFrontPort == publishPort, Serve publishes it)
 #     The front owns 127.0.0.1:<publishPort> and Serve proxies the same number to
 #     it, so ONE port is the answer everywhere: the tailnet URL and
 #     http://127.0.0.1:<publishPort> are the same server. Updating means stopping
 #     the front and starting the new one on that port - a ~1-2s window where
 #     connections are refused, after which browsers reconnect on their own.
+#
+#   PLAIN-HTTP (activeFrontPort == publishPort, Serve is OFF - start-http.ps1)
+#     The front binds the tailnet IP directly and there is no Serve in front of
+#     it. Recorded IDENTICALLY to single-port in state.json, so the mode is read
+#     from Tailscale Serve's own config (Test-ServePublished), not from the port
+#     numbers. Getting this wrong is a real incident this script caused: treating
+#     equal ports as single-port unconditionally starts the new front on
+#     127.0.0.1 (not the tailnet IP) and force-enables Serve on the publish port
+#     - both wrong here, and together they leave the front reachable only on
+#     loopback while Serve's HTTPS listener takes over the tailnet address the
+#     front used to own. A plain http:// request to that address then hits a TLS
+#     endpoint and fails with "Client sent an HTTP request to an HTTPS server."
 #
 #   BLUE/GREEN (activeFrontPort in {7001, 7002})
 #     The front hides on an alternate loopback port and Serve is re-pointed
@@ -20,7 +33,7 @@
 #     working URL - only the tailnet one is. Switch with:
 #         .\windows\start.ps1 -BlueGreen      (and -SinglePort to come back)
 #
-# Either way sessiond is never restarted, so PTYs survive both.
+# Either way sessiond is never restarted, so PTYs survive all three.
 #
 #     .\windows\update.ps1
 
@@ -36,13 +49,29 @@ $state        = Get-TermhubState
 $sessiondPort = $state.sessiondPort
 $bluePort     = $state.activeFrontPort
 $publishPort  = $state.publishPort
-$singlePort   = ($bluePort -eq $publishPort)
 $greenPort    = if ($bluePort -eq 7001) { 7002 } else { 7001 }
 
-if ($singlePort) {
-  Write-Host "termhub update: single-port mode  front=publish=$publishPort  sessiond=$sessiondPort"
+# Resolve which of the three layouts this machine is actually on. See the header
+# comment above and restart-front.ps1, which this mirrors.
+if ($bluePort -ne $publishPort) {
+  $mode = 'bluegreen'
 } else {
-  Write-Host "termhub update: blue=$bluePort  green=$greenPort  sessiond=$sessiondPort  publish=$publishPort"
+  $published = Test-ServePublished -Port $publishPort
+  if ($published -eq $false) {
+    $mode = 'http'
+  } else {
+    $mode = 'single'
+    if ($null -eq $published) {
+      Write-Host "termhub update: could not read 'tailscale serve status' - assuming single-port, the default." -ForegroundColor Yellow
+      Write-Host "termhub update: if this machine uses the plain-HTTP layout, re-run .\windows\start-http.ps1 after this update to confirm the bind." -ForegroundColor Yellow
+    }
+  }
+}
+
+switch ($mode) {
+  'single'    { Write-Host "termhub update: single-port mode  front=publish=$publishPort  sessiond=$sessiondPort" }
+  'http'      { Write-Host "termhub update: plain-HTTP mode  front=publish=$publishPort (tailnet IP, no Serve)  sessiond=$sessiondPort" }
+  'bluegreen' { Write-Host "termhub update: blue=$bluePort  green=$greenPort  sessiond=$sessiondPort  publish=$publishPort" }
 }
 
 # 0a) Reclaim the publish port from anything that isn't a front. In single-port
@@ -81,7 +110,7 @@ if ($changed -match 'package(-lock)?\.json') {
   if ($LASTEXITCODE -ne 0) { & git -C $ProjectDir reset --hard $rollback | Out-Null; Fail "npm install failed; rolled back. Blue still serving." }
 }
 
-if ($singlePort) {
+if ($mode -eq 'single') {
   # 3-5) SINGLE-PORT: swap the front in place on the published port.
   #
   # There is no alternate port to stage on, so the old front is stopped first and
@@ -111,6 +140,30 @@ if ($singlePort) {
     Write-Host "termhub update: could not re-assert Tailscale Serve - the front is up and http://127.0.0.1:$publishPort works," -ForegroundColor Yellow
     Write-Host "termhub update: but the tailnet URL may not. Check: tailscale serve status" -ForegroundColor Yellow
   }
+  Set-TermhubState @{ activeFrontPort = $publishPort } | Out-Null
+  # Any leftover blue/green fronts from a previous mode would serve stale code.
+  foreach ($p in @(7001, 7002)) { if ($p -ne $publishPort) { Stop-Front "front-$p" } }
+}
+elseif ($mode -eq 'http') {
+  # 3-5) PLAIN-HTTP: same in-place swap as single-port, but bound to the tailnet
+  # IP instead of loopback, and Serve is never touched - it must stay off.
+  $ip = ((& tailscale ip -4) | Select-Object -First 1).Trim()
+  if (-not $ip) { Fail "could not determine Tailscale IPv4 address (tailscale ip -4)." }
+  Write-Host "termhub update: swapping the front in place on ${ip}:$publishPort (brief gap) ..."
+  Stop-Front "front-$publishPort"
+  $frontProc = Start-VerifiedFront -Port $publishPort -SessiondPort $sessiondPort -Bind $ip -ExpectCommit $newHead
+
+  if (-not $frontProc) {
+    Write-Host "termhub update: the new front is unhealthy - reverting the tree and restarting the previous one." -ForegroundColor Yellow
+    & git -C $ProjectDir reset --hard $rollback | Out-Null
+    $back = Start-VerifiedFront -Port $publishPort -SessiondPort $sessiondPort -Bind $ip -ExpectCommit $rollback
+    if ($back) {
+      Fail "new version unhealthy; reverted to $(Format-Commit $rollback) and restarted the front on ${ip}:$publishPort. Terminals untouched."
+    }
+    Fail ("new version unhealthy AND the reverted front did not come up either - the UI is DOWN. " `
+      + "Run: .\windows\start-http.ps1   (sessiond 127.0.0.1:$sessiondPort is untouched, so the terminals are still there.)")
+  }
+
   Set-TermhubState @{ activeFrontPort = $publishPort } | Out-Null
   # Any leftover blue/green fronts from a previous mode would serve stale code.
   foreach ($p in @(7001, 7002)) { if ($p -ne $publishPort) { Stop-Front "front-$p" } }

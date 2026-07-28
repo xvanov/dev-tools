@@ -35,9 +35,19 @@ if (-not $ip) { throw "could not determine Tailscale IPv4 address (tailscale ip 
 #    Reuse a live front on this port; otherwise (re)start it.
 $frontName = "front-$Port"
 $finfo = Get-PidInfo $frontName
-if ($finfo -and (Test-NodeAlive $finfo.Pid)) {
+$alive = $finfo -and (Test-NodeAlive $finfo.Pid)
+# Liveness alone isn't enough: a front swapped in by update.ps1's old single-port
+# path (or any other mistake) can be alive but bound to 127.0.0.1 instead of the
+# tailnet IP, which looks "running" while being unreachable from anywhere but this
+# box. Confirm it's actually listening on the address this script is about to
+# publish before trusting it.
+$boundHere = $alive -and ((Get-PortListenerPid -Port $Port -Address $ip) -eq $finfo.Pid)
+if ($boundHere) {
   Write-Host "termhub: front already running (pid $($finfo.Pid), port $Port)"
 } else {
+  if ($alive) {
+    Write-Host "termhub: front-$Port.pid (pid $($finfo.Pid)) is alive but not bound to ${ip}:$Port - restarting it there." -ForegroundColor Yellow
+  }
   Stop-Front $frontName
   Write-Host "termhub: starting front on ${ip}:$Port (plain HTTP) -> sessiond 127.0.0.1:$sessiondPort ..."
   Start-TermhubNode -Script 'front.js' -EnvVars @{

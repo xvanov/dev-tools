@@ -171,6 +171,14 @@ bind `<tailnet-ip>:7000` — a port `tailscaled` already holds for Serve. It fai
 and left no front at all; since `restart-sessiond.ps1` calls it, a deliberate sessiond restart took
 the UI down with it, after the terminals had already been ended. Fix: `.\windows\start.ps1`.
 
+`update.ps1` had the mirror-image bug: it read equal ports as single-port *unconditionally*, with no
+plain-HTTP branch at all. On a plain-HTTP machine the ⟳ Update button would swap in a new front bound
+to `127.0.0.1` (not the tailnet IP) and then force-enable Serve on the publish port — so the front
+became reachable only from the box itself while Serve's HTTPS listener took over the tailnet address
+the front used to own. A plain `http://` request to that address then hit a TLS endpoint and failed
+with "Client sent an HTTP request to an HTTPS server." Both scripts now resolve the same three modes
+via `Test-ServePublished`.
+
 | | single-port (default) | blue/green |
 |---|---|---|
 | front binds | `127.0.0.1:7000` | `127.0.0.1:7001` or `7002` |
@@ -254,12 +262,20 @@ now** just opens a normal session whose command is `update.ps1` — so the updat
 
 `windows/update.ps1`: reclaim the publish port → ensure `sessiond` → `git pull --ff-only` (rollback
 ref saved) → `npm install` only if `package*.json` changed → deploy the new `front` → verify →
-update the Claude CLI. The deploy step follows the mode in `state.json` (see *Port modes*):
+update the Claude CLI. The deploy step resolves the same three modes as `restart-front.ps1` — via
+`Test-ServePublished`, not from `state.json` alone (see *Port modes*):
 
-- **single-port** — stop the front on `<publishPort>`, start the new one on the same port. On
-  failure, `git reset --hard` to the rollback ref and restart the *previous* version there, so the
-  machine is left serving something; if even that fails the script says the UI is down and names
-  `start.ps1`.
+- **single-port** — stop the front on `<publishPort>`, start the new one on the same port (bound to
+  `127.0.0.1`). On failure, `git reset --hard` to the rollback ref and restart the *previous*
+  version there, so the machine is left serving something; if even that fails the script says the
+  UI is down and names `start.ps1`.
+- **plain-HTTP** — the same in-place swap, but bound to the tailnet IP and with Serve never touched.
+  Recorded identically to single-port in `state.json`, so this script used to always take the
+  single-port branch here: it started the new front on loopback and force-enabled Serve on the
+  publish port, which left the front reachable only from the box itself while Serve's HTTPS
+  listener took over the tailnet address the front used to own — a plain `http://` request to that
+  address then hit a TLS endpoint and failed with "Client sent an HTTP request to an HTTPS server."
+  Fixed by giving this branch its own path, mirroring `restart-front.ps1`.
 - **blue/green** — start the new front on the alternate of `{7001, 7002}`, then re-point
   `tailscale serve --https=<publishPort>` to it and stop the old one. On failure the new front is
   stopped and the tree reset; the old front never stopped serving.
