@@ -58,8 +58,13 @@ function candidates() {
 }
 
 function run(bin, args, timeoutMs = 8000) {
+  // A .cmd/.bat shim (e.g. the npm-global install's claude.cmd on Windows) can't
+  // be exec'd directly on Windows: Node refuses since the CVE-2024-27980 fix and
+  // throws `spawn EINVAL` *synchronously*, rejecting this promise before the
+  // callback ever runs. Route those through a shell instead.
+  const needsShell = process.platform === 'win32' && /\.(cmd|bat)$/i.test(bin);
   return new Promise((resolve) => {
-    execFile(bin, args, { timeout: timeoutMs, windowsHide: true }, (err, stdout, stderr) => {
+    execFile(bin, args, { timeout: timeoutMs, windowsHide: true, shell: needsShell }, (err, stdout, stderr) => {
       resolve({ ok: !err, out: String(stdout || '').trim(), err: String(stderr || '').trim() });
     });
   });
