@@ -26,3 +26,18 @@ combined-summary.md
 # but keep package manifests/locks (the *.json rule above would hide them)
 !package.json
 !package-lock.json
+
+# Claude Code agent worktrees — one machine-local checkout per agent, each with
+# its own `.git` FILE pointing back into this repo's worktree metadata. Tracking
+# one would hand every clone a dangling gitlink. Scoped to worktrees/ rather than
+# all of .claude/ so shared project config (agents, skills, settings.json) can
+# still be committed deliberately.
+/.claude/worktrees/
+
+# Generated voice-sample pages: one-off engine comparisons and iOS Safari
+# capability harnesses, each with megabytes of base64 WAV inlined (voice-picker
+# alone is 3.2 MB). Not source — the audio is regenerable from lib/tts.js, the
+# conclusions already live in termhub/AGENT.md, and everything under termhub/web/
+# is served on the tailnet, so these stay local.
+termhub/web/voice-picker.html
+termhub/web/voice-probe*.html
