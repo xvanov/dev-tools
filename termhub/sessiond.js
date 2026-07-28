@@ -223,6 +223,7 @@ function createSessiond({ entry = 'sessiond', port: serverPort = DEFAULT_SESSION
           port: serverPort,
           machine: MACHINE_NAME,
           commit: build.commit(),
+          dirty: build.dirty(),
           startedAt: STARTED_AT,
         });
       }

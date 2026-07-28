@@ -19,26 +19,44 @@ const path = require('path');
 const PROJECT_DIR = path.join(__dirname, '..');
 
 let cached; // undefined = not computed yet, null = unavailable (not a git tree)
+let cachedDirty; // was the tree modified when this process started?
 
-function commit() {
-  if (cached !== undefined) return cached;
+function git(args) {
   try {
-    const out = execFileSync('git', ['-C', PROJECT_DIR, 'rev-parse', 'HEAD'], {
+    return execFileSync('git', ['-C', PROJECT_DIR, ...args], {
       encoding: 'utf8',
       timeout: 5000,
       windowsHide: true,
       stdio: ['ignore', 'pipe', 'ignore'],
-    });
-    cached = out.trim() || null;
+    }).trim();
   } catch {
-    cached = null; // no git, or not a checkout — reported as null, never fatal
+    return null; // no git, or not a checkout — reported as null, never fatal
   }
+}
+
+function commit() {
+  if (cached !== undefined) return cached;
+  cached = git(['rev-parse', 'HEAD']) || null;
   return cached;
+}
+
+// A process started from a modified tree is running code that no commit
+// describes, so `commit` alone would overstate what it is. Reported alongside it
+// rather than folded in, so the updater's exact commit comparison still works
+// (the HEAD is genuinely that commit) while a reader can see the claim is
+// approximate. Sampled once at startup — later edits don't retroactively change
+// what this process loaded.
+function dirty() {
+  if (cachedDirty !== undefined) return cachedDirty;
+  const status = git(['status', '--porcelain', '--untracked-files=no']);
+  cachedDirty = status === null ? null : status.length > 0;
+  return cachedDirty;
 }
 
 function shortCommit() {
   const full = commit();
-  return full ? full.slice(0, 7) : null;
+  if (!full) return null;
+  return full.slice(0, 7) + (dirty() ? '-dirty' : '');
 }
 
-module.exports = { commit, shortCommit, PROJECT_DIR };
+module.exports = { commit, dirty, shortCommit, PROJECT_DIR };

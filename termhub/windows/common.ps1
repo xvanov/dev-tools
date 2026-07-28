@@ -159,9 +159,11 @@ function Get-SessiondIdentity {
 }
 
 function Format-Commit {
-  param($Commit)
-  if ($Commit) { return ([string]$Commit).Substring(0, [Math]::Min(7, ([string]$Commit).Length)) }
-  return 'unknown commit'
+  param($Commit, $Dirty = $false)
+  if (-not $Commit) { return 'unknown commit' }
+  $short = ([string]$Commit).Substring(0, [Math]::Min(7, ([string]$Commit).Length))
+  if ($Dirty -eq $true) { return "$short-dirty" }
+  return $short
 }
 
 # Kill the node process holding $Port and wait for the socket to be released.
@@ -343,7 +345,7 @@ function Start-VerifiedFront {
       Write-Host "termhub: port $Port answered by pid $($ident.self.pid), not the front just started (pid $($proc.Id))." -ForegroundColor Yellow
       $ok = $false
     } elseif ($ExpectCommit -and $ident.self.commit -and $ident.self.commit -ne $ExpectCommit) {
-      Write-Host "termhub: the front runs $(Format-Commit $ident.self.commit), expected $(Format-Commit $ExpectCommit)." -ForegroundColor Yellow
+      Write-Host "termhub: the front runs $(Format-Commit $ident.self.commit $ident.self.dirty), expected $(Format-Commit $ExpectCommit)." -ForegroundColor Yellow
       $ok = $false
     }
   }
@@ -396,7 +398,7 @@ function Confirm-Sessiond {
     if (-not $isMonolith) {
       $livePid = if ($ident.pid) { [int]$ident.pid } else { Get-PortListenerPid -Port $Port }
       Write-Host ("termhub: sessiond already running (pid $livePid, port $Port, " `
-        + "$(Format-Commit $ident.commit), $($ident.sessions) session(s))")
+        + "$(Format-Commit $ident.commit $ident.dirty), $($ident.sessions) session(s))")
       # Repair bookkeeping if the pid file is missing or points elsewhere.
       $info = Get-PidInfo 'sessiond'
       if ($livePid -and (-not $info -or $info.Pid -ne $livePid)) {
@@ -432,7 +434,7 @@ function Confirm-Sessiond {
     throw ("port $Port is answered by pid $($ident.pid), not the sessiond just started (pid $($proc.Id)). " `
       + "Something else owns the port - refusing to continue.")
   }
-  Write-Host "termhub: sessiond up (pid $($ident.pid), $(Format-Commit $ident.commit))"
+  Write-Host "termhub: sessiond up (pid $($ident.pid), $(Format-Commit $ident.commit $ident.dirty))"
   return $Port
 }
 

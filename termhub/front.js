@@ -72,7 +72,14 @@ function createFront({ sessiondPort, port: serverPort = DEFAULT_FRONT_PORT }) {
     // too — a front that can't reach sessiond is exactly when you want to know
     // which front and which port it was looking at.
     if (req.method === 'GET' && pathname === '/api/health') {
-      const self = { entry: 'front', pid: process.pid, port: serverPort, commit: build.commit(), sessiondPort };
+      const self = {
+        entry: 'front',
+        pid: process.pid,
+        port: serverPort,
+        commit: build.commit(),
+        dirty: build.dirty(),
+        sessiondPort,
+      };
       return pingSessiond(sessiondPort)
         .then((info) => sendJson(res, 200, { ok: true, front: true, self, sessiond: info }))
         .catch((e) => sendJson(res, 503, { ok: false, front: true, self, error: String(e.message || e) }));

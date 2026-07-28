@@ -45,12 +45,12 @@ if ($singlePort) {
   Write-Host "termhub update: blue=$bluePort  green=$greenPort  sessiond=$sessiondPort  publish=$publishPort"
 }
 
-# 0a) Reclaim the publish port. Nothing in the two-tier layout binds it on
-# loopback (Tailscale Serve does, and proxies to a front on 7001/7002), so a
-# listener there is a stale `node server.js` serving old code at
-# http://127.0.0.1:$publishPort while the tailnet URL for the same port serves
-# the current front. Left alone it also shadows sessiond, which is how an update
-# once deployed a fresh front on top of a supervisor from days earlier.
+# 0a) Reclaim the publish port from anything that isn't a front. In single-port
+# mode the front legitimately owns it and is left alone (Clear-PublishPort decides
+# on identity, not mode); what gets removed is a pre-split `node server.js`, which
+# served old code on http://127.0.0.1:$publishPort while the tailnet URL for the
+# same port served the current front - and shadowed sessiond, which is how an
+# update once deployed a fresh front on top of a supervisor from days earlier.
 Clear-PublishPort -PublishPort $publishPort -SessiondPort $sessiondPort -ActiveFrontPort $bluePort
 
 # ...and say so if the logon task is what keeps putting it there.
@@ -147,14 +147,34 @@ else {
 # update reads as "deployed" while the tier doing the work still runs old code,
 # which is indistinguishable from a fix that didn't work.
 $sessiondCommit = if ($sessiondBefore) { $sessiondBefore.commit } else { $null }
-$sessiondSideChanged = ($changed -match 'sessiond\.js|(^|/)lib/')
-if ($sessiondSideChanged -and $sessiondCommit -and $sessiondCommit -ne $newHead) {
+$sessiondDirty  = if ($sessiondBefore) { $sessiondBefore.dirty } else { $false }
+# A sessiond started from a MODIFIED tree counts as drifted even at the same HEAD:
+# whatever it loaded isn't the committed code, so no commit describes it.
+if ($sessiondCommit -and (($sessiondCommit -ne $newHead) -or ($sessiondDirty -eq $true))) {
+  # Diff from what SESSIOND IS RUNNING to the new HEAD - not from this update's
+  # rollback ref. A supervisor that sat through five updates is behind by all of
+  # them, and "nothing sessiond-side changed in THIS update" is true and useless
+  # in that case: the restart is owed for the accumulated drift, not for one pull.
+  $drift = & git -C $ProjectDir diff --name-only $sessiondCommit $newHead 2>$null
+  $driftKnown = ($LASTEXITCODE -eq 0)
+  # Owe the restart unless it can be PROVEN unnecessary: an unknown commit (never
+  # fetched, or rewritten history) and a modified tree are both uncomparable, and
+  # staying quiet about those is how drift goes unnoticed for days.
+  $why = ''
+  if ($sessiondDirty -eq $true) { $why = 'it was started from a modified tree, so no commit describes what it loaded' }
+  elseif (-not $driftKnown) { $why = "that commit isn't in this checkout, so the difference can't be compared" }
+  elseif ($drift -match 'sessiond\.js|(^|/)lib/') { $why = 'sessiond-side files have changed since then' }
+
   Write-Host ""
-  Write-Host "termhub update: sessiond-side files changed, but sessiond still runs $(Format-Commit $sessiondCommit)." -ForegroundColor Yellow
-  Write-Host "termhub update: the front is current; PTY/session behaviour is not. To pick it up:" -ForegroundColor Yellow
-  Write-Host "termhub update:   .\windows\restart-sessiond.ps1     # ends live terminals; they become Restorable" -ForegroundColor Yellow
-} elseif ($sessiondCommit -and $sessiondCommit -ne $newHead) {
-  Write-Host "termhub update: sessiond runs $(Format-Commit $sessiondCommit) (no sessiond-side changes in this update)."
+  if ($why) {
+    Write-Host "termhub update: sessiond runs $(Format-Commit $sessiondCommit $sessiondDirty) - $why." -ForegroundColor Yellow
+    Write-Host "termhub update: the front is current; PTY/session behaviour may not be. To pick it up," -ForegroundColor Yellow
+    Write-Host "termhub update: from a NON-termhub window (this ends live terminals; they become Restorable):" -ForegroundColor Yellow
+    Write-Host "termhub update:   .\windows\restart-sessiond.ps1" -ForegroundColor Yellow
+  } else {
+    Write-Host "termhub update: sessiond runs $(Format-Commit $sessiondCommit) - older than HEAD, but nothing"
+    Write-Host "termhub update: sessiond-side changed since then, so a restart would buy nothing."
+  }
 }
 
 # 6) Update the Claude Code CLI too. termhub's Claude integration is

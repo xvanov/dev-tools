@@ -27,7 +27,7 @@ $frontPort    = $state.activeFrontPort
 $ident = Get-SessiondIdentity -Port $sessiondPort
 $live  = if ($ident -and $ident.sessions) { [int]$ident.sessions } else { 0 }
 
-Write-Host "termhub restart-sessiond: port $sessiondPort, running $(Format-Commit $ident.commit), $live live session(s)."
+Write-Host "termhub restart-sessiond: port $sessiondPort, running $(Format-Commit $ident.commit $ident.dirty), $live live session(s)."
 Write-Host "This ENDS those $live terminal(s). They stay restorable from the sidebar." -ForegroundColor Yellow
 
 # Running inside a termhub PTY means this script is about to kill itself. The
