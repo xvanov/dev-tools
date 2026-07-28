@@ -265,12 +265,19 @@ if (-not $claude) {
   }
 }
 
-$servingPort = if ($singlePort) { $publishPort } else { $greenPort }
 $dns = ''
 try { $dns = ((& tailscale status --json 2>$null | ConvertFrom-Json).Self.DNSName).TrimEnd('.') } catch { }
 
 Write-Host ""
-Write-Host "termhub update OK: front 127.0.0.1:$servingPort at HEAD $(Format-Commit $newHead)." -ForegroundColor Green
-if ($dns) { Write-Host "  https://${dns}:${publishPort}/" -ForegroundColor Green }
-if ($singlePort) { Write-Host "  http://127.0.0.1:$publishPort/" -ForegroundColor Green }
+if ($mode -eq 'http') {
+  # No loopback claim here - the front never bound 127.0.0.1, and there's no
+  # Serve/DNS URL either since Serve is deliberately off in this mode.
+  Write-Host "termhub update OK: front ${ip}:$publishPort at HEAD $(Format-Commit $newHead)." -ForegroundColor Green
+  Write-Host "  http://${ip}:$publishPort/" -ForegroundColor Green
+} else {
+  $servingPort = if ($mode -eq 'single') { $publishPort } else { $greenPort }
+  Write-Host "termhub update OK: front 127.0.0.1:$servingPort at HEAD $(Format-Commit $newHead)." -ForegroundColor Green
+  if ($dns) { Write-Host "  https://${dns}:${publishPort}/" -ForegroundColor Green }
+  if ($mode -eq 'single') { Write-Host "  http://127.0.0.1:$publishPort/" -ForegroundColor Green }
+}
 Write-Host "Open terminals reconnect automatically to the same sessions (sessiond 127.0.0.1:$sessiondPort)."
