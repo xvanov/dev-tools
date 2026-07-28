@@ -97,9 +97,12 @@ Build-NodePty
 & setx TERMHUB_BIND 127.0.0.1 | Out-Null
 $env:TERMHUB_BIND = '127.0.0.1'
 
-# Record the published (external) port so start.ps1 / update.ps1 use it. The
-# internal front alternates between 7001/7002; sessiond stays on 7010.
-Set-TermhubState @{ publishPort = $Port } | Out-Null
+# Record the published (external) port so start.ps1 / update.ps1 use it, and
+# default to SINGLE-PORT mode (front on 127.0.0.1:$Port, Serve publishing the same
+# number to it) so one port number is the whole answer - the tailnet URL and
+# http://127.0.0.1:$Port are the same server. Switch a machine to the atomic-swap
+# layout with `start.ps1 -BlueGreen` (front on 7001/7002). sessiond stays on 7010.
+Set-TermhubState @{ publishPort = $Port; activeFrontPort = $Port } | Out-Null
 
 # --- clean up tasks from the older two-process layout, if present ----------
 foreach ($old in @('TermhubAgent', 'TermhubHub')) {
@@ -113,7 +116,7 @@ foreach ($old in @('TermhubAgent', 'TermhubHub')) {
 Get-CimInstance Win32_Process -Filter "Name='node.exe'" |
   Where-Object { $_.CommandLine -match 'server\.js|sessiond\.js|front\.js' } |
   ForEach-Object { try { Stop-Process -Id $_.ProcessId -Force } catch {} }
-foreach ($n in @('sessiond', 'front-7001', 'front-7002')) { Remove-PidFile $n }
+foreach ($n in @('sessiond', 'front-7001', 'front-7002', "front-$Port")) { Remove-PidFile $n }
 
 $IsAdmin    = Test-Admin
 $StartupVbs = Join-Path ([Environment]::GetFolderPath('Startup')) 'termhub.vbs'

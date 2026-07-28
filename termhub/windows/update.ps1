@@ -4,9 +4,23 @@
 # Because only the front is swapped - sessiond and its PTYs are never touched -
 # even the terminal running this script survives the update.
 #
-#   git pull --ff-only  ->  start GREEN front on the alternate loopback port
-#   ->  health-check it  ->  if healthy: re-point Tailscale Serve, stop BLUE
-#                            if not:     kill GREEN, roll back, keep BLUE serving
+# Two deploy shapes, chosen by state.json (activeFrontPort vs publishPort):
+#
+#   SINGLE-PORT (activeFrontPort == publishPort, the default)
+#     The front owns 127.0.0.1:<publishPort> and Serve proxies the same number to
+#     it, so ONE port is the answer everywhere: the tailnet URL and
+#     http://127.0.0.1:<publishPort> are the same server. Updating means stopping
+#     the front and starting the new one on that port - a ~1-2s window where
+#     connections are refused, after which browsers reconnect on their own.
+#
+#   BLUE/GREEN (activeFrontPort in {7001, 7002})
+#     The front hides on an alternate loopback port and Serve is re-pointed
+#     between them, so the swap is atomic and the previous front stays alive as a
+#     rollback target. No downtime, but http://127.0.0.1:<publishPort> is not a
+#     working URL - only the tailnet one is. Switch with:
+#         .\windows\start.ps1 -BlueGreen      (and -SinglePort to come back)
+#
+# Either way sessiond is never restarted, so PTYs survive both.
 #
 #     .\windows\update.ps1
 
@@ -22,12 +36,30 @@ $state        = Get-TermhubState
 $sessiondPort = $state.sessiondPort
 $bluePort     = $state.activeFrontPort
 $publishPort  = $state.publishPort
+$singlePort   = ($bluePort -eq $publishPort)
 $greenPort    = if ($bluePort -eq 7001) { 7002 } else { 7001 }
 
-Write-Host "termhub update: blue=$bluePort  green=$greenPort  sessiond=$sessiondPort  publish=$publishPort"
+if ($singlePort) {
+  Write-Host "termhub update: single-port mode  front=publish=$publishPort  sessiond=$sessiondPort"
+} else {
+  Write-Host "termhub update: blue=$bluePort  green=$greenPort  sessiond=$sessiondPort  publish=$publishPort"
+}
 
-# 0) sessiond must be up (start if somehow down - does NOT restart a live one).
-$sessiondPort = Confirm-Sessiond -Port $sessiondPort
+# 0a) Reclaim the publish port. Nothing in the two-tier layout binds it on
+# loopback (Tailscale Serve does, and proxies to a front on 7001/7002), so a
+# listener there is a stale `node server.js` serving old code at
+# http://127.0.0.1:$publishPort while the tailnet URL for the same port serves
+# the current front. Left alone it also shadows sessiond, which is how an update
+# once deployed a fresh front on top of a supervisor from days earlier.
+Clear-PublishPort -PublishPort $publishPort -SessiondPort $sessiondPort -ActiveFrontPort $bluePort
+
+# ...and say so if the logon task is what keeps putting it there.
+Test-TermhubTask
+
+# 0b) sessiond must be up (start if somehow down - does NOT restart a live one).
+# $publishPort is passed so a pre-identity monolith can still be recognised.
+$sessiondPort = Confirm-Sessiond -Port $sessiondPort -PublishPort $publishPort
+$sessiondBefore = Get-SessiondIdentity -Port $sessiondPort
 
 # 1) Pull, deterministically. Save the current commit for rollback.
 $rollback = (& git -C $ProjectDir rev-parse HEAD).Trim()
@@ -49,44 +81,81 @@ if ($changed -match 'package(-lock)?\.json') {
   if ($LASTEXITCODE -ne 0) { & git -C $ProjectDir reset --hard $rollback | Out-Null; Fail "npm install failed; rolled back. Blue still serving." }
 }
 
-# 3) Clear any stale green, then start the new GREEN front.
-Stop-Front "front-$greenPort"
-Write-Host "termhub update: starting green front on 127.0.0.1:$greenPort ..."
-Start-TermhubNode -Script 'front.js' -EnvVars @{
-  TERMHUB_FRONT_PORT    = $greenPort
-  TERMHUB_SESSIOND_PORT = $sessiondPort
-  TERMHUB_BIND          = '127.0.0.1'
-} | Out-Null
+if ($singlePort) {
+  # 3-5) SINGLE-PORT: swap the front in place on the published port.
+  #
+  # There is no alternate port to stage on, so the old front is stopped first and
+  # the new one takes the same socket. That trades the atomic cutover for a
+  # ~1-2s window of refused connections - and for a rollback that has to RESTART
+  # the previous version instead of just leaving it running. Both are the accepted
+  # cost of one port meaning one thing. sessiond is untouched throughout, so no
+  # terminal dies and no scrollback is lost; browsers reconnect and replay.
+  Write-Host "termhub update: swapping the front in place on 127.0.0.1:$publishPort (brief gap) ..."
+  Stop-Front "front-$publishPort"
+  $frontProc = Start-VerifiedFront -Port $publishPort -SessiondPort $sessiondPort -ExpectCommit $newHead
 
-# 4) Health-check green: front up + sessiond reachable, and the proxy path works.
-$healthy = Wait-FrontHealthy -Port $greenPort -TimeoutSec 12
-if ($healthy) {
-  try {
-    $r = Invoke-WebRequest -UseBasicParsing -TimeoutSec 4 "http://127.0.0.1:$greenPort/api/sessions"
-    if ($r.StatusCode -ne 200) { $healthy = $false }
-    $idx = Invoke-WebRequest -UseBasicParsing -TimeoutSec 4 "http://127.0.0.1:$greenPort/"
-    if ($idx.StatusCode -ne 200) { $healthy = $false }
-  } catch { $healthy = $false }
+  if (-not $frontProc) {
+    Write-Host "termhub update: the new front is unhealthy - reverting the tree and restarting the previous one." -ForegroundColor Yellow
+    & git -C $ProjectDir reset --hard $rollback | Out-Null
+    $back = Start-VerifiedFront -Port $publishPort -SessiondPort $sessiondPort -ExpectCommit $rollback
+    if ($back) {
+      Fail "new version unhealthy; reverted to $(Format-Commit $rollback) and restarted the front on $publishPort. Terminals untouched."
+    }
+    Fail ("new version unhealthy AND the reverted front did not come up either - the UI is DOWN. " `
+      + "Run: .\windows\start.ps1   (sessiond 127.0.0.1:$sessiondPort is untouched, so the terminals are still there.)")
+  }
+
+  # Serve should already point here; re-assert it so a lost or wrong config heals.
+  & tailscale serve --bg --https=$publishPort "http://127.0.0.1:$publishPort" 2>&1 | Out-Host
+  if ($LASTEXITCODE -ne 0) {
+    Write-Host "termhub update: could not re-assert Tailscale Serve - the front is up and http://127.0.0.1:$publishPort works," -ForegroundColor Yellow
+    Write-Host "termhub update: but the tailnet URL may not. Check: tailscale serve status" -ForegroundColor Yellow
+  }
+  Set-TermhubState @{ activeFrontPort = $publishPort } | Out-Null
+  # Any leftover blue/green fronts from a previous mode would serve stale code.
+  foreach ($p in @(7001, 7002)) { if ($p -ne $publishPort) { Stop-Front "front-$p" } }
 }
-
-if (-not $healthy) {
-  Write-Host "termhub update: green failed health check - rolling back." -ForegroundColor Yellow
+else {
+  # 3) BLUE/GREEN: stage the new front on the alternate loopback port.
   Stop-Front "front-$greenPort"
-  & git -C $ProjectDir reset --hard $rollback | Out-Null
-  Fail "new version unhealthy; reverted tree to $rollback. Blue (port $bluePort) still serving - terminals untouched."
+  $greenProc = Start-VerifiedFront -Port $greenPort -SessiondPort $sessiondPort -ExpectCommit $newHead
+
+  # 4) On any failure green is already stopped; blue never stopped serving.
+  if (-not $greenProc) {
+    Write-Host "termhub update: green failed verification - rolling back." -ForegroundColor Yellow
+    & git -C $ProjectDir reset --hard $rollback | Out-Null
+    Fail "new version unhealthy; reverted tree to $rollback. Blue (port $bluePort) still serving - terminals untouched."
+  }
+
+  # 5) Cut over: re-point Tailscale Serve to green (atomic), record state, stop blue.
+  Write-Host "termhub update: green healthy - re-pointing Tailscale Serve to 127.0.0.1:$greenPort"
+  & tailscale serve --bg --https=$publishPort "http://127.0.0.1:$greenPort" 2>&1 | Out-Host
+  if ($LASTEXITCODE -ne 0) {
+    Write-Host "termhub update: tailscale serve re-point failed - rolling back." -ForegroundColor Yellow
+    Stop-Front "front-$greenPort"
+    & git -C $ProjectDir reset --hard $rollback | Out-Null
+    Fail "could not re-point Tailscale Serve; blue (port $bluePort) still serving."
+  }
+  Set-TermhubState @{ activeFrontPort = $greenPort } | Out-Null
+  Stop-Front "front-$bluePort"
 }
 
-# 5) Cut over: re-point Tailscale Serve to green (atomic), record state, stop blue.
-Write-Host "termhub update: green healthy - re-pointing Tailscale Serve to 127.0.0.1:$greenPort"
-& tailscale serve --bg --https=$publishPort "http://127.0.0.1:$greenPort" 2>&1 | Out-Host
-if ($LASTEXITCODE -ne 0) {
-  Write-Host "termhub update: tailscale serve re-point failed - rolling back." -ForegroundColor Yellow
-  Stop-Front "front-$greenPort"
-  & git -C $ProjectDir reset --hard $rollback | Out-Null
-  Fail "could not re-point Tailscale Serve; blue (port $bluePort) still serving."
+# 5b) Report sessiond drift. sessiond is deliberately NOT restarted - that's what
+# keeps the PTYs (including this terminal) alive - so after a pull that touched
+# sessiond-side code the supervisor is legitimately behind the working tree. That
+# is normal and must never fail an update, but it has to be SAID: otherwise the
+# update reads as "deployed" while the tier doing the work still runs old code,
+# which is indistinguishable from a fix that didn't work.
+$sessiondCommit = if ($sessiondBefore) { $sessiondBefore.commit } else { $null }
+$sessiondSideChanged = ($changed -match 'sessiond\.js|(^|/)lib/')
+if ($sessiondSideChanged -and $sessiondCommit -and $sessiondCommit -ne $newHead) {
+  Write-Host ""
+  Write-Host "termhub update: sessiond-side files changed, but sessiond still runs $(Format-Commit $sessiondCommit)." -ForegroundColor Yellow
+  Write-Host "termhub update: the front is current; PTY/session behaviour is not. To pick it up:" -ForegroundColor Yellow
+  Write-Host "termhub update:   .\windows\restart-sessiond.ps1     # ends live terminals; they become Restorable" -ForegroundColor Yellow
+} elseif ($sessiondCommit -and $sessiondCommit -ne $newHead) {
+  Write-Host "termhub update: sessiond runs $(Format-Commit $sessiondCommit) (no sessiond-side changes in this update)."
 }
-Set-TermhubState @{ activeFrontPort = $greenPort } | Out-Null
-Stop-Front "front-$bluePort"
 
 # 6) Update the Claude Code CLI too. termhub's Claude integration is
 # version-coupled (see lib/claudeCli.js): it pins conversations with
@@ -123,6 +192,12 @@ if (-not $claude) {
   }
 }
 
+$servingPort = if ($singlePort) { $publishPort } else { $greenPort }
+$dns = ''
+try { $dns = ((& tailscale status --json 2>$null | ConvertFrom-Json).Self.DNSName).TrimEnd('.') } catch { }
+
 Write-Host ""
-Write-Host "termhub update OK: now serving green (127.0.0.1:$greenPort) at HEAD $newHead." -ForegroundColor Green
+Write-Host "termhub update OK: front 127.0.0.1:$servingPort at HEAD $(Format-Commit $newHead)." -ForegroundColor Green
+if ($dns) { Write-Host "  https://${dns}:${publishPort}/" -ForegroundColor Green }
+if ($singlePort) { Write-Host "  http://127.0.0.1:$publishPort/" -ForegroundColor Green }
 Write-Host "Open terminals reconnect automatically to the same sessions (sessiond 127.0.0.1:$sessiondPort)."
