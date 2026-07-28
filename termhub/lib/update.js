@@ -12,6 +12,7 @@
 const { execFile } = require('child_process');
 const os = require('os');
 const path = require('path');
+const claudeCli = require('./claudeCli');
 
 const PROJECT_DIR = path.join(__dirname, '..'); // .../termhub
 
@@ -38,21 +39,32 @@ async function gitDescribe() {
 
 // The command that performs the actual update, run inside a terminal the user
 // watches. Absolute -File path so it works regardless of the shell's cwd.
+//
+// Both platforms also update the Claude Code CLI, because termhub's Claude
+// integration is version-coupled (lib/claudeCli.js) and a machine that only ever
+// updates termhub drifts away from the CLI termhub was tested against. The CLI
+// step is deliberately non-fatal: `|| true` on Linux, a warning in update.ps1 —
+// a rate-limited or offline `claude update` must not abort a termhub update.
 function updateCommand() {
   if (process.platform === 'win32') {
     const script = path.join(PROJECT_DIR, 'windows', 'update.ps1');
     return `powershell -NoProfile -ExecutionPolicy Bypass -File "${script}"`;
   }
-  // No dedicated Linux updater script: pull fast-forward, then restart the user
-  // service (this restarts sessiond too, so sessions reset — Linux only).
-  return 'git pull --ff-only && systemctl --user restart termhub';
+  // No dedicated Linux updater script: pull fast-forward, update the CLI, then
+  // restart the user service (this restarts sessiond too, so sessions reset —
+  // Linux only).
+  return `git pull --ff-only && { ${claudeCli.updateCommand()} || true; } && systemctl --user restart termhub`;
 }
 
 async function compute() {
   const head = await git(['rev-parse', 'HEAD']);
   const version = await gitDescribe();
+  // Reported on EVERY path, including the error returns below: a machine whose
+  // checkout can't be compared (no upstream, not a git tree) is exactly the kind
+  // that quietly drifts to an untested CLI, so that's the last place to hide it.
+  const claude = await claudeCli.status();
   if (!head.ok) {
-    return { available: false, version, error: 'not a git checkout', checkedAt: Date.now() };
+    return { available: false, version, claudeCli: claude, error: 'not a git checkout', checkedAt: Date.now() };
   }
 
   // Best-effort fetch; if it fails (offline, auth), fall back to comparing the
@@ -64,6 +76,7 @@ async function compute() {
     return {
       available: false,
       version,
+      claudeCli: claude,
       current: head.out.slice(0, 7),
       error: 'no upstream branch tracked',
       fetchOk: fetched.ok,
@@ -99,6 +112,7 @@ async function compute() {
   return {
     available: behind > 0,
     version,
+    claudeCli: claude,
     behind,
     toolChanged,
     current: head.out.slice(0, 7),

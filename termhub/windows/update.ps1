@@ -88,6 +88,41 @@ if ($LASTEXITCODE -ne 0) {
 Set-TermhubState @{ activeFrontPort = $greenPort } | Out-Null
 Stop-Front "front-$bluePort"
 
+# 6) Update the Claude Code CLI too. termhub's Claude integration is
+# version-coupled (see lib/claudeCli.js): it pins conversations with
+# --session-id, resumes them with --resume, and parses the on-disk transcript.
+# A machine that updates only termhub drifts away from the CLI termhub was
+# tested against - which is how session restore came to work on one machine and
+# not another. Runs LAST and never fails the update: termhub is already serving
+# green by this point, and an offline or rate-limited `claude update` is a
+# warning, not a rollback. Open terminals keep the CLI build they started with.
+$claude = (Get-Command claude -ErrorAction SilentlyContinue)
+if (-not $claude) {
+  Write-Host "termhub update: claude CLI not on PATH - skipping CLI update." -ForegroundColor Yellow
+} else {
+  # Drop out of the script's $ErrorActionPreference='Stop' for this step only.
+  # Under Stop, a native command writing anything to stderr can be promoted to a
+  # terminating error - and `claude update` legitimately chats on stderr, which
+  # would abort a step that is supposed to be unable to fail.
+  $prevEap = $ErrorActionPreference
+  $ErrorActionPreference = 'Continue'
+  try {
+    $before = (& claude --version) 2>$null
+    Write-Host "termhub update: updating Claude Code CLI (currently $before)"
+    & claude update
+    if ($LASTEXITCODE -ne 0) {
+      Write-Host "termhub update: claude update exited $LASTEXITCODE - continuing." -ForegroundColor Yellow
+    } else {
+      $after = (& claude --version) 2>$null
+      Write-Host "termhub update: claude CLI now $after"
+    }
+  } catch {
+    Write-Host "termhub update: claude update failed ($($_.Exception.Message)) - continuing." -ForegroundColor Yellow
+  } finally {
+    $ErrorActionPreference = $prevEap
+  }
+}
+
 Write-Host ""
 Write-Host "termhub update OK: now serving green (127.0.0.1:$greenPort) at HEAD $newHead." -ForegroundColor Green
 Write-Host "Open terminals reconnect automatically to the same sessions (sessiond 127.0.0.1:$sessiondPort)."

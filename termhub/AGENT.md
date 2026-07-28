@@ -103,10 +103,27 @@ PTYs live only in `sessiond`'s memory, so a machine reboot kills every terminal 
 comes up empty. `sessiond` mirrors session *metadata* to `sessions.json`; on the next start those
 entries (no longer matched by a live PTY) are returned as `restorable` and the sidebar shows a
 **Restorable (after restart)** section. The processes themselves can't be resurrected, so
-"restore" re-spawns: a `claude` session re-opens as `claude --dangerously-skip-permissions
---resume` in its old cwd (Claude's resume picker, scoped to that directory); any other session
-re-opens as a plain shell in its old cwd with its recorded command history printed in as a
-dim, commented block to re-run by hand. Killing a live session (✕) or forgetting a restorable one
+"restore" re-spawns: a `claude` session re-opens as `claude --resume <uuid>
+--dangerously-skip-permissions` in its old cwd, resuming *that exact conversation* — the uuid
+termhub pinned with `--session-id` at launch (bare `--resume`, i.e. Claude's cwd-scoped picker, is
+only the fallback for a session whose id was never tracked); any other session re-opens as a plain
+shell in its old cwd with its recorded command history printed in as a dim, commented block to
+re-run by hand.
+
+The restore command is built in `lib/restore.js`, and its one job is that the command carry
+**exactly one** conversation-identity flag. It didn't, for a while, and the bug is worth
+remembering because of how it presented: termhub archives the command it actually launched, which
+already contains `--session-id <uuid>`, and restore *appended* `--resume <uuid>` to it. Current
+Claude CLIs reject that pair outright (`--session-id can only be used with --continue or --resume
+if --fork-session is also specified`), so the restored terminal printed one line of usage error and
+sat at a bare shell — looking like "restore does nothing", and only on machines whose CLI was new
+enough to enforce the rule. `restoreClaudeCommand` now strips every identity flag
+(`--session-id`, `--resume`/`-r`, `--continue`/`-c`, `--fork-session`) before adding its own, which
+also repairs the already-mangled entries sitting in `sessions.json`. `--fork-session` is
+deliberately *not* the fix: forking starts a new conversation id, which detaches the session from
+the transcript the model badge and voice layer read. Stripping is confined to the `claude` segment
+of the line (up to the first `&&`/`||`/`;`/`|`) so a `-c` belonging to some other command survives.
+Covered by `test/restore.test.js`. Killing a live session (✕) or forgetting a restorable one
 both `DELETE` it, removing it from the archive. **This is a `sessiond`-tier change**: restart
 `sessiond` once to activate it (which clears the *current* live sessions — but from then on every
 session is persisted). Sessions lost to a reboot that happened *before* this was running are gone;
@@ -133,6 +150,36 @@ serving. `sessiond` is never restarted, so PTYs (and the terminal running the up
 `node-pty` lives only in `sessiond`, so routine front updates need **no native rebuild**. A
 `node-pty` version bump only takes effect on a deliberate `sessiond` restart (which does clear
 sessions — do it intentionally).
+
+### The Claude Code CLI is a pinned dependency
+
+termhub uses Claude Code through surfaces that are not a public API: it pins a conversation with
+`--session-id`, resumes it with `--resume` (above), and reads the transcript at
+`~/.claude/projects/<encoded-cwd>/<uuid>.jsonl` for the model badge, spoken announcements, and turn
+summaries. A CLI change to any of those breaks termhub silently — the restore bug above worked fine
+on a machine with an older CLI and failed on an up-to-date one, which is the worst possible way to
+learn that the coupling exists. So the version is treated as a dependency:
+
+- **The pin** lives in `package.json` under `termhub.claudeCli` (`minVersion`, `verifiedVersion`) so
+  a bump is a reviewable one-line diff. `lib/claudeCli.js` finds the CLI, reads `claude --version`,
+  and compares numerically (a string compare would rank `2.1.220` *below* `2.1.3` and nag about a
+  perfectly current CLI). Lookup order: `TERMHUB_CLAUDE_BIN`, `claude` on `PATH`, then the
+  installers' known locations — the front can run from a systemd `--user` service whose `PATH`
+  lacks `~/.local/bin`, where the native installer puts the launcher.
+- **Reporting**: `GET /api/update/check` carries a `claudeCli` block on every path (including its
+  error paths). The ⟳ Update button shows its dot for an unmet pin as well as a behind-checkout, and
+  the update panel gets a Claude CLI line plus an **Update Claude** button that runs `claude update`
+  in a visible terminal. A CLI that can't be *found* is reported as an error, never as "too old" —
+  a `PATH` quirk must not train the user to ignore the warning.
+- **Updating**: both platform updaters now update the CLI too, so a machine can't drift by updating
+  only termhub. On Linux it's part of the composed update command; on Windows it's the last step of
+  `update.ps1`. Non-fatal in both (`|| true` / a yellow warning) — an offline or rate-limited
+  `claude update` must not roll back a good termhub update. Running `claude` sessions keep the build
+  they started with; the new one applies to sessions started after.
+
+**To bump the pin**: exercise the new CLI first — launch a claude session, restart `sessiond`,
+restore it, and confirm the conversation comes back *and* the model badge and 🔊 announcements still
+resolve. Then set both `minVersion` and `verifiedVersion` in the same commit.
 
 ## Spoken announcements (the voice layer)
 
@@ -605,6 +652,8 @@ user actually meant to paste.
 | Terminal opens but no output | WebSocket blocked | Ensure nothing between browser and server strips WebSocket upgrades |
 | Input ignored after sleep/wake | WebSocket dropped; reconnecting | Output replays on reconnect (incl. across a front update). "Session no longer available" means `sessiond` itself restarted (reboot, or a deliberate sessiond restart) — restore it from the sidebar's **Restorable** section, or open a new terminal |
 | Sidebar empty after a reboot | `sessiond` (and its PTYs) died with the machine | Sessions created while the persistence build was running reappear under **Restorable (after restart)** — restore re-opens Claude with `--resume` or a shell with its command history. Sessions from before the build was deployed weren't recorded |
+| Restoring a Claude session opens a bare shell, no conversation | The restore command carried two conversation-identity flags — Claude printed a usage error and exited | Fixed in `lib/restore.js` (strips `--session-id`/`--continue`/`--fork-session` before adding `--resume`); the fix also repairs entries already mangled in `sessions.json`. Scroll the restored terminal up to see the actual CLI error. Machines on an older CLI never hit this, which is why it looked platform-specific |
+| Restore works on one machine, not another | The two machines run different Claude CLI versions | Open ⟳ **Update** — the panel reports the installed CLI against termhub's pin (`termhub.claudeCli` in `package.json`) and offers **Update Claude**. Verify from a terminal with `claude --version` |
 | Wrong size / wrapping | Pane resized while backgrounded | Switch sessions or rotate to force a refit |
 | Pasted image lands as a file path instead of in the agent's prompt | The host has no usable clipboard (`curl /api/info` → `"clipboardImage": false`) | Expected on a headless Linux box. The path works — both Claude Code and opencode read an image given one. To get the clipboard route instead, run a session with a real display |
 | 📎 upload does nothing on a phone | File over the cap (100 MB, or 15 MB for an image on a host with a real clipboard — `curl /api/info` shows the effective `limits`) | The red notice above the key bar says so; tap it to dismiss, shrink the file. A silent failure instead means the connection dropped — the notice says that too |

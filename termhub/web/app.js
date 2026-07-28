@@ -1054,18 +1054,60 @@ async function fetchUpdate(force) {
   return info;
 }
 
+// A stale Claude CLI earns the same dot as a stale checkout. termhub's Claude
+// integration is version-coupled (see lib/claudeCli.js) — an unmet pin is the
+// difference between session restore working and silently doing nothing — so it
+// has to be visible from the sidebar, not just to whoever opens the panel.
+function claudeCliStale(info) {
+  return !!(info && info.claudeCli && info.claudeCli.installed && info.claudeCli.satisfied === false);
+}
+
 function reflectUpdateButton(info) {
   const btn = $('#update-btn');
   if (btn) {
     const avail = !!(info && info.available);
-    btn.classList.toggle('available', avail);
-    btn.textContent = avail ? '⟳ Update ●' : '⟳ Update';
+    const cliStale = claudeCliStale(info);
+    btn.classList.toggle('available', avail || cliStale);
+    btn.textContent = avail || cliStale ? '⟳ Update ●' : '⟳ Update';
     btn.title = avail
       ? `Update available (${info.behind} commit${info.behind === 1 ? '' : 's'})`
-      : 'Check for updates';
+      : cliStale
+        ? `Claude CLI ${info.claudeCli.installed} is older than the pinned ${info.claudeCli.minVersion}`
+        : 'Check for updates';
   }
   const ver = $('#version-line');
   if (ver) ver.textContent = info && info.version ? info.version : '';
+}
+
+// The Claude CLI row in the panel: version, pin, and — only when it matters — a
+// button that runs `claude update` in a visible terminal.
+function renderClaudeCliRow(info) {
+  const row = $('#update-claude');
+  const btn = $('#update-claude-apply');
+  if (!row) return;
+  const cli = info && info.claudeCli;
+  row.className = '';
+  if (btn) btn.classList.add('hidden');
+  if (!cli) { row.textContent = ''; return; }
+
+  if (!cli.installed) {
+    // Not finding the CLI is a lookup failure, not a verdict on the machine —
+    // termhub's front can run from a service whose PATH lacks ~/.local/bin.
+    row.className = 'warn';
+    row.textContent = `Claude CLI: ${cli.error || 'not found'}`
+      + (cli.minVersion ? ` (termhub expects ${cli.minVersion} or newer)` : '');
+    return;
+  }
+  const pin = cli.minVersion ? ` · termhub pins ${cli.minVersion}+` : '';
+  if (cli.satisfied) {
+    row.textContent = `Claude CLI ${cli.installed}${pin}`;
+    if (btn) btn.classList.remove('hidden'); // updating early is always allowed
+    return;
+  }
+  row.className = 'warn';
+  row.textContent = `Claude CLI ${cli.installed} is older than the pinned ${cli.minVersion}`
+    + ' — session restore and the model badge may not work.';
+  if (btn) btn.classList.remove('hidden');
 }
 
 async function backgroundUpdateCheck() {
@@ -1079,6 +1121,9 @@ function renderUpdatePanel(info, loading) {
   commits.innerHTML = '';
   apply.disabled = true;
   status.className = '';
+  // Before the early returns below: the CLI row is independent of whether the
+  // git check succeeded, and it's most useful on exactly the paths that bail.
+  renderClaudeCliRow(loading ? null : info);
   if (loading) { status.textContent = 'Checking…'; return; }
   if (!info) { status.textContent = 'Could not check for updates.'; return; }
   if (info.error) {
@@ -1124,13 +1169,14 @@ async function recheckUpdate() {
   renderUpdatePanel(lastUpdateInfo, false);
 }
 
-async function applyUpdate() {
-  const info = lastUpdateInfo;
-  if (!info || !info.command) return;
-  $('#update-apply').disabled = true;
+// Run an update command in a fresh terminal the user watches. Shared by the
+// termhub updater and the Claude CLI one: both are long, both can fail in ways
+// only their own output explains, and neither should run invisibly in a service.
+async function runUpdateInTerminal(command, title, cwd, btn) {
+  if (btn) btn.disabled = true;
   try {
-    const body = { cols: 80, rows: 24, command: info.command, title: 'termhub update' };
-    if (info.cwd) body.cwd = info.cwd;
+    const body = { cols: 80, rows: 24, command, title };
+    if (cwd) body.cwd = cwd;
     const session = await api('/api/sessions', {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
     });
@@ -1141,8 +1187,22 @@ async function applyUpdate() {
   } catch (e) {
     $('#update-status').className = 'warn';
     $('#update-status').textContent = 'Could not start update: ' + e.message;
-    $('#update-apply').disabled = false;
+    if (btn) btn.disabled = false;
   }
+}
+
+async function applyUpdate() {
+  const info = lastUpdateInfo;
+  if (!info || !info.command) return;
+  // The termhub updater also runs `claude update` (see lib/update.js), so this
+  // covers the CLI too — the separate button exists for updating just the CLI.
+  await runUpdateInTerminal(info.command, 'termhub update', info.cwd, $('#update-apply'));
+}
+
+async function applyClaudeUpdate() {
+  const cli = lastUpdateInfo && lastUpdateInfo.claudeCli;
+  if (!cli || !cli.updateCommand) return;
+  await runUpdateInTerminal(cli.updateCommand, 'claude update', null, $('#update-claude-apply'));
 }
 
 // ---- voice: spoken announcements + hands-free replies -----------------------
@@ -2546,6 +2606,7 @@ function wireEvents() {
   $('#update-close').onclick = closeUpdatePanel;
   $('#update-check').onclick = recheckUpdate;
   $('#update-apply').onclick = applyUpdate;
+  $('#update-claude-apply').onclick = applyClaudeUpdate;
   $('#update-backdrop').onclick = (e) => { if (e.target.id === 'update-backdrop') closeUpdatePanel(); };
 
   $('#mouse-hint-dismiss').onclick = () => {

@@ -22,6 +22,7 @@ const { Session } = require('./lib/session');
 const recents = require('./lib/recents');
 const archive = require('./lib/archive');
 const { restoreClaudeCommand, restoreOpencodeCommand } = require('./lib/restore');
+const claudeCli = require('./lib/claudeCli');
 const { DEFAULT_SESSIOND_PORT, claimPidFile } = require('./lib/state');
 const { suggestDirs } = require('./lib/dirs');
 const { setClipboardImage, clipboardTarget } = require('./lib/clipboard');
@@ -146,6 +147,22 @@ function renderHistoryNotice(history) {
     + '\r\n' + lines.join('\r\n');
 }
 
+// Print a warning into a freshly opened claude terminal when the machine's CLI
+// is older than the version termhub is pinned to (see lib/claudeCli.js). This is
+// the one moment the mismatch is actionable — the alternative is the user
+// discovering it as "restore silently does nothing" days later. Fire-and-forget
+// and cached, so it never delays the spawn; skipped entirely when the CLI is
+// current or couldn't be located (a PATH quirk is not a version problem).
+function warnIfClaudeCliStale(session) {
+  if (session.kind !== 'claude') return;
+  claudeCli.status().then((s) => {
+    if (!s || s.satisfied || !s.installed) return;
+    session.notice(`\x1b[33m[termhub] Claude CLI ${s.installed} is older than the pinned `
+      + `${s.minVersion} — session restore and the model badge may not work. `
+      + `Run \`${s.updateCommand}\`.\x1b[0m`);
+  }).catch(() => { /* a warning must never break a session */ });
+}
+
 // Wire a session's lifecycle hooks to the on-disk archive.
 function trackSession(session) {
   session.onExit = () => archive.patch(session.id, { endedAt: Date.now() });
@@ -217,6 +234,7 @@ function createSessiond() {
         const body = await readBody(req);
         const session = new Session({ cwd: body.cwd, command: body.command, title: body.title, cols: body.cols, rows: body.rows });
         trackSession(session);
+        warnIfClaudeCliStale(session);
         sessions.set(session.id, session);
         archive.upsert(session.archiveEntry());
         if (body.cwd && !session.cwdFallback) recents.add(body.cwd);
@@ -240,6 +258,7 @@ function createSessiond() {
           agentSessionId: (entry.kind === 'claude' || entry.kind === 'opencode') ? entry.agentSessionId : null,
         });
         trackSession(session);
+        warnIfClaudeCliStale(session); // restore is exactly where a stale CLI bites
         sessions.set(session.id, session);
 
         if (entry.kind !== 'claude' && Array.isArray(entry.history) && entry.history.length) {

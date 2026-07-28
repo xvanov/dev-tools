@@ -150,6 +150,10 @@ It's deterministic and reversible:
    never changes; browsers reconnect to the same sessions and replay scrollback.
 4. **Unhealthy** → kills green, `git reset --hard` to the old commit, leaves the old front
    serving. Zero downtime, terminals untouched.
+5. Runs `claude update` to keep the Claude Code CLI at or above the version termhub is pinned to
+   (`termhub.claudeCli` in `package.json`). Last and non-fatal: an offline or rate-limited CLI
+   update prints a warning and leaves the finished termhub update in place. Running `claude`
+   sessions keep the build they started with.
 
 Because only `front` is swapped — `sessiond` and its PTYs are never touched — even the terminal
 running `update.ps1` survives the update.
@@ -167,7 +171,10 @@ running `update.ps1` survives the update.
 - **⟳ Update** (sidebar header) — opens a panel showing whether termhub is behind GitHub and
   whether the tool itself changed, with the incoming commit list. **Update now** opens a
   terminal that runs the safe updater (see below). It also checks once a day in the background
-  and highlights the button when an update is waiting.
+  and highlights the button when an update is waiting. The panel also reports your **Claude Code
+  CLI** version against the one termhub is pinned to, with an **Update Claude** button — termhub
+  drives the CLI through `--session-id`/`--resume` and its on-disk transcripts, so a CLI too old
+  for the pin can break session restore and the model badge. `Update now` updates the CLI too.
 - Switch terminals via the sidebar — the only place session control lives. The **✕** next
   to a session **kills** it; there's no separate soft-close, so what you see is what happens.
 - **Collapse** (« in the sidebar header, desktop only) tucks the sidebar away for full-width

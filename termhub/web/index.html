@@ -150,9 +150,13 @@
       <h2>Update termhub</h2>
       <div id="update-status">Checking…</div>
       <div id="update-commits"></div>
+      <!-- Claude Code CLI: a version-coupled dependency, not just a program the
+           user happens to run — see lib/claudeCli.js. -->
+      <div id="update-claude"></div>
       <div class="dialog-buttons">
         <button id="update-close" class="secondary">Close</button>
         <button id="update-check" class="secondary">Check again</button>
+        <button id="update-claude-apply" class="secondary hidden">Update Claude</button>
         <button id="update-apply" disabled>Update now</button>
       </div>
     </div>

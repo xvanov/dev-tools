@@ -384,6 +384,15 @@ html, body {
 #update-status.ok { color: var(--ok); }
 #update-status.warn { color: var(--accent-2); }
 #update-dialog .dialog-buttons button:disabled { opacity: 0.5; cursor: default; }
+#update-dialog .dialog-buttons button.hidden { display: none; }
+/* Claude CLI line: a dependency note under the commit list, dimmer than the
+   headline status unless the pinned version isn't met. */
+#update-claude {
+  font-size: 13px; color: var(--fg-dim); margin: 0 0 12px;
+  padding-top: 10px; border-top: 1px solid var(--border);
+}
+#update-claude:empty { display: none; }
+#update-claude.warn { color: var(--accent-2); }
 .commit-list { list-style: none; margin: 0 0 12px; padding: 0; max-height: 220px; overflow-y: auto; font-size: 13px; }
 .commit-list li {
   padding: 4px 0; color: var(--fg); border-bottom: 1px solid var(--border);

@@ -9,7 +9,14 @@
     "sessiond": "node sessiond.js",
     "front": "node front.js",
     "vendor": "cp node_modules/@xterm/xterm/lib/xterm.js web/vendor/xterm.js && cp node_modules/@xterm/xterm/css/xterm.css web/vendor/xterm.css && cp node_modules/@xterm/addon-fit/lib/addon-fit.js web/vendor/addon-fit.js && cp node_modules/@xterm/addon-webgl/lib/addon-webgl.js web/vendor/addon-webgl.js",
-    "test": "node test/voiceCommands.test.js"
+    "test": "node test/voiceCommands.test.js && node test/restore.test.js && node test/claudeCli.test.js"
+  },
+  "termhub": {
+    "claudeCli": {
+      "_comment": "The Claude Code CLI termhub's --session-id/--resume handling and transcript reading are verified against (lib/claudeCli.js). Bump both when a newer CLI has been exercised: launch a claude session, restore it after a sessiond restart, and confirm the model badge and spoken announcements still resolve.",
+      "minVersion": "2.1.220",
+      "verifiedVersion": "2.1.220"
+    }
   },
   "dependencies": {
     "node-pty": "^1.0.0",
