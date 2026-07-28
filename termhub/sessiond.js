@@ -24,6 +24,8 @@ const archive = require('./lib/archive');
 const { restoreClaudeCommand, restoreOpencodeCommand } = require('./lib/restore');
 const claudeCli = require('./lib/claudeCli');
 const { DEFAULT_SESSIOND_PORT, claimPidFile } = require('./lib/state');
+const { probeSessiond } = require('./lib/probe');
+const build = require('./lib/build');
 const { suggestDirs } = require('./lib/dirs');
 const { setClipboardImage, clipboardTarget } = require('./lib/clipboard');
 const { saveUploadedFile, saveImageAttachment } = require('./lib/uploads');
@@ -44,6 +46,9 @@ const MAX_UPLOAD_FILE_BYTES = 100 * 1024 * 1024;
 const MAX_TTS_REQUEST_CHARS = 4000;
 
 const MACHINE_NAME = process.env.TERMHUB_MACHINE || os.hostname();
+// Reported by /api/ping so "how long has this supervisor been up?" (and thus how
+// many updates it has sat through) is answerable without reading logs.
+const STARTED_AT = Date.now();
 
 // ---- helpers --------------------------------------------------------------
 
@@ -171,7 +176,7 @@ function trackSession(session) {
 
 // ---- server factory -------------------------------------------------------
 
-function createSessiond() {
+function createSessiond({ entry = 'sessiond', port: serverPort = DEFAULT_SESSIOND_PORT } = {}) {
   const sessions = new Map();
   const listSessions = () => [...sessions.values()].map((s) => s.info());
   // Archived entries whose session isn't currently live = restorable after a
@@ -199,8 +204,27 @@ function createSessiond() {
 
     try {
       // Liveness probe used by the front's /api/health (proves sessiond is up).
+      //
+      // It also carries IDENTITY, because "something answers on 7010" was not a
+      // strong enough answer for the scripts: a `node server.js` (the dev
+      // monolith, which binds the publish port AND a sessiond on the same port)
+      // answered this happily, so an update declared sessiond healthy while the
+      // real supervisor had never started. `entry` distinguishes them, `pid`
+      // lets the updater confirm the process it spawned is the one replying, and
+      // `commit` exposes the drift between the running supervisor and the
+      // checkout (expected after an update — sessiond is deliberately not
+      // restarted — but it must be visible, not inferred).
       if (req.method === 'GET' && pathname === '/api/ping') {
-        return sendJson(res, 200, { ok: true, sessions: sessions.size });
+        return sendJson(res, 200, {
+          ok: true,
+          sessions: sessions.size,
+          entry,
+          pid: process.pid,
+          port: serverPort,
+          machine: MACHINE_NAME,
+          commit: build.commit(),
+          startedAt: STARTED_AT,
+        });
       }
 
       if (req.method === 'GET' && pathname === '/api/info') {
@@ -547,19 +571,54 @@ function bindVoice(ws, voice) {
 
 // Start sessiond on loopback. Always 127.0.0.1 — never honour TERMHUB_BIND here;
 // only the front is meant to be reachable.
-function startSessiond({ port = DEFAULT_SESSIOND_PORT } = {}) {
-  const server = createSessiond();
+//
+// `claimPid` is opt-in and the pid file is written INSIDE the listen callback:
+// the bind is the real "am I the only supervisor?" test, and only a process that
+// won it may record itself as the supervisor. `server.js` (dev, both tiers in one
+// process) passes claimPid:false — it is not the thing the scripts should find
+// and reuse as a persistent sessiond.
+function startSessiond({ port = DEFAULT_SESSIOND_PORT, entry = 'sessiond', claimPid = false } = {}) {
+  const server = createSessiond({ entry, port });
+  build.commit(); // warm the cache off the request path
+  server.on('error', (err) => {
+    if (err.code === 'EADDRINUSE') {
+      console.error(`[sessiond] 127.0.0.1:${port} is already in use — another sessiond or a `
+        + '`node server.js` owns it. Refusing to start a second supervisor.');
+      console.error('[sessiond] no pid file was written; the process holding the port keeps it.');
+      process.exit(3);
+    }
+    throw err;
+  });
   server.listen(port, '127.0.0.1', () => {
-    console.log(`[sessiond] ${MACHINE_NAME} listening on http://127.0.0.1:${port}`);
+    if (claimPid) claimPidFile('sessiond', port);
+    console.log(`[sessiond] ${MACHINE_NAME} listening on http://127.0.0.1:${port} `
+      + `(pid ${process.pid}, ${build.shortCommit() || 'no commit'})`);
   });
   return server;
 }
 
 module.exports = { createSessiond, startSessiond };
 
-// Run directly: claim the pid file and start.
+// Run directly: pre-flight the port, then start and claim the pid file.
+//
+// The pre-flight exists purely for the error MESSAGE — the EADDRINUSE handler
+// above already refuses correctly, but it can't say who is there. A duplicate
+// launch is nearly always a stale `node server.js` holding both tiers' ports, and
+// naming it is the difference between a two-second fix and an afternoon.
 if (require.main === module) {
   const port = DEFAULT_SESSIOND_PORT;
-  claimPidFile('sessiond', port);
-  startSessiond({ port });
+  probeSessiond(port).then((live) => {
+    if (live) {
+      const who = live.entry === 'server'
+        ? 'a `node server.js` (dev single-process entrypoint)'
+        : 'another sessiond';
+      console.error(`[sessiond] 127.0.0.1:${port} already serving ${who} `
+        + `(pid ${live.pid ?? '?'}, ${live.commit ? live.commit.slice(0, 7) : 'unknown commit'}, `
+        + `${live.sessions ?? '?'} session(s)).`);
+      console.error('[sessiond] Not starting. Stop that process first — it owns the live PTYs.');
+      process.exit(3);
+      return;
+    }
+    startSessiond({ port, claimPid: true });
+  });
 }

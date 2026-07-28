@@ -165,7 +165,17 @@ class Session {
   }
 
   _spawn() {
-    const env = { ...process.env, TERM: 'xterm-256color', COLORTERM: 'truecolor' };
+    // TERMHUB_SESSION_ID marks the terminal as termhub-owned, so a script can
+    // tell it is running inside a PTY that a given action would destroy —
+    // windows/restart-sessiond.ps1 refuses to kill the supervisor from one of
+    // its own terminals on the strength of it. Always assigned, never inherited:
+    // a nested termhub must not hand its parent's session id to its children.
+    const env = {
+      ...process.env,
+      TERM: 'xterm-256color',
+      COLORTERM: 'truecolor',
+      TERMHUB_SESSION_ID: this.id,
+    };
     // A termhub terminal is a *fresh* terminal, never a continuation of whatever
     // launched termhub. If termhub was started from inside a Claude Code session
     // (easy to do — run `node server.js` from a termhub terminal), these inherited

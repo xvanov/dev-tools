@@ -22,6 +22,8 @@ const { URL } = require('url');
 const { resolveBindAddress } = require('./lib/bind');
 const { DEFAULT_FRONT_PORT, DEFAULT_SESSIOND_PORT, claimPidFile } = require('./lib/state');
 const { checkForUpdate } = require('./lib/update');
+const { probeJson } = require('./lib/probe');
+const build = require('./lib/build');
 
 const WEB_DIR = path.join(__dirname, 'web');
 
@@ -53,31 +55,27 @@ function serveStatic(res, pathname) {
 
 // Ask sessiond if it's alive (used by /api/health and the updater's probe).
 function pingSessiond(sessiondPort, timeoutMs = 2000) {
-  return new Promise((resolve, reject) => {
-    const req = http.get({ host: '127.0.0.1', port: sessiondPort, path: '/api/ping', timeout: timeoutMs }, (r) => {
-      let raw = '';
-      r.on('data', (c) => { raw += c; });
-      r.on('end', () => {
-        if (r.statusCode !== 200) return reject(new Error(`sessiond /api/ping -> ${r.statusCode}`));
-        try { resolve(JSON.parse(raw)); } catch (e) { reject(e); }
-      });
-    });
-    req.on('timeout', () => req.destroy(new Error('sessiond ping timeout')));
-    req.on('error', reject);
-  });
+  return probeJson({ port: sessiondPort, path: '/api/ping', timeoutMs });
 }
 
-function createFront({ sessiondPort }) {
+function createFront({ sessiondPort, port: serverPort = DEFAULT_FRONT_PORT }) {
   const server = http.createServer((req, res) => {
     const url = new URL(req.url, 'http://localhost');
     const { pathname } = url;
 
     // Local health check — proves the front is up AND can reach sessiond. The
     // updater polls this on the green port before flipping Tailscale Serve.
+    //
+    // `self` carries the same identity block sessiond's /api/ping does, so one
+    // request answers both "is green healthy?" and "is green actually the new
+    // code, talking to the supervisor I think it is?". Present on the 503 path
+    // too — a front that can't reach sessiond is exactly when you want to know
+    // which front and which port it was looking at.
     if (req.method === 'GET' && pathname === '/api/health') {
+      const self = { entry: 'front', pid: process.pid, port: serverPort, commit: build.commit(), sessiondPort };
       return pingSessiond(sessiondPort)
-        .then((info) => sendJson(res, 200, { ok: true, front: true, sessiond: info }))
-        .catch((e) => sendJson(res, 503, { ok: false, front: true, error: String(e.message || e) }));
+        .then((info) => sendJson(res, 200, { ok: true, front: true, self, sessiond: info }))
+        .catch((e) => sendJson(res, 503, { ok: false, front: true, self, error: String(e.message || e) }));
     }
 
     // Update check is the front's own business (it owns the git checkout and is
@@ -132,11 +130,26 @@ function createFront({ sessiondPort }) {
   return server;
 }
 
-function startFront({ port = DEFAULT_FRONT_PORT, sessiondPort = DEFAULT_SESSIOND_PORT, host } = {}) {
+// `claimPid` is opt-in and claimed inside the listen callback, for the same
+// reason sessiond does it that way: winning the bind is what makes a process the
+// front on that port, so a loser must not leave its pid behind — nor delete the
+// incumbent's on the way out (see removeOwnPidFile in lib/state.js).
+function startFront({ port = DEFAULT_FRONT_PORT, sessiondPort = DEFAULT_SESSIOND_PORT, host, claimPid = false } = {}) {
   const bindHost = host || resolveBindAddress();
-  const server = createFront({ sessiondPort });
+  const server = createFront({ sessiondPort, port });
+  build.commit(); // warm the cache off the request path
+  server.on('error', (err) => {
+    if (err.code === 'EADDRINUSE') {
+      console.error(`[front] ${bindHost}:${port} is already in use — another front or a `
+        + '`node server.js` owns it. Refusing to start a second front on this port.');
+      process.exit(3);
+    }
+    throw err;
+  });
   server.listen(port, bindHost, () => {
-    console.log(`[front] listening on http://${bindHost}:${port} -> sessiond 127.0.0.1:${sessiondPort}`);
+    if (claimPid) claimPidFile(`front-${port}`, port);
+    console.log(`[front] listening on http://${bindHost}:${port} -> sessiond 127.0.0.1:${sessiondPort} `
+      + `(pid ${process.pid}, ${build.shortCommit() || 'no commit'})`);
     if (bindHost === '127.0.0.1' && !process.env.TERMHUB_BIND) {
       console.log('[front] bound to loopback only — publish it with Tailscale Serve, or set TERMHUB_BIND.');
     }
@@ -150,6 +163,5 @@ module.exports = { createFront, startFront, pingSessiond };
 if (require.main === module) {
   const port = DEFAULT_FRONT_PORT;
   const sessiondPort = DEFAULT_SESSIOND_PORT;
-  claimPidFile(`front-${port}`, port);
-  startFront({ port, sessiondPort });
+  startFront({ port, sessiondPort, claimPid: true });
 }

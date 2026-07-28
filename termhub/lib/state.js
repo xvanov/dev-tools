@@ -70,11 +70,43 @@ function removePidFile(name) {
   try { fs.unlinkSync(pidPath(name)); } catch { /* already gone */ }
 }
 
+// Is this pid a live process? Signal 0 checks for existence without delivering
+// anything; EPERM means it exists but belongs to someone else.
+function isProcessAlive(pid) {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; }
+}
+
+// The LIVE holder of a pid file, or null when the file is missing or stale.
+// Note this can't rule out pid REUSE — an unrelated process inheriting the pid
+// reads as a holder. That's why the pid file is bookkeeping only and the
+// authoritative "am I a duplicate?" guard is the port bind (see the EADDRINUSE
+// handlers in sessiond.js / front.js). Nothing here refuses to start.
+function pidFileHolder(name) {
+  const info = readPidFile(name);
+  if (!info || !isProcessAlive(info.pid)) return null;
+  return info;
+}
+
+// Remove a pid file only while it still names THIS process. A duplicate that
+// starts and dies must not delete the incumbent's file on the way out — that's
+// how a squatted port turned into "no sessiond recorded", which made the next
+// update launch yet another duplicate. Self-perpetuating; hence the check.
+function removeOwnPidFile(name) {
+  const info = readPidFile(name);
+  if (info && info.pid !== process.pid) return;
+  removePidFile(name);
+}
+
 // Register a pid file for this process and tear it down on exit so a stale file
 // never outlives the process. Cleared on normal exit and on Ctrl-C / SIGTERM.
+//
+// Call this only AFTER the listen succeeded. Claiming it before binding meant a
+// duplicate wrote the file, hit EADDRINUSE, and then removed the file it had
+// just overwritten — leaving the healthy incumbent with no pid file at all.
 function claimPidFile(name, port) {
   writePidFile(name, port);
-  const cleanup = () => removePidFile(name);
+  const cleanup = () => removeOwnPidFile(name);
   process.on('exit', cleanup);
   for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
     process.on(sig, () => { cleanup(); process.exit(0); });
@@ -93,5 +125,8 @@ module.exports = {
   writePidFile,
   readPidFile,
   removePidFile,
+  removeOwnPidFile,
+  isProcessAlive,
+  pidFileHolder,
   claimPidFile,
 };
