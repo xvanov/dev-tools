@@ -5,13 +5,17 @@ Companion to [README.md](./README.md). termhub runs **two processes per machine*
 the web UI and proxies to `sessiond`. This split is what lets updates swap the front without
 killing terminals. There is no cross-machine hub — you reach each machine directly at its own URL.
 
+Repo-wide working agreement (commit-and-push every unit of work, commit style): [../CLAUDE.md](../CLAUDE.md).
+It matters more here than elsewhere: `windows/update.ps1` deploys by `git pull --ff-only` and
+**fails on a dirty tree**, so uncommitted work blocks the next update on every machine.
+
 ## Mental model
 
 ```
-                         Tailscale Serve (stable public :7000)
-                                    │   (re-pointed atomically on update)
+                         Tailscale Serve  (https://<host>:7000, tailnet IP only)
+                                    │
                                     ▼
-browser tab ──http+ws──►  front  (UI + proxy, 127.0.0.1:7001 or 7002)
+browser tab ──http+ws──►  front  (UI + proxy, 127.0.0.1:7000)   ◄── http://127.0.0.1:7000
                               │   proxies /api/*, /ws/term/* and /ws/voice to ↓
                               ▼
                           sessiond  (127.0.0.1:7010)  ──► node-pty PTYs
@@ -22,16 +26,25 @@ browser tab ──http+ws──►  front  (UI + proxy, 127.0.0.1:7001 or 7002)
 - A session = one PTY living in **`sessiond`**, with an in-memory scrollback buffer. Browser
   (re)connections attach to it via the `front` proxy and get a replay of the buffer, then live
   output.
-- **Updates** (`windows/update.ps1`): start a new `front` on the alternate loopback port,
-  health-check it, re-point Tailscale Serve to it, stop the old one. `sessiond` is never touched,
-  so terminals survive. See *Two-tier layout & safe updates* below.
-- For **local dev**, `node server.js` runs both tiers in one process on `:7000`.
+- **One port means one thing.** Serve binds only the *tailnet* IP, so the front can hold
+  `127.0.0.1:7000` at the same time — `https://<host>:7000/` and `http://127.0.0.1:7000/` are then
+  the same server. That's *single-port* mode, the default. See *Port modes* below for the
+  blue/green alternative and what it buys.
+- **Updates** (`windows/update.ps1`): swap the `front` for the newly pulled one and verify it before
+  keeping it. `sessiond` is never touched, so terminals survive. See *Two-tier layout & safe
+  updates* below.
+- For **local dev**, `node server.js` runs both tiers in one process on `:7000`. It **refuses to
+  start** when a real deployment is already up, because it would shadow it — see *One process per
+  port* below.
 
 ## Ports & binding
 
 - Listens on `TERMHUB_PORT` (default 7000), bound to `TERMHUB_BIND` if set, else auto:
   `tailscale ip -4` → any `100.64.0.0/10` interface → `127.0.0.1`. The loopback fallback
   means it never silently exposes itself on a public interface.
+- The Windows scripts always pass `TERMHUB_BIND=127.0.0.1` and publish via Serve; the front's own
+  port comes from `TERMHUB_FRONT_PORT`, which is the publish port in single-port mode (see
+  *Port modes*). `start-http.ps1` is the exception — it binds the tailnet IP directly, no Serve.
 - Local dev without Tailscale: `TERMHUB_BIND=127.0.0.1 node server.js`, then open
   `http://127.0.0.1:7000`.
 
@@ -43,6 +56,13 @@ Single-process dev (both tiers in one process on :7000):
 npm install
 node server.js
 # browser → http://<tailscale-ip>:7000
+```
+
+On a machine that already runs the real two-tier deployment this exits 3 rather than shadowing it.
+Give the dev instance its own ports instead:
+
+```bash
+TERMHUB_PORT=7100 TERMHUB_SESSIOND_PORT=7110 node server.js
 ```
 
 Or the two tiers separately (the production layout):
@@ -67,7 +87,8 @@ HTTP API (served by `sessiond`, proxied by `front`): `GET /api/info`, `GET /api/
 `POST /api/sessions` (`{cwd?, command?, title?, cols, rows}`), `POST /api/sessions/:id/restore`
 (re-open an archived session), `DELETE /api/sessions/:id` (kill a live session and/or forget an
 archived one), `PATCH /api/sessions/:id` (`{title}`), `GET /api/recents`, `GET /api/dirs?path=`,
-`GET /api/ping` (sessiond liveness). Attachments take a **raw binary body** with the filename in
+`GET /api/ping` (sessiond liveness **and identity**: `{ok, sessions, entry, pid, port, machine,
+commit, startedAt}` — see *One process per port*). Attachments take a **raw binary body** with the filename in
 an URI-encoded `X-File-Name` header: `POST /api/sessions/:id/clipboard-image` →
 `{ok, kind:'clipboard'|'file', path?, name?}` (see *Attachments* below) and
 `POST /api/sessions/:id/upload-file` → `{ok, kind:'file', path, name}`. Both answer `413` with a
@@ -81,7 +102,10 @@ with it and surface through the front's proxy as a misleading
 `imageBytes` is the cap that actually applies **on this host**, not a constant — see below.
 The `front` answers `GET /api/health` itself (front up +
 sessiond reachable) for the updater's probe, and `GET /api/update/check` (`?force=1` to skip the
-60s cache) — both are handled by the front and never proxied. Terminal stream: WebSocket `/ws/term/:id` with JSON
+60s cache) — both are handled by the front and never proxied. `/api/health` returns
+`{ok, front, self:{entry,pid,port,commit,sessiondPort}, sessiond}`, with `self` present on the 503
+path too; the updater checks `self.pid`/`self.commit` to confirm green is the process it started
+running the commit it just pulled. Terminal stream: WebSocket `/ws/term/:id` with JSON
 `{type:'input'|'resize'}` up and `{type:'replay'|'output'|'exit'}` down.
 
 ## Two-tier layout & safe updates
@@ -91,11 +115,87 @@ the data dir (`%LOCALAPPDATA%\termhub` on Windows, `~/.local/termhub` on Linux):
 
 - `state.json` — `{ sessiondPort, activeFrontPort, publishPort }`: which loopback port Tailscale
   Serve currently targets. Written by `start.ps1` / `update.ps1`, read by both.
-- `sessiond.pid`, `front-<port>.pid` — two-line (`PID`\n`PORT`) files each process writes on
-  startup and removes on a clean exit; the scripts read them to find/stop the right process.
+- `sessiond.pid`, `front-<port>.pid` — two-line (`PID`\n`PORT`) files each process writes **after
+  winning its port bind** and removes on a clean exit; the scripts read them to find/stop the right
+  process. They are *bookkeeping*, never authority — see "One process per port" below.
 - `sessions.json` — the session archive (`lib/archive.js`). Mirrors each session's metadata
   (cwd, command, `kind`, and — for shell sessions — the command lines typed in it) so it
   survives a reboot. Written by `sessiond` on create / rename / exit / input.
+
+### One process per port (and why a pid file is never the proof)
+
+The port bind is the only authority on "is this tier already running". A pid file goes stale, and
+pids get reused, so `lib/state.js` treats it as a record to be kept honest rather than a lock:
+
+- **Claim after listen.** `startSessiond`/`startFront` write the pid file inside the `listen`
+  callback, and only when passed `claimPid: true`. A process that loses the bind never records
+  itself.
+- **Only the named process may delete it** (`removeOwnPidFile`, and `Remove-OwnedPidFile` on the
+  PowerShell side). Both halves matter, because the scripts kill by *port* and the pid file for a
+  tier is not guaranteed to describe whoever holds that port.
+- **`EADDRINUSE` is a clean, loud refusal** (exit 3), not a stack trace. `sessiond.js` pre-flights
+  the port first purely to name who's there.
+- **`server.js` refuses to start** when a two-tier sessiond or front is already live. It's the dev
+  single-process entrypoint and it binds the publish port *and* a sessiond, so left running it
+  becomes the machine's de-facto supervisor.
+
+This is all one bug's worth of scar tissue. The old order was claim-then-bind, and a duplicate
+sessiond launch (a leftover `node server.js` already owned 7010) went: write the pid file → fail
+the bind → exit → **delete the file it had just overwritten**. The healthy supervisor was left with
+no pid file, so the next update read "no sessiond running", launched another duplicate, and the
+cycle repeated. Meanwhile `Wait-SessiondUp` was satisfied by *anything* answering `/api/ping`, so
+the update declared sessiond healthy and deployed a fresh front on top of a supervisor running
+days-old code — a fully updated UI over stale `sessiond` behaviour, which is the hardest possible
+symptom to read. Covered by `test/state.test.js`.
+
+So `/api/ping` and `/api/health` now carry **identity**, not just liveness: `entry`
+(`sessiond` | `server` | `front`), `pid`, `port`, `commit` (the commit the *process* runs, from
+`lib/build.js`), and `startedAt`. `Confirm-Sessiond` uses it to tell a real supervisor from the
+monolith, and to verify the pid answering is the pid it just spawned; `update.ps1` uses it to
+confirm green is the process it started, running the commit it just pulled.
+
+### Port modes
+
+`state.json` encodes the mode implicitly: **`activeFrontPort == publishPort` is single-port**,
+anything else is blue/green. `start.ps1 -SinglePort` / `-BlueGreen` switches (and stops the other
+mode's fronts, which would otherwise keep serving stale code on a port nothing points at).
+
+| | single-port (default) | blue/green |
+|---|---|---|
+| front binds | `127.0.0.1:7000` | `127.0.0.1:7001` or `7002` |
+| Serve | `:7000 → 127.0.0.1:7000` | `:7000 → 127.0.0.1:700{1,2}` |
+| `http://127.0.0.1:7000` | works, same server | **nothing there** |
+| update cutover | front swapped in place, ~1–2s of refused connections | atomic Serve re-point, no gap |
+| rollback | must *restart* the old version | old front never stopped |
+
+The thing that makes single-port work: **Serve listens on the tailnet IP only**
+(`100.x.y.z:7000`, `fd7a:…:7000`), never on loopback. So `:7000 → 127.0.0.1:7000` is two different
+sockets, not a loop, and one port number answers everywhere. Verify with
+`Get-NetTCPConnection -State Listen -LocalPort 7000` — expect the tailnet addresses owned by
+`tailscaled` and `127.0.0.1` owned by `node`.
+
+Either way, a loopback listener on the publish port that **isn't a front** is a squatter.
+`Clear-PublishPort` (run first by `start.ps1` and `update.ps1`) decides on identity, not on mode: it
+leaves anything reporting `entry: 'front'` alone in both modes, and removes a `node server.js`
+monolith in both. Only `node` processes are ever killed.
+
+The squatter has a cause worth checking before treating the symptom: on machines installed before
+the split, the **`Termhub` scheduled task still runs `node server.js`** and recreates it at every
+logon. `install.ps1` registers `start.ps1` correctly — but **only when elevated**, since registering
+a scheduled task is an admin operation; run non-elevated it installs the Startup-folder launcher and
+leaves the stale task alone, so the squatter survives an install that looked successful.
+`Test-TermhubTask` warns on every start/update until someone fixes it from an admin shell (re-run
+`install.ps1`, or `Unregister-ScheduledTask -TaskName Termhub -Confirm:$false` and let the Startup
+launcher do it). Inspect with `(Get-ScheduledTask Termhub).Actions | Format-List Execute,Arguments`.
+
+### Restarting sessiond on purpose
+
+`windows/restart-sessiond.ps1` is the deliberate counterpart to the safe update: it **ends every
+live terminal** (PTYs are sessiond's memory and can't be migrated) and they come back as
+*Restorable* from `sessions.json`. It refuses to run from inside a termhub terminal —
+`TERMHUB_SESSION_ID` is set in every spawned PTY (`lib/session.js`) — because that terminal is one
+of the ones it kills. Use it for sessiond-side changes; `update.ps1` prints a reminder when a pull
+touched `sessiond.js` or `lib/` while the running supervisor is still on the old commit.
 
 ### Session persistence (surviving reboots)
 
@@ -141,11 +241,23 @@ The **⟳ Update** button in the UI is a front-end over this: the front answers
 now** just opens a normal session whose command is `update.ps1` — so the updater runs inside a
 `sessiond`-owned PTY and survives the front swap it triggers, exactly like running it by hand.
 
-`windows/update.ps1` does a blue-green swap: `git pull --ff-only` (rollback ref saved) → start a
-green `front` on the alternate of `{7001, 7002}` → health-check (`/api/health`, then the proxied
-`/api/sessions` and static `/`) → on success re-point `tailscale serve --https=<publishPort>` to
-green and stop blue; on failure kill green, `git reset --hard` to the rollback ref, leave blue
-serving. `sessiond` is never restarted, so PTYs (and the terminal running the updater) survive.
+`windows/update.ps1`: reclaim the publish port → ensure `sessiond` → `git pull --ff-only` (rollback
+ref saved) → `npm install` only if `package*.json` changed → deploy the new `front` → verify →
+update the Claude CLI. The deploy step follows the mode in `state.json` (see *Port modes*):
+
+- **single-port** — stop the front on `<publishPort>`, start the new one on the same port. On
+  failure, `git reset --hard` to the rollback ref and restart the *previous* version there, so the
+  machine is left serving something; if even that fails the script says the UI is down and names
+  `start.ps1`.
+- **blue/green** — start the new front on the alternate of `{7001, 7002}`, then re-point
+  `tailscale serve --https=<publishPort>` to it and stop the old one. On failure the new front is
+  stopped and the tree reset; the old front never stopped serving.
+
+Verification is the same for both and lives in `Start-VerifiedFront`: `/api/health` reports
+`ok`, the proxied `/api/sessions` and static `/` both return 200, **and** `self.pid` matches the
+process just spawned while `self.commit` matches the commit just pulled. Health alone would pass a
+stale process that happened to own the port. `sessiond` is never restarted, so PTYs (and the terminal
+running the updater) survive either path.
 
 `node-pty` lives only in `sessiond`, so routine front updates need **no native rebuild**. A
 `node-pty` version bump only takes effect on a deliberate `sessiond` restart (which does clear
@@ -521,12 +633,19 @@ The `Termhub` scheduled task runs `windows\start.ps1` at logon, which ensures `s
 starts the active `front`, and (re-)publishes it via Tailscale Serve. It's idempotent — re-running
 `start.ps1` reuses a live `sessiond`/`front` instead of restarting it.
 
+**Verify that's what the task actually does** — a machine installed before the two-tier split has a
+task that still runs `node server.js`, which squats the publish port and shadows `sessiond` at every
+logon (see "The publish port belongs to Tailscale Serve"). `Test-TermhubTask` warns about it on
+every start/update; `install.ps1` fixes it.
+
 ```powershell
 Get-ScheduledTask Termhub | Get-ScheduledTaskInfo
+(Get-ScheduledTask Termhub).Actions | Format-List Execute,Arguments  # must reference start.ps1
 Start-ScheduledTask Termhub              # = run start.ps1 (boots both tiers, idempotent)
 Stop-ScheduledTask  Termhub
 .\windows\update.ps1                     # safe blue-green update (run from any terminal)
 .\windows\start.ps1                      # bring tiers up / re-publish by hand
+.\windows\restart-sessiond.ps1           # ENDS all terminals; for sessiond-side changes
 ```
 
 Stopping the task does **not** stop the running `node` processes (they're detached); kill them by

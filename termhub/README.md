@@ -66,25 +66,33 @@ Two processes per machine — a **persistent** PTY supervisor and a **swappable*
 updates don't kill terminals:
 
 ```
-                         Tailscale Serve (stable public :7000)
-                                    │   (re-pointed atomically on update)
+                         Tailscale Serve  (https://<host>:7000, tailnet IP only)
+                                    │
                                     ▼
-browser tab ──http+ws──►  front  (UI + proxy, 127.0.0.1:7001⇆7002)
+browser tab ──http+ws──►  front  (UI + proxy, 127.0.0.1:7000)  ◄── http://127.0.0.1:7000
                               │   proxies /api/*, /ws/term/* and /ws/voice to ↓
                               ▼
                           sessiond  (127.0.0.1:7010)
                               └─► PTYs (node-pty) + scrollback  ← survive every update
 ```
 
+Serve binds only the *tailnet* IP, so the front can hold `127.0.0.1:7000` at the same time: one port
+number, and `https://<host>:7000/` and `http://127.0.0.1:7000/` are the same server. That's the
+default (*single-port*) mode. `windows\start.ps1 -BlueGreen` moves the front to `7001`⇆`7002` and has
+Serve re-pointed between them instead, which makes the update cutover atomic at the cost of
+`http://127.0.0.1:7000` no longer being a thing — see `AGENT.md` → *Port modes*.
+
 - **`sessiond`** owns the terminals (the `node-pty` PTYs and their scrollback). It's long-lived
   and only restarting *it* loses sessions.
-- **`front`** serves the web UI and reverse-proxies to `sessiond`. Updates start a new `front`
-  on the alternate loopback port, health-check it, then re-point Tailscale Serve at it — the
+- **`front`** serves the web UI and reverse-proxies to `sessiond`. Updates replace it and verify the
+  replacement (healthy, *and* the right pid running the commit just pulled) before keeping it — the
   browser reconnects through the new `front` to the *same* PTYs and replays scrollback.
 
 Sessions still don't survive a full **reboot** (the supervisor restarts) — by design, no tmux.
 For local dev, `node server.js` runs both tiers in one process on `:7000` (no update-survival,
-which is fine for dev).
+which is fine for dev). It refuses to start if a real deployment is already running, since it would
+otherwise shadow `sessiond` and serve stale code on the publish port; give it its own ports instead:
+`TERMHUB_PORT=7100 TERMHUB_SESSIOND_PORT=7110 node server.js`.
 
 ## Install (on each machine)
 
@@ -288,7 +296,7 @@ All optional environment variables:
 |---|---|---|
 | `TERMHUB_PORT` | `7000` | Front port for the single-process dev server (`node server.js`) |
 | `TERMHUB_SESSIOND_PORT` | `7010` | Supervisor (`sessiond`) loopback port |
-| `TERMHUB_FRONT_PORT` | `7001` | Front loopback port (production alternates `7001`⇆`7002`) |
+| `TERMHUB_FRONT_PORT` | `7001` | Front loopback port. The Windows scripts set it from `state.json`: the publish port in single-port mode (default), else `7001`⇆`7002` for blue/green |
 | `TERMHUB_BIND` | auto | Front bind address. Auto-detects the Tailscale IP (`tailscale ip -4`, else a 100.64.0.0/10 interface), falling back to `127.0.0.1`. On Windows the installer pins it to `127.0.0.1` (Tailscale Serve does the exposure). `sessiond` always binds loopback regardless. |
 | `TERMHUB_MACHINE` | hostname | Name shown in the UI |
 | `TERMHUB_SHELL` | `$SHELL` / `pwsh`→`powershell` | Shell to spawn |
