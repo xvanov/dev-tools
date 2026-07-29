@@ -1250,19 +1250,36 @@ const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
 const SECURE = window.isSecureContext !== false;
 const canListen = () => !!SpeechRec && SECURE;
 
-let secureAddr = null;           // learned from the server; null until it lands
+// Three outcomes, not two, and collapsing them is how this message goes back to
+// lying. "Serve publishes nothing for this front" is a fact worth stating; "the
+// probe didn't answer" is not the same fact, and asserting the first when we
+// only know the second is the exact failure this whole change exists to remove.
+// The probe genuinely fails in a routine case: static files are read from disk
+// per request, so a pulled-but-not-yet-restarted front serves this new client
+// from an old process that has no /api/secure-url route and 404s it.
+let secureAddr = null;           // resolved address, once known
+let secureProbe = 'pending';     // 'pending' | 'found' | 'none' | 'unknown'
+
 function secureHint() {
-  return secureAddr
-    ? `Voice input needs the secure address: ${secureAddr}`
-    : 'Voice input needs an HTTPS address — this machine is not published by Tailscale Serve';
+  if (secureProbe === 'found') return `Voice input needs the secure address: ${secureAddr}`;
+  if (secureProbe === 'none') {
+    return 'Voice input needs an HTTPS address — Tailscale Serve publishes none for this machine';
+  }
+  // 'pending' or 'unknown': say what is needed without naming an address we
+  // don't have. Naming the check is more use than a guess would be.
+  return 'Voice input needs the machine\'s HTTPS address (tailscale serve status)';
 }
 
-// Only asked on the origin that needs the answer. Re-renders the voice strip
-// when it lands, since the strip may already be showing the null wording.
+// Only asked on the origin that needs the answer. Re-renders the voice strip on
+// every outcome — it may already be showing the pending wording.
 if (!SECURE) {
   api('/api/secure-url')
-    .then((r) => { if (r && r.secureUrl) { secureAddr = r.secureUrl; renderVoice(); } })
-    .catch(() => {});
+    .then((r) => {
+      secureAddr = (r && r.secureUrl) || null;
+      secureProbe = secureAddr ? 'found' : 'none';
+    })
+    .catch(() => { secureProbe = 'unknown'; })
+    .then(() => renderVoice());
 }
 
 // Matched against INTERIM results. The final transcript lands ~1.9 s after the
