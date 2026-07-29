@@ -845,9 +845,11 @@ function handleKey(key) {
 // ---- paste (mobile) -------------------------------------------------------
 // iOS Safari doesn't surface the long-press "Paste" menu over xterm's hidden
 // helper textarea (worse with the WebGL renderer + our touch capture), so the
-// Paste key reads the clipboard directly (works because Serve gives us HTTPS).
-// If the Clipboard API is blocked/denied, fall back to a real textarea the user
-// can paste into manually — native paste always works there.
+// Paste key is the only way in, and it reads the clipboard directly. That path
+// needs a secure context: on the plain-HTTP origin `navigator.clipboard` is
+// undefined outright, and even over HTTPS iOS asks for a per-read confirmation
+// the user can decline. Both land in the same fallback — a real textarea the
+// user pastes into manually, where native paste always works.
 async function doPaste() {
   const t = state.open.get(state.activeId);
   if (!t) return;
@@ -1237,10 +1239,31 @@ const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
 // Rather than let the mic silently do nothing, we say so and hand over the
 // address to switch to. navigator.clipboard has exactly the same constraint;
 // see execCopyFallback near the top of this file.
-const SERVE_HTTPS_PORT = 7443;   // the port Tailscale Serve publishes this host on
+//
+// That address has to come from the SERVER. This used to be built here as
+// `https://${location.hostname}:7443`, which is wrong in both halves on the
+// origin where it is the only thing shown: on plain HTTP `location.hostname` is
+// the raw tailnet IP, and Serve's cert covers only the MagicDNS name, so the URL
+// could not connect at all — and the port is whatever Serve was configured with,
+// not a constant. `/api/secure-url` reads both off Serve's own config, and
+// answers null rather than guessing. See lib/serveUrl.js.
 const SECURE = window.isSecureContext !== false;
-const secureUrl = () => `https://${location.hostname}:${SERVE_HTTPS_PORT}${location.pathname}`;
 const canListen = () => !!SpeechRec && SECURE;
+
+let secureAddr = null;           // learned from the server; null until it lands
+function secureHint() {
+  return secureAddr
+    ? `Voice input needs the secure address: ${secureAddr}`
+    : 'Voice input needs an HTTPS address — this machine is not published by Tailscale Serve';
+}
+
+// Only asked on the origin that needs the answer. Re-renders the voice strip
+// when it lands, since the strip may already be showing the null wording.
+if (!SECURE) {
+  api('/api/secure-url')
+    .then((r) => { if (r && r.secureUrl) { secureAddr = r.secureUrl; renderVoice(); } })
+    .catch(() => {});
+}
 
 // Matched against INTERIM results. The final transcript lands ~1.9 s after the
 // last word on device — most of a 3 s window — so waiting for it would make
@@ -1430,7 +1453,7 @@ function enableVoice() {
     : 'voice ready — no speech synthesis on this machine, announcements will be text only';
   // Playback works fine on the plain-HTTP origin; only the microphone doesn't.
   // Say which half the user is getting, and where the other half lives.
-  if (!SECURE) voice.line = `🎤 Voice input needs the secure address: ${secureUrl()}`;
+  if (!SECURE) voice.line = `🎤 ${secureHint()}`;
   else if (!SpeechRec) voice.line = '🎤 This browser has no speech recognition — 🎤 opens a text box instead';
   renderVoice();
   syncSidebar();
@@ -2479,7 +2502,7 @@ function onMicKey() {
     // No Web Speech at all (desktop Firefox), or an insecure origin where the
     // API simply isn't exposed. Either way: fall back to typing into the same
     // box a cancelled utterance lands in — same destination, same Enter.
-    if (!SECURE) toast(`Voice input needs ${secureUrl()}`, 'err').close(9000);
+    if (!SECURE) toast(secureHint(), 'err').close(9000);
     else toast('This browser has no speech recognition — type it instead', 'err').close(6000);
     openVoiceEditor(target, '');
     return;

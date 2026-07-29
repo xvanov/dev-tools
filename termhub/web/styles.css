@@ -211,15 +211,15 @@ html, body {
   display: flex; gap: 4px; padding: 6px; background: var(--bg-2);
   border-top: 1px solid var(--border); overflow: hidden;
 }
-/* The keys scroll; #attach-key, its sibling, does not. `flex: 0 1 auto` keeps
-   the row its natural width on desktop (so 📎 sits right after ⌨ rather than
-   stranded at the far right) and lets it shrink and scroll on a phone. */
+/* The keys scroll; the pinned siblings do not. `flex: 0 1 auto` keeps the row
+   its natural width on desktop (so 📎 sits right after ⌨ rather than stranded
+   at the far right) and lets it shrink and scroll on a phone. */
 #keybar-keys {
   display: flex; gap: 4px; flex: 0 1 auto; min-width: 0; overflow-x: auto;
   scrollbar-width: none;
 }
 #keybar-keys::-webkit-scrollbar { display: none; }
-#keybar > #attach-key, #keybar > #mic-key { flex: 0 0 auto; }
+#keybar > #attach-key, #keybar > #mic-key, #keybar > #paste-key { flex: 0 0 auto; }
 /* Listening is a mode, not a keypress — keep 🎤 lit for as long as the mic is
    open so "am I being heard?" is answerable without reading anything. */
 #keybar > #mic-key.armed { background: var(--danger); border-color: var(--danger); color: #0d1117; }

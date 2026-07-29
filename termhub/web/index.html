@@ -89,9 +89,13 @@
 
       <!-- On-screen keys (essential on phones; phone keyboards lack these).
            The keys scroll sideways when they don't fit (they don't, on a
-           phone) — 🎤 and 📎 live OUTSIDE that scroller so they are always on
-           screen, since a button you have to go looking for is no fix for
-           "I can't attach a file" or "let me just say it". -->
+           phone) — Paste, 🎤 and 📎 live OUTSIDE that scroller so they are
+           always on screen, since a button you have to go looking for is no fix
+           for "I can't attach a file" or "let me just say it".
+           Paste earns its place there because it is the ONLY way to get
+           clipboard text in on iOS: Safari won't surface its own long-press
+           Paste menu over xterm's hidden textarea, so a Paste key parked off
+           the right-hand edge reads as "you can't paste on a phone". -->
       <div id="keybar">
         <div id="keybar-keys">
           <button data-key="esc" class="key">Esc</button>
@@ -102,9 +106,9 @@
           <button data-key="down" class="key">&#8595;</button>
           <button data-key="right" class="key">&#8594;</button>
           <button data-key="ctrl-c" class="key wide">^C</button>
-          <button id="paste-key" class="key" title="Paste from clipboard">Paste</button>
           <button id="kbd-key" class="key" title="Show keyboard">&#9000;</button>
         </div>
+        <button id="paste-key" class="key" title="Paste from clipboard">Paste</button>
         <button id="mic-key" class="key" title="Talk to this session">&#127908;</button>
         <button id="attach-key" class="key" title="Attach a file">&#128206;</button>
       </div>

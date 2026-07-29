@@ -23,6 +23,7 @@ const { resolveBindAddress } = require('./lib/bind');
 const { DEFAULT_FRONT_PORT, DEFAULT_SESSIOND_PORT, claimPidFile } = require('./lib/state');
 const { checkForUpdate } = require('./lib/update');
 const { probeJson } = require('./lib/probe');
+const { secureUrlForPort } = require('./lib/serveUrl');
 const build = require('./lib/build');
 
 const WEB_DIR = path.join(__dirname, 'web');
@@ -92,6 +93,17 @@ function createFront({ sessiondPort, port: serverPort = DEFAULT_FRONT_PORT }) {
       return checkForUpdate({ force })
         .then((info) => sendJson(res, 200, info))
         .catch((e) => sendJson(res, 500, { available: false, error: String(e.message || e) }));
+    }
+
+    // Where this machine answers over HTTPS, if it does. The front's own
+    // business for the same reason the update check is: it knows which port it
+    // listens on, and Serve's config is about that port — sessiond (on loopback,
+    // behind the proxy) knows neither. Answers `{secureUrl: null}` rather than a
+    // guess when Serve isn't publishing this front; see lib/serveUrl.js.
+    if (req.method === 'GET' && pathname === '/api/secure-url') {
+      return secureUrlForPort(serverPort)
+        .then((secureUrl) => sendJson(res, 200, { secureUrl }))
+        .catch(() => sendJson(res, 200, { secureUrl: null }));
     }
 
     // Everything under /api/* is the supervisor's — proxy it.

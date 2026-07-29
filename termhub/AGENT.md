@@ -101,8 +101,10 @@ with it and surface through the front's proxy as a misleading
 `limits: {imageBytes, fileBytes}` so the UI can refuse an over-cap file before uploading it.
 `imageBytes` is the cap that actually applies **on this host**, not a constant — see below.
 The `front` answers `GET /api/health` itself (front up +
-sessiond reachable) for the updater's probe, and `GET /api/update/check` (`?force=1` to skip the
-60s cache) — both are handled by the front and never proxied. `/api/health` returns
+sessiond reachable) for the updater's probe, `GET /api/update/check` (`?force=1` to skip the
+60s cache), and `GET /api/secure-url` → `{secureUrl}`, the HTTPS address Tailscale Serve publishes
+this front on (`null` when it publishes none — see *Secure context* below) — all three are handled
+by the front and never proxied. `/api/health` returns
 `{ok, front, self:{entry,pid,port,commit,sessiondPort}, sessiond}`, with `self` present on the 503
 path too; the updater checks `self.pid`/`self.commit` to confirm green is the process it started
 running the commit it just pulled. Terminal stream: WebSocket `/ws/term/:id` with JSON
@@ -589,9 +591,30 @@ write is even sent. Ordering is guaranteed regardless — both go down the same 
 
 **Secure context.** `SpeechRecognition` is only exposed to a secure origin, so on the plain
 `http://<tailnet-ip>:7000` URL there is no microphone. Playback works there and is left enabled;
-voice *input* is disabled with the derived `https://<host>:7443/` address shown, and 🎤 falls
-back to the same text box a browser without speech recognition gets. This is the same constraint
-`navigator.clipboard` has (see `execCopyFallback`).
+voice *input* is disabled with the HTTPS address to switch to shown, and 🎤 falls back to the same
+text box a browser without speech recognition gets. This is the same constraint
+`navigator.clipboard` has (see `execCopyFallback`) — which is why "paste doesn't work on my phone"
+and "the mic stopped working" are usually one bug reported twice.
+
+**That address must come from the server, and used not to.** It was built in the browser as
+`` `https://${location.hostname}:7443` ``, which is wrong in both halves on the *only* origin that
+ever displays it. On plain HTTP `location.hostname` is the raw tailnet IP, and Serve's certificate
+covers the MagicDNS name and nothing else, so the URL could not connect — the phone got a dead
+address and termhub looked broken rather than unconfigured. The port was equally a guess: it is
+whatever `tailscale serve --https=<port>` was given, and it is routinely *not* the front's own port
+(this checkout's Linux box publishes `:7443` in front of a front on `:7000`, while the Windows
+single-port layout publishes `:7000` in front of `:7000`).
+
+`lib/serveUrl.js` reads both halves off Serve's own config instead. `tailscale serve status --json`
+keys its `Web` map by exactly the `"<magicdns-host>:<port>"` string needed, so the answer is read
+off the key rather than reassembled; the match is made on the handler's proxy **port**, host
+deliberately ignored, because Serve targets `127.0.0.1` in the Windows layout and the tailnet IP
+where the front binds it directly and both are the same front. It answers `null` — never a
+constructed guess — when Serve doesn't publish this front or can't be consulted, and the UI then
+says the machine has no HTTPS address instead of naming one. The spawn is cached 60 s; the *status*
+is cached rather than the resolved URL, so asking about a second port can't be handed the first
+port's address. `test/serveUrl.test.js` pins this against real captured output from all three
+layouts.
 
 ### Voice API
 
@@ -812,7 +835,9 @@ user actually meant to paste.
 | A voice command did nothing | Wake word missed, or wasn't at the start | Commands fire on finals only and only utterance-initial. A parsed-but-unknown command says "didn't catch that" and is dropped. `npm test` covers the matcher; add real mishearings to `KNOWN_VARIANTS` in `web/voiceCommands.js` |
 | A dictated sentence vanished | A false wake-word fire would do this | It shouldn't — `npm test` asserts against a near-miss list. If you find one, add it to `NEAR_MISSES` and tighten the variants; do not add fuzzy matching |
 | Armed, but the strip stays amber and nothing plays | Browsers won't play audio before a user gesture | Tap **Enable voice**. Once per page load; the toggles turn from amber to blue |
-| 🎤 does nothing but open a text box | No `SpeechRecognition`, or an insecure origin | Speech recognition needs a secure context — use `https://<host>:7443/`, not `http://<tailnet-ip>:7000`. The strip names the address. Desktop Firefox has no Web Speech at all; the text box is the fallback |
+| 🎤 does nothing but open a text box | No `SpeechRecognition`, or an insecure origin | Speech recognition needs a secure context — use the machine's MagicDNS HTTPS address, not `http://<tailnet-ip>:7000`. The strip names it, read from Serve (`curl -s http://<host>:7000/api/secure-url`); if that says `null`, Serve isn't publishing this front. Desktop Firefox has no Web Speech at all; the text box is the fallback |
+| 🎤 names an HTTPS address that won't connect | Pre-fix client, or a cert/name mismatch | Old builds fabricated `https://<location.hostname>:7443/`, which can't work from the tailnet IP — Serve's cert covers only the MagicDNS name. Update the front. If a *current* build's address fails, the phone can't resolve MagicDNS: enable it in the Tailscale app |
+| Paste does nothing on iPhone | Insecure origin, or the per-read prompt was declined | `navigator.clipboard.readText` needs HTTPS, and iOS asks to confirm every read. Both fall back to a manual paste box — if that box never appears, the Paste key wasn't the thing tapped; it's pinned to the right of the key bar next to 🎤 and 📎, outside the scrolling group |
 | Mic keeps closing on its own | Working as intended | It closes after 45 s of silence rather than listening to an empty room, and while an announcement is playing (opening it then would flip a Bluetooth headset's audio route mid-sentence). Tap 🎤 to reopen |
 | Voice reply went to the wrong session | 🎤 targets whatever terminal is in front of you | An announcement's reply goes to the session that announced; a 🎤 tap goes to the active terminal |
 | Announcements sound like a rewrite, not the answer | Turn was long enough to go through `claude -p --model haiku` | Expected; turns under ~240 chars are spoken verbatim. `claude -p` failing just falls back to a local trim |

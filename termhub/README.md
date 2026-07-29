@@ -279,14 +279,19 @@ only buy false positives. `npm test` runs the matcher against both the accepted 
 list of near-miss dictation that must *not* trigger.
 
 - On mobile: tap **☰** for the session drawer, **＋** for a new terminal, and use the key bar
-  at the bottom for `Esc` / `Ctrl` / `Tab` / arrows / `^C` (swipe it sideways for `Paste` and
-  **⌨**, which brings the keyboard back). **🎤** and **📎** are pinned to the right of the bar,
-  always visible.
+  at the bottom for `Esc` / `Ctrl` / `Tab` / arrows / `^C` (swipe it sideways for **⌨**, which
+  brings the keyboard back). **Paste**, **🎤** and **📎** are pinned to the right of the bar,
+  always visible. **Paste** is the only way to get clipboard text in on iOS — Safari won't show
+  its own long-press paste menu over the terminal.
 
-> **Voice input needs the HTTPS address.** Speech recognition is only exposed to a secure
-> origin, so on the plain `http://<tailnet-ip>:7000` URL you get announcements but no
-> microphone — termhub says so and shows you the `https://…:7443/` address to switch to. If
-> you have an old bookmark, this is why. (Clipboard paste has the same limitation.)
+> **Voice input and paste need the HTTPS address.** Both `SpeechRecognition` and
+> `navigator.clipboard` are exposed only to a secure origin, so on the plain
+> `http://<tailnet-ip>:7000` URL you get announcements but no microphone, and Paste falls back to
+> a manual paste box. Use the machine's **MagicDNS** address —
+> `https://<machine>.<tailnet>.ts.net:<serve-port>/` — since Serve's certificate covers that name
+> and not the raw `100.x` IP. termhub shows you the exact address, read from Serve itself; check it
+> from a shell with `curl -s http://<host>:7000/api/secure-url`. If you have an old bookmark on the
+> HTTP address, this is why.
 
 ## Configuration
 
