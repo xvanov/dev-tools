@@ -157,9 +157,17 @@ function Test-TermhubTask {
   $task = $null
   try { $task = Get-ScheduledTask -TaskName 'Termhub' -ErrorAction Stop } catch { return }
   $action = (($task.Actions | ForEach-Object { "$($_.Execute) $($_.Arguments)" }) -join ' ').Trim()
-  if (-not $action -or $action -match 'start\.ps1') { return }
+  # start-http.ps1 is a legitimate boot script, not a stale task: it is how a
+  # plain-HTTP machine is *supposed* to start (front bound to the tailnet IP, Serve
+  # off). Matching only 'start\.ps1' - which "start-http.ps1" does not contain -
+  # meant every start and update on such a machine printed the warning below about a
+  # correctly configured task, and the remedies it names (re-run install.ps1, or
+  # delete the task) would have switched the machine to single-port mode. A warning
+  # that fires on a healthy machine is worse than no warning: it trains you to
+  # ignore the one that matters.
+  if (-not $action -or $action -match 'start\.ps1|start-http\.ps1') { return }
   Write-Host ""
-  Write-Host "termhub: WARNING - the 'Termhub' logon task does not run start.ps1:" -ForegroundColor Yellow
+  Write-Host "termhub: WARNING - the 'Termhub' logon task runs neither start.ps1 nor start-http.ps1:" -ForegroundColor Yellow
   Write-Host "termhub:   $action" -ForegroundColor Yellow
   Write-Host "termhub: that's the pre-split single-process entrypoint. It shadows sessiond, and it" -ForegroundColor Yellow
   Write-Host "termhub: will come back at the next logon. Fixing it needs ELEVATION - registering a" -ForegroundColor Yellow

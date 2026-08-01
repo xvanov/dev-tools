@@ -782,7 +782,10 @@ The installer also auto-removes units from the older two-process layout
 
 The `Termhub` scheduled task runs `windows\start.ps1` at logon, which ensures `sessiond` is up,
 starts the active `front`, and (re-)publishes it via Tailscale Serve. It's idempotent — re-running
-`start.ps1` reuses a live `sessiond`/`front` instead of restarting it.
+`start.ps1` reuses a live `sessiond`/`front` instead of restarting it. On a **plain-HTTP** machine
+the task runs `start-http.ps1 -Port <port>` instead, which is equally correct — `Test-TermhubTask`
+accepts either, and used to warn about the second one on every start and update while pointing at
+"fixes" that would have moved the machine to single-port mode.
 
 **Verify that's what the task actually does** — a machine installed before the two-tier split has a
 task that still runs `node server.js`, which squats the publish port and shadows `sessiond` at every
@@ -791,7 +794,7 @@ every start/update; `install.ps1` fixes it.
 
 ```powershell
 Get-ScheduledTask Termhub | Get-ScheduledTaskInfo
-(Get-ScheduledTask Termhub).Actions | Format-List Execute,Arguments  # must reference start.ps1
+(Get-ScheduledTask Termhub).Actions | Format-List Execute,Arguments  # start.ps1 or start-http.ps1
 Start-ScheduledTask Termhub              # = run start.ps1 (boots both tiers, idempotent)
 Stop-ScheduledTask  Termhub
 .\windows\update.ps1                     # safe blue-green update (run from any terminal)
