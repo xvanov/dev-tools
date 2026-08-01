@@ -5,7 +5,7 @@ import click
 
 from .config import AzureConfig
 from .summarize import combine_summaries, summarize_transcript
-from .transcribe import collect_audio_files, transcribe_file
+from .transcribe import collect_audio_files, load_model, transcribe_file
 
 
 @click.group()
@@ -59,8 +59,20 @@ def summarize(json_file, force):
 
 @cli.command()
 @click.argument("paths", nargs=-1, required=True)
+@click.option("--model", default="large-v3", help="faster-whisper model name")
+@click.option("--language", default="en", help="Language code or 'auto'")
+@click.option("--device", default="cuda", type=click.Choice(["cuda", "cpu"]))
+@click.option("--compute-type", default=None, help="float16/int8_float16/int8 etc.")
+@click.option("--beam-size", default=5, type=int)
+@click.option(
+    "--shortest-first",
+    is_flag=True,
+    help="Process smallest files first, so a long batch yields results early",
+)
 @click.option("--force", is_flag=True, help="Redo existing outputs")
-def run(paths, force):
+def run(
+    paths, model, language, device, compute_type, beam_size, shortest_first, force
+):
     """Transcribe and summarize audio files (the full pipeline)."""
     cfg = AzureConfig()
     if not cfg.is_configured():
@@ -70,7 +82,7 @@ def run(paths, force):
         )
         sys.exit(1)
 
-    files = collect_audio_files(list(paths))
+    files = collect_audio_files(list(paths), shortest_first=shortest_first)
     if not files:
         click.echo("summarize-recording: no audio files to process", err=True)
         sys.exit(1)
@@ -79,17 +91,47 @@ def run(paths, force):
         f"summarize-recording: processing {len(files)} file(s)", err=True
     )
 
+    # Load once and reuse: a batch would otherwise pay the model load per file.
+    whisper = load_model(model, device, compute_type)
+
     summaries: list[tuple[str, str]] = []
+    failed: list[tuple[str, str]] = []
     for f in files:
         click.echo(f"\n===== {f} =====", err=True)
-        out = transcribe_file(
-            f,
-            force=force,
-        )
-        text = summarize_transcript(
-            Path(out["json"]), cfg, force=force
-        )
+        # A batch is often hours long and unattended; one bad file must not
+        # discard the work already done, so failures are collected, not raised.
+        try:
+            out = transcribe_file(
+                f,
+                model_name=model,
+                language=language,
+                device=device,
+                compute_type=compute_type,
+                beam_size=beam_size,
+                force=force,
+                model=whisper,
+            )
+        except Exception as exc:
+            click.echo(f"  ERROR transcribing {f.name}: {exc}", err=True)
+            failed.append((f.name, f"transcribe: {exc}"))
+            continue
+        try:
+            text = summarize_transcript(Path(out["json"]), cfg, force=force)
+        except Exception as exc:
+            # The transcript survives on disk; only the summary needs retrying.
+            click.echo(f"  ERROR summarizing {f.name}: {exc}", err=True)
+            failed.append((f.name, f"summarize: {exc}"))
+            continue
         summaries.append((f.stem, text))
+
+    if failed:
+        click.echo(f"\n===== {len(failed)} file(s) failed =====", err=True)
+        for name, why in failed:
+            click.echo(f"  {name}: {why}", err=True)
+
+    if not summaries:
+        click.echo("summarize-recording: nothing succeeded", err=True)
+        sys.exit(1)
 
     if len(summaries) == 1:
         click.echo(summaries[0][1])

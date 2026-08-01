@@ -15,6 +15,25 @@ def fmt_ts(seconds: float, vtt: bool = False) -> str:
     return f"{h:02d}:{m:02d}:{s:02d}{sep}{ms:03d}"
 
 
+def load_model(
+    model_name: str = "large-v3",
+    device: str = "cuda",
+    compute_type: str | None = None,
+) -> WhisperModel:
+    """Load a WhisperModel. Hoisted out of transcribe_file so a batch can load once."""
+    if compute_type is None:
+        compute_type = "float16" if device == "cuda" else "int8"
+    print(
+        f"[1/3] Loading model {model_name!r} on {device} ({compute_type})...",
+        file=sys.stderr,
+        flush=True,
+    )
+    t0 = time.time()
+    model = WhisperModel(model_name, device=device, compute_type=compute_type)
+    print(f"      ready in {time.time()-t0:.1f}s", file=sys.stderr, flush=True)
+    return model
+
+
 def transcribe_file(
     audio_path: Path,
     *,
@@ -25,6 +44,7 @@ def transcribe_file(
     beam_size: int = 5,
     out_dir: Path | None = None,
     force: bool = False,
+    model: WhisperModel | None = None,
 ) -> dict[str, Path]:
     audio_path = audio_path.expanduser().resolve()
     if not audio_path.exists():
@@ -39,17 +59,8 @@ def transcribe_file(
         print(f"transcribe: {json_path} exists (use --force to redo)", file=sys.stderr)
         return {"json": json_path}
 
-    if compute_type is None:
-        compute_type = "float16" if device == "cuda" else "int8"
-
-    print(
-        f"[1/3] Loading model {model_name!r} on {device} ({compute_type})...",
-        file=sys.stderr,
-        flush=True,
-    )
-    t0 = time.time()
-    model = WhisperModel(model_name, device=device, compute_type=compute_type)
-    print(f"      ready in {time.time()-t0:.1f}s", file=sys.stderr, flush=True)
+    if model is None:
+        model = load_model(model_name, device, compute_type)
 
     print(f"[2/3] Transcribing {audio_path.name} ...", file=sys.stderr, flush=True)
     t0 = time.time()
@@ -125,7 +136,7 @@ def transcribe_file(
     return out
 
 
-def collect_audio_files(paths: list[str]) -> list[Path]:
+def collect_audio_files(paths: list[str], shortest_first: bool = False) -> list[Path]:
     AUDIO_EXT = {".mp3", ".m4a", ".wav", ".mp4", ".flac", ".ogg"}
     files: list[Path] = []
     for p in paths:
@@ -138,4 +149,8 @@ def collect_audio_files(paths: list[str]) -> list[Path]:
             files.append(pp)
         else:
             print(f"summarize-recording: skipping (not a file or dir): {pp}", file=sys.stderr)
+    if shortest_first:
+        # Byte size stands in for duration: same codec throughout a recorder's output,
+        # and it avoids shelling out to ffprobe for every file just to pick an order.
+        files.sort(key=lambda f: f.stat().st_size)
     return files

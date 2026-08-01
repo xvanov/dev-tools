@@ -43,7 +43,17 @@ python summarize-recording.py summarize recording.json
 python summarize-recording.py combine /path/to/recordings/
 ```
 
-Options: `--force` to redo, `--device cpu` for CPU, `--model tiny` for a smaller model.
+Options: `--force` to redo, `--device cpu` for CPU, `--model tiny` for a smaller model,
+`--shortest-first` to get results out of a long batch early. All of these work on both
+`transcribe` and `run`.
+
+A `run` over a directory loads the model once and keeps going when a file fails: a bad
+file is reported at the end rather than losing the hours of batch already done. A failed
+summary leaves its transcript on disk, so re-running only redoes the summary.
+
+On CPU, `large-v3` transcribes dense speech at roughly 1x realtime on a 16-core machine.
+Batched inference and thread tuning were measured and make no difference there — the
+speedup lives on the GPU, not in these knobs.
 
 ## Output
 
