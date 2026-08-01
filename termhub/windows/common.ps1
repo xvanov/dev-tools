@@ -23,6 +23,35 @@ function Get-NodePath {
   return $node.Source
 }
 
+# ---- tier logs --------------------------------------------------------------
+# Where a tier's stdout/stderr goes.
+#
+# This exists because of a real outage with no evidence. Start-TermhubNode used to
+# launch both tiers `-WindowStyle Hidden` with NO redirection, so a front that died
+# left nothing behind at all: node exits *normally* on an uncaught exception, so
+# there is no WER crash dump; nothing reaches the event log; and the data dir holds
+# only a pid file naming a process that no longer exists. The only honest answer to
+# "why did the front go down?" was "that is not recorded anywhere" - which is also
+# the only thing the watchdog's LLM escalation would have had to work from.
+#
+# Deliberately plain files rather than a rotating logger: the reader is a human (or
+# an agent) asking "what did it say before it died", and the two files a tier can
+# write are already the whole answer.
+function Get-TermhubLogDir {
+  $d = Join-Path (Get-TermhubDataDir) 'logs'
+  if (-not (Test-Path $d)) { New-Item -ItemType Directory -Force -Path $d | Out-Null }
+  return $d
+}
+
+# Log basename for a tier, matching the pid-file naming so the two line up:
+# front.js + TERMHUB_FRONT_PORT=7000 -> 'front-7000', sessiond.js -> 'sessiond'.
+function Get-TierLogName {
+  param([string]$Script, [hashtable]$EnvVars)
+  $base = [IO.Path]::GetFileNameWithoutExtension($Script)
+  if ($EnvVars -and $EnvVars['TERMHUB_FRONT_PORT']) { return "$base-$($EnvVars['TERMHUB_FRONT_PORT'])" }
+  return $base
+}
+
 # state.json -> { sessiondPort, activeFrontPort, publishPort }
 function Get-TermhubState {
   $file = Join-Path (Get-TermhubDataDir) 'state.json'
@@ -289,6 +318,9 @@ function Test-NodeAlive {
 # The env vars are restored afterwards: they only exist to be inherited by the
 # child, and leaving them set leaked one tier's port into the next launch from
 # the same script (TERMHUB_FRONT_PORT surviving into a sessiond spawn).
+#
+# stdout/stderr go to <data dir>\logs\<tier>.{out,err}.log - see Get-TermhubLogDir
+# for why that is not optional.
 function Start-TermhubNode {
   param([string]$Script, [hashtable]$EnvVars)
   $node = Get-NodePath
@@ -298,8 +330,38 @@ function Start-TermhubNode {
     Set-Item -Path "Env:$k" -Value "$($EnvVars[$k])"
   }
   try {
-    return Start-Process -FilePath $node -ArgumentList $Script -WorkingDirectory $ProjectDir `
-      -WindowStyle Hidden -PassThru
+    $logBase = Join-Path (Get-TermhubLogDir) (Get-TierLogName -Script $Script -EnvVars $EnvVars)
+    $outLog = "$logBase.out.log"
+    $errLog = "$logBase.err.log"
+    # Keep exactly one previous generation. This is the whole point of rotating
+    # here rather than appending: when a dead front is relaunched, the file about
+    # to be truncated holds the last words of the process that just died, and the
+    # relaunch is usually the moment somebody starts looking for them.
+    foreach ($f in @($outLog, $errLog)) {
+      if (Test-Path $f) {
+        Move-Item -LiteralPath $f -Destination ($f -replace '\.log$', '.prev.log') -Force -ErrorAction SilentlyContinue
+      }
+    }
+    try {
+      $proc = Start-Process -FilePath $node -ArgumentList $Script -WorkingDirectory $ProjectDir `
+        -WindowStyle Hidden -PassThru -RedirectStandardOutput $outLog -RedirectStandardError $errLog
+      # Touching .Handle caches it while the process is still alive, which is what
+      # makes .ExitCode readable AFTER it exits. Without this, Start-Process
+      # -PassThru (no -Wait) yields an object whose ExitCode reads as $null, and
+      # Start-VerifiedFront's "the front exited with code ..." diagnostic - printed
+      # on exactly the failure it exists to explain - came out blank.
+      try { $null = $proc.Handle } catch { }
+      return $proc
+    } catch {
+      # Logging is diagnostics, never a precondition for serving. A log file locked
+      # by a tier that hasn't fully exited, or an unwritable data dir, must not be
+      # the reason the machine is left with no front.
+      Write-Host "termhub: could not redirect $Script output to $logBase.*.log ($($_.Exception.Message)) - starting without logs." -ForegroundColor Yellow
+      $proc = Start-Process -FilePath $node -ArgumentList $Script -WorkingDirectory $ProjectDir `
+        -WindowStyle Hidden -PassThru
+      try { $null = $proc.Handle } catch { }
+      return $proc
+    }
   } finally {
     foreach ($k in $EnvVars.Keys) {
       if ($null -eq $saved[$k]) { Remove-Item -Path "Env:$k" -ErrorAction SilentlyContinue }

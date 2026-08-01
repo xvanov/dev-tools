@@ -170,6 +170,31 @@ running `update.ps1` survives the update.
 > requires one restart that *does* clear current sessions. Run `.\windows\install.ps1` (or
 > `.\windows\start.ps1`) once; every `update.ps1` after that is non-disruptive.
 
+## Keeping it up (the watchdog)
+
+The `Termhub` scheduled task starts termhub **at logon and never again**, so a `front` that
+dies mid-session stays dead until somebody notices. `watchdog/` fixes that, and does it in a
+way that gets better over time:
+
+```powershell
+.\watchdog\install-watchdog.ps1     # a scheduled task, every 2 min + at boot
+.\watchdog\watchdog.ps1 -Probe      # full diagnosis, changes nothing
+```
+
+Every outage is classified into a stable **signature**. If `watchdog\remedies\<signature>.ps1`
+exists it runs — repair in about a second, no model involved. If the failure is novel (or the
+remedy failed), the watchdog escalates to **Claude Code**, which fixes the outage *and* writes
+the remedy for that signature, then commits it. So each kind of failure needs a model once, and
+is mechanical after that.
+
+It will not restart `sessiond` to fix a `front` problem (that would end every live terminal),
+will not kill an unidentified process to free a port, and stands down while `update.ps1` is
+swapping the front. Details, the signature table, the escalation budget and the kill switch:
+[watchdog/README.md](watchdog/README.md).
+
+Both tiers now write stdout/stderr to `%LOCALAPPDATA%\termhub\logs\`, which is where to look
+first when one of them has died.
+
 ## Using it
 
 - **+ New terminal** — optionally a starting directory (it autocompletes against the

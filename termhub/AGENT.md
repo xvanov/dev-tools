@@ -123,6 +123,14 @@ the data dir (`%LOCALAPPDATA%\termhub` on Windows, `~/.local/termhub` on Linux):
 - `sessions.json` — the session archive (`lib/archive.js`). Mirrors each session's metadata
   (cwd, command, `kind`, and — for shell sessions — the command lines typed in it) so it
   survives a reboot. Written by `sessiond` on create / rename / exit / input.
+- `logs\<tier>.out.log` / `.err.log` — each tier's stdout and stderr, one `.prev.log`
+  generation kept (`Get-TermhubLogDir`, `Start-TermhubNode`). Rotated on launch rather than
+  appended, because the file a relaunch is about to truncate holds the last words of the
+  process that just died. **This did not exist until 2026-07-31**, and its absence is why the
+  outage that produced the watchdog has no root cause on record: both tiers were launched
+  `-WindowStyle Hidden` with no redirection, node exits *normally* on an uncaught exception
+  so there is no WER dump, and nothing reaches the event log. The front's death was
+  unknowable, not merely unknown.
 
 ### One process per port (and why a pid file is never the proof)
 
@@ -321,6 +329,67 @@ learn that the coupling exists. So the version is treated as a dependency:
 **To bump the pin**: exercise the new CLI first — launch a claude session, restart `sessiond`,
 restore it, and confirm the conversation comes back *and* the model badge and 🔊 announcements still
 resolve. Then set both `minVersion` and `verifiedVersion` in the same commit.
+
+## Staying up (`watchdog/`)
+
+Nothing used to restart a tier that died. The `Termhub` scheduled task fires **at logon and never
+again**, so on 2026-07-31 a `front` that exited some hours after being started left termhub down
+until it was noticed by hand — `sessiond` was untouched the whole time, holding four live PTYs
+behind a port with nothing listening on it. `watchdog/` is the supervisor that was missing.
+Full docs: [watchdog/README.md](./watchdog/README.md), remedy contract:
+[watchdog/remedies/README.md](./watchdog/remedies/README.md).
+
+The cycle: probe → stand down if a deploy is running → confirm 3× over ~15s → run
+`remedies\<signature>.ps1` if one exists → otherwise escalate to `claude -p`, which fixes the
+outage **and writes that remedy**, then commits it.
+
+**The remedy library is the point, and the signature is the mechanism.** Every failure is
+reduced to one of a small set of coarse slugs naming the *shape* of the failure — which tier is
+missing, who holds the port — and that slug is its remedy's filename. Coarse is deliberate: a
+signature carrying a pid, a port or an error string would mint a fresh one every outage and the
+library would never accumulate. So each kind of failure costs one escalation and is mechanical
+after that. Measured on the fault it was built for: 54 s from `Stop-Process` on the front to a
+verified-healthy front, with no model in the loop.
+
+Load-bearing constraints, each of which is a way this could go wrong rather than a preference:
+
+- **Never restart `sessiond` to fix a `front` problem.** It holds every terminal as an
+  in-memory PTY, so restarting it destroys the user's running work to repair a process that
+  isn't the one that failed. Only `both-down` and `sessiond-down-front-up` may start one, and
+  the escalation prompt states the rule *with the reason* — "restart the service" is the obvious
+  wrong move for a model that has just been told a service is down.
+- **`/api/health` returning 503 is not the same as nothing listening.** `Get-JsonEndpoint`
+  folds both to `$null`; the watchdog's own `Get-HttpProbe` keeps them apart, because a front
+  that is alive and cannot reach `sessiond` is the one case where replacing the front is exactly
+  wrong.
+- **Stand down during a deploy.** `update.ps1` and `restart-front.ps1` leave the port empty for
+  ~1–2 s in single-port and plain-HTTP mode. A watchdog racing the updater for that socket is
+  worse than the gap it was fixing, so a deploy script running is a reason to do nothing, and
+  every outage is confirmed three times first.
+- **`publish-port-squatted` has no remedy on purpose.** Killing an unidentified process to free
+  a port is a worse bug than the outage — the same judgement `Clear-PortSquatter` already makes.
+- **Escalations are budgeted** (≥10 min apart, ≤3/h, ≤8/day) and logged to `escalations.json`
+  before and after. Past the budget it says termhub is down and needs a human, which is honest;
+  a failure a model can't fix must not become a model running every two minutes forever.
+- **The task uses `MultipleInstances IgnoreNew`.** An escalation can hold it for minutes, and a
+  2-minute trigger would otherwise stack watchdogs all repairing the same outage at once.
+
+Three Windows/PowerShell traps this cost, all of which fail *silently*:
+
+- **`$L` and `$l` are the same variable.** PowerShell identifiers are case-insensitive, so a
+  `List[string]` called `$L` is replaced by the first `foreach ($l in …)`, and the next `.Add()`
+  hits `Hashtable.Add` and complains about argument counts.
+- **`Start-Process -PassThru` yields a `$null` `ExitCode`** unless `.Handle` is touched while
+  the process is still alive. `Start-TermhubNode` now does, which also un-blanks
+  `Start-VerifiedFront`'s "the front exited with code …" — a diagnostic that printed no code on
+  precisely the failure it exists to explain.
+- **`"$env:USERDOMAIN\$env:USERNAME"` is not a valid principal** off a domain: `USERDOMAIN` is
+  the literal `WORKGROUP`, which maps to no SID, and `Register-ScheduledTask` fails with "No
+  mapping between account names and security IDs was done" — *without* tripping
+  `-ErrorAction Stop`, so the installer's first version printed "registered" over a failed
+  registration. Use `[Security.Principal.WindowsIdentity]::GetCurrent().Name`, and **verify the
+  task exists afterwards** rather than trusting that no error surfaced. A machine that believes
+  it is watched and isn't is the worst way for a watchdog to be wrong.
 
 ## Spoken announcements (the voice layer)
 
@@ -816,6 +885,8 @@ user actually meant to paste.
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
+| The whole UI is gone, terminals were fine an hour ago | The `front` died and nothing restarted it — the `Termhub` task runs at logon only | What `watchdog/` exists to fix; install it (`.\watchdog\install-watchdog.ps1`). By hand: `.\watchdog\watchdog.ps1 -Probe` to see the signature, then `.\windows\start-http.ps1` (plain-HTTP) or `.\windows\restart-front.ps1`. `sessiond` keeps the PTYs the whole time, so nothing is lost |
+| A tier died and there is no reason recorded anywhere | Its output went nowhere | Fixed: both tiers write `%LOCALAPPDATA%\termhub\logs\<tier>.{out,err}.log`, with the previous generation in `.prev.log` — the crash you're chasing is usually in `.prev`. Nothing from before 2026-07-31 was captured |
 | Bound to `127.0.0.1`, unreachable from other devices | No Tailscale IP detected | Set `TERMHUB_BIND` to the tailnet IP; ensure `tailscaled` is up |
 | Can't reach `:7000` from phone (loads forever) | Windows firewall drops raw ports on the Tailscale interface | Use Tailscale Serve (Windows installer does this): bind loopback + `tailscale serve --bg --https=7000 http://127.0.0.1:7000`, then open `https://<host>.<tailnet>.ts.net:7000/` |
 | Can't reach `:7000` from phone | Tailnet ACL or firewall | Confirm both devices are on the tailnet and ACLs allow the port |
@@ -841,6 +912,9 @@ user actually meant to paste.
 | Mic keeps closing on its own | Working as intended | It closes after 45 s of silence rather than listening to an empty room, and while an announcement is playing (opening it then would flip a Bluetooth headset's audio route mid-sentence). Tap 🎤 to reopen |
 | Voice reply went to the wrong session | 🎤 targets whatever terminal is in front of you | An announcement's reply goes to the session that announced; a 🎤 tap goes to the active terminal |
 | Announcements sound like a rewrite, not the answer | Turn was long enough to go through `claude -p --model haiku` | Expected; turns under ~240 chars are spoken verbatim. `claude -p` failing just falls back to a local trim |
+| The watchdog keeps escalating for the same failure | The remedy it wrote doesn't actually fix that failure | The prompt tells it to *improve the existing remedy in place* on a repeat, so check `git log watchdog/remedies/`. `escalations.json` shows the outcome per attempt; the budget (≤3/h) stops the bleeding either way |
+| The watchdog logged nothing at all | Not registered, killed by the switch, or the task never ran | `Get-ScheduledTaskInfo TermhubWatchdog` (`LastRunTime`/`LastTaskResult`); check for `%LOCALAPPDATA%\termhub\watchdog\DISABLED`. Registration can fail *while reporting success* on older copies of the installer — see the `WORKGROUP` trap above |
+| The watchdog fixed it but never wrote a remedy | The escalation ran out of context, or ignored step 2 | The log says so explicitly (`service is back but NO remedy was written`). Write it by hand from `escalation-<stamp>.out.txt`; that transcript records what actually repaired it |
 | `npm install` errors on `node-pty` | Missing build toolchain | See prerequisites above |
 
 ## Security notes
