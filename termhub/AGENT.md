@@ -346,6 +346,35 @@ The cycle: probe → stand down if a deploy is running → confirm 3× over ~15s
 `remedies\<signature>.ps1` if one exists → otherwise escalate to `claude -p`, which fixes the
 outage **and writes that remedy**, then commits it.
 
+### Installing and keeping the task honest
+
+The task definition lives in `watchdog\lib\task.ps1`, not in the installer, because **three**
+callers register it: `install-watchdog.ps1` (explicit), `windows\install.ps1` (a new machine is
+supervised from the start) and `windows\update.ps1` (a machine that *updates into* a build with a
+watchdog shouldn't need a second install step). A second copy of that logic would be a second
+thing to drift.
+
+**The watchdog needs no restart to pick up its own updates.** The task's action is
+`powershell -File watchdog.ps1` — a fresh process per cycle, read off disk each time — so a pull
+is live on the next tick with nothing resident holding the old code. This is the opposite of the
+`front`, and the reason there is no `restart-watchdog.ps1` to write. What *can* go stale is the
+task **definition**, which is what `Confirm-WatchdogTask` repairs: absent, disabled, or pointing
+at a checkout that has moved.
+
+Two judgement calls in there, both about not being hostile on a routine update:
+
+- **It never reconciles the interval.** Somebody who ran `-IntervalMinutes 5` meant it, and having
+  every update quietly reset that is worse than a machine polling at a cadence you chose.
+- **It never downgrades the principal.** An elevated install registers **S4U** (runs with nobody
+  logged on); `update.ps1` normally runs non-elevated from a termhub terminal and can only offer
+  **Interactive**. So when a re-point is needed but the existing task is S4U and the shell isn't
+  elevated, it leaves the task alone and names `install-watchdog.ps1` instead. Silently trading
+  "watched while logged off" for "watched while logged on" during an unrelated update is exactly
+  the kind of regression nobody would notice until a reboot.
+
+`Confirm-WatchdogTask` never throws, and `update.ps1` calls it *after* the front is already
+serving: failing to register a scheduled task must never roll back a good deploy.
+
 **The remedy library is the point, and the signature is the mechanism.** Every failure is
 reduced to one of a small set of coarse slugs naming the *shape* of the failure — which tier is
 missing, who holds the port — and that slug is its remedy's filename. Coarse is deliberate: a

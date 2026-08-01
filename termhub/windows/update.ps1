@@ -39,6 +39,7 @@
 
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'common.ps1')
+. (Join-Path $PSScriptRoot '..\watchdog\lib\task.ps1')
 
 function Fail($msg) { Write-Host "termhub update FAILED: $msg" -ForegroundColor Red; exit 1 }
 
@@ -229,6 +230,21 @@ if ($sessiondCommit -and (($sessiondCommit -ne $newHead) -or ($sessiondDirty -eq
     Write-Host "termhub update: sessiond-side changed since then, so a restart would buy nothing."
   }
 }
+
+# 5c) Make sure the watchdog is installed and pointed at this checkout.
+#
+# The watchdog itself needs NO restart to pick up a pull: its scheduled task runs
+# `powershell -File watchdog.ps1` fresh every cycle, so the code that just landed is
+# live on the next tick with nothing resident holding the old version. What this step
+# is for is the definition going stale, or never having existed - a machine that
+# updates into a build that has a watchdog should end up supervised without anyone
+# having to remember a second install step.
+#
+# Non-fatal by construction (Confirm-WatchdogTask never throws): termhub is already
+# serving the new front by this point, and failing to register a scheduled task must
+# not roll that back.
+Write-Host ""
+Confirm-WatchdogTask
 
 # 6) Update the Claude Code CLI too. termhub's Claude integration is
 # version-coupled (see lib/claudeCli.js): it pins conversations with

@@ -123,11 +123,20 @@ and HTTPS/MagicDNS enabled for your tailnet (the default).
 
 Auto-start adapts to privileges: **elevated** → a Scheduled Task (at logon, auto-restart);
 **non-admin** → a hidden launcher in your Startup folder. The Serve config is persisted by
-`tailscaled` and restored on boot.
+`tailscaled` and restored on boot. The installer also registers the **watchdog** task, so a new
+machine is supervised from the start — run it **elevated** and the watchdog keeps working when
+you're logged off (see below).
 
 It also compiles `node-pty` itself, working around two common Windows build failures
 (`GetCommitHash.bat` and Spectre-lib `MSB8040`) — see [AGENT.md](./AGENT.md). Needs the Visual
 Studio Build Tools (Desktop development with C++ workload).
+
+**That's the whole per-machine setup**: `install.ps1` (elevated) handles deps, the native build,
+the `Termhub` logon task, the watchdog task, and brings both tiers up. Prerequisites are Node 18+,
+the Tailscale CLI signed in, VS Build Tools, and — if you want the watchdog's LLM escalation —
+the `claude` CLI on `PATH` (`.\watchdog\watchdog.ps1 -TestClaude` verifies it). For a
+**plain-HTTP** machine (raw tailnet ports reachable, no Serve), run
+`.\windows\start-http.ps1 -Port 7000` once afterwards to switch modes.
 
 ### Run manually (no service)
 
@@ -180,6 +189,16 @@ way that gets better over time:
 .\watchdog\install-watchdog.ps1     # a scheduled task, every 2 min + at boot
 .\watchdog\watchdog.ps1 -Probe      # full diagnosis, changes nothing
 ```
+
+`windows\install.ps1` and `windows\update.ps1` both call `Confirm-WatchdogTask`, so you rarely
+run that by hand: a fresh install is watched immediately, and a machine that **updates into** a
+build containing the watchdog gets the task without a second install step. Update also
+re-enables a disabled task, re-points one left behind by a moved checkout, and tells you if the
+kill switch is still sitting there.
+
+The watchdog needs **no restart to update itself**. Its task runs `powershell -File watchdog.ps1`
+fresh every cycle, so a `git pull` is live on the next tick with no resident process holding old
+code — unlike the `front`, which is long-lived and must be swapped deliberately.
 
 Every outage is classified into a stable **signature**. If `watchdog\remedies\<signature>.ps1`
 exists it runs — repair in about a second, no model involved. If the failure is novel (or the

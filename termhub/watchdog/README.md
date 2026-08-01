@@ -25,11 +25,27 @@ repaired in about a second by a script with no model in the loop at all.
 
 ## Install
 
+Usually you don't: **`windows\install.ps1` registers this task**, and `windows\update.ps1`
+re-confirms it on every update, so a new machine is watched from the start and a machine that
+updates into a build containing the watchdog picks it up with no extra step. Run it directly to
+change the interval, to repair the task, or to remove it:
+
 ```powershell
 .\watchdog\install-watchdog.ps1                    # every 2 min + at boot (admin ⇒ survives logoff)
 .\watchdog\install-watchdog.ps1 -IntervalMinutes 5
 .\watchdog\install-watchdog.ps1 -Uninstall
 ```
+
+**Run it elevated if you can.** Elevated gets an **S4U** principal, which runs with nobody logged
+on — the case that matters most, a machine that rebooted unattended. Non-elevated can only get
+**Interactive**, which stops at logoff. `Confirm-WatchdogTask` will never downgrade S4U→Interactive
+behind your back during an update; it leaves the task alone and tells you to re-run this elevated.
+
+**Updating the watchdog needs no restart.** The task runs `powershell -File watchdog.ps1` fresh
+every cycle, so a `git pull` is live on the next tick. Only the task *definition* — its path,
+existence, or enablement — can go stale, and that is what `Confirm-WatchdogTask` repairs. The
+shared definition lives in [lib/task.ps1](lib/task.ps1) precisely so the installer and the updater
+cannot disagree about it.
 
 A scheduled task rather than a resident loop, for two reasons. The watchdog is then itself
 supervised — a wedged cycle is replaced by the next run, whereas a daemon that dies leaves

@@ -20,12 +20,11 @@ param(
 
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot '..\windows\common.ps1')
+. (Join-Path $PSScriptRoot 'lib\task.ps1')
 
-$TaskName = 'TermhubWatchdog'
-$script   = Join-Path $PSScriptRoot 'watchdog.ps1'
-
-$elevated = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(
-  [Security.Principal.WindowsBuiltInRole]::Administrator)
+$TaskName = $WatchdogTaskName
+$script   = Get-WatchdogScriptPath
+$elevated = Test-WatchdogAdmin
 
 if ($Uninstall) {
   try {
@@ -43,68 +42,17 @@ if (-not (Test-Path $script)) { throw "watchdog.ps1 not found at $script" }
 # Repetition on a boot/logon trigger is not exposed as a parameter, so it is lifted
 # off a throwaway -Once trigger. Both triggers repeat: the -Once trigger drives the
 # steady state, and the boot trigger guarantees the cycle restarts after a reboot
-# without depending on the past-dated -Once trigger being re-armed.
-function Set-TriggerRepetition {
-  param($Trigger, [int]$Minutes)
-  $donor = New-ScheduledTaskTrigger -Once -At (Get-Date) `
-    -RepetitionInterval (New-TimeSpan -Minutes $Minutes) `
-    -RepetitionDuration (New-TimeSpan -Days 3650)
-  $Trigger.Repetition = $donor.Repetition
-  return $Trigger
-}
-
-$triggers = @(
-  (Set-TriggerRepetition -Trigger (New-ScheduledTaskTrigger -Once -At ((Get-Date).AddMinutes(1))) -Minutes $IntervalMinutes),
-  (Set-TriggerRepetition -Trigger (New-ScheduledTaskTrigger -AtStartup) -Minutes $IntervalMinutes)
-)
-
-$action = New-ScheduledTaskAction -Execute 'powershell.exe' `
-  -Argument "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$script`" -Quiet" `
-  -WorkingDirectory $ProjectDir
-
-# MultipleInstances IgnoreNew is load-bearing, not hygiene. An escalation can hold the
-# task for minutes while a model works; with a 2-minute trigger, anything else would
-# stack watchdogs that all diagnose the same outage and all try to repair it at once.
-$settings = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew -StartWhenAvailable `
-  -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
-  -ExecutionTimeLimit (New-TimeSpan -Minutes 30)
-
-# Mirror the Termhub task's principal: S4U runs the watchdog even with nobody logged
-# on, which is the case that matters most — a machine that rebooted unattended.
-#
-# NOT "$env:USERDOMAIN\$env:USERNAME": on a machine that is not domain-joined
-# USERDOMAIN is the literal string WORKGROUP, and 'WORKGROUP\mvadmin' resolves to no
-# SID at all - Register-ScheduledTask fails with "No mapping between account names
-# and security IDs was done". WindowsIdentity always gives a name that resolves
-# (<machine>\<user> in a workgroup, <domain>\<user> when joined).
-$me = [Security.Principal.WindowsIdentity]::GetCurrent().Name
-if ($elevated) {
-  $principal = New-ScheduledTaskPrincipal -UserId $me -LogonType S4U -RunLevel Limited
-} else {
+# The triggers, settings, principal and post-registration verification all live in
+# lib\task.ps1, because windows\install.ps1 and windows\update.ps1 register this same
+# task and a second copy of that logic is a second thing to drift.
+if (-not $elevated) {
   Write-Host "watchdog: not elevated - registering with an Interactive principal, so the" -ForegroundColor Yellow
-  Write-Host "watchdog: watchdog only runs while $me is logged on. Re-run this from an admin" -ForegroundColor Yellow
+  Write-Host "watchdog: watchdog only runs while you are logged on. Re-run this from an admin" -ForegroundColor Yellow
   Write-Host "watchdog: shell to get the S4U principal that survives logoff and reboot." -ForegroundColor Yellow
-  $principal = New-ScheduledTaskPrincipal -UserId $me -LogonType Interactive -RunLevel Limited
 }
 
-try { Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false -ErrorAction Stop | Out-Null } catch { }
-
-try {
-  Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $triggers `
-    -Settings $settings -Principal $principal `
-    -Description "Watches termhub, repairs known failures from watchdog\remedies\, and escalates novel ones to Claude Code." | Out-Null
-} catch {
-  throw "could not register '$TaskName': $($_.Exception.Message)"
-}
-
-# Verify, rather than trust that no error surfaced. Register-ScheduledTask reports
-# some CIM failures WITHOUT tripping -ErrorAction Stop, so this script's first
-# version printed "registered" over the top of a registration that had just failed -
-# leaving a machine that believed it was watched and was not. That is the single
-# worst way for a watchdog to be wrong, so it is checked rather than assumed.
-$registered = $null
-try { $registered = Get-ScheduledTask -TaskName $TaskName -ErrorAction Stop } catch { }
-if (-not $registered) { throw "'$TaskName' is not present after registering it - the install FAILED." }
+$result = Register-WatchdogTask -IntervalMinutes $IntervalMinutes
+if (-not $result.Ok) { throw "could not register '$TaskName': $($result.Message)" }
 
 Write-Host ""
 Write-Host "watchdog: registered '$TaskName' - every $IntervalMinutes min, and at startup." -ForegroundColor Green

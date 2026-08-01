@@ -32,6 +32,9 @@ Write-Host "termhub: project dir = $Dir"
 
 # Shared state/pid helpers (also used by start.ps1 / update.ps1).
 . (Join-Path $ScriptDir 'common.ps1')
+# The watchdog's scheduled task, so a fresh install is supervised from the start
+# rather than only after somebody remembers to run install-watchdog.ps1.
+. (Join-Path $ScriptDir '..\watchdog\lib\task.ps1')
 
 function Test-Admin {
   ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(
@@ -149,6 +152,13 @@ sh.Run "powershell.exe $PsArgs", 0, False
   Write-Host "termhub: installed Startup-folder launcher -> $StartupVbs"
 }
 
+# --- the watchdog ----------------------------------------------------------
+# The Termhub task above starts termhub at LOGON and never again, so a tier that
+# dies mid-session stays dead until somebody notices. Register the watchdog here so
+# that is never true of a fresh machine.
+Write-Host ""
+Confirm-WatchdogTask
+
 # --- bring it up now (foreground: starts both tiers + publishes + prints URL) ---
 Write-Host ""
 & $StartPs1 -PublishPort $Port
@@ -158,3 +168,4 @@ Write-Host ""
 Write-Host "Manage Serve:  tailscale serve status   /   tailscale serve --https=$Port off"
 Write-Host "Manage start:  Get-ScheduledTask Termhub   (elevated)   or   $StartupVbs   (non-admin)"
 Write-Host "Update safely: .\windows\update.ps1   (run from any termhub terminal - terminals survive)"
+Write-Host "Watchdog:      Get-ScheduledTask TermhubWatchdog   /   .\watchdog\watchdog.ps1 -Probe"
