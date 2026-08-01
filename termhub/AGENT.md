@@ -130,7 +130,10 @@ the data dir (`%LOCALAPPDATA%\termhub` on Windows, `~/.local/termhub` on Linux):
   outage that produced the watchdog has no root cause on record: both tiers were launched
   `-WindowStyle Hidden` with no redirection, node exits *normally* on an uncaught exception
   so there is no WER dump, and nothing reaches the event log. The front's death was
-  unknowable, not merely unknown.
+  unknowable, not merely unknown. **A live tier's log reports 0 bytes** — NTFS doesn't
+  flush the size into the directory entry while the writer holds the file open — so
+  measure these with `Get-Content`, never `Get-ChildItem`/`.Length`. Only the closed
+  `.prev.log` has an honest size.
 
 ### One process per port (and why a pid file is never the proof)
 

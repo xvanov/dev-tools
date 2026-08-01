@@ -355,14 +355,21 @@ function Get-TermhubDiagnosticBundle {
     $lines.Add("(no tier logs yet - output redirection was added to Start-TermhubNode; anything")
     $lines.Add(" that died before that landed nowhere, which is why this section exists)")
   }
+  # Read first, then describe. Deliberately NOT reporting $f.Length: NTFS does not
+  # flush a file's size into its directory entry while a process still holds it open,
+  # so a LIVE tier's log reports 0 bytes while containing plenty - and "0 bytes" next
+  # to a log is read as "the tier said nothing", which is the opposite of the truth
+  # and exactly the wrong conclusion to hand an escalation.
   foreach ($f in $logs) {
+    $tail = $null
+    $readErr = ''
+    try { $tail = @(Get-Content $f.FullName -Tail $LogTailLines -ErrorAction Stop) } catch { $readErr = $_.Exception.Message }
+    $count = if ($tail) { $tail.Count } else { 0 }
     $lines.Add("")
-    $lines.Add("  === $($f.Name)  ($($f.Length) bytes, modified $($f.LastWriteTime)) ===")
-    try {
-      $tail = Get-Content $f.FullName -Tail $LogTailLines -ErrorAction Stop
-      if (-not $tail) { $lines.Add("  (empty)") }
-      foreach ($line in $tail) { $lines.Add("  $line") }
-    } catch { $lines.Add("  (unreadable: $($_.Exception.Message))") }
+    $lines.Add("  === $($f.Name)  (last $count line(s), modified $($f.LastWriteTime)) ===")
+    if ($readErr) { $lines.Add("  (unreadable: $readErr)") }
+    elseif ($count -eq 0) { $lines.Add("  (empty)") }
+    else { foreach ($line in $tail) { $lines.Add("  $line") } }
   }
   return ($lines -join "`r`n")
 }
