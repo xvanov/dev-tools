@@ -26,6 +26,7 @@ const { startSessiond } = require('./sessiond');
 const { startFront } = require('./front');
 const { DEFAULT_SESSIOND_PORT } = require('./lib/state');
 const { probeSessiond, probeFront } = require('./lib/probe');
+const { ensureWatchdog } = require('./lib/watchdogSetup');
 
 const FRONT_PORT = Number(process.env.TERMHUB_PORT) || 7000;
 const SESSIOND_PORT = DEFAULT_SESSIOND_PORT;
@@ -58,6 +59,12 @@ async function main() {
 
   startSessiond({ port: SESSIOND_PORT, entry: 'server' });
   startFront({ port: FRONT_PORT, sessiondPort: SESSIOND_PORT });
+
+  // server.js is the entrypoint the Linux systemd unit runs, so this is where a
+  // Linux machine becomes self-supervising: see lib/watchdogSetup.js for why the
+  // hook lives at startup rather than only in the updater (it is the only thing that
+  // runs on the first ⟳ Update from a build that predates linux/update.sh).
+  ensureWatchdog();
 }
 
 main();

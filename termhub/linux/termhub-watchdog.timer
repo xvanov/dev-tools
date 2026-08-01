@@ -1,0 +1,19 @@
+[Unit]
+Description=Run the termhub watchdog every __INTERVAL__
+
+[Timer]
+# A minute after boot, then every __INTERVAL__ from the END of the previous run
+# (OnUnitActiveSec, not OnCalendar): an escalation that takes ten minutes must not be
+# followed instantly by another cycle, and it must not queue up the ticks it missed.
+OnBootSec=1min
+OnUnitActiveSec=__INTERVAL__
+# Also run on start (i.e. right after install / after a reboot where OnBootSec has
+# already passed), so enabling the timer supervises the machine immediately rather
+# than at the next interval.
+OnActiveSec=30s
+AccuracySec=15s
+# Don't fire the ticks that elapsed while the machine was asleep or off.
+Persistent=false
+
+[Install]
+WantedBy=timers.target

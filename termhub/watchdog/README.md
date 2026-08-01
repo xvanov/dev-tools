@@ -4,6 +4,27 @@ Watches termhub. Repairs failures it has seen before with a **script**, and esca
 it hasn't to **Claude Code** — which fixes the outage *and* writes the script, so that
 failure never needs a model again.
 
+**Two implementations, because there are two deployments.** They share the design — the
+signature/remedy/escalation loop, the budget, the kill switch — and nothing else, because the
+thing being watched is not the same thing:
+
+| | Windows | Linux |
+|---|---|---|
+| deployment | two tiers: `sessiond` (PTYs) + swappable `front` | **one** process, `server.js` |
+| supervisor | `Termhub` scheduled task, at logon | systemd `--user` unit, `Restart=on-failure` |
+| watchdog | `watchdog.ps1` + scheduled task, every 2 min | `watchdog.sh` + systemd timer, every 2 min |
+| remedies | `remedies/*.ps1` | `remedies/*.sh` |
+| cost of a restart | **none** — the front is replaced, PTYs live in `sessiond` | **every live terminal** — PTYs are in that one process |
+
+That last row is the important one. On Windows the watchdog can replace the broken tier and
+keep your terminals; on Linux it cannot, so it only restarts when **nothing is being served
+anyway** (`service-inactive`, `service-failed`, `service-missing`). A service that is up but
+merely *unhealthy* escalates instead of being restarted — killing someone's running work to
+fix a health blip is not a repair. Linux also already has `Restart=on-failure`, so the
+watchdog's job there is the cases systemd can't fix: a unit stopped, disabled, or given up on
+after hitting its start limit; a port held by something else; a process alive but not
+listening.
+
 ```
 probe ──healthy?────────────────────────────────────────────────► done
       │
@@ -25,27 +46,59 @@ repaired in about a second by a script with no model in the loop at all.
 
 ## Install
 
-Usually you don't: **`windows\install.ps1` registers this task**, and `windows\update.ps1`
-re-confirms it on every update, so a new machine is watched from the start and a machine that
-updates into a build containing the watchdog picks it up with no extra step. Run it directly to
-change the interval, to repair the task, or to remove it:
+Usually you don't. **Clicking ⟳ Update in termhub sets it up** on either platform, and so does
+the platform installer — so a new machine is watched from the start and an existing one picks it
+up the next time it updates, with no second step to remember.
 
 ```powershell
+# Windows
 .\watchdog\install-watchdog.ps1                    # every 2 min + at boot (admin ⇒ survives logoff)
 .\watchdog\install-watchdog.ps1 -IntervalMinutes 5
 .\watchdog\install-watchdog.ps1 -Uninstall
+.\watchdog\install-watchdog.ps1 -Ensure            # idempotent; what install/update call
 ```
 
-**Run it elevated if you can.** Elevated gets an **S4U** principal, which runs with nobody logged
-on — the case that matters most, a machine that rebooted unattended. Non-elevated can only get
-**Interactive**, which stops at logoff. `Confirm-WatchdogTask` will never downgrade S4U→Interactive
-behind your back during an update; it leaves the task alone and tells you to re-run this elevated.
+```bash
+# Linux
+bash watchdog/install-watchdog.sh                  # every 2 min + 1 min after boot
+bash watchdog/install-watchdog.sh --interval 5min
+bash watchdog/install-watchdog.sh --uninstall
+bash watchdog/install-watchdog.sh --ensure         # idempotent; what install/update call
+```
 
-**Updating the watchdog needs no restart.** The task runs `powershell -File watchdog.ps1` fresh
-every cycle, so a `git pull` is live on the next tick. Only the task *definition* — its path,
-existence, or enablement — can go stale, and that is what `Confirm-WatchdogTask` repairs. The
-shared definition lives in [lib/task.ps1](lib/task.ps1) precisely so the installer and the updater
-cannot disagree about it.
+On Linux, `--ensure` reconciles the unit files **by content**, which is also how it notices a
+moved checkout (the baked-in absolute `__DIR__` stops matching). Enable lingering
+(`sudo loginctl enable-linger $USER`) or both termhub *and* its watchdog stop when you log out —
+the installer says so when it's missing, because that failure is invisible until a reboot.
+
+**On Windows, run it elevated if you can.** Elevated gets an **S4U** principal, which runs with
+nobody logged on — the case that matters most, a machine that rebooted unattended. Non-elevated
+can only get **Interactive**, which stops at logoff. `Confirm-WatchdogTask` will never downgrade
+S4U→Interactive behind your back during an update; it leaves the task alone and tells you to
+re-run this elevated.
+
+**Updating the watchdog needs no restart, on either platform.** The supervisor runs
+`powershell -File watchdog.ps1` / `bash watchdog.sh` fresh every cycle, reading the script off
+disk, so a `git pull` is live on the next tick with nothing resident holding old code. Only the
+*installation* — unit files or task definition, its path, existence, enablement — can go stale,
+and that is what `--ensure` repairs. The Windows definition lives in [lib/task.ps1](lib/task.ps1)
+so the installer and updater cannot disagree about it; the Linux one is the templates in
+`../linux/termhub-watchdog.{service,timer}`.
+
+### How the ⟳ Update button ends up doing this
+
+`lib/update.js` composes the command that button runs — and it is composed by the **running**
+build, so it always describes the *old* version's idea of how to update. Both platforms therefore
+delegate to a script **in the repo** (`windows/update.ps1`, `linux/update.sh`), so the pull brings
+the new procedure with it. Linux was an inline one-liner until this change, which is exactly why
+it could never pick up a new step.
+
+The remaining gap is the *first* update on a Linux machine still running the old inline command:
+that command can't know about the watchdog. It does end in `systemctl --user restart termhub`,
+though, which starts the **new** code — so `lib/watchdogSetup.js` installs the watchdog from
+termhub's own startup (Linux only, 5 s after listen, non-fatal, silent when nothing changed). That
+hook is what makes the first click work, and afterwards it is a no-op that also re-asserts the
+watchdog after every reboot. Opt out with `TERMHUB_NO_WATCHDOG_SETUP=1`.
 
 A scheduled task rather than a resident loop, for two reasons. The watchdog is then itself
 supervised — a wedged cycle is replaced by the next run, whereas a daemon that dies leaves

@@ -1,14 +1,41 @@
 # remedies — the contract
 
-One script per failure signature. `watchdog.ps1` classifies an outage into a signature
-(see `../lib/diagnose.ps1`) and, if `remedies/<signature>.ps1` exists, runs **that**
-instead of waking a model. These files are the point of the whole watchdog: each one is
-an outage that will never need an LLM again.
+One script per failure signature. The watchdog classifies an outage into a signature and, if
+a remedy for it exists, runs **that** instead of waking a model. These files are the point of
+the whole watchdog: each one is an outage that will never need an LLM again.
 
 **If you are a Claude Code escalation, this file is your spec.** Read it before writing
-anything.
+anything. Write the file for **the platform you are running on**:
 
-## Parameters
+| | classifier | remedy file | contract |
+|---|---|---|---|
+| Windows | `../lib/diagnose.ps1` | `<signature>.ps1` | *PowerShell* section below |
+| Linux | `../watchdog.sh` (`diagnose`) | `<signature>.sh` | *Bash* section below |
+
+The signature namespaces are separate because the deployments are: Windows runs two tiers
+(`sessiond` + `front`), Linux runs one process under systemd. A `front-down-sessiond-up` has no
+meaning on Linux and a `service-failed` has none on Windows.
+
+## Parameters — Bash (Linux)
+
+Parsed as flags, and a remedy must tolerate any of them appearing in any order (the watchdog
+always passes all five):
+
+```bash
+--signature <slug>     # what this run was classified as
+--unit <name>          # the systemd --user unit (default: termhub)
+--port <n>             # the port termhub should be serving
+--bind <addr>          # TERMHUB_BIND from the unit's environment; MAY BE EMPTY
+--tailnet-ip <addr>    # `tailscale ip -4`, may be empty
+```
+
+**`--bind` empty does not mean loopback.** With no `TERMHUB_BIND`, `server.js` binds the
+**tailnet IP** and only falls back to loopback if there isn't one. A remedy that verifies against
+`127.0.0.1` alone therefore reports failure for a start that worked, on a completely normal
+machine — which sends a *fixed* machine to the model. Check every candidate: `--bind` (if set),
+`127.0.0.1`, and the tailnet IP. `service-inactive.sh` shows the loop.
+
+## Parameters — PowerShell (Windows)
 
 Every remedy declares exactly this block. The watchdog always passes all six, so a
 remedy that omits one fails to start.
@@ -63,7 +90,21 @@ Dot-source these; do not re-derive their logic.
 . (Join-Path $PSScriptRoot '..\lib\diagnose.ps1')        # Get-HttpProbe, Get-PortListeners, topology
 ```
 
-## Signatures
+## Signatures — Linux
+
+Restarting termhub on Linux **destroys every live terminal**, because the PTYs live in the same
+process. So the split below is not about difficulty, it is about cost:
+
+| signature | meaning | remedy? |
+|---|---|---|
+| `service-inactive` | unit exists, not running — stopped, or systemd gave up after the start limit | ✅ `reset-failed` + `start`. Nothing was being served, so nothing is lost |
+| `service-failed` | unit in `failed` state | ✅ same repair; escalates with the journal if the cause persists |
+| `service-missing` | no unit file at all | ✋ escalates — reinstalling is a judgement call, not a reflex |
+| `not-listening` | unit active, nothing bound (usually `TERMHUB_BIND` names an address the machine no longer has) | ✋ escalates: **live PTYs exist**, and a restart would kill them |
+| `http-unhealthy` | unit active, `/api/health` not ok | ✋ escalates for the same reason — killing running work to fix a health blip is not a repair |
+| `port-squatted` | the port is held by something that is not termhub's main process | ✋ escalates; killing an unidentified process is worse than the outage |
+
+## Signatures — Windows
 
 Fixable by script — a remedy here is expected:
 

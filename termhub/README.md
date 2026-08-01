@@ -104,8 +104,14 @@ cd dev-tools/termhub
 ./linux/install.sh
 ```
 
-Compiles `node-pty`, writes `~/.config/systemd/user/termhub.service`, and starts it. The
-installer prints the URL (`http://<tailscale-ip>:7000`).
+Compiles `node-pty`, writes `~/.config/systemd/user/termhub.service`, starts it, and installs the
+**watchdog** timer (see *Keeping it up* below). The installer prints the URL
+(`http://<tailscale-ip>:7000`).
+
+Run `sudo loginctl enable-linger $USER` on a headless box, or both termhub and its watchdog stop
+when you log out. On Linux termhub is a **single process** (`server.js`, both tiers in one), so a
+restart — including the one an update does — ends every terminal. That is the one behavioural
+difference from Windows, where `sessiond` keeps them alive across updates.
 
 ### Windows (Tailscale Serve)
 
@@ -186,19 +192,31 @@ dies mid-session stays dead until somebody notices. `watchdog/` fixes that, and 
 way that gets better over time:
 
 ```powershell
-.\watchdog\install-watchdog.ps1     # a scheduled task, every 2 min + at boot
+.\watchdog\install-watchdog.ps1     # Windows: a scheduled task, every 2 min + at boot
 .\watchdog\watchdog.ps1 -Probe      # full diagnosis, changes nothing
 ```
+```bash
+bash watchdog/install-watchdog.sh   # Linux: a systemd --user timer, every 2 min + at boot
+bash watchdog/watchdog.sh --probe
+```
 
-`windows\install.ps1` and `windows\update.ps1` both call `Confirm-WatchdogTask`, so you rarely
-run that by hand: a fresh install is watched immediately, and a machine that **updates into** a
-build containing the watchdog gets the task without a second install step. Update also
-re-enables a disabled task, re-points one left behind by a moved checkout, and tells you if the
-kill switch is still sitting there.
+**You normally run none of that: clicking ⟳ Update installs and updates the watchdog too**, on
+both platforms, and so does the platform installer. A fresh machine is watched immediately, and an
+existing one picks the watchdog up the next time it updates. Update also re-enables it if it was
+disabled, re-points it if the checkout moved, and tells you if the kill switch is still sitting
+there.
 
-The watchdog needs **no restart to update itself**. Its task runs `powershell -File watchdog.ps1`
-fresh every cycle, so a `git pull` is live on the next tick with no resident process holding old
-code — unlike the `front`, which is long-lived and must be swapped deliberately.
+The watchdog needs **no restart to update itself**. Its supervisor runs
+`powershell -File watchdog.ps1` / `bash watchdog.sh` fresh every cycle, so a `git pull` is live on
+the next tick with no resident process holding old code — unlike termhub itself, which is
+long-lived and must be restarted deliberately.
+
+**Linux differs in one way that matters.** There termhub is a single process, so restarting it
+ends every terminal — the watchdog therefore only restarts when nothing is being served anyway,
+and escalates instead of restarting a service that is merely unhealthy. systemd's
+`Restart=on-failure` already covers a plain crash; the watchdog covers what it can't (a unit
+stopped, disabled, or given up on after its start limit; a port squatted; a process alive but not
+listening).
 
 Every outage is classified into a stable **signature**. If `watchdog\remedies\<signature>.ps1`
 exists it runs — repair in about a second, no model involved. If the failure is novel (or the

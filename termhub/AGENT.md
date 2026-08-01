@@ -346,7 +346,57 @@ The cycle: probe → stand down if a deploy is running → confirm 3× over ~15s
 `remedies\<signature>.ps1` if one exists → otherwise escalate to `claude -p`, which fixes the
 outage **and writes that remedy**, then commits it.
 
-### Installing and keeping the task honest
+### Two implementations, because there are two deployments
+
+`watchdog.ps1` and `watchdog.sh` share the *design* — signature → remedy → escalation, the
+budget, the kill switch — and almost no code, because what they watch is not the same thing.
+Windows has two tiers and can replace the broken one; **Linux is a single `server.js` under a
+systemd `--user` unit**, so its PTYs are in the same process as its HTTP server.
+
+That has one consequence worth stating loudly, because it inverts a Windows assumption: on Linux
+**restarting termhub destroys every live terminal**. So the Linux watchdog only restarts when
+nothing is being served anyway (`service-inactive`, `service-failed`) and *escalates* a service
+that is up but unhealthy or unbound, where the Windows watchdog would happily swap the front.
+Killing the user's running work to clear a health blip is not a repair. Linux also already has
+`Restart=on-failure`, so the watchdog's remit there is what systemd can't fix: a unit stopped,
+disabled, or given up on after `StartLimitBurst`; a port held by a stranger; a process alive but
+not listening.
+
+The Linux probe checks **every address termhub could be on** — `TERMHUB_BIND`, loopback, the
+tailnet IP, and anything `ss` reports listening — and that is not defensive padding. With no
+`TERMHUB_BIND`, `server.js` binds the **tailnet IP** and only falls back to loopback if there
+isn't one, so a loopback-only probe reports `not-listening` on a perfectly healthy default
+install and escalates it. The same bug in `linux/update.sh` would have been worse: its
+post-restart health check would have failed and **rolled back a good update**. Any new code that
+asks "is termhub up?" on Linux must check the set, not a guess.
+
+### The ⟳ Update button installs the watchdog (and why that was hard)
+
+`lib/update.js:updateCommand()` is composed by the **running** front, so it always encodes the
+*old* build's idea of how to update. An inline command therefore can never carry a change to the
+update procedure itself. Windows always delegated to `windows/update.ps1`; Linux was an inline
+`git pull && claude update && systemctl --user restart termhub`, which is exactly why no new step
+could ever reach a Linux machine. Both now delegate to a script in the repo, so the pull brings
+the procedure with it. `test/update.test.js` guards this, including the absence of the old inline
+tells — if `git pull` reappears in that string, self-application is broken again.
+
+`linux/update.sh` is shaped by one constraint: the updater runs **inside a termhub PTY**, and on
+Linux the restart kills that PTY mid-script. Anything sequenced after the restart never happens.
+So the watchdog step comes *before* it (also asserted by the test), and the restart is handed to a
+**detached `--finish` re-exec** which is the only thing left alive to verify the new build and
+`git reset --hard` back if it never becomes healthy. The old inline command had the same ordering
+constraint and no way to verify anything at all.
+
+The first click on a machine still running the old inline command can't know about any of this —
+but it ends in `systemctl --user restart termhub`, which starts the **new** code. So
+`lib/watchdogSetup.js` installs the watchdog from termhub's own startup: Linux only, 5 s after
+listen, non-fatal, silent unless it changed something, skipped for a dev instance on a non-7000
+port, and opt-out via `TERMHUB_NO_WATCHDOG_SETUP=1`. It is deliberately **not** enabled on Windows:
+`update.ps1` restarts the front itself, so the new front would race the updater over one
+`Register-ScheduledTask`, and a non-elevated front could only mint an Interactive task where an
+elevated install would have given S4U.
+
+### Installing and keeping the task honest (Windows)
 
 The task definition lives in `watchdog\lib\task.ps1`, not in the installer, because **three**
 callers register it: `install-watchdog.ps1` (explicit), `windows\install.ps1` (a new machine is
@@ -765,8 +815,16 @@ features, major for breaking changes. Keep `package.json`'s `version` in step wi
 
 ```bash
 systemctl --user status termhub
-systemctl --user restart termhub
+systemctl --user restart termhub         # ENDS every terminal: one process on Linux
 journalctl --user -u termhub -f          # live logs
+
+# the watchdog (see "Staying up" above)
+systemctl --user list-timers termhub-watchdog.timer
+systemctl --user start termhub-watchdog.service    # run one cycle now
+journalctl --user -u termhub-watchdog -n 50
+bash watchdog/watchdog.sh --probe                 # full diagnosis, changes nothing
+bash watchdog/watchdog.sh --test-claude           # is escalation armed?
+bash watchdog/install-watchdog.sh --ensure        # repair the timer install
 
 # edit env (port / bind / machine name):
 systemctl --user edit termhub            # add: [Service]\nEnvironment=TERMHUB_BIND=100.x.y.z
@@ -949,6 +1007,10 @@ user actually meant to paste.
 | Announcements sound like a rewrite, not the answer | Turn was long enough to go through `claude -p --model haiku` | Expected; turns under ~240 chars are spoken verbatim. `claude -p` failing just falls back to a local trim |
 | The watchdog keeps escalating for the same failure | The remedy it wrote doesn't actually fix that failure | The prompt tells it to *improve the existing remedy in place* on a repeat, so check `git log watchdog/remedies/`. `escalations.json` shows the outcome per attempt; the budget (≤3/h) stops the bleeding either way |
 | The watchdog logged nothing at all | Not registered, killed by the switch, or the task never ran | `Get-ScheduledTaskInfo TermhubWatchdog` (`LastRunTime`/`LastTaskResult`); check for `%LOCALAPPDATA%\termhub\watchdog\DISABLED`. Registration can fail *while reporting success* on older copies of the installer — see the `WORKGROUP` trap above |
+| (Linux) clicked ⟳ Update and the terminal died mid-output | Expected: one process, so the restart ends every PTY including the updater's | The restart is handed to a detached phase that logs to `~/.local/termhub/logs/update.log` — read that for the result, including a rollback if the new build never became healthy |
+| (Linux) the watchdog reports `not-listening` but termhub works fine | An address-guessing bug this used to have | Fixed: the probe tries `TERMHUB_BIND`, loopback, the tailnet IP and whatever `ss` shows. A default install binds the **tailnet IP**, so a loopback-only check invents an outage. `bash watchdog/watchdog.sh --probe` prints every candidate and its result |
+| (Linux) watchdog timer vanished after logout | `--user` units stop with the session unless lingering is on | `sudo loginctl enable-linger $USER`. termhub itself has the same problem, which is why the installer warns |
+| (Linux) `start request repeated too quickly` | systemd hit `StartLimitBurst` and gave up on the unit | What `service-inactive.sh` exists for: `systemctl --user reset-failed termhub` first, *then* start. A bare `start` on a rate-limited unit fails instantly and looks like the remedy did nothing |
 | The watchdog fixed it but never wrote a remedy | The escalation ran out of context, or ignored step 2 | The log says so explicitly (`service is back but NO remedy was written`). Write it by hand from `escalation-<stamp>.out.txt`; that transcript records what actually repaired it |
 | `npm install` errors on `node-pty` | Missing build toolchain | See prerequisites above |
 

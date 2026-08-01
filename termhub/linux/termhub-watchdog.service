@@ -1,0 +1,17 @@
+[Unit]
+Description=termhub watchdog (probe, repair from watchdog/remedies, escalate to Claude Code)
+# Not After=termhub.service: the whole point is to run when termhub is NOT up, and a
+# dependency on the thing being watched is how a watchdog ends up not running in
+# exactly the situation it exists for.
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=__DIR__
+ExecStart=/usr/bin/env bash __DIR__/watchdog/watchdog.sh --quiet
+# An escalation runs a model and can legitimately take minutes; anything past this is
+# wedged and should be killed so the next timer tick gets a clean run.
+TimeoutStartSec=30min
+# Escalation needs the Claude CLI, and a --user unit's PATH does not include
+# ~/.local/bin, where the native installer puts it (see find_claude in watchdog.sh).
+Environment=PATH=%h/.local/bin:%h/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin

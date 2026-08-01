@@ -1,0 +1,15 @@
+# Files that are EXECUTED on Linux must never be checked out with CRLF: a shebang
+# line ending `bash\r` is not a program, and the failure is a baffling
+# "\r: command not found" rather than anything that names the real cause. The Windows
+# machines in this repo run with core.autocrlf=true, so this is a live risk every time
+# one of these files is edited there — pin the endings rather than rely on nobody
+# noticing.
+*.sh      text eol=lf
+*.bash    text eol=lf
+
+# systemd unit files are parsed by systemd, not a shell, and it does not accept CRLF
+# in directives either.
+*.service text eol=lf
+*.timer   text eol=lf
+
+# The PowerShell side is Windows-only; leave it to git's normal handling.

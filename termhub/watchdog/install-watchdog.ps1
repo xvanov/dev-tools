@@ -15,7 +15,11 @@
 
 param(
   [int]$IntervalMinutes = 2,
-  [switch]$Uninstall
+  [switch]$Uninstall,
+  # Idempotent mode: repair the task only if it is missing, disabled, or pointing at
+  # another checkout, and say nothing when it is already right. The counterpart of
+  # `install-watchdog.sh --ensure`, and what install.ps1/update.ps1 use.
+  [switch]$Ensure
 )
 
 $ErrorActionPreference = 'Stop'
@@ -38,6 +42,11 @@ if ($Uninstall) {
 }
 
 if (-not (Test-Path $script)) { throw "watchdog.ps1 not found at $script" }
+
+if ($Ensure) {
+  Confirm-WatchdogTask -IntervalMinutes $IntervalMinutes -Quiet
+  return
+}
 
 # Repetition on a boot/logon trigger is not exposed as a parameter, so it is lifted
 # off a throwaway -Once trigger. Both triggers repeat: the -Once trigger drives the

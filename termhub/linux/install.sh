@@ -49,8 +49,19 @@ echo "termhub: service enabled and started."
 loginctl enable-linger "$USER" >/dev/null 2>&1 || \
   echo "NOTE: run 'sudo loginctl enable-linger $USER' so termhub survives logout."
 
+# --- watchdog --------------------------------------------------------------
+# Restart=on-failure covers a crash, but not a unit that was stopped, disabled, or
+# given up on after hitting its start limit — nor a process that is running while
+# failing to bind or serve. Install the watchdog timer so a fresh machine is
+# supervised from the start rather than only after somebody remembers a second step.
+echo
+bash "$DIR/watchdog/install-watchdog.sh" --ensure || \
+  echo "NOTE: the watchdog timer could not be installed; termhub itself is fine. Retry with: bash watchdog/install-watchdog.sh"
+
 echo
 echo "Done. Status:  systemctl --user status termhub"
+echo "Watchdog:     systemctl --user list-timers termhub-watchdog.timer"
+echo "              bash watchdog/watchdog.sh --probe"
 if command -v tailscale >/dev/null 2>&1; then
   TSIP="$(tailscale ip -4 2>/dev/null | head -n1 || true)"
   [[ -n "$TSIP" ]] && echo "Open in a browser:  http://$TSIP:${TERMHUB_PORT:-7000}"

@@ -10,6 +10,7 @@
 // so the blue-green swap survives the front being replaced under it.
 
 const { execFile } = require('child_process');
+const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const claudeCli = require('./claudeCli');
@@ -45,14 +46,25 @@ async function gitDescribe() {
 // updates termhub drifts away from the CLI termhub was tested against. The CLI
 // step is deliberately non-fatal: `|| true` on Linux, a warning in update.ps1 —
 // a rate-limited or offline `claude update` must not abort a termhub update.
+// Both platforms delegate to a script IN THE REPO, and that is the important part:
+// this string is composed by the RUNNING front, so it always encodes the OLD
+// version's idea of how to update. An inline command therefore can never apply a
+// change to the update procedure itself — every new step (installing the watchdog,
+// say) would need a manual first run on every machine, forever. Pointing at a
+// pulled script means the pull brings the new procedure with it.
+//
+// Linux was an inline one-liner until that bit: `git pull && claude update &&
+// systemctl --user restart termhub`. It also had nowhere to put a verify step,
+// because the restart kills the PTY the command runs in — see linux/update.sh.
 function updateCommand() {
   if (process.platform === 'win32') {
     const script = path.join(PROJECT_DIR, 'windows', 'update.ps1');
     return `powershell -NoProfile -ExecutionPolicy Bypass -File "${script}"`;
   }
-  // No dedicated Linux updater script: pull fast-forward, update the CLI, then
-  // restart the user service (this restarts sessiond too, so sessions reset —
-  // Linux only).
+  const script = path.join(PROJECT_DIR, 'linux', 'update.sh');
+  if (fs.existsSync(script)) return `bash "${script}"`;
+  // Fallback for a checkout that predates the script (or has lost it): the original
+  // inline sequence. Restart last, since it ends the terminal running it.
   return `git pull --ff-only && { ${claudeCli.updateCommand()} || true; } && systemctl --user restart termhub`;
 }
 
@@ -133,4 +145,7 @@ async function checkForUpdate({ force = false } = {}) {
   return data;
 }
 
-module.exports = { checkForUpdate, PROJECT_DIR };
+// updateCommand is exported for test/update.test.js: it decides how every machine
+// applies every update, and a wrong string there is a machine that cannot update
+// itself — the one bug you cannot fix by shipping a fix.
+module.exports = { checkForUpdate, updateCommand, PROJECT_DIR };
