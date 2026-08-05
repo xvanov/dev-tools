@@ -485,6 +485,22 @@ located by the shared `resolveTranscript()` in `lib/claudeModel.js`. Sessions te
 have `--session-id <uuid>` spliced in, so their transcript path is known exactly; a
 hand-launched `claude` falls back to the newest transcript in that cwd.
 
+**A pinned id is not permanent.** Claude Code creates the transcript for the `--session-id` we
+passed and may then move the conversation to a fresh uuid (a `/clear`, or an internal resume),
+leaving our file as a stub holding user/attachment entries and no assistant turn. Existence alone
+therefore can't settle it: a session in that state showed no model badge and got no spoken
+announcements, because voiceHub was tailing a file that would never change again. So a pinned
+transcript wins while it holds a real assistant turn; if it holds none *and* a newer transcript
+exists in that cwd, the conversation has moved and the newer file wins. A turnless pinned file that
+is still the newest is just young — a session that launched seconds ago looks identical — and is
+kept, since adopting an older conversation's transcript is the worse error.
+
+**`<synthetic>` is not a model.** Claude Code files its own notices — spend-limit warnings,
+`[Request interrupted by user]` — as `assistant` entries whose model is the literal `<synthetic>`.
+They're the newest assistant entry right after any interrupt, so `readLastModel()` skips
+angle-bracket placeholders and keeps walking back to the last real turn; otherwise the badge reads
+`<synthetic>` until the next real response.
+
 **What counts as "waiting"** (`lib/claudeTranscript.js`): the last real turn is an *assistant*
 turn whose `stop_reason` is `end_turn`, `stop_sequence` or `null`, and which has something
 speakable. A `tool_use` stop is mid-work and is **not** announced. `thinking` blocks never make
@@ -992,6 +1008,8 @@ user actually meant to paste.
 | Pasted image lands as a file path instead of in the agent's prompt | The host has no usable clipboard (`curl /api/info` → `"clipboardImage": false`) | Expected on a headless Linux box. The path works — both Claude Code and opencode read an image given one. To get the clipboard route instead, run a session with a real display |
 | 📎 upload does nothing on a phone | File over the cap (100 MB, or 15 MB for an image on a host with a real clipboard — `curl /api/info` shows the effective `limits`) | The red notice above the key bar says so; tap it to dismiss, shrink the file. A silent failure instead means the connection dropped — the notice says that too |
 | Pasted an image and got text instead | The paste carried `text/plain` too (rich text with an inline image), and text wins | Deliberate — taking the image would swallow the text. Use 📎 for the image |
+| Model badge blank, and 🔊 never speaks, on one tab | The pinned `--session-id` transcript is a stub the conversation forked away from | Both symptoms share a cause: `resolveTranscript()` had settled on a file Claude Code stopped writing. Compare `curl localhost:7010/api/sessions` (the session's `command` names the pinned uuid) against `ls -t ~/.claude/projects/<encoded cwd>/` — a *different* uuid holding the recent bytes confirms it. Now self-corrects once the newer transcript exists |
+| Model badge reads `<synthetic>` | Last assistant entry is a Claude Code notice, not a turn | A spend-limit or interrupt notice is written as an assistant entry with model `<synthetic>`. `grep -c '"model":"<synthetic>"' <transcript>` — and read the notice text, since a spend limit also means that session is not running |
 | 🔊 armed but never speaks | No transcript to read | Only `kind: claude` sessions can be armed at all (the endpoint 400s otherwise). If Claude's banner says transcript saving is off, it was launched as a child of another Claude session — termhub's own PTYs are scrubbed of that, so it came from elsewhere |
 | Told "asking you something" but nothing is | PTY-idle heuristic misfired | A claude terminal silent for 12 s with no finished turn recorded is assumed to be on a prompt. A session wedged some other way looks the same; the announcement is generic by design because the question is never written to the transcript |
 | 🔊 reports speech unavailable | Neither engine usable | `curl localhost:7010/api/voice/status` — `tts.engine` names the winner. kokoro needs `TERMHUB_KOKORO_PYTHON` to import `kokoro_onnx` + `soundfile` and the two model files under `TERMHUB_KOKORO_DIR`; piper needs the binary on `PATH` and `<voice>.onnx` + `.onnx.json` in `TERMHUB_TTS_VOICE_DIR` (files under 4 KB are treated as broken stubs and skipped) |

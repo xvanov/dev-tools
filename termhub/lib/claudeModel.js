@@ -107,6 +107,18 @@ function scanTail(filePath, scan) {
   }
 }
 
+// Claude Code writes its own system notices — "You've hit your individual spend
+// limit", "[Request interrupted by user]" — as ordinary `assistant` entries
+// carrying the placeholder model `<synthetic>` instead of a real model id. Those
+// notices are by definition the *newest* assistant entry right after an
+// interrupt or a limit, so taking the last model verbatim pinned the badge to a
+// literal `<synthetic>` (formatModelName doesn't match it, so it passed
+// straight through) until the next real turn overwrote it. Anything in angle
+// brackets is a placeholder, never a model name.
+function isRealModel(model) {
+  return typeof model === 'string' && model !== '' && !/^<.*>$/.test(model);
+}
+
 function readLastModel(filePath) {
   return scanTail(filePath, (lines) => {
     for (let i = lines.length - 1; i >= 0; i--) {
@@ -114,10 +126,27 @@ function readLastModel(filePath) {
       if (!line) continue;
       let entry;
       try { entry = JSON.parse(line); } catch { continue; }
-      if (entry.type === 'assistant' && entry.message && entry.message.model) return entry.message.model;
+      // Keep walking back past synthetic notices to the last real turn — the
+      // model hasn't changed just because Claude Code interjected.
+      if (entry.type === 'assistant' && entry.message && isRealModel(entry.message.model)) {
+        return entry.message.model;
+      }
     }
     return null;
   });
+}
+
+// Does this transcript hold a real assistant turn — i.e. is it a conversation
+// rather than an empty shell? Cached on mtime because resolveTranscript runs on
+// every sidebar poll and an abandoned stub's mtime never changes again, so the
+// answer is computed once and then free.
+const realTurnCache = new Map();
+function hasRealTurn(filePath, mtimeMs) {
+  const hit = realTurnCache.get(filePath);
+  if (hit && hit.mtimeMs === mtimeMs) return hit.value;
+  const value = readLastModel(filePath) !== null;
+  realTurnCache.set(filePath, { mtimeMs, value });
+  return value;
 }
 
 // Which transcript file backs a live session, by the same two-step rule the
@@ -129,7 +158,24 @@ function readLastModel(filePath) {
 function resolveTranscript(cwd, agentSessionId, minMtimeMs) {
   if (agentSessionId) {
     const f = transcriptPath(cwd, agentSessionId);
-    try { fs.statSync(f); return f; } catch { /* not written yet — fall through */ }
+    let pinnedMtimeMs = null;
+    try { pinnedMtimeMs = fs.statSync(f).mtimeMs; } catch { /* not written yet — fall through */ }
+    if (pinnedMtimeMs !== null) {
+      // The pinned file merely *existing* used to end the search, which strands a
+      // session whose conversation forked: Claude Code creates the transcript for
+      // the `--session-id` we passed, then a /clear or an internal resume moves the
+      // real conversation to a fresh uuid and never writes to ours again. The stub
+      // is left holding user/attachment entries and no assistant turn, so the badge
+      // showed no model and voiceHub tailed a file that would never change again.
+      if (hasRealTurn(f, pinnedMtimeMs)) return f;
+      // No assistant turn yet is ambiguous: a session that just launched hasn't had
+      // one either. Only a transcript *newer* than ours proves the conversation
+      // moved on — while ours is the newest in the cwd it's simply young, and
+      // stealing another conversation's file would be worse than waiting.
+      const active = findActiveTranscript(cwd, minMtimeMs);
+      if (!active || active.mtimeMs <= pinnedMtimeMs) return f;
+      return active.file;
+    }
   }
   const active = findActiveTranscript(cwd, minMtimeMs);
   return active ? active.file : null;
