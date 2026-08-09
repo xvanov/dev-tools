@@ -341,10 +341,18 @@ only buy false positives. `npm test` runs the matcher against both the accepted 
 list of near-miss dictation that must *not* trigger.
 
 - On mobile: tap **☰** for the session drawer, **＋** for a new terminal, and use the key bar
-  at the bottom for `Esc` / `Ctrl` / `Tab` / arrows / `^C` (swipe it sideways for **⌨**, which
-  brings the keyboard back). **Paste**, **🎤** and **📎** are pinned to the right of the bar,
-  always visible. **Paste** is the only way to get clipboard text in on iOS — Safari won't show
-  its own long-press paste menu over the terminal.
+  at the bottom for `Esc` / `Ctrl` / `Tab` / arrows / `^C` — swipe that group sideways for the
+  ones that don't fit. **⌨ Copy Paste 🎤 📎** are pinned to the right of the bar and never
+  scroll away, because each is the only way to do its job on a phone:
+  - **⌨** brings the keyboard back if a tap on the terminal doesn't.
+  - **Copy** is how you get text *out*. The terminal is drawn on a `<canvas>`, so there is
+    nothing on screen for a long-press to select; Copy shows the same text as real text you
+    can select natively, with **Copy all** / **Copy selection** and a Screen ↔ All-scrollback
+    toggle.
+  - **Paste** is how you get text *in* — Safari won't show its own long-press paste menu over
+    the terminal. Multi-line pastes arrive as one paste, not as one Enter per line.
+  - Drag anywhere on the terminal to scroll; **↓ Latest** appears when there's newer output
+    below and takes you straight to the bottom.
 
 > **Voice input and paste need the HTTPS address.** Both `SpeechRecognition` and
 > `navigator.clipboard` are exposed only to a secure origin, so on the plain

@@ -955,12 +955,85 @@ instinct as `?voicedebug=1`, which exists because a phone has no console.
 - Inputs use a 16px font so iOS Safari doesn't zoom on focus.
 - The terminal refits on focus, `orientationchange`, and `visualViewport` resize (soft
   keyboard show/hide).
-- The keys scroll sideways when they don't fit (they don't, on a phone: eleven keys want
-  ~550px). **🎤** and **📎** live outside that scroller, pinned to the right edge, so neither
-  the one way to attach a file from a phone nor the one way to start talking is ever off-screen.
 - The voice strip sits directly above the key bar so the undo window's **Cancel** button lands
   under your thumb — the only reason to look at that strip in a hurry is to stop a send.
 - Add the tab to your home screen for an app-like, full-screen experience.
+
+### The key bar: keys scroll, tools don't
+
+`#keybar-keys` (Esc, Ctrl, Tab, arrows, ^C) scrolls sideways, with a faded right edge so it reads
+as a row that continues rather than a row that ends. `#keybar-tools` (**⌨ Copy Paste 🎤 📎**) is
+pinned and never scrolls, because each of those is the *only* way to do its job on iOS and a
+control you have to go looking for is no fix for the thing it does.
+
+**⌨ used to be the last child of the scrolling group**, i.e. off the right-hand edge of every
+phone — the one control whose whole purpose is "give me the keyboard back". That is what "the text
+input bar isn't there and I can't scroll to it" was. `probe.js` checks reachability by clipping
+against every scrollable ancestor, not just the window, so this specific mistake can't come back
+quietly; it currently reports the arrows and `^C` as unreachable, which is true and intended.
+
+The tools are deliberately compact (34px, 12px text): five of them at full key width leaves the
+scroller too narrow to show even `Esc`, and the arrows are what you cycle a Claude Code prompt with.
+
+### Copy: a sheet, because there is nothing to select
+
+**With the WebGL renderer the terminal has no text in the DOM at all** — `.xterm-screen` holds two
+`<canvas>` elements, `.xterm-viewport` scrolls an empty `.xterm-scroll-area` spacer, and
+`user-select` is `none` on both. A long-press has nothing to grab and never will, and xterm's own
+selection is driven by *mouse* events a phone doesn't produce. So "I can't copy anything out of the
+terminal on my phone" was structural, not a missing gesture.
+
+The **Copy** key renders the buffer into a `<pre>` — real text, `user-select: text`,
+`-webkit-touch-callout: default` — and hands the phone back its own native selection, handles and
+Copy menu. Works identically on every browser and either renderer. Screen / All-scrollback toggle,
+plus **Copy all** and **Copy selection** for when you don't want to drag handles at all. Wrapped
+rows are re-joined into one logical line (`line.isWrapped`), because a copied line carrying the
+terminal's wrap points pastes as ragged nonsense anywhere else. It opens scrolled to the newest
+output — and note the ordering in `openCopySheet()`: unhide *before* filling, since a `display:none`
+element has `scrollHeight` 0 and the scroll-to-newest silently does nothing.
+
+### Paste is not typing
+
+`pasteInto()` does two things `sendInput()` did not, and both are required:
+
+- **Newlines become `\r`.** A terminal's Enter is CR; the `\n` off the clipboard reaches some
+  programs as nothing at all.
+- **Bracketed paste when the app asked for it** (mode 2004 — Claude Code and opencode both enable
+  it). Without the `ESC [200~ … ESC [201~` wrapper every newline in a pasted block reads as a
+  *separate Enter*, so pasting a five-line stack trace into Claude Code submitted five prompts, the
+  first of them one line long. That is the whole of "I can't paste into the chat from my phone": it
+  pasted, and then immediately sent, in pieces.
+
+We need our own copy of what xterm does for a native paste because the Paste key bypasses xterm
+entirely — Safari won't surface its long-press Paste menu over xterm's hidden textarea, which is why
+the key exists at all.
+
+### Scrolling: one gesture, three meanings
+
+See the table under *Measuring it instead of guessing* above. `scrollMode()` re-reads the regime per
+gesture (never cached — a session changes regime the moment you open or quit an editor) and the
+touch handler owns the drag in **all three**, including the normal buffer where xterm's own touch
+scrolling used to be left alone.
+
+That last part is the fix for "only the bottom half scrolls, the top half stays static". xterm
+scrolls by letting the browser scroll `.xterm-viewport` (an empty spacer) and repainting the canvas
+from a `scroll` handler. On iOS the spacer is scrolled by the **compositor** while the canvas
+repaints on the **main thread**, so during a flick the two run apart and you get a screen that is
+part new and part stale. Driving `term.scrollLines()` straight from the `touchmove` puts the scroll
+position and the repaint in the same frame, where they cannot disagree. `touch-action: none` on
+`.term-pane` is what stops the browser also scrolling underneath us; pinch-zoom is already off via
+the viewport meta, so nothing else is lost.
+
+**↓ Latest** appears whenever `viewportY < baseY` on the normal buffer. "I can't get to the very
+bottom of the session" is its own bug, and on a phone the answer cannot be "flick repeatedly and
+hope".
+
+A tap on the terminal now calls `focusTerminal()` explicitly. It has to: we `stopPropagation()` the
+touchstart and `preventDefault()` any move, which between them stop iOS ever synthesising the click
+that would have focused xterm's hidden textarea — so the keyboard came up on the browser's own tap
+handling and was taken away again the moment our handlers ran, which is exactly the reported "it
+appears for a second and then disappears". It focuses on the next frame (so our own relayout can't
+undo it) and pins the view to the bottom, so what you're about to type into is on screen.
 
 ## Attachments (📎, paste, drag-drop)
 
@@ -1049,6 +1122,11 @@ user actually meant to paste.
 | Armed, but the strip stays amber and nothing plays | Browsers won't play audio before a user gesture | Tap **Enable voice**. Once per page load; the toggles turn from amber to blue |
 | 🎤 does nothing but open a text box | No `SpeechRecognition`, or an insecure origin | Speech recognition needs a secure context — use the machine's MagicDNS HTTPS address, not `http://<tailnet-ip>:7000`. The strip names it, read from Serve (`curl -s http://<host>:7000/api/secure-url`); if that says `null`, Serve isn't publishing this front. Desktop Firefox has no Web Speech at all; the text box is the fallback |
 | 🎤 names an HTTPS address that won't connect | Pre-fix client, or a cert/name mismatch | Old builds fabricated `https://<location.hostname>:7443/`, which can't work from the tailnet IP — Serve's cert covers only the MagicDNS name. Update the front. If a *current* build's address fails, the phone can't resolve MagicDNS: enable it in the Tailscale app |
+| Can't select or copy anything out of the terminal on a phone | There is no text in the DOM to select | Structural, not a missing gesture: the WebGL renderer draws into a `<canvas>` and `user-select` is `none`. Use the **Copy** key in the pinned tool group — it renders the buffer as real selectable text (Screen / All scrollback, plus Copy all) |
+| Pasting several lines into Claude Code sent several prompts | Raw newlines, no bracketed paste | Fixed in `pasteInto()`: newlines become `\r` and the block is wrapped in `ESC [200~ … ESC [201~` when the app enables mode 2004. Without the wrapper each newline is a separate Enter |
+| Scrolling a Claude session on a phone tears — part of the screen updates, part doesn't | iOS scrolls xterm's spacer on the compositor while the canvas repaints on the main thread | Fixed: the touch handler drives `term.scrollLines()` itself so scroll and repaint share a frame, and `touch-action: none` stops the browser scrolling underneath. Claude Code is on the **normal** buffer with mouse tracking **off**, which is why the full-screen-app wheel path never applied to it |
+| Can't get to the very bottom of a session | No gesture reliably lands there | Tap **↓ Latest** (appears whenever there's newer output below the fold) |
+| The keyboard flashes up and vanishes when tapping the terminal | The tap never reached xterm's hidden textarea | Fixed: the touch handler calls `focusTerminal()` explicitly on a tap. It had been suppressing the synthetic click that would have focused it, so the keyboard came up on the browser's own handling and went away again as soon as our handlers ran |
 | Paste does nothing on iPhone | Insecure origin, or the per-read prompt was declined | `navigator.clipboard.readText` needs HTTPS, and iOS asks to confirm every read. Both fall back to a manual paste box — if that box never appears, the Paste key wasn't the thing tapped; it's pinned to the right of the key bar next to 🎤 and 📎, outside the scrolling group |
 | Mic keeps closing on its own | Working as intended | It closes after 45 s of silence rather than listening to an empty room, and while an announcement is playing (opening it then would flip a Bluetooth headset's audio route mid-sentence). Tap 🎤 to reopen |
 | Voice reply went to the wrong session | 🎤 targets whatever terminal is in front of you | An announcement's reply goes to the session that announced; a 🎤 tap goes to the active terminal |

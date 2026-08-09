@@ -25,6 +25,31 @@ const flag = (name) => args.includes(`--${name}`);
 const AGENT = arg('agent', 'shell');
 const OUT = path.join(__dirname, 'out');
 
+// "Present in the DOM" is not the same as "the user can hit it". A key parked
+// past the right edge of a horizontally-scrolling group is in the DOM, has a
+// non-zero size, and may as well not exist — which is exactly what was wrong
+// with ⌨. So clip against every scrollable ancestor, not just the window.
+const REACHABLE = (sel) => {
+  const el = document.querySelector(sel);
+  if (!el) return false;
+  const b = el.getBoundingClientRect();
+  if (b.width < 1 || b.height < 1) return false;
+  let box = { left: 0, top: 0, right: window.innerWidth, bottom: window.innerHeight };
+  for (let p = el.parentElement; p; p = p.parentElement) {
+    const cs = getComputedStyle(p);
+    if (!/auto|scroll|hidden/.test(cs.overflowX + cs.overflowY)) continue;
+    const pb = p.getBoundingClientRect();
+    box = {
+      left: Math.max(box.left, pb.left), top: Math.max(box.top, pb.top),
+      right: Math.min(box.right, pb.right), bottom: Math.min(box.bottom, pb.bottom),
+    };
+  }
+  // Require most of the control to be inside every clip, not just a sliver.
+  const vw = Math.min(b.right, box.right) - Math.max(b.left, box.left);
+  const vh = Math.min(b.bottom, box.bottom) - Math.max(b.top, box.top);
+  return vw >= b.width * 0.9 && vh >= b.height * 0.9;
+};
+
 const R = { checks: [] };
 function say(label, value, note) {
   R.checks.push({ label, value, note });
@@ -143,12 +168,30 @@ const GEOMETRY = () => {
     await H.dragVertical(page, { fromX: mid.x, fromY: mid.y, dy: 220 });  // finger down = scroll back
     await H.sleep(600);
     const after = await page.evaluate(GEOMETRY);
+    say('scroll regime', await page.evaluate(() => {
+      const g = window.__termhub;
+      return g.scrollMode(g.state.open.get(g.state.activeId));
+    }), 'wheel = forward to the app | arrows = alt-screen | lines = xterm scrollback');
     say('drag from', `${mid.x},${mid.y}  dy=+220 (toward older output)`);
     say('viewportY before → after', `${before.viewportY} → ${after.viewportY}`,
       before.viewportY === after.viewportY ? 'DID NOT SCROLL' : 'scrolled');
     say('viewport.scrollTop before → after',
       `${before.viewport ? before.viewport.scrollTop : '-'} → ${after.viewport ? after.viewport.scrollTop : '-'}`);
+    say('#scroll-bottom offered', await page.evaluate(() => {
+      const el = document.querySelector('#scroll-bottom');
+      return !!el && !el.classList.contains('hidden');
+    }), before.viewportY !== after.viewportY ? 'should be true once scrolled up' : '');
     await page.screenshot({ path: path.join(OUT, `${AGENT}-2-after-drag.png`) });
+
+    // Scrolling up is only half the complaint; "I can't get to the very bottom"
+    // is the other half, and it is the one with no gesture that reliably works.
+    if (after.viewportY !== after.baseY) {
+      await page.evaluate(() => window.__termhub.jumpToBottom());
+      await H.sleep(300);
+      const back = await page.evaluate(GEOMETRY);
+      say('jump to bottom', `viewportY ${after.viewportY} → ${back.viewportY} (baseY ${back.baseY})`,
+        back.viewportY === back.baseY ? 'at the bottom' : 'STILL NOT AT THE BOTTOM');
+    }
 
     head('selection — can a long-press drag select terminal text?');
     const sel = await page.evaluate(async ({ x, y }) => {
@@ -171,22 +214,83 @@ const GEOMETRY = () => {
       };
     });
     say('term.getSelection() exists', sel.hasSelectionApi);
-    say('after long-press drag: xterm sel', JSON.stringify(sel2.xtermSelection),
-      sel2.hasSelection ? 'selected' : 'NOTHING SELECTED');
-    say('after long-press drag: DOM sel', JSON.stringify(sel2.domSelection));
-    say('copy affordance in DOM', await page.evaluate(() =>
-      !!document.querySelector('#copy-key, [data-key="copy"], #select-key')), 'is there a way to copy at all?');
+    say('in-place long-press drag', JSON.stringify(sel2.xtermSelection),
+      sel2.hasSelection ? 'selected' : 'nothing — expected, there is no DOM text');
 
-    head('paste — is there a way in, and does it need a secure context?');
+    head('copy sheet — the affordance that replaces in-place selection');
+    say('#copy-key reachable', await page.evaluate(REACHABLE, '#copy-key'), 'present AND inside the viewport');
+    await page.evaluate(() => window.__termhub.openCopySheet());
+    await H.sleep(300);
+    const copy = await page.evaluate(() => {
+      const pre = document.querySelector('#copy-text');
+      const cs = getComputedStyle(pre);
+      return {
+        open: !document.querySelector('#copy-backdrop').classList.contains('hidden'),
+        chars: pre.textContent.length,
+        lines: pre.textContent ? pre.textContent.split('\n').length : 0,
+        userSelect: cs.userSelect + '/' + cs.webkitUserSelect,
+        firstLine: pre.textContent.split('\n')[0].slice(0, 46),
+        lastLine: pre.textContent.trimEnd().split('\n').pop().slice(0, 46),
+        scrolledToEnd: pre.scrollTop + pre.clientHeight >= pre.scrollHeight - 2,
+      };
+    });
+    say('sheet open', copy.open);
+    say('selectable text in the DOM', `${copy.chars} chars / ${copy.lines} lines`,
+      copy.chars > 0 ? 'real text a long-press can grab' : 'EMPTY');
+    say('user-select', copy.userSelect, copy.userSelect.startsWith('text') ? 'selection allowed' : 'STILL BLOCKED');
+    say('first / last line', `${JSON.stringify(copy.firstLine)} … ${JSON.stringify(copy.lastLine)}`);
+    say('opens at the newest output', copy.scrolledToEnd);
+    // Full scrollback is the other half of the sheet's job.
+    await page.evaluate(() => { document.querySelector('#copy-scope-all').click(); });
+    await H.sleep(200);
+    const copyAllScope = await page.evaluate(() => document.querySelector('#copy-text').textContent);
+    say('scope=all vs scope=screen', `${copyAllScope.split('\n').length} lines vs ${copy.lines}`,
+      copyAllScope.split('\n').length >= copy.lines ? 'scrollback included' : 'NO EXTRA SCROLLBACK');
+    await page.screenshot({ path: path.join(OUT, `${AGENT}-4-copy-sheet.png`) });
+    await page.evaluate(() => window.__termhub.closeCopySheet());
+
+    head('paste — is there a way in, and does multi-line survive it?');
     say('isSecureContext', await page.evaluate(() => window.isSecureContext));
     say('navigator.clipboard', await page.evaluate(() => !!(navigator.clipboard && navigator.clipboard.readText)));
-    say('#paste-key present', await page.evaluate(() => !!document.querySelector('#paste-key')));
-    say('#paste-key visible', await page.evaluate(() => {
-      const el = document.querySelector('#paste-key');
-      if (!el) return false;
-      const b = el.getBoundingClientRect();
-      return b.width > 0 && b.right <= window.innerWidth + 1 && b.left >= -1;
-    }), 'off-screen = might as well not exist');
+    say('#paste-key reachable', await page.evaluate(REACHABLE, '#paste-key'), 'off-screen = might as well not exist');
+    // What actually goes down the wire for a three-line paste. Raw newlines are
+    // read by a TUI as three separate Enters, which is the bug.
+    const wire = await page.evaluate(() => {
+      const g = window.__termhub;
+      const t = g.state.open.get(g.state.activeId);
+      const sent = [];
+      const real = t.ws.send.bind(t.ws);
+      t.ws.send = (d) => { sent.push(JSON.parse(d)); };
+      // `modes` is a getter that rebuilds its object each read, so assigning to
+      // t.term.modes.bracketedPasteMode does nothing at all — stage the getter.
+      const probe = (bracketed) => {
+        Object.defineProperty(t.term, 'modes', {
+          configurable: true, get: () => ({ bracketedPasteMode: bracketed }),
+        });
+        g.pasteInto(t, 'line one\nline two\nline three');
+      };
+      probe(false); const plain = sent.pop().data;
+      probe(true); const brack = sent.pop().data;
+      t.ws.send = real;
+      return { plain, brack };
+    });
+    say('no bracketed-paste support', JSON.stringify(wire.plain),
+      wire.plain.includes('\n') ? 'RAW \\n — would submit per line' : 'newlines are CR');
+    say('bracketed paste (Claude/opencode)', JSON.stringify(wire.brack).slice(0, 70),
+      wire.brack.startsWith('\x1b[200~') && wire.brack.endsWith('\x1b[201~')
+        ? 'wrapped — lands as ONE paste' : 'NOT WRAPPED');
+
+    head('keyboard key — the one that was off-screen');
+    say('#kbd-key reachable', await page.evaluate(REACHABLE, '#kbd-key'), 'was inside the scrolling group, i.e. off the right edge');
+    say('tap on terminal focuses xterm', await page.evaluate(async ({ x, y }) => {
+      const g = window.__termhub;
+      const t = g.state.open.get(g.state.activeId);
+      document.activeElement.blur();
+      g.focusTerminal(t);
+      await new Promise((r) => setTimeout(r, 120));
+      const ta = t.pane.querySelector('.xterm-helper-textarea');
+      return document.activeElement === ta;
+    }, mid), 'the hidden textarea is what summons the iOS keyboard');
 
     head('soft keyboard — staged, not real (see harness.js)');
     const kb = await H.simulateKeyboard(page, 336);

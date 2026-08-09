@@ -192,13 +192,28 @@ html, body {
 .term-pane.active { display: block; }
 .term-pane .xterm { height: 100%; }
 
-/* Smooth, contained touch scrolling of the scrollback on iOS — without this the
-   gesture tends to scroll the page (nothing) instead of the terminal buffer. */
-.xterm .xterm-viewport {
-  -webkit-overflow-scrolling: touch;
+/* app.js owns every vertical drag on a terminal now (see "touch scrolling"
+   there), so the browser must not also scroll .xterm-viewport underneath it.
+   `touch-action: none` is what stops that: xterm scrolls an empty spacer on the
+   compositor and repaints its canvas from a main-thread scroll handler, and on
+   iOS those two run apart during a flick — the screen ends up part new and part
+   stale, which is what "only the bottom half scrolls" was. Pinch-zoom is already
+   off via the viewport meta, so there is nothing else here for the browser to do
+   with a touch. */
+.term-pane, .xterm .xterm-viewport {
   overscroll-behavior: contain;
-  touch-action: pan-y;
+  touch-action: none;
 }
+
+/* ---- jump to bottom ---- */
+#scroll-bottom {
+  position: absolute; right: 12px; bottom: 12px; z-index: 6;
+  padding: 8px 14px; border-radius: 999px; cursor: pointer;
+  background: var(--bg-3); color: var(--fg); border: 1px solid var(--accent);
+  font: inherit; font-size: 13px; box-shadow: 0 4px 14px rgba(0,0,0,0.5);
+  touch-action: manipulation;
+}
+#scroll-bottom.hidden { display: none; }
 
 #empty-state {
   position: absolute; inset: 0; display: flex; flex-direction: column;
@@ -207,22 +222,39 @@ html, body {
 #empty-state.hidden { display: none; }
 
 /* ---- on-screen key bar ---- */
+/* The bottom padding is where the iOS home indicator lives. `viewport-fit=cover`
+   in the meta tag means the page extends under it, so without this the last row
+   of keys sits beneath the bar you swipe up from — tappable in theory, hijacked
+   by the system gesture in practice. */
 #keybar {
-  display: flex; gap: 4px; padding: 6px; background: var(--bg-2);
+  display: flex; gap: 4px; background: var(--bg-2);
+  padding: 6px 6px calc(6px + env(safe-area-inset-bottom, 0px));
   border-top: 1px solid var(--border); overflow: hidden;
 }
-/* The keys scroll; the pinned siblings do not. `flex: 0 1 auto` keeps the row
-   its natural width on desktop (so 📎 sits right after ⌨ rather than stranded
-   at the far right) and lets it shrink and scroll on a phone. */
+/* The keys scroll; the tools do not. `flex: 0 1 auto` keeps the row its natural
+   width on desktop (so the tools sit right after ^C rather than stranded at the
+   far right) and lets it shrink and scroll on a phone. */
 #keybar-keys {
   display: flex; gap: 4px; flex: 0 1 auto; min-width: 0; overflow-x: auto;
   scrollbar-width: none;
+  /* Fade the right edge so it reads as "there is more this way". Five tools now
+     hold the right-hand end, so the arrows and ^C sit behind a scroll on a
+     phone — and a scrolling row with a hard edge looks like a row that ends. */
+  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 14px), transparent);
+  mask-image: linear-gradient(to right, #000 calc(100% - 14px), transparent);
 }
 #keybar-keys::-webkit-scrollbar { display: none; }
-#keybar > #attach-key, #keybar > #mic-key, #keybar > #paste-key { flex: 0 0 auto; }
+/* Never shrinks, never scrolls: everything in here is the only way to do its
+   job on a phone (see index.html). ⌨ used to live in the scroller above, which
+   on a 393px screen put it off the right-hand edge — the one control whose
+   entire purpose is "give me the keyboard back". Deliberately compact: five
+   pinned tools at full key width would leave the scroller too narrow to show
+   even Esc, and the arrows are what you cycle a Claude Code prompt with. */
+#keybar-tools { display: flex; gap: 4px; flex: 0 0 auto; }
+#keybar-tools .key { min-width: 34px; padding: 6px 5px; font-size: 12px; }
 /* Listening is a mode, not a keypress — keep 🎤 lit for as long as the mic is
    open so "am I being heard?" is answerable without reading anything. */
-#keybar > #mic-key.armed { background: var(--danger); border-color: var(--danger); color: #0d1117; }
+#mic-key.armed { background: var(--danger); border-color: var(--danger); color: #0d1117; }
 #keybar .key {
   flex: 1 0 auto; min-width: 44px; min-height: 38px; padding: 6px 10px;
   background: var(--bg-3); color: var(--fg); border: 1px solid var(--border);
@@ -399,6 +431,51 @@ html, body {
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .commit-list code { color: var(--accent); margin-right: 6px; }
+
+/* ---- copy sheet ---- */
+/* Near-full-screen on a phone: the point is to give a long-press somewhere
+   generous to land, and a cramped box makes iOS's selection handles fight the
+   edges. */
+#copy-backdrop {
+  position: fixed; inset: 0; background: rgba(0,0,0,0.6);
+  display: flex; align-items: flex-end; justify-content: center; z-index: 42;
+}
+#copy-backdrop.hidden { display: none; }
+#copy-sheet {
+  background: var(--bg-2); border: 1px solid var(--border);
+  border-radius: 12px 12px 0 0; width: 720px; max-width: 100%;
+  height: 88%; display: flex; flex-direction: column;
+  padding: 12px 12px calc(12px + env(safe-area-inset-bottom, 0px));
+}
+.copy-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.copy-head strong { font-size: 15px; }
+.copy-scope { display: flex; gap: 0; flex: 1; justify-content: center; }
+.copy-seg {
+  background: var(--bg-3); color: var(--fg-dim); border: 1px solid var(--border);
+  padding: 6px 12px; font: inherit; font-size: 13px; cursor: pointer;
+}
+.copy-seg:first-child { border-radius: 6px 0 0 6px; }
+.copy-seg:last-child { border-radius: 0 6px 6px 0; border-left: none; }
+.copy-seg.active { background: var(--accent); color: #0d1117; border-color: var(--accent); }
+.copy-x { background: none; border: none; color: var(--fg-dim); font-size: 16px; cursor: pointer; padding: 4px 6px; }
+.copy-hint { font-size: 12px; color: var(--fg-dim); margin-bottom: 6px; }
+/* The whole reason this sheet exists: real text, and selection turned back ON.
+   xterm sets user-select:none on everything it owns. */
+#copy-text {
+  flex: 1; margin: 0; overflow: auto; padding: 10px;
+  background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
+  font: 13px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  color: var(--fg); white-space: pre-wrap; overflow-wrap: anywhere;
+  user-select: text; -webkit-user-select: text;
+  -webkit-touch-callout: default;   /* iOS: allow the long-press callout */
+  touch-action: pan-y;
+}
+.copy-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 10px; }
+.copy-actions button {
+  padding: 10px 16px; border-radius: 6px; border: 1px solid var(--border);
+  background: var(--accent); color: #0d1117; font-weight: 600; cursor: pointer; font: inherit; font-size: 15px;
+}
+.copy-actions button.secondary { background: var(--bg-3); color: var(--fg); font-weight: 400; }
 
 /* ---- paste fallback overlay ---- */
 #paste-backdrop {

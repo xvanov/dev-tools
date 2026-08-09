@@ -320,6 +320,10 @@ function openTerminal(id, title, kind) {
   term.onResize(({ cols, rows }) => {
     if (t.ws && t.ws.readyState === WebSocket.OPEN) t.ws.send(JSON.stringify({ type: 'resize', cols, rows }));
   });
+  // Whether there is newer output below the fold changes on scroll *and* on new
+  // output arriving while scrolled up; onScroll covers both, since xterm fires it
+  // when the viewport moves relative to the buffer either way.
+  term.onScroll(() => updateScrollAffordance(t));
 
   // Make the pane visible and fit it to the device BEFORE connecting, so the
   // very first thing the terminal knows is its real size.
@@ -341,17 +345,52 @@ function scheduleFit(t) {
 }
 
 // ---- touch scrolling ------------------------------------------------------
-// Full-screen apps (Claude Code, vim, less) run on the alternate screen with
-// mouse tracking on. There, xterm.js has no scrollback to swipe and only relays
-// raw touch as mouse moves — which feels dead. We instead translate a vertical
-// drag into scroll-wheel events (with flick momentum) so the app scrolls its own
-// history smoothly. On the normal buffer we leave xterm's native touch scroll be.
+// One finger dragging on a terminal has to mean three different things, and
+// which one is decided by what the running program actually emitted — not by
+// what it looks like. Measured with test/mobile/probe.js against live sessions:
+//
+//   | program     | alt screen | mouse tracking | a drag must              |
+//   |-------------|------------|----------------|--------------------------|
+//   | Claude Code | no         | none (off!)    | scroll xterm's scrollback|
+//   | opencode    | yes ?1049h | ?1003h ?1006h  | forward as SGR wheel     |
+//   | vim / less  | yes        | usually none   | send arrow keys          |
+//   | plain shell | no         | none           | scroll xterm's scrollback|
+//
+// The surprise is Claude Code: it looks like a full-screen TUI and is not one.
+// It stays on the normal buffer and *explicitly disables* mouse tracking, so the
+// wheel-forwarding path this file built for full-screen apps was never once
+// active in a Claude session. That is how "scrolling is broken in Claude" and
+// "scrolling is fine in vim" were both true, and why the fix had to start with
+// measuring rather than with the scroll code.
+//
+// We now own the gesture in all three regimes, including the normal buffer where
+// xterm's own touch scrolling used to be left alone. That is deliberate: xterm
+// scrolls by letting the browser scroll `.xterm-viewport` (an empty spacer) and
+// repainting the canvas from a `scroll` handler. On iOS the spacer is scrolled by
+// the *compositor* while the canvas repaints on the *main thread*, so during a
+// flick the two run apart and you get a screen that is part new and part stale —
+// reported here as "only the bottom half scrolls, the top half stays static".
+// Driving term.scrollLines() straight from the touchmove puts the scroll position
+// and the repaint in the same frame, so they cannot disagree.
 
 const now = () => (window.performance && performance.now ? performance.now() : Date.now());
 
 function appWantsMouse(t) {
   const m = t.term.modes && t.term.modes.mouseTrackingMode;
   return !!m && m !== 'none';
+}
+
+function onAltBuffer(t) {
+  const b = t.term.buffer && t.term.buffer.active;
+  return !!b && b.type === 'alternate';
+}
+
+// Which of the three regimes above applies right now. Re-read per gesture, never
+// cached: a session switches regime the moment you open or quit an editor.
+function scrollMode(t) {
+  if (appWantsMouse(t)) return 'wheel';   // the app asked for the mouse; give it one
+  if (onAltBuffer(t)) return 'arrows';    // no scrollback of its own to move
+  return 'lines';                          // xterm's scrollback is the thing to move
 }
 
 function cellSize(t) {
@@ -376,29 +415,48 @@ function wheelSeq(notchesUp, col, row) {
   return seq;
 }
 
+// Arrow keys are what a terminal sends for a wheel on the alternate screen when
+// the app hasn't asked for the mouse (xterm's own "alternate scroll" convention),
+// and the shape depends on whether the app put the cursor keys in application
+// mode — `less` does, and sending the wrong one scrolls nothing.
+function arrowSeq(notchesUp, t, count) {
+  const app = !!(t.term.modes && t.term.modes.applicationCursorKeys);
+  const key = notchesUp > 0 ? 'A' : 'B';
+  return (app ? `\x1bO${key}` : `\x1b[${key}`).repeat(Math.min(count, 12));
+}
+
 function wireTouchScroll(t) {
   const el = t.pane;
   let tracking = false, scrolling = false, startX = 0, startY = 0, lastY = 0, accum = 0;
-  let cell = { col: 1, row: 1 }, vel = 0, lastT = 0, raf = 0, startedAt = 0;
+  let cell = { col: 1, row: 1 }, vel = 0, lastT = 0, raf = 0, startedAt = 0, mode = 'lines';
   const stopMomentum = () => { if (raf) { cancelAnimationFrame(raf); raf = 0; } };
 
+  // Convert accumulated drag pixels into whole lines of scroll, in whichever
+  // currency this regime deals in. Returns the pixels actually consumed, so the
+  // remainder carries into the next move and slow drags don't quantise away.
   function emit(deltaPx) {
-    const step = Math.max(8, cellSize(t).h);     // one wheel notch per line of drag
+    const step = Math.max(8, cellSize(t).h);     // one line of scroll per line of drag
     const notches = Math.trunc(deltaPx / step);
     if (!notches) return 0;
-    sendInput(t, wheelSeq(notches, cell.col, cell.row)); // finger down → wheel up (older)
+    const n = Math.min(Math.abs(notches), 12);
+    if (mode === 'wheel') sendInput(t, wheelSeq(notches, cell.col, cell.row));
+    else if (mode === 'arrows') sendInput(t, arrowSeq(notches, t, n));
+    // 'lines': finger down (notches > 0) means show older output, i.e. scroll up.
+    else { try { t.term.scrollLines(-notches); } catch {} }
     return notches * step;
   }
 
   el.addEventListener('touchstart', (e) => {
-    if (!appWantsMouse(t) || e.touches.length !== 1) { tracking = false; return; }
+    if (e.touches.length !== 1) { tracking = false; return; }
     stopMomentum();
     tracking = true; scrolling = false;
+    mode = scrollMode(t);
     const tch = e.touches[0];
     startX = tch.clientX; startY = lastY = tch.clientY;
     accum = 0; vel = 0; lastT = now(); startedAt = lastT;
     cell = touchCell(t, tch);
-    // Don't let xterm relay this as a mouse-down/move; we own the gesture.
+    // Don't let xterm relay this as a mouse-down/move, and don't let the browser
+    // scroll .xterm-viewport underneath us — we own the gesture end to end.
     e.stopPropagation();
   }, { capture: true, passive: false });
 
@@ -418,29 +476,78 @@ function wireTouchScroll(t) {
     vel = dy / dt; lastT = tNow; lastY = tch.clientY;
     accum += dy;
     accum -= emit(accum);
+    updateScrollAffordance(t);
   }, { capture: true, passive: false });
 
   function end(e) {
     if (!tracking) return;
     const wasTap = !scrolling && (now() - startedAt) < 250;
     tracking = false;
-    if (wasTap) { sendInput(t, `\x1b[<0;${cell.col};${cell.row}M\x1b[<0;${cell.col};${cell.row}m`); return; }
+    if (wasTap) {
+      // A tap on the terminal is the user asking to interact with it, and that
+      // has to include summoning the on-screen keyboard. We stopPropagation()'d
+      // the touchstart and preventDefault()'d any move, which between them stop
+      // iOS ever synthesising the click xterm's hidden textarea would have been
+      // focused by — so the keyboard came up on the browser's own tap handling
+      // and was taken away again the moment our handlers ran. Focus explicitly.
+      if (mode === 'wheel') sendInput(t, `\x1b[<0;${cell.col};${cell.row}M\x1b[<0;${cell.col};${cell.row}m`);
+      focusTerminal(t);
+      return;
+    }
     if (!scrolling) return;
-    // Flick momentum: keep emitting wheel events, decaying, until it dies.
+    // Flick momentum: keep scrolling, decaying, until it dies.
     let v = vel; let acc = 0;
     const step = () => {
-      if (Math.abs(v) < 0.015) { raf = 0; return; }
+      if (Math.abs(v) < 0.015) { raf = 0; updateScrollAffordance(t); return; }
       acc += v * 16;                 // px advanced this ~frame
       acc -= emit(acc);
       v *= 0.95;
       raf = requestAnimationFrame(step);
     };
-    if (Math.abs(v) > 0.05) step();
+    if (Math.abs(v) > 0.05) step(); else updateScrollAffordance(t);
   }
   el.addEventListener('touchend', end, { capture: true, passive: false });
   el.addEventListener('touchcancel', () => { tracking = false; stopMomentum(); }, { capture: true });
 
   t._stopMomentum = stopMomentum;
+}
+
+// Focusing xterm summons the on-screen keyboard, and on iOS that resizes the
+// visual viewport, which refits the terminal, which can land while the tap is
+// still being processed. Do it on the next frame so the focus isn't undone by
+// our own relayout, and pin the view to the bottom so what you're about to type
+// into is actually on screen — "the input bar is hidden below and I can't scroll
+// to it" is this, not a scrolling bug.
+function focusTerminal(t) {
+  requestAnimationFrame(() => {
+    try { t.term.focus(); } catch {}
+    if (!onAltBuffer(t)) { try { t.term.scrollToBottom(); } catch {} }
+    updateScrollAffordance(t);
+  });
+}
+
+// ---- "jump to bottom" ------------------------------------------------------
+// Scrolled-up-and-can't-get-back is its own reported bug ("I can't get to the
+// very bottom of the session"), and on a phone the answer cannot be "flick
+// repeatedly and hope". One tap, shown only when there is somewhere to go.
+function updateScrollAffordance(t) {
+  const btn = $('#scroll-bottom');
+  if (!btn) return;
+  const active = t && t.id === state.activeId;
+  let show = false;
+  if (active && !onAltBuffer(t)) {
+    const b = t.term.buffer.active;
+    show = b.viewportY < b.baseY;     // there is newer output below the fold
+  }
+  btn.classList.toggle('hidden', !show);
+}
+
+function jumpToBottom() {
+  const t = state.open.get(state.activeId);
+  if (!t) return;
+  if (t._stopMomentum) { try { t._stopMomentum(); } catch {} }
+  try { t.term.scrollToBottom(); } catch {}
+  updateScrollAffordance(t);
 }
 
 function sendInput(t, data) {
@@ -750,7 +857,11 @@ function setActive(id) {
   state.activeId = id;
   for (const [key, t] of state.open) t.pane.classList.toggle('active', key === id);
   const t = state.open.get(id);
-  if (t) requestAnimationFrame(() => { if (t.fit) { try { t.fit.fit(); } catch {} } t.term.focus(); });
+  if (t) requestAnimationFrame(() => {
+    if (t.fit) { try { t.fit.fit(); } catch {} }
+    t.term.focus();
+    updateScrollAffordance(t);
+  });
   updateChrome();
   renderSessions();
   updateMouseHint();
@@ -842,6 +953,86 @@ function handleKey(key) {
   // keyboard when the user actually wants to type.
 }
 
+// ---- copy (mobile) ---------------------------------------------------------
+// "I can't select and copy anything out of the terminal on my phone" is not a
+// gesture that was never wired up — it is structural. With the WebGL renderer
+// .xterm-screen contains two <canvas> elements and nothing else, .xterm-viewport
+// scrolls an empty spacer, and user-select is `none` on both, so a long-press has
+// no text to grab and no amount of touch handling would give it any. (Measured;
+// see test/mobile/README.md.) xterm's own selection is driven by *mouse* events,
+// which a phone doesn't produce.
+//
+// So we hand the phone something it already knows how to select: the buffer,
+// rendered as a <pre>. Native long-press, native handles, native Copy, on every
+// browser and either renderer — and it doubles as "copy the last screenful",
+// which is what you actually want on a phone anyway.
+
+// Read the buffer back as text. Wrapped rows are re-joined into one logical line
+// (xterm stores a wrapped line as several rows), because a copied line that
+// carries the terminal's wrap points pastes as ragged nonsense anywhere else.
+function terminalText(t, scope) {
+  const buf = t.term.buffer.active;
+  const first = scope === 'all' ? 0 : buf.viewportY;
+  const last = scope === 'all' ? buf.length : Math.min(buf.length, buf.viewportY + t.term.rows);
+  const out = [];
+  for (let i = first; i < last; i++) {
+    const line = buf.getLine(i);
+    if (!line) continue;
+    const text = line.translateToString(true);
+    // isWrapped means "this row is a continuation of the one above".
+    if (line.isWrapped && out.length) out[out.length - 1] += text;
+    else out.push(text);
+  }
+  // A screenful of a TUI is mostly blank padding; trailing empties are noise.
+  while (out.length && !out[out.length - 1].trim()) out.pop();
+  return out.join('\n');
+}
+
+const copyState = { scope: 'screen' };
+
+function openCopySheet() {
+  const t = state.open.get(state.activeId);
+  if (!t) { toast('Open a terminal first', 'err').close(3000); return; }
+  // Unhide BEFORE filling it: a display:none element has no layout, so its
+  // scrollHeight is 0 and the scroll-to-newest below would silently do nothing.
+  $('#copy-backdrop').classList.remove('hidden');
+  renderCopySheet();
+}
+
+function renderCopySheet() {
+  const t = state.open.get(state.activeId);
+  if (!t) return;
+  const all = copyState.scope === 'all';
+  $('#copy-scope-screen').classList.toggle('active', !all);
+  $('#copy-scope-all').classList.toggle('active', all);
+  const pre = $('#copy-text');
+  pre.textContent = terminalText(t, copyState.scope);
+  // Show the newest output first-thing: the reason to open this is almost always
+  // "copy what just happened", and starting at the top of 10k lines of scrollback
+  // means scrolling all the way down before you can even start.
+  pre.scrollTop = pre.scrollHeight;
+}
+
+function closeCopySheet() { $('#copy-backdrop').classList.add('hidden'); }
+
+function copyAll() {
+  const t = state.open.get(state.activeId);
+  if (!t) return;
+  const text = terminalText(t, copyState.scope);
+  if (!text) { toast('Nothing to copy', 'err').close(2500); return; }
+  copyToClipboard(text);
+  toast(`Copied ${text.split('\n').length} lines`, 'ok').close(2500);
+  closeCopySheet();
+}
+
+function copySelection() {
+  const sel = String(window.getSelection() || '');
+  if (!sel) { toast('Select some text first — long-press the text above', 'err').close(4000); return; }
+  copyToClipboard(sel);
+  toast(`Copied ${sel.length} characters`, 'ok').close(2500);
+  closeCopySheet();
+}
+
 // ---- paste (mobile) -------------------------------------------------------
 // iOS Safari doesn't surface the long-press "Paste" menu over xterm's hidden
 // helper textarea (worse with the WebGL renderer + our touch capture), so the
@@ -850,13 +1041,35 @@ function handleKey(key) {
 // undefined outright, and even over HTTPS iOS asks for a per-read confirmation
 // the user can decline. Both land in the same fallback — a real textarea the
 // user pastes into manually, where native paste always works.
+// Send text the way a paste is supposed to arrive, which is NOT the same as
+// typing it. Two things have to happen, and neither used to:
+//
+//  - Newlines become CR. A terminal's Enter is \r; sending the \n that came off
+//    the clipboard means some programs see nothing at all.
+//  - When the app has turned bracketed paste on (mode 2004 — Claude Code and
+//    opencode both do, measured), the text is wrapped in the paste markers.
+//    Without them every newline in a pasted block reads as a *separate Enter*,
+//    so pasting a five-line stack trace into Claude Code submitted five prompts,
+//    the first of them one line long. That is the whole of "I can't paste into
+//    the chat window from my phone": it pasted, then immediately sent, in pieces.
+//
+// This is what xterm.js does for a native paste; we need our own copy because
+// the Paste key bypasses xterm entirely (Safari won't surface its long-press
+// Paste menu over xterm's hidden textarea, which is why the key exists).
+function pasteInto(t, text) {
+  if (!text) return;
+  const body = String(text).replace(/\r?\n/g, '\r');
+  const bracketed = !!(t.term.modes && t.term.modes.bracketedPasteMode);
+  sendInput(t, bracketed ? `\x1b[200~${body}\x1b[201~` : body);
+}
+
 async function doPaste() {
   const t = state.open.get(state.activeId);
-  if (!t) return;
+  if (!t) { toast('Open a terminal first', 'err').close(3000); return; }
   try {
     if (navigator.clipboard && navigator.clipboard.readText) {
       const text = await navigator.clipboard.readText();
-      if (text) { sendInput(t, text); t.term.focus(); return; }
+      if (text) { pasteInto(t, text); focusTerminal(t); return; }
     }
     throw new Error('clipboard unavailable');
   } catch {
@@ -882,8 +1095,8 @@ function pasteFallback(t) {
   back.querySelector('#paste-send').onclick = () => {
     const v = ta.value;
     close();
-    if (v) sendInput(t, v);
-    t.term.focus();
+    pasteInto(t, v);
+    focusTerminal(t);
   };
   back.onclick = (e) => { if (e.target === back) close(); };
   setTimeout(() => ta.focus(), 50);
@@ -2654,12 +2867,20 @@ function wireEvents() {
     updateMouseHint();
   };
 
-  $('#kbd-key').onclick = () => { const t = state.open.get(state.activeId); if (t) t.term.focus(); };
+  $('#kbd-key').onclick = () => { const t = state.open.get(state.activeId); if (t) focusTerminal(t); };
+  $('#scroll-bottom').onclick = jumpToBottom;
   // Plain click (not pointerdown) so iOS counts it as the user gesture the
   // Clipboard API requires before it will hand over clipboard contents. Same
   // for 📎: Safari only opens a file picker from inside a real click.
   $('#paste-key').onclick = doPaste;
   $('#attach-key').onclick = openFilePicker;
+  $('#copy-key').onclick = openCopySheet;
+  $('#copy-done').onclick = closeCopySheet;
+  $('#copy-all').onclick = copyAll;
+  $('#copy-selection').onclick = copySelection;
+  $('#copy-scope-screen').onclick = () => { copyState.scope = 'screen'; renderCopySheet(); };
+  $('#copy-scope-all').onclick = () => { copyState.scope = 'all'; renderCopySheet(); };
+  $('#copy-backdrop').onclick = (e) => { if (e.target.id === 'copy-backdrop') closeCopySheet(); };
   // Voice buttons are all plain clicks on purpose: iOS only counts a real click
   // as the gesture that unlocks audio and the microphone.
   $('#mic-key').onclick = onMicKey;
@@ -2679,6 +2900,7 @@ function wireEvents() {
     if (e.key === 'Escape' && dlgOpen) closeDialog();
     if (e.key === 'Enter' && dlgOpen) submitDialog();
     if (e.key === 'Escape' && !$('#update-backdrop').classList.contains('hidden')) closeUpdatePanel();
+    if (e.key === 'Escape' && !$('#copy-backdrop').classList.contains('hidden')) closeCopySheet();
     // Escape is the desktop equivalent of saying "stop" during the undo window.
   });
 
@@ -2708,7 +2930,11 @@ if (!isMobile() && localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === '1') setSideb
 // and it is the only way to ask the page questions ("how many rows does xterm
 // think it has?") that no amount of screenshotting can answer. Read-only by
 // convention; nothing in app.js reads it back.
-window.__termhub = { state, voice, rec, openTerminal, refitActive, appWantsMouse, isMobile };
+window.__termhub = {
+  state, voice, rec, openTerminal, refitActive, isMobile,
+  appWantsMouse, onAltBuffer, scrollMode, jumpToBottom, focusTerminal,
+  terminalText, openCopySheet, closeCopySheet, pasteInto,
+};
 
 wireEvents();
 syncViewportHeight();
