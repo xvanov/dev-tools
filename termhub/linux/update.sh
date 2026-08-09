@@ -17,6 +17,11 @@
 # same ordering constraint and no way to verify anything, because there was nothing
 # left alive to do the verifying.
 #
+# "Detached" here means detached from the CGROUP, not just from the terminal — see
+# the launch of `--finish` near the bottom of this file. `setsid` is not enough, and
+# the difference is invisible until the day the update is the one that needed
+# rolling back.
+#
 # Windows does not have this problem: there the front is a separate process, so
 # windows/update.ps1 swaps it while sessiond keeps every PTY alive.
 #
@@ -204,14 +209,48 @@ say "restart. Reopen termhub in a moment; the result is logged to:"
 say "  $UPDATE_LOG"
 say ""
 
-if command -v setsid >/dev/null 2>&1; then
-  setsid bash "$SCRIPT_DIR/update.sh" --finish "$ROLLBACK" </dev/null >/dev/null 2>&1 &
+# The detach has to escape the CGROUP, not just the terminal — and `setsid` does
+# not do that.
+#
+# termhub is a systemd --user service with the default `KillMode=control-group`,
+# so `systemctl --user restart termhub` SIGTERMs *every process in the unit's
+# cgroup*. This script runs in a termhub PTY, which is a child of `server.js`
+# and therefore inside that cgroup; a forked child inherits it. `setsid` gives
+# the child a new session and process group and leaves its cgroup exactly where
+# it was — so the old `setsid`/`nohup` detach put the verify-and-rollback phase
+# in the very cgroup it was about to tell systemd to kill, and it died on its own
+# `systemctl restart` line. systemd still completed the restart (it is the
+# manager doing the work, not the killed client), so an update that WORKED looked
+# fine — and an update that broke the build silently lost its rollback, its
+# health check and its log output. The safety net only failed when it was needed.
+#
+# Measured with an isolated transient unit: the setsid child got its own session
+# (sid == pid) and stayed in `/user.slice/…/<unit>.service`, and was killed with
+# the cgroup on `systemctl --user stop`.
+#
+# `systemd-run --user` places the phase in a transient unit *of its own*, which
+# is out of termhub's cgroup and so out of reach of the kill. `--collect` cleans
+# the unit up afterwards so these don't accumulate one per update.
+FINISH_UNIT="termhub-update-$(date +%Y%m%d-%H%M%S)-$$"
+if command -v systemd-run >/dev/null 2>&1 \
+   && systemd-run --user --unit="$FINISH_UNIT" --collect --quiet \
+        --description="termhub update: verify and roll back" \
+        bash "$SCRIPT_DIR/update.sh" --finish "$ROLLBACK" 2>/dev/null; then
+  say "restart phase running as user unit $FINISH_UNIT"
 else
-  # No setsid: nohup still detaches from the terminal well enough that SIGHUP on PTY
-  # teardown won't take it with us.
-  nohup bash "$SCRIPT_DIR/update.sh" --finish "$ROLLBACK" </dev/null >/dev/null 2>&1 &
+  # No systemd-run, or it refused. Fall back to the old behaviour rather than
+  # abandoning the update: on a machine whose termhub is NOT under a systemd unit
+  # with control-group kill (a hand-started server.js, a container), setsid is
+  # genuinely enough, and where it isn't, this is no worse than what it replaced.
+  say "systemd-run unavailable - falling back to setsid (the verify phase may not"
+  say "survive the restart; check '$UPDATE_LOG' and 'systemctl --user status $SERVICE')"
+  if command -v setsid >/dev/null 2>&1; then
+    setsid bash "$SCRIPT_DIR/update.sh" --finish "$ROLLBACK" </dev/null >/dev/null 2>&1 &
+  else
+    nohup bash "$SCRIPT_DIR/update.sh" --finish "$ROLLBACK" </dev/null >/dev/null 2>&1 &
+  fi
+  disown 2>/dev/null || true
 fi
-disown 2>/dev/null || true
 
 # Give the detached child a moment to be scheduled before this shell (and its PTY)
 # goes away with the restart it just triggered.

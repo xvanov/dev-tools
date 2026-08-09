@@ -468,6 +468,26 @@ So the watchdog step comes *before* it (also asserted by the test), and the rest
 `git reset --hard` back if it never becomes healthy. The old inline command had the same ordering
 constraint and no way to verify anything at all.
 
+**"Detached" has to mean out of the cgroup, and `setsid` does not do that.** termhub is a systemd
+`--user` service with the default `KillMode=control-group`, so `systemctl --user restart termhub`
+SIGTERMs *every process in the unit's cgroup* — and the updater's PTY is a child of `server.js`,
+inside it. A forked child inherits the cgroup; `setsid` gives it a new session and process group and
+moves it nowhere. So the original `setsid`/`nohup` hand-off put the verify-and-rollback phase into
+the exact cgroup it was about to ask systemd to kill, and it died on its own `systemctl restart`
+line. systemd still completed the restart — it is the manager doing the work, not the killed
+client — so **an update that worked looked perfect, and an update that broke the build silently lost
+its rollback, its health check and its log output.** The safety net failed only when it was needed,
+which is the worst shape a bug can have.
+
+The phase now goes to `systemd-run --user --unit=termhub-update-<stamp> --collect`, a transient unit
+of its own that is out of termhub's cgroup and so out of reach of the kill; `setsid` remains as the
+fallback for a termhub that isn't under such a unit at all (a hand-started `server.js`, a
+container), where it is genuinely sufficient. Measured both ways with an isolated transient unit:
+the `setsid` child kept `/user.slice/…/<unit>.service` and died with it, while the `systemd-run`
+phase outlived the stop it had itself triggered. `test/update.test.js` pins the hand-off to
+`systemd-run` rather than to `setsid`, because anchoring on `setsid` is exactly what would let this
+regress unnoticed.
+
 The first click on a machine still running the old inline command can't know about any of this —
 but it ends in `systemctl --user restart termhub`, which starts the **new** code. So
 `lib/watchdogSetup.js` installs the watchdog from termhub's own startup: Linux only, 5 s after
@@ -1220,6 +1240,7 @@ user actually meant to paste.
 | The watchdog keeps escalating for the same failure | The remedy it wrote doesn't actually fix that failure | The prompt tells it to *improve the existing remedy in place* on a repeat, so check `git log watchdog/remedies/`. `escalations.json` shows the outcome per attempt; the budget (≤3/h) stops the bleeding either way |
 | The watchdog logged nothing at all | Not registered, killed by the switch, or the task never ran | `Get-ScheduledTaskInfo TermhubWatchdog` (`LastRunTime`/`LastTaskResult`); check for `%LOCALAPPDATA%\termhub\watchdog\DISABLED`. Registration can fail *while reporting success* on older copies of the installer — see the `WORKGROUP` trap above |
 | (Linux) clicked ⟳ Update and the terminal died mid-output | Expected: one process, so the restart ends every PTY including the updater's | The restart is handed to a detached phase that logs to `~/.local/termhub/logs/update.log` — read that for the result, including a rollback if the new build never became healthy |
+| (Linux) `update.log` stops at the "restart phase" header and says nothing more | The verify phase was killed by the restart it triggered | Fixed: the phase now runs under `systemd-run --user --unit=termhub-update-… --collect`, out of termhub's cgroup. On a build before that fix it was launched with `setsid`, which does not leave the cgroup, so `KillMode=control-group` took it down — the update still applied, but with no health check and **no rollback**. `systemctl --user list-units 'termhub-update-*'` shows the phase while it runs |
 | (Linux) the watchdog reports `not-listening` but termhub works fine | An address-guessing bug this used to have | Fixed: the probe tries `TERMHUB_BIND`, loopback, the tailnet IP and whatever `ss` shows. A default install binds the **tailnet IP**, so a loopback-only check invents an outage. `bash watchdog/watchdog.sh --probe` prints every candidate and its result |
 | (Linux) watchdog timer vanished after logout | `--user` units stop with the session unless lingering is on | `sudo loginctl enable-linger $USER`. termhub itself has the same problem, which is why the installer warns |
 | (Linux) `start request repeated too quickly` | systemd hit `StartLimitBurst` and gave up on the unit | What `service-inactive.sh` exists for: `systemctl --user reset-failed termhub` first, *then* start. A bare `start` on a rate-limited unit fails instantly and looks like the remedy did nothing |

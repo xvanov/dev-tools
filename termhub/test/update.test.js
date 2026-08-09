@@ -69,12 +69,31 @@ const sh = fs.readFileSync(linScript, 'utf8');
 // call shape rather than a bare substring.
 const ensureMatches = [...sh.matchAll(/install-watchdog\.sh"?\s+--ensure/g)];
 const lastEnsure = ensureMatches.length ? ensureMatches[ensureMatches.length - 1].index : -1;
-const handoff = sh.lastIndexOf('setsid');
+// Anchor the ordering on the REAL hand-off, which is systemd-run — not on
+// setsid, which is now only the fallback branch beneath it. Anchoring on setsid
+// would keep passing if the fix were reverted.
+const handoff = sh.indexOf('systemd-run');
 check('linux/update.sh installs the watchdog', lastEnsure !== -1);
 check('linux/update.sh hands the restart to a detached --finish phase', sh.includes('--finish'));
 check('the watchdog step precedes the detached restart hand-off',
   lastEnsure !== -1 && handoff !== -1 && lastEnsure < handoff,
-  `ensure@${lastEnsure} setsid@${handoff}`);
+  `ensure@${lastEnsure} systemd-run@${handoff}`);
+
+// The detach must escape the CGROUP, not just the terminal. termhub is a systemd
+// --user service with the default KillMode=control-group, so `systemctl --user
+// restart` SIGTERMs every process in the unit's cgroup — and a PTY child is in
+// it. setsid changes session and process group and leaves the cgroup alone, so
+// the verify-and-rollback phase used to kill itself on its own restart line.
+// Proven with an isolated transient unit: the setsid child kept the unit's
+// cgroup and died with it. The failure is invisible when the update works and
+// only bites when a rollback was needed, so it gets a test rather than a comment.
+check('the --finish phase is launched into its own systemd unit',
+  /systemd-run\s+--user\s+--unit=/.test(sh), sh.slice(handoff, handoff + 160));
+check('the transient unit is --collect (no accumulation of one unit per update)',
+  /systemd-run[^\n]*--collect/.test(sh));
+check('setsid survives only as the documented fallback, not as the hand-off',
+  sh.indexOf('systemd-run') < sh.lastIndexOf('setsid'),
+  `systemd-run@${sh.indexOf('systemd-run')} setsid@${sh.lastIndexOf('setsid')}`);
 
 // ---- platform override hygiene ---------------------------------------------
 check('process.platform was restored', process.platform === realPlatform, process.platform);
