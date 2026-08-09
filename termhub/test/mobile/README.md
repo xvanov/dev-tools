@@ -52,16 +52,33 @@ this machine.
 ## WebKit
 
 Chromium is the default because it's already downloaded on most machines. WebKit is the engine iOS
-actually runs and is worth the one extra system package when a rendering question is in play:
+actually runs, and is worth the one extra system package:
 
 ```bash
-sudo apt-get install libavif16
+sudo apt-get install libavif16      # the only thing Playwright's WebKit needs beyond the download
 npx playwright install webkit
 node test/mobile/probe.js --browser=webkit
 ```
 
-Linux WebKit is still not iOS Safari — no soft keyboard, different compositor — but it shares the
-engine core, so CSS and selection behaviour land much closer.
+Linux WebKit is still not iOS Safari — no soft keyboard, different compositor, so it says nothing
+about momentum-scroll repaint lag. What it *does* catch is the API and CSS surface, and on the first
+run it caught something that mattered:
+
+- **WebKit does not implement the unprefixed `user-select` at all.** `getComputedStyle().userSelect`
+  is `undefined`; only `-webkit-user-select` is honoured. The copy sheet sets both, so it works —
+  but a stylesheet that had set only the standard property would have left selection dead on the one
+  engine this feature exists for, and **Chromium would have reported it green**. The probe now
+  accepts either spelling and prints both, so the discrepancy is visible rather than papered over.
+- `new Touch()` throws *"Illegal constructor"* in WebKit, which still wants the deprecated
+  `document.createTouch` / `createTouchList`. `typeof Touch === 'function'` is `true` there, so the
+  harness detects by *doing* rather than by name.
+- WebKit runs `requestAnimationFrame` on a different schedule, so `openTerminal()`'s deferred
+  `connect()` hadn't run when the probe first reached for the socket. `openInPage()` now waits on
+  `ws.readyState`, i.e. on the thing it actually needs.
+
+Two of those three were harness bugs rather than product bugs — which is the honest summary of what
+a second engine buys: it mostly hardens the harness, and occasionally catches a real one-engine
+mistake that the default engine would have signed off on.
 
 ## The three scroll regimes (why this matters)
 

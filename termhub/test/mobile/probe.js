@@ -228,7 +228,13 @@ const GEOMETRY = () => {
         open: !document.querySelector('#copy-backdrop').classList.contains('hidden'),
         chars: pre.textContent.length,
         lines: pre.textContent ? pre.textContent.split('\n').length : 0,
-        userSelect: cs.userSelect + '/' + cs.webkitUserSelect,
+        // Both spellings, deliberately. WebKit does not implement the
+        // unprefixed `user-select` at all — it reports `undefined` for it and
+        // only honours `-webkit-user-select`. So a stylesheet that set only the
+        // standard property would leave selection dead on the one engine that
+        // matters here, and Chromium would report it green.
+        userSelect: `${cs.userSelect}/${cs.webkitUserSelect}`,
+        selectable: cs.webkitUserSelect === 'text' || cs.userSelect === 'text',
         firstLine: pre.textContent.split('\n')[0].slice(0, 46),
         lastLine: pre.textContent.trimEnd().split('\n').pop().slice(0, 46),
         scrolledToEnd: pre.scrollTop + pre.clientHeight >= pre.scrollHeight - 2,
@@ -237,7 +243,8 @@ const GEOMETRY = () => {
     say('sheet open', copy.open);
     say('selectable text in the DOM', `${copy.chars} chars / ${copy.lines} lines`,
       copy.chars > 0 ? 'real text a long-press can grab' : 'EMPTY');
-    say('user-select', copy.userSelect, copy.userSelect.startsWith('text') ? 'selection allowed' : 'STILL BLOCKED');
+    say('user-select (std/-webkit-)', copy.userSelect,
+      copy.selectable ? 'selection allowed' : 'STILL BLOCKED');
     say('first / last line', `${JSON.stringify(copy.firstLine)} … ${JSON.stringify(copy.lastLine)}`);
     say('opens at the newest output', copy.scrolledToEnd);
     // Full scrollback is the other half of the sheet's job.

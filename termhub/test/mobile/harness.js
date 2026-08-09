@@ -195,11 +195,17 @@ async function createSession(base, { cwd, command, title }) {
 async function openInPage(page, session) {
   await page.evaluate(({ id, title, kind }) => window.__termhub.openTerminal(id, title, kind),
     { id: session.id, title: session.title || '', kind: session.kind || 'shell' });
+  // Wait for the socket to be OPEN, not merely for rows to exist. openTerminal()
+  // defers connect() into a requestAnimationFrame, and headless WebKit does not
+  // run rAF on the same schedule Chromium does — so `t.ws` was still null here
+  // and every send in the probe threw. Waiting on the thing we actually need
+  // makes the harness say the same thing on both engines.
   await page.waitForFunction(() => {
     const g = window.__termhub;
     const t = g && g.state.open.get(g.state.activeId);
-    return !!(t && t.term && t.term.rows > 0 && t.pane.classList.contains('active'));
-  }, null, { timeout: 10000 });
+    return !!(t && t.term && t.term.rows > 0 && t.pane.classList.contains('active')
+      && t.ws && t.ws.readyState === 1);
+  }, null, { timeout: 15000 });
 }
 
 // A one-finger vertical drag on the terminal, in the shape a phone produces:
@@ -210,14 +216,41 @@ async function dragVertical(page, { fromX, fromY, dy, steps = 12, holdMs = 0 }) 
   return page.evaluate(async ({ fromX, fromY, dy, steps, holdMs }) => {
     const el = document.elementFromPoint(fromX, fromY);
     if (!el) return { error: 'no element at point' };
+
+    // Two engines, two ways to mint a Touch, and neither has the other's.
+    // WebKit has no `Touch` constructor at all (`new Touch()` throws "Illegal
+    // constructor") and still wants the deprecated document.createTouch /
+    // createTouchList pair; Chromium has the constructors and dropped
+    // createTouch. Since the whole point of running WebKit is that it is the
+    // engine iOS ships, the harness has to speak both.
+    // Detect by *doing*, not by `typeof`: WebKit exposes a `Touch` global that
+    // is a function and throws "Illegal constructor" when you call it, so a
+    // feature test on the name alone reports support that isn't there.
+    let useLegacy = false;
+    try { new Touch({ identifier: 0, target: el, clientX: 0, clientY: 0 }); }
+    catch { useLegacy = typeof document.createTouch === 'function'; }
+    const mkTouch = (x, y) => (useLegacy
+      ? document.createTouch(window, el, 1, x, y, x, y)
+      : new Touch({ identifier: 1, target: el, clientX: x, clientY: y, pageX: x, pageY: y }));
+    const mkList = (arr) => (useLegacy ? document.createTouchList(...arr) : arr);
+
     const mk = (type, x, y) => {
-      const touch = new Touch({ identifier: 1, target: el, clientX: x, clientY: y, pageX: x, pageY: y });
-      return new TouchEvent(type, {
-        touches: type === 'touchend' ? [] : [touch],
-        targetTouches: type === 'touchend' ? [] : [touch],
-        changedTouches: [touch],
-        bubbles: true, cancelable: true, composed: true,
-      });
+      const touch = mkTouch(x, y);
+      const ended = type === 'touchend';
+      if (typeof TouchEvent === 'function') {
+        try {
+          return new TouchEvent(type, {
+            touches: mkList(ended ? [] : [touch]),
+            targetTouches: mkList(ended ? [] : [touch]),
+            changedTouches: mkList([touch]),
+            bubbles: true, cancelable: true, composed: true,
+          });
+        } catch { /* older WebKit: fall through to initTouchEvent below */ }
+      }
+      const ev = document.createEvent('TouchEvent');
+      ev.initTouchEvent(type, true, true, window, 0, x, y, x, y, false, false, false, false,
+        mkList(ended ? [] : [touch]), mkList(ended ? [] : [touch]), mkList([touch]), 1, 0);
+      return ev;
     };
     el.dispatchEvent(mk('touchstart', fromX, fromY));
     if (holdMs) await new Promise((r) => setTimeout(r, holdMs));
