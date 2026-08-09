@@ -41,3 +41,8 @@ combined-summary.md
 # is served on the tailnet, so these stay local.
 termhub/web/voice-picker.html
 termhub/web/voice-probe*.html
+
+# Screenshots the mobile probe writes on every run (test/mobile/probe.js). They
+# are a diagnosis you look at once, not source; the numbers that matter get
+# written into a commit message or AGENT.md instead.
+termhub/test/mobile/out/

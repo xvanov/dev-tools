@@ -2702,6 +2702,14 @@ api('/api/info').then((info) => {
 // setSidebarCollapsed above), so it's a no-op on mobile regardless of what's stored.
 if (!isMobile() && localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === '1') setSidebarCollapsed(true);
 
+// A handle on the live UI for diagnostics — the same instinct as ?voicedebug=1,
+// which exists because a phone has no console. `test/mobile/` drives the real UI
+// through this rather than through selectors that break for unrelated reasons,
+// and it is the only way to ask the page questions ("how many rows does xterm
+// think it has?") that no amount of screenshotting can answer. Read-only by
+// convention; nothing in app.js reads it back.
+window.__termhub = { state, voice, rec, openTerminal, refitActive, appWantsMouse, isMobile };
+
 wireEvents();
 syncViewportHeight();
 // One voice feed for the whole page (not one per terminal): `waiting` is about

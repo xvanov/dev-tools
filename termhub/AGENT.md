@@ -919,6 +919,36 @@ If building by hand, reproduce both: clear `NoDefaultCurrentDirectoryInExePath`,
 
 ## Mobile notes
 
+### Measuring it instead of guessing (`test/mobile/`)
+
+Every mobile bug here arrived as prose — "scrolling is weird", "the input bar disappears" — and a
+guess costs a round-trip to a real phone to disprove. `test/mobile/probe.js` drives the *real* UI in
+a phone-shaped browser and prints geometry, scroll state, renderer and reachability; full docs and
+the honest list of what it cannot see are in [test/mobile/README.md](./test/mobile/README.md).
+Playwright is deliberately **not** a dependency (termhub ships to phones and Windows boxes);
+`TERMHUB_PLAYWRIGHT=<path>` points at one installed anywhere.
+
+It settled two things no amount of reading would have:
+
+- **With the WebGL renderer there is no text in the DOM.** `.xterm-screen` holds two `<canvas>`
+  elements and nothing else, `.xterm-viewport` scrolls an empty `.xterm-scroll-area` spacer, and
+  `user-select` is `none` on both. So native long-press selection cannot ever work in place, on any
+  browser — "I can't copy from the terminal on my phone" is structural, not a CSS oversight.
+- **Claude Code looks like a full-screen TUI and is not one.** Measured against a live session, it
+  stays on the **normal buffer** and **explicitly disables** mouse tracking (`?1000l ?1002l ?1003l
+  ?1006l`); opencode does the opposite (`?1049h`, `?1003h`, `?1006h`). So the wheel-forwarding path
+  termhub built for full-screen apps was never active in a Claude session, which is how "scrolling
+  is broken in Claude" and "scrolling is fine in vim" were both true.
+
+| | alternate screen | mouse tracking | a drag must |
+|---|---|---|---|
+| **Claude Code** | no — normal buffer | none | scroll xterm's own scrollback |
+| **opencode** | yes (`?1049h`) | `?1003h` + `?1006h` | be forwarded as SGR wheel |
+| plain shell | no | none | scroll xterm's own scrollback |
+
+`window.__termhub` at the end of `web/app.js` is the handle it drives the page through — the same
+instinct as `?voicedebug=1`, which exists because a phone has no console.
+
 - The on-screen key bar sends real escape sequences: `Esc` (`\x1b`), `Tab` (`\t`), arrows
   (`\x1b[A/B/C/D`), `^C` (`\x03`). The sticky **Ctrl** key arms a modifier applied to the next
   letter you type (e.g. `Ctrl` then `d` → `\x04`).
