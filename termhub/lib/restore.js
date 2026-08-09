@@ -98,6 +98,11 @@ function restoreClaudeCommand(command, agentSessionId) {
 // picker like Claude's bare `--resume` to fall back to).
 function restoreOpencodeCommand(command, agentSessionId) {
   let cmd = (command && String(command).trim()) || 'opencode';
+  // A restored session gets a fresh --port (the old one belonged to a TUI that
+  // is gone, and re-using it would either fail to bind or, worse, adopt whatever
+  // took it over). lib/session.js splices the new one in; strip the stale pair
+  // here so there is only ever one.
+  cmd = stripOpencodeServerFlags(cmd);
   if (agentSessionId) {
     if (!/(^|\s)(--session|-s)(\s|=|$)/.test(cmd)) cmd += ` --session ${agentSessionId}`;
   } else if (!/(^|\s)(--continue|-c|--session|-s)(\s|=|$)/.test(cmd)) {
@@ -106,6 +111,34 @@ function restoreOpencodeCommand(command, agentSessionId) {
   return cmd;
 }
 
+// Remove `--port <n>` / `--hostname <h>` (and their `=` forms) from an opencode
+// command line. Confined to the opencode segment for the same reason
+// stripClaudeSessionFlags is: a `--port` belonging to some other command in a
+// compound line is none of our business.
+function stripOpencodeServerFlags(command) {
+  const s = String(command || '');
+  const cut = s.search(/\s*(\|\||&&|;|\|)/);
+  const head = cut === -1 ? s : s.slice(0, cut);
+  const tail = cut === -1 ? '' : s.slice(cut);
+  const cleaned = head
+    .replace(/(^|\s)--port(=|\s+)\S+/gi, '$1')
+    .replace(/(^|\s)--hostname(=|\s+)\S+/gi, '$1')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+  return cleaned + tail;
+}
+
+// Splice flags in right after the `opencode` executable token — the twin of
+// injectAfterClaudeExe above. Appending them instead would land them after a
+// `&&` in a compound command, i.e. on the wrong program entirely.
+function injectAfterOpencodeExe(command, flags) {
+  return String(command).replace(
+    /(^|[\\/\s"'])(opencode(?:\.exe|\.cmd)?)(?=$|[\s"'])/i,
+    (m, pre, exe) => `${pre}${exe} ${flags}`
+  );
+}
+
 module.exports = {
   restoreClaudeCommand, restoreOpencodeCommand, stripClaudeSessionFlags, injectAfterClaudeExe,
+  stripOpencodeServerFlags, injectAfterOpencodeExe,
 };

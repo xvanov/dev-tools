@@ -437,11 +437,12 @@ function createSessiond({ entry = 'sessiond', port: serverPort = DEFAULT_SESSION
         const session = sessions.get(id);
         if (!session) return sendJson(res, 404, { error: 'no such session' });
         const body = await readBody(req);
-        // Refuse rather than accept-and-do-nothing: only a claude session has a
-        // transcript to watch, so arming a shell would light a toggle in the UI
-        // that could never fire.
+        // Refuse rather than accept-and-do-nothing: only a session whose turns
+        // termhub can actually read produces announcements, so arming a shell
+        // would light a toggle in the UI that could never fire. See
+        // VoiceHub.canArm — claude, or an opencode termhub gave a --port to.
         if (body.armed && !VoiceHub.canArm(session)) {
-          return sendJson(res, 400, { error: 'voice announcements need a claude session' });
+          return sendJson(res, 400, { error: 'voice announcements need a claude or opencode session' });
         }
         const armed = voice.setArmed(id, !!body.armed);
         return sendJson(res, 200, { ok: true, armed });
@@ -463,7 +464,8 @@ function createSessiond({ entry = 'sessiond', port: serverPort = DEFAULT_SESSION
         const result = await voice.summaryFor(session).catch(() => ({ summary: '', turnUuid: null, waiting: false }));
         if (url.searchParams.get('full')) {
           let full = { text: '', truncated: false };
-          try { full = voice.fullTurnFor(session); } catch { /* unreadable transcript — summary still stands */ }
+          // Awaited: opencode's turn comes over its HTTP API, not off disk.
+          full = await voice.fullTurnFor(session).catch(() => ({ text: '', truncated: false }));
           result.text = full.text;
           result.truncated = full.truncated;
         }

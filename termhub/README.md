@@ -270,12 +270,16 @@ first when one of them has died.
     immediately, rather than after a long upload.
   - Pasting text that happens to carry an image (copied out of a document or a web page) pastes
     the **text** — attach the image with 📎 if you wanted the picture.
-- **🔊 next to a session** arms spoken announcements for it (Claude sessions only — nothing
-  else writes a transcript to read, and the toggle says so if you tap it). When that session
-  finishes a turn and is waiting on you, termhub speaks a short summary of what it said; with
+- **🔊 next to a session** arms spoken announcements for it — **Claude Code and opencode**
+  sessions; a plain shell has no turns to read and the toggle says so if you tap it. When that
+  session finishes a turn and is waiting on you, termhub speaks a short summary of what it said; with
   more than one session armed, the summary is prefixed with the session's title so you know
   who's talking. A session that starts working again cancels an announcement that hasn't been
   spoken yet. Toggling it off is immediate and forgets nothing else.
+  - **On an opencode session termhub can also tell you what it's asking.** opencode publishes
+    its questions and permission prompts over its own API, so instead of Claude's generic
+    "it's asking you something", you get the question and its options read out. (Only for
+    opencode sessions termhub started itself — it needs to have opened the API port.)
 - **Enable voice** — browsers (iOS Safari especially) refuse to play audio until you've tapped
   something, so the first armed session puts an amber **Enable voice** strip above the key bar.
   One tap unlocks audio for the rest of the page's life; until you tap it, the 🔊 toggles glow
@@ -396,6 +400,8 @@ On Linux set these with `systemctl --user edit termhub`; on Windows via `setx` +
 | `server.js` | Single-process dev entrypoint — runs both tiers in one process (`npm start`) |
 | `lib/session.js` | PTY lifecycle (`node-pty`), scrollback ring buffer, replay |
 | `lib/claudeModel.js` | Locates a Claude session's transcript and tails it for the model badge |
+| `lib/opencodeApi.js` | Talks to an opencode TUI's own HTTP API (termhub launches each with `--port`): model, turns, and its event stream |
+| `lib/opencodeModel.js` | Fallback for an opencode session with no API port — reads the model via `opencode export` |
 | `lib/claudeTranscript.js` | Reads the last turn from that transcript and decides whether it's waiting on you |
 | `lib/summarize.js` | Condenses a turn into speakable prose (`claude -p --model haiku`, with a local fallback) |
 | `lib/tts.js` | Speech synthesis — kokoro or piper, engine selection, voice discovery, WAV rendering, small LRU |

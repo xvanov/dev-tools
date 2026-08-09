@@ -16,6 +16,7 @@
 
 const {
   restoreClaudeCommand, restoreOpencodeCommand, stripClaudeSessionFlags,
+  stripOpencodeServerFlags, injectAfterOpencodeExe,
 } = require('../lib/restore');
 
 let pass = 0;
@@ -146,6 +147,39 @@ eq('opencode without an id falls back to --continue',
 eq('opencode does not double up an existing --session',
   restoreOpencodeCommand('opencode --session ses_old', 'ses_abc'),
   'opencode --session ses_old');
+
+// ---- 7. opencode server flags ------------------------------------------------
+// termhub splices `--port <n> --hostname 127.0.0.1` into every opencode it
+// launches so it can talk to that TUI's own API (lib/opencodeApi.js). The port
+// belongs to a process that is gone by the time anything is restored, so a
+// restore must not carry it forward: re-binding it either fails or, worse,
+// adopts whatever took the port over.
+
+eq('a restored opencode drops the old --port/--hostname',
+  restoreOpencodeCommand('opencode --port 41057 --hostname 127.0.0.1', 'ses_abc'),
+  'opencode --session ses_abc');
+eq('the = form is dropped too',
+  restoreOpencodeCommand('opencode --port=41057 --hostname=127.0.0.1', 'ses_abc'),
+  'opencode --session ses_abc');
+eq('a --port belonging to another command in the line survives',
+  stripOpencodeServerFlags('opencode --port 41057 && serve --port 8080'),
+  'opencode && serve --port 8080');
+eq('nothing to strip leaves the command alone',
+  stripOpencodeServerFlags('opencode --continue'),
+  'opencode --continue');
+
+eq('flags land right after the opencode token, not at the end',
+  injectAfterOpencodeExe('opencode --continue', '--port 1234'),
+  'opencode --port 1234 --continue');
+eq('a path to the executable is matched too',
+  injectAfterOpencodeExe('/home/k/.opencode/bin/opencode', '--port 1234'),
+  '/home/k/.opencode/bin/opencode --port 1234');
+eq('a compound line injects into opencode, not the trailing command',
+  injectAfterOpencodeExe('opencode && echo done', '--port 1234'),
+  'opencode --port 1234 && echo done');
+check('opencode-ish names are not matched',
+  injectAfterOpencodeExe('opencodex', '--port 1234') === 'opencodex',
+  injectAfterOpencodeExe('opencodex', '--port 1234'));
 
 // ---- report -----------------------------------------------------------------
 

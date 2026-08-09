@@ -106,7 +106,7 @@ function refresh() {
       // missed socket message can't leave the 🔊 toggles lying. Non-Claude
       // sessions are filtered out: they have no transcript, so an armed flag on
       // one can only ever be a lie the sidebar would have to render.
-      voice.armed = new Set(state.sessions.filter((x) => x.voiceArmed && x.kind === 'claude').map((x) => x.id));
+      voice.armed = new Set(state.sessions.filter((x) => x.voiceArmed && x.canSpeak).map((x) => x.id));
       $('#machine-name').textContent = state.machine;
       const n = state.sessions.length;
       const live = state.sessions.filter((x) => x.alive).length;
@@ -142,16 +142,21 @@ function renderSessions() {
     // see lib/claudeModel.js). Absent for shells and for Claude sessions whose
     // model isn't known yet (just spawned, or launched with a hand-typed
     // --resume/--continue whose resulting conversation id we can't predict).
-    // 🔊 arms spoken announcements for the session. Only Claude sessions have a
-    // transcript to read, so on anything else it's dimmed — but still tappable,
-    // because a control that does nothing and says nothing is worse than one
-    // that explains itself.
-    const canSpeak = s.kind === 'claude';
-    // A non-Claude session can never announce anything, so never paint one as
-    // armed even if the API let something arm it.
+    // 🔊 arms spoken announcements for the session. Only a session whose turns
+    // termhub can read produces any, so on anything else it's dimmed — but still
+    // tappable, because a control that does nothing and says nothing is worse
+    // than one that explains itself. The server answers this (`canSpeak`)
+    // rather than the browser re-deriving it from `kind`: the rule is no longer
+    // "is it claude" — an opencode termhub launched with a --port can speak too,
+    // and one from an older build cannot.
+    const canSpeak = !!s.canSpeak;
+    // A session that can never announce anything must never be painted armed,
+    // even if the API let something arm it.
     const armed = canSpeak && voice.armed.has(s.id);
     const voiceTitle = !canSpeak
-      ? 'Spoken announcements need a Claude session'
+      ? (s.kind === 'opencode'
+          ? 'This opencode session was started without termhub\'s API port — reopen it to enable speech'
+          : 'Spoken announcements need a Claude or opencode session')
       : armed
         ? (voice.unlocked ? 'Speaking this session — tap to stop' : 'Armed, but audio is locked — tap "Enable voice" below')
         : 'Speak this session when it needs you';
@@ -2627,14 +2632,14 @@ function cmdRate(delta) {
 // ---- arming -----------------------------------------------------------------
 
 // Called from "Enable voice" so that one tap is genuinely all it takes. Only
-// claude sessions can announce (nothing else writes a transcript), so a shell
-// is skipped silently rather than reported as a failure — the strip already
-// says voice is ready, and there is nothing the user did wrong.
+// Only a session that can actually announce is armed here, so a shell is
+// skipped silently rather than reported as a failure — the strip already says
+// voice is ready, and there is nothing the user did wrong.
 function armActiveSessionForVoice() {
   const id = state.activeId;
   if (!id || voice.armed.has(id)) return;
   const info = state.sessions.find((s) => s.id === id);
-  if (!info || info.kind !== 'claude') return;
+  if (!info || !info.canSpeak) return;
   toggleVoiceArm(id, true);
 }
 

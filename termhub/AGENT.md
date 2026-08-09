@@ -333,6 +333,87 @@ learn that the coupling exists. So the version is treated as a dependency:
 restore it, and confirm the conversation comes back *and* the model badge and 🔊 announcements still
 resolve. Then set both `minVersion` and `verifiedVersion` in the same commit.
 
+## opencode talks over HTTP, not over its transcript
+
+termhub launches every opencode session with `--port <n> --hostname 127.0.0.1` spliced in right
+after the executable token (`injectAfterOpencodeExe`), because **opencode's TUI serves the same API
+`opencode serve` does — for that running instance**. `lib/opencodeApi.js` is the client. That one
+flag is what buys parity with Claude Code, and on three of four counts it is a better deal than the
+Claude side gets:
+
+| | Claude Code | opencode |
+|---|---|---|
+| which conversation is this? | pin `--session-id` at launch and hope it isn't forked away | every event carries `sessionID` |
+| which model? | parse the newest transcript JSONL | `session.model`, live |
+| is a turn finished? | infer from `stop_reason` | `session.idle` |
+| **is it asking me something?** | **unknowable** — see the voice layer below | `question.asked`, *with the question text and its options* |
+
+The last row is the one that matters. The voice layer's ugliest compromise is that a Claude session
+parked on a question writes nothing to its transcript until you answer, so termhub has to guess from
+12 s of PTY silence and can never say *what* is being asked. opencode publishes the question, its
+header and its options the moment it asks, so `_pollOpencode` has no heuristic in it at all.
+
+**Ports.** `freePort()` binds one, reads it, and lets go. There is an unavoidable race between that
+and opencode's own bind — opencode has no "bind any port and tell me which" mode we can read back —
+but the window is milliseconds and the failure is loud and recoverable: the TUI exits, the PTY shows
+why, and the session degrades to the old subprocess path. A user who supplies their own `--port` is
+honoured, not overridden. A **restore strips the old pair** (`stripOpencodeServerFlags`): that port
+belonged to a process that is gone, and re-binding it would either fail or, worse, adopt whatever
+took it over. Covered by `test/restore.test.js`.
+
+**Identity, in three escalating steps**, because each is wrong on its own:
+
+1. `--session <id>` in the command line, read at construction. This is what restore builds and what
+   a user resuming by hand types, and reading it is free and exact — not reading it left a restored
+   opencode with no model badge until the user happened to type something.
+2. Otherwise a *seed* from `GET /session`, filtered to this cwd and to sessions created since we
+   launched. The date guard is what stops us adopting an **older** conversation that happens to live
+   in the same directory. Note `GET /api/session/active` reads like the obvious answer and is a
+   trap — measured against 1.18.15 it returns `{"data":{}}` even with a conversation open and even
+   when the TUI was launched with `--session <id>`. It's asked first anyway, cheaply, in case a
+   later version starts populating it; nothing depends on it.
+3. Then the event stream **names** the session, and that supersedes both. Seeding stops the moment
+   an event has spoken: once we've been told, guessing from a directory listing can only make it
+   worse.
+
+**The model badge no longer shells out.** `_opencodeModel()` returns straight from a cache the event
+stream keeps current, so a model switch shows up immediately instead of within 10 s, and the 1.4 s
+`opencode export` subprocess is gone from the hot path. `lib/opencodeModel.js` stays as the fallback
+for a session with no port — one launched by an older build, or one whose TUI never opened its API.
+
+**The event stream is the lifecycle.** `subscribe()` reconnects with the same backoff shape the
+browser's sockets use and for the same reason: the TUI can be restarted under us, and a feed that
+gave up once would leave that session permanently silent with no sign of why. It is closed on PTY
+exit *and* on `kill()` — otherwise it would retry a dead port every few seconds for the life of
+`sessiond`.
+
+**Verified against opencode 1.18.15.** This is a coupling to surfaces that are not a stable public
+API — `--port` on the TUI, `GET /session`, `GET /event`'s type strings, `question.asked`'s shape —
+exactly like the Claude CLI pin above. When it breaks it will break silently and degrade to the
+subprocess path, so if the model badge on an opencode session starts lagging by 10 s again, that is
+the symptom: the API attach failed and nothing said so.
+
+### Arming 🔊 is no longer "is it claude"
+
+`Session.canSpeak()` is the single answer — `claude`, or an `opencode` termhub gave a port to — and
+it is reported in `GET /api/sessions` as `canSpeak`. `VoiceHub.canArm` delegates to it, and the
+browser reads the field rather than re-deriving the rule from `kind`, where it would drift. An
+opencode session started by an older build genuinely cannot be armed, and the 🔊 tooltip says so
+rather than leaving an inert toggle to be discovered.
+
+`_pollOpencode` is the counterpart to `_readTranscript`, and is markedly duller: no mtime poll, no
+`stop_reason` interpretation, no PTY-silence heuristic. It waits for `session._opencodeIdleAt` (set
+by `session.idle`, cleared by `session.status`), reads the turn once, and dedupes on the message id.
+An armed-but-idle opencode session costs nothing — the HTTP read happens once per turn, not once per
+tick. A question is announced **verbatim**, never summarised: paraphrasing away the options is
+exactly the wrong thing to do to a question.
+
+One thing that had to be asked for explicitly: **attaching to a session that is already idle**. The
+Claude path gets this free (its mtime cache starts at `-1`, so the first poll after arming always
+reads), but nothing fires an event at a TUI that is simply sitting there. So once the API is ready
+we check for a finished turn and seed `_opencodeIdleAt` from it — otherwise arming 🔊 on a restored
+session stayed silent until the user prompted again.
+
 ## Staying up (`watchdog/`)
 
 Nothing used to restart a tier that died. The `Termhub` scheduled task fires **at logon and never
@@ -788,11 +869,11 @@ layouts.
 | Method | Path | Body | Response |
 |---|---|---|---|
 | `GET` | `/api/voice/status` | — | `{tts:{available,engine,voice,voices:[{id,label}]}, wakeWord, summarizer:{available}, sessions:[{id,armed}]}` — `engine` is `'kokoro'`/`'piper'`/`null`; `wakeWord` is `null` unless `TERMHUB_WAKE_WORD` overrides the client default |
-| `POST` | `/api/sessions/:id/voice` | `{armed}` | `{ok:true, armed}`; 404 unknown session, 400 arming a non-`claude` one |
-| `GET` | `/api/sessions/:id/voice/summary[?full=1]` | — | `{summary, turnUuid, waiting}` — on demand ("read that again"); empty for a non-`claude` session or when Claude hasn't spoken yet. `?full=1` adds `{text, truncated}`, the assistant's verbatim last turn capped at 3200 chars ("read the last message in full"). Opt-in because the reconnect catch-up hits this route per armed session and doesn't want kilobytes of transcript |
+| `POST` | `/api/sessions/:id/voice` | `{armed}` | `{ok:true, armed}`; 404 unknown session, 400 arming one whose `canSpeak` is false |
+| `GET` | `/api/sessions/:id/voice/summary[?full=1]` | — | `{summary, turnUuid, waiting}` — on demand ("read that again"); empty when `canSpeak` is false, or when the agent hasn't spoken yet. Reads a Claude transcript or opencode's API depending on the session's kind, so the two can never disagree about which message "the last one" is. `?full=1` adds `{text, truncated}`, the assistant's verbatim last turn capped at 3200 chars ("read the last message in full"). Opt-in because the reconnect catch-up hits this route per armed session and doesn't want kilobytes of transcript |
 | `POST` | `/api/tts` | `{text, voice?}` | `audio/wav`, `Cache-Control: no-store`; 400 empty/over 4000 chars, 503 if no engine is available or too busy. `voice` must be an id from `voices()` for the active engine — anything with a path separator (piper) or outside `[a-z]{2}_[a-z]+` (kokoro) is refused |
 
-`GET /api/sessions` gains `voiceArmed` per session.
+`GET /api/sessions` gains `voiceArmed` and `canSpeak` per session — `canSpeak` is the single answer to "could this session ever announce?" (`Session.canSpeak()`: a `claude`, or an `opencode` termhub gave an API port to), so the browser never re-derives it from `kind`.
 
 `WS /ws/voice` is a page-wide feed (not per session). Server → client:
 `{type:'hello', tts:{available,engine,voice,voices}, wakeWord, sessions:[{id,title,armed}]}` on connect, then
@@ -800,10 +881,13 @@ layouts.
 `{type:'armed', sessionId, armed}`. Client → server: `{type:'ping'}` → `{type:'pong'}`.
 Arming goes over REST, not the socket, so it survives a dropped connection.
 
-**When it stays silent.** No speech engine at all, no `claude` CLI, no transcript, a
-session that isn't `kind: claude`, or a mid-tool-call turn — all of these degrade to silence,
-never to an error. A turn whose text flattens to nothing (a reply that is only a code block)
-is announced as such rather than as an empty summary, which the browser couldn't play.
+**When it stays silent.** No speech engine at all, no `claude` CLI, no transcript, a session whose
+`canSpeak` is false (a shell, or an opencode with no API port), or a mid-tool-call turn — all of
+these degrade to silence, never to an error. A turn whose text flattens to nothing (a reply that is
+only a code block) is announced as such rather than as an empty summary, which the browser couldn't
+play. The summariser is shared: an opencode turn goes through the same `claude -p --model haiku`
+path a Claude turn does, so **`claude` is still the summariser even for an opencode session** — its
+absence costs both of them the summary and falls back to the local markdown reduction.
 
 Claude writes no transcript at all when it thinks it's a child of another Claude session, and
 warns about that in its own banner. `lib/session.js` strips the inherited `CLAUDE_CODE_*`
@@ -1113,7 +1197,9 @@ user actually meant to paste.
 | Pasted an image and got text instead | The paste carried `text/plain` too (rich text with an inline image), and text wins | Deliberate — taking the image would swallow the text. Use 📎 for the image |
 | Model badge blank, and 🔊 never speaks, on one tab | The pinned `--session-id` transcript is a stub the conversation forked away from | Both symptoms share a cause: `resolveTranscript()` had settled on a file Claude Code stopped writing. Compare `curl localhost:7010/api/sessions` (the session's `command` names the pinned uuid) against `ls -t ~/.claude/projects/<encoded cwd>/` — a *different* uuid holding the recent bytes confirms it. Now self-corrects once the newer transcript exists |
 | Model badge reads `<synthetic>` | Last assistant entry is a Claude Code notice, not a turn | A spend-limit or interrupt notice is written as an assistant entry with model `<synthetic>`. `grep -c '"model":"<synthetic>"' <transcript>` — and read the notice text, since a spend limit also means that session is not running |
-| 🔊 armed but never speaks | No transcript to read | Only `kind: claude` sessions can be armed at all (the endpoint 400s otherwise). If Claude's banner says transcript saving is off, it was launched as a child of another Claude session — termhub's own PTYs are scrubbed of that, so it came from elsewhere |
+| 🔊 armed but never speaks | Nothing to read turns out of | Only a session whose `canSpeak` is true can be armed (the endpoint 400s otherwise) — a `claude`, or an `opencode` termhub launched with its `--port`. If Claude's banner says transcript saving is off, it was launched as a child of another Claude session — termhub's own PTYs are scrubbed of that, so it came from elsewhere |
+| 🔊 is greyed out on an opencode session | It has no API port | Only sessions termhub launched with `--port` can announce, and one opened by an older build has none. Close and reopen it; `curl localhost:7010/api/sessions` shows the `command` it actually ran. The tooltip says this too |
+| An opencode model badge lags ~10s behind a model switch | The API attach failed and it fell back to the subprocess path | Expected only for a portless session. Otherwise the badge is driven by the event stream and is immediate — a lagging badge means `lib/opencodeApi.js` couldn't reach the TUI, which also means no 🔊. Check the port in the session's `command` answers `/global/health` |
 | Told "asking you something" but nothing is | PTY-idle heuristic misfired | A claude terminal silent for 12 s with no finished turn recorded is assumed to be on a prompt. A session wedged some other way looks the same; the announcement is generic by design because the question is never written to the transcript |
 | 🔊 reports speech unavailable | Neither engine usable | `curl localhost:7010/api/voice/status` — `tts.engine` names the winner. kokoro needs `TERMHUB_KOKORO_PYTHON` to import `kokoro_onnx` + `soundfile` and the two model files under `TERMHUB_KOKORO_DIR`; piper needs the binary on `PATH` and `<voice>.onnx` + `.onnx.json` in `TERMHUB_TTS_VOICE_DIR` (files under 4 KB are treated as broken stubs and skipped) |
 | Announcements sound robotic | Fell back to piper | `tts.engine` says `piper`. A kokoro worker that fails at import demotes the engine for 5 minutes; run `TERMHUB_KOKORO_PYTHON -c 'import kokoro_onnx'` by hand to see why |

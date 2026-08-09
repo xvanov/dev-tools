@@ -8,7 +8,8 @@ const pty = require('node-pty');
 const { defaultShell } = require('./shell');
 const { resolveTranscript, readLastModel, formatModelName } = require('./claudeModel');
 const opencodeModel = require('./opencodeModel');
-const { injectAfterClaudeExe } = require('./restore');
+const opencodeApi = require('./opencodeApi');
+const { injectAfterClaudeExe, injectAfterOpencodeExe } = require('./restore');
 
 // How often to actually shell out to `opencode export` to refresh a session's
 // model (lib/opencodeModel.js's getModel is a ~1.4s subprocess spawn — far too
@@ -147,10 +148,44 @@ class Session {
       this.command = injectSessionId(this.command, uuid);
       this.agentSessionId = uuid;
     } else if (this.kind === 'opencode' && !this.agentSessionId) {
-      const spawnedAtMs = Date.now(); // this.created isn't assigned yet at this point in the constructor
-      opencodeModel.discoverSessionId(this.cwd, spawnedAtMs, () => this._discoveryAborted)
-        .then((id) => { if (id && !this._discoveryAborted) this.agentSessionId = id; })
-        .catch(() => {});
+      // A command that names its own session (`--session <id>`, which is what
+      // restore builds and what a user resuming by hand types) already answers
+      // the question the discovery loop below exists to guess at. Reading it is
+      // free and exact; not reading it left a restored opencode session with no
+      // model badge until the user happened to type something.
+      const own = /(^|\s)(?:--session|-s)(?:=|\s+)(\S+)/.exec(this.command || '');
+      if (own) {
+        this.agentSessionId = own[2];
+      } else {
+        const spawnedAtMs = Date.now(); // this.created isn't assigned yet at this point in the constructor
+        opencodeModel.discoverSessionId(this.cwd, spawnedAtMs, () => this._discoveryAborted)
+          .then((id) => { if (id && !this._discoveryAborted) this.agentSessionId = id; })
+          .catch(() => {});
+      }
+    }
+
+    // opencode's TUI serves its own HTTP API when given `--port`, and that one
+    // flag is what buys parity with Claude Code: which conversation this is,
+    // which model, when a turn ends, and — uniquely — what it is asking you.
+    // See lib/opencodeApi.js for the comparison table.
+    //
+    // The subprocess path above (`opencode export` behind a 10s cache, plus a
+    // polling loop to discover the session id) stays as the fallback: sessions
+    // launched by an older build have no port, and a user who supplied their own
+    // `--port` is honoured rather than overridden.
+    this.opencodePort = null;
+    this._opencodeApi = null;
+    this._opencodeAsk = null;         // the question/permission it is blocked on
+    this._opencodeIdleAt = 0;         // when its last turn finished
+    this._opencodePortPromise = null;
+    if (this.kind === 'opencode') {
+      const own = /(^|\s)--port(?:=|\s+)(\d{2,5})\b/.exec(this.command || '');
+      if (own) {
+        this.opencodePort = Number(own[2]);
+        this._startOpencodeApi();
+      } else {
+        this._opencodePortPromise = opencodeApi.freePort().catch(() => null);
+      }
     }
     this._modelCache = { file: null, mtimeMs: -1, model: null, modelLabel: null };
 
@@ -233,6 +268,9 @@ class Session {
     this.pty.onExit(({ exitCode }) => {
       this.alive = false;
       this.exitCode = exitCode;
+      // The opencode server dies with its TUI, so the SSE reconnect loop would
+      // otherwise retry a dead port every few seconds for the life of sessiond.
+      this._stopOpencodeApi();
       this._broadcast({ type: 'exit', code: exitCode });
       if (this.onExit) { try { this.onExit(exitCode); } catch { /* hook must not break exit */ } }
     });
@@ -251,8 +289,28 @@ class Session {
     const cmd = this._pendingCommand;
     this._pendingCommand = null;
     if (this._cmdFallback) { clearTimeout(this._cmdFallback); this._cmdFallback = null; }
-    // A short settle lets the prompt finish drawing before we type into it.
-    setTimeout(() => { if (this.alive) this.pty.write(cmd + '\r'); }, 120);
+    // An opencode session gets `--port` spliced in so termhub can talk to that
+    // exact TUI over its own API (see lib/opencodeApi.js). The port is picked by
+    // binding one and letting go, which is async — but the command isn't typed
+    // until the shell has drawn a prompt, so the allocation (~1ms) has always
+    // finished long before. Await it anyway rather than racing it, and fall
+    // through to the un-ported command if it failed: an opencode with no API is
+    // the old behaviour, which still works.
+    const run = (final) => {
+      // A short settle lets the prompt finish drawing before we type into it.
+      setTimeout(() => { if (this.alive) this.pty.write(final + '\r'); }, 120);
+    };
+    if (!this._opencodePortPromise) return run(cmd);
+    this._opencodePortPromise
+      .then((port) => {
+        if (!port) return run(cmd);
+        this.opencodePort = port;
+        const final = injectAfterOpencodeExe(cmd, `--port ${port} --hostname 127.0.0.1`);
+        this.command = final;              // so the archive restores it the same way
+        run(final);
+        this._startOpencodeApi();
+      })
+      .catch(() => run(cmd));
   }
 
   _buffer(data) {
@@ -389,12 +447,143 @@ class Session {
     return { model: this._modelCache.model, modelLabel: this._modelCache.modelLabel };
   }
 
-  // opencode has no local file to tail — reading its model means shelling out
-  // to `opencode export` (~1.4s, measured), so this always returns whatever's
-  // cached and only kicks off a background refresh when the cache goes stale.
-  // Never awaits the subprocess inline: info() (which calls this) is called
-  // synchronously from sessiond's request handlers.
+  // Attach to this session's own opencode TUI over HTTP. Everything here is
+  // best-effort and silent on failure: an opencode that never opened its port
+  // (an older build, a port race, a TUI that died) must degrade to the
+  // subprocess path, not break the session.
+  _startOpencodeApi() {
+    if (this._opencodeApi || !this.opencodePort) return;
+    const port = this.opencodePort;
+    const api = { port, events: null, ready: false, closed: false };
+    this._opencodeApi = api;
+
+    // Adopt a session id we were *told* (every session-scoped event carries one)
+    // rather than one we inferred. This is the part the old discovery loop could
+    // never do: it guessed by directory and timestamp and had no way to know it
+    // had guessed wrong.
+    const adopt = (id) => {
+      if (!id || id === this.agentSessionId) return false;
+      this.agentSessionId = id;
+      this._discoveryAborted = true;     // the guess is superseded; stop guessing
+      if (this.onIdentity) { try { this.onIdentity(); } catch {} }
+      return true;
+    };
+
+    const refreshSession = async (knownId) => {
+      if (api.closed) return;
+      let s = null;
+      if (knownId) s = await opencodeApi.session(port, knownId);
+      // Seed only while we still have no id at all: once an event has named the
+      // session, guessing from a directory listing can only make it worse.
+      if (!s && !this.agentSessionId) {
+        s = await opencodeApi.activeSession(port, { cwd: this.cwd, since: this.created });
+      } else if (!s && this.agentSessionId) {
+        s = await opencodeApi.session(port, this.agentSessionId);
+      }
+      if (!s || !s.id) return;           // no conversation yet — opencode creates one lazily
+      adopt(s.id);
+      const id = s.model && s.model.id;
+      if (id) {
+        this._opencodeModelCache = {
+          checkedAt: Date.now(), model: id, modelLabel: opencodeApi.formatModelLabel(id),
+        };
+      }
+    };
+
+    opencodeApi.waitReady(port, 30000, () => api.closed || !this.alive).then((h) => {
+      if (!h || api.closed) return;
+      api.ready = true;
+      refreshSession().then(() => {
+        // Seed the idle flag from what is already true, rather than waiting for
+        // the next `session.idle` event. A session we attach to mid-life — a
+        // restore, or a front reconnecting to a long-running TUI — is very often
+        // sitting on a finished turn, and without this, arming 🔊 on it would
+        // stay silent until the user prompted again. The Claude path gets this
+        // for free (its mtime cache starts at -1, so the first poll after arming
+        // always reads); here it has to be asked for.
+        if (api.closed || this._opencodeIdleAt) return;
+        return opencodeApi.lastAssistantTurn(port, this.agentSessionId)
+          .then((turn) => { if (turn && turn.finished && !api.closed) this._opencodeIdleAt = Date.now(); })
+          .catch(() => {});
+      }).catch(() => {});
+      // The event stream is the whole point: it turns "poll a subprocess every
+      // 10s and hope" into "know the moment it happens".
+      api.events = opencodeApi.subscribe(port, (ev) => {
+        const type = ev && ev.type;
+        const props = (ev && ev.properties) || {};
+        // Any session-scoped event names the conversation this TUI is on, which
+        // is worth more than anything we could infer. Seen before the first
+        // refresh, this is how a session that existed before we attached (a
+        // `--session <id>` restore) gets identified at all.
+        if (props.sessionID) adopt(props.sessionID);
+        if (type === 'session.created' || type === 'session.updated' || type === 'session.next.model.switched') {
+          refreshSession(props.sessionID);
+        } else if (type === 'session.idle') {
+          // The turn is over and opencode is waiting on you. Claude Code has no
+          // equivalent — termhub has to infer it from the transcript's
+          // stop_reason, and can't see a question at all.
+          this._opencodeIdleAt = Date.now();
+          this._opencodeAsk = null;
+          if (this.onAgentIdle) { try { this.onAgentIdle(); } catch {} }
+        } else if (type === 'session.status' || type === 'session.next.step.started') {
+          this._opencodeIdleAt = 0;
+          this._opencodeAsk = null;
+        } else if (type === 'question.asked' || type === 'question.v2.asked'
+                || type === 'permission.asked' || type === 'permission.v2.asked') {
+          // What Claude cannot tell us. Read it back off the API rather than
+          // trusting the event body, so the question shape lives in one place.
+          opencodeApi.pendingAsk(port, this.agentSessionId).then((ask) => {
+            if (api.closed || !ask) return;
+            this._opencodeAsk = ask;
+            this._opencodeIdleAt = Date.now();
+            if (this.onAgentIdle) { try { this.onAgentIdle(); } catch {} }
+          }).catch(() => {});
+        } else if (/^(question|permission)\.(v2\.)?(replied|rejected)$/.test(type || '')) {
+          this._opencodeAsk = null;
+        }
+      });
+    }).catch(() => {});
+  }
+
+  _stopOpencodeApi() {
+    const api = this._opencodeApi;
+    if (!api) return;
+    api.closed = true;
+    if (api.events) { try { api.events.close(); } catch {} }
+    this._opencodeApi = null;
+  }
+
+  // The last finished assistant turn, for the voice layer. Uses the API when
+  // this session has one and says so, so the caller can fall back.
+  async opencodeTurn() {
+    if (!this.opencodePort || !this._opencodeApi || !this._opencodeApi.ready) return null;
+    if (!this.agentSessionId) return null;
+    const ask = this._opencodeAsk;
+    if (ask) {
+      // Being asked something outranks the last thing it said: that is the one
+      // moment the user actually needs to be told, and unlike Claude we can say
+      // what it is.
+      const opts = ask.options && ask.options.length ? ` Options: ${ask.options.join(', ')}.` : '';
+      return { id: `${this.agentSessionId}:${ask.id}`, waiting: true, text: `${ask.text}.${opts}`, ask: true };
+    }
+    const turn = await opencodeApi.lastAssistantTurn(this.opencodePort, this.agentSessionId);
+    if (!turn || !turn.finished) return null;
+    return { id: turn.id, waiting: true, text: turn.text, ask: false };
+  }
+
+  // opencode has no local file to tail. With a port we read the model off the
+  // live API (instant, and correct the moment the user switches models); without
+  // one this falls back to shelling out to `opencode export` (~1.4s, measured),
+  // so it always returns whatever's cached and only kicks off a background
+  // refresh when the cache goes stale. Never awaits the subprocess inline:
+  // info() (which calls this) is called synchronously from sessiond's handlers.
   _opencodeModel() {
+    // The API path keeps _opencodeModelCache up to date from the event stream,
+    // so there is nothing to poll and nothing to wait for.
+    if (this._opencodeApi && this._opencodeApi.ready) {
+      const c = this._opencodeModelCache;
+      return { model: c.model, modelLabel: c.modelLabel };
+    }
     if (!this.agentSessionId) return { model: null, modelLabel: null };
     const cache = this._opencodeModelCache;
     if (!this._opencodeRefreshing && Date.now() - cache.checkedAt > OPENCODE_MODEL_REFRESH_MS) {
@@ -433,6 +622,7 @@ class Session {
 
   kill() {
     this._discoveryAborted = true; // stop an in-flight opencode session-id discovery loop
+    this._stopOpencodeApi();       // and its event-stream reconnect loop, which would retry forever
     if (this.alive) {
       try {
         this.pty.kill();
@@ -460,8 +650,21 @@ class Session {
       // silent. Good enough to show a "working" dot vs nothing when idle.
       busy: this.alive && (Date.now() - this.lastActivity) < 1500,
       voiceArmed: this.voiceArmed,
-      ...this.currentModel(), // { model, modelLabel } — null/null for non-claude sessions
+      // Can this session ever produce a spoken announcement? The rule is no
+      // longer "is it claude" — an opencode termhub launched with a --port can
+      // too, and one from an older build cannot — so it is answered here rather
+      // than re-derived in the browser from `kind`, where it would drift.
+      canSpeak: this.canSpeak(),
+      ...this.currentModel(), // { model, modelLabel } — null/null for a plain shell
     };
+  }
+
+  // Kept beside info() and mirrored by VoiceHub.canArm, which is the authority
+  // the arming endpoint enforces; this is the same question asked cheaply.
+  canSpeak() {
+    if (this.kind === 'claude') return true;
+    if (this.kind === 'opencode') return !!(this.opencodePort || this._opencodePortPromise);
+    return false;
   }
 }
 

@@ -102,11 +102,17 @@ class VoiceHub extends EventEmitter {
 
   // ---- arming ----------------------------------------------------------------
 
-  // Announcements come from a Claude Code transcript, so only a `claude`
-  // session can ever produce one. Arming anything else used to succeed and then
-  // silently do nothing — a toggle the UI would light up that could never fire.
+  // Only a session we can actually read turns out of can ever produce an
+  // announcement. Arming anything else used to succeed and then silently do
+  // nothing — a toggle the UI would light up that could never fire.
+  //
+  //  - `claude`   — read from the Claude Code transcript on disk.
+  //  - `opencode` — read from that TUI's own HTTP API, which exists only when
+  //    termhub launched it with `--port` (see lib/opencodeApi.js). An opencode
+  //    started by an older build has no port and genuinely cannot be armed, so
+  //    the toggle stays inert for it rather than lying.
   static canArm(session) {
-    return !!session && session.kind === 'claude';
+    return !!session && typeof session.canSpeak === 'function' && session.canSpeak();
   }
 
   // Returns the new armed state, or null when there's no such session. Callers
@@ -177,7 +183,9 @@ class VoiceHub extends EventEmitter {
 
   _pollSession(session) {
     const st = this._stateFor(session.id);
-    if (!session.alive || session.kind !== 'claude') return;
+    if (!session.alive) return;
+    if (session.kind === 'opencode') return this._pollOpencode(session, st);
+    if (session.kind !== 'claude') return;
 
     // "Started producing output again" is a PTY fact, not a transcript one. The
     // browser uses `busy` to drop an announcement it hasn't spoken yet, so it
@@ -233,6 +241,43 @@ class VoiceHub extends EventEmitter {
 
     st.inFlight = true;
     this._announce(session, st, turn).catch(() => {}).then(() => { st.inFlight = false; });
+  }
+
+  // opencode, where none of the guesswork above is necessary.
+  //
+  // Everything the Claude path has to infer — has the turn finished, is it
+  // parked on a question — opencode simply says, over its event stream:
+  // `session.idle` when a turn ends, `question.asked` / `permission.asked` when
+  // it needs you. lib/session.js records those on the session; this only has to
+  // notice and read the turn back. So there is no mtime poll, no `stop_reason`
+  // interpretation, and above all no 12-second PTY-silence heuristic — the one
+  // part of the Claude path that isn't derived from a recorded fact.
+  //
+  // The event-driven flag also means the HTTP read happens once per turn rather
+  // than once per tick: an armed but idle opencode session costs nothing.
+  _pollOpencode(session, st) {
+    if (!session._opencodeIdleAt) { this._markBusy(session, st); return; }
+    if (st.inFlight) return;             // one summarize per session at a time
+
+    // Don't read a turn out from under a TUI that is still streaming it: same
+    // quiet window the Claude path uses, and for the same reason.
+    if (Date.now() - session.lastActivity < QUIET_MS) return;
+
+    st.inFlight = true;
+    session.opencodeTurn()
+      .then((turn) => {
+        if (!turn || !turn.id || turn.id === st.announcedUuid) return;
+        if (!turn.text) return;          // a turn that was only a tool call
+        return this._announce(session, st, {
+          uuid: turn.id,
+          text: turn.text,
+          // A question is announced verbatim, never summarised: paraphrasing
+          // away the options is exactly the wrong thing to do to a question.
+          verbatim: turn.ask,
+        });
+      })
+      .catch(() => {})
+      .then(() => { st.inFlight = false; });
   }
 
   // The one case the transcript genuinely cannot tell us about.
@@ -294,9 +339,17 @@ class VoiceHub extends EventEmitter {
     if (st.summaryUuid && st.summaryUuid === turn.uuid) return Promise.resolve(st.summary);
     if (st.pending && st.pendingUuid === turn.uuid) return st.pending;
 
-    // A question from AskUserQuestion/ExitPlanMode is the point of the
-    // announcement, so it's appended verbatim rather than run through the
-    // summarizer, which would paraphrase away the actual options.
+    // A question is the point of the announcement, so it is spoken as written
+    // rather than run through the summarizer, which would paraphrase away the
+    // actual options. Claude's version of this arrives as `turn.prompt`, joined
+    // below; opencode's arrives as a whole turn flagged `verbatim`, because
+    // there its question IS the thing to say.
+    if (turn.verbatim) {
+      st.summary = turn.text;
+      st.summaryUuid = turn.uuid;
+      return Promise.resolve(turn.text);
+    }
+
     const pending = summarize(turn.text)
       .then((summary) => {
         const spoken = [summary, turn.prompt].filter(Boolean).join(' ').trim();
@@ -326,8 +379,15 @@ class VoiceHub extends EventEmitter {
     // Summarizing takes seconds. If the user replied in the meantime, or the
     // session is gone or disarmed, the announcement is stale — drop it.
     if (!session.alive || !session.voiceArmed || !this.sessions.has(session.id)) return;
-    const now = readLastTurn(session.transcriptFile());
-    if (!now || now.uuid !== turn.uuid) return;
+    if (session.kind === 'opencode') {
+      // The equivalent staleness check, without a second HTTP round-trip: the
+      // event stream clears _opencodeIdleAt the instant the session goes back to
+      // work, which is precisely "the user replied while we were summarising".
+      if (!session._opencodeIdleAt) return;
+    } else {
+      const now = readLastTurn(session.transcriptFile());
+      if (!now || now.uuid !== turn.uuid) return;
+    }
 
     st.waiting = true;
     const msg = {
@@ -355,6 +415,13 @@ class VoiceHub extends EventEmitter {
   // that can never produce a `waiting` event is just a lie.
   async summaryFor(session) {
     const empty = { summary: '', turnUuid: null, waiting: false };
+    if (session.kind === 'opencode') {
+      const turn = await session.opencodeTurn().catch(() => null);
+      if (!turn || !turn.text) return empty;
+      const summary = await this._summaryForTurn(session,
+        { uuid: turn.id, text: turn.text, verbatim: turn.ask });
+      return { summary, turnUuid: turn.id, waiting: true };
+    }
     if (session.kind !== 'claude') return empty;
     const file = session.transcriptFile();
     const turn = file ? readLastTurn(file) : null;
@@ -385,20 +452,32 @@ class VoiceHub extends EventEmitter {
   // Capped, because a turn can run to tens of kilobytes and the caller is going
   // to read it out loud. Truncation is announced in the text itself rather than
   // silently cutting mid-sentence — being told there's more is the useful part.
-  fullTurnFor(session, maxChars) {
+  // Async because opencode's turn comes over HTTP. The Claude path still
+  // resolves without awaiting anything real, so the shape is the same.
+  async fullTurnFor(session, maxChars) {
     const empty = { text: '', turnUuid: null, truncated: false };
-    if (session.kind !== 'claude') return empty;
-    const file = session.transcriptFile();
-    const turn = file ? readLastTurn(file) : null;
-    if (!turn || turn.role !== 'assistant' || !hasSpeakableContent(turn)) return empty;
-    const whole = [turn.text, turn.prompt].filter(Boolean).join(' ').trim();
+    let whole;
+    let uuid;
+    if (session.kind === 'opencode') {
+      const turn = await session.opencodeTurn().catch(() => null);
+      if (!turn || !turn.text) return empty;
+      whole = turn.text.trim();
+      uuid = turn.id;
+    } else {
+      if (session.kind !== 'claude') return empty;
+      const file = session.transcriptFile();
+      const turn = file ? readLastTurn(file) : null;
+      if (!turn || turn.role !== 'assistant' || !hasSpeakableContent(turn)) return empty;
+      whole = [turn.text, turn.prompt].filter(Boolean).join(' ').trim();
+      uuid = turn.uuid;
+    }
     const cap = Math.max(200, Number(maxChars) || FULL_TEXT_MAX);
-    if (whole.length <= cap) return { text: whole, turnUuid: turn.uuid, truncated: false };
+    if (whole.length <= cap) return { text: whole, turnUuid: uuid, truncated: false };
     // Back up to a sentence end so the clip doesn't stop mid-word.
     const cut = whole.slice(0, cap);
     const stop = Math.max(cut.lastIndexOf('. '), cut.lastIndexOf('? '), cut.lastIndexOf('! '));
     const body = stop > cap * 0.5 ? cut.slice(0, stop + 1) : cut;
-    return { text: `${body} That's as far as I can read; the rest is on screen.`, turnUuid: turn.uuid, truncated: true };
+    return { text: `${body} That's as far as I can read; the rest is on screen.`, turnUuid: uuid, truncated: true };
   }
 }
 
