@@ -1007,9 +1007,21 @@ function openCopySheet() {
 function renderCopySheet() {
   const t = state.open.get(state.activeId);
   if (!t) return;
+  // A full-screen app (opencode, vim, less) runs on the alternate screen, which
+  // has no scrollback of its own — so "All scrollback" there is the same text as
+  // "Screen". Say so instead of offering a toggle that silently does nothing.
+  const alt = onAltBuffer(t);
+  if (alt) copyState.scope = 'screen';
   const all = copyState.scope === 'all';
   $('#copy-scope-screen').classList.toggle('active', !all);
   $('#copy-scope-all').classList.toggle('active', all);
+  $('#copy-scope-all').disabled = alt;
+  $('#copy-scope-all').title = alt
+    ? 'This full-screen app has no scrollback of its own — scroll it and copy again'
+    : '';
+  $('#copy-hint').textContent = alt
+    ? 'Long-press to select. A full-screen app keeps no scrollback — this is what is on screen.'
+    : 'Long-press to select, or use the buttons below.';
   const pre = $('#copy-text');
   pre.textContent = terminalText(t, copyState.scope);
   // Show the newest output first-thing: the reason to open this is almost always

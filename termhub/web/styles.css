@@ -106,8 +106,9 @@ html, body {
 .session-item .voice:hover { opacity: 0.8; }
 .session-item .voice.armed { opacity: 1; filter: none; }
 .session-item .voice.armed.locked { filter: none; opacity: 1; text-shadow: 0 0 6px var(--accent-2); }
-/* Not a Claude session: no transcript to read, so there's nothing to arm. Says
-   so on tap (and on hover) rather than being inert. */
+/* Nothing here can produce a turn to read — a plain shell, or an opencode with
+   no API port (see Session.canSpeak) — so there's nothing to arm. Says so on tap
+   (and on hover) rather than being inert. */
 .session-item .voice.unsupported { opacity: 0.15; }
 
 /* Status dot: a pulsing green dot when the session is actively producing
@@ -457,6 +458,10 @@ html, body {
 .copy-seg:first-child { border-radius: 6px 0 0 6px; }
 .copy-seg:last-child { border-radius: 0 6px 6px 0; border-left: none; }
 .copy-seg.active { background: var(--accent); color: #0d1117; border-color: var(--accent); }
+/* No scrollback to offer (a full-screen app on the alternate screen). Dimmed
+   rather than removed, so the toggle doesn't appear and disappear as you switch
+   between a shell and vim in the same session. */
+.copy-seg:disabled { opacity: 0.4; cursor: default; }
 .copy-x { background: none; border: none; color: var(--fg-dim); font-size: 16px; cursor: pointer; padding: 4px 6px; }
 .copy-hint { font-size: 12px; color: var(--fg-dim); margin-bottom: 6px; }
 /* The whole reason this sheet exists: real text, and selection turned back ON.
