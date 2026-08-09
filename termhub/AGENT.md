@@ -22,7 +22,12 @@ browser tab ──http+ws──►  front  (UI + proxy, 127.0.0.1:7000)   ◄─
 ```
 
 - Run termhub on every machine you want terminals on.
-- Open one browser tab per machine (bookmark each Tailscale URL on your phone).
+- Open one browser tab per machine (bookmark each Tailscale URL on your phone). **The tab is
+  named after the machine, not after the app** — `setPageTitle()` in `web/app.js` sets
+  `document.title` from `/api/sessions`'s `machine` (and the `apple-mobile-web-app-title` meta
+  with it, so two machines added to an iOS home screen don't both land as "termhub"). With one
+  tab per machine, the app name is the one part that can't tell them apart. `index.html` still
+  ships `termhub` as the static title for the moment before the first poll answers.
 - A session = one PTY living in **`sessiond`**, with an in-memory scrollback buffer. Browser
   (re)connections attach to it via the `front` proxy and get a replay of the buffer, then live
   output.
@@ -1061,7 +1066,10 @@ instinct as `?voicedebug=1`, which exists because a phone has no console.
   keyboard show/hide).
 - The voice strip sits directly above the key bar so the undo window's **Cancel** button lands
   under your thumb — the only reason to look at that strip in a hurry is to stop a send.
-- Add the tab to your home screen for an app-like, full-screen experience.
+- Add the tab to your home screen for an app-like, full-screen experience. The icon is an inline
+  SVG data URI (`rel=icon` plus `apple-touch-icon`) rather than a file: it costs no extra
+  request, can't 404 behind the front's static handler, and needs nothing added to the deploy.
+  Without one the browser draws its generic globe.
 
 ### The key bar: keys scroll, tools don't
 

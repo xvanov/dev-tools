@@ -93,6 +93,21 @@ function syncSidebar() { renderSessions(); lastUiSig = uiSignature(); }
 
 let lastUiSig = '';
 let refreshing = null;
+// The tab is named after the MACHINE, not after the app. You run one termhub per
+// machine and keep one tab per machine open (that's the whole shape of the
+// thing), so a row of tabs all reading "termhub" tells you nothing about the one
+// you want — the machine name is the only part that differs. Falls back to
+// "termhub" only until /api/sessions has answered, and on the way back down if
+// the server ever reports no name at all.
+function setPageTitle() {
+  const name = state.machine || 'termhub';
+  if (document.title !== name) document.title = name;
+  // iOS reads this when you tap Add to Home Screen, so keeping it in step means
+  // two machines don't land as two icons both labelled "termhub".
+  const meta = document.querySelector('meta[name="apple-mobile-web-app-title"]');
+  if (meta && meta.content !== name) meta.content = name;
+}
+
 function refresh() {
   if (refreshing) return refreshing;
   refreshing = (async () => {
@@ -108,6 +123,7 @@ function refresh() {
       // one can only ever be a lie the sidebar would have to render.
       voice.armed = new Set(state.sessions.filter((x) => x.voiceArmed && x.canSpeak).map((x) => x.id));
       $('#machine-name').textContent = state.machine;
+      setPageTitle();
       const n = state.sessions.length;
       const live = state.sessions.filter((x) => x.alive).length;
       const r = state.restorable.length;

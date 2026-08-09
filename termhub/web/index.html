@@ -5,7 +5,21 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
+  <!-- The name iOS puts under the home-screen icon. Kept in step with the title
+       by setPageTitle(), so adding a second machine to the home screen doesn't
+       give you two icons both labelled "termhub". -->
+  <meta name="apple-mobile-web-app-title" content="termhub" />
+  <!-- Replaced at runtime with this machine's name (setPageTitle in app.js).
+       One termhub per machine, one tab per machine — so the machine name is the
+       only part that differs between tabs, and "termhub" in all of them is the
+       one thing that can't help you find the right one. This static value is
+       just what shows for the moment before /api/sessions answers. -->
   <title>termhub</title>
+  <!-- Inline SVG, not a file: it costs no extra request, can't 404 behind the
+       front's static handler, and needs nothing added to the deploy. Without it
+       the browser draws its generic globe. -->
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%2315171c'/><path d='M8.5 10.5l5.5 5.5-5.5 5.5' fill='none' stroke='%236aa9ff' stroke-width='2.8' stroke-linecap='round' stroke-linejoin='round'/><path d='M16.5 21.5h7' stroke='%236aa9ff' stroke-width='2.8' stroke-linecap='round'/></svg>" />
+  <link rel="apple-touch-icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 180 180'><rect width='180' height='180' fill='%2315171c'/><path d='M48 59l31 31-31 31' fill='none' stroke='%236aa9ff' stroke-width='14' stroke-linecap='round' stroke-linejoin='round'/><path d='M93 121h39' stroke='%236aa9ff' stroke-width='14' stroke-linecap='round'/></svg>" />
   <link rel="stylesheet" href="/vendor/xterm.css" />
   <link rel="stylesheet" href="/styles.css" />
 </head>
