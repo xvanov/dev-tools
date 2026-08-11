@@ -206,6 +206,44 @@ function Get-ProcessNameFor {
   return ''
 }
 
+# Every ancestor pid of $ProcId (this process by default), nearest first.
+#
+# update.ps1 is normally launched FROM a termhub terminal - that's the whole
+# design, the front is swapped while the PTY running the script keeps going. But
+# the PTY's owner is sessiond, so any code path that stops "the process on port
+# N" can be pointed at this script's own supervisor. On a machine still running
+# the pre-split `node server.js` that is exactly what happens: one process is the
+# front, the sessiond AND the parent of this shell, and stopping it kills the
+# updater mid-run (no pull, no restart, no rollback - termhub simply ends).
+#
+# Walking the parent chain is what makes that case detectable, so the kill can be
+# refused instead of executed. The CreationDate comparison guards pid reuse: a
+# "parent" that started AFTER its child is a recycled pid, not an ancestor, and
+# following it would either walk into an unrelated process or loop.
+function Get-AncestorPids {
+  param([int]$ProcId = $PID, [int]$MaxDepth = 24)
+  $out = @()
+  $cur = Get-CimInstance Win32_Process -Filter "ProcessId=$ProcId" -ErrorAction SilentlyContinue
+  for ($i = 0; $i -lt $MaxDepth -and $cur; $i++) {
+    $parentId = [int]$cur.ParentProcessId
+    if (-not $parentId -or $parentId -eq [int]$cur.ProcessId) { break }
+    $parent = Get-CimInstance Win32_Process -Filter "ProcessId=$parentId" -ErrorAction SilentlyContinue
+    if (-not $parent) { break }
+    if ($parent.CreationDate -and $cur.CreationDate -and $parent.CreationDate -gt $cur.CreationDate) { break }
+    $out += $parentId
+    $cur = $parent
+  }
+  return $out
+}
+
+# Would stopping $ProcId also stop this script? (see Get-AncestorPids)
+function Test-SelfAncestor {
+  param([int]$ProcId)
+  if (-not $ProcId) { return $false }
+  if ($ProcId -eq $PID) { return $true }
+  return ((Get-AncestorPids) -contains $ProcId)
+}
+
 # GET a JSON endpoint, or $null for anything that isn't a 200 with a JSON body.
 function Get-JsonEndpoint {
   param([string]$Url, [int]$TimeoutSec = 3)
@@ -244,6 +282,21 @@ function Clear-PortSquatter {
     Write-Host "termhub: 127.0.0.1:$Port held by '$name' (pid $procId) - not a termhub process, leaving it alone." -ForegroundColor Yellow
     return $false
   }
+  # Never kill the process this script is running inside of. Stopping an ancestor
+  # takes the shell down with it, so the caller never gets to act on the $false -
+  # the update just stops, halfway, with nothing rolled back and termhub down
+  # until the next logon. Refusing here turns a silent death into an error the
+  # caller reports and an instruction the user can act on.
+  if (Test-SelfAncestor $procId) {
+    Write-Host ""
+    Write-Host "termhub: pid $procId holds 127.0.0.1:$Port and is an ANCESTOR of this script - refusing to stop it." -ForegroundColor Yellow
+    Write-Host "termhub: it owns the terminal this update is running in, so killing it would kill the update" -ForegroundColor Yellow
+    Write-Host "termhub: mid-run (nothing pulled, nothing restarted, nothing rolled back)." -ForegroundColor Yellow
+    Write-Host "termhub: re-run this from a NORMAL PowerShell window (not a termhub terminal):" -ForegroundColor Yellow
+    Write-Host "termhub:   powershell -NoProfile -ExecutionPolicy Bypass -File `"$(Join-Path $PSScriptRoot 'update.ps1')`"" -ForegroundColor Yellow
+    Write-Host ""
+    return $false
+  }
   $suffix = if ($Why) { " - $Why" } else { '' }
   Write-Host "termhub: stopping node pid $procId on 127.0.0.1:$Port$suffix" -ForegroundColor Yellow
   try { Stop-Process -Id $procId -Force -ErrorAction Stop }
@@ -276,23 +329,35 @@ function Clear-PublishPort {
   $procId = Get-PortListenerPid -Port $PublishPort
   if (-not $procId) { return }
 
-  # Never touch a process a front pid file vouches for.
-  foreach ($p in @(7001, 7002, $PublishPort)) {
-    $f = Get-PidInfo "front-$p"
-    if ($f -and $f.Pid -eq $procId) { return }
-  }
-
-  # ...nor one that identifies itself as a front (pid file lost, still the front).
-  $health = Get-JsonEndpoint "http://127.0.0.1:$PublishPort/api/health"
-  if ($health -and $health.self -and $health.self.entry -eq 'front') {
-    Write-Host "termhub: 127.0.0.1:$PublishPort is a front (pid $($health.self.pid)) - leaving it alone."
-    if ($ActiveFrontPort -eq $PublishPort -and $health.self.pid) {
-      Set-PidFile -Name "front-$PublishPort" -ProcId ([int]$health.self.pid) -Port $PublishPort
-    }
-    return
-  }
-
+  # One process holding BOTH the publish port and the sessiond port is the
+  # pre-split `node server.js`, whatever it calls itself. It has to be settled
+  # before either identity test below, because the monolith passes both of them:
+  # it really does run a front on the publish port (entry 'front' on /api/health,
+  # truthfully), and an earlier update that believed it wrote a front pid file
+  # vouching for it - so on the next run the pid file says "front" too. Trusting
+  # either one left the monolith standing here while Confirm-Sessiond identified
+  # the SAME pid as a supervisor-shadowing squatter and stopped it, which is how
+  # an update came to kill the terminal it was running in.
   $alsoSessiond = ((Get-PortListenerPid -Port $SessiondPort) -eq $procId)
+
+  if (-not $alsoSessiond) {
+    # Never touch a process a front pid file vouches for.
+    foreach ($p in @(7001, 7002, $PublishPort)) {
+      $f = Get-PidInfo "front-$p"
+      if ($f -and $f.Pid -eq $procId) { return }
+    }
+
+    # ...nor one that identifies itself as a front (pid file lost, still the front).
+    $health = Get-JsonEndpoint "http://127.0.0.1:$PublishPort/api/health"
+    if ($health -and $health.self -and $health.self.entry -eq 'front') {
+      Write-Host "termhub: 127.0.0.1:$PublishPort is a front (pid $($health.self.pid)) - leaving it alone."
+      if ($ActiveFrontPort -eq $PublishPort -and $health.self.pid) {
+        Set-PidFile -Name "front-$PublishPort" -ProcId ([int]$health.self.pid) -Port $PublishPort
+      }
+      return
+    }
+  }
+
   Write-Host ""
   Write-Host "termhub: 127.0.0.1:$PublishPort is bound by pid $procId, which is not a termhub front." -ForegroundColor Yellow
   Write-Host "termhub: that's the pre-split single-process entrypoint serving old code on the" -ForegroundColor Yellow
@@ -306,6 +371,13 @@ function Clear-PublishPort {
     # a pid file that belongs to someone else is the exact bug this whole change is
     # about (see removeOwnPidFile in lib/state.js) - don't reintroduce it here.
     if ($alsoSessiond) { Remove-OwnedPidFile -Name 'sessiond' -ProcId $procId }
+    # Same for a front pid file an earlier run wrote for this monolith: left
+    # behind it names a dead pid, and the next run's "a pid file vouches for it"
+    # check would read as a front on a port nothing is serving.
+    foreach ($p in @(7001, 7002, $PublishPort)) {
+      $f = Get-PidInfo "front-$p"
+      if ($f -and $f.Pid -eq $procId) { Remove-PidFile "front-$p" }
+    }
   }
   Write-Host ""
 }

@@ -216,6 +216,24 @@ Either way, a loopback listener on the publish port that **isn't a front** is a 
 leaves anything reporting `entry: 'front'` alone in both modes, and removes a `node server.js`
 monolith in both. Only `node` processes are ever killed.
 
+Identity is settled by **the ports a pid holds, before anything it says about itself**: one process
+listening on the publish port *and* the sessiond port is the monolith, whatever it reports. It has
+to be, because the monolith passes both of the softer tests — it genuinely runs a front on the
+publish port, so `/api/health` answers `entry: 'front'` truthfully, and an earlier update that
+believed that answer wrote a `front-<port>.pid` vouching for it. Reading either one first left the
+monolith standing while `Confirm-Sessiond` identified the *same pid* as a supervisor-shadowing
+squatter and stopped it — one script, two verdicts, on one process.
+
+That kill is also the one that must never happen blind. `update.ps1` is *designed* to run from a
+termhub terminal, so its shell is a descendant of sessiond; when sessiond and the publish-port
+squatter are the same process, stopping it kills the updater mid-run — nothing pulled, nothing
+restarted, no rollback, termhub down until the next logon. So `Clear-PortSquatter` walks the parent
+chain (`Get-AncestorPids`, with a `CreationDate` check so a recycled pid isn't mistaken for an
+ancestor) and **refuses to stop an ancestor of the running script**, printing the "re-run from a
+normal PowerShell window" instruction instead. Compare `restart-sessiond.ps1`, which refuses on
+`TERMHUB_SESSION_ID` — a blunter rule that update deliberately can't use, since running from a
+termhub terminal is the normal case.
+
 The squatter has a cause worth checking before treating the symptom: on machines installed before
 the split, the **`Termhub` scheduled task still runs `node server.js`** and recreates it at every
 logon. `install.ps1` registers `start.ps1` correctly — but **only when elevated**, since registering
