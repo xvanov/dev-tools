@@ -11,10 +11,14 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-// claudeModel resolves paths under os.homedir(), which follows $HOME on POSIX.
-// Point it at a throwaway tree before requiring the module.
+// claudeModel resolves paths under os.homedir(), which follows $HOME on POSIX and
+// %USERPROFILE% on Windows. Set BOTH before requiring the module: with only $HOME
+// set, os.homedir() on Windows returns the developer's real profile and every
+// assertion here compares a throwaway path against it, so the suite failed on
+// every Windows machine while passing on Linux.
 const HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'termhub-claudemodel-'));
 process.env.HOME = HOME;
+process.env.USERPROFILE = HOME;
 
 const {
   transcriptPath, findActiveTranscript, resolveTranscript, readLastModel, formatModelName,
