@@ -326,6 +326,25 @@ running the updater) survive either path.
 `node-pty` version bump only takes effect on a deliberate `sessiond` restart (which does clear
 sessions — do it intentionally).
 
+### The install step throws the lockfile rewrite away
+
+Every `npm install` here is followed by `git checkout -- package-lock.json`, in **all four** scripts
+that install deps (`linux/update.sh`'s `discard_lock_churn`, `windows/update.ps1`, and both
+installers). This is not cosmetic tidiness — it is what keeps the deploy loop able to run twice.
+
+npm rewrites the lockfile into whatever shape the *local* npm version prefers even when nothing
+about the installed tree changed: npm 11.6.2 records `"peer": true` on `@xterm/xterm`, 11.12.1 does
+not. Machines on different npm versions therefore dirty that file back and forth forever, and each
+side sees a one-line diff that looks worth committing. Committing it is the trap: the commit is a
+`package-lock.json` change, so it makes `deps_changed` true on the *other* machine, which runs
+`npm install`, which rewrites the file back — and a dirty tree is exactly what the next
+`git pull --ff-only` refuses. The update that installed the deps is the one that blocks the update
+after it, on a machine you are not looking at.
+
+The lockfile is authoritative and `node_modules` is derived from it, so the rewrite carries no
+information worth keeping. Discarding it makes the churn unobservable and the ping-pong impossible,
+whatever npm each machine happens to run. If you ever see that diff again, don't commit it.
+
 ### The Claude Code CLI is a pinned dependency
 
 termhub uses Claude Code through surfaces that are not a public API: it pins a conversation with

@@ -109,6 +109,12 @@ if ($changed -match 'package(-lock)?\.json') {
   Push-Location $ProjectDir
   try { & npm install --omit=dev --ignore-scripts --no-audit --no-fund } finally { Pop-Location }
   if ($LASTEXITCODE -ne 0) { & git -C $ProjectDir reset --hard $rollback | Out-Null; Fail "npm install failed; rolled back. Blue still serving." }
+  # npm rewrites package-lock.json into whatever shape the LOCAL npm prefers even when
+  # the installed tree is unchanged (11.6.2 records `"peer": true` on @xterm/xterm,
+  # 11.12.1 does not), so machines on different npm versions dirty it back and forth -
+  # and the pull at line 99 refuses a dirty tree. The lockfile is authoritative and
+  # node_modules is derived from it, so discard the rewrite. Mirrors linux/update.sh.
+  & git -C $ProjectDir checkout -- package-lock.json 2>&1 | Out-Null
 }
 
 if ($mode -eq 'single') {

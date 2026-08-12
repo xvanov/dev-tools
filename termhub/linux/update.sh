@@ -99,6 +99,20 @@ install_deps() {
   say "package files changed - installing dependencies"
   ( cd "$PROJECT_DIR" && npm install --omit=dev --no-audit --no-fund ) \
     || say "npm install reported a problem - continuing (the previous node_modules is still in place)"
+  discard_lock_churn
+}
+
+# `npm install` rewrites package-lock.json into whatever shape the LOCAL npm
+# prefers, even when nothing about the installed tree changed: npm 11.6.2 records
+# `"peer": true` on @xterm/xterm, 11.12.1 does not. Machines on different npm
+# versions therefore dirty the file back and forth forever, and a dirty tree is
+# exactly what the next `git pull --ff-only` refuses to run against - so the update
+# that installed the deps is the one that blocks the update after it.
+#
+# The lockfile is authoritative and node_modules is derived from it, so the rewrite
+# carries no information worth keeping. Throw it away.
+discard_lock_churn() {
+  git -C "$PROJECT_DIR" checkout -- package-lock.json 2>/dev/null || true
 }
 
 # ---------------------------------------------------------------------------

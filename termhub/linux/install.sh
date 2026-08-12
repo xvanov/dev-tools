@@ -24,6 +24,10 @@ fi
 # --- dependencies (builds node-pty native module) --------------------------
 echo "termhub: installing npm dependencies (this compiles node-pty)…"
 ( cd "$DIR" && npm install --omit=dev --no-audit --no-fund )
+# npm rewrites the lockfile into the local npm's preferred shape even when nothing
+# installed changed, which leaves a fresh clone dirty and blocks its first
+# `git pull --ff-only` update. See discard_lock_churn in linux/update.sh.
+git -C "$DIR" checkout -- package-lock.json 2>/dev/null || true
 
 # --- systemd unit ----------------------------------------------------------
 mkdir -p "$UNIT_DIR"

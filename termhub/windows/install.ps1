@@ -54,6 +54,10 @@ if (-not $tailscale) { Write-Error "tailscale CLI not found. Install Tailscale a
 Write-Host "termhub: installing npm dependencies..."
 Push-Location $Dir
 try { & npm install --omit=dev --ignore-scripts --no-audit --no-fund } finally { Pop-Location }
+# npm rewrites the lockfile into the local npm's preferred shape even when nothing
+# installed changed, which leaves a fresh clone dirty and blocks its first
+# `git pull --ff-only` update. See discard_lock_churn in linux/update.sh.
+& git -C $Dir checkout -- package-lock.json 2>&1 | Out-Null
 
 # --- build node-pty native addon (the part that fails on stock Windows) -----
 function Find-MSBuild {
