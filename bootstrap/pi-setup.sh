@@ -4,8 +4,9 @@
 # =============================================================================
 # Turns a freshly-flashed, freshly-booted Ubuntu/Debian Pi into a working dev
 # machine: base packages -> Node.js -> Tailscale (joined) -> a GitHub login
-# (via the gh CLI) + your git repos -> the dev-tools that make sense on a
-# headless box (termhub, statusline).
+# (via the gh CLI) + your git repos -> Claude Code CLI -> the dev-tools that
+# make sense on a headless box (termhub, statusline) -> a check that termhub
+# actually ended up reachable over the tailnet, not just loopback.
 #
 # It is SELF-CONTAINED: copy just this one file to the Pi and run it. It does
 # not need the repo to be present first — it logs in to GitHub with `gh auth
@@ -200,7 +201,24 @@ git config --global user.email "$GIT_EMAIL"
 info "user.name = $GIT_NAME, user.email = $GIT_EMAIL"
 
 # ---------------------------------------------------------------------------
-# 6. Clone repos
+# 6. Claude Code CLI
+# ---------------------------------------------------------------------------
+# termhub's watchdog escalates to `claude -p` when a probe/remedy can't recover
+# it on its own (watchdog/watchdog.sh:find_claude), so a termhub box without the
+# CLI is a watchdog with its last line of defense missing.
+if command -v claude >/dev/null 2>&1; then
+  step "Claude Code CLI already installed: $(claude --version 2>/dev/null | head -n1)"
+else
+  step "Installing Claude Code CLI"
+  curl -fsSL https://claude.ai/install.sh | bash \
+    || warn "Claude Code install failed — continuing without it (termhub's watchdog escalation needs it; rerun this script to retry)."
+fi
+# The native installer puts the binary in ~/.local/bin; a fresh non-login shell
+# (like the one running the rest of this script) may not have that on PATH yet.
+export PATH="$HOME/.local/bin:$PATH"
+
+# ---------------------------------------------------------------------------
+# 7. Clone repos
 # ---------------------------------------------------------------------------
 step "Cloning repos into $REPO_ROOT"
 mkdir -p "$REPO_ROOT"
@@ -228,7 +246,7 @@ if [[ -z "$DEVTOOLS_DIR" && -f "$SCRIPT_DIR/../README.md" && -d "$SCRIPT_DIR/../
 fi
 
 # ---------------------------------------------------------------------------
-# 7. Install the dev-tools
+# 8. Install the dev-tools
 # ---------------------------------------------------------------------------
 if [[ -z "$DEVTOOLS_DIR" ]]; then
   warn "dev-tools checkout not found — skipping tool installs ($TOOLS)."
@@ -249,11 +267,46 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 8. Keep user services alive after logout (termhub is a --user service)
+# 9. Keep user services alive after logout (termhub is a --user service)
 # ---------------------------------------------------------------------------
 step "Enabling lingering so user services survive logout"
 sudo loginctl enable-linger "$USER" >/dev/null 2>&1 || \
   warn "could not enable-linger; run 'sudo loginctl enable-linger $USER' manually."
+
+# ---------------------------------------------------------------------------
+# 10. Verify termhub is actually reachable over the tailnet
+# ---------------------------------------------------------------------------
+# server.js resolves its bind address once, at process start (lib/bind.js): if
+# termhub started before `tailscale up` had actually finished joining the tailnet
+# (the systemd unit's After=tailscaled.service only waits for the daemon to be
+# running, not for it to be connected), it silently falls back to loopback and
+# stays there until something restarts it. A loopback-only termhub can't be
+# reached from any other device on the tailnet, which is the entire point of
+# running it here — so re-running this script has to be able to detect and fix
+# that, not just get it right on the very first run.
+if [[ " $TOOLS " == *" termhub "* ]]; then
+  step "Verifying termhub is reachable over Tailscale"
+  TSIP="$(tailscale ip -4 2>/dev/null | head -n1 || true)"
+  PORT="${TERMHUB_PORT:-7000}"
+  if [[ -z "$TSIP" ]]; then
+    warn "no Tailscale IP available — skipping the reachability check."
+  elif curl -fsS -m 3 "http://$TSIP:$PORT/api/health" >/dev/null 2>&1; then
+    info "termhub is reachable at http://$TSIP:$PORT"
+  else
+    warn "termhub not reachable at http://$TSIP:$PORT yet — restarting it now that Tailscale is confirmed up."
+    systemctl --user restart termhub 2>/dev/null || true
+    ok=0
+    for _ in $(seq 1 15); do
+      sleep 2
+      curl -fsS -m 3 "http://$TSIP:$PORT/api/health" >/dev/null 2>&1 && { ok=1; break; }
+    done
+    if [[ "$ok" -eq 1 ]]; then
+      info "termhub is now reachable at http://$TSIP:$PORT"
+    else
+      warn "termhub still isn't reachable at http://$TSIP:$PORT — check 'systemctl --user status termhub' and 'journalctl --user -u termhub'."
+    fi
+  fi
+fi
 
 # ---------------------------------------------------------------------------
 # done

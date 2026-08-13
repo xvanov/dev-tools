@@ -3,7 +3,8 @@
 One-shot provisioning for a **new Linux machine** (built for a Raspberry Pi
 running Ubuntu, works on any Ubuntu/Debian arm64/amd64 box). Takes a
 freshly-booted machine to: base packages → Node.js → Tailscale (joined) → an
-SSH key + your git repos → the dev-tools worth running headless.
+SSH key + your git repos → the Claude Code CLI → the dev-tools worth running
+headless → a check that termhub actually ended up reachable over the tailnet.
 
 ## 0. Flash Ubuntu (once, from another machine)
 
@@ -44,8 +45,10 @@ every step skips work already done.
 | Node.js | `NODE_MAJOR` (default 20) via NodeSource, with a fallback to the distro's `nodejs`/`npm` — guarantees ≥18 |
 | Tailscale | official installer + `tailscale up` (auth key, else interactive; non-fatal if it fails) |
 | GitHub | installs `gh`, runs `gh auth login` (device-code flow), wires gh as git's credential helper, rewrites `git@github.com:`→HTTPS, sets `user.name`/`user.email` from your GitHub account, clones `REPOS` into `REPO_ROOT` |
+| Claude Code | installs the CLI via the native installer (`curl -fsSL https://claude.ai/install.sh \| bash`) if not already present — needed for termhub's watchdog escalation (`watchdog/watchdog.sh`) |
 | Tools | runs each tool's own `linux/install.sh` (default: `termhub`, `claude-ctx-statusline`) |
 | Linger | `loginctl enable-linger` so systemd `--user` services (termhub) survive logout |
+| Reachability check | confirms termhub answers on `http://<tailscale-ip>:7000`; if it only came up on loopback (e.g. it started before Tailscale finished joining), restarts it and re-checks |
 
 ## Configuration
 
