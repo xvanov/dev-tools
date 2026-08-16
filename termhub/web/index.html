@@ -39,6 +39,13 @@
       <div class="actions">
         <button id="new-term-btn">+ New terminal</button>
       </div>
+      <!-- The scoreboard. Today's idle total is the number the idle layer
+           exists to drive down, so it sits above the session list where it is
+           unavoidable rather than on the dashboard where it would be opt-in. -->
+      <a id="idle-bar" href="/dashboard" title="Idle time today — tap for the dashboard">
+        <span id="idle-total">—</span>
+        <span id="idle-sub"></span>
+      </a>
       <div id="session-list"></div>
       <div class="sidebar-foot"><span id="status-line">connecting…</span></div>
     </aside>

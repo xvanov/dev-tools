@@ -956,6 +956,90 @@ warns about that in its own banner. `lib/session.js` strips the inherited `CLAUD
 identity from every PTY termhub spawns, so this can't be caused by how termhub itself was
 started; it only shows up for a `claude` launched some other way.
 
+## Idle tracking (`lib/idleHub.js`)
+
+Measures the one number the layer exists for: **how long an agent session sat waiting on the
+human**. Runs in `sessiond`, once a second, over every `claude`/`opencode` session — armed or not,
+attached or not, browser open or not. A tracker in the front would stop counting the moment the tab
+closed, which is exactly the case worth catching.
+
+```
+lib/idleState.js  (pure)      classify one session -> working | waiting | limited
+lib/idleHub.js    (sessiond)  episode bookkeeping + escalating push
+lib/idleStore.js               <data dir>/idle/YYYY-MM-DD.jsonl, append-only
+lib/notify.js                  ntfy POST, best-effort
+```
+
+**The signals are the voice layer's, reused rather than re-derived.** `isWaitingForInput()` for a
+finished Claude turn, the same 12 s PTY-silence rule for a session parked on a question (the
+transcript is empty until you answer — see the voice layer above for the measurement), and
+opencode's `session.idle` / `question.asked`, which need no heuristic at all. The one thing added
+here is `isLimitNotice()` in `lib/claudeTranscript.js`.
+
+**`limited` exists because a spend limit passes every "the turn finished" test there is.** Claude
+Code files its own notices as ordinary `assistant` entries with `model: "<synthetic>"` and
+`stop_reason: "stop_sequence"` (`You've hit your org's monthly spend limit · run /usage-credits…`),
+so structurally they are indistinguishable from an answer waiting on a reply. Counting them would
+charge the user idle minutes for the one pause they cannot fix, so the limit check runs **first**,
+gets its own state, and stops the clock. The narrow text test matters: the other common synthetic
+entry is `[Request interrupted by user]`, which is a real wait.
+
+**Shells are not tracked.** A shell at its prompt is a tool waiting for you by design; counting it
+would make every day look terrible and tell you nothing actionable.
+
+Load-bearing details:
+
+- **Episodes are checkpointed every 5 min.** An open episode lives in memory, so an unexpected
+  `sessiond` death would otherwise lose the whole stretch. Continuations carry `cont: true`, and
+  `rollup()` excludes them from the **handoff** count — without that, one terminal forgotten for
+  half an hour reports six handoffs and flatters the exact number it exists to expose.
+- **Episodes are filed by their START day** and `readDay()` also scans the previous day and clips.
+  Filing by start keeps the writer a pure append; a writer that split at midnight would need a
+  timezone-aware clock it has no other use for.
+- **Today's rollup folds in the open in-memory episodes** (`idle.openEpisodes()`). Without that the
+  header freezes whenever nothing changes state, which on an idle day is the whole day.
+- **Looking at a session suppresses the push, not the clock.** The browser beats
+  `POST /api/idle/focus` every 15 s while visible; idle is idle whether or not you're staring at
+  it, but a phone that buzzes about the window already on screen trains you to ignore the channel.
+- **The notification slot is claimed before the async send**, so a failed post doesn't retry every
+  tick and a slow one can't fire twice.
+- **The deep link is read off Serve's config**, never constructed — `secureUrlForPort()` against
+  `state.json`'s `publishPort`, cached 5 min because it spawns `tailscale`. No address published =
+  no `Click` header, and the push still goes.
+- **The badge's clock is not in `uiSignature()`.** `idleState` is, `idleMs` isn't:
+  `tickIdleBadges()` writes elapsed text in place, because rebuilding the sidebar once a second is
+  precisely the churn that signature exists to prevent.
+- **`notify.json` is read with the BOM stripped.** PowerShell 5.1's `Out-File -Encoding utf8`
+  writes one, `JSON.parse` throws on it, and the failure mode is silent — notifications simply
+  never arrive on a machine that looks configured.
+
+**This is a `sessiond`-tier change**: it takes a `restart-sessiond.ps1` (which ends every live
+terminal) to activate on a machine already running. The UI half rides the ordinary front swap.
+
+### The dashboard (`web/dashboard.*`, served at `/dashboard`)
+
+A second page, not a panel in the hub: it is a reading surface, and the terminal UI is a working
+one. `front.js` maps the extensionless `/dashboard` to `dashboard.html` (`PAGES`), so the URL is
+worth typing and worth putting in a notification.
+
+It reads `GET /api/idle/history` (every recorded day, rolled up) and
+`GET /api/idle/history?day=…&episodes=1` — the raw episodes are **opt-in** because the calendar
+and the tiles only want the rollup, and a busy day is a few hundred rows.
+
+- **Idle share, not idle minutes**, is the headline. `waiting / (waiting + working)`. Ten hours of
+  work with forty minutes of waiting is a better day than two hours with thirty, and only the
+  ratio says so — a raw-minutes score would reward working less, which is a scoreboard pointing
+  the wrong way. The calendar's heat is bucketed on the same ratio for the same reason.
+- **The streak skips days with no sessions.** A weekend is not a regression.
+- **Episodes store the readable session name**, resolved by `label()` at write time — an untitled
+  agent session's `title` is its whole command line including the spliced-in `--session-id
+  <uuid>`, which identifies nothing to a human reading back a Tuesday (and blew the width of a
+  phone notification before it was fixed there too).
+- **"Go back to that session" means three different things** and the page says which: a live
+  session opens via the `#session=` deep link, one in the restorable list can be restored from the
+  hub, and one long gone is only a record — no link, because offering one that can't work is worse
+  than admitting the session ended.
+
 ## Versioning & tagging
 
 The version shown under the **⟳ Update** button (and in the update panel) is `git describe

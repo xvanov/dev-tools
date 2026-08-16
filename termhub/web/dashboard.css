@@ -1,0 +1,128 @@
+/* The idle dashboard. Same palette as the terminal UI (styles.css owns :root),
+   its own layout — this is a reading surface, not a working one. */
+
+body.dash {
+  height: auto; min-height: 100%;
+  overflow-y: auto;
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+#dash-head {
+  position: sticky; top: 0; z-index: 5;
+  display: flex; align-items: baseline; gap: 14px;
+  padding: 12px 18px; background: var(--bg-2); border-bottom: 1px solid var(--border);
+}
+#dash-head h1 { margin: 0; font-size: 15px; font-weight: 600; letter-spacing: 0.3px; }
+#back { color: var(--accent); text-decoration: none; font-size: 13px; }
+#back:hover { text-decoration: underline; }
+#dash-machine { margin-left: auto; color: var(--fg-dim); font-size: 12px; }
+
+#dash-main { max-width: 1000px; margin: 0 auto; padding: 16px 14px 60px; display: flex; flex-direction: column; gap: 16px; }
+
+/* ---- the score ---- */
+#score-card {
+  display: flex; align-items: center; gap: 20px;
+  background: var(--bg-2); border: 1px solid var(--border); border-radius: 12px; padding: 16px 18px;
+}
+#score-ring {
+  flex: 0 0 auto; width: 116px; height: 116px; border-radius: 50%;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  /* --score-deg is set from the day's idle share; the ring IS the number. */
+  background:
+    conic-gradient(var(--score-color, var(--accent-2)) var(--score-deg, 0deg), var(--bg-3) 0deg);
+  position: relative;
+}
+#score-ring::after {
+  content: ''; position: absolute; inset: 9px; border-radius: 50%; background: var(--bg-2);
+}
+#score-pct { position: relative; z-index: 1; font-size: 26px; font-variant-numeric: tabular-nums; }
+#score-label { position: relative; z-index: 1; font-size: 10px; color: var(--fg-dim); text-transform: uppercase; letter-spacing: 0.6px; }
+#score-side { min-width: 0; }
+#score-day { font-size: 15px; margin-bottom: 4px; }
+#score-verdict { font-size: 13px; color: var(--fg-dim); }
+#score-streak { font-size: 13px; margin-top: 6px; }
+
+/* ---- tiles ---- */
+#tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; }
+.tile { background: var(--bg-2); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; }
+.tile .v { font-size: 20px; font-variant-numeric: tabular-nums; }
+.tile .k { font-size: 11px; color: var(--fg-dim); margin-top: 2px; }
+.tile.warn .v { color: var(--accent-2); }
+.tile.bad .v { color: var(--danger); }
+.tile.good .v { color: var(--ok); }
+
+/* ---- panels ---- */
+.panel { background: var(--bg-2); border: 1px solid var(--border); border-radius: 12px; }
+.panel-head { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--border); }
+.panel-head h2 { margin: 0; font-size: 13px; font-weight: 600; color: var(--fg-dim); flex: 1; }
+.panel-head button { background: var(--bg-3); border: 1px solid var(--border); color: var(--fg); border-radius: 6px; cursor: pointer; font-size: 15px; padding: 2px 10px; }
+.panel-head button:hover { border-color: var(--accent); }
+#cal-title { flex: 0 1 auto; text-align: center; color: var(--fg); }
+
+/* ---- calendar ---- */
+#calendar { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; padding: 12px 14px; }
+.cal-dow { font-size: 10px; color: var(--fg-dim); text-align: center; padding-bottom: 2px; }
+/* Height is capped rather than square: on a wide screen a 1:1 cell makes the
+   month a full page of empty boxes, and the grid's job is to be scannable in
+   one glance. */
+.cal-day {
+  position: relative; min-height: 46px; max-height: 62px; height: 7vw;
+  border-radius: 7px; border: 1px solid transparent;
+  background: var(--bg-3); color: var(--fg-dim); cursor: default;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
+  font-size: 12px; font-variant-numeric: tabular-nums;
+}
+.cal-day.empty { background: transparent; }
+.cal-day.has-data { cursor: pointer; color: var(--fg); }
+.cal-day.has-data:hover { border-color: var(--accent); }
+.cal-day.today { box-shadow: inset 0 0 0 1px var(--accent); }
+.cal-day.selected { border-color: var(--accent); background: var(--bg-3); }
+.cal-day .amt { font-size: 9px; color: var(--fg-dim); }
+/* Heat by idle SHARE, not by absolute minutes: a long productive day should not
+   look worse than a short lazy one. */
+.cal-day.s0 { background: #1e2a20; }
+.cal-day.s1 { background: #2c3220; }
+.cal-day.s2 { background: #3a3320; }
+.cal-day.s3 { background: #46301f; }
+.cal-day.s4 { background: #4a2626; }
+#cal-legend { display: flex; align-items: center; gap: 4px; padding: 0 14px 12px; }
+.swatch { width: 13px; height: 13px; border-radius: 3px; }
+.swatch.s0 { background: #1e2a20; } .swatch.s1 { background: #2c3220; } .swatch.s2 { background: #3a3320; }
+.swatch.s3 { background: #46301f; } .swatch.s4 { background: #4a2626; }
+.legend-text { font-size: 11px; color: var(--fg-dim); margin-left: 8px; }
+
+/* ---- timeline ---- */
+#timeline { padding: 12px 14px; overflow-x: auto; }
+.tl-hours { display: flex; margin-left: var(--tl-label, 150px); font-size: 10px; color: var(--fg-dim); }
+.tl-hours span { flex: 1; text-align: left; }
+.tl-row { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
+.tl-name {
+  flex: 0 0 var(--tl-label, 150px); max-width: var(--tl-label, 150px);
+  font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg);
+}
+.tl-track { position: relative; flex: 1; height: 16px; background: var(--bg-3); border-radius: 4px; overflow: hidden; }
+.tl-band { position: absolute; top: 0; bottom: 0; }
+.tl-band.working { background: rgba(152, 195, 121, 0.65); }
+.tl-band.waiting { background: rgba(240, 179, 90, 0.8); }
+.tl-band.limited { background: repeating-linear-gradient(45deg, #3a3f49, #3a3f49 4px, #2c313a 4px, #2c313a 8px); }
+.tl-empty, .list-note { padding: 10px 14px; color: var(--fg-dim); font-size: 13px; }
+
+/* ---- session table ---- */
+.ds-row { display: flex; align-items: center; gap: 10px; padding: 9px 14px; border-top: 1px solid var(--border); }
+.ds-row:first-child { border-top: none; }
+.ds-main { flex: 1; min-width: 0; }
+.ds-title { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ds-cwd { font-size: 11px; color: var(--fg-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ds-num { font-size: 12px; font-variant-numeric: tabular-nums; color: var(--fg-dim); flex: 0 0 auto; }
+.ds-num b { color: var(--accent-2); font-weight: 500; }
+.ds-go {
+  flex: 0 0 auto; font-size: 12px; text-decoration: none; padding: 4px 10px; border-radius: 6px;
+  background: var(--bg-3); border: 1px solid var(--border); color: var(--accent);
+}
+.ds-go:hover { border-color: var(--accent); }
+.ds-go.gone { color: var(--fg-dim); cursor: default; }
+
+@media (max-width: 640px) {
+  #timeline { --tl-label: 96px; }
+  #score-card { flex-direction: column; align-items: flex-start; }
+}

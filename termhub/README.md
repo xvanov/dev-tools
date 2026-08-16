@@ -53,6 +53,14 @@ other machines to maintain.
   instead of being typed at the agent: hold a send, switch sessions, ask what's running, mute,
   read the last message in full. Anything that destroys work asks first and waits for a spoken
   *yes*. See [Voice commands](#voice-commands).
+- **Idle tracking, and a phone that tells you** — termhub measures how long each agent session
+  sits waiting on *you*, for every session, whether or not a browser is open. The sidebar shows a
+  live stopwatch per session and today's total above the list; when a session has been waiting
+  two minutes your phone gets an [ntfy](https://ntfy.sh) push whose notification opens straight
+  into that terminal, escalating at 5 / 15 / 30 minutes. Hitting a usage or spend limit gets its
+  own push and **stops** the clock — you can't un-idle a session that's out of tokens. Off until
+  you write a topic into `notify.json`; the measuring runs regardless. See
+  [Idle tracking](#idle-tracking).
 - **Update from the UI** — a ⟳ Update button checks GitHub (once a day in the background, and
   on demand) and, when the termhub tool itself has changed, opens a terminal that runs the
   safe blue-green updater. See [Updating safely](#updating-safely-terminals-survive).
@@ -367,6 +375,61 @@ list of near-miss dictation that must *not* trigger.
 > from a shell with `curl -s http://<host>:7000/api/secure-url`. If you have an old bookmark on the
 > HTTP address, this is why.
 
+## Idle tracking
+
+The thing being measured is **the time an agent spent waiting on you** — the gap between "Claude
+stopped and needs an answer" and "you answered". Nothing else counts: work in progress is not
+idle, a shell sitting at its prompt is not idle (that's what a shell is *for*), and a session
+that hit a usage limit is not idle either, because there is nothing you could have done.
+
+It runs in `sessiond`, so it counts with the browser closed, the phone asleep and the laptop lid
+shut. There is nothing to arm and nothing to turn on.
+
+**In the UI**: each waiting session shows a stopwatch in the sidebar — amber, turning red once
+it's past the notification threshold — and the bar above the session list shows today's total,
+how many sessions are running vs waiting, how many handoffs there were, and peak parallelism.
+
+**On your phone**: push notifications via [ntfy](https://ntfy.sh), the same way docrag's listing
+monitor does it. Create a topic (any long random string — **the topic is the only secret**; ntfy
+has no accounts) and write it into the data dir:
+
+```jsonc
+// %LOCALAPPDATA%\termhub\notify.json   (Linux: ~/.local/termhub/notify.json)
+{ "topic": "termhub-idle-<something long and random>", "server": "https://ntfy.sh" }
+```
+
+Then subscribe to that topic in the ntfy app. Or set `TERMHUB_NTFY_TOPIC`, which wins over the
+file. No topic configured = no pushes, and everything else still works.
+
+| | |
+|---|---|
+| first push | 2 min of waiting |
+| then | +5 min, +15 min, then every 30 min |
+| priority | `default`, raised to `high` past 15 min |
+| tapping it | opens `https://<machine>/#session=<id>` — that terminal, not the session list |
+| usage/spend limit | its own push, once, and the clock stops for that session |
+| looking at it | a visible browser tab showing that session suppresses the push (but **not** the counting) |
+
+**The log** lives in `<data dir>/idle/YYYY-MM-DD.jsonl`, one line per episode
+(`{start, end, ms, state, reason, id, title, cwd, kind}`), append-only. `GET /api/idle` is
+today's live picture; `GET /api/idle/history` rolls up every recorded day.
+
+### The dashboard (`/dashboard`)
+
+A separate page — the idle bar in the sidebar links to it. It shows, for whichever day you pick:
+
+- **Idle share** — `waiting / (waiting + working)`, as a ring. This is the headline rather than
+  raw minutes, because raw minutes punish a long day and flatter a short one. Under 15% counts as
+  a win, and consecutive wins are a streak.
+- **Tiles** — idle, working, handoffs, **idle per handoff** (the fairest single number: when the
+  agent handed the work back, how long did it sit?), peak parallelism, sessions, and time lost to
+  usage limits when there was any.
+- **A month calendar**, each day shaded by idle share, click one to load it.
+- **A timeline** — one row per session, bands across the 24 hours: green working, amber waiting,
+  hatched out-of-tokens. This is what answers "what was actually going on at 3pm".
+- **That day's sessions**, with a link back: **open** if it's still live, **restore** if it's in
+  the restorable list, and *ended* if only the record survives.
+
 ## Configuration
 
 All optional environment variables:
@@ -388,6 +451,8 @@ All optional environment variables:
 | `TERMHUB_KOKORO_DIR` | `~/.claude/kokoro` | kokoro: directory holding `kokoro-v1.0.onnx` + `voices-v1.0.bin` |
 | `TERMHUB_TTS_IDLE_MS` | `600000` (10 min) | How long the resident kokoro worker stays loaded with nothing to say. It holds ~750 MB |
 | `TERMHUB_WAKE_WORD` | `sputnik` | The spoken wake word for voice commands |
+| `TERMHUB_NTFY_TOPIC` | — | ntfy topic for idle notifications. Wins over `<data dir>/notify.json`; unset and unconfigured means no pushes. **The topic is the secret** — anyone who knows it can read them |
+| `TERMHUB_NTFY_SERVER` | `https://ntfy.sh` | Point at a self-hosted ntfy instead |
 
 On Linux set these with `systemctl --user edit termhub`; on Windows via `setx` + restart the task.
 
@@ -409,6 +474,12 @@ On Linux set these with `systemctl --user edit termhub`; on Windows via `setx` +
 | `web/voiceCommands.js` | Wake-word matching and command parsing (pure, no DOM — see `test/voiceCommands.test.js`) |
 | `lib/voiceHub.js` | Watches armed sessions and broadcasts `waiting`/`busy` over `/ws/voice` |
 | `lib/limit.js` | Concurrency gate bounding the synthesis / `claude -p` children sessiond will fork |
+| `lib/idleState.js` | The idle state machine — working / waiting / limited — as a pure function |
+| `lib/idleHub.js` | Runs that machine once a second over every agent session; logs episodes and pushes to your phone |
+| `lib/idleStore.js` | The append-only episode log (`<data dir>/idle/YYYY-MM-DD.jsonl`) and its rollups |
+| `lib/notify.js` | ntfy client — best-effort, never throws, silent when no topic is configured |
+| `web/dashboard.html`, `web/dashboard.js`, `web/dashboard.css` | The idle dashboard served at `/dashboard` |
+| `test/idle.test.js` | Idle state-machine and episode-log tests |
 | `test/voiceCommands.test.js` | Wake-word and command-parser tests — `npm test`, no framework, no deps |
 | `lib/state.js` | Deployment state (`state.json`) + pid-file helpers shared by the tiers and scripts |
 | `lib/dirs.js` | Directory autocomplete for the new-terminal dialog |

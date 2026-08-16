@@ -43,8 +43,12 @@ function sendJson(res, status, body) {
   res.end(data);
 }
 
+// Extensionless pages, so the idle dashboard has a URL worth typing and worth
+// putting in a notification: /dashboard, not /dashboard.html.
+const PAGES = { '/': '/index.html', '/dashboard': '/dashboard.html' };
+
 function serveStatic(res, pathname) {
-  let rel = pathname === '/' ? '/index.html' : pathname;
+  let rel = PAGES[pathname] || pathname;
   rel = rel.replace(/\.\.+/g, ''); // basic traversal guard
   const file = path.join(WEB_DIR, rel);
   fs.readFile(file, (err, data) => {

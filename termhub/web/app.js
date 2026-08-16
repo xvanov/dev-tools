@@ -28,6 +28,7 @@ const state = {
   open: new Map(), // id -> term object
   activeId: null,
   ctrlArmed: false,
+  idle: null,      // last /api/idle snapshot: today's totals + live per-session state
 };
 
 const $ = (sel) => document.querySelector(sel);
@@ -80,7 +81,11 @@ async function api(path, opts) {
 // only rebuild when this signature actually changes.
 function uiSignature() {
   const live = state.sessions
-    .map((s) => `${s.id}:${s.alive ? 1 : 0}:${s.busy ? 1 : 0}:${s.title || ''}:${s.modelLabel || ''}:${voice.armed.has(s.id) ? 1 : 0}`).join('|');
+    // `idleState` is in the signature but `idleMs` deliberately is NOT: the
+    // badge's clock ticks every second, and putting it here would rebuild the
+    // whole sidebar once a second — exactly the churn this signature exists to
+    // prevent. tickIdleBadges() writes the elapsed text in place instead.
+    .map((s) => `${s.id}:${s.alive ? 1 : 0}:${s.busy ? 1 : 0}:${s.title || ''}:${s.modelLabel || ''}:${voice.armed.has(s.id) ? 1 : 0}:${s.idleState || ''}`).join('|');
   const rest = state.restorable
     .map((r) => `${r.id}:${r.kind}:${(r.history || []).length}`).join('|');
   const open = [...state.open.values()].map((t) => `${t.id}:${t.title || ''}`).join(',');
@@ -182,6 +187,7 @@ function renderSessions() {
         `<span class="title">${escapeHtml(s.title || s.id)}</span>` +
         (s.modelLabel ? `<span class="model-badge">${escapeHtml(s.modelLabel)}</span>` : '') +
       `</span>` +
+      idleBadgeHtml(s) +
       `<button class="voice${canSpeak ? '' : ' unsupported'}${armed ? (voice.unlocked ? ' armed' : ' armed locked') : ''}"` +
         ` title="${escapeHtml(voiceTitle)}">&#128266;</button>` +
       `<button class="rename" title="Rename session">&#9998;</button>` +
@@ -206,6 +212,117 @@ function renderSessions() {
     list.appendChild(head);
     for (const r of state.restorable) list.appendChild(renderRestorable(r));
   }
+}
+
+// ---- idle tracking (browser side) -----------------------------------------
+//
+// The server measures and stores it (lib/idleHub.js); the browser's whole job
+// here is to make the number impossible to ignore — a per-session clock that
+// starts the moment an agent hands the ball back, and today's running total
+// above the session list.
+//
+// Two things this must NOT do: rebuild the sidebar once a second (see
+// uiSignature), and let the phone buzz about the terminal you are looking at
+// (see the focus heartbeat below).
+
+const IDLE_LABEL = { waiting: '⏸', limited: '🪫', working: '' };
+
+// mm:ss under an hour, h mm over it. Deliberately not "a few minutes ago"
+// phrasing: this is a stopwatch you are trying to keep small, and a vague
+// number is one you can ignore.
+function fmtIdle(ms) {
+  const s = Math.max(0, Math.round(ms / 1000));
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}:${String(s % 60).padStart(2, '0')}`;
+  return `${Math.floor(m / 60)}h${String(m % 60).padStart(2, '0')}`;
+}
+
+function idleBadgeHtml(s) {
+  if (!s.alive || !s.idleState || s.idleState === 'working') return '';
+  const cls = s.idleState === 'limited' ? 'limited' : 'waiting';
+  const title = s.idleState === 'limited'
+    ? 'Out of tokens — the idle clock is paused for this session'
+    : 'Waiting on you — this is the time the tracker is counting';
+  return `<span class="idle-badge ${cls}" data-idle-id="${escapeHtml(s.id)}" `
+    + `data-idle-since="${s.idleSince || 0}" title="${title}">`
+    + `${IDLE_LABEL[s.idleState] || ''} <span class="idle-ms"></span></span>`;
+}
+
+// Tick every badge's elapsed text in place — no DOM rebuild, no poll. The
+// server's `idleSince` is the anchor, so a badge can't drift from the number
+// the tracker will log, however long the tab has been open.
+function tickIdleBadges() {
+  const now = Date.now();
+  for (const el of document.querySelectorAll('.idle-badge')) {
+    const since = Number(el.dataset.idleSince) || 0;
+    const span = el.querySelector('.idle-ms');
+    if (!span) continue;
+    span.textContent = since ? fmtIdle(now - since) : '';
+    // Past the notification threshold the badge stops being informational and
+    // starts being the point.
+    el.classList.toggle('hot', since > 0 && now - since >= (state.idle ? state.idle.thresholdMs : 120000));
+  }
+  renderIdleBar();
+}
+
+// Today's scoreboard. `waiting` is the number to minimise; handoffs is what
+// makes it fair — twenty handoffs at 30 s each is a good day, one handoff you
+// missed for two hours is not, and raw minutes alone can't tell them apart.
+function renderIdleBar() {
+  const bar = $('#idle-bar');
+  if (!bar) return;
+  const d = state.idle;
+  if (!d || !d.today) { $('#idle-total').textContent = '—'; $('#idle-sub').textContent = ''; return; }
+  // Add the live stretch of anything currently waiting: the snapshot is a few
+  // seconds old and a total that visibly freezes reads as broken.
+  const drift = Date.now() - d.now;
+  const live = (d.sessions || []).reduce((a, s) => a + (s.state === 'waiting' ? Math.max(0, drift) : 0), 0);
+  const waiting = d.today.waiting + live;
+  $('#idle-total').textContent = `idle today ${fmtIdle(waiting)}`;
+  const bits = [];
+  if (d.running) bits.push(`${d.running} running`);
+  if (d.waiting) bits.push(`${d.waiting} waiting`);
+  if (d.today.handoffs) bits.push(`${d.today.handoffs} handoff${d.today.handoffs === 1 ? '' : 's'}`);
+  if (d.today.peakParallel > 1) bits.push(`peak ×${d.today.peakParallel}`);
+  $('#idle-sub').textContent = bits.join(' · ');
+  bar.classList.toggle('alert', (d.waiting || 0) > 0);
+}
+
+async function refreshIdle() {
+  try {
+    state.idle = await api('/api/idle');
+  } catch {
+    // sessiond unreachable — the sidebar's own status line already says so
+  }
+  renderIdleBar();
+}
+
+// "This tab is visible and showing this session." The server suppresses the
+// PUSH for it and keeps counting — thinking in front of a terminal is still
+// time an agent spent waiting, but a phone that vibrates about the window
+// already on your screen is how a notification channel earns itself ignored.
+function beatFocus() {
+  if (document.visibilityState !== 'visible' || !state.activeId) return;
+  fetch('/api/idle/focus', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ sessionId: state.activeId }),
+  }).catch(() => {});
+}
+
+// A tapped ntfy notification lands on `/#session=<id>`. Opening that terminal
+// IS the point of the notification — landing on the session list instead would
+// leave the last, easiest step undone on the smallest screen.
+function openDeepLink() {
+  const m = /^#session=(.+)$/.exec(location.hash || '');
+  if (!m) return;
+  const id = decodeURIComponent(m[1]);
+  const s = state.sessions.find((x) => x.id === id);
+  if (!s) return;
+  openTerminal(s.id, s.title, s.kind);
+  if (isMobile()) closeDrawer();
+  // Clear it so a later reload doesn't re-open a session you have since left.
+  history.replaceState(null, '', location.pathname + location.search);
 }
 
 // A session that survived a reboot only as metadata. Restore re-spawns it:
@@ -2975,8 +3092,14 @@ syncViewportHeight();
 // a session, but the speaker and the microphone belong to the browser.
 connectVoice();
 renderVoice();
-refresh();
+refresh().then(openDeepLink);   // a tapped notification names a session in the hash
 setInterval(refresh, 2000); // keep the sidebar "working" status roughly live
+refreshIdle();
+setInterval(refreshIdle, 5000);      // today's totals; the badges tick locally
+setInterval(tickIdleBadges, 1000);   // in-place text, no sidebar rebuild
+beatFocus();
+setInterval(beatFocus, 15000);       // "don't buzz me about the tab I'm looking at"
+document.addEventListener('visibilitychange', beatFocus);
 setInterval(updateMouseHint, 1000); // reflect entering/leaving a full-screen app
 backgroundUpdateCheck();
 setInterval(backgroundUpdateCheck, UPDATE_POLL_MS); // nudge ~once a day

@@ -32,6 +32,8 @@ const { saveUploadedFile, saveImageAttachment } = require('./lib/uploads');
 const tts = require('./lib/tts');
 const summarizer = require('./lib/summarize');
 const { VoiceHub, wakeWord: voiceWakeWord } = require('./lib/voiceHub');
+const { IdleHub } = require('./lib/idleHub');
+const idleStore = require('./lib/idleStore');
 
 // A pasted/dropped image, base64-inflated in transit — cap comfortably above a
 // full-screen screenshot (a few MB as PNG) while still bounding memory use.
@@ -178,7 +180,26 @@ function trackSession(session) {
 
 function createSessiond({ entry = 'sessiond', port: serverPort = DEFAULT_SESSIOND_PORT } = {}) {
   const sessions = new Map();
-  const listSessions = () => [...sessions.values()].map((s) => s.info());
+
+  // Measures how long each agent session sits waiting on the human, logs it,
+  // and pushes to the phone when it drags. Lives here, not in the front, because
+  // only this tier sees every PTY — a tracker in the browser tier would stop
+  // counting the moment the tab closed, which is exactly when it matters.
+  const idle = new IdleHub(sessions);
+  idle.start();
+  // Flush the open episodes on a deliberate stop. A SIGKILL still costs
+  // whatever hasn't been checkpointed (a minute at most, by design), but an
+  // orderly shutdown shouldn't cost anything — and `restart-sessiond.ps1` is a
+  // routine operation here, not an emergency.
+  for (const sig of ['SIGINT', 'SIGTERM']) {
+    process.once(sig, () => { try { idle.stop(); } catch { /* shutting down anyway */ } process.exit(0); });
+  }
+  process.once('beforeExit', () => { try { idle.stop(); } catch { /* ditto */ } });
+
+  // The idle fields ride along on the poll the sidebar already makes rather
+  // than earning a second one; `info()` stays the session's own business and
+  // the hub decorates it.
+  const listSessions = () => [...sessions.values()].map((s) => ({ ...s.info(), ...idle.decorate(s.id) }));
   // Archived entries whose session isn't currently live = restorable after a
   // reboot. History is trimmed for the list payload (polled every couple secs).
   const listRestorable = () => {
@@ -494,6 +515,54 @@ function createSessiond({ entry = 'sessiond', port: serverPort = DEFAULT_SESSION
           if (e && e.busy) res.setHeader('Retry-After', '2');
           return sendJson(res, 503, { error: String(e && e.message ? e.message : e) });
         }
+      }
+
+      // ---- idle tracking ------------------------------------------------------
+      // Live state + today's totals, in one call: what the sidebar badges and
+      // the header counter render from, and what the dashboard opens with.
+      if (req.method === 'GET' && pathname === '/api/idle') {
+        return sendJson(res, 200, { machine: MACHINE_NAME, ...idle.snapshot() });
+      }
+
+      // "A tab is open, visible, and showing this session." Suppresses the PUSH
+      // for it and nothing else — the clock keeps running, because thinking in
+      // front of a terminal is still time an agent spent waiting. Without this
+      // the phone buzzes about the session already filling the screen, which is
+      // how a notification channel earns itself ignored.
+      if (req.method === 'POST' && pathname === '/api/idle/focus') {
+        const body = await readBody(req).catch(() => ({}));
+        idle.noteFocus(body.sessionId || null);
+        return sendJson(res, 200, { ok: true });
+      }
+
+      // Historical rollups for the dashboard. `?day=YYYY-MM-DD` for one day
+      // (with its per-session breakdown), otherwise a summary per recorded day.
+      if (req.method === 'GET' && pathname === '/api/idle/history') {
+        const day = url.searchParams.get('day');
+        if (day) {
+          if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return sendJson(res, 400, { error: 'day must be YYYY-MM-DD' });
+          // Today's rollup has to include the stretch currently in progress —
+          // it lives in memory until it ends, and a dashboard that showed today
+          // as whatever last changed state would read as broken.
+          const open = day === idleStore.dayKey(Date.now()) ? idle.openEpisodes() : [];
+          const body = { machine: MACHINE_NAME, ...idleStore.rollup(day, open) };
+          // `?episodes=1` adds the raw (clipped) episodes so the dashboard can
+          // draw the day's timeline. Opt-in because the calendar and the tiles
+          // want only the rollup, and a busy day is a few hundred rows.
+          if (url.searchParams.get('episodes')) {
+            body.episodes = [...idleStore.readDay(day), ...open].sort((a, b) => a.start - b.start);
+          }
+          return sendJson(res, 200, body);
+        }
+        const days = idleStore.days();
+        return sendJson(res, 200, {
+          machine: MACHINE_NAME,
+          days: days.map((d) => {
+            const r = idleStore.rollup(d);
+            return { day: d, working: r.working, waiting: r.waiting, limited: r.limited,
+              handoffs: r.handoffs, peakParallel: r.peakParallel, sessions: r.sessions.length };
+          }),
+        });
       }
 
       if (req.method === 'GET' && pathname === '/api/recents') {

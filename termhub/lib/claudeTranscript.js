@@ -160,6 +160,11 @@ function readLastTurn(file) {
       uuid: last.uuid || null,
       role: last.type,
       text,
+      // The model that produced the turn, verbatim — including the literal
+      // `<synthetic>` Claude Code files its own notices under. The voice layer
+      // doesn't care, but the idle tracker does: a spend-limit notice is a
+      // finished assistant turn by every other test here (see isLimitNotice).
+      model: (message && typeof message.model === 'string') ? message.model : null,
       stopReason: message.stop_reason === undefined ? null : message.stop_reason,
       toolNames: tools.map((t) => t.name),
       prompt: asking ? promptFromTool(asking) : null,
@@ -181,6 +186,29 @@ function isWaitingForInput(turn) {
   return false;
 }
 
+// Is this "turn" actually Claude Code telling you the tap is closed — a usage
+// or spend limit — rather than the assistant finishing a thought?
+//
+// These arrive as ordinary `assistant` entries whose model is the literal
+// `<synthetic>` (the same placeholder readLastModel skips), with a
+// `stop_reason` of `stop_sequence`. Every structural test in this file
+// therefore reads them as "waiting for input", which is true and useless: you
+// are not idle when you have nothing left to spend. The idle tracker needs to
+// tell the two apart, so the discriminator lives here with the rest of the
+// transcript knowledge.
+//
+// Measured shapes on this machine:
+//   "You've hit your org's monthly spend limit · run /usage-credits to …"
+//   "Claude usage limit reached. Your limit will reset at …"
+// The other common synthetic entry — "[Request interrupted by user]" — carries
+// no "limit", which is exactly why the text test is narrow rather than "any
+// synthetic entry".
+function isLimitNotice(turn) {
+  if (!turn || turn.role !== 'assistant') return false;
+  if (!turn.model || !/^<.*>$/.test(turn.model)) return false;
+  return /\blimit(s|ed)?\b|out of credits/i.test(turn.text || '');
+}
+
 // Does this turn have anything worth speaking? A waiting turn with neither
 // prose nor a question is a mid-stream fragment (Claude writes a thinking-only
 // entry with `stop_reason: null` before the text lands), and announcing it
@@ -189,4 +217,4 @@ function hasSpeakableContent(turn) {
   return !!turn && (!!turn.text || !!turn.prompt);
 }
 
-module.exports = { readLastTurn, isWaitingForInput, hasSpeakableContent, ASKING_TOOLS };
+module.exports = { readLastTurn, isWaitingForInput, hasSpeakableContent, isLimitNotice, ASKING_TOOLS };
