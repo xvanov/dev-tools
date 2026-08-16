@@ -565,6 +565,47 @@ function createSessiond({ entry = 'sessiond', port: serverPort = DEFAULT_SESSION
         });
       }
 
+      // Reopen a session the dashboard found in the idle log — the "go back to
+      // what I was doing on the 3rd" path.
+      //
+      // This is deliberately NOT /api/sessions/:id/restore. That route reads
+      // `sessions.json`, which forgets an entry the moment the session is killed
+      // or restored on top of, so it can only ever reach back as far as the
+      // current archive — days, not weeks. The idle log keeps the cwd, the
+      // command and the agent's conversation id for as long as the log exists,
+      // which is what makes an old date actionable rather than decorative.
+      //
+      // The archive still wins when it has the session: its entry is richer
+      // (shell history) and restoring through it keeps the archive consistent.
+      if (req.method === 'POST' && pathname === '/api/idle/reopen') {
+        const body = await readBody(req).catch(() => ({}));
+        const id = body.id;
+        if (!id) return sendJson(res, 400, { error: 'id is required' });
+        if (sessions.has(id)) return sendJson(res, 200, { ok: true, already: true, ...sessions.get(id).info() });
+
+        const entry = archive.get(id) || idleStore.findSession(id);
+        if (!entry) return sendJson(res, 404, { error: 'nothing on record for that session' });
+
+        let command = entry.command || null;
+        if (entry.kind === 'claude') command = restoreClaudeCommand(entry.command, entry.agentSessionId);
+        else if (entry.kind === 'opencode') command = restoreOpencodeCommand(entry.command, entry.agentSessionId);
+        else command = null; // a shell reopens as a plain shell in its old cwd
+
+        const session = new Session({
+          cwd: entry.cwd, command, title: entry.title, cols: body.cols, rows: body.rows,
+          agentSessionId: (entry.kind === 'claude' || entry.kind === 'opencode') ? entry.agentSessionId : null,
+        });
+        trackSession(session);
+        warnIfClaudeCliStale(session);
+        sessions.set(session.id, session);
+        if (archive.get(id)) archive.remove(id);   // superseded, exactly as /restore does
+        archive.upsert(session.archiveEntry());
+        // A conversation that can't be resumed (no id was ever recorded) still
+        // reopens in the right directory — say so rather than pretending the
+        // history came back with it.
+        return sendJson(res, 201, { ok: true, resumed: !!entry.agentSessionId, ...session.info() });
+      }
+
       if (req.method === 'GET' && pathname === '/api/recents') {
         return sendJson(res, 200, { recents: recents.list() });
       }

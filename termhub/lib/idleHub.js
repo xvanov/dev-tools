@@ -180,6 +180,12 @@ class IdleHub extends EventEmitter {
         writtenTo: 0,           // how far the current episode has been checkpointed
         notifiedAt: 0, notifyCount: 0,
         title: label(session), cwd: session.cwd, kind: session.kind,
+        // Enough to bring the conversation back weeks later. The session
+        // archive (sessions.json) forgets an entry the moment it's killed or
+        // restored on top of, so it cannot answer "reopen what I was doing on
+        // the 3rd" — the episode log is the only thing that still remembers,
+        // and a date you can't act on is a museum piece.
+        command: session.command, agentSessionId: session.agentSessionId || null,
       };
       this._state.set(session.id, st);
     }
@@ -188,6 +194,9 @@ class IdleHub extends EventEmitter {
     // what the dashboard renders months later, and "claude --session-id
     // 8b3f…" identifies nothing to a human reading back a Tuesday.
     st.title = label(session);
+    // The agent's own conversation id is discovered asynchronously for opencode
+    // (and can move for claude), so it is refreshed rather than captured once.
+    st.agentSessionId = session.agentSessionId || st.agentSessionId || null;
     return st;
   }
 
@@ -227,6 +236,7 @@ class IdleHub extends EventEmitter {
       id, start, end, ms: end - start,
       state: st.state, reason: st.reason,
       title: st.title, cwd: st.cwd, kind: st.kind,
+      command: st.command, agentSessionId: st.agentSessionId,
       ...(cont ? { cont: true } : {}),
     });
   }

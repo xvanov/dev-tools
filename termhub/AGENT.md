@@ -1035,10 +1035,20 @@ and the tiles only want the rollup, and a busy day is a few hundred rows.
   agent session's `title` is its whole command line including the spliced-in `--session-id
   <uuid>`, which identifies nothing to a human reading back a Tuesday (and blew the width of a
   phone notification before it was fixed there too).
-- **"Go back to that session" means three different things** and the page says which: a live
-  session opens via the `#session=` deep link, one in the restorable list can be restored from the
-  hub, and one long gone is only a record — no link, because offering one that can't work is worse
-  than admitting the session ended.
+- **"Go back to that session" is `POST /api/idle/reopen`, and deliberately not
+  `/api/sessions/:id/restore`.** That route reads `sessions.json`, which drops an entry the moment
+  the session is killed or restored on top of — so it can only reach back as far as the current
+  archive, days rather than weeks, and a calendar you can't act on is decoration. The idle log
+  keeps `cwd`, `command` and `agentSessionId` per episode, so `idleStore.findSession()` can answer
+  for any session still in the log (bounded to 120 day-files; the answer is nearly always in the
+  day you clicked). The archive still wins when it has the entry — it's richer (shell history) and
+  going through it keeps the archive consistent. A session with no recorded conversation id
+  reopens in the right directory as a *fresh* conversation, and both the response (`resumed:
+  false`) and the button's tooltip say so rather than implying the history came back.
+- **Reopening mints a new session id**, so the page hands off to `/#session=<new id>`, not the old
+  one.
+- **The trend and the calendar are drawn from idle SHARE, never minutes.** A quiet day must not
+  render as an improvement; that is the one way a scoreboard like this can teach the wrong lesson.
 
 ## Versioning & tagging
 

@@ -27,6 +27,9 @@
         <div id="score-day">—</div>
         <div id="score-verdict"></div>
         <div id="score-streak"></div>
+        <!-- Two weeks of idle share as bars: the trend is the part you can
+             actually steer, and one day's number alone never shows it. -->
+        <div id="trend" title="Idle share, last 14 recorded days"></div>
       </div>
     </section>
 
@@ -52,9 +55,16 @@
     </section>
 
     <section class="panel">
+      <div class="panel-head"><h2>where the idle went</h2></div>
+      <div id="projects"></div>
+    </section>
+
+    <section class="panel">
       <div class="panel-head"><h2>sessions</h2></div>
       <div id="day-sessions"></div>
     </section>
+
+    <div id="toast" class="hidden"></div>
   </main>
 
   <script src="/dashboard.js"></script>

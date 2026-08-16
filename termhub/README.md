@@ -427,8 +427,17 @@ A separate page — the idle bar in the sidebar links to it. It shows, for which
 - **A month calendar**, each day shaded by idle share, click one to load it.
 - **A timeline** — one row per session, bands across the 24 hours: green working, amber waiting,
   hatched out-of-tokens. This is what answers "what was actually going on at 3pm".
-- **That day's sessions**, with a link back: **open** if it's still live, **restore** if it's in
-  the restorable list, and *ended* if only the record survives.
+- **A 14-day trend** of idle share beside the ring — one day's number never shows the direction.
+- **Where the idle went**, grouped by working directory. "Which repo am I slowest to answer?"
+  outlives the sessions themselves.
+- **That day's sessions**, with a way back: **open** if it's still live, otherwise **reopen** —
+  which spawns it again in its old directory with `--resume <conversation>`, so a date on the
+  calendar is something you can act on rather than a museum piece. A session with no recorded
+  conversation id reopens in the right directory as a fresh one, and the button says so.
+
+The reopen path reads the **idle log**, not `sessions.json`: the archive forgets an entry as soon
+as the session is killed or restored over, so it can only reach back days. The log keeps the cwd,
+the command and the agent's conversation id for as long as the log does.
 
 ## Configuration
 

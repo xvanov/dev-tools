@@ -42,6 +42,35 @@ body.dash {
 #score-verdict { font-size: 13px; color: var(--fg-dim); }
 #score-streak { font-size: 13px; margin-top: 6px; }
 
+/* Two weeks of idle share. Height is the share, not the minutes — a quiet day
+   must not read as an improvement. */
+#trend { display: flex; align-items: flex-end; gap: 3px; height: 34px; margin-top: 10px; }
+.trend-bar { width: 9px; border-radius: 2px 2px 0 0; cursor: pointer; opacity: 0.85; }
+.trend-bar:hover { opacity: 1; outline: 1px solid var(--accent); }
+.trend-bar.good { background: var(--ok); }
+.trend-bar.ok { background: var(--accent-2); }
+.trend-bar.bad { background: var(--danger); }
+
+/* ---- where the idle went (per working directory) ---- */
+.pj-row { display: flex; align-items: center; gap: 10px; padding: 8px 14px; border-top: 1px solid var(--border); }
+.pj-row:first-child { border-top: none; }
+.pj-cwd { flex: 1 1 40%; min-width: 0; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left; }
+.pj-bar { flex: 1 1 40%; height: 8px; background: var(--bg-3); border-radius: 4px; overflow: hidden; }
+.pj-bar span { display: block; height: 100%; background: var(--accent-2); }
+.pj-num { flex: 0 0 auto; font-size: 12px; color: var(--fg-dim); font-variant-numeric: tabular-nums; }
+.pj-num b { color: var(--fg); font-weight: 500; }
+
+/* ---- toast ---- */
+#toast {
+  position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%);
+  background: var(--bg-3); border: 1px solid var(--danger); color: var(--fg);
+  padding: 8px 14px; border-radius: 8px; font-size: 13px; z-index: 20;
+}
+#toast.hidden { display: none; }
+
+button.ds-go { cursor: pointer; font: inherit; font-size: 12px; }
+button.ds-go[disabled] { opacity: 0.6; cursor: default; }
+
 /* ---- tiles ---- */
 #tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; }
 .tile { background: var(--bg-2); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; }

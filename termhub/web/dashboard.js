@@ -239,17 +239,22 @@ function renderDaySessions() {
   if (!sessions.length) { wrap.innerHTML = '<div class="list-note">No agent sessions on this day.</div>'; return; }
 
   wrap.innerHTML = sessions.map((s) => {
-    // "Go back to it" means three different things and it is worth being honest
-    // about which one this is: a live session opens, one archived from a
-    // previous run can be restored from the session list, and one long since
-    // forgotten is only a record — the cwd is then the useful part, not a link.
+    // "Go back to it" means three different things and the button says which:
+    //   live        -> open the terminal that is already running
+    //   ended, id   -> reopen: spawn it again with `--resume <conversation>`,
+    //                  in the directory it ran in. This is the point of keeping
+    //                  the command and the agent id in the episode log — the
+    //                  session archive has long since forgotten this session.
+    //   ended, none -> reopen in the old directory, but as a fresh conversation;
+    //                  the tooltip says so rather than implying history returns.
     const live = state.live.has(s.id);
-    const restorable = state.restorable.has(s.id);
+    const resumable = !!s.agentSessionId;
     const go = live
       ? `<a class="ds-go" href="/#session=${encodeURIComponent(s.id)}">open</a>`
-      : restorable
-        ? `<a class="ds-go" href="/" title="Still in the session list — restore it there">restore</a>`
-        : `<span class="ds-go gone" title="This session is gone; only the record remains">ended</span>`;
+      : `<button class="ds-go" data-reopen="${escapeHtml(s.id)}" title="${resumable
+          ? 'Reopen this conversation where it left off'
+          : 'No conversation id was recorded — reopens in the same directory as a fresh session'}">`
+        + `${resumable ? 'reopen' : 'reopen fresh'}</button>`;
     return `<div class="ds-row">`
       + `<div class="ds-main">`
         + `<div class="ds-title">${escapeHtml(s.title || s.id)}</div>`
@@ -261,6 +266,83 @@ function renderDaySessions() {
       + go
       + `</div>`;
   }).join('');
+
+  for (const btn of wrap.querySelectorAll('[data-reopen]')) {
+    btn.onclick = () => reopen(btn.dataset.reopen, btn);
+  }
+}
+
+// Spawn the session again and go straight to it. The server decides how (see
+// POST /api/idle/reopen): the archive when it still holds the entry, the idle
+// log when it doesn't.
+async function reopen(id, btn) {
+  btn.disabled = true;
+  const was = btn.textContent;
+  btn.textContent = 'opening…';
+  try {
+    const res = await fetch('/api/idle/reopen', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ id }),
+    });
+    const body = await res.json();
+    if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
+    // Hand off to the hub with the NEW id — reopening mints a fresh session.
+    location.href = `/#session=${encodeURIComponent(body.id)}`;
+  } catch (e) {
+    btn.disabled = false;
+    btn.textContent = was;
+    toast(String(e.message || e));
+  }
+}
+
+let toastTimer = null;
+function toast(text) {
+  const el = $('#toast');
+  el.textContent = text;
+  el.classList.remove('hidden');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.add('hidden'), 4000);
+}
+
+// ---- where the idle went ---------------------------------------------------
+
+function renderProjects() {
+  const wrap = $('#projects');
+  const projects = (state.detail && state.detail.projects) || [];
+  if (!projects.length) { wrap.innerHTML = '<div class="list-note">Nothing to attribute yet.</div>'; return; }
+  const worst = Math.max(...projects.map((p) => p.waiting), 1);
+  wrap.innerHTML = projects.map((p) => {
+    const pct = Math.round((p.waiting / worst) * 100);
+    const s = share(p);
+    return `<div class="pj-row">`
+      + `<div class="pj-cwd" title="${escapeHtml(p.cwd)}">${escapeHtml(p.cwd)}</div>`
+      + `<div class="pj-bar"><span style="width:${pct}%"></span></div>`
+      + `<div class="pj-num"><b>${escapeHtml(hm(p.waiting))}</b> · ${Math.round(s * 100)}%</div>`
+      + `</div>`;
+  }).join('');
+}
+
+// ---- the trend -------------------------------------------------------------
+
+// Last 14 recorded days as bars of idle share, oldest left. Bars are drawn from
+// the SHARE, not the minutes, for the same reason the headline is: a quiet day
+// should not look like an improvement.
+function renderTrend() {
+  const el = $('#trend');
+  const played = state.days.filter((d) => (d.working || 0) + (d.waiting || 0) > 0).slice(-14);
+  if (played.length < 2) { el.innerHTML = ''; return; }
+  el.innerHTML = played.map((d) => {
+    const s = share(d);
+    const h = Math.max(6, Math.min(100, s * 200)); // 50% share = full height
+    const cls = s <= TARGET_SHARE ? 'good' : s <= 0.3 ? 'ok' : 'bad';
+    const title = `${d.day}: ${Math.round(s * 100)}% idle · ${hm(d.waiting)} of ${hm(d.working + d.waiting)}`;
+    return `<span class="trend-bar ${cls}" style="height:${h}%" title="${escapeHtml(title)}"`
+      + ` data-day="${d.day}"></span>`;
+  }).join('');
+  for (const bar of el.querySelectorAll('.trend-bar')) {
+    bar.onclick = () => selectDay(bar.dataset.day);
+  }
 }
 
 // ---- loading ---------------------------------------------------------------
@@ -275,7 +357,9 @@ async function selectDay(key) {
   }
   renderScore();
   renderTiles();
+  renderTrend();
   renderTimeline();
+  renderProjects();
   renderDaySessions();
 }
 

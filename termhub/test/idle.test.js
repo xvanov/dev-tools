@@ -179,4 +179,28 @@ ok('days() lists what was actually recorded', () => {
   assert.deepStrictEqual(store.days(), ['2026-08-15', '2026-08-16']);
 });
 
+ok('idle is attributed per working directory', () => {
+  // "Which repo am I slowest to answer?" outlives the sessions themselves,
+  // which is why this groups by cwd rather than leaving it to the session list.
+  const r = store.rollup(DAY);
+  const p = r.projects.find((x) => x.cwd === '(unknown)');
+  assert.ok(p, 'episodes with no cwd are attributed, not dropped');
+  assert.ok(r.projects.every((x, i, a) => i === 0 || a[i - 1].waiting >= x.waiting), 'worst first');
+});
+
+ok('findSession digs a killed session out of the log, newest metadata winning', () => {
+  // The reopen path depends on this: sessions.json forgets an entry the moment
+  // the session is killed, so weeks later the episode log is the only thing
+  // that still knows the cwd, the command and the conversation id.
+  store.append({ id: 'z', start: at(8), end: at(8, 5), state: 'working', title: 'z',
+    cwd: 'C:\\repos\\x', kind: 'claude', command: 'claude', agentSessionId: null });
+  store.append({ id: 'z', start: at(8, 5), end: at(8, 9), state: 'waiting', title: 'renamed',
+    cwd: 'C:\\repos\\x', kind: 'claude', command: 'claude --session-id abc', agentSessionId: 'abc' });
+  const found = store.findSession('z');
+  assert.strictEqual(found.title, 'renamed');
+  assert.strictEqual(found.agentSessionId, 'abc');
+  assert.strictEqual(found.cwd, 'C:\\repos\\x');
+  assert.strictEqual(store.findSession('nope'), null);
+});
+
 console.log(`\n${passed} assertions passed`);

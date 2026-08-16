@@ -152,9 +152,14 @@ function rollup(key, extra = []) {
     let s = sessions.get(ep.id);
     if (!s) {
       s = { id: ep.id, title: ep.title || ep.id, cwd: ep.cwd || '', kind: ep.kind || '',
+        command: ep.command || null, agentSessionId: ep.agentSessionId || null,
         working: 0, waiting: 0, limited: 0, handoffs: 0, first: ep.start, last: ep.end };
       sessions.set(ep.id, s);
     }
+    // Both are learned late for opencode (the id arrives on its event stream),
+    // so the newest non-null wins rather than whatever the first episode had.
+    if (ep.agentSessionId) s.agentSessionId = ep.agentSessionId;
+    if (ep.command) s.command = ep.command;
     if (s[ep.state] === undefined) s[ep.state] = 0;
     s[ep.state] += ms;
     if (ep.state === 'waiting' && !ep.cont) s.handoffs++;
@@ -162,6 +167,7 @@ function rollup(key, extra = []) {
     if (ep.end > s.last) s.last = ep.end;
     if (ep.title) s.title = ep.title;   // a renamed session keeps its newest name
   }
+  const list = [...sessions.values()].sort((a, b) => b.waiting - a.waiting);
   return {
     day: key,
     working: totals.working,
@@ -169,8 +175,54 @@ function rollup(key, extra = []) {
     limited: totals.limited,
     handoffs,
     peakParallel: peakParallel(episodes),
-    sessions: [...sessions.values()].sort((a, b) => b.waiting - a.waiting),
+    sessions: list,
+    projects: byProject(list),
   };
+}
+
+// Where the idle time actually goes, grouped by working directory. Two sessions
+// on the same repo are one project's problem, and "which repo am I slowest to
+// answer?" is a question you can act on in a way that a per-session list isn't —
+// it survives the sessions themselves.
+function byProject(sessions) {
+  const out = new Map();
+  for (const s of sessions) {
+    const key = s.cwd || '(unknown)';
+    let p = out.get(key);
+    if (!p) { p = { cwd: key, working: 0, waiting: 0, limited: 0, handoffs: 0, sessions: 0 }; out.set(key, p); }
+    p.working += s.working; p.waiting += s.waiting; p.limited += s.limited;
+    p.handoffs += s.handoffs; p.sessions++;
+  }
+  return [...out.values()].sort((a, b) => b.waiting - a.waiting);
+}
+
+// Find a session's last-known metadata anywhere in the log, newest day first.
+// This is what makes a date on the calendar actionable: sessions.json forgets an
+// entry as soon as it's killed, so weeks later the episode log is the only place
+// that still knows the cwd, the command and the agent's conversation id.
+//
+// Bounded to `maxDays` files rather than the whole directory — the answer is
+// almost always in the day you clicked, and an unbounded scan would grow
+// without limit as the log accumulates.
+function findSession(id, maxDays = 120) {
+  if (!id) return null;
+  const all = days().reverse().slice(0, maxDays);
+  for (const day of all) {
+    let found = null;
+    for (const ep of readFileLines(day)) {
+      if (ep.id !== id) continue;
+      // Keep scanning the day: later episodes carry the better metadata (a
+      // renamed title, an opencode id that only arrived mid-session).
+      found = {
+        id, title: ep.title || id, cwd: ep.cwd || '', kind: ep.kind || '',
+        command: ep.command || found?.command || null,
+        agentSessionId: ep.agentSessionId || found?.agentSessionId || null,
+        last: ep.end,
+      };
+    }
+    if (found) return found;
+  }
+  return null;
 }
 
 // Which days have any record at all — the calendar's month grid is drawn from
@@ -187,4 +239,6 @@ function days() {
   }
 }
 
-module.exports = { append, readDay, rollup, days, dayKey, dayBounds, peakParallel, idleDir };
+module.exports = {
+  append, readDay, rollup, days, dayKey, dayBounds, peakParallel, byProject, findSession, idleDir,
+};
