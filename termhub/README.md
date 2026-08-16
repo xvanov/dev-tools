@@ -436,6 +436,26 @@ A separate page — the idle bar in the sidebar links to it. It shows, for which
   calendar is something you can act on rather than a museum piece. A session with no recorded
   conversation id reopens in the right directory as a fresh one, and the button says so.
 
+### Several machines
+
+termhub is one server per machine, and the idle numbers stay that way — **nothing is merged**.
+Which box the time went on is information, and a blended figure would throw it away. What the
+dashboard adds is a **machine strip**: one card per machine with its own idle total, share and
+running/waiting counts. Click one and every panel below shows that machine.
+
+Set it up once, from the dashboard's **+ find machines**: it runs `tailscale status --json`,
+probes the online peers, and saves the ones running termhub to `<data dir>/peers.json`
+(or set `TERMHUB_PEERS=host:port,host:port`). Discovery is on demand, not on page load — this
+tailnet has 14 peers and 4 run termhub; probing the rest on every visit is a wall of timeouts.
+
+Peer data is read **through your own front** (`/api/peers/<host>/idle`), so there's no CORS setup
+on every machine and it works from a phone that can reach this box. Only hosts in your peer list
+are reachable that way — the URL never comes from the request.
+
+A machine that's asleep shows as offline; its history lives on it and comes back when it wakes.
+One still running an older build shows *"no idle data — update termhub on that machine"* rather
+than a zero, which would read as "you were never idle there".
+
 The reopen path reads the **idle log**, not `sessions.json`: the archive forgets an entry as soon
 as the session is killed or restored over, so it can only reach back days. The log keeps the cwd,
 the command and the agent's conversation id for as long as the log does.
@@ -463,6 +483,7 @@ All optional environment variables:
 | `TERMHUB_WAKE_WORD` | `sputnik` | The spoken wake word for voice commands |
 | `TERMHUB_NTFY_TOPIC` | — | ntfy topic for idle notifications. Wins over `<data dir>/notify.json`; unset and unconfigured means no pushes. **The topic is the secret** — anyone who knows it can read them |
 | `TERMHUB_NTFY_SERVER` | `https://ntfy.sh` | Point at a self-hosted ntfy instead |
+| `TERMHUB_PEERS` | — | Other termhub machines for the dashboard's machine strip, `host:port,host:port`. Wins over `<data dir>/peers.json`, which **+ find machines** writes |
 
 On Linux set these with `systemctl --user edit termhub`; on Windows via `setx` + restart the task.
 
@@ -489,6 +510,8 @@ On Linux set these with `systemctl --user edit termhub`; on Windows via `setx` +
 | `lib/idleStore.js` | The append-only episode log (`<data dir>/idle/YYYY-MM-DD.jsonl`) and its rollups |
 | `lib/notify.js` | ntfy client — best-effort, never throws, silent when no topic is configured |
 | `web/dashboard.html`, `web/dashboard.js`, `web/dashboard.css` | The idle dashboard served at `/dashboard` |
+| `lib/peers.js` | Other termhub machines: the configured list, tailnet discovery, and reading their idle data |
+| `test/peers.test.js` | Peer-list and discovery-filter tests |
 | `test/idle.test.js` | Idle state-machine and episode-log tests |
 | `test/voiceCommands.test.js` | Wake-word and command-parser tests — `npm test`, no framework, no deps |
 | `lib/state.js` | Deployment state (`state.json`) + pid-file helpers shared by the tiers and scripts |

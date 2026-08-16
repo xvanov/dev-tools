@@ -24,6 +24,7 @@ const { DEFAULT_FRONT_PORT, DEFAULT_SESSIOND_PORT, claimPidFile } = require('./l
 const { checkForUpdate } = require('./lib/update');
 const { probeJson } = require('./lib/probe');
 const { secureUrlForPort } = require('./lib/serveUrl');
+const peers = require('./lib/peers');
 const build = require('./lib/build');
 
 const WEB_DIR = path.join(__dirname, 'web');
@@ -108,6 +109,61 @@ function createFront({ sessiondPort, port: serverPort = DEFAULT_FRONT_PORT }) {
       return secureUrlForPort(serverPort)
         .then((secureUrl) => sendJson(res, 200, { secureUrl }))
         .catch(() => sendJson(res, 200, { secureUrl: null }));
+    }
+
+    // ---- peers (the dashboard's machine strip) -------------------------------
+    // The front's business, not sessiond's: sessiond binds loopback and talks to
+    // nothing outward, while this tier already reaches the tailnet. Stats are
+    // never merged here — each peer answers for itself and the dashboard shows
+    // them side by side (see lib/peers.js).
+    if (req.method === 'GET' && pathname === '/api/peers') {
+      return peers.status()
+        .then((list) => sendJson(res, 200, { peers: list }))
+        .catch(() => sendJson(res, 200, { peers: [] }));
+    }
+
+    // One-time discovery: which tailnet machines actually run termhub. Not run
+    // on page load — 14 tailnet peers here, of which 3 are termhub, and probing
+    // the rest is a wall of timeouts.
+    if (req.method === 'GET' && pathname === '/api/peers/scan') {
+      return peers.scan()
+        .then((r) => sendJson(res, 200, r))
+        .catch((e) => sendJson(res, 200, { available: false, found: [], error: String(e.message || e) }));
+    }
+
+    if (req.method === 'POST' && pathname === '/api/peers') {
+      let raw = '';
+      req.on('data', (c) => { raw += c; if (raw.length > 1e5) req.destroy(); });
+      return req.on('end', () => {
+        try {
+          const body = raw ? JSON.parse(raw) : {};
+          return sendJson(res, 200, { peers: peers.save(body.peers || []) });
+        } catch (e) {
+          return sendJson(res, 400, { error: String(e.message || e) });
+        }
+      });
+    }
+
+    // Read one peer's idle data through us, rather than from the browser
+    // directly: same origin (no CORS on every machine), and it works from a
+    // phone whose browser can reach this machine but might not have the peer's
+    // name resolving.
+    //
+    // **Only configured peers are reachable through this.** The URL comes from
+    // peers.json, never from the request — a `?url=` parameter here would make
+    // the front a general-purpose fetcher for anything on the tailnet, which is
+    // a much bigger thing than a dashboard.
+    const peerMatch = /^\/api\/peers\/([^/]+)\/(idle|history)$/.exec(pathname);
+    if (req.method === 'GET' && peerMatch) {
+      const want = decodeURIComponent(peerMatch[1]);
+      const target = peers.list().find((u) => u === want || new URL(u).hostname === want);
+      if (!target) return sendJson(res, 404, { error: 'not a configured peer' });
+      const suffix = peerMatch[2] === 'idle' ? '/api/idle' : `/api/idle/history${url.search || ''}`;
+      return peers.fetchJson(`${target}${suffix}`, { timeoutMs: 5000 })
+        .then((data) => (data
+          ? sendJson(res, 200, data)
+          : sendJson(res, 502, { error: 'peer did not answer' })))
+        .catch((e) => sendJson(res, 502, { error: String(e.message || e) }));
     }
 
     // Everything under /api/* is the supervisor's — proxy it.

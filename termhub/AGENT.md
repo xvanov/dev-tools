@@ -1030,6 +1030,36 @@ Load-bearing details:
 **This is a `sessiond`-tier change**: it takes a `restart-sessiond.ps1` (which ends every live
 terminal) to activate on a machine already running. The UI half rides the ordinary front swap.
 
+### Several machines (`lib/peers.js`) — read across, never merge
+
+The fleet is symmetric: every machine measures its own PTYs (only it can), keeps its own log, and
+answers for itself. The dashboard reads the others and shows them **side by side**. There is no
+hub, no central store, and deliberately **no combined number** — which box the idle happened on is
+the information, and a blended figure would be the one statistic that hides it.
+
+- **The peer list is explicit, and that is measured.** The obvious design — enumerate the tailnet
+  and probe everything — was run against the real tailnet here: 14 peers, 4 running termhub, the
+  rest colleagues' laptops and an iPhone. On every dashboard load that is ten 2.5 s timeouts to
+  re-learn something that changes once a year. So `scan()` is an explicit action that writes
+  `peers.json`, and page load only probes what's in it.
+- **Probe https:7000, https:7443 AND http:7000.** The first scan of this fleet found *one* machine
+  because it tried https only; two more were answering plain HTTP on 7000 (`start-http.ps1` binds
+  the tailnet IP itself and turns Serve off) and surfaced as `ECONNRESET` and `EPROTO` — a TLS
+  handshake against a server that speaks none. All three forms are live deployments here.
+- **Peer data is proxied by the front, not fetched by the browser.** Same origin (no CORS to
+  configure on four machines) and it works from a phone that can reach this box. **Only configured
+  peers are reachable through it** — the target URL comes from `peers.json`, never from the
+  request. A `?url=` parameter there would turn the front into a general-purpose tailnet fetcher,
+  which is a much bigger thing than a dashboard.
+- **TLS verification stays on.** `ts.net` certificates are publicly trusted; a peer that fails
+  verification is one we should not be reading numbers from.
+- **Three peer states, and the middle one needed saying**: offline; online but running a build with
+  no idle tracking (*"no idle data — update termhub on that machine"*); online with data. Showing
+  the middle case as `0m` would read as "you were never idle there", which is the opposite of true.
+- Viewing a peer, the session rows link to *that machine's* termhub rather than offering
+  **reopen** — the session belongs to its supervisor, and reopening from here would either do
+  nothing or spawn it on the wrong box.
+
 ### The dashboard (`web/dashboard.*`, served at `/dashboard`)
 
 A second page, not a panel in the hub: it is a reading surface, and the terminal UI is a working

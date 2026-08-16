@@ -28,6 +28,11 @@ const state = {
   detail: null,    // the selected day's rollup + episodes
   live: new Set(), // session ids still alive on the server right now
   restorable: new Set(),
+  // Machines. `machine: null` means this one — the server we were served from.
+  // Stats are per machine by design: switching machines re-fetches everything
+  // below the strip rather than blending anything together.
+  machine: null,   // hostname of the peer being viewed, or null for local
+  machines: [],    // [{host, machine, online, local, idle}]
 };
 
 async function api(path) {
@@ -36,6 +41,16 @@ async function api(path) {
   const body = text ? JSON.parse(text) : {};
   if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
   return body;
+}
+
+// Every data read goes through here, so "which machine am I looking at?" is
+// answered in exactly one place. A peer is read through our own front
+// (/api/peers/<host>/…) rather than from the browser directly: same origin, and
+// it works from a phone that can reach this machine but not necessarily the
+// peer's name.
+function machineApi(kind, query = '') {
+  if (!state.machine) return api(kind === 'idle' ? '/api/idle' : `/api/idle/history${query}`);
+  return api(`/api/peers/${encodeURIComponent(state.machine)}/${kind}${query}`);
 }
 
 // ---- formatting ------------------------------------------------------------
@@ -249,7 +264,16 @@ function renderDaySessions() {
     //                  the tooltip says so rather than implying history returns.
     const live = state.live.has(s.id);
     const resumable = !!s.agentSessionId;
-    const go = live
+    // Viewing another machine, neither button can work from here: the session
+    // lives in THAT machine's sessiond, and reopening is its supervisor's job.
+    // So the row links to that machine's own termhub instead of offering a
+    // control that would quietly do nothing — or worse, spawn the session on
+    // the wrong box.
+    const peer = state.machine && state.machines.find((m) => m.host === state.machine);
+    const go = peer
+      ? `<a class="ds-go" href="${escapeHtml(peer.url || `https://${state.machine}`)}/#session=${encodeURIComponent(s.id)}"`
+        + ` target="_blank" rel="noopener" title="Opens ${escapeHtml(peer.machine)}'s termhub">on ${escapeHtml(peer.machine)} ↗</a>`
+      : live
       ? `<a class="ds-go" href="/#session=${encodeURIComponent(s.id)}">open</a>`
       : `<button class="ds-go" data-reopen="${escapeHtml(s.id)}" title="${resumable
           ? 'Reopen this conversation where it left off'
@@ -351,7 +375,7 @@ async function selectDay(key) {
   state.selected = key;
   renderCalendar();
   try {
-    state.detail = await api(`/api/idle/history?day=${encodeURIComponent(key)}&episodes=1`);
+    state.detail = await machineApi('history', `?day=${encodeURIComponent(key)}&episodes=1`);
   } catch {
     state.detail = null;
   }
@@ -364,19 +388,128 @@ async function selectDay(key) {
 }
 
 async function loadHistory() {
-  const h = await api('/api/idle/history').catch(() => ({ days: [] }));
+  const h = await machineApi('history').catch(() => ({ days: [], unavailable: true }));
   state.days = h.days || [];
+  state.unavailable = !!h.unavailable;
   state.byDay = new Map(state.days.map((d) => [d.day, d]));
-  $('#dash-machine').textContent = h.machine || '';
+  const label = state.machine
+    ? (state.machines.find((m) => m.host === state.machine) || {}).machine || state.machine
+    : h.machine || '';
+  $('#dash-machine').textContent = state.unavailable ? `${label} — no idle data` : label;
 }
 
 async function loadLiveSessions() {
+  // Only meaningful for the local machine: "open" and "reopen" act on THIS
+  // server's sessions. Viewing a peer, every row is history — see renderDaySessions.
+  state.live = new Set();
+  state.restorable = new Set();
+  if (state.machine) return;
   try {
     const s = await api('/api/sessions');
     state.live = new Set((s.sessions || []).filter((x) => x.alive).map((x) => x.id));
     state.restorable = new Set((s.restorable || []).map((x) => x.id));
   } catch {
     // the dashboard is still readable without knowing what's live
+  }
+}
+
+// ---- machines --------------------------------------------------------------
+
+// One card per machine, each showing ITS OWN numbers. Nothing is summed across
+// them: which box the idle time happened on is information, and a blended
+// figure would throw it away.
+async function loadMachines() {
+  const local = await api('/api/idle').catch(() => null);
+  const cards = [{
+    host: null,
+    machine: (local && local.machine) || 'this machine',
+    online: !!local,
+    local: true,
+    idle: local,
+  }];
+
+  const { peers = [] } = await api('/api/peers').catch(() => ({ peers: [] }));
+  const fetched = await Promise.all(peers.map(async (p) => {
+    const host = (() => { try { return new URL(p.url).hostname; } catch { return p.url; } })();
+    const idle = p.online ? await api(`/api/peers/${encodeURIComponent(host)}/idle`).catch(() => null) : null;
+    // A peer running an older build answers /api/ping without a `machine`, so
+    // fall back to the first label of its tailnet name — the full DNSName is
+    // three-quarters shared suffix and reads as noise in a card.
+    return { host, url: p.url, machine: p.machine || host.split('.')[0], online: !!p.online, local: false, idle };
+  }));
+  state.machines = cards.concat(fetched);
+  renderMachines();
+}
+
+function renderMachines() {
+  const strip = $('#machine-strip');
+  if (state.machines.length < 2) {
+    // A single machine gets no strip at all — a chooser with one option is
+    // furniture. The "+ find machines" button stays.
+    strip.innerHTML = '';
+    return;
+  }
+  strip.innerHTML = state.machines.map((m) => {
+    const sel = (m.host || null) === state.machine;
+    const t = m.idle && m.idle.today;
+    const pct = t ? Math.round(share(t) * 100) : null;
+    const cls = pct === null ? '' : pct <= TARGET_SHARE * 100 ? 'good' : pct <= 30 ? 'ok' : 'bad';
+    return `<button class="mc${sel ? ' selected' : ''}${m.online ? '' : ' offline'}" `
+      + `data-host="${escapeHtml(m.host || '')}">`
+      + `<div class="mc-name">${escapeHtml(m.machine)}${m.local ? ' <span class="mc-tag">here</span>' : ''}</div>`
+      // Three states, and the middle one is worth spelling out: a machine can
+      // be up, reachable and running termhub, and still have no idle data —
+      // because it hasn't been updated to a build that measures any. "—" would
+      // read as "you were never idle there", which is the opposite of true.
+      + (!m.online
+        ? `<div class="mc-num off">offline</div><div class="mc-sub">its history lives on it</div>`
+        : !m.idle
+          ? `<div class="mc-num off">no idle data</div><div class="mc-sub">update termhub on that machine</div>`
+          : `<div class="mc-num ${cls}">${hm(t.waiting)} idle${pct === null ? '' : ` · ${pct}%`}</div>`
+            + `<div class="mc-sub">${m.idle.running} running · ${m.idle.waiting} waiting</div>`)
+      + `</button>`;
+  }).join('');
+  for (const btn of strip.querySelectorAll('.mc')) {
+    btn.onclick = () => selectMachine(btn.dataset.host || null);
+  }
+}
+
+async function selectMachine(host) {
+  if ((host || null) === state.machine) return;
+  state.machine = host || null;
+  renderMachines();
+  await loadHistory();
+  await loadLiveSessions();
+  renderCalendar();
+  await selectDay(state.selected || todayKey());
+}
+
+// Discovery, on demand. Deliberately not run on page load: this tailnet has 14
+// peers and 3 of them run termhub, so an automatic probe is a wall of timeouts
+// paid on every visit to answer a question that changes about once a year.
+async function findMachines(btn) {
+  btn.disabled = true;
+  const was = btn.textContent;
+  btn.textContent = 'scanning…';
+  try {
+    const r = await api('/api/peers/scan');
+    if (!r.available) throw new Error('tailscale status is not available on this machine');
+    const known = new Set(state.machines.map((m) => m.machine));
+    const fresh = (r.found || []).filter((f) => !known.has(f.machine));
+    if (!fresh.length) { toast('No other termhub machines found.'); return; }
+    const existing = state.machines.filter((m) => m.host).map((m) => `https://${m.host}`);
+    await fetch('/api/peers', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ peers: existing.concat(fresh.map((f) => f.url)) }),
+    });
+    toast(`Added ${fresh.map((f) => f.machine).join(', ')}.`);
+    await loadMachines();
+  } catch (e) {
+    toast(String(e.message || e));
+  } finally {
+    btn.disabled = false;
+    btn.textContent = was;
   }
 }
 
@@ -390,7 +523,11 @@ async function boot() {
   state.month = new Date(now.getFullYear(), now.getMonth(), 1);
   $('#cal-prev').onclick = () => shiftMonth(-1);
   $('#cal-next').onclick = () => shiftMonth(1);
+  $('#machine-scan').onclick = (e) => findMachines(e.currentTarget);
 
+  // Peers are loaded alongside, never blocking: one unreachable machine must
+  // not hold up the numbers for the one you are sitting at.
+  loadMachines().catch(() => {});
   await Promise.all([loadHistory(), loadLiveSessions()]);
   renderCalendar();
   // Open on today even when it has no data yet — landing on "nothing ran" for
@@ -400,6 +537,7 @@ async function boot() {
   // Today keeps moving while the page is open; anything older never changes.
   setInterval(async () => {
     if (state.selected !== todayKey()) return;
+    loadMachines().catch(() => {});   // keep the strip's per-machine numbers live
     await loadHistory();
     await loadLiveSessions();
     renderCalendar();

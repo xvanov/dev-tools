@@ -16,6 +16,14 @@
   </header>
 
   <main id="dash-main">
+    <!-- One card per machine. Numbers are NEVER merged across machines: each
+         box measures its own terminals and answers for itself, and picking one
+         points every panel below at it. -->
+    <section id="machines">
+      <div id="machine-strip"></div>
+      <button id="machine-scan" title="Find other machines on your tailnet running termhub">+ find machines</button>
+    </section>
+
     <!-- The score. Idle share is the honest headline: raw minutes punish a long
          day, and a ratio doesn't. -->
     <section id="score-card">

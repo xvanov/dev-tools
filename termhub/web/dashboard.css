@@ -19,6 +19,35 @@ body.dash {
 
 #dash-main { max-width: 1000px; margin: 0 auto; padding: 16px 14px 60px; display: flex; flex-direction: column; gap: 16px; }
 
+/* ---- machines ----
+   One card per machine, each with its own numbers. Nothing is summed across
+   them on purpose: which box the time went on is information. */
+#machines { display: flex; align-items: stretch; gap: 8px; flex-wrap: wrap; }
+#machine-strip { display: flex; gap: 8px; flex-wrap: wrap; flex: 1 1 auto; }
+.mc {
+  min-width: 150px; text-align: left; cursor: pointer;
+  background: var(--bg-2); border: 1px solid var(--border); border-radius: 10px;
+  padding: 9px 12px; color: var(--fg); font: inherit;
+}
+.mc:hover { border-color: var(--accent); }
+.mc.selected { border-color: var(--accent); background: var(--bg-3); }
+.mc.offline { opacity: 0.55; }
+.mc-name { font-size: 13px; }
+.mc-tag { font-size: 9px; color: var(--fg-dim); border: 1px solid var(--border); border-radius: 4px; padding: 0 4px; }
+.mc-num { font-size: 15px; font-variant-numeric: tabular-nums; margin-top: 3px; }
+.mc-num.good { color: var(--ok); }
+.mc-num.ok { color: var(--accent-2); }
+.mc-num.bad { color: var(--danger); }
+.mc-num.off { color: var(--fg-dim); font-size: 13px; }
+.mc-sub { font-size: 10px; color: var(--fg-dim); margin-top: 2px; }
+#machine-scan {
+  flex: 0 0 auto; align-self: center; cursor: pointer; font: inherit; font-size: 12px;
+  background: var(--bg-2); border: 1px dashed var(--border); color: var(--fg-dim);
+  border-radius: 10px; padding: 9px 12px;
+}
+#machine-scan:hover { border-color: var(--accent); color: var(--fg); }
+#machine-scan[disabled] { opacity: 0.6; cursor: default; }
+
 /* ---- the score ---- */
 #score-card {
   display: flex; align-items: center; gap: 20px;
