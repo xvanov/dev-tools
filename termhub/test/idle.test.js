@@ -24,7 +24,9 @@ const path = require('path');
 const DATA = fs.mkdtempSync(path.join(os.tmpdir(), 'termhub-idle-'));
 process.env.TERMHUB_DATA_DIR = DATA;
 
-const { classifyClaude, classifyOpencode, isTracked, QUIET_MS, BLOCKED_MS } = require('../lib/idleState');
+const {
+  classifyClaude, classifyOpencode, isTracked, shouldAnnounceExit, QUIET_MS, BLOCKED_MS,
+} = require('../lib/idleState');
 const store = require('../lib/idleStore');
 
 let passed = 0;
@@ -114,6 +116,42 @@ ok('opencode reads its state off the event stream, with no heuristic at all', ()
   assert.strictEqual(classifyOpencode({ idleAt: 123, ask: null }).state, 'waiting');
   assert.strictEqual(classifyOpencode({ idleAt: 0, ask: { text: 'which?' } }).reason, 'question');
 });
+
+console.log('idleState — is this death worth a push?');
+
+ok('a crash while working is announced', () => {
+  assert.strictEqual(shouldAnnounceExit({ exitCode: 1, lastState: 'working', sinceInputMs: 600000 }), true);
+});
+
+ok('a clean exit from a session that was mid-work is still announced', () => {
+  // A TUI that finishes its cleanup and gives up returns 0. From the phone that
+  // is indistinguishable from a crash, and equally worth knowing.
+  assert.strictEqual(shouldAnnounceExit({ exitCode: 0, lastState: 'working', sinceInputMs: 600000 }), true);
+});
+
+ok('a clean exit from a session that was merely waiting is not', () => {
+  assert.strictEqual(shouldAnnounceExit({ exitCode: 0, lastState: 'waiting', sinceInputMs: 600000 }), false);
+});
+
+ok('typing right before the end means you closed it — silence', () => {
+  // The case that makes PTY output useless here: `/exit` chatters exactly like
+  // a crash, and returns 0 exactly like a clean finish. Only the keystroke
+  // separates them.
+  assert.strictEqual(shouldAnnounceExit({ exitCode: 0, lastState: 'working', sinceInputMs: 1200 }), false);
+  assert.strictEqual(shouldAnnounceExit({ exitCode: 1, lastState: 'working', sinceInputMs: 1200 }), false);
+});
+
+ok('a session never typed into can still announce its death', () => {
+  // sinceInputMs is Infinity for a session launched and left alone — the guard
+  // must not swallow those, which are exactly the forgotten ones.
+  assert.strictEqual(shouldAnnounceExit({ exitCode: 1, lastState: 'working', sinceInputMs: Infinity }), true);
+});
+
+ok('pressing ✕ is never news', () => {
+  assert.strictEqual(shouldAnnounceExit({ exitCode: 1, lastState: 'working', killed: true, sinceInputMs: Infinity }), false);
+});
+
+console.log('idleState — scope');
 
 ok('shells are not tracked', () => {
   assert.strictEqual(isTracked({ kind: 'shell' }), false);

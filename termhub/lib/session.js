@@ -194,6 +194,7 @@ class Session {
     this.title = title || this.command || baseName(this.shell);
     this.created = Date.now();
     this.lastActivity = Date.now();
+    this.lastInputAt = 0;   // when the human last typed; 0 = never (see write())
     this.alive = false;
     this.exitCode = null;
 
@@ -350,6 +351,12 @@ class Session {
 
   write(data) {
     if (!this.alive) return;
+    // When the HUMAN last typed, as distinct from lastActivity (when the PTY
+    // last produced output). The idle layer needs both: output tells it whether
+    // the agent is working, but only input can tell a session you closed
+    // yourself from one that died on you — typing `/exit` makes the terminal
+    // chatter exactly like a crash does. See lib/idleState.js shouldAnnounceExit.
+    this.lastInputAt = Date.now();
     // Record typed command lines for shell sessions so a post-reboot restore can
     // show what was run. Skipped for `claude` (and other TUI) sessions — those
     // restore via --resume, and their raw keystrokes would just be noise.

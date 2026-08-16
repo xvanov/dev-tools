@@ -1009,6 +1009,20 @@ Load-bearing details:
 - **The badge's clock is not in `uiSignature()`.** `idleState` is, `idleMs` isn't:
   `tickIdleBadges()` writes elapsed text in place, because rebuilding the sidebar once a second is
   precisely the churn that signature exists to prevent.
+- **An exit push fires only when the PTY itself ends**, and the discriminator is
+  `session.lastInputAt` — *your keystrokes*, not PTY output. Typing `/exit` makes the terminal
+  chatter exactly like a crash and returns 0 exactly like a clean finish, so neither the output nor
+  the exit code can separate "I closed this" from "this died on me". Anything that ended within
+  10 s of you typing is treated as yours and stays silent; pressing ✕ (which removes the session
+  from the map before it dies) never announces at all.
+- **The commoner failure is that the AGENT dies and the shell lives**, and this does not fire for
+  it: termhub launches the agent through a shell, so a crashed `claude` drops you back to a prompt
+  with the PTY — and the session — still alive. Measured here: killing `claude.exe` left
+  `alive: true`; killing the shell produced the exit push. Detecting the first case would mean
+  walking the PTY's process tree on every tick (a CIM query per session on Windows) or scraping the
+  screen, and neither is worth it, because **the idle push already covers it**: a session whose
+  agent is gone stops producing output, is classified `waiting`, and buzzes you at two minutes.
+  You then look and see a shell prompt. Don't "fix" this by adding a process walk.
 - **`notify.json` is read with the BOM stripped.** PowerShell 5.1's `Out-File -Encoding utf8`
   writes one, `JSON.parse` throws on it, and the failure mode is silent — notifications simply
   never arrive on a machine that looks configured.

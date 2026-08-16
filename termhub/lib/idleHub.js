@@ -34,7 +34,9 @@ const { EventEmitter } = require('events');
 const store = require('./idleStore');
 const notify = require('./notify');
 const { readLastTurn } = require('./claudeTranscript');
-const { classifyClaude, classifyOpencode, isTracked, WAITING, LIMITED, WORKING } = require('./idleState');
+const {
+  classifyClaude, classifyOpencode, isTracked, shouldAnnounceExit, WAITING, LIMITED, WORKING,
+} = require('./idleState');
 const { readState } = require('./state');
 const { secureUrlForPort } = require('./serveUrl');
 
@@ -139,11 +141,17 @@ class IdleHub extends EventEmitter {
   _tick() {
     const now = Date.now();
 
-    // A session that has gone away (killed, or exited) closes its episode: it
-    // is not idle, it is over.
+    // A session that has gone away closes its episode: it is not idle, it is
+    // over. Whether that death is worth telling you about depends on how it
+    // died — and on one fact only this loop can see. A session still IN the map
+    // but not alive exited on its own; one gone from the map entirely was
+    // removed by the user (the ✕, or the dashboard forgetting it), which is
+    // never news. See shouldAnnounceExit.
     for (const id of [...this._state.keys()]) {
       const session = this.sessions.get(id);
-      if (!session || !session.alive) this._close(id, now);
+      if (session && session.alive) continue;
+      if (session) this._maybePushExit(session, this._state.get(id), now);
+      this._close(id, now);
     }
 
     for (const session of this.sessions.values()) {
@@ -313,6 +321,32 @@ class IdleHub extends EventEmitter {
       click: this._deepLink(session.id),
     }).catch(() => { /* best-effort by contract */ });
     this.emit('notified', { sessionId: session.id, idleMs, count: st.notifyCount });
+  }
+
+  // One push when a session dies on its own. The Click link lands on the hub
+  // rather than on the dead session: there is nothing to attach to, and the
+  // useful next action is the dashboard's **reopen**, which brings the
+  // conversation back where it left off.
+  _maybePushExit(session, st, now) {
+    if (!st || !st.state) return;
+    const killed = !this.sessions.has(session.id);
+    const sinceInputMs = session.lastInputAt ? now - session.lastInputAt : Infinity;
+    if (!shouldAnnounceExit({ exitCode: session.exitCode, lastState: st.state, killed, sinceInputMs })) return;
+    this.emit('exited', { sessionId: session.id, exitCode: session.exitCode, lastState: st.state });
+    if (!notify.enabled()) return;
+
+    const ran = now - (session.created || now);
+    const code = session.exitCode;
+    const crashed = code !== 0 && code !== null && code !== undefined;
+    notify.send({
+      title: `${label(session)} exited${crashed ? ` (code ${code})` : ''}`,
+      message: st.state === WORKING
+        ? `It died mid-task after ${fmt(ran)}. Reopen it from the dashboard to resume the conversation.`
+        : `It ran for ${fmt(ran)}. Reopen it from the dashboard to resume the conversation.`,
+      priority: crashed ? 4 : 3,
+      tags: crashed ? 'skull,warning' : 'wave',
+      click: this._deepLink(session.id),
+    }).catch(() => { /* best-effort by contract */ });
   }
 
   _pushLimit(session, st) {

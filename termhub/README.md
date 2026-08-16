@@ -408,6 +408,7 @@ file. No topic configured = no pushes, and everything else still works.
 | priority | `default`, raised to `high` past 15 min |
 | tapping it | opens `https://<machine>/#session=<id>` — that terminal, not the session list |
 | usage/spend limit | its own push, once, and the clock stops for that session |
+| a session dying | one push — a non-zero exit, or any exit while it was mid-work. Silent if you typed into it in the last 10s, or closed it with ✕: you were there |
 | looking at it | a visible browser tab showing that session suppresses the push (but **not** the counting) |
 
 **The log** lives in `<data dir>/idle/YYYY-MM-DD.jsonl`, one line per episode
