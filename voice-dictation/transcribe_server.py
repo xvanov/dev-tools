@@ -12,6 +12,8 @@ Configure via environment variables:
   TRANSCRIBE_HOST     Bind host (default: 127.0.0.1)
   TRANSCRIBE_PORT     Bind port (default: 47821)
   IDLE_TIMEOUT_SEC    Seconds before unloading (default: 1800)
+  CUDA_RETRY_SEC      Seconds to stay on CPU after a GPU failure (default: 600)
+  VD_SERVER_LOG       Log file path (default: server.log beside this script)
 """
 import gc
 import os
@@ -30,18 +32,39 @@ LANGUAGE = os.environ.get("WHISPER_LANGUAGE", "en")
 HOST = os.environ.get("TRANSCRIBE_HOST", "127.0.0.1")
 PORT = int(os.environ.get("TRANSCRIBE_PORT", "47821"))
 IDLE_TIMEOUT = int(os.environ.get("IDLE_TIMEOUT_SEC", "1800"))
+CUDA_RETRY_SEC = int(os.environ.get("CUDA_RETRY_SEC", "600"))
+
+LOG_PATH = os.environ.get(
+    "VD_SERVER_LOG",
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "server.log"),
+)
+LOG_MAX_BYTES = 2 * 1024 * 1024
 
 _model = None
 _lock = threading.Lock()
 _last_used = 0.0
 
-# Device the model is actually loaded on. Starts as the configured device but
-# is downgraded to CPU permanently (for this process) once a GPU error is seen,
-# so a transient/﻿persistent CUDA failure self-heals instead of breaking every
-# request until restart.
+# Device the model is actually loaded on. Starts as the configured device and is
+# downgraded to CPU for CUDA_RETRY_SEC once a GPU error is seen, so a transient
+# CUDA failure (driver update, another process hogging VRAM) degrades instead of
+# breaking every request — but does not silently pin the server to CPU forever.
 _active_device = DEVICE
 _active_compute = COMPUTE
-_cuda_disabled = False
+_cuda_disabled_until = 0.0
+
+
+def log(msg: str) -> None:
+    """Print and append to LOG_PATH. The server usually runs windowless, so
+    stdout goes nowhere; without this a CPU fallback is invisible."""
+    line = f"{time.strftime('%Y-%m-%d %H:%M:%S')} {msg}"
+    print(line, flush=True)
+    try:
+        if os.path.exists(LOG_PATH) and os.path.getsize(LOG_PATH) > LOG_MAX_BYTES:
+            os.replace(LOG_PATH, LOG_PATH + ".1")
+        with open(LOG_PATH, "a", encoding="utf-8") as f:
+            f.write(line + "\n")
+    except OSError:
+        pass
 
 
 def _is_gpu_error(exc: Exception) -> bool:
@@ -49,24 +72,31 @@ def _is_gpu_error(exc: Exception) -> bool:
     return any(k in s for k in ("cuda", "cublas", "cudnn", "out of memory", "gpu", "nvrtc"))
 
 
+def _desired_device() -> tuple:
+    if DEVICE == "cpu" or time.time() < _cuda_disabled_until:
+        return "cpu", "int8"
+    return DEVICE, COMPUTE
+
+
 def _load() -> None:
     global _model, _last_used, _active_device, _active_compute
+    want_device, want_compute = _desired_device()
+    if _model is not None and want_device != _active_device:
+        # Cooldown expired (or a fallback just tripped): swap the loaded model.
+        log(f"Switching model from {_active_device} to {want_device}.")
+        _unload()
     if _model is None:
-        if _cuda_disabled or DEVICE == "cpu":
-            _active_device, _active_compute = "cpu", "int8"
-        else:
-            _active_device, _active_compute = DEVICE, COMPUTE
-        print(f"Loading {MODEL_NAME} on {_active_device} ({_active_compute})...", flush=True)
+        _active_device, _active_compute = want_device, want_compute
+        log(f"Loading {MODEL_NAME} on {_active_device} ({_active_compute})...")
         _model = WhisperModel(MODEL_NAME, device=_active_device, compute_type=_active_compute)
         _write_info_file()
-        print(f"Model loaded on {_active_device}.", flush=True)
+        log(f"Model loaded on {_active_device}.")
     _last_used = time.time()
 
 
 def _unload() -> None:
     global _model
     if _model is not None:
-        print("Unloading model (idle timeout).", flush=True)
         del _model
         _model = None
         gc.collect()
@@ -82,11 +112,12 @@ def _idle_watcher() -> None:
         time.sleep(60)
         with _lock:
             if _model is not None and (time.time() - _last_used) > IDLE_TIMEOUT:
+                log("Unloading model (idle timeout).")
                 _unload()
 
 
 def _transcribe(audio_path: str) -> str:
-    global _last_used, _model, _cuda_disabled
+    global _last_used, _model, _cuda_disabled_until
     with _lock:
         for attempt in (1, 2):
             try:
@@ -97,12 +128,12 @@ def _transcribe(audio_path: str) -> str:
                 _last_used = time.time()
                 return text
             except Exception as exc:
-                # First GPU failure: drop the model, disable CUDA for the rest
-                # of this process, and retry once on CPU. Anything else (or a
-                # second failure) propagates to the client.
-                if attempt == 1 and not _cuda_disabled and DEVICE != "cpu" and _is_gpu_error(exc):
-                    print(f"GPU transcription failed ({exc}); falling back to CPU.", flush=True)
-                    _cuda_disabled = True
+                # First GPU failure: drop the model, fall back to CPU for
+                # CUDA_RETRY_SEC, and retry once. Anything else (or a second
+                # failure) propagates to the client.
+                if attempt == 1 and _active_device != "cpu" and _is_gpu_error(exc):
+                    log(f"GPU transcription failed ({exc}); on CPU for {CUDA_RETRY_SEC}s.")
+                    _cuda_disabled_until = time.time() + CUDA_RETRY_SEC
                     _unload()
                     continue
                 raise
@@ -120,14 +151,14 @@ def main() -> int:
     try:
         server.bind((HOST, PORT))
     except OSError:
-        print(f"Port {PORT} already in use — another instance is running. Exiting.", flush=True)
+        log(f"Port {PORT} already in use — another instance is running. Exiting.")
         return 1
     server.listen(4)
 
     _write_info_file()
     threading.Thread(target=_idle_watcher, daemon=True).start()
 
-    print(f"Listening on {HOST}:{PORT}  model={MODEL_NAME}/{DEVICE}. Idle unload after {IDLE_TIMEOUT}s.", flush=True)
+    log(f"Listening on {HOST}:{PORT}  model={MODEL_NAME}/{DEVICE}. Idle unload after {IDLE_TIMEOUT}s.")
     while True:
         conn, _addr = server.accept()
         try:
@@ -142,7 +173,7 @@ def main() -> int:
                 conn.sendall(f"ERROR: {exc}".encode("utf-8"))
             except Exception:
                 pass
-            print(f"request error: {exc}", file=sys.stderr, flush=True)
+            log(f"request error: {exc}")
         finally:
             conn.close()
 

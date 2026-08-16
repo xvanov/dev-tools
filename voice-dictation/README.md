@@ -79,6 +79,8 @@ Set `OLLAMA_MODEL` to use a different model.
 | `OLLAMA_HOST` | `http://localhost:11434` | Ollama endpoint |
 | `OLLAMA_MODEL` | `llama3.2` | Any model pulled via `ollama pull` |
 | `TRANSCRIBE_PORT` | `47821` | Loopback TCP port |
+| `CUDA_RETRY_SEC` | `600` | After a GPU error the server runs on CPU this long, then retries CUDA |
+| `VD_SERVER_LOG` | `server.log` beside the script | Server log; the only record of a CPU fallback |
 
 On Linux, vars go in the systemd unit (`~/.config/systemd/user/voice-dictation.service`).
 On Windows, they're baked into `start-server.bat` by the installer.
@@ -151,5 +153,10 @@ Cancelled recordings and "No speech detected" results are **not** saved.
   `sudo usermod -aG audio $USER`, then log out and back in.
 - **CUDA / cuDNN error** — reinstall CUDA wheels into the venv:
   `pip install --force-reinstall nvidia-cudnn-cu12 nvidia-cublas-cu12`.
+- **Overlay shows `<model>/cpu` on a GPU machine** — the server hit a GPU error
+  (driver update mid-run, VRAM exhausted by another app) and fell back. It
+  retries CUDA after `CUDA_RETRY_SEC`; `server.log` records the original error.
+  Restarting the server also clears it. CPU transcription is several times
+  slower, so a stuck `/cpu` is the first thing to check when dictation crawls.
 - **Hotkey conflict** — edit `voice-toggle.ahk` (Windows) or rebind the GNOME
   shortcut (Linux) to a different key combination.

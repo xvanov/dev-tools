@@ -148,6 +148,12 @@ early and proceeds to transcription.
   something else (e.g. `^!d::`) and restart AutoHotkey.
 - Overlay flashes and disappears → tkinter DLLs missing from the venv; this
   should not happen with Python 3.11 from winget. If it does, reinstall Python.
+- Overlay shows `<model>/cpu` although `nvidia-smi` works → the running server
+  fell back to CPU after a GPU error. Read
+  `%LOCALAPPDATA%\voice-dictation\server.log` for the original error, then
+  restart the server (kill the python process owning port 47821; the
+  `server-loop.bat` watchdog relaunches it). The fallback expires by itself
+  after `CUDA_RETRY_SEC` (default 600 s).
 
 ---
 
@@ -207,6 +213,8 @@ If all four checks pass, report success and stop.
 | `VD_MAX_DURATION` | `120.0` | Hard cap in seconds |
 | `OLLAMA_HOST` | `http://localhost:11434` | Ollama endpoint |
 | `OLLAMA_MODEL` | `llama3.2` | Any model pulled via `ollama pull` |
+| `CUDA_RETRY_SEC` | `600` | Seconds on CPU after a GPU error before retrying CUDA |
+| `VD_SERVER_LOG` | `server.log` beside the script | Server log; only record of a CPU fallback |
 
 ---
 
