@@ -443,10 +443,14 @@ async function loadMachines() {
   // restarted by an update) the box you are sitting at reported itself offline.
   // "No tracking yet" and "unreachable" are different problems with different
   // fixes, and the card now says which.
-  const localName = (local && local.machine) || document.querySelector('#dash-machine').textContent || 'this machine';
+  // The name comes from /api/info when the idle endpoint has nothing to give —
+  // reading it back out of the header element (which loadHistory had just
+  // written "— no idle data" into) made the card name itself "— no idle data".
+  let localName = local && local.machine;
+  if (!localName) localName = await api('/api/info').then((i) => i.machine).catch(() => null);
   const cards = [{
     host: null,
-    machine: localName,
+    machine: localName || 'this machine',
     online: true,
     local: true,
     idle: local,
