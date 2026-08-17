@@ -396,6 +396,22 @@ async function loadHistory() {
     ? (state.machines.find((m) => m.host === state.machine) || {}).machine || state.machine
     : h.machine || '';
   $('#dash-machine').textContent = state.unavailable ? `${label} — no idle data` : label;
+  renderNote();
+}
+
+// Say why the page is empty, in the one case where empty is not an answer.
+function renderNote() {
+  const note = $('#dash-note');
+  if (!state.unavailable) { note.classList.add('hidden'); return; }
+  note.classList.remove('hidden');
+  note.innerHTML = state.machine
+    ? `<b>This machine isn't tracking idle time yet.</b> Its termhub is running a build from `
+      + `before the idle tracker. Update it there (⟳ Update), then restart its supervisor.`
+    : `<b>This machine isn't tracking idle time yet.</b> The web tier is up to date, but the `
+      + `session supervisor still runs the old build — an update deliberately never restarts it, `
+      + `because that ends every live terminal. From a <i>non-termhub</i> PowerShell window:`
+      + `<code>cd C:\\repos\\dev-tools\\termhub<br>.\\windows\\restart-sessiond.ps1</code>`
+      + `Terminals come back as <b>Restorable</b>, and a claude session resumes its conversation.`;
 }
 
 async function loadLiveSessions() {
@@ -420,10 +436,18 @@ async function loadLiveSessions() {
 // figure would throw it away.
 async function loadMachines() {
   const local = await api('/api/idle').catch(() => null);
+  // The local machine is ALWAYS online — it just served this page. Deriving
+  // `online` from whether /api/idle answered was wrong and alarming: on a
+  // machine whose front has been updated but whose sessiond hasn't (the normal
+  // state right after a front swap, since sessiond is deliberately never
+  // restarted by an update) the box you are sitting at reported itself offline.
+  // "No tracking yet" and "unreachable" are different problems with different
+  // fixes, and the card now says which.
+  const localName = (local && local.machine) || document.querySelector('#dash-machine').textContent || 'this machine';
   const cards = [{
     host: null,
-    machine: (local && local.machine) || 'this machine',
-    online: !!local,
+    machine: localName,
+    online: true,
     local: true,
     idle: local,
   }];
@@ -464,7 +488,9 @@ function renderMachines() {
       + (!m.online
         ? `<div class="mc-num off">offline</div><div class="mc-sub">its history lives on it</div>`
         : !m.idle
-          ? `<div class="mc-num off">no idle data</div><div class="mc-sub">update termhub on that machine</div>`
+          ? `<div class="mc-num off">no idle data</div><div class="mc-sub">${m.local
+              ? 'restart sessiond to start tracking'
+              : 'update termhub on that machine'}</div>`
           : `<div class="mc-num ${cls}">${hm(t.waiting)} idle${pct === null ? '' : ` · ${pct}%`}</div>`
             + `<div class="mc-sub">${m.idle.running} running · ${m.idle.waiting} waiting</div>`)
       + `</button>`;

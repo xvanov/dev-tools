@@ -24,6 +24,11 @@
       <button id="machine-scan" title="Find other machines on your tailnet running termhub">+ find machines</button>
     </section>
 
+    <!-- Shown when the selected machine records nothing yet. Without it a
+         machine with no tracking renders as 0% idle and "nothing ran", which
+         reads as a perfect day rather than as a missing feature. -->
+    <div id="dash-note" class="hidden"></div>
+
     <!-- The score. Idle share is the honest headline: raw minutes punish a long
          day, and a ratio doesn't. -->
     <section id="score-card">

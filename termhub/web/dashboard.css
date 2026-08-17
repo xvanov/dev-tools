@@ -48,6 +48,18 @@ body.dash {
 #machine-scan:hover { border-color: var(--accent); color: var(--fg); }
 #machine-scan[disabled] { opacity: 0.6; cursor: default; }
 
+/* Why the page is empty, when empty would otherwise read as "a perfect day". */
+#dash-note {
+  background: var(--bg-2); border: 1px solid var(--accent-2); border-left-width: 3px;
+  border-radius: 10px; padding: 11px 14px; font-size: 13px; line-height: 1.55; color: var(--fg-dim);
+}
+#dash-note.hidden { display: none; }
+#dash-note b { color: var(--fg); font-weight: 600; }
+#dash-note code {
+  display: block; margin: 8px 0; padding: 8px 10px; background: var(--bg-3);
+  border-radius: 6px; color: var(--fg); font-size: 12px;
+}
+
 /* ---- the score ---- */
 #score-card {
   display: flex; align-items: center; gap: 20px;
