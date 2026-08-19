@@ -469,6 +469,14 @@ The cycle: probe → stand down if a deploy is running → confirm 3× over ~15s
 `remedies\<signature>.ps1` if one exists → otherwise escalate to `claude -p`, which fixes the
 outage **and writes that remedy**, then commits it.
 
+`Invoke-Remedy` passes the six topology arguments to a remedy through `Start-Process
+-ArgumentList`, and that cmdlet **rejects the entire list if any element is an empty string** on
+PowerShell 5.1. `$TailnetIp` is empty exactly when tailscaled can't be asked — the whole premise of
+`tailnet-ip-unavailable` — so a remedy for that signature could never be spawned at all: the
+watchdog logged a *spawn* error and escalated, which reads like "the remedy failed" rather than
+"the remedy never ran". It now sends a literal `""` token, which the child's `-File` parser binds
+back to an empty string. Any argument that can legitimately be empty needs the same treatment.
+
 ### Two implementations, because there are two deployments
 
 `watchdog.ps1` and `watchdog.sh` share the *design* — signature → remedy → escalation, the
@@ -1386,7 +1394,8 @@ user actually meant to paste.
 |---|---|---|
 | The whole UI is gone, terminals were fine an hour ago | The `front` died and nothing restarted it — the `Termhub` task runs at logon only | What `watchdog/` exists to fix; install it (`.\watchdog\install-watchdog.ps1`). By hand: `.\watchdog\watchdog.ps1 -Probe` to see the signature, then `.\windows\start-http.ps1` (plain-HTTP) or `.\windows\restart-front.ps1`. `sessiond` keeps the PTYs the whole time, so nothing is lost |
 | A tier died and there is no reason recorded anywhere | Its output went nowhere | Fixed: both tiers write `%LOCALAPPDATA%\termhub\logs\<tier>.{out,err}.log`, with the previous generation in `.prev.log` — the crash you're chasing is usually in `.prev`. Nothing from before 2026-07-31 was captured |
-| Bound to `127.0.0.1`, unreachable from other devices | No Tailscale IP detected | Set `TERMHUB_BIND` to the tailnet IP; ensure `tailscaled` is up |
+| Bound to `127.0.0.1`, unreachable from other devices | No Tailscale IP detected | `tailscale status` — a **running** `tailscaled` is not the same as a logged-in node, and it keeps its old tailnet sockets open after a logout, so "Logged out." is easy to miss. Fix the login first, then set `TERMHUB_BIND` to the tailnet IP (or re-run `.\windows\start-http.ps1`, which does it) |
+| The watchdog reports `tailnet-ip-unavailable` but termhub works on `http://127.0.0.1:7000` | Plain-HTTP mode has no address to bind the front to — and that check runs *before* anything is probed | Not necessarily an outage at all: it means `tailscale ip -4` answered nothing. `tailscale status` names the cause. **Logged out** needs a human (`tailscale login`) and nothing else will clear it; `Stopped` is fixed by `tailscale up`; a **PATH** without `C:\Program Files\Tailscale` invents the whole thing, because the watchdog's task PATH is not the interactive one. `remedies\tailnet-ip-unavailable.ps1` handles all but the first, and keeps a loopback front up meanwhile |
 | Can't reach `:7000` from phone (loads forever) | Windows firewall drops raw ports on the Tailscale interface | Use Tailscale Serve (Windows installer does this): bind loopback + `tailscale serve --bg --https=7000 http://127.0.0.1:7000`, then open `https://<host>.<tailnet>.ts.net:7000/` |
 | Can't reach `:7000` from phone | Tailnet ACL or firewall | Confirm both devices are on the tailnet and ACLs allow the port |
 | Terminal opens but no output | WebSocket blocked | Ensure nothing between browser and server strips WebSocket upgrades |

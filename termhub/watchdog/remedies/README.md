@@ -51,6 +51,13 @@ param(
 )
 ```
 
+`$TailnetIp` is empty whenever `tailscale ip -4` could not be asked or had nothing to say, which
+is the *normal* state for `tailnet-ip-unavailable`. The watchdog passes a literal `""` token for it
+rather than an empty array element, because `Start-Process -ArgumentList` in PowerShell 5.1 rejects
+the whole list when any element is empty — which meant no remedy at all could be launched for that
+signature until 2026-08-19. Declare it `[string]` with no `Mandatory`, and treat empty as "unknown",
+never as "there is no tailnet".
+
 Nothing else is passed and nothing is read from stdin — the watchdog runs remedies
 non-interactively with no console.
 
@@ -117,11 +124,23 @@ Fixable by script — a remedy here is expected:
 | `both-down` | reboot, or a logon task that never ran. Bring both tiers up. |
 | `serve-holds-http-port` | tailscaled's TLS listener took the address the front should own in plain-HTTP mode. |
 | `publish-port-monolith` | a pre-split `node server.js` is squatting the publish port. |
+| `tailnet-ip-unavailable` | plain-HTTP mode has no address to bind the front to. **Partly** fixable — see below. |
+
+`tailnet-ip-unavailable` is the one signature whose remedy cannot always win, and it is worth
+knowing why before reading it. The classifier mints it from the *first* branch of
+`Get-TermhubDiagnosis`, before the front or sessiond are probed at all, so it means "we could not
+find out where the front should be", not "termhub is dead". Three of its four causes are repairable
+with no human — `tailscale.exe` missing from the watchdog task's PATH (the interactive PATH is not
+the task's), a transient LocalAPI answer, and an administratively-down-but-still-authenticated node
+— and the remedy handles those, then re-binds the front with `start-http.ps1`. The fourth, a node
+that is **logged out**, cannot be: re-authenticating needs someone to open a login URL. There the
+remedy keeps a front on loopback so the machine still works from itself, prints the auth URL, and
+exits 1. The escalation budget is what stops the un-clearable case from waking a model every two
+minutes.
 
 Deliberately **not** self-healed — these escalate every time, by design:
 
 | signature | why |
 |---|---|
 | `publish-port-squatted` | an unidentified non-termhub process holds the port. Killing it blind is worse than the outage. |
-| `tailnet-ip-unavailable` | tailscaled is down or logged out. Not termhub's to repair. |
 | `unknown` | fell through classification. If you see this, the taxonomy needs a new signature more than it needs a script. |

@@ -189,6 +189,14 @@ function Invoke-Remedy {
   $t = $Diagnosis.Topology
   $outFile = Join-Path (Get-WatchdogDir) 'last-remedy.out.log'
   $errFile = Join-Path (Get-WatchdogDir) 'last-remedy.err.log'
+  # An EMPTY element makes Start-Process reject the whole ArgumentList
+  # ("The argument is null or empty") in PowerShell 5.1, so the remedy is never even
+  # launched and the failure surfaces as a spawn error on its way to an escalation.
+  # $t.TailnetIp is empty precisely when tailscaled cannot be asked - which is the
+  # entire premise of `tailnet-ip-unavailable`, so that remedy could never have run.
+  # A literal `""` token survives the join and the child's -File parser binds it back
+  # to an empty string, which keeps the contract "all six are always passed" true.
+  $emptyArg = '""'
   $args = @(
     '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', $Path,
     '-Signature',    $Diagnosis.Signature,
@@ -196,7 +204,7 @@ function Invoke-Remedy {
     '-PublishPort',  $t.PublishPort,
     '-FrontPort',    $t.FrontPort,
     '-SessiondPort', $t.SessiondPort,
-    '-TailnetIp',    "$($t.TailnetIp)"
+    '-TailnetIp',    $(if ($t.TailnetIp) { "$($t.TailnetIp)" } else { $emptyArg })
   )
   try {
     $p = Start-Process -FilePath 'powershell.exe' -ArgumentList $args -WorkingDirectory $ProjectDir `
