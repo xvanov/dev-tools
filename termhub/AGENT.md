@@ -345,6 +345,38 @@ The lockfile is authoritative and `node_modules` is derived from it, so the rewr
 information worth keeping. Discarding it makes the churn unobservable and the ping-pong impossible,
 whatever npm each machine happens to run. If you ever see that diff again, don't commit it.
 
+### A refused `--ff-only` pull heals itself when it safely can
+
+Both updaters treat a refused `git pull --ff-only` as a question rather than a verdict
+(`heal_diverged_history` in `linux/update.sh`, `Repair-DivergedHistory` in `windows/update.ps1`,
+kept in step with each other by `test/updateHeal.test.js`).
+
+The failure worth healing is **upstream history rewritten and force-pushed from another machine** —
+a rebase, an amend, a corrected author email. Every commit this machine already pulled now has a
+patch-identical twin upstream under a different sha, so git reports a divergence and `--ff-only`
+refuses, on a checkout that has contributed nothing of its own. That refusal is permanent, and it
+is *silent*: a wedged machine also stops being a machine anyone force-pushes from, so nothing
+draws attention to it until someone opens a terminal there. It happened here — five commits deep,
+rewritten only by author email — and the machine could not have updated itself again.
+
+The question that separates it from the case that must never be healed is
+`git log --cherry-pick --right-only <upstream>...HEAD`: local commits whose **patch** appears
+nowhere upstream. It compares patch-ids, so it sees straight through the rewritten shas, dates and
+author lines that made the two histories look unrelated. Empty means the local lineage is a
+duplicate and `git reset --hard <upstream>` loses nothing. Non-empty means real unpushed work, and
+the update stops and prints the commits it refused to destroy.
+
+Three other guards, each of which alone stops the reset: a **dirty tree** (checked first, needs no
+network), a **failed fetch** (an offline machine must be diagnosed as offline, not compared against
+a stale upstream ref), and **not actually diverged** — behind-only or ahead-only means the pull
+failed for a reason the heal cannot see, and a `git reset --hard` triggered by a flaky connection
+is precisely the disaster this must not become. The pre-reset lineage is kept on branch
+`termhub-pre-reset`, which is a human's record *and* what keeps the rollback ref a referenced
+object for the restart phase that may still need it.
+
+`bash linux/update.sh --heal` runs the check alone, without updating anything — the hand tool for a
+wedged machine, and how the tests reach the logic.
+
 ### The Claude Code CLI is a pinned dependency
 
 termhub uses Claude Code through surfaces that are not a public API: it pins a conversation with
@@ -366,10 +398,10 @@ learn that the coupling exists. So the version is treated as a dependency:
   in a visible terminal. A CLI that can't be *found* is reported as an error, never as "too old" —
   a `PATH` quirk must not train the user to ignore the warning.
 - **Updating**: both platform updaters now update the CLI too, so a machine can't drift by updating
-  only termhub. On Linux it's part of the composed update command; on Windows it's the last step of
-  `update.ps1`. Non-fatal in both (`|| true` / a yellow warning) — an offline or rate-limited
-  `claude update` must not roll back a good termhub update. Running `claude` sessions keep the build
-  they started with; the new one applies to sessions started after.
+  only termhub — the last step of `update.ps1`, step 3 of `linux/update.sh`. Non-fatal in both
+  (`|| true` / a yellow warning): an offline or rate-limited `claude update` must not roll back a
+  good termhub update. Running `claude` sessions keep the build they started with; the new one
+  applies to sessions started after.
 
 **To bump the pin**: exercise the new CLI first — launch a claude session, restart `sessiond`,
 restore it, and confirm the conversation comes back *and* the model badge and 🔊 announcements still

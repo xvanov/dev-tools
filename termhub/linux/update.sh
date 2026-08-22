@@ -116,6 +116,124 @@ discard_lock_churn() {
 }
 
 # ---------------------------------------------------------------------------
+# Self-healing a diverged branch.
+#
+# A `git pull --ff-only` that refuses is one of two very different situations, and
+# only one of them is a human's problem.
+#
+# THE ONE THAT ISN'T: upstream history was rewritten and force-pushed from another
+# machine — a rebase, an amend, a corrected author email. Every commit this machine
+# already pulled now has a patch-identical twin upstream under a different sha, git
+# reports "diverged", and --ff-only refuses, on a machine that has contributed
+# nothing of its own. Nothing here is salvage-worthy and nothing is at risk, but the
+# refusal is permanent: the machine can never update again, and since it is wedged
+# it never becomes a machine anyone force-pushes FROM either, so the wedge is silent
+# until someone opens a terminal on it. That is the case worth healing automatically,
+# because the alternative is a fleet that quietly stops taking updates.
+#
+# THE ONE THAT IS: there are local commits with no upstream equivalent (real work
+# that was never pushed), or the tree is dirty. Both would be destroyed by the reset,
+# so both stop here and say exactly what was found.
+#
+# `git log --cherry-pick --right-only <upstream>...HEAD` is precisely the question to
+# ask: list local commits whose patch does NOT appear upstream. Empty means the local
+# lineage is a duplicate under different shas, and resetting onto upstream loses
+# nothing. It compares patch-ids, so it sees through the rewritten shas, dates and
+# author lines that made the histories look unrelated in the first place.
+# ---------------------------------------------------------------------------
+
+# What is this branch tracking? Falls back to origin/<branch> when no upstream is
+# configured — an install made by `git clone` always has one, but a checkout that
+# lost its config should still be able to heal rather than being told it can't.
+upstream_ref() {
+  local u branch
+  u="$(git -C "$PROJECT_DIR" rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null || true)"
+  if [ -n "$u" ]; then printf '%s\n' "$u"; return 0; fi
+  branch="$(git -C "$PROJECT_DIR" rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
+  [ -n "$branch" ] && [ "$branch" != "HEAD" ] && printf 'origin/%s\n' "$branch"
+}
+
+# 0 = healed, HEAD now equals upstream and the caller should carry on updating.
+# 1 = not healed, and the reason has already been printed. Never destroys anything
+#     it has not first proven to be a duplicate.
+heal_diverged_history() {
+  local up counts behind ahead unique before
+
+  up="$(upstream_ref)"
+  if [ -z "$up" ]; then
+    say "no upstream branch is configured, so there is nothing to reset onto."
+    return 1
+  fi
+
+  # Dirty first: it needs no network, and a dirty tree disqualifies the heal outright.
+  if [ -n "$(git -C "$PROJECT_DIR" status --porcelain 2>/dev/null)" ]; then
+    say "the working tree has local changes, which is enough on its own to make the"
+    say "pull fail. Commit or stash them, then update again."
+    return 1
+  fi
+
+  # The pull's own fetch may be what failed. Redo it explicitly so that an offline or
+  # unauthenticated machine is diagnosed as offline instead of being compared against
+  # a stale upstream ref and told a story about its history.
+  if ! git -C "$PROJECT_DIR" fetch --quiet 2>&1; then
+    say "could not fetch from the remote - the pull probably failed for that reason"
+    say "(no network, or credentials), not because of anything in this checkout."
+    return 1
+  fi
+
+  # left = upstream-only (behind), right = HEAD-only (ahead). Only a genuine
+  # divergence (both non-zero) is in scope; anything else reaching here means the
+  # pull failed for a reason this function cannot see, and guessing would be worse
+  # than reporting.
+  counts="$(git -C "$PROJECT_DIR" rev-list --left-right --count "$up...HEAD" 2>/dev/null || true)"
+  behind="$(printf '%s' "$counts" | awk '{print $1+0}')"
+  ahead="$(printf '%s' "$counts" | awk '{print $2+0}')"
+  if [ -z "$counts" ] || [ "$ahead" -eq 0 ] || [ "$behind" -eq 0 ]; then
+    say "HEAD is not diverged from $up (behind ${behind:-?}, ahead ${ahead:-?}), so the"
+    say "pull failed for some other reason - check its output above."
+    return 1
+  fi
+
+  unique="$(git -C "$PROJECT_DIR" log --cherry-pick --right-only --oneline "$up...HEAD" 2>/dev/null || true)"
+  if [ -n "$unique" ]; then
+    say "history diverged from $up AND these local commits exist nowhere upstream:"
+    printf '%s\n' "$unique" | sed 's/^/termhub update:     /'
+    say "resetting would destroy them, so nothing was changed. Push them (or drop"
+    say "them deliberately), then update again."
+    return 1
+  fi
+
+  before="$(git -C "$PROJECT_DIR" rev-parse --short HEAD)"
+  say "history diverged from $up ($behind upstream, $ahead local), but every local"
+  say "commit already exists upstream as an equivalent patch - upstream was rewritten"
+  say "and force-pushed from elsewhere. Resetting onto $up; no local work is lost."
+
+  # Keep the pre-reset lineage reachable, for two reasons and the second is
+  # load-bearing: a human can still inspect exactly what was here, AND $ROLLBACK -
+  # the commit the restart phase would roll back to - stays a referenced object
+  # instead of becoming unreachable and collectable partway through the update that
+  # might need it. Force, so these do not accumulate one per heal.
+  git -C "$PROJECT_DIR" branch --force termhub-pre-reset HEAD >/dev/null 2>&1 || true
+
+  if ! git -C "$PROJECT_DIR" reset --hard "$up" 2>&1; then
+    say "the reset onto $up failed; the checkout is exactly as it was."
+    return 1
+  fi
+  say "was $before, now $(git -C "$PROJECT_DIR" rev-parse --short HEAD) - the previous lineage is kept on"
+  say "branch 'termhub-pre-reset' if you want to look at it."
+  return 0
+}
+
+# --heal: the divergence check and nothing else. Exists so the logic is reachable
+# without triggering an update (a human on a wedged machine, and the tests), and it
+# deliberately needs no systemd unit.
+if [ "${1:-}" = "--heal" ]; then
+  command -v git >/dev/null 2>&1 || fail "git not found on PATH."
+  heal_diverged_history || exit 1
+  exit 0
+fi
+
+# ---------------------------------------------------------------------------
 # --finish: the detached half. Runs with no terminal, so everything it says goes
 # to $UPDATE_LOG. This is the only part that can verify the restart, because it is
 # the only part still alive after it.
@@ -183,7 +301,9 @@ fi
 
 # 1) Pull.
 if ! git -C "$PROJECT_DIR" pull --ff-only 2>&1; then
-  fail "git pull --ff-only failed (not a fast-forward, or local changes are in the way). Nothing was changed."
+  say "git pull --ff-only refused - working out whether that is safe to fix here."
+  heal_diverged_history \
+    || fail "git pull --ff-only failed and could not be safely resolved. Nothing was changed."
 fi
 NEWHEAD="$(git -C "$PROJECT_DIR" rev-parse HEAD)"
 if [ "$NEWHEAD" = "$ROLLBACK" ]; then

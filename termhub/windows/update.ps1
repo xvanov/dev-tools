@@ -43,6 +43,89 @@ $ErrorActionPreference = 'Stop'
 
 function Fail($msg) { Write-Host "termhub update FAILED: $msg" -ForegroundColor Red; exit 1 }
 
+# Self-healing a diverged branch. The exact counterpart of heal_diverged_history()
+# in linux/update.sh; that file carries the long writeup and this one must not drift
+# from it. The short version:
+#
+# A --ff-only pull that refuses is either (a) upstream history rewritten and
+# force-pushed from another machine, leaving this checkout holding patch-identical
+# twins of upstream commits under stale shas - nothing of its own, nothing at risk,
+# but permanently unable to update again; or (b) real unpushed commits, or a dirty
+# tree, either of which a reset would destroy. Only (a) is healed here. The question
+# that separates them is `git log --cherry-pick --right-only <upstream>...HEAD`:
+# local commits whose PATCH appears nowhere upstream. Empty means the local lineage
+# is a duplicate and resetting onto upstream loses nothing.
+#
+# Returns $true when HEAD now equals upstream and the update may continue.
+function Repair-DivergedHistory {
+  $upstream = (& git -C $ProjectDir rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>$null)
+  if ($LASTEXITCODE -ne 0 -or -not $upstream) {
+    $branch = (& git -C $ProjectDir rev-parse --abbrev-ref HEAD 2>$null)
+    if ($LASTEXITCODE -ne 0 -or -not $branch -or $branch.Trim() -eq 'HEAD') {
+      Write-Host "termhub update: no upstream branch is configured, so there is nothing to reset onto."
+      return $false
+    }
+    $upstream = "origin/$($branch.Trim())"
+  }
+  $upstream = $upstream.Trim()
+
+  # Dirty first - it needs no network and disqualifies the heal on its own.
+  $dirty = & git -C $ProjectDir status --porcelain 2>$null
+  if ($dirty) {
+    Write-Host "termhub update: the working tree has local changes, which is enough on its own to"
+    Write-Host "termhub update: make the pull fail. Commit or stash them, then update again."
+    return $false
+  }
+
+  # left = upstream-only (behind), right = HEAD-only (ahead). Only a genuine
+  # divergence is in scope; anything else means the pull failed for a reason this
+  # function cannot see, and guessing would be worse than reporting.
+  $counts = (& git -C $ProjectDir rev-list --left-right --count "$upstream...HEAD" 2>$null)
+  $parts  = if ($counts) { ($counts -split '\s+') | Where-Object { $_ -ne '' } } else { @() }
+  if ($parts.Count -lt 2) {
+    Write-Host "termhub update: could not compare HEAD with $upstream, so the divergence cannot be judged."
+    return $false
+  }
+  $behind = [int]$parts[0]
+  $ahead  = [int]$parts[1]
+  if ($ahead -eq 0 -or $behind -eq 0) {
+    Write-Host "termhub update: HEAD is not diverged from $upstream (behind $behind, ahead $ahead), so the"
+    Write-Host "termhub update: pull failed for some other reason - check its output above."
+    return $false
+  }
+
+  $unique = & git -C $ProjectDir log --cherry-pick --right-only --oneline "$upstream...HEAD" 2>$null
+  if ($unique) {
+    Write-Host "termhub update: history diverged from $upstream AND these local commits exist nowhere upstream:"
+    $unique | ForEach-Object { Write-Host "termhub update:     $_" }
+    Write-Host "termhub update: resetting would destroy them, so nothing was changed. Push them (or drop"
+    Write-Host "termhub update: them deliberately), then update again."
+    return $false
+  }
+
+  $before = (& git -C $ProjectDir rev-parse --short HEAD).Trim()
+  Write-Host "termhub update: history diverged from $upstream ($behind upstream, $ahead local), but every"
+  Write-Host "termhub update: local commit already exists upstream as an equivalent patch - upstream was"
+  Write-Host "termhub update: rewritten and force-pushed from elsewhere. Resetting onto $upstream;"
+  Write-Host "termhub update: no local work is lost."
+
+  # Keep the pre-reset lineage reachable. A human can still inspect what was here,
+  # and - load-bearing - $rollback stays a referenced object instead of becoming
+  # unreachable partway through the update that may still need to roll back to it.
+  # Force, so these do not accumulate one per heal.
+  & git -C $ProjectDir branch --force termhub-pre-reset HEAD 2>&1 | Out-Null
+
+  & git -C $ProjectDir reset --hard $upstream 2>&1 | Out-Null
+  if ($LASTEXITCODE -ne 0) {
+    Write-Host "termhub update: the reset onto $upstream failed; the checkout is exactly as it was."
+    return $false
+  }
+  $now = (& git -C $ProjectDir rev-parse --short HEAD).Trim()
+  Write-Host "termhub update: was $before, now $now - the previous lineage is kept on branch"
+  Write-Host "termhub update: 'termhub-pre-reset' if you want to look at it."
+  return $true
+}
+
 $git = (Get-Command git -ErrorAction SilentlyContinue)
 if (-not $git) { Fail "git not found on PATH." }
 
@@ -98,7 +181,12 @@ Write-Host "termhub update: current HEAD $rollback"
 if ($LASTEXITCODE -ne 0) { Fail "git fetch failed." }
 $pull = & git -C $ProjectDir pull --ff-only 2>&1
 Write-Host $pull
-if ($LASTEXITCODE -ne 0) { Fail "git pull --ff-only failed (not a fast-forward, or dirty tree). Nothing changed; blue still serving." }
+if ($LASTEXITCODE -ne 0) {
+  Write-Host "termhub update: git pull --ff-only refused - working out whether that is safe to fix here."
+  if (-not (Repair-DivergedHistory)) {
+    Fail "git pull --ff-only failed and could not be safely resolved. Nothing changed; blue still serving."
+  }
+}
 $newHead = (& git -C $ProjectDir rev-parse HEAD).Trim()
 if ($newHead -eq $rollback) { Write-Host "termhub update: already up to date - re-deploying anyway to pick up local changes." }
 
@@ -112,7 +200,7 @@ if ($changed -match 'package(-lock)?\.json') {
   # npm rewrites package-lock.json into whatever shape the LOCAL npm prefers even when
   # the installed tree is unchanged (11.6.2 records `"peer": true` on @xterm/xterm,
   # 11.12.1 does not), so machines on different npm versions dirty it back and forth -
-  # and the pull at line 99 refuses a dirty tree. The lockfile is authoritative and
+  # and the pull in step 1 refuses a dirty tree. The lockfile is authoritative and
   # node_modules is derived from it, so discard the rewrite. Mirrors linux/update.sh.
   & git -C $ProjectDir checkout -- package-lock.json 2>&1 | Out-Null
 }
