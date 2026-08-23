@@ -366,9 +366,29 @@ say ""
 # is out of termhub's cgroup and so out of reach of the kill. `--collect` cleans
 # the unit up afterwards so these don't accumulate one per update.
 FINISH_UNIT="termhub-update-$(date +%Y%m%d-%H%M%S)-$$"
+
+# systemd-run --user does NOT inherit this shell's environment - the transient unit
+# starts from the user manager's, which has none of these. Measured: a variable
+# exported right before the call arrives UNSET on the other side. Everything the
+# finish phase decides is driven by them, so without this forwarding:
+#   TERMHUB_SERVICE  - it restarts the DEFAULT service, not the one being updated
+#   TERMHUB_PORT/BIND- it health-checks the wrong address and rolls back a good build
+#   TERMHUB_DATA_DIR - it logs somewhere other than the path just printed above,
+#                      so the update appears to have vanished without a trace
+# Only forward what is actually set, so an unset variable keeps its default on the
+# far side rather than being pinned to an empty string. The ${a[@]+"${a[@]}"} dance
+# at the call site is not noise: under `set -u`, bash before 4.4 treats a plain
+# "${a[@]}" on an EMPTY array as an unbound variable and aborts - which would break
+# the update on exactly the older machines least able to recover from it.
+FINISH_ENV=()
+for _v in TERMHUB_SERVICE TERMHUB_DATA_DIR TERMHUB_PORT TERMHUB_BIND; do
+  [ -n "${!_v:-}" ] && FINISH_ENV+=("--setenv=$_v=${!_v}")
+done
+
 if command -v systemd-run >/dev/null 2>&1 \
    && systemd-run --user --unit="$FINISH_UNIT" --collect --quiet \
         --description="termhub update: verify and roll back" \
+        ${FINISH_ENV[@]+"${FINISH_ENV[@]}"} \
         bash "$SCRIPT_DIR/update.sh" --finish "$ROLLBACK" 2>/dev/null; then
   say "restart phase running as user unit $FINISH_UNIT"
 else

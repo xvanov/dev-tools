@@ -617,3 +617,106 @@ function Stop-Front {
   }
   Remove-PidFile $Name
 }
+
+# ---- a diverged branch that is safe to reset --------------------------------
+#
+# The exact counterpart of heal_diverged_history() in linux/update.sh; that file
+# carries the long writeup and this must not drift from it.
+#
+# A --ff-only pull that refuses is either (a) upstream history rewritten and
+# force-pushed from another machine, leaving this checkout holding patch-identical
+# twins of upstream commits under stale shas - nothing of its own, nothing at risk,
+# and yet permanently unable to update again; or (b) real unpushed commits, or a
+# dirty tree, either of which a reset would destroy. Only (a) is healed.
+#
+# The question that separates them is `git log --cherry-pick --right-only
+# <upstream>...HEAD`: local commits whose PATCH appears nowhere upstream. It compares
+# patch-ids, so it sees through the rewritten shas, dates and author lines that made
+# the two histories look unrelated. Empty means the local lineage is a duplicate and
+# resetting onto upstream loses nothing.
+#
+# Lives here rather than in update.ps1 so it can be dot-sourced and tested without
+# running an update - which is the only way the Windows half of this gets exercised
+# at all, since the fleet's other machines are Linux.
+#
+# Returns $true when HEAD now equals upstream. Callers should still CHECK that with
+# git rather than trusting the boolean: a PowerShell function returns everything that
+# reached the pipeline, so one stray line would turn a refusal into a "success".
+function Repair-DivergedHistory {
+  param([Parameter(Mandatory = $true)][string]$RepoDir)
+
+  $say = { param($m) Write-Host "termhub update: $m" }
+
+  # `git rev-parse @{u}` is EXPECTED to fail when no upstream is set, and a native
+  # command's failure is a throw under some PowerShell configurations - so this one
+  # call is wrapped rather than relying on $LASTEXITCODE alone.
+  $upstream = $null
+  try { $upstream = & git -C $RepoDir rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>$null } catch { $upstream = $null }
+  if (-not $upstream) {
+    & $say "no upstream is configured for this branch, so there is nothing to reset onto."
+    return $false
+  }
+  $upstream = "$upstream".Trim()
+
+  # Dirty first: it needs no network and disqualifies the heal on its own.
+  $dirty = $null
+  try { $dirty = & git -C $RepoDir status --porcelain 2>$null } catch { }
+  if ($dirty) {
+    & $say "the working tree has local changes, which is enough on its own to make the"
+    & $say "pull fail. Commit or stash them, then update again."
+    return $false
+  }
+
+  # left = upstream-only (behind), right = HEAD-only (ahead). Matched as a whole
+  # string rather than cast: git printing anything unexpected must read as "cannot
+  # judge", never as a zero that waves the reset through.
+  $counts = ''
+  try { $counts = "$(& git -C $RepoDir rev-list --left-right --count "$upstream...HEAD" 2>$null)" } catch { }
+  if ($counts -notmatch '^\s*(\d+)\s+(\d+)\s*$') {
+    & $say "could not compare HEAD with $upstream, so the divergence cannot be judged."
+    return $false
+  }
+  $behind = [int]$Matches[1]
+  $ahead  = [int]$Matches[2]
+
+  # Only a genuine divergence is in scope. Behind-only or ahead-only means the pull
+  # failed for a reason this cannot see - no network, credentials, a hook - and a
+  # `git reset --hard` fired by a flaky connection is the disaster to avoid here.
+  if ($ahead -eq 0 -or $behind -eq 0) {
+    & $say "HEAD is not diverged from $upstream (behind $behind, ahead $ahead), so the"
+    & $say "pull failed for some other reason - check its output above."
+    return $false
+  }
+
+  $unique = @()
+  try { $unique = @(& git -C $RepoDir log --cherry-pick --right-only --oneline "$upstream...HEAD" 2>$null) } catch { }
+  if ($unique.Count -gt 0) {
+    & $say "history diverged from $upstream AND these local commits exist nowhere upstream:"
+    foreach ($line in $unique) { Write-Host "termhub update:     $line" }
+    & $say "resetting would destroy them, so nothing was changed. Push them (or drop"
+    & $say "them deliberately), then update again."
+    return $false
+  }
+
+  $before = "$(& git -C $RepoDir rev-parse --short HEAD 2>$null)".Trim()
+  & $say "history diverged from $upstream ($behind upstream, $ahead local), but every"
+  & $say "local commit already exists upstream as an equivalent patch - upstream was"
+  & $say "rewritten and force-pushed from elsewhere. Resetting onto $upstream."
+
+  # Keep the pre-reset lineage reachable: a human's record, and - load-bearing - it
+  # keeps the updater's rollback ref a referenced object instead of an unreachable
+  # one partway through the update that may still need it. Force, so these do not
+  # accumulate one per heal.
+  & git -C $RepoDir branch --force termhub-pre-reset HEAD 2>&1 | Out-Null
+  & git -C $RepoDir reset --hard $upstream 2>&1 | Out-Null
+
+  $now = "$(& git -C $RepoDir rev-parse HEAD 2>$null)".Trim()
+  $want = "$(& git -C $RepoDir rev-parse $upstream 2>$null)".Trim()
+  if (-not $now -or $now -ne $want) {
+    & $say "the reset onto $upstream did not take; the checkout is as it was."
+    return $false
+  }
+  & $say "was $before, now $("$now".Substring(0,7)) - the previous lineage is kept on branch"
+  & $say "'termhub-pre-reset' if you want to look at it."
+  return $true
+}

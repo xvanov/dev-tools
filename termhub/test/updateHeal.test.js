@@ -197,18 +197,53 @@ function rewriteUpstream(fx, extraFile) {
 }
 
 // ---- 5) the two updaters must ask the same question ---------------------------
-// Windows runs its own copy of this logic (Repair-DivergedHistory) and cannot be
-// executed here. The patch-id question is the load-bearing line in both; if one
-// drifts, a Windows machine either wedges or resets away real work.
+// Windows runs its own copy of this logic (Repair-DivergedHistory in
+// windows/common.ps1, exercised by test/repairHistory.test.ps1) and no node test can
+// execute PowerShell. What this can still catch is DRIFT: the patch-id question is
+// the load-bearing line in both, and if one side loses it, that platform either
+// wedges forever or resets away real work.
 {
   const sh = fs.readFileSync(HEAL, 'utf8');
-  const ps = fs.readFileSync(path.join(PROJECT_DIR, 'windows', 'update.ps1'), 'utf8');
+  const ps = fs.readFileSync(path.join(PROJECT_DIR, 'windows', 'common.ps1'), 'utf8');
+  const caller = fs.readFileSync(path.join(PROJECT_DIR, 'windows', 'update.ps1'), 'utf8');
   const question = /log --cherry-pick --right-only/;
   check('linux/update.sh heals on a refused pull', /heal_diverged_history/.test(sh));
   check('linux/update.sh asks the patch-id question', question.test(sh));
-  check('windows/update.ps1 has the twin', /Repair-DivergedHistory/.test(ps));
-  check('windows/update.ps1 asks the same patch-id question', question.test(ps));
+  check('windows/common.ps1 has the twin', /function Repair-DivergedHistory/.test(ps));
+  check('windows/common.ps1 asks the same patch-id question', question.test(ps));
+  check('windows/update.ps1 calls it on a refused pull', /Repair-DivergedHistory -RepoDir/.test(caller));
   check('both refuse to reset a dirty tree', /status --porcelain/.test(sh) && /status --porcelain/.test(ps));
+  // The Windows caller must not trust the function's return value: a PowerShell
+  // function returns everything that reached the pipeline, so it re-asks git where
+  // HEAD is before continuing the update.
+  check('windows/update.ps1 verifies HEAD against upstream rather than the return value',
+    /rev-parse '@\{u\}'/.test(caller));
+  check('there is a PowerShell test for the twin',
+    fs.existsSync(path.join(PROJECT_DIR, 'test', 'repairHistory.test.ps1')));
+}
+
+// ---- 6) the detached finish phase must keep its environment -------------------
+// systemd-run --user starts the transient unit from the USER MANAGER's environment,
+// not this shell's — measured: a variable exported immediately before the call
+// arrives unset on the other side. The finish phase is what restarts the service and
+// decides whether to roll back, so losing TERMHUB_SERVICE means restarting the wrong
+// service, and losing TERMHUB_PORT/BIND means health-checking the wrong address and
+// rolling back a perfectly good update.
+{
+  const sh = fs.readFileSync(HEAL, 'utf8');
+  for (const v of ['TERMHUB_SERVICE', 'TERMHUB_DATA_DIR', 'TERMHUB_PORT', 'TERMHUB_BIND']) {
+    check(`${v} is forwarded into the finish phase`,
+      new RegExp(`FINISH_ENV|setenv`).test(sh) && sh.includes(v));
+  }
+  const setenvAt = sh.indexOf('FINISH_ENV+=');
+  // Anchor on the invocation, not the word: the writeup above it names systemd-run too.
+  const runAt = sh.indexOf('systemd-run --user --unit=');
+  check('the forwarding is built before the hand-off', setenvAt !== -1 && setenvAt < runAt);
+  // Under `set -u`, bash before 4.4 aborts on "${arr[@]}" when arr is EMPTY — which
+  // is the common case (no overrides set). Expanding it guarded is what keeps the
+  // updater working on older machines.
+  check('the empty-array expansion is guarded for bash < 4.4',
+    /\$\{FINISH_ENV\[@\]\+"\$\{FINISH_ENV\[@\]\}"\}/.test(sh));
 }
 
 fs.rmSync(ROOT, { recursive: true, force: true });

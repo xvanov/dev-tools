@@ -347,9 +347,10 @@ whatever npm each machine happens to run. If you ever see that diff again, don't
 
 ### A refused `--ff-only` pull heals itself when it safely can
 
-Both updaters treat a refused `git pull --ff-only` as a question rather than a verdict
-(`heal_diverged_history` in `linux/update.sh`, `Repair-DivergedHistory` in `windows/update.ps1`,
-kept in step with each other by `test/updateHeal.test.js`).
+Both updaters treat a refused `git pull --ff-only` as a question rather than a verdict:
+`heal_diverged_history` in `linux/update.sh`, and `Repair-DivergedHistory` in `windows/common.ps1`
+(in the shared helpers, not in `update.ps1`, so it can be dot-sourced and tested without running an
+update). `test/updateHeal.test.js` pins them to the same question.
 
 The failure worth healing is **upstream history rewritten and force-pushed from another machine** —
 a rebase, an amend, a corrected author email. Every commit this machine already pulled now has a
@@ -376,6 +377,31 @@ object for the restart phase that may still need it.
 
 `bash linux/update.sh --heal` runs the check alone, without updating anything — the hand tool for a
 wedged machine, and how the tests reach the logic.
+
+**Both halves are tested by execution, not by reading.** The whole question is what git actually
+reports for a rewritten upstream, which no assertion about a script's text can answer, so
+`test/updateHeal.test.js` (Linux) and `test/repairHistory.test.ps1` (Windows) each build real
+repositories: a genuinely rewritten upstream, unpushed work, a dirty tree, behind-only. Each fixture
+first asserts that it *is* diverged — an amend landing in the same second as the original produces
+an identical sha, and the resulting fixture tests nothing at all.
+
+The PowerShell test runs natively on Windows, and on a Linux box through a container:
+
+```bash
+docker build -t termhub-pstest - <<'EOF'
+FROM mcr.microsoft.com/powershell:latest
+RUN apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/*
+EOF
+docker run --rm -v "$PWD:/repo:ro" termhub-pstest pwsh -NoProfile -File /repo/test/repairHistory.test.ps1
+```
+
+Two PowerShell hazards are worth knowing, because both were hit while writing this. A function
+returns **everything that reached the pipeline**, so one un-suppressed `git` line inside
+`Repair-DivergedHistory` would turn a refusal into a truthy "success" — which is why `update.ps1`
+re-asks git whether HEAD equals `@{u}` instead of trusting the return value, and why the test
+asserts the return is a bare `[bool]`. And functions **shadow native commands** (name resolution
+prefers them, case-insensitively), so a test helper called `Git` calling `& git` calls *itself*,
+forever; the fixtures resolve the executable through `Get-Command git -CommandType Application`.
 
 ### The Claude Code CLI is a pinned dependency
 
@@ -560,6 +586,19 @@ line. systemd still completed the restart — it is the manager doing the work, 
 client — so **an update that worked looked perfect, and an update that broke the build silently lost
 its rollback, its health check and its log output.** The safety net failed only when it was needed,
 which is the worst shape a bug can have.
+
+**And a transient unit does not inherit the caller's environment.** `systemd-run --user` starts the
+unit from the *user manager's* environment, so every `TERMHUB_*` override set in the shell running
+the update arrives unset on the other side — measured with a variable exported immediately before
+the call. The finish phase is the half that restarts the service and decides whether to roll back,
+so this was not cosmetic: `TERMHUB_SERVICE` lost means restarting the **default** service rather
+than the one being updated, `TERMHUB_PORT`/`TERMHUB_BIND` lost means health-checking the wrong
+address and rolling back a perfectly good build, and `TERMHUB_DATA_DIR` lost means logging somewhere
+other than the path the script just printed — an update that appears to vanish without a trace. The
+hand-off now forwards each of those with `--setenv`, and only when set, so an unset variable keeps
+its default instead of being pinned to an empty string. The array is expanded as
+`${FINISH_ENV[@]+"${FINISH_ENV[@]}"}`: under `set -u`, bash before 4.4 aborts on a plain
+`"${arr[@]}"` when the array is empty, which is the *common* case.
 
 The phase now goes to `systemd-run --user --unit=termhub-update-<stamp> --collect`, a transient unit
 of its own that is out of termhub's cgroup and so out of reach of the kill; `setsid` remains as the
