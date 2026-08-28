@@ -262,10 +262,12 @@ first when one of them has died.
   Library / Take Photo / Browse), takes several files at once, and shows upload progress and
   any failure as a notice above the key bar. **Pasting or dragging** a file onto the terminal
   does the same thing where the browser allows it.
-  - An **image** is staged onto the remote machine's own OS clipboard and pasted into the
-    running agent (Claude Code / opencode) exactly like a local screenshot paste would.
-    On a machine with no clipboard to stage it on — a headless Linux box has no X or Wayland
-    display, and no installed tool changes that — the image is saved to
+  - A **PNG** is staged onto the remote machine's own OS clipboard and pasted into the
+    running agent (Claude Code / opencode) exactly like a local screenshot paste would —
+    and termhub reads the clipboard back before it fires the paste, so it never claims a
+    paste that isn't there. Anything it can't stage that way — a headless Linux box with no
+    X or Wayland display, a JPEG away from Windows (the agents ask the clipboard for
+    `image/png` by name), or a clipboard that just didn't take — is saved to
     `<data dir>/attachments/` instead and its **path** is typed into the terminal input;
     Claude Code and opencode both read an image given a path. Attachments older than a week are
     cleaned up in the background. They deliberately do *not* go in the session's working

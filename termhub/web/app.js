@@ -929,7 +929,14 @@ function sendAttachment(t, file) {
   // that actually applies to THIS host — an image goes by the file cap where
   // there's no clipboard to squeeze it through. If we never got them, let the
   // server be the judge.
-  const cap = state.limits && (isImage ? state.limits.imageBytes : state.limits.fileBytes);
+  //
+  // `imageBytes` is the PNG answer. Away from Windows the clipboard only carries
+  // PNG (the agent reads `image/png` by name — see lib/clipboard.js), so a JPEG
+  // is written to disk there and takes the file cap, exactly as it would on a
+  // host with no clipboard at all.
+  const clippable = isImage
+    && (state.platform === 'win32' || file.type.toLowerCase() === 'image/png');
+  const cap = state.limits && (clippable ? state.limits.imageBytes : state.limits.fileBytes);
   if (cap && file.size > cap) {
     toast(`${file.name || 'file'} is ${humanBytes(file.size)} — over the ${humanBytes(cap)} limit`, 'err').close(8000);
     return;

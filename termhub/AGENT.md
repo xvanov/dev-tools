@@ -105,6 +105,11 @@ with it and surface through the front's proxy as a misleading
 `GET /api/info` reports `clipboardImage` (can this host stage a clipboard image?) and
 `limits: {imageBytes, fileBytes}` so the UI can refuse an over-cap file before uploading it.
 `imageBytes` is the cap that actually applies **on this host**, not a constant — see below.
+`POST /api/clipboard-probe` → `{platform, target, staged, verified, error}` stages a 1x1 PNG
+and reads it back, which is how you answer *"will a pasted image reach the agent on that
+box?"* without sitting at it. It replaces whatever is on that machine's clipboard, hence POST.
+`staged` and `verified` fail independently and the difference is the whole diagnosis (see
+*Attachments*).
 The `front` answers `GET /api/health` itself (front up +
 sessiond reachable) for the updater's probe, `GET /api/update/check` (`?force=1` to skip the
 60s cache), and `GET /api/secure-url` → `{secureUrl}`, the HTTPS address Tailscale Serve publishes
@@ -1411,15 +1416,50 @@ into the terminal, which a full-screen TUI would repaint over within a frame.
 **Images** go to `POST /api/sessions/:id/clipboard-image`, and `sessiond` decides what actually
 happens to them:
 
-- Host has a clipboard → staged on it, reply `{kind:'clipboard'}`, and the client fires the
-  agent's clipboard-image hotkey (`Alt+V` on native Windows Claude Code, `Ctrl+V` otherwise).
-- Host has none, **or** the clipboard write fails anyway → saved under `<data dir>/attachments/`,
-  reply `{kind:'file', path}`, and the client types the path in. `clipboardTarget()` in
-  `lib/clipboard.js` is what decides: Windows and macOS always qualify, Linux only with
-  `DISPLAY`/`WAYLAND_DISPLAY` *and* a tool (`wl-copy`/`xclip`/`xsel`). Checking for the tool
-  alone is not enough — a headless Linux box very often has `xclip` installed, where it can only
-  ever exit 1 with *Can't open display*, which is what this used to surface to the user as a
-  yellow warning they could do nothing about.
+- Host has a clipboard **and the image is provably on it** → reply `{kind:'clipboard'}`, and the
+  client fires the agent's clipboard-image hotkey (`Alt+V` on native Windows Claude Code,
+  `Ctrl+V` otherwise).
+- Anything else → saved under `<data dir>/attachments/`, reply `{kind:'file', path}`, and the
+  client types the path in. Both agents read an image given a path, so this route always works;
+  it is the honest answer, not a degraded one.
+
+**"Provably" is the whole of it.** This path worked on the machine the browser was sitting at and
+failed on every other one, for a reason that hid it completely: locally the user had *just copied
+the image to that machine's clipboard themselves* in order to paste it into the browser, so the
+agent found an image whether or not termhub staged one. Only on a remote host is the staging the
+sole source of the image — and there, four separate ways of exiting 0 with nothing usable on the
+clipboard were live at once:
+
+| What exited 0 | What the agent saw |
+| --- | --- |
+| `xsel` (was the third-choice Linux tool) — it cannot type a selection at all | `xclip -t image/png -o` reads back nothing. Removed; a display with only `xsel` now counts as *no clipboard* |
+| a JPEG staged as `image/jpeg` on Linux, or coerced `«class PNGf»` on macOS | the agent asks for `image/png` **by name**, with no fallback, and saves the zero bytes it gets. `clipboardTarget(mime)` now refuses any non-PNG off Windows (Windows decodes the file itself, so it keeps taking anything) |
+| `Clipboard::SetImage` from PowerShell — measured here, **1 write in 6** left the clipboard empty | `ContainsImage()` false → *"No image found in clipboard"*. Now `SetDataObject($img, $true, 10, 100)` (OLE retry loop + a flush that outlives the process), in a loop that confirms `ContainsImage()` before exiting |
+| `pwsh` staging where Claude Code reads with `powershell` | a different clipboard client; not dependably visible. `lib/clipboard.js` prefers Windows PowerShell 5.1 — the reverse of `lib/shell.js`, on purpose, because matching the reader is the point |
+
+So `stageClipboardImage()` writes, then **reads the clipboard back with the agent's own
+predicate** (`ContainsImage()` on Windows, the `TARGETS` list on Linux, `clipboard info` on
+macOS), and retries the pair up to three times. Even after the Windows fix ~1 staging in 30 still
+read back empty from another process — the clipboard is a contended global and anything watching
+it (clipboard history, a clipboard manager, an RDP clipboard channel) can take it between our
+write and the agent's read. One-in-thirty is invisible in testing and infuriating in use.
+
+`clipboardTarget()` still refuses up front where it can: Linux needs `DISPLAY`/`WAYLAND_DISPLAY`
+*and* `wl-copy`/`xclip`. Checking for the tool alone is not enough — a headless Linux box very
+often has `xclip` installed, where it can only ever exit 1 with *Can't open display*.
+
+`POST /api/clipboard-probe` is the same round trip on a 1x1 PNG, deliberately **unretried**, so a
+box that is merely flaky is distinguishable from one that can never work:
+
+```bash
+curl -sk -X POST https://<host>:7000/api/clipboard-probe
+# {"platform":"win32","target":{"available":true,"tool":"powershell"},
+#  "staged":true,"verified":true,"error":null}
+```
+
+`staged:false` is a missing tool, a missing display, or a write that threw. `staged:true` with
+`verified:false` is the dangerous one this whole design exists to catch: a clipboard the agent
+cannot see.
 
 Attachments live in the data dir, not the session cwd, because the cwd is usually a git checkout;
 anything there older than a week is pruned, at most hourly and never synchronously (this process
@@ -1475,7 +1515,8 @@ user actually meant to paste.
 | Restoring a Claude session opens a bare shell, no conversation | The restore command carried two conversation-identity flags — Claude printed a usage error and exited | Fixed in `lib/restore.js` (strips `--session-id`/`--continue`/`--fork-session` before adding `--resume`); the fix also repairs entries already mangled in `sessions.json`. Scroll the restored terminal up to see the actual CLI error. Machines on an older CLI never hit this, which is why it looked platform-specific |
 | Restore works on one machine, not another | The two machines run different Claude CLI versions | Open ⟳ **Update** — the panel reports the installed CLI against termhub's pin (`termhub.claudeCli` in `package.json`) and offers **Update Claude**. Verify from a terminal with `claude --version` |
 | Wrong size / wrapping | Pane resized while backgrounded | Switch sessions or rotate to force a refit |
-| Pasted image lands as a file path instead of in the agent's prompt | The host has no usable clipboard (`curl /api/info` → `"clipboardImage": false`) | Expected on a headless Linux box. The path works — both Claude Code and opencode read an image given one. To get the clipboard route instead, run a session with a real display |
+| Pasted image lands as a file path instead of in the agent's prompt | The host has no usable clipboard, or the staging didn't read back | `curl -X POST /api/clipboard-probe` says which. Expected on a headless Linux box, and for a JPEG anywhere but Windows. The path works — both Claude Code and opencode read an image given one. To get the clipboard route instead, run a session with a real display and paste a PNG |
+| Attaching an image to a session on a **remote** machine does nothing: Claude Code says *"No image found in clipboard"* (Windows) or nothing at all (Linux), while termhub's toast said `image pasted` | termhub trusted a clipboard write that exited 0 without the image landing — see *Attachments*. It could only ever be seen on a remote host, because locally the user's own clipboard already held the image | Fixed: staging is read back before the paste hotkey is fired, and falls back to a file path when it isn't there. **The fix is in `sessiond`, which `update.ps1` deliberately never restarts** — after updating, restart sessiond (the update prints a sessiond-drift warning when this matters), then confirm with `curl -X POST /api/clipboard-probe` |
 | 📎 upload does nothing on a phone | File over the cap (100 MB, or 15 MB for an image on a host with a real clipboard — `curl /api/info` shows the effective `limits`) | The red notice above the key bar says so; tap it to dismiss, shrink the file. A silent failure instead means the connection dropped — the notice says that too |
 | Pasted an image and got text instead | The paste carried `text/plain` too (rich text with an inline image), and text wins | Deliberate — taking the image would swallow the text. Use 📎 for the image |
 | Model badge blank, and 🔊 never speaks, on one tab | The pinned `--session-id` transcript is a stub the conversation forked away from | Both symptoms share a cause: `resolveTranscript()` had settled on a file Claude Code stopped writing. Compare `curl localhost:7010/api/sessions` (the session's `command` names the pinned uuid) against `ls -t ~/.claude/projects/<encoded cwd>/` — a *different* uuid holding the recent bytes confirms it. Now self-corrects once the newer transcript exists |

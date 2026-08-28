@@ -27,7 +27,7 @@ const { DEFAULT_SESSIOND_PORT, claimPidFile } = require('./lib/state');
 const { probeSessiond } = require('./lib/probe');
 const build = require('./lib/build');
 const { suggestDirs } = require('./lib/dirs');
-const { setClipboardImage, clipboardTarget } = require('./lib/clipboard');
+const { stageClipboardImage, clipboardTarget, probeClipboard } = require('./lib/clipboard');
 const { saveUploadedFile, saveImageAttachment } = require('./lib/uploads');
 const tts = require('./lib/tts');
 const summarizer = require('./lib/summarize');
@@ -272,6 +272,17 @@ function createSessiond({ entry = 'sessiond', port: serverPort = DEFAULT_SESSION
         });
       }
 
+      // Does a pasted image actually reach an agent on THIS host? Stages a 1x1
+      // PNG and reads it back, reporting the two steps separately, because they
+      // fail independently and the difference is the whole diagnosis: a write
+      // that fails is a missing tool or a missing display, a write that
+      // succeeds and does not read back is a clipboard the agent can't see.
+      // Answering that on a machine you are not sitting at used to mean
+      // guessing. It replaces whatever is on the clipboard, so it is a POST.
+      if (req.method === 'POST' && pathname === '/api/clipboard-probe') {
+        return sendJson(res, 200, await probeClipboard());
+      }
+
       if (req.method === 'GET' && pathname === '/api/sessions') {
         return sendJson(res, 200, { machine: MACHINE_NAME, sessions: listSessions(), restorable: listRestorable() });
       }
@@ -353,13 +364,18 @@ function createSessiond({ entry = 'sessiond', port: serverPort = DEFAULT_SESSION
         const session = sessions.get(id);
         if (!session) return sendJson(res, 404, { error: 'no such session' });
         const rawImageName = safeForNotice(uploadedName(req, '') || 'image');
+        // The format decides whether the clipboard is even a candidate (only
+        // PNG can be staged where the reader asks for PNG by name — see
+        // lib/clipboard.js), so it has to be read from the header here, before
+        // the cap is chosen, rather than after the body is in hand.
+        const mimeType = (req.headers['content-type'] || 'image/png').split(';')[0].trim();
         // Which cap applies depends on where the bytes are actually going. The
         // 15 MB limit exists because a clipboard image has to be inflated onto
         // an OS clipboard; on a host with no clipboard this route writes a file,
         // exactly like /upload-file, so it gets the file cap. Recent iPhones
         // shoot 15-25 MB photos — capping those at 15 MB refused the whiteboard
         // photo on the one kind of host where the constraint doesn't exist.
-        const target = clipboardTarget();
+        const target = clipboardTarget(mimeType);
         const imageCap = target.available ? MAX_CLIPBOARD_IMAGE_BYTES : MAX_UPLOAD_FILE_BYTES;
 
         const oversize = oversizeError(req, imageCap);
@@ -374,23 +390,28 @@ function createSessiond({ entry = 'sessiond', port: serverPort = DEFAULT_SESSION
           session.notice(`\x1b[33m[termhub] ${rawImageName} not sent — ${safeForNotice(e.message)}\x1b[0m`);
           return sendTooLarge(req, res, { error: `image ${e.message}` });
         }
-        const mimeType = (req.headers['content-type'] || 'image/png').split(';')[0].trim();
 
         // Only worth naming the cause when a host that looked capable failed
         // anyway; "this box has no display" is not news worth a line of terminal.
-        let failure = null;
+        //
+        // The write exiting 0 is NOT the end of it: read the clipboard back with
+        // the agent's own predicate before promising the client a hotkey will
+        // find anything. Every remote-machine paste failure so far was a write
+        // that reported success onto a clipboard the agent then found empty —
+        // the client fired Alt+V and Claude Code answered "No image found in
+        // clipboard", or on Linux said nothing at all. A read-back turns that
+        // into the file route, which works everywhere.
+        let failure = target.available ? null : target.reason || null;
         if (target.available) {
-          try {
-            await setClipboardImage(buffer, mimeType);
+          failure = await stageClipboardImage(buffer, mimeType);
+          if (!failure) {
             session.notice('[termhub] image copied to clipboard');
             return sendJson(res, 200, { ok: true, kind: 'clipboard' });
-          } catch (e) {
-            failure = e && e.message ? e.message : String(e);
           }
         }
         try {
           const saved = await saveImageAttachment(uploadedName(req, null), mimeType, buffer);
-          const why = failure ? `clipboard failed (${safeForNotice(failure)})` : 'no clipboard on this host';
+          const why = failure ? `clipboard unusable (${safeForNotice(failure, 200)})` : 'no clipboard on this host';
           session.notice(`[termhub] ${why} — saved image to ${safeForNotice(saved.path, 200)}`);
           return sendJson(res, 200, { ok: true, kind: 'file', path: saved.path, name: saved.name });
         } catch (e) {
