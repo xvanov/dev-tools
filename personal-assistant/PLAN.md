@@ -15,8 +15,11 @@ answer is worth about half as much as one that records the abandoned ones too.
 | Session substrate | **termhub sessions**, not tmux and not ACP | Only substrate where you can *attach to a running agent* from a browser on your phone. ACP can be steered but never attached to; native OpenClaw subagents can't even be steered. |
 | Store | One Postgres + pgvector | Rows, jsonb, embeddings and full-text in one engine with one backup. |
 | Autonomy | Per-task mode chosen at dispatch | Not a global setting. See §6. |
-| Onyx | **Deferred** to phase 7 | ~16 GB of Docker (Postgres + Vespa + Redis + model server) to get connectors we're writing thin versions of anyway. Revisit when SharePoint/Confluence/HubSpot breadth actually matters. |
+| Onyx | **Deferred** to phase 8 | ~16 GB of Docker (Postgres + Vespa + Redis + model server) to get connectors we're writing thin versions of anyway. Revisit when SharePoint/Confluence/HubSpot breadth actually matters. |
 | Memory frameworks (Mem0, Letta, Graphiti, Cognee) | Deferred | They solve "agent remembers the user". Our problem is ingesting other people's messages. Add Graphiti only when a real question is answered wrong by flat retrieval. |
+| Audio capture | Always-on, mic **and** system loopback as separate streams, trimmed hourly | Two streams give speaker attribution with no diarization: mic is you, loopback is everyone else. See §7. |
+| Agent-session capture | From Claude Code / OpenClaw transcripts, not from audio | The exact text is already on disk. Audio would be a lossy copy of a perfect record. |
+| Project → repo | Seeded table + guessing distiller that learns from corrections | You never author the mapping; you correct a guess once and it becomes an alias. See §8. |
 | Outbound | Draft only, never auto-send, for as long as it takes to trust | One wrongly-sent Teams message ends the project. |
 
 ### The Windows split, concretely
@@ -115,10 +118,24 @@ person_identity(person_id, kind, value)       -- aad_oid | smtp | teams_id |
                                               -- git_author | gitlab_username
                                               -- unique (kind, value)
 
+-- projects ----------------------------------------------------------------
+project(id, name, gitlab_path, repo_path, active, last_touched_at)
+project_alias(id, project_id, alias, origin, weight, learned_from)
+           -- origin: seeded | corrected | observed
+           -- unique (lower(alias))
+
+-- audio -------------------------------------------------------------------
+audio_episode(id, started_at, ended_at, stream, speech_seconds,
+              kind, calendar_event_id, audio_path, transcript_path, state)
+           -- stream: mic | loopback
+           -- kind: meeting | call | dictation | ambient | unknown
+           -- state: raw | trimmed | transcribed | distilled | purged
+
 -- distilled ----------------------------------------------------------------
 commitment(id, source_item_id, direction, summary, detail,
-           counterparty_person_id, due_at, status, repo, project,
-           confidence, extracted_by, extracted_at, superseded_by)
+           counterparty_person_id, due_at, status, project_id, repo_path,
+           project_confidence, confidence, extracted_by, extracted_at,
+           superseded_by)
            -- direction: owed_by_me | owed_to_me
            -- status: open | dispatched | done | dropped
 fact(id, source_item_id, kind, payload jsonb, occurred_at)
@@ -168,6 +185,10 @@ pa drop <run>                 # kill session, remove worktree
 pa draft <run> [--channel teams|email]   # reply drafted from the ask + the diff
 pa send <run>                            # explicit, interactive, never implicit
 
+pa projects                   # the project ↔ repo table, with alias counts
+pa projects sync              # re-seed from C:\repos and GitLab membership
+pa show <id> --project <name> # correct a guess; also learns the alias that was used
+pa mic status | pause 30m | on
 pa sync [--source ...]        # force an ingest pass
 pa doctor                     # scopes, cursors, queue depth, termhub reachability
 ```
@@ -208,7 +229,144 @@ Mechanics that hold for every mode:
 
 ---
 
-## 7. Phases
+## 7. Always-on capture
+
+Decision: **always-on, both audio streams, batch post-processed hourly.** Manual and
+calendar-triggered capture both fail the same way — the useful ten minutes is usually the
+corridor conversation nobody scheduled.
+
+### Two streams, not one
+
+Capture the **microphone** and the **system loopback** (WASAPI loopback: everything the
+speakers play) as *separate* files. This is the single highest-value decision in the capture
+design, because it gives speaker attribution for free: the mic stream is you, the loopback
+stream is everyone else. No diarization model, no misattributed quotes, and a distiller that
+can tell "I promised" from "they promised" without guessing.
+
+It also means a Teams call is captured whether or not the tenant allows transcripts, and
+without a bot joining the meeting.
+
+### The hourly cycle
+
+Writing raw and trimming after the fact is more robust than trying to be clever in real time —
+a VAD bug then costs you a bloated file, not a lost conversation.
+
+```
+continuous  →  16 kHz mono PCM per stream, rolled hourly
+                ~115 MB/hour/stream, ~2.3 GB for a 10-hour day
+     │
+     ▼  on the hour (a graphile-worker job)
+trim        →  Silero VAD; drop silence, keep 1.5 s of pre-roll before each speech run
+     │         a normal day is ~10-20% speech, so ~250 MB/day survives
+     ▼
+episodes    →  group speech runs; a gap over 90 s ends an episode
+     │         classify: calendar event running → meeting; Teams process in a call → call;
+     │         voice-dictation active → dictation; otherwise ambient
+     ▼
+transcribe  →  faster-whisper via voice-dictation's existing transcribe_server (TCP, GPU)
+     │         no second model, no second install
+     ▼
+store       →  Opus 16 kbps kept (~7 MB per speech-hour), transcript as a source_item,
+               raw PCM deleted at the end of the cycle
+```
+
+`disk-janitor` already exists in this repo for exactly this class of aged, rebuildable data —
+point it at the audio spool rather than writing new cleanup logic.
+
+### Recording your own agent sessions — do it from the transcripts, not the audio
+
+You asked for the Claude and OpenClaw sessions to be recorded too. Audio is the wrong source
+for those, because the exact text already exists on disk:
+
+- **Claude Code** writes a JSONL transcript per session. termhub already reads these to
+  summarise turns for its spoken announcements — read `termhub/lib` before writing a parser.
+- **OpenClaw** keeps its own session records in the gateway.
+- **voice-dictation** already saves today's dictations locally, which *is* the prompt text you
+  spoke, cleaned up.
+
+So agent sessions are a normal ingest source (`source: claude_session`, `openclaw_session`)
+with perfect fidelity and zero transcription error. The mic keeps capturing you thinking out
+loud around them, which is the part no transcript has.
+
+### Controls
+
+Always-on is only tolerable with a hard off switch that does not depend on the assistant
+working. Non-negotiable:
+
+- `pa mic pause 30m` / `pa mic on` / `pa mic status`, plus a global hotkey that pauses both
+  streams. Pausing stops *capture*, not just transcription.
+- A visible indicator whenever capture is live. Not a config flag you have to remember.
+- Calendar categories or keywords (`1:1`, `personal`, `HR`) that auto-pause capture.
+- Raw PCM never leaves the machine and never reaches an API. Transcription is the local
+  faster-whisper server. If a cloud model is ever used for distillation of audio-derived text,
+  that is a separate, explicit decision.
+
+### Why "uncomfortable" — the honest answer
+
+Nothing technical. Two things:
+
+1. **Other people are on the loopback stream.** You already record with a hardware recorder, so
+   you have made this call for yourself; recording colleagues is a different call. US state law
+   splits on one-party versus all-party consent, and INNERGY's own policy may say more than the
+   law does. Practical mitigation that costs nothing: say you record meetings, once, out loud.
+2. **Ambient capture catches the room**, including conversations that have nothing to do with
+   work and people who did not opt into anything. That is what the pause hotkey and the
+   auto-pause categories are for, and why the indicator has to be visible.
+
+Neither is a reason not to build it. Both are reasons the controls ship in the same phase as
+the capture, not a phase later.
+
+---
+
+## 8. Project → repo mapping
+
+Both answers you gave are right, and they compose: **a table you almost never edit, kept
+correct by a distiller that guesses and learns from your corrections.**
+
+### The table maintains itself
+
+You do not sit down and author a mapping. It is seeded, then corrected by exception.
+
+**Seeded automatically** (`pa projects sync`):
+
+- Every git remote under `C:\repos\*` → `project.repo_path` + `gitlab_path`.
+- Every GitLab project you are a member of → name, path, description.
+- Initial aliases from what already exists: repo directory name, GitLab project name, GitLab
+  path slug, and the human-readable name from its README's first heading.
+
+**Corrected by exception.** The distiller writes `project_id` with a `project_confidence`. Any
+commitment below the threshold shows a `?` in `pa inbox`. Fixing it is one command:
+
+```
+pa show 42 --project estimating-api
+```
+
+That does two things: sets the commitment's project, and writes a `project_alias` row with
+`origin: corrected` for whatever phrase the ask actually used ("the estimating rewrite").
+The next message that says the same thing resolves without asking. So the table is maintained
+by *using* it, and the only manual editing you would ever do is `pa projects` to rename or
+retire something.
+
+### What the distiller gets to reason with
+
+Guessing well is worth investing in, as you said. Give it real signal rather than a name-match:
+
+| Signal | Why it helps |
+|---|---|
+| Alias list, weighted by `origin` | Your own corrections outrank a seeded guess |
+| Repos you touched in the last 14 days | Asks cluster around current work |
+| Thread participants vs frequent authors of each repo | The person asking usually asks about their own area |
+| Branch names, file paths, error strings in the message | Near-conclusive when present |
+| Open MRs assigned to you | An ask during a review is almost always about that MR |
+| The prior commitment in the same thread | Threads rarely change project mid-conversation |
+
+Two rules keep it honest: it may answer **"unknown"** rather than guess (an unknown that asks
+you once beats a wrong repo that a session then works in), and every guess stores its reasoning
+so a wrong pattern is visible instead of mysterious.
+
+---
+
+## 9. Phases
 
 Each phase is independently useful and independently abandonable. Estimates are working days
 for one person who is also doing their actual job.
@@ -221,7 +379,7 @@ Register the Entra app. Wire `Softeria/ms-365-mcp-server` into Claude Code read-
 *Done when:* the device-code flow completes and Claude summarises your real inbox. If it fails
 on consent, you have learned the most important thing about this project on day one.
 
-### Phase 1 — Capture and store (2–3 days)
+### Phase 1 — Message capture and store (2–3 days)
 
 Postgres in WSL2 Docker with pgvector. Migrations. `graphile-worker`. Delta-polling ingest for
 mail, calendar and `Chat.Read` chats; GitLab ingest for issues, MRs and pipeline state. Raw
@@ -238,7 +396,17 @@ The extraction prompt and the typed writes. Identity resolution. `pa inbox`, `pa
 *Done when:* `pa brief` tells you something true that you had forgotten. That is the actual
 acceptance test and it is not a soft one.
 
-### Phase 3 — Recall (½–1 day)
+### Phase 3 — Always-on capture (2 days)
+
+Dual-stream WASAPI capture, hourly VAD trim, episode grouping and classification,
+transcription through voice-dictation's existing `transcribe_server`. The controls ship in this
+phase, not later: pause hotkey, `pa mic`, visible indicator, auto-pause categories. Agent
+sessions ingested from the Claude Code and OpenClaw transcripts, not from audio.
+
+*Done when:* a corridor conversation you did not schedule shows up in `pa brief` as a
+commitment, and the pause hotkey provably stops the writes.
+
+### Phase 4 — Recall (½–1 day)
 
 `pa-mcp` over stdio for Claude Code and HTTP for OpenClaw: `brief_me`, `search_context`,
 `get_thread`, `open_commitments`, `who_is`, `repo_state`. Hybrid tsvector + pgvector, reranked.
@@ -246,7 +414,7 @@ acceptance test and it is not a soft one.
 *Done when:* an ordinary Claude Code session in an unrelated repo can answer "what did
 [a colleague] ask me about this last week".
 
-### Phase 4 — Dispatch (2–3 days)
+### Phase 5 — Dispatch (2–3 days)
 
 The dispatcher: worktree, `BRIEF.md`, termhub session, run lifecycle, mode enforcement.
 `pa do`, `pa runs`, `pa attach`, `pa say`, `pa review`, `pa land`, `pa drop`. Add the input
@@ -254,14 +422,14 @@ route to termhub.
 
 *Done when:* a Teams ask becomes a reviewed diff without you typing the context twice.
 
-### Phase 5 — Drafts (1 day)
+### Phase 6 — Drafts (1 day)
 
 `pa draft` composes the reply from the ask plus the run's diff and MR link. `pa send` is
 interactive and explicit. `Mail.Send` / `ChatMessage.Send` scopes verified separately.
 
 *Done when:* you send an assistant-drafted reply and change fewer than half its words.
 
-### Phase 6 — OpenClaw front door (1–2 days)
+### Phase 7 — OpenClaw front door (1–2 days)
 
 Gateway in WSL2. A `pa` skill so the TUI drives the same CLI. Cron for the morning brief.
 Optionally bind Telegram for phone access. Keep ACP available for throwaway one-shots — it is
@@ -269,14 +437,14 @@ the right tool when you will not need to attach.
 
 *Done when:* you run a normal day from the OpenClaw TUI and only drop to `pa` for the unusual.
 
-### Phase 7 — Only if earned
+### Phase 8 — Only if earned
 
 Onyx for connector breadth. Graphiti when you can name a question flat retrieval got wrong. A
 Teams channel bot if the tenant ever allows it, so asks and answers share one thread.
 
 ---
 
-## 8. Risks, in the order they will actually bite
+## 10. Risks, in the order they will actually bite
 
 1. **Distillation drift.** The first extraction prompt will be wrong, and every row it wrote
    will be wrong with it. Mitigation is structural: raw payloads retained, `extracted_by`
@@ -296,13 +464,17 @@ Teams channel bot if the tenant ever allows it, so asks and answers share one th
 
 ---
 
-## 9. Open questions
+## 11. Open questions
 
-- **Repo mapping.** How does a commitment learn which repo it belongs to? First cut: an
-  explicit `project → repo` table you maintain by hand, with the distiller allowed to guess and
-  mark low confidence. Automatic inference from thread content is a phase-7 idea.
-- **Meeting capture trigger.** Manual start, calendar-triggered, or always-on? Always-on is the
-  most useful and the most uncomfortable; propose calendar-triggered with a visible indicator.
+*Resolved 2026-09-01:* repo mapping (§8 — seeded table, distiller guesses, corrections become
+aliases) and capture trigger (§7 — always-on, dual-stream, hourly batch).
+
+- **Audio retention.** Trimmed Opus is small enough to keep indefinitely; raw PCM is deleted
+  each cycle. Is there a case for deleting trimmed audio once transcribed? The transcript is
+  what gets used; the audio is only there for when the transcript is wrong.
+- **Loopback and headphones.** WASAPI loopback captures the render endpoint, so it follows the
+  default output device. Switching to headphones mid-call must not silently stop capture —
+  needs a device-change watcher, and `pa doctor` should assert both streams are live.
 - **Multi-machine.** Everything is on one box by decision. If a second machine ever runs
   dispatched work, the run table needs a `machine` column and termhub is already per-machine —
   design the column in now, use it later.

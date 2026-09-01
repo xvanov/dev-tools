@@ -27,7 +27,7 @@ from the run's own diff and the original ask. You read it and send it.
 | Piece | Role | Build or adopt |
 |---|---|---|
 | Microsoft Graph + GitLab ingest | Pull mail, calendar, chats, MRs on a delta cursor | Build (thin) |
-| Meeting capture | Local audio → transcript, no bot, no tenant approval | Adopt (Meetily / existing whisper) |
+| Always-on audio | Mic + system loopback, trimmed hourly, no bot, no tenant approval | Build on `voice-dictation`'s whisper server |
 | Postgres + pgvector | One store: raw items, distilled rows, embeddings, jobs | Adopt |
 | Distillation | LLM pass turning items into commitments / decisions / blockers | Build — this is the value |
 | `pa` CLI | Everything you type: brief, inbox, do, runs, review, draft | Build |
