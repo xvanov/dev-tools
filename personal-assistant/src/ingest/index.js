@@ -10,12 +10,13 @@ const graphCalendar = require('./graphCalendar');
 const graphChat = require('./graphChat');
 const gitlab = require('./gitlab');
 const claudeSessions = require('./claudeSessions');
+const audio = require('./audio');
 const { recordError } = require('./store');
 const { logger } = require('../log');
 
 const log = logger('ingest');
 
-const SOURCES = [graphMail, graphCalendar, graphChat, gitlab, claudeSessions];
+const SOURCES = [graphMail, graphCalendar, graphChat, gitlab, claudeSessions, audio];
 
 function byId(id) {
   return SOURCES.find((s) => s.id === id) || null;

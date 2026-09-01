@@ -150,8 +150,14 @@ const config = {
     episodeGapSeconds: envInt('PA_AUDIO_EPISODE_GAP_SECONDS', 90),
     // voice-dictation's faster-whisper server, reused rather than reinstalled.
     transcribeHost: env('PA_TRANSCRIBE_HOST', '127.0.0.1'),
-    transcribePort: envInt('PA_TRANSCRIBE_PORT', 8765),
+    transcribePort: envInt('PA_TRANSCRIBE_PORT', 47821),
     pauseFile: env('PA_AUDIO_PAUSE_FILE', path.join(dataDir, 'audio.paused')),
+    // The venv that owns soundcard/soundfile. Separate from voice-dictation's
+    // so upgrading one cannot break the other's hotkey.
+    python: env(
+      'PA_AUDIO_PYTHON',
+      path.join(dataDir, 'venv', process.platform === 'win32' ? 'Scripts/python.exe' : 'bin/python')
+    ),
   },
 
   retention: {

@@ -13,7 +13,8 @@
 param(
   [string]$Distro = 'Ubuntu',
   [switch]$SkipDatabase,
-  [switch]$NoWorker
+  [switch]$NoWorker,
+  [switch]$NoAudio
 )
 
 $ErrorActionPreference = 'Stop'
@@ -80,6 +81,38 @@ if (-not $NoWorker) {
     -Settings $workerSettings -Description 'personal-assistant ingest, distillation and run reconciliation' `
     -Force | Out-Null
   Write-Host "    registered (not started — start it once .env is filled in)"
+}
+
+# --- always-on capture -------------------------------------------------------
+
+if (-not $NoAudio) {
+  $dataDir = Join-Path $env:LOCALAPPDATA 'personal-assistant'
+  $venv = Join-Path $dataDir 'venv'
+  $venvPy = Join-Path $venv 'Scripts\python.exe'
+
+  # Its own venv, not voice-dictation's: upgrading one must never be able to
+  # break the other's hotkey.
+  if (-not (Test-Path $venvPy)) {
+    Write-Host "==> creating the capture venv"
+    python -m venv $venv
+  }
+  Write-Host "==> installing capture dependencies"
+  & $venvPy -m pip install -q --disable-pip-version-check -r (Join-Path $root 'audio\requirements.txt')
+
+  # One task per stream. Two processes rather than one because a device error
+  # on the loopback side (headphones unplugged mid-call) must not take the
+  # microphone down with it.
+  foreach ($stream in @('mic', 'loopback')) {
+    $action = New-ScheduledTaskAction -Execute $venvPy `
+      -Argument "audio\capture.py --stream $stream" -WorkingDirectory $root
+    $trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
+    $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
+      -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1)
+    Register-ScheduledTask -TaskName "pa-capture-$stream" -Action $action -Trigger $trigger `
+      -Settings $settings -Description "personal-assistant always-on $stream capture" -Force | Out-Null
+  }
+  Write-Host "    pa-capture-mic and pa-capture-loopback registered (not started)"
+  Write-Host "    capture is always-on once started; `pa mic pause 30` stops it, `pa mic on` resumes"
 }
 
 # --- .env --------------------------------------------------------------------

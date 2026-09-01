@@ -1,0 +1,11 @@
+# Deliberately small. Transcription is not here: it goes over TCP to
+# voice-dictation's always-warm faster-whisper server, so there is no second
+# model download, no second CUDA setup, and no GPU contention with the
+# dictation hotkey.
+#
+# soundcard rather than sounddevice: WASAPI loopback capture (recording what
+# the speakers play) is what gives speaker attribution without a diarization
+# model, and sounddevice 0.5.x does not expose it.
+soundcard>=0.4.3
+soundfile>=0.12.1
+numpy>=1.24
