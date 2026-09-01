@@ -13,7 +13,7 @@ Internal tooling for AI-assisted workflows: push-to-talk dictation, batch transc
 | [keep-awake](./keep-awake/) | Keeps a Windows session awake (F15 tap + execution-state) so it never idle-logs-out; auto-starts at logon |
 | [termhub](./termhub/) | Mobile-friendly web terminal over Tailscale — one server per machine; open/reattach shell sessions, incl. Claude Code (Windows + Linux) |
 | [disk-janitor](./disk-janitor/) | Safe, scheduled reclamation of rebuildable disk space (package caches + aged temp/cache); whitelist-only, never touches user data (Windows + Ubuntu/Debian) |
-| [personal-assistant](./personal-assistant/) | *(planning)* Context layer over Outlook/Teams/GitLab/meetings that distils asks into commitments and dispatches them to Claude Code sessions you can attach to |
+| [personal-assistant](./personal-assistant/) | Context layer over Outlook/Teams/GitLab/meetings that distils asks into typed commitments, dispatches them to Claude Code sessions you can attach to, and drafts the reply when the work lands |
 
 ## Quick start
 
@@ -102,6 +102,19 @@ phone). Open terminals, switch between them, scroll back, and reattach after dis
 Mobile-friendly, with an on-screen key bar (Ctrl-C, arrows, Esc, Tab) and a one-click
 Claude Code launcher.
 
+### personal-assistant (Windows)
+
+```powershell
+cd personal-assistant
+.\windows\install.ps1
+copy .env.example .env        # fill in the Entra client id, Anthropic and GitLab keys
+node bin\pa.js login
+node bin\pa.js doctor
+```
+
+Then `pa brief` for what's on you, `pa do <id> --mode mr` to hand a piece of work to a Claude
+Code session in its own worktree, and `pa draft <run>` for the reply when it lands.
+
 ## Repo layout
 
 ```
@@ -111,7 +124,9 @@ dev-tools/
 ├── summarize-recording/      # transcribe + Azure summarization CLI
 ├── claude-ctx-statusline/    # Claude Code statusLine helper
 ├── keep-awake/               # Windows keep-session-awake helper
-└── termhub/                  # web terminal over Tailscale (agent + hub + xterm.js UI)
+├── termhub/                  # web terminal over Tailscale (agent + hub + xterm.js UI)
+├── disk-janitor/             # scheduled, whitelist-only disk reclamation
+└── personal-assistant/       # context layer: ingest → distil → recall → dispatch → draft
 ```
 
 Each tool has its own README, requirements, and install scripts.

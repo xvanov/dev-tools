@@ -6,6 +6,31 @@ answer is worth about half as much as one that records the abandoned ones too.
 
 ---
 
+## 0. Status — 1 September 2026
+
+Phases 0 through 6 are built and on `main`; phase 7's integration points are written but the
+gateway itself is not installed. What that means concretely:
+
+| Phase | State |
+|---|---|
+| 1 — message capture and store | **built.** Postgres 16 + pgvector in WSL, delta-polling ingest for mail, calendar, Teams chats, GitLab todos/MRs/issues, and your own Claude Code transcripts. |
+| 2 — distil | **built.** Extraction prompt, identity resolution, the project scorer, `pa inbox` / `show` / `brief`. |
+| 3 — always-on capture | **built.** Dual-stream WASAPI capture, hourly VAD trim, episode assembly, transcription through voice-dictation's server. Controls shipped with it. |
+| 4 — recall | **built.** Read-only MCP server: `brief_me`, `search_context`, `get_thread`, `open_commitments`, `who_is`, `repo_state`. |
+| 5 — dispatch | **built.** Worktree, generated `BRIEF.md`, termhub session, enforced modes, `pa review` / `land` / `drop`. termhub grew `POST /api/sessions/:id/input` for `pa say`. |
+| 6 — drafts | **built.** `pa draft` writes from the ask and the actual diff; `pa send` is the only outbound path and is interactive. |
+| 7 — OpenClaw front door | **partial.** The skill and the MCP registration are written (`integrations/`); installing the gateway in WSL2 and binding a channel is not done. |
+| 8 — Onyx, Graphiti, Teams bot | not started, by design. The triggers for revisiting each are in §1. |
+
+Unexercised until credentials exist: everything behind Microsoft Graph, GitLab, and the
+Anthropic API. `pa doctor` names exactly which are missing.
+
+Two deviations from the plan below, both recorded in §1: the language is plain CommonJS
+JavaScript rather than TypeScript (matching termhub — no build step means `git pull` is the
+whole deployment), and there is no job queue at all (see the Queue row).
+
+---
+
 ## 1. Decisions already taken
 
 | Decision | Choice | Why |
