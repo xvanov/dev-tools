@@ -13,7 +13,8 @@ answer is worth about half as much as one that records the abandoned ones too.
 | Host | Everything on the Windows box | Repos, toolchain and termhub already live there. Accepted cost: the assistant sleeps when the machine does. |
 | Primary surface | OpenClaw TUI in the terminal | Where the work already happens. No tenant approval needed, unlike a Teams bot. |
 | Session substrate | **termhub sessions**, not tmux and not ACP | Only substrate where you can *attach to a running agent* from a browser on your phone. ACP can be steered but never attached to; native OpenClaw subagents can't even be steered. |
-| Store | One Postgres + pgvector | Rows, jsonb, embeddings and full-text in one engine with one backup. |
+| Store | One Postgres + pgvector, **in WSL** | Rows, jsonb, embeddings and full-text in one engine with one backup. Not Docker: this machine's Docker Desktop runs the Windows container engine, and there is no Windows Postgres image. |
+| Queue | **None** — work to do is a query | A queue table can get stuck, leak, or need draining after a crash. An anti-join against `distillation` cannot. Replaces the graphile-worker line in the original plan. |
 | Autonomy | Per-task mode chosen at dispatch | Not a global setting. See §6. |
 | Onyx | **Deferred** to phase 8 | ~16 GB of Docker (Postgres + Vespa + Redis + model server) to get connectors we're writing thin versions of anyway. Revisit when SharePoint/Confluence/HubSpot breadth actually matters. |
 | Memory frameworks (Mem0, Letta, Graphiti, Cognee) | Deferred | They solve "agent remembers the user". Our problem is ingesting other people's messages. Add Graphiti only when a real question is answered wrong by flat retrieval. |
@@ -30,7 +31,9 @@ OpenClaw requires WSL2 on Windows. Everything else wants to be native, next to `
 Windows host
 ├─ WSL2
 │   ├─ openclaw gateway            (TUI, sessions, skills, MCP client)
-│   └─ docker: postgres + pgvector (:5432, forwarded to Windows localhost)
+│   ├─ postgres 16 + pgvector      (:5433, reached over WSL's localhost forwarding)
+│   └─ a `sleep infinity` logon task — WSL kills the distro, and Postgres with
+│      it, once the last wsl.exe client exits, whatever systemd thinks
 └─ native Windows (Node, same as termhub)
     ├─ pa-ingest workers           (Graph delta polling, GitLab, meetings)
     ├─ pa-dispatch                 (:7300 — worktrees, termhub sessions, runs)
@@ -88,7 +91,8 @@ replaceable without touching the others.
 anything interprets it. This is what makes distillation drift survivable: when the extraction
 prompt improves, re-run it over history instead of re-reading a year of email.
 
-**Store** → one Postgres. Jobs live in it too (`graphile-worker`); no Redis, no broker.
+**Store** → one Postgres, inside the WSL distro. No Redis, no broker, and no job table: "work
+to do" is an anti-join, which cannot get stuck or need draining after a crash.
 
 **Distill** → the layer that earns its keep. An LLM pass per item emits typed rows. Everything
 downstream reads rows, never prose. This is the difference between "find me passages about
@@ -255,7 +259,7 @@ a VAD bug then costs you a bloated file, not a lost conversation.
 continuous  →  16 kHz mono PCM per stream, rolled hourly
                 ~115 MB/hour/stream, ~2.3 GB for a 10-hour day
      │
-     ▼  on the hour (a graphile-worker job)
+     ▼  on the hour (a worker pass)
 trim        →  Silero VAD; drop silence, keep 1.5 s of pre-roll before each speech run
      │         a normal day is ~10-20% speech, so ~250 MB/day survives
      ▼
@@ -381,7 +385,7 @@ on consent, you have learned the most important thing about this project on day 
 
 ### Phase 1 — Message capture and store (2–3 days)
 
-Postgres in WSL2 Docker with pgvector. Migrations. `graphile-worker`. Delta-polling ingest for
+Postgres 16 + pgvector inside the WSL distro. Migrations. Delta-polling ingest for
 mail, calendar and `Chat.Read` chats; GitLab ingest for issues, MRs and pipeline state. Raw
 jsonb retained. `pa sync`, `pa doctor`.
 

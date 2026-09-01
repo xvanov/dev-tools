@@ -36,14 +36,34 @@ org's conventions is worse than none.
 
 ## Conventions
 
-- **Language:** TypeScript, matching termhub. Node's own test runner, as termhub uses.
+- **Language:** plain CommonJS JavaScript, matching termhub — which is not TypeScript, and is
+  the better for it: no build step means `git pull` is the whole deployment. Tests are
+  `assert`-based files run directly by `node`, as termhub's are.
 - **Migrations:** plain numbered SQL, applied by a script. No ORM migrations framework.
+- **No job queue.** "Work to do" is a query — items with no distillation row at the current
+  prompt version. A queue table can get stuck, leak, or need draining after a crash; a query
+  cannot. The worker is a scheduler of periodic passes, and passes never overlap themselves.
 - **Secrets:** never in the repo, never in Postgres in plaintext. Graph refresh tokens go in a
   DPAPI-protected file under `%LOCALAPPDATA%\personal-assistant\`; GitLab and API keys come
   from the environment.
 - **Times:** store UTC, render local. Every `due_at` the distiller writes is absolute — a row
   that says "Friday" is a bug.
 - **Logs:** message bodies are not log material. Log ids, counts, and durations.
+
+## The store lives in WSL, and WSL will drop it
+
+Docker Desktop on the target machine runs the **Windows** container engine, and there is no
+Windows image for Postgres, let alone one with pgvector. So the store is Postgres 16 +
+pgvector installed inside the existing WSL Ubuntu distro, on port 5433, reached from Windows
+over WSL's localhost forwarding. `docker-compose.yml` stays in the tree as the right answer on
+a machine whose Docker runs Linux containers.
+
+The non-obvious part: **WSL terminates a distro once the last `wsl.exe` client exits**, taking
+Postgres with it, even though systemd is running it as a service. The symptom is
+`ECONNREFUSED 127.0.0.1:5433` at unpredictable intervals, minutes after everything worked. The
+fix is the `pa-wsl-keepalive` logon task that `windows/install.ps1` registers — one
+`sleep infinity` holding the distro open. If connections start failing at random, check that
+task before suspecting anything in this codebase.
 
 ## Reading termhub before writing dispatch
 

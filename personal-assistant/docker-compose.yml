@@ -1,0 +1,35 @@
+# The store. One container, bound to loopback only.
+#
+# Port 5433 rather than 5432 on purpose: this is a personal store that must not
+# collide with — or be mistaken for — any other Postgres on the machine.
+#
+# `pgvector/pgvector` rather than plain `postgres` because the schema's first
+# migration creates the `vector` extension, and installing it by hand on Windows
+# is an afternoon nobody needs to spend.
+
+services:
+  db:
+    image: pgvector/pgvector:pg17
+    container_name: pa-postgres
+    restart: unless-stopped
+    # Loopback only. Nothing about this database should be reachable from the
+    # tailnet, let alone anywhere else — it holds your mail.
+    ports:
+      - "127.0.0.1:5433:5432"
+    environment:
+      POSTGRES_USER: pa
+      POSTGRES_PASSWORD: pa
+      POSTGRES_DB: pa
+      # Deterministic collation, so full-text ranking does not shift under a
+      # base-image upgrade.
+      POSTGRES_INITDB_ARGS: "--locale=C --encoding=UTF8"
+    volumes:
+      - pa-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pa -d pa"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  pa-pgdata:

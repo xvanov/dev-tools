@@ -1,0 +1,27 @@
+{
+  "name": "personal-assistant",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Context layer over Outlook, Teams, GitLab and recorded meetings that distils asks into commitments and dispatches them to Claude Code sessions.",
+  "license": "MIT",
+  "bin": {
+    "pa": "bin/pa.js"
+  },
+  "scripts": {
+    "pa": "node bin/pa.js",
+    "worker": "node src/worker.js",
+    "mcp": "node src/mcp/server.js",
+    "migrate": "node src/db/migrate.js",
+    "test": "node test/parseArgs.test.js && node test/projects.test.js && node test/distill.test.js && node test/hybrid.test.js && node test/brief.test.js && node test/dispatch.test.js"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.72.0",
+    "@azure/msal-node": "^3.2.0",
+    "@modelcontextprotocol/sdk": "^1.12.0",
+    "pg": "^8.13.0",
+    "ws": "^8.18.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
