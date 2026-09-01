@@ -29,6 +29,7 @@ const build = require('./lib/build');
 const { suggestDirs } = require('./lib/dirs');
 const { stageClipboardImage, clipboardTarget, probeClipboard } = require('./lib/clipboard');
 const { saveUploadedFile, saveImageAttachment } = require('./lib/uploads');
+const { applyInput } = require('./lib/sessionInput');
 const tts = require('./lib/tts');
 const summarizer = require('./lib/summarize');
 const { VoiceHub, wakeWord: voiceWakeWord } = require('./lib/voiceHub');
@@ -296,6 +297,16 @@ function createSessiond({ entry = 'sessiond', port: serverPort = DEFAULT_SESSION
         archive.upsert(session.archiveEntry());
         if (body.cwd && !session.cwdFallback) recents.add(body.cwd);
         return sendJson(res, 201, session.info());
+      }
+
+      // Type into a live session without holding a websocket open. The contract
+      // lives in lib/sessionInput.js so it can be tested without a PTY.
+      const inputMatch = /^\/api\/sessions\/([^/]+)\/input$/.exec(pathname);
+      if (req.method === 'POST' && inputMatch) {
+        const session = sessions.get(decodeURIComponent(inputMatch[1]));
+        const body = await readBody(req).catch(() => ({}));
+        const { status, payload } = applyInput(session, body);
+        return sendJson(res, status, payload);
       }
 
       // Re-open a session archived from a previous run (e.g. before a reboot).

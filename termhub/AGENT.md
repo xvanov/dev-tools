@@ -91,7 +91,10 @@ HTTP API (served by `sessiond`, proxied by `front`): `GET /api/info`, `GET /api/
 (returns `{sessions, restorable}` — live PTYs plus archived sessions from a previous run),
 `POST /api/sessions` (`{cwd?, command?, title?, cols, rows}`), `POST /api/sessions/:id/restore`
 (re-open an archived session), `DELETE /api/sessions/:id` (kill a live session and/or forget an
-archived one), `PATCH /api/sessions/:id` (`{title}`), `GET /api/recents`, `GET /api/dirs?path=`,
+archived one), `PATCH /api/sessions/:id` (`{title}`),
+`POST /api/sessions/:id/input` (`{data, submit?}` → `{ok, bytes}`; types into a live session
+without holding a socket open — `submit:false` fills the prompt without pressing return, so text
+written by a model can be staged for a human to read and send), `GET /api/recents`, `GET /api/dirs?path=`,
 `GET /api/ping` (sessiond liveness **and identity**: `{ok, sessions, entry, pid, port, machine,
 commit, startedAt}` — see *One process per port*). Attachments take a **raw binary body** with the filename in
 an URI-encoded `X-File-Name` header: `POST /api/sessions/:id/clipboard-image` →

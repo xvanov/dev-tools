@@ -5,10 +5,11 @@
 // ACP runs can be steered but never joined; OpenClaw's native subagents can be
 // neither.
 //
-// Creating a session is REST. Typing into one is a websocket — termhub's PTY
-// stream takes `{type:'input', data}` frames — so `say()` opens a socket, writes
-// once, and closes. If a future termhub grows `POST /api/sessions/:id/input`
-// (it should, and its own UI would use it), prefer that and delete this.
+// Creating a session is REST, and so is typing into one:
+// `POST /api/sessions/:id/input` was added to termhub for exactly this. The
+// websocket path below stays as a fallback for a machine running an older
+// termhub, because a dispatcher that cannot steer a stuck agent is worse than
+// one that has two ways to do it.
 
 const WebSocket = require('ws');
 const { config } = require('../config');
@@ -72,10 +73,25 @@ async function killSession(id) {
   }
 }
 
-// Types text at a live session. The newline is separate and deliberate: a
-// caller that wants to fill the prompt without submitting it (to let you read
-// what is about to be sent) passes `submit: false`.
-function say(id, text, { submit = true, timeoutMs = 5000 } = {}) {
+// Types text at a live session. `submit: false` fills the prompt without
+// pressing return, so text a model wrote can wait for you to read it.
+async function say(id, text, { submit = true, timeoutMs = 5000 } = {}) {
+  try {
+    await api(`/api/sessions/${encodeURIComponent(id)}/input`, {
+      method: 'POST',
+      body: { data: text, submit },
+    });
+    return true;
+  } catch (err) {
+    if (err.status === 404 && /no such session/i.test(err.message)) throw err;
+    // 404 on the *route* (an older termhub) is indistinguishable here from a
+    // missing session, so fall through to the socket and let it decide.
+    log.debug('input route unavailable, falling back to the PTY socket', { message: err.message });
+    return sayOverSocket(id, text, { submit, timeoutMs });
+  }
+}
+
+function sayOverSocket(id, text, { submit = true, timeoutMs = 5000 } = {}) {
   const url = base().replace(/^http/, 'ws') + `/ws/term/${encodeURIComponent(id)}`;
 
   return new Promise((resolve, reject) => {
