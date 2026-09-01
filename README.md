@@ -13,6 +13,7 @@ Internal tooling for AI-assisted workflows: push-to-talk dictation, batch transc
 | [keep-awake](./keep-awake/) | Keeps a Windows session awake (F15 tap + execution-state) so it never idle-logs-out; auto-starts at logon |
 | [termhub](./termhub/) | Mobile-friendly web terminal over Tailscale — one server per machine; open/reattach shell sessions, incl. Claude Code (Windows + Linux) |
 | [disk-janitor](./disk-janitor/) | Safe, scheduled reclamation of rebuildable disk space (package caches + aged temp/cache); whitelist-only, never touches user data (Windows + Ubuntu/Debian) |
+| [personal-assistant](./personal-assistant/) | *(planning)* Context layer over Outlook/Teams/GitLab/meetings that distils asks into commitments and dispatches them to Claude Code sessions you can attach to |
 
 ## Quick start
 
