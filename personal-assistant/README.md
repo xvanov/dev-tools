@@ -82,7 +82,7 @@ source cursor, the distillation backlog, and whether termhub is reachable.
 
 | Value | Needed for | Notes |
 |---|---|---|
-| `PA_GRAPH_CLIENT_ID` | mail, calendar, Teams chats | An Entra app registration: single tenant, public client flows enabled, redirect `http://localhost`. Delegated `Mail.Read`, `Calendars.Read`, `Chat.Read`. |
+| `PA_GRAPH_CLIENT_ID` | mail, calendar, Teams chats | An Entra app registration: single tenant, **Allow public client flows = Yes**, no redirect URI (device-code sign-in needs none). Delegated `Mail.Read`, `Calendars.Read`, `Chat.Read`, `User.Read`. |
 | `ANTHROPIC_API_KEY` | distillation and drafts | Without it the store still fills and search still works; nothing gets distilled. |
 | `PA_GITLAB_TOKEN` | MRs, issues, todos, opening draft MRs | `read_api` is enough unless you want `pa land` to open the MR, which needs `api`. |
 | `AZURE_OPENAI_*` | semantic search | Optional. Without it search is full-text only — good on names and ids, weaker on paraphrase. |
