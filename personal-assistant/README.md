@@ -87,7 +87,9 @@ source cursor, the distillation backlog, and whether termhub is reachable.
 | `PA_GITLAB_TOKEN` | MRs, issues, todos, opening draft MRs | `read_api` is enough unless you want `pa land` to open the MR, which needs `api`. |
 | `AZURE_OPENAI_*` | semantic search | Optional. Without it search is full-text only — good on names and ids, weaker on paraphrase. |
 
-Everything else has a working default. See [`.env.example`](./.env.example).
+Everything else has a working default. [`SETUP.md`](./SETUP.md) walks through where each of
+these actually comes from, click by click — which portal, which menu, which button — and
+[`.env.example`](./.env.example) is the annotated template.
 
 ### The permissions wall
 
