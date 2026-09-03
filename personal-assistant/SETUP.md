@@ -104,7 +104,9 @@ consent for applications* set to "Do not allow"), not a property of the permissi
 `Mail.Read`, `Calendars.Read` and `Chat.Read` are all documented as not requiring admin consent
 by themselves.
 
-Ask your Entra/M365 admin, naming exactly this:
+[`IT-REVIEW.md`](./IT-REVIEW.md) is written to be pasted into that ticket — it answers cost,
+scoping, revocation and where data goes, and raises the two things IT would otherwise find on
+their own. Short version to open with:
 
 > Please grant admin consent for the app registration `personal-assistant`
 > (client ID `<yours>`) for the delegated Microsoft Graph permissions `Mail.Read`,

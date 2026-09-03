@@ -98,7 +98,8 @@ these actually comes from, click by click — which portal, which menu, which bu
 in which case even `Mail.Read` asks for admin approval. Team **channel** messages
 (`ChannelMessage.Read.All`) and Teams meeting transcripts via Graph need admin consent
 regardless, which is why meetings are recorded locally instead. [`PLAN.md`](./PLAN.md) §2 has
-the detail and the fallback.
+the detail and the fallback, and [`IT-REVIEW.md`](./IT-REVIEW.md) is the page to send whoever
+has to approve it.
 
 ## Using it
 
