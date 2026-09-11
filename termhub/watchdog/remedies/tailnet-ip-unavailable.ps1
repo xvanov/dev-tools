@@ -50,6 +50,22 @@
 # both healthy on loopback the whole time. So nothing was broken about termhub itself; a
 # human had to run `tailscale login` on the box.
 #
+# WHAT THE 2026-09-11 ESCALATION RULED OUT (LAP-US101): re-verified independently with
+# `tailscale status --json` - BackendState really is NeedsLogin, AuthURL present, the
+# same as 2026-08-19. Front (pid 22232) and sessiond (pid 21140, 2 live sessions) were
+# both already healthy on 127.0.0.1:7000 - this remedy's own previous run had already put
+# the front on loopback and this run's idempotent branch confirmed it, unchanged. No
+# code defect in the NeedsLogin path; the remedy did exactly what section 4 documents.
+# While re-reading the backend-state branch below to confirm that, found and fixed a
+# real bug unrelated to today's outage: 'Starting' was lumped in with 'NeedsLogin' and
+# got told "this node is LOGGED OUT", which is wrong - Starting is what BackendState
+# reads for a few seconds during a normal reconnect (e.g. right after the service-start
+# branch above, or after `tailscale up` returns), not a logged-out node. Cause (2) of
+# this file's own header says a transient answer should be polled, not concluded from;
+# the old code did that for "no IP yet" but not for "state says Starting". Fixed by
+# giving Starting its own branch that polls a little longer instead of printing the
+# login-URL message, so a node that is merely still coming up is never told to re-login.
+#
 # On a logged-out node this signature CANNOT clear, so the watchdog keeps re-diagnosing
 # it. The escalation budget (>=10 min apart, 3/h, 8/day) is what stops that becoming a
 # model woken every two minutes - that is the designed outcome, not a gap in this
@@ -202,7 +218,15 @@ if (-not $ip -and (Get-RemainingSec) -gt 30) {
       if ($r.Text) { Write-Host "remedy: tailscale up said: $($r.Text -replace '\r?\n', ' | ')" }
       $ip = Wait-TailnetIp -TimeoutSec 5
     }
-    elseif ($backend.State -eq 'NeedsLogin' -or $backend.State -eq 'Starting') {
+    elseif ($backend.State -eq 'Starting') {
+      # Starting is what a node reads for a few seconds during a normal reconnect
+      # (e.g. right after the service-start branch above, or after `tailscale up`
+      # returns) - it is NOT logged out, and telling a human to re-login here would be
+      # actively wrong. Poll a bit longer instead of concluding anything from one read.
+      Write-Host "remedy: BackendState=Starting (reconnecting) - waiting rather than concluding logged-out."
+      $ip = Wait-TailnetIp -TimeoutSec ([Math]::Min(10, [Math]::Max(0, (Get-RemainingSec) - 5)))
+    }
+    elseif ($backend.State -eq 'NeedsLogin' -or $backend.State -eq 'NeedsMachineAuth') {
       # Deliberately no `tailscale up` here - see cause (4). It cannot succeed, and it
       # does not fail fast.
       $where = if ($backend.AuthUrl) { $backend.AuthUrl } else { "(run 'tailscale login' on the machine to get one)" }
