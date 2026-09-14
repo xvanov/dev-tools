@@ -356,6 +356,11 @@ function createSessiond({ entry = 'sessiond', port: serverPort = DEFAULT_SESSION
         const body = await readBody(req);
         session.rename(body.title);
         archive.patch(id, { title: session.title });
+        // `paused` opts a session out of idle tracking (lib/idleHub.js reads it
+        // through isTracked()) without touching the PTY. Deliberately not
+        // persisted to the archive: it's a live-monitoring toggle, meaningless
+        // for a session that isn't currently running.
+        if (body.paused !== undefined) session.setPaused(body.paused);
         return sendJson(res, 200, session.info());
       }
 

@@ -91,7 +91,8 @@ HTTP API (served by `sessiond`, proxied by `front`): `GET /api/info`, `GET /api/
 (returns `{sessions, restorable}` — live PTYs plus archived sessions from a previous run),
 `POST /api/sessions` (`{cwd?, command?, title?, cols, rows}`), `POST /api/sessions/:id/restore`
 (re-open an archived session), `DELETE /api/sessions/:id` (kill a live session and/or forget an
-archived one), `PATCH /api/sessions/:id` (`{title}`),
+archived one), `PATCH /api/sessions/:id` (`{title?, paused?}` — `paused` opts a session out of
+idle tracking without touching its PTY; see *Idle tracking* below),
 `POST /api/sessions/:id/input` (`{data, submit?}` → `{ok, bytes}`; types into a live session
 without holding a socket open — `submit:false` fills the prompt without pressing return, so text
 written by a model can be staged for a human to read and send), `GET /api/recents`, `GET /api/dirs?path=`,
@@ -1073,6 +1074,17 @@ entry is `[Request interrupted by user]`, which is a real wait.
 
 **Shells are not tracked.** A shell at its prompt is a tool waiting for you by design; counting it
 would make every day look terrible and tell you nothing actionable.
+
+**Pause (the sidebar's ⏸) is the same exclusion, opted into by the user instead of built into the
+kind.** `PATCH /api/sessions/:id {paused: true}` sets `session.paused`, and `isTracked()`
+(`lib/idleState.js`) refuses a paused session exactly like it refuses a shell. The one thing that
+takes care beyond flipping the flag: a session paused mid-`waiting` must not leave its episode
+frozen open, counting nothing further but also never closing — `_tick()`'s cleanup loop (the same
+one that closes a dead session's episode) treats "alive but no longer tracked" the same as "gone",
+minus the exit push, so pausing flushes the in-flight stretch and unpausing starts a clean one from
+that moment rather than resuming the old clock. Deliberately not persisted to the archive or
+`sessions.json`: it is a live-monitoring toggle with nothing to mean for a session that isn't
+currently running, so a restored session always comes back unpaused.
 
 Load-bearing details:
 

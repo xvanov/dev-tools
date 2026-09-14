@@ -204,6 +204,16 @@ class Session {
     // keep in sync with the session map.
     this.voiceArmed = false;
 
+    // Opt this session out of idle tracking (the sidebar's ⏸ toggle) without
+    // touching the PTY at all — a session you know is fine to leave silent (a
+    // long-running build, a shell you're deliberately stepping away from)
+    // shouldn't buzz your phone or count toward today's idle total. Lives here
+    // for the same reason voiceArmed does: info() reports it for free, and it
+    // needs no id set to keep in sync. lib/idleHub.js reads it through
+    // isTracked() so a paused session's in-flight episode closes out cleanly
+    // rather than freezing mid-count.
+    this.paused = false;
+
     // Lifecycle hooks (sessiond wires these to the on-disk archive). Public so
     // they can also be assigned after construction.
     this.onExit = onExit || null;
@@ -627,6 +637,11 @@ class Session {
     return this.title;
   }
 
+  setPaused(paused) {
+    this.paused = !!paused;
+    return this.paused;
+  }
+
   kill() {
     this._discoveryAborted = true; // stop an in-flight opencode session-id discovery loop
     this._stopOpencodeApi();       // and its event-stream reconnect loop, which would retry forever
@@ -657,6 +672,7 @@ class Session {
       // silent. Good enough to show a "working" dot vs nothing when idle.
       busy: this.alive && (Date.now() - this.lastActivity) < 1500,
       voiceArmed: this.voiceArmed,
+      paused: this.paused,
       // Can this session ever produce a spoken announcement? The rule is no
       // longer "is it claude" — an opencode termhub launched with a --port can
       // too, and one from an older build cannot — so it is answered here rather

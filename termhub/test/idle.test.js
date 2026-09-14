@@ -159,6 +159,12 @@ ok('shells are not tracked', () => {
   assert.strictEqual(isTracked({ kind: 'opencode' }), true);
 });
 
+ok('a paused session is not tracked, regardless of kind', () => {
+  assert.strictEqual(isTracked({ kind: 'claude', paused: true }), false);
+  assert.strictEqual(isTracked({ kind: 'opencode', paused: true }), false);
+  assert.strictEqual(isTracked({ kind: 'claude', paused: false }), true);
+});
+
 console.log('idleStore — the episode log');
 
 const DAY = '2026-08-16';

@@ -85,7 +85,7 @@ function uiSignature() {
     // badge's clock ticks every second, and putting it here would rebuild the
     // whole sidebar once a second — exactly the churn this signature exists to
     // prevent. tickIdleBadges() writes the elapsed text in place instead.
-    .map((s) => `${s.id}:${s.alive ? 1 : 0}:${s.busy ? 1 : 0}:${s.title || ''}:${s.modelLabel || ''}:${voice.armed.has(s.id) ? 1 : 0}:${s.idleState || ''}`).join('|');
+    .map((s) => `${s.id}:${s.alive ? 1 : 0}:${s.busy ? 1 : 0}:${s.title || ''}:${s.modelLabel || ''}:${voice.armed.has(s.id) ? 1 : 0}:${s.idleState || ''}:${s.paused ? 1 : 0}`).join('|');
   const rest = state.restorable
     .map((r) => `${r.id}:${r.kind}:${(r.history || []).length}`).join('|');
   const open = [...state.open.values()].map((t) => `${t.id}:${t.title || ''}`).join(',');
@@ -181,6 +181,12 @@ function renderSessions() {
       : armed
         ? (voice.unlocked ? 'Speaking this session — tap to stop' : 'Armed, but audio is locked — tap "Enable voice" below')
         : 'Speak this session when it needs you';
+    // ⏸ opts a session out of idle tracking without touching its PTY — for a
+    // session you know is fine to leave silent (a long build, a terminal
+    // you're deliberately stepping away from) rather than one termhub never
+    // tracked to begin with, so it's only offered on kinds isTracked() ever
+    // counts (see lib/idleState.js).
+    const trackable = s.kind === 'claude' || s.kind === 'opencode';
     item.innerHTML =
       `<span class="status${s.busy ? ' busy' : ''}" title="${s.busy ? 'working' : 'idle'}"></span>` +
       `<span class="title-wrap">` +
@@ -190,6 +196,9 @@ function renderSessions() {
       idleBadgeHtml(s) +
       `<button class="voice${canSpeak ? '' : ' unsupported'}${armed ? (voice.unlocked ? ' armed' : ' armed locked') : ''}"` +
         ` title="${escapeHtml(voiceTitle)}">&#128266;</button>` +
+      (trackable
+        ? `<button class="pause${s.paused ? ' paused' : ''}" title="${s.paused ? 'Resume idle monitoring' : 'Pause idle monitoring'}">${s.paused ? '&#9654;' : '&#9208;'}</button>`
+        : '') +
       `<button class="rename" title="Rename session">&#9998;</button>` +
       `<button class="kill" title="Kill session">&#10005;</button>`;
     // The whole row opens the terminal — clicking anywhere but the buttons
@@ -200,6 +209,8 @@ function renderSessions() {
       if (!canSpeak) { toast('Spoken announcements only work for Claude sessions', 'err').close(4000); return; }
       toggleVoiceArm(s.id, !armed);
     };
+    const pauseBtn = item.querySelector('.pause');
+    if (pauseBtn) pauseBtn.onclick = (ev) => { ev.stopPropagation(); togglePause(s.id, !s.paused); };
     item.querySelector('.rename').onclick = (ev) => { ev.stopPropagation(); renameSession(s.id, s.title); };
     item.querySelector('.kill').onclick = (ev) => { ev.stopPropagation(); killSession(s.id); };
     list.appendChild(item);
@@ -238,6 +249,14 @@ function fmtIdle(ms) {
 }
 
 function idleBadgeHtml(s) {
+  // Paused overrides everything else the idle state could say — the server
+  // stops advancing it the moment you pause (see lib/idleHub.js), so any
+  // idleState left over is just the last thing it was before you paused it,
+  // not something still true.
+  if (s.alive && s.paused) {
+    return `<span class="idle-badge paused" title="Idle tracking paused — won't notify until you resume it">`
+      + `⏸ paused</span>`;
+  }
   if (!s.alive || !s.idleState || s.idleState === 'working') return '';
   const cls = s.idleState === 'limited' ? 'limited' : 'waiting';
   const title = s.idleState === 'limited'
@@ -1075,6 +1094,19 @@ async function renameSession(id, current) {
   } catch {}
   const t = state.open.get(id);        // keep the open terminal's label in sync
   if (t) t.title = title;
+  refresh();
+}
+
+// ⏸ toggle: opt a session out of (or back into) idle tracking. The server
+// (lib/idleHub.js) closes its in-flight episode the moment this lands, so
+// pausing mid-"waiting" doesn't leave a stale clock running, and unpausing
+// starts a fresh one rather than resuming the old count.
+async function togglePause(id, paused) {
+  try {
+    await api(`/api/sessions/${encodeURIComponent(id)}`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ paused }),
+    });
+  } catch {}
   refresh();
 }
 

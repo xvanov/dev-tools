@@ -107,8 +107,11 @@ function shouldAnnounceExit({ exitCode, lastState, killed, sinceInputMs }) {
 // Which sessions are accounted at all. Shells are deliberately out: a shell
 // sitting at its prompt is a tool waiting for you BY DESIGN, and counting it
 // would make every day look terrible while telling you nothing you can act on.
+// A `paused` session (the sidebar's ⏸ toggle) is out too, and for the user's
+// own opposite reason: it's a session THEY chose to stop monitoring, not one
+// that was never worth monitoring.
 function isTracked(session) {
-  return !!session && (session.kind === 'claude' || session.kind === 'opencode');
+  return !!session && (session.kind === 'claude' || session.kind === 'opencode') && !session.paused;
 }
 
 module.exports = {

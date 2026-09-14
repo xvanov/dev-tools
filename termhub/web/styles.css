@@ -94,11 +94,17 @@ html, body {
   font-size: 10px; color: var(--fg-dim);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.session-item .voice, .session-item .rename, .session-item .kill {
+.session-item .voice, .session-item .pause, .session-item .rename, .session-item .kill {
   background: none; border: none; color: var(--fg-dim); cursor: pointer; font-size: 14px; padding: 4px 5px;
 }
 .session-item .rename:hover { color: var(--accent); }
 .session-item .kill:hover { color: var(--danger); }
+/* ⏸ pause toggle. Dim like the other row buttons until paused, then amber —
+   the same "you did this on purpose, and it's still true" register as the
+   idle badge's own colours, so a paused row reads as a deliberate state
+   rather than an error. */
+.session-item .pause:hover { color: var(--accent); }
+.session-item .pause.paused { color: var(--accent-2); opacity: 1; }
 /* 🔊 arm toggle. Off: nearly invisible, so a sidebar of shells doesn't look
    like a control panel. On: accent. On but the page hasn't been unlocked yet:
    amber — armed and silent is the state worth flagging. */
@@ -141,6 +147,7 @@ html, body {
 }
 .session-item .idle-badge.hot { color: var(--danger); background: rgba(224, 108, 117, 0.15); }
 .session-item .idle-badge.limited { color: var(--fg-dim); background: var(--bg-3); }
+.session-item .idle-badge.paused { color: var(--fg-dim); background: var(--bg-3); }
 
 /* Today's score, above the session list. A link to the dashboard, styled as a
    panel rather than a link so it reads as a readout you glance at. */

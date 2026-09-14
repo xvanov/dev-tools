@@ -147,9 +147,17 @@ class IdleHub extends EventEmitter {
     // but not alive exited on its own; one gone from the map entirely was
     // removed by the user (the ✕, or the dashboard forgetting it), which is
     // never news. See shouldAnnounceExit.
+    //
+    // A session that is still alive but no longer tracked (the user just hit
+    // ⏸) closes the same way, minus the exit push — it isn't gone, so there is
+    // nothing to announce, but its in-flight episode still has to be flushed or
+    // the clock would freeze mid-count instead of stopping. Unpausing it later
+    // starts a fresh episode from that moment, same as attaching to a brand new
+    // session.
     for (const id of [...this._state.keys()]) {
       const session = this.sessions.get(id);
-      if (session && session.alive) continue;
+      if (session && session.alive && isTracked(session)) continue;
+      if (session && session.alive) { this._close(id, now); continue; }
       if (session) this._maybePushExit(session, this._state.get(id), now);
       this._close(id, now);
     }
