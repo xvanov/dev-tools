@@ -70,6 +70,36 @@
 # it. The escalation budget (>=10 min apart, 3/h, 8/day) is what stops that becoming a
 # model woken every two minutes - that is the designed outcome, not a gap in this
 # remedy. See watchdog/README.md, "Escalate in a loop".
+#
+# WHAT THE 2026-09-22 ESCALATION FOUND (LAP-US101), and the two gaps it fixed:
+# BackendState was 'NoState', which the code already routed into cause (3)'s "administratively
+# down but authenticated" branch - correctly, but that branch's bare
+# `tailscale up --timeout=12s` failed outright: "changing settings via 'tailscale up' requires
+# mentioning all non-default flags ... tailscale up --timeout=12s --accept-dns=false". This
+# machine's profile has a non-default setting (--accept-dns=false), and tailscale refuses a
+# bare `up` rather than guess whether to keep or drop it - it hands back the exact command that
+# would work. The old code printed that refusal and gave up, which turned a fixable case into an
+# escalation. Fixed by Get-TailscaleUpRetryArgs, which parses the suggested line out of the
+# refusal and reissues `up` with those exact flags - preserving the profile's settings rather
+# than guessing `--reset`, which would silently change DNS behavior nobody asked to change.
+#
+# Second gap, found only because the first fix still didn't clear this machine: after `up`
+# accepted the reissued flags (exit 0), BackendState stayed 'NoState' with the Health array
+# down to just "Tailscale is starting. Please wait." - not logged out, not erroring, just never
+# leaving "starting". `curl https://controlplane.tailscale.com/key?v=142` returned 200 from this
+# same machine at the same time, which rules out a network/proxy block. Two full service
+# restarts were tried by hand - `Restart-Service Tailscale`, and separately `Stop-Service` +
+# kill both `tailscaled.exe` processes + `Start-Service` - and each left it wedged the same way
+# after 40+ seconds of polling. (The two `tailscaled.exe` processes seen throughout, ~1s apart
+# in start time, are normal for this service under session 0, not a duplicate-process bug worth
+# chasing.) So this is a genuine fifth cause this remedy cannot clear: a backend that is running,
+# reachable, authenticated (HaveNodeKey=true) and never progresses past NoState/"starting". The
+# remedy now tries ONE bounded service restart when `up` succeeds but the state doesn't move -
+# cheap, non-destructive to termhub, and it does sometimes clear a wedge even though it didn't
+# here - then falls through to the same degrade-and-report-failure path as an unclearable
+# NeedsLogin, since no script-only fix is known for it. A human needs to look at tailscaled
+# itself (its logs are SYSTEM-locked from a non-elevated session: even reading
+# `%ProgramData%\Tailscale\tailscaled.log*.txt` needs elevation) - this is not termhub's bug.
 
 param(
   [string]$Signature,
@@ -136,6 +166,18 @@ function Get-TailnetIp4 {
     if ($s -match '^\d{1,3}(\.\d{1,3}){3}$') { return $s }
   }
   return ''
+}
+
+# `tailscale up` refuses a bare re-run when the profile has non-default settings (e.g.
+# --accept-dns=false), and names the exact command that would work rather than let a caller
+# guess whether --reset (which would drop that setting) is intended. Parsing that command back
+# out is the fix for cause (3)'s up-call - see the 2026-09-22 note above.
+function Get-TailscaleUpRetryArgs {
+  param([string]$Text)
+  if ($Text -match '(?ms)non-default settings:\s*\r?\n\s*tailscale up\s+(.+?)\s*(\r?\n|$)') {
+    return @($Matches[1] -split '\s+' | Where-Object { $_ })
+  }
+  return $null
 }
 
 function Wait-TailnetIp {
@@ -216,7 +258,36 @@ if (-not $ip -and (Get-RemainingSec) -gt 30) {
       Write-Host "remedy: the tailnet is administratively down but still authenticated - 'tailscale up'."
       $r = Invoke-Tailscale -TsArgs @('up', '--timeout=12s')
       if ($r.Text) { Write-Host "remedy: tailscale up said: $($r.Text -replace '\r?\n', ' | ')" }
+      if ($r.Code -ne 0) {
+        $retryArgs = Get-TailscaleUpRetryArgs -Text $r.Text
+        if ($retryArgs) {
+          Write-Host "remedy: 'up' refused a bare retry - non-default settings (e.g. --accept-dns=false) must be re-stated explicitly, not assumed away with --reset. Reissuing exactly what it asked for: tailscale up $($retryArgs -join ' ')"
+          $r = Invoke-Tailscale -TsArgs (@('up') + $retryArgs)
+          if ($r.Text) { Write-Host "remedy: reissued 'up' said: $($r.Text -replace '\r?\n', ' | ')" }
+        }
+      }
       $ip = Wait-TailnetIp -TimeoutSec 5
+
+      # Cause 5 (2026-09-22): 'up' can exit clean and BackendState still never leaves
+      # NoState/"starting" - not logged out, not erroring, just wedged. One bounded,
+      # non-destructive service restart is worth trying even though it didn't clear the
+      # case that found it; it never touches termhub. Gated on remaining budget because
+      # the restart + poll below can cost up to ~25s.
+      if (-not $ip -and (Get-RemainingSec) -gt 25) {
+        $stillState = (Get-TailscaleBackend).State
+        if ($stillState -eq 'NoState' -or $stillState -eq 'Stopped') {
+          Write-Host "remedy: still $stillState after 'up' returned - restarting the Tailscale service once."
+          $svc2 = Get-Service -Name 'Tailscale*' -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($svc2) {
+            try {
+              Restart-Service -Name $svc2.Name -Force -ErrorAction Stop
+              $ip = Wait-TailnetIp -TimeoutSec ([Math]::Min(20, [Math]::Max(0, (Get-RemainingSec) - 5)))
+            } catch {
+              Write-Host "remedy: could not restart $($svc2.Name): $($_.Exception.Message) (needs an elevated watchdog task)."
+            }
+          }
+        }
+      }
     }
     elseif ($backend.State -eq 'Starting') {
       # Starting is what a node reads for a few seconds during a normal reconnect
