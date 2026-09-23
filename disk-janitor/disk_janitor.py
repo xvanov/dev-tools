@@ -41,6 +41,11 @@ from pathlib import Path
 DEFAULT_CONFIG = {
     # Informational: logged, and used to decide whether to shout in the log.
     "min_free_percent": 10,
+    # Below min_free_percent, log the dirs >= report_min_gb that hold the space
+    # (read-only; never deletes). Capped at report_max_seconds.
+    "report_min_gb": 5,
+    "report_top": 15,
+    "report_max_seconds": 1200,
     # Rotate the log when it grows past this many bytes.
     "log_max_bytes": 5_000_000,
 
@@ -276,6 +281,65 @@ def clean_by_age(cfg, log, dry_run) -> int:
     return total_freed
 
 
+def report_space(cfg, log, anchor: Path) -> None:
+    """Read-only: log the directories that actually hold the space.
+
+    The janitor only cleans temp/caches, so on a full disk the answer is almost
+    always somewhere it is (rightly) forbidden to touch. Without this the log
+    says "below threshold, reclaimed 0 B" forever and never says why.
+
+    Reports "heavy leaves": dirs holding >= report_min_gb whose children each
+    hold less — the most specific place the space is concentrated.
+    """
+    min_bytes = int(cfg.get("report_min_gb", 5) * 1024**3)
+    root = Path(anchor.anchor)
+    log(f"-- where the space is (dirs >= {cfg.get('report_min_gb', 5)} GB, read-only) --")
+    deadline = time.time() + cfg.get("report_max_seconds", 1200)
+
+    totals: dict[str, int] = {}   # finished dirs that reached min_bytes
+    heavy_child: set[str] = set()  # dirs with at least one heavy child
+    # Iterative post-order walk. Symlinks and junctions are skipped, or
+    # "C:\Users\All Users" -> ProgramData would be counted twice.
+    root_dev = os.stat(root).st_dev
+    stack = [(str(root), False)]
+    sizes: dict[str, int] = {}
+    while stack:
+        if time.time() > deadline:
+            log("  (report timed out — partial)")
+            break
+        path, done = stack.pop()
+        if done:
+            total = sizes.pop(path, 0)
+            parent = os.path.dirname(path)
+            if parent != path:
+                sizes[parent] = sizes.get(parent, 0) + total
+            if total >= min_bytes:
+                totals[path] = total
+                heavy_child.add(parent)
+            continue
+        stack.append((path, True))
+        try:
+            with os.scandir(path) as it:
+                for e in it:
+                    try:
+                        if e.is_symlink() or getattr(e, "is_junction", lambda: False)():
+                            continue
+                        if e.is_dir(follow_symlinks=False):
+                            # stay on this filesystem (/proc, other mounts)
+                            if WINDOWS or e.stat(follow_symlinks=False).st_dev == root_dev:
+                                stack.append((e.path, False))
+                        else:
+                            sizes[path] = sizes.get(path, 0) + e.stat(follow_symlinks=False).st_size
+                    except OSError:
+                        continue
+        except OSError:
+            continue
+
+    leaves = sorted(((s, p) for p, s in totals.items() if p not in heavy_child), reverse=True)
+    for size, path in leaves[: cfg.get("report_top", 15)]:
+        log(f"  {human(size):>10}  {path}")
+
+
 # --------------------------------------------------------------------------- #
 # Config loading                                                               #
 # --------------------------------------------------------------------------- #
@@ -308,6 +372,8 @@ def main(argv=None) -> int:
                     help="report what would be freed; delete nothing")
     ap.add_argument("--config", type=Path, default=None,
                     help="path to a JSON config file (overrides defaults)")
+    ap.add_argument("--space-report", action="store_true",
+                    help="log where the space is even when above the threshold")
     ap.add_argument("--log", type=Path,
                     default=_HOME / ".disk-janitor" / "janitor.log",
                     help="log file path")
@@ -329,6 +395,8 @@ def main(argv=None) -> int:
         aged = clean_by_age(cfg, log, args.dry_run)
 
         after, _ = free_bytes(anchor)
+        if 100 * after / total < cfg.get("min_free_percent", 10) or args.space_report:
+            report_space(cfg, log, anchor)
         if args.dry_run:
             log(f"would reclaim ~ {human(aged)} from aged files "
                 f"(+ package caches, not measured in dry-run)")

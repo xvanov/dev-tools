@@ -42,6 +42,12 @@ python disk_janitor.py             # actually clean
 
 Every run logs to `~/.disk-janitor/janitor.log`.
 
+When free space is below `min_free_percent` after cleanup, the run also logs
+**where the space is**: the most specific directories holding ≥ `report_min_gb`
+(default 5 GB), read-only, capped at `report_max_seconds`. The janitor
+deliberately never cleans repos or user data, so on a full disk this report is
+usually the actual answer. Force it any time with `--space-report`.
+
 ## Install as a scheduled job
 
 ### Windows (Scheduled Task, hidden, daily + at logon)
