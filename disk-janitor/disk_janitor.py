@@ -161,8 +161,11 @@ def is_safe_target(path: Path, log) -> bool:
     except OSError:
         return False
 
-    # Reject roots and absurdly shallow paths.
-    if resolved == resolved.anchor or len(resolved.parts) < 3:
+    # Reject roots and absurdly shallow paths. A temp root the OS itself names
+    # (TEMP=C:\Temp is common on Windows) is the one shallow path allowed —
+    # without this exemption the main temp dir was silently never cleaned.
+    is_temp_root = resolved in temp_roots()
+    if Path(resolved.anchor) == resolved or (len(resolved.parts) < 3 and not is_temp_root):
         log(f"  SKIP  refusing shallow/root path: {resolved}")
         return False
 
@@ -204,14 +207,17 @@ def run_package_caches(cfg, log, dry_run) -> None:
             log(f"  WOULD RUN  {' '.join(argv)}")
             continue
         try:
+            # cwd=$HOME: the scheduled task starts in System32, where pnpm
+            # tries to write a probe file and dies with EPERM.
             if WINDOWS:
                 # npm/yarn/pnpm are .cmd/.ps1 shims that CreateProcess can't run
                 # by bare name; let the shell resolve them.
-                res = subprocess.run(" ".join(argv), shell=True,
+                res = subprocess.run(" ".join(argv), shell=True, cwd=_HOME,
                                      capture_output=True, text=True, timeout=300)
             else:
                 argv = [exe, *argv[1:]]
-                res = subprocess.run(argv, capture_output=True, text=True, timeout=300)
+                res = subprocess.run(argv, cwd=_HOME, capture_output=True,
+                                     text=True, timeout=300)
             tail = (res.stdout or res.stderr or "").strip().splitlines()
             note = tail[-1] if tail else "(no output)"
             log(f"  {entry['name']}: {note}")

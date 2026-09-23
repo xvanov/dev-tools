@@ -73,7 +73,11 @@ is set (the installer attempts this).
 
 - **Two-layer safety.** The config lists *what* to clean; `is_safe_target()`
   independently vetoes anything outside `$HOME`/temp, any user-data dir, and any
-  path shallower than three components. Both must agree before a file is touched.
+  path shallower than three components — except an OS-named temp root itself
+  (`TEMP=C:\Temp`), which is trusted by definition. Both must agree before a
+  file is touched.
+- **Package-cache commands run with `cwd=$HOME`** — the scheduled task starts
+  in `System32`, where `pnpm store prune` fails with EPERM.
 - **Locked / in-use files are left alone** — per-file `OSError` is swallowed, so
   a running build or mounted image never breaks a sweep.
 - **Idempotent** installers — re-run any time; the task/timer is overwritten.
