@@ -25,9 +25,11 @@ const HELP = `pa — your context layer
     pa search <query...>            hybrid search over everything captured
     pa who <name...>                a person: identities, threads, open commitments
     pa projects [sync]              the project ↔ repo table
+    pa dashboard                    the web page (the worker serves it too) at http://127.0.0.1:7300/
 
   Doing
     pa do <id> [--mode m] [--repo p] dispatch a commitment to a Claude Code session
+    pa done <id> [--dismiss|--reopen] close a commitment yourself
     pa do --task "..." [--mode m] [--repo p]
     pa runs [--all]                 live and recent runs
     pa attach <run>                 print (and open) the termhub URL for a run
@@ -288,6 +290,29 @@ const commands = {
     if (result.worktreePath) out(`  worktree ${result.worktreePath}`);
     out(`  brief    ${result.briefPath}`);
     out(`  session  ${result.url}`);
+  },
+
+  async done(args, flags) {
+    const { setStatus } = require('../commitments');
+    const id = Number(args[0]);
+    if (!id) return fail('usage: pa done <commitment-id> [--dismiss|--reopen]');
+    const status = flagBool(flags, 'dismiss') ? 'dropped' : flagBool(flags, 'reopen') ? 'open' : 'done';
+    const row = await setStatus(id, status);
+    out(`#${row.id} ${row.status} · ${row.summary}`);
+  },
+
+  // Standalone, for when the worker is not running. Same server, same port —
+  // if the worker already has it, this says so rather than fighting for it.
+  async dashboard() {
+    const url = `http://${config.dispatch.host}:${config.dispatch.port}/`;
+    try {
+      await require('../dashboard/server').start();
+    } catch (err) {
+      if (err.code === 'EADDRINUSE') return out(`already running (the worker serves it): ${url}`);
+      throw err;
+    }
+    out(`dashboard: ${url}  (ctrl-c to stop)`);
+    await new Promise(() => {});
   },
 
   async runs(args, flags) {

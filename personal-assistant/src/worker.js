@@ -81,6 +81,12 @@ async function main() {
   const { migrate } = require('./db/migrate');
   await migrate();
 
+  // The dashboard rides along with the worker: one process to keep alive.
+  // A port clash (a standalone `pa dashboard`) must not stop ingest.
+  require('./dashboard/server')
+    .start()
+    .catch((err) => log.warn('dashboard not started', { message: err.message }));
+
   const ingest = require('./ingest');
   const distill = require('./distill');
   const search = require('./search');

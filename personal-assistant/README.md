@@ -105,6 +105,11 @@ has to approve it.
 
 ## Using it
 
+**The dashboard** is at <http://127.0.0.1:7300/> whenever the worker runs (or `pa dashboard`
+on its own): what's on you, what you're waiting on, agent runs, drafts, open PRs and board
+items, each with **Do** (dispatch), **Done** and **Dismiss**. Loopback only — it can start
+agents. Drafts get a Copy button; sending stays `pa send`.
+
 ```
 pa brief                        what's on you today
 pa inbox                        newly distilled commitments
@@ -112,6 +117,9 @@ pa show 42                      one commitment, with the ask in the requester's 
 pa show 42 --project x          correct a wrong repo — and teach it the phrase
 pa search <words>               hybrid search over everything captured
 pa who Sam                      identities, threads, open commitments
+
+pa done 42 [--dismiss|--reopen] close a commitment yourself
+pa dashboard                    serve the web page without the worker
 
 pa do 42 --mode mr              dispatch to a Claude Code session in its own worktree
 pa runs                         what's in flight
@@ -166,11 +174,13 @@ than from audio, because the exact text is already there.
 ```
 bin/pa.js            the CLI entry point
 src/config.js        every knob, resolved once
-src/ingest/          Graph mail/calendar/chat, GitLab, Claude sessions, audio episodes
+src/ingest/          Graph mail/calendar/chat, GitLab, GitHub, Jira, Claude sessions, audio episodes
 src/distill/         the extraction prompt, identity resolution, the pass itself
 src/projects/        the project ↔ repo table and the scorer that guesses
 src/search/          hybrid full-text + vector retrieval
 src/brief/           what `pa brief` prints
+src/dashboard/       the loopback web page and its three buttons
+src/llm.js           model calls: API key, or `claude -p` without one
 src/dispatch/        worktrees, briefs, termhub sessions, modes, landing
 src/draft/           reply composition, and the one thing that sends
 src/mcp/server.js    the read-only recall server

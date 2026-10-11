@@ -17,7 +17,7 @@ async function gather({ horizonDays = 7 } = {}) {
   const commitments = await rows(
     `select c.id, c.summary, c.detail, c.direction, c.due_at, c.status, c.confidence,
             c.project_confidence, c.repo_path,
-            p.name as project, per.display_name as who, si.source, si.subject,
+            p.name as project, per.display_name as who, per.is_me as who_is_me, si.source, si.subject,
             si.occurred_at, si.thread_external_id
        from commitment c
        left join project p on p.id = c.project_id

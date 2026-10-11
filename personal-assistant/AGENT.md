@@ -26,6 +26,12 @@ the prompt and call it done.
 interface only. termhub is the thing that is safe to expose, because its trust model is the
 tailnet ACL and it was built for that; this is not.
 
+**The dashboard is the dispatcher's trust model, not termhub's.** Its Dispatch button starts
+agents, so `src/dashboard/server.js` binds loopback only, rejects a non-loopback `Host` (DNS
+rebinding), and requires an `X-PA: 1` header on every POST (a custom header forces a CORS
+preflight the server never answers). It has no send button: drafts get a copy button, and
+`pa send` stays the only outbound path.
+
 **One implementation per behaviour.** OpenClaw skills call the `pa` CLI. They do not talk to
 Postgres, and they do not reimplement dispatch. When the TUI and the CLI disagree about what
 `pa do` means, the bug is that there are two implementations.

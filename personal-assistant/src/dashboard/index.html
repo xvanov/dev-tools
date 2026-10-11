@@ -1,0 +1,231 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>pa</title>
+<style>
+  :root {
+    --bg: #f6f6f4; --panel: #ffffff; --ink: #1d1d1b; --muted: #6b6b66; --line: #e3e3de;
+    --accent: #2f5bd3; --warn: #b4501c; --ok: #2f7d4f; --bad: #b3261e; --chip: #efefea;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #141413; --panel: #1d1d1b; --ink: #ececea; --muted: #9a9a94; --line: #2e2e2b;
+      --accent: #7f9cf5; --warn: #e08a5a; --ok: #6cc28f; --bad: #f08a80; --chip: #262624;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+    font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  header { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: baseline;
+    padding: 16px 20px 8px; }
+  header h1 { margin: 0; font-size: 18px; }
+  header .meta { color: var(--muted); font-size: 12px; }
+  .sources { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 20px 12px; }
+  .chip { background: var(--chip); border-radius: 999px; padding: 2px 10px; font-size: 12px; color: var(--muted); }
+  .chip.bad { color: var(--bad); }
+  main { display: grid; gap: 16px; padding: 0 20px 24px;
+    grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); align-items: start; }
+  section { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; }
+  section h2 { margin: 0 0 8px; font-size: 12px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+  section h2 .n { color: var(--ink); margin-left: 4px; }
+  .item { border-top: 1px solid var(--line); padding: 10px 0; }
+  .item:first-of-type { border-top: 0; }
+  .sum { font-weight: 550; }
+  .sub { color: var(--muted); font-size: 12px; margin-top: 2px; }
+  .sub a { color: var(--accent); text-decoration: none; }
+  .due-over { color: var(--warn); font-weight: 600; }
+  .actions { display: flex; gap: 6px; margin-top: 6px; }
+  button { font: inherit; font-size: 12px; border: 1px solid var(--line); background: var(--chip);
+    color: var(--ink); border-radius: 6px; padding: 3px 10px; cursor: pointer; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button:disabled { opacity: .5; cursor: default; }
+  pre.draft { white-space: pre-wrap; font: inherit; background: var(--chip); border-radius: 6px;
+    padding: 8px; margin: 6px 0 0; }
+  .empty { color: var(--muted); font-size: 13px; padding: 4px 0; }
+  #toast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); background: var(--ink);
+    color: var(--bg); padding: 8px 14px; border-radius: 8px; font-size: 13px; opacity: 0; transition: opacity .2s;
+    max-width: calc(100% - 32px); }
+  #toast.show { opacity: 1; }
+  @media (max-width: 480px) { header, .sources, main { padding-left: 16px; padding-right: 16px; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>pa</h1>
+  <span class="meta" id="updated">loading…</span>
+</header>
+<div class="sources" id="sources"></div>
+<main>
+  <section id="mine"><h2>On you<span class="n"></span></h2><div class="list"></div></section>
+  <section id="waiting"><h2>Waiting on others<span class="n"></span></h2><div class="list"></div></section>
+  <section id="drafts"><h2>Drafts to send<span class="n"></span></h2><div class="list"></div></section>
+  <section id="runs"><h2>Agent runs<span class="n"></span></h2><div class="list"></div></section>
+  <section id="code"><h2>Code &amp; boards<span class="n"></span></h2><div class="list"></div></section>
+  <section id="meetings"><h2>Meetings next 24h<span class="n"></span></h2><div class="list"></div></section>
+</main>
+<div id="toast"></div>
+<script>
+'use strict';
+// Every value from the server goes in through textContent, never innerHTML:
+// message subjects are written by other people.
+
+const SOURCE = {
+  graph_mail: 'Email', graph_chat: 'Teams', graph_event: 'Calendar', gitlab_todo: 'GitLab',
+  gitlab_mr: 'GitLab MR', gitlab_issue: 'GitLab issue', github_notification: 'GitHub',
+  github_pr: 'GitHub PR', github_issue: 'GitHub issue', github_project_item: 'GitHub board',
+  jira_issue: 'Jira', audio: 'Conversation', claude_session: 'Claude session',
+};
+
+function el(tag, props = {}, ...kids) {
+  const n = document.createElement(tag);
+  for (const [k, v] of Object.entries(props)) {
+    if (k === 'class') n.className = v;
+    else if (k.startsWith('on')) n.addEventListener(k.slice(2), v);
+    else n.setAttribute(k, v);
+  }
+  for (const k of kids) if (k != null) n.append(k);
+  return n;
+}
+
+function ago(iso) {
+  const s = (Date.now() - new Date(iso).getTime()) / 1000;
+  if (s < 90) return 'just now';
+  if (s < 5400) return `${Math.round(s / 60)}m ago`;
+  if (s < 129600) return `${Math.round(s / 3600)}h ago`;
+  return `${Math.round(s / 86400)}d ago`;
+}
+
+function due(iso) {
+  if (!iso) return null;
+  const days = Math.round((new Date(iso).setHours(0,0,0,0) - new Date().setHours(0,0,0,0)) / 86400000);
+  if (days < 0) return el('span', { class: 'due-over' }, `${-days}d overdue`);
+  if (days === 0) return el('span', { class: 'due-over' }, 'due today');
+  return days === 1 ? 'due tomorrow' : `due in ${days}d`;
+}
+
+function joinParts(parts) {
+  const out = [];
+  for (const p of parts.filter(Boolean)) {
+    if (out.length) out.push(' · ');
+    out.push(p);
+  }
+  return out;
+}
+
+function toast(text) {
+  const t = document.getElementById('toast');
+  t.textContent = text;
+  t.classList.add('show');
+  clearTimeout(toast.timer);
+  toast.timer = setTimeout(() => t.classList.remove('show'), 4000);
+}
+
+async function post(path, body) {
+  const res = await fetch(path, {
+    method: 'POST', headers: { 'Content-Type': 'application/json', 'X-PA': '1' },
+    body: JSON.stringify(body || {}),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || res.statusText);
+  return data;
+}
+
+function act(button, fn) {
+  return async () => {
+    button.disabled = true;
+    try { await fn(); await refresh(); }
+    catch (err) { toast(err.message); button.disabled = false; }
+  };
+}
+
+function link(url, text) {
+  return url && /^https?:\/\//.test(url) ? el('a', { href: url, target: '_blank', rel: 'noopener' }, text) : null;
+}
+
+function commitmentCard(c) {
+  const doBtn = el('button', { class: 'primary', title: 'Start a Claude Code session on this' }, 'Do');
+  const doneBtn = el('button', {}, 'Done');
+  const dropBtn = el('button', { title: 'Not mine / not real' }, 'Dismiss');
+  doBtn.addEventListener('click', act(doBtn, async () => {
+    const r = await post(`/api/commitments/${c.id}/dispatch`);
+    toast(`run #${r.id} started (${r.mode})`);
+    if (r.url) window.open(r.url, '_blank', 'noopener');
+  }));
+  doneBtn.addEventListener('click', act(doneBtn, () => post(`/api/commitments/${c.id}/status`, { status: 'done' })));
+  dropBtn.addEventListener('click', act(dropBtn, () => post(`/api/commitments/${c.id}/status`, { status: 'dropped' })));
+
+  const sub = joinParts([
+    `#${c.id}`, c.who_is_me ? null : c.who, SOURCE[c.source] || c.source, c.project, due(c.due_at),
+    c.status === 'dispatched' ? 'dispatched' : null, ago(c.occurred_at), link(c.thread_external_id, 'open'),
+  ]);
+  return el('div', { class: 'item' },
+    el('div', { class: 'sum' }, c.summary),
+    el('div', { class: 'sub' }, ...sub),
+    el('div', { class: 'actions' }, c.direction === 'owed_by_me' && c.status === 'open' ? doBtn : null, doneBtn, dropBtn));
+}
+
+function fill(id, items, render, emptyText) {
+  const sec = document.getElementById(id);
+  sec.querySelector('.n').textContent = items.length ? String(items.length) : '';
+  const list = sec.querySelector('.list');
+  list.replaceChildren(...(items.length ? items.map(render) : [el('div', { class: 'empty' }, emptyText)]));
+}
+
+function render(s) {
+  document.getElementById('updated').textContent = `updated ${new Date(s.now).toLocaleTimeString()}`;
+  document.getElementById('sources').replaceChildren(...s.sources.map((x) =>
+    el('span', { class: x.last_error ? 'chip bad' : 'chip', title: x.last_error || '' },
+      `${x.source} · ${x.last_run_at ? ago(x.last_run_at) : 'never'}${x.last_error ? ' · error' : ''}`)));
+
+  const mine = s.commitments.filter((c) => c.direction === 'owed_by_me');
+  const waiting = s.commitments.filter((c) => c.direction === 'owed_to_me');
+  fill('mine', mine, commitmentCard, 'Nothing on you.');
+  fill('waiting', waiting, commitmentCard, 'Nobody owes you anything.');
+
+  fill('drafts', s.drafts, (d) => {
+    const copy = el('button', {}, 'Copy');
+    copy.addEventListener('click', async () => {
+      await navigator.clipboard.writeText(d.body);
+      toast(`copied — send with \`pa send ${d.id}\` or paste it yourself`);
+    });
+    return el('div', { class: 'item' },
+      el('div', { class: 'sum' }, `${d.channel} → ${d.to_identity || '?'}`),
+      el('div', { class: 'sub' }, ...joinParts([`draft #${d.id}`, d.task, ago(d.created_at)])),
+      el('pre', { class: 'draft' }, d.body),
+      el('div', { class: 'actions' }, copy));
+  }, 'No drafts waiting.');
+
+  const runs = [...s.runsActive.map((r) => ({ ...r, live: true })), ...s.runsReview];
+  fill('runs', runs, (r) => el('div', { class: 'item' },
+    el('div', { class: 'sum' }, r.task),
+    el('div', { class: 'sub' }, ...joinParts([`run #${r.id}`, r.live ? r.status : 'done — review', r.mode,
+      r.repo_path, link(r.mr_url, 'MR')]))), 'No agent runs.');
+
+  const code = s.reviews.filter((r) => r.raw?.state === 'opened' || r.raw?.action);
+  fill('code', code.slice(0, 15), (r) => el('div', { class: 'item' },
+    el('div', { class: 'sum' }, r.subject),
+    el('div', { class: 'sub' }, ...joinParts([r.raw?.project, ago(r.occurred_at), link(r.raw?.webUrl, 'open')]))),
+    'Nothing open.');
+
+  fill('meetings', s.meetings, (m) => el('div', { class: 'item' },
+    el('div', { class: 'sum' }, m.subject),
+    el('div', { class: 'sub' }, new Date(m.occurred_at).toLocaleString())), 'No meetings (or calendar not connected).');
+}
+
+async function refresh() {
+  try {
+    const res = await fetch('/api/state');
+    if (!res.ok) throw new Error((await res.json()).error || res.statusText);
+    render(await res.json());
+  } catch (err) {
+    document.getElementById('updated').textContent = `error: ${err.message}`;
+  }
+}
+
+refresh();
+setInterval(refresh, 30000);
+</script>
+</body>
+</html>
