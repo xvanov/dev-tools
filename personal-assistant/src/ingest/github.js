@@ -121,30 +121,55 @@ function searchItem(kind, it) {
   };
 }
 
-const PROJECT_ITEMS = `
+const PROJECTS = `
 query($org: String!) {
   organization(login: $org) {
-    projectsV2(first: 20, orderBy: {field: UPDATED_AT, direction: DESC}) {
-      nodes {
-        title url closed
-        items(first: 100) {
-          nodes {
-            id updatedAt isArchived
-            status: fieldValueByName(name: "Status") {
-              ... on ProjectV2ItemFieldSingleSelectValue { name }
-            }
-            content {
-              __typename
-              ... on Issue { title url body state repository { nameWithOwner } assignees(first: 10) { nodes { login } } author { login } }
-              ... on PullRequest { title url body state repository { nameWithOwner } assignees(first: 10) { nodes { login } } author { login } }
-              ... on DraftIssue { title body assignees(first: 10) { nodes { login } } }
-            }
+    projectsV2(first: 50, orderBy: {field: UPDATED_AT, direction: DESC}) {
+      nodes { id title url closed }
+    }
+  }
+}`;
+
+// Boards run to hundreds of cards, so items are paged; a fixed first-100
+// silently drops whatever is assigned to you further down a big board.
+const PROJECT_PAGE = `
+query($id: ID!, $after: String) {
+  node(id: $id) {
+    ... on ProjectV2 {
+      items(first: 100, after: $after) {
+        pageInfo { hasNextPage endCursor }
+        nodes {
+          id updatedAt isArchived
+          status: fieldValueByName(name: "Status") {
+            ... on ProjectV2ItemFieldSingleSelectValue { name }
+          }
+          content {
+            __typename
+            ... on Issue { title url body state repository { nameWithOwner } assignees(first: 10) { nodes { login } } author { login } }
+            ... on PullRequest { title url body state repository { nameWithOwner } assignees(first: 10) { nodes { login } } author { login } }
+            ... on DraftIssue { title body assignees(first: 10) { nodes { login } } }
           }
         }
       }
     }
   }
 }`;
+
+const MAX_PAGES = 20;
+
+async function boardItemsFor(project, login) {
+  const out = [];
+  let after = null;
+  for (let page = 0; page < MAX_PAGES; page++) {
+    const data = await graphql(PROJECT_PAGE, { id: project.id, after: after ?? 'null' });
+    const items = data.data?.node?.items;
+    if (!items) break;
+    out.push(...projectItems({ ...project, items }, login));
+    if (!items.pageInfo?.hasNextPage) break;
+    after = items.pageInfo.endCursor;
+  }
+  return out;
+}
 
 function projectItems(project, login) {
   const out = [];
@@ -242,9 +267,9 @@ async function run() {
   } else {
     for (const org of config.github.orgs.length ? config.github.orgs : (await api('/user/orgs')).map((o) => o.login)) {
       try {
-        const data = await graphql(PROJECT_ITEMS, { org });
+        const data = await graphql(PROJECTS, { org });
         for (const p of data.data?.organization?.projectsV2?.nodes || []) {
-          if (!p.closed) boardItems.push(...projectItems(p, login));
+          if (!p.closed) boardItems.push(...(await boardItemsFor(p, login)));
         }
       } catch (err) {
         projectsNote = `org ${org}: ${err.message.slice(0, 120)}`;
