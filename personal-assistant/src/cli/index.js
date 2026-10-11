@@ -481,6 +481,20 @@ const commands = {
         mark(boards, 'github projects', boards ? 'read:project granted' : 'run `gh auth refresh -s read:project`');
       }
     }
+    // Jira has no local credential to inspect: the connector sign-in lives in
+    // Claude Code. The last pass's outcome is the only honest signal.
+    if (config.jira.enabled) {
+      const jc = await db.one("select last_run_at, last_error, state from sync_cursor where source = 'jira'").catch(() => null);
+      mark(
+        Boolean(jc && !jc.last_error && jc.state?.cloudId),
+        'jira',
+        !jc
+          ? 'never run — `pa sync --source jira` (needs the Atlassian connector signed in via /mcp)'
+          : jc.last_error
+            ? `last pass failed: ${jc.last_error.slice(0, 80)} — check /mcp → claude.ai Atlassian MCP`
+            : `connector · ${jc.state?.site || jc.state?.cloudId}`
+      );
+    }
     // No key is fine: model calls fall back to `claude -p` on your own login.
     const llm = require('../llm');
     let cliVersion = null;

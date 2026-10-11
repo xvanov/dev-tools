@@ -123,6 +123,15 @@ const config = {
     pollSeconds: envInt('PA_GITHUB_POLL_SECONDS', 300),
   },
 
+  // Through the claude.ai Atlassian connector via `claude -p` — no Jira token.
+  // Sign in once with `/mcp` in Claude Code. The cloud id is discovered on the
+  // first pass and remembered; set it only to pin a site.
+  jira: {
+    enabled: env('PA_JIRA', '1') !== '0',
+    cloudId: env('PA_JIRA_CLOUD_ID'),
+    pollSeconds: envInt('PA_JIRA_POLL_SECONDS', 900),
+  },
+
   anthropic: {
     apiKey: env('ANTHROPIC_API_KEY'),
     // Distillation is extraction, not reasoning-heavy work: the cost lever is

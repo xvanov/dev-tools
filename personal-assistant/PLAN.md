@@ -20,6 +20,7 @@ gateway itself is not installed. What that means concretely:
 | 5 — dispatch | **built.** Worktree, generated `BRIEF.md`, termhub session, enforced modes, `pa review` / `land` / `drop`. termhub grew `POST /api/sessions/:id/input` for `pa say`. |
 | 6 — drafts | **built.** `pa draft` writes from the ask and the actual diff; `pa send` is the only outbound path and is interactive. |
 | 1b — GitHub | **built 2026-10-11.** `src/ingest/github.js` via the `gh` CLI: notifications (the todos analogue), open PRs, assigned issues, Projects v2 items assigned to you. |
+| 1c — Jira | **built 2026-10-11.** `src/ingest/jira.js`: `claude -p` relays JQL results from the claude.ai Atlassian connector as validated JSON. No token, no app registration. |
 | 7 — OpenClaw front door | **partial.** The skill and the MCP registration are written (`integrations/`); installing the gateway in WSL2 and binding a channel is not done. |
 | 8 — Onyx, Graphiti, Teams bot | not started, by design. The triggers for revisiting each are in §1. |
 

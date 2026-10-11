@@ -40,7 +40,7 @@ async function gather({ horizonDays = 7 } = {}) {
   const reviews = await rows(
     `select subject, raw, occurred_at
        from source_item
-      where source in ('gitlab_mr','gitlab_todo','github_pr','github_notification','github_project_item')
+      where source in ('gitlab_mr','gitlab_todo','github_pr','github_notification','github_project_item','jira_issue')
         and occurred_at > now() - interval '21 days'
       order by occurred_at desc
       limit 20`

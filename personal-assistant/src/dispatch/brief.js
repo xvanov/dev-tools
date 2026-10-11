@@ -130,6 +130,7 @@ function sourceLabel(source) {
       github_pr: 'GitHub PR',
       github_issue: 'GitHub issue',
       github_project_item: 'GitHub project board item',
+      jira_issue: 'Jira issue',
       audio: 'Recorded conversation',
       claude_session: 'Your Claude session',
     }[source] || source

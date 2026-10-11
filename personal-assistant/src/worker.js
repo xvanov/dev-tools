@@ -98,6 +98,10 @@ async function main() {
     await ingest.runAll(['github']);
   });
 
+  every(config.jira.pollSeconds, 'jira', async () => {
+    await ingest.runAll(['jira']);
+  });
+
   // Local files, so this can be frequent and cheap.
   every(120, 'sessions', async () => {
     await ingest.runAll(['claude_session']);
