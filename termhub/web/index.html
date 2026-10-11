@@ -39,10 +39,10 @@
       <div class="actions">
         <button id="new-term-btn">+ New terminal</button>
       </div>
-      <!-- The scoreboard. Today's idle total is the number the idle layer
-           exists to drive down, so it sits above the session list where it is
-           unavoidable rather than on the dashboard where it would be opt-in. -->
-      <a id="idle-bar" href="/dashboard" title="Idle time today — tap for the dashboard">
+      <!-- The scoreboard. Today's agent time (summed across sessions, so two
+           agents working at once count twice) sits above the session list;
+           the dashboard has the history and every machine's total. -->
+      <a id="idle-bar" href="/dashboard" title="Agent time today — tap for the dashboard (all machines)">
         <span id="idle-total">—</span>
         <span id="idle-sub"></span>
       </a>

@@ -229,7 +229,7 @@ ok('idle is attributed per working directory', () => {
   const r = store.rollup(DAY);
   const p = r.projects.find((x) => x.cwd === '(unknown)');
   assert.ok(p, 'episodes with no cwd are attributed, not dropped');
-  assert.ok(r.projects.every((x, i, a) => i === 0 || a[i - 1].waiting >= x.waiting), 'worst first');
+  assert.ok(r.projects.every((x, i, a) => i === 0 || a[i - 1].working >= x.working), 'most agent time first');
 });
 
 ok('findSession digs a killed session out of the log, newest metadata winning', () => {
@@ -245,6 +245,50 @@ ok('findSession digs a killed session out of the log, newest metadata winning', 
   assert.strictEqual(found.agentSessionId, 'abc');
   assert.strictEqual(found.cwd, 'C:\\repos\\x');
   assert.strictEqual(store.findSession('nope'), null);
+});
+
+ok('agent time is per session, so two agents at once accrue twice', () => {
+  // The 9:00-9:30 and 9:15-9:45 stretches above overlap for 15 minutes; the
+  // headline counts agent-minutes, not wall-clock minutes.
+  const r = store.rollup(DAY);
+  const a = r.sessions.find((s) => s.id === 'a');
+  const b = r.sessions.find((s) => s.id === 'b');
+  assert.strictEqual(a.working + b.working, 60 * 60 * 1000);
+});
+
+ok('allTime sums every recorded day, taking today from the live rollup', () => {
+  const live = store.rollup(DAY, [{ id: 'q', start: at(20), end: at(20, 10), state: 'working' }]);
+  const t = store.allTime(live);
+  const files = store.history().reduce((acc, d) => acc + d.working, 0);
+  assert.strictEqual(t.working, files + 10 * 60 * 1000, 'open episodes count once, via `today`');
+  assert.strictEqual(t.since, '2026-08-15');
+  assert.strictEqual(t.days, 2);
+});
+
+ok('the cached day summary notices a new line in the file', () => {
+  const before = store.history().find((d) => d.day === DAY).working;
+  store.append({ id: 'r', start: at(21), end: at(21, 1), state: 'working', title: 'r', kind: 'claude' });
+  const after = store.history().find((d) => d.day === DAY).working;
+  assert.strictEqual(after - before, 60 * 1000);
+});
+
+console.log('idleHub — a session\'s own agent time');
+
+ok('working stretches bank into activeMs, and a pause does not reset it', () => {
+  const { IdleHub } = require('../lib/idleHub');
+  const session = { id: 's1', kind: 'claude', alive: true, cwd: 'C:/x', title: 't', command: 'claude' };
+  const hub = new IdleHub(new Map([['s1', session]]));
+  const t0 = Date.now();
+  hub._advance(session, { state: 'working', reason: 'mid-turn' }, t0);
+  assert.strictEqual(hub.activeMs('s1', t0 + 1000), 1000, 'the stretch in progress counts live');
+  hub._advance(session, { state: 'waiting', reason: 'turn-end' }, t0 + 5000);
+  assert.strictEqual(hub.activeMs('s1', t0 + 60000), 5000, 'waiting adds nothing');
+  hub._advance(session, { state: 'working', reason: 'mid-turn' }, t0 + 60000);
+  const d = hub.decorate('s1');
+  assert.strictEqual(d.activeBase, 5000);
+  assert.strictEqual(d.activeSince, t0 + 60000);
+  hub._close('s1', t0 + 62000);   // what ⏸ does
+  assert.strictEqual(hub.activeMs('s1'), 7000);
 });
 
 console.log(`\n${passed} assertions passed`);

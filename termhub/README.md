@@ -53,14 +53,17 @@ other machines to maintain.
   instead of being typed at the agent: hold a send, switch sessions, ask what's running, mute,
   read the last message in full. Anything that destroys work asks first and waits for a spoken
   *yes*. See [Voice commands](#voice-commands).
-- **Idle tracking, and a phone that tells you** — termhub measures how long each agent session
-  sits waiting on *you*, for every session, whether or not a browser is open. The sidebar shows a
-  live stopwatch per session and today's total above the list; when a session has been waiting
+- **Agent time, and a phone that tells you** — termhub measures how long your agents
+  (Claude Code and opencode) actually spend *working*, summed across sessions — two agents working
+  at once accrue it twice as fast, idle agents add nothing. The sidebar shows today's agent time
+  and the all-time total above the list, plus a ⚡ clock per session; the dashboard shows the
+  history and **every machine's total summed** (the global view). It also measures how long each
+  session sits waiting on *you*, whether or not a browser is open; when a session has been waiting
   two minutes your phone gets an [ntfy](https://ntfy.sh) push whose notification opens straight
   into that terminal, escalating at 5 / 15 / 30 minutes. Hitting a usage or spend limit gets its
   own push and **stops** the clock — you can't un-idle a session that's out of tokens. Off until
   you write a topic into `notify.json`; the measuring runs regardless. See
-  [Idle tracking](#idle-tracking).
+  [Agent time & idle tracking](#agent-time--idle-tracking).
 - **Update from the UI** — a ⟳ Update button checks GitHub (once a day in the background, and
   on demand) and, when the termhub tool itself has changed, opens a terminal that runs the
   safe blue-green updater. See [Updating safely](#updating-safely-terminals-survive).
@@ -377,19 +380,30 @@ list of near-miss dictation that must *not* trigger.
 > from a shell with `curl -s http://<host>:7000/api/secure-url`. If you have an old bookmark on the
 > HTTP address, this is why.
 
-## Idle tracking
+## Agent time & idle tracking
 
-The thing being measured is **the time an agent spent waiting on you** — the gap between "Claude
-stopped and needs an answer" and "you answered". Nothing else counts: work in progress is not
-idle, a shell sitting at its prompt is not idle (that's what a shell is *for*), and a session
-that hit a usage limit is not idle either, because there is nothing you could have done.
+Every agent session (Claude Code or opencode — shells are not counted) is classified once a
+second as **working**, **waiting** on you, or **limited** (out of tokens). Two numbers come out:
+
+- **Agent time** — the headline. The sum, over every session, of the time it spent working. It
+  climbs while agents work and stands still while they wait; two agents working at once make it
+  climb twice as fast, three at three times. It is accumulated per day, all-time, and — on the
+  dashboard — across every machine.
+- **Idle time** — the time an agent spent waiting on you: the gap between "Claude stopped and
+  needs an answer" and "you answered". Work in progress is not idle, a shell sitting at its
+  prompt is not idle (that's what a shell is *for*), and a session that hit a usage limit is not
+  idle either, because there is nothing you could have done. Idle time drives the phone pushes;
+  it is no longer the headline, because a session left open overnight piles up idle hours that
+  say nothing about how much the agents did.
 
 It runs in `sessiond`, so it counts with the browser closed, the phone asleep and the laptop lid
 shut. There is nothing to arm and nothing to turn on.
 
-**In the UI**: each waiting session shows a stopwatch in the sidebar — amber, turning red once
-it's past the notification threshold — and the bar above the session list shows today's total,
-how many sessions are running vs waiting, how many handoffs there were, and peak parallelism.
+**In the UI**: the bar above the session list shows **⚡ agent time today** (green while any
+agent is working, with `×N` when several are), then how many are working vs waiting, today's
+idle, the all-time agent time on this machine and the handoff count. Each session row carries its
+own ⚡ agent-time clock, and a waiting session also shows an idle stopwatch — amber, turning red
+once it's past the notification threshold.
 
 **On your phone**: push notifications via [ntfy](https://ntfy.sh), the same way docrag's listing
 monitor does it. Create a topic (any long random string — **the topic is the only secret**; ntfy
@@ -414,25 +428,27 @@ file. No topic configured = no pushes, and everything else still works.
 | looking at it | a visible browser tab showing that session suppresses the push (but **not** the counting) |
 
 **The log** lives in `<data dir>/idle/YYYY-MM-DD.jsonl`, one line per episode
-(`{start, end, ms, state, reason, id, title, cwd, kind}`), append-only. `GET /api/idle` is
-today's live picture; `GET /api/idle/history` rolls up every recorded day.
+(`{start, end, ms, state, reason, id, title, cwd, kind}`), append-only. Agent time is the sum
+of `ms` over `state: "working"` episodes, so it reaches back over the whole log, not just
+from this change on. `GET /api/idle` is today's live picture plus `allTime` (every recorded
+day, today included); `GET /api/idle/history` rolls up every recorded day.
 
 ### The dashboard (`/dashboard`)
 
-A separate page — the idle bar in the sidebar links to it. It shows, for whichever day you pick:
+A separate page — the bar in the sidebar links to it; `/dashboard#all` opens straight on the
+all-machines view. It shows, for whichever day you pick:
 
-- **Idle share** — `waiting / (waiting + working)`, as a ring. This is the headline rather than
-  raw minutes, because raw minutes punish a long day and flatter a short one. Under 15% counts as
-  a win, and consecutive wins are a streak.
-- **Tiles** — idle, working, handoffs, **idle per handoff** (the fairest single number: when the
-  agent handed the work back, how long did it sit?), peak parallelism, sessions, and time lost to
-  usage limits when there was any.
-- **A month calendar**, each day shaded by idle share, click one to load it.
+- **Agent time** in the ring's centre. The ring's fill is the share of engaged time the agents
+  spent working rather than waiting on you; under it, the wall-clock span agents were running,
+  average parallelism, idle, and **all-time agent time** for the selection.
+- **Tiles** — agent time, wall-clock with an agent working, average and peak parallelism,
+  sessions, idle, handoffs, **idle per handoff** (when the agent handed the work back, how long did
+  it sit?), and time lost to usage limits when there was any.
+- **A month calendar**, each day shaded by agent time (&lt;1h → 10h+), click one to load it.
 - **A timeline** — one row per session, bands across the 24 hours: green working, amber waiting,
   hatched out-of-tokens. This is what answers "what was actually going on at 3pm".
-- **A 14-day trend** of idle share beside the ring — one day's number never shows the direction.
-- **Where the idle went**, grouped by working directory. "Which repo am I slowest to answer?"
-  outlives the sessions themselves.
+- **A 14-day trend** of agent time beside the ring.
+- **Where the agent time went**, grouped by working directory, with each one's idle beside it.
 - **That day's sessions**, with a way back: **open** if it's still live, otherwise **reopen** —
   which spawns it again in its old directory with `--resume <conversation>`, so a date on the
   calendar is something you can act on rather than a museum piece. A session with no recorded
@@ -440,10 +456,13 @@ A separate page — the idle bar in the sidebar links to it. It shows, for which
 
 ### Several machines
 
-termhub is one server per machine, and the idle numbers stay that way — **nothing is merged**.
-Which box the time went on is information, and a blended figure would throw it away. What the
-dashboard adds is a **machine strip**: one card per machine with its own idle total, share and
-running/waiting counts. Click one and every panel below shows that machine.
+termhub is one server per machine: each box measures and stores its own sessions. The dashboard
+reads them all and adds a **machine strip** — first an **all machines** card with today's and
+all-time agent time summed over every machine that answered (and how many are working right
+now), then one card per machine with its own numbers. Click **all machines** and every panel
+below shows the merged fleet — calendar, trend, timeline and sessions, each row tagged with the
+machine it ran on; click one machine to see just that box. An offline machine is left out of the
+sum until it wakes (the card says how many reported).
 
 Set it up once, from the dashboard's **+ find machines**: it runs `tailscale status --json`,
 probes the online peers, and saves the ones running termhub to `<data dir>/peers.json`
@@ -455,8 +474,10 @@ on every machine and it works from a phone that can reach this box. Only hosts i
 are reachable that way — the URL never comes from the request.
 
 A machine that's asleep shows as offline; its history lives on it and comes back when it wakes.
-One still running an older build shows *"no idle data — update termhub on that machine"* rather
-than a zero, which would read as "you were never idle there".
+One still running an older build shows *"no data — update termhub on that machine"* rather
+than a zero. A machine whose front is updated but whose sessiond isn't yet still reports today's
+agent time; only its all-time figure is missing from the all-machines card until
+`restart-sessiond.ps1` runs there.
 
 The reopen path reads the **idle log**, not `sessions.json`: the archive forgets an entry as soon
 as the session is killed or restored over, so it can only reach back days. The log keeps the cwd,
@@ -508,10 +529,10 @@ On Linux set these with `systemctl --user edit termhub`; on Windows via `setx` +
 | `lib/voiceHub.js` | Watches armed sessions and broadcasts `waiting`/`busy` over `/ws/voice` |
 | `lib/limit.js` | Concurrency gate bounding the synthesis / `claude -p` children sessiond will fork |
 | `lib/idleState.js` | The idle state machine — working / waiting / limited — as a pure function |
-| `lib/idleHub.js` | Runs that machine once a second over every agent session; logs episodes and pushes to your phone |
-| `lib/idleStore.js` | The append-only episode log (`<data dir>/idle/YYYY-MM-DD.jsonl`) and its rollups |
+| `lib/idleHub.js` | Runs that machine once a second over every agent session; logs episodes, keeps each session's agent time, pushes to your phone |
+| `lib/idleStore.js` | The append-only episode log (`<data dir>/idle/YYYY-MM-DD.jsonl`), its rollups and the cached all-time totals |
 | `lib/notify.js` | ntfy client — best-effort, never throws, silent when no topic is configured |
-| `web/dashboard.html`, `web/dashboard.js`, `web/dashboard.css` | The idle dashboard served at `/dashboard` |
+| `web/dashboard.html`, `web/dashboard.js`, `web/dashboard.css` | The agent-time dashboard served at `/dashboard` (per machine and all machines merged) |
 | `lib/peers.js` | Other termhub machines: the configured list, tailnet discovery, and reading their idle data |
 | `test/peers.test.js` | Peer-list and discovery-filter tests |
 | `test/idle.test.js` | Idle state-machine and episode-log tests |

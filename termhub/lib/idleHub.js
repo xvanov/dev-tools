@@ -106,6 +106,10 @@ class IdleHub extends EventEmitter {
     super();
     this.sessions = sessions;
     this._state = new Map();   // sessionId -> episode + notification bookkeeping
+    // sessionId -> ms of agent work in FINISHED working stretches. Separate from
+    // _state because pausing a session closes its state entry, and a pause must
+    // not reset the session's ⚡ clock to zero; it goes when the session does.
+    this._worked = new Map();
     this._focus = { id: null, at: 0 };
     this._timer = null;
     this._url = { value: null, at: 0, pending: null };
@@ -154,6 +158,9 @@ class IdleHub extends EventEmitter {
     // the clock would freeze mid-count instead of stopping. Unpausing it later
     // starts a fresh episode from that moment, same as attaching to a brand new
     // session.
+    for (const id of [...this._worked.keys()]) {
+      if (!this.sessions.has(id)) this._worked.delete(id);
+    }
     for (const id of [...this._state.keys()]) {
       const session = this.sessions.get(id);
       if (session && session.alive && isTracked(session)) continue;
@@ -221,6 +228,7 @@ class IdleHub extends EventEmitter {
 
     if (st.state !== verdict.state) {
       this._flush(session.id, st, now);
+      this._bankWork(session.id, st, now);
       st.state = verdict.state;
       st.reason = verdict.reason;
       st.since = now;
@@ -264,10 +272,17 @@ class IdleHub extends EventEmitter {
     st.writtenTo = now;
   }
 
+  // Leaving a working stretch: add it to the session's banked agent time.
+  _bankWork(id, st, now) {
+    if (st.state !== WORKING || now <= st.since) return;
+    this._worked.set(id, (this._worked.get(id) || 0) + (now - st.since));
+  }
+
   _close(id, now) {
     const st = this._state.get(id);
     if (!st) return;
     this._flush(id, st, now);
+    this._bankWork(id, st, now);
     this._state.delete(id);
   }
 
@@ -375,15 +390,31 @@ class IdleHub extends EventEmitter {
 
   // Per-session fields folded into GET /api/sessions, so the sidebar gets the
   // idle badge out of the poll it already makes rather than a second one.
+  //
+  // `activeBase` + `activeSince` are the session's agent time: banked work from
+  // finished stretches, plus the stretch in progress when `activeSince` is set.
+  // Split that way so the browser can tick the clock locally without the
+  // number it shows drifting from the one the tracker logs.
   decorate(id) {
     const st = this._state.get(id);
-    if (!st || !st.state) return { idleState: null, idleSince: null, idleMs: 0 };
+    const activeBase = this._worked.get(id) || 0;
+    if (!st || !st.state) return { idleState: null, idleSince: null, idleMs: 0, activeBase, activeSince: null };
+    const working = st.state === WORKING;
     return {
       idleState: st.state,
       idleReason: st.reason,
       idleSince: st.since,
-      idleMs: st.state === WORKING ? 0 : Date.now() - st.since,
+      idleMs: working ? 0 : Date.now() - st.since,
+      activeBase,
+      activeSince: working ? st.since : null,
     };
+  }
+
+  // A session's agent time right now, in ms.
+  activeMs(id, now = Date.now()) {
+    const st = this._state.get(id);
+    const live = st && st.state === WORKING ? now - st.since : 0;
+    return (this._worked.get(id) || 0) + live;
   }
 
   // Open (in-memory) episodes as clipped episode records, so today's totals
@@ -419,11 +450,16 @@ class IdleHub extends EventEmitter {
         reason: st ? st.reason : null,
         since: st ? st.since : null,
         ms: st && st.state !== WORKING ? now - st.since : 0,
+        activeMs: this.activeMs(session.id, now),
       });
     }
+    const today = store.rollup(store.dayKey(now), this.openEpisodes(now));
     return {
       now,
-      today: store.rollup(store.dayKey(now), this.openEpisodes(now)),
+      today,
+      // Every recorded day plus today-so-far: the accumulated agent time on
+      // this machine. The dashboard sums it across machines for the fleet.
+      allTime: store.allTime(today),
       sessions: live,
       running: live.filter((s) => s.state === WORKING).length,
       waiting: live.filter((s) => s.state === WAITING).length,

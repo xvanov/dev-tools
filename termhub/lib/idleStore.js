@@ -8,6 +8,8 @@
 // chosen so the dashboard's questions are all answerable by reading files and
 // doing arithmetic — no database, no index, no daemon:
 //
+//   how much agent time today?     sum ms of state=working, across sessions —
+//                                  two agents working at once accrue twice
 //   how much idle time today?      sum ms of state=waiting
 //   how many turns did I finish?   count of waiting episodes (one per handoff)
 //   how parallel was I?            max overlapping working episodes (sweep)
@@ -167,7 +169,7 @@ function rollup(key, extra = []) {
     if (ep.end > s.last) s.last = ep.end;
     if (ep.title) s.title = ep.title;   // a renamed session keeps its newest name
   }
-  const list = [...sessions.values()].sort((a, b) => b.waiting - a.waiting);
+  const list = [...sessions.values()].sort((a, b) => b.working - a.working);
   return {
     day: key,
     working: totals.working,
@@ -180,7 +182,7 @@ function rollup(key, extra = []) {
   };
 }
 
-// Where the idle time actually goes, grouped by working directory. Two sessions
+// Where the agent time (and the idle time) goes, grouped by working directory. Two sessions
 // on the same repo are one project's problem, and "which repo am I slowest to
 // answer?" is a question you can act on in a way that a per-session list isn't —
 // it survives the sessions themselves.
@@ -193,7 +195,65 @@ function byProject(sessions) {
     p.working += s.working; p.waiting += s.waiting; p.limited += s.limited;
     p.handoffs += s.handoffs; p.sessions++;
   }
-  return [...out.values()].sort((a, b) => b.waiting - a.waiting);
+  return [...out.values()].sort((a, b) => b.working - a.working);
+}
+
+// Every recorded day reduced to its totals, for the history list and the
+// all-time figure. A past day's rollup only changes when its file (or the
+// previous day's, which readDay clips from) is written to, so it is cached on
+// both files' mtime+size: the sidebar polls the all-time number every 5 s, and
+// re-reading months of JSONL on each poll would grow without bound.
+const dayCache = new Map();   // key -> { sig, summary }
+
+function fileSig(key) {
+  try {
+    const st = fs.statSync(dayFile(key));
+    return `${st.mtimeMs}:${st.size}`;
+  } catch {
+    return '-';
+  }
+}
+
+function summarize(r) {
+  return { day: r.day, working: r.working, waiting: r.waiting, limited: r.limited,
+    handoffs: r.handoffs, peakParallel: r.peakParallel, sessions: r.sessions.length };
+}
+
+function daySummary(key) {
+  const sig = `${fileSig(prevDayKey(key))}|${fileSig(key)}`;
+  const hit = dayCache.get(key);
+  if (hit && hit.sig === sig) return hit.summary;
+  const summary = summarize(rollup(key));
+  dayCache.set(key, { sig, summary });
+  return summary;
+}
+
+function history() {
+  return days().map(daySummary);
+}
+
+// The all-time accumulation: every recorded day's totals, with today's taken
+// from `today` (a rollup that already includes the open in-memory episodes)
+// rather than the file, so the number moves while agents work.
+function allTime(today) {
+  const out = { working: 0, waiting: 0, limited: 0, handoffs: 0, days: 0, since: null };
+  const add = (d) => {
+    if (!d) return;
+    out.working += d.working || 0;
+    out.waiting += d.waiting || 0;
+    out.limited += d.limited || 0;
+    out.handoffs += d.handoffs || 0;
+    if ((d.working || 0) + (d.waiting || 0) > 0) {
+      out.days++;
+      if (!out.since || d.day < out.since) out.since = d.day;
+    }
+  };
+  for (const key of days()) {
+    if (today && key === today.day) continue;
+    add(daySummary(key));
+  }
+  add(today);
+  return out;
 }
 
 // Find a session's last-known metadata anywhere in the log, newest day first.
@@ -241,4 +301,5 @@ function days() {
 
 module.exports = {
   append, readDay, rollup, days, dayKey, dayBounds, peakParallel, byProject, findSession, idleDir,
+  history, allTime,
 };

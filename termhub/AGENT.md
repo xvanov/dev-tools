@@ -92,7 +92,7 @@ HTTP API (served by `sessiond`, proxied by `front`): `GET /api/info`, `GET /api/
 `POST /api/sessions` (`{cwd?, command?, title?, cols, rows}`), `POST /api/sessions/:id/restore`
 (re-open an archived session), `DELETE /api/sessions/:id` (kill a live session and/or forget an
 archived one), `PATCH /api/sessions/:id` (`{title?, paused?}` — `paused` opts a session out of
-idle tracking without touching its PTY; see *Idle tracking* below),
+idle tracking without touching its PTY; see *Agent time & idle tracking* below),
 `POST /api/sessions/:id/input` (`{data, submit?}` → `{ok, bytes}`; types into a live session
 without holding a socket open — `submit:false` fills the prompt without pressing return, so text
 written by a model can be staged for a human to read and send), `GET /api/recents`, `GET /api/dirs?path=`,
@@ -1044,10 +1044,20 @@ warns about that in its own banner. `lib/session.js` strips the inherited `CLAUD
 identity from every PTY termhub spawns, so this can't be caused by how termhub itself was
 started; it only shows up for a `claude` launched some other way.
 
-## Idle tracking (`lib/idleHub.js`)
+## Agent time & idle tracking (`lib/idleHub.js`)
 
-Measures the one number the layer exists for: **how long an agent session sat waiting on the
-human**. Runs in `sessiond`, once a second, over every `claude`/`opencode` session — armed or not,
+Classifies every agent session once a second as working / waiting / limited and logs the
+stretches as episodes. Two numbers come out of the same log:
+
+- **Agent time — the headline.** Sum of `ms` over `working` episodes, per session, so
+  concurrent agents add up (two at once accrue 2×). Needs no new recording: `working` episodes
+  were always logged, so the figure reaches back over the whole log. It replaced idle share as the
+  headline because idle was the wrong thing to lead with — a session left open overnight logs
+  hours of `waiting` that say nothing about how much got done (this machine: 66 h of agent time
+  against 741 h "idle" when the switch was made).
+- **Idle time** — how long an agent session sat waiting on the human. Still drives the pushes.
+
+Runs in `sessiond`, once a second, over every `claude`/`opencode` session — armed or not,
 attached or not, browser open or not. A tracker in the front would stop counting the moment the tab
 closed, which is exactly the case worth catching.
 
@@ -1085,6 +1095,20 @@ minus the exit push, so pausing flushes the in-flight stretch and unpausing star
 that moment rather than resuming the old clock. Deliberately not persisted to the archive or
 `sessions.json`: it is a live-monitoring toggle with nothing to mean for a session that isn't
 currently running, so a restored session always comes back unpaused.
+
+Agent-time details:
+
+- **`allTime` is cached per day file.** `/api/idle` (polled every 5 s by every open sidebar)
+  carries `allTime`, which is a sum over every day file. `idleStore.daySummary()` caches each
+  day's rollup keyed on the mtime+size of that file **and the previous day's** (readDay clips
+  from it), so a poll re-reads only what changed. Today comes from the live rollup (with open
+  episodes), never the file, so it isn't counted twice.
+- **The per-session ⚡ clock is `activeBase` + `activeSince`**, from `decorate()` — banked
+  work from finished stretches plus the start of the one in progress — so the browser ticks it
+  locally like the idle badge and `uiSignature()` needn't include it (both change only on a
+  state change, which is in the signature). Banked time lives in `_worked`, separate from
+  `_state`, because ⏸ deletes the `_state` entry and must not zero the clock; it is dropped when
+  the session leaves the map. It counts from when this sessiond started tracking the session.
 
 Load-bearing details:
 
@@ -1129,12 +1153,22 @@ Load-bearing details:
 **This is a `sessiond`-tier change**: it takes a `restart-sessiond.ps1` (which ends every live
 terminal) to activate on a machine already running. The UI half rides the ordinary front swap.
 
-### Several machines (`lib/peers.js`) — read across, never merge
+### Several machines (`lib/peers.js`) — read across, merge in the browser
 
 The fleet is symmetric: every machine measures its own PTYs (only it can), keeps its own log, and
-answers for itself. The dashboard reads the others and shows them **side by side**. There is no
-hub, no central store, and deliberately **no combined number** — which box the idle happened on is
-the information, and a blended figure would be the one statistic that hides it.
+answers for itself. There is no hub and no central store. The dashboard reads the others and
+shows them side by side **and summed**: the first card in the strip is **all machines** (today's
+and all-time agent time over every machine that answered), and selecting it (`/dashboard#all`)
+points every panel at a client-side merge — `fleetApi()` in `web/dashboard.js` fetches each
+machine's history through the peer proxy and adds it up. The no-combined-number rule this section
+used to state was right for idle share (a blended ratio hides which box was slow) and wrong for
+agent time, which is a plain sum and the number the user asked to see globally.
+
+- **Merged session ids are namespaced** `<host|local>:<id>` — ids are per supervisor — and keep
+  `rawId`/`host` so a row still links to (or reopens on) the machine it ran on.
+- **Fleet peak parallelism is exact for the selected day** (re-swept over the merged episodes) but
+  an upper bound on the calendar's day rows, which only have each machine's own peak.
+- **An offline machine is missing from the sum, not zero** — the card shows `reporting/total`.
 
 - **The peer list is explicit, and that is measured.** The obvious design — enumerate the tailnet
   and probe everything — was run against the real tailnet here: 14 peers, 4 running termhub, the
@@ -1153,8 +1187,8 @@ the information, and a blended figure would be the one statistic that hides it.
 - **TLS verification stays on.** `ts.net` certificates are publicly trusted; a peer that fails
   verification is one we should not be reading numbers from.
 - **Three peer states, and the middle one needed saying**: offline; online but running a build with
-  no idle tracking (*"no idle data — update termhub on that machine"*); online with data. Showing
-  the middle case as `0m` would read as "you were never idle there", which is the opposite of true.
+  no tracking (*"no data — update termhub on that machine"*); online with data. Showing the middle
+  case as `0m` would read as "no agent ever ran there", which may be the opposite of true.
 - Viewing a peer, the session rows link to *that machine's* termhub rather than offering
   **reopen** — the session belongs to its supervisor, and reopening from here would either do
   nothing or spawn it on the wrong box.
@@ -1169,11 +1203,10 @@ It reads `GET /api/idle/history` (every recorded day, rolled up) and
 `GET /api/idle/history?day=…&episodes=1` — the raw episodes are **opt-in** because the calendar
 and the tiles only want the rollup, and a busy day is a few hundred rows.
 
-- **Idle share, not idle minutes**, is the headline. `waiting / (waiting + working)`. Ten hours of
-  work with forty minutes of waiting is a better day than two hours with thirty, and only the
-  ratio says so — a raw-minutes score would reward working less, which is a scoreboard pointing
-  the wrong way. The calendar's heat is bucketed on the same ratio for the same reason.
-- **The streak skips days with no sessions.** A weekend is not a regression.
+- **Agent time is the headline** (ring centre, calendar heat, trend, project bars, session sort).
+  The ring's *fill* is still `1 − idle share`, so the idle signal is visible without leading.
+  The idle-share streak was removed with the switch; the line under the verdict is now the
+  all-time agent time for the selection (machine or fleet).
 - **Episodes store the readable session name**, resolved by `label()` at write time — an untitled
   agent session's `title` is its whole command line including the spliced-in `--session-id
   <uuid>`, which identifies nothing to a human reading back a Tuesday (and blew the width of a
@@ -1190,8 +1223,8 @@ and the tiles only want the rollup, and a busy day is a few hundred rows.
   false`) and the button's tooltip say so rather than implying the history came back.
 - **Reopening mints a new session id**, so the page hands off to `/#session=<new id>`, not the old
   one.
-- **The trend and the calendar are drawn from idle SHARE, never minutes.** A quiet day must not
-  render as an improvement; that is the one way a scoreboard like this can teach the wrong lesson.
+- **The trend and the calendar are drawn from agent time.** Neither judges a day by idle any more;
+  idle per handoff and the idle tile carry that.
 
 ## Versioning & tagging
 

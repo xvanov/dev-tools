@@ -591,15 +591,7 @@ function createSessiond({ entry = 'sessiond', port: serverPort = DEFAULT_SESSION
           }
           return sendJson(res, 200, body);
         }
-        const days = idleStore.days();
-        return sendJson(res, 200, {
-          machine: MACHINE_NAME,
-          days: days.map((d) => {
-            const r = idleStore.rollup(d);
-            return { day: d, working: r.working, waiting: r.waiting, limited: r.limited,
-              handoffs: r.handoffs, peakParallel: r.peakParallel, sessions: r.sessions.length };
-          }),
-        });
+        return sendJson(res, 200, { machine: MACHINE_NAME, days: idleStore.history() });
       }
 
       // Reopen a session the dashboard found in the idle log — the "go back to

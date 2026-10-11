@@ -194,6 +194,7 @@ function renderSessions() {
         (s.modelLabel ? `<span class="model-badge">${escapeHtml(s.modelLabel)}</span>` : '') +
       `</span>` +
       idleBadgeHtml(s) +
+      activeBadgeHtml(s) +
       `<button class="voice${canSpeak ? '' : ' unsupported'}${armed ? (voice.unlocked ? ' armed' : ' armed locked') : ''}"` +
         ` title="${escapeHtml(voiceTitle)}">&#128266;</button>` +
       (trackable
@@ -267,6 +268,26 @@ function idleBadgeHtml(s) {
     + `${IDLE_LABEL[s.idleState] || ''} <span class="idle-ms"></span></span>`;
 }
 
+// The session's own agent time — how long its agent has spent working since
+// sessiond started tracking it. Ticks while it works, holds while it waits.
+// Same split as the idle badge: the server sends banked time plus the start of
+// the stretch in progress, and tickIdleBadges() adds the elapsed part locally.
+function activeBadgeHtml(s) {
+  if (!s.alive || (!s.activeBase && !s.activeSince)) return '';
+  return `<span class="active-badge${s.activeSince ? ' live' : ''}" data-active-base="${s.activeBase || 0}" `
+    + `data-active-since="${s.activeSince || 0}" title="Agent time in this session — counts only while it is working">`
+    + `⚡<span class="active-ms"></span></span>`;
+}
+
+// Short form for the sidebar: "45s", "12m", "3h05".
+function fmtActive(ms) {
+  const s = Math.max(0, Math.round(ms / 1000));
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m`;
+  return `${Math.floor(m / 60)}h${String(m % 60).padStart(2, '0')}`;
+}
+
 // Tick every badge's elapsed text in place — no DOM rebuild, no poll. The
 // server's `idleSince` is the anchor, so a badge can't drift from the number
 // the tracker will log, however long the tab has been open.
@@ -281,12 +302,19 @@ function tickIdleBadges() {
     // starts being the point.
     el.classList.toggle('hot', since > 0 && now - since >= (state.idle ? state.idle.thresholdMs : 120000));
   }
+  for (const el of document.querySelectorAll('.active-badge')) {
+    const since = Number(el.dataset.activeSince) || 0;
+    const span = el.querySelector('.active-ms');
+    if (span) span.textContent = fmtActive((Number(el.dataset.activeBase) || 0) + (since ? now - since : 0));
+  }
   renderIdleBar();
 }
 
-// Today's scoreboard. `waiting` is the number to minimise; handoffs is what
-// makes it fair — twenty handoffs at 30 s each is a good day, one handoff you
-// missed for two hours is not, and raw minutes alone can't tell them apart.
+// Today's scoreboard. The headline is AGENT TIME: the sum, over every agent
+// session, of the time it spent working — so two agents working at once make it
+// climb twice as fast, and it stands still while they wait. Idle time is still
+// measured (and still pushed to your phone), but it is the secondary number:
+// "how much did the agents get done" is the one this bar now answers.
 function renderIdleBar() {
   const bar = $('#idle-bar');
   if (!bar) return;
@@ -295,16 +323,20 @@ function renderIdleBar() {
   // Add the live stretch of anything currently waiting: the snapshot is a few
   // seconds old and a total that visibly freezes reads as broken.
   const drift = Date.now() - d.now;
-  const live = (d.sessions || []).reduce((a, s) => a + (s.state === 'waiting' ? Math.max(0, drift) : 0), 0);
-  const waiting = d.today.waiting + live;
-  $('#idle-total').textContent = `idle today ${fmtIdle(waiting)}`;
+  const grow = (st) => (d.sessions || []).reduce((a, s) => a + (s.state === st ? Math.max(0, drift) : 0), 0);
+  const working = d.today.working + grow('working');
+  const waiting = d.today.waiting + grow('waiting');
+  $('#idle-total').textContent = `⚡ agent time today ${fmtIdle(working)}${d.running > 1 ? ` · ×${d.running}` : ''}`;
   const bits = [];
-  if (d.running) bits.push(`${d.running} running`);
+  if (d.running) bits.push(`${d.running} working`);
   if (d.waiting) bits.push(`${d.waiting} waiting`);
+  if (waiting) bits.push(`idle ${fmtIdle(waiting)}`);
+  if (d.allTime) bits.push(`all-time ${fmtIdle(d.allTime.working + grow('working'))}`);
   if (d.today.handoffs) bits.push(`${d.today.handoffs} handoff${d.today.handoffs === 1 ? '' : 's'}`);
   if (d.today.peakParallel > 1) bits.push(`peak ×${d.today.peakParallel}`);
   $('#idle-sub').textContent = bits.join(' · ');
   bar.classList.toggle('alert', (d.waiting || 0) > 0);
+  bar.classList.toggle('live', (d.running || 0) > 0);
 }
 
 async function refreshIdle() {

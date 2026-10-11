@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <title>idle · termhub</title>
+  <title>agent time · termhub</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%2315171c'/%3E%3Ctext x='16' y='23' font-size='19' text-anchor='middle' fill='%23f0b35a'%3E%E2%8F%B1%3C/text%3E%3C/svg%3E" />
   <link rel="stylesheet" href="/styles.css" />
   <link rel="stylesheet" href="/dashboard.css" />
@@ -11,14 +11,14 @@
 <body class="dash">
   <header id="dash-head">
     <a id="back" href="/" title="Back to the terminals">‹ terminals</a>
-    <h1>idle tracker</h1>
+    <h1>agent time</h1>
     <span id="dash-machine"></span>
   </header>
 
   <main id="dash-main">
-    <!-- One card per machine. Numbers are NEVER merged across machines: each
-         box measures its own terminals and answers for itself, and picking one
-         points every panel below at it. -->
+    <!-- One card per machine, led by "all machines" — the sum across every
+         reachable box. Picking a card points every panel below at it;
+         /dashboard#all opens on the fleet. -->
     <section id="machines">
       <div id="machine-strip"></div>
       <button id="machine-scan" title="Find other machines on your tailnet running termhub">+ find machines</button>
@@ -29,20 +29,20 @@
          reads as a perfect day rather than as a missing feature. -->
     <div id="dash-note" class="hidden"></div>
 
-    <!-- The score. Idle share is the honest headline: raw minutes punish a long
-         day, and a ratio doesn't. -->
+    <!-- The score: the day's agent time (summed over sessions, so parallel
+         agents count in full). The ring's fill is the share of it spent
+         working rather than waiting on you. -->
     <section id="score-card">
       <div id="score-ring">
         <div id="score-pct">—</div>
-        <div id="score-label">idle share</div>
+        <div id="score-label">agent time</div>
       </div>
       <div id="score-side">
         <div id="score-day">—</div>
         <div id="score-verdict"></div>
         <div id="score-streak"></div>
-        <!-- Two weeks of idle share as bars: the trend is the part you can
-             actually steer, and one day's number alone never shows it. -->
-        <div id="trend" title="Idle share, last 14 recorded days"></div>
+        <!-- Two weeks of agent time as bars. -->
+        <div id="trend" title="Agent time, last 14 recorded days"></div>
       </div>
     </section>
 
@@ -56,9 +56,9 @@
       </div>
       <div id="calendar"></div>
       <div id="cal-legend">
-        <span class="swatch s0"></span><span class="swatch s1"></span><span class="swatch s2"></span>
-        <span class="swatch s3"></span><span class="swatch s4"></span>
-        <span class="legend-text">less idle → more idle · click a day</span>
+        <span class="swatch a0"></span><span class="swatch a1"></span><span class="swatch a2"></span>
+        <span class="swatch a3"></span><span class="swatch a4"></span>
+        <span class="legend-text">&lt;1h → 10h+ agent time · click a day</span>
       </div>
     </section>
 
@@ -68,7 +68,7 @@
     </section>
 
     <section class="panel">
-      <div class="panel-head"><h2>where the idle went</h2></div>
+      <div class="panel-head"><h2>where the agent time went</h2></div>
       <div id="projects"></div>
     </section>
 
