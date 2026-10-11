@@ -17,15 +17,26 @@ const { injectAfterClaudeExe, injectAfterOpencodeExe } = require('./restore');
 // value between refreshes.
 const OPENCODE_MODEL_REFRESH_MS = 10000;
 
-// Resolve a requested working directory: expand a leading ~, and fall back to
-// the home directory (with an explanatory notice) when it's missing or not a
-// directory — so a typo opens a usable shell instead of failing the session.
+// Resolve a requested working directory: expand a leading ~, make it absolute,
+// and fall back to the home directory (with an explanatory notice) when it's
+// missing or not a directory — so a typo opens a usable shell instead of
+// failing the session.
+//
+// "Absolute" matters more than it looks. On Windows a drive-less path like
+// `\repos\dev-tools\` (typed on a phone, then remembered by recents) is a
+// perfectly good cwd — the shell and claude both resolve it against the current
+// drive — but claude files the transcript under the RESOLVED path
+// (`~/.claude/projects/C--repos-dev-tools/`) while projectDirFor() would encode
+// the raw one (`-repos-dev-tools-`). Nothing then finds the transcript: no model
+// badge, no voice, and the idle tracker loses turn-end detection and falls back
+// to PTY silence, so every repaint of an idle claude logged ~12 s of "working".
 function resolveCwd(input) {
   const home = os.homedir();
   let dir = input && String(input).trim();
   if (!dir) return { cwd: home, notice: null };
   if (dir === '~') dir = home;
   else if (dir.startsWith('~/') || dir.startsWith('~\\')) dir = path.join(home, dir.slice(2));
+  dir = path.resolve(dir);
   try {
     if (fs.statSync(dir).isDirectory()) return { cwd: dir, notice: null };
     return { cwd: home, notice: `'${dir}' is not a directory — starting in ${home}` };
@@ -695,4 +706,4 @@ function baseName(p) {
   return String(p).split(/[\\/]/).pop() || p;
 }
 
-module.exports = { Session };
+module.exports = { Session, resolveCwd };

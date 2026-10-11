@@ -1098,6 +1098,14 @@ currently running, so a restored session always comes back unpaused.
 
 Agent-time details:
 
+- **Agent time is only as good as turn-end detection, and that needs the transcript.** A
+  session whose transcript can't be resolved classifies on PTY silence alone (reason `prompt`
+  on every waiting episode is the tell), so every repaint of an idle claude — statusline,
+  notification, a resize — logged ~12 s of `working`. The cause found on LAP-US101 was a
+  drive-less cwd (`\repos\dev-tools\`, typed on a phone and kept by recents): valid for the
+  shell, but `projectDirFor()` encoded it as `-repos-dev-tools-` while claude filed under
+  `C--repos-dev-tools`. `resolveCwd()` now `path.resolve`s every cwd. With the transcript
+  found, a repaint costs at most the 1.5 s `QUIET_MS` window.
 - **`allTime` is cached per day file.** `/api/idle` (polled every 5 s by every open sidebar)
   carries `allTime`, which is a sum over every day file. `idleStore.daySummary()` caches each
   day's rollup keyed on the mtime+size of that file **and the previous day's** (readDay clips

@@ -295,7 +295,9 @@ function createSessiond({ entry = 'sessiond', port: serverPort = DEFAULT_SESSION
         warnIfClaudeCliStale(session);
         sessions.set(session.id, session);
         archive.upsert(session.archiveEntry());
-        if (body.cwd && !session.cwdFallback) recents.add(body.cwd);
+        // The resolved path, not the typed one — see resolveCwd() for why a
+        // drive-less `\repos\x` must not be offered back as a recent.
+        if (body.cwd && !session.cwdFallback) recents.add(session.cwd);
         return sendJson(res, 201, session.info());
       }
 

@@ -71,6 +71,18 @@ ok('keeps the separator when it is the whole path', () => {
   assert.strictEqual(path.basename(path.dirname(transcriptPath('/', 'abc'))), '-');
 });
 
+ok('a session cwd is made absolute, so it encodes like claude encodes it', () => {
+  // A drive-less Windows path is a valid cwd, but claude files the transcript
+  // under the resolved path — so the session must carry the resolved one.
+  const { resolveCwd } = require('../lib/session');
+  const here = process.cwd();
+  const rel = path.sep + path.relative(path.parse(here).root, here);
+  const r = resolveCwd(rel + path.sep);
+  assert.strictEqual(r.notice, null);
+  assert.strictEqual(r.cwd, here);
+  assert.strictEqual(transcriptPath(r.cwd, 'abc'), transcriptPath(here, 'abc'));
+});
+
 // --- formatModelName -------------------------------------------------------
 
 ok('formats model ids', () => {
