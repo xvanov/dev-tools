@@ -211,6 +211,13 @@ async function run() {
   const since = cursor?.state?.since || new Date(Date.now() - 14 * 86400_000).toISOString();
   const passStarted = new Date().toISOString();
   const login = auth.login;
+  if (cursor?.state?.claimed !== login) {
+    const user = await api('/user');
+    await require('../distill/identity').claimForMe('github_username', login, {
+      displayName: user.name || login,
+      email: user.email || null,
+    });
+  }
 
   const notifications = await api(`/notifications?all=false&per_page=50&since=${encodeURIComponent(since)}`);
   const notifItems = [];
@@ -260,6 +267,7 @@ async function run() {
     state: {
       since: new Date(new Date(passStarted).getTime() - 3600_000).toISOString(),
       login,
+      claimed: login,
       projects: projectsNote,
     },
   });

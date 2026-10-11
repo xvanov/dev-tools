@@ -107,6 +107,18 @@ async function resolve(rawIdentity, displayName) {
 
 // Merges `fromId` into `intoId`. Manual, because it is the one operation here
 // that can destroy information, and it should be a decision you typed.
+// Binds an account handle to the `is_me` person, creating that person if no
+// sign-in has yet (GitHub may well be the first source to run). An earlier
+// pass that already filed the handle as a stranger is merged back, so "who"
+// stops naming you as the person you owe.
+async function claimForMe(kind, value, { displayName, email } = {}) {
+  const meId = (await me())?.id || (await setMe({ displayName, email }));
+  const owner = await one('select person_id from person_identity where kind = $1 and value = $2', [kind, value]);
+  if (owner && String(owner.person_id) !== String(meId)) await merge(meId, owner.person_id);
+  else if (!owner) await addIdentity(meId, kind, value);
+  return meId;
+}
+
 async function merge(intoId, fromId) {
   if (intoId === fromId) return;
   await query('update person_identity set person_id = $1 where person_id = $2', [intoId, fromId]);
@@ -117,4 +129,4 @@ async function merge(intoId, fromId) {
   await query('delete from person where id = $1', [fromId]);
 }
 
-module.exports = { resolve, me, setMe, addIdentity, merge, parseIdentity };
+module.exports = { resolve, me, setMe, addIdentity, claimForMe, merge, parseIdentity };
