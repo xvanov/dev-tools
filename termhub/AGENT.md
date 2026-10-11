@@ -1104,8 +1104,17 @@ Agent-time details:
   notification, a resize — logged ~12 s of `working`. The cause found on LAP-US101 was a
   drive-less cwd (`\repos\dev-tools\`, typed on a phone and kept by recents): valid for the
   shell, but `projectDirFor()` encoded it as `-repos-dev-tools-` while claude filed under
-  `C--repos-dev-tools`. `resolveCwd()` now `path.resolve`s every cwd. With the transcript
-  found, a repaint costs at most the 1.5 s `QUIET_MS` window.
+  `C--repos-dev-tools`. `resolveCwd()` now `path.resolve`s every cwd.
+- **`working` needs positive evidence of a turn in flight; PTY output alone never counts.**
+  Claude: the newest transcript entry is your prompt / a tool_result, or an assistant entry
+  stopping on a non-asking `tool_use`. No transcript yet (a freshly opened claude printing its
+  banner) is `waiting`/`prompt`, and so is a local slash command (`<command-name>/model…`,
+  which no model request follows). Current Claude Code writes an explicit `stop_reason` on every
+  assistant entry, so `end_turn` is a fact a repaint can't overrule; only `stop_reason: null`
+  (older builds' mid-stream fragments) still lets fresh output mean "streaming". opencode:
+  `_opencodeBusy`, set by `session.status` (busy) / `step.started`, cleared by `session.idle`
+  or a `session.status` of `idle`. The old rule was "working until we see session.idle", so an
+  opencode nobody had prompted — or whose API never connected — counted as working indefinitely.
 - **`allTime` is cached per day file.** `/api/idle` (polled every 5 s by every open sidebar)
   carries `allTime`, which is a sum over every day file. `idleStore.daySummary()` caches each
   day's rollup keyed on the mtime+size of that file **and the previous day's** (readDay clips

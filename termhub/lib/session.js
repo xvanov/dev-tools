@@ -188,6 +188,7 @@ class Session {
     this._opencodeApi = null;
     this._opencodeAsk = null;         // the question/permission it is blocked on
     this._opencodeIdleAt = 0;         // when its last turn finished
+    this._opencodeBusy = false;       // a turn is running right now (session.status busy)
     this._opencodePortPromise = null;
     if (this.kind === 'opencode') {
       const own = /(^|\s)--port(?:=|\s+)(\d{2,5})\b/.exec(this.command || '');
@@ -552,10 +553,16 @@ class Session {
           // stop_reason, and can't see a question at all.
           this._opencodeIdleAt = Date.now();
           this._opencodeAsk = null;
+          this._opencodeBusy = false;
           if (this.onAgentIdle) { try { this.onAgentIdle(); } catch {} }
+        } else if (type === 'session.status' && props.status && props.status.type === 'idle') {
+          // session.status carries the state, and "idle" is one of them — it
+          // must not read as the start of a turn (the idle tracker would bill it).
+          this._opencodeBusy = false;
         } else if (type === 'session.status' || type === 'session.next.step.started') {
           this._opencodeIdleAt = 0;
           this._opencodeAsk = null;
+          this._opencodeBusy = true;
         } else if (type === 'question.asked' || type === 'question.v2.asked'
                 || type === 'permission.asked' || type === 'permission.v2.asked') {
           // What Claude cannot tell us. Read it back off the API rather than

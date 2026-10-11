@@ -39,34 +39,64 @@ const QUIET_MS = 1500;
 // AskUserQuestion writes NOTHING to its transcript until you answer.
 const BLOCKED_MS = 12000;
 
+// A `user` entry Claude Code writes for a local slash command (/model, /clear,
+// /cost…) and its output. It is the newest turn after such a command, but no
+// model request follows it — counting it as a turn in flight would clock up to
+// BLOCKED_MS of agent time for typing /model.
+const LOCAL_COMMAND_RE = /^\s*<(command-name|command-message|command-args|local-command-stdout|local-command-stderr|local-command-caveat)>/;
+
 // Classify a claude session.
 //
 //   turn       — readLastTurn() output, or null when no transcript exists yet
 //   ptyIdleMs  — now - session.lastActivity
 //
+// WORKING needs positive evidence from the transcript that a turn is in flight:
+// your prompt or a tool_result is the newest entry (the model is answering), or
+// the newest assistant entry stops on a non-asking tool_use (a tool is running).
+// PTY output alone never counts — a freshly opened claude prints its banner, and
+// an idle one repaints its status line, prompt box and spinner-free footer, none
+// of which is the agent doing anything. That used to be the rule ("any output
+// in the last QUIET_MS is streaming") and it billed every repaint as work.
+//
+// Current Claude Code writes an explicit stop_reason on every assistant entry
+// (`end_turn` or `tool_use`; measured across this machine's transcripts), so
+// "finished" is a recorded fact. The one ambiguous shape is `stop_reason: null`
+// — a mid-stream fragment in older builds — and only there does fresh PTY
+// output still mean "still streaming".
+//
 // Order matters: the limit check is first because a limit notice passes
-// isWaitingForInput(), and the quiet check is second because output still
-// streaming makes every other reading unreliable.
+// isWaitingForInput().
 function classifyClaude({ turn, ptyIdleMs }) {
   if (isLimitNotice(turn)) return { state: LIMITED, reason: 'limit' };
-  if (ptyIdleMs < QUIET_MS) return { state: WORKING, reason: 'streaming' };
-  if (isWaitingForInput(turn)) return { state: WAITING, reason: 'turn-end' };
-  // Silent for BLOCKED_MS with no finished turn on record: parked on a question,
-  // a permission prompt, or an empty prompt box waiting for its first
-  // instruction. All three are you-shaped, all three count.
-  if (ptyIdleMs >= BLOCKED_MS) return { state: WAITING, reason: turn ? 'blocked' : 'prompt' };
-  return { state: WORKING, reason: 'mid-turn' };
+  // No transcript yet: nothing has been asked of this agent. A new session sits
+  // here until the first prompt lands, whatever its PTY is printing.
+  if (!turn) return { state: WAITING, reason: 'prompt' };
+  if (isWaitingForInput(turn)) {
+    if (turn.stopReason === null && ptyIdleMs < QUIET_MS) return { state: WORKING, reason: 'streaming' };
+    return { state: WAITING, reason: 'turn-end' };
+  }
+  if (turn.role === 'user' && LOCAL_COMMAND_RE.test(turn.text || '')) return { state: WAITING, reason: 'prompt' };
+  // A turn is in flight. Silent for BLOCKED_MS anyway: parked on a permission
+  // prompt, which writes nothing to the transcript until you answer — Claude's
+  // TUI animates a spinner the whole time it is genuinely working.
+  if (ptyIdleMs >= BLOCKED_MS) return { state: WAITING, reason: 'blocked' };
+  return { state: WORKING, reason: ptyIdleMs < QUIET_MS ? 'streaming' : 'mid-turn' };
 }
 
 // Classify an opencode session. No heuristic in here at all: the TUI's own API
-// publishes `session.idle` when a turn finishes and `question.asked` the moment
-// it asks, and lib/session.js keeps both on the session (see
-// _opencodeIdleAt / _opencodeAsk). This is the parity the Claude path has to
-// guess its way to.
-function classifyOpencode({ idleAt, ask }) {
+// publishes `session.status` (busy) / `session.idle` around every turn and
+// `question.asked` the moment it asks, and lib/session.js keeps them on the
+// session (_opencodeBusy / _opencodeIdleAt / _opencodeAsk).
+//
+// WORKING needs `busy` — a positive "a turn is running" from opencode itself.
+// The old rule was "working unless we've seen it go idle", which made a freshly
+// opened opencode (no turn yet, so no session.idle ever) count as working for
+// as long as it sat there, and an opencode whose API never connected count as
+// working forever.
+function classifyOpencode({ idleAt, ask, busy }) {
   if (ask) return { state: WAITING, reason: 'question' };
-  if (idleAt) return { state: WAITING, reason: 'turn-end' };
-  return { state: WORKING, reason: 'mid-turn' };
+  if (busy) return { state: WORKING, reason: 'mid-turn' };
+  return { state: WAITING, reason: idleAt ? 'turn-end' : 'prompt' };
 }
 
 // Is this session's death worth a push?

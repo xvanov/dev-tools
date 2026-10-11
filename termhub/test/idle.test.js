@@ -49,11 +49,28 @@ ok('a finished assistant turn with a quiet PTY is waiting', () => {
   assert.strictEqual(v.reason, 'turn-end');
 });
 
-ok('output in the last QUIET_MS reads as working, whatever the transcript says', () => {
-  // The transcript's tail during streaming can be a partial entry that already
-  // looks finished; the PTY is the faster and more honest signal here.
-  const v = classifyClaude({ turn: turn(), ptyIdleMs: QUIET_MS - 1 });
+ok('a repaint of a finished turn is not work', () => {
+  // An idle claude repaints its status line and prompt box; that output used to
+  // flip it to working. A recorded end_turn is a fact the PTY can't overrule.
+  const v = classifyClaude({ turn: turn({ stopReason: 'end_turn' }), ptyIdleMs: 0 });
+  assert.strictEqual(v.state, 'waiting');
+});
+
+ok('a null stop_reason with live output is still streaming (older builds)', () => {
+  const v = classifyClaude({ turn: turn({ stopReason: null }), ptyIdleMs: QUIET_MS - 1 });
   assert.strictEqual(v.state, 'working');
+});
+
+ok('a prompt just submitted is working, output or not', () => {
+  const v = classifyClaude({ turn: turn({ role: 'user', stopReason: null, text: 'fix the bug' }), ptyIdleMs: 3000 });
+  assert.strictEqual(v.state, 'working');
+});
+
+ok('a local slash command is not a turn in flight', () => {
+  const v = classifyClaude({
+    turn: turn({ role: 'user', stopReason: null, text: '<command-name>/model</command-name>' }), ptyIdleMs: 0,
+  });
+  assert.strictEqual(v.state, 'waiting');
 });
 
 ok('a tool_use stop is mid-work, not idle', () => {
@@ -81,10 +98,14 @@ ok('the same silence before BLOCKED_MS is still working', () => {
   assert.strictEqual(v.state, 'working');
 });
 
-ok('a session with no transcript yet, sitting silent, is idle', () => {
-  const v = classifyClaude({ turn: null, ptyIdleMs: BLOCKED_MS + 1 });
-  assert.strictEqual(v.state, 'waiting');
-  assert.strictEqual(v.reason, 'prompt');
+ok('a session with no transcript yet is idle, even while its banner prints', () => {
+  // A freshly opened claude: nothing asked of it yet. This is the "opening a
+  // terminal starts the clock" report — it must not, at any PTY activity.
+  for (const ptyIdleMs of [0, QUIET_MS, BLOCKED_MS + 1]) {
+    const v = classifyClaude({ turn: null, ptyIdleMs });
+    assert.strictEqual(v.state, 'waiting');
+    assert.strictEqual(v.reason, 'prompt');
+  }
 });
 
 ok('a spend-limit notice is `limited`, never `waiting`', () => {
@@ -112,9 +133,17 @@ ok('an interrupt notice is not a limit', () => {
 });
 
 ok('opencode reads its state off the event stream, with no heuristic at all', () => {
-  assert.strictEqual(classifyOpencode({ idleAt: 0, ask: null }).state, 'working');
-  assert.strictEqual(classifyOpencode({ idleAt: 123, ask: null }).state, 'waiting');
-  assert.strictEqual(classifyOpencode({ idleAt: 0, ask: { text: 'which?' } }).reason, 'question');
+  assert.strictEqual(classifyOpencode({ idleAt: 0, ask: null, busy: true }).state, 'working');
+  assert.strictEqual(classifyOpencode({ idleAt: 123, ask: null, busy: false }).state, 'waiting');
+  assert.strictEqual(classifyOpencode({ idleAt: 0, ask: { text: 'which?' }, busy: true }).reason, 'question');
+});
+
+ok('a freshly opened opencode is not working — no turn has started', () => {
+  // The old rule was "working until session.idle", and a TUI nobody has
+  // prompted never sends session.idle.
+  const v = classifyOpencode({ idleAt: 0, ask: null, busy: false });
+  assert.strictEqual(v.state, 'waiting');
+  assert.strictEqual(v.reason, 'prompt');
 });
 
 console.log('idleState — is this death worth a push?');

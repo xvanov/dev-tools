@@ -184,7 +184,7 @@ class IdleHub extends EventEmitter {
   _classify(session, now) {
     const ptyIdleMs = now - (session.lastActivity || now);
     if (session.kind === 'opencode') {
-      return classifyOpencode({ idleAt: session._opencodeIdleAt, ask: session._opencodeAsk });
+      return classifyOpencode({ idleAt: session._opencodeIdleAt, ask: session._opencodeAsk, busy: session._opencodeBusy });
     }
     // Reading the transcript tail is a 64 KB read behind an mtime check in
     // lib/claudeModel.js's scanTail; the voice hub does the same thing on the
