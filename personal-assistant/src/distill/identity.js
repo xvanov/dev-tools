@@ -21,6 +21,7 @@ function parseIdentity(raw) {
   if (value === 'me') return { kind: 'self', value: 'me' };
   if (value.startsWith('aad:')) return { kind: 'aad_oid', value: value.slice(4) };
   if (value.startsWith('gitlab:')) return { kind: 'gitlab_username', value: value.slice(7) };
+  if (value.startsWith('github:')) return { kind: 'github_username', value: value.slice(7) };
   if (value.includes('@')) return { kind: 'smtp', value: value.toLowerCase() };
   return { kind: 'display_name', value };
 }

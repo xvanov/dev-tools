@@ -94,6 +94,10 @@ async function main() {
     await ingest.runAll(['gitlab']);
   });
 
+  every(config.github.pollSeconds, 'github', async () => {
+    await ingest.runAll(['github']);
+  });
+
   // Local files, so this can be frequent and cheap.
   every(120, 'sessions', async () => {
     await ingest.runAll(['claude_session']);

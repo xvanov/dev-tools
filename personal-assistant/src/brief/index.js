@@ -40,7 +40,7 @@ async function gather({ horizonDays = 7 } = {}) {
   const reviews = await rows(
     `select subject, raw, occurred_at
        from source_item
-      where source in ('gitlab_mr','gitlab_todo')
+      where source in ('gitlab_mr','gitlab_todo','github_pr','github_notification','github_project_item')
         and occurred_at > now() - interval '21 days'
       order by occurred_at desc
       limit 20`
@@ -118,7 +118,7 @@ function formatBrief(data, { now = Date.now() } = {}) {
   });
 
   const openMrs = data.reviews.filter((r) => r.raw?.state === 'opened' || r.raw?.action);
-  section('GITLAB', openMrs.slice(0, 8), (r) =>
+  section('CODE & BOARDS', openMrs.slice(0, 8), (r) =>
     `  ${r.subject}${r.raw?.pipeline ? `  [pipeline ${r.raw.pipeline}]` : ''}`
   );
 

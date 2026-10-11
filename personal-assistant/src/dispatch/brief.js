@@ -126,6 +126,10 @@ function sourceLabel(source) {
       gitlab_todo: 'GitLab todo',
       gitlab_mr: 'GitLab MR',
       gitlab_issue: 'GitLab issue',
+      github_notification: 'GitHub notification',
+      github_pr: 'GitHub PR',
+      github_issue: 'GitHub issue',
+      github_project_item: 'GitHub project board item',
       audio: 'Recorded conversation',
       claude_session: 'Your Claude session',
     }[source] || source

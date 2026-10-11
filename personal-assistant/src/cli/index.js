@@ -472,6 +472,15 @@ const commands = {
     // GitLab, Anthropic, embeddings
     const gitlab = require('../ingest/gitlab');
     mark(gitlab.configured(), 'gitlab', gitlab.configured() ? config.gitlab.url : 'PA_GITLAB_TOKEN not set');
+    const github = require('../ingest/github');
+    if (github.configured()) {
+      const gh = await github.status();
+      mark(gh.ok, 'github', gh.ok ? `gh · ${gh.login}` : `gh not signed in — run \`gh auth login\``);
+      if (gh.ok) {
+        const boards = gh.scopes.includes('read:project') || gh.scopes.includes('project');
+        mark(boards, 'github projects', boards ? 'read:project granted' : 'run `gh auth refresh -s read:project`');
+      }
+    }
     // No key is fine: model calls fall back to `claude -p` on your own login.
     const llm = require('../llm');
     let cliVersion = null;

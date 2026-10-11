@@ -84,6 +84,7 @@ source cursor, the distillation backlog, and whether termhub is reachable.
 |---|---|---|
 | `PA_GRAPH_CLIENT_ID` | mail, calendar, Teams chats | An Entra app registration: single tenant, **Allow public client flows = Yes**, no redirect URI (device-code sign-in needs none). Delegated `Mail.Read`, `Calendars.Read`, `Chat.Read`, `User.Read`. |
 | `ANTHROPIC_API_KEY` | distillation and drafts | Optional. Without it, model calls run through `claude -p` on your own Claude Code login. |
+| GitHub (`gh auth login`) | notifications, PRs, assigned issues, Projects v2 board items | No token in `.env`: ingest runs through the signed-in `gh` CLI. Boards also need `gh auth refresh -s read:project`. `PA_GITHUB=0` turns it off. |
 | `PA_GITLAB_TOKEN` | MRs, issues, todos, opening draft MRs | `read_api` is enough unless you want `pa land` to open the MR, which needs `api`. |
 | `AZURE_OPENAI_*` | semantic search | Optional. Without it search is full-text only — good on names and ids, weaker on paraphrase. |
 

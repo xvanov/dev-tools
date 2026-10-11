@@ -9,6 +9,7 @@ const graphMail = require('./graphMail');
 const graphCalendar = require('./graphCalendar');
 const graphChat = require('./graphChat');
 const gitlab = require('./gitlab');
+const github = require('./github');
 const claudeSessions = require('./claudeSessions');
 const audio = require('./audio');
 const { recordError } = require('./store');
@@ -16,7 +17,7 @@ const { logger } = require('../log');
 
 const log = logger('ingest');
 
-const SOURCES = [graphMail, graphCalendar, graphChat, gitlab, claudeSessions, audio];
+const SOURCES = [graphMail, graphCalendar, graphChat, gitlab, github, claudeSessions, audio];
 
 function byId(id) {
   return SOURCES.find((s) => s.id === id) || null;

@@ -113,6 +113,16 @@ const config = {
     pollSeconds: envInt('PA_GITLAB_POLL_SECONDS', 300),
   },
 
+  // Through the `gh` CLI and its keyring login — no token in `.env`. Projects
+  // v2 additionally needs `gh auth refresh -s read:project`.
+  github: {
+    enabled: env('PA_GITHUB', '1') !== '0',
+    bin: env('PA_GH_BIN', 'gh'),
+    // Orgs whose project boards are read. Empty means every org you belong to.
+    orgs: (env('PA_GITHUB_ORGS', '') || '').split(/[\s,]+/).filter(Boolean),
+    pollSeconds: envInt('PA_GITHUB_POLL_SECONDS', 300),
+  },
+
   anthropic: {
     apiKey: env('ANTHROPIC_API_KEY'),
     // Distillation is extraction, not reasoning-heavy work: the cost lever is
