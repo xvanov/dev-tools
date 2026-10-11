@@ -1184,6 +1184,11 @@ agent time, which is a plain sum and the number the user asked to see globally.
   peers are reachable through it** — the target URL comes from `peers.json`, never from the
   request. A `?url=` parameter there would turn the front into a general-purpose tailnet fetcher,
   which is a much bigger thing than a dashboard.
+- **A `.ts.net` name the system resolver can't find is resolved from `tailscale status`**
+  (`lookup()` in `lib/peers.js`, cached 60 s). A machine with `--accept-dns=false` (LAP-US101,
+  next to a corporate VPN) gets NXDOMAIN for every MagicDNS name, and the whole strip read
+  offline while every peer answered on its tailnet IP. Only the address is substituted; the
+  request keeps the name, so TLS still verifies against the ts.net certificate.
 - **TLS verification stays on.** `ts.net` certificates are publicly trusted; a peer that fails
   verification is one we should not be reading numbers from.
 - **Three peer states, and the middle one needed saying**: offline; online but running a build with

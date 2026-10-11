@@ -39,6 +39,22 @@ const STATUS = {
   },
 };
 
+console.log('peers — resolving without MagicDNS');
+
+ok('tailscale status maps each DNSName to its IPv4 address', () => {
+  const map = peers.hostsFromStatus({
+    Self: { DNSName: 'lap-us101.porgy-boga.ts.net.', TailscaleIPs: ['100.126.164.21', 'fd7a:115c:a1e0::1'] },
+    Peer: {
+      'k1:': { DNSName: 'K-911-X17.porgy-boga.ts.net.', TailscaleIPs: ['fd7a:115c:a1e0::2', '100.64.38.18'] },
+      'k2:': { DNSName: 'no-ip.porgy-boga.ts.net.', TailscaleIPs: [] },
+    },
+  });
+  assert.strictEqual(map.get('lap-us101.porgy-boga.ts.net'), '100.126.164.21');
+  assert.strictEqual(map.get('k-911-x17.porgy-boga.ts.net'), '100.64.38.18', 'lowercased, v4 preferred');
+  assert.ok(!map.has('no-ip.porgy-boga.ts.net'));
+  assert.strictEqual(peers.hostsFromStatus(null).size, 0);
+});
+
 console.log('peers — discovery candidates');
 
 ok('offline peers are skipped', () => {

@@ -2,10 +2,10 @@
 
 // The other machines running termhub — for the dashboard's machine strip.
 //
-// **Stats stay per machine.** Nothing here merges anything: each machine keeps
-// measuring its own PTYs (only it can) and keeps its own log, and this module
-// only lets one dashboard *look at* the others. There is no hub, no central
-// store, and no combined number that would hide which box the idle time was on.
+// **Measurement stays per machine.** Each machine keeps measuring its own PTYs
+// (only it can) and keeps its own log; this module only lets one dashboard
+// *read* the others. There is no hub and no central store — the dashboard's
+// "all machines" view sums what it reads, in the browser (web/dashboard.js).
 //
 // **The peer list is explicit, and that is a measured decision.** The obvious
 // design — discover every tailnet peer and probe it — was tried against the
@@ -25,6 +25,7 @@ const fs = require('fs');
 const path = require('path');
 const https = require('https');
 const http = require('http');
+const dns = require('dns');
 const { execFile } = require('child_process');
 const { dataDir } = require('./paths');
 
@@ -99,6 +100,58 @@ function save(entries) {
   return peers;
 }
 
+// ---- resolving tailnet names without MagicDNS ------------------------------
+
+// A machine can be on the tailnet with Tailscale DNS turned off
+// (`tailscale set --accept-dns=false`, common next to a corporate VPN). Its
+// resolver then answers NXDOMAIN for every `*.ts.net` name, and every peer
+// read as offline although `http://<tailnet-ip>:7000` answered fine — found
+// exactly that way on LAP-US101. So a `.ts.net` name the system resolver
+// can't find is looked up in `tailscale status --json` instead. Only the
+// address comes from there: the request still carries the name, so TLS
+// verification against the ts.net certificate is unchanged.
+const TS_HOSTS_TTL_MS = 60 * 1000;
+const tsHosts = { at: 0, map: new Map(), pending: null };
+
+// DNSName (no trailing dot, lowercased) -> first IPv4 tailnet address.
+// Kept apart from the spawn so it can be tested against captured output.
+function hostsFromStatus(status) {
+  const map = new Map();
+  const add = (p) => {
+    if (!p || !p.DNSName) return;
+    const ip = (p.TailscaleIPs || []).find((a) => /^\d+\.\d+\.\d+\.\d+$/.test(a));
+    if (ip) map.set(String(p.DNSName).replace(/\.$/, '').toLowerCase(), ip);
+  };
+  add(status && status.Self);
+  for (const p of Object.values((status && status.Peer) || {})) add(p);
+  return map;
+}
+
+function tailnetAddress(hostname) {
+  const key = String(hostname).toLowerCase();
+  if (Date.now() - tsHosts.at < TS_HOSTS_TTL_MS) return Promise.resolve(tsHosts.map.get(key) || null);
+  if (!tsHosts.pending) {
+    tsHosts.pending = tailscaleStatus()
+      .then((st) => { if (st) tsHosts.map = hostsFromStatus(st); })
+      .finally(() => { tsHosts.at = Date.now(); tsHosts.pending = null; });
+  }
+  return tsHosts.pending.then(() => tsHosts.map.get(key) || null);
+}
+
+// A `lookup` for http(s).get: the system resolver first, the tailnet's own
+// address book for a `.ts.net` name it can't find.
+function lookup(hostname, options, cb) {
+  if (typeof options === 'function') { cb = options; options = {}; }
+  dns.lookup(hostname, options, (err, address, family) => {
+    if (!err || !/\.ts\.net$/i.test(hostname)) return cb(err, address, family);
+    tailnetAddress(hostname).then((ip) => {
+      if (!ip) return cb(err);
+      if (options && options.all) return cb(null, [{ address: ip, family: 4 }]);
+      return cb(null, ip, 4);
+    }, () => cb(err));
+  });
+}
+
 // GET JSON from a peer. Resolves `null` for anything that isn't a clean 200 —
 // a machine that is asleep, rebooting, or not running termhub is the expected
 // case here, not an error worth propagating into the UI as a failure.
@@ -118,6 +171,7 @@ function fetchJson(url, { timeoutMs = PROBE_TIMEOUT_MS } = {}) {
       port: target.port || undefined,
       path: target.pathname + target.search,
       timeout: timeoutMs,
+      lookup,
     }, (res) => {
       let raw = '';
       res.setEncoding('utf8');
@@ -218,6 +272,6 @@ async function scan() {
 }
 
 module.exports = {
-  list, save, status, identify, fetchJson, scan, candidatesFromStatus, normalize,
+  list, save, status, identify, fetchJson, scan, candidatesFromStatus, normalize, hostsFromStatus,
   DEFAULT_PORTS, PROBE_TARGETS, peersFile,
 };
