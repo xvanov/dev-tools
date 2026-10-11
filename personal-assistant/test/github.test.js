@@ -72,4 +72,27 @@ assert.strictEqual(
   assert.strictEqual(items[1].threadExternalId, project.url);
 }
 
+{
+  const { parseBoards, fieldMap } = require('../src/ingest/github');
+  assert.deepStrictEqual(parseBoards('innergy-dev/7:Pod=Xi'), [{ org: 'innergy-dev', number: 7, field: 'Pod', value: 'Xi' }]);
+  assert.strictEqual(parseBoards('').length, 0);
+  assert.strictEqual(parseBoards('a/1:F=x, b/2:G=y').length, 2);
+  assert.throws(() => parseBoards('innergy-dev/7'), /expected org\/number:Field=Value/);
+
+  // A multi-select arrives as one comma-joined string.
+  assert.deepStrictEqual(fieldMap({ fields: { nodes: [{ value: 'Pi, Xi', field: { name: 'Pod' } }, {}] } }), { pod: ['pi', 'xi'] });
+
+  const node = (id, pod, who) => ({
+    id, updatedAt: 'x', isArchived: false, status: { name: 'Ideas' },
+    fields: { nodes: pod ? [{ value: pod, field: { name: 'Pod' } }] : [] },
+    content: { __typename: 'Issue', title: id, state: 'OPEN', url: 'u', assignees: { nodes: who ? [{ login: who }] : [] } },
+  });
+  const board = { title: 'CAD/CAM Planning', url: 'b', items: { nodes: [node('xi', 'Xi'), node('pi', 'Pi'), node('pi-mine', 'Pi', 'me'), node('none')] } };
+  const watch = [{ org: 'o', number: 7, field: 'Pod', value: 'xi' }];
+  // Pod Xi cards come in unassigned; other pods' cards only when they are yours.
+  assert.deepStrictEqual(projectItems(board, 'me', watch).map((i) => i.externalId), ['project-item/xi', 'project-item/pi-mine']);
+  assert.strictEqual(projectItems(board, 'me', watch)[0].raw.watched, true);
+  assert.deepStrictEqual(projectItems(board, 'me').map((i) => i.externalId), ['project-item/pi-mine']);
+}
+
 console.log('github ok');

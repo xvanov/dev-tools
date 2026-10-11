@@ -121,6 +121,9 @@ const config = {
     // Orgs whose project boards are read. Empty means every org you belong to.
     orgs: (env('PA_GITHUB_ORGS', '') || '').split(/[\s,]+/).filter(Boolean),
     pollSeconds: envInt('PA_GITHUB_POLL_SECONDS', 300),
+    // Board items followed by a field value, not by assignee — a pod's board,
+    // e.g. `innergy-dev/7:Pod=Xi`. Parsed by ingest/github.js.
+    boardsSpec: env('PA_GITHUB_BOARDS', ''),
   },
 
   // Through the claude.ai Atlassian connector via `claude -p` — no Jira token.

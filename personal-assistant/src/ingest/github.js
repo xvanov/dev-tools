@@ -63,6 +63,17 @@ async function status() {
   }
 }
 
+// `org/number:Field=Value` rules, comma- or space-separated.
+function parseBoards(spec) {
+  const out = [];
+  for (const part of String(spec || '').split(/[\s,]+/).filter(Boolean)) {
+    const m = part.match(/^([^/\s]+)\/(\d+):([^=]+)=(.+)$/);
+    if (!m) throw new Error(`PA_GITHUB_BOARDS: cannot read "${part}" — expected org/number:Field=Value`);
+    out.push({ org: m[1], number: Number(m[2]), field: m[3], value: m[4] });
+  }
+  return out;
+}
+
 function configured() {
   return config.github.enabled;
 }
@@ -125,7 +136,7 @@ const PROJECTS = `
 query($org: String!) {
   organization(login: $org) {
     projectsV2(first: 50, orderBy: {field: UPDATED_AT, direction: DESC}) {
-      nodes { id title url closed }
+      nodes { id number title url closed }
     }
   }
 }`;
@@ -143,6 +154,13 @@ query($id: ID!, $after: String) {
           status: fieldValueByName(name: "Status") {
             ... on ProjectV2ItemFieldSingleSelectValue { name }
           }
+          fields: fieldValues(first: 30) {
+            nodes {
+              ... on ProjectV2ItemFieldMultiSelectValue { value field { ... on ProjectV2FieldCommon { name } } }
+              ... on ProjectV2ItemFieldSingleSelectValue { name field { ... on ProjectV2FieldCommon { name } } }
+              ... on ProjectV2ItemFieldTextValue { text field { ... on ProjectV2FieldCommon { name } } }
+            }
+          }
           content {
             __typename
             ... on Issue { title url body state repository { nameWithOwner } assignees(first: 10) { nodes { login } } author { login } }
@@ -157,27 +175,45 @@ query($id: ID!, $after: String) {
 
 const MAX_PAGES = 20;
 
-async function boardItemsFor(project, login) {
+async function boardItemsFor(project, login, watch) {
   const out = [];
   let after = null;
   for (let page = 0; page < MAX_PAGES; page++) {
     const data = await graphql(PROJECT_PAGE, { id: project.id, after: after ?? 'null' });
     const items = data.data?.node?.items;
     if (!items) break;
-    out.push(...projectItems({ ...project, items }, login));
+    out.push(...projectItems({ ...project, items }, login, watch));
     if (!items.pageInfo?.hasNextPage) break;
     after = items.pageInfo.endCursor;
   }
   return out;
 }
 
-function projectItems(project, login) {
+// Field name → values, lower-cased. A multi-select comes back as one
+// comma-joined string ("Pi, Xi"), so it is split.
+function fieldMap(node) {
+  const map = {};
+  for (const f of node.fields?.nodes || []) {
+    const name = f?.field?.name;
+    const raw = f?.value ?? f?.name ?? f?.text;
+    if (!name || raw == null) continue;
+    map[name.toLowerCase()] = String(raw).split(',').map((v) => v.trim().toLowerCase()).filter(Boolean);
+  }
+  return map;
+}
+
+// An item is yours if it is assigned to you, or if it matches a watch rule
+// for its board (`PA_GITHUB_BOARDS=innergy-dev/7:Pod=Xi`): a pod's board is
+// the pod's work whether or not anyone has put their name on a card yet.
+function projectItems(project, login, watch = []) {
   const out = [];
   for (const node of project.items?.nodes || []) {
     const c = node.content;
     if (!c || node.isArchived) continue;
     const assignees = (c.assignees?.nodes || []).map((a) => a.login);
-    if (!assignees.includes(login)) continue;
+    const fields = fieldMap(node);
+    const watched = watch.some((w) => (fields[w.field.toLowerCase()] || []).includes(w.value.toLowerCase()));
+    if (!assignees.includes(login) && !watched) continue;
     if (c.state && c.state !== 'OPEN') continue;
     out.push({
       externalId: `project-item/${node.id}`,
@@ -191,6 +227,8 @@ function projectItems(project, login) {
         board: project.title,
         boardUrl: project.url,
         status: node.status?.name || null,
+        fields,
+        watched,
         state: 'opened',
         kind: c.__typename,
         webUrl: c.url || project.url,
@@ -265,11 +303,15 @@ async function run() {
   if (!auth.scopes.includes('read:project') && !auth.scopes.includes('project')) {
     projectsNote = 'needs read:project — run `gh auth refresh -s read:project`';
   } else {
-    for (const org of config.github.orgs.length ? config.github.orgs : (await api('/user/orgs')).map((o) => o.login)) {
+    const watchRules = parseBoards(config.github.boardsSpec);
+    const orgs = new Set(config.github.orgs.length ? config.github.orgs : (await api('/user/orgs')).map((o) => o.login));
+    for (const b of watchRules) orgs.add(b.org);
+    for (const org of orgs) {
       try {
         const data = await graphql(PROJECTS, { org });
         for (const p of data.data?.organization?.projectsV2?.nodes || []) {
-          if (!p.closed) boardItems.push(...(await boardItemsFor(p, login)));
+          const watch = watchRules.filter((b) => b.org === org && b.number === p.number);
+          if (!p.closed) boardItems.push(...(await boardItemsFor(p, login, watch)));
         }
       } catch (err) {
         projectsNote = `org ${org}: ${err.message.slice(0, 120)}`;
@@ -300,4 +342,4 @@ async function run() {
   return changed;
 }
 
-module.exports = { run, id: 'github', configured, status, gh, api, notificationItem, searchItem, projectItems, htmlUrl };
+module.exports = { run, id: 'github', configured, status, gh, api, notificationItem, searchItem, projectItems, fieldMap, parseBoards, htmlUrl };
