@@ -472,7 +472,23 @@ const commands = {
     // GitLab, Anthropic, embeddings
     const gitlab = require('../ingest/gitlab');
     mark(gitlab.configured(), 'gitlab', gitlab.configured() ? config.gitlab.url : 'PA_GITLAB_TOKEN not set');
-    mark(Boolean(config.anthropic.apiKey), 'anthropic', config.anthropic.apiKey ? `${config.anthropic.model} · effort ${config.anthropic.effort}` : 'ANTHROPIC_API_KEY not set — distillation cannot run');
+    // No key is fine: model calls fall back to `claude -p` on your own login.
+    const llm = require('../llm');
+    let cliVersion = null;
+    try {
+      cliVersion = require('child_process')
+        .execFileSync(config.claudeBin, ['--version'], { timeout: 20_000, windowsHide: true })
+        .toString()
+        .trim();
+    } catch {}
+    const viaCli = llm.backend() === 'cli';
+    mark(
+      viaCli ? Boolean(cliVersion) : true,
+      'model',
+      `${config.anthropic.model} · effort ${config.anthropic.effort} · via ` +
+        (viaCli ? (cliVersion ? `claude -p ${cliVersion}` : `${config.claudeBin} not found — set PA_CLAUDE_BIN`) : 'API key')
+    );
+    mark(Boolean(cliVersion), 'claude cli', cliVersion || 'not found — connector sources (Jira) cannot run');
     // Probed rather than assumed: a configured endpoint with the wrong
     // deployment name looks identical to a working one until a search quietly
     // returns half its results.

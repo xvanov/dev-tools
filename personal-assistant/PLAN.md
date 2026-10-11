@@ -23,7 +23,7 @@ gateway itself is not installed. What that means concretely:
 | 8 — Onyx, Graphiti, Teams bot | not started, by design. The triggers for revisiting each are in §1. |
 
 Unexercised until credentials exist: everything behind Microsoft Graph, GitLab, and the
-Anthropic API. `pa doctor` names exactly which are missing.
+Anthropic API (since 2026-10-11 the model falls back to `claude -p` without a key). `pa doctor` names exactly which are missing.
 
 Two deviations from the plan below, both recorded in §1: the language is plain CommonJS
 JavaScript rather than TypeScript (matching termhub — no build step means `git pull` is the

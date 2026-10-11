@@ -121,6 +121,10 @@ const config = {
     effort: env('PA_DISTILL_EFFORT', 'low'),
   },
 
+  // Without an API key, model calls go through a headless `claude -p` on the
+  // operator's own login (see llm.js). Also the only route to the connectors.
+  claudeBin: env('PA_CLAUDE_BIN', 'claude'),
+
   // Optional. Without it, search falls back to full-text only, which is worse
   // at paraphrase and perfectly usable.
   embeddings: {

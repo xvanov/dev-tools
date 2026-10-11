@@ -10,8 +10,7 @@
 // agent's own summary of itself, which is reliably more confident than the diff
 // justifies.
 
-const Anthropic = require('@anthropic-ai/sdk');
-const { config } = require('../config');
+const llm = require('../llm');
 const { one, rows, query } = require('../db');
 const { request } = require('../graph/client');
 const { truncate } = require('../util/text');
@@ -31,12 +30,6 @@ Constraints:
 - No greeting more elaborate than "Hi <name>," and no sign-off beyond a name placeholder.
 - Under 140 words. No bullet lists unless there are genuinely three or more separate outcomes.
 - Never invent a timeline, a test result, or a review you did not do.`;
-
-function client() {
-  if (!config.anthropic.apiKey) throw new Error('ANTHROPIC_API_KEY is not set');
-  const Ctor = Anthropic.default || Anthropic;
-  return new Ctor({ apiKey: config.anthropic.apiKey });
-}
 
 async function context(runId) {
   const run = await dispatch.get(runId);
@@ -81,24 +74,7 @@ async function compose(runId, { channel = null } = {}) {
     `CHANNEL: ${chosen} (${chosen === 'teams' ? 'a chat message; keep it to a few lines' : 'an email; a short paragraph or two'})`,
   ].join('\n');
 
-  const response = await client().messages.create({
-    model: config.anthropic.model,
-    max_tokens: 2000,
-    thinking: { type: 'adaptive' },
-    output_config: { effort: 'low' },
-    system: SYSTEM,
-    messages: [{ role: 'user', content: prompt }],
-  });
-
-  if (response.stop_reason === 'refusal') {
-    throw new Error(`model declined to draft: ${response.stop_details?.category || 'unknown'}`);
-  }
-
-  const body = response.content
-    .filter((b) => b.type === 'text')
-    .map((b) => b.text)
-    .join('\n')
-    .trim();
+  const body = (await llm.complete({ system: SYSTEM, prompt, effort: 'low', maxTokens: 2000 })).trim();
 
   const subject =
     chosen === 'email'

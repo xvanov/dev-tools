@@ -12,8 +12,7 @@
 // attention than it saves in tokens. What *is* skipped is work that cannot pay
 // off — items under a length threshold, and bodies that are pure machine noise.
 
-const Anthropic = require('@anthropic-ai/sdk');
-const { config } = require('../config');
+const llm = require('../llm');
 const { rows, one, query, withTx } = require('../db');
 const { PROMPT_VERSION, SYSTEM, buildUserMessage, parseResponse } = require('./prompt');
 const identity = require('./identity');
@@ -24,18 +23,6 @@ const log = logger('distill');
 
 const MIN_BODY_CHARS = 40;
 const MAX_BODY_CHARS = 24_000;
-
-let client = null;
-function anthropic() {
-  if (!config.anthropic.apiKey) {
-    throw new Error('ANTHROPIC_API_KEY is not set — distillation cannot run');
-  }
-  if (!client) {
-    const Ctor = Anthropic.default || Anthropic;
-    client = new Ctor({ apiKey: config.anthropic.apiKey });
-  }
-  return client;
-}
 
 async function pending(limit = 25) {
   return rows(
@@ -65,24 +52,7 @@ async function callModel(item, context) {
   const body = (item.body_text || '').slice(0, MAX_BODY_CHARS);
   const message = buildUserMessage({ ...item, body_text: body }, context);
 
-  const response = await anthropic().messages.create({
-    model: config.anthropic.model,
-    max_tokens: 8000,
-    thinking: { type: 'adaptive' },
-    output_config: { effort: config.anthropic.effort },
-    system: SYSTEM,
-    messages: [{ role: 'user', content: message }],
-  });
-
-  if (response.stop_reason === 'refusal') {
-    throw new Error(`model declined: ${response.stop_details?.category || 'unknown'}`);
-  }
-
-  const text = response.content
-    .filter((b) => b.type === 'text')
-    .map((b) => b.text)
-    .join('\n');
-
+  const text = await llm.complete({ system: SYSTEM, prompt: message, maxTokens: 8000 });
   return parseResponse(text, { referenceIso: new Date(item.occurred_at).toISOString() });
 }
 

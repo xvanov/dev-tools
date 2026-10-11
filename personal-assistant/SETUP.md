@@ -129,10 +129,12 @@ Two things need admin consent no matter what, which is why the tool does not use
 
 ---
 
-## 2. Anthropic — `ANTHROPIC_API_KEY`
+## 2. Anthropic — `ANTHROPIC_API_KEY` (optional)
 
-This is what turns messages into commitments and writes reply drafts. Without it the store
-still fills up and search still works, but nothing gets distilled.
+The model is what turns messages into commitments and writes reply drafts. **You can skip this
+step.** With no key, every model call runs through a headless `claude -p` on your own Claude
+Code login (see `src/llm.js`) — no separate billing, nothing to create. `pa doctor` shows which
+route is in use on its `model` line. Set a key only if you would rather bill the API directly:
 
 1. Open **<https://console.anthropic.com/settings/keys>** and sign in. (It may redirect to
    `platform.claude.com` — same place.)
