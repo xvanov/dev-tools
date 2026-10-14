@@ -38,8 +38,8 @@ other machines to maintain.
   as you type (recents when blank), and a single editable command box (default
   `claude --dangerously-skip-permissions`, with presets you can pick or type over, or clear
   for a plain shell); it opens a terminal there and runs it.
-- **Spoken announcements (opt-in per session)** — arm a Claude session with the 🔊 toggle and
-  termhub tells you, out loud, when that session stops and is waiting on you. It watches Claude
+- **Spoken announcements (opt-in per session)** — arm a Claude session (`POST
+  /api/sessions/:id/voice {armed:true}`; the sidebar no longer has a toggle) and termhub tells you, out loud, when that session stops and is waiting on you. It watches Claude
   Code's own conversation transcript for the end of a turn, condenses the reply into two or
   three speakable sentences, and synthesises it locally with
   [kokoro](https://github.com/thewh1teagle/kokoro-onnx) — or [piper](https://github.com/OHF-Voice/piper1-gpl)
@@ -47,7 +47,7 @@ other machines to maintain.
   once. When Claude stops on a question or a permission prompt it writes nothing to the
   transcript until you answer, so termhub notices that differently — a silent terminal — and
   tells you the session is asking something, without being able to say what. Needs no setup
-  beyond having one of the two engines installed; without either, the toggle simply reports
+  beyond having one of the two engines installed; without either, arming simply reports
   that speech is unavailable and everything else works as before.
 - **Voice commands** — say **"Sputnik"** and the rest of the sentence drives termhub itself
   instead of being typed at the agent: hold a send, switch sessions, ask what's running, mute,
@@ -56,7 +56,7 @@ other machines to maintain.
 - **Agent time, and a phone that tells you** — termhub measures how long your agents
   (Claude Code and opencode) actually spend *working*, summed across sessions — two agents working
   at once accrue it twice as fast, idle agents add nothing. The sidebar shows today's agent time
-  and the all-time total above the list, plus a ⚡ clock per session; the dashboard shows the
+  above the list (nothing per session — rows are just title, ✎ rename and ✕ close); the dashboard shows the
   history and **every machine's total summed** (the global view). It also measures how long each
   session sits waiting on *you*, whether or not a browser is open; when a session has been waiting
   two minutes your phone gets an [ntfy](https://ntfy.sh) push whose notification opens straight
@@ -256,8 +256,9 @@ first when one of them has died.
   CLI** version against the one termhub is pinned to, with an **Update Claude** button — termhub
   drives the CLI through `--session-id`/`--resume` and its on-disk transcripts, so a CLI too old
   for the pin can break session restore and the model badge. `Update now` updates the CLI too.
-- Switch terminals via the sidebar — the only place session control lives. The **✕** next
-  to a session **kills** it; there's no separate soft-close, so what you see is what happens.
+- Switch terminals via the sidebar — the only place session control lives. Each row is just the
+  session's name (wrapped, never truncated), **✎** to rename and **✕** to close. **✕**
+  **kills** it; there's no separate soft-close, so what you see is what happens.
 - **Collapse** (« in the sidebar header, desktop only) tucks the sidebar away for full-width
   terminal real estate; a floating **»** button brings it back. Remembered across reloads.
 - **📎 (key bar) attaches a file** — the reliable way to get something onto the remote machine,
@@ -283,8 +284,9 @@ first when one of them has died.
     immediately, rather than after a long upload.
   - Pasting text that happens to carry an image (copied out of a document or a web page) pastes
     the **text** — attach the image with 📎 if you wanted the picture.
-- **🔊 next to a session** arms spoken announcements for it — **Claude Code and opencode**
-  sessions; a plain shell has no turns to read and the toggle says so if you tap it. When that
+- **Arming a session** (`POST /api/sessions/:id/voice`, or *Enable voice* for the one you're
+  looking at) turns on spoken announcements for it — **Claude Code and opencode**
+  sessions; a plain shell has no turns to read and the endpoint refuses it. When that
   session finishes a turn and is waiting on you, termhub speaks a short summary of what it said; with
   more than one session armed, the summary is prefixed with the session's title so you know
   who's talking. A session that starts working again cancels an announcement that hasn't been
@@ -295,8 +297,8 @@ first when one of them has died.
     opencode sessions termhub started itself — it needs to have opened the API port.)
 - **Enable voice** — browsers (iOS Safari especially) refuse to play audio until you've tapped
   something, so the first armed session puts an amber **Enable voice** strip above the key bar.
-  One tap unlocks audio for the rest of the page's life; until you tap it, the 🔊 toggles glow
-  amber to say *armed, but you won't hear it*. Announcements still appear as text.
+  One tap unlocks audio for the rest of the page's life; until you tap it, announcements still
+  appear as text.
 - **Hands-free replies.** After an announcement finishes speaking, termhub opens the microphone
   on its own. Talk normally; what it hears appears live under the status line. When you stop,
   it reads back the first few words — *"sending: yes, open a pull request…"* — and gives you
@@ -399,11 +401,10 @@ second as **working**, **waiting** on you, or **limited** (out of tokens). Two n
 It runs in `sessiond`, so it counts with the browser closed, the phone asleep and the laptop lid
 shut. There is nothing to arm and nothing to turn on.
 
-**In the UI**: the bar above the session list shows **⚡ agent time today** (green while any
-agent is working, with `×N` when several are), then how many are working vs waiting, today's
-idle, the all-time agent time on this machine and the handoff count. Each session row carries its
-own ⚡ agent-time clock, and a waiting session also shows an idle stopwatch — amber, turning red
-once it's past the notification threshold.
+**In the UI**: the bar above the session list shows **Agent time today** (green while any
+agent is working) and links to the dashboard, which has the breakdown — working vs waiting,
+idle, all-time, handoffs. Session rows carry no clocks or badges; per-session pausing is
+API-only (`PATCH /api/sessions/:id {paused}`).
 
 **On your phone**: push notifications via [ntfy](https://ntfy.sh), the same way docrag's listing
 monitor does it. Create a topic (any long random string — **the topic is the only secret**; ntfy
@@ -518,7 +519,7 @@ On Linux set these with `systemctl --user edit termhub`; on Windows via `setx` +
 | `front.js` | **Swappable front**: serves the static UI + reverse-proxies `/api/*`, `/ws/term/*` and `/ws/voice` to `sessiond` |
 | `server.js` | Single-process dev entrypoint — runs both tiers in one process (`npm start`) |
 | `lib/session.js` | PTY lifecycle (`node-pty`), scrollback ring buffer, replay |
-| `lib/claudeModel.js` | Locates a Claude session's transcript and tails it for the model badge |
+| `lib/claudeModel.js` | Locates a Claude session's transcript and tails it for the model label (`modelLabel` in `/api/sessions`; no longer shown in the sidebar) |
 | `lib/opencodeApi.js` | Talks to an opencode TUI's own HTTP API (termhub launches each with `--port`): model, turns, and its event stream |
 | `lib/opencodeModel.js` | Fallback for an opencode session with no API port — reads the model via `opencode export` |
 | `lib/claudeTranscript.js` | Reads the last turn from that transcript and decides whether it's waiting on you |
@@ -578,7 +579,7 @@ On Linux set these with `systemctl --user edit termhub`; on Windows via `setx` +
   by design. If the wake word landed but the command didn't parse, termhub says "didn't catch
   that" and drops it — it will never type a half-heard command at the agent.
 - **Armed but never speaks** — announcements come from Claude Code's transcript, so the session
-  must be `kind: claude` (the 🔊 toggle refuses anything else) and Claude must actually be
+  must be `kind: claude` (arming refuses anything else) and Claude must actually be
   writing one. If Claude warns in the terminal that transcript saving is off, it was started as
   a child of another Claude session and writes nothing; termhub strips the inherited
   `CLAUDE_CODE_*` identity from every terminal it spawns to prevent exactly that, so this should

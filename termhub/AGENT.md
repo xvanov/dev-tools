@@ -706,7 +706,8 @@ Three Windows/PowerShell traps this cost, all of which fail *silently*:
 
 ## Spoken announcements (the voice layer)
 
-Opt in per session with the sidebar's 🔊 toggle; when an armed Claude session stops and is
+Opt in per session (`POST /api/sessions/:id/voice`, or *Enable voice*, which arms the active
+session — the sidebar's 🔊 toggle was removed to keep rows to title/rename/close); when an armed Claude session stops and is
 waiting on you, the browser speaks a short summary of what it said. Everything runs locally.
 
 **Where the signal comes from.** Not the terminal — reading a TUI's repainted screen is
@@ -862,8 +863,7 @@ does three things synchronously: resumes an `AudioContext` and plays a silent bu
 plays 60 ms of generated silence through the single `<audio>` element every announcement will
 reuse, and fires one throwaway `SpeechRecognition`. That last one matters: on the user's iPhone
 the *first* `start()` of a page load cost **3.05 s** and every one after it ~10 ms, so the cost
-is spent in the tap rather than mid-conversation. Until it happens, announcements arrive as text
-and the 🔊 toggles glow amber.
+is spent in the tap rather than mid-conversation. Until it happens, announcements arrive as text.
 
 **The loop.** `waiting` → chime → `/api/tts` → play → open mic → transcribe → read back
 "sending: …" → 3 s undo window → `text + '\r'` down that session's existing terminal socket.
@@ -1085,7 +1085,7 @@ entry is `[Request interrupted by user]`, which is a real wait.
 **Shells are not tracked.** A shell at its prompt is a tool waiting for you by design; counting it
 would make every day look terrible and tell you nothing actionable.
 
-**Pause (the sidebar's ⏸) is the same exclusion, opted into by the user instead of built into the
+**Pause (`PATCH {paused}`; the sidebar's ⏸ was removed) is the same exclusion, opted into by the user instead of built into the
 kind.** `PATCH /api/sessions/:id {paused: true}` sets `session.paused`, and `isTracked()`
 (`lib/idleState.js`) refuses a paused session exactly like it refuses a shell. The one thing that
 takes care beyond flipping the flag: a session paused mid-`waiting` must not leave its episode
@@ -1120,10 +1120,9 @@ Agent-time details:
   day's rollup keyed on the mtime+size of that file **and the previous day's** (readDay clips
   from it), so a poll re-reads only what changed. Today comes from the live rollup (with open
   episodes), never the file, so it isn't counted twice.
-- **The per-session ⚡ clock is `activeBase` + `activeSince`**, from `decorate()` — banked
-  work from finished stretches plus the start of the one in progress — so the browser ticks it
-  locally like the idle badge and `uiSignature()` needn't include it (both change only on a
-  state change, which is in the signature). Banked time lives in `_worked`, separate from
+- **Per-session agent time is `activeBase` + `activeSince`**, from `decorate()` — banked
+  work from finished stretches plus the start of the one in progress. The sidebar no longer
+  renders it (rows are title/rename/close only); it stays in `/api/sessions` for API consumers. Banked time lives in `_worked`, separate from
   `_state`, because ⏸ deletes the `_state` entry and must not zero the clock; it is dropped when
   the session leaves the map. It counts from when this sessiond started tracking the session.
 
