@@ -14,6 +14,7 @@ Internal tooling for AI-assisted workflows: push-to-talk dictation, batch transc
 | [termhub](./termhub/) | Mobile-friendly web terminal over Tailscale — one server per machine; open/reattach shell sessions, incl. Claude Code (Windows + Linux) |
 | [disk-janitor](./disk-janitor/) | Safe, scheduled reclamation of rebuildable disk space (package caches + aged temp/cache); whitelist-only, never touches user data (Windows + Ubuntu/Debian) |
 | [personal-assistant](./personal-assistant/) | Context layer over Outlook/Teams/GitLab/meetings that distils asks into typed commitments, dispatches them to Claude Code sessions you can attach to, and drafts the reply when the work lands |
+| [ios-messages](./ios-messages/) | Decrypt messages from an iPhone backup (iMazing/iTunes), export every conversation as text, sort property chats into tenants / landlords / contractors (house group chats included), and pseudonymize them consistently across chats |
 
 ## Quick start
 
@@ -115,6 +116,17 @@ node bin\pa.js doctor
 Then `pa brief` for what's on you, `pa do <id> --mode mr` to hand a piece of work to a Claude
 Code session in its own worktree, and `pa draft <run>` for the reply when it lands.
 
+### ios-messages
+
+```bash
+cd ios-messages
+python -m venv .venv && .venv/Scripts/pip install -r requirements.txt
+python ios-messages.py pipeline --refresh --export
+```
+
+Decrypts the newest iPhone backup, exports every conversation, sorts tenant, landlord and
+contractor chats into datasets and writes a pseudonymized copy plus a leak report under `~/Documents/ios-messages`.
+
 ## Repo layout
 
 ```
@@ -126,7 +138,8 @@ dev-tools/
 ├── keep-awake/               # Windows keep-session-awake helper
 ├── termhub/                  # web terminal over Tailscale (agent + hub + xterm.js UI)
 ├── disk-janitor/             # scheduled, whitelist-only disk reclamation
-└── personal-assistant/       # context layer: ingest → distil → recall → dispatch → draft
+├── personal-assistant/       # context layer: ingest → distil → recall → dispatch → draft
+└── ios-messages/             # iPhone backup → text export → tenants/landlords/contractors → anonymize
 ```
 
 Each tool has its own README, requirements, and install scripts.
