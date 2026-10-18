@@ -18,9 +18,9 @@ import re
 from collections import Counter, defaultdict
 
 from . import fakes
-from .addresses import AMBIGUOUS_STREETS
-from .anonymize import (ROLE_VOCAB, corpus_freq, corpus_texts, fold, is_wordlike, levenshtein1, name_tokens,
-                        redact_regex, token_parts)
+from .addresses import AMBIGUOUS_STREETS, SUFFIX_RE
+from .anonymize import (ROLE_VOCAB, STATES, corpus_freq, corpus_texts, fold, is_wordlike, name_tokens,
+                        owner_variant, redact_regex, token_parts)
 from .classify import Classification
 from .store import Store, norm_handle
 
@@ -28,6 +28,7 @@ PHONE_ANY = re.compile(r"(?<!\d)(?:\+?1[\s.-]?)?\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d
 EMAIL_ANY = re.compile(r"\b[\w.+-]+@[\w-]+(?:\.[\w-]+)+\b")
 WORD = re.compile(r"[^\W\d_]{2,}")
 HARD = ("phone", "email", "house address", "owner name", "owner handle", "contact full name", "company",
+        "street", "state",
         "redact term",
         "zip", "city", "house street", "contact name token")
 SOFT = ("contact name token (common word)",)
@@ -55,13 +56,16 @@ def audit(store: Store, cls: Classification, config: dict, out_dir: str, report_
     real_phones = {h for h in real_handles if h.isdigit() and len(h) == 10}
     real_phones |= {norm_handle(p) for p in config.get("owner_phones", [])}
     real_emails = {h for h in real_handles if "@" in h}
-    real_zips = set()
+    real_zips, real_streets, persons = set(), set(), []
     if private_dir and os.path.exists(os.path.join(private_dir, "mapping.json")):
         with open(os.path.join(private_dir, "mapping.json"), encoding="utf-8") as f:
-            real_zips = set(json.load(f).get("zips", {}))
+            data = json.load(f)
+        real_zips = set(data.get("zips", {}))
+        persons = list(data.get("persons", {}).values()) + [{"first": v, "last": v} for v in data.get("tokens", {}).values()]
+        real_streets = set(data.get("streets", {}))
 
     house_cores = {h.core for h in cls.houses.houses.values()}
-    cities = {c.lower() for c in config.get("cities", [])}
+    cities = set(config.get("cities", []))  # as written: short ones ("SF") match case-sensitively
     ignore = {fold(w) for w in config.get("ignore_names", [])}
     full_names, tokens, orgs = set(), set(), set()
     for c in store.contacts.values():
@@ -77,13 +81,21 @@ def audit(store: Store, cls: Classification, config: dict, out_dir: str, report_
     # entry equal to a real name, so a match is a real leak, not a pseudonym.
     tokens -= ROLE_VOCAB | ignore | {"unknown", "someone", "partner", "prospect"}  # labels the output itself writes
     owner = {fold(t) for n in config.get("owner_names", []) + config.get("owner_surnames", []) for t in n.split()}
-    owner_near = [t for t in owner if len(t) >= 4]
+    owner_list = sorted(owner)
     handles = [h.strip().lstrip("@").lower() for h in config.get("owner_handles", []) if h.strip()]
     redact = [t for t in config.get("redact_terms", []) if t.strip()]
     max_n = max((len(n.split()) for n in full_names), default=2)
     lower, cap = corpus_freq(corpus_texts(store))
     orgs = {o.lower() for o in orgs
             if any(not is_wordlike(fold(w), lower, cap) and fold(w) not in ROLE_VOCAB for w in WORD.findall(o))}
+    # real streets other than the houses' (from mapping.json), when they aren't ordinary words
+    other_streets = sorted({c for c in real_streets if len(c) >= 4 and not c[:1].isdigit() and c not in house_cores
+                            and c not in AMBIGUOUS_STREETS and not all(is_wordlike(fold(w), lower, cap)
+                                                                         for w in c.split())}, key=len, reverse=True)
+    # a real street counts with a suffix or a house number: "pecan" alone is a nut
+    alt = "|".join(re.escape(c).replace(r"\ ", r"\s+") for c in other_streets)
+    street_re = re.compile(rf"(?:\b\d{{1,6}}\s+({alt})(?![^\W_])|(?<![^\W_])({alt})\s+(?:{SUFFIX_RE})\b)",
+                           re.I) if other_streets else None
 
     findings: dict[str, Counter] = defaultdict(Counter)
     examples: dict[tuple, str] = {}
@@ -102,6 +114,7 @@ def audit(store: Store, cls: Classification, config: dict, out_dir: str, report_
                                     0 if len(v) < 4 else re.I))
                   for kind, vals in (("city", cities), ("company", orgs)) for v in vals]
     phrase_res.append(("redact term", redact_regex(redact)))  # same "=Term" rule as the scrubber
+    state_re = re.compile(r"(?<![^\W_])([A-Za-z]{2}),?\s+\d{5}(?!\d)")
     zip_re = re.compile(r"(?<!\d)(" + "|".join(map(re.escape, real_zips)) + r")(?!\d)") if real_zips else None
 
     for path, text in files:
@@ -127,6 +140,12 @@ def audit(store: Store, cls: Classification, config: dict, out_dir: str, report_
         if zip_re:
             for m in zip_re.finditer(text):
                 hit("zip", m.group(1), path, text, m.start())
+        if street_re:
+            for m in street_re.finditer(text):
+                hit("street", (m.group(1) or m.group(2)).lower(), path, text, m.start())
+        for m in state_re.finditer(text):  # "Springfield, nc 00417": the state still says where
+            if m.group(1).upper() in STATES:
+                hit("state", m.group(1).upper(), path, text, m.start())
         words = list(WORD.finditer(text))
         folded = [fold(w.group(0)) for w in words]
         for i in range(len(words)):
@@ -136,15 +155,21 @@ def audit(store: Store, cls: Classification, config: dict, out_dir: str, report_
                 if " ".join(folded[i:i + n]) in full_names and \
                         all(text[words[j].end():words[j + 1].start()] == " " for j in range(i, i + n - 1)):
                     hit("contact full name", " ".join(folded[i:i + n]), path, text, words[i].start())
+        fakes_seen = {p["first"].lower() for p in persons} | {p["last"].lower() for p in persons}
         for w, low in zip(words, folded):
-            if low in owner or (len(low) >= 4 and not is_wordlike(low, lower, cap)
-                                and any(levenshtein1(low, t) for t in owner_near)):
-                hit("owner name", low, path, text, w.start())  # any case, one typo away included
+            if text[w.end():w.end() + 1] == "…":  # a truncated tapback quote, not a word
+                continue
+            if low in fakes_seen and low not in owner:  # a pseudonym we wrote
+                continue
+            if low in owner or ((not is_wordlike(low, lower, cap) or low in owner)
+                                and owner_variant(low, owner_list, w.group(0)[:1].isupper())):
+                hit("owner name", low, path, text, w.start())  # same spellings the scrubber catches
             elif low in tokens:
                 if not is_wordlike(low, lower, cap):
-                    if w.group(0)[:1].isupper() or len(low) >= 4:  # "jesus vilchis" in lowercase too
+                    if w.group(0)[:1].isupper() or len(low) >= 3:  # lowercase names too
                         hit("contact name token", low, path, text, w.start())
-                elif w.group(0)[:1].isupper() and low not in fakes.NON_NAMES and                         (low in fakes.COMMON_WORD_NAMES or lower[low] < 20 * max(1, cap[low])):
+                elif w.group(0)[:1].isupper() and low not in fakes.NON_NAMES and \
+                        (low in fakes.COMMON_WORD_NAMES or lower[low] < 20 * max(1, cap[low])):
                     # Will, Grace, Hope: maybe the person, maybe the word. Words people
                     # write in lowercase twenty times as often ("hello", "it") aren't worth a look.
                     hit("contact name token (common word)", low, path, text, w.start())

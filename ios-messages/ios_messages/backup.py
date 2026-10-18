@@ -172,6 +172,14 @@ def extract(backup: Backup, out_dir: str, password_env: str | None = None) -> di
     if os.path.isdir(out_dir):
         shutil.rmtree(out_dir)
     os.makedirs(out_dir)
+    try:
+        return _extract_into(backup, out_dir, final_dir, password_env)
+    except BaseException:
+        shutil.rmtree(out_dir, ignore_errors=True)  # never leave a half-decrypted db.new behind
+        raise
+
+
+def _extract_into(backup: Backup, out_dir: str, final_dir: str, password_env: str | None) -> dict:
     got = (_extract_encrypted(backup, out_dir, password_env) if backup.encrypted
            else _extract_plain(backup, out_dir))
     if "sms.db" not in got:

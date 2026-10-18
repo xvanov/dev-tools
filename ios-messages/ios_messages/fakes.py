@@ -130,10 +130,9 @@ south\sdakota tennessee texas utah vermont washington west\svirginia wisconsin w
 
 # Surnames that are also ordinary words: after a replaced first name they go too.
 SURNAME_WORDS = set("""
-brown white green black young king wood hill stone long little rich cook bell ward gray grey lane rose
-park day hall wells mills price love sharp strong moon rice banks fields hunter mason carpenter walker
-baker turner fisher cooper parker miller taylor webb fox wolf lamb bird hart lord bishop knight major
-noble joy sweet brooks rivers woods lake marsh street church bush frost snow winter summers
+brown white green black young king wood hill stone cook bell ward gray grey hall wells mills price
+sharp strong rice banks fields hunter mason carpenter walker baker turner fisher cooper parker miller
+taylor webb fox wolf lamb bird hart bishop knight noble brooks rivers woods marsh bush frost snow summers
 """.split())
 
 # Words that are also given names. Only replaced when clearly a name: someone
@@ -178,4 +177,6 @@ roomies spareroom padsplit showmojo flexmls obligo
 street avenue road drive lane court boulevard place circle parkway terrace trail highway blvd
 mr mrs ms miss sir madam bro dude sis mom dad mama papa grandma grandpa uncle aunt auntie
 okay thanks thank please hello hey yes yeah nope sorry happy merry birthday congrats
+furthermore however therefore meanwhile otherwise regardless unfortunately fortunately apparently
+basically honestly hopefully additionally moreover nevertheless anyway anyways also united states
 """.split())

@@ -16,7 +16,7 @@ def read(path):
 
 
 from ios_messages.addresses import HouseRegistry, find_numbered  # noqa: E402
-from ios_messages.anonymize import Scrubber, anonymize, fold, unmark  # noqa: E402
+from ios_messages.anonymize import Scrubber, anonymize, collapse, fold, osa, unmark  # noqa: E402
 from ios_messages.audit import audit  # noqa: E402
 from ios_messages.export_text import export_all  # noqa: E402
 from ios_messages.classify import detect, role_of, write_review  # noqa: E402
@@ -180,7 +180,7 @@ class Pipeline(unittest.TestCase):
                      "123-45-6789", "ilvane.k@mail.test", "4471", "Bluebird77", "maps.example.com/12",
                      "Весна", "Vesna", "Torvin", "Quist", "123456789", "021000021", "ABC1234", "555-1234",
                      "62704", "Springfield", "larkfield", "Larkfield", "Mark", "Mercy", "Vale", "cvale-88",
-                     "qeRTWv"]:
+                     "qeRTWv", "8826"]:
             self.assertIsNone(re.search(rf"(?<!\w){re.escape(real)}(?!\w)", blob), real)
         self.assertIn("See [link]", blob)  # a site that could identify someone loses even its name
         self.assertEqual(audit(self.store, self.cls, CONFIG, out, os.path.join(priv, "leak.txt")), {})
@@ -266,14 +266,15 @@ class Pipeline(unittest.TestCase):
         priv, out = os.path.join(self.tmp, "private4"), os.path.join(self.tmp, "x", "anonymized")
         anonymize(self.store, self.cls, CONFIG, priv, out)
         with open(os.path.join(out, "planted.txt"), "w", encoding="utf-8") as f:
-            f.write("Call Ilvane at (555) 201-0001, she lives at 12 Juniper Rd in Springfield. Torvin Quist knows.")
+            f.write("Call Ilvane at (555) 201-0001, she lives at 12 Juniper Rd in Springfield. Torvin Quist knows. "
+                    "Mail ilvane.k@mail.test or drop by Juniper, Westfield, IL 00417.")
         zips = json.loads(read(os.path.join(priv, "mapping.json")))["zips"]
         with open(os.path.join(out, "tenants", "messages.jsonl"), "a", encoding="utf-8") as f:
             f.write(json.dumps({"text": "Залин here, Larkfield Plumbing Supply quote; ask zarekw. Acme Robotics. "
                                         f"zip {next(iter(zips), '62704')} and Зарек"}) + "\n")
         r = audit(self.store, self.cls, CONFIG, out, os.path.join(priv, "leak.txt"), priv)
         for kind in ("phone", "house address", "city", "contact full name", "contact name token", "company",
-                     "redact term", "owner handle", "owner name", "zip"):
+                     "redact term", "owner handle", "owner name", "zip", "email", "house street", "state"):
             self.assertTrue(r.get(kind), kind)
 
     def test_round_two_privacy(self):
@@ -307,10 +308,55 @@ class Pipeline(unittest.TestCase):
             s.scrub(text)
             self.assertLess(time.time() - t0, 10, text[:8])
 
+    def test_round_three_privacy(self):
+        from ios_messages.anonymize import Mapping, residual_names
+        m = Mapping(os.path.join(self.tmp, "m8.json"), set())
+        cfg = dict(CONFIG, owner_names=["Zarek", "Zak"], redact_terms=["~GG"])
+        s = Scrubber(self.store, self.cls, m, cfg)
+        s.learn_corpus(["ok see you"] * 6)
+        s.real_streets.add("larkmoor")
+        cases = {
+            "Zaaarekkk is here": "Zaaarekkk", "call Wolanskistroy about it": "Wolanskistroy",
+            "Electronic lock 5521 works": "5521", "wifi password: Xk2,~qa9": "~qa9",
+            "Bryla Quist is here": "Bryla", "Torvin vilmarq came by": "vilmarq",
+            "Fakeville Springfield, nc 62704": ", nc", "meet at Springfield_ave": "Springfield",
+            "gg park at noon": "gg park", "Service Address: Juniper Rd 8812": "8812", "meet at larkmoor st": "larkmoor",
+            "lives at 713 Larkmoor, Springfield": "713", "Mail: Springfield, ca 62704": ", ca",
+            "the 48213 Larkmoor house on Craigslist": "48213",
+        }
+        for text, secret in cases.items():
+            self.assertNotIn(secret, unmark(s.scrub(text)), text)
+        self.assertEqual(unmark(s.scrub("Jak and the crew")), "Jak and the crew")  # no fuzzy on short names
+        found = {w for w, _, _ in residual_names(["Thanks for the update\nOkonkwo", "Hi Hope, the rent is in"], s)}
+        self.assertIn("Okonkwo", found)  # a name alone on the last line
+        self.assertIn("Hope", found)  # a word-name with a cue in front
+
+    def test_group_no_override_stops_tenancy(self):
+        review = os.path.join(self.tmp, "review3.csv")
+        write_review(self.cls, self.store, review)
+        with open(review, encoding="utf-8-sig") as f:
+            rows = list(csv.DictReader(f))
+        house = next(c for c in self.store.conversations if c.name == "12 Juniper Rd"
+                     and norm_handle(fixture.LATE_JOINER) in c.members)
+        for r in rows:
+            if r["conv_id"] == house.id:
+                r["override"] = "no"
+        with open(review, "w", encoding="utf-8-sig", newline="") as f:
+            w = csv.DictWriter(f, fieldnames=rows[0].keys())
+            w.writeheader()
+            w.writerows(rows)
+        cls = detect(self.store, CONFIG, review)
+        self.assertNotEqual(cls.people[self.store.person_key(norm_handle(fixture.LATE_JOINER))].role, "tenant")
+
     def test_pools_are_unique_and_collisions_redone(self):
         from ios_messages.anonymize import Mapping
         path = os.path.join(self.tmp, "m6.json")
         m = Mapping(path, set())
+        self.assertFalse(set(m.first_pool) & set(m.token_pool) or set(m.last_pool) & set(m.token_pool)
+                         or set(m.first_pool) & set(m.last_pool))
+        self.assertFalse({x.lower() for x in m.street_pool} & {x.lower() for x in m.first_pool + m.last_pool})
+        near = Mapping(os.path.join(self.tmp, "m9.json"), set(), ["Zarek"])
+        self.assertFalse(any(osa(collapse(n.lower()), "zarek") <= 1 for n in near.first_pool))  # no fake looks like you
         firsts = [m.person(f"x{i}")["first"] for i in range(1500)]
         self.assertEqual(len(set(firsts)), 1500)
         toks = {m.token(f"w{i}") for i in range(200)}

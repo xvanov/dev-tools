@@ -118,8 +118,9 @@ conversations (a contractor who shows up in a house group is the same pseudonym 
 fake city is the same fake the text uses for that real city (read from contacts and from messages
 that write "<house>, <city>"). Every person gets their own fake first name (invented names top up
 the curated pool), and names that map to no single person draw from a separate pool, so a fake never
-means two things. A fake that would equal a real name is never used, and one that later collides
-with a new contact is reassigned. `owner_pseudonym` sets your own fake name. `private/mapping.json`
+means two things; no fake street is also a person's name. A fake is never a real name or street from
+your data, never contains one, and never sits a typo away from your own name; one that later collides
+with a new contact or street is reassigned. `owner_pseudonym` sets your own fake name. `private/mapping.json`
 keeps all of it stable between runs; delete it to reshuffle everyone.
 
 What gets scrubbed in every message, in this order (each replacement is protected from the stages
@@ -131,30 +132,42 @@ after it):
   their fake number).
 - **`redact_terms` and `owner_handles`** — your business and employer names, neighborhoods,
   utilities, universities, your Venmo/Instagram/GitHub handles: anything that gives the owner or the
-  region away. Terms match in any case; write `=Wake` to match only as written (so "wake up" stays).
+  region away. Terms match in any case, except: `=Wake` matches only as written (so "wake up" stays),
+  and terms of 1-3 letters match as written unless written `~SF` (then "sf" goes too). An
+  underscore counts as a word break ("ave_NYC").
 - **Numbers** — SSNs, card numbers (Luhn-checked), account numbers (even on the line after
   "Account number"), routing numbers (ABA checksum), any other run of 8+ digits.
-- **Secrets** — door/gate/lockbox codes and passwords (also a bare number written near the word
-  "code", "door", "gate", "código"…), Wi-Fi network names and passwords (value on the same line or
-  the next — network names can be geolocated), standalone password-like tokens ("Acme2024!"), the
-  handle after "venmo"/"IG"/"cash app"…, dates of birth (numeric or written out), license plates.
+- **Secrets** — door/gate/lock/lockbox codes and passwords (the whole token, punctuation included;
+  also a bare number written near the word "code", "door", "lock", "código"…, and a message that is
+  nothing but a code or password right after one asking about a code, lockbox, door, Wi-Fi or
+  password), Wi-Fi network names and passwords (value on the same line or the next — network names
+  can be geolocated), standalone password-like tokens ("Acme2024!"), the
+  handle after "venmo"/"IG"/"cash app"…, dates of birth (numeric or written out), license plates
+  and license numbers.
   Times and quantities are left alone ("garage opens at 10am", "the gate is 10 feet wide").
 - **Addresses** — every house variant, other numbered addresses, numberless streets ("on
-  Bellflower Ave", "near 28th ave and Quarrel" — cross streets too), a house number in front of a
-  replaced street, misspelled house streets and cities (fuzzy match), ZIP codes (after a state, after an
-  address, or any 5- or 6-digit number sharing a prefix with a real ZIP in your data), configured
-  cities. Fake ZIPs are 00100–00499, a range no real ZIP uses.
+  Bellflower Ave", "near 28th ave and Quarrel" — cross streets too), a house number before or after
+  a replaced street, a number plus a word right before a replaced city ("713 Larkmoor, Springfield"),
+  a number before any street your data knows is real, lowercase real streets ("larkmoor st"),
+  misspelled house streets and cities (fuzzy match), ZIP codes (after a state, after an address, or
+  any 5- or 6-digit number sharing a prefix with a real ZIP in your data), configured cities, and a
+  state abbreviation in any case right after a replaced place or before a ZIP ("…, nc 00417").
+  Fake ZIPs are 00100–00499, a range no real ZIP uses.
 - **Companies** — contacts' organisation names, as whole phrases.
 - **Names** — every contact's name tokens (resolved to the right person when they're in the chat),
   your own name in any spelling, case or script (Cyrillic is transliterated, so `Весна` matches
-  `Vesna`; one typo away counts), and names that are in no contact: capitalised words people almost
+  `Vesna`; repeated letters, one typo, two in a longer capitalised word, or your surname inside a
+  longer word all count — checked before anything else, so a misspelling of you never becomes a
+  stranger; nicknames go in `owner_names`), and names that are in no contact: capitalised words people almost
   never write in lowercase. Whether a word is a name or a word is learned from how people write it
   mid-sentence across the whole history, leaving out business short codes' boilerplate, so "That",
   "Rent", "Hola" or "Will" stay words, while "Torvin" goes. Word-names (Will, Mark) are replaced when
   someone in the chat has that name (anywhere: "Bathroom: Mark"), a cue precedes them ("his name is
   Will"), a contact has that name and it's capitalised mid-sentence ("check with Mark"), or they sit
   next to another name ("Mark Scarborough"); a surname right after a replaced first name goes too,
-  even an ordinary-word one ("… Brown").
+  even an ordinary-word one ("… Brown") or a lowercase one, and so does a first name right before a
+  replaced surname. A name alone on a message's last line, or after a greeting ("Hi Hope"), counts as
+  a name. A first name several contacts share goes to the one you talk to far more.
 - **Handles** — `@handles`, `$cashtags`. Attachments are reduced to their type.
 
 Timestamps and amounts are kept. Very long messages are scrubbed in pieces, so no pattern can
@@ -180,7 +193,9 @@ including the text in each `messages.jsonl`. It looks for:
 - every real phone number and email in the backup;
 - contact full names of any length, contact name tokens (any case) and company names;
 - house addresses and streets, real ZIP codes seen while scrubbing, and configured cities;
-- `redact_terms`, your handles, and your names in any script or one typo away.
+- real streets other than the houses' (with a suffix or a house number), and a state abbreviation
+  right before a ZIP;
+- `redact_terms`, your handles, and your names in the same spellings the scrubber catches.
 
 Real names are checked even when they look like a pseudonym (pools never contain real names, so a
 match is a leak). Results go to `private/leak-report.txt`, and any hard hit prints a warning. Soft
@@ -198,6 +213,28 @@ school, a neighborhood typed in lowercase) aren't detected. Skim before publishi
 
 The tests build a synthetic backup (`tests/fixture.py`) and run the whole pipeline end to end:
 classification, export, anonymization, and an audit that must catch deliberately planted leaks of
-every hard category (phone, address, city, full name, name token, company, redact term, handle,
-owner name in Cyrillic, ZIP — in transcripts and in `messages.jsonl`). Pseudonyms are randomly seeded,
-so run the suite a few times when changing name handling.
+every hard category (phone, email, house address, house street, city, state, full name, name
+token, company, redact term, handle, owner name in Cyrillic, ZIP — in transcripts and in
+`messages.jsonl`). Pseudonyms are randomly seeded, so run the suite a few times when changing name
+handling.
+
+## Keeping real data out of this repo (`guard`)
+
+Examples in code, tests and docs must be invented. `ios-messages.py guard --staged` checks the files
+staged for commit against the work dir: contact names, your names and handles, redact terms, cities,
+real streets and ZIPs from the mapping, numbers that occur in your messages, and identifier-shaped
+tokens (Wi-Fi names, codes) that occur in them. It prints file:line and the kind of match, never the
+value. Install it as a pre-commit hook:
+
+```bash
+cat > ../.git/hooks/pre-commit <<'HOOK'
+#!/bin/sh
+cd "$(git rev-parse --show-toplevel)/ios-messages" 2>/dev/null || exit 0
+PY=.venv/Scripts/python; [ -x "$PY" ] || PY=.venv/bin/python
+[ -x "$PY" ] || exit 0
+exec "$PY" ios-messages.py guard --staged
+HOOK
+chmod +x ../.git/hooks/pre-commit
+```
+
+Generic words a contact name happens to contain ("realty", "partners") go in `.guard-allow`.

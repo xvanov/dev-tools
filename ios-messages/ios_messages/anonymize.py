@@ -25,10 +25,10 @@ from collections import Counter, defaultdict
 from urllib.parse import urlparse
 
 from . import fakes
-from .addresses import DIRECTIONS, SUFFIXES, find_numbered
+from .addresses import DIRECTIONS, SUFFIXES, find_numbered, find_streets
 from .classify import Classification
 from .export_text import render_lines, safe_filename, unique_path
-from .store import APPLE_EPOCH, SHORT_CODE, Store, fmt, norm_handle
+from .store import APPLE_EPOCH, SHORT_CODE, Store, fmt, norm_handle, renderable
 
 OPEN, CLOSE = "", ""
 PROTECTED = re.compile(f"{OPEN}.*?{CLOSE}", re.S)
@@ -64,25 +64,33 @@ def sub_free(pattern: re.Pattern, repl, text: str) -> str:
 
 
 def redact_regex(terms) -> re.Pattern:
-    """redact_terms match in any case ("AcmeCo", "nevada"), except a term
-    written "=Wake", which matches only as written, so "wake up" stays."""
-    exact = [t[1:] for t in terms if t.strip().startswith("=")]
-    return phrase_regex([t for t in terms if not t.strip().startswith("=")] + exact, exact=exact)
+    """redact_terms match in any case ("AcmeCo", "nevada"), except a term written
+    "=Wake", which matches only as written, so "wake up" stays. Terms of 1-3
+    letters match as written unless written "~SF" (then "sf" and "Sf" go too)."""
+    terms = [t.strip() for t in terms if t.strip()]
+    exact = [t[1:] for t in terms if t.startswith("=")]
+    loose = [t[1:] for t in terms if t.startswith("~")]
+    plain = [t for t in terms if t[0] not in "=~"]
+    return phrase_regex(plain + exact + loose, exact=exact, any_case=loose)
 
 
-def phrase_regex(phrases, min_len: int = 4, exact=()) -> re.Pattern:
+def phrase_regex(phrases, min_len: int = 4, exact=(), any_case=()) -> re.Pattern:
     """Whole-phrase matcher. Short phrases ("NC") and those in `exact` match
-    case-sensitively so they don't fire on ordinary lowercase text."""
+    case-sensitively so they don't fire on ordinary lowercase text; `any_case`
+    phrases match in any case whatever their length. "_" counts as a boundary
+    ("ave_NYC")."""
     exact = {e.strip() for e in exact}
-    long_ = sorted({p.strip() for p in phrases if len(p.strip()) >= min_len and p.strip() not in exact},
-                   key=len, reverse=True)
-    short = sorted({p.strip() for p in phrases if 0 < len(p.strip()) < min_len} | exact, key=len, reverse=True)
+    any_case = {e.strip() for e in any_case}
+    long_ = sorted({p.strip() for p in phrases if (len(p.strip()) >= min_len or p.strip() in any_case)
+                    and p.strip() not in exact}, key=len, reverse=True)
+    short = sorted({p.strip() for p in phrases if 0 < len(p.strip()) < min_len and p.strip() not in any_case}
+                   | exact, key=len, reverse=True)
     parts = []
     if long_:
         parts.append("(?i:" + "|".join(re.escape(p).replace(r"\ ", r"\s+") for p in long_) + ")")
     if short:
         parts.append("|".join(re.escape(p) for p in short))
-    return re.compile(r"(?<!\w)(?:" + ("|".join(parts) or r"(?!x)x") + r")(?!\w)")
+    return re.compile(r"(?<![^\W_])(?:" + ("|".join(parts) or r"(?!x)x") + r")(?![^\W_])")
 
 
 # ---------------------------------------------------------------- name tokens
@@ -124,7 +132,7 @@ def token_parts(tok: str) -> list[str]:
 class Mapping:
     """Real -> fake, persisted. Keys are real identifiers: keep the file private."""
 
-    def __init__(self, path: str, blocked: set[str]):
+    def __init__(self, path: str, blocked: set[str], owner: tuple = ()):
         self.path = path
         self.data = {"persons": {}, "houses": {}, "streets": {}, "addresses": {}, "phones": {},
                      "emails": {}, "cities": {}, "tokens": {}, "zips": {}, "convs": {}, "seed": None}
@@ -139,16 +147,22 @@ class Mapping:
         # nor may a fake contain a real name: "Juniperton" would echo a real Juniper St
         long_blocked = [b for b in self.blocked if len(b) >= 5]
 
+        owner = sorted({fold(o) for o in owner})
+
         def ok(n: str) -> bool:
             low = n.lower()
-            return low not in self.blocked and not any(b in low for b in long_blocked)
+            # nor may a fake look like you: no name a typo or two from yours
+            return low not in self.blocked and not any(b in low for b in long_blocked) \
+                and not owner_variant(fold(n), owner, True)
 
-        self.first_pool = [n for n in fakes.FIRST + fakes.generated_names(4000, "first") if ok(n)]
-        self.last_pool = [n for n in fakes.LAST + fakes.generated_names(3000, "last") if ok(n)]
-        # tokens (names that map to no single person) draw from their own pool,
-        # so "Evander" can't be both a person and a stand-in for some other word
-        self.token_pool = [n for n in fakes.generated_names(4000, "token") if ok(n)]
-        self.street_pool = [n for n in fakes.STREETS if ok(n)]
+        # one generated stream cut into three, so first names, surnames and
+        # stand-ins never share a value, and no street is also a person's name
+        gen = fakes.generated_names(11000, "pools")
+        self.first_pool = [n for n in fakes.FIRST + gen[:4000] if ok(n)]
+        self.last_pool = [n for n in fakes.LAST + gen[4000:7000] if ok(n) and n not in fakes.FIRST]
+        self.token_pool = [n for n in gen[7000:] if ok(n)]
+        people_names = {n.lower() for n in self.first_pool + self.last_pool}
+        self.street_pool = [n for n in fakes.STREETS if ok(n) and n.lower() not in people_names]
         self.city_pool = [n for n in fakes.CITIES if ok(n)]
         self._used_full = {f"{p['first']} {p['last']}" for p in self.data["persons"].values()}
         self._used_streets = {h["street"] for h in self.data["houses"].values()} | \
@@ -157,12 +171,23 @@ class Mapping:
                             {p["phone"] for p in self.data["persons"].values()}
         # a fake chosen before a contact existed may now equal a real name: redo it
         for key, p in list(self.data["persons"].items()):
-            if p["first"].lower() in self.blocked or p["last"].lower() in self.blocked:
+            if key != "owner" and (not ok(p["first"]) or not ok(p["last"])):
                 del self.data["persons"][key]
                 self.person(key)["id"] = p["id"]
         for k, v in list(self.data["tokens"].items()):
-            if v.lower() in self.blocked:
+            if not ok(v):
                 del self.data["tokens"][k]
+        # a real street or city found since may now equal a fake one: redraw those
+        for k, h in list(self.data["houses"].items()):
+            if h["street"].lower() in self.blocked or h["city"].lower() in self.blocked:
+                del self.data["houses"][k]
+                self.house(k)["id"] = h["id"]
+        for k, st in list(self.data["streets"].items()):
+            if st["street"].lower() in self.blocked:
+                del self.data["streets"][k]
+        for k, c in list(self.data["cities"].items()):
+            if c.lower() in self.blocked:
+                del self.data["cities"][k]
 
     def set_owner(self, first: str, last: str) -> None:
         """Your own pseudonym, if config names one."""
@@ -306,8 +331,8 @@ CARD = re.compile(r"\b(?:\d[ -]?){12,18}\d\b")
 ACCOUNT = re.compile(r"(?i)\b(routing|account|acct|iban|swift|aba)\b([^\d]{0,30}?)(\d[\d -]{3,}\d)")
 ROUTING = re.compile(r"(?<![\d.,$])\d{9}(?![\d.,]?\d)")
 LONG_DIGITS = re.compile(r"(?<![\d.,$/:])\d{8,}(?![\d,.]?\d)")
-_SECRET_KEY = (r"(?i)\b(code|pin|passcode|password|passwd|pass|pw|combo|combination|lockbox|lock box|gate"
-               r"|garage|wi-?fi|network|ssid|keypad|key pad)\b")
+_SECRET_KEY = (r"(?i)\b(code|pin|passcode|password|passwd|pass|pw|combo|combination|lockbox|lock box|lock"
+               r"|gate|garage|wi-?fi|network|ssid|keypad|key pad)\b")
 WEAK_SECRET_KEYS = {"pass", "gate", "garage", "network", "combo", "combination"}
 # "gate is 10 feet", "pass 100 exams": a quantity, not a code
 UNIT_AFTER = re.compile(r"(?i)\s?(ft|feet|foot|inch(es)?|lbs?|pounds?|miles?|mi|exams?|people|dollars|bucks"
@@ -316,14 +341,17 @@ UNIT_AFTER = re.compile(r"(?i)\s?(ft|feet|foot|inch(es)?|lbs?|pounds?|miles?|mi|
 # "gate code is 4421", "PIN: 818 590 649#": the lazy gap stretches until a value
 # with a digit turns up, so an earlier keyword can't swallow the later one
 CODE = re.compile(_SECRET_KEY + r"([^\n:=#]{0,20}?)(\s*[:#=]\s*|\s+is\s+|\s+to\s+|\s+)"
-                  r"(\d[\d \-‬]*\d(?![A-Za-z\d])|(?=[^\s,;]*\d)[^\s,;]{3,40})")
+                  r"(\d[\d \-‬]*\d(?![A-Za-z\d])|(?=\S*\d)\S{3,60})")  # the whole token: "Xk2,~qa9" is one password
 # "password: sunshine": a word value only right after an explicit separator
-CODE_WORD = re.compile(_SECRET_KEY + r"(\s*)(\s*[:=]\s*(?:\n\s*)?|\s+is\s+)([^\s,;]{4,40})")
+CODE_WORD = re.compile(_SECRET_KEY + r"(\s*)(\s*[:=]\s*(?:\n\s*)?|\s+is\s+)(\S{4,60})")
 # "Wi-Fi name: qeRTWv", "WiFi Name:\nZOPLAXE": a network name can be geolocated
 WIFI = re.compile(r"(?i)\b(wi-?fi|wireless|network|ssid)(\s*(?:name|network|ssid|id|password|pass|pw)?)"
-                  r"(\s*(?:[:=]|-\s|\bis\b)\s*(?:\n\s*)?)([^\s,;]{3,40})")
+                  r"(\s*(?:[:=]|-\s|\bis\b)\s*(?:\n\s*)?)(\S{3,60})")
 # a bare number in a message about a door, gate or code is the code
-CODE_CONTEXT = re.compile(r"(?i)\b(codes?|door|gate|lockbox|lock box|keypad|key pad|pin|garage|c[oó]digo|clave|combo)\b")
+CODE_CONTEXT = re.compile(r"(?i)\b(codes?|door|gate|lockbox|lock box|locks?|keypad|key pad|pin|garage|c[oó]digo"
+                          r"|clave|combo|wi-?fi|password|passcode|contraseña)\b")
+# a message that is nothing but a code or a password: "4471#", "Xk2!fQ"
+SOLO_SECRET = re.compile(r"^\s*#?(?:\d{3,8}|(?=\S*\d)\S{4,40}|\S{6,40})#?\s*$")
 BARE_CODE = re.compile(r"(?<![\d$.,:/#\-])\d{4,8}(?!\d|[,.:/\-]\d)")
 # "venmo: some.handle", "IG ilvanek_art": the token after a payment/social app
 APP_HANDLE = re.compile(r"(?i)\b(venmo|cash ?app|paypal|zelle|ig|insta(?:gram)?|handle|username|user name"
@@ -338,7 +366,8 @@ TIME_BEFORE = re.compile(r"(?i)\b(at|by|until|till|before|after|around|from|to)\
 DOB = re.compile(r"(?i)\b(dob|d\.o\.b|date of birth|born on|born|birthday)\b([^\n\d]{0,15})"
                  r"(\d{4}-\d{2}-\d{2}|\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4}"
                  r"|(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.? \d{1,2},? \d{4})")
-LICENSE = re.compile(r"(?i)\b(license plate|plate number|plate|tag number|driver'?s? licen[cs]e|dl|license (?:no|number|#))\b"
+LICENSE = re.compile(r"(?i)\b(license plate|plate number|plate|tag number|driver'?s? licen[cs]e|dl|license (?:no|number|#)"
+                     r"|license)\b"
                      r"([^\n\w]{0,4}(?:\w+\s){0,2}?[^\n\w]{0,3})\b([A-Z0-9]{1,4}[ -]?[A-Z0-9]{2,6})\b")
 # mixed case + digit, no spaces: "Acme2024!" sent on its own is a password
 SECRET_TOKEN = re.compile(r"(?<![\w@/.])(?=\S*[A-Z])(?=\S*[a-z])(?=\S*\d)[A-Za-z0-9!@#$%^&*_+=.?-]{6,40}(?![\w/])")
@@ -348,7 +377,9 @@ SIGN_OFF = re.compile(r"(?i)(regards|thanks|thank you|best|cheers|sincerely|resp
 NAME_CUE = re.compile(r"(?i)\b(name is|named|called|this is|i'?m|i am|meet|ask|tell|text|call"
                       r"|thanks|thank you|hi|hey|hello|dear|mr\.?|mrs\.?|ms\.?)[\s,]*$")
 WORD = re.compile(r"(?<![\w@])[^\W\d_]{2,}(?!\w)")
-SURNAME_AFTER = re.compile(f"{OPEN}([^{CLOSE}]+){CLOSE}([ \\t]+)([A-Z][a-z]+)(?!\\w)")
+SURNAME_AFTER = re.compile(f"{OPEN}([^{CLOSE}]+){CLOSE}([ \\t]+)([A-Za-z][a-z]+)(?!\\w)")
+NAME_BEFORE = re.compile(f"(?<![\\w{CLOSE}])([A-Z][a-z]+)([ \\t]+){OPEN}([^{CLOSE}]+){CLOSE}")
+LOWER_STREET = re.compile(r"(?i)\b([a-z]{3,})(\s+)(st|ave|rd|blvd|ln|ct|dr|way|pl|cir|street|avenue|road|drive|lane)\b")
 HANDLE = re.compile(r"(?<![\w@.])@[A-Za-z0-9_][A-Za-z0-9_.-]{2,}")
 CASHTAG = re.compile(r"(?<![\w$])\$[A-Za-z][A-Za-z0-9_-]{2,}")
 STATES = ("AL AK AZ AR CA CO CT DE FL GA HI ID IL IN IA KS KY LA ME MD MA MI MN MS MO MT NE NV NH NJ "
@@ -358,6 +389,10 @@ _STATE = r"(?:\b(?:" + "|".join(STATES) + r")\b|(?i:\b(?:" + "|".join(fakes.STAT
 STATE_ZIP = re.compile(r"(" + _STATE + r")(\s*,?\s*)(\d{5})(?:-\d{4})?\b")
 ZIP_AFTER = re.compile(f"({CLOSE}[,\\s]{{0,3}})(\\d{{5}})(?:-\\d{{4}})?(?!\\d)")
 FIVE_DIGITS = re.compile(r"(?<![\d$.,/:#-])(\d{5})(?:-\d{4})?(?![\d,.]?\d)")
+STATE_AFTER_CITY = re.compile(f"({CLOSE},?[ \\t]+)([A-Za-z]{{2}})(?![^\\W_])")
+STATE_BEFORE_ZIP = re.compile(f"(?<![^\\W_])([A-Za-z]{{2}})(,?[ \\t]+{OPEN}\\d{{5}})")
+NUMBERED_BEFORE_PLACE = re.compile(f"(?<![\\w{CLOSE}])(\\d{{2,6}})[ \\t]+([A-Z][a-z]{{3,}})(,?[ \\t]+{OPEN})")
+NUMBERED_REAL = re.compile(r"(?<![\w$.,])(\d{2,6})[ \t]+([A-Z][a-z]{3,})()(?![^\W_])")
 SIX_DIGITS = re.compile(r"(?<![\d$.,/:#-])(\d{6})(?![\d,.]?\d)")  # "627041": a ZIP with a typo
 ZIP_SEED = re.compile(r"(?:" + _STATE + r"|(?i:\bzip(?:\s?code)?\b))\W{0,3}(\d{5})\b")
 
@@ -389,25 +424,42 @@ def corpus_texts(store: Store) -> list[str]:
             for m in conv.messages if m.text]
 
 
-def levenshtein1(a: str, b: str) -> bool:
-    """Edit distance <= 1."""
-    if abs(len(a) - len(b)) > 1:
-        return False
-    if len(a) > len(b):
-        a, b = b, a
-    i = j = diff = 0
-    while i < len(a) and j < len(b):
-        if a[i] != b[j]:
-            diff += 1
-            if diff > 1:
-                return False
-            if len(a) == len(b):
-                i += 1
-            j += 1
-        else:
-            i += 1
-            j += 1
-    return diff + (len(b) - j) <= 1
+def collapse(s: str) -> str:
+    """'Zaaarrekkk' -> 'zarek': repeated letters don't make a different name."""
+    return re.sub(r"(.)\1+", r"\1", s)
+
+
+def osa(a: str, b: str, cap: int = 3) -> int:
+    """Edit distance counting a swap of neighbours as one edit."""
+    if abs(len(a) - len(b)) > cap:
+        return cap + 1
+    d = [[0] * (len(b) + 1) for _ in range(len(a) + 1)]
+    for i in range(len(a) + 1):
+        d[i][0] = i
+    for j in range(len(b) + 1):
+        d[0][j] = j
+    for i in range(1, len(a) + 1):
+        for j in range(1, len(b) + 1):
+            d[i][j] = min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + (a[i - 1] != b[j - 1]))
+            if i > 1 and j > 1 and a[i - 1] == b[j - 2] and a[i - 2] == b[j - 1]:
+                d[i][j] = min(d[i][j], d[i - 2][j - 2] + 1)
+    return d[-1][-1]
+
+
+def owner_variant(low: str, owner: list[str], titled: bool) -> str | None:
+    """The owner token `low` is a variant of: same after collapsing repeats, one
+    edit away (5+ letters), two away when capitalised and 6+ letters, or an
+    owner surname of 6+ letters inside a longer word ("Surnamestroy")."""
+    k = collapse(low)
+    for t in owner:
+        ct = collapse(t)
+        if len(ct) < 5:
+            continue
+        if k == ct or (len(k) >= 5 and osa(k, ct) <= (2 if titled and len(k) >= 6 else 1)):
+            return t
+        if len(ct) >= 6 and ct in k:
+            return t
+    return None
 
 
 def is_wordlike(low: str, lower: Counter, cap: Counter) -> bool:
@@ -482,11 +534,12 @@ class Scrubber:
         city_list = [c for c in self.cities if c not in name_like]
         alt = "|".join(re.escape(c).replace(r"\ ", r"\s+")
                        for c in sorted(city_list, key=len, reverse=True)) or r"(?!x)x"
-        self.city_re = re.compile(rf"\b({alt})\b", re.IGNORECASE)
+        self.city_re = re.compile(rf"(?<![^\W_])({alt})(?![^\W_])", re.IGNORECASE)  # "_" is a boundary
         terms = list(config.get("redact_terms", [])) + list(config.get("owner_handles", []))
         self.redact_re = redact_regex(terms)
         self.redact_terms = {fold(t.lstrip("=")) for t in terms}
         self._inserted: set[str] = set()  # fake names inserted by the current scrub() call
+        self.real_streets: set[str] = {c for c in self.house_cores if " " not in c} | set(mapping.data["streets"])
         # Misspellings of what matters most ("Quarrell", "Springfeild", "Zareck") are
         # caught by a fuzzy match against house streets, cities and your names.
         self.fuzzy_targets: dict[str, tuple[str, str]] = {}
@@ -496,8 +549,12 @@ class Scrubber:
         for city in self.cities:
             if len(city) >= 6:
                 self.fuzzy_targets[fold(city)] = ("city", city)
-        self.owner_fuzzy = [t for t in self.owner_tokens if len(t) >= 4]
+        self.owner_fuzzy = sorted(self.owner_tokens)
         self.owner_phones = {norm_handle(p) for p in config.get("owner_phones", []) + [owner_phone] if p}
+        self.msg_count: Counter = Counter()
+        for conv in store.conversations:
+            for h in conv.members:
+                self.msg_count[store.person_key(h)] += len(conv.messages)
         self.lower_freq: Counter = Counter()
         self.cap_freq: Counter = Counter()
 
@@ -624,10 +681,23 @@ class Scrubber:
                 if num:
                     out[-1] = out[-1][:num.start()]
                     rep = f"{self.map.generic_number(num.group(1) + '|' + h.core)}{num.group(2)} {rep}"
+            # "Service Address: Elm Rd 8812": a number right after a replaced street is its house number
+            after = re.match(r"([ \t]+)(\d{1,6})\b(?![:.,]?\d|\s?(?:am|pm|%))", text[h.end:]) if not h.number else None
+            if after:
+                rep = f"{rep}{after.group(1)}{self.map.generic_number(after.group(2) + '|' + h.core)}"
+                pos = h.end + after.end()
+            else:
+                pos = h.end
             out.append(P(rep) + trail)
-            pos = h.end
         out.append(text[pos:])
         return "".join(out)
+
+    def _lower_street(self, m):
+        """'banks st' in lowercase: a street the data knows is real."""
+        if fold(m.group(1)) in self.real_streets:
+            s = self.map.street(fold(m.group(1)))
+            return P(f"{s['street']}{m.group(2)}{m.group(3)}")
+        return m.group(0)
 
     def _addresses(self, t: str) -> str:
         out, pos = [], 0
@@ -677,6 +747,11 @@ class Scrubber:
             elif len(firsts | lasts) == 1:
                 pk = next(iter(firsts | lasts))
                 rep = self.map.person(pk)["first" if pk in firsts else "last"]
+            elif self._dominant(firsts | lasts):
+                # several contacts share the name, but you talk to one of them far
+                # more: "Dana" in your texts is almost always that Dana
+                pk = self._dominant(firsts | lasts)
+                rep = self.map.person(pk)["first" if pk in firsts else "last"]
             else:
                 rep = self.map.token(low, last=not firsts and bool(lasts))
         self._inserted.add(rep)
@@ -684,23 +759,49 @@ class Scrubber:
             rep = rep.upper()
         return P(rep)
 
+    def _dominant(self, keys: set[str]) -> str | None:
+        ranked = sorted(keys, key=lambda k: -self.msg_count[k])
+        if len(ranked) >= 2 and self.msg_count[ranked[0]] >= 5 * max(1, self.msg_count[ranked[1]]):
+            return ranked[0]
+        return None
+
     def _surname(self, m):
         """'Soren Brown' after the first name was replaced: the surname goes too,
-        even when it's an ordinary word."""
+        even an ordinary-word one, or a lowercase one ("soren vilmar")."""
         fake, gap, word = m.group(1), m.group(2), m.group(3)
         low = fold(word)
-        if fake not in self._inserted or low in self.ignore or low in fakes.NON_NAMES:
+        if fake not in self._inserted or low in self.ignore or low in fakes.NON_NAMES or low in SUFFIXES:
             return m.group(0)
-        if low in fakes.SURNAME_WORDS or (not self.wordlike(low) and low not in self.name_set):
+        surname_word = word[:1].isupper() and low in fakes.SURNAME_WORDS
+        never_lower = self.lower_freq[low] == 0 and low not in self.name_set
+        if surname_word or (never_lower and not self.wordlike(low)):
             return P(fake) + gap + P(self.map.token(low, last=True))
         return m.group(0)
 
+    def _name_before(self, m):
+        """'Wenna Ravenscroft' where only the surname was a known name: the first
+        name before it goes too."""
+        word, gap, fake = m.group(1), m.group(2), m.group(3)
+        low = fold(word)
+        if fake not in self._inserted or low in self.ignore or low in fakes.NON_NAMES or self.wordlike(low):
+            return m.group(0)
+        if self.lower_freq[low] * 2 <= self.cap_freq[low] or self.lower_freq[low] == 0:
+            return P(self.map.token(low)) + gap + P(fake)
+        return m.group(0)
+
+    def _owner(self, tok: str) -> str | None:
+        """Your own name in any spelling: "zarec", "Zaaarek", "Zareck", "Zarekconstruction"."""
+        low = fold(tok)
+        if self.wordlike(low) and low not in self.owner_tokens:
+            return None
+        hit = owner_variant(low, self.owner_fuzzy, tok[:1].isupper())
+        if not hit:
+            return None
+        o = self.map.person("owner")
+        return o["first"] if hit in self.owner_first else o["last"]
+
     def _fuzzy(self, tok: str) -> str | None:
         low = fold(tok)
-        # your own name, any case, one typo away: "zarec", "zarekk"
-        if len(low) >= 4 and not self.wordlike(low) and any(levenshtein1(low, t) for t in self.owner_fuzzy):
-            o = self.map.person("owner")
-            return o["first"] if any(levenshtein1(low, t) for t in self.owner_first) else o["last"]
         if len(low) < 6 or not tok[:1].isupper() or self.wordlike(low):
             return None
         hit = get_close_matches(low, self.fuzzy_targets, n=1, cutoff=0.84)
@@ -715,20 +816,28 @@ class Scrubber:
     def _word(self, m, participants: set[str]) -> str:
         tok = m.group(0)
         low = fold(tok)
+        if low in self.ignore:
+            return tok
+        # your own name before the automatic name pass gets a chance to call it someone else;
+        # a real contact with a similar name keeps their own pseudonym
+        if low not in self.first_of and low not in self.last_of:
+            rep = self._owner(tok)
+            if rep:
+                self._inserted.add(rep)
+                return P(rep.upper() if tok.isupper() and len(tok) > 1 else rep)
         if low in self.name_set:
             return self._name(m, participants, m.string)
-        if low not in self.ignore:
-            rep = self._fuzzy(tok)
-            if rep:
-                return P(rep)
-        return tok
+        rep = self._fuzzy(tok)
+        return P(rep) if rep else tok
 
     def scrub(self, text: str, participants: set[str] = frozenset()) -> str:
         if not text:
             return text
+        text = text.replace(OPEN, " ").replace(CLOSE, " ")  # the markers are ours alone
         if len(text) > 4000:
-            # some patterns are quadratic on pathological input; scrub long texts in pieces
-            pieces = re.findall(r"[^\n]{1,2000}(?:\n|$)|\n", text)
+            # some patterns are quadratic on pathological input; scrub long texts in
+            # pieces, cut after whitespace so no word is split
+            pieces = re.findall(r".{1,2000}(?:\s+|$)|.{2000}", text, re.S)
             return "".join(self.scrub(p, participants) for p in pieces)
         self._inserted = set()
         t = sub_free(EMAIL, self._email, text)
@@ -755,6 +864,9 @@ class Scrubber:
         t = sub_free(self.org_re, lambda m: P("[company]"), t)
         # cities before ZIPs: in "Fake St Springfield 62701" the city sits between them
         t = sub_free(self.city_re, lambda m: P(self.map.city(m.group(1))), t)
+        # "Springfield, nc 00417": a state right after a city, in any case
+        t = STATE_AFTER_CITY.sub(lambda m: m.group(1) + P("[state]") if m.group(2).upper() in STATES
+                                 else m.group(0), t)
         t = sub_free(STATE_ZIP, lambda m: m.group(1) + m.group(2) + P(self.map.zip(m.group(3))), t)
         t = ZIP_AFTER.sub(lambda m: m.group(1) + P(self.map.zip(m.group(2))), t)
         t = sub_free(FIVE_DIGITS, lambda m: P(self.map.zip(m.group(1))) if m.group(1)[:3] in self.zip_prefixes
@@ -766,7 +878,28 @@ class Scrubber:
         t = sub_free(CASHTAG, lambda m: P("$[handle]"), t)
         t = sub_free(WORD, lambda m: self._word(m, participants), t)
         t = SURNAME_AFTER.sub(self._surname, t)
+        t = NAME_BEFORE.sub(self._name_before, t)
+        t = sub_free(LOWER_STREET, self._lower_street, t)
+        # places the name stage replaced can carry a state too: "Blava, TX", "highlands, ca 00442"
+        t = STATE_AFTER_CITY.sub(lambda m: m.group(1) + P("[state]") if m.group(2).upper() in STATES
+                                 else m.group(0), t)
+        t = STATE_BEFORE_ZIP.sub(lambda m: P("[state]") + m.group(2) if m.group(1).upper() in STATES
+                                 else m.group(0), t)
+        t = NUMBERED_BEFORE_PLACE.sub(self._numbered_before_place, t)
+        # "48213 Larkmoor house": a number before a street the data knows is real
+        t = sub_free(NUMBERED_REAL, lambda m: self._numbered_before_place(m)
+                     if fold(m.group(2)) in self.real_streets else m.group(0), t)
         return t
+
+    def _numbered_before_place(self, m):
+        """'713 Larkmoor, Springfield': a number and a word right before a replaced
+        place is a street address even without "St"."""
+        num, word, gap = m.group(1), m.group(2), m.group(3)
+        low = fold(word)
+        if self.wordlike(low) and low not in self.real_streets:
+            return m.group(0)
+        st = self.map.street(low)
+        return P(f"{self.map.generic_number(num + '|' + low)} {st['street']}") + gap
 
 
 # ---------------------------------------------------------------- residual audit
@@ -795,8 +928,10 @@ def residual_names(texts: list[str], scrub: Scrubber, skip: set[str] = frozenset
             cued = bool(NAME_CUE.search(before.rstrip()))
             line_start = before == "" or before.endswith("\n")
             prev_line = before.rstrip("\n").rsplit("\n", 1)[-1] if before.rstrip("\n") else ""
+            rest = free[m.end():]
             signature = line_start and bool(SIGNATURE_TAIL.match(free, m.end())) and bool(SIGN_OFF.search(prev_line)) \
-                or bool(re.search(r"(?:^|\n)\s*[-—~]\s*$", before))
+                or bool(re.search(r"(?:^|\n)\s*[-—~]\s*$", before)) \
+                or (line_start and bool(before.strip()) and not rest.strip(" \t.!\n"))  # a name alone on the last line
             if not (mid or cued or signature):
                 continue
             seen[w] += 1
@@ -806,12 +941,15 @@ def residual_names(texts: list[str], scrub: Scrubber, skip: set[str] = frozenset
     out = []
     for w, n in seen.items():
         low = fold(w)
-        if low in skip or scrub.wordlike(low) or low in SUFFIXES:
+        if low in skip or low in SUFFIXES or low in fakes.NON_NAMES:
+            continue
+        # "Hi Hope": a word-name with a cue in front still counts (it's replaced only where cued)
+        if scrub.wordlike(low) and not (strong[w] and low in fakes.COMMON_WORD_NAMES):
             continue
         # one stray lowercase "dan" mustn't save a name written "Dan" 26 times
         # Privacy over prose: once is enough. A place or brand may become a fake
         # name, but a friend mentioned once must not stay real.
-        if strict and not scrub.lower_freq[low] * 2 <= scrub.cap_freq[low]:
+        if strict and not (scrub.lower_freq[low] * 2 <= scrub.cap_freq[low] or low in fakes.COMMON_WORD_NAMES):
             continue
         if not strict and scrub.lower_freq[low] > max(1, n // 5):
             continue
@@ -831,6 +969,18 @@ def _span(cur_first, cur_last, first, last):
     firsts = [d for d in (cur_first, first) if d]
     lasts = [d for d in (cur_last, last) if d]
     return (min(firsts) if firsts else None), (max(lasts) if lasts else None)
+
+
+def solo_secrets(conv) -> None:
+    """A code or password sent as its own message after "what's the lockbox code?"
+    or "here's the wifi": blank it in place (in memory only)."""
+    recent: list[str] = []
+    for m in conv.messages:
+        if m.text and SOLO_SECRET.match(m.text) and any(CODE_CONTEXT.search(r) for r in recent) \
+                and not TIME_AFTER.match(m.text.strip()[-3:]) and not m.text.strip().isalpha():
+            m.text = "[redacted]"
+        if m.text:
+            recent = (recent + [m.text])[-2:]
 
 
 def house_cities(store: Store, cls: Classification, cities: set[str], texts=()) -> dict[str, str]:
@@ -876,7 +1026,15 @@ def anonymize(store: Store, cls: Classification, config: dict, private_dir: str,
     for core in house_cores:
         blocked.update(core.split())
     blocked |= cities | {t.lower() for n in config.get("owner_names", []) for t in n.split()}
-    mapping = Mapping(os.path.join(private_dir, "mapping.json"), blocked)
+    # real streets mentioned anywhere must not come back as a fake street
+    for t in (m.text for c in included for m in c.conv.messages if m.text):
+        for h in find_numbered(t) + find_streets(t):
+            blocked.update(h.core.split())
+    if os.path.exists(os.path.join(private_dir, "mapping.json")):
+        with open(os.path.join(private_dir, "mapping.json"), encoding="utf-8") as f:
+            blocked.update(w for core in json.load(f).get("streets", {}) for w in core.split())
+    owner_all = [t for n in config.get("owner_names", []) + config.get("owner_surnames", []) for t in n.split()]
+    mapping = Mapping(os.path.join(private_dir, "mapping.json"), blocked, owner_all)
     owner_fake = config.get("owner_pseudonym") or {}
     if owner_fake.get("first") and owner_fake.get("last"):
         mapping.set_owner(owner_fake["first"], owner_fake["last"])
@@ -964,6 +1122,7 @@ def anonymize(store: Store, cls: Classification, config: dict, private_dir: str,
         def text_of(s):
             return unmark(marked(s))
 
+        solo_secrets(conv)
         lines = render_lines(conv, fake_name, text_of, attachment_label)
         count = sum(1 for l in lines if l.startswith("[") and not l.split("] ", 1)[-1].startswith("["))
         if not count:
@@ -994,7 +1153,7 @@ def anonymize(store: Store, cls: Classification, config: dict, private_dir: str,
             body = text_of(m.text) if m.text else ""
             if body:
                 scrubbed_all.append(marked(m.text))
-            if m.item_type == 0 and (body or m.attachments):
+            if m.item_type == 0 and renderable(m) and (body or m.attachments):
                 sender = "me" if m.from_me else mapping.person(pk_of(m.sender))["id"] if m.sender else "someone"
                 jsonl_rows[ds].append({
                     "conv": cid, "dataset": ds, "type": "group" if conv.is_group else "1:1",

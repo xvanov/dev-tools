@@ -394,6 +394,9 @@ def detect(store: Store, config: dict, review_path: str | None = None) -> Classi
         for conv in store.conversations:
             if not conv.is_group:
                 continue
+            # a "no" on the group in review.csv keeps its members from becoming tenants through it
+            if prior.get(conv.id) in OVERRIDE_NO:
+                continue
             name_house = next((houses.resolve(n) for n in reversed(conv.names) if houses.resolve(n)), None)
             members = [people[store.person_key(h)] for h in conv.members]
             renters = [p for p in members if p.has(*RENTERISH)]
@@ -439,6 +442,8 @@ def detect(store: Store, config: dict, review_path: str | None = None) -> Classi
                 role, ds, auto, why = "group?", best[1], False, best[2][:6]
             else:
                 continue
+            if prior.get(conv.id) in datasets:  # a dataset override on a group decides it here too
+                ds, auto = prior[conv.id], True
             ds = ds if ds in datasets else None
             found.append(Candidate(conv, role, house, max(score, ls, cs), reasons + why, auto, ds))
             if auto and ds == "tenants":

@@ -11,7 +11,7 @@ EPOCH = datetime(2001, 1, 1, tzinfo=timezone.utc)
 
 CONTACTS = [
     # id, First, Last, Org, phones
-    (1, "Ilvane", "12 Juniper Rd Tenant", None, ["+1 (555) 201-0001"]),
+    (1, "Ilvane", "12 Juniper Rd Tenant", None, ["+1 (555) 201-0001", "ilvane.k@mail.test"]),
     (2, "Oskar", "12 Juniper Rd", None, ["5552010002"]),          # address only
     (3, "Roomies | Delphine", None, None, ["5552010003"]),          # role only
     (4, "Bram", "Plumber 12 Juniper Rd", None, ["5552010004"]),     # vendor
@@ -54,7 +54,7 @@ def build(dir_: str) -> None:
     for cid, first, last, org, phones in CONTACTS:
         ab.execute("insert into ABPerson values (?,?,?,?,?)", (cid, first, last, org, None))
         for p in phones:
-            ab.execute("insert into ABMultiValue values (?,3,?)", (cid, p))
+            ab.execute("insert into ABMultiValue values (?,?,?)", (cid, 4 if "@" in p else 3, p))
     ab.commit()
     ab.close()
 
@@ -170,6 +170,8 @@ def build(dir_: str) -> None:
     msg("house2", "5552010011", "Bathroom: Mark\nKitchen: Ilvane\nMark, did you take the bins out? "
                                 "Mercy moved out, his Venmo is cvale-88.", 18, 1)
     msg("house2", "5552010019", "Done. Wi-Fi name: qeRTWv and the router is in the hall.", 18, 2)
+    msg("house2", "+15552010001", "What's the electronic lock code again?", 18, 3)
+    msg("house2", "5552010011", "8826#", 18, 4)
     chat("vesna", ["5552010014"])
     msg("vesna", "5552010014", "Привет, это Весна. Rent is sent for my room.", 19)
     msg("vesna", None, "Thanks Весна! Ask Torvin about the keys; Torvin Quist has the spare set.", 19, 1)

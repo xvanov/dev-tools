@@ -86,7 +86,12 @@ def load_config(work: str) -> dict:
     cfg = dict(DEFAULT_CONFIG)
     if os.path.exists(p):
         with open(p, encoding="utf-8") as f:
-            cfg.update({k: v for k, v in json.load(f).items() if not k.startswith("_")})
+            raw = json.load(f)
+        cfg.update({k: v for k, v in raw.items() if not k.startswith("_")})
+        if raw.get("_help") != CONFIG_HELP:  # keep the in-file help in step with the code
+            raw["_help"] = CONFIG_HELP
+            with open(p, "w", encoding="utf-8") as f:
+                json.dump(raw, f, indent=2, ensure_ascii=False)
     else:
         os.makedirs(work, exist_ok=True)
         with open(p, "w", encoding="utf-8") as f:
