@@ -36,8 +36,10 @@ Copy-Item -Path $ScriptSrc -Destination $ScriptDest -Force
 Write-Host "Copied KeepAwake.ps1 -> $ScriptDest"
 
 # --- register logon task (hidden, no console window) ---
-$action = New-ScheduledTaskAction -Execute 'powershell.exe' `
-    -Argument "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$ScriptDest`""
+# -WindowStyle Hidden alone still flashes a terminal at every logon: the window
+# exists before PowerShell gets to hide it. conhost --headless never makes one.
+$action = New-ScheduledTaskAction -Execute "$env:SystemRoot\System32\conhost.exe" `
+    -Argument "--headless powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$ScriptDest`""
 $trigger  = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
 $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries `
     -DontStopIfGoingOnBatteries -StartWhenAvailable -ExecutionTimeLimit 0

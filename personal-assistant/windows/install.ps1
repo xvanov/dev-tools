@@ -22,6 +22,18 @@ $here = Split-Path -Parent $MyInvocation.MyCommand.Path
 $root = Split-Path -Parent $here
 $node = (Get-Command node).Source
 
+# Every task below runs a console program from an Interactive logon task, which
+# gets a visible console window: Windows Terminal pops up, and closing it kills
+# the task (0xC000013A). Each restart-on-failure opens another one, so a failing
+# worker floods the screen with terminals that open and close. `conhost
+# --headless` is a GUI-subsystem host, so the task gets no window, and it runs
+# the program on a windowless pseudoconsole.
+function New-HeadlessAction([string]$Exe, [string]$Arguments, [string]$WorkingDirectory) {
+  $params = @{ Execute = "$env:SystemRoot\System32\conhost.exe"; Argument = "--headless `"$Exe`" $Arguments" }
+  if ($WorkingDirectory) { $params.WorkingDirectory = $WorkingDirectory }
+  New-ScheduledTaskAction @params
+}
+
 Write-Host "personal-assistant install" -ForegroundColor Cyan
 Write-Host "  root: $root"
 
@@ -50,7 +62,7 @@ if (-not $SkipDatabase) {
 
 Write-Host "==> registering the WSL keep-alive task"
 $keepAliveArgs = "-d $Distro -u root --exec /bin/sh -c `"exec sleep infinity`""
-$keepAction = New-ScheduledTaskAction -Execute 'wsl.exe' -Argument $keepAliveArgs
+$keepAction = New-HeadlessAction -Exe 'wsl.exe' -Arguments $keepAliveArgs
 $keepTrigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
 $keepSettings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
   -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1)
@@ -73,7 +85,7 @@ Pop-Location
 
 if (-not $NoWorker) {
   Write-Host "==> registering the worker task"
-  $workerAction = New-ScheduledTaskAction -Execute $node -Argument 'src\worker.js' -WorkingDirectory $root
+  $workerAction = New-HeadlessAction -Exe $node -Arguments 'src\worker.js' -WorkingDirectory $root
   $workerTrigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
   $workerSettings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
     -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 5 -RestartInterval (New-TimeSpan -Minutes 2)
@@ -103,8 +115,8 @@ if (-not $NoAudio) {
   # on the loopback side (headphones unplugged mid-call) must not take the
   # microphone down with it.
   foreach ($stream in @('mic', 'loopback')) {
-    $action = New-ScheduledTaskAction -Execute $venvPy `
-      -Argument "audio\capture.py --stream $stream" -WorkingDirectory $root
+    $action = New-HeadlessAction -Exe $venvPy `
+      -Arguments "audio\capture.py --stream $stream" -WorkingDirectory $root
     $trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
     $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
       -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1)

@@ -34,7 +34,7 @@ Removes the scheduled task, stops the running process, deletes the copy.
 `install.ps1`:
 1. Copies `KeepAwake.ps1` to `~/.keep-awake/`
 2. Registers a per-user scheduled task `KeepAwake` triggered at logon, running
-   the script hidden via `powershell.exe -WindowStyle Hidden`
+   the script under `conhost.exe --headless`, so no console window ever appears
 3. Starts the task now
 
 ## Run manually (no install)
