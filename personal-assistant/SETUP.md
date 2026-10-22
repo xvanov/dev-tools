@@ -141,6 +141,7 @@ Every line should read `ok`. What the failures mean:
 | Line | Means |
 |---|---|
 | `postgres ... ECONNREFUSED` | WSL dropped the distro. `Start-ScheduledTask pa-wsl-keepalive`. |
+| dashboard refuses to connect, or a pass runs twice | an old worker outlived a restart: `Stop-ScheduledTask` ends the wrapper, not node. Restart with `Stop-ScheduledTask pa-worker; Get-CimInstance Win32_Process -Filter "Name='node.exe'" \| ? CommandLine -match 'src\\worker\.js' \| % { Stop-Process -Id $_.ProcessId -Force }; Start-ScheduledTask pa-worker`. A second worker waits on a database lock rather than running beside the first. |
 | `microsoft 365 — ... /mcp` | step 1 not finished, the connector sign-in expired, or IT has not assigned you |
 | `anthropic — not set` | step 2 not done |
 | `embeddings — endpoint returned 404` | step 3: wrong or missing deployment name |

@@ -93,11 +93,31 @@ async function main() {
     }
   }
 
+  // One worker at a time. `Stop-ScheduledTask` ends the conhost wrapper, not
+  // node, so a "restart" can leave the old worker running beside the new one
+  // — two of every pass, two dreams, two dashboards fighting for a port. A
+  // session advisory lock held on a dedicated connection makes the second
+  // one wait; it is released the moment the first process dies.
+  const lockClient = await db.getPool().connect();
+  for (let attempt = 1; ; attempt++) {
+    const { rows: got } = await lockClient.query('select pg_try_advisory_lock(7300) as ok');
+    if (got[0].ok) break;
+    if (attempt === 1) log.warn('another worker holds the lock — waiting for it to exit');
+    await new Promise((r) => setTimeout(r, 15_000));
+  }
+
   // The dashboard rides along with the worker: one process to keep alive.
-  // A port clash (a standalone `pa dashboard`) must not stop ingest.
-  require('./dashboard/server')
-    .start()
-    .catch((err) => log.warn('dashboard not started', { message: err.message }));
+  // A port clash must not stop ingest — and must not be permanent either: on
+  // a restart the old worker can still hold the port for a few seconds, and a
+  // single attempt left the dashboard down until the next restart.
+  const startDashboard = (attempt = 1) =>
+    require('./dashboard/server')
+      .start()
+      .catch((err) => {
+        log.warn('dashboard not started — retrying', { attempt, message: err.message });
+        setTimeout(() => startDashboard(attempt + 1), Math.min(300, 10 * attempt) * 1000);
+      });
+  startDashboard();
 
   const ingest = require('./ingest');
   const distill = require('./distill');
