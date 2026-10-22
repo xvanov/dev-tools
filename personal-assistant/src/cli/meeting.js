@@ -12,6 +12,11 @@ const HELP = `pa meeting — pre-meeting briefs
         [--evidence]                  print the labelled evidence instead (no model call)
   pa meeting kind <title> <kind>      correct a series' kind: ${'standup one_on_one planning review retro external interview other'}
   pa meeting learn                    learn from transcripts of meetings that just ended
+  pa meeting debrief [episode-id|last] after a recorded meeting: your to-dos, updates to
+        [--dry-run]                   your open work and decisions, each with its quote
+        [--notify]                    also deliver it (toast + dashboard feed)
+  pa meeting debriefs [--days 7]      recent debriefs and what they applied
+  pa meeting undo <debrief-id> <n>    take back item n of a debrief
 `;
 
 function make(out, fail) {
@@ -82,6 +87,43 @@ function make(out, fail) {
       if (sub === 'learn') {
         const n = await meetings.learnRecent({ limit: flagInt(flags, 'limit', 5) });
         return out(`learned from ${n} occurrence${n === 1 ? '' : 's'}`);
+      }
+
+      if (sub === 'debrief') {
+        const debrief = require('../meetings/debrief');
+        // `--dry-run last` would read "last" as the flag's value.
+        const dry = flags['dry-run'];
+        const target = args[1] || (typeof dry === 'string' && dry !== 'true' ? dry : 'last');
+        const dryRun = dry !== undefined && dry !== false && dry !== 'false';
+        const r = await debrief.debrief(target, { dryRun, deliver: flagBool(flags, 'notify', false) });
+        out(`${local(r.meeting.start)} · ${r.meeting.title} · episode ${r.episode.id} (${r.meeting.kind})${dryRun ? ' · DRY RUN, nothing written' : ''}`);
+        const { itemLine } = require('../meetings/debriefCore');
+        const items = r.debrief ? r.debrief.applied.items : r.plan.items;
+        if (!items.length) out('  nothing for you in this one');
+        items.forEach((it, i) => {
+          out(`  ${i + 1}. ${itemLine(it)}${it.commitmentId && it.type !== 'update' ? `  (#${it.commitmentId})` : ''}`);
+          out(`     "${it.quote}"`);
+        });
+        for (const s of r.plan.skipped) out(`  skipped: ${s.summary} — ${s.reason}`);
+        if (r.plan.dropped.length) out(`  dropped ${r.plan.dropped.length} item(s) whose quote was missing, not in the transcript, or not yours`);
+        if (r.debrief) out(`debrief #${r.debrief.id}${r.debrief.notification_id ? ` · notified #${r.debrief.notification_id}` : ''}`);
+        return;
+      }
+
+      if (sub === 'debriefs') {
+        const list = await require('../meetings/debrief').recent({ days: flagInt(flags, 'days', 7) });
+        if (!list.length) return out('no debriefs in that window');
+        for (const d of list) {
+          out(`#${d.id}  ${local(d.startedAt)} · ${d.title} — ${d.counts.todos} to-dos, ${d.counts.updates} updated, ${d.counts.decisions} decisions`);
+          for (const it of d.items) out(`    ${it.index + 1}. ${it.line}${it.undone_at ? '  (undone)' : ''}`);
+        }
+        return;
+      }
+
+      if (sub === 'undo') {
+        if (args.length < 3) return fail('usage: pa meeting undo <debrief-id> <item-number>');
+        const r = await require('../meetings/debrief').undo(Number(args[1]), Number(args[2]) - 1);
+        return out(r.already ? 'already undone' : r.result);
       }
 
       return fail(`unknown: pa meeting ${sub} — try \`pa meeting help\``);

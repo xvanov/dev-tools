@@ -126,6 +126,14 @@ async function handle(req, res) {
     return out === undefined ? send(res, 404, { error: 'not found' }) : send(res, 200, out ?? null);
   }
 
+  // Post-meeting debriefs (dashboard/debriefs.js). Undo is a write: same guards.
+  if (url.pathname === '/api/debriefs' || url.pathname.startsWith('/api/debriefs/')) {
+    if (req.method === 'POST' && req.headers['x-pa'] !== '1') return send(res, 403, { error: 'missing X-PA header' });
+    const body = req.method === 'POST' ? await readJson(req) : {};
+    const out = await require('./debriefs').route(req.method, url, body);
+    return out === undefined ? send(res, 404, { error: 'not found' }) : send(res, 200, out ?? null);
+  }
+
   // The Routines tab (dashboard/routines.js, routines.client.js). Its writes
   // run actions on this machine, so the same guards apply.
   if (req.method === 'GET' && url.pathname === '/routines.js') {

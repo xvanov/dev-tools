@@ -78,6 +78,19 @@ corroborate with `duplicate_of`; `forget` sets `status = 'retracted'`. No memory
 claims, consolidation, pages — says so, and nothing a message says can change what a pass does:
 no pass takes an action other than writing rows. Keep it that way when adding one.
 
+**A debrief writes only what the user owes or is owed, each with a verified quote; its updates
+are reversible.** `src/meetings/debrief.js` turns a recorded meeting into to-dos, owed-to-me,
+updates to existing commitments and decisions — never other people's tasks — and
+`debriefCore.parseDebrief` drops any item whose quote is not verbatim in the transcript, whose
+owner is not the user, or whose ref was not in the prompt. Every write is recorded in
+`meeting_debrief.applied` with the columns it replaced, and undo restores them (unless someone
+changed them since). It never writes to a PR or ticket; news about one is a claim. The generic
+distiller skips meeting and call recordings (`DEBRIEF_OWNED`) so nothing is extracted twice.
+
+**Capture never stops for the assistant.** The worker's only levers on `capture.py` are the pause
+file (`pa mic pause`) and the roll file, which makes capture finish its file and continue in a
+new one. A capture file is never opened for writing twice (`audio/naming.py`).
+
 **Agents propose memory; humans decide it.** The MCP server's only memory write is `remember`, which
 stores a `pending_review` claim (`origin = 'agent'`) that no read path believes and no
 consolidation sees until it is approved in the dashboard. An agent's note may be something it

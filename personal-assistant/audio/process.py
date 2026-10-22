@@ -33,6 +33,8 @@ warnings.filterwarnings("ignore")
 import numpy as np
 import soundfile as sf
 
+import naming
+
 FRAME_MS = 30
 PREROLL_S = 1.5
 MIN_SPEECH_S = 0.6
@@ -153,12 +155,12 @@ class TranscriptionUnavailable(RuntimeError):
 
 
 def file_started_at(path: str) -> dt.datetime:
-    """Capture names files by their slot start; fall back to mtime."""
+    """Capture names files by when their audio starts (naming.py); fall back to mtime."""
     stem = os.path.splitext(os.path.basename(path))[0]
-    try:
-        return dt.datetime.strptime(stem, "%Y%m%dT%H%M").astimezone()
-    except ValueError:
-        return dt.datetime.fromtimestamp(os.path.getmtime(path)).astimezone()
+    started = naming.started_at(stem)
+    if started is not None:
+        return started.astimezone()
+    return dt.datetime.fromtimestamp(os.path.getmtime(path)).astimezone()
 
 
 def read_audio(path: str) -> tuple[np.ndarray, int]:

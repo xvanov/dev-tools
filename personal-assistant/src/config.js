@@ -220,6 +220,9 @@ const config = {
     transcribeHost: env('PA_TRANSCRIBE_HOST', '127.0.0.1'),
     transcribePort: envInt('PA_TRANSCRIBE_PORT', 47821),
     pauseFile: env('PA_AUDIO_PAUSE_FILE', path.join(dataDir, 'audio.paused')),
+    // Touched by the worker when a meeting ends; capture finishes its current
+    // file within a second (audio/capture.py, audio/naming.py).
+    rollFile: env('PA_AUDIO_ROLL_FILE', path.join(dataDir, 'audio.roll')),
     // The venv that owns soundcard/soundfile. Separate from voice-dictation's
     // so upgrading one cannot break the other's hotkey.
     python: env(
@@ -251,6 +254,11 @@ const config = {
     model: env('PA_BRIEF_MODEL', 'claude-sonnet-5-5'),
     classifyModel: env('PA_BRIEF_CLASSIFY_MODEL', 'claude-sonnet-5-5'),
     effort: env('PA_BRIEF_EFFORT', 'low'),
+    // Post-meeting debriefs (src/meetings/debrief.js): your to-dos and updates
+    // to your open work, minutes after a recorded meeting or call ends.
+    debrief: env('PA_DEBRIEF', '1') !== '0',
+    debriefModel: env('PA_DEBRIEF_MODEL', 'claude-sonnet-5-5'),
+    debriefEffort: env('PA_DEBRIEF_EFFORT', 'medium'),
   },
 
   // Recurring typed actions (src/routines). PA_ROUTINES=0 stops the worker

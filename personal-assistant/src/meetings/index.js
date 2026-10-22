@@ -589,7 +589,10 @@ async function brief(target, { deliver = false, force = false, now = new Date() 
 async function transcriptsFor(m) {
   return rows(
     `select si.id, si.body_text, si.occurred_at from source_item si
-      where si.source = 'audio' and length(si.body_text) > 40 and (
+      where si.source = 'audio' and length(si.body_text) > 40
+        -- A superseded episode's speech lives in another row (ingest/audio.js).
+        and not exists (select 1 from audio_episode x where x.source_item_id = si.id and x.state = 'superseded')
+        and (
             si.thread_external_id = $1
          or si.id in (select source_item_id from audio_episode where calendar_event_id = $1 and source_item_id is not null)
          or si.occurred_at between $2::timestamptz - interval '10 minutes' and $3::timestamptz)

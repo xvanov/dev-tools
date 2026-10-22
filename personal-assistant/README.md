@@ -283,6 +283,44 @@ pa meeting learn                    learn from meetings that just ended now
 
 `PA_BRIEFS=0` turns it off; `PA_BRIEF_MODEL` / `PA_BRIEF_EFFORT` pick the writer.
 
+### Post-meeting debriefs
+
+Minutes after a recorded meeting or call ends, a toast: *"Debrief: Ledger sync — 2 to-dos for
+you, 1 updated, 1 decision"*, with a numbered list, and the same in the dashboard's **Meeting
+debriefs** section. `src/meetings/debrief.js`, run in the worker's audio pass:
+
+1. **When.** A meeting or call episode with both streams (a mic-only recording puts everyone in
+   the room on the `Me:` line, so it is not debriefed) is debriefed once it is over: its calendar
+   slot has ended, the audio past the end is transcribed, and nobody spoke in the last ~100 s of
+   it — or ten quiet minutes, for a call or a meeting that ended early — or 45 minutes have
+   passed. When a meeting ends the worker touches `audio.roll` (`PA_AUDIO_ROLL_FILE`) and capture
+   finishes its files within a second, so a meeting is typically debriefed 2–7 minutes after it
+   ends instead of at the next quarter-hour.
+2. **One model call per meeting** (`PA_DEBRIEF_MODEL`, default Sonnet; `PA_DEBRIEF_EFFORT`
+   medium) reads the transcript beside the calendar title and attendees, who you are, and your
+   open commitments (C-ids), open PRs and assigned tickets (T-ids). It returns only what is
+   yours: to-dos you took or were asked to take, what others owe you, updates to a listed item
+   (done, moved, blocked, new information) and decisions that change your work. Others' tasks,
+   status of work you do not own, and small talk are left out — an empty debrief is a fine one.
+3. **Verify, then apply.** Every item carries a verbatim quote, checked against the transcript
+   (case- and whitespace-folded; a near miss is dropped). To-dos and owed-to-me become
+   commitments (`extracted_by = debrief-v1`) unless one on your list already says the same;
+   *done* closes the commitment ("said done in <meeting>: “…”"); *moved* sets its date; *blocked*
+   and *new info* append to its detail; news about a PR or ticket and every decision become
+   memory claims with their quote. Everything applied is recorded in `meeting_debrief` with what
+   it replaced, and **Undo** (dashboard) or `pa meeting undo` takes any one item back.
+4. **Once.** The generic distiller skips meeting and call recordings (the debrief owns them). A
+   meeting that keeps going after its debrief is debriefed again once it has grown by a page of
+   speech; the second pass sees the first one's to-dos as open commitments.
+
+```
+pa meeting debrief [episode-id|last] [--dry-run] [--notify]
+pa meeting debriefs [--days 7]
+pa meeting undo <debrief-id> <n>
+```
+
+`PA_DEBRIEF=0` turns it off.
+
 ### Dispatch modes
 
 | Mode | May | Stops before |
@@ -379,6 +417,12 @@ until it succeeds. `pa doctor` shows a backlog of untranscribed files. Speech gr
 are transcribed through voice-dictation's already-warm faster-whisper server, so there is no
 second model and no GPU contention with the dictation hotkey.
 
+A file is named by when its audio starts: `YYYYMMDDTHHMM.wav` on a slot boundary, with seconds
+(`…THHMMSS.wav`) when it opens mid-slot — an early roll, a device change, an unpause — and never
+reuses a name, so a reopen can no longer empty a finished file (`audio/naming.py`). Episodes grow
+in place as later files arrive, and a conversation that runs straight from one calendar meeting
+into the next is cut at the second one's start, so each meeting gets its own episode and link.
+
 `pa mic pause 30` releases the device handle outright — it stops capture, not merely
 transcription. Your own Claude Code sessions are captured from their transcripts on disk rather
 than from audio, because the exact text is already there.
@@ -472,7 +516,8 @@ src/eval/            retrieval eval: metrics, retriever registry, case seeding, 
 src/memory/          claims with evidence, consolidation, people/project pages, nightly dream
 src/recall/          multi-hop recall over items, claims and pages, one rerank
 src/brief/           what `pa brief` prints
-src/meetings/        pre-meeting briefs: classify, gather evidence, learn from transcripts, notify
+src/meetings/        pre-meeting briefs: classify, gather evidence, learn from transcripts, notify;
+                     post-meeting debriefs (debrief.js, pure half in debriefCore.js)
 src/dashboard/       the loopback web page: today, next meeting, replies, runs, secret requests, and the Memory and Routines tabs
 src/secrets/         secret and login requests; Windows Credential Manager via PowerShell (stdin only)
 src/routines/        cron parser, the typed action registry (repo_sync, prompt_report), runs, suggestions

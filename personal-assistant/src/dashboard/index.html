@@ -130,6 +130,12 @@
   .refs { display: inline-flex; flex-wrap: wrap; gap: 3px; margin-left: 4px; vertical-align: 1px; }
   .refs a { font-size: 10px; background: var(--chip); border-radius: 4px; padding: 0 4px; color: var(--muted); text-decoration: none; cursor: pointer; }
   .item.target { outline: 2px solid var(--accent); outline-offset: 4px; border-radius: 4px; }
+  /* post-meeting debriefs */
+  .db-item { display: flex; gap: 8px; align-items: baseline; margin: 6px 0 0; }
+  .db-item .db-text { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+  .db-item .db-quote { font-size: 12px; color: var(--muted); font-style: italic; }
+  .db-item.undone .db-text { text-decoration: line-through; color: var(--muted); }
+  .db-item .db-result { font-size: 12px; color: var(--muted); }
   /* routines: actions that change the machine, so they look different from memory */
   .rt { display: grid; gap: 16px; padding: 0 20px 24px; max-width: 980px; }
   section.rt-intro { border-left: 4px solid var(--warn); }
@@ -169,6 +175,7 @@
 </div>
 <main id="today">
   <section id="nextmeeting"><h2>Next meeting<span class="n"></span></h2><div class="list"><div class="empty">loading…</div></div></section>
+  <section id="debriefs"><h2>Meeting debriefs<span class="n"></span></h2><div class="list"><div class="empty">loading…</div></div></section>
   <section id="drafts"><h2>Replies to send<span class="n"></span></h2><div class="list"></div></section>
   <section id="mine"><h2>On you<span class="n"></span></h2><div class="list"></div></section>
   <section id="waiting"><h2>Waiting on others<span class="n"></span></h2><div class="list"></div></section>
@@ -1038,7 +1045,79 @@ async function focusBrief() {
   } catch (err) { toast(err.message); }
 }
 
-// #today, #memory, #memory/person/12, #memory/topic/<label>, #memory/me, #brief-<id>
+// --------------------------------------------------------- debriefs -----
+// What each recorded meeting meant for you: to-dos, what others owe you,
+// updates to your open work and decisions, each with the words it rests on.
+// Undo takes one item back (deletes the to-do, restores what an update
+// changed, retracts a claim). A toast's click lands on #debrief-<id>.
+
+const DEBRIEF_TAG = { todo: 'to-do', owed_to_me: 'owed to you', update: 'update', decision: 'decision' };
+
+function debriefItem(d, it) {
+  const result = el('span', { class: 'db-result' }, it.undone_at ? (it.undo === 'undone' ? 'undone' : it.undo || 'undone') : '');
+  const kids = [
+    el('span', { class: 'tag' }, DEBRIEF_TAG[it.type] || it.type),
+    el('div', { class: 'db-text' }, it.line, el('div', { class: 'db-quote' }, `“${it.quote}”`)),
+    result,
+  ];
+  if (!it.undone_at) {
+    const undoBtn = el('button', { title: 'Take this back: delete the to-do, or restore what the update changed' }, 'Undo');
+    undoBtn.addEventListener('click', async () => {
+      const ok = await busy(undoBtn, async () => {
+        const r = await post(`api/debriefs/${d.id}/undo`, { index: it.index });
+        result.textContent = r.result;
+        toast(`Undone: ${it.line}`);
+      });
+      if (ok) {
+        undoBtn.remove();
+        row.classList.add('undone');
+      }
+    });
+    kids.push(undoBtn);
+  }
+  const row = el('div', { class: `db-item${it.undone_at ? ' undone' : ''}` }, ...kids);
+  return row;
+}
+
+function debriefCard(d) {
+  const c = d.counts;
+  return el('div', { class: 'item', id: `debrief-${d.id}` },
+    el('div', { class: 'sum' }, d.title),
+    el('div', { class: 'sub' }, ...joinParts([
+      new Date(d.startedAt).toLocaleString([], { weekday: 'short', hour: '2-digit', minute: '2-digit' }),
+      `${c.todos} to-do${c.todos === 1 ? '' : 's'}`, c.owed ? `${c.owed} owed to you` : null,
+      `${c.updates} updated`, `${c.decisions} decision${c.decisions === 1 ? '' : 's'}`,
+      d.skipped.length ? `${d.skipped.length} already on your list` : null, `debrief #${d.id}`])),
+    ...(d.items.length ? d.items.map((it) => debriefItem(d, it)) : [el('div', { class: 'sub' }, 'Nothing for you in this one.')]));
+}
+
+async function loadDebriefs() {
+  if (document.querySelector('#debriefs button.working')) return;
+  try {
+    const list = await getJson('api/debriefs?days=7');
+    fill('debriefs', list.slice(0, 6), debriefCard, 'No recorded meetings debriefed this week.');
+    focusDebrief();
+  } catch (err) {
+    fill('debriefs', [], debriefCard, `error: ${err.message}`);
+  }
+}
+
+async function focusDebrief() {
+  const m = /^#debrief-(\d+)$/.exec(location.hash);
+  if (!m) return;
+  const card = document.getElementById(`debrief-${m[1]}`);
+  if (card) {
+    card.classList.add('target');
+    card.scrollIntoView({ block: 'center' });
+    return;
+  }
+  try {
+    const d = await getJson(`api/debriefs/${m[1]}`);
+    if (d) modal(`Debrief · ${d.title}`, debriefCard(d));
+  } catch (err) { toast(err.message); }
+}
+
+// #today, #memory, #memory/person/12, #memory/topic/<label>, #memory/me, #brief-<id>, #debrief-<id>
 function route() {
   const h = location.hash || '#today';
   const memory = h.startsWith('#memory');
@@ -1051,6 +1130,7 @@ function route() {
   document.getElementById('tab-memory').classList.toggle('on', memory);
   document.getElementById('tab-routines').classList.toggle('on', routines);
   if (h.startsWith('#brief-')) focusBrief();
+  if (h.startsWith('#debrief-')) focusDebrief();
   if (!memory) return;
   const [, kind, rest] = h.split('/');
   let target = null;
@@ -1074,6 +1154,8 @@ refresh();
 setInterval(refresh, 30000);
 loadMeetings();
 setInterval(loadMeetings, 60000);
+loadDebriefs();
+setInterval(loadDebriefs, 60000);
 </script>
 <script src="routines.js"></script>
 </body>

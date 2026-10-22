@@ -28,6 +28,7 @@ const HELP = `pa — your context layer
                                     [--source graph_chat,graph_mail] [--since 2026-01-01] [--until …] [-n 12]
     pa who <name...>                a person: identities, threads, open commitments
     pa meeting next|list|brief      pre-meeting briefs (pa meeting help)
+    pa meeting debrief [id|last]    after a meeting: your to-dos and updates [--dry-run]
     pa projects [sync]              the project ↔ repo table
     pa dashboard                    the web page (the worker serves it too) at http://127.0.0.1:7300/
 
@@ -898,6 +899,23 @@ const commands = {
       );
     } catch (err) {
       lines.push(`  briefs: not migrated (${err.message.slice(0, 60)}) — run \`pa migrate\``);
+    }
+
+    // Post-meeting debriefs, and whether capture has ever honoured an early roll.
+    try {
+      const d = await db.one(
+        `select (select count(*) from meeting_debrief where error is null)::int as ok,
+                (select count(*) from meeting_debrief where error is not null and attempts >= 3)::int as failed,
+                (select max(created_at) from meeting_debrief where error is null) as last`
+      );
+      const rolled = require('../audio/spool').lastRoll(config.audio.rollFile);
+      lines.push(
+        `  debriefs ${config.meetings.debrief ? 'on' : 'off (PA_DEBRIEF=0)'} · ${d.ok} written` +
+          `${d.failed ? ` · ${d.failed} FAILED (pa meeting debriefs)` : ''} · last ${d.last ? relative(d.last) : 'never'}` +
+          ` · capture last asked to roll ${rolled ? relative(new Date(rolled)) : 'never'}`
+      );
+    } catch (err) {
+      lines.push(`  debriefs: not migrated (${err.message.slice(0, 60)}) — run \`pa migrate\``);
     }
 
     // Audio

@@ -150,12 +150,29 @@ async function main() {
   });
 
   // The audio cycle: Python trims and transcribes completed capture files,
-  // then the sidecars it wrote become episodes here. Every five minutes: files
-  // roll every fifteen, and a pass that finds nothing finished costs nothing.
-  every(config.audio.enabled ? 300 : 86400, 'audio', async () => {
+  // then the sidecars it wrote become episodes here, then a meeting that is
+  // over gets its debrief (src/meetings/debrief.js).
+  //
+  // Checked every minute so a meeting lands within minutes of ending: when
+  // one ends, capture is asked to finish its files early, and the next tick
+  // finds them. Python only starts when a finished file is waiting, or every
+  // five minutes regardless (it also recovers files a dead capture left).
+  let lastAudioSweep = 0;
+  every(config.audio.enabled ? 60 : 86400, 'audio', async () => {
     if (!config.audio.enabled) return;
-    await runAudioProcess();
-    await ingest.runAll(['audio']);
+    const spool = require('./audio/spool');
+    const debrief = require('./meetings/debrief');
+    if (config.meetings.debrief) {
+      const rolled = await debrief.rollIfUseful().catch((err) => log.warn('roll check failed', { message: err.message }));
+      // Capture checks the roll file every second; give it a moment to close.
+      if (rolled) await new Promise((r) => setTimeout(r, 4000));
+    }
+    if (spool.needsProcessing(config.audioDir) || Date.now() - lastAudioSweep >= 290_000) {
+      lastAudioSweep = Date.now();
+      await runAudioProcess();
+      await ingest.runAll(['audio']);
+    }
+    await debrief.pass();
   });
 
   every(90, 'distill', async () => {

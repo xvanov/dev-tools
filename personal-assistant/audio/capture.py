@@ -24,6 +24,12 @@ depend on the rest of the system working:
 
 The pause file stops *capture*, not merely transcription. A paused recorder
 holds no device handle at all.
+
+The roll file (`audio.roll` beside it) is the worker's one other lever: when
+a meeting ends it touches the file, and both streams close their current file
+within a second and carry on in a new one, so the meeting is transcribed and
+debriefed in minutes instead of at the next slot boundary. Recording never
+stops for it.
 """
 from __future__ import annotations
 
@@ -39,6 +45,8 @@ warnings.filterwarnings("ignore")
 import numpy as np
 import soundcard as sc
 import soundfile as sf
+
+import naming
 
 # soundcard warns on every dropped block ("data discontinuity in recording").
 # On an always-on recorder that is a warning per few seconds, forever, and it
@@ -93,11 +101,11 @@ def recorder_for(stream: str):
     return device, device.name
 
 
-def slot_path(spool: str, stream: str, when: dt.datetime) -> str:
-    stamp = when.strftime("%Y%m%dT%H%M")
+def slot_path(spool: str, stream: str, slot: dt.datetime, now: dt.datetime) -> str:
+    """A new, unused file for audio starting `now` (naming.py says why)."""
     directory = os.path.join(spool, stream)
     os.makedirs(directory, exist_ok=True)
-    return os.path.join(directory, f"{stamp}.wav")
+    return naming.unused_path(directory, naming.stem_for(slot, now))
 
 
 def slot_start(now: dt.datetime) -> dt.datetime:
@@ -113,12 +121,13 @@ def finish(path: str) -> None:
             fh.write(dt.datetime.now(dt.timezone.utc).isoformat())
 
 
-def run(stream: str, spool: str, pause_file: str) -> int:
+def run(stream: str, spool: str, pause_file: str, roll_file: str) -> int:
     log(f"stream={stream} spool={spool} rate={SAMPLE_RATE} roll={ROLL_MINUTES}m")
     current_slot: dt.datetime | None = None
     current_path: str | None = None
     writer: sf.SoundFile | None = None
     device_name: str | None = None
+    opened_at = 0.0
 
     def close_writer():
         nonlocal writer, current_path, current_slot
@@ -151,16 +160,23 @@ def run(stream: str, spool: str, pause_file: str) -> int:
                     data = rec.record(numframes=SAMPLE_RATE)  # one second
                     now = dt.datetime.now()
                     slot = slot_start(now)
+                    # An early roll: the worker touches the roll file when a
+                    # meeting ends, so the audio so far is finished — and
+                    # transcribed — now rather than at the next slot boundary.
+                    # Recording does not pause: the next second goes to a new
+                    # file, exactly as it does at a boundary.
+                    early = writer is not None and naming.roll_requested(roll_file, opened_at)
 
-                    if slot != current_slot:
+                    if slot != current_slot or early:
                         close_writer()
                         current_slot = slot
-                        current_path = slot_path(spool, stream, slot)
+                        current_path = slot_path(spool, stream, slot, now)
+                        opened_at = time.time()
                         writer = sf.SoundFile(
                             current_path, mode="w", samplerate=SAMPLE_RATE,
                             channels=1, subtype="PCM_16",
                         )
-                        log(f"rolled to {os.path.basename(current_path)}")
+                        log(f"rolled to {os.path.basename(current_path)}{' (roll requested)' if early else ''}")
 
                     mono = np.asarray(data, dtype="float32").reshape(-1)
                     writer.write(mono)
@@ -192,14 +208,16 @@ def main() -> int:
     parser.add_argument("--stream", choices=["mic", "loopback"], required=True)
     parser.add_argument("--spool", default=os.environ.get("PA_AUDIO_DIR"))
     parser.add_argument("--pause-file", default=os.environ.get("PA_AUDIO_PAUSE_FILE"))
+    parser.add_argument("--roll-file", default=os.environ.get("PA_AUDIO_ROLL_FILE"))
     args = parser.parse_args()
 
     spool = args.spool or os.path.join(
         os.environ.get("LOCALAPPDATA", os.path.expanduser("~")), "personal-assistant", "audio"
     )
     pause_file = args.pause_file or os.path.join(os.path.dirname(spool), "audio.paused")
+    roll_file = args.roll_file or os.path.join(os.path.dirname(spool), "audio.roll")
     os.makedirs(spool, exist_ok=True)
-    return run(args.stream, spool, pause_file)
+    return run(args.stream, spool, pause_file, roll_file)
 
 
 if __name__ == "__main__":

@@ -22,7 +22,7 @@ const { logger } = require('../log');
 
 const log = logger('notify');
 
-const KINDS = ['meeting_brief', 'routine', 'suggestion', 'secret_request', 'info'];
+const KINDS = ['meeting_brief', 'meeting_debrief', 'routine', 'suggestion', 'secret_request', 'info'];
 
 function dashboardUrl(anchor = '') {
   return `http://${config.dispatch.host}:${config.dispatch.port}/${anchor ? `#${anchor}` : ''}`;

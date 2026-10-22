@@ -24,12 +24,18 @@ const log = logger('distill');
 const MIN_BODY_CHARS = 40;
 const MAX_BODY_CHARS = 24_000;
 
+// A recorded meeting or call is the debrief's (src/meetings/debrief.js): one
+// model call over the whole conversation with your open work beside it, not
+// this item-at-a-time pass, which found one commitment in an hour-long
+// meeting. Extracting it twice would put every to-do on the list twice.
+const DEBRIEF_OWNED = `(si.source = 'audio' and coalesce(si.raw->>'kind', '') in ('meeting','call'))`;
+
 async function pending(limit = 25) {
   return rows(
     `select si.* from source_item si
        left join distillation d
          on d.source_item_id = si.id and d.extracted_by = $1
-      where d.source_item_id is null
+      where d.source_item_id is null and not ${DEBRIEF_OWNED}
         and length(si.body_text) >= $2
       order by si.occurred_at desc
       limit $3`,
@@ -42,7 +48,7 @@ async function pendingCount() {
     `select count(*)::int as n from source_item si
        left join distillation d
          on d.source_item_id = si.id and d.extracted_by = $1
-      where d.source_item_id is null and length(si.body_text) >= $2`,
+      where d.source_item_id is null and not ${DEBRIEF_OWNED} and length(si.body_text) >= $2`,
     [PROMPT_VERSION, MIN_BODY_CHARS]
   );
   return r?.n ?? 0;
@@ -223,4 +229,13 @@ async function run({ limit = 25 } = {}) {
   return { processed: items.length, commitments, facts, errors };
 }
 
-module.exports = { run, distillOne, pending, pendingCount, PROMPT_VERSION };
+// Marks an item the debrief owns as distilled, so a worker still running code
+// from before DEBRIEF_OWNED existed does not extract it as well.
+async function markOwnedByDebrief(itemId) {
+  await query(
+    `insert into distillation (source_item_id, extracted_by) values ($1, $2) on conflict (source_item_id) do nothing`,
+    [itemId, PROMPT_VERSION]
+  );
+}
+
+module.exports = { run, distillOne, pending, pendingCount, markOwnedByDebrief, PROMPT_VERSION };
