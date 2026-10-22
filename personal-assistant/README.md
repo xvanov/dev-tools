@@ -234,6 +234,47 @@ and project's pages and recalled facts — each labelled as evidence, not instru
 propose a fact with MCP `remember`; it lands as `pending_review` and changes nothing until you
 approve it.
 
+### Pre-meeting briefs
+
+About an hour before a meeting (`PA_BRIEF_LEAD_MINUTES`, default 60) the worker sends a short
+numbered brief of what is worth saying in it — a Windows toast with the first lines, the whole
+brief in the dashboard's **Next meeting** card, with **Open brief** and **Join** buttons on the
+toast. `src/meetings/`, a 5-minute pass:
+
+1. **Which meetings.** Calendar occurrences starting within the lead time, once per event id +
+   start (a moved meeting is briefed again). Skipped: cancelled, all-day, marked free/OOF, solo
+   blocks (`PA_BRIEF_FOCUS=1` briefs them), and broadcasts with more than `PA_BRIEF_MAX_ATTENDEES`
+   (40) invitees unless you organised them.
+2. **What kind.** Title keywords first (stand-up/daily, 1:1, planning/refinement, review/demo,
+   retro, interview, customer), then the series' shape (two people → 1:1; ≤20 minutes on three
+   or more days with a team → stand-up; mostly outside your domain → external), then one cheap
+   model call, cached per series. `pa meeting kind "<title>" <kind>` corrects it for good.
+3. **Evidence per kind.** *Stand-up*: since the previous occurrence (or the previous working day —
+   Monday covers Friday): PRs merged and reviewed (a live `gh` search), activity on your PRs,
+   Jira tickets, commitments closed, Claude Code sessions; then what is due, new asks, open PRs
+   and reviews asked of you; blocker claims. *1:1*: open commitments both ways, their memory
+   page, recent threads. *Anything else*: `recall` over the title and description, attendees'
+   pages, and for review/retro/planning your last week's work.
+4. **Learning.** After a meeting ends, transcripts recorded during it (audio items linked to the
+   event or overlapping its slot) are read once: how the meeting runs, what you get asked, and
+   what you reported or promised — each kept only with a verbatim quote that checks out against
+   the transcript (your promises against your own `Me:` lines). That becomes the series profile
+   and claims about `topic:<series>`; the next brief checks last time's promises against the
+   evidence ("Said last time: finish the retry — merged ✅").
+5. **Writing.** One model call over labelled evidence (E1…En). Every point cites its labels; an
+   unknown label is dropped, and the numbered part is capped at 120 words. The labels stay out
+   of the toast and show as links in the dashboard.
+
+```
+pa meeting next                     the next meeting that would be briefed, and its kind
+pa meeting list [--hours 24]        upcoming: kind, briefed, or why skipped
+pa meeting brief next|<event-id>    write it now and print it (--notify to deliver, --evidence for the raw input)
+pa meeting kind "<title>" standup   correct a series' kind
+pa meeting learn                    learn from meetings that just ended now
+```
+
+`PA_BRIEFS=0` turns it off; `PA_BRIEF_MODEL` / `PA_BRIEF_EFFORT` pick the writer.
+
 ### Dispatch modes
 
 | Mode | May | Stops before |
@@ -360,7 +401,8 @@ src/eval/            retrieval eval: metrics, retriever registry, case seeding, 
 src/memory/          claims with evidence, consolidation, people/project pages, nightly dream
 src/recall/          multi-hop recall over items, claims and pages, one rerank
 src/brief/           what `pa brief` prints
-src/dashboard/       the loopback web page: today, replies, runs, secret requests, and the Memory tab
+src/meetings/        pre-meeting briefs: classify, gather evidence, learn from transcripts, notify
+src/dashboard/       the loopback web page: today, next meeting, replies, runs, secret requests, and the Memory tab
 src/secrets/         secret and login requests; Windows Credential Manager via PowerShell (stdin only)
 src/llm.js           model calls: API key, or `claude -p` without one
 src/backup.js        nightly pg_dump, restore, re-ingest

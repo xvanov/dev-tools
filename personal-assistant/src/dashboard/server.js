@@ -111,6 +111,14 @@ async function handle(req, res) {
     return out === undefined ? send(res, 404, { error: 'not found' }) : send(res, 200, out ?? null);
   }
 
+  // Pre-meeting briefs (dashboard/meetings.js). Same guards.
+  if (url.pathname.startsWith('/api/meetings/')) {
+    if (req.method === 'POST' && req.headers['x-pa'] !== '1') return send(res, 403, { error: 'missing X-PA header' });
+    const body = req.method === 'POST' ? await readJson(req) : {};
+    const out = await require('./meetings').route(req.method, url, body);
+    return out === undefined ? send(res, 404, { error: 'not found' }) : send(res, 200, out ?? null);
+  }
+
   if (req.method === 'POST') {
     if (req.headers['x-pa'] !== '1') return send(res, 403, { error: 'missing X-PA header' });
     const body = await readJson(req);

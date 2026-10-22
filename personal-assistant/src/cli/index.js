@@ -25,6 +25,7 @@ const HELP = `pa — your context layer
     pa search <query...>            hybrid search over everything captured
                                     [--source graph_chat,graph_mail] [--since 2026-01-01] [--until …] [-n 12]
     pa who <name...>                a person: identities, threads, open commitments
+    pa meeting next|list|brief      pre-meeting briefs (pa meeting help)
     pa projects [sync]              the project ↔ repo table
     pa dashboard                    the web page (the worker serves it too) at http://127.0.0.1:7300/
 
@@ -818,6 +819,23 @@ const commands = {
           : '  secrets: nothing waiting · `pa secret list`'
     );
 
+    // Pre-meeting briefs
+    try {
+      const b = await db.one(
+        `select (select count(*) from meeting_brief where error is null)::int as ok,
+                (select count(*) from meeting_brief where error is not null)::int as failed,
+                (select max(created_at) from meeting_brief where notification_id is not null) as last,
+                (select count(*) from meeting_series where profile ? 'learnedFrom')::int as learned`
+      );
+      lines.push(
+        `  briefs ${config.meetings.enabled ? `on · ${config.meetings.leadMinutes} min ahead` : 'off (PA_BRIEFS=0)'} · ${b.ok} written` +
+          `${b.failed ? ` · ${b.failed} FAILED (pa meeting list)` : ''} · last delivered ${b.last ? relative(b.last) : 'never'}` +
+          ` · ${b.learned} series learned from transcripts${config.notify.toasts ? '' : ' · toasts off (PA_TOASTS=0)'}`
+      );
+    } catch (err) {
+      lines.push(`  briefs: not migrated (${err.message.slice(0, 60)}) — run \`pa migrate\``);
+    }
+
     // Audio
     const paused = fs.existsSync(config.audio.pauseFile);
     lines.push('');
@@ -861,6 +879,7 @@ async function learnAliases(projectId, commitment, item, commitmentId) {
 
 Object.assign(commands, require('./memory').make(out, fail));
 Object.assign(commands, require('./secret').make(out, fail));
+Object.assign(commands, require('./meeting').make(out, fail));
 
 async function main(argv) {
   const { command, args, flags } = parseArgs(argv);

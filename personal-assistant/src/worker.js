@@ -176,6 +176,12 @@ async function main() {
     every(3600, 'memory-dream', memoryPass('dream', {}));
   }
 
+  // Pre-meeting briefs: learn from meetings that just ended, then brief the
+  // ones starting within the lead time. Idempotent per occurrence.
+  every(300, 'meetings', async () => {
+    await require('./meetings').pass();
+  });
+
   every(300, 'embed', async () => {
     await search.backfillEmbeddings({ limit: 256 });
   });

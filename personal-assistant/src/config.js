@@ -232,6 +232,20 @@ const config = {
     toasts: env('PA_TOASTS', '1') !== '0',
   },
 
+  // Pre-meeting briefs (src/meetings): a short numbered note, delivered
+  // through notify, this many minutes before each meeting you will speak in.
+  meetings: {
+    enabled: env('PA_BRIEFS', '1') !== '0',
+    leadMinutes: envInt('PA_BRIEF_LEAD_MINUTES', 60),
+    // More invitees than this is a broadcast you sit in; not briefed unless you organised it.
+    maxAttendees: envInt('PA_BRIEF_MAX_ATTENDEES', 40),
+    // Solo blocks on your own calendar (focus time) get a brief too.
+    focusBlocks: env('PA_BRIEF_FOCUS', '0') === '1',
+    model: env('PA_BRIEF_MODEL', 'claude-sonnet-5-5'),
+    classifyModel: env('PA_BRIEF_CLASSIFY_MODEL', 'claude-sonnet-5-5'),
+    effort: env('PA_BRIEF_EFFORT', 'low'),
+  },
+
   // Nightly pg_dump of the whole store (see src/backup.js). Local disk by
   // default — the dumps hold everything the assistant knows, so where they go
   // is a privacy decision as much as a durability one.

@@ -37,8 +37,9 @@ function xmlEscape(s) {
     .replace(/'/g, '&apos;');
 }
 
-// Toast XML: title, up to ~4 lines of body, and a click that opens `url`.
-function toastXml({ title, body, url }) {
+// Toast XML: title, up to ~4 lines of body, a click that opens `url`, and
+// optional buttons that each open their own link (a meeting's join link).
+function toastXml({ title, body, url, actions = [] }) {
   const lines = String(body || '')
     .split(/\r?\n/)
     .map((l) => l.trim())
@@ -50,7 +51,18 @@ function toastXml({ title, body, url }) {
     '<visual><binding template="ToastGeneric">',
     `<text>${xmlEscape(title).slice(0, 120)}</text>`,
     lines ? `<text>${xmlEscape(lines).slice(0, 600)}</text>` : '',
-    '</binding></visual></toast>',
+    '</binding></visual>',
+    ...(actions.length
+      ? [
+          '<actions>',
+          ...actions
+            .filter((a) => a && /^https?:\/\//.test(a.url || ''))
+            .slice(0, 3)
+            .map((a) => `<action content="${xmlEscape(a.label).slice(0, 40)}" activationType="protocol" arguments="${xmlEscape(a.url)}"/>`),
+          '</actions>',
+        ]
+      : []),
+    '</toast>',
   ].join('');
 }
 
@@ -58,9 +70,9 @@ function toastXml({ title, body, url }) {
 // app id (registered on every Windows install, so no Start-menu shortcut or
 // AUMID registration is needed). The XML travels base64-encoded so nothing in
 // a title can break out of the script.
-function toast({ title, body, url }) {
+function toast({ title, body, url, actions = [] }) {
   if (process.platform !== 'win32' || !config.notify.toasts) return Promise.resolve(false);
-  const xml64 = Buffer.from(toastXml({ title, body, url }), 'utf8').toString('base64');
+  const xml64 = Buffer.from(toastXml({ title, body, url, actions }), 'utf8').toString('base64');
   const script = [
     '[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] | Out-Null',
     '[Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime] | Out-Null',
@@ -87,9 +99,10 @@ function toast({ title, body, url }) {
  * @param {string} [n.url]      where a click goes; defaults to the dashboard feed
  * @param {string} [n.dedupeKey] same key twice → second call is a no-op
  * @param {boolean} [n.toast=true]
+ * @param {Array<{label, url}>} [n.actions] toast buttons (not stored; put the link in the body too)
  * @returns {Promise<object|null>} the row, or null when deduplicated
  */
-async function notify({ kind, title, body = '', url = null, dedupeKey = null, toast: show = true }) {
+async function notify({ kind, title, body = '', url = null, dedupeKey = null, toast: show = true, actions = [] }) {
   if (!KINDS.includes(kind)) throw new Error(`unknown notification kind "${kind}"`);
   const row = await one(
     `insert into notification (kind, title, body, url, dedupe_key)
@@ -100,7 +113,7 @@ async function notify({ kind, title, body = '', url = null, dedupeKey = null, to
   );
   if (!row) return null;
   if (show) {
-    const ok = await toast({ title: row.title, body: row.body, url: row.url || dashboardUrl(`notification-${row.id}`) });
+    const ok = await toast({ title: row.title, body: row.body, url: row.url || dashboardUrl(`notification-${row.id}`), actions });
     if (ok) await query('update notification set toasted_at = now() where id = $1', [row.id]);
   }
   log.info('notified', { id: row.id, kind });
