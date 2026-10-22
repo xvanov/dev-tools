@@ -434,7 +434,9 @@ function draftCard(d) {
 const WHERE = { 'credential-manager': 'Windows Credential Manager (encrypted, your Windows account only)', 'env-file': 'personal-assistant/.env (gitignored, plain text)' };
 const needCards = new Map();
 
-function busy(button, label) {
+// Not `busy`: this page and routines.js share one global scope, and a second
+// function of the same name silently replaces the first for every caller.
+function busyLabel(button, label) {
   const was = button.textContent;
   button.disabled = true;
   button.textContent = label;
@@ -482,7 +484,7 @@ function secretCard(r) {
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
       if (!input.value.trim()) { say('Paste the value first.', false); input.focus(); return; }
-      const restore = busy(save, 'Saving…');
+      const restore = busyLabel(save, 'Saving…');
       say('Saving…', true);
       try {
         const res = await post(`/api/secrets/${r.id}/fulfil`, { value: input.value, target: target.value });
@@ -500,7 +502,7 @@ function secretCard(r) {
 
 function needAct(button, label, fn, okText, say) {
   return async () => {
-    const restore = busy(button, label);
+    const restore = busyLabel(button, label);
     try { await fn(); say(okText, true); setTimeout(() => { refresh(); }, 1200); }
     catch (err) { say(`Failed: ${err.message}`, false); restore(); }
   };

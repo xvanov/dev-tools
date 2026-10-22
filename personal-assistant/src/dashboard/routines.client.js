@@ -30,7 +30,7 @@ function when(iso) {
 
 // Runs fn with the button busy, then writes the outcome into `status` (and a
 // toast). Errors stay on screen until the next click.
-function busy(button, status, workingText, fn) {
+function rtBusy(button, status, workingText, fn) {
   return async () => {
     const label = button.textContent;
     button.disabled = true;
@@ -65,7 +65,7 @@ function routineCard(r) {
   const buttons = [];
   const add = (text, title, working, fn, cls) => {
     const b = el('button', { title, class: cls || '' }, text);
-    b.addEventListener('click', busy(b, status, working, fn));
+    b.addEventListener('click', rtBusy(b, status, working, fn));
     buttons.push(b);
   };
 
@@ -188,7 +188,7 @@ function showPreview(p) {
   const status = document.getElementById('rt-add-status');
   const save = el('button', { class: 'primary' }, 'Save routine');
   const cancel = el('button', {}, 'Cancel');
-  save.addEventListener('click', busy(save, status, 'Saving…', async () => {
+  save.addEventListener('click', rtBusy(save, status, 'Saving…', async () => {
     const x = await post('/api/routines', { ...rt.preview, confirmed: true });
     box.hidden = true;
     box.replaceChildren();
@@ -218,7 +218,7 @@ function wireAddBox() {
   const input = document.getElementById('rt-words');
   const read = document.getElementById('rt-read');
   const status = document.getElementById('rt-add-status');
-  const go = busy(read, status, 'Reading…', async () => {
+  const go = rtBusy(read, status, 'Reading…', async () => {
     const words = input.value.trim();
     if (!words) throw new Error('Describe what should happen and when.');
     const p = await post('/api/routines/parse', { words });
@@ -231,7 +231,7 @@ function wireAddBox() {
   });
   const sug = document.getElementById('rt-suggest');
   const sugStatus = document.getElementById('rt-suggest-status');
-  sug.addEventListener('click', busy(sug, sugStatus, 'Looking…', async () => {
+  sug.addEventListener('click', rtBusy(sug, sugStatus, 'Looking…', async () => {
     const x = await post('/api/routines/suggest');
     await loadRoutines();
     return x.proposed.length ? `Proposed ${x.proposed.length} — review them above.` : 'Nothing convincing to propose right now.';
