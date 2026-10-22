@@ -23,6 +23,17 @@ function Test-WatchdogAdmin {
     [Security.Principal.WindowsBuiltInRole]::Administrator)
 }
 
+# S4U logs on without a password by asking a domain controller for a ticket on
+# EVERY run. For a domain (or Entra) account on a laptop that means every run off
+# the corporate network fails with 0x8007051F (ERROR_NO_LOGON_SERVERS) - silently,
+# from the task's side: one LAP-US101 watchdog went 10,585 cycles without running
+# while its front sat dead. Only a local account, which the machine can vouch for
+# by itself, gets S4U.
+function Test-WatchdogCanUseS4U {
+  $me = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+  return ($me.Split('\')[0] -ieq $env:COMPUTERNAME)
+}
+
 function Get-WatchdogScriptPath {
   return (Join-Path $ProjectDir 'watchdog\watchdog.ps1')
 }
@@ -83,7 +94,7 @@ function Register-WatchdogTask {
   # between account names and security IDs was done".
   $me = [Security.Principal.WindowsIdentity]::GetCurrent().Name
   $logon = $ForceLogonType
-  if (-not $logon) { $logon = if (Test-WatchdogAdmin) { 'S4U' } else { 'Interactive' } }
+  if (-not $logon) { $logon = if ((Test-WatchdogAdmin) -and (Test-WatchdogCanUseS4U)) { 'S4U' } else { 'Interactive' } }
   try {
     $principal = New-ScheduledTaskPrincipal -UserId $me -LogonType $logon -RunLevel Limited
   } catch {
@@ -104,8 +115,15 @@ function Register-WatchdogTask {
   # installer printed "registered" over a registration that had just failed - leaving
   # a machine that believed it was watched and was not, which is the worst way for a
   # watchdog to be wrong.
-  if (-not (Get-WatchdogTask)) {
+  # Presence alone isn't enough when overwriting: a non-elevated re-register of an
+  # admin-created task fails with "Access is denied" the same quiet way and leaves
+  # the old definition in place, so check the principal that actually landed.
+  $landed = Get-WatchdogTask
+  if (-not $landed) {
     return @{ Ok = $false; LogonType = $logon; Message = "'$WatchdogTaskName' is not present after registering it" }
+  }
+  if ("$($landed.Principal.LogonType)" -ne $logon) {
+    return @{ Ok = $false; LogonType = $logon; Message = "the task still runs as $($landed.Principal.LogonType), not $logon (access denied? re-run elevated)" }
   }
   return @{ Ok = $true; LogonType = $logon; Message = '' }
 }
@@ -123,6 +141,23 @@ function Confirm-WatchdogTask {
   if (-not (Test-Path $script)) { return }
 
   $task = Get-WatchdogTask
+
+  # An S4U task on an account that can't use it is not "watched while logged off",
+  # it is not watched at all whenever no domain controller answers - so moving it to
+  # Interactive is a repair, not the downgrade the guard below protects against.
+  if ($task -and "$($task.Principal.LogonType)" -eq 'S4U' -and -not (Test-WatchdogCanUseS4U)) {
+    $r = Register-WatchdogTask -IntervalMinutes $IntervalMinutes -ForceLogonType 'Interactive'
+    if ($r.Ok) {
+      Write-Host "termhub: moved the '$WatchdogTaskName' task from S4U to Interactive - S4U needs a" -ForegroundColor Yellow
+      Write-Host "termhub: domain controller on every run, so off the corporate network it never ran." -ForegroundColor Yellow
+    } else {
+      Write-Host "termhub: the '$WatchdogTaskName' task runs as S4U on a domain account, so it fails" -ForegroundColor Yellow
+      Write-Host "termhub: whenever no domain controller is reachable, and could not be re-registered" -ForegroundColor Yellow
+      Write-Host "termhub: ($($r.Message)). Fix from an ADMIN shell:  .\watchdog\install-watchdog.ps1" -ForegroundColor Yellow
+    }
+    Confirm-WatchdogNotDisabledByFile
+    return
+  }
 
   if ($task -and (Test-WatchdogTaskTargets -Task $task -Script $script)) {
     # A disabled task is the one case where "exists and points here" still isn't
@@ -170,7 +205,7 @@ function Confirm-WatchdogTask {
   if ($r.Ok) {
     $scope = if ($r.LogonType -eq 'S4U') { 'runs even when logged off' } else { 'runs while you are logged on' }
     Write-Host "termhub: registered the '$WatchdogTaskName' task - every $IntervalMinutes min, at boot ($scope)." -ForegroundColor Green
-    if ($r.LogonType -ne 'S4U') {
+    if ($r.LogonType -ne 'S4U' -and (Test-WatchdogCanUseS4U)) {
       Write-Host "termhub: re-run .\watchdog\install-watchdog.ps1 from an ADMIN shell to have it survive logoff." -ForegroundColor Yellow
     }
   } else {

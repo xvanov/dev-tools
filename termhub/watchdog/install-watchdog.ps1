@@ -54,7 +54,10 @@ if ($Ensure) {
 # The triggers, settings, principal and post-registration verification all live in
 # lib\task.ps1, because windows\install.ps1 and windows\update.ps1 register this same
 # task and a second copy of that logic is a second thing to drift.
-if (-not $elevated) {
+if (-not (Test-WatchdogCanUseS4U)) {
+  Write-Host "watchdog: domain account - registering with an Interactive principal. S4U would need a" -ForegroundColor Yellow
+  Write-Host "watchdog: domain controller on every run and silently never run off the corporate network." -ForegroundColor Yellow
+} elseif (-not $elevated) {
   Write-Host "watchdog: not elevated - registering with an Interactive principal, so the" -ForegroundColor Yellow
   Write-Host "watchdog: watchdog only runs while you are logged on. Re-run this from an admin" -ForegroundColor Yellow
   Write-Host "watchdog: shell to get the S4U principal that survives logoff and reboot." -ForegroundColor Yellow

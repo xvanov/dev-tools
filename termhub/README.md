@@ -142,7 +142,7 @@ Auto-start adapts to privileges: **elevated** → a Scheduled Task (at logon, au
 **non-admin** → a hidden launcher in your Startup folder. The Serve config is persisted by
 `tailscaled` and restored on boot. The installer also registers the **watchdog** task, so a new
 machine is supervised from the start — run it **elevated** and the watchdog keeps working when
-you're logged off (see below).
+you're logged off (local accounts only: a domain account always gets an Interactive watchdog, see below).
 
 It also compiles `node-pty` itself, working around two common Windows build failures
 (`GetCommitHash.bat` and Spectre-lib `MSB8040`) — see [AGENT.md](./AGENT.md). Needs the Visual

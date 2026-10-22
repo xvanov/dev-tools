@@ -345,6 +345,12 @@ function Get-TermhubDiagnosticBundle {
       $act = (($task.Actions | ForEach-Object { "$($_.Execute) $($_.Arguments)" }) -join ' | ')
       $info = Get-ScheduledTaskInfo -TaskName $tn -ErrorAction SilentlyContinue
       $lines.Add("  ${tn}: state=$($task.State) action=$act lastRun=$($info.LastRunTime) lastResult=$($info.LastTaskResult)")
+      # A watchdog that stopped running looks exactly like a healthy machine from
+      # here, unless its last run is old - so say so (S4U off-network did this).
+      if ($tn -eq 'TermhubWatchdog' -and $info -and $info.LastRunTime -and ((Get-Date) - $info.LastRunTime).TotalMinutes -gt 15) {
+        $lines.Add("  WARNING: the watchdog has not run since $($info.LastRunTime) ($($info.NumberOfMissedRuns) missed run(s), logon=$($task.Principal.LogonType)).")
+        $lines.Add("  See Microsoft-Windows-TaskScheduler/Operational; .\watchdog\install-watchdog.ps1 -Ensure repairs an S4U task on a domain account.")
+      }
     } catch { $lines.Add("  ${tn}: not registered") }
   }
   $lines.Add("")

@@ -77,6 +77,13 @@ can only get **Interactive**, which stops at logoff. `Confirm-WatchdogTask` will
 S4U→Interactive behind your back during an update; it leaves the task alone and tells you to
 re-run this elevated.
 
+**Except on a domain (or Entra) account, which always gets Interactive.** S4U asks a domain
+controller for a ticket on every run, so on a laptop off the corporate network every cycle fails
+with `0x8007051F` (`ERROR_NO_LOGON_SERVERS`) and the watchdog silently never runs. `-Ensure`
+treats an existing S4U task on a domain account as broken and moves it to Interactive (that
+re-register needs an elevated shell if an elevated one created the task). `-Probe` warns when the
+watchdog's last run is more than 15 minutes old.
+
 **Updating the watchdog needs no restart, on either platform.** The supervisor runs
 `powershell -File watchdog.ps1` / `bash watchdog.sh` fresh every cycle, reading the script off
 disk, so a `git pull` is live on the next tick with nothing resident holding old code. Only the

@@ -652,6 +652,11 @@ Two judgement calls in there, both about not being hostile on a routine update:
   elevated, it leaves the task alone and names `install-watchdog.ps1` instead. Silently trading
   "watched while logged off" for "watched while logged on" during an unrelated update is exactly
   the kind of regression nobody would notice until a reboot.
+  The exception is a **domain/Entra account** (`Test-WatchdogCanUseS4U`): S4U needs a domain
+  controller on every run, so off-network it never runs at all (`0x8007051F`). Such an account
+  always gets Interactive, and `Confirm-WatchdogTask` moves an existing S4U task to Interactive as
+  a repair. Registration is verified by the principal that landed, not just presence, because a
+  non-elevated overwrite of an admin-created task fails "Access is denied" without throwing.
 
 `Confirm-WatchdogTask` never throws, and `update.ps1` calls it *after* the front is already
 serving: failing to register a scheduled task must never roll back a good deploy.
