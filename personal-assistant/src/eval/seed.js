@@ -148,38 +148,54 @@ async function generate(qtype, ids) {
 async function lexicallyAbsent(term) {
   const t = String(term || '').trim();
   if (t.length < 3) return false;
+  // Whole words, via the same English tsquery as the chunks: a substring test
+  // on subjects rejected "Mac" because "machine" exists.
   const r = await db.one(
     `select exists (select 1 from chunk where tsv @@ plainto_tsquery('english', $1))
-         or exists (select 1 from source_item where subject ilike '%' || $1 || '%') as hit`,
+         or exists (select 1 from source_item
+                     where to_tsvector('english', coalesce(subject, '')) @@ plainto_tsquery('english', $1)) as hit`,
     [t]
   );
   return !r.hit;
 }
 
-async function abstentions(count) {
-  const subjects = (await db.rows(
-    `select distinct on (subject) subject from source_item
-      where subject is not null and length(subject) between 8 and 140
-      order by subject, random() limit 400`
-  )).map((r) => r.subject).sort(() => Math.random() - 0.5).slice(0, 40);
-  const reply = await llm.complete({
-    system: P.SYSTEM,
-    prompt: P.abstentionPrompt(subjects, Math.ceil(count * 1.8)),
-    effort: 'medium',
-    maxTokens: 3000,
-  });
-  const qs = (llm.extractJson(reply).questions || []).filter((q) => q && q.question && q.term);
+// Most proposed terms turn out to be present — this corpus covers a lot — so
+// ask in rounds until enough survive the absence check.
+async function abstentions(count, { rounds = 4 } = {}) {
   const out = [];
-  for (const q of qs) {
-    if (out.length >= count) break;
-    if (!(await lexicallyAbsent(q.term))) continue;
-    out.push({
-      qtype: 'abstention',
-      question: String(q.question).trim(),
-      gold_answer: null,
-      gold_item_ids: [],
-      notes: `absent term: ${q.term}`,
-    });
+  const asked = new Set();
+  for (let round = 0; round < rounds && out.length < count; round++) {
+    const subjects = (await db.rows(
+      `select distinct on (subject) subject from source_item
+        where subject is not null and length(subject) between 8 and 140
+        order by subject, random() limit 400`
+    )).map((r) => r.subject).sort(() => Math.random() - 0.5).slice(0, 40);
+    let qs = [];
+    try {
+      const reply = await llm.complete({
+        system: P.SYSTEM,
+        prompt: P.abstentionPrompt(subjects, Math.max(6, (count - out.length) * 3)),
+        effort: 'medium',
+        maxTokens: 3000,
+      });
+      qs = (llm.extractJson(reply).questions || []).filter((q) => q && q.question && q.term);
+    } catch (err) {
+      log.warn('abstention generation failed', { message: err.message });
+    }
+    for (const q of qs) {
+      if (out.length >= count) break;
+      const key = String(q.term).toLowerCase();
+      if (asked.has(key)) continue;
+      asked.add(key);
+      if (!(await lexicallyAbsent(q.term))) continue;
+      out.push({
+        qtype: 'abstention',
+        question: String(q.question).trim(),
+        gold_answer: null,
+        gold_item_ids: [],
+        notes: `absent term: ${q.term}`,
+      });
+    }
   }
   return out;
 }
@@ -230,8 +246,8 @@ async function insertCase(c) {
 }
 
 async function seed({ n = 60, concurrency = 4, only = null, progress = () => {} } = {}) {
-  const plan = P.allocate(n);
-  if (only) for (const k of Object.keys(plan)) if (k !== only) plan[k] = 0;
+  if (only && !(only in P.allocate(0))) throw new Error(`unknown qtype "${only}"`);
+  const plan = only ? { [only]: n } : P.allocate(n);
   const exclude = await usedGold();
   const made = {};
   const onCase = async (c) => {

@@ -564,6 +564,7 @@ const commands = {
       });
       if (!r) return out('no active eval cases — `pa eval seed` first');
       out(`eval run #${r.id} · ${r.retriever} · ${r.config.cases} cases · k=${r.config.k} · threshold ${r.config.threshold} · ${r.config.ms}ms`);
+      if (r.config.degraded) out(`WARNING: ${r.config.degraded} queries ran degraded (e.g. no rerank) — abstention numbers are not comparable`);
       out(ev.metrics.formatTable(r.metrics, r.delta));
       out(r.prev ? `delta vs run #${r.prev.id} (${relative(r.prev.ran_at)})` : 'first run for this retriever — no delta');
       if (flagBool(flags, 'misses')) {
@@ -575,7 +576,7 @@ const commands = {
     }
 
     out(`pa eval — retrieval eval harness
-    pa eval seed [--n 60] [--qtype t]          generate cases from real items
+    pa eval seed [--n 60] [--qtype t]          generate cases from real items (--qtype: n of that type only)
     pa eval list [--all] [--qtype t] [-v]      cases (x = deactivated)
     pa eval drop <id>[,id]  /  restore <id>    deactivate a bad case / bring it back
     pa eval add "<question>" --gold 1,2 [--answer "..."]   log a miss by hand

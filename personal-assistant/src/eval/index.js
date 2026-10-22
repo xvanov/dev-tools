@@ -121,15 +121,18 @@ async function run({ retriever = 'search', k = 10, judge: withJudge = false, thr
 
   const started = Date.now();
   const perCase = [];
+  let degraded = 0;
   for (const c of cases) {
-    const results = await r.fn(c.question, { limit, asOf: c.as_of });
+    const got = await r.fn(c.question, { limit, asOf: c.as_of });
+    const results = Array.isArray(got) ? got : got.results;
+    if (!Array.isArray(got) && got.degraded) degraded++;
     perCase.push(M.scoreCase(c, results, { k, threshold: th }));
   }
   if (withJudge) await judge(cases, perCase, k);
 
   const metrics = M.aggregate(perCase);
   const prev = await previousRun(retriever);
-  const config = { k, limit, threshold: th, judge: withJudge, cases: cases.length, ms: Date.now() - started };
+  const config = { k, limit, threshold: th, judge: withJudge, cases: cases.length, degraded, ms: Date.now() - started };
   const saved = await db.one(
     `insert into eval_run (retriever, config, metrics, per_case) values ($1, $2, $3, $4) returning id, ran_at`,
     [retriever, config, metrics, JSON.stringify(perCase)]

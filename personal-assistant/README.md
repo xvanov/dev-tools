@@ -241,7 +241,8 @@ deterministic eval once a day.
 
 The cases are real questions about real mail, so **they live in the database only**: never in
 fixtures, tests or commits. A new retriever is one `register(...)` line in
-`src/eval/retrievers.js`.
+`src/eval/retrievers.js`. `--retriever search-fused` runs search with the reranker off, to
+measure what the reranker adds.
 
 ## Wiring it into your agents
 

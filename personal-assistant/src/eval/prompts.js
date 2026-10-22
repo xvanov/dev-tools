@@ -52,7 +52,10 @@ would answer it wrongly. Put the old value in "why". If nothing changes, set "sk
   multi_session: `These items are separate conversations that share a person or project. Write ONE
 question that needs information from at least two of them to answer fully — an aggregation
 ("what has Quill asked me for across ...", "how many ...", "which of ...") or a connection between
-them. The answer must cite what comes from each item. If they share nothing meaningful, set
+them. The answer must cite what comes from each item. Scope the question so these items are the
+WHOLE answer — a specific topic, change or decision — never an open set like "which review
+requests came in on <date>" or "what PRs are waiting on me", which the store holds many more of
+than you can see. If they share nothing meaningful, set
 "skip": true. Also return "uses": [ids of the items the answer needs].`,
 };
 
