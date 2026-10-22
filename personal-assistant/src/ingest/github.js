@@ -86,9 +86,19 @@ function htmlUrl(apiUrl) {
     .replace(/\/pulls\/(\d+)$/, '/pull/$1');
 }
 
+// GitHub gives a review request made to one of your *teams* the same
+// notification reason as one made to you. Only a request naming you is an
+// ask; a team request is the team's queue. `detail.requestedMe` is read from
+// the PR's own requested_reviewers list (false when only a team is named).
+function reviewAction(reason, detail) {
+  if (reason !== 'review_requested' || !detail || detail.requestedMe !== false) return reason;
+  return 'team_review_requested';
+}
+
 function notificationItem(n, detail) {
   const subject = n.subject || {};
   const url = htmlUrl(subject.url) || n.repository?.html_url || null;
+  const action = reviewAction(n.reason, detail);
   const body = [
     detail?.comment ? `Latest comment by ${detail.commentAuthor || 'someone'}:\n${detail.comment}` : '',
     detail?.body ? `Description:\n${detail.body}` : '',
@@ -100,14 +110,16 @@ function notificationItem(n, detail) {
     threadExternalId: url,
     occurredAt: n.updated_at,
     authorIdentity: detail?.commentAuthor ? `github:${detail.commentAuthor}` : null,
-    subject: `${n.reason}: ${subject.title || subject.type}`,
+    subject: `${action}: ${subject.title || subject.type}`,
     bodyText: body.slice(0, 8000),
     raw: {
       project: n.repository?.full_name || null,
-      action: n.reason,
+      action,
       targetType: subject.type,
       webUrl: url,
       unread: n.unread,
+      state: detail?.state || null,
+      merged: detail?.merged ?? null,
     },
   };
 }
@@ -243,10 +255,13 @@ function projectItems(project, login, watch = []) {
 // to you. CI noise does not get a second request.
 const CONVERSATIONAL = new Set(['mention', 'team_mention', 'comment', 'assign', 'author', 'review_requested', 'manual']);
 
-async function detailFor(n) {
+async function detailFor(n, login) {
   if (!CONVERSATIONAL.has(n.reason) || !n.subject?.url) return null;
   try {
     const subject = await api(n.subject.url.replace('https://api.github.com', ''));
+    const requestedMe = Array.isArray(subject.requested_reviewers)
+      ? subject.requested_reviewers.some((u) => u.login === login)
+      : null;
     let comment = null;
     let commentAuthor = subject.user?.login || null;
     const latest = n.subject.latest_comment_url;
@@ -255,7 +270,14 @@ async function detailFor(n) {
       comment = c.body || null;
       commentAuthor = c.user?.login || commentAuthor;
     }
-    return { body: (subject.body || '').slice(0, 4000), comment, commentAuthor };
+    return {
+      body: (subject.body || '').slice(0, 4000),
+      comment,
+      commentAuthor,
+      requestedMe,
+      state: subject.state || null,
+      merged: subject.merged ?? null,
+    };
   } catch (err) {
     log.debug('notification detail failed', { id: n.id, message: err.message });
     return null;
@@ -285,13 +307,15 @@ async function run() {
   const notifications = await api(`/notifications?all=false&per_page=50&since=${encodeURIComponent(since)}`);
   const notifItems = [];
   for (const n of notifications.slice(0, 40)) {
-    notifItems.push(notificationItem(n, await detailFor(n)));
+    notifItems.push(notificationItem(n, await detailFor(n, login)));
   }
 
+  // `user-review-requested`, not `review-requested`: the latter also matches
+  // every PR requested from a team you are in.
   const q = (s) => `/search/issues?per_page=50&q=${encodeURIComponent(s)}`;
   const [authored, reviewing, assigned] = await Promise.all([
     api(q(`is:open is:pr author:${login} archived:false`)),
-    api(q(`is:open is:pr review-requested:${login} archived:false`)),
+    api(q(`is:open is:pr user-review-requested:${login} archived:false`)),
     api(q(`is:open is:issue assignee:${login} archived:false`)),
   ]);
   const prs = new Map();
@@ -339,7 +363,12 @@ async function run() {
     },
   });
 
+  // Never fatal: closing settled commitments is housekeeping, ingest is not.
+  await require('./githubReconcile')
+    .reconcile({ api, login })
+    .catch((err) => log.warn('reconcile failed', { message: err.message }));
+
   return changed;
 }
 
-module.exports = { run, id: 'github', configured, status, gh, api, notificationItem, searchItem, projectItems, fieldMap, parseBoards, htmlUrl };
+module.exports = { run, id: 'github', configured, status, gh, api, notificationItem, reviewAction, searchItem, projectItems, fieldMap, parseBoards, htmlUrl };

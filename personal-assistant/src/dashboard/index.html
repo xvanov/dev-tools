@@ -83,6 +83,9 @@
   .pick { cursor: pointer; }
   .pick:hover .sum, .pick.on .sum { color: var(--accent); }
   .tag { font-size: 11px; background: var(--chip); border-radius: 4px; padding: 0 5px; color: var(--muted); }
+  .tag.mem { color: var(--ink); font-weight: 600; margin-right: 4px; }
+  .item.closed .sum { color: var(--muted); }
+  button.working { cursor: progress; }
   .st-superseded, .st-retracted { opacity: .6; }
   .st-superseded .sum, .st-retracted .sum { text-decoration: line-through; }
   .st-pending_review .tag.status { color: var(--warn); }
@@ -130,11 +133,12 @@
   <section id="runs"><h2>Agent runs<span class="n"></span></h2><div class="list"></div></section>
   <section id="code"><h2>Code &amp; boards<span class="n"></span></h2><div class="list"></div></section>
   <section id="meetings"><h2>Meetings next 24h<span class="n"></span></h2><div class="list"></div></section>
+  <section id="closed"><h2>Closed recently<span class="n"></span></h2><div class="list"></div></section>
 </main>
 <div class="mem" id="memory" hidden>
   <div class="col">
     <section id="review" class="review"><h2>Review queue<span class="n"></span></h2>
-      <p class="hint">Claims nobody has vouched for: quotes that only nearly matched, and notes an agent suggested. Approve makes one a belief; Reject retracts it.</p>
+      <p class="hint"><span class="tag mem">Memory only — nothing runs</span> Things the assistant is unsure it should believe: quotes that only nearly matched, and notes an agent suggested. <b>Save to memory</b> makes one a belief the assistant uses as context (for drafts, briefs, answers). It never triggers an action — scheduled actions live under Routines.</p>
       <div class="list"></div></section>
     <section id="subjects"><h2>People &amp; projects<span class="n"></span></h2>
       <div class="row"><input type="search" id="filter" placeholder="Filter by name or summary" autocomplete="off"></div>
@@ -231,11 +235,34 @@ async function post(path, body) {
   return data;
 }
 
+// Every click shows that something is happening, and then what happened:
+// the button reads "…" while the request runs, a toast reports the result,
+// and a failure restores the button and says why. A click that changes
+// nothing visible looks like a click that did nothing.
+async function busy(button, fn) {
+  const label = button.textContent;
+  button.disabled = true;
+  button.textContent = `${label}…`;
+  button.classList.add('working');
+  try {
+    await fn();
+    return true;
+  } catch (err) {
+    toast(`${label} failed: ${err.message}`);
+    button.disabled = false;
+    return false;
+  } finally {
+    button.textContent = label;
+    button.classList.remove('working');
+  }
+}
+
 function act(button, fn) {
   return async () => {
-    button.disabled = true;
-    try { await fn(); editing = false; document.querySelectorAll('.confirm').forEach((c) => { c.hidden = true; }); await refresh(); }
-    catch (err) { toast(err.message); button.disabled = false; }
+    if (!(await busy(button, fn))) return;
+    editing = false;
+    document.querySelectorAll('.confirm').forEach((c) => { c.hidden = true; });
+    await refresh();
   };
 }
 
@@ -258,8 +285,14 @@ function commitmentCard(c) {
     toast(`run #${r.id} started (${r.mode})`);
     if (r.url) window.open(r.url, '_blank', 'noopener');
   }));
-  doneBtn.addEventListener('click', act(doneBtn, () => post(`/api/commitments/${c.id}/status`, { status: 'done' })));
-  dropBtn.addEventListener('click', act(dropBtn, () => post(`/api/commitments/${c.id}/status`, { status: 'dropped' })));
+  doneBtn.addEventListener('click', act(doneBtn, async () => {
+    await post(`/api/commitments/${c.id}/status`, { status: 'done' });
+    toast(`#${c.id} marked done — it is in "Closed recently" if you need it back`);
+  }));
+  dropBtn.addEventListener('click', act(dropBtn, async () => {
+    await post(`/api/commitments/${c.id}/status`, { status: 'dropped' });
+    toast(`#${c.id} dismissed — it is in "Closed recently" if you need it back`);
+  }));
 
   const sub = joinParts([
     `#${c.id}`, c.who_is_me ? null : c.who, SOURCE[c.source] || c.source, c.project, due(c.due_at),
@@ -365,6 +398,23 @@ function render(s) {
   fill('meetings', s.meetings, (m) => el('div', { class: 'item' },
     el('div', { class: 'sum' }, m.subject),
     el('div', { class: 'sub' }, new Date(m.occurred_at).toLocaleString())), 'No meetings (or calendar not connected).');
+
+  fill('closed', s.closed || [], closedCard, 'Nothing closed in the last three days.');
+}
+
+// Closed by you or by the assistant (a PR merged, a review given, a review
+// that was only ever requested from a team), with the reason and a way back.
+function closedCard(c) {
+  const reopen = el('button', { title: 'Put it back on your list' }, 'Reopen');
+  reopen.addEventListener('click', act(reopen, async () => {
+    await post(`/api/commitments/${c.id}/status`, { status: 'open' });
+    toast(`#${c.id} is open again`);
+  }));
+  return el('div', { class: 'item closed' },
+    el('div', { class: 'sum' }, c.summary),
+    el('div', { class: 'sub' }, ...joinParts([`#${c.id}`, el('span', { class: 'tag' }, c.status === 'done' ? 'done' : 'dismissed'),
+      c.closed_reason, ago(c.closed_at), link(c.url, 'open')])),
+    el('div', { class: 'actions' }, reopen));
 }
 
 let editing = false;
@@ -463,15 +513,15 @@ function claimCard(c, { review = false, showSubject = false } = {}) {
   const actions = el('div', { class: 'actions' });
 
   if (review) {
-    const ok = el('button', { class: 'primary', title: 'Believe it, and consolidate it against what is known' }, 'Approve');
-    const no = el('button', { title: 'Retract it; it stays in the table as retracted' }, 'Reject');
+    const ok = el('button', { class: 'primary', title: 'Store it as something the assistant believes. Nothing is run.' }, 'Save to memory');
+    const no = el('button', { title: 'Do not believe it; it stays in the table as retracted' }, 'Discard');
     ok.addEventListener('click', memAct(ok, async () => {
       const r = await post(`/api/memory/claims/${c.id}/approve`);
-      toast(`approved #${c.id}${outcome(r.claim)}`);
+      toast(`saved to memory as #${c.id}${outcome(r.claim)} — no action was taken`);
     }));
     no.addEventListener('click', memAct(no, async () => {
       await post(`/api/memory/claims/${c.id}/reject`);
-      toast(`rejected #${c.id}`);
+      toast(`discarded #${c.id} — not believed`);
     }));
     actions.append(ok, no);
   } else if (c.status === 'active' || c.status === 'pending_review') {
@@ -525,9 +575,9 @@ function outcome(claim) {
 // Like act(), but reloads the memory view instead of the Today lists.
 function memAct(button, fn) {
   return async () => {
-    button.disabled = true;
-    try { await fn(); await loadMemory(); refresh(); }
-    catch (err) { toast(err.message); button.disabled = false; }
+    if (!(await busy(button, fn))) return;
+    await loadMemory();
+    refresh();
   };
 }
 

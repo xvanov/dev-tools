@@ -180,6 +180,9 @@ async function distillOne(item, cached) {
 
   try {
     const result = await callModel(item, { meLabel, candidates, ranked });
+    // A review requested from a team is the team's queue, not an ask of the
+    // reader — decided by GitHub's own reviewer list, not left to the model.
+    if (item.raw?.action === 'team_review_requested') result.commitments = [];
     const resolved = await resolveReferences(item, result, candidates);
     await persist(item, result, resolved);
     return { id: item.id, commitments: result.commitments.length, facts: result.facts.length };

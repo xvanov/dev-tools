@@ -115,7 +115,12 @@ ingested directly, with structure.
 **The dashboard** is at <http://127.0.0.1:7300/> whenever the worker runs (or `pa dashboard`
 on its own): what's on you, what you're waiting on, agent runs, drafts, open PRs and board
 items, each with **Do** (dispatch), **Reply**, **Done** and **Dismiss**. Loopback only — it can
-start agents.
+start agents. Every button shows that it is working and then what happened.
+
+**Closed recently** lists what left your list in the last three days and why — by you, or by the
+assistant: after each GitHub pass it closes commitments whose PR merged or closed, reviews you
+already gave, and review requests GitHub addressed only to a team you are in (those never become
+commitments in the first place now). Each has **Reopen**.
 
 **Replies to send** sits at the top: drafts the worker wrote for fresh asks from mail and Teams
 (`PA_AUTODRAFT=0` turns that off; `PA_AUTODRAFT_MIN_CONFIDENCE`, default 0.6, sets how sure the

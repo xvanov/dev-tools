@@ -51,7 +51,8 @@ async function state() {
   );
   // The Memory tab's badge: claims waiting for a human to vouch for them.
   const review = await rows(`select count(*)::int as n from claim where status = 'pending_review'`).catch(() => [{ n: 0 }]);
-  return { ...data, drafts, sources, memoryPending: review[0].n, now: new Date().toISOString() };
+  const closed = await require('../commitments').recentlyClosed().catch(() => []);
+  return { ...data, drafts, sources, closed, memoryPending: review[0].n, now: new Date().toISOString() };
 }
 
 function send(res, status, body, type = 'application/json') {
