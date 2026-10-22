@@ -197,6 +197,17 @@ function isoSec(d) {
 
 // What I did in a window: the "Yesterday" of a stand-up, and the recent work
 // a review or retro draws on.
+// The opening of a PR description or a session's first prompt: what the work
+// actually was, so a stand-up line can say what changed and not just a title.
+function gist(text, prefix = '') {
+  const t = String(text || '')
+    .replace(/^>>\s*/gm, '')
+    .replace(/^#+\s*\w+\s*$/gm, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return t ? ` — ${prefix}${t.slice(0, 220)}` : '';
+}
+
 async function doneSince(ctx, from, to) {
   const out = [];
   if (ctx.githubLogin) {
@@ -205,16 +216,19 @@ async function doneSince(ctx, from, to) {
     const merged = await ghSearch(`is:pr author:${ctx.githubLogin} merged:>=${isoSec(from)}`);
     const reviewed = await ghSearch(`is:pr reviewed-by:${ctx.githubLogin} -author:${ctx.githubLogin} updated:>=${isoSec(from)}`);
     for (const it of merged.slice(0, 6)) out.push(item(`gh:${it.html_url}`, `Merged PR ${ghLabel(it)}`, { url: it.html_url, when: it.closed_at }));
-    for (const it of reviewed.slice(0, 5)) out.push(item(`gh:${it.html_url}`, `Reviewed PR ${ghLabel(it)}`, { url: it.html_url, when: it.updated_at }));
+    for (const it of reviewed.slice(0, 5)) {
+      const whose = it.user?.login ? `${it.user.login}'s ` : '';
+      out.push(item(`gh:${it.html_url}`, `Reviewed ${whose}PR ${ghLabel(it)} (someone else's work)`, { url: it.html_url, when: it.updated_at }));
+    }
   }
   if (ctx.githubLogin) {
     const prs = await rows(
-      `select id, subject, occurred_at, raw from source_item
+      `select id, subject, occurred_at, raw, left(body_text, 600) as body from source_item
         where source = 'github_pr' and author_identity = $1 and occurred_at between $2 and $3
         order by occurred_at desc limit 6`,
       [`github:${ctx.githubLogin}`, from, to]
     );
-    for (const p of prs) out.push(item(`gh:${p.raw?.webUrl || p.id}`, `Activity on my ${p.raw?.draft ? 'draft ' : ''}${p.subject}`, { url: p.raw?.webUrl, when: p.occurred_at }));
+    for (const p of prs) out.push(item(`gh:${p.raw?.webUrl || p.id}`, `Activity on my ${p.raw?.draft ? 'draft ' : ''}${p.subject}${gist(p.body)}`, { url: p.raw?.webUrl, when: p.occurred_at }));
   }
   const jira = await rows(
     `select id, subject, occurred_at, raw from source_item
@@ -228,6 +242,9 @@ async function doneSince(ctx, from, to) {
   const closed = await rows(
     `select id, summary, closed_reason, closed_at from commitment
       where direction = 'owed_by_me' and status = 'done' and closed_at between $1 and $2
+        -- Only what I closed or did. "PR merged" is someone else's PR landing
+        -- (githubReconcile closing a review ask), not my work to report.
+        and (closed_reason is null or closed_reason in ('you marked it done', 'you reviewed it'))
       order by closed_at desc limit 6`,
     [from, to]
   ).catch(() => []);
@@ -236,7 +253,7 @@ async function doneSince(ctx, from, to) {
   }
 
   const sessions = await rows(
-    `select id, subject, occurred_at, raw from source_item
+    `select id, subject, occurred_at, raw, left(body_text, 600) as body from source_item
       where source = 'claude_session' and occurred_at between $1 and $2
       order by coalesce((raw->>'turns')::int, 0) desc limit 8`,
     [from, to]
@@ -245,7 +262,7 @@ async function doneSince(ctx, from, to) {
     const where = [s.raw?.cwd ? path.basename(String(s.raw.cwd)) : null, s.raw?.gitBranch && s.raw.gitBranch !== 'HEAD' ? s.raw.gitBranch : null]
       .filter(Boolean)
       .join(' @ ');
-    out.push(item(`item:${s.id}`, `Coding session: ${s.subject}${where ? ` (${where})` : ''}`, { when: s.occurred_at }));
+    out.push(item(`item:${s.id}`, `Coding session: ${s.subject}${where ? ` (${where})` : ''}${gist(s.body, 'I asked: ')}`, { when: s.occurred_at }));
   }
   return out;
 }

@@ -261,14 +261,19 @@ toast. `src/meetings/`, a 5-minute pass:
    the transcript (your promises against your own `Me:` lines). That becomes the series profile
    and claims about `topic:<series>`; the next brief checks last time's promises against the
    evidence ("Said last time: finish the retry — merged ✅").
-5. **Writing.** One model call over labelled evidence (E1…En). Every point cites its labels; an
-   unknown label is dropped, and the numbered part is capped at 120 words. The labels stay out
-   of the toast and show as links in the dashboard.
+5. **Writing.** One model call over labelled evidence (E1…En), written as **your script**:
+   per section, a few first-person bullets you can say out loud ("I shipped the What's new panel —
+   it lists every improvement a user can use"), saying what each PR or session changed (from its
+   description or opening prompt), your own work first and reviews of others' PRs last. Every
+   bullet cites its labels; an unknown label is dropped. The toast shows one line per section
+   (its first bullet and "+N"), capped at 120 words; the dashboard and `pa meeting brief` show the
+   whole script with each bullet's sources. Asks the assistant closed because someone else's PR
+   merged are not reported as your work.
 
 ```
 pa meeting next                     the next meeting that would be briefed, and its kind
 pa meeting list [--hours 24]        upcoming: kind, briefed, or why skipped
-pa meeting brief next|<event-id>    write it now and print it (--notify to deliver, --evidence for the raw input)
+pa meeting brief next|<event-id>    write it now and print it (--force to rewrite, --notify to deliver, --evidence for the raw input)
 pa meeting kind "<title>" standup   correct a series' kind
 pa meeting learn                    learn from meetings that just ended now
 ```

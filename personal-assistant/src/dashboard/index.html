@@ -966,7 +966,11 @@ function briefBlock(b) {
   const refs = b.refs || {};
   const tags = (list) => (list && list.length ? el('span', { class: 'refs' }, ...list.filter((r) => refs[r]).map((r) => refTag(r, refs[r]))) : null);
   return el('div', {},
-    el('ol', { class: 'brief' }, ...b.points.map((p) => el('li', {}, p.label ? `${p.label}: ${p.text}` : p.text, tags(p.refs)))),
+    // The script: each section's label, then its bullets as they are said.
+    // Briefs written before bullets existed have one line per section.
+    ...b.points.map((p) => el('div', { class: 'script' },
+      p.label ? el('div', { class: 'sum' }, p.label) : null,
+      el('ul', { class: 'brief' }, ...(p.bullets || [{ text: p.text, refs: p.refs }]).map((x) => el('li', {}, x.text, tags(x.refs)))))),
     b.context.length ? el('div', { class: 'sub' }, 'Context:') : null,
     b.context.length ? el('ul', { class: 'brief' }, ...b.context.map((c) => el('li', { class: 'sub' }, c.text, tags(c.refs)))) : null,
     el('div', { class: 'sub' }, ...joinParts([`brief #${b.id}`, b.notified ? 'notified' : null, `written ${ago(b.updatedAt)}`])));

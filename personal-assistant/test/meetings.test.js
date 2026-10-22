@@ -201,6 +201,36 @@ const meeting = (over = {}, raw = {}) => core.toMeeting(row({ ...over, raw: { ..
   assert.match(r.body, /\nContext:\n- Quill asked/);
   assert.match(r.body, /Join: https:\/\/teams/);
 
+  // The script shape: sections with spoken bullets. The toast line shows the
+  // first bullet and how many more; the body carries every bullet.
+  const s = P.renderBrief(
+    {
+      points: [
+        { label: 'Yesterday', bullets: [
+          { text: 'I merged the sync retry so failed ledger writes are retried.', refs: ['E1'] },
+          { text: 'I fixed the importer crash on empty rows.', refs: ['E2'] },
+          { text: 'I also reviewed Quill\'s rollout plan.', refs: ['E99'] },
+        ] },
+        { label: 'Today', bullets: [{ text: 'Next I\'m sending Quill the rollout plan.', refs: ['E3'] }] },
+      ],
+    },
+    refs
+  );
+  assert.strictEqual(s.points[0].bullets.length, 3);
+  assert.deepStrictEqual(s.points[0].refs, ['E1', 'E2'], 'unknown refs dropped, the rest unioned');
+  assert.strictEqual(s.points[0].text, 'I merged the sync retry so failed ledger writes are retried.');
+  assert.ok(s.headline.startsWith('1. Yesterday: I merged the sync retry so failed ledger writes are retried. (+2)'));
+  assert.match(s.headline, /\n2\. Today: Next I'm sending/);
+  assert.match(s.body, /\nYesterday\n• I merged the sync retry[^\n]*\n• I fixed the importer crash[^\n]*\n• I also reviewed/);
+  assert.match(s.body, /\nToday\n• Next I'm sending/);
+
+  // A long script loses trailing bullets, never a section's first one.
+  const wordy = Array.from({ length: 24 }, () => 'word').join(' ');
+  const big = P.renderBrief({ points: ['A', 'B', 'C'].map((label) => ({ label, bullets: Array.from({ length: 5 }, () => ({ text: wordy, refs: ['E1'] })) })) }, refs);
+  assert.strictEqual(big.points.length, 3);
+  assert.ok(big.points.every((p) => p.bullets.length >= 1));
+  assert.ok(P.words(big.points.flatMap((p) => p.bullets.map((b) => b.text)).join(' ')) <= 260);
+
   // The cap: a rambling reply is cut to the headline budget.
   const long = Array.from({ length: 80 }, () => 'word').join(' ');
   const capped = P.renderBrief({ points: Array.from({ length: 6 }, (_, i) => ({ label: `P${i}`, text: long, refs: ['E1'] })) }, refs);
@@ -220,7 +250,7 @@ const meeting = (over = {}, raw = {}) => core.toMeeting(row({ ...over, raw: { ..
   assert.ok(!myLines.includes('where are we'));
   const parsed = P.parseLearn(
     {
-      format: 'Round-robin updates, then blockers.',
+      format: 'Updates one person at a time, then blockers.',
       format_quote: 'Any blockers on the staging database?',
       asks: [
         { text: 'Status of the ledger sync', quote: 'where are we on the ledger sync' },
