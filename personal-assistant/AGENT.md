@@ -10,9 +10,12 @@ only record of what a message said. Every derived row carries `extracted_by` (pr
 version) so history can be re-derived when the prompt improves. Deleting a `source_item` is a
 retention action, never a cleanup.
 
-**Nothing is sent without a human.** `pa send` is the only path outbound, it is interactive,
-and no worker, cron job, skill or agent may call it. If a future phase wants auto-send, that
-is a conversation, not a patch.
+**Nothing is sent without a human.** This tool has no code path that puts a message on the
+wire. Drafts — including the ones the worker writes on its own — are delivered by opening them,
+already written, in Teams or Outlook (`src/draft/deliver.js`), and the human presses Send there.
+`pa send` and the dashboard's Send button both do exactly that and nothing more. If the
+connector is ever granted `Mail.Send`/`ChatMessage.Send`, using them is a conversation, not a
+patch — and no worker, cron job, skill or agent may ever trigger a send.
 
 **A dispatched run never touches the main working tree.** Own worktree under
 `../.pa-worktrees/<run-id>`, own branch, removed by `pa drop`. The root `CLAUDE.md` is explicit
@@ -29,8 +32,8 @@ tailnet ACL and it was built for that; this is not.
 **The dashboard is the dispatcher's trust model, not termhub's.** Its Dispatch button starts
 agents, so `src/dashboard/server.js` binds loopback only, rejects a non-loopback `Host` (DNS
 rebinding), and requires an `X-PA: 1` header on every POST (a custom header forces a CORS
-preflight the server never answers). It has no send button: drafts get a copy button, and
-`pa send` stays the only outbound path.
+preflight the server never answers). Its Send button opens the reply in Teams or Outlook and
+then asks whether you sent it; it cannot send.
 
 **One implementation per behaviour.** OpenClaw skills call the `pa` CLI. They do not talk to
 Postgres, and they do not reimplement dispatch. When the TUI and the CLI disagree about what
@@ -56,9 +59,9 @@ org's conventions is worse than none.
 - **No job queue.** "Work to do" is a query — items with no distillation row at the current
   prompt version. A queue table can get stuck, leak, or need draining after a crash; a query
   cannot. The worker is a scheduler of periodic passes, and passes never overlap themselves.
-- **Secrets:** never in the repo, never in Postgres in plaintext. Graph refresh tokens go in a
-  DPAPI-protected file under `%LOCALAPPDATA%\personal-assistant\`; API keys come
-  from the environment.
+- **Secrets:** never in the repo, never in Postgres in plaintext. There are almost none: GitHub,
+  Jira and Microsoft 365 ride on logins that already exist (`gh`, the claude.ai connectors), and
+  API keys come from the environment.
 - **Times:** store UTC, render local. Every `due_at` the distiller writes is absolute — a row
   that says "Friday" is a bug.
 - **Logs:** message bodies are not log material. Log ids, counts, and durations.

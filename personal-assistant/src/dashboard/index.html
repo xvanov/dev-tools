@@ -43,6 +43,14 @@
   button:disabled { opacity: .5; cursor: default; }
   pre.draft { white-space: pre-wrap; font: inherit; background: var(--chip); border-radius: 6px;
     padding: 8px; margin: 6px 0 0; }
+  textarea.draft { display: block; width: 100%; min-height: 96px; resize: vertical; font: inherit;
+    color: var(--ink); background: var(--chip); border: 1px solid var(--line); border-radius: 6px;
+    padding: 8px; margin: 6px 0 0; }
+  .ask { color: var(--muted); font-size: 12px; margin-top: 4px; border-left: 2px solid var(--line);
+    padding-left: 8px; white-space: pre-wrap; max-height: 5.5em; overflow: hidden; }
+  .confirm { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 6px;
+    font-size: 12px; color: var(--muted); }
+  .badge { font-size: 11px; color: var(--accent); }
   .empty { color: var(--muted); font-size: 13px; padding: 4px 0; }
   #toast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); background: var(--ink);
     color: var(--bg); padding: 8px 14px; border-radius: 8px; font-size: 13px; opacity: 0; transition: opacity .2s;
@@ -58,9 +66,9 @@
 </header>
 <div class="sources" id="sources"></div>
 <main>
+  <section id="drafts"><h2>Replies to send<span class="n"></span></h2><div class="list"></div></section>
   <section id="mine"><h2>On you<span class="n"></span></h2><div class="list"></div></section>
   <section id="waiting"><h2>Waiting on others<span class="n"></span></h2><div class="list"></div></section>
-  <section id="drafts"><h2>Drafts to send<span class="n"></span></h2><div class="list"></div></section>
   <section id="runs"><h2>Agent runs<span class="n"></span></h2><div class="list"></div></section>
   <section id="code"><h2>Code &amp; boards<span class="n"></span></h2><div class="list"></div></section>
   <section id="meetings"><h2>Meetings next 24h<span class="n"></span></h2><div class="list"></div></section>
@@ -134,7 +142,7 @@ async function post(path, body) {
 function act(button, fn) {
   return async () => {
     button.disabled = true;
-    try { await fn(); await refresh(); }
+    try { await fn(); editing = false; document.querySelectorAll('.confirm').forEach((c) => { c.hidden = true; }); await refresh(); }
     catch (err) { toast(err.message); button.disabled = false; }
   };
 }
@@ -145,6 +153,12 @@ function link(url, text) {
 
 function commitmentCard(c) {
   const doBtn = el('button', { class: 'primary', title: 'Start a Claude Code session on this' }, 'Do');
+  const replyBtn = el('button', { title: 'Draft a reply to this ask' }, 'Reply');
+  replyBtn.addEventListener('click', act(replyBtn, async () => {
+    const r = await post(`/api/commitments/${c.id}/reply`);
+    toast(`draft #${r.id} written — it is at the top`);
+  }));
+  const canReply = c.direction === 'owed_by_me' && (c.source === 'graph_chat' || c.source === 'graph_mail');
   const doneBtn = el('button', {}, 'Done');
   const dropBtn = el('button', { title: 'Not mine / not real' }, 'Dismiss');
   doBtn.addEventListener('click', act(doBtn, async () => {
@@ -162,7 +176,65 @@ function commitmentCard(c) {
   return el('div', { class: 'item' },
     el('div', { class: 'sum' }, c.summary),
     el('div', { class: 'sub' }, ...sub),
-    el('div', { class: 'actions' }, c.direction === 'owed_by_me' && c.status === 'open' ? doBtn : null, doneBtn, dropBtn));
+    el('div', { class: 'actions' }, c.direction === 'owed_by_me' && c.status === 'open' ? doBtn : null,
+      canReply ? replyBtn : null, doneBtn, dropBtn));
+}
+
+// A draft is edited in place and saved when the box loses focus. Send opens
+// it, written, in Teams or Outlook — this page cannot send — and then asks
+// whether you did, because only you know.
+function draftCard(d) {
+  const box = el('textarea', { class: 'draft', spellcheck: 'true' });
+  box.value = d.body;
+  let saved = d.body;
+  const save = async () => {
+    if (box.value === saved) return;
+    await post(`/api/drafts/${d.id}/edit`, { body: box.value });
+    saved = box.value;
+  };
+  box.addEventListener('focus', () => { editing = true; });
+  box.addEventListener('blur', () => { editing = false; save().catch((e) => toast(e.message)); });
+
+  const sendBtn = el('button', { class: 'primary' }, d.channel === 'teams' ? 'Send in Teams' : 'Send in Outlook');
+  const discardBtn = el('button', {}, 'Discard');
+  const confirmRow = el('div', { class: 'confirm' });
+  confirmRow.hidden = true;
+
+  sendBtn.addEventListener('click', async () => {
+    sendBtn.disabled = true;
+    try {
+      await save();
+      const r = await post(`/api/drafts/${d.id}/deliver`);
+      await navigator.clipboard.writeText(r.body).catch(() => {});
+      if (r.open && r.open.startsWith('msteams:')) window.location.href = r.open;
+      else if (r.open || r.web) window.open(r.open || r.web, '_blank', 'noopener');
+      toast(r.how + (r.prefilled ? '' : ' (copied)'));
+      const sent = el('button', { class: 'primary' }, 'I sent it');
+      const sentClose = el('button', { title: 'Also mark the ask done' }, 'Sent — ask is done');
+      const notYet = el('button', {}, 'Not yet');
+      sent.addEventListener('click', act(sent, () => post(`/api/drafts/${d.id}/sent`, { close: false })));
+      sentClose.addEventListener('click', act(sentClose, () => post(`/api/drafts/${d.id}/sent`, { close: true })));
+      notYet.addEventListener('click', () => { confirmRow.hidden = true; sendBtn.disabled = false; });
+      const web = r.web && r.open !== r.web ? link(r.web, 'open in browser') : null;
+      confirmRow.replaceChildren('Did it go?', sent, sentClose, notYet, web);
+      confirmRow.hidden = false;
+    } catch (err) {
+      toast(err.message);
+      sendBtn.disabled = false;
+    }
+  });
+  discardBtn.addEventListener('click', act(discardBtn, () => post(`/api/drafts/${d.id}/discard`)));
+
+  const about = d.commitment_id ? d.ask : d.task;
+  return el('div', { class: 'item' },
+    el('div', { class: 'sum' }, `${d.channel === 'teams' ? 'Teams' : 'Email'} → ${d.to_identity || '?'}`),
+    el('div', { class: 'sub' }, ...joinParts([`draft #${d.id}`, d.origin === 'auto' ? el('span', { class: 'badge' }, 'auto') : null,
+      d.subject, ago(d.created_at), link(d.ask_url || d.ask_link, 'original')])),
+    about ? el('div', { class: 'sub' }, about) : null,
+    d.ask_text ? el('div', { class: 'ask' }, d.ask_text) : null,
+    box,
+    el('div', { class: 'actions' }, sendBtn, discardBtn),
+    confirmRow);
 }
 
 function fill(id, items, render, emptyText) {
@@ -183,18 +255,7 @@ function render(s) {
   fill('mine', mine, commitmentCard, 'Nothing on you.');
   fill('waiting', waiting, commitmentCard, 'Nobody owes you anything.');
 
-  fill('drafts', s.drafts, (d) => {
-    const copy = el('button', {}, 'Copy');
-    copy.addEventListener('click', async () => {
-      await navigator.clipboard.writeText(d.body);
-      toast(`copied — send with \`pa send ${d.id}\` or paste it yourself`);
-    });
-    return el('div', { class: 'item' },
-      el('div', { class: 'sum' }, `${d.channel} → ${d.to_identity || '?'}`),
-      el('div', { class: 'sub' }, ...joinParts([`draft #${d.id}`, d.task, ago(d.created_at)])),
-      el('pre', { class: 'draft' }, d.body),
-      el('div', { class: 'actions' }, copy));
-  }, 'No drafts waiting.');
+  fill('drafts', s.drafts, draftCard, 'No replies waiting.');
 
   const runs = [...s.runsActive.map((r) => ({ ...r, live: true })), ...s.runsReview];
   fill('runs', runs, (r) => el('div', { class: 'item' },
@@ -213,7 +274,10 @@ function render(s) {
     el('div', { class: 'sub' }, new Date(m.occurred_at).toLocaleString())), 'No meetings (or calendar not connected).');
 }
 
+let editing = false;
+
 async function refresh() {
+  if (editing || document.querySelector('.confirm:not([hidden])')) return;
   try {
     const res = await fetch('/api/state');
     if (!res.ok) throw new Error((await res.json()).error || res.statusText);

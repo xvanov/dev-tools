@@ -21,7 +21,8 @@ your own working context removes it.
 
 The second thing it removes: work finishes and then sits there, because writing "here's what I
 did" back to the person who asked is a separate act of will. `pa draft` writes that message from
-the run's own diff and the original ask. You read it and send it.
+the run's own diff and the original ask, and fresh asks from mail and Teams get a reply drafted
+before you have opened them. You read it, edit it, and send it.
 
 ## The shape of it
 
@@ -49,7 +50,8 @@ Four decisions carry most of the design:
   I promise seven people this week" needs a table with a `due` column.
 - **Modes are enforced, not requested.** A `local` run's worktree has its push URL pointed at a
   dead host. The agent cannot push, whatever its brief says.
-- **Nothing is sent without you.** `pa send` is interactive and is the only path outbound.
+- **Nothing is sent without you.** There is no send code at all: an approved draft opens,
+  already written, in Teams or Outlook, and you press Send there.
 
 ## Install (Windows)
 
@@ -112,8 +114,16 @@ ingested directly, with structure.
 
 **The dashboard** is at <http://127.0.0.1:7300/> whenever the worker runs (or `pa dashboard`
 on its own): what's on you, what you're waiting on, agent runs, drafts, open PRs and board
-items, each with **Do** (dispatch), **Done** and **Dismiss**. Loopback only — it can start
-agents. Drafts get a Copy button; sending stays `pa send`.
+items, each with **Do** (dispatch), **Reply**, **Done** and **Dismiss**. Loopback only — it can
+start agents.
+
+**Replies to send** sits at the top: drafts the worker wrote for fresh asks from mail and Teams
+(`PA_AUTODRAFT=0` turns that off; `PA_AUTODRAFT_MIN_CONFIDENCE`, default 0.6, sets how sure the
+distiller must be that the ask is on you), plus any you asked for with **Reply**. Each shows the
+original message and an editable box. **Send in Teams / Send in Outlook** opens the reply where
+it goes — a 1:1 Teams chat or a new Outlook message with the text already typed in; a group
+chat or channel thread opens with the text on the clipboard to paste — and asks *Did it go?*.
+The connector's grant is read-only, so this page cannot send; you press Send in Teams or Outlook.
 
 ```
 pa brief                        what's on you today
@@ -134,8 +144,10 @@ pa review 7 [--diff]            what it changed
 pa land 7                       push, and open a draft PR (gh) if the mode allows
 pa drop 7                       kill the session, remove the worktree
 
-pa draft 7                      a reply written from the ask and the actual diff
-pa send 12                      interactive, explicit, and the only thing that sends
+pa draft 7                      a report on a run, from the ask and the actual diff
+pa reply 42                     a reply to the ask behind commitment 42
+pa drafts                       what is waiting to be sent
+pa send 12                      opens it, written, in Teams/Outlook; you press Send
 
 pa mic status | pause 30 | on    always-on capture control
 pa doctor                        what is configured, stale, or broken
@@ -187,7 +199,7 @@ src/brief/           what `pa brief` prints
 src/dashboard/       the loopback web page and its three buttons
 src/llm.js           model calls: API key, or `claude -p` without one
 src/dispatch/        worktrees, briefs, termhub sessions, modes, landing
-src/draft/           reply composition, and the one thing that sends
+src/draft/           reply drafting, auto-drafts, and delivery links (never sends)
 src/mcp/server.js    the read-only recall server
 src/worker.js        the periodic passes
 audio/               capture and trim/transcribe (Python)

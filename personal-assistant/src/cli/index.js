@@ -39,9 +39,10 @@ const HELP = `pa — your context layer
     pa drop <run> [--force]         kill the session and remove the worktree
 
   Replying
-    pa draft <run> [--channel teams|email]
+    pa draft <run> [--channel teams|email]   a report on what a run did
+    pa reply <commitment>           a reply to the ask itself
     pa drafts                       pending drafts
-    pa send <draft>                 interactive, explicit, never implicit
+    pa send <draft>                 opens it, written, in Teams/Outlook; you press Send
 
   Plumbing
     pa login                        check the Microsoft 365 connector and record who you are
@@ -59,6 +60,33 @@ function out(text) {
 function fail(message) {
   process.stderr.write(`pa: ${message}\n`);
   process.exitCode = 1;
+}
+
+function printDraft(draft, { footer = true } = {}) {
+  out(`draft #${draft.id} · ${draft.channel} · to ${draft.to_identity || '(unknown)'}`);
+  if (draft.subject) out(`subject: ${draft.subject}`);
+  out('');
+  out(draft.body);
+  out('');
+  if (footer) out(`Nothing has been sent. \`pa send ${draft.id}\` opens it in ${draft.channel === 'teams' ? 'Teams' : 'Outlook'}.`);
+}
+
+function openUrl(url) {
+  const { spawn } = require('child_process');
+  const [cmd, args] = process.platform === 'win32'
+    ? ['cmd', ['/c', 'start', '""', url.replace(/&/g, '^&')]]
+    : [process.platform === 'darwin' ? 'open' : 'xdg-open', [url]];
+  spawn(cmd, args, { detached: true, stdio: 'ignore', windowsHide: true }).unref();
+}
+
+function copyToClipboard(text) {
+  if (process.platform !== 'win32') return Promise.resolve();
+  return new Promise((resolve) => {
+    const child = require('child_process').spawn('clip', [], { stdio: ['pipe', 'ignore', 'ignore'] });
+    child.on('close', resolve);
+    child.on('error', resolve);
+    child.stdin.end(text);
+  });
 }
 
 async function confirm(question) {
@@ -97,8 +125,7 @@ const commands = {
   async login() {
     const m365 = require('../ingest/m365');
     const me = await m365.whoAmI().catch((err) => {
-      throw new Error(`${err.message}
-In Claude Code: /mcp → claude.ai Microsoft 365 → Authenticate.`);
+      throw new Error(`${err.message}\nIn Claude Code: /mcp → claude.ai Microsoft 365 → Authenticate.`);
     });
     out(`connector signed in as ${me.displayName || ''} <${me.mail}>`);
   },
@@ -384,12 +411,14 @@ In Claude Code: /mcp → claude.ai Microsoft 365 → Authenticate.`);
     const { draft } = await drafts.compose(id, {
       channel: flags.channel && flags.channel !== true ? String(flags.channel) : null,
     });
-    out(`draft #${draft.id} · ${draft.channel} · to ${draft.to_identity || '(unknown)'}`);
-    if (draft.subject) out(`subject: ${draft.subject}`);
-    out('');
-    out(draft.body);
-    out('');
-    out(`Nothing has been sent. \`pa send ${draft.id}\` when you are happy with it.`);
+    printDraft(draft);
+  },
+
+  async reply(args) {
+    const drafts = require('../draft');
+    const id = Number(args[0]);
+    if (!id) return fail('usage: pa reply <commitment>');
+    printDraft(await drafts.composeReply(id));
   },
 
   async drafts() {
@@ -397,31 +426,32 @@ In Claude Code: /mcp → claude.ai Microsoft 365 → Authenticate.`);
     const list = await drafts.pending();
     if (!list.length) return out('no pending drafts');
     for (const d of list) {
-      out(`#${d.id} · run ${d.run_id} · ${d.channel} · to ${d.to_identity || '?'} · ${d.status}`);
+      const about = d.commitment_id ? `reply to #${d.commitment_id}` : `run ${d.run_id}`;
+      out(`#${d.id} · ${about} · ${d.channel} · to ${d.to_identity || '?'} · ${d.status}`);
       out(`    ${d.body.split('\n')[0].slice(0, 100)}`);
     }
   },
 
+  // Never sends. Opens the draft, already written, where you send things, and
+  // records that you did only when you say so.
   async send(args, flags) {
     const drafts = require('../draft');
     const id = Number(args[0]);
     if (!id) return fail('usage: pa send <draft>');
-    const draft = await drafts.get(id);
-    if (!draft) return fail(`no draft #${id}`);
-
-    out(`to:      ${draft.to_identity}`);
-    if (draft.subject) out(`subject: ${draft.subject}`);
-    out(`channel: ${draft.channel}`);
-    out('');
-    out(draft.body);
-    out('');
-
-    if (!flagBool(flags, 'yes')) {
-      const ok = await confirm('Send this? [y/N]');
-      if (!ok) return out('not sent');
+    const d = await drafts.delivery(id);
+    printDraft(d.draft, { footer: false });
+    if (!d.open && !d.web) return fail('no way to reach this conversation — copy the text and send it yourself');
+    if (!d.prefilled) await copyToClipboard(d.draft.body);
+    openUrl(d.open || d.web);
+    out(d.how);
+    if (d.original) out(`original message: ${d.original}`);
+    if (flagBool(flags, 'yes') || (await confirm('Did you send it? [y/N]'))) {
+      const close = flagBool(flags, 'close') || (await confirm('Close the commitment too? [y/N]'));
+      await drafts.markSent(id, { closeCommitment: close });
+      out('marked sent');
+    } else {
+      out('left pending');
     }
-    await drafts.send(id);
-    out('sent');
   },
 
   async mic(args) {
@@ -478,8 +508,7 @@ In Claude Code: /mcp → claude.ai Microsoft 365 → Authenticate.`);
       const m365 = require('../ingest/m365');
       const scopes = await m365.grantedScopes().catch((err) => err);
       if (scopes instanceof Error) {
-        mark(false, 'microsoft 365', `${scopes.message.split('
-')[0]} — /mcp → claude.ai Microsoft 365`);
+        mark(false, 'microsoft 365', `${scopes.message.split('\n')[0]} — /mcp → claude.ai Microsoft 365`);
       } else {
         const has = (s) => scopes.includes(s);
         mark(has('Mail.Read') && has('Chat.Read'), 'microsoft 365', `connector · ${scopes.length} scopes granted`);

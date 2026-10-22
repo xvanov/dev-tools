@@ -130,6 +130,13 @@ const config = {
     pollSeconds: envInt('PA_JIRA_POLL_SECONDS', 900),
   },
 
+  // Replies the worker writes on its own for fresh asks from mail and Teams.
+  // They sit in the dashboard until you send or discard them; nothing sends.
+  drafts: {
+    auto: env('PA_AUTODRAFT', '1') !== '0',
+    minConfidence: Number(env('PA_AUTODRAFT_MIN_CONFIDENCE', '0.6')),
+  },
+
   anthropic: {
     apiKey: env('ANTHROPIC_API_KEY'),
     // Distillation is extraction, not reasoning-heavy work: the cost lever is

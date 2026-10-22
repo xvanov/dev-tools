@@ -140,6 +140,12 @@ async function main() {
     await distill.run({ limit: 15 });
   });
 
+  // After distillation, so a fresh ask has its commitment before a reply is
+  // drafted for it.
+  every(120, 'drafts', async () => {
+    await require('./draft').autoDraft({ limit: 3 });
+  });
+
   every(300, 'embed', async () => {
     await search.backfillEmbeddings({ limit: 256 });
   });

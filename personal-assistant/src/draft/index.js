@@ -1,40 +1,138 @@
 'use strict';
 
-// Drafting the reply, and the one guarantee this module makes: it does not
-// send. `compose()` writes a row; `send()` is a separate call that a human
-// makes, after reading it, with the scopes that were deliberately left out of
-// the default token.
+// Drafting replies, and the one guarantee this module makes: it does not
+// send. A draft is a row; delivery (deliver.js) opens it, already written, in
+// Teams or Outlook, and the human presses Send there.
 //
-// The draft is written from three things — the original ask in the requester's
-// words, what the run actually changed, and where it ended up. Not from the
-// agent's own summary of itself, which is reliably more confident than the diff
-// justifies.
+// Two kinds of draft, one table:
+//
+//  - **reply** — an answer to an ask, written from the ask in the requester's
+//    words, the rest of its thread, and what else the store knows about the
+//    subject. The worker writes these on its own for fresh asks from mail and
+//    Teams (`autoDraft`), so the dashboard has a reply waiting before you open
+//    the message.
+//  - **run report** — "here's what I did", written from the original ask and
+//    what the run actually changed. Not from the agent's own summary of
+//    itself, which is reliably more confident than the diff justifies.
 
 const llm = require('../llm');
+const { config } = require('../config');
 const { one, rows, query } = require('../db');
-const { request } = require('../graph/client');
 const { truncate } = require('../util/text');
-const dispatch = require('../dispatch');
+const deliver = require('./deliver');
 const { logger } = require('../log');
 
 const log = logger('draft');
 
-const SYSTEM = `You write short replies on behalf of a software engineer, reporting work they had done.
+const VOICE = `Write as the engineer, in first person, to the person who asked. Plain sentences.
+No greeting more elaborate than "Hi <first name>," and no sign-off. Match the channel: a Teams
+message is a few lines; an email is a short paragraph or two. No bullet lists unless there are
+three or more genuinely separate points.`;
 
-Constraints:
-- Write as the engineer, in first person, to the person who asked. Plain sentences.
+const REPORT_SYSTEM = `You write short replies on behalf of a software engineer, reporting work they had done.
+
+${VOICE}
+
 - Lead with whether the thing they asked for is done, in the first line.
 - Say what changed in terms of what they will notice, not in terms of files or functions.
 - If the diff does not actually cover the whole ask, say what is left. Never claim more than the changes support.
-- Include the merge request link if one is given.
-- No greeting more elaborate than "Hi <name>," and no sign-off beyond a name placeholder.
-- Under 140 words. No bullet lists unless there are genuinely three or more separate outcomes.
-- Never invent a timeline, a test result, or a review you did not do.`;
+- Include the pull request link if one is given.
+- Under 140 words. Never invent a timeline, a test result, or a review you did not do.`;
 
-async function context(runId) {
+const REPLY_SYSTEM = `You draft replies on behalf of a software engineer to messages that ask them for something.
+The engineer reads every draft and sends it themselves; your job is a reply they can send with at most a small edit.
+
+${VOICE}
+
+- Answer what was actually asked. If the context below contains the answer, give it, and say where it comes from when that matters.
+- If it needs work that has not been done, acknowledge it plainly and say what happens next. Do not promise a date unless the context gives one.
+- If the ask is ambiguous, ask the one question that would unblock it instead of guessing.
+- Never invent facts, numbers, links, decisions or people. If you do not know, say you will check.
+- Under 120 words. Output only the message text — no subject line, no quotes, no commentary.`;
+
+// ------------------------------------------------------------- context --
+
+async function myEmail() {
+  const me = await one('select primary_email from person where is_me limit 1');
+  return me?.primary_email ? me.primary_email.toLowerCase() : null;
+}
+
+async function thread(item, limit = 8) {
+  if (!item?.thread_external_id) return [];
+  return rows(
+    `select occurred_at, author_identity, subject, body_text, raw->>'fromName' as from_name
+       from source_item
+      where source = $1 and thread_external_id = $2 and id <> $3
+        and occurred_at <= $4
+      order by occurred_at desc limit $5`,
+    [item.source, item.thread_external_id, item.id, item.occurred_at, limit]
+  );
+}
+
+async function related(text, excludeId) {
+  try {
+    const { search } = require('../search');
+    const { results } = await search(text, { limit: 6 });
+    return results.filter((r) => r.id !== excludeId).slice(0, 4);
+  } catch {
+    return [];
+  }
+}
+
+// ---------------------------------------------------------------- reply --
+
+async function composeReply(commitmentId, { origin = 'manual' } = {}) {
+  const c = await one(
+    `select c.*, per.display_name as who, per.primary_email as who_email
+       from commitment c left join person per on per.id = c.counterparty_person_id
+      where c.id = $1`,
+    [commitmentId]
+  );
+  if (!c) throw new Error(`no commitment #${commitmentId}`);
+  const item = await one('select * from source_item where id = $1', [c.source_item_id]);
+  const target = deliver.targetFor(item, { me: await myEmail(), counterpartyEmail: c.who_email });
+
+  const earlier = await thread(item);
+  const background = await related(`${c.summary} ${item?.subject || ''}`, item?.id);
+  const when = item?.occurred_at ? new Date(item.occurred_at).toISOString() : '';
+
+  const prompt = [
+    `THE ASK (from ${c.who || item?.raw?.fromName || 'the requester'}, ${target.channel === 'teams' ? 'Teams' : 'email'}, ${when})`,
+    item?.subject ? `Subject: ${item.subject}` : null,
+    truncate(item?.body_text || c.summary, 3000),
+    '',
+    `WHAT THE ASSISTANT UNDERSTOOD THEY WANT: ${c.summary}${c.detail ? ` — ${c.detail}` : ''}`,
+    c.due_at ? `DUE: ${new Date(c.due_at).toISOString().slice(0, 10)}` : null,
+    '',
+    earlier.length ? 'EARLIER IN THE SAME THREAD (newest first)' : null,
+    ...earlier.map((m) => `- ${m.from_name || m.author_identity || '?'}: ${truncate(m.body_text, 400)}`),
+    '',
+    background.length ? 'OTHER THINGS THE ENGINEER HAS SEEN THAT MAY BE RELEVANT' : null,
+    ...background.map((r) => `- [${r.source}] ${r.subject || ''}: ${truncate(r.snippet || '', 240)}`),
+    '',
+    `CHANNEL: ${target.channel === 'teams' ? 'Teams message' : 'email'}`,
+  ]
+    .filter((l) => l !== null)
+    .join('\n');
+
+  const body = (await llm.complete({ system: REPLY_SYSTEM, prompt, effort: 'medium', maxTokens: 1500 })).trim();
+  return save({
+    commitmentId,
+    runId: null,
+    sourceItemId: item?.id || null,
+    target,
+    subject: target.channel === 'email' ? target.subject : null,
+    body,
+    origin,
+  });
+}
+
+// --------------------------------------------------------- run report --
+
+async function compose(runId, { channel = null } = {}) {
+  const dispatch = require('../dispatch');
   const run = await dispatch.get(runId);
   if (!run) throw new Error(`no run #${runId}`);
-
   const commitment = run.commitment_id
     ? await one('select * from commitment where id = $1', [run.commitment_id])
     : null;
@@ -44,60 +142,90 @@ async function context(runId) {
   const person = commitment?.counterparty_person_id
     ? await one('select * from person where id = $1', [commitment.counterparty_person_id])
     : null;
-
   const review = await dispatch.review(runId).catch(() => ({ stat: '', commits: '' }));
-  return { run, commitment, item, person, review };
-}
 
-function channelFor(item) {
-  if (!item) return 'email';
-  return item.source === 'graph_chat' ? 'teams' : 'email';
-}
-
-async function compose(runId, { channel = null } = {}) {
-  const ctx = await context(runId);
-  const chosen = channel || channelFor(ctx.item);
+  // `--channel email` on a Teams ask writes to the person's address instead.
+  const me = await myEmail();
+  let target = deliver.targetFor(item, { me, counterpartyEmail: person?.primary_email });
+  if (channel === 'email' && target.channel !== 'email') {
+    target = deliver.targetFor(null, { me, counterpartyEmail: person?.primary_email });
+  }
 
   const prompt = [
-    `THE ASK (from ${ctx.person?.display_name || 'the requester'})`,
-    ctx.item?.body_text ? truncate(ctx.item.body_text, 3000) : ctx.run.task,
+    `THE ASK (from ${person?.display_name || 'the requester'})`,
+    item?.body_text ? truncate(item.body_text, 3000) : run.task,
     '',
     'WHAT THE RUN ACTUALLY CHANGED',
-    ctx.review.stat || '(no diff recorded)',
+    review.stat || '(no diff recorded)',
     '',
     'COMMITS',
-    ctx.review.commits || '(none)',
+    review.commits || '(none)',
     '',
-    `MERGE REQUEST: ${ctx.run.mr_url || '(none opened)'}`,
-    `MODE: ${ctx.run.mode} — ${require('../dispatch/modes').describe(ctx.run.mode)}`,
+    `PULL REQUEST: ${run.mr_url || '(none opened)'}`,
+    `MODE: ${run.mode} — ${require('../dispatch/modes').describe(run.mode)}`,
     '',
-    `CHANNEL: ${chosen} (${chosen === 'teams' ? 'a chat message; keep it to a few lines' : 'an email; a short paragraph or two'})`,
+    `CHANNEL: ${target.channel === 'teams' ? 'Teams message' : 'email'}`,
   ].join('\n');
 
-  const body = (await llm.complete({ system: SYSTEM, prompt, effort: 'low', maxTokens: 2000 })).trim();
+  const body = (await llm.complete({ system: REPORT_SYSTEM, prompt, effort: 'low', maxTokens: 2000 })).trim();
+  const draft = await save({
+    commitmentId: null,
+    runId,
+    sourceItemId: item?.id || null,
+    target,
+    subject: target.channel === 'email' ? target.subject || run.task : null,
+    body,
+    origin: 'run',
+  });
+  return { draft };
+}
 
-  const subject =
-    chosen === 'email'
-      ? ctx.item?.subject
-        ? `Re: ${ctx.item.subject.replace(/^re:\s*/i, '')}`
-        : ctx.run.task
-      : null;
-
+async function save({ commitmentId, runId, sourceItemId, target, subject, body, origin }) {
   const draft = await one(
-    `insert into draft (run_id, channel, to_identity, subject, body, status)
-     values ($1,$2,$3,$4,$5,'pending') returning *`,
-    [runId, chosen, recipientOf(ctx), subject, body]
+    `insert into draft (commitment_id, run_id, source_item_id, channel, to_identity, subject, body, target, origin, status)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,'pending') returning *`,
+    [commitmentId, runId, sourceItemId, target.channel, target.label || null, subject, body, target, origin]
   );
-
-  log.info('drafted', { run: runId, draft: draft.id, channel: chosen });
-  return { draft, context: ctx };
+  log.info('drafted', { draft: draft.id, commitment: commitmentId, run: runId, channel: target.channel, origin });
+  return draft;
 }
 
-function recipientOf(ctx) {
-  if (ctx.person?.primary_email) return ctx.person.primary_email;
-  if (ctx.item?.source === 'graph_chat') return ctx.item.thread_external_id; // the chat id
-  return ctx.item?.author_identity || null;
+// ----------------------------------------------------------- auto pass --
+
+// Fresh asks from mail and Teams that are on you get a reply drafted without
+// being asked. "Fresh" and "never drafted before" are both load-bearing: a
+// discarded draft stays discarded, and a week-old ask is not worth a surprise
+// reply.
+async function autoDraft({ limit = 3 } = {}) {
+  if (!config.drafts.auto) return 0;
+  const candidates = await rows(
+    `select c.id
+       from commitment c
+       join source_item si on si.id = c.source_item_id
+       left join person per on per.id = c.counterparty_person_id
+      where c.status = 'open' and c.direction = 'owed_by_me' and c.superseded_by is null
+        and si.source in ('graph_chat', 'graph_mail')
+        and coalesce(c.confidence, 1) >= $1
+        and si.occurred_at > now() - interval '2 days'
+        and coalesce(per.is_me, false) = false
+        and not exists (select 1 from draft d where d.commitment_id = c.id)
+      order by si.occurred_at desc
+      limit $2`,
+    [config.drafts.minConfidence, limit]
+  );
+  let made = 0;
+  for (const { id } of candidates) {
+    try {
+      await composeReply(id, { origin: 'auto' });
+      made++;
+    } catch (err) {
+      log.warn('auto draft failed', { commitment: id, message: err.message });
+    }
+  }
+  return made;
 }
+
+// ------------------------------------------------------------ the rest --
 
 async function get(draftId) {
   return one('select * from draft where id = $1', [draftId]);
@@ -106,59 +234,51 @@ async function get(draftId) {
 async function pending(runId = null) {
   return runId
     ? rows(`select * from draft where run_id = $1 order by created_at desc`, [runId])
-    : rows(`select * from draft where status = 'pending' order by created_at desc limit 20`);
+    : rows(`select * from draft where status in ('pending','edited') order by created_at desc limit 30`);
 }
 
 async function edit(draftId, body) {
-  await query(`update draft set body = $2, status = 'edited' where id = $1`, [draftId, body]);
-  return get(draftId);
+  const row = await one(
+    `update draft set body = $2, status = 'edited' where id = $1 and status in ('pending','edited') returning *`,
+    [draftId, String(body)]
+  );
+  if (!row) throw new Error(`draft #${draftId} is not open`);
+  return row;
 }
 
 async function discard(draftId) {
-  await query(`update draft set status = 'discarded' where id = $1`, [draftId]);
+  const row = await one(
+    `update draft set status = 'discarded' where id = $1 and status in ('pending','edited') returning id`,
+    [draftId]
+  );
+  if (!row) throw new Error(`draft #${draftId} is not open`);
+  return row;
 }
 
-// Sending. Requires scopes the default token does not have — that is the point.
-// The error names the remedy rather than surfacing a raw 403.
-async function send(draftId) {
+// The links that put this draft in front of you in Teams or Outlook. Opening
+// them sends nothing; `markSent` records that you pressed Send yourself.
+async function delivery(draftId) {
   const draft = await get(draftId);
   if (!draft) throw new Error(`no draft #${draftId}`);
   if (draft.status === 'sent') throw new Error(`draft #${draftId} was already sent`);
-  if (!draft.to_identity) throw new Error(`draft #${draftId} has no recipient`);
-
-  try {
-    if (draft.channel === 'email') {
-      await request('/me/sendMail', {
-        method: 'POST',
-        body: {
-          message: {
-            subject: draft.subject || '(no subject)',
-            body: { contentType: 'Text', content: draft.body },
-            toRecipients: [{ emailAddress: { address: draft.to_identity } }],
-          },
-          saveToSentItems: true,
-        },
-      });
-    } else {
-      await request(`/me/chats/${encodeURIComponent(draft.to_identity)}/messages`, {
-        method: 'POST',
-        body: { body: { contentType: 'text', content: draft.body } },
-      });
-    }
-  } catch (err) {
-    if (err.status === 403 || /scope|permission/i.test(err.message)) {
-      throw new Error(
-        `sending needs a scope the read-only token does not have. Add ` +
-          `${draft.channel === 'email' ? 'Mail.Send' : 'ChatMessage.Send'} to PA_GRAPH_SCOPES and run \`pa login\` again.\n` +
-          `Underlying error: ${err.message}`
-      );
-    }
-    throw err;
-  }
-
-  await query(`update draft set status = 'sent', sent_at = now() where id = $1`, [draftId]);
-  log.info('sent', { draft: draftId, channel: draft.channel });
-  return true;
+  if (draft.status === 'discarded') throw new Error(`draft #${draftId} was discarded`);
+  return { draft, ...deliver.links(draft) };
 }
 
-module.exports = { compose, get, pending, edit, discard, send, context };
+// Sending a reply usually discharges the ask, but not when the reply only
+// says you will look into it — so closing the commitment is the caller's
+// explicit choice, not an inference.
+async function markSent(draftId, { closeCommitment = false } = {}) {
+  const row = await one(
+    `update draft set status = 'sent', sent_at = now() where id = $1 and status in ('pending','edited') returning *`,
+    [draftId]
+  );
+  if (!row) throw new Error(`draft #${draftId} is not open`);
+  if (closeCommitment && row.commitment_id) {
+    await query(`update commitment set status = 'done' where id = $1 and status = 'open'`, [row.commitment_id]);
+  }
+  log.info('sent by hand', { draft: draftId, channel: row.channel });
+  return row;
+}
+
+module.exports = { compose, composeReply, autoDraft, get, pending, edit, discard, delivery, markSent };

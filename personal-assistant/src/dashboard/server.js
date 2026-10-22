@@ -11,8 +11,10 @@
 //  - every POST must carry `X-PA: 1`. A custom header forces a CORS preflight,
 //    which this server never answers, so no other origin can forge a click.
 //
-// There is no send button, by design. Drafts are shown with a copy button;
-// `pa send` stays the only outbound path and stays interactive.
+// Its Send button does not send. It asks for the draft's delivery links and
+// opens the reply, already written, in Teams or Outlook; the human presses
+// Send there, then tells the page they did. This tool has no path that puts a
+// message on the wire (see draft/deliver.js).
 
 const fs = require('fs');
 const path = require('path');
@@ -33,10 +35,15 @@ async function state() {
   const { gather } = require('../brief');
   const data = await gather({ horizonDays: 7 });
   const drafts = await rows(
-    `select d.id, d.run_id, d.channel, d.to_identity, d.subject, d.body, d.status, d.created_at, r.task
-       from draft d left join run r on r.id = d.run_id
+    `select d.id, d.run_id, d.commitment_id, d.channel, d.to_identity, d.subject, d.body, d.status,
+            d.origin, d.created_at, r.task, c.summary as ask, si.raw->>'webUrl' as ask_url,
+            si.raw->>'webLink' as ask_link, si.body_text as ask_text
+       from draft d
+       left join run r on r.id = d.run_id
+       left join commitment c on c.id = d.commitment_id
+       left join source_item si on si.id = d.source_item_id
       where d.status in ('pending','edited')
-      order by d.created_at desc limit 20`
+      order by d.created_at desc limit 30`
   );
   const sources = await rows(
     `select source, last_run_at, last_error from sync_cursor order by source`
@@ -90,6 +97,24 @@ async function handle(req, res) {
     if (m) {
       const { setStatus } = require('../commitments');
       return send(res, 200, await setStatus(Number(m[1]), String(body.status)));
+    }
+    m = url.pathname.match(/^\/api\/commitments\/(\d+)\/reply$/);
+    if (m) {
+      const draft = await require('../draft').composeReply(Number(m[1]));
+      return send(res, 200, { id: draft.id });
+    }
+    m = url.pathname.match(/^\/api\/drafts\/(\d+)\/(edit|deliver|sent|discard)$/);
+    if (m) {
+      const drafts = require('../draft');
+      const id = Number(m[1]);
+      if (m[2] === 'edit') return send(res, 200, { id: (await drafts.edit(id, String(body.body || ''))).id });
+      if (m[2] === 'discard') return send(res, 200, await drafts.discard(id));
+      if (m[2] === 'sent') {
+        const row = await drafts.markSent(id, { closeCommitment: body.close === true });
+        return send(res, 200, { id: row.id, status: row.status });
+      }
+      const d = await drafts.delivery(id);
+      return send(res, 200, { open: d.open, web: d.web, original: d.original || null, prefilled: d.prefilled, how: d.how, body: d.draft.body });
     }
     m = url.pathname.match(/^\/api\/commitments\/(\d+)\/dispatch$/);
     if (m) {
