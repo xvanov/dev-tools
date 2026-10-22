@@ -186,6 +186,16 @@ async function ghSearch(q) {
   }
 }
 
+// A PR under my account that an AI agent wrote — Claude Code's footer or
+// co-author trailer in its description. Agents (dispatched runs, cloud or
+// remote sessions) open PRs as me; a brief that says "I shipped X" about one
+// is putting words in my mouth.
+const AGENT_MADE = /generated with \[?claude code|co-authored-by:\s*claude|🤖 generated with/i;
+
+function agentMade(body) {
+  return AGENT_MADE.test(String(body || ''));
+}
+
 function ghLabel(it) {
   const repo = String(it.repository_url || '').split('/').slice(-1)[0];
   return `${repo}#${it.number}: ${it.title}`;
@@ -215,7 +225,10 @@ async function doneSince(ctx, from, to) {
     // rate limit, which then fails the ingest pass's searches too.
     const merged = await ghSearch(`is:pr author:${ctx.githubLogin} merged:>=${isoSec(from)}`);
     const reviewed = await ghSearch(`is:pr reviewed-by:${ctx.githubLogin} -author:${ctx.githubLogin} updated:>=${isoSec(from)}`);
-    for (const it of merged.slice(0, 6)) out.push(item(`gh:${it.html_url}`, `Merged PR ${ghLabel(it)}`, { url: it.html_url, when: it.closed_at }));
+    for (const it of merged.slice(0, 6)) {
+      const what = agentMade(it.body) ? 'Agent PR merged (an AI agent wrote it under my account; not my own work)' : 'Merged PR';
+      out.push(item(`gh:${it.html_url}`, `${what} ${ghLabel(it)}`, { url: it.html_url, when: it.closed_at }));
+    }
     for (const it of reviewed.slice(0, 5)) {
       const whose = it.user?.login ? `${it.user.login}'s ` : '';
       out.push(item(`gh:${it.html_url}`, `Reviewed ${whose}PR ${ghLabel(it)} (someone else's work)`, { url: it.html_url, when: it.updated_at }));
@@ -223,12 +236,16 @@ async function doneSince(ctx, from, to) {
   }
   if (ctx.githubLogin) {
     const prs = await rows(
-      `select id, subject, occurred_at, raw, left(body_text, 600) as body from source_item
+      `select id, subject, occurred_at, raw, left(body_text, 600) as body,
+              body_text ~* $4 as agent from source_item
         where source = 'github_pr' and author_identity = $1 and occurred_at between $2 and $3
         order by occurred_at desc limit 6`,
-      [`github:${ctx.githubLogin}`, from, to]
+      [`github:${ctx.githubLogin}`, from, to, 'generated with \\[?claude code|co-authored-by:\\s*claude']
     );
-    for (const p of prs) out.push(item(`gh:${p.raw?.webUrl || p.id}`, `Activity on my ${p.raw?.draft ? 'draft ' : ''}${p.subject}${gist(p.body)}`, { url: p.raw?.webUrl, when: p.occurred_at }));
+    for (const p of prs) {
+      const whose = p.agent ? 'Agent PR on my account (an AI agent wrote it; not my own work)' : `Activity on my ${p.raw?.draft ? 'draft ' : ''}PR`;
+      out.push(item(`gh:${p.raw?.webUrl || p.id}`, `${whose}: ${p.subject}${gist(p.body)}`, { url: p.raw?.webUrl, when: p.occurred_at }));
+    }
   }
   const jira = await rows(
     `select id, subject, occurred_at, raw from source_item
@@ -297,13 +314,16 @@ async function todayItems(ctx, now) {
 
   if (ctx.githubLogin) {
     const mine = await rows(
-      `select id, subject, raw from source_item
+      `select id, subject, raw, body_text ~* $3 as agent from source_item
         where source = 'github_pr' and author_identity = $1 and raw->>'state' = 'opened'
           and occurred_at > $2::timestamptz - interval '14 days'
         order by occurred_at desc limit 5`,
-      [`github:${ctx.githubLogin}`, now]
+      [`github:${ctx.githubLogin}`, now, 'generated with \\[?claude code|co-authored-by:\\s*claude']
     );
-    for (const p of mine) out.push(item(`gh:${p.raw?.webUrl || p.id}`, `My open ${p.raw?.draft ? 'draft ' : ''}${p.subject}`, { url: p.raw?.webUrl }));
+    for (const p of mine) {
+      const whose = p.agent ? 'Agent PR on my account waiting for me to review and merge' : `My open ${p.raw?.draft ? 'draft ' : ''}PR`;
+      out.push(item(`gh:${p.raw?.webUrl || p.id}`, `${whose}: ${p.subject}`, { url: p.raw?.webUrl }));
+    }
     const asked = await ghSearch(`is:open is:pr user-review-requested:${ctx.githubLogin} archived:false`);
     for (const it of asked.slice(0, 5)) out.push(item(`gh:${it.html_url}`, `Review asked of me: ${ghLabel(it)}`, { url: it.html_url }));
   }
