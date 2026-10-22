@@ -33,9 +33,9 @@ function sdk() {
   return sdkClient;
 }
 
-async function viaApi({ system, prompt, effort, maxTokens }) {
+async function viaApi({ system, prompt, effort, maxTokens, model }) {
   const response = await sdk().messages.create({
-    model: config.anthropic.model,
+    model: model || config.anthropic.model,
     max_tokens: maxTokens,
     thinking: { type: 'adaptive' },
     output_config: { effort },
@@ -51,14 +51,16 @@ async function viaApi({ system, prompt, effort, maxTokens }) {
     .join('\n');
 }
 
-function cliArgs({ system, effort, tools }) {
+// `model` overrides the default for one call: cheap judgements (is this a
+// duplicate?) do not need the model that extracts commitments.
+function cliArgs({ system, effort, tools, model = null }) {
   const args = [
     '-p',
     '--output-format', 'json',
     '--setting-sources', 'project',
     '--no-session-persistence',
     '--effort', effort,
-    '--model', config.anthropic.model,
+    '--model', model || config.anthropic.model,
   ];
   if (system) args.push('--system-prompt', system);
   if (tools && tools.length) args.push('--allowedTools', tools.join(','));
@@ -109,8 +111,24 @@ function parseCliOutput({ code, out, err }) {
   return String(parsed.result || '');
 }
 
-async function viaCli({ system, prompt, effort, tools, timeoutMs }) {
-  return parseCliOutput(await runCli(cliArgs({ system, effort, tools }), prompt, timeoutMs));
+// What `claude -p` reported spending, summed over this process. Backfills
+// read it to say what a pass cost; nothing else depends on it.
+const spend = { calls: 0, usd: 0 };
+
+function noteCost(out) {
+  spend.calls++;
+  try {
+    const n = Number(JSON.parse(out).total_cost_usd);
+    if (Number.isFinite(n)) spend.usd += n;
+  } catch {
+    // An unparseable reply fails in parseCliOutput; cost is best effort.
+  }
+}
+
+async function viaCli({ system, prompt, effort, tools, timeoutMs, model }) {
+  const result = await runCli(cliArgs({ system, effort, tools, model }), prompt, timeoutMs);
+  noteCost(result.out);
+  return parseCliOutput(result);
 }
 
 // `tools` forces the CLI backend: only Claude Code can reach the connectors.
@@ -121,9 +139,10 @@ async function complete({
   maxTokens = 8000,
   tools = null,
   timeoutMs = 300_000,
+  model = null,
 }) {
-  if (tools || backend() === 'cli') return viaCli({ system, prompt, effort, tools, timeoutMs });
-  return viaApi({ system, prompt, effort, maxTokens });
+  if (tools || backend() === 'cli') return viaCli({ system, prompt, effort, tools, timeoutMs, model });
+  return viaApi({ system, prompt, effort, maxTokens, model });
 }
 
 // Runs a headless session whose only job is to call connector tools, and
@@ -230,4 +249,4 @@ function extractJson(text) {
   return JSON.parse(body.slice(start, end + 1));
 }
 
-module.exports = { complete, toolCalls, parseToolStream, spilledBlocks, backend, extractJson, cliArgs, parseCliOutput };
+module.exports = { spend: () => ({ ...spend }), complete, toolCalls, parseToolStream, spilledBlocks, backend, extractJson, cliArgs, parseCliOutput };

@@ -24,6 +24,16 @@ const { cliArgs, parseCliOutput, extractJson } = require('../src/llm');
 }
 
 {
+  // A per-call model goes to --model; without one, the configured default does.
+  const { config } = require('../src/config');
+  const def = cliArgs({ system: null, effort: 'low', tools: null });
+  assert.strictEqual(def[def.indexOf('--model') + 1], config.anthropic.model);
+  const cheap = cliArgs({ system: null, effort: 'low', tools: null, model: 'claude-haiku-5-5' });
+  assert.strictEqual(cheap[cheap.indexOf('--model') + 1], 'claude-haiku-5-5');
+  assert.strictEqual(cheap.filter((a) => a === '--model').length, 1);
+}
+
+{
   const ok = JSON.stringify({ subtype: 'success', is_error: false, result: 'hello' });
   assert.strictEqual(parseCliOutput({ code: 0, out: ok, err: '' }), 'hello');
   const bad = JSON.stringify({ subtype: 'error_max_turns', is_error: true, result: 'nope' });
