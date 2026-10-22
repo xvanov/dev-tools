@@ -38,6 +38,19 @@ approve, merge) are POSTs under the same guards, and memory pages reach the brow
 tree (`src/dashboard/markdown.js`) built with `textContent` — the page has no HTML sink, and
 `test/memoryui.test.js` fails if one appears.
 
+The one sanctioned way off loopback is **termhub's `/pa/` proxy** (`TERMHUB_PA_URL`), which
+rewrites `Host` to loopback and forwards `X-PA`. That reaches exactly the people who can already
+reach termhub — who can open a shell, which is more than the dashboard can do — so it adds no
+capability; it is how the dashboard works from a phone. For that the page's own URLs are relative
+(`api/...`, `routines.js`), never `/api/...`. Do not expose the dashboard any other way.
+
+**The PA chat acts only behind permission prompts.** `pa chat` starts one Claude Code session in
+termhub, homed in `<dataDir>/pa-home` (`src/chat/`), which reads other people's messages all day.
+It is started *without* `--dangerously-skip-permissions`; its `settings.json` allows the read-only
+`pa` commands and the read MCP tools and puts `pa do/land/drop/say/done/remember/forget/routine
+add` behind an *ask*. Its CLAUDE.md is rewritten from code on every start — change it in
+`src/chat/index.js`, not on disk; the user's own additions go in `CLAUDE.local.md`.
+
 **One implementation per behaviour.** OpenClaw skills call the `pa` CLI. They do not talk to
 Postgres, and they do not reimplement dispatch. When the TUI and the CLI disagree about what
 `pa do` means, the bug is that there are two implementations.

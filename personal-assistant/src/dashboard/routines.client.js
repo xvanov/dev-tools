@@ -71,42 +71,42 @@ function routineCard(r) {
 
   if (r.status === 'proposed') {
     add('Accept', 'Turn this suggestion into an active routine', 'Accepting…', async () => {
-      const x = await post(`/api/routines/${r.id}/accept`);
+      const x = await post(`api/routines/${r.id}/accept`);
       await loadRoutines();
       return `Accepted — first run ${when(x.next_run_at)}.`;
     }, 'primary');
     add('Reject', 'Never propose this again', 'Rejecting…', async () => {
-      await post(`/api/routines/${r.id}/reject`);
+      await post(`api/routines/${r.id}/reject`);
       await loadRoutines();
       return 'Rejected; it will not be proposed again.';
     });
   } else {
     add('Run now', 'Run it now for real', 'Starting…', async () => {
-      const x = await post(`/api/routines/${r.id}/run`);
+      const x = await post(`api/routines/${r.id}/run`);
       startPolling();
       return `Started (run ${x.runId}) — the result appears below when it finishes.`;
     }, 'primary');
     add('Dry run', 'Show what it would do, changing nothing', 'Starting…', async () => {
-      const x = await post(`/api/routines/${r.id}/dry-run`);
+      const x = await post(`api/routines/${r.id}/dry-run`);
       startPolling();
       return `Dry run started (run ${x.runId}) — see Run history.`;
     });
     if (r.status === 'active') {
       add('Pause', 'Stop running it on schedule', 'Pausing…', async () => {
-        await post(`/api/routines/${r.id}/pause`);
+        await post(`api/routines/${r.id}/pause`);
         await loadRoutines();
         return 'Paused.';
       });
     } else if (r.status === 'paused') {
       add('Resume', 'Run it on schedule again', 'Resuming…', async () => {
-        const x = await post(`/api/routines/${r.id}/resume`);
+        const x = await post(`api/routines/${r.id}/resume`);
         await loadRoutines();
         return `Resumed — next run ${when(x.next_run_at)}.`;
       });
     }
     add('Delete', 'Remove this routine', 'Deleting…', async () => {
       if (!window.confirm(`Delete routine "${r.title}"?`)) return 'Not deleted.';
-      const x = await post(`/api/routines/${r.id}/delete`);
+      const x = await post(`api/routines/${r.id}/delete`);
       await loadRoutines();
       return x.deleted ? 'Deleted.' : 'Marked rejected (it was a suggestion).';
     });
@@ -160,7 +160,7 @@ function renderRoutines() {
 
 async function loadRoutines() {
   try {
-    rt.data = await getJson('/api/routines');
+    rt.data = await getJson('api/routines');
     renderRoutines();
     const anyRunning = rt.data.history.some((x) => !x.ended_at);
     if (!anyRunning) stopPolling();
@@ -189,7 +189,7 @@ function showPreview(p) {
   const save = el('button', { class: 'primary' }, 'Save routine');
   const cancel = el('button', {}, 'Cancel');
   save.addEventListener('click', rtBusy(save, status, 'Saving…', async () => {
-    const x = await post('/api/routines', { ...rt.preview, confirmed: true });
+    const x = await post('api/routines', { ...rt.preview, confirmed: true });
     box.hidden = true;
     box.replaceChildren();
     document.getElementById('rt-words').value = '';
@@ -221,7 +221,7 @@ function wireAddBox() {
   const go = rtBusy(read, status, 'Reading…', async () => {
     const words = input.value.trim();
     if (!words) throw new Error('Describe what should happen and when.');
-    const p = await post('/api/routines/parse', { words });
+    const p = await post('api/routines/parse', { words });
     showPreview(p);
     return 'Check it below, then Save or Cancel.';
   });
@@ -232,7 +232,7 @@ function wireAddBox() {
   const sug = document.getElementById('rt-suggest');
   const sugStatus = document.getElementById('rt-suggest-status');
   sug.addEventListener('click', rtBusy(sug, sugStatus, 'Looking…', async () => {
-    const x = await post('/api/routines/suggest');
+    const x = await post('api/routines/suggest');
     await loadRoutines();
     return x.proposed.length ? `Proposed ${x.proposed.length} — review them above.` : 'Nothing convincing to propose right now.';
   }));

@@ -358,19 +358,56 @@ async function markDone(runId, note) {
 
 // A run whose termhub session has gone (machine rebooted, session killed) is
 // not "running" any more, whatever the table says.
+// Keeps run status in step with termhub, and tells the user when a run needs
+// them. termhub's idle tracking says whether an agent session is working or
+// sitting at its prompt; a run that has been at its prompt for a minute has
+// either finished or stopped to ask something — either way it is the user's
+// turn, and they should not have to go looking. One notification per wait
+// (keyed by when it started waiting), not one per pass.
+const WAIT_NOTIFY_MS = 60_000;
+
 async function reconcile() {
-  const live = new Set((await termhub.listSessions().catch(() => [])).map((s) => s.id));
+  const sessions = await termhub.listSessions().catch(() => null);
+  if (!sessions) return { closed: 0, notified: 0 };
+  const byId = new Map(sessions.map((s) => [s.id, s]));
   const active = await rows(
-    `select id, termhub_session_id from run where status in ('starting','running','waiting')`
+    `select id, task, status, termhub_session_id from run where status in ('starting','running','waiting')`
   );
   let closed = 0;
+  let notified = 0;
   for (const run of active) {
-    if (run.termhub_session_id && !live.has(run.termhub_session_id)) {
+    const s = run.termhub_session_id ? byId.get(run.termhub_session_id) : null;
+    if (run.termhub_session_id && (!s || s.alive === false)) {
       await markDone(run.id, 'session ended');
+      require('../notify')
+        .notify({
+          kind: 'info',
+          title: `Run #${run.id} ended`,
+          body: `${String(run.task).slice(0, 160)}\nReview it: pa review ${run.id}`,
+          dedupeKey: `run-ended:${run.id}`,
+        })
+        .catch(() => {});
       closed++;
+      continue;
+    }
+    if (!s) continue;
+    const waiting = s.idleState && s.idleState !== 'working' && (s.idleMs ?? 0) >= WAIT_NOTIFY_MS;
+    const next = waiting ? 'waiting' : 'running';
+    if (next !== run.status) await query('update run set status = $2 where id = $1', [run.id, next]);
+    if (waiting) {
+      const row = await require('../notify')
+        .notify({
+          kind: 'info',
+          title: `Run #${run.id} is waiting for you`,
+          body: `${String(run.task).slice(0, 160)}\nIt finished or has a question — open its session.`,
+          url: `${config.termhub.url.replace(/\/+$/, '')}/#session=${s.id}`,
+          dedupeKey: `run-wait:${run.id}:${s.idleSince || ''}`,
+        })
+        .catch(() => null);
+      if (row) notified++;
     }
   }
-  return { closed };
+  return { closed, notified };
 }
 
 module.exports = { start, get, list, steer, review, diff, land, drop, markDone, reconcile, slug, BLOCKED_PUSH_URL };

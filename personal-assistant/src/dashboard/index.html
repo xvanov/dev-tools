@@ -338,23 +338,23 @@ function commitmentCard(c) {
   const doBtn = el('button', { class: 'primary', title: 'Start a Claude Code session on this' }, 'Do');
   const replyBtn = el('button', { title: 'Draft a reply to this ask' }, 'Reply');
   replyBtn.addEventListener('click', act(replyBtn, async () => {
-    const r = await post(`/api/commitments/${c.id}/reply`);
+    const r = await post(`api/commitments/${c.id}/reply`);
     toast(`draft #${r.id} written — it is at the top`);
   }));
   const canReply = c.direction === 'owed_by_me' && (c.source === 'graph_chat' || c.source === 'graph_mail');
   const doneBtn = el('button', {}, 'Done');
   const dropBtn = el('button', { title: 'Not mine / not real' }, 'Dismiss');
   doBtn.addEventListener('click', act(doBtn, async () => {
-    const r = await post(`/api/commitments/${c.id}/dispatch`);
+    const r = await post(`api/commitments/${c.id}/dispatch`);
     toast(`run #${r.id} started (${r.mode})`);
     if (r.url) window.open(r.url, '_blank', 'noopener');
   }));
   doneBtn.addEventListener('click', act(doneBtn, async () => {
-    await post(`/api/commitments/${c.id}/status`, { status: 'done' });
+    await post(`api/commitments/${c.id}/status`, { status: 'done' });
     toast(`#${c.id} marked done — it is in "Closed recently" if you need it back`);
   }));
   dropBtn.addEventListener('click', act(dropBtn, async () => {
-    await post(`/api/commitments/${c.id}/status`, { status: 'dropped' });
+    await post(`api/commitments/${c.id}/status`, { status: 'dropped' });
     toast(`#${c.id} dismissed — it is in "Closed recently" if you need it back`);
   }));
 
@@ -378,7 +378,7 @@ function draftCard(d) {
   let saved = d.body;
   const save = async () => {
     if (box.value === saved) return;
-    await post(`/api/drafts/${d.id}/edit`, { body: box.value });
+    await post(`api/drafts/${d.id}/edit`, { body: box.value });
     saved = box.value;
   };
   box.addEventListener('focus', () => { editing = true; });
@@ -393,7 +393,7 @@ function draftCard(d) {
     sendBtn.disabled = true;
     try {
       await save();
-      const r = await post(`/api/drafts/${d.id}/deliver`);
+      const r = await post(`api/drafts/${d.id}/deliver`);
       await navigator.clipboard.writeText(r.body).catch(() => {});
       if (r.open && r.open.startsWith('msteams:')) window.location.href = r.open;
       else if (r.open || r.web) window.open(r.open || r.web, '_blank', 'noopener');
@@ -401,8 +401,8 @@ function draftCard(d) {
       const sent = el('button', { class: 'primary' }, 'I sent it');
       const sentClose = el('button', { title: 'Also mark the ask done' }, 'Sent — ask is done');
       const notYet = el('button', {}, 'Not yet');
-      sent.addEventListener('click', act(sent, () => post(`/api/drafts/${d.id}/sent`, { close: false })));
-      sentClose.addEventListener('click', act(sentClose, () => post(`/api/drafts/${d.id}/sent`, { close: true })));
+      sent.addEventListener('click', act(sent, () => post(`api/drafts/${d.id}/sent`, { close: false })));
+      sentClose.addEventListener('click', act(sentClose, () => post(`api/drafts/${d.id}/sent`, { close: true })));
       notYet.addEventListener('click', () => { confirmRow.hidden = true; sendBtn.disabled = false; });
       const web = r.web && r.open !== r.web ? link(r.web, 'open in browser') : null;
       confirmRow.replaceChildren('Did it go?', sent, sentClose, notYet, web);
@@ -412,7 +412,7 @@ function draftCard(d) {
       sendBtn.disabled = false;
     }
   });
-  discardBtn.addEventListener('click', act(discardBtn, () => post(`/api/drafts/${d.id}/discard`)));
+  discardBtn.addEventListener('click', act(discardBtn, () => post(`api/drafts/${d.id}/discard`)));
 
   const about = d.commitment_id ? d.ask : d.task;
   return el('div', { class: 'item' },
@@ -463,8 +463,8 @@ function secretCard(r) {
     }
     const done = el('button', { class: 'primary' }, 'Done');
     const dismiss = el('button', { title: 'Not now; the next failing check asks again' }, 'Dismiss');
-    done.addEventListener('click', needAct(done, 'Saving…', () => post(`/api/secrets/${r.id}/done`), 'Marked done.', say));
-    dismiss.addEventListener('click', needAct(dismiss, 'Dismissing…', () => post(`/api/secrets/${r.id}/decline`), 'Dismissed.', say));
+    done.addEventListener('click', needAct(done, 'Saving…', () => post(`api/secrets/${r.id}/done`), 'Marked done.', say));
+    dismiss.addEventListener('click', needAct(dismiss, 'Dismissing…', () => post(`api/secrets/${r.id}/decline`), 'Dismissed.', say));
     kids.push(el('div', { class: 'actions' }, done, dismiss));
   } else {
     // Config that is not secret (an email, a site name) may be shown as typed.
@@ -487,13 +487,13 @@ function secretCard(r) {
       const restore = busyLabel(save, 'Saving…');
       say('Saving…', true);
       try {
-        const res = await post(`/api/secrets/${r.id}/fulfil`, { value: input.value, target: target.value });
+        const res = await post(`api/secrets/${r.id}/fulfil`, { value: input.value, target: target.value });
         input.value = '';
         say(`Saved ${res.name} to ${res.stored === 'env-file' ? '.env' : 'Credential Manager'}.`, true);
         setTimeout(() => { needCards.delete(r.id); refresh(); }, 1500);
       } catch (err) { say(`Not saved: ${err.message}`, false); restore(); }
     });
-    decline.addEventListener('click', needAct(decline, 'Declining…', () => post(`/api/secrets/${r.id}/decline`), 'Declined.', say));
+    decline.addEventListener('click', needAct(decline, 'Declining…', () => post(`api/secrets/${r.id}/decline`), 'Declined.', say));
     kids.push(form, where);
   }
   kids.push(result);
@@ -572,7 +572,7 @@ function render(s) {
 function closedCard(c) {
   const reopen = el('button', { title: 'Put it back on your list' }, 'Reopen');
   reopen.addEventListener('click', act(reopen, async () => {
-    await post(`/api/commitments/${c.id}/status`, { status: 'open' });
+    await post(`api/commitments/${c.id}/status`, { status: 'open' });
     toast(`#${c.id} is open again`);
   }));
   return el('div', { class: 'item closed' },
@@ -587,7 +587,7 @@ let editing = false;
 async function refresh() {
   if (editing || document.querySelector('.confirm:not([hidden])')) return;
   try {
-    const res = await fetch('/api/state');
+    const res = await fetch('api/state');
     if (!res.ok) throw new Error((await res.json()).error || res.statusText);
     render(await res.json());
   } catch (err) {
@@ -681,11 +681,11 @@ function claimCard(c, { review = false, showSubject = false } = {}) {
     const ok = el('button', { class: 'primary', title: 'Store it as something the assistant believes. Nothing is run.' }, 'Save to memory');
     const no = el('button', { title: 'Do not believe it; it stays in the table as retracted' }, 'Discard');
     ok.addEventListener('click', memAct(ok, async () => {
-      const r = await post(`/api/memory/claims/${c.id}/approve`);
+      const r = await post(`api/memory/claims/${c.id}/approve`);
       toast(r.pending ? `Saved to memory (#${c.id}). Nothing was run. Its page updates in the background.` : `saved to memory as #${c.id}${outcome(r.claim)} — no action was taken`);
     }));
     no.addEventListener('click', memAct(no, async () => {
-      await post(`/api/memory/claims/${c.id}/reject`);
+      await post(`api/memory/claims/${c.id}/reject`);
       toast(`discarded #${c.id} — not believed`);
     }));
     actions.append(ok, no);
@@ -695,7 +695,7 @@ function claimCard(c, { review = false, showSubject = false } = {}) {
       const yes = el('button', { class: 'primary' }, 'Forget it');
       const keep = el('button', {}, 'Keep');
       yes.addEventListener('click', memAct(yes, async () => {
-        const r = await post(`/api/memory/claims/${c.id}/forget`);
+        const r = await post(`api/memory/claims/${c.id}/forget`);
         toast(`forgot #${c.id}${r.restored ? ` — ${r.restored} older claim believed again` : ''}`);
       }));
       keep.addEventListener('click', () => { confirmRow.hidden = true; });
@@ -808,7 +808,7 @@ function dupCard(pair) {
     const yes = el('button', { class: 'primary' }, 'Merge them');
     const no = el('button', {}, 'Cancel');
     yes.addEventListener('click', memAct(yes, async () => {
-      const r = await post('/api/memory/people/merge', { into: into.id, from: from.id });
+      const r = await post('api/memory/people/merge', { into: into.id, from: from.id });
       toast(`merged #${from.id} into #${into.id} — ${r.claims} claim${r.claims === 1 ? '' : 's'} moved`);
     }));
     no.addEventListener('click', () => { confirmRow.hidden = true; });
@@ -825,7 +825,7 @@ function dupCard(pair) {
 
 async function loadMemory() {
   const [overview, review, dups] = await Promise.all([
-    getJson('/api/memory/overview'), getJson('/api/memory/review'), getJson('/api/memory/duplicates'),
+    getJson('api/memory/overview'), getJson('api/memory/review'), getJson('api/memory/duplicates'),
   ]);
   mem.subjects = overview.subjects;
   mem.loaded = true;
@@ -846,7 +846,7 @@ async function openSubject(s) {
   if (s.label) q.set('label', s.label);
   if (mem.history) q.set('history', '1');
   let p;
-  try { p = await getJson(`/api/memory/page?${q}`); }
+  try { p = await getJson(`api/memory/page?${q}`); }
   catch (err) { detail.replaceChildren(el('div', { class: 'empty' }, err.message)); return; }
   if (mem.open !== s) return;
 
@@ -875,7 +875,7 @@ function modal(title, ...kids) {
 
 async function showItem(id) {
   try {
-    const it = await getJson(`/api/memory/items/${id}`);
+    const it = await getJson(`api/memory/items/${id}`);
     modal(`item #${it.id}`,
       el('div', { class: 'sum' }, it.subject || '(no subject)'),
       el('div', { class: 'sub' }, ...joinParts([SOURCE[it.source] || it.source, it.author_identity,
@@ -886,7 +886,7 @@ async function showItem(id) {
 
 async function showClaim(id) {
   try {
-    const r = await getJson(`/api/memory/claims/${id}`);
+    const r = await getJson(`api/memory/claims/${id}`);
     const c = r.claim;
     const mini = (x, label) => el('div', { class: 'sub' }, `${label} `, el('a', { class: 'ref', href: '#' }, `#${x.id}`), ` ${x.text || x.quote || ''}`);
     const kids = [
@@ -917,7 +917,7 @@ document.getElementById('remember-form').addEventListener('submit', async (e) =>
   button.disabled = true;
   out.textContent = 'remembering…';
   try {
-    const r = await post('/api/memory/remember', {
+    const r = await post('api/memory/remember', {
       text: text.value, subject: document.getElementById('remember-subject').value.trim() || null,
       kind: document.getElementById('remember-kind').value || null,
     });
@@ -935,7 +935,7 @@ document.getElementById('search-form').addEventListener('submit', async (e) => {
   const sec = document.getElementById('results');
   if (!q) { sec.hidden = true; return; }
   try {
-    const r = await getJson(`/api/memory/search?q=${encodeURIComponent(q)}`);
+    const r = await getJson(`api/memory/search?q=${encodeURIComponent(q)}`);
     sec.hidden = false;
     sec.querySelector('.n').textContent = String(r.results.length);
     sec.querySelector('.list').replaceChildren(...(r.results.length
@@ -988,7 +988,7 @@ function meetingCard(m) {
     btn.textContent = 'Briefing…';
     const tick = setInterval(() => { btn.textContent = `Briefing… ${Math.round((Date.now() - started) / 1000)}s`; }, 1000);
     try {
-      const b = await post('/api/meetings/brief', { eventId: m.eventId, force: !!m.brief });
+      const b = await post('api/meetings/brief', { eventId: m.eventId, force: !!m.brief });
       out.replaceChildren(briefBlock(b));
       btn.textContent = 'Brief again';
       btn.className = '';
@@ -1014,7 +1014,7 @@ function meetingCard(m) {
 async function loadMeetings() {
   if (meetingsBusy) return;
   try {
-    const list = await getJson('/api/meetings/upcoming?hours=24');
+    const list = await getJson('api/meetings/upcoming?hours=24');
     const shown = list.filter((m) => m.eligible || m.brief).slice(0, 4);
     fill('nextmeeting', shown, meetingCard, 'No meetings to brief in the next 24h.');
     focusBrief();
@@ -1033,7 +1033,7 @@ async function focusBrief() {
     return;
   }
   try {
-    const b = await getJson(`/api/meetings/brief/${m[1]}`);
+    const b = await getJson(`api/meetings/brief/${m[1]}`);
     if (b) modal(`${b.title} · ${new Date(b.startsAt).toLocaleString()}`, briefBlock(b));
   } catch (err) { toast(err.message); }
 }
@@ -1075,6 +1075,6 @@ setInterval(refresh, 30000);
 loadMeetings();
 setInterval(loadMeetings, 60000);
 </script>
-<script src="/routines.js"></script>
+<script src="routines.js"></script>
 </body>
 </html>

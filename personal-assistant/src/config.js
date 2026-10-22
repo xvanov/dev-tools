@@ -197,6 +197,13 @@ const config = {
     claudeCommand: env('PA_CLAUDE_COMMAND', 'claude --dangerously-skip-permissions'),
   },
 
+  // The PA chat (src/chat): one Claude Code session in termhub. Deliberately
+  // without --dangerously-skip-permissions — it reads other people's
+  // messages, so its actions stay behind permission prompts.
+  chat: {
+    command: env('PA_CHAT_COMMAND', 'claude'),
+  },
+
   dispatch: {
     port: envInt('PA_DISPATCH_PORT', 7300),
     // Loopback only. This process starts agents; it is not tailnet-safe.

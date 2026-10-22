@@ -18,7 +18,8 @@ const { route } = require('../src/dashboard/routines');
   assert.match(client, /Action — will run git in your repos/);
 
   const html = fs.readFileSync(path.join(__dirname, '../src/dashboard/index.html'), 'utf8');
-  assert.match(html, /<script src="\/routines\.js"><\/script>/);
+  // Relative, so the page also works behind termhub's /pa/ proxy.
+  assert.match(html, /<script src="routines\.js"><\/script>/);
   assert.match(html, /id="tab-routines"/);
   assert.match(html, /Routines are actions/);
 

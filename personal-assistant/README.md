@@ -435,6 +435,23 @@ sessions and audio transcripts on disk are re-scanned on their own. Re-ingest is
 running it over data that is still there costs fetches, not duplicates. Distillation, embeddings
 and memory then rebuild from the items by themselves.
 
+## Talking to it: the PA chat
+
+`pa chat` (or termhub's **PA chat** button) opens one Claude Code session in termhub that *is*
+the assistant: ask it anything, tell it what to work on, from any termhub tab or your phone.
+It is homed in `%LOCALAPPDATA%\personal-assistant\pa-home`, whose `CLAUDE.md` makes it the PA and
+whose SessionStart hook loads `pa context` — your profile, today's brief, what is waiting on you —
+at every start, resume and compaction, so a long-running chat stays current without carrying
+history. It answers through the MCP tools (`recall`, `memory_page`, …) and acts through the `pa`
+CLI: read-only commands run freely; starting a run (`pa do`), landing, steering, closing,
+remembering and adding routines each ask you first. Put your own standing instructions in
+`pa-home\CLAUDE.local.md`.
+
+Work you hand it runs as an ordinary dispatch: its own termhub session and worktree. When that
+session has been sitting at its prompt for a minute — finished, or stopped to ask something — you
+get a notification that opens it; when it ends, another. The dashboard is also reachable through
+termhub at `/pa/` (the **PA** button), so all of this works away from the desk.
+
 ## Wiring it into your agents
 
 - [`integrations/claude-code/`](./integrations/claude-code/) — register the read-only MCP recall

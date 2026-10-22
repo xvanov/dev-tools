@@ -98,6 +98,13 @@ async function handle(req, res) {
   if (req.method === 'GET' && url.pathname === '/api/state') {
     return send(res, 200, await state());
   }
+  // The PA chat (src/chat): termhub's "PA chat" button asks for the session
+  // and attaches to it. Starting a Claude Code session is an action, so it
+  // takes the same X-PA guard as every other POST.
+  if (req.method === 'POST' && url.pathname === '/api/chat/open') {
+    if (req.headers['x-pa'] !== '1') return send(res, 403, { error: 'missing X-PA header' });
+    return send(res, 200, await require('../chat').ensureSession());
+  }
   if (req.method === 'GET' && url.pathname === '/api/secrets') {
     const r = await require('../secrets').list();
     return send(res, 200, { secrets: r.secrets, pending: r.pending, vaultError: r.vaultError });
