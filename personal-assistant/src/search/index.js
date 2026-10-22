@@ -343,6 +343,9 @@ async function search(q, { limit = 12, sources = null, since = null, until = nul
     return {
       ...row,
       context,
+      // The best chunk's words, for callers that rerank or quote further
+      // (recall). Display code uses `snippet`.
+      text: content,
       score: hit.score,
       fused: hit.fused,
       matched: [...new Set(hit.sources)].map((s) => LEG_NAMES[s]).join('+'),

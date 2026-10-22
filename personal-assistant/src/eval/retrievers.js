@@ -56,4 +56,27 @@ register(
   { threshold: 0.03, describe: 'hybrid search, no rerank (RRF scores)' }
 );
 
+// Recall (src/recall): search + claims + pages, a second hop on what the
+// first found, one rerank over the union. Same reranker scale as search, so
+// a slightly higher threshold (see ABSTAIN_BELOW in src/recall).
+register(
+  'recall',
+  async (q, { limit }) => {
+    const r = await require('../recall').recall(q, { limit });
+    return { results: r.items, degraded: !r.reranked };
+  },
+  { threshold: 0.6, describe: 'multi-hop recall over items, claims and pages (src/recall)' }
+);
+
+// The same with a model planning sub-queries first: one model call per
+// question, so slow — measure whether it earns that.
+register(
+  'recall-deep',
+  async (q, { limit }) => {
+    const r = await require('../recall').recall(q, { limit, deep: true });
+    return { results: r.items, degraded: !r.reranked };
+  },
+  { threshold: 0.6, describe: 'recall with model-planned sub-queries' }
+);
+
 module.exports = { register, get, names };

@@ -192,6 +192,20 @@ pa forget 812 | item:4411        retract; the pages are rebuilt without it
 pa memory run [extract|consolidate|pages|dream]   force a pass
 ```
 
+**Reading it back: recall.** `src/recall/` is the question-answering path, exposed as the MCP
+`recall` tool and used for reply drafts and dispatch briefs. One hop searches items, claims and
+pages in parallel; a second searches again for what the strongest claims and pages name (and,
+with `deep`, sub-queries a model plans from the index); then one Cohere rerank orders items,
+claims and pages together against the question. A claim lends its score to the item it came
+from. When the best score is under 0.6, recall says nothing relevant was found instead of
+offering the least-bad hit. On the eval it lifts multi-session R@5 from 0.22 to 0.37 and
+knowledge-update R@5 from 0.90 to 1.00 over plain search, at ~2s a question.
+
+Drafts get the requester's page, your own profile and recalled facts; briefs get the requester's
+and project's pages and recalled facts — each labelled as evidence, not instruction. Agents can
+propose a fact with MCP `remember`; it lands as `pending_review` and changes nothing until you
+approve it.
+
 ### Dispatch modes
 
 | Mode | May | Stops before |
@@ -288,6 +302,7 @@ src/projects/        the project ↔ repo table and the scorer that guesses
 src/search/          hybrid retrieval: full text + vector + people named, fused, Cohere-reranked
 src/eval/            retrieval eval: metrics, retriever registry, case seeding, runs
 src/memory/          claims with evidence, consolidation, people/project pages, nightly dream
+src/recall/          multi-hop recall over items, claims and pages, one rerank
 src/brief/           what `pa brief` prints
 src/dashboard/       the loopback web page and its three buttons
 src/llm.js           model calls: API key, or `claude -p` without one

@@ -92,6 +92,23 @@ async function relatedContext(item) {
   );
 }
 
+// The memory's contribution to a brief. Never blocks a dispatch: any piece
+// that fails is simply absent.
+async function memoryContext({ commitment, item, project, person }, task) {
+  const memory = require('../memory');
+  const question = [task || commitment?.summary, commitment?.detail, item?.subject].filter(Boolean).join(' — ');
+  const [recalled, personPage, projectPage] = await Promise.all([
+    question ? require('../recall').recall(question, { limit: 6 }).catch(() => null) : null,
+    person ? memory.getPage({ kind: 'person', id: person.id }).catch(() => null) : null,
+    project ? memory.getPage({ kind: 'project', id: project.id }).catch(() => null) : null,
+  ]);
+  return {
+    facts: recalled && !recalled.abstain ? recalled.claims : [],
+    person: personPage?.body || null,
+    project: projectPage?.body || null,
+  };
+}
+
 async function start({ commitmentId = null, task = null, mode: modeName, repoPath = null }) {
   const m = resolveMode(modeName);
   const target = await resolveTarget({ commitmentId, repoPath });
@@ -146,6 +163,7 @@ async function start({ commitmentId = null, task = null, mode: modeName, repoPat
     modeName: m.name,
     run: { ...run, worktree_path: worktreePath, branch },
     related: await relatedContext(target.item),
+    memory: await memoryContext(target, task),
   });
 
   const briefPath = worktreePath

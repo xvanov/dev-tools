@@ -62,6 +62,11 @@ corroborate with `duplicate_of`; `forget` sets `status = 'retracted'`. No memory
 claims, consolidation, pages — says so, and nothing a message says can change what a pass does:
 no pass takes an action other than writing rows. Keep it that way when adding one.
 
+**Agents propose memory; humans decide it.** The MCP server's only write is `remember`, which
+stores a `pending_review` claim (`origin = 'agent'`) that no read path believes and no
+consolidation sees until it is approved in the dashboard. An agent's note may be something it
+read in an email. Do not add MCP tools that approve, forget, or write active claims.
+
 **Raven stays a skill.** Company engineering conventions are read through the existing
 `innergy-knowledge` skill. Do not copy that repo into this store; a second stale copy of the
 org's conventions is worse than none.

@@ -11,12 +11,19 @@ Register it once, at user scope, so every session on this machine can reach it:
 claude mcp add personal-assistant --scope user -- node C:\repos\dev-tools\personal-assistant\src\mcp\server.js
 ```
 
-It exposes `brief_me`, `search_context`, `get_thread`, `open_commitments`, `who_is` and
-`repo_state`.
+It exposes:
 
-**It is read-only on purpose.** A server that could dispatch runs or send mail would put those
-actions one prompt-injected email away — and this store is full of text other people wrote.
-Dispatching and sending stay in the CLI, where a human types them.
+- `recall` — the one to reach for with a question: raw items, distilled facts with their quotes,
+  and people/project pages, followed up and ranked together; it says when nothing relevant exists.
+- `memory_page` — a person, a project, `me` or `index`.
+- `explain_claim` — why a fact is believed: quote, source, what it replaced.
+- `remember` — proposes a fact; it waits in the dashboard's review queue until you approve it.
+- `brief_me`, `search_context`, `get_thread`, `open_commitments`, `who_is`, `repo_state`.
+
+**It is read-only on purpose**, except for `remember`, which only proposes. A server that could
+dispatch runs, send mail or rewrite memory would put those actions one prompt-injected email
+away — and this store is full of text other people wrote. Dispatching, sending, approving and
+forgetting stay in the CLI and the dashboard, where a human does them.
 
 ## 2. A `/brief` command — optional, and just a shortcut
 
