@@ -379,6 +379,22 @@ html, body {
 }
 #version-line:empty { display: none; }
 
+/* ---- personal assistant (the front's /pa/* proxy) ----
+   Same look as ⟳ Update. Wraps so an error line gets its own row instead of
+   squeezing the buttons on a 250px sidebar. */
+#pa-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 8px 14px 0; }
+#pa-row.hidden { display: none; }
+.pa-btn {
+  background: var(--bg-3); border: 1px solid var(--border); color: var(--fg-dim);
+  font: inherit; font-size: 12px; padding: 4px 8px; border-radius: 6px; cursor: pointer;
+  white-space: nowrap; text-decoration: none; line-height: 1.4;
+}
+.pa-btn:hover { border-color: var(--accent); color: var(--fg); }
+.pa-btn:disabled { opacity: 0.6; cursor: progress; }
+#pa-msg { flex: 1 1 100%; font-size: 11px; color: var(--fg-dim); overflow-wrap: anywhere; }
+#pa-msg:empty { display: none; }
+#pa-msg.error { color: var(--danger); }
+
 #update-backdrop {
   position: fixed; inset: 0; background: rgba(0,0,0,0.5);
   display: flex; align-items: center; justify-content: center; z-index: 35; padding: 16px;
@@ -494,6 +510,8 @@ html, body {
   /* Collapsing is a desktop concept (mobile already keeps the sidebar tucked
      away behind the drawer by default) — hide the toggle here. */
   #sidebar-collapse { display: none; }
+  /* Thumb-sized in the drawer; desktop keeps them as compact as ⟳ Update. */
+  .pa-btn { font-size: 14px; padding: 8px 14px; }
 }
 
 /* On desktop the key bar is handy but optional; keep it compact. */

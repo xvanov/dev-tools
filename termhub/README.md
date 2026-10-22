@@ -256,6 +256,10 @@ first when one of them has died.
   CLI** version against the one termhub is pinned to, with an **Update Claude** button — termhub
   drives the CLI through `--session-id`/`--resume` and its on-disk transcripts, so a CLI too old
   for the pin can break session restore and the model badge. `Update now` updates the CLI too.
+- **PA ↗ / PA chat** (under the sidebar header, shown only while the personal assistant
+  answers through the front's `/pa/` proxy). **PA ↗** opens its dashboard in a new tab.
+  **PA chat** asks the PA for its chat terminal and opens it here, as if you had picked it from
+  the list. Phone included, over the tailnet. See `AGENT.md` → *The PA proxy*.
 - Switch terminals via the sidebar — the only place session control lives. Each row is just the
   session's name (wrapped, never truncated), **✎** to rename and **✕** to close. **✕**
   **kills** it; there's no separate soft-close, so what you see is what happens.

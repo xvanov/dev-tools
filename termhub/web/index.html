@@ -36,6 +36,15 @@
         <button id="sidebar-close" title="Close">✕</button>
       </div>
       <div id="version-line" title="current version"></div>
+      <!-- The personal assistant, through the front's /pa/* proxy. Hidden until
+           GET /pa/api/state answers (proxy off, or the PA not running, means no
+           buttons rather than buttons that fail). Up here, not in the key bar:
+           the key bar's pinned tools are already at the width a phone allows. -->
+      <div id="pa-row" class="hidden">
+        <a id="pa-open" class="pa-btn" href="/pa/" target="_blank" rel="noopener" title="Open the personal assistant's dashboard in a new tab">PA &#8599;</a>
+        <button id="pa-chat" class="pa-btn" title="Open the PA chat terminal (starts one if none is running)">PA chat</button>
+        <span id="pa-msg" role="status"></span>
+      </div>
       <div class="actions">
         <button id="new-term-btn">+ New terminal</button>
       </div>

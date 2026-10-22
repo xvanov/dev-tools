@@ -1292,6 +1292,27 @@ widen who can reach termhub (`TERMHUB_BIND=0.0.0.0`, Funnel instead of Serve) wi
 the PA by the same amount. If the PA ever needs a stricter boundary than termhub's, set
 `TERMHUB_PA_URL=` on that machine.
 
+**In the hub (`#pa-row`, under the sidebar header).** Two controls styled like ⟳ Update,
+thumb-sized inside the phone drawer:
+
+- **PA ↗** is a plain `<a href="/pa/" target="_blank">`, not `window.open()`, so iOS never
+  treats it as a popup.
+- **PA chat** sends `POST /pa/api/chat/open` with `X-PA: 1`. The PA answers
+  `{sessionId, created}`, a termhub session on this machine, which it either just started
+  through sessiond or already had running. The hub then does exactly what a click on that row
+  does: `openTerminal(id, title, kind)`, and closes the drawer on a phone. A just-created
+  session isn't in `state.sessions` yet, and `refresh()` returns an in-flight poll that may
+  predate it, so a miss gets one fresh refresh before it counts as an error. While the request
+  runs the button reads `PA chat…`. A failure puts red text under the buttons (`#pa-msg`), and
+  the row deliberately **stays visible** so that text can be read: re-checking straight away
+  would hide the row and the error with it.
+- **Both are hidden unless `GET /pa/api/state` answers**: checked at load, and again on window
+  focus or when the tab becomes visible, at most once a minute (`checkPa`). Proxy disabled and
+  PA not running look the same from here, and in both cases no buttons is better than buttons
+  that can only fail.
+- They are kept out of the key bar on purpose. Its pinned tools are already as wide as a phone
+  allows (see *The key bar: keys scroll, tools don't*), and the PA isn't a terminal key.
+
 The PA side documents its half (relative URLs, `POST /api/chat/open`) in
 `personal-assistant/AGENT.md`. Covered by `test/paProxy.test.js` (fake PA on an ephemeral port).
 

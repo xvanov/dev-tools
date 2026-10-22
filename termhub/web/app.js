@@ -2876,6 +2876,77 @@ function connectVoice() {
   ws.onerror = () => { try { ws.close(); } catch {} };
 }
 
+// ---- personal assistant (/pa/*, proxied by the front) ---------------------
+//
+// Two controls under the sidebar header: PA opens the dashboard in a new tab
+// (a plain link, so iOS never treats it as a popup), PA chat asks the PA for
+// its chat terminal and opens it here. Both stay hidden unless the PA answers —
+// the proxy can be switched off (TERMHUB_PA_URL=) and the PA may not be running,
+// and a button that can only fail is worse than no button.
+
+const PA_RECHECK_MS = 60000;
+let paCheckedAt = 0;
+let paChecking = null;
+
+function checkPa(force) {
+  if (paChecking) return paChecking;
+  if (!force && Date.now() - paCheckedAt < PA_RECHECK_MS) return Promise.resolve();
+  paCheckedAt = Date.now();
+  paChecking = api('/pa/api/state')
+    .then(() => true, () => false)
+    .then((up) => { $('#pa-row').classList.toggle('hidden', !up); })
+    .finally(() => { paChecking = null; });
+  return paChecking;
+}
+
+function paMessage(text, isError) {
+  const el = $('#pa-msg');
+  el.textContent = text || '';
+  el.classList.toggle('error', !!isError);
+}
+
+// The PA answers `{sessionId, created}`, where sessionId is a termhub session on
+// THIS machine (the PA started it through sessiond, or found its running one).
+// From there it's exactly a click on that row in the session list.
+async function openPaChat() {
+  const btn = $('#pa-chat');
+  if (btn.disabled) return;
+  btn.disabled = true;
+  btn.textContent = 'PA chat…';
+  paMessage('');
+  try {
+    let reply;
+    try {
+      reply = await api('/pa/api/chat/open', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'X-PA': '1' },
+        body: '{}',
+      });
+    } catch (e) {
+      // A non-JSON body (an HTML error page) surfaces as a SyntaxError — say
+      // what happened, not what the parser thought of it.
+      throw new Error(e instanceof SyntaxError ? 'the PA gave an unreadable answer' : e.message);
+    }
+    if (!reply || !reply.sessionId) throw new Error('the PA did not name a session');
+    // A just-created session isn't in the list yet. refresh() hands back an
+    // in-flight poll if one is running — which may have started before the PA
+    // created it — so a miss earns one more, fresh, refresh.
+    await refresh();
+    let s = state.sessions.find((x) => x.id === reply.sessionId);
+    if (!s) { await refresh(); s = state.sessions.find((x) => x.id === reply.sessionId); }
+    if (!s) throw new Error(`session ${reply.sessionId} is not on this machine`);
+    openTerminal(s.id, s.title, s.kind);
+    if (isMobile()) closeDrawer();
+  } catch (e) {
+    // No re-check here: if the PA has gone away it would hide the row, and the
+    // error with it, the moment it appeared. The next focus check catches up.
+    paMessage(`PA chat failed: ${e.message || e}`, true);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'PA chat';
+  }
+}
+
 // ---- drawer (mobile) ------------------------------------------------------
 
 function openDrawer() { document.body.classList.add('drawer-open'); }
@@ -2941,6 +3012,9 @@ function wireEvents() {
   $('#dlg-cancel').onclick = closeDialog;
   $('#dlg-open').onclick = submitDialog;
   $('#dialog-backdrop').onclick = (e) => { if (e.target.id === 'dialog-backdrop') closeDialog(); };
+
+  $('#pa-chat').onclick = openPaChat;
+  $('#pa-open').addEventListener('click', () => paMessage(''));
 
   $('#update-btn').onclick = openUpdatePanel;
   $('#update-close').onclick = closeUpdatePanel;
@@ -3040,3 +3114,8 @@ document.addEventListener('visibilitychange', beatFocus);
 setInterval(updateMouseHint, 1000); // reflect entering/leaving a full-screen app
 backgroundUpdateCheck();
 setInterval(backgroundUpdateCheck, UPDATE_POLL_MS); // nudge ~once a day
+// PA buttons: once at load, then again when the tab comes back (at most once a
+// minute) — the PA starting or stopping is rare, and not worth a poll.
+checkPa(true);
+window.addEventListener('focus', () => checkPa());
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') checkPa(); });
