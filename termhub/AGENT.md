@@ -17,6 +17,7 @@ It matters more here than elsewhere: `windows/update.ps1` deploys by `git pull -
                                     ▼
 browser tab ──http+ws──►  front  (UI + proxy, 127.0.0.1:7000)   ◄── http://127.0.0.1:7000
                               │   proxies /api/*, /ws/term/* and /ws/voice to ↓
+                              │   (and /pa/* to the PA dashboard, 127.0.0.1:7300 — see *The PA proxy*)
                               ▼
                           sessiond  (127.0.0.1:7010)  ──► node-pty PTYs
 ```
@@ -1252,6 +1253,48 @@ and the tiles only want the rollup, and a busy day is a few hundred rows.
 - **The trend and the calendar are drawn from agent time.** Neither judges a day by idle any more;
   idle per handoff and the idle tile carry that.
 
+## The PA proxy (`/pa/*` → the personal assistant)
+
+The personal assistant (`../personal-assistant/`) serves its dashboard on loopback only,
+`http://127.0.0.1:7300`, which a phone can't reach. The front reverse-proxies `/pa/*` to it
+(`lib/paProxy.js`), so the PA is one tap away from any termhub tab, phone included, without
+publishing a second port through Serve.
+
+- **`TERMHUB_PA_URL`** picks the target; unset means `http://127.0.0.1:7300`, **the empty string
+  disables it** (`/pa/*` then answers 404 `{error: 'PA proxy disabled …'}`), and an unparseable
+  value disables it too rather than guessing. Read once, when the front starts — changing it takes
+  a front restart, not a sessiond one.
+- **The `/pa` prefix is stripped**: `/pa/api/state?x` reaches the PA as `/api/state?x`. The PA's
+  page uses relative URLs (`api/...`) so it works under the prefix, which is why **`/pa` redirects
+  to `/pa/`** — without the trailing slash `api/state` would resolve to termhub's `/api/state`. A
+  path-absolute `Location` from the PA is rewritten to stay under `/pa/`.
+- **`Host` is rewritten to the target's `host:port`.** The PA dashboard refuses any non-loopback
+  Host — its guard against DNS rebinding — and that check has to keep working for direct access.
+  Rewriting here is the right side to fix it on: the front *is* a loopback client of the PA.
+- **Every other header passes through, `X-PA` included.** The PA refuses a POST without `X-PA: 1`;
+  that guard still holds through termhub because the front answers no CORS preflight, so a page on
+  another origin can't attach a custom header to a request at this origin either.
+- **Down is fast and readable.** Connection refused (the normal "PA isn't running") answers at once;
+  a port that accepts nothing hits a 5 s connect timeout. Either way: **502**, as a small "PA not
+  running" HTML page for a browser navigation (`Accept: text/html`) and JSON `{error}` for anything
+  else. There is deliberately **no response timeout** — some PA actions run a model for minutes,
+  and a proxy that cuts them off turns a slow answer into a lost one.
+- No websockets: the PA dashboard doesn't use any, and the upgrade handler still only accepts
+  `/ws/term/*` and `/ws/voice`.
+
+**Trust model.** termhub has no authentication: anyone who can reach the front on the tailnet
+already gets full shells on the machine as the user — and from a shell, `curl 127.0.0.1:7300`
+reaches the PA anyway. So exposing the PA dashboard through the front gives nobody a capability
+they didn't already have; it only saves a step. The converse is the point to remember: **the PA's
+loopback-only binding is not what protects it from the tailnet — termhub's reachability is the
+boundary**, the same boundary that protects the shells (see *Security notes*). Anything that would
+widen who can reach termhub (`TERMHUB_BIND=0.0.0.0`, Funnel instead of Serve) widens who can reach
+the PA by the same amount. If the PA ever needs a stricter boundary than termhub's, set
+`TERMHUB_PA_URL=` on that machine.
+
+The PA side documents its half (relative URLs, `POST /api/chat/open`) in
+`personal-assistant/AGENT.md`. Covered by `test/paProxy.test.js` (fake PA on an ephemeral port).
+
 ## Versioning & tagging
 
 The version shown under the **⟳ Update** button (and in the update panel) is `git describe
@@ -1633,3 +1676,7 @@ user actually meant to paste.
   terminals on that machine. Keep your tailnet ACLs tight.
 - termhub binds only the Tailscale interface by default. Do **not** set `TERMHUB_BIND=0.0.0.0`
   on a machine with a public interface unless you add your own access control in front.
+- The front also proxies `/pa/*` to the personal assistant's loopback dashboard, so whoever can
+  reach termhub can reach the PA too. That adds no capability (they already have shells), but it
+  does mean termhub's boundary is the PA's boundary — see *The PA proxy*. `TERMHUB_PA_URL=` turns
+  it off.

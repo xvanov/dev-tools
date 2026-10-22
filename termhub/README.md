@@ -507,6 +507,7 @@ All optional environment variables:
 | `TERMHUB_WAKE_WORD` | `sputnik` | The spoken wake word for voice commands |
 | `TERMHUB_NTFY_TOPIC` | — | ntfy topic for idle notifications. Wins over `<data dir>/notify.json`; unset and unconfigured means no pushes. **The topic is the secret** — anyone who knows it can read them |
 | `TERMHUB_NTFY_SERVER` | `https://ntfy.sh` | Point at a self-hosted ntfy instead |
+| `TERMHUB_PA_URL` | `http://127.0.0.1:7300` | The personal assistant's dashboard, proxied at `/pa/` (Host rewritten to the PA's loopback address, `X-PA` forwarded). **Empty disables it.** Anyone who can reach termhub can reach the PA through it — no new capability, since they already have shells; see `AGENT.md` → *The PA proxy* |
 | `TERMHUB_PEERS` | — | Other termhub machines for the dashboard's machine strip, `host:port,host:port`. Wins over `<data dir>/peers.json`, which **+ find machines** writes |
 
 On Linux set these with `systemctl --user edit termhub`; on Windows via `setx` + restart the task.
@@ -516,7 +517,8 @@ On Linux set these with `systemctl --user edit termhub`; on Windows via `setx` +
 | Path | Purpose |
 |---|---|
 | `sessiond.js` | **Persistent supervisor**: HTTP API + terminal WebSocket; owns the PTYs (loopback) |
-| `front.js` | **Swappable front**: serves the static UI + reverse-proxies `/api/*`, `/ws/term/*` and `/ws/voice` to `sessiond` |
+| `front.js` | **Swappable front**: serves the static UI + reverse-proxies `/api/*`, `/ws/term/*` and `/ws/voice` to `sessiond`, and `/pa/*` to the personal assistant |
+| `lib/paProxy.js` | The `/pa/*` proxy to the personal assistant's loopback dashboard (`TERMHUB_PA_URL`) |
 | `server.js` | Single-process dev entrypoint — runs both tiers in one process (`npm start`) |
 | `lib/session.js` | PTY lifecycle (`node-pty`), scrollback ring buffer, replay |
 | `lib/claudeModel.js` | Locates a Claude session's transcript and tails it for the model label (`modelLabel` in `/api/sessions`; no longer shown in the sidebar) |

@@ -6,6 +6,8 @@
 //   - HTTP  /api/*        -> http://127.0.0.1:<sessiondPort>/api/*
 //   - WS    /ws/term/:id  -> raw socket pipe to the same sessiond
 //   - WS    /ws/voice     -> same, the voice-announcement feed
+//   - HTTP  /pa/*         -> the personal assistant's dashboard ($TERMHUB_PA_URL,
+//                            default http://127.0.0.1:7300), prefix stripped
 // It owns no terminals, so it can be restarted/replaced at will. Updates start a
 // second front on the alternate loopback port, health-check it, then re-point
 // Tailscale Serve at it — the browser reconnects through the new front to the
@@ -26,6 +28,7 @@ const { probeJson } = require('./lib/probe');
 const { secureUrlForPort } = require('./lib/serveUrl');
 const peers = require('./lib/peers');
 const build = require('./lib/build');
+const { resolvePaUrl, createPaProxy } = require('./lib/paProxy');
 
 const WEB_DIR = path.join(__dirname, 'web');
 
@@ -68,10 +71,15 @@ function pingSessiond(sessiondPort, timeoutMs = 2000) {
   return probeJson({ port: sessiondPort, path: '/api/ping', timeoutMs });
 }
 
-function createFront({ sessiondPort, port: serverPort = DEFAULT_FRONT_PORT }) {
+// `paUrl` is for tests; left undefined, TERMHUB_PA_URL decides (see lib/paProxy.js).
+function createFront({ sessiondPort, port: serverPort = DEFAULT_FRONT_PORT, paUrl }) {
+  const handlePa = createPaProxy(paUrl === undefined ? resolvePaUrl() : resolvePaUrl({ TERMHUB_PA_URL: paUrl }));
   const server = http.createServer((req, res) => {
     const url = new URL(req.url, 'http://localhost');
     const { pathname } = url;
+
+    // /pa/* is the personal assistant's dashboard, not ours — see lib/paProxy.js.
+    if (handlePa(req, res)) return undefined;
 
     // Local health check — proves the front is up AND can reach sessiond. The
     // updater polls this on the green port before flipping Tailscale Serve.
