@@ -23,6 +23,7 @@ const HELP = `pa — your context layer
     pa inbox [-n 20] [--source s]   newly distilled commitments, newest first
     pa show <id> [--project name]   one commitment; --project corrects a guess and learns the phrase
     pa search <query...>            hybrid search over everything captured
+                                    [--source graph_chat,graph_mail] [--since 2026-01-01] [--until …] [-n 12]
     pa who <name...>                a person: identities, threads, open commitments
     pa projects [sync]              the project ↔ repo table
     pa dashboard                    the web page (the worker serves it too) at http://127.0.0.1:7300/
@@ -252,13 +253,20 @@ const commands = {
     const q = args.join(' ');
     if (!q) return fail('usage: pa search <query>');
     const { search } = require('../search');
-    const { results, lexicalOnly, embedError } = await search(q, { limit: flagInt(flags, 'n', 12) });
+    const { results, lexicalOnly, embedError, reranked, rerankError } = await search(q, {
+      limit: flagInt(flags, 'n', 12),
+      sources: flags.source ? String(flags.source).split(',') : null,
+      since: flags.since || null,
+      until: flags.until || null,
+    });
     if (!results.length) return out('no matches');
     for (const r of results) {
-      out(`#${r.id} [${r.source}] ${new Date(r.occurred_at).toISOString().slice(0, 10)} ${r.subject || ''}`);
+      const score = reranked ? ` ${r.score.toFixed(2)}` : '';
+      out(`#${r.id}${score} [${r.source}] ${new Date(r.occurred_at).toISOString().slice(0, 10)} ${r.subject || ''}  (${r.matched})`);
       out(`      ${(r.snippet || '').replace(/\s+/g, ' ').trim()}`);
     }
-    if (lexicalOnly) out('\n(text search only — no embedding endpoint configured)');
+    if (lexicalOnly) out(`\n(text search only — ${embedError || 'no embedding endpoint configured'})`);
+    if (rerankError) out(`(not reranked — ${rerankError})`);
   },
 
   async who(args) {
@@ -662,6 +670,14 @@ const commands = {
         'embeddings',
         probe ? `${config.embeddings.deployment} · ${probe[0].length} dims` : search.lastEmbedError()
       );
+    }
+
+    const { rerank, rerankConfigured, lastRerankError } = require('../search/rerank');
+    if (!rerankConfigured()) {
+      mark(false, 'rerank', 'off — results keep their fused order (PA_RERANK)');
+    } else {
+      const probe = await rerank('ping', ['ping', 'pong']);
+      mark(Boolean(probe), 'rerank', probe ? config.rerank.deployment : lastRerankError());
     }
 
     // termhub

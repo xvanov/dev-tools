@@ -81,40 +81,34 @@ with `pa doctor` — the "awaiting distillation" number tells you how much is qu
 
 ---
 
-## 3. Embeddings — optional, improves search
+## 3. Embeddings and rerank — optional, improve search
 
-Without this, search is full-text only: excellent at names, ticket ids and `GridHelpers`,
-weaker when you phrase a query differently from the message you are looking for.
+Without embeddings, search is full-text only: excellent at names, ticket ids and `GridHelpers`,
+weaker when you phrase a query differently from the message you are looking for. Without the
+reranker, results keep their fused order and carry no absolute relevance score.
 
-The repo-root `.env` already has `AZURE_OPENAI_ENDPOINT` and `AZURE_OPENAI_API_KEY` (shared with
-`summarize-recording`), but that resource currently has **no embedding deployment** — `pa doctor`
-reports `endpoint returned 404 for deployment "text-embedding-3-small"`. Two ways to fix it:
+Both live on the Azure AI resource whose endpoint and key are in the repo-root `.env`
+(`AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_API_KEY`, shared with `summarize-recording`).
 
-**a. Point at a deployment you already have**
+**Embeddings.** The resource needs an embedding deployment; `text-embedding-3-large` with
+`PA_EMBED_DIMENSIONS=1536` fits the `vector(1536)` column. Set its deployment name as
+`PA_EMBED_DEPLOYMENT`. To find it: <https://ai.azure.com> → your project → **Deployments** — the
+deployment name is the one *you* gave it, often not the model name.
 
-1. Open **<https://ai.azure.com>**, sign in, and select the project matching the endpoint in
-   your repo-root `.env`.
-2. Left sidebar → **Deployments** (older portals: **Model deployments**).
-3. Look for a model whose name contains `embedding`. Copy its **deployment name** — that is the
-   name *you* gave it, which is often not the model name.
-4. Put that in `.env`:
-
-```
-PA_EMBED_DEPLOYMENT=<the deployment name you copied>
-```
-
-**b. Deploy one**
-
-Same page → **+ Deploy model** → **Deploy base model** → search `text-embedding-3-small` →
-**Confirm**. Keep the default deployment name and you can leave `.env` as it is.
-
-If the endpoint in the repo root is not the right one, set these here instead — values from
-**Azure AI Foundry → your project → Overview → Endpoints and keys**:
+**Rerank.** Deploy `Cohere-rerank-v4.0-fast` (pay per use, about $2 per thousand searches) on the
+same resource:
 
 ```
-AZURE_OPENAI_ENDPOINT=https://<resource>.openai.azure.com
-AZURE_OPENAI_API_KEY=<key>
+az cognitiveservices account deployment create -n <resource> -g <resource-group>   --deployment-name cohere-rerank-v4-fast --model-name Cohere-rerank-v4.0-fast   --model-version 1 --model-format Cohere --sku-name GlobalStandard --sku-capacity 200
 ```
+
+Capacity is a rate limit, not a price: 1 unit is one request and 1,000 tokens a minute, and one
+search sends about 40 documents. At capacity 1 every search after the first in a minute is
+throttled. The deployment name defaults to `cohere-rerank-v4-fast` (`PA_RERANK_DEPLOYMENT`);
+`PA_RERANK=0` turns reranking off.
+
+`pa doctor` probes both rather than trusting the config: a wrong deployment name looks exactly
+like a working one until results quietly get worse.
 
 Skipping this entirely is a legitimate choice. Nothing breaks.
 
@@ -150,6 +144,7 @@ Every line should read `ok`. What the failures mean:
 | `microsoft 365 — ... /mcp` | step 1 not finished, the connector sign-in expired, or IT has not assigned you |
 | `anthropic — not set` | step 2 not done |
 | `embeddings — endpoint returned 404` | step 3: wrong or missing deployment name |
+| `rerank — endpoint returned 429` | step 3: deployment capacity too low |
 | `termhub — ECONNREFUSED` | termhub is not running on this machine |
 
 Then:

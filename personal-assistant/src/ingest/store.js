@@ -10,6 +10,7 @@
 
 const { withTx, one, rows } = require('../db');
 const { contentHash, chunkText } = require('../util/text');
+const { chunkContext, CONTEXT_VERSION } = require('../search/context');
 const { logger } = require('../log');
 
 const log = logger('ingest');
@@ -74,11 +75,19 @@ async function saveItems(source, items, cursor) {
         // Chunks are derived state: on a changed body the old ones are wrong.
         await client.query('delete from chunk where source_item_id = $1', [res.rows[0].id]);
         const parts = chunkText(it.bodyText);
+        const context = chunkContext({
+          source: it.source,
+          subject: it.subject,
+          occurred_at: it.occurredAt,
+          author_identity: it.authorIdentity,
+          raw: it.raw,
+        });
         for (let i = 0; i < parts.length; i++) {
           await client.query(
-            'insert into chunk (source_item_id, ord, content) values ($1,$2,$3) ' +
-              'on conflict (source_item_id, ord) do update set content = excluded.content',
-            [res.rows[0].id, i, parts[i]]
+            'insert into chunk (source_item_id, ord, content, context, context_v) values ($1,$2,$3,$4,$5) ' +
+              'on conflict (source_item_id, ord) do update set content = excluded.content, ' +
+              'context = excluded.context, context_v = excluded.context_v, embedding = null',
+            [res.rows[0].id, i, parts[i], context, CONTEXT_VERSION]
           );
         }
         // A changed body means the distillation is stale.

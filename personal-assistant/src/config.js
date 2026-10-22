@@ -159,6 +159,17 @@ const config = {
     dimensions: envInt('PA_EMBED_DIMENSIONS', 1536),
   },
 
+  // Cohere Rerank, deployed on the same Azure AI resource and reached with the
+  // same key as embeddings. Optional: without it search keeps its fused order.
+  rerank: {
+    enabled: env('PA_RERANK', '1') !== '0',
+    deployment: env('PA_RERANK_DEPLOYMENT', 'cohere-rerank-v4-fast'),
+    // How many fused candidates the reranker reads. One search unit covers
+    // up to 100 documents, so this costs the same as reranking ten.
+    candidates: envInt('PA_RERANK_CANDIDATES', 40),
+    timeoutMs: envInt('PA_RERANK_TIMEOUT_MS', 8000),
+  },
+
   termhub: {
     url: env('PA_TERMHUB_URL', 'http://127.0.0.1:7000'),
     claudeCommand: env('PA_CLAUDE_COMMAND', 'claude --dangerously-skip-permissions'),

@@ -43,6 +43,8 @@ const TOOLS = [
           description:
             'Optional filter: graph_mail, graph_chat, graph_event, github_pr, github_issue, github_notification, github_project_item, jira_issue, audio, claude_session.',
         },
+        since: { type: 'string', description: 'Optional ISO date: only items on or after it.' },
+        until: { type: 'string', description: 'Optional ISO date: only items on or before it.' },
       },
       required: ['query'],
       additionalProperties: false,
@@ -107,14 +109,18 @@ async function handle(name, args = {}) {
       return text(await brief());
 
     case 'search_context': {
-      const { results, lexicalOnly, embedError } = await search(args.query, {
+      const { results, lexicalOnly, embedError, reranked } = await search(args.query, {
         limit: args.limit ?? 10,
         sources: args.sources || null,
+        since: args.since || null,
+        until: args.until || null,
       });
       if (!results.length) return text(`No matches for "${args.query}".`);
+      // A reranked score is an absolute relevance: below ~0.3 the hit is
+      // probably not about the query, and saying so lets the caller abstain.
       const lines = results.map(
         (r) =>
-          `#${r.id} [${sourceLabel(r.source)}] ${new Date(r.occurred_at).toISOString().slice(0, 10)} — ${r.subject || '(no subject)'}\n    ${(r.snippet || '').replace(/\s+/g, ' ').trim()}`
+          `#${r.id}${reranked ? ` (relevance ${r.score.toFixed(2)})` : ''} [${sourceLabel(r.source)}] ${new Date(r.occurred_at).toISOString().slice(0, 10)} — ${r.subject || '(no subject)'}\n    ${(r.snippet || '').replace(/\s+/g, ' ').trim()}`
       );
       if (lexicalOnly) {
         lines.push('', `(text search only — ${embedError || 'embeddings unavailable'} — paraphrased matches may be missed)`);

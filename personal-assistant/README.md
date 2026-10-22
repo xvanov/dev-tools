@@ -219,7 +219,7 @@ src/config.js        every knob, resolved once
 src/ingest/          Microsoft 365 mail/calendar/Teams (connector), GitHub, Jira, Claude sessions, audio episodes
 src/distill/         the extraction prompt, identity resolution, the pass itself
 src/projects/        the project ↔ repo table and the scorer that guesses
-src/search/          hybrid full-text + vector retrieval
+src/search/          hybrid retrieval: full text + vector + people named, fused, Cohere-reranked
 src/eval/            retrieval eval: metrics, retriever registry, case seeding, runs
 src/brief/           what `pa brief` prints
 src/dashboard/       the loopback web page and its three buttons
