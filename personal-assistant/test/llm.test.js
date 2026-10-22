@@ -14,12 +14,16 @@ const { cliArgs, parseCliOutput, extractJson } = require('../src/llm');
   assert.strictEqual(args[args.indexOf('--tools') + 1], '');
   assert.strictEqual(args[args.indexOf('--system-prompt') + 1], 'S');
   assert.ok(!args.includes('--allowedTools'));
+  // A model-only call starts no MCP servers.
+  assert.ok(args.includes('--strict-mcp-config'));
 }
 
 {
   const args = cliArgs({ system: null, effort: 'low', tools: ['mcp__a__b', 'mcp__a__c'] });
   assert.strictEqual(args[args.indexOf('--allowedTools') + 1], 'mcp__a__b,mcp__a__c');
   assert.ok(!args.includes('--tools'));
+  // A connector call needs its connectors.
+  assert.ok(!args.includes('--strict-mcp-config'));
   assert.ok(!args.includes('--system-prompt'));
 }
 

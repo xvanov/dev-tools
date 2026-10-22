@@ -64,7 +64,10 @@ function cliArgs({ system, effort, tools, model = null }) {
   ];
   if (system) args.push('--system-prompt', system);
   if (tools && tools.length) args.push('--allowedTools', tools.join(','));
-  else args.push('--tools', '');
+  // No tools, no MCP servers either: a user-scope server (this tool's own
+  // recall server among them) would otherwise be spawned, and connected to
+  // Postgres, for every one of the worker's thousands of model calls.
+  else args.push('--tools', '', '--strict-mcp-config');
   return args;
 }
 
