@@ -12,7 +12,7 @@
 // called "Alex" merged into one is a data-loss bug you find out about by
 // sending the wrong person a message.
 
-const { one, query } = require('../db');
+const { one, query, withTx } = require('../db');
 
 function parseIdentity(raw) {
   if (!raw) return null;
@@ -105,8 +105,6 @@ async function resolve(rawIdentity, displayName) {
   return created.id;
 }
 
-// Merges `fromId` into `intoId`. Manual, because it is the one operation here
-// that can destroy information, and it should be a decision you typed.
 // Binds an account handle to the `is_me` person, creating that person if no
 // sign-in has yet (GitHub may well be the first source to run). An earlier
 // pass that already filed the handle as a stranger is merged back, so "who"
@@ -119,14 +117,58 @@ async function claimForMe(kind, value, { displayName, email } = {}) {
   return meId;
 }
 
+// Merges `fromId` into `intoId`. Manual (the dashboard's Merge, or claimForMe
+// for your own handles), because it is the one operation here that can destroy
+// information, and it should be a decision you made.
+//
+// Everything that points at a person moves with it: identities, commitments,
+// and memory — claims about `fromId` become claims about `intoId` (or about
+// `me`, when merging into yourself), so a merge never strands what was learnt
+// under a person id that no longer exists. The merged-away page is deleted;
+// it is derived, and the caller regenerates the survivor's (memory.mergePeople).
+// The survivor keeps its own name unless it only had a handle and the other
+// had a real one.
 async function merge(intoId, fromId) {
-  if (intoId === fromId) return;
-  await query('update person_identity set person_id = $1 where person_id = $2', [intoId, fromId]);
-  await query('update commitment set counterparty_person_id = $1 where counterparty_person_id = $2', [
-    intoId,
-    fromId,
-  ]);
-  await query('delete from person where id = $1', [fromId]);
+  if (String(intoId) === String(fromId)) return { claims: 0 };
+  return withTx(async (tx) => {
+    const both = await tx.query('select * from person where id = any($1::bigint[])', [[intoId, fromId]]);
+    const into = both.rows.find((p) => String(p.id) === String(intoId));
+    const from = both.rows.find((p) => String(p.id) === String(fromId));
+    if (!into || !from) throw new Error('no such person');
+    if (from.is_me) throw new Error('cannot merge yourself away; merge the other person into you');
+
+    await tx.query('update person_identity set person_id = $1 where person_id = $2', [intoId, fromId]);
+    await tx.query('update commitment set counterparty_person_id = $1 where counterparty_person_id = $2', [
+      intoId,
+      fromId,
+    ]);
+
+    const name = !looksHuman(into.display_name) && looksHuman(from.display_name) ? from.display_name : into.display_name;
+    const moved = into.is_me
+      ? await tx.query(
+          `update claim set subject_kind = 'me', subject_id = $1, subject_label = 'me'
+            where subject_kind = 'person' and subject_id = $2`,
+          [intoId, fromId]
+        )
+      : await tx.query(
+          `update claim set subject_id = $1, subject_label = $3 where subject_kind = 'person' and subject_id = $2`,
+          [intoId, fromId, name]
+        );
+    await tx.query(`delete from memory_page where kind = 'person' and subject_id = $1`, [fromId]);
+    await tx.query('delete from person where id = $1', [fromId]);
+    // After the delete: primary_email is unique, and the two may share it.
+    await tx.query('update person set display_name = $2, primary_email = coalesce(primary_email, $3) where id = $1', [
+      intoId,
+      name,
+      from.primary_email,
+    ]);
+    return { claims: moved.rowCount, isMe: into.is_me };
+  });
 }
 
-module.exports = { resolve, me, setMe, addIdentity, claimForMe, merge, parseIdentity };
+// A display name a human would write, rather than an address or a handle.
+function looksHuman(name) {
+  return /\s/.test(String(name || '').trim()) && !/@|^(github|gitlab|aad):/i.test(String(name));
+}
+
+module.exports = { resolve, me, setMe, addIdentity, claimForMe, merge, parseIdentity, looksHuman };
