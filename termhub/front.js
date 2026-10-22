@@ -38,7 +38,11 @@ const MIME = {
   '.json': 'application/json',
 };
 
+// Once headers are out there is no status left to send: cut the connection so
+// the client sees a truncated response instead of the front throwing
+// ERR_HTTP_HEADERS_SENT — which is uncaught and takes the whole process down.
 function sendJson(res, status, body) {
+  if (res.headersSent) return res.destroy();
   const data = JSON.stringify(body);
   res.writeHead(status, { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(data) });
   res.end(data);
@@ -167,15 +171,23 @@ function createFront({ sessiondPort, port: serverPort = DEFAULT_FRONT_PORT }) {
     }
 
     // Everything under /api/* is the supervisor's — proxy it.
+    //
+    // Either side can drop mid-stream (sessiond resetting a socket, a phone
+    // closing the tab), so every stream gets an error listener and a drop on
+    // one side tears down the other. An unhandled 'error' here is fatal to the
+    // front — see test/frontProxy.test.js.
     if (pathname.startsWith('/api/')) {
       const proxyReq = http.request(
         { host: '127.0.0.1', port: sessiondPort, method: req.method, path: req.url, headers: req.headers },
         (proxyRes) => {
+          proxyRes.on('error', () => res.destroy());
           res.writeHead(proxyRes.statusCode, proxyRes.headers);
           proxyRes.pipe(res);
         },
       );
       proxyReq.on('error', (e) => sendJson(res, 502, { error: `sessiond unreachable: ${e.message}` }));
+      req.on('error', () => proxyReq.destroy());
+      res.on('close', () => { if (!res.writableFinished) proxyReq.destroy(); });
       return req.pipe(proxyReq);
     }
 
