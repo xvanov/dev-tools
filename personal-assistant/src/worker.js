@@ -179,6 +179,14 @@ async function main() {
   // finds them. Python only starts when a finished file is waiting, or every
   // five minutes regardless (it also recovers files a dead capture left).
   let lastAudioSweep = 0;
+  // A recorder that is up but writing nothing is restarted, and a disk that
+  // is filling up is reported before it stops capture (src/audio/watchdog.js).
+  every(60, 'capture-watchdog', async () => {
+    const watchdog = require('./audio/watchdog');
+    await watchdog.checkCapture();
+    await watchdog.checkDisk();
+  });
+
   every(config.audio.enabled ? 60 : 86400, 'audio', async () => {
     if (!config.audio.enabled) return;
     const spool = require('./audio/spool');

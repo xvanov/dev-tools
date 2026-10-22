@@ -465,6 +465,12 @@ into the next is cut at the second one's start, so each meeting gets its own epi
 transcription. Your own Claude Code sessions are captured from their transcripts on disk rather
 than from audio, because the exact text is already there.
 
+A recorder can be running and recording nothing — when the disk filled, the call-audio recorder
+sat on an empty file for twelve minutes while its task said "Running". So the worker checks every
+minute that each stream's spool is still *growing*; one that has been silent for two minutes (and
+is not paused) is killed and restarted, and you get a notification. It also warns once an hour
+while the spool's drive has less than `PA_LOW_DISK_GB` (default 5) free.
+
 ## Eval
 
 Every change to retrieval or memory is judged by `pa eval`, not by how a few searches feel. Public

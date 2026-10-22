@@ -240,6 +240,9 @@ const config = {
     transcribeHost: env('PA_TRANSCRIBE_HOST', '127.0.0.1'),
     transcribePort: envInt('PA_TRANSCRIBE_PORT', 47821),
     pauseFile: env('PA_AUDIO_PAUSE_FILE', path.join(dataDir, 'audio.paused')),
+    // Below this much free space on the spool's drive the worker warns you:
+    // a full disk silently stopped call recording once.
+    lowDiskGb: Number(env('PA_LOW_DISK_GB', '5')),
     // Touched by the worker when a meeting ends; capture finishes its current
     // file within a second (audio/capture.py, audio/naming.py).
     rollFile: env('PA_AUDIO_ROLL_FILE', path.join(dataDir, 'audio.roll')),
