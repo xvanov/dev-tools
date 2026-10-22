@@ -223,8 +223,61 @@ async function save({ commitmentId, runId, sourceItemId, target, subject, body, 
 // being asked. "Fresh" and "never drafted before" are both load-bearing: a
 // discarded draft stays discarded, and a week-old ask is not worth a surprise
 // reply.
+// How "I" appear as an item's author: my email, and my AAD object id in the
+// `aad:<oid>` form Teams items carry.
+async function myAuthorForms() {
+  const ids = await rows(
+    `select pi.kind, pi.value from person_identity pi join person p on p.id = pi.person_id where p.is_me`
+  );
+  const out = new Set(['me']);
+  for (const { kind, value } of ids) {
+    if (kind === 'smtp') out.add(String(value).toLowerCase());
+    if (kind === 'aad_oid') out.add(`aad:${value}`);
+  }
+  const email = await myEmail();
+  if (email) out.add(email);
+  return [...out];
+}
+
+// "I already answered": a message from me in the same thread, after the ask.
+// Same source only — a Teams ask is answered in that chat, a mail in that
+// conversation. SQL fragment over `si` (the ask's item); $1 = my author forms.
+const ANSWERED = `exists (
+  select 1 from source_item mine
+   where mine.source = si.source and mine.thread_external_id = si.thread_external_id
+     and si.thread_external_id is not null
+     and mine.occurred_at > si.occurred_at
+     and lower(coalesce(mine.author_identity, '')) = any($1::text[]))`;
+
+// Retires pending drafts whose ask I have since answered myself, recording why.
+// Runs before autoDraft every pass, so the "Replies to send" list only holds
+// replies that are still owed.
+async function retireAnswered() {
+  const me = await myAuthorForms();
+  const stale = await rows(
+    `select d.id, (select min(mine.occurred_at) from source_item mine
+                    where mine.source = si.source and mine.thread_external_id = si.thread_external_id
+                      and mine.occurred_at > si.occurred_at
+                      and lower(coalesce(mine.author_identity, '')) = any($1::text[])) as answered_at
+       from draft d join source_item si on si.id = d.source_item_id
+      where d.status in ('pending', 'edited') and ${ANSWERED}`,
+    [me]
+  );
+  for (const d of stale) {
+    await query(
+      `update draft set status = 'discarded', closed_at = now(),
+              closed_reason = $2 where id = $1 and status in ('pending','edited')`,
+      [d.id, `you already replied in the thread (${new Date(d.answered_at).toISOString().slice(0, 16).replace('T', ' ')} UTC)`]
+    );
+  }
+  if (stale.length) log.info('retired answered drafts', { count: stale.length });
+  return stale.length;
+}
+
 async function autoDraft({ limit = 3 } = {}) {
+  await retireAnswered().catch((err) => log.warn('retire answered failed', { message: err.message }));
   if (!config.drafts.auto) return 0;
+  const me = await myAuthorForms();
   const candidates = await rows(
     `select c.id
        from commitment c
@@ -232,13 +285,14 @@ async function autoDraft({ limit = 3 } = {}) {
        left join person per on per.id = c.counterparty_person_id
       where c.status = 'open' and c.direction = 'owed_by_me' and c.superseded_by is null
         and si.source in ('graph_chat', 'graph_mail')
-        and coalesce(c.confidence, 1) >= $1
+        and coalesce(c.confidence, 1) >= $2
         and si.occurred_at > now() - interval '2 days'
         and coalesce(per.is_me, false) = false
         and not exists (select 1 from draft d where d.commitment_id = c.id)
+        and not ${ANSWERED}
       order by si.occurred_at desc
-      limit $2`,
-    [config.drafts.minConfidence, limit]
+      limit $3`,
+    [me, config.drafts.minConfidence, limit]
   );
   let made = 0;
   for (const { id } of candidates) {

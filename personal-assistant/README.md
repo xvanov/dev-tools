@@ -129,6 +129,9 @@ original message and an editable box. **Send in Teams / Send in Outlook** opens 
 it goes — a 1:1 Teams chat or a new Outlook message with the text already typed in; a group
 chat or channel thread opens with the text on the clipboard to paste — and asks *Did it go?*.
 The connector's grant is read-only, so this page cannot send; you press Send in Teams or Outlook.
+A draft is only written for an ask you have not answered, and one you answer yourself afterwards —
+a newer message from you in the same chat or mail thread — is retired on the next pass with the
+reason recorded (`draft.closed_reason`).
 
 **Memory** (the second tab, `#memory`) is the memory layer below, made browsable:
 
