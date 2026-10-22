@@ -872,6 +872,24 @@ const commands = {
     const paused = fs.existsSync(config.audio.pauseFile);
     lines.push('');
     lines.push(`  audio ${config.audio.enabled ? (paused ? 'PAUSED' : 'on') : 'disabled'} · spool ${config.audioDir}`);
+    // Capture files not yet transcribed, beyond the one being written. A
+    // growing backlog means the transcriber is down: the files are kept and
+    // retried, but nothing new reaches memory until it is back.
+    const untranscribed = [];
+    for (const stream of ['mic', 'loopback']) {
+      const dir = path.join(config.audioDir, stream);
+      let names = [];
+      try { names = fs.readdirSync(dir); } catch { continue; }
+      for (const n of names) {
+        if (!/^\d{8}T\d{4}\.wav$/.test(n) || names.includes(n.replace('.wav', '.processed'))) continue;
+        const age = (Date.now() - fs.statSync(path.join(dir, n)).mtimeMs) / 60000;
+        if (age > config.audio.rollMinutes + 20) untranscribed.push({ stream, n, age });
+      }
+    }
+    if (untranscribed.length) {
+      const oldest = Math.max(...untranscribed.map((w) => w.age));
+      lines.push(`  audio backlog: ${untranscribed.length} file(s) not transcribed, oldest ${Math.round(oldest / 60)}h — is the transcriber up (port ${config.audio.transcribePort})?`);
+    }
 
     const newest = require('../backup').list()[0];
     const stale = !newest || Date.now() - newest.at.getTime() > (config.backup.everyHours + 6) * 3600_000;

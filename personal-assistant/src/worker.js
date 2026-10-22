@@ -40,6 +40,8 @@ async function runAudioProcess() {
       PA_TRANSCRIBE_HOST: config.audio.transcribeHost,
       PA_TRANSCRIBE_PORT: String(config.audio.transcribePort),
       PA_AUDIO_EPISODE_GAP_SECONDS: String(config.audio.episodeGapSeconds),
+      PA_AUDIO_ROLL_MINUTES: String(config.audio.rollMinutes),
+      PA_AUDIO_SAMPLE_RATE: String(config.audio.sampleRate),
       PA_RETENTION_RAW_AUDIO_HOURS: String(config.retention.rawAudioHours),
     },
   });
@@ -148,9 +150,9 @@ async function main() {
   });
 
   // The audio cycle: Python trims and transcribes completed capture files,
-  // then the sidecars it wrote become episodes here. Hourly, matching the
-  // capture roll — running it more often would mostly find incomplete files.
-  every(config.audio.enabled ? 1800 : 86400, 'audio', async () => {
+  // then the sidecars it wrote become episodes here. Every five minutes: files
+  // roll every fifteen, and a pass that finds nothing finished costs nothing.
+  every(config.audio.enabled ? 300 : 86400, 'audio', async () => {
     if (!config.audio.enabled) return;
     await runAudioProcess();
     await ingest.runAll(['audio']);

@@ -40,6 +40,14 @@ MERGE_GAP_S = 0.7
 GROUP_GAP_S = int(os.environ.get("PA_AUDIO_EPISODE_GAP_SECONDS", "90"))
 MIN_GROUP_SPEECH_S = 3.0
 
+# What capture.py writes: the rate a header-less recovery assumes, and the
+# slot length that tells an abandoned file from one still being written.
+CAPTURE_RATE = int(os.environ.get("PA_AUDIO_SAMPLE_RATE", "16000"))
+ROLL_MINUTES = int(os.environ.get("PA_AUDIO_ROLL_MINUTES", "15"))
+# A file with no .done whose slot ended this long ago was abandoned by a
+# capture that died (crash, reboot, power cut), not one still being written.
+ORPHAN_GRACE_MINUTES = 5
+
 TRANSCRIBE_HOST = os.environ.get("PA_TRANSCRIBE_HOST", "127.0.0.1")
 TRANSCRIBE_PORT = int(os.environ.get("PA_TRANSCRIBE_PORT", "47821"))
 
@@ -125,13 +133,23 @@ def transcribe(path: str) -> str:
                     break
                 chunks.append(buf)
         text = b"".join(chunks).decode("utf-8", errors="replace")
-        if text.startswith("ERROR:"):
-            log(f"transcription error: {text[:200]}")
-            return ""
-        return text.strip()
     except OSError as exc:
-        log(f"transcribe server unreachable on {TRANSCRIBE_HOST}:{TRANSCRIBE_PORT} ({exc})")
-        return ""
+        raise TranscriptionUnavailable(
+            f"transcribe server unreachable on {TRANSCRIBE_HOST}:{TRANSCRIBE_PORT} ({exc})"
+        ) from exc
+    if text.startswith("ERROR:"):
+        raise TranscriptionUnavailable(f"transcription error: {text[:200]}")
+    return text.strip()
+
+
+class TranscriptionUnavailable(RuntimeError):
+    """The transcriber could not produce text for audio that has speech.
+
+    Raised, not swallowed: an empty transcript used to be written as if the
+    hour had been silent, the file was marked processed, and six hours later
+    the raw audio was deleted — the hour was gone. Raising leaves the file
+    unprocessed, so the next pass retries it, and its raw audio is kept.
+    """
 
 
 def file_started_at(path: str) -> dt.datetime:
@@ -143,8 +161,29 @@ def file_started_at(path: str) -> dt.datetime:
         return dt.datetime.fromtimestamp(os.path.getmtime(path)).astimezone()
 
 
+def read_audio(path: str) -> tuple[np.ndarray, int]:
+    """Reads a capture file, repairing one whose writer died mid-hour.
+
+    A WAV's header records its length, and libsndfile rewrites it on close.
+    A capture killed by a crash, a reboot or a power cut leaves a header that
+    understates (or zeroes) the data that is actually on disk. The samples
+    after the header are still plain 16-bit mono PCM at the capture rate, so
+    they are read directly when the header cannot be trusted.
+    """
+    try:
+        data, rate = sf.read(path, dtype="float32", always_2d=False)
+        on_disk = (os.path.getsize(path) - 44) // 2
+        if len(data) >= on_disk * 0.99:
+            return data, rate
+        log(f"{os.path.basename(path)}: header says {len(data)} samples, disk holds {on_disk} — repairing")
+    except Exception as exc:  # noqa: BLE001 - a broken header raises many things
+        log(f"{os.path.basename(path)}: unreadable header ({exc!r}) — repairing")
+    raw = np.fromfile(path, dtype="<i2", offset=44)
+    return raw.astype("float32") / 32768.0, CAPTURE_RATE
+
+
 def process_file(path: str, stream: str, keep_raw_hours: int) -> int:
-    data, rate = sf.read(path, dtype="float32", always_2d=False)
+    data, rate = read_audio(path)
     if data.ndim > 1:
         data = data.mean(axis=1)
 
@@ -218,6 +257,7 @@ def main() -> int:
     )
 
     total = 0
+    failed = 0
     for stream in ("mic", "loopback"):
         directory = os.path.join(spool, stream)
         if not os.path.isdir(directory):
@@ -226,21 +266,48 @@ def main() -> int:
             if not name.endswith(".wav") or name.endswith(".speech.wav"):
                 continue
             path = os.path.join(directory, name)
-            # Only complete files. A file still being written would be trimmed
-            # to whatever had reached the disk.
-            if not os.path.exists(path + ".done"):
-                continue
             if os.path.exists(path.replace(".wav", ".processed")):
                 continue
+            # Only complete files: one still being written would be trimmed to
+            # whatever had reached the disk. Capture marks a file complete when
+            # it rolls; a file it never marked, whose slot is long over, was
+            # left by a capture that died — recover it rather than skip it
+            # forever.
+            if not os.path.exists(path + ".done"):
+                if not abandoned(path):
+                    continue
+                log(f"recovering {stream}/{name}: its capture never finished it")
+                with open(path + ".done", "w", encoding="utf-8") as fh:
+                    fh.write("recovered " + dt.datetime.now(dt.timezone.utc).isoformat())
             try:
                 total += process_file(path, stream, args.keep_raw_hours)
                 with open(path.replace(".wav", ".processed"), "w", encoding="utf-8") as fh:
                     fh.write(dt.datetime.now(dt.timezone.utc).isoformat())
+            except TranscriptionUnavailable as exc:
+                # Not processed, so retried next pass, and its raw audio stays.
+                failed += 1
+                log(f"left {stream}/{name} for the next pass: {exc}")
             except Exception as exc:  # noqa: BLE001 - one bad file must not stop the pass
+                failed += 1
                 log(f"failed on {name}: {exc!r}")
 
-    log(f"wrote {total} speech group(s)")
+    log(f"wrote {total} speech group(s){f', {failed} file(s) left to retry' if failed else ''}")
     return 0
+
+
+def abandoned(path: str, now: dt.datetime | None = None) -> bool:
+    """True for a capture file nobody is writing any more.
+
+    Its slot (named in the file) ended more than the grace period ago, and the
+    file has not been written to since then either — a capture that is still
+    writing an over-long slot (clock change) keeps touching it.
+    """
+    now = now or dt.datetime.now().astimezone()
+    started = file_started_at(path)
+    slot_over = started + dt.timedelta(minutes=max(ROLL_MINUTES, 1) + ORPHAN_GRACE_MINUTES) < now
+    modified = dt.datetime.fromtimestamp(os.path.getmtime(path)).astimezone()
+    quiet = now - modified > dt.timedelta(minutes=ORPHAN_GRACE_MINUTES)
+    return slot_over and quiet
 
 
 if __name__ == "__main__":

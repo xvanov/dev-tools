@@ -48,7 +48,9 @@ warnings.filterwarnings("ignore", category=sc.SoundcardRuntimeWarning)
 
 SAMPLE_RATE = int(os.environ.get("PA_AUDIO_SAMPLE_RATE", "16000"))
 BLOCK = 4096
-ROLL_MINUTES = int(os.environ.get("PA_AUDIO_ROLL_MINUTES", "60"))
+# Fifteen-minute files: a damaged file or a failed pass costs a quarter of an
+# hour, not a meeting, and a transcript is ready minutes after you stop talking.
+ROLL_MINUTES = int(os.environ.get("PA_AUDIO_ROLL_MINUTES", "15"))
 
 
 def log(msg: str) -> None:

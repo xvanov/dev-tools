@@ -206,7 +206,7 @@ const config = {
   audio: {
     enabled: env('PA_AUDIO_ENABLED', '1') !== '0',
     sampleRate: envInt('PA_AUDIO_SAMPLE_RATE', 16000),
-    rollMinutes: envInt('PA_AUDIO_ROLL_MINUTES', 60),
+    rollMinutes: envInt('PA_AUDIO_ROLL_MINUTES', 15),
     // How long a silence ends an episode.
     episodeGapSeconds: envInt('PA_AUDIO_EPISODE_GAP_SECONDS', 90),
     // voice-dictation's faster-whisper server, reused rather than reinstalled.

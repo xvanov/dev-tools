@@ -366,8 +366,13 @@ loopback** is everyone else. That is what gives speaker attribution with no diar
 and no misattributed quotes — and it works whether or not your tenant ever allows Teams
 transcripts, because nothing joins the meeting.
 
-Raw audio is written continuously and trimmed hourly rather than gated live by a VAD: a VAD bug
-then costs a bloated file instead of the first three seconds of every sentence. Speech groups
+Raw audio is written continuously (flushed every second) in 15-minute files and trimmed after
+each one, rather than gated live by a VAD: a VAD bug then costs a bloated file instead of the
+first three seconds of every sentence. A file is the unit of loss, so it is kept small, and the
+pass is built not to lose one: a file whose capture died mid-slot (crash, reboot, power cut) is
+recovered and its header repaired from the PCM on disk; a file whose transcription fails (the
+transcriber is down) is left unprocessed, retried every five minutes, and its raw audio kept
+until it succeeds. `pa doctor` shows a backlog of untranscribed files. Speech groups
 are transcribed through voice-dictation's already-warm faster-whisper server, so there is no
 second model and no GPU contention with the dictation hotkey.
 
