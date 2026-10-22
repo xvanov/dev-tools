@@ -125,6 +125,29 @@ it goes — a 1:1 Teams chat or a new Outlook message with the text already type
 chat or channel thread opens with the text on the clipboard to paste — and asks *Did it go?*.
 The connector's grant is read-only, so this page cannot send; you press Send in Teams or Outlook.
 
+**Memory** (the second tab, `#memory`) is the memory layer below, made browsable:
+
+- **People & projects** (and topics), filterable, each with the one-line summary from its page.
+  Opening one shows the page and, under it, every claim about that subject: kind, valid dates,
+  status, the verbatim quote, and a link to the item it came from. **Show history** adds
+  superseded and retracted claims. Every `[#id]` in a page opens that item. **Me** and **Index**
+  are there too.
+- **Review queue**, with a count on the tab: `pending_review` claims — quotes that only nearly
+  matched, and notes an agent suggested. **Approve** makes one a belief (confidence 1) and
+  consolidates it; **Reject** retracts it.
+- **Remember** a note (optionally about someone or something, and of a given kind); the result
+  says whether it was added, superseded an older claim, or was already known.
+- **Search** claims, and **Forget** one, after a confirm that says what it does: the claim is
+  marked retracted (not deleted), pages are rewritten, and a claim it had superseded is believed
+  again.
+- **Possible duplicate people** — the same colleague seen by GitHub handle and by email — with a
+  **Merge** that moves identities, commitments and claims to the person kept, deletes the other's
+  page and rewrites the survivor's. There is no unmerge, so it asks first.
+
+Pages are written by a model from other people's mail and chat, so the page never renders them
+as HTML: the server parses the markdown into a tree (`src/dashboard/markdown.js`) and the browser
+builds it with `textContent`, like everything else on the page.
+
 ```
 pa brief                        what's on you today
 pa inbox                        newly distilled commitments
@@ -304,7 +327,7 @@ src/eval/            retrieval eval: metrics, retriever registry, case seeding, 
 src/memory/          claims with evidence, consolidation, people/project pages, nightly dream
 src/recall/          multi-hop recall over items, claims and pages, one rerank
 src/brief/           what `pa brief` prints
-src/dashboard/       the loopback web page and its three buttons
+src/dashboard/       the loopback web page: today, replies, runs, and the Memory tab
 src/llm.js           model calls: API key, or `claude -p` without one
 src/backup.js        nightly pg_dump, restore, re-ingest
 src/dispatch/        worktrees, briefs, termhub sessions, modes, landing

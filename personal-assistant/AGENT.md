@@ -33,7 +33,10 @@ tailnet ACL and it was built for that; this is not.
 agents, so `src/dashboard/server.js` binds loopback only, rejects a non-loopback `Host` (DNS
 rebinding), and requires an `X-PA: 1` header on every POST (a custom header forces a CORS
 preflight the server never answers). Its Send button opens the reply in Teams or Outlook and
-then asks whether you sent it; it cannot send.
+then asks whether you sent it; it cannot send. The Memory tab's writes (remember, forget,
+approve, merge) are POSTs under the same guards, and memory pages reach the browser as a parsed
+tree (`src/dashboard/markdown.js`) built with `textContent` — the page has no HTML sink, and
+`test/memoryui.test.js` fails if one appears.
 
 **One implementation per behaviour.** OpenClaw skills call the `pa` CLI. They do not talk to
 Postgres, and they do not reimplement dispatch. When the TUI and the CLI disagree about what

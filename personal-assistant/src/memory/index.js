@@ -9,6 +9,8 @@
 //   claimsFor(subject, {all, asOf})  what is believed about a subject
 //   searchClaims(q, {subject, asOf}) hybrid search over claims
 //   explain(claimId)                 a claim, its quote, its source, its history
+//   approve(claimId)                 a pending_review claim becomes a belief
+//   reviewQueue / subjects / item / people / mergePeople   for the dashboard
 //
 // Two speeds: `remember` is the fast path and skips extraction entirely; the
 // worker's passes (extract → consolidate → pages, and the nightly dream) are
@@ -188,6 +190,101 @@ async function forget(target) {
   return { retracted: ids.length, restored: restored.rowCount, ids };
 }
 
+// The human gate for claims nobody has vouched for yet — a quote that only
+// nearly matched, or a note an agent suggested. Approving makes it a belief
+// and consolidates it like any other; rejecting is `forget`.
+async function approve(claimId) {
+  const claim = await one(
+    // Human-confirmed now, so believed as fully as a typed note.
+    `update claim set status = 'active', expired_at = null, confidence = 1
+      where id = $1 and status = 'pending_review' returning *`,
+    [claimId]
+  );
+  if (!claim) throw Object.assign(new Error(`claim ${claimId} is not waiting for review`), { status: 409 });
+  const decided = await consolidate.consolidateClaims([claim.id]);
+  const after = await one(
+    `select c.id, c.status, c.subject_kind, c.subject_id, k.decision, k.target_id
+       from claim c left join consolidation k on k.claim_id = c.id where c.id = $1`,
+    [claim.id]
+  );
+  await pages.refreshSubjects([claim]);
+  return { claim: after, consolidation: decided };
+}
+
+async function reviewQueue({ limit = 100 } = {}) {
+  return rows(
+    `select c.id, c.status, c.subject_kind, c.subject_id, c.subject_label, c.kind, c.text, c.quote, c.origin, c.source_kind,
+            c.confidence, c.valid_at, c.recorded_at, c.source_item_id, si.source, si.subject as source_subject,
+            si.raw->>'webUrl' as url, si.raw->>'webLink' as link
+       from claim c left join source_item si on si.id = c.source_item_id
+      where c.status = 'pending_review'
+      order by c.recorded_at desc, c.id desc limit $1`,
+    [limit]
+  );
+}
+
+// Everything memory has a name for: people and projects with a page or with
+// active claims, and topics with active claims. `summary` is filled from the
+// page by the caller, which owns how a page is read.
+async function subjects() {
+  return rows(
+    `with active as (
+       select subject_kind, subject_id, lower(subject_label) as label, count(*)::int as claims,
+              max(subject_label) as any_label, max(valid_at) as latest
+         from claim where status = 'active' group by 1, 2, 3
+     ), named as (
+       select subject_kind as kind, subject_id as id, sum(claims)::int as claims, max(latest) as latest,
+              max(any_label) as label
+         from active where subject_kind in ('person','project') and subject_id is not null group by 1, 2
+     )
+     select coalesce(mp.kind, n.kind) as kind, coalesce(mp.subject_id, n.id) as id,
+            coalesce(mp.title, per.display_name, pr.name, n.label) as title,
+            mp.body, mp.generated_at, coalesce(n.claims, 0) as claims, n.latest
+       from memory_page mp
+       full join named n on n.kind = mp.kind and n.id = mp.subject_id
+       left join person per on per.id = coalesce(mp.subject_id, n.id) and coalesce(mp.kind, n.kind) = 'person'
+       left join project pr on pr.id = coalesce(mp.subject_id, n.id) and coalesce(mp.kind, n.kind) = 'project'
+      where coalesce(mp.kind, n.kind) in ('person','project')
+     union all
+     select 'topic', null, any_label, null, null, claims, latest
+       from active where subject_kind = 'topic'
+     order by 1, 3`
+  );
+}
+
+// One source item, for following a [#id] citation out of a page or a claim.
+async function item(id) {
+  return one(
+    `select id, source, subject, occurred_at, author_identity, body_text,
+            raw->>'webUrl' as url, raw->>'webLink' as link
+       from source_item where id = $1`,
+    [id]
+  );
+}
+
+// People with what duplicate detection needs to compare them.
+async function people() {
+  return rows(
+    `select p.id, p.display_name, p.primary_email, p.is_me, mp.title as page_title,
+            coalesce((select json_agg(json_build_object('kind', pi.kind, 'value', pi.value))
+                        from person_identity pi where pi.person_id = p.id), '[]') as identities,
+            (select count(*)::int from claim c where c.subject_kind = 'person' and c.subject_id = p.id
+                                                and c.status = 'active') as claims,
+            (select count(*)::int from commitment c where c.counterparty_person_id = p.id) as commitments
+       from person p left join memory_page mp on mp.kind = 'person' and mp.subject_id = p.id
+      order by p.id`
+  );
+}
+
+// Merges two people (identity.merge moves identities, commitments and
+// claims), then rebuilds the survivor's page from the combined facts.
+async function mergePeople(intoId, fromId) {
+  const identity = require('../distill/identity');
+  const moved = await identity.merge(intoId, fromId);
+  await pages.refreshSubjects([{ subject_kind: moved.isMe ? 'me' : 'person', subject_id: intoId }]);
+  return { into: intoId, from: fromId, claims: moved.claims };
+}
+
 // ---------------------------------------------------------------- reads ----
 
 // Reciprocal-rank fusion of ranked claim lists. Kept here rather than borrowed
@@ -349,4 +446,10 @@ module.exports = {
   stats,
   resolveSubject,
   rrf,
+  approve,
+  reviewQueue,
+  subjects,
+  item,
+  people,
+  mergePeople,
 };

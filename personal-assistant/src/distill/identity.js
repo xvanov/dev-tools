@@ -134,8 +134,10 @@ async function merge(intoId, fromId) {
     const both = await tx.query('select * from person where id = any($1::bigint[])', [[intoId, fromId]]);
     const into = both.rows.find((p) => String(p.id) === String(intoId));
     const from = both.rows.find((p) => String(p.id) === String(fromId));
-    if (!into || !from) throw new Error('no such person');
-    if (from.is_me) throw new Error('cannot merge yourself away; merge the other person into you');
+    if (!into || !from) throw Object.assign(new Error('no such person'), { status: 404 });
+    if (from.is_me) {
+      throw Object.assign(new Error('cannot merge yourself away; merge the other person into you'), { status: 409 });
+    }
 
     await tx.query('update person_identity set person_id = $1 where person_id = $2', [intoId, fromId]);
     await tx.query('update commitment set counterparty_person_id = $1 where counterparty_person_id = $2', [

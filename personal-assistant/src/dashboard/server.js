@@ -1,7 +1,8 @@
 'use strict';
 
 // The dashboard: one page over the same data `pa brief` reads, plus the three
-// buttons worth having — done, dismiss, and dispatch.
+// buttons worth having — done, dismiss, and dispatch — and a Memory tab
+// (/api/memory/*, dashboard/memory.js) over the memory layer.
 //
 // It can start agents, so it inherits the dispatcher's trust model (AGENT.md):
 // loopback only, never tailnet-reachable. Two more guards, because "loopback"
@@ -48,7 +49,9 @@ async function state() {
   const sources = await rows(
     `select source, last_run_at, last_error from sync_cursor order by source`
   );
-  return { ...data, drafts, sources, now: new Date().toISOString() };
+  // The Memory tab's badge: claims waiting for a human to vouch for them.
+  const review = await rows(`select count(*)::int as n from claim where status = 'pending_review'`).catch(() => [{ n: 0 }]);
+  return { ...data, drafts, sources, memoryPending: review[0].n, now: new Date().toISOString() };
 }
 
 function send(res, status, body, type = 'application/json') {
@@ -87,6 +90,14 @@ async function handle(req, res) {
   }
   if (req.method === 'GET' && url.pathname === '/api/state') {
     return send(res, 200, await state());
+  }
+
+  // The Memory tab (dashboard/memory.js). Same guards: a POST needs X-PA.
+  if (url.pathname.startsWith('/api/memory/')) {
+    if (req.method === 'POST' && req.headers['x-pa'] !== '1') return send(res, 403, { error: 'missing X-PA header' });
+    const body = req.method === 'POST' ? await readJson(req) : {};
+    const out = await require('./memory').route(req.method, url, body);
+    return out === undefined ? send(res, 404, { error: 'not found' }) : send(res, 200, out ?? null);
   }
 
   if (req.method === 'POST') {
@@ -130,8 +141,8 @@ function start({ port = config.dispatch.port, host = config.dispatch.host } = {}
   if (!hostAllowed(host)) throw new Error(`refusing to bind the dashboard to ${host}: loopback only`);
   const server = http.createServer((req, res) => {
     handle(req, res).catch((err) => {
-      log.warn('request failed', { path: req.url, message: err.message });
-      send(res, 500, { error: err.message });
+      log.warn('request failed', { path: String(req.url).split('?')[0], message: err.message });
+      if (!res.headersSent) send(res, err.status || 500, { error: err.message });
     });
   });
   return new Promise((resolve, reject) => {
