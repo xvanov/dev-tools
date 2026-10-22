@@ -20,6 +20,8 @@
 const { config } = require('../config');
 const m365 = require('./m365');
 const { saveItems, getCursor } = require('./store');
+const { rows } = require('../db');
+const identity = require('../distill/identity');
 const { htmlToText } = require('../util/text');
 const { logger } = require('../log');
 
@@ -111,6 +113,60 @@ async function recentChats() {
   return map;
 }
 
+// A message the local Teams cache (teamsLocal.js) wrote first, under the same
+// `{chatId}/{messageId}`. Its body is the full text, not a search summary, so
+// it is kept; the connector only *upgrades* what the cache could not know — a
+// sender address where only an AAD id was known, a chat's real topic where
+// the cache had none — and otherwise leaves the content hash alone, so the
+// item is not distilled twice.
+function mergeCached(item, cached) {
+  if (!cached) return item;
+  const author = String(cached.author_identity || '');
+  const upgradeAuthor = !author.includes('@') && String(item.authorIdentity || '').includes('@');
+  const upgradeSubject = (!cached.subject || cached.subject === 'Teams chat') && item.subject && item.subject !== 'Teams chat';
+  const fill = Object.fromEntries(
+    Object.entries(item.raw).filter(([, v]) => v !== null && v !== false && !(Array.isArray(v) && !v.length))
+  );
+  return {
+    ...item,
+    occurredAt: cached.occurred_at || item.occurredAt,
+    authorIdentity: upgradeAuthor ? item.authorIdentity : cached.author_identity,
+    subject: upgradeSubject ? item.subject : cached.subject,
+    bodyText: cached.body_text || item.bodyText,
+    raw: {
+      ...(cached.raw || {}),
+      ...fill,
+      mentionsMe: Boolean(cached.raw?.mentionsMe || item.raw.mentionsMe),
+      partial: false,
+      via: 'teams-cache',
+    },
+  };
+}
+
+async function cachedRows(externalIds) {
+  if (!externalIds.length) return new Map();
+  const found = await rows(
+    `select external_id, occurred_at, author_identity, subject, body_text, raw
+       from source_item
+      where source = 'graph_chat' and external_id = any($1) and raw->>'via' = 'teams-cache'`,
+    [externalIds]
+  );
+  return new Map(found.map((r) => [r.external_id, r]));
+}
+
+// The cache knows a sender only by AAD id; once the connector names the
+// address, remember the pair so the next cached message has it at once.
+async function learnSenders(pairs) {
+  for (const { oid, email } of pairs) {
+    try {
+      const personId = await identity.resolve(email);
+      if (personId) await identity.addIdentity(personId, 'aad_oid', oid);
+    } catch (err) {
+      log.debug('sender not learned', { message: err.message });
+    }
+  }
+}
+
 function keep(hit, me) {
   const from = String(hit.from?.email || '').toLowerCase();
   if (m365.isAutomated(from)) return false;
@@ -135,17 +191,30 @@ async function run() {
   const wanted = hits.filter((h) => keep(h, me));
 
   const chats = wanted.some((h) => !h.channelUri) ? await recentChats().catch(() => new Map()) : new Map();
-  const toRead = wanted.filter((h) => isTruncated(h.summary)).slice(0, m365.MAX_READS).map(readUri);
+  const cached = await cachedRows(wanted.map((h) => `${h.chatId}/${h.id}`));
+  const toRead = wanted
+    .filter((h) => isTruncated(h.summary) && !cached.get(`${h.chatId}/${h.id}`)?.body_text)
+    .slice(0, m365.MAX_READS)
+    .map(readUri);
   const full = await m365.readAll(toRead);
 
-  const items = wanted.map((h) => toItem(h, full.get(readUri(h)), chats, me));
+  const learned = [];
+  const items = wanted.map((h) => {
+    const prior = cached.get(`${h.chatId}/${h.id}`) || null;
+    const item = mergeCached(toItem(h, full.get(readUri(h)), chats, me), prior);
+    if (prior?.raw?.fromId && !String(prior.author_identity || '').includes('@') && item.authorIdentity?.includes('@')) {
+      learned.push({ oid: prior.raw.fromId, email: item.authorIdentity });
+    }
+    return item;
+  });
   const changed = await saveItems('graph_chat', items, {
     source: 'graph_chat',
     deltaToken: null,
     state: { since: m365.nextSince(passStarted) },
   });
-  log.info('relayed', { found: hits.length, kept: wanted.length, read: full.size, changed });
+  await learnSenders(learned);
+  log.info('relayed', { found: hits.length, kept: wanted.length, read: full.size, fromCache: cached.size, changed });
   return changed;
 }
 
-module.exports = { run, id: 'graph_chat', toItem, keep, channelIds, isTruncated, namesMe };
+module.exports = { run, id: 'graph_chat', toItem, keep, channelIds, isTruncated, namesMe, mergeCached };

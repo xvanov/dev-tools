@@ -14,7 +14,8 @@ param(
   [string]$Distro = 'Ubuntu',
   [switch]$SkipDatabase,
   [switch]$NoWorker,
-  [switch]$NoAudio
+  [switch]$NoAudio,
+  [switch]$NoTeamsCache
 )
 
 $ErrorActionPreference = 'Stop'
@@ -125,6 +126,27 @@ if (-not $NoAudio) {
   }
   Write-Host "    pa-capture-mic and pa-capture-loopback registered (not started)"
   Write-Host "    capture is always-on once started; `pa mic pause 30` stops it, `pa mic on` resumes"
+}
+
+# --- Teams in seconds ----------------------------------------------------------
+# The worker reads the new Teams client's local IndexedDB cache through
+# teams/read_cache.py (README: Teams in seconds). Its own venv: the reader is a
+# forensic library that is not on PyPI, so it is installed from pinned GitHub
+# archives — snappy first, because the reader's metadata names it as a git URL
+# that pip would otherwise try to clone.
+
+if (-not $NoTeamsCache) {
+  $teamsVenv = Join-Path (Join-Path $env:LOCALAPPDATA 'personal-assistant') 'teams-venv'
+  $teamsPy = Join-Path $teamsVenv 'Scripts\python.exe'
+  if (-not (Test-Path $teamsPy)) {
+    Write-Host "==> creating the Teams cache reader venv"
+    python -m venv $teamsVenv
+  }
+  Write-Host "==> installing the Teams cache reader"
+  & $teamsPy -I -m pip install -q --disable-pip-version-check `
+    'https://github.com/cclgroupltd/ccl_simplesnappy/archive/3d085230baa8c46cf2090ebba29bf6e8eab31087.zip'
+  & $teamsPy -I -m pip install -q --disable-pip-version-check `
+    'https://github.com/cclgroupltd/ccl_chromium_reader/archive/ef840de30221c4d65bc96d2f4d9057e9ef2f526d.zip'
 }
 
 # --- .env --------------------------------------------------------------------

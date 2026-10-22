@@ -108,6 +108,26 @@ const config = {
     teamsChannels: env('PA_TEAMS_CHANNELS', 'mentions'),
   },
 
+  // Teams in seconds, from the new Teams client's own IndexedDB cache on this
+  // disk (src/ingest/teamsLocal.js). The connector still runs: it backfills
+  // and upgrades what this reads. A missing cache or venv is a quiet no-op.
+  teamsCache: {
+    enabled: env('PA_TEAMS_CACHE', '1') !== '0',
+    pollSeconds: envInt('PA_TEAMS_CACHE_POLL_SECONDS', 5),
+    dir: env(
+      'PA_TEAMS_CACHE_DIR',
+      path.join(
+        process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'),
+        'Packages', 'MSTeams_8wekyb3d8bbwe', 'LocalCache', 'Microsoft', 'MSTeams', 'EBWebView',
+        'WV2Profile_tfw', 'IndexedDB', 'https_teams.microsoft.com_0.indexeddb'
+      )
+    ),
+    // Its own venv, not the capture one: the reader is pinned to a forensic
+    // library that is not on PyPI and must not be able to break capture.
+    python: env('PA_TEAMS_PYTHON', path.join(dataDir, 'teams-venv', 'Scripts', 'python.exe')),
+    timeoutMs: envInt('PA_TEAMS_CACHE_TIMEOUT_MS', 60_000),
+  },
+
   // Through the `gh` CLI and its keyring login — no token in `.env`. Projects
   // v2 additionally needs `gh auth refresh -s read:project`.
   github: {

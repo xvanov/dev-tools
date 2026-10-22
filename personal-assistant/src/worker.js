@@ -53,21 +53,27 @@ const log = logger('worker');
 
 const running = new Set();
 
+// Runs a pass unless that pass is already running. Every caller — the timer
+// and the Teams fast path alike — goes through here, so a pass never overlaps
+// itself however it was started. Resolves to whether it ran.
+async function exclusive(name, fn) {
+  if (running.has(name)) {
+    log.debug('skipping overlapping pass', { name });
+    return false;
+  }
+  running.add(name);
+  try {
+    await fn();
+  } catch (err) {
+    log.warn('pass failed', { name, message: err.message });
+  } finally {
+    running.delete(name);
+  }
+  return true;
+}
+
 function every(seconds, name, fn) {
-  const tick = async () => {
-    if (running.has(name)) {
-      log.debug('skipping overlapping pass', { name });
-      return;
-    }
-    running.add(name);
-    try {
-      await fn();
-    } catch (err) {
-      log.warn('pass failed', { name, message: err.message });
-    } finally {
-      running.delete(name);
-    }
-  };
+  const tick = () => exclusive(name, fn);
   // One immediate pass so a freshly started worker is useful straight away.
   setTimeout(tick, 2000 + Math.random() * 3000);
   return setInterval(tick, seconds * 1000);
@@ -130,6 +136,21 @@ async function main() {
     if (!config.m365.enabled) return;
     await ingest.runAll(['graph_chat', 'graph_mail']);
   });
+
+  // Teams in seconds, from the client's local cache. A fresh DM or mention is
+  // distilled (and drafted for) straight away rather than at the next 90 s
+  // tick — through `exclusive`, so it never overlaps a scheduled pass; if one
+  // is running, that pass or the next picks the item up. Not awaited: the
+  // cache pass stays a few hundred milliseconds whatever distill costs.
+  if (config.teamsCache.enabled) {
+    every(config.teamsCache.pollSeconds, 'teams-cache', async () => {
+      const r = await require('./ingest/teamsLocal').tick();
+      if (!r.fresh) return;
+      exclusive('distill', () => distill.run({ limit: 5 }))
+        .then((ran) => ran && exclusive('drafts', () => require('./draft').autoDraft({ limit: 3 })))
+        .catch(() => {});
+    });
+  }
 
   every(config.m365.calendarPollSeconds, 'calendar', async () => {
     if (!config.m365.enabled) return;
@@ -263,4 +284,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { every };
+module.exports = { every, exclusive };

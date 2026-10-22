@@ -62,6 +62,18 @@ spilled a large one to. A relay that asks the model to *copy* a message body int
 a relay that will one day paraphrase someone's request. (Jira predates this and still parses the
 reply; moving it over is fine.)
 
+**The Teams cache is read, never touched, and shares the connector's rows.** `teamsLocal.js`
+reads the new Teams client's IndexedDB on this disk because it is seconds behind where the
+connector is minutes behind, and it needs no Entra app registration (ruled out for this tool). It is
+the same user's same data, local only. `teams/read_cache.py` opens Teams' files read-only with
+every share flag, never writes or locks them, tails the LevelDB log from a saved offset, and
+never does a full parse (minutes of CPU). Its items are `graph_chat` with the connector's own
+`{chatId}/{messageId}` ids and `raw.via = 'teams-cache'`; `planWrite` and `graphChat.mergeCached`
+decide who wins a shared row, and both avoid rewriting a row whose content did not change, since
+a changed hash re-runs distillation. Bodies never reach a log, stderr, or an exception message.
+If a Teams update changes the record shapes the pass reads nothing and `pa doctor` shows the last
+message going stale — fix the shape, do not fall back to anything that phones home.
+
 **Memory carries its evidence.** Every claim in `claim` holds the verbatim `quote` it was read
 from, checked against the item before it is stored (whitespace- and case-folded; a near miss is
 `pending_review`, a miss is dropped). The quote is copied, not referenced, and `source_item_id`

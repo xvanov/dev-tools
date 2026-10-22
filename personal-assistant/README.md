@@ -61,8 +61,8 @@ cd C:\repos\dev-tools\personal-assistant
 ```
 
 That provisions Postgres 16 + pgvector inside your WSL distro, registers the logon tasks
-(keep-alive, worker, and the two capture streams), applies the schema, and writes a `.env` for
-you to fill in.
+(keep-alive, worker, and the two capture streams), creates the Teams cache reader's venv (see
+*Teams in seconds*), applies the schema, and writes a `.env` for you to fill in.
 
 Then:
 
@@ -109,6 +109,44 @@ calls for the bodies the search only previewed. The bodies are taken from the to
 event stream (and from the files Claude Code spills large results to), never retyped by the model.
 Automated mail — GitHub and Jira notifications, no-reply senders — is skipped: those sources are
 ingested directly, with structure.
+
+### Teams in seconds
+
+The connector is minutes behind by construction: a headless session every three minutes, over a
+Microsoft Search index that itself lags new messages by minutes more (half an hour to an hour
+was typical before this). Change notifications would need an app registration, which this tool
+does not have. So the worker also reads Teams where Teams itself keeps it: the new Teams client
+is a WebView2 app that writes every chat and channel message it shows into Chromium IndexedDB on
+your disk, a second or two after it arrives.
+
+Every five seconds `src/ingest/teamsLocal.js` checks that directory's newest mtime. Only when it
+moved does it run `teams/read_cache.py`, which reads the LevelDB write-ahead log *from where the
+last pass stopped* — a few KB, about a tenth of a second — plus any table a compaction wrote
+since, and prints the new messages. A full parse of the ~100 MB store takes five to ten minutes
+in pure Python and is never done. Items are `graph_chat` rows with the connector's own ids
+(`{chatId}/{messageId}` is the same pair in both), so the two sources share one row:
+
+- a message the connector already has is left alone, unless it was edited since;
+- a message read from the cache first keeps its full body; the connector later only *upgrades*
+  it — the sender's address where the cache knew an AAD id, the chat's topic — and learns the
+  id-to-address pair for next time. When nothing needs upgrading the row is not rewritten, so
+  it is not distilled twice;
+- channel posts follow `PA_TEAMS_CHANNELS`; bots, cards, call and membership events, and
+  deleted messages are skipped; your own messages are kept (they are how "already answered" is
+  detected) but not rushed;
+- a new DM, group-chat message or mention is distilled at once — and drafted for — instead of
+  at the next 90-second tick, through the worker's no-overlap guard.
+
+Privacy: it is the same data the connector reads and you see in Teams, read on the machine it
+is already on, for the user signed in to it. Nothing is sent anywhere new. The reader never
+writes to Teams' files or holds one open (it opens them read-only with every share flag and
+copies tables before parsing), and logs carry counts and timings, never a body. Off with
+`PA_TEAMS_CACHE=0`; `pa doctor` shows `teams cache: last message Ns ago`, or why not.
+
+The reader lives in its own venv (`%LOCALAPPDATA%\personal-assistant\teams-venv`, created by
+`install.ps1`) with [`ccl_chromium_reader`](https://github.com/cclgroupltd/ccl_chromium_reader),
+which is not on PyPI and is installed from pinned GitHub archives. Without the venv, or without
+the new Teams, the pass is a no-op.
 
 ## Using it
 
@@ -508,7 +546,7 @@ termhub at `/pa/` (the **PA** button), so all of this works away from the desk.
 ```
 bin/pa.js            the CLI entry point
 src/config.js        every knob, resolved once
-src/ingest/          Microsoft 365 mail/calendar/Teams (connector), GitHub, Jira, Claude sessions, audio episodes
+src/ingest/          Microsoft 365 mail/calendar/Teams (connector), the Teams local cache, GitHub, Jira, Claude sessions, audio episodes
 src/distill/         the extraction prompt, identity resolution, the pass itself
 src/projects/        the project ↔ repo table and the scorer that guesses
 src/search/          hybrid retrieval: full text + vector + people named, fused, Cohere-reranked
@@ -528,6 +566,7 @@ src/draft/           reply drafting, auto-drafts, and delivery links (never send
 src/mcp/server.js    the recall server: read-only, plus remember and request_secret, which only ask
 src/worker.js        the periodic passes
 audio/               capture and trim/transcribe (Python)
+teams/               the Teams local-cache reader (Python, its own venv)
 sql/                 numbered migrations
 windows/             install, and the WSL Postgres provisioner
 ```

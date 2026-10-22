@@ -717,6 +717,8 @@ const commands = {
     } else {
       mark(true, 'microsoft 365', 'off (PA_M365=0)');
     }
+    const teamsCache = await require('../ingest/teamsLocal').status().catch((err) => ({ ok: false, detail: err.message }));
+    mark(teamsCache.ok, 'teams cache', teamsCache.detail);
 
     // GitHub, Anthropic, embeddings
     const github = require('../ingest/github');

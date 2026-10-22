@@ -54,6 +54,14 @@ function normalise(item) {
 
 // Returns the number of rows that were new or genuinely changed. Unchanged
 // items are not counted, so "0 new" in a poll log means exactly that.
+const CURSOR_UPSERT = `insert into sync_cursor (source, delta_token, last_run_at, last_error, state)
+         values ($1,$2,now(),null,$3)
+         on conflict (source) do update set
+           delta_token = excluded.delta_token,
+           last_run_at = excluded.last_run_at,
+           last_error  = null,
+           state       = excluded.state`;
+
 async function saveItems(source, items, cursor) {
   return withTx(async (client) => {
     let changed = 0;
@@ -96,21 +104,18 @@ async function saveItems(source, items, cursor) {
     }
 
     if (cursor) {
-      await client.query(
-        `insert into sync_cursor (source, delta_token, last_run_at, last_error, state)
-         values ($1,$2,now(),null,$3)
-         on conflict (source) do update set
-           delta_token = excluded.delta_token,
-           last_run_at = excluded.last_run_at,
-           last_error  = null,
-           state       = excluded.state`,
-        [cursor.source, cursor.deltaToken ?? null, cursor.state ?? {}]
-      );
+      await client.query(CURSOR_UPSERT, [cursor.source, cursor.deltaToken ?? null, cursor.state ?? {}]);
     }
 
     log.info('saved', { source, seen: items.length, changed });
     return changed;
   });
+}
+
+// A cursor alone, for a pass that read nothing worth saving — without the
+// per-save log line, which a five-second pass would turn into noise.
+async function saveCursor(cursor) {
+  await withTx((client) => client.query(CURSOR_UPSERT, [cursor.source, cursor.deltaToken ?? null, cursor.state ?? {}]));
 }
 
 async function getCursor(source) {
@@ -132,4 +137,4 @@ async function cursors() {
   return rows('select source, last_run_at, last_error, delta_token is not null as has_token from sync_cursor order by source');
 }
 
-module.exports = { saveItems, getCursor, recordError, cursors };
+module.exports = { saveItems, saveCursor, getCursor, recordError, cursors };
