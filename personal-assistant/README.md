@@ -313,6 +313,47 @@ connector in `/mcp`, `gh auth refresh -s read:project`) are the same kind of req
 command to copy and a **Done** button; `pa doctor` opens them for failing checks and closes them
 when the check passes.
 
+### Routines
+
+Recurring actions you describe in plain words. Unlike memory, which only stores beliefs, a routine
+**changes things on this machine** on a schedule — so it can only run a *typed* action from a
+fixed registry (`src/routines/actions`), never a shell string.
+
+```
+pa routine add "every weekday at 8 pull main on all repos"
+  Weekdays 08:00 — Pull main on every repo under C:\repos that is clean, on its default branch, …
+  next: Fri 08:00 · Mon 08:00 · Tue 08:00
+  Save this routine? [y/N]
+pa routine list | run <id> [--dry-run] | pause | resume | delete | history | suggest | actions
+```
+
+A model reads your words into `{schedule, action, params}`, choosing only from the registry; you
+see the plain-words version and the next three runs, and nothing is saved until you confirm. The
+dashboard's **Routines** tab does the same, plus Run now / Dry run, Pause, and the run history.
+
+| Action | Does | Changes the machine |
+|---|---|---|
+| `repo_sync` | `git fetch --prune` every repo under `PA_REPOS_ROOT` (and one level into non-repo folders); fast-forwards the default branch where it is safe | yes — fetch, and `git merge --ff-only` |
+| `prompt_report` | answers a standing question from the profile, the brief and a search; result as a notification | no — the model gets no tools |
+
+`repo_sync` fast-forwards only a repo that is **on** its default branch (`origin/HEAD`, else
+main/master), has no uncommitted change, no merge/rebase/cherry-pick in progress, no untracked file
+where the update writes, nothing touched in the last 60 minutes, no termhub session or live `pa`
+run in it, and is strictly behind. Everything else is fetched and reported — "on feature/x, 3
+behind main — left alone". It never switches branches, stashes, resets, or touches a local branch.
+The rules are one pure function, `decide(repoState)`, tested case by case. `--dry-run` still
+fetches (remote-tracking refs only) unless `--no-fetch`.
+
+The worker checks every minute and runs due routines one at a time. A slot missed while the machine
+was off runs once on return, never a backlog. Each run is a `routine_run` row and a notification;
+a run with nothing changed is in the feed without a toast.
+
+**Suggestions.** Nightly (after `PA_ROUTINE_SUGGEST_HOUR`, default 03:00) and on
+`pa routine suggest`, the assistant reads memory claims about you of kind workflow/preference and
+asks you repeated across days in your Claude sessions, and proposes at most three routines, each
+with a one-line why citing the evidence ids. They arrive as `proposed` — never enabled until you
+accept — and a rejected one is never proposed again.
+
 ## Always-on capture
 
 Two streams, captured separately and never mixed: the **microphone** is you, the **system
@@ -402,8 +443,9 @@ src/memory/          claims with evidence, consolidation, people/project pages, 
 src/recall/          multi-hop recall over items, claims and pages, one rerank
 src/brief/           what `pa brief` prints
 src/meetings/        pre-meeting briefs: classify, gather evidence, learn from transcripts, notify
-src/dashboard/       the loopback web page: today, next meeting, replies, runs, secret requests, and the Memory tab
+src/dashboard/       the loopback web page: today, next meeting, replies, runs, secret requests, and the Memory and Routines tabs
 src/secrets/         secret and login requests; Windows Credential Manager via PowerShell (stdin only)
+src/routines/        cron parser, the typed action registry (repo_sync, prompt_report), runs, suggestions
 src/llm.js           model calls: API key, or `claude -p` without one
 src/backup.js        nightly pg_dump, restore, re-ingest
 src/dispatch/        worktrees, briefs, termhub sessions, modes, landing

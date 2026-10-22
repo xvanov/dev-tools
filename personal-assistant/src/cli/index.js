@@ -59,6 +59,11 @@ const HELP = `pa — your context layer
     pa secret request <NAME> --purpose "…"  ask for it in the dashboard instead
     pa help secret                  every secret verb
 
+  Routines
+    pa routine add "<words>"        a recurring action, e.g. "every weekday at 8 pull main on all repos"
+    pa routine list|run <id> [--dry-run]|pause|resume|delete|history|suggest
+    pa help routine                 every routine verb
+
   Plumbing
     pa login                        check the Microsoft 365 connector and record who you are
     pa sync [--source s]            force an ingest pass
@@ -769,6 +774,33 @@ const commands = {
     const hub = await termhub.reachable();
     mark(hub.ok, 'termhub', hub.ok ? config.termhub.url : `${config.termhub.url} — ${hub.error}`);
 
+    // Routines: a schedule or action that no longer parses, and the last run's
+    // outcome. repo_sync refuses to fast-forward while termhub is unreachable.
+    try {
+      const routines = require('../routines');
+      const list = await routines.list({ statuses: ['active', 'proposed'] });
+      const broken = list.filter((r) => {
+        try {
+          routines.preview(r);
+          return false;
+        } catch {
+          return true;
+        }
+      });
+      const failed = list.filter((r) => r.status === 'active' && r.last_ok === false);
+      const active = list.filter((r) => r.status === 'active').length;
+      const proposed = list.length - active;
+      mark(
+        !broken.length && !failed.length,
+        'routines',
+        `${active} active · ${proposed} proposed${config.routines.enabled ? '' : ' · worker runs off (PA_ROUTINES=0)'}` +
+          (broken.length ? ` · invalid: #${broken.map((r) => r.id).join(', #')}` : '') +
+          (failed.length ? ` · last run failed: #${failed.map((r) => r.id).join(', #')}` : '')
+      );
+    } catch (err) {
+      mark(false, 'routines', `${err.message} — run \`pa migrate\``);
+    }
+
     // Cursors and backlog
     lines.push('');
     lines.push('  sources');
@@ -880,13 +912,15 @@ async function learnAliases(projectId, commitment, item, commitmentId) {
 Object.assign(commands, require('./memory').make(out, fail));
 Object.assign(commands, require('./secret').make(out, fail));
 Object.assign(commands, require('./meeting').make(out, fail));
+Object.assign(commands, require('./routine').make(out, fail));
 
 async function main(argv) {
   const { command, args, flags } = parseArgs(argv);
   const name = command || 'help';
 
   if (flags.help || name === 'help' || name === '--help') {
-    out(args[0] === 'memory' ? require('./memory').HELP : args[0] === 'secret' ? require('./secret').HELP : HELP);
+    const topics = { memory: './memory', secret: './secret', routine: './routine', routines: './routine' };
+    out(topics[args[0]] ? require(topics[args[0]]).HELP : HELP);
     return;
   }
 

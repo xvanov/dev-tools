@@ -192,6 +192,17 @@ async function main() {
     await dispatch.reconcile();
   });
 
+  // Routines: due ones run one at a time; a missed slot runs once, never a
+  // backlog (src/routines). Suggestions are proposed nightly, never enabled.
+  if (config.routines.enabled) {
+    every(60, 'routines', async () => {
+      await require('./routines').runDue();
+    });
+    every(3600, 'routine-suggest', async () => {
+      await require('./routines/suggest').nightly();
+    });
+  }
+
   // Deterministic retrieval eval; a no-op with no cases, at most once a day.
   every(86400, 'eval', async () => {
     await require('./eval').nightly();

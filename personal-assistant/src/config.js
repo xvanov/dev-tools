@@ -246,6 +246,14 @@ const config = {
     effort: env('PA_BRIEF_EFFORT', 'low'),
   },
 
+  // Recurring typed actions (src/routines). PA_ROUTINES=0 stops the worker
+  // running them; `pa routine run` still works by hand.
+  routines: {
+    enabled: env('PA_ROUTINES', '1') !== '0',
+    // Local hour after which the nightly suggestion pass may run.
+    suggestHour: envInt('PA_ROUTINE_SUGGEST_HOUR', 3),
+  },
+
   // Nightly pg_dump of the whole store (see src/backup.js). Local disk by
   // default — the dumps hold everything the assistant knows, so where they go
   // is a privacy decision as much as a durability one.

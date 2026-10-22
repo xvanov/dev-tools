@@ -79,6 +79,15 @@ secret with `config.secret(name)` and nothing else; errors are scrubbed of it. A
 `request_secret` and ask `secret_status` (configured or not); do not add a tool, endpoint or CLI
 verb that shows a value. `test/secrets.test.js` fails if one echoes.
 
+**Routines run typed actions only; repo_sync never switches branches or discards work.** A
+routine names an action in `src/routines/actions` with schema-checked params — there is no action
+that takes a command string, and adding one is a conversation, not a patch. `repo_sync` writes
+nothing but `git fetch --prune` and `git merge --ff-only` on the branch already checked out, and
+only when the pure `decide(repoState)` says `ff`; it never checks out, stashes, resets, or moves a
+local branch. Any new safety condition goes into `decide` with a test. Suggested routines are
+stored `proposed` and only a human enables them; a rejected one is kept so it is never proposed
+again. A scheduled slot missed during downtime runs once, never as a backlog.
+
 **Raven stays a skill.** Company engineering conventions are read through the existing
 `innergy-knowledge` skill. Do not copy that repo into this store; a second stale copy of the
 org's conventions is worse than none.
