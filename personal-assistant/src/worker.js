@@ -78,8 +78,21 @@ async function main() {
     db: config.databaseUrl.replace(/:[^:@/]*@/, ':***@'),
   });
 
+  // Wait for the store rather than exit. Postgres lives in WSL, and at logon
+  // (or after WSL drops the distro) it is routinely down for a minute; exiting
+  // spent the task's five restarts in ten minutes and left the worker dead for
+  // a week. Retrying here costs nothing and has no ceiling.
   const { migrate } = require('./db/migrate');
-  await migrate();
+  for (let attempt = 1; ; attempt++) {
+    try {
+      await migrate();
+      break;
+    } catch (err) {
+      const wait = Math.min(300, 5 * 2 ** Math.min(attempt, 6));
+      log.warn('store not reachable — retrying', { attempt, waitSeconds: wait, message: err.message });
+      await new Promise((r) => setTimeout(r, wait * 1000));
+    }
+  }
 
   // The dashboard rides along with the worker: one process to keep alive.
   // A port clash (a standalone `pa dashboard`) must not stop ingest.
@@ -151,6 +164,10 @@ async function main() {
     await db.close().catch(() => {});
     process.exit(0);
   };
+  // A stray rejection in one pass must not end every other pass with it.
+  process.on('unhandledRejection', (err) => {
+    log.warn('unhandled rejection', { message: err?.message || String(err) });
+  });
   process.on('SIGINT', () => shutdown('SIGINT'));
   process.on('SIGTERM', () => shutdown('SIGTERM'));
 }
