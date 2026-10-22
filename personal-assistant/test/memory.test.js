@@ -211,6 +211,10 @@ const m = require('../src/memory/claims');
   assert.ok(idx.includes('**Brannoc Vale** — Leads payments. Knows the ledger.'));
   assert.ok(idx.includes('**quill-api** — In beta.'));
   assert.ok(idx.includes('billing migration'));
+  const { pageTitle } = require('../src/memory/pages');
+  assert.strictEqual(pageTitle('github:qbrannoc', '# Quill Brannoc\n\nLeads payments.'), 'Quill Brannoc');
+  assert.strictEqual(pageTitle('qbrannoc-acme', 'no heading'), 'qbrannoc-acme');
+  assert.strictEqual(pageTitle('Quill Brannoc', '# Someone Else'), 'Quill Brannoc');
 }
 
 {

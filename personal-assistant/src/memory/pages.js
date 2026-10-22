@@ -198,6 +198,28 @@ async function writePage({ kind, subjectId = 0, title, body, hash }) {
   );
 }
 
+// A person known only by a handle ("github:qbrannoc") gets the page's own
+// heading as its title when the model could read a human name off the facts.
+function pageTitle(displayName, body) {
+  if (!/@|^github:|^gitlab:|^aad:|^[a-z0-9-]+$/i.test(displayName || '')) return displayName;
+  const h1 = String(body || '').match(/^#\s+(.+)$/m);
+  const name = h1 ? h1[1].trim() : '';
+  return name && name.length <= 60 && /\s/.test(name) ? name : displayName;
+}
+
+// Pages written while the embedding endpoint was down or throttled get their
+// vectors on a later pass; the page itself does not need regenerating.
+async function backfillPageEmbeddings(limit = 40) {
+  const missing = await rows('select id, title, body from memory_page where embedding is null limit $1', [limit]);
+  if (!missing.length) return 0;
+  const vectors = await embed(missing.map((p) => `${p.title}\n${p.body}`.slice(0, 8000))).catch(() => null);
+  if (!vectors) return 0;
+  for (let i = 0; i < missing.length; i++) {
+    await query('update memory_page set embedding = $2::vector where id = $1', [missing[i].id, toVector(vectors[i])]);
+  }
+  return missing.length;
+}
+
 async function storedHash(kind, subjectId) {
   const r = await one('select facts_hash from memory_page where kind = $1 and subject_id = $2', [kind, subjectId]);
   return r?.facts_hash || null;
@@ -238,7 +260,7 @@ async function personPage(personId, { force = false } = {}) {
   ].join('\n');
 
   const body = await generate(PERSON_SYSTEM, prompt);
-  await writePage({ kind: 'person', subjectId: personId, title: person.display_name, body, hash });
+  await writePage({ kind: 'person', subjectId: personId, title: pageTitle(person.display_name, body), body, hash });
   return { written: true };
 }
 
@@ -424,6 +446,7 @@ async function run({ limit = 40 } = {}) {
     }
   }
   if (totals.written) await indexPage().catch((err) => log.warn('index failed', { message: err.message }));
+  await backfillPageEmbeddings().catch(() => 0);
   if (totals.written || totals.errors) log.info('pages', totals);
   return totals;
 }
@@ -461,5 +484,6 @@ module.exports = {
   eligiblePeople,
   refreshSubjects,
   renderIndex,
+  pageTitle,
   PAGE_VERSION,
 };
