@@ -186,14 +186,18 @@ async function forget(target) {
       subjects.push(c);
     }
   }
-  await pages.refreshSubjects(subjects);
+  // Rewriting pages is a model call per page; the retraction itself is done,
+  // so the caller does not wait for it (see approve).
+  pages.refreshSubjects(subjects).catch((err) =>
+    require('../log').logger('memory').warn('forget: page refresh failed', { message: err.message })
+  );
   return { retracted: ids.length, restored: restored.rowCount, ids };
 }
 
 // The human gate for claims nobody has vouched for yet — a quote that only
 // nearly matched, or a note an agent suggested. Approving makes it a belief
 // and consolidates it like any other; rejecting is `forget`.
-async function approve(claimId) {
+async function approve(claimId, { wait = false } = {}) {
   const claim = await one(
     // Human-confirmed now, so believed as fully as a typed note.
     `update claim set status = 'active', expired_at = null, confidence = 1
@@ -201,13 +205,25 @@ async function approve(claimId) {
     [claimId]
   );
   if (!claim) throw Object.assign(new Error(`claim ${claimId} is not waiting for review`), { status: 409 });
-  const decided = await consolidate.consolidateClaims([claim.id]);
+  // The belief is saved the moment the row flips. Consolidating it and
+  // rewriting its page are model calls — up to a minute — and a button that
+  // spins that long reads as "nothing happened", so they finish in the
+  // background unless the caller asks to wait.
+  const settle = async () => {
+    const decided = await consolidate.consolidateClaims([claim.id]);
+    await pages.refreshSubjects([claim]);
+    return decided;
+  };
+  if (!wait) {
+    settle().catch((err) => require('../log').logger('memory').warn('approve: background settle failed', { id: claim.id, message: err.message }));
+    return { claim: { id: claim.id, status: claim.status, subject_kind: claim.subject_kind, subject_id: claim.subject_id }, consolidation: null, pending: true };
+  }
+  const decided = await settle();
   const after = await one(
     `select c.id, c.status, c.subject_kind, c.subject_id, k.decision, k.target_id
        from claim c left join consolidation k on k.claim_id = c.id where c.id = $1`,
     [claim.id]
   );
-  await pages.refreshSubjects([claim]);
   return { claim: after, consolidation: decided };
 }
 

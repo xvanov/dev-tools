@@ -680,7 +680,7 @@ function claimCard(c, { review = false, showSubject = false } = {}) {
     const no = el('button', { title: 'Do not believe it; it stays in the table as retracted' }, 'Discard');
     ok.addEventListener('click', memAct(ok, async () => {
       const r = await post(`/api/memory/claims/${c.id}/approve`);
-      toast(`saved to memory as #${c.id}${outcome(r.claim)} — no action was taken`);
+      toast(r.pending ? `Saved to memory (#${c.id}). Nothing was run. Its page updates in the background.` : `saved to memory as #${c.id}${outcome(r.claim)} — no action was taken`);
     }));
     no.addEventListener('click', memAct(no, async () => {
       await post(`/api/memory/claims/${c.id}/reject`);
