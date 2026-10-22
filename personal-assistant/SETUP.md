@@ -12,120 +12,42 @@ notepad .env
 
 Format is `NAME=value` — no quotes, no spaces around the `=`, one per line. It is gitignored.
 
-Do them in this order. The Microsoft one is first because it is the only one that can be
-refused by someone other than you, and everything else is a five-minute job.
+Microsoft 365, GitHub and Jira need nothing in `.env` at all: each goes through a login that
+already exists on the machine.
 
 ---
 
-## 1. Microsoft — `PA_GRAPH_CLIENT_ID` and `PA_GRAPH_TENANT_ID`
+## 1. Microsoft 365 — the claude.ai connector
 
-**What "Entra" is:** Microsoft renamed Azure Active Directory to *Microsoft Entra ID* in 2023.
-It is the thing that holds your work account. "Registering an app" means telling it that a
-program on your laptop is allowed to ask you for permission to read your own mail. You are not
-installing anything into the company tenant and you are not asking for anyone else's data —
-you are creating an identity for a program that then acts strictly as you.
+There is no app registration. Mail, calendar and Teams are read through the **claude.ai
+Microsoft 365 connector**, which a headless `claude -p` can call with your own sign-in. What it
+may read is decided by IT on the connector's enterprise app (*M365 MCP Client for Claude*);
+until IT assigns you to it, sign-in fails with `AADSTS50105`.
 
-### Step by step
-
-1. Open **<https://entra.microsoft.com>** and sign in with your INNERGY work account.
-
-2. In the left sidebar: **Applications** → **App registrations**.
-
-   *If you cannot see "App registrations", or the page says you do not have access:* your tenant
-   restricts who may register applications. Stop here and ask IT for either (a) the ability to
-   register an app, or (b) an app registration created for you with the four delegated scopes in
-   step 5. Nothing else in this guide depends on it — GitHub, Jira, Anthropic and audio capture all
-   work without it.
-
-3. Click **+ New registration** at the top.
-
-   - **Name:** `personal-assistant` (only you ever see this)
-   - **Supported account types:** *Accounts in this organizational directory only (INNERGY only
-     - Single tenant)*
-   - **Redirect URI:** leave it empty. Device-code sign-in does not use one.
-   - Click **Register**.
-
-4. You land on the app's **Overview** page. Two values you need are right here:
-
-   - **Application (client) ID** → this is `PA_GRAPH_CLIENT_ID`
-   - **Directory (tenant) ID** → this is `PA_GRAPH_TENANT_ID`
-
-   Copy both now. They are GUIDs, like `3f9c1b2a-....`. Neither is secret — they identify the
-   app, they do not authorise anything.
-
-5. Left sidebar of the app → **Manage** → **API permissions**.
-
-   - Click **+ Add a permission**
-   - Choose **Microsoft Graph**
-   - Choose **Delegated permissions** — *not* Application permissions. Delegated means "acting
-     as the signed-in user". Application permissions would mean "acting as the app, over the
-     whole tenant", which is both far more than you need and certain to be refused.
-   - In the search box, tick each of these (search one at a time):
-     - `Mail.Read`
-     - `Calendars.Read`
-     - `Chat.Read`
-     - `User.Read` (usually already there by default)
-   - Click **Add permissions**.
-
-   You will see a table with a **Status** column. If it says *"Not granted for INNERGY"* with a
-   warning triangle, that is normal and not necessarily a problem — you will find out at sign-in
-   whether you can consent yourself. See "if it asks for admin approval" below.
-
-6. Left sidebar of the app → **Manage** → **Authentication**.
-
-   - Scroll to the bottom, to **Advanced settings**
-   - **Allow public client flows** → set to **Yes**
-   - Click **Save** at the top
-
-   This is the step that makes device-code sign-in work. Without it, `pa login` fails with an
-   error about the client not being public.
-
-7. Put both values in `.env`:
-
-```
-PA_GRAPH_CLIENT_ID=<the Application (client) ID from step 4>
-PA_GRAPH_TENANT_ID=<the Directory (tenant) ID from step 4>
-```
-
-8. Sign in:
+1. In Claude Code, type `/mcp`.
+2. Pick **claude.ai Microsoft 365** → **Authenticate**, and finish the browser sign-in.
+3. Back in a terminal:
 
 ```powershell
-node bin\pa.js login
+node bin\pa.js login     # calls the connector's get_me and records who "me" is
+node bin\pa.js doctor    # the "microsoft 365" line lists how many scopes IT granted
 ```
 
-It prints something like *"To sign in, use a web browser to open the page
-https://microsoft.com/devicelogin and enter the code ABCD-EFGH"*. Do that in a browser, approve
-the consent screen, and come back — the command finishes on its own and prints your name.
+Optional knobs, all with working defaults:
 
-### If it asks for admin approval
-
-The consent screen may say **"Need admin approval"**. That is a tenant-wide setting (*User
-consent for applications* set to "Do not allow"), not a property of the permissions you picked —
-`Mail.Read`, `Calendars.Read` and `Chat.Read` are all documented as not requiring admin consent
-by themselves.
-
-[`IT-REVIEW.md`](./IT-REVIEW.md) is written to be pasted into that ticket — it answers cost,
-scoping, revocation and where data goes, and raises the two things IT would otherwise find on
-their own. Short version to open with:
-
-> Please grant admin consent for the app registration `personal-assistant`
-> (client ID `<yours>`) for the delegated Microsoft Graph permissions `Mail.Read`,
-> `Calendars.Read`, `Chat.Read` and `User.Read`. Delegated only — the app acts as me and can
-> see nothing I cannot already see. No application permissions, no write access, no ability to
-> send.
-
-Until that clears, leave `PA_GRAPH_CLIENT_ID` blank. Everything else still works; `pa doctor`
-will simply report Microsoft as unconfigured.
+```
+PA_TEAMS_CHANNELS=mentions        # channel posts kept only when they name you; or all / off
+PA_M365_POLL_SECONDS=180          # mail + Teams
+PA_M365_CALENDAR_POLL_SECONDS=900
+```
 
 ### What this does *not* get you
 
-Two things need admin consent no matter what, which is why the tool does not use them:
-
-- **Team channel messages** (`ChannelMessage.Read.All`) — admin consent required by definition.
-  Only your 1:1 and group chats are read.
-- **Teams meeting transcripts via Graph** — needs application permissions, admin consent, a
-  PowerShell-assigned Application Access Policy *and* a tenant toggle. Meetings are recorded
-  locally instead, which needs nobody's permission.
+- **Teams meeting transcripts.** The connector is granted the scope, but the tenant switches
+  Graph transcript access off. Meetings are recorded locally instead, which needs nobody's
+  permission.
+- **Sending.** The grant is read-only. Approved drafts open prefilled in Teams or Outlook, and
+  you press Send there.
 
 ---
 
@@ -225,7 +147,7 @@ Every line should read `ok`. What the failures mean:
 | Line | Means |
 |---|---|
 | `postgres ... ECONNREFUSED` | WSL dropped the distro. `Start-ScheduledTask pa-wsl-keepalive`. |
-| `microsoft sign-in — run pa login` | step 1 not finished, or the token expired |
+| `microsoft 365 — ... /mcp` | step 1 not finished, the connector sign-in expired, or IT has not assigned you |
 | `anthropic — not set` | step 2 not done |
 | `embeddings — endpoint returned 404` | step 3: wrong or missing deployment name |
 | `termhub — ECONNREFUSED` | termhub is not running on this machine |

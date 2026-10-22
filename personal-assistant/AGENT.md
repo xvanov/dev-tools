@@ -36,6 +36,13 @@ preflight the server never answers). It has no send button: drafts get a copy bu
 Postgres, and they do not reimplement dispatch. When the TUI and the CLI disagree about what
 `pa do` means, the bug is that there are two implementations.
 
+**Connector data comes from tool results, never from model text.** Microsoft 365 is reached
+through a headless `claude -p` (`llm.toolCalls`), and the model's only job there is to make the
+calls. Items are built from the `tool_result` blocks in the event stream, or the file Claude Code
+spilled a large one to. A relay that asks the model to *copy* a message body into its reply is
+a relay that will one day paraphrase someone's request. (Jira predates this and still parses the
+reply; moving it over is fine.)
+
 **Raven stays a skill.** Company engineering conventions are read through the existing
 `innergy-knowledge` skill. Do not copy that repo into this store; a second stale copy of the
 org's conventions is worse than none.

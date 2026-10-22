@@ -1,3 +1,7 @@
+> **Superseded 2026-10-22.** This app registration was never made. The assistant reads Microsoft
+> 365 through the claude.ai connector's existing enterprise app instead (see SETUP.md §1); this
+> page is kept as the record of the route that was considered.
+
 # For IT review
 
 A one-page answer to "what is this, and what is it allowed to do". Written to be pasted into a

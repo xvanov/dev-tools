@@ -44,7 +44,7 @@ const HELP = `pa — your context layer
     pa send <draft>                 interactive, explicit, never implicit
 
   Plumbing
-    pa login | whoami | logout      Microsoft sign-in (device code)
+    pa login                        check the Microsoft 365 connector and record who you are
     pa sync [--source s]            force an ingest pass
     pa distill [--limit n]          force a distillation pass
     pa migrate                      apply database migrations
@@ -91,34 +91,20 @@ const commands = {
     out(result.applied.length ? `applied: ${result.applied.join(', ')}` : 'schema already up to date');
   },
 
+  // There is nothing to sign in to here: mail, calendar and Teams go through
+  // the claude.ai Microsoft 365 connector, connected once with `/mcp`. This
+  // checks the connector answers and records who "me" is.
   async login() {
-    const { login } = require('../auth/graphAuth');
-    const { request } = require('../graph/client');
-    const identity = require('../distill/identity');
-
-    await login((response) => {
-      out('');
-      out(response.message);
-      out('');
+    const m365 = require('../ingest/m365');
+    const me = await m365.whoAmI().catch((err) => {
+      throw new Error(`${err.message}
+In Claude Code: /mcp → claude.ai Microsoft 365 → Authenticate.`);
     });
-
-    const me = await request('/me?$select=displayName,mail,userPrincipalName');
-    const email = (me.mail || me.userPrincipalName || '').toLowerCase();
-    await identity.setMe({ displayName: me.displayName, email });
-    out(`signed in as ${me.displayName} <${email}>`);
-    out(`scopes: ${config.graph.scopes.join(' ')}`);
+    out(`connector signed in as ${me.displayName || ''} <${me.mail}>`);
   },
 
   async whoami() {
-    const { whoAmI } = require('../auth/graphAuth');
-    const who = await whoAmI();
-    if (!who) return out('not signed in — run `pa login`');
-    out(`${who.name || ''} <${who.username}>  tenant ${who.tenantId}`);
-  },
-
-  async logout() {
-    require('../auth/tokenStore').clear();
-    out('token cache cleared');
+    return commands.login();
   },
 
   async sync(args, flags) {
@@ -488,11 +474,22 @@ const commands = {
     }
 
     // Microsoft
-    const { whoAmI } = require('../auth/graphAuth');
-    const who = await whoAmI().catch(() => null);
-    mark(Boolean(config.graph.clientId), 'PA_GRAPH_CLIENT_ID', config.graph.clientId || 'not set');
-    mark(Boolean(who), 'microsoft sign-in', who ? who.username : 'run `pa login`');
-    lines.push(`       scopes                   ${config.graph.scopes.join(' ')}`);
+    if (config.m365.enabled) {
+      const m365 = require('../ingest/m365');
+      const scopes = await m365.grantedScopes().catch((err) => err);
+      if (scopes instanceof Error) {
+        mark(false, 'microsoft 365', `${scopes.message.split('
+')[0]} — /mcp → claude.ai Microsoft 365`);
+      } else {
+        const has = (s) => scopes.includes(s);
+        mark(has('Mail.Read') && has('Chat.Read'), 'microsoft 365', `connector · ${scopes.length} scopes granted`);
+        mark(true, '  teams channels', has('ChannelMessage.Read.All') ? `readable · keeping ${config.m365.teamsChannels}` : 'not granted');
+        const canSend = has('Mail.Send') || has('ChatMessage.Send');
+        lines.push(`       sending                  ${canSend ? 'connector can send' : 'read-only grant — approved drafts open prefilled in Teams/Outlook'}`);
+      }
+    } else {
+      mark(true, 'microsoft 365', 'off (PA_M365=0)');
+    }
 
     // GitHub, Anthropic, embeddings
     const github = require('../ingest/github');
@@ -534,7 +531,7 @@ const commands = {
       `${config.anthropic.model} · effort ${config.anthropic.effort} · via ` +
         (viaCli ? (cliVersion ? `claude -p ${cliVersion}` : `${config.claudeBin} not found — set PA_CLAUDE_BIN`) : 'API key')
     );
-    mark(Boolean(cliVersion), 'claude cli', cliVersion || 'not found — connector sources (Jira) cannot run');
+    mark(Boolean(cliVersion), 'claude cli', cliVersion || 'not found — connector sources (Jira, Microsoft 365) cannot run');
     // Probed rather than assumed: a configured endpoint with the wrong
     // deployment name looks identical to a working one until a search quietly
     // returns half its results.

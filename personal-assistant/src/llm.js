@@ -68,11 +68,12 @@ function cliArgs({ system, effort, tools }) {
 
 // The prompt goes in on stdin: Windows caps a command line at 32k characters
 // and a distillation prompt is routinely longer.
-function runCli(args, prompt, timeoutMs) {
+function runCli(args, prompt, timeoutMs, env = null) {
   return new Promise((resolve, reject) => {
     const child = spawn(config.claudeBin, args, {
       cwd: os.tmpdir(),
       windowsHide: true,
+      env: env ? { ...process.env, ...env } : process.env,
       stdio: ['pipe', 'pipe', 'pipe'],
     });
     let out = '';
@@ -125,6 +126,96 @@ async function complete({
   return viaApi({ system, prompt, effort, maxTokens });
 }
 
+// Runs a headless session whose only job is to call connector tools, and
+// returns what the tools returned — not what the model says they returned.
+//
+// The reply is read as `stream-json`, so every tool_use and its tool_result
+// come back verbatim: the model chooses the calls, it never copies the data.
+// That is the difference from the Jira relay, and the reason bodies arrive
+// intact. Each result block is JSON-parsed when it can be; Microsoft 365
+// results are one JSON object per block.
+//
+// A result larger than MAX_MCP_OUTPUT_TOKENS is not shown to the model at all:
+// Claude Code writes it to a file and hands the model the path. For a relay
+// that is the better channel — the data arrives verbatim from disk and the
+// session's context stays small — so `visibleTokens` sets that threshold per
+// call: high where the model must read a result to act on it (a search's
+// `nextOffset`), low where it only has to make the call (read_resource).
+//
+// Returns [{ name, input, results: [...], error: string|null }] in call order.
+async function toolCalls({ prompt, tools, effort = 'low', timeoutMs = 300_000, visibleTokens = null }) {
+  const args = cliArgs({ system: null, effort, tools });
+  const fmt = args.indexOf('json');
+  args[fmt] = 'stream-json';
+  args.push('--verbose');
+  const env = visibleTokens ? { MAX_MCP_OUTPUT_TOKENS: String(visibleTokens) } : null;
+  const { code, out, err } = await runCli(args, prompt, timeoutMs, env);
+  return parseToolStream(out, { code, err });
+}
+
+// "...exceeds maximum allowed tokens. Output has been saved to C:\...\x.txt"
+// → the blocks that file holds: a JSON array of {type, text}.
+function spilledBlocks(text) {
+  const m = String(text).match(/Output has been saved to (.+?\.(?:txt|json))/);
+  if (!m) return null;
+  try {
+    const parsed = JSON.parse(require('fs').readFileSync(m[1].trim(), 'utf8'));
+    const blocks = Array.isArray(parsed) ? parsed : [parsed];
+    return blocks.map((b) => (b && typeof b === 'object' && 'text' in b ? b.text : JSON.stringify(b)));
+  } catch {
+    return null;
+  }
+}
+
+function parseToolStream(out, { code = 0, err = '' } = {}) {
+  const calls = new Map();
+  let final = null;
+  for (const line of String(out).split(/\r?\n/)) {
+    if (!line.trim()) continue;
+    let event;
+    try {
+      event = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    const content = event.message?.content;
+    if (event.type === 'assistant' && Array.isArray(content)) {
+      for (const block of content) {
+        if (block.type === 'tool_use' && /^mcp__/.test(block.name)) {
+          calls.set(block.id, { name: block.name, input: block.input || {}, results: [], error: null });
+        }
+      }
+    } else if (event.type === 'user' && Array.isArray(content)) {
+      for (const block of content) {
+        const call = block.type === 'tool_result' && calls.get(block.tool_use_id);
+        if (!call) continue;
+        let parts = Array.isArray(block.content)
+          ? block.content.filter((p) => p.type === 'text').map((p) => p.text)
+          : [String(block.content ?? '')];
+        const spilled = parts.length === 1 ? spilledBlocks(parts[0]) : null;
+        if (spilled) parts = spilled;
+        if (block.is_error) {
+          call.error = parts.join('\n').slice(0, 500);
+          continue;
+        }
+        for (const text of parts) {
+          try {
+            call.results.push(JSON.parse(text));
+          } catch {
+            call.results.push(text);
+          }
+        }
+      }
+    } else if (event.type === 'result') {
+      final = event;
+    }
+  }
+  if (!final && !calls.size) {
+    throw new Error(`claude -p exited ${code}: ${(err || out).trim().slice(0, 300)}`);
+  }
+  return [...calls.values()];
+}
+
 // Pulls the first JSON object or array out of a model reply, tolerating a
 // code fence or a sentence of preamble — the CLI does not enforce a schema.
 function extractJson(text) {
@@ -139,4 +230,4 @@ function extractJson(text) {
   return JSON.parse(body.slice(start, end + 1));
 }
 
-module.exports = { complete, backend, extractJson, cliArgs, parseCliOutput };
+module.exports = { complete, toolCalls, parseToolStream, spilledBlocks, backend, extractJson, cliArgs, parseCliOutput };

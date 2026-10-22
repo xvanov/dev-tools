@@ -73,7 +73,7 @@ function every(seconds, name, fn) {
 
 async function main() {
   log.info('starting', {
-    graphPoll: config.graph.pollSeconds,
+    m365Poll: config.m365.pollSeconds,
     db: config.databaseUrl.replace(/:[^:@/]*@/, ':***@'),
   });
 
@@ -104,8 +104,14 @@ async function main() {
   const search = require('./search');
   const dispatch = require('./dispatch');
 
-  every(config.graph.pollSeconds, 'graph', async () => {
-    await ingest.runAll(['graph_mail', 'graph_event', 'graph_chat']);
+  every(config.m365.pollSeconds, 'm365', async () => {
+    if (!config.m365.enabled) return;
+    await ingest.runAll(['graph_chat', 'graph_mail']);
+  });
+
+  every(config.m365.calendarPollSeconds, 'calendar', async () => {
+    if (!config.m365.enabled) return;
+    await ingest.runAll(['graph_event']);
   });
 
   every(config.github.pollSeconds, 'github', async () => {

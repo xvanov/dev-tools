@@ -96,15 +96,16 @@ const config = {
 
   databaseUrl: env('PA_DATABASE_URL', 'postgres://pa:pa@127.0.0.1:5433/pa'),
 
-  graph: {
-    clientId: env('PA_GRAPH_CLIENT_ID'),
-    tenantId: env('PA_GRAPH_TENANT_ID', 'organizations'),
-    // Read-only by default. `Mail.Send`/`ChatMessage.Send` are added only when
-    // the operator opts in, because consent for them is a separate ask.
-    scopes: (env('PA_GRAPH_SCOPES', 'Mail.Read Calendars.Read Chat.Read User.Read') || '')
-      .split(/\s+/)
-      .filter(Boolean),
-    pollSeconds: envInt('PA_GRAPH_POLL_SECONDS', 120),
+  // Mail, calendar and Teams through the claude.ai Microsoft 365 connector via
+  // `claude -p` — no app registration, no Graph token. Connect it once with
+  // `/mcp` in Claude Code. Each pass is a headless session, so these polls are
+  // minutes, not seconds.
+  m365: {
+    enabled: env('PA_M365', '1') !== '0',
+    pollSeconds: envInt('PA_M365_POLL_SECONDS', 180),
+    calendarPollSeconds: envInt('PA_M365_CALENDAR_POLL_SECONDS', 900),
+    // Channel posts: `mentions` (kept when they name you), `all`, or `off`.
+    teamsChannels: env('PA_TEAMS_CHANNELS', 'mentions'),
   },
 
   // Through the `gh` CLI and its keyring login — no token in `.env`. Projects

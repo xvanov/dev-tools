@@ -67,7 +67,7 @@ Then:
 ```powershell
 copy .env.example .env      # if install.ps1 did not
 notepad .env                # see below for what each value is
-node bin\pa.js login        # device code — sign in to Microsoft
+node bin\pa.js login        # checks the Microsoft 365 connector, records who you are
 node bin\pa.js projects sync
 node bin\pa.js doctor       # confirms what is wired and what is missing
 Start-ScheduledTask pa-worker
@@ -82,7 +82,7 @@ source cursor, the distillation backlog, and whether termhub is reachable.
 
 | Value | Needed for | Notes |
 |---|---|---|
-| `PA_GRAPH_CLIENT_ID` | mail, calendar, Teams chats | An Entra app registration: single tenant, **Allow public client flows = Yes**, no redirect URI (device-code sign-in needs none). Delegated `Mail.Read`, `Calendars.Read`, `Chat.Read`, `User.Read`. |
+| Microsoft 365 (claude.ai connector) | mail, calendar, Teams chats and channels | No app registration and no token: a headless `claude -p` calls the connector. Connect it once with `/mcp` → *claude.ai Microsoft 365*. `PA_TEAMS_CHANNELS` = `mentions` (default) / `all` / `off`. `PA_M365=0` turns it off. |
 | `ANTHROPIC_API_KEY` | distillation and drafts | Optional. Without it, model calls run through `claude -p` on your own Claude Code login. |
 | GitHub (`gh auth login`) | notifications, PRs, assigned issues, Projects v2 board items | No token in `.env`: ingest runs through the signed-in `gh` CLI. Boards also need `gh auth refresh -s read:project`; `PA_GITHUB_BOARDS=innergy-dev/7:Pod=Xi` follows a pod's cards whoever they are assigned to. `PA_GITHUB=0` turns it off. |
 | Jira (Atlassian connector) | issues you're assigned, reported, or watching | No token: a headless `claude -p` runs the JQL through the claude.ai Atlassian connector. Sign in once with `/mcp` → *claude.ai Atlassian MCP*. `PA_JIRA=0` turns it off. |
@@ -92,15 +92,21 @@ Everything else has a working default. [`SETUP.md`](./SETUP.md) walks through wh
 these actually comes from, click by click — which portal, which menu, which button — and
 [`.env.example`](./.env.example) is the annotated template.
 
-### The permissions wall
+### What the connector can and cannot reach
 
-`Mail.Read`, `Calendars.Read` and `Chat.Read` are delegated scopes that need no admin consent
-*by specification* — but a tenant switch (*User consent for applications*) can still block them,
-in which case even `Mail.Read` asks for admin approval. Team **channel** messages
-(`ChannelMessage.Read.All`) and Teams meeting transcripts via Graph need admin consent
-regardless, which is why meetings are recorded locally instead. [`PLAN.md`](./PLAN.md) §2 has
-the detail and the fallback, and [`IT-REVIEW.md`](./IT-REVIEW.md) is the page to send whoever
-has to approve it.
+The claude.ai Microsoft 365 connector holds a delegated sign-in that IT grants on its enterprise
+app — `pa doctor` prints the grant. On this tenant that covers mail, calendar, Teams chats *and*
+Teams channel posts (`ChannelMessage.Read.All`). Two things it does not give:
+
+- **Meeting transcripts.** The scope is granted, but the tenant switches Graph transcript access
+  off, so meetings are recorded locally instead (see *Always-on capture*).
+- **Sending.** The grant is read-only — no `Mail.Send`, no `ChatMessage.Send`.
+
+Each pass is a headless session: one search since the cursor, then one batch of `read_resource`
+calls for the bodies the search only previewed. The bodies are taken from the tool results in the
+event stream (and from the files Claude Code spills large results to), never retyped by the model.
+Automated mail — GitHub and Jira notifications, no-reply senders — is skipped: those sources are
+ingested directly, with structure.
 
 ## Using it
 
@@ -173,7 +179,7 @@ than from audio, because the exact text is already there.
 ```
 bin/pa.js            the CLI entry point
 src/config.js        every knob, resolved once
-src/ingest/          Graph mail/calendar/chat, GitHub, Jira, Claude sessions, audio episodes
+src/ingest/          Microsoft 365 mail/calendar/Teams (connector), GitHub, Jira, Claude sessions, audio episodes
 src/distill/         the extraction prompt, identity resolution, the pass itself
 src/projects/        the project ↔ repo table and the scorer that guesses
 src/search/          hybrid full-text + vector retrieval

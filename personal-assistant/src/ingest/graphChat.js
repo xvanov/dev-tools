@@ -1,105 +1,151 @@
 'use strict';
 
-// Teams chat ingest — 1:1 and group chats, which is what delegated `Chat.Read`
-// covers. Channel messages need `ChannelMessage.Read.All`, which is admin
-// consent by definition and therefore out of v1 (see PLAN.md §2).
+// Teams ingest — 1:1, group and meeting chats, and channel posts — through the
+// Microsoft 365 connector (see m365.js).
 //
-// There is no single delta feed for "all my chats" on delegated permissions —
-// `/chats/getAllMessages` is application-permission territory. So this walks
-// the chat list and keeps a delta token per chat, all of them in the cursor's
-// `state` blob. That blob is the only place a per-chat token exists; losing it
-// costs a re-read of recent history, which the content hash makes a no-op.
+// One search covers all of it: chat_message_search with `*` since the cursor
+// returns messages from every chat and channel you belong to. The connector's
+// grant includes ChannelMessage.Read.All, which the Entra route never had.
 //
-// Chats are ordered by last activity and capped per pass. A tenant with four
-// hundred chats should not make every poll a four-hundred-request storm — the
-// quiet ones will be picked up on later passes, and their messages are old.
+// Channels are the noisy half. A company's channels are mostly announcements,
+// bots and other teams' threads, and every kept message costs a distillation
+// call. So by default a channel post is kept only when it names you; set
+// PA_TEAMS_CHANNELS=all to keep every post, or off to keep none. Chats are
+// always kept — a chat you are in is addressed to you by construction.
+//
+// The search returns a ~250-character summary. Messages cut short ("…") are
+// read in full through the chat URI form, which works for channel posts too;
+// the channel URI form returns NOT_FOUND for the same message.
 
-const { getAll, getDelta } = require('../graph/client');
+const { config } = require('../config');
+const m365 = require('./m365');
 const { saveItems, getCursor } = require('./store');
 const { htmlToText } = require('../util/text');
+const { logger } = require('../log');
 
-const MAX_CHATS_PER_PASS = 40;
+const log = logger('teams');
 
-function memberNames(chat) {
-  return (chat.members || [])
-    .map((m) => m.displayName || m.email)
-    .filter(Boolean)
-    .join(', ');
+const FIRST_RUN_DAYS = 3;
+
+// teams:///teams/{teamId}/channels/{channelId}/messages → ids, decoded.
+function channelIds(channelUri) {
+  const m = String(channelUri || '').match(/^teams:\/\/\/teams\/([^/]+)\/channels\/([^/]+)\/messages/);
+  return m ? { teamId: decodeURIComponent(m[1]), channelId: decodeURIComponent(m[2]) } : null;
 }
 
-function toItem(msg, chat) {
-  const html = msg.body?.contentType === 'html' ? msg.body?.content : null;
-  const text = html ? htmlToText(html) : msg.body?.content || '';
-  const from = msg.from?.user;
+function isTruncated(summary) {
+  return /(\.\.\.|…)\s*$/.test(String(summary || ''));
+}
 
+function namesMe(text, me) {
+  if (!me) return false;
+  const t = String(text || '').toLowerCase();
+  const first = String(me.displayName || '').split(/\s+/)[0].toLowerCase();
+  return (first.length > 2 && new RegExp(`\\b${first.replace(/[^a-z0-9]/g, '')}\\b`).test(t)) ||
+    t.includes(String(me.mail || '').split('@')[0]);
+}
+
+function readUri(hit) {
+  return hit.chatUri ? `${hit.chatUri}/${hit.id}` : hit.uri;
+}
+
+function bodyOf(hit, full) {
+  const body = full?.body;
+  if (body?.content) return body.contentType === 'html' ? htmlToText(body.content) : body.content;
+  return hit.summary || '';
+}
+
+function toItem(hit, full, chats, me) {
+  const channel = channelIds(hit.channelUri);
+  const chat = chats.get(hit.chatId) || null;
+  const fromEmail = hit.from?.email ? String(hit.from.email).toLowerCase() : null;
+  const text = bodyOf(hit, full);
+  const mentions = Array.isArray(full?.mentions) ? full.mentions : [];
   return {
-    externalId: `${chat.id}/${msg.id}`,
-    threadExternalId: chat.id,
-    occurredAt: msg.createdDateTime || new Date().toISOString(),
-    // Teams gives an AAD object id here, not an address. person_identity is
-    // what turns it back into a human; see distill/identity.js.
-    authorIdentity: from?.id ? `aad:${from.id}` : from?.displayName || null,
-    subject: chat.topic || memberNames(chat) || 'Teams chat',
+    externalId: `${hit.chatId}/${hit.id}`,
+    threadExternalId: hit.chatId,
+    occurredAt: hit.createdDateTime || new Date().toISOString(),
+    authorIdentity: fromEmail || (full?.from?.id ? `aad:${full.from.id}` : hit.from?.displayName || null),
+    subject: channel ? 'Teams channel' : chat?.topic || chat?.members || 'Teams chat',
     bodyText: text,
     raw: {
-      chatType: chat.chatType,
-      chatTopic: chat.topic || null,
-      members: memberNames(chat),
-      fromName: from?.displayName || null,
-      webUrl: chat.webUrl || null,
-      importance: msg.importance || null,
-      mentionsMe: Array.isArray(msg.mentions) && msg.mentions.length > 0,
+      chatType: channel ? 'channel' : chat?.chatType || null,
+      chatTopic: chat?.topic || null,
+      members: chat?.members || null,
+      memberEmails: chat?.memberEmails || [],
+      fromName: hit.from?.displayName || null,
+      webUrl: hit.webUrl || full?.webUrl || null,
+      importance: hit.importance || null,
+      mentionsMe: mentions.some((m) => m.mentioned?.user?.id === me?.id) || namesMe(text, me),
+      teamId: channel?.teamId || null,
+      channelId: channel?.channelId || null,
+      messageId: hit.id,
+      replyToId: full?.replyToId || null,
+      partial: isTruncated(hit.summary) && !full,
     },
   };
 }
 
-async function run() {
-  const cursorKey = 'graph_chat';
-  const cursor = await getCursor(cursorKey);
-  const state = { ...(cursor?.state || {}) };
-  const tokens = { ...(state.tokens || {}) };
-
-  const chats = await getAll(
-    '/me/chats?$expand=members&$orderby=lastMessagePreview/createdDateTime desc&$top=50'
-  );
-
-  let changed = 0;
-  const considered = chats.slice(0, MAX_CHATS_PER_PASS);
-
-  for (const chat of considered) {
-    const start = `/me/chats/${chat.id}/messages/delta`;
-    let result;
-    try {
-      result = await getDelta(start, tokens[chat.id], {
-        headers: { Prefer: 'odata.maxpagesize=50' },
-      });
-    } catch (err) {
-      // One inaccessible chat (a meeting chat you were removed from, a
-      // federated chat the tenant blocks) must not stop the other thirty-nine.
-      if (err.status === 403 || err.status === 404) {
-        tokens[chat.id] = tokens[chat.id] || null;
-        continue;
-      }
-      throw err;
-    }
-
-    const usable = result.items
-      .filter((m) => m.id && !m['@removed'] && (m.body?.content || '').trim())
-      // System messages (joins, renames, call-ended) carry no ask.
-      .filter((m) => m.messageType === 'message')
-      .map((m) => toItem(m, chat));
-
-    if (usable.length) changed += await saveItems('graph_chat', usable, null);
-    if (result.deltaLink) tokens[chat.id] = result.deltaLink;
-  }
-
-  await saveItems('graph_chat', [], {
-    source: cursorKey,
-    deltaToken: null,
-    state: { ...state, tokens, chatsSeen: chats.length },
+// chatId → { chatType, topic, members, memberEmails } for the 25 most recent
+// chats. Used for subjects and for addressing a reply; a chat outside the 25
+// just goes without a topic.
+async function recentChats() {
+  const calls = await require('../llm').toolCalls({
+    prompt: 'Call teams_list_chats once with {"limit": 25}. Then reply with the single word: done',
+    tools: [m365.tool('teams_list_chats')],
+    timeoutMs: 120_000,
   });
+  const map = new Map();
+  for (const call of calls) {
+    for (const c of call.results) {
+      if (!c || !c.id) continue;
+      const members = Array.isArray(c.members) ? c.members : [];
+      map.set(c.id, {
+        chatType: c.chatType || c.type || null,
+        topic: c.topic || null,
+        members: members.map((m) => m.displayName || m.email).filter(Boolean).join(', ') || null,
+        memberEmails: members.map((m) => String(m.email || '').toLowerCase()).filter((e) => e.includes('@')),
+      });
+    }
+  }
+  return map;
+}
 
+function keep(hit, me) {
+  const from = String(hit.from?.email || '').toLowerCase();
+  if (m365.isAutomated(from)) return false;
+  if (!hit.channelUri) return true;
+  const policy = config.m365.teamsChannels;
+  if (policy === 'all') return true;
+  if (policy === 'off') return false;
+  return from === me.mail || namesMe(hit.summary, me);
+}
+
+async function run() {
+  const me = await m365.whoAmI();
+  const cursor = await getCursor('graph_chat');
+  const since = m365.sinceFrom(cursor, { firstRunDays: FIRST_RUN_DAYS });
+  const passStarted = new Date().toISOString();
+
+  const hits = await m365.search(
+    'chat_message_search',
+    { query: '*', afterDateTime: since, limit: 25 },
+    { dateKey: 'createdDateTime' }
+  );
+  const wanted = hits.filter((h) => keep(h, me));
+
+  const chats = wanted.some((h) => !h.channelUri) ? await recentChats().catch(() => new Map()) : new Map();
+  const toRead = wanted.filter((h) => isTruncated(h.summary)).slice(0, m365.MAX_READS).map(readUri);
+  const full = await m365.readAll(toRead);
+
+  const items = wanted.map((h) => toItem(h, full.get(readUri(h)), chats, me));
+  const changed = await saveItems('graph_chat', items, {
+    source: 'graph_chat',
+    deltaToken: null,
+    state: { since: m365.nextSince(passStarted) },
+  });
+  log.info('relayed', { found: hits.length, kept: wanted.length, read: full.size, changed });
   return changed;
 }
 
-module.exports = { run, id: 'graph_chat', toItem };
+module.exports = { run, id: 'graph_chat', toItem, keep, channelIds, isTruncated, namesMe };
