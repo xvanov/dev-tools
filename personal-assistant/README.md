@@ -179,6 +179,31 @@ second model and no GPU contention with the dictation hotkey.
 transcription. Your own Claude Code sessions are captured from their transcripts on disk rather
 than from audio, because the exact text is already there.
 
+## Eval
+
+Every change to retrieval or memory is judged by `pa eval`, not by how a few searches feel. Public
+memory benchmarks are self-reported and don't transfer to your own mail, so the cases are built
+from it. The question types follow LongMemEval: single-session lookup, multi-session aggregation,
+temporal, knowledge update, and abstention.
+
+```
+pa eval seed --n 60          # the model writes realistic questions about sampled items; the item is the gold
+pa eval list -v              # read them; `pa eval drop <id>` the bad ones
+pa eval add "where did we land on the export retries?" --gold 4812   # log a real miss
+pa eval run [--retriever search] [--k 10] [--judge] [--misses]
+```
+
+`run` prints R@5, R@10, MRR and nDCG per question type. It stores the run in `eval_run` and shows
+the change from the previous run of the same retriever. Abstention cases have no gold. They pass
+when the retriever's top score stays under its threshold, and the raw top score is kept so the
+threshold can be calibrated. `--judge` also answers each question from the top-k items with the
+model and grades the answer. It's slow, so it's occasional. The worker runs the cheap
+deterministic eval once a day.
+
+The cases are real questions about real mail, so **they live in the database only**: never in
+fixtures, tests or commits. A new retriever is one `register(...)` line in
+`src/eval/retrievers.js`.
+
 ## Wiring it into your agents
 
 - [`integrations/claude-code/`](./integrations/claude-code/) — register the read-only MCP recall
@@ -195,6 +220,7 @@ src/ingest/          Microsoft 365 mail/calendar/Teams (connector), GitHub, Jira
 src/distill/         the extraction prompt, identity resolution, the pass itself
 src/projects/        the project ↔ repo table and the scorer that guesses
 src/search/          hybrid full-text + vector retrieval
+src/eval/            retrieval eval: metrics, retriever registry, case seeding, runs
 src/brief/           what `pa brief` prints
 src/dashboard/       the loopback web page and its three buttons
 src/llm.js           model calls: API key, or `claude -p` without one

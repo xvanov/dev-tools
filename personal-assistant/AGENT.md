@@ -50,6 +50,15 @@ reply; moving it over is fine.)
 `innergy-knowledge` skill. Do not copy that repo into this store; a second stale copy of the
 org's conventions is worse than none.
 
+**Retrieval changes are judged by `pa eval run`, not by anecdote.** Run it before and after any
+change to `src/search/` or a memory retriever, and put the per-qtype numbers in the commit body.
+A new retriever plugs in with one `register(...)` line in `src/eval/retrievers.js` and is scored
+on the same cases. The metrics in `src/eval/metrics.js` are pure and unit-tested; keep them that
+way.
+
+**Eval cases are private data.** `eval_case` holds real questions about real mail, so it lives in
+Postgres and nowhere else. Tests use invented names; fixtures never hold a real question.
+
 ## Conventions
 
 - **Language:** plain CommonJS JavaScript, matching termhub — which is not TypeScript, and is

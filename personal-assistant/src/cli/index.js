@@ -51,6 +51,7 @@ const HELP = `pa — your context layer
     pa migrate                      apply database migrations
     pa mic status|pause <mins>|on   always-on capture control
     pa doctor                       what is configured, what is stale, what is broken
+    pa eval seed|list|add|drop|run  retrieval eval harness (pa eval for details)
 `;
 
 function out(text) {
@@ -480,6 +481,93 @@ const commands = {
     out(`capture: paused until ${until}`);
   },
 
+  // The retrieval eval harness. Cases live in the database only — they are
+  // real questions about real mail.
+  async eval(args, flags) {
+    const ev = require('../eval');
+    const action = args[0] || 'help';
+
+    if (action === 'seed') {
+      const { seed } = require('../eval/seed');
+      const n = flagInt(flags, 'n', 60);
+      out(`seeding ~${n} cases — one model call each, this takes a while`);
+      const r = await seed({
+        n,
+        only: flags.qtype ? String(flags.qtype) : null,
+        progress: (c) => out(`  + #${c.id} ${c.qtype.padEnd(16)} ${c.question}`),
+      });
+      const made = Object.entries(r.made).map(([q, k]) => `${q} ${k}/${r.planned[q]}`).join(' · ');
+      return out(`seeded: ${made || 'nothing'} — prune with \`pa eval list\` / \`pa eval drop <id>\``);
+    }
+
+    if (action === 'list') {
+      const list = await ev.listCases({ all: flagBool(flags, 'all'), qtype: flags.qtype ? String(flags.qtype) : null });
+      if (!list.length) return out('no eval cases — `pa eval seed` or `pa eval add`');
+      for (const c of list) {
+        out(
+          `${String(c.id).padStart(5)} ${c.active ? ' ' : 'x'} ${c.qtype.padEnd(16)} ${c.question}` +
+            `\n        gold ${c.gold_item_ids.length ? c.gold_item_ids.join(',') : '(none)'} · ${c.origin}` +
+            (flagBool(flags, 'v') || flagBool(flags, 'verbose')
+              ? `\n        answer: ${c.gold_answer ?? '(abstain)'}${c.notes ? `\n        notes: ${c.notes}` : ''}`
+              : '')
+        );
+      }
+      return;
+    }
+
+    if (action === 'drop' || action === 'restore') {
+      const ids = args.slice(1).flatMap((a) => a.split(',')).map(Number).filter(Boolean);
+      if (!ids.length) return fail(`usage: pa eval ${action} <id>[,<id>...]`);
+      for (const id of ids) {
+        const ok = await ev.setActive(id, action === 'restore');
+        out(ok ? `${action === 'drop' ? 'deactivated' : 'restored'} #${id}` : `no case #${id}`);
+      }
+      return;
+    }
+
+    if (action === 'add') {
+      const question = args.slice(1).join(' ').trim();
+      if (!question) return fail('usage: pa eval add "<question>" --gold 123,456 [--answer "..."] [--qtype t]');
+      const gold = flags.gold && flags.gold !== true ? String(flags.gold).split(',').map(Number).filter(Boolean) : [];
+      const row = await ev.addCase({
+        question,
+        gold,
+        answer: flags.answer && flags.answer !== true ? String(flags.answer) : null,
+        qtype: flags.qtype ? String(flags.qtype) : null,
+        origin: flags.origin ? String(flags.origin) : 'miss',
+      });
+      return out(`added #${row.id} (${row.qtype})`);
+    }
+
+    if (action === 'run') {
+      const threshold = flags.threshold != null && flags.threshold !== true ? Number(flags.threshold) : null;
+      const r = await ev.run({
+        retriever: flags.retriever ? String(flags.retriever) : 'search',
+        k: flagInt(flags, 'k', 10),
+        judge: flagBool(flags, 'judge'),
+        threshold,
+      });
+      if (!r) return out('no active eval cases — `pa eval seed` first');
+      out(`eval run #${r.id} · ${r.retriever} · ${r.config.cases} cases · k=${r.config.k} · threshold ${r.config.threshold} · ${r.config.ms}ms`);
+      out(ev.metrics.formatTable(r.metrics, r.delta));
+      out(r.prev ? `delta vs run #${r.prev.id} (${relative(r.prev.ran_at)})` : 'first run for this retriever — no delta');
+      if (flagBool(flags, 'misses')) {
+        for (const s of r.perCase.filter((s) => (s.abstention ? !s.abstained : !s.first_hit || s.first_hit > 5))) {
+          out(`  miss #${s.id} ${s.qtype} ${s.abstention ? `top ${s.top_score?.toFixed(4)}` : `first hit ${s.first_hit ?? '-'}`}`);
+        }
+      }
+      return;
+    }
+
+    out(`pa eval — retrieval eval harness
+    pa eval seed [--n 60] [--qtype t]          generate cases from real items
+    pa eval list [--all] [--qtype t] [-v]      cases (x = deactivated)
+    pa eval drop <id>[,id]  /  restore <id>    deactivate a bad case / bring it back
+    pa eval add "<question>" --gold 1,2 [--answer "..."]   log a miss by hand
+    pa eval run [--retriever search] [--k 10] [--threshold x] [--judge] [--misses]
+  retrievers: ${ev.retrievers.names().join(', ')}`);
+  },
+
   async doctor() {
     const lines = [];
     const mark = (ok, label, detail) =>
@@ -603,6 +691,14 @@ const commands = {
     lines.push('');
     lines.push(`  ${counts.items} items · ${counts.open_commitments} open commitments · ${await distill.pendingCount()} awaiting distillation`);
     lines.push(`  ${counts.live_runs} live runs · ${counts.pending_drafts} pending drafts · ${counts.failed_items} items failed distillation`);
+    const evalState = await db
+      .one(`select (select count(*) from eval_case where active)::int as cases, (select max(ran_at) from eval_run) as last`)
+      .catch(() => null);
+    lines.push(
+      evalState
+        ? `  eval: ${evalState.cases} active cases · last run ${relative(evalState.last)}${evalState.cases ? '' : ' — `pa eval seed`'}`
+        : '  eval: tables missing — run `pa migrate`'
+    );
 
     // Audio
     const paused = fs.existsSync(config.audio.pauseFile);

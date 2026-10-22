@@ -156,6 +156,11 @@ async function main() {
     await dispatch.reconcile();
   });
 
+  // Deterministic retrieval eval; a no-op with no cases, at most once a day.
+  every(86400, 'eval', async () => {
+    await require('./eval').nightly();
+  });
+
   every(3600, 'retention', async () => {
     const result = await db.query(
       `delete from source_item
