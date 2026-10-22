@@ -16,10 +16,16 @@ function getPool() {
   if (!pool) {
     pool = new Pool({
       connectionString: config.databaseUrl,
-      max: 8,
+      // The worker runs a dozen passes concurrently (one every 5 s for the
+      // Teams cache), holds one connection for its single-instance lock, and
+      // serves the dashboard. Eight was enough before that; passes then queued
+      // for a client past the timeout and failed with "Connection terminated
+      // due to connection timeout" — a pool wait, not a dead database.
+      max: 20,
       idleTimeoutMillis: 30_000,
-      // A dead Postgres should fail the command, not hang the CLI.
-      connectionTimeoutMillis: 5_000,
+      // A dead Postgres should fail the command, not hang the CLI. The
+      // timeout also bounds the wait for a free pool slot, hence not 5 s.
+      connectionTimeoutMillis: 15_000,
     });
     pool.on('error', () => {
       // An idle client dying is not fatal; pg will make another. Swallowing it
