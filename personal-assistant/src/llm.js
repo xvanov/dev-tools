@@ -178,7 +178,10 @@ async function toolCalls({ prompt, tools, effort = 'low', timeoutMs = 300_000, v
 // "...exceeds maximum allowed tokens. Output has been saved to C:\...\x.txt"
 // → the blocks that file holds: a JSON array of {type, text}.
 function spilledBlocks(text) {
-  const m = String(text).match(/Output has been saved to (.+?\.(?:txt|json))/);
+  // Two spellings across Claude Code versions: "Output has been saved to X"
+  // and "<persisted-output> … Full output saved to: X". Missing the newer one
+  // silently dropped every large page (a 25-event calendar page is ~70KB).
+  const m = String(text).match(/(?:Output has been saved to|Full output saved to:)\s*(.+?\.(?:txt|json))/);
   if (!m) return null;
   try {
     const parsed = JSON.parse(require('fs').readFileSync(m[1].trim(), 'utf8'));

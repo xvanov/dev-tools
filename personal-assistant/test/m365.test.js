@@ -42,6 +42,14 @@ const result = (id, content, isError = false) =>
   assert.strictEqual(calls[1].results[0].body.content, 'long');
   assert.ok(calls[2].error.includes('NOT_FOUND'));
   assert.throws(() => parseToolStream('not json'), /claude -p exited/);
+
+  // The newer spelling of the same spill.
+  const { spilledBlocks } = require('../src/llm');
+  const spill2 = path.join(os.tmpdir(), `pa-spill2-${process.pid}.json`);
+  fs.writeFileSync(spill2, JSON.stringify([{ type: 'text', text: '{"id":"c"}' }]));
+  const blocks = spilledBlocks(`<persisted-output>\nOutput too large (73.6KB). Full output saved to: ${spill2}\n\nPreview (first 2KB): ...`);
+  fs.unlinkSync(spill2);
+  assert.deepStrictEqual(blocks, ['{"id":"c"}']);
 }
 
 // paging: trailer means more; one failed page is tolerated, all failed is not
@@ -60,6 +68,12 @@ const result = (id, content, isError = false) =>
   assert.strictEqual(partial.items.length, 1);
   assert.strictEqual(partial.more, true);
   assert.throws(() => searchResults([{ name, error: 'boom', results: [] }], 'outlook_email_search'), /boom/);
+
+  // Two occurrences of one recurring meeting: same id, different start — both kept.
+  const cal = `${PREFIX}outlook_calendar_search`;
+  const occ = (day) => ({ id: 'series1', start: { dateTime: `2026-10-${day}T09:00:00`, timeZone: 'UTC' } });
+  const c = searchResults([{ name: cal, error: null, results: [occ(22), occ(23), occ(23)] }], 'outlook_calendar_search');
+  assert.strictEqual(c.items.length, 2);
 }
 
 // automated senders
@@ -130,6 +144,26 @@ const result = (id, content, isError = false) =>
   assert.strictEqual(ev.authorIdentity, 'brannoc@example.com');
   assert.deepStrictEqual(ev.raw.attendees, ['a@x.com']);
   assert.strictEqual(ev.raw.isOnlineMeeting, true);
+  // Occurrences of one series share the event id; the start keeps them apart.
+  assert.strictEqual(ev.externalId, 'e1@2026-10-22T10:00:00Z');
+  const next = calendar.toItem({ id: 'e1', recurrence: 'weekly', start: { dateTime: '2026-10-29T10:00:00.0000000', timeZone: 'UTC' } });
+  assert.notStrictEqual(next.externalId, ev.externalId);
+  assert.strictEqual(next.threadExternalId, 'e1');
+}
+
+// calendar windows: the near window always; the far slices only when an hour
+// has passed since they were last read, and together they cover the range.
+{
+  const now = new Date('2026-10-22T12:00:00Z');
+  const first = calendar.windows(now);
+  assert.strictEqual(first.far, true);
+  assert.deepStrictEqual(first.windows[0], ['2026-10-20T12:00:00.000Z', '2026-10-30T12:00:00.000Z']);
+  assert.strictEqual(first.windows.length, 1 + 1 + 4); // near, back, four forward slices to +30d
+  assert.strictEqual(first.windows[first.windows.length - 1][1], '2026-11-21T12:00:00.000Z');
+
+  const soon = calendar.windows(now, { lastFarAt: '2026-10-22T11:30:00Z' });
+  assert.strictEqual(soon.far, false);
+  assert.strictEqual(soon.windows.length, 1);
 }
 
 console.log('m365 ok');

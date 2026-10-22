@@ -36,12 +36,21 @@ function isoOf(t) {
   return /^(utc|gmt|etc\/utc)$/i.test(zone) ? `${base}Z` : base;
 }
 
+function occurrenceId(ev) {
+  return `${ev.id}@${isoOf(ev.start) || 'unknown'}`;
+}
+
 function toItem(ev) {
   const attendees = (ev.attendees || []).map((a) => String(a).toLowerCase()).filter((a) => a.includes('@'));
   const start = isoOf(ev.start);
+  // Every occurrence of a recurring meeting comes back with the series' id,
+  // so the id alone made each occurrence overwrite the last — the store kept
+  // one row per series, dated at its furthest occurrence, and "today's
+  // stand-up" did not exist. The start time makes an occurrence an occurrence;
+  // the bare id threads them into a series.
   return {
-    externalId: ev.id,
-    threadExternalId: ev.seriesMasterId || null,
+    externalId: occurrenceId(ev),
+    threadExternalId: ev.seriesMasterId || (ev.recurrence ? ev.id : null),
     occurredAt: start || new Date().toISOString(),
     authorIdentity: ev.organizer ? String(ev.organizer).toLowerCase() : null,
     subject: ev.subject || '(untitled meeting)',
@@ -60,24 +69,59 @@ function toItem(ev) {
   };
 }
 
+// The windows a pass reads. One search over five weeks silently lost the
+// current week — the connector pages 25 at a time and the relay does not
+// reliably walk every page of a wide range — and the current week is the one
+// that matters (briefs, audio classification). So: the near window (two days
+// back, eight forward) every pass, and the rest of the five weeks in week-sized
+// slices at most hourly. Pure, so the split is testable.
+const NEAR_BACK_DAYS = 2;
+const NEAR_FORWARD_DAYS = 8;
+const FAR_EVERY_MS = 3600_000;
+
+function windows(now, { lastFarAt = null } = {}) {
+  const day = 86400_000;
+  const t = now.getTime();
+  const iso = (ms) => new Date(ms).toISOString();
+  const out = [[iso(t - NEAR_BACK_DAYS * day), iso(t + NEAR_FORWARD_DAYS * day)]];
+  const far = !lastFarAt || t - new Date(lastFarAt).getTime() >= FAR_EVERY_MS;
+  if (far) {
+    out.push([iso(t - WINDOW_BACK_DAYS * day), iso(t - NEAR_BACK_DAYS * day)]);
+    for (let start = NEAR_FORWARD_DAYS; start < WINDOW_FORWARD_DAYS; start += 7) {
+      out.push([iso(t + start * day), iso(t + Math.min(start + 7, WINDOW_FORWARD_DAYS) * day)]);
+    }
+  }
+  return { windows: out, far };
+}
+
 async function run() {
   await m365.whoAmI();
-  const after = new Date(Date.now() - WINDOW_BACK_DAYS * 86400_000).toISOString();
-  const before = new Date(Date.now() + WINDOW_FORWARD_DAYS * 86400_000).toISOString();
-  const events = await m365.search('outlook_calendar_search', {
-    query: '*',
-    afterDateTime: after,
-    beforeDateTime: before,
-    order: 'oldest',
-    limit: 25,
-  });
+  const now = new Date();
+  const cursor = await require('./store').getCursor('graph_event');
+  const plan = windows(now, { lastFarAt: cursor?.state?.lastFarAt });
+
+  const byId = new Map();
+  for (const [after, before] of plan.windows) {
+    const events = await m365.search('outlook_calendar_search', {
+      query: '*',
+      afterDateTime: after,
+      beforeDateTime: before,
+      order: 'oldest',
+      limit: 25,
+    });
+    for (const ev of events) byId.set(occurrenceId(ev), ev);
+  }
+  const events = [...byId.values()];
   const changed = await saveItems('graph_event', events.map(toItem), {
     source: 'graph_event',
     deltaToken: null,
-    state: { window: [after, before] },
+    state: {
+      window: [plan.windows[0][0], plan.windows[0][1]],
+      lastFarAt: plan.far ? now.toISOString() : cursor?.state?.lastFarAt || null,
+    },
   });
-  log.info('relayed', { events: events.length, changed });
+  log.info('relayed', { events: events.length, windows: plan.windows.length, changed });
   return changed;
 }
 
-module.exports = { run, id: 'graph_event', toItem, isoOf };
+module.exports = { run, id: 'graph_event', toItem, isoOf, windows, occurrenceId };

@@ -106,8 +106,11 @@ function searchResults(calls, toolName) {
     for (const r of call.results) {
       if (!r || typeof r !== 'object') continue;
       if (r.nextOffset !== undefined || r.nextCursor) more = true;
-      if (!r.id || seen.has(r.id)) continue;
-      seen.add(r.id);
+      // Calendar occurrences of one series share an id; their start is what
+      // tells them apart. Keying on the id alone kept one meeting per series.
+      const key = r.id && r.start ? `${r.id}@${JSON.stringify(r.start)}` : r.id;
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
       items.push(r);
     }
   }
