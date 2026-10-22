@@ -16,10 +16,12 @@ const { logger } = require('../log');
 
 const log = logger('jira');
 
-const TOOLS = [
-  'mcp__claude_ai_Atlassian_MCP__getAccessibleAtlassianResources',
-  'mcp__claude_ai_Atlassian_MCP__searchJiraIssuesUsingJql',
-];
+// Both names the claude.ai Atlassian connector has gone by: whichever one the
+// operator has signed in to is the one the session can reach.
+const TOOLS = ['Atlassian_MCP', 'Atlassian'].flatMap((server) => [
+  `mcp__claude_ai_${server}__getAccessibleAtlassianResources`,
+  `mcp__claude_ai_${server}__searchJiraIssuesUsingJql`,
+]);
 
 function configured() {
   return config.jira.enabled;
