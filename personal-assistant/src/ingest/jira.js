@@ -117,7 +117,21 @@ async function run() {
     effort: 'low',
     timeoutMs: 240_000,
   });
-  const { cloudId: gotCloud, site, issues } = parseReply(text);
+  let parsed;
+  try {
+    parsed = parseReply(text);
+  } catch (err) {
+    // The relay explains itself in prose when it cannot reach the connector
+    // ("tools aren't available", "still connecting"). That sentence is the
+    // diagnosis; "no JSON" is not.
+    const said = String(text || '').replace(/\s+/g, ' ').trim().slice(0, 160);
+    throw new Error(
+      /not available|aren't available|connecting|authori[sz]e|\/mcp/i.test(said)
+        ? `Atlassian connector unreachable — check /mcp (relay said: ${said})`
+        : `${err.message}: ${said}`
+    );
+  }
+  const { cloudId: gotCloud, site, issues } = parsed;
 
   const changed = await saveItems('jira_issue', issues.map((i) => issueItem(i, site)), {
     source: 'jira',
