@@ -16,6 +16,10 @@
 // opens the reply, already written, in Teams or Outlook; the human presses
 // Send there, then tells the page they did. This tool has no path that puts a
 // message on the wire (see draft/deliver.js).
+//
+// Its Needs-you panel answers secret requests (src/secrets). A pasted value
+// arrives in one POST, goes straight to Credential Manager or `.env`, and the
+// reply is `{ok, stored, name}`. No route here returns a value.
 
 const fs = require('fs');
 const path = require('path');
@@ -52,7 +56,9 @@ async function state() {
   // The Memory tab's badge: claims waiting for a human to vouch for them.
   const review = await rows(`select count(*)::int as n from claim where status = 'pending_review'`).catch(() => [{ n: 0 }]);
   const closed = await require('../commitments').recentlyClosed().catch(() => []);
-  return { ...data, drafts, sources, closed, memoryPending: review[0].n, now: new Date().toISOString() };
+  // Secret and login requests: names and guidance only — the table holds no values.
+  const secretRequests = await require('../secrets').pending().catch(() => []);
+  return { ...data, drafts, sources, closed, memoryPending: review[0].n, secretRequests, now: new Date().toISOString() };
 }
 
 function send(res, status, body, type = 'application/json') {
@@ -92,6 +98,10 @@ async function handle(req, res) {
   if (req.method === 'GET' && url.pathname === '/api/state') {
     return send(res, 200, await state());
   }
+  if (req.method === 'GET' && url.pathname === '/api/secrets') {
+    const r = await require('../secrets').list();
+    return send(res, 200, { secrets: r.secrets, pending: r.pending, vaultError: r.vaultError });
+  }
 
   // The Memory tab (dashboard/memory.js). Same guards: a POST needs X-PA.
   if (url.pathname.startsWith('/api/memory/')) {
@@ -105,7 +115,20 @@ async function handle(req, res) {
     if (req.headers['x-pa'] !== '1') return send(res, 403, { error: 'missing X-PA header' });
     const body = await readJson(req);
 
-    let m = url.pathname.match(/^\/api\/commitments\/(\d+)\/status$/);
+    // A pasted secret goes from this body straight into the store. The reply
+    // says where it went and never carries the value (AGENT.md, Secrets).
+    let m = url.pathname.match(/^\/api\/secrets\/(\d+)\/(fulfil|decline|done)$/);
+    if (m) {
+      const secrets = require('../secrets');
+      const id = Number(m[1]);
+      if (m[2] === 'decline') return send(res, 200, { ok: true, ...(await secrets.decline(id)) });
+      if (m[2] === 'done') return send(res, 200, { ok: true, ...(await secrets.loginDone(id)) });
+      const target = body.target === 'env-file' ? 'env-file' : body.target ? 'credential-manager' : undefined;
+      const r = await secrets.fulfil(id, typeof body.value === 'string' ? body.value : '', { target });
+      return send(res, 200, { ok: r.ok, stored: r.stored, name: r.name });
+    }
+
+    m = url.pathname.match(/^\/api\/commitments\/(\d+)\/status$/);
     if (m) {
       const { setStatus } = require('../commitments');
       return send(res, 200, await setStatus(Number(m[1]), String(body.status)));

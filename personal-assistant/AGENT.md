@@ -65,10 +65,19 @@ corroborate with `duplicate_of`; `forget` sets `status = 'retracted'`. No memory
 claims, consolidation, pages — says so, and nothing a message says can change what a pass does:
 no pass takes an action other than writing rows. Keep it that way when adding one.
 
-**Agents propose memory; humans decide it.** The MCP server's only write is `remember`, which
+**Agents propose memory; humans decide it.** The MCP server's only memory write is `remember`, which
 stores a `pending_review` claim (`origin = 'agent'`) that no read path believes and no
 consolidation sees until it is approved in the dashboard. An agent's note may be something it
 read in an email. Do not add MCP tools that approve, forget, or write active claims.
+
+**Secret values flow browser → store; no model, log, API response or MCP result ever contains
+one.** A credential is asked for with a `secret_request` row (names, purpose, hints — the table
+has no value column) and answered in the dashboard or with `pa secret set`; the value goes
+straight into Windows Credential Manager or the gitignored `.env`, and the reply says only where.
+The vault is reached through PowerShell with the value on **stdin, never argv**. Code reads a
+secret with `config.secret(name)` and nothing else; errors are scrubbed of it. Agents may
+`request_secret` and ask `secret_status` (configured or not); do not add a tool, endpoint or CLI
+verb that shows a value. `test/secrets.test.js` fails if one echoes.
 
 **Raven stays a skill.** Company engineering conventions are read through the existing
 `innergy-knowledge` skill. Do not copy that repo into this store; a second stale copy of the
@@ -92,9 +101,12 @@ Postgres and nowhere else. Tests use invented names; fixtures never hold a real 
 - **No job queue.** "Work to do" is a query — items with no distillation row at the current
   prompt version. A queue table can get stuck, leak, or need draining after a crash; a query
   cannot. The worker is a scheduler of periodic passes, and passes never overlap themselves.
-- **Secrets:** never in the repo, never in Postgres in plaintext. There are almost none: GitHub,
-  Jira and Microsoft 365 ride on logins that already exist (`gh`, the claude.ai connectors), and
-  API keys come from the environment.
+- **Secrets:** never in the repo, never in Postgres at all. There are few: GitHub and Microsoft
+  365 ride on logins that already exist (`gh`, the claude.ai connectors); Jira prefers an API
+  token (`PA_JIRA_API_TOKEN`) and falls back to its connector. A secret resolves real env →
+  Windows Credential Manager → `.env` through `config.secret(name)`; a missing one is `null`,
+  shows as "not configured" in `pa doctor`, and code that needs it calls
+  `requestSecret({name, purpose, hint})` (`src/secrets`) instead of failing quietly.
 - **Times:** store UTC, render local. Every `due_at` the distiller writes is absolute — a row
   that says "Friday" is a bug.
 - **Logs:** message bodies are not log material. Log ids, counts, and durations.

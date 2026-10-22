@@ -52,6 +52,12 @@ const HELP = `pa — your context layer
     pa forget <claim>|item:<id>     retract it; pages are rebuilt without it
     pa help memory                  every memory verb
 
+  Secrets
+    pa secret list                  names, where each is stored, when set — never values
+    pa secret set <NAME>            hidden prompt → Windows Credential Manager
+    pa secret request <NAME> --purpose "…"  ask for it in the dashboard instead
+    pa help secret                  every secret verb
+
   Plumbing
     pa login                        check the Microsoft 365 connector and record who you are
     pa sync [--source s]            force an ingest pass
@@ -643,10 +649,23 @@ const commands = {
       return;
     }
 
+    // A failing sign-in check also opens a login request in the dashboard
+    // (deduplicated by key), and a passing one closes it. Best effort: an
+    // unmigrated store must not break the doctor that says to migrate it.
+    const secrets = require('../secrets');
+    const login = (ok, req) =>
+      (ok ? secrets.resolveLogin(req.key) : secrets.requestLogin({ ...req, requestedBy: 'doctor' })).catch(() => {});
+
     // Microsoft
     if (config.m365.enabled) {
       const m365 = require('../ingest/m365');
       const scopes = await m365.grantedScopes().catch((err) => err);
+      await login(!(scopes instanceof Error), {
+        key: 'login:m365',
+        purpose: 'Re-authenticate the Microsoft 365 connector',
+        hint: 'In Claude Code run /mcp, pick claude.ai Microsoft 365, choose Authenticate, then `pa login`.',
+        command: '/mcp',
+      });
       if (scopes instanceof Error) {
         mark(false, 'microsoft 365', `${scopes.message.split('\n')[0]} — /mcp → claude.ai Microsoft 365`);
       } else {
@@ -665,24 +684,44 @@ const commands = {
     if (github.configured()) {
       const gh = await github.status();
       mark(gh.ok, 'github', gh.ok ? `gh · ${gh.login}` : `gh not signed in — run \`gh auth login\``);
+      await login(gh.ok, {
+        key: 'login:github',
+        purpose: 'Sign in to GitHub with the gh CLI',
+        hint: 'Run this in a terminal and follow the browser prompt.',
+        command: 'gh auth login',
+      });
       if (gh.ok) {
         const boards = gh.scopes.includes('read:project') || gh.scopes.includes('project');
         mark(boards, 'github projects', boards ? 'read:project granted' : 'run `gh auth refresh -s read:project`');
+        await login(boards, {
+          key: 'login:github-projects',
+          purpose: 'Let gh read GitHub project boards',
+          hint: 'Run this in a terminal; it adds the read:project scope to your existing gh login.',
+          command: 'gh auth refresh -s read:project',
+        });
       }
     }
-    // Jira has no local credential to inspect: the connector sign-in lives in
-    // Claude Code. The last pass's outcome is the only honest signal.
+    // Jira: with the PA_JIRA_API_TOKEN secret it is a REST call and the token
+    // is checkable; without it the connector sign-in lives in Claude Code and
+    // the last pass's outcome is the only honest signal.
     if (config.jira.enabled) {
+      const jira = require('../ingest/jira');
       const jc = await db.one("select last_run_at, last_error, state from sync_cursor where source = 'jira'").catch(() => null);
+      const rest = await jira.restAuth(jc).catch(() => ({ ok: false, missing: [] }));
+      const ok = Boolean(jc && !jc.last_error && (jc.state?.cloudId || jc.state?.site));
       mark(
-        Boolean(jc && !jc.last_error && jc.state?.cloudId),
+        ok,
         'jira',
         !jc
-          ? 'never run — `pa sync --source jira` (needs the Atlassian connector signed in via /mcp)'
+          ? `never run — \`pa sync --source jira\`${rest.ok ? '' : ' (needs a PA_JIRA_API_TOKEN or the Atlassian connector)'}`
           : jc.last_error
-            ? `last pass failed: ${jc.last_error.slice(0, 80)} — check /mcp → claude.ai Atlassian MCP`
-            : `connector · ${jc.state?.site || jc.state?.cloudId}`
+            ? `last pass failed: ${jc.last_error.slice(0, 80)}${rest.ok ? '' : ' — `pa secret set PA_JIRA_API_TOKEN`'}`
+            : `${jc.state?.via === 'rest' ? 'REST' : 'connector'} · ${jc.state?.site || jc.state?.cloudId}`
       );
+      lines.push(
+        `       api token                ${rest.ok ? `${rest.source} · ${rest.email}` : `not configured (missing ${rest.missing.join(', ') || '?'})`}`
+      );
+      if (!ok && !rest.ok) await jira.requestCredentials(rest, 'doctor').catch(() => {});
     }
     // No key is fine: model calls fall back to `claude -p` on your own login.
     const llm = require('../llm');
@@ -770,6 +809,15 @@ const commands = {
       lines.push(`  memory: not migrated (${err.message.slice(0, 60)}) — run \`pa migrate\``);
     }
 
+    const waiting = await secrets.pending().catch(() => null);
+    lines.push(
+      !waiting
+        ? '  secrets: requests table missing — run `pa migrate`'
+        : waiting.length
+          ? `  secrets: ${waiting.length} waiting for you — ${waiting.map((w) => w.name).join(', ')} (dashboard → Needs you)`
+          : '  secrets: nothing waiting · `pa secret list`'
+    );
+
     // Audio
     const paused = fs.existsSync(config.audio.pauseFile);
     lines.push('');
@@ -812,13 +860,14 @@ async function learnAliases(projectId, commitment, item, commitmentId) {
 }
 
 Object.assign(commands, require('./memory').make(out, fail));
+Object.assign(commands, require('./secret').make(out, fail));
 
 async function main(argv) {
   const { command, args, flags } = parseArgs(argv);
   const name = command || 'help';
 
   if (flags.help || name === 'help' || name === '--help') {
-    out(args[0] === 'memory' ? require('./memory').HELP : HELP);
+    out(args[0] === 'memory' ? require('./memory').HELP : args[0] === 'secret' ? require('./secret').HELP : HELP);
     return;
   }
 

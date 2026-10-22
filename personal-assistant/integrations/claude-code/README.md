@@ -18,9 +18,12 @@ It exposes:
 - `memory_page` — a person, a project, `me` or `index`.
 - `explain_claim` — why a fact is believed: quote, source, what it replaced.
 - `remember` — proposes a fact; it waits in the dashboard's review queue until you approve it.
+- `request_secret` — asks you for a credential in the dashboard; returns a request id, never a
+  value. `secret_status` says whether one is configured, and where.
 - `brief_me`, `search_context`, `get_thread`, `open_commitments`, `who_is`, `repo_state`.
 
-**It is read-only on purpose**, except for `remember`, which only proposes. A server that could
+**It is read-only on purpose**, except for `remember` and `request_secret`, which only ask. No
+tool returns a secret value. A server that could
 dispatch runs, send mail or rewrite memory would put those actions one prompt-injected email
 away — and this store is full of text other people wrote. Dispatching, sending, approving and
 forgetting stay in the CLI and the dashboard, where a human does them.

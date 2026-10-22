@@ -121,12 +121,19 @@ const config = {
     boardsSpec: env('PA_GITHUB_BOARDS', ''),
   },
 
-  // Through the claude.ai Atlassian connector via `claude -p` — no Jira token.
-  // Sign in once with `/mcp` in Claude Code. The cloud id is discovered on the
-  // first pass and remembered; set it only to pin a site.
+  // Two routes. With an API token (the `PA_JIRA_API_TOKEN` secret, see
+  // `secret()` below) and an email, Jira's REST API directly. Without one,
+  // the claude.ai Atlassian connector via `claude -p`, signed in once with
+  // `/mcp`. The site and cloud id are discovered by the connector on its
+  // first pass and remembered; set them only to pin a site.
   jira: {
     enabled: env('PA_JIRA', '1') !== '0',
     cloudId: env('PA_JIRA_CLOUD_ID'),
+    // `acme` or `https://acme.atlassian.net`.
+    site: env('PA_JIRA_SITE'),
+    // The Atlassian account the token belongs to. Defaults to the Microsoft
+    // 365 address `pa login` recorded.
+    email: env('PA_JIRA_EMAIL'),
     pollSeconds: envInt('PA_JIRA_POLL_SECONDS', 900),
   },
 
@@ -237,4 +244,63 @@ const config = {
   },
 };
 
-module.exports = { config, env, envInt, parseEnvFile };
+// ------------------------------------------------------------- secrets ----
+// `secret(name)`: a credential, resolved real env → Windows Credential
+// Manager → `.env` (this tool's, then the repo root's). Same rule as above:
+// nothing secret has a default, a missing one is null and its feature reports
+// itself "not configured".
+//
+// Values are cached in memory once found. A miss is cached for a minute only,
+// so a token pasted into the dashboard or set with `pa secret set` in another
+// process is picked up without restarting the worker. The value is returned
+// to the caller and nowhere else: never logged, never put in an error.
+
+const secretCache = new Map();
+const MISS_TTL_MS = 60_000;
+
+function envFileSecret(name) {
+  const tool = parseEnvFile(path.join(TOOL_DIR, '.env'))[name];
+  if (tool) return { value: tool, source: '.env' };
+  const root = parseEnvFile(path.join(REPO_ROOT, '.env'))[name];
+  return root ? { value: root, source: 'repo .env' } : null;
+}
+
+function resolveSecret(name) {
+  const hit = secretCache.get(name);
+  if (hit && (hit.value !== null || Date.now() - hit.at < MISS_TTL_MS)) return hit;
+  let found = null;
+  if (process.env[name]) found = { value: process.env[name], source: 'env' };
+  if (!found) {
+    const vault = require('./secrets/vault');
+    if (vault.available()) {
+      try {
+        const v = vault.get(name);
+        if (v) found = { value: v, source: 'credential-manager' };
+      } catch {
+        // An unreachable vault is a miss, not a crash; `pa secret list`
+        // reports the vault's own error.
+      }
+    }
+  }
+  if (!found) found = envFileSecret(name);
+  const entry = { value: found ? found.value : null, source: found ? found.source : null, at: Date.now() };
+  secretCache.set(name, entry);
+  return entry;
+}
+
+function secret(name) {
+  return resolveSecret(name).value;
+}
+
+// Where a secret comes from ('env' | 'credential-manager' | '.env' | 'repo .env'),
+// or null — for `pa doctor` and the dashboard, which must never see the value.
+function secretSource(name) {
+  return resolveSecret(name).source;
+}
+
+function forgetSecret(name) {
+  if (name) secretCache.delete(name);
+  else secretCache.clear();
+}
+
+module.exports = { config, env, envInt, parseEnvFile, secret, secretSource, forgetSecret };

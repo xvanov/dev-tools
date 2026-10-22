@@ -87,7 +87,7 @@ source cursor, the distillation backlog, and whether termhub is reachable.
 | Microsoft 365 (claude.ai connector) | mail, calendar, Teams chats and channels | No app registration and no token: a headless `claude -p` calls the connector. Connect it once with `/mcp` → *claude.ai Microsoft 365*. `PA_TEAMS_CHANNELS` = `mentions` (default) / `all` / `off`. `PA_M365=0` turns it off. |
 | `ANTHROPIC_API_KEY` | distillation and drafts | Optional. Without it, model calls run through `claude -p` on your own Claude Code login. |
 | GitHub (`gh auth login`) | notifications, PRs, assigned issues, Projects v2 board items | No token in `.env`: ingest runs through the signed-in `gh` CLI. Boards also need `gh auth refresh -s read:project`; `PA_GITHUB_BOARDS=innergy-dev/7:Pod=Xi` follows a pod's cards whoever they are assigned to. `PA_GITHUB=0` turns it off. |
-| Jira (Atlassian connector) | issues you're assigned, reported, or watching | No token: a headless `claude -p` runs the JQL through the claude.ai Atlassian connector. Sign in once with `/mcp` → *claude.ai Atlassian MCP*. `PA_JIRA=0` turns it off. |
+| Jira (API token, or the Atlassian connector) | issues you're assigned, reported, or watching | Preferred: the `PA_JIRA_API_TOKEN` secret (see [Secrets](#secrets-and-sign-ins)) — REST with Basic auth, no model in the loop. `PA_JIRA_EMAIL` defaults to your Microsoft 365 address, `PA_JIRA_SITE` to the site the connector discovered. Without a token, a headless `claude -p` runs the JQL through the claude.ai Atlassian connector (`/mcp` → *claude.ai Atlassian MCP*); when that fails too, the dashboard asks you for a token. `PA_JIRA=0` turns it off. |
 | `AZURE_OPENAI_*` | semantic search | Optional. Without it search is full-text only — good on names and ids, weaker on paraphrase. |
 
 Everything else has a working default. [`SETUP.md`](./SETUP.md) walks through where each of
@@ -244,6 +244,34 @@ approve it.
 | `mr` | push, open a **draft** PR | marking it ready, notifying anyone |
 | `full` | all of that, plus draft a reply into `REPLY.md` | sending |
 
+### Secrets and sign-ins
+
+When the assistant — or an agent through MCP — needs a credential, it asks; you never hand-edit
+`.env`. A request appears at the top of the dashboard under **Needs you** (with a badge on the
+Today tab and a Windows toast): what is needed, why, where to get it, and where the value will be
+stored. Paste it into the password box and press **Save**.
+
+The value goes from your browser over loopback straight into **Windows Credential Manager**
+(DPAPI, your Windows account only; listed under *Web Credentials* → `personal-assistant`), or —
+for non-secret config, or if you pick it — into the gitignored `personal-assistant/.env`, which
+is refused if git does not ignore it. The reply says where it went, never what it was: no
+endpoint, log line, MCP result or model ever sees a value, and there is no "show" button.
+
+```
+pa secret list                  names, where each is stored, when it was set — never values
+pa secret set PA_JIRA_API_TOKEN hidden prompt (or piped stdin); replaces an existing one
+pa secret request NAME --purpose "why" [--hint "…"] [--url https://…]
+pa secret delete NAME
+```
+
+Code reads a secret with `secret(name)` from `src/config.js`: real environment → Credential
+Manager → `.env`. Code that finds one missing calls `requestSecret({name, purpose, hint})`
+(`src/secrets`); agents call the MCP tool `request_secret`, and `secret_status` tells them whether
+it is configured — never what it is. Sign-ins the tool cannot do for you (re-authenticating a
+connector in `/mcp`, `gh auth refresh -s read:project`) are the same kind of request with a
+command to copy and a **Done** button; `pa doctor` opens them for failing checks and closes them
+when the check passes.
+
 ## Always-on capture
 
 Two streams, captured separately and never mixed: the **microphone** is you, the **system
@@ -332,12 +360,13 @@ src/eval/            retrieval eval: metrics, retriever registry, case seeding, 
 src/memory/          claims with evidence, consolidation, people/project pages, nightly dream
 src/recall/          multi-hop recall over items, claims and pages, one rerank
 src/brief/           what `pa brief` prints
-src/dashboard/       the loopback web page: today, replies, runs, and the Memory tab
+src/dashboard/       the loopback web page: today, replies, runs, secret requests, and the Memory tab
+src/secrets/         secret and login requests; Windows Credential Manager via PowerShell (stdin only)
 src/llm.js           model calls: API key, or `claude -p` without one
 src/backup.js        nightly pg_dump, restore, re-ingest
 src/dispatch/        worktrees, briefs, termhub sessions, modes, landing
 src/draft/           reply drafting, auto-drafts, and delivery links (never sends)
-src/mcp/server.js    the read-only recall server
+src/mcp/server.js    the recall server: read-only, plus remember and request_secret, which only ask
 src/worker.js        the periodic passes
 audio/               capture and trim/transcribe (Python)
 sql/                 numbered migrations

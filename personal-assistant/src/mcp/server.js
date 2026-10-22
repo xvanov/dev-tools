@@ -13,6 +13,10 @@
 // pending_review claim that changes no belief until a human approves it in
 // the dashboard. There is no `forget` here for the same reason.
 //
+// `request_secret` is the same idea for credentials: it opens a request the
+// user answers in the dashboard, and returns an id and a status. No tool here
+// returns a secret value — `secret_status` says configured or not, and where.
+//
 // Uses the low-level Server rather than McpServer so tool schemas stay plain
 // JSON Schema: one less dependency, and the schemas are readable as data.
 
@@ -80,6 +84,32 @@ const TOOLS = [
         subject: { type: 'string', description: "Optional: a person, a project, or 'me'." },
       },
       required: ['text'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'request_secret',
+    description:
+      "Ask the user for a credential you need (an API key, a token, a config value) without ever seeing it. Opens a request in the user's dashboard; they paste the value there and it goes straight into Windows Credential Manager. Returns only the request id and status — never a value, now or later. Use secret_status to learn when it is configured. Never ask the user to paste a secret into the chat instead.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Env-style name, UPPER_SNAKE_CASE, e.g. PA_JIRA_API_TOKEN.' },
+        purpose: { type: 'string', description: 'Why it is needed, in one sentence the user will read.' },
+        hint: { type: 'string', description: 'Optional non-secret guidance: where to create it (a URL), the expected format.' },
+      },
+      required: ['name', 'purpose'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'secret_status',
+    description:
+      'Whether a credential is configured, and where it is stored (env, credential-manager, .env). Never returns the value.',
+    inputSchema: {
+      type: 'object',
+      properties: { name: { type: 'string', description: 'UPPER_SNAKE_CASE name.' } },
+      required: ['name'],
       additionalProperties: false,
     },
   },
@@ -213,6 +243,26 @@ async function handle(name, args = {}) {
       return text(
         `Queued as claim #${r.claim.id} about ${r.claim.subject_label}, pending the user's approval in the dashboard (Memory → review).`
       );
+    }
+
+    // Like `remember`, these only ask: the value goes from the user's browser
+    // to the store and is never readable through this server.
+    case 'request_secret': {
+      const hint = args.hint ? String(args.hint) : null;
+      const url = hint && (hint.match(/https:\/\/\S+/) || [])[0];
+      const r = await require('../secrets').requestSecret({
+        name: args.name, purpose: args.purpose, hint, url: url || null, requestedBy: 'agent',
+      });
+      return text(
+        r.status === 'configured'
+          ? { id: null, name: r.name, status: 'configured', note: 'Already configured; the code that needs it can read it.' }
+          : { id: r.id, name: r.name, status: 'pending', note: "Waiting for the user in the dashboard (Needs you). Do not ask for the value in chat." }
+      );
+    }
+
+    case 'secret_status': {
+      const s = require('../secrets').status(args.name);
+      return text({ name: s.name, configured: s.configured, stored_in: s.source });
     }
 
     case 'brief_me':
