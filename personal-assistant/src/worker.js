@@ -146,6 +146,16 @@ async function main() {
     await require('./draft').autoDraft({ limit: 3 });
   });
 
+  // Memory: claims → consolidation → pages, and a nightly dream. Each pass is
+  // a query over its own marker table, so they need no ordering beyond this.
+  if (config.memory.enabled) {
+    const memoryPass = (file, opts) => () => require(`./memory/${file}`).run(opts);
+    every(300, 'memory-extract', memoryPass('extract', { limit: 16 }));
+    every(300, 'memory-consolidate', memoryPass('consolidate', { limit: 60 }));
+    every(3600, 'memory-pages', memoryPass('pages', { limit: 20 }));
+    every(3600, 'memory-dream', memoryPass('dream', {}));
+  }
+
   every(300, 'embed', async () => {
     await search.backfillEmbeddings({ limit: 256 });
   });

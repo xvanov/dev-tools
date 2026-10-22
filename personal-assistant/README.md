@@ -153,6 +153,45 @@ pa mic status | pause 30 | on    always-on capture control
 pa doctor                        what is configured, stale, or broken
 ```
 
+### Memory
+
+Alongside commitments, the worker keeps a memory of the people and projects around you: who owns
+what, who knows what, how someone likes to work, what was decided, where a project stands, and
+how you yourself work. It is built in four passes, all queries over marker tables like
+distillation:
+
+1. **Claims** — a separate pass (`src/memory/extract.js`, a cheaper model than distillation,
+   several items per call) reads each item and writes *claims*: one sentence about a subject, with
+   the **verbatim quote** it came from. A quote that is not in the item is dropped; one that is
+   only nearly there is kept as `pending_review` and not believed. Automated noise and
+   notifications for PRs that are ingested themselves are skipped. Transcripts give at most three
+   claims, and only from attributable speech.
+2. **Consolidation** — each new claim is compared with the five most similar active claims about
+   the same subject and judged ADD, SUPERSEDE, DUPLICATE or NOOP. Superseding closes the old
+   claim's clocks (`invalid_at`, `expired_at`) and keeps it: memory is bitemporal, so what was
+   believed when is still answerable. The same pass sets `commitment.superseded_by` when a newer
+   commitment restates an older open one to the same person.
+3. **Pages** (hourly) — a markdown page per person you actually work with and per project with
+   something known, rebuilt only when its claims or commitments changed, every line citing
+   `[#item]`.
+4. **Dream** (nightly) — dedupes whole subjects, retires status claims that described a moment,
+   and rebuilds `me` (your profile, ≤1500 tokens) and `index` (who's who, small enough to load
+   into every call).
+
+Claims keep their own quote, and their link to the item is `on delete set null`, so memory
+outlives the 180-day retention on mail and chat.
+
+```
+pa memory                        the index: who's who, what's active
+pa memory me                     your profile
+pa memory Brannoc                a person's page (or: pa memory project quill)
+pa memory claims Brannoc         what is believed, with quotes and status (--all, --as-of)
+pa memory explain 812            one claim: its evidence, source, and what it replaced
+pa remember "Quill prefers PRs under 400 lines" [--about Quill]
+pa forget 812 | item:4411        retract; the pages are rebuilt without it
+pa memory run [extract|consolidate|pages|dream]   force a pass
+```
+
 ### Dispatch modes
 
 | Mode | May | Stops before |
@@ -221,6 +260,7 @@ src/distill/         the extraction prompt, identity resolution, the pass itself
 src/projects/        the project ↔ repo table and the scorer that guesses
 src/search/          hybrid retrieval: full text + vector + people named, fused, Cohere-reranked
 src/eval/            retrieval eval: metrics, retriever registry, case seeding, runs
+src/memory/          claims with evidence, consolidation, people/project pages, nightly dream
 src/brief/           what `pa brief` prints
 src/dashboard/       the loopback web page and its three buttons
 src/llm.js           model calls: API key, or `claude -p` without one

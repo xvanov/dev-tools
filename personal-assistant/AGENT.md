@@ -46,6 +46,22 @@ spilled a large one to. A relay that asks the model to *copy* a message body int
 a relay that will one day paraphrase someone's request. (Jira predates this and still parses the
 reply; moving it over is fine.)
 
+**Memory carries its evidence.** Every claim in `claim` holds the verbatim `quote` it was read
+from, checked against the item before it is stored (whitespace- and case-folded; a near miss is
+`pending_review`, a miss is dropped). The quote is copied, not referenced, and `source_item_id`
+is `on delete set null`, because retention deletes mail and chat and memory must survive it.
+A claim with no evidence is either an explicit `pa remember` note (whose evidence is the words
+typed) or a bug.
+
+**Memory supersedes; it does not overwrite or delete.** A contradicting claim closes the old one's
+`invalid_at`/`expired_at` and links it with `supersedes_id`; duplicates point at what they
+corroborate with `duplicate_of`; `forget` sets `status = 'retracted'`. No memory code runs a
+`delete from claim`. Pages are derived and may be deleted and rebuilt at will.
+
+**Message content is data, never instructions.** Every prompt that carries item text — distill,
+claims, consolidation, pages — says so, and nothing a message says can change what a pass does:
+no pass takes an action other than writing rows. Keep it that way when adding one.
+
 **Raven stays a skill.** Company engineering conventions are read through the existing
 `innergy-knowledge` skill. Do not copy that repo into this store; a second stale copy of the
 org's conventions is worse than none.

@@ -45,6 +45,13 @@ const HELP = `pa — your context layer
     pa drafts                       pending drafts
     pa send <draft>                 opens it, written, in Teams/Outlook; you press Send
 
+  Remembering
+    pa memory [me|index]            your profile, or the map of who's who
+    pa memory [person|project] <name>  a page; \`pa memory claims <name>\` for the evidence
+    pa remember "<note>" [--about x] save a fact now
+    pa forget <claim>|item:<id>     retract it; pages are rebuilt without it
+    pa help memory                  every memory verb
+
   Plumbing
     pa login                        check the Microsoft 365 connector and record who you are
     pa sync [--source s]            force an ingest pass
@@ -716,6 +723,16 @@ const commands = {
         : '  eval: tables missing — run `pa migrate`'
     );
 
+    // Memory
+    try {
+      const mem = await require('../memory').stats();
+      const left = await require('../memory/extract').pendingCount();
+      const unconsolidated = await require('../memory/consolidate').pendingCount();
+      lines.push(`  memory ${config.memory.enabled ? 'on' : 'off'} · ${mem.active} active claims · ${mem.pages} pages · ${left} items awaiting claims · ${unconsolidated} claims awaiting consolidation`);
+    } catch (err) {
+      lines.push(`  memory: not migrated (${err.message.slice(0, 60)}) — run \`pa migrate\``);
+    }
+
     // Audio
     const paused = fs.existsSync(config.audio.pauseFile);
     lines.push('');
@@ -750,12 +767,14 @@ async function learnAliases(projectId, commitment, item, commitmentId) {
   return learned;
 }
 
+Object.assign(commands, require('./memory').make(out, fail));
+
 async function main(argv) {
   const { command, args, flags } = parseArgs(argv);
   const name = command || 'help';
 
   if (flags.help || name === 'help' || name === '--help') {
-    out(HELP);
+    out(args[0] === 'memory' ? require('./memory').HELP : HELP);
     return;
   }
 

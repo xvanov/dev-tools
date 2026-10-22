@@ -137,6 +137,21 @@ const config = {
     minConfidence: Number(env('PA_AUTODRAFT_MIN_CONFIDENCE', '0.6')),
   },
 
+  // The memory layer (src/memory): claims with evidence, consolidated into
+  // people and project pages. Unlike distillation, most of this is many small
+  // judgements, so it runs on cheaper models than the commitment extractor.
+  memory: {
+    enabled: env('PA_MEMORY', '1') !== '0',
+    extractModel: env('PA_MEMORY_EXTRACT_MODEL', 'claude-sonnet-5-5'),
+    decideModel: env('PA_MEMORY_DECIDE_MODEL', 'claude-sonnet-5-5'),
+    pageModel: env('PA_MEMORY_PAGE_MODEL', 'claude-sonnet-5-5'),
+    // A person gets a page once this many items, commitments or claims tie
+    // them to you — below it they are a name in a CC line.
+    minInteractions: envInt('PA_MEMORY_MIN_INTERACTIONS', 4),
+    // Local hour after which the nightly dream pass may run.
+    dreamHour: envInt('PA_MEMORY_DREAM_HOUR', 2),
+  },
+
   anthropic: {
     apiKey: env('ANTHROPIC_API_KEY'),
     // Distillation is extraction, not reasoning-heavy work: the cost lever is
