@@ -244,6 +244,32 @@ fixtures, tests or commits. A new retriever is one `register(...)` line in
 `src/eval/retrievers.js`. `--retriever search-fused` runs search with the reranker off, to
 measure what the reranker adds.
 
+## Backup and recovery
+
+The database is the only copy of what the assistant knows — transcripts whose audio is long
+deleted, and mail and Teams history the connectors will not hand back past their own limits. The
+worker dumps it (`pg_dump`, custom format) once a day to `%LOCALAPPDATA%personal-assistantackups`
+and keeps the newest 14 (`PA_BACKUP_DIR`, `PA_BACKUP_KEEP`). The dumps hold everything, so keep
+them somewhere only you can read. `pa doctor` shows the age of the newest one.
+
+```
+pa backup                 dump now
+pa backup list            what is there
+pa restore [file]         replace the store with a dump (newest by default); asks first
+pa reingest --days 180    no dump? rewind the sources and fetch history again
+```
+
+**Rebuilding on a new or wiped machine:** run `windows/install.ps1` (or just
+`windows/setup-wsl-postgres.sh` in WSL) to get an empty database with its extensions, copy the
+backups folder back, stop the worker, `pa restore`, start the worker. Restore needs the
+extensions to exist and refuses otherwise; it leaves them out of the dump on purpose.
+
+**With no dump**, `pa reingest --days N` rewinds the Microsoft 365, GitHub and Jira cursors so the
+next passes re-fetch that window — how far back you actually get is each source's limit. Claude
+sessions and audio transcripts on disk are re-scanned on their own. Re-ingest is an upsert:
+running it over data that is still there costs fetches, not duplicates. Distillation, embeddings
+and memory then rebuild from the items by themselves.
+
 ## Wiring it into your agents
 
 - [`integrations/claude-code/`](./integrations/claude-code/) — register the read-only MCP recall
@@ -265,6 +291,7 @@ src/memory/          claims with evidence, consolidation, people/project pages, 
 src/brief/           what `pa brief` prints
 src/dashboard/       the loopback web page and its three buttons
 src/llm.js           model calls: API key, or `claude -p` without one
+src/backup.js        nightly pg_dump, restore, re-ingest
 src/dispatch/        worktrees, briefs, termhub sessions, modes, landing
 src/draft/           reply drafting, auto-drafts, and delivery links (never sends)
 src/mcp/server.js    the read-only recall server

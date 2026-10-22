@@ -171,6 +171,12 @@ async function main() {
     await require('./eval').nightly();
   });
 
+  // Checked hourly, dumps when the newest backup is older than a day; a
+  // restart therefore does not produce a dump of its own.
+  every(3600, 'backup', async () => {
+    await require('./backup').dumpIfDue();
+  });
+
   every(3600, 'retention', async () => {
     const result = await db.query(
       `delete from source_item

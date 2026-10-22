@@ -58,6 +58,9 @@ const HELP = `pa — your context layer
     pa distill [--limit n]          force a distillation pass
     pa migrate                      apply database migrations
     pa mic status|pause <mins>|on   always-on capture control
+    pa backup [list] [--dir d]      dump the whole store now (the worker does it nightly)
+    pa restore [file] [--yes]       replace the store with a dump (newest by default)
+    pa reingest --days N [--source s]  rewind sources so history is fetched again
     pa doctor                       what is configured, what is stale, what is broken
     pa eval seed|list|add|drop|run  retrieval eval harness (pa eval for details)
 `;
@@ -470,6 +473,39 @@ const commands = {
     }
   },
 
+  async backup(args, flags) {
+    const backup = require('../backup');
+    if (args[0] === 'list') {
+      const all = backup.list();
+      if (!all.length) return out(`no backups in ${config.backup.dir}`);
+      for (const b of all) out(`${b.at.toISOString().slice(0, 16).replace('T', ' ')}  ${(b.bytes / 1e6).toFixed(1).padStart(7)} MB  ${b.file}`);
+      return;
+    }
+    const r = await backup.dump({ dir: flags.dir || config.backup.dir });
+    out(`${r.file} (${(r.bytes / 1e6).toFixed(1)} MB)${r.pruned ? ` · pruned ${r.pruned} old` : ''}`);
+  },
+
+  async restore(args, flags) {
+    const backup = require('../backup');
+    const file = args[0] || backup.list()[0]?.file;
+    if (!file) return fail(`usage: pa restore [file] — and no backups found in ${config.backup.dir}`);
+    out(`This replaces the whole database with ${file}.`);
+    out('Stop the worker first (Stop-ScheduledTask pa-worker) so it does not write mid-restore.');
+    if (!(flagBool(flags, 'yes') || (await confirm('Restore now? [y/N]')))) return out('not restored');
+    await backup.restore(file);
+    out('restored. Start the worker again: Start-ScheduledTask pa-worker');
+  },
+
+  async reingest(args, flags) {
+    const days = flagInt(flags, 'days', 0);
+    if (!days) return fail('usage: pa reingest --days N [--source graph_mail,graph_chat,github,jira]');
+    const sources = flags.source ? String(flags.source).split(',') : [];
+    const r = await require('../backup').reingest({ days, sources });
+    if (!r.sources.length) return out('no matching sources to rewind');
+    out(`rewound ${r.sources.join(', ')} to ${r.since.slice(0, 10)} — the worker fetches it over its next passes`);
+    out('(or now: pa sync --source <name>). Existing items are upserted, not duplicated.');
+  },
+
   async mic(args) {
     const action = args[0] || 'status';
     const pauseFile = config.audio.pauseFile;
@@ -738,6 +774,13 @@ const commands = {
     const paused = fs.existsSync(config.audio.pauseFile);
     lines.push('');
     lines.push(`  audio ${config.audio.enabled ? (paused ? 'PAUSED' : 'on') : 'disabled'} · spool ${config.audioDir}`);
+
+    const newest = require('../backup').list()[0];
+    const stale = !newest || Date.now() - newest.at.getTime() > (config.backup.everyHours + 6) * 3600_000;
+    lines.push(
+      `  backup ${newest ? `${relative(newest.at)} · ${(newest.bytes / 1e6).toFixed(1)} MB` : 'NONE'}` +
+        `${stale ? ' — `pa backup`' : ''} · ${config.backup.dir}`
+    );
 
     out(lines.join('\n'));
   },

@@ -218,6 +218,17 @@ const config = {
     rawItemDays: envInt('PA_RETENTION_RAW_DAYS', 180),
     rawAudioHours: envInt('PA_RETENTION_RAW_AUDIO_HOURS', 6),
   },
+
+  // Nightly pg_dump of the whole store (see src/backup.js). Local disk by
+  // default — the dumps hold everything the assistant knows, so where they go
+  // is a privacy decision as much as a durability one.
+  backup: {
+    dir: env('PA_BACKUP_DIR', path.join(dataDir, 'backups')),
+    keep: envInt('PA_BACKUP_KEEP', 14),
+    everyHours: envInt('PA_BACKUP_EVERY_HOURS', 24),
+    // The distro that hosts Postgres; pg_dump runs inside it.
+    wslDistro: env('PA_WSL_DISTRO', 'Ubuntu'),
+  },
 };
 
 module.exports = { config, env, envInt, parseEnvFile };
