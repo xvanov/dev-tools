@@ -258,7 +258,7 @@ const commands = {
   async projects(args, flags) {
     const projects = require('../projects');
     if (args[0] === 'sync') {
-      const seen = await projects.sync({ includeGitlab: flagBool(flags, 'gitlab', true) });
+      const seen = await projects.sync();
       out(`${seen.length} projects seeded`);
       return;
     }
@@ -494,9 +494,7 @@ const commands = {
     mark(Boolean(who), 'microsoft sign-in', who ? who.username : 'run `pa login`');
     lines.push(`       scopes                   ${config.graph.scopes.join(' ')}`);
 
-    // GitLab, Anthropic, embeddings
-    const gitlab = require('../ingest/gitlab');
-    mark(gitlab.configured(), 'gitlab', gitlab.configured() ? config.gitlab.url : 'PA_GITLAB_TOKEN not set');
+    // GitHub, Anthropic, embeddings
     const github = require('../ingest/github');
     if (github.configured()) {
       const gh = await github.status();

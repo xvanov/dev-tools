@@ -4,8 +4,8 @@
 //
 // Two rules govern what lives here:
 //
-//  - **Nothing secret has a default.** A missing `PA_GITLAB_TOKEN` must surface
-//    as "GitLab ingest is not configured" in `pa doctor`, never as a confusing
+//  - **Nothing secret has a default.** A missing `AZURE_OPENAI_API_KEY` must surface
+//    as "embeddings are not configured" in `pa doctor`, never as a confusing
 //    401 from a worker three layers down. Secrets resolve to `null` and the
 //    feature that needs them reports itself unconfigured.
 //  - **Everything non-secret has a working default**, so `pa doctor` on a fresh
@@ -105,12 +105,6 @@ const config = {
       .split(/\s+/)
       .filter(Boolean),
     pollSeconds: envInt('PA_GRAPH_POLL_SECONDS', 120),
-  },
-
-  gitlab: {
-    url: env('PA_GITLAB_URL', 'https://gitlab.com'),
-    token: env('PA_GITLAB_TOKEN'),
-    pollSeconds: envInt('PA_GITLAB_POLL_SECONDS', 300),
   },
 
   // Through the `gh` CLI and its keyring login — no token in `.env`. Projects

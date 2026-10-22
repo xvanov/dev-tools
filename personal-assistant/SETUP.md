@@ -34,7 +34,7 @@ you are creating an identity for a program that then acts strictly as you.
    *If you cannot see "App registrations", or the page says you do not have access:* your tenant
    restricts who may register applications. Stop here and ask IT for either (a) the ability to
    register an app, or (b) an app registration created for you with the four delegated scopes in
-   step 5. Nothing else in this guide depends on it — GitLab, Anthropic and audio capture all
+   step 5. Nothing else in this guide depends on it — GitHub, Jira, Anthropic and audio capture all
    work without it.
 
 3. Click **+ New registration** at the top.
@@ -159,33 +159,7 @@ with `pa doctor` — the "awaiting distillation" number tells you how much is qu
 
 ---
 
-## 3. GitLab — `PA_GITLAB_URL` and `PA_GITLAB_TOKEN`
-
-1. Open GitLab and sign in.
-2. Your **avatar** (top right) → **Edit profile**.
-3. Left sidebar → **Access** → **Personal access tokens**.
-   Direct URL: `https://<your-gitlab-host>/-/user_settings/personal_access_tokens`
-4. Click **Add new token** (on some versions: **Generate token** → **Legacy token**).
-   - **Token name:** `personal-assistant`
-   - **Expiration date:** whatever your policy allows. Note it — the tool will start reporting
-     GitLab errors in `pa doctor` when it lapses.
-   - **Scopes:** tick **`read_api`**. That is read access to the whole API — issues, merge
-     requests, todos, pipelines.
-     - Tick **`api`** *instead* only if you want `pa land` to open draft merge requests for you.
-       `api` is read **and write**, so only do this if you want that.
-     - If your instance does not offer `read_api`, `api` is the only option.
-5. Click **Create personal access token** and copy the value from the green banner. Shown once.
-
-The URL is the base of your instance, no trailing path — the same host you see in the browser:
-
-```
-PA_GITLAB_URL=https://gitlab.example.com
-PA_GITLAB_TOKEN=glpat-...
-```
-
----
-
-## 4. Embeddings — optional, improves search
+## 3. Embeddings — optional, improves search
 
 Without this, search is full-text only: excellent at names, ticket ids and `GridHelpers`,
 weaker when you phrase a query differently from the message you are looking for.
@@ -224,7 +198,7 @@ Skipping this entirely is a legitimate choice. Nothing breaks.
 
 ---
 
-## 5. Everything else
+## 4. Everything else
 
 These have working defaults and need no accounts:
 
@@ -240,7 +214,7 @@ These have working defaults and need no accounts:
 
 ---
 
-## 6. Check it
+## 5. Check it
 
 ```powershell
 node bin\pa.js doctor
@@ -252,9 +226,8 @@ Every line should read `ok`. What the failures mean:
 |---|---|
 | `postgres ... ECONNREFUSED` | WSL dropped the distro. `Start-ScheduledTask pa-wsl-keepalive`. |
 | `microsoft sign-in — run pa login` | step 1 not finished, or the token expired |
-| `gitlab — PA_GITLAB_TOKEN not set` | step 3 not done, or the token expired |
 | `anthropic — not set` | step 2 not done |
-| `embeddings — endpoint returned 404` | step 4: wrong or missing deployment name |
+| `embeddings — endpoint returned 404` | step 3: wrong or missing deployment name |
 | `termhub — ECONNREFUSED` | termhub is not running on this machine |
 
 Then:

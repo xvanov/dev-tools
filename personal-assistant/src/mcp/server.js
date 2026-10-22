@@ -25,13 +25,13 @@ const TOOLS = [
   {
     name: 'brief_me',
     description:
-      "What is on the user today: overdue and due commitments, meetings in the next day, GitLab work waiting, and dispatched runs. Call this when asked what to work on, what's outstanding, or for a status catch-up.",
+      "What is on the user today: overdue and due commitments, meetings in the next day, GitHub and Jira work waiting, and dispatched runs. Call this when asked what to work on, what's outstanding, or for a status catch-up.",
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
   },
   {
     name: 'search_context',
     description:
-      'Hybrid full-text and semantic search over everything captured: email, Teams chats, calendar entries, GitLab issues and MRs, recorded conversations, and the user\'s own past Claude sessions. Use this when a task references something not in the current conversation — a decision, a person\'s request, a prior discussion.',
+      'Hybrid full-text and semantic search over everything captured: email, Teams chats, calendar entries, GitHub PRs and issues, Jira issues, recorded conversations, and the user\'s own past Claude sessions. Use this when a task references something not in the current conversation — a decision, a person\'s request, a prior discussion.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -41,7 +41,7 @@ const TOOLS = [
           type: 'array',
           items: { type: 'string' },
           description:
-            'Optional filter: graph_mail, graph_chat, graph_event, gitlab_mr, gitlab_issue, gitlab_todo, audio, claude_session.',
+            'Optional filter: graph_mail, graph_chat, graph_event, github_pr, github_issue, github_notification, github_project_item, jira_issue, audio, claude_session.',
         },
       },
       required: ['query'],
@@ -76,7 +76,7 @@ const TOOLS = [
   {
     name: 'who_is',
     description:
-      'A person: their known identities across Outlook, Teams and GitLab, recent threads with them, and open commitments either way. Use before writing to or about a colleague.',
+      'A person: their known identities across Outlook, Teams and GitHub, recent threads with them, and open commitments either way. Use before writing to or about a colleague.',
     inputSchema: {
       type: 'object',
       properties: { name: { type: 'string', description: 'Name, email, or handle.' } },
@@ -87,7 +87,7 @@ const TOOLS = [
   {
     name: 'repo_state',
     description:
-      'What the assistant knows about a project: its repo path, GitLab path, open MRs and issues, and recent dispatched runs.',
+      'What the assistant knows about a project: its repo path, remote path, open PRs and issues, and recent dispatched runs.',
     inputSchema: {
       type: 'object',
       properties: { project: { type: 'string' } },
@@ -195,9 +195,9 @@ async function handle(name, args = {}) {
         [args.project]
       );
       if (!project) return text(`No project matching "${args.project}".`);
-      const gitlabItems = await rows(
+      const codeItems = await rows(
         `select source, subject, raw, occurred_at from source_item
-          where source in ('gitlab_mr','gitlab_issue','gitlab_todo')
+          where source in ('github_pr','github_issue','github_notification','github_project_item')
             and raw->>'project' = $1
           order by occurred_at desc limit 20`,
         [project.gitlab_path]
@@ -207,7 +207,7 @@ async function handle(name, args = {}) {
           where repo_path = $1 order by started_at desc limit 10`,
         [project.repo_path]
       );
-      return text({ project, gitlab: gitlabItems, runs });
+      return text({ project, code: codeItems, runs });
     }
 
     default:

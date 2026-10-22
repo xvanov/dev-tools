@@ -50,7 +50,7 @@ org's conventions is worse than none.
   prompt version. A queue table can get stuck, leak, or need draining after a crash; a query
   cannot. The worker is a scheduler of periodic passes, and passes never overlap themselves.
 - **Secrets:** never in the repo, never in Postgres in plaintext. Graph refresh tokens go in a
-  DPAPI-protected file under `%LOCALAPPDATA%\personal-assistant\`; GitLab and API keys come
+  DPAPI-protected file under `%LOCALAPPDATA%\personal-assistant\`; API keys come
   from the environment.
 - **Times:** store UTC, render local. Every `due_at` the distiller writes is absolute — a row
   that says "Friday" is a bug.

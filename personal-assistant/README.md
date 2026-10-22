@@ -1,7 +1,7 @@
 # personal-assistant
 
 A personal agentic layer that sits between you and the coding agents. It watches where work
-arrives — Outlook mail and calendar, Teams chats, GitLab, and conversations it records in the
+arrives — Outlook mail and calendar, Teams chats, GitHub, Jira, and conversations it records in the
 room — turns what it finds into **typed commitments** (who asked, for what, by when, in which
 repo), and dispatches the ones you approve to Claude Code sessions you can walk into at any
 time.
@@ -29,7 +29,7 @@ the run's own diff and the original ask. You read it and send it.
  Teams ask  ──┐
  email       ─┤                                                    ┌─► pa brief   (what's on me)
  meeting     ─┼──►  ingest ──► distill ──►  commitments  ──────────┼─► pa do 42   (dispatch)
- GitLab      ─┘                              (Postgres)            └─► pa draft 7 (reply back)
+ GitHub/Jira ─┘                              (Postgres)            └─► pa draft 7 (reply back)
  your own                                         │
  Claude                                           ▼
  sessions                           dispatcher ──► git worktree
@@ -86,7 +86,6 @@ source cursor, the distillation backlog, and whether termhub is reachable.
 | `ANTHROPIC_API_KEY` | distillation and drafts | Optional. Without it, model calls run through `claude -p` on your own Claude Code login. |
 | GitHub (`gh auth login`) | notifications, PRs, assigned issues, Projects v2 board items | No token in `.env`: ingest runs through the signed-in `gh` CLI. Boards also need `gh auth refresh -s read:project`; `PA_GITHUB_BOARDS=innergy-dev/7:Pod=Xi` follows a pod's cards whoever they are assigned to. `PA_GITHUB=0` turns it off. |
 | Jira (Atlassian connector) | issues you're assigned, reported, or watching | No token: a headless `claude -p` runs the JQL through the claude.ai Atlassian connector. Sign in once with `/mcp` → *claude.ai Atlassian MCP*. `PA_JIRA=0` turns it off. |
-| `PA_GITLAB_TOKEN` | MRs, issues, todos, opening draft MRs | `read_api` is enough unless you want `pa land` to open the MR, which needs `api`. |
 | `AZURE_OPENAI_*` | semantic search | Optional. Without it search is full-text only — good on names and ids, weaker on paraphrase. |
 
 Everything else has a working default. [`SETUP.md`](./SETUP.md) walks through where each of
@@ -126,7 +125,7 @@ pa runs                         what's in flight
 pa say 7 "use the existing helper"
 pa attach 7                     open the session in termhub
 pa review 7 [--diff]            what it changed
-pa land 7                       push, and open a draft MR if the mode allows
+pa land 7                       push, and open a draft PR (gh) if the mode allows
 pa drop 7                       kill the session, remove the worktree
 
 pa draft 7                      a reply written from the ask and the actual diff
@@ -142,8 +141,8 @@ pa doctor                        what is configured, stale, or broken
 |---|---|---|
 | `plan` | read, write a plan | changing any file |
 | `local` *(default)* | commit in its own worktree | anything touching the remote |
-| `branch` | push the branch | opening an MR |
-| `mr` | push, open a **draft** MR | marking it ready, notifying anyone |
+| `branch` | push the branch | opening a PR |
+| `mr` | push, open a **draft** PR | marking it ready, notifying anyone |
 | `full` | all of that, plus draft a reply into `REPLY.md` | sending |
 
 ## Always-on capture
@@ -174,7 +173,7 @@ than from audio, because the exact text is already there.
 ```
 bin/pa.js            the CLI entry point
 src/config.js        every knob, resolved once
-src/ingest/          Graph mail/calendar/chat, GitLab, GitHub, Jira, Claude sessions, audio episodes
+src/ingest/          Graph mail/calendar/chat, GitHub, Jira, Claude sessions, audio episodes
 src/distill/         the extraction prompt, identity resolution, the pass itself
 src/projects/        the project ↔ repo table and the scorer that guesses
 src/search/          hybrid full-text + vector retrieval

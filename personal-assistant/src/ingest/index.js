@@ -1,14 +1,13 @@
 'use strict';
 
 // The ingest registry, and the rule that one broken source does not stop the
-// others: a tenant that refuses `Chat.Read` should not also cost you GitLab.
+// others: a tenant that refuses `Chat.Read` should not also cost you GitHub.
 // Each source records its own error against its own cursor, and `pa doctor`
 // reads those back.
 
 const graphMail = require('./graphMail');
 const graphCalendar = require('./graphCalendar');
 const graphChat = require('./graphChat');
-const gitlab = require('./gitlab');
 const github = require('./github');
 const jira = require('./jira');
 const claudeSessions = require('./claudeSessions');
@@ -18,7 +17,7 @@ const { logger } = require('../log');
 
 const log = logger('ingest');
 
-const SOURCES = [graphMail, graphCalendar, graphChat, gitlab, github, jira, claudeSessions, audio];
+const SOURCES = [graphMail, graphCalendar, graphChat, github, jira, claudeSessions, audio];
 
 function byId(id) {
   return SOURCES.find((s) => s.id === id) || null;

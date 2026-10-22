@@ -2,7 +2,7 @@
   "name": "personal-assistant",
   "version": "0.1.0",
   "private": true,
-  "description": "Context layer over Outlook, Teams, GitLab and recorded meetings that distils asks into commitments and dispatches them to Claude Code sessions.",
+  "description": "Context layer over Outlook, Teams, GitHub, Jira and recorded meetings that distils asks into commitments and dispatches them to Claude Code sessions.",
   "license": "MIT",
   "bin": {
     "pa": "bin/pa.js"

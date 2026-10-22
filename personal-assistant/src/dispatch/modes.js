@@ -29,7 +29,7 @@ const MODES = {
     mayOpenMr: false,
     mayDraftReply: false,
     stopCondition:
-      'Work in this worktree and commit locally. Do not push and do not open a merge request — pushing is blocked and will fail.',
+      'Work in this worktree and commit locally. Do not push and do not open a pull request — pushing is blocked and will fail.',
   },
   branch: {
     order: 2,
@@ -37,7 +37,7 @@ const MODES = {
     mayPush: true,
     mayOpenMr: false,
     mayDraftReply: false,
-    stopCondition: 'Commit and push the branch. Do not open a merge request.',
+    stopCondition: 'Commit and push the branch. Do not open a pull request.',
   },
   mr: {
     order: 3,
@@ -46,7 +46,7 @@ const MODES = {
     mayOpenMr: true,
     mayDraftReply: false,
     stopCondition:
-      'Commit, push, and open a DRAFT merge request. Do not mark it ready and do not notify anyone.',
+      'Commit, push, and open a DRAFT pull request. Do not mark it ready and do not notify anyone.',
   },
   full: {
     order: 4,
@@ -55,7 +55,7 @@ const MODES = {
     mayOpenMr: true,
     mayDraftReply: true,
     stopCondition:
-      'Commit, push, open a DRAFT merge request, and write a short reply to the requester into REPLY.md. Do not send anything.',
+      'Commit, push, open a DRAFT pull request, and write a short reply to the requester into REPLY.md. Do not send anything.',
   },
 };
 
@@ -80,7 +80,7 @@ function describe(name) {
   const can = [];
   if (m.mayCommit) can.push('commit');
   if (m.mayPush) can.push('push');
-  if (m.mayOpenMr) can.push('open a draft MR');
+  if (m.mayOpenMr) can.push('open a draft PR');
   if (m.mayDraftReply) can.push('draft a reply');
   return can.length ? can.join(', ') : 'read and plan only';
 }

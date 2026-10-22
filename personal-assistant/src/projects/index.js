@@ -3,8 +3,7 @@
 // The project table: seeding it, reading it, and learning from corrections.
 //
 // You never author this mapping. It is seeded from what already exists — the
-// git remotes under your repos root and the GitLab projects you belong to —
-// and thereafter maintained by *using* it: correcting one guess writes the
+// git remotes under your repos root — and thereafter maintained by *using* it: correcting one guess writes the
 // phrase that was used as an alias, so the next message phrased the same way
 // resolves silently.
 
@@ -135,8 +134,8 @@ async function addAlias(projectId, alias, origin = 'seeded', learnedFrom = null)
   return res.rows.length > 0;
 }
 
-// Seeds from local repos and, when configured, GitLab membership.
-async function sync({ includeGitlab = true } = {}) {
+// Seeds from the git repos under your repos root.
+async function sync() {
   const seen = [];
 
   for (const repo of scanRepos(config.reposRoot)) {
@@ -153,34 +152,6 @@ async function sync({ includeGitlab = true } = {}) {
     }
     if (repo.title) await addAlias(id, repo.title);
     seen.push({ id, name, source: 'local' });
-  }
-
-  if (includeGitlab) {
-    const gitlab = require('../ingest/gitlab');
-    if (gitlab.configured()) {
-      try {
-        const projects = await gitlab.api('/projects?membership=true&per_page=100&order_by=last_activity_at');
-        for (const p of projects) {
-          const id = await upsertProject({
-            name: p.path,
-            gitlabPath: p.path_with_namespace,
-            repoPath: null,
-          });
-          await addAlias(id, p.name);
-          await addAlias(id, p.path);
-          await addAlias(id, p.path_with_namespace);
-          if (p.last_activity_at) {
-            await query('update project set last_touched_at = greatest(coalesce(last_touched_at, $2), $2) where id = $1', [
-              id,
-              p.last_activity_at,
-            ]);
-          }
-          seen.push({ id, name: p.path, source: 'gitlab' });
-        }
-      } catch (err) {
-        log.warn('gitlab project sync failed', { message: err.message });
-      }
-    }
   }
 
   log.info('projects synced', { count: seen.length });

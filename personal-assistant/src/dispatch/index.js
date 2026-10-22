@@ -231,7 +231,7 @@ async function diff(runId) {
 }
 
 // Executes the run's mode: restores the real push URL, pushes, and opens a
-// draft MR if the mode allows. Nothing here happens implicitly — `pa land` is
+// draft pull request if the mode allows. Nothing here happens implicitly — `pa land` is
 // something a human typed after reading a diff.
 async function land(runId, { openMr = null } = {}) {
   const run = await get(runId);
@@ -256,7 +256,7 @@ async function land(runId, { openMr = null } = {}) {
   const wantMr = openMr === null ? m.mayOpenMr : openMr;
   if (wantMr) {
     mrUrl = await openMergeRequest(run).catch((err) => {
-      log.warn('branch pushed but MR not opened', { run: runId, message: err.message });
+      log.warn('branch pushed but pull request not opened', { run: runId, message: err.message });
       return null;
     });
   }
@@ -272,39 +272,27 @@ async function land(runId, { openMr = null } = {}) {
   return { pushed: true, branch: run.branch, mrUrl };
 }
 
+// A draft pull request through the signed-in `gh` CLI — the same login GitHub
+// ingest uses, so there is no token here either. `--draft` is the whole point:
+// nothing a dispatched run opens may ask anyone for review on its own.
 async function openMergeRequest(run) {
-  const gitlab = require('../ingest/gitlab');
-  if (!gitlab.configured()) throw new Error('PA_GITLAB_TOKEN not set');
-
-  const remote = (await git(run.worktree_path, ['remote', 'get-url', 'origin'])).trim();
-  const { pathFromRemote } = require('../projects');
-  const projectPath = pathFromRemote(remote);
-  if (!projectPath) throw new Error(`cannot derive a project path from ${remote}`);
-
   const base = await defaultBranch(run.repo_path);
-  const body = new URLSearchParams({
-    source_branch: run.branch,
-    target_branch: base,
-    title: `Draft: ${run.task}`.slice(0, 250),
-    description: `Dispatched by the personal assistant (run #${run.id}, mode \`${run.mode}\`).\n\nReviewed by a human before this was pushed.`,
-    remove_source_branch: 'true',
-  });
-
-  const url =
-    `${config.gitlab.url.replace(/\/+$/, '')}/api/v4/projects/` +
-    `${encodeURIComponent(projectPath)}/merge_requests`;
-
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'PRIVATE-TOKEN': config.gitlab.token,
-      'Content-Type': 'application/x-www-form-urlencoded',
-    },
-    body,
-  });
-  if (!res.ok) throw new Error(`GitLab ${res.status}: ${(await res.text()).slice(0, 200)}`);
-  const mr = await res.json();
-  return mr.web_url;
+  const { stdout } = await exec(
+    config.github.bin,
+    [
+      'pr', 'create', '--draft',
+      '--head', run.branch,
+      '--base', base,
+      '--title', run.task.slice(0, 250),
+      '--body',
+      `Dispatched by the personal assistant (run #${run.id}, mode \`${run.mode}\`).\n\n` +
+        'Reviewed by a human before this was pushed.',
+    ],
+    { cwd: run.worktree_path, windowsHide: true }
+  );
+  const url = stdout.trim().split(/\r?\n/).pop();
+  if (!/^https:\/\//.test(url)) throw new Error(`gh pr create printed no URL: ${stdout.slice(0, 200)}`);
+  return url;
 }
 
 async function drop(runId, { force = false } = {}) {

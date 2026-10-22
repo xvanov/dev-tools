@@ -16,7 +16,7 @@ const PROMPT_VERSION = 'distill-v1';
 
 const SYSTEM = `You extract structured work items from one person's incoming and outgoing messages.
 
-You are given a single item — an email, a Teams message, a calendar entry, a GitLab notification, a meeting transcript, or a transcript of that person's own session with a coding agent. Your job is to identify what, if anything, in it creates or discharges an obligation, records a decision, or names a blocker.
+You are given a single item — an email, a Teams message, a calendar entry, a GitHub or Jira notification, a meeting transcript, or a transcript of that person's own session with a coding agent. Your job is to identify what, if anything, in it creates or discharges an obligation, records a decision, or names a blocker.
 
 Return ONLY a JSON object. No prose, no markdown fence.
 
@@ -65,8 +65,8 @@ function buildUserMessage(item, { meLabel, candidates, ranked }) {
   if (raw.to?.length) lines.push(`  to: ${raw.to.join(', ')}`);
   if (raw.members) lines.push(`  chat members: ${raw.members}`);
   if (raw.attendees?.length) lines.push(`  attendees: ${raw.attendees.join(', ')}`);
-  if (raw.project) lines.push(`  gitlab project: ${raw.project}`);
-  if (raw.action) lines.push(`  gitlab action: ${raw.action}`);
+  if (raw.project) lines.push(`  repo: ${raw.project}`);
+  if (raw.action) lines.push(`  action: ${raw.action}`);
   lines.push('');
   lines.push('CANDIDATE PROJECTS (name — aliases)');
   if (candidates?.length) {
