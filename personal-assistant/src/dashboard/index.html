@@ -38,6 +38,8 @@
   .due-over { color: var(--warn); font-weight: 600; }
   .actions { display: flex; gap: 6px; margin-top: 6px; }
   .actions select { font: inherit; font-size: 12px; }
+  .ctx-toggle { margin-top: 6px; font-size: 12px; }
+  .ctx-toggle > summary { cursor: pointer; color: var(--muted); }
   .ctx { margin-top: 8px; padding: 8px 10px; border-left: 2px solid var(--line); font-size: 13px; }
   .ctx .msg { white-space: pre-wrap; margin: 4px 0 8px; }
   .ctx .who { color: var(--muted); font-size: 12px; }
@@ -379,32 +381,45 @@ function contextPanel(x) {
     }
   }
   for (const r of x.runs || []) {
-    lines.push(el('div', { class: 'who' }, `run #${r.id} · ${r.status} · ${r.mode}${r.machine ? ` · ${r.machine}` : ''} · ${r.branch || ''}`));
+    lines.push(el('div', { class: 'who' }, `run #${r.id} · ${r.status} · ${r.mode}${r.machine ? ` · ${r.machine}` : ''} · ${r.branch || ''} `,
+      r.url && ['starting', 'running', 'waiting', 'done'].includes(r.status) ? link(r.url, 'open session') : null));
   }
   return el('div', { class: 'ctx' }, ...lines);
 }
 
+// What each mode lets the session do, shown in the mode picker. A review or a
+// question wants `plan`; `full` also pushes, opens a draft PR and writes a reply.
+const MODE_HELP = {
+  plan: 'plan — read and write a plan, change nothing',
+  local: 'local — commit in its worktree, push blocked',
+  branch: 'branch — commit and push the branch',
+  mr: 'mr — push and open a draft PR',
+  full: 'full — push, draft PR, and draft a reply to the asker',
+};
+
 function commitmentCard(c) {
   const doBtn = el('button', { class: 'primary', title: 'Start a Claude Code session on this' }, 'Do');
   const machinePick = picker(MACHINES.machines.map((m) => ({ value: m.name, label: m.label })), '');
-  const modePick = picker(MACHINES.modes.map((m) => ({ value: m, label: m })), MACHINES.defaultMode);
-  const ctxBtn = el('button', { title: 'The ask, its thread, and any runs' }, openContext.has(c.id) ? 'Hide' : 'Context');
-  const ctxSlot = el('div', {});
-  if (openContext.has(c.id)) ctxSlot.append(contextPanel(openContext.get(c.id)));
-  ctxBtn.addEventListener('click', async () => {
-    if (openContext.has(c.id)) {
-      openContext.delete(c.id);
-      ctxSlot.replaceChildren();
-      ctxBtn.textContent = 'Context';
-      return;
+  const modePick = picker(MACHINES.modes.map((m) => ({ value: m, label: MODE_HELP[m] || m })), MACHINES.defaultMode);
+  // A native disclosure: it opens and closes whatever else the card is doing.
+  const ctx = el('details', { class: 'ctx-toggle' }, el('summary', {}, 'Context'));
+  const loadContext = async (fresh = false) => {
+    if (!fresh && openContext.get(c.id)) return ctx.append(contextPanel(openContext.get(c.id)));
+    const x = await (await fetch(`api/commitments/${c.id}`)).json().catch(() => ({ error: 'could not load' }));
+    openContext.set(c.id, x);
+    ctx.querySelector('.ctx')?.remove();
+    ctx.append(contextPanel(x));
+  };
+  if (openContext.has(c.id)) {
+    ctx.open = true;
+    loadContext();
+  }
+  ctx.addEventListener('toggle', () => {
+    if (!ctx.open) return openContext.delete(c.id);
+    if (!ctx.querySelector('.ctx')) {
+      openContext.set(c.id, null);
+      loadContext(true);
     }
-    await busy(ctxBtn, async () => {
-      const res = await fetch(`api/commitments/${c.id}`);
-      const x = await res.json();
-      openContext.set(c.id, x);
-      ctxSlot.replaceChildren(contextPanel(x));
-    });
-    ctxBtn.textContent = 'Hide';
   });
   const replyBtn = el('button', { title: 'Draft a reply to this ask' }, 'Reply');
   replyBtn.addEventListener('click', act(replyBtn, async () => {
@@ -415,10 +430,25 @@ function commitmentCard(c) {
   const doneBtn = el('button', {}, 'Done');
   const dropBtn = el('button', { title: 'Not mine / not real' }, 'Dismiss');
   doBtn.addEventListener('click', act(doBtn, async () => {
-    if (machinePick.value) toast(`setting up on ${machinePick.value} — this takes a minute`);
-    const r = await post(`api/commitments/${c.id}/dispatch`, { machine: machinePick.value || null, mode: modePick.value });
-    toast(`run #${r.id} started (${r.mode}${r.machine ? ` on ${r.machine}` : ''})`);
-    if (r.url) window.open(r.url, '_blank', 'noopener');
+    // Opened now, while this is still the click: a tab opened after the
+    // request returns is a popup, and the browser blocks it.
+    const tab = window.open('about:blank', '_blank');
+    if (tab) tab.document.title = 'starting a session…';
+    machinePick.disabled = true;
+    modePick.disabled = true;
+    toast(machinePick.value ? `setting up on ${machinePick.value} — this takes a minute; the session opens in the new tab` : 'starting the session…');
+    try {
+      const r = await post(`api/commitments/${c.id}/dispatch`, { machine: machinePick.value || null, mode: modePick.value });
+      toast(`run #${r.id} started (${r.mode}${r.machine ? ` on ${r.machine}` : ''})`);
+      if (tab && r.url) tab.location.href = r.url;
+      else if (r.url) window.open(r.url, '_blank');
+      openContext.set(c.id, null);
+    } catch (err) {
+      if (tab) tab.close();
+      machinePick.disabled = false;
+      modePick.disabled = false;
+      throw err;
+    }
   }));
   doneBtn.addEventListener('click', act(doneBtn, async () => {
     await post(`api/commitments/${c.id}/status`, { status: 'done' });
@@ -437,10 +467,10 @@ function commitmentCard(c) {
   return el('div', { class: 'item' },
     el('div', { class: 'sum' }, c.summary),
     el('div', { class: 'sub' }, ...sub),
-    el('div', { class: 'actions' }, ctxBtn,
+    el('div', { class: 'actions' },
       canDo && MACHINES.machines.length > 1 ? machinePick : null, canDo ? modePick : null, canDo ? doBtn : null,
       canReply ? replyBtn : null, doneBtn, dropBtn),
-    ctxSlot);
+    ctx);
 }
 
 // A draft is edited in place and saved when the box loses focus. Send opens

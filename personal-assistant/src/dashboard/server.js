@@ -58,10 +58,17 @@ async function commitmentContext(id) {
         [c.thread_external_id]
       )
     : [];
-  const runs = await rows(
-    `select id, status, mode, machine, branch, started_at from run where commitment_id = $1 order by started_at desc`,
-    [id]
-  );
+  const termhub = require('../dispatch/termhub');
+  const runs = (
+    await rows(
+      `select id, status, mode, machine, branch, started_at, termhub_session_id from run
+        where commitment_id = $1 order by started_at desc`,
+      [id]
+    )
+  ).map((r) => ({
+    ...r,
+    url: r.termhub_session_id ? `${termhub.forMachine(r.machine).base}/?session=${encodeURIComponent(r.termhub_session_id)}` : null,
+  }));
   return { ...c, thread: thread.reverse(), runs };
 }
 

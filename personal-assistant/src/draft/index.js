@@ -108,6 +108,12 @@ async function composeReply(commitmentId, { origin = 'manual' } = {}) {
   const target = deliver.targetFor(item, { me: await myEmail(), counterpartyEmail: c.who_email });
 
   const earlier = await thread(item);
+  // The other asks read from the same message: one reply answers all of them.
+  const siblings = await rows(
+    `select summary, detail from commitment
+      where source_item_id = $1 and id <> $2 and direction = 'owed_by_me' and status in ('open','dispatched')`,
+    [c.source_item_id, commitmentId]
+  );
   const [background, memo] = await Promise.all([
     related(`${c.summary} ${item?.subject || ''}`, item?.id),
     pages(c.counterparty_person_id),
@@ -121,6 +127,7 @@ async function composeReply(commitmentId, { origin = 'manual' } = {}) {
     '',
     `WHAT THE ASSISTANT UNDERSTOOD THEY WANT: ${c.summary}${c.detail ? ` — ${c.detail}` : ''}`,
     c.due_at ? `DUE: ${new Date(c.due_at).toISOString().slice(0, 10)}` : null,
+    ...siblings.map((s) => `ALSO ASKED IN THE ASK ABOVE (cover it too, in this one reply): ${s.summary}${s.detail ? ` — ${s.detail}` : ''}`),
     '',
     earlier.length ? 'EARLIER IN THE SAME THREAD (newest first)' : null,
     ...earlier.map((m) => `- ${m.from_name || m.author_identity || '?'}: ${truncate(m.body_text, 400)}`),
@@ -289,6 +296,11 @@ async function autoDraft({ limit = 3 } = {}) {
         and si.occurred_at > now() - interval '2 days'
         and coalesce(per.is_me, false) = false
         and not exists (select 1 from draft d where d.commitment_id = c.id)
+        -- One reply per message: an ask that holds two requests became two
+        -- commitments, and drafting each wrote the same person two replies.
+        and not exists (
+          select 1 from draft d join commitment sib on sib.id = d.commitment_id
+           where sib.source_item_id = c.source_item_id and sib.id <> c.id)
         and not ${ANSWERED}
       order by si.occurred_at desc
       limit $3`,

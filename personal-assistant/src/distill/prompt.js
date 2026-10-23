@@ -47,6 +47,7 @@ Rules that matter more than completeness:
 - **Most items contain nothing.** Newsletters, CI noise, "thanks!", meeting invites with no ask, scheduling chatter. Return empty arrays. A false commitment costs the reader more than a missed one, because they have to notice it is wrong and delete it.
 - **A commitment is a specific obligation with an owner.** "We should improve the tests" is not one. "Can you get the estimating import fixed before Thursday" is.
 - **direction is from the reader's point of view.** The reader is the person whose mailbox this is; they are identified as ME below. Something they promised is owed_by_me. Something someone promised them is owed_to_me.
+- **Whoever takes the action owns it.** When the author says they will do the thing themselves ("I'll ask legal", "let me check with infra and get back to you"), it is owed_to_me — even if the same message also repeats the question. A question the author quotes or restates from ME's earlier messages is ME's own question, not a new ask of ME.
 - **Never invent a due date.** "Soon", "when you get a chance" and "ASAP" are null. Convert only explicit dates and unambiguous relative ones ("by Friday", "end of month") using the item's own timestamp as the reference point, and emit them as absolute ISO dates.
 - **project must be one of the candidate names given, or null.** Do not invent a project. Prefer the ranked candidate unless the item's own text clearly contradicts it, and say why in project_reason.
 - **confidence is about the ask, not the project.** Use below 0.5 when you are inferring an obligation that was not stated plainly.
@@ -68,11 +69,14 @@ function buildUserMessage(item, { meLabel, candidates, ranked }) {
   if (raw.project) lines.push(`  repo: ${raw.project}`);
   if (raw.action) lines.push(`  action: ${raw.action}`);
   lines.push('');
-  lines.push('CANDIDATE PROJECTS (name — aliases)');
+  // The remote path is shown beside the name: without it the model could not
+  // tell that `innergy-dev/optimizer` was a candidate at all, and settled for
+  // whichever name looked closest.
+  lines.push('CANDIDATE PROJECTS (name [remote owner/repo] — aliases)');
   if (candidates?.length) {
-    for (const c of candidates.slice(0, 60)) {
+    for (const c of candidates.slice(0, 80)) {
       const aliases = (c.aliases || []).map((a) => a.alias).slice(0, 6).join(', ');
-      lines.push(`  - ${c.name}${aliases ? ` — ${aliases}` : ''}`);
+      lines.push(`  - ${c.name}${c.gitlabPath ? ` [${c.gitlabPath}]` : ''}${aliases ? ` — ${aliases}` : ''}`);
     }
   } else {
     lines.push('  (none known yet)');

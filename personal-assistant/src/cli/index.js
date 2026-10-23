@@ -251,25 +251,16 @@ const commands = {
     if (!id) return fail('usage: pa show <commitment-id> [--project name]');
 
     if (flags.project) {
-      const projects = require('../projects');
-      const project = await projects.byName(String(flags.project));
-      if (!project) return fail(`no project "${flags.project}" — try \`pa projects\``);
-
-      const commitment = await db.one('select * from commitment where id = $1', [id]);
-      if (!commitment) return fail(`no commitment #${id}`);
-      const item = await db.one('select subject, body_text from source_item where id = $1', [
-        commitment.source_item_id,
-      ]);
-
-      await db.query(
-        `update commitment set project_id = $2, repo_path = $3, project_confidence = 1.0,
-                               project_rationale = 'corrected by hand' where id = $1`,
-        [id, project.id, project.repo_path]
-      );
-
-      // The correction is the lesson. Learn the phrase that was actually used,
-      // so the next message worded that way resolves without asking.
-      const learned = await learnAliases(project.id, commitment, item, id);
+      // The correction is the lesson: projects.correct also learns the phrase
+      // that was actually used, so the next message worded that way resolves
+      // without asking.
+      let result;
+      try {
+        result = await require('../projects').correct(id, String(flags.project));
+      } catch (err) {
+        return fail(err.message);
+      }
+      const { project, learned } = result;
       out(`#${id} → ${project.name}${project.repo_path ? ` (${project.repo_path})` : ''}`);
       if (learned.length) out(`learned alias${learned.length > 1 ? 'es' : ''}: ${learned.join(', ')}`);
       return;
@@ -338,6 +329,7 @@ const commands = {
     if (args[0] === 'sync') {
       const seen = await projects.sync();
       out(`${seen.length} projects seeded`);
+      for (const r of seen.retired || []) out(`retired ${r.name} — ${r.repoPath} is gone`);
       return;
     }
     const list = await projects.list();
@@ -689,6 +681,13 @@ const commands = {
         .rows('select version from schema_migration order by version')
         .catch(() => []);
       mark(migrations.length > 0, 'migrations', migrations.length ? `${migrations.length} applied` : 'none — run `pa migrate`');
+      // An active project whose folder is gone attracts asks a run cannot work on.
+      const active = await db.rows('select name, repo_path from project where active').catch(() => []);
+      const gone = require('../projects').staleProjects(
+        active.map((p) => ({ ...p, active: true })),
+        (p) => require('fs').existsSync(p)
+      );
+      mark(!gone.length, 'projects', gone.length ? `${gone.length} point at missing folders (${gone.map((p) => p.name).slice(0, 4).join(', ')}) — run \`pa projects sync\`` : `${active.length} active`);
     } catch (err) {
       mark(false, 'postgres', err.message);
       out(lines.join('\n'));
@@ -978,31 +977,6 @@ const commands = {
     out(lines.join('\n'));
   },
 };
-
-// Learns the phrases a corrected commitment was actually described with. Short
-// noun phrases from the summary and subject, not the whole sentence — an alias
-// that only matches one exact message is not an alias.
-async function learnAliases(projectId, commitment, item, commitmentId) {
-  const projects = require('../projects');
-  const { normalise } = require('../projects/resolve');
-  const learned = [];
-  const sources = [commitment.summary, item?.subject].filter(Boolean);
-
-  for (const source of sources) {
-    const words = normalise(source).split(' ').filter((w) => w.length > 3);
-    for (let n = 3; n >= 2; n--) {
-      for (let i = 0; i + n <= words.length; i++) {
-        const phrase = words.slice(i, i + n).join(' ');
-        if (phrase.length < 8 || phrase.length > 40) continue;
-        if (await projects.addAlias(projectId, phrase, 'corrected', commitmentId)) {
-          learned.push(phrase);
-        }
-        if (learned.length >= 2) return learned;
-      }
-    }
-  }
-  return learned;
-}
 
 Object.assign(commands, require('./memory').make(out, fail));
 Object.assign(commands, require('./secret').make(out, fail));

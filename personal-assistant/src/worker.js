@@ -256,6 +256,12 @@ async function main() {
     await require('./meetings').pass();
   });
 
+  // The project table follows the disk: new clones become candidates, and a
+  // deleted folder is retired so nothing more is routed to it.
+  every(6 * 3600, 'projects-sync', async () => {
+    await require('./projects').sync();
+  });
+
   every(300, 'embed', async () => {
     await search.backfillEmbeddings({ limit: 256 });
   });

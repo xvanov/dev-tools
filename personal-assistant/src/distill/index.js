@@ -17,6 +17,7 @@ const { rows, one, query, withTx } = require('../db');
 const { PROMPT_VERSION, SYSTEM, buildUserMessage, parseResponse } = require('./prompt');
 const identity = require('./identity');
 const projects = require('../projects');
+const resolve = require('../projects/resolve');
 const { logger } = require('../log');
 
 const log = logger('distill');
@@ -126,6 +127,11 @@ async function persist(item, result, resolved) {
 // deterministic scorer as the fallback when the model declined to choose.
 async function resolveReferences(item, result, candidates) {
   const byCommitment = new Map();
+  // A GitHub item names its repo outright; that beats the model's pick and the
+  // scorer's. A repo with no project here resolves to none rather than to the
+  // nearest-looking one.
+  const direct = resolve.directMatch(item, candidates);
+  const workdirProjectId = resolve.workdirProject(item.raw?.cwd, candidates);
 
   for (const c of result.commitments) {
     let personId = null;
@@ -139,6 +145,17 @@ async function resolveReferences(item, result, candidates) {
     let repoPath = null;
     let projectConfidence = null;
     let projectRationale = null;
+
+    if (direct) {
+      byCommitment.set(c, {
+        personId,
+        projectId: direct.projectId,
+        repoPath: direct.repoPath,
+        projectConfidence: direct.confidence,
+        projectRationale: direct.rationale,
+      });
+      continue;
+    }
 
     if (c.project) {
       const named = candidates.find(
@@ -156,6 +173,7 @@ async function resolveReferences(item, result, candidates) {
       const guess = await projects.guess(`${item.subject || ''}\n${c.summary}\n${c.detail || ''}`, {
         authorPersonId: personId,
         threadExternalId: item.thread_external_id,
+        workdirProjectId,
       });
       if (guess) {
         projectId = guess.projectId;
@@ -177,10 +195,13 @@ async function distillOne(item, cached) {
   const meLabel = meRow ? `${meRow.display_name} <${meRow.primary_email || 'unknown'}>` : null;
 
   const ranked = candidates.length
-    ? require('../projects/resolve').scoreCandidates(
+    ? resolve.scoreCandidates(
         `${item.subject || ''}\n${(item.body_text || '').slice(0, 4000)}`,
         candidates,
-        await projects.scoringContext({ threadExternalId: item.thread_external_id })
+        {
+          ...(await projects.scoringContext({ threadExternalId: item.thread_external_id })),
+          workdirProjectId: resolve.workdirProject(item.raw?.cwd, candidates),
+        }
       )
     : [];
 

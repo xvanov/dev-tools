@@ -26,6 +26,7 @@ const NAME_HIT = 2.5;
 const RECENT_TOUCH = 1;
 const AUTHOR_AFFINITY = 1;
 const THREAD_CONTINUITY = 2;
+const WORKDIR = 4;
 
 const STOPWORDS = new Set([
   'api', 'app', 'web', 'core', 'main', 'test', 'tests', 'the', 'and', 'for', 'new', 'old',
@@ -71,10 +72,72 @@ function explicitTokens(text) {
   return [...out];
 }
 
+// Does a path-like token name this candidate's repo? Only a whole path
+// segment counts: "innergy-dev/optimizer" names the optimizer repo, and the
+// `innergy` inside its owner segment must not make it name a repo called
+// `innergy` as well. That substring match is what sent every innergy-dev PR
+// to the old monorepo. The full owner/repo path also counts, wherever it sits.
+function tokenNamesRepo(token, c) {
+  const whole = normalise(c.gitlabPath);
+  if (whole && whole.includes(' ') && ` ${normalise(token)} `.includes(` ${whole} `)) return true;
+  const names = new Set(
+    [c.name, c.repoPath ? c.repoPath.split(/[\\/]/).pop() : null, c.gitlabPath ? c.gitlabPath.split('/').pop() : null]
+      .map(normalise)
+      .filter((n) => n.length >= 3 && !STOPWORDS.has(n))
+  );
+  return String(token)
+    .split(/[\\/]+/)
+    .some((seg) => names.has(normalise(seg)));
+}
+
+function cleanPath(p) {
+  return String(p || '').replace(/\//g, '\\').replace(/\\+$/, '').toLowerCase();
+}
+
+/**
+ * The project an item names outright, before any scoring. A GitHub item
+ * carries its repository's full name, which is conclusive.
+ * @returns {{projectId, name, repoPath, confidence, rationale}|null} — with
+ *   projectId null when the item names a repo that has no active project here
+ *   (not cloned, or retired): unknown beats the nearest-looking wrong repo.
+ *   null when the item names no repo at all.
+ */
+function directMatch(item, candidates) {
+  const raw = item?.raw || {};
+  const repo =
+    String(item?.source || '').startsWith('github') && typeof raw.project === 'string' && /^[^/\s]+\/[^/\s]+$/.test(raw.project)
+      ? raw.project
+      : null;
+  if (!repo) return null;
+  const hit = (candidates || []).find((c) => c.gitlabPath && c.gitlabPath.toLowerCase() === repo.toLowerCase());
+  if (hit) return { projectId: hit.id, name: hit.name, repoPath: hit.repoPath, confidence: 0.99, rationale: `the item is from ${repo}` };
+  return { projectId: null, name: null, repoPath: null, confidence: null, rationale: `${repo} is not a project here (not cloned under the repos root)` };
+}
+
+/**
+ * The project whose folder a Claude session ran in, or null. Evidence for the
+ * scorer, not a verdict: a session in one repo often talks about another.
+ */
+function workdirProject(cwd, candidates) {
+  const dir = cleanPath(cwd);
+  if (!dir) return null;
+  let best = null;
+  let bestLen = 0;
+  for (const c of candidates || []) {
+    const p = cleanPath(c.repoPath);
+    if (!p || p.length <= bestLen) continue;
+    if (dir === p || dir.startsWith(`${p}\\`)) {
+      best = c;
+      bestLen = p.length;
+    }
+  }
+  return best ? best.id : null;
+}
+
 /**
  * @param {string} text            the ask, plus any subject line
  * @param {Array}  candidates      [{id, name, gitlabPath, repoPath, aliases:[{alias,weight,origin}], lastTouchedAt}]
- * @param {object} context         {recentProjectIds, authorProjectIds, threadProjectId, now}
+ * @param {object} context         {recentProjectIds, authorProjectIds, threadProjectId, workdirProjectId, now}
  * @returns {Array} ranked [{projectId, name, score, confidence, rationale}]
  */
 function scoreCandidates(text, candidates, context = {}) {
@@ -88,16 +151,16 @@ function scoreCandidates(text, candidates, context = {}) {
     const why = [];
 
     for (const token of tokens) {
-      const repoName = c.repoPath ? c.repoPath.split(/[\\/]/).pop() : null;
-      if (
-        (c.gitlabPath && token.includes(normalise(c.gitlabPath).replace(/ /g, '/'))) ||
-        (repoName && containsPhrase(token, repoName)) ||
-        containsPhrase(token, c.name)
-      ) {
+      if (tokenNamesRepo(token, c)) {
         score += EXPLICIT_TOKEN;
         why.push(`explicit token "${token}"`);
         break;
       }
+    }
+
+    if (context.workdirProjectId && context.workdirProjectId === c.id) {
+      score += WORKDIR;
+      why.push('the session ran in this repo');
     }
 
     for (const alias of c.aliases || []) {
@@ -156,4 +219,4 @@ function scoreCandidates(text, candidates, context = {}) {
   return ranked.map((r) => ({ ...r, rationale: r.why.join('; ') }));
 }
 
-module.exports = { scoreCandidates, explicitTokens, containsPhrase, normalise };
+module.exports = { scoreCandidates, explicitTokens, containsPhrase, normalise, tokenNamesRepo, directMatch, workdirProject };

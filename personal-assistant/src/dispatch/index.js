@@ -109,7 +109,20 @@ async function memoryContext({ commitment, item, project, person }, task) {
   };
 }
 
-async function start({ commitmentId = null, task = null, mode: modeName, repoPath = null, machine = null }) {
+async function start({ commitmentId = null, task = null, mode: modeName, repoPath = null, machine = null, again = false }) {
+  // One live run per commitment. A second Do while the first is still setting
+  // up (a remote one takes a minute) started a second agent on the same ask.
+  if (commitmentId && !again) {
+    const live = await one(
+      `select id, machine from run where commitment_id = $1 and status in ('starting','running','waiting')
+        order by started_at desc limit 1`,
+      [commitmentId]
+    );
+    if (live) {
+      const where = termhub.isLocal(live.machine) ? '' : ` on ${live.machine}`;
+      throw new Error(`#${commitmentId} already has run #${live.id}${where} — attach to it (pa attach ${live.id}), or drop it first`);
+    }
+  }
   if (machine && !termhub.isLocal(machine)) {
     return startRemote({ commitmentId, task, modeName, repoPath, machineName: machine });
   }

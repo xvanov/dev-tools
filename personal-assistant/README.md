@@ -80,6 +80,13 @@ Start-ScheduledTask pa-capture-loopback
 `pa doctor` is the answer to "why isn't it doing anything". It reports every credential, every
 source cursor, the distillation backlog, and whether termhub is reachable.
 
+`pa projects sync` (also run by the worker every six hours) builds the project ↔ repo table from
+the clones under `PA_REPOS_ROOT`. When several folders share one remote, the one named like the
+repo wins and worktrees and copies become its aliases. A project whose folder has gone is
+*retired* — kept, so commitments still point at it, but never offered to the distiller or accepted
+as a correction — and comes back if the folder does. A GitHub item's own repository decides its
+project outright; if that repo is not cloned, the project is left empty rather than guessed.
+
 ### What you need to set
 
 | Value | Needed for | Notes |
