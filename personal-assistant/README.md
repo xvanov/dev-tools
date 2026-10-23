@@ -160,6 +160,17 @@ assistant: after each GitHub pass it closes commitments whose PR merged or close
 already gave, and review requests GitHub addressed only to a team you are in (those never become
 commitments in the first place now). Each has **Reopen**.
 
+Asks from Teams and mail close the same way once you have answered them yourself
+(`src/commitments/replyClose.js`, every five minutes, `PA_REPLY_CLOSE=0` turns it off). An open
+owed_by_me commitment with a later message from you in the same chat or mail thread (within two
+weeks) is shown to a model beside that ask; only a reply that delivers what was owed — the answer,
+even a "no", or "fixed it" — closes it, never a promise ("I'll look tomorrow") or half an answer.
+The verdict must quote your message verbatim (checked as for memory claims) and the quote becomes
+the reason: `answered in chat: "…"`. Each judgement is a `reply_close` row keyed by the newest
+reply it saw, with what the close replaced, so the same reply is never judged twice — **Reopen**
+(or `pa done <id> --reopen`) sticks until you write in that thread again. `pa doctor` shows the
+count.
+
 **Replies to send** sits at the top: drafts the worker wrote for fresh asks from mail and Teams
 (`PA_AUTODRAFT=0` turns that off; `PA_AUTODRAFT_MIN_CONFIDENCE`, default 0.6, sets how sure the
 distiller must be that the ask is on you), plus any you asked for with **Reply**. Each shows the
@@ -368,6 +379,24 @@ pa meeting undo <debrief-id> <n>
 | `branch` | push the branch | opening a PR |
 | `mr` | push, open a **draft** PR | marking it ready, notifying anyone |
 | `full` | all of that, plus draft a reply into `REPLY.md` | sending |
+
+### Runs on another machine
+
+Some work belongs on a particular machine — the VM that runs the service, holds the OneDrive
+sync, has the credentials. `pa do 959 --machine mv-automated-vm` (or the machine picker beside
+**Do** on the dashboard) starts the run in *that* machine's termhub, which is already one of
+your hub's peers, so you attach to it the same way. Machines are listed in `PA_MACHINES`
+(`name=termhubUrl|reposRoot`); the repo must be cloned there under the same folder name.
+
+The dispatcher cannot touch that disk, so it types the setup into a fresh shell there and checks
+the result through termhub's API before starting Claude: `git fetch`, a worktree under
+`<reposRoot>\.pa-worktrees\run-<id>` on branch `pa/<id>-…`, the dead pushurl for a mode that may
+not push, and `BRIEF.md` written into the worktree. If the worktree never appears the run is
+marked `failed` and its session left open to show why. `pa say`, `pa attach`, `pa runs` and
+`pa drop` work as for a local run; `pa review`, `pa diff` and `pa land` run git on this disk, so
+for a remote run they point you at the session instead, and `pa drop` leaves the worktree on that
+machine for you to remove. **Context** on the dashboard shows the ask, its thread and its runs
+before you dispatch.
 
 ### Secrets and sign-ins
 
@@ -581,6 +610,7 @@ src/recall/          multi-hop recall over items, claims and pages, one rerank
 src/brief/           what `pa brief` prints
 src/meetings/        pre-meeting briefs: classify, gather evidence, learn from transcripts, notify;
                      post-meeting debriefs (debrief.js, pure half in debriefCore.js)
+src/commitments/     closing chat and mail asks you answered yourself (replyClose.js, pure half in replyCloseCore.js)
 src/dashboard/       the loopback web page: today, next meeting, replies, runs, secret requests, and the Memory and Routines tabs
 src/secrets/         secret and login requests; Windows Credential Manager via PowerShell (stdin only)
 src/routines/        cron parser, the typed action registry (repo_sync, prompt_report), runs, suggestions

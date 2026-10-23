@@ -10,127 +10,154 @@
 // websocket path below stays as a fallback for a machine running an older
 // termhub, because a dispatcher that cannot steer a stuck agent is worse than
 // one that has two ways to do it.
+//
+// One client per termhub. The module itself is this machine's
+// (PA_TERMHUB_URL); `forMachine(name)` is the client for a machine named in
+// PA_MACHINES, whose runs live in that machine's termhub (src/dispatch/remote.js).
 
+const os = require('os');
 const WebSocket = require('ws');
 const { config } = require('../config');
 const { logger } = require('../log');
 
 const log = logger('termhub');
 
-function base() {
-  return config.termhub.url.replace(/\/+$/, '');
-}
+function client(baseUrl) {
+  const root = String(baseUrl).replace(/\/+$/, '');
 
-async function api(path, { method = 'GET', body } = {}) {
-  const res = await fetch(base() + path, {
-    method,
-    headers: body ? { 'Content-Type': 'application/json' } : {},
-    body: body ? JSON.stringify(body) : undefined,
-  });
-  if (!res.ok) {
-    const text = await res.text().catch(() => '');
-    const err = new Error(`termhub ${res.status} on ${path}: ${text.slice(0, 200)}`);
-    err.status = res.status;
-    throw err;
+  async function api(path, { method = 'GET', body, timeoutMs = 15_000 } = {}) {
+    const res = await fetch(root + path, {
+      method,
+      headers: body ? { 'Content-Type': 'application/json' } : {},
+      body: body ? JSON.stringify(body) : undefined,
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      const err = new Error(`termhub ${res.status} on ${path}: ${text.slice(0, 200)}`);
+      err.status = res.status;
+      throw err;
+    }
+    if (res.status === 204) return null;
+    return res.json();
   }
-  if (res.status === 204) return null;
-  return res.json();
-}
 
-async function reachable() {
-  try {
-    const info = await api('/api/health');
-    return { ok: true, info };
-  } catch (err) {
-    return { ok: false, error: err.message };
+  async function reachable() {
+    try {
+      const info = await api('/api/health', { timeoutMs: 5000 });
+      return { ok: true, info };
+    } catch (err) {
+      return { ok: false, error: err.message };
+    }
   }
-}
 
-async function listSessions() {
-  const payload = await api('/api/sessions');
-  return payload?.sessions || payload || [];
-}
-
-async function createSession({ cwd, command, title, cols = 120, rows = 34 }) {
-  const payload = await api('/api/sessions', {
-    method: 'POST',
-    body: { cwd, command, title, cols, rows },
-  });
-  // termhub has answered with both shapes across versions; accept either rather
-  // than pin a version we would then have to keep in step.
-  const id = payload?.id || payload?.session?.id;
-  if (!id) throw new Error('termhub did not return a session id');
-  return { id, raw: payload };
-}
-
-async function killSession(id) {
-  try {
-    await api(`/api/sessions/${encodeURIComponent(id)}`, { method: 'DELETE' });
-    return true;
-  } catch (err) {
-    if (err.status === 404) return false;
-    throw err;
+  async function listSessions() {
+    const payload = await api('/api/sessions');
+    return payload?.sessions || payload || [];
   }
-}
 
-// Types text at a live session. `submit: false` fills the prompt without
-// pressing return, so text a model wrote can wait for you to read it.
-async function say(id, text, { submit = true, timeoutMs = 5000 } = {}) {
-  try {
-    await api(`/api/sessions/${encodeURIComponent(id)}/input`, {
+  async function createSession({ cwd, command, title, cols = 120, rows = 34 }) {
+    const payload = await api('/api/sessions', {
       method: 'POST',
-      body: { data: text, submit },
+      body: { cwd, command, title, cols, rows },
     });
-    return true;
-  } catch (err) {
-    if (err.status === 404 && /no such session/i.test(err.message)) throw err;
-    // 404 on the *route* (an older termhub) is indistinguishable here from a
-    // missing session, so fall through to the socket and let it decide.
-    log.debug('input route unavailable, falling back to the PTY socket', { message: err.message });
-    return sayOverSocket(id, text, { submit, timeoutMs });
+    // termhub has answered with both shapes across versions; accept either rather
+    // than pin a version we would then have to keep in step.
+    const id = payload?.id || payload?.session?.id;
+    if (!id) throw new Error('termhub did not return a session id');
+    return { id, raw: payload };
   }
-}
 
-function sayOverSocket(id, text, { submit = true, timeoutMs = 5000 } = {}) {
-  const url = base().replace(/^http/, 'ws') + `/ws/term/${encodeURIComponent(id)}`;
+  async function killSession(id) {
+    try {
+      await api(`/api/sessions/${encodeURIComponent(id)}`, { method: 'DELETE' });
+      return true;
+    } catch (err) {
+      if (err.status === 404) return false;
+      throw err;
+    }
+  }
 
-  return new Promise((resolve, reject) => {
-    const ws = new WebSocket(url);
-    const timer = setTimeout(() => {
-      ws.terminate();
-      reject(new Error('timed out talking to termhub'));
-    }, timeoutMs);
+  // Types text at a live session. `submit: false` fills the prompt without
+  // pressing return, so text a model wrote can wait for you to read it.
+  async function say(id, text, { submit = true, timeoutMs = 5000 } = {}) {
+    try {
+      await api(`/api/sessions/${encodeURIComponent(id)}/input`, {
+        method: 'POST',
+        body: { data: text, submit },
+      });
+      return true;
+    } catch (err) {
+      if (err.status === 404 && /no such session/i.test(err.message)) throw err;
+      // 404 on the *route* (an older termhub) is indistinguishable here from a
+      // missing session, so fall through to the socket and let it decide.
+      log.debug('input route unavailable, falling back to the PTY socket', { message: err.message });
+      return sayOverSocket(id, text, { submit, timeoutMs });
+    }
+  }
 
-    ws.on('open', () => {
-      ws.send(JSON.stringify({ type: 'input', data: text }));
-      if (submit) ws.send(JSON.stringify({ type: 'input', data: '\r' }));
-      // Give the frames a moment to leave before closing; a socket closed in
-      // the same tick can drop them.
-      setTimeout(() => {
+  function sayOverSocket(id, text, { submit = true, timeoutMs = 5000 } = {}) {
+    const url = root.replace(/^http/, 'ws') + `/ws/term/${encodeURIComponent(id)}`;
+
+    return new Promise((resolve, reject) => {
+      const ws = new WebSocket(url);
+      const timer = setTimeout(() => {
+        ws.terminate();
+        reject(new Error('timed out talking to termhub'));
+      }, timeoutMs);
+
+      ws.on('open', () => {
+        ws.send(JSON.stringify({ type: 'input', data: text }));
+        if (submit) ws.send(JSON.stringify({ type: 'input', data: '\r' }));
+        // Give the frames a moment to leave before closing; a socket closed in
+        // the same tick can drop them.
+        setTimeout(() => {
+          clearTimeout(timer);
+          ws.close();
+          resolve(true);
+        }, 150);
+      });
+
+      ws.on('error', (err) => {
         clearTimeout(timer);
-        ws.close();
-        resolve(true);
-      }, 150);
+        reject(new Error(`termhub session ${id} unreachable: ${err.message}`));
+      });
     });
-
-    ws.on('error', (err) => {
-      clearTimeout(timer);
-      reject(new Error(`termhub session ${id} unreachable: ${err.message}`));
-    });
-  });
-}
-
-// The URL to open in a browser. termhub publishes an HTTPS address over
-// Tailscale Serve; fall back to the configured base when it cannot say.
-async function sessionUrl(id) {
-  let origin = base();
-  try {
-    const secure = await api('/api/secure-url');
-    if (secure?.secureUrl) origin = secure.secureUrl.replace(/\/+$/, '');
-  } catch {
-    /* single-port mode, or an older termhub */
   }
-  return `${origin}/?session=${encodeURIComponent(id)}`;
+
+  // Directories under `dir` on that termhub's machine — how a remote dispatch
+  // checks a repo is there, and that its worktree appeared, without a shell.
+  async function dirs(dir) {
+    const payload = await api(`/api/dirs?path=${encodeURIComponent(dir)}`);
+    return payload?.dirs || [];
+  }
+
+  // The URL to open in a browser. termhub publishes an HTTPS address over
+  // Tailscale Serve; fall back to the configured base when it cannot say.
+  async function sessionUrl(id) {
+    let origin = root;
+    try {
+      const secure = await api('/api/secure-url');
+      if (secure?.secureUrl) origin = secure.secureUrl.replace(/\/+$/, '');
+    } catch {
+      /* single-port mode, or an older termhub */
+    }
+    return `${origin}/?session=${encodeURIComponent(id)}`;
+  }
+
+  return { base: root, api, reachable, listSessions, createSession, killSession, say, dirs, sessionUrl };
 }
 
-module.exports = { api, reachable, listSessions, createSession, killSession, say, sessionUrl };
+const local = client(config.termhub.url);
+
+// True for this machine: no name, its hostname, or any name PA_MACHINES does
+// not list (runs recorded before machines existed carry the hostname).
+function isLocal(name) {
+  return !name || name === os.hostname() || !config.termhub.machines[name];
+}
+
+function forMachine(name) {
+  return isLocal(name) ? local : client(config.termhub.machines[name].url);
+}
+
+module.exports = { ...local, client, forMachine, isLocal };

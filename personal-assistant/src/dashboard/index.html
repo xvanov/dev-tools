@@ -37,6 +37,10 @@
   .sub a { color: var(--accent); text-decoration: none; }
   .due-over { color: var(--warn); font-weight: 600; }
   .actions { display: flex; gap: 6px; margin-top: 6px; }
+  .actions select { font: inherit; font-size: 12px; }
+  .ctx { margin-top: 8px; padding: 8px 10px; border-left: 2px solid var(--line); font-size: 13px; }
+  .ctx .msg { white-space: pre-wrap; margin: 4px 0 8px; }
+  .ctx .who { color: var(--muted); font-size: 12px; }
   button { font: inherit; font-size: 12px; border: 1px solid var(--line); background: var(--chip);
     color: var(--ink); border-radius: 6px; padding: 3px 10px; cursor: pointer; }
   button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
@@ -341,8 +345,67 @@ function link(url, text) {
   return url && /^https?:\/\//.test(url) ? el('a', { href: url, target: '_blank', rel: 'noopener' }, text) : null;
 }
 
+// Where a run can go and in which mode (GET api/machines), loaded once. A
+// commitment's context is fetched when asked for and kept open across the
+// page's refreshes, so reading it is not interrupted.
+let MACHINES = { machines: [{ name: '', label: 'this machine' }], modes: ['plan', 'local', 'branch', 'mr', 'full'], defaultMode: 'local' };
+fetch('api/machines').then((r) => r.json()).then((m) => { MACHINES = m; }).catch(() => {});
+const openContext = new Map();
+
+function picker(options, value) {
+  const s = el('select', {});
+  for (const o of options) {
+    const opt = el('option', { value: o.value }, o.label);
+    if (o.value === value) opt.selected = true;
+    s.append(opt);
+  }
+  s.addEventListener('focus', () => { editing = true; });
+  s.addEventListener('blur', () => { editing = false; });
+  return s;
+}
+
+function contextPanel(x) {
+  if (x.error) return el('div', { class: 'ctx' }, x.error);
+  const lines = [
+    x.detail ? el('div', { class: 'msg' }, x.detail) : null,
+    el('div', { class: 'who' }, ...joinParts([x.project ? `project ${x.project}` : 'no project', x.repo_path, x.project_rationale])),
+    el('div', { class: 'who' }, `asked in ${SOURCE[x.source] || x.source} · ${x.author_identity || ''} · ${ago(x.occurred_at)}${x.subject ? ` · ${x.subject}` : ''}`),
+    el('div', { class: 'msg' }, x.body || ''),
+  ];
+  if (x.thread && x.thread.length > 1) {
+    lines.push(el('div', { class: 'who' }, 'thread:'));
+    for (const t of x.thread) {
+      lines.push(el('div', { class: 'who' }, `${t.author_identity || '?'} · ${ago(t.occurred_at)}`), el('div', { class: 'msg' }, t.body || ''));
+    }
+  }
+  for (const r of x.runs || []) {
+    lines.push(el('div', { class: 'who' }, `run #${r.id} · ${r.status} · ${r.mode}${r.machine ? ` · ${r.machine}` : ''} · ${r.branch || ''}`));
+  }
+  return el('div', { class: 'ctx' }, ...lines);
+}
+
 function commitmentCard(c) {
   const doBtn = el('button', { class: 'primary', title: 'Start a Claude Code session on this' }, 'Do');
+  const machinePick = picker(MACHINES.machines.map((m) => ({ value: m.name, label: m.label })), '');
+  const modePick = picker(MACHINES.modes.map((m) => ({ value: m, label: m })), MACHINES.defaultMode);
+  const ctxBtn = el('button', { title: 'The ask, its thread, and any runs' }, openContext.has(c.id) ? 'Hide' : 'Context');
+  const ctxSlot = el('div', {});
+  if (openContext.has(c.id)) ctxSlot.append(contextPanel(openContext.get(c.id)));
+  ctxBtn.addEventListener('click', async () => {
+    if (openContext.has(c.id)) {
+      openContext.delete(c.id);
+      ctxSlot.replaceChildren();
+      ctxBtn.textContent = 'Context';
+      return;
+    }
+    await busy(ctxBtn, async () => {
+      const res = await fetch(`api/commitments/${c.id}`);
+      const x = await res.json();
+      openContext.set(c.id, x);
+      ctxSlot.replaceChildren(contextPanel(x));
+    });
+    ctxBtn.textContent = 'Hide';
+  });
   const replyBtn = el('button', { title: 'Draft a reply to this ask' }, 'Reply');
   replyBtn.addEventListener('click', act(replyBtn, async () => {
     const r = await post(`api/commitments/${c.id}/reply`);
@@ -352,8 +415,9 @@ function commitmentCard(c) {
   const doneBtn = el('button', {}, 'Done');
   const dropBtn = el('button', { title: 'Not mine / not real' }, 'Dismiss');
   doBtn.addEventListener('click', act(doBtn, async () => {
-    const r = await post(`api/commitments/${c.id}/dispatch`);
-    toast(`run #${r.id} started (${r.mode})`);
+    if (machinePick.value) toast(`setting up on ${machinePick.value} — this takes a minute`);
+    const r = await post(`api/commitments/${c.id}/dispatch`, { machine: machinePick.value || null, mode: modePick.value });
+    toast(`run #${r.id} started (${r.mode}${r.machine ? ` on ${r.machine}` : ''})`);
     if (r.url) window.open(r.url, '_blank', 'noopener');
   }));
   doneBtn.addEventListener('click', act(doneBtn, async () => {
@@ -369,11 +433,14 @@ function commitmentCard(c) {
     `#${c.id}`, c.who_is_me ? null : c.who, SOURCE[c.source] || c.source, c.project, due(c.due_at),
     c.status === 'dispatched' ? 'dispatched' : null, ago(c.occurred_at), link(c.thread_external_id, 'open'),
   ]);
+  const canDo = c.direction === 'owed_by_me' && c.status === 'open';
   return el('div', { class: 'item' },
     el('div', { class: 'sum' }, c.summary),
     el('div', { class: 'sub' }, ...sub),
-    el('div', { class: 'actions' }, c.direction === 'owed_by_me' && c.status === 'open' ? doBtn : null,
-      canReply ? replyBtn : null, doneBtn, dropBtn));
+    el('div', { class: 'actions' }, ctxBtn,
+      canDo && MACHINES.machines.length > 1 ? machinePick : null, canDo ? modePick : null, canDo ? doBtn : null,
+      canReply ? replyBtn : null, doneBtn, dropBtn),
+    ctxSlot);
 }
 
 // A draft is edited in place and saved when the box loses focus. Send opens

@@ -232,6 +232,14 @@ async function main() {
     await require('./draft').autoDraft({ limit: 3 });
   });
 
+  // An ask from chat or mail I have since answered myself in the thread is
+  // closed, with the quote that answered it. Judged once per new reply.
+  if (config.replyClose.enabled) {
+    every(300, 'reply-close', async () => {
+      await require('./commitments/replyClose').pass({ limit: 8 });
+    });
+  }
+
   // Memory: claims → consolidation → pages, and a nightly dream. Each pass is
   // a query over its own marker table, so they need no ordering beyond this.
   if (config.memory.enabled) {

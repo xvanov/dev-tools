@@ -20,6 +20,9 @@ patch — and no worker, cron job, skill or agent may ever trigger a send.
 **A dispatched run never touches the main working tree.** Own worktree under
 `../.pa-worktrees/<run-id>`, own branch, removed by `pa drop`. The root `CLAUDE.md` is explicit
 that a dirty tree breaks termhub's updater — dispatched work must not be able to cause that.
+A run on another machine (`--machine`, `src/dispatch/remote.js`) gets the same: its worktree
+and the pushurl block are made on that machine before `claude` is typed, and the dispatcher
+checks the worktree exists through termhub's API rather than trusting the shell.
 
 **Mode boundaries are enforced by the dispatcher, not requested of the agent.** A `local` run
 gets no push credential in its environment. Do not implement a stop condition as a sentence in
@@ -98,6 +101,13 @@ owner is not the user, or whose ref was not in the prompt. Every write is record
 `meeting_debrief.applied` with the columns it replaced, and undo restores them (unless someone
 changed them since). It never writes to a PR or ticket; news about one is a claim. The generic
 distiller skips meeting and call recordings (`DEBRIEF_OWNED`) so nothing is extracted twice.
+
+**A reply closes a commitment only on a verbatim quote of my own message, and reversibly.**
+`src/commitments/replyClose.js` closes an open owed_by_me ask from chat or mail only when
+`replyCloseCore.parseVerdict` finds the quote in the reply of mine it names and the verdict is
+"discharged" — a promise or a partial answer closes nothing. The close is recorded in
+`reply_close.applied` with the columns it replaced, and the row is keyed by the newest reply
+judged, so a reopened commitment is not closed again by the same reply.
 
 **Capture never stops for the assistant.** The worker's only levers on `capture.py` are the pause
 file (`pa mic pause`) and the roll file, which makes capture finish its file and continue in a

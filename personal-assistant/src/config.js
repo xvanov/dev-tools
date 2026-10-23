@@ -77,6 +77,20 @@ function defaultDataDir() {
   return path.join(os.homedir(), '.local', 'share', 'personal-assistant');
 }
 
+// Other machines a run can be dispatched to (src/dispatch/remote.js), each
+// with its own termhub and its own repos root:
+//   PA_MACHINES=mv-automated-vm=http://mv-automated-vm.example.ts.net:7000|C:\source
+// Comma-separated for more than one. A machine not listed here is unknown.
+function parseMachines(text) {
+  const machines = {};
+  for (const entry of String(text || '').split(',').map((s) => s.trim()).filter(Boolean)) {
+    const m = /^([^=]+)=([^|]+)\|(.+)$/.exec(entry);
+    if (!m) throw new Error(`PA_MACHINES: cannot read "${entry}" — want name=termhubUrl|reposRoot`);
+    machines[m[1].trim()] = { name: m[1].trim(), url: m[2].trim().replace(/\/+$/, ''), reposRoot: m[3].trim() };
+  }
+  return machines;
+}
+
 function defaultReposRoot() {
   return process.platform === 'win32' ? 'C:\\repos' : path.join(os.homedir(), 'repos');
 }
@@ -215,6 +229,7 @@ const config = {
   termhub: {
     url: env('PA_TERMHUB_URL', 'http://127.0.0.1:7000'),
     claudeCommand: env('PA_CLAUDE_COMMAND', 'claude --dangerously-skip-permissions'),
+    machines: parseMachines(env('PA_MACHINES', '')),
   },
 
   // The PA chat (src/chat): one Claude Code session in termhub. Deliberately
@@ -291,6 +306,15 @@ const config = {
     debrief: env('PA_DEBRIEF', '1') !== '0',
     debriefModel: env('PA_DEBRIEF_MODEL', 'claude-sonnet-5-5'),
     debriefEffort: env('PA_DEBRIEF_EFFORT', 'medium'),
+  },
+
+  // Closing an owed_by_me commitment from Teams or mail once my own later
+  // reply in the thread settles it (src/commitments/replyClose.js). One small
+  // judgement per new reply, so a cheaper model at low effort.
+  replyClose: {
+    enabled: env('PA_REPLY_CLOSE', '1') !== '0',
+    model: env('PA_REPLY_CLOSE_MODEL', 'claude-sonnet-5-5'),
+    effort: env('PA_REPLY_CLOSE_EFFORT', 'low'),
   },
 
   // Recurring typed actions (src/routines). PA_ROUTINES=0 stops the worker
@@ -372,4 +396,4 @@ function forgetSecret(name) {
   else secretCache.clear();
 }
 
-module.exports = { config, env, envInt, parseEnvFile, secret, secretSource, forgetSecret };
+module.exports = { config, env, envInt, parseEnvFile, parseMachines, secret, secretSource, forgetSecret };

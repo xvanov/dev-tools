@@ -362,4 +362,4 @@ async function markSent(draftId, { closeCommitment = false } = {}) {
   return row;
 }
 
-module.exports = { compose, composeReply, autoDraft, get, pending, edit, discard, delivery, markSent };
+module.exports = { compose, composeReply, autoDraft, get, pending, edit, discard, delivery, markSent, myAuthorForms };

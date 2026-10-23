@@ -36,6 +36,35 @@ function hostAllowed(host) {
   return name === '127.0.0.1' || name === 'localhost' || name === '::1';
 }
 
+async function commitmentContext(id) {
+  const { one } = require('../db');
+  const c = await one(
+    `select c.id, c.direction, c.status, c.summary, c.detail, c.due_at, c.repo_path, c.project_rationale,
+            p.name as project, per.display_name as who,
+            si.source, si.subject, si.occurred_at, si.thread_external_id, si.author_identity,
+            left(si.body_text, 4000) as body, si.raw->>'webUrl' as web_url, si.raw->>'webLink' as web_link
+       from commitment c
+       left join project p on p.id = c.project_id
+       left join person per on per.id = c.counterparty_person_id
+       join source_item si on si.id = c.source_item_id
+      where c.id = $1`,
+    [id]
+  );
+  if (!c) return { error: `no commitment #${id}` };
+  const thread = c.thread_external_id
+    ? await rows(
+        `select id, author_identity, occurred_at, left(body_text, 600) as body from source_item
+          where thread_external_id = $1 order by occurred_at desc limit 12`,
+        [c.thread_external_id]
+      )
+    : [];
+  const runs = await rows(
+    `select id, status, mode, machine, branch, started_at from run where commitment_id = $1 order by started_at desc`,
+    [id]
+  );
+  return { ...c, thread: thread.reverse(), runs };
+}
+
 async function state() {
   const { gather } = require('../brief');
   const data = await gather({ horizonDays: 7 });
@@ -98,6 +127,18 @@ async function handle(req, res) {
   if (req.method === 'GET' && url.pathname === '/api/state') {
     return send(res, 200, await state());
   }
+  // Where a run can go: this machine, and each one in PA_MACHINES.
+  if (req.method === 'GET' && url.pathname === '/api/machines') {
+    return send(res, 200, {
+      machines: [{ name: '', label: 'this machine' }, ...Object.keys(config.termhub.machines).map((name) => ({ name, label: name }))],
+      modes: Object.keys(require('../dispatch/modes').MODES),
+      defaultMode: require('../dispatch/modes').mode().name,
+    });
+  }
+  // One commitment with what it came from, so it can be judged before it is
+  // dispatched: the ask itself, the thread around it, and any runs so far.
+  let cm = req.method === 'GET' && url.pathname.match(/^\/api\/commitments\/(\d+)$/);
+  if (cm) return send(res, 200, await commitmentContext(Number(cm[1])));
   // The PA chat (src/chat): termhub's "PA chat" button asks for the session
   // and attaches to it. Starting a Claude Code session is an action, so it
   // takes the same X-PA guard as every other POST.
@@ -189,8 +230,12 @@ async function handle(req, res) {
     m = url.pathname.match(/^\/api\/commitments\/(\d+)\/dispatch$/);
     if (m) {
       const dispatch = require('../dispatch');
-      const run = await dispatch.start({ commitmentId: Number(m[1]), mode: body.mode || undefined });
-      return send(res, 200, { id: run.id, mode: run.mode, url: run.url, repoPath: run.repoPath });
+      const run = await dispatch.start({
+        commitmentId: Number(m[1]),
+        mode: body.mode || undefined,
+        machine: body.machine ? String(body.machine) : null,
+      });
+      return send(res, 200, { id: run.id, mode: run.mode, machine: run.machine || null, url: run.url, repoPath: run.repoPath });
     }
   }
   return send(res, 404, { error: 'not found' });

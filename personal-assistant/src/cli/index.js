@@ -34,6 +34,7 @@ const HELP = `pa — your context layer
 
   Doing
     pa do <id> [--mode m] [--repo p] dispatch a commitment to a Claude Code session
+                     [--machine name]  …in another machine's termhub (PA_MACHINES)
     pa done <id> [--dismiss|--reopen] close a commitment yourself
     pa do --task "..." [--mode m] [--repo p]
     pa runs [--all]                 live and recent runs
@@ -353,16 +354,19 @@ const commands = {
     const dispatch = require('../dispatch');
     const commitmentId = args[0] ? Number(args[0]) : null;
     const task = flags.task && flags.task !== true ? String(flags.task) : null;
-    if (!commitmentId && !task) return fail('usage: pa do <commitment-id> [--mode m] | pa do --task "..."');
+    if (!commitmentId && !task) return fail('usage: pa do <commitment-id> [--mode m] [--machine name] | pa do --task "..."');
 
+    const machine = flags.machine && flags.machine !== true ? String(flags.machine) : null;
+    if (machine) out(`setting up on ${machine} — fetch, worktree, brief, then claude (a minute or so)…`);
     const result = await dispatch.start({
       commitmentId,
       task,
       mode: flags.mode && flags.mode !== true ? String(flags.mode) : undefined,
       repoPath: flags.repo && flags.repo !== true ? String(flags.repo) : null,
+      machine,
     });
 
-    out(`run #${result.id} · ${result.mode} · ${result.repoPath || '(no repo)'}`);
+    out(`run #${result.id} · ${result.mode}${result.machine ? ` · on ${result.machine}` : ''} · ${result.repoPath || '(no repo)'}`);
     if (result.branch) out(`  branch   ${result.branch}`);
     if (result.worktreePath) out(`  worktree ${result.worktreePath}`);
     out(`  brief    ${result.briefPath}`);
@@ -400,7 +404,8 @@ const commands = {
     for (const r of list) {
       out(
         `#${String(r.id).padEnd(4)} ${r.status.padEnd(9)} ${r.mode.padEnd(7)} ${r.task}` +
-          `\n      ${r.branch || '(no branch)'} · ${relative(r.started_at)}${r.mr_url ? ` · ${r.mr_url}` : ''}`
+          `\n      ${r.branch || '(no branch)'} · ${relative(r.started_at)}` +
+          `${require('../dispatch/termhub').isLocal(r.machine) ? '' : ` · on ${r.machine}`}${r.mr_url ? ` · ${r.mr_url}` : ''}`
       );
     }
   },
@@ -411,7 +416,7 @@ const commands = {
     const run = await dispatch.get(Number(args[0]));
     if (!run) return fail(`no run #${args[0]}`);
     if (!run.termhub_session_id) return fail(`run #${run.id} has no session`);
-    const url = await termhub.sessionUrl(run.termhub_session_id);
+    const url = await termhub.forMachine(run.machine).sessionUrl(run.termhub_session_id);
     out(url);
     if (process.platform === 'win32') {
       require('child_process').spawn('cmd', ['/c', 'start', '', url], { detached: true, stdio: 'ignore' }).unref();
@@ -464,8 +469,10 @@ const commands = {
     const dispatch = require('../dispatch');
     const id = Number(args[0]);
     if (!id) return fail('usage: pa drop <run> [--force]');
-    await dispatch.drop(id, { force: flagBool(flags, 'force') });
+    const r = await dispatch.drop(id, { force: flagBool(flags, 'force') });
     out(`run #${id} dropped`);
+    if (r && r.remote && r.removed) out(`  worktree removed on ${r.machine}: ${r.worktree}`);
+    else if (r && r.remote) out(`  its worktree stays on ${r.machine}: ${r.worktree} — \`pa drop ${id} --force\` removes it`);
   },
 
   async draft(args, flags) {
@@ -808,6 +815,10 @@ const commands = {
     const termhub = require('../dispatch/termhub');
     const hub = await termhub.reachable();
     mark(hub.ok, 'termhub', hub.ok ? config.termhub.url : `${config.termhub.url} — ${hub.error}`);
+    for (const machine of Object.values(config.termhub.machines)) {
+      const r = await termhub.forMachine(machine.name).reachable();
+      mark(r.ok, `termhub · ${machine.name}`, r.ok ? `${machine.url} · repos ${machine.reposRoot}` : `${machine.url} — ${r.error}`);
+    }
 
     // Routines: a schedule or action that no longer parses, and the last run's
     // outcome. repo_sync refuses to fast-forward while termhub is unreachable.
@@ -918,6 +929,17 @@ const commands = {
       );
     } catch (err) {
       lines.push(`  debriefs: not migrated (${err.message.slice(0, 60)}) — run \`pa migrate\``);
+    }
+
+    // Asks closed by my own reply in the thread (src/commitments/replyClose.js).
+    try {
+      const r = await require('../commitments/replyClose').stats();
+      lines.push(
+        `  reply-close ${config.replyClose.enabled ? 'on' : 'off (PA_REPLY_CLOSE=0)'} · ${r.closed} closed by your replies of ${r.judged} judged` +
+          `${r.failed ? ` · ${r.failed} FAILED` : ''} · last ${r.last ? relative(r.last) : 'never'}`
+      );
+    } catch (err) {
+      lines.push(`  reply-close: not migrated (${err.message.slice(0, 60)}) — run \`pa migrate\``);
     }
 
     // Audio

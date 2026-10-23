@@ -109,7 +109,10 @@ async function memoryContext({ commitment, item, project, person }, task) {
   };
 }
 
-async function start({ commitmentId = null, task = null, mode: modeName, repoPath = null }) {
+async function start({ commitmentId = null, task = null, mode: modeName, repoPath = null, machine = null }) {
+  if (machine && !termhub.isLocal(machine)) {
+    return startRemote({ commitmentId, task, modeName, repoPath, machineName: machine });
+  }
   const m = resolveMode(modeName);
   const target = await resolveTarget({ commitmentId, repoPath });
 
@@ -199,6 +202,98 @@ async function start({ commitmentId = null, task = null, mode: modeName, repoPat
   return { id: run.id, mode: m.name, repoPath: repo, worktreePath, branch, briefPath, sessionId: session.id, url };
 }
 
+// The same run, on another machine's termhub (src/dispatch/remote.js). The
+// repo is the local one's namesake under that machine's repos root; the
+// worktree, the pushurl block and BRIEF.md are made there, by the session.
+async function startRemote({ commitmentId, task, modeName, repoPath, machineName }) {
+  const remote = require('./remote');
+  const machine = remote.machineNamed(machineName);
+  const hub = termhub.forMachine(machine.name);
+  const m = resolveMode(modeName);
+  const target = await resolveTarget({ commitmentId, repoPath });
+
+  const label = task || target.commitment?.summary;
+  if (!label) throw new Error('nothing to do — give a commitment id or a --task');
+  if (!target.repoPath) {
+    throw new Error('no repo for this commitment — set one with `pa show <id> --project <name>`, or pass --repo');
+  }
+  const repo = remote.remoteRepoPath(machine, target.repoPath);
+
+  const run = await one(
+    `insert into run (commitment_id, mode, task, repo_path, status, machine)
+     values ($1,$2,$3,$4,'starting',$5) returning *`,
+    [commitmentId, m.name, label, repo, machine.name]
+  );
+  const branch = `pa/${run.id}-${slug(label)}`;
+  const worktreePath = remote.remoteWorktreePath(machine, run.id);
+  const briefText = buildBrief({
+    commitment: target.commitment,
+    item: target.item,
+    project: target.project,
+    person: target.person,
+    modeName: m.name,
+    run: { ...run, worktree_path: worktreePath, branch },
+    related: await relatedContext(target.item),
+    memory: await memoryContext(target, task),
+  });
+
+  let started;
+  try {
+    started = await remote.startOnMachine({
+      machine,
+      hub,
+      run,
+      repo,
+      branch,
+      mode: m,
+      brief: briefText,
+      title: `pa#${run.id} ${label.slice(0, 40)}`,
+      blockedPushUrl: BLOCKED_PUSH_URL,
+    });
+  } catch (err) {
+    await query(
+      `update run set status = 'failed', termhub_session_id = $2, exit_note = $3, ended_at = now() where id = $1`,
+      [run.id, err.sessionId || null, err.message.slice(0, 500)]
+    );
+    throw err;
+  }
+
+  await query(
+    `update run set termhub_session_id = $2, brief_path = $3, worktree_path = $4, branch = $5, status = 'running'
+      where id = $1`,
+    [run.id, started.sessionId, started.briefPath, started.worktreePath, branch]
+  );
+  if (commitmentId) {
+    await query(`update commitment set status = 'dispatched' where id = $1`, [commitmentId]);
+  }
+  await hub.say(started.sessionId, openingPrompt(run)).catch((err) => {
+    log.warn('could not type the opening prompt', { run: run.id, message: err.message });
+  });
+  log.info('dispatched', { run: run.id, mode: m.name, repo, branch, machine: machine.name });
+
+  return {
+    id: run.id,
+    mode: m.name,
+    machine: machine.name,
+    repoPath: repo,
+    worktreePath: started.worktreePath,
+    branch,
+    briefPath: started.briefPath,
+    sessionId: started.sessionId,
+    url: started.url,
+  };
+}
+
+// git on a remote run's worktree happens on that machine, not here.
+function localOnly(run, verb) {
+  if (!termhub.isLocal(run.machine)) {
+    throw new Error(
+      `run #${run.id} is on ${run.machine}: ${verb} it in its session (pa attach ${run.id}), ` +
+        `or ask it — pa say ${run.id} "show me git diff --stat"`
+    );
+  }
+}
+
 async function get(runId) {
   return one('select * from run where id = $1', [runId]);
 }
@@ -216,13 +311,14 @@ async function steer(runId, text) {
   const run = await get(runId);
   if (!run) throw new Error(`no run #${runId}`);
   if (!run.termhub_session_id) throw new Error(`run #${runId} has no session`);
-  await termhub.say(run.termhub_session_id, text);
+  await termhub.forMachine(run.machine).say(run.termhub_session_id, text);
   return true;
 }
 
 async function review(runId) {
   const run = await get(runId);
   if (!run) throw new Error(`no run #${runId}`);
+  localOnly(run, 'review');
   if (!run.worktree_path) return { run, diff: null, stat: null, status: null };
 
   const base = await defaultBranch(run.repo_path);
@@ -244,6 +340,7 @@ async function review(runId) {
 async function diff(runId) {
   const run = await get(runId);
   if (!run?.worktree_path) return '';
+  localOnly(run, 'diff');
   const base = await defaultBranch(run.repo_path);
   return git(run.worktree_path, ['diff', `${base}...HEAD`]).catch(() => '');
 }
@@ -254,6 +351,7 @@ async function diff(runId) {
 async function land(runId, { openMr = null } = {}) {
   const run = await get(runId);
   if (!run) throw new Error(`no run #${runId}`);
+  localOnly(run, 'land');
   const m = resolveMode(run.mode);
   if (!m.mayPush) {
     throw new Error(
@@ -317,6 +415,30 @@ async function drop(runId, { force = false } = {}) {
   const run = await get(runId);
   if (!run) throw new Error(`no run #${runId}`);
 
+  // A remote run's worktree is on that machine, where this cannot see whether
+  // it holds unpushed work: a plain drop ends the session and keeps the
+  // worktree; --force removes it there too.
+  if (!termhub.isLocal(run.machine)) {
+    const hub = termhub.forMachine(run.machine);
+    if (run.termhub_session_id) await hub.killSession(run.termhub_session_id).catch(() => {});
+    let removed = false;
+    if (force && run.worktree_path) {
+      const remote = require('./remote');
+      removed = await remote.removeOnMachine({
+        machine: remote.machineNamed(run.machine),
+        hub,
+        repo: run.repo_path,
+        worktree: run.worktree_path,
+        branch: run.branch,
+      });
+    }
+    await query(`update run set status = 'dropped', ended_at = now() where id = $1`, [runId]);
+    if (run.commitment_id) {
+      await query(`update commitment set status = 'open' where id = $1 and status = 'dispatched'`, [run.commitment_id]);
+    }
+    return { remote: true, removed, worktree: run.worktree_path, machine: run.machine };
+  }
+
   if (run.worktree_path && !force) {
     const dirty = (await git(run.worktree_path, ['status', '--porcelain']).catch(() => '')).trim();
     const base = await defaultBranch(run.repo_path).catch(() => 'main');
@@ -367,15 +489,26 @@ async function markDone(runId, note) {
 const WAIT_NOTIFY_MS = 60_000;
 
 async function reconcile() {
-  const sessions = await termhub.listSessions().catch(() => null);
-  if (!sessions) return { closed: 0, notified: 0 };
-  const byId = new Map(sessions.map((s) => [s.id, s]));
   const active = await rows(
-    `select id, task, status, termhub_session_id from run where status in ('starting','running','waiting')`
+    `select id, task, status, termhub_session_id, machine from run where status in ('starting','running','waiting')`
   );
+  // Each run is checked against its own machine's termhub. A machine that
+  // cannot be reached says nothing about its runs, so they are left alone
+  // rather than closed as "session ended".
+  const hubs = new Map();
+  for (const run of active) {
+    const key = termhub.isLocal(run.machine) ? '' : run.machine;
+    if (!hubs.has(key)) {
+      const hub = termhub.forMachine(key || null);
+      const sessions = await hub.listSessions().catch(() => null);
+      hubs.set(key, { hub, byId: sessions ? new Map(sessions.map((s) => [s.id, s])) : null });
+    }
+  }
   let closed = 0;
   let notified = 0;
   for (const run of active) {
+    const { hub, byId } = hubs.get(termhub.isLocal(run.machine) ? '' : run.machine);
+    if (!byId) continue;
     const s = run.termhub_session_id ? byId.get(run.termhub_session_id) : null;
     if (run.termhub_session_id && (!s || s.alive === false)) {
       await markDone(run.id, 'session ended');
@@ -400,7 +533,7 @@ async function reconcile() {
           kind: 'info',
           title: `Run #${run.id} is waiting for you`,
           body: `${String(run.task).slice(0, 160)}\nIt finished or has a question — open its session.`,
-          url: `${config.termhub.url.replace(/\/+$/, '')}/#session=${s.id}`,
+          url: `${hub.base}/#session=${s.id}`,
           dedupeKey: `run-wait:${run.id}:${s.idleSince || ''}`,
         })
         .catch(() => null);
