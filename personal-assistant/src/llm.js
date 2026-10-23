@@ -8,16 +8,27 @@
 //    process that can reach the claude.ai connectors (Atlassian, Microsoft 365)
 //    without an app registration in anyone's tenant.
 //
-// The CLI is isolated on purpose. It runs from a temp directory so no repo
-// `CLAUDE.md` is discovered, with `--setting-sources project` so the user's own
+// The CLI is isolated on purpose. It runs from an empty directory of its own
+// (CLI_CWD) so no repo `CLAUDE.md` is discovered — and not from the temp root,
+// which Claude Code lists in full at startup (`rg --files`): with tens of
+// thousands of files there, every call cost seconds of CPU and disk,
+// several times a minute, and made the whole machine lag. It also runs with `--setting-sources project` so the user's own
 // hooks and plugins (an output-style hook, a status line) cannot rewrite an
 // extraction prompt, and with `--no-session-persistence` so a thousand
 // distillation calls do not land in the session history. Tools are off unless
 // the caller names the ones it needs.
 
-const os = require('os');
+const fs = require('fs');
+const path = require('path');
 const { spawn } = require('child_process');
 const { config } = require('./config');
+
+const CLI_CWD = path.join(config.dataDir, 'llm-cwd');
+
+function cliCwd() {
+  fs.mkdirSync(CLI_CWD, { recursive: true });
+  return CLI_CWD;
+}
 
 function backend() {
   return config.anthropic.apiKey ? 'api' : 'cli';
@@ -76,7 +87,7 @@ function cliArgs({ system, effort, tools, model = null }) {
 function runCli(args, prompt, timeoutMs, env = null) {
   return new Promise((resolve, reject) => {
     const child = spawn(config.claudeBin, args, {
-      cwd: os.tmpdir(),
+      cwd: cliCwd(),
       windowsHide: true,
       env: env ? { ...process.env, ...env } : process.env,
       stdio: ['pipe', 'pipe', 'pipe'],
