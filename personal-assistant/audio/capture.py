@@ -25,7 +25,11 @@ depend on the rest of the system working:
 The pause file stops *capture*, not merely transcription. A paused recorder
 holds no device handle at all.
 
-The roll file (`audio.roll` beside it) is the worker's one other lever: when
+The worker's meeting gate writes the same pause file (with the marker
+"meeting-gate") between meetings, and removes only that, so capture records
+during calendar meetings and calls and holds no device the rest of the day.
+
+The roll file (`audio.roll` beside it) is the worker's other lever: when
 a meeting ends it touches the file, and both streams close their current file
 within a second and carry on in a new one, so the meeting is transcribed and
 debriefed in minutes instead of at the next slot boundary. Recording never
@@ -77,7 +81,9 @@ def paused(pause_file: str) -> bool:
     try:
         with open(pause_file, "r", encoding="utf-8") as fh:
             until = fh.read().strip()
-        if not until:
+        # Empty is `pa mic pause` with no end; "meeting-gate" is the worker's
+        # meeting gate between meetings (src/audio/gate.js).
+        if not until or until == "meeting-gate":
             return True
         return dt.datetime.fromisoformat(until.replace("Z", "+00:00")) > dt.datetime.now(dt.timezone.utc)
     except (OSError, ValueError):
@@ -86,18 +92,104 @@ def paused(pause_file: str) -> bool:
         return True
 
 
+# The mic you talk into on a call is whichever one the call app opened, not
+# the default recording device: Teams picks the headset while the default
+# stays the laptop array, and a whole stand-up of your own words was recorded
+# as silence that way. So the mic is chosen in this order:
+#
+#   1. the device another app is recording from right now (a WASAPI capture
+#      session in the Active state that is not Python — not us, not
+#      voice-dictation): the mic the call is really using, whatever its name
+#   2. the first mic whose name matches PA_AUDIO_MIC (a headset, by default)
+#   3. Windows' default recording device
+#
+# A Bluetooth headset's mic only exists while a call holds it open, so the
+# choice is re-made every few seconds (MIC_RECHECK_SECONDS).
+MIC_PREFER = os.environ.get("PA_AUDIO_MIC", r"headset|hands-free")
+MIC_RECHECK_SECONDS = 5
+
+
+def _active_capture_ids() -> list[str]:
+    """Endpoint ids that a non-Python process is recording from right now."""
+    try:
+        sys.coinit_flags = 0  # COINIT_MULTITHREADED, as soundcard initialises COM
+        import comtypes
+        from comtypes import CLSCTX_ALL
+        from pycaw.pycaw import AudioUtilities, IAudioSessionControl2, IAudioSessionManager2
+    except ImportError:
+        return []
+    try:
+        comtypes.CoInitializeEx(0)
+    except OSError:
+        pass  # already initialised on this thread
+    ids = []
+    endpoints = AudioUtilities.GetDeviceEnumerator().EnumAudioEndpoints(1, 1)  # eCapture, ACTIVE
+    for i in range(endpoints.GetCount()):
+        device = endpoints.Item(i)
+        manager = device.Activate(IAudioSessionManager2._iid_, CLSCTX_ALL, None).QueryInterface(IAudioSessionManager2)
+        sessions = manager.GetSessionEnumerator()
+        for j in range(sessions.GetCount()):
+            control = sessions.GetSession(j).QueryInterface(IAudioSessionControl2)
+            if control.GetState() != 1:  # AudioSessionStateActive
+                continue
+            if _is_python(control.GetProcessId()):
+                continue
+            ids.append(device.GetId())
+            break
+    return ids
+
+
+def _is_python(pid: int) -> bool:
+    if pid in (0, os.getpid()):
+        return True
+    import ctypes
+
+    k32 = ctypes.windll.kernel32
+    handle = k32.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
+    if not handle:
+        return False
+    try:
+        buf = ctypes.create_unicode_buffer(1024)
+        size = ctypes.c_ulong(len(buf))
+        if not k32.QueryFullProcessImageNameW(handle, 0, buf, ctypes.byref(size)):
+            return False
+        return os.path.basename(buf.value).lower().startswith("python")
+    finally:
+        k32.CloseHandle(handle)
+
+
+def preferred_mic():
+    """The mic a call is using, else one matching PA_AUDIO_MIC, else the default."""
+    import re
+
+    mics = sc.all_microphones()
+    try:
+        in_use = set(_active_capture_ids())
+    except Exception:  # noqa: BLE001 - COM can fail mid-device-change; fall through
+        in_use = set()
+    for mic in mics:
+        if mic.id in in_use:
+            return mic
+    pattern = re.compile(MIC_PREFER, re.IGNORECASE)
+    for mic in mics:
+        if pattern.search(str(mic.name)):
+            return mic
+    return sc.default_microphone()
+
+
 def recorder_for(stream: str):
     """Opens the device and returns (recorder_context, device_name).
 
     Loopback follows the *default output device*, so switching to headphones
-    mid-call changes which device we must be recording. The name is returned so
+    mid-call changes which device we must be recording. The mic follows the
+    headset when one is connected (preferred_mic). The name is returned so
     the caller can notice the change and reopen.
     """
     if stream == "loopback":
         speaker = sc.default_speaker()
         device = sc.get_microphone(id=str(speaker.name), include_loopback=True)
         return device, speaker.name
-    device = sc.default_microphone()
+    device = preferred_mic()
     return device, device.name
 
 
@@ -128,6 +220,7 @@ def run(stream: str, spool: str, pause_file: str, roll_file: str) -> int:
     writer: sf.SoundFile | None = None
     device_name: str | None = None
     opened_at = 0.0
+    mic_checked = 0.0
 
     def close_writer():
         nonlocal writer, current_path, current_slot
@@ -188,6 +281,14 @@ def run(stream: str, spool: str, pause_file: str, roll_file: str) -> int:
                     if stream == "loopback":
                         try:
                             if str(sc.default_speaker().name) != device_name:
+                                break
+                        except Exception:  # noqa: BLE001 - device enumeration is flaky mid-switch
+                            pass
+                    # Likewise a headset mic that appears when a call starts.
+                    elif time.time() - mic_checked >= MIC_RECHECK_SECONDS:
+                        mic_checked = time.time()
+                        try:
+                            if str(preferred_mic().name) != device_name:
                                 break
                         except Exception:  # noqa: BLE001 - device enumeration is flaky mid-switch
                             pass

@@ -461,8 +461,27 @@ reuses a name, so a reopen can no longer empty a finished file (`audio/naming.py
 in place as later files arrive, and a conversation that runs straight from one calendar meeting
 into the next is cut at the second one's start, so each meeting gets its own episode and link.
 
+Capture records during meetings, not all day. Recording every second fed the transcriber
+music, videos and an empty room — a CPU core and a slice of the GPU from login to shutdown — so
+the worker's **meeting gate** (`src/audio/gate.js`) keeps the recorders paused, holding no
+device, except while a calendar meeting with other people in it is on (from two minutes before
+its start to five after its end) or another app holds the microphone. The second is the
+unplanned call: a Teams ring, a Zoom link in chat, a Meet tab. Windows records which app holds
+the mic, and the gate reads that every 20 s; our own recorder and voice-dictation (Python) do
+not count. After a call lets go it waits two minutes before pausing, so a dropped call that
+rejoins stays one recording. `PA_AUDIO_MEETING_GATE=0` goes back to always-on.
+
+The mic stream records **the mic the call is using**, not Windows' default recording device:
+Teams talks through the headset while the default stays the laptop array, and that once
+recorded a whole stand-up of your own words as silence. Capture asks Windows which capture
+device another app (Teams, Zoom, a browser — anything but Python) is actively recording from
+and records that one; with no call, it takes a mic whose name matches `PA_AUDIO_MIC` (default
+`headset|hands-free`), else the default device. A Bluetooth headset's mic only appears while a
+call holds it open, so capture re-checks every five seconds and switches.
+
 `pa mic pause 30` releases the device handle outright — it stops capture, not merely
-transcription. Your own Claude Code sessions are captured from their transcripts on disk rather
+transcription — and the gate never lifts it, meeting or not. `pa mic on` between meetings
+records until the next meeting ends. Your own Claude Code sessions are captured from their transcripts on disk rather
 than from audio, because the exact text is already there.
 
 A recorder can be running and recording nothing — when the disk filled, the call-audio recorder

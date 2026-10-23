@@ -28,13 +28,9 @@ const STALE_MS = 120_000;
 const RESTART_COOLDOWN_MS = 10 * 60_000;
 const lastRestart = new Map();
 
+// Paused by you or by the meeting gate: either way silence is the point.
 function paused() {
-  try {
-    const until = fs.readFileSync(config.audio.pauseFile, 'utf8').trim();
-    return !until || new Date(until).getTime() > Date.now();
-  } catch {
-    return false;
-  }
+  return require('./gate').readPause().state !== 'on';
 }
 
 // Newest write to any raw capture file in a stream's spool (speech files are

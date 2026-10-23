@@ -9,3 +9,6 @@
 soundcard>=0.4.3
 soundfile>=0.12.1
 numpy>=1.24
+# Which mic the call app is really recording from (WASAPI capture sessions),
+# so "you" is the headset Teams opened, not the default laptop array.
+pycaw>=20251023

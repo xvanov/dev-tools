@@ -187,6 +187,14 @@ async function main() {
     await watchdog.checkDisk();
   });
 
+  // Records during meetings only: a calendar meeting, or another app on the
+  // microphone for the unplanned call (src/audio/gate.js).
+  if (config.audio.enabled && config.audio.gate.enabled) {
+    every(config.audio.gate.pollSeconds, 'meeting-gate', async () => {
+      await require('./audio/gate').tick();
+    });
+  }
+
   every(config.audio.enabled ? 60 : 86400, 'audio', async () => {
     if (!config.audio.enabled) return;
     const spool = require('./audio/spool');

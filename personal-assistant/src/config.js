@@ -246,6 +246,15 @@ const config = {
     // Touched by the worker when a meeting ends; capture finishes its current
     // file within a second (audio/capture.py, audio/naming.py).
     rollFile: env('PA_AUDIO_ROLL_FILE', path.join(dataDir, 'audio.roll')),
+    // The meeting gate (src/audio/gate.js): capture records only while a
+    // calendar meeting is on or another app holds the microphone.
+    gate: {
+      enabled: env('PA_AUDIO_MEETING_GATE', '1') !== '0',
+      pollSeconds: envInt('PA_AUDIO_GATE_POLL_SECONDS', 20),
+      leadMinutes: envInt('PA_AUDIO_GATE_LEAD_MINUTES', 2),
+      graceMinutes: envInt('PA_AUDIO_GATE_GRACE_MINUTES', 5),
+      callGraceSeconds: envInt('PA_AUDIO_GATE_CALL_GRACE_SECONDS', 120),
+    },
     // The venv that owns soundcard/soundfile. Separate from voice-dictation's
     // so upgrading one cannot break the other's hotkey.
     python: env(

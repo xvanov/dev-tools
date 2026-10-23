@@ -568,13 +568,13 @@ const commands = {
       } catch {
         /* already on */
       }
-      return out('capture on');
+      return out(config.audio.gate.enabled ? 'capture on (the meeting gate pauses it again after the next meeting)' : 'capture on');
     }
 
-    if (!fs.existsSync(pauseFile)) return out('capture: on');
-    const until = fs.readFileSync(pauseFile, 'utf8').trim();
-    if (until && new Date(until) < new Date()) return out(`capture: on (pause expired ${until})`);
-    out(`capture: paused until ${until}`);
+    const p = require('../audio/gate').readPause(pauseFile);
+    if (p.state === 'gate') return out('capture: idle — the meeting gate starts it for a meeting or a call');
+    if (p.state === 'on') return out(p.expired ? `capture: on (pause expired ${p.expired})` : 'capture: on');
+    out(`capture: paused ${p.until ? `until ${p.until}` : 'until `pa mic on`'}`);
   },
 
   // The retrieval eval harness. Cases live in the database only — they are
@@ -921,9 +921,12 @@ const commands = {
     }
 
     // Audio
-    const paused = fs.existsSync(config.audio.pauseFile);
+    const pause = require('../audio/gate').readPause().state;
+    const audioState = { on: 'recording', gate: 'idle until a meeting', user: 'PAUSED by you' }[pause];
     lines.push('');
-    lines.push(`  audio ${config.audio.enabled ? (paused ? 'PAUSED' : 'on') : 'disabled'} · spool ${config.audioDir}`);
+    lines.push(
+      `  audio ${config.audio.enabled ? audioState : 'disabled'} · meeting gate ${config.audio.gate.enabled ? 'on' : 'off (always-on)'} · spool ${config.audioDir}`
+    );
     // Capture files not yet transcribed, beyond the one being written. A
     // growing backlog means the transcriber is down: the files are kept and
     // retried, but nothing new reaches memory until it is back.
