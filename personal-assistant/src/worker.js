@@ -80,6 +80,16 @@ function every(seconds, name, fn) {
 }
 
 async function main() {
+  // Below normal, so everything the worker starts — every headless `claude
+  // -p`, the audio pass — inherits it and yields to whatever you are typing
+  // into. The worker is never in a hurry; a pass a second later costs nothing,
+  // while a model call at Normal priority made a terminal lag by seconds.
+  try {
+    require('os').setPriority(require('os').constants.priority.PRIORITY_BELOW_NORMAL);
+  } catch {
+    /* not permitted here: run at the default */
+  }
+
   log.info('starting', {
     m365Poll: config.m365.pollSeconds,
     db: config.databaseUrl.replace(/:[^:@/]*@/, ':***@'),
