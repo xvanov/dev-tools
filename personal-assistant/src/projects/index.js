@@ -359,7 +359,9 @@ async function correct(commitmentId, projectName, { learn = true, rationale = 'c
   };
   await query(
     `update commitment set project_id = $2, repo_path = $3, project_confidence = $4,
-                           project_rationale = $5 where id = $1`,
+                           project_rationale = $5,
+                           touched_at = case when $5 = 'corrected by hand' then now() else touched_at end
+      where id = $1`,
     [commitmentId, project?.id ?? null, project?.repo_path ?? null, project ? 1.0 : null, rationale]
   );
   let learned = [];

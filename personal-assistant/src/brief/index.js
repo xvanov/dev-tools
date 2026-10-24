@@ -14,19 +14,26 @@ const { rows } = require('../db');
 const DAY = 86400_000;
 
 async function gather({ horizonDays = 7 } = {}) {
-  const commitments = await rows(
-    `select c.id, c.summary, c.detail, c.direction, c.due_at, c.status, c.confidence,
-            c.project_confidence, c.repo_path,
-            p.name as project, per.display_name as who, per.is_me as who_is_me, si.source, si.subject,
-            si.occurred_at, si.thread_external_id
-       from commitment c
-       left join project p on p.id = c.project_id
-       left join person per on per.id = c.counterparty_person_id
-       join source_item si on si.id = c.source_item_id
-      where c.status in ('open','dispatched') and c.superseded_by is null
-      order by c.due_at nulls last, c.extracted_at desc
-      limit 60`
-  );
+  // What people ask of me, and notes from my own work, kept apart
+  // (src/commitments/selfNotes.js): the second is grouped and expires.
+  const { SELF_NOTE, group } = require('../commitments/selfNotes');
+  const select = (selfNote, limit) =>
+    rows(
+      `select c.id, c.summary, c.detail, c.direction, c.due_at, c.status, c.confidence,
+              c.project_confidence, c.repo_path,
+              p.name as project, per.display_name as who, per.is_me as who_is_me, si.source, si.subject,
+              si.occurred_at, si.thread_external_id
+         from commitment c
+         left join project p on p.id = c.project_id
+         left join person per on per.id = c.counterparty_person_id
+         join source_item si on si.id = c.source_item_id
+        where c.status in ('open','dispatched') and c.superseded_by is null
+          and ${selfNote ? '' : 'not '}${SELF_NOTE}
+        order by c.due_at nulls last, c.extracted_at desc
+        limit ${limit}`
+    );
+  const commitments = await select(false, 60);
+  const selfNotes = group(await select(true, 200));
 
   const meetings = await rows(
     `select subject, occurred_at, raw
@@ -58,7 +65,7 @@ async function gather({ horizonDays = 7 } = {}) {
       order by ended_at desc nulls last limit 10`
   );
 
-  return { commitments, meetings, reviews, runsActive, runsReview, horizonDays };
+  return { commitments, selfNotes, meetings, reviews, runsActive, runsReview, horizonDays };
 }
 
 function bucket(commitment, now) {
@@ -111,6 +118,16 @@ function formatBrief(data, { now = Date.now() } = {}) {
   section('WAITING ON OTHERS', buckets.waiting.slice(0, 8), (c) =>
     `  ${String(c.id).padStart(4)}  ${c.summary}${c.who ? `  (${c.who})` : ''}`
   );
+
+  // Notes from my own sessions and PRs: one line per PR or session, not per
+  // note. They expire after a week untouched (src/commitments/selfNotes.js).
+  const notes = data.selfNotes || [];
+  if (notes.length) {
+    const total = notes.reduce((n, g) => n + g.items.length, 0);
+    section(`FROM YOUR OWN WORK (${total} notes, ${notes.length} groups)`, notes.slice(0, 6), (g) =>
+      `  ${g.label}: ${g.items.length > 1 ? `${g.items.length} notes, latest ` : ''}#${g.items[0].id} ${g.items[0].summary}`
+    );
+  }
 
   section('TODAY', data.meetings, (m) => {
     const attendees = (m.raw?.attendees || []).length;

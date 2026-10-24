@@ -16,6 +16,7 @@ async function setStatus(id, status) {
   const row = await one(
     `update commitment
         set status = $2,
+            touched_at = now(),
             closed_at = case when $2 = 'open' then null else now() end,
             closed_reason = case when $2 = 'open' then null
                                  when $2 = 'done' then 'you marked it done'

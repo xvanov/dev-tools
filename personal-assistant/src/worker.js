@@ -294,6 +294,12 @@ async function main() {
     await require('./backup').dumpIfDue();
   });
 
+  // Notes from my own sessions and PRs nobody touched for a week are closed
+  // (src/commitments/selfNotes.js); asks from people never expire.
+  every(3600, 'self-notes', async () => {
+    await require('./commitments/selfNotes').expire();
+  });
+
   every(3600, 'retention', async () => {
     const result = await db.query(
       `delete from source_item

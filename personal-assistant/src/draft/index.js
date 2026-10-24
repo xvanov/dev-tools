@@ -277,8 +277,18 @@ async function retireAnswered() {
       [d.id, `you already replied in the thread (${new Date(d.answered_at).toISOString().slice(0, 16).replace('T', ' ')} UTC)`]
     );
   }
-  if (stale.length) log.info('retired answered drafts', { count: stale.length });
-  return stale.length;
+  // A reply to my own message is no reply at all: a promise I made ("I'm
+  // creating a fix PR now") became a commitment, and drafting for it wrote me
+  // a message addressed to myself.
+  const own = await query(
+    `update draft d set status = 'discarded', closed_at = now(), closed_reason = 'the ask was your own message'
+       from source_item si
+      where si.id = d.source_item_id and d.status in ('pending','edited') and d.origin = 'auto'
+        and lower(coalesce(si.author_identity, '')) = any($1::text[])`,
+    [me]
+  );
+  if (stale.length || own.rowCount) log.info('retired answered drafts', { count: stale.length, own: own.rowCount });
+  return stale.length + (own.rowCount || 0);
 }
 
 async function autoDraft({ limit = 3 } = {}) {
@@ -295,6 +305,7 @@ async function autoDraft({ limit = 3 } = {}) {
         and coalesce(c.confidence, 1) >= $2
         and si.occurred_at > now() - interval '2 days'
         and coalesce(per.is_me, false) = false
+        and lower(coalesce(si.author_identity, '')) <> all($1::text[])
         and not exists (select 1 from draft d where d.commitment_id = c.id)
         -- One reply per message: an ask that holds two requests became two
         -- commitments, and drafting each wrote the same person two replies.
@@ -374,4 +385,4 @@ async function markSent(draftId, { closeCommitment = false } = {}) {
   return row;
 }
 
-module.exports = { compose, composeReply, autoDraft, get, pending, edit, discard, delivery, markSent, myAuthorForms };
+module.exports = { compose, composeReply, autoDraft, retireAnswered, get, pending, edit, discard, delivery, markSent, myAuthorForms };

@@ -185,6 +185,7 @@
   <section id="drafts"><h2>Replies to send<span class="n"></span></h2><div class="list"></div></section>
   <section id="mine"><h2>On you<span class="n"></span></h2><div class="list"></div></section>
   <section id="waiting"><h2>Waiting on others<span class="n"></span></h2><div class="list"></div></section>
+  <section id="selfnotes"><h2 title="Notes read from your own Claude sessions and PRs — not asks from people. Closed when the PR merges, or after a week untouched.">From your own work<span class="n"></span></h2><div class="list"></div></section>
   <section id="runs"><h2>Agent runs<span class="n"></span></h2><div class="list"></div></section>
   <section id="code"><h2>Code &amp; boards<span class="n"></span></h2><div class="list"></div></section>
   <section id="meetings"><h2>Meetings next 24h<span class="n"></span></h2><div class="list"></div></section>
@@ -353,6 +354,7 @@ function link(url, text) {
 let MACHINES = { machines: [{ name: '', label: 'this machine' }], modes: ['plan', 'local', 'branch', 'mr', 'full'], defaultMode: 'local' };
 fetch('api/machines').then((r) => r.json()).then((m) => { MACHINES = m; }).catch(() => {});
 const openContext = new Map();
+const openGroups = new Set();
 
 function picker(options, value) {
   const s = el('select', {});
@@ -649,6 +651,15 @@ function render(s) {
   const waiting = s.commitments.filter((c) => c.direction === 'owed_to_me');
   fill('mine', mine, commitmentCard, 'Nothing on you.');
   fill('waiting', waiting, commitmentCard, 'Nobody owes you anything.');
+  // One collapsed group per PR or session; open groups stay open across refreshes.
+  fill('selfnotes', s.selfNotes || [], (g) => {
+    const d = el('details', { class: 'item' },
+      el('summary', {}, `${g.label} · ${g.items.length} note${g.items.length === 1 ? '' : 's'} · latest ${ago(g.items[0].occurred_at)}`),
+      ...g.items.map(commitmentCard));
+    d.open = openGroups.has(g.key);
+    d.addEventListener('toggle', () => (d.open ? openGroups.add(g.key) : openGroups.delete(g.key)));
+    return d;
+  }, 'No notes from your own work.');
 
   fill('drafts', s.drafts, draftCard, 'No replies waiting.');
 

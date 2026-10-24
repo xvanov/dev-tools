@@ -162,6 +162,15 @@ on its own): what's on you, what you're waiting on, agent runs, drafts, open PRs
 items, each with **Do** (dispatch), **Reply**, **Done** and **Dismiss**. Loopback only — it can
 start agents. Every button shows that it is working and then what happened.
 
+**From your own work** holds what the distiller read from your own Claude sessions and your own
+PRs — agent handoffs like "verify the banner in a browser before merge" — apart from **On you**,
+which is only what people asked of you or you promised them. They are grouped one per PR or
+session, close when their PR merges or closes, and expire after a week nobody touched them
+(`src/commitments/selfNotes.js`; reopening or correcting one counts as touching it). Asks from
+people never expire. A GitHub issue someone else filed through your account is still their ask.
+Auto-drafted replies are never written for an ask that was your own message, and one already
+written for one is retired.
+
 **Closed recently** lists what left your list in the last three days and why — by you, or by the
 assistant: after each GitHub pass it closes commitments whose PR merged or closed, reviews you
 already gave, and review requests GitHub addressed only to a team you are in (those never become
