@@ -50,4 +50,16 @@ assert.strictEqual(Buffer.from(chunks.join(''), 'base64').toString('utf8'), brie
 assert.ok(!local.some((l) => l.includes('Sam said')));
 assert.ok(local[local.length - 1].startsWith('Set-Location'), 'ends in the worktree, ready for claude');
 
+// --- what Claude's screen is asking for ------------------------------------
+
+const { claudeScreenState } = require('../src/dispatch/termhub');
+assert.strictEqual(claudeScreenState(''), null);
+assert.strictEqual(claudeScreenState('Claude Code v2\nDo you trust the files in this folder?\n> 1. Yes, proceed'), 'trust');
+assert.strictEqual(claudeScreenState('… bypass permissions on (shift+tab to cycle)'), 'ready');
+// An answered trust question is still in the replay above the input box.
+assert.strictEqual(
+  claudeScreenState('Do you trust the files in this folder?\n1. Yes, proceed\n…\n❯ Try "fix lint"\n bypass permissions on'),
+  'ready'
+);
+
 console.log('remoteDispatch.test.js ok');

@@ -12,8 +12,10 @@
 // Which PR a commitment is about comes from, in order: the GitHub item it was
 // read from; a PR URL in its own text; or "PR #N" in a review/merge ask whose
 // project is a known repo (asks made in chat, mail or a Claude session). The
-// last two settle only on merged or closed — "you reviewed it" and "requested
-// from a team" are about GitHub's review requests, which a chat ask is not.
+// last two settle on merged or closed, and a review ask also on a review the
+// user submitted after it was asked ("can you review #1814" in chat is done
+// once you have reviewed #1814). "Requested from a team" is about GitHub's
+// review requests, which a chat ask is not.
 //
 // It also folds repeated review asks for one PR into one: each notification
 // about a PR used to be distilled into a fresh "Review PR …" card. The older
@@ -64,22 +66,31 @@ function day(iso) {
  * What to do with one open commitment, given the PR it is about.
  * @param {object} c       {summary, action, fromText} — action is the source item's raw.action
  * @param {object} pr      {state, merged, mergedAt, closedAt, requestedLogins: string[], authorLogin}
- * @param {string[]} myReviewStates  states of reviews the user submitted on it
+ * @param {Array} myReviews  the user's reviews on it: [{state, submittedAt}] (bare states accepted)
  * @param {string} login
  * @returns {{status:'done'|'dropped', reason:string}|null}
  */
-function verdict(c, pr, myReviewStates, login) {
+function verdict(c, pr, myReviews, login) {
   if (!pr) return null;
   if (pr.merged) return { status: 'done', reason: `PR merged${day(pr.mergedAt)}` };
   if (pr.state === 'closed') return { status: 'dropped', reason: `PR closed without merging${day(pr.closedAt)}` };
-  if (c.fromText) return null;
 
   const isReview = c.action === 'review_requested' || c.action === 'team_review_requested' || REVIEW_ASK.test(c.summary || '');
+  const reviews = (myReviews || []).map((r) => (typeof r === 'string' ? { state: r, submittedAt: null } : r));
+  // A review submitted after the ask was made answers it, however it was asked.
+  const askedAt = c.askedAt ? new Date(c.askedAt).getTime() : null;
+  const answering = reviews.filter(
+    (r) => r.state !== 'PENDING' && (askedAt == null || !r.submittedAt || new Date(r.submittedAt).getTime() > askedAt)
+  );
+  if (c.fromText) {
+    if (!isReview || pr.authorLogin === login || !answering.length) return null;
+    return { status: 'done', reason: `you reviewed it${day(answering[answering.length - 1].submittedAt)}` };
+  }
   if (!isReview || pr.authorLogin === login) return null;
 
   const stillRequested = pr.requestedLogins.includes(login);
   if (stillRequested) return null;
-  if (myReviewStates.length) return { status: 'done', reason: 'you reviewed it' };
+  if (reviews.length) return { status: 'done', reason: 'you reviewed it' };
   return { status: 'dropped', reason: 'review was requested from a team, not from you' };
 }
 
@@ -110,6 +121,7 @@ function duplicatePlan(list) {
 async function openWithRefs() {
   const list = await rows(
     `select c.id, c.summary, c.detail, c.direction, c.status, c.superseded_by, si.raw->>'action' as action,
+            si.occurred_at as asked_at,
             case when si.source like 'github%' then coalesce(si.raw->>'webUrl', si.thread_external_id, '') else '' end as url,
             p.gitlab_path as project_path
        from commitment c
@@ -121,7 +133,7 @@ async function openWithRefs() {
   const out = [];
   for (const c of list) {
     const r = refFor({ summary: c.summary, detail: c.detail, url: c.url, projectPath: c.project_path });
-    if (r) out.push({ ...c, ref: r.ref, fromText: r.fromText });
+    if (r) out.push({ ...c, askedAt: c.asked_at, ref: r.ref, fromText: r.fromText });
   }
   return out;
 }
@@ -137,9 +149,11 @@ async function lookup(api, ref, login) {
     authorLogin: p.user?.login || null,
   };
   let mine = [];
-  if (!pr.merged && pr.state === 'open' && !pr.requestedLogins.includes(login)) {
+  if (!pr.merged && pr.state === 'open') {
     const reviews = await api(`/repos/${ref.owner}/${ref.repo}/pulls/${ref.number}/reviews?per_page=100`);
-    mine = reviews.filter((r) => r.user?.login === login).map((r) => r.state);
+    mine = reviews
+      .filter((r) => r.user?.login === login)
+      .map((r) => ({ state: r.state, submittedAt: r.submitted_at || null }));
   }
   return { pr, mine };
 }

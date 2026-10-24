@@ -118,18 +118,8 @@ async function startOnMachine({ machine, hub, run, repo, branch, mode, brief, ti
   );
   if (!made) throw fail(`the worktree never appeared on ${machine.name} — open the session to see why`);
 
+  // The caller waits for Claude's prompt and types the brief (briefClaude).
   await hub.say(session.id, config.termhub.claudeCommand);
-  // Ready when termhub sees a Claude session sitting at its prompt. A session
-  // that started as a shell may never be classed as Claude by termhub, so this
-  // waits a bounded while rather than for that.
-  const ready = await waitFor(
-    async () => {
-      const s = (await hub.listSessions()).find((x) => x.id === session.id);
-      return s && s.kind === 'claude' && s.idleState && s.idleState !== 'working';
-    },
-    { timeoutMs: 15_000 }
-  );
-  if (!ready) await sleep(5000);
 
   return {
     sessionId: session.id,

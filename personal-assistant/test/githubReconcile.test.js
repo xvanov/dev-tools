@@ -55,11 +55,19 @@ assert.strictEqual(verdict(review, { ...open, merged: true, mergedAt: '2031-04-0
   assert.strictEqual(refFor({ summary: 'Review PR #63', url: '', projectPath: null }), null);
 }
 
-// An ask found in text settles only on merged/closed, never on review requests.
+// An ask found in text settles on merged/closed, or on a review I submitted
+// after it was asked — never on GitHub's review-request bookkeeping.
 {
-  const fromChat = { summary: 'Review PR #12 on the importer', action: null, fromText: true };
+  const fromChat = { summary: 'Review PR #12 on the importer', action: null, fromText: true, askedAt: '2026-03-02T10:00:00Z' };
   assert.strictEqual(verdict(fromChat, open, [], me), null);
   assert.strictEqual(verdict(fromChat, { ...open, state: 'closed' }, [], me).status, 'dropped');
+  const after = [{ state: 'COMMENTED', submittedAt: '2026-03-02T15:30:00Z' }];
+  assert.deepStrictEqual(verdict(fromChat, open, after, me), { status: 'done', reason: 'you reviewed it 2026-03-02' });
+  // A review from before the ask does not answer it; nor does an unsent draft review.
+  assert.strictEqual(verdict(fromChat, open, [{ state: 'APPROVED', submittedAt: '2026-03-01T09:00:00Z' }], me), null);
+  assert.strictEqual(verdict(fromChat, open, [{ state: 'PENDING', submittedAt: null }], me), null);
+  // Not a review ask: a review does not settle "deploy it after merge".
+  assert.strictEqual(verdict({ ...fromChat, summary: 'Deploy PR #12 once merged' }, open, after, me), null);
 }
 
 // Repeated review asks for one PR fold into the newest; other asks are left.

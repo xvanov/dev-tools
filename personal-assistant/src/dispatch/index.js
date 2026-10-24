@@ -203,9 +203,9 @@ async function start({ commitmentId = null, task = null, mode: modeName, repoPat
     await query(`update commitment set status = 'dispatched' where id = $1`, [commitmentId]);
   }
 
-  // Claude Code needs a moment after spawn before it will accept typed input.
-  await new Promise((r) => setTimeout(r, 2500));
-  await termhub.say(session.id, openingPrompt(run)).catch((err) => {
+  // Waits for Claude's prompt (answering the folder-trust question a new
+  // worktree always gets), types the brief prompt and checks it was taken.
+  await termhub.briefClaude(termhub, session.id, openingPrompt(run)).catch((err) => {
     log.warn('could not type the opening prompt', { run: run.id, message: err.message });
   });
 
@@ -279,7 +279,7 @@ async function startRemote({ commitmentId, task, modeName, repoPath, machineName
   if (commitmentId) {
     await query(`update commitment set status = 'dispatched' where id = $1`, [commitmentId]);
   }
-  await hub.say(started.sessionId, openingPrompt(run)).catch((err) => {
+  await termhub.briefClaude(hub, started.sessionId, openingPrompt(run)).catch((err) => {
     log.warn('could not type the opening prompt', { run: run.id, message: err.message });
   });
   log.info('dispatched', { run: run.id, mode: m.name, repo, branch, machine: machine.name });

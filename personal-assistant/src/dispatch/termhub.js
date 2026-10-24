@@ -80,12 +80,21 @@ function client(baseUrl) {
 
   // Types text at a live session. `submit: false` fills the prompt without
   // pressing return, so text a model wrote can wait for you to read it.
+  //
+  // Return goes as its own keystroke a moment after the text. Sent in the same
+  // write, Claude Code reads text-plus-return as one paste and the return is
+  // swallowed: the brief prompt sat typed and unsent in every local run.
   async function say(id, text, { submit = true, timeoutMs = 5000 } = {}) {
     try {
-      await api(`/api/sessions/${encodeURIComponent(id)}/input`, {
-        method: 'POST',
-        body: { data: text, submit },
-      });
+      const input = (data, pressReturn) =>
+        api(`/api/sessions/${encodeURIComponent(id)}/input`, { method: 'POST', body: { data, submit: pressReturn } });
+      if (text && submit) {
+        await input(text, false);
+        await new Promise((r) => setTimeout(r, 600));
+        await input('', true);
+      } else {
+        await input(text, submit);
+      }
       return true;
     } catch (err) {
       if (err.status === 404 && /no such session/i.test(err.message)) throw err;
@@ -125,6 +134,34 @@ function client(baseUrl) {
     });
   }
 
+  // The session's recent screen as plain text (termhub's replay buffer with
+  // escape sequences stripped) — how the dispatcher sees a prompt it must
+  // answer, such as Claude's folder-trust question.
+  function screen(id, { tailChars = 6000, timeoutMs = 5000 } = {}) {
+    const url = root.replace(/^http/, 'ws') + `/ws/term/${encodeURIComponent(id)}`;
+    return new Promise((resolve) => {
+      const ws = new WebSocket(url);
+      const done = (text) => {
+        clearTimeout(timer);
+        try { ws.close(); } catch { /* already closed */ }
+        resolve(text);
+      };
+      const timer = setTimeout(() => done(''), timeoutMs);
+      ws.on('message', (raw) => {
+        let msg;
+        try { msg = JSON.parse(raw); } catch { return; }
+        if (msg.type !== 'replay') return;
+        const text = String(msg.data || '')
+          .replace(/\x1b\][^\x07]*(\x07|\x1b\\)/g, '')
+          .replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, '')
+          .replace(/\x1b[@-_]/g, '')
+          .replace(/\r/g, '');
+        done(text.slice(-tailChars));
+      });
+      ws.on('error', () => done(''));
+    });
+  }
+
   // Directories under `dir` on that termhub's machine — how a remote dispatch
   // checks a repo is there, and that its worktree appeared, without a shell.
   async function dirs(dir) {
@@ -145,7 +182,63 @@ function client(baseUrl) {
     return `${origin}/?session=${encodeURIComponent(id)}`;
   }
 
-  return { base: root, api, reachable, listSessions, createSession, killSession, say, dirs, sessionUrl };
+  return { base: root, api, reachable, listSessions, createSession, killSession, say, screen, dirs, sessionUrl };
+}
+
+// Pure: what Claude's screen is asking for. 'trust' is the first-run "do you
+// trust this folder" question (every new worktree is a folder it has never
+// seen); 'ready' is its input box; null is still starting.
+// The replay keeps what scrolled past, so whichever appeared *last* wins: an
+// answered trust question is still in the buffer above the input box.
+const TRUST = /trust (the files in )?this folder|Do you trust|Is this a project you (created|trust)|Yes, proceed/gi;
+const READY = /bypass permissions|\? for shortcuts|shift\+tab to cycle|Try "/gi;
+
+function lastIndex(re, text) {
+  let at = -1;
+  for (const m of text.matchAll(re)) at = m.index;
+  return at;
+}
+
+function claudeScreenState(text) {
+  const tail = String(text || '');
+  const trust = lastIndex(TRUST, tail);
+  const ready = lastIndex(READY, tail);
+  if (trust < 0 && ready < 0) return null;
+  return trust > ready ? 'trust' : 'ready';
+}
+
+const pause = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * Waits for a freshly started Claude Code to be at its prompt — answering the
+ * folder-trust question with its default (proceed) on the way — then types
+ * `prompt` and makes sure it was taken: if termhub still sees the session idle
+ * a few seconds later, return is pressed once more. Returns what happened.
+ */
+async function briefClaude(hub, id, prompt, { timeoutMs = 90_000 } = {}) {
+  const until = Date.now() + timeoutMs;
+  let trusted = false;
+  let state = null;
+  while (Date.now() < until) {
+    state = claudeScreenState(await hub.screen(id));
+    if (state === 'trust') {
+      await hub.say(id, '', { submit: true });
+      trusted = true;
+      await pause(2500);
+      continue;
+    }
+    if (state === 'ready') break;
+    await pause(1500);
+  }
+  await hub.say(id, prompt);
+  await pause(6000);
+  const s = (await hub.listSessions().catch(() => [])).find((x) => x.id === id);
+  let nudged = false;
+  if (s && s.idleState && s.idleState !== 'working') {
+    await hub.say(id, '', { submit: true });
+    nudged = true;
+  }
+  return { ready: state === 'ready', trusted, nudged };
 }
 
 const local = client(config.termhub.url);
@@ -160,4 +253,4 @@ function forMachine(name) {
   return isLocal(name) ? local : client(config.termhub.machines[name].url);
 }
 
-module.exports = { ...local, client, forMachine, isLocal };
+module.exports = { ...local, client, forMachine, isLocal, briefClaude, claudeScreenState };
