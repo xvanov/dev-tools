@@ -180,6 +180,7 @@
     <div class="list"></div></section>
 </div>
 <main id="today">
+  <div class="needs" id="blind" hidden></div>
   <section id="nextmeeting"><h2>Next meeting<span class="n"></span></h2><div class="list"><div class="empty">loading…</div></div></section>
   <section id="debriefs"><h2>Meeting debriefs<span class="n"></span></h2><div class="list"><div class="empty">loading…</div></div></section>
   <section id="drafts"><h2>Replies to send<span class="n"></span></h2><div class="list"></div></section>
@@ -647,6 +648,13 @@ function render(s) {
   document.getElementById('sources').replaceChildren(...s.sources.map((x) =>
     el('span', { class: x.last_error ? 'chip bad' : 'chip', title: x.last_error || '' },
       `${x.source} · ${x.last_run_at ? ago(x.last_run_at) : 'never'}${x.last_error ? ' · error' : ''}`)));
+
+  // A source that keeps failing: say so above everything else, with the fix.
+  const blindBox = document.getElementById('blind');
+  blindBox.hidden = !(s.blind || []).length;
+  blindBox.replaceChildren(...(s.blind || []).map((b) => el('div', { class: 'item' },
+    el('div', { class: 'sum' }, `The board may be out of date: ${b.label} has not synced since ${new Date(b.since).toLocaleString()}.`),
+    el('div', { class: 'sub' }, `Open items settled there will not close until it is back. ${b.hint}`))));
 
   const mine = s.commitments.filter((c) => c.direction === 'owed_by_me');
   const waiting = s.commitments.filter((c) => c.direction === 'owed_to_me');

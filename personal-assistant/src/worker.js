@@ -252,6 +252,12 @@ async function main() {
     });
   }
 
+  // A source that keeps failing blinds the reconciler: one toast per outage,
+  // and a banner on the dashboard (src/ingest/health.js).
+  every(600, 'health', async () => {
+    await require('./ingest/health').pass();
+  });
+
   // Memory: claims → consolidation → pages, and a nightly dream. Each pass is
   // a query over its own marker table, so they need no ordering beyond this.
   if (config.memory.enabled) {

@@ -120,3 +120,20 @@ const { prompt, cRefs, eRefs } = R.buildPrompt(commitments, items);
 }
 
 console.log('reconcile: ok');
+
+{
+  // Source health: only sources that keep failing, measured from their newest item.
+  const H = require('../src/ingest/health');
+  const now = new Date('2026-10-25T12:00:00Z');
+  const b = H.blind(
+    [
+      { source: 'graph_chat', last_error: 'chat_message_search was not called — is the Microsoft 365 connector connected? Run /mcp in Claude Code.', last_run_at: now, last_item_at: '2026-10-22T09:00:00Z' },
+      { source: 'github', last_error: 'timeout', last_run_at: now, last_item_at: '2026-10-25T11:55:00Z' },
+      { source: 'jira', last_error: null, last_run_at: now, last_item_at: '2026-10-01T00:00:00Z' },
+    ],
+    now
+  );
+  assert.deepStrictEqual(b.map((x) => x.source), ['graph_chat']);
+  assert.match(b[0].hint, /\/mcp/);
+  console.log('health: ok');
+}

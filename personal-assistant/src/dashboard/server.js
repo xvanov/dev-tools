@@ -86,9 +86,10 @@ async function state() {
       where d.status in ('pending','edited')
       order by d.created_at desc limit 30`
   );
-  const sources = await rows(
-    `select source, last_run_at, last_error from sync_cursor order by source`
-  );
+  const health = require('../ingest/health');
+  const sources = await health.sources();
+  // Sources that keep failing: the board cannot see what was settled there.
+  const blind = health.blind(sources);
   // The Memory tab's badge: claims waiting for a human to vouch for them.
   const review = await rows(`select count(*)::int as n from claim where status = 'pending_review'`).catch(() => [{ n: 0 }]);
   const closed = await require('../commitments').recentlyClosed().catch(() => []);
@@ -96,7 +97,7 @@ async function state() {
   const looksDone = await require('../ledger/reconcile').proposals().catch(() => []);
   // Secret and login requests: names and guidance only — the table holds no values.
   const secretRequests = await require('../secrets').pending().catch(() => []);
-  return { ...data, drafts, sources, closed, looksDone, memoryPending: review[0].n, secretRequests, now: new Date().toISOString() };
+  return { ...data, drafts, sources, blind, closed, looksDone, memoryPending: review[0].n, secretRequests, now: new Date().toISOString() };
 }
 
 function send(res, status, body, type = 'application/json') {
