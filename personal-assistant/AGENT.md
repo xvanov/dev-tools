@@ -136,6 +136,12 @@ woke it is a hint. `awaitEvent` suspends a task by throwing: never catch it exce
 waits on `proposal:<id>`; a proposal with no task runs a typed handler in `src/proposals` — there
 is no handler that takes a command or free text.
 
+**The planner starts only read-only runs on its own, and few.** `src/agent/planner.js` may start
+a `plan`-mode run (it reads and writes findings; it can neither commit nor push) for an ask it
+judged "investigate" with a known repo, at most `PA_EAGER_RUNS_PER_DAY` a day and only while
+`budget.allow('eager')` says yes, and tells you it did. Anything that changes code is offered as a
+`dispatch` proposal and starts only on your yes. Do not widen the mode it may start alone.
+
 **Capture never stops for the assistant.** The worker's only levers on `capture.py` are the pause
 file (`pa mic pause`) and the roll file, which makes capture finish its file and continue in a
 new one. The meeting gate (`src/audio/gate.js`) writes the pause file between meetings with the

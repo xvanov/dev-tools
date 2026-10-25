@@ -274,6 +274,14 @@ async function main() {
     });
   }
 
+  // The planner: each new ask on me gets a kind and, where it can, work done
+  // ahead of me — within the daily budget (src/agent/planner.js).
+  if (config.planner.enabled) {
+    every(300, 'planner', async () => {
+      await require('./agent/planner').pass();
+    });
+  }
+
   // A source that keeps failing blinds the reconciler: one toast per outage,
   // and a banner on the dashboard (src/ingest/health.js).
   every(600, 'health', async () => {

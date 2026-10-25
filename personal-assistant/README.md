@@ -223,6 +223,16 @@ and are never refused. Speculative work asks `budget.allow(purpose)` before it s
 [--days N]` prints per-day, per-pass totals, `pa doctor` shows today against the cap with the top
 three passes, and the dashboard shows a spend chip beside the source chips.
 
+**The planner works ahead of you** (`src/agent/planner.js`, every five minutes, `PA_PLANNER=0`
+turns it off). Each new ask on you from the last week is given a kind (reply, review, coding,
+investigate, meeting, decision, admin) once. An *investigate* ask with a known repo gets a
+read-only research run started on its own — `plan` mode, so it can neither commit nor push — at
+most `PA_EAGER_RUNS_PER_DAY` (2) a day and only within the daily budget; you get a toast with the
+session. A *coding* ask with a known repo becomes a **Needs you** card, "start a coding session?"
+(local mode on yes). A code ask with no repo asks **which repo?** with buttons; your pick sets the
+project and teaches the alias, and the ask is planned again. Asks the reconciler thinks are done,
+or that already have a run, are left alone.
+
 **Replies to send** sits at the top: drafts the worker wrote for fresh asks from mail and Teams
 (`PA_AUTODRAFT=0` turns that off; `PA_AUTODRAFT_MIN_CONFIDENCE`, default 0.6, sets how sure the
 distiller must be that the ask is on you), plus any you asked for with **Reply**. Each shows the

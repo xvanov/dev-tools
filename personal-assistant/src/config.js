@@ -338,6 +338,16 @@ const config = {
     effort: env('PA_RECONCILE_EFFORT', 'medium'),
   },
 
+  // The planner (src/agent/planner.js): each new ask gets a kind, and some an
+  // action ahead of me — a read-only research run (at most researchPerDay a
+  // day), a "start a run?" card, or a "which repo?" question. PA_PLANNER=0
+  // turns it off.
+  planner: {
+    enabled: env('PA_PLANNER', '1') !== '0',
+    model: env('PA_PLANNER_MODEL', 'claude-sonnet-5-5'),
+    researchPerDay: Number(env('PA_EAGER_RUNS_PER_DAY', '2')) || 0,
+  },
+
   // Durable tasks on Absurd (src/durable). PA_DURABLE=0 stops the worker
   // running them and spawning new ones; tasks already in the store wait.
   durable: {
