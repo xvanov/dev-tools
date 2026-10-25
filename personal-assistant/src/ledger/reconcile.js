@@ -66,9 +66,14 @@ const DIRTY = `
          and ($4::bigint[] is null or c.id = any($4::bigint[]))
     ) o
     cross join lateral (
-      select r.id, r.fetched_at from source_item r
-       where r.id <> o.item_id
-         and r.occurred_at > o.asked_at
+      select r.id, r.fetched_at,
+             (o.thread_external_id is not null and r.source = o.source and r.thread_external_id = o.thread_external_id) as same_thread
+        from source_item r
+       -- Not the message the ask came from — unless its text arrived only
+       -- later (graphChat.repairEmpty): then it may hold the answer itself, as
+       -- a reply quoting the question did once.
+       where (r.id <> o.item_id or r.raw->>'repaired' is not null)
+         and (r.occurred_at > o.asked_at or r.id = o.item_id)
          and r.occurred_at < o.asked_at + interval '${WINDOW_DAYS} days'
          and r.fetched_at > coalesce(o.ledger_checked_at, '-infinity'::timestamptz)
          and r.source <> 'graph_event'
@@ -78,9 +83,15 @@ const DIRTY = `
          and (r.source <> 'claude_session' or r.fetched_at < now() - interval '${SESSION_SETTLE_MINUTES} minutes')
          and length(r.body_text) >= 8
          and (
-           (o.thread_external_id is not null and r.source = o.source and r.thread_external_id = o.thread_external_id)
+           r.id = o.item_id
+           or (o.thread_external_id is not null and r.source = o.source and r.thread_external_id = o.thread_external_id)
+           -- What they wrote elsewhere: in chat or mail, or on GitHub in this
+           -- ask's repo. Their PRs in other repos are not an answer, and ten of
+           -- them once filled every slot ahead of the reply in the same thread.
            or (o.direction = 'owed_to_me' and o.counterparty_person_id is not null
-               and lower(coalesce(r.author_identity, '')) in ${FORMS_OF('o.counterparty_person_id')})
+               and lower(coalesce(r.author_identity, '')) in ${FORMS_OF('o.counterparty_person_id')}
+               and (r.source in ('graph_chat', 'graph_mail')
+                    or (o.gitlab_path is not null and r.source like 'github%' and lower(r.raw->>'project') = lower(o.gitlab_path))))
            or (lower(coalesce(r.author_identity, '')) = any($1::text[]) and (
                  (o.gitlab_path is not null and r.source like 'github%' and lower(r.raw->>'project') = lower(o.gitlab_path))
                  or (o.repo_path is not null and r.source = 'claude_session'
@@ -91,11 +102,18 @@ const DIRTY = `
                               and string_to_array(translate(lower(r.raw->>'cwd'), chr(92), '/'), '/')
                                   @> array[regexp_replace(translate(lower(o.repo_path), chr(92), '/'), '^.*/', '')])))))
          )
-       order by r.fetched_at
+       -- The same thread first: that is where an answer usually is.
+       order by same_thread desc, r.fetched_at
        limit $3
     ) r
-   group by o.id, o.direction, o.summary, o.detail, o.counterparty, o.asked_at, o.ask_text, o.source
-   order by max(r.fetched_at) desc
+   group by o.id, o.direction, o.summary, o.detail, o.counterparty, o.asked_at, o.ask_text, o.source, o.ledger_checked_at
+   -- Fresh evidence first (an answer that just arrived closes its ask within
+   -- the minute); then the asks waiting longest. Newest-first alone starved
+   -- the backlog: live sessions kept winning, and an answer from two days ago
+   -- was never judged at all.
+   order by (max(r.fetched_at) > now() - interval '15 minutes') desc,
+            coalesce(o.ledger_checked_at, '-infinity'::timestamptz),
+            max(r.fetched_at) desc
    limit $2`;
 
 async function myForms() {

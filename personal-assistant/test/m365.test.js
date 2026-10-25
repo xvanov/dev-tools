@@ -166,4 +166,18 @@ const result = (id, content, isError = false) =>
   assert.strictEqual(soon.windows.length, 1);
 }
 
+{
+  // A quoted reply keeps what it answers, and a link keeps its target: "no, I
+  // have a plan, review the pr <branch>" is otherwise an answer to nothing.
+  const full = {
+    body: { contentType: 'html', content: '<p>no, review the pr <a href="https://github.com/o/r/tree/b">b</a> or <a href="https://x.y">https://x.y</a></p>' },
+    attachments: [
+      { contentType: 'messageReference', content: JSON.stringify({ messagePreview: 'Is that intended?', messageSender: { user: { displayName: 'Pat' } } }) },
+      { contentType: 'messageReference', content: 'not json' },
+    ],
+  };
+  assert.strictEqual(chat.bodyOf({}, full), '[replying to Pat: "Is that intended?"]\nno, review the pr b (https://github.com/o/r/tree/b) or https://x.y');
+  assert.strictEqual(chat.bodyOf({ summary: 'short' }, null), 'short');
+}
+
 console.log('m365 ok');

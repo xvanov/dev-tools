@@ -190,10 +190,12 @@ count.
 **The reconciler keeps the rest true** (`src/ledger/reconcile.js`, every minute and right after a
 fresh Teams message; `PA_RECONCILE=0` turns it off, `PA_RECONCILE_AUTO=0` makes every close a
 proposal). It is level-triggered: each open commitment, in either direction, is judged against
-everything *related* that arrived since it was last judged — the same thread, anything the other
-person wrote (so their answer to an owed-to-me ask closes it), and your own PRs, notifications and
+everything *related* that arrived since it was last judged — the same thread first, what the other
+person wrote in chat or mail or in the ask's own repo (so their answer to an owed-to-me ask closes
+it), and your own PRs, notifications and
 Claude sessions in the commitment's repo (a session once it has been quiet for 10 minutes, or a
-live one would re-judge its whole repo every minute). Commitments that share new items are judged in one call;
+live one would re-judge its whole repo every minute). Fresh evidence is judged first, then the asks
+that have waited longest, so a backlog never starves. Commitments that share new items are judged in one call;
 with nothing new there is no model call at all. A close needs a quote checked verbatim against the
 item, and is applied on its own at 80% confidence or more — unless you reopened that commitment
 before — or shown under **Looks done?** with **Close it** / **Not yet** between 50% and 80%. A
@@ -211,7 +213,12 @@ that thread for you to send, and if nothing comes you get one reminder half as l
 at most three follow-ups a day. The card goes away by itself when their answer closes the ask.
 **Run review**: when a dispatched run's session ends with commits, the branch is pushed and a
 **draft** PR opened without asking, and you are told; a research (`plan`) run just tells you its
-findings are ready. Merging is never automatic. **Needs you** is also where the assistant asks what
+findings are ready. In your own repos (`PA_MERGE_REPOS`: by default mv-assistant,
+engineering-assistant, mv-pipeline, innergy-dispatch and everything under `xvanov/`) the PR is then
+marked ready, its checks are waited for (up to 3 hours) and it is squash-merged once they pass —
+never with a failing check. Everywhere else it stays a draft: when it is ready and whether it
+merges is yours. A chase judges its ask before asking you anything, so an ask already answered
+gets no card. **Needs you** is also where the assistant asks what
 only you know (which repo?). `pa proposals` / `pa answer <id> yes|no|<option>`
 do the same from the terminal, and `pa doctor` counts tasks by state.
 

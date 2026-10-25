@@ -20,9 +20,9 @@
 const { config } = require('../config');
 const m365 = require('./m365');
 const { saveItems, getCursor } = require('./store');
-const { rows } = require('../db');
+const { rows, query } = require('../db');
 const identity = require('../distill/identity');
-const { htmlToText } = require('../util/text');
+const { htmlToText, contentHash } = require('../util/text');
 const { logger } = require('../log');
 
 const log = logger('teams');
@@ -51,10 +51,79 @@ function readUri(hit) {
   return hit.chatUri ? `${hit.chatUri}/${hit.id}` : hit.uri;
 }
 
+// A reply that quotes an earlier message carries the quote as a
+// `messageReference` attachment, not in its body. Without it "no, I have a full
+// plan" answers nothing anyone can see.
+function quotedOf(full) {
+  const out = [];
+  for (const a of Array.isArray(full?.attachments) ? full.attachments : []) {
+    if (a?.contentType !== 'messageReference' || !a.content) continue;
+    try {
+      const ref = JSON.parse(a.content);
+      const who = ref.messageSender?.user?.displayName || 'someone';
+      if (ref.messagePreview) out.push(`[replying to ${who}: "${String(ref.messagePreview).trim()}"]`);
+    } catch {
+      // not JSON: nothing to show
+    }
+  }
+  return out.join('\n');
+}
+
+// A link's target, kept beside its text: "the pr <branch name>" is no use
+// without the URL it pointed at.
+function withHrefs(html) {
+  return String(html).replace(/<a\b[^>]*\bhref="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi, (m, href, label) => {
+    const text = label.replace(/<[^>]+>/g, '').trim();
+    return text && text !== href ? `${label} (${href})` : href;
+  });
+}
+
 function bodyOf(hit, full) {
   const body = full?.body;
-  if (body?.content) return body.contentType === 'html' ? htmlToText(body.content) : body.content;
-  return hit.summary || '';
+  const quoted = quotedOf(full);
+  const text = body?.content ? (body.contentType === 'html' ? htmlToText(withHrefs(body.content)) : body.content) : hit.summary || '';
+  return [quoted, text].filter(Boolean).join('\n');
+}
+
+// Messages saved with no text — the Teams cache sometimes has none for an
+// edited reply, and the search can miss it — are read again by id, a few
+// times at most. Their text is what lets the reconciler see an answer.
+const REPAIR_TRIES = 3;
+// Only a person's message in a real chat (not the `48:` system threads, not an
+// id the cache could not read): the relay balks at a batch of junk URIs.
+async function repairEmpty({ limit = 5 } = {}) {
+  const empty = await rows(
+    `select id, external_id, thread_external_id, subject, author_identity, raw from source_item
+      where source = 'graph_chat' and body_text = '' and occurred_at > now() - interval '14 days'
+        and coalesce((raw->>'repairTries')::int, 0) < ${REPAIR_TRIES}
+        and thread_external_id like '19:%' and split_part(external_id, '/', 2) ~ '^[0-9]+$'
+      order by occurred_at desc limit $1`,
+    [limit]
+  );
+  if (!empty.length) return 0;
+  const uriOf = (r) => {
+    const id = r.raw?.messageId || String(r.external_id).split('/').pop();
+    return r.raw?.teamId && r.raw?.channelId
+      ? `teams:///teams/${r.raw.teamId}/channels/${r.raw.channelId}/messages/${id}`
+      : `teams:///chats/${r.thread_external_id}/messages/${id}`;
+  };
+  const full = await m365.readAll(empty.map(uriOf));
+  let fixed = 0;
+  for (const r of empty) {
+    const text = bodyOf({}, full.get(uriOf(r))).trim();
+    if (text) {
+      await query(
+        `update source_item set body_text = $2, content_hash = $3, fetched_at = now(),
+                raw = raw || '{"repaired": true}'::jsonb where id = $1`,
+        [r.id, text, contentHash(r.subject, text, r.author_identity)]
+      );
+      fixed++;
+    } else {
+      await query(`update source_item set raw = jsonb_set(raw, '{repairTries}', to_jsonb(coalesce((raw->>'repairTries')::int, 0) + 1)) where id = $1`, [r.id]);
+    }
+  }
+  log.info('repaired empty messages', { tried: empty.length, fixed });
+  return fixed;
 }
 
 function toItem(hit, full, chats, me) {
@@ -215,7 +284,8 @@ async function run() {
   });
   await learnSenders(learned);
   log.info('relayed', { found: hits.length, kept: wanted.length, read: full.size, fromCache: cached.size, changed });
+  await repairEmpty().catch((err) => log.warn('repair failed', { message: String(err.message).slice(0, 160) }));
   return changed;
 }
 
-module.exports = { run, id: 'graph_chat', toItem, keep, channelIds, isTruncated, namesMe, mergeCached };
+module.exports = { run, id: 'graph_chat', toItem, keep, channelIds, isTruncated, namesMe, mergeCached, quotedOf, bodyOf, repairEmpty };

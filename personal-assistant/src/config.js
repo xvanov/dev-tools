@@ -121,9 +121,10 @@ const config = {
     // cache, so the connector pass (about $0.20 each) only needs to catch up.
     offHoursPollSeconds: envInt('PA_M365_OFF_HOURS_POLL_SECONDS', 1800),
     calendarPollSeconds: envInt('PA_M365_CALENDAR_POLL_SECONDS', 900),
-    // The relay model only chooses tool calls; the data comes back verbatim
-    // from the tools (llm.toolCalls), so it needs no reasoning model.
-    connectorModel: env('PA_CONNECTOR_MODEL', 'claude-sonnet-5-5'),
+    // The model that relays connector calls. Not Sonnet: headless, it made no
+    // tool calls at all (a pass "succeeded" with nothing read), so a cheaper
+    // relay must be proven against a real read before it becomes the default.
+    connectorModel: env('PA_CONNECTOR_MODEL', 'claude-opus-5'),
     // Channel posts: `mentions` (kept when they name you), `all`, or `off`.
     teamsChannels: env('PA_TEAMS_CHANNELS', 'mentions'),
   },
@@ -249,6 +250,15 @@ const config = {
     port: envInt('PA_DISPATCH_PORT', 7300),
     // Loopback only. This process starts agents; it is not tailnet-safe.
     host: env('PA_DISPATCH_HOST', '127.0.0.1'),
+    // Repos where a finished run's PR is merged once its checks pass
+    // (src/dispatch/merge.js): mine alone. Elsewhere it stays a draft for me.
+    mergeRepos: env(
+      'PA_MERGE_REPOS',
+      'innergy-dev/mv-assistant,innergy-dev/engineering-assistant,innergy-dev/mv-pipeline,innergy-dev/innergy-dispatch,xvanov/*'
+    )
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean),
   },
 
   audio: {
