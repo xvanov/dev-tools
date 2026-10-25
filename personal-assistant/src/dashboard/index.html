@@ -54,6 +54,22 @@
     padding: 8px; margin: 6px 0 0; }
   .ask { color: var(--muted); font-size: 12px; margin-top: 4px; border-left: 2px solid var(--line);
     padding-left: 8px; white-space: pre-wrap; max-height: 5.5em; overflow: hidden; }
+  /* where a card came from: the message, the person, the repo, PRs, the session */
+  .links { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+  .links a { font-size: 11px; background: var(--chip); border-radius: 999px; padding: 1px 8px; color: var(--accent);
+    text-decoration: none; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .links a:hover { text-decoration: underline; }
+  .links a.k-person { color: var(--ok); }
+  .links a.k-evidence { color: var(--warn); }
+  .sess { display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: center; margin-top: 6px; font-size: 12px; color: var(--muted); }
+  .sess strong { color: var(--ink); font-weight: 600; overflow-wrap: anywhere; }
+  .sess code { font: 11px/1.4 ui-monospace, Consolas, monospace; background: var(--chip); border-radius: 4px; padding: 1px 5px;
+    user-select: all; overflow-wrap: anywhere; }
+  .sess a { color: var(--accent); text-decoration: none; }
+  pre.sub { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; font-size: 12px; margin: 4px 0 0; }
+  .why { margin-top: 6px; padding: 6px 9px; border-left: 3px solid var(--accent); background: var(--chip);
+    border-radius: 0 6px 6px 0; font-size: 13px; overflow-wrap: anywhere; }
+  .why.pending { background: none; border-left-color: var(--line); color: var(--muted); font-size: 12px; padding: 2px 9px; }
   .confirm { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 6px;
     font-size: 12px; color: var(--muted); }
   .badge { font-size: 11px; color: var(--accent); }
@@ -398,6 +414,58 @@ function contextPanel(x) {
   return el('div', { class: 'ctx' }, ...lines);
 }
 
+// Where a card came from, as one row of links built by the server
+// (dashboard/links.js): the message, a chat with the person, the repo, the PRs
+// and tickets it mentions, a run's PR, and the evidence for a "Looks done?".
+function linkChips(x) {
+  const links = (x.links || []).filter((l) => /^https?:\/\//.test(l.url || ''));
+  if (!links.length) return null;
+  return el('div', { class: 'links' }, ...links.map((l) =>
+    el('a', { href: l.url, target: '_blank', rel: 'noopener', class: `k-${l.kind}`, title: l.url }, l.label)));
+}
+
+// A Claude session is a place, not a URL: which machine, which folder, when,
+// and how to get back in — open it in termhub there, or resume it by hand.
+function sessionLines(x) {
+  return (x.sessions || []).map((s) => {
+    const open = el('button', { title: s.remote ? `Open it in ${s.machine}'s termhub (resumes it if it is not running)` : 'Open it in termhub (resumes it if it is not running)' }, 'Open in termhub');
+    open.addEventListener('click', () => busy(open, async () => {
+      // Opened now, while this is still the click, so it is not a blocked popup.
+      const tab = window.open('about:blank', '_blank');
+      const r = await post(`api/sessions/${s.itemId}/open`).catch((err) => { if (tab) tab.close(); throw err; });
+      if (!r.ok) { if (tab) tab.close(); throw new Error(r.error || 'could not open it'); }
+      if (tab) tab.location.href = r.url; else window.open(r.url, '_blank');
+      toast(r.resumed ? 'resuming the session in termhub' : 'opened the running session');
+    }));
+    const copy = s.resume ? el('button', { title: 'Copy the resume command' }, 'Copy') : null;
+    if (copy) copy.addEventListener('click', () => {
+      navigator.clipboard?.writeText(s.resume).then(() => toast('copied'), () => toast(s.resume));
+    });
+    return el('div', { class: 'sess' },
+      el('span', {}, s.role === 'evidence' ? 'Evidence from the Claude session on ' : 'Claude session on ',
+        el('strong', {}, s.machine), ' in ', el('strong', {}, s.cwd || '?'),
+        s.branch ? ` (${s.branch})` : '', s.at ? ` · ${new Date(s.at).toLocaleString()}` : ''),
+      s.resume ? el('code', {}, s.remote ? `${s.resume}   # on ${s.machine}` : s.resume) : null, copy,
+      s.itemId && s.id ? open : null, link(s.transcriptUrl, 'transcript'));
+  });
+}
+
+// The cause-and-effect paragraph the worker writes for a card
+// (src/commitments/context.js): who asked what, why, what happened since,
+// what is expected now and from whom.
+function whyBlock(x, wanted) {
+  if (x.context) {
+    return el('div', { class: 'why', title: x.context_at ? `written ${ago(x.context_at)}` : '' }, x.context);
+  }
+  if (!wanted) return null;
+  return el('div', { class: 'why pending' }, 'The story behind this card is not written yet — the assistant writes it within a few minutes.');
+}
+
+// Everything under a card's title that says where it came from and why.
+function cardSource(x, wanted) {
+  return [whyBlock(x, wanted), linkChips(x), ...sessionLines(x)];
+}
+
 // What each mode lets the session do, shown in the mode picker. A review or a
 // question wants `plan`; `full` also pushes, opens a draft PR and writes a reply.
 const MODE_HELP = {
@@ -472,12 +540,15 @@ function commitmentCard(c) {
 
   const sub = joinParts([
     `#${c.id}`, c.who_is_me ? null : c.who, SOURCE[c.source] || c.source, c.project, due(c.due_at),
-    c.status === 'dispatched' ? 'dispatched' : null, ago(c.occurred_at), link(c.thread_external_id, 'open'),
+    c.status === 'dispatched' ? 'dispatched' : null, ago(c.occurred_at),
+    // The server's links say what each one opens; this is the fallback.
+    c.links ? null : link(c.thread_external_id, 'open'),
   ]);
   const canDo = c.direction === 'owed_by_me' && c.status === 'open';
   return el('div', { class: 'item' },
     el('div', { class: 'sum' }, c.summary),
     el('div', { class: 'sub' }, ...sub),
+    ...cardSource(c, c.onBoard),
     el('div', { class: 'actions' },
       canDo && MACHINES.machines.length > 1 ? machinePick : null, canDo ? modePick : null, canDo ? doBtn : null,
       canReply ? replyBtn : null, doneBtn, dropBtn),
@@ -670,6 +741,9 @@ function render(s) {
 
   const mine = s.commitments.filter((c) => c.direction === 'owed_by_me');
   const waiting = s.commitments.filter((c) => c.direction === 'owed_to_me');
+  // These get a cause-and-effect paragraph from the worker; notes from your own
+  // work keep their links only.
+  for (const c of s.commitments) c.onBoard = true;
   fill('mine', mine, commitmentCard, 'Nothing on you.');
   fill('waiting', waiting, commitmentCard, 'Nobody owes you anything.');
   // One collapsed group per PR or session; open groups stay open across refreshes.
@@ -761,11 +835,14 @@ function needsYouCard(p) {
   const no = el('button', { title: 'Not this — it will not be asked again' }, 'No');
   no.addEventListener('click', act(no, decide(false, null)));
   buttons.push(no);
+  // A card about an ask carries that ask's story and links — a "when should I
+  // chase?" question is unanswerable without knowing what the chase is about.
   return el('div', { class: 'item' },
     el('div', { class: 'sum' }, p.title),
     el('div', { class: 'sub' }, ...joinParts([p.commitment_id ? `#${p.commitment_id}` : null, p.run_id ? `run #${p.run_id}` : null,
-      p.commitment_summary, ago(p.created_at)])),
+      p.commitment_summary, p.who, SOURCE[p.source] || p.source, p.project, ago(p.created_at)])),
     p.body ? el('pre', { class: 'sub' }, p.body) : null,
+    ...(p.commitment_id ? cardSource(p, true) : []),
     el('div', { class: 'actions' }, ...buttons));
 }
 
@@ -783,9 +860,10 @@ function looksDoneCard(p) {
   }));
   return el('div', { class: 'item' },
     el('div', { class: 'sum' }, p.summary),
-    el('div', { class: 'sub' }, ...joinParts([`#${p.commitment_id}`, p.direction === 'owed_to_me' ? 'waiting on them' : 'on you',
-      `${Math.round(p.confidence * 100)}% sure`, ago(p.created_at), link(p.url, 'open')])),
-    el('div', { class: 'sub' }, `“${p.quote}”`),
+    el('div', { class: 'sub' }, ...joinParts([`#${p.commitment_id}`, p.direction === 'owed_to_me' ? `waiting on ${p.who || 'them'}` : 'on you',
+      p.project, `${Math.round(p.confidence * 100)}% sure`, ago(p.created_at), p.links ? null : link(p.url, 'open')])),
+    el('div', { class: 'sub' }, 'Why it looks settled: ', `“${p.quote}”`),
+    ...cardSource(p, true),
     el('div', { class: 'actions' }, yes, no));
 }
 

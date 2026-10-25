@@ -200,7 +200,7 @@ function client(baseUrl) {
     } catch {
       /* single-port mode, or an older termhub */
     }
-    return `${origin}/?session=${encodeURIComponent(id)}`;
+    return `${origin}/#session=${encodeURIComponent(id)}`;
   }
 
   return { base: root, api, reachable, listSessions, createSession, killSession, say, screen, dirs, sessionUrl, claudeTranscripts, claudeTranscript };

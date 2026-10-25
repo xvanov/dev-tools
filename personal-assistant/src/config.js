@@ -354,6 +354,13 @@ const config = {
     effort: env('PA_RECONCILE_EFFORT', 'medium'),
   },
 
+  // Card context (src/commitments/context.js): the cause-and-effect paragraph on
+  // dashboard cards, written by the worker a few at a time on the reconcile
+  // model. Discretionary spend (purpose card-context). PA_CARD_CONTEXT=0 stops it.
+  cardContext: {
+    enabled: env('PA_CARD_CONTEXT', '1') !== '0',
+  },
+
   // The planner (src/agent/planner.js): each new ask gets a kind, and some an
   // action ahead of me — a read-only research run (at most researchPerDay a
   // day), a "start a run?" card, or a "which repo?" question. PA_PLANNER=0
@@ -382,7 +389,7 @@ const config = {
       return Number.isFinite(n) ? n : 15;
     })(),
     essential: env('PA_BUDGET_ESSENTIAL', 'distill,reconcile,connector,reply-close').split(',').map((s) => s.trim()).filter(Boolean),
-    discretionary: env('PA_BUDGET_DISCRETIONARY', 'eager,research,digest,planner').split(',').map((s) => s.trim()).filter(Boolean),
+    discretionary: env('PA_BUDGET_DISCRETIONARY', 'eager,research,digest,planner,card').split(',').map((s) => s.trim()).filter(Boolean),
   },
 
   // Recurring typed actions (src/routines). PA_ROUTINES=0 stops the worker

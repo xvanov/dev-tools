@@ -67,7 +67,7 @@ async function commitmentContext(id) {
     )
   ).map((r) => ({
     ...r,
-    url: r.termhub_session_id ? `${termhub.forMachine(r.machine).base}/?session=${encodeURIComponent(r.termhub_session_id)}` : null,
+    url: r.termhub_session_id ? `${termhub.forMachine(r.machine).base}/#session=${encodeURIComponent(r.termhub_session_id)}` : null,
   }));
   return { ...c, thread: thread.reverse(), runs };
 }
@@ -106,7 +106,14 @@ async function state() {
     .status()
     .then((s) => ({ today: s.today, cap: s.cap }))
     .catch(() => null);
-  return { ...data, drafts, sources, blind, closed, looksDone, needsYou, memoryPending: review[0].n, secretRequests, spend, notifications, now: new Date().toISOString() };
+  const out = { ...data, drafts, sources, blind, closed, looksDone, needsYou, memoryPending: review[0].n, secretRequests, spend, notifications, now: new Date().toISOString() };
+  // Every card's links (the message, the person, the repo, the PRs it names,
+  // the Claude session) and its stored cause-and-effect paragraph
+  // (dashboard/cards.js). A failure here costs the links, not the page.
+  await require('./cards')
+    .enrich(out)
+    .catch((err) => log.warn('card links failed', { message: err.message }));
+  return out;
 }
 
 function send(res, status, body, type = 'application/json') {
@@ -229,6 +236,11 @@ async function handle(req, res) {
       const value = body.value === 'up' || body.value === 'down' ? body.value : null;
       return send(res, 200, await require('../notify').feedback(Number(m[1]), value));
     }
+
+    // A card's Claude session, opened in termhub on the machine it ran on:
+    // the live session, or `claude --resume <id>` in its folder.
+    m = url.pathname.match(/^\/api\/sessions\/(\d+)\/open$/);
+    if (m) return send(res, 200, await require('./cards').openSession(Number(m[1])));
 
     m = url.pathname.match(/^\/api\/commitments\/(\d+)\/status$/);
     if (m) {

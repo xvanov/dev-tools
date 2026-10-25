@@ -935,6 +935,23 @@ const commands = {
     } catch (err) {
       mark(false, 'spend today', `${err.message.slice(0, 60)} — run \`pa migrate\``);
     }
+    // The cause-and-effect paragraphs on dashboard cards (src/commitments/context.js).
+    try {
+      const { SELF_NOTE } = require('../commitments/selfNotes');
+      const r = await db.one(
+        `select count(*)::int as n, count(c.context)::int as with_context
+           from commitment c join source_item si on si.id = c.source_item_id
+           left join person per on per.id = c.counterparty_person_id
+          where c.status in ('open','dispatched') and c.superseded_by is null and not ${SELF_NOTE}`
+      );
+      mark(
+        config.cardContext.enabled,
+        'card context',
+        `${r.with_context} of ${r.n} open cards written${config.cardContext.enabled ? '' : ' · off (PA_CARD_CONTEXT=0)'}`
+      );
+    } catch (err) {
+      mark(false, 'card context', `${err.message.slice(0, 60)} — run \`pa migrate\``);
+    }
     // Probed rather than assumed: a configured endpoint with the wrong
     // deployment name looks identical to a working one until a search quietly
     // returns half its results.

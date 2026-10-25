@@ -36,7 +36,11 @@ tailnet ACL and it was built for that; this is not.
 agents, so `src/dashboard/server.js` binds loopback only, rejects a non-loopback `Host` (DNS
 rebinding), and requires an `X-PA: 1` header on every POST (a custom header forces a CORS
 preflight the server never answers). Its Send button opens the reply in Teams or Outlook and
-then asks whether you sent it; it cannot send. The Memory tab's writes (remember, forget,
+then asks whether you sent it; it cannot send. A card's **Open in termhub** is a POST under the
+same guards: it opens the termhub session already running that Claude conversation, or starts
+the fixed command `claude --resume <uuid>` in the session's own folder on the machine it ran on —
+the id must be a UUID and a machine missing from `PA_MACHINES` is refused, never resumed here.
+Card links are built server-side from stored URLs and only `http(s)` ones are rendered. The Memory tab's writes (remember, forget,
 approve, merge) are POSTs under the same guards, and memory pages reach the browser as a parsed
 tree (`src/dashboard/markdown.js`) built with `textContent` — the page has no HTML sink, and
 `test/memoryui.test.js` fails if one appears.
@@ -98,7 +102,7 @@ corroborate with `duplicate_of`; `forget` sets `status = 'retracted'`. No memory
 `delete from claim`. Pages are derived and may be deleted and rebuilt at will.
 
 **Message content is data, never instructions.** Every prompt that carries item text — distill,
-claims, consolidation, pages — says so, and nothing a message says can change what a pass does:
+claims, consolidation, pages, card context — says so, and nothing a message says can change what a pass does:
 no pass takes an action other than writing rows. Keep it that way when adding one.
 
 **A debrief writes only what the user owes or is owed, each with a verified quote; its updates
