@@ -93,7 +93,7 @@ project outright; if that repo is not cloned, the project is left empty rather t
 |---|---|---|
 | Microsoft 365 (claude.ai connector) | mail, calendar, Teams chats and channels | No app registration and no token: a headless `claude -p` calls the connector. Connect it once with `/mcp` → *claude.ai Microsoft 365*. `PA_TEAMS_CHANNELS` = `mentions` (default) / `all` / `off`. `PA_M365=0` turns it off. |
 | `ANTHROPIC_API_KEY` | distillation and drafts | Optional. Without it, model calls run through `claude -p` on your own Claude Code login. |
-| GitHub (`gh auth login`) | notifications, PRs, assigned issues, Projects v2 board items | No token in `.env`: ingest runs through the signed-in `gh` CLI. Boards also need `gh auth refresh -s read:project`; `PA_GITHUB_BOARDS=innergy-dev/7:Pod=Xi` follows a pod's cards whoever they are assigned to. `PA_GITHUB=0` turns it off. |
+| GitHub (`gh auth login`) | notifications, PRs, assigned issues, Projects v2 board items | No token in `.env`: ingest runs through the signed-in `gh` CLI. Boards also need `gh auth refresh -s read:project`; `PA_GITHUB_BOARDS=innergy-dev/7:Pod=Xi` follows a pod's cards whoever they are assigned to (as context: only a card assigned to you or by you puts anything on you). `PA_GITHUB=0` turns it off. |
 | Jira (API token, or the Atlassian connector) | issues you're assigned, reported, or watching | Preferred: the `PA_JIRA_API_TOKEN` secret (see [Secrets](#secrets-and-sign-ins)) — REST with Basic auth, no model in the loop. `PA_JIRA_EMAIL` defaults to your Microsoft 365 address, `PA_JIRA_SITE` to the site the connector discovered. Without a token, a headless `claude -p` runs the JQL through the claude.ai Atlassian connector (`/mcp` → *claude.ai Atlassian MCP*); when that fails too, the dashboard asks you for a token. `PA_JIRA=0` turns it off. |
 | `AZURE_OPENAI_*` | semantic search | Optional. Without it search is full-text only — good on names and ids, weaker on paraphrase. |
 
@@ -175,6 +175,14 @@ written for one is retired.
 assistant: after each GitHub pass it closes commitments whose PR merged or closed, reviews you
 already gave, and review requests GitHub addressed only to a team you are in (those never become
 commitments in the first place now). Each has **Reopen**.
+
+A GitHub item puts something on you only when GitHub names you on it: you wrote it, are assigned,
+were asked to review by name (not through a team or CODEOWNERS), were @mentioned by login, or
+commented in it. Anything else — a team review request, a watched repo, an unassigned card on a
+pod board you follow — is context: its facts are kept, its commitments are not. On a PR you did
+not write, the work it plans ("frontend in a follow-up PR") is its author's, owed to you at most,
+and if you are only a reviewer what you owe is the review. That is checked in code after the model
+answers (`src/distill/githubGate.js`), not asked of it.
 
 Asks from Teams and mail close the same way once you have answered them yourself
 (`src/commitments/replyClose.js`, every five minutes, `PA_REPLY_CLOSE=0` turns it off). An open

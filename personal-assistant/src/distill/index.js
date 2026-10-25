@@ -20,6 +20,7 @@ const projects = require('../projects');
 const resolve = require('../projects/resolve');
 const { logger } = require('../log');
 const keep = require('./keep');
+const githubGate = require('./githubGate');
 
 const log = logger('distill');
 
@@ -220,9 +221,16 @@ async function distillOne(item, cached) {
 
   try {
     const result = await callModel(item, { meLabel, candidates, ranked });
-    // A review requested from a team is the team's queue, not an ask of the
-    // reader — decided by GitHub's own reviewer list, not left to the model.
-    if (item.raw?.action === 'team_review_requested') result.commitments = [];
+    // On GitHub, what you owe is decided by GitHub's own records of who you
+    // are on the item (author, assignee, named reviewer, @mention), not left
+    // to the model: a team's review queue or a PR's planned follow-up is not
+    // yours (githubGate.js).
+    const login = cached && 'githubLogin' in cached ? cached.githubLogin : await identity.myHandle('github_username');
+    const g = githubGate.gate(item, result.commitments, { login });
+    if (g.dropped.length || g.moved.length) {
+      log.info('github gate', { id: item.id, dropped: g.dropped.length, moved: g.moved.length });
+    }
+    result.commitments = g.commitments;
     const resolved = await resolveReferences(item, result, candidates);
     await persist(item, result, resolved);
     return { id: item.id, commitments: result.commitments.length, facts: result.facts.length };
@@ -245,7 +253,11 @@ async function run({ limit = 25 } = {}) {
   const items = await pending(limit);
   if (!items.length) return { processed: 0, commitments: 0, facts: 0, errors: 0 };
 
-  const cached = { candidates: await projects.candidates(), me: await identity.me() };
+  const cached = {
+    candidates: await projects.candidates(),
+    me: await identity.me(),
+    githubLogin: await identity.myHandle('github_username'),
+  };
   let commitments = 0;
   let facts = 0;
   let errors = 0;

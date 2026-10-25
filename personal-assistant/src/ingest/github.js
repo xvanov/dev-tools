@@ -120,11 +120,17 @@ function notificationItem(n, detail) {
       unread: n.unread,
       state: detail?.state || null,
       merged: detail?.merged ?? null,
+      // Who wrote the PR or issue, and whether a review request names you:
+      // the distiller's GitHub gate (src/distill/githubGate.js) reads both.
+      author: detail?.author || null,
+      requestedMe: detail?.requestedMe ?? null,
     },
   };
 }
 
-function searchItem(kind, it) {
+// `reviewRequested`: the PR came from the `user-review-requested:` search, so
+// a review is asked of you by name — the gate's only evidence of it.
+function searchItem(kind, it, { reviewRequested = false } = {}) {
   const repo = it.repository_url?.replace('https://api.github.com/repos/', '') || null;
   return {
     externalId: `${kind}/${repo}#${it.number}`,
@@ -140,6 +146,7 @@ function searchItem(kind, it) {
       webUrl: it.html_url,
       labels: (it.labels || []).map((l) => l.name),
       assignees: (it.assignees || []).map((a) => a.login),
+      ...(reviewRequested ? { reviewRequested: true } : {}),
     },
   };
 }
@@ -216,7 +223,9 @@ function fieldMap(node) {
 
 // An item is yours if it is assigned to you, or if it matches a watch rule
 // for its board (`PA_GITHUB_BOARDS=innergy-dev/7:Pod=Xi`): a pod's board is
-// the pod's work whether or not anyone has put their name on a card yet.
+// the pod's work whether or not anyone has put their name on a card yet. A
+// watched card nobody assigned to you is context, though: the distiller's
+// GitHub gate keeps its facts and none of its commitments.
 function projectItems(project, login, watch = []) {
   const out = [];
   for (const node of project.items?.nodes || []) {
@@ -275,6 +284,7 @@ async function detailFor(n, login) {
       comment,
       commentAuthor,
       requestedMe,
+      author: subject.user?.login || null,
       state: subject.state || null,
       merged: subject.merged ?? null,
     };
@@ -319,6 +329,7 @@ async function run() {
     api(q(`is:open is:issue assignee:${login} archived:false`)),
   ]);
   const prs = new Map();
+  const requested = new Set(reviewing.items.map((it) => it.html_url));
   for (const it of [...authored.items, ...reviewing.items]) prs.set(it.html_url, it);
 
   // Projects v2: optional, scope-gated, and never fatal to the rest.
@@ -346,7 +357,7 @@ async function run() {
 
   let changed = 0;
   changed += await saveItems('github_notification', notifItems, null);
-  changed += await saveItems('github_pr', [...prs.values()].map((it) => searchItem('pr', it)), null);
+  changed += await saveItems('github_pr', [...prs.values()].map((it) => searchItem('pr', it, { reviewRequested: requested.has(it.html_url) })), null);
   changed += await saveItems('github_issue', assigned.items.map((it) => searchItem('issue', it)), null);
   changed += await saveItems('github_project_item', boardItems, null);
 

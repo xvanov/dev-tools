@@ -110,6 +110,15 @@ owner is not the user, or whose ref was not in the prompt. Every write is record
 changed them since). It never writes to a PR or ticket; news about one is a claim. The generic
 distiller skips meeting and call recordings (`DEBRIEF_OWNED`) so nothing is extracted twice.
 
+**GitHub puts work on you only where GitHub names you.** `src/distill/githubGate.js` runs on the
+distiller's answer for every GitHub item: no commitment at all from an item you are not personally
+in (author, assignee, reviewer requested by name, @mentioned by login, or in the thread yourself) —
+a team review request, CODEOWNERS, a watched repo or a followed pod board is context only. On a PR
+or issue you neither wrote nor are assigned, delivery of the item's own work moves to its author
+(owed_to_me), and a reviewer-only role owes only the review. It reads GitHub's records
+(`raw.reviewRequested`, `raw.requestedMe`, `raw.author`, assignees), never the model's opinion of
+who you are; a new GitHub source must record those or its items owe you nothing.
+
 **A reply closes a commitment only on a verbatim quote of my own message, and reversibly.**
 `src/commitments/replyClose.js` closes an open owed_by_me ask from chat or mail only when
 `replyCloseCore.parseVerdict` finds the quote in the reply of mine it names and the verdict is
