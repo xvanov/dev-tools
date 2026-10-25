@@ -192,7 +192,8 @@ fresh Teams message; `PA_RECONCILE=0` turns it off, `PA_RECONCILE_AUTO=0` makes 
 proposal). It is level-triggered: each open commitment, in either direction, is judged against
 everything *related* that arrived since it was last judged — the same thread, anything the other
 person wrote (so their answer to an owed-to-me ask closes it), and your own PRs, notifications and
-Claude sessions in the commitment's repo. Commitments that share new items are judged in one call;
+Claude sessions in the commitment's repo (a session once it has been quiet for 10 minutes, or a
+live one would re-judge its whole repo every minute). Commitments that share new items are judged in one call;
 with nothing new there is no model call at all. A close needs a quote checked verbatim against the
 item, and is applied on its own at 80% confidence or more — unless you reopened that commitment
 before — or shown under **Looks done?** with **Close it** / **Not yet** between 50% and 80%. A

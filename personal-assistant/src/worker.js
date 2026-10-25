@@ -142,8 +142,13 @@ async function main() {
   const search = require('./search');
   const dispatch = require('./dispatch');
 
+  let m365At = 0;
   every(config.m365.pollSeconds, 'm365', async () => {
     if (!config.m365.enabled) return;
+    const now = new Date();
+    const offHours = now.getDay() === 0 || now.getDay() === 6 || now.getHours() < 8 || now.getHours() >= 19;
+    if (offHours && Date.now() - m365At < config.m365.offHoursPollSeconds * 1000) return;
+    m365At = Date.now();
     await ingest.runAll(['graph_chat', 'graph_mail']);
   });
 

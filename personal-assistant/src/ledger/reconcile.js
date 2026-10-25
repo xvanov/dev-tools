@@ -38,6 +38,7 @@ const R = require('./reconcileCore');
 const log = logger('reconcile');
 
 const WINDOW_DAYS = 30;
+const SESSION_SETTLE_MINUTES = 10;
 const MAX_FAILURES = 3;
 const failures = new Map();
 
@@ -71,6 +72,10 @@ const DIRTY = `
          and r.occurred_at < o.asked_at + interval '${WINDOW_DAYS} days'
          and r.fetched_at > coalesce(o.ledger_checked_at, '-infinity'::timestamptz)
          and r.source <> 'graph_event'
+         -- A live Claude session is re-saved every few minutes while it runs;
+         -- judging it each time re-judged every ask in its repo every minute.
+         -- It counts once it has been quiet for a while.
+         and (r.source <> 'claude_session' or r.fetched_at < now() - interval '${SESSION_SETTLE_MINUTES} minutes')
          and length(r.body_text) >= 8
          and (
            (o.thread_external_id is not null and r.source = o.source and r.thread_external_id = o.thread_external_id)

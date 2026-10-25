@@ -117,7 +117,13 @@ const config = {
   m365: {
     enabled: env('PA_M365', '1') !== '0',
     pollSeconds: envInt('PA_M365_POLL_SECONDS', 180),
+    // Evenings and weekends: chat still arrives in seconds through the Teams
+    // cache, so the connector pass (about $0.20 each) only needs to catch up.
+    offHoursPollSeconds: envInt('PA_M365_OFF_HOURS_POLL_SECONDS', 1800),
     calendarPollSeconds: envInt('PA_M365_CALENDAR_POLL_SECONDS', 900),
+    // The relay model only chooses tool calls; the data comes back verbatim
+    // from the tools (llm.toolCalls), so it needs no reasoning model.
+    connectorModel: env('PA_CONNECTOR_MODEL', 'claude-sonnet-5-5'),
     // Channel posts: `mentions` (kept when they name you), `all`, or `off`.
     teamsChannels: env('PA_TEAMS_CHANNELS', 'mentions'),
   },

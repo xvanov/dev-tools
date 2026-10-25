@@ -269,6 +269,8 @@ async function complete({
     model: model || config.anthropic.model,
     backend: useCli ? 'cli' : 'api',
   };
+  // A connector relay without a model of its own: the relay model.
+  if (tools && !model) model = meta.model = config.m365.connectorModel;
   const started = Date.now();
   try {
     const { text, usage } = useCli
@@ -300,12 +302,13 @@ async function complete({
 //
 // Returns [{ name, input, results: [...], error: string|null }] in call order.
 async function toolCalls({ prompt, tools, effort = 'low', timeoutMs = 300_000, visibleTokens = null, purpose = 'connector' }) {
-  const args = cliArgs({ system: null, effort, tools });
+  const model = config.m365.connectorModel;
+  const args = cliArgs({ system: null, effort, tools, model });
   const fmt = args.indexOf('json');
   args[fmt] = 'stream-json';
   args.push('--verbose');
   const env = visibleTokens ? { MAX_MCP_OUTPUT_TOKENS: String(visibleTokens) } : null;
-  const meta = { purpose: purpose || 'connector', model: config.anthropic.model, backend: 'cli' };
+  const meta = { purpose: purpose || 'connector', model, backend: 'cli' };
   const started = Date.now();
   let usage = null;
   try {
