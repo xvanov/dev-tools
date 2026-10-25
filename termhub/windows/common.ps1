@@ -594,7 +594,7 @@ function Confirm-Sessiond {
 
   Write-Host "termhub: starting sessiond on 127.0.0.1:$Port ..."
   $proc = Start-TermhubNode -Script 'sessiond.js' -EnvVars @{ TERMHUB_SESSIOND_PORT = $Port }
-  if (-not (Wait-SessiondUp -Port $Port)) {
+  if (-not (Wait-SessiondUp -Port $Port -TimeoutSec 60)) {
     $why = if ($proc -and $proc.HasExited) { " (it exited with code $($proc.ExitCode) - run 'node sessiond.js' to see why)" } else { '' }
     throw "sessiond did not come up on port $Port$why"
   }

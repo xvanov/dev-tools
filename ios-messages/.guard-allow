@@ -10,4 +10,5 @@ consolidated lent
 advisory
 block 15-minute
 ready pending
- DURABLE durable jose creation family FAMILY person PERSON Monday-Friday people PEOPLE message MESSAGE
+ DURABLE durable jose creation family FAMILY person PERSON Monday-Friday people PEOPLE message MESSAGE BEFORE
+CHECK
