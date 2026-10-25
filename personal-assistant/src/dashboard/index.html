@@ -184,6 +184,7 @@
   <section id="nextmeeting"><h2>Next meeting<span class="n"></span></h2><div class="list"><div class="empty">loading…</div></div></section>
   <section id="debriefs"><h2>Meeting debriefs<span class="n"></span></h2><div class="list"><div class="empty">loading…</div></div></section>
   <section id="drafts"><h2>Replies to send<span class="n"></span></h2><div class="list"></div></section>
+  <section id="needsyou"><h2 title="Things the assistant prepared or needs to know, waiting for a yes, a no or an answer.">Needs you<span class="n"></span></h2><div class="list"></div></section>
   <section id="looksdone"><h2 title="The assistant found something that looks like it settles these, but was not sure enough to close them on its own.">Looks done?<span class="n"></span></h2><div class="list"></div></section>
   <section id="mine"><h2>On you<span class="n"></span></h2><div class="list"></div></section>
   <section id="waiting"><h2>Waiting on others<span class="n"></span></h2><div class="list"></div></section>
@@ -690,6 +691,36 @@ function render(s) {
 
   fill('closed', s.closed || [], closedCard, 'Nothing closed in the last three days.');
   fill('looksdone', s.looksDone || [], looksDoneCard, 'Nothing to confirm.');
+  fill('needsyou', s.needsYou || [], needsYouCard, 'Nothing waiting on you.');
+}
+
+// A prepared action (yes / no) or a question (one button per option).
+function needsYouCard(p) {
+  const decide = (accept, answer) => async () => {
+    const r = await post(`api/proposals/${p.id}/${accept ? 'accept' : 'reject'}`, { answer });
+    toast(r.result || (accept ? 'done' : 'declined'));
+  };
+  const buttons = [];
+  if (Array.isArray(p.options) && p.options.length) {
+    for (const o of p.options) {
+      const b = el('button', {}, o.label || o.value);
+      b.addEventListener('click', act(b, decide(true, String(o.value))));
+      buttons.push(b);
+    }
+  } else {
+    const yes = el('button', {}, 'Yes');
+    yes.addEventListener('click', act(yes, decide(true, null)));
+    buttons.push(yes);
+  }
+  const no = el('button', { title: 'Not this — it will not be asked again' }, 'No');
+  no.addEventListener('click', act(no, decide(false, null)));
+  buttons.push(no);
+  return el('div', { class: 'item' },
+    el('div', { class: 'sum' }, p.title),
+    el('div', { class: 'sub' }, ...joinParts([p.commitment_id ? `#${p.commitment_id}` : null, p.run_id ? `run #${p.run_id}` : null,
+      p.commitment_summary, ago(p.created_at)])),
+    p.body ? el('pre', { class: 'sub' }, p.body) : null,
+    el('div', { class: 'actions' }, ...buttons));
 }
 
 // A close the reconciler proposes, with the quote that suggests it.

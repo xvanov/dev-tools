@@ -118,6 +118,16 @@ own (DURABLE.md), but never silently and never without that row. A new closer ca
 `transition`; it does not run `update commitment set status`. (The debrief predates this and
 keeps its own reversible log in `meeting_debrief.applied`.)
 
+**Durable tasks act through checkpointed steps and re-read before acting.** Work that waits (a
+chase, a finished run waiting to be landed) is an Absurd task (`src/durable`, schema vendored
+unchanged in `vendor/absurd/` at the version `absurd-sdk` is pinned to — upgrade it with a new
+migration, never by editing the file). Every effect is a `ctx.step` and is itself idempotent
+(dedupe keys); a task reads the commitment or run again before it acts, because the event that
+woke it is a hint. `awaitEvent` suspends a task by throwing: never catch it except to test for
+`TimeoutError` and rethrow everything else. A task that wants a decision creates a `proposal` and
+waits on `proposal:<id>`; a proposal with no task runs a typed handler in `src/proposals` — there
+is no handler that takes a command or free text.
+
 **Capture never stops for the assistant.** The worker's only levers on `capture.py` are the pause
 file (`pa mic pause`) and the roll file, which makes capture finish its file and continue in a
 new one. The meeting gate (`src/audio/gate.js`) writes the pause file between meetings with the

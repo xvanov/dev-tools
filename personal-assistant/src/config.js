@@ -327,6 +327,12 @@ const config = {
     effort: env('PA_RECONCILE_EFFORT', 'medium'),
   },
 
+  // Durable tasks on Absurd (src/durable). PA_DURABLE=0 stops the worker
+  // running them and spawning new ones; tasks already in the store wait.
+  durable: {
+    enabled: env('PA_DURABLE', '1') !== '0',
+  },
+
   // Recurring typed actions (src/routines). PA_ROUTINES=0 stops the worker
   // running them; `pa routine run` still works by hand.
   routines: {

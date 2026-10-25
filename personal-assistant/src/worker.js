@@ -252,6 +252,19 @@ async function main() {
     });
   }
 
+  // Durable tasks (src/durable): chases of what I am owed, finished runs
+  // waiting to be landed. The Absurd worker runs inside this process; the
+  // pass below spawns the tasks the store says should exist.
+  if (config.durable.enabled) {
+    require('./durable')
+      .startWorker()
+      .then(() => log.info('durable worker started'))
+      .catch((err) => log.warn('durable worker not started', { message: err.message }));
+    every(600, 'durable', async () => {
+      await require('./durable/spawners').pass();
+    });
+  }
+
   // A source that keeps failing blinds the reconciler: one toast per outage,
   // and a banner on the dashboard (src/ingest/health.js).
   every(600, 'health', async () => {

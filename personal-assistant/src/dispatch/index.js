@@ -203,6 +203,10 @@ async function start({ commitmentId = null, task = null, mode: modeName, repoPat
   if (commitmentId) {
     await ledger.transition({ commitmentId, to: 'dispatched', actor: 'dispatch', reason: `run #${run.id}`, from: ['open'] });
   }
+  // When the session ends, a durable task offers to land it (src/durable/tasks/runReview.js).
+  await require('../durable')
+    .spawn('run_review', { runId: Number(run.id) }, { key: `run:${run.id}` })
+    .catch((err) => log.warn('run review not scheduled', { run: run.id, message: err.message }));
 
   // Waits for Claude's prompt (answering the folder-trust question a new
   // worktree always gets), types the brief prompt and checks it was taken.
@@ -488,6 +492,8 @@ async function markDone(runId, note) {
     runId,
     note || null,
   ]);
+  // Wakes its run_review task (src/durable/tasks/runReview.js).
+  await require('../durable').emit(`run-ended:${runId}`, { note: note || null }).catch(() => {});
 }
 
 // A run whose termhub session has gone (machine rebooted, session killed) is

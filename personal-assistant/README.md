@@ -200,6 +200,16 @@ promise is never a delivery. Every status change, yours or the assistant's, goes
 `src/ledger` and is listed by `pa ledger <id>`; the closed card says who closed it, and **Reopen**
 takes it back.
 
+**Work that waits is a durable task** (`src/durable`, on [Absurd](https://github.com/earendil-works/absurd)
+in the same Postgres; `PA_DURABLE=0` turns it off). Two so far. **Chase**: something a person
+owes you in chat or mail is chased on a working morning two days after the promise (or just after
+it was due) unless it closes first — a follow-up is drafted in that thread for you to send, and if
+nothing comes three days later you get one reminder; at most three follow-ups a day.
+**Run review**: when a dispatched run's session ends, its commits and diffstat become a **Needs
+you** card, "open a draft PR?"; yes pushes the branch and opens a draft PR. **Needs you** is also
+where the assistant asks what only you know (which repo?). `pa proposals` / `pa answer <id> yes|no|<option>`
+do the same from the terminal, and `pa doctor` counts tasks by state.
+
 **Replies to send** sits at the top: drafts the worker wrote for fresh asks from mail and Teams
 (`PA_AUTODRAFT=0` turns that off; `PA_AUTODRAFT_MIN_CONFIDENCE`, default 0.6, sets how sure the
 distiller must be that the ask is on you), plus any you asked for with **Reply**. Each shows the
@@ -247,6 +257,8 @@ pa ledger 42                    every status change of #42, who made it and why
 pa ledger reconcile --dry-run   what the reconciler would close now (--id 1,2 to aim it)
 pa ledger looks-done            closes waiting for you; answer with <id> --yes|--no
 pa ledger undo 7                take back one status change
+pa proposals                    prepared actions and questions waiting on you
+pa answer 3 yes                 answer one (yes, no, or one of its options)
 pa dashboard                    serve the web page without the worker
 
 pa do 42 --mode mr              dispatch to a Claude Code session in its own worktree

@@ -40,6 +40,8 @@ const HELP = `pa — your context layer
     pa ledger reconcile [--dry-run] [--id N,..] [--limit N]
                                      judge open commitments against newer items now
     pa ledger undo <transition-id>   take back one status change
+    pa proposals                     what the assistant prepared or asks, waiting for you
+    pa answer <id> yes|no|<option>   answer one
     pa ledger looks-done [<evidence-id> --yes|--no]  proposals: list, or answer one
     pa do --task "..." [--mode m] [--repo p]
     pa runs [--all]                 live and recent runs
@@ -377,6 +379,23 @@ const commands = {
     const status = flagBool(flags, 'dismiss') ? 'dropped' : flagBool(flags, 'reopen') ? 'open' : 'done';
     const row = await setStatus(id, status);
     out(`#${row.id} ${row.status} · ${row.summary}`);
+  },
+
+  async proposals() {
+    const list = await require('../proposals').pending();
+    if (!list.length) return out('Nothing waiting on you.');
+    for (const p of list) {
+      out(`${p.id} · ${p.kind} · ${p.title}`);
+      if (Array.isArray(p.options) && p.options.length) out(`    options: ${p.options.map((o) => o.value).join(', ')}`);
+    }
+  },
+
+  async answer(args) {
+    const [id, ans] = args;
+    if (!Number(id) || !ans) return fail('usage: pa answer <proposal-id> yes|no|<option>');
+    const accept = ans !== 'no';
+    const r = await require('../proposals').decide(Number(id), { accept, answer: ans === 'yes' || ans === 'no' ? null : ans });
+    out(r.result);
   },
 
   // The ledger (src/ledger): history, the reconciler by hand, undo, proposals.
@@ -975,6 +994,16 @@ const commands = {
       );
     } catch (err) {
       lines.push(`  debriefs: not migrated (${err.message.slice(0, 60)}) — run \`pa migrate\``);
+    }
+
+    // Durable tasks (src/durable) and what waits on you (src/proposals).
+    try {
+      const t = await require('../durable').stats();
+      const by = t.map((r) => `${r.task_name} ${r.state} ${r.n}`).join(' · ') || 'none yet';
+      const p = (await require('../proposals').pending()).length;
+      lines.push(`  durable ${config.durable.enabled ? 'on' : 'off (PA_DURABLE=0)'} · tasks: ${by} · ${p} proposal(s) waiting`);
+    } catch (err) {
+      lines.push(`  durable: not migrated (${err.message.slice(0, 60)}) — run \`pa migrate\``);
     }
 
     // The reconciler (src/ledger/reconcile.js).

@@ -36,6 +36,14 @@ async function applied() {
   return new Set(r.rows.map((row) => row.version));
 }
 
+// A vendored schema (vendor/absurd/absurd.sql) is applied by a migration
+// holding one `-- include: <path relative to sql/>` line, so the upstream
+// file stays byte-for-byte as published and the migration that applied it is
+// still a numbered, recorded file in this directory.
+function expandIncludes(sql) {
+  return sql.replace(/^-- include: (\S+)\s*$/gm, (_, rel) => fs.readFileSync(path.resolve(SQL_DIR, rel), 'utf8'));
+}
+
 async function migrate() {
   await ensureRegistry();
   const done = await applied();
@@ -47,7 +55,7 @@ async function migrate() {
   }
 
   for (const file of pending) {
-    const sql = fs.readFileSync(path.join(SQL_DIR, file), 'utf8');
+    const sql = expandIncludes(fs.readFileSync(path.join(SQL_DIR, file), 'utf8'));
     await withTx(async (client) => {
       await client.query(sql);
       await client.query('insert into schema_migration (version) values ($1)', [file]);
@@ -57,7 +65,7 @@ async function migrate() {
   return { applied: pending };
 }
 
-module.exports = { migrate, migrationFiles };
+module.exports = { migrate, migrationFiles, expandIncludes };
 
 if (require.main === module) {
   migrate()

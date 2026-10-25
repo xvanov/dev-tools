@@ -50,6 +50,14 @@ async function transition({ commitmentId, to, actor, reason = null, evidenceId =
       )
     ).rows[0];
     return { changed: true, transitionId: Number(t.id), set: p.set };
+  }).then((r) => {
+    // Whatever waits on this commitment closing (a chase, src/durable) wakes.
+    // Best effort and after the write: a task re-reads the row before acting,
+    // so an event for a change that was rolled back costs nothing.
+    if (r.changed && L.CLOSED.has(to)) {
+      require('../durable').emit(`closed:${commitmentId}`, { status: to, at: L.iso(now) }).catch(() => {});
+    }
+    return r;
   });
 }
 
