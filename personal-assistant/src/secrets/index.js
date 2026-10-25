@@ -247,6 +247,8 @@ async function openRequest({ kind, name, purpose, hint, url, command = null, req
       body: kind === 'login' ? hint || command || '' : `${purpose}\nPaste it in the dashboard; it goes to ${target === 'env-file' ? '.env' : 'Windows Credential Manager'}.`,
       url: dashboardUrl(`secret-${row.id}`),
       dedupeKey: `secret_request:${row.id}`,
+      // Something is blocked until you answer it.
+      priority: 'urgent',
     });
   } catch (err) {
     // The row is the request; the toast is a courtesy.

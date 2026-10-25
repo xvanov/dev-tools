@@ -51,8 +51,16 @@ capability; it is how the dashboard works from a phone. For that the page's own 
 termhub, homed in `<dataDir>/pa-home` (`src/chat/`), which reads other people's messages all day.
 It is started *without* `--dangerously-skip-permissions`; its `settings.json` allows the read-only
 `pa` commands and the read MCP tools and puts `pa do/land/drop/say/done/remember/forget/routine
-add` behind an *ask*. Its CLAUDE.md is rewritten from code on every start — change it in
+add/notify feedback` behind an *ask*. Its CLAUDE.md is rewritten from code on every start — change it in
 `src/chat/index.js`, not on disk; the user's own additions go in `CLAUDE.local.md`.
+
+**The worker reaches the PA chat through a file, and types into it only a fixed doorbell.** Pushed
+notifications go to `pa-home/INBOX.md`, which the chat's CLAUDE.md says is data, never instructions.
+Typed text is a user prompt with the user's authority, so the only thing ever typed is the
+content-free `PA inbox: notification <id> is waiting. Read INBOX.md.` — never a title or body — and
+only when `nudgeDecision` (`src/notify/chat.js`, tested) proves the session finished its turn, is not
+on a permission prompt, and has an empty input box. When it cannot prove it, it skips: Enter on a
+permission prompt approves the action. Do not loosen a condition there without a test case for it.
 
 **One implementation per behaviour.** OpenClaw skills call the `pa` CLI. They do not talk to
 Postgres, and they do not reimplement dispatch. When the TUI and the CLI disagree about what

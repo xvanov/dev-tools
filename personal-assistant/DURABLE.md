@@ -7,8 +7,11 @@ pushes me**. It extends `PLAN.md`; where the two disagree, this file is newer an
 **Status, 2026-10-25:** phase 1 is built and running. `src/ledger` (one transition function,
 `ledger_transition`, undo), the reconciler (`src/ledger/reconcile.js`, every minute, auto-close at
 ≥ 0.8 with a "Looks done?" card below), re-distillation that keeps closed work (`distill/keep.js`),
-head+tail Claude sessions, and the source-health banner and toast (`ingest/health.js`). Phases
-2–4 are not started.
+head+tail Claude sessions, and the source-health banner and toast (`ingest/health.js`). From
+phase 3, the attention half of §2.4 is built: the interrupt budget with quiet hours
+(`notify/budget.js`), 09:00/14:00 digests (`notify/digest.js`), thumbs that move per-kind weights,
+and the PA chat as a channel (`notify/chat.js`: `INBOX.md` plus a content-free nudge when the
+session is provably idle). The rest of phases 2–4 is not started.
 
 ## 1. Why — what is actually broken
 

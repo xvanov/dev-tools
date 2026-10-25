@@ -301,6 +301,13 @@ async function main() {
     });
   }
 
+  // The digest (src/notify/digest.js): at PA_DIGEST_TIMES, what the assistant
+  // closed, what waits for a yes, who is late, and what the interrupt budget
+  // held back. One query when no slot is due; a missed slot runs once.
+  every(60, 'digest', async () => {
+    await require('./notify/digest').runDue();
+  });
+
   // Deterministic retrieval eval; a no-op with no cases, at most once a day.
   every(86400, 'eval', async () => {
     await require('./eval').nightly();

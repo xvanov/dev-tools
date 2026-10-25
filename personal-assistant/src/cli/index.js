@@ -41,6 +41,10 @@ const HELP = `pa — your context layer
                                      judge open commitments against newer items now
     pa ledger undo <transition-id>   take back one status change
     pa ledger looks-done [<evidence-id> --yes|--no]  proposals: list, or answer one
+    pa notify [list] [--unread]      what the assistant told you, and how (push, digest, feed)
+    pa notify ack <id>|all           mark read; it leaves the PA chat's INBOX.md
+    pa notify feedback <id> up|down|clear  more or fewer interruptions of that kind
+    pa notify weights | digest       per-kind weights · what the next digest would say
     pa do --task "..." [--mode m] [--repo p]
     pa runs [--all]                 live and recent runs
     pa attach <run>                 print (and open) the termhub URL for a run
@@ -423,6 +427,53 @@ const commands = {
 
   // Standalone, for when the worker is not running. Same server, same port —
   // if the worker already has it, this says so rather than fighting for it.
+  // The notification feed, your thumbs on it, and the digest (src/notify).
+  async notify(args, flags) {
+    const notify = require('../notify');
+    const [sub, a, b] = args;
+    if (!sub || sub === 'list') {
+      const list = await notify.feed({ limit: flagInt(flags, 'n', 20), unreadOnly: flagBool(flags, 'unread') });
+      if (!list.length) return out('Nothing.');
+      for (const n of list) {
+        const how = [n.kind, n.priority, n.delivery, ...(n.channel_sent || []), n.feedback ? `rated ${n.feedback}` : null, n.read_at ? null : 'unread']
+          .filter(Boolean).join(' · ');
+        out(`${n.id} · ${new Date(n.created_at).toLocaleString()} · ${how}`);
+        out(`    ${n.title}`);
+      }
+      return;
+    }
+    if (sub === 'ack') {
+      if (a === 'all') {
+        await db.query('update notification set read_at = now() where read_at is null');
+        await require('../notify/chat').writeInbox().catch(() => {});
+        return out('All read.');
+      }
+      if (!Number(a)) return fail('usage: pa notify ack <id>|all');
+      await notify.markRead(Number(a));
+      return out(`${a} read`);
+    }
+    if (sub === 'feedback') {
+      const value = b === 'clear' ? null : b;
+      if (!Number(a) || !['up', 'down', null].includes(value)) return fail('usage: pa notify feedback <id> up|down|clear');
+      const r = await notify.feedback(Number(a), value);
+      return out(`${r.id} ${r.feedback || 'cleared'} · ${r.kind} weight ${r.previous} → ${r.weight}`);
+    }
+    if (sub === 'weights') {
+      const list = await notify.weights();
+      if (!list.length) return out('No feedback yet: every kind at 1.');
+      for (const w of list) out(`${Number(w.weight).toFixed(2)}  ${w.kind}`);
+      return;
+    }
+    if (sub === 'digest') {
+      // Preview only: the worker writes digests at their slots, once each.
+      const p = await require('../notify/digest').preview();
+      out(p.title);
+      if (p.body) out(`\n${p.body}`);
+      return;
+    }
+    return fail('usage: pa notify [list [--unread] [-n 20]] | ack <id>|all | feedback <id> up|down|clear | weights | digest');
+  },
+
   async dashboard() {
     const url = `http://${config.dispatch.host}:${config.dispatch.port}/`;
     try {
@@ -942,6 +993,42 @@ const commands = {
           ? `  secrets: ${waiting.length} waiting for you — ${waiting.map((w) => w.name).join(', ')} (dashboard → Needs you)`
           : '  secrets: nothing waiting · `pa secret list`'
     );
+
+    // The interrupt budget and digests (src/notify). A typo in either knob
+    // would silently mean "never quiet" or "no digest", so it is shown here.
+    try {
+      const budget = require('../notify/budget');
+      const digest = require('../notify/digest');
+      let quiet;
+      try {
+        const q = budget.parseQuietHours(config.notify.quietHours);
+        quiet = q ? `quiet ${config.notify.quietHours}` : 'no quiet hours';
+      } catch (err) {
+        quiet = `BAD ${err.message} — treated as none`;
+      }
+      let times;
+      try {
+        times = digest.parseDigestTimes(config.notify.digestTimes);
+      } catch (err) {
+        times = null;
+        quiet += ` · BAD ${err.message} — no digests`;
+      }
+      const a = await db.one(
+        `select (select count(*) from notification where delivery = 'push' and kind <> 'digest' and created_at >= $1)::int as pushed,
+                (select count(*) from notification where delivery = 'digest' and digest_id is null)::int as held,
+                (select max(created_at) from digest) as last_digest`,
+        [budget.startOfLocalDay(new Date())]
+      );
+      const inbox = require('../notify/chat').inboxPath();
+      lines.push(
+        `  attention: ${a.pushed}/${config.notify.pushBudget} pushes today · ${quiet} · ${a.held} held for the digest` +
+          ` · digests ${times && times.length ? times.map((t) => `${String(t.h).padStart(2, '0')}:${String(t.m).padStart(2, '0')}`).join(', ') : 'off'}` +
+          `, last ${a.last_digest ? relative(a.last_digest) : 'never'} · PA chat inbox ${fs.existsSync(inbox) ? 'written' : 'not yet (pa chat)'}` +
+          `${config.notify.chatNudge ? '' : ' · nudge off'}`
+      );
+    } catch (err) {
+      lines.push(`  attention: not migrated (${err.message.slice(0, 60)}) — run \`pa migrate\``);
+    }
 
     // Pre-meeting briefs
     try {

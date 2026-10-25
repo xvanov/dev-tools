@@ -500,6 +500,34 @@ asks you repeated across days in your Claude sessions, and proposes at most thre
 with a one-line why citing the evidence ids. They arrive as `proposed` — never enabled until you
 accept — and a rejected one is never proposed again.
 
+### Attention: pushes, digests and your thumbs
+
+Everything the assistant says lands in **From the assistant** on the Today tab. Whether it also
+*interrupts* you is decided by the interrupt budget (`src/notify/budget.js`, pure and tested):
+
+| Priority | Pushed (toast + PA chat) when | Otherwise |
+|---|---|---|
+| `urgent` — a meeting starting within 30 min, a credential something is blocked on | always, except in quiet hours | the next digest |
+| `normal` — everything else | fewer than `PA_PUSH_BUDGET` (4) pushes so far today, and its kind's weight ≥ 0.5 | the next digest |
+| `digest` | never | the next digest |
+
+Quiet hours are `PA_QUIET_HOURS` (default `19-08`, local; `off` for none). Every push counts
+against the budget, urgent ones included. A notification with the same dedupe key as an earlier one
+is never sent again, so nothing is announced twice without something new behind it.
+
+**Digests** come at `PA_DIGEST_TIMES` (default `09:00,14:00`): one toast and one feed row with what
+the assistant closed for you since the last one (`pa ledger undo` takes any of them back), the
+"Looks done?" proposals waiting, people you are waiting on who are overdue or have had it more than
+three days, and whatever the budget held back. The text is built from queries, so it costs no
+model call. A slot missed while the worker was down runs once when it comes back, never as a
+backlog. `pa notify digest` shows what the next one would say.
+
+**Thumbs.** Each feed row has 👍/👎 (or `pa notify feedback <id> up|down|clear`). A thumb moves the
+weight of that kind of notification by ×1.25 or ÷1.25, bounded to 0.2–2: four downs and a kind waits
+for the digest instead of pushing, six and it stays in the feed alone; ups bring it back. Weights
+are per kind, and `info` notifications are split by what they are about (`info:run-wait`,
+`info:low-disk`, …) so muting one does not mute the others. `pa notify weights` lists them.
+
 ## Always-on capture
 
 Two streams, captured separately and never mixed: the **microphone** is you, the **system
@@ -621,6 +649,27 @@ session has been sitting at its prompt for a minute — finished, or stopped to 
 get a notification that opens it; when it ends, another. The dashboard is also reachable through
 termhub at `/pa/` (the **PA** button), so all of this works away from the desk.
 
+**The assistant speaks first here too.** Every push is also written to `pa-home\INBOX.md` (the
+unread pushes of the last two days), and the chat's `CLAUDE.md` tells it to read that file at the
+start of every turn, tell you what is new, and offer the `pa` command that answers it — so you
+answer in place: "yes, close it" becomes `pa ledger looks-done 33 --yes`. When the session is
+provably idle, the worker also rings the bell by typing one fixed line,
+`PA inbox: notification 123 is waiting. Read INBOX.md.`, and pressing Enter. Two rules make that
+safe (`src/notify/chat.js`):
+
+- **The typed line carries no content.** Typed text is a prompt with *your* authority, and
+  notification titles quote other people; in `INBOX.md` the same words are data the chat is told
+  never to obey.
+- **It is typed only when nothing can go wrong with Enter**: termhub says the session finished its
+  turn (not working, not parked on a permission prompt or question), it has been quiet for
+  `PA_CHAT_NUDGE_IDLE_MINUTES` (2), and the screen's input box is empty with nothing unexplained
+  after it. Any doubt and the nudge is skipped — the toast still goes and the chat reads the inbox
+  on your next turn. A skipped nudge costs minutes; Enter on a half-typed line, or on a permission
+  prompt, would cost far more. `PA_CHAT_NUDGE=0` turns the nudge off.
+
+`pa notify ack <id>` takes one off the inbox (the chat may run it freely); `pa notify feedback`
+asks first, because it changes how often you are interrupted.
+
 ## Wiring it into your agents
 
 - [`integrations/claude-code/`](./integrations/claude-code/) — register the read-only MCP recall
@@ -647,6 +696,7 @@ src/commitments/     closing chat and mail asks you answered yourself (replyClos
 src/dashboard/       the loopback web page: today, next meeting, replies, runs, secret requests, and the Memory and Routines tabs
 src/secrets/         secret and login requests; Windows Credential Manager via PowerShell (stdin only)
 src/routines/        cron parser, the typed action registry (repo_sync, prompt_report), runs, suggestions
+src/notify/          notifications: toasts, the interrupt budget, digests, feedback weights, the PA chat inbox
 src/llm.js           model calls: API key, or `claude -p` without one
 src/backup.js        nightly pg_dump, restore, re-ingest
 src/dispatch/        worktrees, briefs, termhub sessions, modes, landing
