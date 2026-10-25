@@ -92,7 +92,7 @@ async function parseWords(words, { now = new Date() } = {}) {
     `Catalog:\n${JSON.stringify(actions.catalog(), null, 2)}`,
     `Request:\n${text.slice(0, 1000)}`,
   ].join('\n\n');
-  const reply = await complete({ system: PARSE_SYSTEM, prompt, model: PARSE_MODEL, effort: 'low', timeoutMs: 120_000 });
+  const reply = await complete({ system: PARSE_SYSTEM, prompt, model: PARSE_MODEL, effort: 'low', timeoutMs: 120_000, purpose: 'routine' });
   const parsed = extractJson(reply);
   if (parsed.error) throw new Error(`not a routine I can run: ${parsed.error}`);
   return preview({ ...parsed, description: text }, { now });

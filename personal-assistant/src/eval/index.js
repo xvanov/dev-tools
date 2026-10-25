@@ -83,7 +83,7 @@ async function judge(cases, perCase, k) {
     const items = await itemsFor(s.returned.slice(0, k));
     const question = cases.find((c) => c.id === s.id).question;
     try {
-      return (await llm.complete({ system: P.ANSWER_SYSTEM, prompt: P.answerPrompt(question, items), effort: 'low', maxTokens: 600 })).trim();
+      return (await llm.complete({ system: P.ANSWER_SYSTEM, prompt: P.answerPrompt(question, items), effort: 'low', maxTokens: 600, purpose: 'eval' })).trim();
     } catch (err) {
       log.warn('judge answer failed', { case: s.id, message: err.message });
       return null;
@@ -95,7 +95,7 @@ async function judge(cases, perCase, k) {
   for (let b = 0; b < rows.length; b += 20) {
     const batch = rows.slice(b, b + 20);
     try {
-      const reply = await llm.complete({ system: P.GRADE_SYSTEM, prompt: P.gradePrompt(batch), effort: 'low', maxTokens: 2000 });
+      const reply = await llm.complete({ system: P.GRADE_SYSTEM, prompt: P.gradePrompt(batch), effort: 'low', maxTokens: 2000, purpose: 'eval' });
       for (const g of llm.extractJson(reply).grades || []) {
         if (perCase[g.i]) perCase[g.i].judge_correct = Boolean(g.correct);
       }

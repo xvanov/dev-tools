@@ -96,6 +96,7 @@ async function recentChats() {
     prompt: 'Call teams_list_chats once with {"limit": 25}. Then reply with the single word: done',
     tools: [m365.tool('teams_list_chats')],
     timeoutMs: 120_000,
+    purpose: 'connector',
   });
   const map = new Map();
   for (const call of calls) {

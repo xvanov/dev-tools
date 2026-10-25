@@ -210,6 +210,19 @@ you** card, "open a draft PR?"; yes pushes the branch and opens a draft PR. **Ne
 where the assistant asks what only you know (which repo?). `pa proposals` / `pa answer <id> yes|no|<option>`
 do the same from the terminal, and `pa doctor` counts tasks by state.
 
+**Model spend is recorded and capped per day** (`src/budget.js`). Every model call — `claude -p`
+or the API — leaves an `llm_spend` row: when, which pass (`purpose`: distill, reconcile,
+reply-close, draft, memory-*, meeting-brief, debrief, connector, ...), model, backend, cost,
+tokens, duration and whether it worked; never any prompt or reply text. The CLI reports its own
+cost; for the API it is estimated from token usage at list prices, or left null for a model it
+does not know. `PA_DAILY_BUDGET_USD` (default 15) caps a local day: once reached, *discretionary*
+purposes (`PA_BUDGET_DISCRETIONARY`, default eager, research, digest, planner — speculative work
+done ahead of you) are refused until midnight and the worker logs it once; *essential* ones
+(`PA_BUDGET_ESSENTIAL`, default distill, reconcile, connector, reply-close) keep the board true
+and are never refused. Speculative work asks `budget.allow(purpose)` before it spends. `pa spend
+[--days N]` prints per-day, per-pass totals, `pa doctor` shows today against the cap with the top
+three passes, and the dashboard shows a spend chip beside the source chips.
+
 **Replies to send** sits at the top: drafts the worker wrote for fresh asks from mail and Teams
 (`PA_AUTODRAFT=0` turns that off; `PA_AUTODRAFT_MIN_CONFIDENCE`, default 0.6, sets how sure the
 distiller must be that the ask is on you), plus any you asked for with **Reply**. Each shows the
@@ -276,6 +289,7 @@ pa send 12                      opens it, written, in Teams/Outlook; you press S
 
 pa mic status | pause 30 | on    always-on capture control
 pa doctor                        what is configured, stale, or broken
+pa spend [--days 7]              model spend per day and per pass, against the daily cap
 ```
 
 ### Memory
@@ -660,6 +674,7 @@ src/dashboard/       the loopback web page: today, next meeting, replies, runs, 
 src/secrets/         secret and login requests; Windows Credential Manager via PowerShell (stdin only)
 src/routines/        cron parser, the typed action registry (repo_sync, prompt_report), runs, suggestions
 src/llm.js           model calls: API key, or `claude -p` without one
+src/budget.js        model spend: one llm_spend row per call, the daily cap on discretionary work
 src/backup.js        nightly pg_dump, restore, re-ingest
 src/dispatch/        worktrees, briefs, termhub sessions, modes, landing
 src/draft/           reply drafting, auto-drafts, and delivery links (never sends)

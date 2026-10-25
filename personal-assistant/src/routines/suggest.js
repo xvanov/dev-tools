@@ -160,7 +160,7 @@ async function suggest({ ask = null, now = new Date(), notifyUser = true } = {})
 
   const call = ask || (async (p) => {
     const { complete } = require('../llm');
-    return complete({ system: SYSTEM, prompt: p, model: MODEL, effort: 'low', timeoutMs: 180_000 });
+    return complete({ system: SYSTEM, prompt: p, model: MODEL, effort: 'low', timeoutMs: 180_000, purpose: 'routine' });
   });
   const { extractJson } = require('../llm');
   const parsed = extractJson(await call(prompt));

@@ -333,6 +333,21 @@ const config = {
     enabled: env('PA_DURABLE', '1') !== '0',
   },
 
+  // The daily model budget (src/budget.js). Every call is recorded in
+  // `llm_spend`; once today's spend reaches the cap, *discretionary* purposes
+  // (eager, speculative work) are refused until local midnight. *Essential*
+  // ones keep the board true and are never refused — a cap that stopped
+  // distillation would trade a bill for a stale board. A purpose matches an
+  // entry exactly or as a prefix ('eager' covers 'eager-draft').
+  budget: {
+    dailyUsd: (() => {
+      const n = Number.parseFloat(env('PA_DAILY_BUDGET_USD', '15'));
+      return Number.isFinite(n) ? n : 15;
+    })(),
+    essential: env('PA_BUDGET_ESSENTIAL', 'distill,reconcile,connector,reply-close').split(',').map((s) => s.trim()).filter(Boolean),
+    discretionary: env('PA_BUDGET_DISCRETIONARY', 'eager,research,digest,planner').split(',').map((s) => s.trim()).filter(Boolean),
+  },
+
   // Recurring typed actions (src/routines). PA_ROUTINES=0 stops the worker
   // running them; `pa routine run` still works by hand.
   routines: {

@@ -88,7 +88,7 @@ async function plan(question) {
   const prompt = `TODAY: ${new Date().toISOString().slice(0, 10)}\n\nINDEX\n${index.slice(0, 6000)}\n\nQUESTION\n${question}`;
   try {
     const reply = llm.extractJson(
-      await llm.complete({ system: PLAN_SYSTEM, prompt, model: config.memory?.decideModel, effort: 'low', maxTokens: 800 })
+      await llm.complete({ system: PLAN_SYSTEM, prompt, model: config.memory?.decideModel, effort: 'low', maxTokens: 800, purpose: 'recall' })
     );
     return (reply.queries || [])
       .filter((q) => q && typeof q.query === 'string' && q.query.trim())

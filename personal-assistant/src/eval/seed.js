@@ -119,7 +119,7 @@ async function sharedGroups({ exclude, limit }) {
 async function generate(qtype, ids) {
   const items = await loadItems(ids);
   if (items.length !== ids.length) return null;
-  const reply = await llm.complete({ system: P.SYSTEM, prompt: P.casePrompt(qtype, items), effort: 'medium', maxTokens: 2000 });
+  const reply = await llm.complete({ system: P.SYSTEM, prompt: P.casePrompt(qtype, items), effort: 'medium', maxTokens: 2000, purpose: 'eval' });
   let parsed;
   try {
     parsed = llm.extractJson(reply);
@@ -177,6 +177,7 @@ async function abstentions(count, { rounds = 4 } = {}) {
         prompt: P.abstentionPrompt(subjects, Math.max(6, (count - out.length) * 3)),
         effort: 'medium',
         maxTokens: 3000,
+        purpose: 'eval',
       });
       qs = (llm.extractJson(reply).questions || []).filter((q) => q && q.question && q.term);
     } catch (err) {

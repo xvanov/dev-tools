@@ -85,6 +85,7 @@ async function judge(c, me) {
     effort: config.replyClose.effort,
     maxTokens: 800,
     timeoutMs: 180_000,
+    purpose: 'reply-close',
   });
   return R.parseVerdict(llm.extractJson(reply), refs);
 }

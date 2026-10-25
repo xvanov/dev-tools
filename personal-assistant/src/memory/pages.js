@@ -232,6 +232,7 @@ async function generate(system, prompt) {
     model: config.memory.pageModel,
     effort: 'low',
     maxTokens: 3000,
+    purpose: 'memory-pages',
   });
   return String(text || '').replace(/^```(?:markdown|md)?\s*/i, '').replace(/```\s*$/, '').trim();
 }

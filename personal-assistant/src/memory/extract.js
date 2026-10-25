@@ -325,6 +325,7 @@ async function runBatch(batch, ctx) {
       model: config.memory.extractModel,
       effort: 'low',
       maxTokens: 8000,
+      purpose: 'memory-extract',
     });
     parsed = parseClaimsResponse(text, batch.map((i) => i.id));
   } catch (err) {

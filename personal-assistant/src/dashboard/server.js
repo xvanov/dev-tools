@@ -99,7 +99,12 @@ async function state() {
   const needsYou = await require('../proposals').pending().catch(() => []);
   // Secret and login requests: names and guidance only — the table holds no values.
   const secretRequests = await require('../secrets').pending().catch(() => []);
-  return { ...data, drafts, sources, blind, closed, looksDone, needsYou, memoryPending: review[0].n, secretRequests, now: new Date().toISOString() };
+  // Today's model spend against the daily cap (src/budget.js); null until migrated.
+  const spend = await require('../budget')
+    .status()
+    .then((s) => ({ today: s.today, cap: s.cap }))
+    .catch(() => null);
+  return { ...data, drafts, sources, blind, closed, looksDone, needsYou, memoryPending: review[0].n, secretRequests, spend, now: new Date().toISOString() };
 }
 
 function send(res, status, body, type = 'application/json') {

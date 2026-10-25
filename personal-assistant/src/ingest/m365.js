@@ -126,6 +126,7 @@ async function searchOnce(toolName, params, timeoutMs) {
     tools: [tool(toolName)],
     timeoutMs,
     visibleTokens: SEARCH_VISIBLE_TOKENS,
+    purpose: 'connector',
   });
   if (!calls.some((c) => c.name === tool(toolName))) {
     throw new Error(`${toolName} was not called — is the Microsoft 365 connector connected? Run /mcp in Claude Code.`);
@@ -167,6 +168,7 @@ async function readAll(uris, { timeoutMs = 300_000 } = {}) {
     tools: [tool('read_resource')],
     timeoutMs,
     visibleTokens: READ_VISIBLE_TOKENS,
+    purpose: 'connector',
   });
   for (const call of calls) {
     if (call.name !== tool('read_resource') || call.error) continue;
@@ -186,6 +188,7 @@ async function whoAmI() {
     prompt: 'Call get_me once. Then reply with the single word: done',
     tools: [tool('get_me')],
     timeoutMs: 120_000,
+    purpose: 'connector',
   });
   const me = calls.find((c) => c.name === tool('get_me'))?.results.find((r) => r && r.id);
   if (!me) throw new Error('get_me returned nothing — is the Microsoft 365 connector connected? Run /mcp in Claude Code.');
@@ -206,6 +209,7 @@ async function grantedScopes() {
     prompt: 'Call get_granted_scopes once. Then reply with the single word: done',
     tools: [tool('get_granted_scopes')],
     timeoutMs: 120_000,
+    purpose: 'connector',
   });
   const call = calls.find((c) => c.name === tool('get_granted_scopes'));
   if (!call) throw new Error('the Microsoft 365 connector is not available — run /mcp in Claude Code');

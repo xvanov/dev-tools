@@ -68,7 +68,7 @@ async function run(params, { dryRun = false } = {}) {
       detail: { dryRun: true, contextChars: context.length },
     };
   }
-  const reply = String(await complete({ system: SYSTEM, prompt, model: MODEL, effort: 'low', timeoutMs: 180_000 })).trim();
+  const reply = String(await complete({ system: SYSTEM, prompt, model: MODEL, effort: 'low', timeoutMs: 180_000, purpose: 'routine' })).trim();
   const lines = reply.split(/\r?\n/).map((l) => l.trim()).filter(Boolean).slice(0, 12);
   return {
     ok: true,

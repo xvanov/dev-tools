@@ -217,6 +217,7 @@ async function consolidateClaims(ids = null, { limit = 60 } = {}) {
         model: config.memory.decideModel,
         effort: 'low',
         maxTokens: 2000,
+        purpose: 'memory-consolidate',
       });
       totals.calls++;
       decisions = parseDecisions(
@@ -307,7 +308,7 @@ async function reviewCommitments({ limit = 40 } = {}) {
       .join('\n\n');
     let map = new Map();
     try {
-      const text = await llm.complete({ system: COMMIT_SYSTEM, prompt, model: config.memory.decideModel, effort: 'low', maxTokens: 1500 });
+      const text = await llm.complete({ system: COMMIT_SYSTEM, prompt, model: config.memory.decideModel, effort: 'low', maxTokens: 1500, purpose: 'memory-consolidate' });
       totals.calls++;
       const parsed = extractJson(text);
       for (const d of parsed.decisions || []) map.set(String(d.commitment), d.replaces == null ? null : String(d.replaces));
