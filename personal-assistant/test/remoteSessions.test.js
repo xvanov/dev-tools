@@ -82,18 +82,23 @@ const transcript = [
     'p/c.jsonl': { mtimeMs: 100, size: 9 }, // grew
     'p/gone.jsonl': { mtimeMs: 50, size: 5 }, // no longer listed
   };
-  const { fetch, keep } = remote.plan(listing, known);
+  const { fetch, keep } = remote.plan(listing, known, undefined, 1000);
   assert.deepStrictEqual(fetch.map((t) => t.id), ['p/a.jsonl', 'p/c.jsonl']);
   assert.deepStrictEqual(Object.keys(keep), ['p/b.jsonl']);
 
   // Over budget: the newest go first; a changed one left over keeps its old
   // mark so it still reads as changed next pass.
-  const capped = remote.plan(listing, known, 1);
+  const capped = remote.plan(listing, known, 1, 1000);
   assert.deepStrictEqual(capped.fetch.map((t) => t.id), ['p/a.jsonl']);
   assert.deepStrictEqual(capped.keep['p/c.jsonl'], { mtimeMs: 100, size: 9 });
 
   assert.deepStrictEqual(remote.plan(null, null), { fetch: [], keep: {} });
   assert.deepStrictEqual(remote.plan([{ nope: 1 }], {}).fetch, []);
+
+  // Older than a week: not read at all, not even on a first pass.
+  const week = 7 * 86400_000;
+  const aged = remote.plan([{ id: 'p/new.jsonl', mtimeMs: 10 * week, size: 1 }, { id: 'p/old.jsonl', mtimeMs: 2 * week, size: 1 }], {}, 20, 10 * week + 1);
+  assert.deepStrictEqual(aged.fetch.map((t) => t.id), ['p/new.jsonl']);
 }
 
 // ---- describeError ----------------------------------------------------------
@@ -119,10 +124,11 @@ const transcript = [
 // ---- runMachine against a fake termhub --------------------------------------
 (async () => {
   const machine = { name: 'build-vm', url: 'http://build-vm:7000', reposRoot: 'C:\\source' };
+  const T = Date.now() - 60_000; // recent: older than a week is not read
   let listing = [
-    { id: 'C--source-orchard/sess-0001.jsonl', mtimeMs: 1000, size: transcript.length },
-    { id: 'C--source-orchard/empty.jsonl', mtimeMs: 900, size: 2 },
-    { id: 'C--source-orchard/broken.jsonl', mtimeMs: 800, size: 4 },
+    { id: 'C--source-orchard/sess-0001.jsonl', mtimeMs: T + 1000, size: transcript.length },
+    { id: 'C--source-orchard/empty.jsonl', mtimeMs: T + 900, size: 2 },
+    { id: 'C--source-orchard/broken.jsonl', mtimeMs: T + 800, size: 4 },
   ];
   const fetched = [];
   const termhub = {
@@ -158,7 +164,7 @@ const transcript = [
 
   // The session grew: fetched again.
   fetched.length = 0;
-  listing = [{ ...listing[0], mtimeMs: 2000, size: transcript.length + 10 }, listing[1]];
+  listing = [{ ...listing[0], mtimeMs: T + 2000, size: transcript.length + 10 }, listing[1]];
   await remote.runMachine(machine, termhub);
   assert.deepStrictEqual(fetched, ['C--source-orchard/sess-0001.jsonl']);
 

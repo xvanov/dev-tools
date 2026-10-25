@@ -48,11 +48,17 @@ const cursorKey = (machine) => `claude_session@${machine}`;
  * A transcript that fell out of the listing is forgotten — it is old, and if
  * it changes again its new mtime puts it back at the top.
  */
-function plan(listing, known = {}, max = MAX_FETCH_PER_PASS) {
+// Only sessions touched in the last week. A machine's first pass once read its
+// hundred newest transcripts back to August and made 79 to-dos out of them —
+// an automation VM's long-finished work among them.
+const MAX_AGE_MS = 7 * 86400_000;
+
+function plan(listing, known = {}, max = MAX_FETCH_PER_PASS, now = Date.now()) {
   const fetch = [];
   const keep = {};
   for (const t of listing || []) {
     if (!t || typeof t.id !== 'string') continue;
+    if (!(now - Number(t.mtimeMs) <= MAX_AGE_MS)) continue;
     const k = known[t.id];
     if (k && k.mtimeMs === t.mtimeMs && k.size === t.size) {
       keep[t.id] = k;

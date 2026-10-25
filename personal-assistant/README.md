@@ -508,7 +508,7 @@ before you dispatch.
 read-only; `src/ingest/remoteSessions.js`) and stores them as `claude_session` items exactly as
 local ones, with `raw.machine` set, the id and thread prefixed `<machine>:` and the subject ending
 `(on <machine>)` — so a remote run's work is evidence like any other. Only new or changed
-transcripts are fetched; each machine has its own cursor, `claude_session@<machine>`, and a machine
+transcripts touched in the last week are fetched (a first pass once turned a machine's history back to August into 79 stale to-dos); each machine has its own cursor, `claude_session@<machine>`, and a machine
 that is off or unreachable is an `ERROR` line on that cursor in `pa doctor`, not a failed pass.
 "termhub on X is too old" means that machine's termhub predates the route: run
 `termhub/windows/update.ps1` there. `pa sync --source claude_session_remote` runs it by hand.
