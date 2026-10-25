@@ -579,6 +579,8 @@ async function brief(target, { deliver = false, force = false, now = new Date() 
       body: row.body,
       url: dashboardUrl(`brief-${row.id}`),
       dedupeKey: key,
+      // A meeting about to start cannot wait for a digest; one an hour out can.
+      priority: new Date(m.start).getTime() - now.getTime() <= 30 * 60_000 ? 'urgent' : 'normal',
       actions: [{ label: 'Open brief', url: dashboardUrl(`brief-${row.id}`) }, ...(m.joinUrl ? [{ label: 'Join', url: m.joinUrl }] : [])],
     });
     if (n) row = await one('update meeting_brief set notification_id = $2 where id = $1 returning *', [row.id, n.id]);

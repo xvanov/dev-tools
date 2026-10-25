@@ -287,6 +287,17 @@ const config = {
   // toast for each unless PA_TOASTS=0.
   notify: {
     toasts: env('PA_TOASTS', '1') !== '0',
+    // The interrupt budget (src/notify/budget.js): this many real-time pushes
+    // a day; past it, and in quiet hours, the rest wait for a digest.
+    pushBudget: envInt('PA_PUSH_BUDGET', 4),
+    // Local hours, "from-to"; '' or 'off' for none. Wraps midnight.
+    quietHours: env('PA_QUIET_HOURS', '19-08'),
+    // Local times the digest is built (src/notify/digest.js).
+    digestTimes: env('PA_DIGEST_TIMES', '09:00,14:00'),
+    // Pushes also land in <dataDir>/pa-home/INBOX.md for the PA chat, and the
+    // chat session is nudged when it is provably idle (src/notify/chat.js).
+    chatNudge: env('PA_CHAT_NUDGE', '1') !== '0',
+    chatNudgeIdleMinutes: envInt('PA_CHAT_NUDGE_IDLE_MINUTES', 2),
   },
 
   // Pre-meeting briefs (src/meetings): a short numbered note, delivered

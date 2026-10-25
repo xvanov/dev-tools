@@ -99,12 +99,14 @@ async function state() {
   const needsYou = await require('../proposals').pending().catch(() => []);
   // Secret and login requests: names and guidance only — the table holds no values.
   const secretRequests = await require('../secrets').pending().catch(() => []);
+  // What the assistant said, pushed or held back, with your thumbs on it (src/notify).
+  const notifications = await require('../notify').feed({ limit: 30 }).catch(() => []);
   // Today's model spend against the daily cap (src/budget.js); null until migrated.
   const spend = await require('../budget')
     .status()
     .then((s) => ({ today: s.today, cap: s.cap }))
     .catch(() => null);
-  return { ...data, drafts, sources, blind, closed, looksDone, needsYou, memoryPending: review[0].n, secretRequests, spend, now: new Date().toISOString() };
+  return { ...data, drafts, sources, blind, closed, looksDone, needsYou, memoryPending: review[0].n, secretRequests, spend, notifications, now: new Date().toISOString() };
 }
 
 function send(res, status, body, type = 'application/json') {
@@ -219,6 +221,13 @@ async function handle(req, res) {
       const target = body.target === 'env-file' ? 'env-file' : body.target ? 'credential-manager' : undefined;
       const r = await secrets.fulfil(id, typeof body.value === 'string' ? body.value : '', { target });
       return send(res, 200, { ok: r.ok, stored: r.stored, name: r.name });
+    }
+
+    // A thumb on a notification: moves how often its kind interrupts you.
+    m = url.pathname.match(/^\/api\/notifications\/(\d+)\/feedback$/);
+    if (m) {
+      const value = body.value === 'up' || body.value === 'down' ? body.value : null;
+      return send(res, 200, await require('../notify').feedback(Number(m[1]), value));
     }
 
     m = url.pathname.match(/^\/api\/commitments\/(\d+)\/status$/);
