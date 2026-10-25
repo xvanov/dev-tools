@@ -4,15 +4,27 @@ Written 2026-10-25. This is the plan for turning the assistant from a set of tim
 extract something into **one long-running agent that keeps a live, true state of my work and
 pushes me**. It extends `PLAN.md`; where the two disagree, this file is newer and says why.
 
-**Status, 2026-10-25:** phase 1 is built and running. `src/ledger` (one transition function,
-`ledger_transition`, undo), the reconciler (`src/ledger/reconcile.js`, every minute, auto-close at
-≥ 0.8 with a "Looks done?" card below), re-distillation that keeps closed work (`distill/keep.js`),
-head+tail Claude sessions, and the source-health banner and toast (`ingest/health.js`). Phase 4's
-last item too: Claude sessions from the other `PA_MACHINES` are ingested through termhub's read-only
-`/api/claude/transcripts` (`ingest/remoteSessions.js`). From phase 3, the attention half of §2.4 is
-built: the interrupt budget with quiet hours (`notify/budget.js`), 09:00/14:00 digests
-(`notify/digest.js`), thumbs that move per-kind weights, and the PA chat as a channel
-(`notify/chat.js`: `INBOX.md` plus a content-free nudge when the session is provably idle).
+**Status, 2026-10-25: all four phases are built and running.**
+
+- Phase 1, the board tells the truth: `src/ledger` (one transition function,
+  `ledger_transition`, undo); the reconciler (`src/ledger/reconcile.js`, every minute, auto-close
+  at ≥ 0.8, a "Looks done?" card below that); re-distillation that keeps closed work
+  (`distill/keep.js`); head+tail Claude sessions; the source-health banner and toast
+  (`ingest/health.js`).
+- Phase 2, durable tasks: Absurd 0.5.0 (`sql/019`, `src/durable`) running `chase` and
+  `run_review`, and the `proposal` inbox ("Needs you", `src/proposals`).
+- Phase 3, the eager agent: the planner (`src/agent/planner.js`: kinds, read-only research runs
+  within a daily allowance, run offers, "which repo?"); spend recorded per call and capped per day
+  (`src/budget.js`, `llm_spend`); the interrupt budget with quiet hours, 09:00/14:00 digests,
+  thumbs that move per-kind weights, and the PA chat as a channel (`src/notify`).
+- Phase 4: kinds on commitments (`commitment.kind`, set by the planner); Claude sessions from the
+  other `PA_MACHINES` through termhub's read-only `/api/claude/transcripts`
+  (`ingest/remoteSessions.js`), counted as evidence by repo folder name.
+
+Not ported, on purpose: meeting brief and debrief stay periodic passes. They are already
+idempotent per occurrence and wait on nothing a timer could not see, so Absurd would add
+moving parts and no new behaviour. Still open: an undo of an assistant close should lower the
+weight of that kind of close, the way a thumb-down does.
 
 ## 1. Why — what is actually broken
 
