@@ -63,7 +63,7 @@ async function dedupe(since) {
       .join('\n');
     let groups;
     try {
-      const text = await llm.complete({ system: DEDUPE_SYSTEM, prompt, model: config.memory.decideModel, effort: 'low', maxTokens: 2000 });
+      const text = await llm.complete({ system: DEDUPE_SYSTEM, prompt, model: config.memory.decideModel, effort: 'low', maxTokens: 2000, purpose: 'memory-dream' });
       calls++;
       groups = parseMerges(text, claims.map((c) => c.id));
     } catch (err) {

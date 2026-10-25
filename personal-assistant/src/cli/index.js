@@ -83,6 +83,7 @@ const HELP = `pa — your context layer
     pa restore [file] [--yes]       replace the store with a dump (newest by default)
     pa reingest --days N [--source s]  rewind sources so history is fetched again
     pa doctor                       what is configured, what is stale, what is broken
+    pa spend [--days N]             model spend per day and per pass (default 7 days)
     pa eval seed|list|add|drop|run  retrieval eval harness (pa eval for details)
 `;
 
@@ -423,6 +424,21 @@ const commands = {
 
   // Standalone, for when the worker is not running. Same server, same port —
   // if the worker already has it, this says so rather than fighting for it.
+  // Model spend per local day and per pass, from `llm_spend` (src/budget.js).
+  async spend(args, flags) {
+    const budget = require('../budget');
+    const days = await budget.daily({ days: flagInt(flags, 'days', 7) });
+    out(`model spend · cap ${budget.usd(config.budget.dailyUsd)}/day on discretionary work (PA_DAILY_BUDGET_USD)`);
+    if (!days.length) return out('  nothing recorded yet');
+    for (const d of days) {
+      out(
+        `\n  ${d.day}  ${budget.usd(d.usd).padStart(6)}  ${d.calls} calls` +
+          `${d.failed ? ` · ${d.failed} failed` : ''}${d.unknown ? ` · ${d.unknown} with no reported cost` : ''}`
+      );
+      for (const p of d.purposes) out(`    ${p.purpose.padEnd(22)} ${budget.usd(p.usd).padStart(6)}  ${p.calls}`);
+    }
+  },
+
   async dashboard() {
     const url = `http://${config.dispatch.host}:${config.dispatch.port}/`;
     try {
@@ -834,6 +850,21 @@ const commands = {
         (viaCli ? (cliVersion ? `claude -p ${cliVersion}` : `${config.claudeBin} not found — set PA_CLAUDE_BIN`) : 'API key')
     );
     mark(Boolean(cliVersion), 'claude cli', cliVersion || 'not found — connector sources (Jira, Microsoft 365) cannot run');
+    // Today's model spend against the cap (src/budget.js). Over the cap is not
+    // broken — essential passes carry on — but eager work has stopped.
+    try {
+      const budget = require('../budget');
+      const s = await budget.status();
+      const top = s.purposes.slice(0, 3).map((p) => `${p.purpose} ${budget.usd(p.usd)}`).join(', ');
+      mark(
+        s.today < s.cap,
+        'spend today',
+        `${budget.usd(s.today)} / ${budget.usd(s.cap)}${s.today >= s.cap ? ' — cap reached, discretionary work paused' : ''}` +
+          `${top ? ` · ${top}` : ' · nothing yet'} · \`pa spend\``
+      );
+    } catch (err) {
+      mark(false, 'spend today', `${err.message.slice(0, 60)} — run \`pa migrate\``);
+    }
     // Probed rather than assumed: a configured endpoint with the wrong
     // deployment name looks identical to a working one until a search quietly
     // returns half its results.

@@ -647,7 +647,12 @@ function render(s) {
   renderNeeds(s.secretRequests || []);
   document.getElementById('sources').replaceChildren(...s.sources.map((x) =>
     el('span', { class: x.last_error ? 'chip bad' : 'chip', title: x.last_error || '' },
-      `${x.source} · ${x.last_run_at ? ago(x.last_run_at) : 'never'}${x.last_error ? ' · error' : ''}`)));
+      `${x.source} · ${x.last_run_at ? ago(x.last_run_at) : 'never'}${x.last_error ? ' · error' : ''}`)),
+    // Model spend today against the daily cap; red once eager work has stopped.
+    ...(s.spend ? [el('span', {
+      class: s.spend.today >= s.spend.cap ? 'chip bad' : 'chip',
+      title: s.spend.today >= s.spend.cap ? 'Daily cap reached: discretionary work is paused until midnight (pa spend)' : 'Model spend today (pa spend)',
+    }, `spend · $${Number(s.spend.today).toFixed(2)} / $${Number(s.spend.cap).toFixed(0)}`)] : []));
 
   // A source that keeps failing: say so above everything else, with the fix.
   const blindBox = document.getElementById('blind');

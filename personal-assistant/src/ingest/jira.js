@@ -333,6 +333,7 @@ async function relay({ since, cloudId, nextSince }) {
     tools: TOOLS,
     effort: 'low',
     timeoutMs: 240_000,
+    purpose: 'connector',
   });
   let parsed;
   try {

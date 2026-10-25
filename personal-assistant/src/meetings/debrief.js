@@ -167,6 +167,7 @@ async function prepare(ep, { now = new Date() } = {}) {
     model: config.meetings.debriefModel,
     effort: config.meetings.debriefEffort,
     maxTokens: 4000,
+    purpose: 'debrief',
   });
   const parsed = D.parseDebrief(llm.extractJson(reply), { transcript, refs, meetingStart: m.start });
 

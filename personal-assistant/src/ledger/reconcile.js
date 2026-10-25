@@ -116,6 +116,7 @@ async function judge(batch) {
     effort: config.reconcile.effort,
     maxTokens: 1500,
     timeoutMs: 240_000,
+    purpose: 'reconcile',
   });
   return R.parseVerdicts(llm.extractJson(reply), cRefs, eRefs);
 }

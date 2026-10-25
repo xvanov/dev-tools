@@ -60,7 +60,7 @@ async function callModel(item, context) {
   const body = (item.body_text || '').slice(0, MAX_BODY_CHARS);
   const message = buildUserMessage({ ...item, body_text: body }, context);
 
-  const text = await llm.complete({ system: SYSTEM, prompt: message, maxTokens: 8000 });
+  const text = await llm.complete({ system: SYSTEM, prompt: message, maxTokens: 8000, purpose: 'distill' });
   return parseResponse(text, { referenceIso: new Date(item.occurred_at).toISOString() });
 }
 

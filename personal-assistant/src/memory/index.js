@@ -110,7 +110,7 @@ async function remember(text, { subject = null, kind = null, pending = false } =
   if (!resolved || !claimKind) {
     try {
       const reply = extractJson(
-        await llm.complete({ system: CLASSIFY_SYSTEM, prompt: note, model: config.memory.decideModel, effort: 'low', maxTokens: 500 })
+        await llm.complete({ system: CLASSIFY_SYSTEM, prompt: note, model: config.memory.decideModel, effort: 'low', maxTokens: 500, purpose: 'memory-classify' })
       );
       if (!resolved) {
         const k = String(reply.subject?.kind || '').toLowerCase();

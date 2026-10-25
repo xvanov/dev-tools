@@ -148,6 +148,7 @@ async function classify(m, ctx, { allowModel = true } = {}) {
       model: config.meetings.classifyModel,
       effort: 'low',
       maxTokens: 200,
+      purpose: 'meeting-brief',
     });
     const kind = core.normaliseKind(llm.extractJson(reply).kind);
     await saveSeries(m, { kind, kindSource: 'model' });
@@ -520,6 +521,7 @@ async function writeBrief(m, kind, ctx, { now }) {
     model: config.meetings.model,
     effort: config.meetings.effort,
     maxTokens: 2000,
+    purpose: 'meeting-brief',
   });
   const rendered = P.renderBrief(llm.extractJson(reply), refs, { joinUrl: m.joinUrl });
   // Keep only the refs the brief cites, with their evidence text, for the view.
@@ -618,6 +620,7 @@ async function learnOccurrence(m, kind, items) {
     model: config.meetings.model,
     effort: 'low',
     maxTokens: 2000,
+    purpose: 'meeting-learn',
   });
   const learned = P.parseLearn(llm.extractJson(reply), { transcript, myLines: P.myLinesOf(transcript), verify: verifyQuote });
 
