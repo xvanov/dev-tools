@@ -528,6 +528,7 @@ On Linux set these with `systemctl --user edit termhub`; on Windows via `setx` +
 | `lib/claudeModel.js` | Locates a Claude session's transcript and tails it for the model label (`modelLabel` in `/api/sessions`; no longer shown in the sidebar) |
 | `lib/opencodeApi.js` | Talks to an opencode TUI's own HTTP API (termhub launches each with `--port`): model, turns, and its event stream |
 | `lib/opencodeModel.js` | Fallback for an opencode session with no API port — reads the model via `opencode export` |
+| `lib/transcripts.js` | Read-only `/api/claude/transcripts` + `/api/claude/transcript`: lists and serves `~/.claude/projects/*/*.jsonl` for the personal assistant on another machine |
 | `lib/claudeTranscript.js` | Reads the last turn from that transcript and decides whether it's waiting on you |
 | `lib/summarize.js` | Condenses a turn into speakable prose (`claude -p --model haiku`, with a local fallback) |
 | `lib/tts.js` | Speech synthesis — kokoro or piper, engine selection, voice discovery, WAV rendering, small LRU |

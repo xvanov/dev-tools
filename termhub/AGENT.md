@@ -1316,6 +1316,32 @@ thumb-sized inside the phone drawer:
 The PA side documents its half (relative URLs, `POST /api/chat/open`) in
 `personal-assistant/AGENT.md`. Covered by `test/paProxy.test.js` (fake PA on an ephemeral port).
 
+## Claude transcripts, read-only (`lib/transcripts.js`)
+
+The personal assistant ingests your Claude Code sessions as evidence of work done. Its own
+machine's it reads from disk; a run dispatched to *another* machine leaves its transcript on that
+machine, and termhub is the one thing reachable there. So `sessiond` serves the files under
+`~/.claude/projects/` and nothing else:
+
+| Method | Path | Response |
+|---|---|---|
+| `GET` | `/api/claude/transcripts?since=<ms>&limit=<n>` | `{machine, transcripts:[{id, project, file, mtimeMs, size}]}`, newest first. `since` is exclusive; `limit` defaults to 100, capped at 500 |
+| `GET` | `/api/claude/transcript?id=<project>/<file>.jsonl` | the file verbatim, `application/x-ndjson`, `X-Transcript-Mtime`; 400 a malformed id, 403 a path that resolves outside the projects directory, 404 none, 413 over 64 MB |
+
+- **Read-only, and only that directory.** There is no write route. An id is exactly two segments
+  matched against narrow patterns (`[A-Za-z0-9._-]`, the file ending `.jsonl`), *and* the real
+  path is resolved and must still be inside the real projects directory, so a project folder that
+  is a junction or symlink to somewhere else is refused rather than followed.
+- **Top level of each project only.** Subagent conversations (`<session>/subagents/*.jsonl`) are
+  not listed, for the same reason `lib/claudeTranscript.js` never recurses: nobody typed into them.
+- **No snapshot.** A live session can append while the file streams; the reader already tolerates a
+  half-written last line, and `Content-Length` is the size at the moment of the request.
+- It is a GET under `/api/*`, so the front proxies it like everything else, and an older termhub
+  answers 404 `not found` — which the PA reports as "termhub on X is too old", fixed by updating
+  that machine.
+
+Covered by `test/transcripts.test.js` (temp directory; traversal, absolute paths, junction escape).
+
 ## Versioning & tagging
 
 The version shown under the **⟳ Update** button (and in the update panel) is `git describe
@@ -1697,6 +1723,10 @@ user actually meant to paste.
   terminals on that machine. Keep your tailnet ACLs tight.
 - termhub binds only the Tailscale interface by default. Do **not** set `TERMHUB_BIND=0.0.0.0`
   on a machine with a public interface unless you add your own access control in front.
+- `GET /api/claude/transcripts` and `/api/claude/transcript` serve this machine's Claude Code
+  transcripts (read-only, `~/.claude/projects/` only — see *Claude transcripts, read-only*). They
+  hold everything you said to Claude there; that is no more than a shell already reaches, but it
+  is easier to automate, so the tailnet ACL matters for them too.
 - The front also proxies `/pa/*` to the personal assistant's loopback dashboard, so whoever can
   reach termhub can reach the PA too. That adds no capability (they already have shells), but it
   does mean termhub's boundary is the PA's boundary — see *The PA proxy*. `TERMHUB_PA_URL=` turns

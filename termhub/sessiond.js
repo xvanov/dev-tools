@@ -13,6 +13,7 @@
 //
 //     node sessiond.js            # listens on 127.0.0.1:$TERMHUB_SESSIOND_PORT (7010)
 
+const fs = require('fs');
 const http = require('http');
 const os = require('os');
 const { URL } = require('url');
@@ -27,6 +28,7 @@ const { DEFAULT_SESSIOND_PORT, claimPidFile } = require('./lib/state');
 const { probeSessiond } = require('./lib/probe');
 const build = require('./lib/build');
 const { suggestDirs } = require('./lib/dirs');
+const transcripts = require('./lib/transcripts');
 const { stageClipboardImage, clipboardTarget, probeClipboard } = require('./lib/clipboard');
 const { saveUploadedFile, saveImageAttachment } = require('./lib/uploads');
 const { applyInput } = require('./lib/sessionInput');
@@ -643,6 +645,36 @@ function createSessiond({ entry = 'sessiond', port: serverPort = DEFAULT_SESSION
 
       if (req.method === 'GET' && pathname === '/api/dirs') {
         return sendJson(res, 200, { dirs: suggestDirs(url.searchParams.get('path') || '') });
+      }
+
+      // Read-only Claude transcripts, for the personal assistant on another
+      // machine (lib/transcripts.js). GET only; nothing here writes.
+      if (req.method === 'GET' && pathname === '/api/claude/transcripts') {
+        return sendJson(res, 200, {
+          machine: MACHINE_NAME,
+          transcripts: transcripts.listTranscripts({
+            since: url.searchParams.get('since'),
+            limit: url.searchParams.get('limit'),
+          }),
+        });
+      }
+
+      if (req.method === 'GET' && pathname === '/api/claude/transcript') {
+        const found = transcripts.resolveTranscript(url.searchParams.get('id'));
+        if (found.error) return sendJson(res, found.status, { error: found.error });
+        res.writeHead(200, {
+          'Content-Type': 'application/x-ndjson; charset=utf-8',
+          'Content-Length': found.size,
+          'X-Transcript-Mtime': String(found.mtimeMs),
+          'Cache-Control': 'no-store',
+        });
+        // A live session may append while this streams; the reader tolerates a
+        // short or half-written last line, so no lock and no snapshot.
+        if (!found.size) return res.end();
+        const stream = fs.createReadStream(found.path, { start: 0, end: found.size - 1 });
+        stream.on('error', () => res.destroy());
+        res.on('close', () => stream.destroy());
+        return stream.pipe(res);
       }
 
       return sendJson(res, 404, { error: 'not found' });
