@@ -30,6 +30,17 @@ async function me() {
   return one('select * from person where is_me limit 1');
 }
 
+// Your own handle of one kind (`github_username`), or null before that
+// source has signed in and claimed it.
+async function myHandle(kind) {
+  const r = await one(
+    `select pi.value from person_identity pi join person p on p.id = pi.person_id
+      where p.is_me and pi.kind = $1 order by pi.value limit 1`,
+    [kind]
+  );
+  return r?.value || null;
+}
+
 async function setMe({ displayName, email }) {
   const existing = await me();
   if (existing) {
@@ -173,4 +184,4 @@ function looksHuman(name) {
   return /\s/.test(String(name || '').trim()) && !/@|^(github|gitlab|aad):/i.test(String(name));
 }
 
-module.exports = { resolve, me, setMe, addIdentity, claimForMe, merge, parseIdentity, looksHuman };
+module.exports = { resolve, me, myHandle, setMe, addIdentity, claimForMe, merge, parseIdentity, looksHuman };
