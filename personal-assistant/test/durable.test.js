@@ -58,4 +58,21 @@ const local = (y, m, d, h = 0, min = 0) => new Date(y, m - 1, d, h, min);
   assert.ok(!C.cadenceOptions(null).some((o) => /usual/.test(o.label)));
 }
 
+{
+  // Merging is mine alone outside the repos I listed (src/dispatch/merge.js).
+  const M = require('../src/dispatch/merge');
+  const list = ['innergy-dev/mv-assistant', 'xvanov/*'];
+  assert.strictEqual(M.mayMerge('innergy-dev/mv-assistant', list), true);
+  assert.strictEqual(M.mayMerge('INNERGY-dev/MV-Assistant', list), true);
+  assert.strictEqual(M.mayMerge('xvanov/anything', list), true);
+  assert.strictEqual(M.mayMerge('innergy-dev/erp', list), false);
+  assert.strictEqual(M.mayMerge('innergy-dev/mv-assistant-fork', list), false);
+  assert.strictEqual(M.mayMerge(null, list), false);
+  assert.strictEqual(M.summarize([]), 'pass');
+  assert.strictEqual(M.summarize([{ bucket: 'pass' }, { bucket: 'skipping' }]), 'pass');
+  assert.strictEqual(M.summarize([{ bucket: 'pass' }, { bucket: 'pending' }]), 'pending');
+  assert.strictEqual(M.summarize([{ bucket: 'pending' }, { bucket: 'fail' }]), 'fail');
+  assert.strictEqual(M.summarize([{ bucket: 'cancel' }]), 'fail');
+}
+
 console.log('durable: ok');

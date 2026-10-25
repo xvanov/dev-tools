@@ -136,10 +136,12 @@ woke it is a hint. `awaitEvent` suspends a task by throwing: never catch it exce
 waits on `proposal:<id>`; a proposal with no task runs a typed handler in `src/proposals` — there
 is no handler that takes a command or free text.
 
-**A finished run's draft PR is opened without asking; nothing is merged.** `run_review` pushes
-the run's branch and opens a *draft* PR as soon as the session ends with commits (I decided a
-draft is always fine: it merges nothing and can be closed). There is no merge code path; adding
-one is a conversation, and it would ask per repo.
+**A finished run's draft PR is opened without asking; merging only in my own repos.**
+`run_review` pushes the run's branch and opens a *draft* PR as soon as the session ends with
+commits (I decided a draft is always fine: it merges nothing and can be closed). Only in a repo on
+`PA_MERGE_REPOS` (repos I own, `src/dispatch/merge.js`) is it marked ready and squash-merged, and
+only once every check passed. Do not widen the default list or merge on a failing, cancelled or
+still-running check; a repo where other people work is never on it.
 
 **The planner starts only read-only runs on its own, and few.** `src/agent/planner.js` may start
 a `plan`-mode run (it reads and writes findings; it can neither commit nor push) for an ask it

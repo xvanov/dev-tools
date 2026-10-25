@@ -9,12 +9,18 @@
 // own code, and tells me. It does not ask first: I decided a draft PR is
 // always fine to open, since a draft merges nothing and anyone can close it.
 // A run made in a mode that may not push (`plan`, `local`) is moved to `mr`
-// first. Merging is never done here; it stays mine.
+// first. In my own repos (PA_MERGE_REPOS, src/dispatch/merge.js) the PR is
+// then marked ready and squash-merged once its checks pass; elsewhere when it
+// is marked ready and whether it merges stays mine.
 
 const { TimeoutError } = require('absurd-sdk');
 const { one } = require('../../db');
 
+const merger = require('../../dispatch/merge');
+
 const name = 'run_review';
+const CHECK_ROUNDS = 36;
+const CHECK_EVERY_S = 300;
 const WAIT_RUN_DAYS = 14;
 
 async function awaitOr(ctx, event, stepName, days) {
@@ -81,7 +87,41 @@ async function run({ runId }, ctx) {
       dedupeKey: `landed:${runId}`,
     }).then(() => true)
   );
-  return { result: 'landed', mrUrl: landed.mrUrl || null };
+  if (!landed.mrUrl) return { result: 'landed', mrUrl: null };
+
+  // My own repos: ready, checks, merge. Everywhere else the draft is mine.
+  const may = await ctx.step('merge-policy', async () => {
+    const r = await one('select repo_path from run where id = $1', [runId]);
+    const slug = await merger.slugOf(r.repo_path).catch(() => null);
+    return { slug, may: merger.mayMerge(slug) };
+  });
+  if (!may.may) return { result: 'landed', mrUrl: landed.mrUrl };
+
+  let state = 'pending';
+  for (let i = 0; i < CHECK_ROUNDS && state === 'pending'; i++) {
+    if (i) await ctx.sleepFor(`wait-checks-${i}`, CHECK_EVERY_S);
+    state = await ctx.step(`checks-${i}`, () => merger.checks(landed.mrUrl).catch(() => 'pending'));
+  }
+  const merged = await ctx.step('merge', async () => {
+    if (state !== 'pass') return { ok: false, why: state === 'fail' ? 'a check failed' : 'checks still running after 3 hours' };
+    try {
+      await merger.ready(landed.mrUrl);
+      await merger.merge(landed.mrUrl);
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, why: String(err.stderr || err.message).trim().slice(0, 200) };
+    }
+  });
+  await ctx.step('say-merged', () =>
+    require('../../notify').notify({
+      kind: 'info',
+      title: merged.ok ? `Run #${runId}: merged into ${may.slug}` : `Run #${runId}: not merged — ${merged.why}`,
+      body: `${String(found.task).slice(0, 160)}\n${landed.mrUrl}`,
+      url: landed.mrUrl,
+      dedupeKey: `merged:${runId}`,
+    }).then(() => true)
+  );
+  return { result: merged.ok ? 'merged' : 'not merged', mrUrl: landed.mrUrl };
 }
 
 module.exports = { name, run };
