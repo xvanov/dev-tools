@@ -287,6 +287,14 @@ async function main() {
     });
   }
 
+  // The cause-and-effect paragraph on dashboard cards: a few a tick, only for
+  // cards on the board, within the daily budget (src/commitments/context.js).
+  if (config.cardContext.enabled) {
+    every(120, 'card-context', async () => {
+      await require('./commitments/context').pass();
+    });
+  }
+
   // A source that keeps failing blinds the reconciler: one toast per outage,
   // and a banner on the dashboard (src/ingest/health.js).
   every(600, 'health', async () => {

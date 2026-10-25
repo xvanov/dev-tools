@@ -14,7 +14,8 @@
 //  - **essential** — distill, reconcile, connector, reply-close. These keep the
 //    board true. They are counted but never refused: a cap that stopped
 //    ingesting mail would save money by making the assistant wrong.
-//  - **discretionary** — eager, research, digest, planner: work done ahead of
+//  - **discretionary** — eager, research, digest, planner, card (the dashboard's
+//    card-context paragraphs): work done ahead of
 //    me on speculation. Once today's spend reaches the cap, `allow` says no
 //    and the worker says so once, in the log.
 //

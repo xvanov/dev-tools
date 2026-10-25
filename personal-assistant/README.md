@@ -162,6 +162,20 @@ on its own): what's on you, what you're waiting on, agent runs, drafts, open PRs
 items, each with **Do** (dispatch), **Reply**, **Done** and **Dismiss**. Loopback only — it can
 start agents. Every button shows that it is working and then what happened.
 
+**Every card says where it came from and why it is there.** Cards on **On you**, **Waiting on
+others**, **Needs you** and **Looks done?** carry a row of links built from what ingest stored, with
+no model in the loop (`src/dashboard/links.js`, `cards.js`): the Teams message, mail, PR, Jira issue
+or board item it was read from; a Teams chat with the person and their GitHub; the repo; GitHub
+PRs, issues, branches, repos and Jira issues named in the message or the next few messages of its
+thread; a run's PR; and, on **Looks done?**, the item that suggests it is settled. A card read from
+a Claude session says which machine and folder it ran in and when, shows `claude --resume <id>`,
+links its transcript, and has **Open in termhub**, which opens the running session on that machine
+or starts one resuming it. Above the links is a short paragraph — who asked what, what led to it,
+what has happened since, and what is expected now and from whom — written by the worker a few
+cards at a time (`src/commitments/context.js`, every two minutes, `PA_CARD_CONTEXT=0` turns it off)
+and rewritten when the thread has news; it is discretionary spend (`card-context`). A chase's
+"when should I follow up?" card shows the same paragraph for the ask it is about.
+
 **From your own work** holds what the distiller read from your own Claude sessions and your own
 PRs — agent handoffs like "verify the banner in a browser before merge" — apart from **On you**,
 which is only what people asked of you or you promised them. They are grouped one per PR or
@@ -221,7 +235,7 @@ reply-close, draft, memory-*, meeting-brief, debrief, connector, ...), model, ba
 tokens, duration and whether it worked; never any prompt or reply text. The CLI reports its own
 cost; for the API it is estimated from token usage at list prices, or left null for a model it
 does not know. `PA_DAILY_BUDGET_USD` (default 15) caps a local day: once reached, *discretionary*
-purposes (`PA_BUDGET_DISCRETIONARY`, default eager, research, digest, planner — speculative work
+purposes (`PA_BUDGET_DISCRETIONARY`, default eager, research, digest, planner, card — speculative work
 done ahead of you) are refused until midnight and the worker logs it once; *essential* ones
 (`PA_BUDGET_ESSENTIAL`, default distill, reconcile, connector, reply-close) keep the board true
 and are never refused. Speculative work asks `budget.allow(purpose)` before it spends. `pa spend
@@ -745,8 +759,10 @@ src/recall/          multi-hop recall over items, claims and pages, one rerank
 src/brief/           what `pa brief` prints
 src/meetings/        pre-meeting briefs: classify, gather evidence, learn from transcripts, notify;
                      post-meeting debriefs (debrief.js, pure half in debriefCore.js)
-src/commitments/     closing chat and mail asks you answered yourself (replyClose.js, pure half in replyCloseCore.js)
-src/dashboard/       the loopback web page: today, next meeting, replies, runs, secret requests, and the Memory and Routines tabs
+src/commitments/     closing chat and mail asks you answered yourself (replyClose.js, pure half in replyCloseCore.js);
+                     the cause-and-effect paragraph on cards (context.js, pure half in contextCore.js)
+src/dashboard/       the loopback web page: today, next meeting, replies, runs, secret requests, and the Memory and Routines tabs;
+                     each card's links to its source, person, repo and session (links.js pure, cards.js)
 src/secrets/         secret and login requests; Windows Credential Manager via PowerShell (stdin only)
 src/routines/        cron parser, the typed action registry (repo_sync, prompt_report), runs, suggestions
 src/notify/          notifications: toasts, the interrupt budget, digests, feedback weights, the PA chat inbox
