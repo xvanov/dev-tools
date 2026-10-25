@@ -13,7 +13,8 @@ const assert = require('assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { listTranscripts, resolveTranscript } = require('../lib/transcripts');
+const http = require('http');
+const { listTranscripts, resolveTranscript, handle } = require('../lib/transcripts');
 
 const base = fs.mkdtempSync(path.join(os.tmpdir(), 'termhub-transcripts-'));
 const root = path.join(base, 'projects');
@@ -32,7 +33,55 @@ write(path.join(root, 'C--repos-demo', 'aaaa-1111', 'subagents', 'agent-x.jsonl'
 write(path.join(root, '-home-pat-tool', 'bbbb-2222.jsonl'), '{"b":2}\n{"b":3}\n', 1_700_000_200);
 write(path.join(outside, 'leak.jsonl'), '{"secret":true}\n', 1_700_000_400);
 
+// handle() answering through a real server: the front calls it before its
+// /api proxy, so the routes work against a sessiond too old to have them.
+function serve(port0 = 0) {
+  const sendJson = (res, status, body) => {
+    res.writeHead(status, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(body));
+  };
+  const server = http.createServer((req, res) => {
+    const url = new URL(req.url, 'http://localhost');
+    if (!handle(req, res, url, { sendJson, machine: 'box', root })) sendJson(res, 418, { passed: true });
+  });
+  return new Promise((resolve) => server.listen(port0, '127.0.0.1', () => resolve(server)));
+}
+function get(port, p, method = 'GET') {
+  return new Promise((resolve, reject) => {
+    const req = http.request({ host: '127.0.0.1', port, path: p, method }, (res) => {
+      let body = '';
+      res.on('data', (c) => { body += c; });
+      res.on('end', () => resolve({ status: res.statusCode, body, headers: res.headers }));
+    });
+    req.on('error', reject);
+    req.end();
+  });
+}
+
+(async () => {
 try {
+  {
+    const server = await serve();
+    const { port } = server.address();
+    try {
+      const list = await get(port, '/api/claude/transcripts?limit=1');
+      assert.strictEqual(list.status, 200);
+      const parsed = JSON.parse(list.body);
+      assert.strictEqual(parsed.machine, 'box');
+      assert.deepStrictEqual(parsed.transcripts.map((t) => t.id), ['-home-pat-tool/bbbb-2222.jsonl']);
+      const one = await get(port, '/api/claude/transcript?id=C--repos-demo/aaaa-1111.jsonl');
+      assert.strictEqual(one.status, 200);
+      assert.strictEqual(one.body, '{"a":1}\n');
+      assert.strictEqual(one.headers['x-transcript-mtime'], '1700000100000');
+      assert.strictEqual((await get(port, '/api/claude/transcript?id=../x.jsonl')).status, 400);
+      // Not ours: anything else falls through to the caller (the proxy).
+      assert.strictEqual((await get(port, '/api/sessions')).status, 418);
+      assert.strictEqual((await get(port, '/api/claude/transcripts', 'POST')).status, 418);
+    } finally {
+      server.close();
+    }
+  }
+
   {
     const list = listTranscripts({ root });
     assert.deepStrictEqual(list.map((t) => t.id), ['-home-pat-tool/bbbb-2222.jsonl', 'C--repos-demo/aaaa-1111.jsonl']);
@@ -103,3 +152,7 @@ try {
 }
 
 console.log('transcripts.test.js ok');
+})().catch((err) => {
+  console.error(err);
+  process.exit(1);
+});

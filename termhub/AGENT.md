@@ -1320,8 +1320,10 @@ The PA side documents its half (relative URLs, `POST /api/chat/open`) in
 
 The personal assistant ingests your Claude Code sessions as evidence of work done. Its own
 machine's it reads from disk; a run dispatched to *another* machine leaves its transcript on that
-machine, and termhub is the one thing reachable there. So `sessiond` serves the files under
-`~/.claude/projects/` and nothing else:
+machine, and termhub is the one thing reachable there. So the **front** serves the files under
+`~/.claude/projects/` and nothing else. The front, not sessiond: an update swaps only the front
+and never restarts sessiond, so a route there would reach a machine only once every terminal on it
+was killed.
 
 | Method | Path | Response |
 |---|---|---|
