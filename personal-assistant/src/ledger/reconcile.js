@@ -18,7 +18,7 @@
 //   - the same thread (chat, mail, PR — for a Claude session, the same repo);
 //   - for something owed to me, anything the other person wrote, anywhere;
 //   - for anything in a known project, my own PRs, notifications and coding
-//     sessions in that repo.
+//     sessions in that repo — on this machine or another (src/ingest/remoteSessions.js).
 // Commitments that share newer items are judged together in one call
 // (reconcileCore.batches). Nothing related arrived: no model call at all, so
 // the pass can run every minute.
@@ -79,7 +79,12 @@ const DIRTY = `
            or (lower(coalesce(r.author_identity, '')) = any($1::text[]) and (
                  (o.gitlab_path is not null and r.source like 'github%' and lower(r.raw->>'project') = lower(o.gitlab_path))
                  or (o.repo_path is not null and r.source = 'claude_session'
-                     and lower(r.raw->>'cwd') like lower(o.repo_path) || '%')))
+                     and (lower(r.raw->>'cwd') like lower(o.repo_path) || '%'
+                          -- A session on another machine (raw.machine) has that machine's
+                          -- path: the repo's folder name anywhere in it is the match.
+                          or (r.raw->>'machine' is not null
+                              and string_to_array(translate(lower(r.raw->>'cwd'), chr(92), '/'), '/')
+                                  @> array[regexp_replace(translate(lower(o.repo_path), chr(92), '/'), '^.*/', '')])))))
          )
        order by r.fetched_at
        limit $3
