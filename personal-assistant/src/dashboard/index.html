@@ -183,6 +183,7 @@
   <section id="nextmeeting"><h2>Next meeting<span class="n"></span></h2><div class="list"><div class="empty">loading…</div></div></section>
   <section id="debriefs"><h2>Meeting debriefs<span class="n"></span></h2><div class="list"><div class="empty">loading…</div></div></section>
   <section id="drafts"><h2>Replies to send<span class="n"></span></h2><div class="list"></div></section>
+  <section id="looksdone"><h2 title="The assistant found something that looks like it settles these, but was not sure enough to close them on its own.">Looks done?<span class="n"></span></h2><div class="list"></div></section>
   <section id="mine"><h2>On you<span class="n"></span></h2><div class="list"></div></section>
   <section id="waiting"><h2>Waiting on others<span class="n"></span></h2><div class="list"></div></section>
   <section id="selfnotes"><h2 title="Notes read from your own Claude sessions and PRs — not asks from people. Closed when the PR merges, or after a week untouched.">From your own work<span class="n"></span></h2><div class="list"></div></section>
@@ -680,6 +681,27 @@ function render(s) {
     el('div', { class: 'sub' }, new Date(m.occurred_at).toLocaleString())), 'No meetings (or calendar not connected).');
 
   fill('closed', s.closed || [], closedCard, 'Nothing closed in the last three days.');
+  fill('looksdone', s.looksDone || [], looksDoneCard, 'Nothing to confirm.');
+}
+
+// A close the reconciler proposes, with the quote that suggests it.
+function looksDoneCard(p) {
+  const yes = el('button', { title: 'Close it' }, p.effect === 'moot' ? 'Dismiss it' : 'Close it');
+  const no = el('button', { title: 'It is not done: keep it open' }, 'Not yet');
+  yes.addEventListener('click', act(yes, async () => {
+    await post(`api/ledger/evidence/${p.id}/accept`, {});
+    toast(`#${p.commitment_id} closed — it is in "Closed recently" if you need it back`);
+  }));
+  no.addEventListener('click', act(no, async () => {
+    await post(`api/ledger/evidence/${p.id}/reject`, {});
+    toast(`#${p.commitment_id} stays open`);
+  }));
+  return el('div', { class: 'item' },
+    el('div', { class: 'sum' }, p.summary),
+    el('div', { class: 'sub' }, ...joinParts([`#${p.commitment_id}`, p.direction === 'owed_to_me' ? 'waiting on them' : 'on you',
+      `${Math.round(p.confidence * 100)}% sure`, ago(p.created_at), link(p.url, 'open')])),
+    el('div', { class: 'sub' }, `“${p.quote}”`),
+    el('div', { class: 'actions' }, yes, no));
 }
 
 // Closed by you or by the assistant (a PR merged, a review given, a review
@@ -693,6 +715,7 @@ function closedCard(c) {
   return el('div', { class: 'item closed' },
     el('div', { class: 'sum' }, c.summary),
     el('div', { class: 'sub' }, ...joinParts([`#${c.id}`, el('span', { class: 'tag' }, c.status === 'done' ? 'done' : 'dismissed'),
+      c.actor && c.actor !== 'you' ? el('span', { class: 'tag', title: 'Closed by the assistant — Reopen takes it back' }, `by ${c.actor}`) : null,
       c.closed_reason, ago(c.closed_at), link(c.url, 'open')])),
     el('div', { class: 'actions' }, reopen));
 }

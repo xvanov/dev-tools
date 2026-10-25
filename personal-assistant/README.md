@@ -187,6 +187,19 @@ reply it saw, with what the close replaced, so the same reply is never judged tw
 (or `pa done <id> --reopen`) sticks until you write in that thread again. `pa doctor` shows the
 count.
 
+**The reconciler keeps the rest true** (`src/ledger/reconcile.js`, every minute and right after a
+fresh Teams message; `PA_RECONCILE=0` turns it off, `PA_RECONCILE_AUTO=0` makes every close a
+proposal). It is level-triggered: each open commitment, in either direction, is judged against
+everything *related* that arrived since it was last judged — the same thread, anything the other
+person wrote (so their answer to an owed-to-me ask closes it), and your own PRs, notifications and
+Claude sessions in the commitment's repo. Commitments that share new items are judged in one call;
+with nothing new there is no model call at all. A close needs a quote checked verbatim against the
+item, and is applied on its own at 80% confidence or more — unless you reopened that commitment
+before — or shown under **Looks done?** with **Close it** / **Not yet** between 50% and 80%. A
+promise is never a delivery. Every status change, yours or the assistant's, goes through
+`src/ledger` and is listed by `pa ledger <id>`; the closed card says who closed it, and **Reopen**
+takes it back.
+
 **Replies to send** sits at the top: drafts the worker wrote for fresh asks from mail and Teams
 (`PA_AUTODRAFT=0` turns that off; `PA_AUTODRAFT_MIN_CONFIDENCE`, default 0.6, sets how sure the
 distiller must be that the ask is on you), plus any you asked for with **Reply**. Each shows the
@@ -230,6 +243,10 @@ pa search <words>               hybrid search over everything captured
 pa who Sam                      identities, threads, open commitments
 
 pa done 42 [--dismiss|--reopen] close a commitment yourself
+pa ledger 42                    every status change of #42, who made it and why
+pa ledger reconcile --dry-run   what the reconciler would close now (--id 1,2 to aim it)
+pa ledger looks-done            closes waiting for you; answer with <id> --yes|--no
+pa ledger undo 7                take back one status change
 pa dashboard                    serve the web page without the worker
 
 pa do 42 --mode mr              dispatch to a Claude Code session in its own worktree

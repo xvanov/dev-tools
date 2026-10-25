@@ -92,9 +92,11 @@ async function state() {
   // The Memory tab's badge: claims waiting for a human to vouch for them.
   const review = await rows(`select count(*)::int as n from claim where status = 'pending_review'`).catch(() => [{ n: 0 }]);
   const closed = await require('../commitments').recentlyClosed().catch(() => []);
+  // Closes the reconciler was not sure enough to make on its own (src/ledger/reconcile.js).
+  const looksDone = await require('../ledger/reconcile').proposals().catch(() => []);
   // Secret and login requests: names and guidance only — the table holds no values.
   const secretRequests = await require('../secrets').pending().catch(() => []);
-  return { ...data, drafts, sources, closed, memoryPending: review[0].n, secretRequests, now: new Date().toISOString() };
+  return { ...data, drafts, sources, closed, looksDone, memoryPending: review[0].n, secretRequests, now: new Date().toISOString() };
 }
 
 function send(res, status, body, type = 'application/json') {
@@ -216,6 +218,9 @@ async function handle(req, res) {
       const { setStatus } = require('../commitments');
       return send(res, 200, await setStatus(Number(m[1]), String(body.status)));
     }
+    // A "Looks done?" card answered: accepting closes it as your decision.
+    m = url.pathname.match(/^\/api\/ledger\/evidence\/(\d+)\/(accept|reject)$/);
+    if (m) return send(res, 200, await require('../ledger/reconcile').decide(Number(m[1]), m[2] === 'accept'));
     m = url.pathname.match(/^\/api\/commitments\/(\d+)\/reply$/);
     if (m) {
       const draft = await require('../draft').composeReply(Number(m[1]));

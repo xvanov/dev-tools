@@ -158,6 +158,7 @@ async function main() {
       if (!r.fresh) return;
       exclusive('distill', () => distill.run({ limit: 5 }))
         .then((ran) => ran && exclusive('drafts', () => require('./draft').autoDraft({ limit: 3 })))
+        .then(() => config.reconcile.enabled && exclusive('reconcile', () => require('./ledger/reconcile').pass()))
         .catch(() => {});
     });
   }
@@ -237,6 +238,17 @@ async function main() {
   if (config.replyClose.enabled) {
     every(300, 'reply-close', async () => {
       await require('./commitments/replyClose').pass({ limit: 8 });
+    });
+  }
+
+  // The reconciler keeps open commitments true: anything related that arrived
+  // since an item was last judged — the other person's answer, my PR, my
+  // session — is weighed, and a verified close is applied through the ledger
+  // (src/ledger). With nothing new it is one query, so every minute is cheap;
+  // the Teams fast path above also starts it.
+  if (config.reconcile.enabled) {
+    every(60, 'reconcile', async () => {
+      await require('./ledger/reconcile').pass();
     });
   }
 

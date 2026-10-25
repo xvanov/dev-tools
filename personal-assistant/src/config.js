@@ -317,6 +317,16 @@ const config = {
     effort: env('PA_REPLY_CLOSE_EFFORT', 'low'),
   },
 
+  // The reconciler (src/ledger/reconcile.js): open commitments judged against
+  // newer related items, closed on verified evidence. PA_RECONCILE_AUTO=0
+  // keeps every close a proposal on the dashboard.
+  reconcile: {
+    enabled: env('PA_RECONCILE', '1') !== '0',
+    auto: env('PA_RECONCILE_AUTO', '1') !== '0',
+    model: env('PA_RECONCILE_MODEL', 'claude-sonnet-5-5'),
+    effort: env('PA_RECONCILE_EFFORT', 'medium'),
+  },
+
   // Recurring typed actions (src/routines). PA_ROUTINES=0 stops the worker
   // running them; `pa routine run` still works by hand.
   routines: {

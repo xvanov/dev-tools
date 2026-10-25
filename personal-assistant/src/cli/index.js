@@ -36,6 +36,11 @@ const HELP = `pa — your context layer
     pa do <id> [--mode m] [--repo p] dispatch a commitment to a Claude Code session
                      [--machine name]  …in another machine's termhub (PA_MACHINES)
     pa done <id> [--dismiss|--reopen] close a commitment yourself
+    pa ledger <id>                   every status change of a commitment, and why
+    pa ledger reconcile [--dry-run] [--id N,..] [--limit N]
+                                     judge open commitments against newer items now
+    pa ledger undo <transition-id>   take back one status change
+    pa ledger looks-done [<evidence-id> --yes|--no]  proposals: list, or answer one
     pa do --task "..." [--mode m] [--repo p]
     pa runs [--all]                 live and recent runs
     pa attach <run>                 print (and open) the termhub URL for a run
@@ -372,6 +377,48 @@ const commands = {
     const status = flagBool(flags, 'dismiss') ? 'dropped' : flagBool(flags, 'reopen') ? 'open' : 'done';
     const row = await setStatus(id, status);
     out(`#${row.id} ${row.status} · ${row.summary}`);
+  },
+
+  // The ledger (src/ledger): history, the reconciler by hand, undo, proposals.
+  async ledger(args, flags) {
+    const ledger = require('../ledger');
+    const reconcile = require('../ledger/reconcile');
+    const [sub, arg] = args;
+    if (sub === 'reconcile') {
+      const ids = flags.id && flags.id !== true ? String(flags.id).split(',').map(Number).filter(Boolean) : null;
+      const limit = flags.limit && flags.limit !== true ? Number(flags.limit) : 24;
+      const r = await reconcile.pass({ dryRun: flagBool(flags, 'dry-run'), ids, limit });
+      for (const x of r.results) {
+        if (x.effect === 'none') continue;
+        out(`#${x.commitmentId} ${x.effect} → ${x.decision}${x.applied ? ' (applied)' : ''} · ${Math.round(x.confidence * 100)}% · ${x.summary}`);
+        if (x.quote) out(`    "${x.quote}" (item ${x.itemId})`);
+      }
+      return out(`${r.dirty} with new evidence · ${r.judged} judged · ${r.closed} closed · ${r.proposed} proposed · ${r.errors} errors${flagBool(flags, 'dry-run') ? ' · dry run' : ''}`);
+    }
+    if (sub === 'undo') {
+      if (!Number(arg)) return fail('usage: pa ledger undo <transition-id>');
+      const r = await ledger.undo(Number(arg));
+      return out(`#${r.commitmentId ?? '?'}: ${r.result}`);
+    }
+    if (sub === 'looks-done') {
+      if (arg) {
+        if (!flagBool(flags, 'yes') && !flagBool(flags, 'no')) return fail('usage: pa ledger looks-done <evidence-id> --yes|--no');
+        const r = await reconcile.decide(Number(arg), flagBool(flags, 'yes'));
+        return out(`#${r.commitmentId ?? '?'}: ${r.result}`);
+      }
+      const list = await reconcile.proposals();
+      if (!list.length) return out('Nothing waiting.');
+      for (const p of list) out(`${p.id} · #${p.commitment_id} ${p.effect} · ${Math.round(p.confidence * 100)}% · "${p.quote}"`);
+      return;
+    }
+    const id = Number(sub);
+    if (!id) return fail('usage: pa ledger <commitment-id> | reconcile | undo <id> | looks-done');
+    const list = await ledger.history(id);
+    if (!list.length) return out(`#${id}: no recorded changes`);
+    for (const t of list) {
+      out(`${t.id} · ${new Date(t.at).toLocaleString()} · ${t.from_status} → ${t.to_status} · ${t.actor}${t.undone_at ? ` · UNDONE (${t.undo})` : ''}`);
+      if (t.reason) out(`    ${t.reason}`);
+    }
   },
 
   // Standalone, for when the worker is not running. Same server, same port —
@@ -928,6 +975,18 @@ const commands = {
       );
     } catch (err) {
       lines.push(`  debriefs: not migrated (${err.message.slice(0, 60)}) — run \`pa migrate\``);
+    }
+
+    // The reconciler (src/ledger/reconcile.js).
+    try {
+      const r = await require('../ledger/reconcile').stats();
+      lines.push(
+        `  reconcile ${config.reconcile.enabled ? (config.reconcile.auto ? 'on' : 'on, proposals only (PA_RECONCILE_AUTO=0)') : 'off (PA_RECONCILE=0)'}` +
+          ` · ${r.closed} closed on evidence · ${r.reopened} of them reopened by you · ${r.proposed} waiting as "looks done?"` +
+          ` · last ${r.last ? relative(r.last) : 'never'}`
+      );
+    } catch (err) {
+      lines.push(`  reconcile: not migrated (${err.message.slice(0, 60)}) — run \`pa migrate\``);
     }
 
     // Asks closed by my own reply in the thread (src/commitments/replyClose.js).

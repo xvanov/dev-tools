@@ -27,7 +27,9 @@ async function setStatus(id, status) {
 async function recentlyClosed({ days = 3, limit = 40 } = {}) {
   return rows(
     `select c.id, c.summary, c.status, c.closed_reason, c.closed_at, si.source,
-            coalesce(si.raw->>'webUrl', si.thread_external_id) as url
+            coalesce(si.raw->>'webUrl', si.thread_external_id) as url,
+            (select t.actor from ledger_transition t where t.commitment_id = c.id and t.undone_at is null
+              order by t.at desc, t.id desc limit 1) as actor
        from commitment c join source_item si on si.id = c.source_item_id
       where c.closed_at > now() - ($1 || ' days')::interval
       order by c.closed_at desc limit $2`,
