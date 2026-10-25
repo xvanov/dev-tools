@@ -127,7 +127,7 @@ own (DURABLE.md), but never silently and never without that row. A new closer ca
 keeps its own reversible log in `meeting_debrief.applied`.)
 
 **Durable tasks act through checkpointed steps and re-read before acting.** Work that waits (a
-chase, a finished run waiting to be landed) is an Absurd task (`src/durable`, schema vendored
+chase waiting on a reply, a run waiting to end) is an Absurd task (`src/durable`, schema vendored
 unchanged in `vendor/absurd/` at the version `absurd-sdk` is pinned to — upgrade it with a new
 migration, never by editing the file). Every effect is a `ctx.step` and is itself idempotent
 (dedupe keys); a task reads the commitment or run again before it acts, because the event that
@@ -135,6 +135,11 @@ woke it is a hint. `awaitEvent` suspends a task by throwing: never catch it exce
 `TimeoutError` and rethrow everything else. A task that wants a decision creates a `proposal` and
 waits on `proposal:<id>`; a proposal with no task runs a typed handler in `src/proposals` — there
 is no handler that takes a command or free text.
+
+**A finished run's draft PR is opened without asking; nothing is merged.** `run_review` pushes
+the run's branch and opens a *draft* PR as soon as the session ends with commits (I decided a
+draft is always fine: it merges nothing and can be closed). There is no merge code path; adding
+one is a conversation, and it would ask per repo.
 
 **The planner starts only read-only runs on its own, and few.** `src/agent/planner.js` may start
 a `plan`-mode run (it reads and writes findings; it can neither commit nor push) for an ask it

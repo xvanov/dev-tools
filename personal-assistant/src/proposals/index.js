@@ -97,8 +97,17 @@ async function decide(id, { accept, answer = null }) {
   return { ok: true, result, id: Number(p.id) };
 }
 
+// Past its expiry, or a question or offer about an ask that has since closed
+// (a "when should I chase?" card for an answer that already came).
 async function expire() {
-  const r = await query(`update proposal set status = 'expired' where status = 'pending' and expires_at <= now() returning id, payload`);
+  const r = await query(
+    `update proposal p set status = 'expired'
+      where p.status = 'pending'
+        and (p.expires_at <= now()
+             or (p.kind in ('question', 'dispatch')
+                 and exists (select 1 from commitment c where c.id = p.commitment_id and c.status in ('done', 'dropped'))))
+      returning p.id, p.payload`
+  );
   for (const p of r.rows || []) {
     if (p.payload?.task) await require('../durable').emit(`proposal:${p.id}`, { accepted: false, expired: true }).catch(() => {});
   }

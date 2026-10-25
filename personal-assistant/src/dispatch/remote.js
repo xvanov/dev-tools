@@ -75,6 +75,11 @@ function machineNamed(name) {
       `unknown machine "${name}" — ${known.length ? `one of: ${known.join(', ')}` : 'none configured; set PA_MACHINES in .env'}`
     );
   }
+  // The setup runs as PowerShell with Windows paths. A Linux machine in
+  // PA_MACHINES is still read for its Claude sessions (ingest/remoteSessions.js).
+  if (machine.reposRoot.startsWith('/')) {
+    throw new Error(`"${name}" is not a Windows machine; runs can only be dispatched to Windows machines for now`);
+  }
   return machine;
 }
 

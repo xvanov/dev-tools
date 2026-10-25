@@ -13,6 +13,41 @@ const MORNING_HOUR = 9;
 
 const CHANNELS = new Set(['graph_chat', 'graph_mail']);
 
+// How long to wait before following up: I am asked once per ask (chase.js),
+// and the answer I last gave for the same person is the one marked usual.
+const CADENCES = [
+  { value: '4h', label: 'In 4 hours', hours: 4 },
+  { value: '1d', label: 'Tomorrow', hours: 24 },
+  { value: '2d', label: 'In 2 days', hours: 48 },
+  { value: '1w', label: 'In a week', hours: 168 },
+  { value: 'never', label: "Don't chase", hours: null },
+];
+
+const cadence = (value) => CADENCES.find((c) => c.value === value) || null;
+
+/** The buttons for the question, the usual answer marked. */
+function cadenceOptions(usual) {
+  return CADENCES.map((c) => ({ value: c.value, label: c.value === usual ? `${c.label} (usual)` : c.label }));
+}
+
+/**
+ * When to chase for a cadence answer, counted from `from`: inside working
+ * hours, so "in 4 hours" at 16:00 means the next morning. Null: don't chase.
+ * Undefined: not a cadence I know.
+ */
+function chaseAtFor(value, from) {
+  const c = cadence(value);
+  if (!c) return undefined;
+  if (c.hours == null) return null;
+  return workingMorning(new Date(new Date(from).getTime() + c.hours * 3600_000));
+}
+
+/** The gap before the one reminder after a nudge: half as long again. */
+function secondGapHours(value) {
+  const c = cadence(value);
+  return c && c.hours ? Math.max(4, c.hours * 1.5) : SECOND_WAIT_HOURS;
+}
+
 /** The next working-day morning at or after `d` (local time). */
 function workingMorning(d) {
   const t = new Date(d);
@@ -38,8 +73,8 @@ function firstChaseAt(c, now = new Date()) {
   return workingMorning(base < now ? now : base);
 }
 
-function secondChaseAt(nudgedAt) {
-  return workingMorning(new Date(new Date(nudgedAt).getTime() + SECOND_WAIT_HOURS * 3600_000));
+function secondChaseAt(nudgedAt, value = null) {
+  return workingMorning(new Date(new Date(nudgedAt).getTime() + secondGapHours(value) * 3600_000));
 }
 
 /**
@@ -58,4 +93,4 @@ function secondsUntil(at, now = new Date()) {
   return Math.max(1, Math.ceil((new Date(at) - now) / 1000));
 }
 
-module.exports = { firstChaseAt, secondChaseAt, worthChasing, workingMorning, secondsUntil, MAX_NUDGES_PER_DAY, MAX_AGE_DAYS };
+module.exports = { CADENCES, cadenceOptions, chaseAtFor, secondGapHours, firstChaseAt, secondChaseAt, worthChasing, workingMorning, secondsUntil, MAX_NUDGES_PER_DAY, MAX_AGE_DAYS };

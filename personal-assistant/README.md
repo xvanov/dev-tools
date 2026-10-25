@@ -201,13 +201,17 @@ promise is never a delivery. Every status change, yours or the assistant's, goes
 takes it back.
 
 **Work that waits is a durable task** (`src/durable`, on [Absurd](https://github.com/earendil-works/absurd)
-in the same Postgres; `PA_DURABLE=0` turns it off). Two so far. **Chase**: something a person
-owes you in chat or mail is chased on a working morning two days after the promise (or just after
-it was due) unless it closes first — a follow-up is drafted in that thread for you to send, and if
-nothing comes three days later you get one reminder; at most three follow-ups a day.
-**Run review**: when a dispatched run's session ends, its commits and diffstat become a **Needs
-you** card, "open a draft PR?"; yes pushes the branch and opens a draft PR. **Needs you** is also
-where the assistant asks what only you know (which repo?). `pa proposals` / `pa answer <id> yes|no|<option>`
+in the same Postgres; `PA_DURABLE=0` turns it off). Two so far. **Chase**: for something a person
+owes you in chat or mail, a **Needs you** card asks when to follow up — in 4 hours, tomorrow, in 2
+days, in a week, or don't chase — with the answer you last gave for that person marked *usual*.
+Unanswered, it goes with the default: your usual for them, else a working morning two days after
+the promise (or just after it was due). Unless the ask closes first, a follow-up is then drafted in
+that thread for you to send, and if nothing comes you get one reminder half as long again later;
+at most three follow-ups a day. The card goes away by itself when their answer closes the ask.
+**Run review**: when a dispatched run's session ends with commits, the branch is pushed and a
+**draft** PR opened without asking, and you are told; a research (`plan`) run just tells you its
+findings are ready. Merging is never automatic. **Needs you** is also where the assistant asks what
+only you know (which repo?). `pa proposals` / `pa answer <id> yes|no|<option>`
 do the same from the terminal, and `pa doctor` counts tasks by state.
 
 **Model spend is recorded and capped per day** (`src/budget.js`). Every model call — `claude -p`
@@ -455,7 +459,9 @@ Some work belongs on a particular machine — the VM that runs the service, hold
 sync, has the credentials. `pa do 959 --machine mv-automated-vm` (or the machine picker beside
 **Do** on the dashboard) starts the run in *that* machine's termhub, which is already one of
 your hub's peers, so you attach to it the same way. Machines are listed in `PA_MACHINES`
-(`name=termhubUrl|reposRoot`); the repo must be cloned there under the same folder name.
+(`name=termhubUrl|reposRoot`); the repo must be cloned there under the same folder name. Runs go
+only to Windows machines; a Linux machine (a `reposRoot` starting with `/`) is listed only so its
+Claude sessions are read.
 
 The dispatcher cannot touch that disk, so it types the setup into a fresh shell there and checks
 the result through termhub's API before starting Claude: `git fetch`, a worktree under

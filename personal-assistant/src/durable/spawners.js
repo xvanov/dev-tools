@@ -6,7 +6,8 @@
 // place a commitment can be created (distill, debrief, a hand edit), this pass
 // asks the store which commitments want a task and have none, and spawns it
 // with an idempotency key — so running it twice, or after a crash, starts
-// nothing twice.
+// nothing twice. The key carries a version: `chase2:` since a chase first asks
+// me for its cadence; the `chase:` tasks before it were cancelled.
 
 const { rows } = require('../db');
 const { logger } = require('../log');
@@ -23,11 +24,11 @@ async function chases() {
         and c.counterparty_person_id is not null and not coalesce(per.is_me, false)
         and si.source in ('graph_chat', 'graph_mail')
         and si.occurred_at > now() - interval '${C.MAX_AGE_DAYS} days'
-        and not exists (select 1 from absurd.t_pa t where t.idempotency_key = 'chase:' || c.id)
+        and not exists (select 1 from absurd.t_pa t where t.idempotency_key = 'chase2:' || c.id)
       limit 50`
   );
   const durable = require('./index');
-  for (const { id } of due) await durable.spawn('chase', { commitmentId: Number(id) }, { key: `chase:${id}` });
+  for (const { id } of due) await durable.spawn('chase', { commitmentId: Number(id) }, { key: `chase2:${id}` });
   if (due.length) log.info('chases scheduled', { count: due.length });
   return due.length;
 }

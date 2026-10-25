@@ -12,7 +12,9 @@ pushes me**. It extends `PLAN.md`; where the two disagree, this file is newer an
   (`distill/keep.js`); head+tail Claude sessions; the source-health banner and toast
   (`ingest/health.js`).
 - Phase 2, durable tasks: Absurd 0.5.0 (`sql/019`, `src/durable`) running `chase` and
-  `run_review`, and the `proposal` inbox ("Needs you", `src/proposals`).
+  `run_review`, and the `proposal` inbox ("Needs you", `src/proposals`). Since: a chase asks me
+  its cadence first (4h / 1d / 2d / 1w / never, my last answer for that person marked usual, the
+  old rule as the default), and `run_review` opens the draft PR without asking.
 - Phase 3, the eager agent: the planner (`src/agent/planner.js`: kinds, read-only research runs
   within a daily allowance, run offers, "which repo?"); spend recorded per call and capped per day
   (`src/budget.js`, `llm_spend`); the interrupt budget with quiet hours, 09:00/14:00 digests,

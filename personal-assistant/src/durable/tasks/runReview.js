@@ -1,23 +1,21 @@
 'use strict';
 
-// From a finished run to a draft PR, with me in between (durable task
-// `run_review`, one per dispatched run on this machine).
+// From a finished run to a draft PR (durable task `run_review`, one per
+// dispatched run on this machine).
 //
 // The run's session ends (dispatch.reconcile emits `run-ended:<id>`). The task
 // reads what the run committed; with nothing committed it says so and ends.
-// Otherwise it puts one proposal in "Needs you" — "Run #N finished, 3 commits:
-// open a draft PR?" with the diffstat — and waits up to a week. Accepting
-// pushes the branch and opens a *draft* PR through `pa land`'s own code; a run
-// made in a mode that may not push (`plan`, `local`) is moved to `mr` first,
-// because my accept is exactly the decision `pa land` exists to record.
-// Declined or expired: the worktree stays for `pa review` / `pa drop`.
+// Otherwise it pushes the branch and opens a *draft* PR through `pa land`'s
+// own code, and tells me. It does not ask first: I decided a draft PR is
+// always fine to open, since a draft merges nothing and anyone can close it.
+// A run made in a mode that may not push (`plan`, `local`) is moved to `mr`
+// first. Merging is never done here; it stays mine.
 
 const { TimeoutError } = require('absurd-sdk');
 const { one } = require('../../db');
 
 const name = 'run_review';
 const WAIT_RUN_DAYS = 14;
-const WAIT_ANSWER_DAYS = 7;
 
 async function awaitOr(ctx, event, stepName, days) {
   try {
@@ -51,32 +49,19 @@ async function run({ runId }, ctx) {
     );
     return { result: 'no commits' };
   }
-
-  const proposal = await ctx.step('propose', async () => {
-    const p = await require('../../proposals').create({
-      kind: 'land',
-      runId,
-      commitmentId: found.commitmentId,
-      title: `Run #${runId} finished — ${found.commits.length} commit${found.commits.length === 1 ? '' : 's'}. Open a draft PR?`,
-      body: [found.task, '', ...found.commits.slice(0, 10), '', found.stat, found.uncommitted ? `\n${found.uncommitted} uncommitted file(s) will not be included.` : '']
-        .join('\n')
-        .trim(),
-      payload: { task: name },
-      dedupeKey: `land:${runId}`,
-      expiresAt: new Date(Date.now() + WAIT_ANSWER_DAYS * 86400_000),
-    });
-    const id = p ? Number(p.id) : Number((await one('select id from proposal where dedupe_key = $1', [`land:${runId}`])).id);
-    await require('../../notify').notify({
-      kind: 'info',
-      title: `Run #${runId} finished — open a draft PR?`,
-      body: String(found.task).slice(0, 200),
-      dedupeKey: `land-proposed:${runId}`,
-    });
-    return { id };
-  });
-
-  const answer = await awaitOr(ctx, `proposal:${proposal.id}`, 'wait-answer', WAIT_ANSWER_DAYS + 1);
-  if (!answer || !answer.accepted) return { result: answer?.expired ? 'expired' : 'declined' };
+  // A research run (`plan`) is there to write up findings, not to change code:
+  // nothing to open a PR for.
+  if (found.mode === 'plan') {
+    await ctx.step('say-research', () =>
+      require('../../notify').notify({
+        kind: 'info',
+        title: `Research run #${runId} finished`,
+        body: `${String(found.task).slice(0, 160)}\nRead its findings: \`pa review ${runId}\`.`,
+        dedupeKey: `run-research:${runId}`,
+      }).then(() => true)
+    );
+    return { result: 'research done' };
+  }
 
   const landed = await ctx.step('land', async () => {
     const dispatch = require('../../dispatch');
@@ -90,7 +75,8 @@ async function run({ runId }, ctx) {
     require('../../notify').notify({
       kind: 'info',
       title: `Run #${runId}: draft PR opened`,
-      body: landed.mrUrl || `Branch pushed; the PR could not be opened — see \`pa review ${runId}\`.`,
+      body: [String(found.task).slice(0, 160), `${found.commits.length} commit${found.commits.length === 1 ? '' : 's'}${found.uncommitted ? `; ${found.uncommitted} uncommitted file(s) left out` : ''}.`,
+        landed.mrUrl || `Branch pushed; the PR could not be opened — see \`pa review ${runId}\`.`].join('\n'),
       url: landed.mrUrl || null,
       dedupeKey: `landed:${runId}`,
     }).then(() => true)
