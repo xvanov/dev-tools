@@ -25,6 +25,7 @@ const { rows, one, query, withTx } = require('../db');
 const { logger } = require('../log');
 const { myAuthorForms } = require('../draft');
 const R = require('./replyCloseCore');
+const ledger = require('../ledger');
 
 const log = logger('reply-close');
 
@@ -118,12 +119,10 @@ async function apply(c, j, now) {
     const cur = (await client.query('select id, status, closed_at, closed_reason from commitment where id = $1 for update', [c.id])).rows[0];
     const plan = R.planClose(cur, j, { source: c.source, now });
     if (plan.set) {
-      await client.query('update commitment set status = $2, closed_at = $3, closed_reason = $4 where id = $1', [
-        c.id,
-        plan.set.status,
-        plan.set.closed_at,
-        plan.set.closed_reason,
-      ]);
+      await ledger.transition(
+        { commitmentId: c.id, to: plan.set.status, actor: 'reply-close', reason: plan.set.closed_reason, from: ['open'], now },
+        client
+      );
     }
     await record(client, c, j, plan.set ? { set: plan.set, before: plan.before } : null);
     return plan;
@@ -179,6 +178,18 @@ async function undo(commitmentId) {
     [commitmentId]
   );
   if (!row) return { ok: false, result: `no reply-close to undo on #${commitmentId}` };
+  // Closes made since the ledger existed are undone through it; older ones
+  // only have the columns this table kept.
+  const t = await one(
+    `select id from ledger_transition where commitment_id = $1 and actor = 'reply-close' and undone_at is null
+      order by at desc, id desc limit 1`,
+    [commitmentId]
+  );
+  if (t) {
+    const u = await ledger.undo(Number(t.id));
+    await query('update reply_close set undone_at = now(), undo = $2 where id = $1', [row.id, u.result]);
+    return { ok: true, result: u.result };
+  }
   let result = 'undone';
   await withTx(async (client) => {
     const cur = (await client.query('select id, status, closed_at, closed_reason from commitment where id = $1 for update', [commitmentId])).rows[0];

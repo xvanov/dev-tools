@@ -109,6 +109,15 @@ distiller skips meeting and call recordings (`DEBRIEF_OWNED`) so nothing is extr
 `reply_close.applied` with the columns it replaced, and the row is keyed by the newest reply
 judged, so a reopened commitment is not closed again by the same reply.
 
+**A commitment's status changes only through `src/ledger`.** `ledger.transition` is the one
+writer of `commitment.status`, `closed_at` and `closed_reason`: you (`pa done`, the dashboard),
+reply-close, GitHub reconcile, self-note expiry, the dispatcher and the reconciler all call it,
+and each call leaves a `ledger_transition` row with its actor, reason and the columns it replaced,
+so any change can be undone unless the row moved since. The assistant may close things on its
+own (DURABLE.md), but never silently and never without that row. A new closer calls
+`transition`; it does not run `update commitment set status`. (The debrief predates this and
+keeps its own reversible log in `meeting_debrief.applied`.)
+
 **Capture never stops for the assistant.** The worker's only levers on `capture.py` are the pause
 file (`pa mic pause`) and the roll file, which makes capture finish its file and continue in a
 new one. The meeting gate (`src/audio/gate.js`) writes the pause file between meetings with the

@@ -6,26 +6,21 @@
 // `dispatched` is not settable here: only the dispatcher knows a run exists.
 
 const { one, rows } = require('./db');
+const ledger = require('./ledger');
 
 const SETTABLE = new Set(['open', 'done', 'dropped']);
 
 // Closing records who closed it and when, so "Closed recently" can show it
-// and offer it back; reopening clears both.
+// and offer it back; reopening clears both. It goes through the ledger like
+// every other change, so your own decisions are in the same history as the
+// assistant's.
+const REASON = { open: null, done: 'you marked it done', dropped: 'you dismissed it' };
+
 async function setStatus(id, status) {
   if (!SETTABLE.has(status)) throw new Error(`status must be one of ${[...SETTABLE].join(', ')}`);
-  const row = await one(
-    `update commitment
-        set status = $2,
-            touched_at = now(),
-            closed_at = case when $2 = 'open' then null else now() end,
-            closed_reason = case when $2 = 'open' then null
-                                 when $2 = 'done' then 'you marked it done'
-                                 else 'you dismissed it' end
-      where id = $1 returning id, status, summary`,
-    [id, status]
-  );
-  if (!row) throw new Error(`no commitment #${id}`);
-  return row;
+  const r = await ledger.transition({ commitmentId: id, to: status, actor: 'you', reason: REASON[status] });
+  if (!r.changed && r.skip === 'commitment not found') throw new Error(`no commitment #${id}`);
+  return one('select id, status, summary from commitment where id = $1', [id]);
 }
 
 // Closed in the last few days, newest first — by you or by the assistant.

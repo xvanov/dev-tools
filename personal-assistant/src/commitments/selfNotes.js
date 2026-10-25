@@ -15,7 +15,8 @@
 //   - expire() closes the ones nobody touched for EXPIRE_DAYS. A PR merging
 //     or closing still closes them first (ingest/githubReconcile.js).
 
-const { query } = require('../db');
+const { rows } = require('../db');
+const ledger = require('../ledger');
 const { logger } = require('../log');
 
 const log = logger('self-notes');
@@ -64,19 +65,28 @@ function group(notes) {
  * run's business and are left alone). Returns how many.
  */
 async function expire({ days = EXPIRE_DAYS } = {}) {
-  const r = await query(
-    `update commitment set status = 'dropped', closed_at = now(), closed_reason = $2
-      where id in (
-        select c.id from commitment c
-          join source_item si on si.id = c.source_item_id
-          left join person per on per.id = c.counterparty_person_id
-         where c.status = 'open' and c.superseded_by is null
-           and coalesce(c.touched_at, si.occurred_at) < now() - ($1 || ' days')::interval
-           and ${SELF_NOTE})`,
-    [String(days), `expired: a note from your own work, untouched for ${days} days`]
+  const due = await rows(
+    `select c.id from commitment c
+       join source_item si on si.id = c.source_item_id
+       left join person per on per.id = c.counterparty_person_id
+      where c.status = 'open' and c.superseded_by is null
+        and coalesce(c.touched_at, si.occurred_at) < now() - ($1 || ' days')::interval
+        and ${SELF_NOTE}`,
+    [String(days)]
   );
-  if (r.rowCount) log.info('expired self-notes', { count: r.rowCount });
-  return r.rowCount || 0;
+  let count = 0;
+  for (const { id } of due) {
+    const r = await ledger.transition({
+      commitmentId: id,
+      to: 'dropped',
+      actor: 'self-notes',
+      reason: `expired: a note from your own work, untouched for ${days} days`,
+      from: ['open'],
+    });
+    if (r.changed) count++;
+  }
+  if (count) log.info('expired self-notes', { count });
+  return count;
 }
 
 module.exports = { SELF_NOTE, EXPIRE_DAYS, groupKey, group, expire };

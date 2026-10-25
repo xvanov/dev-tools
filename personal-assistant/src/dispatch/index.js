@@ -20,6 +20,7 @@ const { one, rows, query } = require('../db');
 const { mode: resolveMode } = require('./modes');
 const { buildBrief, openingPrompt } = require('./brief');
 const termhub = require('./termhub');
+const ledger = require('../ledger');
 const { logger } = require('../log');
 
 const exec = promisify(execFile);
@@ -200,7 +201,7 @@ async function start({ commitmentId = null, task = null, mode: modeName, repoPat
   );
 
   if (commitmentId) {
-    await query(`update commitment set status = 'dispatched' where id = $1`, [commitmentId]);
+    await ledger.transition({ commitmentId, to: 'dispatched', actor: 'dispatch', reason: `run #${run.id}`, from: ['open'] });
   }
 
   // Waits for Claude's prompt (answering the folder-trust question a new
@@ -277,7 +278,7 @@ async function startRemote({ commitmentId, task, modeName, repoPath, machineName
     [run.id, started.sessionId, started.briefPath, started.worktreePath, branch]
   );
   if (commitmentId) {
-    await query(`update commitment set status = 'dispatched' where id = $1`, [commitmentId]);
+    await ledger.transition({ commitmentId, to: 'dispatched', actor: 'dispatch', reason: `run #${run.id}`, from: ['open'] });
   }
   await termhub.briefClaude(hub, started.sessionId, openingPrompt(run)).catch((err) => {
     log.warn('could not type the opening prompt', { run: run.id, message: err.message });
@@ -395,7 +396,7 @@ async function land(runId, { openMr = null } = {}) {
     mrUrl,
   ]);
   if (run.commitment_id) {
-    await query(`update commitment set status = 'done' where id = $1`, [run.commitment_id]);
+    await ledger.transition({ commitmentId: run.commitment_id, to: 'done', actor: 'dispatch', reason: `run #${runId} landed${mrUrl ? `: ${mrUrl}` : ''}` });
   }
 
   return { pushed: true, branch: run.branch, mrUrl };
@@ -447,7 +448,7 @@ async function drop(runId, { force = false } = {}) {
     }
     await query(`update run set status = 'dropped', ended_at = now() where id = $1`, [runId]);
     if (run.commitment_id) {
-      await query(`update commitment set status = 'open' where id = $1 and status = 'dispatched'`, [run.commitment_id]);
+      await ledger.transition({ commitmentId: run.commitment_id, to: 'open', actor: 'dispatch', reason: `run #${runId} dropped`, from: ['dispatched'] });
     }
     return { remote: true, removed, worktree: run.worktree_path, machine: run.machine };
   }
@@ -475,9 +476,7 @@ async function drop(runId, { force = false } = {}) {
 
   await query(`update run set status = 'dropped', ended_at = now() where id = $1`, [runId]);
   if (run.commitment_id) {
-    await query(`update commitment set status = 'open' where id = $1 and status = 'dispatched'`, [
-      run.commitment_id,
-    ]);
+    await ledger.transition({ commitmentId: run.commitment_id, to: 'open', actor: 'dispatch', reason: `run #${runId} dropped`, from: ['dispatched'] });
   }
   return true;
 }

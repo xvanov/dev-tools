@@ -23,6 +23,7 @@
 // restatement; nothing is deleted.
 
 const { rows, query } = require('../db');
+const ledger = require('../ledger');
 const { logger } = require('../log');
 
 const log = logger('github');
@@ -205,12 +206,8 @@ async function reconcile({ api, login }) {
   const { checked, closes, duplicates } = await plan({ api, login });
   let closed = 0;
   for (const c of closes) {
-    const r = await query(
-      `update commitment set status = $2, closed_reason = $3, closed_at = now()
-        where id = $1 and status = 'open'`,
-      [c.id, c.status, c.reason]
-    );
-    closed += r.rowCount || 0;
+    const r = await ledger.transition({ commitmentId: c.id, to: c.status, actor: 'github', reason: c.reason, from: ['open'] });
+    if (r.changed) closed++;
   }
   let folded = 0;
   for (const d of duplicates) {
