@@ -8,7 +8,8 @@ pushes me**. It extends `PLAN.md`; where the two disagree, this file is newer an
 `ledger_transition`, undo), the reconciler (`src/ledger/reconcile.js`, every minute, auto-close at
 ≥ 0.8 with a "Looks done?" card below), re-distillation that keeps closed work (`distill/keep.js`),
 head+tail Claude sessions, and the source-health banner and toast (`ingest/health.js`). Phases
-2–4 are not started.
+2–4 are not started, except phase 4's last item: Claude sessions from the other `PA_MACHINES`
+are ingested through termhub's read-only `/api/claude/transcripts` (`ingest/remoteSessions.js`).
 
 ## 1. Why — what is actually broken
 

@@ -181,6 +181,15 @@ async function main() {
     await ingest.runAll(['claude_session']);
   });
 
+  // The other machines' sessions, through their termhubs
+  // (src/ingest/remoteSessions.js). Its own pass so an unreachable machine's
+  // timeouts never hold up the local one.
+  if (Object.keys(config.termhub.machines).length) {
+    every(300, 'remote-sessions', async () => {
+      await ingest.runAll(['claude_session_remote']);
+    });
+  }
+
   // The audio cycle: Python trims and transcribes completed capture files,
   // then the sidecars it wrote become episodes here, then a meeting that is
   // over gets its debrief (src/meetings/debrief.js).

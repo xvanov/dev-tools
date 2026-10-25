@@ -12,13 +12,14 @@ const teamsLocal = require('./teamsLocal');
 const github = require('./github');
 const jira = require('./jira');
 const claudeSessions = require('./claudeSessions');
+const remoteSessions = require('./remoteSessions');
 const audio = require('./audio');
 const { recordError } = require('./store');
 const { logger } = require('../log');
 
 const log = logger('ingest');
 
-const SOURCES = [graphMail, graphCalendar, teamsLocal, graphChat, github, jira, claudeSessions, audio];
+const SOURCES = [graphMail, graphCalendar, teamsLocal, graphChat, github, jira, claudeSessions, remoteSessions, audio];
 
 function byId(id) {
   return SOURCES.find((s) => s.id === id) || null;
