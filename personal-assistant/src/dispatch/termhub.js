@@ -169,6 +169,27 @@ function client(baseUrl) {
     return payload?.dirs || [];
   }
 
+  // That machine's Claude Code transcripts, read-only (termhub's
+  // lib/transcripts.js) — how sessions on other machines reach the store
+  // (src/ingest/remoteSessions.js). An older termhub answers 404 on the route.
+  async function claudeTranscripts({ limit = 100 } = {}) {
+    const payload = await api(`/api/claude/transcripts?limit=${encodeURIComponent(limit)}`);
+    return payload?.transcripts || [];
+  }
+
+  // One transcript, verbatim. Text, not JSON — it is JSON Lines.
+  async function claudeTranscript(id, { timeoutMs = 60_000 } = {}) {
+    const path = `/api/claude/transcript?id=${encodeURIComponent(id)}`;
+    const res = await fetch(root + path, { signal: AbortSignal.timeout(timeoutMs) });
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      const err = new Error(`termhub ${res.status} on ${path}: ${text.slice(0, 200)}`);
+      err.status = res.status;
+      throw err;
+    }
+    return res.text();
+  }
+
   // The URL to open in a browser. termhub publishes an HTTPS address over
   // Tailscale Serve; fall back to the configured base when it cannot say.
   async function sessionUrl(id) {
@@ -182,7 +203,7 @@ function client(baseUrl) {
     return `${origin}/?session=${encodeURIComponent(id)}`;
   }
 
-  return { base: root, api, reachable, listSessions, createSession, killSession, say, screen, dirs, sessionUrl };
+  return { base: root, api, reachable, listSessions, createSession, killSession, say, screen, dirs, sessionUrl, claudeTranscripts, claudeTranscript };
 }
 
 // Pure: what Claude's screen is asking for. 'trust' is the first-run "do you

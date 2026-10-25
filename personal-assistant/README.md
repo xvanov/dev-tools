@@ -457,6 +457,16 @@ for a remote run they point you at the session instead, and `pa drop` leaves the
 machine for you to remove. **Context** on the dashboard shows the ask, its thread and its runs
 before you dispatch.
 
+**Sessions on those machines are ingested too.** Every five minutes the worker reads each
+`PA_MACHINES` machine's Claude Code transcripts through its termhub (`GET /api/claude/transcripts`,
+read-only; `src/ingest/remoteSessions.js`) and stores them as `claude_session` items exactly as
+local ones, with `raw.machine` set, the id and thread prefixed `<machine>:` and the subject ending
+`(on <machine>)` — so a remote run's work is evidence like any other. Only new or changed
+transcripts are fetched; each machine has its own cursor, `claude_session@<machine>`, and a machine
+that is off or unreachable is an `ERROR` line on that cursor in `pa doctor`, not a failed pass.
+"termhub on X is too old" means that machine's termhub predates the route: run
+`termhub/windows/update.ps1` there. `pa sync --source claude_session_remote` runs it by hand.
+
 ### Secrets and sign-ins
 
 When the assistant — or an agent through MCP — needs a credential, it asks; you never hand-edit
@@ -659,7 +669,7 @@ termhub at `/pa/` (the **PA** button), so all of this works away from the desk.
 ```
 bin/pa.js            the CLI entry point
 src/config.js        every knob, resolved once
-src/ingest/          Microsoft 365 mail/calendar/Teams (connector), the Teams local cache, GitHub, Jira, Claude sessions, audio episodes
+src/ingest/          Microsoft 365 mail/calendar/Teams (connector), the Teams local cache, GitHub, Jira, Claude sessions (this machine and, through termhub, the others), audio episodes
 src/distill/         the extraction prompt, identity resolution, the pass itself
 src/projects/        the project ↔ repo table and the scorer that guesses
 src/search/          hybrid retrieval: full text + vector + people named, fused, Cohere-reranked

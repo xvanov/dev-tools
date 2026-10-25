@@ -88,25 +88,35 @@ function parseTranscript(text) {
   return { sessionId, title, cwd, gitBranch, firstAt, lastAt, turns };
 }
 
-function toItem(parsed, file) {
+// `machine` is set for a session read from another machine's termhub
+// (src/ingest/remoteSessions.js), and then `file` is termhub's transcript id.
+// Its ids are prefixed with the machine name: the same repo path on two
+// machines is two different working trees, and a local row must never be
+// overwritten by a remote one, or the reverse.
+function toItem(parsed, file, { machine = null } = {}) {
   const body = parsed.turns
     .map((t) => `${t.role === 'me' ? '>>' : '<<'} ${t.text}`)
     .join('\n\n');
 
+  const sessionId = parsed.sessionId || path.basename(file, '.jsonl');
+  const subject = parsed.title || `Claude session in ${path.basename(parsed.cwd || 'unknown')}`;
+  const raw = {
+    cwd: parsed.cwd,
+    gitBranch: parsed.gitBranch,
+    turns: parsed.turns.length,
+    startedAt: parsed.firstAt,
+    transcript: file,
+  };
+  if (machine) raw.machine = machine;
+
   return {
-    externalId: parsed.sessionId || path.basename(file, '.jsonl'),
-    threadExternalId: parsed.cwd || null,
+    externalId: machine ? `${machine}:${sessionId}` : sessionId,
+    threadExternalId: parsed.cwd ? (machine ? `${machine}:${parsed.cwd}` : parsed.cwd) : null,
     occurredAt: parsed.lastAt || new Date().toISOString(),
     authorIdentity: 'me',
-    subject: parsed.title || `Claude session in ${path.basename(parsed.cwd || 'unknown')}`,
+    subject: machine ? `${subject} (on ${machine})` : subject,
     bodyText: headTail(body, MAX_BODY),
-    raw: {
-      cwd: parsed.cwd,
-      gitBranch: parsed.gitBranch,
-      turns: parsed.turns.length,
-      startedAt: parsed.firstAt,
-      transcript: file,
-    },
+    raw,
   };
 }
 
