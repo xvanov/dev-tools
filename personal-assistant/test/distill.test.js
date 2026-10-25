@@ -122,4 +122,24 @@ const REF = '2026-09-01T10:00:00.000Z';
   assert.match(msg, /can you look at the import/);
 }
 
+{
+  // Re-distilling keeps what anything acted on, and what it says again.
+  const keep = require('../src/distill/keep');
+  const existing = [
+    { id: 1, status: 'done', summary: 'Open a fix PR for the export timeout', touched: false, refs: true },
+    { id: 2, status: 'open', summary: 'Send Ysolde the rollout notes', touched: false, refs: false },
+    { id: 3, status: 'open', summary: 'Book the retro room', touched: false, refs: false },
+    { id: 4, status: 'open', summary: 'Review the ledger-portal access request', touched: true, refs: false },
+  ];
+  const p = keep.plan(existing, [
+    { summary: 'Open a fix PR for the export timeout issue' }, // restates a closed one: not inserted
+    { summary: 'Send Ysolde the rollout notes' }, // said again: kept with its id
+    { summary: 'Rotate the staging API key' }, // new
+  ]);
+  assert.deepStrictEqual(p.keep.sort(), [1, 2, 4]);
+  assert.deepStrictEqual(p.remove, [3]);
+  assert.deepStrictEqual(p.insert.map((c) => c.summary), ['Rotate the staging API key']);
+  assert.strictEqual(keep.same('Review PR #12', 'Merge the release branch'), false);
+}
+
 console.log('distill.test.js ok');

@@ -22,7 +22,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { saveItems } = require('./store');
-const { truncate } = require('../util/text');
+const { headTail } = require('../util/text');
 const { logger } = require('../log');
 
 const log = logger('claude-sessions');
@@ -99,7 +99,7 @@ function toItem(parsed, file) {
     occurredAt: parsed.lastAt || new Date().toISOString(),
     authorIdentity: 'me',
     subject: parsed.title || `Claude session in ${path.basename(parsed.cwd || 'unknown')}`,
-    bodyText: truncate(body, MAX_BODY),
+    bodyText: headTail(body, MAX_BODY),
     raw: {
       cwd: parsed.cwd,
       gitBranch: parsed.gitBranch,

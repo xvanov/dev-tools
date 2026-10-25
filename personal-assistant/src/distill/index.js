@@ -19,6 +19,7 @@ const identity = require('./identity');
 const projects = require('../projects');
 const resolve = require('../projects/resolve');
 const { logger } = require('../log');
+const keep = require('./keep');
 
 const log = logger('distill');
 
@@ -63,21 +64,33 @@ async function callModel(item, context) {
   return parseResponse(text, { referenceIso: new Date(item.occurred_at).toISOString() });
 }
 
+// The item's live commitments, with whether anything has acted on them
+// (src/distill/keep.js decides what a re-distillation may replace).
+const EXISTING = `
+  select c.id, c.status, c.summary, c.touched_at is not null as touched,
+         (exists (select 1 from draft d where d.commitment_id = c.id)
+          or exists (select 1 from run r where r.commitment_id = c.id)
+          or exists (select 1 from ledger_transition t where t.commitment_id = c.id)
+          or exists (select 1 from ledger_evidence e where e.commitment_id = c.id)
+          or exists (select 1 from reply_close rc where rc.commitment_id = c.id)) as refs
+    from commitment c
+   where c.source_item_id = $1 and c.superseded_by is null`;
+
 // Writes one item's results. The distillation marker goes in the same
 // transaction as the rows it explains, so a crash mid-write cannot leave an
-// item marked done with half its commitments missing.
+// item marked done with half its commitments missing. A commitment anything
+// has acted on survives a re-distillation untouched (keep.js).
 async function persist(item, result, resolved) {
   return withTx(async (client_) => {
-    await client_.query('delete from commitment where source_item_id = $1 and extracted_by = $2', [
-      item.id,
-      PROMPT_VERSION,
-    ]);
+    const existing = (await client_.query(EXISTING, [item.id])).rows;
+    const p = keep.plan(existing, result.commitments);
+    if (p.remove.length) await client_.query('delete from commitment where id = any($1::bigint[])', [p.remove]);
     await client_.query('delete from fact where source_item_id = $1 and extracted_by = $2', [
       item.id,
       PROMPT_VERSION,
     ]);
 
-    for (const c of result.commitments) {
+    for (const c of p.insert) {
       const match = resolved.byCommitment.get(c);
       await client_.query(
         `insert into commitment

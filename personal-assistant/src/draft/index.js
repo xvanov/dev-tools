@@ -379,7 +379,13 @@ async function markSent(draftId, { closeCommitment = false } = {}) {
   );
   if (!row) throw new Error(`draft #${draftId} is not open`);
   if (closeCommitment && row.commitment_id) {
-    await query(`update commitment set status = 'done' where id = $1 and status = 'open'`, [row.commitment_id]);
+    await require('../ledger').transition({
+      commitmentId: row.commitment_id,
+      to: 'done',
+      actor: 'you',
+      reason: `you sent the reply (draft #${draftId})`,
+      from: ['open'],
+    });
   }
   log.info('sent by hand', { draft: draftId, channel: row.channel });
   return row;

@@ -94,4 +94,17 @@ function truncate(text, max) {
   return s.length <= max ? s : s.slice(0, max - 1) + '…';
 }
 
-module.exports = { htmlToText, stripQuoted, contentHash, chunkText, truncate };
+// The start and the end of a long text, with a marker where the middle was.
+// For a body that grows at the end (a Claude session), where truncate() froze
+// it at the first `max` characters: the stored body then never changed again,
+// so nothing after the cut was ever distilled or seen as new evidence.
+function headTail(text, max, headShare = 0.25) {
+  const s = String(text ?? '');
+  if (s.length <= max) return s;
+  const marker = '\n\n[… middle of the session left out …]\n\n';
+  const head = Math.floor((max - marker.length) * headShare);
+  const tail = max - marker.length - head;
+  return s.slice(0, head) + marker + s.slice(s.length - tail);
+}
+
+module.exports = { htmlToText, stripQuoted, contentHash, chunkText, truncate, headTail };
