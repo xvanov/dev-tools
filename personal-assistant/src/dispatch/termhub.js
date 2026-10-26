@@ -220,6 +220,14 @@ function lastIndex(re, text) {
   return at;
 }
 
+// Pure: the keys that accept the trust question on this screen. Newer Claude
+// Code puts the cursor on "No, exit", where Enter alone quits Claude — run #8
+// stopped there — so the cursor moves down to "Yes" first.
+function trustKeys(text) {
+  const tail = String(text || '').slice(-1500);
+  return /❯\s*No, exit/.test(tail) ? ['\x1b[B', ''] : [''];
+}
+
 function claudeScreenState(text) {
   const tail = String(text || '');
   const trust = lastIndex(TRUST, tail);
@@ -241,9 +249,13 @@ async function briefClaude(hub, id, prompt, { timeoutMs = 90_000 } = {}) {
   let trusted = false;
   let state = null;
   while (Date.now() < until) {
-    state = claudeScreenState(await hub.screen(id));
+    const text = await hub.screen(id);
+    state = claudeScreenState(text);
     if (state === 'trust') {
-      await hub.say(id, '', { submit: true });
+      for (const key of trustKeys(text)) {
+        await hub.say(id, key, { submit: key === '' });
+        await pause(300);
+      }
       trusted = true;
       await pause(2500);
       continue;
@@ -274,4 +286,4 @@ function forMachine(name) {
   return isLocal(name) ? local : client(config.termhub.machines[name].url);
 }
 
-module.exports = { ...local, client, forMachine, isLocal, briefClaude, claudeScreenState };
+module.exports = { ...local, client, forMachine, isLocal, briefClaude, claudeScreenState, trustKeys };

@@ -493,6 +493,8 @@ your hub's peers, so you attach to it the same way. Machines are listed in `PA_M
 only to Windows machines; a Linux machine (a `reposRoot` starting with `/`) is listed only so its
 Claude sessions are read.
 
+A run's worktree is trusted ahead of time (the worktrees root is marked trusted in `~/.claude.json`, `src/dispatch/trust.js`), so Claude never stops at its folder-trust question; if the question shows anyway, the cursor is moved to *Yes* first, since newer Claude Code puts it on *No, exit*.
+
 The dispatcher cannot touch that disk, so it types the setup into a fresh shell there and checks
 the result through termhub's API before starting Claude: `git fetch`, a worktree under
 `<reposRoot>\.pa-worktrees\run-<id>` on branch `pa/<id>-…`, the dead pushurl for a mode that may

@@ -189,6 +189,13 @@ async function start({ commitmentId = null, task = null, mode: modeName, repoPat
   fs.mkdirSync(path.dirname(briefPath), { recursive: true });
   fs.writeFileSync(briefPath, briefText, 'utf8');
 
+  // Every worktree is a folder Claude has never seen; trusted ahead of time
+  // so its session does not stop at the trust question (src/dispatch/trust.js).
+  try {
+    require('./trust').ensureTrusted(config.worktreesRoot);
+  } catch (err) {
+    log.warn('could not mark the worktrees trusted', { message: err.message });
+  }
   const session = await termhub.createSession({
     cwd: worktreePath || repo || config.reposRoot,
     command: config.termhub.claudeCommand,

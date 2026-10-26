@@ -52,8 +52,22 @@ assert.ok(local[local.length - 1].startsWith('Set-Location'), 'ends in the workt
 
 // --- what Claude's screen is asking for ------------------------------------
 
-const { claudeScreenState } = require('../src/dispatch/termhub');
+const { claudeScreenState, trustKeys } = require('../src/dispatch/termhub');
 assert.strictEqual(claudeScreenState(''), null);
+// The newer prompt has the cursor on "No, exit": Enter alone quits Claude.
+const newTrust = ' Quick safety check: Is this a project you created or one you trust?\n ❯ No, exit\n   Yes, I trust this folder\n Enter to confirm';
+assert.strictEqual(claudeScreenState(newTrust), 'trust');
+assert.deepStrictEqual(trustKeys(newTrust), ['\x1b[B', '']);
+assert.deepStrictEqual(trustKeys('Do you trust the files in this folder?\n❯ 1. Yes, proceed\n  2. No, exit'), ['']);
+{
+  const { withTrust, key } = require('../src/dispatch/trust');
+  const dir = process.platform === 'win32' ? 'C:\\data\\worktrees' : '/data/worktrees';
+  const next = withTrust({ projects: { other: { x: 1 } }, keep: true }, dir);
+  assert.strictEqual(next.projects[key(dir)].hasTrustDialogAccepted, true);
+  assert.deepStrictEqual(next.projects.other, { x: 1 });
+  assert.strictEqual(next.keep, true);
+  assert.strictEqual(withTrust(next, dir), null); // already trusted: no write
+}
 assert.strictEqual(claudeScreenState('Claude Code v2\nDo you trust the files in this folder?\n> 1. Yes, proceed'), 'trust');
 assert.strictEqual(claudeScreenState('… bypass permissions on (shift+tab to cycle)'), 'ready');
 // An answered trust question is still in the replay above the input box.
