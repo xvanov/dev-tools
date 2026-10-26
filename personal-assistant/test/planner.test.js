@@ -22,6 +22,17 @@ const { prompt, refs } = P.buildPrompt(todos, repos);
 }
 
 {
+  // What already happened goes in, so a merged feature is not offered again.
+  const { prompt: p2 } = P.buildPrompt(
+    [{ id: 9, summary: 'Add a copy button', project: 'app', progress: ['button under every answer'], recentPrs: ['PR o/app#149: Copy button'] }],
+    ['app']
+  );
+  assert.match(p2, /progress so far: button under every answer/);
+  assert.match(p2, /PR in this repo since the ask: PR o\/app#149: Copy button/);
+  assert.match(P.SYSTEM, /already done, the action is "none"/);
+}
+
+{
   const plans = P.parsePlans(
     {
       plans: [

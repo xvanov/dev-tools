@@ -121,10 +121,52 @@ async function act(p) {
   return plan;
 }
 
+// What is already known to have happened: the reconciler's "progresses"
+// quotes, and my PRs in the ask's repo since it was made. The planner once
+// offered a run to build a button that had merged four days earlier.
+async function background(todos) {
+  const ids = todos.map((t) => t.id);
+  const progress = await rows(
+    `select commitment_id, quote from ledger_evidence
+      where commitment_id = any($1::bigint[]) and effect = 'progresses' and quote is not null
+      order by created_at desc`,
+    [ids]
+  );
+  const shipped = await rows(
+    `select c.id as commitment_id, si.subject
+       from commitment c
+       join source_item ask on ask.id = c.source_item_id
+       join project pr on pr.id = c.project_id
+       join source_item si on si.source = 'github_pr'
+        and lower(si.raw->>'project') = lower(pr.gitlab_path)
+        and si.occurred_at > ask.occurred_at - interval '1 day'
+      where c.id = any($1::bigint[])
+      order by si.occurred_at desc`,
+    [ids]
+  );
+  const by = (list, field) => {
+    const m = new Map();
+    for (const r of list) {
+      const k = String(r.commitment_id);
+      if (!m.has(k)) m.set(k, []);
+      if (m.get(k).length < 8) m.get(k).push(r[field]);
+    }
+    return m;
+  };
+  const p = by(progress, 'quote');
+  const s = by(shipped, 'subject');
+  return todos.map((t) => ({ ...t, progress: p.get(String(t.id)) || [], recentPrs: s.get(String(t.id)) || [] }));
+}
+
 async function pass({ limit = BATCH } = {}) {
-  const todos = await due(limit);
+  let todos = await due(limit);
   if (!todos.length) return { planned: 0 };
   if (!(await require('../budget').allow('planner').catch(() => false))) return { planned: 0, skipped: 'budget' };
+  // Judged first: an ask already answered or delivered gets no plan at all.
+  await require('../ledger/reconcile').pass({ ids: todos.map((t) => Number(t.id)) }).catch(() => null);
+  todos = await due(limit);
+  if (!todos.length) return { planned: 0 };
+  todos = await background(todos);
 
   const repos = (await require('../projects').candidates()).map((p) => p.name);
   const { prompt, refs } = P.buildPrompt(todos, repos);
@@ -152,4 +194,4 @@ async function pass({ limit = BATCH } = {}) {
   return { planned: todos.length, ...counts };
 }
 
-module.exports = { pass, due };
+module.exports = { pass, due, background };
