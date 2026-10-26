@@ -192,7 +192,10 @@ async function start({ commitmentId = null, task = null, mode: modeName, repoPat
   // Every worktree is a folder Claude has never seen; trusted ahead of time
   // so its session does not stop at the trust question (src/dispatch/trust.js).
   try {
+    // The run's own folder too: a folder once refused (an earlier attempt)
+    // carries its own "not trusted" entry, which outranks the root's.
     require('./trust').ensureTrusted(config.worktreesRoot);
+    if (worktreePath) require('./trust').ensureTrusted(worktreePath);
   } catch (err) {
     log.warn('could not mark the worktrees trusted', { message: err.message });
   }

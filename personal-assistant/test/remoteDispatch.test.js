@@ -59,6 +59,11 @@ const newTrust = ' Quick safety check: Is this a project you created or one you 
 assert.strictEqual(claudeScreenState(newTrust), 'trust');
 assert.deepStrictEqual(trustKeys(newTrust), ['\x1b[B', '']);
 assert.deepStrictEqual(trustKeys('Do you trust the files in this folder?\n❯ 1. Yes, proceed\n  2. No, exit'), ['']);
+// termhub's replay as it really came back for run #8: every space gone.
+const squashed = 'Accessingworkspace:C:\\x\\run-8Quicksafetycheck:Isthisaprojectyoucreatedoroneyoutrust?❯No,exitYes,ItrustthisfolderEntertoconfirm';
+assert.strictEqual(claudeScreenState(squashed), 'trust');
+assert.deepStrictEqual(trustKeys(squashed), ['\x1b[B', '']);
+assert.strictEqual(claudeScreenState(squashed + '❯Try"fix lint"⏵⏵bypasspermissionson'), 'ready');
 {
   const { withTrust, key } = require('../src/dispatch/trust');
   const dir = process.platform === 'win32' ? 'C:\\data\\worktrees' : '/data/worktrees';

@@ -211,8 +211,11 @@ function client(baseUrl) {
 // seen); 'ready' is its input box; null is still starting.
 // The replay keeps what scrolled past, so whichever appeared *last* wins: an
 // answered trust question is still in the buffer above the input box.
-const TRUST = /trust (the files in )?this folder|Do you trust|Is this a project you (created|trust)|Yes, proceed/gi;
-const READY = /bypass permissions|\? for shortcuts|shift\+tab to cycle|Try "/gi;
+// Matched with all whitespace removed: termhub's replay of a full-screen
+// prompt often loses its spaces ("Isthisaprojectyoucreated", "❯No,exit").
+const squash = (text) => String(text || '').replace(/\s+/g, '');
+const TRUST = /trust(thefilesin)?thisfolder|Doyoutrust|Isthisaprojectyou(created|trust)|Yes,proceed/gi;
+const READY = /bypasspermissions|\?forshortcuts|shift\+tabtocycle|Try"/gi;
 
 function lastIndex(re, text) {
   let at = -1;
@@ -224,12 +227,13 @@ function lastIndex(re, text) {
 // Code puts the cursor on "No, exit", where Enter alone quits Claude — run #8
 // stopped there — so the cursor moves down to "Yes" first.
 function trustKeys(text) {
-  const tail = String(text || '').slice(-1500);
-  return /❯\s*No, exit/.test(tail) ? ['\x1b[B', ''] : [''];
+  const tail = squash(text).slice(-1200);
+  const no = tail.lastIndexOf('❯No,exit');
+  return no >= 0 && no > tail.lastIndexOf('❯Yes') ? ['\x1b[B', ''] : [''];
 }
 
 function claudeScreenState(text) {
-  const tail = String(text || '');
+  const tail = squash(text);
   const trust = lastIndex(TRUST, tail);
   const ready = lastIndex(READY, tail);
   if (trust < 0 && ready < 0) return null;
