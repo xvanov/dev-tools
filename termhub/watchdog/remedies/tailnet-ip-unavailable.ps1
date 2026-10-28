@@ -100,6 +100,20 @@
 # NeedsLogin, since no script-only fix is known for it. A human needs to look at tailscaled
 # itself (its logs are SYSTEM-locked from a non-elevated session: even reading
 # `%ProgramData%\Tailscale\tailscaled.log*.txt` needs elevation) - this is not termhub's bug.
+#
+# WHAT THE 2026-10-28 ESCALATION FOUND (LAP-US101): NeedsLogin again, and this remedy did
+# exactly what section 4 says (loopback front already healthy, sessiond pid 6664 with 5 live
+# sessions untouched). What it MISSED was evidence, not a repair: this time the node looked
+# recoverable on paper - `status --json` had HaveNodeKey=true, `tailscale debug prefs` had
+# LoggedOut=false and WantRunning=true, the Health line said "The last login error was: fetch
+# control key: ... context canceled", and controlplane.tailscale.com/key answered 200 from the
+# box. That reads like a network blip a reconnect would clear. It is not: a bounded
+# `tailscale up --timeout=20s` (bare - CorpDNS is default here now) printed a FRESH auth URL and
+# timed out, BackendState still NeedsLogin. So HaveNodeKey/LoggedOut=false do NOT mean `up` can
+# reconnect silently; NeedsLogin stays human-only and section 4's "do not try `up`" holds (it
+# also re-mints the auth URL, so a URL logged by an earlier run goes stale). The remedy now
+# prints tailscaled's Health text next to the auth URL, so the next responder sees the
+# backend's own reason without re-deriving all of the above by hand.
 
 param(
   [string]$Signature,
@@ -194,13 +208,14 @@ function Wait-TailnetIp {
 # BackendState is what separates "reconnect it" from "a human must log in", and it is
 # only in the JSON. Asked with stderr dropped so an error line cannot corrupt the parse.
 function Get-TailscaleBackend {
-  $out = @{ State = ''; AuthUrl = '' }
+  $out = @{ State = ''; AuthUrl = ''; Health = '' }
   $r = Invoke-Tailscale -TsArgs @('status', '--json') -DropStderr
   if ($r.Code -eq 0 -and $r.Text) {
     try {
       $j = $r.Text | ConvertFrom-Json
       $out.State = [string]$j.BackendState
       if ($j.AuthURL) { $out.AuthUrl = [string]$j.AuthURL }
+      if ($j.Health)  { $out.Health = (@($j.Health) -join ' | ') }
     } catch { }
   }
   if (-not $out.AuthUrl) {
@@ -302,6 +317,7 @@ if (-not $ip -and (Get-RemainingSec) -gt 30) {
       # does not fail fast.
       $where = if ($backend.AuthUrl) { $backend.AuthUrl } else { "(run 'tailscale login' on the machine to get one)" }
       Write-Host "remedy: this node is LOGGED OUT of the tailnet. No script can re-authenticate it - a human must open: $where"
+      if ($backend.Health) { Write-Host "remedy: tailscaled health: $($backend.Health)" }
     }
   }
 }
