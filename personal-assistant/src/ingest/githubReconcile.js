@@ -15,7 +15,9 @@
 // last two settle on merged or closed, and a review ask also on a review the
 // user submitted after it was asked ("can you review #1814" in chat is done
 // once you have reviewed #1814). "Requested from a team" is about GitHub's
-// review requests, which a chat ask is not.
+// review requests, which a chat ask is not. An ask naming several PRs ("Have
+// Brannoc approve ERP PRs 2023, 2064 and 2076", "Address the comments on PRs
+// #2064 and #2056") settles only when every one of them is merged or closed.
 //
 // It also folds repeated review asks for one PR into one: each notification
 // about a PR used to be distilled into a fresh "Review PR …" card. The older
@@ -57,6 +59,57 @@ function refFor(c) {
   if (numbers.length !== 1) return null;
   const [owner, repo] = c.projectPath.split('/');
   return { ref: { owner, repo, number: numbers[0], key: `${owner}/${repo}#${numbers[0]}`.toLowerCase() }, fromText: true };
+}
+
+// "Have Quill Ashby re-review ERP PR #2021" is the same ask as "re-review PR
+// #2021", owed to me instead of by me.
+const HAVE_SOMEONE = /^[Hh]ave\s+(?:[A-Z][\w'.-]*\s+){1,3}(?=(?:re-?)?(?:review|approve|merge)\b)/;
+// "Address the review comments on PRs #2064 and #2056" is moot once they merged.
+const COMMENTS_ASK = /^(?:finish\s+)?(?:address|fix(?:ing)?|resolve|answer)\b.*\bcomments?\b/i;
+const PR_WORD = /\b(?:PRs?|pull\s+requests?)\b/i;
+// A PR number in a list: "#2062", "2023," — not "134.1.0", "5a" or "PR-5".
+const LIST_NUMBER = /(?<![\w.\-])#?(\d{1,6})(?![\w\-]|\.\d)/g;
+
+/**
+ * Every PR a commitment is about, for asks that name several ("Review and
+ * approve ERP PRs #2062 and #2056", "Have Brannoc review ERP PRs 2023, 2064,
+ * and 2076") or name the PR without the word ("Finish fixing the review
+ * comments on ERP #2062"), which refFor does not guess at. A multi-PR ask is
+ * settled only once every PR it names is merged or closed — see `settledAll`.
+ * @param {object} c  as refFor, plus projectName (the project's short name, e.g. "erp")
+ * @returns {{refs: Array, fromText: true}|null}
+ */
+function refsFor(c) {
+  const single = refFor(c);
+  if (single) return { refs: [single.ref], fromText: single.fromText };
+  const summary = String(c.summary || '').replace(HAVE_SOMEONE, '');
+  if (!PR_ACTION.test(summary) && !COMMENTS_ASK.test(summary)) return null;
+  if (!c.projectPath || !/^[^/\s]+\/[^/\s]+$/.test(c.projectPath)) return null;
+  const name = String(c.projectName || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const marker = name ? new RegExp(`${PR_WORD.source}|\\b${name}\\b(?=\\s+#?\\d)`, 'i') : PR_WORD;
+  const at = summary.search(marker);
+  if (at < 0) return null;
+  const numbers = [...new Set([...summary.slice(at).matchAll(LIST_NUMBER)].map((m) => Number(m[1])))];
+  if (!numbers.length) return null;
+  const [owner, repo] = c.projectPath.split('/');
+  return {
+    refs: numbers.map((n) => ({ owner, repo, number: n, key: `${owner}/${repo}#${n}`.toLowerCase() })),
+    fromText: true,
+  };
+}
+
+/**
+ * A multi-PR ask, given every PR it names: done once all are merged or closed
+ * and at least one merged; dropped if all closed unmerged; otherwise open.
+ * @param {Array} list  [{ref, pr}] with pr as in verdict
+ */
+function settledAll(list) {
+  if (!list.length || list.some(({ pr }) => !pr || (!pr.merged && pr.state !== 'closed'))) return null;
+  const nums = list.map(({ ref }) => `#${ref.number}`).join(', ');
+  const merged = list.filter(({ pr }) => pr.merged);
+  if (!merged.length) return { status: 'dropped', reason: `PRs ${nums} closed without merging` };
+  const last = merged.map(({ pr }) => pr.mergedAt).filter(Boolean).sort().pop();
+  return { status: 'done', reason: `PRs ${nums} merged or closed${day(last)}` };
 }
 
 function day(iso) {
@@ -124,17 +177,18 @@ async function openWithRefs() {
     `select c.id, c.summary, c.detail, c.direction, c.status, c.superseded_by, si.raw->>'action' as action,
             si.occurred_at as asked_at,
             case when si.source like 'github%' then coalesce(si.raw->>'webUrl', si.thread_external_id, '') else '' end as url,
-            p.gitlab_path as project_path
+            p.gitlab_path as project_path, p.name as project_name
        from commitment c
        join source_item si on si.id = c.source_item_id
        left join project p on p.id = c.project_id and p.active
       where c.status in ('open','dispatched')
-        and (si.source like 'github%' or c.summary ~* '(github\\.com/|\\mPR\\M|pull request)' or c.detail ~* 'github\\.com/[^/]+/[^/]+/pull/')`
+        and (si.source like 'github%' or c.summary ~* '(github\\.com/|\\mPRs?\\M|pull request)' or c.detail ~* 'github\\.com/[^/]+/[^/]+/pull/'
+             or (p.name is not null and c.summary ~* ('\\m' || p.name || '\\M\\s+#?\\d')))`
   );
   const out = [];
   for (const c of list) {
-    const r = refFor({ summary: c.summary, detail: c.detail, url: c.url, projectPath: c.project_path });
-    if (r) out.push({ ...c, askedAt: c.asked_at, ref: r.ref, fromText: r.fromText });
+    const r = refsFor({ summary: c.summary, detail: c.detail, url: c.url, projectPath: c.project_path, projectName: c.project_name });
+    if (r) out.push({ ...c, askedAt: c.asked_at, refs: r.refs, ref: r.refs.length === 1 ? r.refs[0] : null, fromText: r.fromText });
   }
   return out;
 }
@@ -168,38 +222,42 @@ async function lookup(api, ref, login) {
  */
 async function plan({ api, login }) {
   const open = await openWithRefs();
-  const byPr = new Map();
-  for (const c of open) {
-    if (!byPr.has(c.ref.key)) byPr.set(c.ref.key, { ref: c.ref, commitments: [] });
-    byPr.get(c.ref.key).commitments.push(c);
-  }
+  // One lookup per PR, however many commitments name it.
+  const looks = new Map();
+  const look = (ref) => {
+    if (!looks.has(ref.key)) {
+      looks.set(
+        ref.key,
+        lookup(api, ref, login).catch((err) => {
+          log.debug('reconcile: PR lookup failed', { pr: ref.key, message: err.message });
+          return null;
+        })
+      );
+    }
+    return looks.get(ref.key);
+  };
 
   const closes = [];
   const settled = new Set();
-  for (const { ref, commitments } of byPr.values()) {
-    let looked;
-    try {
-      looked = await lookup(api, ref, login);
-    } catch (err) {
-      log.debug('reconcile: PR lookup failed', { pr: ref.key, message: err.message });
-      continue;
-    }
-    for (const c of commitments) {
-      if (c.status !== 'open') continue;
-      const v = verdict(c, looked.pr, looked.mine, login);
-      if (!v) continue;
-      closes.push({ id: c.id, status: v.status, reason: v.reason, pr: ref.key });
-      settled.add(String(c.id));
-    }
+  for (const c of open) {
+    const looked = await Promise.all(c.refs.map(look));
+    if (c.status !== 'open' || looked.some((l) => !l)) continue;
+    const v =
+      c.refs.length === 1
+        ? verdict(c, looked[0].pr, looked[0].mine, login)
+        : settledAll(c.refs.map((ref, i) => ({ ref, pr: looked[i].pr })));
+    if (!v) continue;
+    closes.push({ id: c.id, status: v.status, reason: v.reason, pr: c.refs.map((r) => r.key).join(' ') });
+    settled.add(String(c.id));
   }
 
   const duplicates = duplicatePlan(
     open
-      .filter((c) => !settled.has(String(c.id)))
+      .filter((c) => c.ref && !settled.has(String(c.id)))
       .map((c) => ({ id: c.id, key: c.ref.key, direction: c.direction, summary: c.summary, status: c.status, supersededBy: c.superseded_by }))
   ).map((d) => ({ ...d, pr: open.find((c) => String(c.id) === String(d.id)).ref.key }));
 
-  return { checked: byPr.size, closes, duplicates };
+  return { checked: looks.size, closes, duplicates };
 }
 
 async function reconcile({ api, login }) {
@@ -222,4 +280,4 @@ async function reconcile({ api, login }) {
   return { checked, closed, folded };
 }
 
-module.exports = { reconcile, plan, verdict, prRef, refFor, duplicatePlan };
+module.exports = { reconcile, plan, verdict, prRef, refFor, refsFor, settledAll, duplicatePlan };

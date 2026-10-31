@@ -4,7 +4,7 @@
 // requests were never addressed to the reader.
 
 const assert = require('assert');
-const { verdict, prRef, refFor, duplicatePlan } = require('../src/ingest/githubReconcile');
+const { verdict, prRef, refFor, refsFor, settledAll, duplicatePlan } = require('../src/ingest/githubReconcile');
 const { reviewAction } = require('../src/ingest/github');
 
 const me = 'quill';
@@ -53,6 +53,37 @@ assert.strictEqual(verdict(review, { ...open, merged: true, mergedAt: '2031-04-0
   assert.strictEqual(refFor({ summary: 'Merge PR 8 before PR 9', url: '', projectPath: 'acme/gizmo' }), null);
   assert.strictEqual(refFor({ summary: 'Review PRs 12 and 14', url: '', projectPath: 'acme/gizmo' }), null);
   assert.strictEqual(refFor({ summary: 'Review PR #63', url: '', projectPath: null }), null);
+}
+
+// Asks naming several PRs, or naming them without the word "PR".
+{
+  const erp = { url: '', projectPath: 'innergy-dev/erp', projectName: 'erp' };
+  const keys = (summary) => refsFor({ ...erp, summary })?.refs.map((r) => r.number) ?? null;
+  assert.deepStrictEqual(keys('Review and approve ERP PRs #2062 (search API rate limit) and #2056 (paced tenant fill job)'), [2062, 2056]);
+  assert.deepStrictEqual(keys('Have Brannoc review and approve ERP PRs 2023, 2064, and 2076'), [2023, 2064, 2076]);
+  assert.deepStrictEqual(keys('Have Quill Ashby re-review ERP PR #2021'), [2021]);
+  assert.deepStrictEqual(keys('Re-review ERP pull requests #2064 and #2056'), [2064, 2056]);
+  assert.deepStrictEqual(keys('Finish fixing remaining review comments on ERP #2062 and #2056 within the hour'), [2062, 2056]);
+  assert.deepStrictEqual(keys('Address the new review comments on PRs #2064 and #2056'), [2064, 2056]);
+  assert.deepStrictEqual(keys('Merge PR 8 before PR 9'), [8, 9]);
+  // Not asks about the PRs themselves, or nothing to look up.
+  assert.strictEqual(keys('Sync ERP main with gizmo develop when the 134.1.0 release branch is cut'), null);
+  assert.strictEqual(keys('Split PR 5 into 5a, 5b and 5c and land the fixes'), null);
+  assert.strictEqual(keys('Send PRs to Brannoc one at a time as each is completed'), null);
+  assert.strictEqual(keys('After PRs #41 and #42 merge, update the contract doc'), null);
+  assert.strictEqual(refsFor({ summary: 'Review PRs 12 and 14', url: '', projectPath: null }), null);
+  // The single-PR path is unchanged.
+  assert.deepStrictEqual(refsFor({ summary: 'Answer Brannoc', url: 'https://github.com/acme/widgets/pull/42' }).fromText, false);
+
+  const ref = (n) => ({ number: n });
+  const merged = (d) => ({ state: 'closed', merged: true, mergedAt: d });
+  assert.deepStrictEqual(
+    settledAll([{ ref: ref(1), pr: merged('2031-04-01T00:00:00Z') }, { ref: ref(2), pr: merged('2031-04-02T00:00:00Z') }]),
+    { status: 'done', reason: 'PRs #1, #2 merged or closed 2031-04-02' }
+  );
+  // One still open: the ask stands.
+  assert.strictEqual(settledAll([{ ref: ref(1), pr: merged(null) }, { ref: ref(2), pr: open }]), null);
+  assert.strictEqual(settledAll([{ ref: ref(1), pr: { state: 'closed', merged: false } }]).status, 'dropped');
 }
 
 // An ask found in text settles on merged/closed, or on a review I submitted
