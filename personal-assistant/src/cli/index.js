@@ -920,6 +920,18 @@ const commands = {
         (viaCli ? (cliVersion ? `claude -p ${cliVersion}` : `${config.claudeBin} not found — set PA_CLAUDE_BIN`) : 'API key')
     );
     mark(Boolean(cliVersion), 'claude cli', cliVersion || 'not found — connector sources (Jira, Microsoft 365) cannot run');
+    if (viaCli || cliVersion) {
+      // Which subscription pa's own calls bill to, and where its connectors live.
+      const acct = llm.cliAccount();
+      const where = acct.custom ? `PA_CLAUDE_CONFIG_DIR ${acct.dir}` : 'your default login';
+      mark(
+        Boolean(acct.email),
+        'claude login',
+        acct.email
+          ? `${acct.email}${acct.org ? ` · ${acct.org}` : ''} · ${where}`
+          : `not signed in · ${where} — run \`$env:CLAUDE_CONFIG_DIR='${acct.dir}'; claude\` and /login`
+      );
+    }
     // Today's model spend against the cap (src/budget.js). Over the cap is not
     // broken — essential passes carry on — but eager work has stopped.
     try {

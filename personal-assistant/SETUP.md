@@ -58,7 +58,25 @@ PA_M365_CALENDAR_POLL_SECONDS=900
 The model is what turns messages into commitments and writes reply drafts. **You can skip this
 step.** With no key, every model call runs through a headless `claude -p` on your own Claude
 Code login (see `src/llm.js`) — no separate billing, nothing to create. `pa doctor` shows which
-route is in use on its `model` line. Set a key only if you would rather bill the API directly:
+route is in use on its `model` line. Set a key only if you would rather bill the API directly.
+
+**pa on a subscription of its own.** If you switch Claude subscriptions, pin pa to one so its
+connectors do not vanish with the switch. Give it a Claude Code config folder of its own and sign
+that folder in once:
+
+```powershell
+$env:CLAUDE_CONFIG_DIR = "$env:USERPROFILE\.claude-pa"
+claude          # then /login with pa's account, and /mcp → claude.ai Microsoft 365
+```
+
+Then set `PA_CLAUDE_CONFIG_DIR=~/.claude-pa` in `.env` and restart the worker
+(`Stop-ScheduledTask pa-worker; Start-ScheduledTask pa-worker`). Only pa's own `claude -p`
+calls use it: agent runs dispatched through termhub keep the login of the machine they run on,
+and the PA chat session runs in termhub on your default login. `pa doctor` names the account on
+its `claude login` line. Connect connectors in a browser signed in to that same account, or
+claude.ai answers "Account mismatch".
+
+To bill the API directly instead, set a key:
 
 1. Open **<https://console.anthropic.com/settings/keys>** and sign in. (It may redirect to
    `platform.claude.com` — same place.)

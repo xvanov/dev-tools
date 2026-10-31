@@ -4,7 +4,11 @@
 // unless named, and failures surfaced as errors rather than as reply text.
 
 const assert = require('assert');
-const { cliArgs, parseCliOutput, extractJson } = require('../src/llm');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+const { config } = require('../src/config');
+const { cliArgs, parseCliOutput, extractJson, childEnv, cliAccount } = require('../src/llm');
 
 {
   const args = cliArgs({ system: 'S', effort: 'low', tools: null });
@@ -50,6 +54,36 @@ const { cliArgs, parseCliOutput, extractJson } = require('../src/llm');
   assert.deepStrictEqual(extractJson('[1,2]'), [1, 2]);
   assert.deepStrictEqual(extractJson('sure {"x":{"y":2}} done'), { x: { y: 2 } });
   assert.throws(() => extractJson('nothing'), /no JSON/);
+}
+
+// pa's own login: CLAUDE_CONFIG_DIR goes to the child only, and per-call env
+// still layers on top.
+{
+  const saved = config.claudeConfigDir;
+  const base = { PATH: 'p', CLAUDE_CONFIG_DIR: 'from-shell' };
+  try {
+    config.claudeConfigDir = '';
+    assert.strictEqual(childEnv(null, base), base);
+    assert.strictEqual(childEnv({ X: '1' }, base).CLAUDE_CONFIG_DIR, 'from-shell');
+    config.claudeConfigDir = 'C:\pa-login';
+    const e = childEnv({ MAX_MCP_OUTPUT_TOKENS: '9' }, base);
+    assert.strictEqual(e.CLAUDE_CONFIG_DIR, 'C:\pa-login');
+    assert.strictEqual(e.MAX_MCP_OUTPUT_TOKENS, '9');
+    assert.strictEqual(e.PATH, 'p');
+    assert.strictEqual(base.CLAUDE_CONFIG_DIR, 'from-shell');
+  } finally {
+    config.claudeConfigDir = saved;
+  }
+}
+
+// Who that login is, read from the folder's own .claude.json.
+{
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pa-login-'));
+  assert.strictEqual(cliAccount(dir).email, null);
+  fs.writeFileSync(path.join(dir, '.claude.json'), JSON.stringify({ oauthAccount: { emailAddress: 'a@b.c', organizationName: 'Org' } }));
+  const a = cliAccount(dir);
+  assert.deepStrictEqual([a.email, a.org, a.custom, a.dir], ['a@b.c', 'Org', true, dir]);
+  fs.rmSync(dir, { recursive: true, force: true });
 }
 
 console.log('llm ok');

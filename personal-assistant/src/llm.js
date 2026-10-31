@@ -84,6 +84,27 @@ function cliArgs({ system, effort, tools, model = null }) {
   return args;
 }
 
+// pa's own login (PA_CLAUDE_CONFIG_DIR), set for the child alone: the worker
+// itself keeps the default, so what it reads from ~/.claude (your session
+// transcripts) does not move with it.
+function childEnv(extra = null, base = process.env) {
+  const dir = config.claudeConfigDir;
+  if (!dir && !extra) return base;
+  return { ...base, ...(dir ? { CLAUDE_CONFIG_DIR: dir } : {}), ...(extra || {}) };
+}
+
+// Who pa's `claude -p` is signed in as, from the config folder it uses:
+// { dir, email, org } — or { dir, email: null } when that folder has no login.
+function cliAccount(dir = config.claudeConfigDir) {
+  const os = require('os');
+  const file = dir ? path.join(dir, '.claude.json') : path.join(os.homedir(), '.claude.json');
+  let a = null;
+  try {
+    a = JSON.parse(fs.readFileSync(file, 'utf8')).oauthAccount || null;
+  } catch {}
+  return { dir: dir || path.join(os.homedir(), '.claude'), custom: Boolean(dir), email: a?.emailAddress || null, org: a?.organizationName || null };
+}
+
 // The prompt goes in on stdin: Windows caps a command line at 32k characters
 // and a distillation prompt is routinely longer.
 function runCli(args, prompt, timeoutMs, env = null) {
@@ -91,7 +112,7 @@ function runCli(args, prompt, timeoutMs, env = null) {
     const child = spawn(config.claudeBin, args, {
       cwd: cliCwd(),
       windowsHide: true,
-      env: env ? { ...process.env, ...env } : process.env,
+      env: childEnv(env),
       stdio: ['pipe', 'pipe', 'pipe'],
     });
     let out = '';
@@ -411,6 +432,8 @@ module.exports = {
   parseToolStream,
   spilledBlocks,
   backend,
+  childEnv,
+  cliAccount,
   extractJson,
   cliArgs,
   parseCliOutput,

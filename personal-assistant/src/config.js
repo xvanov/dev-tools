@@ -56,6 +56,16 @@ const fileEnv = {
   ...parseEnvFile(path.join(TOOL_DIR, '.env')),
 };
 
+// `~` and %VAR% so the same `.env` line works typed by hand.
+function expandHome(p) {
+  if (!p) return '';
+  return path.resolve(
+    String(p)
+      .replace(/^~(?=$|[\\/])/, os.homedir())
+      .replace(/%([^%]+)%/g, (m, name) => process.env[name] ?? m)
+  );
+}
+
 function env(name, fallback = null) {
   const v = process.env[name] ?? fileEnv[name];
   if (v === undefined || v === null || v === '') return fallback;
@@ -211,6 +221,12 @@ const config = {
   // Without an API key, model calls go through a headless `claude -p` on the
   // operator's own login (see llm.js). Also the only route to the connectors.
   claudeBin: env('PA_CLAUDE_BIN', 'claude'),
+  // Which Claude Code login those calls use: a config folder of its own
+  // (CLAUDE_CONFIG_DIR for that child only), so pa can stay on one
+  // subscription while your own sessions switch between others. Empty: your
+  // default login. Agent sessions dispatched through termhub never get it —
+  // they run on the login of the machine they run on.
+  claudeConfigDir: expandHome(env('PA_CLAUDE_CONFIG_DIR', '')),
 
   // Optional. Without it, search falls back to full-text only, which is worse
   // at paraphrase and perfectly usable.
