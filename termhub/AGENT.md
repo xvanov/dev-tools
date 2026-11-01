@@ -1551,6 +1551,16 @@ instinct as `?voicedebug=1`, which exists because a phone has no console.
   SVG data URI (`rel=icon` plus `apple-touch-icon`) rather than a file: it costs no extra
   request, can't 404 behind the front's static handler, and needs nothing added to the deploy.
   Without one the browser draws its generic globe.
+  `/manifest.webmanifest` is built by the front per request (`manifest()` in `front.js`) so it can
+  carry the machine's name — a static file would put several identical "termhub" icons on an
+  Android home screen, the problem `setPageTitle()` already solves for tabs. It is what makes
+  Android's *Add to Home screen* open standalone (no URL bar); `/icon.svg` is its icon. iOS reads the
+  `apple-mobile-web-app-*` metas instead. `theme-color` and the `black` status-bar style keep the
+  browser chrome dark; `black-translucent` would draw the page under the status bar.
+- **Swipe in from the left edge** (first 24px) to open the session drawer, swipe it left to close
+  (`wireDrawerSwipe` in `app.js`). Capture-phase listeners, because the terminal's touch-scroll
+  handler stops propagation; a gesture that turns out vertical is let go as a scroll. In a Safari
+  *tab* iOS's own back-swipe owns the edge; as a home-screen app nothing else claims it.
 
 ### The key bar: keys scroll, tools don't
 

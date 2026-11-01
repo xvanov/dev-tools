@@ -3113,6 +3113,41 @@ async function openPaChat() {
 function openDrawer() { document.body.classList.add('drawer-open'); }
 function closeDrawer() { document.body.classList.remove('drawer-open'); }
 
+// ---- drawer gestures (phone) ------------------------------------------------
+// Swipe in from the left edge to open the session list, swipe it back to close
+// — what every phone app with a drawer does, and the ☰ button is a stretch for
+// a thumb at the top-left. Capture phase, because the terminal's touch-scroll
+// handler stops propagation; once a swipe is recognised as horizontal its moves
+// are stopped here so the terminal doesn't also scroll. iOS Safari's own
+// back-swipe owns the very edge in a browser tab; as a home-screen app nothing
+// else claims it.
+const EDGE_PX = 24;       // where an opening swipe may start
+const SWIPE_PX = 50;      // how far it must travel
+(function wireDrawerSwipe() {
+  let sx = 0, sy = 0, mode = null;   // mode: 'open' | 'close' | 'claimed' | null
+  document.addEventListener('touchstart', (e) => {
+    mode = null;
+    if (!isMobile() || e.touches.length !== 1) return;
+    const p = e.touches[0];
+    sx = p.clientX; sy = p.clientY;
+    const open = document.body.classList.contains('drawer-open');
+    if (!open && sx <= EDGE_PX) mode = 'open';
+    else if (open) mode = 'close';
+  }, { capture: true, passive: true });
+  document.addEventListener('touchmove', (e) => {
+    if (!mode || e.touches.length !== 1) return;
+    const p = e.touches[0];
+    const dx = p.clientX - sx, dy = p.clientY - sy;
+    if (mode !== 'claimed') {
+      if (Math.abs(dy) > Math.abs(dx) && Math.abs(dy) > 10) { mode = null; return; }  // a scroll
+      if (mode === 'open' && dx > SWIPE_PX) { openDrawer(); mode = 'claimed'; }
+      else if (mode === 'close' && dx < -SWIPE_PX) { closeDrawer(); mode = 'claimed'; }
+    }
+    if (mode === 'claimed' || (mode === 'open' && dx > 10)) e.stopPropagation();
+  }, { capture: true, passive: true });
+  document.addEventListener('touchend', () => { mode = null; }, { capture: true, passive: true });
+})();
+
 // ---- sidebar collapse (desktop) --------------------------------------------
 // Desktop-only max-real-estate toggle — mobile already keeps the sidebar out of
 // the way by default via the drawer above. Remembered across reloads the same

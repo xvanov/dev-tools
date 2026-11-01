@@ -19,6 +19,7 @@ const http = require('http');
 const net = require('net');
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
 const { URL } = require('url');
 
 const { resolveBindAddress } = require('./lib/bind');
@@ -50,6 +51,27 @@ function sendJson(res, status, body) {
   const data = JSON.stringify(body);
   res.writeHead(status, { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(data) });
   res.end(data);
+}
+
+// The install manifest is built per request, not shipped as a file, because its
+// name is the machine's. With one termhub per machine, a static "termhub" would
+// put several identical icons on the home screen — the same reason
+// setPageTitle() in app.js names the tab after the machine. It is what makes
+// Android's "Add to Home screen" open termhub as a standalone app (no URL bar)
+// instead of a bookmark; iOS reads the apple-mobile-web-app-* metas instead.
+function manifest() {
+  const machine = process.env.TERMHUB_MACHINE || os.hostname();
+  return {
+    name: `${machine} · termhub`,
+    short_name: machine,
+    start_url: '/',
+    scope: '/',
+    display: 'standalone',
+    orientation: 'any',
+    background_color: '#15171c',
+    theme_color: '#15171c',
+    icons: [{ src: '/icon.svg', sizes: 'any', type: 'image/svg+xml', purpose: 'any' }],
+  };
 }
 
 // Extensionless pages, so the idle dashboard has a URL worth typing and worth
@@ -202,6 +224,12 @@ function createFront({ sessiondPort, port: serverPort = DEFAULT_FRONT_PORT, paUr
       req.on('error', () => proxyReq.destroy());
       res.on('close', () => { if (!res.writableFinished) proxyReq.destroy(); });
       return req.pipe(proxyReq);
+    }
+
+    if (pathname === '/manifest.webmanifest') {
+      const body = JSON.stringify(manifest());
+      res.writeHead(200, { 'Content-Type': 'application/manifest+json', 'Content-Length': Buffer.byteLength(body) });
+      return res.end(body);
     }
 
     return serveStatic(res, pathname);
