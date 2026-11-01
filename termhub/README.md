@@ -500,7 +500,8 @@ All optional environment variables:
 | `TERMHUB_BIND` | auto | Front bind address. Auto-detects the Tailscale IP (`tailscale ip -4`, else a 100.64.0.0/10 interface), falling back to `127.0.0.1`. On Windows the installer pins it to `127.0.0.1` (Tailscale Serve does the exposure). `sessiond` always binds loopback regardless. |
 | `TERMHUB_MACHINE` | hostname | Name shown in the UI |
 | `TERMHUB_SHELL` | `$SHELL` / `pwsh`→`powershell` | Shell to spawn |
-| `TERMHUB_SCROLLBACK_BYTES` | `2097152` (2 MB) | Per-session replay buffer size |
+| `TERMHUB_SCROLLBACK_LINES` | `5000` | Scrollback rows kept in each session's server-side screen copy (what a reconnecting browser is sent) |
+| `TERMHUB_SCROLLBACK_BYTES` | `2097152` (2 MB) | Replay buffer size, used only if `@xterm/headless` is unavailable and the raw-byte fallback is live |
 | `TERMHUB_DATA_DIR` | `~/.local/termhub` (Win: `%LOCALAPPDATA%\termhub`) | Where recent dirs, the session archive and `attachments/` are stored |
 | `TERMHUB_TTS_ENGINE` | `kokoro` if installed, else `piper` | Which speech engine to use. An engine that isn't installed silently yields to the other one |
 | `TERMHUB_TTS_VOICE` | `af_heart` (kokoro) / `~/.claude/tts-voice.txt`, else `en_US-lessac-medium` (piper) | Voice **within the active engine**. A value the active engine doesn't have is ignored rather than fatal |
@@ -524,7 +525,8 @@ On Linux set these with `systemctl --user edit termhub`; on Windows via `setx` +
 | `front.js` | **Swappable front**: serves the static UI + reverse-proxies `/api/*`, `/ws/term/*` and `/ws/voice` to `sessiond`, and `/pa/*` to the personal assistant |
 | `lib/paProxy.js` | The `/pa/*` proxy to the personal assistant's loopback dashboard (`TERMHUB_PA_URL`) |
 | `server.js` | Single-process dev entrypoint — runs both tiers in one process (`npm start`) |
-| `lib/session.js` | PTY lifecycle (`node-pty`), scrollback ring buffer, replay |
+| `lib/session.js` | PTY lifecycle (`node-pty`), attach/snapshot, size ownership across browsers |
+| `lib/screenMirror.js` | Headless-xterm copy of each session's screen, serialized at the current size for reconnecting browsers |
 | `lib/claudeModel.js` | Locates a Claude session's transcript and tails it for the model label (`modelLabel` in `/api/sessions`; no longer shown in the sidebar) |
 | `lib/opencodeApi.js` | Talks to an opencode TUI's own HTTP API (termhub launches each with `--port`): model, turns, and its event stream |
 | `lib/opencodeModel.js` | Fallback for an opencode session with no API port — reads the model via `opencode export` |

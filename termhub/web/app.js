@@ -321,7 +321,7 @@ function openTerminal(id, title, kind) {
   const term = new Term({
     scrollback: 10000,
     fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
-    fontSize: isMobile() ? 12 : 13,
+    fontSize: baseFontSize(),
     cursorBlink: true,
     theme: TERM_THEME,
   });
@@ -329,15 +329,6 @@ function openTerminal(id, title, kind) {
   if (fit) term.loadAddon(fit);
   term.open(pane);
 
-  // GPU renderer — far faster redraws on mobile (smoother when Claude repaints on
-  // scroll). Falls back to the default DOM renderer if WebGL is unavailable/lost.
-  if (WebglAddonCtor) {
-    try {
-      const webgl = new WebglAddonCtor();
-      webgl.onContextLoss(() => { try { webgl.dispose(); } catch {} });
-      term.loadAddon(webgl);
-    } catch {}
-  }
 
   // Bridge the remote clipboard to THIS browser's clipboard. Full-screen TUIs
   // (Claude Code, vim, tmux) that run over SSH can't reach your local clipboard
@@ -363,14 +354,22 @@ function openTerminal(id, title, kind) {
     });
   } catch {}
 
-  const t = { id, title, kind, term, fit, pane, ws: null, attempts: 0, closing: false, reconnectTimer: null, ro: null };
+  // Size ownership (see "one PTY, several screens" below): `clientId` is what
+  // sessiond calls this socket, `owner` whichever socket last claimed the PTY's
+  // size, `isOwner` whether that is us. `wantClaim` is a claim waiting for the
+  // socket — opening a terminal is itself a claim.
+  const t = {
+    id, title, kind, term, fit, pane, ws: null, attempts: 0, closing: false, reconnectTimer: null, ro: null,
+    clientId: null, owner: null, isOwner: false, wantClaim: true, replayed: false, legacy: false, webgl: null,
+  };
+  useGpu(t, true);
   state.open.set(id, t);
   wireTouchScroll(t);
   wireAttachments(t);
 
-  // Keep the PTY in lock-step with the rendered size: any layout change (rotate,
-  // keyboard open/close, font reflow) refits and pushes a resize. Without this
-  // the terminal and PTY drift apart and output gets mangled.
+  // Any layout change (rotate, keyboard open/close, font reflow) re-runs
+  // refit(): the size owner refits and pushes a resize, a passive screen just
+  // rescales what it shows.
   if (window.ResizeObserver) {
     t.ro = new ResizeObserver(() => scheduleFit(t));
     t.ro.observe(pane);
@@ -383,11 +382,16 @@ function openTerminal(id, title, kind) {
       if (c >= 97 && c <= 122) data = String.fromCharCode(c - 96); // ctrl-a..ctrl-z
       setCtrlArmed(false);
     }
+    // xterm also emits its own replies to terminal queries (cursor position,
+    // device attributes, background colour) through onData. When another screen
+    // owns the size, that screen answers them — a second answer, computed for a
+    // size this screen isn't driving, is noise to the app at best.
+    if (!t.isOwner && t.owner && !recentGesture()) return;
     sendInput(t, data);
   });
-  term.onResize(({ cols, rows }) => {
-    if (t.ws && t.ws.readyState === WebSocket.OPEN) t.ws.send(JSON.stringify({ type: 'resize', cols, rows }));
-  });
+  // Touching a screen is using it: it takes the size. Capture phase, because
+  // the touch-scroll handler stops propagation of the touch events.
+  pane.addEventListener('pointerdown', () => { if (!t.isOwner) claim(t); }, true);
   // Whether there is newer output below the fold changes on scroll *and* on new
   // output arriving while scrolled up; onScroll covers both, since xterm fires it
   // when the viewport moves relative to the buffer either way.
@@ -402,15 +406,150 @@ function openTerminal(id, title, kind) {
 }
 
 // Debounced refit: coalesces bursts of layout changes (iOS keyboard animations
-// fire dozens of resize events) into one fit + one resize message.
+// fire dozens of resize events) into one refit.
 const fitTimers = new WeakMap();
 function scheduleFit(t) {
   clearTimeout(fitTimers.get(t));
-  fitTimers.set(t, setTimeout(() => {
-    if (!state.open.has(t.id) || !t.fit) return;
-    try { t.fit.fit(); } catch {}
-  }, 80));
+  fitTimers.set(t, setTimeout(() => refit(t), 80));
 }
+
+// ---- one PTY, several screens ------------------------------------------------
+// A session is watched from a laptop and a phone, and a PTY has exactly one
+// size. This used to be decided by whichever browser fitted last: every refit
+// pushed a resize, so opening the phone shrank the PTY to ~54 columns while the
+// laptop went on drawing 160, and Claude Code / vim / opencode — which position
+// everything absolutely — came out mangled on whichever screen didn't match.
+//
+// Now one screen OWNS the size: the one you last touched, typed on, focused or
+// brought to the foreground (tmux's `window-size latest`). Only the owner sends
+// resizes. Every other screen renders at the owner's size — sessiond tells it
+// with a `size` message — scaled down if it doesn't fit, with a "Fit here" pill
+// that hands ownership over. Nothing is ever drawn for a width it isn't.
+//
+// Against a sessiond that predates this (it runs until restarted, and holds the
+// terminals, so it is only restarted on purpose) there are no `size` messages:
+// `legacy` is set, each screen claims on interaction exactly as above, and just
+// can't learn that another screen took over until you touch it again.
+
+let lastGestureAt = 0;
+const recentGesture = () => now() - lastGestureAt < 1500;
+for (const ev of ['pointerdown', 'keydown', 'touchstart']) {
+  document.addEventListener(ev, () => { lastGestureAt = now(); }, true);
+}
+
+function proposedSize(t) {
+  if (!t.fit || !t.pane.offsetWidth) return null;
+  let d = null;
+  try { d = t.fit.proposeDimensions(); } catch {}
+  if (!d || !Number.isFinite(d.cols) || !Number.isFinite(d.rows) || d.cols < 2 || d.rows < 1) return null;
+  return { cols: d.cols, rows: d.rows };
+}
+
+// Take the PTY's size for this screen. Queued (wantClaim) until the socket has
+// replayed and the pane is visible, since there is nothing to measure before.
+function claim(t) {
+  if (!t || !state.open.has(t.id)) return;
+  if (!t.replayed || !t.ws || t.ws.readyState !== WebSocket.OPEN || !t.pane.offsetWidth) { t.wantClaim = true; return; }
+  // Back to the owner's font and renderer BEFORE measuring: cell width differs
+  // between them, and measuring the passive one sized the PTY ~10% too narrow.
+  clearPassive(t);
+  const d = proposedSize(t);
+  if (!d) { t.wantClaim = true; return; }
+  t.wantClaim = false;
+  t.isOwner = true;
+  t.owner = t.clientId;
+  updateFitPill();
+  if (d.cols !== t.term.cols || d.rows !== t.term.rows) { try { t.term.resize(d.cols, d.rows); } catch {} }
+  // Sent even when the size is unchanged: a claim moves ownership, and sessiond
+  // keeps a same-size claim away from the PTY.
+  t.ws.send(JSON.stringify({ type: 'resize', cols: d.cols, rows: d.rows }));
+}
+
+// Layout changed. The owner follows its own pane; anyone else rescales.
+function refit(t) {
+  if (!state.open.has(t.id)) return;
+  if (t.wantClaim) { claim(t); return; }
+  if (!t.isOwner) { showPassive(t); return; }
+  const d = proposedSize(t);
+  if (!d || (d.cols === t.term.cols && d.rows === t.term.rows)) return;
+  try { t.term.resize(d.cols, d.rows); } catch {}
+  if (t.ws && t.ws.readyState === WebSocket.OPEN) t.ws.send(JSON.stringify({ type: 'resize', cols: d.cols, rows: d.rows }));
+}
+
+// Render at someone else's size: shrink the FONT until it fits if it's bigger
+// than this pane (a phone looking at a laptop-sized session), leave it alone if
+// it's smaller. The font, not a CSS transform: a scaled WebGL canvas came out
+// blank or unscaled depending on the frame, and a smaller font is crisp text
+// that xterm lays out itself.
+//
+// A passive screen also drops to xterm's DOM renderer. Measured in Chromium: the
+// WebGL renderer, told to change font size, kept painting the old glyph size
+// into the new canvas (blank in one run, a blurry 3x crop in the next), while
+// the DOM renderer got it right every time. A screen you're only glancing at
+// doesn't need the GPU's speed; it comes back the moment the screen takes the size.
+const MIN_PASSIVE_FONT = 5;
+
+// GPU renderer — far faster redraws on mobile (smoother when Claude repaints on
+// scroll). Falls back to the default DOM renderer if WebGL is unavailable/lost.
+function useGpu(t, on) {
+  if (on && !t.webgl && WebglAddonCtor) {
+    try {
+      const webgl = new WebglAddonCtor();
+      webgl.onContextLoss(() => { try { webgl.dispose(); } catch {} if (t.webgl === webgl) t.webgl = null; });
+      t.term.loadAddon(webgl);
+      t.webgl = webgl;
+    } catch { t.webgl = null; }
+  } else if (!on && t.webgl) {
+    try { t.webgl.dispose(); } catch {}
+    t.webgl = null;
+  }
+}
+function baseFontSize() { return isMobile() ? 12 : 13; }
+
+function showPassive(t) {
+  const el = t.term.element;
+  if (t.isOwner || !el || !t.pane.offsetWidth) { updateFitPill(); return; }
+  t.pane.classList.add('passive');
+  useGpu(t, false);
+  const screen = el.querySelector('.xterm-screen');
+  const fits = () => !screen || (screen.offsetWidth <= el.clientWidth + 1 && screen.offsetHeight <= el.clientHeight + 1);
+  let size = baseFontSize();
+  if (t.term.options.fontSize !== size) t.term.options.fontSize = size;
+  if (!fits() && screen && screen.offsetWidth && screen.offsetHeight) {
+    const s = Math.min(el.clientWidth / screen.offsetWidth, el.clientHeight / screen.offsetHeight);
+    size = Math.max(MIN_PASSIVE_FONT, Math.floor(size * s * 2) / 2);
+    t.term.options.fontSize = size;
+    // Glyph metrics don't scale exactly linearly; step down until it fits.
+    while (!fits() && size > MIN_PASSIVE_FONT) { size -= 0.5; t.term.options.fontSize = size; }
+  }
+  updateFitPill();
+}
+
+function clearPassive(t) {
+  t.pane.classList.remove('passive');
+  if (t.term.options.fontSize !== baseFontSize()) t.term.options.fontSize = baseFontSize();
+  useGpu(t, true);
+  updateFitPill();
+}
+
+function updateFitPill() {
+  const pill = $('#fit-here');
+  if (!pill) return;
+  const t = state.open.get(state.activeId);
+  const show = !!(t && t.replayed && !t.isOwner && t.owner);
+  pill.classList.toggle('hidden', !show);
+  if (show) $('#fit-here-size').textContent = `${t.term.cols}×${t.term.rows}`;
+}
+
+// The active terminal is in front of the user again (tab shown, window
+// focused, phone unlocked): it takes the size.
+function claimActive() {
+  if (document.visibilityState !== 'visible') return;
+  const t = state.open.get(state.activeId);
+  if (t && !t.isOwner) claim(t);
+}
+document.addEventListener('visibilitychange', claimActive);
+window.addEventListener('focus', claimActive);
 
 // ---- touch scrolling ------------------------------------------------------
 // One finger dragging on a terminal has to mean three different things, and
@@ -619,6 +758,8 @@ function jumpToBottom() {
 }
 
 function sendInput(t, data) {
+  // Typing on a screen is using it — the key bar, Paste and 🎤 all land here.
+  if (!t.isOwner && recentGesture()) claim(t);
   if (t.ws && t.ws.readyState === WebSocket.OPEN) t.ws.send(JSON.stringify({ type: 'input', data }));
 }
 
@@ -630,15 +771,33 @@ function connect(t) {
   ws.onmessage = (ev) => {
     let msg; try { msg = JSON.parse(ev.data); } catch { return; }
     if (msg.type === 'replay') {
-      // Render the buffered bytes at the width the PTY produced them, so wrapping
-      // and absolute cursor positioning line up. Then refit to this device and
-      // send a resize — full-screen apps (Claude Code, vim) redraw cleanly on the
-      // resulting SIGWINCH, and a plain shell just reflows.
+      // Render the snapshot at the PTY's current size — sessiond serializes it
+      // for exactly that size (lib/screenMirror.js). Then either take the size
+      // (this screen was opened or used just now, or nobody holds it and we're
+      // in front) or keep rendering at the owner's size.
       if (msg.cols && msg.rows) { try { t.term.resize(msg.cols, msg.rows); } catch {} }
       t.term.reset();
+      t.replayed = false;
+      t.clientId = msg.you || null;
+      t.legacy = !msg.you;
+      t.owner = msg.owner || null;
+      t.isOwner = false;
       t.term.write(msg.data, () => {
-        requestAnimationFrame(() => { if (t.fit) { try { t.fit.fit(); } catch {} } });
+        t.replayed = true;
+        const inFront = document.visibilityState === 'visible' && state.activeId === t.id;
+        if (t.wantClaim || (inFront && (t.legacy || !t.owner))) requestAnimationFrame(() => claim(t));
+        else requestAnimationFrame(() => showPassive(t));
       });
+    }
+    else if (msg.type === 'size') {
+      // Someone claimed the size — possibly us, confirming. Anyone else: render
+      // at their size. Nobody (the owner went away): whoever is in front takes it.
+      t.owner = msg.owner || null;
+      t.isOwner = !!t.clientId && t.owner === t.clientId;
+      if (t.isOwner) { clearPassive(t); return; }
+      if (msg.cols !== t.term.cols || msg.rows !== t.term.rows) { try { t.term.resize(msg.cols, msg.rows); } catch {} }
+      if (!t.owner && document.visibilityState === 'visible' && state.activeId === t.id) requestAnimationFrame(() => claim(t));
+      else requestAnimationFrame(() => showPassive(t));
     }
     else if (msg.type === 'output') t.term.write(msg.data);
     else if (msg.type === 'exit') t.term.write(`\r\n\x1b[90m[process exited${msg.code != null ? ' (' + msg.code + ')' : ''}]\x1b[0m\r\n`);
@@ -932,11 +1091,13 @@ function setActive(id) {
   state.activeId = id;
   for (const [key, t] of state.open) t.pane.classList.toggle('active', key === id);
   const t = state.open.get(id);
+  // Switching to a session is using it: it takes the size.
   if (t) requestAnimationFrame(() => {
-    if (t.fit) { try { t.fit.fit(); } catch {} }
+    claim(t);
     t.term.focus();
     updateScrollAffordance(t);
   });
+  updateFitPill();
   updateChrome();
   renderSessions();
   updateMouseHint();
@@ -3030,6 +3191,7 @@ function wireEvents() {
 
   $('#kbd-key').onclick = () => { const t = state.open.get(state.activeId); if (t) focusTerminal(t); };
   $('#scroll-bottom').onclick = jumpToBottom;
+  $('#fit-here').onclick = () => { const t = state.open.get(state.activeId); if (t) { claim(t); focusTerminal(t); } };
   // Plain click (not pointerdown) so iOS counts it as the user gesture the
   // Clipboard API requires before it will hand over clipboard contents. Same
   // for 📎: Safari only opens a file picker from inside a real click.

@@ -677,13 +677,14 @@ function createSessiond({ entry = 'sessiond', port: serverPort = DEFAULT_SESSION
 
 function bindTerminal(ws, session) {
   const send = (msg) => { if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(msg)); };
-  const detach = session.attach(send);
+  const { id, detach } = session.attach(send);
 
   ws.on('message', (raw) => {
     let msg;
     try { msg = JSON.parse(raw.toString()); } catch { return; }
     if (msg.type === 'input') session.write(msg.data);
-    else if (msg.type === 'resize') session.resize(Number(msg.cols) || session.cols, Number(msg.rows) || session.rows);
+    // A resize is a claim on the PTY's size by this client — see Session.resize.
+    else if (msg.type === 'resize') session.resize(msg.cols, msg.rows, id);
   });
   ws.on('close', () => detach());
   ws.on('error', () => detach());

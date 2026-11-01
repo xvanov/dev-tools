@@ -10,6 +10,7 @@ const { resolveTranscript, readLastModel, formatModelName } = require('./claudeM
 const opencodeModel = require('./opencodeModel');
 const opencodeApi = require('./opencodeApi');
 const { injectAfterClaudeExe, injectAfterOpencodeExe } = require('./restore');
+const { ScreenMirror } = require('./screenMirror');
 
 // How often to actually shell out to `opencode export` to refresh a session's
 // model (lib/opencodeModel.js's getModel is a ~1.4s subprocess spawn — far too
@@ -44,9 +45,6 @@ function resolveCwd(input) {
     return { cwd: home, notice: `directory '${dir}' not found — starting in ${home}` };
   }
 }
-
-// Default scrollback kept in memory per session, for replay on reconnect.
-const DEFAULT_SCROLLBACK_BYTES = Number(process.env.TERMHUB_SCROLLBACK_BYTES) || 2 * 1024 * 1024;
 
 // Environment variables that identify the agent session termhub itself was
 // launched from. Stripped from every PTY we spawn — see _spawn().
@@ -232,10 +230,20 @@ class Session {
     this.onInputLine = onInputLine || null;
     this._inputLine = ''; // partial command line being assembled from keystrokes
 
-    this.maxBytes = maxBytes || DEFAULT_SCROLLBACK_BYTES;
-    this._chunks = [];
-    this._bytes = 0;
-    this._clients = new Set(); // each is a function(msgObject)
+    // What a newly attached browser is shown — see lib/screenMirror.js.
+    this._screen = new ScreenMirror({ cols: this.cols, rows: this.rows, maxBytes });
+    // Attached browsers: send function -> { id, ready, queue }. `ready` is false
+    // until the client has been sent its snapshot; output arriving before then
+    // is queued so it lands after the snapshot, never before or inside it.
+    this._clients = new Map();
+    this._clientSeq = 0;
+    // Which attached client last set the PTY's size. Several browsers can watch
+    // one PTY (a laptop and a phone), and a PTY has exactly one size: when each
+    // pushed its own, whichever fitted last won, and every other screen showed
+    // output drawn for a width it didn't have. Now only a client that *claims*
+    // the size (the user touched, typed on or switched to it) sends a resize,
+    // and every other client is told the new size so it renders at it.
+    this.sizeOwner = null;
 
     this._spawn();
   }
@@ -337,17 +345,12 @@ class Session {
   }
 
   _buffer(data) {
-    const bytes = Buffer.byteLength(data, 'utf8');
-    this._chunks.push({ data, bytes });
-    this._bytes += bytes;
-    while (this._bytes > this.maxBytes && this._chunks.length > 1) {
-      const dropped = this._chunks.shift();
-      this._bytes -= dropped.bytes;
-    }
+    this._screen.write(data);
   }
 
   _broadcast(msg) {
-    for (const send of this._clients) {
+    for (const [send, c] of this._clients) {
+      if (!c.ready) { c.queue.push(msg); continue; }
       try {
         send(msg);
       } catch {
@@ -356,19 +359,40 @@ class Session {
     }
   }
 
-  replay() {
-    return this._chunks.map((c) => c.data).join('');
-  }
-
+  // Attach a browser. It is sent the current screen (snapshot at the PTY's
+  // current size — see lib/screenMirror.js), then everything live after it.
+  // Returns { id, detach }: `id` is how this client's resizes are told apart
+  // from everyone else's (see resize()).
   attach(send) {
-    this._clients.add(send);
-    // Send accumulated scrollback first, then the client receives live output.
-    // Include the PTY's current dimensions: the buffered bytes were produced at
-    // this width, so the client must render them at the same width or wrapping
-    // and absolute cursor positioning will be mangled (esp. full-screen apps).
-    send({ type: 'replay', data: this.replay(), cols: this.cols, rows: this.rows });
-    if (!this.alive) send({ type: 'exit', code: this.exitCode });
-    return () => this._clients.delete(send);
+    const c = { id: `c${++this._clientSeq}`, ready: false, queue: [] };
+    this._clients.set(send, c);
+    // The snapshot covers every byte written before this call; anything the PTY
+    // produces from here on is queued on `c` and flushed right after it.
+    this._screen.snapshot(({ data, cols, rows }) => {
+      if (!this._clients.has(send)) return;
+      try {
+        send({
+          type: 'replay', data, cols, rows,
+          you: c.id, owner: this.sizeOwner, screen: this._screen.kind,
+        });
+        for (const msg of c.queue) send(msg);
+        if (!this.alive) send({ type: 'exit', code: this.exitCode });
+      } catch { /* socket went away mid-flush; its close handler detaches it */ }
+      c.queue = [];
+      c.ready = true;
+    });
+    return {
+      id: c.id,
+      detach: () => {
+        this._clients.delete(send);
+        // The owner leaving (tab closed, phone locked) frees the size; telling
+        // the rest lets whichever screen is in front take it straight back.
+        if (this.sizeOwner === c.id) {
+          this.sizeOwner = null;
+          this._broadcast({ type: 'size', cols: this.cols, rows: this.rows, owner: null });
+        }
+      },
+    };
   }
 
   write(data) {
@@ -637,16 +661,31 @@ class Session {
     return { model: cache.model, modelLabel: cache.modelLabel };
   }
 
-  resize(cols, rows) {
+  // `by` is the attached client claiming the size (attach()'s id), or null for
+  // a resize from anywhere else. Every client — including the claimant, which
+  // learns its claim landed — is told the size and who owns it, so the others
+  // can stop rendering at their own size and render at this one instead.
+  resize(cols, rows, by = null) {
+    cols = Math.max(2, Math.min(1000, Math.floor(Number(cols)) || this.cols));
+    rows = Math.max(1, Math.min(500, Math.floor(Number(rows)) || this.rows));
+    const changed = cols !== this.cols || rows !== this.rows;
     this.cols = cols;
     this.rows = rows;
-    if (this.alive) {
-      try {
-        this.pty.resize(cols, rows);
-      } catch {
-        // resize can throw if the pty just exited; ignore
+    if (by) this.sizeOwner = by;
+    // A same-size resize is still a claim (ownership moves), but it must not
+    // reach the PTY: on Windows a no-op ConPTY resize can still make a TUI
+    // repaint, and there is nothing to repaint for.
+    if (changed) {
+      this._screen.resize(cols, rows);
+      if (this.alive) {
+        try {
+          this.pty.resize(cols, rows);
+        } catch {
+          // resize can throw if the pty just exited; ignore
+        }
       }
     }
+    this._broadcast({ type: 'size', cols, rows, owner: this.sizeOwner });
   }
 
   rename(title) {
@@ -661,6 +700,7 @@ class Session {
   }
 
   kill() {
+    this._screen.dispose();
     this._discoveryAborted = true; // stop an in-flight opencode session-id discovery loop
     this._stopOpencodeApi();       // and its event-stream reconnect loop, which would retry forever
     if (this.alive) {

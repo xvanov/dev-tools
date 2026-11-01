@@ -192,6 +192,29 @@ html, body {
 }
 #scroll-bottom.hidden { display: none; }
 
+/* ---- another screen owns the size ---- */
+#fit-here {
+  /* Bottom-left, by the thumb, clear of the newest output and of "↓ Latest"
+     on the right. */
+  position: absolute; left: 12px; bottom: 12px; z-index: 6;
+  display: flex; align-items: center; gap: 10px; max-width: calc(100% - 140px);
+  padding: 8px 8px 8px 14px; border-radius: 999px; cursor: pointer;
+  background: var(--bg-3); color: var(--fg-dim); border: 1px solid var(--border, #333);
+  font: inherit; font-size: 13px; box-shadow: 0 4px 14px rgba(0,0,0,0.5);
+  touch-action: manipulation; white-space: nowrap;
+}
+#fit-here strong {
+  color: var(--bg); background: var(--accent); border-radius: 999px;
+  padding: 4px 12px; font-weight: 600;
+}
+#fit-here .fit-why { overflow: hidden; text-overflow: ellipsis; }
+#fit-here.hidden { display: none; }
+@media (max-width: 760px) {
+  #fit-here .fit-why { display: none; }
+  #fit-here { padding: 4px; }
+  #fit-here strong { padding: 8px 16px; font-size: 14px; }
+}
+
 #empty-state {
   position: absolute; inset: 0; display: flex; flex-direction: column;
   align-items: center; justify-content: center; color: var(--fg-dim); gap: 4px; text-align: center; padding: 20px;

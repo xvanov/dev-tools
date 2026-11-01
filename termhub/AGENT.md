@@ -29,9 +29,10 @@ browser tab ──http+ws──►  front  (UI + proxy, 127.0.0.1:7000)   ◄─
   with it, so two machines added to an iOS home screen don't both land as "termhub"). With one
   tab per machine, the app name is the one part that can't tell them apart. `index.html` still
   ships `termhub` as the static title for the moment before the first poll answers.
-- A session = one PTY living in **`sessiond`**, with an in-memory scrollback buffer. Browser
-  (re)connections attach to it via the `front` proxy and get a replay of the buffer, then live
-  output.
+- A session = one PTY living in **`sessiond`**, with a server-side copy of its screen (a headless
+  xterm, `lib/screenMirror.js`). Browser (re)connections attach to it via the `front` proxy and get
+  that screen serialized at the PTY's current size, then live output. See *One PTY, several
+  screens* below for why it isn't a raw byte replay, and who decides the size.
 - **One port means one thing.** Serve binds only the *tailnet* IP, so the front can hold
   `127.0.0.1:7000` at the same time — `https://<host>:7000/` and `http://127.0.0.1:7000/` are then
   the same server. That's *single-port* mode, the default. See *Port modes* below for the
@@ -123,7 +124,9 @@ by the front and never proxied. `/api/health` returns
 `{ok, front, self:{entry,pid,port,commit,sessiondPort}, sessiond}`, with `self` present on the 503
 path too; the updater checks `self.pid`/`self.commit` to confirm green is the process it started
 running the commit it just pulled. Terminal stream: WebSocket `/ws/term/:id` with JSON
-`{type:'input'|'resize'}` up and `{type:'replay'|'output'|'exit'}` down.
+`{type:'input'|'resize'}` up and `{type:'replay'|'output'|'size'|'exit'}` down. `replay` carries
+`{data, cols, rows, you, owner, screen}`; `size` is `{cols, rows, owner}`. A `resize` is a claim on
+the PTY's size by that socket — see *One PTY, several screens*.
 
 ## Two-tier layout & safe updates
 
@@ -1451,6 +1454,58 @@ build failures automatically:
 If building by hand, reproduce both: clear `NoDefaultCurrentDirectoryInExePath`, then
 `npx node-gyp configure` and `MSBuild build\binding.sln /p:Configuration=Release /p:Platform=x64 /p:SpectreMitigation=false`.
 
+## One PTY, several screens
+
+The same session is routinely open on a laptop and a phone at once, and a PTY has exactly one size.
+It used to be set by whichever browser fitted last: every refit pushed a resize, so opening the
+phone shrank the PTY to ~54 columns while the laptop went on drawing 160 (it never re-sent its
+size, because its own pane hadn't changed), and Claude Code / vim / opencode — which position
+everything absolutely — came out mangled on whichever screen didn't match. Measured with a
+two-browser Playwright run before the fix: phone opens → PTY 54×39, laptop still rendering 162×53,
+and clicking the laptop changed nothing.
+
+**One screen owns the size: the one last used** (tmux's `window-size latest`). "Used" is opening
+or switching to the session, a pointerdown on the terminal, typing (any `sendInput` within 1.5 s of
+a real gesture — key bar, Paste and 🎤 included), the window gaining focus, or the tab becoming
+visible (phone unlocked). Only the owner sends `resize`. `sessiond` (`Session.resize(cols, rows,
+by)`) records the claimant and broadcasts `{type:'size', cols, rows, owner}` to every socket; a
+same-size claim moves ownership without touching the PTY. Everyone else renders at the owner's
+size — shrinking the font (to a 5px floor) when it's bigger than their pane — with a **Fit here**
+pill bottom-left that claims it for this screen. When the owner's socket closes, `sessiond`
+broadcasts `owner: null` and whichever screen is in front takes the size straight back.
+
+Two things a passive screen does differently, both measured:
+
+- **It drops to xterm's DOM renderer.** Told to change font size, the WebGL renderer kept painting
+  the old glyph size into the resized canvas (blank in one run, a blurry 3× crop in the next); the
+  DOM renderer was right every time. WebGL comes back on claim — and `claim()` restores the
+  owner's font and renderer *before* measuring, because cell width differs between the two and
+  measuring the passive one sized the PTY ~10% narrow (144 instead of 162 columns).
+- **It doesn't answer terminal queries.** xterm emits its replies (cursor position, device
+  attributes) through `onData`; with another screen owning the size, those are dropped unless a
+  real gesture just happened, so the app hears one answer, from the screen it's drawing for.
+
+**Attach is a snapshot, not a replay.** Raw bytes were produced at whatever size the PTY had at the
+time, so replaying a laptop's Claude session into a phone put characters in the wrong places, and
+nothing on the receiving end could know which bytes belonged to which width. `lib/screenMirror.js`
+feeds the same stream into an `@xterm/headless` terminal that lives through every resize as it
+happens (resizes are queued *into* the write stream, so earlier output is parsed at the old width),
+and `@xterm/addon-serialize` turns it into one screen at the current size — also far less for a
+phone to parse than up to 2 MB of redraws. `Session.attach()` queues live output for a socket until
+its snapshot is sent, so nothing is lost or doubled in between (`test/screen.test.js`). Known
+limitation (addon-serialize 0.13): a wrapped row that *starts* with never-written cells is
+serialized as a cursor-forward from the pending-wrap position, which lands on the wrong row. It
+needs a cursor-positioned gap exactly on a wrap boundary after a shrink, and the TUI repaints on the
+resize anyway.
+
+**This is a `sessiond`-tier change** for the snapshot and the `size` broadcast: they arrive with the
+next `sessiond` restart (reboot, or `restart-sessiond.ps1`). Until then the new browser code runs
+in `legacy` mode against the old `sessiond` — no `you` in the replay — and still claims on every
+interaction above, so switching devices and touching the screen fixes the size; it just can't tell
+the *other* screen to follow until that one is touched too. If `@xterm/headless` is missing on a
+host, the mirror falls back to the old raw ring buffer (`screen: 'raw'` in the replay) rather than
+taking `sessiond` down.
+
 ## Mobile notes
 
 ### Measuring it instead of guessing (`test/mobile/`)
@@ -1488,7 +1543,8 @@ instinct as `?voicedebug=1`, which exists because a phone has no console.
   letter you type (e.g. `Ctrl` then `d` → `\x04`).
 - Inputs use a 16px font so iOS Safari doesn't zoom on focus.
 - The terminal refits on focus, `orientationchange`, and `visualViewport` resize (soft
-  keyboard show/hide).
+  keyboard show/hide) — if this screen owns the size; otherwise it re-shrinks to fit (see
+  *One PTY, several screens*).
 - The voice strip sits directly above the key bar so the undo window's **Cancel** button lands
   under your thumb — the only reason to look at that strip in a hurry is to stop a send.
 - Add the tab to your home screen for an app-like, full-screen experience. The icon is an inline
@@ -1682,7 +1738,7 @@ user actually meant to paste.
 | Sidebar empty after a reboot | `sessiond` (and its PTYs) died with the machine | Sessions created while the persistence build was running reappear under **Restorable (after restart)** — restore re-opens Claude with `--resume` or a shell with its command history. Sessions from before the build was deployed weren't recorded |
 | Restoring a Claude session opens a bare shell, no conversation | The restore command carried two conversation-identity flags — Claude printed a usage error and exited | Fixed in `lib/restore.js` (strips `--session-id`/`--continue`/`--fork-session` before adding `--resume`); the fix also repairs entries already mangled in `sessions.json`. Scroll the restored terminal up to see the actual CLI error. Machines on an older CLI never hit this, which is why it looked platform-specific |
 | Restore works on one machine, not another | The two machines run different Claude CLI versions | Open ⟳ **Update** — the panel reports the installed CLI against termhub's pin (`termhub.claudeCli` in `package.json`) and offers **Update Claude**. Verify from a terminal with `claude --version` |
-| Wrong size / wrapping | Pane resized while backgrounded | Switch sessions or rotate to force a refit |
+| Wrong size / wrapping | Another screen (laptop/phone) owns the size — the **Fit here** pill shows | Tap the terminal or **Fit here**; any use of a screen claims the size. Without the pill on a long-running host, `sessiond` predates size ownership: touching the screen still fixes it, and a `sessiond` restart brings the pill |
 | Pasted image lands as a file path instead of in the agent's prompt | The host has no usable clipboard, or the staging didn't read back | `curl -X POST /api/clipboard-probe` says which. Expected on a headless Linux box, and for a JPEG anywhere but Windows. The path works — both Claude Code and opencode read an image given one. To get the clipboard route instead, run a session with a real display and paste a PNG |
 | Attaching an image to a session on a **remote** machine does nothing: Claude Code says *"No image found in clipboard"* (Windows) or nothing at all (Linux), while termhub's toast said `image pasted` | termhub trusted a clipboard write that exited 0 without the image landing — see *Attachments*. It could only ever be seen on a remote host, because locally the user's own clipboard already held the image | Fixed: staging is read back before the paste hotkey is fired, and falls back to a file path when it isn't there. **The fix is in `sessiond`, which `update.ps1` deliberately never restarts** — after updating, restart sessiond (the update prints a sessiond-drift warning when this matters), then confirm with `curl -X POST /api/clipboard-probe` |
 | 📎 upload does nothing on a phone | File over the cap (100 MB, or 15 MB for an image on a host with a real clipboard — `curl /api/info` shows the effective `limits`) | The red notice above the key bar says so; tap it to dismiss, shrink the file. A silent failure instead means the connection dropped — the notice says that too |
