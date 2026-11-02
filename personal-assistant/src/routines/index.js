@@ -15,13 +15,14 @@
 // `pa routine run` in a terminal): a Postgres advisory lock held for the run.
 
 const db = require('../db');
+const { config } = require('../config');
 const { logger } = require('../log');
 const cron = require('./cron');
 const actions = require('./actions');
 
 const log = logger('routines');
 const LOCK_KEY = 7301;
-const PARSE_MODEL = 'claude-sonnet-5-5';
+const PARSE_MODEL = config.routines.model;
 
 // ------------------------------------------------------------ preview ----
 

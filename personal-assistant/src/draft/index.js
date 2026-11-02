@@ -161,7 +161,7 @@ async function composeReply(commitmentId, { origin = 'manual' } = {}) {
     .filter((l) => l !== null)
     .join('\n');
 
-  const body = (await llm.complete({ system: REPLY_SYSTEM, prompt, effort: 'medium', maxTokens: 1500, purpose: 'draft' })).trim();
+  const body = (await llm.complete({ system: REPLY_SYSTEM, prompt, effort: 'medium', maxTokens: 1500, model: config.drafts.model, purpose: 'draft' })).trim();
   return save({
     commitmentId,
     runId: null,
@@ -197,7 +197,7 @@ async function composeNudge(commitmentId) {
   ]
     .filter((l) => l !== null)
     .join('\n');
-  const body = (await llm.complete({ system: NUDGE_SYSTEM, prompt, effort: 'low', maxTokens: 600, purpose: 'draft' })).trim();
+  const body = (await llm.complete({ system: NUDGE_SYSTEM, prompt, effort: 'low', maxTokens: 600, model: config.drafts.model, purpose: 'draft' })).trim();
   return save({
     commitmentId,
     runId: null,
@@ -249,7 +249,7 @@ async function compose(runId, { channel = null } = {}) {
     `CHANNEL: ${target.channel === 'teams' ? 'Teams message' : 'email'}`,
   ].join('\n');
 
-  const body = (await llm.complete({ system: REPORT_SYSTEM, prompt, effort: 'low', maxTokens: 2000, purpose: 'draft' })).trim();
+  const body = (await llm.complete({ system: REPORT_SYSTEM, prompt, effort: 'low', maxTokens: 2000, model: config.drafts.model, purpose: 'draft' })).trim();
   const draft = await save({
     commitmentId: null,
     runId,

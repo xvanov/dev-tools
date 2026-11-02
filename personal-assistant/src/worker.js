@@ -95,6 +95,13 @@ async function main() {
     db: config.databaseUrl.replace(/:[^:@/]*@/, ':***@'),
   });
 
+  // A pass whose model cannot do its job (a connector relay set to a
+  // non-Claude-Code backend, an unknown provider) is said once, loudly, at
+  // start — each call refuses too, but this names the variable to fix.
+  for (const r of require('./models').report()) {
+    if (!r.ok) log[r.capable ? 'warn' : 'error']('model misconfigured', { purpose: r.purpose, env: r.env, model: r.model, problem: r.problem });
+  }
+
   // Wait for the store rather than exit. Postgres lives in WSL, and at logon
   // (or after WSL drops the distro) it is routinely down for a minute; exiting
   // spent the task's five restarts in ten minutes and left the worker dead for

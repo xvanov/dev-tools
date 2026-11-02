@@ -92,7 +92,7 @@ project outright; if that repo is not cloned, the project is left empty rather t
 | Value | Needed for | Notes |
 |---|---|---|
 | Microsoft 365 (claude.ai connector) | mail, calendar, Teams chats and channels | No app registration and no token: a headless `claude -p` calls the connector. Connect it once with `/mcp` → *claude.ai Microsoft 365*. `PA_TEAMS_CHANNELS` = `mentions` (default) / `all` / `off`. `PA_M365=0` turns it off. |
-| `ANTHROPIC_API_KEY` | distillation and drafts | Optional. Without it, model calls run through `claude -p` on your own Claude Code login — or on a login of pa's own with `PA_CLAUDE_CONFIG_DIR` (see SETUP §2). |
+| `ANTHROPIC_API_KEY` | distillation and drafts | Optional. Without it, model calls run through `claude -p` on your own Claude Code login — or on a login of pa's own with `PA_CLAUDE_CONFIG_DIR` (see SETUP §2). Any pass can also run on Azure OpenAI, OpenAI, OpenRouter, DeepSeek or a local server — see [Models and providers](#models-and-providers). |
 | GitHub (`gh auth login`) | notifications, PRs, assigned issues, Projects v2 board items | No token in `.env`: ingest runs through the signed-in `gh` CLI. Boards also need `gh auth refresh -s read:project`; `PA_GITHUB_BOARDS=innergy-dev/7:Pod=Xi` follows a pod's cards whoever they are assigned to (as context: only a card assigned to you or by you puts anything on you). `PA_GITHUB=0` turns it off. |
 | Jira (API token, or the Atlassian connector) | issues you're assigned, reported, or watching | Preferred: the `PA_JIRA_API_TOKEN` secret (see [Secrets](#secrets-and-sign-ins)) — REST with Basic auth, no model in the loop. `PA_JIRA_EMAIL` defaults to your Microsoft 365 address, `PA_JIRA_SITE` to the site the connector discovered. Without a token, a headless `claude -p` runs the JQL through the claude.ai Atlassian connector (`/mcp` → *claude.ai Atlassian MCP*); when that fails too, the dashboard asks you for a token. `PA_JIRA=0` turns it off. |
 | `AZURE_OPENAI_*` | semantic search | Optional. Without it search is full-text only — good on names and ids, weaker on paraphrase. |
@@ -249,7 +249,9 @@ or the API — leaves an `llm_spend` row: when, which pass (`purpose`: distill, 
 reply-close, draft, memory-*, meeting-brief, debrief, connector, ...), model, backend, cost,
 tokens, duration and whether it worked; never any prompt or reply text. The CLI reports its own
 cost; for the API it is estimated from token usage at list prices, or left null for a model it
-does not know. `PA_DAILY_BUDGET_USD` (default 15) caps a local day: once reached, *discretionary*
+does not know. Another provider's call is priced only from `PA_MODEL_PRICES` (or, on OpenRouter,
+the cost it reports); otherwise its cost is null, never guessed — and its `backend` is the
+provider's name (`azure`, `openrouter`, …). `PA_DAILY_BUDGET_USD` (default 15) caps a local day: once reached, *discretionary*
 purposes (`PA_BUDGET_DISCRETIONARY`, default eager, research, digest, planner, card — speculative work
 done ahead of you) are refused until midnight and the worker logs it once; *essential* ones
 (`PA_BUDGET_ESSENTIAL`, default distill, reconcile, connector, reply-close) keep the board true
@@ -790,6 +792,38 @@ sessions and audio transcripts on disk are re-scanned on their own. Re-ingest is
 running it over data that is still there costs fetches, not duplicates. Distillation, embeddings
 and memory then rebuild from the items by themselves.
 
+## Models and providers
+
+Every pass that calls a model picks it with its own variable, and the value is a **model string**
+(`src/models.js`):
+
+| String | Goes to |
+|---|---|
+| `claude-sonnet-5-5` (bare) | the Anthropic API when `ANTHROPIC_API_KEY` is set, else `claude -p` — the original meaning |
+| `anthropic/claude-sonnet-5-5` | the Anthropic API, always |
+| `cli/claude-opus-5` | a headless `claude -p`, always |
+| `azure/<deployment>` | Azure OpenAI chat completions on `AZURE_OPENAI_ENDPOINT` (or `PA_AZURE_CHAT_ENDPOINT`), key `AZURE_OPENAI_API_KEY` |
+| `openai/<model>` | OpenAI (`OPENAI_API_KEY`, `OPENAI_BASE_URL`) |
+| `openrouter/<vendor>/<model>` | OpenRouter (`OPENROUTER_API_KEY`) |
+| `deepseek/<model>` | DeepSeek (`DEEPSEEK_API_KEY`) |
+| `local/<model>` | any OpenAI-compatible server at `PA_LOCAL_LLM_URL` |
+
+Only the first segment is the provider; an unknown one is an error, not a bare name. `PA_MODEL`
+sets one default for every pass that has no variable of its own. Per pass: `PA_DISTILL_MODEL`,
+`PA_MEMORY_EXTRACT_MODEL`, `PA_MEMORY_DECIDE_MODEL` (also recall planning), `PA_MEMORY_PAGE_MODEL`,
+`PA_BRIEF_MODEL`, `PA_BRIEF_CLASSIFY_MODEL`, `PA_DEBRIEF_MODEL`, `PA_REPLY_CLOSE_MODEL`,
+`PA_RECONCILE_MODEL`, `PA_CARD_CONTEXT_MODEL` (default: the reconcile model), `PA_PLANNER_MODEL`,
+`PA_DRAFT_MODEL` and `PA_EVAL_MODEL` (default: the distill model), `PA_ROUTINE_MODEL`.
+
+**The connector relay is Claude Code only.** Microsoft 365 and the Jira connector fallback are
+reached by tool calls to the claude.ai connectors, and only Claude Code holds those logins, so
+`PA_CONNECTOR_MODEL` must be a bare Claude name or `cli/…`, and it ignores `PA_MODEL`. Anything else
+is refused at the call (with the variable named), logged as an error when the worker starts, and
+shown as **NOT capable** in `pa doctor`, which prints one line per pass: model, backend, the
+capability it needs (text, json, toolCalls), whether its key is configured.
+
+The PA chat and dispatched runs choose an agent CLI as well as a model — see the next section.
+
 ## Talking to it: the PA chat
 
 `pa chat` (or termhub's **PA chat** button) opens one Claude Code session in termhub that *is*
@@ -801,6 +835,24 @@ history. It answers through the MCP tools (`recall`, `memory_page`, …) and act
 CLI: read-only commands run freely; starting a run (`pa do`), landing, steering, closing,
 remembering and adding routines each ask you first. Put your own standing instructions in
 `pa-home\CLAUDE.local.md`.
+
+**Claude Code or opencode.** `PA_CHAT_AGENT=opencode` runs the chat in
+[opencode](https://opencode.ai) instead, on any provider opencode is set up for, with
+`PA_CHAT_MODEL` in opencode's `provider/model` form (`PA_CHAT_MODEL` on claude takes a Claude
+model). The same rules apply: pa writes `pa-home\opencode.json` and `AGENTS.md` from the same
+command lists as Claude's `settings.json`, starting from "ask for everything" (opencode's own
+defaults allow nearly everything), denying subagents, and asking for any command with a redirect.
+Before it starts an opencode chat, pa asks the installed opencode for the rules it actually
+resolved (`opencode debug agent`) for every agent you can switch to, and refuses to start if any
+action that must ask would not. Neither CLI may be started with permissions skipped
+(`--dangerously-skip-permissions`, `--auto`): `pa chat` and `pa doctor` refuse. opencode has no
+SessionStart hook, so its `AGENTS.md` tells it to run `pa context` first, and **the doorbell below
+never rings for it** — its screen is not Claude's, so the chat reads `INBOX.md` on your next turn.
+
+Dispatched runs choose too: `PA_DISPATCH_AGENT` / `PA_DISPATCH_MODEL`, or `pa do … --agent
+opencode --model azure/gpt-5.4` for one run. An opencode run starts as `opencode --auto` with the
+opening prompt on its command line (nothing is typed at it); the run's mode limits are enforced by
+the dispatcher either way. Runs on another machine start that machine's `claude`.
 
 Work you hand it runs as an ordinary dispatch: its own termhub session and worktree. When that
 session has been sitting at its prompt for a minute — finished, or stopped to ask something — you
@@ -818,7 +870,7 @@ safe (`src/notify/chat.js`):
 - **The typed line carries no content.** Typed text is a prompt with *your* authority, and
   notification titles quote other people; in `INBOX.md` the same words are data the chat is told
   never to obey.
-- **It is typed only when nothing can go wrong with Enter**: termhub says the session finished its
+- **It is typed only when nothing can go wrong with Enter**: termhub says the session is Claude Code and finished its
   turn (not working, not parked on a permission prompt or question), it has been quiet for
   `PA_CHAT_NUDGE_IDLE_MINUTES` (2), and the screen's input box is empty with nothing unexplained
   after it. Any doubt and the nudge is skipped — the toast still goes and the chat reads the inbox
@@ -857,7 +909,9 @@ src/dashboard/       the loopback web page: today, next meeting, replies, runs, 
 src/secrets/         secret and login requests; Windows Credential Manager via PowerShell (stdin only)
 src/routines/        cron parser, the typed action registry (repo_sync, prompt_report), runs, suggestions
 src/notify/          notifications: toasts, the interrupt budget, digests, feedback weights, the PA chat inbox
-src/llm.js           model calls: API key, or `claude -p` without one
+src/llm.js           model calls: Anthropic API, `claude -p`, or an OpenAI-compatible provider
+src/models.js        model strings, which backend each pass uses, and what it can do (pa doctor)
+src/agentCli.js      claude | opencode command lines for the chat (src/chat/agent.js) and runs (src/dispatch/agent.js)
 src/budget.js        model spend: one llm_spend row per call, the daily cap on discretionary work
 src/backup.js        nightly pg_dump, restore, re-ingest
 src/dispatch/        worktrees, briefs, termhub sessions, modes, landing; the factory route

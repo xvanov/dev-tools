@@ -19,7 +19,7 @@ const { logger } = require('../log');
 const routines = require('./index');
 
 const log = logger('routine-suggest');
-const MODEL = 'claude-sonnet-5-5';
+const MODEL = config.routines.model;
 const MAX = 3;
 const SETTING = 'routines.suggested_on';
 

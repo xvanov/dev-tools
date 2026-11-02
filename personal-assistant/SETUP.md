@@ -58,7 +58,7 @@ PA_M365_CALENDAR_POLL_SECONDS=900
 The model is what turns messages into commitments and writes reply drafts. **You can skip this
 step.** With no key, every model call runs through a headless `claude -p` on your own Claude
 Code login (see `src/llm.js`) — no separate billing, nothing to create. `pa doctor` shows which
-route is in use on its `model` line. Set a key only if you would rather bill the API directly.
+route each pass uses on its `model · <pass>` lines. Set a key only if you would rather bill the API directly.
 
 **pa on a subscription of its own.** If you switch Claude subscriptions, pin pa to one so its
 connectors do not vanish with the switch. Give it a Claude Code config folder of its own and sign
@@ -92,6 +92,17 @@ ANTHROPIC_API_KEY=sk-ant-...
 
 > This is a real secret. It is in `.env`, which is gitignored — do not paste it into a commit,
 > a chat, or a screenshot.
+
+### Other providers
+
+Any pass can run on Azure OpenAI, OpenAI, OpenRouter, DeepSeek or a local OpenAI-compatible
+server instead: set its `*_MODEL` variable (or `PA_MODEL` for all of them) to `provider/model`, e.g.
+`PA_RECONCILE_MODEL=azure/gpt-5.4`, and give the provider its key with `pa secret set
+OPENROUTER_API_KEY` (Azure reuses `AZURE_OPENAI_ENDPOINT` / `AZURE_OPENAI_API_KEY` from step 3).
+The README's *Models and providers* has the full list. Two limits: `PA_CONNECTOR_MODEL` stays on
+Claude Code (Microsoft 365 and the Jira connector need its logins), and a non-Claude model's cost
+is recorded as unknown unless you give its price in `PA_MODEL_PRICES`. Run `pa doctor` after any
+change: it prints one line per pass and refuses a pass whose backend cannot do its job.
 
 ### Cost
 

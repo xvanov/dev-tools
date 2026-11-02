@@ -37,6 +37,7 @@ const HELP = `pa — your context layer
                      [--machine name]  …in another machine's termhub (PA_MACHINES)
                      [--via claude|factory|auto]  …or to the software factory; auto picks and says why
                      [--pipeline chain|solo|auto] [--model persona=model]… [--done "…"]… [--app a]  factory only
+                     [--agent claude|opencode] [--model m]  which agent CLI and model (local runs)
     pa done <id> [--dismiss|--reopen] close a commitment yourself
     pa ledger <id>                   every status change of a commitment, and why
     pa ledger reconcile [--dry-run] [--id N,..] [--limit N]
@@ -374,9 +375,15 @@ const commands = {
       machine,
       via: str('via'),
       pipeline: str('pipeline'),
-      models: lists.model || null,
+      // --model is shared: persona=model pairs are factory route overrides,
+      // a bare model picks the agent's model for a Claude/opencode run.
+      models: (lists.model || []).filter((m) => String(m).includes('=')).length
+        ? (lists.model || []).filter((m) => String(m).includes('='))
+        : null,
       done: lists.done || null,
       app: str('app'),
+      agent: flags.agent && flags.agent !== true ? String(flags.agent) : null,
+      model: (lists.model || []).filter((m) => !String(m).includes('=')).pop() || null,
     });
 
     if (result.route === 'factory') {
@@ -960,13 +967,41 @@ const commands = {
         .toString()
         .trim();
     } catch {}
-    const viaCli = llm.backend() === 'cli';
-    mark(
-      viaCli ? Boolean(cliVersion) : true,
-      'model',
-      `${config.anthropic.model} · effort ${config.anthropic.effort} · via ` +
-        (viaCli ? (cliVersion ? `claude -p ${cliVersion}` : `${config.claudeBin} not found — set PA_CLAUDE_BIN`) : 'API key')
-    );
+    // Every pass's model, where it goes, and whether it can do the pass's job
+    // (src/models.js). A connector pass on a non-Claude-Code backend is
+    // refused here rather than failing on the next sync.
+    const modelRows = require('../models').report({ claudeAvailable: Boolean(cliVersion) });
+    for (const r of modelRows) {
+      mark(
+        r.ok,
+        `model · ${r.purpose}`,
+        `${r.model} · ${r.backend ? `via ${r.backend === 'cli' ? 'claude -p' : r.backend === 'api' ? 'Anthropic API' : r.backend}` : 'unroutable'}` +
+          ` · needs ${r.needs}${r.backend ? ` · key ${r.keyConfigured ? 'ok' : 'missing'}` : ''} · ${r.capable ? 'capable' : 'NOT capable'}` +
+          `${r.problem ? ` — ${r.problem}` : ''}${r.purpose === 'distill' ? ` · effort ${config.anthropic.effort}` : ''}`
+      );
+    }
+    const viaCli = modelRows.some((r) => r.backend === 'cli');
+    // The PA chat and dispatched runs: which agent CLI, which model, and
+    // whether its permission guarantees hold (src/chat/agent.js).
+    try {
+      const agent = require('../chat/agent');
+      const chat = agent.chatCommand();
+      let detail = `${chat.command}`;
+      if (chat.agent === 'opencode') {
+        const check = await agent.verifyOpencodePermissions(require('../chat').ensureHome());
+        mark(check.ok, 'chat agent', `${detail} · permissions ${check.ok ? 'verified' : `REFUSED — ${check.problems.join('; ')}`}`);
+      } else {
+        mark(true, 'chat agent', `${detail} · permissions from .claude/settings.json`);
+      }
+    } catch (err) {
+      mark(false, 'chat agent', `REFUSED — ${err.message}`);
+    }
+    try {
+      const d = require('../dispatch/agent').dispatchCommand();
+      mark(true, 'dispatch agent', d.command);
+    } catch (err) {
+      mark(false, 'dispatch agent', `REFUSED — ${err.message}`);
+    }
     mark(Boolean(cliVersion), 'claude cli', cliVersion || 'not found — connector sources (Jira, Microsoft 365) cannot run');
     if (viaCli || cliVersion) {
       // Which subscription pa's own calls bill to, and where its connectors live.

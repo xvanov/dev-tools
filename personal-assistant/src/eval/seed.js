@@ -11,6 +11,7 @@
 // case that nothing could pass measures the chunker, not retrieval.
 
 const db = require('../db');
+const { config } = require('../config');
 const llm = require('../llm');
 const { logger } = require('../log');
 const P = require('./prompts');
@@ -119,7 +120,7 @@ async function sharedGroups({ exclude, limit }) {
 async function generate(qtype, ids) {
   const items = await loadItems(ids);
   if (items.length !== ids.length) return null;
-  const reply = await llm.complete({ system: P.SYSTEM, prompt: P.casePrompt(qtype, items), effort: 'medium', maxTokens: 2000, purpose: 'eval' });
+  const reply = await llm.complete({ system: P.SYSTEM, prompt: P.casePrompt(qtype, items), effort: 'medium', maxTokens: 2000, model: config.eval.model, purpose: 'eval' });
   let parsed;
   try {
     parsed = llm.extractJson(reply);
@@ -177,6 +178,7 @@ async function abstentions(count, { rounds = 4 } = {}) {
         prompt: P.abstentionPrompt(subjects, Math.max(6, (count - out.length) * 3)),
         effort: 'medium',
         maxTokens: 3000,
+        model: config.eval.model,
         purpose: 'eval',
       });
       qs = (llm.extractJson(reply).questions || []).filter((q) => q && q.question && q.term);

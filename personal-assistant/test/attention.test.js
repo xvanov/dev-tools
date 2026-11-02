@@ -208,7 +208,7 @@ const noon = L(2026, 10, 25, 12);
   assert.strictEqual(chat.promptContent('just some output'), null);
   assert.notStrictEqual(chat.promptContent(PERMISSION), '', 'a permission menu is never an empty prompt');
 
-  const idle = { id: 's1', alive: true, busy: false, idleState: 'waiting', idleReason: 'turn-end', idleMs: 5 * 60_000 };
+  const idle = { id: 's1', kind: 'claude', alive: true, busy: false, idleState: 'waiting', idleReason: 'turn-end', idleMs: 5 * 60_000 };
   const ok = (session, screen = EMPTY_BOX) => chat.nudgeDecision({ session, screen, minIdleMs: 2 * 60_000 });
 
   assert.deepStrictEqual(ok(idle), { ok: true, reason: 'idle at an empty prompt' });
