@@ -75,7 +75,11 @@ async function act(p) {
     });
     if (ok) {
       try {
-        const run = await require('../dispatch').start({ commitmentId: c.id, task: p.brief, mode: 'plan' });
+        // Always a Claude session: plan mode is read-only, and the factory
+        // only builds — nothing the planner starts alone may change code.
+        const run = await require('../dispatch').start({
+          commitmentId: c.id, task: p.brief, mode: 'plan', via: 'claude', routeReason: 'planner research run (read-only)',
+        });
         plan.researchRunId = Number(run.id);
         await require('../notify').notify({
           kind: 'info',
@@ -96,12 +100,32 @@ async function act(p) {
     }
   }
   if (p.action === 'offer_run') {
+    // Which route the offer is for, decided now so the card says it before
+    // the yes (src/dispatch/routeCore.js). A factory job changes code, so it
+    // is only ever offered, never started here.
+    let route = { route: 'claude', reason: 'plan mode is read-only; the factory only builds' };
+    if (plan.mode !== 'plan') {
+      route = await require('../dispatch/route')
+        .decideFor({ commitmentId: c.id, kind: p.kind, mode: config.factory.proposalMode })
+        .catch((err) => ({ route: 'claude', reason: `route not decided (${String(err.message).slice(0, 80)})` }));
+    }
+    const viaFactory = route.route === 'factory';
+    plan.route = route.route;
+    plan.routeReason = route.reason;
+    if (!plan.mode) plan.mode = viaFactory ? config.factory.proposalMode : 'local';
+    const how = viaFactory
+      ? `Software factory (app ${route.app}), mode \`${plan.mode}\`: it opens at most ${plan.mode === 'local' ? 'nothing — work stays in the factory' : plan.mode === 'branch' ? 'a pushed branch' : 'a draft PR'}; its gates run first.`
+      : plan.mode === 'plan'
+        ? 'Read-only: it writes up findings.'
+        : 'Local mode: it commits in its own worktree and never pushes.';
     await require('../proposals').create({
       kind: 'dispatch',
       commitmentId: c.id,
-      title: `Start a ${plan.mode === 'plan' ? 'research' : 'coding'} session on: ${c.summary}`.slice(0, 280),
-      body: `${p.brief}\n\nIn ${c.project}. ${plan.mode === 'plan' ? 'Read-only: it writes up findings.' : 'Local mode: it commits in its own worktree and never pushes.'}`,
-      payload: { mode: plan.mode || 'local' },
+      title: (viaFactory
+        ? `Send to the factory: ${c.summary}`
+        : `Start a ${plan.mode === 'plan' ? 'research' : 'coding'} session on: ${c.summary}`).slice(0, 280),
+      body: `${p.brief}\n\nIn ${c.project}. ${how}\nRoute: ${viaFactory ? 'factory' : 'Claude session'} — ${route.reason}.`,
+      payload: { mode: plan.mode, via: route.route, routeReason: route.reason },
       dedupeKey: `offer-run:${c.id}`,
       expiresAt: new Date(Date.now() + 5 * 86400_000),
     });

@@ -25,22 +25,37 @@ function fence(text) {
 
 // `memory` is what the assistant's memory adds, all optional: pages on the
 // requester and the project, and distilled facts recalled for the ask.
-function buildBrief({ commitment, item, project, person, modeName, run, related = [], memory = {} }) {
+//
+// `factory` ({app, delivery}) makes it the ask of a software-factory job
+// (src/dispatch/factory.js) rather than a Claude session's BRIEF.md: the stop
+// condition is the job's delivery level, which the factory enforces, and the
+// lines about this tool's worktree and its `pa` MCP server — which a factory
+// persona does not have — are left out.
+function buildBrief({ commitment, item, project, person, modeName, run, related = [], memory = {}, factory = null }) {
   const m = resolveMode(modeName);
   const lines = [];
 
   lines.push(`# ${commitment ? commitment.summary : run.task}`);
   lines.push('');
-  lines.push(
-    `Dispatched by the personal assistant, run #${run.id}, mode \`${m.name}\` — this session may ${describe(m.name)}.`
-  );
+  if (factory) {
+    lines.push(
+      `Sent by the personal assistant as a software-factory job (run #${run.id}, app \`${factory.app}\`), mode \`${m.name}\` → delivery \`${factory.delivery}\`.`
+    );
+  } else {
+    lines.push(
+      `Dispatched by the personal assistant, run #${run.id}, mode \`${m.name}\` — this session may ${describe(m.name)}.`
+    );
+  }
   lines.push('');
 
   lines.push('## Stop condition');
   lines.push('');
-  lines.push(m.stopCondition);
+  lines.push(factory ? FACTORY_STOP[factory.delivery] || `Deliver at most \`${factory.delivery}\`.` : m.stopCondition);
   lines.push('');
-  if (!m.mayPush) {
+  if (factory) {
+    lines.push('> The delivery level is enforced by the factory (clamped to the app\'s own ceiling), not merely requested here. Nothing is ever sent to the requester.');
+    lines.push('');
+  } else if (!m.mayPush) {
     lines.push(
       '> Pushing is blocked at the git level for this run, not merely discouraged. If you find yourself wanting to push, that is the signal to stop and say so.'
     );
@@ -71,8 +86,8 @@ function buildBrief({ commitment, item, project, person, modeName, run, related 
     lines.push('## Where');
     lines.push('');
     lines.push(`**Project:** ${project.name}${project.gitlab_path ? ` (\`${project.gitlab_path}\`)` : ''}`);
-    if (run.worktree_path) lines.push(`**Worktree:** \`${run.worktree_path}\``);
-    if (run.branch) lines.push(`**Branch:** \`${run.branch}\``);
+    if (!factory && run.worktree_path) lines.push(`**Worktree:** \`${run.worktree_path}\``);
+    if (!factory && run.branch) lines.push(`**Branch:** \`${run.branch}\``);
     if (commitment && commitment.project_confidence !== null && commitment.project_confidence < 0.6) {
       lines.push('');
       lines.push(
@@ -124,10 +139,13 @@ function buildBrief({ commitment, item, project, person, modeName, run, related 
   lines.push(
     '- For cross-repo or org-wide conventions, use the `innergy-knowledge` skill rather than assuming. Do not copy its content in here.'
   );
-  lines.push(
-    '- The assistant\'s own store is available through the `pa` MCP server: `recall` (questions about people, decisions, history), `memory_page`, `explain_claim`, `search_context`, `get_thread`, `who_is`, `open_commitments`. Use it when the ask references something not quoted above.'
-  );
+  if (!factory) {
+    lines.push(
+      '- The assistant\'s own store is available through the `pa` MCP server: `recall` (questions about people, decisions, history), `memory_page`, `explain_claim`, `search_context`, `get_thread`, `who_is`, `open_commitments`. Use it when the ask references something not quoted above.'
+    );
+  }
   lines.push('');
+  if (factory) return lines.join('\n');
   lines.push('## When you are done');
   lines.push('');
   lines.push(
@@ -143,6 +161,14 @@ function buildBrief({ commitment, item, project, person, modeName, run, related 
 
   return lines.join('\n');
 }
+
+// What each factory delivery level means, for the job's ask (JOBS-API.md).
+const FACTORY_STOP = {
+  none: 'Commit in the factory\'s own worktree. Push nothing and open no pull request.',
+  branch: 'Push the branch. Do not open a pull request.',
+  draft_pr: 'Push and open a DRAFT pull request. Never mark it ready and never merge it.',
+  pr: 'Open a ready pull request. Never merge it.',
+};
 
 function sourceLabel(source) {
   return (

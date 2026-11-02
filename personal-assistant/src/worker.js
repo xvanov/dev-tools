@@ -333,6 +333,15 @@ async function main() {
     await dispatch.reconcile();
   });
 
+  // Factory jobs (src/dispatch/factory.js): their status onto the run rows,
+  // and a finished or failed one moves its commitment through the ledger.
+  // A no-op, without a command, while no factory run is live.
+  if (require('./dispatch/factory').enabled()) {
+    every(config.factory.pollSeconds, 'factory', async () => {
+      await require('./dispatch/factory').poll();
+    });
+  }
+
   // Routines: due ones run one at a time; a missed slot runs once, never a
   // backlog (src/routines). Suggestions are proposed nightly, never enabled.
   if (config.routines.enabled) {

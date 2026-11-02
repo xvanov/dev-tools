@@ -162,6 +162,22 @@ judged "investigate" with a known repo, at most `PA_EAGER_RUNS_PER_DAY` a day an
 `budget.allow('eager')` says yes, and tells you it did. Anything that changes code is offered as a
 `dispatch` proposal and starts only on your yes. Do not widen the mode it may start alone.
 
+**The factory is a dispatch target under the same rules, reached only through its contract.**
+`--via factory` (`src/dispatch/factory.js`) sends a run to the software factory instead of a
+Claude session. The PA never imports factory code or reads its store: it runs `uv run factory
+job|app …` through `runCommand` (`src/dispatch/exec.js`) and parses the one JSON object the
+factory's `docs/JOBS-API.md` says each command prints. The mode boundary holds as the job's
+delivery level (`factoryCore.deliveryFor`; `plan` is never a job, and no mode asks past a draft
+PR), which the factory clamps to the app's ceiling. A factory job changes code, so the planner only
+ever *offers* one; its own runs stay `plan`-mode Claude sessions (`test/factoryDispatch.test.js`
+checks the planner source). A job's end moves its commitment only through `ledger.transition`
+(actor `factory`) and only from `dispatched`, and GitHub reconcile closes only `open` asks, so a
+merged factory PR is never closed twice. A job id is checked against `factoryCore.JOB_ID` before it
+is typed into a terminal. Any route chooser's answer passes `routeCore.guard`. Every job is sent
+with a `--flow-file` (`factoryCore.flowMarkdown`, deterministic), since the factory parks a job
+without a flow; content reaches another machine base64-encoded through a fixed writer, never as a
+command string.
+
 **Capture never stops for the assistant.** The worker's only levers on `capture.py` are the pause
 file (`pa mic pause`) and the roll file, which makes capture finish its file and continue in a
 new one. The meeting gate (`src/audio/gate.js`) writes the pause file between meetings with the

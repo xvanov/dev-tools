@@ -80,7 +80,9 @@ or Teams messages — that is not possible from here, and drafts are sent by the
 **Starting work on a problem:** \`${pa} do --task "<what to do, with the context you found>" --mode <m> --repo <path>\`.
 Modes: \`plan\` (read and plan only), \`local\` (commit in its own worktree), \`branch\`, \`mr\` (push and
 open a draft PR), \`full\`. Default to \`local\` unless the user asked for a PR. Put everything the agent
-needs into the task — it does not see this conversation. The run's session appears in termhub; when it
+needs into the task — it does not see this conversation. \`--via factory\` sends it to the software factory
+instead (a code change in a repo the factory has registered; add \`--done "<criterion>"\` per acceptance
+criterion), \`--via auto\` lets the routing rule pick and say why. The run's session appears in termhub; when it
 stops to ask something or finishes, the user gets a notification, and \`${pa} runs\` / \`${pa} review <run>\`
 show where it is. \`${pa} say <run> <text>\` answers a run's question for the user once they have told you
 the answer.

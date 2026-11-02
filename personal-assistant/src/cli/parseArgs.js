@@ -14,10 +14,18 @@
 //    as the mode would dispatch a run in a mode nobody asked for.
 //  - Everything after a bare `--` is positional, verbatim. `pa say 7 -- --help`
 //    has to be able to type "--help" at an agent.
+//  - A repeated flag keeps its last value in `flags`, as before; every value it
+//    was given is in `lists[name]`, in order, for the few verbs that take a
+//    flag more than once (`pa do --done a --done b`).
 
 function parseArgs(argv) {
   const args = [];
   const flags = {};
+  const lists = {};
+  const set = (name, value) => {
+    flags[name] = value;
+    if (typeof value === 'string') (lists[name] = lists[name] || []).push(value);
+  };
   let command = null;
   let literal = false;
 
@@ -37,7 +45,7 @@ function parseArgs(argv) {
       const body = token.slice(2);
       const eq = body.indexOf('=');
       if (eq >= 0) {
-        flags[body.slice(0, eq)] = body.slice(eq + 1);
+        set(body.slice(0, eq), body.slice(eq + 1));
         continue;
       }
       if (body.startsWith('no-')) {
@@ -46,7 +54,7 @@ function parseArgs(argv) {
       }
       const next = argv[i + 1];
       if (next !== undefined && !next.startsWith('-')) {
-        flags[body] = next;
+        set(body, next);
         i++;
       } else {
         flags[body] = true;
@@ -58,7 +66,7 @@ function parseArgs(argv) {
       const body = token.slice(1);
       const next = argv[i + 1];
       if (next !== undefined && !next.startsWith('-')) {
-        flags[body] = next;
+        set(body, next);
         i++;
       } else {
         flags[body] = true;
@@ -70,7 +78,7 @@ function parseArgs(argv) {
     else args.push(token);
   }
 
-  return { command, args, flags };
+  return { command, args, flags, lists };
 }
 
 // Flags arrive as strings; commands that mean numbers should say so once here

@@ -209,6 +209,8 @@ pa search <query>             # hybrid search over everything captured
 pa who <name>                 # a person: identities, recent threads, open commitments
 
 pa do <id> --mode <mode> [--repo <path>]   # dispatch (see §6)
+        [--via claude|factory|auto]         # a Claude session, the software factory, or let the rule pick
+pa runs stats                 # which route works for which kind of task
 pa runs                       # live and recent runs, with termhub session links
 pa attach <run>               # print the termhub URL (and open it)
 pa say <run> "<text>"         # steer a running session without leaving the CLI
@@ -260,6 +262,14 @@ Mechanics that hold for every mode:
   runs get no push credential in their environment.
 - A run that finishes announces through termhub's existing voice/ntfy path. A run that stalls
   waiting on input is exactly what termhub's idle tracking already measures.
+
+**The software factory is a second target** (`--via factory`, contract in the factory's
+`docs/JOBS-API.md`). The mode becomes the job's delivery level — `local` → `none`, `branch` →
+`branch`, `mr`/`full` → `draft_pr`; `plan` is not a factory job — and the factory clamps it to the
+app's ceiling. The BRIEF is the job's ask; the commitment's done-criteria go with it. `--via auto`
+uses a deterministic rule (factory for a concrete code change in a registered repo with stated
+done-criteria; a Claude session otherwise) behind a seam for a smarter chooser, and every run
+records route and outcome so `pa runs stats` can say which route works for which task.
 
 ---
 

@@ -107,6 +107,8 @@ async function run({ runId }, ctx) {
     try {
       await merger.ready(landed.mrUrl);
       await merger.merge(landed.mrUrl);
+      // The measured outcome (sql/024, `pa runs stats`).
+      await require('../../db').query(`update run set outcome = 'merged', outcome_at = now() where id = $1`, [runId]).catch(() => {});
       return { ok: true };
     } catch (err) {
       return { ok: false, why: String(err.stderr || err.message).trim().slice(0, 200) };

@@ -376,7 +376,7 @@ function link(url, text) {
 // Where a run can go and in which mode (GET api/machines), loaded once. A
 // commitment's context is fetched when asked for and kept open across the
 // page's refreshes, so reading it is not interrupted.
-let MACHINES = { machines: [{ name: '', label: 'this machine' }], modes: ['plan', 'local', 'branch', 'mr', 'full'], defaultMode: 'local' };
+let MACHINES = { machines: [{ name: '', label: 'this machine' }], modes: ['plan', 'local', 'branch', 'mr', 'full'], defaultMode: 'local', routes: ['claude'], defaultRoute: 'claude' };
 fetch('api/machines').then((r) => r.json()).then((m) => { MACHINES = m; }).catch(() => {});
 const openContext = new Map();
 const openGroups = new Set();
@@ -408,8 +408,12 @@ function contextPanel(x) {
     }
   }
   for (const r of x.runs || []) {
-    lines.push(el('div', { class: 'who' }, `run #${r.id} · ${r.status} · ${r.mode}${r.machine ? ` · ${r.machine}` : ''} · ${r.branch || ''} `,
-      r.url && ['starting', 'running', 'waiting', 'done'].includes(r.status) ? link(r.url, 'open session') : null));
+    const where = r.route === 'factory'
+      ? `factory ${r.factory_job_id || ''}${r.factory_state ? ` · ${r.factory_state}` : ''}${r.delivery ? ` · ${r.delivery}` : ''}${r.cost_usd != null ? ` · $${Number(r.cost_usd).toFixed(2)}` : ''}`
+      : `${r.machine ? `${r.machine} · ` : ''}${r.branch || ''}`;
+    lines.push(el('div', { class: 'who', title: [r.route_reason, ...(r.factory_warnings || []).map((w) => `warning: ${w}`)].filter(Boolean).join('\n') }, `run #${r.id} · ${r.status} · ${r.mode} · ${where}${(r.factory_warnings || []).length ? ' · factory warned' : ''} `,
+      r.url && ['starting', 'running', 'waiting', 'done'].includes(r.status) ? link(r.url, r.route === 'factory' ? 'follow job' : 'open session') : null,
+      r.mr_url ? link(r.mr_url, 'PR') : null));
   }
   return el('div', { class: 'ctx' }, ...lines);
 }
@@ -468,6 +472,15 @@ function cardSource(x, wanted) {
 
 // What each mode lets the session do, shown in the mode picker. A review or a
 // question wants `plan`; `full` also pushes, opens a draft PR and writes a reply.
+// Where the work goes. The factory delivers at most what the mode maps to
+// (local → nothing pushed, branch → a branch, mr/full → a draft PR); plan is
+// never a factory job, and auto falls back to a Claude session for it.
+const ROUTE_HELP = {
+  claude: 'Claude session',
+  factory: 'software factory',
+  auto: 'auto — the routing rule picks',
+};
+
 const MODE_HELP = {
   plan: 'plan — read and write a plan, change nothing',
   local: 'local — commit in its worktree, push blocked',
@@ -480,6 +493,7 @@ function commitmentCard(c) {
   const doBtn = el('button', { class: 'primary', title: 'Start a Claude Code session on this' }, 'Do');
   const machinePick = picker(MACHINES.machines.map((m) => ({ value: m.name, label: m.label })), '');
   const modePick = picker(MACHINES.modes.map((m) => ({ value: m, label: MODE_HELP[m] || m })), MACHINES.defaultMode);
+  const routePick = picker((MACHINES.routes || ['claude']).map((r) => ({ value: r, label: ROUTE_HELP[r] || r })), MACHINES.defaultRoute || 'claude');
   // A native disclosure: it opens and closes whatever else the card is doing.
   const ctx = el('details', { class: 'ctx-toggle' }, el('summary', {}, 'Context'));
   const loadContext = async (fresh = false) => {
@@ -515,10 +529,13 @@ function commitmentCard(c) {
     if (tab) tab.document.title = 'starting a session…';
     machinePick.disabled = true;
     modePick.disabled = true;
-    toast(machinePick.value ? `setting up on ${machinePick.value} — this takes a minute; the session opens in the new tab` : 'starting the session…');
+    routePick.disabled = true;
+    toast(routePick.value !== 'claude' ? 'sending it on its way…' : machinePick.value ? `setting up on ${machinePick.value} — this takes a minute; the session opens in the new tab` : 'starting the session…');
     try {
-      const r = await post(`api/commitments/${c.id}/dispatch`, { machine: machinePick.value || null, mode: modePick.value });
-      toast(`run #${r.id} started (${r.mode}${r.machine ? ` on ${r.machine}` : ''})`);
+      const r = await post(`api/commitments/${c.id}/dispatch`, { machine: routePick.value === 'factory' ? null : machinePick.value || null, mode: modePick.value, via: routePick.value });
+      toast(r.route === 'factory'
+        ? `run #${r.id} sent to the factory (job ${r.jobId}, delivers ${r.delivery})${(r.warnings || []).length ? ` — factory warned: ${r.warnings.join('; ')}` : ''}`
+        : `run #${r.id} started (${r.mode}${r.machine ? ` on ${r.machine}` : ''})${r.routeReason && routePick.value === 'auto' ? ` — ${r.routeReason}` : ''}`);
       if (tab && r.url) tab.location.href = r.url;
       else if (r.url) window.open(r.url, '_blank');
       openContext.set(c.id, null);
@@ -526,6 +543,7 @@ function commitmentCard(c) {
       if (tab) tab.close();
       machinePick.disabled = false;
       modePick.disabled = false;
+      routePick.disabled = false;
       throw err;
     }
   }));
@@ -550,6 +568,7 @@ function commitmentCard(c) {
     el('div', { class: 'sub' }, ...sub),
     ...cardSource(c, c.onBoard),
     el('div', { class: 'actions' },
+      canDo && (MACHINES.routes || []).length > 1 ? routePick : null,
       canDo && MACHINES.machines.length > 1 ? machinePick : null, canDo ? modePick : null, canDo ? doBtn : null,
       canReply ? replyBtn : null, doneBtn, dropBtn),
     ctx);
@@ -762,6 +781,7 @@ function render(s) {
   fill('runs', runs, (r) => el('div', { class: 'item' },
     el('div', { class: 'sum' }, r.task),
     el('div', { class: 'sub' }, ...joinParts([`run #${r.id}`, r.live ? r.status : 'done — review', r.mode,
+      r.route === 'factory' ? `factory ${r.factory_job_id || ''}${r.factory_state ? ` · ${r.factory_state}` : ''}` : null,
       r.repo_path, link(r.mr_url, 'MR')]))), 'No agent runs.');
 
   const code = s.reviews.filter((r) => r.raw?.state === 'opened' || r.raw?.action);

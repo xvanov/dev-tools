@@ -47,15 +47,21 @@ async function pending({ limit = 40 } = {}) {
 // Typed actions for proposals no task is waiting on. Each gets the proposal
 // and my answer and returns a short result line.
 const HANDLERS = {
-  // Start a run on an ask, in the mode the planner chose (a `local` run never
-  // pushes: src/dispatch/modes.js).
+  // Start a run on an ask, in the mode and on the route the planner chose and
+  // the card showed (a `local` run never pushes: src/dispatch/modes.js). An
+  // older proposal without a route is a Claude session, as it said.
   async dispatch(p) {
+    const via = p.payload?.via === 'factory' ? 'factory' : 'claude';
     const run = await require('../dispatch').start({
       commitmentId: p.commitment_id,
       mode: p.payload?.mode || undefined,
       repoPath: p.payload?.repoPath || null,
+      via,
+      routeReason: p.payload?.routeReason ? `proposal: ${p.payload.routeReason}` : null,
     });
-    return `run #${run.id} started (${run.mode})`;
+    return run.route === 'factory'
+      ? `run #${run.id} sent to the factory (job ${run.jobId}, ${run.delivery})`
+      : `run #${run.id} started (${run.mode})`;
   },
   // A question: what the answer means is named by `payload.on`.
   async question(p, answer) {

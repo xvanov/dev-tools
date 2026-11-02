@@ -277,6 +277,30 @@ const config = {
       .filter(Boolean),
   },
 
+  // The software factory as a second dispatch target (src/dispatch/factory.js,
+  // contract: software-factory docs/JOBS-API.md). Off until PA_FACTORY_PATH
+  // names the factory's checkout on its machine. Its commands run there
+  // through src/dispatch/exec.js; the walk-in session opens in that
+  // machine's termhub, so a remote factory machine must be in PA_MACHINES.
+  factory: {
+    // The checkout `uv run factory …` runs in, as a path on the factory's machine.
+    path: env('PA_FACTORY_PATH', ''),
+    // A PA_MACHINES name; '' = this machine.
+    machine: env('PA_FACTORY_MACHINE', ''),
+    // `pa do`'s route when --via is not given: claude | factory | auto.
+    via: env('PA_DISPATCH_VIA', 'claude'),
+    // chain | solo | auto (the factory decides).
+    pipeline: env('PA_FACTORY_PIPELINE', 'auto'),
+    // Per-persona model overrides passed with every job: `dev=model,reviewer=model`.
+    models: env('PA_FACTORY_MODELS', ''),
+    // The mode a planner "send to the factory?" card offers (mr = draft PR).
+    proposalMode: env('PA_FACTORY_PROPOSAL_MODE', 'mr'),
+    // How `auto` picks: `rule` (src/dispatch/routeCore.js). The seam for others.
+    chooser: env('PA_ROUTE_CHOOSER', 'rule'),
+    pollSeconds: envInt('PA_FACTORY_POLL_SECONDS', 120),
+    timeoutMs: envInt('PA_FACTORY_TIMEOUT_MS', 120_000),
+  },
+
   audio: {
     enabled: env('PA_AUDIO_ENABLED', '1') !== '0',
     sampleRate: envInt('PA_AUDIO_SAMPLE_RATE', 16000),

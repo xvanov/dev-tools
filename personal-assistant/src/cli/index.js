@@ -35,6 +35,8 @@ const HELP = `pa — your context layer
   Doing
     pa do <id> [--mode m] [--repo p] dispatch a commitment to a Claude Code session
                      [--machine name]  …in another machine's termhub (PA_MACHINES)
+                     [--via claude|factory|auto]  …or to the software factory; auto picks and says why
+                     [--pipeline chain|solo|auto] [--model persona=model]… [--done "…"]… [--app a]  factory only
     pa done <id> [--dismiss|--reopen] close a commitment yourself
     pa ledger <id>                   every status change of a commitment, and why
     pa ledger reconcile [--dry-run] [--id N,..] [--limit N]
@@ -49,6 +51,7 @@ const HELP = `pa — your context layer
     pa notify weights | digest       per-kind weights · what the next digest would say
     pa do --task "..." [--mode m] [--repo p]
     pa runs [--all]                 live and recent runs
+    pa runs stats [--days 90]       which route works for which kind of task: outcomes, cost
     pa attach <run>                 print (and open) the termhub URL for a run
     pa say <run> <text...>          type at a running session without leaving the CLI
     pa review <run> [--diff]        what the session changed
@@ -354,23 +357,39 @@ const commands = {
     }
   },
 
-  async do(args, flags) {
+  async do(args, flags, lists = {}) {
     const dispatch = require('../dispatch');
     const commitmentId = args[0] ? Number(args[0]) : null;
     const task = flags.task && flags.task !== true ? String(flags.task) : null;
-    if (!commitmentId && !task) return fail('usage: pa do <commitment-id> [--mode m] [--machine name] | pa do --task "..."');
+    if (!commitmentId && !task) return fail('usage: pa do <commitment-id> [--mode m] [--machine name] [--via claude|factory|auto] | pa do --task "..."');
 
-    const machine = flags.machine && flags.machine !== true ? String(flags.machine) : null;
+    const str = (name) => (flags[name] && flags[name] !== true ? String(flags[name]) : null);
+    const machine = str('machine');
     if (machine) out(`setting up on ${machine} — fetch, worktree, brief, then claude (a minute or so)…`);
     const result = await dispatch.start({
       commitmentId,
       task,
-      mode: flags.mode && flags.mode !== true ? String(flags.mode) : undefined,
-      repoPath: flags.repo && flags.repo !== true ? String(flags.repo) : null,
+      mode: str('mode') || undefined,
+      repoPath: str('repo'),
       machine,
+      via: str('via'),
+      pipeline: str('pipeline'),
+      models: lists.model || null,
+      done: lists.done || null,
+      app: str('app'),
     });
 
+    if (result.route === 'factory') {
+      out(`run #${result.id} · factory job ${result.jobId}${result.created ? '' : ' (already submitted)'} · app ${result.app}`);
+      out(`  delivery ${result.delivery}${result.delivery !== result.deliveryRequested ? ` (asked ${result.deliveryRequested}; the app's ceiling clamped it)` : ''} · pipeline ${result.pipeline} · mode ${result.mode}`);
+      if (result.routeReason) out(`  route    ${result.routeReason}`);
+      for (const w of result.warnings || []) out(`  WARNING  ${w}`);
+      out(`  ask      ${result.briefPath}`);
+      out(`  follow   ${result.url || '(no session — `uv run factory job follow ' + result.jobId + '` on the factory machine)'}`);
+      return;
+    }
     out(`run #${result.id} · ${result.mode}${result.machine ? ` · on ${result.machine}` : ''} · ${result.repoPath || '(no repo)'}`);
+    if (result.routeReason) out(`  route    claude — ${result.routeReason}`);
     if (result.branch) out(`  branch   ${result.branch}`);
     if (result.worktreePath) out(`  worktree ${result.worktreePath}`);
     out(`  brief    ${result.briefPath}`);
@@ -522,14 +541,31 @@ const commands = {
   },
 
   async runs(args, flags) {
+    if (args[0] === 'stats') {
+      const days = flagInt(flags, 'days', 90);
+      const list = await require('../dispatch/stats').byRoute({ days });
+      if (!list.length) return out(`no runs in the last ${days} days`);
+      out(`last ${days} days — success = delivered or merged, of the runs that finished`);
+      out(`${'route'.padEnd(8)} ${'kind'.padEnd(12)} ${'runs'.padStart(4)} ${'deliv'.padStart(5)} ${'merged'.padStart(6)} ${'failed'.padStart(6)} ${'dropped'.padStart(7)} ${'open'.padStart(4)} ${'success'.padStart(7)} ${'$'.padStart(8)} ${'$/success'.padStart(9)}`);
+      for (const g of list) {
+        const pct = g.successRate === null ? '-' : `${Math.round(g.successRate * 100)}%`;
+        const money = (v) => (v === null ? '-' : v.toFixed(2));
+        out(
+          `${g.route.padEnd(8)} ${g.kind.slice(0, 12).padEnd(12)} ${String(g.runs).padStart(4)} ${String(g.delivered).padStart(5)} ${String(g.merged).padStart(6)} ` +
+            `${String(g.failed).padStart(6)} ${String(g.dropped).padStart(7)} ${String(g.open).padStart(4)} ${pct.padStart(7)} ${money(g.costUsd).padStart(8)} ${money(g.costPerSuccess).padStart(9)}`
+        );
+      }
+      out('\nCost is the factory\'s reported spend; a Claude session\'s is not measured per run, so its $ is "-".');
+      return;
+    }
     const dispatch = require('../dispatch');
     await dispatch.reconcile().catch(() => {});
     const list = await dispatch.list({ all: flagBool(flags, 'all'), limit: flagInt(flags, 'n', 20) });
     if (!list.length) return out('no runs');
     for (const r of list) {
       out(
-        `#${String(r.id).padEnd(4)} ${r.status.padEnd(9)} ${r.mode.padEnd(7)} ${r.task}` +
-          `\n      ${r.branch || '(no branch)'} · ${relative(r.started_at)}` +
+        `#${String(r.id).padEnd(4)} ${r.status.padEnd(9)} ${r.mode.padEnd(7)} ${r.route === 'factory' ? 'factory ' : ''}${r.task}` +
+          `\n      ${r.route === 'factory' ? `job ${r.factory_job_id || '(not submitted)'}${r.factory_state ? ` · ${r.factory_state}` : ''}${r.cost_usd != null ? ` · $${Number(r.cost_usd).toFixed(2)}` : ''}` : r.branch || '(no branch)'} · ${relative(r.started_at)}` +
           `${require('../dispatch/termhub').isLocal(r.machine) ? '' : ` · on ${r.machine}`}${r.mr_url ? ` · ${r.mr_url}` : ''}`
       );
     }
@@ -568,6 +604,18 @@ const commands = {
     }
 
     const r = await dispatch.review(id);
+    if (r.run.route === 'factory') {
+      const j = r.factory;
+      out(`run #${r.run.id} · ${r.run.status} · factory ${r.run.factory_job_id || '(not submitted)'} · ${r.run.task}`);
+      if (r.run.route_reason) out(`route: ${r.run.route_reason}`);
+      for (const w of r.run.factory_warnings || []) out(`warning at submit: ${w}`);
+      if (!j) return out(r.run.exit_note ? `\n${r.run.exit_note}` : '');
+      out(`state ${j.state}${j.terminal ? ' (final)' : ''} · delivery ${j.delivery} · pipeline ${j.pipeline} · $${Number(j.cost_usd || 0).toFixed(2)}`);
+      if (j.why) out(`why: ${j.why}`);
+      for (const st of j.stories || []) out(`  story ${st.id} · ${st.state}${st.pr_url ? ` · ${st.pr_url}${st.pr_state ? ` (${st.pr_state})` : ''}` : ''}`);
+      for (const u of j.pr_urls || []) out(u);
+      return;
+    }
     out(`run #${r.run.id} · ${r.run.status} · ${r.run.mode} · ${r.run.task}`);
     if (r.run.worktree_path) out(`worktree ${r.run.worktree_path}`);
     out('');
@@ -595,7 +643,7 @@ const commands = {
     const id = Number(args[0]);
     if (!id) return fail('usage: pa drop <run> [--force]');
     const r = await dispatch.drop(id, { force: flagBool(flags, 'force') });
-    out(`run #${id} dropped`);
+    out(`run #${id} dropped${r && r.factory ? (r.cancelled ? ` — factory job ${r.jobId} cancelled${r.storiesParked != null ? `, ${r.storiesParked} stor${r.storiesParked === 1 ? 'y' : 'ies'} parked` : ''}` : ' — its factory job had already ended') : ''}`);
     if (r && r.remote && r.removed) out(`  worktree removed on ${r.machine}: ${r.worktree}`);
     else if (r && r.remote) out(`  its worktree stays on ${r.machine}: ${r.worktree} — \`pa drop ${id} --force\` removes it`);
   },
@@ -987,6 +1035,23 @@ const commands = {
       mark(Boolean(probe), 'rerank', probe ? config.rerank.deployment : lastRerankError());
     }
 
+    // The software factory as a dispatch target: configured, its machine
+    // known to termhub, and answering `factory app list`.
+    {
+      const factory = require('../dispatch/factory');
+      if (!factory.enabled()) {
+        mark(false, 'factory', 'off — set PA_FACTORY_PATH (and PA_FACTORY_MACHINE) to dispatch to the software factory');
+      } else {
+        try {
+          const where = factory.machine() || 'this machine';
+          const apps = await factory.apps({ fresh: true });
+          mark(true, 'factory', `${where} · ${config.factory.path} · ${apps.length} app(s): ${apps.map((a) => a.repo || a.app).slice(0, 6).join(', ')} · default --via ${config.factory.via}`);
+        } catch (err) {
+          mark(false, 'factory', err.message.slice(0, 160));
+        }
+      }
+    }
+
     // termhub
     const termhub = require('../dispatch/termhub');
     const hub = await termhub.reachable();
@@ -1219,7 +1284,7 @@ Object.assign(commands, require('./meeting').make(out, fail));
 Object.assign(commands, require('./routine').make(out, fail));
 
 async function main(argv) {
-  const { command, args, flags } = parseArgs(argv);
+  const { command, args, flags, lists } = parseArgs(argv);
   const name = command || 'help';
 
   if (flags.help || name === 'help' || name === '--help') {
@@ -1235,7 +1300,7 @@ async function main(argv) {
   }
 
   try {
-    await handler(args, flags);
+    await handler(args, flags, lists);
   } catch (err) {
     if (err.name === 'NeedsLogin') fail(`${err.message}`);
     else fail(err.message);
