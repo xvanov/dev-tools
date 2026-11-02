@@ -70,6 +70,15 @@ permission prompt approves the action. Do not loosen a condition there without a
 Postgres, and they do not reimplement dispatch. When the TUI and the CLI disagree about what
 `pa do` means, the bug is that there are two implementations.
 
+**Connector passes run on Claude Code, and nothing else pretends to.** Model strings are
+`provider/model` (`src/models.js`); text and JSON passes may run on any provider, but a pass that
+needs `toolCalls` — the Microsoft 365 relay and the Jira connector fallback, `PA_CONNECTOR_MODEL` —
+needs the claude.ai connector logins only Claude Code holds. `models.route` refuses any other
+backend before a call is made, `pa doctor` shows it as not capable, and the worker logs it at
+start. Do not add a fallback that runs a connector pass on a model that cannot reach the
+connectors: it would "succeed" with nothing read. And an unknown price is `null` in `llm_spend`,
+never estimated from a similar-sounding model — `openrouter/anthropic/…` is not Anthropic's price.
+
 **Connector data comes from tool results, never from model text.** Microsoft 365 is reached
 through a headless `claude -p` (`llm.toolCalls`), and the model's only job there is to make the
 calls. Items are built from the `tool_result` blocks in the event stream, or the file Claude Code

@@ -1,9 +1,13 @@
 'use strict';
 
-// One way to ask a model for text, with two backends behind it.
+// One way to ask a model for text, with three kinds of backend behind it,
+// chosen per call by the model string (src/models.js: `provider/model`, or a
+// bare Claude name that keeps the original meaning — api with a key, else cli).
 //
-//  - **api** — the Anthropic SDK, when `ANTHROPIC_API_KEY` is set.
-//  - **cli** — a headless `claude -p`, otherwise. It runs on the operator's own
+//  - **api** — the Anthropic SDK (`anthropic/…`, or bare with `ANTHROPIC_API_KEY`).
+//  - **OpenAI-compatible** chat completions — `azure/…`, `openai/…`,
+//    `openrouter/…`, `deepseek/…`, `local/…`. Text and JSON only.
+//  - **cli** — a headless `claude -p` (`cli/…`, or bare without a key). It runs on the operator's own
 //    Claude Code login, so the tool needs no key of its own, and it is the same
 //    process that can reach the claude.ai connectors (Atlassian, Microsoft 365)
 //    without an app registration in anyone's tenant.
@@ -22,6 +26,7 @@ const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
 const { config } = require('./config');
+const models = require('./models');
 
 const CLI_CWD = path.join(config.dataDir, 'llm-cwd');
 
@@ -39,12 +44,13 @@ function sdk() {
   if (!sdkClient) {
     const Anthropic = require('@anthropic-ai/sdk');
     const Ctor = Anthropic.default || Anthropic;
-    sdkClient = new Ctor({ apiKey: config.anthropic.apiKey });
+    sdkClient = new Ctor({ apiKey: models.providerKey('anthropic') });
   }
   return sdkClient;
 }
 
 async function viaApi({ system, prompt, effort, maxTokens, model }) {
+  if (!models.providerKey('anthropic')) throw new Error(`anthropic/${model}: no key — set ANTHROPIC_API_KEY`);
   const response = await sdk().messages.create({
     model: model || config.anthropic.model,
     max_tokens: maxTokens,
@@ -64,6 +70,15 @@ async function viaApi({ system, prompt, effort, maxTokens, model }) {
   return { text, usage };
 }
 
+// `cli/claude-opus-5` → `claude-opus-5`: claude takes the bare id.
+function bareModel(value) {
+  try {
+    return models.parseModel(value).model;
+  } catch {
+    return value;
+  }
+}
+
 // `model` overrides the default for one call: cheap judgements (is this a
 // duplicate?) do not need the model that extracts commitments.
 function cliArgs({ system, effort, tools, model = null }) {
@@ -73,7 +88,7 @@ function cliArgs({ system, effort, tools, model = null }) {
     '--setting-sources', 'project',
     '--no-session-persistence',
     '--effort', effort,
-    '--model', model || config.anthropic.model,
+    '--model', bareModel(model || config.anthropic.model),
   ];
   if (system) args.push('--system-prompt', system);
   if (tools && tools.length) args.push('--allowedTools', tools.join(','));
@@ -215,8 +230,22 @@ const FAMILY = [
   [/haiku/, [0.1, 0.5]],
 ];
 
-function priceOf(model) {
-  const id = String(model || '').toLowerCase();
+// Takes a model string. A price set in PA_MODEL_PRICES wins; otherwise only a
+// Claude model reached through Anthropic (bare, `anthropic/`, `cli/`) is
+// priced from the table — `openrouter/anthropic/claude-…` is OpenRouter's
+// price, not Anthropic's, and an unknown price is null, never a guess.
+function priceOf(model, prices = models.parsePrices(config.modelPrices)) {
+  const raw = String(model || '').trim().toLowerCase();
+  if (prices[raw]) return prices[raw];
+  let m;
+  try {
+    m = models.parseModel(raw);
+  } catch {
+    return null;
+  }
+  if (prices[m.model] && m.provider === 'auto') return prices[m.model];
+  if (!['auto', 'anthropic', 'cli'].includes(m.provider)) return null;
+  const id = m.model;
   if (PRICES[id]) return PRICES[id];
   const fam = FAMILY.find(([re]) => re.test(id));
   return fam ? fam[1] : null;
@@ -237,6 +266,96 @@ function apiUsage(model, u) {
 function withUsage(err, usage) {
   err.usage = usage;
   return err;
+}
+
+// ------------------------------------------- OpenAI-compatible backend ----
+
+// Pure: the request for one chat completion on an OpenAI-compatible provider.
+// Returns { url, headers, body }. The key goes in a header, never the URL.
+function compatRequest({ provider, model, system, prompt, effort, maxTokens, key, providers = config.providers }) {
+  const messages = [];
+  if (system) messages.push({ role: 'system', content: system });
+  messages.push({ role: 'user', content: prompt });
+  const body = { model, messages };
+  const reasoning = /^(gpt-5|o\d)/i.test(model);
+  // OpenAI's reasoning models take max_completion_tokens; the rest of the
+  // compatible world still reads max_tokens.
+  if (provider === 'openai' || provider === 'azure') body.max_completion_tokens = maxTokens;
+  else body.max_tokens = maxTokens;
+  if ((provider === 'openai' || provider === 'azure') && reasoning && effort) {
+    body.reasoning_effort = ['low', 'medium', 'high'].includes(effort) ? effort : 'high';
+  }
+  // OpenRouter reports what the call cost when asked; nothing else does.
+  if (provider === 'openrouter') body.usage = { include: true };
+  const headers = { 'content-type': 'application/json' };
+  let url;
+  if (provider === 'azure') {
+    const az = providers.azure;
+    if (!az.endpoint) throw new Error('azure: no endpoint — set AZURE_OPENAI_ENDPOINT or PA_AZURE_CHAT_ENDPOINT');
+    const base = String(az.endpoint).replace(/\/+$/, '').replace(/\/openai(\/v1)?$/, '');
+    if (!az.apiVersion || az.apiVersion === 'v1') {
+      url = `${base}/openai/v1/chat/completions`;
+    } else {
+      url = `${base}/openai/deployments/${encodeURIComponent(model)}/chat/completions?api-version=${encodeURIComponent(az.apiVersion)}`;
+      delete body.model;
+    }
+    if (key) headers['api-key'] = key;
+  } else {
+    const base = String(providers[provider].baseUrl).replace(/\/+$/, '');
+    url = `${base}/chat/completions`;
+    if (key) headers.authorization = `Bearer ${key}`;
+  }
+  return { url, headers, body };
+}
+
+// Pure: text and usage from a chat-completions reply. `raw` is the full
+// model string, for pricing.
+function compatResult(raw, json) {
+  const usage = compatUsage(raw, json?.usage);
+  const choice = json?.choices?.[0];
+  if (!choice) throw withUsage(new Error(`no choices in reply: ${JSON.stringify(json?.error || json).slice(0, 200)}`), usage);
+  if (choice.finish_reason === 'content_filter') throw withUsage(new Error('model declined: content_filter'), usage);
+  const content = choice.message?.content;
+  const text = Array.isArray(content) ? content.map((p) => p?.text || '').join('') : String(content ?? '');
+  return { text, usage };
+}
+
+function compatUsage(raw, u) {
+  if (!u) return { costUsd: null, inputTokens: null, outputTokens: null };
+  const n = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0);
+  const input = n(u.prompt_tokens);
+  const output = n(u.completion_tokens);
+  let costUsd = null;
+  if (u.cost != null && Number.isFinite(Number(u.cost))) costUsd = Number(u.cost); // OpenRouter, reported
+  else {
+    const price = priceOf(raw);
+    if (price) costUsd = (input * price[0] + output * price[1]) / 1e6;
+  }
+  return { costUsd, inputTokens: u.prompt_tokens != null ? input : null, outputTokens: u.completion_tokens != null ? output : null };
+}
+
+async function viaCompat({ route: r, system, prompt, effort, maxTokens, timeoutMs }) {
+  const key = models.providerKey(r.provider);
+  if (!key && r.provider !== 'local') {
+    throw new Error(`${r.raw}: no key — set ${(models.KEY_NAMES[r.provider] || []).join(' or ')}`);
+  }
+  const req = compatRequest({ provider: r.provider, model: r.model, system, prompt, effort, maxTokens, key });
+  let res;
+  try {
+    res = await fetch(req.url, { method: 'POST', headers: req.headers, body: JSON.stringify(req.body), signal: AbortSignal.timeout(timeoutMs) });
+  } catch (err) {
+    throw new Error(`${r.provider}: ${err.name === 'TimeoutError' ? `timed out after ${Math.round(timeoutMs / 1000)}s` : err.message}`);
+  }
+  const text = await res.text();
+  let json = null;
+  try {
+    json = JSON.parse(text);
+  } catch {}
+  if (!res.ok) {
+    const why = json?.error?.message || text;
+    throw withUsage(new Error(`${r.provider} ${res.status}: ${String(why).slice(0, 300)}`), compatUsage(r.raw, json?.usage));
+  }
+  return compatResult(r.raw, json);
 }
 
 async function viaCli({ system, prompt, effort, tools, timeoutMs, model }) {
@@ -284,19 +403,23 @@ async function complete({
   model = null,
   purpose = null,
 }) {
-  const useCli = Boolean(tools) || backend() === 'cli';
+  // A connector relay without a model of its own: the relay model.
+  const raw = model || (tools ? config.m365.connectorModel : config.anthropic.model);
+  // Refuses here, before any call, when the backend cannot do what is asked.
+  const r = models.route(raw, { needs: tools ? 'toolCalls' : 'text', envName: tools ? 'PA_CONNECTOR_MODEL' : null });
   const meta = {
     purpose: purpose || (tools ? 'connector' : 'unknown'),
-    model: model || config.anthropic.model,
-    backend: useCli ? 'cli' : 'api',
+    model: raw,
+    backend: r.backend,
   };
-  // A connector relay without a model of its own: the relay model.
-  if (tools && !model) model = meta.model = config.m365.connectorModel;
   const started = Date.now();
   try {
-    const { text, usage } = useCli
-      ? await viaCli({ system, prompt, effort, tools, timeoutMs, model })
-      : await viaApi({ system, prompt, effort, maxTokens, model });
+    const { text, usage } =
+      r.backend === 'cli'
+        ? await viaCli({ system, prompt, effort, tools, timeoutMs, model: r.model })
+        : r.backend === 'api'
+          ? await viaApi({ system, prompt, effort, maxTokens, model: r.model })
+          : await viaCompat({ route: r, system, prompt, effort, maxTokens, timeoutMs });
     await recordCall(meta, started, usage, true);
     return text;
   } catch (err) {
@@ -324,7 +447,9 @@ async function complete({
 // Returns [{ name, input, results: [...], error: string|null }] in call order.
 async function toolCalls({ prompt, tools, effort = 'low', timeoutMs = 300_000, visibleTokens = null, purpose = 'connector' }) {
   const model = config.m365.connectorModel;
-  const args = cliArgs({ system: null, effort, tools, model });
+  // Only Claude Code holds the connector logins: refuse anything else loudly.
+  const r = models.route(model, { needs: 'toolCalls', envName: 'PA_CONNECTOR_MODEL' });
+  const args = cliArgs({ system: null, effort, tools, model: r.model });
   const fmt = args.indexOf('json');
   args[fmt] = 'stream-json';
   args.push('--verbose');
@@ -440,4 +565,7 @@ module.exports = {
   cliUsage,
   apiUsage,
   priceOf,
+  compatRequest,
+  compatResult,
+  compatUsage,
 };

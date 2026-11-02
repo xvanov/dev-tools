@@ -107,6 +107,16 @@ function defaultReposRoot() {
 
 const dataDir = env('PA_DATA_DIR', defaultDataDir());
 
+// A pass's model: its own variable, else PA_MODEL (one default for every
+// text/JSON pass), else the pass's built-in default. A value is a model
+// string, `provider/model` or a bare Claude name (src/models.js parses it).
+// The connector relay does not read PA_MODEL: it must stay on Claude Code.
+function modelEnv(name, fallback) {
+  return env(name) || env('PA_MODEL') || fallback;
+}
+const distillModel = modelEnv('PA_DISTILL_MODEL', 'claude-opus-5');
+const reconcileModel = modelEnv('PA_RECONCILE_MODEL', 'claude-sonnet-5-5');
+
 const config = {
   toolDir: TOOL_DIR,
   repoRoot: REPO_ROOT,
@@ -193,6 +203,8 @@ const config = {
   drafts: {
     auto: env('PA_AUTODRAFT', '1') !== '0',
     minConfidence: Number(env('PA_AUTODRAFT_MIN_CONFIDENCE', '0.6')),
+    // Reply drafts (src/draft): the distill model unless set.
+    model: env('PA_DRAFT_MODEL') || distillModel,
   },
 
   // The memory layer (src/memory): claims with evidence, consolidated into
@@ -200,9 +212,9 @@ const config = {
   // judgements, so it runs on cheaper models than the commitment extractor.
   memory: {
     enabled: env('PA_MEMORY', '1') !== '0',
-    extractModel: env('PA_MEMORY_EXTRACT_MODEL', 'claude-sonnet-5-5'),
-    decideModel: env('PA_MEMORY_DECIDE_MODEL', 'claude-sonnet-5-5'),
-    pageModel: env('PA_MEMORY_PAGE_MODEL', 'claude-sonnet-5-5'),
+    extractModel: modelEnv('PA_MEMORY_EXTRACT_MODEL', 'claude-sonnet-5-5'),
+    decideModel: modelEnv('PA_MEMORY_DECIDE_MODEL', 'claude-sonnet-5-5'),
+    pageModel: modelEnv('PA_MEMORY_PAGE_MODEL', 'claude-sonnet-5-5'),
     // A person gets a page once this many items, commitments or claims tie
     // them to you — below it they are a name in a CC line.
     minInteractions: envInt('PA_MEMORY_MIN_INTERACTIONS', 4),
@@ -214,13 +226,37 @@ const config = {
     apiKey: env('ANTHROPIC_API_KEY'),
     // Distillation is extraction, not reasoning-heavy work: the cost lever is
     // effort, not a smaller model. See AGENT.md.
-    model: env('PA_DISTILL_MODEL', 'claude-opus-5'),
+    model: distillModel,
     effort: env('PA_DISTILL_EFFORT', 'low'),
   },
 
   // Without an API key, model calls go through a headless `claude -p` on the
   // operator's own login (see llm.js). Also the only route to the connectors.
   claudeBin: env('PA_CLAUDE_BIN', 'claude'),
+
+  // Where the non-Claude model providers live (src/models.js). Endpoints only:
+  // their keys are secrets, read with secret() when a call needs one —
+  // OPENAI_API_KEY, OPENROUTER_API_KEY, DEEPSEEK_API_KEY, PA_LOCAL_LLM_API_KEY,
+  // and for Azure the AZURE_OPENAI_API_KEY embeddings already use.
+  providers: {
+    openai: { baseUrl: env('OPENAI_BASE_URL', 'https://api.openai.com/v1') },
+    // The embeddings resource by default; PA_AZURE_CHAT_ENDPOINT when chat
+    // models are deployed elsewhere. `v1` is Azure's version-less API (the
+    // model string names the deployment); a dated version uses the
+    // per-deployment route instead.
+    azure: {
+      endpoint: env('PA_AZURE_CHAT_ENDPOINT') || env('AZURE_OPENAI_ENDPOINT') || env('AZURE_FOUNDRY_ENDPOINT'),
+      apiVersion: env('PA_AZURE_CHAT_API_VERSION', 'v1'),
+    },
+    openrouter: { baseUrl: env('OPENROUTER_BASE_URL', 'https://openrouter.ai/api/v1') },
+    deepseek: { baseUrl: env('DEEPSEEK_BASE_URL', 'https://api.deepseek.com') },
+    // Any OpenAI-compatible server (ollama, llama.cpp, vLLM, LM Studio).
+    local: { baseUrl: env('PA_LOCAL_LLM_URL', 'http://127.0.0.1:11434/v1') },
+  },
+  // Dollars per million tokens for models pa has no price for, as
+  // `provider/model=in:out` pairs, comma-separated. Without one a call's cost
+  // is recorded as unknown (null) — never guessed.
+  modelPrices: env('PA_MODEL_PRICES', ''),
   // Which Claude Code login those calls use: a config folder of its own
   // (CLAUDE_CONFIG_DIR for that child only), so pa can stay on one
   // subscription while your own sessions switch between others. Empty: your
@@ -341,13 +377,13 @@ const config = {
     maxAttendees: envInt('PA_BRIEF_MAX_ATTENDEES', 40),
     // Solo blocks on your own calendar (focus time) get a brief too.
     focusBlocks: env('PA_BRIEF_FOCUS', '0') === '1',
-    model: env('PA_BRIEF_MODEL', 'claude-sonnet-5-5'),
-    classifyModel: env('PA_BRIEF_CLASSIFY_MODEL', 'claude-sonnet-5-5'),
+    model: modelEnv('PA_BRIEF_MODEL', 'claude-sonnet-5-5'),
+    classifyModel: modelEnv('PA_BRIEF_CLASSIFY_MODEL', 'claude-sonnet-5-5'),
     effort: env('PA_BRIEF_EFFORT', 'low'),
     // Post-meeting debriefs (src/meetings/debrief.js): your to-dos and updates
     // to your open work, minutes after a recorded meeting or call ends.
     debrief: env('PA_DEBRIEF', '1') !== '0',
-    debriefModel: env('PA_DEBRIEF_MODEL', 'claude-sonnet-5-5'),
+    debriefModel: modelEnv('PA_DEBRIEF_MODEL', 'claude-sonnet-5-5'),
     debriefEffort: env('PA_DEBRIEF_EFFORT', 'medium'),
   },
 
@@ -356,7 +392,7 @@ const config = {
   // judgement per new reply, so a cheaper model at low effort.
   replyClose: {
     enabled: env('PA_REPLY_CLOSE', '1') !== '0',
-    model: env('PA_REPLY_CLOSE_MODEL', 'claude-sonnet-5-5'),
+    model: modelEnv('PA_REPLY_CLOSE_MODEL', 'claude-sonnet-5-5'),
     effort: env('PA_REPLY_CLOSE_EFFORT', 'low'),
   },
 
@@ -366,7 +402,7 @@ const config = {
   reconcile: {
     enabled: env('PA_RECONCILE', '1') !== '0',
     auto: env('PA_RECONCILE_AUTO', '1') !== '0',
-    model: env('PA_RECONCILE_MODEL', 'claude-sonnet-5-5'),
+    model: reconcileModel,
     effort: env('PA_RECONCILE_EFFORT', 'medium'),
   },
 
@@ -375,6 +411,7 @@ const config = {
   // model. Discretionary spend (purpose card-context). PA_CARD_CONTEXT=0 stops it.
   cardContext: {
     enabled: env('PA_CARD_CONTEXT', '1') !== '0',
+    model: env('PA_CARD_CONTEXT_MODEL') || reconcileModel,
   },
 
   // The planner (src/agent/planner.js): each new ask gets a kind, and some an
@@ -383,7 +420,7 @@ const config = {
   // turns it off.
   planner: {
     enabled: env('PA_PLANNER', '1') !== '0',
-    model: env('PA_PLANNER_MODEL', 'claude-sonnet-5-5'),
+    model: modelEnv('PA_PLANNER_MODEL', 'claude-sonnet-5-5'),
     researchPerDay: Number(env('PA_EAGER_RUNS_PER_DAY', '2')) || 0,
   },
 
@@ -414,6 +451,13 @@ const config = {
     enabled: env('PA_ROUTINES', '1') !== '0',
     // Local hour after which the nightly suggestion pass may run.
     suggestHour: envInt('PA_ROUTINE_SUGGEST_HOUR', 3),
+    // Parsing a typed routine, its prompt reports, and the nightly suggestions.
+    model: modelEnv('PA_ROUTINE_MODEL', 'claude-sonnet-5-5'),
+  },
+
+  // Retrieval evals (src/eval): the distill model unless set.
+  eval: {
+    model: env('PA_EVAL_MODEL') || distillModel,
   },
 
   // Nightly pg_dump of the whole store (see src/backup.js). Local disk by

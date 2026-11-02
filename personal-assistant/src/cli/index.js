@@ -912,13 +912,20 @@ const commands = {
         .toString()
         .trim();
     } catch {}
-    const viaCli = llm.backend() === 'cli';
-    mark(
-      viaCli ? Boolean(cliVersion) : true,
-      'model',
-      `${config.anthropic.model} · effort ${config.anthropic.effort} · via ` +
-        (viaCli ? (cliVersion ? `claude -p ${cliVersion}` : `${config.claudeBin} not found — set PA_CLAUDE_BIN`) : 'API key')
-    );
+    // Every pass's model, where it goes, and whether it can do the pass's job
+    // (src/models.js). A connector pass on a non-Claude-Code backend is
+    // refused here rather than failing on the next sync.
+    const modelRows = require('../models').report({ claudeAvailable: Boolean(cliVersion) });
+    for (const r of modelRows) {
+      mark(
+        r.ok,
+        `model · ${r.purpose}`,
+        `${r.model} · ${r.backend ? `via ${r.backend === 'cli' ? 'claude -p' : r.backend === 'api' ? 'Anthropic API' : r.backend}` : 'unroutable'}` +
+          ` · needs ${r.needs}${r.backend ? ` · key ${r.keyConfigured ? 'ok' : 'missing'}` : ''} · ${r.capable ? 'capable' : 'NOT capable'}` +
+          `${r.problem ? ` — ${r.problem}` : ''}${r.purpose === 'distill' ? ` · effort ${config.anthropic.effort}` : ''}`
+      );
+    }
+    const viaCli = modelRows.some((r) => r.backend === 'cli');
     mark(Boolean(cliVersion), 'claude cli', cliVersion || 'not found — connector sources (Jira, Microsoft 365) cannot run');
     if (viaCli || cliVersion) {
       // Which subscription pa's own calls bill to, and where its connectors live.

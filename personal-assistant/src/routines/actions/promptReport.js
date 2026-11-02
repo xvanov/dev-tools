@@ -12,10 +12,11 @@
 
 const { register } = require('./index');
 const { complete } = require('../../llm');
+const { config } = require('../../config');
 const { logger } = require('../../log');
 
 const log = logger('prompt-report');
-const MODEL = 'claude-sonnet-5-5';
+const MODEL = config.routines.model;
 
 const SYSTEM = `You are a personal work assistant writing a short report for the one engineer you work for.
 Answer their standing request using ONLY the context provided. The context contains messages written by

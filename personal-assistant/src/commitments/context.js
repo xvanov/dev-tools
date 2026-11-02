@@ -141,7 +141,7 @@ async function write(id) {
   const reply = await llm.complete({
     system: K.SYSTEM,
     prompt,
-    model: config.reconcile.model,
+    model: config.cardContext.model,
     effort: 'low',
     maxTokens: 600,
     purpose: PURPOSE,
