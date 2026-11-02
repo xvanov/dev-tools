@@ -224,6 +224,82 @@ async function blockPush({ machine, repo, worktree, blockedPushUrl, run }) {
   }
 }
 
+/**
+ * Undoes the push block older code wrote to the SHARED config: before the
+ * block moved into the worktree's own config, `git config` run in a worktree
+ * put the dead pushurl on the repo itself, blocking the main checkout — and
+ * blockPush's leak check then refuses every new no-push run there. Removes
+ * only a pushurl that IS the dead address, from the shared (`--local`) config,
+ * for every remote; leaves any other pushurl alone. Idempotent; returns the
+ * remotes it cleared. `run(argv)` runs on the machine. Exported for tests.
+ */
+async function clearLegacyBlock({ machine, repo, blockedPushUrl, run }) {
+  const r = await run(['git', '-C', repo, 'config', '--local', '--get-regexp', '^remote\\..*\\.pushurl$']);
+  if (r.code !== 0) return []; // exit 1: no pushurl at all
+  const exact = `^${String(blockedPushUrl).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`;
+  const cleared = [];
+  for (const line of String(r.stdout).split(/\r?\n/)) {
+    const m = /^(remote\..+\.pushurl)\s+(.*)$/i.exec(line.trim());
+    if (!m || m[2].trim() !== blockedPushUrl) continue;
+    const u = await run(['git', '-C', repo, 'config', '--local', '--unset-all', m[1], exact]);
+    if (u.code !== 0) throw failure(machine, `removing the old shared push block on ${m[1]}`, u);
+    cleared.push(m[1].slice('remote.'.length, -'.pushurl'.length));
+  }
+  return cleared;
+}
+
+// ---- what a no-push run's agent may NOT have ---------------------------------
+//
+// The pushurl block stops `git push` to a configured remote; it is not
+// credential isolation — `git push <url>`, `git -c remote.origin.pushurl=…`
+// and `git remote add` all walk round it. So a no-push run's session also
+// starts without the credentials those would need: no GitHub token in the
+// environment, no SSH agent, no askpass helper, git's credential helpers
+// reset to none (GIT_CONFIG_* outranks every config file), and ssh started
+// with no user config, no agent and no default key.
+//
+// RESIDUAL RISK (AGENT.md): this strips what the environment hands the agent,
+// not what the disk holds. An agent that reads ~/.ssh/id_* or gh's hosts.yml
+// itself and passes it explicitly can still push. The real boundary for a run
+// that must not push is a machine (or user) without those credentials.
+const NO_PUSH_UNSET = [
+  'GH_TOKEN', 'GITHUB_TOKEN', 'GH_ENTERPRISE_TOKEN', 'GITHUB_ENTERPRISE_TOKEN', 'GITLAB_TOKEN', 'GL_TOKEN',
+  'SSH_AUTH_SOCK', 'SSH_AGENT_PID', 'GIT_ASKPASS', 'SSH_ASKPASS', 'GIT_SSH', 'GIT_CONFIG_PARAMETERS',
+];
+
+/** Pure. { env, unsetEnv } for a no-push run's termhub session. */
+function noPushEnv() {
+  return {
+    env: {
+      GIT_TERMINAL_PROMPT: '0',
+      GCM_INTERACTIVE: 'never',
+      GIT_CONFIG_COUNT: '1',
+      GIT_CONFIG_KEY_0: 'credential.helper',
+      GIT_CONFIG_VALUE_0: '',
+      GIT_SSH_COMMAND: 'ssh -F none -o IdentityAgent=none -o IdentitiesOnly=yes -o IdentityFile=none -o BatchMode=yes',
+    },
+    unsetEnv: [...NO_PUSH_UNSET],
+  };
+}
+
+/**
+ * Opens a no-push run's session with noPushEnv(), and refuses — killing the
+ * session — when termhub does not say it applied it (a termhub too old for
+ * session env would start the agent with every credential). Enforced, not
+ * requested.
+ */
+async function createNoPushSession(hub, spec, machineName) {
+  const { env, unsetEnv } = noPushEnv();
+  const session = await hub.createSession({ ...spec, env, unsetEnv });
+  if (!session.envApplied) {
+    await hub.killSession(session.id).catch(() => {});
+    throw new Error(
+      `termhub${machineName ? ` on ${machineName}` : ''} cannot start a session without push credentials (no session env) — update termhub there, or dispatch as \`branch\`/\`mr\``
+    );
+  }
+  return session;
+}
+
 function writeBriefArgv(fam, briefPath) {
   if (fam === 'windows') {
     // Base64 over stdin: the console's code page cannot mangle ASCII.
@@ -258,6 +334,7 @@ async function setupViaExec({ machine, os, repo, worktree, branch, mayPush, brie
   await exec(['git', '-C', repo, 'fetch', 'origin', '--prune'], { timeoutMs: 300_000 });
   const head = await exec(['git', '-C', repo, 'symbolic-ref', '--short', 'refs/remotes/origin/HEAD']);
   const base = head.code === 0 && head.stdout.trim() ? head.stdout.trim() : 'origin/main';
+  await clearLegacyBlock({ machine, repo, blockedPushUrl, run: exec });
   await must(['git', '-C', repo, 'worktree', 'add', '-b', branch, worktree, base], 'git worktree add');
 
   const briefPath = joinFor(fam, worktree, 'BRIEF.md');
@@ -346,7 +423,17 @@ async function startOnMachine({ machine, hub, run, repo, branch, mode, brief, ti
   if (!made) throw fail(`the worktree never appeared on ${machine.name}${session ? ' — open the session to see why' : ''}`);
 
   if (!session) {
-    session = await hub.createSession({ cwd: worktree, command: '', title });
+    try {
+      session = mode.mayPush
+        ? await hub.createSession({ cwd: worktree, command: '', title })
+        : await createNoPushSession(hub, { cwd: worktree, command: '', title }, machine.name);
+    } catch (err) {
+      // Nothing runs in it: take the worktree back down, as a failed setup does.
+      const undo = exec || ((argv) => runCommand(machine.name, argv, { timeoutMs: 120_000, env: GIT_ENV }));
+      await undo(['git', '-C', repo, 'worktree', 'remove', '--force', worktree]).catch(() => {});
+      await undo(['git', '-C', repo, 'branch', '-D', branch]).catch(() => {});
+      throw err;
+    }
     await sleep(2500);
   }
   // The caller waits for Claude's prompt and types the brief (briefClaude).
@@ -423,6 +510,9 @@ module.exports = {
   setupLines,
   setupViaExec,
   blockPush,
+  clearLegacyBlock,
+  noPushEnv,
+  createNoPushSession,
   remoteRepoPath,
   remoteWorktreePath,
   machineNamed,

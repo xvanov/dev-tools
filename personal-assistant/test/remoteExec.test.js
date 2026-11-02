@@ -206,6 +206,44 @@ assert.strictEqual(remote.shq("it's"), `'it'\\''s'`);
 
   await provesBoundary((argv, opts = {}) => runCommand(null, argv, { timeoutMs: 60_000, ...opts }), 'local');
 
+  // A remote no-push run: the old shared push block is cleared first (MH4), the
+  // session starts without push credentials (M5), and a termhub that cannot do
+  // that is refused — with the worktree taken back down.
+  {
+    const { repo, origin } = makeRepo('widget-session');
+    git(repo, 'config', '--local', 'remote.origin.pushurl', BLOCKED); // the old shared block
+    const reposRoot = path.join(tmp, 'repos');
+    const created = [];
+    const killed = [];
+    let applied = true;
+    const fakeHub = {
+      api: async () => ({ platform: 'linux' }),
+      dirs: async (p) => fs.readdirSync(p, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => path.join(p, d.name)),
+      createSession: async (spec) => { created.push(spec); return { id: `s${created.length}`, envApplied: Boolean(spec.env && applied) }; },
+      killSession: async (id) => { killed.push(id); return true; },
+      say: async () => {},
+      sessionUrl: async (id) => `http://x/#session=${id}`,
+    };
+    const m = { name: 'here', reposRoot, os: 'linux' };
+    const exec = (argv, opts = {}) => runCommand(null, argv, { timeoutMs: 60_000, ...opts });
+    const ok = await remote.startOnMachine({ machine: m, hub: fakeHub, run: { id: 501 }, repo, branch: 'pa/501-x', mode: { name: 'local', mayPush: false }, brief: 'b', title: 't', blockedPushUrl: BLOCKED, exec });
+    assert.strictEqual(git(repo, 'remote', 'get-url', '--push', 'origin').trim(), origin, 'old shared block cleared');
+    assert.deepStrictEqual({ env: created[0].env, unsetEnv: created[0].unsetEnv }, remote.noPushEnv());
+    assert.ok(fs.existsSync(ok.worktreePath));
+    applied = false;
+    await assert.rejects(
+      remote.startOnMachine({ machine: m, hub: fakeHub, run: { id: 502 }, repo, branch: 'pa/502-x', mode: { name: 'local', mayPush: false }, brief: 'b', title: 't', blockedPushUrl: BLOCKED, exec }),
+      /without push credentials/
+    );
+    assert.deepStrictEqual(killed, ['s2'], 'the session it opened is killed');
+    assert.ok(!fs.existsSync(path.join(reposRoot, '.pa-worktrees', 'run-502')), 'worktree removed');
+    assert.strictEqual(git(repo, 'branch', '--list', 'pa/502-x').trim(), '', 'branch removed');
+    // A run that may push opens a plain session.
+    applied = true;
+    await remote.startOnMachine({ machine: m, hub: fakeHub, run: { id: 503 }, repo, branch: 'pa/503-x', mode: { name: 'branch', mayPush: true }, brief: 'b', title: 't', blockedPushUrl: BLOCKED, exec });
+    assert.ok(!created[created.length - 1].env);
+  }
+
   // The typed POSIX fallback, run by a real sh, makes the same worktree and brief.
   {
     const { repo } = makeRepo('widget-typed');

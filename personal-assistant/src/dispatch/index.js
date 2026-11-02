@@ -198,6 +198,15 @@ async function start({
     throw new Error(`${repo} is not a git repository`);
   }
 
+  const localRun = (argv) => require('./exec').runCommand(null, argv, { timeoutMs: 60_000, env: { GIT_TERMINAL_PROMPT: '0' } });
+  // The push block older code put on the SHARED config (it blocked the main
+  // checkout, and every new no-push run then failed its leak check). Before
+  // anything is created, so a failure here leaves nothing behind.
+  if (repo) {
+    const cleared = await require('./remote').clearLegacyBlock({ machine: { name: 'this machine' }, repo, blockedPushUrl: BLOCKED_PUSH_URL, run: localRun });
+    if (cleared.length) log.info('removed an old shared push block', { repo, remotes: cleared });
+  }
+
   const run = await one(
     `insert into run (commitment_id, mode, task, repo_path, status, machine, route, route_reason, kind)
      values ($1,$2,$3,$4,'starting',$5,'claude',$6,$7) returning *`,
@@ -206,64 +215,79 @@ async function start({
 
   let worktreePath = null;
   let branch = null;
+  let briefPath = null;
+  let session = null;
+  let worktreeMade = false;
 
-  if (repo) {
-    branch = `pa/${run.id}-${slug(label)}`;
-    worktreePath = path.join(config.worktreesRoot, `run-${run.id}`);
-    fs.mkdirSync(config.worktreesRoot, { recursive: true });
+  // Everything from here to 'running' is undone on any error: the row is
+  // marked failed with the reason, the session killed, the worktree and its
+  // branch removed — never a `starting` row and a worktree left lying there.
+  try {
+    if (repo) {
+      branch = `pa/${run.id}-${slug(label)}`;
+      worktreePath = path.join(config.worktreesRoot, `run-${run.id}`);
+      fs.mkdirSync(config.worktreesRoot, { recursive: true });
 
-    const base = await defaultBranch(repo);
-    await git(repo, ['worktree', 'add', '-b', branch, worktreePath, base]);
+      const base = await defaultBranch(repo);
+      await git(repo, ['worktree', 'add', '-b', branch, worktreePath, base]);
+      worktreeMade = true;
 
-    if (!m.mayPush) {
-      // Enforcement, not persuasion — and verified. The one implementation a
-      // remote run uses too: every remote blocked in the worktree's OWN config
-      // (a plain `git config` there writes the shared one, blocking the main
-      // checkout and every other run), then read back. Throws if it didn't take.
-      await require('./remote').blockPush({
-        machine: { name: 'this machine' },
-        repo,
-        worktree: worktreePath,
-        blockedPushUrl: BLOCKED_PUSH_URL,
-        run: (argv) => require('./exec').runCommand(null, argv, { timeoutMs: 60_000, env: { GIT_TERMINAL_PROMPT: '0' } }),
-      });
+      if (!m.mayPush) {
+        // Enforcement, not persuasion — and verified. The one implementation a
+        // remote run uses too: every remote blocked in the worktree's OWN config
+        // (a plain `git config` there writes the shared one, blocking the main
+        // checkout and every other run), then read back. Throws if it didn't take.
+        await require('./remote').blockPush({
+          machine: { name: 'this machine' },
+          repo,
+          worktree: worktreePath,
+          blockedPushUrl: BLOCKED_PUSH_URL,
+          run: localRun,
+        });
+      }
+
+      await query('update run set worktree_path = $2, branch = $3 where id = $1', [
+        run.id,
+        worktreePath,
+        branch,
+      ]);
     }
 
-    await query('update run set worktree_path = $2, branch = $3 where id = $1', [
-      run.id,
-      worktreePath,
-      branch,
-    ]);
-  }
+    const briefText = await briefFor(target, { modeName: m.name, run: { ...run, worktree_path: worktreePath, branch }, task });
 
-  const briefText = await briefFor(target, { modeName: m.name, run: { ...run, worktree_path: worktreePath, branch }, task });
+    briefPath = worktreePath
+      ? path.join(worktreePath, 'BRIEF.md')
+      : path.join(config.worktreesRoot, `run-${run.id}-BRIEF.md`);
+    fs.mkdirSync(path.dirname(briefPath), { recursive: true });
+    fs.writeFileSync(briefPath, briefText, 'utf8');
 
-  const briefPath = worktreePath
-    ? path.join(worktreePath, 'BRIEF.md')
-    : path.join(config.worktreesRoot, `run-${run.id}-BRIEF.md`);
-  fs.mkdirSync(path.dirname(briefPath), { recursive: true });
-  fs.writeFileSync(briefPath, briefText, 'utf8');
+    // Every worktree is a folder Claude has never seen; trusted ahead of time
+    // so its session does not stop at the trust question (src/dispatch/trust.js).
+    try {
+      // The run's own folder too: a folder once refused (an earlier attempt)
+      // carries its own "not trusted" entry, which outranks the root's.
+      require('./trust').ensureTrusted(config.worktreesRoot);
+      if (worktreePath) require('./trust').ensureTrusted(worktreePath);
+    } catch (err) {
+      log.warn('could not mark the worktrees trusted', { message: err.message });
+    }
+    const spec = {
+      cwd: worktreePath || repo || config.reposRoot,
+      command: launch.command,
+      title: `pa#${run.id} ${label.slice(0, 40)}`,
+    };
+    // A run that may not push also starts without push credentials
+    // (src/dispatch/remote.js noPushEnv); refused if termhub cannot do that.
+    session = m.mayPush ? await termhub.createSession(spec) : await require('./remote').createNoPushSession(termhub, spec, null);
 
-  // Every worktree is a folder Claude has never seen; trusted ahead of time
-  // so its session does not stop at the trust question (src/dispatch/trust.js).
-  try {
-    // The run's own folder too: a folder once refused (an earlier attempt)
-    // carries its own "not trusted" entry, which outranks the root's.
-    require('./trust').ensureTrusted(config.worktreesRoot);
-    if (worktreePath) require('./trust').ensureTrusted(worktreePath);
+    await query(
+      `update run set termhub_session_id = $2, brief_path = $3, status = 'running' where id = $1`,
+      [run.id, session.id, briefPath]
+    );
   } catch (err) {
-    log.warn('could not mark the worktrees trusted', { message: err.message });
+    await rollbackStart({ run, repo, worktreePath, branch, worktreeMade, session, err });
+    throw err;
   }
-  const session = await termhub.createSession({
-    cwd: worktreePath || repo || config.reposRoot,
-    command: launch.command,
-    title: `pa#${run.id} ${label.slice(0, 40)}`,
-  });
-
-  await query(
-    `update run set termhub_session_id = $2, brief_path = $3, status = 'running' where id = $1`,
-    [run.id, session.id, briefPath]
-  );
 
   if (commitmentId) {
     await ledger.transition({ commitmentId, to: 'dispatched', actor: 'dispatch', reason: `run #${run.id}`, from: ['open'] });
@@ -286,6 +310,22 @@ async function start({
   log.info('dispatched', { run: run.id, mode: m.name, repo, branch, agent: launch.agent, model: launch.model });
 
   return { id: run.id, route: 'claude', routeReason, mode: m.name, repoPath: repo, worktreePath, branch, briefPath, sessionId: session.id, url };
+}
+
+// Undoes a local start that failed before its run reached 'running'. Best
+// effort, each step on its own: the original error is what the caller sees.
+async function rollbackStart({ run, repo, worktreePath, branch, worktreeMade, session, err }) {
+  if (session?.id) await termhub.killSession(session.id).catch(() => {});
+  if (worktreeMade && repo && worktreePath) {
+    await git(repo, ['worktree', 'remove', '--force', worktreePath]).catch(() => {});
+    await git(repo, ['worktree', 'prune']).catch(() => {});
+    if (branch) await git(repo, ['branch', '-D', branch]).catch(() => {});
+  }
+  await query(
+    `update run set status = 'failed', outcome = 'failed', outcome_at = now(), ended_at = now(), exit_note = $2 where id = $1`,
+    [run.id, `start failed: ${String(err?.message || err)}`.slice(0, 500)]
+  ).catch((e) => log.warn('could not mark the failed run', { run: run.id, message: e.message }));
+  log.warn('run failed to start; rolled back', { run: run.id, message: String(err?.message || err).slice(0, 300) });
 }
 
 // The same run, on another machine's termhub (src/dispatch/remote.js). The
@@ -456,7 +496,10 @@ async function land(runId, { openMr = null } = {}) {
     throw new Error(`worktree for run #${runId} is dirty — commit or discard first:\n${dirty}`);
   }
 
-  await git(run.worktree_path, ['config', '--unset-all', 'remote.origin.pushurl']).catch(() => {});
+  // No pushurl to lift: a mode that may push never had its worktree blocked.
+  // (This once ran a plain `git config --unset-all remote.origin.pushurl` in
+  // the worktree — which edits the repo's SHARED config and wiped the user's
+  // own pushurl.)
   await git(run.worktree_path, ['push', '-u', 'origin', run.branch]);
 
   let mrUrl = null;

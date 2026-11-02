@@ -59,6 +59,11 @@ async function exercise(base, seen, label) {
   const hub = client(base);
   const { id } = await hub.createSession({ cwd: '/tmp', command: 'claude', title: 't' });
   assert.strictEqual(id, 's1', `${label}: created`);
+  // A termhub that does not say it applied session env (older ones ignore the
+  // field) is reported as not applied, so a no-push run is refused, not started.
+  const withEnv = await hub.createSession({ cwd: '/tmp', command: '', title: 't', env: { GIT_TERMINAL_PROMPT: '0' }, unsetEnv: ['GH_TOKEN'] });
+  assert.strictEqual(withEnv.envApplied, false, `${label}: unconfirmed env is not applied`);
+  seen.splice(seen.findIndex((r) => r.method === 'POST' && r.pathname === '/api/sessions'), 1);
   assert.strictEqual(await hub.say(id, 'hello', { submit: false }), true, `${label}: typed`);
   assert.deepStrictEqual((await hub.listSessions()).map((s) => s.id), ['s1']);
   assert.strictEqual(await hub.killSession(id), true, `${label}: killed`);
