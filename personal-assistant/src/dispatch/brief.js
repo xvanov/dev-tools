@@ -15,6 +15,7 @@
 // second copy of those conventions goes stale and then gets trusted.
 
 const { mode: resolveMode, describe } = require('./modes');
+const { describe: describeDelivery } = require('./deliveryCore');
 
 function fence(text) {
   const body = String(text || '').trim();
@@ -31,7 +32,12 @@ function fence(text) {
 // condition is the job's delivery level, which the factory enforces, and the
 // lines about this tool's worktree and its `pa` MCP server — which a factory
 // persona does not have — are left out.
-function buildBrief({ commitment, item, project, person, modeName, run, related = [], memory = {}, factory = null }) {
+//
+// `delivery` (a Claude session) is the end state the operator chose
+// (src/dispatch/deliveryCore.js): the session works within its mode, and what
+// lies past it — marking the PR ready, merging, pushing to main — the
+// assistant does itself when the session ends.
+function buildBrief({ commitment, item, project, person, modeName, run, related = [], memory = {}, factory = null, delivery = null }) {
   const m = resolveMode(modeName);
   const lines = [];
 
@@ -50,10 +56,14 @@ function buildBrief({ commitment, item, project, person, modeName, run, related 
 
   lines.push('## Stop condition');
   lines.push('');
-  lines.push(factory ? FACTORY_STOP[factory.delivery] || `Deliver at most \`${factory.delivery}\`.` : m.stopCondition);
+  lines.push(factory ? FACTORY_STOP[factory.delivery] || `Deliver \`${factory.delivery}\`.` : m.stopCondition);
   lines.push('');
+  if (!factory && delivery && AFTER[delivery]) {
+    lines.push(`**End state the operator chose:** \`${delivery}\` — ${describeDelivery(delivery, { route: 'claude' })} ${AFTER[delivery]}`);
+    lines.push('');
+  }
   if (factory) {
-    lines.push('> The delivery level is enforced by the factory (clamped to the app\'s own ceiling), not merely requested here. Nothing is ever sent to the requester.');
+    lines.push('> The delivery level is enforced by the factory, not merely requested here. Nothing is ever sent to the requester.');
     lines.push('');
   } else if (!m.mayPush) {
     lines.push(
@@ -168,6 +178,19 @@ const FACTORY_STOP = {
   branch: 'Push the branch. Do not open a pull request.',
   draft_pr: 'Push and open a DRAFT pull request. Never mark it ready and never merge it.',
   pr: 'Open a ready pull request. Never merge it.',
+  auto_merge: 'Open a pull request; it merges once every gate and check passes. Never bypass a check.',
+  push_to_main: 'When every gate passes, the change is fast-forwarded onto the default branch with no pull request.',
+};
+
+// What the assistant does after a Claude session ends, per delivery level —
+// told to the session so it leaves the work in the shape that step needs.
+const AFTER = {
+  none: 'Nothing leaves this worktree.',
+  branch: 'When you finish, the assistant pushes the branch if you have not.',
+  draft_pr: 'When you finish, the assistant opens the draft pull request if you have not.',
+  pr: 'When you finish, the assistant marks the pull request ready for review. Leave it in a reviewable state.',
+  auto_merge: 'When you finish, the assistant marks the pull request ready and merges it once its checks pass — so it must be complete and tested.',
+  push_to_main: 'You cannot push. When you finish, the assistant pushes your commits straight onto the default branch (fast-forward only) — so commit only finished, tested work, on top of the current default branch.',
 };
 
 function sourceLabel(source) {

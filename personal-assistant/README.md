@@ -279,13 +279,14 @@ Unanswered, it goes with the default: your usual for them, else a working mornin
 the promise (or just after it was due). Unless the ask closes first, a follow-up is then drafted in
 that thread for you to send, and if nothing comes you get one reminder half as long again later;
 at most three follow-ups a day. The card goes away by itself when their answer closes the ask.
-**Run review**: when a dispatched run's session ends with commits, the branch is pushed and a
-**draft** PR opened without asking, and you are told; a research (`plan`) run just tells you its
-findings are ready. In your own repos (`PA_MERGE_REPOS`: by default mv-assistant,
-engineering-assistant, mv-pipeline, innergy-dispatch and everything under `xvanov/`) the PR is then
-marked ready, its checks are waited for (up to 3 hours) and it is squash-merged once they pass —
-never with a failing check. Everywhere else it stays a draft: when it is ready and whether it
-merges is yours. A chase judges its ask before asking you anything, so an ask already answered
+**Run review**: when a dispatched run's session ends with commits, the assistant carries out the
+run's **end state** — the delivery level you chose (below) — and tells you: `none` pushes nothing,
+`branch` pushes the branch, `draft_pr` opens a draft PR, `pr` marks it ready for review,
+`auto_merge` marks it ready and squash-merges it once every check passed (never with a failing
+check), `push_to_main` fast-forwards the default branch with the run's commits (no `--force`; a
+main that moved on refuses). A research (`plan`) run just tells you its findings are ready. A run
+from before end states keeps the old rule: a draft PR, merged only in your own repos
+(`PA_MERGE_REPOS`). A chase judges its ask before asking you anything, so an ask already answered
 gets no card. **Needs you** is also where the assistant asks what
 only you know (which repo?). `pa proposals` / `pa answer <id> yes|no|<option>`
 do the same from the terminal, and `pa doctor` counts tasks by state.
@@ -310,10 +311,15 @@ turns it off). Each new ask on you from the last week is given a kind (reply, re
 investigate, meeting, decision, admin) once. An *investigate* ask with a known repo gets a
 read-only research run started on its own — `plan` mode, so it can neither commit nor push — at
 most `PA_EAGER_RUNS_PER_DAY` (2) a day and only within the daily budget; you get a toast with the
-session. A *coding* ask with a known repo becomes a **Needs you** card, "start a coding session?"
-(local mode on yes) — or, when the routing rule picks the software factory (below), "send to the
-factory?" (`PA_FACTORY_PROPOSAL_MODE`, default `mr`: at most a draft PR). The card states the route
-and the rule's reason before you say yes; a factory job changes code, so it is only ever offered. A code ask with no repo asks **which repo?** with buttons; your pick sets the
+session. A *coding* ask with a known repo becomes a **Needs you** card, "start a coding session?" —
+or, when the routing rule picks the software factory (below), "send to the factory?". Everything
+the card shows is decided before you see it and frozen into the proposal (`src/dispatch/offer.js`):
+the route and its reason, the **end state** in plain words (loud when nothing human follows your
+yes), the app, pipeline and models, the done-criteria, and — one click away — the exact brief that
+will be sent. Accepting runs exactly that; the only thing you can change on the card is the end
+state (a picker), and the brief is re-rendered for it. The planner's offers take the repo's default
+end state: it never reads one from the ask's text, which someone else wrote. A factory job changes
+code, so it is only ever offered. A code ask with no repo asks **which repo?** with buttons; your pick sets the
 project and teaches the alias, and the ask is planned again. Asks the reconciler thinks are done,
 or that already have a run, are left alone.
 
@@ -374,6 +380,9 @@ pa say 7 "use the existing helper"
 pa attach 7                     open the session in termhub
 pa review 7 [--diff]            what it changed
 pa land 7                       push, and open a draft PR (gh) if the mode allows
+pa do 959 --via factory --delivery auto_merge --pipeline solo   end state + pipeline, chosen by you
+pa propose 959 --via factory    the same on a card: brief, end state and criteria shown before the yes
+pa delivery set acme/widget pr  a repo's default end state when you say nothing
 pa drop 7                       kill the session, remove the worktree
 
 pa draft 7                      a report on a run, from the ask and the actual diff
@@ -595,19 +604,43 @@ in the factory checkout (`PA_FACTORY_PATH`) on the factory's machine (`PA_FACTOR
 `PA_MACHINES` name, or empty for this one) and reads the one JSON object each command prints — the
 contract is the factory's `docs/JOBS-API.md`.
 
-- **The mode still bounds it**, now as the job's delivery level, which the factory clamps to the
-  app's own ceiling: `local` → `none` (committed in the factory's worktree), `branch` → `branch`,
-  `mr` and `full` → `draft_pr`. `plan` is not a factory job. Nothing the PA sends asks for a merge.
-- **The ask is the brief**: the same BRIEF the session would get (requester's words, thread, memory),
-  without the lines about this tool's worktree and MCP server. Done-criteria are the commitment's
-  "what done looks like", one per line (`--done "…"`, repeatable, replaces them).
-  `--pipeline chain|solo|auto` (`PA_FACTORY_PIPELINE`) and `--model persona=model` (repeatable;
-  `PA_FACTORY_MODELS` sets defaults) pass straight through; `--app` names the factory app when the
-  repo cannot be read from the commitment. The run id is the job's external id, so a submit whose
-  answer was lost is retried once and returns the same job.
+- **The end state is yours** (operator decision 2026-11-02, no ceiling). Every job carries an
+  explicit `--delivery`: `none` (committed in the factory's worktree), `branch`, `draft_pr`, `pr`,
+  `auto_merge` (merged when its gates and CI pass), `push_to_main` (fast-forwarded onto main when
+  its gates pass). Where it comes from, first match wins (`src/dispatch/deliveryCore.js`):
+  `--delivery` or the card's pick; an explicit `--mode` (local → none, branch → branch, mr/full →
+  draft_pr); your own words in `--task` ("just open a draft", "merge it", "push straight to main",
+  "don't push") — never a third party's message; the repo's default (`pa delivery set owner/name
+  <level>`, `pa delivery list`, sql/025); `PA_DELIVERY_DEFAULT` (draft_pr). The same vocabulary
+  drives a Claude session: its worktree runs in the mode that level maps to (push_to_main runs as
+  `local` — the agent can never push to main itself) and run review does the rest. `plan` is never
+  a factory job.
+- **The ask is a composed brief** (`src/dispatch/compose.js`, rules in `composeCore.js`): a model
+  (`PA_COMPOSE_MODEL`, any text-capable provider) writes the goal, done-criteria, constraints,
+  decisions and facts the task needs, and points at **existing files to reuse or extend** — found by
+  searching the repo's local checkout (`git ls-files`, `git grep -F`) for the ask's keywords. Every
+  brief says: "Search the repo for existing implementations before writing new code; extend rather
+  than duplicate; follow existing conventions; add/extend tests." Private material (memory pages,
+  message bodies) reaches the model to pick from, never the brief wholesale: a run of 12 words
+  copied from it is dropped, a credential is redacted before the model sees it and again after,
+  reuse paths must be real files. No model, a model error or no JSON → a deterministic brief with
+  your words, the criteria and the code pointers and nothing private. `pa do … --preview` prints the
+  brief without sending; the card shows it. Done-criteria: `--done "…"` (repeatable) wins;
+  otherwise the commitment's "what done looks like", else the model's.
+  `--pipeline chain|solo|auto` (`PA_FACTORY_PIPELINE`) and `--model persona=provider/model`
+  (repeatable; `PA_FACTORY_MODELS` sets defaults) pass straight through; `--app` names the factory
+  app when the repo cannot be read from the commitment; `--register` (or `pa factory add
+  owner/name [--delivery-default level]`) registers a repo the factory does not know yet.
+- **Submission is idempotent and never leaves a run stuck.** The run id is the job's external id
+  (`--source pa --external-id <run>`), so a resubmit returns the same job. A contract error fails
+  the run. Anything else after a submit went out — a lost answer after one retry, a crash before
+  the job was recorded — is reconciled with the factory (`job status` by id, else `job list --source
+  pa` matched by external id): the job is adopted, or the run waits as `submit_unknown` and the
+  worker asks again each pass, failing it only once the factory has answered "no such job" for ten
+  minutes. A run left `starting` for two minutes is swept the same way.
 - **Every job carries a flow**: the factory's direction validator needs a `flow.md` (or an API spec)
   and parks a job without one as `needs_human`. `factoryCore.flowMarkdown` writes it
-  deterministically — no model call: numbered steps that restate the ask and turn each
+  deterministically from the composed goal: numbered steps that restate the ask and turn each
   done-criterion into a "Check:" step. Ask and flow are files on the factory's machine: written
   directly when it is this one, otherwise through `runCommand` by a fixed Python writer that takes
   the contents base64-encoded and puts them under that machine's temp dir. Any `warnings` the
@@ -624,6 +657,11 @@ contract is the factory's `docs/JOBS-API.md`.
 - `pa review <run>` shows the job, its stories and PRs; `pa drop <run>` cancels the job (the factory
   keeps its evidence) and reopens the ask; `pa land`, `pa diff` and `pa say` refuse — the factory
   delivers and is steered on its own side.
+
+**Telling the PA chat**: it picks the end state from what you said, the route (`--via claude`, or
+`--via factory --pipeline chain|solo`) and models, and either starts it (`pa do`, behind a permission
+prompt) or puts it on a card (`pa propose`, which starts nothing). Accepting a card from the chat
+(`pa answer <id> yes [--delivery level]`), `pa delivery set` and `pa factory add` ask first.
 
 **The routing rule** (`src/dispatch/routeCore.js`, pure and tested) sends work to the factory only
 when all hold: the factory is configured, the mode changes code, the planner judged the ask

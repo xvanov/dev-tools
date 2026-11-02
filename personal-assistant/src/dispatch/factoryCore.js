@@ -10,19 +10,10 @@
 // sqlite: it runs `uv run factory job …` on the factory's machine and parses
 // the single JSON object each `--json` command prints.
 
-// PA mode → factory delivery level. The contract gives the PA side this
-// mapping. `plan` is read-only and the factory only builds, so it is not a
-// factory job at all. `full` is `draft_pr` too: the factory never drafts the
-// reply, and nothing ever sends one.
-const DELIVERY_BY_MODE = {
-  plan: null,
-  local: 'none',
-  branch: 'branch',
-  mr: 'draft_pr',
-  full: 'draft_pr',
-};
-
-const DELIVERIES = ['none', 'branch', 'draft_pr', 'pr', 'auto_merge', 'push_to_main'];
+// Delivery levels are the shared vocabulary in deliveryCore.js. The operator
+// chooses one per job (operator decision 2026-11-02, no ceiling) and it is
+// sent on every submit; a legacy PA mode no longer decides it.
+const { DELIVERIES } = require('./deliveryCore');
 const PIPELINES = ['chain', 'solo', 'auto'];
 const STATES = ['queued', 'triaging', 'in_progress', 'blocked', 'needs_human', 'done', 'failed', 'cancelled'];
 const ACTIVE_STATES = new Set(['queued', 'triaging', 'in_progress', 'blocked', 'needs_human']);
@@ -32,14 +23,6 @@ const ACTIVE_STATES = new Set(['queued', 'triaging', 'in_progress', 'blocked', '
 const JOB_ID = /^[A-Za-z0-9_.-]+:[A-Za-z0-9_.-]+$/;
 const PERSONA = /^[A-Za-z0-9_-]+$/;
 const MODEL = /^[A-Za-z0-9_.:/@-]+$/;
-
-function deliveryFor(modeName) {
-  const key = String(modeName || '').toLowerCase();
-  if (!Object.prototype.hasOwnProperty.call(DELIVERY_BY_MODE, key)) throw new Error(`unknown mode "${modeName}"`);
-  const d = DELIVERY_BY_MODE[key];
-  if (!d) throw new Error('plan mode is read-only and is not a factory job — send it to a Claude session (--via claude)');
-  return d;
-}
 
 function pipeline(name) {
   const p = String(name || 'auto').toLowerCase();
@@ -149,7 +132,7 @@ function flowMarkdown({ title, summary = null, app = null, done = [], delivery =
   steps.push(`Make the change: ${clip(summary || title, 400)}.`);
   for (const d of done) steps.push(`Check: ${clip(d, 400)}`);
   steps.push('The existing tests still pass, and new behaviour is covered by a test.');
-  if (delivery) steps.push(`Deliver at most \`${delivery}\`.`);
+  if (delivery) steps.push(`Deliver \`${delivery}\`.`);
   return [
     `# Flow: ${clip(title, 200)}`,
     '',
@@ -158,6 +141,47 @@ function flowMarkdown({ title, summary = null, app = null, done = [], delivery =
     ...steps.map((s, i) => `${i + 1}. ${s}`),
     '',
   ].join('\n');
+}
+
+/**
+ * `factory app add` for a repo the factory does not know yet (JOBS-API.md).
+ * `--delivery-default` is the app's own default; the PA still sends
+ * `--delivery` on every job, so it only matters for jobs submitted elsewhere.
+ */
+function appAddArgv({ repo, deliveryDefault = 'draft_pr', path: clonePath = null }) {
+  if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(String(repo || ''))) throw new Error(`not a repo: "${repo}" — want owner/name`);
+  if (!DELIVERIES.includes(deliveryDefault)) throw new Error(`unknown delivery "${deliveryDefault}"`);
+  const argv = ['app', 'add', '--json', '--repo', String(repo), '--delivery-default', deliveryDefault];
+  if (clonePath) argv.push(`--path=${String(clonePath)}`);
+  return argv;
+}
+
+/** This run's job in a `job list` answer: source pa, external id = run id. */
+function jobForRun(jobs, runId) {
+  return (Array.isArray(jobs) ? jobs : []).find(
+    (j) => (j?.source == null || j.source === 'pa') && j?.external_id != null && String(j.external_id) === String(runId) && JOB_ID.test(String(j.job_id || ''))
+  ) || null;
+}
+
+// How long a run may sit with its submit unanswered before "the factory has
+// no job for it" is believed: a submit that timed out here may still be
+// finishing there.
+const SUBMIT_GRACE_MS = 10 * 60_000;
+
+/**
+ * Pure. What to do with a run whose submit did not come back cleanly (a lost
+ * answer, a crash between submit and recording it), from what the factory
+ * says now. Never "leave it starting".
+ *   adopt   the factory has the job: record it, then follow it like any other
+ *   fail    the factory answered and has no job for it, and the grace is over
+ *   unknown the factory could not be asked, or it is too early to be sure:
+ *           the row waits as `submit_unknown`, and the worker asks again
+ * @param {{job?: object|null, asked: boolean, ageMs: number}} o
+ */
+function submitVerdict({ job = null, asked, ageMs }) {
+  if (job) return 'adopt';
+  if (!asked) return 'unknown';
+  return ageMs >= SUBMIT_GRACE_MS ? 'fail' : 'unknown';
 }
 
 /** The command a termhub session runs to "walk into" a job. */
@@ -232,13 +256,12 @@ function clip(s, n) {
 }
 
 module.exports = {
-  DELIVERY_BY_MODE,
   DELIVERIES,
   PIPELINES,
   STATES,
   ACTIVE_STATES,
   JOB_ID,
-  deliveryFor,
+  SUBMIT_GRACE_MS,
   pipeline,
   parseModels,
   factoryArgv,
@@ -246,6 +269,9 @@ module.exports = {
   flowMarkdown,
   parseResult,
   followCommand,
+  appAddArgv,
+  jobForRun,
+  submitVerdict,
   runUpdate,
   commitmentMove,
   FactoryError,

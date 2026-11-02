@@ -334,6 +334,14 @@ const config = {
       .split(',')
       .map((s) => s.trim())
       .filter(Boolean),
+    // The end state a run or factory job gets when the operator did not say
+    // and its repo has no default of its own (`pa delivery set`,
+    // src/dispatch/deliveryCore.js): none | branch | draft_pr | pr |
+    // auto_merge | push_to_main.
+    deliveryDefault: env('PA_DELIVERY_DEFAULT', 'draft_pr'),
+    // The model that writes a factory job's brief from the ask and what the
+    // assistant gathered (src/dispatch/compose.js). Any text-capable model.
+    composeModel: modelEnv('PA_COMPOSE_MODEL', 'claude-sonnet-5-5'),
   },
 
   // The software factory as a second dispatch target (src/dispatch/factory.js,
@@ -352,8 +360,6 @@ const config = {
     pipeline: env('PA_FACTORY_PIPELINE', 'auto'),
     // Per-persona model overrides passed with every job: `dev=model,reviewer=model`.
     models: env('PA_FACTORY_MODELS', ''),
-    // The mode a planner "send to the factory?" card offers (mr = draft PR).
-    proposalMode: env('PA_FACTORY_PROPOSAL_MODE', 'mr'),
     // How `auto` picks: `rule` (src/dispatch/routeCore.js). The seam for others.
     chooser: env('PA_ROUTE_CHOOSER', 'rule'),
     pollSeconds: envInt('PA_FACTORY_POLL_SECONDS', 120),

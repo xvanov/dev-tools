@@ -76,23 +76,35 @@ async function decide(o) {
   return { ...g, done: ctx.done, slug: ctx.slug };
 }
 
-/** `--via factory`: the human chose it; only the hard limits can refuse. */
-async function forced({ target, mode, done = null, app = null }) {
+/**
+ * `--via factory`: the human chose it; only the hard limits can refuse.
+ * `register`: a repo the factory does not know yet is registered with it
+ * first (`factory app add`, JOBS-API.md) instead of refused. `exactDone`
+ * (an accepted proposal): the done-criteria are the card's, even when empty
+ * — never re-derived from the commitment at accept time.
+ */
+async function forced({ target, mode, done = null, app = null, register = false, exactDone = false }) {
   const ctx = await context({ target, mode, done });
+  if (exactDone) ctx.done = Array.isArray(done) ? done : [];
   if (!ctx.factoryEnabled) throw new Error('the factory is not configured — set PA_FACTORY_PATH (see `pa doctor`)');
   if (ctx.unavailable) throw new Error(`the factory did not answer: ${ctx.unavailable}`);
   if (ctx.mode === 'plan') throw new Error('plan mode is read-only and is not a factory job — use --via claude, or another mode');
-  const hit = app ? ctx.apps.find((a) => a.app === app) : R.appFor(ctx.slug, ctx.apps);
+  let hit = app ? ctx.apps.find((a) => a.app === app) : R.appFor(ctx.slug, ctx.apps);
+  if (!hit && !app && register && ctx.slug) {
+    const added = await factory.addApp({ repo: ctx.slug });
+    log.info('registered a repo with the factory', { repo: ctx.slug, app: added.app });
+    hit = { app: added.app, repo: added.repo || ctx.slug };
+  }
   if (!hit) {
     throw new Error(
       app
         ? `no factory app "${app}" — registered: ${ctx.apps.map((a) => a.app).join(', ') || 'none'}`
         : ctx.slug
-          ? `${ctx.slug} is not registered with the factory — register it there with \`uv run factory app add --repo ${ctx.slug}\``
+          ? `${ctx.slug} is not registered with the factory — add --register (or \`pa factory add ${ctx.slug}\`) to register it`
           : 'no repository known for this — set one with `pa show <id> --project <name>`, or pass --repo owner/name or --app'
     );
   }
-  return { route: 'factory', reason: 'you chose the factory', app: hit.app, done: ctx.done, slug: ctx.slug };
+  return { route: 'factory', reason: 'you chose the factory', app: hit.app, done: ctx.done, slug: ctx.slug, appPath: hit.path || null };
 }
 
 async function decideFor({ commitmentId, kind, mode }) {

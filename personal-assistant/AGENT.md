@@ -60,8 +60,9 @@ capability; it is how the dashboard works from a phone. For that the page's own 
 **The PA chat acts only behind permission prompts.** `pa chat` starts one Claude Code session in
 termhub, homed in `<dataDir>/pa-home` (`src/chat/`), which reads other people's messages all day.
 It is started *without* `--dangerously-skip-permissions`; its `settings.json` allows the read-only
-`pa` commands and the read MCP tools and puts `pa do/land/drop/say/done/remember/forget/routine
-add/notify feedback` behind an *ask*. Its CLAUDE.md is rewritten from code on every start — change it in
+`pa` commands (and `pa propose`, which only makes a card) and the read MCP tools and puts `pa
+do/answer/land/drop/say/done/remember/forget/routine add/notify feedback/delivery set/factory add`
+behind an *ask*. Its CLAUDE.md is rewritten from code on every start — change it in
 `src/chat/index.js`, not on disk; the user's own additions go in `CLAUDE.local.md`. The chat may run
 on opencode instead (`PA_CHAT_AGENT`, `src/chat/agent.js`) only under the same guarantee: its
 `opencode.json` is generated from the *same* command lists (`ALLOW_COMMANDS`/`ASK_COMMANDS`), starts
@@ -174,12 +175,20 @@ woke it is a hint. `awaitEvent` suspends a task by throwing: never catch it exce
 waits on `proposal:<id>`; a proposal with no task runs a typed handler in `src/proposals` — there
 is no handler that takes a command or free text.
 
-**A finished run's draft PR is opened without asking; merging only in my own repos.**
-`run_review` pushes the run's branch and opens a *draft* PR as soon as the session ends with
-commits (I decided a draft is always fine: it merges nothing and can be closed). Only in a repo on
-`PA_MERGE_REPOS` (repos I own, `src/dispatch/merge.js`) is it marked ready and squash-merged, and
-only once every check passed. Do not widen the default list or merge on a failing, cancelled or
-still-running check; a repo where other people work is never on it.
+**A finished run is delivered to the end state I chose for it, and to nothing past it.** Every run
+records its delivery level (`run.delivery`, src/dispatch/deliveryCore.js): `none` < `branch` <
+`draft_pr` < `pr` < `auto_merge` < `push_to_main`. It is set only from my side — `--delivery`, the
+card's picker, an explicit `--mode`, my own words in `--task`, my per-repo default (`pa delivery
+set`), `PA_DELIVERY_DEFAULT` — and never from a third party's message: the planner's offers and a
+commitment's text never infer one. There is no ceiling (operator decision 2026-11-02), so the two
+levels with no human step after the yes (`auto_merge`, `push_to_main`) say so in plain words on the
+card and in `pa do`'s output. A Claude session runs in the mode its level maps to (`D.modeFor`;
+`push_to_main` runs as `local`, so the agent can never push to main itself) and `run_review`
+(src/durable/tasks/runReview.js) does the rest when it ends: merging only on `auto_merge` and only
+once every check passed; pushing to main only on `push_to_main` and only as a fast-forward. A run
+recorded before end states (delivery null) keeps the old rule: a draft PR, merged only in a repo on
+`PA_MERGE_REPOS` — do not widen that list. The push block is lifted from the worktree's own config
+(`liftPushBlock`), the same place `blockPush` put it.
 
 **The planner starts only read-only runs on its own, and few.** `src/agent/planner.js` may start
 a `plan`-mode run (it reads and writes findings; it can neither commit nor push) for an ask it
@@ -191,17 +200,33 @@ judged "investigate" with a known repo, at most `PA_EAGER_RUNS_PER_DAY` a day an
 `--via factory` (`src/dispatch/factory.js`) sends a run to the software factory instead of a
 Claude session. The PA never imports factory code or reads its store: it runs `uv run factory
 job|app …` through `runCommand` (`src/dispatch/exec.js`) and parses the one JSON object the
-factory's `docs/JOBS-API.md` says each command prints. The mode boundary holds as the job's
-delivery level (`factoryCore.deliveryFor`; `plan` is never a job, and no mode asks past a draft
-PR), which the factory clamps to the app's ceiling. A factory job changes code, so the planner only
-ever *offers* one; its own runs stay `plan`-mode Claude sessions (`test/factoryDispatch.test.js`
-checks the planner source). A job's end moves its commitment only through `ledger.transition`
-(actor `factory`) and only from `dispatched`, and GitHub reconcile closes only `open` asks, so a
-merged factory PR is never closed twice. A job id is checked against `factoryCore.JOB_ID` before it
-is typed into a terminal. Any route chooser's answer passes `routeCore.guard`. Every job is sent
-with a `--flow-file` (`factoryCore.flowMarkdown`, deterministic), since the factory parks a job
-without a flow; content reaches another machine base64-encoded through a fixed writer, never as a
-command string.
+factory's `docs/JOBS-API.md` says each command prints. Every job is sent with an explicit
+`--delivery` (the end state above; `plan` is never a job) and the factory honours it as asked. A
+factory job changes code, so the planner only ever *offers* one; its own runs stay `plan`-mode
+Claude sessions (`test/factoryDispatch.test.js` checks the planner source). A job's end moves its
+commitment only through `ledger.transition` (actor `factory`) and only from `dispatched`, and
+GitHub reconcile closes only `open` asks, so a merged factory PR is never closed twice. A job id is
+checked against `factoryCore.JOB_ID` before it is typed into a terminal. Any route chooser's answer
+passes `routeCore.guard`. Every job is sent with a `--flow-file` (`factoryCore.flowMarkdown`,
+deterministic), since the factory parks a job without a flow; content reaches another machine
+base64-encoded through a fixed writer, never as a command string. A submit is idempotent on
+`--source pa --external-id <run id>`; after any failure once a submit went out, the run is settled
+against `job status`/`job list` (`factory.settle`, `factoryCore.submitVerdict`) — adopted, failed
+only after the factory has said "no such job" for `SUBMIT_GRACE_MS`, or `waiting` as
+`submit_unknown` for the worker — and never left `starting`.
+
+**A factory brief carries what the task needs, not my private material.** The ask is composed
+(`src/dispatch/compose.js`; every rule pure and tested in `composeCore.js`): goal, done-criteria,
+constraints, decisions, facts, pointers to existing files to reuse or extend, and the fixed
+instruction to search before writing, extend rather than duplicate, follow conventions and add
+tests. Memory pages and message bodies go to the composing model to select from and never into
+the brief wholesale (`copiesPrivate`: 12 verbatim words is a dump and is dropped); secrets are
+redacted before the model sees anything and again after; reuse paths must be files the repo has.
+The model is a mockable seam (`compose._setModel`); when it fails, the brief is the deterministic
+one, which holds nothing private. What a dispatch card shows is frozen in the proposal
+(`src/dispatch/offer.js`) and is exactly what runs at accept — app, criteria, brief, pipeline,
+models, end state (re-rendered, never recomposed, if I change it on the card). Nothing outward
+happens before the yes: registering a repo with the factory (`factory app add`) waits for accept.
 
 **Capture never stops for the assistant.** The worker's only levers on `capture.py` are the pause
 file (`pa mic pause`) and the roll file, which makes capture finish its file and continue in a

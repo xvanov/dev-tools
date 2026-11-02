@@ -67,6 +67,12 @@
     user-select: all; overflow-wrap: anywhere; }
   .sess a { color: var(--accent); text-decoration: none; }
   pre.sub { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; font-size: 12px; margin: 4px 0 0; }
+  .endstate { margin: 6px 0 2px; font-weight: 600; }
+  .endstate.loud { color: var(--bad); }
+  .endstate-pick { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; font-size: 12px; color: var(--muted); }
+  .done-list { margin: 4px 0 0 18px; padding: 0; font-size: 12px; }
+  details.brief summary { cursor: pointer; font-size: 12px; color: var(--accent); margin-top: 4px; }
+  details.brief pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; max-height: 420px; overflow: auto; background: var(--chip); padding: 8px; border-radius: 4px; }
   .why { margin-top: 6px; padding: 6px 9px; border-left: 3px solid var(--accent); background: var(--chip);
     border-radius: 0 6px 6px 0; font-size: 13px; overflow-wrap: anywhere; }
   .why.pending { background: none; border-left-color: var(--line); color: var(--muted); font-size: 12px; padding: 2px 9px; }
@@ -472,9 +478,10 @@ function cardSource(x, wanted) {
 
 // What each mode lets the session do, shown in the mode picker. A review or a
 // question wants `plan`; `full` also pushes, opens a draft PR and writes a reply.
-// Where the work goes. The factory delivers at most what the mode maps to
-// (local → nothing pushed, branch → a branch, mr/full → a draft PR); plan is
-// never a factory job, and auto falls back to a Claude session for it.
+// Where the work goes. Its end state is the end-state picker's (unpicked: the
+// repo's default); a mode changed from its default maps to one instead (local
+// → nothing pushed, branch → a branch, mr/full → a draft PR). plan is never a
+// factory job, and auto falls back to a Claude session for it.
 const ROUTE_HELP = {
   claude: 'Claude session',
   factory: 'software factory',
@@ -494,6 +501,9 @@ function commitmentCard(c) {
   const machinePick = picker(MACHINES.machines.map((m) => ({ value: m.name, label: m.label })), '');
   const modePick = picker(MACHINES.modes.map((m) => ({ value: m, label: MODE_HELP[m] || m })), MACHINES.defaultMode);
   const routePick = picker((MACHINES.routes || ['claude']).map((r) => ({ value: r, label: ROUTE_HELP[r] || r })), MACHINES.defaultRoute || 'claude');
+  // The end state (src/dispatch/deliveryCore.js). Unpicked: the repo's default.
+  const deliveryPick = picker([{ value: '', label: 'end state: the repo\'s default' },
+    ...(MACHINES.deliveries || []).map((d) => ({ value: d.value, label: `${d.value} — ${d.plain}` }))], '');
   // A native disclosure: it opens and closes whatever else the card is doing.
   const ctx = el('details', { class: 'ctx-toggle' }, el('summary', {}, 'Context'));
   const loadContext = async (fresh = false) => {
@@ -530,12 +540,17 @@ function commitmentCard(c) {
     machinePick.disabled = true;
     modePick.disabled = true;
     routePick.disabled = true;
+    deliveryPick.disabled = true;
     toast(routePick.value !== 'claude' ? 'sending it on its way…' : machinePick.value ? `setting up on ${machinePick.value} — this takes a minute; the session opens in the new tab` : 'starting the session…');
     try {
-      const r = await post(`api/commitments/${c.id}/dispatch`, { machine: routePick.value === 'factory' ? null : machinePick.value || null, mode: modePick.value, via: routePick.value });
+      // A mode left at its default is not a choice: the end state decides then.
+      const mode = modePick.value !== MACHINES.defaultMode ? modePick.value : undefined;
+      const r = await post(`api/commitments/${c.id}/dispatch`, {
+        machine: routePick.value === 'factory' ? null : machinePick.value || null, mode, via: routePick.value, delivery: deliveryPick.value || null,
+      });
       toast(r.route === 'factory'
         ? `run #${r.id} sent to the factory (job ${r.jobId}, delivers ${r.delivery})${(r.warnings || []).length ? ` — factory warned: ${r.warnings.join('; ')}` : ''}`
-        : `run #${r.id} started (${r.mode}${r.machine ? ` on ${r.machine}` : ''})${r.routeReason && routePick.value === 'auto' ? ` — ${r.routeReason}` : ''}`);
+        : `run #${r.id} started (${r.mode}${r.delivery ? ` → ${r.delivery}` : ''}${r.machine ? ` on ${r.machine}` : ''})${r.routeReason && routePick.value === 'auto' ? ` — ${r.routeReason}` : ''}`);
       if (tab && r.url) tab.location.href = r.url;
       else if (r.url) window.open(r.url, '_blank');
       openContext.set(c.id, null);
@@ -544,6 +559,7 @@ function commitmentCard(c) {
       machinePick.disabled = false;
       modePick.disabled = false;
       routePick.disabled = false;
+      deliveryPick.disabled = false;
       throw err;
     }
   }));
@@ -569,7 +585,7 @@ function commitmentCard(c) {
     ...cardSource(c, c.onBoard),
     el('div', { class: 'actions' },
       canDo && (MACHINES.routes || []).length > 1 ? routePick : null,
-      canDo && MACHINES.machines.length > 1 ? machinePick : null, canDo ? modePick : null, canDo ? doBtn : null,
+      canDo && MACHINES.machines.length > 1 ? machinePick : null, canDo ? modePick : null, canDo ? deliveryPick : null, canDo ? doBtn : null,
       canReply ? replyBtn : null, doneBtn, dropBtn),
     ctx);
 }
@@ -837,10 +853,57 @@ function noteCard(n) {
       thumb('down', '👎', 'Not worth an interruption — fewer like this')));
 }
 
+// A dispatch offer frozen by src/dispatch/offer.js: the end state first, in
+// plain words (loud when nothing human follows the yes), a picker to change
+// it when accepting, the route, the done-criteria, and — one click away — the
+// exact brief that will be sent.
+const UNATTENDED = new Set(['auto_merge', 'push_to_main']);
+function offerDetails(p) {
+  const pl = p.payload || {};
+  const plain = pl.deliveryPlain || {};
+  const line = el('div', { class: 'endstate' });
+  const show = (d) => {
+    line.textContent = d ? `End state: ${d} — ${plain[d] || ''}` : 'End state: none — read-only research; changes nothing.';
+    line.className = UNATTENDED.has(d) ? 'endstate loud' : 'endstate';
+  };
+  show(pl.delivery);
+  let select = null;
+  const nodes = [line];
+  if (pl.delivery) {
+    select = el('select', { 'aria-label': 'End state on accept' });
+    for (const d of Object.keys(plain)) {
+      const o = el('option', { value: d }, d);
+      if (d === pl.delivery) o.selected = true;
+      select.append(o);
+    }
+    select.addEventListener('change', () => show(select.value));
+    nodes.push(el('div', { class: 'endstate-pick' }, 'Change it before accepting:', select));
+  }
+  const route = pl.via === 'factory'
+    ? `Software factory · app ${pl.app || `${pl.slug} (registered on accept)`} · pipeline ${pl.pipeline}` +
+      (pl.models && Object.keys(pl.models).length ? ` · models ${Object.entries(pl.models).map(([k, v]) => `${k}=${v}`).join(' ')}` : '')
+    : `Claude session · mode ${pl.mode || '?'}`;
+  nodes.push(el('div', { class: 'sub' }, route));
+  if (pl.routeReason) nodes.push(el('div', { class: 'sub' }, `Why: ${pl.routeReason}`));
+  if (Array.isArray(pl.done)) {
+    nodes.push(el('div', { class: 'sub' }, pl.done.length ? 'Done when:' : 'Done when: (no criteria)'));
+    if (pl.done.length) nodes.push(el('ul', { class: 'done-list' }, ...pl.done.map((d) => el('li', {}, d))));
+  }
+  if (pl.brief) {
+    nodes.push(el('details', { class: 'brief' },
+      el('summary', {}, `The brief that will be sent (${pl.briefBy || 'composed'}) — at the end state shown when it was prepared`),
+      el('pre', {}, pl.brief)));
+  }
+  return { nodes, select };
+}
+
 // A prepared action (yes / no) or a question (one button per option).
 function needsYouCard(p) {
+  const offer = p.kind === 'dispatch' && p.payload?.frozen ? offerDetails(p) : null;
   const decide = (accept, answer) => async () => {
-    const r = await post(`api/proposals/${p.id}/${accept ? 'accept' : 'reject'}`, { answer });
+    const body = { answer };
+    if (accept && offer?.select && offer.select.value !== p.payload.delivery) body.delivery = offer.select.value;
+    const r = await post(`api/proposals/${p.id}/${accept ? 'accept' : 'reject'}`, body);
     toast(r.result || (accept ? 'done' : 'declined'));
   };
   const buttons = [];
@@ -864,7 +927,8 @@ function needsYouCard(p) {
     el('div', { class: 'sum' }, p.title),
     el('div', { class: 'sub' }, ...joinParts([p.commitment_id ? `#${p.commitment_id}` : null, p.run_id ? `run #${p.run_id}` : null,
       p.commitment_summary, p.who, SOURCE[p.source] || p.source, p.project, ago(p.created_at)])),
-    p.body ? el('pre', { class: 'sub' }, p.body) : null,
+    offer ? (p.payload.why ? el('pre', { class: 'sub' }, p.payload.why) : null) : p.body ? el('pre', { class: 'sub' }, p.body) : null,
+    ...(offer ? offer.nodes : []),
     ...(p.commitment_id ? cardSource(p, true) : []),
     el('div', { class: 'actions' }, ...buttons));
 }

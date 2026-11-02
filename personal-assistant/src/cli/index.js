@@ -37,15 +37,20 @@ const HELP = `pa — your context layer
     pa do <id> [--mode m] [--repo p] dispatch a commitment to a Claude Code session
                      [--machine name]  …in another machine's termhub (PA_MACHINES)
                      [--via claude|factory|auto]  …or to the software factory; auto picks and says why
-                     [--pipeline chain|solo|auto] [--model persona=model]… [--done "…"]… [--app a]  factory only
+                     [--delivery none|branch|draft_pr|pr|auto_merge|push_to_main]  the end state (both routes)
+                     [--pipeline chain|solo|auto] [--model persona=model]… [--done "…"]… [--app a] [--register]  factory only
+                     [--preview]  print the route, end state and the brief that would be sent; start nothing
                      [--agent claude|opencode] [--model m]  which agent CLI and model (local runs)
     pa done <id> [--dismiss|--reopen] close a commitment yourself
     pa ledger <id>                   every status change of a commitment, and why
     pa ledger reconcile [--dry-run] [--id N,..] [--limit N]
                                      judge open commitments against newer items now
     pa ledger undo <transition-id>   take back one status change
+    pa propose <id>|--task "…" […pa do's flags]  put the work on a card (Needs you) instead of starting it
     pa proposals                     what the assistant prepared or asks, waiting for you
-    pa answer <id> yes|no|<option>   answer one
+    pa answer <id> yes|no|<option> [--delivery level]  answer one; --delivery changes a card's end state
+    pa delivery [list] | set <owner/name> <level> | clear <owner/name>  per-repo default end state
+    pa factory apps | add <owner/name> [--delivery-default level] [--path p]  the factory's registered repos
     pa ledger looks-done [<evidence-id> --yes|--no]  proposals: list, or answer one
     pa notify [list] [--unread]      what the assistant told you, and how (push, digest, feed)
     pa notify ack <id>|all           mark read; it leaves the PA chat's INBOX.md
@@ -142,6 +147,40 @@ function relative(iso) {
   const hours = Math.round(mins / 60);
   if (hours < 48) return `${hours}h ago`;
   return `${Math.round(hours / 24)}d ago`;
+}
+
+// `pa do` / `pa propose` / `pa do --preview`: one reading of the flags.
+function dispatchFlags(commitmentId, task, flags, lists) {
+  const str = (name) => (flags[name] && flags[name] !== true ? String(flags[name]) : null);
+  const models = lists.model || [];
+  return {
+    commitmentId,
+    task,
+    mode: str('mode') || undefined,
+    repoPath: str('repo'),
+    machine: str('machine'),
+    via: str('via'),
+    delivery: str('delivery'),
+    pipeline: str('pipeline'),
+    // --model is shared: persona=model pairs are factory route overrides,
+    // a bare model picks the agent's model for a Claude/opencode run.
+    models: models.filter((m) => String(m).includes('=')).length ? models.filter((m) => String(m).includes('=')) : null,
+    done: lists.done || null,
+    app: str('app'),
+    register: flagBool(flags, 'register'),
+    agent: str('agent'),
+    model: models.filter((m) => !String(m).includes('=')).pop() || null,
+  };
+}
+
+// An offer (src/dispatch/offer.js), as the card would show it.
+function printOffer({ body, payload }, { preview }) {
+  if (preview) out('PREVIEW — nothing started, nothing sent.\n');
+  out(body);
+  if (payload?.brief) {
+    out(`\n--- the brief that ${preview ? 'would be' : 'will be'} sent (${payload.briefBy}) ---\n`);
+    out(payload.brief);
+  }
 }
 
 // ---------------------------------------------------------------- commands --
@@ -356,33 +395,30 @@ const commands = {
     const dispatch = require('../dispatch');
     const commitmentId = args[0] ? Number(args[0]) : null;
     const task = flags.task && flags.task !== true ? String(flags.task) : null;
-    if (!commitmentId && !task) return fail('usage: pa do <commitment-id> [--mode m] [--machine name] [--via claude|factory|auto] | pa do --task "..."');
+    if (!commitmentId && !task) return fail('usage: pa do <commitment-id> [--mode m] [--delivery level] [--machine name] [--via claude|factory|auto] | pa do --task "..."');
+    const o = dispatchFlags(commitmentId, task, flags, lists);
+    if (flagBool(flags, 'preview')) return printOffer(await require('../dispatch/offer').prepare(o), { preview: true });
 
-    const str = (name) => (flags[name] && flags[name] !== true ? String(flags[name]) : null);
-    const machine = str('machine');
+    const machine = o.machine;
     if (machine) out(`setting up on ${machine} — fetch, worktree, brief, then claude (a minute or so)…`);
-    const result = await dispatch.start({
-      commitmentId,
-      task,
-      mode: str('mode') || undefined,
-      repoPath: str('repo'),
-      machine,
-      via: str('via'),
-      pipeline: str('pipeline'),
-      // --model is shared: persona=model pairs are factory route overrides,
-      // a bare model picks the agent's model for a Claude/opencode run.
-      models: (lists.model || []).filter((m) => String(m).includes('=')).length
-        ? (lists.model || []).filter((m) => String(m).includes('='))
-        : null,
-      done: lists.done || null,
-      app: str('app'),
-      agent: flags.agent && flags.agent !== true ? String(flags.agent) : null,
-      model: (lists.model || []).filter((m) => !String(m).includes('=')).pop() || null,
-    });
+    const result = await dispatch.start(o);
+    const D = require('../dispatch/deliveryCore');
+    const end = (r, route) => r.delivery
+      ? `${r.delivery} — ${D.describe(r.delivery, { route })} (${D.sourceLine(r.deliverySource, r.deliveryPhrase)})`
+      : 'none — read-only';
 
     if (result.route === 'factory') {
+      if (result.submitUnknown) {
+        out(`run #${result.id} · factory · app ${result.app} · SUBMIT UNCONFIRMED`);
+        out(`  ${result.note}`);
+        out(`  end state ${end(result, 'factory')}`);
+        out(`  ask      ${result.briefPath}`);
+        return;
+      }
       out(`run #${result.id} · factory job ${result.jobId}${result.created ? '' : ' (already submitted)'} · app ${result.app}`);
-      out(`  delivery ${result.delivery}${result.delivery !== result.deliveryRequested ? ` (asked ${result.deliveryRequested}; the app's ceiling clamped it)` : ''} · pipeline ${result.pipeline} · mode ${result.mode}`);
+      out(`  end state ${end(result, 'factory')}`);
+      if (result.delivery !== result.deliveryRequested) out(`  WARNING  asked for ${result.deliveryRequested}; the factory reports ${result.delivery}`);
+      out(`  pipeline ${result.pipeline} · brief by ${result.briefBy || '?'}`);
       if (result.routeReason) out(`  route    ${result.routeReason}`);
       for (const w of result.warnings || []) out(`  WARNING  ${w}`);
       out(`  ask      ${result.briefPath}`);
@@ -390,11 +426,70 @@ const commands = {
       return;
     }
     out(`run #${result.id} · ${result.mode}${result.machine ? ` · on ${result.machine}` : ''} · ${result.repoPath || '(no repo)'}`);
+    out(`  end state ${end(result, 'claude')}`);
     if (result.routeReason) out(`  route    claude — ${result.routeReason}`);
     if (result.branch) out(`  branch   ${result.branch}`);
     if (result.worktreePath) out(`  worktree ${result.worktreePath}`);
     out(`  brief    ${result.briefPath}`);
     out(`  session  ${result.url}`);
+  },
+
+  // The same choices as `pa do`, put on a card instead of started: the
+  // route, end state, pipeline, models, done-criteria and the composed brief
+  // are frozen into the proposal and run exactly as shown on yes.
+  async propose(args, flags, lists = {}) {
+    const commitmentId = args[0] ? Number(args[0]) : null;
+    const task = flags.task && flags.task !== true ? String(flags.task) : null;
+    if (!commitmentId && !task) return fail('usage: pa propose <commitment-id> | --task "..." [pa do\'s flags]');
+    const o = dispatchFlags(commitmentId, task, flags, lists);
+    const row = await require('../dispatch/offer').propose(o);
+    if (!row) return out('already offered');
+    out(`proposal ${row.id} · ${row.title}`);
+    printOffer({ body: row.body, payload: row.payload }, { preview: false });
+    out(`\nOn the dashboard under Needs you, or: pa answer ${row.id} yes [--delivery level]`);
+  },
+
+  async delivery(args) {
+    const store = require('../dispatch/delivery');
+    const D = require('../dispatch/deliveryCore');
+    const [sub, repo, level] = args;
+    if (!sub || sub === 'list') {
+      const list = await store.list();
+      out(`default when nothing is said and the repo has none: ${store.fallback()} — ${D.describe(store.fallback())} (PA_DELIVERY_DEFAULT)`);
+      if (!list.length) return out('no per-repo defaults — `pa delivery set owner/name <level>`');
+      for (const r of list) out(`${r.repo.padEnd(40)} ${r.delivery.padEnd(13)} ${D.describe(r.delivery)}`);
+      return;
+    }
+    if (sub === 'set') {
+      if (!repo || !level) return fail(`usage: pa delivery set <owner/name> <${D.DELIVERIES.join('|')}>`);
+      const r = await store.setDefault(repo, level);
+      return out(`${r.repo}: ${r.delivery} — ${D.describe(r.delivery)}`);
+    }
+    if (sub === 'clear') {
+      if (!repo) return fail('usage: pa delivery clear <owner/name>');
+      return out((await store.clearDefault(repo)) ? `${repo}: back to ${store.fallback()}` : `${repo} had no default`);
+    }
+    return fail('usage: pa delivery [list] | set <owner/name> <level> | clear <owner/name>');
+  },
+
+  async factory(args, flags) {
+    const factory = require('../dispatch/factory');
+    const [sub, repo] = args;
+    if (!sub || sub === 'apps') {
+      const apps = await factory.apps({ fresh: true });
+      if (!apps.length) return out('no apps registered — `pa factory add owner/name`');
+      for (const a of apps) out(`${String(a.app).padEnd(24)} ${String(a.repo || '').padEnd(36)} default ${a.delivery?.default || '?'}${a.pipeline_default ? ` · pipeline ${a.pipeline_default}` : ''}`);
+      return;
+    }
+    if (sub === 'add') {
+      if (!repo) return fail('usage: pa factory add <owner/name> [--delivery-default level] [--path p]');
+      const str = (n) => (flags[n] && flags[n] !== true ? String(flags[n]) : null);
+      const r = await factory.addApp({ repo, deliveryDefault: str('delivery-default'), path: str('path') });
+      out(`registered ${r.repo || repo} as factory app ${r.app}${r.delivery?.default ? ` (its default ${r.delivery.default})` : ''}`);
+      if (r.config_path) out(`  config ${r.config_path}`);
+      return;
+    }
+    return fail('usage: pa factory apps | add <owner/name>');
   },
 
   async done(args, flags) {
@@ -409,17 +504,22 @@ const commands = {
   async proposals() {
     const list = await require('../proposals').pending();
     if (!list.length) return out('Nothing waiting on you.');
+    const D = require('../dispatch/deliveryCore');
     for (const p of list) {
       out(`${p.id} · ${p.kind} · ${p.title}`);
+      if (p.kind === 'dispatch' && p.payload?.delivery) {
+        out(`    end state ${p.payload.delivery} — ${D.describe(p.payload.delivery, { route: p.payload.via })}`);
+      }
       if (Array.isArray(p.options) && p.options.length) out(`    options: ${p.options.map((o) => o.value).join(', ')}`);
     }
   },
 
-  async answer(args) {
+  async answer(args, flags = {}) {
     const [id, ans] = args;
-    if (!Number(id) || !ans) return fail('usage: pa answer <proposal-id> yes|no|<option>');
+    if (!Number(id) || !ans) return fail('usage: pa answer <proposal-id> yes|no|<option> [--delivery level]');
     const accept = ans !== 'no';
-    const r = await require('../proposals').decide(Number(id), { accept, answer: ans === 'yes' || ans === 'no' ? null : ans });
+    const delivery = flags.delivery && flags.delivery !== true ? String(flags.delivery) : null;
+    const r = await require('../proposals').decide(Number(id), { accept, answer: ans === 'yes' || ans === 'no' ? null : ans, delivery });
     out(r.result);
   },
 
@@ -1072,6 +1172,17 @@ const commands = {
       mark(Boolean(probe), 'rerank', probe ? config.rerank.deployment : lastRerankError());
     }
 
+    // The end state a run gets when nothing was said (src/dispatch/deliveryCore.js).
+    {
+      const D = require('../dispatch/deliveryCore');
+      const raw = String(config.dispatch.deliveryDefault || '');
+      const n = await require('../dispatch/delivery').list().then((l) => l.length, () => null);
+      if (D.isDelivery(raw)) {
+        mark(true, 'delivery', `default ${raw}${D.unattended(raw) ? ' (UNATTENDED: no human step after a yes)' : ''} · ${n === null ? 'repo defaults unreadable — run `pa migrate`' : `${n} repo default(s)`}`);
+      } else {
+        mark(false, 'delivery', `PA_DELIVERY_DEFAULT "${raw}" is not one of ${D.DELIVERIES.join(', ')} — using ${D.FALLBACK}`);
+      }
+    }
     // The software factory as a dispatch target: configured, its machine
     // known to termhub, and answering `factory app list`.
     {

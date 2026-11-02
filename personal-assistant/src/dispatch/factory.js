@@ -17,11 +17,22 @@
 //   status(run)    one job's status (pa review)
 //   apps()         `factory app list`, cached briefly
 //
-// The mode boundary still holds, enforced rather than requested: the PA mode
-// maps to a delivery level (factoryCore.deliveryFor) that the factory clamps
-// to the app's own ceiling — a job can only lower autonomy, never raise it.
-// And a factory job changes code, so the planner never starts one on its own:
-// it is always a proposal you say yes to (src/agent/planner.js).
+// The end state is the operator's call (operator decision 2026-11-02, no
+// ceiling): every job carries an explicit `--delivery` — what they said
+// (`pa do --delivery`, the card's pick), else their own words, else the repo's
+// default (`pa delivery set`), else PA_DELIVERY_DEFAULT (src/dispatch/
+// deliveryCore.js). A factory job changes code, so the planner never starts one
+// on its own: it is always a proposal you say yes to (src/agent/planner.js).
+//
+// The ask is a COMPOSED brief (src/dispatch/compose.js): the goal, done
+// criteria, constraints, decisions and pointers to existing code the task
+// needs — not the operator's memory pages or message bodies wholesale.
+//
+// Submission is idempotent on (source pa, external id = run id). Whatever goes
+// wrong after a submit was sent, the run is reconciled against what the
+// factory says (`job status` by id, or `job list` by external id): adopted,
+// failed, or left `waiting` as `submit_unknown` for the worker to settle —
+// never stuck in `starting`.
 
 const fs = require('fs');
 const os = require('os');
@@ -31,6 +42,7 @@ const { config } = require('../config');
 const { one, rows, query } = require('../db');
 const { mode: resolveMode } = require('./modes');
 const F = require('./factoryCore');
+const D = require('./deliveryCore');
 const termhub = require('./termhub');
 const ledger = require('../ledger');
 const { logger } = require('../log');
@@ -86,7 +98,28 @@ async function apps({ fresh = false } = {}) {
 }
 
 function modelsFor(extra) {
-  return { ...F.parseModels(config.factory.models), ...F.parseModels(extra || []) };
+  return { ...F.parseModels(config.factory.models), ...F.parseModels(modelEntries(extra)) };
+}
+
+// `persona=model` entries from a list, a string, or an {persona: model} object
+// (the frozen form a proposal keeps).
+function modelEntries(m) {
+  if (!m) return [];
+  if (Array.isArray(m) || typeof m === 'string') return m;
+  return Object.entries(m).map(([k, v]) => `${k}=${v}`);
+}
+
+/**
+ * Registers a repo with the factory (`factory app add`, JOBS-API.md). Its
+ * `--delivery-default` is this repo's PA default, else PA_DELIVERY_DEFAULT —
+ * though the PA sends `--delivery` on every job regardless.
+ */
+async function addApp({ repo, deliveryDefault = null, path: clonePath = null }) {
+  const level = deliveryDefault || (await require('./delivery').defaultFor(repo).catch(() => null)) || require('./delivery').fallback();
+  const r = await call(F.appAddArgv({ repo, deliveryDefault: D.delivery(level), path: clonePath }));
+  appsCache = null;
+  if (!r.app) throw new F.FactoryError('bad_output', 'app add answered without an app');
+  return r;
 }
 
 // The ask and the flow must be files the factory can read, so on another
@@ -143,78 +176,133 @@ async function submit(argv) {
  * @param {object} o
  * @param {object} o.target   dispatch's resolveTarget() result
  * @param {string} o.app      the registered factory app (route.js resolved it)
- * @param {string} [o.task]
- * @param {string} [o.mode]   PA mode; plan is refused
+ * @param {string} [o.slug]   owner/name of the repo
+ * @param {string} [o.task]   the operator's own words, if they typed them
+ * @param {string} [o.mode]   an explicitly given PA mode; plan is refused
+ * @param {string} [o.delivery]  the end state; resolved when not given
  * @param {string} [o.pipeline]
- * @param {Array<string>|string} [o.models]  `persona=model` entries, over PA_FACTORY_MODELS
+ * @param {Array<string>|string|object} [o.models]  `persona=model` entries, over PA_FACTORY_MODELS
+ * @param {boolean} [o.modelsExact]  a proposal's frozen models: used as they are
  * @param {Array<string>} [o.done]  acceptance criteria
+ * @param {string} [o.brief]  a frozen brief (the card's): sent exactly, not recomposed
  * @param {string} [o.routeReason]
  */
-async function start({ target, app, task = null, mode: modeName, pipeline = null, models = null, done = [], routeReason = null }) {
-  const m = resolveMode(modeName);
-  const delivery = F.deliveryFor(m.name);
+async function start({
+  target, app, slug = null, task = null, mode: modeName, delivery = null, deliverySource = null, deliveryPhrase = null,
+  pipeline = null, models = null, modelsExact = false, done = [], brief = null, briefBy = null, routeReason = null,
+}) {
+  if (modeName && resolveMode(modeName).name === 'plan') {
+    throw new Error('plan mode is read-only and is not a factory job — send it to a Claude session (--via claude)');
+  }
   const where = machine();
   const commitmentId = target.commitment ? Number(target.commitment.id) : null;
   const label = task || target.commitment?.summary;
   if (!label) throw new Error('nothing to do — give a commitment id or a --task');
   if (!app) throw new Error('no factory app for this work');
   const pipe = F.pipeline(pipeline || config.factory.pipeline);
-  const overrides = modelsFor(models);
+  const overrides = modelsExact ? F.parseModels(modelEntries(models)) : modelsFor(models);
+  const chosen = delivery
+    ? { delivery: D.delivery(delivery), source: deliverySource || 'explicit', phrase: deliveryPhrase || null }
+    : await require('./delivery').resolve({ mode: modeName ? resolveMode(modeName).name : null, operatorText: task, slug });
+  const runMode = modeName ? resolveMode(modeName).name : D.modeFor(chosen.delivery);
 
   const run = await one(
     `insert into run (commitment_id, mode, task, repo_path, status, machine, route, route_reason, kind,
-                      pipeline, delivery_requested, models)
-     values ($1,$2,$3,$4,'starting',$5,'factory',$6,$7,$8,$9,$10) returning *`,
-    [commitmentId, m.name, label, target.repoPath || null, where || os.hostname(), routeReason, target.commitment?.kind || null,
-      pipe, delivery, Object.keys(overrides).length ? overrides : null]
+                      pipeline, delivery_requested, models, delivery_source)
+     values ($1,$2,$3,$4,'starting',$5,'factory',$6,$7,$8,$9,$10,$11) returning *`,
+    [commitmentId, runMode, label, target.repoPath || null, where || os.hostname(), routeReason, target.commitment?.kind || null,
+      pipe, chosen.delivery, Object.keys(overrides).length ? overrides : null, chosen.source]
   );
 
-  // The ask is the BRIEF the Claude route would have written, minus what only
-  // a Claude session can use (src/dispatch/brief.js, `factory`).
-  const brief = await require('./index').briefFor(target, { modeName: m.name, run, task, factory: { app, delivery } });
+  // The ask: the card's frozen brief, or one composed now from the ask and
+  // what the assistant gathered (src/dispatch/compose.js). Composition never
+  // fails a dispatch — the worst case is the deterministic brief.
+  let ask = brief;
+  let by = briefBy || (brief ? 'proposal' : null);
+  let criteria = Array.isArray(done) ? done : [];
+  let goal = null;
+  if (!ask) {
+    try {
+      const c = await require('./compose').compose({ target, task, done: criteria, app, slug, delivery: chosen.delivery, pipeline: pipe });
+      ask = c.brief;
+      by = c.by;
+      criteria = c.done;
+      goal = c.goal;
+    } catch (err) {
+      log.warn('brief composition failed; sending the deterministic brief', { run: run.id, message: String(err.message).slice(0, 200) });
+      const C = require('./composeCore');
+      const fb = C.fallbackComposed({ title: label, operatorAsk: task, summary: target.commitment?.summary, detail: target.commitment?.detail, done: criteria });
+      ask = C.render(fb, { title: label, app, slug, delivery: chosen.delivery, deliveryPlain: D.describe(chosen.delivery), pipeline: pipe, by: 'compose:fallback' });
+      by = 'compose:fallback';
+      criteria = fb.done;
+      goal = fb.goal;
+    }
+  }
   // Without a flow the factory parks the job as needs_human (JOBS-API v1.1).
-  const flow = F.flowMarkdown({ title: label, summary: task || target.commitment?.summary, app, done, delivery });
+  const flow = F.flowMarkdown({ title: label, summary: goal || task || target.commitment?.summary, app, done: criteria, delivery: chosen.delivery });
   // This machine's copy is the record (brief_path), wherever the factory runs.
   const briefPath = path.join(config.worktreesRoot, `run-${run.id}-BRIEF.md`);
   fs.mkdirSync(path.dirname(briefPath), { recursive: true });
-  fs.writeFileSync(briefPath, brief, 'utf8');
+  fs.writeFileSync(briefPath, ask, 'utf8');
 
-  let job;
+  const argvFor = (staged) =>
+    F.submitArgv({
+      app,
+      title: label,
+      askFile: staged['BRIEF.md'] || briefPath,
+      flowFile: staged['flow.md'],
+      done: criteria,
+      pipeline: pipe,
+      delivery: chosen.delivery,
+      models: overrides,
+      externalId: run.id,
+    });
+
+  let job = null;
+  let sent = false;
   try {
-    const staged = await stage(where, run.id, where ? { 'BRIEF.md': brief, 'flow.md': flow } : { 'flow.md': flow });
-    job = await submit(
-      F.submitArgv({
-        app,
-        title: label,
-        askFile: staged['BRIEF.md'] || briefPath,
-        flowFile: staged['flow.md'],
-        done,
-        pipeline: pipe,
-        delivery,
-        models: overrides,
-        externalId: run.id,
-      })
-    );
+    // Staging is exec.js/remote territory; brief-over-stdin (runCommand's
+    // `stdin` option, fix/pa-security) can replace it without touching this.
+    const staged = await stage(where, run.id, where ? { 'BRIEF.md': ask, 'flow.md': flow } : { 'flow.md': flow });
+    sent = true;
+    job = await submit(argvFor(staged));
     if (!F.JOB_ID.test(String(job.job_id || ''))) throw new F.FactoryError('bad_output', `job id "${job.job_id}"`);
+    await recordJob(run, job, { delivery: chosen.delivery, pipe, briefPath, by });
   } catch (err) {
-    await query(
-      `update run set status = 'failed', outcome = 'failed', outcome_at = now(), ended_at = now(), exit_note = $2, brief_path = $3 where id = $1`,
-      [run.id, String(err.message).slice(0, 500), briefPath]
-    );
-    throw err;
+    // The factory refused it (a contract error) or nothing was ever sent:
+    // there is no job, and the run failed.
+    // `bad_output` is not a refusal: the factory may have made the job and
+    // then printed something else.
+    const refused = err instanceof F.FactoryError && err.code !== 'bad_output' && !job;
+    if (!sent || refused) {
+      await query(
+        `update run set status = 'failed', outcome = 'failed', outcome_at = now(), ended_at = now(), exit_note = $2, brief_path = $3, brief_by = $4 where id = $1`,
+        [run.id, String(err.message).slice(0, 500), briefPath, by]
+      );
+      throw err;
+    }
+    // A submit went out and something after it failed: the factory may well
+    // have the job. Ask it, and adopt, or park the row for the worker.
+    log.warn('job submit did not come back cleanly; reconciling with the factory', { run: run.id, message: String(err.message).slice(0, 200) });
+    const settled = await settle({ ...run, brief_path: briefPath }, { jobId: job?.job_id || null, ageMs: 0, note: err.message, extra: { delivery: chosen.delivery, pipe, briefPath, by } });
+    if (settled.verdict !== 'adopt') {
+      return {
+        id: run.id, route: 'factory', mode: runMode, jobId: null, submitUnknown: true, app, delivery: chosen.delivery,
+        deliveryRequested: chosen.delivery, deliverySource: chosen.source, deliveryPhrase: chosen.phrase, pipeline: pipe,
+        machine: where, repoPath: target.repoPath || null, briefPath, briefBy: by, sessionId: null, url: null, routeReason, warnings: [],
+        note: `the submit went out but its answer was lost (${F.clip(err.message, 160)}); the worker matches run #${run.id} to its job by external id — \`pa review ${run.id}\``,
+      };
+    }
+    job = settled.job;
   }
 
   const warnings = Array.isArray(job.warnings) ? job.warnings.map((w) => F.clip(w, 300)).slice(0, 20) : [];
-  await query(
-    `update run set factory_job_id = $2, delivery = $3, pipeline = $4, brief_path = $5, status = 'running', factory_state = 'queued',
-                    factory_warnings = $6, exit_note = $7
-      where id = $1`,
-    [run.id, job.job_id, job.delivery || delivery, job.pipeline || pipe, briefPath,
-      warnings.length ? JSON.stringify(warnings) : null, warnings.length ? F.clip(`factory warned: ${warnings.join('; ')}`, 500) : null]
-  );
   if (warnings.length) log.warn('factory accepted the job with warnings', { run: run.id, job: job.job_id, warnings });
   if (commitmentId) {
-    await ledger.transition({ commitmentId, to: 'dispatched', actor: 'dispatch', reason: `run #${run.id}: factory job ${job.job_id}`, from: ['open'] });
+    // After the job is recorded: a ledger hiccup must not orphan it.
+    await ledger
+      .transition({ commitmentId, to: 'dispatched', actor: 'dispatch', reason: `run #${run.id}: factory job ${job.job_id}`, from: ['open'] })
+      .catch((err) => log.warn('job recorded, but its commitment did not move to dispatched', { run: run.id, message: err.message }));
   }
 
   // Walk-in: a termhub session on the factory's machine following the job,
@@ -236,25 +324,88 @@ async function start({ target, app, task = null, mode: modeName, pipeline = null
     log.warn('factory job started, but its follow session did not open', { run: run.id, job: job.job_id, message: err.message });
   }
 
-  log.info('dispatched to the factory', { run: run.id, job: job.job_id, app, delivery: job.delivery || delivery, pipeline: job.pipeline || pipe });
+  log.info('dispatched to the factory', { run: run.id, job: job.job_id, app, delivery: job.delivery || chosen.delivery, pipeline: job.pipeline || pipe, brief: by });
   return {
     id: run.id,
     route: 'factory',
-    mode: m.name,
+    mode: runMode,
     jobId: job.job_id,
     created: job.created !== false,
     app,
-    delivery: job.delivery || delivery,
-    deliveryRequested: delivery,
+    delivery: job.delivery || chosen.delivery,
+    deliveryRequested: chosen.delivery,
+    deliverySource: chosen.source,
+    deliveryPhrase: chosen.phrase,
     pipeline: job.pipeline || pipe,
     machine: where,
     repoPath: target.repoPath || null,
     briefPath,
+    briefBy: by,
     sessionId,
     url,
     routeReason,
     warnings,
   };
+}
+
+// The job, written onto its run. One statement, so a run is either still
+// without a job or fully recorded with one.
+async function recordJob(run, job, { delivery, pipe, briefPath, by }) {
+  const warnings = Array.isArray(job.warnings) ? job.warnings.map((w) => F.clip(w, 300)).slice(0, 20) : [];
+  await query(
+    `update run set factory_job_id = $2, delivery = $3, pipeline = $4, brief_path = coalesce($5, brief_path), status = 'running',
+                    factory_state = 'queued', factory_warnings = $6, exit_note = $7, brief_by = coalesce($8, brief_by)
+      where id = $1`,
+    [run.id, job.job_id, job.delivery || delivery || null, job.pipeline || pipe || null, briefPath || null,
+      warnings.length ? JSON.stringify(warnings) : null, warnings.length ? F.clip(`factory warned: ${warnings.join('; ')}`, 500) : null, by || null]
+  );
+}
+
+/**
+ * A run whose submit went out but did not come back cleanly, settled against
+ * what the factory says now (factoryCore.submitVerdict): adopted (recorded,
+ * then followed like any other), failed, or left `waiting` as
+ * `submit_unknown`. Never left `starting`.
+ * @returns {Promise<{verdict: 'adopt'|'fail'|'unknown', job: object|null}>}
+ */
+async function settle(run, { jobId = null, ageMs = 0, note = null, extra = {} } = {}) {
+  let job = null;
+  let asked = false;
+  try {
+    if (jobId && F.JOB_ID.test(String(jobId))) {
+      const j = await call(['job', 'status', jobId, '--json']);
+      asked = true;
+      job = F.jobForRun([j], run.id);
+    } else {
+      const l = await call(['job', 'list', '--json', '--source', 'pa']);
+      asked = true;
+      job = F.jobForRun(l.jobs, run.id);
+    }
+  } catch (err) {
+    log.warn('could not ask the factory about an unsettled submit', { run: run.id, message: String(err.message).slice(0, 200) });
+  }
+  const verdict = F.submitVerdict({ job, asked, ageMs });
+  try {
+    if (verdict === 'adopt') {
+      await recordJob(run, job, { delivery: extra.delivery, pipe: extra.pipe, briefPath: extra.briefPath, by: extra.by });
+      log.info('adopted the factory job for an unsettled submit', { run: run.id, job: job.job_id });
+    } else if (verdict === 'fail') {
+      await query(
+        `update run set status = 'failed', outcome = 'failed', outcome_at = now(), ended_at = now(), factory_state = 'not_submitted',
+                        exit_note = $2 where id = $1 and factory_job_id is null`,
+        [run.id, F.clip(`the factory has no job for run #${run.id}${note ? ` (${note})` : ''}`, 500)]
+      );
+    } else {
+      await query(
+        `update run set status = 'waiting', factory_state = 'submit_unknown', exit_note = $2, brief_path = coalesce($3, brief_path)
+          where id = $1 and factory_job_id is null`,
+        [run.id, F.clip(`submit sent; the factory's answer was lost${note ? ` (${note})` : ''} — the worker matches it by external id`, 500), extra.briefPath || null]
+      );
+    }
+  } catch (err) {
+    log.error('could not record an unsettled submit; the worker will retry it', { run: run.id, message: err.message });
+  }
+  return { verdict, job };
 }
 
 async function status(run) {
@@ -333,13 +484,14 @@ async function apply(run, job) {
  */
 async function poll() {
   if (!enabled()) return { checked: 0 };
+  const unsettled = await sweepUnsettled();
   const watched = await rows(
     `select * from run
       where route = 'factory' and factory_job_id is not null
         and (status in ('starting','running','waiting')
              or (outcome = 'delivered' and ended_at > now() - interval '14 days'))`
   );
-  if (!watched.length) return { checked: 0 };
+  if (!watched.length) return unsettled ? { checked: 0, unsettled } : { checked: 0 };
   const listed = await call(['job', 'list', '--json', '--source', 'pa', '--active']);
   const byId = new Map((Array.isArray(listed.jobs) ? listed.jobs : []).map((j) => [j.job_id, j]));
   let changed = 0;
@@ -362,7 +514,32 @@ async function poll() {
     if (r.ended) ended++;
   }
   if (changed) log.info('factory runs updated', { checked: watched.length, changed, ended });
-  return { checked: watched.length, changed, ended };
+  return unsettled ? { checked: watched.length, changed, ended, unsettled } : { checked: watched.length, changed, ended };
 }
 
-module.exports = { enabled, machine, call, apps, start, status, cancel, apply, poll, runCommand, _setRunner };
+/**
+ * Runs with no job recorded that are not known to have failed: a submit whose
+ * answer was lost (`submit_unknown`), or a process that died between the run
+ * row and the submit (`starting` for more than two minutes). Each is settled
+ * against `job list` by its external id; adopted ones then poll like any
+ * other. Returns how many were looked at (0: no factory call at all).
+ */
+async function sweepUnsettled() {
+  const stuck = await rows(
+    `select *, extract(epoch from (now() - started_at)) * 1000 as age_ms from run
+      where route = 'factory' and factory_job_id is null
+        and (factory_state = 'submit_unknown' and status = 'waiting'
+             or status = 'starting' and started_at < now() - interval '2 minutes')`
+  ).catch(() => []);
+  for (const run of stuck) {
+    const r = await settle(run, { ageMs: Number(run.age_ms) || 0, extra: { by: run.brief_by } });
+    if (r.verdict === 'adopt' && run.commitment_id) {
+      await ledger
+        .transition({ commitmentId: run.commitment_id, to: 'dispatched', actor: 'factory', reason: `run #${run.id}: factory job ${r.job.job_id} (answer recovered)`, from: ['open'] })
+        .catch(() => {});
+    }
+  }
+  return stuck.length;
+}
+
+module.exports = { enabled, machine, call, apps, addApp, start, settle, sweepUnsettled, status, cancel, apply, poll, runCommand, modelsFor, _setRunner };

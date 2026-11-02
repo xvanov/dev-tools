@@ -100,35 +100,33 @@ async function act(p) {
     }
   }
   if (p.action === 'offer_run') {
-    // Which route the offer is for, decided now so the card says it before
-    // the yes (src/dispatch/routeCore.js). A factory job changes code, so it
-    // is only ever offered, never started here.
-    let route = { route: 'claude', reason: 'plan mode is read-only; the factory only builds' };
-    if (plan.mode !== 'plan') {
-      route = await require('../dispatch/route')
-        .decideFor({ commitmentId: c.id, kind: p.kind, mode: config.factory.proposalMode })
-        .catch((err) => ({ route: 'claude', reason: `route not decided (${String(err.message).slice(0, 80)})` }));
-    }
-    const viaFactory = route.route === 'factory';
-    plan.route = route.route;
-    plan.routeReason = route.reason;
-    if (!plan.mode) plan.mode = viaFactory ? config.factory.proposalMode : 'local';
-    const how = viaFactory
-      ? `Software factory (app ${route.app}), mode \`${plan.mode}\`: it opens at most ${plan.mode === 'local' ? 'nothing — work stays in the factory' : plan.mode === 'branch' ? 'a pushed branch' : 'a draft PR'}; its gates run first.`
-      : plan.mode === 'plan'
-        ? 'Read-only: it writes up findings.'
-        : 'Local mode: it commits in its own worktree and never pushes.';
-    await require('../proposals').create({
-      kind: 'dispatch',
+    // Everything the card shows is decided now and frozen into the proposal
+    // (src/dispatch/offer.js): route, app, the end state, pipeline, models,
+    // done-criteria and the composed brief — accepting runs exactly that. A
+    // factory job changes code, so it is only ever offered, never started
+    // here. The end state is the repo's default (or PA_DELIVERY_DEFAULT): it
+    // is never inferred from the ask's text, which someone else wrote.
+    const offer = require('../dispatch/offer');
+    const useModel = await require('../budget').allow('planner').catch(() => false);
+    const o = {
       commitmentId: c.id,
-      title: (viaFactory
-        ? `Send to the factory: ${c.summary}`
-        : `Start a ${plan.mode === 'plan' ? 'research' : 'coding'} session on: ${c.summary}`).slice(0, 280),
-      body: `${p.brief}\n\nIn ${c.project}. ${how}\nRoute: ${viaFactory ? 'factory' : 'Claude session'} — ${route.reason}.`,
-      payload: { mode: plan.mode, via: route.route, routeReason: route.reason },
+      kind: p.kind,
+      via: plan.mode === 'plan' ? 'claude' : 'auto',
+      mode: plan.mode === 'plan' ? 'plan' : null,
+      useModel,
+      why: p.brief,
       dedupeKey: `offer-run:${c.id}`,
       expiresAt: new Date(Date.now() + 5 * 86400_000),
+    };
+    const row = await offer.propose(o).catch(async (err) => {
+      // A route or composition failure still leaves an offer: a Claude session.
+      log.warn('offer not prepared; offering a Claude session', { commitment: Number(c.id), message: String(err.message).slice(0, 160) });
+      return offer.propose({ ...o, via: 'claude' }).catch(() => null);
     });
+    plan.route = row?.payload?.via || 'claude';
+    plan.routeReason = row?.payload?.routeReason || null;
+    plan.mode = row?.payload?.mode || plan.mode || null;
+    plan.delivery = row?.payload?.delivery || null;
   }
   if (p.action === 'ask_repo') {
     await require('../proposals').create({

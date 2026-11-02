@@ -164,6 +164,9 @@ async function handle(req, res) {
       // the routing rule pick (src/dispatch/routeCore.js). Factory only when configured.
       routes: require('../dispatch/factory').enabled() ? ['claude', 'factory', 'auto'] : ['claude'],
       defaultRoute: require('../dispatch/factory').enabled() ? config.factory.via : 'claude',
+      // The end states the operator may pick on Do (src/dispatch/deliveryCore.js);
+      // none picked: the repo's default, else PA_DELIVERY_DEFAULT.
+      deliveries: require('../dispatch/deliveryCore').DELIVERIES.map((d) => ({ value: d, plain: require('../dispatch/deliveryCore').describe(d) })),
     });
   }
   // One commitment with what it came from, so it can be judged before it is
@@ -256,7 +259,12 @@ async function handle(req, res) {
     m = url.pathname.match(/^\/api\/proposals\/(\d+)\/(accept|reject)$/);
     if (m) {
       const answer = typeof body.answer === 'string' ? body.answer.slice(0, 200) : null;
-      return send(res, 200, await require('../proposals').decide(Number(m[1]), { accept: m[2] === 'accept', answer }));
+      // A dispatch card's end state, picked when accepting: one of the six
+      // levels or nothing (the card's own); anything else is refused.
+      const D = require('../dispatch/deliveryCore');
+      const delivery = typeof body.delivery === 'string' && body.delivery ? body.delivery : null;
+      if (delivery && !D.isDelivery(delivery)) return send(res, 400, { error: `unknown delivery "${delivery.slice(0, 40)}"` });
+      return send(res, 200, await require('../proposals').decide(Number(m[1]), { accept: m[2] === 'accept', answer, delivery }));
     }
     // A "Looks done?" card answered: accepting closes it as your decision.
     m = url.pathname.match(/^\/api\/ledger\/evidence\/(\d+)\/(accept|reject)$/);
@@ -282,11 +290,15 @@ async function handle(req, res) {
     m = url.pathname.match(/^\/api\/commitments\/(\d+)\/dispatch$/);
     if (m) {
       const dispatch = require('../dispatch');
+      const D = require('../dispatch/deliveryCore');
+      const delivery = typeof body.delivery === 'string' && body.delivery ? body.delivery : null;
+      if (delivery && !D.isDelivery(delivery)) return send(res, 400, { error: `unknown delivery "${delivery.slice(0, 40)}"` });
       const run = await dispatch.start({
         commitmentId: Number(m[1]),
         mode: body.mode || undefined,
         machine: body.machine ? String(body.machine) : null,
         via: body.via ? String(body.via) : null,
+        delivery,
       });
       return send(res, 200, {
         id: run.id, mode: run.mode, machine: run.machine || null, url: run.url, repoPath: run.repoPath,

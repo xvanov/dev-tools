@@ -19,18 +19,18 @@ process.env.PA_WORKTREES_ROOT = tmp;
 const F = require('../src/dispatch/factoryCore');
 const R = require('../src/dispatch/routeCore');
 
-// --- PA mode → factory delivery (the contract's mapping) --------------------
+// --- delivery is the operator's call, sent on every job (deliveryCore) ---------
 
-assert.strictEqual(F.deliveryFor('local'), 'none');
-assert.strictEqual(F.deliveryFor('branch'), 'branch');
-assert.strictEqual(F.deliveryFor('mr'), 'draft_pr');
-assert.strictEqual(F.deliveryFor('full'), 'draft_pr', 'full is a draft PR: the factory never drafts or sends the reply');
-assert.throws(() => F.deliveryFor('plan'), /not a factory job/);
-assert.throws(() => F.deliveryFor('yolo'), /unknown mode/);
-// No PA mode maps past a draft PR: the PA never asks the factory to merge.
-for (const m of Object.keys(F.DELIVERY_BY_MODE)) {
-  const d = F.DELIVERY_BY_MODE[m];
-  assert.ok(d === null || F.DELIVERIES.indexOf(d) <= F.DELIVERIES.indexOf('draft_pr'), `${m} → ${d}`);
+{
+  const D = require('../src/dispatch/deliveryCore');
+  assert.deepStrictEqual(F.DELIVERIES, D.DELIVERIES, 'one vocabulary');
+  assert.strictEqual(F.deliveryFor, undefined, 'a PA mode no longer decides a job\'s delivery');
+  // Every level, including the two with no human step, can be sent.
+  for (const d of D.DELIVERIES) {
+    const argv = F.submitArgv({ app: 'w', title: 't', ask: 'x', delivery: d, externalId: 1 });
+    assert.deepStrictEqual(argv.slice(argv.indexOf('--delivery'), argv.indexOf('--delivery') + 2), ['--delivery', d]);
+  }
+  assert.throws(() => F.submitArgv({ app: 'w', title: 't', ask: 'x', externalId: 1 }), /delivery/, 'never sent without one');
 }
 
 // --- model overrides and pipelines ------------------------------------------
@@ -76,7 +76,7 @@ assert.throws(() => F.pipeline('swarm'), /unknown pipeline/);
   assert.match(flow, /\n1\. Start from how `widget` behaves today/);
   assert.match(flow, /\n2\. Make the change: Add retries to the export\./);
   assert.match(flow, /\n3\. Check: retries tested\n4\. Check: docs updated\n5\. The existing tests still pass/);
-  assert.match(flow, /\n6\. Deliver at most `draft_pr`\./);
+  assert.match(flow, /\n6\. Deliver `draft_pr`\./);
   assert.match(F.flowMarkdown({ title: 'x' }), /\n2\. Make the change: x\.\n3\. The existing tests/, 'no criteria: still a valid flow');
 }
 
@@ -270,14 +270,21 @@ stub('db', {
   async one(sql, params) {
     store.queries.push({ sql, params });
     if (/insert into run/.test(sql)) return { id: store.nextId, status: 'starting' };
+    if (/from repo_delivery/.test(sql)) return store.repoDefault ? { delivery: store.repoDefault } : null;
     return null;
   },
   async rows(sql, params) {
     store.queries.push({ sql, params });
+    if (/factory_job_id is null/.test(sql)) return store.unsettled || [];
+    if (/from repo_delivery/.test(sql)) return [];
     return /from run/.test(sql) ? store.watched : [];
   },
   async query(sql, params) {
     store.queries.push({ sql, params });
+    if (store.failOn && store.failOn.test(sql)) {
+      store.failOn = null;
+      throw new Error('connection to the store lost');
+    }
     return { rowCount: 1, rows: [] };
   },
 });
@@ -296,6 +303,13 @@ stub('dispatch/termhub', {
 });
 stub('dispatch/index', {
   async briefFor(target, o) { return `# ${target.commitment.summary}\nrun ${o.run.id} → ${o.factory.delivery}`; },
+});
+
+// The brief-composition model: never a real call from a test.
+const composeCalls = [];
+require('../src/dispatch/compose')._setModel(async ({ prompt }) => {
+  composeCalls.push(prompt);
+  return JSON.stringify({ goal: 'Retry the export on transient errors.', done: ['model criterion'], constraints: ['keep the CSV format'], decisions: [], facts: [], reuse: [], questions: [] });
 });
 
 const factory = require('../src/dispatch/factory');
@@ -324,7 +338,14 @@ async function factoryStart() {
     assert.ok(submit.argv.includes(want), `submit carries ${want}`);
   }
   const askFile = submit.argv[submit.argv.indexOf('--ask-file') + 1];
-  assert.match(fs.readFileSync(askFile, 'utf8'), /Add retries to the export\nrun 7 → draft_pr/, 'the ask is the brief');
+  const askText = fs.readFileSync(askFile, 'utf8');
+  assert.match(askText, /^# Add retries to the export\n/, 'the ask is the composed brief');
+  assert.match(askText, /## Goal\n\nRetry the export on transient errors\./);
+  assert.match(askText, /- \[ \] retries tested\n/, 'the given criteria, not the model\'s');
+  assert.doesNotMatch(askText, /model criterion/);
+  assert.match(askText, /Search the repo for existing implementations before writing new code; extend rather than duplicate; follow existing conventions; add\/extend tests\./);
+  assert.match(askText, /Delivery: `draft_pr`/);
+  assert.ok(composeCalls.length >= 1, 'composed through the (stubbed) model');
   const flowFile = submit.argv[submit.argv.indexOf('--flow-file') + 1];
   assert.ok(submit.argv.includes('--flow-file'), 'every job carries a flow, or the factory parks it');
   assert.match(fs.readFileSync(flowFile, 'utf8'), /# Flow: Add retries to the export[\s\S]*Check: retries tested/);
@@ -332,7 +353,7 @@ async function factoryStart() {
   // Recorded on the run, then the commitment moves only through the ledger.
   const insert = store.queries.find((q) => /insert into run/.test(q.sql));
   assert.match(insert.sql, /'factory'/);
-  assert.deepStrictEqual(insert.params.slice(5), ['you chose the factory', 'coding', 'auto', 'draft_pr', { dev: 'model-a', reviewer: 'model-b' }]);
+  assert.deepStrictEqual(insert.params.slice(5), ['you chose the factory', 'coding', 'auto', 'draft_pr', { dev: 'model-a', reviewer: 'model-b' }, 'mode']);
   assert.ok(store.queries.some((q) => /factory_job_id = \$2/.test(q.sql) && q.params[1] === 'widget:017'));
   assert.deepStrictEqual(transitions, [{ commitmentId: 31, to: 'dispatched', actor: 'dispatch', reason: 'run #7: factory job widget:017', from: ['open'] }]);
   // Walk-in: a session following the job, in the factory checkout, stored on the run.
@@ -383,7 +404,7 @@ async function factoryStart() {
     const ask = sub[sub.indexOf('--ask-file') + 1];
     const flowPath = sub[sub.indexOf('--flow-file') + 1];
     assert.ok(ask.startsWith(otherTmp) && flowPath.startsWith(otherTmp), 'paths on the factory machine');
-    assert.match(fs.readFileSync(ask, 'utf8'), /run 7 → draft_pr/);
+    assert.match(fs.readFileSync(ask, 'utf8'), /Delivery: `draft_pr`/);
     assert.match(fs.readFileSync(flowPath, 'utf8'), /Check: retries tested/);
     assert.strictEqual(remote.machine, 'forge');
     fs.rmSync(otherTmp, { recursive: true, force: true });
@@ -476,8 +497,121 @@ async function routeDecide() {
   config.factory.chooser = 'rule';
   // --via factory refuses plainly what it cannot do.
   await assert.rejects(route.forced({ target, mode: 'plan' }), /plan mode/);
-  await assert.rejects(route.forced({ target: { ...target, project: { gitlab_path: 'acme/elsewhere' } }, mode: 'mr' }), /not registered.*factory app add --repo acme\/elsewhere/);
+  await assert.rejects(route.forced({ target: { ...target, project: { gitlab_path: 'acme/elsewhere' } }, mode: 'mr' }), /not registered.*--register.*pa factory add acme\/elsewhere/);
   assert.strictEqual((await route.forced({ target: { ...target, commitment: { id: 42, kind: null } }, mode: 'mr' })).app, 'widget', 'the human may send any registered repo');
+}
+
+
+// --- M8: a submit whose answer is lost is reconciled, never left `starting` ------------
+
+async function factoryReconcile() {
+  const target = { commitment: { id: 31, summary: 'Add retries to the export', kind: 'coding' }, repoPath: '/repos/widget' };
+  const lastRunUpdate = () => store.queries.filter((q) => /^\s*update run set/.test(q.sql)).pop();
+
+  // Pure: what an unsettled submit becomes.
+  assert.strictEqual(F.submitVerdict({ job: { job_id: 'w:1' }, asked: true, ageMs: 0 }), 'adopt');
+  assert.strictEqual(F.submitVerdict({ job: null, asked: false, ageMs: 1e9 }), 'unknown', 'the factory could not be asked: not failed');
+  assert.strictEqual(F.submitVerdict({ job: null, asked: true, ageMs: 0 }), 'unknown', 'too early to believe "no job"');
+  assert.strictEqual(F.submitVerdict({ job: null, asked: true, ageMs: F.SUBMIT_GRACE_MS }), 'fail');
+  assert.deepStrictEqual(F.jobForRun([{ job_id: 'w:1', source: 'pa', external_id: '6' }, { job_id: 'w:2', source: 'pa', external_id: '7' }], 7).job_id, 'w:2');
+  assert.strictEqual(F.jobForRun([{ job_id: 'w:2', source: 'someone', external_id: '7' }], 7), null, 'another source\'s job is not ours');
+  assert.strictEqual(F.jobForRun([{ job_id: 'bad id; rm', source: 'pa', external_id: '7' }], 7), null);
+
+  // 1. Both submit attempts lose their answer; the factory has the job → adopted.
+  calls.length = 0;
+  store.queries.length = 0;
+  transitions.length = 0;
+  answers = {
+    'job submit': () => { throw new Error('socket hang up'); },
+    'job list': json({ jobs: [{ job_id: 'widget:030', source: 'pa', external_id: '7', state: 'queued', delivery: 'pr' }] }),
+  };
+  const adopted = await factory.start({ target, app: 'widget', delivery: 'pr', done: ['retries tested'] });
+  assert.deepStrictEqual([adopted.jobId, adopted.delivery, adopted.submitUnknown], ['widget:030', 'pr', undefined]);
+  assert.deepStrictEqual(calls.map((c) => c.argv.slice(3, 5).join(' ')), ['job submit', 'job submit', 'job list']);
+  assert.deepStrictEqual(calls[2].argv.slice(3), ['job', 'list', '--json', '--source', 'pa'], 'looked up by source, matched by external id');
+  assert.deepStrictEqual(calls.slice(0, 2).map((c) => c.argv[c.argv.indexOf('--external-id') + 1]), ['7', '7'], 'one idempotency key');
+  assert.ok(store.queries.some((q) => /factory_job_id = \$2/.test(q.sql) && q.params[1] === 'widget:030'), 'recorded');
+  assert.ok(!store.queries.some((q) => /status = 'failed'/.test(q.sql)), 'not failed');
+  assert.strictEqual(transitions.length, 1, 'the commitment moves once it is recorded');
+
+  // 2. Submit answered, but recording it failed → asked by job id, adopted on the retry.
+  calls.length = 0;
+  store.queries.length = 0;
+  store.failOn = /factory_job_id = \$2/;
+  answers = {
+    'job submit': json({ job_id: 'widget:031', delivery: 'auto_merge', created: true }),
+    'job status': json({ job_id: 'widget:031', source: 'pa', external_id: '7', state: 'queued', delivery: 'auto_merge' }),
+  };
+  const recovered = await factory.start({ target, app: 'widget', delivery: 'auto_merge' });
+  assert.strictEqual(recovered.jobId, 'widget:031');
+  assert.deepStrictEqual(calls.map((c) => c.argv.slice(3, 6).join(' ')), ['job submit --json', 'job status widget:031']);
+  assert.strictEqual(store.queries.filter((q) => /factory_job_id = \$2/.test(q.sql)).length, 2, 'tried, failed, recorded on the reconcile');
+
+  // 3. Submit lost and the factory cannot be asked → `waiting` as submit_unknown, never `starting`, never failed.
+  calls.length = 0;
+  store.queries.length = 0;
+  transitions.length = 0;
+  answers = { 'job submit': () => { throw new Error('ETIMEDOUT'); }, 'job list': () => { throw new Error('ETIMEDOUT'); } };
+  const unknown = await factory.start({ target, app: 'widget', delivery: 'push_to_main' });
+  assert.strictEqual(unknown.submitUnknown, true);
+  assert.match(unknown.note, /answer was lost.*pa review 7/);
+  const parked = lastRunUpdate();
+  assert.match(parked.sql, /status = 'waiting', factory_state = 'submit_unknown'/);
+  assert.match(parked.sql, /factory_job_id is null/, 'never overwrites a job recorded meanwhile');
+  assert.ok(!store.queries.some((q) => /status = 'failed'/.test(q.sql)));
+  assert.deepStrictEqual(transitions, [], 'no commitment move without a job');
+
+  // 4. The worker settles such rows: no job after the grace → failed; a job → adopted (and the commitment moves).
+  calls.length = 0;
+  store.queries.length = 0;
+  transitions.length = 0;
+  store.watched = [];
+  store.unsettled = [
+    { id: 12, commitment_id: null, status: 'waiting', factory_state: 'submit_unknown', age_ms: String(F.SUBMIT_GRACE_MS + 1) },
+    { id: 13, commitment_id: 44, status: 'starting', factory_state: null, age_ms: '200000' },
+    { id: 14, commitment_id: null, status: 'waiting', factory_state: 'submit_unknown', age_ms: '1000' },
+  ];
+  answers = { 'job list': json({ jobs: [{ job_id: 'widget:040', source: 'pa', external_id: '13', state: 'in_progress' }] }) };
+  const swept = await factory.poll();
+  assert.deepStrictEqual(swept, { checked: 0, unsettled: 3 });
+  const byRun = (id) => store.queries.filter((q) => /^\s*update run set/.test(q.sql) && q.params[0] === id).map((q) => q.sql);
+  assert.match(byRun(12)[0], /status = 'failed'.*factory_state = 'not_submitted'/s);
+  assert.match(byRun(13)[0], /factory_job_id = \$2/);
+  assert.match(byRun(14)[0], /submit_unknown/, 'still inside the grace: asked again later');
+  assert.deepStrictEqual(transitions.map((t) => [t.commitmentId, t.to, t.from]), [[44, 'dispatched', ['open']]]);
+  store.unsettled = [];
+
+  // 5. A contract error is a refusal: failed at once, no reconcile.
+  calls.length = 0;
+  answers = { 'job submit': json({ error: 'unknown_repo', message: 'x' }, 2) };
+  await assert.rejects(factory.start({ target, app: 'widget', delivery: 'pr' }), (e) => e.code === 'unknown_repo');
+  assert.deepStrictEqual(calls.length, 1);
+}
+
+// --- item 6: registering a repo with the factory ---------------------------------------
+
+async function factoryRegister() {
+  assert.deepStrictEqual(F.appAddArgv({ repo: 'acme/widget' }), ['app', 'add', '--json', '--repo', 'acme/widget', '--delivery-default', 'draft_pr']);
+  assert.deepStrictEqual(F.appAddArgv({ repo: 'acme/w', deliveryDefault: 'auto_merge', path: '/srv/w' }).slice(-3), ['--delivery-default', 'auto_merge', '--path=/srv/w']);
+  assert.throws(() => F.appAddArgv({ repo: 'acme/w; rm -rf /' }), /not a repo/);
+  assert.throws(() => F.appAddArgv({ repo: 'acme/w', deliveryDefault: 'yolo' }), /unknown delivery/);
+  assert.ok(!F.appAddArgv({ repo: 'a/b' }).includes('--delivery-max'), 'the contract has no ceiling');
+
+  const route = require('../src/dispatch/route');
+  calls.length = 0;
+  store.repoDefault = 'pr';
+  let registered = false;
+  answers = {
+    'app list': () => json({ apps: registered ? [{ app: 'gadget', repo: 'acme/gadget' }] : [{ app: 'widget', repo: 'acme/widget' }] }),
+    'app add': (argv) => { registered = true; return json({ app: 'gadget', repo: argv[argv.indexOf('--repo') + 1], delivery: { default: argv[argv.indexOf('--delivery-default') + 1] } }); },
+  };
+  const target = { commitment: { id: 50, kind: 'coding' }, project: { gitlab_path: 'acme/gadget' }, repoPath: null };
+  await assert.rejects(route.forced({ target, mode: 'mr' }), /not registered/);
+  const r = await route.forced({ target, register: true });
+  assert.strictEqual(r.app, 'gadget');
+  const add = calls.find((c) => c.argv[3] === 'app' && c.argv[4] === 'add');
+  assert.deepStrictEqual(add.argv.slice(3), ['app', 'add', '--json', '--repo', 'acme/gadget', '--delivery-default', 'pr'], 'the repo\'s PA default');
+  store.repoDefault = null;
 }
 
 (async () => {
@@ -485,6 +619,8 @@ async function routeDecide() {
   await factoryStart();
   await factoryPoll();
   await routeDecide();
+  await factoryReconcile();
+  await factoryRegister();
   fs.rmSync(tmp, { recursive: true, force: true });
   console.log('factoryDispatch ok');
 })().catch((err) => {
