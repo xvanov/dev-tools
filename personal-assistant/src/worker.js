@@ -95,6 +95,13 @@ async function main() {
     db: config.databaseUrl.replace(/:[^:@/]*@/, ':***@'),
   });
 
+  // A pass whose model cannot do its job (a connector relay set to a
+  // non-Claude-Code backend, an unknown provider) is said once, loudly, at
+  // start — each call refuses too, but this names the variable to fix.
+  for (const r of require('./models').report()) {
+    if (!r.ok) log[r.capable ? 'warn' : 'error']('model misconfigured', { purpose: r.purpose, env: r.env, model: r.model, problem: r.problem });
+  }
+
   // Wait for the store rather than exit. Postgres lives in WSL, and at logon
   // (or after WSL drops the distro) it is routinely down for a minute; exiting
   // spent the task's five restarts in ten minutes and left the worker dead for
@@ -332,6 +339,15 @@ async function main() {
   every(120, 'runs', async () => {
     await dispatch.reconcile();
   });
+
+  // Factory jobs (src/dispatch/factory.js): their status onto the run rows,
+  // and a finished or failed one moves its commitment through the ledger.
+  // A no-op, without a command, while no factory run is live.
+  if (require('./dispatch/factory').enabled()) {
+    every(config.factory.pollSeconds, 'factory', async () => {
+      await require('./dispatch/factory').poll();
+    });
+  }
 
   // Routines: due ones run one at a time; a missed slot runs once, never a
   // backlog (src/routines). Suggestions are proposed nightly, never enabled.

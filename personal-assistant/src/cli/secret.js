@@ -12,10 +12,10 @@ const { flagBool } = require('./parseArgs');
 const HELP = `
   Secrets
     pa secret list                       names, where each is stored, when it was set — never values
-    pa secret set <NAME> [--env-file]    prompt (hidden) and store it; Credential Manager by default
+    pa secret set <NAME> [--env-file]    prompt (hidden) and store it; the OS keyring by default
     pa secret request <NAME> --purpose "…" [--hint "…"] [--url https://…] [--env-file]
                                          ask for it in the dashboard instead
-    pa secret delete <NAME>              remove it from Credential Manager and .env
+    pa secret delete <NAME>              remove it from the OS keyring and .env
 `;
 
 function day(v) {
@@ -93,7 +93,7 @@ function make(out, fail) {
         const value = await readHidden(`${name} (input hidden): `);
         if (!value.trim()) return fail('nothing entered — nothing stored');
         const r = await secrets.store(name, value, { target, by: 'cli' });
-        out(`stored ${r.name} in ${r.stored === 'env-file' ? 'personal-assistant/.env' : 'Windows Credential Manager'}`);
+        out(`stored ${r.name} in ${r.stored === 'env-file' ? 'personal-assistant/.env' : require('../secrets/vault').label()}`);
         return;
       }
 

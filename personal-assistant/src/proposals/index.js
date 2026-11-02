@@ -47,15 +47,60 @@ async function pending({ limit = 40 } = {}) {
 // Typed actions for proposals no task is waiting on. Each gets the proposal
 // and my answer and returns a short result line.
 const HANDLERS = {
-  // Start a run on an ask, in the mode the planner chose (a `local` run never
-  // pushes: src/dispatch/modes.js).
-  async dispatch(p) {
+  // Start a run on an ask. A frozen offer (src/dispatch/offer.js) runs
+  // exactly what its card showed — route, app, done-criteria, brief,
+  // pipeline, models — at the delivery level shown, or the one I picked on the
+  // card when accepting. An older proposal without frozen values is a run in
+  // the mode and on the route it named (a Claude session if none).
+  async dispatch(p, answer, { delivery: picked = null } = {}) {
+    const pl = p.payload || {};
+    if (pl.repoPath && !pl.repoVerifiedAt) {
+      // A card made before `--repo` had to be a known project: checked now, with the way out.
+      await require('../dispatch').knownRepo(pl.repoPath).catch(() => {
+        throw new Error(`this card's repo ${pl.repoPath} is not a known project — decline it and offer it again (pa propose …), or add the checkout with \`pa projects sync\``);
+      });
+    }
+    if (pl.frozen) {
+      const D = require('../dispatch/deliveryCore');
+      const delivery = picked ? D.delivery(picked) : pl.delivery || null;
+      const changed = Boolean(picked) && delivery !== pl.delivery;
+      if (pl.via === 'factory' && !delivery) throw new Error('a factory offer without a delivery level — decline it and offer it again');
+      const run = await require('../dispatch').start({
+        commitmentId: p.commitment_id,
+        task: pl.task || null,
+        repoPath: pl.repoPath || null,
+        via: pl.via === 'factory' ? 'factory' : 'claude',
+        mode: pl.via === 'factory' ? undefined : (changed ? undefined : pl.mode) || undefined,
+        delivery: delivery || undefined,
+        deliverySource: changed ? 'explicit' : pl.deliverySource || null,
+        deliveryPhrase: changed ? null : pl.deliveryPhrase || null,
+        app: pl.app || null,
+        register: Boolean(pl.register),
+        done: Array.isArray(pl.done) ? pl.done : [],
+        pipeline: pl.pipeline || null,
+        models: pl.models || null,
+        brief: pl.via === 'factory' ? require('../dispatch/offer').briefAt(pl, delivery) : null,
+        briefBy: pl.briefBy || null,
+        frozen: true,
+        // Accepting the card IS the operator's confirmation of its end state
+        // (the CLI refuses to accept an unattended one without a terminal).
+        confirmedUnattended: true,
+        repoVerified: true, // checked when the card was made, or just above
+        routeReason: pl.routeReason ? `proposal: ${pl.routeReason}` : null,
+      });
+      return describeStart(run);
+    }
+    const via = pl.via === 'factory' ? 'factory' : 'claude';
+
     const run = await require('../dispatch').start({
       commitmentId: p.commitment_id,
-      mode: p.payload?.mode || undefined,
-      repoPath: p.payload?.repoPath || null,
+      mode: pl.mode || undefined,
+      repoPath: pl.repoPath || null,
+      repoVerified: true,
+      via,
+      routeReason: pl.routeReason ? `proposal: ${pl.routeReason}` : null,
     });
-    return `run #${run.id} started (${run.mode})`;
+    return describeStart(run);
   },
   // A question: what the answer means is named by `payload.on`.
   async question(p, answer) {
@@ -70,13 +115,25 @@ const HANDLERS = {
   },
 };
 
+function describeStart(run) {
+  if (run.route === 'factory') {
+    if (run.submitUnknown) return `run #${run.id} sent to the factory; its answer was lost — the worker matches it to its job (pa review ${run.id})`;
+    return `run #${run.id} sent to the factory (job ${run.jobId}, ${run.delivery})`;
+  }
+  return `run #${run.id} started (${run.mode}${run.delivery ? ` → ${run.delivery}` : ''})`;
+}
+
 /**
  * @param {number} id
- * @param {{accept: boolean, answer?: string}} o
+ * @param {{accept: boolean, answer?: string, delivery?: string}} o
+ *   `delivery`: on a dispatch card, the end state picked when accepting —
+ *   the card's own level when absent.
  */
-async function decide(id, { accept, answer = null }) {
+async function decide(id, { accept, answer = null, delivery = null }) {
+  if (delivery) delivery = require('../dispatch/deliveryCore').delivery(delivery);
+  const recorded = answer || (accept && delivery ? `delivery=${delivery}` : null);
   const p = await one(`update proposal set status = $2, answer = $3, decided_at = now()
-                        where id = $1 and status = 'pending' returning *`, [id, accept ? 'accepted' : 'rejected', answer]);
+                        where id = $1 and status = 'pending' returning *`, [id, accept ? 'accepted' : 'rejected', recorded]);
   if (!p) {
     const cur = await one('select status from proposal where id = $1', [id]);
     return { ok: false, result: cur ? `already ${cur.status}` : `no proposal #${id}` };
@@ -87,7 +144,7 @@ async function decide(id, { accept, answer = null }) {
     await require('../durable').emit(`proposal:${p.id}`, { accepted: !!accept, answer });
   } else if (accept && HANDLERS[p.kind]) {
     try {
-      result = await HANDLERS[p.kind](p, answer);
+      result = await HANDLERS[p.kind](p, answer, { delivery });
     } catch (err) {
       await query(`update proposal set status = 'pending', decided_at = null where id = $1`, [p.id]);
       throw err;
@@ -114,4 +171,4 @@ async function expire() {
   return r.rowCount || 0;
 }
 
-module.exports = { create, pending, decide, expire, KINDS, HANDLERS };
+module.exports = { create, pending, decide, expire, describeStart, KINDS, HANDLERS };

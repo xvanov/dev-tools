@@ -170,7 +170,7 @@ async function createSession(base, { cwd, command, title }) {
   const body = JSON.stringify({ cwd: cwd || os.homedir(), command: command || '', title: title || '', cols: 80, rows: 24 });
   return new Promise((resolve, reject) => {
     const req = http.request(`${base}/api/sessions`, {
-      method: 'POST', headers: { 'content-type': 'application/json', 'content-length': Buffer.byteLength(body) },
+      method: 'POST', headers: { 'content-type': 'application/json', 'x-termhub': '1', 'content-length': Buffer.byteLength(body) },
     }, (res) => {
       let out = '';
       res.on('data', (c) => { out += c; });

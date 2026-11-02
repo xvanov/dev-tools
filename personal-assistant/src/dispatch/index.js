@@ -19,6 +19,7 @@ const { config } = require('../config');
 const { one, rows, query } = require('../db');
 const { mode: resolveMode } = require('./modes');
 const { buildBrief, openingPrompt } = require('./brief');
+const D = require('./deliveryCore');
 const termhub = require('./termhub');
 const ledger = require('../ledger');
 const { logger } = require('../log');
@@ -35,6 +36,8 @@ async function git(cwd, args) {
   const { stdout } = await exec('git', args, {
     cwd,
     maxBuffer: 32 * 1024 * 1024,
+    // A fetch or push that waits on a network or a prompt must not hang a start.
+    timeout: 300_000,
     env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
   });
   return stdout;
@@ -53,16 +56,57 @@ async function defaultBranch(repoPath) {
     const out = await git(repoPath, ['symbolic-ref', '--short', 'refs/remotes/origin/HEAD']);
     return out.trim().replace(/^origin\//, '');
   } catch {
-    for (const candidate of ['main', 'master', 'develop']) {
+    // The remote's branches first: a local `main` may be stale or never pushed.
+    for (const ref of ['refs/remotes/origin/main', 'refs/remotes/origin/master', 'refs/remotes/origin/develop', 'main', 'master', 'develop']) {
       try {
-        await git(repoPath, ['rev-parse', '--verify', candidate]);
-        return candidate;
+        await git(repoPath, ['rev-parse', '--verify', '--quiet', ref]);
+        return ref.split('/').pop();
       } catch {
         /* try the next one */
       }
     }
     return 'main';
   }
+}
+
+/**
+ * What a new run's worktree starts from: origin's default branch, fetched now
+ * (as a remote run does), so the work is on top of what is really there — not
+ * a local `main` that may be days behind (which makes push_to_main's
+ * fast-forward fail and a PR conflict). A fetch that fails falls back to the
+ * origin/<base> ref already here (said in the log), never to the local branch;
+ * without either the start is refused. A repo with no `origin` at all is
+ * local-only work and starts from its local branch.
+ */
+async function worktreeBase(repoPath) {
+  const base = await defaultBranch(repoPath);
+  const remotes = (await git(repoPath, ['remote']).catch(() => '')).split(/\r?\n/).map((r) => r.trim());
+  if (!remotes.includes('origin')) return base;
+  try {
+    await git(repoPath, ['fetch', '--quiet', 'origin', `+refs/heads/${base}:refs/remotes/origin/${base}`]);
+    return `origin/${base}`;
+  } catch (err) {
+    const have = await git(repoPath, ['rev-parse', '--verify', '--quiet', `refs/remotes/origin/${base}`]).then(() => true, () => false);
+    if (have) {
+      log.warn('could not fetch origin; starting from the origin ref already here', { repo: repoPath, base, message: String(err.message).slice(0, 200) });
+      return `origin/${base}`;
+    }
+    throw new Error(`could not fetch origin/${base} in ${repoPath}, and there is no copy of it here — not starting from a local branch that may be stale (${String(err.message).split('\n')[0].slice(0, 160)})`);
+  }
+}
+
+/**
+ * `--repo` must name a known project (its checkout, or its owner/name): a run
+ * is never started in an arbitrary directory a message or a typo pointed at.
+ */
+async function knownRepo(repoPath) {
+  const p = await one(
+    `select id, repo_path, gitlab_path from project
+      where active and (repo_path = $1 or lower(gitlab_path) = lower($1)) limit 1`,
+    [String(repoPath)]
+  ).catch(() => null);
+  if (!p) throw new Error(`${repoPath} is not a known project's repo — \`pa projects\` lists them (\`pa projects sync\` adds new checkouts)`);
+  return p;
 }
 
 async function resolveTarget({ commitmentId, repoPath }) {
@@ -104,13 +148,67 @@ async function memoryContext({ commitment, item, project, person }, task) {
     project ? memory.getPage({ kind: 'project', id: project.id }).catch(() => null) : null,
   ]);
   return {
-    facts: recalled && !recalled.abstain ? recalled.claims : [],
+    facts: scopeFacts(recalled && !recalled.abstain ? recalled.claims : [], { personId: person?.id, projectId: project?.id }),
     person: personPage?.body || null,
     project: projectPage?.body || null,
   };
 }
 
-async function start({ commitmentId = null, task = null, mode: modeName, repoPath = null, machine = null, again = false }) {
+/**
+ * Pure. Remembered facts a dispatched run may see: about the task's own
+ * requester or project, or a topic — never about another person or project
+ * (recall searches everything the operator knows; a run needs only its own).
+ */
+function scopeFacts(facts, { personId = null, projectId = null } = {}) {
+  return (facts || []).filter((f) => {
+    if (f.subjectKind === 'topic') return true;
+    if (f.subjectKind === 'person') return personId != null && String(f.subjectId) === String(personId);
+    if (f.subjectKind === 'project') return projectId != null && String(f.subjectId) === String(projectId);
+    return false; // 'me' (the operator), or unknown
+  });
+}
+
+// The BRIEF for a target — the Claude route's BRIEF.md, and the factory
+// route's ask (src/dispatch/factory.js), from one implementation.
+async function briefFor(target, { modeName, run, task = null, factory = null, delivery = null }) {
+  return buildBrief({
+    delivery,
+    commitment: target.commitment,
+    item: target.item,
+    project: target.project,
+    person: target.person,
+    modeName,
+    run,
+    related: await relatedContext(target.item),
+    memory: await memoryContext(target, task),
+    factory,
+  });
+}
+
+/**
+ * Starts a run. `via` picks the route (src/dispatch/routeCore.js): `claude`
+ * (a Claude Code session, the default unless PA_DISPATCH_VIA says otherwise),
+ * `factory` (a software-factory job, src/dispatch/factory.js), or `auto` (the
+ * routing rule chooses, and says why). `pipeline`, `models`, `done`, `app`,
+ * `brief` and `register` only mean something to the factory.
+ *
+ * `delivery` is the end state the operator chose (src/dispatch/deliveryCore.js).
+ * Not given: an explicit `mode` maps to one, else the operator's own words in
+ * `task`, else the repo's default, else PA_DELIVERY_DEFAULT.
+ *
+ * `frozen` (an accepted proposal, src/proposals): app, done-criteria, brief,
+ * delivery, pipeline and models are used exactly as the card showed them —
+ * nothing is re-chosen or re-derived at accept time.
+ */
+async function start({
+  commitmentId = null, task = null, mode: modeName, repoPath = null, machine = null, again = false,
+  via = null, pipeline = null, models = null, done = null, app = null, routeReason: givenReason = null,
+  agent = null, model = null, delivery = null, deliverySource = null, deliveryPhrase = null,
+  brief = null, briefBy = null, frozen = false, register = false, confirmedUnattended = false, repoVerified = false,
+}) {
+  // `--repo` must be a known project. A card's repo was checked when the card
+  // was made (offer.js `repoVerifiedAt`) and is not re-judged at accept.
+  if (repoPath && !repoVerified) await knownRepo(repoPath);
   // One live run per commitment. A second Do while the first is still setting
   // up (a remote one takes a minute) started a second agent on the same ask.
   if (commitmentId && !again) {
@@ -124,9 +222,48 @@ async function start({ commitmentId = null, task = null, mode: modeName, repoPat
       throw new Error(`#${commitmentId} already has run #${live.id}${where} — attach to it (pa attach ${live.id}), or drop it first`);
     }
   }
-  if (machine && !termhub.isLocal(machine)) {
-    return startRemote({ commitmentId, task, modeName, repoPath, machineName: machine });
+  if (delivery) delivery = D.delivery(delivery);
+  const route = require('./routeCore').via(via || config.factory.via);
+  let routeReason = givenReason || (route === 'claude' && via ? 'you chose a Claude session' : null);
+  if (route !== 'claude') {
+    const target = await resolveTarget({ commitmentId, repoPath });
+    const chooser = require('./route');
+    const choice =
+      route === 'factory'
+        ? await chooser.forced({ target, mode: modeName, done, app, register, exactDone: frozen })
+        : await chooser.decide({ target, mode: modeName, done });
+    if (choice.route === 'factory') {
+      if (machine) throw new Error('--machine picks where a Claude session runs; the factory runs on PA_FACTORY_MACHINE');
+      return require('./factory').start({
+        target, app: choice.app, slug: choice.slug, task, mode: modeName, pipeline, models, modelsExact: frozen, done: choice.done,
+        routeReason: givenReason || choice.reason, delivery, deliverySource, deliveryPhrase, brief, briefBy, confirmedUnattended, again,
+      });
+    }
+    routeReason = givenReason || choice.reason;
   }
+  // The end state, for a Claude session: what the PA does when it ends
+  // (src/durable/tasks/runReview.js), and the session's own mode, enforced in
+  // its worktree. Plan mode delivers nothing.
+  const chosen = await sessionDelivery({ modeName, delivery, deliverySource, deliveryPhrase, task, commitmentId, repoPath });
+  requireConfirmed(chosen.delivery, confirmedUnattended);
+  if (machine && !termhub.isLocal(machine) && ['pr', 'auto_merge', 'push_to_main'].includes(chosen.delivery)) {
+    throw new Error(`delivery \`${chosen.delivery}\` is carried out by the assistant when the session ends, which it can only do for runs on this machine — use none, branch or draft_pr on ${machine}, or run it here`);
+  }
+  modeName = chosen.mode;
+  // Which agent and model (src/dispatch/agent.js), resolved before anything
+  // is created so a bad choice leaves no run row or worktree behind.
+  if (machine && !termhub.isLocal(machine)) {
+    // src/dispatch/remote.js types that machine's own claude. A choice made
+    // for this run is refused rather than dropped; the defaults
+    // (PA_DISPATCH_AGENT/MODEL) are for local runs and do not apply.
+    if ((agent && agent !== 'claude') || model) {
+      throw new Error('a run on another machine starts that machine\'s claude — --agent/--model apply to local runs only');
+    }
+    return startRemote({ commitmentId, task, modeName, repoPath, machineName: machine, routeReason, chosen, again });
+  }
+  // Which agent and model (src/dispatch/agent.js), resolved before anything
+  // is created so a bad choice leaves no run row or worktree behind.
+  const launch = require('./agent').dispatchCommand({ agent, model, prompt: openingPrompt({}) });
   const m = resolveMode(modeName);
   const target = await resolveTarget({ commitmentId, repoPath });
 
@@ -143,72 +280,103 @@ async function start({ commitmentId = null, task = null, mode: modeName, repoPat
     throw new Error(`${repo} is not a git repository`);
   }
 
-  const run = await one(
-    `insert into run (commitment_id, mode, task, repo_path, status, machine)
-     values ($1,$2,$3,$4,'starting',$5) returning *`,
-    [commitmentId, m.name, label, repo, os.hostname()]
+  const localRun = (argv) => require('./exec').runCommand(null, argv, { timeoutMs: 60_000, env: { GIT_TERMINAL_PROMPT: '0' } });
+  // The push block older code put on the SHARED config (it blocked the main
+  // checkout, and every new no-push run then failed its leak check). Before
+  // anything is created, so a failure here leaves nothing behind.
+  if (repo) {
+    const cleared = await require('./remote').clearLegacyBlock({ machine: { name: 'this machine' }, repo, blockedPushUrl: BLOCKED_PUSH_URL, run: localRun });
+    if (cleared.length) log.info('removed an old shared push block', { repo, remotes: cleared });
+  }
+
+  const run = await require('./runRow').insertRun(
+    `insert into run (commitment_id, mode, task, repo_path, status, machine, route, route_reason, kind,
+                      delivery, delivery_requested, delivery_source)
+     values ($1,$2,$3,$4,'starting',$5,'claude',$6,$7,$8,$8,$9) returning *`,
+    [commitmentId, m.name, label, repo, os.hostname(), routeReason, target.commitment?.kind || null, chosen.delivery, chosen.source],
+    { commitmentId, again }
   );
 
   let worktreePath = null;
   let branch = null;
+  let briefPath = null;
+  let session = null;
+  let worktreeMade = false;
 
-  if (repo) {
-    branch = `pa/${run.id}-${slug(label)}`;
-    worktreePath = path.join(config.worktreesRoot, `run-${run.id}`);
-    fs.mkdirSync(config.worktreesRoot, { recursive: true });
+  // Everything from here to 'running' is undone on any error: the row is
+  // marked failed with the reason, the session killed, the worktree and its
+  // branch removed — never a `starting` row and a worktree left lying there.
+  try {
+    if (repo) {
+      branch = `pa/${run.id}-${slug(label)}`;
+      worktreePath = path.join(config.worktreesRoot, `run-${run.id}`);
+      fs.mkdirSync(config.worktreesRoot, { recursive: true });
 
-    const base = await defaultBranch(repo);
-    await git(repo, ['worktree', 'add', '-b', branch, worktreePath, base]);
+      const base = await worktreeBase(repo);
+      await git(repo, ['worktree', 'add', '--no-track', '-b', branch, worktreePath, base]);
+      worktreeMade = true;
 
-    if (!m.mayPush) {
-      // Enforcement, not persuasion.
-      await git(worktreePath, ['config', 'remote.origin.pushurl', BLOCKED_PUSH_URL]);
+      if (!m.mayPush) {
+        // Enforcement, not persuasion — and verified. The one implementation a
+        // remote run uses too: every remote blocked in the worktree's OWN config
+        // (a plain `git config` there writes the shared one, blocking the main
+        // checkout and every other run), then read back. Throws if it didn't take.
+        await require('./remote').blockPush({
+          machine: { name: 'this machine' },
+          repo,
+          worktree: worktreePath,
+          blockedPushUrl: BLOCKED_PUSH_URL,
+          run: localRun,
+        });
+      }
+
+      await query('update run set worktree_path = $2, branch = $3 where id = $1', [
+        run.id,
+        worktreePath,
+        branch,
+      ]);
     }
 
-    await query('update run set worktree_path = $2, branch = $3 where id = $1', [
-      run.id,
-      worktreePath,
-      branch,
-    ]);
-  }
+    const briefText = await briefFor(target, { modeName: m.name, run: { ...run, worktree_path: worktreePath, branch }, task, delivery: chosen.delivery });
 
-  const briefText = buildBrief({
-    commitment: target.commitment,
-    item: target.item,
-    project: target.project,
-    person: target.person,
-    modeName: m.name,
-    run: { ...run, worktree_path: worktreePath, branch },
-    related: await relatedContext(target.item),
-    memory: await memoryContext(target, task),
-  });
+    briefPath = worktreePath
+      ? path.join(worktreePath, 'BRIEF.md')
+      : path.join(config.worktreesRoot, `run-${run.id}-BRIEF.md`);
+    fs.mkdirSync(path.dirname(briefPath), { recursive: true });
+    fs.writeFileSync(briefPath, briefText, 'utf8');
 
-  const briefPath = worktreePath
-    ? path.join(worktreePath, 'BRIEF.md')
-    : path.join(config.worktreesRoot, `run-${run.id}-BRIEF.md`);
-  fs.mkdirSync(path.dirname(briefPath), { recursive: true });
-  fs.writeFileSync(briefPath, briefText, 'utf8');
+    // Every worktree is a folder Claude has never seen; trusted ahead of time
+    // so its session does not stop at the trust question (src/dispatch/trust.js).
+    try {
+      // The run's own folder too: a folder once refused (an earlier attempt)
+      // carries its own "not trusted" entry, which outranks the root's.
+      require('./trust').ensureTrusted(config.worktreesRoot);
+      if (worktreePath) require('./trust').ensureTrusted(worktreePath);
+    } catch (err) {
+      log.warn('could not mark the worktrees trusted', { message: err.message });
+    }
+    const spec = {
+      cwd: worktreePath || repo || config.reposRoot,
+      command: launch.command,
+      title: `pa#${run.id} ${label.slice(0, 40)}`,
+      // Marks everything the agent runs: `pa do` / `pa answer` refuse an
+      // unattended end state from inside a dispatched run.
+      env: { PA_DISPATCHED_RUN: String(run.id) },
+    };
+    // A run that may not push also starts without push credentials
+    // (src/dispatch/remote.js noPushEnv); refused if termhub cannot do that.
+    session = m.mayPush
+      ? await termhub.createSession(spec)
+      : await require('./remote').createNoPushSession(termhub, spec, null, { fam: require('../platform').id === 'windows' ? 'windows' : 'posix', runId: run.id });
 
-  // Every worktree is a folder Claude has never seen; trusted ahead of time
-  // so its session does not stop at the trust question (src/dispatch/trust.js).
-  try {
-    // The run's own folder too: a folder once refused (an earlier attempt)
-    // carries its own "not trusted" entry, which outranks the root's.
-    require('./trust').ensureTrusted(config.worktreesRoot);
-    if (worktreePath) require('./trust').ensureTrusted(worktreePath);
+    await query(
+      `update run set termhub_session_id = $2, brief_path = $3, status = 'running' where id = $1`,
+      [run.id, session.id, briefPath]
+    );
   } catch (err) {
-    log.warn('could not mark the worktrees trusted', { message: err.message });
+    await rollbackStart({ run, repo, worktreePath, branch, worktreeMade, session, err });
+    throw err;
   }
-  const session = await termhub.createSession({
-    cwd: worktreePath || repo || config.reposRoot,
-    command: config.termhub.claudeCommand,
-    title: `pa#${run.id} ${label.slice(0, 40)}`,
-  });
-
-  await query(
-    `update run set termhub_session_id = $2, brief_path = $3, status = 'running' where id = $1`,
-    [run.id, session.id, briefPath]
-  );
 
   if (commitmentId) {
     await ledger.transition({ commitmentId, to: 'dispatched', actor: 'dispatch', reason: `run #${run.id}`, from: ['open'] });
@@ -220,20 +388,43 @@ async function start({ commitmentId = null, task = null, mode: modeName, repoPat
 
   // Waits for Claude's prompt (answering the folder-trust question a new
   // worktree always gets), types the brief prompt and checks it was taken.
-  await termhub.briefClaude(termhub, session.id, openingPrompt(run)).catch((err) => {
-    log.warn('could not type the opening prompt', { run: run.id, message: err.message });
-  });
+  // opencode got the prompt on its command line; nothing is typed at it.
+  if (launch.typesPrompt) {
+    await termhub.briefClaude(termhub, session.id, openingPrompt(run)).catch((err) => {
+      log.warn('could not type the opening prompt', { run: run.id, message: err.message });
+    });
+  }
 
   const url = await termhub.sessionUrl(session.id);
-  log.info('dispatched', { run: run.id, mode: m.name, repo, branch });
+  log.info('dispatched', { run: run.id, mode: m.name, repo, branch, agent: launch.agent, model: launch.model, delivery: chosen.delivery });
 
-  return { id: run.id, mode: m.name, repoPath: repo, worktreePath, branch, briefPath, sessionId: session.id, url };
+  return {
+    id: run.id, route: 'claude', routeReason, mode: m.name, repoPath: repo, worktreePath, branch, briefPath, sessionId: session.id, url,
+    delivery: chosen.delivery, deliverySource: chosen.source, deliveryPhrase: chosen.phrase,
+  };
+}
+
+// Undoes a local start that failed before its run reached 'running'. Best
+// effort, each step on its own: the original error is what the caller sees.
+async function rollbackStart({ run, repo, worktreePath, branch, worktreeMade, session, err }) {
+  if (session?.id) await termhub.killSession(session.id).catch(() => {});
+  require('./remote').removeNoGhDirs(run.id);
+  if (worktreeMade && repo && worktreePath) {
+    await git(repo, ['worktree', 'remove', '--force', worktreePath]).catch(() => {});
+    await git(repo, ['worktree', 'prune']).catch(() => {});
+    if (branch) await git(repo, ['branch', '-D', branch]).catch(() => {});
+  }
+  await query(
+    `update run set status = 'failed', outcome = 'failed', outcome_at = now(), ended_at = now(), exit_note = $2 where id = $1`,
+    [run.id, `start failed: ${String(err?.message || err)}`.slice(0, 500)]
+  ).catch((e) => log.warn('could not mark the failed run', { run: run.id, message: e.message }));
+  log.warn('run failed to start; rolled back', { run: run.id, message: String(err?.message || err).slice(0, 300) });
 }
 
 // The same run, on another machine's termhub (src/dispatch/remote.js). The
 // repo is the local one's namesake under that machine's repos root; the
 // worktree, the pushurl block and BRIEF.md are made there, by the session.
-async function startRemote({ commitmentId, task, modeName, repoPath, machineName }) {
+async function startRemote({ commitmentId, task, modeName, repoPath, machineName, routeReason = null, chosen = { delivery: null, source: null }, again = false }) {
   const remote = require('./remote');
   const machine = remote.machineNamed(machineName);
   const hub = termhub.forMachine(machine.name);
@@ -247,23 +438,16 @@ async function startRemote({ commitmentId, task, modeName, repoPath, machineName
   }
   const repo = remote.remoteRepoPath(machine, target.repoPath);
 
-  const run = await one(
-    `insert into run (commitment_id, mode, task, repo_path, status, machine)
-     values ($1,$2,$3,$4,'starting',$5) returning *`,
-    [commitmentId, m.name, label, repo, machine.name]
+  const run = await require('./runRow').insertRun(
+    `insert into run (commitment_id, mode, task, repo_path, status, machine, route, route_reason, kind,
+                      delivery, delivery_requested, delivery_source)
+     values ($1,$2,$3,$4,'starting',$5,'claude',$6,$7,$8,$8,$9) returning *`,
+    [commitmentId, m.name, label, repo, machine.name, routeReason, target.commitment?.kind || null, chosen.delivery, chosen.source],
+    { commitmentId, again }
   );
   const branch = `pa/${run.id}-${slug(label)}`;
   const worktreePath = remote.remoteWorktreePath(machine, run.id);
-  const briefText = buildBrief({
-    commitment: target.commitment,
-    item: target.item,
-    project: target.project,
-    person: target.person,
-    modeName: m.name,
-    run: { ...run, worktree_path: worktreePath, branch },
-    related: await relatedContext(target.item),
-    memory: await memoryContext(target, task),
-  });
+  const briefText = await briefFor(target, { modeName: m.name, run: { ...run, worktree_path: worktreePath, branch }, task, delivery: chosen.delivery });
 
   let started;
   try {
@@ -280,7 +464,7 @@ async function startRemote({ commitmentId, task, modeName, repoPath, machineName
     });
   } catch (err) {
     await query(
-      `update run set status = 'failed', termhub_session_id = $2, exit_note = $3, ended_at = now() where id = $1`,
+      `update run set status = 'failed', outcome = 'failed', outcome_at = now(), termhub_session_id = $2, exit_note = $3, ended_at = now() where id = $1`,
       [run.id, err.sessionId || null, err.message.slice(0, 500)]
     );
     throw err;
@@ -301,6 +485,8 @@ async function startRemote({ commitmentId, task, modeName, repoPath, machineName
 
   return {
     id: run.id,
+    route: 'claude',
+    routeReason,
     mode: m.name,
     machine: machine.name,
     repoPath: repo,
@@ -309,11 +495,65 @@ async function startRemote({ commitmentId, task, modeName, repoPath, machineName
     briefPath: started.briefPath,
     sessionId: started.sessionId,
     url: started.url,
+    delivery: chosen.delivery,
+    deliverySource: chosen.source,
   };
+}
+
+const requireConfirmed = D.requireConfirmed;
+
+/**
+ * The end state a start would get, before anything is created — so the CLI
+ * can show it, and ask, first. Same rules as start (deliveryCore.choose).
+ */
+async function previewDelivery({ commitmentId = null, task = null, mode = undefined, delivery = null, repoPath = null }) {
+  if (mode && resolveMode(mode).name === 'plan') return { delivery: null, source: null, phrase: null };
+  if (delivery) return { delivery: D.delivery(delivery), source: 'explicit', phrase: null };
+  let slugName = null;
+  if (!mode && !D.infer(task)) {
+    const target = await resolveTarget({ commitmentId, repoPath }).catch(() => null);
+    slugName = target ? await require('./route').slugFor(target).catch(() => null) : null;
+  }
+  return require('./delivery').resolve({ mode: mode ? resolveMode(mode).name : null, operatorText: task, slug: slugName });
+}
+
+/**
+ * A Claude session's delivery and the mode its worktree is held to.
+ * Pure rules in deliveryCore; this reads the repo default when it needs it.
+ *   - plan mode: read-only, delivers nothing (delivery null)
+ *   - an explicit mode with no delivery: the mode's own level
+ *   - a delivery: the session runs in D.modeFor(delivery) unless a mode was
+ *     given too, and a mode that may push cannot carry delivery `none`
+ */
+async function sessionDelivery({ modeName, delivery, deliverySource, deliveryPhrase, task, commitmentId, repoPath }) {
+  const explicitMode = modeName ? resolveMode(modeName).name : null;
+  if (explicitMode === 'plan') {
+    if (delivery && delivery !== 'none') throw new Error(`plan mode is read-only; it cannot deliver \`${delivery}\``);
+    return { mode: 'plan', delivery: null, source: null, phrase: null };
+  }
+  let chosen;
+  if (delivery) {
+    chosen = { delivery, source: deliverySource || 'explicit', phrase: deliveryPhrase || null };
+  } else {
+    let slugName = null;
+    if (!explicitMode && !D.infer(task)) {
+      const target = await resolveTarget({ commitmentId, repoPath }).catch(() => null);
+      slugName = target ? await require('./route').slugFor(target).catch(() => null) : null;
+    }
+    chosen = await require('./delivery').resolve({ mode: explicitMode, operatorText: task, slug: slugName });
+  }
+  const sessionMode = explicitMode || D.modeFor(chosen.delivery);
+  if (chosen.delivery === 'none' && resolveMode(sessionMode).mayPush) {
+    throw new Error(`mode \`${sessionMode}\` pushes, but the delivery is \`none\` — drop --mode, or pick a delivery past none`);
+  }
+  return { mode: sessionMode, delivery: chosen.delivery, source: chosen.source, phrase: chosen.phrase || null };
 }
 
 // git on a remote run's worktree happens on that machine, not here.
 function localOnly(run, verb) {
+  if (run.route === 'factory') {
+    throw new Error(`run #${run.id} is a factory job (${run.factory_job_id || 'not submitted'}): the factory ${verb === 'land' ? 'delivers it itself' : 'has its diff'} — \`pa review ${run.id}\` shows the job, its PRs and why`);
+  }
   if (!termhub.isLocal(run.machine)) {
     throw new Error(
       `run #${run.id} is on ${run.machine}: ${verb} it in its session (pa attach ${run.id}), ` +
@@ -330,7 +570,7 @@ async function list({ all = false, limit = 20 } = {}) {
   return rows(
     all
       ? 'select * from run order by started_at desc limit $1'
-      : `select * from run where status in ('starting','running','waiting','done') order by started_at desc limit $1`,
+      : `select * from run where status in ('starting','running','waiting','done','blocked') order by started_at desc limit $1`,
     [limit]
   );
 }
@@ -338,14 +578,40 @@ async function list({ all = false, limit = 20 } = {}) {
 async function steer(runId, text) {
   const run = await get(runId);
   if (!run) throw new Error(`no run #${runId}`);
+  if (run.route === 'factory') {
+    throw new Error(`run #${runId} is a factory job: its session only follows the job — answer it in the factory (\`pa review ${runId}\` says why it waits)`);
+  }
   if (!run.termhub_session_id) throw new Error(`run #${runId} has no session`);
   await termhub.forMachine(run.machine).say(run.termhub_session_id, text);
   return true;
 }
 
+// The chat's read-only `pa` tool runs verbs with PA_READ_ONLY=1 (src/mcp/server.js):
+// a review then reads and reports, and writes nothing.
+function readOnly() {
+  return process.env.PA_READ_ONLY === '1';
+}
+
 async function review(runId) {
   const run = await get(runId);
   if (!run) throw new Error(`no run #${runId}`);
+  if (run.route === 'factory') {
+    if (!run.factory_job_id) {
+      // A submit whose answer was lost: ask the factory now rather than wait for the worker.
+      if (['starting', 'waiting'].includes(run.status) && !readOnly()) {
+        const ageMs = Date.now() - new Date(run.started_at || Date.now()).getTime();
+        await require('./factory').settle(run, { ageMs, extra: { by: run.brief_by } });
+        const now = await get(runId);
+        if (now.factory_job_id) return review(runId);
+        return { run: now, factory: null };
+      }
+      return { run, factory: null };
+    }
+    const job = await require('./factory').status(run);
+    if (readOnly()) return { run, factory: job };
+    await require('./factory').apply(run, job);
+    return { run: await get(runId), factory: job };
+  }
   localOnly(run, 'review');
   if (!run.worktree_path) return { run, diff: null, stat: null, status: null };
 
@@ -357,7 +623,7 @@ async function review(runId) {
   ]);
 
   const uncommitted = status.trim().split('\n').filter(Boolean).length;
-  await query('update run set diff_stat = $2 where id = $1', [
+  if (!readOnly()) await query('update run set diff_stat = $2 where id = $1', [
     runId,
     { stat: stat.trim(), commits: logOut.trim().split('\n').filter(Boolean).length, uncommitted },
   ]);
@@ -393,7 +659,11 @@ async function land(runId, { openMr = null } = {}) {
     throw new Error(`worktree for run #${runId} is dirty — commit or discard first:\n${dirty}`);
   }
 
-  await git(run.worktree_path, ['config', '--unset-all', 'remote.origin.pushurl']).catch(() => {});
+  // A worktree that started in a no-push mode and is delivered by run review
+  // still carries its block, in the worktree's OWN config: lifted there only.
+  // (This once ran a plain `git config --unset-all remote.origin.pushurl`,
+  // which edits the repo's SHARED config and wiped the user's own pushurl.)
+  await liftPushBlock(run.worktree_path);
   await git(run.worktree_path, ['push', '-u', 'origin', run.branch]);
 
   let mrUrl = null;
@@ -405,7 +675,7 @@ async function land(runId, { openMr = null } = {}) {
     });
   }
 
-  await query(`update run set status = 'landed', mr_url = $2, ended_at = now() where id = $1`, [
+  await query(`update run set status = 'landed', mr_url = $2, ended_at = now(), outcome = 'delivered', outcome_at = now() where id = $1`, [
     runId,
     mrUrl,
   ]);
@@ -414,6 +684,83 @@ async function land(runId, { openMr = null } = {}) {
   }
 
   return { pushed: true, branch: run.branch, mrUrl };
+}
+
+// The push block lives in the worktree's OWN config (remote.blockPush writes
+// it with `git config --worktree`), so it is lifted there: a plain
+// `git config --unset-all` edits the shared config and leaves the block in
+// place. Read back, like the block itself.
+async function liftPushBlock(worktree) {
+  const remotes = (await git(worktree, ['remote']).catch(() => '')).split(/\r?\n/).map((r) => r.trim()).filter(Boolean);
+  for (const name of remotes) {
+    // --worktree only: the shared config holds the user's own pushurl, if any.
+    await git(worktree, ['config', '--worktree', '--unset-all', `remote.${name}.pushurl`]).catch(() => {});
+    const got = (await git(worktree, ['remote', 'get-url', '--push', name]).catch(() => '')).trim();
+    if (got === BLOCKED_PUSH_URL) throw new Error(`could not lift the push block on ${name} in ${worktree}`);
+  }
+}
+
+/**
+ * Delivery `push_to_main`, step one: the run's branch is pushed (never main),
+ * so CI runs on the exact commit that may later reach main. Returns that
+ * commit. The agent itself ran with pushing blocked and without credentials;
+ * this, after the session, is the PA's own push. Authorised by the run's
+ * recorded delivery, which only the operator sets.
+ */
+async function pushBranch(runId) {
+  const run = await get(runId);
+  if (!run) throw new Error(`no run #${runId}`);
+  localOnly(run, 'land');
+  if (run.delivery !== 'push_to_main') throw new Error(`run #${runId} has delivery \`${run.delivery || 'unset'}\`, not push_to_main`);
+  if (!run.worktree_path) throw new Error(`run #${runId} has no worktree`);
+  const dirty = (await git(run.worktree_path, ['status', '--porcelain'])).trim();
+  if (dirty) throw new Error(`worktree for run #${runId} is dirty — commit or discard first:\n${dirty}`);
+  const base = await defaultBranch(run.repo_path);
+  const sha = (await git(run.worktree_path, ['rev-parse', 'HEAD'])).trim();
+  await liftPushBlock(run.worktree_path);
+  await git(run.worktree_path, ['push', '-u', 'origin', run.branch]);
+  return { sha, base, branch: run.branch };
+}
+
+/**
+ * Delivery `push_to_main`, step two, once CI passed on `sha`: that commit —
+ * not whatever the worktree holds now — is pushed onto the default branch,
+ * fast-forward only (no --force: a main that moved on refuses, and the run
+ * says so).
+ */
+async function pushToMain(runId, { sha, note = null } = {}) {
+  const run = await get(runId);
+  if (!run) throw new Error(`no run #${runId}`);
+  localOnly(run, 'land');
+  if (run.delivery !== 'push_to_main') throw new Error(`run #${runId} has delivery \`${run.delivery || 'unset'}\`, not push_to_main`);
+  if (!/^[0-9a-f]{7,40}$/i.test(String(sha || ''))) throw new Error('pushToMain needs the commit CI passed');
+  const base = await defaultBranch(run.repo_path);
+  await git(run.worktree_path, ['push', 'origin', `${sha}:refs/heads/${base}`]);
+  await query(
+    `update run set status = 'landed', ended_at = coalesce(ended_at, now()), outcome = 'merged', outcome_at = now(),
+                    exit_note = coalesce($2, exit_note) where id = $1`,
+    [runId, note]
+  );
+  if (run.commitment_id) {
+    await ledger.transition({ commitmentId: run.commitment_id, to: 'done', actor: 'dispatch', reason: `run #${runId} pushed to ${base}`, from: ['open', 'dispatched'] });
+  }
+  return { pushed: true, base };
+}
+
+/** The commit a run's worktree is at. */
+async function headOf(runId) {
+  const run = await get(runId);
+  if (!run?.worktree_path) throw new Error(`run #${runId} has no worktree`);
+  return (await git(run.worktree_path, ['rev-parse', 'HEAD'])).trim();
+}
+
+/**
+ * A finished run whose end state could not be reached (CI red, CI too slow,
+ * main moved on): its branch / PR are left as they are, and the run waits
+ * for me as `blocked` with the reason.
+ */
+async function blockRun(runId, reason) {
+  await query(`update run set status = 'blocked', exit_note = $2 where id = $1 and status not in ('landed', 'dropped')`, [runId, String(reason).slice(0, 500)]);
 }
 
 // A draft pull request through the signed-in `gh` CLI — the same login GitHub
@@ -430,10 +777,14 @@ async function openMergeRequest(run) {
       '--title', run.task.slice(0, 250),
       '--body',
       `Dispatched by the personal assistant (run #${run.id}, mode \`${run.mode}\`).\n\n` +
-        'Reviewed by a human before this was pushed.',
+        `End state chosen: \`${run.delivery || 'draft_pr'}\`.`,
     ],
     { cwd: run.worktree_path, windowsHide: true }
-  );
+  ).catch(async (err) => {
+    // In `mr` mode the agent opens the draft itself; that one is the run's PR.
+    if (!/already exists/i.test(String(err.stderr || err.message))) throw err;
+    return exec(config.github.bin, ['pr', 'view', run.branch, '--json', 'url', '--jq', '.url'], { cwd: run.worktree_path, windowsHide: true });
+  });
   const url = stdout.trim().split(/\r?\n/).pop();
   if (!/^https:\/\//.test(url)) throw new Error(`gh pr create printed no URL: ${stdout.slice(0, 200)}`);
   return url;
@@ -442,6 +793,44 @@ async function openMergeRequest(run) {
 async function drop(runId, { force = false } = {}) {
   const run = await get(runId);
   if (!run) throw new Error(`no run #${runId}`);
+  require('./remote').removeNoGhDirs(runId);
+
+  // A factory job is cancelled in the factory (it parks or closes its
+  // stories and keeps the evidence); its follow session goes too.
+  if (run.route === 'factory') {
+    let cancelled = false;
+    let storiesParked = null;
+    // A submit whose answer was lost may have made a job: find it before
+    // dropping, or the job runs on with nobody watching it.
+    if (!run.factory_job_id && ['starting', 'waiting'].includes(run.status)) {
+      const ageMs = Date.now() - new Date(run.started_at || Date.now()).getTime();
+      const settled = await require('./factory').settle(run, { ageMs, extra: { by: run.brief_by } });
+      if (settled.verdict === 'adopt') Object.assign(run, { factory_job_id: settled.job.job_id, status: 'running' });
+      else if (settled.verdict === 'unknown') {
+        // Not asked, or asked too soon to believe "no job": a drop now could orphan one.
+        throw new Error(
+          settled.asked
+            ? `run #${runId}'s submit is still unconfirmed (the factory may yet show its job) — try again in a few minutes`
+            : `run #${runId}'s submit is unconfirmed and the factory cannot be asked now — dropping it could orphan a job; try again when the factory answers`
+        );
+      }
+    }
+    if (run.factory_job_id && ['starting', 'running', 'waiting'].includes(run.status)) {
+      const c = await require('./factory').cancel(run);
+      cancelled = true;
+      storiesParked = Array.isArray(c?.stories_parked) ? c.stories_parked.length : Number.isFinite(c?.stories_parked) ? c.stories_parked : null;
+    }
+    if (run.termhub_session_id) await termhub.forMachine(run.machine).killSession(run.termhub_session_id).catch(() => {});
+    await query(
+      `update run set status = 'dropped', ended_at = coalesce(ended_at, now()),
+                      outcome = coalesce(outcome, 'dropped'), outcome_at = coalesce(outcome_at, now()) where id = $1`,
+      [runId]
+    );
+    if (run.commitment_id) {
+      await ledger.transition({ commitmentId: run.commitment_id, to: 'open', actor: 'dispatch', reason: `run #${runId} dropped`, from: ['dispatched'] });
+    }
+    return { factory: true, cancelled, storiesParked, jobId: run.factory_job_id };
+  }
 
   // A remote run's worktree is on that machine, where this cannot see whether
   // it holds unpushed work: a plain drop ends the session and keeps the
@@ -460,7 +849,7 @@ async function drop(runId, { force = false } = {}) {
         branch: run.branch,
       });
     }
-    await query(`update run set status = 'dropped', ended_at = now() where id = $1`, [runId]);
+    await query(`update run set status = 'dropped', ended_at = now(), outcome = coalesce(outcome, 'dropped'), outcome_at = coalesce(outcome_at, now()) where id = $1`, [runId]);
     if (run.commitment_id) {
       await ledger.transition({ commitmentId: run.commitment_id, to: 'open', actor: 'dispatch', reason: `run #${runId} dropped`, from: ['dispatched'] });
     }
@@ -488,7 +877,7 @@ async function drop(runId, { force = false } = {}) {
     await git(run.repo_path, ['worktree', 'prune']).catch(() => {});
   }
 
-  await query(`update run set status = 'dropped', ended_at = now() where id = $1`, [runId]);
+  await query(`update run set status = 'dropped', ended_at = now(), outcome = coalesce(outcome, 'dropped'), outcome_at = coalesce(outcome_at, now()) where id = $1`, [runId]);
   if (run.commitment_id) {
     await ledger.transition({ commitmentId: run.commitment_id, to: 'open', actor: 'dispatch', reason: `run #${runId} dropped`, from: ['dispatched'] });
   }
@@ -498,6 +887,7 @@ async function drop(runId, { force = false } = {}) {
 // Marks a run as finished-and-awaiting-review. Called by `pa review --done` and
 // by the worker when a session disappears.
 async function markDone(runId, note) {
+  require('./remote').removeNoGhDirs(runId);
   await query(`update run set status = 'done', ended_at = now(), exit_note = $2 where id = $1`, [
     runId,
     note || null,
@@ -518,7 +908,10 @@ const WAIT_NOTIFY_MS = 60_000;
 
 async function reconcile() {
   const active = await rows(
-    `select id, task, status, termhub_session_id, machine from run where status in ('starting','running','waiting')`
+    // A factory run's session only follows its job; the job's status is the
+    // factory pass's to read (src/dispatch/factory.js poll), not termhub's.
+    `select id, task, status, termhub_session_id, machine from run
+      where status in ('starting','running','waiting') and route <> 'factory'`
   );
   // Each run is checked against its own machine's termhub. A machine that
   // cannot be reached says nothing about its runs, so they are left alone
@@ -571,4 +964,7 @@ async function reconcile() {
   return { closed, notified };
 }
 
-module.exports = { start, get, list, steer, review, diff, land, drop, markDone, reconcile, slug, BLOCKED_PUSH_URL };
+module.exports = {
+  start, knownRepo, get, list, steer, review, diff, land, pushBranch, pushToMain, headOf, blockRun, defaultBranch, drop, markDone, reconcile, slug, resolveTarget, briefFor,
+  worktreeBase, scopeFacts, relatedContext, memoryContext, sessionDelivery, previewDelivery, requireConfirmed, BLOCKED_PUSH_URL,
+};

@@ -20,6 +20,11 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
+// OS-specific defaults (data dir, repos root, venv layout, Teams cache, how
+// backups reach pg_dump) come from the platform layer, not from inline
+// `process.platform` tests.
+const platform = require('./platform');
+
 const TOOL_DIR = path.resolve(__dirname, '..');
 const REPO_ROOT = path.resolve(TOOL_DIR, '..');
 
@@ -80,32 +85,55 @@ function envInt(name, fallback) {
 }
 
 function defaultDataDir() {
-  if (process.platform === 'win32') {
-    const base = process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local');
-    return path.join(base, 'personal-assistant');
-  }
-  return path.join(os.homedir(), '.local', 'share', 'personal-assistant');
+  return platform.defaults.dataDir();
 }
 
-// Other machines a run can be dispatched to (src/dispatch/remote.js), each
-// with its own termhub and its own repos root:
+// Other machines a run can be dispatched to (src/dispatch/remote.js) and
+// commands run on (src/dispatch/exec.js), each with its own termhub and its
+// own repos root, and optionally its OS:
 //   PA_MACHINES=mv-automated-vm=http://mv-automated-vm.example.ts.net:7000|C:\source
+//   PA_MACHINES=lab=http://lab.example.ts.net:7000|/home/k/repos|linux
 // Comma-separated for more than one. A machine not listed here is unknown.
+// The OS (windows | linux | macos) is optional: without it, it is what that
+// termhub reports (`/api/info` platform), else read off the repos root's shape.
+const MACHINE_OS = { windows: 'windows', win32: 'windows', win: 'windows', linux: 'linux', macos: 'macos', darwin: 'macos', mac: 'macos' };
+
 function parseMachines(text) {
   const machines = {};
   for (const entry of String(text || '').split(',').map((s) => s.trim()).filter(Boolean)) {
-    const m = /^([^=]+)=([^|]+)\|(.+)$/.exec(entry);
-    if (!m) throw new Error(`PA_MACHINES: cannot read "${entry}" — want name=termhubUrl|reposRoot`);
-    machines[m[1].trim()] = { name: m[1].trim(), url: m[2].trim().replace(/\/+$/, ''), reposRoot: m[3].trim() };
+    const m = /^([^=]+)=([^|]+)\|([^|]+?)(?:\|([^|]*))?$/.exec(entry);
+    if (!m) throw new Error(`PA_MACHINES: cannot read "${entry}" — want name=termhubUrl|reposRoot[|os]`);
+    const machine = { name: m[1].trim(), url: m[2].trim().replace(/\/+$/, ''), reposRoot: m[3].trim() };
+    if (m[4] != null && m[4].trim()) {
+      const os = MACHINE_OS[m[4].trim().toLowerCase()];
+      if (!os) throw new Error(`PA_MACHINES: "${m[4].trim()}" is not an OS — one of windows, linux, macos`);
+      machine.os = os;
+    }
+    machines[machine.name] = machine;
   }
   return machines;
 }
 
 function defaultReposRoot() {
-  return process.platform === 'win32' ? 'C:\\repos' : path.join(os.homedir(), 'repos');
+  return platform.defaults.reposRoot();
 }
 
+// The Teams cache reader runs by default only where the platform has the new
+// Teams desktop client (Windows). Elsewhere it runs only when you point
+// PA_TEAMS_CACHE_DIR at a cache yourself — and never when PA_TEAMS_CACHE=0.
+const teamsCacheDir = env('PA_TEAMS_CACHE_DIR', platform.defaults.teamsCacheDir());
+
 const dataDir = env('PA_DATA_DIR', defaultDataDir());
+
+// A pass's model: its own variable, else PA_MODEL (one default for every
+// text/JSON pass), else the pass's built-in default. A value is a model
+// string, `provider/model` or a bare Claude name (src/models.js parses it).
+// The connector relay does not read PA_MODEL: it must stay on Claude Code.
+function modelEnv(name, fallback) {
+  return env(name) || env('PA_MODEL') || fallback;
+}
+const distillModel = modelEnv('PA_DISTILL_MODEL', 'claude-opus-5');
+const reconcileModel = modelEnv('PA_RECONCILE_MODEL', 'claude-sonnet-5-5');
 
 const config = {
   toolDir: TOOL_DIR,
@@ -143,19 +171,14 @@ const config = {
   // disk (src/ingest/teamsLocal.js). The connector still runs: it backfills
   // and upgrades what this reads. A missing cache or venv is a quiet no-op.
   teamsCache: {
-    enabled: env('PA_TEAMS_CACHE', '1') !== '0',
+    enabled: env('PA_TEAMS_CACHE', '1') !== '0' && Boolean(teamsCacheDir),
+    // Why it is off on this platform when nobody turned it off (`pa doctor`).
+    unsupported: teamsCacheDir ? null : platform.teamsCache.why,
     pollSeconds: envInt('PA_TEAMS_CACHE_POLL_SECONDS', 5),
-    dir: env(
-      'PA_TEAMS_CACHE_DIR',
-      path.join(
-        process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'),
-        'Packages', 'MSTeams_8wekyb3d8bbwe', 'LocalCache', 'Microsoft', 'MSTeams', 'EBWebView',
-        'WV2Profile_tfw', 'IndexedDB', 'https_teams.microsoft.com_0.indexeddb'
-      )
-    ),
+    dir: teamsCacheDir,
     // Its own venv, not the capture one: the reader is pinned to a forensic
     // library that is not on PyPI and must not be able to break capture.
-    python: env('PA_TEAMS_PYTHON', path.join(dataDir, 'teams-venv', 'Scripts', 'python.exe')),
+    python: env('PA_TEAMS_PYTHON', platform.defaults.venvPython(path.join(dataDir, 'teams-venv'))),
     timeoutMs: envInt('PA_TEAMS_CACHE_TIMEOUT_MS', 60_000),
   },
 
@@ -193,6 +216,8 @@ const config = {
   drafts: {
     auto: env('PA_AUTODRAFT', '1') !== '0',
     minConfidence: Number(env('PA_AUTODRAFT_MIN_CONFIDENCE', '0.6')),
+    // Reply drafts (src/draft): the distill model unless set.
+    model: env('PA_DRAFT_MODEL') || distillModel,
   },
 
   // The memory layer (src/memory): claims with evidence, consolidated into
@@ -200,9 +225,9 @@ const config = {
   // judgements, so it runs on cheaper models than the commitment extractor.
   memory: {
     enabled: env('PA_MEMORY', '1') !== '0',
-    extractModel: env('PA_MEMORY_EXTRACT_MODEL', 'claude-sonnet-5-5'),
-    decideModel: env('PA_MEMORY_DECIDE_MODEL', 'claude-sonnet-5-5'),
-    pageModel: env('PA_MEMORY_PAGE_MODEL', 'claude-sonnet-5-5'),
+    extractModel: modelEnv('PA_MEMORY_EXTRACT_MODEL', 'claude-sonnet-5-5'),
+    decideModel: modelEnv('PA_MEMORY_DECIDE_MODEL', 'claude-sonnet-5-5'),
+    pageModel: modelEnv('PA_MEMORY_PAGE_MODEL', 'claude-sonnet-5-5'),
     // A person gets a page once this many items, commitments or claims tie
     // them to you — below it they are a name in a CC line.
     minInteractions: envInt('PA_MEMORY_MIN_INTERACTIONS', 4),
@@ -214,13 +239,37 @@ const config = {
     apiKey: env('ANTHROPIC_API_KEY'),
     // Distillation is extraction, not reasoning-heavy work: the cost lever is
     // effort, not a smaller model. See AGENT.md.
-    model: env('PA_DISTILL_MODEL', 'claude-opus-5'),
+    model: distillModel,
     effort: env('PA_DISTILL_EFFORT', 'low'),
   },
 
   // Without an API key, model calls go through a headless `claude -p` on the
   // operator's own login (see llm.js). Also the only route to the connectors.
   claudeBin: env('PA_CLAUDE_BIN', 'claude'),
+
+  // Where the non-Claude model providers live (src/models.js). Endpoints only:
+  // their keys are secrets, read with secret() when a call needs one —
+  // OPENAI_API_KEY, OPENROUTER_API_KEY, DEEPSEEK_API_KEY, PA_LOCAL_LLM_API_KEY,
+  // and for Azure the AZURE_OPENAI_API_KEY embeddings already use.
+  providers: {
+    openai: { baseUrl: env('OPENAI_BASE_URL', 'https://api.openai.com/v1') },
+    // The embeddings resource by default; PA_AZURE_CHAT_ENDPOINT when chat
+    // models are deployed elsewhere. `v1` is Azure's version-less API (the
+    // model string names the deployment); a dated version uses the
+    // per-deployment route instead.
+    azure: {
+      endpoint: env('PA_AZURE_CHAT_ENDPOINT') || env('AZURE_OPENAI_ENDPOINT') || env('AZURE_FOUNDRY_ENDPOINT'),
+      apiVersion: env('PA_AZURE_CHAT_API_VERSION', 'v1'),
+    },
+    openrouter: { baseUrl: env('OPENROUTER_BASE_URL', 'https://openrouter.ai/api/v1') },
+    deepseek: { baseUrl: env('DEEPSEEK_BASE_URL', 'https://api.deepseek.com') },
+    // Any OpenAI-compatible server (ollama, llama.cpp, vLLM, LM Studio).
+    local: { baseUrl: env('PA_LOCAL_LLM_URL', 'http://127.0.0.1:11434/v1') },
+  },
+  // Dollars per million tokens for models pa has no price for, as
+  // `provider/model=in:out` pairs, comma-separated. Without one a call's cost
+  // is recorded as unknown (null) — never guessed.
+  modelPrices: env('PA_MODEL_PRICES', ''),
   // Which Claude Code login those calls use: a config folder of its own
   // (CLAUDE_CONFIG_DIR for that child only), so pa can stay on one
   // subscription while your own sessions switch between others. Empty: your
@@ -252,14 +301,24 @@ const config = {
   termhub: {
     url: env('PA_TERMHUB_URL', 'http://127.0.0.1:7000'),
     claudeCommand: env('PA_CLAUDE_COMMAND', 'claude --dangerously-skip-permissions'),
+    // Which agent a dispatched run starts (claude | opencode) and on which
+    // model, unless `pa do --agent/--model` says otherwise (src/dispatch/agent.js).
+    // PA_CLAUDE_COMMAND stays the claude command line.
+    agent: env('PA_DISPATCH_AGENT', 'claude'),
+    model: env('PA_DISPATCH_MODEL'),
     machines: parseMachines(env('PA_MACHINES', '')),
   },
 
   // The PA chat (src/chat): one Claude Code session in termhub. Deliberately
   // without --dangerously-skip-permissions — it reads other people's
   // messages, so its actions stay behind permission prompts.
+  // PA_CHAT_AGENT picks the CLI (claude | opencode), PA_CHAT_MODEL its model;
+  // PA_CHAT_COMMAND, when set, is the whole command line instead. Either way
+  // src/chat/agent.js refuses a command that skips permissions.
   chat: {
-    command: env('PA_CHAT_COMMAND', 'claude'),
+    agent: env('PA_CHAT_AGENT'),
+    model: env('PA_CHAT_MODEL'),
+    command: env('PA_CHAT_COMMAND'),
   },
 
   dispatch: {
@@ -275,6 +334,36 @@ const config = {
       .split(',')
       .map((s) => s.trim())
       .filter(Boolean),
+    // The end state a run or factory job gets when the operator did not say
+    // and its repo has no default of its own (`pa delivery set`,
+    // src/dispatch/deliveryCore.js): none | branch | draft_pr | pr |
+    // auto_merge | push_to_main.
+    deliveryDefault: env('PA_DELIVERY_DEFAULT', 'draft_pr'),
+    // The model that writes a factory job's brief from the ask and what the
+    // assistant gathered (src/dispatch/compose.js). Any text-capable model.
+    composeModel: modelEnv('PA_COMPOSE_MODEL', 'claude-sonnet-5-5'),
+  },
+
+  // The software factory as a second dispatch target (src/dispatch/factory.js,
+  // contract: software-factory docs/JOBS-API.md). Off until PA_FACTORY_PATH
+  // names the factory's checkout on its machine. Its commands run there
+  // through src/dispatch/exec.js; the walk-in session opens in that
+  // machine's termhub, so a remote factory machine must be in PA_MACHINES.
+  factory: {
+    // The checkout `uv run factory …` runs in, as a path on the factory's machine.
+    path: env('PA_FACTORY_PATH', ''),
+    // A PA_MACHINES name; '' = this machine.
+    machine: env('PA_FACTORY_MACHINE', ''),
+    // `pa do`'s route when --via is not given: claude | factory | auto.
+    via: env('PA_DISPATCH_VIA', 'claude'),
+    // chain | solo | auto (the factory decides).
+    pipeline: env('PA_FACTORY_PIPELINE', 'auto'),
+    // Per-persona model overrides passed with every job: `dev=model,reviewer=model`.
+    models: env('PA_FACTORY_MODELS', ''),
+    // How `auto` picks: `rule` (src/dispatch/routeCore.js). The seam for others.
+    chooser: env('PA_ROUTE_CHOOSER', 'rule'),
+    pollSeconds: envInt('PA_FACTORY_POLL_SECONDS', 120),
+    timeoutMs: envInt('PA_FACTORY_TIMEOUT_MS', 120_000),
   },
 
   audio: {
@@ -304,10 +393,7 @@ const config = {
     },
     // The venv that owns soundcard/soundfile. Separate from voice-dictation's
     // so upgrading one cannot break the other's hotkey.
-    python: env(
-      'PA_AUDIO_PYTHON',
-      path.join(dataDir, 'venv', process.platform === 'win32' ? 'Scripts/python.exe' : 'bin/python')
-    ),
+    python: env('PA_AUDIO_PYTHON', platform.defaults.venvPython(path.join(dataDir, 'venv'))),
   },
 
   retention: {
@@ -315,10 +401,17 @@ const config = {
     rawAudioHours: envInt('PA_RETENTION_RAW_AUDIO_HOURS', 6),
   },
 
-  // Proactive messages (src/notify): a feed in the dashboard, and a Windows
-  // toast for each unless PA_TOASTS=0.
+  // Proactive messages (src/notify): a feed in the dashboard, and a desktop
+  // notification for each (a Windows toast, notify-send on Linux) unless
+  // PA_TOASTS=0.
   notify: {
     toasts: env('PA_TOASTS', '1') !== '0',
+    // ntfy pushes (src/notify/ntfy.js), live once the PA_NTFY_TOPIC secret is
+    // set: 'fallback' when the desktop one did not show, 'always', or 'off'.
+    ntfyMode: env('PA_NTFY', 'fallback'),
+    ntfyServer: env('PA_NTFY_SERVER', 'https://ntfy.sh'),
+    // Titles only unless asked: a body can quote your mail.
+    ntfyBody: env('PA_NTFY_BODY', '0') === '1',
     // The interrupt budget (src/notify/budget.js): this many real-time pushes
     // a day; past it, and in quiet hours, the rest wait for a digest.
     pushBudget: envInt('PA_PUSH_BUDGET', 4),
@@ -341,13 +434,13 @@ const config = {
     maxAttendees: envInt('PA_BRIEF_MAX_ATTENDEES', 40),
     // Solo blocks on your own calendar (focus time) get a brief too.
     focusBlocks: env('PA_BRIEF_FOCUS', '0') === '1',
-    model: env('PA_BRIEF_MODEL', 'claude-sonnet-5-5'),
-    classifyModel: env('PA_BRIEF_CLASSIFY_MODEL', 'claude-sonnet-5-5'),
+    model: modelEnv('PA_BRIEF_MODEL', 'claude-sonnet-5-5'),
+    classifyModel: modelEnv('PA_BRIEF_CLASSIFY_MODEL', 'claude-sonnet-5-5'),
     effort: env('PA_BRIEF_EFFORT', 'low'),
     // Post-meeting debriefs (src/meetings/debrief.js): your to-dos and updates
     // to your open work, minutes after a recorded meeting or call ends.
     debrief: env('PA_DEBRIEF', '1') !== '0',
-    debriefModel: env('PA_DEBRIEF_MODEL', 'claude-sonnet-5-5'),
+    debriefModel: modelEnv('PA_DEBRIEF_MODEL', 'claude-sonnet-5-5'),
     debriefEffort: env('PA_DEBRIEF_EFFORT', 'medium'),
   },
 
@@ -356,7 +449,7 @@ const config = {
   // judgement per new reply, so a cheaper model at low effort.
   replyClose: {
     enabled: env('PA_REPLY_CLOSE', '1') !== '0',
-    model: env('PA_REPLY_CLOSE_MODEL', 'claude-sonnet-5-5'),
+    model: modelEnv('PA_REPLY_CLOSE_MODEL', 'claude-sonnet-5-5'),
     effort: env('PA_REPLY_CLOSE_EFFORT', 'low'),
   },
 
@@ -366,7 +459,7 @@ const config = {
   reconcile: {
     enabled: env('PA_RECONCILE', '1') !== '0',
     auto: env('PA_RECONCILE_AUTO', '1') !== '0',
-    model: env('PA_RECONCILE_MODEL', 'claude-sonnet-5-5'),
+    model: reconcileModel,
     effort: env('PA_RECONCILE_EFFORT', 'medium'),
   },
 
@@ -375,6 +468,7 @@ const config = {
   // model. Discretionary spend (purpose card-context). PA_CARD_CONTEXT=0 stops it.
   cardContext: {
     enabled: env('PA_CARD_CONTEXT', '1') !== '0',
+    model: env('PA_CARD_CONTEXT_MODEL') || reconcileModel,
   },
 
   // The planner (src/agent/planner.js): each new ask gets a kind, and some an
@@ -383,7 +477,7 @@ const config = {
   // turns it off.
   planner: {
     enabled: env('PA_PLANNER', '1') !== '0',
-    model: env('PA_PLANNER_MODEL', 'claude-sonnet-5-5'),
+    model: modelEnv('PA_PLANNER_MODEL', 'claude-sonnet-5-5'),
     researchPerDay: Number(env('PA_EAGER_RUNS_PER_DAY', '2')) || 0,
   },
 
@@ -405,7 +499,7 @@ const config = {
       return Number.isFinite(n) ? n : 15;
     })(),
     essential: env('PA_BUDGET_ESSENTIAL', 'distill,reconcile,connector,reply-close').split(',').map((s) => s.trim()).filter(Boolean),
-    discretionary: env('PA_BUDGET_DISCRETIONARY', 'eager,research,digest,planner,card').split(',').map((s) => s.trim()).filter(Boolean),
+    discretionary: env('PA_BUDGET_DISCRETIONARY', 'eager,research,digest,planner,card,propose').split(',').map((s) => s.trim()).filter(Boolean),
   },
 
   // Recurring typed actions (src/routines). PA_ROUTINES=0 stops the worker
@@ -414,6 +508,13 @@ const config = {
     enabled: env('PA_ROUTINES', '1') !== '0',
     // Local hour after which the nightly suggestion pass may run.
     suggestHour: envInt('PA_ROUTINE_SUGGEST_HOUR', 3),
+    // Parsing a typed routine, its prompt reports, and the nightly suggestions.
+    model: modelEnv('PA_ROUTINE_MODEL', 'claude-sonnet-5-5'),
+  },
+
+  // Retrieval evals (src/eval): the distill model unless set.
+  eval: {
+    model: env('PA_EVAL_MODEL') || distillModel,
   },
 
   // Nightly pg_dump of the whole store (see src/backup.js). Local disk by
@@ -423,14 +524,17 @@ const config = {
     dir: env('PA_BACKUP_DIR', path.join(dataDir, 'backups')),
     keep: envInt('PA_BACKUP_KEEP', 14),
     everyHours: envInt('PA_BACKUP_EVERY_HOURS', 24),
-    // The distro that hosts Postgres; pg_dump runs inside it.
+    // The distro that hosts Postgres on Windows; pg_dump runs inside it.
     wslDistro: env('PA_WSL_DISTRO', 'Ubuntu'),
+    // How pg_dump/pg_restore are reached: 'wsl:<distro>' (Windows), 'native',
+    // or 'docker:<container>' (the compose store). Default per platform.
+    pgTools: env('PA_PG_TOOLS', null) || platform.defaults.pgTools({ wslDistro: env('PA_WSL_DISTRO', 'Ubuntu') }),
   },
 };
 
 // ------------------------------------------------------------- secrets ----
-// `secret(name)`: a credential, resolved real env → Windows Credential
-// Manager → `.env` (this tool's, then the repo root's). Same rule as above:
+// `secret(name)`: a credential, resolved real env → the OS vault (Windows
+// Credential Manager, the Linux Secret Service) → `.env` (this tool's, then the repo root's). Same rule as above:
 // nothing secret has a default, a missing one is null and its feature reports
 // itself "not configured".
 //
@@ -487,4 +591,4 @@ function forgetSecret(name) {
   else secretCache.clear();
 }
 
-module.exports = { config, env, envInt, parseEnvFile, parseMachines, secret, secretSource, forgetSecret };
+module.exports = { config, env, envInt, parseEnvFile, parseMachines, MACHINE_OS, secret, secretSource, forgetSecret };

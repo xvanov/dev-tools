@@ -10,7 +10,8 @@
 //
 //   - a calendar meeting is on (from PA_AUDIO_GATE_LEAD_MINUTES before its
 //     start to PA_AUDIO_GATE_GRACE_MINUTES after its end), or
-//   - another app is using the microphone — the unplanned call: a Teams ring,
+//   - another app is using the microphone (src/platform says which, per OS) —
+//     the unplanned call: a Teams ring,
 //     a Zoom link in chat, a Meet tab — plus PA_AUDIO_GATE_CALL_GRACE_SECONDS
 //     after it lets go, so a dropped call that rejoins stays one recording.
 //
@@ -22,21 +23,14 @@
 
 const fs = require('fs');
 const path = require('path');
-const { execFile } = require('child_process');
-const { promisify } = require('util');
-
 const { config } = require('../config');
 const { logger } = require('../log');
 const { attendable, eventRange } = require('./episodes');
+const platform = require('../platform');
 
-const exec = promisify(execFile);
 const log = logger('meeting-gate');
 
 const GATE_MARKER = 'meeting-gate';
-
-// Windows records per-app microphone use here; LastUsedTimeStop is 0 while an
-// app holds the device.
-const MIC_KEY = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\CapabilityAccessManager\\ConsentStore\\microphone';
 
 // Who holds the pause file: 'on' (nobody), 'user' (`pa mic pause`, or a file
 // we cannot read — honoured the way capture.py honours it), or 'gate'.
@@ -71,25 +65,12 @@ function calendarActive(events, now, { leadMs, graceMs }) {
     .some((e) => e.start - leadMs <= now && now < e.end + graceMs);
 }
 
-// Pure: the apps holding the microphone, from `reg query /s /v
-// LastUsedTimeStop` output. Python is left out: that is our own recorder and
-// voice-dictation, and counting them would keep the gate open forever.
-function micHolders(regOutput) {
-  const holders = [];
-  let key = null;
-  for (const line of String(regOutput).split(/\r?\n/)) {
-    if (/^HKEY_/i.test(line)) {
-      key = line.trim();
-      continue;
-    }
-    const m = /^\s+LastUsedTimeStop\s+REG_QWORD\s+(0x[0-9a-f]+)/i.exec(line);
-    if (!m || !key || BigInt(m[1]) !== 0n) continue;
-    const app = key.split('\\').pop().replace(/#/g, '\\');
-    if (/\\pythonw?\.exe$/i.test(app)) continue;
-    holders.push(app);
-  }
-  return holders;
-}
+// Who holds the microphone is the platform's to answer (src/platform): the
+// Windows registry's per-app consent store, or PipeWire/PulseAudio's
+// recording streams on Linux. Python — our own recorder and voice-dictation —
+// never counts, or the gate would hold itself open forever.
+// Pure, kept here for its tests: the Windows registry parser.
+const micHolders = platform.select('win32').parseMicHolders;
 
 /**
  * Pure: what the gate should do now.
@@ -111,17 +92,7 @@ function decide({ calendar, call, pause, wanted }) {
 }
 
 async function currentMicHolders() {
-  if (process.platform !== 'win32') return [];
-  try {
-    const { stdout } = await exec('reg.exe', ['query', MIC_KEY, '/s', '/v', 'LastUsedTimeStop'], {
-      windowsHide: true,
-      timeout: 10_000,
-    });
-    return micHolders(stdout);
-  } catch (err) {
-    // reg exits non-zero when some subkeys lack the value; the rest is still on stdout.
-    return micHolders(err.stdout || '');
-  }
+  return platform.capture.micHolders().catch(() => []);
 }
 
 async function upcomingEvents(now) {

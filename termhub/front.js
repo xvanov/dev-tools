@@ -6,6 +6,7 @@
 //   - HTTP  /api/*        -> http://127.0.0.1:<sessiondPort>/api/*
 //   - WS    /ws/term/:id  -> raw socket pipe to the same sessiond
 //   - WS    /ws/voice     -> same, the voice-announcement feed
+//   - HTTP  POST /api/exec -> answered here: runs one argv, returns output + exit code
 //   - HTTP  /pa/*         -> the personal assistant's dashboard ($TERMHUB_PA_URL,
 //                            default http://127.0.0.1:7300), prefix stripped
 // It owns no terminals, so it can be restarted/replaced at will. Updates start a
@@ -31,6 +32,8 @@ const peers = require('./lib/peers');
 const build = require('./lib/build');
 const { resolvePaUrl, createPaProxy } = require('./lib/paProxy');
 const transcripts = require('./lib/transcripts');
+const execRoute = require('./lib/exec');
+const { checkRequest, checkUpgrade, refuseUpgrade, learnSelfNamesAndWarn } = require('./lib/requestGuard');
 
 const WEB_DIR = path.join(__dirname, 'web');
 
@@ -101,6 +104,18 @@ function createFront({ sessiondPort, port: serverPort = DEFAULT_FRONT_PORT, paUr
     const url = new URL(req.url, 'http://localhost');
     const { pathname } = url;
 
+    // Every /api/* and /pa/* request: Host must name this machine and Origin
+    // (when a browser sends one) must be this host; a state-changing /api/*
+    // request also needs `X-Termhub: 1` and a non-"simple" Content-Type. This
+    // is the CSRF / DNS-rebinding guard — see lib/requestGuard.js. Here, before
+    // anything is proxied, so an old sessiond is covered by a new front.
+    const refused = checkRequest(req, pathname);
+    if (refused) {
+      sendJson(res, refused.status, { error: refused.error });
+      req.resume();
+      return undefined;
+    }
+
     // /pa/* is the personal assistant's dashboard, not ours — see lib/paProxy.js.
     if (handlePa(req, res)) return undefined;
 
@@ -145,6 +160,11 @@ function createFront({ sessiondPort, port: serverPort = DEFAULT_FRONT_PORT, paUr
         .then((secureUrl) => sendJson(res, 200, { secureUrl }))
         .catch(() => sendJson(res, 200, { secureUrl: null }));
     }
+
+    // Run one command, non-interactively, and return its output and exit code
+    // (lib/exec.js). Here, not in sessiond, for the same reason as transcripts;
+    // guarded against cross-origin and rebound-DNS browsers (lib/requestGuard.js).
+    if (execRoute.handle(req, res, url, { sendJson })) return undefined;
 
     // Read-only Claude transcripts for the personal assistant on another
     // machine. Here, not in sessiond, so an update ships it (lib/transcripts.js).
@@ -242,6 +262,10 @@ function createFront({ sessiondPort, port: serverPort = DEFAULT_FRONT_PORT, paUr
     const url = new URL(req.url, 'http://localhost');
     // /ws/term/:id is a PTY stream; /ws/voice is the page-wide announcement feed.
     if (!/^\/ws\/(term\/[^/]+|voice)$/.test(url.pathname)) return clientSocket.destroy();
+    // A page on any origin can open a WebSocket here and type into a shell
+    // (cross-site WebSocket hijacking): refuse a foreign Origin or a rebound Host.
+    const refused = checkUpgrade(req);
+    if (refused) return refuseUpgrade(clientSocket, refused);
 
     const upstream = net.connect(sessiondPort, '127.0.0.1', () => {
       // Replay the request line + headers verbatim so sessiond's WebSocketServer
@@ -270,6 +294,7 @@ function startFront({ port = DEFAULT_FRONT_PORT, sessiondPort = DEFAULT_SESSIOND
   const bindHost = host || resolveBindAddress();
   const server = createFront({ sessiondPort, port });
   build.commit(); // warm the cache off the request path
+  learnSelfNamesAndWarn(); // this machine's MagicDNS name (warns if it cannot); , for the Host check (lib/requestGuard.js)
   server.on('error', (err) => {
     if (err.code === 'EADDRINUSE') {
       console.error(`[front] ${bindHost}:${port} is already in use — another front or a `

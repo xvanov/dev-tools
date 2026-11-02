@@ -64,8 +64,17 @@ function execCopyFallback(text) {
   } catch {}
 }
 
+// Every request this page makes carries `X-Termhub: 1`: termhub refuses a
+// state-changing request without it (lib/requestGuard.js), because a page on
+// another origin cannot attach a custom header without a CORS preflight that
+// termhub never grants. Harmless on reads and on /pa/* (the PA ignores it).
+const GUARD_HEADERS = { 'X-Termhub': '1' };
+function withGuard(opts = {}) {
+  return { ...opts, headers: { ...GUARD_HEADERS, ...(opts.headers || {}) } };
+}
+
 async function api(path, opts) {
-  const res = await fetch(path, opts);
+  const res = await fetch(path, withGuard(opts));
   const text = await res.text();
   const body = text ? JSON.parse(text) : {};
   if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
@@ -233,11 +242,11 @@ async function refreshIdle() {
 // already on your screen is how a notification channel earns itself ignored.
 function beatFocus() {
   if (document.visibilityState !== 'visible' || !state.activeId) return;
-  fetch('/api/idle/focus', {
+  fetch('/api/idle/focus', withGuard({
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ sessionId: state.activeId }),
-  }).catch(() => {});
+  })).catch(() => {});
 }
 
 // A tapped ntfy notification lands on `/#session=<id>`. Opening that terminal
@@ -928,7 +937,7 @@ function uploadWithProgress(url, headers, file, onProgress) {
   return new Promise((resolve) => {
     const xhr = new XMLHttpRequest();
     xhr.open('POST', url, true);
-    for (const [k, v] of Object.entries(headers)) xhr.setRequestHeader(k, v);
+    for (const [k, v] of Object.entries({ ...GUARD_HEADERS, ...headers })) xhr.setRequestHeader(k, v);
     xhr.upload.onprogress = (e) => { if (e.lengthComputable) onProgress(e.loaded / e.total); };
     xhr.onload = () => {
       let body = null;
@@ -2003,9 +2012,9 @@ async function speak(text, { force } = {}) {
   vlog('speak start');
   renderVoice();
   try {
-    const res = await fetch('/api/tts', {
+    const res = await fetch('/api/tts', withGuard({
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: say }),
-    });
+    }));
     if (!res.ok) {
       // 503 means piper went away under us — stop asking, and keep announcing on
       // screen. A 400 is this one string's problem (empty, or over the cap), so

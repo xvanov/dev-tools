@@ -1,0 +1,36 @@
+# personal-assistant capture, one instance per stream:
+#   pa-capture@mic        the microphone you talk into
+#   pa-capture@loopback   the default sink's monitor — everyone else on the call
+# Two units rather than one process so a device error on one side (headphones
+# unplugged mid-call) cannot take the other down. Written by linux/install.sh
+# through linux/units.js, from the same config the worker reads (.env included),
+# so capture writes exactly where the worker looks.
+#
+# The worker's watchdog restarts an instance whose spool stops growing
+# (`systemctl --user restart pa-capture@<stream>`); stopping the cgroup ends
+# the recorder itself, so no orphaned python is left holding the device.
+# Capture is never stopped *for* the assistant: the meeting gate pauses it
+# through the pause file, and the recorder then holds no device at all.
+
+[Unit]
+Description=personal-assistant %i capture
+After=pipewire.service pipewire-pulse.service pulseaudio.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+WorkingDirectory=__DIR__
+Environment=PYTHONUNBUFFERED=1
+Environment="PA_AUDIO_DIR=__AUDIO_DIR__"
+Environment="PA_AUDIO_PAUSE_FILE=__PAUSE_FILE__"
+Environment="PA_AUDIO_ROLL_FILE=__ROLL_FILE__"
+Environment="PA_AUDIO_ROLL_MINUTES=__ROLL_MINUTES__"
+Environment="PA_AUDIO_SAMPLE_RATE=__SAMPLE_RATE__"
+__MIC_ENV__
+ExecStart="__PY__" "__DIR__/audio/capture.py" --stream %i
+Restart=always
+RestartSec=10
+KillMode=control-group
+
+[Install]
+WantedBy=default.target

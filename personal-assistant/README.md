@@ -55,6 +55,9 @@ Four decisions carry most of the design:
 
 ## Install (Windows)
 
+Windows and Linux are both first-class (operator decision, 2026-11-02): each runs the native way
+for its OS — every OS decision lives in `src/platform/`. Linux is [below](#install-linux).
+
 ```powershell
 cd C:\repos\dev-tools\personal-assistant
 .\windows\install.ps1
@@ -77,6 +80,41 @@ Start-ScheduledTask pa-capture-mic
 Start-ScheduledTask pa-capture-loopback
 ```
 
+## Install (Linux)
+
+```bash
+cd ~/repos/dev-tools/personal-assistant
+linux/install.sh            # --docker | --native | --skip-db, --no-worker, --no-audio, --start
+```
+
+That runs `npm ci`; brings up the store — the `docker-compose.yml` container when a Docker daemon
+answers (`--docker`), else a dedicated native `pa` cluster on 5433 through
+`linux/setup-postgres.sh` (`--native`, sudo, Debian/Ubuntu), which leaves any existing Postgres
+alone; records which in `.env` as `PA_PG_TOOLS` so backups reach the right `pg_dump`; applies the
+schema; creates the capture venv; and writes and enables three systemd **user** units —
+`pa-worker`, `pa-capture@mic`, `pa-capture@loopback` — rendered from the same config the worker
+reads, so capture writes where the worker looks. Like the Windows tasks they are not started
+until you say so (`--start`, or):
+
+```bash
+node bin/pa.js login && node bin/pa.js projects sync && node bin/pa.js doctor
+systemctl --user start pa-worker
+systemctl --user start pa-capture@mic pa-capture@loopback     # recording — your call
+journalctl --user -u pa-worker -f                             # its log
+```
+
+What each OS-specific piece becomes on Linux, and what `pa doctor` says when it cannot:
+
+| Piece | Linux | When it can't |
+|---|---|---|
+| store | native cluster or compose container, 127.0.0.1:5433 | — |
+| secrets | Secret Service via `secret-tool` (`libsecret-tools`), value on stdin | `DEGRADED`: env and `.env` only |
+| pushes | `notify-send`; ntfy with `PA_NTFY_TOPIC` | `DEGRADED`: the dashboard feed only |
+| `pa send` | `xdg-open`; Teams *web* links unless an `msteams:` handler exists; `wl-copy`/`xclip`/`xsel` | headless: the link and text are printed |
+| capture | PipeWire/PulseAudio: the mic and the default sink's monitor | no `pactl`: calendar-only gate, `DEGRADED` |
+| Teams in seconds | no new Teams desktop client on Linux | `UNSUPPORTED`: the connector, every 3 min |
+| services | systemd user units; `loginctl enable-linger` for a headless box | — |
+
 `pa doctor` is the answer to "why isn't it doing anything". It reports every credential, every
 source cursor, the distillation backlog, and whether termhub is reachable.
 
@@ -92,7 +130,7 @@ project outright; if that repo is not cloned, the project is left empty rather t
 | Value | Needed for | Notes |
 |---|---|---|
 | Microsoft 365 (claude.ai connector) | mail, calendar, Teams chats and channels | No app registration and no token: a headless `claude -p` calls the connector. Connect it once with `/mcp` → *claude.ai Microsoft 365*. `PA_TEAMS_CHANNELS` = `mentions` (default) / `all` / `off`. `PA_M365=0` turns it off. |
-| `ANTHROPIC_API_KEY` | distillation and drafts | Optional. Without it, model calls run through `claude -p` on your own Claude Code login — or on a login of pa's own with `PA_CLAUDE_CONFIG_DIR` (see SETUP §2). |
+| `ANTHROPIC_API_KEY` | distillation and drafts | Optional. Without it, model calls run through `claude -p` on your own Claude Code login — or on a login of pa's own with `PA_CLAUDE_CONFIG_DIR` (see SETUP §2). Any pass can also run on Azure OpenAI, OpenAI, OpenRouter, DeepSeek or a local server — see [Models and providers](#models-and-providers). |
 | GitHub (`gh auth login`) | notifications, PRs, assigned issues, Projects v2 board items | No token in `.env`: ingest runs through the signed-in `gh` CLI. Boards also need `gh auth refresh -s read:project`; `PA_GITHUB_BOARDS=innergy-dev/7:Pod=Xi` follows a pod's cards whoever they are assigned to (as context: only a card assigned to you or by you puts anything on you). `PA_GITHUB=0` turns it off. |
 | Jira (API token, or the Atlassian connector) | issues you're assigned, reported, or watching | Preferred: the `PA_JIRA_API_TOKEN` secret (see [Secrets](#secrets-and-sign-ins)) — REST with Basic auth, no model in the loop. `PA_JIRA_EMAIL` defaults to your Microsoft 365 address, `PA_JIRA_SITE` to the site the connector discovered. Without a token, a headless `claude -p` runs the JQL through the claude.ai Atlassian connector (`/mcp` → *claude.ai Atlassian MCP*); when that fails too, the dashboard asks you for a token. `PA_JIRA=0` turns it off. |
 | `AZURE_OPENAI_*` | semantic search | Optional. Without it search is full-text only — good on names and ids, weaker on paraphrase. |
@@ -143,6 +181,14 @@ in pure Python and is never done. Items are `graph_chat` rows with the connector
   detected) but not rushed;
 - a new DM, group-chat message or mention is distilled at once — and drafted for — instead of
   at the next 90-second tick, through the worker's no-overlap guard.
+
+**Windows only.** There is no new Teams desktop client on Linux (Microsoft retired the old one
+in 2022), so on Linux the reader is off by default and the 5-second poll is never scheduled; Teams
+arrives through the connector, minutes behind rather than seconds, and nothing is lost.
+`pa doctor` shows `teams cache UNSUPPORTED on Linux`. The Teams *web* app keeps the same IndexedDB
+in a Chromium profile; if doctor finds one it prints its path, and `PA_TEAMS_CACHE_DIR=<that path>`
+turns the reader on against it. That is experimental — the record shapes are unverified there —
+and the doctor line says so.
 
 Privacy: it is the same data the connector reads and you see in Teams, read on the machine it
 is already on, for the user signed in to it. Nothing is sent anywhere new. The reader never
@@ -233,13 +279,17 @@ Unanswered, it goes with the default: your usual for them, else a working mornin
 the promise (or just after it was due). Unless the ask closes first, a follow-up is then drafted in
 that thread for you to send, and if nothing comes you get one reminder half as long again later;
 at most three follow-ups a day. The card goes away by itself when their answer closes the ask.
-**Run review**: when a dispatched run's session ends with commits, the branch is pushed and a
-**draft** PR opened without asking, and you are told; a research (`plan`) run just tells you its
-findings are ready. In your own repos (`PA_MERGE_REPOS`: by default mv-assistant,
-engineering-assistant, mv-pipeline, innergy-dispatch and everything under `xvanov/`) the PR is then
-marked ready, its checks are waited for (up to 3 hours) and it is squash-merged once they pass —
-never with a failing check. Everywhere else it stays a draft: when it is ready and whether it
-merges is yours. A chase judges its ask before asking you anything, so an ask already answered
+**Run review**: when a dispatched run's session ends with commits, the assistant carries out the
+run's **end state** — the delivery level you chose (below) — and tells you: `none` pushes nothing,
+`branch` pushes the branch, `draft_pr` opens a draft PR, `pr` marks it ready for review,
+`auto_merge` marks it ready and squash-merges it, `push_to_main` pushes the branch and then
+fast-forwards the default branch to it (no `--force`; a main that moved on refuses). Neither happens
+before CI passed on that exact commit: the assistant polls its checks once a minute for at most 30
+minutes; with no checks at all it proceeds only when the repo provably requires none (and notes it
+on the run). Red CI, a timeout, or a main that moved on leaves the branch / PR as it is, marks the
+run `blocked` with the reason and tells you. A research (`plan`) run just tells you its findings are ready. A run
+from before end states keeps the old rule: a draft PR, merged only in your own repos
+(`PA_MERGE_REPOS`). A chase judges its ask before asking you anything, so an ask already answered
 gets no card. **Needs you** is also where the assistant asks what
 only you know (which repo?). `pa proposals` / `pa answer <id> yes|no|<option>`
 do the same from the terminal, and `pa doctor` counts tasks by state.
@@ -249,8 +299,10 @@ or the API — leaves an `llm_spend` row: when, which pass (`purpose`: distill, 
 reply-close, draft, memory-*, meeting-brief, debrief, connector, ...), model, backend, cost,
 tokens, duration and whether it worked; never any prompt or reply text. The CLI reports its own
 cost; for the API it is estimated from token usage at list prices, or left null for a model it
-does not know. `PA_DAILY_BUDGET_USD` (default 15) caps a local day: once reached, *discretionary*
-purposes (`PA_BUDGET_DISCRETIONARY`, default eager, research, digest, planner, card — speculative work
+does not know. Another provider's call is priced only from `PA_MODEL_PRICES` (or, on OpenRouter,
+the cost it reports); otherwise its cost is null, never guessed — and its `backend` is the
+provider's name (`azure`, `openrouter`, …). `PA_DAILY_BUDGET_USD` (default 15) caps a local day: once reached, *discretionary*
+purposes (`PA_BUDGET_DISCRETIONARY`, default eager, research, digest, planner, card, propose — speculative work
 done ahead of you) are refused until midnight and the worker logs it once; *essential* ones
 (`PA_BUDGET_ESSENTIAL`, default distill, reconcile, connector, reply-close) keep the board true
 and are never refused. Speculative work asks `budget.allow(purpose)` before it spends. `pa spend
@@ -262,8 +314,15 @@ turns it off). Each new ask on you from the last week is given a kind (reply, re
 investigate, meeting, decision, admin) once. An *investigate* ask with a known repo gets a
 read-only research run started on its own — `plan` mode, so it can neither commit nor push — at
 most `PA_EAGER_RUNS_PER_DAY` (2) a day and only within the daily budget; you get a toast with the
-session. A *coding* ask with a known repo becomes a **Needs you** card, "start a coding session?"
-(local mode on yes). A code ask with no repo asks **which repo?** with buttons; your pick sets the
+session. A *coding* ask with a known repo becomes a **Needs you** card, "start a coding session?" —
+or, when the routing rule picks the software factory (below), "send to the factory?". Everything
+the card shows is decided before you see it and frozen into the proposal (`src/dispatch/offer.js`):
+the route and its reason, the **end state** in plain words (loud when nothing human follows your
+yes), the app, pipeline and models, the done-criteria, and — one click away — the exact brief that
+will be sent. Accepting runs exactly that; the only thing you can change on the card is the end
+state (a picker), and the brief is re-rendered for it. The planner's offers take the repo's default
+end state: it never reads one from the ask's text, which someone else wrote. A factory job changes
+code, so it is only ever offered. A code ask with no repo asks **which repo?** with buttons; your pick sets the
 project and teaches the alias, and the ask is planned again. Asks the reconciler thinks are done,
 or that already have a run, are left alone.
 
@@ -324,6 +383,9 @@ pa say 7 "use the existing helper"
 pa attach 7                     open the session in termhub
 pa review 7 [--diff]            what it changed
 pa land 7                       push, and open a draft PR (gh) if the mode allows
+pa do 959 --via factory --delivery auto_merge --pipeline solo   end state + pipeline, chosen by you
+pa propose 959 --via factory    the same on a card: brief, end state and criteria shown before the yes
+pa delivery set acme/widget pr  a repo's default end state when you say nothing
 pa drop 7                       kill the session, remove the worktree
 
 pa draft 7                      a report on a run, from the ask and the actual diff
@@ -392,7 +454,8 @@ approve it.
 ### Pre-meeting briefs
 
 About an hour before a meeting (`PA_BRIEF_LEAD_MINUTES`, default 60) the worker sends a short
-numbered brief of what is worth saying in it — a Windows toast with the first lines, the whole
+numbered brief of what is worth saying in it — a desktop notification (a Windows toast, or
+notify-send on Linux) with the first lines, the whole
 brief in the dashboard's **Next meeting** card, with **Open brief** and **Join** buttons on the
 toast. `src/meetings/`, a 5-minute pass:
 
@@ -489,17 +552,35 @@ Some work belongs on a particular machine — the VM that runs the service, hold
 sync, has the credentials. `pa do 959 --machine mv-automated-vm` (or the machine picker beside
 **Do** on the dashboard) starts the run in *that* machine's termhub, which is already one of
 your hub's peers, so you attach to it the same way. Machines are listed in `PA_MACHINES`
-(`name=termhubUrl|reposRoot`); the repo must be cloned there under the same folder name. Runs go
-only to Windows machines; a Linux machine (a `reposRoot` starting with `/`) is listed only so its
-Claude sessions are read.
+(`name=termhubUrl|reposRoot[|os]`); the repo must be cloned there under the same folder name.
+Windows, Linux and macOS machines all take runs. The OS (`windows`, `linux`, `macos`) is optional:
+without it, it is what that termhub reports (`/api/info`), else the shape of `reposRoot`
+(`C:\…` or `/…`). A configured OS that its termhub contradicts, or a `reposRoot` written for the
+other OS, is refused rather than guessed around. `pa doctor` shows each machine's reachability,
+OS and whether its termhub can run commands. A factory job on any of them
+can be followed (next section).
 
 A run's worktree is trusted ahead of time (the worktrees root is marked trusted in `~/.claude.json`, `src/dispatch/trust.js`), so Claude never stops at its folder-trust question; if the question shows anyway, the cursor is moved to *Yes* first, since newer Claude Code puts it on *No, exit*.
 
-The dispatcher cannot touch that disk, so it types the setup into a fresh shell there and checks
-the result through termhub's API before starting Claude: `git fetch`, a worktree under
-`<reposRoot>\.pa-worktrees\run-<id>` on branch `pa/<id>-…`, the dead pushurl for a mode that may
-not push, and `BRIEF.md` written into the worktree. If the worktree never appears the run is
-marked `failed` and its session left open to show why. `pa say`, `pa attach`, `pa runs` and
+The dispatcher cannot touch that disk, so it has that machine's termhub run the setup —
+`POST /api/exec`, one command at a time, argv arrays with no shell, each exit code checked
+(`src/dispatch/exec.js`) — and checks the result through termhub's API before starting Claude:
+`git fetch`, a worktree under `<reposRoot>/.pa-worktrees/run-<id>` (backslashes on Windows) on
+branch `pa/<id>-…`, and `BRIEF.md` written from stdin and its size read back. For a mode that may
+not push, every remote's pushurl is set to the dead address **in the worktree's own config**
+(`extensions.worktreeConfig`, so the main checkout and other runs still push), then read back: the
+run's worktree must report the dead address and the main checkout must not, or the run fails. The
+session is opened in the worktree only once `/api/dirs` shows it there.
+
+A machine whose termhub predates `/api/exec` gets the old way — the same steps typed into a fresh
+shell (PowerShell on Windows, POSIX `sh` elsewhere), the session left open to show why if the
+worktree never appears — but only for `branch`, `mr` and `full`. A typed push block can't be read
+back, so a `plan` or `local` run there is refused until termhub on that machine is updated.
+
+The same primitive is available to other code: `runCommand(machine | null, argv, {cwd, timeoutMs})`
+→ `{code, stdout, stderr}` in `src/dispatch/exec.js` (`null` is this machine). A timeout is code
+124, a missing program 127; it rejects only when the command could not be put to the machine at
+all (unknown name, termhub down or too old). `pa say`, `pa attach`, `pa runs` and
 `pa drop` work as for a local run; `pa review`, `pa diff` and `pa land` run git on this disk, so
 for a remote run they point you at the session instead, and `pa drop` leaves the worktree on that
 machine for you to remove. **Context** on the dashboard shows the ask, its thread and its runs
@@ -515,15 +596,104 @@ that is off or unreachable is an `ERROR` line on that cursor in `pa doctor`, not
 "termhub on X is too old" means that machine's termhub predates the route: run
 `termhub/windows/update.ps1` there. `pa sync --source claude_session_remote` runs it by hand.
 
+### Runs in the software factory
+
+A second dispatch target next to Claude sessions: the software factory (PM → SM → dev → reviewer →
+merge gates, its own repo). `pa do 959 --via factory` sends the ask there as a job instead of
+starting a session; `--via auto` lets the routing rule choose and prints why; `--via claude` (the
+default, `PA_DISPATCH_VIA`) is everything before. The dashboard grows a route picker beside **Do**
+once the factory is configured. The PA never imports factory code: it runs `uv run factory job …`
+in the factory checkout (`PA_FACTORY_PATH`) on the factory's machine (`PA_FACTORY_MACHINE`, a
+`PA_MACHINES` name, or empty for this one) and reads the one JSON object each command prints — the
+contract is the factory's `docs/JOBS-API.md`.
+
+- **The end state is yours** (operator decision 2026-11-02, no ceiling). Every job carries an
+  explicit `--delivery`: `none` (committed in the factory's worktree), `branch`, `draft_pr`, `pr`,
+  `auto_merge` (merged when its gates and CI pass), `push_to_main` (fast-forwarded onto main when
+  its gates pass). Where it comes from, first match wins (`src/dispatch/deliveryCore.js`):
+  `--delivery` or the card's pick; an explicit `--mode` (local → none, branch → branch, mr/full →
+  draft_pr); your own words in `--task` ("just open a draft", "merge it", "push straight to main",
+  "don't push") — never a third party's message; the repo's default (`pa delivery set owner/name
+  <level>`, `pa delivery list`, sql/025); `PA_DELIVERY_DEFAULT` (draft_pr). The same vocabulary
+  drives a Claude session: its worktree runs in the mode that level maps to (push_to_main runs as
+  `local` — no push credentials in its environment and its push blocked, which stops an accident; an
+  agent running as your OS user can still restore them from disk, so the real boundary is a separate
+  OS user, not set up yet — `pa doctor` says so) and run review does the rest. `plan` is never
+  a factory job.
+- **The ask is a composed brief** (`src/dispatch/compose.js`, rules in `composeCore.js`): a model
+  (`PA_COMPOSE_MODEL`, any text-capable provider) writes the goal, done-criteria, constraints,
+  decisions and facts the task needs, and points at **existing files to reuse or extend** — found by
+  searching the repo's local checkout (`git ls-files`, `git grep -F`) for the ask's keywords. Every
+  brief says: "Search the repo for existing implementations before writing new code; extend rather
+  than duplicate; follow existing conventions; add/extend tests." Private material (memory pages,
+  message bodies) reaches the model to pick from, never the brief wholesale: a run of 12 words
+  copied from it is dropped, a credential is redacted before the model sees it and again after,
+  reuse paths must be real files. No model, a model error or no JSON → a deterministic brief with
+  your words, the criteria and the code pointers and nothing private. `pa do … --preview` prints the
+  brief without sending; the card shows it. Done-criteria: `--done "…"` (repeatable) wins;
+  otherwise the commitment's "what done looks like", else the model's.
+  `--pipeline chain|solo|auto` (`PA_FACTORY_PIPELINE`) and `--model persona=provider/model`
+  (repeatable; `PA_FACTORY_MODELS` sets defaults) pass straight through; `--app` names the factory
+  app when the repo cannot be read from the commitment; `--register` (or `pa factory add
+  owner/name [--delivery-default level]`) registers a repo the factory does not know yet.
+- **Submission is idempotent and never leaves a run stuck.** The run id is the job's external id
+  (`--source pa --external-id <run>`), so a resubmit returns the same job. A contract error fails
+  the run. Anything else after a submit went out — a lost answer after one retry, a crash before
+  the job was recorded — is reconciled with the factory (`job status` by id, else `job list --source
+  pa` matched by external id): the job is adopted, or the run waits as `submit_unknown` and the
+  worker asks again each pass, failing it only once the factory has answered "no such job" for ten
+  minutes. A run left `starting` for two minutes is swept the same way.
+- **Every job carries a flow**: the factory's direction validator needs a `flow.md` (or an API spec)
+  and parks a job without one as `needs_human`. `factoryCore.flowMarkdown` writes it
+  deterministically from the composed goal: numbered steps that restate the ask and turn each
+  done-criterion into a "Check:" step. Ask and flow are files on the factory's machine: written
+  directly when it is this one, otherwise through `runCommand` by a fixed Python writer that reads
+  the contents on stdin and puts them in a fresh private temp dir on that machine (removed once the
+  factory has the job). Any `warnings` the
+  factory returns are kept on the run (`factory_warnings`), printed by `pa do` / `pa review`, and
+  shown on the dashboard.
+- **Walking in**: a termhub session on the factory's machine runs `uv run factory job follow <job>`
+  in the checkout, titled with the ask; the card's session link and `pa attach` open it.
+- **Status comes back** every `PA_FACTORY_POLL_SECONDS` (120): one `factory job list --source pa
+  --active`, plus `job status` for jobs that ended since. A blocked job makes the run `waiting` and
+  tells you why; a finished one is `landed` with its PR on the card and closes the commitment *done*
+  through the ledger (actor `factory`); a failed or cancelled one reopens it. `none` delivery
+  closes nothing — the work is in the factory, and the ask stays dispatched until you close it.
+  GitHub reconcile only closes `open` asks, so a merged factory PR is never closed twice.
+- `pa review <run>` shows the job, its stories and PRs; `pa drop <run>` cancels the job (the factory
+  keeps its evidence) and reopens the ask; `pa land`, `pa diff` and `pa say` refuse — the factory
+  delivers and is steered on its own side.
+
+**Telling the PA chat**: it picks the end state from what you said, the route (`--via claude`, or
+`--via factory --pipeline chain|solo`) and models, and either starts it (`pa do`, behind a permission
+prompt) or puts it on a card (`pa propose`, which starts nothing). Accepting a card from the chat
+(`pa answer <id> yes [--delivery level]`), `pa delivery set` and `pa factory add` ask first.
+
+**The routing rule** (`src/dispatch/routeCore.js`, pure and tested) sends work to the factory only
+when all hold: the factory is configured, the mode changes code, the planner judged the ask
+*coding*, its repo is registered with the factory (`factory app list`), and it has done-criteria.
+Anything else — investigate, ambiguous, `plan`, an unknown or unregistered repo, nothing to check
+the result against — is a Claude session. `PA_ROUTE_CHOOSER` picks a different chooser registered
+in `src/dispatch/route.js` (the seam for an LLM or evidence-based one); whatever it says is held to
+the hard limits (configured, not `plan`, registered repo).
+
+**Which route works** is measured: every run records its route, the reason, the ask's kind, and its
+outcome (`delivered`, `merged`, `failed`, `dropped`); factory runs add pipeline, delivery, models,
+job id and the factory's reported cost (sql/024). `pa runs stats [--days 90]` prints success rate
+and cost per route × kind. `pa doctor` checks the factory answers and lists its apps.
+
 ### Secrets and sign-ins
 
 When the assistant — or an agent through MCP — needs a credential, it asks; you never hand-edit
 `.env`. A request appears at the top of the dashboard under **Needs you** (with a badge on the
-Today tab and a Windows toast): what is needed, why, where to get it, and where the value will be
-stored. Paste it into the password box and press **Save**.
+Today tab and a desktop notification): what is needed, why, where to get it, and where the value
+will be stored. Paste it into the password box and press **Save**.
 
-The value goes from your browser over loopback straight into **Windows Credential Manager**
-(DPAPI, your Windows account only; listed under *Web Credentials* → `personal-assistant`), or —
+The value goes from your browser over loopback straight into the OS keyring — **Windows Credential
+Manager** on Windows (DPAPI, your Windows account only; listed under *Web Credentials* →
+`personal-assistant`), the **Secret Service** on Linux (GNOME Keyring or KWallet through
+`secret-tool`, unlocked with your login; Seahorse lists the entries as `personal-assistant: NAME`) —
+or —
 for non-secret config, or if you pick it — into the gitignored `personal-assistant/.env`, which
 is refused if git does not ignore it. The reply says where it went, never what it was: no
 endpoint, log line, MCP result or model ever sees a value, and there is no "show" button.
@@ -535,8 +705,14 @@ pa secret request NAME --purpose "why" [--hint "…"] [--url https://…]
 pa secret delete NAME
 ```
 
-Code reads a secret with `secret(name)` from `src/config.js`: real environment → Credential
-Manager → `.env`. Code that finds one missing calls `requestSecret({name, purpose, hint})`
+Either way the value reaches the keyring process on stdin, never on its command line. A Linux box
+with no Secret Service (no `libsecret-tools`, or no session bus — a bare server) has no keyring:
+`pa doctor` shows `secret store … DEGRADED`, the dashboard offers only `.env`, and secrets are read
+from the environment and `.env`. A keyring that hangs (locked, nobody to unlock it) is skipped for
+ten minutes after one timeout rather than stalling every lookup.
+
+Code reads a secret with `secret(name)` from `src/config.js`: real environment → the OS keyring →
+`.env`. Code that finds one missing calls `requestSecret({name, purpose, hint})`
 (`src/secrets`); agents call the MCP tool `request_secret`, and `secret_status` tells them whether
 it is configured — never what it is. Sign-ins the tool cannot do for you (re-authenticating a
 connector in `/mcp`, `gh auth refresh -s read:project`) are the same kind of request with a
@@ -612,6 +788,14 @@ for the digest instead of pushing, six and it stays in the feed alone; ups bring
 are per kind, and `info` notifications are split by what they are about (`info:run-wait`,
 `info:low-disk`, …) so muting one does not mute the others. `pa notify weights` lists them.
 
+**Where a push shows.** On Windows, a toast (WinRT through PowerShell). On Linux, `notify-send`:
+clicking it opens the link where libnotify supports actions (0.7.10+), otherwise it is shown
+unclickable — `pa doctor` says which. On a box with no desktop (a headless server), set the
+`PA_NTFY_TOPIC` secret and pushes go to [ntfy](https://ntfy.sh) instead (`PA_NTFY=fallback`, the
+default; `always` sends both; `off`). The topic *is* the password on ntfy.sh, so it is a secret
+(`pa secret set PA_NTFY_TOPIC`), and only titles are sent unless `PA_NTFY_BODY=1` — a brief's body
+quotes your mail. `PA_NTFY_SERVER` points at your own server.
+
 ## Always-on capture
 
 Two streams, captured separately and never mixed: the **microphone** is you, the **system
@@ -658,6 +842,17 @@ transcription — and the gate never lifts it, meeting or not. `pa mic on` betwe
 records until the next meeting ends. Your own Claude Code sessions are captured from their transcripts on disk rather
 than from audio, because the exact text is already there.
 
+**On Linux** capture records through PipeWire or PulseAudio (the same `soundcard` library; PipeWire
+serves it through pipewire-pulse). The loopback stream is the default sink's **monitor source** —
+what the speakers play — and follows the default output device the same way. "Which mic is the
+call using" and the gate's "another app holds the mic" both come from `pactl list source-outputs`:
+a recording stream that is not Python, not a level meter, and not reading a monitor. A muted call
+still counts, as it does on Windows. Without `pactl` the gate falls back to calendar meetings only
+and the mic to `PA_AUDIO_MIC` / the default — `pa doctor` says `sound server … DEGRADED`. The two
+streams run as systemd user units, `pa-capture@mic` and `pa-capture@loopback`
+(`linux/install.sh`); the watchdog restarts them with `systemctl --user restart`, and never
+restarts a unit that was not installed.
+
 A recorder can be running and recording nothing — when the disk filled, the call-audio recorder
 sat on an empty file for twelve minutes while its task said "Running". So the worker checks every
 minute that each stream's spool is still *growing*; one that has been silent for two minutes (and
@@ -694,8 +889,13 @@ measure what the reranker adds.
 
 The database is the only copy of what the assistant knows — transcripts whose audio is long
 deleted, and mail and Teams history the connectors will not hand back past their own limits. The
-worker dumps it (`pg_dump`, custom format) once a day to `%LOCALAPPDATA%personal-assistantackups`
-and keeps the newest 14 (`PA_BACKUP_DIR`, `PA_BACKUP_KEEP`). The dumps hold everything, so keep
+worker dumps it (`pg_dump`, custom format) once a day to `backups` under the data folder
+(`%LOCALAPPDATA%\personal-assistant\backups` on Windows, `~/.local/share/personal-assistant/backups`
+on Linux) and keeps the newest 14 (`PA_BACKUP_DIR`, `PA_BACKUP_KEEP`). Where `pg_dump` runs follows
+where the store runs (`PA_PG_TOOLS`): `wsl:<distro>` on Windows, `native` for a native Linux
+cluster, `docker:pa-postgres` for the compose container — whose own `pg_dump` always matches the
+server, its output streamed to the file. `pa doctor` flags a native `pg_dump` older than the server
+before the nightly dump finds out. The dumps hold everything, so keep
 them somewhere only you can read. `pa doctor` shows the age of the newest one.
 
 ```
@@ -706,7 +906,8 @@ pa reingest --days 180    no dump? rewind the sources and fetch history again
 ```
 
 **Rebuilding on a new or wiped machine:** run `windows/install.ps1` (or just
-`windows/setup-wsl-postgres.sh` in WSL) to get an empty database with its extensions, copy the
+`windows/setup-wsl-postgres.sh` in WSL), or `linux/install.sh` on Linux, to get an empty database
+with its extensions, copy the
 backups folder back, stop the worker, `pa restore`, start the worker. Restore needs the
 extensions to exist and refuses otherwise; it leaves them out of the dump on purpose.
 
@@ -715,6 +916,38 @@ next passes re-fetch that window — how far back you actually get is each sourc
 sessions and audio transcripts on disk are re-scanned on their own. Re-ingest is an upsert:
 running it over data that is still there costs fetches, not duplicates. Distillation, embeddings
 and memory then rebuild from the items by themselves.
+
+## Models and providers
+
+Every pass that calls a model picks it with its own variable, and the value is a **model string**
+(`src/models.js`):
+
+| String | Goes to |
+|---|---|
+| `claude-sonnet-5-5` (bare) | the Anthropic API when `ANTHROPIC_API_KEY` is set, else `claude -p` — the original meaning |
+| `anthropic/claude-sonnet-5-5` | the Anthropic API, always |
+| `cli/claude-opus-5` | a headless `claude -p`, always |
+| `azure/<deployment>` | Azure OpenAI chat completions on `AZURE_OPENAI_ENDPOINT` (or `PA_AZURE_CHAT_ENDPOINT`), key `AZURE_OPENAI_API_KEY` |
+| `openai/<model>` | OpenAI (`OPENAI_API_KEY`, `OPENAI_BASE_URL`) |
+| `openrouter/<vendor>/<model>` | OpenRouter (`OPENROUTER_API_KEY`) |
+| `deepseek/<model>` | DeepSeek (`DEEPSEEK_API_KEY`) |
+| `local/<model>` | any OpenAI-compatible server at `PA_LOCAL_LLM_URL` |
+
+Only the first segment is the provider; an unknown one is an error, not a bare name. `PA_MODEL`
+sets one default for every pass that has no variable of its own. Per pass: `PA_DISTILL_MODEL`,
+`PA_MEMORY_EXTRACT_MODEL`, `PA_MEMORY_DECIDE_MODEL` (also recall planning), `PA_MEMORY_PAGE_MODEL`,
+`PA_BRIEF_MODEL`, `PA_BRIEF_CLASSIFY_MODEL`, `PA_DEBRIEF_MODEL`, `PA_REPLY_CLOSE_MODEL`,
+`PA_RECONCILE_MODEL`, `PA_CARD_CONTEXT_MODEL` (default: the reconcile model), `PA_PLANNER_MODEL`,
+`PA_DRAFT_MODEL` and `PA_EVAL_MODEL` (default: the distill model), `PA_ROUTINE_MODEL`.
+
+**The connector relay is Claude Code only.** Microsoft 365 and the Jira connector fallback are
+reached by tool calls to the claude.ai connectors, and only Claude Code holds those logins, so
+`PA_CONNECTOR_MODEL` must be a bare Claude name or `cli/…`, and it ignores `PA_MODEL`. Anything else
+is refused at the call (with the variable named), logged as an error when the worker starts, and
+shown as **NOT capable** in `pa doctor`, which prints one line per pass: model, backend, the
+capability it needs (text, json, toolCalls), whether its key is configured.
+
+The PA chat and dispatched runs choose an agent CLI as well as a model — see the next section.
 
 ## Talking to it: the PA chat
 
@@ -727,6 +960,24 @@ history. It answers through the MCP tools (`recall`, `memory_page`, …) and act
 CLI: read-only commands run freely; starting a run (`pa do`), landing, steering, closing,
 remembering and adding routines each ask you first. Put your own standing instructions in
 `pa-home\CLAUDE.local.md`.
+
+**Claude Code or opencode.** `PA_CHAT_AGENT=opencode` runs the chat in
+[opencode](https://opencode.ai) instead, on any provider opencode is set up for, with
+`PA_CHAT_MODEL` in opencode's `provider/model` form (`PA_CHAT_MODEL` on claude takes a Claude
+model). The same rules apply: pa writes `pa-home\opencode.json` and `AGENTS.md` from the same
+command lists as Claude's `settings.json`, starting from "ask for everything" (opencode's own
+defaults allow nearly everything), denying subagents, and asking for any command with a redirect.
+Before it starts an opencode chat, pa asks the installed opencode for the rules it actually
+resolved (`opencode debug agent`) for every agent you can switch to, and refuses to start if any
+action that must ask would not. Neither CLI may be started with permissions skipped
+(`--dangerously-skip-permissions`, `--auto`): `pa chat` and `pa doctor` refuse. opencode has no
+SessionStart hook, so its `AGENTS.md` tells it to run `pa context` first, and **the doorbell below
+never rings for it** — its screen is not Claude's, so the chat reads `INBOX.md` on your next turn.
+
+Dispatched runs choose too: `PA_DISPATCH_AGENT` / `PA_DISPATCH_MODEL`, or `pa do … --agent
+opencode --model azure/gpt-5.4` for one run. An opencode run starts as `opencode --auto` with the
+opening prompt on its command line (nothing is typed at it); the run's mode limits are enforced by
+the dispatcher either way. Runs on another machine start that machine's `claude`.
 
 Work you hand it runs as an ordinary dispatch: its own termhub session and worktree. When that
 session has been sitting at its prompt for a minute — finished, or stopped to ask something — you
@@ -744,7 +995,7 @@ safe (`src/notify/chat.js`):
 - **The typed line carries no content.** Typed text is a prompt with *your* authority, and
   notification titles quote other people; in `INBOX.md` the same words are data the chat is told
   never to obey.
-- **It is typed only when nothing can go wrong with Enter**: termhub says the session finished its
+- **It is typed only when nothing can go wrong with Enter**: termhub says the session is Claude Code and finished its
   turn (not working, not parked on a permission prompt or question), it has been quiet for
   `PA_CHAT_NUDGE_IDLE_MINUTES` (2), and the screen's input box is empty with nothing unexplained
   after it. Any doubt and the nudge is skipped — the toast still goes and the chat reads the inbox
@@ -780,20 +1031,26 @@ src/commitments/     closing chat and mail asks you answered yourself (replyClos
                      the cause-and-effect paragraph on cards (context.js, pure half in contextCore.js)
 src/dashboard/       the loopback web page: today, next meeting, replies, runs, secret requests, and the Memory and Routines tabs;
                      each card's links to its source, person, repo and session (links.js pure, cards.js)
-src/secrets/         secret and login requests; Windows Credential Manager via PowerShell (stdin only)
+src/secrets/         secret and login requests; the OS keyring facade (vault.js; stdin only)
+src/platform/        every OS decision: windows.js, linux.js, darwin.js behind one contract (index.js)
 src/routines/        cron parser, the typed action registry (repo_sync, prompt_report), runs, suggestions
 src/notify/          notifications: toasts, the interrupt budget, digests, feedback weights, the PA chat inbox
-src/llm.js           model calls: API key, or `claude -p` without one
+src/llm.js           model calls: Anthropic API, `claude -p`, or an OpenAI-compatible provider
+src/models.js        model strings, which backend each pass uses, and what it can do (pa doctor)
+src/agentCli.js      claude | opencode command lines for the chat (src/chat/agent.js) and runs (src/dispatch/agent.js)
 src/budget.js        model spend: one llm_spend row per call, the daily cap on discretionary work
 src/backup.js        nightly pg_dump, restore, re-ingest
-src/dispatch/        worktrees, briefs, termhub sessions, modes, landing
+src/dispatch/        worktrees, briefs, termhub sessions, modes, landing; the factory route
+                     (factory.js, pure half factoryCore.js), the routing rule (route.js, routeCore.js),
+                     `pa runs stats` (stats.js)
 src/draft/           reply drafting, auto-drafts, and delivery links (never sends)
 src/mcp/server.js    the recall server: read-only, plus remember and request_secret, which only ask
 src/worker.js        the periodic passes
-audio/               capture and trim/transcribe (Python)
+audio/               capture and trim/transcribe (Python); devices_linux.py asks PipeWire/PulseAudio
 teams/               the Teams local-cache reader (Python, its own venv)
 sql/                 numbered migrations
 windows/             install, and the WSL Postgres provisioner
+linux/               install.sh, the native Postgres provisioner, systemd user units
 ```
 
 ## Related

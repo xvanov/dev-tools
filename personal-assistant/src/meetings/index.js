@@ -22,7 +22,6 @@
 // `topic:<series>`. The next brief checks last time's promises against the
 // evidence.
 
-const path = require('path');
 const llm = require('../llm');
 const { config } = require('../config');
 const { rows, one, query } = require('../db');
@@ -277,7 +276,7 @@ async function doneSince(ctx, from, to) {
     [from, to]
   );
   for (const s of sessions) {
-    const where = [s.raw?.cwd ? path.basename(String(s.raw.cwd)) : null, s.raw?.gitBranch && s.raw.gitBranch !== 'HEAD' ? s.raw.gitBranch : null]
+    const where = [s.raw?.cwd ? String(s.raw.cwd).replace(/[\\/]+$/, '').split(/[\\/]/).pop() : null, s.raw?.gitBranch && s.raw.gitBranch !== 'HEAD' ? s.raw.gitBranch : null]
       .filter(Boolean)
       .join(' @ ');
     out.push(item(`item:${s.id}`, `Coding session: ${s.subject}${where ? ` (${where})` : ''}${gist(s.body, 'I asked: ')}`, { when: s.occurred_at }));

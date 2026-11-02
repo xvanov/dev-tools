@@ -7,9 +7,15 @@
 // and mail that retention-limited connectors will not hand back. So:
 //
 //  - **dump** — `pg_dump -Fc` of the whole database to a local folder, run
-//    nightly by the worker and rotated. pg_dump runs inside the WSL distro
-//    that hosts Postgres (no Windows client to install), writing straight to
-//    the Windows path through /mnt so the bytes never cross a pipe.
+//    nightly by the worker and rotated. Where pg_dump runs follows where the
+//    store runs (`config.backup.pgTools`, defaulted by src/platform):
+//      wsl:<distro>        Windows. Inside the WSL distro that hosts Postgres
+//                          (no Windows client to install), writing straight
+//                          to the Windows path through /mnt.
+//      native              Linux with a native cluster: the host's pg_dump.
+//      docker:<container>  the compose store: the container's own pg_dump,
+//                          which always matches the server's version, its
+//                          output streamed to the file.
 //  - **restore** — `pg_restore --clean` of a dump. Destructive by definition,
 //    so it is a CLI command you confirm, never something the worker does.
 //  - **reingest** — the fallback with no dump: rewind each source's cursor so
@@ -21,7 +27,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const { execFile } = require('child_process');
+const { execFile, spawn } = require('child_process');
 const { promisify } = require('util');
 
 const { config } = require('./config');
@@ -69,13 +75,90 @@ function wslPath(winPath) {
   return `/mnt/${m[1].toLowerCase()}/${m[2].replace(/\\/g, '/')}`;
 }
 
-// Runs a program inside the WSL distro. `--exec` skips the distro's shell, so
-// a URL or a path with spaces stays one argument.
-async function inWsl(program, args, { timeoutMs = 30 * 60_000 } = {}) {
-  return exec('wsl.exe', ['-d', config.backup.wslDistro, '--exec', program, ...args], {
-    timeout: timeoutMs,
-    maxBuffer: 16 * 1024 * 1024,
-    windowsHide: true,
+// 'wsl:Ubuntu' | 'native' | 'docker:pa-postgres' → what it means.
+function parseTools(spec) {
+  const m = /^(wsl|docker):(.+)$/.exec(String(spec || '').trim());
+  if (m) return m[1] === 'wsl' ? { mode: 'wsl', distro: m[2] } : { mode: 'docker', container: m[2] };
+  if (String(spec || '').trim() === 'native') return { mode: 'native' };
+  throw new Error(`PA_PG_TOOLS: cannot read "${spec}" — want native, docker:<container> or wsl:<distro>`);
+}
+
+// Inside the container the server is on its own loopback at 5432, whatever
+// port the host maps it to.
+function containerUrl(url) {
+  const u = new URL(url);
+  u.hostname = '127.0.0.1';
+  u.port = '5432';
+  return u.toString();
+}
+
+// Pure: the store's URL without its password, and the password. The password
+// travels as PGPASSWORD in the tool's environment, never on its command line
+// (which `ps` shows to every user on the machine).
+function splitPassword(url) {
+  const u = new URL(url);
+  const password = u.password ? decodeURIComponent(u.password) : null;
+  u.password = '';
+  return { url: u.toString(), password };
+}
+
+// Pure: the process that runs `program args` against the store for this
+// mode. Paths among the args must already be in the program's view of the
+// filesystem (the distro's /mnt path, the container's /tmp copy). With a
+// `password`, it reaches the program as PGPASSWORD: in this process's env for
+// a native tool, named (no value) with `docker exec -e` so the docker CLI
+// passes its own copy, and through WSLENV into the distro.
+function toolCommand(tools, program, args, { password = null } = {}) {
+  const env = password ? { PGPASSWORD: password } : null;
+  if (tools.mode === 'wsl') {
+    const wslenv = env ? { ...env, WSLENV: [process.env.WSLENV, 'PGPASSWORD/u'].filter(Boolean).join(':') } : null;
+    return withEnv({ cmd: 'wsl.exe', args: ['-d', tools.distro, '--exec', program, ...args] }, wslenv);
+  }
+  if (tools.mode === 'docker') {
+    return withEnv({ cmd: 'docker', args: ['exec', ...(env ? ['-e', 'PGPASSWORD'] : []), tools.container, program, ...args] }, env);
+  }
+  return withEnv({ cmd: program, args }, env);
+}
+
+function withEnv(command, env) {
+  return env ? { ...command, env } : command;
+}
+
+// Pure: the dump step. The docker one prints the archive on stdout, which is
+// streamed to `file`; the others write `file` themselves.
+function dumpCommand(tools, { url, file }) {
+  const base = ['--format=custom', '--compress=6'];
+  if (tools.mode === 'docker') {
+    const c = splitPassword(containerUrl(url));
+    return { ...toolCommand(tools, 'pg_dump', [...base, `--dbname=${c.url}`], c), stdoutFile: file };
+  }
+  const target = tools.mode === 'wsl' ? wslPath(file) : file;
+  const c = splitPassword(url);
+  return toolCommand(tools, 'pg_dump', [...base, `--dbname=${c.url}`, `--file=${target}`], c);
+}
+
+// Runs one command; with `stdoutFile`, its stdout goes to that file.
+function runTool({ cmd, args, stdoutFile, env }, { timeoutMs = 30 * 60_000 } = {}) {
+  const childEnv = env ? { ...process.env, ...env } : process.env;
+  if (!stdoutFile) {
+    return exec(cmd, args, { timeout: timeoutMs, maxBuffer: 16 * 1024 * 1024, windowsHide: true, env: childEnv });
+  }
+  return new Promise((resolve, reject) => {
+    const outFile = fs.createWriteStream(stdoutFile);
+    const child = spawn(cmd, args, { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, env: childEnv });
+    let stderr = '';
+    const timer = setTimeout(() => child.kill('SIGKILL'), timeoutMs);
+    child.stdout.pipe(outFile);
+    child.stderr.on('data', (d) => { stderr += d; });
+    child.on('error', (err) => {
+      clearTimeout(timer);
+      outFile.destroy();
+      reject(err);
+    });
+    child.on('close', (code) => {
+      clearTimeout(timer);
+      outFile.close(() => (code === 0 ? resolve({ stdout: '', stderr }) : reject(Object.assign(new Error(`exit ${code}`), { stderr }))));
+    });
   });
 }
 
@@ -86,12 +169,7 @@ async function dump({ dir = config.backup.dir, keep = config.backup.keep } = {})
   const partial = `${final}.partial`;
   const started = Date.now();
   try {
-    await inWsl('pg_dump', [
-      '--format=custom',
-      '--compress=6',
-      `--dbname=${config.databaseUrl}`,
-      `--file=${wslPath(partial)}`,
-    ]);
+    await runTool(dumpCommand(parseTools(config.backup.pgTools), { url: config.databaseUrl, file: partial }));
     fs.renameSync(partial, final);
   } catch (err) {
     fs.rmSync(partial, { force: true });
@@ -118,34 +196,61 @@ async function dumpIfDue() {
 //
 // Extensions are left out of the restore list: `pa` does not own `vector`,
 // so `--clean` cannot drop it, and the restore would abort. Creating one
-// needs a superuser, which is what windows/setup-wsl-postgres.sh is for — on
-// a rebuilt machine, run that first and it leaves an empty database with
-// both extensions, ready for this.
+// needs a superuser, which is what the provisioners are for
+// (windows/setup-wsl-postgres.sh, linux/setup-postgres.sh, or the compose
+// container's first start) — on a rebuilt machine, run that first and it
+// leaves an empty database with both extensions, ready for this.
 async function restore(file) {
   if (!fs.existsSync(file)) throw new Error(`no such file: ${file}`);
   const have = await query(`select extname from pg_extension where extname in ('vector','pg_trgm')`);
   if (have.rows.length < 2) {
-    throw new Error('the database lacks the vector/pg_trgm extensions — run windows/setup-wsl-postgres.sh first');
+    throw new Error(`the database lacks the vector/pg_trgm extensions — run ${require('./platform').services.dbProvision} first`);
   }
+  const tools = parseTools(config.backup.pgTools);
   const listFile = `${file}.restore-list`;
+  // The docker tools see the container's filesystem: the dump and the list go
+  // in through `docker cp` and are removed after.
+  const inside = tools.mode === 'docker' ? `/tmp/pa-restore-${process.pid}-${Date.now()}` : null;
+  const view = (p) => (tools.mode === 'wsl' ? wslPath(p) : inside ? `${inside}${p === listFile ? '.list' : '.dump'}` : p);
   try {
-    const { stdout } = await inWsl('pg_restore', ['--list', wslPath(file)]);
+    if (inside) await runTool({ cmd: 'docker', args: ['cp', file, `${tools.container}:${view(file)}`] });
+    const { stdout } = await runTool(toolCommand(tools, 'pg_restore', ['--list', view(file)]));
     fs.writeFileSync(listFile, restoreList(stdout));
-    await inWsl('pg_restore', [
-      '--clean',
-      '--if-exists',
-      '--no-owner',
-      '--single-transaction',
-      `--use-list=${wslPath(listFile)}`,
-      `--dbname=${config.databaseUrl}`,
-      wslPath(file),
-    ]);
+    if (inside) await runTool({ cmd: 'docker', args: ['cp', listFile, `${tools.container}:${view(listFile)}`] });
+    const db = splitPassword(tools.mode === 'docker' ? containerUrl(config.databaseUrl) : config.databaseUrl);
+    await runTool(
+      toolCommand(tools, 'pg_restore', [
+        '--clean',
+        '--if-exists',
+        '--no-owner',
+        '--single-transaction',
+        `--use-list=${view(listFile)}`,
+        `--dbname=${db.url}`,
+        view(file),
+      ], db)
+    );
   } catch (err) {
     throw new Error(`pg_restore failed: ${(err.stderr || err.message).trim().slice(0, 500)}`);
   } finally {
     fs.rmSync(listFile, { force: true });
+    if (inside) await runTool({ cmd: 'docker', args: ['exec', tools.container, 'rm', '-f', view(file), view(listFile)] }).catch(() => {});
   }
+  await rotateInstallId();
   log.info('restored', { file });
+}
+
+/**
+ * A restored store is a new install (sql/026 pa_install): the dump may be
+ * restored next to a live copy of itself, and two stores holding one install
+ * id would hand each other's runs the same factory idempotency keys. Runs
+ * already submitted keep the key on their row (run.external_id).
+ */
+async function rotateInstallId(q = query) {
+  const id = require('crypto').randomUUID();
+  await q('delete from pa_install');
+  await q('insert into pa_install (id) values ($1)', [id]);
+  log.info('new install id after restore');
+  return id;
 }
 
 // A `pg_restore --list` with the extension entries (and their comments)
@@ -174,4 +279,19 @@ async function reingest({ days, sources = [] }) {
   return { since, sources: r.rows.map((x) => x.source) };
 }
 
-module.exports = { dump, dumpIfDue, restore, reingest, list, toPrune, stamp, wslPath, restoreList };
+// For `pa doctor`: a native pg_dump older than the server refuses to dump it
+// ("server version mismatch"), which would surface only at 2 a.m.
+async function toolsCheck() {
+  const tools = parseTools(config.backup.pgTools);
+  if (tools.mode !== 'native') return { ok: true, detail: '' };
+  const r = await exec('pg_dump', ['--version'], { timeout: 10_000, windowsHide: true }).catch((err) => ({ error: err }));
+  if (r.error) return { ok: false, detail: 'pg_dump not found — install postgresql-client, or set PA_PG_TOOLS=docker:<container>' };
+  const client = Number((/(\d+)(?:\.\d+)?/.exec(r.stdout) || [])[1]);
+  const row = await query(`select current_setting('server_version_num')::int / 10000 as major`).catch(() => null);
+  const server = row ? Number(row.rows[0].major) : null;
+  if (server && client && client < server) return { ok: false, detail: `pg_dump ${client} is older than the server (${server}) — dumps will fail` };
+  return { ok: true, detail: `pg_dump ${client || '?'}` };
+}
+
+module.exports = {
+  rotateInstallId, dump, dumpIfDue, restore, reingest, list, toPrune, stamp, wslPath, restoreList, parseTools, containerUrl, dumpCommand, toolCommand, toolsCheck, splitPassword };

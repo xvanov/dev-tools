@@ -22,13 +22,40 @@ const { logger } = require('../log');
 
 const log = logger('termhub');
 
+const GUARD = { 'X-Termhub': '1' };
+
+/**
+ * Pure. A doctor line for a termhub reached by its tailnet (MagicDNS) name:
+ * null when the URL is not a tailnet name; otherwise ok, or — on the 403 a
+ * termhub gives a Host it does not know — the fix, naming
+ * TERMHUB_ALLOWED_HOSTS (termhub learns its own name from `tailscale status`,
+ * so a `tailscale` missing from its PATH lands here).
+ */
+function tailnetCheck(url, result) {
+  let host;
+  try {
+    host = new URL(String(url)).hostname.toLowerCase();
+  } catch {
+    return null;
+  }
+  if (!/\.ts\.net$/.test(host)) return null;
+  if (result.ok) return { ok: true, detail: `${host} answers by its tailnet name` };
+  if (/\b403\b/.test(String(result.error))) {
+    return { ok: false, detail: `${host} refused its own tailnet name (403) — on that machine put \`tailscale\` on termhub's PATH, or add ${host} to TERMHUB_ALLOWED_HOSTS` };
+  }
+  return { ok: false, detail: `${host} unreachable by its tailnet name — ${String(result.error).slice(0, 120)}` };
+}
+
 function client(baseUrl) {
   const root = String(baseUrl).replace(/\/+$/, '');
 
   async function api(path, { method = 'GET', body, timeoutMs = 15_000 } = {}) {
     const res = await fetch(root + path, {
       method,
-      headers: body ? { 'Content-Type': 'application/json' } : {},
+      // X-Termhub on every call: termhub refuses a state-changing request
+      // without it (termhub/lib/requestGuard.js, its CSRF guard). An older
+      // termhub ignores the header.
+      headers: body ? { 'Content-Type': 'application/json', ...GUARD } : { ...GUARD },
       body: body ? JSON.stringify(body) : undefined,
       signal: AbortSignal.timeout(timeoutMs),
     });
@@ -56,16 +83,21 @@ function client(baseUrl) {
     return payload?.sessions || payload || [];
   }
 
-  async function createSession({ cwd, command, title, cols = 120, rows = 34 }) {
-    const payload = await api('/api/sessions', {
-      method: 'POST',
-      body: { cwd, command, title, cols, rows },
-    });
+  // `env` / `unsetEnv` change the session's environment from termhub's own
+  // (a no-push run starts without push credentials, src/dispatch/remote.js).
+  // `envApplied` is true only when termhub says it applied them: an older
+  // termhub ignores the fields, and the caller must not take that on trust.
+  async function createSession({ cwd, command, title, cols = 120, rows = 34, env = null, unsetEnv = null }) {
+    const body = { cwd, command, title, cols, rows };
+    if (env) body.env = env;
+    if (unsetEnv) body.unsetEnv = unsetEnv;
+    const payload = await api('/api/sessions', { method: 'POST', body });
     // termhub has answered with both shapes across versions; accept either rather
     // than pin a version we would then have to keep in step.
     const id = payload?.id || payload?.session?.id;
     if (!id) throw new Error('termhub did not return a session id');
-    return { id, raw: payload };
+    const applied = payload?.envApplied || payload?.session?.envApplied;
+    return { id, raw: payload, envApplied: Boolean((env || unsetEnv) && applied === true) };
   }
 
   async function killSession(id) {
@@ -290,4 +322,4 @@ function forMachine(name) {
   return isLocal(name) ? local : client(config.termhub.machines[name].url);
 }
 
-module.exports = { ...local, client, forMachine, isLocal, briefClaude, claudeScreenState, trustKeys };
+module.exports = { ...local, client, tailnetCheck, forMachine, isLocal, briefClaude, claudeScreenState, trustKeys };

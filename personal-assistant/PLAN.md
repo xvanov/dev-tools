@@ -40,10 +40,10 @@ whole deployment), and there is no job queue at all (see the Queue row).
 
 | Decision | Choice | Why |
 |---|---|---|
-| Host | Everything on the Windows box | Repos, toolchain and termhub already live there. Accepted cost: the assistant sleeps when the machine does. |
+| Host | **Any machine, Linux or Windows, each the native way** (2026-11-02; was "everything on the Windows box") | Operator, 2026-11-02: "the PA should be able to run on any machine, Linux or Windows; whatever platform it runs on it should run the best way for that platform and be performant." Every OS decision sits behind `src/platform/` (one implementation per behaviour per OS); a piece an OS cannot do well degrades explicitly in `pa doctor`. Accepted cost unchanged: the assistant sleeps when its machine does. |
 | Primary surface | OpenClaw TUI in the terminal | Where the work already happens. No tenant approval needed, unlike a Teams bot. |
 | Session substrate | **termhub sessions**, not tmux and not ACP | Only substrate where you can *attach to a running agent* from a browser on your phone. ACP can be steered but never attached to; native OpenClaw subagents can't even be steered. |
-| Store | One Postgres + pgvector, **in WSL** | Rows, jsonb, embeddings and full-text in one engine with one backup. Not Docker: this machine's Docker Desktop runs the Windows container engine, and there is no Windows Postgres image. |
+| Store | One Postgres + pgvector — **in WSL** on Windows; a native cluster or the compose container on Linux | Rows, jsonb, embeddings and full-text in one engine with one backup. Not Docker on Windows: that machine's Docker Desktop runs the Windows container engine, and there is no Windows Postgres image. Linux Docker runs Linux images, so `docker-compose.yml` is the right answer there (`linux/install.sh`). |
 | Queue | **None** — work to do is a query | A queue table can get stuck, leak, or need draining after a crash. An anti-join against `distillation` cannot. Replaces the graphile-worker line in the original plan. |
 | Autonomy | Per-task mode chosen at dispatch | Not a global setting. See §6. |
 | Onyx | **Deferred** to phase 8 | ~16 GB of Docker (Postgres + Vespa + Redis + model server) to get connectors we're writing thin versions of anyway. Revisit when SharePoint/Confluence/HubSpot breadth actually matters. |
@@ -56,6 +56,9 @@ whole deployment), and there is no job queue at all (see the Queue row).
 ### The Windows split, concretely
 
 OpenClaw requires WSL2 on Windows. Everything else wants to be native, next to `C:\repos`.
+(On Linux there is no split: everything is native, the store is a dedicated cluster or the
+compose container on :5433, and the processes are systemd user units — see README, *Install
+(Linux)*.)
 
 ```
 Windows host
@@ -209,6 +212,8 @@ pa search <query>             # hybrid search over everything captured
 pa who <name>                 # a person: identities, recent threads, open commitments
 
 pa do <id> --mode <mode> [--repo <path>]   # dispatch (see §6)
+        [--via claude|factory|auto]         # a Claude session, the software factory, or let the rule pick
+pa runs stats                 # which route works for which kind of task
 pa runs                       # live and recent runs, with termhub session links
 pa attach <run>               # print the termhub URL (and open it)
 pa say <run> "<text>"         # steer a running session without leaving the CLI
@@ -260,6 +265,14 @@ Mechanics that hold for every mode:
   runs get no push credential in their environment.
 - A run that finishes announces through termhub's existing voice/ntfy path. A run that stalls
   waiting on input is exactly what termhub's idle tracking already measures.
+
+**The software factory is a second target** (`--via factory`, contract in the factory's
+`docs/JOBS-API.md`). The mode becomes the job's delivery level — `local` → `none`, `branch` →
+`branch`, `mr`/`full` → `draft_pr`; `plan` is not a factory job — and the factory clamps it to the
+app's ceiling. The BRIEF is the job's ask; the commitment's done-criteria go with it. `--via auto`
+uses a deterministic rule (factory for a concrete code change in a registered repo with stated
+done-criteria; a Claude session otherwise) behind a seam for a smarter chooser, and every run
+records route and outcome so `pa runs stats` can say which route works for which task.
 
 ---
 
@@ -490,8 +503,10 @@ Teams channel bot if the tenant ever allows it, so asks and answers share one th
 4. **Distillation cost.** An LLM pass over every inbound item adds up. Route it to a small fast
    model, batch it, skip anything under a length threshold, and never re-distill an unchanged
    `content_hash`.
-5. **Windows-only fragility.** node-pty, worktrees, path separators, and WSL/Windows networking
-   are each a small tax, paid repeatedly. termhub already solved most of these — read how it did
+5. **Per-platform fragility.** node-pty, worktrees, path separators, and WSL/Windows networking
+   are each a small tax, paid repeatedly — and since 2026-11-02 the same tool also runs on Linux,
+   where the taxes are a keyring that may be locked, a desktop that may not exist, and a sound
+   server that may not be PipeWire. `src/platform/` is where each is paid, once. termhub already solved most of these — read how it did
    it before solving them differently.
 6. **The dependency that stalls.** Half the landscape surveyed on 2026-09-01 had stopped
    shipping. Keep OpenClaw behind the `pa` CLI, so it can be cut without touching the store.

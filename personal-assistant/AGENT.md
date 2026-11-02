@@ -20,13 +20,50 @@ patch — and no worker, cron job, skill or agent may ever trigger a send.
 **A dispatched run never touches the main working tree.** Own worktree under
 `../.pa-worktrees/<run-id>`, own branch, removed by `pa drop`. The root `CLAUDE.md` is explicit
 that a dirty tree breaks termhub's updater — dispatched work must not be able to cause that.
-A run on another machine (`--machine`, `src/dispatch/remote.js`) gets the same: its worktree
-and the pushurl block are made on that machine before `claude` is typed, and the dispatcher
+A run on another machine (`--machine`, `src/dispatch/remote.js`; Windows, Linux or macOS) gets
+the same: its worktree and the pushurl block are made on that machine through termhub's
+`POST /api/exec` (exit codes checked, no shell) before `claude` is typed, and the dispatcher
 checks the worktree exists through termhub's API rather than trusting the shell.
 
 **Mode boundaries are enforced by the dispatcher, not requested of the agent.** A `local` run
-gets no push credential in its environment. Do not implement a stop condition as a sentence in
-the prompt and call it done.
+gets no push credential in its environment: its termhub session starts with GH/GitHub tokens,
+`SSH_AUTH_SOCK` and askpass helpers removed, git's credential helpers reset to none through
+`GIT_CONFIG_*`, and ssh run with no user config, agent or default key (`remote.noPushEnv`, applied by
+termhub's session env and confirmed back as `envApplied`; a termhub that cannot confirm it refuses the
+run). `gh` is logged out there too: `GH_CONFIG_DIR` points at an empty private directory of ours (so
+the `hosts.yml` in `~/.config/gh` is never read), `GH_HOST`/`GH_TOKEN`/`GITHUB_TOKEN`/enterprise tokens
+are unset; the shell starts without rc files (termhub `noRc`, confirmed as `rcSkipped`; required on
+Windows) and on POSIX the agent's command line re-applies the env after them (`remote.noPushCommand`),
+so a `~/.bashrc` that exports a token cannot undo it. `test/dispatchStart.test.js` checks `gh auth
+token` fails inside that env. **Residual risk:** that strips what the environment hands the agent, not
+what the disk holds — an agent that reads `~/.ssh/id_*` or gh's `hosts.yml` itself and passes it
+explicitly can still push; the pushurl block is not credential isolation either (`git push <url>` and
+`-c` walk round it). And a run whose mode may push (`branch`, `mr` — so every `draft_pr`, `pr` and
+`auto_merge` session) holds the operator's full credentials: its agent, started with
+`--dangerously-skip-permissions`, *could* exceed its level (mark its PR ready, merge it, push to main);
+the end state is what the PA does, not a limit on what that agent can do. The same holds for a
+no-push run: it is the operator's OS user, so `GH_CONFIG_DIR=$HOME/.config/gh gh …` or `~/.ssh/id_*`
+restores the login. **The real boundary for work that must never exceed its level is a separate OS
+user (or machine) without those credentials — not set up yet; a follow-up.** `pa doctor` says so on
+every run (`run isolation`).
+
+**Unattended levels cannot be started from inside a run — by mitigation, not by boundary.** A
+dispatched agent runs as the same user with prompts skipped, so it can reach the dashboard API with
+`X-PA: 1`, run `pa`, or fake a TTY. Two cheap layers: (1) every dispatched session's env carries
+`PA_DISPATCHED_RUN=<id>`, and `pa do` / `pa answer` refuse `auto_merge` / `push_to_main` while it is
+set; (2) the dashboard's endpoints that start or accept those levels also need a page token issued
+with each page load and held only in that page's memory (`X-PA-Page`, src/dashboard/server.js), and
+Do confirms only the level the page resolved and showed (`confirmedLevel`; anything else is 409 with
+the level). An agent that unsets the variable and scrapes a page gets past both: defence in depth. Do not
+implement a stop condition as a sentence in the prompt and call it done. Here and on another machine, the push block goes in the worktree's own config
+(`extensions.worktreeConfig` + `git config --worktree`; a plain `git config` in a worktree writes
+the repo's *shared* config and blocks the main checkout and every run at once) and is **read
+back** before the run starts — a block that cannot be verified (a termhub without `/api/exec`,
+where it could only be typed) refuses the no-push run instead of starting it unverified. Both
+paths call the one `remote.blockPush`, after `remote.clearLegacyBlock` has removed the dead pushurl
+older code left in a repo's *shared* config (only that value). Nothing else edits a repo's shared
+config: `pa land` lifts no block (a mode that may push never had one). A start that fails after its
+run row exists marks the row failed with the reason and removes the session, worktree and branch.
 
 **The dispatcher is not tailnet-reachable.** It executes code by design. Loopback and the WSL
 interface only. termhub is the thing that is safe to expose, because its trust model is the
@@ -53,22 +90,55 @@ capability; it is how the dashboard works from a phone. For that the page's own 
 
 **The PA chat acts only behind permission prompts.** `pa chat` starts one Claude Code session in
 termhub, homed in `<dataDir>/pa-home` (`src/chat/`), which reads other people's messages all day.
-It is started *without* `--dangerously-skip-permissions`; its `settings.json` allows the read-only
-`pa` commands and the read MCP tools and puts `pa do/land/drop/say/done/remember/forget/routine
-add/notify feedback` behind an *ask*. Its CLAUDE.md is rewritten from code on every start — change it in
-`src/chat/index.js`, not on disk; the user's own additions go in `CLAUDE.local.md`.
+It is started *without* `--dangerously-skip-permissions` and *with* `--permission-mode default`; its
+`settings.json` sets `defaultMode: "default"` and `disableBypassPermissionsMode: "disable"` (a user-level
+`auto` or `acceptEdits` cannot apply), and `verifyClaudeHome` reads the settings back — including a
+`settings.local.json` that would outrank them — before the session starts, refusing it otherwise. It
+reads only through MCP tools: the read MCP tools, and the read-only `pa` verbs as the MCP tool `pa`
+(server `pa-chat`, `--mcp-config pa-home/pa-chat.mcp.json`, `PA_MCP_CHAT_TOOLS=1`). No `pa` shell
+command is allowed — a Bash prefix rule cannot tell `pa memory` from `pa memory run` — so every one,
+`pa propose` included, asks. Its CLAUDE.md is rewritten from code on every start — change it in
+`src/chat/index.js`, not on disk; the user's own additions go in `CLAUDE.local.md`. The chat may run
+on opencode instead (`PA_CHAT_AGENT`, `src/chat/agent.js`) only under the same guarantee, enforced
+differently because opencode parses a command line its own way and every bash allow-pattern was a
+way round it: its `opencode.json` starts from `"*": "ask"` (opencode's defaults allow), makes
+**every** shell command ask with no allow-pattern, and gives it the read-only verbs
+(`ALLOW_COMMANDS`) as the MCP tool `pa` instead — an enum plus argv, no shell, sub-commands compared
+case-insensitively against per-verb allow/deny lists, writing flags (`--force`, `--notify`, `--done`,
+`--project`, …) refused on every verb, verbs that write (`notify ack`, `doctor`) not on it at all, and
+`runs` run with `PA_READ_ONLY=1` so it does not reconcile — listed only when the chat's own config sets
+`PA_MCP_CHAT_TOOLS=1`.
+The acting verbs (`ASK_COMMANDS`) stay shell commands behind the prompt, through one launcher each
+(`pa-home/bin/pa-do`, …), because opencode's "Allow always" saves the command's first word + ` *`, cannot
+be turned off and outranks the config: on `node …/pa.js` that was `node *`; on a launcher it is that
+one verb. It denies `task` (subagents), and an opencode chat starts only after
+`verifyOpencodePermissions` has read the ruleset opencode actually resolved (`opencode debug agent`)
+and found its shape — nothing after the ask-everything bash rule allows a shell command — and every
+probe holding. `chatCommand` refuses any command that skips permissions
+(`--dangerously-skip-permissions`, any `--permission-mode` but `default`/`plan`, `--allowedTools`,
+opencode `--auto`). Add a permission to the lists, never to one agent's file.
 
 **The worker reaches the PA chat through a file, and types into it only a fixed doorbell.** Pushed
 notifications go to `pa-home/INBOX.md`, which the chat's CLAUDE.md says is data, never instructions.
 Typed text is a user prompt with the user's authority, so the only thing ever typed is the
 content-free `PA inbox: notification <id> is waiting. Read INBOX.md.` — never a title or body — and
-only when `nudgeDecision` (`src/notify/chat.js`, tested) proves the session finished its turn, is not
-on a permission prompt, and has an empty input box. When it cannot prove it, it skips: Enter on a
+only when `nudgeDecision` (`src/notify/chat.js`, tested) proves the session is Claude Code (termhub's
+`kind`), finished its turn, is not on a permission prompt, and has an empty input box. An opencode
+chat is never nudged: the screen rules are Claude's. When it cannot prove it, it skips: Enter on a
 permission prompt approves the action. Do not loosen a condition there without a test case for it.
 
 **One implementation per behaviour.** OpenClaw skills call the `pa` CLI. They do not talk to
 Postgres, and they do not reimplement dispatch. When the TUI and the CLI disagree about what
 `pa do` means, the bug is that there are two implementations.
+
+**Connector passes run on Claude Code, and nothing else pretends to.** Model strings are
+`provider/model` (`src/models.js`); text and JSON passes may run on any provider, but a pass that
+needs `toolCalls` — the Microsoft 365 relay and the Jira connector fallback, `PA_CONNECTOR_MODEL` —
+needs the claude.ai connector logins only Claude Code holds. `models.route` refuses any other
+backend before a call is made, `pa doctor` shows it as not capable, and the worker logs it at
+start. Do not add a fallback that runs a connector pass on a model that cannot reach the
+connectors: it would "succeed" with nothing read. And an unknown price is `null` in `llm_spend`,
+never estimated from a similar-sounding model — `openrouter/anthropic/…` is not Anthropic's price.
 
 **Connector data comes from tool results, never from model text.** Microsoft 365 is reached
 through a headless `claude -p` (`llm.toolCalls`), and the model's only job there is to make the
@@ -78,7 +148,9 @@ a relay that will one day paraphrase someone's request. (Jira predates this and 
 reply; moving it over is fine.)
 
 **The Teams cache is read, never touched, and shares the connector's rows.** `teamsLocal.js`
-reads the new Teams client's IndexedDB on this disk because it is seconds behind where the
+reads the new Teams client's IndexedDB on this disk (Windows: there is no new Teams desktop client
+on Linux, so there it is off unless `PA_TEAMS_CACHE_DIR` points at a cache, and `pa doctor` says
+so) because it is seconds behind where the
 connector is minutes behind, and it needs no Entra app registration (ruled out for this tool). It is
 the same user's same data, local only. `teams/read_cache.py` opens Teams' files read-only with
 every share flag, never writes or locks them, tails the LevelDB log from a saved offset, and
@@ -149,18 +221,79 @@ woke it is a hint. `awaitEvent` suspends a task by throwing: never catch it exce
 waits on `proposal:<id>`; a proposal with no task runs a typed handler in `src/proposals` — there
 is no handler that takes a command or free text.
 
-**A finished run's draft PR is opened without asking; merging only in my own repos.**
-`run_review` pushes the run's branch and opens a *draft* PR as soon as the session ends with
-commits (I decided a draft is always fine: it merges nothing and can be closed). Only in a repo on
-`PA_MERGE_REPOS` (repos I own, `src/dispatch/merge.js`) is it marked ready and squash-merged, and
-only once every check passed. Do not widen the default list or merge on a failing, cancelled or
-still-running check; a repo where other people work is never on it.
+**A finished run is delivered to the end state I chose for it, and to nothing past it.** Every run
+records its delivery level (`run.delivery`, src/dispatch/deliveryCore.js): `none` < `branch` <
+`draft_pr` < `pr` < `auto_merge` < `push_to_main`. It is set only from my side — `--delivery`, the
+card's picker, an explicit `--mode`, my own words in `--task`, my per-repo default (`pa delivery
+set`), `PA_DELIVERY_DEFAULT` — and never from a third party's message: the planner's offers and a
+commitment's text never infer one. Inference from my words reaches at most `pr` (ordinary text says
+"runs on push to main"). The two levels with no human step after the yes (`auto_merge`,
+`push_to_main`) need an explicit choice and a confirmed start — `D.requireConfirmed` refuses any start
+without one: a terminal yes to `pa do` (which prints the end state first), the dashboard's Do, or a
+card accepted in the dashboard or from a terminal. Asked for by the chat or any non-interactive
+caller, `pa do` puts it on a card labelled "suggested by the chat" instead, and `pa answer` will not
+accept such a card without a terminal. There is no ceiling (operator decision 2026-11-02); the card
+and `pa do` say what these two do in plain words. A Claude session runs in the mode its level maps to (`D.modeFor`;
+`push_to_main` runs as `local`: no push credentials in its environment and its worktree's push blocked
+— which stops an accident, not a determined agent, see the residual risk above) and `run_review`
+(src/durable/tasks/runReview.js) does the rest when it ends: merging only on `auto_merge`, pushing
+to main only on `push_to_main` (branch first, then a fast-forward to exactly the checked commit), and
+either only after `merge.ciGate` passed CI on that commit — polled at most `CI_LIMIT_MS` (30 min),
+never before `CI_SETTLE_MS`, every required check present and green (required checks unreadable →
+blocked), and with none required the same green set on two polls; no checks at all counts only when
+none are required, and is noted on the run. Before a merge `merge.mergeRefusal` re-reads the PR: base
+is the default branch, not from a fork, head is the checked commit, and the base has not moved since
+CI unless the repo itself requires up-to-date branches. A worktree starts from a freshly fetched
+`origin/<default>`. Red, late or refused: branch / PR left, run `blocked`, I am told. A run
+recorded before end states (delivery null) keeps the old rule: a draft PR, merged only in a repo on
+`PA_MERGE_REPOS` — do not widen that list. The push block is lifted from the worktree's own config
+(`liftPushBlock`), the same place `blockPush` put it.
 
 **The planner starts only read-only runs on its own, and few.** `src/agent/planner.js` may start
 a `plan`-mode run (it reads and writes findings; it can neither commit nor push) for an ask it
 judged "investigate" with a known repo, at most `PA_EAGER_RUNS_PER_DAY` a day and only while
 `budget.allow('eager')` says yes, and tells you it did. Anything that changes code is offered as a
 `dispatch` proposal and starts only on your yes. Do not widen the mode it may start alone.
+
+**The factory is a dispatch target under the same rules, reached only through its contract.**
+`--via factory` (`src/dispatch/factory.js`) sends a run to the software factory instead of a
+Claude session. The PA never imports factory code or reads its store: it runs `uv run factory
+job|app …` through `runCommand` (`src/dispatch/exec.js`) and parses the one JSON object the
+factory's `docs/JOBS-API.md` says each command prints. Every job is sent with an explicit
+`--delivery` (the end state above; `plan` is never a job) and the factory honours it as asked. A
+factory job changes code, so the planner only ever *offers* one; its own runs stay `plan`-mode
+Claude sessions (`test/factoryDispatch.test.js` checks the planner source). A job's end moves its
+commitment only through `ledger.transition` (actor `factory`) and only from `dispatched`, and
+GitHub reconcile closes only `open` asks, so a merged factory PR is never closed twice. A job id is
+checked against `factoryCore.JOB_ID` before it is typed into a terminal. Any route chooser's answer
+passes `routeCore.guard`. Every job is sent with a `--flow-file` (`factoryCore.flowMarkdown`,
+deterministic), since the factory parks a job without a flow; content reaches another machine
+on the writer's stdin (never argv, where `ps` shows it and a large brief overflows the limit), into
+a fresh `mkdtemp` directory (0700) with `O_EXCL|O_NOFOLLOW` files, removed once the factory has the
+job (kept while a submit's outcome is unknown, since it may still be read). A submit is idempotent on
+`--source pa --external-id <install id>-<run id>` (sql/026 `pa_install`; a first submit answered
+`created: false` is someone else's job and is refused); only the factory's known pre-creation refusal
+codes (`factoryCore.REFUSAL_CODES`) or a command that never ran (exit 127) fail a run outright; after
+any other failure once a submit went out, the run is settled
+against `job status`/`job list` (`factory.settle`, `factoryCore.submitVerdict`) — adopted, failed
+only after the factory has said "no such job" for `SUBMIT_GRACE_MS`, or `waiting` as
+`submit_unknown` for the worker, failed and notified after a day either way — and never left
+`starting`. `pa drop` settles such a run first (cancelling a job it finds) and refuses while the
+factory cannot be asked. One live run per commitment holds under concurrency: every run insert goes
+through `runRow.insertRun`, which re-checks under a transaction-scoped advisory lock.
+
+**A factory brief carries what the task needs, not my private material.** The ask is composed
+(`src/dispatch/compose.js`; every rule pure and tested in `composeCore.js`): goal, done-criteria,
+constraints, decisions, facts, pointers to existing files to reuse or extend, and the fixed
+instruction to search before writing, extend rather than duplicate, follow conventions and add
+tests. Memory pages and message bodies go to the composing model to select from and never into
+the brief wholesale (`copiesPrivate`: 12 verbatim words is a dump and is dropped); secrets are
+redacted before the model sees anything and again after; reuse paths must be files the repo has.
+The model is a mockable seam (`compose._setModel`); when it fails, the brief is the deterministic
+one, which holds nothing private. What a dispatch card shows is frozen in the proposal
+(`src/dispatch/offer.js`) and is exactly what runs at accept — app, criteria, brief, pipeline,
+models, end state (re-rendered, never recomposed, if I change it on the card). Nothing outward
+happens before the yes: registering a repo with the factory (`factory app add`) waits for accept.
 
 **Capture never stops for the assistant.** The worker's only levers on `capture.py` are the pause
 file (`pa mic pause`) and the roll file, which makes capture finish its file and continue in a
@@ -177,8 +310,10 @@ read in an email. Do not add MCP tools that approve, forget, or write active cla
 **Secret values flow browser → store; no model, log, API response or MCP result ever contains
 one.** A credential is asked for with a `secret_request` row (names, purpose, hints — the table
 has no value column) and answered in the dashboard or with `pa secret set`; the value goes
-straight into Windows Credential Manager or the gitignored `.env`, and the reply says only where.
-The vault is reached through PowerShell with the value on **stdin, never argv**. Code reads a
+straight into the OS vault — Windows Credential Manager (through PowerShell), or the Secret Service
+on Linux (through `secret-tool`) — or the gitignored `.env`, and the reply says only where. Every
+vault backend gets the value on **stdin, never argv** (`src/secrets/vault.js` is the one facade;
+the backends are in `src/platform/`). Code reads a
 secret with `config.secret(name)` and nothing else; errors are scrubbed of it. Agents may
 `request_secret` and ask `secret_status` (configured or not); do not add a tool, endpoint or CLI
 verb that shows a value. `test/secrets.test.js` fails if one echoes.
@@ -191,6 +326,15 @@ only when the pure `decide(repoState)` says `ff`; it never checks out, stashes, 
 local branch. Any new safety condition goes into `decide` with a test. Suggested routines are
 stored `proposed` and only a human enables them; a rejected one is kept so it is never proposed
 again. A scheduled slot missed during downtime runs once, never as a backlog.
+
+**OS decisions live in `src/platform/`, and only there.** One implementation per behaviour per
+OS (`windows.js`, `linux.js`, `darwin.js`, same contract, listed in `index.js`): data dir, venv
+layout, vault, notifications, open/clipboard, who holds the mic, restarting capture, free disk, how
+backups reach `pg_dump`, and the Teams cache default. Nothing else tests `process.platform`
+(dispatch decides by the *target* machine's OS, which is a different question). Each behaviour's
+process is built by a pure `…Command` function so `test/platform.test.js` pins it without side
+effects. Where an OS cannot do a thing well, it degrades explicitly and `pa doctor` prints
+`DEGRADED` or `UNSUPPORTED` — never silently.
 
 **Raven stays a skill.** Company engineering conventions are read through the existing
 `innergy-knowledge` skill. Do not copy that repo into this store; a second stale copy of the
@@ -217,14 +361,21 @@ Postgres and nowhere else. Tests use invented names; fixtures never hold a real 
 - **Secrets:** never in the repo, never in Postgres at all. There are few: GitHub and Microsoft
   365 ride on logins that already exist (`gh`, the claude.ai connectors); Jira prefers an API
   token (`PA_JIRA_API_TOKEN`) and falls back to its connector. A secret resolves real env →
-  Windows Credential Manager → `.env` through `config.secret(name)`; a missing one is `null`,
+  the OS vault (Credential Manager / Secret Service) → `.env` through `config.secret(name)`; a missing one is `null`,
   shows as "not configured" in `pa doctor`, and code that needs it calls
   `requestSecret({name, purpose, hint})` (`src/secrets`) instead of failing quietly.
 - **Times:** store UTC, render local. Every `due_at` the distiller writes is absolute — a row
   that says "Friday" is a bug.
 - **Logs:** message bodies are not log material. Log ids, counts, and durations.
 
-## The store lives in WSL, and WSL will drop it
+## Where the store lives
+
+**Linux:** Postgres 16 + pgvector on port 5433, either a dedicated native cluster
+(`pg_createcluster 16 pa`, so an existing Postgres on 5432 is untouched) or the
+`docker-compose.yml` container — Linux Docker runs Linux images, so compose is the right answer
+there. `linux/install.sh` provisions either and records which in `PA_PG_TOOLS` for backups.
+
+### On Windows the store lives in WSL, and WSL will drop it
 
 Docker Desktop on the target machine runs the **Windows** container engine, and there is no
 Windows image for Postgres, let alone one with pgvector. So the store is Postgres 16 +

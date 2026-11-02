@@ -38,6 +38,8 @@
 //     PA_CHAT_NUDGE_IDLE_MINUTES (2);
 //   - the screen's last input box is empty, and nothing after it but the
 //     footer — any text we cannot account for means "maybe you are typing".
+//   - termhub says the session is `claude`: the screen rules above are Claude
+//     Code's, and an opencode chat is never nudged.
 // Otherwise the nudge is skipped. The toast still goes and INBOX.md is still
 // written: the chat reads it on your next turn. A skipped nudge costs a few
 // minutes; a wrong Enter costs an approved action.
@@ -161,6 +163,10 @@ function promptContent(screen) {
 function nudgeDecision({ session, screen, minIdleMs = 2 * 60_000 } = {}) {
   if (!session) return { ok: false, reason: 'no PA chat session' };
   if (session.alive === false) return { ok: false, reason: 'session ended' };
+  // The input-box reading below is Claude Code's screen. An opencode chat (or
+  // a termhub too old to say which agent it is) cannot be proven idle at an
+  // empty prompt, so it is never typed at — INBOX.md still reaches it.
+  if (session.kind !== 'claude') return { ok: false, reason: `not a Claude Code session (${session.kind || 'agent unknown'})` };
   if (session.busy) return { ok: false, reason: 'producing output' };
   if (session.idleState !== 'waiting') return { ok: false, reason: `state ${session.idleState || 'unknown'}` };
   if (session.idleReason !== 'turn-end') return { ok: false, reason: `waiting on ${session.idleReason || 'something unknown'}` };

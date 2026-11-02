@@ -75,7 +75,11 @@ async function act(p) {
     });
     if (ok) {
       try {
-        const run = await require('../dispatch').start({ commitmentId: c.id, task: p.brief, mode: 'plan' });
+        // Always a Claude session: plan mode is read-only, and the factory
+        // only builds — nothing the planner starts alone may change code.
+        const run = await require('../dispatch').start({
+          commitmentId: c.id, task: p.brief, mode: 'plan', via: 'claude', routeReason: 'planner research run (read-only)',
+        });
         plan.researchRunId = Number(run.id);
         await require('../notify').notify({
           kind: 'info',
@@ -96,15 +100,33 @@ async function act(p) {
     }
   }
   if (p.action === 'offer_run') {
-    await require('../proposals').create({
-      kind: 'dispatch',
+    // Everything the card shows is decided now and frozen into the proposal
+    // (src/dispatch/offer.js): route, app, the end state, pipeline, models,
+    // done-criteria and the composed brief — accepting runs exactly that. A
+    // factory job changes code, so it is only ever offered, never started
+    // here. The end state is the repo's default (or PA_DELIVERY_DEFAULT): it
+    // is never inferred from the ask's text, which someone else wrote.
+    const offer = require('../dispatch/offer');
+    const useModel = await require('../budget').allow('planner').catch(() => false);
+    const o = {
       commitmentId: c.id,
-      title: `Start a ${plan.mode === 'plan' ? 'research' : 'coding'} session on: ${c.summary}`.slice(0, 280),
-      body: `${p.brief}\n\nIn ${c.project}. ${plan.mode === 'plan' ? 'Read-only: it writes up findings.' : 'Local mode: it commits in its own worktree and never pushes.'}`,
-      payload: { mode: plan.mode || 'local' },
+      kind: p.kind,
+      via: plan.mode === 'plan' ? 'claude' : 'auto',
+      mode: plan.mode === 'plan' ? 'plan' : null,
+      useModel,
+      why: p.brief,
       dedupeKey: `offer-run:${c.id}`,
       expiresAt: new Date(Date.now() + 5 * 86400_000),
+    };
+    const row = await offer.propose(o).catch(async (err) => {
+      // A route or composition failure still leaves an offer: a Claude session.
+      log.warn('offer not prepared; offering a Claude session', { commitment: Number(c.id), message: String(err.message).slice(0, 160) });
+      return offer.propose({ ...o, via: 'claude' }).catch(() => null);
     });
+    plan.route = row?.payload?.via || 'claude';
+    plan.routeReason = row?.payload?.routeReason || null;
+    plan.mode = row?.payload?.mode || plan.mode || null;
+    plan.delivery = row?.payload?.delivery || null;
   }
   if (p.action === 'ask_repo') {
     await require('../proposals').create({

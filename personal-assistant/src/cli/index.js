@@ -13,6 +13,7 @@ const path = require('path');
 const readline = require('readline');
 
 const { config } = require('../config');
+const platform = require('../platform');
 const { parseArgs, flagInt, flagBool } = require('./parseArgs');
 const db = require('../db');
 
@@ -35,13 +36,21 @@ const HELP = `pa — your context layer
   Doing
     pa do <id> [--mode m] [--repo p] dispatch a commitment to a Claude Code session
                      [--machine name]  …in another machine's termhub (PA_MACHINES)
+                     [--via claude|factory|auto]  …or to the software factory; auto picks and says why
+                     [--delivery none|branch|draft_pr|pr|auto_merge|push_to_main]  the end state (both routes)
+                     [--pipeline chain|solo|auto] [--model persona=model]… [--done "…"]… [--app a] [--register]  factory only
+                     [--preview]  print the route, end state and the brief that would be sent; start nothing
+                     [--agent claude|opencode] [--model m]  which agent CLI and model (local runs)
     pa done <id> [--dismiss|--reopen] close a commitment yourself
     pa ledger <id>                   every status change of a commitment, and why
     pa ledger reconcile [--dry-run] [--id N,..] [--limit N]
                                      judge open commitments against newer items now
     pa ledger undo <transition-id>   take back one status change
+    pa propose <id>|--task "…" […pa do's flags]  put the work on a card (Needs you) instead of starting it
     pa proposals                     what the assistant prepared or asks, waiting for you
-    pa answer <id> yes|no|<option>   answer one
+    pa answer <id> yes|no|<option> [--delivery level]  answer one; --delivery changes a card's end state
+    pa delivery [list] | set <owner/name> <level> | clear <owner/name>  per-repo default end state
+    pa factory apps | add <owner/name> [--delivery-default level] [--path p]  the factory's registered repos
     pa ledger looks-done [<evidence-id> --yes|--no]  proposals: list, or answer one
     pa notify [list] [--unread]      what the assistant told you, and how (push, digest, feed)
     pa notify ack <id>|all           mark read; it leaves the PA chat's INBOX.md
@@ -49,6 +58,7 @@ const HELP = `pa — your context layer
     pa notify weights | digest       per-kind weights · what the next digest would say
     pa do --task "..." [--mode m] [--repo p]
     pa runs [--all]                 live and recent runs
+    pa runs stats [--days 90]       which route works for which kind of task: outcomes, cost
     pa attach <run>                 print (and open) the termhub URL for a run
     pa say <run> <text...>          type at a running session without leaving the CLI
     pa review <run> [--diff]        what the session changed
@@ -70,7 +80,7 @@ const HELP = `pa — your context layer
 
   Secrets
     pa secret list                  names, where each is stored, when set — never values
-    pa secret set <NAME>            hidden prompt → Windows Credential Manager
+    pa secret set <NAME>            hidden prompt → the OS keyring (Credential Manager / Secret Service)
     pa secret request <NAME> --purpose "…"  ask for it in the dashboard instead
     pa help secret                  every secret verb
 
@@ -111,22 +121,15 @@ function printDraft(draft, { footer = true } = {}) {
   if (footer) out(`Nothing has been sent. \`pa send ${draft.id}\` opens it in ${draft.channel === 'teams' ? 'Teams' : 'Outlook'}.`);
 }
 
+// Opening and the clipboard are the platform's (src/platform). On a headless
+// box neither exists; the link and the text are printed instead.
 function openUrl(url) {
-  const { spawn } = require('child_process');
-  const [cmd, args] = process.platform === 'win32'
-    ? ['cmd', ['/c', 'start', '""', url.replace(/&/g, '^&')]]
-    : [process.platform === 'darwin' ? 'open' : 'xdg-open', [url]];
-  spawn(cmd, args, { detached: true, stdio: 'ignore', windowsHide: true }).unref();
+  if (!platform.openUrl(url)) out(`open: ${url}`);
 }
 
-function copyToClipboard(text) {
-  if (process.platform !== 'win32') return Promise.resolve();
-  return new Promise((resolve) => {
-    const child = require('child_process').spawn('clip', [], { stdio: ['pipe', 'ignore', 'ignore'] });
-    child.on('close', resolve);
-    child.on('error', resolve);
-    child.stdin.end(text);
-  });
+async function copyToClipboard(text) {
+  const ok = await platform.copyToClipboard(text).catch(() => false);
+  if (!ok) out('(no clipboard here — copy the text above)');
 }
 
 async function confirm(question) {
@@ -144,6 +147,62 @@ function relative(iso) {
   const hours = Math.round(mins / 60);
   if (hours < 48) return `${hours}h ago`;
   return `${Math.round(hours / 24)}d ago`;
+}
+
+// `pa do` / `pa propose` / `pa do --preview`: one reading of the flags.
+function dispatchFlags(commitmentId, task, flags, lists) {
+  const str = (name) => (flags[name] && flags[name] !== true ? String(flags[name]) : null);
+  const models = lists.model || [];
+  return {
+    commitmentId,
+    task,
+    mode: str('mode') || undefined,
+    repoPath: str('repo'),
+    machine: str('machine'),
+    via: str('via'),
+    delivery: str('delivery'),
+    pipeline: str('pipeline'),
+    // --model is shared: persona=model pairs are factory route overrides,
+    // a bare model picks the agent's model for a Claude/opencode run.
+    models: models.filter((m) => String(m).includes('=')).length ? models.filter((m) => String(m).includes('=')) : null,
+    done: lists.done || null,
+    app: str('app'),
+    register: flagBool(flags, 'register'),
+    agent: str('agent'),
+    model: models.filter((m) => !String(m).includes('=')).pop() || null,
+  };
+}
+
+// A connection string with its password hidden, parsed rather than pattern-
+// matched (a password holding '@', ':' or '/' defeated the regex).
+function maskUrl(u) {
+  try {
+    const url = new URL(String(u));
+    if (url.password) url.password = '***';
+    return url.toString();
+  } catch {
+    return '(unparseable database URL)';
+  }
+}
+
+// A person at a terminal, not the PA chat or a script: both ends a TTY, and
+// not inside the chat's session.
+function interactive() {
+  return Boolean(process.stdin.isTTY && process.stdout.isTTY) && process.env.PA_CHAT_SESSION !== '1' && !process.env.PA_DISPATCHED_RUN;
+}
+
+function suggestedBy() {
+  return process.env.PA_CHAT_SESSION === '1' ? 'the chat' : 'a non-interactive caller';
+}
+
+// An offer (src/dispatch/offer.js), as the card would show it.
+function printOffer({ body, payload }, { preview }) {
+  if (preview) out('PREVIEW — nothing started, nothing sent.\n');
+  out(body);
+  if (payload?.brief) {
+    out(`\n--- the brief that ${preview ? 'would be' : 'will be'} sent (${payload.briefBy}) ---\n`);
+    out(payload.brief);
+  }
 }
 
 // ---------------------------------------------------------------- commands --
@@ -354,27 +413,137 @@ const commands = {
     }
   },
 
-  async do(args, flags) {
+  async do(args, flags, lists = {}) {
     const dispatch = require('../dispatch');
     const commitmentId = args[0] ? Number(args[0]) : null;
     const task = flags.task && flags.task !== true ? String(flags.task) : null;
-    if (!commitmentId && !task) return fail('usage: pa do <commitment-id> [--mode m] [--machine name] | pa do --task "..."');
+    if (!commitmentId && !task) return fail('usage: pa do <commitment-id> [--mode m] [--delivery level] [--machine name] [--via claude|factory|auto] | pa do --task "..."');
+    const o = dispatchFlags(commitmentId, task, flags, lists);
+    if (flagBool(flags, 'preview')) {
+      // Composing is a model call made ahead of any decision: under the daily budget.
+      o.useModel = await require('../budget').allow('propose').catch(() => false);
+      return printOffer(await require('../dispatch/offer').prepare(o), { preview: true });
+    }
 
-    const machine = flags.machine && flags.machine !== true ? String(flags.machine) : null;
+    // The end state, shown BEFORE anything starts. One that merges or pushes to
+    // main with no human step after it starts only on a terminal yes; asked
+    // for by the chat (or any non-interactive caller) it becomes a card.
+    const D = require('../dispatch/deliveryCore');
+    const pre = await dispatch.previewDelivery(o);
+    out(pre.delivery ? `end state: ${pre.delivery} — ${D.describe(pre.delivery)} (${D.sourceLine(pre.source, pre.phrase)})` : 'end state: none — read-only');
+    const hint = !o.delivery ? D.unattendedHint(task) : null;
+    if (hint) out(`  your words mention "${hint.phrase}" — merging or pushing to main is only ever set explicitly: --delivery ${hint.delivery}`);
+    if (D.unattended(pre.delivery)) {
+      if (process.env.PA_DISPATCHED_RUN) {
+        return fail(`refused: run #${process.env.PA_DISPATCHED_RUN}'s agent may not start work that ${pre.delivery === 'push_to_main' ? 'pushes to main' : 'merges'} with no human step`);
+      }
+      if (!interactive()) {
+        const row = await require('../dispatch/offer').propose({
+          ...o, useModel: await require('../budget').allow('propose').catch(() => false), suggestedBy: suggestedBy(),
+        });
+        out(row ? `NOT started: put on a card for you to accept — proposal ${row.id} (dashboard → Needs you)` : 'NOT started: already on a card');
+        return;
+      }
+      if (!(await confirm(`This will ${pre.delivery === 'push_to_main' ? 'push to main' : 'merge'} with no human step after it. Start it? [y/N]`))) return out('not started');
+      o.confirmedUnattended = true;
+    }
+
+    const machine = o.machine;
     if (machine) out(`setting up on ${machine} — fetch, worktree, brief, then claude (a minute or so)…`);
-    const result = await dispatch.start({
-      commitmentId,
-      task,
-      mode: flags.mode && flags.mode !== true ? String(flags.mode) : undefined,
-      repoPath: flags.repo && flags.repo !== true ? String(flags.repo) : null,
-      machine,
-    });
+    const result = await dispatch.start(o);
+    const end = (r, route) => r.delivery
+      ? `${r.delivery} — ${D.describe(r.delivery, { route })} (${D.sourceLine(r.deliverySource, r.deliveryPhrase)})`
+      : 'none — read-only';
 
+    if (result.route === 'factory') {
+      if (result.submitUnknown) {
+        out(`run #${result.id} · factory · app ${result.app} · SUBMIT UNCONFIRMED`);
+        out(`  ${result.note}`);
+        out(`  end state ${end(result, 'factory')}`);
+        out(`  ask      ${result.briefPath}`);
+        return;
+      }
+      out(`run #${result.id} · factory job ${result.jobId}${result.created ? '' : ' (already submitted)'} · app ${result.app}`);
+      out(`  end state ${end(result, 'factory')}`);
+      if (result.delivery !== result.deliveryRequested) out(`  WARNING  asked for ${result.deliveryRequested}; the factory reports ${result.delivery}`);
+      out(`  pipeline ${result.pipeline} · brief by ${result.briefBy || '?'}`);
+      if (result.routeReason) out(`  route    ${result.routeReason}`);
+      for (const w of result.warnings || []) out(`  WARNING  ${w}`);
+      out(`  ask      ${result.briefPath}`);
+      out(`  follow   ${result.url || '(no session — `uv run factory job follow ' + result.jobId + '` on the factory machine)'}`);
+      return;
+    }
     out(`run #${result.id} · ${result.mode}${result.machine ? ` · on ${result.machine}` : ''} · ${result.repoPath || '(no repo)'}`);
+    out(`  end state ${end(result, 'claude')}`);
+    if (result.routeReason) out(`  route    claude — ${result.routeReason}`);
     if (result.branch) out(`  branch   ${result.branch}`);
     if (result.worktreePath) out(`  worktree ${result.worktreePath}`);
     out(`  brief    ${result.briefPath}`);
     out(`  session  ${result.url}`);
+  },
+
+  // The same choices as `pa do`, put on a card instead of started: the
+  // route, end state, pipeline, models, done-criteria and the composed brief
+  // are frozen into the proposal and run exactly as shown on yes.
+  async propose(args, flags, lists = {}) {
+    const commitmentId = args[0] ? Number(args[0]) : null;
+    const task = flags.task && flags.task !== true ? String(flags.task) : null;
+    if (!commitmentId && !task) return fail('usage: pa propose <commitment-id> | --task "..." [pa do\'s flags]');
+    const o = dispatchFlags(commitmentId, task, flags, lists);
+    // The brief's model call happens before anyone said yes: discretionary
+    // spend (PA_BUDGET_DISCRETIONARY `propose`). Over the cap the card still
+    // comes, with the deterministic brief, and says so.
+    o.useModel = await require('../budget').allow('propose').catch(() => false);
+    if (!o.useModel) out('daily model budget reached — the card carries the deterministic brief (no model)');
+    if (!interactive()) o.suggestedBy = suggestedBy();
+    const row = await require('../dispatch/offer').propose(o);
+    if (!row) return out('already offered');
+    out(`proposal ${row.id} · ${row.title}`);
+    printOffer({ body: row.body, payload: row.payload }, { preview: false });
+    out(`\nOn the dashboard under Needs you, or: pa answer ${row.id} yes [--delivery level]`);
+  },
+
+  async delivery(args) {
+    const store = require('../dispatch/delivery');
+    const D = require('../dispatch/deliveryCore');
+    const [sub, repo, level] = args;
+    if (!sub || sub === 'list') {
+      const list = await store.list();
+      out(`default when nothing is said and the repo has none: ${store.fallback()} — ${D.describe(store.fallback())} (PA_DELIVERY_DEFAULT)`);
+      if (!list.length) return out('no per-repo defaults — `pa delivery set owner/name <level>`');
+      for (const r of list) out(`${r.repo.padEnd(40)} ${r.delivery.padEnd(13)} ${D.describe(r.delivery)}`);
+      return;
+    }
+    if (sub === 'set') {
+      if (!repo || !level) return fail(`usage: pa delivery set <owner/name> <${D.DELIVERIES.join('|')}>`);
+      const r = await store.setDefault(repo, level);
+      return out(`${r.repo}: ${r.delivery} — ${D.describe(r.delivery)}`);
+    }
+    if (sub === 'clear') {
+      if (!repo) return fail('usage: pa delivery clear <owner/name>');
+      return out((await store.clearDefault(repo)) ? `${repo}: back to ${store.fallback()}` : `${repo} had no default`);
+    }
+    return fail('usage: pa delivery [list] | set <owner/name> <level> | clear <owner/name>');
+  },
+
+  async factory(args, flags) {
+    const factory = require('../dispatch/factory');
+    const [sub, repo] = args;
+    if (!sub || sub === 'apps') {
+      const apps = await factory.apps({ fresh: true });
+      if (!apps.length) return out('no apps registered — `pa factory add owner/name`');
+      for (const a of apps) out(`${String(a.app).padEnd(24)} ${String(a.repo || '').padEnd(36)} default ${a.delivery?.default || '?'}${a.pipeline_default ? ` · pipeline ${a.pipeline_default}` : ''}`);
+      return;
+    }
+    if (sub === 'add') {
+      if (!repo) return fail('usage: pa factory add <owner/name> [--delivery-default level] [--path p]');
+      const str = (n) => (flags[n] && flags[n] !== true ? String(flags[n]) : null);
+      const r = await factory.addApp({ repo, deliveryDefault: str('delivery-default'), path: str('path') });
+      out(`registered ${r.repo || repo} as factory app ${r.app}${r.delivery?.default ? ` (its default ${r.delivery.default})` : ''}`);
+      if (r.config_path) out(`  config ${r.config_path}`);
+      return;
+    }
+    return fail('usage: pa factory apps | add <owner/name>');
   },
 
   async done(args, flags) {
@@ -389,17 +558,32 @@ const commands = {
   async proposals() {
     const list = await require('../proposals').pending();
     if (!list.length) return out('Nothing waiting on you.');
+    const D = require('../dispatch/deliveryCore');
     for (const p of list) {
       out(`${p.id} · ${p.kind} · ${p.title}`);
+      if (p.kind === 'dispatch' && p.payload?.delivery) {
+        out(`    end state ${p.payload.delivery} — ${D.describe(p.payload.delivery, { route: p.payload.via })}`);
+      }
       if (Array.isArray(p.options) && p.options.length) out(`    options: ${p.options.map((o) => o.value).join(', ')}`);
     }
   },
 
-  async answer(args) {
+  async answer(args, flags = {}) {
     const [id, ans] = args;
-    if (!Number(id) || !ans) return fail('usage: pa answer <proposal-id> yes|no|<option>');
+    if (!Number(id) || !ans) return fail('usage: pa answer <proposal-id> yes|no|<option> [--delivery level]');
     const accept = ans !== 'no';
-    const r = await require('../proposals').decide(Number(id), { accept, answer: ans === 'yes' || ans === 'no' ? null : ans });
+    const delivery = flags.delivery && flags.delivery !== true ? String(flags.delivery) : null;
+    if (accept) {
+      // Accepting a card that merges or pushes to main is the operator's own
+      // act: from a terminal or the dashboard, never from the chat.
+      const D = require('../dispatch/deliveryCore');
+      const p = await require('../db').one('select kind, payload from proposal where id = $1', [Number(id)]);
+      const final = delivery ? D.delivery(delivery) : p?.payload?.delivery;
+      if (p?.kind === 'dispatch' && D.unattended(final) && (!interactive() || process.env.PA_DISPATCHED_RUN)) {
+        return fail(`proposal ${id} would ${final === 'push_to_main' ? 'push to main' : 'merge'} with no human step — accept it in the dashboard or from a terminal`);
+      }
+    }
+    const r = await require('../proposals').decide(Number(id), { accept, answer: ans === 'yes' || ans === 'no' ? null : ans, delivery });
     out(r.result);
   },
 
@@ -522,14 +706,32 @@ const commands = {
   },
 
   async runs(args, flags) {
+    if (args[0] === 'stats') {
+      const days = flagInt(flags, 'days', 90);
+      const list = await require('../dispatch/stats').byRoute({ days });
+      if (!list.length) return out(`no runs in the last ${days} days`);
+      out(`last ${days} days — success = delivered or merged, of the runs that finished`);
+      out(`${'route'.padEnd(8)} ${'kind'.padEnd(12)} ${'runs'.padStart(4)} ${'deliv'.padStart(5)} ${'merged'.padStart(6)} ${'failed'.padStart(6)} ${'dropped'.padStart(7)} ${'open'.padStart(4)} ${'success'.padStart(7)} ${'$'.padStart(8)} ${'$/success'.padStart(9)}`);
+      for (const g of list) {
+        const pct = g.successRate === null ? '-' : `${Math.round(g.successRate * 100)}%`;
+        const money = (v) => (v === null ? '-' : v.toFixed(2));
+        out(
+          `${g.route.padEnd(8)} ${g.kind.slice(0, 12).padEnd(12)} ${String(g.runs).padStart(4)} ${String(g.delivered).padStart(5)} ${String(g.merged).padStart(6)} ` +
+            `${String(g.failed).padStart(6)} ${String(g.dropped).padStart(7)} ${String(g.open).padStart(4)} ${pct.padStart(7)} ${money(g.costUsd).padStart(8)} ${money(g.costPerSuccess).padStart(9)}`
+        );
+      }
+      out('\nCost is the factory\'s reported spend; a Claude session\'s is not measured per run, so its $ is "-".');
+      return;
+    }
     const dispatch = require('../dispatch');
-    await dispatch.reconcile().catch(() => {});
+    // The chat's read-only `pa` tool runs this with PA_READ_ONLY=1: no writes.
+    if (process.env.PA_READ_ONLY !== '1') await dispatch.reconcile().catch(() => {});
     const list = await dispatch.list({ all: flagBool(flags, 'all'), limit: flagInt(flags, 'n', 20) });
     if (!list.length) return out('no runs');
     for (const r of list) {
       out(
-        `#${String(r.id).padEnd(4)} ${r.status.padEnd(9)} ${r.mode.padEnd(7)} ${r.task}` +
-          `\n      ${r.branch || '(no branch)'} · ${relative(r.started_at)}` +
+        `#${String(r.id).padEnd(4)} ${r.status.padEnd(9)} ${r.mode.padEnd(7)} ${r.route === 'factory' ? 'factory ' : ''}${r.task}` +
+          `\n      ${r.route === 'factory' ? `job ${r.factory_job_id || '(not submitted)'}${r.factory_state ? ` · ${r.factory_state}` : ''}${r.cost_usd != null ? ` · $${Number(r.cost_usd).toFixed(2)}` : ''}` : r.branch || '(no branch)'} · ${relative(r.started_at)}` +
           `${require('../dispatch/termhub').isLocal(r.machine) ? '' : ` · on ${r.machine}`}${r.mr_url ? ` · ${r.mr_url}` : ''}`
       );
     }
@@ -543,9 +745,7 @@ const commands = {
     if (!run.termhub_session_id) return fail(`run #${run.id} has no session`);
     const url = await termhub.forMachine(run.machine).sessionUrl(run.termhub_session_id);
     out(url);
-    if (process.platform === 'win32') {
-      require('child_process').spawn('cmd', ['/c', 'start', '', url], { detached: true, stdio: 'ignore' }).unref();
-    }
+    platform.openUrl(url);
   },
 
   async say(args) {
@@ -568,6 +768,18 @@ const commands = {
     }
 
     const r = await dispatch.review(id);
+    if (r.run.route === 'factory') {
+      const j = r.factory;
+      out(`run #${r.run.id} · ${r.run.status} · factory ${r.run.factory_job_id || '(not submitted)'} · ${r.run.task}`);
+      if (r.run.route_reason) out(`route: ${r.run.route_reason}`);
+      for (const w of r.run.factory_warnings || []) out(`warning at submit: ${w}`);
+      if (!j) return out(r.run.exit_note ? `\n${r.run.exit_note}` : '');
+      out(`state ${j.state}${j.terminal ? ' (final)' : ''} · delivery ${j.delivery} · pipeline ${j.pipeline} · $${Number(j.cost_usd || 0).toFixed(2)}`);
+      if (j.why) out(`why: ${j.why}`);
+      for (const st of j.stories || []) out(`  story ${st.id} · ${st.state}${st.pr_url ? ` · ${st.pr_url}${st.pr_state ? ` (${st.pr_state})` : ''}` : ''}`);
+      for (const u of j.pr_urls || []) out(u);
+      return;
+    }
     out(`run #${r.run.id} · ${r.run.status} · ${r.run.mode} · ${r.run.task}`);
     if (r.run.worktree_path) out(`worktree ${r.run.worktree_path}`);
     out('');
@@ -595,7 +807,7 @@ const commands = {
     const id = Number(args[0]);
     if (!id) return fail('usage: pa drop <run> [--force]');
     const r = await dispatch.drop(id, { force: flagBool(flags, 'force') });
-    out(`run #${id} dropped`);
+    out(`run #${id} dropped${r && r.factory ? (r.cancelled ? ` — factory job ${r.jobId} cancelled${r.storiesParked != null ? `, ${r.storiesParked} stor${r.storiesParked === 1 ? 'y' : 'ies'} parked` : ''}` : ' — its factory job had already ended') : ''}`);
     if (r && r.remote && r.removed) out(`  worktree removed on ${r.machine}: ${r.worktree}`);
     else if (r && r.remote) out(`  its worktree stays on ${r.machine}: ${r.worktree} — \`pa drop ${id} --force\` removes it`);
   },
@@ -667,10 +879,10 @@ const commands = {
     const file = args[0] || backup.list()[0]?.file;
     if (!file) return fail(`usage: pa restore [file] — and no backups found in ${config.backup.dir}`);
     out(`This replaces the whole database with ${file}.`);
-    out('Stop the worker first (Stop-ScheduledTask pa-worker) so it does not write mid-restore.');
+    out(`Stop the worker first (${platform.services.workerStop}) so it does not write mid-restore.`);
     if (!(flagBool(flags, 'yes') || (await confirm('Restore now? [y/N]')))) return out('not restored');
     await backup.restore(file);
-    out('restored. Start the worker again: Start-ScheduledTask pa-worker');
+    out(`restored. Start the worker again: ${platform.services.workerStart}`);
   },
 
   async reingest(args, flags) {
@@ -808,7 +1020,7 @@ const commands = {
     // Database
     try {
       const probe = await db.probe();
-      mark(true, 'postgres', `${config.databaseUrl.replace(/:[^:@/]*@/, ':***@')} · ${probe.db}`);
+      mark(true, 'postgres', `${maskUrl(config.databaseUrl)} · ${probe.db}`);
       mark(probe.has_vector, 'pgvector', probe.has_vector ? 'installed' : 'MISSING — run `pa migrate`');
       const migrations = await db
         .rows('select version from schema_migration order by version')
@@ -858,6 +1070,16 @@ const commands = {
     }
     const teamsCache = await require('../ingest/teamsLocal').status().catch((err) => ({ ok: false, detail: err.message }));
     mark(teamsCache.ok, 'teams cache', teamsCache.detail);
+
+    // What only this OS can get wrong (src/platform): keyring, notifier,
+    // clipboard, sound server, service units. A DEGRADED line is a feature
+    // working in a reduced way on purpose, never silently.
+    mark(true, 'platform', platform.label);
+    for (const l of await platform
+      .doctor({ ntfyConfigured: require('../notify/ntfy').configured(), audioEnabled: config.audio.enabled })
+      .catch((err) => [{ ok: false, label: 'platform', detail: err.message }])) {
+      mark(l.ok, `  ${l.label}`, l.detail);
+    }
 
     // GitHub, Anthropic, embeddings
     const github = require('../ingest/github');
@@ -912,13 +1134,41 @@ const commands = {
         .toString()
         .trim();
     } catch {}
-    const viaCli = llm.backend() === 'cli';
-    mark(
-      viaCli ? Boolean(cliVersion) : true,
-      'model',
-      `${config.anthropic.model} · effort ${config.anthropic.effort} · via ` +
-        (viaCli ? (cliVersion ? `claude -p ${cliVersion}` : `${config.claudeBin} not found — set PA_CLAUDE_BIN`) : 'API key')
-    );
+    // Every pass's model, where it goes, and whether it can do the pass's job
+    // (src/models.js). A connector pass on a non-Claude-Code backend is
+    // refused here rather than failing on the next sync.
+    const modelRows = require('../models').report({ claudeAvailable: Boolean(cliVersion) });
+    for (const r of modelRows) {
+      mark(
+        r.ok,
+        `model · ${r.purpose}`,
+        `${r.model} · ${r.backend ? `via ${r.backend === 'cli' ? 'claude -p' : r.backend === 'api' ? 'Anthropic API' : r.backend}` : 'unroutable'}` +
+          ` · needs ${r.needs}${r.backend ? ` · key ${r.keyConfigured ? 'ok' : 'missing'}` : ''} · ${r.capable ? 'capable' : 'NOT capable'}` +
+          `${r.problem ? ` — ${r.problem}` : ''}${r.purpose === 'distill' ? ` · effort ${config.anthropic.effort}` : ''}`
+      );
+    }
+    const viaCli = modelRows.some((r) => r.backend === 'cli');
+    // The PA chat and dispatched runs: which agent CLI, which model, and
+    // whether its permission guarantees hold (src/chat/agent.js).
+    try {
+      const agent = require('../chat/agent');
+      const chat = agent.chatCommand();
+      let detail = `${chat.command}`;
+      if (chat.agent === 'opencode') {
+        const check = await agent.verifyOpencodePermissions(require('../chat').ensureHome());
+        mark(check.ok, 'chat agent', `${detail} · permissions ${check.ok ? 'verified' : `REFUSED — ${check.problems.join('; ')}`}`);
+      } else {
+        mark(true, 'chat agent', `${detail} · permissions from .claude/settings.json`);
+      }
+    } catch (err) {
+      mark(false, 'chat agent', `REFUSED — ${err.message}`);
+    }
+    try {
+      const d = require('../dispatch/agent').dispatchCommand();
+      mark(true, 'dispatch agent', d.command);
+    } catch (err) {
+      mark(false, 'dispatch agent', `REFUSED — ${err.message}`);
+    }
     mark(Boolean(cliVersion), 'claude cli', cliVersion || 'not found — connector sources (Jira, Microsoft 365) cannot run');
     if (viaCli || cliVersion) {
       // Which subscription pa's own calls bill to, and where its connectors live.
@@ -987,13 +1237,54 @@ const commands = {
       mark(Boolean(probe), 'rerank', probe ? config.rerank.deployment : lastRerankError());
     }
 
+    // The end state a run gets when nothing was said (src/dispatch/deliveryCore.js).
+    {
+      const D = require('../dispatch/deliveryCore');
+      const raw = String(config.dispatch.deliveryDefault || '');
+      const n = await require('../dispatch/delivery').list().then((l) => l.length, () => null);
+      if (D.isDelivery(raw)) {
+        mark(true, 'delivery', `default ${raw}${D.unattended(raw) ? ' (UNATTENDED: no human step after a yes)' : ''} · ${n === null ? 'repo defaults unreadable — run `pa migrate`' : `${n} repo default(s)`}`);
+      } else {
+        mark(false, 'delivery', `PA_DELIVERY_DEFAULT "${raw}" is not one of ${D.DELIVERIES.join(', ')} — using ${D.FALLBACK}`);
+      }
+    }
+    // The software factory as a dispatch target: configured, its machine
+    // known to termhub, and answering `factory app list`.
+    {
+      const factory = require('../dispatch/factory');
+      if (!factory.enabled()) {
+        mark(false, 'factory', 'off — set PA_FACTORY_PATH (and PA_FACTORY_MACHINE) to dispatch to the software factory');
+      } else {
+        try {
+          const where = factory.machine() || 'this machine';
+          const apps = await factory.apps({ fresh: true });
+          mark(true, 'factory', `${where} · ${config.factory.path} · ${apps.length} app(s): ${apps.map((a) => a.repo || a.app).slice(0, 6).join(', ')} · default --via ${config.factory.via}`);
+        } catch (err) {
+          mark(false, 'factory', err.message.slice(0, 160));
+        }
+      }
+    }
+
     // termhub
     const termhub = require('../dispatch/termhub');
     const hub = await termhub.reachable();
     mark(hub.ok, 'termhub', hub.ok ? config.termhub.url : `${config.termhub.url} — ${hub.error}`);
+    // Reachable by tailnet name: a termhub that cannot learn its own MagicDNS
+    // name refuses it (403) until TERMHUB_ALLOWED_HOSTS names it.
+    for (const [label, url] of [['termhub', config.termhub.url], ...Object.values(config.termhub.machines).map((m) => [`termhub ${m.name}`, m.url])]) {
+      const t = termhub.tailnetCheck(url, url === config.termhub.url ? hub : await termhub.client(url).reachable());
+      if (t) mark(t.ok, `${label} (tailnet)`, t.detail);
+    }
+    // The no-push boundary, said plainly every time: it is the environment,
+    // not the OS user.
+    mark(true, 'run isolation', 'WARNING: dispatched runs are your OS user. A no-push run starts without push credentials ' +
+      'in its environment, but its agent can restore them from disk (GH_CONFIG_DIR=~/.config/gh gh …, ~/.ssh), call the ' +
+      'dashboard API, or fake a terminal. The real boundary is a separate OS user (not set up).');
+    // Each machine: reachable, which OS (and does PA_MACHINES agree), and can
+    // its termhub run commands (POST /api/exec) — remote setup needs that.
     for (const machine of Object.values(config.termhub.machines)) {
-      const r = await termhub.forMachine(machine.name).reachable();
-      mark(r.ok, `termhub · ${machine.name}`, r.ok ? `${machine.url} · repos ${machine.reposRoot}` : `${machine.url} — ${r.error}`);
+      const r = await require('../dispatch/remote').probeMachine(machine, { hub: termhub.forMachine(machine.name) });
+      mark(r.ok, `termhub · ${machine.name}`, r.detail);
     }
 
     // Routines: a schedule or action that no longer parses, and the last run's
@@ -1204,9 +1495,11 @@ const commands = {
 
     const newest = require('../backup').list()[0];
     const stale = !newest || Date.now() - newest.at.getTime() > (config.backup.everyHours + 6) * 3600_000;
+    const tools = await require('../backup').toolsCheck().catch((err) => ({ ok: false, detail: err.message }));
     lines.push(
       `  backup ${newest ? `${relative(newest.at)} · ${(newest.bytes / 1e6).toFixed(1)} MB` : 'NONE'}` +
-        `${stale ? ' — `pa backup`' : ''} · ${config.backup.dir}`
+        `${stale ? ' — `pa backup`' : ''} · ${config.backup.dir} · via ${config.backup.pgTools}` +
+        `${tools.detail ? ` (${tools.ok ? '' : 'BROKEN: '}${tools.detail})` : ''}`
     );
 
     out(lines.join('\n'));
@@ -1219,7 +1512,7 @@ Object.assign(commands, require('./meeting').make(out, fail));
 Object.assign(commands, require('./routine').make(out, fail));
 
 async function main(argv) {
-  const { command, args, flags } = parseArgs(argv);
+  const { command, args, flags, lists } = parseArgs(argv);
   const name = command || 'help';
 
   if (flags.help || name === 'help' || name === '--help') {
@@ -1235,7 +1528,7 @@ async function main(argv) {
   }
 
   try {
-    await handler(args, flags);
+    await handler(args, flags, lists);
   } catch (err) {
     if (err.name === 'NeedsLogin') fail(`${err.message}`);
     else fail(err.message);
@@ -1245,4 +1538,4 @@ async function main(argv) {
   }
 }
 
-module.exports = { main, commands, HELP };
+module.exports = { main, commands, HELP, maskUrl };

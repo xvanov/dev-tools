@@ -18,7 +18,9 @@
 // without a database.
 
 // Desktop Teams takes `msteams:`; the https form is the fallback that also
-// works in a browser.
+// works in a browser — and the only form on a machine with no msteams:
+// handler (Linux without teams-for-linux), where `desktopTeams` is false and
+// `open` is the web link.
 const TEAMS_WEB = 'https://teams.microsoft.com';
 const OUTLOOK_COMPOSE = 'https://outlook.office.com/mail/deeplink/compose';
 
@@ -88,15 +90,16 @@ function targetFor(item, { me = null, counterpartyEmail = null } = {}) {
 
 // The links the dashboard and `pa send` open. `prefilled` says whether the
 // text rides in the link, or has to be pasted from the clipboard.
-function links(draft) {
+function links(draft, { desktopTeams = true } = {}) {
   const t = draft.target || {};
+  const app = (url, web) => (desktopTeams ? url : web);
   const body = String(draft.body || '');
   const fits = body.length <= MAX_PREFILL;
 
   if (t.channel === 'teams' && t.kind === 'dm' && t.users?.length === 1) {
     const q = `users=${encodeURIComponent(t.users[0])}` + (fits ? `&message=${encodeURIComponent(body)}` : '');
     return {
-      open: `msteams:/l/chat/0/0?${q}`,
+      open: app(`msteams:/l/chat/0/0?${q}`, `${TEAMS_WEB}/l/chat/0/0?${q}`),
       web: `${TEAMS_WEB}/l/chat/0/0?${q}`,
       prefilled: fits,
       how: fits ? 'Teams opens the chat with the reply typed in — press Enter to send.' : 'Teams opens the chat — paste (Ctrl+V) and send.',
@@ -107,7 +110,7 @@ function links(draft) {
       ? (t.webUrl || '').replace(/^https:\/\/teams\.microsoft\.com/, '')
       : t.chatId ? `/l/chat/${encodeURIComponent(t.chatId)}/0` : '';
     return {
-      open: path ? `msteams:${path}` : null,
+      open: path ? app(`msteams:${path}`, `${TEAMS_WEB}${path}`) : null,
       web: path ? `${TEAMS_WEB}${path}` : t.webUrl || null,
       prefilled: false,
       how: `Teams opens the ${t.kind === 'channel' ? 'thread' : 'chat'} — paste (Ctrl+V) and send.`,

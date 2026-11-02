@@ -18,7 +18,7 @@
 // message on the wire (see draft/deliver.js).
 //
 // Its Needs-you panel answers secret requests (src/secrets). A pasted value
-// arrives in one POST, goes straight to Credential Manager or `.env`, and the
+// arrives in one POST, goes straight to the OS keyring (src/secrets/vault.js) or `.env`, and the
 // reply is `{ok, stored, name}`. No route here returns a value.
 
 const fs = require('fs');
@@ -61,7 +61,8 @@ async function commitmentContext(id) {
   const termhub = require('../dispatch/termhub');
   const runs = (
     await rows(
-      `select id, status, mode, machine, branch, started_at, termhub_session_id from run
+      `select id, status, mode, machine, branch, started_at, termhub_session_id, route, route_reason,
+              factory_job_id, factory_state, factory_warnings, delivery, cost_usd, mr_url from run
         where commitment_id = $1 order by started_at desc`,
       [id]
     )
@@ -143,12 +144,51 @@ function readJson(req) {
   });
 }
 
+// Page tokens: a random value issued with each page load and kept by that
+// page in memory only (never on disk, never in a cookie). Starting or
+// accepting work that merges or pushes to main with no human step after it
+// needs one, on top of X-PA. A dispatched agent runs as the same OS user and
+// can send X-PA itself; it now has to deliberately scrape a page for a token
+// too. Defence in depth, not a boundary: the boundary is a separate OS user.
+const PAGE_TOKEN_TTL_MS = 12 * 3600_000;
+const PAGE_TOKENS_MAX = 20;
+const pageTokens = new Map();
+
+function issuePageToken(now = Date.now()) {
+  for (const [t, at] of pageTokens) if (now - at > PAGE_TOKEN_TTL_MS) pageTokens.delete(t);
+  while (pageTokens.size >= PAGE_TOKENS_MAX) pageTokens.delete(pageTokens.keys().next().value);
+  const t = require('crypto').randomBytes(24).toString('base64url');
+  pageTokens.set(t, now);
+  return t;
+}
+
+function pageTokenOk(req, now = Date.now()) {
+  const t = String(req.headers['x-pa-page'] || '');
+  const at = t ? pageTokens.get(t) : undefined;
+  return at !== undefined && now - at <= PAGE_TOKEN_TTL_MS;
+}
+
+function pageHtml(token) {
+  return fs.readFileSync(PAGE, 'utf8').replace('</head>', `<meta name="pa-page" content="${token}">\n</head>`);
+}
+
 async function handle(req, res) {
   if (!hostAllowed(req.headers.host)) return send(res, 403, { error: 'host not allowed' });
   const url = new URL(req.url, 'http://localhost');
 
   if (req.method === 'GET' && url.pathname === '/') {
-    return send(res, 200, fs.readFileSync(PAGE, 'utf8'), 'text/html; charset=utf-8');
+    return send(res, 200, pageHtml(issuePageToken()), 'text/html; charset=utf-8');
+  }
+  // The end state a Do would get, before it is pressed: the page shows it,
+  // and must send it back as `confirmedLevel` to start an unattended one.
+  let pm = req.method === 'GET' && url.pathname.match(/^\/api\/commitments\/(\d+)\/delivery$/);
+  if (pm) {
+    const D = require('../dispatch/deliveryCore');
+    const q = url.searchParams;
+    const delivery = q.get('delivery') || null;
+    if (delivery && !D.isDelivery(delivery)) return send(res, 400, { error: 'unknown delivery' });
+    const r = await require('../dispatch').previewDelivery({ commitmentId: Number(pm[1]), mode: q.get('mode') || undefined, delivery });
+    return send(res, 200, { ...r, plain: r.delivery ? D.describe(r.delivery) : null, unattended: D.unattended(r.delivery) });
   }
   if (req.method === 'GET' && url.pathname === '/api/state') {
     return send(res, 200, await state());
@@ -159,6 +199,13 @@ async function handle(req, res) {
       machines: [{ name: '', label: 'this machine' }, ...Object.keys(config.termhub.machines).map((name) => ({ name, label: name }))],
       modes: Object.keys(require('../dispatch/modes').MODES),
       defaultMode: require('../dispatch/modes').mode().name,
+      // Where the work goes: a Claude session, the software factory, or let
+      // the routing rule pick (src/dispatch/routeCore.js). Factory only when configured.
+      routes: require('../dispatch/factory').enabled() ? ['claude', 'factory', 'auto'] : ['claude'],
+      defaultRoute: require('../dispatch/factory').enabled() ? config.factory.via : 'claude',
+      // The end states the operator may pick on Do (src/dispatch/deliveryCore.js);
+      // none picked: the repo's default, else PA_DELIVERY_DEFAULT.
+      deliveries: require('../dispatch/deliveryCore').DELIVERIES.map((d) => ({ value: d, plain: require('../dispatch/deliveryCore').describe(d) })),
     });
   }
   // One commitment with what it came from, so it can be judged before it is
@@ -251,7 +298,19 @@ async function handle(req, res) {
     m = url.pathname.match(/^\/api\/proposals\/(\d+)\/(accept|reject)$/);
     if (m) {
       const answer = typeof body.answer === 'string' ? body.answer.slice(0, 200) : null;
-      return send(res, 200, await require('../proposals').decide(Number(m[1]), { accept: m[2] === 'accept', answer }));
+      // A dispatch card's end state, picked when accepting: one of the six
+      // levels or nothing (the card's own); anything else is refused.
+      const D = require('../dispatch/deliveryCore');
+      const delivery = typeof body.delivery === 'string' && body.delivery ? body.delivery : null;
+      if (delivery && !D.isDelivery(delivery)) return send(res, 400, { error: `unknown delivery "${delivery.slice(0, 40)}"` });
+      if (m[2] === 'accept') {
+        const p = await require('../db').one('select kind, payload from proposal where id = $1', [Number(m[1])]);
+        const final = delivery || p?.payload?.delivery || null;
+        if (p?.kind === 'dispatch' && D.unattended(final) && !pageTokenOk(req)) {
+          return send(res, 403, { error: `accepting a card that ${final === 'push_to_main' ? 'pushes to main' : 'merges'} needs this page's token — reload the dashboard` });
+        }
+      }
+      return send(res, 200, await require('../proposals').decide(Number(m[1]), { accept: m[2] === 'accept', answer, delivery }));
     }
     // A "Looks done?" card answered: accepting closes it as your decision.
     m = url.pathname.match(/^\/api\/ledger\/evidence\/(\d+)\/(accept|reject)$/);
@@ -277,12 +336,35 @@ async function handle(req, res) {
     m = url.pathname.match(/^\/api\/commitments\/(\d+)\/dispatch$/);
     if (m) {
       const dispatch = require('../dispatch');
+      const D = require('../dispatch/deliveryCore');
+      const delivery = typeof body.delivery === 'string' && body.delivery ? body.delivery : null;
+      if (delivery && !D.isDelivery(delivery)) return send(res, 400, { error: `unknown delivery "${delivery.slice(0, 40)}"` });
+      // What the start will resolve to — a repo default included. Confirmed only
+      // when the page showed exactly that level and sent it back, with its token.
+      const resolved = await dispatch.previewDelivery({ commitmentId: Number(m[1]), mode: body.mode || undefined, delivery });
+      const confirmed = D.unattended(resolved.delivery) && body.confirmedLevel === resolved.delivery && pageTokenOk(req);
+      if (D.unattended(resolved.delivery) && !confirmed) {
+        return send(res, 409, {
+          error: `this would ${resolved.delivery === 'push_to_main' ? 'push straight to main' : 'merge automatically'} (${resolved.delivery}) — confirm that level on the page`,
+          delivery: resolved.delivery,
+          plain: D.describe(resolved.delivery),
+        });
+      }
       const run = await dispatch.start({
         commitmentId: Number(m[1]),
         mode: body.mode || undefined,
         machine: body.machine ? String(body.machine) : null,
+        via: body.via ? String(body.via) : null,
+        // The level the page confirmed, pinned: a repo default changing in
+        // between cannot swap in another one.
+        delivery: confirmed ? resolved.delivery : delivery,
+        confirmedUnattended: confirmed,
       });
-      return send(res, 200, { id: run.id, mode: run.mode, machine: run.machine || null, url: run.url, repoPath: run.repoPath });
+      return send(res, 200, {
+        id: run.id, mode: run.mode, machine: run.machine || null, url: run.url, repoPath: run.repoPath,
+        route: run.route || 'claude', routeReason: run.routeReason || null, jobId: run.jobId || null, delivery: run.delivery || null,
+        warnings: run.warnings || [],
+      });
     }
   }
   return send(res, 404, { error: 'not found' });
@@ -305,4 +387,4 @@ function start({ port = config.dispatch.port, host = config.dispatch.host } = {}
   });
 }
 
-module.exports = { start, hostAllowed, state };
+module.exports = { start, hostAllowed, state, handle, issuePageToken, pageTokenOk };

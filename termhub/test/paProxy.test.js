@@ -14,6 +14,8 @@ const http = require('http');
 const net = require('net');
 const { createFront } = require('../front');
 const { resolvePaUrl } = require('../lib/paProxy');
+const { setLearnedNames } = require('../lib/requestGuard');
+setLearnedNames(['mybox.tailnet.ts.net']); // this machine's own MagicDNS name (tailscale status Self.DNSName)
 
 function listen(server) {
   return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve(server.address().port)));

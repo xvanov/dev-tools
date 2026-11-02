@@ -67,6 +67,10 @@ other machines to maintain.
 - **Update from the UI** — a ⟳ Update button checks GitHub (once a day in the background, and
   on demand) and, when the termhub tool itself has changed, opens a terminal that runs the
   safe blue-green updater. See [Updating safely](#updating-safely-terminals-survive).
+- **Run a command, get its output** — `POST /api/exec {argv, cwd?, timeoutMs?}` returns
+  `{code, stdout, stderr}`. argv is never given to a shell. It is for programs (the personal
+  assistant sets up runs on other machines with it), not the UI; see `AGENT.md` → *Running a
+  command*.
 - **Mobile-friendly** — responsive layout, slide-out session drawer, on-screen keys.
 - **Tailscale-native** — binds to the Tailscale interface only; no login screen, trust is
   delegated to your tailnet ACLs.
@@ -513,6 +517,7 @@ All optional environment variables:
 | `TERMHUB_NTFY_TOPIC` | — | ntfy topic for idle notifications. Wins over `<data dir>/notify.json`; unset and unconfigured means no pushes. **The topic is the secret** — anyone who knows it can read them |
 | `TERMHUB_NTFY_SERVER` | `https://ntfy.sh` | Point at a self-hosted ntfy instead |
 | `TERMHUB_PA_URL` | `http://127.0.0.1:7300` | The personal assistant's dashboard, proxied at `/pa/` (Host rewritten to the PA's loopback address, `X-PA` forwarded). **Empty disables it.** Anyone who can reach termhub can reach the PA through it — no new capability, since they already have shells; see `AGENT.md` → *The PA proxy* |
+| `TERMHUB_ALLOWED_HOSTS` | — | Extra hostnames (comma-separated) termhub accepts in `Host` on `/api/*`, `/pa/*` and websockets. **Exact match** — case-insensitive, port and trailing dot ignored, no wildcards or suffixes. Always accepted without it: loopback, IP literals, this machine's hostname / `TERMHUB_MACHINE` (full or first label), and this machine's own MagicDNS name as `tailscale status --json` reports it (`Self.DNSName`, learned at startup). Other `*.ts.net` names are **not** accepted. Needed if you reach termhub by any other name — a custom DNS name, a `/etc/hosts` alias, or the MagicDNS name on a machine where `tailscale` is not on termhub's PATH (otherwise the UI loads but every API call answers 403); see `AGENT.md` → *Security notes* |
 | `TERMHUB_PEERS` | — | Other termhub machines for the dashboard's machine strip, `host:port,host:port`. Wins over `<data dir>/peers.json`, which **+ find machines** writes |
 
 On Linux set these with `systemctl --user edit termhub`; on Windows via `setx` + restart the task.
@@ -530,6 +535,10 @@ On Linux set these with `systemctl --user edit termhub`; on Windows via `setx` +
 | `lib/claudeModel.js` | Locates a Claude session's transcript and tails it for the model label (`modelLabel` in `/api/sessions`; no longer shown in the sidebar) |
 | `lib/opencodeApi.js` | Talks to an opencode TUI's own HTTP API (termhub launches each with `--port`): model, turns, and its event stream |
 | `lib/opencodeModel.js` | Fallback for an opencode session with no API port — reads the model via `opencode export` |
+| `lib/exec.js` | `POST /api/exec`: runs one argv (no shell) with a cwd, timeout and output cap and returns `{code, stdout, stderr}` — how the personal assistant makes another machine do something without typing at a shell |
+| `lib/sessionEnv.js` | `POST /api/sessions {env?, unsetEnv?}`: variables set/removed on top of termhub's own environment for that session (and kept for its restore), answered with `envApplied: true` — how the personal assistant starts a run that may not push without push credentials |
+| `lib/shell.js` | The session shell: `defaultShell()`, and `shellArgs(shell, {noRc})` — `POST /api/sessions {noRc: true}` starts it without rc/profile files (bash `--norc --noprofile`, zsh `-f`, fish `--no-config`, pwsh/powershell `-NoProfile`, sh/dash with `ENV` removed, cmd `/D`) so they can't re-export what `unsetEnv` removed; answered with `rcSkipped: true\|false` (false for a shell it doesn't know, which then starts normally) and kept for the session's restore |
+| `lib/requestGuard.js` | The browser guard on every `/api/*`, `/pa/*` and `/ws/*` request, on both tiers: `Host` must name this machine (DNS rebinding), no foreign `Origin` (CSRF, websocket hijacking), and a state-changing request needs `X-Termhub: 1` and a non-form Content-Type (`/api/exec`: JSON only) |
 | `lib/transcripts.js` | Read-only `/api/claude/transcripts` + `/api/claude/transcript`: lists and serves `~/.claude/projects/*/*.jsonl` for the personal assistant on another machine |
 | `lib/claudeTranscript.js` | Reads the last turn from that transcript and decides whether it's waiting on you |
 | `lib/summarize.js` | Condenses a turn into speakable prose (`claude -p --model haiku`, with a local fallback) |

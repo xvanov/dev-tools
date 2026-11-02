@@ -67,6 +67,12 @@
     user-select: all; overflow-wrap: anywhere; }
   .sess a { color: var(--accent); text-decoration: none; }
   pre.sub { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; font-size: 12px; margin: 4px 0 0; }
+  .endstate { margin: 6px 0 2px; font-weight: 600; }
+  .endstate.loud { color: var(--bad); }
+  .endstate-pick { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; font-size: 12px; color: var(--muted); }
+  .done-list { margin: 4px 0 0 18px; padding: 0; font-size: 12px; }
+  details.brief summary { cursor: pointer; font-size: 12px; color: var(--accent); margin-top: 4px; }
+  details.brief pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; max-height: 420px; overflow: auto; background: var(--chip); padding: 8px; border-radius: 4px; }
   .why { margin-top: 6px; padding: 6px 9px; border-left: 3px solid var(--accent); background: var(--chip);
     border-radius: 0 6px 6px 0; font-size: 13px; overflow-wrap: anywhere; }
   .why.pending { background: none; border-left-color: var(--line); color: var(--muted); font-size: 12px; padding: 2px 9px; }
@@ -328,13 +334,22 @@ function toast(text) {
   toast.timer = setTimeout(() => t.classList.remove('show'), 4000);
 }
 
+// This page's token (server.js issuePageToken): read once from the page and
+// kept in memory only; the meta tag is removed so it is not left in the DOM.
+const PAGE_TOKEN = (() => {
+  const m = document.querySelector('meta[name="pa-page"]');
+  const t = m ? m.getAttribute('content') : '';
+  if (m) m.remove();
+  return t;
+})();
+
 async function post(path, body) {
   const res = await fetch(path, {
-    method: 'POST', headers: { 'Content-Type': 'application/json', 'X-PA': '1' },
+    method: 'POST', headers: { 'Content-Type': 'application/json', 'X-PA': '1', 'X-PA-Page': PAGE_TOKEN },
     body: JSON.stringify(body || {}),
   });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || res.statusText);
+  if (!res.ok) throw Object.assign(new Error(data.error || res.statusText), { status: res.status, data });
   return data;
 }
 
@@ -376,7 +391,7 @@ function link(url, text) {
 // Where a run can go and in which mode (GET api/machines), loaded once. A
 // commitment's context is fetched when asked for and kept open across the
 // page's refreshes, so reading it is not interrupted.
-let MACHINES = { machines: [{ name: '', label: 'this machine' }], modes: ['plan', 'local', 'branch', 'mr', 'full'], defaultMode: 'local' };
+let MACHINES = { machines: [{ name: '', label: 'this machine' }], modes: ['plan', 'local', 'branch', 'mr', 'full'], defaultMode: 'local', routes: ['claude'], defaultRoute: 'claude' };
 fetch('api/machines').then((r) => r.json()).then((m) => { MACHINES = m; }).catch(() => {});
 const openContext = new Map();
 const openGroups = new Set();
@@ -408,8 +423,12 @@ function contextPanel(x) {
     }
   }
   for (const r of x.runs || []) {
-    lines.push(el('div', { class: 'who' }, `run #${r.id} · ${r.status} · ${r.mode}${r.machine ? ` · ${r.machine}` : ''} · ${r.branch || ''} `,
-      r.url && ['starting', 'running', 'waiting', 'done'].includes(r.status) ? link(r.url, 'open session') : null));
+    const where = r.route === 'factory'
+      ? `factory ${r.factory_job_id || ''}${r.factory_state ? ` · ${r.factory_state}` : ''}${r.delivery ? ` · ${r.delivery}` : ''}${r.cost_usd != null ? ` · $${Number(r.cost_usd).toFixed(2)}` : ''}`
+      : `${r.machine ? `${r.machine} · ` : ''}${r.branch || ''}`;
+    lines.push(el('div', { class: 'who', title: [r.route_reason, ...(r.factory_warnings || []).map((w) => `warning: ${w}`)].filter(Boolean).join('\n') }, `run #${r.id} · ${r.status} · ${r.mode} · ${where}${(r.factory_warnings || []).length ? ' · factory warned' : ''} `,
+      r.url && ['starting', 'running', 'waiting', 'done'].includes(r.status) ? link(r.url, r.route === 'factory' ? 'follow job' : 'open session') : null,
+      r.mr_url ? link(r.mr_url, 'PR') : null));
   }
   return el('div', { class: 'ctx' }, ...lines);
 }
@@ -468,6 +487,16 @@ function cardSource(x, wanted) {
 
 // What each mode lets the session do, shown in the mode picker. A review or a
 // question wants `plan`; `full` also pushes, opens a draft PR and writes a reply.
+// Where the work goes. Its end state is the end-state picker's (unpicked: the
+// repo's default); a mode changed from its default maps to one instead (local
+// → nothing pushed, branch → a branch, mr/full → a draft PR). plan is never a
+// factory job, and auto falls back to a Claude session for it.
+const ROUTE_HELP = {
+  claude: 'Claude session',
+  factory: 'software factory',
+  auto: 'auto — the routing rule picks',
+};
+
 const MODE_HELP = {
   plan: 'plan — read and write a plan, change nothing',
   local: 'local — commit in its worktree, push blocked',
@@ -480,6 +509,10 @@ function commitmentCard(c) {
   const doBtn = el('button', { class: 'primary', title: 'Start a Claude Code session on this' }, 'Do');
   const machinePick = picker(MACHINES.machines.map((m) => ({ value: m.name, label: m.label })), '');
   const modePick = picker(MACHINES.modes.map((m) => ({ value: m, label: MODE_HELP[m] || m })), MACHINES.defaultMode);
+  const routePick = picker((MACHINES.routes || ['claude']).map((r) => ({ value: r, label: ROUTE_HELP[r] || r })), MACHINES.defaultRoute || 'claude');
+  // The end state (src/dispatch/deliveryCore.js). Unpicked: the repo's default.
+  const deliveryPick = picker([{ value: '', label: 'end state: the repo\'s default' },
+    ...(MACHINES.deliveries || []).map((d) => ({ value: d.value, label: `${d.value} — ${d.plain}` }))], '');
   // A native disclosure: it opens and closes whatever else the card is doing.
   const ctx = el('details', { class: 'ctx-toggle' }, el('summary', {}, 'Context'));
   const loadContext = async (fresh = false) => {
@@ -515,10 +548,28 @@ function commitmentCard(c) {
     if (tab) tab.document.title = 'starting a session…';
     machinePick.disabled = true;
     modePick.disabled = true;
-    toast(machinePick.value ? `setting up on ${machinePick.value} — this takes a minute; the session opens in the new tab` : 'starting the session…');
+    routePick.disabled = true;
+    deliveryPick.disabled = true;
+    toast(routePick.value !== 'claude' ? 'sending it on its way…' : machinePick.value ? `setting up on ${machinePick.value} — this takes a minute; the session opens in the new tab` : 'starting the session…');
     try {
-      const r = await post(`api/commitments/${c.id}/dispatch`, { machine: machinePick.value || null, mode: modePick.value });
-      toast(`run #${r.id} started (${r.mode}${r.machine ? ` on ${r.machine}` : ''})`);
+      // A mode left at its default is not a choice: the end state decides then.
+      const mode = modePick.value !== MACHINES.defaultMode ? modePick.value : undefined;
+      // The level this will resolve to (a repo default included), shown and
+      // confirmed here when nothing human follows it; the server checks the
+      // page sent back exactly that level.
+      const q = new URLSearchParams({ ...(mode ? { mode } : {}), ...(deliveryPick.value ? { delivery: deliveryPick.value } : {}) });
+      const pre = await (await fetch(`api/commitments/${c.id}/delivery?${q}`)).json();
+      let confirmedLevel = null;
+      if (pre.unattended) {
+        if (!window.confirm(`End state: ${pre.delivery} — ${pre.plain}\n\nNo human step after this. Start it?`)) throw new Error('not started');
+        confirmedLevel = pre.delivery;
+      }
+      const r = await post(`api/commitments/${c.id}/dispatch`, {
+        machine: routePick.value === 'factory' ? null : machinePick.value || null, mode, via: routePick.value, delivery: deliveryPick.value || null, confirmedLevel,
+      });
+      toast(r.route === 'factory'
+        ? `run #${r.id} sent to the factory (job ${r.jobId}, delivers ${r.delivery})${(r.warnings || []).length ? ` — factory warned: ${r.warnings.join('; ')}` : ''}`
+        : `run #${r.id} started (${r.mode}${r.delivery ? ` → ${r.delivery}` : ''}${r.machine ? ` on ${r.machine}` : ''})${r.routeReason && routePick.value === 'auto' ? ` — ${r.routeReason}` : ''}`);
       if (tab && r.url) tab.location.href = r.url;
       else if (r.url) window.open(r.url, '_blank');
       openContext.set(c.id, null);
@@ -526,6 +577,8 @@ function commitmentCard(c) {
       if (tab) tab.close();
       machinePick.disabled = false;
       modePick.disabled = false;
+      routePick.disabled = false;
+      deliveryPick.disabled = false;
       throw err;
     }
   }));
@@ -550,7 +603,8 @@ function commitmentCard(c) {
     el('div', { class: 'sub' }, ...sub),
     ...cardSource(c, c.onBoard),
     el('div', { class: 'actions' },
-      canDo && MACHINES.machines.length > 1 ? machinePick : null, canDo ? modePick : null, canDo ? doBtn : null,
+      canDo && (MACHINES.routes || []).length > 1 ? routePick : null,
+      canDo && MACHINES.machines.length > 1 ? machinePick : null, canDo ? modePick : null, canDo ? deliveryPick : null, canDo ? doBtn : null,
       canReply ? replyBtn : null, doneBtn, dropBtn),
     ctx);
 }
@@ -617,7 +671,9 @@ function draftCard(d) {
 // no API this page calls ever returns one. Cards are kept across refreshes
 // (keyed by id) so the 30-second refresh cannot wipe a half-pasted token.
 
-const WHERE = { 'credential-manager': 'Windows Credential Manager (encrypted, your Windows account only)', 'env-file': 'personal-assistant/.env (gitignored, plain text)' };
+// The keyring's wording comes with each request (`vault`): Windows Credential
+// Manager on Windows, the Secret Service on Linux.
+const WHERE = { 'credential-manager': 'the OS keyring', 'env-file': 'personal-assistant/.env (gitignored, plain text)' };
 const needCards = new Map();
 
 // Not `busy`: this page and routines.js share one global scope, and a second
@@ -656,10 +712,11 @@ function secretCard(r) {
     // Config that is not secret (an email, a site name) may be shown as typed.
     const input = el('input', { type: r.target === 'env-file' ? 'text' : 'password', autocomplete: 'off', spellcheck: 'false', placeholder: `Paste ${r.name}`, 'aria-label': r.name });
     const target = el('select', { title: 'Where the value is stored' },
-      el('option', { value: 'credential-manager' }, 'Credential Manager'), el('option', { value: 'env-file' }, '.env file'));
-    target.value = r.target === 'env-file' ? 'env-file' : 'credential-manager';
+      el('option', { value: 'credential-manager', ...(r.vault_available === false ? { disabled: '' } : {}) }, 'OS keyring'), el('option', { value: 'env-file' }, '.env file'));
+    target.value = r.target === 'env-file' || r.vault_available === false ? 'env-file' : 'credential-manager';
     const where = el('div', { class: 'where' });
-    const showWhere = () => where.replaceChildren('Will be stored in ', el('strong', {}, WHERE[target.value]), '.');
+    const whereText = (t) => (t === 'credential-manager' && r.vault ? r.vault : WHERE[t]);
+    const showWhere = () => where.replaceChildren('Will be stored in ', el('strong', {}, whereText(target.value)), '.');
     target.addEventListener('change', showWhere);
     showWhere();
     const save = el('button', { class: 'primary', type: 'submit' }, 'Save');
@@ -675,7 +732,7 @@ function secretCard(r) {
       try {
         const res = await post(`api/secrets/${r.id}/fulfil`, { value: input.value, target: target.value });
         input.value = '';
-        say(`Saved ${res.name} to ${res.stored === 'env-file' ? '.env' : 'Credential Manager'}.`, true);
+        say(`Saved ${res.name} to ${res.stored === 'env-file' ? '.env' : 'the OS keyring'}.`, true);
         setTimeout(() => { needCards.delete(r.id); refresh(); }, 1500);
       } catch (err) { say(`Not saved: ${err.message}`, false); restore(); }
     });
@@ -761,7 +818,8 @@ function render(s) {
   const runs = [...s.runsActive.map((r) => ({ ...r, live: true })), ...s.runsReview];
   fill('runs', runs, (r) => el('div', { class: 'item' },
     el('div', { class: 'sum' }, r.task),
-    el('div', { class: 'sub' }, ...joinParts([`run #${r.id}`, r.live ? r.status : 'done — review', r.mode,
+    el('div', { class: 'sub' }, ...joinParts([`run #${r.id}`, r.live ? r.status : r.status === 'blocked' ? `blocked — ${r.exit_note || 'see pa review'}` : 'done — review', r.mode,
+      r.route === 'factory' ? `factory ${r.factory_job_id || ''}${r.factory_state ? ` · ${r.factory_state}` : ''}` : null,
       r.repo_path, link(r.mr_url, 'MR')]))), 'No agent runs.');
 
   const code = s.reviews.filter((r) => r.raw?.state === 'opened' || r.raw?.action);
@@ -814,10 +872,57 @@ function noteCard(n) {
       thumb('down', '👎', 'Not worth an interruption — fewer like this')));
 }
 
+// A dispatch offer frozen by src/dispatch/offer.js: the end state first, in
+// plain words (loud when nothing human follows the yes), a picker to change
+// it when accepting, the route, the done-criteria, and — one click away — the
+// exact brief that will be sent.
+const UNATTENDED = new Set(['auto_merge', 'push_to_main']);
+function offerDetails(p) {
+  const pl = p.payload || {};
+  const plain = pl.deliveryPlain || {};
+  const line = el('div', { class: 'endstate' });
+  const show = (d) => {
+    line.textContent = d ? `End state: ${d} — ${plain[d] || ''}` : 'End state: none — read-only research; changes nothing.';
+    line.className = UNATTENDED.has(d) ? 'endstate loud' : 'endstate';
+  };
+  show(pl.delivery);
+  let select = null;
+  const nodes = [line];
+  if (pl.delivery) {
+    select = el('select', { 'aria-label': 'End state on accept' });
+    for (const d of Object.keys(plain)) {
+      const o = el('option', { value: d }, d);
+      if (d === pl.delivery) o.selected = true;
+      select.append(o);
+    }
+    select.addEventListener('change', () => show(select.value));
+    nodes.push(el('div', { class: 'endstate-pick' }, 'Change it before accepting:', select));
+  }
+  const route = pl.via === 'factory'
+    ? `Software factory · app ${pl.app || `${pl.slug} (registered on accept)`} · pipeline ${pl.pipeline}` +
+      (pl.models && Object.keys(pl.models).length ? ` · models ${Object.entries(pl.models).map(([k, v]) => `${k}=${v}`).join(' ')}` : '')
+    : `Claude session · mode ${pl.mode || '?'}`;
+  nodes.push(el('div', { class: 'sub' }, route));
+  if (pl.routeReason) nodes.push(el('div', { class: 'sub' }, `Why: ${pl.routeReason}`));
+  if (Array.isArray(pl.done)) {
+    nodes.push(el('div', { class: 'sub' }, pl.done.length ? 'Done when:' : 'Done when: (no criteria)'));
+    if (pl.done.length) nodes.push(el('ul', { class: 'done-list' }, ...pl.done.map((d) => el('li', {}, d))));
+  }
+  if (pl.brief) {
+    nodes.push(el('details', { class: 'brief' },
+      el('summary', {}, `The brief that will be sent (${pl.briefBy || 'composed'}) — at the end state shown when it was prepared`),
+      el('pre', {}, pl.brief)));
+  }
+  return { nodes, select };
+}
+
 // A prepared action (yes / no) or a question (one button per option).
 function needsYouCard(p) {
+  const offer = p.kind === 'dispatch' && p.payload?.frozen ? offerDetails(p) : null;
   const decide = (accept, answer) => async () => {
-    const r = await post(`api/proposals/${p.id}/${accept ? 'accept' : 'reject'}`, { answer });
+    const body = { answer };
+    if (accept && offer?.select && offer.select.value !== p.payload.delivery) body.delivery = offer.select.value;
+    const r = await post(`api/proposals/${p.id}/${accept ? 'accept' : 'reject'}`, body);
     toast(r.result || (accept ? 'done' : 'declined'));
   };
   const buttons = [];
@@ -841,7 +946,9 @@ function needsYouCard(p) {
     el('div', { class: 'sum' }, p.title),
     el('div', { class: 'sub' }, ...joinParts([p.commitment_id ? `#${p.commitment_id}` : null, p.run_id ? `run #${p.run_id}` : null,
       p.commitment_summary, p.who, SOURCE[p.source] || p.source, p.project, ago(p.created_at)])),
-    p.body ? el('pre', { class: 'sub' }, p.body) : null,
+    offer && p.payload.suggestedBy ? el('div', { class: 'endstate loud' }, `Suggested by ${p.payload.suggestedBy} — check the end state before you accept.`) : null,
+    offer ? (p.payload.why ? el('div', { class: 'sub' }, `Planner's note: ${p.payload.why}`) : null) : p.body ? el('pre', { class: 'sub' }, p.body) : null,
+    ...(offer ? offer.nodes : []),
     ...(p.commitment_id ? cardSource(p, true) : []),
     el('div', { class: 'actions' }, ...buttons));
 }

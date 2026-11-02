@@ -7,7 +7,8 @@
 //
 //   code that needs a token  →  requestSecret()  →  a row + a toast
 //   the human, in the dashboard (or `pa secret set`)  →  store()
-//   store()  →  Windows Credential Manager (or the gitignored .env)
+//   store()  →  the OS vault — Windows Credential Manager, the Linux Secret
+//               Service (secrets/vault.js) — or the gitignored .env
 //   the code that needs it  →  config.secret(name)
 //
 // **Secret values flow browser → store.** No model, log line, API response
@@ -244,7 +245,7 @@ async function openRequest({ kind, name, purpose, hint, url, command = null, req
     await notify({
       kind: 'secret_request',
       title: kind === 'login' ? `Sign-in needed: ${purpose}` : `Secret needed: ${name}`,
-      body: kind === 'login' ? hint || command || '' : `${purpose}\nPaste it in the dashboard; it goes to ${target === 'env-file' ? '.env' : 'Windows Credential Manager'}.`,
+      body: kind === 'login' ? hint || command || '' : `${purpose}\nPaste it in the dashboard; it goes to ${target === 'env-file' ? '.env' : vault.label()}.`,
       url: dashboardUrl(`secret-${row.id}`),
       dedupeKey: `secret_request:${row.id}`,
       // Something is blocked until you answer it.
@@ -289,6 +290,10 @@ function publicRow(r) {
     status: r.status,
     created_at: r.created_at,
     fulfilled_at: r.fulfilled_at,
+    // Where "the OS keyring" is on this machine, in words, and whether there
+    // is one (on a Linux box without a Secret Service, only .env works).
+    vault: vault.where(),
+    vault_available: vault.available(),
   };
 }
 
