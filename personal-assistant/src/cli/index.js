@@ -35,6 +35,7 @@ const HELP = `pa — your context layer
   Doing
     pa do <id> [--mode m] [--repo p] dispatch a commitment to a Claude Code session
                      [--machine name]  …in another machine's termhub (PA_MACHINES)
+                     [--agent claude|opencode] [--model m]  which agent CLI and model (local runs)
     pa done <id> [--dismiss|--reopen] close a commitment yourself
     pa ledger <id>                   every status change of a commitment, and why
     pa ledger reconcile [--dry-run] [--id N,..] [--limit N]
@@ -368,6 +369,8 @@ const commands = {
       mode: flags.mode && flags.mode !== true ? String(flags.mode) : undefined,
       repoPath: flags.repo && flags.repo !== true ? String(flags.repo) : null,
       machine,
+      agent: flags.agent && flags.agent !== true ? String(flags.agent) : null,
+      model: flags.model && flags.model !== true ? String(flags.model) : null,
     });
 
     out(`run #${result.id} · ${result.mode}${result.machine ? ` · on ${result.machine}` : ''} · ${result.repoPath || '(no repo)'}`);
@@ -926,6 +929,27 @@ const commands = {
       );
     }
     const viaCli = modelRows.some((r) => r.backend === 'cli');
+    // The PA chat and dispatched runs: which agent CLI, which model, and
+    // whether its permission guarantees hold (src/chat/agent.js).
+    try {
+      const agent = require('../chat/agent');
+      const chat = agent.chatCommand();
+      let detail = `${chat.command}`;
+      if (chat.agent === 'opencode') {
+        const check = await agent.verifyOpencodePermissions(require('../chat').ensureHome());
+        mark(check.ok, 'chat agent', `${detail} · permissions ${check.ok ? 'verified' : `REFUSED — ${check.problems.join('; ')}`}`);
+      } else {
+        mark(true, 'chat agent', `${detail} · permissions from .claude/settings.json`);
+      }
+    } catch (err) {
+      mark(false, 'chat agent', `REFUSED — ${err.message}`);
+    }
+    try {
+      const d = require('../dispatch/agent').dispatchCommand();
+      mark(true, 'dispatch agent', d.command);
+    } catch (err) {
+      mark(false, 'dispatch agent', `REFUSED — ${err.message}`);
+    }
     mark(Boolean(cliVersion), 'claude cli', cliVersion || 'not found — connector sources (Jira, Microsoft 365) cannot run');
     if (viaCli || cliVersion) {
       // Which subscription pa's own calls bill to, and where its connectors live.

@@ -288,14 +288,24 @@ const config = {
   termhub: {
     url: env('PA_TERMHUB_URL', 'http://127.0.0.1:7000'),
     claudeCommand: env('PA_CLAUDE_COMMAND', 'claude --dangerously-skip-permissions'),
+    // Which agent a dispatched run starts (claude | opencode) and on which
+    // model, unless `pa do --agent/--model` says otherwise (src/dispatch/agent.js).
+    // PA_CLAUDE_COMMAND stays the claude command line.
+    agent: env('PA_DISPATCH_AGENT', 'claude'),
+    model: env('PA_DISPATCH_MODEL'),
     machines: parseMachines(env('PA_MACHINES', '')),
   },
 
   // The PA chat (src/chat): one Claude Code session in termhub. Deliberately
   // without --dangerously-skip-permissions — it reads other people's
   // messages, so its actions stay behind permission prompts.
+  // PA_CHAT_AGENT picks the CLI (claude | opencode), PA_CHAT_MODEL its model;
+  // PA_CHAT_COMMAND, when set, is the whole command line instead. Either way
+  // src/chat/agent.js refuses a command that skips permissions.
   chat: {
-    command: env('PA_CHAT_COMMAND', 'claude'),
+    agent: env('PA_CHAT_AGENT'),
+    model: env('PA_CHAT_MODEL'),
+    command: env('PA_CHAT_COMMAND'),
   },
 
   dispatch: {

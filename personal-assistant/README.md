@@ -748,6 +748,8 @@ is refused at the call (with the variable named), logged as an error when the wo
 shown as **NOT capable** in `pa doctor`, which prints one line per pass: model, backend, the
 capability it needs (text, json, toolCalls), whether its key is configured.
 
+The PA chat and dispatched runs choose an agent CLI as well as a model — see the next section.
+
 ## Talking to it: the PA chat
 
 `pa chat` (or termhub's **PA chat** button) opens one Claude Code session in termhub that *is*
@@ -759,6 +761,24 @@ history. It answers through the MCP tools (`recall`, `memory_page`, …) and act
 CLI: read-only commands run freely; starting a run (`pa do`), landing, steering, closing,
 remembering and adding routines each ask you first. Put your own standing instructions in
 `pa-home\CLAUDE.local.md`.
+
+**Claude Code or opencode.** `PA_CHAT_AGENT=opencode` runs the chat in
+[opencode](https://opencode.ai) instead, on any provider opencode is set up for, with
+`PA_CHAT_MODEL` in opencode's `provider/model` form (`PA_CHAT_MODEL` on claude takes a Claude
+model). The same rules apply: pa writes `pa-home\opencode.json` and `AGENTS.md` from the same
+command lists as Claude's `settings.json`, starting from "ask for everything" (opencode's own
+defaults allow nearly everything), denying subagents, and asking for any command with a redirect.
+Before it starts an opencode chat, pa asks the installed opencode for the rules it actually
+resolved (`opencode debug agent`) for every agent you can switch to, and refuses to start if any
+action that must ask would not. Neither CLI may be started with permissions skipped
+(`--dangerously-skip-permissions`, `--auto`): `pa chat` and `pa doctor` refuse. opencode has no
+SessionStart hook, so its `AGENTS.md` tells it to run `pa context` first, and **the doorbell below
+never rings for it** — its screen is not Claude's, so the chat reads `INBOX.md` on your next turn.
+
+Dispatched runs choose too: `PA_DISPATCH_AGENT` / `PA_DISPATCH_MODEL`, or `pa do … --agent
+opencode --model azure/gpt-5.4` for one run. An opencode run starts as `opencode --auto` with the
+opening prompt on its command line (nothing is typed at it); the run's mode limits are enforced by
+the dispatcher either way. Runs on another machine start that machine's `claude`.
 
 Work you hand it runs as an ordinary dispatch: its own termhub session and worktree. When that
 session has been sitting at its prompt for a minute — finished, or stopped to ask something — you
@@ -776,7 +796,7 @@ safe (`src/notify/chat.js`):
 - **The typed line carries no content.** Typed text is a prompt with *your* authority, and
   notification titles quote other people; in `INBOX.md` the same words are data the chat is told
   never to obey.
-- **It is typed only when nothing can go wrong with Enter**: termhub says the session finished its
+- **It is typed only when nothing can go wrong with Enter**: termhub says the session is Claude Code and finished its
   turn (not working, not parked on a permission prompt or question), it has been quiet for
   `PA_CHAT_NUDGE_IDLE_MINUTES` (2), and the screen's input box is empty with nothing unexplained
   after it. Any doubt and the nudge is skipped — the toast still goes and the chat reads the inbox
@@ -817,6 +837,7 @@ src/routines/        cron parser, the typed action registry (repo_sync, prompt_r
 src/notify/          notifications: toasts, the interrupt budget, digests, feedback weights, the PA chat inbox
 src/llm.js           model calls: Anthropic API, `claude -p`, or an OpenAI-compatible provider
 src/models.js        model strings, which backend each pass uses, and what it can do (pa doctor)
+src/agentCli.js      claude | opencode command lines for the chat (src/chat/agent.js) and runs (src/dispatch/agent.js)
 src/budget.js        model spend: one llm_spend row per call, the daily cap on discretionary work
 src/backup.js        nightly pg_dump, restore, re-ingest
 src/dispatch/        worktrees, briefs, termhub sessions, modes, landing

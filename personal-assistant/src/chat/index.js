@@ -42,8 +42,14 @@ function paCommand() {
   return `node ${path.join(config.toolDir, 'bin', 'pa.js').replace(/\\/g, '/')}`;
 }
 
-function claudeMd() {
+// `agent` is the CLI reading it: Claude Code loads `pa context` with a
+// SessionStart hook; opencode has no hooks, so it is told to run it.
+function claudeMd({ agent = 'claude' } = {}) {
   const pa = paCommand();
+  const loads = agent === 'opencode'
+    ? `Before your first answer in a session (and after every compaction), run \`${pa} context\` (fine
+without asking). It prints`
+    : `At the start of every session (and after every compaction) a hook loads \`pa context\`:`;
   return `# You are the personal assistant
 
 You are the user's personal work assistant, running on their machine. They talk to you here, from
@@ -51,7 +57,7 @@ any termhub tab or their phone. Be brief and concrete; they are usually between 
 
 ## What you know
 
-At the start of every session (and after every compaction) a hook loads \`pa context\`: their
+${loads} their
 profile, today's brief, what is waiting on them, and live agent runs. Beyond that, use the
 \`personal-assistant\` MCP tools:
 
@@ -111,39 +117,45 @@ lists the unread pushes, oldest first, each headed \`## notification <id>\`.
 `;
 }
 
+// The chat's permissions, once, for both agent CLIs: settingsJson() renders
+// them for Claude Code, src/chat/agent.js for opencode.
+const ALLOW_COMMANDS = [
+  'brief', 'inbox', 'show', 'search', 'who', 'runs', 'review', 'drafts', 'memory', 'meeting',
+  'routine list', 'doctor', 'backup list', 'context', 'projects',
+  // Reading the feed, and acking a row (sets read_at; the feed keeps it).
+  'notify list', 'notify ack', 'notify weights', 'notify digest',
+];
+const ASK_COMMANDS = ['do', 'land', 'drop', 'say', 'done', 'remember', 'forget', 'routine add',
+  // Moves how often a kind interrupts you: a message must not be able to talk the chat into it.
+  'notify feedback'];
+const ALLOW_MCP_TOOLS = ['recall', 'memory_page', 'brief_me', 'open_commitments', 'who_is', 'get_thread',
+  'search_context', 'explain_claim', 'repo_state'];
+
 function settingsJson() {
   const pa = paCommand();
-  const allow = [
-    'brief', 'inbox', 'show', 'search', 'who', 'runs', 'review', 'drafts', 'memory', 'meeting',
-    'routine list', 'doctor', 'backup list', 'context', 'projects',
-    // Reading the feed, and acking a row (sets read_at; the feed keeps it).
-    'notify list', 'notify ack', 'notify weights', 'notify digest',
-  ].map((c) => `Bash(${pa} ${c}:*)`);
   return {
     hooks: {
       SessionStart: [{ hooks: [{ type: 'command', command: `${pa} context`, timeout: 60 }] }],
     },
     permissions: {
-      allow: [...allow, 'mcp__personal-assistant__recall', 'mcp__personal-assistant__memory_page',
-        'mcp__personal-assistant__brief_me', 'mcp__personal-assistant__open_commitments',
-        'mcp__personal-assistant__who_is', 'mcp__personal-assistant__get_thread',
-        'mcp__personal-assistant__search_context', 'mcp__personal-assistant__explain_claim',
-        'mcp__personal-assistant__repo_state'],
-      ask: [`Bash(${pa} do:*)`, `Bash(${pa} land:*)`, `Bash(${pa} drop:*)`, `Bash(${pa} say:*)`,
-        `Bash(${pa} done:*)`, `Bash(${pa} remember:*)`, `Bash(${pa} forget:*)`, `Bash(${pa} routine add:*)`,
-        // Moves how often a kind interrupts you: a message must not be able to talk the chat into it.
-        `Bash(${pa} notify feedback:*)`],
+      allow: [...ALLOW_COMMANDS.map((c) => `Bash(${pa} ${c}:*)`), ...ALLOW_MCP_TOOLS.map((t) => `mcp__personal-assistant__${t}`)],
+      ask: ASK_COMMANDS.map((c) => `Bash(${pa} ${c}:*)`),
     },
   };
 }
 
 // Writes the home directory. Rewritten every time, so the instructions follow
 // the code; the user's own additions belong in CLAUDE.local.md, never touched.
+// Both agents' files are written every time, so switching PA_CHAT_AGENT needs
+// no cleanup: CLAUDE.md + .claude/settings.json for Claude Code, AGENTS.md +
+// opencode.json for opencode (src/chat/agent.js).
 function ensureHome() {
   const home = homeDir();
   fs.mkdirSync(path.join(home, '.claude'), { recursive: true });
   fs.writeFileSync(path.join(home, 'CLAUDE.md'), claudeMd(), 'utf8');
   fs.writeFileSync(path.join(home, '.claude', 'settings.json'), JSON.stringify(settingsJson(), null, 2), 'utf8');
+  fs.writeFileSync(path.join(home, 'AGENTS.md'), claudeMd({ agent: 'opencode' }), 'utf8');
+  fs.writeFileSync(path.join(home, 'opencode.json'), JSON.stringify(require('./agent').opencodeConfig(), null, 2), 'utf8');
   return home;
 }
 
@@ -151,17 +163,25 @@ function sameDir(a, b) {
   return path.resolve(String(a || '')).toLowerCase() === path.resolve(String(b || '')).toLowerCase();
 }
 
-// The live PA session, or a new one. Not `--dangerously-skip-permissions`:
-// this session reads other people's messages, so its actions stay behind the
-// permission prompts settings.json defines.
+// The live PA session, or a new one. Never skipping permissions: this session
+// reads other people's messages, so its actions stay behind the permission
+// prompts settings.json / opencode.json define. agent.chatCommand() refuses a
+// command that would skip them, and an opencode chat starts only once
+// opencode itself confirms it resolved those rules.
 async function ensureSession() {
+  const agent = require('./agent');
   const home = ensureHome();
   const sessions = await termhub.listSessions();
   const live = sessions.find((s) => s.alive !== false && sameDir(s.cwd, home));
   if (live) return { sessionId: live.id, created: false };
-  const created = await termhub.createSession({ cwd: home, command: config.chat.command, title: 'PA' });
-  log.info('started PA chat', { session: created.id });
+  const chat = agent.chatCommand();
+  if (chat.agent === 'opencode') {
+    const check = await agent.verifyOpencodePermissions(home);
+    if (!check.ok) throw new Error(`opencode chat refused: ${check.problems.join('; ')}`);
+  }
+  const created = await termhub.createSession({ cwd: home, command: chat.command, title: 'PA' });
+  log.info('started PA chat', { session: created.id, agent: chat.agent });
   return { sessionId: created.id, created: true };
 }
 
-module.exports = { ensureSession, ensureHome, homeDir, claudeMd, settingsJson, paCommand };
+module.exports = { ensureSession, ensureHome, homeDir, claudeMd, settingsJson, paCommand, ALLOW_COMMANDS, ASK_COMMANDS, ALLOW_MCP_TOOLS };

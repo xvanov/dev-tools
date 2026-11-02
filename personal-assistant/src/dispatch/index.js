@@ -110,7 +110,7 @@ async function memoryContext({ commitment, item, project, person }, task) {
   };
 }
 
-async function start({ commitmentId = null, task = null, mode: modeName, repoPath = null, machine = null, again = false }) {
+async function start({ commitmentId = null, task = null, mode: modeName, repoPath = null, machine = null, again = false, agent = null, model = null }) {
   // One live run per commitment. A second Do while the first is still setting
   // up (a remote one takes a minute) started a second agent on the same ask.
   if (commitmentId && !again) {
@@ -124,9 +124,20 @@ async function start({ commitmentId = null, task = null, mode: modeName, repoPat
       throw new Error(`#${commitmentId} already has run #${live.id}${where} — attach to it (pa attach ${live.id}), or drop it first`);
     }
   }
+  // Which agent and model (src/dispatch/agent.js), resolved before anything
+  // is created so a bad choice leaves no run row or worktree behind.
   if (machine && !termhub.isLocal(machine)) {
+    // src/dispatch/remote.js types that machine's own claude. A choice made
+    // for this run is refused rather than dropped; the defaults
+    // (PA_DISPATCH_AGENT/MODEL) are for local runs and do not apply.
+    if ((agent && agent !== 'claude') || model) {
+      throw new Error('a run on another machine starts that machine\'s claude — --agent/--model apply to local runs only');
+    }
     return startRemote({ commitmentId, task, modeName, repoPath, machineName: machine });
   }
+  // Which agent and model (src/dispatch/agent.js), resolved before anything
+  // is created so a bad choice leaves no run row or worktree behind.
+  const launch = require('./agent').dispatchCommand({ agent, model, prompt: openingPrompt({}) });
   const m = resolveMode(modeName);
   const target = await resolveTarget({ commitmentId, repoPath });
 
@@ -201,7 +212,7 @@ async function start({ commitmentId = null, task = null, mode: modeName, repoPat
   }
   const session = await termhub.createSession({
     cwd: worktreePath || repo || config.reposRoot,
-    command: config.termhub.claudeCommand,
+    command: launch.command,
     title: `pa#${run.id} ${label.slice(0, 40)}`,
   });
 
@@ -220,12 +231,15 @@ async function start({ commitmentId = null, task = null, mode: modeName, repoPat
 
   // Waits for Claude's prompt (answering the folder-trust question a new
   // worktree always gets), types the brief prompt and checks it was taken.
-  await termhub.briefClaude(termhub, session.id, openingPrompt(run)).catch((err) => {
-    log.warn('could not type the opening prompt', { run: run.id, message: err.message });
-  });
+  // opencode got the prompt on its command line; nothing is typed at it.
+  if (launch.typesPrompt) {
+    await termhub.briefClaude(termhub, session.id, openingPrompt(run)).catch((err) => {
+      log.warn('could not type the opening prompt', { run: run.id, message: err.message });
+    });
+  }
 
   const url = await termhub.sessionUrl(session.id);
-  log.info('dispatched', { run: run.id, mode: m.name, repo, branch });
+  log.info('dispatched', { run: run.id, mode: m.name, repo, branch, agent: launch.agent, model: launch.model });
 
   return { id: run.id, mode: m.name, repoPath: repo, worktreePath, branch, briefPath, sessionId: session.id, url };
 }
