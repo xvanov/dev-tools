@@ -369,7 +369,7 @@ async function handle(name, args = {}) {
         [project.gitlab_path]
       );
       const runs = await rows(
-        `select id, task, mode, status, branch, mr_url, started_at from run
+        `select id, task, mode, status, branch, mr_url, started_at, route, factory_job_id from run
           where repo_path = $1 order by started_at desc limit 10`,
         [project.repo_path]
       );

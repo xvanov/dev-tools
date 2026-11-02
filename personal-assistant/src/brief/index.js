@@ -54,7 +54,7 @@ async function gather({ horizonDays = 7 } = {}) {
   );
 
   const runsActive = await rows(
-    `select id, task, mode, status, repo_path, termhub_session_id, started_at
+    `select id, task, mode, status, repo_path, termhub_session_id, started_at, route, factory_job_id, factory_state
        from run where status in ('starting','running','waiting')
       order by started_at desc limit 10`
   );

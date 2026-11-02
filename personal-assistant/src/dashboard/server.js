@@ -61,7 +61,8 @@ async function commitmentContext(id) {
   const termhub = require('../dispatch/termhub');
   const runs = (
     await rows(
-      `select id, status, mode, machine, branch, started_at, termhub_session_id from run
+      `select id, status, mode, machine, branch, started_at, termhub_session_id, route, route_reason,
+              factory_job_id, factory_state, factory_warnings, delivery, cost_usd, mr_url from run
         where commitment_id = $1 order by started_at desc`,
       [id]
     )
@@ -159,6 +160,10 @@ async function handle(req, res) {
       machines: [{ name: '', label: 'this machine' }, ...Object.keys(config.termhub.machines).map((name) => ({ name, label: name }))],
       modes: Object.keys(require('../dispatch/modes').MODES),
       defaultMode: require('../dispatch/modes').mode().name,
+      // Where the work goes: a Claude session, the software factory, or let
+      // the routing rule pick (src/dispatch/routeCore.js). Factory only when configured.
+      routes: require('../dispatch/factory').enabled() ? ['claude', 'factory', 'auto'] : ['claude'],
+      defaultRoute: require('../dispatch/factory').enabled() ? config.factory.via : 'claude',
     });
   }
   // One commitment with what it came from, so it can be judged before it is
@@ -281,8 +286,13 @@ async function handle(req, res) {
         commitmentId: Number(m[1]),
         mode: body.mode || undefined,
         machine: body.machine ? String(body.machine) : null,
+        via: body.via ? String(body.via) : null,
       });
-      return send(res, 200, { id: run.id, mode: run.mode, machine: run.machine || null, url: run.url, repoPath: run.repoPath });
+      return send(res, 200, {
+        id: run.id, mode: run.mode, machine: run.machine || null, url: run.url, repoPath: run.repoPath,
+        route: run.route || 'claude', routeReason: run.routeReason || null, jobId: run.jobId || null, delivery: run.delivery || null,
+        warnings: run.warnings || [],
+      });
     }
   }
   return send(res, 404, { error: 'not found' });

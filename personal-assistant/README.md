@@ -263,7 +263,9 @@ investigate, meeting, decision, admin) once. An *investigate* ask with a known r
 read-only research run started on its own — `plan` mode, so it can neither commit nor push — at
 most `PA_EAGER_RUNS_PER_DAY` (2) a day and only within the daily budget; you get a toast with the
 session. A *coding* ask with a known repo becomes a **Needs you** card, "start a coding session?"
-(local mode on yes). A code ask with no repo asks **which repo?** with buttons; your pick sets the
+(local mode on yes) — or, when the routing rule picks the software factory (below), "send to the
+factory?" (`PA_FACTORY_PROPOSAL_MODE`, default `mr`: at most a draft PR). The card states the route
+and the rule's reason before you say yes; a factory job changes code, so it is only ever offered. A code ask with no repo asks **which repo?** with buttons; your pick sets the
 project and teaches the alias, and the ask is planned again. Asks the reconciler thinks are done,
 or that already have a run, are left alone.
 
@@ -494,7 +496,8 @@ Windows, Linux and macOS machines all take runs. The OS (`windows`, `linux`, `ma
 without it, it is what that termhub reports (`/api/info`), else the shape of `reposRoot`
 (`C:\…` or `/…`). A configured OS that its termhub contradicts, or a `reposRoot` written for the
 other OS, is refused rather than guessed around. `pa doctor` shows each machine's reachability,
-OS and whether its termhub can run commands.
+OS and whether its termhub can run commands. A factory job on any of them
+can be followed (next section).
 
 A run's worktree is trusted ahead of time (the worktrees root is marked trusted in `~/.claude.json`, `src/dispatch/trust.js`), so Claude never stops at its folder-trust question; if the question shows anyway, the cursor is moved to *Yes* first, since newer Claude Code puts it on *No, exit*.
 
@@ -531,6 +534,60 @@ transcripts touched in the last week are fetched (a first pass once turned a mac
 that is off or unreachable is an `ERROR` line on that cursor in `pa doctor`, not a failed pass.
 "termhub on X is too old" means that machine's termhub predates the route: run
 `termhub/windows/update.ps1` there. `pa sync --source claude_session_remote` runs it by hand.
+
+### Runs in the software factory
+
+A second dispatch target next to Claude sessions: the software factory (PM → SM → dev → reviewer →
+merge gates, its own repo). `pa do 959 --via factory` sends the ask there as a job instead of
+starting a session; `--via auto` lets the routing rule choose and prints why; `--via claude` (the
+default, `PA_DISPATCH_VIA`) is everything before. The dashboard grows a route picker beside **Do**
+once the factory is configured. The PA never imports factory code: it runs `uv run factory job …`
+in the factory checkout (`PA_FACTORY_PATH`) on the factory's machine (`PA_FACTORY_MACHINE`, a
+`PA_MACHINES` name, or empty for this one) and reads the one JSON object each command prints — the
+contract is the factory's `docs/JOBS-API.md`.
+
+- **The mode still bounds it**, now as the job's delivery level, which the factory clamps to the
+  app's own ceiling: `local` → `none` (committed in the factory's worktree), `branch` → `branch`,
+  `mr` and `full` → `draft_pr`. `plan` is not a factory job. Nothing the PA sends asks for a merge.
+- **The ask is the brief**: the same BRIEF the session would get (requester's words, thread, memory),
+  without the lines about this tool's worktree and MCP server. Done-criteria are the commitment's
+  "what done looks like", one per line (`--done "…"`, repeatable, replaces them).
+  `--pipeline chain|solo|auto` (`PA_FACTORY_PIPELINE`) and `--model persona=model` (repeatable;
+  `PA_FACTORY_MODELS` sets defaults) pass straight through; `--app` names the factory app when the
+  repo cannot be read from the commitment. The run id is the job's external id, so a submit whose
+  answer was lost is retried once and returns the same job.
+- **Every job carries a flow**: the factory's direction validator needs a `flow.md` (or an API spec)
+  and parks a job without one as `needs_human`. `factoryCore.flowMarkdown` writes it
+  deterministically — no model call: numbered steps that restate the ask and turn each
+  done-criterion into a "Check:" step. Ask and flow are files on the factory's machine: written
+  directly when it is this one, otherwise through `runCommand` by a fixed Python writer that takes
+  the contents base64-encoded and puts them under that machine's temp dir. Any `warnings` the
+  factory returns are kept on the run (`factory_warnings`), printed by `pa do` / `pa review`, and
+  shown on the dashboard.
+- **Walking in**: a termhub session on the factory's machine runs `uv run factory job follow <job>`
+  in the checkout, titled with the ask; the card's session link and `pa attach` open it.
+- **Status comes back** every `PA_FACTORY_POLL_SECONDS` (120): one `factory job list --source pa
+  --active`, plus `job status` for jobs that ended since. A blocked job makes the run `waiting` and
+  tells you why; a finished one is `landed` with its PR on the card and closes the commitment *done*
+  through the ledger (actor `factory`); a failed or cancelled one reopens it. `none` delivery
+  closes nothing — the work is in the factory, and the ask stays dispatched until you close it.
+  GitHub reconcile only closes `open` asks, so a merged factory PR is never closed twice.
+- `pa review <run>` shows the job, its stories and PRs; `pa drop <run>` cancels the job (the factory
+  keeps its evidence) and reopens the ask; `pa land`, `pa diff` and `pa say` refuse — the factory
+  delivers and is steered on its own side.
+
+**The routing rule** (`src/dispatch/routeCore.js`, pure and tested) sends work to the factory only
+when all hold: the factory is configured, the mode changes code, the planner judged the ask
+*coding*, its repo is registered with the factory (`factory app list`), and it has done-criteria.
+Anything else — investigate, ambiguous, `plan`, an unknown or unregistered repo, nothing to check
+the result against — is a Claude session. `PA_ROUTE_CHOOSER` picks a different chooser registered
+in `src/dispatch/route.js` (the seam for an LLM or evidence-based one); whatever it says is held to
+the hard limits (configured, not `plan`, registered repo).
+
+**Which route works** is measured: every run records its route, the reason, the ask's kind, and its
+outcome (`delivered`, `merged`, `failed`, `dropped`); factory runs add pipeline, delivery, models,
+job id and the factory's reported cost (sql/024). `pa runs stats [--days 90]` prints success rate
+and cost per route × kind. `pa doctor` checks the factory answers and lists its apps.
 
 ### Secrets and sign-ins
 
@@ -803,7 +860,9 @@ src/notify/          notifications: toasts, the interrupt budget, digests, feedb
 src/llm.js           model calls: API key, or `claude -p` without one
 src/budget.js        model spend: one llm_spend row per call, the daily cap on discretionary work
 src/backup.js        nightly pg_dump, restore, re-ingest
-src/dispatch/        worktrees, briefs, termhub sessions, modes, landing
+src/dispatch/        worktrees, briefs, termhub sessions, modes, landing; the factory route
+                     (factory.js, pure half factoryCore.js), the routing rule (route.js, routeCore.js),
+                     `pa runs stats` (stats.js), the local command runner (exec.local.js)
 src/draft/           reply drafting, auto-drafts, and delivery links (never sends)
 src/mcp/server.js    the recall server: read-only, plus remember and request_secret, which only ask
 src/worker.js        the periodic passes

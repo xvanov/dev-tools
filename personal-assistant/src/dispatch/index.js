@@ -110,7 +110,33 @@ async function memoryContext({ commitment, item, project, person }, task) {
   };
 }
 
-async function start({ commitmentId = null, task = null, mode: modeName, repoPath = null, machine = null, again = false }) {
+// The BRIEF for a target — the Claude route's BRIEF.md, and the factory
+// route's ask (src/dispatch/factory.js), from one implementation.
+async function briefFor(target, { modeName, run, task = null, factory = null }) {
+  return buildBrief({
+    commitment: target.commitment,
+    item: target.item,
+    project: target.project,
+    person: target.person,
+    modeName,
+    run,
+    related: await relatedContext(target.item),
+    memory: await memoryContext(target, task),
+    factory,
+  });
+}
+
+/**
+ * Starts a run. `via` picks the route (src/dispatch/routeCore.js): `claude`
+ * (a Claude Code session, the default unless PA_DISPATCH_VIA says otherwise),
+ * `factory` (a software-factory job, src/dispatch/factory.js), or `auto` (the
+ * routing rule chooses, and says why). `pipeline`, `models`, `done` and `app`
+ * only mean something to the factory.
+ */
+async function start({
+  commitmentId = null, task = null, mode: modeName, repoPath = null, machine = null, again = false,
+  via = null, pipeline = null, models = null, done = null, app = null, routeReason: givenReason = null,
+}) {
   // One live run per commitment. A second Do while the first is still setting
   // up (a remote one takes a minute) started a second agent on the same ask.
   if (commitmentId && !again) {
@@ -124,8 +150,25 @@ async function start({ commitmentId = null, task = null, mode: modeName, repoPat
       throw new Error(`#${commitmentId} already has run #${live.id}${where} — attach to it (pa attach ${live.id}), or drop it first`);
     }
   }
+  const route = require('./routeCore').via(via || config.factory.via);
+  let routeReason = givenReason || (route === 'claude' && via ? 'you chose a Claude session' : null);
+  if (route !== 'claude') {
+    const target = await resolveTarget({ commitmentId, repoPath });
+    const chooser = require('./route');
+    const choice =
+      route === 'factory'
+        ? await chooser.forced({ target, mode: modeName, done, app })
+        : await chooser.decide({ target, mode: modeName, done });
+    if (choice.route === 'factory') {
+      if (machine) throw new Error('--machine picks where a Claude session runs; the factory runs on PA_FACTORY_MACHINE');
+      return require('./factory').start({
+        target, app: choice.app, task, mode: modeName, pipeline, models, done: choice.done, routeReason: givenReason || choice.reason,
+      });
+    }
+    routeReason = givenReason || choice.reason;
+  }
   if (machine && !termhub.isLocal(machine)) {
-    return startRemote({ commitmentId, task, modeName, repoPath, machineName: machine });
+    return startRemote({ commitmentId, task, modeName, repoPath, machineName: machine, routeReason });
   }
   const m = resolveMode(modeName);
   const target = await resolveTarget({ commitmentId, repoPath });
@@ -144,9 +187,9 @@ async function start({ commitmentId = null, task = null, mode: modeName, repoPat
   }
 
   const run = await one(
-    `insert into run (commitment_id, mode, task, repo_path, status, machine)
-     values ($1,$2,$3,$4,'starting',$5) returning *`,
-    [commitmentId, m.name, label, repo, os.hostname()]
+    `insert into run (commitment_id, mode, task, repo_path, status, machine, route, route_reason, kind)
+     values ($1,$2,$3,$4,'starting',$5,'claude',$6,$7) returning *`,
+    [commitmentId, m.name, label, repo, os.hostname(), routeReason, target.commitment?.kind || null]
   );
 
   let worktreePath = null;
@@ -181,16 +224,7 @@ async function start({ commitmentId = null, task = null, mode: modeName, repoPat
     ]);
   }
 
-  const briefText = buildBrief({
-    commitment: target.commitment,
-    item: target.item,
-    project: target.project,
-    person: target.person,
-    modeName: m.name,
-    run: { ...run, worktree_path: worktreePath, branch },
-    related: await relatedContext(target.item),
-    memory: await memoryContext(target, task),
-  });
+  const briefText = await briefFor(target, { modeName: m.name, run: { ...run, worktree_path: worktreePath, branch }, task });
 
   const briefPath = worktreePath
     ? path.join(worktreePath, 'BRIEF.md')
@@ -236,13 +270,13 @@ async function start({ commitmentId = null, task = null, mode: modeName, repoPat
   const url = await termhub.sessionUrl(session.id);
   log.info('dispatched', { run: run.id, mode: m.name, repo, branch });
 
-  return { id: run.id, mode: m.name, repoPath: repo, worktreePath, branch, briefPath, sessionId: session.id, url };
+  return { id: run.id, route: 'claude', routeReason, mode: m.name, repoPath: repo, worktreePath, branch, briefPath, sessionId: session.id, url };
 }
 
 // The same run, on another machine's termhub (src/dispatch/remote.js). The
 // repo is the local one's namesake under that machine's repos root; the
 // worktree, the pushurl block and BRIEF.md are made there, by the session.
-async function startRemote({ commitmentId, task, modeName, repoPath, machineName }) {
+async function startRemote({ commitmentId, task, modeName, repoPath, machineName, routeReason = null }) {
   const remote = require('./remote');
   const machine = remote.machineNamed(machineName);
   const hub = termhub.forMachine(machine.name);
@@ -257,22 +291,13 @@ async function startRemote({ commitmentId, task, modeName, repoPath, machineName
   const repo = remote.remoteRepoPath(machine, target.repoPath);
 
   const run = await one(
-    `insert into run (commitment_id, mode, task, repo_path, status, machine)
-     values ($1,$2,$3,$4,'starting',$5) returning *`,
-    [commitmentId, m.name, label, repo, machine.name]
+    `insert into run (commitment_id, mode, task, repo_path, status, machine, route, route_reason, kind)
+     values ($1,$2,$3,$4,'starting',$5,'claude',$6,$7) returning *`,
+    [commitmentId, m.name, label, repo, machine.name, routeReason, target.commitment?.kind || null]
   );
   const branch = `pa/${run.id}-${slug(label)}`;
   const worktreePath = remote.remoteWorktreePath(machine, run.id);
-  const briefText = buildBrief({
-    commitment: target.commitment,
-    item: target.item,
-    project: target.project,
-    person: target.person,
-    modeName: m.name,
-    run: { ...run, worktree_path: worktreePath, branch },
-    related: await relatedContext(target.item),
-    memory: await memoryContext(target, task),
-  });
+  const briefText = await briefFor(target, { modeName: m.name, run: { ...run, worktree_path: worktreePath, branch }, task });
 
   let started;
   try {
@@ -289,7 +314,7 @@ async function startRemote({ commitmentId, task, modeName, repoPath, machineName
     });
   } catch (err) {
     await query(
-      `update run set status = 'failed', termhub_session_id = $2, exit_note = $3, ended_at = now() where id = $1`,
+      `update run set status = 'failed', outcome = 'failed', outcome_at = now(), termhub_session_id = $2, exit_note = $3, ended_at = now() where id = $1`,
       [run.id, err.sessionId || null, err.message.slice(0, 500)]
     );
     throw err;
@@ -310,6 +335,8 @@ async function startRemote({ commitmentId, task, modeName, repoPath, machineName
 
   return {
     id: run.id,
+    route: 'claude',
+    routeReason,
     mode: m.name,
     machine: machine.name,
     repoPath: repo,
@@ -323,6 +350,9 @@ async function startRemote({ commitmentId, task, modeName, repoPath, machineName
 
 // git on a remote run's worktree happens on that machine, not here.
 function localOnly(run, verb) {
+  if (run.route === 'factory') {
+    throw new Error(`run #${run.id} is a factory job (${run.factory_job_id || 'not submitted'}): the factory ${verb === 'land' ? 'delivers it itself' : 'has its diff'} — \`pa review ${run.id}\` shows the job, its PRs and why`);
+  }
   if (!termhub.isLocal(run.machine)) {
     throw new Error(
       `run #${run.id} is on ${run.machine}: ${verb} it in its session (pa attach ${run.id}), ` +
@@ -347,6 +377,9 @@ async function list({ all = false, limit = 20 } = {}) {
 async function steer(runId, text) {
   const run = await get(runId);
   if (!run) throw new Error(`no run #${runId}`);
+  if (run.route === 'factory') {
+    throw new Error(`run #${runId} is a factory job: its session only follows the job — answer it in the factory (\`pa review ${runId}\` says why it waits)`);
+  }
   if (!run.termhub_session_id) throw new Error(`run #${runId} has no session`);
   await termhub.forMachine(run.machine).say(run.termhub_session_id, text);
   return true;
@@ -355,6 +388,12 @@ async function steer(runId, text) {
 async function review(runId) {
   const run = await get(runId);
   if (!run) throw new Error(`no run #${runId}`);
+  if (run.route === 'factory') {
+    if (!run.factory_job_id) return { run, factory: null };
+    const job = await require('./factory').status(run);
+    await require('./factory').apply(run, job);
+    return { run: await get(runId), factory: job };
+  }
   localOnly(run, 'review');
   if (!run.worktree_path) return { run, diff: null, stat: null, status: null };
 
@@ -414,7 +453,7 @@ async function land(runId, { openMr = null } = {}) {
     });
   }
 
-  await query(`update run set status = 'landed', mr_url = $2, ended_at = now() where id = $1`, [
+  await query(`update run set status = 'landed', mr_url = $2, ended_at = now(), outcome = 'delivered', outcome_at = now() where id = $1`, [
     runId,
     mrUrl,
   ]);
@@ -452,6 +491,28 @@ async function drop(runId, { force = false } = {}) {
   const run = await get(runId);
   if (!run) throw new Error(`no run #${runId}`);
 
+  // A factory job is cancelled in the factory (it parks or closes its
+  // stories and keeps the evidence); its follow session goes too.
+  if (run.route === 'factory') {
+    let cancelled = false;
+    let storiesParked = null;
+    if (run.factory_job_id && ['starting', 'running', 'waiting'].includes(run.status)) {
+      const c = await require('./factory').cancel(run);
+      cancelled = true;
+      storiesParked = Array.isArray(c?.stories_parked) ? c.stories_parked.length : Number.isFinite(c?.stories_parked) ? c.stories_parked : null;
+    }
+    if (run.termhub_session_id) await termhub.forMachine(run.machine).killSession(run.termhub_session_id).catch(() => {});
+    await query(
+      `update run set status = 'dropped', ended_at = coalesce(ended_at, now()),
+                      outcome = coalesce(outcome, 'dropped'), outcome_at = coalesce(outcome_at, now()) where id = $1`,
+      [runId]
+    );
+    if (run.commitment_id) {
+      await ledger.transition({ commitmentId: run.commitment_id, to: 'open', actor: 'dispatch', reason: `run #${runId} dropped`, from: ['dispatched'] });
+    }
+    return { factory: true, cancelled, storiesParked, jobId: run.factory_job_id };
+  }
+
   // A remote run's worktree is on that machine, where this cannot see whether
   // it holds unpushed work: a plain drop ends the session and keeps the
   // worktree; --force removes it there too.
@@ -469,7 +530,7 @@ async function drop(runId, { force = false } = {}) {
         branch: run.branch,
       });
     }
-    await query(`update run set status = 'dropped', ended_at = now() where id = $1`, [runId]);
+    await query(`update run set status = 'dropped', ended_at = now(), outcome = coalesce(outcome, 'dropped'), outcome_at = coalesce(outcome_at, now()) where id = $1`, [runId]);
     if (run.commitment_id) {
       await ledger.transition({ commitmentId: run.commitment_id, to: 'open', actor: 'dispatch', reason: `run #${runId} dropped`, from: ['dispatched'] });
     }
@@ -497,7 +558,7 @@ async function drop(runId, { force = false } = {}) {
     await git(run.repo_path, ['worktree', 'prune']).catch(() => {});
   }
 
-  await query(`update run set status = 'dropped', ended_at = now() where id = $1`, [runId]);
+  await query(`update run set status = 'dropped', ended_at = now(), outcome = coalesce(outcome, 'dropped'), outcome_at = coalesce(outcome_at, now()) where id = $1`, [runId]);
   if (run.commitment_id) {
     await ledger.transition({ commitmentId: run.commitment_id, to: 'open', actor: 'dispatch', reason: `run #${runId} dropped`, from: ['dispatched'] });
   }
@@ -527,7 +588,10 @@ const WAIT_NOTIFY_MS = 60_000;
 
 async function reconcile() {
   const active = await rows(
-    `select id, task, status, termhub_session_id, machine from run where status in ('starting','running','waiting')`
+    // A factory run's session only follows its job; the job's status is the
+    // factory pass's to read (src/dispatch/factory.js poll), not termhub's.
+    `select id, task, status, termhub_session_id, machine from run
+      where status in ('starting','running','waiting') and route <> 'factory'`
   );
   // Each run is checked against its own machine's termhub. A machine that
   // cannot be reached says nothing about its runs, so they are left alone
@@ -580,4 +644,4 @@ async function reconcile() {
   return { closed, notified };
 }
 
-module.exports = { start, get, list, steer, review, diff, land, drop, markDone, reconcile, slug, BLOCKED_PUSH_URL };
+module.exports = { start, get, list, steer, review, diff, land, drop, markDone, reconcile, slug, resolveTarget, briefFor, BLOCKED_PUSH_URL };
