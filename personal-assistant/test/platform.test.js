@@ -60,7 +60,30 @@ const darwin = platform.select('darwin');
 // ------------------------------------------------- open, clipboard, Teams --
 {
   assert.deepStrictEqual(linux.openCommand('https://x.example/a?b=1&c=2'), { cmd: 'xdg-open', args: ['https://x.example/a?b=1&c=2'] });
-  assert.deepStrictEqual(windows.openCommand('https://x.example/a?b=1&c=2'), { cmd: 'cmd', args: ['/c', 'start', '""', 'https://x.example/a?b=1^&c=2'] });
+  // Windows: no cmd.exe in the path. The URL is one argv entry to the protocol
+  // handler, verbatim — cmd metacharacters are inert because nothing parses them.
+  const fph = (u) => ({ cmd: 'rundll32.exe', args: ['url.dll,FileProtocolHandler', u] });
+  assert.deepStrictEqual(windows.openCommand('https://x.example/a?b=1&c=2'), fph('https://x.example/a?b=1&c=2'));
+  for (const u of ['https://x.example/a?b=1&calc|x^y%PATH%', 'https://x.example/?q=a&&whoami', 'https://x.example/<x>']) {
+    const c = windows.openCommand(u);
+    assert.ok(c, `opened: ${u}`);
+    assert.strictEqual(c.cmd, 'rundll32.exe', 'never cmd');
+    assert.strictEqual(c.args.length, 2, 'the URL is a single argument');
+    assert.ok(!c.args.some((a) => a === '/c' || a === 'start'));
+  }
+  assert.strictEqual(windows.openCommand('https://x.example/a?b=1&calc|x^y%PATH%').args[1], 'https://x.example/a?b=1&calc|x^y%PATH%', 'passed through, not escaped');
+  assert.strictEqual(windows.openCommand('https://x.example/<x>').args[1], 'https://x.example/%3Cx%3E', 'normalised by WHATWG URL');
+  assert.deepStrictEqual(windows.openCommand('msteams:/l/chat/0/0?users=a%40b.com&message=hi'), fph('msteams:/l/chat/0/0?users=a%40b.com&message=hi'), 'Teams drafts still open');
+  assert.strictEqual(windows.openCommand('HTTPS://X.example/').args[1], 'https://x.example/');
+  // A space or quote never reaches the command line raw (Node would quote it).
+  assert.strictEqual(windows.openCommand('msteams:/l/chat/0/0?message=a b').args[1], 'msteams:/l/chat/0/0?message=a%20b');
+  assert.strictEqual(windows.openCommand('https://x.example/"&calc').args[1], 'https://x.example/%22&calc');
+  // Refused: not a URL, a scheme nothing here opens, or one that would need quoting.
+  for (const bad of ['not a url', '', 'file:///C:/Windows/System32/calc.exe', 'C:\\Windows\\calc.exe', 'javascript:alert(1)',
+    'ms-settings:', 'cmd:/c calc', '\\\\evil\\share\\x.exe', null, undefined]) {
+    assert.strictEqual(windows.openCommand(bad), null, `refused: ${bad}`);
+  }
+  assert.strictEqual(windows.openUrl('file:///C:/Windows/System32/calc.exe'), false, 'refused → false, so the caller prints the link');
   assert.strictEqual(linux.openUrl('https://x.example', { env: {} }), false, 'headless: nothing opened, caller prints the link');
 
   const all = () => '/usr/bin/x';

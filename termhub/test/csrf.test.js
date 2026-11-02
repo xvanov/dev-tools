@@ -25,7 +25,7 @@ process.env.TERMHUB_DATA_DIR = tmp;       // never touch the live archive / idle
 delete process.env.TERMHUB_NTFY_TOPIC;     // and never push a notification
 
 const WebSocket = require('ws');
-const { checkRequest, checkUpgrade } = require('../lib/requestGuard');
+const { checkRequest, checkUpgrade, setLearnedNames } = require('../lib/requestGuard');
 const { createSessiond } = require('../sessiond');
 const { createFront } = require('../front');
 const peers = require('../lib/peers');
@@ -33,6 +33,7 @@ const peers = require('../lib/peers');
 // ---- the rules (pure) -------------------------------------------------------
 
 const env = { TERMHUB_MACHINE: 'build-vm' };
+setLearnedNames(['box.tail1234.ts.net']); // this machine's MagicDNS name (tailscale status Self.DNSName)
 const H = '127.0.0.1:7000';
 const ui = { host: H, origin: `http://${H}`, 'x-termhub': '1', 'content-type': 'application/json' };
 const v = (method, p, headers) => checkRequest({ method, headers }, p, { env });
@@ -43,6 +44,7 @@ assert.strictEqual(v('DELETE', '/api/sessions/x', { host: H, 'x-termhub': '1' })
 assert.strictEqual(v('POST', '/api/sessions/x/clipboard-image', { ...ui, 'content-type': 'image/png' }), null, 'an image upload');
 assert.strictEqual(v('POST', '/api/sessions/x/upload-file', { ...ui, 'content-type': 'application/octet-stream' }), null, 'a file upload');
 assert.strictEqual(v('GET', '/api/sessions', { host: 'box.tail1234.ts.net:7000' }), null, 'a peer or a phone over MagicDNS');
+assert.strictEqual(v('GET', '/api/sessions', { host: 'other.tail1234.ts.net:7000' }).status, 403, 'not any *.ts.net name: only this machine\'s own');
 assert.strictEqual(v('GET', '/', { host: 'evil.example' }), null, 'static UI files are not guarded');
 assert.strictEqual(v('OPTIONS', '/api/sessions', { host: H, origin: 'https://evil.example' }), null, 'OPTIONS is left to the routes (none grants CORS)');
 
@@ -73,6 +75,7 @@ assert.strictEqual(up({ host: 'box.tail1234.ts.net:7000', origin: 'https://box.t
 assert.strictEqual(up({ host: H, origin: 'https://evil.example' }).status, 403, 'cross-site websocket hijacking');
 assert.strictEqual(up({ host: H, origin: 'null' }).status, 403, 'an opaque origin');
 assert.strictEqual(up({ host: 'evil.example:7000', origin: 'http://evil.example:7000' }).status, 403, 'a rebound websocket');
+assert.strictEqual(up({ host: 'evil.tail9999.ts.net', origin: 'https://evil.tail9999.ts.net' }).status, 403, 'a foreign MagicDNS/Funnel name');
 
 // ---- through a real front and a real sessiond -----------------------------
 

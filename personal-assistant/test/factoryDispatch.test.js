@@ -266,10 +266,27 @@ function stub(rel, exports) {
 }
 
 const store = { queries: [], watched: [], nextId: 7 };
-stub('db', {
+const INSTALL = '0f1e2d3c-4b5a-6978-8a9b-acbdcedf0011';
+const KEY = `${INSTALL}-7`;
+
+// The guarded run insert (src/dispatch/runRow.js) runs in a transaction: the
+// same stub answers its queries, and the live-run re-check sees store.liveRun.
+function stubTx(db) {
+  db.withTx = async (fn) => fn({
+    async query(sql, params) {
+      if (/pg_advisory_xact_lock/.test(sql)) { (global.__txLocks = global.__txLocks || []).push(params); return { rows: [] }; }
+      if (/^\s*select id from run where commitment_id/.test(sql)) return { rows: global.__liveRun ? [global.__liveRun] : [] };
+      return { rows: [await db.one(sql, params)] };
+    },
+  });
+  return db;
+}
+
+stub('db', stubTx({
   async one(sql, params) {
     store.queries.push({ sql, params });
     if (/insert into run/.test(sql)) return { id: store.nextId, status: 'starting' };
+    if (/from pa_install/.test(sql)) return { id: INSTALL };
     if (/from repo_delivery/.test(sql)) return store.repoDefault ? { delivery: store.repoDefault } : null;
     return null;
   },
@@ -287,7 +304,7 @@ stub('db', {
     }
     return { rowCount: 1, rows: [] };
   },
-});
+}));
 const transitions = [];
 stub('ledger', { async transition(t) { transitions.push(t); return { changed: true }; } });
 const notes = [];
@@ -334,7 +351,7 @@ async function factoryStart() {
   assert.strictEqual(submit.machine, null, 'this machine');
   assert.strictEqual(submit.opts.cwd, '/srv/factory-checkout');
   assert.deepStrictEqual(submit.argv.slice(0, 5), ['uv', 'run', 'factory', 'job', 'submit']);
-  for (const want of ['--external-id', '7', '--source', 'pa', '--delivery', 'draft_pr', '--done=retries tested', '--model', 'dev=model-a', 'reviewer=model-b', '--ask-file']) {
+  for (const want of ['--external-id', KEY, '--source', 'pa', '--delivery', 'draft_pr', '--done=retries tested', '--model', 'dev=model-a', 'reviewer=model-b', '--ask-file']) {
     assert.ok(submit.argv.includes(want), `submit carries ${want}`);
   }
   const askFile = submit.argv[submit.argv.indexOf('--ask-file') + 1];
@@ -456,7 +473,7 @@ async function factoryStart() {
   const again = await factory.start({ target, app: 'widget', mode: 'local' });
   assert.deepStrictEqual([calls.length, again.jobId, again.created], [2, 'widget:018', false]);
   const ids = calls.map((c) => c.argv[c.argv.indexOf('--external-id') + 1]);
-  assert.deepStrictEqual(ids, ['7', '7']);
+  assert.deepStrictEqual(ids, [KEY, KEY], 'install-scoped key, the same on the retry');
 }
 
 async function factoryPoll() {
@@ -544,10 +561,13 @@ async function factoryReconcile() {
 
   // Pure: what an unsettled submit becomes.
   assert.strictEqual(F.submitVerdict({ job: { job_id: 'w:1' }, asked: true, ageMs: 0 }), 'adopt');
-  assert.strictEqual(F.submitVerdict({ job: null, asked: false, ageMs: 1e9 }), 'unknown', 'the factory could not be asked: not failed');
+  assert.strictEqual(F.submitVerdict({ job: null, asked: false, ageMs: F.SUBMIT_GRACE_MS * 2 }), 'unknown', 'the factory could not be asked: not failed (yet)');
   assert.strictEqual(F.submitVerdict({ job: null, asked: true, ageMs: 0 }), 'unknown', 'too early to believe "no job"');
   assert.strictEqual(F.submitVerdict({ job: null, asked: true, ageMs: F.SUBMIT_GRACE_MS }), 'fail');
   assert.deepStrictEqual(F.jobForRun([{ job_id: 'w:1', source: 'pa', external_id: '6' }, { job_id: 'w:2', source: 'pa', external_id: '7' }], 7).job_id, 'w:2');
+  assert.strictEqual(F.jobForRun([{ job_id: 'w:2', source: 'pa', external_id: '7' }], KEY), null, 'a bare id is not this install\'s key');
+  assert.strictEqual(F.externalKey(INSTALL, 7), KEY);
+  assert.throws(() => F.externalKey('', 7), /install id/);
   assert.strictEqual(F.jobForRun([{ job_id: 'w:2', source: 'someone', external_id: '7' }], 7), null, 'another source\'s job is not ours');
   assert.strictEqual(F.jobForRun([{ job_id: 'bad id; rm', source: 'pa', external_id: '7' }], 7), null);
 
@@ -557,13 +577,14 @@ async function factoryReconcile() {
   transitions.length = 0;
   answers = {
     'job submit': () => { throw new Error('socket hang up'); },
-    'job list': json({ jobs: [{ job_id: 'widget:030', source: 'pa', external_id: '7', state: 'queued', delivery: 'pr' }] }),
+    'job list': json({ jobs: [{ job_id: 'widget:029', source: 'pa', external_id: '7', state: 'queued' }, { job_id: 'widget:030', source: 'pa', external_id: KEY, state: 'queued', delivery: 'pr' }] }),
   };
   const adopted = await factory.start({ target, app: 'widget', delivery: 'pr', done: ['retries tested'] });
   assert.deepStrictEqual([adopted.jobId, adopted.delivery, adopted.submitUnknown], ['widget:030', 'pr', undefined]);
   assert.deepStrictEqual(calls.map((c) => c.argv.slice(3, 5).join(' ')), ['job submit', 'job submit', 'job list']);
   assert.deepStrictEqual(calls[2].argv.slice(3), ['job', 'list', '--json', '--source', 'pa'], 'looked up by source, matched by external id');
-  assert.deepStrictEqual(calls.slice(0, 2).map((c) => c.argv[c.argv.indexOf('--external-id') + 1]), ['7', '7'], 'one idempotency key');
+  assert.deepStrictEqual(calls.slice(0, 2).map((c) => c.argv[c.argv.indexOf('--external-id') + 1]), [KEY, KEY], 'one idempotency key');
+  // (widget:029 holds the bare id 7 — another install's run 7 — and is never adopted.)
   assert.ok(store.queries.some((q) => /factory_job_id = \$2/.test(q.sql) && q.params[1] === 'widget:030'), 'recorded');
   assert.ok(!store.queries.some((q) => /status = 'failed'/.test(q.sql)), 'not failed');
   assert.strictEqual(transitions.length, 1, 'the commitment moves once it is recorded');
@@ -574,9 +595,9 @@ async function factoryReconcile() {
   store.failOn = /factory_job_id = \$2/;
   answers = {
     'job submit': json({ job_id: 'widget:031', delivery: 'auto_merge', created: true }),
-    'job status': json({ job_id: 'widget:031', source: 'pa', external_id: '7', state: 'queued', delivery: 'auto_merge' }),
+    'job status': json({ job_id: 'widget:031', source: 'pa', external_id: KEY, state: 'queued', delivery: 'auto_merge' }),
   };
-  const recovered = await factory.start({ target, app: 'widget', delivery: 'auto_merge' });
+  const recovered = await factory.start({ target, app: 'widget', delivery: 'auto_merge', confirmedUnattended: true });
   assert.strictEqual(recovered.jobId, 'widget:031');
   assert.deepStrictEqual(calls.map((c) => c.argv.slice(3, 6).join(' ')), ['job submit --json', 'job status widget:031']);
   assert.strictEqual(store.queries.filter((q) => /factory_job_id = \$2/.test(q.sql)).length, 2, 'tried, failed, recorded on the reconcile');
@@ -586,7 +607,7 @@ async function factoryReconcile() {
   store.queries.length = 0;
   transitions.length = 0;
   answers = { 'job submit': () => { throw new Error('ETIMEDOUT'); }, 'job list': () => { throw new Error('ETIMEDOUT'); } };
-  const unknown = await factory.start({ target, app: 'widget', delivery: 'push_to_main' });
+  const unknown = await factory.start({ target, app: 'widget', delivery: 'push_to_main', confirmedUnattended: true });
   assert.strictEqual(unknown.submitUnknown, true);
   assert.match(unknown.note, /answer was lost.*pa review 7/);
   const parked = lastRunUpdate();
@@ -614,6 +635,58 @@ async function factoryReconcile() {
   assert.match(byRun(14)[0], /submit_unknown/, 'still inside the grace: asked again later');
   assert.deepStrictEqual(transitions.map((t) => [t.commitmentId, t.to, t.from]), [[44, 'dispatched', ['open']]]);
   store.unsettled = [];
+
+  // MUST-FIX 1: an unattended end state never reaches the factory unconfirmed.
+  calls.length = 0;
+  await assert.rejects(factory.start({ target, app: 'widget', delivery: 'push_to_main' }), (e) => e.code === 'needs_confirmation');
+  assert.strictEqual(calls.length, 0);
+
+  // MUST-FIX 11: an error that is not a known pre-creation refusal is settled, not failed.
+  calls.length = 0;
+  store.queries.length = 0;
+  answers = {
+    'job submit': json({ error: 'internal', message: 'KeyError: x' }, 2),
+    'job list': json({ jobs: [{ job_id: 'widget:041', source: 'pa', external_id: KEY, state: 'queued' }] }),
+  };
+  const internal = await factory.start({ target, app: 'widget', delivery: 'pr' });
+  assert.strictEqual(internal.jobId, 'widget:041', 'the direction was written before the error: adopted');
+  assert.ok(!store.queries.some((q) => /status = 'failed', outcome = 'failed'/.test(q.sql)));
+  for (const code of ['unknown_repo', 'invalid_delivery', 'review_independence', 'duplicate_key']) assert.ok(F.isRefusal(new F.FactoryError(code)), code);
+  for (const code of ['internal', 'conflict', 'bad_output', 'exit_2']) assert.ok(!F.isRefusal(new F.FactoryError(code)), code);
+
+  // MUST-FIX 12: exit 127 (no uv, bad cwd) never ran: failed at once, not left waiting.
+  calls.length = 0;
+  store.queries.length = 0;
+  answers = { 'job submit': { code: 127, stdout: '', stderr: 'spawn uv ENOENT' } };
+  await assert.rejects(factory.start({ target, app: 'widget', delivery: 'pr' }), (e) => e.code === 'not_sent');
+  assert.ok(store.queries.some((q) => /status = 'failed', outcome = 'failed'/.test(q.sql)));
+  assert.ok(!store.queries.some((q) => /submit_unknown/.test(q.sql)));
+  assert.strictEqual(calls.length, 1, 'not retried, not reconciled');
+  // …but after a first attempt whose answer was lost, a 127 says nothing: settled.
+  let n = 0;
+  answers = {
+    'job submit': () => (n++ === 0 ? (() => { throw new Error('ETIMEDOUT'); })() : { code: 127, stdout: '', stderr: '' }),
+    'job list': json({ jobs: [{ job_id: 'widget:042', source: 'pa', external_id: KEY, state: 'queued' }] }),
+  };
+  assert.strictEqual((await factory.start({ target, app: 'widget', delivery: 'pr' })).jobId, 'widget:042');
+  // An unknown submit is never waiting forever: after a day, failed and notified, even unasked.
+  assert.strictEqual(F.submitVerdict({ job: null, asked: false, ageMs: F.UNKNOWN_CAP_MS }), 'fail');
+  notes.length = 0;
+  store.queries.length = 0;
+  store.unsettled = [{ id: 15, commitment_id: null, task: 'old', status: 'waiting', factory_state: 'submit_unknown', age_ms: String(3 * 86400e3) }];
+  answers = { 'job list': { code: 127, stdout: '', stderr: '' } };
+  await factory.sweepUnsettled();
+  assert.ok(store.queries.some((q) => /status = 'failed'.*not_submitted/s.test(q.sql) && q.params[0] === 15));
+  assert.match(notes.find((x) => /factory-unsettled:15/.test(x.dedupeKey)).body, /could not be asked for a day/);
+  store.unsettled = [];
+
+  // MUST-FIX 13: created:false on the FIRST submit is someone else's job — never adopted.
+  calls.length = 0;
+  store.queries.length = 0;
+  answers = { 'job submit': json({ job_id: 'widget:043', created: false, delivery: 'pr' }) };
+  await assert.rejects(factory.start({ target, app: 'widget', delivery: 'pr' }), (e) => e.code === 'duplicate_key');
+  assert.ok(!store.queries.some((q) => /factory_job_id = \$2/.test(q.sql)), 'not recorded');
+  assert.ok(store.queries.some((q) => /update run set external_id = \$2/.test(q.sql) && q.params[1] === KEY), 'the key is on the row before the submit');
 
   // 5. A contract error is a refusal: failed at once, no reconcile.
   calls.length = 0;
@@ -648,8 +721,29 @@ async function factoryRegister() {
   store.repoDefault = null;
 }
 
+// --- MUST-FIX 15: one live run per commitment, under a lock --------------------------
+
+async function liveRunGuard() {
+  const { insertRun, LOCK_SPACE } = require('../src/dispatch/runRow');
+  global.__txLocks = [];
+  global.__liveRun = { id: 99 };
+  await assert.rejects(insertRun('insert into run (x) values ($1) returning *', [1], { commitmentId: 31 }), (e) => e.code === 'live_run' && /#31 already has run #99/.test(e.message));
+  assert.deepStrictEqual(global.__txLocks, [[LOCK_SPACE, 31]], 'the re-check runs under the commitment\'s lock');
+  const again = await insertRun('insert into run (x) values ($1) returning *', [1], { commitmentId: 31, again: true });
+  assert.strictEqual(again.id, store.nextId, '--again starts a second one on purpose');
+  global.__liveRun = null;
+  assert.strictEqual((await insertRun('insert into run (x) values ($1) returning *', [1], { commitmentId: 31 })).id, store.nextId);
+  store.queries.length = 0;
+  // Every run insert goes through it.
+  for (const f of ['index.js', 'factory.js']) {
+    const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'dispatch', f), 'utf8');
+    assert.ok(!/await one\(\s*`insert into run/.test(src), `${f}: no unguarded run insert`);
+  }
+}
+
 (async () => {
   await execLocal();
+  await liveRunGuard();
   await factoryStart();
   await factoryPoll();
   await routeDecide();

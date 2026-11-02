@@ -46,7 +46,7 @@ const PLAIN = (route) => Object.fromEntries(D.DELIVERIES.map((d) => [d, D.descri
  */
 async function prepare({
   commitmentId = null, task = null, via = 'auto', mode = null, delivery = null, pipeline = null, models = null, done = null,
-  app = null, repoPath = null, kind = undefined, register = false, useModel = true, why = null,
+  app = null, repoPath = null, kind = undefined, register = false, useModel = true, why = null, suggestedBy = null,
 }) {
   const dispatch = require('./index');
   const route = require('./route');
@@ -80,6 +80,7 @@ async function prepare({
   const payload = {
     frozen: true,
     why: why ? C.clip(why, 500) : null,
+    suggestedBy: suggestedBy ? C.clip(suggestedBy, 40) : null,
     via: choice.route,
     routeReason: choice.reason,
     task: task || null,
@@ -122,7 +123,10 @@ async function prepare({
 /** The card's text: the end state first, in plain words. */
 function cardBody({ payload: p, label, why, target }) {
   const L = [];
-  if (why) L.push(why, '');
+  if (p.suggestedBy) L.push(`Suggested by ${p.suggestedBy} — check the end state before you accept.`, '');
+  // The planner's note is model text: one line, labelled, so it can never pose
+  // as the card's own "End state:" line.
+  if (why) L.push(`Planner's note: ${C.clip(why, 500)}`, '');
   if (p.delivery) {
     L.push(`End state: ${p.delivery} — ${p.deliveryPlain[p.delivery]}${D.unattended(p.delivery) ? ' (NO HUMAN STEP AFTER YOUR YES)' : ''}`);
     L.push(`  (${D.sourceLine(p.deliverySource, p.deliveryPhrase, p.slug)})`);

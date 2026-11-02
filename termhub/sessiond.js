@@ -36,8 +36,9 @@ const summarizer = require('./lib/summarize');
 const { VoiceHub, wakeWord: voiceWakeWord } = require('./lib/voiceHub');
 const { IdleHub } = require('./lib/idleHub');
 const idleStore = require('./lib/idleStore');
-const { checkRequest, checkUpgrade, refuseUpgrade } = require('./lib/requestGuard');
+const { checkRequest, checkUpgrade, refuseUpgrade, learnSelfNames } = require('./lib/requestGuard');
 const { parseEnvSpec } = require('./lib/sessionEnv');
+const { parseNoRc } = require('./lib/shell');
 
 // A pasted/dropped image, base64-inflated in transit — cap comfortably above a
 // full-screen screenshot (a few MB as PNG) while still bounding memory use.
@@ -281,7 +282,7 @@ function createSessiond({ entry = 'sessiond', port: serverPort = DEFAULT_SESSION
           home: os.homedir(),
           // What this build can do that an older one cannot; read by callers
           // that must refuse rather than degrade (lib/sessionEnv.js).
-          features: ['session-env'],
+          features: ['session-env', 'session-norc'],
           clipboardImage: canClip,
           limits: {
             imageBytes: canClip ? MAX_CLIPBOARD_IMAGE_BYTES : MAX_UPLOAD_FILE_BYTES,
@@ -309,7 +310,12 @@ function createSessiond({ entry = 'sessiond', port: serverPort = DEFAULT_SESSION
         const body = await readBody(req);
         const envReq = parseEnvSpec(body);
         if (envReq.error) return sendJson(res, 400, { error: envReq.error });
-        const session = new Session({ cwd: body.cwd, command: body.command, title: body.title, cols: body.cols, rows: body.rows, envSpec: envReq.spec });
+        const rcReq = parseNoRc(body);
+        if (rcReq.error) return sendJson(res, 400, { error: rcReq.error });
+        const session = new Session({
+          cwd: body.cwd, command: body.command, title: body.title, cols: body.cols, rows: body.rows,
+          envSpec: envReq.spec, noRc: rcReq.noRc,
+        });
         trackSession(session);
         warnIfClaudeCliStale(session);
         sessions.set(session.id, session);
@@ -319,7 +325,13 @@ function createSessiond({ entry = 'sessiond', port: serverPort = DEFAULT_SESSION
         if (body.cwd && !session.cwdFallback) recents.add(session.cwd);
         // envApplied: the caller asked for env changes and they are in the PTY's
         // environment — the personal assistant refuses a no-push run without it.
-        return sendJson(res, 201, envReq.spec ? { ...session.info(), envApplied: true } : session.info());
+        // rcSkipped: when `noRc` was sent, whether the shell really started
+        // without rc files (false for a shell lib/shell.js doesn't know).
+        return sendJson(res, 201, {
+          ...session.info(),
+          ...(envReq.spec ? { envApplied: true } : {}),
+          ...(rcReq.given ? { rcSkipped: session.rcSkipped } : {}),
+        });
       }
 
       // Type into a live session without holding a websocket open. The contract
@@ -348,6 +360,7 @@ function createSessiond({ entry = 'sessiond', port: serverPort = DEFAULT_SESSION
           cwd: entry.cwd, command, title: entry.title, cols: body.cols, rows: body.rows,
           agentSessionId: (entry.kind === 'claude' || entry.kind === 'opencode') ? entry.agentSessionId : null,
           envSpec: entry.envSpec || null, // a no-push run comes back without credentials too
+          noRc: entry.noRc === true,      // ... and without the rc files that would re-export them
         });
         trackSession(session);
         warnIfClaudeCliStale(session); // restore is exactly where a stale CLI bites
@@ -648,6 +661,7 @@ function createSessiond({ entry = 'sessiond', port: serverPort = DEFAULT_SESSION
           cwd: entry.cwd, command, title: entry.title, cols: body.cols, rows: body.rows,
           agentSessionId: (entry.kind === 'claude' || entry.kind === 'opencode') ? entry.agentSessionId : null,
           envSpec: entry.envSpec || null, // a no-push run comes back without credentials too
+          noRc: entry.noRc === true,      // ... and without the rc files that would re-export them
         });
         trackSession(session);
         warnIfClaudeCliStale(session);
@@ -750,6 +764,7 @@ function bindVoice(ws, voice) {
 function startSessiond({ port = DEFAULT_SESSIOND_PORT, entry = 'sessiond', claimPid = false } = {}) {
   const server = createSessiond({ entry, port });
   build.commit(); // warm the cache off the request path
+  learnSelfNames(); // this machine's MagicDNS name, for the Host check (lib/requestGuard.js)
   server.on('error', (err) => {
     if (err.code === 'EADDRINUSE') {
       console.error(`[sessiond] 127.0.0.1:${port} is already in use — another sessiond or a `

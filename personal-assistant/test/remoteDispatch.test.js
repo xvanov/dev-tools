@@ -81,4 +81,7 @@ assert.strictEqual(
   'ready'
 );
 
+// PowerShell reads curly single quotes as quotes too: doubled like the straight one.
+assert.strictEqual(psq("it’s a ‘test’ ‚x‛ 'y'"), "'it’’s a ‘‘test’’ ‚‚x‛‛ ''y'''");
+
 console.log('remoteDispatch.test.js ok');

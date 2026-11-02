@@ -927,7 +927,8 @@ function needsYouCard(p) {
     el('div', { class: 'sum' }, p.title),
     el('div', { class: 'sub' }, ...joinParts([p.commitment_id ? `#${p.commitment_id}` : null, p.run_id ? `run #${p.run_id}` : null,
       p.commitment_summary, p.who, SOURCE[p.source] || p.source, p.project, ago(p.created_at)])),
-    offer ? (p.payload.why ? el('pre', { class: 'sub' }, p.payload.why) : null) : p.body ? el('pre', { class: 'sub' }, p.body) : null,
+    offer && p.payload.suggestedBy ? el('div', { class: 'endstate loud' }, `Suggested by ${p.payload.suggestedBy} — check the end state before you accept.`) : null,
+    offer ? (p.payload.why ? el('div', { class: 'sub' }, `Planner's note: ${p.payload.why}`) : null) : p.body ? el('pre', { class: 'sub' }, p.body) : null,
     ...(offer ? offer.nodes : []),
     ...(p.commitment_id ? cardSource(p, true) : []),
     el('div', { class: 'actions' }, ...buttons));

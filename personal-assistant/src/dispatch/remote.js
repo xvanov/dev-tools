@@ -41,8 +41,11 @@ const CHUNK = 1800;
 const GIT_ENV = { GIT_TERMINAL_PROMPT: '0', GCM_INTERACTIVE: 'never' };
 
 // PowerShell single-quoted literal: '' is the only escape.
+// PowerShell single-quoted literal. PowerShell also reads the curly quotes
+// ‘ ’ ‚ ‛ as single quotes, so each is doubled too, or one in a path or a
+// title ends the string early.
 function psq(text) {
-  return `'${String(text).replace(/'/g, "''")}'`;
+  return `'${String(text).replace(/['\u2018\u2019\u201A\u201B]/g, (q) => q + q)}'`;
 }
 
 // POSIX sh single-quoted literal: close, escaped quote, reopen.
@@ -263,12 +266,31 @@ async function clearLegacyBlock({ machine, repo, blockedPushUrl, run }) {
 // itself and passes it explicitly can still push. The real boundary for a run
 // that must not push is a machine (or user) without those credentials.
 const NO_PUSH_UNSET = [
-  'GH_TOKEN', 'GITHUB_TOKEN', 'GH_ENTERPRISE_TOKEN', 'GITHUB_ENTERPRISE_TOKEN', 'GITLAB_TOKEN', 'GL_TOKEN',
+  'GH_TOKEN', 'GITHUB_TOKEN', 'GH_ENTERPRISE_TOKEN', 'GITHUB_ENTERPRISE_TOKEN', 'GH_HOST', 'GITHUB_PAT', 'GH_PAT',
+  'HUB_TOKEN', 'GITLAB_TOKEN', 'GL_TOKEN', 'GLAB_TOKEN', 'CI_JOB_TOKEN',
   'SSH_AUTH_SOCK', 'SSH_AGENT_PID', 'GIT_ASKPASS', 'SSH_ASKPASS', 'GIT_SSH', 'GIT_CONFIG_PARAMETERS',
 ];
 
+/**
+ * Where `gh` looks for its login in a no-push session: an empty directory of
+ * our own, so the `hosts.yml` in ~/.config/gh — which is what makes `gh pr
+ * create` / `gh api` work for a session started with
+ * --dangerously-skip-permissions — is never read. On this machine it is made
+ * (0700) and emptied; on another one it is a path under the worktrees root
+ * that does not exist, which gh reads as "not logged in".
+ */
+function noGhDir() {
+  const fs = require('fs');
+  const path = require('path');
+  const dir = path.join(config.dataDir, 'no-gh-config');
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  fs.chmodSync(dir, 0o700);
+  for (const f of fs.readdirSync(dir)) fs.rmSync(path.join(dir, f), { recursive: true, force: true });
+  return dir;
+}
+
 /** Pure. { env, unsetEnv } for a no-push run's termhub session. */
-function noPushEnv() {
+function noPushEnv({ ghConfigDir = null } = {}) {
   return {
     env: {
       GIT_TERMINAL_PROMPT: '0',
@@ -277,27 +299,43 @@ function noPushEnv() {
       GIT_CONFIG_KEY_0: 'credential.helper',
       GIT_CONFIG_VALUE_0: '',
       GIT_SSH_COMMAND: 'ssh -F none -o IdentityAgent=none -o IdentitiesOnly=yes -o IdentityFile=none -o BatchMode=yes',
+      GH_CONFIG_DIR: ghConfigDir || noGhDir(),
+      GH_PROMPT_DISABLED: '1',
     },
     unsetEnv: [...NO_PUSH_UNSET],
   };
 }
 
 /**
- * Opens a no-push run's session with noPushEnv(), and refuses — killing the
- * session — when termhub does not say it applied it (a termhub too old for
- * session env would start the agent with every credential). Enforced, not
+ * Pure. The agent's command line with the no-push environment applied AGAIN,
+ * after the shell's rc files ran (a ~/.bashrc that exports GH_TOKEN or starts
+ * an ssh-agent would otherwise undo the session env). POSIX shells only;
+ * Windows relies on termhub skipping the profile (`noRc`).
+ */
+function noPushCommand(command, { env, unsetEnv }, fam = 'posix') {
+  if (!command || fam === 'windows') return command;
+  const q = (v) => `'${String(v).replace(/'/g, `'\\''`)}'`;
+  return ['env', ...unsetEnv.flatMap((k) => ['-u', k]), ...Object.entries(env).map(([k, v]) => `${k}=${q(v)}`), command].join(' ');
+}
+
+/**
+ * Opens a no-push run's session with noPushEnv(), shell rc files skipped
+ * (termhub `noRc`) and the env re-applied on the command line on POSIX, and
+ * refuses — killing the session — when termhub does not say it applied the
+ * env (a termhub too old for session env would start the agent with every
+ * credential) or, on Windows, did not skip the profile. Enforced, not
  * requested.
  */
-async function createNoPushSession(hub, spec, machineName) {
-  const { env, unsetEnv } = noPushEnv();
-  const session = await hub.createSession({ ...spec, env, unsetEnv });
-  if (!session.envApplied) {
+async function createNoPushSession(hub, spec, machineName, { ghConfigDir = null, fam = 'posix' } = {}) {
+  const ne = noPushEnv({ ghConfigDir });
+  const session = await hub.createSession({ ...spec, command: noPushCommand(spec.command, ne, fam), env: ne.env, unsetEnv: ne.unsetEnv, noRc: true });
+  const refuse = async (why) => {
     await hub.killSession(session.id).catch(() => {});
-    throw new Error(
-      `termhub${machineName ? ` on ${machineName}` : ''} cannot start a session without push credentials (no session env) — update termhub there, or dispatch as \`branch\`/\`mr\``
-    );
-  }
-  return session;
+    throw new Error(`termhub${machineName ? ` on ${machineName}` : ''} ${why} — update termhub there, or dispatch as \`branch\`/\`mr\``);
+  };
+  if (!session.envApplied) await refuse('cannot start a session without push credentials (no session env)');
+  if (fam === 'windows' && session.rcSkipped !== true) await refuse('cannot start a shell without its profile (noRc), which could restore credentials');
+  return Object.assign(session, { noPush: ne });
 }
 
 function writeBriefArgv(fam, briefPath) {
@@ -426,7 +464,7 @@ async function startOnMachine({ machine, hub, run, repo, branch, mode, brief, ti
     try {
       session = mode.mayPush
         ? await hub.createSession({ cwd: worktree, command: '', title })
-        : await createNoPushSession(hub, { cwd: worktree, command: '', title }, machine.name);
+        : await createNoPushSession(hub, { cwd: worktree, command: '', title }, machine.name, { ghConfigDir: `${worktree}.no-gh`, fam });
     } catch (err) {
       // Nothing runs in it: take the worktree back down, as a failed setup does.
       const undo = exec || ((argv) => runCommand(machine.name, argv, { timeoutMs: 120_000, env: GIT_ENV }));
@@ -437,7 +475,8 @@ async function startOnMachine({ machine, hub, run, repo, branch, mode, brief, ti
     await sleep(2500);
   }
   // The caller waits for Claude's prompt and types the brief (briefClaude).
-  await hub.say(session.id, config.termhub.claudeCommand);
+  // A no-push run's command re-applies the no-push env after the shell's rc.
+  await hub.say(session.id, session.noPush ? noPushCommand(config.termhub.claudeCommand, session.noPush, fam) : config.termhub.claudeCommand);
 
   return {
     sessionId: session.id,
@@ -512,6 +551,8 @@ module.exports = {
   blockPush,
   clearLegacyBlock,
   noPushEnv,
+  noPushCommand,
+  noGhDir,
   createNoPushSession,
   remoteRepoPath,
   remoteWorktreePath,

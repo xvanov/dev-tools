@@ -21,13 +21,20 @@
 //     tailnet address, and is then same-origin with it — headers and all. The
 //     only thing that still differs is `Host`, which still says evil.example.
 //     So `Host` must name this machine: loopback, an IP literal (rebinding
-//     needs a name), a MagicDNS name (`*.ts.net`), this machine's own name, or
-//     one listed in TERMHUB_ALLOWED_HOSTS.
+//     needs a name), this machine's own name (hostname / TERMHUB_MACHINE, full
+//     or first label), this machine's OWN MagicDNS name as `tailscale status`
+//     reports it (`Self.DNSName`), or one listed in TERMHUB_ALLOWED_HOSTS.
+//     Every name is an EXACT match (case-insensitive, port and trailing dot
+//     ignored) — never a suffix. `*.ts.net` used to be accepted wholesale,
+//     which let any MagicDNS / Funnel name (someone else's tailnet included)
+//     through.
 //
-// Pure apart from reading env and the hostname, so it is tested directly.
+// Pure apart from reading env, the hostname and the learned tailnet name, so
+// it is tested directly.
 
 const os = require('os');
 const net = require('net');
+const { execFile } = require('child_process');
 
 function hostnameOf(hostHeader) {
   const h = String(hostHeader || '').trim().toLowerCase();
@@ -42,8 +49,69 @@ function hostnameOf(hostHeader) {
   return h;
 }
 
+// ---- this machine's own MagicDNS name, learned from `tailscale status` -------
+//
+// The check is synchronous (it runs on every request), so the name is learned
+// in the background: once when a tier starts (learnSelfNames), and again —
+// rate-limited — whenever a `.ts.net` Host arrives that is not known, so a
+// tailscale that was not up yet at boot heals on the next request instead of
+// 403ing until a restart. Until it is learned, the MagicDNS name is refused
+// (fail closed); loopback, IPs and configured names keep working.
+
+const LEARN_MIN_INTERVAL_MS = 30_000;
+const LEARN_TIMEOUT_MS = 3000;
+let learned = new Set();
+let lastLearnAt = 0;
+let learning = null;
+
+/** Pure: `tailscale status --json` → this machine's own names (lowercased, no trailing dot). */
+function selfNamesFromStatus(status) {
+  const names = new Set();
+  const self = status && status.Self;
+  if (!self || typeof self !== 'object') return names;
+  if (self.DNSName) {
+    const n = String(self.DNSName).trim().toLowerCase().replace(/\.$/, '');
+    if (n) names.add(n);
+  }
+  return names;
+}
+
+function defaultStatus() {
+  return new Promise((resolve) => {
+    execFile('tailscale', ['status', '--json'], { timeout: LEARN_TIMEOUT_MS, windowsHide: true }, (err, stdout) => {
+      if (err || !stdout) return resolve(null);
+      try { resolve(JSON.parse(stdout)); } catch { resolve(null); }
+    });
+  });
+}
+
+/**
+ * Learn this machine's MagicDNS name. `readStatus` is for tests. Resolves to
+ * the learned set. A failed read keeps the previous answer.
+ */
+function learnSelfNames({ readStatus = defaultStatus } = {}) {
+  if (learning) return learning;
+  lastLearnAt = Date.now();
+  learning = Promise.resolve()
+    .then(readStatus)
+    .then((status) => {
+      const names = selfNamesFromStatus(status);
+      if (names.size) learned = names;
+      return learned;
+    })
+    .catch(() => learned)
+    .finally(() => { learning = null; });
+  return learning;
+}
+
+/** Tests: replace the learned names outright (and suppress background learning). */
+function setLearnedNames(names) {
+  learned = new Set([...(names || [])].map((n) => String(n).toLowerCase().replace(/\.$/, '')));
+  lastLearnAt = Date.now();
+}
+
 function allowedNames(env = process.env) {
-  const names = new Set(['localhost']);
+  const names = new Set(['localhost', ...learned]);
   for (const n of [os.hostname(), env.TERMHUB_MACHINE]) {
     if (!n) continue;
     names.add(String(n).toLowerCase());
@@ -60,8 +128,14 @@ function hostAllowed(hostHeader, env = process.env) {
   const host = hostnameOf(hostHeader);
   if (!host) return false;
   if (net.isIP(host)) return true;
-  if (host.endsWith('.ts.net')) return true;
-  return allowedNames(env).has(host.replace(/\.$/, ''));
+  const name = host.replace(/\.$/, '');
+  if (allowedNames(env).has(name)) return true;
+  // An unknown MagicDNS name: maybe ours, not learned yet. Refuse THIS request,
+  // and look again in the background (rate-limited) so the next one can pass.
+  if (name.endsWith('.ts.net') && !learning && Date.now() - lastLearnAt > LEARN_MIN_INTERVAL_MS) {
+    learnSelfNames();
+  }
+  return false;
 }
 
 // The Origin rule, shared: a request a browser sends on behalf of some page
@@ -168,4 +242,7 @@ function refuseUpgrade(socket, { status, error }) {
   }
 }
 
-module.exports = { checkProgrammaticRequest, checkRequest, checkUpgrade, refuseUpgrade, hostAllowed, hostnameOf };
+module.exports = {
+  checkProgrammaticRequest, checkRequest, checkUpgrade, refuseUpgrade, hostAllowed, hostnameOf,
+  learnSelfNames, selfNamesFromStatus, setLearnedNames,
+};

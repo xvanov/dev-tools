@@ -185,8 +185,18 @@ async function run({ runId }, ctx) {
     return require('../../dispatch').defaultBranch(r.repo_path).catch(() => 'main');
   });
   if (!sha || !may.slug) return blocked(ctx, runId, found, 'could not read the PR\'s commit or repo to check its CI — the PR is left open', landed.mrUrl);
+  const baseAtCi = await ctx.step('base-at-ci', () => merger.branchSha(may.slug, base).catch(() => null));
   const gate = await ciWait(ctx, { slug: may.slug, sha, base });
   if (gate.action !== 'proceed') return blocked(ctx, runId, found, `${gate.reason} — the PR is left open, not merged`, landed.mrUrl);
+  const refusal = await ctx.step('pre-merge', async () => {
+    const [pr, baseNow, req] = await Promise.all([
+      merger.prState(landed.mrUrl).catch(() => null),
+      merger.branchSha(may.slug, base).catch(() => null),
+      merger.requiredChecks(may.slug, base).catch(() => ({ strict: false })),
+    ]);
+    return merger.mergeRefusal({ pr, defaultBranch: base, sha, baseShaAtCi: baseAtCi, baseShaNow: baseNow, strict: Boolean(req.strict) });
+  });
+  if (refusal) return blocked(ctx, runId, found, `${refusal} — the PR is left open, not merged`, landed.mrUrl);
   const merged = await ctx.step('merge', async () => {
     try {
       await merger.ready(landed.mrUrl).catch(() => {});
@@ -219,11 +229,13 @@ async function run({ runId }, ctx) {
 async function ciWait(ctx, { slug, sha, base }) {
   const required = await ctx.step('ci-required', () => merger.requiredChecks(slug, base).catch(() => ({ known: false, contexts: [] })));
   const rounds = Math.ceil(merger.CI_LIMIT_MS / merger.CI_POLL_MS) + 1;
+  let previous = null;
   for (let i = 0; i < rounds; i++) {
     if (i) await ctx.sleepFor(`ci-wait-${i}`, merger.CI_POLL_MS / 1000);
     const checks = await ctx.step(`ci-${i}`, () => merger.commitChecks(slug, sha).catch(() => ({ state: 'pending', names: [], failed: [] })));
-    const g = merger.ciGate({ checks, required, elapsedMs: i * merger.CI_POLL_MS });
+    const g = merger.ciGate({ checks, previous, required, elapsedMs: i * merger.CI_POLL_MS });
     if (g.action !== 'wait') return g;
+    previous = checks;
   }
   return { action: 'block', reason: `CI still running after ${Math.round(merger.CI_LIMIT_MS / 60_000)} min` };
 }

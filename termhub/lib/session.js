@@ -5,7 +5,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const pty = require('node-pty');
-const { defaultShell } = require('./shell');
+const { defaultShell, shellArgs } = require('./shell');
 const { resolveTranscript, readLastModel, formatModelName } = require('./claudeModel');
 const opencodeModel = require('./opencodeModel');
 const opencodeApi = require('./opencodeApi');
@@ -131,8 +131,12 @@ function genId() {
 }
 
 class Session {
-  constructor({ cwd, command, title, cols, rows, maxBytes, onExit, onInputLine, agentSessionId, envSpec } = {}) {
+  constructor({ cwd, command, title, cols, rows, maxBytes, onExit, onInputLine, agentSessionId, envSpec, noRc } = {}) {
     this.id = genId();
+    // Start the shell without rc/profile files (lib/shell.js shellArgs), so they
+    // cannot re-export what envSpec removed. rcSkipped says whether it could.
+    this.noRc = noRc === true;
+    this.rcSkipped = false;
     // Variables set/removed on top of termhub's own environment (lib/sessionEnv.js).
     this.envSpec = envSpec || null;
     this.shell = defaultShell();
@@ -274,7 +278,16 @@ class Session {
     for (const key of PARENT_AGENT_ENV) delete env[key];
     // Last, so a caller's removals hold over everything above.
     const spawnEnv = applyEnvSpec(env, this.envSpec);
-    this.pty = pty.spawn(this.shell, [], {
+    // No rc files: the shell's own flag, plus whatever variable makes it source
+    // one anyway (sh reads $ENV). Removed last, after the caller's own sets.
+    const launch = shellArgs(this.shell, { noRc: this.noRc });
+    this.rcSkipped = launch.rcSkipped;
+    for (const name of launch.unsetEnv) {
+      for (const k of Object.keys(spawnEnv)) {
+        if (k === name || (process.platform === 'win32' && k.toUpperCase() === name)) delete spawnEnv[k];
+      }
+    }
+    this.pty = pty.spawn(this.shell, launch.args, {
       name: 'xterm-256color',
       cols: this.cols,
       rows: this.rows,
@@ -461,6 +474,7 @@ class Session {
       kind: this.kind,
       agentSessionId: this.agentSessionId,
       envSpec: this.envSpec,
+      noRc: this.noRc, // a restore must skip rc files too, or they re-export what envSpec removed
       created: this.created,
       endedAt: null,
       history: [],

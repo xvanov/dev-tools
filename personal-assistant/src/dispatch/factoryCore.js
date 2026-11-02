@@ -71,17 +71,44 @@ function submitArgv({ app, title, ask = null, askFile = null, flowFile = null, d
   if (!DELIVERIES.includes(delivery)) throw new Error(`unknown delivery "${delivery}"`);
   // Free text goes as `--flag=value`: a title or criterion that starts with
   // "-" must not be read as an option by the factory's CLI parser.
-  const argv = ['job', 'submit', '--json', '--app', String(app), `--title=${clip(title, 200)}`];
+  // The title and criteria are on the factory's command line (visible in `ps`)
+  // and in its direction: redacted like the brief.
+  const { redactSecrets } = require('./composeCore');
+  const argv = ['job', 'submit', '--json', '--app', String(app), `--title=${clip(redactSecrets(title), 200)}`];
   if (askFile) argv.push('--ask-file', String(askFile));
   else argv.push(`--ask=${String(ask)}`);
   // The factory's backpressure gate needs a flow.md (or an api_spec.md): a
   // job without one parks as needs_human every time (JOBS-API.md v1.1).
   if (flowFile) argv.push('--flow-file', String(flowFile));
-  for (const d of done) argv.push(`--done=${String(d)}`);
+  for (const d of done) argv.push(`--done=${redactSecrets(String(d))}`);
   argv.push('--pipeline', pipeline(pipe), '--delivery', delivery);
   for (const [persona, model] of Object.entries(models || {})) argv.push('--model', `${persona}=${model}`);
   argv.push('--source', source, '--external-id', String(externalId));
   return argv;
+}
+
+// The factory's own refusals of a submit, raised BEFORE it writes anything
+// (software-factory factory/jobs/submit.py, job_routing.py). Only these mean
+// "no job was made"; any other error after a submit went out (`internal`,
+// `conflict`, …) may have come after the direction was written, so the run is
+// settled against the factory instead of failed. `duplicate_key` is ours: a
+// first submit that came back `created: false` (someone else's job holds the key).
+const REFUSAL_CODES = new Set([
+  'unknown_repo', 'unknown_app', 'invalid_app_config', 'missing_argument', 'invalid_argument', 'bad_pipeline',
+  'invalid_delivery', 'file_unreadable', 'bad_model_flag', 'bad_models', 'unknown_persona', 'bad_model_id',
+  'review_independence', 'pipeline_unavailable', 'duplicate_key',
+]);
+
+function isRefusal(err) {
+  return err instanceof FactoryError && REFUSAL_CODES.has(err.code);
+}
+
+class NotSentError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = 'NotSentError';
+    this.code = 'not_sent';
+  }
 }
 
 class FactoryError extends Error {
@@ -103,7 +130,9 @@ function parseResult({ code, stdout, stderr, timedOut = false }) {
   // failures — plain Errors, which submit() retries once (idempotent on the
   // external id) — never as a FactoryError, which it would not.
   if (timedOut || code === 124) throw new Error(`the factory did not answer in time (exit ${code})`);
-  if (code === 127) throw new Error('could not start the factory command (exit 127) — is uv on that machine\'s PATH?');
+  // 127: the command never ran (no such program, or no such cwd) — so nothing
+  // was sent, and a submit can be failed outright.
+  if (code === 127) throw new NotSentError('could not start the factory command (exit 127) — is uv on that machine\'s PATH, and PA_FACTORY_PATH right?');
   const text = String(stdout || '').trim();
   let obj = null;
   try {
@@ -126,7 +155,11 @@ function parseResult({ code, stdout, stderr, timedOut = false }) {
  * check. The factory's direction validator requires a flow (or an API spec);
  * the requester's own words travel in the ask file next to it.
  */
-function flowMarkdown({ title, summary = null, app = null, done = [], delivery = null }) {
+function flowMarkdown({ title: rawTitle, summary: rawSummary = null, app = null, done: rawDone = [], delivery = null }) {
+  const { redactSecrets } = require('./composeCore');
+  const title = redactSecrets(rawTitle);
+  const summary = rawSummary === null ? null : redactSecrets(rawSummary);
+  const done = (rawDone || []).map((d) => redactSecrets(d));
   const steps = [];
   steps.push(`Start from how ${app ? `\`${app}\`` : 'the repository'} behaves today, as the ask (the job's ask file) describes it.`);
   steps.push(`Make the change: ${clip(summary || title, 400)}.`);
@@ -156,10 +189,13 @@ function appAddArgv({ repo, deliveryDefault = 'draft_pr', path: clonePath = null
   return argv;
 }
 
-/** This run's job in a `job list` answer: source pa, external id = run id. */
-function jobForRun(jobs, runId) {
+/**
+ * This run's job in a `job list` answer: source pa, external id = the run's
+ * key (`<install>-<run>`; a run from before sql/026 used its bare id).
+ */
+function jobForRun(jobs, key) {
   return (Array.isArray(jobs) ? jobs : []).find(
-    (j) => (j?.source == null || j.source === 'pa') && j?.external_id != null && String(j.external_id) === String(runId) && JOB_ID.test(String(j.job_id || ''))
+    (j) => (j?.source == null || j.source === 'pa') && j?.external_id != null && String(j.external_id) === String(key) && JOB_ID.test(String(j.job_id || ''))
   ) || null;
 }
 
@@ -167,6 +203,7 @@ function jobForRun(jobs, runId) {
 // no job for it" is believed: a submit that timed out here may still be
 // finishing there.
 const SUBMIT_GRACE_MS = 10 * 60_000;
+const UNKNOWN_CAP_MS = 24 * 3600_000;
 
 /**
  * Pure. What to do with a run whose submit did not come back cleanly (a lost
@@ -180,8 +217,18 @@ const SUBMIT_GRACE_MS = 10 * 60_000;
  */
 function submitVerdict({ job = null, asked, ageMs }) {
   if (job) return 'adopt';
+  // A day without an answer either way: failed, and said so — never a row
+  // waiting forever (the factory's own job, if it ever appears, is then
+  // nobody's, and `factory job list --source pa` shows it).
+  if (ageMs >= UNKNOWN_CAP_MS) return 'fail';
   if (!asked) return 'unknown';
   return ageMs >= SUBMIT_GRACE_MS ? 'fail' : 'unknown';
+}
+
+/** This install's idempotency key for a run (sql/026). */
+function externalKey(installId, runId) {
+  if (!/^[0-9a-f-]{8,64}$/i.test(String(installId || ''))) throw new Error('no install id');
+  return `${installId}-${Number(runId)}`;
 }
 
 /** The command a termhub session runs to "walk into" a job. */
@@ -251,8 +298,7 @@ function commitmentMove(job) {
 }
 
 function clip(s, n) {
-  const t = String(s ?? '').replace(/\s+/g, ' ').trim();
-  return t.length > n ? `${t.slice(0, n - 1)}…` : t;
+  return require('./composeCore').clip(s, n);
 }
 
 module.exports = {
@@ -262,6 +308,11 @@ module.exports = {
   ACTIVE_STATES,
   JOB_ID,
   SUBMIT_GRACE_MS,
+  UNKNOWN_CAP_MS,
+  REFUSAL_CODES,
+  isRefusal,
+  NotSentError,
+  externalKey,
   pipeline,
   parseModels,
   factoryArgv,

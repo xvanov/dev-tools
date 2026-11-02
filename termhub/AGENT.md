@@ -145,7 +145,9 @@ the data dir (`%LOCALAPPDATA%\termhub` on Windows, `~/.local/termhub` on Linux):
   process. They are *bookkeeping*, never authority — see "One process per port" below.
 - `sessions.json` — the session archive (`lib/archive.js`). Mirrors each session's metadata
   (cwd, command, `kind`, and — for shell sessions — the command lines typed in it) so it
-  survives a reboot. Written by `sessiond` on create / rename / exit / input.
+  survives a reboot. Written by `sessiond` on create / rename / exit / input. **Mode 0600**
+  (POSIX): typed command lines hold pasted tokens. Each write goes to a 0600 temp file renamed over
+  it, and a file left wider by an older termhub is chmod'ed on first touch (`test/archive.test.js`).
 - `logs\<tier>.out.log` / `.err.log` — each tier's stdout and stderr, one `.prev.log`
   generation kept (`Get-TermhubLogDir`, `Start-TermhubNode`). Rotated on launch rather than
   appended, because the file a relaunch is about to truncate holds the last words of the
@@ -1415,16 +1417,21 @@ call it:
 | Threat | Check |
 |---|---|
 | CSRF — a page on another origin POSTs here from your browser | `Content-Type: application/json` **and** `X-Termhub: 1` are required, and either one forces a CORS preflight. termhub answers no preflight (`OPTIONS` gets a 405 with no CORS headers). A foreign `Origin` (including `null`) is refused outright |
-| DNS rebinding — a page re-points its own name at your tailnet IP and becomes same-origin | `Host` must name this machine: loopback, any IP literal (rebinding needs a name), `*.ts.net` (MagicDNS), this machine's hostname or `TERMHUB_MACHINE` (full or first label), or a name in `TERMHUB_ALLOWED_HOSTS` |
+| DNS rebinding — a page re-points its own name at your tailnet IP and becomes same-origin | `Host` must name this machine, by exact match: loopback, any IP literal (rebinding needs a name), this machine's hostname or `TERMHUB_MACHINE` (full or first label), this machine's **own** MagicDNS name (`tailscale status --json` → `Self.DNSName`, learned at startup and re-checked, rate-limited, when an unknown `.ts.net` name arrives), or a name in `TERMHUB_ALLOWED_HOSTS`. Any other `*.ts.net` name is refused — a suffix match let every MagicDNS/Funnel name, other tailnets included, through |
 
 Reaching termhub by some other DNS name (a custom tailnet domain, a `/etc/hosts` alias) answers
 403 `Host "…" is not this machine` — on every `/api/*`, `/pa/*` and websocket request, not only
 this one, so the UI loads but cannot list sessions — until that name is added to
 `TERMHUB_ALLOWED_HOSTS` (set it for both tiers).
 
+**The body is read before a slot is taken.** The body is capped at 4 MB (413, as soon as it is
+crossed) and must arrive within 10 s (`BODY_TIMEOUT_MS`, 408); both close the connection. Only a
+fully read, valid body takes one of the `MAX_CONCURRENT` (8) slots, so clients that open requests
+and never finish their bodies cannot lock the route for everyone with 429s.
+
 Covered by `test/exec.test.js` (through a real front: argv verbatim with shell metacharacters,
 exit code/stderr/stdin/env, missing program, output cap, a grandchild killed with its group on
-timeout, every refusal). An older termhub answers **404** on the route, which the personal
+timeout, every refusal, stalled bodies holding no slot and getting 408). An older termhub answers **404** on the route, which the personal
 assistant reports as "termhub on X is too old — update it".
 
 ## Versioning & tagging
@@ -1885,7 +1892,7 @@ user actually meant to paste.
 
   | Request | Must have |
   |---|---|
-  | anything under `/api/*`, `/pa`, `/pa/*` | `Host` naming this machine (loopback, an IP literal, `*.ts.net`, this hostname or `TERMHUB_MACHINE`, or `TERMHUB_ALLOWED_HOSTS`) and, if an `Origin` is sent, `Origin` = this host. Reads included: a DNS-rebound page is same-origin, and could otherwise read the session list or a Claude transcript |
+  | anything under `/api/*`, `/pa`, `/pa/*` | `Host` naming this machine, exactly (loopback, an IP literal, this hostname or `TERMHUB_MACHINE`, this machine's own MagicDNS name from `tailscale status`, or `TERMHUB_ALLOWED_HOSTS` — never a `*.ts.net` suffix) and, if an `Origin` is sent, `Origin` = this host. Reads included: a DNS-rebound page is same-origin, and could otherwise read the session list or a Claude transcript |
   | a state-changing `/api/*` request (any method but GET/HEAD/OPTIONS) | also `X-Termhub: 1`, and a `Content-Type` that is not one a `<form>` can send (`text/plain`, `application/x-www-form-urlencoded`, `multipart/form-data`). No Content-Type (a bodyless DELETE) and binary upload types are fine |
   | a websocket upgrade (`/ws/term/:id`, `/ws/voice`) | `Host` as above, and `Origin` = this host when sent. Browsers always send it and cannot add a custom header to a websocket; programs send none |
   | static UI files, `/manifest.webmanifest` | nothing — they are public code |
@@ -1901,8 +1908,8 @@ user actually meant to paste.
   Callers that send it: the web UI (`web/app.js` `api()`/`withGuard()`/`uploadWithProgress()`,
   `web/dashboard.js` `GUARD_HEADERS`), the personal assistant's termhub client
   (`personal-assistant/src/dispatch/termhub.js`) and its `/api/exec` caller, and the mobile test
-  harness. Peers (`lib/peers.js`) and the scripts only make GETs, by IP or `*.ts.net`, and need
-  nothing. **A personal assistant older than this rule** cannot start or type into sessions on an
+  harness. Peers (`lib/peers.js`) and the scripts only make GETs, by IP or by the target's own `*.ts.net`
+  name (which that target has learned as its own), and need nothing. **A personal assistant older than this rule** cannot start or type into sessions on an
   updated termhub (403) — update both. Likewise a browser tab still running the old `app.js`
   gets 403 on its first action after the update; reloading the tab fixes it. sessiond is not restarted by an update, so until it is, the
   front's copy of the check is the one protecting the published port; sessiond's loopback port

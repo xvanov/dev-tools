@@ -31,36 +31,85 @@ const COPY_WORDS = 12;
 
 const LIMITS = { goal: 600, item: 300, done: 8, constraints: 8, decisions: 8, facts: 8, reuse: 12, questions: 5 };
 
+// Never cuts a surrogate pair in half (an emoji at the cut would leave a lone
+// surrogate, which JSON and the factory's parser choke on).
 function clip(s, n) {
   const t = String(s ?? '').replace(/\s+/g, ' ').trim();
-  return t.length > n ? `${t.slice(0, n - 1)}…` : t;
+  if (t.length <= n) return t;
+  let cut = n - 1;
+  const c = t.charCodeAt(cut - 1);
+  if (c >= 0xd800 && c <= 0xdbff) cut -= 1;
+  return `${t.slice(0, cut)}…`;
 }
 
 // --- secrets -----------------------------------------------------------------------
 
+// Whether a value after "password", "key", "token" … looks like a credential
+// rather than prose ("the key: retries matter").
+function looksSecret(v) {
+  const t = String(v).replace(/^["']|["']$/g, '');
+  if (t.length < 6 || /^\[redacted/.test(t)) return false;
+  if (/^[a-z]+$/.test(t) && t.length < 16) return false;
+  return /\d/.test(t) || /[^A-Za-z]/.test(t) || t.length >= 16;
+}
+
+function entropy(t) {
+  const f = {};
+  for (const ch of t) f[ch] = (f[ch] || 0) + 1;
+  let h = 0;
+  for (const n of Object.values(f)) h -= (n / t.length) * Math.log2(n / t.length);
+  return h;
+}
+
+// A run of 1–3 newlines inside a token (a key wrapped in a mail or a chat
+// message) is still one token.
+const T = (cls, min) => `(?:${cls}|\\s?\\r?\\n\\s?(?=${cls})){${min},}`;
+const KEYNAME = '(?:api[_-]?key|key|secret|token|access[_-]?token|refresh[_-]?token|id[_-]?token|client[_-]?secret|passw(?:or)?d|passphrase|pwd|credentials?|creds|auth|sig|signature|subscription[_-]?key)';
+
 const SECRET_PATTERNS = [
-  [/-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)/g, '[redacted private key]'],
-  [/\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}\b/g, '[redacted]'],
-  [/\bgithub_pat_[A-Za-z0-9_]{20,}\b/g, '[redacted]'],
-  [/\bglpat-[A-Za-z0-9_-]{16,}\b/g, '[redacted]'],
-  [/\bsk-(?:ant-|proj-)?[A-Za-z0-9_-]{16,}\b/g, '[redacted]'],
+  [/-----BEGIN [A-Z ]*PRIVATE KEY(?: BLOCK)?-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY(?: BLOCK)?-----|$)/g, '[redacted private key]'],
+  [new RegExp(`\\b(?:ghp|gho|ghu|ghs|ghr)_${T('[A-Za-z0-9]', 16)}`, 'g'), '[redacted]'],
+  [new RegExp(`\\bgithub_pat_${T('[A-Za-z0-9_]', 20)}`, 'g'), '[redacted]'],
+  [/\bglpat-[A-Za-z0-9_-]{16,}/g, '[redacted]'],
+  [/\bsk-(?:ant-|proj-)?[A-Za-z0-9_-]{16,}/g, '[redacted]'],
+  [/\b[sr]k_(?:live|test)_[A-Za-z0-9]{16,}/g, '[redacted]'],
+  [/\b(?:npm|hf|pypi|dop_v1|glsa|xapp)_[A-Za-z0-9_-]{20,}/g, '[redacted]'],
   [/\bAKIA[0-9A-Z]{16}\b/g, '[redacted]'],
-  [/\bxox[abprs]-[A-Za-z0-9-]{10,}\b/g, '[redacted]'],
-  [/\bAIza[0-9A-Za-z_-]{30,}\b/g, '[redacted]'],
+  [/\bxox[abprs]-[A-Za-z0-9-]{10,}/g, '[redacted]'],
+  [/\bAIza[0-9A-Za-z_-]{30,}/g, '[redacted]'],
+  [/\bya29\.[0-9A-Za-z_-]{20,}/g, '[redacted]'],
   [/\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/g, '[redacted]'],
   [/\b(Bearer|Basic)\s+[A-Za-z0-9._~+/-]{12,}=*/gi, '$1 [redacted]'],
   [/\b(AccountKey|SharedAccessKey|SharedAccessSignature|sig|Password|Pwd)=([^;&\s]+)/gi, '$1=[redacted]'],
-  [/(\b[a-z][a-z0-9+.-]*:\/\/[^\s:@/]+:)[^\s@/]+@/gi, '$1[redacted]@'],
-  // "my password is X": prose, but only for the words that always mean a credential.
-  [/\b((?:pass(?:word|wd|code|phrase)?|pwd)\s+(?:is|was|=)\s*)("[^"]+"|'[^']+'|[^\s.,;]+)/gi, '$1[redacted]'],
-  [/\b((?:pass(?:word|wd)?|pwd|secret|token|api[_-]?key|client[_-]?secret|access[_-]?key|auth)\b["']?\s*[:=]\s*)("[^"]+"|'[^']+'|\S+)/gi, '$1[redacted]'],
+  // user:password@host — the password may itself hold @ or /: up to the LAST @ before the host.
+  [/(\b[a-z][a-z0-9+.-]*:\/\/[^\s:@/]+:)\S*@(?=[^\s@/]+)/gi, '$1[redacted]@'],
+  [/(\s-u\s+[^\s:]+:)\S+/g, '$1[redacted]'],
+  // NAME=value / NAME: value / "name": "value", the name ending in a credential word —
+  // AZURE_OPENAI_API_KEY=…, Ocp-Apim-Subscription-Key: …, "access_token": "…".
+  [new RegExp(`((?<![A-Za-z0-9])[A-Za-z0-9_.-]*${KEYNAME}(?![A-Za-z])["']?\\s*[:=]\\s*)("[^"]*"|'[^']*'|[^\\s,;}]+)`, 'gi'), (m, k, v) => (looksSecret(v) ? `${k}[redacted]` : m)],
+  // "my password is X", "login me password hunter2".
+  [/\b((?:pass(?:word|wd|code|phrase)?|pwd)\s+(?:is\s+|was\s+)?)("[^"]+"|'[^']+'|[^\s.,;]+)/gi, (m, k, v) => (looksSecret(v) ? `${k}[redacted]` : m)],
+  // A bare 32+ hex string (an API key) — except a 40/64-char one named as a commit.
+  [/(\b(?:commit|sha|rev|revision)\s*[:#]?\s*)?\b([0-9a-f]{32,})\b/gi, (m, named, hex) => (named && (hex.length === 40 || hex.length === 64) ? m : `${named || ''}[redacted]`)],
 ];
+
+// High-entropy fallback: a long token mixing upper, lower and digits that no
+// pattern above named is most likely a credential. Paths and file names
+// (anything with a dot) are left alone.
+function redactEntropy(t) {
+  return t.replace(/(?<![A-Za-z0-9+/=_.-])[A-Za-z0-9+/=_-]{24,}(?![A-Za-z0-9+/=_.-])/g, (tok) => {
+    if (!(/[A-Z]/.test(tok) && /[a-z]/.test(tok) && /\d/.test(tok))) return tok;
+    if ((tok.match(/\//g) || []).length > 2) return tok;
+    return entropy(tok) >= 4 ? '[redacted]' : tok;
+  });
+}
 
 /** Every credential-shaped thing in a text, replaced. Idempotent. */
 function redactSecrets(text) {
-  let t = String(text ?? '');
+  // Zero-width characters split a token so no pattern sees it whole.
+  let t = String(text ?? '').replace(/[​-‍⁠﻿]/g, '');
   for (const [re, sub] of SECRET_PATTERNS) t = t.replace(re, sub);
-  return t;
+  return redactEntropy(t);
 }
 
 // --- what to look for in the repo ---------------------------------------------------

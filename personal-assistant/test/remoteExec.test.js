@@ -28,6 +28,7 @@ const { config } = require('../src/config');
 
 const node = process.execPath;
 const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pa-remote-exec-')));
+config.dataDir = path.join(tmp, 'data');
 const BLOCKED = 'https://pa-push-blocked.invalid/this-run-may-not-push.git';
 
 // ---- PA_MACHINES with an OS -------------------------------------------------
@@ -228,7 +229,9 @@ assert.strictEqual(remote.shq("it's"), `'it'\\''s'`);
     const exec = (argv, opts = {}) => runCommand(null, argv, { timeoutMs: 60_000, ...opts });
     const ok = await remote.startOnMachine({ machine: m, hub: fakeHub, run: { id: 501 }, repo, branch: 'pa/501-x', mode: { name: 'local', mayPush: false }, brief: 'b', title: 't', blockedPushUrl: BLOCKED, exec });
     assert.strictEqual(git(repo, 'remote', 'get-url', '--push', 'origin').trim(), origin, 'old shared block cleared');
-    assert.deepStrictEqual({ env: created[0].env, unsetEnv: created[0].unsetEnv }, remote.noPushEnv());
+    assert.deepStrictEqual({ env: created[0].env, unsetEnv: created[0].unsetEnv }, remote.noPushEnv({ ghConfigDir: `${ok.worktreePath}.no-gh` }));
+    assert.strictEqual(created[0].noRc, true, 'shell rc files skipped');
+    assert.ok(!fs.existsSync(`${ok.worktreePath}.no-gh`), 'gh reads a config dir that does not exist: not logged in');
     assert.ok(fs.existsSync(ok.worktreePath));
     applied = false;
     await assert.rejects(

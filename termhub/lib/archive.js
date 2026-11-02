@@ -12,6 +12,14 @@
 // this is the next best thing.
 //
 // sessiond is the only writer, so the trivial read-modify-write below is safe.
+//
+// The file is PRIVATE (mode 0600): a shell session's history is every command
+// line typed in it, which routinely includes tokens and passwords pasted on a
+// command line. It is written to a temp file created 0600 and renamed over the
+// old one (so a crash mid-write cannot leave half a file either), and an
+// existing file from before this rule is chmod'ed to 0600 the first time it is
+// touched. On Windows the mode is a no-op; the data dir under %LOCALAPPDATA% is
+// already per-user.
 
 const fs = require('fs');
 const path = require('path');
@@ -20,8 +28,16 @@ const { ensureDataDir } = require('./paths');
 const MAX_ENTRIES = 40;   // cap the restorable list so it can't grow without bound
 const MAX_HISTORY = 200;  // command lines kept per shell session
 
+const FILE_MODE = 0o600;
+let tightened = null; // the path already chmod'ed this process
+
 function file() {
-  return path.join(ensureDataDir(), 'sessions.json');
+  const f = path.join(ensureDataDir(), 'sessions.json');
+  if (tightened !== f) {
+    tightened = f;
+    try { fs.chmodSync(f, FILE_MODE); } catch { /* not there yet */ }
+  }
+  return f;
 }
 
 function load() {
@@ -35,10 +51,15 @@ function load() {
 }
 
 function save(list) {
+  const f = file();
+  const tmp = `${f}.${process.pid}.tmp`;
   try {
-    fs.writeFileSync(file(), JSON.stringify(list, null, 2));
+    fs.writeFileSync(tmp, JSON.stringify(list, null, 2), { mode: FILE_MODE });
+    fs.chmodSync(tmp, FILE_MODE); // `mode` only applies on create; a stale tmp keeps its own
+    fs.renameSync(tmp, f);
   } catch {
     // best-effort; persistence is a convenience, never block a session on it
+    try { fs.unlinkSync(tmp); } catch { /* nothing to clean */ }
   }
 }
 
@@ -87,4 +108,4 @@ function addHistory(id, line) {
   save(all);
 }
 
-module.exports = { list, get, upsert, patch, remove, addHistory, MAX_HISTORY };
+module.exports = { list, get, upsert, patch, remove, addHistory, MAX_HISTORY, FILE_MODE };

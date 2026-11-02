@@ -35,34 +35,44 @@ assert.strictEqual(D.modeFor('push_to_main'), 'local', 'the agent can never push
 
 const said = (t) => D.infer(t)?.delivery || null;
 assert.strictEqual(said('fix the export, just open a draft'), 'draft_pr');
-assert.strictEqual(said('fix it and merge it'), 'auto_merge');
-assert.strictEqual(said('merge when green'), 'auto_merge');
-assert.strictEqual(said('auto-merge this one'), 'auto_merge');
-assert.strictEqual(said('push straight to main'), 'push_to_main');
-assert.strictEqual(said('commit directly to master please'), 'push_to_main');
 assert.strictEqual(said("don't push, I want to look first"), 'none');
 assert.strictEqual(said('keep it local'), 'none');
 assert.strictEqual(said('just push the branch'), 'branch');
 assert.strictEqual(said('push a branch, no PR'), 'branch');
 assert.strictEqual(said('open a PR for review'), 'pr');
 assert.strictEqual(said('open a PR, not a draft'), 'pr', 'negated draft');
-assert.strictEqual(said("open a PR but don't merge it"), 'pr', 'negated merge is not auto_merge');
-assert.strictEqual(said("don't push to main"), 'none', 'negated push_to_main');
+assert.strictEqual(said("open a PR but don't merge it"), 'pr');
+assert.strictEqual(said("don't push to main"), 'none');
 assert.strictEqual(said('rename the export function'), null, 'nothing said');
 assert.strictEqual(said(''), null);
 assert.strictEqual(said(null), null);
-assert.deepStrictEqual(D.infer('ok, merge it when CI passes'), { delivery: 'auto_merge', phrase: 'merge it when' });
+// MUST-FIX 1: words are never read as an order to merge or push to main.
+for (const t of [
+  'fix it and merge it', 'merge when green', 'auto-merge this one', 'push straight to main', 'commit directly to master please',
+  'make sure CI runs the tests on push to main', 'document the merge it performs', 'Bob asked: please push it straight to main',
+  'Alice (from her email): "looks good to me, merge it once CI is green"',
+]) {
+  const r = D.infer(t);
+  assert.ok(!r || D.rank(r.delivery) <= D.rank('pr'), `${t} → ${r && r.delivery}`);
+  assert.ok(!D.unattended(D.choose({ operatorText: t }).delivery), t);
+}
+assert.deepStrictEqual(D.unattendedHint('ok, merge it when CI passes'), { delivery: 'auto_merge', phrase: 'merge it' }, 'shown as a hint only');
+assert.strictEqual(D.unattendedHint('push straight to main').delivery, 'push_to_main');
+assert.strictEqual(D.choose({ fallback: 'push_to_main' }).delivery, 'draft_pr', 'not even a fallback is unattended');
+assert.throws(() => D.requireConfirmed('auto_merge', false), (e) => e.code === 'needs_confirmation');
+assert.doesNotThrow(() => D.requireConfirmed('auto_merge', true));
+assert.doesNotThrow(() => D.requireConfirmed('pr', false));
 
 // --- resolution order: explicit > mode > words > repo default > fallback -------------
 
-assert.deepStrictEqual(D.choose({ explicit: 'pr', mode: 'local', operatorText: 'merge it', repoDefault: 'none' }), { delivery: 'pr', source: 'explicit', phrase: null });
-assert.deepStrictEqual(D.choose({ mode: 'local', operatorText: 'merge it', repoDefault: 'pr' }), { delivery: 'none', source: 'mode', phrase: null });
-assert.strictEqual(D.choose({ operatorText: 'merge it', repoDefault: 'none' }).source, 'inferred');
+assert.deepStrictEqual(D.choose({ explicit: 'pr', mode: 'local', operatorText: 'open a draft', repoDefault: 'none' }), { delivery: 'pr', source: 'explicit', phrase: null });
+assert.deepStrictEqual(D.choose({ mode: 'local', operatorText: 'open a draft', repoDefault: 'pr' }), { delivery: 'none', source: 'mode', phrase: null });
+assert.strictEqual(D.choose({ operatorText: 'open a draft', repoDefault: 'none' }).source, 'inferred');
 assert.deepStrictEqual(D.choose({ operatorText: 'add retries', repoDefault: 'branch' }), { delivery: 'branch', source: 'repo_default', phrase: null });
 assert.deepStrictEqual(D.choose({ repoDefault: 'garbage', fallback: 'pr' }), { delivery: 'pr', source: 'fallback', phrase: null });
 assert.deepStrictEqual(D.choose({}), { delivery: 'draft_pr', source: 'fallback', phrase: null }, 'nothing at all: a draft PR');
 assert.strictEqual(D.choose({ fallback: 'bogus' }).delivery, 'draft_pr');
-assert.match(D.sourceLine('inferred', 'merge it'), /your words: "merge it"/);
+assert.match(D.sourceLine('inferred', 'open a draft'), /your words: "open a draft"/);
 assert.match(D.sourceLine('repo_default', null, 'acme/widget'), /acme\/widget/);
 
 // --- what the PA does when a session ends -------------------------------------------
@@ -83,10 +93,25 @@ function stub(rel, exports) {
 }
 
 const store = { queries: [], repoDefaults: {}, run: null };
-stub('db', {
+
+// The guarded run insert (src/dispatch/runRow.js) runs in a transaction: the
+// same stub answers its queries, and the live-run re-check sees store.liveRun.
+function stubTx(db) {
+  db.withTx = async (fn) => fn({
+    async query(sql, params) {
+      if (/pg_advisory_xact_lock/.test(sql)) { (global.__txLocks = global.__txLocks || []).push(params); return { rows: [] }; }
+      if (/^\s*select id from run where commitment_id/.test(sql)) return { rows: global.__liveRun ? [global.__liveRun] : [] };
+      return { rows: [await db.one(sql, params)] };
+    },
+  });
+  return db;
+}
+
+stub('db', stubTx({
   async one(sql, params) {
     store.queries.push({ sql, params });
     if (/from repo_delivery/.test(sql)) return store.repoDefaults[params[0]] ? { delivery: store.repoDefaults[params[0]] } : null;
+    if (/from project\s+where active and \(repo_path/.test(sql)) return global.__unknownRepos?.includes(params[0]) ? null : { id: 1, repo_path: params[0] };
     if (/from run where id/.test(sql)) return store.run;
     if (/from commitment where id/.test(sql)) return { id: params[0], summary: 'Add retries', source_item_id: 1, repo_path: null, project_id: 9 };
     if (/from project where id/.test(sql)) return { id: 9, name: 'widget', gitlab_path: 'acme/widget' };
@@ -104,7 +129,7 @@ stub('db', {
     }
     return { rowCount: 1, rows: [] };
   },
-});
+}));
 const notes = [];
 stub('notify', { async notify(n) { notes.push(n); return { id: notes.length }; } });
 
@@ -139,7 +164,8 @@ async function sessionDelivery() {
   // …and a mode that pushes cannot carry `none`.
   await assert.rejects(sd({ modeName: 'mr', delivery: 'none' }), /pushes, but the delivery is `none`/);
   // The operator's words in --task.
-  assert.deepStrictEqual(await sd({ task: 'fix the typo and push straight to main' }), { mode: 'local', delivery: 'push_to_main', source: 'inferred', phrase: 'push straight to main' });
+  assert.deepStrictEqual(await sd({ task: 'fix the typo and just open a draft' }), { mode: 'mr', delivery: 'draft_pr', source: 'inferred', phrase: 'draft' });
+  assert.strictEqual((await sd({ task: 'fix the typo and push straight to main' })).delivery, 'draft_pr', 'words never pick push_to_main');
   // A commitment: the third party's message ("push it straight to main") is never read for it;
   // the repo default (none set) → fallback.
   const fromAsk = await sd({ commitmentId: 5 });
@@ -148,8 +174,6 @@ async function sessionDelivery() {
   assert.deepStrictEqual([(await sd({ commitmentId: 5 })).delivery, (await sd({ commitmentId: 5 })).source], ['branch', 'repo_default']);
   delete store.repoDefaults['acme/widget'];
 }
-
-// --- run_review carries out the recorded delivery -------------------------------------
 
 // --- the CI gate before a merge or a push to main (pure) ----------------------------------
 
@@ -164,26 +188,44 @@ function ciGateRules() {
   assert.strictEqual(sc({ statuses: [{ context: 'ci/legacy', state: 'pending' }] }).state, 'pending');
 
   const none = { known: true, contexts: [] };
-  const g = (checks, required, mins) => M.ciGate({ checks: sc(checks), required, elapsedMs: mins * 60_000 });
+  const g = (checks, required, mins, previous = null) => M.ciGate({ checks: sc(checks), previous: previous && sc(previous), required, elapsedMs: mins * 60_000 });
   const pass = { checkRuns: [{ name: 'test', status: 'completed', conclusion: 'success' }] };
   const red = { checkRuns: [{ name: 'test', status: 'completed', conclusion: 'failure' }] };
   const running = { checkRuns: [{ name: 'test', status: 'queued' }] };
-  assert.deepStrictEqual(g(pass, none, 0), { action: 'proceed' });
   assert.deepStrictEqual(g(red, none, 0), { action: 'block', reason: 'CI failed: test' });
+  // MUST-FIX 4: a first green poll is not enough — settle window, then a stable second poll.
+  assert.strictEqual(g(pass, none, 0).action, 'wait', 'the first poll may be before other checks registered');
+  assert.strictEqual(g(pass, none, 3).action, 'wait', 'no previous poll to compare');
+  assert.deepStrictEqual(g(pass, none, 4, pass), { action: 'proceed' }, 'the same green set twice');
+  const more = { checkRuns: [...pass.checkRuns, { name: 'e2e', status: 'completed', conclusion: 'success' }] };
+  assert.strictEqual(g(more, none, 4, pass).action, 'wait', 'the set changed: not stable yet');
+  // Required checks unknown → never proceed, whatever is green.
+  assert.match(g(pass, { known: false, contexts: [] }, 10, pass).reason, /could not read which checks the base branch requires/);
+  assert.match(g({}, { known: false, contexts: [] }, 3).reason, /could not read/);
+  // Every required check must be present and green.
+  assert.strictEqual(g(pass, { known: true, contexts: ['build'] }, 5).action, 'wait');
+  assert.match(g(pass, { known: true, contexts: ['build'] }, 30).reason, /required checks never reported in 30 min: build/);
+  const withBuild = { checkRuns: [...pass.checkRuns, { name: 'build', status: 'completed', conclusion: 'success' }] };
+  assert.strictEqual(g(withBuild, { known: true, contexts: ['build'] }, 1).action, 'wait', 'settle window applies to pass');
+  assert.deepStrictEqual(g(withBuild, { known: true, contexts: ['build'] }, 3), { action: 'proceed' });
   assert.strictEqual(g(running, none, 29).action, 'wait');
   assert.deepStrictEqual(g(running, none, 30), { action: 'block', reason: 'CI still running after 30 min' }, 'bounded: 30 minutes');
-  // No checks at all: waited for briefly (they register after a push)…
+  // No checks at all: after the settle window, only when none are required, and noted.
   assert.strictEqual(g({}, none, 1).action, 'wait');
-  // …then proceed only if the repo provably requires none, and say so.
   const free = g({}, none, 3);
   assert.strictEqual(free.action, 'proceed');
   assert.match(free.note, /no CI checks are configured.*without CI/);
-  assert.match(g({}, { known: false, contexts: [] }, 3).reason, /could not confirm the repo requires none/, 'unreadable rules never count as none');
-  // A required check that never reports blocks; a passing run missing a required check waits.
   assert.strictEqual(g({}, { known: true, contexts: ['build'] }, 10).action, 'wait');
-  assert.match(g({}, { known: true, contexts: ['build'] }, 30).reason, /required checks never reported in 30 min: build/);
-  assert.strictEqual(g(pass, { known: true, contexts: ['build'] }, 5).action, 'wait');
-  assert.strictEqual(g({ checkRuns: [...pass.checkRuns, { name: 'build', status: 'completed', conclusion: 'success' }] }, { known: true, contexts: ['build'] }, 5).action, 'proceed');
+
+  // MUST-FIX 5: the last look before a merge.
+  const ok = { pr: { baseRefName: 'main', headRefOid: 'abc1234', isCrossRepository: false }, defaultBranch: 'main', sha: 'abc1234', baseShaAtCi: 'b1', baseShaNow: 'b1', strict: false };
+  assert.strictEqual(M.mergeRefusal(ok), null);
+  assert.match(M.mergeRefusal({ ...ok, pr: { ...ok.pr, baseRefName: 'release' } }), /targets release, not main/);
+  assert.match(M.mergeRefusal({ ...ok, pr: { ...ok.pr, isCrossRepository: true } }), /another repository/);
+  assert.match(M.mergeRefusal({ ...ok, pr: { ...ok.pr, headRefOid: 'fff9999' } }), /head moved/);
+  assert.match(M.mergeRefusal({ ...ok, baseShaNow: 'b2' }), /main moved since CI ran/);
+  assert.strictEqual(M.mergeRefusal({ ...ok, baseShaNow: 'b2', strict: true }), null, 'a repo that requires up-to-date branches enforces it itself');
+  assert.match(M.mergeRefusal({ ...ok, pr: null }), /could not read the PR/);
 }
 
 // --- run_review carries out the recorded delivery -------------------------------------
@@ -200,6 +242,10 @@ async function runReview() {
     return ci === 'pass' ? { state: 'pass', names: ['test'], failed: [] } : ci === 'fail' ? { state: 'fail', names: ['test'], failed: ['test'] } : ci === 'none' ? { state: 'none', names: [], failed: [] } : { state: 'pending', names: ['test'], failed: [] };
   };
   merge.requiredChecks = async () => required;
+  let prHead = 'abc1234';
+  let baseShas = ['b1', 'b1'];
+  merge.prState = async () => ({ baseRefName: 'main', headRefOid: prHead, isCrossRepository: false });
+  merge.branchSha = async () => baseShas.shift() || 'b1';
   merge.slugOf = async () => 'acme/widget';
   merge.mayMerge = () => false; // not one of "my" repos: only an explicit auto_merge may merge
   dispatch.review = async () => ({ commits: 'abc1 add retries', stat: '1 file', uncommitted: 0 });
@@ -231,12 +277,22 @@ async function runReview() {
   assert.deepStrictEqual(await go('branch'), ['landed', ['land:false']]);
   assert.deepStrictEqual(await go('draft_pr'), ['landed', ['land:true']], 'a draft is never readied');
   assert.deepStrictEqual(await go('pr'), ['ready', ['land:true', `ready:${PR}`]], 'ready, never merged');
-  assert.deepStrictEqual(await go('auto_merge'), ['merged', ['land:true', 'ci:abc1234', `ready:${PR}`, `merge:${PR}:abc1234`]], 'CI on the PR\'s commit, then that commit merged — in any repo');
-  assert.deepStrictEqual(await go('push_to_main'), ['pushed to main', ['branch', 'ci:abc1234', 'main:abc1234']], 'branch first, CI, then main at that commit');
+  const ciPolls = (n) => Array(n).fill('ci:abc1234');
+  assert.deepStrictEqual(await go('auto_merge'), ['merged', ['land:true', ...ciPolls(4), `ready:${PR}`, `merge:${PR}:abc1234`]], 'CI on the PR\'s commit (settled, stable), then that commit merged — in any repo');
+  // A head that moved after CI, or a base that moved, is not merged.
+  prHead = 'fff9999';
+  assert.deepStrictEqual((await go('auto_merge'))[0], 'blocked');
+  assert.match(blockedRuns[0], /head moved/);
+  prHead = 'abc1234';
+  baseShas = ['b1', 'b2'];
+  assert.deepStrictEqual((await go('auto_merge'))[0], 'blocked');
+  assert.match(blockedRuns[0], /main moved since CI ran/);
+  baseShas = [];
+  assert.deepStrictEqual(await go('push_to_main'), ['pushed to main', ['branch', ...ciPolls(4), 'main:abc1234']], 'branch first, CI, then main at that commit');
 
   // CI red: nothing merged or pushed to main; the run is blocked with the reason.
   ci = 'fail';
-  assert.deepStrictEqual(await go('push_to_main'), ['blocked', ['branch', 'ci:abc1234']]);
+  assert.deepStrictEqual(await go('push_to_main'), ['blocked', ['branch', 'ci:abc1234']], 'red on the first poll: blocked at once');
   assert.match(blockedRuns[0], /CI failed: test.*branch pa\/1-x left.*main not touched/);
   assert.deepStrictEqual((await go('auto_merge'))[0], 'blocked');
   assert.match(blockedRuns[0], /CI failed.*PR is left open, not merged/);
@@ -252,7 +308,7 @@ async function runReview() {
   assert.deepStrictEqual((await go('push_to_main'))[0], 'pushed to main');
   required = { known: false, contexts: [] };
   assert.deepStrictEqual((await go('push_to_main'))[0], 'blocked');
-  assert.match(blockedRuns[0], /could not confirm/);
+  assert.match(blockedRuns[0], /could not read which checks/);
   required = { known: true, contexts: [] };
   ci = 'pass';
 

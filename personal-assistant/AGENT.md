@@ -30,10 +30,19 @@ gets no push credential in its environment: its termhub session starts with GH/G
 `SSH_AUTH_SOCK` and askpass helpers removed, git's credential helpers reset to none through
 `GIT_CONFIG_*`, and ssh run with no user config, agent or default key (`remote.noPushEnv`, applied by
 termhub's session env and confirmed back as `envApplied`; a termhub that cannot confirm it refuses the
-run). **Residual risk:** that strips what the environment hands the agent, not what the disk holds — an
-agent that reads `~/.ssh/id_*` or gh's `hosts.yml` itself and passes it explicitly can still push; the
-pushurl block is not credential isolation either (`git push <url>` and `-c` walk round it). The real
-boundary for work that must never push is a machine or user without those credentials. Do not
+run). `gh` is logged out there too: `GH_CONFIG_DIR` points at an empty private directory of ours (so
+the `hosts.yml` in `~/.config/gh` is never read), `GH_HOST`/`GH_TOKEN`/`GITHUB_TOKEN`/enterprise tokens
+are unset; the shell starts without rc files (termhub `noRc`, confirmed as `rcSkipped`; required on
+Windows) and on POSIX the agent's command line re-applies the env after them (`remote.noPushCommand`),
+so a `~/.bashrc` that exports a token cannot undo it. `test/dispatchStart.test.js` checks `gh auth
+token` fails inside that env. **Residual risk:** that strips what the environment hands the agent, not
+what the disk holds — an agent that reads `~/.ssh/id_*` or gh's `hosts.yml` itself and passes it
+explicitly can still push; the pushurl block is not credential isolation either (`git push <url>` and
+`-c` walk round it). And a run whose mode may push (`branch`, `mr` — so every `draft_pr`, `pr` and
+`auto_merge` session) holds the operator's full credentials: its agent, started with
+`--dangerously-skip-permissions`, *could* exceed its level (mark its PR ready, merge it, push to main);
+the end state is what the PA does, not a limit on what that agent can do. The real boundary for work
+that must never exceed its level is a machine or user without those credentials. Do not
 implement a stop condition as a sentence in the prompt and call it done. Here and on another machine, the push block goes in the worktree's own config
 (`extensions.worktreeConfig` + `git config --worktree`; a plain `git config` in a worktree writes
 the repo's *shared* config and blocks the main checkout and every run at once) and is **read
@@ -69,17 +78,24 @@ capability; it is how the dashboard works from a phone. For that the page's own 
 
 **The PA chat acts only behind permission prompts.** `pa chat` starts one Claude Code session in
 termhub, homed in `<dataDir>/pa-home` (`src/chat/`), which reads other people's messages all day.
-It is started *without* `--dangerously-skip-permissions`; its `settings.json` allows the read-only
-`pa` commands (and `pa propose`, which only makes a card) and the read MCP tools and puts `pa
-do/answer/land/drop/say/done/remember/forget/routine add/notify feedback/delivery set/factory add`
-behind an *ask*. Its CLAUDE.md is rewritten from code on every start — change it in
+It is started *without* `--dangerously-skip-permissions` and *with* `--permission-mode default`; its
+`settings.json` sets `defaultMode: "default"` and `disableBypassPermissionsMode: "disable"` (a user-level
+`auto` or `acceptEdits` cannot apply), and `verifyClaudeHome` reads the settings back — including a
+`settings.local.json` that would outrank them — before the session starts, refusing it otherwise. It
+reads only through MCP tools: the read MCP tools, and the read-only `pa` verbs as the MCP tool `pa`
+(server `pa-chat`, `--mcp-config pa-home/pa-chat.mcp.json`, `PA_MCP_CHAT_TOOLS=1`). No `pa` shell
+command is allowed — a Bash prefix rule cannot tell `pa memory` from `pa memory run` — so every one,
+`pa propose` included, asks. Its CLAUDE.md is rewritten from code on every start — change it in
 `src/chat/index.js`, not on disk; the user's own additions go in `CLAUDE.local.md`. The chat may run
 on opencode instead (`PA_CHAT_AGENT`, `src/chat/agent.js`) only under the same guarantee, enforced
 differently because opencode parses a command line its own way and every bash allow-pattern was a
 way round it: its `opencode.json` starts from `"*": "ask"` (opencode's defaults allow), makes
 **every** shell command ask with no allow-pattern, and gives it the read-only verbs
-(`ALLOW_COMMANDS`) as the MCP tool `pa` instead — an enum plus argv, no shell, writing
-sub-commands and flags refused, listed only when the chat's own config sets `PA_MCP_CHAT_TOOLS=1`.
+(`ALLOW_COMMANDS`) as the MCP tool `pa` instead — an enum plus argv, no shell, sub-commands compared
+case-insensitively against per-verb allow/deny lists, writing flags (`--force`, `--notify`, `--done`,
+`--project`, …) refused on every verb, verbs that write (`notify ack`, `doctor`) not on it at all, and
+`runs` run with `PA_READ_ONLY=1` so it does not reconcile — listed only when the chat's own config sets
+`PA_MCP_CHAT_TOOLS=1`.
 The acting verbs (`ASK_COMMANDS`) stay shell commands behind the prompt, through one launcher each
 (`pa-home/bin/pa-do`, …), because opencode's "Allow always" saves the command's first word + ` *`, cannot
 be turned off and outranks the config: on `node …/pa.js` that was `node *`; on a launcher it is that
@@ -198,15 +214,24 @@ records its delivery level (`run.delivery`, src/dispatch/deliveryCore.js): `none
 `draft_pr` < `pr` < `auto_merge` < `push_to_main`. It is set only from my side — `--delivery`, the
 card's picker, an explicit `--mode`, my own words in `--task`, my per-repo default (`pa delivery
 set`), `PA_DELIVERY_DEFAULT` — and never from a third party's message: the planner's offers and a
-commitment's text never infer one. There is no ceiling (operator decision 2026-11-02), so the two
-levels with no human step after the yes (`auto_merge`, `push_to_main`) say so in plain words on the
-card and in `pa do`'s output. A Claude session runs in the mode its level maps to (`D.modeFor`;
+commitment's text never infer one. Inference from my words reaches at most `pr` (ordinary text says
+"runs on push to main"). The two levels with no human step after the yes (`auto_merge`,
+`push_to_main`) need an explicit choice and a confirmed start — `D.requireConfirmed` refuses any start
+without one: a terminal yes to `pa do` (which prints the end state first), the dashboard's Do, or a
+card accepted in the dashboard or from a terminal. Asked for by the chat or any non-interactive
+caller, `pa do` puts it on a card labelled "suggested by the chat" instead, and `pa answer` will not
+accept such a card without a terminal. There is no ceiling (operator decision 2026-11-02); the card
+and `pa do` say what these two do in plain words. A Claude session runs in the mode its level maps to (`D.modeFor`;
 `push_to_main` runs as `local`, so the agent can never push to main itself) and `run_review`
 (src/durable/tasks/runReview.js) does the rest when it ends: merging only on `auto_merge`, pushing
 to main only on `push_to_main` (branch first, then a fast-forward to exactly the checked commit), and
-either only after `merge.ciGate` passed CI on that commit — polled at most `CI_LIMIT_MS` (30 min);
-no checks at all counts only when the base branch provably requires none (unreadable rules never
-do), and is noted on the run. Red, late or refused: branch / PR left, run `blocked`, I am told. A run
+either only after `merge.ciGate` passed CI on that commit — polled at most `CI_LIMIT_MS` (30 min),
+never before `CI_SETTLE_MS`, every required check present and green (required checks unreadable →
+blocked), and with none required the same green set on two polls; no checks at all counts only when
+none are required, and is noted on the run. Before a merge `merge.mergeRefusal` re-reads the PR: base
+is the default branch, not from a fork, head is the checked commit, and the base has not moved since
+CI unless the repo itself requires up-to-date branches. A worktree starts from a freshly fetched
+`origin/<default>`. Red, late or refused: branch / PR left, run `blocked`, I am told. A run
 recorded before end states (delivery null) keeps the old rule: a draft PR, merged only in a repo on
 `PA_MERGE_REPOS` — do not widen that list. The push block is lifted from the worktree's own config
 (`liftPushBlock`), the same place `blockPush` put it.
@@ -233,10 +258,16 @@ deterministic), since the factory parks a job without a flow; content reaches an
 on the writer's stdin (never argv, where `ps` shows it and a large brief overflows the limit), into
 a fresh `mkdtemp` directory (0700) with `O_EXCL|O_NOFOLLOW` files, removed once the factory has the
 job (kept while a submit's outcome is unknown, since it may still be read). A submit is idempotent on
-`--source pa --external-id <run id>`; after any failure once a submit went out, the run is settled
+`--source pa --external-id <install id>-<run id>` (sql/026 `pa_install`; a first submit answered
+`created: false` is someone else's job and is refused); only the factory's known pre-creation refusal
+codes (`factoryCore.REFUSAL_CODES`) or a command that never ran (exit 127) fail a run outright; after
+any other failure once a submit went out, the run is settled
 against `job status`/`job list` (`factory.settle`, `factoryCore.submitVerdict`) — adopted, failed
 only after the factory has said "no such job" for `SUBMIT_GRACE_MS`, or `waiting` as
-`submit_unknown` for the worker — and never left `starting`.
+`submit_unknown` for the worker, failed and notified after a day either way — and never left
+`starting`. `pa drop` settles such a run first (cancelling a job it finds) and refuses while the
+factory cannot be asked. One live run per commitment holds under concurrency: every run insert goes
+through `runRow.insertRun`, which re-checks under a transaction-scoped advisory lock.
 
 **A factory brief carries what the task needs, not my private material.** The ask is composed
 (`src/dispatch/compose.js`; every rule pure and tested in `composeCore.js`): goal, done-criteria,

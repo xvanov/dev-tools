@@ -16,9 +16,9 @@
 //
 //   1. explicit   `pa do --delivery …`, or the level picked on the card at accept
 //   2. mode       an explicit legacy `--mode` (local→none, branch→branch, mr/full→draft_pr)
-//   3. inferred   the OPERATOR'S own words ("just open a draft", "merge it") —
-//                 never a third party's message: a sentence in someone's email
-//                 must not be able to say "push straight to main"
+//   3. inferred   the OPERATOR'S own words ("just open a draft", "don't push"),
+//                 and only up to `pr` — never a third party's message, and never
+//                 auto_merge / push_to_main, which need an explicit choice
 //   4. repo       the per-repo default the operator set (`pa delivery set`)
 //   5. fallback   PA_DELIVERY_DEFAULT, else draft_pr
 
@@ -101,39 +101,54 @@ function modeFor(d) {
 const NEG = /\b(?:don'?t|do\s+not|never|not|no|without|skip)\s+(?:\w+\s+){0,2}$/i;
 
 // Most specific first. Each: [level, pattern]. A match preceded (within three
-// words) by a negation does not count — "don't merge it" is not auto_merge.
+// words) by a negation does not count. Inference only ever yields a level up
+// to `pr`: ordinary task text says "runs the tests on push to main" or "the
+// merge it performs", and a sentence must never be read as an order to merge
+// or to push to main. Those two need an explicit choice (`--delivery`, the
+// card's picker) — UNATTENDED_RULES only produce a hint saying so.
 const RULES = [
-  ['push_to_main', /\b(?:push|commit|land|ship)(?:ed|ing)?\s+(?:it\s+|this\s+|that\s+)?(?:straight|directly|right)?\s*(?:to|into|on|onto)\s+(?:main|master|the\s+default\s+branch)\b/i],
-  ['push_to_main', /\b(?:straight|directly)\s+(?:to|into|on)\s+(?:main|master)\b/i],
   ['none', /\b(?:don'?t|do\s+not|never|no)\s+push(?:ing)?\b/i],
   ['none', /\b(?:keep\s+it\s+local|local\s+only|stay\s+local|nothing\s+pushed|commit\s+locally)\b/i],
-  ['auto_merge', /\b(?:auto[-\s]?merge|merge\s+(?:it|this|that)?\s*(?:when|once|if|after)\b|(?:and|then)\s+merge(?:\s+it)?\b|merge\s+it\b)/i],
   ['draft_pr', /\bdraft\b/i],
   ['branch', /\b(?:just\s+)?push\s+(?:the\s+|a\s+)?branch\b|\bbranch\s+only\b|\bno\s+(?:pr|pull\s+request)\b/i],
   ['pr', /\b(?:ready|real|proper|non-?draft)\s+(?:pr|pull\s+request)\b|\bready\s+for\s+review\b|\bopen\s+(?:a|the)\s+(?:pr|pull\s+request)\b/i],
 ];
+const UNATTENDED_RULES = [
+  ['push_to_main', /\b(?:push|commit|land|ship)(?:ed|ing)?\s+(?:it\s+|this\s+|that\s+)?(?:straight|directly|right)?\s*(?:to|into|on|onto)\s+(?:main|master)\b/i],
+  ['auto_merge', /\b(?:auto[-\s]?merge|merge\s+it\b)/i],
+];
 
-/**
- * The delivery level the operator's own words ask for, or null when they say
- * nothing about it. Only ever given the operator's words (a `--task` they
- * typed, a chat ask) — never a third party's message.
- * @returns {{delivery: string, phrase: string}|null}
- */
-function infer(text) {
-  const t = String(text || '');
-  if (!t.trim()) return null;
-  for (const [level, re] of RULES) {
+function firstMatch(rules, t) {
+  for (const [level, re] of rules) {
     const g = new RegExp(re.source, 'gi');
     let m;
     while ((m = g.exec(t))) {
       const before = t.slice(Math.max(0, m.index - 40), m.index);
-      // The `none` rules carry their own negation; for every other level a
-      // negation in front cancels the match.
       if (level !== 'none' && NEG.test(before)) continue;
       return { delivery: level, phrase: m[0].trim().replace(/\s+/g, ' ') };
     }
   }
   return null;
+}
+
+/**
+ * The delivery level the operator's own words ask for, at most `pr`, or null.
+ * Only ever given the operator's words — never a third party's message.
+ * @returns {{delivery: string, phrase: string}|null}
+ */
+function infer(text) {
+  const t = String(text || '');
+  if (!t.trim()) return null;
+  return firstMatch(RULES, t);
+}
+
+/**
+ * Words that may mean "merge it" / "push to main" — never acted on; shown so
+ * the operator can pass `--delivery` if that is what they meant.
+ */
+function unattendedHint(text) {
+  const t = String(text || '');
+  return t.trim() ? firstMatch(UNATTENDED_RULES, t) : null;
 }
 
 /**
@@ -154,8 +169,24 @@ function choose({ explicit = null, mode = null, operatorText = null, repoDefault
   }
   const said = infer(operatorText);
   if (said) return { delivery: said.delivery, source: 'inferred', phrase: said.phrase };
+  // Inference never reaches an unattended level, and neither does a fallback.
   if (repoDefault && isDelivery(repoDefault)) return { delivery: repoDefault, source: 'repo_default', phrase: null };
-  return { delivery: fallback && isDelivery(fallback) ? fallback : FALLBACK, source: 'fallback', phrase: null };
+  const f = fallback && isDelivery(fallback) && !unattended(fallback) ? fallback : FALLBACK;
+  return { delivery: f, source: 'fallback', phrase: null };
+}
+
+/**
+ * auto_merge and push_to_main have no human step after the start, so a start
+ * at those levels must say the operator confirmed it: a terminal yes (cli
+ * `do`), the dashboard's Do, or a card accepted. Anything else is refused,
+ * whatever path it came by.
+ */
+function requireConfirmed(d, confirmed) {
+  if (unattended(d) && !confirmed) {
+    const err = new Error(`end state \`${d}\` (${describe(d)}) needs your confirmation — run it from a terminal, or accept it on a card`);
+    err.code = 'needs_confirmation';
+    throw err;
+  }
 }
 
 /** One line on where the level came from, for the card. */
@@ -199,6 +230,8 @@ module.exports = {
   deliveryForMode,
   modeFor,
   infer,
+  unattendedHint,
+  requireConfirmed,
   choose,
   sourceLine,
   finishPlan,

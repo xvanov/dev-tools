@@ -168,6 +168,8 @@ async function recall(question, { limit = 10, deep = false, sources = null, sinc
     .map((c, j) => ({
       id: c.id,
       subject: c.subject_label,
+      subjectKind: c.subject_kind || null,
+      subjectId: c.subject_id ?? null,
       kind: c.kind,
       text: c.text,
       quote: c.quote,

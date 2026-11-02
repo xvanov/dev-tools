@@ -10,9 +10,9 @@
 --   route_reason   why that route: the routing rule's sentence, or "you chose it"
 --   kind           the commitment's kind (the planner's) when it was dispatched
 --   pipeline       factory: chain | solo | auto
---   delivery       factory: the EFFECTIVE delivery level the factory reported
---                  (requested, clamped to the app's ceiling)
---   delivery_requested  factory: what the PA mode mapped to
+--   delivery       factory: the delivery level the factory reported for the
+--                  job (there is no per-app ceiling: it is what was requested)
+--   delivery_requested  factory: what the PA asked for (sql/025: the operator's end state)
 --   models         factory: per-persona model overrides sent with the job
 --   factory_job_id factory: `<app>:<direction_id>`
 --   factory_state  factory: the job's last reported state

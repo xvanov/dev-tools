@@ -185,13 +185,37 @@ async function unstage(where, dir) {
 // the external id, so the factory returns the job it already made rather
 // than a second one. A contract error (unknown_repo, …) is not retried.
 async function submit(argv) {
+  let first;
   try {
-    return await call(argv);
+    first = await call(argv);
   } catch (err) {
-    if (err instanceof F.FactoryError) throw err;
+    if (err instanceof F.FactoryError || err instanceof F.NotSentError) throw err;
     log.warn('job submit failed, retrying once with the same external id', { message: err.message });
-    return call(argv);
+    try {
+      return await call(argv);
+    } catch (again) {
+      // The first attempt may have made the job: "not sent" now says nothing about it.
+      if (again instanceof F.NotSentError) throw new Error(`${again.message} (after an earlier attempt whose answer was lost)`);
+      throw again;
+    }
   }
+  // A key no one used before cannot already have a job: created:false on the
+  // FIRST attempt means someone else's job holds it — never adopt that.
+  if (first && first.created === false) {
+    throw new F.FactoryError('duplicate_key', `the factory already had job ${first.job_id} for this run's external id`);
+  }
+  return first;
+}
+
+// This install's id (sql/026 pa_install): made once, then read.
+let installCache = null;
+async function installId() {
+  if (installCache) return installCache;
+  const made = require('crypto').randomUUID();
+  await query('insert into pa_install (id) select $1 where not exists (select 1 from pa_install)', [made]).catch(() => {});
+  const r = await one('select id from pa_install order by created_at limit 1').catch(() => null);
+  installCache = r?.id || made;
+  return installCache;
 }
 
 /**
@@ -213,6 +237,7 @@ async function submit(argv) {
 async function start({
   target, app, slug = null, task = null, mode: modeName, delivery = null, deliverySource = null, deliveryPhrase = null,
   pipeline = null, models = null, modelsExact = false, done = [], brief = null, briefBy = null, routeReason = null,
+  confirmedUnattended = false, again = false,
 }) {
   if (modeName && resolveMode(modeName).name === 'plan') {
     throw new Error('plan mode is read-only and is not a factory job — send it to a Claude session (--via claude)');
@@ -228,14 +253,20 @@ async function start({
     ? { delivery: D.delivery(delivery), source: deliverySource || 'explicit', phrase: deliveryPhrase || null }
     : await require('./delivery').resolve({ mode: modeName ? resolveMode(modeName).name : null, operatorText: task, slug });
   const runMode = modeName ? resolveMode(modeName).name : D.modeFor(chosen.delivery);
+  D.requireConfirmed(chosen.delivery, confirmedUnattended);
 
-  const run = await one(
+  const install = await installId();
+  const run = await require('./runRow').insertRun(
     `insert into run (commitment_id, mode, task, repo_path, status, machine, route, route_reason, kind,
                       pipeline, delivery_requested, models, delivery_source)
      values ($1,$2,$3,$4,'starting',$5,'factory',$6,$7,$8,$9,$10,$11) returning *`,
     [commitmentId, runMode, label, target.repoPath || null, where || os.hostname(), routeReason, target.commitment?.kind || null,
-      pipe, chosen.delivery, Object.keys(overrides).length ? overrides : null, chosen.source]
+      pipe, chosen.delivery, Object.keys(overrides).length ? overrides : null, chosen.source],
+    { commitmentId, again }
   );
+  // The idempotency key, recorded before anything is sent.
+  run.external_id = F.externalKey(install, run.id);
+  await query('update run set external_id = $2 where id = $1', [run.id, run.external_id]);
 
   // The ask: the card's frozen brief, or one composed now from the ask and
   // what the assistant gathered (src/dispatch/compose.js). Composition never
@@ -278,7 +309,7 @@ async function start({
       pipeline: pipe,
       delivery: chosen.delivery,
       models: overrides,
-      externalId: run.id,
+      externalId: run.external_id,
     });
 
   let job = null;
@@ -294,11 +325,11 @@ async function start({
     if (!F.JOB_ID.test(String(job.job_id || ''))) throw new F.FactoryError('bad_output', `job id "${job.job_id}"`);
     await recordJob(run, job, { delivery: chosen.delivery, pipe, briefPath, by });
   } catch (err) {
-    // The factory refused it (a contract error) or nothing was ever sent:
-    // there is no job, and the run failed.
-    // `bad_output` is not a refusal: the factory may have made the job and
-    // then printed something else.
-    const refused = err instanceof F.FactoryError && err.code !== 'bad_output' && !job;
+    // The factory refused it before writing anything (F.REFUSAL_CODES), or the
+    // command never ran (exit 127, F.NotSentError), or nothing was ever sent:
+    // there is no job, and the run failed. Anything else — `internal`,
+    // `bad_output`, a lost answer — may have come after the job was made.
+    const refused = !job && (F.isRefusal(err) || err instanceof F.NotSentError);
     if (!sent || refused) {
       await unstage(where, stagedDir);
       await query(
@@ -403,11 +434,11 @@ async function settle(run, { jobId = null, ageMs = 0, note = null, extra = {} } 
     if (jobId && F.JOB_ID.test(String(jobId))) {
       const j = await call(['job', 'status', jobId, '--json']);
       asked = true;
-      job = F.jobForRun([j], run.id);
+      job = F.jobForRun([j], run.external_id || run.id);
     } else {
       const l = await call(['job', 'list', '--json', '--source', 'pa']);
       asked = true;
-      job = F.jobForRun(l.jobs, run.id);
+      job = F.jobForRun(l.jobs, run.external_id || run.id);
     }
   } catch (err) {
     log.warn('could not ask the factory about an unsettled submit', { run: run.id, message: String(err.message).slice(0, 200) });
@@ -433,7 +464,7 @@ async function settle(run, { jobId = null, ageMs = 0, note = null, extra = {} } 
   } catch (err) {
     log.error('could not record an unsettled submit; the worker will retry it', { run: run.id, message: err.message });
   }
-  return { verdict, job };
+  return { verdict, job, asked };
 }
 
 async function status(run) {
@@ -533,7 +564,7 @@ async function poll() {
       }));
     if (!job) continue;
     // Our job, or nobody's business: the external id is this run's id.
-    if ((job.source && job.source !== 'pa') || (job.external_id != null && String(job.external_id) !== String(run.id))) {
+    if ((job.source && job.source !== 'pa') || (job.external_id != null && String(job.external_id) !== String(run.external_id || run.id))) {
       log.warn('factory job does not belong to this run; left alone', { run: run.id, job: run.factory_job_id });
       continue;
     }
@@ -561,6 +592,16 @@ async function sweepUnsettled() {
   ).catch(() => []);
   for (const run of stuck) {
     const r = await settle(run, { ageMs: Number(run.age_ms) || 0, extra: { by: run.brief_by } });
+    if (r.verdict === 'fail') {
+      await require('../notify')
+        .notify({
+          kind: 'info',
+          title: `Factory run #${run.id}: submit never confirmed — marked failed`,
+          body: `${String(run.task || '').slice(0, 160)}\n${r.asked ? 'The factory has no job for it.' : 'The factory could not be asked for a day.'} If a job turns up anyway: \`uv run factory job list --source pa\`.`,
+          dedupeKey: `factory-unsettled:${run.id}`,
+        })
+        .catch(() => {});
+    }
     if (r.verdict === 'adopt' && run.commitment_id) {
       await ledger
         .transition({ commitmentId: run.commitment_id, to: 'dispatched', actor: 'factory', reason: `run #${run.id}: factory job ${r.job.job_id} (answer recovered)`, from: ['open'] })
@@ -570,4 +611,4 @@ async function sweepUnsettled() {
   return stuck.length;
 }
 
-module.exports = { enabled, machine, call, apps, addApp, start, settle, sweepUnsettled, status, cancel, apply, poll, runCommand, modelsFor, _setRunner };
+module.exports = { enabled, machine, call, apps, addApp, installId, start, settle, sweepUnsettled, status, cancel, apply, poll, runCommand, modelsFor, _setRunner };

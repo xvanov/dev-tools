@@ -26,7 +26,11 @@
 //     does not outlive its deadline.
 //   - stdout and stderr are each capped (default 1 MB, at most 16 MB): past the
 //     cap the stream is drained and dropped, and `truncated` says so.
-//   - at most MAX_CONCURRENT runs at once; the next gets 429.
+//   - the body is capped (MAX_BODY_BYTES -> 413) and must arrive within
+//     BODY_TIMEOUT_MS (-> 408, connection closed).
+//   - at most MAX_CONCURRENT runs at once; the next gets 429. A slot is taken
+//     only once the body is fully read and valid, so a client that opens a
+//     request and trickles (or never finishes) its body cannot hold one.
 //   - the client hanging up kills the run.
 //
 // Served by the FRONT, for the reason lib/transcripts.js is: an update swaps
@@ -48,6 +52,7 @@ const MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
 const MAX_BODY_BYTES = 4 * 1024 * 1024; // argv + stdin, as JSON
 const MAX_ARGS = 1024;
 const MAX_CONCURRENT = 8;
+const BODY_TIMEOUT_MS = 10_000;
 const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
 let running = 0;
@@ -202,35 +207,51 @@ function runSpec(spec, { onAbort } = {}) {
   });
 }
 
-function readJson(req, maxBytes) {
+// Read and parse the JSON body. Never hangs: over `maxBytes` answers 413 as
+// soon as the cap is crossed, and a body not finished within `timeoutMs`
+// answers 408. Either way the caller closes the connection (`close: true`),
+// since the rest of the body is not going to be read.
+function readJson(req, maxBytes, timeoutMs = BODY_TIMEOUT_MS) {
   return new Promise((resolve) => {
     const chunks = [];
     let total = 0;
-    let over = false;
-    req.on('data', (c) => {
-      if (over) return;
+    let done = false;
+    const settle = (v) => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      req.removeListener('data', onData);
+      resolve(v);
+    };
+    const timer = setTimeout(() => settle({ status: 408, error: `body not received within ${timeoutMs} ms`, close: true }), timeoutMs);
+    function onData(c) {
       total += c.length;
-      if (total > maxBytes) { over = true; chunks.length = 0; return; }
+      if (total > maxBytes) {
+        chunks.length = 0;
+        return settle({ status: 413, error: `body is over the ${maxBytes} byte limit`, close: true });
+      }
       chunks.push(c);
-    });
+    }
+    req.on('data', onData);
     req.on('end', () => {
-      if (over) return resolve({ status: 413, error: `body is over the ${maxBytes} byte limit` });
       try {
         const raw = Buffer.concat(chunks).toString('utf8');
-        return resolve({ body: raw ? JSON.parse(raw) : {} });
+        return settle({ body: raw ? JSON.parse(raw) : {} });
       } catch {
-        return resolve({ status: 400, error: 'body is not valid JSON' });
+        return settle({ status: 400, error: 'body is not valid JSON' });
       }
     });
-    req.on('error', () => resolve({ status: 400, error: 'request failed' }));
+    req.on('error', () => settle({ status: 400, error: 'request failed', close: true }));
+    req.on('close', () => settle({ status: 400, error: 'request closed before its body ended', close: true }));
   });
 }
 
 /**
  * The route, for the front. Returns true when it answered. Options are for
- * tests: `env` feeds the request guard, `home` the default cwd.
+ * tests: `env` feeds the request guard, `home` the default cwd, `bodyTimeoutMs`
+ * the body-read deadline.
  */
-function handle(req, res, url, { sendJson, env, home } = {}) {
+function handle(req, res, url, { sendJson, env, home, bodyTimeoutMs = BODY_TIMEOUT_MS } = {}) {
   if (url.pathname !== '/api/exec') return false;
   if (req.method !== 'POST') {
     // No CORS headers, ever: a preflight that gets this fails, which is the point.
@@ -247,23 +268,29 @@ function handle(req, res, url, { sendJson, env, home } = {}) {
   }
   const len = Number(req.headers['content-length']);
   if (Number.isFinite(len) && len > MAX_BODY_BYTES) {
+    res.setHeader('Connection', 'close');
     sendJson(res, 413, { error: `body is over the ${MAX_BODY_BYTES} byte limit` });
-    req.resume();
-    return true;
-  }
-  if (running >= MAX_CONCURRENT) {
-    sendJson(res, 429, { error: `${MAX_CONCURRENT} commands already running` });
-    req.resume();
     return true;
   }
 
-  running += 1;
   (async () => {
+    // Read the whole body BEFORE taking a concurrency slot: a slow or endless
+    // body must cost the reader a 408, not cost everyone else a slot.
+    const read = await readJson(req, MAX_BODY_BYTES, bodyTimeoutMs);
+    if (read.error) {
+      if (read.close) {
+        res.setHeader('Connection', 'close');
+        res.on('finish', () => req.destroy());
+      }
+      return sendJson(res, read.status, { error: read.error });
+    }
+    const spec = parseSpec(read.body, home ? { home } : {});
+    if (spec.error) return sendJson(res, 400, { error: spec.error });
+    if (running >= MAX_CONCURRENT) {
+      return sendJson(res, 429, { error: `${MAX_CONCURRENT} commands already running` });
+    }
+    running += 1;
     try {
-      const read = await readJson(req, MAX_BODY_BYTES);
-      if (read.error) return sendJson(res, read.status, { error: read.error });
-      const spec = parseSpec(read.body, home ? { home } : {});
-      if (spec.error) return sendJson(res, 400, { error: spec.error });
       const result = await runSpec(spec, {
         onAbort: (kill) => res.on('close', () => { if (!res.writableFinished) kill(); }),
       });
@@ -271,16 +298,15 @@ function handle(req, res, url, { sendJson, env, home } = {}) {
       console.log(`[exec] ${path.basename(spec.argv[0])} in ${spec.cwd} -> `
         + `${result.timedOut ? 'timeout' : (result.error ? 'error' : result.code)} (${result.durationMs} ms)`);
       return sendJson(res, 200, result);
-    } catch (e) {
-      return sendJson(res, 500, { error: String(e.message || e) });
     } finally {
       running -= 1;
     }
-  })();
+  })().catch((e) => sendJson(res, 500, { error: String(e.message || e) }));
   return true;
 }
 
 module.exports = {
   handle, parseSpec, runSpec,
   DEFAULT_TIMEOUT_MS, MAX_TIMEOUT_MS, DEFAULT_OUTPUT_BYTES, MAX_OUTPUT_BYTES, MAX_BODY_BYTES, MAX_CONCURRENT,
+  BODY_TIMEOUT_MS,
 };

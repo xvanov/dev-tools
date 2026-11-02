@@ -22,6 +22,7 @@ const { execFileSync } = require('child_process');
 
 const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pa-start-')));
 process.env.PA_WORKTREES_ROOT = path.join(tmp, 'worktrees');
+process.env.PA_DATA_DIR = path.join(tmp, 'data');
 process.env.PA_DISPATCH_VIA = 'claude';
 
 function stub(rel, exports) {
@@ -30,7 +31,21 @@ function stub(rel, exports) {
 }
 
 const store = { queries: [], nextId: 40, runs: new Map() };
-stub('db', {
+
+// The guarded run insert (src/dispatch/runRow.js) runs in a transaction: the
+// same stub answers its queries, and the live-run re-check sees store.liveRun.
+function stubTx(db) {
+  db.withTx = async (fn) => fn({
+    async query(sql, params) {
+      if (/pg_advisory_xact_lock/.test(sql)) { (global.__txLocks = global.__txLocks || []).push(params); return { rows: [] }; }
+      if (/^\s*select id from run where commitment_id/.test(sql)) return { rows: global.__liveRun ? [global.__liveRun] : [] };
+      return { rows: [await db.one(sql, params)] };
+    },
+  });
+  return db;
+}
+
+stub('db', stubTx({
   async one(sql, params) {
     store.queries.push({ sql, params });
     if (/insert into run/.test(sql)) {
@@ -39,11 +54,12 @@ stub('db', {
       return row;
     }
     if (/select \* from run where id/.test(sql)) return store.runs.get(Number(params[0])) || null;
+    if (/from project\s+where active and \(repo_path/.test(sql)) return global.__unknownRepos?.includes(params[0]) ? null : { id: 1, repo_path: params[0] };
     return null;
   },
   async rows(sql, params) { store.queries.push({ sql, params }); return []; },
   async query(sql, params) { store.queries.push({ sql, params }); return { rowCount: 1, rows: [] }; },
-});
+}));
 stub('ledger', { async transition() { return { changed: true }; } });
 stub('durable', { async spawn() { return null; }, async emit() { return null; } });
 stub('dispatch/trust', { ensureTrusted() {} });
@@ -188,12 +204,92 @@ const sharedPushurls = (repo) => {
     assert.ok(git(origin, 'branch', '--list', r.branch).includes(r.branch.split('/').pop()), 'the branch reached origin');
   }
 
+  // ---- MUST-FIX 2: `gh` is logged out in a no-push session ---------------------------
+  {
+    let ghOk = true;
+    try { execFileSync('gh', ['--version'], { stdio: 'ignore' }); } catch { ghOk = false; }
+    const fakeCfg = path.join(tmp, 'gh-logged-in');
+    fs.mkdirSync(fakeCfg, { recursive: true });
+    fs.writeFileSync(path.join(fakeCfg, 'hosts.yml'), 'github.com:\n    oauth_token: gho_FAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKE12\n    user: someone\n    git_protocol: https\n');
+    // What a termhub session gets: its own env, the removals, then the sets (termhub lib/sessionEnv.js).
+    const sessionEnv = (base) => {
+      const { env, unsetEnv } = noPushEnv();
+      const out = { ...base };
+      for (const k of [...unsetEnv, ...Object.keys(env)]) delete out[k];
+      return { ...out, ...env };
+    };
+    const base = { ...process.env, GH_CONFIG_DIR: fakeCfg, GH_TOKEN: 'ghp_FAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKE', GH_HOST: 'github.com' };
+    const token = (env) => { try { return execFileSync('gh', ['auth', 'token'], { env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim(); } catch { return null; } };
+    if (ghOk) {
+      assert.ok(token(base), 'control: gh is logged in with the operator\'s env');
+      assert.strictEqual(token(sessionEnv(base)), null, 'gh auth token fails inside a no-push session');
+      const status = (() => { try { execFileSync('gh', ['auth', 'status'], { env: sessionEnv(base), stdio: 'ignore' }); return 0; } catch (e) { return e.status; } })();
+      assert.notStrictEqual(status, 0, 'gh auth status fails inside a no-push session');
+    } else {
+      console.log('dispatchStart: gh not installed — skipped the live gh check');
+    }
+    const ne = noPushEnv();
+    assert.deepStrictEqual(fs.readdirSync(ne.env.GH_CONFIG_DIR), [], 'an empty config dir');
+    assert.strictEqual(fs.statSync(ne.env.GH_CONFIG_DIR).mode & 0o777, 0o700, 'private');
+    for (const v of ['GH_TOKEN', 'GITHUB_TOKEN', 'GH_HOST', 'GH_ENTERPRISE_TOKEN', 'GITHUB_ENTERPRISE_TOKEN']) assert.ok(ne.unsetEnv.includes(v), v);
+    // The command re-applies the env after the shell's rc files (an rc that exports GH_TOKEN).
+    const rc = path.join(tmp, 'evil-rc');
+    fs.writeFileSync(rc, 'export GH_TOKEN=ghp_FROMRCFROMRCFROMRCFROMRCFROMRCFROMRC12\n');
+    const cmd = require('../src/dispatch/remote').noPushCommand('sh -c \'echo "token=${GH_TOKEN:-none} cfg=$GH_CONFIG_DIR"\'', ne);
+    const outp = execFileSync('sh', ['-c', `. '${rc}'; ${cmd}`], { encoding: 'utf8' }).trim();
+    assert.strictEqual(outp, `token=none cfg=${ne.env.GH_CONFIG_DIR}`);
+    // A local no-push start asks termhub to skip rc files and wraps the command.
+    hub.created.length = 0;
+    const { repo } = makeRepo('norc');
+    await dispatch.start({ task: 'no rc', mode: 'local', repoPath: repo });
+    assert.strictEqual(hub.created[0].noRc, true);
+    assert.match(hub.created[0].command, /^env -u GH_TOKEN .* GH_CONFIG_DIR='[^']+' .*claude/);
+  }
+
+  // ---- --repo must be a known project -------------------------------------------------
+  {
+    const { repo } = makeRepo('unknown');
+    global.__unknownRepos = [repo];
+    await assert.rejects(dispatch.start({ task: 'x', mode: 'branch', repoPath: repo }), /not a known project's repo/);
+    global.__unknownRepos = [];
+    // Remembered facts: the task's own person/project and topics only.
+    const facts = [
+      { subjectKind: 'person', subjectId: 4, text: 'requester fact' }, { subjectKind: 'person', subjectId: 5, text: 'someone else' },
+      { subjectKind: 'project', subjectId: 9, text: 'this project' }, { subjectKind: 'project', subjectId: 8, text: 'another project' },
+      { subjectKind: 'topic', subjectId: null, text: 'a topic' }, { subjectKind: 'me', subjectId: null, text: 'about the operator' }, { text: 'unknown' },
+    ];
+    assert.deepStrictEqual(dispatch.scopeFacts(facts, { personId: 4, projectId: 9 }).map((f) => f.text), ['requester fact', 'this project', 'a topic']);
+    assert.deepStrictEqual(dispatch.scopeFacts(facts, {}).map((f) => f.text), ['a topic']);
+  }
+
+  // ---- MUST-FIX 3: a run starts from origin's default branch, fetched now -----------------
+  {
+    const { repo, origin } = makeRepo('stale');
+    const other = path.join(tmp, 'stale-other');
+    git(tmp, 'clone', '-q', origin, other);
+    git(other, '-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-q', '--allow-empty', '-m', 'landed elsewhere');
+    git(other, 'push', '-q', 'origin', 'main');
+    const upstream = git(origin, 'rev-parse', 'main').trim();
+    assert.notStrictEqual(git(repo, 'rev-parse', 'main').trim(), upstream, 'the local main is behind');
+    const r = await dispatch.start({ task: 'on top of origin', mode: 'branch', repoPath: repo });
+    assert.strictEqual(git(r.worktreePath, 'rev-parse', 'HEAD').trim(), upstream, 'based on the fetched origin/main');
+    // No origin/HEAD and a stale local `master`: the remote's `main` wins.
+    const odd = path.join(tmp, 'odd');
+    git(tmp, 'init', '-q', '-b', 'master', odd);
+    git(odd, '-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-q', '--allow-empty', '-m', 'x');
+    git(odd, 'update-ref', 'refs/remotes/origin/main', 'HEAD');
+    assert.strictEqual(await require('../src/dispatch').defaultBranch(odd), 'main');
+  }
+
   // ---- end states: a session whose delivery maps to `local` starts without credentials ----
   {
     const { repo } = makeRepo('deliveries');
     for (const delivery of ['none', 'push_to_main']) {
       hub.created.length = 0;
-      const r = await dispatch.start({ task: `deliver ${delivery}`, delivery, repoPath: repo });
+      if (delivery === 'push_to_main') {
+        await assert.rejects(dispatch.start({ task: 'unconfirmed', delivery, repoPath: repo }), (e) => e.code === 'needs_confirmation', 'never without the operator\'s yes');
+      }
+      const r = await dispatch.start({ task: `deliver ${delivery}`, delivery, repoPath: repo, confirmedUnattended: true });
       assert.deepStrictEqual([r.mode, r.delivery], ['local', delivery]);
       const spec = hub.created[0];
       assert.deepStrictEqual({ env: spec.env, unsetEnv: spec.unsetEnv }, noPushEnv(), `${delivery}: no push credentials in the session`);
@@ -210,7 +306,7 @@ const sharedPushurls = (repo) => {
     const { repo, origin } = makeRepo('lift');
     // (A shared pushurl of the user's own makes a no-push start refuse: git
     // would push to it as well as to the block — remote.blockPush's read-back.)
-    const r = await dispatch.start({ task: 'ship it', delivery: 'push_to_main', repoPath: repo });
+    const r = await dispatch.start({ task: 'ship it', delivery: 'push_to_main', repoPath: repo, confirmedUnattended: true });
     fs.rmSync(path.join(r.worktreePath, 'BRIEF.md'));
     git(r.worktreePath, '-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-q', '--allow-empty', '-m', 'work');
     const row = store.runs.get(r.id);

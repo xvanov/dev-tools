@@ -47,7 +47,7 @@ const SAFE_PERMISSION_MODES = ['default', 'plan'];
  * Pure. The chat's command line: { agent, model, command }. Throws when the
  * configuration cannot give the chat its permission guarantee.
  */
-function chatCommand({ agent = config.chat.agent, model = config.chat.model, command = config.chat.command } = {}) {
+function chatCommand({ agent = config.chat.agent, model = config.chat.model, command = config.chat.command, mcpConfig = null } = {}) {
   let kind;
   let line;
   if (command) {
@@ -67,6 +67,12 @@ function chatCommand({ agent = config.chat.agent, model = config.chat.model, com
     if (hasFlag(line, ...CLAUDE_UNSAFE) || modes.some((v) => !SAFE_PERMISSION_MODES.includes(v.toLowerCase()))) {
       throw new Error('the PA chat must not skip permissions (it reads other people\'s messages) — remove the flag from PA_CHAT_COMMAND');
     }
+    // Explicit, so a user-level defaultMode (auto, acceptEdits) cannot apply.
+    if (!modes.length) line += ' --permission-mode default';
+    else if (modes.some((v) => v.toLowerCase() !== 'default')) {
+      throw new Error('the PA chat runs in --permission-mode default — remove the other mode from PA_CHAT_COMMAND');
+    }
+    if (mcpConfig && !/(^|\s)--mcp-config(\s|=)/.test(line)) line += ` --mcp-config ${JSON.stringify(String(mcpConfig).replace(/\\/g, '/'))}`;
   } else {
     if (hasFlag(line, ...OPENCODE_UNSAFE)) {
       throw new Error('the PA chat must not run opencode with --auto (it approves every action) — remove it from PA_CHAT_COMMAND');

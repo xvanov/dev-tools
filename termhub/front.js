@@ -33,7 +33,7 @@ const build = require('./lib/build');
 const { resolvePaUrl, createPaProxy } = require('./lib/paProxy');
 const transcripts = require('./lib/transcripts');
 const execRoute = require('./lib/exec');
-const { checkRequest, checkUpgrade, refuseUpgrade } = require('./lib/requestGuard');
+const { checkRequest, checkUpgrade, refuseUpgrade, learnSelfNames } = require('./lib/requestGuard');
 
 const WEB_DIR = path.join(__dirname, 'web');
 
@@ -294,6 +294,7 @@ function startFront({ port = DEFAULT_FRONT_PORT, sessiondPort = DEFAULT_SESSIOND
   const bindHost = host || resolveBindAddress();
   const server = createFront({ sessiondPort, port });
   build.commit(); // warm the cache off the request path
+  learnSelfNames(); // this machine's MagicDNS name, for the Host check (lib/requestGuard.js)
   server.on('error', (err) => {
     if (err.code === 'EADDRINUSE') {
       console.error(`[front] ${bindHost}:${port} is already in use — another front or a `

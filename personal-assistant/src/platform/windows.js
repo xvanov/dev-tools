@@ -49,15 +49,34 @@ function pathKey(p) {
 
 // ------------------------------------------------------- open, clipboard --
 
-// `start` is a cmd builtin; `^&` keeps a query string's `&` from ending the
-// command. The empty "" is start's window title, so a quoted URL is not taken
-// for one.
+// No cmd.exe. `cmd /c start` re-parses its whole command line, so `&`, `|`,
+// `^`, `<`, `>`, `%` and quotes in a URL are cmd syntax: escaping only `&`
+// (as this used to) left `|calc` or `%PATH%` live. Instead the URL goes,
+// as ONE argv entry, to the shell's own protocol handler —
+// `rundll32 url.dll,FileProtocolHandler <url>` — which is what `start` does
+// for a URL anyway, with no interpreter in between.
+//
+// Only schemes something here actually opens are accepted (http/https, and
+// msteams: for drafts — src/draft/deliver.js): FileProtocolHandler would just
+// as happily run a `file:` path or any registered handler. The URL is
+// normalised by WHATWG URL, and one that still holds whitespace, a quote or a
+// control character is refused rather than handed to a Windows command line,
+// where Node would wrap it in quotes the handler then sees. Refused → null,
+// and openUrl answers false so the caller prints the link instead.
+const OPEN_SCHEMES = new Set(['http:', 'https:', 'msteams:']);
+
 function openCommand(url) {
-  return { cmd: 'cmd', args: ['/c', 'start', '""', String(url).replace(/&/g, '^&')] };
+  let u;
+  try { u = new URL(String(url)); } catch { return null; }
+  if (!OPEN_SCHEMES.has(u.protocol)) return null;
+  const href = u.href;
+  if (/[\s"\u0000-\u001f\u007f]/.test(href)) return null;
+  return { cmd: 'rundll32.exe', args: ['url.dll,FileProtocolHandler', href] };
 }
 
 function openUrl(url) {
   const c = openCommand(url);
+  if (!c) return false;
   return common.spawnDetached(c.cmd, c.args);
 }
 

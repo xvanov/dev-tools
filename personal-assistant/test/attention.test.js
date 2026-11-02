@@ -235,7 +235,11 @@ const noon = L(2026, 10, 25, 12);
   const s = settingsJson();
   const allowed = (c) => s.permissions.allow.some((p) => p.endsWith(` ${c}:*)`));
   const asked = (c) => s.permissions.ask.some((p) => p.endsWith(` ${c}:*)`));
-  assert.ok(allowed('notify list') && allowed('notify ack') && allowed('notify digest'));
+  // Reading the feed is the read-only `pa` tool now; no `pa` shell command is allowed without asking.
+  assert.ok(!s.permissions.allow.some((p) => p.startsWith('Bash(')));
+  const { READ_VERBS } = require('../src/mcp/server');
+  assert.ok(READ_VERBS['notify list'] && READ_VERBS['notify digest'] && !READ_VERBS['notify ack'], 'ack writes a read mark: not on the tool');
+  assert.ok(asked('notify ack'));
   assert.ok(asked('notify feedback'), 'a message must not be able to talk the chat into muting a kind');
   assert.ok(!allowed('notify feedback'));
   const md = claudeMd();

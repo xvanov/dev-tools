@@ -76,6 +76,9 @@ const HANDLERS = {
         brief: pl.via === 'factory' ? require('../dispatch/offer').briefAt(pl, delivery) : null,
         briefBy: pl.briefBy || null,
         frozen: true,
+        // Accepting the card IS the operator's confirmation of its end state
+        // (the CLI refuses to accept an unattended one without a terminal).
+        confirmedUnattended: true,
         routeReason: pl.routeReason ? `proposal: ${pl.routeReason}` : null,
       });
       return describeStart(run);

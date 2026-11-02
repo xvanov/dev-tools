@@ -111,28 +111,60 @@ function summarizeCommit({ checkRuns = [], statuses = [] } = {}) {
 
 /**
  * Pure. What to do now with a commit waiting to be merged or pushed to main.
+ * Proceeds only when the commit provably passed:
+ *   - the base branch's required checks are KNOWN (unreadable rules → block),
+ *     every one of them reported on this commit, and all passed;
+ *   - nothing failed, nothing still running;
+ *   - at least CI_SETTLE_MS since the gate started (checks register late: a
+ *     first poll that shows one green check may be before the others exist);
+ *   - with no required checks, the same green set on two polls in a row;
+ *   - no checks at all: only when none are required, and noted on the run.
  * @param {object} o
- * @param {{state, names, failed}} o.checks   summarizeCommit
- * @param {{known: boolean, contexts: Array<string>}} o.required  the base branch's required checks
- * @param {number} o.elapsedMs   since the gate started
+ * @param {{state, names, failed}} o.checks     summarizeCommit, this poll
+ * @param {{state, names}} [o.previous]         the poll before
+ * @param {{known: boolean, contexts: Array<string>}} o.required
+ * @param {number} o.elapsedMs
  * @returns {{action: 'proceed'|'wait'|'block', reason?: string, note?: string}}
  */
-function ciGate({ checks, required, elapsedMs, limitMs = CI_LIMIT_MS, settleMs = CI_SETTLE_MS }) {
+function ciGate({ checks, previous = null, required, elapsedMs, limitMs = CI_LIMIT_MS, settleMs = CI_SETTLE_MS }) {
   const late = elapsedMs >= limitMs;
   const mins = Math.round(limitMs / 60_000);
   if (checks.state === 'fail') return { action: 'block', reason: `CI failed: ${checks.failed.slice(0, 5).join(', ')}` };
+  if (!required || required.known !== true) return { action: 'block', reason: 'could not read which checks the base branch requires — not merging blind' };
   const missing = (required.contexts || []).filter((c) => !checks.names.includes(c));
-  if (checks.state === 'pass' && !missing.length) return { action: 'proceed' };
-  if (checks.state === 'none' && !missing.length) {
-    if (elapsedMs < settleMs) return { action: 'wait' };
-    if (!required.known) return { action: 'block', reason: 'no CI checks reported, and the assistant could not confirm the repo requires none' };
+  if (missing.length || checks.state === 'pending') {
+    if (!late) return { action: 'wait' };
+    return missing.length && checks.state !== 'pending'
+      ? { action: 'block', reason: `required checks never reported in ${mins} min: ${missing.slice(0, 5).join(', ')}` }
+      : { action: 'block', reason: `CI still running after ${mins} min` };
+  }
+  if (elapsedMs < settleMs) return { action: 'wait' };
+  if (checks.state === 'none') {
     return { action: 'proceed', note: 'no CI checks are configured on this repo and none are required — delivered without CI' };
   }
-  if (late) {
-    if (missing.length && checks.state !== 'pending') return { action: 'block', reason: `required checks never reported in ${mins} min: ${missing.slice(0, 5).join(', ')}` };
-    return { action: 'block', reason: `CI still running after ${mins} min` };
+  // pass, every required check present and green.
+  if ((required.contexts || []).length) return { action: 'proceed' };
+  const same = previous && previous.state === 'pass' && [...previous.names].sort().join('\n') === [...checks.names].sort().join('\n');
+  if (same) return { action: 'proceed' };
+  return late ? { action: 'block', reason: `CI never settled in ${mins} min` } : { action: 'wait' };
+}
+
+/**
+ * Pure. The last look before an auto_merge: the PR is the one the gate
+ * checked. Its base is the default branch, it is not from a fork, its head is
+ * the checked commit, and — unless the repo itself requires branches to be up
+ * to date before merging — the base has not moved since CI ran.
+ * @returns {string|null} why not, or null to merge
+ */
+function mergeRefusal({ pr, defaultBranch, sha, baseShaAtCi, baseShaNow, strict }) {
+  if (!pr) return 'could not read the PR';
+  if (pr.baseRefName !== defaultBranch) return `the PR targets ${pr.baseRefName}, not ${defaultBranch}`;
+  if (pr.isCrossRepository) return 'the PR comes from another repository';
+  if (pr.headRefOid !== sha) return `the PR's head moved to ${String(pr.headRefOid).slice(0, 12)} after CI checked ${String(sha).slice(0, 12)}`;
+  if (!strict && baseShaAtCi && baseShaNow && baseShaAtCi !== baseShaNow) {
+    return `${defaultBranch} moved since CI ran (the repo does not require up-to-date branches, so the merged result was never tested)`;
   }
-  return { action: 'wait' };
+  return null;
 }
 
 async function ghJson(args) {
@@ -157,11 +189,13 @@ async function commitChecks(slug, sha) {
 async function requiredChecks(slug, base) {
   const contexts = new Set();
   let known = true;
+  let strict = false;
   try {
     const b = await ghJson([`repos/${slug}/branches/${encodeURIComponent(base)}`]);
     const rc = b?.protection?.required_status_checks;
     for (const c of rc?.contexts || []) contexts.add(c);
     for (const c of rc?.checks || []) if (c?.context) contexts.add(c.context);
+    if (rc?.strict) strict = true;
   } catch {
     known = false;
   }
@@ -170,11 +204,22 @@ async function requiredChecks(slug, base) {
     for (const r of Array.isArray(rules) ? rules : []) {
       if (r.type !== 'required_status_checks') continue;
       for (const c of r.parameters?.required_status_checks || []) if (c?.context) contexts.add(c.context);
+      if (r.parameters?.strict_required_status_checks_policy) strict = true;
     }
   } catch {
     known = false;
   }
-  return { known, contexts: [...contexts] };
+  return { known, contexts: [...contexts], strict };
+}
+
+async function prState(url) {
+  const { stdout } = await gh(['pr', 'view', url, '--json', 'baseRefName,headRefOid,isCrossRepository,state']);
+  return JSON.parse(stdout || 'null');
+}
+
+async function branchSha(slug, branch) {
+  const c = await ghJson([`repos/${slug}/commits/${encodeURIComponent(branch)}`]);
+  return c?.sha || null;
 }
 
 // Only the commit the gate passed is merged: a push after the checks ran is
@@ -185,5 +230,5 @@ async function mergeAt(url, sha) {
 
 module.exports = {
   mayMerge, summarize, slugOf, checks, ready, merge,
-  CI_LIMIT_MS, CI_POLL_MS, CI_SETTLE_MS, summarizeCommit, ciGate, commitChecks, requiredChecks, mergeAt,
+  CI_LIMIT_MS, CI_POLL_MS, CI_SETTLE_MS, summarizeCommit, ciGate, mergeRefusal, commitChecks, requiredChecks, prState, branchSha, mergeAt,
 };

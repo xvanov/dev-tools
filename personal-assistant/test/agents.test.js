@@ -43,8 +43,9 @@ const notifyChat = require('../src/notify/chat');
 
 {
   const cmd = (o) => agent.chatCommand({ agent: null, model: null, command: null, ...o });
-  assert.deepStrictEqual(cmd({}), { agent: 'claude', model: null, command: 'claude' }, 'default unchanged');
-  assert.strictEqual(cmd({ model: 'claude-sonnet-5-5' }).command, 'claude --model claude-sonnet-5-5');
+  assert.deepStrictEqual(cmd({}), { agent: 'claude', model: null, command: 'claude --permission-mode default' }, 'the mode is explicit (MUST-FIX 6)');
+  assert.strictEqual(cmd({ model: 'claude-sonnet-5-5' }).command, 'claude --permission-mode default --model claude-sonnet-5-5');
+  assert.strictEqual(cmd({ mcpConfig: '/h/pa-chat.mcp.json' }).command, 'claude --permission-mode default --mcp-config "/h/pa-chat.mcp.json"');
   assert.strictEqual(cmd({ agent: 'opencode', model: 'azure/gpt-5.4' }).command, 'opencode --agent pa --model azure/gpt-5.4');
   assert.strictEqual(cmd({ command: 'opencode' }).command, 'opencode --agent pa');
   assert.strictEqual(cmd({ command: 'claude' }).agent, 'claude');
@@ -58,7 +59,7 @@ const notifyChat = require('../src/notify/chat');
     assert.throws(() => cmd({ command: `claude --permission-mode=${m}` }), /must not skip permissions/, m);
   }
   assert.throws(() => cmd({ command: 'claude --permission-mode plan --permission-mode acceptEdits' }), /must not skip permissions/);
-  assert.strictEqual(cmd({ command: 'claude --permission-mode plan' }).agent, 'claude');
+  assert.throws(() => cmd({ command: 'claude --permission-mode plan' }), /runs in --permission-mode default/);
   assert.strictEqual(cmd({ command: 'claude --permission-mode default' }).agent, 'claude');
   assert.throws(() => cmd({ command: 'claude --allowedTools Bash' }), /must not skip permissions/);
   assert.throws(() => cmd({ command: 'opencode --auto' }), /--auto/);
@@ -87,11 +88,33 @@ const notifyChat = require('../src/notify/chat');
   assert.deepStrictEqual(conf.mcp['personal-assistant'].environment, { PA_MCP_CHAT_TOOLS: '1' }, 'listed for this chat only');
   assert.ok(conf.mcp['personal-assistant'].command[1].endsWith('src/mcp/server.js'));
 
-  // The Claude Code chat is unchanged: one list still feeds its settings.
+  // MUST-FIX 7: the Claude Code chat reads through the same pa tool; no `pa` shell command is allowed.
   const s = chat.settingsJson();
   const pa = chat.paCommand();
-  for (const c of chat.ALLOW_COMMANDS) assert.ok(s.permissions.allow.includes(`Bash(${pa} ${c}:*)`));
-  for (const c of chat.ASK_COMMANDS) assert.ok(s.permissions.ask.includes(`Bash(${pa} ${c}:*)`));
+  assert.ok(!s.permissions.allow.some((r) => r.startsWith('Bash(')), 'no Bash allow rule at all');
+  assert.ok(s.permissions.allow.includes(`mcp__${chat.CHAT_MCP}__pa`));
+  assert.ok(s.permissions.ask.includes(`Bash(${pa}:*)`), 'every pa shell command asks');
+  for (const c of [...chat.ASK_COMMANDS, ...chat.ALLOW_COMMANDS, 'propose']) assert.ok(s.permissions.ask.includes(`Bash(${pa} ${c}:*)`), c);
+  assert.deepStrictEqual(chat.mcpJson().mcpServers[chat.CHAT_MCP].env, { PA_MCP_CHAT_TOOLS: '1' });
+  // MUST-FIX 6: default mode, bypass disabled, read back before the chat starts.
+  assert.strictEqual(s.permissions.defaultMode, 'default');
+  assert.strictEqual(s.permissions.disableBypassPermissionsMode, 'disable');
+  const okCmd = agent.chatCommand({ agent: 'claude', model: null, command: null }).command;
+  assert.deepStrictEqual(chat.verifyClaudeHome({ settings: s, command: okCmd }), []);
+  assert.match(chat.verifyClaudeHome({ settings: s, local: { permissions: { defaultMode: 'auto' } }, command: okCmd }).join(), /defaultMode is "auto"/, 'a settings.local.json cannot switch it');
+  assert.match(chat.verifyClaudeHome({ settings: { permissions: { defaultMode: 'default' } }, command: okCmd }).join(), /bypass/);
+  assert.match(chat.verifyClaudeHome({ settings: s, local: { permissions: { allow: [`Bash(${pa} memory:*)`] } }, command: okCmd }).join(), /allowed without asking/);
+  assert.match(chat.verifyClaudeHome({ settings: s, command: 'claude' }).join(), /--permission-mode default/);
+  // MUST-FIX 8: the tool refuses what writes, whatever its spelling.
+  const { paToolArgv } = require('../src/mcp/server');
+  for (const [c, a] of [['memory', ['RUN', 'dream']], ['memory', ['Run']], ['projects', ['SYNC']], ['review', ['5', '--done']], ['show', ['5', '--project=x']],
+    ['meeting', ['brief', 'next', '--notify']], ['meeting', ['brief', '--force']], ['meeting', ['debrief']], ['meeting', ['undo', '3']], ['meeting', ['learn']],
+    ['runs', ['reconcile']], ['notify ack', ['all']], ['doctor', []], ['brief', ['--Force']]]) {
+    assert.throws(() => paToolArgv(c, a), /not read-only|writes|not a read-only/, `${c} ${a.join(' ')}`);
+  }
+  for (const [c, a] of [['memory', ['Dana']], ['meeting', ['brief', 'next']], ['runs', []], ['runs', ['stats']], ['projects', []], ['search', ['renewal']]]) {
+    assert.doesNotThrow(() => paToolArgv(c, a), `${c} ${a.join(' ')}`);
+  }
   // ...and every read-only verb it may run is a verb of the opencode chat's pa tool.
   const mcp = require('../src/mcp/server');
   for (const c of chat.ALLOW_COMMANDS) assert.ok(Object.prototype.hasOwnProperty.call(mcp.READ_VERBS, c), `pa tool carries ${c}`);
@@ -234,7 +257,7 @@ const notifyChat = require('../src/notify/chat');
     assert.strictEqual(mcp.chatToolsOn({ PA_MCP_CHAT_TOOLS: '1' }), true);
     await assert.rejects(mcp.handle('pa', { command: 'brief' }), /unknown tool pa/, 'refused when not switched on');
     assert.deepStrictEqual(mcp.paToolArgv('search', ['renewal', '--since', '2026-01-01']), ['search', 'renewal', '--since', '2026-01-01']);
-    assert.deepStrictEqual(mcp.paToolArgv('notify ack', ['4']), ['notify', 'ack', '4']);
+    assert.throws(() => mcp.paToolArgv('notify ack', ['4']), /not a read-only/, 'notify ack writes a read mark: off the tool');
     assert.deepStrictEqual(mcp.paToolArgv('meeting', ['next']), ['meeting', 'next']);
     // Only read-only verbs, and none of their writing sub-commands or flags.
     for (const [c, a] of [

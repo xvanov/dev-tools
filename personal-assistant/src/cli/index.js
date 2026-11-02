@@ -173,6 +173,28 @@ function dispatchFlags(commitmentId, task, flags, lists) {
   };
 }
 
+// A connection string with its password hidden, parsed rather than pattern-
+// matched (a password holding '@', ':' or '/' defeated the regex).
+function maskUrl(u) {
+  try {
+    const url = new URL(String(u));
+    if (url.password) url.password = '***';
+    return url.toString();
+  } catch {
+    return '(unparseable database URL)';
+  }
+}
+
+// A person at a terminal, not the PA chat or a script: both ends a TTY, and
+// not inside the chat's session.
+function interactive() {
+  return Boolean(process.stdin.isTTY && process.stdout.isTTY) && process.env.PA_CHAT_SESSION !== '1';
+}
+
+function suggestedBy() {
+  return process.env.PA_CHAT_SESSION === '1' ? 'the chat' : 'a non-interactive caller';
+}
+
 // An offer (src/dispatch/offer.js), as the card would show it.
 function printOffer({ body, payload }, { preview }) {
   if (preview) out('PREVIEW — nothing started, nothing sent.\n');
@@ -403,10 +425,29 @@ const commands = {
       return printOffer(await require('../dispatch/offer').prepare(o), { preview: true });
     }
 
+    // The end state, shown BEFORE anything starts. One that merges or pushes to
+    // main with no human step after it starts only on a terminal yes; asked
+    // for by the chat (or any non-interactive caller) it becomes a card.
+    const D = require('../dispatch/deliveryCore');
+    const pre = await dispatch.previewDelivery(o);
+    out(pre.delivery ? `end state: ${pre.delivery} — ${D.describe(pre.delivery)} (${D.sourceLine(pre.source, pre.phrase)})` : 'end state: none — read-only');
+    const hint = !o.delivery ? D.unattendedHint(task) : null;
+    if (hint) out(`  your words mention "${hint.phrase}" — merging or pushing to main is only ever set explicitly: --delivery ${hint.delivery}`);
+    if (D.unattended(pre.delivery)) {
+      if (!interactive()) {
+        const row = await require('../dispatch/offer').propose({
+          ...o, useModel: await require('../budget').allow('propose').catch(() => false), suggestedBy: suggestedBy(),
+        });
+        out(row ? `NOT started: put on a card for you to accept — proposal ${row.id} (dashboard → Needs you)` : 'NOT started: already on a card');
+        return;
+      }
+      if (!(await confirm(`This will ${pre.delivery === 'push_to_main' ? 'push to main' : 'merge'} with no human step after it. Start it? [y/N]`))) return out('not started');
+      o.confirmedUnattended = true;
+    }
+
     const machine = o.machine;
     if (machine) out(`setting up on ${machine} — fetch, worktree, brief, then claude (a minute or so)…`);
     const result = await dispatch.start(o);
-    const D = require('../dispatch/deliveryCore');
     const end = (r, route) => r.delivery
       ? `${r.delivery} — ${D.describe(r.delivery, { route })} (${D.sourceLine(r.deliverySource, r.deliveryPhrase)})`
       : 'none — read-only';
@@ -451,6 +492,7 @@ const commands = {
     // comes, with the deterministic brief, and says so.
     o.useModel = await require('../budget').allow('propose').catch(() => false);
     if (!o.useModel) out('daily model budget reached — the card carries the deterministic brief (no model)');
+    if (!interactive()) o.suggestedBy = suggestedBy();
     const row = await require('../dispatch/offer').propose(o);
     if (!row) return out('already offered');
     out(`proposal ${row.id} · ${row.title}`);
@@ -528,6 +570,16 @@ const commands = {
     if (!Number(id) || !ans) return fail('usage: pa answer <proposal-id> yes|no|<option> [--delivery level]');
     const accept = ans !== 'no';
     const delivery = flags.delivery && flags.delivery !== true ? String(flags.delivery) : null;
+    if (accept) {
+      // Accepting a card that merges or pushes to main is the operator's own
+      // act: from a terminal or the dashboard, never from the chat.
+      const D = require('../dispatch/deliveryCore');
+      const p = await require('../db').one('select kind, payload from proposal where id = $1', [Number(id)]);
+      const final = delivery ? D.delivery(delivery) : p?.payload?.delivery;
+      if (p?.kind === 'dispatch' && D.unattended(final) && !interactive()) {
+        return fail(`proposal ${id} would ${final === 'push_to_main' ? 'push to main' : 'merge'} with no human step — accept it in the dashboard or from a terminal`);
+      }
+    }
     const r = await require('../proposals').decide(Number(id), { accept, answer: ans === 'yes' || ans === 'no' ? null : ans, delivery });
     out(r.result);
   },
@@ -669,7 +721,8 @@ const commands = {
       return;
     }
     const dispatch = require('../dispatch');
-    await dispatch.reconcile().catch(() => {});
+    // The chat's read-only `pa` tool runs this with PA_READ_ONLY=1: no writes.
+    if (process.env.PA_READ_ONLY !== '1') await dispatch.reconcile().catch(() => {});
     const list = await dispatch.list({ all: flagBool(flags, 'all'), limit: flagInt(flags, 'n', 20) });
     if (!list.length) return out('no runs');
     for (const r of list) {
@@ -964,7 +1017,7 @@ const commands = {
     // Database
     try {
       const probe = await db.probe();
-      mark(true, 'postgres', `${config.databaseUrl.replace(/:[^:@/]*@/, ':***@')} · ${probe.db}`);
+      mark(true, 'postgres', `${maskUrl(config.databaseUrl)} · ${probe.db}`);
       mark(probe.has_vector, 'pgvector', probe.has_vector ? 'installed' : 'MISSING — run `pa migrate`');
       const migrations = await db
         .rows('select version from schema_migration order by version')
@@ -1471,4 +1524,4 @@ async function main(argv) {
   }
 }
 
-module.exports = { main, commands, HELP };
+module.exports = { main, commands, HELP, maskUrl };

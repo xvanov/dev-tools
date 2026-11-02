@@ -14,8 +14,8 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const http = require('http');
-const { parseSpec, runSpec, MAX_TIMEOUT_MS } = require('../lib/exec');
-const { checkProgrammaticRequest, hostAllowed, hostnameOf } = require('../lib/requestGuard');
+const { handle: execHandle, parseSpec, runSpec, MAX_TIMEOUT_MS, MAX_CONCURRENT, BODY_TIMEOUT_MS } = require('../lib/exec');
+const { checkProgrammaticRequest, hostAllowed, hostnameOf, setLearnedNames, selfNamesFromStatus, learnSelfNames } = require('../lib/requestGuard');
 const { createFront } = require('../front');
 
 const node = process.execPath;
@@ -27,13 +27,25 @@ assert.strictEqual(hostnameOf('127.0.0.1:7000'), '127.0.0.1');
 assert.strictEqual(hostnameOf('[::1]:7000'), '::1');
 assert.strictEqual(hostnameOf('Box.Tail1234.TS.NET:7000'), 'box.tail1234.ts.net');
 const env = { TERMHUB_MACHINE: 'build-vm', TERMHUB_ALLOWED_HOSTS: 'termhub.lan' };
+// This machine's own MagicDNS name, as `tailscale status --json` reports it
+// (Self.DNSName, trailing dot and all). Set directly so no test spawns tailscale.
+assert.deepStrictEqual([...selfNamesFromStatus({ Self: { DNSName: 'Build-VM.tail1234.ts.net.' } })], ['build-vm.tail1234.ts.net']);
+assert.deepStrictEqual([...selfNamesFromStatus(null)], []);
+assert.deepStrictEqual([...selfNamesFromStatus({ Self: {} })], []);
+setLearnedNames(['build-vm.tail1234.ts.net.']);
 for (const ok of ['127.0.0.1:7000', 'localhost:7000', '[::1]:7000', '100.101.102.103:7000', 'build-vm:7000',
-  'build-vm.tail1234.ts.net', 'termhub.lan:7000', `${os.hostname()}:7000`]) {
+  'build-vm.tail1234.ts.net', 'BUILD-VM.Tail1234.TS.NET:7443', 'build-vm.tail1234.ts.net.:7000',
+  'termhub.lan:7000', 'TermHub.LAN', `${os.hostname()}:7000`]) {
   assert.ok(hostAllowed(ok, env), `allowed: ${ok}`);
 }
-for (const bad of ['evil.example:7000', 'build-vm.evil.example', '', 'ts.net.evil.example']) {
+// Regression: `*.ts.net` used to pass as a suffix. Only this machine's exact
+// MagicDNS name may — not another machine, another tailnet, or a Funnel name.
+for (const bad of ['evil.example:7000', 'build-vm.evil.example', '', 'ts.net.evil.example',
+  'evil.tail9999.ts.net', 'other-box.tail1234.ts.net:7000', 'build-vm.tail9999.ts.net', 'x.build-vm.tail1234.ts.net',
+  'ts.net', 'evil.termhub.lan', 'termhub.lan.evil.example']) {
   assert.ok(!hostAllowed(bad, env), `refused: ${bad}`);
 }
+assert.ok(!hostAllowed('box.tail1234.ts.net', {}), 'no wildcard even with nothing configured');
 
 const good = { host: '127.0.0.1:7000', 'content-type': 'application/json', 'x-termhub': '1' };
 const verdict = (headers) => checkProgrammaticRequest({ method: 'POST', headers }, { env });
@@ -88,6 +100,16 @@ function post(port, body, headers = {}, { host } = {}) {
 }
 
 (async () => {
+  // learnSelfNames reads `tailscale status`; a failed read keeps the previous answer.
+  await learnSelfNames({ readStatus: async () => ({ Self: { DNSName: 'learned-box.tail42.ts.net.' } }) });
+  assert.ok(hostAllowed('learned-box.tail42.ts.net:7000', {}), 'the learned name passes');
+  assert.ok(!hostAllowed('build-vm.tail1234.ts.net', {}), 'and replaces the old one');
+  await learnSelfNames({ readStatus: async () => null });
+  assert.ok(hostAllowed('learned-box.tail42.ts.net', {}), 'tailscale down: the last good name is kept');
+  await learnSelfNames({ readStatus: async () => { throw new Error('boom'); } });
+  assert.ok(hostAllowed('learned-box.tail42.ts.net', {}), 'and a throwing read changes nothing');
+  setLearnedNames(['build-vm.tail1234.ts.net']);
+
   // sessiond is never consulted for /api/exec: point the front at a dead port.
   const server = createFront({ sessiondPort: 1, port: 0, paUrl: '' });
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
@@ -160,6 +182,72 @@ function post(port, body, headers = {}, { host } = {}) {
     });
     assert.strictEqual(opts.statusCode, 405, 'a preflight is not answered');
     assert.ok(!opts.headers['access-control-allow-origin'], 'and carries no CORS grant');
+
+    // ---- the body is read before a concurrency slot is taken ----
+    //
+    // Regression: the slot used to be taken BEFORE the body was read, so
+    // MAX_CONCURRENT requests that never finish their body locked /api/exec
+    // for everyone (429) for as long as they cared to hold the sockets.
+    assert.strictEqual(BODY_TIMEOUT_MS, 10_000, 'default body deadline');
+    const sendJsonT = (res, status, body) => {
+      if (res.headersSent) return res.destroy();
+      const data = JSON.stringify(body);
+      res.writeHead(status, { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(data) });
+      res.end(data);
+    };
+    const slowServer = http.createServer((req, res) => {
+      execHandle(req, res, new URL(req.url, 'http://x'), { sendJson: sendJsonT, env: {}, home: tmp, bodyTimeoutMs: 400 });
+    });
+    await new Promise((r) => slowServer.listen(0, '127.0.0.1', r));
+    const sPort = slowServer.address().port;
+    // Opens a request, sends part of a body, never ends it. Resolves its outcome.
+    const stall = (extra = {}) => new Promise((resolve) => {
+      const req = http.request({ host: '127.0.0.1', port: sPort, path: '/api/exec', method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Termhub': '1', ...extra } }, (res) => {
+        let text = '';
+        res.on('data', (c) => { text += c; });
+        res.on('end', () => resolve({ status: res.statusCode, text, headers: res.headers }));
+      });
+      req.on('error', (e) => resolve({ error: e.code }));
+      req.write('{"argv":');
+      req.flushHeaders();
+    });
+    try {
+      const t0 = Date.now();
+      const stalled = Array.from({ length: MAX_CONCURRENT + 2 }, () => stall());
+      await new Promise((r) => setTimeout(r, 100));
+      const through = await post(sPort, { argv: [node, '-e', 'process.stdout.write("ran")'], cwd: tmp });
+      assert.strictEqual(through.status, 200, `stalled bodies hold no slot: ${JSON.stringify(through.json)}`);
+      assert.strictEqual(through.json.stdout, 'ran');
+      const outcomes = await Promise.all(stalled);
+      for (const o of outcomes) {
+        assert.strictEqual(o.status, 408, `a body that never ends gets 408: ${JSON.stringify(o)}`);
+        assert.strictEqual(o.headers.connection, 'close');
+      }
+      assert.ok(Date.now() - t0 < 3000, 'and promptly, at the deadline');
+
+      // A chunked body (no Content-Length) over the cap: 413 as soon as it crosses it.
+      const huge = await new Promise((resolve) => {
+        const req = http.request({ host: '127.0.0.1', port: sPort, path: '/api/exec', method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-Termhub': '1' } }, (res) => { res.resume(); resolve(res.statusCode); });
+        req.on('error', () => {});
+        req.write('{"argv":["x"],"stdin":"');
+        req.write('x'.repeat(5 * 1024 * 1024));
+      });
+      assert.strictEqual(huge, 413);
+
+      // The slot limit itself still holds for real runs: MAX_CONCURRENT
+      // sleepers in flight, the next one is refused.
+      const sleepers = Array.from({ length: MAX_CONCURRENT },
+        () => post(sPort, { argv: [node, '-e', 'setTimeout(()=>{},1500)'], cwd: tmp }));
+      await new Promise((r) => setTimeout(r, 500));
+      assert.strictEqual((await post(sPort, { argv: [node, '-e', ''], cwd: tmp })).status, 429, 'the cap still applies to runs');
+      for (const r of await Promise.all(sleepers)) assert.strictEqual(r.status, 200);
+      assert.strictEqual((await post(sPort, { argv: [node, '-e', ''], cwd: tmp })).status, 200, 'and slots come back');
+    } finally {
+      slowServer.close();
+      slowServer.closeAllConnections?.();
+    }
 
     console.log('exec.test.js ok');
   } finally {

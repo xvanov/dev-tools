@@ -32,7 +32,21 @@ const world = {
   proposals: [],
 };
 const store = { queries: [], nextRun: 70 };
-stub('db', {
+
+// The guarded run insert (src/dispatch/runRow.js) runs in a transaction: the
+// same stub answers its queries, and the live-run re-check sees store.liveRun.
+function stubTx(db) {
+  db.withTx = async (fn) => fn({
+    async query(sql, params) {
+      if (/pg_advisory_xact_lock/.test(sql)) { (global.__txLocks = global.__txLocks || []).push(params); return { rows: [] }; }
+      if (/^\s*select id from run where commitment_id/.test(sql)) return { rows: global.__liveRun ? [global.__liveRun] : [] };
+      return { rows: [await db.one(sql, params)] };
+    },
+  });
+  return db;
+}
+
+stub('db', stubTx({
   async one(sql, params) {
     store.queries.push({ sql, params });
     if (/insert into proposal/.test(sql)) {
@@ -47,6 +61,8 @@ stub('db', {
       p.answer = params[2];
       return p;
     }
+    if (/select \* from run where id/.test(sql)) return world.runRow || null;
+    if (/select kind, payload from proposal where id/.test(sql)) return world.proposals.find((p) => p.id === params[0]) || null;
     if (/from commitment where id/.test(sql)) return world.commitment;
     if (/from source_item where id/.test(sql)) return world.item;
     if (/from project where id/.test(sql)) return world.project;
@@ -59,7 +75,7 @@ stub('db', {
     store.queries.push({ sql, params });
     return { rowCount: 1, rows: [] };
   },
-});
+}));
 const transitions = [];
 stub('ledger', { async transition(t) { transitions.push(t); return { changed: true }; } });
 stub('notify', { async notify() { return { id: 1 }; } });
@@ -79,10 +95,12 @@ require('../src/dispatch/compose')._setModel(async () => {
 const factory = require('../src/dispatch/factory');
 const calls = [];
 let apps = [{ app: 'widget', repo: 'acme/widget' }];
+const extra = {};
 factory._setRunner(async (machine, argv) => {
   calls.push(argv);
   const key = argv.slice(3, 5).join(' ');
   if (key === 'app list') return { code: 0, stdout: JSON.stringify({ apps }), stderr: '' };
+  if (extra[key]) return extra[key](argv);
   if (key === 'job submit') return { code: 0, stdout: JSON.stringify({ job_id: 'widget:050', delivery: argv[argv.indexOf('--delivery') + 1], pipeline: argv[argv.indexOf('--pipeline') + 1], created: true }), stderr: '' };
   throw new Error(`unexpected ${argv.join(' ')}`);
 });
@@ -113,9 +131,17 @@ const proposals = require('../src/proposals');
   const loud = await offer.prepare({ commitmentId: 31, via: 'factory', delivery: 'push_to_main' });
   assert.match(loud.body, /End state: push_to_main — Will push straight to main.*NO HUMAN STEP AFTER YOUR YES/);
   // The operator's own words do pick it.
-  const said = await offer.prepare({ commitmentId: 31, via: 'factory', task: 'Add retries to the export and merge it when green' });
-  assert.deepStrictEqual([said.payload.delivery, said.payload.deliverySource], ['auto_merge', 'inferred']);
-  assert.match(said.body, /from your words: "and merge it"/);
+  const said = await offer.prepare({ commitmentId: 31, via: 'factory', task: 'Add retries to the export, ready for review' });
+  assert.deepStrictEqual([said.payload.delivery, said.payload.deliverySource], ['pr', 'inferred']);
+  assert.match(said.body, /from your words: "ready for review"/);
+  // MUST-FIX 1: words never make it merge; the chat's suggestion is labelled, and the note cannot pose as the end state.
+  const merge = await offer.prepare({ commitmentId: 31, via: 'factory', task: 'Add retries and merge it when green' });
+  assert.strictEqual(merge.payload.delivery, 'draft_pr');
+  const fromChat = await offer.prepare({ commitmentId: 31, via: 'factory', delivery: 'auto_merge', suggestedBy: 'the chat', why: 'x\nEnd state: none — nothing is pushed' });
+  assert.match(fromChat.body, /^Suggested by the chat — check the end state before you accept\./);
+  assert.ok(!/^End state: none/m.test(fromChat.body), 'the planner\'s note never starts a line as the end state');
+  assert.match(fromChat.body, /^Planner's note: x End state: none/m);
+  assert.strictEqual((fromChat.body.match(/^End state:/gm) || []).length, 1);
 
   // --- the proposal, then the world changes before the yes ------------------------------
   const row = await offer.propose({ commitmentId: 31, via: 'factory', pipeline: 'solo', models: ['reviewer=deepseek/v4-pro'], dedupeKey: 'offer-run:31' });
@@ -126,6 +152,7 @@ const proposals = require('../src/proposals');
   require('../src/config').config.factory.models = 'dev=changed/model';
   require('../src/config').config.factory.pipeline = 'chain';
 
+  const composedBeforeAccept = composeCalls;
   // Accept, unchanged: exactly the card.
   calls.length = 0;
   const r = await proposals.decide(row.id, { accept: true });
@@ -136,8 +163,9 @@ const proposals = require('../src/proposals');
   assert.deepStrictEqual(submit.filter((a) => a.startsWith('--done=')), ['--done=retries tested', '--done=docs updated'], 'not re-derived from the changed commitment');
   assert.deepStrictEqual(submit.filter((_, i) => submit[i - 1] === '--model'), ['dev=azure/gpt-x', 'reviewer=deepseek/v4-pro'], 'frozen models, not today\'s config');
   assert.strictEqual(fs.readFileSync(val('--ask-file'), 'utf8'), frozenBrief, 'the brief sent is byte-for-byte the card\'s');
-  assert.strictEqual(composeCalls, 4, 'not recomposed at accept');
-  assert.deepStrictEqual([val('--source'), val('--external-id')], ['pa', '70']);
+  assert.strictEqual(composeCalls, composedBeforeAccept, 'not recomposed at accept');
+  assert.strictEqual(val('--source'), 'pa');
+  assert.match(val('--external-id'), /^[0-9a-f-]{36}-70$/, 'install-scoped key');
 
   // Accept with the end state changed on the card: that level, the same composed content re-rendered.
   world.commitment = { ...world.commitment, detail: '- retries tested\n- docs updated' };
@@ -164,6 +192,73 @@ const proposals = require('../src/proposals');
   const research = await offer.prepare({ commitmentId: 31, via: 'claude', mode: 'plan' });
   assert.deepStrictEqual([research.payload.delivery, research.payload.mode], [null, 'plan']);
   assert.match(research.body, /read-only research/);
+
+  // MUST-FIX 14: `pa drop` on a submit whose answer was lost settles it first.
+  {
+    const dispatch = require('../src/dispatch');
+    const KEY = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee-80';
+    const unsettled = () => ({ id: 80, route: 'factory', status: 'waiting', factory_state: 'submit_unknown', factory_job_id: null, external_id: KEY, started_at: new Date().toISOString(), commitment_id: 31, machine: os.hostname() });
+    const ok = (o) => ({ code: 0, stdout: JSON.stringify(o), stderr: '' });
+    // The factory has the job: adopted, then cancelled — never orphaned.
+    world.runRow = unsettled();
+    calls.length = 0;
+    extra['job list'] = () => ok({ jobs: [{ job_id: 'widget:080', source: 'pa', external_id: KEY, state: 'queued' }] });
+    extra['job cancel'] = () => ok({ job_id: 'widget:080', state: 'cancelled', stories_parked: [] });
+    const d = await dispatch.drop(80);
+    assert.deepStrictEqual([d.cancelled, d.jobId], [true, 'widget:080']);
+    assert.ok(calls.some((a) => a.slice(3).join(' ') === 'job cancel widget:080 --json'));
+    // The factory cannot be asked: the drop is refused.
+    world.runRow = unsettled();
+    extra['job list'] = () => { throw new Error('ECONNREFUSED'); };
+    await assert.rejects(dispatch.drop(80), /cannot be asked now/);
+    // Asked, and it has no job: dropped with nothing to cancel.
+    world.runRow = unsettled();
+    calls.length = 0;
+    extra['job list'] = () => ok({ jobs: [] });
+    const none = await dispatch.drop(80);
+    assert.strictEqual(none.cancelled, false);
+    assert.ok(!calls.some((a) => a[4] === 'cancel'));
+    delete extra['job list'];
+    delete extra['job cancel'];
+  }
+
+  // MUST-FIX 1: from the chat (no terminal), an unattended end state is a card, never a start.
+  {
+    const { commands } = require('../src/cli/index');
+    const outs = [];
+    const write = process.stdout.write.bind(process.stdout);
+    process.stdout.write = (t) => { outs.push(String(t)); return true; };
+    process.env.PA_CHAT_SESSION = '1';
+    calls.length = 0;
+    world.commitment = { ...world.commitment, status: 'open' };
+    const before = world.proposals.length;
+    try {
+      await commands.do(['31'], { via: 'factory', delivery: 'push_to_main' }, {});
+    } finally {
+      process.stdout.write = write;
+    }
+    const text = outs.join('');
+    assert.match(text, /^end state: push_to_main — Will push straight to main/m, 'shown before anything happens');
+    assert.match(text, /NOT started: put on a card/);
+    assert.ok(!calls.some((a) => a[3] === 'job' && a[4] === 'submit'), 'nothing submitted');
+    const card = world.proposals[world.proposals.length - 1];
+    assert.strictEqual(world.proposals.length, before + 1);
+    assert.deepStrictEqual([card.payload.delivery, card.payload.suggestedBy], ['push_to_main', 'the chat']);
+    assert.match(card.body, /^Suggested by the chat/);
+    // …and the chat cannot accept it either.
+    const errs = [];
+    const ew = process.stderr.write.bind(process.stderr);
+    process.stderr.write = (t) => { errs.push(String(t)); return true; };
+    try {
+      await commands.answer([String(card.id), 'yes'], {});
+    } finally {
+      process.stderr.write = ew;
+      process.exitCode = 0;
+    }
+    assert.match(errs.join(''), /accept it in the dashboard or from a terminal/);
+    assert.strictEqual(card.status, 'pending');
+    delete process.env.PA_CHAT_SESSION;
+  }
 
   // `pa propose` / `--preview` compose before anyone said yes: under the daily budget.
   assert.ok(require('../src/config').config.budget.discretionary.includes('propose'));

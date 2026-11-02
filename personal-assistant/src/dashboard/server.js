@@ -299,6 +299,8 @@ async function handle(req, res) {
         machine: body.machine ? String(body.machine) : null,
         via: body.via ? String(body.via) : null,
         delivery,
+        // The Do button is the operator, in the browser (loopback + X-PA).
+        confirmedUnattended: true,
       });
       return send(res, 200, {
         id: run.id, mode: run.mode, machine: run.machine || null, url: run.url, repoPath: run.repoPath,

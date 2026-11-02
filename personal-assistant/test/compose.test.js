@@ -40,6 +40,56 @@ const C = require('../src/dispatch/composeCore');
   assert.strictEqual(C.redactSecrets('rename src/auth/token.js and add a retry'), 'rename src/auth/token.js and add a retry', 'ordinary prose and paths untouched');
 }
 
+// MUST-FIX 9/10: the review's leaks, every one redacted; ordinary text untouched.
+{
+  const leaks = {
+    ghp_split: 'ghp_ABCDEFGHIJ\nKLMNOPQRSTUVWXYZ0123456789ab',
+    azure_env: 'AZURE_OPENAI_API_KEY=3f2a9c0d1e4b5a6978c0d1e2f3a4b5c6',
+    aws_secret_env: 'AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY',
+    deepseek_env: 'DEEPSEEK_API_KEY: abcdef0123456789abcdef0123456789',
+    x_api_key: 'X_API_KEY: Zm9vYmFyYmF6cXV4MTIz',
+    ocp: 'Ocp-Apim-Subscription-Key: 3f2a9c0d1e4b5a6978c0d1e2f3a4b5c6',
+    bare_hex: 'the azure key is 3f2a9c0d1e4b5a6978c0d1e2f3a4b5c6',
+    pgp: '-----BEGIN PGP PRIVATE KEY BLOCK-----\nlQOYBF...secretmaterial\n-----END PGP PRIVATE KEY BLOCK-----',
+    pg_at: 'postgres://admin:p@ss/w0rd@db.host:5432/app',
+    mongo: 'mongodb+srv://u:Hunter2!x@cluster0.mongodb.net',
+    creds_b64: 'creds: dXNlcjpodW50ZXIyLXN1cGVyLXNlY3JldA==',
+    curl_u: 'curl -u admin:hunter2 https://x',
+    netrc: 'machine github.com login me password hunter2',
+    access_token: '{"access_token": "ya29.a0AfH6SMBx-very-long-google-token"}',
+    refresh: 'refresh_token=1//0gLongGoogleRefreshTokenValue',
+    stripe: 'sk_live_51H' + 'a'.repeat(30),
+    npm: 'npm_' + 'c'.repeat(36),
+    hf: 'hf_' + 'd'.repeat(34),
+    zero_width: 'ghp_' + 'A'.repeat(18) + '\u200b' + 'B'.repeat(18),
+    entropy: 'use Xk9fQ2mZ7pL4vR8tW1nB6cY3hJ5dG0sA for it',
+  };
+  for (const [k, v] of Object.entries(leaks)) {
+    const r = C.redactSecrets(v);
+    assert.match(r, /\[redacted/, k);
+    for (const secret of ['3f2a9c0d1e4b5a6978c0d1e2f3a4b5c6', 'wJalrXUtnFEMI', 'p@ss/w0rd', 'Hunter2!x', 'hunter2', 'secretmaterial', 'ya29.', '1//0gLong', 'KLMNOPQRSTUV', 'Xk9fQ2mZ7pL4']) {
+      assert.ok(!r.includes(secret), `${k}: ${secret}`);
+    }
+  }
+  for (const t of ['rename src/auth/token.js and add a retry', 'the password reset flow sends a token by email', 'Retry the export; key: retries must use backoff',
+    'commit 0123456789abcdef0123456789abcdef01234567 broke it', 'see src/components/UserProfileSettingsPanel2.tsx', 'the token expiry is configurable']) {
+    assert.strictEqual(C.redactSecrets(t), t, t);
+  }
+  // Title, criteria and flow are on the factory's command line and in its direction.
+  const F = require('../src/dispatch/factoryCore');
+  const task = 'rotate the key; current one is AZURE_OPENAI_API_KEY=3f2a9c0d1e4b5a6978c0d1e2f3a4b5c6 and ghp_' + 'Z'.repeat(36);
+  const argv = F.submitArgv({ app: 'a', title: task, askFile: '/x', done: [task], delivery: 'pr', externalId: 'k-1' });
+  assert.ok(!argv.some((a) => /3f2a9c0d|ZZZZZZZZ/.test(a)), 'argv carries no secret');
+  assert.ok(!/3f2a9c0d|ZZZZZZZZ/.test(F.flowMarkdown({ title: task, summary: task, done: [task] })), 'flow.md carries no secret');
+  // clip never splits a surrogate pair.
+  const c = C.clip('x'.repeat(598) + '\u{1F600}\u{1F600}', 600);
+  assert.ok(c.isWellFormed(), 'well-formed after clipping');
+  // Doctor shows the database URL with its password hidden, however it is spelled.
+  const { maskUrl } = require('../src/cli/index');
+  assert.strictEqual(maskUrl('postgres://pa:s3cret@127.0.0.1:5433/pa'), 'postgres://pa:***@127.0.0.1:5433/pa');
+  assert.ok(!maskUrl('postgres://pa:p@ss:w/rd@h/db').includes('ss:w'));
+}
+
 // --- what to look for, and what exists ---------------------------------------------------
 
 {
