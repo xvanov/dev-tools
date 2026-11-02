@@ -129,10 +129,12 @@ Fixable by script — a remedy here is expected:
 `tailnet-ip-unavailable` is the one signature whose remedy cannot always win, and it is worth
 knowing why before reading it. The classifier mints it from the *first* branch of
 `Get-TermhubDiagnosis`, before the front or sessiond are probed at all, so it means "we could not
-find out where the front should be", not "termhub is dead". Three of its four causes are repairable
+find out where the front should be", not "termhub is dead". Four of its five causes are repairable
 with no human — `tailscale.exe` missing from the watchdog task's PATH (the interactive PATH is not
-the task's), a transient LocalAPI answer, and an administratively-down-but-still-authenticated node
-— and the remedy handles those, then re-binds the front with `start-http.ps1`. The fourth, a node
+the task's), a transient LocalAPI answer, an administratively-down-but-still-authenticated node, and a
+Windows node not in unattended mode whose tray app (`tailscale-ipn.exe`) has exited, which looks
+logged out but is not (`tailscale up --unattended`)
+— and the remedy handles those, then re-binds the front with `start-http.ps1`. The fifth, a node
 that is **logged out**, cannot be: re-authenticating needs someone to open a login URL. There the
 remedy keeps a front on loopback so the machine still works from itself, prints the auth URL, and
 exits 1. The escalation budget is what stops the un-clearable case from waking a model every two

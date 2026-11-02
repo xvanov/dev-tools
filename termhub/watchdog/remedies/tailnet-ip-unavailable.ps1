@@ -20,6 +20,11 @@
 #   3. `tailscale down` was run (BackendState 'Stopped'), or the Tailscale service is
 #      not running. Both are repairable with no human: the node key is still valid, so
 #      `tailscale up` reconnects silently.
+#   6. (see 2026-11-02 below) Windows, NOT in unattended mode, and the tray app
+#      tailscale-ipn.exe is not running. The profile unloads the moment the last client
+#      disconnects, so the node READS as NoState/NeedsLogin while it is still fully
+#      authenticated. Repaired with `tailscale up --unattended`. Checked BEFORE causes 3 and
+#      4, because both of their branches misread this state.
 #   4. the node is LOGGED OUT (BackendState 'NeedsLogin'). Not repairable here, and not
 #      termhub's to repair - re-authenticating needs someone to open a login URL.
 #      `tailscale up` in this state does not fail fast, it prints an auth URL and
@@ -114,6 +119,37 @@
 # also re-mints the auth URL, so a URL logged by an earlier run goes stale). The remedy now
 # prints tailscaled's Health text next to the auth URL, so the next responder sees the
 # backend's own reason without re-deriving all of the above by hand.
+#
+# WHAT THE 2026-11-02 ESCALATION FOUND (LAP-US101) - cause 6, and very likely the real
+# cause behind the 2026-09-22 "wedged NoState" and the 2026-10-28 "NeedsLogin with
+# HaveNodeKey=true / LoggedOut=false" notes above. This remedy ran its NoState branch
+# (`up`, then one service restart) and still exited 1 with BackendState=NoState and the
+# same "logged out ... fetch control key: context canceled" health text. That escalation was
+# elevated, so it could read tailscaled's own log (%ProgramData%\Tailscale\Logs\
+# tailscale-service-*.txt), and the log names the mechanism:
+#     04:17:33 client disconnected (S-1-5-21-...): disconnecting Tailscale
+#              Switching ipn state Running -> NoState (WantRunning=false)
+#     then, for every CLI call:  client connected (INNERGY\<user>): switching to profile ...
+#              NoState (WantRunning=true) -> TryLogin -> client disconnected:
+#              disconnecting Tailscale -> "profile not found" -> NeedsLogin
+# On Windows, tailscaled WITHOUT "Run unattended" (pref ForceDaemon=false) only keeps a
+# profile loaded while a LocalAPI client from the user's session stays connected. That
+# long-lived client is the tray app, tailscale-ipn.exe. It exited at 04:17:33 (why is
+# unknown: no Application Error event, no crash dump). The node was never logged out. Every
+# short-lived client (`tailscale up`, `status`, this remedy) loads the profile, starts a login,
+# and cancels it when the client disconnects. That cancelled login is the "context canceled"
+# fetch error, and it explains why `up` can't finish, why a service restart doesn't help, and
+# why a bare `up` can look like it needs a fresh auth URL. A prefs dump says LoggedOut=false and
+# the control plane is reachable, because neither was ever the problem.
+# THE FIX FOR CAUSE 6 is `tailscale up --unattended` (sets ForceDaemon=true, Tailscale's
+# documented "keep running with no user client"). It held on the first try: Running and the
+# old 100.x IP back in 13s, and start-http.ps1 rebound the front. Detection, all required:
+# prefs LoggedOut=false and ForceDaemon=false, no tailscale-ipn.exe in any session, and
+# BackendState NoState/NeedsLogin/Stopped. A watchdog task in session 0 cannot launch the
+# tray app onto the user's desktop, so unattended mode is the only fix a script can apply.
+# It persists until someone undoes it, which is the point: the next tray exit or logoff no
+# longer takes termhub off the tailnet. Undo with `tailscale up --unattended=false` or the
+# tray menu's "Run unattended" toggle.
 
 param(
   [string]$Signature,
@@ -225,6 +261,15 @@ function Get-TailscaleBackend {
   return $out
 }
 
+# `tailscale debug prefs` is JSON. LoggedOut and ForceDaemon tell cause 6 (unattended off,
+# no client attached, but authenticated) apart from a real logout. Returns $null if unreadable,
+# and an unreadable result never counts as evidence for cause 6.
+function Get-TailscalePrefs {
+  $r = Invoke-Tailscale -TsArgs @('debug', 'prefs') -DropStderr
+  if ($r.Code -ne 0 -or -not $r.Text) { return $null }
+  try { return ($r.Text | ConvertFrom-Json) } catch { return $null }
+}
+
 # ---- 0. resolve the CLI (cause 1) -------------------------------------------
 
 $script:TsExe = Resolve-TailscaleExe
@@ -266,7 +311,42 @@ if (-not $ip -and (Get-RemainingSec) -gt 30) {
   if (-not $ip) {
     $backend = Get-TailscaleBackend
     Write-Host "remedy: BackendState=$(if ($backend.State) { $backend.State } else { '(unknown)' })"
-    if ($backend.State -eq 'Stopped' -or $backend.State -eq 'NoState') {
+
+    # Cause 6 (2026-11-02): runs before the Stopped/NoState and NeedsLogin branches, because
+    # both misread this state. The first does `up` plus a service restart, and every one of
+    # those calls unloads the profile again when it disconnects. The second tells a human to
+    # log in a node that was never logged out.
+    if ($backend.State -in @('NoState', 'NeedsLogin', 'Stopped')) {
+      $prefs = Get-TailscalePrefs
+      $tray  = @(Get-Process -Name 'tailscale-ipn' -ErrorAction SilentlyContinue)
+      if ($prefs -and $prefs.LoggedOut -eq $false -and $prefs.ForceDaemon -ne $true -and $tray.Count -eq 0) {
+        $upTimeout = [Math]::Min(20, [Math]::Max(5, (Get-RemainingSec) - 12))
+        Write-Host "remedy: no tailscale-ipn.exe (tray client) running and unattended mode is OFF (ForceDaemon=false, LoggedOut=false) - tailscaled unloads the profile whenever no client is attached, so the node only LOOKS logged out. 'tailscale up --unattended' (undo: --unattended=false)."
+        $r = Invoke-Tailscale -TsArgs @('up', '--unattended', "--timeout=${upTimeout}s")
+        if ($r.Text) { Write-Host "remedy: tailscale up --unattended said: $($r.Text -replace '\r?\n', ' | ')" }
+        if ($r.Code -ne 0) {
+          $retryArgs = Get-TailscaleUpRetryArgs -Text $r.Text
+          if ($retryArgs -and (Get-RemainingSec) -gt 15) {
+            if ($retryArgs -notcontains '--unattended') { $retryArgs = @('--unattended') + $retryArgs }
+            Write-Host "remedy: 'up' wants the profile's non-default flags re-stated - reissuing: tailscale up $($retryArgs -join ' ')"
+            $r = Invoke-Tailscale -TsArgs (@('up') + $retryArgs)
+            if ($r.Text) { Write-Host "remedy: reissued 'up' said: $($r.Text -replace '\r?\n', ' | ')" }
+          }
+        }
+        $ip = Wait-TailnetIp -TimeoutSec ([Math]::Min(10, [Math]::Max(0, (Get-RemainingSec) - 5)))
+        if (-not $ip) {
+          $backend = Get-TailscaleBackend
+          Write-Host "remedy: still no tailnet IP after 'up --unattended' (BackendState=$($backend.State)) - falling through."
+          if ($backend.Health) { Write-Host "remedy: tailscaled health: $($backend.Health)" }
+        }
+      }
+    }
+
+    if ($ip) { }
+    elseif ((Get-RemainingSec) -le 20 -and ($backend.State -eq 'Stopped' -or $backend.State -eq 'NoState')) {
+      Write-Host "remedy: out of budget for the Stopped/NoState reconnect after the unattended attempt."
+    }
+    elseif ($backend.State -eq 'Stopped' -or $backend.State -eq 'NoState') {
       # 'Stopped' is `tailscale down`: the node key is still good, so `up` reconnects
       # with no login and no prompt. Bounded anyway, because `up` blocks when it turns
       # out to be wrong about that.
