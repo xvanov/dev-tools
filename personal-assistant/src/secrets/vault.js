@@ -42,8 +42,12 @@ function defaultRunner({ command, args, input }) {
 let runner = defaultRunner;
 
 // A store that hangs (a locked keyring with no one to unlock it, on a headless
-// box) would block every secret lookup for the timeout. After one timeout the
-// vault counts as unavailable for ten minutes and lookups fall through to .env.
+// box) would block every secret lookup for the timeout, and a locked desktop
+// keyring answers a lookup with an unlock prompt — once a minute per missing
+// name, if nothing stopped it. So after a read (get/list) times out or fails,
+// the vault counts as unavailable for ten minutes and lookups fall through to
+// .env. A failed *write* does not trip it: that error goes to the person who
+// asked, who can retry.
 const BREAK_MS = 10 * 60_000;
 let brokenUntil = 0;
 
@@ -98,7 +102,8 @@ function call(request) {
     return r;
   };
   const parsed = backend.run(request, watched);
-  if (timedOut && runner === defaultRunner) brokenUntil = Date.now() + BREAK_MS;
+  const failedRead = (!parsed || !parsed.ok) && (request.op === 'get' || request.op === 'list');
+  if ((timedOut || failedRead) && runner === defaultRunner) brokenUntil = Date.now() + BREAK_MS;
   if (!parsed || !parsed.ok) throw new Error(`${backend.label}: ${scrub(parsed && parsed.error, request.value)}`);
   return parsed;
 }
