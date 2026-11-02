@@ -55,6 +55,9 @@ Four decisions carry most of the design:
 
 ## Install (Windows)
 
+Windows and Linux are both first-class (operator decision, 2026-11-02): each runs the native way
+for its OS — every OS decision lives in `src/platform/`. Linux is [below](#install-linux).
+
 ```powershell
 cd C:\repos\dev-tools\personal-assistant
 .\windows\install.ps1
@@ -76,6 +79,41 @@ Start-ScheduledTask pa-worker
 Start-ScheduledTask pa-capture-mic
 Start-ScheduledTask pa-capture-loopback
 ```
+
+## Install (Linux)
+
+```bash
+cd ~/repos/dev-tools/personal-assistant
+linux/install.sh            # --docker | --native | --skip-db, --no-worker, --no-audio, --start
+```
+
+That runs `npm ci`; brings up the store — the `docker-compose.yml` container when a Docker daemon
+answers (`--docker`), else a dedicated native `pa` cluster on 5433 through
+`linux/setup-postgres.sh` (`--native`, sudo, Debian/Ubuntu), which leaves any existing Postgres
+alone; records which in `.env` as `PA_PG_TOOLS` so backups reach the right `pg_dump`; applies the
+schema; creates the capture venv; and writes and enables three systemd **user** units —
+`pa-worker`, `pa-capture@mic`, `pa-capture@loopback` — rendered from the same config the worker
+reads, so capture writes where the worker looks. Like the Windows tasks they are not started
+until you say so (`--start`, or):
+
+```bash
+node bin/pa.js login && node bin/pa.js projects sync && node bin/pa.js doctor
+systemctl --user start pa-worker
+systemctl --user start pa-capture@mic pa-capture@loopback     # recording — your call
+journalctl --user -u pa-worker -f                             # its log
+```
+
+What each OS-specific piece becomes on Linux, and what `pa doctor` says when it cannot:
+
+| Piece | Linux | When it can't |
+|---|---|---|
+| store | native cluster or compose container, 127.0.0.1:5433 | — |
+| secrets | Secret Service via `secret-tool` (`libsecret-tools`), value on stdin | `DEGRADED`: env and `.env` only |
+| pushes | `notify-send`; ntfy with `PA_NTFY_TOPIC` | `DEGRADED`: the dashboard feed only |
+| `pa send` | `xdg-open`; Teams *web* links unless an `msteams:` handler exists; `wl-copy`/`xclip`/`xsel` | headless: the link and text are printed |
+| capture | PipeWire/PulseAudio: the mic and the default sink's monitor | no `pactl`: calendar-only gate, `DEGRADED` |
+| Teams in seconds | no new Teams desktop client on Linux | `UNSUPPORTED`: the connector, every 3 min |
+| services | systemd user units; `loginctl enable-linger` for a headless box | — |
 
 `pa doctor` is the answer to "why isn't it doing anything". It reports every credential, every
 source cursor, the distillation backlog, and whether termhub is reachable.

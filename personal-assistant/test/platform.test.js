@@ -309,6 +309,22 @@ print(json.dumps({"active": d.active_sources(data["o"], data["s"]), "monitor": d
   });
 }
 
+// ------------------------------------------------------ systemd units --
+{
+  const units = require('../linux/units');
+  const tpl = fs.readFileSync(path.join(__dirname, '..', 'linux', 'pa-capture@.service'), 'utf8');
+  const out = units.render(tpl, {
+    DIR: '/home/q/dev tools/pa', NODE: '/usr/bin/node', PY: '/d/50%off/venv/bin/python', AUDIO_DIR: '/d/a"b', PAUSE_FILE: '/d/p',
+    ROLL_FILE: '/d/r', ROLL_MINUTES: 15, SAMPLE_RATE: 16000, MIC_ENV: '',
+  });
+  assert.ok(out.includes('ExecStart="/d/50%%off/venv/bin/python" "/home/q/dev tools/pa/audio/capture.py" --stream %i'), 'a % in a path is not a systemd specifier; %i is');
+  assert.ok(out.includes('Environment="PA_AUDIO_DIR=/d/a\\"b"'), 'quotes cannot end the word');
+  assert.ok(!/__[A-Z_]+__/.test(out), 'every placeholder filled');
+  assert.throws(() => units.render('X=__NOPE__', {}), /no value/);
+  const worker = units.render(fs.readFileSync(path.join(__dirname, '..', 'linux', 'pa-worker.service'), 'utf8'), { DIR: '/pa', NODE: '/n' });
+  assert.ok(worker.includes('ExecStart="/n" "/pa/src/worker.js"'));
+}
+
 // ------------------------------------------------- paths from other OSes --
 {
   const { toItem } = require('../src/ingest/claudeSessions');

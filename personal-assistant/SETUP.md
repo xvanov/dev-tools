@@ -10,12 +10,16 @@ copy .env.example .env
 notepad .env
 ```
 
+On Linux it is `personal-assistant/.env` in your clone, and `linux/install.sh` writes it from the
+template (mode 600); the commands below are the same with `/` for `\` (`node bin/pa.js doctor`).
+
 Format is `NAME=value` — no quotes, no spaces around the `=`, one per line. It is gitignored.
 
 Microsoft 365, GitHub and Jira need nothing in `.env` at all: each goes through a login that
 already exists on the machine. Jira works better with an API token, and that does not go in
-`.env` either — the dashboard asks for it under **Needs you** and stores it in Windows
-Credential Manager (or `pa secret set PA_JIRA_API_TOKEN`).
+`.env` either — the dashboard asks for it under **Needs you** and stores it in the OS keyring:
+Windows Credential Manager, or the Secret Service on Linux (or `pa secret set PA_JIRA_API_TOKEN`).
+A Linux box with no keyring (`pa doctor`: `secret store … DEGRADED`) stores it in `.env` instead.
 
 ---
 
@@ -70,7 +74,8 @@ claude          # then /login with pa's account, and /mcp → claude.ai Microsof
 ```
 
 Then set `PA_CLAUDE_CONFIG_DIR=~/.claude-pa` in `.env` and restart the worker
-(`Stop-ScheduledTask pa-worker; Start-ScheduledTask pa-worker`). Only pa's own `claude -p`
+(`Stop-ScheduledTask pa-worker; Start-ScheduledTask pa-worker`, or on Linux
+`systemctl --user restart pa-worker`). Only pa's own `claude -p`
 calls use it: agent runs dispatched through termhub keep the login of the machine they run on,
 and the PA chat session runs in termhub on your default login. `pa doctor` names the account on
 its `claude login` line. Connect connectors in a browser signed in to that same account, or
@@ -142,7 +147,9 @@ These have working defaults and need no accounts:
 |---|---|---|
 | `PA_DATABASE_URL` | `postgres://pa:pa@127.0.0.1:5433/pa` | never, unless you moved the database |
 | `PA_TERMHUB_URL` | `http://127.0.0.1:7000` | termhub runs on a different port |
-| `PA_REPOS_ROOT` | `C:\repos` | your repos live elsewhere |
+| `PA_REPOS_ROOT` | `C:\repos` (Windows), `~/repos` (Linux) | your repos live elsewhere |
+| `PA_PG_TOOLS` | `wsl:Ubuntu` (Windows); set by `linux/install.sh` | the store moved between a native cluster (`native`) and the container (`docker:pa-postgres`) |
+| `PA_TEAMS_CACHE_DIR` | the new Teams client's cache (Windows); none (Linux) | you want to try a Teams web cache on Linux (experimental) |
 | `PA_CLAUDE_COMMAND` | `claude --dangerously-skip-permissions` | you want dispatched sessions to ask before acting |
 | `PA_TRANSCRIBE_PORT` | `47821` | you changed voice-dictation's server port |
 | `PA_AUDIO_ENABLED` | `1` | set `0` to disable recording entirely |
@@ -160,7 +167,11 @@ Every line should read `ok`. What the failures mean:
 
 | Line | Means |
 |---|---|
-| `postgres ... ECONNREFUSED` | WSL dropped the distro. `Start-ScheduledTask pa-wsl-keepalive`. |
+| `postgres ... ECONNREFUSED` | Windows: WSL dropped the distro. `Start-ScheduledTask pa-wsl-keepalive`. Linux: `docker compose up -d` (container) or `sudo systemctl start postgresql@16-pa` (native). |
+| `secret store … DEGRADED` (Linux) | no Secret Service: `sudo apt install libsecret-tools` and a running keyring (GNOME Keyring / KWallet). Until then secrets live in `.env`. |
+| `sound server … DEGRADED` (Linux) | `pactl` missing: `sudo apt install pulseaudio-utils` (it talks to PipeWire too). |
+| `capture units … not installed` (Linux) | `linux/install.sh`, or `PA_AUDIO_ENABLED=0` if this box records nothing. |
+| `backup … BROKEN: pg_dump N is older than the server` | Linux: install the matching `postgresql-client-NN`, or `PA_PG_TOOLS=docker:pa-postgres` for the container. |
 | dashboard refuses to connect, or a pass runs twice | an old worker outlived a restart: `Stop-ScheduledTask` ends the wrapper, not node. Restart with `Stop-ScheduledTask pa-worker; Get-CimInstance Win32_Process -Filter "Name='node.exe'" \| ? CommandLine -match 'src\\worker\.js' \| % { Stop-Process -Id $_.ProcessId -Force }; Start-ScheduledTask pa-worker`. A second worker waits on a database lock rather than running beside the first. |
 | `microsoft 365 — ... /mcp` | step 1 not finished, the connector sign-in expired, or IT has not assigned you |
 | `anthropic — not set` | step 2 not done |
@@ -182,4 +193,12 @@ And when you want it running by itself:
 Start-ScheduledTask pa-worker              # ingest + distil on a timer
 Start-ScheduledTask pa-capture-mic         # start recording — your call, and reversible
 Start-ScheduledTask pa-capture-loopback
+```
+
+On Linux:
+
+```bash
+linux/install.sh                                             # the store, the venv, the systemd user units
+systemctl --user start pa-worker
+systemctl --user start pa-capture@mic pa-capture@loopback    # your call, and reversible
 ```
