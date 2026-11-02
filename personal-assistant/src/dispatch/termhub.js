@@ -22,13 +22,18 @@ const { logger } = require('../log');
 
 const log = logger('termhub');
 
+const GUARD = { 'X-Termhub': '1' };
+
 function client(baseUrl) {
   const root = String(baseUrl).replace(/\/+$/, '');
 
   async function api(path, { method = 'GET', body, timeoutMs = 15_000 } = {}) {
     const res = await fetch(root + path, {
       method,
-      headers: body ? { 'Content-Type': 'application/json' } : {},
+      // X-Termhub on every call: termhub refuses a state-changing request
+      // without it (termhub/lib/requestGuard.js, its CSRF guard). An older
+      // termhub ignores the header.
+      headers: body ? { 'Content-Type': 'application/json', ...GUARD } : { ...GUARD },
       body: body ? JSON.stringify(body) : undefined,
       signal: AbortSignal.timeout(timeoutMs),
     });
