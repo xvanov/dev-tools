@@ -517,7 +517,7 @@ All optional environment variables:
 | `TERMHUB_NTFY_TOPIC` | — | ntfy topic for idle notifications. Wins over `<data dir>/notify.json`; unset and unconfigured means no pushes. **The topic is the secret** — anyone who knows it can read them |
 | `TERMHUB_NTFY_SERVER` | `https://ntfy.sh` | Point at a self-hosted ntfy instead |
 | `TERMHUB_PA_URL` | `http://127.0.0.1:7300` | The personal assistant's dashboard, proxied at `/pa/` (Host rewritten to the PA's loopback address, `X-PA` forwarded). **Empty disables it.** Anyone who can reach termhub can reach the PA through it — no new capability, since they already have shells; see `AGENT.md` → *The PA proxy* |
-| `TERMHUB_ALLOWED_HOSTS` | — | Extra names (comma-separated) `POST /api/exec` accepts in `Host`, beyond loopback, IP literals, `*.ts.net` and this machine's own name. Needed only if you reach termhub by some other DNS name; see `AGENT.md` → *Running a command* |
+| `TERMHUB_ALLOWED_HOSTS` | — | Extra names (comma-separated) termhub accepts in `Host` on `/api/*`, `/pa/*` and websockets, beyond loopback, IP literals, `*.ts.net` and this machine's own name. Needed only if you reach termhub by some other DNS name (otherwise the UI loads but every API call answers 403); see `AGENT.md` → *Security notes* |
 | `TERMHUB_PEERS` | — | Other termhub machines for the dashboard's machine strip, `host:port,host:port`. Wins over `<data dir>/peers.json`, which **+ find machines** writes |
 
 On Linux set these with `systemctl --user edit termhub`; on Windows via `setx` + restart the task.
@@ -536,7 +536,7 @@ On Linux set these with `systemctl --user edit termhub`; on Windows via `setx` +
 | `lib/opencodeApi.js` | Talks to an opencode TUI's own HTTP API (termhub launches each with `--port`): model, turns, and its event stream |
 | `lib/opencodeModel.js` | Fallback for an opencode session with no API port — reads the model via `opencode export` |
 | `lib/exec.js` | `POST /api/exec`: runs one argv (no shell) with a cwd, timeout and output cap and returns `{code, stdout, stderr}` — how the personal assistant makes another machine do something without typing at a shell |
-| `lib/requestGuard.js` | The browser guard on `/api/exec`: `Host` must name this machine (DNS rebinding), no foreign `Origin`, JSON content type + `X-Termhub: 1` (CSRF) |
+| `lib/requestGuard.js` | The browser guard on every `/api/*`, `/pa/*` and `/ws/*` request, on both tiers: `Host` must name this machine (DNS rebinding), no foreign `Origin` (CSRF, websocket hijacking), and a state-changing request needs `X-Termhub: 1` and a non-form Content-Type (`/api/exec`: JSON only) |
 | `lib/transcripts.js` | Read-only `/api/claude/transcripts` + `/api/claude/transcript`: lists and serves `~/.claude/projects/*/*.jsonl` for the personal assistant on another machine |
 | `lib/claudeTranscript.js` | Reads the last turn from that transcript and decides whether it's waiting on you |
 | `lib/summarize.js` | Condenses a turn into speakable prose (`claude -p --model haiku`, with a local fallback) |

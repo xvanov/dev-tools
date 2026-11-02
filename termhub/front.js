@@ -33,6 +33,7 @@ const build = require('./lib/build');
 const { resolvePaUrl, createPaProxy } = require('./lib/paProxy');
 const transcripts = require('./lib/transcripts');
 const execRoute = require('./lib/exec');
+const { checkRequest, checkUpgrade, refuseUpgrade } = require('./lib/requestGuard');
 
 const WEB_DIR = path.join(__dirname, 'web');
 
@@ -102,6 +103,18 @@ function createFront({ sessiondPort, port: serverPort = DEFAULT_FRONT_PORT, paUr
   const server = http.createServer((req, res) => {
     const url = new URL(req.url, 'http://localhost');
     const { pathname } = url;
+
+    // Every /api/* and /pa/* request: Host must name this machine and Origin
+    // (when a browser sends one) must be this host; a state-changing /api/*
+    // request also needs `X-Termhub: 1` and a non-"simple" Content-Type. This
+    // is the CSRF / DNS-rebinding guard — see lib/requestGuard.js. Here, before
+    // anything is proxied, so an old sessiond is covered by a new front.
+    const refused = checkRequest(req, pathname);
+    if (refused) {
+      sendJson(res, refused.status, { error: refused.error });
+      req.resume();
+      return undefined;
+    }
 
     // /pa/* is the personal assistant's dashboard, not ours — see lib/paProxy.js.
     if (handlePa(req, res)) return undefined;
@@ -249,6 +262,10 @@ function createFront({ sessiondPort, port: serverPort = DEFAULT_FRONT_PORT, paUr
     const url = new URL(req.url, 'http://localhost');
     // /ws/term/:id is a PTY stream; /ws/voice is the page-wide announcement feed.
     if (!/^\/ws\/(term\/[^/]+|voice)$/.test(url.pathname)) return clientSocket.destroy();
+    // A page on any origin can open a WebSocket here and type into a shell
+    // (cross-site WebSocket hijacking): refuse a foreign Origin or a rebound Host.
+    const refused = checkUpgrade(req);
+    if (refused) return refuseUpgrade(clientSocket, refused);
 
     const upstream = net.connect(sessiondPort, '127.0.0.1', () => {
       // Replay the request line + headers verbatim so sessiond's WebSocketServer

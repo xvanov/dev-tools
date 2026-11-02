@@ -36,6 +36,7 @@ const summarizer = require('./lib/summarize');
 const { VoiceHub, wakeWord: voiceWakeWord } = require('./lib/voiceHub');
 const { IdleHub } = require('./lib/idleHub');
 const idleStore = require('./lib/idleStore');
+const { checkRequest, checkUpgrade, refuseUpgrade } = require('./lib/requestGuard');
 
 // A pasted/dropped image, base64-inflated in transit — cap comfortably above a
 // full-screen screenshot (a few MB as PNG) while still bounding memory use.
@@ -224,6 +225,17 @@ function createSessiond({ entry = 'sessiond', port: serverPort = DEFAULT_SESSION
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, 'http://localhost');
     const { pathname } = url;
+
+    // The same CSRF / DNS-rebinding guard the front applies (lib/requestGuard.js).
+    // The front forwards Host, Origin and X-Termhub verbatim, so a proxied
+    // request is judged identically; this copy is what protects sessiond's own
+    // loopback port, which a browser on this machine can reach directly.
+    const refused = checkRequest(req, pathname);
+    if (refused) {
+      sendJson(res, refused.status, { error: refused.error });
+      req.resume();
+      return;
+    }
 
     try {
       // Liveness probe used by the front's /api/health (proves sessiond is up).
@@ -659,6 +671,8 @@ function createSessiond({ entry = 'sessiond', port: serverPort = DEFAULT_SESSION
 
   server.on('upgrade', (req, socket, head) => {
     const url = new URL(req.url, 'http://localhost');
+    const refused = checkUpgrade(req);
+    if (refused) return refuseUpgrade(socket, refused);
 
     if (url.pathname === '/ws/voice') {
       return wss.handleUpgrade(req, socket, head, (ws) => bindVoice(ws, voice));

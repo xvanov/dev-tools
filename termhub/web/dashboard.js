@@ -41,6 +41,10 @@ const state = {
   machines: [],    // [{host, machine, online, local, idle}]
 };
 
+// `X-Termhub: 1` on every request: termhub refuses a state-changing one
+// without it (lib/requestGuard.js — the CSRF guard). Same rule as web/app.js.
+const GUARD_HEADERS = { 'X-Termhub': '1', 'Content-Type': 'application/json' };
+
 async function api(path) {
   const res = await fetch(path);
   const text = await res.text();
@@ -424,7 +428,7 @@ async function reopen(id, btn) {
   try {
     const res = await fetch('/api/idle/reopen', {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: GUARD_HEADERS,
       body: JSON.stringify({ id }),
     });
     const body = await res.json();
@@ -661,7 +665,7 @@ async function findMachines(btn) {
     const existing = state.machines.filter((m) => m.host).map((m) => m.url || `https://${m.host}`);
     await fetch('/api/peers', {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: GUARD_HEADERS,
       body: JSON.stringify({ peers: existing.concat(fresh.map((f) => f.url)) }),
     });
     toast(`Added ${fresh.map((f) => f.machine).join(', ')}.`);

@@ -1,19 +1,22 @@
 'use strict';
 
-// The browser-facing guard for a route meant for programs, not pages.
+// The browser-facing guard for every termhub request (both tiers).
 //
 // termhub's trust model is the tailnet ACL: whoever can reach it can open a
-// shell (see AGENT.md, *Security notes*). A route a program calls — today
-// `POST /api/exec` — adds no capability to that. What it must not add is a way
-// in for someone who CANNOT reach termhub, and a browser is the one thing that
-// can be steered into reaching it on their behalf:
+// shell (see AGENT.md, *Security notes*). What termhub must not offer is a way
+// in for someone who CANNOT reach it, and a browser is the one thing that can
+// be steered into reaching it on their behalf:
 //
 //   - CSRF: a page on another origin POSTs here from your browser. A plain
 //     `<form>` or a `fetch` with `text/plain` needs no preflight, and nothing
-//     stops it from carrying a JSON-looking body. So the route demands
-//     `Content-Type: application/json` AND a custom `X-Termhub: 1` header —
-//     either one forces a CORS preflight, and termhub answers none. An
+//     stops it from carrying a JSON-looking body. So a state-changing request
+//     needs a custom `X-Termhub: 1` header, which forces a CORS preflight that
+//     termhub never answers, and may not use a preflight-free Content-Type
+//     (`POST /api/exec` goes further and demands application/json). An
 //     `Origin` that is not this request's own host is refused outright.
+//   - Cross-site WebSocket hijacking: WebSockets ignore the same-origin policy
+//     and cannot carry custom headers, so `/ws/*` upgrades are judged on
+//     `Origin` (and `Host`) alone.
 //   - DNS rebinding: a page on evil.example re-points its own name at your
 //     tailnet address, and is then same-origin with it — headers and all. The
 //     only thing that still differs is `Host`, which still says evil.example.
@@ -61,26 +64,108 @@ function hostAllowed(hostHeader, env = process.env) {
   return allowedNames(env).has(host.replace(/\.$/, ''));
 }
 
-/**
- * null when the request may proceed, else {status, error}. `req` needs only
- * `method` and `headers`.
- */
-function checkProgrammaticRequest(req, { env = process.env } = {}) {
+// The Origin rule, shared: a request a browser sends on behalf of some page
+// carries that page's Origin, and it must be this very host. Non-browser
+// clients (curl, the personal assistant, a peer termhub) send none.
+function checkOrigin(h) {
+  if (!h.origin) return null;
+  let originHost = null;
+  try { originHost = new URL(h.origin).host.toLowerCase(); } catch { /* "null" or junk */ }
+  if (originHost !== String(h.host || '').toLowerCase()) {
+    return { status: 403, error: 'cross-origin request refused' };
+  }
+  return null;
+}
+
+function checkHostAndOrigin(req, env) {
   const h = req.headers || {};
   if (!hostAllowed(h.host, env)) {
     return { status: 403, error: `Host "${h.host || ''}" is not this machine (set TERMHUB_ALLOWED_HOSTS to allow another name)` };
   }
-  if (h.origin) {
-    let originHost = null;
-    try { originHost = new URL(h.origin).host.toLowerCase(); } catch { /* "null" or junk */ }
-    if (originHost !== String(h.host || '').toLowerCase()) {
-      return { status: 403, error: 'cross-origin request refused' };
-    }
-  }
+  return checkOrigin(h);
+}
+
+/**
+ * null when the request may proceed, else {status, error}. `req` needs only
+ * `method` and `headers`. The strict form, for a route that is only ever
+ * called by programs with a JSON body: `POST /api/exec`.
+ */
+function checkProgrammaticRequest(req, { env = process.env } = {}) {
+  const h = req.headers || {};
+  const refused = checkHostAndOrigin(req, env);
+  if (refused) return refused;
   const type = String(h['content-type'] || '').split(';')[0].trim().toLowerCase();
   if (type !== 'application/json') return { status: 415, error: 'Content-Type must be application/json' };
   if (h['x-termhub'] !== '1') return { status: 403, error: 'missing X-Termhub: 1 header' };
   return null;
 }
 
-module.exports = { checkProgrammaticRequest, hostAllowed, hostnameOf };
+// The content types a cross-site page can send WITHOUT a CORS preflight
+// (the Fetch spec's "CORS-safelisted request-header" values for
+// Content-Type). Anything else forces a preflight, which termhub never grants.
+const SIMPLE_TYPES = new Set(['text/plain', 'application/x-www-form-urlencoded', 'multipart/form-data']);
+const READ_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
+
+/**
+ * The guard for every termhub request that is not a static UI file — the whole
+ * session API on both tiers, `/pa/*`, and (via checkUpgrade) the websockets.
+ * `pathname` decides which rules apply:
+ *
+ *   - `/api/*`, `/pa`, `/pa/*`: `Host` must name this machine and a present
+ *     `Origin` must be this host — for reads too, because a DNS-rebound page
+ *     is same-origin and could otherwise READ the session list or a Claude
+ *     transcript. OPTIONS is exempt: it changes nothing and no route answers it
+ *     with a CORS grant.
+ *   - a state-changing `/api/*` request (anything but GET/HEAD/OPTIONS) also
+ *     needs `X-Termhub: 1`, and may not carry a "simple" Content-Type
+ *     (text/plain, form-urlencoded, multipart). The header alone already forces
+ *     a preflight; refusing the simple types too means a body is never parsed
+ *     from a request a `<form>` could have sent. A bodyless DELETE or a binary
+ *     upload (`image/png`, `application/octet-stream`) is fine.
+ *   - `/pa/*` POSTs are left to the PA's own `X-PA: 1` rule; the Host check
+ *     here is what the PA's Host check can no longer do once the proxy has
+ *     rewritten `Host` to loopback.
+ *
+ * Returns null to proceed, else {status, error}.
+ */
+function checkRequest(req, pathname, { env = process.env } = {}) {
+  const api = pathname.startsWith('/api/');
+  const pa = pathname === '/pa' || pathname.startsWith('/pa/');
+  if (!api && !pa) return null;
+  const method = String(req.method || 'GET').toUpperCase();
+  if (method === 'OPTIONS') return null;
+  const refused = checkHostAndOrigin(req, env);
+  if (refused) return refused;
+  if (!api || READ_METHODS.has(method)) return null;
+  const h = req.headers || {};
+  if (h['x-termhub'] !== '1') return { status: 403, error: 'missing X-Termhub: 1 header' };
+  const type = String(h['content-type'] || '').split(';')[0].trim().toLowerCase();
+  if (SIMPLE_TYPES.has(type)) return { status: 415, error: `Content-Type ${type} is not accepted (send application/json)` };
+  return null;
+}
+
+/**
+ * The websocket form. A page on any origin can open a WebSocket to any host —
+ * the same-origin policy does not apply to them, and the browser cannot attach
+ * a custom header — so `/ws/term/:id` (type into a shell) is guarded by `Host`
+ * and `Origin` alone. Browsers always send `Origin` on a WebSocket; programs
+ * (the personal assistant's `ws` client) send none and pass.
+ */
+function checkUpgrade(req, { env = process.env } = {}) {
+  return checkHostAndOrigin(req, env);
+}
+
+// Answer a refused websocket upgrade with a plain HTTP status rather than a
+// silent reset, so a client (or someone debugging one) can see why.
+function refuseUpgrade(socket, { status, error }) {
+  const body = JSON.stringify({ error });
+  const reason = status === 403 ? 'Forbidden' : 'Refused';
+  try {
+    socket.end(`HTTP/1.1 ${status} ${reason}\r\nContent-Type: application/json\r\n`
+      + `Content-Length: ${Buffer.byteLength(body)}\r\nConnection: close\r\n\r\n${body}`);
+  } catch {
+    socket.destroy();
+  }
+}
+
+module.exports = { checkProgrammaticRequest, checkRequest, checkUpgrade, refuseUpgrade, hostAllowed, hostnameOf };

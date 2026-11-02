@@ -85,9 +85,14 @@ API quick checks (against the front, which proxies to sessiond):
 curl -s http://<host>:7000/api/health | jq   # front up + sessiond reachable
 curl -s http://<host>:7000/api/info | jq
 curl -s http://<host>:7000/api/sessions | jq
-curl -s -X POST http://<host>:7000/api/sessions \
+curl -s -X POST http://<host>:7000/api/sessions -H 'X-Termhub: 1' \
   -H 'content-type: application/json' -d '{"cwd":"'"$HOME"'"}' | jq
 ```
+
+Every request that changes something (any method but GET/HEAD/OPTIONS under `/api/*`) needs
+`X-Termhub: 1`, and may not use a form-style `Content-Type` — see *Security notes*. A bare
+`curl -X POST` answers `403 missing X-Termhub: 1 header`; `curl -d` without `-H
+'content-type: application/json'` answers 415.
 
 HTTP API (served by `sessiond`, proxied by `front`): `GET /api/info`, `GET /api/sessions`
 (returns `{sessions, restorable}` — live PTYs plus archived sessions from a previous run),
@@ -1277,6 +1282,10 @@ publishing a second port through Serve.
 - **Every other header passes through, `X-PA` included.** The PA refuses a POST without `X-PA: 1`;
   that guard still holds through termhub because the front answers no CORS preflight, so a page on
   another origin can't attach a custom header to a request at this origin either.
+- **The PA's own Host check is the front's job here.** Rewriting `Host` to loopback means the PA
+  can no longer see a DNS-rebound name, so the front checks `Host` (and a present `Origin`) on
+  every `/pa` and `/pa/*` request *before* proxying it — the same rule as `/api/*`, see *Security
+  notes*. `X-Termhub` is not required on `/pa/*`; `X-PA` already does that job.
 - **Down is fast and readable.** Connection refused (the normal "PA isn't running") answers at once;
   a port that accepts nothing hits a 5 s connect timeout. Either way: **502**, as a small "PA not
   running" HTML page for a browser navigation (`Accept: text/html`) and JSON `{error}` for anything
@@ -1399,8 +1408,9 @@ session, not an exec.
 
 **The guard (`lib/requestGuard.js`).** It adds no capability — anyone who can reach termhub can
 open a shell and run the same thing. What it must not add is a way in for a *browser* that is
-being steered by someone who can't reach termhub. The session API's POSTs check nothing (see
-*Security notes*); this route checks:
+being steered by someone who can't reach termhub. Every state-changing route has the general
+form of this guard (see *Security notes*); this route is the strict form, because only programs
+call it:
 
 | Threat | Check |
 |---|---|
@@ -1408,7 +1418,9 @@ being steered by someone who can't reach termhub. The session API's POSTs check 
 | DNS rebinding — a page re-points its own name at your tailnet IP and becomes same-origin | `Host` must name this machine: loopback, any IP literal (rebinding needs a name), `*.ts.net` (MagicDNS), this machine's hostname or `TERMHUB_MACHINE` (full or first label), or a name in `TERMHUB_ALLOWED_HOSTS` |
 
 Reaching termhub by some other DNS name (a custom tailnet domain, a `/etc/hosts` alias) answers
-403 `Host "…" is not this machine` until that name is added to `TERMHUB_ALLOWED_HOSTS`.
+403 `Host "…" is not this machine` — on every `/api/*`, `/pa/*` and websocket request, not only
+this one, so the UI loads but cannot list sessions — until that name is added to
+`TERMHUB_ALLOWED_HOSTS` (set it for both tiers).
 
 Covered by `test/exec.test.js` (through a real front: argv verbatim with shell metacharacters,
 exit code/stderr/stdin/env, missing program, output cap, a grandchild killed with its group on
@@ -1752,7 +1764,7 @@ often has `xclip` installed, where it can only ever exit 1 with *Can't open disp
 box that is merely flaky is distinguishable from one that can never work:
 
 ```bash
-curl -sk -X POST https://<host>:7000/api/clipboard-probe
+curl -sk -X POST -H 'X-Termhub: 1' https://<host>:7000/api/clipboard-probe
 # {"platform":"win32","target":{"available":true,"tool":"powershell"},
 #  "staged":true,"verified":true,"error":null}
 ```
@@ -1817,8 +1829,8 @@ user actually meant to paste.
 | Restoring a Claude session opens a bare shell, no conversation | The restore command carried two conversation-identity flags — Claude printed a usage error and exited | Fixed in `lib/restore.js` (strips `--session-id`/`--continue`/`--fork-session` before adding `--resume`); the fix also repairs entries already mangled in `sessions.json`. Scroll the restored terminal up to see the actual CLI error. Machines on an older CLI never hit this, which is why it looked platform-specific |
 | Restore works on one machine, not another | The two machines run different Claude CLI versions | Open ⟳ **Update** — the panel reports the installed CLI against termhub's pin (`termhub.claudeCli` in `package.json`) and offers **Update Claude**. Verify from a terminal with `claude --version` |
 | Wrong size / wrapping | Another screen (laptop/phone) owns the size — the **Fit here** pill shows | Tap the terminal or **Fit here**; any use of a screen claims the size. Without the pill on a long-running host, `sessiond` predates size ownership: touching the screen still fixes it, and a `sessiond` restart brings the pill |
-| Pasted image lands as a file path instead of in the agent's prompt | The host has no usable clipboard, or the staging didn't read back | `curl -X POST /api/clipboard-probe` says which. Expected on a headless Linux box, and for a JPEG anywhere but Windows. The path works — both Claude Code and opencode read an image given one. To get the clipboard route instead, run a session with a real display and paste a PNG |
-| Attaching an image to a session on a **remote** machine does nothing: Claude Code says *"No image found in clipboard"* (Windows) or nothing at all (Linux), while termhub's toast said `image pasted` | termhub trusted a clipboard write that exited 0 without the image landing — see *Attachments*. It could only ever be seen on a remote host, because locally the user's own clipboard already held the image | Fixed: staging is read back before the paste hotkey is fired, and falls back to a file path when it isn't there. **The fix is in `sessiond`, which `update.ps1` deliberately never restarts** — after updating, restart sessiond (the update prints a sessiond-drift warning when this matters), then confirm with `curl -X POST /api/clipboard-probe` |
+| Pasted image lands as a file path instead of in the agent's prompt | The host has no usable clipboard, or the staging didn't read back | `curl -X POST -H 'X-Termhub: 1' /api/clipboard-probe` says which. Expected on a headless Linux box, and for a JPEG anywhere but Windows. The path works — both Claude Code and opencode read an image given one. To get the clipboard route instead, run a session with a real display and paste a PNG |
+| Attaching an image to a session on a **remote** machine does nothing: Claude Code says *"No image found in clipboard"* (Windows) or nothing at all (Linux), while termhub's toast said `image pasted` | termhub trusted a clipboard write that exited 0 without the image landing — see *Attachments*. It could only ever be seen on a remote host, because locally the user's own clipboard already held the image | Fixed: staging is read back before the paste hotkey is fired, and falls back to a file path when it isn't there. **The fix is in `sessiond`, which `update.ps1` deliberately never restarts** — after updating, restart sessiond (the update prints a sessiond-drift warning when this matters), then confirm with `curl -X POST -H 'X-Termhub: 1' /api/clipboard-probe` |
 | 📎 upload does nothing on a phone | File over the cap (100 MB, or 15 MB for an image on a host with a real clipboard — `curl /api/info` shows the effective `limits`) | The red notice above the key bar says so; tap it to dismiss, shrink the file. A silent failure instead means the connection dropped — the notice says that too |
 | Pasted an image and got text instead | The paste carried `text/plain` too (rich text with an inline image), and text wins | Deliberate — taking the image would swallow the text. Use 📎 for the image |
 | Model badge blank, and 🔊 never speaks, on one tab | The pinned `--session-id` transcript is a stub the conversation forked away from | Both symptoms share a cause: `resolveTranscript()` had settled on a file Claude Code stopped writing. Compare `curl localhost:7010/api/sessions` (the session's `command` names the pinned uuid) against `ls -t ~/.claude/projects/<encoded cwd>/` — a *different* uuid holding the recent bytes confirms it. Now self-corrects once the newer transcript exists |
@@ -1864,11 +1876,38 @@ user actually meant to paste.
   hold everything you said to Claude there; that is no more than a shell already reaches, but it
   is easier to automate, so the tailnet ACL matters for them too.
 - `POST /api/exec` runs any command as the termhub user — exactly what a shell there can do, so
-  no new capability, but it is the easiest thing here to automate. It refuses cross-origin and
-  rebound-DNS browsers (see *Running a command*). **The session API's own POSTs do not**:
-  `POST /api/sessions` with a `command` parses a JSON body regardless of its `Content-Type` and
-  checks no `Host` or `Origin`, so a page you visit could in principle start a terminal running a
-  command on a machine your browser can reach. The tailnet ACL is what stands between them today.
+  no new capability, but it is the easiest thing here to automate. It takes the strict form of the
+  guard below (JSON only — see *Running a command*).
+- **No page you visit can drive termhub through your browser** (`lib/requestGuard.js`,
+  `checkRequest` / `checkUpgrade`, applied by **both** tiers — the front before it proxies, and
+  sessiond again on its own loopback port, which a browser on the same machine can reach
+  directly). The rule:
+
+  | Request | Must have |
+  |---|---|
+  | anything under `/api/*`, `/pa`, `/pa/*` | `Host` naming this machine (loopback, an IP literal, `*.ts.net`, this hostname or `TERMHUB_MACHINE`, or `TERMHUB_ALLOWED_HOSTS`) and, if an `Origin` is sent, `Origin` = this host. Reads included: a DNS-rebound page is same-origin, and could otherwise read the session list or a Claude transcript |
+  | a state-changing `/api/*` request (any method but GET/HEAD/OPTIONS) | also `X-Termhub: 1`, and a `Content-Type` that is not one a `<form>` can send (`text/plain`, `application/x-www-form-urlencoded`, `multipart/form-data`). No Content-Type (a bodyless DELETE) and binary upload types are fine |
+  | a websocket upgrade (`/ws/term/:id`, `/ws/voice`) | `Host` as above, and `Origin` = this host when sent. Browsers always send it and cannot add a custom header to a websocket; programs send none |
+  | static UI files, `/manifest.webmanifest` | nothing — they are public code |
+
+  Why it holds: a cross-site page can only send a "simple" request without a CORS preflight, and
+  a simple request can carry neither `X-Termhub` nor a JSON content type; termhub answers no
+  preflight, so the browser never sends the real request. A foreign `Origin` (including `null`) is
+  refused outright, and `Host` catches DNS rebinding, where the page *is* same-origin. Refusals are
+  403 (`missing X-Termhub: 1 header`, `cross-origin request refused`, `Host "…" is not this
+  machine`) or 415 (a form-style Content-Type); a refused websocket gets a 403 response, not a
+  reset.
+
+  Callers that send it: the web UI (`web/app.js` `api()`/`withGuard()`/`uploadWithProgress()`,
+  `web/dashboard.js` `GUARD_HEADERS`), the personal assistant's termhub client
+  (`personal-assistant/src/dispatch/termhub.js`) and its `/api/exec` caller, and the mobile test
+  harness. Peers (`lib/peers.js`) and the scripts only make GETs, by IP or `*.ts.net`, and need
+  nothing. **A personal assistant older than this rule** cannot start or type into sessions on an
+  updated termhub (403) — update both. Likewise a browser tab still running the old `app.js`
+  gets 403 on its first action after the update; reloading the tab fixes it. sessiond is not restarted by an update, so until it is, the
+  front's copy of the check is the one protecting the published port; sessiond's loopback port
+  gets its copy at the next sessiond restart. Covered by `test/csrf.test.js` (a real sessiond
+  behind a real front) and, from the caller's side, `personal-assistant/test/termhubClient.test.js`.
 - The front also proxies `/pa/*` to the personal assistant's loopback dashboard, so whoever can
   reach termhub can reach the PA too. That adds no capability (they already have shells), but it
   does mean termhub's boundary is the PA's boundary — see *The PA proxy*. `TERMHUB_PA_URL=` turns
