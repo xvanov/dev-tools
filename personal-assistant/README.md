@@ -998,7 +998,7 @@ src/budget.js        model spend: one llm_spend row per call, the daily cap on d
 src/backup.js        nightly pg_dump, restore, re-ingest
 src/dispatch/        worktrees, briefs, termhub sessions, modes, landing; the factory route
                      (factory.js, pure half factoryCore.js), the routing rule (route.js, routeCore.js),
-                     `pa runs stats` (stats.js), the local command runner (exec.local.js)
+                     `pa runs stats` (stats.js)
 src/draft/           reply drafting, auto-drafts, and delivery links (never sends)
 src/mcp/server.js    the recall server: read-only, plus remember and request_secret, which only ask
 src/worker.js        the periodic passes

@@ -114,7 +114,13 @@ class FactoryError extends Error {
  * `{"error", "message"}` on stdout. Anything else — no JSON, a JSON array,
  * extra lines — breaks the contract and is reported, never guessed at.
  */
-function parseResult({ code, stdout, stderr }) {
+function parseResult({ code, stdout, stderr, timedOut = false }) {
+  // exec.js answers a timeout (124) and a missing program (127) as results,
+  // not throws. Neither is the factory's answer, so they surface as transport
+  // failures — plain Errors, which submit() retries once (idempotent on the
+  // external id) — never as a FactoryError, which it would not.
+  if (timedOut || code === 124) throw new Error(`the factory did not answer in time (exit ${code})`);
+  if (code === 127) throw new Error('could not start the factory command (exit 127) — is uv on that machine\'s PATH?');
   const text = String(stdout || '').trim();
   let obj = null;
   try {

@@ -240,17 +240,22 @@ assert.throws(() => R.via('carrier-pigeon'), /unknown route/);
   assert.strictEqual((src.match(/dispatch'\)\.start\(/g) || []).length, 1, 'one start call, the research one');
 }
 
-// --- the local runner (exec.local.js) ---------------------------------------------
+// --- the runner: exec.js, and how its results read as factory answers ------------
 
 async function execLocal() {
-  const { runCommand } = require('../src/dispatch/exec.local');
+  const { runCommand } = require('../src/dispatch/exec');
   const ok = await runCommand(null, [process.execPath, '-e', 'process.stdout.write(JSON.stringify({a: process.argv[1]}))', 'x="1"; echo $HOME'], { cwd: tmp });
   assert.deepStrictEqual([ok.code, JSON.parse(ok.stdout)], [0, { a: 'x="1"; echo $HOME' }], 'argv verbatim, no shell');
-  const bad = await runCommand(os.hostname(), [process.execPath, '-e', 'process.stdout.write("{}"); process.exit(3)']);
+  const bad = await runCommand(null, [process.execPath, '-e', 'process.stdout.write("{}"); process.exit(3)']);
   assert.deepStrictEqual([bad.code, bad.stdout], [3, '{}'], 'a non-zero exit is an answer, not a throw');
-  await assert.rejects(runCommand('some-other-box', ['true']), /exec\.js/);
-  await assert.rejects(runCommand(null, ['/no/such/binary-pa']), /binary-pa/);
-  await assert.rejects(runCommand(null, [process.execPath, '-e', 'setTimeout(()=>{}, 5000)'], { timeoutMs: 200 }), /timed out/);
+  const F = require('../src/dispatch/factoryCore');
+  // A timeout / missing program is a transport failure (plain Error, retried once), not a FactoryError.
+  for (const res of [{ code: 124, stdout: '', stderr: '', timedOut: true }, { code: 127, stdout: '', stderr: '' }]) {
+    let caught = null;
+    try { F.parseResult(res); } catch (err) { caught = err; }
+    assert.ok(caught && !(caught instanceof F.FactoryError), `exit ${res.code} is a transport failure`);
+  }
+  assert.throws(() => F.parseResult({ code: 1, stdout: '{"error":"unknown_repo","message":"x"}' }), (e) => e instanceof F.FactoryError && e.code === 'unknown_repo');
 }
 
 // --- factory.js against a stubbed store, ledger, termhub and factory CLI ----------

@@ -38,20 +38,13 @@ const { logger } = require('../log');
 const log = logger('factory');
 
 // ------------------------------------------------------------ the runner ----
-// exec.js (local + remote through termhub) is another unit of work; until it
-// lands, exec.local.js answers for this machine with the same signature.
+// Every factory command goes through exec.js: this machine via child_process,
+// another machine through its termhub's /api/exec.
 let runnerOverride = null;
 
 function runCommand(machineName, argv, opts) {
   if (runnerOverride) return runnerOverride(machineName, argv, opts);
-  let mod;
-  try {
-    mod = require('./exec');
-  } catch (err) {
-    if (err.code !== 'MODULE_NOT_FOUND' || !/['"]\.\/exec['"]/.test(err.message)) throw err;
-    mod = require('./exec.local');
-  }
-  return mod.runCommand(machineName, argv, opts);
+  return require('./exec').runCommand(machineName, argv, opts);
 }
 
 /** Tests only: swap the command runner. */
