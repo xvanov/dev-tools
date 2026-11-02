@@ -90,7 +90,7 @@ const TOOLS = [
   {
     name: 'request_secret',
     description:
-      "Ask the user for a credential you need (an API key, a token, a config value) without ever seeing it. Opens a request in the user's dashboard; they paste the value there and it goes straight into Windows Credential Manager. Returns only the request id and status — never a value, now or later. Use secret_status to learn when it is configured. Never ask the user to paste a secret into the chat instead.",
+      "Ask the user for a credential you need (an API key, a token, a config value) without ever seeing it. Opens a request in the user's dashboard; they paste the value there and it goes straight into the OS keyring (Windows Credential Manager, or the Secret Service on Linux). Returns only the request id and status — never a value, now or later. Use secret_status to learn when it is configured. Never ask the user to paste a secret into the chat instead.",
     inputSchema: {
       type: 'object',
       properties: {

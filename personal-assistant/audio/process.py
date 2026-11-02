@@ -34,6 +34,7 @@ import numpy as np
 import soundfile as sf
 
 import naming
+import paths
 
 FRAME_MS = 30
 PREROLL_S = 1.5
@@ -254,9 +255,7 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    spool = args.spool or os.path.join(
-        os.environ.get("LOCALAPPDATA", os.path.expanduser("~")), "personal-assistant", "audio"
-    )
+    spool = args.spool or paths.default_spool()
 
     total = 0
     failed = 0

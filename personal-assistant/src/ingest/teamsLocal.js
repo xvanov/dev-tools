@@ -36,6 +36,7 @@ const { saveItems, saveCursor, getCursor, recordError } = require('./store');
 const { htmlToText } = require('../util/text');
 const { namesMe } = require('./graphChat');
 const { logger } = require('../log');
+const platform = require('../platform');
 
 const log = logger('teams-cache');
 
@@ -418,9 +419,21 @@ async function run() {
 
 // `pa doctor`: where the cache is and how fresh the newest message read was.
 async function status() {
+  if (config.teamsCache.unsupported) {
+    // Off by platform, not by you (src/platform): say so, and point at a
+    // Teams web cache if one exists, which PA_TEAMS_CACHE_DIR can try.
+    const found = typeof platform.teamsWebCaches === 'function' ? platform.teamsWebCaches() : [];
+    return {
+      ok: true,
+      detail:
+        `UNSUPPORTED on ${platform.label}: ${config.teamsCache.unsupported} (every ${config.m365.pollSeconds}s)` +
+        (found.length ? ` · a Teams web cache exists — PA_TEAMS_CACHE_DIR=${found[0]} tries it (experimental)` : ''),
+    };
+  }
   if (!config.teamsCache.enabled) return { ok: true, detail: 'off (PA_TEAMS_CACHE=0)' };
   const { leveldb } = paths();
   if (!fs.existsSync(leveldb)) return { ok: false, detail: 'not found — is the new Teams installed?' };
+  const experimental = platform.teamsCache.supported ? '' : ' · EXPERIMENTAL (a Teams web cache, untested record shapes)';
   if (!fs.existsSync(config.teamsCache.python)) {
     return { ok: false, detail: `reader venv missing (${config.teamsCache.python}) — see README, Teams in seconds` };
   }
@@ -431,7 +444,7 @@ async function status() {
   const ago = (t) => `${Math.max(0, Math.round((Date.now() - new Date(t).getTime()) / 1000))}s ago`;
   return {
     ok: Date.now() - Date.parse(st.lastReadAt) < 10 * 60_000,
-    detail: `last message ${st.newestArrival ? ago(Number(st.newestArrival)) : 'none yet'} · last read ${ago(st.lastReadAt)}`,
+    detail: `last message ${st.newestArrival ? ago(Number(st.newestArrival)) : 'none yet'} · last read ${ago(st.lastReadAt)}${experimental}`,
   };
 }
 

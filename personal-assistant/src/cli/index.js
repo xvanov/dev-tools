@@ -13,6 +13,7 @@ const path = require('path');
 const readline = require('readline');
 
 const { config } = require('../config');
+const platform = require('../platform');
 const { parseArgs, flagInt, flagBool } = require('./parseArgs');
 const db = require('../db');
 
@@ -70,7 +71,7 @@ const HELP = `pa — your context layer
 
   Secrets
     pa secret list                  names, where each is stored, when set — never values
-    pa secret set <NAME>            hidden prompt → Windows Credential Manager
+    pa secret set <NAME>            hidden prompt → the OS keyring (Credential Manager / Secret Service)
     pa secret request <NAME> --purpose "…"  ask for it in the dashboard instead
     pa help secret                  every secret verb
 
@@ -111,22 +112,15 @@ function printDraft(draft, { footer = true } = {}) {
   if (footer) out(`Nothing has been sent. \`pa send ${draft.id}\` opens it in ${draft.channel === 'teams' ? 'Teams' : 'Outlook'}.`);
 }
 
+// Opening and the clipboard are the platform's (src/platform). On a headless
+// box neither exists; the link and the text are printed instead.
 function openUrl(url) {
-  const { spawn } = require('child_process');
-  const [cmd, args] = process.platform === 'win32'
-    ? ['cmd', ['/c', 'start', '""', url.replace(/&/g, '^&')]]
-    : [process.platform === 'darwin' ? 'open' : 'xdg-open', [url]];
-  spawn(cmd, args, { detached: true, stdio: 'ignore', windowsHide: true }).unref();
+  if (!platform.openUrl(url)) out(`open: ${url}`);
 }
 
-function copyToClipboard(text) {
-  if (process.platform !== 'win32') return Promise.resolve();
-  return new Promise((resolve) => {
-    const child = require('child_process').spawn('clip', [], { stdio: ['pipe', 'ignore', 'ignore'] });
-    child.on('close', resolve);
-    child.on('error', resolve);
-    child.stdin.end(text);
-  });
+async function copyToClipboard(text) {
+  const ok = await platform.copyToClipboard(text).catch(() => false);
+  if (!ok) out('(no clipboard here — copy the text above)');
 }
 
 async function confirm(question) {
@@ -543,9 +537,7 @@ const commands = {
     if (!run.termhub_session_id) return fail(`run #${run.id} has no session`);
     const url = await termhub.forMachine(run.machine).sessionUrl(run.termhub_session_id);
     out(url);
-    if (process.platform === 'win32') {
-      require('child_process').spawn('cmd', ['/c', 'start', '', url], { detached: true, stdio: 'ignore' }).unref();
-    }
+    platform.openUrl(url);
   },
 
   async say(args) {
@@ -667,10 +659,10 @@ const commands = {
     const file = args[0] || backup.list()[0]?.file;
     if (!file) return fail(`usage: pa restore [file] — and no backups found in ${config.backup.dir}`);
     out(`This replaces the whole database with ${file}.`);
-    out('Stop the worker first (Stop-ScheduledTask pa-worker) so it does not write mid-restore.');
+    out(`Stop the worker first (${platform.services.workerStop}) so it does not write mid-restore.`);
     if (!(flagBool(flags, 'yes') || (await confirm('Restore now? [y/N]')))) return out('not restored');
     await backup.restore(file);
-    out('restored. Start the worker again: Start-ScheduledTask pa-worker');
+    out(`restored. Start the worker again: ${platform.services.workerStart}`);
   },
 
   async reingest(args, flags) {
@@ -858,6 +850,16 @@ const commands = {
     }
     const teamsCache = await require('../ingest/teamsLocal').status().catch((err) => ({ ok: false, detail: err.message }));
     mark(teamsCache.ok, 'teams cache', teamsCache.detail);
+
+    // What only this OS can get wrong (src/platform): keyring, notifier,
+    // clipboard, sound server, service units. A DEGRADED line is a feature
+    // working in a reduced way on purpose, never silently.
+    mark(true, 'platform', platform.label);
+    for (const l of await platform
+      .doctor({ ntfyConfigured: require('../notify/ntfy').configured(), audioEnabled: config.audio.enabled })
+      .catch((err) => [{ ok: false, label: 'platform', detail: err.message }])) {
+      mark(l.ok, `  ${l.label}`, l.detail);
+    }
 
     // GitHub, Anthropic, embeddings
     const github = require('../ingest/github');
@@ -1204,9 +1206,11 @@ const commands = {
 
     const newest = require('../backup').list()[0];
     const stale = !newest || Date.now() - newest.at.getTime() > (config.backup.everyHours + 6) * 3600_000;
+    const tools = await require('../backup').toolsCheck().catch((err) => ({ ok: false, detail: err.message }));
     lines.push(
       `  backup ${newest ? `${relative(newest.at)} · ${(newest.bytes / 1e6).toFixed(1)} MB` : 'NONE'}` +
-        `${stale ? ' — `pa backup`' : ''} · ${config.backup.dir}`
+        `${stale ? ' — `pa backup`' : ''} · ${config.backup.dir} · via ${config.backup.pgTools}` +
+        `${tools.detail ? ` (${tools.ok ? '' : 'BROKEN: '}${tools.detail})` : ''}`
     );
 
     out(lines.join('\n'));

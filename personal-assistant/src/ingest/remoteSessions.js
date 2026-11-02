@@ -78,7 +78,7 @@ function describeError(err, machine) {
   const status = err && err.status;
   const message = String((err && err.message) || err || 'unknown error');
   if (status === 404 && /not found/i.test(message)) {
-    return `termhub on ${machine} is too old to serve transcripts — update it (termhub/windows/update.ps1 on that machine)`;
+    return `termhub on ${machine} is too old to serve transcripts — update it (termhub/windows/update.ps1 or termhub/linux/update.sh on that machine)`;
   }
   if (!status) return `termhub on ${machine} unreachable: ${message}`.slice(0, 500);
   return `termhub on ${machine}: ${message}`.slice(0, 500);

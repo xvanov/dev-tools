@@ -73,6 +73,10 @@ db.query = async (sql, params) => ({ rows: fakeQuery(sql, params) });
 
 // ---------------------------------------------------------- fake vault --
 const vault = require('../src/secrets/vault');
+// The fake below speaks the Windows backend's protocol (one base64 JSON
+// request on stdin, one JSON line back), whatever OS runs the test. The Linux
+// backend has its own fake in test/platform.test.js.
+vault.useBackend('windows');
 const store = new Map();
 const invocations = [];
 vault.setRunner((inv) => {

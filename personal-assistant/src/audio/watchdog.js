@@ -7,21 +7,20 @@
 // empty file for twelve minutes — the process was up, the scheduled task
 // said "Running", and nobody knew the calls were not being kept. So the
 // check is the one that matters: has this stream's spool *grown* lately?
-// If not (and capture is not paused), its process is killed and its task
-// started again, and the user is told.
+// If not (and capture is not paused), its process is killed and its service
+// started again (a logon task on Windows, a systemd user unit on Linux — see
+// src/platform), and the user is told.
 //
 // The disk check fires before that happens: a notification once free space
 // on the spool's drive drops under the threshold, so there is time to act.
 
 const fs = require('fs');
 const path = require('path');
-const { execFile } = require('child_process');
-const { promisify } = require('util');
 
 const { config } = require('../config');
 const { logger } = require('../log');
+const platform = require('../platform');
 
-const exec = promisify(execFile);
 const log = logger('capture-watchdog');
 
 const STALE_MS = 120_000;
@@ -64,21 +63,11 @@ function staleStreams({ now, writes, isPaused, lastRestarts }) {
     .map(([stream]) => stream);
 }
 
-async function restart(stream) {
-  const task = `pa-capture-${stream}`;
-  // Ending the task leaves the python child running (the task's process is a
-  // wrapper), so the recorder itself is killed by its command line.
-  const ps = [
-    `Stop-ScheduledTask -TaskName '${task}' -ErrorAction SilentlyContinue`,
-    `Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -match 'capture\\.py --stream ${stream}' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -Confirm:$false }`,
-    'Start-Sleep -Seconds 2',
-    `Start-ScheduledTask -TaskName '${task}'`,
-  ].join('; ');
-  await exec('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', ps], { windowsHide: true, timeout: 60_000 });
-}
-
 async function checkCapture() {
-  if (!config.audio.enabled || process.platform !== 'win32') return [];
+  // A stream whose service was never installed (`--no-audio`, or a platform
+  // without capture) is reported by `pa doctor`, not restarted every ten
+  // minutes with a notification each time.
+  if (!config.audio.enabled || !platform.capture.installed()) return [];
   const now = Date.now();
   const writes = { mic: lastWrite('mic'), loopback: lastWrite('loopback') };
   const stale = staleStreams({ now, writes, isPaused: paused(), lastRestarts: Object.fromEntries(lastRestart) });
@@ -88,7 +77,7 @@ async function checkCapture() {
     log.warn('recorder silent — restarting', { stream, quietMinutes: quietMin });
     let ok = true;
     try {
-      await restart(stream);
+      await platform.capture.restart(stream);
     } catch (err) {
       ok = false;
       log.warn('recorder restart failed', { stream, message: err.message });
@@ -97,7 +86,7 @@ async function checkCapture() {
       .notify({
         kind: 'info',
         title: `Recording: ${stream === 'mic' ? 'microphone' : 'call audio'} had stopped`,
-        body: `Nothing was written for ${quietMin ?? '?'} min. ${ok ? 'Restarted it.' : 'Restart failed — run: Start-ScheduledTask pa-capture-' + stream}`,
+        body: `Nothing was written for ${quietMin ?? '?'} min. ${ok ? 'Restarted it.' : 'Restart failed — run: ' + platform.capture.restartHint(stream)}`,
         dedupeKey: `capture-stale:${stream}:${Math.floor(now / RESTART_COOLDOWN_MS)}`,
       })
       .catch(() => {});
@@ -105,19 +94,13 @@ async function checkCapture() {
   return stale;
 }
 
-// Free bytes on the drive holding the audio spool (Windows drive letter).
-async function freeBytes() {
-  const drive = path.parse(path.resolve(config.audioDir)).root.slice(0, 1);
-  const { stdout } = await exec(
-    'powershell.exe',
-    ['-NoProfile', '-NonInteractive', '-Command', `(Get-PSDrive -Name '${drive}').Free`],
-    { windowsHide: true, timeout: 30_000 }
-  );
-  return Number(String(stdout).trim());
+// Free bytes on the filesystem holding the audio spool: a PowerShell drive
+// query on Windows, one statfs call elsewhere (src/platform).
+function freeBytes() {
+  return platform.freeBytes(config.audioDir);
 }
 
 async function checkDisk() {
-  if (process.platform !== 'win32') return null;
   const free = await freeBytes();
   if (!Number.isFinite(free)) return null;
   const gb = free / 1e9;
@@ -126,7 +109,7 @@ async function checkDisk() {
       .notify({
         kind: 'info',
         title: `Disk almost full: ${gb.toFixed(1)} GB free`,
-        body: 'Recording, the database and backups all fail when it fills. Free some space (Disk Cleanup, OneDrive "free up space", old builds).',
+        body: 'Recording, the database and backups all fail when it fills. Free some space (old builds, caches, aged audio).',
         // Once per hour at most.
         dedupeKey: `low-disk:${Math.floor(Date.now() / 3600_000)}`,
       })

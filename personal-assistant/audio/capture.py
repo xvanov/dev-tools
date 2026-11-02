@@ -6,6 +6,12 @@ Records two streams separately and never mixes them:
     mic       what you said
     loopback  what came out of the speakers - everyone else on the call
 
+Windows: WASAPI, the loopback is the default render endpoint's loopback.
+Linux: PipeWire or PulseAudio (soundcard's pulse backend; pipewire-pulse
+serves it), the loopback is the default sink's *monitor source*
+(devices_linux.py). File naming, the pause file and the roll file are the
+same contract on both.
+
 That separation is the single most useful decision in the capture design. It
 gives speaker attribution for free, with no diarization model and no
 misattributed quotes, and it works whether or not the tenant ever allows Teams
@@ -51,6 +57,7 @@ import soundcard as sc
 import soundfile as sf
 
 import naming
+import paths
 
 # soundcard warns on every dropped block ("data discontinuity in recording").
 # On an always-on recorder that is a warning per few seconds, forever, and it
@@ -98,8 +105,9 @@ def paused(pause_file: str) -> bool:
 # as silence that way. So the mic is chosen in this order:
 #
 #   1. the device another app is recording from right now (a WASAPI capture
-#      session in the Active state that is not Python — not us, not
-#      voice-dictation): the mic the call is really using, whatever its name
+#      session in the Active state on Windows, a PipeWire/PulseAudio recording
+#      stream on Linux, that is not Python — not us, not voice-dictation): the
+#      mic the call is really using, whatever its name
 #   2. the first mic whose name matches PA_AUDIO_MIC (a headset, by default)
 #   3. Windows' default recording device
 #
@@ -110,7 +118,13 @@ MIC_RECHECK_SECONDS = 5
 
 
 def _active_capture_ids() -> list[str]:
-    """Endpoint ids that a non-Python process is recording from right now."""
+    """Device ids that a non-Python process is recording from right now."""
+    if sys.platform.startswith("linux"):
+        import devices_linux
+
+        return devices_linux.active_capture_ids()
+    if sys.platform != "win32":
+        return []
     try:
         sys.coinit_flags = 0  # COINIT_MULTITHREADED, as soundcard initialises COM
         import comtypes
@@ -187,10 +201,29 @@ def recorder_for(stream: str):
     """
     if stream == "loopback":
         speaker = sc.default_speaker()
-        device = sc.get_microphone(id=str(speaker.name), include_loopback=True)
+        device = _loopback_of(speaker)
         return device, speaker.name
     device = preferred_mic()
     return device, device.name
+
+
+def _loopback_of(speaker):
+    """What `speaker` plays, as a recordable device.
+
+    Windows: soundcard exposes the render endpoint itself as a loopback mic
+    with the speaker's name. Linux: the sink's monitor source, matched by id —
+    never by name, because "Monitor of Built-in Audio" also contains the
+    built-in *mic*'s name, and a fuzzy match can pick the mic.
+    """
+    if sys.platform.startswith("linux"):
+        import devices_linux
+
+        want = devices_linux.monitor_of(str(speaker.id))
+        for mic in sc.all_microphones(include_loopback=True):
+            if str(mic.id) == want:
+                return mic
+        raise RuntimeError(f"no monitor source for the default sink ({speaker.name})")
+    return sc.get_microphone(id=str(speaker.name), include_loopback=True)
 
 
 def slot_path(spool: str, stream: str, slot: dt.datetime, now: dt.datetime) -> str:
@@ -312,9 +345,7 @@ def main() -> int:
     parser.add_argument("--roll-file", default=os.environ.get("PA_AUDIO_ROLL_FILE"))
     args = parser.parse_args()
 
-    spool = args.spool or os.path.join(
-        os.environ.get("LOCALAPPDATA", os.path.expanduser("~")), "personal-assistant", "audio"
-    )
+    spool = args.spool or paths.default_spool()
     pause_file = args.pause_file or os.path.join(os.path.dirname(spool), "audio.paused")
     roll_file = args.roll_file or os.path.join(os.path.dirname(spool), "audio.roll")
     os.makedirs(spool, exist_ok=True)

@@ -93,13 +93,19 @@ function parseTranscript(text) {
 // Its ids are prefixed with the machine name: the same repo path on two
 // machines is two different working trees, and a local row must never be
 // overwritten by a remote one, or the reverse.
+// The last folder of a cwd from any OS: a remote Windows session's
+// `C:\\repos\\quill` is read on Linux too, where path.basename would not split it.
+function folderName(cwd) {
+  return String(cwd).replace(/[\\/]+$/, '').split(/[\\/]/).pop() || String(cwd);
+}
+
 function toItem(parsed, file, { machine = null } = {}) {
   const body = parsed.turns
     .map((t) => `${t.role === 'me' ? '>>' : '<<'} ${t.text}`)
     .join('\n\n');
 
   const sessionId = parsed.sessionId || path.basename(file, '.jsonl');
-  const subject = parsed.title || `Claude session in ${path.basename(parsed.cwd || 'unknown')}`;
+  const subject = parsed.title || `Claude session in ${folderName(parsed.cwd || 'unknown')}`;
   const raw = {
     cwd: parsed.cwd,
     gitBranch: parsed.gitBranch,

@@ -144,6 +144,14 @@ in pure Python and is never done. Items are `graph_chat` rows with the connector
 - a new DM, group-chat message or mention is distilled at once — and drafted for — instead of
   at the next 90-second tick, through the worker's no-overlap guard.
 
+**Windows only.** There is no new Teams desktop client on Linux (Microsoft retired the old one
+in 2022), so on Linux the reader is off by default and the 5-second poll is never scheduled; Teams
+arrives through the connector, minutes behind rather than seconds, and nothing is lost.
+`pa doctor` shows `teams cache UNSUPPORTED on Linux`. The Teams *web* app keeps the same IndexedDB
+in a Chromium profile; if doctor finds one it prints its path, and `PA_TEAMS_CACHE_DIR=<that path>`
+turns the reader on against it. That is experimental — the record shapes are unverified there —
+and the doctor line says so.
+
 Privacy: it is the same data the connector reads and you see in Teams, read on the machine it
 is already on, for the user signed in to it. Nothing is sent anywhere new. The reader never
 writes to Teams' files or holds one open (it opens them read-only with every share flag and
@@ -392,7 +400,8 @@ approve it.
 ### Pre-meeting briefs
 
 About an hour before a meeting (`PA_BRIEF_LEAD_MINUTES`, default 60) the worker sends a short
-numbered brief of what is worth saying in it — a Windows toast with the first lines, the whole
+numbered brief of what is worth saying in it — a desktop notification (a Windows toast, or
+notify-send on Linux) with the first lines, the whole
 brief in the dashboard's **Next meeting** card, with **Open brief** and **Join** buttons on the
 toast. `src/meetings/`, a 5-minute pass:
 
@@ -519,11 +528,14 @@ that is off or unreachable is an `ERROR` line on that cursor in `pa doctor`, not
 
 When the assistant — or an agent through MCP — needs a credential, it asks; you never hand-edit
 `.env`. A request appears at the top of the dashboard under **Needs you** (with a badge on the
-Today tab and a Windows toast): what is needed, why, where to get it, and where the value will be
-stored. Paste it into the password box and press **Save**.
+Today tab and a desktop notification): what is needed, why, where to get it, and where the value
+will be stored. Paste it into the password box and press **Save**.
 
-The value goes from your browser over loopback straight into **Windows Credential Manager**
-(DPAPI, your Windows account only; listed under *Web Credentials* → `personal-assistant`), or —
+The value goes from your browser over loopback straight into the OS keyring — **Windows Credential
+Manager** on Windows (DPAPI, your Windows account only; listed under *Web Credentials* →
+`personal-assistant`), the **Secret Service** on Linux (GNOME Keyring or KWallet through
+`secret-tool`, unlocked with your login; Seahorse lists the entries as `personal-assistant: NAME`) —
+or —
 for non-secret config, or if you pick it — into the gitignored `personal-assistant/.env`, which
 is refused if git does not ignore it. The reply says where it went, never what it was: no
 endpoint, log line, MCP result or model ever sees a value, and there is no "show" button.
@@ -535,8 +547,14 @@ pa secret request NAME --purpose "why" [--hint "…"] [--url https://…]
 pa secret delete NAME
 ```
 
-Code reads a secret with `secret(name)` from `src/config.js`: real environment → Credential
-Manager → `.env`. Code that finds one missing calls `requestSecret({name, purpose, hint})`
+Either way the value reaches the keyring process on stdin, never on its command line. A Linux box
+with no Secret Service (no `libsecret-tools`, or no session bus — a bare server) has no keyring:
+`pa doctor` shows `secret store … DEGRADED`, the dashboard offers only `.env`, and secrets are read
+from the environment and `.env`. A keyring that hangs (locked, nobody to unlock it) is skipped for
+ten minutes after one timeout rather than stalling every lookup.
+
+Code reads a secret with `secret(name)` from `src/config.js`: real environment → the OS keyring →
+`.env`. Code that finds one missing calls `requestSecret({name, purpose, hint})`
 (`src/secrets`); agents call the MCP tool `request_secret`, and `secret_status` tells them whether
 it is configured — never what it is. Sign-ins the tool cannot do for you (re-authenticating a
 connector in `/mcp`, `gh auth refresh -s read:project`) are the same kind of request with a
@@ -612,6 +630,14 @@ for the digest instead of pushing, six and it stays in the feed alone; ups bring
 are per kind, and `info` notifications are split by what they are about (`info:run-wait`,
 `info:low-disk`, …) so muting one does not mute the others. `pa notify weights` lists them.
 
+**Where a push shows.** On Windows, a toast (WinRT through PowerShell). On Linux, `notify-send`:
+clicking it opens the link where libnotify supports actions (0.7.10+), otherwise it is shown
+unclickable — `pa doctor` says which. On a box with no desktop (a headless server), set the
+`PA_NTFY_TOPIC` secret and pushes go to [ntfy](https://ntfy.sh) instead (`PA_NTFY=fallback`, the
+default; `always` sends both; `off`). The topic *is* the password on ntfy.sh, so it is a secret
+(`pa secret set PA_NTFY_TOPIC`), and only titles are sent unless `PA_NTFY_BODY=1` — a brief's body
+quotes your mail. `PA_NTFY_SERVER` points at your own server.
+
 ## Always-on capture
 
 Two streams, captured separately and never mixed: the **microphone** is you, the **system
@@ -658,6 +684,17 @@ transcription — and the gate never lifts it, meeting or not. `pa mic on` betwe
 records until the next meeting ends. Your own Claude Code sessions are captured from their transcripts on disk rather
 than from audio, because the exact text is already there.
 
+**On Linux** capture records through PipeWire or PulseAudio (the same `soundcard` library; PipeWire
+serves it through pipewire-pulse). The loopback stream is the default sink's **monitor source** —
+what the speakers play — and follows the default output device the same way. "Which mic is the
+call using" and the gate's "another app holds the mic" both come from `pactl list source-outputs`:
+a recording stream that is not Python, not a level meter, and not reading a monitor. A muted call
+still counts, as it does on Windows. Without `pactl` the gate falls back to calendar meetings only
+and the mic to `PA_AUDIO_MIC` / the default — `pa doctor` says `sound server … DEGRADED`. The two
+streams run as systemd user units, `pa-capture@mic` and `pa-capture@loopback`
+(`linux/install.sh`); the watchdog restarts them with `systemctl --user restart`, and never
+restarts a unit that was not installed.
+
 A recorder can be running and recording nothing — when the disk filled, the call-audio recorder
 sat on an empty file for twelve minutes while its task said "Running". So the worker checks every
 minute that each stream's spool is still *growing*; one that has been silent for two minutes (and
@@ -694,8 +731,13 @@ measure what the reranker adds.
 
 The database is the only copy of what the assistant knows — transcripts whose audio is long
 deleted, and mail and Teams history the connectors will not hand back past their own limits. The
-worker dumps it (`pg_dump`, custom format) once a day to `%LOCALAPPDATA%personal-assistantackups`
-and keeps the newest 14 (`PA_BACKUP_DIR`, `PA_BACKUP_KEEP`). The dumps hold everything, so keep
+worker dumps it (`pg_dump`, custom format) once a day to `backups` under the data folder
+(`%LOCALAPPDATA%\personal-assistant\backups` on Windows, `~/.local/share/personal-assistant/backups`
+on Linux) and keeps the newest 14 (`PA_BACKUP_DIR`, `PA_BACKUP_KEEP`). Where `pg_dump` runs follows
+where the store runs (`PA_PG_TOOLS`): `wsl:<distro>` on Windows, `native` for a native Linux
+cluster, `docker:pa-postgres` for the compose container — whose own `pg_dump` always matches the
+server, its output streamed to the file. `pa doctor` flags a native `pg_dump` older than the server
+before the nightly dump finds out. The dumps hold everything, so keep
 them somewhere only you can read. `pa doctor` shows the age of the newest one.
 
 ```
@@ -706,7 +748,8 @@ pa reingest --days 180    no dump? rewind the sources and fetch history again
 ```
 
 **Rebuilding on a new or wiped machine:** run `windows/install.ps1` (or just
-`windows/setup-wsl-postgres.sh` in WSL) to get an empty database with its extensions, copy the
+`windows/setup-wsl-postgres.sh` in WSL), or `linux/install.sh` on Linux, to get an empty database
+with its extensions, copy the
 backups folder back, stop the worker, `pa restore`, start the worker. Restore needs the
 extensions to exist and refuses otherwise; it leaves them out of the dump on purpose.
 
@@ -780,7 +823,8 @@ src/commitments/     closing chat and mail asks you answered yourself (replyClos
                      the cause-and-effect paragraph on cards (context.js, pure half in contextCore.js)
 src/dashboard/       the loopback web page: today, next meeting, replies, runs, secret requests, and the Memory and Routines tabs;
                      each card's links to its source, person, repo and session (links.js pure, cards.js)
-src/secrets/         secret and login requests; Windows Credential Manager via PowerShell (stdin only)
+src/secrets/         secret and login requests; the OS keyring facade (vault.js; stdin only)
+src/platform/        every OS decision: windows.js, linux.js, darwin.js behind one contract (index.js)
 src/routines/        cron parser, the typed action registry (repo_sync, prompt_report), runs, suggestions
 src/notify/          notifications: toasts, the interrupt budget, digests, feedback weights, the PA chat inbox
 src/llm.js           model calls: API key, or `claude -p` without one
@@ -790,10 +834,11 @@ src/dispatch/        worktrees, briefs, termhub sessions, modes, landing
 src/draft/           reply drafting, auto-drafts, and delivery links (never sends)
 src/mcp/server.js    the recall server: read-only, plus remember and request_secret, which only ask
 src/worker.js        the periodic passes
-audio/               capture and trim/transcribe (Python)
+audio/               capture and trim/transcribe (Python); devices_linux.py asks PipeWire/PulseAudio
 teams/               the Teams local-cache reader (Python, its own venv)
 sql/                 numbered migrations
 windows/             install, and the WSL Postgres provisioner
+linux/               install.sh, the native Postgres provisioner, systemd user units
 ```
 
 ## Related

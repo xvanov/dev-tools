@@ -78,7 +78,9 @@ a relay that will one day paraphrase someone's request. (Jira predates this and 
 reply; moving it over is fine.)
 
 **The Teams cache is read, never touched, and shares the connector's rows.** `teamsLocal.js`
-reads the new Teams client's IndexedDB on this disk because it is seconds behind where the
+reads the new Teams client's IndexedDB on this disk (Windows: there is no new Teams desktop client
+on Linux, so there it is off unless `PA_TEAMS_CACHE_DIR` points at a cache, and `pa doctor` says
+so) because it is seconds behind where the
 connector is minutes behind, and it needs no Entra app registration (ruled out for this tool). It is
 the same user's same data, local only. `teams/read_cache.py` opens Teams' files read-only with
 every share flag, never writes or locks them, tails the LevelDB log from a saved offset, and
@@ -177,8 +179,10 @@ read in an email. Do not add MCP tools that approve, forget, or write active cla
 **Secret values flow browser → store; no model, log, API response or MCP result ever contains
 one.** A credential is asked for with a `secret_request` row (names, purpose, hints — the table
 has no value column) and answered in the dashboard or with `pa secret set`; the value goes
-straight into Windows Credential Manager or the gitignored `.env`, and the reply says only where.
-The vault is reached through PowerShell with the value on **stdin, never argv**. Code reads a
+straight into the OS vault — Windows Credential Manager (through PowerShell), or the Secret Service
+on Linux (through `secret-tool`) — or the gitignored `.env`, and the reply says only where. Every
+vault backend gets the value on **stdin, never argv** (`src/secrets/vault.js` is the one facade;
+the backends are in `src/platform/`). Code reads a
 secret with `config.secret(name)` and nothing else; errors are scrubbed of it. Agents may
 `request_secret` and ask `secret_status` (configured or not); do not add a tool, endpoint or CLI
 verb that shows a value. `test/secrets.test.js` fails if one echoes.
@@ -191,6 +195,15 @@ only when the pure `decide(repoState)` says `ff`; it never checks out, stashes, 
 local branch. Any new safety condition goes into `decide` with a test. Suggested routines are
 stored `proposed` and only a human enables them; a rejected one is kept so it is never proposed
 again. A scheduled slot missed during downtime runs once, never as a backlog.
+
+**OS decisions live in `src/platform/`, and only there.** One implementation per behaviour per
+OS (`windows.js`, `linux.js`, `darwin.js`, same contract, listed in `index.js`): data dir, venv
+layout, vault, notifications, open/clipboard, who holds the mic, restarting capture, free disk, how
+backups reach `pg_dump`, and the Teams cache default. Nothing else tests `process.platform`
+(dispatch decides by the *target* machine's OS, which is a different question). Each behaviour's
+process is built by a pure `…Command` function so `test/platform.test.js` pins it without side
+effects. Where an OS cannot do a thing well, it degrades explicitly and `pa doctor` prints
+`DEGRADED` or `UNSUPPORTED` — never silently.
 
 **Raven stays a skill.** Company engineering conventions are read through the existing
 `innergy-knowledge` skill. Do not copy that repo into this store; a second stale copy of the
@@ -217,14 +230,21 @@ Postgres and nowhere else. Tests use invented names; fixtures never hold a real 
 - **Secrets:** never in the repo, never in Postgres at all. There are few: GitHub and Microsoft
   365 ride on logins that already exist (`gh`, the claude.ai connectors); Jira prefers an API
   token (`PA_JIRA_API_TOKEN`) and falls back to its connector. A secret resolves real env →
-  Windows Credential Manager → `.env` through `config.secret(name)`; a missing one is `null`,
+  the OS vault (Credential Manager / Secret Service) → `.env` through `config.secret(name)`; a missing one is `null`,
   shows as "not configured" in `pa doctor`, and code that needs it calls
   `requestSecret({name, purpose, hint})` (`src/secrets`) instead of failing quietly.
 - **Times:** store UTC, render local. Every `due_at` the distiller writes is absolute — a row
   that says "Friday" is a bug.
 - **Logs:** message bodies are not log material. Log ids, counts, and durations.
 
-## The store lives in WSL, and WSL will drop it
+## Where the store lives
+
+**Linux:** Postgres 16 + pgvector on port 5433, either a dedicated native cluster
+(`pg_createcluster 16 pa`, so an existing Postgres on 5432 is untouched) or the
+`docker-compose.yml` container — Linux Docker runs Linux images, so compose is the right answer
+there. `linux/install.sh` provisions either and records which in `PA_PG_TOOLS` for backups.
+
+### On Windows the store lives in WSL, and WSL will drop it
 
 Docker Desktop on the target machine runs the **Windows** container engine, and there is no
 Windows image for Postgres, let alone one with pgvector. So the store is Postgres 16 +
