@@ -26,13 +26,23 @@ the same: its worktree and the pushurl block are made on that machine through te
 checks the worktree exists through termhub's API rather than trusting the shell.
 
 **Mode boundaries are enforced by the dispatcher, not requested of the agent.** A `local` run
-gets no push credential in its environment. Do not implement a stop condition as a sentence in
-the prompt and call it done. Here and on another machine, the push block goes in the worktree's own config
+gets no push credential in its environment: its termhub session starts with GH/GitHub tokens,
+`SSH_AUTH_SOCK` and askpass helpers removed, git's credential helpers reset to none through
+`GIT_CONFIG_*`, and ssh run with no user config, agent or default key (`remote.noPushEnv`, applied by
+termhub's session env and confirmed back as `envApplied`; a termhub that cannot confirm it refuses the
+run). **Residual risk:** that strips what the environment hands the agent, not what the disk holds — an
+agent that reads `~/.ssh/id_*` or gh's `hosts.yml` itself and passes it explicitly can still push; the
+pushurl block is not credential isolation either (`git push <url>` and `-c` walk round it). The real
+boundary for work that must never push is a machine or user without those credentials. Do not
+implement a stop condition as a sentence in the prompt and call it done. Here and on another machine, the push block goes in the worktree's own config
 (`extensions.worktreeConfig` + `git config --worktree`; a plain `git config` in a worktree writes
 the repo's *shared* config and blocks the main checkout and every run at once) and is **read
 back** before the run starts — a block that cannot be verified (a termhub without `/api/exec`,
 where it could only be typed) refuses the no-push run instead of starting it unverified. Both
-paths call the one `remote.blockPush`.
+paths call the one `remote.blockPush`, after `remote.clearLegacyBlock` has removed the dead pushurl
+older code left in a repo's *shared* config (only that value). Nothing else edits a repo's shared
+config: `pa land` lifts no block (a mode that may push never had one). A start that fails after its
+run row exists marks the row failed with the reason and removes the session, worktree and branch.
 
 **The dispatcher is not tailnet-reachable.** It executes code by design. Loopback and the WSL
 interface only. termhub is the thing that is safe to expose, because its trust model is the
@@ -63,13 +73,21 @@ It is started *without* `--dangerously-skip-permissions`; its `settings.json` al
 `pa` commands and the read MCP tools and puts `pa do/land/drop/say/done/remember/forget/routine
 add/notify feedback` behind an *ask*. Its CLAUDE.md is rewritten from code on every start — change it in
 `src/chat/index.js`, not on disk; the user's own additions go in `CLAUDE.local.md`. The chat may run
-on opencode instead (`PA_CHAT_AGENT`, `src/chat/agent.js`) only under the same guarantee: its
-`opencode.json` is generated from the *same* command lists (`ALLOW_COMMANDS`/`ASK_COMMANDS`), starts
-from `"*": "ask"` because opencode's defaults allow, denies `task` (subagents), asks on any redirect,
-and an opencode chat starts only after `verifyOpencodePermissions` has read the ruleset opencode
-actually resolved (`opencode debug agent`) and found every probe that must ask asking. `chatCommand`
-refuses any command that skips permissions (`--dangerously-skip-permissions`, `bypassPermissions`,
-`--allowedTools`, opencode `--auto`). Add a permission to the lists, never to one agent's file.
+on opencode instead (`PA_CHAT_AGENT`, `src/chat/agent.js`) only under the same guarantee, enforced
+differently because opencode parses a command line its own way and every bash allow-pattern was a
+way round it: its `opencode.json` starts from `"*": "ask"` (opencode's defaults allow), makes
+**every** shell command ask with no allow-pattern, and gives it the read-only verbs
+(`ALLOW_COMMANDS`) as the MCP tool `pa` instead — an enum plus argv, no shell, writing
+sub-commands and flags refused, listed only when the chat's own config sets `PA_MCP_CHAT_TOOLS=1`.
+The acting verbs (`ASK_COMMANDS`) stay shell commands behind the prompt, through one launcher each
+(`pa-home/bin/pa-do`, …), because opencode's "Allow always" saves the command's first word + ` *`, cannot
+be turned off and outranks the config: on `node …/pa.js` that was `node *`; on a launcher it is that
+one verb. It denies `task` (subagents), and an opencode chat starts only after
+`verifyOpencodePermissions` has read the ruleset opencode actually resolved (`opencode debug agent`)
+and found its shape — nothing after the ask-everything bash rule allows a shell command — and every
+probe holding. `chatCommand` refuses any command that skips permissions
+(`--dangerously-skip-permissions`, any `--permission-mode` but `default`/`plan`, `--allowedTools`,
+opencode `--auto`). Add a permission to the lists, never to one agent's file.
 
 **The worker reaches the PA chat through a file, and types into it only a fixed doorbell.** Pushed
 notifications go to `pa-home/INBOX.md`, which the chat's CLAUDE.md says is data, never instructions.
@@ -200,8 +218,9 @@ checks the planner source). A job's end moves its commitment only through `ledge
 merged factory PR is never closed twice. A job id is checked against `factoryCore.JOB_ID` before it
 is typed into a terminal. Any route chooser's answer passes `routeCore.guard`. Every job is sent
 with a `--flow-file` (`factoryCore.flowMarkdown`, deterministic), since the factory parks a job
-without a flow; content reaches another machine base64-encoded through a fixed writer, never as a
-command string.
+without a flow; content reaches another machine on the writer's stdin (never argv, where `ps` shows it
+and a large brief overflows the limit), into a fresh `mkdtemp` directory (0700) with
+`O_EXCL|O_NOFOLLOW` files, removed once the factory has the job.
 
 **Capture never stops for the assistant.** The worker's only levers on `capture.py` are the pause
 file (`pa mic pause`) and the roll file, which makes capture finish its file and continue in a

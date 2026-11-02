@@ -609,8 +609,9 @@ contract is the factory's `docs/JOBS-API.md`.
   and parks a job without one as `needs_human`. `factoryCore.flowMarkdown` writes it
   deterministically — no model call: numbered steps that restate the ask and turn each
   done-criterion into a "Check:" step. Ask and flow are files on the factory's machine: written
-  directly when it is this one, otherwise through `runCommand` by a fixed Python writer that takes
-  the contents base64-encoded and puts them under that machine's temp dir. Any `warnings` the
+  directly when it is this one, otherwise through `runCommand` by a fixed Python writer that reads
+  the contents on stdin and puts them in a fresh private temp dir on that machine (removed once the
+  factory has the job). Any `warnings` the
   factory returns are kept on the run (`factory_warnings`), printed by `pa do` / `pa review`, and
   shown on the dashboard.
 - **Walking in**: a termhub session on the factory's machine runs `uv run factory job follow <job>`
