@@ -1,9 +1,9 @@
 'use strict';
 
 // The ruleset opencode 1.18.15 resolved for the PA chat's "pa" agent from the
-// opencode.json src/chat/agent.js writes (`opencode debug agent pa` in pa-home),
-// with the machine's skill folders dropped and pa's command replaced by __PA__.
-// .js, not .json: the repo ignores *.json.
+// opencode.json src/chat/agent.js writes since every shell command asks
+// (`opencode debug agent pa` in a home holding only that file), with the
+// machine's skill folders dropped. .js, not .json: the repo ignores *.json.
 
 module.exports = [
  {
@@ -20,6 +20,16 @@ module.exports = [
   "permission": "external_directory",
   "pattern": "*",
   "action": "ask"
+ },
+ {
+  "permission": "external_directory",
+  "pattern": "~/.local/share/opencode/tool-output/*",
+  "action": "allow"
+ },
+ {
+  "permission": "external_directory",
+  "pattern": "/tmp/opencode/*",
+  "action": "allow"
  },
  {
   "permission": "question",
@@ -128,293 +138,8 @@ module.exports = [
  },
  {
   "permission": "bash",
-  "pattern": "*",
-  "action": "ask"
- },
- {
-  "permission": "bash",
-  "pattern": "__PA__ brief",
-  "action": "allow"
- },
- {
-  "permission": "bash",
-  "pattern": "__PA__ brief *",
-  "action": "allow"
- },
- {
-  "permission": "bash",
-  "pattern": "__PA__ inbox",
-  "action": "allow"
- },
- {
-  "permission": "bash",
-  "pattern": "__PA__ inbox *",
-  "action": "allow"
- },
- {
-  "permission": "bash",
-  "pattern": "__PA__ show",
-  "action": "allow"
- },
- {
-  "permission": "bash",
-  "pattern": "__PA__ show *",
-  "action": "allow"
- },
- {
-  "permission": "bash",
-  "pattern": "__PA__ search",
-  "action": "allow"
- },
- {
-  "permission": "bash",
-  "pattern": "__PA__ search *",
-  "action": "allow"
- },
- {
-  "permission": "bash",
-  "pattern": "__PA__ who",
-  "action": "allow"
- },
- {
-  "permission": "bash",
-  "pattern": "__PA__ who *",
-  "action": "allow"
- },
- {
-  "permission": "bash",
-  "pattern": "__PA__ runs",
-  "action": "allow"
- },
- {
-  "permission": "bash",
-  "pattern": "__PA__ runs *",
-  "action": "allow"
- },
- {
-  "permission": "bash",
-  "pattern": "__PA__ review",
-  "action": "allow"
- },
- {
-  "permission": "bash",
-  "pattern": "__PA__ review *",
-  "action": "allow"
- },
- {
-  "permission": "bash",
-  "pattern": "__PA__ drafts",
-  "action": "allow"
- },
- {
-  "permission": "bash",
-  "pattern": "__PA__ drafts *",
-  "action": "allow"
- },
- {
-  "permission": "bash",
-  "pattern": "__PA__ memory",
-  "action": "allow"
- },
- {
-  "permission": "bash",
-  "pattern": "__PA__ memory *",
-  "action": "allow"
- },
- {
-  "permission": "bash",
-  "pattern": "__PA__ meeting",
-  "action": "allow"
- },
- {
-  "permission": "bash",
-  "pattern": "__PA__ meeting *",
-  "action": "allow"
- },
- {
-  "permission": "bash",
-  "pattern": "__PA__ routine list",
-  "action": "allow"
- },
- {
-  "permission": "bash",
-  "pattern": "__PA__ routine list *",
-  "action": "allow"
- },
- {
-  "permission": "bash",
-  "pattern": "__PA__ doctor",
-  "action": "allow"
- },
- {
-  "permission": "bash",
-  "pattern": "__PA__ doctor *",
-  "action": "allow"
- },
- {
-  "permission": "bash",
-  "pattern": "__PA__ backup list",
-  "action": "allow"
- },
- {
-  "permission": "bash",
-  "pattern": "__PA__ backup list *",
-  "action": "allow"
- },
- {
-  "permission": "bash",
-  "pattern": "__PA__ context",
-  "action": "allow"
- },
- {
-  "permission": "bash",
-  "pattern": "__PA__ context *",
-  "action": "allow"
- },
- {
-  "permission": "bash",
-  "pattern": "__PA__ projects",
-  "action": "allow"
- },
- {
-  "permission": "bash",
-  "pattern": "__PA__ projects *",
-  "action": "allow"
- },
- {
-  "permission": "bash",
-  "pattern": "__PA__ notify list",
-  "action": "allow"
- },
- {
-  "permission": "bash",
-  "pattern": "__PA__ notify list *",
-  "action": "allow"
- },
- {
-  "permission": "bash",
-  "pattern": "__PA__ notify ack",
-  "action": "allow"
- },
- {
-  "permission": "bash",
-  "pattern": "__PA__ notify ack *",
-  "action": "allow"
- },
- {
-  "permission": "bash",
-  "pattern": "__PA__ notify weights",
-  "action": "allow"
- },
- {
-  "permission": "bash",
-  "pattern": "__PA__ notify weights *",
-  "action": "allow"
- },
- {
-  "permission": "bash",
-  "pattern": "__PA__ notify digest",
-  "action": "allow"
- },
- {
-  "permission": "bash",
-  "pattern": "__PA__ notify digest *",
-  "action": "allow"
- },
- {
-  "permission": "bash",
-  "pattern": "__PA__ do",
-  "action": "ask"
- },
- {
-  "permission": "bash",
-  "pattern": "__PA__ do *",
-  "action": "ask"
- },
- {
-  "permission": "bash",
-  "pattern": "__PA__ land",
-  "action": "ask"
- },
- {
-  "permission": "bash",
-  "pattern": "__PA__ land *",
-  "action": "ask"
- },
- {
-  "permission": "bash",
-  "pattern": "__PA__ drop",
-  "action": "ask"
- },
- {
-  "permission": "bash",
-  "pattern": "__PA__ drop *",
-  "action": "ask"
- },
- {
-  "permission": "bash",
-  "pattern": "__PA__ say",
-  "action": "ask"
- },
- {
-  "permission": "bash",
-  "pattern": "__PA__ say *",
-  "action": "ask"
- },
- {
-  "permission": "bash",
-  "pattern": "__PA__ done",
-  "action": "ask"
- },
- {
-  "permission": "bash",
-  "pattern": "__PA__ done *",
-  "action": "ask"
- },
- {
-  "permission": "bash",
-  "pattern": "__PA__ remember",
-  "action": "ask"
- },
- {
-  "permission": "bash",
-  "pattern": "__PA__ remember *",
-  "action": "ask"
- },
- {
-  "permission": "bash",
-  "pattern": "__PA__ forget",
-  "action": "ask"
- },
- {
-  "permission": "bash",
-  "pattern": "__PA__ forget *",
-  "action": "ask"
- },
- {
-  "permission": "bash",
-  "pattern": "__PA__ routine add",
-  "action": "ask"
- },
- {
-  "permission": "bash",
-  "pattern": "__PA__ routine add *",
-  "action": "ask"
- },
- {
-  "permission": "bash",
-  "pattern": "__PA__ notify feedback",
-  "action": "ask"
- },
- {
-  "permission": "bash",
-  "pattern": "__PA__ notify feedback *",
-  "action": "ask"
- },
- {
-  "permission": "bash",
-  "pattern": "*>*",
-  "action": "ask"
+  "action": "ask",
+  "pattern": "*"
  },
  {
   "permission": "personal-assistant_recall",
@@ -458,6 +183,11 @@ module.exports = [
  },
  {
   "permission": "personal-assistant_repo_state",
+  "action": "allow",
+  "pattern": "*"
+ },
+ {
+  "permission": "personal-assistant_pa",
   "action": "allow",
   "pattern": "*"
  },
@@ -533,293 +263,8 @@ module.exports = [
  },
  {
   "permission": "bash",
-  "pattern": "*",
-  "action": "ask"
- },
- {
-  "permission": "bash",
-  "pattern": "__PA__ brief",
-  "action": "allow"
- },
- {
-  "permission": "bash",
-  "pattern": "__PA__ brief *",
-  "action": "allow"
- },
- {
-  "permission": "bash",
-  "pattern": "__PA__ inbox",
-  "action": "allow"
- },
- {
-  "permission": "bash",
-  "pattern": "__PA__ inbox *",
-  "action": "allow"
- },
- {
-  "permission": "bash",
-  "pattern": "__PA__ show",
-  "action": "allow"
- },
- {
-  "permission": "bash",
-  "pattern": "__PA__ show *",
-  "action": "allow"
- },
- {
-  "permission": "bash",
-  "pattern": "__PA__ search",
-  "action": "allow"
- },
- {
-  "permission": "bash",
-  "pattern": "__PA__ search *",
-  "action": "allow"
- },
- {
-  "permission": "bash",
-  "pattern": "__PA__ who",
-  "action": "allow"
- },
- {
-  "permission": "bash",
-  "pattern": "__PA__ who *",
-  "action": "allow"
- },
- {
-  "permission": "bash",
-  "pattern": "__PA__ runs",
-  "action": "allow"
- },
- {
-  "permission": "bash",
-  "pattern": "__PA__ runs *",
-  "action": "allow"
- },
- {
-  "permission": "bash",
-  "pattern": "__PA__ review",
-  "action": "allow"
- },
- {
-  "permission": "bash",
-  "pattern": "__PA__ review *",
-  "action": "allow"
- },
- {
-  "permission": "bash",
-  "pattern": "__PA__ drafts",
-  "action": "allow"
- },
- {
-  "permission": "bash",
-  "pattern": "__PA__ drafts *",
-  "action": "allow"
- },
- {
-  "permission": "bash",
-  "pattern": "__PA__ memory",
-  "action": "allow"
- },
- {
-  "permission": "bash",
-  "pattern": "__PA__ memory *",
-  "action": "allow"
- },
- {
-  "permission": "bash",
-  "pattern": "__PA__ meeting",
-  "action": "allow"
- },
- {
-  "permission": "bash",
-  "pattern": "__PA__ meeting *",
-  "action": "allow"
- },
- {
-  "permission": "bash",
-  "pattern": "__PA__ routine list",
-  "action": "allow"
- },
- {
-  "permission": "bash",
-  "pattern": "__PA__ routine list *",
-  "action": "allow"
- },
- {
-  "permission": "bash",
-  "pattern": "__PA__ doctor",
-  "action": "allow"
- },
- {
-  "permission": "bash",
-  "pattern": "__PA__ doctor *",
-  "action": "allow"
- },
- {
-  "permission": "bash",
-  "pattern": "__PA__ backup list",
-  "action": "allow"
- },
- {
-  "permission": "bash",
-  "pattern": "__PA__ backup list *",
-  "action": "allow"
- },
- {
-  "permission": "bash",
-  "pattern": "__PA__ context",
-  "action": "allow"
- },
- {
-  "permission": "bash",
-  "pattern": "__PA__ context *",
-  "action": "allow"
- },
- {
-  "permission": "bash",
-  "pattern": "__PA__ projects",
-  "action": "allow"
- },
- {
-  "permission": "bash",
-  "pattern": "__PA__ projects *",
-  "action": "allow"
- },
- {
-  "permission": "bash",
-  "pattern": "__PA__ notify list",
-  "action": "allow"
- },
- {
-  "permission": "bash",
-  "pattern": "__PA__ notify list *",
-  "action": "allow"
- },
- {
-  "permission": "bash",
-  "pattern": "__PA__ notify ack",
-  "action": "allow"
- },
- {
-  "permission": "bash",
-  "pattern": "__PA__ notify ack *",
-  "action": "allow"
- },
- {
-  "permission": "bash",
-  "pattern": "__PA__ notify weights",
-  "action": "allow"
- },
- {
-  "permission": "bash",
-  "pattern": "__PA__ notify weights *",
-  "action": "allow"
- },
- {
-  "permission": "bash",
-  "pattern": "__PA__ notify digest",
-  "action": "allow"
- },
- {
-  "permission": "bash",
-  "pattern": "__PA__ notify digest *",
-  "action": "allow"
- },
- {
-  "permission": "bash",
-  "pattern": "__PA__ do",
-  "action": "ask"
- },
- {
-  "permission": "bash",
-  "pattern": "__PA__ do *",
-  "action": "ask"
- },
- {
-  "permission": "bash",
-  "pattern": "__PA__ land",
-  "action": "ask"
- },
- {
-  "permission": "bash",
-  "pattern": "__PA__ land *",
-  "action": "ask"
- },
- {
-  "permission": "bash",
-  "pattern": "__PA__ drop",
-  "action": "ask"
- },
- {
-  "permission": "bash",
-  "pattern": "__PA__ drop *",
-  "action": "ask"
- },
- {
-  "permission": "bash",
-  "pattern": "__PA__ say",
-  "action": "ask"
- },
- {
-  "permission": "bash",
-  "pattern": "__PA__ say *",
-  "action": "ask"
- },
- {
-  "permission": "bash",
-  "pattern": "__PA__ done",
-  "action": "ask"
- },
- {
-  "permission": "bash",
-  "pattern": "__PA__ done *",
-  "action": "ask"
- },
- {
-  "permission": "bash",
-  "pattern": "__PA__ remember",
-  "action": "ask"
- },
- {
-  "permission": "bash",
-  "pattern": "__PA__ remember *",
-  "action": "ask"
- },
- {
-  "permission": "bash",
-  "pattern": "__PA__ forget",
-  "action": "ask"
- },
- {
-  "permission": "bash",
-  "pattern": "__PA__ forget *",
-  "action": "ask"
- },
- {
-  "permission": "bash",
-  "pattern": "__PA__ routine add",
-  "action": "ask"
- },
- {
-  "permission": "bash",
-  "pattern": "__PA__ routine add *",
-  "action": "ask"
- },
- {
-  "permission": "bash",
-  "pattern": "__PA__ notify feedback",
-  "action": "ask"
- },
- {
-  "permission": "bash",
-  "pattern": "__PA__ notify feedback *",
-  "action": "ask"
- },
- {
-  "permission": "bash",
-  "pattern": "*>*",
-  "action": "ask"
+  "action": "ask",
+  "pattern": "*"
  },
  {
   "permission": "personal-assistant_recall",
@@ -865,5 +310,15 @@ module.exports = [
   "permission": "personal-assistant_repo_state",
   "action": "allow",
   "pattern": "*"
+ },
+ {
+  "permission": "personal-assistant_pa",
+  "action": "allow",
+  "pattern": "*"
+ },
+ {
+  "permission": "external_directory",
+  "pattern": "~/.local/share/opencode/tool-output/*",
+  "action": "allow"
  }
 ];
