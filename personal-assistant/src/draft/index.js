@@ -420,7 +420,7 @@ async function delivery(draftId) {
   if (!draft) throw new Error(`no draft #${draftId}`);
   if (draft.status === 'sent') throw new Error(`draft #${draftId} was already sent`);
   if (draft.status === 'discarded') throw new Error(`draft #${draftId} was discarded`);
-  return { draft, ...deliver.links(draft) };
+  return { draft, ...deliver.links(draft, { desktopTeams: require('../platform').teamsDesktop() }) };
 }
 
 // Sending a reply usually discharges the ask, but not when the reply only

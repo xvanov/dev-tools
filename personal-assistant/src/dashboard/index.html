@@ -636,7 +636,9 @@ function draftCard(d) {
 // no API this page calls ever returns one. Cards are kept across refreshes
 // (keyed by id) so the 30-second refresh cannot wipe a half-pasted token.
 
-const WHERE = { 'credential-manager': 'Windows Credential Manager (encrypted, your Windows account only)', 'env-file': 'personal-assistant/.env (gitignored, plain text)' };
+// The keyring's wording comes with each request (`vault`): Windows Credential
+// Manager on Windows, the Secret Service on Linux.
+const WHERE = { 'credential-manager': 'the OS keyring', 'env-file': 'personal-assistant/.env (gitignored, plain text)' };
 const needCards = new Map();
 
 // Not `busy`: this page and routines.js share one global scope, and a second
@@ -675,10 +677,11 @@ function secretCard(r) {
     // Config that is not secret (an email, a site name) may be shown as typed.
     const input = el('input', { type: r.target === 'env-file' ? 'text' : 'password', autocomplete: 'off', spellcheck: 'false', placeholder: `Paste ${r.name}`, 'aria-label': r.name });
     const target = el('select', { title: 'Where the value is stored' },
-      el('option', { value: 'credential-manager' }, 'Credential Manager'), el('option', { value: 'env-file' }, '.env file'));
-    target.value = r.target === 'env-file' ? 'env-file' : 'credential-manager';
+      el('option', { value: 'credential-manager', ...(r.vault_available === false ? { disabled: '' } : {}) }, 'OS keyring'), el('option', { value: 'env-file' }, '.env file'));
+    target.value = r.target === 'env-file' || r.vault_available === false ? 'env-file' : 'credential-manager';
     const where = el('div', { class: 'where' });
-    const showWhere = () => where.replaceChildren('Will be stored in ', el('strong', {}, WHERE[target.value]), '.');
+    const whereText = (t) => (t === 'credential-manager' && r.vault ? r.vault : WHERE[t]);
+    const showWhere = () => where.replaceChildren('Will be stored in ', el('strong', {}, whereText(target.value)), '.');
     target.addEventListener('change', showWhere);
     showWhere();
     const save = el('button', { class: 'primary', type: 'submit' }, 'Save');
@@ -694,7 +697,7 @@ function secretCard(r) {
       try {
         const res = await post(`api/secrets/${r.id}/fulfil`, { value: input.value, target: target.value });
         input.value = '';
-        say(`Saved ${res.name} to ${res.stored === 'env-file' ? '.env' : 'Credential Manager'}.`, true);
+        say(`Saved ${res.name} to ${res.stored === 'env-file' ? '.env' : 'the OS keyring'}.`, true);
         setTimeout(() => { needCards.delete(r.id); refresh(); }, 1500);
       } catch (err) { say(`Not saved: ${err.message}`, false); restore(); }
     });

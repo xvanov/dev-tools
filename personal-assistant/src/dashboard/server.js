@@ -18,7 +18,7 @@
 // message on the wire (see draft/deliver.js).
 //
 // Its Needs-you panel answers secret requests (src/secrets). A pasted value
-// arrives in one POST, goes straight to Credential Manager or `.env`, and the
+// arrives in one POST, goes straight to the OS keyring (src/secrets/vault.js) or `.env`, and the
 // reply is `{ok, stored, name}`. No route here returns a value.
 
 const fs = require('fs');

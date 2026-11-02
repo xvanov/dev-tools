@@ -1,104 +1,89 @@
 'use strict';
 
-// Windows Credential Manager, through WinRT's PasswordVault.
+// The operating system's secret store, whichever this machine has:
 //
-// The vault is DPAPI-protected and per user: what lands here is readable by
-// this Windows account and nobody else, and never touches the repo or
-// Postgres. Entries are "web credentials" under one resource name, so they
-// show up together in Control Panel → Credential Manager, where you can
-// inspect or delete them by hand.
+//   Windows  Credential Manager, through WinRT's PasswordVault (PowerShell)
+//   Linux    the Secret Service — GNOME Keyring, KWallet — via `secret-tool`
+//   macOS    none (see src/platform/darwin.js): env and .env only
 //
-// No native npm dependency: each call is one Windows PowerShell process
-// running a fixed script. **The secret travels on stdin, never in argv** —
-// a process's command line is readable by every other process on the machine
-// (Task Manager shows it), stdin is not. The script itself is constant and
-// carries no data; the request (op, name, value) is a base64 JSON line on
-// stdin, so no character in a value can break out of anything.
+// The backends live in src/platform/<os>.js. This module is the one API the
+// rest of the tool uses, and it enforces what must hold for every backend:
+//
+//  - **The secret travels on stdin, never in argv.** A command line is
+//    readable by every other process on the machine; stdin is not. Each
+//    backend's `invocation(request)` is the exact process a request starts,
+//    exposed so the tests can check the value is in `input` and nowhere in
+//    `args`.
+//  - **No value escapes in an error.** Whatever the store said is scrubbed of
+//    the value before it becomes a message.
+//  - A missing entry is `null`, not an error.
+//
+// Whatever the backend, its target id is 'credential-manager' — the name the
+// dashboard, `pa secret` and stored `secret_request.stored_in` rows use for
+// "the OS vault" — and `label()` is what the human reads.
 //
 // This module must not require config.js: config's `secret()` resolver
 // requires it.
 
 const { spawnSync } = require('child_process');
+const platform = require('../platform');
 
 const RESOURCE = 'personal-assistant';
 const NAME_RE = /^[A-Z][A-Z0-9_]{1,63}$/;
 
-// Reads one base64 JSON request from stdin, answers one JSON line on stdout.
-// A missing entry is {ok:true, found:false}, not an error: PasswordVault
-// throws "Element not found" for both "no such credential" and "empty vault".
-const SCRIPT = `
-$ErrorActionPreference = 'Stop'
-[Console]::OutputEncoding = [Text.Encoding]::UTF8
-function Answer($o) { [Console]::Out.WriteLine(($o | ConvertTo-Json -Compress)) }
-try {
-  $line = [Console]::In.ReadLine()
-  $req = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($line)) | ConvertFrom-Json
-  [void][Windows.Security.Credentials.PasswordVault, Windows.Security.Credentials, ContentType = WindowsRuntime]
-  $vault = New-Object Windows.Security.Credentials.PasswordVault
-  $res = '${RESOURCE}'
-  function Find($name) { try { return $vault.Retrieve($res, $name) } catch { return $null } }
-  switch ($req.op) {
-    'set' {
-      $old = Find $req.name
-      if ($old) { $vault.Remove($old) }
-      $vault.Add((New-Object Windows.Security.Credentials.PasswordCredential($res, $req.name, $req.value)))
-      Answer @{ ok = $true }
-    }
-    'get' {
-      $c = Find $req.name
-      if (-not $c) { Answer @{ ok = $true; found = $false } }
-      else { $c.RetrievePassword(); Answer @{ ok = $true; found = $true; value = $c.Password } }
-    }
-    'delete' {
-      $c = Find $req.name
-      if ($c) { $vault.Remove($c) }
-      Answer @{ ok = $true; found = [bool]$c }
-    }
-    'list' {
-      $names = @()
-      try { $names = @($vault.FindAllByResource($res) | ForEach-Object { $_.UserName }) } catch {}
-      Answer @{ ok = $true; names = $names }
-    }
-    default { Answer @{ ok = $false; error = 'unknown op' } }
-  }
-} catch {
-  Answer @{ ok = $false; error = $_.Exception.Message }
-}
-`;
-
-const ENCODED = Buffer.from(SCRIPT, 'utf16le').toString('base64');
-
-/**
- * The exact process a vault call starts. Exposed so the test can check the
- * one property that matters: the value is in `input`, nowhere in `args`.
- */
-function invocation(request) {
-  return {
-    command: 'powershell.exe',
-    args: ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', ENCODED],
-    input: Buffer.from(JSON.stringify(request), 'utf8').toString('base64') + '\n',
-  };
-}
+let backend = platform.vault;
 
 function defaultRunner({ command, args, input }) {
-  const r = spawnSync(command, args, { input, windowsHide: true, timeout: 30_000, encoding: 'utf8' });
-  if (r.error) return { error: r.error.message };
-  return { stdout: r.stdout || '', status: r.status };
+  const r = spawnSync(command, args, { input, windowsHide: true, timeout: 15_000, encoding: 'utf8' });
+  if (r.error) return { error: r.error.code === 'ETIMEDOUT' ? 'timed out' : r.error.message, timedOut: r.error.code === 'ETIMEDOUT' };
+  return { stdout: r.stdout || '', stderr: r.stderr || '', status: r.status };
 }
 
 let runner = defaultRunner;
 
+// A store that hangs (a locked keyring with no one to unlock it, on a headless
+// box) would block every secret lookup for the timeout, and a locked desktop
+// keyring answers a lookup with an unlock prompt — once a minute per missing
+// name, if nothing stopped it. So after a read (get/list) times out or fails,
+// the vault counts as unavailable for ten minutes and lookups fall through to
+// .env. A failed *write* does not trip it: that error goes to the person who
+// asked, who can retry.
+const BREAK_MS = 10 * 60_000;
+let brokenUntil = 0;
+
 // Tests swap the process for a fake; nothing else should.
 function setRunner(fn) {
   runner = fn || defaultRunner;
+  brokenUntil = 0;
+}
+
+// Tests pick the backend whose protocol their fake speaks: 'windows' |
+// 'linux' | 'darwin' (a platform id), or null for this machine's.
+function useBackend(id) {
+  const map = { windows: 'win32', linux: 'linux', darwin: 'darwin' };
+  backend = id ? platform.select(map[id] || id).vault : platform.vault;
+  brokenUntil = 0;
 }
 
 function available() {
-  return process.platform === 'win32' || runner !== defaultRunner;
+  if (runner !== defaultRunner) return true;
+  if (Date.now() < brokenUntil) return false;
+  return backend.available();
 }
 
-// Never lets the value escape in an error: whatever PowerShell said is
-// scrubbed of it before it becomes a message.
+// Where a stored value goes, in words: "Windows Credential Manager".
+function label() {
+  return backend.label;
+}
+
+function where() {
+  return backend.where;
+}
+
+function invocation(request) {
+  return backend.invocation(request);
+}
+
 function scrub(text, value) {
   let s = String(text ?? '');
   if (value) s = s.split(String(value)).join('<redacted>');
@@ -106,20 +91,20 @@ function scrub(text, value) {
 }
 
 function call(request) {
-  if (!available()) throw new Error('Windows Credential Manager is only available on Windows');
+  if (!available()) throw new Error(`${backend.label} is not available on this machine — store it in .env instead`);
   if (request.name !== undefined && !NAME_RE.test(request.name)) {
     throw new Error('secret names are UPPER_SNAKE_CASE, e.g. PA_JIRA_API_TOKEN');
   }
-  const r = runner(invocation(request));
-  if (r.error) throw new Error(`credential manager: ${scrub(r.error, request.value)}`);
-  const last = String(r.stdout || '').trim().split(/\r?\n/).pop();
-  let parsed;
-  try {
-    parsed = JSON.parse(last);
-  } catch {
-    throw new Error(`credential manager: unreadable reply (exit ${r.status})`);
-  }
-  if (!parsed.ok) throw new Error(`credential manager: ${scrub(parsed.error, request.value)}`);
+  let timedOut = false;
+  const watched = (inv) => {
+    const r = runner(inv);
+    if (r && r.timedOut) timedOut = true;
+    return r;
+  };
+  const parsed = backend.run(request, watched);
+  const failedRead = (!parsed || !parsed.ok) && (request.op === 'get' || request.op === 'list');
+  if ((timedOut || failedRead) && runner === defaultRunner) brokenUntil = Date.now() + BREAK_MS;
+  if (!parsed || !parsed.ok) throw new Error(`${backend.label}: ${scrub(parsed && parsed.error, request.value)}`);
   return parsed;
 }
 
@@ -143,4 +128,4 @@ function list() {
   return [].concat(r.names || []).map(String).sort();
 }
 
-module.exports = { RESOURCE, NAME_RE, invocation, setRunner, available, scrub, set, get, remove, list };
+module.exports = { RESOURCE, NAME_RE, invocation, setRunner, useBackend, available, label, where, scrub, set, get, remove, list };

@@ -100,9 +100,9 @@ function decide(s) {
 
 // ------------------------------------------------------ who is in a repo ----
 
+// Case-folded where the filesystem is case-insensitive (src/platform).
 function samePathKey(p) {
-  const r = path.resolve(String(p)).replace(/[\\/]+$/, '');
-  return process.platform === 'win32' ? r.toLowerCase() : r;
+  return require('../../platform').pathKey(p);
 }
 
 function under(child, parent) {

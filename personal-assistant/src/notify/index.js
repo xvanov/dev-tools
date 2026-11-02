@@ -5,15 +5,16 @@
 // Everything proactive — a brief an hour before a meeting, a routine's
 // result, a suggested routine, a request for a secret — goes through
 // `notify()`: a row in `notification` (the dashboard's feed, so nothing is
-// lost if the toast is missed) and a Windows toast that opens the dashboard
-// when clicked.
+// lost if the toast is missed) and a desktop notification that opens the
+// dashboard when clicked — a Windows toast, or notify-send on Linux — or an
+// ntfy push where there is no desktop.
 //
 // `dedupeKey` makes notify idempotent: passes run every few minutes, and the
 // same meeting must not be announced twelve times. A second notify with the
 // same key is a no-op and returns null.
 //
 // Toasts are best effort. A machine with notifications off, a locked
-// session, or PowerShell missing still gets the feed row.
+// session, PowerShell or notify-send missing still gets the feed row.
 //
 // Not every row interrupts you. `priority` (urgent | normal | digest) goes
 // through the interrupt budget (budget.js): a push is a toast plus the PA
@@ -22,11 +23,12 @@
 // is the dashboard's alone. Callers that say nothing are 'normal'. A digest
 // row is the digest itself and always pushes: you chose its times.
 
-const { spawn } = require('child_process');
 const { config } = require('../config');
 const { one, rows, query } = require('../db');
 const { logger } = require('../log');
 const budget = require('./budget');
+const ntfy = require('./ntfy');
+const platform = require('../platform');
 
 const log = logger('notify');
 
@@ -36,67 +38,22 @@ function dashboardUrl(anchor = '') {
   return `http://${config.dispatch.host}:${config.dispatch.port}/${anchor ? `#${anchor}` : ''}`;
 }
 
-function xmlEscape(s) {
-  return String(s ?? '')
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&apos;');
+// The desktop notification is the platform's (src/platform): a WinRT toast on
+// Windows, notify-send on Linux. Where none can show — a headless box, toasts
+// off — ntfy (ntfy.js) takes it, if you configured a topic.
+function toastXml(spec) {
+  return platform.select('win32').toastXml({ ...spec, url: spec.url || dashboardUrl() });
 }
 
-// Toast XML: title, up to ~4 lines of body, a click that opens `url`, and
-// optional buttons that each open their own link (a meeting's join link).
-function toastXml({ title, body, url, actions = [] }) {
-  const lines = String(body || '')
-    .split(/\r?\n/)
-    .map((l) => l.trim())
-    .filter(Boolean)
-    .slice(0, 4)
-    .join('\n');
-  return [
-    `<toast activationType="protocol" launch="${xmlEscape(url || dashboardUrl())}">`,
-    '<visual><binding template="ToastGeneric">',
-    `<text>${xmlEscape(title).slice(0, 120)}</text>`,
-    lines ? `<text>${xmlEscape(lines).slice(0, 600)}</text>` : '',
-    '</binding></visual>',
-    ...(actions.length
-      ? [
-          '<actions>',
-          ...actions
-            .filter((a) => a && /^https?:\/\//.test(a.url || ''))
-            .slice(0, 3)
-            .map((a) => `<action content="${xmlEscape(a.label).slice(0, 40)}" activationType="protocol" arguments="${xmlEscape(a.url)}"/>`),
-          '</actions>',
-        ]
-      : []),
-    '</toast>',
-  ].join('');
-}
-
-// Shows a toast through WinRT from Windows PowerShell, under PowerShell's own
-// app id (registered on every Windows install, so no Start-menu shortcut or
-// AUMID registration is needed). The XML travels base64-encoded so nothing in
-// a title can break out of the script.
-function toast({ title, body, url, actions = [] }) {
-  if (process.platform !== 'win32' || !config.notify.toasts) return Promise.resolve(false);
-  const xml64 = Buffer.from(toastXml({ title, body, url, actions }), 'utf8').toString('base64');
-  const script = [
-    '[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] | Out-Null',
-    '[Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime] | Out-Null',
-    `$xml = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${xml64}'))`,
-    '$doc = New-Object Windows.Data.Xml.Dom.XmlDocument; $doc.LoadXml($xml)',
-    "$app = '{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\\WindowsPowerShell\\v1.0\\powershell.exe'",
-    '[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier($app).Show([Windows.UI.Notifications.ToastNotification]::new($doc))',
-  ].join('; ');
-  return new Promise((resolve) => {
-    const child = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], {
-      windowsHide: true,
-      stdio: 'ignore',
-    });
-    child.on('error', () => resolve(false));
-    child.on('close', (code) => resolve(code === 0));
-  });
+async function toast({ title, body, url, actions = [] }) {
+  const spec = { title, body, url: url || dashboardUrl(), actions };
+  const shown = config.notify.toasts ? await platform.toast(spec).catch(() => false) : false;
+  const mode = config.notify.ntfyMode;
+  if (mode === 'always' || (mode === 'fallback' && !shown)) {
+    const pushed = await ntfy.send(spec).catch(() => false);
+    return shown || pushed;
+  }
+  return shown;
 }
 
 /**

@@ -20,6 +20,11 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
+// OS-specific defaults (data dir, repos root, venv layout, Teams cache, how
+// backups reach pg_dump) come from the platform layer, not from inline
+// `process.platform` tests.
+const platform = require('./platform');
+
 const TOOL_DIR = path.resolve(__dirname, '..');
 const REPO_ROOT = path.resolve(TOOL_DIR, '..');
 
@@ -80,11 +85,7 @@ function envInt(name, fallback) {
 }
 
 function defaultDataDir() {
-  if (process.platform === 'win32') {
-    const base = process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local');
-    return path.join(base, 'personal-assistant');
-  }
-  return path.join(os.homedir(), '.local', 'share', 'personal-assistant');
+  return platform.defaults.dataDir();
 }
 
 // Other machines a run can be dispatched to (src/dispatch/remote.js) and
@@ -114,8 +115,13 @@ function parseMachines(text) {
 }
 
 function defaultReposRoot() {
-  return process.platform === 'win32' ? 'C:\\repos' : path.join(os.homedir(), 'repos');
+  return platform.defaults.reposRoot();
 }
+
+// The Teams cache reader runs by default only where the platform has the new
+// Teams desktop client (Windows). Elsewhere it runs only when you point
+// PA_TEAMS_CACHE_DIR at a cache yourself — and never when PA_TEAMS_CACHE=0.
+const teamsCacheDir = env('PA_TEAMS_CACHE_DIR', platform.defaults.teamsCacheDir());
 
 const dataDir = env('PA_DATA_DIR', defaultDataDir());
 
@@ -165,19 +171,14 @@ const config = {
   // disk (src/ingest/teamsLocal.js). The connector still runs: it backfills
   // and upgrades what this reads. A missing cache or venv is a quiet no-op.
   teamsCache: {
-    enabled: env('PA_TEAMS_CACHE', '1') !== '0',
+    enabled: env('PA_TEAMS_CACHE', '1') !== '0' && Boolean(teamsCacheDir),
+    // Why it is off on this platform when nobody turned it off (`pa doctor`).
+    unsupported: teamsCacheDir ? null : platform.teamsCache.why,
     pollSeconds: envInt('PA_TEAMS_CACHE_POLL_SECONDS', 5),
-    dir: env(
-      'PA_TEAMS_CACHE_DIR',
-      path.join(
-        process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'),
-        'Packages', 'MSTeams_8wekyb3d8bbwe', 'LocalCache', 'Microsoft', 'MSTeams', 'EBWebView',
-        'WV2Profile_tfw', 'IndexedDB', 'https_teams.microsoft.com_0.indexeddb'
-      )
-    ),
+    dir: teamsCacheDir,
     // Its own venv, not the capture one: the reader is pinned to a forensic
     // library that is not on PyPI and must not be able to break capture.
-    python: env('PA_TEAMS_PYTHON', path.join(dataDir, 'teams-venv', 'Scripts', 'python.exe')),
+    python: env('PA_TEAMS_PYTHON', platform.defaults.venvPython(path.join(dataDir, 'teams-venv'))),
     timeoutMs: envInt('PA_TEAMS_CACHE_TIMEOUT_MS', 60_000),
   },
 
@@ -386,10 +387,7 @@ const config = {
     },
     // The venv that owns soundcard/soundfile. Separate from voice-dictation's
     // so upgrading one cannot break the other's hotkey.
-    python: env(
-      'PA_AUDIO_PYTHON',
-      path.join(dataDir, 'venv', process.platform === 'win32' ? 'Scripts/python.exe' : 'bin/python')
-    ),
+    python: env('PA_AUDIO_PYTHON', platform.defaults.venvPython(path.join(dataDir, 'venv'))),
   },
 
   retention: {
@@ -397,10 +395,17 @@ const config = {
     rawAudioHours: envInt('PA_RETENTION_RAW_AUDIO_HOURS', 6),
   },
 
-  // Proactive messages (src/notify): a feed in the dashboard, and a Windows
-  // toast for each unless PA_TOASTS=0.
+  // Proactive messages (src/notify): a feed in the dashboard, and a desktop
+  // notification for each (a Windows toast, notify-send on Linux) unless
+  // PA_TOASTS=0.
   notify: {
     toasts: env('PA_TOASTS', '1') !== '0',
+    // ntfy pushes (src/notify/ntfy.js), live once the PA_NTFY_TOPIC secret is
+    // set: 'fallback' when the desktop one did not show, 'always', or 'off'.
+    ntfyMode: env('PA_NTFY', 'fallback'),
+    ntfyServer: env('PA_NTFY_SERVER', 'https://ntfy.sh'),
+    // Titles only unless asked: a body can quote your mail.
+    ntfyBody: env('PA_NTFY_BODY', '0') === '1',
     // The interrupt budget (src/notify/budget.js): this many real-time pushes
     // a day; past it, and in quiet hours, the rest wait for a digest.
     pushBudget: envInt('PA_PUSH_BUDGET', 4),
@@ -513,14 +518,17 @@ const config = {
     dir: env('PA_BACKUP_DIR', path.join(dataDir, 'backups')),
     keep: envInt('PA_BACKUP_KEEP', 14),
     everyHours: envInt('PA_BACKUP_EVERY_HOURS', 24),
-    // The distro that hosts Postgres; pg_dump runs inside it.
+    // The distro that hosts Postgres on Windows; pg_dump runs inside it.
     wslDistro: env('PA_WSL_DISTRO', 'Ubuntu'),
+    // How pg_dump/pg_restore are reached: 'wsl:<distro>' (Windows), 'native',
+    // or 'docker:<container>' (the compose store). Default per platform.
+    pgTools: env('PA_PG_TOOLS', null) || platform.defaults.pgTools({ wslDistro: env('PA_WSL_DISTRO', 'Ubuntu') }),
   },
 };
 
 // ------------------------------------------------------------- secrets ----
-// `secret(name)`: a credential, resolved real env → Windows Credential
-// Manager → `.env` (this tool's, then the repo root's). Same rule as above:
+// `secret(name)`: a credential, resolved real env → the OS vault (Windows
+// Credential Manager, the Linux Secret Service) → `.env` (this tool's, then the repo root's). Same rule as above:
 // nothing secret has a default, a missing one is null and its feature reports
 // itself "not configured".
 //
