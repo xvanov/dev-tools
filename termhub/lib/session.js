@@ -11,6 +11,7 @@ const opencodeModel = require('./opencodeModel');
 const opencodeApi = require('./opencodeApi');
 const { injectAfterClaudeExe, injectAfterOpencodeExe } = require('./restore');
 const { ScreenMirror } = require('./screenMirror');
+const { applyEnvSpec } = require('./sessionEnv');
 
 // How often to actually shell out to `opencode export` to refresh a session's
 // model (lib/opencodeModel.js's getModel is a ~1.4s subprocess spawn — far too
@@ -130,8 +131,10 @@ function genId() {
 }
 
 class Session {
-  constructor({ cwd, command, title, cols, rows, maxBytes, onExit, onInputLine, agentSessionId } = {}) {
+  constructor({ cwd, command, title, cols, rows, maxBytes, onExit, onInputLine, agentSessionId, envSpec } = {}) {
     this.id = genId();
+    // Variables set/removed on top of termhub's own environment (lib/sessionEnv.js).
+    this.envSpec = envSpec || null;
     this.shell = defaultShell();
     const resolved = resolveCwd(cwd);
     this.cwd = resolved.cwd;
@@ -269,12 +272,14 @@ class Session {
     // Only the parent-identity vars go; user preferences (CLAUDE_CONFIG_DIR,
     // CLAUDE_CODE_ENABLE_TELEMETRY, …) are deliberately left alone.
     for (const key of PARENT_AGENT_ENV) delete env[key];
+    // Last, so a caller's removals hold over everything above.
+    const spawnEnv = applyEnvSpec(env, this.envSpec);
     this.pty = pty.spawn(this.shell, [], {
       name: 'xterm-256color',
       cols: this.cols,
       rows: this.rows,
       cwd: this.cwd,
-      env,
+      env: spawnEnv,
     });
     this.alive = true;
 
@@ -455,6 +460,7 @@ class Session {
       shell: this.shell,
       kind: this.kind,
       agentSessionId: this.agentSessionId,
+      envSpec: this.envSpec,
       created: this.created,
       endedAt: null,
       history: [],

@@ -37,6 +37,7 @@ const { VoiceHub, wakeWord: voiceWakeWord } = require('./lib/voiceHub');
 const { IdleHub } = require('./lib/idleHub');
 const idleStore = require('./lib/idleStore');
 const { checkRequest, checkUpgrade, refuseUpgrade } = require('./lib/requestGuard');
+const { parseEnvSpec } = require('./lib/sessionEnv');
 
 // A pasted/dropped image, base64-inflated in transit — cap comfortably above a
 // full-screen screenshot (a few MB as PNG) while still bounding memory use.
@@ -278,6 +279,9 @@ function createSessiond({ entry = 'sessiond', port: serverPort = DEFAULT_SESSION
           machine: MACHINE_NAME,
           platform: process.platform,
           home: os.homedir(),
+          // What this build can do that an older one cannot; read by callers
+          // that must refuse rather than degrade (lib/sessionEnv.js).
+          features: ['session-env'],
           clipboardImage: canClip,
           limits: {
             imageBytes: canClip ? MAX_CLIPBOARD_IMAGE_BYTES : MAX_UPLOAD_FILE_BYTES,
@@ -303,7 +307,9 @@ function createSessiond({ entry = 'sessiond', port: serverPort = DEFAULT_SESSION
 
       if (req.method === 'POST' && pathname === '/api/sessions') {
         const body = await readBody(req);
-        const session = new Session({ cwd: body.cwd, command: body.command, title: body.title, cols: body.cols, rows: body.rows });
+        const envReq = parseEnvSpec(body);
+        if (envReq.error) return sendJson(res, 400, { error: envReq.error });
+        const session = new Session({ cwd: body.cwd, command: body.command, title: body.title, cols: body.cols, rows: body.rows, envSpec: envReq.spec });
         trackSession(session);
         warnIfClaudeCliStale(session);
         sessions.set(session.id, session);
@@ -311,7 +317,9 @@ function createSessiond({ entry = 'sessiond', port: serverPort = DEFAULT_SESSION
         // The resolved path, not the typed one — see resolveCwd() for why a
         // drive-less `\repos\x` must not be offered back as a recent.
         if (body.cwd && !session.cwdFallback) recents.add(session.cwd);
-        return sendJson(res, 201, session.info());
+        // envApplied: the caller asked for env changes and they are in the PTY's
+        // environment — the personal assistant refuses a no-push run without it.
+        return sendJson(res, 201, envReq.spec ? { ...session.info(), envApplied: true } : session.info());
       }
 
       // Type into a live session without holding a websocket open. The contract
@@ -339,6 +347,7 @@ function createSessiond({ entry = 'sessiond', port: serverPort = DEFAULT_SESSION
         const session = new Session({
           cwd: entry.cwd, command, title: entry.title, cols: body.cols, rows: body.rows,
           agentSessionId: (entry.kind === 'claude' || entry.kind === 'opencode') ? entry.agentSessionId : null,
+          envSpec: entry.envSpec || null, // a no-push run comes back without credentials too
         });
         trackSession(session);
         warnIfClaudeCliStale(session); // restore is exactly where a stale CLI bites
@@ -638,6 +647,7 @@ function createSessiond({ entry = 'sessiond', port: serverPort = DEFAULT_SESSION
         const session = new Session({
           cwd: entry.cwd, command, title: entry.title, cols: body.cols, rows: body.rows,
           agentSessionId: (entry.kind === 'claude' || entry.kind === 'opencode') ? entry.agentSessionId : null,
+          envSpec: entry.envSpec || null, // a no-push run comes back without credentials too
         });
         trackSession(session);
         warnIfClaudeCliStale(session);
