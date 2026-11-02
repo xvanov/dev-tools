@@ -170,11 +170,16 @@ async function openSession(itemId) {
   const open = (await hub.listSessions().catch(() => [])).find((s) => s.agentSessionId === info.id);
   if (open) return { ok: true, url: `${hub.base}/#session=${encodeURIComponent(open.id)}`, resumed: false };
   const exe = String(config.termhub.claudeCommand || 'claude').trim().split(/\s+/)[0] || 'claude';
-  const created = await hub.createSession({
+  const spec = {
     cwd: info.cwd,
     command: `${exe} --resume ${info.id}`,
     title: String(item.subject || 'Claude session').slice(0, 60),
-  });
+  };
+  // A dispatched run that may not push is resumed as it was started: without
+  // push credentials (src/dispatch/remote.js), or not at all.
+  const run = await one(`select mode from run where worktree_path = $1 order by started_at desc limit 1`, [info.cwd]).catch(() => null);
+  const mayPush = !run || require('../dispatch/modes').mode(run.mode).mayPush;
+  const created = mayPush ? await hub.createSession(spec) : await require('../dispatch/remote').createNoPushSession(hub, spec, machine);
   return { ok: true, url: `${hub.base}/#session=${encodeURIComponent(created.id)}`, resumed: true };
 }
 

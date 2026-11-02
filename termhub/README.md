@@ -536,6 +536,7 @@ On Linux set these with `systemctl --user edit termhub`; on Windows via `setx` +
 | `lib/opencodeApi.js` | Talks to an opencode TUI's own HTTP API (termhub launches each with `--port`): model, turns, and its event stream |
 | `lib/opencodeModel.js` | Fallback for an opencode session with no API port — reads the model via `opencode export` |
 | `lib/exec.js` | `POST /api/exec`: runs one argv (no shell) with a cwd, timeout and output cap and returns `{code, stdout, stderr}` — how the personal assistant makes another machine do something without typing at a shell |
+| `lib/sessionEnv.js` | `POST /api/sessions {env?, unsetEnv?}`: variables set/removed on top of termhub's own environment for that session (and kept for its restore), answered with `envApplied: true` — how the personal assistant starts a run that may not push without push credentials |
 | `lib/requestGuard.js` | The browser guard on every `/api/*`, `/pa/*` and `/ws/*` request, on both tiers: `Host` must name this machine (DNS rebinding), no foreign `Origin` (CSRF, websocket hijacking), and a state-changing request needs `X-Termhub: 1` and a non-form Content-Type (`/api/exec`: JSON only) |
 | `lib/transcripts.js` | Read-only `/api/claude/transcripts` + `/api/claude/transcript`: lists and serves `~/.claude/projects/*/*.jsonl` for the personal assistant on another machine |
 | `lib/claudeTranscript.js` | Reads the last turn from that transcript and decides whether it's waiting on you |

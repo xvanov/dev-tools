@@ -61,16 +61,21 @@ function client(baseUrl) {
     return payload?.sessions || payload || [];
   }
 
-  async function createSession({ cwd, command, title, cols = 120, rows = 34 }) {
-    const payload = await api('/api/sessions', {
-      method: 'POST',
-      body: { cwd, command, title, cols, rows },
-    });
+  // `env` / `unsetEnv` change the session's environment from termhub's own
+  // (a no-push run starts without push credentials, src/dispatch/remote.js).
+  // `envApplied` is true only when termhub says it applied them: an older
+  // termhub ignores the fields, and the caller must not take that on trust.
+  async function createSession({ cwd, command, title, cols = 120, rows = 34, env = null, unsetEnv = null }) {
+    const body = { cwd, command, title, cols, rows };
+    if (env) body.env = env;
+    if (unsetEnv) body.unsetEnv = unsetEnv;
+    const payload = await api('/api/sessions', { method: 'POST', body });
     // termhub has answered with both shapes across versions; accept either rather
     // than pin a version we would then have to keep in step.
     const id = payload?.id || payload?.session?.id;
     if (!id) throw new Error('termhub did not return a session id');
-    return { id, raw: payload };
+    const applied = payload?.envApplied || payload?.session?.envApplied;
+    return { id, raw: payload, envApplied: Boolean((env || unsetEnv) && applied === true) };
   }
 
   async function killSession(id) {

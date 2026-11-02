@@ -60,8 +60,8 @@ async function gather({ horizonDays = 7 } = {}) {
   );
 
   const runsReview = await rows(
-    `select id, task, mode, repo_path, mr_url, ended_at
-       from run where status = 'done'
+    `select id, task, mode, status, exit_note, repo_path, mr_url, ended_at
+       from run where status in ('done', 'blocked')
       order by ended_at desc nulls last limit 10`
   );
 

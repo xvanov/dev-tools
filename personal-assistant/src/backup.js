@@ -92,13 +92,36 @@ function containerUrl(url) {
   return u.toString();
 }
 
+// Pure: the store's URL without its password, and the password. The password
+// travels as PGPASSWORD in the tool's environment, never on its command line
+// (which `ps` shows to every user on the machine).
+function splitPassword(url) {
+  const u = new URL(url);
+  const password = u.password ? decodeURIComponent(u.password) : null;
+  u.password = '';
+  return { url: u.toString(), password };
+}
+
 // Pure: the process that runs `program args` against the store for this
 // mode. Paths among the args must already be in the program's view of the
-// filesystem (the distro's /mnt path, the container's /tmp copy).
-function toolCommand(tools, program, args) {
-  if (tools.mode === 'wsl') return { cmd: 'wsl.exe', args: ['-d', tools.distro, '--exec', program, ...args] };
-  if (tools.mode === 'docker') return { cmd: 'docker', args: ['exec', tools.container, program, ...args] };
-  return { cmd: program, args };
+// filesystem (the distro's /mnt path, the container's /tmp copy). With a
+// `password`, it reaches the program as PGPASSWORD: in this process's env for
+// a native tool, named (no value) with `docker exec -e` so the docker CLI
+// passes its own copy, and through WSLENV into the distro.
+function toolCommand(tools, program, args, { password = null } = {}) {
+  const env = password ? { PGPASSWORD: password } : null;
+  if (tools.mode === 'wsl') {
+    const wslenv = env ? { ...env, WSLENV: [process.env.WSLENV, 'PGPASSWORD/u'].filter(Boolean).join(':') } : null;
+    return withEnv({ cmd: 'wsl.exe', args: ['-d', tools.distro, '--exec', program, ...args] }, wslenv);
+  }
+  if (tools.mode === 'docker') {
+    return withEnv({ cmd: 'docker', args: ['exec', ...(env ? ['-e', 'PGPASSWORD'] : []), tools.container, program, ...args] }, env);
+  }
+  return withEnv({ cmd: program, args }, env);
+}
+
+function withEnv(command, env) {
+  return env ? { ...command, env } : command;
 }
 
 // Pure: the dump step. The docker one prints the archive on stdout, which is
@@ -106,20 +129,23 @@ function toolCommand(tools, program, args) {
 function dumpCommand(tools, { url, file }) {
   const base = ['--format=custom', '--compress=6'];
   if (tools.mode === 'docker') {
-    return { ...toolCommand(tools, 'pg_dump', [...base, `--dbname=${containerUrl(url)}`]), stdoutFile: file };
+    const c = splitPassword(containerUrl(url));
+    return { ...toolCommand(tools, 'pg_dump', [...base, `--dbname=${c.url}`], c), stdoutFile: file };
   }
   const target = tools.mode === 'wsl' ? wslPath(file) : file;
-  return toolCommand(tools, 'pg_dump', [...base, `--dbname=${url}`, `--file=${target}`]);
+  const c = splitPassword(url);
+  return toolCommand(tools, 'pg_dump', [...base, `--dbname=${c.url}`, `--file=${target}`], c);
 }
 
 // Runs one command; with `stdoutFile`, its stdout goes to that file.
-function runTool({ cmd, args, stdoutFile }, { timeoutMs = 30 * 60_000 } = {}) {
+function runTool({ cmd, args, stdoutFile, env }, { timeoutMs = 30 * 60_000 } = {}) {
+  const childEnv = env ? { ...process.env, ...env } : process.env;
   if (!stdoutFile) {
-    return exec(cmd, args, { timeout: timeoutMs, maxBuffer: 16 * 1024 * 1024, windowsHide: true });
+    return exec(cmd, args, { timeout: timeoutMs, maxBuffer: 16 * 1024 * 1024, windowsHide: true, env: childEnv });
   }
   return new Promise((resolve, reject) => {
     const outFile = fs.createWriteStream(stdoutFile);
-    const child = spawn(cmd, args, { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+    const child = spawn(cmd, args, { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, env: childEnv });
     let stderr = '';
     const timer = setTimeout(() => child.kill('SIGKILL'), timeoutMs);
     child.stdout.pipe(outFile);
@@ -191,6 +217,7 @@ async function restore(file) {
     const { stdout } = await runTool(toolCommand(tools, 'pg_restore', ['--list', view(file)]));
     fs.writeFileSync(listFile, restoreList(stdout));
     if (inside) await runTool({ cmd: 'docker', args: ['cp', listFile, `${tools.container}:${view(listFile)}`] });
+    const db = splitPassword(tools.mode === 'docker' ? containerUrl(config.databaseUrl) : config.databaseUrl);
     await runTool(
       toolCommand(tools, 'pg_restore', [
         '--clean',
@@ -198,9 +225,9 @@ async function restore(file) {
         '--no-owner',
         '--single-transaction',
         `--use-list=${view(listFile)}`,
-        `--dbname=${tools.mode === 'docker' ? containerUrl(config.databaseUrl) : config.databaseUrl}`,
+        `--dbname=${db.url}`,
         view(file),
-      ])
+      ], db)
     );
   } catch (err) {
     throw new Error(`pg_restore failed: ${(err.stderr || err.message).trim().slice(0, 500)}`);
@@ -251,4 +278,4 @@ async function toolsCheck() {
   return { ok: true, detail: `pg_dump ${client || '?'}` };
 }
 
-module.exports = { dump, dumpIfDue, restore, reingest, list, toPrune, stamp, wslPath, restoreList, parseTools, containerUrl, dumpCommand, toolCommand, toolsCheck };
+module.exports = { dump, dumpIfDue, restore, reingest, list, toPrune, stamp, wslPath, restoreList, parseTools, containerUrl, dumpCommand, toolCommand, toolsCheck, splitPassword };

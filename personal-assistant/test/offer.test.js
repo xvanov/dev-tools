@@ -165,6 +165,13 @@ const proposals = require('../src/proposals');
   assert.deepStrictEqual([research.payload.delivery, research.payload.mode], [null, 'plan']);
   assert.match(research.body, /read-only research/);
 
+  // `pa propose` / `--preview` compose before anyone said yes: under the daily budget.
+  assert.ok(require('../src/config').config.budget.discretionary.includes('propose'));
+  const cli = fs.readFileSync(path.join(__dirname, '..', 'src', 'cli', 'index.js'), 'utf8');
+  const prop = cli.slice(cli.indexOf('async propose('), cli.indexOf('async delivery('));
+  assert.ok(prop.indexOf("allow('propose')") > 0 && prop.indexOf("allow('propose')") < prop.indexOf('.propose(o)'), 'budget asked before the card is composed');
+  const noModel = await offer.prepare({ commitmentId: 31, via: 'factory', useModel: false });
+  assert.strictEqual(noModel.payload.briefBy, 'compose:fallback');
   fs.rmSync(tmp, { recursive: true, force: true });
   console.log('offer ok');
 })().catch((err) => {

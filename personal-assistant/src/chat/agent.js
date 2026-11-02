@@ -10,16 +10,27 @@
 //
 //  - **claude** reads .claude/settings.json (src/chat/index.js). The command
 //    must not skip permissions; chatCommand() refuses one that does.
-//  - **opencode** reads opencode.json in the chat's home, written here from the
-//    same command lists. opencode's defaults allow nearly everything, so the
-//    rules start with `"*": "ask"` and only then allow; the last matching rule
-//    wins. Subagents (`task`) are denied — a subagent would run under its own
-//    ruleset — and so is `--auto`. Because a project config can be ignored
+//  - **opencode** reads opencode.json in the chat's home, written here.
+//    opencode's defaults allow nearly everything, so the rules start with
+//    `"*": "ask"`; the last matching rule wins. **Every shell command asks**,
+//    with no allow-pattern at all: a pattern is matched against opencode's own
+//    reading of the command line, which this file cannot reproduce, and every
+//    allow-pattern we tried was a way round it (`export NODE_OPTIONS=…; pa
+//    brief`, a bare `> file`, `{ …; } > f`). The read-only `pa` verbs reach
+//    the chat as the MCP tool `pa` instead (src/mcp/server.js, on only for
+//    this chat), where they are an enum, not a command line. The verbs that
+//    act stay shell commands behind the prompt, through one launcher per verb
+//    (`bin/pa-do`, …, written by src/chat/index.js) so that opencode's "Allow
+//    always" — which saves the command's first word + ` *`, cannot be switched
+//    off, and outranks the config — approves at most that one verb, never
+//    `node *`. Subagents (`task`) are denied — a subagent would run under its
+//    own ruleset — and so is `--auto`. Because a project config can be ignored
 //    (OPENCODE_DISABLE_PROJECT_CONFIG) or outranked, the rules are not taken
 //    on trust: verifyOpencodePermissions() asks opencode itself for the
-//    resolved ruleset (`opencode debug agent <name>`) and checks the outcomes
-//    that matter. `pa chat` will not start an opencode chat that fails it, and
-//    `pa doctor` reports it.
+//    resolved ruleset (`opencode debug agent <name>`) and checks its SHAPE —
+//    nothing after the bash catch-all may allow a shell command — as well as
+//    the outcomes that matter. `pa chat` will not start an opencode chat that
+//    fails it, and `pa doctor` reports it.
 
 const path = require('path');
 const { execFile } = require('child_process');
@@ -29,6 +40,8 @@ const { agentOf, hasFlag, modelArg, AGENTS } = require('../agentCli');
 // Flags that would take the chat out from behind its prompts.
 const CLAUDE_UNSAFE = ['--dangerously-skip-permissions', '--allow-dangerously-skip-permissions', '--allowedTools', '--allowed-tools'];
 const OPENCODE_UNSAFE = ['--auto'];
+// `--permission-mode` values that keep every prompt.
+const SAFE_PERMISSION_MODES = ['default', 'plan'];
 
 /**
  * Pure. The chat's command line: { agent, model, command }. Throws when the
@@ -48,7 +61,10 @@ function chatCommand({ agent = config.chat.agent, model = config.chat.model, com
     line = kind;
   }
   if (kind === 'claude') {
-    if (hasFlag(line, ...CLAUDE_UNSAFE) || /--permission-mode[\s=]+bypassPermissions/i.test(line)) {
+    // Only the modes that still ask: acceptEdits, dontAsk, auto and
+    // bypassPermissions each let an action through without the prompt.
+    const modes = [...line.matchAll(/(?:^|\s)--permission-mode(?:[\s=]+(\S+))?/gi)].map((m) => String(m[1] || ''));
+    if (hasFlag(line, ...CLAUDE_UNSAFE) || modes.some((v) => !SAFE_PERMISSION_MODES.includes(v.toLowerCase()))) {
       throw new Error('the PA chat must not skip permissions (it reads other people\'s messages) — remove the flag from PA_CHAT_COMMAND');
     }
   } else {
@@ -69,22 +85,15 @@ function chatCommand({ agent = config.chat.agent, model = config.chat.model, com
 
 // ---------------------------------------------------- opencode rules ----
 
-function paPatterns(pa, c) {
-  // "x *" matches x with arguments; opencode also needs the bare form.
-  return [`${pa} ${c}`, `${pa} ${c} *`];
-}
+// The MCP tool that carries the read-only `pa` verbs (src/mcp/server.js).
+const PA_TOOL = 'pa';
+// Set only in the chat's opencode.json: the shared MCP server lists the tool
+// for this chat and for no other session.
+const PA_TOOL_ENV = 'PA_MCP_CHAT_TOOLS';
 
 /** Pure. The permission ruleset for every agent in the chat's opencode. */
 function opencodeRules() {
   const chat = require('./index');
-  const pa = chat.paCommand();
-  const bash = { '*': 'ask' };
-  for (const c of chat.ALLOW_COMMANDS) for (const p of paPatterns(pa, c)) bash[p] = 'allow';
-  for (const c of chat.ASK_COMMANDS) for (const p of paPatterns(pa, c)) bash[p] = 'ask';
-  // Last, so it outranks every allow: a redirect writes a file, whatever the
-  // command in front of it. (opencode checks each command of a chain or a
-  // substitution on its own; a redirect stays on the command's text.)
-  bash['*>*'] = 'ask';
   const rules = {
     '*': 'ask',
     read: { '*': 'allow', '*.env': 'ask', '*.env.*': 'ask' },
@@ -98,9 +107,11 @@ function opencodeRules() {
     websearch: 'ask',
     external_directory: 'ask',
     task: 'deny',
-    bash,
+    // Every shell command asks. No allow-pattern: see the header.
+    bash: 'ask',
   };
   for (const t of chat.ALLOW_MCP_TOOLS) rules[`personal-assistant_${t}`] = 'allow';
+  rules[`personal-assistant_${PA_TOOL}`] = 'allow';
   return rules;
 }
 
@@ -113,7 +124,9 @@ function opencodeConfig() {
     default_agent: 'pa',
     // The user's own additions, as for Claude Code.
     instructions: ['CLAUDE.local.md'],
-    mcp: { 'personal-assistant': { type: 'local', command: ['node', server], enabled: true } },
+    mcp: {
+      'personal-assistant': { type: 'local', command: ['node', server], enabled: true, environment: { [PA_TOOL_ENV]: '1' } },
+    },
     // Top level and on every primary agent: switching agents in the TUI must
     // not switch the rules off.
     permission: rules,
@@ -145,14 +158,20 @@ function evaluate(ruleset, permission, pattern) {
 /** Pure. The outcomes the chat's guarantee rests on, as [permission, pattern, wanted]. */
 function probes(pa = require('./index').paCommand()) {
   return [
-    ['bash', `${pa} brief`, 'allow'],
-    ['bash', `${pa} search "renewal"`, 'allow'],
+    // Every shell command asks — the read-only ones too (they are the `pa`
+    // tool now), and the ways round an allow-pattern that once worked.
+    ['bash', `${pa} brief`, 'ask'],
+    ['bash', `${pa} search "renewal"`, 'ask'],
+    ['bash', `export NODE_OPTIONS='--import data:text/javascript,x'; ${pa} brief`, 'ask'],
+    ['bash', '> notes.txt', 'ask'],
+    ['bash', `{ ${pa} brief; } > notes.txt`, 'ask'],
+    ['bash', `for i in 1; do ${pa} brief; done >> notes.txt`, 'ask'],
     ['bash', `${pa} do --task "x" --mode local`, 'ask'],
+    ['bash', 'bin/pa-do --task "x" --mode local', 'ask'],
     ['bash', `${pa} done 12`, 'ask'],
-    ['bash', `${pa} notify feedback 4 down`, 'ask'],
     ['bash', `${pa} answer 9 yes --delivery push_to_main`, 'ask'],
-    ['bash', `${pa} delivery set acme/widget auto_merge`, 'ask'],
-    ['bash', `${pa} propose --task "x" --delivery draft_pr`, 'allow'],
+    ['bash', 'bin/pa-delivery-set acme/widget auto_merge', 'ask'],
+    ['bash', `${pa} propose --task "x" --delivery draft_pr`, 'ask'],
     ['bash', `${pa} brief > notes.txt`, 'ask'],
     ['bash', 'rm -rf build', 'ask'],
     ['bash', 'curl https://example.com', 'ask'],
@@ -161,12 +180,34 @@ function probes(pa = require('./index').paCommand()) {
     ['task', 'general', 'deny'],
     ['personal-assistant_remember', '*', 'ask'],
     ['personal-assistant_recall', '*', 'allow'],
+    [`personal-assistant_${PA_TOOL}`, '*', 'allow'],
   ];
+}
+
+/**
+ * Pure. The shape every shell rule must have, whatever the command text: a
+ * catch-all (`bash` / `*` pattern) that asks or denies, and after it no rule
+ * that could allow a shell command. This is what makes the probes above
+ * independent of how opencode splits a command line — no pattern of ours is
+ * ever matched against it. Problems as strings; [] when it holds.
+ */
+function checkBashShape(name, ruleset) {
+  const list = Array.isArray(ruleset) ? ruleset : [];
+  let last = -1;
+  list.forEach((r, i) => {
+    if (wildcard(r.permission, 'bash') && r.pattern === '*' && (r.action === 'ask' || r.action === 'deny')) last = i;
+  });
+  if (last < 0) return [`${name}: no rule makes every shell command ask`];
+  const out = [];
+  for (const r of list.slice(last + 1)) {
+    if (wildcard(r.permission, 'bash') && r.action === 'allow') out.push(`${name}: bash "${r.pattern}" is allowed after the ask-everything rule (permission "${r.permission}")`);
+  }
+  return out;
 }
 
 /** Pure. Problems with one agent's resolved ruleset; [] when it holds. */
 function checkRuleset(name, ruleset, pa) {
-  const out = [];
+  const out = checkBashShape(name, ruleset);
   for (const [perm, pattern, wanted] of probes(pa)) {
     const got = evaluate(ruleset, perm, pattern);
     const unsafe = wanted !== 'allow' && got === 'allow';
@@ -212,4 +253,7 @@ async function verifyOpencodePermissions(home, { exec = run, env = process.env }
   return { ok: problems.length === 0, problems };
 }
 
-module.exports = { chatCommand, opencodeRules, opencodeConfig, wildcard, evaluate, probes, checkRuleset, verifyOpencodePermissions };
+module.exports = {
+  chatCommand, opencodeRules, opencodeConfig, wildcard, evaluate, probes, checkRuleset, checkBashShape, verifyOpencodePermissions,
+  PA_TOOL, PA_TOOL_ENV,
+};

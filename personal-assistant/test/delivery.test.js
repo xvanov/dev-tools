@@ -151,36 +151,111 @@ async function sessionDelivery() {
 
 // --- run_review carries out the recorded delivery -------------------------------------
 
+// --- the CI gate before a merge or a push to main (pure) ----------------------------------
+
+function ciGateRules() {
+  const M = require('../src/dispatch/merge');
+  const sc = M.summarizeCommit;
+  assert.deepStrictEqual(sc({}), { state: 'none', names: [], failed: [] });
+  assert.strictEqual(sc({ checkRuns: [{ name: 'test', status: 'in_progress' }] }).state, 'pending');
+  assert.strictEqual(sc({ checkRuns: [{ name: 'test', status: 'completed', conclusion: 'success' }, { name: 'lint', status: 'completed', conclusion: 'skipped' }] }).state, 'pass');
+  assert.deepStrictEqual(sc({ checkRuns: [{ name: 'test', status: 'completed', conclusion: 'timed_out' }] }).failed, ['test']);
+  assert.strictEqual(sc({ statuses: [{ context: 'ci/legacy', state: 'error' }] }).state, 'fail');
+  assert.strictEqual(sc({ statuses: [{ context: 'ci/legacy', state: 'pending' }] }).state, 'pending');
+
+  const none = { known: true, contexts: [] };
+  const g = (checks, required, mins) => M.ciGate({ checks: sc(checks), required, elapsedMs: mins * 60_000 });
+  const pass = { checkRuns: [{ name: 'test', status: 'completed', conclusion: 'success' }] };
+  const red = { checkRuns: [{ name: 'test', status: 'completed', conclusion: 'failure' }] };
+  const running = { checkRuns: [{ name: 'test', status: 'queued' }] };
+  assert.deepStrictEqual(g(pass, none, 0), { action: 'proceed' });
+  assert.deepStrictEqual(g(red, none, 0), { action: 'block', reason: 'CI failed: test' });
+  assert.strictEqual(g(running, none, 29).action, 'wait');
+  assert.deepStrictEqual(g(running, none, 30), { action: 'block', reason: 'CI still running after 30 min' }, 'bounded: 30 minutes');
+  // No checks at all: waited for briefly (they register after a push)…
+  assert.strictEqual(g({}, none, 1).action, 'wait');
+  // …then proceed only if the repo provably requires none, and say so.
+  const free = g({}, none, 3);
+  assert.strictEqual(free.action, 'proceed');
+  assert.match(free.note, /no CI checks are configured.*without CI/);
+  assert.match(g({}, { known: false, contexts: [] }, 3).reason, /could not confirm the repo requires none/, 'unreadable rules never count as none');
+  // A required check that never reports blocks; a passing run missing a required check waits.
+  assert.strictEqual(g({}, { known: true, contexts: ['build'] }, 10).action, 'wait');
+  assert.match(g({}, { known: true, contexts: ['build'] }, 30).reason, /required checks never reported in 30 min: build/);
+  assert.strictEqual(g(pass, { known: true, contexts: ['build'] }, 5).action, 'wait');
+  assert.strictEqual(g({ checkRuns: [...pass.checkRuns, { name: 'build', status: 'completed', conclusion: 'success' }] }, { known: true, contexts: ['build'] }, 5).action, 'proceed');
+}
+
+// --- run_review carries out the recorded delivery -------------------------------------
+
 async function runReview() {
   const merge = require('../src/dispatch/merge');
   const did = [];
+  let ci = 'pass';
+  let required = { known: true, contexts: [] };
   merge.ready = async (url) => did.push(['ready', url]);
-  merge.merge = async (url) => did.push(['merge', url]);
-  merge.checks = async () => 'pass';
+  merge.mergeAt = async (url, sha) => did.push(['merge', url, sha]);
+  merge.commitChecks = async (slug, sha) => {
+    did.push(['ci', sha]);
+    return ci === 'pass' ? { state: 'pass', names: ['test'], failed: [] } : ci === 'fail' ? { state: 'fail', names: ['test'], failed: ['test'] } : ci === 'none' ? { state: 'none', names: [], failed: [] } : { state: 'pending', names: ['test'], failed: [] };
+  };
+  merge.requiredChecks = async () => required;
   merge.slugOf = async () => 'acme/widget';
   merge.mayMerge = () => false; // not one of "my" repos: only an explicit auto_merge may merge
   dispatch.review = async () => ({ commits: 'abc1 add retries', stat: '1 file', uncommitted: 0 });
   dispatch.land = async (id, o) => { did.push(['land', o.openMr]); return { mrUrl: o.openMr ? 'https://github.com/acme/widget/pull/5' : null }; };
-  dispatch.pushToMain = async () => { did.push(['main']); return { pushed: true, base: 'main' }; };
+  dispatch.headOf = async () => 'abc1234';
+  dispatch.defaultBranch = async () => 'main';
+  dispatch.pushBranch = async () => { did.push(['branch']); return { sha: 'abc1234', base: 'main', branch: 'pa/1-x' }; };
+  dispatch.pushToMain = async (id, o) => { did.push(['main', o.sha]); return { pushed: true, base: 'main' }; };
+  const blockedRuns = [];
+  dispatch.blockRun = async (id, reason) => { blockedRuns.push(reason); };
   const task = require('../src/durable/tasks/runReview');
+  let slept = 0;
   const ctx = {
     awaitEvent: async () => ({ note: null }),
     step: async (_name, fn) => fn(),
-    sleepFor: async () => {},
+    sleepFor: async () => { slept++; },
   };
   const os = require('os');
   const go = async (delivery, mode = D.modeFor(delivery)) => {
     did.length = 0;
+    blockedRuns.length = 0;
+    slept = 0;
     store.run = { id: 1, status: 'done', mode, task: 'Add retries', commitment_id: null, machine: os.hostname(), mr_url: null, delivery, repo_path: '/r' };
     const r = await task.run({ runId: 1 }, ctx);
     return [r.result, did.map((d) => d.join(':'))];
   };
+  const PR = 'https://github.com/acme/widget/pull/5';
   assert.deepStrictEqual(await go('none'), ['kept local', []], 'none pushes nothing');
   assert.deepStrictEqual(await go('branch'), ['landed', ['land:false']]);
   assert.deepStrictEqual(await go('draft_pr'), ['landed', ['land:true']], 'a draft is never readied');
-  assert.deepStrictEqual(await go('pr'), ['ready', ['land:true', 'ready:https://github.com/acme/widget/pull/5']], 'ready, never merged');
-  assert.deepStrictEqual(await go('auto_merge'), ['merged', ['land:true', 'ready:https://github.com/acme/widget/pull/5', 'merge:https://github.com/acme/widget/pull/5']], 'the operator chose it: merged in any repo');
-  assert.deepStrictEqual(await go('push_to_main'), ['pushed to main', ['main']]);
+  assert.deepStrictEqual(await go('pr'), ['ready', ['land:true', `ready:${PR}`]], 'ready, never merged');
+  assert.deepStrictEqual(await go('auto_merge'), ['merged', ['land:true', 'ci:abc1234', `ready:${PR}`, `merge:${PR}:abc1234`]], 'CI on the PR\'s commit, then that commit merged — in any repo');
+  assert.deepStrictEqual(await go('push_to_main'), ['pushed to main', ['branch', 'ci:abc1234', 'main:abc1234']], 'branch first, CI, then main at that commit');
+
+  // CI red: nothing merged or pushed to main; the run is blocked with the reason.
+  ci = 'fail';
+  assert.deepStrictEqual(await go('push_to_main'), ['blocked', ['branch', 'ci:abc1234']]);
+  assert.match(blockedRuns[0], /CI failed: test.*branch pa\/1-x left.*main not touched/);
+  assert.deepStrictEqual((await go('auto_merge'))[0], 'blocked');
+  assert.match(blockedRuns[0], /CI failed.*PR is left open, not merged/);
+  // CI too slow: bounded at 30 minutes of polls.
+  ci = 'pending';
+  const slow = await go('push_to_main');
+  assert.strictEqual(slow[0], 'blocked');
+  assert.match(blockedRuns[0], /CI still running after 30 min/);
+  assert.ok(!slow[1].some((d) => d.startsWith('main')));
+  assert.strictEqual(slept, 30, 'one poll a minute for 30 minutes');
+  // No checks at all: proceeds only when the repo provably requires none.
+  ci = 'none';
+  assert.deepStrictEqual((await go('push_to_main'))[0], 'pushed to main');
+  required = { known: false, contexts: [] };
+  assert.deepStrictEqual((await go('push_to_main'))[0], 'blocked');
+  assert.match(blockedRuns[0], /could not confirm/);
+  required = { known: true, contexts: [] };
+  ci = 'pass';
+
   // A run from before delivery levels: a draft, and merged only on PA_MERGE_REPOS.
   assert.deepStrictEqual(await go(null, 'local'), ['landed', ['land:true']]);
   // A run on this machine records its hostname; only another machine's is skipped.
@@ -189,12 +264,10 @@ async function runReview() {
   const { config } = require('../src/config');
   config.termhub.machines['some-other-box'] = { name: 'some-other-box', url: 'http://x' };
   assert.deepStrictEqual((await task.run({ runId: 1 }, ctx)).result, 'nothing to land');
-  // A failing check never merges, even on auto_merge.
-  merge.checks = async () => 'fail';
-  assert.deepStrictEqual((await go('auto_merge'))[0], 'not merged');
 }
 
 (async () => {
+  ciGateRules();
   await repoDefaults();
   await sessionDelivery();
   await runReview();

@@ -499,7 +499,7 @@ const config = {
       return Number.isFinite(n) ? n : 15;
     })(),
     essential: env('PA_BUDGET_ESSENTIAL', 'distill,reconcile,connector,reply-close').split(',').map((s) => s.trim()).filter(Boolean),
-    discretionary: env('PA_BUDGET_DISCRETIONARY', 'eager,research,digest,planner,card').split(',').map((s) => s.trim()).filter(Boolean),
+    discretionary: env('PA_BUDGET_DISCRETIONARY', 'eager,research,digest,planner,card,propose').split(',').map((s) => s.trim()).filter(Boolean),
   },
 
   // Recurring typed actions (src/routines). PA_ROUTINES=0 stops the worker

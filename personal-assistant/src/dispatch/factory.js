@@ -124,20 +124,35 @@ async function addApp({ repo, deliveryDefault = null, path: clonePath = null }) 
 
 // The ask and the flow must be files the factory can read, so on another
 // machine they are written there first, through the same runCommand: a fixed
-// Python one-liner (the factory checkout always has Python under uv) that
-// takes base64 contents as arguments — never a shell, never content on a
-// command line it could be read from — and writes them under that machine's
-// temp dir, printing the paths as JSON.
+// Python program (the factory checkout always has Python under uv) that reads
+// the contents as JSON on STDIN — never on a command line, where `ps` shows
+// them and a big brief overflows the argument limit — and writes them into a
+// fresh private directory (mkdtemp: unpredictable name, 0700) with
+// O_CREAT|O_EXCL|O_NOFOLLOW (0600), printing the directory and paths as JSON.
+// The directory is removed once the factory has the job (submit copies both
+// into its direction); CLEANER only removes a directory WRITER could have made.
+const STAGE_PREFIX = 'pa-factory-ask-';
 const WRITER = [
-  'import base64, json, os, sys, tempfile',
-  "d = os.path.join(tempfile.gettempdir(), 'pa-factory-asks', 'run-' + sys.argv[1])",
-  'os.makedirs(d, exist_ok=True)',
+  'import json, os, sys, tempfile',
+  'req = json.loads(sys.stdin.buffer.read().decode("utf-8"))',
+  `d = tempfile.mkdtemp(prefix='${STAGE_PREFIX}' + str(int(req['run'])) + '-')`,
+  'flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0)',
   'out = {}',
-  'for name, b64 in zip(sys.argv[2::2], sys.argv[3::2]):',
+  'for name, text in req["files"].items():',
   '    p = os.path.join(d, os.path.basename(name))',
-  "    open(p, 'wb').write(base64.b64decode(b64))",
+  '    fd = os.open(p, flags, 0o600)',
+  '    with os.fdopen(fd, "wb") as f:',
+  '        f.write(text.encode("utf-8"))',
   '    out[name] = p',
-  "print(json.dumps({'paths': out}))",
+  "print(json.dumps({'dir': d, 'paths': out}))",
+].join('\n');
+const CLEANER = [
+  'import json, os, shutil, sys, tempfile',
+  'd = os.path.realpath(sys.argv[1])',
+  'root = os.path.realpath(tempfile.gettempdir())',
+  `ok = os.path.dirname(d) == root and os.path.basename(d).startswith('${STAGE_PREFIX}') and not os.path.islink(sys.argv[1])`,
+  'if ok: shutil.rmtree(d, ignore_errors=True)',
+  "print(json.dumps({'removed': ok}))",
 ].join('\n');
 
 async function stage(where, runId, files) {
@@ -149,13 +164,21 @@ async function stage(where, runId, files) {
       fs.writeFileSync(p, text, 'utf8');
       out[name] = p;
     }
-    return out;
+    return { paths: out, dir: null };
   }
-  const argv = ['uv', 'run', 'python', '-c', WRITER, String(Number(runId))];
-  for (const [name, text] of Object.entries(files)) argv.push(name, Buffer.from(text, 'utf8').toString('base64'));
-  const r = F.parseResult(await runCommand(where, argv, { cwd: config.factory.path, timeoutMs: config.factory.timeoutMs }));
+  const argv = ['uv', 'run', 'python', '-c', WRITER];
+  const stdin = JSON.stringify({ run: Number(runId), files });
+  const r = F.parseResult(await runCommand(where, argv, { cwd: config.factory.path, timeoutMs: config.factory.timeoutMs, stdin }));
   for (const name of Object.keys(files)) if (!r.paths?.[name]) throw new Error(`could not stage ${name} on ${where}`);
-  return r.paths;
+  return { paths: r.paths, dir: typeof r.dir === 'string' ? r.dir : null };
+}
+
+// Best effort: a leftover private temp dir is litter, not a leak.
+async function unstage(where, dir) {
+  if (!where || !dir) return;
+  await runCommand(where, ['uv', 'run', 'python', '-c', CLEANER, dir], { cwd: config.factory.path, timeoutMs: 60_000 }).catch((err) =>
+    log.warn('could not remove the staged ask on the factory machine', { dir, message: err.message })
+  );
 }
 
 // Submit, retried once on a transport failure (a lost answer): the run id is
@@ -260,10 +283,12 @@ async function start({
 
   let job = null;
   let sent = false;
+  let stagedDir = null;
   try {
-    // Staging is exec.js/remote territory; brief-over-stdin (runCommand's
-    // `stdin` option, fix/pa-security) can replace it without touching this.
-    const staged = await stage(where, run.id, where ? { 'BRIEF.md': ask, 'flow.md': flow } : { 'flow.md': flow });
+    // On another machine the brief and flow travel over runCommand's stdin
+    // into a private mkdtemp dir there (stage/WRITER), never on a command line.
+    const { paths: staged, dir } = await stage(where, run.id, where ? { 'BRIEF.md': ask, 'flow.md': flow } : { 'flow.md': flow });
+    stagedDir = dir;
     sent = true;
     job = await submit(argvFor(staged));
     if (!F.JOB_ID.test(String(job.job_id || ''))) throw new F.FactoryError('bad_output', `job id "${job.job_id}"`);
@@ -275,6 +300,7 @@ async function start({
     // then printed something else.
     const refused = err instanceof F.FactoryError && err.code !== 'bad_output' && !job;
     if (!sent || refused) {
+      await unstage(where, stagedDir);
       await query(
         `update run set status = 'failed', outcome = 'failed', outcome_at = now(), ended_at = now(), exit_note = $2, brief_path = $3, brief_by = $4 where id = $1`,
         [run.id, String(err.message).slice(0, 500), briefPath, by]
@@ -286,6 +312,7 @@ async function start({
     log.warn('job submit did not come back cleanly; reconciling with the factory', { run: run.id, message: String(err.message).slice(0, 200) });
     const settled = await settle({ ...run, brief_path: briefPath }, { jobId: job?.job_id || null, ageMs: 0, note: err.message, extra: { delivery: chosen.delivery, pipe, briefPath, by } });
     if (settled.verdict !== 'adopt') {
+      // The staged files stay: a submit still running there may yet read them.
       return {
         id: run.id, route: 'factory', mode: runMode, jobId: null, submitUnknown: true, app, delivery: chosen.delivery,
         deliveryRequested: chosen.delivery, deliverySource: chosen.source, deliveryPhrase: chosen.phrase, pipeline: pipe,
@@ -296,6 +323,7 @@ async function start({
     job = settled.job;
   }
 
+  await unstage(where, stagedDir);
   const warnings = Array.isArray(job.warnings) ? job.warnings.map((w) => F.clip(w, 300)).slice(0, 20) : [];
   if (warnings.length) log.warn('factory accepted the job with warnings', { run: run.id, job: job.job_id, warnings });
   if (commitmentId) {

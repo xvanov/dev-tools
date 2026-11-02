@@ -318,7 +318,7 @@ let answers = {};
 factory._setRunner(async (machine, argv, opts) => {
   calls.push({ machine, argv, opts });
   const key = argv[2] === 'python' ? 'python -c' : argv.slice(3, 5).join(' ');
-  const a = typeof answers[key] === 'function' ? answers[key](argv) : answers[key];
+  const a = typeof answers[key] === 'function' ? answers[key](argv, opts) : answers[key];
   if (!a) throw new Error(`unexpected factory call ${argv.join(' ')}`);
   return a;
 });
@@ -384,7 +384,9 @@ async function factoryStart() {
   assert.deepStrictEqual([JSON.parse(rec.params[5]), rec.params[6]], [['no api_spec.md; flow only'], 'factory warned: no api_spec.md; flow only']);
 
   // A factory on another machine: ask and flow are written THERE, through
-  // runCommand and a fixed python writer (run for real here), then submitted by path.
+  // runCommand and a fixed python writer (run for real here) that reads them
+  // on STDIN into a fresh private directory, then submitted by path, then the
+  // directory is removed.
   {
     const { config } = require('../src/config');
     const { execFileSync } = require('child_process');
@@ -392,21 +394,53 @@ async function factoryStart() {
     config.termhub.machines.forge = { name: 'forge', url: 'http://forge:7000', reposRoot: '/home/k' };
     config.factory.machine = 'forge';
     calls.length = 0;
+    const py = (argv, opts) => ({
+      code: 0,
+      stdout: execFileSync('python3', argv.slice(3), { input: opts.stdin || '', env: { ...process.env, TMPDIR: otherTmp } }).toString(),
+      stderr: '',
+    });
+    let seen = null;
     answers = {
-      'python -c': (argv) => ({ code: 0, stdout: execFileSync('python3', argv.slice(3), { env: { ...process.env, TMPDIR: otherTmp } }).toString(), stderr: '' }),
-      'job submit': json({ job_id: 'widget:022', delivery: 'draft_pr', created: true }),
+      'python -c': py,
+      'job submit': (argv) => {
+        const ask = argv[argv.indexOf('--ask-file') + 1];
+        const flowPath = argv[argv.indexOf('--flow-file') + 1];
+        seen = { ask, flowPath, askText: fs.readFileSync(ask, 'utf8'), flowText: fs.readFileSync(flowPath, 'utf8'), mode: fs.statSync(path.dirname(ask)).mode & 0o777 };
+        return json({ job_id: 'widget:022', delivery: 'draft_pr', created: true });
+      },
     };
     const remote = await factory.start({ target, app: 'widget', mode: 'mr', done: ['retries tested'] });
     config.factory.machine = '';
-    assert.deepStrictEqual(calls.map((c) => c.machine), ['forge', 'forge']);
-    assert.ok(!calls[0].argv.some((a) => /Add retries to the export/.test(a)), 'contents travel base64, never readable on a command line');
-    const sub = calls[1].argv;
-    const ask = sub[sub.indexOf('--ask-file') + 1];
-    const flowPath = sub[sub.indexOf('--flow-file') + 1];
-    assert.ok(ask.startsWith(otherTmp) && flowPath.startsWith(otherTmp), 'paths on the factory machine');
-    assert.match(fs.readFileSync(ask, 'utf8'), /Delivery: `draft_pr`/);
-    assert.match(fs.readFileSync(flowPath, 'utf8'), /Check: retries tested/);
+    assert.deepStrictEqual(calls.map((c) => c.machine), ['forge', 'forge', 'forge'], 'stage, submit, clean up');
+    assert.ok(!calls[0].argv.some((a) => /Add retries to the export/.test(a)), 'contents never on a command line');
+    assert.ok(!calls[0].argv.some((a) => a.length > 2000 && /^[A-Za-z0-9+/=]+$/.test(a)), 'not base64 on argv either');
+    assert.match(calls[0].opts.stdin, /Add retries to the export/, 'contents travel on stdin');
+    assert.ok(seen.ask.startsWith(otherTmp) && seen.flowPath.startsWith(otherTmp), 'paths on the factory machine');
+    assert.match(path.basename(path.dirname(seen.ask)), /^pa-factory-ask-7-.+/, 'a fresh, unpredictable directory per run');
+    assert.strictEqual(seen.mode, 0o700, 'private to the user');
+    assert.match(seen.askText, /Delivery: `draft_pr`/);
+    assert.match(seen.flowText, /Check: retries tested/);
+    assert.ok(!fs.existsSync(path.dirname(seen.ask)), 'removed once the factory has the job');
     assert.strictEqual(remote.machine, 'forge');
+
+    // A brief far past the ~96 KB a command line carries is staged whole.
+    const big = 'x'.repeat(300 * 1024);
+    const bigOut = JSON.parse(py(['uv', 'run', 'python', '-c', calls[0].argv[4]], { stdin: JSON.stringify({ run: 9, files: { 'BRIEF.md': big } }) }).stdout);
+    assert.strictEqual(fs.readFileSync(bigOut.paths['BRIEF.md'], 'utf8').length, big.length);
+    // O_EXCL|O_NOFOLLOW: a planted symlink is never written through.
+    const victim = path.join(otherTmp, 'victim');
+    fs.writeFileSync(victim, 'keep');
+    const link = path.join(bigOut.dir, 'flow.md');
+    fs.symlinkSync(victim, link);
+    const writer = calls[0].argv[4];
+    const planted = writer.replace("d = tempfile.mkdtemp(prefix='pa-factory-ask-' + str(int(req['run'])) + '-')", `d = ${JSON.stringify(bigOut.dir)}`);
+    assert.notStrictEqual(planted, writer);
+    assert.throws(() => execFileSync('python3', ['-c', planted], { input: JSON.stringify({ run: 9, files: { 'flow.md': 'evil' } }), stdio: ['pipe', 'pipe', 'pipe'] }));
+    assert.strictEqual(fs.readFileSync(victim, 'utf8'), 'keep');
+    // The cleaner refuses anything that is not a staged directory.
+    const cleanerArgv = calls[2].argv;
+    assert.strictEqual(JSON.parse(py([...cleanerArgv.slice(0, 5), victim], {}).stdout).removed, false);
+    assert.ok(fs.existsSync(victim));
     fs.rmSync(otherTmp, { recursive: true, force: true });
   }
 

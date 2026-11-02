@@ -799,7 +799,7 @@ function render(s) {
   const runs = [...s.runsActive.map((r) => ({ ...r, live: true })), ...s.runsReview];
   fill('runs', runs, (r) => el('div', { class: 'item' },
     el('div', { class: 'sum' }, r.task),
-    el('div', { class: 'sub' }, ...joinParts([`run #${r.id}`, r.live ? r.status : 'done — review', r.mode,
+    el('div', { class: 'sub' }, ...joinParts([`run #${r.id}`, r.live ? r.status : r.status === 'blocked' ? `blocked — ${r.exit_note || 'see pa review'}` : 'done — review', r.mode,
       r.route === 'factory' ? `factory ${r.factory_job_id || ''}${r.factory_state ? ` · ${r.factory_state}` : ''}` : null,
       r.repo_path, link(r.mr_url, 'MR')]))), 'No agent runs.');
 

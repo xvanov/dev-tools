@@ -32,6 +32,10 @@ const notifyChat = require('../src/notify/chat');
   assert.throws(() => modelArg('opencode', 'cli/claude-opus-5'), /cli\//);
   assert.throws(() => modelArg('opencode', 'azure/gpt; rm -rf ~'), /command line/);
   assert.throws(() => modelArg('claude', 'claude-opus-5 --dangerously-skip-permissions'), /command line/);
+  // A leading '-' would be read as the next flag after --model.
+  assert.throws(() => modelArg('claude', '--dangerously-skip-permissions'), /command line/);
+  assert.throws(() => modelArg('opencode', '-x/y'), /command line/);
+  assert.throws(() => modelArg('opencode', '--auto'), /command line/);
   assert.strictEqual(modelArg('claude', null), null);
 }
 
@@ -48,6 +52,14 @@ const notifyChat = require('../src/notify/chat');
   // Never without permission prompts.
   assert.throws(() => cmd({ command: 'claude --dangerously-skip-permissions' }), /must not skip permissions/);
   assert.throws(() => cmd({ command: 'claude --permission-mode bypassPermissions' }), /must not skip permissions/);
+  // Every permission mode that lets an action through without the prompt.
+  for (const m of ['acceptEdits', 'dontAsk', 'auto', 'bypassPermissions', 'AcceptEdits', '']) {
+    assert.throws(() => cmd({ command: `claude --permission-mode ${m}` }), /must not skip permissions/, m);
+    assert.throws(() => cmd({ command: `claude --permission-mode=${m}` }), /must not skip permissions/, m);
+  }
+  assert.throws(() => cmd({ command: 'claude --permission-mode plan --permission-mode acceptEdits' }), /must not skip permissions/);
+  assert.strictEqual(cmd({ command: 'claude --permission-mode plan' }).agent, 'claude');
+  assert.strictEqual(cmd({ command: 'claude --permission-mode default' }).agent, 'claude');
   assert.throws(() => cmd({ command: 'claude --allowedTools Bash' }), /must not skip permissions/);
   assert.throws(() => cmd({ command: 'opencode --auto' }), /--auto/);
   assert.throws(() => cmd({ command: 'opencode --agent build' }), /"pa" agent/);
@@ -69,22 +81,20 @@ const notifyChat = require('../src/notify/chat');
   assert.strictEqual(keys[0], '*', 'the catch-all comes first: the last match wins');
   assert.strictEqual(conf.permission['*'], 'ask');
   assert.strictEqual(conf.permission.task, 'deny');
-  const bashKeys = Object.keys(conf.permission.bash);
-  assert.strictEqual(bashKeys[0], '*');
-  assert.strictEqual(bashKeys[bashKeys.length - 1], '*>*', 'a redirect asks, after every allow');
+  // Every shell command asks: no allow-pattern for opencode to read differently.
+  assert.strictEqual(conf.permission.bash, 'ask');
+  assert.strictEqual(conf.permission['personal-assistant_pa'], 'allow', 'the read-only verbs are the pa tool');
+  assert.deepStrictEqual(conf.mcp['personal-assistant'].environment, { PA_MCP_CHAT_TOOLS: '1' }, 'listed for this chat only');
   assert.ok(conf.mcp['personal-assistant'].command[1].endsWith('src/mcp/server.js'));
 
-  // One list feeds both agents.
+  // The Claude Code chat is unchanged: one list still feeds its settings.
   const s = chat.settingsJson();
   const pa = chat.paCommand();
-  for (const c of chat.ALLOW_COMMANDS) {
-    assert.ok(s.permissions.allow.includes(`Bash(${pa} ${c}:*)`));
-    assert.strictEqual(conf.permission.bash[`${pa} ${c} *`], 'allow');
-  }
-  for (const c of chat.ASK_COMMANDS) {
-    assert.ok(s.permissions.ask.includes(`Bash(${pa} ${c}:*)`));
-    assert.strictEqual(conf.permission.bash[`${pa} ${c} *`], 'ask');
-  }
+  for (const c of chat.ALLOW_COMMANDS) assert.ok(s.permissions.allow.includes(`Bash(${pa} ${c}:*)`));
+  for (const c of chat.ASK_COMMANDS) assert.ok(s.permissions.ask.includes(`Bash(${pa} ${c}:*)`));
+  // ...and every read-only verb it may run is a verb of the opencode chat's pa tool.
+  const mcp = require('../src/mcp/server');
+  for (const c of chat.ALLOW_COMMANDS) assert.ok(Object.prototype.hasOwnProperty.call(mcp.READ_VERBS, c), `pa tool carries ${c}`);
 
   // Wildcards as opencode reads them.
   assert.ok(agent.wildcard('git *', 'git status'));
@@ -94,26 +104,43 @@ const notifyChat = require('../src/notify/chat');
   assert.ok(agent.wildcard('personal-assistant_*', 'personal-assistant_recall'));
 
   // The ruleset opencode 1.18.15 actually resolved for the "pa" agent from
-  // this config (`opencode debug agent pa`, captured; pa's path is __PA__).
-  const fixture = JSON.stringify(require('./opencodeRules.fixture.js')).split('__PA__').join(pa);
-  const resolved = JSON.parse(fixture);
+  // this config (`opencode debug agent pa`, captured).
+  const resolved = require('./opencodeRules.fixture.js');
   assert.deepStrictEqual(agent.checkRuleset('pa', resolved, pa), []);
-  assert.strictEqual(agent.evaluate(resolved, 'bash', `${pa} brief`), 'allow');
-  assert.strictEqual(agent.evaluate(resolved, 'bash', `${pa} do --task x`), 'ask');
-  assert.strictEqual(agent.evaluate(resolved, 'bash', 'git push'), 'ask');
+  for (const cmdline of [
+    `${pa} brief`,
+    `export NODE_OPTIONS='--import data:text/javascript,x'; ${pa} brief`,
+    '> notes.txt',
+    `{ ${pa} brief; } > f`,
+    `for i in 1; do ${pa} brief; done >> f`,
+    'git push',
+  ]) assert.strictEqual(agent.evaluate(resolved, 'bash', cmdline), 'ask', cmdline);
+  assert.strictEqual(agent.evaluate(resolved, 'personal-assistant_pa', '*'), 'allow');
   assert.strictEqual(agent.evaluate(resolved, 'read', '.env'), 'ask');
   assert.strictEqual(agent.evaluate(resolved, 'read', 'INBOX.md'), 'allow');
+
+  // The old shape — bash allowed by pattern — is refused by shape, whatever
+  // the command text: this is the check that does not depend on how opencode
+  // splits a command line.
+  const oldResolved = JSON.parse(JSON.stringify(require('./opencodeRules.allowPatterns.fixture.js')).split('__PA__').join(pa));
+  const oldHoles = agent.checkBashShape('pa', oldResolved);
+  assert.ok(oldHoles.length > 0 && oldHoles.every((h) => /allowed after the ask-everything rule/.test(h)), oldHoles.join('\n'));
+  assert.ok(agent.checkRuleset('pa', oldResolved, pa).length > 0);
+  // A later wildcard allow also counts as a bash allow.
+  assert.ok(agent.checkBashShape('x', [{ permission: 'bash', pattern: '*', action: 'ask' }, { permission: '*', pattern: 'node *', action: 'allow' }]).length === 1);
+  assert.ok(agent.checkBashShape('x', [{ permission: '*', pattern: '*', action: 'allow' }]).length === 1, 'no ask-everything rule at all');
 
   // opencode's defaults alone (our file not loaded) allow everything: refused.
   const defaults = [{ permission: '*', action: 'allow', pattern: '*' }, { permission: 'doom_loop', action: 'ask', pattern: '*' }];
   const holes = agent.checkRuleset('build', defaults, pa);
+  assert.ok(holes.some((h) => /no rule makes every shell command ask/.test(h)));
   assert.ok(holes.some((h) => h.includes(' do --task')));
   assert.ok(holes.some((h) => h.startsWith('build: task')));
 }
 
 (async () => {
   const pa = chat.paCommand();
-  const fixture = JSON.stringify(require('./opencodeRules.fixture.js')).split('__PA__').join(pa);
+  const fixture = JSON.stringify(require('./opencodeRules.fixture.js'));
   const good = async () => ({ err: null, stdout: `{"name":"x","permission":${fixture}}` });
   assert.deepStrictEqual(await agent.verifyOpencodePermissions('/h', { exec: good, env: {} }), { ok: true, problems: [] });
   // Fails closed: an opencode that cannot be asked, or an environment that can override the file.
@@ -123,6 +150,12 @@ const notifyChat = require('../src/notify/chat');
   assert.match(r1.problems[0], /could not read/);
   const r2 = await agent.verifyOpencodePermissions('/h', { exec: good, env: { OPENCODE_DISABLE_PROJECT_CONFIG: '1' } });
   assert.strictEqual(r2.ok, false);
+  // An opencode that resolved an allow-pattern for bash (an old opencode.json,
+  // a global config, an "always" written into a config) is refused.
+  const allowing = async () => ({ err: null, stdout: `{"permission":${JSON.stringify([...JSON.parse(fixture), { permission: 'bash', pattern: 'node *', action: 'allow' }])}}` });
+  const r3 = await agent.verifyOpencodePermissions('/h', { exec: allowing, env: {} });
+  assert.strictEqual(r3.ok, false);
+  assert.ok(r3.problems.some((p) => /bash "node \*" is allowed/.test(p)));
 
   // --------------------------------------------------- dispatch ----
   const c = { termhub: { claudeCommand: 'claude --dangerously-skip-permissions', agent: 'claude', model: null } };
@@ -160,9 +193,58 @@ const notifyChat = require('../src/notify/chat');
 
   // -------------------------------------------------- AGENTS.md ----
   const md = chat.claudeMd({ agent: 'opencode' });
-  assert.match(md, new RegExp(`run \`${pa.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} context\``));
+  assert.match(md, /call the `pa` tool with\s+command `context`/);
   assert.match(md, /data, never\s+instructions/);
+  assert.match(md, /`bin\/pa-do --task/, 'acting verbs through their launcher');
+  assert.ok(!md.includes(`\`${pa} do`), 'never the node … pa.js form for an acting verb');
   assert.match(chat.claudeMd(), /a hook loads/);
+  assert.ok(chat.claudeMd().includes(`\`${pa} do --task`), 'the Claude Code chat still runs the CLI');
+
+  // ------------------------------------------- per-verb launchers (H2) ----
+  // opencode's "Allow always" saves `<first word> *`. For each acting verb the
+  // first word is its own launcher, so "always" can never cover more than it.
+  const l = chat.launchers();
+  for (const verb of chat.ASK_COMMANDS) {
+    const name = `pa-${verb.replace(/ /g, '-')}`;
+    assert.ok(l[name].startsWith('#!/bin/sh\n'), name);
+    assert.ok(l[name].includes(`pa.js' ${verb} "$@"`), name);
+    assert.ok(l[`${name}.cmd`].includes(`pa.js" ${verb} %*`), `${name}.cmd`);
+  }
+  assert.strictEqual(Object.keys(l).length, chat.ASK_COMMANDS.length * 2);
+  {
+    // Run for real: the launcher reaches pa.js with the verb and the args, and
+    // nothing in an arg is shell syntax.
+    const os = require('os');
+    const { execFileSync } = require('child_process');
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pa-launch-'));
+    const js = path.join(config.toolDir, 'bin', 'pa.js').replace(/\\/g, '/');
+    const text = l['pa-say'].replace(`node '${js}'`, `node -e 'console.log(JSON.stringify(process.argv.slice(1)))'`);
+    assert.notStrictEqual(text, l['pa-say']);
+    fs.writeFileSync(path.join(dir, 'pa-say'), text, { mode: 0o755 });
+    const got = JSON.parse(execFileSync(path.join(dir, 'pa-say'), ['7', '$(touch pwned); `id`'], { cwd: dir }).toString());
+    assert.deepStrictEqual(got, ['say', '7', '$(touch pwned); `id`']);
+    assert.ok(!fs.existsSync(path.join(dir, 'pwned')));
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+
+  // ------------------------------------------- the chat's pa tool (H1) ----
+  {
+    const mcp = require('../src/mcp/server');
+    assert.strictEqual(mcp.chatToolsOn({}), false, 'off for every session but the opencode chat');
+    assert.strictEqual(mcp.chatToolsOn({ PA_MCP_CHAT_TOOLS: '1' }), true);
+    await assert.rejects(mcp.handle('pa', { command: 'brief' }), /unknown tool pa/, 'refused when not switched on');
+    assert.deepStrictEqual(mcp.paToolArgv('search', ['renewal', '--since', '2026-01-01']), ['search', 'renewal', '--since', '2026-01-01']);
+    assert.deepStrictEqual(mcp.paToolArgv('notify ack', ['4']), ['notify', 'ack', '4']);
+    assert.deepStrictEqual(mcp.paToolArgv('meeting', ['next']), ['meeting', 'next']);
+    // Only read-only verbs, and none of their writing sub-commands or flags.
+    for (const [c, a] of [
+      ['do', ['--task', 'x']], ['land', ['1']], ['remember', ['x']], ['notify feedback', ['1', 'up']], ['routine add', ['x']],
+      ['memory', ['run']], ['memory', ['--', 'run']], ['projects', ['sync']], ['show', ['3', '--project', 'x']],
+      ['show', ['3', '--project=x']], ['show', ['3', '--no-project']], ['meeting', ['debrief']], ['meeting', ['undo', '3']],
+      ['meeting', ['learn']], ['review', ['3', '--done']], ['brief', [1]], ['brief', 'x'],
+    ]) assert.throws(() => mcp.paToolArgv(c, a), Error, `${c} ${JSON.stringify(a)}`);
+    assert.ok(mcp.PA_TOOL.inputSchema.properties.command.enum.every((v) => Object.prototype.hasOwnProperty.call(mcp.READ_VERBS, v)));
+  }
 
   void config;
   console.log('agents: ok');

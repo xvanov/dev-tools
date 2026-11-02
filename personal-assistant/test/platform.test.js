@@ -297,16 +297,24 @@ print(json.dumps({"active": d.active_sources(data["o"], data["s"]), "monitor": d
   assert.throws(() => backup.parseTools('ssh:box'), /PA_PG_TOOLS/);
   const url = 'postgres://pa:pa@127.0.0.1:5433/pa';
   assert.strictEqual(backup.containerUrl(url), 'postgres://pa:pa@127.0.0.1:5432/pa', 'inside the container the server is on 5432');
+  // The password never rides the command line (ps shows it): PGPASSWORD.
+  const bare = 'postgres://pa@127.0.0.1:5433/pa';
+  assert.deepStrictEqual(backup.splitPassword(url), { url: bare, password: 'pa' });
+  assert.deepStrictEqual(backup.splitPassword('postgres://u:p%40ss@h/db'), { url: 'postgres://u@h/db', password: 'p@ss' });
+  assert.deepStrictEqual(backup.splitPassword('postgres://u@h/db'), { url: 'postgres://u@h/db', password: null });
   assert.deepStrictEqual(backup.dumpCommand({ mode: 'native' }, { url, file: '/b/pa.dump.partial' }), {
-    cmd: 'pg_dump', args: ['--format=custom', '--compress=6', `--dbname=${url}`, '--file=/b/pa.dump.partial'],
+    cmd: 'pg_dump', args: ['--format=custom', '--compress=6', `--dbname=${bare}`, '--file=/b/pa.dump.partial'], env: { PGPASSWORD: 'pa' },
   });
   assert.deepStrictEqual(backup.dumpCommand({ mode: 'docker', container: 'pa-postgres' }, { url, file: '/b/pa.dump.partial' }), {
-    cmd: 'docker', args: ['exec', 'pa-postgres', 'pg_dump', '--format=custom', '--compress=6', '--dbname=postgres://pa:pa@127.0.0.1:5432/pa'],
+    cmd: 'docker', args: ['exec', '-e', 'PGPASSWORD', 'pa-postgres', 'pg_dump', '--format=custom', '--compress=6', '--dbname=postgres://pa@127.0.0.1:5432/pa'],
+    env: { PGPASSWORD: 'pa' },
     stdoutFile: '/b/pa.dump.partial',
   });
-  assert.deepStrictEqual(backup.dumpCommand({ mode: 'wsl', distro: 'Ubuntu' }, { url, file: 'C:\\b\\pa.dump.partial' }), {
-    cmd: 'wsl.exe', args: ['-d', 'Ubuntu', '--exec', 'pg_dump', '--format=custom', '--compress=6', `--dbname=${url}`, '--file=/mnt/c/b/pa.dump.partial'],
-  });
+  const wsl = backup.dumpCommand({ mode: 'wsl', distro: 'Ubuntu' }, { url, file: 'C:\\b\\pa.dump.partial' });
+  assert.deepStrictEqual([wsl.cmd, wsl.args], ['wsl.exe', ['-d', 'Ubuntu', '--exec', 'pg_dump', '--format=custom', '--compress=6', `--dbname=${bare}`, '--file=/mnt/c/b/pa.dump.partial']]);
+  assert.strictEqual(wsl.env.PGPASSWORD, 'pa');
+  assert.match(wsl.env.WSLENV, /(^|:)PGPASSWORD\/u$/, 'carried into the distro');
+  for (const c of [wsl, backup.dumpCommand({ mode: 'native' }, { url, file: '/x' })]) assert.ok(!c.args.some((a) => a.includes(':pa@')), 'no password in argv');
 }
 
 // ------------------------------------------------------ systemd units --

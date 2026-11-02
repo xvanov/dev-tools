@@ -17,7 +17,8 @@ const AGENTS = ['claude', 'opencode'];
 
 // Nothing that a shell would read as more than one word. The command line is
 // typed by termhub into a shell; a model string must not be able to add to it.
-const SAFE_MODEL = /^[A-Za-z0-9._:@/+-]+$/;
+// Nor may it start with `-`: after `--model` the CLI would read it as a flag.
+const SAFE_MODEL = /^[A-Za-z0-9._:@/+][A-Za-z0-9._:@/+-]*$/;
 
 /** The agent a command line starts: 'claude' | 'opencode' | null. */
 function agentOf(command) {

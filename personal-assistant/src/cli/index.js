@@ -397,7 +397,11 @@ const commands = {
     const task = flags.task && flags.task !== true ? String(flags.task) : null;
     if (!commitmentId && !task) return fail('usage: pa do <commitment-id> [--mode m] [--delivery level] [--machine name] [--via claude|factory|auto] | pa do --task "..."');
     const o = dispatchFlags(commitmentId, task, flags, lists);
-    if (flagBool(flags, 'preview')) return printOffer(await require('../dispatch/offer').prepare(o), { preview: true });
+    if (flagBool(flags, 'preview')) {
+      // Composing is a model call made ahead of any decision: under the daily budget.
+      o.useModel = await require('../budget').allow('propose').catch(() => false);
+      return printOffer(await require('../dispatch/offer').prepare(o), { preview: true });
+    }
 
     const machine = o.machine;
     if (machine) out(`setting up on ${machine} — fetch, worktree, brief, then claude (a minute or so)…`);
@@ -442,6 +446,11 @@ const commands = {
     const task = flags.task && flags.task !== true ? String(flags.task) : null;
     if (!commitmentId && !task) return fail('usage: pa propose <commitment-id> | --task "..." [pa do\'s flags]');
     const o = dispatchFlags(commitmentId, task, flags, lists);
+    // The brief's model call happens before anyone said yes: discretionary
+    // spend (PA_BUDGET_DISCRETIONARY `propose`). Over the cap the card still
+    // comes, with the deterministic brief, and says so.
+    o.useModel = await require('../budget').allow('propose').catch(() => false);
+    if (!o.useModel) out('daily model budget reached — the card carries the deterministic brief (no model)');
     const row = await require('../dispatch/offer').propose(o);
     if (!row) return out('already offered');
     out(`proposal ${row.id} · ${row.title}`);

@@ -282,9 +282,12 @@ at most three follow-ups a day. The card goes away by itself when their answer c
 **Run review**: when a dispatched run's session ends with commits, the assistant carries out the
 run's **end state** — the delivery level you chose (below) — and tells you: `none` pushes nothing,
 `branch` pushes the branch, `draft_pr` opens a draft PR, `pr` marks it ready for review,
-`auto_merge` marks it ready and squash-merges it once every check passed (never with a failing
-check), `push_to_main` fast-forwards the default branch with the run's commits (no `--force`; a
-main that moved on refuses). A research (`plan`) run just tells you its findings are ready. A run
+`auto_merge` marks it ready and squash-merges it, `push_to_main` pushes the branch and then
+fast-forwards the default branch to it (no `--force`; a main that moved on refuses). Neither happens
+before CI passed on that exact commit: the assistant polls its checks once a minute for at most 30
+minutes; with no checks at all it proceeds only when the repo provably requires none (and notes it
+on the run). Red CI, a timeout, or a main that moved on leaves the branch / PR as it is, marks the
+run `blocked` with the reason and tells you. A research (`plan`) run just tells you its findings are ready. A run
 from before end states keeps the old rule: a draft PR, merged only in your own repos
 (`PA_MERGE_REPOS`). A chase judges its ask before asking you anything, so an ask already answered
 gets no card. **Needs you** is also where the assistant asks what
@@ -299,7 +302,7 @@ cost; for the API it is estimated from token usage at list prices, or left null 
 does not know. Another provider's call is priced only from `PA_MODEL_PRICES` (or, on OpenRouter,
 the cost it reports); otherwise its cost is null, never guessed — and its `backend` is the
 provider's name (`azure`, `openrouter`, …). `PA_DAILY_BUDGET_USD` (default 15) caps a local day: once reached, *discretionary*
-purposes (`PA_BUDGET_DISCRETIONARY`, default eager, research, digest, planner, card — speculative work
+purposes (`PA_BUDGET_DISCRETIONARY`, default eager, research, digest, planner, card, propose — speculative work
 done ahead of you) are refused until midnight and the worker logs it once; *essential* ones
 (`PA_BUDGET_ESSENTIAL`, default distill, reconcile, connector, reply-close) keep the board true
 and are never refused. Speculative work asks `budget.allow(purpose)` before it spends. `pa spend
@@ -642,8 +645,9 @@ contract is the factory's `docs/JOBS-API.md`.
   and parks a job without one as `needs_human`. `factoryCore.flowMarkdown` writes it
   deterministically from the composed goal: numbered steps that restate the ask and turn each
   done-criterion into a "Check:" step. Ask and flow are files on the factory's machine: written
-  directly when it is this one, otherwise through `runCommand` by a fixed Python writer that takes
-  the contents base64-encoded and puts them under that machine's temp dir. Any `warnings` the
+  directly when it is this one, otherwise through `runCommand` by a fixed Python writer that reads
+  the contents on stdin and puts them in a fresh private temp dir on that machine (removed once the
+  factory has the job). Any `warnings` the
   factory returns are kept on the run (`factory_warnings`), printed by `pa do` / `pa review`, and
   shown on the dashboard.
 - **Walking in**: a termhub session on the factory's machine runs `uv run factory job follow <job>`
