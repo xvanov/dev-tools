@@ -334,13 +334,22 @@ function toast(text) {
   toast.timer = setTimeout(() => t.classList.remove('show'), 4000);
 }
 
+// This page's token (server.js issuePageToken): read once from the page and
+// kept in memory only; the meta tag is removed so it is not left in the DOM.
+const PAGE_TOKEN = (() => {
+  const m = document.querySelector('meta[name="pa-page"]');
+  const t = m ? m.getAttribute('content') : '';
+  if (m) m.remove();
+  return t;
+})();
+
 async function post(path, body) {
   const res = await fetch(path, {
-    method: 'POST', headers: { 'Content-Type': 'application/json', 'X-PA': '1' },
+    method: 'POST', headers: { 'Content-Type': 'application/json', 'X-PA': '1', 'X-PA-Page': PAGE_TOKEN },
     body: JSON.stringify(body || {}),
   });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || res.statusText);
+  if (!res.ok) throw Object.assign(new Error(data.error || res.statusText), { status: res.status, data });
   return data;
 }
 
@@ -545,8 +554,18 @@ function commitmentCard(c) {
     try {
       // A mode left at its default is not a choice: the end state decides then.
       const mode = modePick.value !== MACHINES.defaultMode ? modePick.value : undefined;
+      // The level this will resolve to (a repo default included), shown and
+      // confirmed here when nothing human follows it; the server checks the
+      // page sent back exactly that level.
+      const q = new URLSearchParams({ ...(mode ? { mode } : {}), ...(deliveryPick.value ? { delivery: deliveryPick.value } : {}) });
+      const pre = await (await fetch(`api/commitments/${c.id}/delivery?${q}`)).json();
+      let confirmedLevel = null;
+      if (pre.unattended) {
+        if (!window.confirm(`End state: ${pre.delivery} — ${pre.plain}\n\nNo human step after this. Start it?`)) throw new Error('not started');
+        confirmedLevel = pre.delivery;
+      }
       const r = await post(`api/commitments/${c.id}/dispatch`, {
-        machine: routePick.value === 'factory' ? null : machinePick.value || null, mode, via: routePick.value, delivery: deliveryPick.value || null,
+        machine: routePick.value === 'factory' ? null : machinePick.value || null, mode, via: routePick.value, delivery: deliveryPick.value || null, confirmedLevel,
       });
       toast(r.route === 'factory'
         ? `run #${r.id} sent to the factory (job ${r.jobId}, delivers ${r.delivery})${(r.warnings || []).length ? ` — factory warned: ${r.warnings.join('; ')}` : ''}`

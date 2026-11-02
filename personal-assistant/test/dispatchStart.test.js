@@ -80,6 +80,13 @@ stub('dispatch/termhub', {
 });
 
 const dispatch = require('../src/dispatch');
+// A no-push session's env: noPushEnv's, with this run's own gh dir and the dispatched-run marker.
+function expectNoPush(spec, runId, msg) {
+  const ne = noPushEnv({ ghConfigDir: spec.env.GH_CONFIG_DIR });
+  assert.deepStrictEqual({ env: spec.env, unsetEnv: spec.unsetEnv }, { env: { PA_DISPATCHED_RUN: String(runId), ...ne.env }, unsetEnv: ne.unsetEnv }, msg);
+  assert.match(path.basename(spec.env.GH_CONFIG_DIR), new RegExp(`^run-${runId}-`), 'a private dir for this run');
+}
+
 const { noPushEnv } = require('../src/dispatch/remote');
 const BLOCKED = dispatch.BLOCKED_PUSH_URL;
 
@@ -126,7 +133,7 @@ const sharedPushurls = (repo) => {
 
     // ---- M5: the no-push session has no push credentials ------------------------
     const spec = hub.created[hub.created.length - 1];
-    assert.deepStrictEqual({ env: spec.env, unsetEnv: spec.unsetEnv }, noPushEnv());
+    expectNoPush(spec, r.id);
     for (const v of ['GH_TOKEN', 'GITHUB_TOKEN', 'SSH_AUTH_SOCK', 'GIT_ASKPASS']) assert.ok(spec.unsetEnv.includes(v), v);
     assert.strictEqual(spec.env.GIT_CONFIG_KEY_0, 'credential.helper');
     assert.strictEqual(spec.env.GIT_CONFIG_VALUE_0, '');
@@ -153,7 +160,8 @@ const sharedPushurls = (repo) => {
     const { repo } = makeRepo('pushy');
     await dispatch.start({ task: 'push it', mode: 'branch', repoPath: repo });
     const spec = hub.created[hub.created.length - 1];
-    assert.ok(!spec.env && !spec.unsetEnv);
+    assert.deepStrictEqual(spec.env, { PA_DISPATCHED_RUN: String(store.nextId - 1) }, 'only the dispatched-run marker');
+    assert.ok(!spec.unsetEnv);
   }
 
   // ---- M5 + MH4: a termhub that cannot strip the env refuses, and rolls back ---
@@ -273,6 +281,17 @@ const sharedPushurls = (repo) => {
     assert.notStrictEqual(git(repo, 'rev-parse', 'main').trim(), upstream, 'the local main is behind');
     const r = await dispatch.start({ task: 'on top of origin', mode: 'branch', repoPath: repo });
     assert.strictEqual(git(r.worktreePath, 'rev-parse', 'HEAD').trim(), upstream, 'based on the fetched origin/main');
+    // A fetch that fails: the origin ref already here, never the local branch; none → refused.
+    const { worktreeBase } = require('../src/dispatch');
+    const cut = makeRepo('cut');
+    git(cut.repo, 'fetch', '-q', 'origin');
+    const known = git(cut.repo, 'rev-parse', 'origin/main').trim();
+    git(cut.repo, '-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-q', '--allow-empty', '-m', 'local only');
+    git(cut.repo, 'remote', 'set-url', 'origin', path.join(tmp, 'gone.git'));
+    assert.strictEqual(await worktreeBase(cut.repo), 'origin/main');
+    assert.strictEqual(git(cut.repo, 'rev-parse', 'origin/main').trim(), known);
+    git(cut.repo, 'update-ref', '-d', 'refs/remotes/origin/main');
+    await assert.rejects(worktreeBase(cut.repo), /could not fetch origin\/main.*no copy of it here/);
     // No origin/HEAD and a stale local `master`: the remote's `main` wins.
     const odd = path.join(tmp, 'odd');
     git(tmp, 'init', '-q', '-b', 'master', odd);
@@ -292,13 +311,16 @@ const sharedPushurls = (repo) => {
       const r = await dispatch.start({ task: `deliver ${delivery}`, delivery, repoPath: repo, confirmedUnattended: true });
       assert.deepStrictEqual([r.mode, r.delivery], ['local', delivery]);
       const spec = hub.created[0];
-      assert.deepStrictEqual({ env: spec.env, unsetEnv: spec.unsetEnv }, noPushEnv(), `${delivery}: no push credentials in the session`);
+      expectNoPush(spec, r.id, `${delivery}: no push credentials in the session`);
+      assert.ok(fs.existsSync(spec.env.GH_CONFIG_DIR));
+      await dispatch.markDone(r.id, 'session ended');
+      assert.ok(!fs.existsSync(spec.env.GH_CONFIG_DIR), 'removed when the run ends');
       assert.strictEqual(git(r.worktreePath, 'remote', 'get-url', '--push', 'origin').trim(), BLOCKED, `${delivery}: push blocked in the worktree`);
     }
     hub.created.length = 0;
     const pr = await dispatch.start({ task: 'deliver pr', delivery: 'pr', repoPath: repo });
     assert.strictEqual(pr.mode, 'mr');
-    assert.ok(!hub.created[0].env, 'a mode that may push keeps termhub\'s environment');
+    assert.deepStrictEqual(hub.created[0].env, { PA_DISPATCHED_RUN: String(pr.id) }, 'a mode that may push keeps termhub\'s environment, plus the marker');
   }
 
   // ---- delivery after the session: the block is lifted from the worktree only ----------

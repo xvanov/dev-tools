@@ -153,16 +153,23 @@ function ciGate({ checks, previous = null, required, elapsedMs, limitMs = CI_LIM
  * Pure. The last look before an auto_merge: the PR is the one the gate
  * checked. Its base is the default branch, it is not from a fork, its head is
  * the checked commit, and — unless the repo itself requires branches to be up
- * to date before merging — the base has not moved since CI ran.
+ * to date (GitHub then refuses a stale merge) — that commit already contains
+ * the base as it is NOW (compare: behind_by 0), so the squash GitHub makes is
+ * the tree CI tested. Anything unreadable refuses.
+ * @param {number|null} o.behindBy  commits on the base the head does not have; null = could not read
  * @returns {string|null} why not, or null to merge
  */
-function mergeRefusal({ pr, defaultBranch, sha, baseShaAtCi, baseShaNow, strict }) {
+function mergeRefusal({ pr, defaultBranch, sha, behindBy, strict }) {
   if (!pr) return 'could not read the PR';
   if (pr.baseRefName !== defaultBranch) return `the PR targets ${pr.baseRefName}, not ${defaultBranch}`;
   if (pr.isCrossRepository) return 'the PR comes from another repository';
   if (pr.headRefOid !== sha) return `the PR's head moved to ${String(pr.headRefOid).slice(0, 12)} after CI checked ${String(sha).slice(0, 12)}`;
-  if (!strict && baseShaAtCi && baseShaNow && baseShaAtCi !== baseShaNow) {
-    return `${defaultBranch} moved since CI ran (the repo does not require up-to-date branches, so the merged result was never tested)`;
+  if (strict) return null;
+  if (behindBy === null || behindBy === undefined || !Number.isFinite(Number(behindBy))) {
+    return `could not check that the PR contains the current ${defaultBranch} — not merging blind`;
+  }
+  if (Number(behindBy) > 0) {
+    return `${defaultBranch} has ${behindBy} commit(s) the checked commit does not (the merged result was never tested; the repo does not require up-to-date branches)`;
   }
   return null;
 }
@@ -217,6 +224,13 @@ async function prState(url) {
   return JSON.parse(stdout || 'null');
 }
 
+/** Commits on `base` that `sha` does not contain (GitHub compare), or null. */
+async function behindBy(slug, base, sha) {
+  if (!/^[0-9a-f]{7,40}$/i.test(String(sha))) return null;
+  const c = await ghJson([`repos/${slug}/compare/${encodeURIComponent(base)}...${sha}`]);
+  return Number.isFinite(Number(c?.behind_by)) ? Number(c.behind_by) : null;
+}
+
 async function branchSha(slug, branch) {
   const c = await ghJson([`repos/${slug}/commits/${encodeURIComponent(branch)}`]);
   return c?.sha || null;
@@ -230,5 +244,5 @@ async function mergeAt(url, sha) {
 
 module.exports = {
   mayMerge, summarize, slugOf, checks, ready, merge,
-  CI_LIMIT_MS, CI_POLL_MS, CI_SETTLE_MS, summarizeCommit, ciGate, mergeRefusal, commitChecks, requiredChecks, prState, branchSha, mergeAt,
+  CI_LIMIT_MS, CI_POLL_MS, CI_SETTLE_MS, summarizeCommit, ciGate, mergeRefusal, commitChecks, requiredChecks, prState, branchSha, behindBy, mergeAt,
 };

@@ -73,21 +73,26 @@ async function defaultBranch(repoPath) {
  * What a new run's worktree starts from: origin's default branch, fetched now
  * (as a remote run does), so the work is on top of what is really there — not
  * a local `main` that may be days behind (which makes push_to_main's
- * fast-forward fail and a PR conflict). Without a reachable origin, the local
- * branch, and the log says so.
+ * fast-forward fail and a PR conflict). A fetch that fails falls back to the
+ * origin/<base> ref already here (said in the log), never to the local branch;
+ * without either the start is refused. A repo with no `origin` at all is
+ * local-only work and starts from its local branch.
  */
 async function worktreeBase(repoPath) {
   const base = await defaultBranch(repoPath);
   const remotes = (await git(repoPath, ['remote']).catch(() => '')).split(/\r?\n/).map((r) => r.trim());
-  if (remotes.includes('origin')) {
-    try {
-      await git(repoPath, ['fetch', '--quiet', 'origin', `+refs/heads/${base}:refs/remotes/origin/${base}`]);
+  if (!remotes.includes('origin')) return base;
+  try {
+    await git(repoPath, ['fetch', '--quiet', 'origin', `+refs/heads/${base}:refs/remotes/origin/${base}`]);
+    return `origin/${base}`;
+  } catch (err) {
+    const have = await git(repoPath, ['rev-parse', '--verify', '--quiet', `refs/remotes/origin/${base}`]).then(() => true, () => false);
+    if (have) {
+      log.warn('could not fetch origin; starting from the origin ref already here', { repo: repoPath, base, message: String(err.message).slice(0, 200) });
       return `origin/${base}`;
-    } catch (err) {
-      log.warn('could not fetch origin; starting from the local branch', { repo: repoPath, base, message: String(err.message).slice(0, 200) });
     }
+    throw new Error(`could not fetch origin/${base} in ${repoPath}, and there is no copy of it here — not starting from a local branch that may be stale (${String(err.message).split('\n')[0].slice(0, 160)})`);
   }
-  return base;
 }
 
 /**
@@ -105,7 +110,6 @@ async function knownRepo(repoPath) {
 }
 
 async function resolveTarget({ commitmentId, repoPath }) {
-  if (repoPath) await knownRepo(repoPath);
   if (!commitmentId) return { commitment: null, item: null, project: null, person: null, repoPath };
 
   const commitment = await one('select * from commitment where id = $1', [commitmentId]);
@@ -200,8 +204,11 @@ async function start({
   commitmentId = null, task = null, mode: modeName, repoPath = null, machine = null, again = false,
   via = null, pipeline = null, models = null, done = null, app = null, routeReason: givenReason = null,
   agent = null, model = null, delivery = null, deliverySource = null, deliveryPhrase = null,
-  brief = null, briefBy = null, frozen = false, register = false, confirmedUnattended = false,
+  brief = null, briefBy = null, frozen = false, register = false, confirmedUnattended = false, repoVerified = false,
 }) {
+  // `--repo` must be a known project. A card's repo was checked when the card
+  // was made (offer.js `repoVerifiedAt`) and is not re-judged at accept.
+  if (repoPath && !repoVerified) await knownRepo(repoPath);
   // One live run per commitment. A second Do while the first is still setting
   // up (a remote one takes a minute) started a second agent on the same ask.
   if (commitmentId && !again) {
@@ -352,12 +359,15 @@ async function start({
       cwd: worktreePath || repo || config.reposRoot,
       command: launch.command,
       title: `pa#${run.id} ${label.slice(0, 40)}`,
+      // Marks everything the agent runs: `pa do` / `pa answer` refuse an
+      // unattended end state from inside a dispatched run.
+      env: { PA_DISPATCHED_RUN: String(run.id) },
     };
     // A run that may not push also starts without push credentials
     // (src/dispatch/remote.js noPushEnv); refused if termhub cannot do that.
     session = m.mayPush
       ? await termhub.createSession(spec)
-      : await require('./remote').createNoPushSession(termhub, spec, null, { fam: require('../platform').id === 'windows' ? 'windows' : 'posix' });
+      : await require('./remote').createNoPushSession(termhub, spec, null, { fam: require('../platform').id === 'windows' ? 'windows' : 'posix', runId: run.id });
 
     await query(
       `update run set termhub_session_id = $2, brief_path = $3, status = 'running' where id = $1`,
@@ -398,6 +408,7 @@ async function start({
 // effort, each step on its own: the original error is what the caller sees.
 async function rollbackStart({ run, repo, worktreePath, branch, worktreeMade, session, err }) {
   if (session?.id) await termhub.killSession(session.id).catch(() => {});
+  require('./remote').removeNoGhDirs(run.id);
   if (worktreeMade && repo && worktreePath) {
     await git(repo, ['worktree', 'remove', '--force', worktreePath]).catch(() => {});
     await git(repo, ['worktree', 'prune']).catch(() => {});
@@ -575,13 +586,19 @@ async function steer(runId, text) {
   return true;
 }
 
+// The chat's read-only `pa` tool runs verbs with PA_READ_ONLY=1 (src/mcp/server.js):
+// a review then reads and reports, and writes nothing.
+function readOnly() {
+  return process.env.PA_READ_ONLY === '1';
+}
+
 async function review(runId) {
   const run = await get(runId);
   if (!run) throw new Error(`no run #${runId}`);
   if (run.route === 'factory') {
     if (!run.factory_job_id) {
       // A submit whose answer was lost: ask the factory now rather than wait for the worker.
-      if (['starting', 'waiting'].includes(run.status)) {
+      if (['starting', 'waiting'].includes(run.status) && !readOnly()) {
         const ageMs = Date.now() - new Date(run.started_at || Date.now()).getTime();
         await require('./factory').settle(run, { ageMs, extra: { by: run.brief_by } });
         const now = await get(runId);
@@ -591,6 +608,7 @@ async function review(runId) {
       return { run, factory: null };
     }
     const job = await require('./factory').status(run);
+    if (readOnly()) return { run, factory: job };
     await require('./factory').apply(run, job);
     return { run: await get(runId), factory: job };
   }
@@ -605,7 +623,7 @@ async function review(runId) {
   ]);
 
   const uncommitted = status.trim().split('\n').filter(Boolean).length;
-  await query('update run set diff_stat = $2 where id = $1', [
+  if (!readOnly()) await query('update run set diff_stat = $2 where id = $1', [
     runId,
     { stat: stat.trim(), commits: logOut.trim().split('\n').filter(Boolean).length, uncommitted },
   ]);
@@ -775,6 +793,7 @@ async function openMergeRequest(run) {
 async function drop(runId, { force = false } = {}) {
   const run = await get(runId);
   if (!run) throw new Error(`no run #${runId}`);
+  require('./remote').removeNoGhDirs(runId);
 
   // A factory job is cancelled in the factory (it parks or closes its
   // stories and keeps the evidence); its follow session goes too.
@@ -787,8 +806,13 @@ async function drop(runId, { force = false } = {}) {
       const ageMs = Date.now() - new Date(run.started_at || Date.now()).getTime();
       const settled = await require('./factory').settle(run, { ageMs, extra: { by: run.brief_by } });
       if (settled.verdict === 'adopt') Object.assign(run, { factory_job_id: settled.job.job_id, status: 'running' });
-      else if (!settled.asked) {
-        throw new Error(`run #${runId}'s submit is unconfirmed and the factory cannot be asked now — dropping it could orphan a job; try again when the factory answers`);
+      else if (settled.verdict === 'unknown') {
+        // Not asked, or asked too soon to believe "no job": a drop now could orphan one.
+        throw new Error(
+          settled.asked
+            ? `run #${runId}'s submit is still unconfirmed (the factory may yet show its job) — try again in a few minutes`
+            : `run #${runId}'s submit is unconfirmed and the factory cannot be asked now — dropping it could orphan a job; try again when the factory answers`
+        );
       }
     }
     if (run.factory_job_id && ['starting', 'running', 'waiting'].includes(run.status)) {
@@ -863,6 +887,7 @@ async function drop(runId, { force = false } = {}) {
 // Marks a run as finished-and-awaiting-review. Called by `pa review --done` and
 // by the worker when a session disappears.
 async function markDone(runId, note) {
+  require('./remote').removeNoGhDirs(runId);
   await query(`update run set status = 'done', ended_at = now(), exit_note = $2 where id = $1`, [
     runId,
     note || null,
@@ -940,6 +965,6 @@ async function reconcile() {
 }
 
 module.exports = {
-  start, get, list, steer, review, diff, land, pushBranch, pushToMain, headOf, blockRun, defaultBranch, drop, markDone, reconcile, slug, resolveTarget, briefFor,
+  start, knownRepo, get, list, steer, review, diff, land, pushBranch, pushToMain, headOf, blockRun, defaultBranch, drop, markDone, reconcile, slug, resolveTarget, briefFor,
   worktreeBase, scopeFacts, relatedContext, memoryContext, sessionDelivery, previewDelivery, requireConfirmed, BLOCKED_PUSH_URL,
 };

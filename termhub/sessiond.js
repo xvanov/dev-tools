@@ -36,7 +36,7 @@ const summarizer = require('./lib/summarize');
 const { VoiceHub, wakeWord: voiceWakeWord } = require('./lib/voiceHub');
 const { IdleHub } = require('./lib/idleHub');
 const idleStore = require('./lib/idleStore');
-const { checkRequest, checkUpgrade, refuseUpgrade, learnSelfNames } = require('./lib/requestGuard');
+const { checkRequest, checkUpgrade, refuseUpgrade, learnSelfNamesAndWarn } = require('./lib/requestGuard');
 const { parseEnvSpec } = require('./lib/sessionEnv');
 const { parseNoRc } = require('./lib/shell');
 
@@ -764,7 +764,7 @@ function bindVoice(ws, voice) {
 function startSessiond({ port = DEFAULT_SESSIOND_PORT, entry = 'sessiond', claimPid = false } = {}) {
   const server = createSessiond({ entry, port });
   build.commit(); // warm the cache off the request path
-  learnSelfNames(); // this machine's MagicDNS name, for the Host check (lib/requestGuard.js)
+  learnSelfNamesAndWarn(); // this machine's MagicDNS name (warns if it cannot); , for the Host check (lib/requestGuard.js)
   server.on('error', (err) => {
     if (err.code === 'EADDRINUSE') {
       console.error(`[sessiond] 127.0.0.1:${port} is already in use — another sessiond or a `

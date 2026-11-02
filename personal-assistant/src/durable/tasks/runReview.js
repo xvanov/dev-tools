@@ -185,16 +185,15 @@ async function run({ runId }, ctx) {
     return require('../../dispatch').defaultBranch(r.repo_path).catch(() => 'main');
   });
   if (!sha || !may.slug) return blocked(ctx, runId, found, 'could not read the PR\'s commit or repo to check its CI — the PR is left open', landed.mrUrl);
-  const baseAtCi = await ctx.step('base-at-ci', () => merger.branchSha(may.slug, base).catch(() => null));
   const gate = await ciWait(ctx, { slug: may.slug, sha, base });
   if (gate.action !== 'proceed') return blocked(ctx, runId, found, `${gate.reason} — the PR is left open, not merged`, landed.mrUrl);
   const refusal = await ctx.step('pre-merge', async () => {
-    const [pr, baseNow, req] = await Promise.all([
+    const [pr, behind, req] = await Promise.all([
       merger.prState(landed.mrUrl).catch(() => null),
-      merger.branchSha(may.slug, base).catch(() => null),
+      merger.behindBy(may.slug, base, sha).catch(() => null),
       merger.requiredChecks(may.slug, base).catch(() => ({ strict: false })),
     ]);
-    return merger.mergeRefusal({ pr, defaultBranch: base, sha, baseShaAtCi: baseAtCi, baseShaNow: baseNow, strict: Boolean(req.strict) });
+    return merger.mergeRefusal({ pr, defaultBranch: base, sha, behindBy: behind, strict: Boolean(req.strict) });
   });
   if (refusal) return blocked(ctx, runId, found, `${refusal} — the PR is left open, not merged`, landed.mrUrl);
   const merged = await ctx.step('merge', async () => {

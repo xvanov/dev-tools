@@ -64,9 +64,10 @@ stub('db', stubTx({
     if (/select \* from run where id/.test(sql)) return world.runRow || null;
     if (/select kind, payload from proposal where id/.test(sql)) return world.proposals.find((p) => p.id === params[0]) || null;
     if (/from commitment where id/.test(sql)) return world.commitment;
+    if (/from project\s+where active and \(repo_path/.test(sql)) return global.__unknownRepos?.includes(params[0]) ? null : { id: 9, repo_path: params[0] };
     if (/from source_item where id/.test(sql)) return world.item;
     if (/from project where id/.test(sql)) return world.project;
-    if (/from repo_delivery/.test(sql)) return null;
+    if (/from repo_delivery/.test(sql)) return world.repoDefault ? { delivery: world.repoDefault } : null;
     if (/insert into run/.test(sql)) return { id: store.nextRun, status: 'starting' };
     return null;
   },
@@ -193,6 +194,105 @@ const proposals = require('../src/proposals');
   assert.deepStrictEqual([research.payload.delivery, research.payload.mode], [null, 'plan']);
   assert.match(research.body, /read-only research/);
 
+  // #1 + page token: the dashboard confirms only the level the page showed, with its token.
+  {
+    const { Readable } = require('stream');
+    const server = require('../src/dashboard/server');
+    const call = async (method, url, body = null, headers = {}) => {
+      const req = Readable.from(body ? [Buffer.from(JSON.stringify(body))] : []);
+      Object.assign(req, { method, url, headers: { host: '127.0.0.1:7300', 'content-type': 'application/json', ...headers } });
+      let status = 0;
+      let out = '';
+      const res = { writeHead(s) { status = s; }, end(b) { out = String(b || ''); }, headersSent: false };
+      await server.handle(req, res);
+      return { status, body: out.startsWith('{') ? JSON.parse(out) : out };
+    };
+    // The page carries a fresh token in a meta tag.
+    const page = await call('GET', '/');
+    const token = /name="pa-page" content="([^"]+)"/.exec(page.body)[1];
+    assert.ok(token.length >= 20);
+    assert.ok(server.pageTokenOk({ headers: { 'x-pa-page': token } }));
+    assert.ok(!server.pageTokenOk({ headers: { 'x-pa-page': 'forged' } }));
+    // A repo default of push_to_main, the picker left empty: the page must name it.
+    world.commitment = { ...world.commitment, status: 'open' };
+    world.repoDefault = 'push_to_main';
+    const pre = await call('GET', '/api/commitments/31/delivery');
+    assert.deepStrictEqual([pre.body.delivery, pre.body.unattended], ['push_to_main', true], 'the page is told the resolved level');
+    calls.length = 0;
+    const blind = await call('POST', '/api/commitments/31/dispatch', { via: 'factory' }, { 'x-pa': '1', 'x-pa-page': token });
+    assert.deepStrictEqual([blind.status, blind.body.delivery], [409, 'push_to_main'], 'no confirmedLevel: 409 with the level');
+    const wrong = await call('POST', '/api/commitments/31/dispatch', { via: 'factory', confirmedLevel: 'auto_merge' }, { 'x-pa': '1', 'x-pa-page': token });
+    assert.strictEqual(wrong.status, 409, 'a different level than the resolved one');
+    const noToken = await call('POST', '/api/commitments/31/dispatch', { via: 'factory', confirmedLevel: 'push_to_main' }, { 'x-pa': '1' });
+    assert.strictEqual(noToken.status, 409, 'X-PA alone (what an agent can send) is not enough');
+    assert.ok(!calls.some((a) => a[3] === 'job' && a[4] === 'submit'), 'nothing started');
+    store.nextRun = 90;
+    const okRun = await call('POST', '/api/commitments/31/dispatch', { via: 'factory', confirmedLevel: 'push_to_main' }, { 'x-pa': '1', 'x-pa-page': token });
+    assert.deepStrictEqual([okRun.status, okRun.body.delivery], [200, 'push_to_main']);
+    world.repoDefault = null;
+    // Accepting an unattended card needs the token too.
+    const card = await proposals.create({ kind: 'dispatch', commitmentId: 31, title: 'card', payload: { frozen: true, via: 'claude', delivery: 'auto_merge', mode: 'mr' }, dedupeKey: 'tok-card' });
+    const refused = await call('POST', `/api/proposals/${card.id}/accept`, {}, { 'x-pa': '1' });
+    assert.strictEqual(refused.status, 403);
+    assert.match(refused.body.error, /page's token/);
+    assert.strictEqual(card.status, 'pending');
+  }
+
+  // PA_DISPATCHED_RUN: inside a run, `pa do` refuses an unattended level outright (no card either).
+  {
+    const { commands } = require('../src/cli/index');
+    process.env.PA_DISPATCHED_RUN = '55';
+    const errs = [];
+    const ew = process.stderr.write.bind(process.stderr);
+    const ow = process.stdout.write.bind(process.stdout);
+    process.stderr.write = (t) => { errs.push(String(t)); return true; };
+    process.stdout.write = () => true;
+    const before = world.proposals.length;
+    try {
+      await commands.do(['31'], { via: 'factory', delivery: 'auto_merge' }, {});
+    } finally {
+      process.stderr.write = ew;
+      process.stdout.write = ow;
+      process.exitCode = 0;
+      delete process.env.PA_DISPATCHED_RUN;
+    }
+    assert.match(errs.join(''), /refused: run #55's agent may not start work that merges/);
+    assert.strictEqual(world.proposals.length, before, 'no card made from inside a run');
+  }
+
+  // An older card whose repo is no longer a known project: a clear error with the way out;
+  // a card made now carries repoVerifiedAt and is not re-judged at accept.
+  {
+    const old = await proposals.create({ kind: 'dispatch', commitmentId: 31, title: 'old card', payload: { via: 'claude', mode: 'local', repoPath: '/gone/repo' } });
+    global.__unknownRepos = ['/gone/repo'];
+    await assert.rejects(proposals.decide(old.id, { accept: true }), /not a known project — decline it and offer it again.*pa projects sync/);
+    global.__unknownRepos = [];
+    const fresh = await offer.prepare({ commitmentId: 31, via: 'claude', delivery: 'pr' });
+    assert.ok(fresh.payload.repoVerifiedAt === null || typeof fresh.payload.repoVerifiedAt === 'string');
+    global.__unknownRepos = ['/x'];
+    await assert.rejects(offer.prepare({ commitmentId: 31, via: 'claude', repoPath: '/x' }), /not a known project's repo/);
+    global.__unknownRepos = [];
+  }
+
+  // #8: `review` through the read-only tool (PA_READ_ONLY=1) asks the factory and writes nothing.
+  {
+    const dispatch = require('../src/dispatch');
+    world.runRow = { id: 81, route: 'factory', status: 'waiting', factory_state: 'submit_unknown', factory_job_id: null, external_id: 'k-81', started_at: new Date(0).toISOString(), machine: os.hostname() };
+    process.env.PA_READ_ONLY = '1';
+    calls.length = 0;
+    const writes = store.queries.length;
+    await dispatch.review(81);
+    assert.strictEqual(calls.length, 0, 'no settle');
+    assert.ok(!store.queries.slice(writes).some((q) => /^\s*update /.test(q.sql)), 'no writes');
+    world.runRow = { id: 82, route: 'factory', status: 'running', factory_job_id: 'widget:082', machine: os.hostname() };
+    extra['job status'] = () => ({ code: 0, stdout: JSON.stringify({ job_id: 'widget:082', source: 'pa', state: 'done', terminal: true, delivery: 'pr' }), stderr: '' });
+    const r = await dispatch.review(82);
+    assert.strictEqual(r.factory.state, 'done');
+    assert.ok(!store.queries.slice(writes).some((q) => /^\s*update /.test(q.sql)), 'status read, not applied');
+    delete extra['job status'];
+    delete process.env.PA_READ_ONLY;
+  }
+
   // MUST-FIX 14: `pa drop` on a submit whose answer was lost settles it first.
   {
     const dispatch = require('../src/dispatch');
@@ -211,8 +311,12 @@ const proposals = require('../src/proposals');
     world.runRow = unsettled();
     extra['job list'] = () => { throw new Error('ECONNREFUSED'); };
     await assert.rejects(dispatch.drop(80), /cannot be asked now/);
-    // Asked, and it has no job: dropped with nothing to cancel.
+    // #14a: asked, no job yet, but too soon to believe it: still refused.
     world.runRow = unsettled();
+    extra['job list'] = () => ok({ jobs: [] });
+    await assert.rejects(dispatch.drop(80), /still unconfirmed.*try again in a few minutes/);
+    // Asked, and past the grace with no job: dropped with nothing to cancel.
+    world.runRow = { ...unsettled(), started_at: new Date(Date.now() - 3600_000).toISOString() };
     calls.length = 0;
     extra['job list'] = () => ok({ jobs: [] });
     const none = await dispatch.drop(80);

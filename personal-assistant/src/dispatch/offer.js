@@ -50,6 +50,7 @@ async function prepare({
 }) {
   const dispatch = require('./index');
   const route = require('./route');
+  if (repoPath) await dispatch.knownRepo(repoPath);
   const target = await dispatch.resolveTarget({ commitmentId, repoPath });
   const label = task || target.commitment?.summary;
   if (!label) throw new Error('nothing to offer — give a commitment id or a --task');
@@ -85,6 +86,10 @@ async function prepare({
     routeReason: choice.reason,
     task: task || null,
     repoPath: target.repoPath || null,
+    // `--repo` passed the known-project check now; accept trusts this (sql/026 note in AGENT.md).
+    // Checked now: a `--repo` against the known projects (above), or the
+    // commitment's own project. Accept trusts this instead of re-judging.
+    repoVerifiedAt: target.repoPath ? new Date().toISOString() : null,
     slug: choice.slug || null,
     delivery: chosen.delivery,
     deliverySource: chosen.source,

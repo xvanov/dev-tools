@@ -272,25 +272,51 @@ const NO_PUSH_UNSET = [
 ];
 
 /**
- * Where `gh` looks for its login in a no-push session: an empty directory of
- * our own, so the `hosts.yml` in ~/.config/gh — which is what makes `gh pr
- * create` / `gh api` work for a session started with
- * --dangerously-skip-permissions — is never read. On this machine it is made
- * (0700) and emptied; on another one it is a path under the worktrees root
- * that does not exist, which gh reads as "not logged in".
+ * Where `gh` looks for its login in a no-push session: an empty private
+ * directory made for that run alone (mkdtemp, 0700, under the data dir), so
+ * the `hosts.yml` in ~/.config/gh is never read and no two runs share one.
+ * Removed when the run ends (removeNoGhDirs). On another machine it is a path
+ * under the worktrees root that does not exist, which gh reads as "not
+ * logged in".
  */
-function noGhDir() {
+function noGhBase() {
   const fs = require('fs');
   const path = require('path');
-  const dir = path.join(config.dataDir, 'no-gh-config');
-  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  const base = path.join(config.dataDir, 'no-gh');
+  fs.mkdirSync(base, { recursive: true, mode: 0o700 });
+  fs.chmodSync(base, 0o700);
+  return base;
+}
+
+function noGhDir(runId = null) {
+  const fs = require('fs');
+  const path = require('path');
+  const dir = fs.mkdtempSync(path.join(noGhBase(), runId != null ? `run-${Number(runId)}-` : 'tmp-'));
   fs.chmodSync(dir, 0o700);
-  for (const f of fs.readdirSync(dir)) fs.rmSync(path.join(dir, f), { recursive: true, force: true });
   return dir;
 }
 
+/** The run's private gh config dirs, gone. Best effort; returns how many. */
+function removeNoGhDirs(runId) {
+  const fs = require('fs');
+  const path = require('path');
+  let n = 0;
+  try {
+    const base = path.join(config.dataDir, 'no-gh');
+    for (const f of fs.readdirSync(base)) {
+      if (f.startsWith(`run-${Number(runId)}-`)) {
+        fs.rmSync(path.join(base, f), { recursive: true, force: true });
+        n++;
+      }
+    }
+  } catch {
+    /* nothing made */
+  }
+  return n;
+}
+
 /** Pure. { env, unsetEnv } for a no-push run's termhub session. */
-function noPushEnv({ ghConfigDir = null } = {}) {
+function noPushEnv({ ghConfigDir = null, runId = null } = {}) {
   return {
     env: {
       GIT_TERMINAL_PROMPT: '0',
@@ -299,7 +325,7 @@ function noPushEnv({ ghConfigDir = null } = {}) {
       GIT_CONFIG_KEY_0: 'credential.helper',
       GIT_CONFIG_VALUE_0: '',
       GIT_SSH_COMMAND: 'ssh -F none -o IdentityAgent=none -o IdentitiesOnly=yes -o IdentityFile=none -o BatchMode=yes',
-      GH_CONFIG_DIR: ghConfigDir || noGhDir(),
+      GH_CONFIG_DIR: ghConfigDir || noGhDir(runId),
       GH_PROMPT_DISABLED: '1',
     },
     unsetEnv: [...NO_PUSH_UNSET],
@@ -326,9 +352,10 @@ function noPushCommand(command, { env, unsetEnv }, fam = 'posix') {
  * credential) or, on Windows, did not skip the profile. Enforced, not
  * requested.
  */
-async function createNoPushSession(hub, spec, machineName, { ghConfigDir = null, fam = 'posix' } = {}) {
-  const ne = noPushEnv({ ghConfigDir });
-  const session = await hub.createSession({ ...spec, command: noPushCommand(spec.command, ne, fam), env: ne.env, unsetEnv: ne.unsetEnv, noRc: true });
+async function createNoPushSession(hub, spec, machineName, { ghConfigDir = null, fam = 'posix', runId = null } = {}) {
+  const ne = noPushEnv({ ghConfigDir, runId });
+  const env = { ...(spec.env || {}), ...ne.env };
+  const session = await hub.createSession({ ...spec, command: noPushCommand(spec.command, { ...ne, env }, fam), env, unsetEnv: ne.unsetEnv, noRc: true });
   const refuse = async (why) => {
     await hub.killSession(session.id).catch(() => {});
     throw new Error(`termhub${machineName ? ` on ${machineName}` : ''} ${why} — update termhub there, or dispatch as \`branch\`/\`mr\``);
@@ -463,8 +490,8 @@ async function startOnMachine({ machine, hub, run, repo, branch, mode, brief, ti
   if (!session) {
     try {
       session = mode.mayPush
-        ? await hub.createSession({ cwd: worktree, command: '', title })
-        : await createNoPushSession(hub, { cwd: worktree, command: '', title }, machine.name, { ghConfigDir: `${worktree}.no-gh`, fam });
+        ? await hub.createSession({ cwd: worktree, command: '', title, env: { PA_DISPATCHED_RUN: String(run.id) } })
+        : await createNoPushSession(hub, { cwd: worktree, command: '', title, env: { PA_DISPATCHED_RUN: String(run.id) } }, machine.name, { ghConfigDir: `${worktree}.no-gh`, fam });
     } catch (err) {
       // Nothing runs in it: take the worktree back down, as a failed setup does.
       const undo = exec || ((argv) => runCommand(machine.name, argv, { timeoutMs: 120_000, env: GIT_ENV }));
@@ -553,6 +580,7 @@ module.exports = {
   noPushEnv,
   noPushCommand,
   noGhDir,
+  removeNoGhDirs,
   createNoPushSession,
   remoteRepoPath,
   remoteWorktreePath,

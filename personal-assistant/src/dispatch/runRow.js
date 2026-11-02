@@ -24,16 +24,25 @@ class LiveRunError extends Error {
 /**
  * @param {string} sql     an `insert into run … returning *`
  * @param {Array} params
- * @param {{commitmentId?: number|null, again?: boolean}} o
+ * @param {{commitmentId?: number|null, again?: boolean, externalId?: (row) => string}} o
+ *   externalId: the factory idempotency key, written in the SAME transaction
+ *   as the row — never a row that exists without its key.
  */
-async function insertRun(sql, params, { commitmentId = null, again = false } = {}) {
-  if (!commitmentId || again) return one(sql, params);
+async function insertRun(sql, params, { commitmentId = null, again = false, externalId = null } = {}) {
+  if ((!commitmentId || again) && !externalId) return one(sql, params);
   return withTx(async (c) => {
-    await c.query('select pg_advisory_xact_lock($1, $2)', [LOCK_SPACE, Number(commitmentId)]);
-    const live = await c.query(`select id from run where commitment_id = $1 and status in ${LIVE} order by started_at desc limit 1`, [commitmentId]);
-    if (live.rows && live.rows.length) throw new LiveRunError(commitmentId, live.rows[0].id);
-    const r = await c.query(sql, params);
-    return r.rows[0];
+    if (commitmentId && !again) {
+      await c.query('select pg_advisory_xact_lock($1, $2)', [LOCK_SPACE, Number(commitmentId)]);
+      const live = await c.query(`select id from run where commitment_id = $1 and status in ${LIVE} order by started_at desc limit 1`, [commitmentId]);
+      if (live.rows && live.rows.length) throw new LiveRunError(commitmentId, live.rows[0].id);
+    }
+    const row = (await c.query(sql, params)).rows[0];
+    if (externalId && row) {
+      const key = externalId(row);
+      await c.query('update run set external_id = $2 where id = $1', [row.id, key]);
+      row.external_id = key;
+    }
+    return row;
   });
 }
 

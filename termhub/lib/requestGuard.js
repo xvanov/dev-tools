@@ -104,6 +104,29 @@ function learnSelfNames({ readStatus = defaultStatus } = {}) {
   return learning;
 }
 
+/**
+ * Pure. The startup warning when this machine's MagicDNS name could not be
+ * learned (no `tailscale` on termhub's PATH, or tailscale down) and nothing
+ * stands in for it: the tailnet address then answers 403 until the name is
+ * put in TERMHUB_ALLOWED_HOSTS. Null when there is nothing to say.
+ */
+function selfNamesWarning(names, env = process.env) {
+  if (names && names.size) return null;
+  if (String(env.TERMHUB_ALLOWED_HOSTS || '').split(',').some((n) => /\.ts\.net\.?$/i.test(n.trim()))) return null;
+  return '[termhub] could not learn this machine\'s tailnet name (is `tailscale` on termhub\'s PATH, and up?) — ' +
+    'requests to https://<machine>.<tailnet>.ts.net will get 403 until that name is in TERMHUB_ALLOWED_HOSTS ' +
+    '(comma-separated). Loopback and IP addresses still work.';
+}
+
+/** Learn at startup and say so once if it did not work. */
+function learnSelfNamesAndWarn(logWarn = (m) => console.warn(m)) {
+  return learnSelfNames().then((names) => {
+    const w = selfNamesWarning(names);
+    if (w) logWarn(w);
+    return names;
+  });
+}
+
 /** Tests: replace the learned names outright (and suppress background learning). */
 function setLearnedNames(names) {
   learned = new Set([...(names || [])].map((n) => String(n).toLowerCase().replace(/\.$/, '')));
@@ -243,6 +266,8 @@ function refuseUpgrade(socket, { status, error }) {
 }
 
 module.exports = {
+  selfNamesWarning,
+  learnSelfNamesAndWarn,
   checkProgrammaticRequest, checkRequest, checkUpgrade, refuseUpgrade, hostAllowed, hostnameOf,
   learnSelfNames, selfNamesFromStatus, setLearnedNames,
 };

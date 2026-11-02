@@ -218,13 +218,17 @@ function ciGateRules() {
   assert.strictEqual(g({}, { known: true, contexts: ['build'] }, 10).action, 'wait');
 
   // MUST-FIX 5: the last look before a merge.
-  const ok = { pr: { baseRefName: 'main', headRefOid: 'abc1234', isCrossRepository: false }, defaultBranch: 'main', sha: 'abc1234', baseShaAtCi: 'b1', baseShaNow: 'b1', strict: false };
+  const ok = { pr: { baseRefName: 'main', headRefOid: 'abc1234', isCrossRepository: false }, defaultBranch: 'main', sha: 'abc1234', behindBy: 0, strict: false };
   assert.strictEqual(M.mergeRefusal(ok), null);
   assert.match(M.mergeRefusal({ ...ok, pr: { ...ok.pr, baseRefName: 'release' } }), /targets release, not main/);
   assert.match(M.mergeRefusal({ ...ok, pr: { ...ok.pr, isCrossRepository: true } }), /another repository/);
   assert.match(M.mergeRefusal({ ...ok, pr: { ...ok.pr, headRefOid: 'fff9999' } }), /head moved/);
-  assert.match(M.mergeRefusal({ ...ok, baseShaNow: 'b2' }), /main moved since CI ran/);
-  assert.strictEqual(M.mergeRefusal({ ...ok, baseShaNow: 'b2', strict: true }), null, 'a repo that requires up-to-date branches enforces it itself');
+  // #5a: the checked commit must contain the base as it is now.
+  assert.match(M.mergeRefusal({ ...ok, behindBy: 2 }), /main has 2 commit\(s\) the checked commit does not/);
+  assert.strictEqual(M.mergeRefusal({ ...ok, behindBy: 2, strict: true }), null, 'a repo that requires up-to-date branches enforces it itself');
+  // #5b: unreadable → refused.
+  assert.match(M.mergeRefusal({ ...ok, behindBy: null }), /could not check that the PR contains the current main/);
+  assert.match(M.mergeRefusal({ ...ok, behindBy: undefined }), /not merging blind/);
   assert.match(M.mergeRefusal({ ...ok, pr: null }), /could not read the PR/);
 }
 
@@ -243,9 +247,9 @@ async function runReview() {
   };
   merge.requiredChecks = async () => required;
   let prHead = 'abc1234';
-  let baseShas = ['b1', 'b1'];
+  let behind = 0;
   merge.prState = async () => ({ baseRefName: 'main', headRefOid: prHead, isCrossRepository: false });
-  merge.branchSha = async () => baseShas.shift() || 'b1';
+  merge.behindBy = async () => behind;
   merge.slugOf = async () => 'acme/widget';
   merge.mayMerge = () => false; // not one of "my" repos: only an explicit auto_merge may merge
   dispatch.review = async () => ({ commits: 'abc1 add retries', stat: '1 file', uncommitted: 0 });
@@ -284,10 +288,12 @@ async function runReview() {
   assert.deepStrictEqual((await go('auto_merge'))[0], 'blocked');
   assert.match(blockedRuns[0], /head moved/);
   prHead = 'abc1234';
-  baseShas = ['b1', 'b2'];
+  behind = 1;
   assert.deepStrictEqual((await go('auto_merge'))[0], 'blocked');
-  assert.match(blockedRuns[0], /main moved since CI ran/);
-  baseShas = [];
+  assert.match(blockedRuns[0], /main has 1 commit\(s\) the checked commit does not/);
+  behind = null;
+  assert.deepStrictEqual((await go('auto_merge'))[0], 'blocked', 'unreadable: fail closed');
+  behind = 0;
   assert.deepStrictEqual(await go('push_to_main'), ['pushed to main', ['branch', ...ciPolls(4), 'main:abc1234']], 'branch first, CI, then main at that commit');
 
   // CI red: nothing merged or pushed to main; the run is blocked with the reason.

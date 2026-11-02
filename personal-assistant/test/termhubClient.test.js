@@ -122,3 +122,18 @@ async function exercise(base, seen, label) {
   console.error(err);
   process.exit(1);
 });
+
+// pa doctor: a termhub reached by its tailnet name, and the fix when it refuses it.
+{
+  const assert = require('assert');
+  const { tailnetCheck } = require('../src/dispatch/termhub');
+  assert.strictEqual(tailnetCheck('http://127.0.0.1:7000', { ok: false, error: 'x' }), null, 'not a tailnet name: no line');
+  assert.deepStrictEqual(tailnetCheck('https://box.tail1.ts.net', { ok: true }).ok, true);
+  const refused = tailnetCheck('https://box.tail1.ts.net/', { ok: false, error: 'termhub 403 on /api/health: host not allowed' });
+  assert.strictEqual(refused.ok, false);
+  assert.match(refused.detail, /TERMHUB_ALLOWED_HOSTS/);
+  assert.match(tailnetCheck('https://box.tail1.ts.net', { ok: false, error: 'ECONNREFUSED' }).detail, /unreachable by its tailnet name/);
+  const doctor = require('fs').readFileSync(require('path').join(__dirname, '..', 'src', 'cli', 'index.js'), 'utf8');
+  assert.match(doctor, /'run isolation'/, 'doctor states the real isolation boundary');
+  console.log('termhubClient tailnet check ok');
+}

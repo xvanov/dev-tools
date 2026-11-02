@@ -235,7 +235,22 @@ async function restore(file) {
     fs.rmSync(listFile, { force: true });
     if (inside) await runTool({ cmd: 'docker', args: ['exec', tools.container, 'rm', '-f', view(file), view(listFile)] }).catch(() => {});
   }
+  await rotateInstallId();
   log.info('restored', { file });
+}
+
+/**
+ * A restored store is a new install (sql/026 pa_install): the dump may be
+ * restored next to a live copy of itself, and two stores holding one install
+ * id would hand each other's runs the same factory idempotency keys. Runs
+ * already submitted keep the key on their row (run.external_id).
+ */
+async function rotateInstallId(q = query) {
+  const id = require('crypto').randomUUID();
+  await q('delete from pa_install');
+  await q('insert into pa_install (id) values ($1)', [id]);
+  log.info('new install id after restore');
+  return id;
 }
 
 // A `pg_restore --list` with the extension entries (and their comments)
@@ -278,4 +293,5 @@ async function toolsCheck() {
   return { ok: true, detail: `pg_dump ${client || '?'}` };
 }
 
-module.exports = { dump, dumpIfDue, restore, reingest, list, toPrune, stamp, wslPath, restoreList, parseTools, containerUrl, dumpCommand, toolCommand, toolsCheck, splitPassword };
+module.exports = {
+  rotateInstallId, dump, dumpIfDue, restore, reingest, list, toPrune, stamp, wslPath, restoreList, parseTools, containerUrl, dumpCommand, toolCommand, toolsCheck, splitPassword };

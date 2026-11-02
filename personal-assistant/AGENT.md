@@ -41,8 +41,20 @@ explicitly can still push; the pushurl block is not credential isolation either 
 `-c` walk round it). And a run whose mode may push (`branch`, `mr` — so every `draft_pr`, `pr` and
 `auto_merge` session) holds the operator's full credentials: its agent, started with
 `--dangerously-skip-permissions`, *could* exceed its level (mark its PR ready, merge it, push to main);
-the end state is what the PA does, not a limit on what that agent can do. The real boundary for work
-that must never exceed its level is a machine or user without those credentials. Do not
+the end state is what the PA does, not a limit on what that agent can do. The same holds for a
+no-push run: it is the operator's OS user, so `GH_CONFIG_DIR=$HOME/.config/gh gh …` or `~/.ssh/id_*`
+restores the login. **The real boundary for work that must never exceed its level is a separate OS
+user (or machine) without those credentials — not set up yet; a follow-up.** `pa doctor` says so on
+every run (`run isolation`).
+
+**Unattended levels cannot be started from inside a run — by mitigation, not by boundary.** A
+dispatched agent runs as the same user with prompts skipped, so it can reach the dashboard API with
+`X-PA: 1`, run `pa`, or fake a TTY. Two cheap layers: (1) every dispatched session's env carries
+`PA_DISPATCHED_RUN=<id>`, and `pa do` / `pa answer` refuse `auto_merge` / `push_to_main` while it is
+set; (2) the dashboard's endpoints that start or accept those levels also need a page token issued
+with each page load and held only in that page's memory (`X-PA-Page`, src/dashboard/server.js), and
+Do confirms only the level the page resolved and showed (`confirmedLevel`; anything else is 409 with
+the level). An agent that unsets the variable and scrapes a page gets past both: defence in depth. Do not
 implement a stop condition as a sentence in the prompt and call it done. Here and on another machine, the push block goes in the worktree's own config
 (`extensions.worktreeConfig` + `git config --worktree`; a plain `git config` in a worktree writes
 the repo's *shared* config and blocks the main checkout and every run at once) and is **read
@@ -222,7 +234,8 @@ card accepted in the dashboard or from a terminal. Asked for by the chat or any 
 caller, `pa do` puts it on a card labelled "suggested by the chat" instead, and `pa answer` will not
 accept such a card without a terminal. There is no ceiling (operator decision 2026-11-02); the card
 and `pa do` say what these two do in plain words. A Claude session runs in the mode its level maps to (`D.modeFor`;
-`push_to_main` runs as `local`, so the agent can never push to main itself) and `run_review`
+`push_to_main` runs as `local`: no push credentials in its environment and its worktree's push blocked
+— which stops an accident, not a determined agent, see the residual risk above) and `run_review`
 (src/durable/tasks/runReview.js) does the rest when it ends: merging only on `auto_merge`, pushing
 to main only on `push_to_main` (branch first, then a fast-forward to exactly the checked commit), and
 either only after `merge.ciGate` passed CI on that commit — polled at most `CI_LIMIT_MS` (30 min),

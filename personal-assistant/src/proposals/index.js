@@ -54,6 +54,12 @@ const HANDLERS = {
   // the mode and on the route it named (a Claude session if none).
   async dispatch(p, answer, { delivery: picked = null } = {}) {
     const pl = p.payload || {};
+    if (pl.repoPath && !pl.repoVerifiedAt) {
+      // A card made before `--repo` had to be a known project: checked now, with the way out.
+      await require('../dispatch').knownRepo(pl.repoPath).catch(() => {
+        throw new Error(`this card's repo ${pl.repoPath} is not a known project — decline it and offer it again (pa propose …), or add the checkout with \`pa projects sync\``);
+      });
+    }
     if (pl.frozen) {
       const D = require('../dispatch/deliveryCore');
       const delivery = picked ? D.delivery(picked) : pl.delivery || null;
@@ -79,15 +85,18 @@ const HANDLERS = {
         // Accepting the card IS the operator's confirmation of its end state
         // (the CLI refuses to accept an unattended one without a terminal).
         confirmedUnattended: true,
+        repoVerified: true, // checked when the card was made, or just above
         routeReason: pl.routeReason ? `proposal: ${pl.routeReason}` : null,
       });
       return describeStart(run);
     }
     const via = pl.via === 'factory' ? 'factory' : 'claude';
+
     const run = await require('../dispatch').start({
       commitmentId: p.commitment_id,
       mode: pl.mode || undefined,
       repoPath: pl.repoPath || null,
+      repoVerified: true,
       via,
       routeReason: pl.routeReason ? `proposal: ${pl.routeReason}` : null,
     });

@@ -188,7 +188,7 @@ function maskUrl(u) {
 // A person at a terminal, not the PA chat or a script: both ends a TTY, and
 // not inside the chat's session.
 function interactive() {
-  return Boolean(process.stdin.isTTY && process.stdout.isTTY) && process.env.PA_CHAT_SESSION !== '1';
+  return Boolean(process.stdin.isTTY && process.stdout.isTTY) && process.env.PA_CHAT_SESSION !== '1' && !process.env.PA_DISPATCHED_RUN;
 }
 
 function suggestedBy() {
@@ -434,6 +434,9 @@ const commands = {
     const hint = !o.delivery ? D.unattendedHint(task) : null;
     if (hint) out(`  your words mention "${hint.phrase}" — merging or pushing to main is only ever set explicitly: --delivery ${hint.delivery}`);
     if (D.unattended(pre.delivery)) {
+      if (process.env.PA_DISPATCHED_RUN) {
+        return fail(`refused: run #${process.env.PA_DISPATCHED_RUN}'s agent may not start work that ${pre.delivery === 'push_to_main' ? 'pushes to main' : 'merges'} with no human step`);
+      }
       if (!interactive()) {
         const row = await require('../dispatch/offer').propose({
           ...o, useModel: await require('../budget').allow('propose').catch(() => false), suggestedBy: suggestedBy(),
@@ -576,7 +579,7 @@ const commands = {
       const D = require('../dispatch/deliveryCore');
       const p = await require('../db').one('select kind, payload from proposal where id = $1', [Number(id)]);
       const final = delivery ? D.delivery(delivery) : p?.payload?.delivery;
-      if (p?.kind === 'dispatch' && D.unattended(final) && !interactive()) {
+      if (p?.kind === 'dispatch' && D.unattended(final) && (!interactive() || process.env.PA_DISPATCHED_RUN)) {
         return fail(`proposal ${id} would ${final === 'push_to_main' ? 'push to main' : 'merge'} with no human step — accept it in the dashboard or from a terminal`);
       }
     }
@@ -1266,6 +1269,17 @@ const commands = {
     const termhub = require('../dispatch/termhub');
     const hub = await termhub.reachable();
     mark(hub.ok, 'termhub', hub.ok ? config.termhub.url : `${config.termhub.url} — ${hub.error}`);
+    // Reachable by tailnet name: a termhub that cannot learn its own MagicDNS
+    // name refuses it (403) until TERMHUB_ALLOWED_HOSTS names it.
+    for (const [label, url] of [['termhub', config.termhub.url], ...Object.values(config.termhub.machines).map((m) => [`termhub ${m.name}`, m.url])]) {
+      const t = termhub.tailnetCheck(url, url === config.termhub.url ? hub : await termhub.client(url).reachable());
+      if (t) mark(t.ok, `${label} (tailnet)`, t.detail);
+    }
+    // The no-push boundary, said plainly every time: it is the environment,
+    // not the OS user.
+    mark(true, 'run isolation', 'WARNING: dispatched runs are your OS user. A no-push run starts without push credentials ' +
+      'in its environment, but its agent can restore them from disk (GH_CONFIG_DIR=~/.config/gh gh …, ~/.ssh), call the ' +
+      'dashboard API, or fake a terminal. The real boundary is a separate OS user (not set up).');
     // Each machine: reachable, which OS (and does PA_MACHINES agree), and can
     // its termhub run commands (POST /api/exec) — remote setup needs that.
     for (const machine of Object.values(config.termhub.machines)) {

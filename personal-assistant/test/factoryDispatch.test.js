@@ -274,6 +274,7 @@ const KEY = `${INSTALL}-7`;
 function stubTx(db) {
   db.withTx = async (fn) => fn({
     async query(sql, params) {
+      (global.__txQueries = global.__txQueries || []).push({ sql, params });
       if (/pg_advisory_xact_lock/.test(sql)) { (global.__txLocks = global.__txLocks || []).push(params); return { rows: [] }; }
       if (/^\s*select id from run where commitment_id/.test(sql)) return { rows: global.__liveRun ? [global.__liveRun] : [] };
       return { rows: [await db.one(sql, params)] };
@@ -302,6 +303,7 @@ stub('db', stubTx({
       store.failOn = null;
       throw new Error('connection to the store lost');
     }
+    if (store.runEnded && /status in \('starting', 'waiting', 'running'\)/.test(sql)) return { rowCount: 0, rows: [] };
     return { rowCount: 1, rows: [] };
   },
 }));
@@ -686,7 +688,29 @@ async function factoryReconcile() {
   answers = { 'job submit': json({ job_id: 'widget:043', created: false, delivery: 'pr' }) };
   await assert.rejects(factory.start({ target, app: 'widget', delivery: 'pr' }), (e) => e.code === 'duplicate_key');
   assert.ok(!store.queries.some((q) => /factory_job_id = \$2/.test(q.sql)), 'not recorded');
-  assert.ok(store.queries.some((q) => /update run set external_id = \$2/.test(q.sql) && q.params[1] === KEY), 'the key is on the row before the submit');
+  assert.ok(global.__txQueries.some((q) => /update run set external_id = \$2/.test(q.sql) && q.params[1] === KEY), 'the key is written inside the insert\'s transaction');
+
+  // #14b: a job that turns up for a run dropped meanwhile is cancelled; the row stays dropped.
+  calls.length = 0;
+  store.queries.length = 0;
+  transitions.length = 0;
+  store.runEnded = true;
+  store.unsettled = [{ id: 16, commitment_id: 46, status: 'waiting', factory_state: 'submit_unknown', external_id: 'k-16', age_ms: '1000' }];
+  answers = {
+    'job list': json({ jobs: [{ job_id: 'widget:016', source: 'pa', external_id: 'k-16', state: 'queued' }] }),
+    'job cancel': json({ job_id: 'widget:016', state: 'cancelled' }),
+  };
+  await factory.sweepUnsettled();
+  assert.ok(calls.some((c) => c.argv.slice(3).join(' ') === 'job cancel widget:016 --json'), 'the late job is cancelled');
+  assert.ok(!store.queries.some((q) => /status = 'running'/.test(q.sql) && !/status in/.test(q.sql)), 'never set running unconditionally');
+  assert.ok(store.queries.some((q) => /factory_state = 'cancelled'/.test(q.sql)));
+  assert.deepStrictEqual(transitions, [], 'no commitment move');
+  // …and at start: a run dropped while its submit was in flight.
+  calls.length = 0;
+  answers = { 'job submit': json({ job_id: 'widget:017b', created: true }), 'job cancel': json({ job_id: 'widget:017b', state: 'cancelled' }) };
+  await assert.rejects(factory.start({ target, app: 'widget', delivery: 'pr' }), /dropped while its job was being submitted; job widget:017b was cancelled/);
+  store.runEnded = false;
+  store.unsettled = [];
 
   // 5. A contract error is a refusal: failed at once, no reconcile.
   calls.length = 0;

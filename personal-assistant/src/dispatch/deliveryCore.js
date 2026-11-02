@@ -34,8 +34,10 @@ const DELIVERY_BY_MODE = { plan: null, local: 'none', branch: 'branch', mr: 'dra
 // modes.js: a `local` worktree's pushurl is a dead address), and anything past
 // what the agent may do itself is done by the assistant when the session ends:
 // `pr` and `auto_merge` run as `mr` (the agent opens a draft) and the PA marks
-// it ready / merges it; `push_to_main` runs as `local` — the agent can never
-// write to main itself; only the PA's fast-forward push at the end does.
+// it ready / merges it; `push_to_main` runs as `local` — no push credentials in
+// its environment and its push blocked, so main moves only by the PA's
+// fast-forward at the end (against accidents: an agent of the same OS user can
+// restore credentials from disk — AGENT.md, run isolation).
 const MODE_BY_DELIVERY = { none: 'local', branch: 'branch', draft_pr: 'mr', pr: 'mr', auto_merge: 'mr', push_to_main: 'local' };
 
 // Plain words for the card and the CLI. The two that need no human after the

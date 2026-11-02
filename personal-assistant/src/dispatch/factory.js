@@ -262,11 +262,9 @@ async function start({
      values ($1,$2,$3,$4,'starting',$5,'factory',$6,$7,$8,$9,$10,$11) returning *`,
     [commitmentId, runMode, label, target.repoPath || null, where || os.hostname(), routeReason, target.commitment?.kind || null,
       pipe, chosen.delivery, Object.keys(overrides).length ? overrides : null, chosen.source],
-    { commitmentId, again }
+    // The idempotency key, in the insert's own transaction: before anything is sent.
+    { commitmentId, again, externalId: (row) => F.externalKey(install, row.id) }
   );
-  // The idempotency key, recorded before anything is sent.
-  run.external_id = F.externalKey(install, run.id);
-  await query('update run set external_id = $2 where id = $1', [run.id, run.external_id]);
 
   // The ask: the card's frozen brief, or one composed now from the ask and
   // what the assistant gathered (src/dispatch/compose.js). Composition never
@@ -323,8 +321,12 @@ async function start({
     sent = true;
     job = await submit(argvFor(staged));
     if (!F.JOB_ID.test(String(job.job_id || ''))) throw new F.FactoryError('bad_output', `job id "${job.job_id}"`);
-    await recordJob(run, job, { delivery: chosen.delivery, pipe, briefPath, by });
+    if (!(await recordJob(run, job, { delivery: chosen.delivery, pipe, briefPath, by }))) {
+      await unstage(where, stagedDir);
+      throw Object.assign(new Error(`run #${run.id} was dropped while its job was being submitted; job ${job.job_id} was cancelled`), { code: 'run_ended' });
+    }
   } catch (err) {
+    if (err.code === 'run_ended') throw err;
     // The factory refused it before writing anything (F.REFUSAL_CODES), or the
     // command never ran (exit 127, F.NotSentError), or nothing was ever sent:
     // there is no job, and the run failed. Anything else — `internal`,
@@ -407,17 +409,26 @@ async function start({
   };
 }
 
-// The job, written onto its run. One statement, so a run is either still
-// without a job or fully recorded with one.
+// The job, written onto its run — only while the run is still live. A run
+// dropped (or failed) while its submit was in flight is not brought back to
+// `running`: the job it turns out to have is cancelled in the factory, and its
+// id kept on the row as evidence. Returns whether the run is live.
 async function recordJob(run, job, { delivery, pipe, briefPath, by }) {
   const warnings = Array.isArray(job.warnings) ? job.warnings.map((w) => F.clip(w, 300)).slice(0, 20) : [];
-  await query(
+  const r = await query(
     `update run set factory_job_id = $2, delivery = $3, pipeline = $4, brief_path = coalesce($5, brief_path), status = 'running',
                     factory_state = 'queued', factory_warnings = $6, exit_note = $7, brief_by = coalesce($8, brief_by)
-      where id = $1`,
+      where id = $1 and status in ('starting', 'waiting', 'running')`,
     [run.id, job.job_id, job.delivery || delivery || null, job.pipeline || pipe || null, briefPath || null,
       warnings.length ? JSON.stringify(warnings) : null, warnings.length ? F.clip(`factory warned: ${warnings.join('; ')}`, 500) : null, by || null]
   );
+  if (r && r.rowCount === 0) {
+    log.warn('a job turned up for a run that already ended; cancelling it', { run: run.id, job: job.job_id });
+    await call(['job', 'cancel', job.job_id, '--json']).catch((err) => log.error('could not cancel the late job', { run: run.id, job: job.job_id, message: err.message }));
+    await query(`update run set factory_job_id = coalesce(factory_job_id, $2), factory_state = 'cancelled' where id = $1`, [run.id, job.job_id]).catch(() => {});
+    return false;
+  }
+  return true;
 }
 
 /**
@@ -446,7 +457,8 @@ async function settle(run, { jobId = null, ageMs = 0, note = null, extra = {} } 
   const verdict = F.submitVerdict({ job, asked, ageMs });
   try {
     if (verdict === 'adopt') {
-      await recordJob(run, job, { delivery: extra.delivery, pipe: extra.pipe, briefPath: extra.briefPath, by: extra.by });
+      const live = await recordJob(run, job, { delivery: extra.delivery, pipe: extra.pipe, briefPath: extra.briefPath, by: extra.by });
+      if (!live) return { verdict: 'cancelled', job, asked };
       log.info('adopted the factory job for an unsettled submit', { run: run.id, job: job.job_id });
     } else if (verdict === 'fail') {
       await query(

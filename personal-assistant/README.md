@@ -616,7 +616,9 @@ contract is the factory's `docs/JOBS-API.md`.
   "don't push") — never a third party's message; the repo's default (`pa delivery set owner/name
   <level>`, `pa delivery list`, sql/025); `PA_DELIVERY_DEFAULT` (draft_pr). The same vocabulary
   drives a Claude session: its worktree runs in the mode that level maps to (push_to_main runs as
-  `local` — the agent can never push to main itself) and run review does the rest. `plan` is never
+  `local` — no push credentials in its environment and its push blocked, which stops an accident; an
+  agent running as your OS user can still restore them from disk, so the real boundary is a separate
+  OS user, not set up yet — `pa doctor` says so) and run review does the rest. `plan` is never
   a factory job.
 - **The ask is a composed brief** (`src/dispatch/compose.js`, rules in `composeCore.js`): a model
   (`PA_COMPOSE_MODEL`, any text-capable provider) writes the goal, done-criteria, constraints,

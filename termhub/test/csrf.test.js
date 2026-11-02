@@ -188,3 +188,14 @@ const listen = (server) => new Promise((ok) => server.listen(0, '127.0.0.1', () 
   console.error(e);
   process.exit(1);
 });
+
+// No tailnet name learned and none configured: a startup warning naming TERMHUB_ALLOWED_HOSTS.
+{
+  const { selfNamesWarning } = require('../lib/requestGuard');
+  const w = selfNamesWarning(new Set(), {});
+  require('assert').match(w, /TERMHUB_ALLOWED_HOSTS/);
+  require('assert').match(w, /tailscale/);
+  require('assert').strictEqual(selfNamesWarning(new Set(['box.tail1.ts.net']), {}), null);
+  require('assert').strictEqual(selfNamesWarning(new Set(), { TERMHUB_ALLOWED_HOSTS: 'box.tail1.ts.net' }), null);
+  console.log('csrf: tailnet-name warning ok');
+}
