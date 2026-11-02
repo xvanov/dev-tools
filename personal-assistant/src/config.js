@@ -87,16 +87,28 @@ function defaultDataDir() {
   return path.join(os.homedir(), '.local', 'share', 'personal-assistant');
 }
 
-// Other machines a run can be dispatched to (src/dispatch/remote.js), each
-// with its own termhub and its own repos root:
+// Other machines a run can be dispatched to (src/dispatch/remote.js) and
+// commands run on (src/dispatch/exec.js), each with its own termhub and its
+// own repos root, and optionally its OS:
 //   PA_MACHINES=mv-automated-vm=http://mv-automated-vm.example.ts.net:7000|C:\source
+//   PA_MACHINES=lab=http://lab.example.ts.net:7000|/home/k/repos|linux
 // Comma-separated for more than one. A machine not listed here is unknown.
+// The OS (windows | linux | macos) is optional: without it, it is what that
+// termhub reports (`/api/info` platform), else read off the repos root's shape.
+const MACHINE_OS = { windows: 'windows', win32: 'windows', win: 'windows', linux: 'linux', macos: 'macos', darwin: 'macos', mac: 'macos' };
+
 function parseMachines(text) {
   const machines = {};
   for (const entry of String(text || '').split(',').map((s) => s.trim()).filter(Boolean)) {
-    const m = /^([^=]+)=([^|]+)\|(.+)$/.exec(entry);
-    if (!m) throw new Error(`PA_MACHINES: cannot read "${entry}" — want name=termhubUrl|reposRoot`);
-    machines[m[1].trim()] = { name: m[1].trim(), url: m[2].trim().replace(/\/+$/, ''), reposRoot: m[3].trim() };
+    const m = /^([^=]+)=([^|]+)\|([^|]+?)(?:\|([^|]*))?$/.exec(entry);
+    if (!m) throw new Error(`PA_MACHINES: cannot read "${entry}" — want name=termhubUrl|reposRoot[|os]`);
+    const machine = { name: m[1].trim(), url: m[2].trim().replace(/\/+$/, ''), reposRoot: m[3].trim() };
+    if (m[4] != null && m[4].trim()) {
+      const os = MACHINE_OS[m[4].trim().toLowerCase()];
+      if (!os) throw new Error(`PA_MACHINES: "${m[4].trim()}" is not an OS — one of windows, linux, macos`);
+      machine.os = os;
+    }
+    machines[machine.name] = machine;
   }
   return machines;
 }
@@ -487,4 +499,4 @@ function forgetSecret(name) {
   else secretCache.clear();
 }
 
-module.exports = { config, env, envInt, parseEnvFile, parseMachines, secret, secretSource, forgetSecret };
+module.exports = { config, env, envInt, parseEnvFile, parseMachines, MACHINE_OS, secret, secretSource, forgetSecret };

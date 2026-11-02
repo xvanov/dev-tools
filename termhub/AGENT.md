@@ -120,7 +120,7 @@ The `front` answers `GET /api/health` itself (front up +
 sessiond reachable) for the updater's probe, `GET /api/update/check` (`?force=1` to skip the
 60s cache), and `GET /api/secure-url` → `{secureUrl}`, the HTTPS address Tailscale Serve publishes
 this front on (`null` when it publishes none — see *Secure context* below) — all three are handled
-by the front and never proxied. `/api/health` returns
+by the front and never proxied. So is `POST /api/exec` — run one argv, no shell, get `{code, stdout, stderr}` (see *Running a command*). `/api/health` returns
 `{ok, front, self:{entry,pid,port,commit,sessiondPort}, sessiond}`, with `self` present on the 503
 path too; the updater checks `self.pid`/`self.commit` to confirm green is the process it started
 running the commit it just pulled. Terminal stream: WebSocket `/ws/term/:id` with JSON
@@ -1347,6 +1347,74 @@ was killed.
 
 Covered by `test/transcripts.test.js` (temp directory; traversal, absolute paths, junction escape).
 
+## Running a command (`POST /api/exec`, `lib/exec.js`)
+
+Until this existed the only way to make a machine do something through termhub was to open a
+session and **type at a shell**, then guess from the screen whether it worked. The personal
+assistant set up dispatched runs on other machines that way, and a typed `git worktree add` that
+had failed looked exactly like one still running. `/api/exec` runs one command and answers with
+its outcome:
+
+```
+POST /api/exec
+Content-Type: application/json
+X-Termhub: 1
+{"argv":["git","-C","/home/k/repos/x","status","--porcelain"], "cwd":"/home/k", "timeoutMs":60000,
+ "maxOutputBytes":1048576, "stdin":"…optional…", "env":{"GIT_TERMINAL_PROMPT":"0"}}
+
+200 {"code":0, "signal":null, "stdout":"…", "stderr":"", "timedOut":false,
+     "truncated":{"stdout":false,"stderr":false}, "durationMs":41}
+```
+
+- **argv is an array and never reaches a shell** (`spawn(argv[0], argv.slice(1), {shell:false})`).
+  Nothing in it is expanded, globbed or split. A caller that wants a shell names one in `argv[0]`
+  (`["sh","-c","…","sh","$1-value"]`, `["powershell","-NoProfile","-Command","…"]`) and owns
+  the quoting. On Windows that includes `.cmd`/`.bat` files, which Node refuses to spawn without a
+  shell since the 2024 batch-file fix — run the `.exe`, or `cmd.exe /d /c` on purpose.
+- **cwd** must be an absolute path to an existing directory; omitted, it is the home directory.
+- **timeoutMs** defaults to 60 s and is clamped to 30 min. On expiry the **process group** is
+  killed (POSIX: the child is spawned `detached` so it leads a group, then `kill(-pid, SIGKILL)`;
+  Windows: `taskkill /T /F`), so a `git` waiting on an `ssh` child doesn't outlive its deadline.
+  The answer is then `{code:null, timedOut:true, error:"timed out after …"}`. A client that hangs
+  up kills the run too.
+- **Output** is capped per stream (`maxOutputBytes`, default 1 MB, at most 16 MB); past the cap it is
+  drained and dropped and `truncated.<stream>` is `true`. Decoded as UTF-8.
+- **stdin** is an optional string written and then closed — how a caller writes a file (or feeds a
+  brief) without putting its content on a command line. With no `stdin`, stdin is closed at once,
+  so a program that prompts (git asking for credentials) reads EOF rather than hanging.
+- **env** is merged over the front's own environment; names must be `[A-Za-z_][A-Za-z0-9_]*`.
+- A program that doesn't exist, or a cwd that isn't a directory, is still a **200** with
+  `code:null` and `error` (`ENOENT: spawn … ENOENT`). Non-2xx means the request itself was refused:
+  400 malformed body, 403/415 the guard below, 405 not a POST, 413 body over 4 MB, 429 more than 8
+  already running.
+- The front logs one line per run — the program's basename, cwd, outcome and duration. Never argv
+  or output: either can hold anything.
+
+**Front, not sessiond**, for the reason transcripts are: an update swaps the front and never
+restarts sessiond, so a sessiond route would reach a machine only once every terminal there was
+killed. Nothing here needs to outlive a front — a run is bounded and its caller is waiting on the
+response. The cost: a front swapped mid-run kills that run (an `exit` hook kills the groups it
+started), and the caller sees a dropped connection. A run that has to survive updates is a
+session, not an exec.
+
+**The guard (`lib/requestGuard.js`).** It adds no capability — anyone who can reach termhub can
+open a shell and run the same thing. What it must not add is a way in for a *browser* that is
+being steered by someone who can't reach termhub. The session API's POSTs check nothing (see
+*Security notes*); this route checks:
+
+| Threat | Check |
+|---|---|
+| CSRF — a page on another origin POSTs here from your browser | `Content-Type: application/json` **and** `X-Termhub: 1` are required, and either one forces a CORS preflight. termhub answers no preflight (`OPTIONS` gets a 405 with no CORS headers). A foreign `Origin` (including `null`) is refused outright |
+| DNS rebinding — a page re-points its own name at your tailnet IP and becomes same-origin | `Host` must name this machine: loopback, any IP literal (rebinding needs a name), `*.ts.net` (MagicDNS), this machine's hostname or `TERMHUB_MACHINE` (full or first label), or a name in `TERMHUB_ALLOWED_HOSTS` |
+
+Reaching termhub by some other DNS name (a custom tailnet domain, a `/etc/hosts` alias) answers
+403 `Host "…" is not this machine` until that name is added to `TERMHUB_ALLOWED_HOSTS`.
+
+Covered by `test/exec.test.js` (through a real front: argv verbatim with shell metacharacters,
+exit code/stderr/stdin/env, missing program, output cap, a grandchild killed with its group on
+timeout, every refusal). An older termhub answers **404** on the route, which the personal
+assistant reports as "termhub on X is too old — update it".
+
 ## Versioning & tagging
 
 The version shown under the **⟳ Update** button (and in the update panel) is `git describe
@@ -1795,6 +1863,12 @@ user actually meant to paste.
   transcripts (read-only, `~/.claude/projects/` only — see *Claude transcripts, read-only*). They
   hold everything you said to Claude there; that is no more than a shell already reaches, but it
   is easier to automate, so the tailnet ACL matters for them too.
+- `POST /api/exec` runs any command as the termhub user — exactly what a shell there can do, so
+  no new capability, but it is the easiest thing here to automate. It refuses cross-origin and
+  rebound-DNS browsers (see *Running a command*). **The session API's own POSTs do not**:
+  `POST /api/sessions` with a `command` parses a JSON body regardless of its `Content-Type` and
+  checks no `Host` or `Origin`, so a page you visit could in principle start a terminal running a
+  command on a machine your browser can reach. The tailnet ACL is what stands between them today.
 - The front also proxies `/pa/*` to the personal assistant's loopback dashboard, so whoever can
   reach termhub can reach the PA too. That adds no capability (they already have shells), but it
   does mean termhub's boundary is the PA's boundary — see *The PA proxy*. `TERMHUB_PA_URL=` turns

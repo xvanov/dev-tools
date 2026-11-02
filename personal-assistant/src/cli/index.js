@@ -991,9 +991,11 @@ const commands = {
     const termhub = require('../dispatch/termhub');
     const hub = await termhub.reachable();
     mark(hub.ok, 'termhub', hub.ok ? config.termhub.url : `${config.termhub.url} — ${hub.error}`);
+    // Each machine: reachable, which OS (and does PA_MACHINES agree), and can
+    // its termhub run commands (POST /api/exec) — remote setup needs that.
     for (const machine of Object.values(config.termhub.machines)) {
-      const r = await termhub.forMachine(machine.name).reachable();
-      mark(r.ok, `termhub · ${machine.name}`, r.ok ? `${machine.url} · repos ${machine.reposRoot}` : `${machine.url} — ${r.error}`);
+      const r = await require('../dispatch/remote').probeMachine(machine, { hub: termhub.forMachine(machine.name) });
+      mark(r.ok, `termhub · ${machine.name}`, r.detail);
     }
 
     // Routines: a schedule or action that no longer parses, and the last run's

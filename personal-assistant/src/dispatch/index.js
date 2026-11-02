@@ -161,8 +161,17 @@ async function start({ commitmentId = null, task = null, mode: modeName, repoPat
     await git(repo, ['worktree', 'add', '-b', branch, worktreePath, base]);
 
     if (!m.mayPush) {
-      // Enforcement, not persuasion.
-      await git(worktreePath, ['config', 'remote.origin.pushurl', BLOCKED_PUSH_URL]);
+      // Enforcement, not persuasion — and verified. The one implementation a
+      // remote run uses too: every remote blocked in the worktree's OWN config
+      // (a plain `git config` there writes the shared one, blocking the main
+      // checkout and every other run), then read back. Throws if it didn't take.
+      await require('./remote').blockPush({
+        machine: { name: 'this machine' },
+        repo,
+        worktree: worktreePath,
+        blockedPushUrl: BLOCKED_PUSH_URL,
+        run: (argv) => require('./exec').runCommand(null, argv, { timeoutMs: 60_000, env: { GIT_TERMINAL_PROMPT: '0' } }),
+      });
     }
 
     await query('update run set worktree_path = $2, branch = $3 where id = $1', [

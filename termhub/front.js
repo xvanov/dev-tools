@@ -6,6 +6,7 @@
 //   - HTTP  /api/*        -> http://127.0.0.1:<sessiondPort>/api/*
 //   - WS    /ws/term/:id  -> raw socket pipe to the same sessiond
 //   - WS    /ws/voice     -> same, the voice-announcement feed
+//   - HTTP  POST /api/exec -> answered here: runs one argv, returns output + exit code
 //   - HTTP  /pa/*         -> the personal assistant's dashboard ($TERMHUB_PA_URL,
 //                            default http://127.0.0.1:7300), prefix stripped
 // It owns no terminals, so it can be restarted/replaced at will. Updates start a
@@ -31,6 +32,7 @@ const peers = require('./lib/peers');
 const build = require('./lib/build');
 const { resolvePaUrl, createPaProxy } = require('./lib/paProxy');
 const transcripts = require('./lib/transcripts');
+const execRoute = require('./lib/exec');
 
 const WEB_DIR = path.join(__dirname, 'web');
 
@@ -145,6 +147,11 @@ function createFront({ sessiondPort, port: serverPort = DEFAULT_FRONT_PORT, paUr
         .then((secureUrl) => sendJson(res, 200, { secureUrl }))
         .catch(() => sendJson(res, 200, { secureUrl: null }));
     }
+
+    // Run one command, non-interactively, and return its output and exit code
+    // (lib/exec.js). Here, not in sessiond, for the same reason as transcripts;
+    // guarded against cross-origin and rebound-DNS browsers (lib/requestGuard.js).
+    if (execRoute.handle(req, res, url, { sendJson })) return undefined;
 
     // Read-only Claude transcripts for the personal assistant on another
     // machine. Here, not in sessiond, so an update ships it (lib/transcripts.js).

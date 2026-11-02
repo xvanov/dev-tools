@@ -489,17 +489,34 @@ Some work belongs on a particular machine — the VM that runs the service, hold
 sync, has the credentials. `pa do 959 --machine mv-automated-vm` (or the machine picker beside
 **Do** on the dashboard) starts the run in *that* machine's termhub, which is already one of
 your hub's peers, so you attach to it the same way. Machines are listed in `PA_MACHINES`
-(`name=termhubUrl|reposRoot`); the repo must be cloned there under the same folder name. Runs go
-only to Windows machines; a Linux machine (a `reposRoot` starting with `/`) is listed only so its
-Claude sessions are read.
+(`name=termhubUrl|reposRoot[|os]`); the repo must be cloned there under the same folder name.
+Windows, Linux and macOS machines all take runs. The OS (`windows`, `linux`, `macos`) is optional:
+without it, it is what that termhub reports (`/api/info`), else the shape of `reposRoot`
+(`C:\…` or `/…`). A configured OS that its termhub contradicts, or a `reposRoot` written for the
+other OS, is refused rather than guessed around. `pa doctor` shows each machine's reachability,
+OS and whether its termhub can run commands.
 
 A run's worktree is trusted ahead of time (the worktrees root is marked trusted in `~/.claude.json`, `src/dispatch/trust.js`), so Claude never stops at its folder-trust question; if the question shows anyway, the cursor is moved to *Yes* first, since newer Claude Code puts it on *No, exit*.
 
-The dispatcher cannot touch that disk, so it types the setup into a fresh shell there and checks
-the result through termhub's API before starting Claude: `git fetch`, a worktree under
-`<reposRoot>\.pa-worktrees\run-<id>` on branch `pa/<id>-…`, the dead pushurl for a mode that may
-not push, and `BRIEF.md` written into the worktree. If the worktree never appears the run is
-marked `failed` and its session left open to show why. `pa say`, `pa attach`, `pa runs` and
+The dispatcher cannot touch that disk, so it has that machine's termhub run the setup —
+`POST /api/exec`, one command at a time, argv arrays with no shell, each exit code checked
+(`src/dispatch/exec.js`) — and checks the result through termhub's API before starting Claude:
+`git fetch`, a worktree under `<reposRoot>/.pa-worktrees/run-<id>` (backslashes on Windows) on
+branch `pa/<id>-…`, and `BRIEF.md` written from stdin and its size read back. For a mode that may
+not push, every remote's pushurl is set to the dead address **in the worktree's own config**
+(`extensions.worktreeConfig`, so the main checkout and other runs still push), then read back: the
+run's worktree must report the dead address and the main checkout must not, or the run fails. The
+session is opened in the worktree only once `/api/dirs` shows it there.
+
+A machine whose termhub predates `/api/exec` gets the old way — the same steps typed into a fresh
+shell (PowerShell on Windows, POSIX `sh` elsewhere), the session left open to show why if the
+worktree never appears — but only for `branch`, `mr` and `full`. A typed push block can't be read
+back, so a `plan` or `local` run there is refused until termhub on that machine is updated.
+
+The same primitive is available to other code: `runCommand(machine | null, argv, {cwd, timeoutMs})`
+→ `{code, stdout, stderr}` in `src/dispatch/exec.js` (`null` is this machine). A timeout is code
+124, a missing program 127; it rejects only when the command could not be put to the machine at
+all (unknown name, termhub down or too old). `pa say`, `pa attach`, `pa runs` and
 `pa drop` work as for a local run; `pa review`, `pa diff` and `pa land` run git on this disk, so
 for a remote run they point you at the session instead, and `pa drop` leaves the worktree on that
 machine for you to remove. **Context** on the dashboard shows the ask, its thread and its runs

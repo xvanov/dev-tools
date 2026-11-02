@@ -20,13 +20,19 @@ patch — and no worker, cron job, skill or agent may ever trigger a send.
 **A dispatched run never touches the main working tree.** Own worktree under
 `../.pa-worktrees/<run-id>`, own branch, removed by `pa drop`. The root `CLAUDE.md` is explicit
 that a dirty tree breaks termhub's updater — dispatched work must not be able to cause that.
-A run on another machine (`--machine`, `src/dispatch/remote.js`) gets the same: its worktree
-and the pushurl block are made on that machine before `claude` is typed, and the dispatcher
+A run on another machine (`--machine`, `src/dispatch/remote.js`; Windows, Linux or macOS) gets
+the same: its worktree and the pushurl block are made on that machine through termhub's
+`POST /api/exec` (exit codes checked, no shell) before `claude` is typed, and the dispatcher
 checks the worktree exists through termhub's API rather than trusting the shell.
 
 **Mode boundaries are enforced by the dispatcher, not requested of the agent.** A `local` run
 gets no push credential in its environment. Do not implement a stop condition as a sentence in
-the prompt and call it done.
+the prompt and call it done. Here and on another machine, the push block goes in the worktree's own config
+(`extensions.worktreeConfig` + `git config --worktree`; a plain `git config` in a worktree writes
+the repo's *shared* config and blocks the main checkout and every run at once) and is **read
+back** before the run starts — a block that cannot be verified (a termhub without `/api/exec`,
+where it could only be typed) refuses the no-push run instead of starting it unverified. Both
+paths call the one `remote.blockPush`.
 
 **The dispatcher is not tailnet-reachable.** It executes code by design. Loopback and the WSL
 interface only. termhub is the thing that is safe to expose, because its trust model is the
