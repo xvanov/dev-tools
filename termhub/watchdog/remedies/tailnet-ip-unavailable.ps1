@@ -150,6 +150,28 @@
 # It persists until someone undoes it, which is the point: the next tray exit or logoff no
 # longer takes termhub off the tailnet. Undo with `tailscale up --unattended=false` or the
 # tray menu's "Run unattended" toggle.
+#
+# WHAT THE 2026-11-03 ESCALATION FOUND (LAP-US101) - cause 7, a NODE KEY EXPIRY. This is
+# a real NeedsLogin, not cause 6 wearing its clothes: unattended mode was ON (ForceDaemon=true,
+# from the 11-02 fix), the tray app was running, LoggedOut=false, HaveNodeKey=true, Health
+# empty. What happened: Tailscale auto-updated itself to 1.104.5 at 05:29, which restarted
+# tailscaled. On re-register, control answered `nodeKeyExpired=true`. tailscaled generated a
+# new key and control wanted interactive auth for it (`authURL=true`). Neither the update nor
+# the restart broke anything. They only made the node re-register, and that is when the
+# expiry showed. The log shows the key minted at the 11-02 04:29 login expired about 25h
+# later, and 11-01 18:24 was another expired-key re-login. So this tailnet's keys expire
+# about daily for this machine. Why so short is unknown, probably the tailnet's key-expiry
+# setting or a policy. No script can fix it. The one fix that stops it coming back is in the
+# admin console: Machines -> LAP-US101 -> "Disable key expiry", or a longer tailnet key
+# expiry.
+# What the old version MISSED was the diagnosis, not a repair. It said "LOGGED OUT" and left
+# the next responder to dig the expiry out of an elevated log by hand. The NeedsLogin branch
+# now reads tailscaled's service log (Get-TailscaledKeyExpiry; elevated read, silently
+# skipped if denied) and says "node key EXPIRED at <time>" with the console fix. That turns a
+# daily escalation into a one-time setting change. Ruled out today: `tailscale up` (it only
+# re-mints the auth URL, per the 10-28 note), cause 6 (ForceDaemon already true, tray
+# present) and a reboot (uptime since 10-27). sessiond (pid 6664, 3 sessions) and the
+# loopback front stayed healthy throughout.
 
 param(
   [string]$Signature,
@@ -268,6 +290,26 @@ function Get-TailscalePrefs {
   $r = Invoke-Tailscale -TsArgs @('debug', 'prefs') -DropStderr
   if ($r.Code -ne 0 -or -not $r.Text) { return $null }
   try { return ($r.Text | ConvertFrom-Json) } catch { return $null }
+}
+
+# Cause 7 (2026-11-03): tells a node-key EXPIRY apart from a plain logout. Only tailscaled's
+# own log has it; `status --json` shows the same NeedsLogin and empty KeyExpiry for both.
+# The log dir needs an elevated read, so an access failure returns '' and that is NOT evidence
+# either way. Reads the tail of the newest two service logs, because the expiry can sit just
+# before a midnight rotation.
+function Get-TailscaledKeyExpiry {
+  try {
+    $dir = Join-Path $env:ProgramData 'Tailscale\Logs'
+    $files = @(Get-ChildItem -Path $dir -Filter 'tailscale-service-*.txt' -ErrorAction Stop |
+               Sort-Object LastWriteTime -Descending | Select-Object -First 2)
+    foreach ($f in $files) {
+      $hit = Get-Content -LiteralPath $f.FullName -Tail 4000 -ErrorAction Stop |
+             Where-Object { $_ -match 'nodeKeyExpired=true|Old key expired|key-expired=true' } |
+             Select-Object -Last 1
+      if ($hit) { return (($hit -split ': ', 2)[0]) }
+    }
+  } catch { }
+  return ''
 }
 
 # ---- 0. resolve the CLI (cause 1) -------------------------------------------
@@ -398,6 +440,10 @@ if (-not $ip -and (Get-RemainingSec) -gt 30) {
       $where = if ($backend.AuthUrl) { $backend.AuthUrl } else { "(run 'tailscale login' on the machine to get one)" }
       Write-Host "remedy: this node is LOGGED OUT of the tailnet. No script can re-authenticate it - a human must open: $where"
       if ($backend.Health) { Write-Host "remedy: tailscaled health: $($backend.Health)" }
+      $expiredAt = Get-TailscaledKeyExpiry
+      if ($expiredAt) {
+        Write-Host "remedy: cause is a NODE KEY EXPIRY (tailscaled log: control reported the key expired at $expiredAt), not a logout or a termhub fault. Logging in clears it for one key lifetime only. To stop it recurring: Tailscale admin console -> Machines -> $env:COMPUTERNAME -> 'Disable key expiry'."
+      }
     }
   }
 }
