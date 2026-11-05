@@ -317,6 +317,10 @@ The **⟳ Update** button in the UI is a front-end over this: the front answers
 `toolChanged` flag set when a changed file lives under the `termhub/` prefix), and **Update
 now** just opens a normal session whose command is `update.ps1` — so the updater runs inside a
 `sessiond`-owned PTY and survives the front swap it triggers, exactly like running it by hand.
+The button is **never gated on the check**: every `/api/update/check` answer — including the error
+ones (no upstream, failed fetch, not a git tree, a thrown check) — carries `command` and `cwd`, and
+the panel enables the button whenever `command` is present (labelled **Re-deploy** when already up
+to date). The check is advice; the script decides, and it copes with every one of those cases itself.
 
 `windows/update.ps1`: reclaim the publish port → ensure `sessiond` → `git pull --ff-only` (rollback
 ref saved) → `npm install` only if `package*.json` changed → deploy the new `front` → verify →

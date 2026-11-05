@@ -1598,9 +1598,17 @@ function renderUpdatePanel(info, loading) {
   renderClaudeCliRow(loading ? null : info);
   if (loading) { status.textContent = 'Checking…'; return; }
   if (!info) { status.textContent = 'Could not check for updates.'; return; }
+  // The button works whatever the check said. The check is advice; the updater
+  // script is what decides, and it handles "already up to date" (re-deploys),
+  // an offline fetch, a diverged branch and a dirty tree itself. Gating the
+  // button on the check meant a failed check — or a stale "up to date" — left
+  // no way to update from the UI at all.
+  apply.disabled = !info.command;
+  apply.textContent = info.available ? 'Update now' : 'Re-deploy';
   if (info.error) {
     status.className = 'warn';
-    status.textContent = 'Update check unavailable: ' + info.error;
+    status.textContent = 'Update check unavailable: ' + info.error
+      + (info.command ? ' — you can still run the updater.' : '');
     return;
   }
   if (!info.available) {
@@ -1623,7 +1631,6 @@ function renderUpdatePanel(info, loading) {
     }
     commits.appendChild(ul);
   }
-  apply.disabled = false;
 }
 
 async function openUpdatePanel() {

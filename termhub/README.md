@@ -255,7 +255,9 @@ first when one of them has died.
   plain shell. The command runs in a fresh shell, so when it exits you still have a shell.
 - **⟳ Update** (sidebar header) — opens a panel showing whether termhub is behind GitHub and
   whether the tool itself changed, with the incoming commit list. **Update now** opens a
-  terminal that runs the safe updater (see below). It also checks once a day in the background
+  terminal that runs the safe updater (see below); it stays clickable even when the check says
+  up to date (**Re-deploy**) or could not run, and uncommitted edits are stashed around the pull
+  and put back. It also checks once a day in the background
   and highlights the button when an update is waiting. The panel also reports your **Claude Code
   CLI** version against the one termhub is pinned to, with an **Update Claude** button — termhub
   drives the CLI through `--session-id`/`--resume` and its on-disk transcripts, so a CLI too old

@@ -98,8 +98,31 @@ check('setsid survives only as the documented fallback, not as the hand-off',
 // ---- platform override hygiene ---------------------------------------------
 check('process.platform was restored', process.platform === realPlatform, process.platform);
 
-console.log(`\nupdate: ${pass} checks passed, ${failures.length} failed`);
-if (failures.length) {
-  for (const f of failures) console.log('  FAIL ' + f);
-  process.exit(1);
-}
+// ---- the button must never be left without a command --------------------------
+// The UI enables Update on `command`. A check that could not compare refs (no
+// upstream, offline, not a git tree, or compute() throwing) used to return no
+// command, which left the button dead exactly when the update was needed.
+// Also: update.ps1 runs under Windows PowerShell 5.1 with ErrorActionPreference
+// Stop, where `& git ... 2>&1` throws on git's first stderr line. The pull must go
+// through Invoke-Git, or the script dies before it can heal a diverged branch.
+(async () => {
+  const { checkForUpdate } = require('../lib/update');
+  const info = await checkForUpdate({ force: true });
+  check('every check answer carries the update command', !!info.command, JSON.stringify(info).slice(0, 200));
+  check('every check answer carries the cwd', info.cwd === PROJECT_DIR);
+
+  const ps = fs.readFileSync(winScript, 'utf8');
+  const code = ps.split('\n').filter((l) => !/^\s*#/.test(l)).join('\n');
+  check('update.ps1 pulls via Invoke-Git, not a raw redirected git call',
+    /Invoke-Git[^\n]*'pull'/.test(code) && !/&\s*git[^\n]*\bpull\b[^\n]*2>/.test(code));
+  check('update.ps1 never redirects a native command\'s stderr (fatal under PS 5.1 + Stop)',
+    !/&\s*(git|tailscale)\b[^\n]*2>(&1|\$null)/.test(code));
+  check('update.ps1 stashes uncommitted work instead of refusing it', /Save-LocalChanges/.test(code));
+  check('update.ps1 rolls back via Reset-TreeTo, never a bare reset --hard', !/reset --hard/.test(code));
+
+  console.log(`\nupdate: ${pass} checks passed, ${failures.length} failed`);
+  if (failures.length) {
+    for (const f of failures) console.log('  FAIL ' + f);
+    process.exit(1);
+  }
+})();

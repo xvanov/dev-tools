@@ -138,9 +138,22 @@ async function compute() {
   };
 }
 
+// Every answer carries the command, including the error ones and a compute()
+// that throws. The UI enables its button on `command`, and the update script
+// copes with a missing upstream, a failed fetch or a dirty tree on its own —
+// so a check that could not compare refs must never be what stops an update.
+function withCommand(data) {
+  return { ...data, command: updateCommand(), cwd: PROJECT_DIR };
+}
+
 async function checkForUpdate({ force = false } = {}) {
   if (!force && cache.data && Date.now() - cache.at < CACHE_TTL_MS) return cache.data;
-  const data = await compute();
+  let data;
+  try {
+    data = withCommand(await compute());
+  } catch (e) {
+    data = withCommand({ available: false, error: String((e && e.message) || e), checkedAt: Date.now() });
+  }
   cache = { at: Date.now(), data };
   return data;
 }
