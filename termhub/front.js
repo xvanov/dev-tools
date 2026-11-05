@@ -34,6 +34,7 @@ const { resolvePaUrl, createPaProxy } = require('./lib/paProxy');
 const transcripts = require('./lib/transcripts');
 const execRoute = require('./lib/exec');
 const { checkRequest, checkUpgrade, refuseUpgrade, learnSelfNamesAndWarn } = require('./lib/requestGuard');
+const cursorTranscripts = require('./lib/cursorTranscripts');
 
 const WEB_DIR = path.join(__dirname, 'web');
 
@@ -169,6 +170,7 @@ function createFront({ sessiondPort, port: serverPort = DEFAULT_FRONT_PORT, paUr
     // Read-only Claude transcripts for the personal assistant on another
     // machine. Here, not in sessiond, so an update ships it (lib/transcripts.js).
     if (transcripts.handle(req, res, url, { sendJson })) return undefined;
+    if (cursorTranscripts.handle(req, res, url, { sendJson })) return undefined;
 
     // ---- peers (the dashboard's machine strip) -------------------------------
     // The front's business, not sessiond's: sessiond binds loopback and talks to

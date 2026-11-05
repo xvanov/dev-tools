@@ -23,7 +23,7 @@ const { EventEmitter } = require('events');
 
 const tts = require('./tts');
 const { summarize } = require('./summarize');
-const { readLastTurn, isWaitingForInput, hasSpeakableContent } = require('./claudeTranscript');
+const { forKind: transcriptFor } = require('./transcriptRead');
 
 const POLL_MS = 1000;
 
@@ -185,7 +185,8 @@ class VoiceHub extends EventEmitter {
     const st = this._stateFor(session.id);
     if (!session.alive) return;
     if (session.kind === 'opencode') return this._pollOpencode(session, st);
-    if (session.kind !== 'claude') return;
+    if (session.kind !== 'claude' && session.kind !== 'cursor') return;
+    const tx = transcriptFor(session.kind);
 
     // "Started producing output again" is a PTY fact, not a transcript one. The
     // browser uses `busy` to drop an announcement it hasn't spoken yet, so it
@@ -197,13 +198,14 @@ class VoiceHub extends EventEmitter {
       return; // and don't read a transcript that's mid-write
     }
 
-    this._readTranscript(session, st);
+    this._readTranscript(session, st, tx);
     // Runs on every tick, not just when the file changes — a session parked on
     // an interactive prompt writes nothing at all (see _maybeAnnounceBlocked).
-    this._maybeAnnounceBlocked(session, st, idleMs);
+    this._maybeAnnounceBlocked(session, st, idleMs, tx);
   }
 
-  _readTranscript(session, st) {
+  _readTranscript(session, st, tx) {
+    if (!tx) tx = transcriptFor(session.kind);
     if (st.inFlight) return; // one summarize per session at a time
 
     const file = session.transcriptFile();
@@ -216,13 +218,13 @@ class VoiceHub extends EventEmitter {
     if (mtimeMs === st.mtimeMs) return;
     st.mtimeMs = mtimeMs;
 
-    const turn = readLastTurn(file);
+    const turn = tx.readLastTurn(file);
     if (!turn) return;
     st.lastTurn = turn; // cached so the blocked check needn't re-read
 
     // Mid-tool-call, or a session working silently (a long tool producing no
     // terminal output), which the PTY check above can't see.
-    if (!isWaitingForInput(turn)) {
+    if (!tx.isWaitingForInput(turn)) {
       this._markBusy(session, st);
       return;
     }
@@ -232,7 +234,7 @@ class VoiceHub extends EventEmitter {
     // nothing AND burn the turn's uuid. Deliberately not marked busy — the
     // session isn't working again, it's mid-sentence. The next append to the
     // transcript (moments away) brings the text and we announce then.
-    if (!hasSpeakableContent(turn)) return;
+    if (!tx.hasSpeakableContent(turn)) return;
 
     // Fail closed on a uuid-less entry. Dedupe is the whole design here, and an
     // entry we can't key would re-announce on every mtime bump. No real entry
@@ -295,11 +297,12 @@ class VoiceHub extends EventEmitter {
   // conversation's last recorded turn also isn't a finished assistant turn,
   // Claude is parked on something interactive. We can't say what it's asking —
   // that text exists only on screen — so we say that it's asking.
-  _maybeAnnounceBlocked(session, st, idleMs) {
+  _maybeAnnounceBlocked(session, st, idleMs, tx) {
+    if (!tx) tx = transcriptFor(session.kind);
     if (idleMs < BLOCKED_MS) return;
     const turn = st.lastTurn;
     if (!turn || !turn.uuid) return;          // no conversation yet, or unkeyable
-    if (isWaitingForInput(turn)) return;      // a finished turn: the normal path owns it
+    if (tx.isWaitingForInput(turn)) return;      // a finished turn: the normal path owns it
     if (st.blockedUuid === turn.uuid) return; // said once already
 
     st.blockedUuid = turn.uuid;
@@ -385,7 +388,8 @@ class VoiceHub extends EventEmitter {
       // work, which is precisely "the user replied while we were summarising".
       if (!session._opencodeIdleAt) return;
     } else {
-      const now = readLastTurn(session.transcriptFile());
+      const tx = transcriptFor(session.kind);
+      const now = tx.readLastTurn(session.transcriptFile());
       if (!now || now.uuid !== turn.uuid) return;
     }
 
@@ -422,12 +426,13 @@ class VoiceHub extends EventEmitter {
         { uuid: turn.id, text: turn.text, verbatim: turn.ask });
       return { summary, turnUuid: turn.id, waiting: true };
     }
-    if (session.kind !== 'claude') return empty;
+    if (session.kind !== 'claude' && session.kind !== 'cursor') return empty;
+    const tx = transcriptFor(session.kind);
     const file = session.transcriptFile();
-    const turn = file ? readLastTurn(file) : null;
+    const turn = file ? tx.readLastTurn(file) : null;
     if (!turn) return empty;
 
-    // "Read that again" means read back what CLAUDE said. A `user` turn last
+    // "Read that again" means read back what the assistant said. A `user` turn last
     // means either Claude is mid-work or it's parked on an interactive prompt —
     // reciting the user's own message back at them is never the answer.
     if (turn.role !== 'assistant') {
@@ -437,8 +442,8 @@ class VoiceHub extends EventEmitter {
       }
       return empty;
     }
-    if (!hasSpeakableContent(turn)) return empty;
-    const waiting = isWaitingForInput(turn);
+    if (!tx.hasSpeakableContent(turn)) return empty;
+    const waiting = tx.isWaitingForInput(turn);
     const summary = await this._summaryForTurn(session, turn);
     return { summary, turnUuid: turn.uuid, waiting };
   }
@@ -464,10 +469,11 @@ class VoiceHub extends EventEmitter {
       whole = turn.text.trim();
       uuid = turn.id;
     } else {
-      if (session.kind !== 'claude') return empty;
+      if (session.kind !== 'claude' && session.kind !== 'cursor') return empty;
+      const tx = transcriptFor(session.kind);
       const file = session.transcriptFile();
-      const turn = file ? readLastTurn(file) : null;
-      if (!turn || turn.role !== 'assistant' || !hasSpeakableContent(turn)) return empty;
+      const turn = file ? tx.readLastTurn(file) : null;
+      if (!turn || turn.role !== 'assistant' || !tx.hasSpeakableContent(turn)) return empty;
       whole = [turn.text, turn.prompt].filter(Boolean).join(' ').trim();
       uuid = turn.uuid;
     }

@@ -141,7 +141,7 @@ function shouldAnnounceExit({ exitCode, lastState, killed, sinceInputMs }) {
 // own opposite reason: it's a session THEY chose to stop monitoring, not one
 // that was never worth monitoring.
 function isTracked(session) {
-  return !!session && (session.kind === 'claude' || session.kind === 'opencode') && !session.paused;
+  return !!session && (session.kind === 'claude' || session.kind === 'cursor' || session.kind === 'opencode') && !session.paused;
 }
 
 module.exports = {

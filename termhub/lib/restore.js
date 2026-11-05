@@ -138,7 +138,36 @@ function injectAfterOpencodeExe(command, flags) {
   );
 }
 
+const CURSOR_EXE = /(^|[\\/\s"'])((?:cursor-)?agent(?:\.exe|\.cmd|\.ps1)?)(?=$|[\s"'])/i;
+const CURSOR_RESUME = /\s(?:--resume|--continue)(?:[=\s]+[^\s]+)?(?=\s|$)/gi;
+
+function injectAfterCursorExe(command, flags) {
+  return String(command).replace(CURSOR_EXE, (m, pre, exe) => `${pre}${exe} ${flags}`);
+}
+
+function stripCursorSessionFlags(command) {
+  const s = String(command);
+  const cut = s.search(/\s*(\|\||&&|;|\|)/);
+  const head = cut === -1 ? s : s.slice(0, cut);
+  const tail = cut === -1 ? '' : s.slice(cut);
+  const stripped = head.replace(CURSOR_RESUME, ' ').replace(/\s{2,}/g, ' ').trim();
+  return stripped + tail;
+}
+
+function restoreCursorCommand(command, agentSessionId) {
+  let cmd = (command && String(command).trim()) || 'agent';
+  if (agentSessionId) {
+    cmd = injectAfterCursorExe(stripCursorSessionFlags(cmd), `--resume ${agentSessionId}`);
+  } else if (!/(^|\s)(--resume|--continue)(\s|=|$)/.test(cmd)) {
+    cmd = injectAfterCursorExe(cmd, '--resume');
+  }
+  if (!/(^|\s)(--trust|--force|--yolo)(\s|=|$)/.test(cmd)) cmd += ' --trust';
+  return cmd;
+}
+
 module.exports = {
-  restoreClaudeCommand, restoreOpencodeCommand, stripClaudeSessionFlags, injectAfterClaudeExe,
+  restoreClaudeCommand, restoreOpencodeCommand, restoreCursorCommand,
+  stripClaudeSessionFlags, injectAfterClaudeExe,
   stripOpencodeServerFlags, injectAfterOpencodeExe,
+  stripCursorSessionFlags, injectAfterCursorExe,
 };

@@ -33,7 +33,7 @@ const { EventEmitter } = require('events');
 
 const store = require('./idleStore');
 const notify = require('./notify');
-const { readLastTurn } = require('./claudeTranscript');
+const { forKind: transcriptFor } = require('./transcriptRead');
 const {
   classifyClaude, classifyOpencode, isTracked, shouldAnnounceExit, WAITING, LIMITED, WORKING,
 } = require('./idleState');
@@ -191,7 +191,8 @@ class IdleHub extends EventEmitter {
     // same cadence. Cheap enough to do unconditionally, and unconditionally is
     // what a session parked on a question requires — it writes nothing at all.
     const file = session.transcriptFile();
-    const turn = file ? readLastTurn(file) : null;
+    const tx = transcriptFor(session.kind);
+    const turn = file ? tx.readLastTurn(file) : null;
     return classifyClaude({ turn, ptyIdleMs });
   }
 

@@ -7,9 +7,10 @@ const crypto = require('crypto');
 const pty = require('node-pty');
 const { defaultShell, shellArgs } = require('./shell');
 const { resolveTranscript, readLastModel, formatModelName } = require('./claudeModel');
+const cursorModel = require('./cursorModel');
 const opencodeModel = require('./opencodeModel');
 const opencodeApi = require('./opencodeApi');
-const { injectAfterClaudeExe, injectAfterOpencodeExe } = require('./restore');
+const { injectAfterClaudeExe, injectAfterOpencodeExe, injectAfterCursorExe } = require('./restore');
 const { ScreenMirror } = require('./screenMirror');
 const { applyEnvSpec } = require('./sessionEnv');
 
@@ -80,11 +81,22 @@ function firstToken(command) {
 // string spliced --resume/--session-id into an unrelated updater command (see
 // test/restore.test.js history). Matches the bare command, `<exe>.exe`/`.cmd`,
 // or a path ending in it — but not `claude-foo` or `myclaude`.
+function isCursorAgentToken(tok) {
+  if (/(^|[\\/])cursor-agent(\.exe|\.cmd|\.ps1)?$/i.test(tok)) return true;
+  if (/(^|[\\/])agent(\.exe|\.cmd|\.ps1)?$/i.test(tok)) {
+    if (/cursor-agent/i.test(tok)) return true;
+    const base = tok.replace(/^.*[\\/]/, '');
+    return /^agent(\.(exe|cmd|ps1))?$/i.test(base);
+  }
+  return false;
+}
+
 function classifyCommand(command) {
   if (!command) return 'shell';
   const tok = firstToken(command);
   if (/(^|[\\/])claude(\.exe|\.cmd)?$/i.test(tok)) return 'claude';
   if (/(^|[\\/])opencode(\.exe|\.cmd)?$/i.test(tok)) return 'opencode';
+  if (isCursorAgentToken(tok)) return 'cursor';
   return 'shell';
 }
 
@@ -163,6 +175,17 @@ class Session {
       const uuid = crypto.randomUUID();
       this.command = injectSessionId(this.command, uuid);
       this.agentSessionId = uuid;
+    } else if (this.kind === 'cursor' && !this.agentSessionId && !hasOwnSessionIdentity(this.command)) {
+      try {
+        const uuid = cursorModel.createChat(this.command);
+        this.agentSessionId = uuid;
+        this.command = injectAfterCursorExe(this.command, `--resume ${uuid}`);
+        if (!/(^|\s)(--trust|--force|--yolo)(\s|=|$)/.test(this.command)) {
+          this.command += ' --trust';
+        }
+      } catch {
+        /* session still starts; transcript may appear later via cwd fallback */
+      }
     } else if (this.kind === 'opencode' && !this.agentSessionId) {
       // A command that names its own session (`--session <id>`, which is what
       // restore builds and what a user resuming by hand types) already answers
@@ -486,16 +509,18 @@ class Session {
   // implementations below).
   currentModel() {
     if (this.kind === 'opencode') return this._opencodeModel();
+    if (this.kind === 'cursor') return this._cursorModel();
     // claude sessions, and shell sessions that may be running `claude` by hand
     // (the transcript fallback below only fires when one actually is).
     return this._claudeModel();
   }
 
-  // The Claude Code conversation transcript backing this session, or null. The
-  // model badge reads it for the model; lib/voiceHub.js tails the same file for
-  // turn boundaries — they must agree on which conversation this session is,
-  // hence one shared resolver (see lib/claudeModel.js resolveTranscript).
+  // Agent conversation transcript backing this session, or null. The model badge
+  // and lib/voiceHub.js must resolve the same file (see claudeModel / cursorModel).
   transcriptFile() {
+    if (this.kind === 'cursor') {
+      return cursorModel.resolveTranscript(this.cwd, this.agentSessionId, this.created);
+    }
     return resolveTranscript(this.cwd, this.agentSessionId, this.created);
   }
 
@@ -516,6 +541,22 @@ class Session {
     if (file !== this._modelCache.file || mtimeMs !== this._modelCache.mtimeMs) {
       const raw = readLastModel(file);
       this._modelCache = { file, mtimeMs, model: raw, modelLabel: formatModelName(raw) };
+    }
+    return { model: this._modelCache.model, modelLabel: this._modelCache.modelLabel };
+  }
+
+  _cursorModel() {
+    const file = this.transcriptFile();
+    if (!file) return { model: null, modelLabel: null };
+    let mtimeMs;
+    try {
+      mtimeMs = fs.statSync(file).mtimeMs;
+    } catch {
+      return { model: null, modelLabel: null };
+    }
+    if (file !== this._modelCache.file || mtimeMs !== this._modelCache.mtimeMs) {
+      const raw = cursorModel.readLastModel(file);
+      this._modelCache = { file, mtimeMs, model: raw, modelLabel: cursorModel.formatModelName(raw) };
     }
     return { model: this._modelCache.model, modelLabel: this._modelCache.modelLabel };
   }
@@ -763,7 +804,7 @@ class Session {
   // Kept beside info() and mirrored by VoiceHub.canArm, which is the authority
   // the arming endpoint enforces; this is the same question asked cheaply.
   canSpeak() {
-    if (this.kind === 'claude') return true;
+    if (this.kind === 'claude' || this.kind === 'cursor') return true;
     if (this.kind === 'opencode') return !!(this.opencodePort || this._opencodePortPromise);
     return false;
   }

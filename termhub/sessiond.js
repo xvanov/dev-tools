@@ -22,7 +22,7 @@ const { WebSocketServer } = require('ws');
 const { Session } = require('./lib/session');
 const recents = require('./lib/recents');
 const archive = require('./lib/archive');
-const { restoreClaudeCommand, restoreOpencodeCommand } = require('./lib/restore');
+const { restoreClaudeCommand, restoreOpencodeCommand, restoreCursorCommand } = require('./lib/restore');
 const claudeCli = require('./lib/claudeCli');
 const { DEFAULT_SESSIOND_PORT, claimPidFile } = require('./lib/state');
 const { probeSessiond } = require('./lib/probe');
@@ -356,9 +356,10 @@ function createSessiond({ entry = 'sessiond', port: serverPort = DEFAULT_SESSION
         let command = null;
         if (entry.kind === 'claude') command = restoreClaudeCommand(entry.command, entry.agentSessionId);
         else if (entry.kind === 'opencode') command = restoreOpencodeCommand(entry.command, entry.agentSessionId);
+        else if (entry.kind === 'cursor') command = restoreCursorCommand(entry.command, entry.agentSessionId);
         const session = new Session({
           cwd: entry.cwd, command, title: entry.title, cols: body.cols, rows: body.rows,
-          agentSessionId: (entry.kind === 'claude' || entry.kind === 'opencode') ? entry.agentSessionId : null,
+          agentSessionId: (entry.kind === 'claude' || entry.kind === 'opencode' || entry.kind === 'cursor') ? entry.agentSessionId : null,
           envSpec: entry.envSpec || null, // a no-push run comes back without credentials too
           noRc: entry.noRc === true,      // ... and without the rc files that would re-export them
         });
@@ -366,7 +367,7 @@ function createSessiond({ entry = 'sessiond', port: serverPort = DEFAULT_SESSION
         warnIfClaudeCliStale(session); // restore is exactly where a stale CLI bites
         sessions.set(session.id, session);
 
-        if (entry.kind !== 'claude' && Array.isArray(entry.history) && entry.history.length) {
+        if (entry.kind !== 'claude' && entry.kind !== 'cursor' && Array.isArray(entry.history) && entry.history.length) {
           session.notice(renderHistoryNotice(entry.history));
         }
 
@@ -537,7 +538,7 @@ function createSessiond({ entry = 'sessiond', port: serverPort = DEFAULT_SESSION
         // would light a toggle in the UI that could never fire. See
         // VoiceHub.canArm — claude, or an opencode termhub gave a --port to.
         if (body.armed && !VoiceHub.canArm(session)) {
-          return sendJson(res, 400, { error: 'voice announcements need a claude or opencode session' });
+          return sendJson(res, 400, { error: 'voice announcements need a claude, cursor, or opencode session' });
         }
         const armed = voice.setArmed(id, !!body.armed);
         return sendJson(res, 200, { ok: true, armed });
@@ -655,11 +656,12 @@ function createSessiond({ entry = 'sessiond', port: serverPort = DEFAULT_SESSION
         let command = entry.command || null;
         if (entry.kind === 'claude') command = restoreClaudeCommand(entry.command, entry.agentSessionId);
         else if (entry.kind === 'opencode') command = restoreOpencodeCommand(entry.command, entry.agentSessionId);
+        else if (entry.kind === 'cursor') command = restoreCursorCommand(entry.command, entry.agentSessionId);
         else command = null; // a shell reopens as a plain shell in its old cwd
 
         const session = new Session({
           cwd: entry.cwd, command, title: entry.title, cols: body.cols, rows: body.rows,
-          agentSessionId: (entry.kind === 'claude' || entry.kind === 'opencode') ? entry.agentSessionId : null,
+          agentSessionId: (entry.kind === 'claude' || entry.kind === 'opencode' || entry.kind === 'cursor') ? entry.agentSessionId : null,
           envSpec: entry.envSpec || null, // a no-push run comes back without credentials too
           noRc: entry.noRc === true,      // ... and without the rc files that would re-export them
         });

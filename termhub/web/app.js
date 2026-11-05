@@ -270,6 +270,7 @@ function openDeepLink() {
 // the user can rebuild state by hand. ✕ forgets it.
 const RESTORE_KIND_META = {
   claude: { icon: '◈', label: 'Claude session — resumes' },
+  cursor: { icon: '◇', label: 'Cursor agent — resumes' },
   opencode: { icon: '◆', label: 'opencode session — resumes' },
 };
 function renderRestorable(r) {
@@ -1440,6 +1441,8 @@ const COMMAND_PRESETS = [
   'claude --dangerously-skip-permissions --resume',
   'claude',
   'claude --resume',
+  'agent --trust --force',
+  'agent --trust --resume',
   'opencode',
   'opencode --auto',
 ];

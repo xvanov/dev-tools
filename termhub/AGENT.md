@@ -488,6 +488,23 @@ learn that the coupling exists. So the version is treated as a dependency:
 restore it, and confirm the conversation comes back *and* the model badge and 🔊 announcements still
 resolve. Then set both `minVersion` and `verifiedVersion` in the same commit.
 
+## Cursor agent sessions (`kind: 'cursor'`)
+
+A command whose first token is Cursor's CLI (`agent`, `cursor-agent`, with `.exe`/`.cmd`/`.ps1`
+or a path) is a `cursor` session, handled like a Claude one through its on-disk transcript rather
+than over HTTP:
+
+- **Session id.** On start, termhub runs `agent create-chat` (sync, `lib/cursorModel.js`) and
+  launches with `--resume <uuid> --trust`, so the conversation is pinned the way `--session-id`
+  pins Claude's. If `create-chat` fails the session still starts and the transcript is found by cwd.
+- **Transcript.** `~/.cursor/projects/<slug>/agent-transcripts/<id>/<id>.jsonl`, where the slug is
+  the cwd with `:`, `\` and `/` turned into `-`. `lib/transcriptRead.js` picks the Claude or Cursor
+  reader by kind, so the model badge, idle tracking and 🔊 announcements share one code path.
+- **Restore.** `restoreCursorCommand` (`lib/restore.js`) strips any old `--resume`/`--continue`,
+  injects `--resume <id>` and keeps `--trust`.
+- **Remote ingest.** The front serves `GET /api/cursor/transcripts` and `/api/cursor/transcript`
+  read-only for the personal assistant (`lib/cursorTranscripts.js`), beside the Claude ones.
+
 ## opencode talks over HTTP, not over its transcript
 
 termhub launches every opencode session with `--port <n> --hostname 127.0.0.1` spliced in right
