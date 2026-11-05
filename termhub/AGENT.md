@@ -6,8 +6,10 @@ the web UI and proxies to `sessiond`. This split is what lets updates swap the f
 killing terminals. There is no cross-machine hub — you reach each machine directly at its own URL.
 
 Repo-wide working agreement (commit-and-push every unit of work, commit style): [../CLAUDE.md](../CLAUDE.md).
-It matters more here than elsewhere: `windows/update.ps1` deploys by `git pull --ff-only` and
-**fails on a dirty tree**, so uncommitted work blocks the next update on every machine.
+It matters more here than elsewhere: both updaters deploy by `git pull --ff-only`. They **set
+uncommitted work aside** (`git stash`, tracked and untracked) around the pull and put it back on the
+new HEAD afterwards, so an edit in progress never blocks the update button. Committing still matters
+for the work itself — the stash is a safety net for the updater, not a place to keep work.
 
 ## Mental model
 
@@ -387,8 +389,7 @@ author lines that made the two histories look unrelated. Empty means the local l
 duplicate and `git reset --hard <upstream>` loses nothing. Non-empty means real unpushed work, and
 the update stops and prints the commits it refused to destroy.
 
-Three other guards, each of which alone stops the reset: a **dirty tree** (checked first, needs no
-network), a **failed fetch** (an offline machine must be diagnosed as offline, not compared against
+Two other guards, each of which alone stops the reset: a **failed fetch** (an offline machine must be diagnosed as offline, not compared against
 a stale upstream ref), and **not actually diverged** — behind-only or ahead-only means the pull
 failed for a reason the heal cannot see, and a `git reset --hard` triggered by a flaky connection
 is precisely the disaster this must not become. The pre-reset lineage is kept on branch
@@ -414,6 +415,36 @@ RUN apt-get update && apt-get install -y --no-install-recommends git && rm -rf /
 EOF
 docker run --rm -v "$PWD:/repo:ro" termhub-pstest pwsh -NoProfile -File /repo/test/repairHistory.test.ps1
 ```
+
+### Uncommitted work is stashed, not a blocker
+
+The updater used to refuse any update on a dirty tree (`git pull --ff-only` refuses it, and the heal
+refused to reset it), so the Update button failed for as long as an edit was in progress. Now
+`Save-LocalChanges` stashes the tree (`git stash push --include-untracked`) right after the fetch,
+and `Restore-LocalChanges` pops it once HEAD is settled and before anything runs from the tree, so
+the new front serves the same working copy the old one did. Two details matter:
+
+- A rollback goes through `Reset-TreeTo`, never a bare `git reset --hard`, which silently destroys
+  every uncommitted edit to a tracked file. Any dirty tree is stashed first and re-applied on the
+  rolled-back commit.
+- A restore that conflicts leaves the stash in the list (git keeps it on a conflicted pop) and the
+  update reports it and stops — it never drops work to make a run succeed. Resolve with
+  `git status` and `git stash pop`, or read it with `git stash show -p`.
+
+Tested by execution in `test/repairHistory.test.ps1`: dirty plus rewritten upstream heals and restores,
+a clean tree stashes nothing, a conflicting restore keeps the stash, and a rollback keeps the edit.
+
+### Native git output is not an error under Windows PowerShell 5.1
+
+`update.ps1` runs under Windows PowerShell 5.1 with `$ErrorActionPreference = 'Stop'`. In that
+combination, any line a native command writes to stderr becomes a terminating `NativeCommandError`
+the moment it is redirected (`2>&1`, `2>$null`) or piped. git writes its refusal to stderr
+(`fatal: Not possible to fast-forward`, `hint: Diverging branches …`), so `$pull = & git pull --ff-only 2>&1`
+died on that line before the heal ever ran — the update button showed a red exception and did nothing.
+Every native call in the updater now goes through `Invoke-Git` / `Invoke-Native` (`windows/common.ps1`),
+which run the command at `Continue`, keep stdout and stderr apart, and return `Code`, `Stdout`, `Text`.
+Parse `.Stdout`, not `.Text`, when the output is a sha, a count or JSON. Don't add `2>&1` to a native call
+in the updater.
 
 Two PowerShell hazards are worth knowing, because both were hit while writing this. A function
 returns **everything that reached the pipeline**, so one un-suppressed `git` line inside

@@ -1,4 +1,4 @@
-# termhub - shared helpers for start.ps1 / update.ps1 (Windows).
+﻿# termhub - shared helpers for start.ps1 / update.ps1 (Windows).
 #
 # The two-tier layout: a persistent `sessiond` (owns the PTYs) on a loopback port,
 # and a swappable `front` (UI + proxy) on one of two loopback ports. Tailscale Serve
@@ -6,6 +6,62 @@
 # mirror lib/state.js / lib/paths.js so Node and PowerShell agree.
 
 $ProjectDir = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
+
+# Runs a native command (git, tailscale, ...) and returns its exit code and output.
+#
+# Use this for EVERY native call in the updater, not `& git ... 2>&1` or `2>$null`.
+# Under Windows PowerShell 5.1 with $ErrorActionPreference = 'Stop', any line a native
+# command writes to stderr - and git writes its whole refusal there ("fatal: Not
+# possible to fast-forward", "hint: Diverging branches ...") - is promoted to a
+# terminating NativeCommandError the moment stderr is redirected. The update button runs
+# that PowerShell, so `$pull = & git pull --ff-only 2>&1` killed update.ps1 on the very
+# line that was supposed to detect the diverged history, before the heal ran. This
+# helper drops to 'Continue' for the duration of the call and returns the text, so the
+# caller decides what a non-zero exit means.
+#
+#   $r = Invoke-Native git -Arguments @('-C', $dir, 'pull', '--ff-only')
+#   if ($r.Code -ne 0) { ... $r.Text ... }
+function Invoke-Native {
+  param(
+    [Parameter(Mandatory = $true)][string]$Exe,
+    [string[]]$Arguments = @()
+  )
+  $prev = $ErrorActionPreference
+  $ErrorActionPreference = 'Continue'
+  $out = @()
+  $err = @()
+  try {
+    # stdout and stderr kept apart: a command that prints warnings to stderr must not
+    # corrupt the stdout it is parsed for (JSON, a rev-parse sha).
+    & $Exe @Arguments 2>&1 | ForEach-Object {
+      if ($_ -is [System.Management.Automation.ErrorRecord]) { $err += "$_" } else { $out += "$_" }
+    }
+    $code = $LASTEXITCODE
+  } catch {
+    $err += "$($_.Exception.Message)"
+    $code = -1
+  } finally {
+    $ErrorActionPreference = $prev
+  }
+  if ($null -eq $code) { $code = -1 }
+  $all = @($out + $err)
+  return [pscustomobject]@{
+    Code  = [int]$code
+    Out   = $out                                  # stdout lines
+    Lines = $all                                  # stdout then stderr, for messages
+    Text  = (($all -join "`n").Trim())
+    Stdout = (($out -join "`n").Trim())
+  }
+}
+
+# git in a given checkout. See Invoke-Native.
+function Invoke-Git {
+  param(
+    [Parameter(Mandatory = $true)][string]$RepoDir,
+    [string[]]$Arguments = @()
+  )
+  return Invoke-Native git -Arguments (@('-C', $RepoDir) + $Arguments)
+}
 
 function Get-TermhubDataDir {
   if ($env:TERMHUB_DATA_DIR) { $d = $env:TERMHUB_DATA_DIR }
@@ -95,8 +151,9 @@ function Set-TermhubState {
 function Test-ServePublished {
   param([int]$Port)
   try {
-    $raw = (& tailscale serve status --json 2>$null | Out-String)
-    if ($LASTEXITCODE -ne 0 -or -not $raw.Trim()) { return $null }
+    $r = Invoke-Native tailscale -Arguments @('serve', 'status', '--json')
+    $raw = $r.Stdout
+    if ($r.Code -ne 0 -or -not $raw.Trim()) { return $null }
     $j = $raw | ConvertFrom-Json
     if (-not $j) { return $null }
     if (-not $j.TCP) { return $false }
@@ -651,7 +708,8 @@ function Repair-DivergedHistory {
   # command's failure is a throw under some PowerShell configurations - so this one
   # call is wrapped rather than relying on $LASTEXITCODE alone.
   $upstream = $null
-  try { $upstream = & git -C $RepoDir rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>$null } catch { $upstream = $null }
+  $r = Invoke-Git -RepoDir $RepoDir -Arguments @('rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}')
+  $upstream = if ($r.Code -eq 0) { $r.Stdout } else { $null }
   if (-not $upstream) {
     & $say "no upstream is configured for this branch, so there is nothing to reset onto."
     return $false
@@ -660,7 +718,7 @@ function Repair-DivergedHistory {
 
   # Dirty first: it needs no network and disqualifies the heal on its own.
   $dirty = $null
-  try { $dirty = & git -C $RepoDir status --porcelain 2>$null } catch { }
+  $dirty = (Invoke-Git -RepoDir $RepoDir -Arguments @('status', '--porcelain')).Stdout
   if ($dirty) {
     & $say "the working tree has local changes, which is enough on its own to make the"
     & $say "pull fail. Commit or stash them, then update again."
@@ -671,7 +729,8 @@ function Repair-DivergedHistory {
   # string rather than cast: git printing anything unexpected must read as "cannot
   # judge", never as a zero that waves the reset through.
   $counts = ''
-  try { $counts = "$(& git -C $RepoDir rev-list --left-right --count "$upstream...HEAD" 2>$null)" } catch { }
+  $r = Invoke-Git -RepoDir $RepoDir -Arguments @('rev-list', '--left-right', '--count', "$upstream...HEAD")
+  if ($r.Code -eq 0) { $counts = $r.Stdout }
   if ($counts -notmatch '^\s*(\d+)\s+(\d+)\s*$') {
     & $say "could not compare HEAD with $upstream, so the divergence cannot be judged."
     return $false
@@ -689,7 +748,8 @@ function Repair-DivergedHistory {
   }
 
   $unique = @()
-  try { $unique = @(& git -C $RepoDir log --cherry-pick --right-only --oneline "$upstream...HEAD" 2>$null) } catch { }
+  $r = Invoke-Git -RepoDir $RepoDir -Arguments @('log', '--cherry-pick', '--right-only', '--oneline', "$upstream...HEAD")
+  if ($r.Code -eq 0) { $unique = @($r.Lines | Where-Object { $_ }) }
   if ($unique.Count -gt 0) {
     & $say "history diverged from $upstream AND these local commits exist nowhere upstream:"
     foreach ($line in $unique) { Write-Host "termhub update:     $line" }
@@ -698,7 +758,7 @@ function Repair-DivergedHistory {
     return $false
   }
 
-  $before = "$(& git -C $RepoDir rev-parse --short HEAD 2>$null)".Trim()
+  $before = (Invoke-Git -RepoDir $RepoDir -Arguments @('rev-parse', '--short', 'HEAD')).Stdout
   & $say "history diverged from $upstream ($behind upstream, $ahead local), but every"
   & $say "local commit already exists upstream as an equivalent patch - upstream was"
   & $say "rewritten and force-pushed from elsewhere. Resetting onto $upstream."
@@ -707,11 +767,11 @@ function Repair-DivergedHistory {
   # keeps the updater's rollback ref a referenced object instead of an unreachable
   # one partway through the update that may still need it. Force, so these do not
   # accumulate one per heal.
-  & git -C $RepoDir branch --force termhub-pre-reset HEAD 2>&1 | Out-Null
-  & git -C $RepoDir reset --hard $upstream 2>&1 | Out-Null
+  $null = Invoke-Git -RepoDir $RepoDir -Arguments @('branch', '--force', 'termhub-pre-reset', 'HEAD')
+  $null = Invoke-Git -RepoDir $RepoDir -Arguments @('reset', '--hard', $upstream)
 
-  $now = "$(& git -C $RepoDir rev-parse HEAD 2>$null)".Trim()
-  $want = "$(& git -C $RepoDir rev-parse $upstream 2>$null)".Trim()
+  $now = (Invoke-Git -RepoDir $RepoDir -Arguments @('rev-parse', 'HEAD')).Stdout
+  $want = (Invoke-Git -RepoDir $RepoDir -Arguments @('rev-parse', $upstream)).Stdout
   if (-not $now -or $now -ne $want) {
     & $say "the reset onto $upstream did not take; the checkout is as it was."
     return $false
@@ -719,4 +779,74 @@ function Repair-DivergedHistory {
   & $say "was $before, now $("$now".Substring(0,7)) - the previous lineage is kept on branch"
   & $say "'termhub-pre-reset' if you want to look at it."
   return $true
+}
+
+# ---------------------------------------------------------------------------
+# Keeping uncommitted work through an update.
+#
+# A dirty tree used to be a hard stop. `git pull --ff-only` refuses it, and
+# Repair-DivergedHistory refuses to reset it, so the update failed for as long as the
+# checkout held ANY uncommitted edit - which on a machine being actively developed is
+# most of the time. The button then failed every press, which is the one thing it must
+# not do. The working tree belongs to the person (or the agent) editing it, not to the
+# updater, so the update sets it aside around the pull and puts it back afterwards.
+#
+# Stash, not reset: a stash is a reversible commit, and nothing is dropped unless it
+# re-applied cleanly. A stash that will not re-apply stays in the list, and the message
+# says where it is.
+
+# Sets the stash aside if the tree is dirty.
+#   $true  - changes were stashed; the caller must Restore-LocalChanges later
+#   $false - the tree was clean; nothing to restore
+#   $null  - the tree is dirty but could not be stashed; the caller must not continue
+function Save-LocalChanges {
+  param([Parameter(Mandatory = $true)][string]$RepoDir, [Parameter(Mandatory = $true)][string]$Why)
+
+  $status = Invoke-Git -RepoDir $RepoDir -Arguments @('status', '--porcelain')
+  if ($status.Code -ne 0) {
+    Write-Host "termhub update: could not read git status - nothing was changed." -ForegroundColor Yellow
+    return $null
+  }
+  if (-not $status.Stdout) { return $false }
+
+  $before = (Invoke-Git -RepoDir $RepoDir -Arguments @('rev-parse', '-q', '--verify', 'refs/stash')).Stdout
+  Write-Host "termhub update: setting your uncommitted changes aside for the update (git stash) ..."
+  $null = Invoke-Git -RepoDir $RepoDir -Arguments @('stash', 'push', '--include-untracked', '--quiet', '-m', "termhub update: $Why")
+  $after = (Invoke-Git -RepoDir $RepoDir -Arguments @('rev-parse', '-q', '--verify', 'refs/stash')).Stdout
+  if (-not $after -or $after -eq $before) {
+    Write-Host "termhub update: could not stash the uncommitted changes - nothing was changed." -ForegroundColor Yellow
+    return $null
+  }
+  return $true
+}
+
+# Puts the stash back on whatever HEAD is now. Returns $true when it applied cleanly.
+# On failure the stash is left in the list (git keeps it on a conflicted pop) and the
+# tree may hold conflict markers - the caller reports that, it does not retry.
+function Restore-LocalChanges {
+  param([Parameter(Mandatory = $true)][string]$RepoDir)
+
+  $pop = Invoke-Git -RepoDir $RepoDir -Arguments @('stash', 'pop', '--quiet')
+  if ($pop.Code -eq 0) {
+    Write-Host "termhub update: your uncommitted changes are back in place."
+    return $true
+  }
+  Write-Host "termhub update: your uncommitted changes did NOT re-apply cleanly on the new commit." -ForegroundColor Yellow
+  Write-Host "termhub update: they are still in the stash list (git stash list). Resolve with" -ForegroundColor Yellow
+  Write-Host "termhub update: 'git status' + 'git stash pop', or 'git stash show -p' to read them." -ForegroundColor Yellow
+  return $false
+}
+
+# `git reset --hard` for the rollback paths. It silently destroys every uncommitted
+# edit to a tracked file, so any dirty tree is stashed first, and the stash is put back
+# on the rolled-back commit if it applies there.
+function Reset-TreeTo {
+  param([Parameter(Mandatory = $true)][string]$RepoDir, [Parameter(Mandatory = $true)][string]$Rev)
+
+  $stashed = Save-LocalChanges -RepoDir $RepoDir -Why "pre-rollback to $($Rev.Substring(0, [Math]::Min(7, $Rev.Length)))"
+  # Dirty but un-stashable: refuse the reset rather than destroy the edits it would drop.
+  if ($null -eq $stashed) { return $false }
+  $ok = ((Invoke-Git -RepoDir $RepoDir -Arguments @('reset', '--hard', $Rev)).Code -eq 0)
+  if ($stashed -eq $true) { Restore-LocalChanges -RepoDir $RepoDir | Out-Null }
+  return $ok
 }

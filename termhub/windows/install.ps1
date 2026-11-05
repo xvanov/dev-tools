@@ -57,7 +57,7 @@ try { & npm install --omit=dev --ignore-scripts --no-audit --no-fund } finally {
 # npm rewrites the lockfile into the local npm's preferred shape even when nothing
 # installed changed, which leaves a fresh clone dirty and blocks its first
 # `git pull --ff-only` update. See discard_lock_churn in linux/update.sh.
-& git -C $Dir checkout -- package-lock.json 2>&1 | Out-Null
+& git -C $Dir checkout -- package-lock.json | Out-Null
 
 # --- build node-pty native addon (the part that fails on stock Windows) -----
 function Find-MSBuild {

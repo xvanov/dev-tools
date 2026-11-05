@@ -41,7 +41,18 @@ $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'common.ps1')
 . (Join-Path $PSScriptRoot '..\watchdog\lib\task.ps1')
 
-function Fail($msg) { Write-Host "termhub update FAILED: $msg" -ForegroundColor Red; exit 1 }
+$script:stashPending = $false
+
+function Fail($msg) {
+  # Every exit after the stash put the user's uncommitted work back first, so a failed
+  # update never leaves their edits in the stash list without saying so.
+  if ($script:stashPending) {
+    $script:stashPending = $false
+    Restore-LocalChanges -RepoDir $ProjectDir | Out-Null
+  }
+  Write-Host "termhub update FAILED: $msg" -ForegroundColor Red
+  exit 1
+}
 
 
 $git = (Get-Command git -ErrorAction SilentlyContinue)
@@ -97,9 +108,17 @@ $rollback = (& git -C $ProjectDir rev-parse HEAD).Trim()
 Write-Host "termhub update: current HEAD $rollback"
 & git -C $ProjectDir fetch --quiet
 if ($LASTEXITCODE -ne 0) { Fail "git fetch failed." }
-$pull = & git -C $ProjectDir pull --ff-only 2>&1
-Write-Host $pull
-if ($LASTEXITCODE -ne 0) {
+# Uncommitted edits would make the pull (and the heal below) refuse, so they are set
+# aside here and put back once HEAD is settled. See Save-LocalChanges in common.ps1.
+$stash = Save-LocalChanges -RepoDir $ProjectDir -Why "update from $($rollback.Substring(0, 7))"
+if ($null -eq $stash) { Fail "could not set aside your uncommitted changes. Nothing changed; blue still serving." }
+$script:stashPending = [bool]$stash
+# Invoke-Native, not `& git ... 2>&1`: git's refusal arrives on stderr, which Windows
+# PowerShell 5.1 turns into a terminating error under 'Stop' - the script died here,
+# before the heal below could run. See Invoke-Native in common.ps1.
+$pull = Invoke-Git -RepoDir $ProjectDir -Arguments @('pull', '--ff-only')
+Write-Host $pull.Text
+if ($pull.Code -ne 0) {
   Write-Host "termhub update: git pull --ff-only refused - working out whether that is safe to fix here."
   Repair-DivergedHistory -RepoDir $ProjectDir | Out-Null
   # Trust the RESULT, not the return value. A PowerShell function returns everything
@@ -107,8 +126,8 @@ if ($LASTEXITCODE -ne 0) {
   # refusal look like a success - and that particular mistake would continue an
   # update on a tree the heal deliberately left alone. Asking git where HEAD is now
   # cannot be fooled that way.
-  $healed = & git -C $ProjectDir rev-parse HEAD 2>$null
-  $target = & git -C $ProjectDir rev-parse '@{u}' 2>$null
+  $healed = (Invoke-Git -RepoDir $ProjectDir -Arguments @('rev-parse', 'HEAD')).Stdout
+  $target = (Invoke-Git -RepoDir $ProjectDir -Arguments @('rev-parse', '@{u}')).Stdout
   if (-not $healed -or -not $target -or "$healed".Trim() -ne "$target".Trim()) {
     Fail "git pull --ff-only failed and could not be safely resolved. Nothing changed; blue still serving."
   }
@@ -117,19 +136,29 @@ if ($LASTEXITCODE -ne 0) {
 $newHead = (& git -C $ProjectDir rev-parse HEAD).Trim()
 if ($newHead -eq $rollback) { Write-Host "termhub update: already up to date - re-deploying anyway to pick up local changes." }
 
+# HEAD is settled: put the user's uncommitted work back before anything runs from the
+# tree, so the new front serves it exactly as the old one did. If it does not re-apply,
+# stop here - the old front is still up, and the stash is kept for a human.
+if ($script:stashPending) {
+  $script:stashPending = $false
+  if (-not (Restore-LocalChanges -RepoDir $ProjectDir)) {
+    Fail "your uncommitted changes do not re-apply on $(Format-Commit $newHead). They are in the stash. Nothing was deployed; blue still serving."
+  }
+}
+
 # 2) Install deps only if the lockfile/manifest changed (front needs no native build).
 $changed = & git -C $ProjectDir diff --name-only $rollback $newHead
 if ($changed -match 'package(-lock)?\.json') {
   Write-Host "termhub update: dependencies changed -> npm install (no native build)"
   Push-Location $ProjectDir
   try { & npm install --omit=dev --ignore-scripts --no-audit --no-fund } finally { Pop-Location }
-  if ($LASTEXITCODE -ne 0) { & git -C $ProjectDir reset --hard $rollback | Out-Null; Fail "npm install failed; rolled back. Blue still serving." }
+  if ($LASTEXITCODE -ne 0) { Reset-TreeTo -RepoDir $ProjectDir -Rev $rollback | Out-Null; Fail "npm install failed; rolled back. Blue still serving." }
   # npm rewrites package-lock.json into whatever shape the LOCAL npm prefers even when
   # the installed tree is unchanged (11.6.2 records `"peer": true` on @xterm/xterm,
   # 11.12.1 does not), so machines on different npm versions dirty it back and forth -
   # and the pull in step 1 refuses a dirty tree. The lockfile is authoritative and
   # node_modules is derived from it, so discard the rewrite. Mirrors linux/update.sh.
-  & git -C $ProjectDir checkout -- package-lock.json 2>&1 | Out-Null
+  $null = Invoke-Git -RepoDir $ProjectDir -Arguments @('checkout', '--', 'package-lock.json')
 }
 
 if ($mode -eq 'single') {
@@ -147,7 +176,7 @@ if ($mode -eq 'single') {
 
   if (-not $frontProc) {
     Write-Host "termhub update: the new front is unhealthy - reverting the tree and restarting the previous one." -ForegroundColor Yellow
-    & git -C $ProjectDir reset --hard $rollback | Out-Null
+    Reset-TreeTo -RepoDir $ProjectDir -Rev $rollback | Out-Null
     $back = Start-VerifiedFront -Port $publishPort -SessiondPort $sessiondPort -ExpectCommit $rollback
     if ($back) {
       Fail "new version unhealthy; reverted to $(Format-Commit $rollback) and restarted the front on $publishPort. Terminals untouched."
@@ -157,8 +186,9 @@ if ($mode -eq 'single') {
   }
 
   # Serve should already point here; re-assert it so a lost or wrong config heals.
-  & tailscale serve --bg --https=$publishPort "http://127.0.0.1:$publishPort" 2>&1 | Out-Host
-  if ($LASTEXITCODE -ne 0) {
+  $serve = Invoke-Native tailscale -Arguments @('serve', '--bg', "--https=$publishPort", "http://127.0.0.1:$publishPort")
+  $serve.Lines | Out-Host
+  if ($serve.Code -ne 0) {
     Write-Host "termhub update: could not re-assert Tailscale Serve - the front is up and http://127.0.0.1:$publishPort works," -ForegroundColor Yellow
     Write-Host "termhub update: but the tailnet URL may not. Check: tailscale serve status" -ForegroundColor Yellow
   }
@@ -177,7 +207,7 @@ elseif ($mode -eq 'http') {
 
   if (-not $frontProc) {
     Write-Host "termhub update: the new front is unhealthy - reverting the tree and restarting the previous one." -ForegroundColor Yellow
-    & git -C $ProjectDir reset --hard $rollback | Out-Null
+    Reset-TreeTo -RepoDir $ProjectDir -Rev $rollback | Out-Null
     $back = Start-VerifiedFront -Port $publishPort -SessiondPort $sessiondPort -Bind $ip -ExpectCommit $rollback
     if ($back) {
       Fail "new version unhealthy; reverted to $(Format-Commit $rollback) and restarted the front on ${ip}:$publishPort. Terminals untouched."
@@ -198,17 +228,18 @@ else {
   # 4) On any failure green is already stopped; blue never stopped serving.
   if (-not $greenProc) {
     Write-Host "termhub update: green failed verification - rolling back." -ForegroundColor Yellow
-    & git -C $ProjectDir reset --hard $rollback | Out-Null
+    Reset-TreeTo -RepoDir $ProjectDir -Rev $rollback | Out-Null
     Fail "new version unhealthy; reverted tree to $rollback. Blue (port $bluePort) still serving - terminals untouched."
   }
 
   # 5) Cut over: re-point Tailscale Serve to green (atomic), record state, stop blue.
   Write-Host "termhub update: green healthy - re-pointing Tailscale Serve to 127.0.0.1:$greenPort"
-  & tailscale serve --bg --https=$publishPort "http://127.0.0.1:$greenPort" 2>&1 | Out-Host
-  if ($LASTEXITCODE -ne 0) {
+  $serve = Invoke-Native tailscale -Arguments @('serve', '--bg', "--https=$publishPort", "http://127.0.0.1:$greenPort")
+  $serve.Lines | Out-Host
+  if ($serve.Code -ne 0) {
     Write-Host "termhub update: tailscale serve re-point failed - rolling back." -ForegroundColor Yellow
     Stop-Front "front-$greenPort"
-    & git -C $ProjectDir reset --hard $rollback | Out-Null
+    Reset-TreeTo -RepoDir $ProjectDir -Rev $rollback | Out-Null
     Fail "could not re-point Tailscale Serve; blue (port $bluePort) still serving."
   }
   Set-TermhubState @{ activeFrontPort = $greenPort } | Out-Null
@@ -230,8 +261,9 @@ if ($sessiondCommit -and (($sessiondCommit -ne $newHead) -or ($sessiondDirty -eq
   # rollback ref. A supervisor that sat through five updates is behind by all of
   # them, and "nothing sessiond-side changed in THIS update" is true and useless
   # in that case: the restart is owed for the accumulated drift, not for one pull.
-  $drift = & git -C $ProjectDir diff --name-only $sessiondCommit $newHead 2>$null
-  $driftKnown = ($LASTEXITCODE -eq 0)
+  $driftRes = Invoke-Git -RepoDir $ProjectDir -Arguments @('diff', '--name-only', $sessiondCommit, $newHead)
+  $drift = $driftRes.Stdout
+  $driftKnown = ($driftRes.Code -eq 0)
   # Owe the restart unless it can be PROVEN unnecessary: an unknown commit (never
   # fetched, or rewritten history) and a modified tree are both uncomparable, and
   # staying quiet about those is how drift goes unnoticed for days.
@@ -303,7 +335,7 @@ if (-not $claude) {
 }
 
 $dns = ''
-try { $dns = ((& tailscale status --json 2>$null | ConvertFrom-Json).Self.DNSName).TrimEnd('.') } catch { }
+try { $dns = (((Invoke-Native tailscale -Arguments @('status', '--json')).Stdout | ConvertFrom-Json).Self.DNSName).TrimEnd('.') } catch { }
 
 Write-Host ""
 if ($mode -eq 'http') {
