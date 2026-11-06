@@ -511,10 +511,44 @@
     return out;
   }
 
+  // A fast-lane turn (POST /api/talk/turn) adds its route and two marks, both
+  // timed from the transcript: `decision` (the route is known) and
+  // `firstToken` (the first words of the fast reply). `posted` is when the
+  // turn's response began; `firstReply` the first sentence handed to speech.
   function formatLatency(m) {
     const s = latencySlices(m);
     const f = (v) => (v == null ? '–' : v >= 1000 ? `${(v / 1000).toFixed(1)}s` : `${Math.round(v)}ms`);
-    return `silence ${f(s.silence)} · stt ${f(s.transcribe)} · send ${f(s.send)} · reply ${f(s.reply)} · voice ${f(s.voice)} = ${f(s.total)}`;
+    const line = `silence ${f(s.silence)} · stt ${f(s.transcribe)} · send ${f(s.send)} · reply ${f(s.reply)} · voice ${f(s.voice)} = ${f(s.total)}`;
+    if (!m.route) return line;
+    const ok = (x) => typeof x === 'number' && isFinite(x);
+    const from = (k) => (ok(m.transcribed) && ok(m[k]) ? m[k] - m.transcribed : null);
+    return `${m.route}: decide ${f(from('decision'))} · 1st token ${f(from('firstToken'))} | ${line}`;
+  }
+
+  // ---- The fast lane's stream ------------------------------------------------------
+  //
+  // POST /api/talk/turn answers in NDJSON: one JSON event per line. Lines can
+  // be split across network chunks; push() returns the events now complete.
+  function createLineReader() {
+    let rest = '';
+    return {
+      push(text) {
+        rest += String(text || '');
+        const out = [];
+        let i;
+        while ((i = rest.indexOf('\n')) >= 0) {
+          const line = rest.slice(0, i).trim();
+          rest = rest.slice(i + 1);
+          if (!line) continue;
+          try {
+            out.push(JSON.parse(line));
+          } catch {
+            /* a malformed line is skipped */
+          }
+        }
+        return out;
+      },
+    };
   }
 
   // ---- The face -------------------------------------------------------------
@@ -545,6 +579,7 @@
     createTurnVoice,
     latencySlices,
     formatLatency,
+    createLineReader,
     rms,
     downsample,
     encodeWav,

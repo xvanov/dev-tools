@@ -108,6 +108,13 @@ case-insensitively against per-verb allow/deny lists, writing flags (`--force`, 
 `--project`, …) refused on every verb, verbs that write (`notify ack`, `doctor`) not on it at all, and
 `runs` run with `PA_READ_ONLY=1` so it does not reconcile — listed only when the chat's own config sets
 `PA_MCP_CHAT_TOOLS=1`.
+
+**The voice fast lane only speaks or hands off** (`src/chat/fastLane.js`, `POST /api/talk/turn`). It
+calls a model with no tools, and its one side effect is typing the user's own words into the PA chat
+through `feed.send` — the same path as typing. Keep it that way: never give it tools or `pa` verbs,
+keep `guardDecision` turning an "answer" to an action-like request into a handoff, and keep what is
+handed off the verbatim utterance (the model's `task` only as a labelled hint), since its context
+snapshot quotes other people's messages.
 The acting verbs (`ASK_COMMANDS`) stay shell commands behind the prompt, through one launcher each
 (`pa-home/bin/pa-do`, …), because opencode's "Allow always" saves the command's first word + ` *`, cannot
 be turned off and outranks the config: on `node …/pa.js` that was `node *`; on a launcher it is that

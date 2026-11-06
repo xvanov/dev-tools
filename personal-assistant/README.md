@@ -995,7 +995,12 @@ sets one default for every pass that has no variable of its own. Per pass: `PA_D
 `PA_MEMORY_EXTRACT_MODEL`, `PA_MEMORY_DECIDE_MODEL` (also recall planning), `PA_MEMORY_PAGE_MODEL`,
 `PA_BRIEF_MODEL`, `PA_BRIEF_CLASSIFY_MODEL`, `PA_DEBRIEF_MODEL`, `PA_REPLY_CLOSE_MODEL`,
 `PA_RECONCILE_MODEL`, `PA_CARD_CONTEXT_MODEL` (default: the reconcile model), `PA_PLANNER_MODEL`,
-`PA_DRAFT_MODEL` and `PA_EVAL_MODEL` (default: the distill model), `PA_ROUTINE_MODEL`.
+`PA_DRAFT_MODEL` and `PA_EVAL_MODEL` (default: the distill model), `PA_ROUTINE_MODEL`, and
+`PA_FAST_MODEL` (the voice fast lane, default `azure/pa`; see "Talking to it by voice").
+
+The fast lane streams its reply (`llm.stream()`): token by token on the Anthropic API and the
+OpenAI-compatible providers, and through `claude -p --output-format stream-json
+--include-partial-messages` on the CLI backend, which works but pays a process start per call.
 
 **The connector relay is Claude Code only.** Microsoft 365 and the Jira connector fallback are
 reached by tool calls to the claude.ai connectors, and only Claude Code holds those logins, so
@@ -1078,9 +1083,35 @@ text, and **session** opens the PA chat's termhub session.
 - **Transcription** reuses voice-dictation's warm faster-whisper server (`PA_TRANSCRIBE_HOST` /
   `PA_TRANSCRIBE_PORT`, as capture does): the page sends a 16 kHz WAV to `POST /api/talk/transcribe`,
   which writes it to a temp file, hands the path to the server, and deletes the file. Whisper's
-  stock filler for silence ("Thank you.", "you") is dropped. The text then goes to `/api/chat` with
-  `source: "voice"`. While the chat is parked on a permission prompt or question, the chat refuses
-  the send (409); the page says once that it is waiting on an answer in termhub, and does not retry.
+  stock filler for silence ("Thank you.", "you") is dropped. The text then goes to the fast lane
+  (next bullet), which hands it to `/api/chat` with `source: "voice"` when the PA chat is needed.
+  While the chat is parked on a permission prompt or question, the chat refuses the send (409); the
+  page says once that it is waiting on an answer in termhub, and does not retry.
+- **The fast lane ("System 1", `src/chat/fastLane.js`).** The PA chat takes 3–5 s before it says
+  anything; a person answers within a second. So each spoken turn first goes to a quick model
+  (`PA_FAST_MODEL`, default `azure/pa`) that sees a compact snapshot of your day (the clock, open
+  asks with the most pressing few, the next day's meetings, live runs, waiting drafts — about a
+  kilobyte, rebuilt every `PA_FAST_CONTEXT_SECONDS` (60) in the background) and the last six turns.
+  It decides **answer** (small talk, thanks, "what's on today", "how many are overdue": it says the
+  whole answer, and nothing goes to the chat), **handoff** (it says a short "on it, checking your
+  mail" and your words go to the PA chat, whose answer is spoken when it arrives), or **both** (it
+  says what it knows and hands off the rest). Its words stream and are spoken sentence by sentence.
+  It **never acts**: it has no tools, and an "answer" to something that reads like an action
+  ("send…", "close…", "remind me…") is turned into a handoff before a word is spoken, so actions
+  always go through the PA chat's permission prompts. What is handed off is your own words,
+  verbatim; the model's reading of the task rides along as a labelled hint, because the snapshot
+  quotes other people's mail and must not be able to put words in your mouth. Turns it answered
+  itself are not in the PA chat's history (it keeps the last few for its own context).
+  `PA_FAST_ROUTER` picks who decides: `same` (default: the fast model, in the same streamed call —
+  the decision is the first line, the words follow), `rules` (a built-in keyword router, no model
+  call), another model string (a JSON-only router call, then the fast model writes the words), or
+  an `http(s)://` URL (POSTed `{ text, context, history }`, answers the decision JSON — for an
+  external classifier). `PA_FAST_EFFORT` (low) is the reasoning effort; `PA_FAST_LANE=0` turns it
+  off and the page sends straight to `/api/chat` as before. Spend is recorded as `fast-lane`.
+  Measured (Nov 2026, 8 utterances): `azure/pa` decides in 0.4–1.4 s with the first words in the
+  same chunk; `cli/claude-haiku-5-5` takes 1.8–3.7 s (a `claude -p` process per turn);
+  `rules` + `azure/pa` decides at once and speaks in 0.5–1.5 s, but misroutes anything its
+  keywords do not cover.
 - **Speaking** reads each answer sentence by sentence as it arrives, in the browser's best natural
   voice (Edge's "Online (Natural)" voices are good; pick another in **settings**). Code blocks,
   tables and URLs are not read out: it says "the link" or "I put the details on the dashboard"
@@ -1099,8 +1130,11 @@ text, and **session** opens the PA chat's termhub session.
   soon as it arrives.
 - **Latency readout.** `/talk?debug=1` shows, per turn, where the time went: the pause wait,
   transcription, typing into the session, the reply (Claude's turn plus the transcript tail), and
-  the voice starting.
-- **Barge-in and echo.** Start talking and it stops. While it speaks, the mic needs three times
+  the voice starting. A fast-lane turn leads with its route, the time to the decision and to the
+  first token (both from the transcript), and a hand-off adds a line when the PA chat's answer
+  arrives.
+- **Barge-in and echo.** Start talking and it stops (a fast reply still streaming is dropped too;
+  a hand-off already made stands). While it speaks, the mic needs three times
   the usual level for over a third of a second before it counts as you, so its own voice from the
   speakers is not transcribed. With speakers loud and no headset, tick "stop listening" in
   **settings** to turn barge-in off.
@@ -1142,6 +1176,7 @@ The contract (the voice page depends on it):
 | `GET /api/chat/stream` | — | Server-Sent Events; each `data:` is one event (below). No replay: the first event is the current `status`, then live events only. A `: ping` comment every 20 s |
 | `GET /api/chat/history?limit=50` | `limit` 1–500 | `{ "messages": [event…] }`, oldest first, `user` and `assistant` only |
 | `GET /api/chat/session` | — | `{ sessionId, status, waitingOn, url }` — `url` opens the session in termhub |
+| `POST /api/talk/turn` | `{ "text": string }`, header `X-PA: 1` | The voice fast lane. NDJSON, one event per line: `{ type: "decision", route: "answer" \| "handoff" \| "both", say?, task?, reason, router, ms, overridden? }`, then `{ type: "delta", text }`… (words to speak), `{ type: "handoff", id, ms }` or `{ type: "handoff", error, status }` (409: waiting in termhub), and `{ type: "done", route, say, decisionMs, firstTokenMs, ms, model, router }`. 400 bad input, 403 no `X-PA`, 404 `{ disabled: true }` with `PA_FAST_LANE=0` |
 
 An event is `{ "id", "type", "text", "at" (ISO), "source"? }`:
 
@@ -1192,7 +1227,7 @@ src/dashboard/       the loopback web page: today, next meeting, replies, runs, 
 src/secrets/         secret and login requests; the OS keyring facade (vault.js; stdin only)
 src/platform/        every OS decision: windows.js, linux.js, darwin.js behind one contract (index.js)
 src/routines/        cron parser, the typed action registry (repo_sync, prompt_report), runs, suggestions
-src/chat/            the PA chat session's home (index.js, agent.js) and its stream for the Chat tab and voice (feed.js; transcript.js pure)
+src/chat/            the PA chat session's home (index.js, agent.js) and its stream for the Chat tab and voice (feed.js; transcript.js pure); the voice fast lane (fastLane.js)
 src/notify/          notifications: toasts, the interrupt budget, digests, feedback weights, the PA chat inbox
 src/llm.js           model calls: Anthropic API, `claude -p`, or an OpenAI-compatible provider
 src/models.js        model strings, which backend each pass uses, and what it can do (pa doctor)

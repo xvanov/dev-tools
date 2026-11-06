@@ -272,7 +272,7 @@ function withUsage(err, usage) {
 
 // Pure: the request for one chat completion on an OpenAI-compatible provider.
 // Returns { url, headers, body }. The key goes in a header, never the URL.
-function compatRequest({ provider, model, system, prompt, effort, maxTokens, key, providers = config.providers }) {
+function compatRequest({ provider, model, system, prompt, effort, maxTokens, key, providers = config.providers, stream = false, reasoningEffort = null }) {
   const messages = [];
   if (system) messages.push({ role: 'system', content: system });
   messages.push({ role: 'user', content: prompt });
@@ -284,6 +284,13 @@ function compatRequest({ provider, model, system, prompt, effort, maxTokens, key
   else body.max_tokens = maxTokens;
   if ((provider === 'openai' || provider === 'azure') && reasoning && effort) {
     body.reasoning_effort = ['low', 'medium', 'high'].includes(effort) ? effort : 'high';
+  }
+  // Said outright by the caller (the voice fast lane): sent whatever the
+  // deployment is called — an Azure deployment name does not say "gpt-5".
+  if ((provider === 'openai' || provider === 'azure') && reasoningEffort) body.reasoning_effort = reasoningEffort;
+  if (stream) {
+    body.stream = true;
+    body.stream_options = { include_usage: true };
   }
   // OpenRouter reports what the call cost when asked; nothing else does.
   if (provider === 'openrouter') body.usage = { include: true };
@@ -428,6 +435,236 @@ async function complete({
   }
 }
 
+// ------------------------------------------------------------ streaming ----
+//
+// `stream()` is `complete()` token by token: an async generator of text
+// pieces, for the voice fast lane, which speaks the first sentence while the
+// rest is still being written. Text only, no tools. Spend is recorded once,
+// when the generator ends (finished, failed, or abandoned by the caller —
+// `for await … break` runs its `finally`). `signal` aborts the call.
+
+// Pure: Server-Sent Events text -> the `data:` payloads that are complete,
+// and the unfinished remainder to prepend to the next chunk.
+function sseData(text) {
+  const out = [];
+  const s = String(text || '').replace(/\r\n?/g, '\n');
+  let start = 0;
+  let i;
+  while ((i = s.indexOf('\n\n', start)) >= 0) {
+    const block = s.slice(start, i);
+    start = i + 2;
+    const data = block
+      .split('\n')
+      .filter((l) => l.startsWith('data:'))
+      .map((l) => l.slice(5).replace(/^ /, ''))
+      .join('\n');
+    if (data) out.push(data);
+  }
+  return { data: out, rest: s.slice(start) };
+}
+
+// Pure: one chat-completions stream chunk -> { text, usage, error }.
+function compatChunk(raw, json) {
+  if (json?.error) return { error: String(json.error.message || JSON.stringify(json.error)).slice(0, 300) };
+  const choice = json?.choices?.[0];
+  if (choice?.finish_reason === 'content_filter') return { error: 'model declined: content_filter' };
+  const c = choice?.delta?.content;
+  const text = Array.isArray(c) ? c.map((p) => p?.text || '').join('') : c ? String(c) : '';
+  return { text, usage: json?.usage ? compatUsage(raw, json.usage) : null };
+}
+
+function anySignal(signal, timeoutMs) {
+  const t = AbortSignal.timeout(timeoutMs);
+  return signal ? AbortSignal.any([signal, t]) : t;
+}
+
+async function* streamCompat({ route: r, system, prompt, effort, reasoningEffort, maxTokens, timeoutMs, signal, acc }) {
+  const key = models.providerKey(r.provider);
+  if (!key && r.provider !== 'local') {
+    throw new Error(`${r.raw}: no key — set ${(models.KEY_NAMES[r.provider] || []).join(' or ')}`);
+  }
+  const req = compatRequest({ provider: r.provider, model: r.model, system, prompt, effort, maxTokens, key, stream: true, reasoningEffort });
+  let res;
+  try {
+    res = await fetch(req.url, { method: 'POST', headers: req.headers, body: JSON.stringify(req.body), signal: anySignal(signal, timeoutMs) });
+  } catch (err) {
+    throw new Error(`${r.provider}: ${err.name === 'TimeoutError' ? `timed out after ${Math.round(timeoutMs / 1000)}s` : err.message}`);
+  }
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    let json = null;
+    try {
+      json = JSON.parse(text);
+    } catch {}
+    throw new Error(`${r.provider} ${res.status}: ${String(json?.error?.message || text).slice(0, 300)}`);
+  }
+  const dec = new TextDecoder();
+  let carry = '';
+  for await (const chunk of res.body) {
+    carry += dec.decode(chunk, { stream: true });
+    const { data, rest } = sseData(carry);
+    carry = rest;
+    for (const d of data) {
+      if (d.trim() === '[DONE]') continue;
+      let json;
+      try {
+        json = JSON.parse(d);
+      } catch {
+        continue;
+      }
+      const c = compatChunk(r.raw, json);
+      if (c.usage) acc.usage = c.usage;
+      if (c.error) throw new Error(`${r.provider}: ${c.error}`);
+      if (c.text) yield c.text;
+    }
+  }
+}
+
+async function* streamApi({ system, prompt, maxTokens, model, signal, acc }) {
+  if (!models.providerKey('anthropic')) throw new Error(`anthropic/${model}: no key — set ANTHROPIC_API_KEY`);
+  // No extended thinking: this path exists to be quick.
+  const s = await sdk().messages.create(
+    { model, max_tokens: maxTokens, ...(system ? { system } : {}), messages: [{ role: 'user', content: prompt }], stream: true },
+    signal ? { signal } : undefined
+  );
+  let u = {};
+  for await (const ev of s) {
+    if (ev.type === 'message_start') u = { ...(ev.message?.usage || {}) };
+    else if (ev.type === 'message_delta' && ev.usage) u = { ...u, ...ev.usage };
+    acc.usage = apiUsage(model, u);
+    if (ev.type === 'content_block_delta' && ev.delta?.type === 'text_delta' && ev.delta.text) yield ev.delta.text;
+  }
+}
+
+// Pure: one `claude -p --output-format stream-json --include-partial-messages`
+// line -> { text } for a text delta, { final } for the closing result event,
+// { whole } for a complete assistant message (a CLI without partials).
+function cliStreamLine(line) {
+  let e;
+  try {
+    e = JSON.parse(line);
+  } catch {
+    return null;
+  }
+  if (e.type === 'stream_event' && e.event?.type === 'content_block_delta' && e.event.delta?.type === 'text_delta') return { text: e.event.delta.text || '' };
+  if (e.type === 'result') return { final: e, line };
+  if (e.type === 'assistant' && Array.isArray(e.message?.content)) {
+    return { whole: e.message.content.filter((b) => b.type === 'text').map((b) => b.text).join('') };
+  }
+  return null;
+}
+
+async function* streamCli({ system, prompt, effort, timeoutMs, model, signal, acc }) {
+  const args = cliArgs({ system, effort, tools: null, model });
+  args[args.indexOf('json')] = 'stream-json';
+  args.push('--verbose', '--include-partial-messages');
+  const child = spawn(config.claudeBin, args, { cwd: cliCwd(), windowsHide: true, env: childEnv(), stdio: ['pipe', 'pipe', 'pipe'] });
+  const queue = [];
+  let wake = null;
+  let ended = false;
+  let failure = null;
+  const push = (x) => {
+    queue.push(x);
+    if (wake) wake();
+  };
+  let carry = '';
+  let err = '';
+  child.stdout.on('data', (d) => {
+    carry += d;
+    let i;
+    while ((i = carry.indexOf('\n')) >= 0) {
+      const line = carry.slice(0, i).trim();
+      carry = carry.slice(i + 1);
+      if (line) push(line);
+    }
+  });
+  child.stderr.on('data', (d) => (err += d));
+  child.on('error', (e) => {
+    failure = new Error(`could not start ${config.claudeBin}: ${e.message}`);
+    ended = true;
+    if (wake) wake();
+  });
+  child.on('close', (code) => {
+    if (carry.trim()) queue.push(carry.trim());
+    if (code && !failure) failure = new Error(`claude -p exited ${code}: ${err.trim().slice(0, 300)}`);
+    ended = true;
+    if (wake) wake();
+  });
+  const stop = () => child.kill();
+  const timer = setTimeout(() => {
+    failure = new Error(`claude -p timed out after ${Math.round(timeoutMs / 1000)}s`);
+    stop();
+  }, timeoutMs);
+  signal?.addEventListener('abort', stop, { once: true });
+  child.stdin.end(prompt);
+  let streamed = false;
+  let result = null;
+  try {
+    for (;;) {
+      if (!queue.length) {
+        if (ended) break;
+        await new Promise((r) => (wake = r));
+        wake = null;
+        continue;
+      }
+      const p = cliStreamLine(queue.shift());
+      if (!p) continue;
+      if (p.text) {
+        streamed = true;
+        yield p.text;
+      } else if (p.whole && !streamed) {
+        streamed = true;
+        yield p.whole;
+      } else if (p.final) {
+        result = p.final;
+        acc.usage = cliUsage(p.line);
+        noteCost(acc.usage);
+        // The answer is complete; claude takes seconds more to exit.
+        break;
+      }
+    }
+    if (result && (result.is_error || result.subtype !== 'success')) {
+      throw new Error(`claude -p failed: ${String(result.result || result.subtype || 'unknown').slice(0, 300)}`);
+    }
+    if (!result && failure) throw failure;
+  } finally {
+    clearTimeout(timer);
+    signal?.removeEventListener('abort', stop);
+    if (!ended) stop();
+  }
+}
+
+async function* stream({
+  system = null,
+  prompt,
+  effort = 'low',
+  reasoningEffort = null,
+  maxTokens = 800,
+  timeoutMs = 30_000,
+  model = null,
+  purpose = null,
+  signal = null,
+}) {
+  const raw = model || config.anthropic.model;
+  const r = models.route(raw, { needs: 'text' });
+  const meta = { purpose: purpose || 'unknown', model: raw, backend: r.backend };
+  const started = Date.now();
+  const acc = { usage: null };
+  let ok = false;
+  try {
+    const gen =
+      r.backend === 'cli'
+        ? streamCli({ system, prompt, effort, timeoutMs, model: r.model, signal, acc })
+        : r.backend === 'api'
+          ? streamApi({ system, prompt, maxTokens, model: r.model, signal, acc })
+          : streamCompat({ route: r, system, prompt, effort, reasoningEffort, maxTokens, timeoutMs, signal, acc });
+    yield* gen;
+    ok = true;
+  } finally {
+    await recordCall(meta, started, acc.usage, ok);
+  }
+}
+
 // Runs a headless session whose only job is to call connector tools, and
 // returns what the tools returned — not what the model says they returned.
 //
@@ -563,6 +800,10 @@ function extractJson(text) {
 module.exports = {
   spend: () => ({ ...spend }),
   complete,
+  stream,
+  sseData,
+  compatChunk,
+  cliStreamLine,
   toolCalls,
   parseToolStream,
   spilledBlocks,

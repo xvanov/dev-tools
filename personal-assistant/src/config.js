@@ -334,6 +334,22 @@ const config = {
     command: env('PA_CHAT_COMMAND'),
   },
 
+  // The voice page's fast lane ("System 1", src/chat/fastLane.js): a quick
+  // model answers simple spoken turns itself and acknowledges the rest while
+  // handing them to the PA chat. PA_FAST_ROUTER: `same` (the fast model
+  // decides and replies in one call), `rules` (built-in keyword router), a
+  // model string (a separate router call), or an http(s) URL (POST
+  // { text, context, history } -> decision JSON).
+  fastLane: {
+    enabled: env('PA_FAST_LANE', '1') !== '0',
+    model: env('PA_FAST_MODEL', 'azure/pa'),
+    router: env('PA_FAST_ROUTER', 'same'),
+    // Reasoning effort for an OpenAI/Azure reasoning model; Claude effort otherwise.
+    effort: env('PA_FAST_EFFORT', 'low'),
+    contextTtlMs: envInt('PA_FAST_CONTEXT_SECONDS', 60) * 1000,
+    decisionTimeoutMs: envInt('PA_FAST_DECISION_TIMEOUT_MS', 6000),
+  },
+
   dispatch: {
     port: envInt('PA_DISPATCH_PORT', 7300),
     // Loopback only. This process starts agents; it is not tailnet-safe.

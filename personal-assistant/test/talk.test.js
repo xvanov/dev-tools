@@ -273,6 +273,24 @@ const C = require('../src/dashboard/talk.core');
   assert.strictEqual(typed.total, null);
 }
 
+// ---- the fast lane's NDJSON, and its latency row ------------------------------------
+{
+  const r = C.createLineReader();
+  assert.deepStrictEqual(r.push('{"type":"decision","route":"answer"}\n{"type":"del'), [{ type: 'decision', route: 'answer' }]);
+  assert.deepStrictEqual(r.push('ta","text":"Hi"}\n\nnot json\n'), [{ type: 'delta', text: 'Hi' }]);
+  assert.deepStrictEqual(r.push(''), []);
+  const m = { speechEnd: 0, vadEnd: 650, transcribed: 1050, posted: 1100, decision: 1800, firstToken: 1850, firstReply: 1900, audioStart: 2400, route: 'handoff' };
+  assert.strictEqual(C.formatLatency(m), 'handoff: decide 750ms · 1st token 800ms | silence 650ms · stt 400ms · send 50ms · reply 800ms · voice 500ms = 2.4s');
+}
+
+// ---- the page sends voice turns to the fast lane, and barge-in cancels it --------
+{
+  const page = fs.readFileSync(require('path').join(__dirname, '../src/dashboard/talk.page.js'), 'utf8');
+  assert.match(page, /fetch\('api\/talk\/turn'/);
+  assert.match(page, /if \(await fastTurn\(text\)\) return;\s*await post\('api\/chat'/, 'falls back to api/chat');
+  assert.match(page, /function beginUtterance\(\) \{\s*cancelFastTurn\(\);/);
+}
+
 // ---- the page wires the face to audio events, and the settings exist ---------------
 {
   const page = fs.readFileSync(require('path').join(__dirname, '../src/dashboard/talk.page.js'), 'utf8');

@@ -92,6 +92,8 @@ function pageHtml() {
 // Returns true when it answered the request.
 async function route(req, res, url, { send }) {
   if (req.method === 'GET' && url.pathname === '/talk') {
+    // The fast lane's snapshot of the day is built now, not on the first turn.
+    if (config.fastLane.enabled) require('../chat/fastLane').snapshotCache().warm();
     send(res, 200, pageHtml(), 'text/html; charset=utf-8');
     return true;
   }
@@ -115,7 +117,63 @@ async function route(req, res, url, { send }) {
     send(res, 200, { text, ms: Date.now() - started });
     return true;
   }
+  if (req.method === 'POST' && url.pathname === '/api/talk/turn') {
+    if (req.headers['x-pa'] !== '1') {
+      send(res, 403, { error: 'missing X-PA header' });
+      return true;
+    }
+    await turn(req, res, { send });
+    return true;
+  }
   return false;
+}
+
+// One spoken turn through the fast lane, streamed as NDJSON: one JSON event
+// per line (decision, delta…, handoff, done; src/chat/fastLane.js runTurn).
+// Off (PA_FAST_LANE=0): 404 { disabled: true }, and the page sends to
+// /api/chat itself, as before.
+async function turn(req, res, { send }) {
+  if (!config.fastLane.enabled) {
+    send(res, 404, { error: 'the fast lane is off (PA_FAST_LANE=0)', disabled: true });
+    return;
+  }
+  let body;
+  try {
+    body = JSON.parse((await readBody(req, 64 * 1024)).toString('utf8') || '{}');
+  } catch {
+    send(res, 400, { error: 'bad json' });
+    return;
+  }
+  const text = typeof body.text === 'string' ? body.text.trim() : '';
+  if (!text) {
+    send(res, 400, { error: 'text must be a non-empty string' });
+    return;
+  }
+  if (text.length > 4000) {
+    send(res, 400, { error: 'text is over 4000 characters' });
+    return;
+  }
+  res.writeHead(200, {
+    'Content-Type': 'application/x-ndjson; charset=utf-8',
+    'Cache-Control': 'no-store',
+    'X-Content-Type-Options': 'nosniff',
+    'X-Accel-Buffering': 'no',
+  });
+  // The page went away (barge-in aborts its fetch): stop the model. A
+  // hand-off already made stands — the PA chat has the words.
+  const ac = new AbortController();
+  res.on('close', () => {
+    if (!res.writableFinished) ac.abort();
+  });
+  const emit = (e) => {
+    if (!res.writableEnded && !res.destroyed) res.write(JSON.stringify(e) + '\n');
+  };
+  try {
+    await require('../chat/fastLane').runTurn({ text, emit, signal: ac.signal });
+  } catch (err) {
+    if (!ac.signal.aborted) emit({ type: 'error', error: err.message });
+  }
+  if (!res.writableEnded) res.end();
 }
 
 module.exports = { route, transcribe, askWhisper, MAX_AUDIO_BYTES };

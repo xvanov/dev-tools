@@ -132,6 +132,7 @@ const PURPOSES = [
   { key: 'draft', env: 'PA_DRAFT_MODEL', needs: 'text', get: (c) => c.drafts.model, what: 'reply drafts' },
   { key: 'routine', env: 'PA_ROUTINE_MODEL', needs: 'text', get: (c) => c.routines.model, what: 'routines: parse, reports, suggestions' },
   { key: 'eval', env: 'PA_EVAL_MODEL', needs: 'json', get: (c) => c.eval.model, what: 'retrieval evals' },
+  { key: 'fast-lane', env: 'PA_FAST_MODEL', needs: 'text', get: (c) => c.fastLane.model, what: 'voice fast lane: quick replies and routing' },
 ];
 
 function purpose(key) {

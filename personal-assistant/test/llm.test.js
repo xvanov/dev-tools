@@ -86,4 +86,66 @@ const { cliArgs, parseCliOutput, extractJson, childEnv, cliAccount } = require('
   fs.rmSync(dir, { recursive: true, force: true });
 }
 
-console.log('llm ok');
+// ---- streaming (llm.stream): SSE parsing, chunks, and a fake compatible server ----
+{
+  const { sseData, compatChunk, cliStreamLine, compatRequest } = require('../src/llm');
+  const a = sseData('data: {"a":1}\n\ndata: {"b"');
+  assert.deepStrictEqual(a.data, ['{"a":1}']);
+  assert.strictEqual(a.rest, 'data: {"b"');
+  assert.deepStrictEqual(sseData('data: x\r\n\r\n: comment\n\ndata: [DONE]\n\n').data, ['x', '[DONE]']);
+  assert.deepStrictEqual(compatChunk('local/m', { choices: [{ delta: { content: 'Hi' } }] }), { text: 'Hi', usage: null });
+  assert.match(compatChunk('local/m', { choices: [{ delta: {}, finish_reason: 'content_filter' }] }).error, /content_filter/);
+  assert.strictEqual(compatChunk('local/m', { choices: [], usage: { prompt_tokens: 3, completion_tokens: 2 } }).usage.outputTokens, 2);
+  assert.deepStrictEqual(cliStreamLine(JSON.stringify({ type: 'stream_event', event: { type: 'content_block_delta', delta: { type: 'text_delta', text: 'yo' } } })), { text: 'yo' });
+  assert.ok(cliStreamLine(JSON.stringify({ type: 'result', subtype: 'success' })).final);
+  assert.strictEqual(cliStreamLine('not json'), null);
+  const req = compatRequest({ provider: 'azure', model: 'pa', prompt: 'p', maxTokens: 10, key: 'k', stream: true, reasoningEffort: 'low', providers: { azure: { endpoint: 'https://x.openai.azure.com', apiVersion: 'v1' } } });
+  assert.strictEqual(req.body.stream, true);
+  assert.deepStrictEqual(req.body.stream_options, { include_usage: true });
+  assert.strictEqual(req.body.reasoning_effort, 'low', 'said outright, whatever the deployment is called');
+  assert.ok(!('stream' in compatRequest({ provider: 'local', model: 'm', prompt: 'p', maxTokens: 1, providers: { local: { baseUrl: 'http://l' } } }).body));
+}
+
+(async () => {
+  const http = require('http');
+  const llm = require('../src/llm');
+  const budget = require('../src/budget');
+  const recorded = [];
+  budget.record = async (row) => recorded.push(row); // never the real store
+  let seen = null;
+  const srv = http.createServer((req, res) => {
+    let body = '';
+    req.on('data', (d) => (body += d));
+    req.on('end', () => {
+      seen = JSON.parse(body);
+      res.writeHead(200, { 'content-type': 'text/event-stream' });
+      const chunks = ['Hel', 'lo', ' there.'].map((t) => `data: ${JSON.stringify({ choices: [{ delta: { content: t } }] })}\n\n`);
+      chunks.push(`data: ${JSON.stringify({ choices: [], usage: { prompt_tokens: 5, completion_tokens: 3 } })}\n\n`, 'data: [DONE]\n\n');
+      // Split mid-event, as a network would.
+      const all = chunks.join('');
+      res.write(all.slice(0, 17));
+      setTimeout(() => res.end(all.slice(17)), 20);
+    });
+  });
+  await new Promise((r) => srv.listen(0, '127.0.0.1', r));
+  config.providers.local.baseUrl = `http://127.0.0.1:${srv.address().port}/v1`;
+  const pieces = [];
+  for await (const p of llm.stream({ prompt: 'hi', model: 'local/tiny', purpose: 'fast-lane' })) pieces.push(p);
+  assert.deepStrictEqual(pieces, ['Hel', 'lo', ' there.']);
+  assert.strictEqual(seen.stream, true);
+  assert.strictEqual(recorded.length, 1);
+  assert.strictEqual(recorded[0].purpose, 'fast-lane');
+  assert.strictEqual(recorded[0].ok, true);
+  assert.strictEqual(recorded[0].outputTokens, 3);
+  // Abandoned by the caller: still recorded once.
+  for await (const p of llm.stream({ prompt: 'hi', model: 'local/tiny', purpose: 'fast-lane' })) {
+    assert.strictEqual(p, 'Hel');
+    break;
+  }
+  assert.strictEqual(recorded.length, 2);
+  srv.close();
+  console.log('llm ok');
+})().catch((err) => {
+  console.error(err);
+  process.exit(1);
+});

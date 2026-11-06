@@ -1,9 +1,10 @@
 'use strict';
 
 // The voice page (talk.html): mic -> VAD -> /api/talk/transcribe ->
-// /api/chat (source "voice"); /api/chat/stream -> sentences -> TTS; and a
-// face that shows which of those is happening. Pure logic is in
-// talk.core.js (window.TalkCore).
+// /api/talk/turn (the fast lane: a quick spoken reply, and a hand-off to the
+// PA chat when it needs one; /api/chat directly when the fast lane is off);
+// /api/chat/stream -> sentences -> TTS; and a face that shows which of those
+// is happening. Pure logic is in talk.core.js (window.TalkCore).
 
 (function () {
   const C = window.TalkCore;
@@ -286,7 +287,16 @@
       const m = this.marks;
       if (!m || m.firstReply == null || m.audioStart != null) return;
       m.audioStart = Date.now();
-      const line = C.formatLatency(m);
+      this.row(C.formatLatency(m), m);
+    },
+    // A fast-lane hand-off: the PA chat's first block, timed from the transcript.
+    slow() {
+      const m = this.marks;
+      if (!m || !m.route || m.route === 'answer' || m.slowReply != null || m.transcribed == null) return;
+      m.slowReply = Date.now();
+      this.row(`  slow answer ${((m.slowReply - m.transcribed) / 1000).toFixed(1)}s after the transcript`, m);
+    },
+    row(line, m) {
       if (!DEBUG) return;
       console.log('[talk latency]', line, m);
       this.rows = [new Date().toLocaleTimeString() + '  ' + line, ...this.rows].slice(0, 6);
@@ -361,6 +371,7 @@
   }
 
   function beginUtterance() {
+    cancelFastTurn(); // barge-in: the fast reply in flight is dropped too
     mic.frames = mic.preroll.slice();
     mic.recording = true;
     st.listening = true;
@@ -399,6 +410,7 @@
       latency.set('transcribed');
       if (C.isNoise(text)) return;
       heard(text);
+      if (await fastTurn(text)) return;
       await post('api/chat', JSON.stringify({ text, source: 'voice' }));
       latency.set('posted');
     } catch (err) {
@@ -409,6 +421,91 @@
     } finally {
       st.pending--;
     }
+  }
+
+  // ---- The fast lane (POST api/talk/turn) ------------------------------------------
+  //
+  // The server decides in about a second whether it can answer itself
+  // ("answer"), or says a short acknowledgement and hands the words to the PA
+  // chat ("handoff"), or both. Its words stream back and are spoken sentence
+  // by sentence through the same speaker queue; a hand-off's real answer
+  // arrives on the chat stream like any other and is spoken as before. Returns
+  // false only when nothing was handed off and the caller should send to
+  // api/chat itself (fast lane off, unreachable, or it failed before deciding).
+  const fast = { gen: 0, abort: null, off: false };
+
+  function cancelFastTurn() {
+    if (!fast.abort) return;
+    fast.gen++;
+    fast.abort.abort();
+    fast.abort = null;
+  }
+
+  async function fastTurn(text) {
+    if (fast.off) return false;
+    cancelFastTurn();
+    const ac = new AbortController();
+    fast.abort = ac;
+    const gen = fast.gen;
+    const live = () => gen === fast.gen;
+    let res;
+    try {
+      res = await fetch('api/talk/turn', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-PA': '1' }, body: JSON.stringify({ text }), signal: ac.signal });
+    } catch {
+      return !live(); // barged in: dropped on purpose; otherwise unreachable
+    }
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      if (data.disabled || res.status === 404) fast.off = true; // PA_FAST_LANE=0: until reload
+      return false;
+    }
+    latency.set('posted');
+    const lines = C.createLineReader();
+    const words = C.createUtteranceStream();
+    const dec = new TextDecoder();
+    let full = '';
+    let decided = false;
+    const handle = (ev) => {
+      if (!live()) return;
+      if (ev.type === 'decision') {
+        decided = true;
+        latency.set('decision');
+        if (latency.marks) latency.marks.route = ev.route;
+      } else if (ev.type === 'delta') {
+        latency.set('firstToken');
+        full += ev.text || '';
+        const sentences = words.push(full);
+        if (sentences.length) {
+          latency.set('firstReply');
+          speaker.say(sentences);
+        }
+      } else if (ev.type === 'handoff' && ev.error) {
+        // 409: the PA chat is parked on a question in termhub.
+        if (ev.status === 409) sayWaiting(ev.error);
+        else concerned(`Could not hand that to the PA chat: ${ev.error}`);
+      } else if (ev.type === 'error') {
+        concerned(`The fast lane failed: ${ev.error}`);
+      }
+    };
+    try {
+      const reader = res.body.getReader();
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        for (const ev of lines.push(dec.decode(value, { stream: true }))) handle(ev);
+      }
+    } catch {
+      if (!live()) return true;
+      if (!decided) return false;
+    }
+    if (!live()) return true;
+    fast.abort = null;
+    const rest = words.finish(full);
+    if (rest.length) {
+      latency.set('firstReply');
+      speaker.say(rest);
+    }
+    return decided;
   }
 
   // The stream's activity line and the 409 usually say the same thing within
@@ -516,6 +613,7 @@
     }
     if (ev.type === 'assistant') {
       latency.set('firstReply');
+      latency.slow();
       let s = streams.get(ev.id);
       if (!s) {
         s = C.createUtteranceStream();
