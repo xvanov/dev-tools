@@ -356,7 +356,7 @@ async function handle(name, args = {}) {
       return text(
         r.status === 'configured'
           ? { id: null, name: r.name, status: 'configured', note: 'Already configured; the code that needs it can read it.' }
-          : { id: r.id, name: r.name, status: 'pending', note: "Waiting for the user in the dashboard (Needs you). Do not ask for the value in chat." }
+          : { id: r.id, name: r.name, status: 'pending', note: "Waiting for the user in the dashboard (Needs a credential or sign-in). Do not ask for the value in chat." }
       );
     }
 

@@ -2,9 +2,10 @@
 
 // Chasing what I am owed (durable task `chase`, one per owed-to-me commitment).
 //
-// Someone promised me something in chat or mail. First it asks me, in "Needs
-// you", when to follow up: in 4 hours, tomorrow, in 2 days, in a week, or not
-// at all — the answer I last gave for that person marked usual. No answer by
+// Someone promised me something in chat or mail. First it asks me, on that
+// ask's card under "Waiting on others", when to follow up: a chip (5 min to
+// next week), anything src/util/when.js reads ("2h", "fri 3pm", a date), or
+// not at all — the span I last gave for that person marked usual. No answer by
 // the default time (a working morning two days later, just after it was due,
 // or my usual cadence for them) and it goes with the default. Then it sleeps
 // until that time unless the commitment closes first — the ledger emits `closed:<id>` on every close,
@@ -16,7 +17,7 @@
 // waits for the next morning.
 
 const { TimeoutError } = require('absurd-sdk');
-const { one } = require('../../db');
+const { one, rows } = require('../../db');
 const C = require('./chaseCore');
 
 const name = 'chase';
@@ -44,15 +45,17 @@ async function closedBy(ctx, stepName, commitmentId, at) {
   }
 }
 
-// The cadence I last picked for this person, if any.
+// The cadence I last picked for this person, if any: a span of an hour or
+// more (chaseCore.usualWorthy). "Don't remind me about this one" or "Friday
+// 3pm" was about that ask, so it is not carried to the next.
 async function usualCadence(personId) {
-  const r = await one(
+  const list = await rows(
     `select p.answer from proposal p join commitment c on c.id = p.commitment_id
       where p.payload->>'on' = 'cadence' and p.status = 'accepted' and c.counterparty_person_id = $1
-      order by p.decided_at desc limit 1`,
+      order by p.decided_at desc limit 10`,
     [personId]
   );
-  return r?.answer || null;
+  return list.map((r) => r.answer).find(C.usualWorthy) || null;
 }
 
 async function run({ commitmentId }, ctx) {

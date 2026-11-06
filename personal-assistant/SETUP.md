@@ -17,7 +17,7 @@ Format is `NAME=value` — no quotes, no spaces around the `=`, one per line. It
 
 Microsoft 365, GitHub and Jira need nothing in `.env` at all: each goes through a login that
 already exists on the machine. Jira works better with an API token, and that does not go in
-`.env` either — the dashboard asks for it under **Needs you** and stores it in the OS keyring:
+`.env` either — the dashboard asks for it under **Needs a credential or sign-in** and stores it in the OS keyring:
 Windows Credential Manager, or the Secret Service on Linux (or `pa secret set PA_JIRA_API_TOKEN`).
 A Linux box with no keyring (`pa doctor`: `secret store … DEGRADED`) stores it in `.env` instead.
 

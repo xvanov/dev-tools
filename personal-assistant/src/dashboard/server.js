@@ -17,7 +17,7 @@
 // Send there, then tells the page they did. This tool has no path that puts a
 // message on the wire (see draft/deliver.js).
 //
-// Its Needs-you panel answers secret requests (src/secrets). A pasted value
+// Its credential panel ("Needs a credential or sign-in") answers secret requests (src/secrets). A pasted value
 // arrives in one POST, goes straight to the OS keyring (src/secrets/vault.js) or `.env`, and the
 // reply is `{ok, stored, name}`. No route here returns a value.
 
@@ -114,6 +114,8 @@ async function state() {
   await require('./cards')
     .enrich(out)
     .catch((err) => log.warn('card links failed', { message: err.message }));
+  // The Today board's columns, one card per commitment (dashboard/board.js).
+  out.board = require('./board').build(out);
   return out;
 }
 
@@ -219,6 +221,14 @@ async function handle(req, res) {
     if (delivery && !D.isDelivery(delivery)) return send(res, 400, { error: 'unknown delivery' });
     const r = await require('../dispatch').previewDelivery({ commitmentId: Number(pm[1]), mode: q.get('mode') || undefined, delivery });
     return send(res, 200, { ...r, plain: r.delivery ? D.describe(r.delivery) : null, unattended: D.unattended(r.delivery) });
+  }
+  // What a typed follow-up time means, before it is set: the card previews it
+  // with the same parser the chase uses (src/util/when.js via chaseCore).
+  if (req.method === 'GET' && url.pathname === '/api/when') {
+    const C = require('../durable/tasks/chaseCore');
+    const canonical = C.cadenceAnswer(url.searchParams.get('text') || '');
+    const when = canonical ? C.chaseAtFor(canonical, new Date()) : undefined;
+    return send(res, 200, canonical && when ? { ok: true, canonical, at: when.toISOString() } : { ok: false });
   }
   if (req.method === 'GET' && url.pathname === '/api/state') {
     return send(res, 200, await state());

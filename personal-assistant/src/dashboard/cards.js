@@ -114,6 +114,8 @@ function attach(card, info) {
   if (card.project === undefined) card.project = info.project;
   if (card.source === undefined) card.source = info.source;
   if (card.occurred_at === undefined) card.occurred_at = info.occurred_at;
+  // The source item: the board shows one card per item and wording (board.js).
+  if (card.item_id === undefined) card.item_id = info.item?.id ?? null;
   return card;
 }
 

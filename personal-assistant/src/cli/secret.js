@@ -78,7 +78,7 @@ function make(out, fail) {
         }
         if (r.vaultError) out(`\n  credential manager unreadable: ${r.vaultError}`);
         if (r.pending.length) {
-          out('\n  waiting for you (dashboard → Needs you, or `pa secret set <NAME>`)');
+          out('\n  waiting for you (dashboard → Needs a credential or sign-in, or `pa secret set <NAME>`)');
           for (const p of r.pending) {
             out(`    #${p.id} ${p.kind === 'login' ? p.purpose : p.name} — ${p.kind === 'login' ? p.command || p.hint || '' : p.purpose}`);
           }
@@ -111,7 +111,7 @@ function make(out, fail) {
         });
         out(r.status === 'configured'
           ? `${name} is already configured — \`pa secret set ${name}\` replaces it`
-          : `request #${r.id} ${r.existing ? 'already open' : 'opened'} — answer it in the dashboard (Needs you)`);
+          : `request #${r.id} ${r.existing ? 'already open' : 'opened'} — answer it in the dashboard (Needs a credential or sign-in)`);
         return;
       }
 

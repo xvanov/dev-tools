@@ -231,28 +231,44 @@ the new Teams, the pass is a no-op.
 ## Using it
 
 **The dashboard** is at <http://127.0.0.1:7300/> whenever the worker runs (or `pa dashboard`
-on its own): what's on you, what you're waiting on, agent runs, drafts, open PRs and board
-items, each with **Do** (dispatch), **Reply**, **Done** and **Dismiss**. Loopback only — it can
-start agents. Every button shows that it is working and then what happened. Its **Chat** tab is
+on its own). Loopback only — it can start agents. Its Today board has two main columns, each with
+a count, and every commitment appears on it once (`src/dashboard/board.js`, tested in
+`test/board.test.js`):
+
+- **On me** — everything you must act on or confirm: what you owe people, with **Do** (dispatch),
+  **Reply**, **Done** and **Dismiss**; a prepared session (a *ready to start* flag, **Start it** /
+  **Don't start** — declining runs nothing and leaves the ask on the list); a question for you
+  (**Skip** leaves it unanswered). At the bottom, under **Looks done — confirm?**, the asks the
+  reconciler thinks are settled but was not sure enough to close, in either direction, each with
+  the quote, **Confirm done** and **Keep open**. A prepared action, a question and a looks-done
+  proposal are drawn on the card of the ask they are about, not as cards of their own; two
+  commitments from the same message with the same words are one card ("also #…").
+- **Waiting on others** — what people owe you. A card whose chase asks when to follow up carries
+  that question (below).
+
+**Replies to send** and **Agent runs** appear only when they have something. **Notes from your
+Claude sessions & PRs**, **Code & boards**, **Closed recently** and **From the assistant** are
+folded below (the page remembers which you opened, in this browser only). Every button shows that it is working and then what happened. Its **Chat** tab is
 a box onto the PA chat, the same conversation as in termhub ([below](#the-chat-tab-and-the-chat-api)).
 
-**Every card says where it came from and why it is there.** Cards on **On you**, **Waiting on
-others**, **Needs you** and **Looks done?** carry a row of links built from what ingest stored, with
+**Every card says where it came from and why it is there.** Cards on **On me** and **Waiting on
+others** carry a row of links built from what ingest stored, with
 no model in the loop (`src/dashboard/links.js`, `cards.js`): the Teams message, mail, PR, Jira issue
 or board item it was read from; a Teams chat with the person and their GitHub; the repo; GitHub
 PRs, issues, branches, repos and Jira issues named in the message or the next few messages of its
-thread; a run's PR; and, on **Looks done?**, the item that suggests it is settled. A card read from
+thread; a run's PR; and, on a card that looks done, the item that suggests it is settled. A card read from
 a Claude session says which machine and folder it ran in and when, shows `claude --resume <id>`,
 links its transcript, and has **Open in termhub**, which opens the running session on that machine
 or starts one resuming it. Above the links is a short paragraph — who asked what, what led to it,
 what has happened since, and what is expected now and from whom — written by the worker a few
 cards at a time (`src/commitments/context.js`, every two minutes, `PA_CARD_CONTEXT=0` turns it off)
 and rewritten when the thread has news; it is discretionary spend (`card-context`). A chase's
-"when should I follow up?" card shows the same paragraph for the ask it is about.
+"when should I follow up?" question sits on the card of the ask it is about, under that paragraph.
 
-**From your own work** holds what the distiller read from your own Claude sessions and your own
-PRs — agent handoffs like "verify the banner in a browser before merge" — apart from **On you**,
-which is only what people asked of you or you promised them. They are grouped one per PR or
+**Notes from your Claude sessions & PRs** (folded) holds what the distiller read from your own Claude
+sessions and your own PRs — agent handoffs like "verify the banner in a browser before merge" —
+apart from **On me**, which is what people asked of you or you promised them; a note that gets a
+question or a looks-done proposal moves to **On me** while it does. They are grouped one per PR or
 session, close when their PR merges or closes, and expire after a week nobody touched them
 (`src/commitments/selfNotes.js`; reopening or correcting one counts as touching it). Asks from
 people never expire. A GitHub issue someone else filed through your account is still their ask.
@@ -294,17 +310,24 @@ live one would re-judge its whole repo every minute). Fresh evidence is judged f
 that have waited longest, so a backlog never starves. Commitments that share new items are judged in one call;
 with nothing new there is no model call at all. A close needs a quote checked verbatim against the
 item, and is applied on its own at 80% confidence or more — unless you reopened that commitment
-before — or shown under **Looks done?** with **Close it** / **Not yet** between 50% and 80%. A
+before — or shown under **Looks done — confirm?** on **On me** with **Confirm done** / **Keep open** between 50% and 80%. A
 promise is never a delivery. Every status change, yours or the assistant's, goes through
 `src/ledger` and is listed by `pa ledger <id>`; the closed card says who closed it, and **Reopen**
 takes it back.
 
 **Work that waits is a durable task** (`src/durable`, on [Absurd](https://github.com/earendil-works/absurd)
 in the same Postgres; `PA_DURABLE=0` turns it off). Two so far. **Chase**: for something a person
-owes you in chat or mail, a **Needs you** card asks when to follow up — in 4 hours, tomorrow, in 2
-days, in a week, or don't chase — with the answer you last gave for that person marked *usual*.
-Unanswered, it goes with the default: your usual for them, else a working morning two days after
-the promise (or just after it was due). Unless the ask closes first, a follow-up is then drafted in
+owes you in chat or mail, its card under **Waiting on others** asks when to follow up: chips (5 min,
+1 h, tomorrow 9:00, 2 days, next week), a box that reads `5m`, `90 min`, `2h`, `2d`, `1w`,
+`tomorrow 3pm`, `today 17:00`, `3pm`, `mon`, `next fri 2pm`, `next week` or
+`2026-11-10 14:00` (and a date-time picker), previewed before you set it (`GET /api/when`), or
+**Keep, but don't remind me** — it stays open and is never chased. **Not needed — close it** on that
+card closes the ask instead (it moves to Closed recently). The parser is `src/util/when.js` (pure,
+`test/when.test.js`); a typed time is taken literally and stored in canonical form (`5m`,
+`at:<ISO>`), the fixed 4h/1d/2d/1w answers still keep to working hours, and one it cannot read is
+refused, never guessed. The span you last gave for that person (an hour or more; not "don't remind
+me" or a fixed time) is marked *usual*. Unanswered, it goes with the default: your usual for them,
+else a working morning two days after the promise (or just after it was due). Unless the ask closes first, a follow-up is then drafted in
 that thread for you to send, and if nothing comes you get one reminder half as long again later;
 at most three follow-ups a day. The card goes away by itself when their answer closes the ask.
 **Run review**: when a dispatched run's session ends with commits, the assistant carries out the
@@ -318,9 +341,9 @@ on the run). Red CI, a timeout, or a main that moved on leaves the branch / PR a
 run `blocked` with the reason and tells you. A research (`plan`) run just tells you its findings are ready. A run
 from before end states keeps the old rule: a draft PR, merged only in your own repos
 (`PA_MERGE_REPOS`). A chase judges its ask before asking you anything, so an ask already answered
-gets no card. **Needs you** is also where the assistant asks what
-only you know (which repo?). `pa proposals` / `pa answer <id> yes|no|<option>`
-do the same from the terminal, and `pa doctor` counts tasks by state.
+gets no card. **On me** is also where the assistant asks what
+only you know (which repo?). `pa proposals` / `pa answer <id> yes|no|<option>|<when>`
+(`pa answer 109 tomorrow 3pm`) do the same from the terminal, and `pa doctor` counts tasks by state.
 
 **Model spend is recorded and capped per day** (`src/budget.js`). Every model call — `claude -p`
 or the API — leaves an `llm_spend` row: when, which pass (`purpose`: distill, reconcile,
@@ -342,7 +365,7 @@ turns it off). Each new ask on you from the last week is given a kind (reply, re
 investigate, meeting, decision, admin) once. An *investigate* ask with a known repo gets a
 read-only research run started on its own — `plan` mode, so it can neither commit nor push — at
 most `PA_EAGER_RUNS_PER_DAY` (2) a day and only within the daily budget; you get a toast with the
-session. A *coding* ask with a known repo becomes a **Needs you** card, "start a coding session?" —
+session. A *coding* ask with a known repo gets a *ready to start* offer on its **On me** card, "start a coding session?" —
 or, when the routing rule picks the software factory (below), "send to the factory?". Everything
 the card shows is decided before you see it and frozen into the proposal (`src/dispatch/offer.js`):
 the route and its reason, the **end state** in plain words (loud when nothing human follows your
@@ -719,7 +742,7 @@ and cost per route × kind. `pa doctor` checks the factory answers and lists its
 ### Secrets and sign-ins
 
 When the assistant — or an agent through MCP — needs a credential, it asks; you never hand-edit
-`.env`. A request appears at the top of the dashboard under **Needs you** (with a badge on the
+`.env`. A request appears at the top of the dashboard under **Needs a credential or sign-in** (with a badge on the
 Today tab and a desktop notification): what is needed, why, where to get it, and where the value
 will be stored. Paste it into the password box and press **Save**.
 

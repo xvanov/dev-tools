@@ -3,7 +3,7 @@
 // The assistant's questions and prepared actions, waiting for me (sql/020).
 //
 //   create({kind, title, ...})        idempotent by dedupeKey
-//   pending()                         what the dashboard shows under "Needs you"
+//   pending()                         what the dashboard draws on its asks (On me; board.js)
 //   decide(id, {accept, answer})      my answer; runs or wakes what waits on it
 //   expire()                          proposals past their expiry
 //
@@ -131,6 +131,19 @@ function describeStart(run) {
  */
 async function decide(id, { accept, answer = null, delivery = null }) {
   if (delivery) delivery = require('../dispatch/deliveryCore').delivery(delivery);
+  // "When should I follow up?" takes a fixed answer or a typed time ("2h",
+  // "fri 3pm", a date — src/util/when.js), stored canonical so the chase does
+  // exactly what was previewed. One it cannot read is refused, not guessed.
+  if (accept && answer) {
+    const q = await one(`select payload from proposal where id = $1`, [id]);
+    if (q?.payload?.on === 'cadence') {
+      const canonical = require('../durable/tasks/chaseCore').cadenceAnswer(answer);
+      if (!canonical) {
+        throw Object.assign(new Error(`"${String(answer).slice(0, 40)}" is not a time I can read — try 5m, 2h, 2d, tomorrow 3pm, mon, or 2026-11-10 14:00`), { status: 400 });
+      }
+      answer = canonical;
+    }
+  }
   const recorded = answer || (accept && delivery ? `delivery=${delivery}` : null);
   const p = await one(`update proposal set status = $2, answer = $3, decided_at = now()
                         where id = $1 and status = 'pending' returning *`, [id, accept ? 'accepted' : 'rejected', recorded]);

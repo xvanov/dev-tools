@@ -24,6 +24,7 @@ const CADENCES = [
 ];
 
 const cadence = (value) => CADENCES.find((c) => c.value === value) || null;
+const { parseWhen } = require('../../util/when');
 
 /** The buttons for the question, the usual answer marked. */
 function cadenceOptions(usual) {
@@ -31,21 +32,55 @@ function cadenceOptions(usual) {
 }
 
 /**
- * When to chase for a cadence answer, counted from `from`: inside working
- * hours, so "in 4 hours" at 16:00 means the next morning. Null: don't chase.
- * Undefined: not a cadence I know.
+ * When to chase for a cadence answer, counted from `from`. The fixed answers
+ * (4h, 1d, 2d, 1w) stay inside working hours, so "in 4 hours" at 16:00 means
+ * the next morning. Anything else typed or picked on the dashboard ("5m",
+ * "tomorrow 3pm", "at:<ISO>", src/util/when.js) is taken literally. Null:
+ * don't chase. Undefined: not an answer I understand.
  */
 function chaseAtFor(value, from) {
   const c = cadence(value);
-  if (!c) return undefined;
-  if (c.hours == null) return null;
-  return workingMorning(new Date(new Date(from).getTime() + c.hours * 3600_000));
+  if (c) {
+    if (c.hours == null) return null;
+    return workingMorning(new Date(new Date(from).getTime() + c.hours * 3600_000));
+  }
+  const w = parseWhen(value, from);
+  return w ? w.at : undefined;
 }
 
 /** The gap before the one reminder after a nudge: half as long again. */
 function secondGapHours(value) {
   const c = cadence(value);
-  return c && c.hours ? Math.max(4, c.hours * 1.5) : SECOND_WAIT_HOURS;
+  if (c) return c.hours ? Math.max(4, c.hours * 1.5) : SECOND_WAIT_HOURS;
+  const w = value ? parseWhen(value, new Date()) : null;
+  return w && w.kind === 'duration' ? Math.max(4, (w.ms / 3600_000) * 1.5) : SECOND_WAIT_HOURS;
+}
+
+/**
+ * An answer to "when should I follow up?" as it is stored: a fixed value as
+ * is, anything else in its canonical form ("5m", "at:<ISO>"), so the chase
+ * computes exactly what the page previewed. Null: not an answer I understand
+ * (or a time already past).
+ */
+function cadenceAnswer(text, now = new Date()) {
+  const t = String(text || '').trim();
+  if (cadence(t)) return t;
+  const w = parseWhen(t, now);
+  return w ? w.canonical : null;
+}
+
+/**
+ * Whether an answer can be someone's *usual*: a span of at least an hour.
+ * "Don't chase this one", "in 5 minutes" or "Friday 3pm" was about that ask,
+ * not about how long that person usually takes.
+ */
+function usualWorthy(value) {
+  const c = cadence(value);
+  if (c) return c.hours != null;
+  const w = /^(\d+)([mhdw])$/.exec(String(value || ''));
+  if (!w) return false;
+  const hours = Number(w[1]) * { m: 1 / 60, h: 1, d: 24, w: 168 }[w[2]];
+  return hours >= 1;
 }
 
 /** The next working-day morning at or after `d` (local time). */
@@ -93,4 +128,4 @@ function secondsUntil(at, now = new Date()) {
   return Math.max(1, Math.ceil((new Date(at) - now) / 1000));
 }
 
-module.exports = { CADENCES, cadenceOptions, chaseAtFor, secondGapHours, firstChaseAt, secondChaseAt, worthChasing, workingMorning, secondsUntil, MAX_NUDGES_PER_DAY, MAX_AGE_DAYS };
+module.exports = { CADENCES, cadenceOptions, chaseAtFor, cadenceAnswer, usualWorthy, secondGapHours, firstChaseAt, secondChaseAt, worthChasing, workingMorning, secondsUntil, MAX_NUDGES_PER_DAY, MAX_AGE_DAYS };

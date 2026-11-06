@@ -48,9 +48,9 @@ const HELP = `pa — your context layer
     pa ledger reconcile [--dry-run] [--id N,..] [--limit N]
                                      judge open commitments against newer items now
     pa ledger undo <transition-id>   take back one status change
-    pa propose <id>|--task "…" […pa do's flags]  put the work on a card (Needs you) instead of starting it
+    pa propose <id>|--task "…" […pa do's flags]  put the work on a card (dashboard → On me) instead of starting it
     pa proposals                     what the assistant prepared or asks, waiting for you
-    pa answer <id> yes|no|<option> [--delivery level]  answer one; --delivery changes a card's end state
+    pa answer <id> yes|no|<option>|<when> [--delivery level]  answer one; <when> on a follow-up question: 5m, 2h, 2d, tomorrow 3pm, mon, 2026-11-10 14:00; --delivery changes a card's end state
     pa delivery [list] | set <owner/name> <level> | clear <owner/name>  per-repo default end state
     pa factory apps | add <owner/name> [--delivery-default level] [--path p]  the factory's registered repos
     pa ledger looks-done [<evidence-id> --yes|--no]  proposals: list, or answer one
@@ -456,7 +456,7 @@ const commands = {
         const row = await require('../dispatch/offer').propose({
           ...o, useModel: await require('../budget').allow('propose').catch(() => false), suggestedBy: suggestedBy(),
         });
-        out(row ? `NOT started: put on a card for you to accept — proposal ${row.id} (dashboard → Needs you)` : 'NOT started: already on a card');
+        out(row ? `NOT started: put on a card for you to accept — proposal ${row.id} (dashboard → On me)` : 'NOT started: already on a card');
         return;
       }
       if (!(await confirm(`This will ${pre.delivery === 'push_to_main' ? 'push to main' : 'merge'} with no human step after it. Start it? [y/N]`))) return out('not started');
@@ -515,7 +515,7 @@ const commands = {
     if (!row) return out('already offered');
     out(`proposal ${row.id} · ${row.title}`);
     printOffer({ body: row.body, payload: row.payload }, { preview: false });
-    out(`\nOn the dashboard under Needs you, or: pa answer ${row.id} yes [--delivery level]`);
+    out(`\nOn the dashboard under On me, or: pa answer ${row.id} yes [--delivery level]`);
   },
 
   async delivery(args) {
@@ -584,8 +584,10 @@ const commands = {
   },
 
   async answer(args, flags = {}) {
-    const [id, ans] = args;
-    if (!Number(id) || !ans) return fail('usage: pa answer <proposal-id> yes|no|<option> [--delivery level]');
+    // A follow-up time may be several words: `pa answer 109 tomorrow 3pm`.
+    const [id, ...rest] = args;
+    const ans = rest.join(' ').trim();
+    if (!Number(id) || !ans) return fail('usage: pa answer <proposal-id> yes|no|<option>|<when> [--delivery level]');
     const accept = ans !== 'no';
     const delivery = flags.delivery && flags.delivery !== true ? String(flags.delivery) : null;
     if (accept) {
@@ -1375,7 +1377,7 @@ const commands = {
       !waiting
         ? '  secrets: requests table missing — run `pa migrate`'
         : waiting.length
-          ? `  secrets: ${waiting.length} waiting for you — ${waiting.map((w) => w.name).join(', ')} (dashboard → Needs you)`
+          ? `  secrets: ${waiting.length} waiting for you — ${waiting.map((w) => w.name).join(', ')} (dashboard → Needs a credential or sign-in)`
           : '  secrets: nothing waiting · `pa secret list`'
     );
 

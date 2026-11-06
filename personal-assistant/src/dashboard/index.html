@@ -79,6 +79,33 @@
   .confirm { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 6px;
     font-size: 12px; color: var(--muted); }
   .badge { font-size: 11px; color: var(--accent); }
+  /* the board: one card per commitment, with what needs you on it (board.js) */
+  section#onme { grid-column: span 2; }
+  @media (max-width: 760px) { section#onme { grid-column: auto; } }
+  .flag { display: inline-block; font-size: 11px; font-weight: 600; border-radius: 999px; padding: 0 8px; margin-right: 4px;
+    border: 1px solid currentColor; }
+  .flag.settled { color: var(--ok); }
+  .flag.offer { color: var(--accent); }
+  .flag.ask { color: var(--warn); }
+  .item.settled .sum { color: var(--muted); }
+  .item .ask-box { margin-top: 8px; padding: 6px 9px; border: 1px dashed var(--line); border-radius: 6px; }
+  .item .ask-box > .sum { font-weight: 500; font-size: 13px; }
+  .group-head { margin: 14px 0 2px; padding-top: 8px; border-top: 2px solid var(--line); font-size: 12px; font-weight: 600;
+    color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
+  .chase { margin-top: 8px; padding: 6px 9px; background: var(--chip); border-radius: 6px; font-size: 12px; }
+  .chase .row { display: flex; flex-wrap: wrap; gap: 4px 6px; align-items: center; margin-top: 4px; }
+  .chase button.chipbtn { border-radius: 999px; padding: 1px 9px; background: var(--panel); }
+  .chase input { font: inherit; font-size: 12px; color: var(--ink); background: var(--panel); border: 1px solid var(--line);
+    border-radius: 6px; padding: 2px 6px; }
+  .chase input[type=text] { width: 15em; max-width: 100%; }
+  .chase .preview { color: var(--muted); }
+  .chase .preview.bad { color: var(--bad); }
+  .chase .dflt { color: var(--muted); }
+  .folds { grid-column: 1 / -1; display: flex; flex-direction: column; gap: 8px; }
+  .folds section { padding: 6px 14px; }
+  .folds summary { cursor: pointer; list-style: revert; }
+  .folds summary h2 { display: inline; margin: 0; }
+  .folds details[open] summary { margin-bottom: 8px; }
   .empty { color: var(--muted); font-size: 13px; padding: 4px 0; }
   #toast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); background: var(--ink);
     color: var(--bg); padding: 8px 14px; border-radius: 8px; font-size: 13px; opacity: 0; transition: opacity .2s;
@@ -237,22 +264,26 @@
 </header>
 <div class="sources" id="sources"></div>
 <div class="needs" id="needs" hidden>
-  <section><h2>Needs you<span class="n"></span></h2>
+  <section><h2>Needs a credential or sign-in<span class="n"></span></h2>
     <p class="hint">The assistant needs a credential or a sign-in. A value you paste goes from this page straight into the store shown — no model and no log sees it, and nothing here can show it back.</p>
     <div class="list"></div></section>
 </div>
 <main id="today">
   <div class="needs" id="blind" hidden></div>
-  <section id="drafts"><h2>Replies to send<span class="n"></span></h2><div class="list"></div></section>
-  <section id="needsyou"><h2 title="Things the assistant prepared or needs to know, waiting for a yes, a no or an answer.">Needs you<span class="n"></span></h2><div class="list"></div></section>
-  <section id="looksdone"><h2 title="The assistant found something that looks like it settles these, but was not sure enough to close them on its own.">Looks done?<span class="n"></span></h2><div class="list"></div></section>
-  <section id="mine"><h2>On you<span class="n"></span></h2><div class="list"></div></section>
-  <section id="waiting"><h2>Waiting on others<span class="n"></span></h2><div class="list"></div></section>
-  <section id="selfnotes"><h2 title="Notes read from your own Claude sessions and PRs — not asks from people. Closed when the PR merges, or after a week untouched.">From your own work<span class="n"></span></h2><div class="list"></div></section>
-  <section id="runs"><h2>Agent runs<span class="n"></span></h2><div class="list"></div></section>
-  <section id="code"><h2>Code &amp; boards<span class="n"></span></h2><div class="list"></div></section>
-  <section id="closed"><h2>Closed recently<span class="n"></span></h2><div class="list"></div></section>
-  <section id="feed"><h2 title="Everything the assistant told you: pushed (toast and PA chat), held for a digest, or feed only. Thumbs teach it what is worth an interruption.">From the assistant<span class="n"></span></h2><div class="list"></div></section>
+  <section id="drafts" hidden><h2 title="Replies the assistant drafted. Send opens them, written, in Teams or Outlook; you press Send there.">Replies to send<span class="n"></span></h2><div class="list"></div></section>
+  <section id="onme"><h2>On me<span class="n"></span></h2>
+    <p class="hint">Everything that needs you, once each: asks to do, offers to start, questions to answer — and, at the bottom, things that look done for you to confirm.</p>
+    <div class="list"></div></section>
+  <section id="waiting"><h2 title="What people owe you. A card asking when to follow up has a default: leave it and it follows up then.">Waiting on others<span class="n"></span></h2><div class="list"></div></section>
+  <section id="runs" hidden><h2>Agent runs<span class="n"></span></h2><div class="list"></div></section>
+  <div class="folds">
+    <section id="selfnotes"><details data-fold="selfnotes"><summary><h2>Notes from your Claude sessions &amp; PRs<span class="n"></span></h2></summary>
+      <p class="hint">Handoffs your own agents and PRs left behind ("verify in a browser before merge") — not asks from people. They close when the PR merges, or after a week untouched. Anything here that needs you is on On me instead.</p>
+      <div class="list"></div></details></section>
+    <section id="code"><details data-fold="code"><summary><h2>Code &amp; boards<span class="n"></span></h2></summary><div class="list"></div></details></section>
+    <section id="closed"><details data-fold="closed"><summary><h2>Closed recently<span class="n"></span></h2></summary><div class="list"></div></details></section>
+    <section id="feed"><details data-fold="feed"><summary><h2 title="Everything the assistant told you: pushed (toast and PA chat), held for a digest, or feed only. Thumbs teach it what is worth an interruption.">From the assistant<span class="n"></span></h2></summary><div class="list"></div></details></section>
+  </div>
 </main>
 <div class="mtg" id="meetings-view" hidden>
   <section>
@@ -596,8 +627,12 @@ function commitmentCard(c) {
     toast(`draft #${r.id} written — it is at the top`);
   }));
   const canReply = c.direction === 'owed_by_me' && (c.source === 'graph_chat' || c.source === 'graph_mail');
-  const doneBtn = el('button', {}, 'Done');
-  const dropBtn = el('button', { title: 'Not mine / not real' }, 'Dismiss');
+  const doneBtn = el('button', { title: c.direction === 'owed_to_me' ? 'They delivered: close it as done' : 'I did it: close it as done' }, 'Done');
+  // On a card that asks when to follow up, closing it is the other half of
+  // that question ("Don't remind me" keeps it open), so it says so.
+  const dropBtn = c.chase
+    ? el('button', { title: 'They do not owe you this any more: close it as dismissed — nothing is chased. It moves to "Closed recently", where Reopen brings it back.' }, 'Not needed — close it')
+    : el('button', { title: 'Not mine, not real, or no longer needed: close it as dismissed. It moves to "Closed recently", where Reopen brings it back.' }, 'Dismiss');
   doBtn.addEventListener('click', act(doBtn, async () => {
     // Opened now, while this is still the click: a tab opened after the
     // request returns is a popup, and the browser blocks it.
@@ -645,25 +680,117 @@ function commitmentCard(c) {
   }));
   dropBtn.addEventListener('click', act(dropBtn, async () => {
     await post(`api/commitments/${c.id}/status`, { status: 'dropped' });
-    toast(`#${c.id} dismissed — it is in "Closed recently" if you need it back`);
+    // The follow-up question goes with it now, not at the worker's next pass.
+    if (c.chase) await post(`api/proposals/${c.chase.id}/accept`, { answer: 'never' }).catch(() => {});
+    toast(`#${c.id} closed — it is in "Closed recently" if you need it back`);
   }));
 
   const sub = joinParts([
-    `#${c.id}`, c.who_is_me ? null : c.who, SOURCE[c.source] || c.source, c.project, due(c.due_at),
+    `#${c.id}`, (c.also || []).length ? `also #${c.also.join(', #')}` : null,
+    c.direction === 'owed_to_me' ? `waiting on ${c.who || 'them'}` : c.who_is_me ? null : c.who,
+    SOURCE[c.source] || c.source, c.project, due(c.due_at),
     c.status === 'dispatched' ? 'dispatched' : null, ago(c.occurred_at),
     // The server's links say what each one opens; this is the fallback.
     c.links ? null : link(c.thread_external_id, 'open'),
   ]);
-  const canDo = c.direction === 'owed_by_me' && c.status === 'open';
-  return el('div', { class: 'item' },
-    el('div', { class: 'sum' }, c.summary),
+  // A card that only looks done gets Confirm / Keep open, not a to-do's buttons.
+  const settledOnly = c.group === 'settled';
+  const asks = c.asks || [];
+  // A prepared offer is the start button: no second set of pickers beside it.
+  const canDo = c.direction === 'owed_by_me' && c.status === 'open' && !settledOnly && !asks.some((p) => p.kind === 'dispatch');
+  const flags = [
+    c.settled ? el('span', { class: 'flag settled', title: 'The assistant found something that looks like it settles this, but is not sure enough to close it alone' }, 'looks done — confirm?') : null,
+    asks.some((p) => p.kind === 'dispatch') ? el('span', { class: 'flag offer', title: 'A session is prepared: start it below' }, 'ready to start') : null,
+    asks.some((p) => p.kind !== 'dispatch') ? el('span', { class: 'flag ask' }, 'question for you') : null,
+  ];
+  return el('div', { class: settledOnly ? 'item settled' : 'item' },
+    el('div', { class: 'sum' }, ...flags, c.summary),
     el('div', { class: 'sub' }, ...sub),
     ...cardSource(c, c.onBoard),
-    el('div', { class: 'actions' },
+    c.settled ? settledBlock(c) : null,
+    ...asks.map((p) => askBlock(p, false)),
+    c.chase ? chaseBlock(c, c.chase) : null,
+    settledOnly ? null : el('div', { class: 'actions' },
       canDo && (MACHINES.routes || []).length > 1 ? routePick : null,
       canDo && MACHINES.machines.length > 1 ? machinePick : null, canDo ? modePick : null, canDo ? deliveryPick : null, canDo ? doBtn : null,
       canReply ? replyBtn : null, doneBtn, dropBtn),
     ctx);
+}
+
+// "Looks done?" on a card (src/ledger/reconcile.js): the quote that suggests
+// it is settled, and one click either way.
+function settledBlock(c) {
+  const p = c.settled;
+  const yes = el('button', { class: 'primary', title: p.effect === 'moot'
+    ? 'Agree it is no longer needed: close it as dismissed (Closed recently can bring it back)'
+    : 'Agree it is done: close it (Closed recently can bring it back)' }, p.effect === 'moot' ? 'Confirm — not needed' : 'Confirm done');
+  const no = el('button', { title: 'It is not done: keep it open. This piece of evidence will not be proposed again.' }, 'Keep open');
+  yes.addEventListener('click', act(yes, async () => {
+    await post(`api/ledger/evidence/${p.id}/accept`, {});
+    toast(`#${c.id} closed — it is in "Closed recently" if you need it back`);
+  }));
+  no.addEventListener('click', act(no, async () => {
+    await post(`api/ledger/evidence/${p.id}/reject`, {});
+    toast(`#${c.id} stays open`);
+  }));
+  // The item that suggests it is settled (a card built from this proposal has it already).
+  const evidence = c.synthesized ? null : linkChips({ links: (p.links || []).filter((l) => l.kind === 'evidence') });
+  return el('div', { class: 'confirm' },
+    el('span', {}, `Why it looks ${p.effect === 'moot' ? 'no longer needed' : 'done'} (${Math.round((p.confidence || 0) * 100)}% sure): “${p.quote || ''}”`),
+    evidence, yes, no);
+}
+
+// The chase's "when should I follow up?" (src/durable/tasks/chase.js), on the
+// card it is about. Quick chips, or anything src/util/when.js reads, previewed
+// by the server before it is set. Doing nothing is an answer too: the default.
+const CHASE_CHIPS = [['5 min', '5m'], ['1 h', '1h'], ['Tomorrow 9:00', 'tomorrow 9:00'], ['2 days', '2d'], ['Next week', 'next week']];
+function chaseBlock(c, p) {
+  const set = async (value) => {
+    const r = await post(`api/proposals/${p.id}/accept`, { answer: value });
+    if (r.ok === false) throw new Error(r.result);
+    toast(value === 'never' ? `#${c.id} stays open; no follow-up, no reminder` : `follow-up on #${c.id} set`);
+  };
+  const chips = CHASE_CHIPS.map(([label, value]) => {
+    const b = el('button', { class: 'chipbtn', title: `Follow up: ${label}` }, label);
+    b.addEventListener('click', act(b, () => set(value)));
+    return b;
+  });
+  const text = el('input', { type: 'text', placeholder: 'or type: 3h, fri 2pm, 2026-11-10 14:00', 'aria-label': 'Follow up when' });
+  const pick = el('input', { type: 'datetime-local', 'aria-label': 'Pick a date and time', title: 'Pick a date and time' });
+  const preview = el('span', { class: 'preview' });
+  const go = el('button', { class: 'primary' }, 'Set');
+  let timer = null;
+  const show = async () => {
+    const v = text.value.trim();
+    if (!v) { preview.textContent = ''; return; }
+    const r = await fetch(`api/when?text=${encodeURIComponent(v)}`).then((x) => x.json()).catch(() => ({ ok: false }));
+    if (text.value.trim() !== v) return;
+    preview.className = r.ok ? 'preview' : 'preview bad';
+    preview.textContent = r.ok
+      ? `→ ${new Date(r.at).toLocaleString(undefined, { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}`
+      : 'can\'t read that — try 5m, 2h, 2d, tomorrow 3pm, mon';
+  };
+  text.addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(show, 250); });
+  pick.addEventListener('change', () => { if (pick.value) { text.value = pick.value.replace('T', ' '); show(); } });
+  for (const i of [text, pick]) {
+    i.addEventListener('focus', () => { editing = true; });
+    i.addEventListener('blur', () => { editing = false; });
+  }
+  text.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); go.click(); } });
+  go.addEventListener('click', act(go, async () => {
+    if (!text.value.trim()) throw new Error('type when, or pick a chip');
+    await set(text.value.trim());
+  }));
+  const never = el('button', { title: 'Leaves it open under Waiting on others, but the assistant will not draft a follow-up or remind you about this one. (This was "Don\'t chase".)' }, 'Keep, but don\'t remind me');
+  never.addEventListener('click', act(never, () => set('never')));
+  const usual = (p.options || []).find((o) => /\(usual\)/.test(o.label || ''));
+  return el('div', { class: 'chase' },
+    el('div', {}, el('strong', {}, `Follow up with ${c.who || 'them'}?`), ' ',
+      el('span', { class: 'dflt' }, p.body ? `If you do nothing: ${p.body.replace(/^Without an answer, /, '').replace(/ Answering earlier.*$/, '')}` : '',
+        usual ? ` Usual for them: ${usual.label.replace(' (usual)', '').toLowerCase()}.` : '')),
+    el('div', { class: 'row' }, ...chips),
+    el('div', { class: 'row' }, text, pick, go, preview),
+    el('div', { class: 'row' }, never));
 }
 
 // A draft is edited in place and saved when the box loses focus. Send opens
@@ -853,15 +980,15 @@ function render(s) {
     el('div', { class: 'sum' }, `The board may be out of date: ${b.label} has not synced since ${new Date(b.since).toLocaleString()}.`),
     el('div', { class: 'sub' }, `Open items settled there will not close until it is back. ${b.hint}`))));
 
-  const mine = s.commitments.filter((c) => c.direction === 'owed_by_me');
-  const waiting = s.commitments.filter((c) => c.direction === 'owed_to_me');
+  // The board's columns, one card per commitment (dashboard/board.js).
+  const b = s.board || { onMe: [], waiting: [], notes: [], counts: {} };
   // These get a cause-and-effect paragraph from the worker; notes from your own
   // work keep their links only.
-  for (const c of s.commitments) c.onBoard = true;
-  fill('mine', mine, commitmentCard, 'Nothing on you.');
-  fill('waiting', waiting, commitmentCard, 'Nobody owes you anything.');
+  for (const c of [...b.onMe, ...b.waiting]) c.onBoard = !c.standalone;
+  renderOnMe(b.onMe);
+  fill('waiting', b.waiting, commitmentCard, 'Nobody owes you anything.');
   // One collapsed group per PR or session; open groups stay open across refreshes.
-  fill('selfnotes', s.selfNotes || [], (g) => {
+  fill('selfnotes', b.notes, (g) => {
     const d = el('details', { class: 'item' },
       el('summary', {}, `${g.label} · ${g.items.length} note${g.items.length === 1 ? '' : 's'} · latest ${ago(g.items[0].occurred_at)}`),
       ...g.items.map(commitmentCard));
@@ -869,8 +996,12 @@ function render(s) {
     d.addEventListener('toggle', () => (d.open ? openGroups.add(g.key) : openGroups.delete(g.key)));
     return d;
   }, 'No notes from your own work.');
+  // The count is notes, not groups: "3" for 40 notes undersold it.
+  document.querySelector('#selfnotes .n').textContent = b.counts.notes ? String(b.counts.notes) : '';
 
   fill('drafts', s.drafts, draftCard, 'No replies waiting.');
+  // Columns with nothing in them are not drawn: fewer boxes to read past.
+  document.getElementById('drafts').hidden = !s.drafts.length;
 
   const runs = [...s.runsActive.map((r) => ({ ...r, live: true })), ...s.runsReview];
   fill('runs', runs, (r) => el('div', { class: 'item' },
@@ -878,6 +1009,7 @@ function render(s) {
     el('div', { class: 'sub' }, ...joinParts([`run #${r.id}`, r.live ? r.status : r.status === 'blocked' ? `blocked — ${r.exit_note || 'see pa review'}` : 'done — review', r.mode,
       r.route === 'factory' ? `factory ${r.factory_job_id || ''}${r.factory_state ? ` · ${r.factory_state}` : ''}` : null,
       r.repo_path, link(r.mr_url, 'MR')]))), 'No agent runs.');
+  document.getElementById('runs').hidden = !runs.length;
 
   const code = s.reviews.filter((r) => r.raw?.state === 'opened' || r.raw?.action);
   fill('code', code.slice(0, 15), (r) => el('div', { class: 'item' },
@@ -886,13 +1018,16 @@ function render(s) {
     'Nothing open.');
 
   fill('closed', s.closed || [], closedCard, 'Nothing closed in the last three days.');
-  fill('looksdone', s.looksDone || [], looksDoneCard, 'Nothing to confirm.');
-  fill('needsyou', s.needsYou || [], needsYouCard, 'Nothing waiting on you.');
   fill('feed', s.notifications || [], noteCard, 'Nothing yet.');
-  // A toast's link lands on #notification-<id>: bring it into view once.
+  // A toast's link lands on #notification-<id>: unfold it and bring it into view once.
   if (location.hash.startsWith('#notification-') && render.jumped !== location.hash) {
     const target = document.getElementById(location.hash.slice(1));
-    if (target) { target.scrollIntoView({ block: 'center' }); render.jumped = location.hash; }
+    if (target) {
+      const fold = target.closest('details');
+      if (fold) fold.open = true;
+      target.scrollIntoView({ block: 'center' });
+      render.jumped = location.hash;
+    }
   }
 }
 
@@ -969,8 +1104,10 @@ function offerDetails(p) {
   return { nodes, select };
 }
 
-// A prepared action (yes / no) or a question (one button per option).
-function needsYouCard(p) {
+// A prepared action or a question (src/proposals), on the card of the ask it
+// is about — or, with no ask behind it (a run to land), a card of its own.
+// What "no" does differs by kind, so the button says it.
+function askBlock(p, standalone) {
   const offer = p.kind === 'dispatch' && p.payload?.frozen ? offerDetails(p) : null;
   const decide = (accept, answer) => async () => {
     const body = { answer };
@@ -986,45 +1123,54 @@ function needsYouCard(p) {
       buttons.push(b);
     }
   } else {
-    const yes = el('button', {}, 'Yes');
+    const yes = p.kind === 'dispatch'
+      ? el('button', { class: 'primary', title: 'Start it exactly as shown' }, 'Start it')
+      : el('button', {}, 'Yes');
     yes.addEventListener('click', act(yes, decide(true, null)));
     buttons.push(yes);
   }
-  const no = el('button', { title: 'Not this — it will not be asked again' }, 'No');
+  const no = p.kind === 'dispatch'
+    ? el('button', { title: 'Decline this offer: nothing runs, and it is not offered again. The ask itself stays on your list — Done or Dismiss close that.' }, 'Don\'t start')
+    : p.kind === 'question'
+      ? el('button', { title: 'Leave this question unanswered: nothing changes, and it is not asked again.' }, 'Skip')
+      : el('button', { title: 'Decline: nothing is done, and it is not asked again.' }, 'No');
   no.addEventListener('click', act(no, decide(false, null)));
   buttons.push(no);
-  // A card about an ask carries that ask's story and links — a "when should I
-  // chase?" question is unanswerable without knowing what the chase is about.
-  return el('div', { class: 'item' },
+  return el('div', { class: standalone ? '' : 'ask-box' },
     el('div', { class: 'sum' }, p.title),
-    el('div', { class: 'sub' }, ...joinParts([p.commitment_id ? `#${p.commitment_id}` : null, p.run_id ? `run #${p.run_id}` : null,
-      p.commitment_summary, p.who, SOURCE[p.source] || p.source, p.project, ago(p.created_at)])),
+    standalone ? el('div', { class: 'sub' }, ...joinParts([p.run_id ? `run #${p.run_id}` : null, SOURCE[p.source] || p.source, p.project, ago(p.created_at)])) : null,
     offer && p.payload.suggestedBy ? el('div', { class: 'endstate loud' }, `Suggested by ${p.payload.suggestedBy} — check the end state before you accept.`) : null,
     offer ? (p.payload.why ? el('div', { class: 'sub' }, `Planner's note: ${p.payload.why}`) : null) : p.body ? el('pre', { class: 'sub' }, p.body) : null,
     ...(offer ? offer.nodes : []),
-    ...(p.commitment_id ? cardSource(p, true) : []),
     el('div', { class: 'actions' }, ...buttons));
 }
 
-// A close the reconciler proposes, with the quote that suggests it.
-function looksDoneCard(p) {
-  const yes = el('button', { title: 'Close it' }, p.effect === 'moot' ? 'Dismiss it' : 'Close it');
-  const no = el('button', { title: 'It is not done: keep it open' }, 'Not yet');
-  yes.addEventListener('click', act(yes, async () => {
-    await post(`api/ledger/evidence/${p.id}/accept`, {});
-    toast(`#${p.commitment_id} closed — it is in "Closed recently" if you need it back`);
-  }));
-  no.addEventListener('click', act(no, async () => {
-    await post(`api/ledger/evidence/${p.id}/reject`, {});
-    toast(`#${p.commitment_id} stays open`);
-  }));
-  return el('div', { class: 'item' },
-    el('div', { class: 'sum' }, p.summary),
-    el('div', { class: 'sub' }, ...joinParts([`#${p.commitment_id}`, p.direction === 'owed_to_me' ? `waiting on ${p.who || 'them'}` : 'on you',
-      p.project, `${Math.round(p.confidence * 100)}% sure`, ago(p.created_at), p.links ? null : link(p.url, 'open')])),
-    el('div', { class: 'sub' }, 'Why it looks settled: ', `“${p.quote}”`),
-    ...cardSource(p, true),
-    el('div', { class: 'actions' }, yes, no));
+function boardCard(c) {
+  return c.standalone ? el('div', { class: 'item' }, askBlock(c.asks[0], true)) : commitmentCard(c);
+}
+
+// On me: the to-dos, then — under their own heading — what looks done.
+function renderOnMe(list) {
+  const sec = document.getElementById('onme');
+  const todo = list.filter((c) => c.group !== 'settled');
+  const settled = list.filter((c) => c.group === 'settled');
+  const n = sec.querySelector('.n');
+  n.textContent = list.length ? (settled.length ? `${todo.length} + ${settled.length} to confirm` : String(todo.length)) : '';
+  const nodes = todo.length ? todo.map(boardCard) : [el('div', { class: 'empty' }, 'Nothing to do.')];
+  if (settled.length) {
+    nodes.push(el('div', { class: 'group-head', title: 'The assistant found something that looks like it settles these, but was not sure enough to close them on its own. Confirm, or keep them open.' },
+      `Looks done — confirm? · ${settled.length}`), ...settled.map(boardCard));
+  }
+  sec.querySelector('.list').replaceChildren(...nodes);
+}
+
+// The folded sections (notes, code, closed, the assistant's feed) remember
+// whether you opened them — in this browser only, and only as a convenience.
+for (const fold of document.querySelectorAll('details[data-fold]')) {
+  try { fold.open = localStorage.getItem(`pa.fold.${fold.dataset.fold}`) === '1'; } catch { /* storage off: closed */ }
+  fold.addEventListener('toggle', () => {
+    try { localStorage.setItem(`pa.fold.${fold.dataset.fold}`, fold.open ? '1' : '0'); } catch { /* storage off */ }
+  });
 }
 
 // Closed by you or by the assistant (a PR merged, a review given, a review
