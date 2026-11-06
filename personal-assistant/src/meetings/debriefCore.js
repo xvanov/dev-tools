@@ -15,22 +15,28 @@ const MIN_CONFIDENCE = 0.6;
 
 const SYSTEM = `You debrief one engineer after a recorded meeting. You get the transcript, the meeting's calendar details, who the engineer is, and the engineer's own open work: commitments (C-ids) and tasks — pull requests and tickets (T-ids).
 
-The transcript has two streams. "Me:" lines are the engineer's microphone. "Them:" lines are everyone else on the call mixed into one stream: speakers are not separated, and a "Them:" line is never the engineer. Speech recognition makes mistakes, especially with names.
+The transcript has two streams. "Me:" lines are the engineer's microphone. "Them:" lines are everyone else on the call mixed into one stream: speakers are not separated, and a "Them:" line is never the engineer. If the prompt notes that only the microphone stream was captured (speakerphone), "Me:" lines include everyone on the call — attribute a todo to the engineer only when the words and context make it clearly the engineer's own task. Speech recognition makes mistakes, especially with names.
 
-Find only what concerns the engineer:
+Write:
+- title: a concise title for the meeting or call. Keep the calendar title when the transcript matches it; if the recording is an untitled call or an ad-hoc call that overlapped another calendar slot (check "Recent Teams messages around this call"), name the actual call (e.g. "Call with Tim Sublette — Docebo & Engineering KPIs").
+- summary: 2–3 sentences summarizing what happened in the meeting, what was discussed, and the main outcomes.
+
+And find only what concerns the engineer:
 - todos: something the engineer committed to do ("I'll send the numbers tomorrow"), or was clearly asked to do and did not decline ("can you take the import fix?").
 - owed_to_me: something someone else committed to do for the engineer or to deliver to them.
 - updates: news about one of the listed C- or T- items — it is done, its date moved, it is blocked, or there is new information that changes what the engineer must do. Use the id shown. Restating an existing commitment is an update or nothing, never a new todo.
-- decisions: a decision made in this meeting that changes the engineer's own work.
+- decisions: a decision made in this meeting that changes the engineer's own work or team direction.
 
-Ignore everything else: work other people take on between themselves, the status of work the engineer does not own, small talk, hypotheticals ("we could…"), and talk about the past that asks nothing. When unsure, leave it out. An empty list is a good answer; a wrong to-do costs the engineer more than a missed one.
+Ignore everything else for action items: work other people take on between themselves, the status of work the engineer does not own, small talk, hypotheticals ("we could…"), and talk about the past that asks nothing. When unsure, leave it out. An empty list is a good answer; a wrong to-do costs the engineer more than a missed one.
 
-Every item needs "quote": a short excerpt copied exactly from the transcript (8–200 characters, from one line, no paraphrase, no added punctuation) that shows it. If you cannot copy a quote that shows it, it is not an item.
+Every todo, owed_to_me, update and decision needs "quote": a short excerpt copied exactly from the transcript (8–200 characters, from one line, no paraphrase, no added punctuation) that shows it. If you cannot copy a quote that shows it, it is not an item.
 
 "due" only when a date is said or unambiguous ("by Friday", "end of day"): resolve it against the meeting date and give YYYY-MM-DD. Otherwise null.
 
 Return ONLY JSON:
-{"todos": [{"summary": "<imperative, standalone, under 15 words>", "owner": "me", "counterparty": "<attendee email, or a name, or null>", "due": "YYYY-MM-DD" | null, "quote": "...", "confidence": 0.0-1.0}],
+{"title": "<short meeting or call title>",
+ "summary": "<2-3 sentences: what happened in the meeting, what was discussed, and the main outcomes>",
+ "todos": [{"summary": "<imperative, standalone, under 15 words>", "owner": "me", "counterparty": "<attendee email, or a name, or null>", "due": "YYYY-MM-DD" | null, "quote": "...", "confidence": 0.0-1.0}],
  "owed_to_me": [{"summary": "<what they will do, standalone>", "owner": "<their attendee email, or name, or null>", "to": "me", "due": "YYYY-MM-DD" | null, "quote": "...", "confidence": 0.0-1.0}],
  "updates": [{"ref": "C12" | "T34", "kind": "done" | "due_changed" | "blocked" | "new_info", "due": "YYYY-MM-DD" | null, "note": "<the news, standalone, under 25 words>", "quote": "..."}],
  "decisions": [{"text": "<the decision, standalone>", "quote": "..."}]}
@@ -70,7 +76,7 @@ function shortDue(due) {
  * @param {string} input.transcript
  * @returns {{prompt: string, refs: Set<string>}}
  */
-function buildPrompt({ meeting, me, commitments = [], tasks = [], transcript }) {
+function buildPrompt({ meeting, me, commitments = [], tasks = [], recentChats = [], transcript }) {
   const refs = new Set();
   const people = (meeting.attendees || [])
     .map((a) => (a.name && a.email ? `${clip(a.name, 60)} <${a.email}>` : a.email || clip(a.name, 60)))
@@ -80,9 +86,17 @@ function buildPrompt({ meeting, me, commitments = [], tasks = [], transcript }) 
     `When: ${localDay(meeting.start)}, ${localTime(meeting.start)}–${localTime(meeting.end)} local time`,
     `Attendees: ${people.length ? people.slice(0, 40).join(', ') : 'not known'}`,
     `The engineer ("Me:"): ${[me.name, ...(me.emails || []).slice(0, 2)].filter(Boolean).join(', ') || 'not known'}`,
-    '',
-    'Open commitments:',
   ];
+  if (meeting.singleStream) {
+    lines.push('Stream note: Only the microphone stream was captured (speaker audio was picked up through the mic, so "Me:" lines include everyone on the call).');
+  }
+  if (recentChats.length) {
+    lines.push('', 'Recent Teams messages around this call:');
+    for (const ch of recentChats.slice(0, 12)) {
+      lines.push(`- [${localTime(ch.occurredAt)}] ${clip(ch.who || ch.author, 80)} (${clip(ch.subject, 80)}): ${clip(ch.body, 220)}`);
+    }
+  }
+  lines.push('', 'Open commitments:');
   if (!commitments.length) lines.push('(none)');
   for (const c of commitments) {
     refs.add(`C${c.id}`);
@@ -230,7 +244,10 @@ function parseDebrief(parsed, { transcript, refs = new Set(), meetingStart = nul
     decisions.push({ text, quote });
   }
 
-  return { todos, owedToMe, updates, decisions, dropped };
+  const title = parsed?.title ? clip(parsed.title, 160) || null : null;
+  const summary = parsed?.summary ? clip(parsed.summary, 800) || null : null;
+
+  return { title, summary, todos, owedToMe, updates, decisions, dropped };
 }
 
 // ---------------------------------------------------------- similarity -----
@@ -355,7 +372,7 @@ function changedSince(current, set) {
  *
  * @param {object} p {endedAt, eventEnd, coverage, now} — times as Date|ISO|ms
  */
-function debriefDue({ endedAt, eventEnd = null, coverage = null, now = Date.now() }, { quietMs = 10 * 60_000, settleMs = 100_000, maxWaitMs = 45 * 60_000 } = {}) {
+function debriefDue({ endedAt, eventEnd = null, coverage = null, paused = false, now = Date.now() }, { quietMs = 10 * 60_000, settleMs = 100_000, maxWaitMs = 45 * 60_000 } = {}) {
   const t = (v) => (v == null ? null : new Date(v).getTime());
   const ended = t(endedAt);
   const nowMs = t(now);
@@ -363,6 +380,9 @@ function debriefDue({ endedAt, eventEnd = null, coverage = null, now = Date.now(
   const evEnd = t(eventEnd);
   if (nowMs - ended >= maxWaitMs) return { due: true, why: 'waited long enough' };
   if (cov != null && cov - ended >= quietMs) return { due: true, why: 'quiet since' };
+  if (paused && cov != null && cov >= ended && nowMs - ended >= settleMs) {
+    return { due: true, why: 'capture paused after call' };
+  }
   if (evEnd != null && nowMs >= evEnd && cov != null && cov >= evEnd && cov - ended >= settleMs) {
     return { due: true, why: 'meeting over' };
   }

@@ -386,10 +386,10 @@ const config = {
     // calendar meeting is on or another app holds the microphone.
     gate: {
       enabled: env('PA_AUDIO_MEETING_GATE', '1') !== '0',
-      pollSeconds: envInt('PA_AUDIO_GATE_POLL_SECONDS', 20),
+      pollSeconds: envInt('PA_AUDIO_GATE_POLL_SECONDS', 5),
       leadMinutes: envInt('PA_AUDIO_GATE_LEAD_MINUTES', 2),
       graceMinutes: envInt('PA_AUDIO_GATE_GRACE_MINUTES', 5),
-      callGraceSeconds: envInt('PA_AUDIO_GATE_CALL_GRACE_SECONDS', 120),
+      callGraceSeconds: envInt('PA_AUDIO_GATE_CALL_GRACE_SECONDS', 180),
     },
     // The venv that owns soundcard/soundfile. Separate from voice-dictation's
     // so upgrading one cannot break the other's hotkey.

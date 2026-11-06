@@ -22,6 +22,12 @@ async function route(method, url, body) {
     const r = await debrief.undo(Number(m[1]), index);
     return { ok: true, result: r.already ? 'already undone' : r.result, debrief: await debrief.get(Number(m[1])) };
   }
+  if (method === 'POST' && url.pathname === '/api/debriefs/run') {
+    const episodeId = Number(body.episodeId);
+    if (!Number.isInteger(episodeId) || episodeId <= 0) throw Object.assign(new Error('episodeId required'), { status: 400 });
+    const r = await debrief.debrief(episodeId, { deliver: false });
+    return debrief.get(r.debrief.id);
+  }
   return undefined;
 }
 

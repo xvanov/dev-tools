@@ -456,7 +456,7 @@ approve it.
 About an hour before a meeting (`PA_BRIEF_LEAD_MINUTES`, default 60) the worker sends a short
 numbered brief of what is worth saying in it — a desktop notification (a Windows toast, or
 notify-send on Linux) with the first lines, the whole
-brief in the dashboard's **Next meeting** card, with **Open brief** and **Join** buttons on the
+brief in the dashboard's **Meetings** tab (under **Upcoming · what to say**), with **Open brief** and **Join** buttons on the
 toast. `src/meetings/`, a 5-minute pass:
 
 1. **Which meetings.** Calendar occurrences starting within the lead time, once per event id +
@@ -501,19 +501,21 @@ pa meeting learn                    learn from meetings that just ended now
 ### Post-meeting debriefs
 
 Minutes after a recorded meeting or call ends, a toast: *"Debrief: Ledger sync — 2 to-dos for
-you, 1 updated, 1 decision"*, with a numbered list, and the same in the dashboard's **Meeting
-debriefs** section. `src/meetings/debrief.js`, run in the worker's audio pass:
+you, 1 updated, 1 decision"*, with a numbered list, and the full meeting card in the dashboard's
+**Meetings** tab (short summary of what happened, what was decided, your action items and updates,
+and the transcript; defaults to today's meetings). `src/meetings/debrief.js`, run in the worker's audio pass:
 
-1. **When.** A meeting or call episode with both streams (a mic-only recording puts everyone in
-   the room on the `Me:` line, so it is not debriefed) is debriefed once it is over: its calendar
+1. **When.** A meeting or call episode is debriefed once it is over: its calendar
    slot has ended, the audio past the end is transcribed, and nobody spoke in the last ~100 s of
-   it — or ten quiet minutes, for a call or a meeting that ended early — or 45 minutes have
-   passed. When a meeting ends the worker touches `audio.roll` (`PA_AUDIO_ROLL_FILE`) and capture
+   it — or ten quiet minutes (or capture has paused after an ad-hoc call), for a call or a meeting
+   that ended early — or 45 minutes have passed. When a meeting ends the worker touches `audio.roll` (`PA_AUDIO_ROLL_FILE`) and capture
    finishes its files within a second, so a meeting is typically debriefed 2–7 minutes after it
    ends instead of at the next quarter-hour.
 2. **One model call per meeting** (`PA_DEBRIEF_MODEL`, default Sonnet; `PA_DEBRIEF_EFFORT`
-   medium) reads the transcript beside the calendar title and attendees, who you are, and your
-   open commitments (C-ids), open PRs and assigned tickets (T-ids). It returns only what is
+   medium) reads the transcript beside the calendar title and attendees (plus recent 1:1/group Teams
+   messages around an ad-hoc call), who you are, and your
+   open commitments (C-ids), open PRs and assigned tickets (T-ids). It writes a 2–3 sentence
+   summary of what happened and returns only what is
    yours: to-dos you took or were asked to take, what others owe you, updates to a listed item
    (done, moved, blocked, new information) and decisions that change your work. Others' tasks,
    status of work you do not own, and small talk are left out — an empty debrief is a fine one.

@@ -35,6 +35,7 @@ async function runAudioProcess() {
   }
   const { stdout } = await exec(config.audio.python, [script, '--spool', config.audioDir], {
     maxBuffer: 8 * 1024 * 1024,
+    windowsHide: true,
     env: {
       ...process.env,
       PA_TRANSCRIBE_HOST: config.audio.transcribeHost,

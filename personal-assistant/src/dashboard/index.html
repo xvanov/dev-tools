@@ -163,7 +163,17 @@
   .refs { display: inline-flex; flex-wrap: wrap; gap: 3px; margin-left: 4px; vertical-align: 1px; }
   .refs a { font-size: 10px; background: var(--chip); border-radius: 4px; padding: 0 4px; color: var(--muted); text-decoration: none; cursor: pointer; }
   .item.target { outline: 2px solid var(--accent); outline-offset: 4px; border-radius: 4px; }
-  /* post-meeting debriefs */
+  /* post-meeting debriefs & meetings tab */
+  .mtg { display: grid; gap: 16px; padding: 0 20px 24px; max-width: 1080px; }
+  .mtg-bar { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; justify-content: space-between; }
+  .mtg-bar .kinds { margin: 0; }
+  .mtg-summary { margin-top: 8px; padding: 8px 10px; border-left: 3px solid var(--accent); background: var(--chip);
+    border-radius: 0 6px 6px 0; font-size: 13px; overflow-wrap: anywhere; }
+  .mtg-block { margin-top: 8px; }
+  .mtg-block-title { font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); margin-bottom: 2px; }
+  details.transcript summary { cursor: pointer; font-size: 12px; color: var(--muted); margin-top: 6px; }
+  details.transcript pre { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; font-size: 12px;
+    max-height: 360px; overflow: auto; background: var(--chip); padding: 8px; border-radius: 6px; margin: 4px 0 0; }
   .db-item { display: flex; gap: 8px; align-items: baseline; margin: 6px 0 0; }
   .db-item .db-text { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
   .db-item .db-quote { font-size: 12px; color: var(--muted); font-style: italic; }
@@ -187,7 +197,7 @@
   .rt-preview { margin-top: 8px; padding: 8px 10px; border: 1px dashed var(--warn); border-radius: 8px; }
   ol.rt-lines { margin: 4px 0; padding-left: 22px; font-size: 12px; }
   @media (max-width: 820px) { .mem { grid-template-columns: minmax(0, 1fr); } }
-  @media (max-width: 480px) { header, .sources, main, .mem, .needs, .rt { padding-left: 16px; padding-right: 16px; } }
+  @media (max-width: 480px) { header, .sources, main, .mem, .mtg, .needs, .rt { padding-left: 16px; padding-right: 16px; } }
 </style>
 </head>
 <body>
@@ -195,6 +205,7 @@
   <h1>pa</h1>
   <nav class="tabs">
     <a href="#today" id="tab-today" title="Secrets and sign-ins waiting for you">Today<span class="count" id="needcount"></span></a>
+    <a href="#meetings" id="tab-meetings" title="Upcoming and recorded meetings">Meetings<span class="count" id="mtgcount"></span></a>
     <a href="#memory" id="tab-memory" title="Claims waiting for review">Memory<span class="count" id="memcount"></span></a>
     <a href="#routines" id="tab-routines" title="Suggested routines waiting for you">Routines<span class="count" id="rtcount"></span></a>
   </nav>
@@ -208,8 +219,6 @@
 </div>
 <main id="today">
   <div class="needs" id="blind" hidden></div>
-  <section id="nextmeeting"><h2>Next meeting<span class="n"></span></h2><div class="list"><div class="empty">loading…</div></div></section>
-  <section id="debriefs"><h2>Meeting debriefs<span class="n"></span></h2><div class="list"><div class="empty">loading…</div></div></section>
   <section id="drafts"><h2>Replies to send<span class="n"></span></h2><div class="list"></div></section>
   <section id="needsyou"><h2 title="Things the assistant prepared or needs to know, waiting for a yes, a no or an answer.">Needs you<span class="n"></span></h2><div class="list"></div></section>
   <section id="looksdone"><h2 title="The assistant found something that looks like it settles these, but was not sure enough to close them on its own.">Looks done?<span class="n"></span></h2><div class="list"></div></section>
@@ -218,10 +227,19 @@
   <section id="selfnotes"><h2 title="Notes read from your own Claude sessions and PRs — not asks from people. Closed when the PR merges, or after a week untouched.">From your own work<span class="n"></span></h2><div class="list"></div></section>
   <section id="runs"><h2>Agent runs<span class="n"></span></h2><div class="list"></div></section>
   <section id="code"><h2>Code &amp; boards<span class="n"></span></h2><div class="list"></div></section>
-  <section id="meetings"><h2>Meetings next 24h<span class="n"></span></h2><div class="list"></div></section>
   <section id="closed"><h2>Closed recently<span class="n"></span></h2><div class="list"></div></section>
   <section id="feed"><h2 title="Everything the assistant told you: pushed (toast and PA chat), held for a digest, or feed only. Thumbs teach it what is worth an interruption.">From the assistant<span class="n"></span></h2><div class="list"></div></section>
 </main>
+<div class="mtg" id="meetings-view" hidden>
+  <section>
+    <div class="mtg-bar">
+      <div class="kinds" id="mtg-range"></div>
+      <span class="chip" id="mtg-capture">capture: loading…</span>
+    </div>
+  </section>
+  <section id="mtg-upcoming"><h2>Upcoming · what to say<span class="n"></span></h2><div class="list"><div class="empty">loading…</div></div></section>
+  <section id="mtg-past"><h2>Recorded &amp; past meetings<span class="n"></span></h2><div class="list"><div class="empty">loading…</div></div></section>
+</div>
 <div class="mem" id="memory" hidden>
   <div class="col">
     <section id="review" class="review"><h2>Review queue<span class="n"></span></h2>
@@ -828,10 +846,6 @@ function render(s) {
     el('div', { class: 'sub' }, ...joinParts([r.raw?.project, ago(r.occurred_at), link(r.raw?.webUrl, 'open')]))),
     'Nothing open.');
 
-  fill('meetings', s.meetings, (m) => el('div', { class: 'item' },
-    el('div', { class: 'sum' }, m.subject),
-    el('div', { class: 'sub' }, new Date(m.occurred_at).toLocaleString())), 'No meetings (or calendar not connected).');
-
   fill('closed', s.closed || [], closedCard, 'Nothing closed in the last three days.');
   fill('looksdone', s.looksDone || [], looksDoneCard, 'Nothing to confirm.');
   fill('needsyou', s.needsYou || [], needsYouCard, 'Nothing waiting on you.');
@@ -1353,12 +1367,15 @@ document.getElementById('search-form').addEventListener('submit', async (e) => {
 });
 
 // --------------------------------------------------------- meetings -----
-// "Next meeting": upcoming meetings with their brief, and a Brief me now
-// button. A toast's click lands on #brief-<id>, which highlights that card
-// (or opens the brief in the dialog if its meeting has passed).
+// The Meetings tab: upcoming meetings (with what to say: their pre-meeting
+// brief and a "Brief me now" button) and recorded / past meetings and ad-hoc
+// calls (with a short summary of what happened, what was decided, your action
+// items and updates, and the transcript). Defaults to today's meetings.
 
 const KIND_NAME = { standup: 'stand-up', one_on_one: '1:1', planning: 'planning', review: 'review/demo',
-  retro: 'retro', external: 'external', interview: 'interview', other: 'meeting' };
+  retro: 'retro', external: 'external', interview: 'interview', call: 'ad-hoc call', other: 'meeting' };
+const MTG_RANGES = [[1, 'Today'], [7, 'Last 7 days'], [30, 'Last 30 days']];
+let mtgDays = 1;
 let meetingsBusy = false;
 
 function refTag(label, ref) {
@@ -1375,9 +1392,9 @@ function briefBlock(b) {
   if (b.error && !b.headline) return el('div', { class: 'sub due-over' }, `brief failed: ${b.error}`);
   const refs = b.refs || {};
   const tags = (list) => (list && list.length ? el('span', { class: 'refs' }, ...list.filter((r) => refs[r]).map((r) => refTag(r, refs[r]))) : null);
-  return el('div', {},
+  return el('div', { class: 'mtg-block' },
+    el('div', { class: 'mtg-block-title' }, 'What to say'),
     // The script: each section's label, then its bullets as they are said.
-    // Briefs written before bullets existed have one line per section.
     ...b.points.map((p) => el('div', { class: 'script' },
       p.label ? el('div', { class: 'sum' }, p.label) : null,
       el('ul', { class: 'brief' }, ...(p.bullets || [{ text: p.text, refs: p.refs }]).map((x) => el('li', {}, x.text, tags(x.refs)))))),
@@ -1386,7 +1403,16 @@ function briefBlock(b) {
     el('div', { class: 'sub' }, ...joinParts([`brief #${b.id}`, b.notified ? 'notified' : null, `written ${ago(b.updatedAt)}`])));
 }
 
-function meetingCard(m) {
+function formatSlot(startIso, endIso) {
+  const s = new Date(startIso);
+  const sStr = s.toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+  if (!endIso) return sStr;
+  const e = new Date(endIso);
+  const eStr = e.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  return `${sStr} – ${eStr}`;
+}
+
+function upcomingMeetingCard(m) {
   const btn = el('button', { class: m.brief ? '' : 'primary' }, m.brief ? 'Brief again' : 'Brief me now');
   const out = el('div', {}, briefBlock(m.brief));
   btn.addEventListener('click', async () => {
@@ -1409,48 +1435,16 @@ function meetingCard(m) {
       meetingsBusy = false;
     }
   });
-  const when = new Date(m.start);
   return el('div', m.brief ? { class: 'item', id: `brief-${m.brief.id}` } : { class: 'item' },
     el('div', { class: 'sum' }, m.subject),
     el('div', { class: 'sub' }, ...joinParts([
-      when.toLocaleString([], { weekday: 'short', hour: '2-digit', minute: '2-digit' }),
-      KIND_NAME[m.kind] || m.kind, m.eligible ? null : `not briefed: ${m.skipReason}`, link(m.joinUrl, 'join')])),
+      formatSlot(m.start, m.end),
+      el('span', { class: 'tag' }, KIND_NAME[m.kind] || m.kind),
+      m.eligible ? null : `not auto-briefed: ${m.skipReason}`,
+      link(m.joinUrl, 'join')])),
     out,
     el('div', { class: 'actions' }, btn));
 }
-
-async function loadMeetings() {
-  if (meetingsBusy) return;
-  try {
-    const list = await getJson('api/meetings/upcoming?hours=24');
-    const shown = list.filter((m) => m.eligible || m.brief).slice(0, 4);
-    fill('nextmeeting', shown, meetingCard, 'No meetings to brief in the next 24h.');
-    focusBrief();
-  } catch (err) {
-    fill('nextmeeting', [], meetingCard, `error: ${err.message}`);
-  }
-}
-
-async function focusBrief() {
-  const m = /^#brief-(\d+)$/.exec(location.hash);
-  if (!m) return;
-  const card = document.getElementById(`brief-${m[1]}`);
-  if (card) {
-    card.classList.add('target');
-    card.scrollIntoView({ block: 'center' });
-    return;
-  }
-  try {
-    const b = await getJson(`api/meetings/brief/${m[1]}`);
-    if (b) modal(`${b.title} · ${new Date(b.startsAt).toLocaleString()}`, briefBlock(b));
-  } catch (err) { toast(err.message); }
-}
-
-// --------------------------------------------------------- debriefs -----
-// What each recorded meeting meant for you: to-dos, what others owe you,
-// updates to your open work and decisions, each with the words it rests on.
-// Undo takes one item back (deletes the to-do, restores what an update
-// changed, retracts a claim). A toast's click lands on #debrief-<id>.
 
 const DEBRIEF_TAG = { todo: 'to-do', owed_to_me: 'owed to you', update: 'update', decision: 'decision' };
 
@@ -1458,7 +1452,7 @@ function debriefItem(d, it) {
   const result = el('span', { class: 'db-result' }, it.undone_at ? (it.undo === 'undone' ? 'undone' : it.undo || 'undone') : '');
   const kids = [
     el('span', { class: 'tag' }, DEBRIEF_TAG[it.type] || it.type),
-    el('div', { class: 'db-text' }, it.line, el('div', { class: 'db-quote' }, `“${it.quote}”`)),
+    el('div', { class: 'db-text' }, it.line, it.quote ? el('div', { class: 'db-quote' }, `“${it.quote}”`) : null),
     result,
   ];
   if (!it.undone_at) {
@@ -1481,26 +1475,182 @@ function debriefItem(d, it) {
 }
 
 function debriefCard(d) {
-  const c = d.counts;
+  const c = d.counts || { todos: 0, owed: 0, updates: 0, decisions: 0 };
+  const decisions = d.decisions || (d.items || []).filter((i) => i.type === 'decision');
+  const actions = d.actions || (d.items || []).filter((i) => i.type !== 'decision');
   return el('div', { class: 'item', id: `debrief-${d.id}` },
     el('div', { class: 'sum' }, d.title),
     el('div', { class: 'sub' }, ...joinParts([
-      new Date(d.startedAt).toLocaleString([], { weekday: 'short', hour: '2-digit', minute: '2-digit' }),
+      formatSlot(d.startedAt, d.endedAt),
       `${c.todos} to-do${c.todos === 1 ? '' : 's'}`, c.owed ? `${c.owed} owed to you` : null,
       `${c.updates} updated`, `${c.decisions} decision${c.decisions === 1 ? '' : 's'}`,
-      d.skipped.length ? `${d.skipped.length} already on your list` : null, `debrief #${d.id}`])),
-    ...(d.items.length ? d.items.map((it) => debriefItem(d, it)) : [el('div', { class: 'sub' }, 'Nothing for you in this one.')]));
+      d.skipped?.length ? `${d.skipped.length} already on your list` : null, `debrief #${d.id}`])),
+    d.summary ? el('div', { class: 'mtg-summary' }, el('div', { class: 'mtg-block-title' }, 'What happened'), el('div', {}, d.summary)) : null,
+    decisions.length ? el('div', { class: 'mtg-block' },
+      el('div', { class: 'mtg-block-title' }, 'What was decided'),
+      ...decisions.map((it) => debriefItem(d, it))) : null,
+    actions.length ? el('div', { class: 'mtg-block' },
+      el('div', { class: 'mtg-block-title' }, 'Action items & updates'),
+      ...actions.map((it) => debriefItem(d, it))) : null,
+    !decisions.length && !actions.length ? el('div', { class: 'sub', style: 'margin-top:6px' }, 'No action items or decisions for you in this one.') : null);
 }
 
-async function loadDebriefs() {
-  if (document.querySelector('#debriefs button.working')) return;
+function pastMeetingCard(p) {
+  const d = p.debrief;
+  const c = d?.counts || null;
+  const decisions = d ? (d.decisions || (d.items || []).filter((i) => i.type === 'decision')) : [];
+  const actions = d ? (d.actions || (d.items || []).filter((i) => i.type !== 'decision')) : [];
+  const speechMin = p.speechSeconds ? Math.max(1, Math.round(p.speechSeconds / 60)) : 0;
+
+  const subParts = [
+    formatSlot(p.startedAt, p.endedAt),
+    el('span', { class: 'tag' }, KIND_NAME[p.meetingKind] || p.meetingKind || 'meeting'),
+    p.recorded ? `${speechMin}m speech recorded` : 'not recorded',
+    c ? `${c.todos} to-do${c.todos === 1 ? '' : 's'}` : null,
+    c && c.owed ? `${c.owed} owed to you` : null,
+    c && c.decisions ? `${c.decisions} decision${c.decisions === 1 ? '' : 's'}` : null,
+    c && c.updates ? `${c.updates} updated` : null,
+    d ? `debrief #${d.id}` : null,
+  ];
+
+  const bodyBox = el('div', {});
+  const drawDebrief = (deb) => {
+    const decs = deb ? (deb.decisions || (deb.items || []).filter((i) => i.type === 'decision')) : [];
+    const acts = deb ? (deb.actions || (deb.items || []).filter((i) => i.type !== 'decision')) : [];
+    const nodes = [];
+    if (deb?.summary) {
+      nodes.push(el('div', { class: 'mtg-summary' },
+        el('div', { class: 'mtg-block-title' }, 'What happened'),
+        el('div', {}, deb.summary)));
+    } else if (p.recorded && !deb) {
+      nodes.push(el('div', { class: 'why pending' }, 'Recorded and transcribed — click "Summarize & debrief" below to generate the summary, decisions and action items now.'));
+    }
+    if (decs.length) {
+      nodes.push(el('div', { class: 'mtg-block' },
+        el('div', { class: 'mtg-block-title' }, 'What was decided'),
+        ...decs.map((it) => debriefItem(deb, it))));
+    }
+    if (acts.length) {
+      nodes.push(el('div', { class: 'mtg-block' },
+        el('div', { class: 'mtg-block-title' }, 'Action items & updates'),
+        ...acts.map((it) => debriefItem(deb, it))));
+    }
+    if (deb && !decs.length && !acts.length) {
+      nodes.push(el('div', { class: 'sub', style: 'margin-top:6px' }, 'No action items or decisions for you in this meeting.'));
+    }
+    bodyBox.replaceChildren(...nodes);
+  };
+  drawDebrief(d);
+
+  const kids = [
+    el('div', { class: 'sum' }, p.title),
+    el('div', { class: 'sub' }, ...joinParts(subParts)),
+    bodyBox,
+  ];
+
+  if (p.brief) {
+    kids.push(el('details', { class: 'transcript' },
+      el('summary', {}, 'Pre-meeting brief (what was prepared before the meeting)'),
+      briefBlock(p.brief)));
+  }
+
+  if (p.transcript) {
+    kids.push(el('details', { class: 'transcript' },
+      el('summary', {}, `Transcript (${speechMin}m speech)`),
+      el('pre', {}, p.transcript)));
+  }
+
+  if (p.episodeId) {
+    const needsSummary = !d || !d.summary;
+    const runBtn = el('button', { class: needsSummary ? 'primary' : '' }, d ? (d.summary ? 'Debrief again' : 'Generate summary') : 'Summarize & debrief');
+    runBtn.addEventListener('click', async () => {
+      runBtn.disabled = true;
+      meetingsBusy = true;
+      const started = Date.now();
+      runBtn.textContent = 'Summarizing…';
+      const tick = setInterval(() => { runBtn.textContent = `Summarizing… ${Math.round((Date.now() - started) / 1000)}s`; }, 1000);
+      try {
+        const fresh = await post('api/debriefs/run', { episodeId: p.episodeId });
+        p.debrief = fresh;
+        drawDebrief(fresh);
+        runBtn.textContent = 'Debrief again';
+        runBtn.className = '';
+        toast(`Debriefed: ${fresh.title}`);
+        await loadMeetings();
+      } catch (err) {
+        toast(err.message);
+        runBtn.textContent = d ? 'Debrief again' : 'Summarize & debrief';
+      } finally {
+        clearInterval(tick);
+        runBtn.disabled = false;
+        meetingsBusy = false;
+      }
+    });
+    kids.push(el('div', { class: 'actions' }, runBtn));
+  }
+
+  return el('div', d ? { class: 'item', id: `debrief-${d.id}` } : { class: 'item' }, ...kids);
+}
+
+function renderMtgRange() {
+  const bar = document.getElementById('mtg-range');
+  bar.replaceChildren(...MTG_RANGES.map(([days, label]) => {
+    const b = el('button', { class: mtgDays === days ? 'on' : '' }, label);
+    b.addEventListener('click', () => {
+      mtgDays = days;
+      renderMtgRange();
+      loadMeetings();
+    });
+    return b;
+  }));
+}
+
+async function loadMeetings() {
+  if (meetingsBusy || document.querySelector('#meetings-view button.working')) return;
+  renderMtgRange();
   try {
-    const list = await getJson('api/debriefs?days=7');
-    fill('debriefs', list.slice(0, 6), debriefCard, 'No recorded meetings debriefed this week.');
+    const data = await getJson(`api/meetings/overview?days=${mtgDays}&hours=24`);
+    const cap = data.capture || {};
+    const capEl = document.getElementById('mtg-capture');
+    if (!cap.enabled) {
+      capEl.textContent = 'capture: disabled';
+    } else if (cap.state === 'on') {
+      capEl.textContent = 'capture: recording now (calendar + ad-hoc calls)';
+    } else if (cap.state === 'gate') {
+      capEl.textContent = 'capture: ready — auto-records calendar meetings & ad-hoc calls';
+    } else {
+      capEl.textContent = 'capture: paused by you';
+    }
+
+    const upcomingShown = (data.upcoming || []).filter((m) => m.eligible || m.brief);
+    const pastList = data.past || [];
+    if (mtgDays === 1) {
+      const totalToday = upcomingShown.length + pastList.filter((p) => p.recorded).length;
+      document.getElementById('mtgcount').textContent = totalToday ? String(totalToday) : '';
+    }
+    fill('mtg-upcoming', upcomingShown, upcomingMeetingCard, 'No upcoming meetings in the next 24h.');
+    fill('mtg-past', pastList, pastMeetingCard, mtgDays === 1 ? 'No recorded or past meetings yet today.' : `No recorded or past meetings in the last ${mtgDays} days.`);
+    focusBrief();
     focusDebrief();
   } catch (err) {
-    fill('debriefs', [], debriefCard, `error: ${err.message}`);
+    fill('mtg-upcoming', [], upcomingMeetingCard, `error: ${err.message}`);
+    fill('mtg-past', [], pastMeetingCard, `error: ${err.message}`);
   }
+}
+
+async function focusBrief() {
+  const m = /^#brief-(\d+)$/.exec(location.hash);
+  if (!m) return;
+  const card = document.getElementById(`brief-${m[1]}`);
+  if (card) {
+    card.classList.add('target');
+    card.scrollIntoView({ block: 'center' });
+    return;
+  }
+  try {
+    const b = await getJson(`api/meetings/brief/${m[1]}`);
+    if (b) modal(`${b.title} · ${new Date(b.startsAt).toLocaleString()}`, briefBlock(b));
+  } catch (err) { toast(err.message); }
 }
 
 async function focusDebrief() {
@@ -1518,18 +1668,23 @@ async function focusDebrief() {
   } catch (err) { toast(err.message); }
 }
 
-// #today, #memory, #memory/person/12, #memory/topic/<label>, #memory/me, #brief-<id>, #debrief-<id>
+// #today, #meetings, #memory, #memory/person/12, #memory/topic/<label>, #memory/me, #brief-<id>, #debrief-<id>
 function route() {
   const h = location.hash || '#today';
   const memory = h.startsWith('#memory');
   const routines = h.startsWith('#routines');
-  document.getElementById('today').hidden = memory || routines;
-  document.getElementById('sources').hidden = memory || routines;
+  const meetings = h.startsWith('#meetings') || h.startsWith('#brief-') || h.startsWith('#debrief-');
+  const today = !memory && !routines && !meetings;
+  document.getElementById('today').hidden = !today;
+  document.getElementById('sources').hidden = !today;
+  document.getElementById('meetings-view').hidden = !meetings;
   document.getElementById('memory').hidden = !memory;
   document.getElementById('routines').hidden = !routines;
-  document.getElementById('tab-today').classList.toggle('on', !memory && !routines);
+  document.getElementById('tab-today').classList.toggle('on', today);
+  document.getElementById('tab-meetings').classList.toggle('on', meetings);
   document.getElementById('tab-memory').classList.toggle('on', memory);
   document.getElementById('tab-routines').classList.toggle('on', routines);
+  if (meetings) loadMeetings();
   if (h.startsWith('#brief-')) focusBrief();
   if (h.startsWith('#debrief-')) focusDebrief();
   if (!memory) return;
@@ -1555,8 +1710,6 @@ refresh();
 setInterval(refresh, 30000);
 loadMeetings();
 setInterval(loadMeetings, 60000);
-loadDebriefs();
-setInterval(loadDebriefs, 60000);
 </script>
 <script src="routines.js"></script>
 </body>

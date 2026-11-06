@@ -112,6 +112,9 @@ async function run() {
   for (const episode of episodes) {
     const stream = episode.streams.join('+');
     const meta = classify(episode, events);
+    if (meta.kind === 'ambient' && config.audio.gate.enabled && episode.speech_seconds >= 60) {
+      meta.kind = 'call';
+    }
     // An episode grows while its meeting goes on: each finished capture file
     // adds speech groups to it. It is updated in place — once frozen at its
     // first fifteen minutes, a meeting's debrief would read a fraction of it.

@@ -247,8 +247,9 @@ const vault = {
 // Windows records per-app microphone use here; LastUsedTimeStop is 0 while an
 // app holds the device.
 const MIC_KEY = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\CapabilityAccessManager\\ConsentStore\\microphone';
+const CAM_KEY = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\CapabilityAccessManager\\ConsentStore\\webcam';
 
-// Pure: the apps holding the microphone, from `reg query /s /v
+// Pure: the apps holding the microphone (or camera), from `reg query /s /v
 // LastUsedTimeStop` output. Python is left out: that is our own recorder and
 // voice-dictation, and counting them would keep the gate open forever.
 function parseMicHolders(regOutput) {
@@ -263,7 +264,7 @@ function parseMicHolders(regOutput) {
     if (!m || !key || BigInt(m[1]) !== 0n) continue;
     const app = key.split('\\').pop().replace(/#/g, '\\');
     if (/\\pythonw?\.exe$/i.test(app)) continue;
-    holders.push(app);
+    if (!holders.includes(app)) holders.push(app);
   }
   return holders;
 }
@@ -289,16 +290,20 @@ const capture = {
     await exec(c.cmd, c.args, { windowsHide: true, timeout: 60_000 });
   },
   async micHolders() {
-    try {
-      const { stdout } = await exec('reg.exe', ['query', MIC_KEY, '/s', '/v', 'LastUsedTimeStop'], {
-        windowsHide: true,
-        timeout: 10_000,
-      });
-      return parseMicHolders(stdout);
-    } catch (err) {
-      // reg exits non-zero when some subkeys lack the value; the rest is still on stdout.
-      return parseMicHolders(err.stdout || '');
-    }
+    const queryKey = async (k) => {
+      try {
+        const { stdout } = await exec('reg.exe', ['query', k, '/s', '/v', 'LastUsedTimeStop'], {
+          windowsHide: true,
+          timeout: 10_000,
+        });
+        return stdout;
+      } catch (err) {
+        // reg exits non-zero when some subkeys lack the value; the rest is still on stdout.
+        return err.stdout || '';
+      }
+    };
+    const [micOut, camOut] = await Promise.all([queryKey(MIC_KEY), queryKey(CAM_KEY)]);
+    return parseMicHolders(`${micOut}\n${camOut}`);
   },
 };
 

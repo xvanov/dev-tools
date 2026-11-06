@@ -49,11 +49,10 @@ const EPISODE_SQL = `
     join source_item si on si.id = e.source_item_id
     left join source_item ev on ev.source = 'graph_event' and ev.external_id = e.calendar_event_id`;
 
-// Both streams, or the "Me:" label would be wrong: a mic-only recording of
-// a room puts everyone's words in your mouth, and a to-do read from that is
-// someone else's.
+// A meeting or call with enough speech: dual-stream when loopback is present,
+// or mic-only when speakerphone picked up both sides of the call.
 const OWNED = `e.kind in ('meeting','call') and e.state <> 'superseded'
-   and e.stream like '%loopback%' and e.stream like '%mic%' and length(si.body_text) >= ${MIN_CHARS}`;
+   and e.stream like '%mic%' and length(si.body_text) >= ${MIN_CHARS}`;
 
 async function loadEpisode(target) {
   const t = String(target ?? 'last').trim();
@@ -70,11 +69,48 @@ function meetingOf(ep) {
     title: ev?.subject || ep.item_subject || 'Recorded conversation',
     seriesKey: ev?.seriesKey || null,
     kind: ep.kind,
+    singleStream: !String(ep.stream || '').includes('loopback'),
     start: new Date(ep.started_at).toISOString(),
     end: new Date(ep.ended_at).toISOString(),
     eventEnd: ev ? ev.end : null,
     attendees: ev?.attendees || [],
   };
+}
+
+async function recentChatsAround(startIso, endIso) {
+  const list = await rows(
+    `select subject, author_identity, occurred_at, left(body_text, 240) as body, raw
+       from source_item
+      where source = 'graph_chat'
+        and occurred_at between $1::timestamptz - interval '5 minutes' and $2::timestamptz + interval '2 minutes'
+        and coalesce(raw->>'chatType', '') <> 'channel'
+      order by occurred_at asc limit 16`,
+    [startIso, endIso]
+  ).catch(() => []);
+  const emails = new Set();
+  let hadCallLog = false;
+  const startMs = new Date(startIso).getTime();
+  const chats = [];
+  for (const r of list) {
+    if (r.subject === 'Teams chat' && /Call Logs for Call/i.test(r.body || '')) {
+      if (new Date(r.occurred_at).getTime() >= startMs) hadCallLog = true;
+      continue;
+    }
+    if (!String(r.body || '').trim()) continue;
+    if (r.author_identity && r.author_identity.includes('@')) emails.add(r.author_identity.toLowerCase());
+    for (const em of r.raw?.memberEmails || []) {
+      if (typeof em === 'string' && em.includes('@')) emails.add(em.toLowerCase());
+    }
+    chats.push({
+      subject: r.subject || 'Teams chat',
+      author: r.author_identity || '',
+      who: r.raw?.fromName || r.author_identity || '',
+      occurredAt: r.occurred_at,
+      body: r.body,
+      chatType: r.raw?.chatType || null,
+    });
+  }
+  return { chats, emails: [...emails], hadCallLog };
 }
 
 async function namesFor(emails) {
@@ -149,7 +185,11 @@ async function prepare(ep, { now = new Date() } = {}) {
   const meetings = require('./index');
   const ctx = await meetings.context();
   const m = meetingOf(ep);
-  const attendees = await namesFor(m.attendees.filter((a) => !ctx.myEmails.includes(a)));
+  const around = await recentChatsAround(m.start, m.end);
+  const allEmails = [...new Set([...m.attendees, ...around.emails].map((e) => e.toLowerCase()))].filter(
+    (a) => !ctx.myEmails.includes(a)
+  );
+  const attendees = await namesFor(allEmails);
   const commitments = await openCommitments(attendees.map((a) => a.email));
   const tasks = await openTasks(ctx);
   const transcript = String(ep.body_text || '');
@@ -158,6 +198,7 @@ async function prepare(ep, { now = new Date() } = {}) {
     me: { name: ctx.name, emails: ctx.myEmails },
     commitments: commitments.map((c) => ({ id: c.id, direction: c.direction, summary: c.summary, due: c.due_at, counterparty: c.counterparty })),
     tasks,
+    recentChats: around.chats,
     transcript: headTail(transcript, MAX_TRANSCRIPT),
   });
 
@@ -170,9 +211,12 @@ async function prepare(ep, { now = new Date() } = {}) {
     purpose: 'debrief',
   });
   const parsed = D.parseDebrief(llm.extractJson(reply), { transcript, refs, meetingStart: m.start });
+  if (parsed.title && (m.kind === 'call' || around.hadCallLog || /^Call\b|^Recorded conversation/i.test(m.title))) {
+    m.title = parsed.title;
+  }
 
   const day = new Date(m.start).toISOString().slice(0, 10);
-  const plan = { items: [], skipped: [], dropped: parsed.dropped };
+  const plan = { title: m.title, summary: parsed.summary || null, items: [], skipped: [], dropped: parsed.dropped };
   const byId = new Map(commitments.map((c) => [`C${c.id}`, c]));
   const taskById = new Map(tasks.map((t) => [`T${t.id}`, t]));
 
@@ -273,12 +317,17 @@ async function apply(ep, prepared) {
         claimIds.push(it.claimId);
       }
     }
-    const applied = { items: plan.items.map(({ counterpartyPersonId, ...rest }) => rest), skipped: plan.skipped, dropped: plan.dropped };
+    const applied = {
+      summary: plan.summary || null,
+      items: plan.items.map(({ counterpartyPersonId, ...rest }) => rest),
+      skipped: plan.skipped,
+      dropped: plan.dropped,
+    };
     const r = await client.query(
       `insert into meeting_debrief (episode_id, event_external_id, source_item_id, title, started_at, ended_at, content_hash,
                                     transcript_chars, applied, dropped, error, attempts, extracted_by)
        values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,null,1,$11)
-       on conflict (episode_id, content_hash) do update set applied = excluded.applied, dropped = excluded.dropped,
+       on conflict (episode_id, content_hash) do update set title = excluded.title, applied = excluded.applied, dropped = excluded.dropped,
          error = null, attempts = meeting_debrief.attempts + 1, updated_at = now()
        returning *`,
       [ep.id, ep.calendar_event_id, ep.source_item_id, m.title, m.start, m.end, ep.content_hash, prepared.transcriptChars,
@@ -380,16 +429,20 @@ async function undo(debriefId, index) {
 // ---------------------------------------------------------------- views ----
 
 function view(row) {
+  const items = (row.applied?.items || []).map((i, index) => ({ ...i, index, line: D.itemLine(i) }));
   return {
     id: row.id,
     episodeId: row.episode_id,
     title: row.title,
+    summary: row.applied?.summary || null,
     startedAt: row.started_at,
     endedAt: row.ended_at,
     createdAt: row.created_at,
     error: row.error,
     notified: !!row.notification_id,
-    items: (row.applied?.items || []).map((i, index) => ({ ...i, index, line: D.itemLine(i) })),
+    items,
+    decisions: items.filter((i) => i.type === 'decision'),
+    actions: items.filter((i) => i.type !== 'decision'),
     skipped: row.applied?.skipped || [],
     dropped: row.dropped,
     counts: D.counts(row.applied?.items || []),
@@ -398,7 +451,7 @@ function view(row) {
 
 async function recent({ days = 7, limit = 20 } = {}) {
   const list = await rows(
-    `select * from meeting_debrief where created_at > now() - ($1 || ' days')::interval and error is null
+    `select * from meeting_debrief where started_at > now() - ($1 || ' days')::interval and error is null
       order by started_at desc limit $2`,
     [String(days), limit]
   );
@@ -422,9 +475,10 @@ async function lastDebrief(episodeId) {
  */
 async function due({ now = new Date(), coverage = undefined } = {}) {
   const cov = coverage !== undefined ? coverage : spool.coverage(config.audioDir, { rollMinutes: config.audio.rollMinutes, now: now.getTime() });
+  const paused = require('../audio/gate').readPause().state !== 'on' && !spool.needsProcessing(config.audioDir);
   const list = await rows(
     `${EPISODE_SQL}
-      where ${OWNED} and e.ended_at > $1::timestamptz - interval '12 hours'
+      where ${OWNED} and e.ended_at > $1::timestamptz - interval '48 hours'
         and not exists (select 1 from meeting_debrief d where d.episode_id = e.id and d.content_hash = si.content_hash
                           and (d.error is null or d.attempts >= 3))
       order by e.ended_at`,
@@ -435,7 +489,7 @@ async function due({ now = new Date(), coverage = undefined } = {}) {
     const prev = await lastDebrief(ep.id);
     if (prev && String(ep.body_text || '').length < prev.transcript_chars + REGROW_CHARS) continue;
     const m = meetingOf(ep);
-    const d = D.debriefDue({ endedAt: ep.ended_at, eventEnd: m.eventEnd, coverage: cov, now });
+    const d = D.debriefDue({ endedAt: ep.ended_at, eventEnd: m.eventEnd, coverage: cov, paused, now });
     if (d.due) out.push({ ep, why: d.why });
   }
   return out;
@@ -487,4 +541,4 @@ async function pass({ now = new Date() } = {}) {
   return { debriefed };
 }
 
-module.exports = { pass, debrief, due, undo, recent, get, rollIfUseful, loadEpisode };
+module.exports = { pass, debrief, due, undo, recent, get, view, rollIfUseful, loadEpisode };

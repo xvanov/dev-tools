@@ -10,6 +10,11 @@
 
 async function route(method, url, body) {
   const meetings = require('../meetings');
+  if (method === 'GET' && url.pathname === '/api/meetings/overview') {
+    const days = Math.max(1, Math.min(Number(url.searchParams.get('days')) || 1, 90));
+    const hours = Math.max(1, Math.min(Number(url.searchParams.get('hours')) || 24, 24 * 14));
+    return meetings.overview({ days, hours });
+  }
   if (method === 'GET' && url.pathname === '/api/meetings/upcoming') {
     return meetings.upcoming({ hours: Math.min(Number(url.searchParams.get('hours')) || 24, 24 * 14) });
   }

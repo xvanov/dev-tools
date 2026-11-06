@@ -746,6 +746,127 @@ async function getBrief(id) {
   return b ? briefView(b) : null;
 }
 
+/**
+ * Everything the Meetings tab shows: upcoming meetings (with what to say) and
+ * recorded / past meetings and ad-hoc calls (with summary, decisions, action
+ * items and transcript). By default `days = 1` covers today (since local
+ * midnight).
+ */
+async function overview({ days = 1, hours = 24, now = new Date() } = {}) {
+  const debriefMod = require('./debrief');
+  const ctx = await context();
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const since = days <= 1 ? startOfToday : new Date(now.getTime() - Math.min(days, 90) * DAY);
+
+  const upcomingList = await upcoming({ hours, now, limit: 15 });
+
+  const epRows = await rows(
+    `select e.id, e.started_at, e.ended_at, e.stream, e.speech_seconds, e.kind, e.calendar_event_id,
+            e.source_item_id, si.subject as item_subject, left(si.body_text, 24000) as transcript,
+            ev.id as event_item_id, ev.external_id as event_external_id, ev.subject as event_subject,
+            ev.occurred_at as event_occurred_at, ev.author_identity as event_organizer,
+            ev.body_text as event_body, ev.raw as event_raw
+       from audio_episode e
+       join source_item si on si.id = e.source_item_id
+       left join source_item ev on ev.source = 'graph_event' and ev.external_id = e.calendar_event_id
+      where e.kind in ('meeting','call') and e.state <> 'superseded'
+        and e.started_at >= $1
+      order by e.started_at desc
+      limit 60`,
+    [since]
+  );
+
+  const epIds = epRows.map((r) => r.id);
+  const debriefRows = epIds.length
+    ? await rows(
+        `select distinct on (episode_id) *
+           from meeting_debrief
+          where episode_id = any($1::bigint[])
+          order by episode_id, (error is null) desc, created_at desc`,
+        [epIds]
+      )
+    : [];
+  const debriefByEp = new Map(debriefRows.map((d) => [String(d.episode_id), debriefMod.view(d)]));
+
+  const recordedEventIds = new Set();
+  const past = [];
+
+  for (const r of epRows) {
+    if (r.calendar_event_id) recordedEventIds.add(r.calendar_event_id);
+    const ev = r.event_raw
+      ? core.toMeeting({
+          id: r.event_item_id,
+          external_id: r.event_external_id,
+          subject: r.event_subject,
+          raw: r.event_raw,
+          occurred_at: r.event_occurred_at,
+          author_identity: r.event_organizer,
+          body_text: r.event_body,
+        })
+      : null;
+    const deb = debriefByEp.get(String(r.id)) || null;
+    const meetingKind = ev ? (await classify(ev, ctx, { allowModel: false })).kind : null;
+    const b = ev ? await briefRow(core.dedupeKey(ev)) : null;
+    const isAdHoc = r.kind === 'call' || (deb?.title && ev?.subject && deb.title !== ev.subject);
+    past.push({
+      episodeId: Number(r.id),
+      eventId: r.calendar_event_id || null,
+      recorded: true,
+      kind: isAdHoc ? 'call' : r.kind,
+      meetingKind: isAdHoc ? 'call' : meetingKind || r.kind,
+      title: deb?.title || ev?.subject || r.item_subject || 'Recorded call',
+      startedAt: r.started_at,
+      endedAt: r.ended_at,
+      speechSeconds: Math.round(Number(r.speech_seconds) || 0),
+      streams: String(r.stream || '').split('+').filter(Boolean),
+      attendees: ev ? ev.attendees.filter((a) => !ctx.myEmails.includes(a)) : [],
+      debrief: deb,
+      brief: b && !isAdHoc ? briefView(b) : null,
+      transcript: r.transcript || '',
+    });
+  }
+
+  // Past calendar meetings in the window that have no recorded episode.
+  const calPast = (await eventsBetween(since, now)).filter(
+    (m) => new Date(m.end) <= now && !recordedEventIds.has(m.eventId) && core.eligibility(m, eligibilityOpts(ctx)).ok
+  );
+  for (const m of calPast) {
+    const { kind } = await classify(m, ctx, { allowModel: false });
+    const b = await briefRow(core.dedupeKey(m));
+    past.push({
+      episodeId: null,
+      eventId: m.eventId,
+      recorded: false,
+      kind: 'meeting',
+      meetingKind: kind,
+      title: m.subject,
+      startedAt: m.start,
+      endedAt: m.end,
+      speechSeconds: 0,
+      streams: [],
+      attendees: m.attendees.filter((a) => !ctx.myEmails.includes(a)),
+      debrief: null,
+      brief: b ? briefView(b) : null,
+      transcript: null,
+    });
+  }
+
+  past.sort((a, b) => new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime());
+
+  const pauseState = require('../audio/gate').readPause().state;
+  return {
+    days,
+    since: since.toISOString(),
+    upcoming: upcomingList,
+    past,
+    capture: {
+      enabled: config.audio.enabled,
+      gate: config.audio.gate.enabled,
+      state: pauseState,
+    },
+  };
+}
+
 // ---------------------------------------------------------------- pass ----
 
 async function pass({ now = new Date() } = {}) {
@@ -775,6 +896,7 @@ module.exports = {
   pass,
   brief,
   upcoming,
+  overview,
   getBrief,
   learnRecent,
   gatherEvidence,

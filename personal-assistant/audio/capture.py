@@ -114,7 +114,10 @@ def paused(pause_file: str) -> bool:
 # A Bluetooth headset's mic only exists while a call holds it open, so the
 # choice is re-made every few seconds (MIC_RECHECK_SECONDS).
 MIC_PREFER = os.environ.get("PA_AUDIO_MIC", r"headset|hands-free")
+SPEAKER_PREFER = os.environ.get("PA_AUDIO_SPEAKER", "")
 MIC_RECHECK_SECONDS = 5
+CALL_APPS = ("ms-teams", "teams", "zoom", "webex", "slack", "discord")
+_last_active_speaker_id: str | None = None
 
 
 def _active_capture_ids() -> list[str]:
@@ -151,6 +154,67 @@ def _active_capture_ids() -> list[str]:
             ids.append(device.GetId())
             break
     return ids
+
+
+def _preferred_render_id() -> tuple[str | None, bool]:
+    """(device_id, from_active_session) for the speaker a call uses on Windows.
+
+    Windows keeps a separate Default Communications Device (role 2) from the
+    default multimedia speaker (role 0, which soundcard's default_speaker()
+    returns). Teams and Zoom play call audio to the communications device or
+    the user's chosen speaker, leaving the multimedia default silent.
+    """
+    if sys.platform != "win32":
+        return None, False
+    try:
+        sys.coinit_flags = 0
+        import comtypes
+        from comtypes import CLSCTX_ALL
+        from pycaw.pycaw import AudioUtilities, IAudioSessionControl2, IAudioSessionManager2
+    except ImportError:
+        return None, False
+    try:
+        comtypes.CoInitializeEx(0)
+    except OSError:
+        pass
+    enum = AudioUtilities.GetDeviceEnumerator()
+    endpoints = enum.EnumAudioEndpoints(0, 1)  # eRender, ACTIVE
+    call_active: list[str] = []
+    other_active: list[str] = []
+    call_registered: list[str] = []
+    for i in range(endpoints.GetCount()):
+        device = endpoints.Item(i)
+        dev_id = device.GetId()
+        manager = device.Activate(IAudioSessionManager2._iid_, CLSCTX_ALL, None).QueryInterface(IAudioSessionManager2)
+        sessions = manager.GetSessionEnumerator()
+        for j in range(sessions.GetCount()):
+            control = sessions.GetSession(j).QueryInterface(IAudioSessionControl2)
+            if _is_python(control.GetProcessId()):
+                continue
+            sid = (control.GetSessionIdentifier() or "").lower()
+            is_call = any(app in sid for app in CALL_APPS)
+            if control.GetState() == 1:  # AudioSessionStateActive
+                if is_call:
+                    call_active.append(dev_id)
+                else:
+                    other_active.append(dev_id)
+            elif is_call:
+                call_registered.append(dev_id)
+    if call_active:
+        return call_active[0], True
+    if other_active:
+        return other_active[0], True
+    if _last_active_speaker_id:
+        return _last_active_speaker_id, False
+    try:
+        comm = enum.GetDefaultAudioEndpoint(0, 2).GetId()  # eRender, eCommunications
+        if comm:
+            return comm, False
+    except Exception:  # noqa: BLE001
+        pass
+    if call_registered:
+        return call_registered[0], False
+    return None, False
 
 
 def _is_python(pid: int) -> bool:
@@ -191,16 +255,41 @@ def preferred_mic():
     return sc.default_microphone()
 
 
+def preferred_speaker():
+    """The speaker a call is playing to, else eCommunications, else default."""
+    global _last_active_speaker_id
+    import re
+
+    speakers = sc.all_speakers()
+    try:
+        want_id, active = _preferred_render_id()
+    except Exception:  # noqa: BLE001 - COM can fail mid-device-change; fall through
+        want_id, active = None, False
+    if want_id:
+        for speaker in speakers:
+            if speaker.id == want_id:
+                if active:
+                    _last_active_speaker_id = want_id
+                return speaker
+    if SPEAKER_PREFER:
+        pattern = re.compile(SPEAKER_PREFER, re.IGNORECASE)
+        for speaker in speakers:
+            if pattern.search(str(speaker.name)):
+                return speaker
+    return sc.default_speaker()
+
+
 def recorder_for(stream: str):
     """Opens the device and returns (recorder_context, device_name).
 
-    Loopback follows the *default output device*, so switching to headphones
-    mid-call changes which device we must be recording. The mic follows the
-    headset when one is connected (preferred_mic). The name is returned so
-    the caller can notice the change and reopen.
+    Loopback follows the speaker the call is using (preferred_speaker), so a
+    dock speaker or headset chosen by Teams or Windows' Default Communications
+    Device is recorded instead of a silent multimedia default. The mic follows
+    preferred_mic. The name is returned so the caller can notice a change and
+    reopen.
     """
     if stream == "loopback":
-        speaker = sc.default_speaker()
+        speaker = preferred_speaker()
         device = _loopback_of(speaker)
         return device, speaker.name
     device = preferred_mic()
@@ -270,6 +359,8 @@ def run(stream: str, spool: str, pause_file: str, roll_file: str) -> int:
             if writer is not None:
                 log("paused — releasing the device")
                 close_writer()
+            global _last_active_speaker_id
+            _last_active_speaker_id = None
             time.sleep(1.0)
             continue
 
@@ -308,20 +399,13 @@ def run(stream: str, spool: str, pause_file: str, roll_file: str) -> int:
                     writer.write(mono)
                     writer.flush()
 
-                    # The default output device can change without an error
-                    # being raised on the open stream; a headphone switch
-                    # mid-call would otherwise record silence for an hour.
-                    if stream == "loopback":
-                        try:
-                            if str(sc.default_speaker().name) != device_name:
-                                break
-                        except Exception:  # noqa: BLE001 - device enumeration is flaky mid-switch
-                            pass
-                    # Likewise a headset mic that appears when a call starts.
-                    elif time.time() - mic_checked >= MIC_RECHECK_SECONDS:
+                    # A headphone or dock switch mid-call changes the active
+                    # speaker or mic without raising on the open stream.
+                    if time.time() - mic_checked >= MIC_RECHECK_SECONDS:
                         mic_checked = time.time()
                         try:
-                            if str(preferred_mic().name) != device_name:
+                            want = preferred_speaker() if stream == "loopback" else preferred_mic()
+                            if str(want.name) != device_name:
                                 break
                         except Exception:  # noqa: BLE001 - device enumeration is flaky mid-switch
                             pass

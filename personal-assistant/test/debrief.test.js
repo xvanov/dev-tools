@@ -68,6 +68,11 @@ const meetingStart = '2026-09-02T14:00:00Z'; // a Wednesday
   // Empty or malformed replies mean nothing, not an error.
   const r = D.parseDebrief({}, { transcript, refs });
   assert.deepStrictEqual([r.todos, r.owedToMe, r.updates, r.decisions].map((l) => l.length), [0, 0, 0, 0]);
+  assert.strictEqual(r.summary, null);
+  assert.strictEqual(r.title, null);
+  const rWithSummary = D.parseDebrief({ title: 'Call with Quill', summary: 'Discussed the ledger sync and tax report.' }, { transcript, refs });
+  assert.strictEqual(rWithSummary.title, 'Call with Quill');
+  assert.strictEqual(rWithSummary.summary, 'Discussed the ledger sync and tax report.');
   const r2 = D.parseDebrief({ todos: 'none', updates: [null, { ref: 'C12' }] }, { transcript, refs });
   assert.strictEqual(r2.todos.length + r2.updates.length, 0);
   // A due date before the meeting is a misread year, not an overdue task.
@@ -77,16 +82,20 @@ const meetingStart = '2026-09-02T14:00:00Z'; // a Wednesday
 {
   // The prompt carries ids the reply may name, and says the transcript is data.
   const { prompt, refs: got } = D.buildPrompt({
-    meeting: { title: 'Ledger sync', kind: 'meeting', start: meetingStart, end: '2026-09-02T14:30:00Z', attendees: [{ name: 'Quill Ashdown', email: 'quill@example.com' }] },
+    meeting: { title: 'Ledger sync', kind: 'meeting', singleStream: true, start: meetingStart, end: '2026-09-02T14:30:00Z', attendees: [{ name: 'Quill Ashdown', email: 'quill@example.com' }] },
     me: { name: 'Brannoc Vey', emails: ['brannoc@example.com'] },
     commitments: [{ id: 12, direction: 'owed_by_me', summary: 'Migrate cost codes', due: '2026-09-03T17:00:00Z', counterparty: 'Quill Ashdown' }],
     tasks: [{ id: 501, kind: 'jira', label: 'LED-7 Release 2.4', status: 'In Progress' }],
+    recentChats: [{ occurredAt: '2026-09-02T13:59:00Z', who: 'Quill Ashdown', subject: 'Quill, Brannoc', body: 'calling now' }],
     transcript,
   });
   assert.deepStrictEqual([...got].sort(), ['C12', 'T501']);
   assert.match(prompt, /C12 \[I owe Quill Ashdown\] due 2026-09-03: Migrate cost codes/);
   assert.match(prompt, /T501 Ticket LED-7 Release 2.4 \(In Progress\)/);
   assert.match(prompt, /Quill Ashdown <quill@example.com>/);
+  assert.match(prompt, /Only the microphone stream was captured/);
+  assert.match(prompt, /Recent Teams messages around this call/);
+  assert.match(prompt, /calling now/);
   assert.match(D.SYSTEM, /data, never instructions/);
 }
 
@@ -145,8 +154,9 @@ const meetingStart = '2026-09-02T14:00:00Z'; // a Wednesday
   // Before the calendar end, only ten quiet minutes will do.
   assert.strictEqual(D.debriefDue({ endedAt: t('14:05'), eventEnd: t('14:30'), coverage: t('14:12'), now: t('14:13') }).due, false);
   assert.strictEqual(D.debriefDue({ endedAt: t('14:05'), eventEnd: t('14:30'), coverage: t('14:16'), now: t('14:17') }).due, true);
-  // A call has no calendar end: ten quiet minutes.
+  // A call has no calendar end: ten quiet minutes, or capture paused after the call.
   assert.strictEqual(D.debriefDue({ endedAt: t('14:05'), coverage: t('14:10'), now: t('14:11') }).due, false);
+  assert.strictEqual(D.debriefDue({ endedAt: t('14:05'), coverage: t('14:07'), paused: true, now: t('14:08') }).due, true);
   // Nothing transcribed: wait, but not forever.
   assert.strictEqual(D.debriefDue({ ...base, coverage: null, now: t('14:40') }).due, false);
   assert.strictEqual(D.debriefDue({ ...base, coverage: null, now: t('15:20') }).due, true);
