@@ -320,11 +320,20 @@ async function main() {
     await require('./meetings').pass();
   });
 
-  // The project table follows the disk: new clones become candidates, and a
-  // deleted folder is retired so nothing more is routed to it.
-  every(6 * 3600, 'projects-sync', async () => {
-    await require('./projects').sync();
-  });
+  // The repo registry (src/repos) follows the evidence: clones on disk (new
+  // ones become candidates, a deleted folder is retired), your GitHub PRs and
+  // commits, Claude sessions on every machine, raven's repo map. Cheap: PRs
+  // are read incrementally, and the model is called only for a repo that is
+  // new or whose README changed. PA_REPOS=0 falls back to the disk-only seed.
+  if (config.repos.enabled) {
+    every(config.repos.syncSeconds, 'repos-sync', async () => {
+      await require('./repos').sync();
+    });
+  } else {
+    every(6 * 3600, 'projects-sync', async () => {
+      await require('./projects').sync();
+    });
+  }
 
   every(300, 'embed', async () => {
     await search.backfillEmbeddings({ limit: 256 });

@@ -87,11 +87,22 @@ function explicitTokens(text) {
 // `innergy` inside its owner segment must not make it name a repo called
 // `innergy` as well. That substring match is what sent every innergy-dev PR
 // to the old monorepo. The full owner/repo path also counts, wherever it sits.
+//
+// The repo registry's other forge paths and per-machine folders
+// (c.remotePaths, c.paths) name the repo just as its main path and clone do.
 function tokenNamesRepo(token, c) {
-  const whole = normalise(c.gitlabPath);
-  if (whole && whole.includes(' ') && ` ${normalise(token)} `.includes(` ${whole} `)) return true;
+  const t = ` ${normalise(token)} `;
+  for (const full of [c.gitlabPath, ...(c.remotePaths || [])]) {
+    const whole = normalise(full);
+    if (whole && whole.includes(' ') && t.includes(` ${whole} `)) return true;
+  }
   const names = new Set(
-    [c.name, c.repoPath ? c.repoPath.split(/[\\/]/).pop() : null, c.gitlabPath ? c.gitlabPath.split('/').pop() : null]
+    [
+      c.name,
+      c.repoPath ? c.repoPath.split(/[\\/]/).pop() : null,
+      c.gitlabPath ? c.gitlabPath.split('/').pop() : null,
+      ...(c.paths || []).map((p) => String(p).split(/[\\/]/).filter(Boolean).pop()),
+    ]
       .map(normalise)
       .filter((n) => n.length >= 3 && !STOPWORDS.has(n))
   );
@@ -109,7 +120,9 @@ function cleanPath(p) {
  * carries its repository's full name, which is conclusive.
  * @returns {{projectId, name, repoPath, confidence, rationale}|null} — with
  *   projectId null when the item names a repo that has no active project here
- *   (not cloned, or retired): unknown beats the nearest-looking wrong repo.
+ *   (not in the registry, or retired): unknown beats the nearest-looking
+ *   wrong repo. A registry repo with no clone here still matches, with
+ *   repoPath null — dispatch then asks for a folder instead of guessing one.
  *   null when the item names no repo at all.
  */
 function directMatch(item, candidates) {
@@ -119,9 +132,12 @@ function directMatch(item, candidates) {
       ? raw.project
       : null;
   if (!repo) return null;
-  const hit = (candidates || []).find((c) => c.gitlabPath && c.gitlabPath.toLowerCase() === repo.toLowerCase());
+  const want = repo.toLowerCase();
+  const hit =
+    (candidates || []).find((c) => c.gitlabPath && c.gitlabPath.toLowerCase() === want) ||
+    (candidates || []).find((c) => (c.remotePaths || []).some((p) => String(p).toLowerCase() === want));
   if (hit) return { projectId: hit.id, name: hit.name, repoPath: hit.repoPath, confidence: 0.99, rationale: `the item is from ${repo}` };
-  return { projectId: null, name: null, repoPath: null, confidence: null, rationale: `${repo} is not a project here (not cloned under the repos root)` };
+  return { projectId: null, name: null, repoPath: null, confidence: null, rationale: `${repo} is not in the repo registry (pa repos add ${repo})` };
 }
 
 /**
@@ -134,11 +150,15 @@ function workdirProject(cwd, candidates) {
   let best = null;
   let bestLen = 0;
   for (const c of candidates || []) {
-    const p = cleanPath(c.repoPath);
-    if (!p || p.length <= bestLen) continue;
-    if (dir === p || dir.startsWith(`${p}\\`)) {
-      best = c;
-      bestLen = p.length;
+    // The clone here, and the folders the registry knows it by on other
+    // machines (a session on mv-automated-vm ran in C:\source\mv-assistant).
+    for (const raw of [c.repoPath, ...(c.paths || [])]) {
+      const p = cleanPath(raw);
+      if (!p || p.length <= bestLen) continue;
+      if (dir === p || dir.startsWith(`${p}\\`)) {
+        best = c;
+        bestLen = p.length;
+      }
     }
   }
   return best ? best.id : null;

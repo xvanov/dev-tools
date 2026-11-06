@@ -235,9 +235,15 @@ async function retireMissing({ exists = fs.existsSync } = {}) {
   return stale.map((p) => ({ id: p.id, name: p.name, repoPath: p.repo_path }));
 }
 
+// The resolver's vocabulary is the repo registry (src/repos): besides the
+// name, forge path and clone, every folder the repo is known by on any
+// machine (`paths`) and every forge path it has had (`remotePaths` — the
+// archived GitLab original of a repo that moved to GitHub, a second remote).
 async function candidates() {
   const projects = await rows(
-    'select id, name, gitlab_path, repo_path, last_touched_at from project where active order by name'
+    `select id, name, gitlab_path, repo_path, last_touched_at,
+            coalesce(local_paths, '{}'::jsonb) as local_paths, coalesce(remote_urls, '{}') as remote_urls
+       from project where active order by name`
   );
   const aliases = await rows('select project_id, alias, origin, weight from project_alias');
   const byProject = new Map();
@@ -245,14 +251,24 @@ async function candidates() {
     if (!byProject.has(a.project_id)) byProject.set(a.project_id, []);
     byProject.get(a.project_id).push({ alias: a.alias, origin: a.origin, weight: a.weight });
   }
-  return projects.map((p) => ({
-    id: p.id,
-    name: p.name,
-    gitlabPath: p.gitlab_path,
-    repoPath: p.repo_path,
-    lastTouchedAt: p.last_touched_at,
-    aliases: byProject.get(p.id) || [],
-  }));
+  return projects.map((p) => {
+    const aliasList = byProject.get(p.id) || [];
+    const remotePaths = new Set(
+      [...(p.remote_urls || []).map(pathFromRemote), ...aliasList.map((a) => a.alias).filter((a) => /^[^/\s]+\/[^/\s]+$/.test(a))]
+        .filter(Boolean)
+        .filter((x) => !p.gitlab_path || x.toLowerCase() !== p.gitlab_path.toLowerCase())
+    );
+    return {
+      id: p.id,
+      name: p.name,
+      gitlabPath: p.gitlab_path,
+      repoPath: p.repo_path,
+      paths: Object.values(p.local_paths || {}).flat().filter((x) => typeof x === 'string'),
+      remotePaths: [...remotePaths],
+      lastTouchedAt: p.last_touched_at,
+      aliases: aliasList,
+    };
+  });
 }
 
 // Context that makes the scorer better than string matching: what you touched

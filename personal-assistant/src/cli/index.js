@@ -31,6 +31,10 @@ const HELP = `pa — your context layer
     pa meeting next|list|brief      pre-meeting briefs (pa meeting help)
     pa meeting debrief [id|last]    after a meeting: your to-dos and updates [--dry-run]
     pa projects [sync]              the project ↔ repo table
+    pa repos [list [--all]]         the repo registry: repos you work in, what they are, your latest PRs
+    pa repos show <repo>            one repo: profile, folders per machine, branches, every PR of yours
+    pa repos sync [--full]          refresh from clones, GitHub, sessions and raven (the worker does it hourly)
+    pa repos add|alias|hide|set     corrections; yours always win over sync (pa repos help)
     pa projects rescore             list open asks whose repo their text doesn't back
                      [--apply --project name | --ids 1,2]  …and clear those links (undo SQL logged)
     pa dashboard                    the web page (the worker serves it too) at http://127.0.0.1:7300/
@@ -426,6 +430,96 @@ const commands = {
           `\n    ${p.aliases} aliases · ${p.commitments} commitments`
       );
     }
+  },
+
+  // The repo registry (src/repos): every repo you work in, what it is, your PRs.
+  async repos(args, flags) {
+    const repos = require('../repos');
+    const sub = args[0] || 'list';
+    const str = (k) => (flags[k] && flags[k] !== true ? String(flags[k]) : null);
+    const day = (d) => (d ? new Date(d).toISOString().slice(0, 10) : '—');
+    const printRepo = (r, { prs = 3 } = {}) => {
+      const where = r.fullName || r.repoPath || Object.values(r.localPaths || {}).flat()[0] || '';
+      out(`${r.name.padEnd(30)} ${where}${r.hidden ? '  (hidden)' : ''}`);
+      if (r.description) out(`    ${require('../repos/merge').shortText(r.description, 200)}`);
+      out(`    last ${day(r.lastActivity)} · ${r.prCount} PRs · ${r.sessionCount} sessions${r.lastCommitAt ? ` · commit ${day(r.lastCommitAt)}` : ''}`);
+      for (const p of (r.prs || []).slice(0, prs)) out(`      #${p.number} ${p.state.padEnd(6)} ${day(p.mergedAt || p.updatedAt)} ${p.title}`);
+    };
+    if (sub === 'sync') {
+      const r = await repos.sync({ full: Boolean(flags.full), profile: flags.profile === false ? false : undefined });
+      for (const [name, s] of Object.entries(r.sources)) {
+        out(`${s.ok ? 'ok  ' : 'FAIL'} ${name.padEnd(15)} ${s.ok ? JSON.stringify(Object.fromEntries(Object.entries(s).filter(([k]) => k !== 'ok'))) : s.error}`);
+      }
+      for (const c of r.created) out(`new  ${c}`);
+      for (const t of r.tookOver) out(`moved ${t}`);
+      out(`${r.counts.worked} repos you work in · ${r.counts.active} active · ${r.counts.prs} PRs · ${r.profiled} profiled`);
+      return;
+    }
+    if (sub === 'list') {
+      const list = await repos.list({ all: Boolean(flags.all), prs: flagInt(flags, 'prs', 3) });
+      if (!list.length) return out('no repos yet — run `pa repos sync`');
+      for (const r of list) printRepo(r, { prs: flagInt(flags, 'prs', 3) });
+      return;
+    }
+    if (sub === 'show') {
+      if (!args[1]) return fail('usage: pa repos show <repo>');
+      const r = await repos.show(args[1]);
+      if (!r) return fail(`no repo "${args[1]}"`);
+      if (flags.json) return out(JSON.stringify(r, null, 2));
+      out(`${r.name}${r.fullName ? ` — ${r.fullName}` : ''}${r.forgeUrl ? `  ${r.forgeUrl}` : ''}`);
+      if (r.description) out(`\n${r.description}\n    (from ${r.descriptionSource || '—'})`);
+      const facts = [r.kind, r.stack.length ? r.stack.join(', ') : null, r.owner ? `owner ${r.owner}` : null].filter(Boolean);
+      if (facts.length) out(facts.join(' · '));
+      if (r.related.length) out(`related: ${r.related.join(', ')}`);
+      if (r.ravenDoc) out(`raven: ${r.ravenDoc}`);
+      for (const [m, paths] of Object.entries(r.localPaths)) out(`on ${m}: ${paths.join(', ')}`);
+      if (r.defaultBranch) out(`default branch: ${r.defaultBranch}`);
+      if (r.branches.length) {
+        out('\nbranches:');
+        for (const b of r.branches) out(`  ${b.name}${b.current ? ' (current)' : ''}${b.pr ? ` PR #${b.pr}` : ''} · ${day(b.at)}${b.machine ? ` · ${b.machine}` : ''}${b.mine ? '' : ' · not yours'}`);
+      }
+      out(`\naliases: ${r.aliases.map((a) => a.alias + (a.origin === 'corrected' ? '*' : '')).join(', ') || '—'}`);
+      out(`\n${r.prCount} PRs:`);
+      for (const p of r.prs.slice(0, flagInt(flags, 'prs', 20))) {
+        out(`  #${p.number} ${p.state.padEnd(6)} ${day(p.mergedAt || p.updatedAt)} ${p.title}${p.branch ? `  [${p.branch}]` : ''}`);
+        if (p.summary) out(`      ${p.summary}`);
+      }
+      if (r.commitments.length) {
+        out('\nopen asks linked here:');
+        for (const c of r.commitments) out(`  #${c.id} ${c.summary}`);
+      }
+      return;
+    }
+    if (sub === 'add') {
+      if (!args[1]) return fail('usage: pa repos add <owner/name|folder|name> [--name n]');
+      const r = await repos.add(args[1], { name: str('name') });
+      out(`added ${r.name}${r.fullName ? ` (${r.fullName})` : ''} — pinned to the Repos tab`);
+      return;
+    }
+    if (sub === 'alias') {
+      if (!args[1] || !args[2]) return fail('usage: pa repos alias <repo> <alias...>');
+      const r = await repos.alias(args[1], args.slice(2).join(' '));
+      out(`${r.name} is also "${args.slice(2).join(' ')}"`);
+      return;
+    }
+    if (sub === 'hide' || sub === 'unhide') {
+      if (!args[1]) return fail(`usage: pa repos ${sub} <repo>`);
+      await repos.hide(args[1], sub === 'hide' && !flags.undo);
+      out(`${args[1]} ${sub === 'hide' && !flags.undo ? 'hidden from' : 'back on'} the Repos tab`);
+      return;
+    }
+    if (sub === 'set') {
+      if (!args[1]) return fail('usage: pa repos set <repo> [--description "…"] [--owner team] [--stack a,b] [--related x,y] [--kind k] [--pinned|--unpinned]');
+      const edits = {};
+      for (const k of ['description', 'owner', 'stack', 'related', 'kind']) if (flags[k] !== undefined) edits[k] = flags[k] === true ? '' : String(flags[k]);
+      if (flags.pinned) edits.pinned = true;
+      if (flags.unpinned) edits.pinned = '';
+      if (!Object.keys(edits).length) return fail('nothing to set');
+      const r = await repos.set(args[1], edits);
+      out(`${r.name}: ${Object.keys(edits).join(', ')} set by hand — sync will not change them`);
+      return;
+    }
+    return fail('usage: pa repos [list [--all]] | show <repo> | sync [--full] [--no-profile] | add <ref> | alias <repo> <alias> | hide|unhide <repo> | set <repo> --description …');
   },
 
   async do(args, flags, lists = {}) {

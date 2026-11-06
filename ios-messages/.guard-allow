@@ -19,3 +19,5 @@ gates
 a-zA-Z0-9
 DETAILS inner
 SSH_AUTH_SOCK destroyed
+after
+ISSUE

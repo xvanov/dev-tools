@@ -128,6 +128,7 @@ const PURPOSES = [
   { key: 'reply-close', env: 'PA_REPLY_CLOSE_MODEL', needs: 'json', get: (c) => c.replyClose.model, what: 'closing asks on my replies' },
   { key: 'reconcile', env: 'PA_RECONCILE_MODEL', needs: 'json', get: (c) => c.reconcile.model, what: 'closing on newer evidence' },
   { key: 'card-context', env: 'PA_CARD_CONTEXT_MODEL', needs: 'text', get: (c) => c.cardContext.model, what: 'dashboard card paragraphs' },
+  { key: 'repo-profile', env: 'PA_REPO_PROFILE_MODEL', needs: 'json', get: (c) => c.repos.profileModel, what: 'what each repo is (registry)' },
   { key: 'planner', env: 'PA_PLANNER_MODEL', needs: 'json', get: (c) => c.planner.model, what: 'what to do with each new ask' },
   { key: 'draft', env: 'PA_DRAFT_MODEL', needs: 'text', get: (c) => c.drafts.model, what: 'reply drafts' },
   { key: 'routine', env: 'PA_ROUTINE_MODEL', needs: 'text', get: (c) => c.routines.model, what: 'routines: parse, reports, suggestions' },

@@ -317,6 +317,18 @@ async function handle(req, res) {
     return out === undefined ? send(res, 404, { error: 'not found' }) : send(res, 200, out ?? null);
   }
 
+  // ---- The Repos tab (dashboard/repos.js, repos.client.js): the repo registry. ----
+  if (req.method === 'GET' && url.pathname === '/repos.js') {
+    return send(res, 200, fs.readFileSync(path.join(__dirname, 'repos.client.js'), 'utf8'), 'text/javascript; charset=utf-8');
+  }
+  if (url.pathname === '/api/repos' || url.pathname.startsWith('/api/repos/')) {
+    if (req.method === 'POST' && req.headers['x-pa'] !== '1') return send(res, 403, { error: 'missing X-PA header' });
+    const out = await require('./repos').route(req.method, url);
+    if (out && out.error === 'not found') return send(res, 404, out);
+    return out === undefined ? send(res, 404, { error: 'not found' }) : send(res, 200, out);
+  }
+  // ---- end Repos tab ----
+
   if (req.method === 'POST') {
     if (req.headers['x-pa'] !== '1') return send(res, 403, { error: 'missing X-PA header' });
     const body = await readJson(req);

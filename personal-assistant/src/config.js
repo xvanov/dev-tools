@@ -500,6 +500,18 @@ const config = {
     model: env('PA_CARD_CONTEXT_MODEL') || reconcileModel,
   },
 
+  // The repo registry (src/repos): `pa repos sync` and the hourly worker pass.
+  // The model only writes a profile for a repo that is new or whose README or
+  // manifests changed, a handful of repos per call, on the cheap pass model.
+  // PA_REPOS=0 stops the worker pass; PA_REPO_PROFILE=0 stops the model calls.
+  repos: {
+    enabled: env('PA_REPOS', '1') !== '0',
+    syncSeconds: envInt('PA_REPOS_SYNC_SECONDS', 3600),
+    profile: env('PA_REPO_PROFILE', '1') !== '0',
+    profileModel: env('PA_REPO_PROFILE_MODEL') || reconcileModel,
+    profilesPerSync: envInt('PA_REPO_PROFILES_PER_SYNC', 60),
+  },
+
   // The planner (src/agent/planner.js): each new ask gets a kind, and some an
   // action ahead of me — a read-only research run (at most researchPerDay a
   // day), a "start a run?" card, or a "which repo?" question. PA_PLANNER=0

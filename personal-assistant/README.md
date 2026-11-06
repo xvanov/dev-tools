@@ -118,12 +118,15 @@ What each OS-specific piece becomes on Linux, and what `pa doctor` says when it 
 `pa doctor` is the answer to "why isn't it doing anything". It reports every credential, every
 source cursor, the distillation backlog, and whether termhub is reachable.
 
-`pa projects sync` (also run by the worker every six hours) builds the project ↔ repo table from
-the clones under `PA_REPOS_ROOT`. When several folders share one remote, the one named like the
+`pa projects sync` builds the project ↔ repo table from the clones under `PA_REPOS_ROOT`; the
+worker runs it hourly as the first step of `pa repos sync` (the repo registry, below). When
+several folders share one remote, the one named like the
 repo wins and worktrees and copies become its aliases. A project whose folder has gone is
 *retired* — kept, so commitments still point at it, but never offered to the distiller or accepted
 as a correction — and comes back if the folder does. A GitHub item's own repository decides its
-project outright; if that repo is not cloned, the project is left empty rather than guessed.
+project outright — any repo in the registry, cloned here or not (one with no clone links with no
+folder, and `pa do` asks for one); a repo the registry does not know is left empty rather than
+guessed.
 Otherwise an ask gets a project only when its text names it — a path, a PR link, the repo's name
 or an alias — or its Claude session ran in that repo. Recent work, the thread's earlier asks and
 the person asking only break ties between projects the text already names; on their own they used
@@ -448,6 +451,61 @@ pa mic status | pause 30 | on    always-on capture control
 pa doctor                        what is configured, stale, or broken
 pa spend [--days 7]              model spend per day and per pass, against the daily cap
 ```
+
+### Repos: the registry of what you work in
+
+`project` is the single source of truth for every repo you work in — built from evidence, never
+from what a conversation happened to mention. `pa repos sync` (the worker runs it hourly,
+`PA_REPOS_SYNC_SECONDS`; `PA_REPOS=0` falls back to the six-hourly disk-only `pa projects sync`)
+reads:
+
+- **Clones** under `PA_REPOS_ROOT`: remote, default branch, the recent branches (yours marked by
+  your git email), the date of your last commit (within a year).
+- **GitHub**, through `gh`: every PR you authored (GraphQL search; the first sync reads all of
+  them, later ones only what changed since) with title, state, branch and a one-line summary taken
+  from the body — no model call — and your commits (commit search). A repo you have a PR or commit
+  in is in the registry whether or not it is cloned here. A repo that moved from GitLab to GitHub
+  takes over its retired GitLab row, so its commitments come with it.
+- **Claude sessions** already ingested, on this machine and every `PA_MACHINES` one: the folder
+  each ran in (the first folder under that machine's repos root) is matched to a repo by name,
+  alias or known folder and recorded as that repo's path on that machine, with the branch. A
+  folder you worked in on two or more sessions and nothing else knows (a repo on the Linux box)
+  becomes a repo of its own.
+- **raven** (`innergy-dev/raven`, live from GitHub `main`, else the local clone):
+  `knowledge/systems/repositories.md` is the authoritative description of INNERGY repos, and a
+  `knowledge/systems/<repo>/` folder is linked as the repo's deep doc.
+
+What a repo *is* — a description, kind, stack, owner, related repos — comes from raven where it
+covers the repo, else from a profile the cheap pass model writes from the README, manifests and
+top-level files (`PA_REPO_PROFILE_MODEL`, default the reconcile model; purpose `repo-profile` in
+`llm_spend`). It is written again only when that material changes, so a quiet hour makes no model
+call; `PA_REPO_PROFILE=0` stops it.
+
+```
+pa repos                          repos you work in, newest activity first, with your latest PRs
+pa repos list --all               every active repo, hidden ones too
+pa repos show erp                 description, folders per machine, branches, aliases, every PR, linked asks
+pa repos sync [--full]            refresh now (--full re-reads every PR); --no-profile skips the model
+pa repos add innergy-dev/lidia    a repo the sources do not show yet (pinned to the tab)
+pa repos alias erp "aspen"        a name you call it — the resolver matches it from then on
+pa repos set erp --owner "Pod Xi" --description "…" --stack "C#,React"
+pa repos hide OpenHands           off the Repos tab (unhide puts it back)
+```
+
+Your edits live in their own columns (`project.manual`, `hidden`, `corrected` aliases) and every
+reader lays them over the synced values: **manual always wins**, and sync never writes them.
+
+The resolver (`src/projects/resolve.js`) resolves against the registry: besides a repo's name,
+forge path, clone and aliases, the folders it is known by on every machine (a session on
+`mv-automated-vm` in `C:\source\mv-assistant` is evidence for `mv-assistant`) and its older forge
+paths (a GitLab original). The evidence rule is unchanged: a repo is linked only when the item's
+text, its repository or its session's folder names it.
+
+The dashboard's **Repos** tab (`#repos`) shows one card per repo you worked in, newest activity
+first: name, forge link and folders per machine, kind and stack, the description, your activity
+(PRs, sessions, last commit), your latest PRs (state, date, one-line summary) and recent branches.
+A card opens the repo's detail view (`#repos/<name>`) with every PR, every branch, the asks linked
+to it and a Hide button; **Sync now** starts a sync.
 
 ### Memory
 
@@ -1212,6 +1270,7 @@ src/config.js        every knob, resolved once
 src/ingest/          Microsoft 365 mail/calendar/Teams (connector), the Teams local cache, GitHub, Jira, Claude sessions (this machine and, through termhub, the others), audio episodes
 src/distill/         the extraction prompt, identity resolution, the pass itself
 src/projects/        the project ↔ repo table and the scorer that guesses
+src/repos/           the repo registry: sources (clones, GitHub, sessions, raven), merge rules (merge.js, pure), profiles
 src/search/          hybrid retrieval: full text + vector + people named, fused, Cohere-reranked
 src/eval/            retrieval eval: metrics, retriever registry, case seeding, runs
 src/memory/          claims with evidence, consolidation, people/project pages, nightly dream
@@ -1221,7 +1280,7 @@ src/meetings/        pre-meeting briefs: classify, gather evidence, learn from t
                      post-meeting debriefs (debrief.js, pure half in debriefCore.js)
 src/commitments/     closing chat and mail asks you answered yourself (replyClose.js, pure half in replyCloseCore.js);
                      the cause-and-effect paragraph on cards (context.js, pure half in contextCore.js)
-src/dashboard/       the loopback web page: today, next meeting, replies, runs, secret requests, and the Memory, Chat and Routines tabs;
+src/dashboard/       the loopback web page: today, next meeting, replies, runs, secret requests, and the Memory, Chat, Routines and Repos tabs;
                      each card's links to its source, person, repo and session (links.js pure, cards.js);
                      /talk, the voice page (talk.html + talk.page.js; talk.core.js pure; talk.js serves it and proxies to whisper)
 src/secrets/         secret and login requests; the OS keyring facade (vault.js; stdin only)
