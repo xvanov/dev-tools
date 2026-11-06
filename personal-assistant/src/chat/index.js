@@ -206,6 +206,10 @@ function settingsJson() {
     hooks: {
       SessionStart: [{ hooks: [{ type: 'command', command: `${pa} context`, timeout: 60 }] }],
     },
+    // The user's global "caveman" plugin adds a prompt hook to every turn
+    // (0.2–0.5 s, once a 5 s timeout) and makes replies terse fragments,
+    // which read badly aloud on /talk. Off for the PA chat only.
+    enabledPlugins: { 'caveman@caveman': false },
     permissions: {
       // Never auto, acceptEdits or bypass, whatever the user's own settings
       // say (verifyClaudeHome reads this back before the chat starts).
