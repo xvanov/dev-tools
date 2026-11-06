@@ -122,7 +122,7 @@ back to them before you run anything:
 3. **Done criteria** — \`--done "<criterion>"\` per acceptance criterion, for the factory.
 
 \`${cmd('propose')} --task "<the ask, in the user's words, with what you found>" --repo <path|owner/name>
---delivery <level> [--via factory --pipeline solo --done "…"]\` puts it on a card (dashboard → Needs you):
+--delivery <level> [--via factory --pipeline solo --done "…"]\` puts it on a card (dashboard → On me):
 the assistant composes the brief the builder will get — the goal, criteria, constraints, and pointers to
 existing code to reuse — and the card shows it with the end state, which the user can change before
 accepting. Prefer this when they want to look first. \`${cmd('do')} --task "…" --repo <…> --delivery <level>\`
