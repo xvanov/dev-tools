@@ -119,6 +119,31 @@ function attach(card, info) {
   return card;
 }
 
+// Every open commitment folded into one of `ids` (superseded_by chains, any
+// depth), with its source item: the places a card's duplicates were said.
+async function foldedInto(ids) {
+  const want = [...new Set(ids.filter((x) => x != null).map(Number))];
+  if (!want.length) return new Map();
+  const found = await rows(
+    `with recursive down as (
+       select c.id, c.superseded_by as root, 1 as depth from commitment c where c.superseded_by = any($1::bigint[])
+       union all
+       select c.id, down.root, down.depth + 1 from commitment c join down on c.superseded_by = down.id where down.depth < 10)
+     select d.id, d.root, si.id as item_id, si.source, si.external_id, si.thread_external_id, si.subject, si.occurred_at,
+            si.raw - 'members' - 'memberEmails' - 'audioPaths' as raw
+       from down d join commitment c on c.id = d.id join source_item si on si.id = c.source_item_id
+      order by si.occurred_at desc`,
+    [want]
+  );
+  const out = new Map();
+  for (const f of found) {
+    const k = String(f.root);
+    if (!out.has(k)) out.set(k, []);
+    out.get(k).push({ id: f.id, item: itemOf(f) });
+  }
+  return out;
+}
+
 /** Adds links and context to the cards in a dashboard state, in place. */
 async function enrich(s) {
   const board = [...(s.commitments || []), ...(s.selfNotes || []).flatMap((g) => g.items || [])];
@@ -129,6 +154,12 @@ async function enrich(s) {
   ];
   const { byId, evidence, hubs: h } = await forCommitments(ids, { evidenceIds: (s.looksDone || []).map((p) => p.id) });
   for (const c of board) attach(c, byId.get(String(c.id)));
+  // Where the duplicates folded into each card were said (dashboard/links.js).
+  const folded = await foldedInto(board.map((c) => c.id)).catch(() => new Map());
+  for (const c of board) {
+    const members = folded.get(String(c.id));
+    if (members?.length) c.alsoIn = L.alsoLinks(c.links, members);
+  }
   for (const p of s.needsYou || []) {
     if (p.commitment_id != null) attach(p, byId.get(String(p.commitment_id)));
   }

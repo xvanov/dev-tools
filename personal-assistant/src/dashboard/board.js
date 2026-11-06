@@ -128,6 +128,7 @@ function build(s, { now = Date.now() } = {}) {
     keep.chase = keep.chase || c.chase;
     keep.settled = keep.settled || c.settled;
     keep.also = [...(keep.also || []), c.id];
+    if (c.alsoIn?.length) keep.alsoIn = [...(keep.alsoIn || []), ...c.alsoIn];
     cards.delete(id);
   }
 

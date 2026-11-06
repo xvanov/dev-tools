@@ -248,6 +248,15 @@ const config = {
     dreamHour: envInt('PA_MEMORY_DREAM_HOUR', 2),
   },
 
+  // The cross-thread duplicate pass (src/commitments/dedupe.js): new open
+  // commitments compared by embedding and anchors with every open one of the
+  // last 60 days, confirmed by a cheap model in batches. Discretionary spend
+  // (PA_BUDGET_DISCRETIONARY lists `dedupe`).
+  dedupe: {
+    enabled: env('PA_DEDUPE', '1') !== '0',
+    model: modelEnv('PA_DEDUPE_MODEL', 'azure/pa'),
+  },
+
   anthropic: {
     apiKey: env('ANTHROPIC_API_KEY'),
     // Distillation is extraction, not reasoning-heavy work: the cost lever is
@@ -540,7 +549,7 @@ const config = {
       return Number.isFinite(n) ? n : 15;
     })(),
     essential: env('PA_BUDGET_ESSENTIAL', 'distill,reconcile,connector,reply-close').split(',').map((s) => s.trim()).filter(Boolean),
-    discretionary: env('PA_BUDGET_DISCRETIONARY', 'eager,research,digest,planner,card,propose').split(',').map((s) => s.trim()).filter(Boolean),
+    discretionary: env('PA_BUDGET_DISCRETIONARY', 'eager,research,digest,planner,card,propose,dedupe').split(',').map((s) => s.trim()).filter(Boolean),
   },
 
   // Recurring typed actions (src/routines). PA_ROUTINES=0 stops the worker

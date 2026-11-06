@@ -21,6 +21,7 @@ const resolve = require('../projects/resolve');
 const { logger } = require('../log');
 const keep = require('./keep');
 const githubGate = require('./githubGate');
+const lists = require('./lists');
 
 const log = logger('distill');
 
@@ -245,6 +246,11 @@ async function distillOne(item, cached) {
       log.info('github gate', { id: item.id, dropped: g.dropped.length, moved: g.moved.length });
     }
     result.commitments = g.commitments;
+    // One message that commits to a list is one commitment, not one per item
+    // plus an umbrella (distill/lists.js) — the net under the prompt's rule.
+    const l = lists.collapse(result.commitments, item.body_text);
+    if (l.collapsed) log.info('list collapsed', { id: item.id, folded: l.collapsed });
+    result.commitments = l.commitments;
     const resolved = await resolveReferences(item, result, candidates);
     await persist(item, result, resolved);
     return { id: item.id, commitments: result.commitments.length, facts: result.facts.length };

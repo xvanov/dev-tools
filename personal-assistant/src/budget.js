@@ -15,8 +15,8 @@
 //    board true. They are counted but never refused: a cap that stopped
 //    ingesting mail would save money by making the assistant wrong.
 //  - **discretionary** — eager, research, digest, planner, card (the dashboard's
-//    card-context paragraphs): work done ahead of
-//    me on speculation. Once today's spend reaches the cap, `allow` says no
+//    card-context paragraphs), propose, dedupe (the cross-thread duplicate
+//    judge): work done ahead of me on speculation, or tidying that can wait. Once today's spend reaches the cap, `allow` says no
 //    and the worker says so once, in the log.
 //
 // A purpose in neither list (draft, memory-*, meeting-brief, ...) predates the

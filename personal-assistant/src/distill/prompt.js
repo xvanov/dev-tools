@@ -10,7 +10,10 @@
 // the fix has to be "re-run history", not "re-read a year of email".
 //
 // Bump it whenever the instructions or the output shape change in a way that
-// would make an old row different from a new one.
+// would make an old row different from a new one — and weigh the cost first:
+// a bump re-distills every item on the expensive model. The "one list, one
+// commitment" rule was added without one: history was folded by the duplicate
+// pass instead (commitments/dedupe.js), and new items get the rule.
 
 const PROMPT_VERSION = 'distill-v1';
 
@@ -46,6 +49,7 @@ Rules that matter more than completeness:
 
 - **Most items contain nothing.** Newsletters, CI noise, "thanks!", meeting invites with no ask, scheduling chatter. Return empty arrays. A false commitment costs the reader more than a missed one, because they have to notice it is wrong and delete it.
 - **A commitment is a specific obligation with an owner.** "We should improve the tests" is not one. "Can you get the estimating import fixed before Thursday" is.
+- **One list, one commitment.** When a message asks for or promises a set of things — numbered points, bullets, "the four items above", "I'll look at those" — return ONE commitment for the set: the summary names the whole set ("Unblock the app move: hosting target, Key Vault, DB role, network"), and the detail lists every item. Never one commitment per item, and never per-item commitments plus one for the whole list. Split only asks that are truly independent: owed by different people, in different directions, or unrelated deliverables.
 - **direction is from the reader's point of view.** The reader is the person whose mailbox this is; they are identified as ME below. Something they promised is owed_by_me. Something someone promised them is owed_to_me.
 - **Whoever takes the action owns it.** When the author says they will do the thing themselves ("I'll ask legal", "let me check with infra and get back to you"), it is owed_to_me — even if the same message also repeats the question. A question the author quotes or restates from ME's earlier messages is ME's own question, not a new ask of ME.
 - **Never invent a due date.** "Soon", "when you get a chance" and "ASAP" are null. Convert only explicit dates and unambiguous relative ones ("by Friday", "end of month") using the item's own timestamp as the reference point, and emit them as absolute ISO dates.

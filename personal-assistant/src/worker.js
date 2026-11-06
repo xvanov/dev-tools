@@ -244,6 +244,16 @@ async function main() {
     await distill.run({ limit: 15 });
   });
 
+  // New commitments against every open one of the last 60 days, whatever
+  // thread or person they came from: embedded, paired by meaning and shared
+  // refs, confirmed by a cheap model in batches, folded (commitments/dedupe.js).
+  // Within the daily budget; a commitment is judged once.
+  if (config.dedupe.enabled) {
+    every(180, 'dedupe', async () => {
+      await require('./commitments/dedupe').pass({ limit: 24 });
+    });
+  }
+
   // After distillation, so a fresh ask has its commitment before a reply is
   // drafted for it.
   every(120, 'drafts', async () => {

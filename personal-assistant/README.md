@@ -268,6 +268,33 @@ cards at a time (`src/commitments/context.js`, every two minutes, `PA_CARD_CONTE
 and rewritten when the thread has news; it is discretionary spend (`card-context`). A chase's
 "when should I follow up?" question sits on the card of the ask it is about, under that paragraph.
 
+**One ask, one card, wherever it was said.** The same work turns up in a chat, the draft of the
+reply, the PR, a meeting chat — and a message with a numbered list used to become one card per
+point plus one for the whole list. Three things keep that to one card:
+
+- *Distillation*: a message that asks for or promises a set of things gives one commitment whose
+  summary names the set and whose detail lists the items (a prompt rule; `src/distill/lists.js`
+  collapses an umbrella-plus-items or item-per-list-line answer if the model still splits). New
+  items only — the prompt version was not bumped, so history is not re-distilled.
+- *The duplicate pass* (`src/commitments/dedupe.js`, pure half `semantic.js`, every three minutes,
+  `PA_DEDUPE=0` turns it off): each new open commitment is embedded (summary + detail, stored in
+  `commitment_vector`) and paired with open commitments of the last 60 days from **any** thread,
+  source or person — cosine ≥ 0.60, or ≥ 0.38 in the same conversation (a Teams draft counts as
+  the chat it is for), or ≥ 0.30 when both name the same anchor (`repo#123`, a GitHub PR/issue URL,
+  another URL, a Jira key). Either direction is compared when one side has no counterparty. A cheap
+  model (`PA_DEDUPE_MODEL`, default `azure/pa`) answers each pair in batches of 20 with a typed
+  verdict — `same`, `subset` or `different`, plus "does A include B / B include A", which must agree
+  with it. `same` folds into the judge's keeper; `subset` folds only for the same anchor or into an
+  *umbrella* in the same conversation that clearly names two or more parts (`umbrellaFolds`), with
+  the word overlap deciding which is the whole. A commitment something acted on (run, draft, ledger
+  status change, a reply that closed it, your hand) is never hidden behind one nothing acted on.
+  Fold = `superseded_by`, as for the review pass, so Done closes the group. Discretionary spend
+  (`dedupe`). The 0.60 was calibrated on the live board: unrelated open pairs have a median cosine
+  of 0.27 and a 99th percentile of 0.55; rewordings of one ask in different threads scored
+  0.58–0.92, and an umbrella against its own items only 0.40–0.57, hence the per-thread floor.
+- *The card*: a card with folded duplicates shows **also mentioned in:** with a link to every other
+  place they were said (`links.alsoLinks`), so folding loses no thread.
+
 **Notes from your Claude sessions & PRs** (folded) holds what the distiller read from your own Claude
 sessions and your own PRs — agent handoffs like "verify the banner in a browser before merge" —
 apart from **On me**, which is what people asked of you or you promised them; a note that gets a
@@ -356,7 +383,7 @@ cost; for the API it is estimated from token usage at list prices, or left null 
 does not know. Another provider's call is priced only from `PA_MODEL_PRICES` (or, on OpenRouter,
 the cost it reports); otherwise its cost is null, never guessed — and its `backend` is the
 provider's name (`azure`, `openrouter`, …). `PA_DAILY_BUDGET_USD` (default 15) caps a local day: once reached, *discretionary*
-purposes (`PA_BUDGET_DISCRETIONARY`, default eager, research, digest, planner, card, propose — speculative work
+purposes (`PA_BUDGET_DISCRETIONARY`, default eager, research, digest, planner, card, propose, dedupe — speculative work
 done ahead of you) are refused until midnight and the worker logs it once; *essential* ones
 (`PA_BUDGET_ESSENTIAL`, default distill, reconcile, connector, reply-close) keep the board true
 and are never refused. Speculative work asks `budget.allow(purpose)` before it spends. `pa spend
@@ -528,7 +555,8 @@ distillation:
    person — compared with the most alike of those, not just the most recent. A near-verbatim
    repeat (same words, same numbers and refs) is folded without a model call; the rest go to the
    judge. The newer one survives, unless only the older one has been acted on (a run, a draft, a
-   ledger entry, your hand) — then the newer one is the one folded.
+   ledger entry, your hand) — then the newer one is the one folded. Restatements from other
+   threads and people are the duplicate pass's (see "One ask, one card" above).
 3. **Pages** (hourly) — a markdown page per person you actually work with and per project with
    something known, rebuilt only when its claims or commitments changed, every line citing
    `[#item]`.
@@ -1053,6 +1081,7 @@ sets one default for every pass that has no variable of its own. Per pass: `PA_D
 `PA_MEMORY_EXTRACT_MODEL`, `PA_MEMORY_DECIDE_MODEL` (also recall planning), `PA_MEMORY_PAGE_MODEL`,
 `PA_BRIEF_MODEL`, `PA_BRIEF_CLASSIFY_MODEL`, `PA_DEBRIEF_MODEL`, `PA_REPLY_CLOSE_MODEL`,
 `PA_RECONCILE_MODEL`, `PA_CARD_CONTEXT_MODEL` (default: the reconcile model), `PA_PLANNER_MODEL`,
+`PA_DEDUPE_MODEL` (the cross-thread duplicate judge, default `azure/pa`),
 `PA_DRAFT_MODEL` and `PA_EVAL_MODEL` (default: the distill model), `PA_ROUTINE_MODEL`, and
 `PA_FAST_MODEL` (the voice fast lane, default `azure/pa`; see "Talking to it by voice").
 
@@ -1305,7 +1334,8 @@ src/brief/           what `pa brief` prints
 src/meetings/        pre-meeting briefs: classify, gather evidence, learn from transcripts, notify;
                      post-meeting debriefs (debrief.js, pure half in debriefCore.js)
 src/commitments/     closing chat and mail asks you answered yourself (replyClose.js, pure half in replyCloseCore.js);
-                     the cause-and-effect paragraph on cards (context.js, pure half in contextCore.js)
+                     the cause-and-effect paragraph on cards (context.js, pure half in contextCore.js);
+                     the cross-thread duplicate pass (dedupe.js, pure half in semantic.js)
 src/dashboard/       the loopback web page: today, next meeting, replies, runs, secret requests, and the Memory, Chat, Routines and Repos tabs;
                      each card's links to its source, person, repo and session (links.js pure, cards.js);
                      /talk, the voice page (talk.html + talk.page.js; talk.core.js pure; talk.js serves it and proxies to whisper);

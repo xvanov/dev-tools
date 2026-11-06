@@ -67,6 +67,8 @@
   .links a:hover { text-decoration: underline; }
   .links a.k-person { color: var(--ok); }
   .links a.k-evidence { color: var(--warn); }
+  .links.also-in { align-items: center; }
+  .links.also-in > span { font-size: 11px; color: var(--muted); }
   .sess { display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: center; margin-top: 6px; font-size: 12px; color: var(--muted); }
   .sess strong { color: var(--ink); font-weight: 600; overflow-wrap: anywhere; }
   .sess code { font: 11px/1.4 var(--font-mono); background: var(--chip); border-radius: 4px; padding: 1px 5px;
@@ -532,6 +534,15 @@ function contextPanel(x) {
 // Where a card came from, as one row of links built by the server
 // (dashboard/links.js): the message, a chat with the person, the repo, the PRs
 // and tickets it mentions, a run's PR, and the evidence for a "Looks done?".
+// The other places a folded duplicate of this card was said
+// (commitments/dedupe.js folds them; dashboard/cards.js finds them).
+function alsoInChips(x) {
+  const links = (x.alsoIn || []).filter((l) => /^https?:\/\//.test(l.url || ''));
+  if (!links.length) return null;
+  return el('div', { class: 'links also-in' }, el('span', {}, 'also mentioned in:'), ...links.map((l) =>
+    el('a', { href: l.url, target: '_blank', rel: 'noopener', class: 'k-also', title: `#${l.id}: ${l.url}` }, l.label)));
+}
+
 function linkChips(x) {
   const links = (x.links || []).filter((l) => /^https?:\/\//.test(l.url || ''));
   if (!links.length) return null;
@@ -715,6 +726,7 @@ function commitmentCard(c) {
     el('div', { class: 'sum' }, ...flags, c.summary),
     el('div', { class: 'sub' }, ...sub),
     ...cardSource(c, c.onBoard),
+    alsoInChips(c),
     c.settled ? settledBlock(c) : null,
     ...asks.map((p) => askBlock(p, false)),
     c.chase ? chaseBlock(c, c.chase) : null,

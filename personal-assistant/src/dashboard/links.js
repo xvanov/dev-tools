@@ -219,7 +219,30 @@ function cardLinks({ item, text = '', person = null, project = null, runs = [], 
   return { links, sessions };
 }
 
+/**
+ * "Also mentioned in": where the duplicates folded into a card were said — the
+ * other chats, drafts, PRs and meetings — so folding loses no thread. One link
+ * per place, none the card already links to.
+ * @param {Array<{url}>} own  the card's own links
+ * @param {Array<{id, item}>} members  folded commitments with their source items
+ * @returns {Array<{kind:'also', label, url, id}>}
+ */
+function alsoLinks(own, members, { limit = 8 } = {}) {
+  const key = (u) => String(u).replace(/\/+$/, '').toLowerCase();
+  const seen = new Set((own || []).map((l) => key(l.url)));
+  const out = [];
+  for (const m of members || []) {
+    for (const l of sourceLinks(m.item)) {
+      if (seen.has(key(l.url))) continue;
+      seen.add(key(l.url));
+      out.push({ kind: 'also', label: l.label, url: l.url, id: m.id });
+    }
+  }
+  return out.slice(0, limit);
+}
+
 module.exports = {
+  alsoLinks,
   cardLinks, sourceLinks, personLinks, repoLink, mentionedLinks, sessionInfo, teamsChatUrl,
   teamsMessageUrl, githubLabel, transcriptId, hubFor,
 };
