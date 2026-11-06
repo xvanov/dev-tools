@@ -172,6 +172,28 @@ function pageHtml(token) {
   return fs.readFileSync(PAGE, 'utf8').replace('</head>', `<meta name="pa-page" content="${token}">\n</head>`);
 }
 
+// Server-Sent Events: one `data:` JSON chat event per message. A comment line
+// every 20 s keeps proxies (termhub's /pa/) and the browser from timing out.
+function chatStream(req, res) {
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream; charset=utf-8',
+    'Cache-Control': 'no-store',
+    Connection: 'keep-alive',
+    'X-Content-Type-Options': 'nosniff',
+  });
+  res.write('retry: 3000\n\n');
+  const unsubscribe = require('../chat/feed').feed().subscribe((e) => {
+    res.write(`id: ${e.id}\ndata: ${JSON.stringify(e)}\n\n`);
+  });
+  const ping = setInterval(() => res.write(': ping\n\n'), 20_000);
+  const done = () => {
+    clearInterval(ping);
+    unsubscribe();
+  };
+  req.on('close', done);
+  res.on('error', done);
+}
+
 async function handle(req, res) {
   if (!hostAllowed(req.headers.host)) return send(res, 403, { error: 'host not allowed' });
   const url = new URL(req.url, 'http://localhost');
@@ -218,6 +240,23 @@ async function handle(req, res) {
   if (req.method === 'POST' && url.pathname === '/api/chat/open') {
     if (req.headers['x-pa'] !== '1') return send(res, 403, { error: 'missing X-PA header' });
     return send(res, 200, await require('../chat').ensureSession());
+  }
+  // The chat box and the voice page talk to that same session
+  // (src/chat/feed.js; contract in the README, "Talking to it").
+  if (req.method === 'POST' && url.pathname === '/api/chat') {
+    if (req.headers['x-pa'] !== '1') return send(res, 403, { error: 'missing X-PA header' });
+    const body = await readJson(req);
+    return send(res, 200, await require('../chat/feed').feed().send({ text: body.text, source: body.source || 'typed' }));
+  }
+  if (req.method === 'GET' && url.pathname === '/api/chat/history') {
+    return send(res, 200, { messages: require('../chat/feed').feed().history(url.searchParams.get('limit') || 50) });
+  }
+  if (req.method === 'GET' && url.pathname === '/api/chat/session') {
+    return send(res, 200, await require('../chat/feed').feed().session());
+  }
+  if (req.method === 'GET' && url.pathname === '/api/chat/stream') return chatStream(req, res);
+  if (req.method === 'GET' && url.pathname === '/chat.js') {
+    return send(res, 200, fs.readFileSync(path.join(__dirname, 'chat.client.js'), 'utf8'), 'text/javascript; charset=utf-8');
   }
   if (req.method === 'GET' && url.pathname === '/api/secrets') {
     const r = await require('../secrets').list();

@@ -225,7 +225,8 @@ the new Teams, the pass is a no-op.
 **The dashboard** is at <http://127.0.0.1:7300/> whenever the worker runs (or `pa dashboard`
 on its own): what's on you, what you're waiting on, agent runs, drafts, open PRs and board
 items, each with **Do** (dispatch), **Reply**, **Done** and **Dismiss**. Loopback only — it can
-start agents. Every button shows that it is working and then what happened.
+start agents. Every button shows that it is working and then what happened. Its **Chat** tab is
+a box onto the PA chat, the same conversation as in termhub ([below](#the-chat-tab-and-the-chat-api)).
 
 **Every card says where it came from and why it is there.** Cards on **On you**, **Waiting on
 others**, **Needs you** and **Looks done?** carry a row of links built from what ingest stored, with
@@ -1026,6 +1027,53 @@ safe (`src/notify/chat.js`):
 `pa notify ack <id>` takes one off the inbox (the chat may run it freely); `pa notify feedback`
 asks first, because it changes how often you are interrupted.
 
+### The Chat tab and the chat API
+
+The dashboard's **Chat** tab (and the voice page) talk to **the same live session**, not to a
+new `claude -p` per message, so typing there, speaking, and typing in termhub are one
+conversation. Enter sends, Shift+Enter is a new line; the tab's dot shows when the assistant is
+working, the line under the messages shows what it is doing ("searching your history…"), and
+**open in termhub** jumps to the session itself (`src/chat/feed.js`):
+
+- **In:** the text is typed into the session through termhub (`POST /api/sessions/:id/input`,
+  then Return as its own keystroke). No session running? `ensureSession()` starts one and the
+  message is typed once Claude is at its prompt, answering the folder-trust question on the way.
+- **Out:** the session's own Claude Code transcript, tailed by byte offset:
+  `~/.claude/projects/<pa-home with every non-alphanumeric as ->/<uuid>.jsonl`. Only the PA chat
+  runs in `pa-home`, so the newest file there is its conversation (a `/clear` starts a new file;
+  the newest still wins). Claude Code writes each text block once it is complete, so replies
+  arrive whole, a block at a time, not token by token.
+- **State:** termhub's own `idleState` for the session, polled every 2 s while a page is
+  listening. The transcript cannot be the authority: a permission prompt or a question writes
+  nothing to it until answered. While the session is parked on one, `POST /api/chat` is
+  **refused (409)** — typed keys would answer the picker, and Enter picks its highlighted
+  option — and an `activity` says to answer it in termhub.
+
+The contract (the voice page depends on it):
+
+| Route | Body / query | Answer |
+|---|---|---|
+| `POST /api/chat` | `{ "text": string, "source": "typed" \| "voice" }`, header `X-PA: 1` | `{ "id": string }` once the text is typed (or queued, for a session still starting). 400 bad input, 403 no `X-PA`, 409 waiting on an answer in termhub |
+| `GET /api/chat/stream` | — | Server-Sent Events; each `data:` is one event (below). No replay: the first event is the current `status`, then live events only. A `: ping` comment every 20 s |
+| `GET /api/chat/history?limit=50` | `limit` 1–500 | `{ "messages": [event…] }`, oldest first, `user` and `assistant` only |
+| `GET /api/chat/session` | — | `{ sessionId, status, waitingOn, url }` — `url` opens the session in termhub |
+
+An event is `{ "id", "type", "text", "at" (ISO), "source"? }`:
+
+- `user` — a message to the assistant. One sent through `POST /api/chat` carries that call's `id`
+  and its `source`; its echo in the transcript is dropped, so it is seen once. One typed in
+  termhub (or the inbox doorbell line) has no `source`.
+- `assistant` — a complete block of the reply. A turn can be several (text, a tool, more text),
+  each with its own id. No `partial` events: the transcript has none to give.
+- `activity` — a short line about a tool call ("reading INBOX.md…", "running pa search …"),
+  never the tool's whole input.
+- `status` — `thinking`, `idle` (the turn is over: speak now) or `offline` (no session; sending
+  starts one). It stays `thinking` from a send until the message is taken, even when a session
+  that is still starting reads as idle.
+
+Ids are stable across history and the stream (transcript entry uuids), so a client can load
+history and then dedupe the stream against it.
+
 ## Wiring it into your agents
 
 - [`integrations/claude-code/`](./integrations/claude-code/) — register the read-only MCP recall
@@ -1050,11 +1098,12 @@ src/meetings/        pre-meeting briefs: classify, gather evidence, learn from t
                      post-meeting debriefs (debrief.js, pure half in debriefCore.js)
 src/commitments/     closing chat and mail asks you answered yourself (replyClose.js, pure half in replyCloseCore.js);
                      the cause-and-effect paragraph on cards (context.js, pure half in contextCore.js)
-src/dashboard/       the loopback web page: today, next meeting, replies, runs, secret requests, and the Memory and Routines tabs;
+src/dashboard/       the loopback web page: today, next meeting, replies, runs, secret requests, and the Memory, Chat and Routines tabs;
                      each card's links to its source, person, repo and session (links.js pure, cards.js)
 src/secrets/         secret and login requests; the OS keyring facade (vault.js; stdin only)
 src/platform/        every OS decision: windows.js, linux.js, darwin.js behind one contract (index.js)
 src/routines/        cron parser, the typed action registry (repo_sync, prompt_report), runs, suggestions
+src/chat/            the PA chat session's home (index.js, agent.js) and its stream for the Chat tab and voice (feed.js; transcript.js pure)
 src/notify/          notifications: toasts, the interrupt budget, digests, feedback weights, the PA chat inbox
 src/llm.js           model calls: Anthropic API, `claude -p`, or an OpenAI-compatible provider
 src/models.js        model strings, which backend each pass uses, and what it can do (pa doctor)
