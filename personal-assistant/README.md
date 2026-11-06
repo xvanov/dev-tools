@@ -124,6 +124,14 @@ repo wins and worktrees and copies become its aliases. A project whose folder ha
 *retired* — kept, so commitments still point at it, but never offered to the distiller or accepted
 as a correction — and comes back if the folder does. A GitHub item's own repository decides its
 project outright; if that repo is not cloned, the project is left empty rather than guessed.
+Otherwise an ask gets a project only when its text names it — a path, a PR link, the repo's name
+or an alias — or its Claude session ran in that repo. Recent work, the thread's earlier asks and
+the person asking only break ties between projects the text already names; on their own they used
+to spread one wrong guess across a whole thread. The distiller's own pick is kept only when the
+text backs it the same way (or shares two distinctive words with one of the repo's names). No
+project beats a wrong one. `pa projects rescore` lists open asks whose repo their text does not
+back; `--apply --project <name>` (or `--ids`) clears those links and logs undo SQL under
+`<PA_DATA_DIR>/fixes/`.
 
 ### What you need to set
 

@@ -49,7 +49,7 @@ Rules that matter more than completeness:
 - **direction is from the reader's point of view.** The reader is the person whose mailbox this is; they are identified as ME below. Something they promised is owed_by_me. Something someone promised them is owed_to_me.
 - **Whoever takes the action owns it.** When the author says they will do the thing themselves ("I'll ask legal", "let me check with infra and get back to you"), it is owed_to_me — even if the same message also repeats the question. A question the author quotes or restates from ME's earlier messages is ME's own question, not a new ask of ME.
 - **Never invent a due date.** "Soon", "when you get a chance" and "ASAP" are null. Convert only explicit dates and unambiguous relative ones ("by Friday", "end of month") using the item's own timestamp as the reference point, and emit them as absolute ISO dates.
-- **project must be one of the candidate names given, or null.** Do not invent a project. Prefer the ranked candidate unless the item's own text clearly contradicts it, and say why in project_reason.
+- **project must be one of the candidate names given, or null.** Name a project only when the item's own text points at it — a repo, path, PR link, product or alias of that project. The ranked guess is evidence, not a default; a thread or a person you have worked with before is not a reason. When nothing in the text names a project, project is null — no project beats a wrong repo.
 - **confidence is about the ask, not the project.** Use below 0.5 when you are inferring an obligation that was not stated plainly.
 - Quote nothing verbatim in summary. Write it as an instruction the reader could act on.`;
 

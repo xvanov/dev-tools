@@ -14,11 +14,21 @@
 //  2. **Your own corrections outrank seeded guesses.** A `corrected` alias is
 //     a phrase a human confirmed once. That is better evidence than a
 //     directory name that happened to look similar.
-//  3. **Recency and authorship are hints, not answers.** They break ties
-//     between two plausible projects; they never carry a match on their own.
+//  3. **Recency, authorship and thread are hints, not answers.** They break
+//     ties between two projects the text already points at; they never carry
+//     a match on their own. A candidate with nothing in the text (or the
+//     session's folder) pointing at it is not ranked at all, however recent.
 //
-// A candidate with no evidence at all scores zero and stays there — "unknown"
-// that asks you once beats a wrong repo that a session then works in.
+// That last rule is load-bearing. These hints feed on earlier guesses — a
+// thread's earlier commitment, the projects "you worked in recently", the
+// repos "the person asking works in" are all read back from commitment rows —
+// so a hint that could carry a match on its own snowballed: one guess in a
+// chat thread put every later ask in that thread, and every ask from the same
+// people, on the same repo (a Docebo/HubSpot thread ended up on a training
+// matrix repo, and from there a dozen unrelated cards with it).
+//
+// A candidate with no evidence at all is dropped — "unknown" that asks you
+// once beats a wrong repo that a session then works in.
 
 const EXPLICIT_TOKEN = 5;
 const ALIAS_HIT = 3;
@@ -149,10 +159,14 @@ function scoreCandidates(text, candidates, context = {}) {
   const scored = candidates.map((c) => {
     let score = 0;
     const why = [];
+    // Evidence from the text or the session's folder; the hints below only
+    // count for a candidate that has some.
+    let evidence = false;
 
     for (const token of tokens) {
       if (tokenNamesRepo(token, c)) {
         score += EXPLICIT_TOKEN;
+        evidence = true;
         why.push(`explicit token "${token}"`);
         break;
       }
@@ -160,6 +174,7 @@ function scoreCandidates(text, candidates, context = {}) {
 
     if (context.workdirProjectId && context.workdirProjectId === c.id) {
       score += WORKDIR;
+      evidence = true;
       why.push('the session ran in this repo');
     }
 
@@ -168,6 +183,7 @@ function scoreCandidates(text, candidates, context = {}) {
       if (containsPhrase(text, alias.alias)) {
         const weight = Number(alias.weight) || 1;
         score += ALIAS_HIT * weight;
+        evidence = true;
         why.push(`alias "${alias.alias}"${alias.origin === 'corrected' ? ' (you corrected this before)' : ''}`);
         break;
       }
@@ -175,6 +191,7 @@ function scoreCandidates(text, candidates, context = {}) {
 
     if (!STOPWORDS.has(normalise(c.name)) && containsPhrase(text, c.name)) {
       score += NAME_HIT;
+      evidence = true;
       why.push(`project name "${c.name}"`);
     }
 
@@ -198,10 +215,10 @@ function scoreCandidates(text, candidates, context = {}) {
       if (days <= 14) score += 0.5;
     }
 
-    return { projectId: c.id, name: c.name, repoPath: c.repoPath, score, why };
+    return { projectId: c.id, name: c.name, repoPath: c.repoPath, score, why, evidence };
   });
 
-  const ranked = scored.filter((s) => s.score > 0).sort((a, b) => b.score - a.score);
+  const ranked = scored.filter((s) => s.evidence && s.score > 0).sort((a, b) => b.score - a.score);
   if (!ranked.length) return [];
 
   // Confidence is about *separation*, not absolute score: a strong match with
@@ -216,7 +233,44 @@ function scoreCandidates(text, candidates, context = {}) {
     r.confidence = Math.min(0.4, r.score / (top.score * 2.5));
   }
 
-  return ranked.map((r) => ({ ...r, rationale: r.why.join('; ') }));
+  return ranked.map(({ evidence, ...r }) => ({ ...r, rationale: r.why.join('; ') }));
 }
 
-module.exports = { scoreCandidates, explicitTokens, containsPhrase, normalise, tokenNamesRepo, directMatch, workdirProject };
+// Words that say nothing about which repo: English filler, the company and
+// its divisions (every message mentions INNERGY or ENGINEERING), and the
+// generic halves of repo names ("internal apps", "assistant", "tools").
+const GENERIC_WORDS = new Set([
+  ...STOPWORDS,
+  'with', 'from', 'that', 'this', 'have', 'will', 'into', 'about', 'when', 'what', 'them', 'they',
+  'your', 'after', 'before', 'there', 'their', 'than', 'then', 'just', 'only', 'also', 'some',
+  'innergy', 'engineering', 'internal', 'apps', 'assistant', 'tool', 'tools', 'toolkit', 'library',
+  'infrastructure', 'infra', 'platform', 'system', 'team', 'work', 'update', 'review', 'build',
+  'main', 'analytics', 'server', 'service', 'integration', 'setup', 'template',
+]);
+
+function distinctiveWords(phrase) {
+  return [...new Set(normalise(phrase).split(' ').filter((w) => w.length >= 4 && !/^\d+$/.test(w) && !GENERIC_WORDS.has(w)))];
+}
+
+/**
+ * Whether the text itself backs a project the distiller picked. The model
+ * reads meaning into a list of repo names ("Docebo is a training platform, so
+ * this is the training matrix repo"), and a card linked to the wrong repo is
+ * worse than one linked to none. So its pick stands only when the text names
+ * the project as the scorer would (a path, an alias, its name), or shares at
+ * least two distinctive words with one of its names — "Docebo … HubSpot video
+ * engagement" with "PeAk (Docebo) ↔ HubSpot Video Engagement Analytics", but
+ * not "training" alone with "INNERGY Engineering Training Matrix".
+ */
+function corroborates(text, candidate) {
+  if (!candidate) return false;
+  if (scoreCandidates(text, [candidate]).length) return true;
+  const words = new Set(normalise(text).split(' '));
+  const names = [candidate.name, candidate.gitlabPath, ...(candidate.aliases || []).map((a) => a.alias)];
+  return names.some((n) => {
+    const distinct = distinctiveWords(n);
+    return distinct.length >= 2 && distinct.filter((w) => words.has(w) || words.has(`${w}s`)).length >= 2;
+  });
+}
+
+module.exports = { scoreCandidates, corroborates, explicitTokens, containsPhrase, normalise, tokenNamesRepo, directMatch, workdirProject };

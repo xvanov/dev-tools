@@ -31,6 +31,8 @@ const HELP = `pa — your context layer
     pa meeting next|list|brief      pre-meeting briefs (pa meeting help)
     pa meeting debrief [id|last]    after a meeting: your to-dos and updates [--dry-run]
     pa projects [sync]              the project ↔ repo table
+    pa projects rescore             list open asks whose repo their text doesn't back
+                     [--apply --project name | --ids 1,2]  …and clear those links (undo SQL logged)
     pa dashboard                    the web page (the worker serves it too) at http://127.0.0.1:7300/
 
   Doing
@@ -401,6 +403,19 @@ const commands = {
       const seen = await projects.sync();
       out(`${seen.length} projects seeded`);
       for (const r of seen.retired || []) out(`retired ${r.name} — ${r.repoPath} is gone`);
+      return;
+    }
+    if (args[0] === 'rescore') {
+      const { rescore } = require('../projects/rescore');
+      const apply = Boolean(flags.apply);
+      const project = flags.project && flags.project !== true ? String(flags.project) : null;
+      const ids = flags.ids && flags.ids !== true ? String(flags.ids).split(',').map(Number).filter(Number.isInteger) : null;
+      if (apply && !project && !ids) return fail('--apply needs --project <name> or --ids 1,2,3: an unnamed link is not always a wrong one');
+      const r = await rescore({ apply, project, ids, logDir: path.join(config.dataDir, 'fixes') });
+      for (const x of r.clear) out(`#${x.id} ${x.from} — ${x.reason}\n    ${x.summary}`);
+      out(`${r.checked} linked open commitments · ${r.keep} backed by their text · ${r.clear.length} not`);
+      if (apply) out(`cleared ${r.applied || 0}${r.logFile ? ` — old values and undo SQL in ${r.logFile}` : ''}`);
+      else out('dry run — `pa projects rescore --apply --project <name>|--ids 1,2` clears those');
       return;
     }
     const list = await projects.list();

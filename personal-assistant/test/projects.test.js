@@ -4,7 +4,7 @@
 // lands in the right repo.
 
 const assert = require('assert');
-const { scoreCandidates, explicitTokens, containsPhrase, tokenNamesRepo, directMatch, workdirProject } = require('../src/projects/resolve');
+const { scoreCandidates, corroborates, explicitTokens, containsPhrase, tokenNamesRepo, directMatch, workdirProject } = require('../src/projects/resolve');
 const { pathFromRemote, groupRepos, staleProjects } = require('../src/projects');
 
 const CANDIDATES = [
@@ -57,18 +57,57 @@ const CANDIDATES = [
 }
 
 {
-  // Recency alone is a tie-breaker, never a match.
+  // Recency, thread and authorship are tie-breakers, never a match: they are
+  // read back from earlier guesses, and when they could carry a match alone
+  // one guess spread to every later ask in the thread and from the person.
   const ranked = scoreCandidates('please look at this when you can', CANDIDATES, {
     recentProjectIds: [3],
+    authorProjectIds: [3],
+    threadProjectId: 3,
   });
-  assert.strictEqual(ranked.length, 1);
-  assert.strictEqual(ranked[0].projectId, 3);
-  assert.ok(ranked[0].confidence < 0.5, 'a hint-only match must not look confident');
+  assert.deepStrictEqual(ranked, []);
+  // ... but they still break a tie between two candidates the text names.
+  const tie = scoreCandidates('update estimating-api and shopfloor together', CANDIDATES, { threadProjectId: 2, authorProjectIds: [2] });
+  assert.strictEqual(tie[0].projectId, 2);
+}
+
+{
+  // The board's "HubSpot video engagement" card linked the training matrix
+  // repo: the thread had one earlier (wrong) guess, and recency, thread and
+  // author affinity carried it with nothing in the text. Now: no evidence, no
+  // project, and the distiller's pick of it is not backed by the text either.
+  const REAL = [
+    {
+      id: 11,
+      name: 'INNERGY_Engineering_Training_Matrix',
+      gitlabPath: 'innergy-dev/INNERGY_Engineering_Training_Matrix',
+      aliases: [
+        { alias: 'INNERGY_Engineering_Training_Matrix', origin: 'seeded', weight: 1 },
+        { alias: 'INNERGY Engineering Training Matrix', origin: 'seeded', weight: 1 },
+      ],
+    },
+    {
+      id: 54,
+      name: 'peak-hubspot-analytics',
+      gitlabPath: 'innergy-dev/peak-hubspot-analytics',
+      aliases: [{ alias: 'PeAk (Docebo) â†” HubSpot Video Engagement Analytics', origin: 'seeded', weight: 1 }],
+    },
+  ];
+  const text = 'Reply to Kalin about a call on Docebo-to-HubSpot video engagement metrics\nCan we get on a call about the training data?';
+  const ctx = { recentProjectIds: [11], authorProjectIds: [11], threadProjectId: 11 };
+  assert.deepStrictEqual(scoreCandidates(text, REAL, ctx).map((r) => r.projectId), []);
+  assert.strictEqual(corroborates(text, REAL[0]), false, '"training" alone does not name the training matrix');
+  assert.strictEqual(corroborates(text, REAL[1]), true, 'Docebo + HubSpot + video engagement names the analytics repo');
+  // The company and division names are in every message; they corroborate nothing.
+  assert.strictEqual(corroborates('INNERGY ENGINEERING sync notes', REAL[0]), false);
+  assert.strictEqual(corroborates('update the engineering training matrix sheet', REAL[0]), true);
+  assert.strictEqual(corroborates('see innergy-dev/INNERGY_Engineering_Training_Matrix#4', REAL[0]), true);
+  assert.strictEqual(corroborates('anything', null), false);
 }
 
 {
   // Two equally plausible candidates must report low confidence even though the
-  // top score is high — confidence is about separation.
+  // top score is high â€” confidence is about separation.
   const ambiguous = scoreCandidates('update estimating-api and shopfloor together', CANDIDATES);
   assert.ok(ambiguous.length >= 2);
   assert.ok(ambiguous[0].confidence < 0.6, `expected low confidence, got ${ambiguous[0].confidence}`);
@@ -173,6 +212,23 @@ const ORG = [
     (p) => p === 'C:\\here'
   );
   assert.deepStrictEqual(stale.map((p) => p.id), [1]);
+}
+
+{
+  // rescore: a link the text does not back is listed for clearing; one set by
+  // hand, from the item's own repo, from the session's folder, or named in the
+  // text stays.
+  const { judge } = require('../src/projects/rescore');
+  const C = [
+    { id: 11, name: 'INNERGY_Engineering_Training_Matrix', gitlabPath: 'innergy-dev/INNERGY_Engineering_Training_Matrix', repoPath: 'C:\\repos\\tm', aliases: [] },
+    { id: 4, name: 'design', gitlabPath: 'innergy-dev/design', repoPath: 'C:\\repos\\design', aliases: [] },
+  ];
+  const hubspot = { project_id: 11, project_rationale: 'earlier commitment in this thread; you worked here recently', source: 'graph_chat', subject: null, body_text: 'can we talk Docebo to HubSpot video engagement?', raw: {}, summary: 'Reply to Kalin about a call on Docebo-to-HubSpot video engagement metrics' };
+  assert.strictEqual(judge(hubspot, C).action, 'clear');
+  assert.strictEqual(judge({ ...hubspot, project_rationale: 'corrected by hand' }, C).action, 'keep');
+  assert.strictEqual(judge({ ...hubspot, raw: { cwd: 'C:\\repos\\tm\\src' } }, C).action, 'keep');
+  assert.strictEqual(judge({ ...hubspot, project_id: 4, source: 'github_pr', raw: { project: 'innergy-dev/design' } }, C).action, 'keep');
+  assert.strictEqual(judge({ ...hubspot, project_id: 99 }, C).action, 'keep', 'a retired project is left alone');
 }
 
 console.log('projects.test.js ok');

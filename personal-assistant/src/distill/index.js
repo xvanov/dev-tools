@@ -137,6 +137,15 @@ async function persist(item, result, resolved) {
   });
 }
 
+// What a project pick has to be backed by: the item as the model read it, plus
+// the commitment it wrote.
+function evidenceText(item, c) {
+  const raw = item.raw || {};
+  return [item.subject, raw.chatTopic, raw.project, (item.body_text || '').slice(0, MAX_BODY_CHARS), c.summary, c.detail]
+    .filter(Boolean)
+    .join('\n');
+}
+
 // Turns the model's free-text `counterparty` and `project` into ids, using the
 // deterministic scorer as the fallback when the model declined to choose.
 async function resolveReferences(item, result, candidates) {
@@ -175,7 +184,12 @@ async function resolveReferences(item, result, candidates) {
       const named = candidates.find(
         (p) => p.name.toLowerCase() === c.project.toLowerCase()
       );
-      if (named) {
+      // The model's pick stands only when the text backs it (resolve.js
+      // corroborates): it used to follow the ranked guess, or read meaning
+      // into repo names, and put unrelated asks on whatever repo was nearest.
+      if (named && !(named.id === workdirProjectId || resolve.corroborates(evidenceText(item, c), named))) {
+        log.info('project pick not backed by the text', { id: item.id, project: named.name });
+      } else if (named) {
         projectId = named.id;
         repoPath = named.repoPath;
         projectConfidence = 0.9;
@@ -284,4 +298,4 @@ async function markOwnedByDebrief(itemId) {
   );
 }
 
-module.exports = { run, distillOne, pending, pendingCount, markOwnedByDebrief, PROMPT_VERSION };
+module.exports = { run, distillOne, pending, pendingCount, markOwnedByDebrief, resolveReferences, evidenceText, PROMPT_VERSION };
