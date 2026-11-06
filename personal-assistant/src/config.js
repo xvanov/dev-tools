@@ -159,10 +159,12 @@ const config = {
     // cache, so the connector pass (about $0.20 each) only needs to catch up.
     offHoursPollSeconds: envInt('PA_M365_OFF_HOURS_POLL_SECONDS', 1800),
     calendarPollSeconds: envInt('PA_M365_CALENDAR_POLL_SECONDS', 900),
-    // The model that relays connector calls. Not Sonnet: headless, it made no
-    // tool calls at all (a pass "succeeded" with nothing read), so a cheaper
-    // relay must be proven against a real read before it becomes the default.
-    connectorModel: env('PA_CONNECTOR_MODEL', 'claude-opus-5'),
+    // The model that relays connector calls: it only picks the calls, results
+    // are read verbatim (llm.toolCalls). Haiku was proven against a real
+    // outlook_email_search (2026-11-06): $0.02 a call against Opus's $0.30.
+    // Sonnet once made no tool calls at all headless — prove any other relay
+    // against a real read before making it the default.
+    connectorModel: env('PA_CONNECTOR_MODEL', 'claude-haiku-5-5'),
     // Channel posts: `mentions` (kept when they name you), `all`, or `off`.
     teamsChannels: env('PA_TEAMS_CHANNELS', 'mentions'),
   },

@@ -445,11 +445,21 @@ async function complete({
 // `nextOffset`), low where it only has to make the call (read_resource).
 //
 // Returns [{ name, input, results: [...], error: string|null }] in call order.
+const RELAY_SYSTEM =
+  'You relay calls to connector tools for a program that reads the tool results directly. ' +
+  'Call exactly the tools the user message asks for, with the arguments it gives, and page as it says. ' +
+  'If a tool is not loaded yet, load it with ToolSearch first. Do not summarise or restate results. ' +
+  'When the calls are done, reply with the single word: done';
+
 async function toolCalls({ prompt, tools, effort = 'low', timeoutMs = 300_000, visibleTokens = null, purpose = 'connector' }) {
   const model = config.m365.connectorModel;
   // Only Claude Code holds the connector logins: refuse anything else loudly.
   const r = models.route(model, { needs: 'toolCalls', envName: 'PA_CONNECTOR_MODEL' });
-  const args = cliArgs({ system: null, effort, tools, model: r.model });
+  // A short system prompt instead of Claude Code's default: the relay only has
+  // to call the tools it is named, and the default prompt (coding guidance,
+  // every built-in tool's schema) was most of each call's ~100k input tokens.
+  // (Narrowing built-ins with `--tools ToolSearch` was tried: the session hung.)
+  const args = cliArgs({ system: RELAY_SYSTEM, effort, tools, model: r.model });
   const fmt = args.indexOf('json');
   args[fmt] = 'stream-json';
   args.push('--verbose');

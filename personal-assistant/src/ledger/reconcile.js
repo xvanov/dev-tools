@@ -242,9 +242,19 @@ async function pass({ limit = 24, dryRun = false, ids = null } = {}) {
     }
     if (!dryRun) {
       // Judged through the newest item it saw: anything fetched later is new.
+      // The mark is taken from the items in SQL, never from `c.through`: that
+      // comes back as a JS Date, which keeps milliseconds while fetched_at
+      // keeps microseconds, so the truncated mark stayed older than the item
+      // it was meant to cover. The commitment stayed dirty, sorted first as
+      // "longest waiting", and the same batch was re-judged every minute.
       for (const c of batch.commitments) {
         failures.delete(String(c.id));
-        await query('update commitment set ledger_checked_at = greatest(coalesce(ledger_checked_at, $2), $2) where id = $1', [c.id, c.through]);
+        await query(
+          `update commitment set ledger_checked_at = greatest(coalesce(ledger_checked_at, t.through), t.through)
+             from (select max(fetched_at) as through from source_item where id = any($2::bigint[])) t
+            where commitment.id = $1 and t.through is not null`,
+          [c.id, c.item_ids]
+        );
       }
     }
   }
