@@ -266,6 +266,12 @@ first when one of them has died.
   answers through the front's `/pa/` proxy). **PA ↗** opens its dashboard in a new tab.
   **PA chat** asks the PA for its chat terminal and opens it here, as if you had picked it from
   the list. Phone included, over the tailnet. See `AGENT.md` → *The PA proxy*.
+- **Talk · Dashboard · Sessions · Session** (top of the sidebar, **Alt+1..4** anywhere) — the
+  layer switcher shared with the personal assistant's pages: its voice page, its dashboard, this
+  hub, and its chat session full-window at `/?focus=<id>` (no sidebar, just the terminal). The
+  toggle at its end picks system, light or dark; the terminal stays dark in all three. The look
+  is a copy of the PA's design system (`web/theme.css`, `web/nav.js`); see `AGENT.md` → *One look
+  with the PA*.
 - Switch terminals via the sidebar — the only place session control lives. Each row is just the
   session's name (wrapped, never truncated), **✎** to rename and **✕** to close. **✕**
   **kills** it; there's no separate soft-close, so what you see is what happens.
@@ -546,6 +552,7 @@ On Linux set these with `systemctl --user edit termhub`; on Windows via `setx` +
 | `lib/summarize.js` | Condenses a turn into speakable prose (`claude -p --model haiku`, with a local fallback) |
 | `lib/tts.js` | Speech synthesis — kokoro or piper, engine selection, voice discovery, WAV rendering, small LRU |
 | `lib/kokoro_helper.py` | The resident kokoro worker `lib/tts.js` spawns: loads the model once, takes text on stdin, writes WAV on stdout |
+| `web/theme.css`, `web/nav.js` | Copies of the personal assistant's design system and layer switcher; `test/theme.test.js` fails on drift, `npm run sync-theme` re-copies |
 | `web/voiceCommands.js` | Wake-word matching and command parsing (pure, no DOM — see `test/voiceCommands.test.js`) |
 | `lib/voiceHub.js` | Watches armed sessions and broadcasts `waiting`/`busy` over `/ws/voice` |
 | `lib/limit.js` | Concurrency gate bounding the synthesis / `claude -p` children sessiond will fork |

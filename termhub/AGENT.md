@@ -1382,6 +1382,38 @@ thumb-sized inside the phone drawer:
 The PA side documents its half (relative URLs, `POST /api/chat/open`) in
 `personal-assistant/AGENT.md`. Covered by `test/paProxy.test.js` (fake PA on an ephemeral port).
 
+## One look with the PA (`web/theme.css`, `web/nav.js`) and the focus view
+
+termhub is layer 3 of four that read as one assistant: the PA's voice page (`/pa/talk`), its
+dashboard (`/pa/`), this hub, and one session full-window. All four load the same design system
+and the same layer switcher.
+
+- **`web/theme.css` and `web/nav.js` are copies.** The canonical files are
+  `../personal-assistant/src/dashboard/theme.css` and `nav.js`; termhub keeps copies so it looks
+  and works the same where the PA isn't installed. `test/theme.test.js` (first in `npm test`)
+  fails when a copy drifts, and `npm run sync-theme` copies the canonical ones over. Edit the PA's
+  copy, never this one. The test skips when `../personal-assistant` is absent.
+- **`styles.css` keeps its own variable names** (`--bg`, `--bg-2`, `--fg`, `--accent`, …) as
+  aliases onto the tokens, so no rule had to change shape. Colours live only in theme.css; light
+  and dark follow the OS until the switcher's toggle pins one (`<html data-theme>`, localStorage
+  `jarvis.theme`). **The terminal is always dark**: `#terminals` and xterm's background, text and
+  cursor come from the plain `--term-*` tokens (`themeToken()` at the top of `app.js`), because
+  Claude Code and opencode pick their colours for a dark background.
+- **The switcher** (`Talk · Dashboard · Sessions · Session`) heads the sidebar (`[data-jnav]`,
+  tight variant: no brand, no key digits, which is why `--sidebar-w` is 280px), and the agent-time
+  dashboard's header. **Alt+1..4** switches from anywhere; the listener is capture-phase on
+  `window`, so it fires before xterm's textarea and the terminal never sees those keys. Talk,
+  Dashboard and Session need the PA: nav.js asks `GET /pa/api/chat/session` on load and on tab
+  focus, and dims them (`is-off`) when that fails, the same "no PA, no working buttons" rule as
+  `#pa-row`. On a phone the switcher is in the drawer.
+- **Session is `/?focus=<id>`** (layer 4): `body.focus` hides the sidebar, topbar, drawer and the
+  desktop key bar, so what is left is the terminal (plus the key bar on a phone, which you can't
+  type a Claude prompt without). `openDeepLink()` opens the session from `?focus=` as it does from
+  `#session=`; the query is not cleared, so a reload stays focused. The switcher becomes a small
+  tab in the top-right corner showing only "4 Session", opening on hover, keyboard focus or a tap,
+  and always drawn in night colours since a terminal is under it. The PA builds the link from its
+  chat session id (`/?focus=<id>#session=<id>`; the hash makes an older front still open it).
+
 ## Claude transcripts, read-only (`lib/transcripts.js`)
 
 The personal assistant ingests your Claude Code sessions as evidence of work done. Its own

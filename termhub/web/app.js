@@ -6,9 +6,14 @@ const Term = window.Terminal;
 const FitAddonCtor = (window.FitAddon && (window.FitAddon.FitAddon || window.FitAddon)) || null;
 const WebglAddonCtor = (window.WebglAddon && (window.WebglAddon.WebglAddon || window.WebglAddon)) || null;
 
+// Background, text and cursor come from the shared design system (theme.css's
+// --term-* tokens, plain values so getComputedStyle hands back a colour).
+function themeToken(name, fallback) {
+  try { return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback; } catch { return fallback; }
+}
 const TERM_THEME = {
-  background: '#15171c', foreground: '#d7dae0', cursor: '#6aa9ff',
-  black: '#15171c', red: '#e06c75', green: '#98c379', yellow: '#e5c07b',
+  background: themeToken('--term-bg', '#15171c'), foreground: themeToken('--term-fg', '#d7dae0'), cursor: themeToken('--term-cursor', '#6aa9ff'),
+  black: themeToken('--term-bg', '#15171c'), red: '#e06c75', green: '#98c379', yellow: '#e5c07b',
   blue: '#61afef', magenta: '#c678dd', cyan: '#56b6c2', white: '#d7dae0',
   brightBlack: '#5c6370', brightWhite: '#ffffff',
 };
@@ -249,19 +254,25 @@ function beatFocus() {
   })).catch(() => {});
 }
 
+// Layer 4 of the Jarvis switcher (nav.js): `/?focus=<id>` is that one session,
+// full window, with none of the hub around it (body.focus in styles.css). The
+// query survives the hash clean-up below, so a reload stays in focus.
+const FOCUS_ID = new URLSearchParams(location.search).get('focus');
+if (FOCUS_ID) document.body.classList.add('focus');
+
 // A tapped ntfy notification lands on `/#session=<id>`. Opening that terminal
 // IS the point of the notification — landing on the session list instead would
 // leave the last, easiest step undone on the smallest screen.
 function openDeepLink() {
   const m = /^#session=(.+)$/.exec(location.hash || '');
-  if (!m) return;
-  const id = decodeURIComponent(m[1]);
+  const id = m ? decodeURIComponent(m[1]) : FOCUS_ID;
+  if (!id) return;
   const s = state.sessions.find((x) => x.id === id);
   if (!s) return;
   openTerminal(s.id, s.title, s.kind);
   if (isMobile()) closeDrawer();
   // Clear it so a later reload doesn't re-open a session you have since left.
-  history.replaceState(null, '', location.pathname + location.search);
+  if (m) history.replaceState(null, '', location.pathname + location.search);
 }
 
 // A session that survived a reboot only as metadata. Restore re-spawns it:

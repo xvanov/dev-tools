@@ -8,7 +8,7 @@
   <!-- Dark browser chrome and status bar, so the app doesn't sit under a white
        strip. `black` rather than `black-translucent`: translucent draws the
        page under the status bar, and the topbar would need its own inset. -->
-  <meta name="theme-color" content="#15171c" />
+  <meta name="theme-color" content="#0e1217" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black" />
   <!-- Per-machine, built by the front (see manifest() in front.js). -->
   <link rel="manifest" href="/manifest.webmanifest" />
@@ -28,13 +28,20 @@
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%2315171c'/><path d='M8.5 10.5l5.5 5.5-5.5 5.5' fill='none' stroke='%236aa9ff' stroke-width='2.8' stroke-linecap='round' stroke-linejoin='round'/><path d='M16.5 21.5h7' stroke='%236aa9ff' stroke-width='2.8' stroke-linecap='round'/></svg>" />
   <link rel="apple-touch-icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 180 180'><rect width='180' height='180' fill='%2315171c'/><path d='M48 59l31 31-31 31' fill='none' stroke='%236aa9ff' stroke-width='14' stroke-linecap='round' stroke-linejoin='round'/><path d='M93 121h39' stroke='%236aa9ff' stroke-width='14' stroke-linecap='round'/></svg>" />
   <link rel="stylesheet" href="/vendor/xterm.css" />
+  <!-- The Jarvis design system (a copy of the PA's; test/theme.test.js keeps
+       them equal), then termhub's own layout. nav.js is the layer switcher and
+       the theme toggle; synchronous so a remembered theme applies before paint. -->
+  <link rel="stylesheet" href="/theme.css" />
   <link rel="stylesheet" href="/styles.css" />
+  <script src="/nav.js" data-layer="termhub"></script>
 </head>
 <body>
   <div id="app">
     <div id="scrim"></div>
 
     <aside id="sidebar">
+      <!-- Talk · Dashboard · Sessions · Session (nav.js). -->
+      <div data-jnav="tight"></div>
       <div class="sidebar-head">
         <span class="brand">termhub</span>
         <span id="machine-name" class="machine-name">…</span>

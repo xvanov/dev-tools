@@ -1,15 +1,18 @@
+/* termhub's names for the shared tokens in theme.css (the Jarvis design
+   system, loaded first). Colours live there, once, for light and dark; the
+   terminal pane itself is always night (--term-bg). */
 :root {
-  --bg: #15171c;
-  --bg-2: #1b1e25;
-  --bg-3: #23272f;
-  --border: #2c313a;
-  --fg: #d7dae0;
-  --fg-dim: #8b93a1;
-  --accent: #6aa9ff;
-  --accent-2: #f0b35a;
-  --danger: #e06c75;
-  --ok: #98c379;
-  --sidebar-w: 250px;
+  --bg: var(--surface-0);
+  --bg-2: var(--surface-1);
+  --bg-3: var(--surface-2);
+  --border: var(--line);
+  --fg: var(--ink);
+  --fg-dim: var(--ink-2);
+  --accent: var(--signal);
+  --accent-2: var(--amber);
+  --danger: var(--bad);
+  /* --ok is a theme.css name already. Wide enough for the layer switcher. */
+  --sidebar-w: 280px;
 }
 
 * { box-sizing: border-box; }
@@ -19,7 +22,7 @@ html, body {
   height: 100%;
   background: var(--bg);
   color: var(--fg);
-  font: 14px/1.4 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+  font: var(--text-base)/1.4 var(--font-sans);
   overflow: hidden;
   overscroll-behavior: none; /* don't let the page rubber-band and steal scroll */
   -webkit-text-size-adjust: 100%;
@@ -56,7 +59,10 @@ html, body {
   padding: 12px 14px;
   border-bottom: 1px solid var(--border);
 }
-.brand { font-weight: 600; letter-spacing: 0.5px; }
+.brand { font: 600 var(--text-base) var(--font-mono); letter-spacing: 0.02em; }
+/* The layer switcher (theme.css .jnav, rendered by nav.js) heads the sidebar. */
+#sidebar > .jnav { padding: 10px 10px 0; }
+#sidebar > .jnav .jnav-rail { flex: 1; justify-content: space-between; }
 .machine-name { color: var(--accent); font-size: 12px; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #sidebar-close { display: none; background: none; border: none; color: var(--fg-dim); font-size: 16px; cursor: pointer; }
 #sidebar-collapse { background: none; border: none; color: var(--fg-dim); font-size: 16px; cursor: pointer; }
@@ -82,7 +88,7 @@ html, body {
 /* Open (has a live xterm instance client-side) but not the active one: a
    dimmed accent bar, so the sidebar shows at a glance what's open in the
    background vs. just archived/restorable. */
-.session-item.open { box-shadow: inset 3px 0 0 rgba(106, 169, 255, 0.35); }
+.session-item.open { box-shadow: inset 3px 0 0 var(--signal-soft); }
 .session-item.active { background: var(--bg-3); box-shadow: inset 3px 0 0 var(--accent); }
 .session-item .title { flex: 1; min-width: 0; overflow-wrap: anywhere; line-height: 1.3; }
 .session-item.dead .title { color: var(--fg-dim); text-decoration: line-through; }
@@ -114,7 +120,7 @@ html, body {
 .restore-row { display: flex; align-items: center; gap: 8px; }
 .restore-kind { flex: 0 0 auto; width: 14px; text-align: center; font-size: 12px; color: var(--fg-dim); }
 .restore-kind.claude { color: var(--accent); }
-.restore-kind.cursor { color: #79c0ff; }
+.restore-kind.cursor { color: var(--signal); }
 .restore-kind.opencode { color: var(--accent-2); }
 .restore-kind.shell { color: var(--ok); }
 .restore-title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg); }
@@ -135,7 +141,7 @@ html, body {
 .restore-hist { margin: 2px 0 0 22px; max-height: 160px; overflow-y: auto; }
 .restore-hist code {
   display: block; padding: 1px 0; font-size: 11px; color: var(--fg);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-family: var(--font-mono);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 
@@ -158,14 +164,14 @@ html, body {
 #mouse-hint span { flex: 1; }
 #mouse-hint kbd {
   background: var(--bg); border: 1px solid var(--border); border-radius: 4px;
-  padding: 1px 5px; font: 11px/1.4 ui-monospace, Menlo, Consolas, monospace; color: var(--fg);
+  padding: 1px 5px; font: 11px/1.4 var(--font-mono); color: var(--fg);
 }
 #mouse-hint-dismiss {
   background: none; border: none; color: var(--fg-dim); font-size: 13px; cursor: pointer; padding: 2px 4px;
 }
 #mouse-hint-dismiss:hover { color: var(--fg); }
 
-#terminals { flex: 1; position: relative; background: var(--bg); min-height: 0; }
+#terminals { flex: 1; position: relative; background: var(--term-bg); color: var(--term-dim); min-height: 0; }
 .term-pane { position: absolute; inset: 0; padding: 6px 8px; display: none; }
 .term-pane.active { display: block; }
 .term-pane .xterm { height: 100%; }
@@ -188,7 +194,7 @@ html, body {
   position: absolute; right: 12px; bottom: 12px; z-index: 6;
   padding: 8px 14px; border-radius: 999px; cursor: pointer;
   background: var(--bg-3); color: var(--fg); border: 1px solid var(--accent);
-  font: inherit; font-size: 13px; box-shadow: 0 4px 14px rgba(0,0,0,0.5);
+  font: inherit; font-size: 13px; box-shadow: var(--shadow-2);
   touch-action: manipulation;
 }
 #scroll-bottom.hidden { display: none; }
@@ -201,7 +207,7 @@ html, body {
   display: flex; align-items: center; gap: 10px; max-width: calc(100% - 140px);
   padding: 8px 8px 8px 14px; border-radius: 999px; cursor: pointer;
   background: var(--bg-3); color: var(--fg-dim); border: 1px solid var(--border, #333);
-  font: inherit; font-size: 13px; box-shadow: 0 4px 14px rgba(0,0,0,0.5);
+  font: inherit; font-size: 13px; box-shadow: var(--shadow-2);
   touch-action: manipulation; white-space: nowrap;
 }
 #fit-here strong {
@@ -218,7 +224,7 @@ html, body {
 
 #empty-state {
   position: absolute; inset: 0; display: flex; flex-direction: column;
-  align-items: center; justify-content: center; color: var(--fg-dim); gap: 4px; text-align: center; padding: 20px;
+  align-items: center; justify-content: center; color: var(--term-dim); gap: 4px; text-align: center; padding: 20px;
 }
 #empty-state.hidden { display: none; }
 
@@ -255,15 +261,15 @@ html, body {
 #keybar-tools .key { min-width: 34px; padding: 6px 5px; font-size: 12px; }
 /* Listening is a mode, not a keypress — keep 🎤 lit for as long as the mic is
    open so "am I being heard?" is answerable without reading anything. */
-#mic-key.armed { background: var(--danger); border-color: var(--danger); color: #0d1117; }
+#mic-key.armed { background: var(--danger); border-color: var(--danger); color: var(--on-signal); }
 #keybar .key {
   flex: 1 0 auto; min-width: 44px; min-height: 38px; padding: 6px 10px;
   background: var(--bg-3); color: var(--fg); border: 1px solid var(--border);
-  border-radius: 6px; font-size: 14px; cursor: pointer; touch-action: manipulation; user-select: none;
+  border-radius: var(--radius); font-size: 14px; cursor: pointer; touch-action: manipulation; user-select: none;
 }
 #keybar .key.wide { color: var(--danger); }
-#keybar .key.armed { background: var(--accent); color: #0d1117; border-color: var(--accent); }
-#keybar .key:active { background: var(--accent); color: #0d1117; }
+#keybar .key.armed { background: var(--accent); color: var(--on-signal); border-color: var(--accent); }
+#keybar .key:active { background: var(--accent); color: var(--on-signal); }
 
 /* ---- voice strip ---- */
 #voice-bar {
@@ -273,7 +279,7 @@ html, body {
 #voice-bar.hidden { display: none; }
 /* Armed-but-locked is the one state the user must not mistake for working:
    announcements are coming and nothing will play. Paint the whole strip amber. */
-#voice-bar.locked { background: rgba(240, 179, 90, 0.10); border-top-color: var(--accent-2); }
+#voice-bar.locked { background: var(--amber-soft); border-top-color: var(--accent-2); }
 .voice-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
 #voice-status { flex: 1; min-width: 0; color: var(--fg-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #voice-dot { flex: 0 0 auto; width: 8px; height: 8px; border-radius: 50%; background: var(--fg-dim); }
@@ -283,13 +289,13 @@ html, body {
 /* The mic being open is the state with a privacy cost — make it the loud one. */
 #voice-dot.listening { background: var(--danger); animation: termhub-pulse-mic 1.2s ease-out infinite; }
 @keyframes termhub-pulse-mic {
-  0%   { box-shadow: 0 0 0 0 rgba(224, 108, 117, 0.6); }
-  70%  { box-shadow: 0 0 0 6px rgba(224, 108, 117, 0); }
-  100% { box-shadow: 0 0 0 0 rgba(224, 108, 117, 0); }
+  0%   { box-shadow: 0 0 0 0 color-mix(in srgb, var(--bad) 60%, transparent); }
+  70%  { box-shadow: 0 0 0 6px transparent; }
+  100% { box-shadow: 0 0 0 0 transparent; }
 }
 #voice-unlock {
   flex: 0 0 auto; padding: 6px 12px; border-radius: 6px; cursor: pointer; font: inherit; font-weight: 600;
-  background: var(--accent-2); color: #0d1117; border: 1px solid var(--accent-2);
+  background: var(--accent-2); color: var(--on-signal); border: 1px solid var(--accent-2);
 }
 #voice-bar .voice-sub {
   flex: 0 0 auto; background: none; border: none; color: var(--fg-dim);
@@ -313,7 +319,7 @@ html, body {
 .voice-edit-actions { display: flex; justify-content: flex-end; gap: 8px; }
 .voice-edit-actions button {
   padding: 8px 16px; border-radius: 6px; border: 1px solid var(--border);
-  background: var(--accent); color: #0d1117; font-weight: 600; cursor: pointer; font: inherit;
+  background: var(--accent); color: var(--on-signal); font-weight: 600; cursor: pointer; font: inherit;
 }
 .voice-edit-actions button.secondary { background: var(--bg-3); color: var(--fg); }
 
@@ -334,7 +340,7 @@ html, body {
 .toast {
   background: var(--bg-3); color: var(--fg); border: 1px solid var(--border);
   border-radius: 8px; padding: 8px 12px; font-size: 13px;
-  box-shadow: 0 6px 18px rgba(0,0,0,0.5);
+  box-shadow: var(--shadow-2);
   max-width: 100%; white-space: normal; overflow-wrap: anywhere;
   pointer-events: auto; cursor: pointer;
 }
@@ -343,12 +349,12 @@ html, body {
 
 /* ---- dialog ---- */
 #dialog-backdrop {
-  position: fixed; inset: 0; background: rgba(0,0,0,0.5);
+  position: fixed; inset: 0; background: var(--scrim);
   display: flex; align-items: center; justify-content: center; z-index: 30; padding: 16px;
 }
 #dialog-backdrop.hidden { display: none; }
 #dialog {
-  background: var(--bg-2); border: 1px solid var(--border); border-radius: 10px;
+  background: var(--bg-2); border: 1px solid var(--border); border-radius: var(--radius-lg); box-shadow: var(--shadow-2);
   padding: 20px; width: 400px; max-width: 100%;
 }
 #dialog h2 { margin: 0 0 14px; font-size: 16px; }
@@ -362,7 +368,7 @@ html, body {
 .dialog-buttons { display: flex; justify-content: flex-end; gap: 8px; margin-top: 6px; }
 .dialog-buttons button {
   padding: 10px 18px; border-radius: 6px; border: 1px solid var(--border);
-  background: var(--accent); color: #0d1117; font-weight: 600; cursor: pointer; font-size: 15px;
+  background: var(--accent); color: var(--on-signal); font-weight: 600; cursor: pointer; font-size: 15px;
 }
 .dialog-buttons button.secondary { background: var(--bg-3); color: var(--fg); }
 #dlg-error { color: var(--danger); font-size: 13px; margin-top: 8px; min-height: 16px; }
@@ -378,14 +384,14 @@ html, body {
   position: absolute; left: 0; right: 0; top: 100%; z-index: 5;
   margin-top: 2px; max-height: 220px; overflow-y: auto;
   background: var(--bg-3); border: 1px solid var(--border); border-radius: 6px;
-  box-shadow: 0 6px 18px rgba(0,0,0,0.4);
+  box-shadow: var(--shadow-2);
 }
 .combo-list[hidden] { display: none; }
 .combo-item {
   padding: 8px 10px; cursor: pointer; font-size: 14px;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-.combo-item:hover, .combo-item.active { background: var(--accent); color: #0d1117; }
+.combo-item:hover, .combo-item.active { background: var(--accent); color: var(--on-signal); }
 
 /* ---- update button + panel ---- */
 #update-btn {
@@ -405,7 +411,7 @@ html, body {
 
 /* ---- personal assistant (the front's /pa/* proxy) ----
    Same look as ⟳ Update. Wraps so an error line gets its own row instead of
-   squeezing the buttons on a 250px sidebar. */
+   squeezing the buttons on a 280px sidebar. */
 #pa-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 8px 14px 0; }
 #pa-row.hidden { display: none; }
 .pa-btn {
@@ -420,12 +426,12 @@ html, body {
 #pa-msg.error { color: var(--danger); }
 
 #update-backdrop {
-  position: fixed; inset: 0; background: rgba(0,0,0,0.5);
+  position: fixed; inset: 0; background: var(--scrim);
   display: flex; align-items: center; justify-content: center; z-index: 35; padding: 16px;
 }
 #update-backdrop.hidden { display: none; }
 #update-dialog {
-  background: var(--bg-2); border: 1px solid var(--border); border-radius: 10px;
+  background: var(--bg-2); border: 1px solid var(--border); border-radius: var(--radius-lg); box-shadow: var(--shadow-2);
   padding: 20px; width: 460px; max-width: 100%;
 }
 #update-dialog h2 { margin: 0 0 14px; font-size: 16px; }
@@ -454,7 +460,7 @@ html, body {
    generous to land, and a cramped box makes iOS's selection handles fight the
    edges. */
 #copy-backdrop {
-  position: fixed; inset: 0; background: rgba(0,0,0,0.6);
+  position: fixed; inset: 0; background: var(--scrim);
   display: flex; align-items: flex-end; justify-content: center; z-index: 42;
 }
 #copy-backdrop.hidden { display: none; }
@@ -473,7 +479,7 @@ html, body {
 }
 .copy-seg:first-child { border-radius: 6px 0 0 6px; }
 .copy-seg:last-child { border-radius: 0 6px 6px 0; border-left: none; }
-.copy-seg.active { background: var(--accent); color: #0d1117; border-color: var(--accent); }
+.copy-seg.active { background: var(--accent); color: var(--on-signal); border-color: var(--accent); }
 /* No scrollback to offer (a full-screen app on the alternate screen). Dimmed
    rather than removed, so the toggle doesn't appear and disappear as you switch
    between a shell and vim in the same session. */
@@ -485,7 +491,7 @@ html, body {
 #copy-text {
   flex: 1; margin: 0; overflow: auto; padding: 10px;
   background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
-  font: 13px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font: 13px/1.45 var(--font-mono);
   color: var(--fg); white-space: pre-wrap; overflow-wrap: anywhere;
   user-select: text; -webkit-user-select: text;
   -webkit-touch-callout: default;   /* iOS: allow the long-press callout */
@@ -494,13 +500,13 @@ html, body {
 .copy-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 10px; }
 .copy-actions button {
   padding: 10px 16px; border-radius: 6px; border: 1px solid var(--border);
-  background: var(--accent); color: #0d1117; font-weight: 600; cursor: pointer; font: inherit; font-size: 15px;
+  background: var(--accent); color: var(--on-signal); font-weight: 600; cursor: pointer; font: inherit; font-size: 15px;
 }
 .copy-actions button.secondary { background: var(--bg-3); color: var(--fg); font-weight: 400; }
 
 /* ---- paste fallback overlay ---- */
 #paste-backdrop {
-  position: fixed; inset: 0; background: rgba(0,0,0,0.5);
+  position: fixed; inset: 0; background: var(--scrim);
   display: flex; align-items: center; justify-content: center; z-index: 40; padding: 16px;
 }
 #paste-box {
@@ -518,7 +524,7 @@ html, body {
 .hidden { display: none; }
 
 /* ---- scrim (mobile drawer backdrop) ---- */
-#scrim { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 18; }
+#scrim { display: none; position: fixed; inset: 0; background: var(--scrim); z-index: 18; }
 
 /* ---- mobile ---- */
 @media (max-width: 760px) {
@@ -526,7 +532,7 @@ html, body {
   #sidebar {
     position: fixed; top: 0; bottom: 0; left: 0; z-index: 20;
     transform: translateX(-100%); transition: transform 0.2s ease;
-    box-shadow: 2px 0 12px rgba(0,0,0,0.4);
+    box-shadow: var(--shadow-2);
   }
   body.drawer-open #sidebar { transform: translateX(0); }
   body.drawer-open #scrim { display: block; }
@@ -555,11 +561,22 @@ html, body {
   padding: 6px 8px;
   max-height: 200px;
   overflow: auto;
-  background: #0e1015;
-  border: 1px solid #262b36;
+  background: var(--term-bg);
+  border: 1px solid var(--term-line);
   border-radius: 6px;
-  font: 11px/1.35 ui-monospace, SFMono-Regular, Menlo, monospace;
-  color: #9fb0c9;
+  font: 11px/1.35 var(--font-mono);
+  color: var(--term-dim);
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+/* ---- layer 4: one session, full window (`/?focus=<id>`, see app.js) ----
+   No sidebar, no topbar, no drawer: the terminal and, on a phone, the key bar
+   it cannot be typed into without. The layer switcher floats in the top-right
+   corner (theme.css .jnav--float). */
+body.focus #sidebar, body.focus #topbar, body.focus #sidebar-expand,
+body.focus #scrim, body.focus #mouse-hint { display: none !important; }
+body.focus .term-pane { padding: 4px 6px; }
+@media (min-width: 761px) {
+  body.focus #keybar { display: none; }
 }
