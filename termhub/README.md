@@ -330,6 +330,14 @@ first when one of them has died.
 - **🎤 (key bar)** — talk to the session you're looking at without waiting to be asked. Tap
   once to listen, again to stop. On a browser with no speech recognition it opens a text box
   that sends the same way, so the button always does something.
+  - When the mic can't work, a toast says why and what to do, with the browser's error code in
+    brackets: *(service-not-allowed)* is Dictation turned off on the iPhone (Settings › General ›
+    Keyboard › Enable Dictation), *(not-allowed)* is the site's microphone permission,
+    *(audio-capture)* means another tab or app holds the mic (the PA's talk page does while it is
+    open), *(network)* means the phone can't reach Apple's or Google's speech service.
+  - Every such failure is also written down on the machine: `GET /api/client-log` (or
+    `client-log.jsonl` in termhub's data dir) shows the code, the URL, and whether the page was
+    the home-screen app — no screenshot needed.
 ### Voice commands
 
 Say **"Sputnik"** and the rest of the sentence drives termhub instead of being typed at the

@@ -127,7 +127,8 @@ The `front` answers `GET /api/health` itself (front up +
 sessiond reachable) for the updater's probe, `GET /api/update/check` (`?force=1` to skip the
 60s cache), and `GET /api/secure-url` → `{secureUrl}`, the HTTPS address Tailscale Serve publishes
 this front on (`null` when it publishes none — see *Secure context* below) — all three are handled
-by the front and never proxied. So is `POST /api/exec` — run one argv, no shell, get `{code, stdout, stderr}` (see *Running a command*). `/api/health` returns
+by the front and never proxied. So is `POST /api/client-log` / `GET /api/client-log[?n=]` (see
+*Client log* under the voice layer). So is `POST /api/exec` — run one argv, no shell, get `{code, stdout, stderr}` (see *Running a command*). `/api/health` returns
 `{ok, front, self:{entry,pid,port,commit,sessiondPort}, sessiond}`, with `self` present on the 503
 path too; the updater checks `self.pid`/`self.commit` to confirm green is the process it started
 running the commit it just pulled. Terminal stream: WebSocket `/ws/term/:id` with JSON
@@ -959,11 +960,39 @@ so past two queued announcements the rest collapse into "3 more sessions are wai
   and independent of the queue.
 - The mic closes after 45 s of silence, enforced both on `onend` and by a watchdog timer (a
   recogniser that never ends would otherwise sit on the microphone forever). A toast says so.
+- **Name the error, and show it even when the strip is gone.** Every real `onerror` code maps to a
+  cause and a fix in `web/speechErrors.js` (pure, `test/speechErrors.test.js`), with the raw code
+  in brackets. `service-not-allowed` is *not* a site permission — on iOS it is Dictation/Siri off
+  (and, in the home-screen app, historically speech recognition being unavailable there) — and it
+  used to share "microphone blocked for this site" with `not-allowed`. The message goes in a
+  **toast**, not only `voice.status`: when nothing is armed the voice strip hides the moment
+  `rec.want` drops, so before this a terminal error, or five `network`/`audio-capture` failures in
+  a row, left the 🎤 tap doing visibly nothing (reproduced on an emulated iPhone with a stubbed
+  recogniser). `language-not-supported` switches the recogniser to `en-US` once instead of
+  retrying a language that cannot work; the wake word and commands are English anyway.
+- **No warm-up recogniser when 🎤 itself is the unlock tap.** `enableVoice({warm:false})` from
+  `onMicKey`: the real recogniser starts in the same tick, and two started back to back race — in
+  Chromium the second silently ends the first (no `onstart`, no `onerror`), and the warm-up's
+  delayed `abort()` then lands on what is by then the real one's engine. The *Enable voice* button
+  still warms up, because nothing follows it immediately.
 - `hello` reports who is *armed*, not who is *waiting*, and the server never re-announces a turn.
   So on every connect the page asks `/api/sessions/:id/voice/summary` for each armed session —
   without it, reloading (or iOS discarding the tab) while Claude waits means permanent silence.
 - A summary can come back empty (a reply that was only a code block flattens to `""`, and
   `/api/tts` rejects that with a 400). It falls back to "<title> is waiting on you."
+
+### Client log (`lib/clientLog.js`)
+
+A phone has no console, so the page reports its own failures: `clientLog(event, fields)` in
+`web/app.js` posts speech-recognition error codes (`speech-error`, with `attempt`), a recogniser
+`start()` that throws, a 🎤 tap that cannot work here (`mic-unavailable`: insecure origin or no
+Web Speech), and uncaught exceptions/rejections. Each line also carries the origin, `secure`,
+`standalone` (home-screen app), `navigator.language`, visibility and the User-Agent — the facts
+that decide which mobile failure it was. The front appends them to `<data dir>/client-log.jsonl`
+(rolls to `.1` past 512 KB) and serves the tail at `GET /api/client-log?n=50`. Bounded because any
+tailnet page can write to it: 8 KB body, 24 clipped fields, 60 lines/minute across all clients,
+and the usual CSRF guard on the POST. The page caps itself at 40 posts per load. Fire and forget:
+an old front without the route 404s it and nothing else happens.
 
 ### Voice commands (`web/voiceCommands.js` + the command section of `web/app.js`)
 

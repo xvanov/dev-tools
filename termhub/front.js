@@ -35,6 +35,7 @@ const transcripts = require('./lib/transcripts');
 const execRoute = require('./lib/exec');
 const { checkRequest, checkUpgrade, refuseUpgrade, learnSelfNamesAndWarn } = require('./lib/requestGuard');
 const cursorTranscripts = require('./lib/cursorTranscripts');
+const { createClientLog } = require('./lib/clientLog');
 
 const WEB_DIR = path.join(__dirname, 'web');
 
@@ -99,8 +100,10 @@ function pingSessiond(sessiondPort, timeoutMs = 2000) {
 }
 
 // `paUrl` is for tests; left undefined, TERMHUB_PA_URL decides (see lib/paProxy.js).
-function createFront({ sessiondPort, port: serverPort = DEFAULT_FRONT_PORT, paUrl }) {
+// `clientLogDir` is for tests too; left undefined, the data dir (lib/paths.js).
+function createFront({ sessiondPort, port: serverPort = DEFAULT_FRONT_PORT, paUrl, clientLogDir }) {
   const handlePa = createPaProxy(paUrl === undefined ? resolvePaUrl() : resolvePaUrl({ TERMHUB_PA_URL: paUrl }));
+  const clientLog = createClientLog(clientLogDir ? { dir: clientLogDir } : {});
   const server = http.createServer((req, res) => {
     const url = new URL(req.url, 'http://localhost');
     const { pathname } = url;
@@ -166,6 +169,10 @@ function createFront({ sessiondPort, port: serverPort = DEFAULT_FRONT_PORT, paUr
     // (lib/exec.js). Here, not in sessiond, for the same reason as transcripts;
     // guarded against cross-origin and rebound-DNS browsers (lib/requestGuard.js).
     if (execRoute.handle(req, res, url, { sendJson })) return undefined;
+
+    // Browser-side failures (the phone's mic errors, mostly), one JSON line
+    // each, so they can be read off the machine — lib/clientLog.js.
+    if (clientLog.handle(req, res, url, { sendJson })) return undefined;
 
     // Read-only Claude transcripts for the personal assistant on another
     // machine. Here, not in sessiond, so an update ships it (lib/transcripts.js).

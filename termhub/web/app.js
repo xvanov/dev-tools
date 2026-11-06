@@ -86,6 +86,49 @@ async function api(path, opts) {
   return body;
 }
 
+// ---- client log: browser failures, kept on the machine ----------------------
+// A phone has no console, and "the mic gives weird errors" is not a diagnosis.
+// Failures worth knowing about (speech-recognition error codes, mic taps that
+// can't work here, uncaught exceptions) go to `POST /api/client-log`, one JSON
+// line each, readable with `GET /api/client-log` (lib/clientLog.js). Fire and
+// forget: logging must never be the thing that breaks the page, and an old
+// front without the route just 404s it. Capped per page load as well as on the
+// server, so a loop gone wrong can't flood either side.
+const IS_IOS = /iP(hone|ad|od)/.test(navigator.userAgent)
+  || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+function isStandalone() {
+  try {
+    return navigator.standalone === true
+      || (!!window.matchMedia && window.matchMedia('(display-mode: standalone)').matches);
+  } catch { return false; }
+}
+let clientLogBudget = 40;
+function clientLog(event, fields) {
+  if (clientLogBudget <= 0) return;
+  clientLogBudget -= 1;
+  try {
+    const body = JSON.stringify({
+      event,
+      ...(fields || {}),
+      href: location.origin + location.pathname,
+      secure: window.isSecureContext !== false,
+      standalone: isStandalone(),
+      lang: navigator.language || '',
+      visibility: document.visibilityState,
+    });
+    fetch('/api/client-log', withGuard({
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body, keepalive: true,
+    })).catch(() => {});
+  } catch {}
+}
+window.addEventListener('error', (e) => {
+  clientLog('window-error', { message: e && e.message, source: e && e.filename, line: e && e.lineno });
+});
+window.addEventListener('unhandledrejection', (e) => {
+  const r = e && e.reason;
+  clientLog('unhandled-rejection', { message: r && (r.message || String(r)), name: r && r.name });
+});
+
 // ---- data refresh ---------------------------------------------------------
 
 // A cheap fingerprint of everything the sidebar renders from. The 2s poll
@@ -1846,6 +1889,8 @@ const rec = {
   openedAt: 0,           // when this listening stretch began (see onBusy)
   restartTimer: null,
   errors: 0,             // consecutive REAL errors ('aborted'/'no-speech' don't count)
+  lastError: '',         // the last real error code, named when the loop gives up
+  lang: '',              // overrides navigator.language after 'language-not-supported'
   denied: false,
   warmed: false,
 };
@@ -1926,7 +1971,7 @@ function sendBlip() {
 
 // The one gesture iOS demands. Must stay fully synchronous: every unlock here
 // only counts while we're still inside the tap's call stack.
-function enableVoice() {
+function enableVoice({ warm = true } = {}) {
   const Ctx = window.AudioContext || window.webkitAudioContext;
   if (Ctx && !voice.ctx) { try { voice.ctx = new Ctx(); } catch {} }
   if (voice.ctx) {
@@ -1948,7 +1993,7 @@ function enableVoice() {
     voice.audio = el;
     playBlob(silentWav(60));
   }
-  warmUpRecognition();
+  if (warm) warmUpRecognition();
   voice.unlocked = true;
   // "Enable voice" is one button, so it had better mean voice is on. Requiring
   // a second, separate 🔊 tap on the session row is a distinction the user does
@@ -2245,6 +2290,7 @@ function listenFor(sessionId) {
   rec.want = true;
   rec.sessionId = sessionId;
   rec.errors = 0;
+  rec.lastError = '';
   bumpIdle();
   armRecognition();
   renderVoice();
@@ -2268,7 +2314,7 @@ function armRecognition() {
   if (rec.sr) { vlog('rearm skipped: recogniser already live'); return; }
   let sr;
   try { sr = new SpeechRec(); } catch { rec.want = false; renderVoice(); return; }
-  sr.lang = navigator.language || 'en-US';
+  sr.lang = rec.lang || navigator.language || 'en-US';
   sr.continuous = false;     // ignored on iOS anyway — one utterance per start
   sr.interimResults = true;  // the undo window is driven off these
   sr.maxAlternatives = 1;
@@ -2279,18 +2325,35 @@ function armRecognition() {
   sr.onresult = (ev) => handleResult(ev);
   sr.onerror = (ev) => {
     const err = ev && ev.error;
-    if (err === 'not-allowed' || err === 'service-not-allowed') {
-      // The only genuinely terminal one: the user (or the OS) said no.
-      rec.denied = true;
-      rec.want = false;
-      voice.status = 'microphone blocked for this site';
-      return;
-    }
+    vlog('onerror ' + err);
     // 'aborted' is what you get for stopping a recogniser that heard nothing,
     // and 'no-speech' is a quiet room. Both are ordinary punctuation in a
     // hands-free loop — re-arm (in onend) and say nothing about it.
-    vlog('onerror ' + err);
-    if (err !== 'aborted' && err !== 'no-speech') rec.errors += 1;
+    if (SpeechErrors.isBenign(err)) return;
+    rec.lastError = err || 'unknown';
+    clientLog('speech-error', {
+      error: rec.lastError, message: ev && ev.message, srLang: sr.lang, attempt: rec.errors + 1,
+    });
+    if (SpeechErrors.isTerminal(err)) {
+      // The user (or the OS) said no. Retrying can't help, so stop and say
+      // WHICH no: `service-not-allowed` is Dictation/Siri being off on iOS,
+      // not a site permission, and calling both "microphone blocked for this
+      // site" sent the user to a settings page that was already fine.
+      rec.denied = true;
+      rec.want = false;
+      voice.status = SpeechErrors.describe(err, { ios: IS_IOS, standalone: isStandalone() });
+      toast(voice.status, 'err').close(12000);
+      return;
+    }
+    // A phone set to a language the recogniser can't do. Everything on top of
+    // it (the wake word, commands, the read-back) is English anyway, so fall
+    // back once rather than spend five retries failing identically.
+    if (err === 'language-not-supported' && rec.lang !== 'en-US') {
+      rec.lang = 'en-US';
+      toast(SpeechErrors.describe(err), 'ok').close(5000);
+      return;
+    }
+    rec.errors += 1;
   };
   sr.onend = () => {
     vlog('onend');
@@ -2313,7 +2376,12 @@ function armRecognition() {
   };
 
   try { sr.start(); vlog('start() called'); }
-  catch { vlog('start() THREW'); rec.sr = null; rec.restartTimer = setTimeout(armRecognition, 500); }
+  catch (e) {
+    vlog('start() THREW');
+    clientLog('speech-start-threw', { name: e && e.name, message: e && e.message });
+    rec.sr = null;
+    rec.restartTimer = setTimeout(armRecognition, 500);
+  }
 }
 
 function stopListening(reason) {
@@ -2334,7 +2402,12 @@ function stopListening(reason) {
     voice.status = 'mic off — quiet for a while. Tap 🎤 to talk';
     toast('Mic closed after 45s of silence — tap 🎤 to talk', 'ok').close(6000);
   } else if (reason === 'error' && wasOn) {
-    voice.status = 'speech recognition keeps failing — tap 🎤 to retry';
+    // Name the cause: "keeps failing" alone was the "weird error" — the code
+    // that decides what to do about it (mic busy? no internet?) was dropped.
+    voice.status = rec.lastError
+      ? SpeechErrors.describe(rec.lastError, { ios: IS_IOS, standalone: isStandalone() })
+      : 'speech recognition keeps failing — tap 🎤 to retry';
+    toast(voice.status, 'err').close(12000);
   } else if (reason === 'off' && wasOn) {
     voice.status = 'mic off';
   }
@@ -2369,6 +2442,7 @@ function handleResult(ev) {
     if (r.isFinal) final += txt; else interim += txt;
   }
   rec.errors = 0;
+  rec.lastError = '';
   bumpIdle();                       // someone's talking; keep the mic open
   const heardFinal = final.trim();
   const heardInterim = interim.trim();
@@ -2997,7 +3071,15 @@ function measureChrome() {
 function onMicKey() {
   // This tap is a user gesture — the only place the audio unlock can happen —
   // so do it here too rather than making the user find the other button.
-  if (!voice.unlocked) enableVoice();
+  //
+  // No warm-up recogniser when the mic tap itself unlocks: listenFor() below
+  // starts the real one in the same tick, and two recognisers started
+  // back-to-back race — in Chromium the second silently kills the first (it
+  // ends with no start and no error), and the warm-up's delayed abort() lands
+  // on an engine that is by then the real one's. The real start pays the
+  // one-off first-start cost instead, which is the cost the user is asking
+  // to pay by tapping 🎤.
+  if (!voice.unlocked) enableVoice({ warm: false });
   if (rec.want) { stopListening('off'); return; }
   // Whatever you're looking at is what you're talking to; only fall back to the
   // last-announced session when nothing is open in front of you. Checked before
@@ -3010,6 +3092,7 @@ function onMicKey() {
     // No Web Speech at all (desktop Firefox), or an insecure origin where the
     // API simply isn't exposed. Either way: fall back to typing into the same
     // box a cancelled utterance lands in — same destination, same Enter.
+    clientLog('mic-unavailable', { reason: SECURE ? 'no-speech-recognition' : 'insecure-context' });
     if (!SECURE) toast(secureHint(), 'err').close(9000);
     else toast('This browser has no speech recognition — type it instead', 'err').close(6000);
     openVoiceEditor(target, '');
