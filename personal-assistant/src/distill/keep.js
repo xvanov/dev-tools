@@ -54,4 +54,4 @@ function plan(existing, extracted) {
   return { keep: [...keep], remove: untouched.filter((c) => !keep.has(c.id)).map((c) => c.id), insert };
 }
 
-module.exports = { plan, same };
+module.exports = { plan, same, words };

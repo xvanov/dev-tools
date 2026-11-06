@@ -443,7 +443,11 @@ distillation:
    the same subject and judged ADD, SUPERSEDE, DUPLICATE or NOOP. Superseding closes the old
    claim's clocks (`invalid_at`, `expired_at`) and keeps it: memory is bitemporal, so what was
    believed when is still answerable. The same pass sets `commitment.superseded_by` when a newer
-   commitment restates an older open one to the same person.
+   commitment restates an older open one in the same direction from the same item, thread or
+   person — compared with the most alike of those, not just the most recent. A near-verbatim
+   repeat (same words, same numbers and refs) is folded without a model call; the rest go to the
+   judge. The newer one survives, unless only the older one has been acted on (a run, a draft, a
+   ledger entry, your hand) — then the newer one is the one folded.
 3. **Pages** (hourly) — a markdown page per person you actually work with and per project with
    something known, rebuilt only when its claims or commitments changed, every line citing
    `[#item]`.

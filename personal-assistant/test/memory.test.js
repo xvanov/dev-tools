@@ -224,4 +224,32 @@ const m = require('../src/memory/claims');
   assert.strictEqual(fused.length, 3);
 }
 
+{
+  // Commitment restatements (commitments/dupes.js), on pairs from the board.
+  const d = require('../src/commitments/dupes');
+  // Word-for-word repeats are settled without a model.
+  assert.ok(d.sameAsk('Turn on the shared index ConfigCat flags for the pilot tenants', 'Turn on the shared index ConfigCat flags for pilot tenants'));
+  assert.ok(d.sameAsk('Merge and sync argocdstate#153 to enable indexer pods in production', 'Merge and sync argocdstate#153 to enable indexer pods in production'));
+  // Same words, different refs: different asks.
+  assert.ok(!d.sameAsk('Review ERP PRs 2021-2023 for the documents index', 'Review ERP PRs 2024-2026 for the documents index'));
+  assert.ok(!d.sameAsk('Merge argocdstate#153 after the release', 'Merge argocdstate#154 after the release'));
+  // A rephrasing is not verbatim: that is the judge's call.
+  assert.ok(!d.sameAsk('Tell Cassey who on our side will work with Sierra on Docebo', 'Tell Cassey who should work with Sierra on the Docebo rollout'));
+  assert.ok(d.similarity('Tell Cassey who on our side will work with Sierra on Docebo', 'Tell Cassey who should work with Sierra on the Docebo rollout') > 0.5);
+
+  // The twin is shown to the judge even when it is not among the most recent.
+  const pool = [
+    ...Array.from({ length: 20 }, (_, i) => ({ id: 100 + i, summary: `Unrelated ask number ${i} about billing` })),
+    { id: 7, summary: 'Merge and sync argocdstate#153 to enable indexer pods in production' },
+  ];
+  const near = d.neighbours({ summary: 'Merge and sync argocdstate#153 to enable indexer pods in production' }, pool, 6);
+  assert.strictEqual(near.length, 6);
+  assert.strictEqual(near[0].id, 7);
+
+  // The newer one survives, unless only the older one has been acted on.
+  assert.deepStrictEqual(d.survivor({ id: 9, acted: false }, { id: 3, acted: false }), { keep: 9, drop: 3 });
+  assert.deepStrictEqual(d.survivor({ id: 9, acted: false }, { id: 3, acted: true }), { keep: 3, drop: 9 });
+  assert.deepStrictEqual(d.survivor({ id: 9, acted: true }, { id: 3, acted: true }), { keep: 9, drop: 3 });
+}
+
 console.log('memory ok');
