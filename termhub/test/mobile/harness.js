@@ -74,7 +74,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // ---- the server under test -------------------------------------------------
 
-async function startServer(log) {
+async function startServer(log, extraEnv = {}) {
   // Its own data dir, so a probe run can never touch the real sessions.json /
   // attachments of the deployment on this machine.
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'termhub-mobile-'));
@@ -86,6 +86,7 @@ async function startServer(log) {
     TERMHUB_DATA_DIR: dataDir,
     TERMHUB_NO_WATCHDOG_SETUP: '1',   // a probe must not install a supervisor
     TERMHUB_MACHINE: 'mobile-probe',
+    ...extraEnv,
   };
   const proc = spawn(process.execPath, [path.join(ROOT, 'server.js')], {
     cwd: ROOT, env, stdio: ['ignore', 'pipe', 'pipe'],
@@ -129,7 +130,7 @@ async function startBrowser(opts = {}) {
   const device = pw.devices[opts.device || 'iPhone 15'];
   let browser;
   try {
-    browser = await type.launch({ headless: opts.headless !== false });
+    browser = await type.launch({ headless: opts.headless !== false, args: opts.args || [] });
   } catch (e) {
     if (want === 'webkit') {
       throw new Error(

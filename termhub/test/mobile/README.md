@@ -17,6 +17,14 @@ node test/mobile/probe.js --agent=opencode
 node test/mobile/probe.js --browser=webkit --headed --keep
 ```
 
+`voice.e2e.js` is the one script here that asserts: the 🎤 record → `/api/transcribe` → typed flow
+on an emulated iPhone, with Chromium's fake mic playing a generated tone burst and a fake whisper
+server, against its own throwaway termhub on **7280/7290** (see AGENT.md → *Recorded speech*):
+
+```bash
+TERMHUB_PLAYWRIGHT=/tmp/pw/node_modules/playwright-core node test/mobile/voice.e2e.js
+```
+
 The probe changes nothing and asserts nothing — it's the counterpart to `watchdog/watchdog.sh
 --probe`: a diagnosis you read. It boots a throwaway termhub on ports **7180/7190** with its own
 data dir, so it can never touch the real deployment's `sessions.json` or the live terminals on

@@ -7,6 +7,7 @@
 //   - WS    /ws/term/:id  -> raw socket pipe to the same sessiond
 //   - WS    /ws/voice     -> same, the voice-announcement feed
 //   - HTTP  POST /api/exec -> answered here: runs one argv, returns output + exit code
+//   - HTTP  /api/transcribe -> answered here: a WAV in, whisper's text out (lib/transcribe.js)
 //   - HTTP  /pa/*         -> the personal assistant's dashboard ($TERMHUB_PA_URL,
 //                            default http://127.0.0.1:7300), prefix stripped
 // It owns no terminals, so it can be restarted/replaced at will. Updates start a
@@ -36,6 +37,7 @@ const execRoute = require('./lib/exec');
 const { checkRequest, checkUpgrade, refuseUpgrade, learnSelfNamesAndWarn } = require('./lib/requestGuard');
 const cursorTranscripts = require('./lib/cursorTranscripts');
 const { createClientLog } = require('./lib/clientLog');
+const { createTranscriber } = require('./lib/transcribe');
 
 const WEB_DIR = path.join(__dirname, 'web');
 
@@ -101,9 +103,11 @@ function pingSessiond(sessiondPort, timeoutMs = 2000) {
 
 // `paUrl` is for tests; left undefined, TERMHUB_PA_URL decides (see lib/paProxy.js).
 // `clientLogDir` is for tests too; left undefined, the data dir (lib/paths.js).
-function createFront({ sessiondPort, port: serverPort = DEFAULT_FRONT_PORT, paUrl, clientLogDir }) {
+// `transcribe` is for tests too: options for createTranscriber (env, peer list).
+function createFront({ sessiondPort, port: serverPort = DEFAULT_FRONT_PORT, paUrl, clientLogDir, transcribe }) {
   const handlePa = createPaProxy(paUrl === undefined ? resolvePaUrl() : resolvePaUrl({ TERMHUB_PA_URL: paUrl }));
   const clientLog = createClientLog(clientLogDir ? { dir: clientLogDir } : {});
+  const transcriber = createTranscriber(transcribe || {});
   const server = http.createServer((req, res) => {
     const url = new URL(req.url, 'http://localhost');
     const { pathname } = url;
@@ -173,6 +177,10 @@ function createFront({ sessiondPort, port: serverPort = DEFAULT_FRONT_PORT, paUr
     // Browser-side failures (the phone's mic errors, mostly), one JSON line
     // each, so they can be read off the machine — lib/clientLog.js.
     if (clientLog.handle(req, res, url, { sendJson })) return undefined;
+
+    // Speech to text for the 🎤 button: one WAV per utterance, through this
+    // machine's whisper server or a configured peer's — lib/transcribe.js.
+    if (transcriber.handle(req, res, url, { sendJson })) return undefined;
 
     // Read-only Claude transcripts for the personal assistant on another
     // machine. Here, not in sessiond, so an update ships it (lib/transcripts.js).

@@ -262,6 +262,8 @@ html, body {
 /* Listening is a mode, not a keypress — keep 🎤 lit for as long as the mic is
    open so "am I being heard?" is answerable without reading anything. */
 #mic-key.armed { background: var(--danger); border-color: var(--danger); color: var(--on-signal); }
+/* Hold to talk: no long-press callout, text selection or scroll stealing the press. */
+#mic-key { touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
 #keybar .key {
   flex: 1 0 auto; min-width: 44px; min-height: 38px; padding: 6px 10px;
   background: var(--bg-3); color: var(--fg); border: 1px solid var(--border);
@@ -346,6 +348,7 @@ html, body {
 }
 .toast.err { border-color: var(--danger); color: var(--danger); }
 .toast.ok { border-color: var(--ok); }
+.toast-link { display: inline-block; margin-top: 6px; color: var(--accent); font-weight: 600; text-decoration: underline; }
 
 /* ---- dialog ---- */
 #dialog-backdrop {

@@ -128,7 +128,8 @@ sessiond reachable) for the updater's probe, `GET /api/update/check` (`?force=1`
 60s cache), and `GET /api/secure-url` → `{secureUrl}`, the HTTPS address Tailscale Serve publishes
 this front on (`null` when it publishes none — see *Secure context* below) — all three are handled
 by the front and never proxied. So is `POST /api/client-log` / `GET /api/client-log[?n=]` (see
-*Client log* under the voice layer). So is `POST /api/exec` — run one argv, no shell, get `{code, stdout, stderr}` (see *Running a command*). `/api/health` returns
+*Client log* under the voice layer). So is `GET`/`POST /api/transcribe` (a WAV in, whisper's text
+out — see *Recorded speech*). So is `POST /api/exec` — run one argv, no shell, get `{code, stdout, stderr}` (see *Running a command*). `/api/health` returns
 `{ok, front, self:{entry,pid,port,commit,sessiondPort}, sessiond}`, with `self` present on the 503
 path too; the updater checks `self.pid`/`self.commit` to confirm green is the process it started
 running the commit it just pulled. Terminal stream: WebSocket `/ws/term/:id` with JSON
@@ -994,6 +995,82 @@ tailnet page can write to it: 8 KB body, 24 clipped fields, 60 lines/minute acro
 and the usual CSRF guard on the POST. The page caps itself at 40 posts per load. Fire and forget:
 an old front without the route 404s it and nothing else happens.
 
+### Recorded speech (`/api/transcribe`, `lib/transcribe.js`, `web/voiceCapture.js`)
+
+On a phone the browser's `SpeechRecognition` fails in too many ways termhub can't fix (Dictation
+off, the home-screen app, the phone's language, Android's beep on every `start()`, no route to
+Apple's or Google's service). So when the machine can transcribe, 🎤 records the audio itself and
+the machine turns it into text; Web Speech is the fallback, not the default.
+
+**The page** (`web/voiceCapture.js`, UMD, pure half tested by `test/voiceCapture.test.js`):
+getUserMedia (`echoCancellation`, `noiseSuppression`, `autoGainControl`, mono) → an AudioWorklet
+(`web/micWorklet.js`, 1024-sample batches) or a ScriptProcessor where there is none → a streaming
+box-filter resampler to 16 kHz (the fractional position carries across chunks, so 44.1 kHz does
+not drift) → an energy VAD (the PA's `talk.core.js` one: adaptive floor, `endMs` 700 by default,
+clamped 400–1500, `localStorage['termhub.vadEndMs']`) → a 16-bit mono WAV per utterance →
+`POST /api/transcribe` → the same decisions a recogniser's *final* result gets (`onHeard` in
+`app.js`: pending confirmation, then a wake-word command, then dictation). The capture runs on
+`voice.ctx`, the AudioContext the tap already created and resumed **synchronously**; getUserMedia
+needs no gesture. The file is deliberately free of termhub so the PA's `/talk` page can load
+`/voiceCapture.js` from the same origin instead of keeping its copy.
+
+- **Hold = push-to-talk, tap = hands-free.** `pointerdown` opens the mic at once, recording into a
+  manual buffer, so a hold loses nothing to the 300 ms wait. Release after `HOLD_MS` → flush, close
+  the mic, transcribe and **send immediately** (a release after silence sends nothing — whisper
+  turns silence into "Thank you."). Release sooner → a tap: the buffer is dropped and the same open
+  mic turns hands-free, where each VAD end is one upload and the draft goes after
+  `SEND_SILENCE_MS` exactly as with Web Speech (a VAD `start` freezes the pending send). The
+  click that follows a handled press is swallowed. `#mic-key` has `touch-action: none` and no
+  callout, or iOS turns a hold into a text-selection menu.
+- **Order.** Uploads go out at once; results are applied in the order spoken (`stt.chain`). A
+  deliberate stop (`off`, `taken`) bumps `stt.gen` and late results are dropped.
+- **Backgrounding.** `visibilitychange` → hidden releases the mic (a held press is ended and
+  sent); visible again → a toast and the strip say *tap 🎤 to resume*. Never reopened without a
+  tap — iOS often refuses capture outside a gesture. A mic that delivers no frames for 2.5 s
+  (a context still suspended, a capture iOS took away silently) is closed and logged
+  (`mic-no-frames`); a track that ends (a call, Siri) is `mic-ended`.
+- **Screen Wake Lock** is held while the mic is open and released with it.
+- **One tab holds the mic.** `BroadcastChannel('voice-mic')`, message `{type:'claim', owner, app}`:
+  opening the mic (either engine) claims it, and every other holder stops and toasts. The PA's talk
+  page should post the same claim when it opens its stream (same origin under `/pa/`).
+- **Fallback.** `GET /api/transcribe` at load decides; unknown counts as yes. A `503` (no whisper
+  here or on a peer) or `404` (an old front) flips to Web Speech with a toast naming the reason,
+  and re-asks after a minute. getUserMedia `NotAllowedError` / `NotFoundError` reuse the
+  `speechErrors.js` wording for `not-allowed` / `audio-capture`, with the DOM error name.
+  `localStorage['termhub.voiceEngine'] = 'browser'` prefers Web Speech outright.
+- **Insecure origin**: neither engine exists there; the toast carries the `/api/secure-url`
+  address as a link.
+
+**The server** (`lib/transcribe.js`, front-only, `test/transcribe.test.js` with a fake whisper
+speaking the real TCP protocol and a fake peer):
+
+    GET  /api/transcribe[?local=1] -> {available, backend:'local'|'peer'|null, local:{available,host,port}, peer, reason}
+    POST /api/transcribe  audio/wav -> 200 {text, ms, backend[, peer]}
+                                       400 not a WAV · 413 > 4 MB · 415 not audio/wav · 429 > 40/min
+                                       502 whisper said ERROR · 503 {reason:'no-backend'|'busy'} · 504 timeout
+
+Backend, first that works: **(1) local** — voice-dictation's `transcribe_server.py` at
+`TERMHUB_TRANSCRIBE_HOST:PORT` (default `127.0.0.1:47821`, falling back to voice-dictation's own
+`TRANSCRIBE_HOST/PORT`). Its protocol is *a path*: the WAV is written to a `0600` temp file, the
+absolute path sent, half-closed, the text read to EOF, the file removed — so it must run on the same
+machine. Reachability is a bare connect (the server answers an empty request with nothing),
+cached 10 s, and a local server that vanishes mid-request is re-checked once before trying a peer.
+**(2) peer** — a configured peer (`lib/peers.js` list only, never a URL from the request; narrowed by
+`TERMHUB_TRANSCRIBE_PEER`, `off` disables) whose `GET /api/transcribe?local=1` says it has a local
+whisper (cached 60 s). The WAV is POSTed there as a program (no Origin, `X-Termhub: 1`,
+`audio/wav`, TLS verified against the ts.net name) with `X-Termhub-Transcribe-Hop: 1`, which makes
+the peer answer from its local backend only — two machines pointed at each other cannot loop.
+**(3) none** — 503 with the reason. Guarded like every mutating route (X-Termhub, non-simple
+Content-Type, Host/Origin), plus a RIFF/WAVE check before anything is written, 40 uploads/min
+across clients, and 2 in flight with 4 queued (overflow is `503 busy`). `TERMHUB_TRANSCRIBE=off`
+turns it all off. Client-log events: `mic-open-failed`, `mic-ended`, `mic-no-frames`,
+`transcribe-failed`.
+
+`test/mobile/voice.e2e.js` drives the whole flow on an emulated iPhone (Chromium, fake media
+device playing a generated tone burst, a fake whisper) against a throwaway termhub on 7280/7290:
+push-to-talk, hands-free, backgrounding, another tab's claim, the 503 fallback, the insecure-origin
+link. It is Chromium, not iOS: it proves the logic and the API surface, not Safari's audio session.
+
 ### Voice commands (`web/voiceCommands.js` + the command section of `web/app.js`)
 
 An utterance that **begins** with the wake word drives termhub and never reaches the agent;
@@ -1084,10 +1161,10 @@ which network latency (phone → Tailscale → front → sessiond) makes less li
 and the 200 ms is applied in the browser so it is a floor on the separation before the second
 write is even sent. Ordering is guaranteed regardless — both go down the same WebSocket.
 
-**Secure context.** `SpeechRecognition` is only exposed to a secure origin, so on the plain
+**Secure context.** `SpeechRecognition` and getUserMedia are only exposed to a secure origin, so on the plain
 `http://<tailnet-ip>:7000` URL there is no microphone. Playback works there and is left enabled;
-voice *input* is disabled with the HTTPS address to switch to shown, and 🎤 falls back to the same
-text box a browser without speech recognition gets. This is the same constraint
+voice *input* is disabled with the HTTPS address to switch to shown (a tappable link in the 🎤
+toast), and 🎤 falls back to the same text box a browser without speech recognition gets. This is the same constraint
 `navigator.clipboard` has (see `execCopyFallback`) — which is why "paste doesn't work on my phone"
 and "the mic stopped working" are usually one bug reported twice.
 
@@ -1966,7 +2043,8 @@ user actually meant to paste.
 | A voice command did nothing | Wake word missed, or wasn't at the start | Commands fire on finals only and only utterance-initial. A parsed-but-unknown command says "didn't catch that" and is dropped. `npm test` covers the matcher; add real mishearings to `KNOWN_VARIANTS` in `web/voiceCommands.js` |
 | A dictated sentence vanished | A false wake-word fire would do this | It shouldn't — `npm test` asserts against a near-miss list. If you find one, add it to `NEAR_MISSES` and tighten the variants; do not add fuzzy matching |
 | Armed, but the strip stays amber and nothing plays | Browsers won't play audio before a user gesture | Tap **Enable voice**. Once per page load; the toggles turn from amber to blue |
-| 🎤 does nothing but open a text box | No `SpeechRecognition`, or an insecure origin | Speech recognition needs a secure context — use the machine's MagicDNS HTTPS address, not `http://<tailnet-ip>:7000`. The strip names it, read from Serve (`curl -s http://<host>:7000/api/secure-url`); if that says `null`, Serve isn't publishing this front. Desktop Firefox has no Web Speech at all; the text box is the fallback |
+| 🎤 says "transcribing on the machine isn't available" | No whisper here and no peer with one | `curl -s localhost:7000/api/transcribe` names why. Start voice-dictation's server on this machine (`systemctl --user status voice-dictation` / the `VoiceDictationServer` task, port 47821), or put a machine that has one in the peer list (`TERMHUB_PEERS` / **+ find machines**). Until then 🎤 uses the browser's recogniser |
+| 🎤 does nothing but open a text box | No `SpeechRecognition` and no getUserMedia, or an insecure origin | Speech recognition needs a secure context — use the machine's MagicDNS HTTPS address, not `http://<tailnet-ip>:7000`. The strip names it, read from Serve (`curl -s http://<host>:7000/api/secure-url`); if that says `null`, Serve isn't publishing this front. Desktop Firefox has no Web Speech at all; the text box is the fallback |
 | 🎤 names an HTTPS address that won't connect | Pre-fix client, or a cert/name mismatch | Old builds fabricated `https://<location.hostname>:7443/`, which can't work from the tailnet IP — Serve's cert covers only the MagicDNS name. Update the front. If a *current* build's address fails, the phone can't resolve MagicDNS: enable it in the Tailscale app |
 | Can't select or copy anything out of the terminal on a phone | There is no text in the DOM to select | Structural, not a missing gesture: the WebGL renderer draws into a `<canvas>` and `user-select` is `none`. Use the **Copy** key in the pinned tool group — it renders the buffer as real selectable text (Screen / All scrollback, plus Copy all) |
 | Pasting several lines into Claude Code sent several prompts | Raw newlines, no bracketed paste | Fixed in `pasteInto()`: newlines become `\r` and the block is wrapped in `ESC [200~ … ESC [201~` when the app enables mode 2004. Without the wrapper each newline is a separate Enter |

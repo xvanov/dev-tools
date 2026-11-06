@@ -327,9 +327,25 @@ first when one of them has died.
   - The mic is never open while audio is playing (on Bluetooth headphones every switch flips
     the audio route, so termhub does it as rarely as it can), and it closes itself after 45
     seconds of silence rather than listening to an empty room. A toast tells you when it does.
-- **🎤 (key bar)** — talk to the session you're looking at without waiting to be asked. Tap
-  once to listen, again to stop. On a browser with no speech recognition it opens a text box
-  that sends the same way, so the button always does something.
+- **🎤 (key bar)** — talk to the session you're looking at without waiting to be asked.
+  **Hold** it to talk (push-to-talk: it records while held and sends when you let go — the way to
+  use it on a phone), or **tap** it to listen hands-free and tap again to stop. On a browser with
+  no way to listen it opens a text box that sends the same way, so the button always does
+  something.
+  - When the machine can transcribe, your voice never goes to Apple or Google: the page records
+    the audio itself and sends it to `POST /api/transcribe`, which runs it through
+    [voice-dictation](../voice-dictation)'s faster-whisper server on this machine — or, if this
+    machine has none, on a peer termhub that has one (e.g. a laptop with a GPU; it must be in
+    this machine's peer list). That sidesteps Dictation settings, the home-screen app, the
+    phone's language and Android's beep. With no whisper anywhere, 🎤 falls back to the
+    browser's own speech recognition and a toast says why.
+  - While it listens, the screen is kept on (Screen Wake Lock). Switching away from the page
+    releases the mic; coming back says *tap 🎤 to resume*. Only one tab holds the mic: opening it
+    in another termhub tab (or the PA's talk page) releases it here.
+  - On a plain-HTTP address the mic can't work at all; the toast links the HTTPS address.
+  - Tuning (per browser, `localStorage`): `termhub.vadEndMs` (default 700) is how long a pause
+    ends a hands-free utterance; `termhub.voiceEngine = 'browser'` prefers the browser's speech
+    recognition.
   - When the mic can't work, a toast says why and what to do, with the browser's error code in
     brackets: *(service-not-allowed)* is Dictation turned off on the iPhone (Settings › General ›
     Keyboard › Enable Dictation), *(not-allowed)* is the site's microphone permission,
@@ -534,7 +550,10 @@ All optional environment variables:
 | `TERMHUB_NTFY_SERVER` | `https://ntfy.sh` | Point at a self-hosted ntfy instead |
 | `TERMHUB_PA_URL` | `http://127.0.0.1:7300` | The personal assistant's dashboard, proxied at `/pa/` (Host rewritten to the PA's loopback address, `X-PA` forwarded). **Empty disables it.** Anyone who can reach termhub can reach the PA through it — no new capability, since they already have shells; see `AGENT.md` → *The PA proxy* |
 | `TERMHUB_ALLOWED_HOSTS` | — | Extra hostnames (comma-separated) termhub accepts in `Host` on `/api/*`, `/pa/*` and websockets. **Exact match** — case-insensitive, port and trailing dot ignored, no wildcards or suffixes. Always accepted without it: loopback, IP literals, this machine's hostname / `TERMHUB_MACHINE` (full or first label), and this machine's own MagicDNS name as `tailscale status --json` reports it (`Self.DNSName`, learned at startup). Other `*.ts.net` names are **not** accepted. Needed if you reach termhub by any other name — a custom DNS name, a `/etc/hosts` alias, or the MagicDNS name on a machine where `tailscale` is not on termhub's PATH (otherwise the UI loads but every API call answers 403); see `AGENT.md` → *Security notes* |
-| `TERMHUB_PEERS` | — | Other termhub machines for the dashboard's machine strip, `host:port,host:port`. Wins over `<data dir>/peers.json`, which **+ find machines** writes |
+| `TERMHUB_PEERS` | — | Other termhub machines for the dashboard's machine strip, `host:port,host:port`. Wins over `<data dir>/peers.json`, which **+ find machines** writes. Also the only machines 🎤 may borrow a whisper server from (below) |
+| `TERMHUB_TRANSCRIBE_HOST` / `_PORT` | `127.0.0.1` / `47821` | The [voice-dictation](../voice-dictation) faster-whisper server 🎤 transcribes with (`POST /api/transcribe`). Must run on **this** machine: its protocol hands over a file path. voice-dictation's own `TRANSCRIBE_HOST`/`_PORT` are read as a fallback |
+| `TERMHUB_TRANSCRIBE_PEER` | any | Which configured peer may transcribe for this machine when it has no whisper of its own: unset = the first peer whose `GET /api/transcribe?local=1` says it has one; a host or URL = only that peer; `off` = never forward |
+| `TERMHUB_TRANSCRIBE` | on | `off` turns server-side transcription off; 🎤 then uses the browser's speech recognition |
 
 On Linux set these with `systemctl --user edit termhub`; on Windows via `setx` + restart the task.
 

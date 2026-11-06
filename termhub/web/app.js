@@ -886,12 +886,22 @@ function connect(t) {
 // toast's handle still works, it just updates an element nobody can see.
 const MAX_TOASTS = 4;
 
-function toast(text, kind) {
+// `link` ({href, label}) adds one tappable link under the text — the HTTPS
+// address on a plain-HTTP page, where copying a URL off a toast is no answer.
+function toast(text, kind, link) {
   const box = $('#toasts');
   while (box.children.length >= MAX_TOASTS) box.firstChild.remove();
   const el = document.createElement('div');
   el.className = 'toast' + (kind ? ' ' + kind : '');
   el.textContent = text;
+  if (link && link.href) {
+    const a = document.createElement('a');
+    a.href = link.href;
+    a.textContent = link.label || link.href;
+    a.className = 'toast-link';
+    el.appendChild(document.createElement('br'));
+    el.appendChild(a);
+  }
   // Tap to dismiss — an error can be several lines long, and the user needs a
   // way to get it off the screen once they've read it.
   el.addEventListener('click', () => el.remove());
@@ -1782,7 +1792,12 @@ const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
 // not a constant. `/api/secure-url` reads both off Serve's own config, and
 // answers null rather than guessing. See lib/serveUrl.js.
 const SECURE = window.isSecureContext !== false;
-const canListen = () => !!SpeechRec && SECURE;
+// getUserMedia is what the server-side transcription path records with
+// (web/voiceCapture.js -> POST /api/transcribe). Like Web Speech it exists only
+// in a secure context: on plain HTTP `navigator.mediaDevices` is undefined.
+const HAS_GUM = SECURE && !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia)
+  && !!(window.AudioContext || window.webkitAudioContext);
+const canListen = () => SECURE && (!!SpeechRec || HAS_GUM);
 
 // Three outcomes, not two, and collapsing them is how this message goes back to
 // lying. "Serve publishes nothing for this front" is a fact worth stating; "the
@@ -2007,7 +2022,7 @@ function enableVoice({ warm = true } = {}) {
   // Playback works fine on the plain-HTTP origin; only the microphone doesn't.
   // Say which half the user is getting, and where the other half lives.
   if (!SECURE) voice.line = `🎤 ${secureHint()}`;
-  else if (!SpeechRec) voice.line = '🎤 This browser has no speech recognition — 🎤 opens a text box instead';
+  else if (!SpeechRec && !HAS_GUM) voice.line = '🎤 This browser has no speech recognition — 🎤 opens a text box instead';
   renderVoice();
   syncSidebar();
 }
@@ -2292,7 +2307,8 @@ function listenFor(sessionId) {
   rec.errors = 0;
   rec.lastError = '';
   bumpIdle();
-  armRecognition();
+  if (useServerStt()) startServerCapture('handsfree');
+  else { micOwner.claim(); armRecognition(); }
   renderVoice();
 }
 
@@ -2398,6 +2414,12 @@ function stopListening(reason) {
   const sr = rec.sr;
   rec.sr = null;
   if (sr) { try { (sr.abort || sr.stop).call(sr); } catch {} }  // → onerror 'aborted', benign
+  // The recorded-audio engine: release the mic, the wake lock and the claim.
+  // A deliberate stop (or another tab taking the mic) also drops whatever is
+  // still being transcribed — the same as aborting a recogniser mid-utterance.
+  if (reason === 'off' || reason === 'taken') stt.gen += 1;
+  stopServerCapture();
+  micOwner.release();
   if (reason === 'idle' && wasOn) {
     voice.status = 'mic off — quiet for a while. Tap 🎤 to talk';
     toast('Mic closed after 45s of silence — tap 🎤 to talk', 'ok').close(6000);
@@ -2410,9 +2432,395 @@ function stopListening(reason) {
     toast(voice.status, 'err').close(12000);
   } else if (reason === 'off' && wasOn) {
     voice.status = 'mic off';
+  } else if (reason === 'hidden' && wasOn) {
+    voice.status = 'mic paused while the page was hidden — tap 🎤 to resume';
+  } else if (reason === 'taken' && wasOn) {
+    voice.status = 'mic is in use in another tab — tap 🎤 to take it back';
   }
   renderVoice();
 }
+
+// ---- speech in, recorded here and transcribed on the machine ------------------
+//
+// The browser's SpeechRecognition is the least dependable part of the loop on a
+// phone: Dictation switched off, the home-screen app, the phone's language,
+// Android's beep on every start(), no route to Apple's or Google's service. So
+// when the machine can transcribe (`GET /api/transcribe` -> available: its own
+// voice-dictation whisper, or a peer termhub's), 🎤 records here instead:
+// getUserMedia -> AudioWorklet (ScriptProcessor on old Safari) -> 16 kHz ->
+// energy VAD -> one WAV per utterance -> `POST /api/transcribe` -> the same
+// command/draft handling a recogniser's final result gets. The capture code is
+// web/voiceCapture.js, shared with the PA's /talk page.
+//
+// Two ways to talk:
+//   hold 🎤   push-to-talk: records while held, sends on release. The gesture
+//             for a phone — no open mic on a speaker, no VAD guessing.
+//   tap 🎤    hands-free: the VAD ends each utterance after ~700 ms of quiet
+//             (`localStorage['termhub.vadEndMs']`, 400-1500), and the draft
+//             goes after SEND_SILENCE_MS, exactly as with Web Speech.
+// Web Speech stays the fallback: a 503 from /api/transcribe (no whisper here or
+// on any peer), no getUserMedia, or `localStorage['termhub.voiceEngine'] =
+// 'browser'` to prefer it.
+
+const HOLD_MS = 300;             // a press longer than this is push-to-talk
+const NO_FRAMES_MS = 2500;       // a mic that delivers nothing this long is stuck
+const STT_RECHECK_MS = 60000;    // re-ask /api/transcribe after a "no" this old
+
+const stt = {
+  server: null,        // null = not asked yet, true/false = GET /api/transcribe
+  reason: '',          // why not, when server === false
+  backend: null,       // 'local' | 'peer'
+  checkedAt: 0,
+  checking: null,
+  cap: null,           // VoiceCapture.createMicCapture while the mic is open
+  recorder: null,      // VoiceCapture.createUtteranceRecorder for this stretch
+  resampler: null,
+  rate: 0,
+  mode: null,          // 'ptt' | 'handsfree'
+  ptt: false,          // the 🎤 button is being held
+  pending: 0,          // utterances uploaded, text not back yet
+  chain: Promise.resolve(),   // results are applied in the order they were spoken
+  gen: 0,              // bumped by a deliberate stop: late results are dropped
+  lastSampleAt: 0,
+  noFramesTimer: null,
+  resumeHint: false,   // the mic was on when the page was hidden
+};
+
+const micOwner = VoiceCapture.createMicOwner({
+  app: 'termhub',
+  onTaken: ({ app }) => {
+    if (!rec.want && !stt.cap) return;
+    vlog('mic taken by ' + app);
+    stopListening('taken');
+    toast(`Mic handed to ${app === 'termhub' ? 'another termhub tab' : app} — tap 🎤 to take it back`, 'ok').close(6000);
+  },
+});
+const wakeLock = VoiceCapture.createWakeLock();
+
+function preferBrowserEngine() {
+  try { return localStorage.getItem('termhub.voiceEngine') === 'browser' && !!SpeechRec; } catch { return false; }
+}
+
+function vadEndMs() {
+  let v = NaN;
+  try { v = Number(localStorage.getItem('termhub.vadEndMs')); } catch {}
+  return Number.isFinite(v) && v > 0 ? v : VoiceCapture.VAD_DEFAULTS.endMs;
+}
+
+// Record here and transcribe on the machine? Optimistic while unknown: the
+// first upload answers the question (a 503 flips to Web Speech).
+function useServerStt() {
+  return HAS_GUM && stt.server !== false && !preferBrowserEngine();
+}
+
+function checkServerStt(force) {
+  if (!HAS_GUM) return Promise.resolve(false);
+  if (stt.checking) return stt.checking;
+  if (!force && stt.server !== null && (stt.server || Date.now() - stt.checkedAt < STT_RECHECK_MS)) {
+    return Promise.resolve(stt.server);
+  }
+  stt.checking = api('/api/transcribe')
+    .then((r) => { stt.server = !!r.available; stt.reason = r.reason || ''; stt.backend = r.backend || null; })
+    // An old front has no route (404): the browser engine, as before.
+    .catch(() => { stt.server = false; stt.reason = 'this termhub has no /api/transcribe'; })
+    .then(() => { stt.checkedAt = Date.now(); vlog(`stt server=${stt.server} ${stt.reason}`); return stt.server; })
+    .finally(() => { stt.checking = null; });
+  return stt.checking;
+}
+
+function newRecorder(mode) {
+  return VoiceCapture.createUtteranceRecorder({
+    mode: mode === 'ptt' ? 'manual' : 'vad',
+    vad: { endMs: vadEndMs() },
+  });
+}
+
+// Open the mic (or switch an open one between modes). Called from listenFor()
+// for hands-free and from the 🎤 press for push-to-talk. The AudioContext was
+// created and resumed synchronously in the tap (enableVoice); getUserMedia
+// itself needs no gesture.
+async function startServerCapture(mode) {
+  stt.mode = mode;
+  stt.ptt = mode === 'ptt';
+  if (stt.cap) { stt.recorder = newRecorder(mode); renderVoice(); return; }
+  if (document.hidden) { stt.resumeHint = true; rec.want = false; renderVoice(); return; }
+  if (voice.playing) {
+    // Never open the mic over our own audio (see the echo note at the top).
+    clearTimeout(rec.restartTimer);
+    rec.restartTimer = setTimeout(() => { if (rec.want && !stt.cap) startServerCapture(stt.mode || 'handsfree'); }, REARM_MS);
+    return;
+  }
+  if (!voice.ctx) enableVoice({ warm: false });
+  const ctx = voice.ctx;
+  if (!ctx) { fallBackToBrowser('no AudioContext'); return; }
+  stt.recorder = newRecorder(mode);
+  stt.resampler = null;
+  stt.lastSampleAt = 0;
+  const cap = VoiceCapture.createMicCapture({
+    ctx,
+    onSamples: onMicSamples,
+    onEnded: (why) => {
+      if (stt.cap !== cap) return;
+      clientLog('mic-ended', { why, mode: stt.mode });
+      stopListening('ended');
+      toast('The microphone was taken away (a call, Siri, or another app) — tap 🎤 to talk', 'err').close(8000);
+    },
+  });
+  stt.cap = cap;
+  micOwner.claim();
+  wakeLock.acquire();
+  renderVoice();
+  let info;
+  try {
+    info = await cap.start();
+  } catch (e) {
+    if (stt.cap !== cap) return;   // stopped while the permission prompt was up
+    stt.cap = null;
+    stt.ptt = false;
+    wakeLock.release();
+    micOwner.release();
+    onMicOpenFailed(e);
+    return;
+  }
+  if (stt.cap !== cap) return;
+  vlog(`mic open via ${info.via} @${info.rate}Hz ctx=${info.state}`);
+  clearTimeout(stt.noFramesTimer);
+  stt.noFramesTimer = setTimeout(() => {
+    if (stt.cap !== cap || stt.lastSampleAt) return;
+    // The graph is built and nothing arrives: an AudioContext still suspended
+    // (opened outside a gesture on iOS), or a capture iOS took away silently.
+    clientLog('mic-no-frames', { via: info.via, ctxState: ctx.state, mode: stt.mode });
+    stopListening('ended');
+    toast('The microphone delivers no audio — tap 🎤 again (audio may still be locked)', 'err').close(8000);
+  }, NO_FRAMES_MS);
+}
+
+function onMicOpenFailed(e) {
+  const name = (e && e.name) || 'Error';
+  clientLog('mic-open-failed', { name, message: e && e.message, mode: stt.mode });
+  rec.want = false;
+  if (name === 'NotAllowedError' || name === 'SecurityError') {
+    rec.denied = true;
+    voice.status = `${SpeechErrors.describe('not-allowed', { ios: IS_IOS, standalone: isStandalone() })} [${name}]`;
+    toast(voice.status, 'err').close(12000);
+  } else if (name === 'NotFoundError' || name === 'NotReadableError' || name === 'OverconstrainedError') {
+    voice.status = `${SpeechErrors.describe('audio-capture', { ios: IS_IOS, standalone: isStandalone() })} [${name}]`;
+    toast(voice.status, 'err').close(12000);
+  } else {
+    fallBackToBrowser(`${name}: ${(e && e.message) || ''}`);
+    return;
+  }
+  renderVoice();
+}
+
+// The recorded-audio path cannot work here (no whisper anywhere, no capture):
+// say so once, and carry on with the browser's recogniser if there is one.
+function fallBackToBrowser(why) {
+  stt.server = false;
+  stt.reason = why || stt.reason;
+  stt.checkedAt = Date.now();
+  const sessionId = rec.sessionId || state.activeId;
+  const wanted = rec.want;
+  stopServerCapture();
+  rec.want = false;
+  if (SpeechRec) {
+    toast(`Transcribing on the machine isn't available (${stt.reason}) — using the browser's speech recognition`, 'ok').close(7000);
+    if (wanted && sessionId) listenFor(sessionId);
+  } else {
+    toast(`Transcribing on the machine isn't available (${stt.reason}) — type it instead`, 'err').close(8000);
+    if (sessionId) openVoiceEditor(sessionId, '');
+  }
+  renderVoice();
+}
+
+function stopServerCapture() {
+  clearTimeout(stt.noFramesTimer);
+  const cap = stt.cap;
+  stt.cap = null;
+  stt.recorder = null;
+  stt.ptt = false;
+  if (cap) cap.stop();
+  wakeLock.release();
+}
+
+function onMicSamples(chunk, rate) {
+  if (!stt.cap || !stt.recorder) return;
+  stt.lastSampleAt = Date.now();
+  if (!stt.resampler || stt.rate !== rate) { stt.resampler = VoiceCapture.createResampler(rate, 16000); stt.rate = rate; }
+  const s16 = stt.resampler.push(chunk);
+  if (!s16.length) return;
+  const recorder = stt.recorder;
+  const ev = recorder.push(s16, performance.now());
+  if (!ev) return;
+  if (ev.type === 'start') {
+    vlog('vad start');
+    holdSendTimer();          // talking: the pending send waits for this utterance
+    bumpIdle();
+    voice.status = 'hearing you…';
+    renderVoice();
+  } else if (ev.type === 'end') {
+    vlog('vad end');
+    const ptt = recorder.mode === 'manual';
+    submitUtterance(ev.samples, { ptt });
+    // Push-to-talk ran past its cap: the button is still held, but this stretch is over.
+    if (ptt) { micPress = null; stopListening('ptt'); }
+  } else if (ev.type === 'cancel') {
+    if (voice.draft) restartSendTimer();
+    voice.status = 'listening';
+    renderVoice();
+  }
+}
+
+async function transcribeWav(wav) {
+  const res = await fetch('/api/transcribe', withGuard({
+    method: 'POST', headers: { 'Content-Type': 'audio/wav' }, body: wav,
+  }));
+  let body = {};
+  try { body = await res.json(); } catch {}
+  if (!res.ok) {
+    const err = new Error(body.error || `HTTP ${res.status}`);
+    err.status = res.status;
+    err.reason = body.reason || '';
+    throw err;
+  }
+  return String(body.text || '');
+}
+
+// Uploads go out at once (a second utterance does not wait for the first's
+// text), but their results are applied strictly in the order spoken.
+function submitUtterance(samples, { ptt }) {
+  const sessionId = rec.sessionId;
+  const gen = stt.gen;
+  const wav = VoiceCapture.encodeWav(samples, 16000);
+  stt.pending += 1;
+  renderVoice();
+  const started = Date.now();
+  const result = transcribeWav(wav).then((text) => ({ text }), (err) => ({ err }));
+  stt.chain = stt.chain.then(() => result).then(({ text, err }) => {
+    stt.pending -= 1;
+    if (gen !== stt.gen) { renderVoice(); return; }
+    if (err) { onTranscribeFailed(err); return; }
+    vlog(`transcribed in ${Date.now() - started}ms: ${text.slice(0, 40)}`);
+    onHeard(text, { sessionId, ptt });
+  }).catch((e) => { clientLog('transcribe-apply-threw', { message: e && e.message }); });
+}
+
+function onTranscribeFailed(err) {
+  clientLog('transcribe-failed', { status: err.status || 0, error: err.message, reason: err.reason });
+  // No whisper here or on any peer, or a front that predates the route: the
+  // browser's recogniser takes over. That utterance is gone — say so.
+  if (err.status === 503 && err.reason !== 'busy') {
+    fallBackToBrowser(err.message);
+    toast('Say that again, please', 'ok').close(4000);
+    return;
+  }
+  if (err.status === 404) { fallBackToBrowser('this termhub has no /api/transcribe'); return; }
+  if (voice.draft) restartSendTimer();
+  toast(`Couldn't transcribe that: ${err.message}`, 'err').close(7000);
+  renderVoice();
+}
+
+// A transcript from the machine: the same decisions a recogniser's FINAL result
+// gets in handleResult() — a pending confirmation first, then a wake-word
+// command, then dictation. Push-to-talk sends on release; hands-free banks it
+// in the draft and sends after SEND_SILENCE_MS, so a pause mid-thought still
+// never ends the turn.
+function onHeard(raw, { sessionId, ptt }) {
+  const heard = String(raw || '').trim();
+  bumpIdle();
+  if (!heard || VoiceCapture.isNoise(heard)) {
+    if (voice.draft) restartSendTimer();
+    else if (ptt) voice.status = 'nothing heard — hold 🎤 while you talk';
+    renderVoice();
+    return;
+  }
+  if (voice.confirm) { resolveConfirm(heard); return; }
+  const cmd = VoiceCommands.parse(heard);
+  if (cmd) { runVoiceCommand(cmd); return; }
+  voice.commandHold = false;
+  addToDraft(sessionId || rec.sessionId || state.activeId, heard);
+  if (ptt) sendDraft();
+  else restartSendTimer();
+}
+
+// ---- the 🎤 press: hold = push-to-talk, tap = hands-free ------------------------
+//
+// pointerdown opens the mic straight away (recording into the push-to-talk
+// buffer), so a hold loses no first syllable to the HOLD_MS wait. A release
+// before HOLD_MS was a tap: the buffer is dropped and the same open mic turns
+// hands-free. Only on the recorded-audio path — with Web Speech, the click
+// handler (onMicKey) does what it always did.
+let micPress = null;
+let swallowClickUntil = 0;
+
+function micTarget() {
+  return state.activeId
+    || (rec.sessionId && state.sessions.some((s) => s.id === rec.sessionId && s.alive) ? rec.sessionId : null);
+}
+
+function onMicDown(e) {
+  if (e.button) return;                 // primary button / touch / pen only
+  micPress = null;
+  // Inside the gesture, synchronously: the AudioContext the capture runs on.
+  if (!voice.unlocked) enableVoice({ warm: false });
+  else if (voice.ctx && voice.ctx.state === 'suspended') { try { voice.ctx.resume(); } catch {} }
+  if (stt.server === null || (stt.server === false && Date.now() - stt.checkedAt > STT_RECHECK_MS)) checkServerStt(true);
+  if (rec.want || !canListen() || !useServerStt() || rec.denied) return;   // the click decides
+  const target = micTarget();
+  if (!target) return;
+  try { e.currentTarget.setPointerCapture(e.pointerId); } catch {}
+  micPress = { at: Date.now(), target };
+  rec.want = true;
+  rec.sessionId = target;
+  rec.openedAt = Date.now();
+  voice.line = '';
+  bumpIdle();
+  startServerCapture('ptt');
+}
+
+function onMicUp() {
+  const p = micPress;
+  if (!p) return;
+  micPress = null;
+  swallowClickUntil = Date.now() + 700;
+  if (Date.now() - p.at < HOLD_MS) {
+    // A tap: hands-free on the mic that is already opening.
+    if (!rec.want) return;
+    if (stt.cap) startServerCapture('handsfree');
+    else { stt.mode = 'handsfree'; stt.ptt = false; }
+    voice.status = 'listening';
+    renderVoice();
+    return;
+  }
+  endPushToTalk();
+}
+
+function endPushToTalk() {
+  const out = stt.recorder && stt.recorder.mode === 'manual' ? stt.recorder.flush() : null;
+  stopListening('ptt');
+  if (out) submitUtterance(out.samples, { ptt: true });
+  else { voice.status = 'nothing heard — hold 🎤 while you talk'; renderVoice(); }
+}
+
+// Backgrounded: give the mic back (iOS takes it anyway, and a hidden page must
+// not listen). On return, don't reopen without a tap — iOS often refuses
+// capture outside a gesture — say how to resume instead.
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) {
+    if (stt.cap) {
+      stt.resumeHint = true;
+      if (micPress) { micPress = null; endPushToTalk(); return; }
+      stopListening('hidden');
+    }
+    return;
+  }
+  if (stt.resumeHint) {
+    stt.resumeHint = false;
+    voice.status = 'mic paused while the page was hidden — tap 🎤 to resume';
+    toast('Mic paused while the page was in the background — tap 🎤 to resume', 'ok').close(6000);
+    renderVoice();
+  }
+});
 
 // Where dictation and commands part company.
 //
@@ -3015,7 +3423,7 @@ function renderVoice() {
   const bar = $('#voice-bar');
   if (!bar) return;
   const show = voice.armed.size > 0 || rec.want || !!voice.draft || !!voice.editing
-    || voice.playing || !!voice.confirm;
+    || voice.playing || !!voice.confirm || stt.pending > 0;
   bar.classList.toggle('hidden', !show);
   if (!show) return;
 
@@ -3032,10 +3440,14 @@ function renderVoice() {
     // A pending confirmation outranks everything: it is the only state where
     // the next word said has consequences.
     status = voice.status || 'say yes to confirm';
+  } else if (stt.ptt && stt.cap) {
+    status = 'recording — release to send';
   } else if (voice.draft) {
     // showDraft() owns the wording while dictation is accumulating.
     status = voice.status || 'listening';
-  } else if (rec.want) status = 'listening…';
+  } else if (stt.pending) {
+    status = 'transcribing…';
+  } else if (rec.want) status = voice.status === 'hearing you…' ? voice.status : 'listening…';
   else status = voice.status || 'voice ready';
   // Muting is silent by definition, so the strip is the only place it shows.
   $('#voice-status').textContent = voice.muted && !locked ? `🔇 ${status}` : status;
@@ -3069,6 +3481,9 @@ function measureChrome() {
 }
 
 function onMicKey() {
+  // The press handlers already did this one (push-to-talk, or a tap that
+  // turned hands-free) — the click after the release is not a second tap.
+  if (Date.now() < swallowClickUntil) return;
   // This tap is a user gesture — the only place the audio unlock can happen —
   // so do it here too rather than making the user find the other button.
   //
@@ -3089,11 +3504,14 @@ function onMicKey() {
     || (rec.sessionId && state.sessions.some((s) => s.id === rec.sessionId && s.alive) ? rec.sessionId : null);
   if (!target) { toast('Open a terminal first', 'err').close(3000); return; }
   if (!canListen()) {
-    // No Web Speech at all (desktop Firefox), or an insecure origin where the
-    // API simply isn't exposed. Either way: fall back to typing into the same
-    // box a cancelled utterance lands in — same destination, same Enter.
+    // Neither Web Speech nor getUserMedia, or an insecure origin where neither
+    // is exposed. Either way: fall back to typing into the same box a cancelled
+    // utterance lands in — same destination, same Enter. On plain HTTP the
+    // toast carries the HTTPS address as a link: one tap and the mic works.
     clientLog('mic-unavailable', { reason: SECURE ? 'no-speech-recognition' : 'insecure-context' });
-    if (!SECURE) toast(secureHint(), 'err').close(9000);
+    if (!SECURE) {
+      toast(secureHint(), 'err', secureAddr ? { href: secureAddr, label: 'Open the secure address →' } : null).close(15000);
+    }
     else toast('This browser has no speech recognition — type it instead', 'err').close(6000);
     openVoiceEditor(target, '');
     return;
@@ -3355,6 +3773,11 @@ function wireEvents() {
   // Voice buttons are all plain clicks on purpose: iOS only counts a real click
   // as the gesture that unlocks audio and the microphone.
   $('#mic-key').onclick = onMicKey;
+  // Hold to talk (push-to-talk), on the recorded-audio path; see onMicDown.
+  $('#mic-key').addEventListener('pointerdown', onMicDown);
+  $('#mic-key').addEventListener('pointerup', onMicUp);
+  $('#mic-key').addEventListener('pointercancel', onMicUp);
+  $('#mic-key').addEventListener('contextmenu', (e) => e.preventDefault());   // long-press menu
   $('#voice-unlock').onclick = enableVoice;
   $('#voice-off').onclick = () => stopListening('off');
   $('#voice-again').onclick = readAgain;
@@ -3402,7 +3825,7 @@ if (!isMobile() && localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === '1') setSideb
 // think it has?") that no amount of screenshotting can answer. Read-only by
 // convention; nothing in app.js reads it back.
 window.__termhub = {
-  state, voice, rec, openTerminal, refitActive, isMobile,
+  state, voice, rec, stt, openTerminal, refitActive, isMobile,
   appWantsMouse, onAltBuffer, scrollMode, jumpToBottom, focusTerminal,
   terminalText, openCopySheet, closeCopySheet, pasteInto,
 };
@@ -3428,4 +3851,6 @@ setInterval(backgroundUpdateCheck, UPDATE_POLL_MS); // nudge ~once a day
 // minute) — the PA starting or stopping is rare, and not worth a poll.
 checkPa(true);
 window.addEventListener('focus', () => checkPa());
+// Can this machine (or a peer) transcribe? Decides what 🎤 records with.
+checkServerStt();
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') checkPa(); });
