@@ -97,10 +97,13 @@ function placeForgeRepo(fullName, rows) {
 // PR bodies open with template scaffolding ("## Summary", "Closes #12",
 // checklists) more often than with a sentence. The summary is the first line
 // that reads like prose.
-const SKIP_LINE = /^(#{1,6}\s|[-*]\s*\[[ x]\]|closes\b|fixes\b|resolves\b|refs?\b|related to\b|jira\b|ticket\b|<!--|---|\|)/i;
+// "Closes #12" is scaffolding; "Fixes the export when…" is prose.
+const SKIP_LINE = /^(#{1,6}\s|[-*]\s*\[[ x]\]|(closes|fixes|resolves|refs?|related to)\s*:?\s*(#|https?:|[A-Z]+-\d|[\w.-]+\/[\w.-]+#)|jira\s*:|ticket\s*:|<!--|---|\|)/i;
 
 /**
  * A one-line summary from a PR body, or null when there is no prose in it.
+ * Bodies are often hard-wrapped, so a paragraph's lines are joined before
+ * the first sentence or two is taken from it.
  * @param {string} body
  * @param {number} [max]
  */
@@ -108,18 +111,32 @@ function prSummary(body, max = 220) {
   const text = String(body || '')
     .replace(/<!--[\s\S]*?-->/g, '')
     .replace(/```[\s\S]*?```/g, '');
-  for (const raw of text.split(/\r?\n/)) {
-    let line = raw.trim();
-    if (!line || SKIP_LINE.test(line)) continue;
-    line = line
+  const clean = (line) =>
+    line
       .replace(/^[-*>]\s+/, '')
       .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
       .replace(/[*_`]+/g, '')
       .replace(/\s+/g, ' ')
       .trim();
-    if (line.length < 12 || !/[a-z]{3}/i.test(line)) continue;
-    if (/^(summary|description|what|why|changes|overview|context)\s*:?$/i.test(line)) continue;
-    return line.length > max ? `${line.slice(0, max - 1).trimEnd()}…` : line;
+  // A paragraph ends at a blank line, and a list item starts a paragraph of its own.
+  const paragraphs = [];
+  let cur = [];
+  for (const raw of text.split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line || SKIP_LINE.test(line) || /^[-*]\s/.test(line)) {
+      if (cur.length) paragraphs.push(cur);
+      cur = [];
+      if (line && !SKIP_LINE.test(line)) paragraphs.push([line]);
+      continue;
+    }
+    cur.push(line);
+  }
+  if (cur.length) paragraphs.push(cur);
+  for (const p of paragraphs) {
+    const para = clean(p.map(clean).join(' '));
+    if (para.length < 12 || !/[a-z]{3}/i.test(para)) continue;
+    if (/^(summary|description|what|why|changes|overview|context)\s*:?$/i.test(para)) continue;
+    return para.length > max ? `${para.slice(0, max - 1).trimEnd()}…` : para;
   }
   return null;
 }

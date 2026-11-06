@@ -67,6 +67,12 @@ assert.strictEqual(m.prSummary('<!-- template -->\n**Why:** the [build](http://x
 assert.strictEqual(m.prSummary('## Summary\n- Adds a retry to the uploader when the blob store throttles'), 'Adds a retry to the uploader when the blob store throttles');
 assert.strictEqual(m.prSummary('x'.repeat(10) + ' ' + 'word '.repeat(80), 60).length, 60);
 assert.strictEqual(m.prSummary('```\ncode only\n```'), null);
+assert.strictEqual(
+  m.prSummary('Jira returned a 200 with an error page\nrather than a 401, so search could not tell.\n\nMore.'),
+  'Jira returned a 200 with an error page rather than a 401, so search could not tell.',
+  'a hard-wrapped paragraph is joined'
+);
+assert.strictEqual(m.prSummary('Fixes #4\nFixes the export when a row is empty.'), 'Fixes the export when a row is empty.', '"Fixes" prose is kept, "Fixes #4" is not');
 assert.strictEqual(m.prState({ state: 'MERGED', mergedAt: '2026-01-01' }), 'merged');
 assert.strictEqual(m.prState({ state: 'OPEN' }), 'open');
 assert.strictEqual(m.prState({ state: 'CLOSED' }), 'closed');
