@@ -1027,6 +1027,38 @@ safe (`src/notify/chat.js`):
 `pa notify ack <id>` takes one off the inbox (the chat may run it freely); `pa notify feedback`
 asks first, because it changes how often you are interrupted.
 
+### Talking to it by voice
+
+<http://127.0.0.1:7300/talk> is the same chat with no keyboard: you talk, it talks back, and the
+work happens in the background. A small ASCII face shows what it is doing (listening, thinking,
+talking, pleased when it finishes, worried when something is down), with the latest tool step in
+small print under it. Tap the face (or press Space) once to start: browsers allow the microphone
+and speech only after a gesture. From there, **dashboard** drills down to the cards and the chat in
+text, and **session** opens the PA chat's termhub session.
+
+- **Listening** is hands-free: an energy-based voice detector in the page (`talk.core.js`) notices
+  you start, waits for a pause of about a second, and sends that utterance. Hold Space (or the
+  button) to push-to-talk instead; turn hands-free off in **settings** if the room is noisy.
+- **Transcription** reuses voice-dictation's warm faster-whisper server (`PA_TRANSCRIBE_HOST` /
+  `PA_TRANSCRIBE_PORT`, as capture does): the page sends a 16 kHz WAV to `POST /api/talk/transcribe`,
+  which writes it to a temp file, hands the path to the server, and deletes the file. Whisper's
+  stock filler for silence ("Thank you.", "you") is dropped. The text then goes to `/api/chat` with
+  `source: "voice"`.
+- **Speaking** reads each answer sentence by sentence as it arrives, in the browser's best natural
+  voice (Edge's "Online (Natural)" voices are good; pick another in **settings**). Code blocks,
+  tables and URLs are not read out: it says "the link" or "I put the details on the dashboard"
+  instead. The speech engine is one entry in a table in `talk.page.js`, so a local neural TTS can be
+  added beside it.
+- **Barge-in and echo.** Start talking and it stops. While it speaks, the mic needs three times
+  the usual level for over a third of a second before it counts as you, so its own voice from the
+  speakers is not transcribed. With speakers loud and no headset, tick "stop listening" in
+  **settings** to turn barge-in off.
+
+The microphone needs a secure page: `http://127.0.0.1` or `localhost` on this machine is fine, but
+the plain-HTTP tailnet address through termhub's `/pa/` proxy is not, so the page can still speak
+there but cannot hear. To talk from a phone, put termhub behind HTTPS (for example
+`tailscale serve`, which gives it a certificate on its `*.ts.net` name) and open `/pa/talk` there.
+
 ### The Chat tab and the chat API
 
 The dashboard's **Chat** tab (and the voice page) talk to **the same live session**, not to a
@@ -1099,7 +1131,8 @@ src/meetings/        pre-meeting briefs: classify, gather evidence, learn from t
 src/commitments/     closing chat and mail asks you answered yourself (replyClose.js, pure half in replyCloseCore.js);
                      the cause-and-effect paragraph on cards (context.js, pure half in contextCore.js)
 src/dashboard/       the loopback web page: today, next meeting, replies, runs, secret requests, and the Memory, Chat and Routines tabs;
-                     each card's links to its source, person, repo and session (links.js pure, cards.js)
+                     each card's links to its source, person, repo and session (links.js pure, cards.js);
+                     /talk, the voice page (talk.html + talk.page.js; talk.core.js pure; talk.js serves it and proxies to whisper)
 src/secrets/         secret and login requests; the OS keyring facade (vault.js; stdin only)
 src/platform/        every OS decision: windows.js, linux.js, darwin.js behind one contract (index.js)
 src/routines/        cron parser, the typed action registry (repo_sync, prompt_report), runs, suggestions

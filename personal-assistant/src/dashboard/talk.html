@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PA Talk</title>
+<style>
+  :root {
+    --bg: #f6f5f1;
+    --fg: #23262b;
+    --muted: #7a7f88;
+    --faint: #b9bcc2;
+    --accent: #2f6fdf;
+    --warn: #c0612b;
+    --panel: #ffffff;
+    --line: #e2e0da;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #121417;
+      --fg: #e6e8eb;
+      --muted: #8b919a;
+      --faint: #4a4f57;
+      --accent: #7aa7ff;
+      --warn: #f0a070;
+      --panel: #1b1e23;
+      --line: #2a2e35;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: var(--bg);
+    color: var(--fg);
+    font: 15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 16px;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+  nav {
+    width: 100%;
+    max-width: 640px;
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    font-size: 13px;
+    color: var(--muted);
+  }
+  nav a, nav button {
+    color: var(--muted);
+    background: none;
+    border: 0;
+    padding: 4px 0;
+    font: inherit;
+    cursor: pointer;
+    text-decoration: none;
+  }
+  nav a:hover, nav button:hover { color: var(--accent); }
+  nav .links { display: flex; gap: 14px; }
+  main {
+    flex: 1;
+    width: 100%;
+    max-width: 640px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 14px;
+  }
+  #face {
+    font: 22px/1.15 ui-monospace, "Cascadia Mono", Consolas, Menlo, monospace;
+    margin: 0;
+    white-space: pre;
+    cursor: pointer;
+    color: var(--fg);
+    transition: color .3s;
+  }
+  #face[data-expr="listening"] { color: var(--accent); }
+  #face[data-expr="concerned"] { color: var(--warn); }
+  @media (max-width: 420px) { #face { font-size: 17px; } }
+  #mood { font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--faint); height: 1em; }
+  #activity { font-size: 12px; color: var(--muted); min-height: 1.4em; text-align: center; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #caption { min-height: 2.9em; text-align: center; font-size: 17px; max-width: 34em; }
+  #heard { min-height: 1.4em; text-align: center; font-size: 13px; color: var(--muted); font-style: italic; }
+  #notice { font-size: 13px; color: var(--warn); text-align: center; min-height: 1.2em; max-width: 34em; }
+  #ptt {
+    margin-top: 6px;
+    border: 1px solid var(--line);
+    background: var(--panel);
+    color: var(--muted);
+    border-radius: 999px;
+    padding: 10px 20px;
+    font: inherit;
+    font-size: 13px;
+    cursor: pointer;
+    touch-action: none;
+  }
+  #ptt.down { color: var(--accent); border-color: var(--accent); }
+  #settings {
+    display: none;
+    width: 100%;
+    max-width: 640px;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 12px 14px;
+    font-size: 13px;
+    gap: 10px 16px;
+    grid-template-columns: max-content 1fr;
+    align-items: center;
+  }
+  #settings.open { display: grid; }
+  #settings select, #settings input[type=range] { width: 100%; max-width: 100%; }
+  #settings select { background: var(--bg); color: var(--fg); border: 1px solid var(--line); border-radius: 6px; padding: 4px; font: inherit; }
+  #settings .meter { height: 4px; background: var(--line); border-radius: 2px; position: relative; overflow: hidden; }
+  #settings .meter i { position: absolute; left: 0; top: 0; bottom: 0; background: var(--accent); width: 0; }
+  #settings .meter b { position: absolute; top: -2px; bottom: -2px; width: 2px; background: var(--warn); left: 0; }
+</style>
+</head>
+<body>
+<nav>
+  <span class="links">
+    <a id="toDashboard" href="./" title="Layer 2: the dashboard, with the chat in text and cards">dashboard</a>
+    <button id="toSession" type="button" title="Layer 3: the PA chat's session in termhub">session</button>
+  </span>
+  <button id="toggleSettings" type="button" title="Voice, microphone and listening settings">settings</button>
+</nav>
+<div id="settings" aria-label="settings">
+  <label for="ttsBackend">Speech engine</label><select id="ttsBackend"></select>
+  <label for="voice">Voice</label><select id="voice"></select>
+  <label for="handsFree">Hands-free</label><span><input type="checkbox" id="handsFree"> listen without holding Space</span>
+  <label for="deafWhileTalking">While I talk</label><span><input type="checkbox" id="deafWhileTalking"> stop listening (no barge-in)</span>
+  <label for="muted">Voice off</label><span><input type="checkbox" id="muted"> show answers, do not speak them</span>
+  <label for="sensitivity">Mic threshold</label><input type="range" id="sensitivity" min="0.003" max="0.06" step="0.001">
+  <span>Level</span><div class="meter"><i id="levelBar"></i><b id="threshMark"></b></div>
+</div>
+<main>
+  <div id="mood"></div>
+  <pre id="face" role="img" aria-label="assistant face" title="Tap to start"></pre>
+  <div id="activity"></div>
+  <div id="caption"></div>
+  <div id="heard"></div>
+  <div id="notice"></div>
+  <button id="ptt" type="button">hold Space (or here) to talk</button>
+</main>
+<script src="talk.core.js"></script>
+<script src="talk.page.js"></script>
+</body>
+</html>

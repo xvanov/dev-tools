@@ -201,6 +201,14 @@ async function handle(req, res) {
   if (req.method === 'GET' && url.pathname === '/') {
     return send(res, 200, pageHtml(issuePageToken()), 'text/html; charset=utf-8');
   }
+
+  // ---- The voice page (dashboard/talk.js): /talk, its scripts, and
+  // POST /api/talk/transcribe (X-PA guarded there). ----
+  if (url.pathname === '/talk' || url.pathname.startsWith('/talk.') || url.pathname.startsWith('/api/talk/')) {
+    if (await require('./talk').route(req, res, url, { send })) return;
+  }
+  // ---- end voice page ----
+
   // The end state a Do would get, before it is pressed: the page shows it,
   // and must send it back as `confirmedLevel` to start an unattended one.
   let pm = req.method === 'GET' && url.pathname.match(/^\/api\/commitments\/(\d+)\/delivery$/);
