@@ -265,13 +265,17 @@ async function pass({ limit = 24, dryRun = false, ids = null } = {}) {
 /** Closes the judge was not sure enough to apply, newest per commitment, still open. */
 async function proposals({ limit = 40 } = {}) {
   return rows(
-    `select distinct on (e.commitment_id) e.id, e.commitment_id, e.effect, e.quote, e.confidence, e.created_at,
+    // Evidence found for a copy that was later folded into a survivor
+    // (superseded_by) is shown on the survivor: the copy is not on the board,
+    // and showing it put a twin of a live card under "Looks done".
+    `select distinct on (c.id) e.id, c.id as commitment_id, e.effect, e.quote, e.confidence, e.created_at,
             c.summary, c.direction, si.source, si.author_identity, coalesce(si.raw->>'webUrl', si.raw->>'url') as url
        from ledger_evidence e
-       join commitment c on c.id = e.commitment_id and c.status = 'open'
+       join commitment o on o.id = e.commitment_id
+       join commitment c on c.id = coalesce(o.superseded_by, o.id) and c.status = 'open' and c.superseded_by is null
        left join source_item si on si.id = e.source_item_id
       where e.effect in ('closes','moot') and not e.applied and e.decision is null and e.confidence >= $2
-      order by e.commitment_id, e.created_at desc
+      order by c.id, e.created_at desc
       limit $1`,
     [limit, R.PROPOSE_CONFIDENCE]
   );
@@ -282,7 +286,7 @@ async function decide(evidenceId, accept) {
   const e = await one('select * from ledger_evidence where id = $1', [evidenceId]);
   if (!e) throw new Error(`no evidence #${evidenceId}`);
   if (e.decision) return { ok: false, result: `already ${e.decision}` };
-  return withTx(async (client) => {
+  const out = await withTx(async (client) => {
     let changed = false;
     if (accept) {
       const t = await ledger.transition(
@@ -304,6 +308,14 @@ async function decide(evidenceId, accept) {
     ]);
     return { ok: true, result: accept ? (changed ? 'closed' : 'already closed') : 'kept open', commitmentId: Number(e.commitment_id) };
   });
+  // The evidence may sit on a copy folded into a survivor (proposals() shows
+  // it on the survivor): confirming closes the whole duplicate group.
+  if (accept) {
+    const to = e.effect === 'moot' ? 'dropped' : 'done';
+    const also = await require('../commitments').closeGroup(Number(e.commitment_id), to, 'you confirmed it looks done');
+    if (also.length) out.alsoClosed = also;
+  }
+  return out;
 }
 
 async function stats() {
