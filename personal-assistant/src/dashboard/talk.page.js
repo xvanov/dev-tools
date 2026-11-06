@@ -333,10 +333,23 @@
       heard(text);
       await post('api/chat', JSON.stringify({ text, source: 'voice' }));
     } catch (err) {
-      concerned(err.status === 404 ? 'The chat is not available on this dashboard yet.' : `Could not send that: ${err.message}`);
+      // 409: the session waits on an answer in termhub; typed keys would pick
+      // an option, so the chat refuses. Not retried — said once, out loud.
+      if (err.status === 409) sayWaiting(err.message);
+      else concerned(err.status === 404 ? 'The chat is not available on this dashboard yet.' : `Could not send that: ${err.message}`);
     } finally {
       st.pending--;
     }
+  }
+
+  // The stream's activity line and the 409 usually say the same thing within
+  // a second of each other: speak it once.
+  let lastWaitingSaid = 0;
+  function sayWaiting(text) {
+    concerned(text || 'I am waiting on an answer in termhub.', 8000);
+    if (Date.now() - lastWaitingSaid < 10000) return;
+    lastWaitingSaid = Date.now();
+    speaker.say(['I am waiting on an answer in termhub. Open the session to answer it.']);
   }
 
   // Push-to-talk: hold Space or the button. Always available, even hands-free.
@@ -400,8 +413,13 @@
       return;
     }
     if (ev.type === 'activity') {
-      st.thinking = true;
       $('activity').textContent = ev.text || '';
+      // The session is parked on a permission prompt or question: it can only
+      // be answered in termhub, so say so instead of looking busy.
+      if (/termhub/i.test(ev.text || '')) {
+        st.thinking = false;
+        sayWaiting(ev.text);
+      } else st.thinking = true;
       return;
     }
     if (ev.type === 'user') {
@@ -444,10 +462,16 @@
   $('toSession').addEventListener('click', async () => {
     const win = window.open('', '_blank');
     try {
-      const { sessionId } = await post('api/chat/open', '{}');
+      // The chat's own answer first (GET api/chat/session: its termhub url);
+      // no session yet, or an older dashboard: start one with api/chat/open.
+      let s = await fetch('api/chat/session').then((r) => (r.ok ? r.json() : {})).catch(() => ({}));
+      if (!s.sessionId) s = await post('api/chat/open', '{}');
       const meta = document.querySelector('meta[name="pa-termhub"]');
-      const base = location.pathname.startsWith('/pa/') ? location.origin : (meta && meta.content) || 'http://127.0.0.1:7000';
-      const target = `${base.replace(/\/$/, '')}/#session=${encodeURIComponent(sessionId)}`;
+      // Under termhub's /pa/ proxy the server's loopback termhub URL is
+      // unreachable from this device; the page's own origin is termhub.
+      const proxied = location.pathname.startsWith('/pa/');
+      const base = proxied ? location.origin : (meta && meta.content) || 'http://127.0.0.1:7000';
+      const target = !proxied && s.url ? s.url : `${base.replace(/\/$/, '')}/#session=${encodeURIComponent(s.sessionId)}`;
       if (win) win.location = target;
       else location.href = target;
     } catch (err) {

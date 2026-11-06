@@ -1043,7 +1043,8 @@ text, and **session** opens the PA chat's termhub session.
   `PA_TRANSCRIBE_PORT`, as capture does): the page sends a 16 kHz WAV to `POST /api/talk/transcribe`,
   which writes it to a temp file, hands the path to the server, and deletes the file. Whisper's
   stock filler for silence ("Thank you.", "you") is dropped. The text then goes to `/api/chat` with
-  `source: "voice"`.
+  `source: "voice"`. While the chat is parked on a permission prompt or question, the chat refuses
+  the send (409); the page says once that it is waiting on an answer in termhub, and does not retry.
 - **Speaking** reads each answer sentence by sentence as it arrives, in the browser's best natural
   voice (Edge's "Online (Natural)" voices are good; pick another in **settings**). Code blocks,
   tables and URLs are not read out: it says "the link" or "I put the details on the dashboard"
