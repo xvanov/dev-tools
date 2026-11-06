@@ -512,7 +512,7 @@ async function rollIfUseful({ now = new Date() } = {}) {
   );
   const ended = events.filter(attendable).map(eventRange).find((e) => e.end <= nowMs && e.end > nowMs - 5 * 60_000 && last < e.end);
   let reason = ended ? 'meeting ended' : null;
-  if (!reason && nowMs - last >= 5 * 60_000) {
+  if (!reason && nowMs - last >= 90_000) {
     const waiting = await rows(
       `${EPISODE_SQL}
         where ${OWNED} and e.ended_at > $1::timestamptz - interval '45 minutes'
