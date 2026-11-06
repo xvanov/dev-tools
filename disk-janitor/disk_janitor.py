@@ -192,6 +192,14 @@ def is_safe_target(path: Path, log) -> bool:
     return True
 
 
+def is_link_dir(path: Path) -> bool:
+    """Symlink or Windows junction — never descended into or cleaned through."""
+    try:
+        return path.is_symlink() or getattr(path, "is_junction", lambda: False)()
+    except OSError:
+        return True
+
+
 def free_bytes(path: Path) -> tuple[int, int]:
     usage = shutil.disk_usage(path)
     return usage.free, usage.total
@@ -247,8 +255,15 @@ def clean_by_age(cfg, log, dry_run) -> int:
         cutoff = now - target["min_age_days"] * 86400
         freed_here = 0
         removed = 0
-        for root, dirs, files in os.walk(base, topdown=False):
+        # Top-down so link dirs can be pruned before descent: os.walk follows
+        # Windows junctions (is_symlink() is False for them), and a junction in
+        # %TEMP% to a repo's node_modules once let this delete every aged file
+        # in it. Empty dirs are removed afterwards, deepest first.
+        visited: list[Path] = []
+        for root, dirs, files in os.walk(base, topdown=True):
             root_path = Path(root)
+            dirs[:] = [d for d in dirs if not is_link_dir(root_path / d)]
+            visited.append(root_path)
             for fname in files:
                 fpath = root_path / fname
                 try:
@@ -265,10 +280,13 @@ def clean_by_age(cfg, log, dry_run) -> int:
                     removed += 1
                 except OSError:
                     continue  # locked / in-use / permission — leave it
-            # prune now-empty subdirs (never the base itself)
-            if not dry_run and root_path != base:
+        # prune now-empty subdirs (never the base itself)
+        if not dry_run:
+            for d in reversed(visited):
+                if d == base:
+                    continue
                 try:
-                    root_path.rmdir()
+                    d.rmdir()
                 except OSError:
                     pass
 

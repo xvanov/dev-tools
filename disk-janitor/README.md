@@ -82,6 +82,11 @@ is set (the installer attempts this).
   path shallower than three components — except an OS-named temp root itself
   (`TEMP=C:\Temp`), which is trusted by definition. Both must agree before a
   file is touched.
+- **Symlinks and junctions are never followed.** The vetted base is the only
+  thing `is_safe_target()` sees; a link inside it can point anywhere. A
+  junction in `C:\Temp` to a repo's `node_modules` once let the age sweep
+  delete every file there older than seven days (`os.walk` descends junctions
+  on Windows).
 - **Package-cache commands run with `cwd=$HOME`** — the scheduled task starts
   in `System32`, where `pnpm store prune` fails with EPERM.
 - **Locked / in-use files are left alone** — per-file `OSError` is swallowed, so
