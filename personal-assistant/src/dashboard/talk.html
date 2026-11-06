@@ -115,6 +115,8 @@
   #settings.open { display: grid; }
   #settings select, #settings input[type=range] { width: 100%; max-width: 100%; }
   #settings select { background: var(--bg); color: var(--fg); border: 1px solid var(--line); border-radius: 6px; padding: 4px; font: inherit; }
+  #settings input[type=range]#endMs { width: 70%; }
+  #debug { width: 100%; max-width: 640px; margin: 8px 0 0; font: 11px/1.4 ui-monospace, Consolas, monospace; color: var(--muted); white-space: pre-wrap; user-select: text; }
   #settings .meter { height: 4px; background: var(--line); border-radius: 2px; position: relative; overflow: hidden; }
   #settings .meter i { position: absolute; left: 0; top: 0; bottom: 0; background: var(--accent); width: 0; }
   #settings .meter b { position: absolute; top: -2px; bottom: -2px; width: 2px; background: var(--warn); left: 0; }
@@ -134,6 +136,8 @@
   <label for="handsFree">Hands-free</label><span><input type="checkbox" id="handsFree"> listen without holding Space</span>
   <label for="deafWhileTalking">While I talk</label><span><input type="checkbox" id="deafWhileTalking"> stop listening (no barge-in)</span>
   <label for="muted">Voice off</label><span><input type="checkbox" id="muted"> show answers, do not speak them</span>
+  <label for="endMs">Pause before sending</label><span><input type="range" id="endMs" step="50"> <span id="endMsLabel"></span></span>
+  <label for="voiceMode">Speak while working</label><select id="voiceMode"><option value="auto">only on slow turns (over 4 s)</option><option value="all">every step</option><option value="final">only the answer</option></select>
   <label for="sensitivity">Mic threshold</label><input type="range" id="sensitivity" min="0.003" max="0.06" step="0.001">
   <span>Level</span><div class="meter"><i id="levelBar"></i><b id="threshMark"></b></div>
 </div>
@@ -146,6 +150,7 @@
   <div id="notice"></div>
   <button id="ptt" type="button">hold Space (or here) to talk</button>
 </main>
+<pre id="debug" hidden title="latency per turn (?debug=1)"></pre>
 <script src="talk.core.js"></script>
 <script src="talk.page.js"></script>
 </body>

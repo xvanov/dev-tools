@@ -31,7 +31,10 @@ assert.deepStrictEqual(T.entryEvents(user('u7', 'side', { isSidechain: true })),
 
 // An assistant line: text is the reply, tool_use is activity, thinking is nothing.
 assert.deepStrictEqual(T.entryEvents(asst('a1', [{ type: 'thinking', thinking: 'hmm' }], 'tool_use')), []);
-assert.deepStrictEqual(T.entryEvents(asst('a2', [{ type: 'text', text: '  Two meetings.  ' }])), [{ id: 'a2', type: 'assistant', text: 'Two meetings.', at }]);
+assert.deepStrictEqual(T.entryEvents(asst('a2', [{ type: 'text', text: '  Two meetings.  ' }])), [{ id: 'a2', type: 'assistant', text: 'Two meetings.', at, final: true }]);
+// Text before a tool call is a step, not the answer; no stop_reason: unknown.
+assert.strictEqual(T.entryEvents(asst('a2b', [{ type: 'text', text: 'Let me check.' }], 'tool_use'))[0].final, false);
+assert.ok(!('final' in T.entryEvents(asst('a2c', [{ type: 'text', text: 'Hm.' }], null))[0]));
 const tools = T.entryEvents(asst('a3', [{ type: 'text', text: 'Looking.' }, { type: 'tool_use', name: 'mcp__personal-assistant__recall', input: { query: 'renewal' } }], 'tool_use'));
 assert.deepStrictEqual(tools.map((e) => [e.id, e.type]), [['a3', 'assistant'], ['a3:1', 'activity']]);
 assert.strictEqual(tools[1].text, 'searching your history: renewal…');
@@ -117,8 +120,14 @@ assert.match(client, /new EventSource\('api\/chat\/stream'\)/);
   await new Promise((r) => setTimeout(r, 60));
   assert.strictEqual(got.filter((e) => e.type === 'status').pop().text, 'thinking');
 
+  // The echo lands but termhub has not said "working" yet (a prompt hook
+  // runs first): its "idle" is still the previous turn's.
+  fs.appendFileSync(file, line(user('t1', 'hello\nthere')));
+  await new Promise((r) => setTimeout(r, 80));
+  assert.strictEqual(got.filter((e) => e.type === 'status').pop().text, 'thinking', 'no idle before the turn has begun');
+
   // Its echo in the transcript is dropped; the reply and the tool use come through.
-  fs.appendFileSync(file, line(user('t1', 'hello\nthere')) + line(asst('t2', [{ type: 'tool_use', name: 'Read', input: { file_path: 'INBOX.md' } }], 'tool_use')));
+  fs.appendFileSync(file, line(asst('t2', [{ type: 'tool_use', name: 'Read', input: { file_path: 'INBOX.md' } }], 'tool_use')));
   fs.appendFileSync(file, line(asst('t3', [{ type: 'text', text: 'Hi.' }])) + '{"type":"assistant","uuid":"t4"'); // half-written
   await new Promise((r) => setTimeout(r, 80));
   assert.ok(!got.some((e) => e.id === 't1'), 'our own message is not shown twice');
@@ -126,6 +135,8 @@ assert.match(client, /new EventSource\('api\/chat\/stream'\)/);
   assert.ok(got.some((e) => e.id === 't3' && e.type === 'assistant' && e.text === 'Hi.'));
   assert.ok(!got.some((e) => e.id === 't4'), 'a line still being written is not read');
   assert.deepStrictEqual(feed.history(2).map((e) => e.text), ['hello\nthere', 'Hi.']);
+  await new Promise((r) => setTimeout(r, 60));
+  assert.strictEqual(got.filter((e) => e.type === 'status').pop().text, 'idle', 'the answer ends the turn');
 
   // Someone typing in termhub is the same conversation.
   fs.appendFileSync(file, `,"timestamp":"${at}","message":{"content":[{"type":"text","text":"done"}],"stop_reason":"end_turn"}}\n` + line(user('t5', 'typed in termhub')));

@@ -1049,7 +1049,8 @@ and speech only after a gesture. From there, **dashboard** drills down to the ca
 text, and **session** opens the PA chat's termhub session.
 
 - **Listening** is hands-free: an energy-based voice detector in the page (`talk.core.js`) notices
-  you start, waits for a pause of about a second, and sends that utterance. Hold Space (or the
+  you start, waits for a pause of 650 ms, and sends that utterance (**Pause before sending** in
+  **settings**, 400–1500 ms: raise it if it cuts you off mid-thought). Hold Space (or the
   button) to push-to-talk instead; turn hands-free off in **settings** if the room is noisy.
 - **Transcription** reuses voice-dictation's warm faster-whisper server (`PA_TRANSCRIBE_HOST` /
   `PA_TRANSCRIBE_PORT`, as capture does): the page sends a 16 kHz WAV to `POST /api/talk/transcribe`,
@@ -1061,7 +1062,21 @@ text, and **session** opens the PA chat's termhub session.
   voice (Edge's "Online (Natural)" voices are good; pick another in **settings**). Code blocks,
   tables and URLs are not read out: it says "the link" or "I put the details on the dashboard"
   instead. The speech engine is one entry in a table in `talk.page.js`, so a local neural TTS can be
-  added beside it.
+  added beside it: an engine reports what its audio does (`onstart`, `onend`, and `onboundary` per
+  word or `onlevel` loudness where it can), and nothing else needs to change.
+- **The face follows the sound, not the queue.** Edge's natural voices fetch audio over the network
+  (measured 0.35–0.7 s from `speak()` to sound, 1.7 s cold), so while a sentence is on its way the
+  face looks up with its mouth shut ("about to speak"); the mouth moves from the engine's start
+  event, opens on each spoken word where the voice reports word boundaries (a gentle loop where it
+  does not), and closes between words and sentences (`createSpeechSync` in `talk.core.js`).
+- **What it says while it works.** A turn is often "let me check" → a tool → the answer. **Speak
+  while working** in **settings**: *only on slow turns* (default) holds a step and says it only if
+  the turn is still running after 4 s, so quick answers come without chatter and long ones still
+  tell you something is happening; *every step*; or *only the answer*. Each block is spoken as
+  soon as it arrives.
+- **Latency readout.** `/talk?debug=1` shows, per turn, where the time went: the pause wait,
+  transcription, typing into the session, the reply (Claude's turn plus the transcript tail), and
+  the voice starting.
 - **Barge-in and echo.** Start talking and it stops. While it speaks, the mic needs three times
   the usual level for over a third of a second before it counts as you, so its own voice from the
   speakers is not transcribed. With speakers loud and no headset, tick "stop listening" in
@@ -1088,6 +1103,8 @@ working, the line under the messages shows what it is doing ("searching your his
   runs in `pa-home`, so the newest file there is its conversation (a `/clear` starts a new file;
   the newest still wins). Claude Code writes each text block once it is complete, so replies
   arrive whole, a block at a time, not token by token.
+- **Timing:** the transcript is read every 200 ms while a turn is running and every second
+  otherwise, so a finished block reaches the page within a fifth of a second.
 - **State:** termhub's own `idleState` for the session, polled every 2 s while a page is
   listening. The transcript cannot be the authority: a permission prompt or a question writes
   nothing to it until answered. While the session is parked on one, `POST /api/chat` is
@@ -1109,12 +1126,15 @@ An event is `{ "id", "type", "text", "at" (ISO), "source"? }`:
   and its `source`; its echo in the transcript is dropped, so it is seen once. One typed in
   termhub (or the inbox doorbell line) has no `source`.
 - `assistant` — a complete block of the reply. A turn can be several (text, a tool, more text),
-  each with its own id. No `partial` events: the transcript has none to give.
+  each with its own id. No `partial` events: the transcript has none to give. `final` is `false`
+  on text written before a tool call (the turn goes on) and `true` on the answer; absent when the
+  transcript line has no `stop_reason`.
 - `activity` — a short line about a tool call ("reading INBOX.md…", "running pa search …"),
   never the tool's whole input.
 - `status` — `thinking`, `idle` (the turn is over: speak now) or `offline` (no session; sending
-  starts one). It stays `thinking` from a send until the message is taken, even when a session
-  that is still starting reads as idle.
+  starts one). It stays `thinking` from a send until termhub has seen the session working or the
+  answer has arrived: a session still starting, or still running a prompt hook, reads as idle
+  before its turn has begun.
 
 Ids are stable across history and the stream (transcript entry uuids), so a client can load
 history and then dedupe the stream against it.

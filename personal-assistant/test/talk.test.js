@@ -156,6 +156,133 @@ const C = require('../src/dashboard/talk.core');
   assert.strictEqual(C.expression({}), 'idle');
 }
 
+// ---- VAD end wait: tunable, clamped, and the last voiced frame is known -----------
+{
+  assert.strictEqual(C.VAD_DEFAULTS.endMs, 650);
+  assert.strictEqual(C.createVad({ endMs: 50 }).endMs, C.END_MS_MIN);
+  assert.strictEqual(C.createVad({ endMs: 99999 }).endMs, C.END_MS_MAX);
+  const v = C.createVad({ endMs: 600 });
+  let end = null;
+  for (let i = 0; i < 120; i++) {
+    const t = i * 20;
+    const e = v.step(i >= 10 && i < 50 ? 0.08 : 0.002, t, 20);
+    if (e === 'end') end = t;
+  }
+  assert.strictEqual(v.lastVoice, 49 * 20);
+  assert.ok(end - v.lastVoice >= 600 && end - v.lastVoice < 640, `ended ${end - v.lastVoice} ms after the voice`);
+}
+
+// ---- face follows the audio, not the queue -------------------------------------------
+{
+  const y = C.createSpeechSync();
+  assert.deepStrictEqual(y.frame(0), { face: null, mouth: 0 });
+  // Queued, nothing audible yet: "about to speak", mouth shut.
+  y.queued(0);
+  assert.deepStrictEqual(y.frame(300), { face: 'about', mouth: 0 });
+  // Audio starts; a voice never seen sending boundaries loops.
+  y.start(500, 'ava');
+  const loop = new Set();
+  for (let t = 500; t < 1600; t += 60) loop.add(y.frame(t).mouth);
+  assert.ok(loop.size >= 3 && loop.has(0), 'a gentle open/close loop');
+  // A word boundary opens the mouth for about that word, then it closes.
+  y.boundary(1600, 8);
+  assert.strictEqual(y.frame(1610).mouth, 3);
+  assert.ok(y.frame(1610 + 300).mouth >= 1);
+  assert.strictEqual(y.frame(1600 + 600).mouth, 0, 'closed between words');
+  // Sentence ends: between sentences the mouth is closed, still the talking face.
+  y.end(2500);
+  y.queued(2500);
+  assert.deepStrictEqual(y.frame(2600), { face: 'talking', mouth: 0 });
+  // The same voice again: known to send boundaries, so the mouth waits for
+  // the first word instead of moving at onstart (natural voices start
+  // early)...
+  y.start(3000, 'ava');
+  for (let t = 3000; t < 3700; t += 60) assert.strictEqual(y.frame(t).mouth, 0, `shut before the first word (${t})`);
+  // ...but not forever: no word within boundaryWaitMs, it loops.
+  const late = new Set();
+  for (let t = 3900; t < 4900; t += 60) late.add(y.frame(t).mouth);
+  assert.ok(late.size >= 3);
+  y.end(5000);
+  y.done(5000);
+  assert.strictEqual(y.frame(5100).face, null);
+  // A fresh run starts from "about" again; barge-in clears everything.
+  y.queued(6000);
+  assert.strictEqual(y.frame(6000).face, 'about');
+  y.cancel();
+  assert.strictEqual(y.frame(6100).face, null);
+  // An engine that plays audio itself drives the mouth by loudness.
+  y.queued(7000);
+  y.start(7100, 'local-tts');
+  y.level(7200, 0.3);
+  assert.strictEqual(y.frame(7210).mouth, 3);
+  y.level(7300, 0.001);
+  assert.strictEqual(y.frame(7310).mouth, 0);
+  // A boundary after the run was cancelled does nothing.
+  y.cancel();
+  y.boundary(7400, 5);
+  assert.strictEqual(y.frame(7410).face, null);
+  // Face priority: the user talking wins; "about" sits under talking.
+  assert.strictEqual(C.expression({ about: true, thinking: true }), 'about');
+  assert.strictEqual(C.expression({ about: true, talking: true }), 'talking');
+}
+
+// ---- which blocks of a turn are spoken ---------------------------------------------
+{
+  // auto: a quick turn's step is held, then dropped when the answer comes.
+  const v = C.createTurnVoice();
+  v.userTurn(0);
+  assert.strictEqual(v.assistant('a', false, 1500), 'hold');
+  assert.strictEqual(v.due(3000), null);
+  assert.strictEqual(v.assistant('b', true, 3200), 'speak');
+  assert.strictEqual(v.due(9000), null, 'the held step is dropped');
+  // A slow turn: the held step is spoken once the turn passes 4 s...
+  v.userTurn(10000);
+  assert.strictEqual(v.assistant('c', false, 11000), 'hold');
+  assert.strictEqual(v.due(13999), null);
+  assert.strictEqual(v.due(14000), 'c');
+  assert.strictEqual(v.due(14500), null, 'once');
+  // ...and later steps are spoken at once.
+  assert.strictEqual(v.assistant('d', false, 16000), 'speak');
+  // A turn that ends without an answer block speaks its step.
+  v.userTurn(20000);
+  v.assistant('e', false, 20500);
+  assert.strictEqual(v.end(), 'e');
+  // Unknown finality is the answer; no user turn seen (the inbox doorbell): speak.
+  const w = C.createTurnVoice();
+  assert.strictEqual(w.assistant('f', undefined, 0), 'speak');
+  assert.strictEqual(w.assistant('g', false, 0), 'speak');
+  // all / final.
+  const all = C.createTurnVoice({ mode: 'all' });
+  all.userTurn(0);
+  assert.strictEqual(all.assistant('h', false, 10), 'speak');
+  all.mode = 'final';
+  assert.strictEqual(all.assistant('i', false, 9000), 'drop');
+  all.mode = 'nonsense';
+  assert.strictEqual(all.mode, 'auto');
+}
+
+// ---- latency readout ---------------------------------------------------------------
+{
+  const m = { speechEnd: 1000, vadEnd: 1650, transcribed: 2050, posted: 2900, firstReply: 6900, audioStart: 7400 };
+  assert.deepStrictEqual(C.latencySlices(m), { silence: 650, transcribe: 400, send: 850, reply: 4000, voice: 500, total: 6400 });
+  assert.strictEqual(C.formatLatency(m), 'silence 650ms · stt 400ms · send 850ms · reply 4.0s · voice 500ms = 6.4s');
+  // A typed turn has no mic slices.
+  const typed = C.latencySlices({ posted: 0, firstReply: 3000, audioStart: 3400 });
+  assert.strictEqual(typed.silence, null);
+  assert.strictEqual(typed.reply, 3000);
+  assert.strictEqual(typed.total, null);
+}
+
+// ---- the page wires the face to audio events, and the settings exist ---------------
+{
+  const page = fs.readFileSync(require('path').join(__dirname, '../src/dashboard/talk.page.js'), 'utf8');
+  const html = fs.readFileSync(require('path').join(__dirname, '../src/dashboard/talk.html'), 'utf8');
+  assert.match(page, /u\.onboundary = /);
+  assert.match(page, /sync\.start\(/);
+  assert.ok(!/Math\.random\(\) \* MOUTHS/.test(page), 'the mouth no longer moves at random');
+  for (const id of ['endMs', 'voiceMode', 'debug']) assert.match(html, new RegExp(`id="${id}"`));
+}
+
 // ---- the transcribe proxy, against a fake faster-whisper server --------------------
 (async () => {
   const { config } = require('../src/config');

@@ -85,6 +85,7 @@ function createFeed({
   hub = () => require('../dispatch/termhub'),
   ensureSession = () => require('./index').ensureSession(),
   pollMs = 1000,
+  fastPollMs = 200,
   statusMs = 2000,
 } = {}) {
   const events = [];
@@ -98,6 +99,10 @@ function createFeed({
   let waitingOn = null;
   let sessionId = null;
   let timers = [];
+  // The turn our last send started: until termhub has been seen working or
+  // the transcript has shown the answer, its "idle" is the previous turn's.
+  let turn = null;
+  let lastRead = 0;
 
   function publish(e, broadcast = true) {
     if (e.type !== 'status') {
@@ -126,6 +131,7 @@ function createFeed({
   // file seeds history without broadcasting it; a new file (a /clear, a new
   // session) is news and is broadcast from its start.
   function readTranscript() {
+    lastRead = Date.now();
     const found = newestTranscript(path.join(root(), T.projectDirFor(home())));
     if (!found) return;
     const quiet = file === null;
@@ -173,6 +179,7 @@ function createFeed({
             continue; // already shown, with its source
           }
         }
+        if (turn && e.type === 'assistant' && e.final !== false) turn.answered = true;
         publish(e, !quiet);
       }
     }
@@ -194,10 +201,16 @@ function createFeed({
     let st = T.sessionStatus(session);
     // A message we typed that the transcript has not shown yet is still
     // being taken: a new session sits "idle" at its prompt for seconds before
-    // the first one lands. Idle then would end the turn before it began.
+    // the first one lands. Idle then would end the turn before it began. The
+    // same holds after the echo: termhub's state lags the PTY, and a
+    // UserPromptSubmit hook runs before Claude looks busy, so "idle" counts
+    // only once termhub has said working since the send, or the answer is in.
     readTranscript();
     const now = Date.now();
-    if (st.status === 'idle' && pending.some((p) => now - p.sentAt < HOLD_MS)) st = { status: 'thinking', waitingOn: null };
+    if (turn && st.status === 'thinking') turn.working = true;
+    const held = pending.some((p) => now - p.sentAt < HOLD_MS) || (turn && !turn.working && !turn.answered && now - turn.sentAt < HOLD_MS);
+    if (st.status === 'idle' && held) st = { status: 'thinking', waitingOn: null };
+    if (st.status !== 'thinking' && !held) turn = null;
     setStatus(st.status);
     if (st.waitingOn && !waitingOn) {
       publish({ id: `wait-${Date.now()}`, type: 'activity', text: 'waiting for your answer in termhub (a permission prompt or a question)…', at: new Date().toISOString() });
@@ -205,10 +218,18 @@ function createFeed({
     waitingOn = st.waitingOn;
   }
 
+  // The transcript is read every fastPollMs while a turn is running (an
+  // answer reaches the voice page that much sooner: a 1 s poll costs 0.5 s
+  // on average) and every pollMs otherwise.
+  function tickTranscript() {
+    const busy = status === 'thinking' || pending.length > 0 || turn;
+    if (busy || Date.now() - lastRead >= pollMs) readTranscript();
+  }
+
   function start() {
     if (timers.length) return;
     timers = [
-      setInterval(readTranscript, pollMs),
+      setInterval(tickTranscript, Math.min(pollMs, fastPollMs)),
       setInterval(() => pollStatus().catch(() => {}), statusMs),
     ];
     for (const t of timers) t.unref?.();
@@ -256,6 +277,7 @@ function createFeed({
     sessionId = id;
     const event = { id: `u-${crypto.randomUUID()}`, type: 'user', text: clean, at: new Date().toISOString(), source };
     pending.push({ text: norm(clean), sentAt: Date.now() });
+    turn = { sentAt: Date.now(), working: false, answered: false };
     publish(event);
     setStatus('thinking');
     const h = hub();

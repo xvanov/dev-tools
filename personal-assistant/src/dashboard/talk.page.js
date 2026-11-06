@@ -12,7 +12,7 @@
   // ---- Settings (per-browser conveniences only) ---------------------------
   const PREFS_KEY = 'pa-talk-prefs';
   const prefs = Object.assign(
-    { handsFree: true, deafWhileTalking: false, muted: false, threshold: C.VAD_DEFAULTS.minThreshold, tts: 'browser', voice: '' },
+    { handsFree: true, deafWhileTalking: false, muted: false, threshold: C.VAD_DEFAULTS.minThreshold, endMs: C.VAD_DEFAULTS.endMs, voiceMode: 'auto', tts: 'browser', voice: '' },
     (() => {
       try {
         return JSON.parse(localStorage.getItem(PREFS_KEY) || '{}');
@@ -35,23 +35,28 @@
     idle: { brows: '  ', eyes: 'oo', mouth: ' \\_/ ' },
     listening: { brows: '  ', eyes: 'OO', mouth: ' --- ' },
     thinking: { brows: '~~', eyes: '°°', mouth: '  ~  ' },
+    // Sound is on its way (a natural voice is still being fetched): eyes up,
+    // mouth shut — it never moves before the audio does.
+    about: { brows: '  ', eyes: '°°', mouth: ' --- ' },
     talking: { brows: '  ', eyes: 'oo', mouth: ' --- ' },
     happy: { brows: '  ', eyes: '^^', mouth: '\\___/' },
     concerned: { brows: '/\\', eyes: 'oo', mouth: ' .-. ' },
   };
-  const MOUTHS = [' --- ', ' -o- ', ' (o) ', ' (O) ', ' -o- ', ' ___ '];
-  const MOOD = { idle: '', listening: 'listening', thinking: 'thinking', talking: '', happy: '', concerned: '' };
+  // By openness, 0 (closed) to 3 (wide): TalkCore.createSpeechSync's mouth.
+  const MOUTHS = [' --- ', ' -o- ', ' (o) ', ' (O) '];
+  const MOOD = { idle: '', listening: 'listening', thinking: 'thinking', about: '', talking: '', happy: '', concerned: '' };
+  const sync = C.createSpeechSync();
   let blinkUntil = 0;
   let nextBlink = Date.now() + 2500;
   let glance = 0;
   let nextGlance = Date.now() + 6000;
-  let mouthFrame = 0;
   let tick = 0;
 
-  function currentExpr(now) {
+  function currentExpr(now, f) {
     return C.expression({
       listening: st.listening,
-      talking: st.talking,
+      talking: f.face === 'talking',
+      about: f.face === 'about',
       thinking: st.thinking || st.pending > 0,
       concerned: st.offline || now < st.concernedUntil,
       happy: now < st.happyUntil,
@@ -61,7 +66,8 @@
   function drawFace() {
     const now = Date.now();
     tick++;
-    const expr = currentExpr(now);
+    const f = sync.frame(now);
+    const expr = currentExpr(now, f);
     const e = EXPR[expr];
     if (now > nextBlink) {
       blinkUntil = now + 140;
@@ -75,10 +81,7 @@
     const eyeL = blink ? '-' : e.eyes[0];
     const eyeR = blink ? '-' : e.eyes[1];
     let mouth = e.mouth;
-    if (expr === 'talking') {
-      if (tick % 2 === 0) mouthFrame = Math.floor(Math.random() * MOUTHS.length);
-      mouth = MOUTHS[mouthFrame];
-    }
+    if (expr === 'talking') mouth = MOUTHS[f.mouth] || MOUTHS[0];
     const dx = expr === 'thinking' ? 1 : glance;
     const row = (tpl, a, b, at = 5) => {
       const chars = tpl.split('');
@@ -109,7 +112,8 @@
       $('threshMark').style.left = Math.min(100, (prefs.threshold / 0.06) * 100) + '%';
     }
   }
-  setInterval(drawFace, 90);
+  // 60 ms: a word's mouth pulse is 120-380 ms, so each gets two to six frames.
+  setInterval(drawFace, 60);
 
   function concerned(msg, ms = 5000) {
     st.concernedUntil = ms ? Date.now() + ms : Infinity; // 0: until the page is reloaded
@@ -130,10 +134,17 @@
 
   // ---- Speech out -------------------------------------------------------------
   //
-  // A backend speaks one sentence at a time: speak(text, {onstart, onend})
-  // and cancel(). The browser's speechSynthesis is the first; a local neural
-  // TTS (an HTTP endpoint returning audio) slots in as another entry here
-  // without touching the queue, the face or barge-in.
+  // A backend speaks one sentence at a time and reports what the audio does,
+  // not what was asked of it:
+  //   speak(text, { onstart(voiceKey), onboundary(charLength), onlevel(0..1), onend })
+  //   cancel()
+  // onstart when sound begins, onend when it stops (or failed). onboundary
+  // per spoken word where the engine knows (speechSynthesis does), onlevel
+  // with loudness where the engine plays audio itself (a local neural TTS:
+  // fetch audio from an HTTP endpoint, play it through Web Audio, report
+  // 'playing' as onstart, an AnalyserNode's RMS as onlevel, 'ended' as
+  // onend). The face follows these (TalkCore.createSpeechSync), so a new
+  // engine is one more entry here and needs nothing else.
   const TTS_BACKENDS = {
     browser: {
       label: 'Browser (speechSynthesis)',
@@ -152,7 +163,7 @@
         const all = this.voices().sort((a, b) => score(b) - score(a));
         return all[0] ? all[0].id : '';
       },
-      speak(text, { onstart, onend }) {
+      speak(text, { onstart, onboundary, onend }) {
         const u = new SpeechSynthesisUtterance(text);
         const pick = this.voices().find((x) => x.id === (prefs.voice || this.bestVoice()));
         if (pick) {
@@ -168,7 +179,14 @@
         };
         // onend is not always fired (Chrome drops it for some voices).
         const guard = setTimeout(finish, 4000 + text.length * 120);
-        u.onstart = onstart;
+        u.onstart = () => onstart(pick ? pick.id : 'default');
+        // Word boundaries are when a word is actually being said. Edge's
+        // natural voices send them; some voices send none (the face loops).
+        u.onboundary = (ev) => {
+          if (ev.name && ev.name !== 'word') return;
+          const len = ev.charLength || (/^\S+/.exec(text.slice(ev.charIndex || 0)) || [''])[0].length;
+          onboundary(len);
+        };
         u.onend = finish;
         u.onerror = finish;
         this._keep = u; // an utterance that is garbage-collected never ends
@@ -184,6 +202,7 @@
     queue: [],
     busy: false,
     lastEnd: 0,
+    gen: 0, // a cancelled sentence's late onend must not end the next one
     backend() {
       return TTS_BACKENDS[prefs.tts] && TTS_BACKENDS[prefs.tts].available() ? TTS_BACKENDS[prefs.tts] : TTS_BACKENDS.browser;
     },
@@ -200,6 +219,7 @@
       if (!s) {
         if (st.talking) {
           st.talking = false;
+          sync.done();
           this.lastEnd = Date.now();
           st.happyUntil = Date.now() + 1800;
         }
@@ -208,9 +228,20 @@
       this.busy = true;
       st.talking = true;
       caption(s);
+      const gen = this.gen;
+      const live = () => gen === this.gen;
+      sync.queued();
       this.backend().speak(s, {
-        onstart: () => {},
+        onstart: (key) => {
+          if (!live()) return;
+          sync.start(Date.now(), key);
+          latency.audio();
+        },
+        onboundary: (len) => live() && sync.boundary(Date.now(), len),
+        onlevel: (lv) => live() && sync.level(Date.now(), lv),
         onend: () => {
+          if (!live()) return;
+          sync.end();
           this.busy = false;
           this.lastEnd = Date.now();
           this.next();
@@ -221,9 +252,11 @@
     cancel() {
       if (!st.talking && !this.queue.length) return;
       this.queue = [];
+      this.gen++;
       this.backend().cancel();
       this.busy = false;
       st.talking = false;
+      sync.cancel();
       this.lastEnd = Date.now();
     },
     // The assistant's own voice may still be in the room for a moment.
@@ -234,6 +267,33 @@
   function caption(s) {
     $('caption').textContent = s;
   }
+
+  // ---- Latency readout (?debug=1) ---------------------------------------------------
+  // One set of wall-clock marks per turn (TalkCore.latencySlices names them);
+  // the last few turns are shown under the face and logged to the console.
+  const DEBUG = /[?&]debug=1\b/.test(location.search);
+  const latency = {
+    marks: null,
+    rows: [],
+    begin(m) {
+      this.marks = Object.assign({}, m);
+    },
+    set(k, at = Date.now()) {
+      if (this.marks && this.marks[k] == null) this.marks[k] = at;
+    },
+    // The first audio after the first reply closes the turn's row.
+    audio() {
+      const m = this.marks;
+      if (!m || m.firstReply == null || m.audioStart != null) return;
+      m.audioStart = Date.now();
+      const line = C.formatLatency(m);
+      if (!DEBUG) return;
+      console.log('[talk latency]', line, m);
+      this.rows = [new Date().toLocaleTimeString() + '  ' + line, ...this.rows].slice(0, 6);
+      $('debug').textContent = this.rows.join('\n');
+    },
+  };
+  if (DEBUG) $('debug').hidden = false;
 
   // ---- Speech in ----------------------------------------------------------------
   const PREROLL_MS = 350;
@@ -256,7 +316,7 @@
     const ctx = new (window.AudioContext || window.webkitAudioContext)();
     mic.ctx = ctx;
     mic.rate = ctx.sampleRate;
-    mic.vad = C.createVad({ minThreshold: prefs.threshold });
+    mic.vad = makeVad();
     const src = ctx.createMediaStreamSource(stream);
     // ScriptProcessor is deprecated but runs everywhere with no extra module
     // file; 1024 samples is ~21 ms at 48 kHz — fine for an energy VAD.
@@ -270,6 +330,10 @@
     proc.onaudioprocess = (ev) => onFrame(new Float32Array(ev.inputBuffer.getChannelData(0)), frameMs);
     $('face').title = '';
     notice('');
+  }
+
+  function makeVad() {
+    return C.createVad({ minThreshold: prefs.threshold, endMs: prefs.endMs });
   }
 
   function onFrame(frame, frameMs) {
@@ -289,7 +353,10 @@
     if (ev === 'start') {
       speaker.cancel();
       beginUtterance();
-    } else if (ev === 'end') endUtterance(true);
+    } else if (ev === 'end') {
+      latency.begin({ speechEnd: mic.vad.lastVoice, vadEnd: now });
+      endUtterance(true);
+    }
     else if (ev === 'cancel') endUtterance(false);
   }
 
@@ -329,9 +396,11 @@
     st.pending++;
     try {
       const { text } = await post('api/talk/transcribe', wav, 'audio/wav');
+      latency.set('transcribed');
       if (C.isNoise(text)) return;
       heard(text);
       await post('api/chat', JSON.stringify({ text, source: 'voice' }));
+      latency.set('posted');
     } catch (err) {
       // 409: the session waits on an answer in termhub; typed keys would pick
       // an option, so the chat refuses. Not retried — said once, out loud.
@@ -369,6 +438,7 @@
     if (!mic.ptt) return;
     mic.ptt = false;
     $('ptt').classList.remove('down');
+    latency.begin({ speechEnd: Date.now(), vadEnd: Date.now() });
     endUtterance(true);
   }
   const typing = (t) => t && /^(INPUT|SELECT|TEXTAREA)$/.test(t.tagName) && t.type !== 'checkbox' && t.type !== 'range';
@@ -402,12 +472,25 @@
 
   // ---- The chat stream -------------------------------------------------------------
   const streams = new Map();
+  // Which blocks of a turn are spoken (settings: "Speak while working").
+  const turnVoice = C.createTurnVoice({ mode: prefs.voiceMode });
+  const held = new Map(); // block id -> its sentences, until spoken or dropped
+  function sayHeld(id) {
+    if (id == null || !held.has(id)) return;
+    speaker.say(held.get(id));
+    held.clear();
+  }
+  setInterval(() => sayHeld(turnVoice.due(Date.now())), 250);
+
   function onEvent(ev) {
     if (!ev || !ev.type) return;
     if (ev.type === 'status') {
       st.offline = ev.text === 'offline';
       st.thinking = ev.text === 'thinking';
-      if (ev.text === 'idle') $('activity').textContent = '';
+      if (ev.text === 'idle') {
+        $('activity').textContent = '';
+        sayHeld(turnVoice.end());
+      }
       if (st.offline) notice('The PA chat session is not running. Open it from "session".', 0);
       else if ($('notice').textContent.startsWith('The PA chat session')) notice('');
       return;
@@ -423,17 +506,32 @@
       return;
     }
     if (ev.type === 'user') {
-      if (ev.source !== 'voice') heard(ev.text);
+      turnVoice.userTurn(Date.now());
+      held.clear();
+      if (ev.source !== 'voice') {
+        heard(ev.text);
+        latency.begin({ posted: Date.now() }); // typed elsewhere: the turn starts here
+      }
       return;
     }
     if (ev.type === 'assistant') {
+      latency.set('firstReply');
       let s = streams.get(ev.id);
       if (!s) {
         s = C.createUtteranceStream();
         streams.set(ev.id, s);
         if (streams.size > 50) streams.delete(streams.keys().next().value);
       }
-      speaker.say(ev.partial ? s.push(ev.text) : s.finish(ev.text));
+      if (ev.partial) return speaker.say(s.push(ev.text));
+      const sentences = s.finish(ev.text);
+      const verdict = turnVoice.assistant(ev.id, ev.final, Date.now());
+      if (verdict === 'speak') {
+        held.clear();
+        speaker.say(sentences);
+      } else if (verdict === 'hold') {
+        held.clear();
+        held.set(ev.id, sentences);
+      } else if (prefs.muted) caption(sentences.join(' '));
     }
   }
 
@@ -527,7 +625,24 @@
   $('sensitivity').oninput = (e) => {
     prefs.threshold = Number(e.target.value);
     savePrefs();
-    if (mic.vad) mic.vad = C.createVad({ minThreshold: prefs.threshold });
+    if (mic.vad) mic.vad = makeVad();
+  };
+  $('endMs').min = C.END_MS_MIN;
+  $('endMs').max = C.END_MS_MAX;
+  $('endMs').value = prefs.endMs;
+  const showEndMs = () => ($('endMsLabel').textContent = `${prefs.endMs} ms`);
+  showEndMs();
+  $('endMs').oninput = (e) => {
+    prefs.endMs = Number(e.target.value);
+    savePrefs();
+    showEndMs();
+    if (mic.vad) mic.vad = makeVad();
+  };
+  $('voiceMode').value = prefs.voiceMode;
+  $('voiceMode').onchange = (e) => {
+    prefs.voiceMode = e.target.value;
+    turnVoice.mode = prefs.voiceMode;
+    savePrefs();
   };
   $('toggleSettings').onclick = () => $('settings').classList.toggle('open');
   if ('speechSynthesis' in window) {

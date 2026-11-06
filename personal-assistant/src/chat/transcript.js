@@ -109,11 +109,19 @@ function entryEvents(entry) {
   }
   if (entry.type === 'assistant' && entry.message) {
     const blocks = Array.isArray(entry.message.content) ? entry.message.content : [];
+    // Every line of a response carries its stop_reason: 'tool_use' means the
+    // text is a step ("let me check…") and the turn goes on; anything else
+    // ends the turn, so the text is the answer. No stop_reason: unknown.
+    const stop = entry.message.stop_reason;
+    const final = stop ? stop !== 'tool_use' : undefined;
     blocks.forEach((b, k) => {
       if (!b) return;
       const id = k ? `${uuid}:${k}` : uuid;
-      if (b.type === 'text' && String(b.text || '').trim()) out.push({ id, type: 'assistant', text: String(b.text).trim(), at });
-      else if (b.type === 'tool_use') out.push({ id, type: 'activity', text: describeTool(b.name, b.input), at });
+      if (b.type === 'text' && String(b.text || '').trim()) {
+        const e = { id, type: 'assistant', text: String(b.text).trim(), at };
+        if (final !== undefined) e.final = final;
+        out.push(e);
+      } else if (b.type === 'tool_use') out.push({ id, type: 'activity', text: describeTool(b.name, b.input), at });
     });
     return out;
   }
