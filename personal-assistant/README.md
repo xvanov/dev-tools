@@ -164,12 +164,27 @@ does not have. So the worker also reads Teams where Teams itself keeps it: the n
 is a WebView2 app that writes every chat and channel message it shows into Chromium IndexedDB on
 your disk, a second or two after it arrives.
 
-Every five seconds `src/ingest/teamsLocal.js` checks that directory's newest mtime. Only when it
-moved does it run `teams/read_cache.py`, which reads the LevelDB write-ahead log *from where the
-last pass stopped* — a few KB, about a tenth of a second — plus any table a compaction wrote
-since, and prints the new messages. A full parse of the ~100 MB store takes five to ten minutes
-in pure Python and is never done. Items are `graph_chat` rows with the connector's own ids
-(`{chatId}/{messageId}` is the same pair in both), so the two sources share one row:
+Nothing polls for it. `src/ingest/teamsLocal.js` asks Windows to report changes to that
+directory (`fs.watch`, i.e. ReadDirectoryChangesW: no file is opened or stat'ed to find out),
+waits until a write burst has been quiet for 300 ms (never more than 1.5 s after it began;
+`src/ingest/teamsTrigger.js`), and then asks `teams/read_cache.py` to read the LevelDB
+write-ahead log *from where the last pass stopped* — a few KB, about 20 ms — plus any table a
+compaction wrote since. The reader stays resident and takes requests on a pipe, so a pass is a
+line of JSON rather than a Python start (350–500 ms and a process creation each, which is what
+an on-access scanner such as ESET woke up for). A message is in the store about half a second
+after Teams writes it; a quiet Teams costs nothing at all. A full parse of the ~100 MB store
+takes five to ten minutes in pure Python and is never done.
+
+A notification can be lost — the watcher errors, or Teams replaces the directory on an update.
+So a fallback check compares the directory's newest mtime every minute
+(`PA_TEAMS_CACHE_FALLBACK_SECONDS`), and re-opens a watcher that saw nothing while the directory
+changed. While no watcher is armed the old five-second check runs (`PA_TEAMS_CACHE_POLL_SECONDS`;
+`PA_TEAMS_CACHE_WATCH=0` makes it the only trigger), so a broken watcher costs seconds, never
+messages. A reader that crashes or hangs (60 s) is replaced on the next pass;
+`PA_TEAMS_CACHE_RESIDENT=0` goes back to a process per pass.
+
+Items are `graph_chat` rows with the connector's own ids (`{chatId}/{messageId}` is the same
+pair in both), so the two sources share one row:
 
 - a message the connector already has is left alone, unless it was edited since;
 - a message read from the cache first keeps its full body; the connector later only *upgrades*
@@ -180,10 +195,13 @@ in pure Python and is never done. Items are `graph_chat` rows with the connector
   deleted messages are skipped; your own messages are kept (they are how "already answered" is
   detected) but not rushed;
 - a new DM, group-chat message or mention is distilled at once — and drafted for — instead of
-  at the next 90-second tick, through the worker's no-overlap guard.
+  at the next 90-second tick, through the worker's no-overlap guard. If a scheduled distill is
+  already running, the fresh one runs the moment it ends rather than waiting a tick (that pass
+  chose its items before the message existed). What remains is the model call itself, and that
+  wait for a pass already in flight.
 
 **Windows only.** There is no new Teams desktop client on Linux (Microsoft retired the old one
-in 2022), so on Linux the reader is off by default and the 5-second poll is never scheduled; Teams
+in 2022), so on Linux the reader is off by default and no watcher or poll is started; Teams
 arrives through the connector, minutes behind rather than seconds, and nothing is lost.
 `pa doctor` shows `teams cache UNSUPPORTED on Linux`. The Teams *web* app keeps the same IndexedDB
 in a Chromium profile; if doctor finds one it prints its path, and `PA_TEAMS_CACHE_DIR=<that path>`
@@ -192,8 +210,9 @@ and the doctor line says so.
 
 Privacy: it is the same data the connector reads and you see in Teams, read on the machine it
 is already on, for the user signed in to it. Nothing is sent anywhere new. The reader never
-writes to Teams' files or holds one open (it opens them read-only with every share flag and
-copies tables before parsing), and logs carry counts and timings, never a body. Off with
+writes to Teams' files or holds one open between passes (it opens them read-only with every
+share flag and copies tables before parsing; the resident process holds no handle while idle),
+and logs carry counts and timings, never a body. Off with
 `PA_TEAMS_CACHE=0`; `pa doctor` shows `teams cache: last message Ns ago`, or why not.
 
 The reader lives in its own venv (`%LOCALAPPDATA%\personal-assistant\teams-venv`, created by

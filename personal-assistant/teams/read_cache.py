@@ -23,8 +23,17 @@ metadata scan: a reply chain has a `messageMap`, a conversation has
 Output is JSON lines on stdout -- `msg`, `conv`, then one `status` -- and
 nothing else. Message bodies go to the caller, never to stderr or a log.
 
+--serve keeps the process alive between passes: each line on stdin is a JSON
+array of the arguments above, answered with the same lines, ending with its
+`status` (or a `status` carrying only an `error` class name). The worker
+triggers a pass on every LevelDB write burst, and a fresh interpreter plus
+these imports costs 350-500 ms of wall time and a process creation per pass
+where the read itself is ~20 ms; a resident reader makes a trigger one pipe
+message. EOF on stdin (the worker exited, however it died) ends it.
+
 Usage: read_cache.py --src DIR [--blobs DIR] --work DIR [--since-ms N]
-                     [--after-ldb N] [--max-ldb N]
+                     [--after-ldb N] [--max-ldb N] [--log NAME:OFFSET]
+       read_cache.py --serve
 """
 
 import argparse
@@ -194,14 +203,20 @@ BLOCK = 32768  # LevelDB log block size; a record fragment never crosses one
 
 
 def log_batches(data):
-    """Write batches in a LevelDB log fragment that starts on a block boundary.
+    """Write batches in a LevelDB log fragment that starts on a block boundary,
+    and the offset just past the last complete record.
 
     Tolerant where ccl's LogFile is strict, because a tail read starts in the
     middle of the log and a live copy can end mid-write: a leading Middle/Last
     fragment (its First is before the tail) is skipped, and a torn record at
-    the end stops the walk.
+    the end stops the walk. The end returned stops *before* a record still
+    being written (a First whose Last is not there yet), so the next pass
+    reads it whole. Passes now run within a second of a write, which makes
+    landing mid-record likely; resuming past such a First would drop the rest
+    of the record as an orphan when the record crosses a block.
     """
-    pos, pending = 0, None
+    batches = []
+    pos, pending, end = 0, None, 0
     while pos + 7 <= len(data):
         room = BLOCK - (pos % BLOCK)
         if room < 7:  # block trailer padding
@@ -215,19 +230,24 @@ def log_batches(data):
         pos += 7 + length
         if kind == 1:  # Full
             pending = None
-            yield body
+            batches.append(body)
+            end = pos
         elif kind == 2:  # First
             pending = bytearray(body)
         elif kind == 3 and pending is not None:  # Middle
             pending += body
         elif kind == 4 and pending is not None:  # Last
             pending += body
-            yield bytes(pending)
+            batches.append(bytes(pending))
             pending = None
+            end = pos
+        elif pending is None:  # an orphan from before the tail: done with
+            end = pos
+    return batches, end
 
 
-def log_records(data, path):
-    for batch in log_batches(data):
+def log_records(batches, path):
+    for batch in batches:
         buf = io.BytesIO(batch)
         header = buf.read(12)
         if len(header) < 12:
@@ -268,17 +288,31 @@ def read_tail(src, start):
         return f.read(), start
 
 
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--src", required=True)
+class ArgError(Exception):
+    pass
+
+
+class Parser(argparse.ArgumentParser):
+    def error(self, message):  # not sys.exit: a bad request must not end --serve
+        raise ArgError(message)
+
+
+def parser():
+    ap = Parser()
+    ap.add_argument("--src")
     ap.add_argument("--blobs")
-    ap.add_argument("--work", required=True)
+    ap.add_argument("--work")
     ap.add_argument("--since-ms", type=float, default=0)
     ap.add_argument("--after-ldb", type=int)
     ap.add_argument("--max-ldb", type=int, default=3)
     ap.add_argument("--log", default="", help="NAME:OFFSET already read of the active log")
-    a = ap.parse_args()
+    ap.add_argument("--serve", action="store_true")
+    return ap
 
+
+def read(a, out):
+    if not a.src or not a.work:
+        raise ArgError("--src and --work are required")
     started = time.time()
     logs = sorted(glob.glob(os.path.join(a.src, "*.log")), key=file_no)
     ldbs = sorted(glob.glob(os.path.join(a.src, "*.ldb")), key=file_no)
@@ -292,8 +326,13 @@ def main():
     seen_name, _, seen_off = a.log.partition(":")
     seen_off = int(seen_off or 0)
 
-    shutil.rmtree(a.work, ignore_errors=True)
-    os.makedirs(a.work, exist_ok=True)
+    # The work directory exists only while a table or blob is being parsed:
+    # a log-only pass (nearly every pass) creates no file at all, so it gives
+    # an on-access scanner nothing new to look at.
+    if os.path.isdir(a.work):
+        shutil.rmtree(a.work, ignore_errors=True)
+    if fresh:
+        os.makedirs(a.work, exist_ok=True)
     records = []
     copied = 0
     for p in fresh:  # oldest first, so a later write of a key wins
@@ -312,8 +351,9 @@ def main():
         except FileNotFoundError:
             continue
         copied += len(data)
-        log_state.append({"name": name, "offset": start + len(data)})
-        records.extend(log_records(data, pathlib.Path(p)))
+        batches, end = log_batches(data)
+        log_state.append({"name": name, "offset": start + end})
+        records.extend(log_records(batches, pathlib.Path(p)))
 
     dec = Decoder(records, a.blobs, a.work)
     msgs, convs = {}, {}
@@ -350,8 +390,8 @@ def main():
         elif "threadProperties" in v and "members" in v and v.get("id"):
             convs[v["id"]] = conv_out(plain(v), db_id)
 
-    shutil.rmtree(a.work, ignore_errors=True)
-    out = sys.stdout
+    if os.path.isdir(a.work):
+        shutil.rmtree(a.work, ignore_errors=True)
     for m in sorted(msgs.values(), key=lambda x: x["arrival"] or 0):
         out.write(json.dumps(m) + "\n")
     wanted = {m["conversationId"] for m in msgs.values()}
@@ -370,6 +410,29 @@ def main():
         "bytes": copied,
         "ms": round((time.time() - started) * 1000),
     }) + "\n")
+    out.flush()
+
+
+def serve():
+    ap = parser()
+    out = sys.stdout
+    for line in sys.stdin:
+        if not line.strip():
+            continue
+        try:
+            a = ap.parse_args(json.loads(line))
+            read(a, out)
+        except Exception as e:  # the class name only: a message can quote a value
+            out.write(json.dumps({"t": "status", "error": type(e).__name__}) + "\n")
+            out.flush()
+
+
+def main():
+    a = parser().parse_args()
+    if a.serve:
+        serve()
+    else:
+        read(a, sys.stdout)
 
 
 if __name__ == "__main__":

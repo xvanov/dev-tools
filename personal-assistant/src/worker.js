@@ -52,25 +52,16 @@ async function runAudioProcess() {
 
 const log = logger('worker');
 
-const running = new Set();
-
-// Runs a pass unless that pass is already running. Every caller — the timer
-// and the Teams fast path alike — goes through here, so a pass never overlaps
-// itself however it was started. Resolves to whether it ran.
-async function exclusive(name, fn) {
-  if (running.has(name)) {
-    log.debug('skipping overlapping pass', { name });
-    return false;
-  }
-  running.add(name);
-  try {
-    await fn();
-  } catch (err) {
-    log.warn('pass failed', { name, message: err.message });
-  } finally {
-    running.delete(name);
-  }
-  return true;
+// Every caller — the timers and the Teams fast path alike — goes through
+// these, so a pass never overlaps itself however it was started
+// (src/util/exclusive.js). `exclusive` skips a busy pass and resolves to
+// whether it ran; `soon` runs right after a busy one instead.
+const passes = require('./util/exclusive').passes({
+  onError: (name, err) => log.warn('pass failed', { name, message: err.message }),
+});
+function exclusive(name, fn) {
+  if (passes.isRunning(name)) log.debug('skipping overlapping pass', { name });
+  return passes.run(name, fn);
 }
 
 function every(seconds, name, fn) {
@@ -160,19 +151,23 @@ async function main() {
     await ingest.runAll(['graph_chat', 'graph_mail']);
   });
 
-  // Teams in seconds, from the client's local cache. A fresh DM or mention is
-  // distilled (and drafted for) straight away rather than at the next 90 s
-  // tick — through `exclusive`, so it never overlaps a scheduled pass; if one
-  // is running, that pass or the next picks the item up. Not awaited: the
-  // cache pass stays a few hundred milliseconds whatever distill costs.
+  // Teams in seconds, from the client's local cache: a pass on each write
+  // burst Teams makes, not on a timer (src/ingest/teamsLocal.js `watch`). A
+  // fresh DM or mention is distilled (and drafted for) straight away rather
+  // than at the next 90 s tick — through `soon`, so it never overlaps a
+  // scheduled pass yet does not wait for the next tick when one is running
+  // (that pass chose its items before this one existed). Not awaited: the
+  // cache pass stays tens of milliseconds whatever distill costs.
   if (config.teamsCache.enabled) {
-    every(config.teamsCache.pollSeconds, 'teams-cache', async () => {
-      const r = await require('./ingest/teamsLocal').tick();
-      if (!r.fresh) return;
-      exclusive('distill', () => distill.run({ limit: 5 }))
-        .then((ran) => ran && exclusive('drafts', () => require('./draft').autoDraft({ limit: 3 })))
-        .then(() => config.reconcile.enabled && exclusive('reconcile', () => require('./ledger/reconcile').pass()))
-        .catch(() => {});
+    require('./ingest/teamsLocal').watch({
+      onResult: (r) => {
+        if (!r.fresh) return;
+        passes
+          .soon('distill', () => distill.run({ limit: 5 }))
+          .then((ran) => ran && passes.soon('drafts', () => require('./draft').autoDraft({ limit: 3 })))
+          .then(() => config.reconcile.enabled && exclusive('reconcile', () => require('./ledger/reconcile').pass()))
+          .catch(() => {});
+      },
     });
   }
 

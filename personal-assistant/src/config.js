@@ -176,7 +176,18 @@ const config = {
     enabled: env('PA_TEAMS_CACHE', '1') !== '0' && Boolean(teamsCacheDir),
     // Why it is off on this platform when nobody turned it off (`pa doctor`).
     unsupported: teamsCacheDir ? null : platform.teamsCache.why,
+    // A pass runs on a change notification for the cache directory, once
+    // writes have been quiet for debounceMs (never more than maxWaitMs after
+    // the first); the fallback poll catches what a notification missed, and
+    // pollSeconds is the poll used while no watcher is armed (or with
+    // PA_TEAMS_CACHE_WATCH=0). The reader stays resident unless
+    // PA_TEAMS_CACHE_RESIDENT=0.
+    watch: env('PA_TEAMS_CACHE_WATCH', '1') !== '0',
+    debounceMs: envInt('PA_TEAMS_CACHE_DEBOUNCE_MS', 300),
+    maxWaitMs: envInt('PA_TEAMS_CACHE_MAX_WAIT_MS', 1500),
+    fallbackSeconds: envInt('PA_TEAMS_CACHE_FALLBACK_SECONDS', 60),
     pollSeconds: envInt('PA_TEAMS_CACHE_POLL_SECONDS', 5),
+    resident: env('PA_TEAMS_CACHE_RESIDENT', '1') !== '0',
     dir: teamsCacheDir,
     // Its own venv, not the capture one: the reader is pinned to a forensic
     // library that is not on PyPI and must not be able to break capture.

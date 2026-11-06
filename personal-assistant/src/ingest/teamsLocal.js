@@ -11,10 +11,24 @@
 // is the same data the connector reads, already on the machine, for the same
 // signed-in user.
 //
-// Every few seconds the pass looks at the cache directory's newest mtime; only
-// when it moved does it run teams/read_cache.py, which reads the LevelDB log
-// from where the last pass stopped (KB, not the ~100 MB store) and prints the
-// new messages as JSON lines. Items are written as `graph_chat` with the
+// A pass runs teams/read_cache.py, which reads the LevelDB log from where the
+// last pass stopped (KB, not the ~100 MB store) and prints the new messages
+// as JSON lines. What starts a pass (`watch` below):
+//
+//  - a change notification on the LevelDB directory (fs.watch, which is
+//    ReadDirectoryChangesW on Windows: the kernel tells us, nothing is opened
+//    or stat'ed to find out), debounced to the end of the write burst
+//    (teamsTrigger.js). A message is in the store well under a second after
+//    Teams writes it, and a quiet Teams costs nothing at all;
+//  - a slow fallback poll (PA_TEAMS_CACHE_FALLBACK_SECONDS, 60) that compares
+//    the directory's newest mtime, in case a notification is lost (the
+//    watcher's buffer overflowed, Teams replaced the directory on an update).
+//    It also re-arms a watcher that errored or closed;
+//  - while no watcher is armed, the old fast poll (PA_TEAMS_CACHE_POLL_SECONDS,
+//    5), so a broken watcher costs latency, never messages.
+//
+// The reader stays resident between passes (teamsReader.js): a trigger is a
+// line on a pipe, not an interpreter start. Items are written as `graph_chat` with the
 // connector's own ids — `{chatId}/{messageId}` is the same pair in both — so
 // the two sources land on one row, never two:
 //
@@ -28,7 +42,6 @@
 
 const fs = require('fs');
 const path = require('path');
-const { execFile } = require('child_process');
 
 const { config } = require('../config');
 const { rows } = require('../db');
@@ -37,6 +50,8 @@ const { htmlToText } = require('../util/text');
 const { namesMe } = require('./graphChat');
 const { logger } = require('../log');
 const platform = require('../platform');
+const trigger = require('./teamsTrigger');
+const readers = require('./teamsReader');
 
 const log = logger('teams-cache');
 
@@ -236,19 +251,20 @@ function signature(dir) {
   return `${newest}|${logs}`;
 }
 
+// One-shot by default (`pa sync`, which must exit when done); `watch` swaps
+// in the resident reader for the worker's lifetime.
+const readerOpts = () => ({ python: config.teamsCache.python, script: SCRIPT, timeoutMs: config.teamsCache.timeoutMs });
+let reader = null;
 function runReader(args) {
-  return new Promise((resolve, reject) => {
-    execFile(
-      config.teamsCache.python,
-      ['-I', SCRIPT, ...args],
-      { timeout: config.teamsCache.timeoutMs, maxBuffer: 64 * 1024 * 1024, windowsHide: true },
-      (err, stdout) => {
-        // stderr is not passed on: a traceback can quote a value it choked on.
-        if (err) reject(new Error(err.killed ? 'reader timed out' : `reader exited ${err.code ?? '?'}`));
-        else resolve(stdout);
-      }
-    );
-  });
+  if (!reader) reader = readers.oneShot(readerOpts());
+  return reader.request(args);
+}
+
+// Whether a file-change notification names something a pass would read: the
+// log and tables. LOG, LOCK, MANIFEST and CURRENT change alongside them and
+// add nothing. No name (allowed by the API) counts.
+function relevantChange(filename) {
+  return !filename || /\.(log|ldb)$/i.test(String(filename));
 }
 
 // Sender addresses the store already knows: by AAD id (person_identity), and
@@ -317,7 +333,9 @@ let lastPersist = 0;
 let memo = null; // cursor state between persists
 
 // One pass. Returns { changed, fresh, skipped? }. Never throws for a missing
-// Teams or venv — those are states, reported by `pa doctor`.
+// Teams or venv — those are states, reported by `pa doctor`. `force` reads
+// without comparing the directory's signature first: a change notification
+// already says something moved, so the readdir and stats would be waste.
 async function pass({ force = false } = {}) {
   if (!config.teamsCache.enabled) return { changed: 0, fresh: 0, skipped: 'off' };
   const { leveldb, blobs } = paths();
@@ -325,7 +343,7 @@ async function pass({ force = false } = {}) {
   if (!fs.existsSync(config.teamsCache.python) || !fs.existsSync(SCRIPT)) {
     return { changed: 0, fresh: 0, skipped: 'no venv' };
   }
-  const sig = signature(leveldb);
+  const sig = force ? null : signature(leveldb);
   if (!force && sig === lastSignature) return { changed: 0, fresh: 0, skipped: 'unchanged' };
 
   if (!memo) memo = (await getCursor(CURSOR))?.state || {};
@@ -341,7 +359,7 @@ async function pass({ force = false } = {}) {
   if (memo.maxLdb != null) args.push('--after-ldb', String(memo.maxLdb));
 
   const { messages, convs, status } = parseOutput(await runReader(args));
-  lastSignature = sig;
+  if (sig) lastSignature = sig;
   if (!status) throw new Error('reader printed no status');
 
   const newest = Math.max(Number(memo.newestArrival) || 0, ...messages.map((m) => Number(m.arrival) || 0));
@@ -397,9 +415,9 @@ async function pass({ force = false } = {}) {
 // The worker's entry point. A failure is recorded on the cursor for `pa
 // doctor` and logged once per distinct message, not every five seconds.
 let lastError = null;
-async function tick() {
+async function tick(opts) {
   try {
-    const r = await pass();
+    const r = await pass(opts);
     lastError = null;
     return r;
   } catch (err) {
@@ -408,6 +426,123 @@ async function tick() {
     await recordError(CURSOR, err.message).catch(() => {});
     return { changed: 0, fresh: 0, error: err.message };
   }
+}
+
+// The worker's driver: change notifications, debounced, plus the fallback
+// poll (see the top of this file). `onResult` gets every pass's result.
+// Returns { stop, stats }. Injectable fs.watch and timers for tests.
+function watch({ onResult = () => {}, fsWatch = fs.watch, timers = { setTimeout, clearTimeout }, now = Date.now } = {}) {
+  const tc = config.teamsCache;
+  if (tc.resident) {
+    if (reader) reader.close();
+    reader = readers.resident(readerOpts());
+  }
+  let watcher = null;
+  let stopped = false;
+  let fallbackTimer = null;
+  let wantForce = false; // a notification asked for this pass
+  let heard = 0; // relevant notifications, ever
+  let heardAtCheck = 0; // ... as of the last fallback check
+  let silent = false; // no notification between the last two fallback checks
+  const stats = { notifications: 0, passes: 0, fallbackChecks: 0, rearms: 0 };
+
+  const sched = trigger.scheduler({
+    quietMs: tc.debounceMs,
+    maxWaitMs: tc.maxWaitMs,
+    timers,
+    now,
+    run: async () => {
+      const force = wantForce;
+      wantForce = false;
+      const before = lastSignature;
+      const wasSilent = silent;
+      silent = false;
+      stats.passes++;
+      const r = await tick({ force });
+      // The fallback saw the directory change, but no notification arrived
+      // since the previous check: the watcher is alive but deaf (the
+      // directory was replaced under it). Open a new one.
+      if (!force && wasSilent && watcher && before && lastSignature !== before) {
+        log.info('watcher missed a change — re-arming');
+        drop(watcher);
+        arm();
+      }
+      onResult(r);
+    },
+  });
+
+  function drop(w) {
+    if (watcher === w) watcher = null;
+    try {
+      w.close();
+    } catch {
+      /* already closed */
+    }
+  }
+
+  function arm() {
+    if (watcher || stopped || !tc.watch) return;
+    const { leveldb } = paths();
+    let w;
+    try {
+      w = fsWatch(leveldb, { persistent: false }, (_type, filename) => {
+        if (stopped || !relevantChange(filename)) return;
+        stats.notifications++;
+        heard++;
+        wantForce = true;
+        sched.poke();
+      });
+    } catch (err) {
+      // No directory (Teams not installed or mid-update): the fast poll
+      // runs and tries again.
+      log.debug('watch not armed', { code: err.code || err.message });
+      return;
+    }
+    stats.rearms++;
+    const lost = (why) => {
+      if (watcher !== w) return;
+      log.info('watcher lost — polling until re-armed', { why });
+      drop(w);
+      sched.poke(); // whatever it missed
+      scheduleFallback();
+    };
+    w.on('error', (err) => lost(err.code || err.message));
+    w.on('close', () => lost('closed'));
+    watcher = w;
+  }
+
+  function scheduleFallback() {
+    if (fallbackTimer) timers.clearTimeout(fallbackTimer);
+    fallbackTimer = null;
+    if (stopped) return;
+    const seconds = watcher ? tc.fallbackSeconds : tc.pollSeconds;
+    fallbackTimer = timers.setTimeout(() => {
+      fallbackTimer = null;
+      if (!watcher) arm();
+      stats.fallbackChecks++;
+      silent = heard === heardAtCheck;
+      heardAtCheck = heard;
+      sched.poke();
+      scheduleFallback();
+    }, seconds * 1000);
+  }
+
+  arm();
+  // One read at start, as the poll did: whatever arrived while the worker was down.
+  sched.poke();
+  scheduleFallback();
+
+  return {
+    stats: () => ({ ...stats, watching: Boolean(watcher), reader: reader?.stats?.() || null }),
+    stop() {
+      stopped = true;
+      sched.stop();
+      if (fallbackTimer) timers.clearTimeout(fallbackTimer);
+      if (watcher) drop(watcher);
+      if (reader) reader.close();
+      reader = null;
+    },
+  };
 }
 
 // For the ingest registry (`pa sync --source teams_cache`): always reads.
@@ -453,7 +588,9 @@ module.exports = {
   run,
   pass,
   tick,
+  watch,
   status,
+  relevantChange,
   // pure, for tests
   toItem,
   planWrite,

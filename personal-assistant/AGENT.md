@@ -154,7 +154,10 @@ so) because it is seconds behind where the
 connector is minutes behind, and it needs no Entra app registration (ruled out for this tool). It is
 the same user's same data, local only. `teams/read_cache.py` opens Teams' files read-only with
 every share flag, never writes or locks them, tails the LevelDB log from a saved offset, and
-never does a full parse (minutes of CPU). Its items are `graph_chat` with the connector's own
+never does a full parse (minutes of CPU). A pass is started by a change notification on the
+LevelDB directory (debounced, `teamsTrigger.js`) and served by one resident reader process
+(`teamsReader.js`); the mtime poll is only the fallback. Do not go back to a process per pass or a
+fast poll: each was an antivirus wakeup. Its items are `graph_chat` with the connector's own
 `{chatId}/{messageId}` ids and `raw.via = 'teams-cache'`; `planWrite` and `graphChat.mergeCached`
 decide who wins a shared row, and both avoid rewriting a row whose content did not change, since
 a changed hash re-runs distillation. Bodies never reach a log, stderr, or an exception message.
