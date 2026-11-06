@@ -1,0 +1,228 @@
+/* The Jarvis design system: colour, type and shape for all four layers.
+ *
+ *   1 Talk       personal-assistant /talk
+ *   2 Dashboard  personal-assistant /
+ *   3 Sessions   termhub /
+ *   4 Session    termhub /?focus=<id>
+ *
+ * CANONICAL COPY: personal-assistant/src/dashboard/theme.css (served at /theme.css).
+ * termhub/web/theme.css is a byte-for-byte copy, so termhub keeps its look when the
+ * PA is not installed. Edit this file, then run `npm run sync-theme` in termhub;
+ * termhub's test/theme.test.js fails while the two differ. nav.js works the same way.
+ *
+ * Three layers of custom properties:
+ *   1. Palette   (--p-*)   raw values, nothing else in the system holds a hex.
+ *   2. Semantic  (--surface-*, --ink-*, --signal, ...) what the pages use. Light and
+ *                dark come from one light-dark() each, keyed off `color-scheme`, so a
+ *                value is never written twice.
+ *   3. Components (.jnav, .j-btn)  the layer switcher and the button shapes.
+ *
+ * Swapping in a brand palette means overriding block 1 only, for example in a
+ * file loaded after this one:  :root { --p-signal-day: #...; --p-signal-night: #...; }
+ * Pages never reference --p-* directly.
+ *
+ * Dark / light: the OS preference wins until the switcher's toggle sets
+ * <html data-theme="light|dark"> (remembered per browser by nav.js).
+ * The terminal itself stays dark in both (--term-*): TUIs like Claude Code
+ * draw their own colours for a dark background.
+ */
+
+/* ---- 1. Palette ------------------------------------------------------------ */
+:root {
+  /* Day: cool paper, blue-grey ink. */
+  --p-day-0: #f2f4f7;      /* page */
+  --p-day-1: #ffffff;      /* panel */
+  --p-day-2: #e7ebf0;      /* sunk: chips, inputs, hover */
+  --p-day-line: #d2d8e0;
+  --p-day-line-strong: #b3bcc8;
+  --p-day-ink: #16202b;
+  --p-day-ink-2: #4c5866;
+  --p-day-ink-3: #7b8693;
+
+  /* Night: the terminal's colour, a blue-black rather than a neutral one. */
+  --p-night-0: #0e1217;
+  --p-night-1: #151b22;
+  --p-night-2: #1c242d;
+  --p-night-line: #27313c;
+  --p-night-line-strong: #3a4553;
+  --p-night-ink: #d8e0e8;
+  --p-night-ink-2: #93a0ae;
+  --p-night-ink-3: #606c7a;
+
+  /* Signal: ion cyan, the assistant's colour (listening, current layer, primary). */
+  --p-signal-day: #08778c;
+  --p-signal-night: #4cc2d9;
+  --p-on-signal-day: #ffffff;
+  --p-on-signal-night: #06222b;
+
+  /* Status. Amber is "needs you", never decoration. */
+  --p-amber-day: #a85a06;
+  --p-amber-night: #e5a446;
+  --p-ok-day: #1f7a48;
+  --p-ok-night: #5cbf89;
+  --p-bad-day: #b0312a;
+  --p-bad-night: #ee7a70;
+}
+
+/* ---- 2. Semantic tokens ---------------------------------------------------- */
+:root {
+  color-scheme: light dark;
+
+  --surface-0: light-dark(var(--p-day-0), var(--p-night-0));
+  --surface-1: light-dark(var(--p-day-1), var(--p-night-1));
+  --surface-2: light-dark(var(--p-day-2), var(--p-night-2));
+  --line: light-dark(var(--p-day-line), var(--p-night-line));
+  --line-strong: light-dark(var(--p-day-line-strong), var(--p-night-line-strong));
+  --ink: light-dark(var(--p-day-ink), var(--p-night-ink));
+  --ink-2: light-dark(var(--p-day-ink-2), var(--p-night-ink-2));
+  --ink-3: light-dark(var(--p-day-ink-3), var(--p-night-ink-3));
+
+  --signal: light-dark(var(--p-signal-day), var(--p-signal-night));
+  --on-signal: light-dark(var(--p-on-signal-day), var(--p-on-signal-night));
+  --signal-soft: color-mix(in srgb, var(--signal) 14%, transparent);
+  --amber: light-dark(var(--p-amber-day), var(--p-amber-night));
+  --amber-soft: color-mix(in srgb, var(--amber) 12%, transparent);
+  --ok: light-dark(var(--p-ok-day), var(--p-ok-night));
+  --bad: light-dark(var(--p-bad-day), var(--p-bad-night));
+  --scrim: light-dark(rgb(14 22 32 / 0.35), rgb(0 0 0 / 0.55));
+
+  /* The terminal: always night. Plain values (no light-dark) so termhub's
+     app.js can read them with getComputedStyle for xterm's theme. */
+  --term-bg: var(--p-night-0);
+  --term-fg: var(--p-night-ink);
+  --term-cursor: var(--p-signal-night);
+  --term-dim: var(--p-night-ink-2);
+  --term-line: var(--p-night-line);
+
+  /* Type. System faces only: these pages load on a phone over the tailnet and
+     must not wait on a font CDN. Mono is the assistant's voice (the face, the
+     layer switcher, the terminal); sans is for reading. */
+  --font-sans: "Segoe UI Variable Text", "Segoe UI", -apple-system, BlinkMacSystemFont, "SF Pro Text", Roboto, "Helvetica Neue", sans-serif;
+  --font-mono: "Cascadia Code", "Cascadia Mono", "JetBrains Mono", ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+  --text-xs: 11px;
+  --text-sm: 12px;
+  --text-base: 14px;
+  --text-md: 15px;
+  --text-lg: 18px;
+  --text-xl: 22px;
+  --leading: 1.45;
+  --leading-tight: 1.25;
+
+  /* Shape. Radius follows hierarchy: controls < panels; chips are pills. */
+  --radius-sm: 4px;
+  --radius: 7px;
+  --radius-lg: 12px;
+  --radius-pill: 999px;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --shadow-1: 0 1px 2px light-dark(rgb(16 28 40 / 0.06), rgb(0 0 0 / 0.3));
+  --shadow-2: 0 8px 24px light-dark(rgb(16 28 40 / 0.14), rgb(0 0 0 / 0.5));
+  --focus-ring: 0 0 0 2px var(--surface-0), 0 0 0 4px var(--signal);
+  --ease: cubic-bezier(.2, .7, .2, 1);
+}
+:root[data-theme="light"] { color-scheme: light; }
+:root[data-theme="dark"] { color-scheme: dark; }
+
+:focus-visible { outline: 2px solid var(--signal); outline-offset: 2px; }
+
+/* ---- 3a. Buttons ----------------------------------------------------------- */
+.j-btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  font: inherit; font-size: var(--text-sm); line-height: 1.3; text-decoration: none;
+  color: var(--ink); background: var(--surface-1);
+  border: 1px solid var(--line-strong); border-radius: var(--radius);
+  padding: 5px 12px; cursor: pointer;
+}
+.j-btn:hover { border-color: var(--signal); }
+.j-btn.primary { background: var(--signal); border-color: var(--signal); color: var(--on-signal); font-weight: 600; }
+.j-btn.quiet { background: none; border-color: transparent; color: var(--ink-2); }
+.j-btn.quiet:hover { color: var(--signal); }
+.j-btn:disabled { opacity: .5; cursor: default; }
+
+/* ---- 3b. The layer switcher (nav.js renders it) ---------------------------- */
+.jnav {
+  display: inline-flex; align-items: center; gap: var(--space-2);
+  font: 500 var(--text-sm)/1 var(--font-mono);
+  color: var(--ink-2);
+  min-width: 0;
+}
+.jnav-brand {
+  display: inline-flex; align-items: center; gap: 7px;
+  color: var(--ink); font-weight: 600; letter-spacing: .02em;
+}
+.jnav-dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--signal); box-shadow: 0 0 0 3px var(--signal-soft);
+}
+.jnav-rail {
+  display: flex; align-items: stretch; gap: 2px;
+  list-style: none; margin: 0; padding: 2px;
+  background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--radius);
+  min-width: 0;
+}
+.jnav-rail li { display: flex; min-width: 0; }
+.jnav-seg {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 5px 9px; border-radius: 5px;
+  color: var(--ink-2); text-decoration: none; white-space: nowrap;
+  cursor: pointer;
+}
+.jnav-seg kbd {
+  font: inherit; font-size: 10.5px; color: var(--ink-3);
+  min-width: 1ch;
+}
+.jnav-seg:hover { color: var(--ink); background: var(--surface-1); }
+.jnav-seg[aria-current="page"] {
+  color: var(--signal); background: var(--surface-1);
+  box-shadow: var(--shadow-1), inset 0 -2px 0 var(--signal);
+}
+.jnav-seg[aria-current="page"] kbd { color: var(--signal); }
+.jnav-seg.is-off { opacity: .45; cursor: not-allowed; }
+.jnav-seg.is-busy { cursor: progress; }
+.jnav-theme {
+  display: inline-grid; place-items: center;
+  width: 26px; height: 26px; padding: 0;
+  background: none; border: 1px solid transparent; border-radius: var(--radius);
+  color: var(--ink-2); cursor: pointer;
+}
+.jnav-theme:hover { color: var(--signal); border-color: var(--line); }
+.jnav-theme svg { width: 14px; height: 14px; display: block; }
+
+/* Narrow: digits and the brand word go, the dot stays. */
+@media (max-width: 560px) {
+  .jnav-seg kbd, .jnav-brand-word { display: none; }
+  .jnav-seg { padding: 6px 8px; }
+}
+/* Tight: inside termhub's sidebar, which already names itself. */
+.jnav--tight { gap: 4px; font-size: var(--text-xs); }
+.jnav--tight .jnav-brand, .jnav--tight .jnav-seg kbd { display: none; }
+.jnav--tight .jnav-seg { padding: 5px 6px; }
+
+/* Layer 4: a terminal, so the switcher is a small tab in the corner that shows
+   only where you are, and opens on hover, focus or a tap. It always takes the
+   night colours, because what is under it is always the terminal. */
+.jnav--float {
+  color-scheme: dark;
+  position: fixed; top: 6px; right: 10px; z-index: 25;
+  padding: 0; opacity: .55;
+  transition: opacity .15s var(--ease);
+}
+.jnav--float .jnav-brand, .jnav--float .jnav-theme { display: none; }
+.jnav--float .jnav-rail { background: var(--surface-1); box-shadow: var(--shadow-2); }
+.jnav--float .jnav-seg:not([aria-current="page"]) {
+  max-width: 0; padding-left: 0; padding-right: 0; overflow: hidden;
+  transition: max-width .18s var(--ease), padding .18s var(--ease);
+}
+.jnav--float .jnav-rail li:not(:has([aria-current="page"])) { margin: 0 -1px; }
+.jnav--float:hover, .jnav--float:focus-within, .jnav--float.open { opacity: 1; }
+.jnav--float:hover .jnav-seg, .jnav--float:focus-within .jnav-seg, .jnav--float.open .jnav-seg {
+  max-width: 14em; padding-left: 9px; padding-right: 9px;
+}
+.jnav--float:hover .jnav-rail li, .jnav--float:focus-within .jnav-rail li, .jnav--float.open .jnav-rail li { margin: 0; }
+@media (prefers-reduced-motion: reduce) {
+  .jnav--float, .jnav--float .jnav-seg { transition: none; }
+}

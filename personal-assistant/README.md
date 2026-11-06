@@ -1131,8 +1131,8 @@ asks first, because it changes how often you are interrupted.
 work happens in the background. A small ASCII face shows what it is doing (listening, thinking,
 talking, pleased when it finishes, worried when something is down), with the latest tool step in
 small print under it. Tap the face (or press Space) once to start: browsers allow the microphone
-and speech only after a gesture. From there, **dashboard** drills down to the cards and the chat in
-text, and **session** opens the PA chat's termhub session.
+and speech only after a gesture. From there the layer switcher at the top (below) drills down to
+the cards and the chat in text, then termhub, then the PA chat's session on its own.
 
 - **Listening** is hands-free: an energy-based voice detector in the page (`talk.core.js`) notices
   you start, waits for a pause of 650 ms, and sends that utterance (**Pause before sending** in
@@ -1262,6 +1262,32 @@ history and then dedupe the stream against it.
 - [`integrations/openclaw/SKILL.md`](./integrations/openclaw/SKILL.md) — the skill that lets
   OpenClaw drive these same commands from a chat surface.
 
+### One look, four layers
+
+Talk, the dashboard, termhub and the PA chat's raw session are four depths of the same
+assistant, and they share one design system and one layer switcher:
+
+**jarvis · 1 Talk · 2 Dashboard · 3 Sessions · 4 Session**, at the top of every page, the
+current one lit, **Alt+1..4** from anywhere (the terminal included), and a theme toggle at its
+end (system → light → dark, remembered per browser).
+
+- **Talk** is `/talk`, **Dashboard** is `/` (both relative, so they work on
+  `http://127.0.0.1:7300` and under termhub's `/pa/` on the tailnet alike).
+- **Sessions** is termhub's hub. Under `/pa/` it is the same origin (`/`); on loopback it is the
+  origin of the chat session's termhub URL (`GET /api/chat/session`), else `PA_TERMHUB_URL`, else
+  `http://127.0.0.1:7000`.
+- **Session** is termhub's focus view, `/?focus=<id>`: the PA chat's terminal full-window, no
+  termhub chrome. With no chat session yet it starts one (`POST /api/chat/open`) first. There the
+  switcher shrinks to a small tab in the corner that opens on hover or a tap.
+
+The colours, type and shapes are tokens in `src/dashboard/theme.css` (served at `/theme.css`);
+the switcher is `src/dashboard/nav.js` (`/nav.js`). These are the canonical copies: termhub
+carries byte copies in `termhub/web/` so it keeps its look without the PA, and its
+`test/theme.test.js` fails until `npm run sync-theme` (in termhub) copies an edit across. The
+palette is one block of `--p-*` values that pages never use directly, so a brand palette drops in
+by overriding that block alone. Light and dark are one `light-dark()` per token; the terminal stays
+dark in both.
+
 ## Layout
 
 ```
@@ -1282,7 +1308,8 @@ src/commitments/     closing chat and mail asks you answered yourself (replyClos
                      the cause-and-effect paragraph on cards (context.js, pure half in contextCore.js)
 src/dashboard/       the loopback web page: today, next meeting, replies, runs, secret requests, and the Memory, Chat, Routines and Repos tabs;
                      each card's links to its source, person, repo and session (links.js pure, cards.js);
-                     /talk, the voice page (talk.html + talk.page.js; talk.core.js pure; talk.js serves it and proxies to whisper)
+                     /talk, the voice page (talk.html + talk.page.js; talk.core.js pure; talk.js serves it and proxies to whisper);
+                     theme.css + nav.js, the design system and layer switcher every layer shares (canonical; termhub copies them)
 src/secrets/         secret and login requests; the OS keyring facade (vault.js; stdin only)
 src/platform/        every OS decision: windows.js, linux.js, darwin.js behind one contract (index.js)
 src/routines/        cron parser, the typed action registry (repo_sync, prompt_report), runs, suggestions

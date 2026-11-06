@@ -203,6 +203,12 @@ async function handle(req, res) {
   if (req.method === 'GET' && url.pathname === '/') {
     return send(res, 200, pageHtml(issuePageToken()), 'text/html; charset=utf-8');
   }
+  // The design system shared by every layer (theme.css) and the layer switcher
+  // (nav.js). termhub serves byte copies of both; see the header of theme.css.
+  if (req.method === 'GET' && (url.pathname === '/theme.css' || url.pathname === '/nav.js')) {
+    const css = url.pathname === '/theme.css';
+    return send(res, 200, fs.readFileSync(path.join(__dirname, css ? 'theme.css' : 'nav.js'), 'utf8'), css ? 'text/css; charset=utf-8' : 'text/javascript; charset=utf-8');
+  }
 
   // ---- The voice page (dashboard/talk.js): /talk, its scripts, and
   // POST /api/talk/transcribe (X-PA guarded there). ----

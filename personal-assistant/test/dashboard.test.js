@@ -34,4 +34,30 @@ assert.ok(!hostAllowed(undefined));
   }
 }
 
-console.log('dashboard ok');
+// One design system for every layer: both PA pages load theme.css and the
+// layer switcher (nav.js) by relative URL, so they work under termhub's /pa/
+// too, and the server answers both.
+(async () => {
+  const fs = require('fs');
+  const path = require('path');
+  const dir = path.join(__dirname, '..', 'src', 'dashboard');
+  for (const [page, layer] of [['index.html', 'dashboard'], ['talk.html', 'talk']]) {
+    const html = fs.readFileSync(path.join(dir, page), 'utf8');
+    assert.match(html, /<link rel="stylesheet" href="theme\.css">/, `${page} loads theme.css`);
+    assert.match(html, new RegExp(`<script src="nav\\.js" data-layer="${layer}"></script>`), `${page} loads nav.js`);
+    assert.match(html, /data-jnav/, `${page} has a switcher slot`);
+    assert.ok(!/#[0-9a-fA-F]{6}\b/.test(html.slice(0, html.indexOf('</style>'))), `${page}: colours come from theme.css, not the page`);
+  }
+  const { handle } = require('../src/dashboard/server');
+  for (const [p, type] of [['/theme.css', /text\/css/], ['/nav.js', /javascript/]]) {
+    const res = { writeHead(s, h) { this.status = s; this.headers = h; }, end(b) { this.body = b; } };
+    await handle({ method: 'GET', url: p, headers: { host: '127.0.0.1:7300' } }, res);
+    assert.strictEqual(res.status, 200, p);
+    assert.match(res.headers['Content-Type'], type, p);
+    assert.ok(res.body.length > 500, p);
+  }
+  console.log('dashboard ok');
+})().catch((err) => {
+  console.error(err);
+  process.exit(1);
+});

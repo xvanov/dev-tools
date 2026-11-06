@@ -3,63 +3,44 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>PA Talk</title>
+<title>Jarvis · Talk</title>
+<link rel="stylesheet" href="theme.css">
+<script src="nav.js" data-layer="talk"></script>
 <style>
-  :root {
-    --bg: #f6f5f1;
-    --fg: #23262b;
-    --muted: #7a7f88;
-    --faint: #b9bcc2;
-    --accent: #2f6fdf;
-    --warn: #c0612b;
-    --panel: #ffffff;
-    --line: #e2e0da;
-  }
-  @media (prefers-color-scheme: dark) {
-    :root:not([data-theme="light"]) {
-      --bg: #121417;
-      --fg: #e6e8eb;
-      --muted: #8b919a;
-      --faint: #4a4f57;
-      --accent: #7aa7ff;
-      --warn: #f0a070;
-      --panel: #1b1e23;
-      --line: #2a2e35;
-    }
-  }
+  /* Colours, type and the layer switcher come from theme.css (the Jarvis design
+     system); only this page's layout lives here. */
   * { box-sizing: border-box; }
   html, body { height: 100%; margin: 0; }
   body {
-    background: var(--bg);
-    color: var(--fg);
-    font: 15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+    background: var(--surface-0);
+    color: var(--ink);
+    font: var(--text-md)/var(--leading) var(--font-sans);
     display: flex;
     flex-direction: column;
     align-items: center;
-    padding: 16px;
+    padding: var(--space-3) var(--space-4) var(--space-4);
     user-select: none;
     -webkit-user-select: none;
   }
-  nav {
+  .talk-top {
     width: 100%;
-    max-width: 640px;
+    max-width: 760px;
     display: flex;
     justify-content: space-between;
-    gap: 12px;
-    font-size: 13px;
-    color: var(--muted);
+    align-items: center;
+    gap: var(--space-3);
   }
-  nav a, nav button {
-    color: var(--muted);
+  #toggleSettings {
+    font: 500 var(--text-sm)/1 var(--font-mono);
+    color: var(--ink-2);
     background: none;
-    border: 0;
-    padding: 4px 0;
-    font: inherit;
+    border: 1px solid transparent;
+    border-radius: var(--radius);
+    padding: 7px 10px;
     cursor: pointer;
-    text-decoration: none;
   }
-  nav a:hover, nav button:hover { color: var(--accent); }
-  nav .links { display: flex; gap: 14px; }
+  #toggleSettings:hover { color: var(--signal); border-color: var(--line); }
+  #toggleSettings[aria-expanded="true"] { color: var(--signal); border-color: var(--line); background: var(--surface-1); }
   main {
     flex: 1;
     width: 100%;
@@ -68,68 +49,77 @@
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    gap: 14px;
+    gap: var(--space-3);
   }
+  /* The face is the assistant: drawn in the mono voice, in ink at rest, in the
+     signal colour while it listens, amber when something is wrong. */
   #face {
-    font: 22px/1.15 ui-monospace, "Cascadia Mono", Consolas, Menlo, monospace;
+    font: 22px/1.15 var(--font-mono);
     margin: 0;
     white-space: pre;
     cursor: pointer;
-    color: var(--fg);
-    transition: color .3s;
+    color: var(--ink);
+    transition: color .3s, text-shadow .3s;
   }
-  #face[data-expr="listening"] { color: var(--accent); }
-  #face[data-expr="concerned"] { color: var(--warn); }
+  #face[data-expr="listening"] { color: var(--signal); text-shadow: 0 0 18px var(--signal-soft); }
+  #face[data-expr="concerned"] { color: var(--amber); }
   @media (max-width: 420px) { #face { font-size: 17px; } }
-  #mood { font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--faint); height: 1em; }
-  #activity { font-size: 12px; color: var(--muted); min-height: 1.4em; text-align: center; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  #caption { min-height: 2.9em; text-align: center; font-size: 17px; max-width: 34em; }
-  #heard { min-height: 1.4em; text-align: center; font-size: 13px; color: var(--muted); font-style: italic; }
-  #notice { font-size: 13px; color: var(--warn); text-align: center; min-height: 1.2em; max-width: 34em; }
+  #mood { font: var(--text-sm)/1 var(--font-mono); color: var(--ink-3); height: 1em; }
+  #activity { font-size: var(--text-sm); color: var(--ink-2); min-height: 1.4em; text-align: center; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #caption { min-height: 2.9em; text-align: center; font-size: var(--text-lg); line-height: 1.4; max-width: 34em; }
+  #heard { min-height: 1.4em; text-align: center; font-size: 13px; color: var(--ink-2); font-style: italic; }
+  #notice { font-size: 13px; color: var(--amber); text-align: center; min-height: 1.2em; max-width: 34em; }
   #ptt {
     margin-top: 6px;
-    border: 1px solid var(--line);
-    background: var(--panel);
-    color: var(--muted);
-    border-radius: 999px;
-    padding: 10px 20px;
-    font: inherit;
-    font-size: 13px;
+    border: 1px solid var(--line-strong);
+    background: var(--surface-1);
+    color: var(--ink-2);
+    border-radius: var(--radius-pill);
+    padding: 10px 22px;
+    font: 500 var(--text-sm)/1.2 var(--font-mono);
     cursor: pointer;
     touch-action: none;
+    box-shadow: var(--shadow-1);
   }
-  #ptt.down { color: var(--accent); border-color: var(--accent); }
+  #ptt:hover { border-color: var(--signal); }
+  #ptt.down { color: var(--on-signal); background: var(--signal); border-color: var(--signal); }
   #settings {
     display: none;
     width: 100%;
     max-width: 640px;
-    background: var(--panel);
+    margin-top: var(--space-3);
+    background: var(--surface-1);
     border: 1px solid var(--line);
-    border-radius: 10px;
-    padding: 12px 14px;
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-1);
+    padding: var(--space-3) var(--space-4);
     font-size: 13px;
     gap: 10px 16px;
     grid-template-columns: max-content 1fr;
     align-items: center;
   }
+  #settings > label { color: var(--ink-2); }
   #settings.open { display: grid; }
-  #settings select, #settings input[type=range] { width: 100%; max-width: 100%; }
-  #settings select { background: var(--bg); color: var(--fg); border: 1px solid var(--line); border-radius: 6px; padding: 4px; font: inherit; }
+  #settings select, #settings input[type=range] { width: 100%; max-width: 100%; accent-color: var(--signal); }
+  #settings input[type=checkbox] { accent-color: var(--signal); }
+  #settings select { background: var(--surface-2); color: var(--ink); border: 1px solid var(--line); border-radius: var(--radius); padding: 5px 6px; font: inherit; }
   #settings input[type=range]#endMs { width: 70%; }
-  #debug { width: 100%; max-width: 640px; margin: 8px 0 0; font: 11px/1.4 ui-monospace, Consolas, monospace; color: var(--muted); white-space: pre-wrap; user-select: text; }
-  #settings .meter { height: 4px; background: var(--line); border-radius: 2px; position: relative; overflow: hidden; }
-  #settings .meter i { position: absolute; left: 0; top: 0; bottom: 0; background: var(--accent); width: 0; }
-  #settings .meter b { position: absolute; top: -2px; bottom: -2px; width: 2px; background: var(--warn); left: 0; }
+  #debug { width: 100%; max-width: 640px; margin: 8px 0 0; font: 11px/1.4 var(--font-mono); color: var(--ink-2); white-space: pre-wrap; user-select: text; }
+  #settings .meter { height: 4px; background: var(--surface-2); border-radius: 2px; position: relative; overflow: hidden; }
+  #settings .meter i { position: absolute; left: 0; top: 0; bottom: 0; background: var(--signal); width: 0; }
+  #settings .meter b { position: absolute; top: -2px; bottom: -2px; width: 2px; background: var(--amber); left: 0; }
 </style>
 </head>
 <body>
-<nav>
-  <span class="links">
-    <a id="toDashboard" href="./" title="Layer 2: the dashboard, with the chat in text and cards">dashboard</a>
-    <button id="toSession" type="button" title="Layer 3: the PA chat's session in termhub">session</button>
+<header class="talk-top">
+  <div data-jnav></div>
+  <!-- Kept for talk.page.js, which wires #toSession; the switcher above replaces both. -->
+  <span hidden>
+    <a id="toDashboard" href="./">dashboard</a>
+    <button id="toSession" type="button">session</button>
   </span>
   <button id="toggleSettings" type="button" title="Voice, microphone and listening settings">settings</button>
-</nav>
+</header>
 <div id="settings" aria-label="settings">
   <label for="ttsBackend">Speech engine</label><select id="ttsBackend"></select>
   <label for="voice">Voice</label><select id="voice"></select>
