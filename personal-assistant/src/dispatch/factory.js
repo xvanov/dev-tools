@@ -464,6 +464,8 @@ async function start({
     url,
     routeReason,
     warnings,
+    // v1.3: what a --branch/--pr job continues ({branch, pr, into}); null otherwise.
+    base: job.base && typeof job.base === 'object' ? job.base : null,
   };
 }
 

@@ -82,6 +82,9 @@ async function main() {
       job: 'widget:0042', state: 'in_progress', group: 'needs_you', kind: 'code', runtime: 'claude_session', title: 'Export retries', app: 'widget',
       prs: ['https://github.example/acme/widget/pull/12'], ci_failing: true, subscription_equiv_usd: 3.46, pa_run: 7, updated: '2026-11-07T09:00:00Z',
     });
+    const st = T.jobRow(v, { ...job, stalled: true, base: { branch: 'feat/retry', pr: 12, into: 'main' } });
+    assert.strictEqual(st.stalled, true);
+    assert.deepStrictEqual(st.continues, { branch: 'feat/retry', pr: 12 });
     const d = T.jobDetail(v, { followUrl: 'http://hub.example/#session=f1' });
     assert.strictEqual(d.stories[0].ci, 'failing: lint');
     assert.strictEqual(d.runs[0].session, 'http://hub.example/#session=s1');

@@ -165,7 +165,7 @@ const ACTION_TOOLS = [
   },
   {
     name: 'factory_resume',
-    description: 'Resume a factory job that stopped (failed, blocked, needs you) — `factory job resume`. The user approves each call.',
+    description: 'Resume a factory job that stopped — failed, cancelled, needs you, or stalled (factory_jobs marks stalled) — keeping finished stories and continuing the rest on their branch/PR (`factory job resume`). The user approves each call.',
     inputSchema: { type: 'object', properties: { job: JOB }, required: ['job'], additionalProperties: false },
   },
   {
@@ -287,8 +287,11 @@ function boardView(board, { extras = new Map(), limit = 25, now = Date.now() } =
 }
 
 /** Pure. One factory job (factoryCore.jobView) for the list. */
-function jobRow(v) {
+function jobRow(v, raw = null) {
   const out = { job: v.jobId, state: v.state, group: v.group, kind: v.kind, runtime: v.runtime, title: clip(v.title, 120) };
+  // v1.3: no progress for hours (factory_resume can pick it up), and the branch/PR it continues.
+  if (raw?.stalled === true) out.stalled = true;
+  if (raw?.base && typeof raw.base === 'object' && raw.base.branch) out.continues = { branch: String(raw.base.branch), pr: raw.base.pr ?? null };
   if (v.app) out.app = v.app;
   if (v.why) out.why = clip(v.why, 200);
   const prs = v.stories.map((s) => s.prUrl).filter(Boolean);
@@ -303,8 +306,8 @@ function jobRow(v) {
 }
 
 /** Pure. One factory job in detail. */
-function jobDetail(v, { followUrl = null } = {}) {
-  const out = jobRow(v);
+function jobDetail(v, { followUrl = null, raw = null } = {}) {
+  const out = jobRow(v, raw);
   out.delivery = v.delivery;
   out.pipeline = v.pipeline;
   out.terminal = v.terminal;
@@ -541,7 +544,8 @@ async function factoryJobsTool({ group = 'active', limit = 15 } = {}) {
   if (snap.error) out.last_error = clip(snap.error, 200);
   if (b.spend?.factoryToday) out.spend_today = { metered_usd: b.spend.factoryToday.metered, subscription_equiv_usd: b.spend.factoryToday.subscriptionEquiv };
   for (const g of want) {
-    out[g] = b.groups[g].slice(0, limit).map(jobRow);
+    const byId = new Map(snap.jobs.map((j) => [j.job_id, j]));
+    out[g] = b.groups[g].slice(0, limit).map((v) => jobRow(v, byId.get(v.jobId)));
     if (b.groups[g].length > limit) out[`${g}_more`] = b.groups[g].length - limit;
   }
   return out;
@@ -573,7 +577,7 @@ async function factoryJobTool({ job, fresh = false }) {
     const base = hubBase(run.machine);
     if (base) followUrl = `${base}/#session=${encodeURIComponent(run.termhub_session_id)}`;
   }
-  return { ...jobDetail(v, { followUrl }), from: source };
+  return { ...jobDetail(v, { followUrl, raw }), from: source };
 }
 
 async function sessionsTool({ machine = null, all = false } = {}) {
@@ -628,6 +632,7 @@ function startedView(r) {
     if (r.created === false) out.already_submitted = true;
     if (r.delivery !== r.deliveryRequested) out.warning = `asked for ${r.deliveryRequested}; the factory reports ${r.delivery}`;
     if (r.warnings?.length) out.warnings = r.warnings.slice(0, 5);
+    if (r.base) out.continues = { branch: r.base.branch || null, pr: r.base.pr ?? null, into: r.base.into || null };
     out.follow = r.url || null;
     return out;
   }
@@ -673,7 +678,9 @@ async function handle(name, args = {}) {
     case 'factory_continue': return factoryStartTool(args, { requireBranchOrPr: true });
     case 'factory_resume': {
       const r = await factory().resume(checkJob(args.job));
-      return { job: r.jobId, resumed: true, state: r.state || null, ...(r.why ? { why: r.why } : {}) };
+      const raw = r.raw || {};
+      const n = (x) => (Array.isArray(x) ? x.length : 0);
+      return { job: r.jobId, resumed: true, state: r.state || null, was: raw.was || null, stories_resumed: n(raw.resumed), stories_kept: n(raw.kept), stories_left: n(raw.stories_left), ...(r.why ? { why: r.why } : {}) };
     }
     case 'factory_cancel': {
       const r = await factory().cancelJob(checkJob(args.job));
