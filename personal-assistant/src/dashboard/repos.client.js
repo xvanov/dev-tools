@@ -6,8 +6,8 @@
 // Self-contained on purpose: the main board (index.html) is being reworked
 // separately, so this file brings its own helpers, styles and view, and
 // touches the page only through three things: the `#tab-repos` link, a
-// `repos-on` class on <body> that hides every other view while this tab is
-// open, and its own `#repos-view` element. Everything is inside one function
+// `repos-on` class on <body> that hides the other views in `.jmain` while this
+// tab is open, and its own `#repos-view` element. Everything is inside one function
 // scope, so nothing here can collide with the page's globals
 // (test/dashboard.test.js). Every value goes in through textContent — no
 // HTML sinks.
@@ -17,8 +17,8 @@
 
   const style = document.createElement('style');
   style.textContent = `
-  body.repos-on > *:not(header):not(#repos-view):not(script):not(style):not(#toast) { display: none !important; }
-  #repos-view { max-width: 1100px; margin: 0 auto; padding: 12px 16px 40px; }
+  body.repos-on .jmain > *:not(#repos-view) { display: none !important; }
+  #repos-view { max-width: 1100px; margin: 0 auto; padding: 20px var(--gutter, 16px) 40px; }
   #repos-view .rp-bar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 4px 0 12px; }
   #repos-view .rp-bar input[type=search] { flex: 1 1 220px; font: inherit; font-size: 13px; padding: 4px 8px;
     border: 1px solid var(--line, #ddd); border-radius: 6px; background: var(--panel, #fff); color: var(--ink, #111); }
@@ -93,8 +93,10 @@
   // ---------------------------------------------------------------- view ----
 
   const view = h('div', { id: 'repos-view', hidden: true });
-  const header = document.querySelector('header');
-  if (header) header.after(view);
+  // Inside the page's main column (theme.css .jmain), so the panel and its
+  // toggle stay where they are while this view shows.
+  const host = document.querySelector('.jmain');
+  if (host) host.prepend(view);
   else document.body.prepend(view);
 
   const nav = document.querySelector('nav.tabs');

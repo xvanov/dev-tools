@@ -26,17 +26,42 @@
     width: 6px; height: 6px; border-radius: 50%; background: var(--warn); }
   .chip { background: var(--chip); border-radius: 999px; padding: 2px 10px; font-size: 12px; color: var(--muted); }
   .chip.bad { color: var(--bad); }
-  main { display: grid; gap: 16px; padding: var(--gutter);
-    grid-template-columns: repeat(auto-fit, minmax(min(340px, 100%), 1fr)); align-items: start; }
-  section { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius-lg); padding: 12px 14px;
-    box-shadow: var(--shadow-1); }
-  section h2 { margin: 0 0 8px; font-size: 13px; font-weight: 600; color: var(--ink); }
-  section h2 .n { color: var(--muted); font: 500 var(--text-sm) var(--font-mono); margin-left: 6px; }
+  /* Today: one column of sections, each the full width. */
+  main { display: flex; flex-direction: column; gap: 12px; padding: var(--gutter); }
+  section { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius-lg); padding: 12px 14px; }
+  section h2 { margin: 0 0 8px; font-size: 14px; font-weight: 600; color: var(--ink); }
+  section .n { color: var(--ink-3); font: 500 var(--text-sm) var(--font-mono); margin-left: 8px; }
+
+  /* One section component for the whole board (.psec): a header row with a
+     disclosure arrow, the title and a count, and a body that folds away. Open or
+     closed is remembered per section (pa.fold.<name>); what needs you starts
+     open, the rest closed. A section that needs you now carries one accent: an
+     amber edge (.alert). Nothing else on the page is coloured for decoration. */
+  section.psec { padding: 0; }
+  .psec > details > summary { display: flex; align-items: baseline; gap: 8px; padding: 11px 14px;
+    cursor: pointer; list-style: none; user-select: none; -webkit-user-select: none; }
+  .psec > details > summary::-webkit-details-marker { display: none; }
+  .psec > details > summary::before { content: ""; flex: none; align-self: center; width: 6px; height: 6px; margin: 0 4px 0 2px;
+    border-right: 1.5px solid var(--ink-3); border-bottom: 1.5px solid var(--ink-3); transform: rotate(-45deg);
+    transition: transform .12s var(--ease); }
+  .psec > details[open] > summary::before { transform: rotate(45deg); }
+  .psec > details > summary:hover::before { border-color: var(--ink); }
+  .psec > details > summary h2 { margin: 0; }
+  .psec > details > summary .n { margin-left: 0; }
+  .psec-body { padding: 0 14px 12px; }
+  .psec-body > .hint:first-child { margin-top: 0; }
+  section.alert, .needs#blind { border-left: 3px solid var(--warn); }
+  .needs#blind { background: var(--panel); border: 1px solid var(--line); border-left: 3px solid var(--warn);
+    border-radius: var(--radius-lg); padding: 4px 14px; }
+  /* The chat's "shall I?" card (permission.client.js) takes the same shape. */
+  section#chatyes { background: var(--panel); border: 1px solid var(--line); border-left: 3px solid var(--warn);
+    border-radius: var(--radius-lg); padding: 11px 14px; margin: 0; }
+  section#chatyes h2 { font-size: 14px; }
   .item { border-top: 1px solid var(--line); padding: 10px 0; }
   .item:first-of-type { border-top: 0; }
   .sum { font-weight: 550; }
   .sub { color: var(--muted); font-size: 12px; margin-top: 2px; }
-  .sub a { color: var(--accent); text-decoration: none; }
+  .sub a { color: var(--ink-2); text-decoration: underline; text-decoration-color: var(--line-strong); text-underline-offset: 2px; }
   .due-over { color: var(--warn); font-weight: 600; }
   .actions { display: flex; gap: 6px; margin-top: 6px; }
   .actions select { font: inherit; font-size: 12px; }
@@ -60,12 +85,11 @@
   .ask { color: var(--muted); font-size: 12px; margin-top: 4px; border-left: 2px solid var(--line);
     padding-left: 8px; white-space: pre-wrap; max-height: 5.5em; overflow: hidden; }
   /* where a card came from: the message, the person, the repo, PRs, the session */
-  .links { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
-  .links a { font-size: 11px; background: var(--chip); border-radius: 999px; padding: 1px 8px; color: var(--accent);
-    text-decoration: none; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .links a:hover { text-decoration: underline; }
-  .links a.k-person { color: var(--ok); }
-  .links a.k-evidence { color: var(--warn); }
+  .links { display: flex; flex-wrap: wrap; gap: 2px 6px; margin-top: 6px; }
+  .links a { font-size: 12px; color: var(--ink-2); text-decoration: none; max-width: 100%;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .links a + a::before { content: "·"; color: var(--ink-3); margin-right: 4px; }
+  .links a:hover { color: var(--ink); text-decoration: underline; }
   .links.also-in { align-items: center; }
   .links.also-in > span { font-size: 11px; color: var(--muted); }
   .sess { display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: center; margin-top: 6px; font-size: 12px; color: var(--muted); }
@@ -80,12 +104,12 @@
   .done-list { margin: 4px 0 0 18px; padding: 0; font-size: 12px; }
   details.brief summary { cursor: pointer; font-size: 12px; color: var(--accent); margin-top: 4px; }
   details.brief pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; max-height: 420px; overflow: auto; background: var(--chip); padding: 8px; border-radius: 4px; }
-  .why { margin-top: 6px; padding: 6px 9px; border-left: 3px solid var(--accent); background: var(--chip);
-    border-radius: 0 6px 6px 0; font-size: 13px; overflow-wrap: anywhere; }
+  .why { margin-top: 6px; padding: 2px 0 2px 10px; border-left: 2px solid var(--line-strong);
+    font-size: 13px; color: var(--ink-2); overflow-wrap: anywhere; }
   .why.pending { background: none; border-left-color: var(--line); color: var(--muted); font-size: 12px; padding: 2px 9px; }
   .confirm { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 6px;
     font-size: 12px; color: var(--muted); }
-  .badge { font-size: 11px; color: var(--accent); }
+  .badge { font-size: 12px; color: var(--muted); }
   /* the board: one card per commitment, with what needs you on it (board.js).
      The whole width: to-dos on the left, what is blocked or waiting (then what
      looks done) on the right; one column when narrow. With nothing blocked, the
@@ -93,8 +117,7 @@
   section#onme { grid-column: 1 / -1; container-type: inline-size; }
   .onme-cols { display: grid; grid-template-columns: minmax(0, 1fr); gap: 0 28px; align-items: start; }
   .onme-col { min-width: 0; }
-  .onme-col > h3 { margin: 10px 0 2px; font-size: 12px; font-weight: 600; color: var(--muted);
-    text-transform: uppercase; letter-spacing: .05em; }
+  .onme-col > h3 { margin: 6px 0 2px; font-size: 12px; font-weight: 600; color: var(--muted); }
   .onme-col > h3 .n { font: 500 var(--text-xs) var(--font-mono); margin-left: 6px; }
   @container (min-width: 860px) {
     .onme-cols:not(.one) { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
@@ -102,21 +125,18 @@
     .onme-cols.one .onme-col { display: grid; grid-template-columns: repeat(auto-fill, minmax(420px, 1fr)); column-gap: 28px; align-items: start; }
     .onme-cols.one .onme-col > h3 { grid-column: 1 / -1; }
   }
-  .flag { display: inline-block; font-size: 11px; font-weight: 600; border-radius: 999px; padding: 0 8px; margin-right: 4px;
-    border: 1px solid currentColor; }
-  .flag.settled { color: var(--ok); }
-  .flag.offer { color: var(--accent); }
-  .flag.ask { color: var(--warn); }
-  .flag.blocked { color: var(--bad); cursor: pointer; }
-  .flag.unblocked { color: var(--ok); }
-  .blockers { margin-top: 8px; padding: 6px 9px; border-left: 3px solid var(--bad); background: var(--chip); border-radius: 6px; font-size: 13px; }
+  /* Status as words: plain grey, and amber only where it waits on you or someone. */
+  .flag { display: inline; font-size: 12px; font-weight: 500; color: var(--muted); margin-right: 10px; }
+  .flag.ask, .flag.blocked { color: var(--warn); }
+  .flag.blocked { cursor: pointer; text-decoration: underline dotted; text-underline-offset: 3px; }
+  .blockers { margin-top: 8px; padding: 2px 0 2px 10px; border-left: 2px solid var(--warn); font-size: 13px; }
   .blockers > summary { cursor: pointer; font-weight: 600; }
   .blockers .blocker { margin-top: 8px; }
   .blockers .blocker + .blocker { border-top: 1px solid var(--line); padding-top: 8px; }
   .need { color: var(--muted); }
-  .unblocked-note { margin-top: 6px; font-size: 12px; color: var(--ok); }
+  .unblocked-note { margin-top: 6px; font-size: 12px; color: var(--ink-2); }
   .item.settled .sum { color: var(--muted); }
-  .item .ask-box { margin-top: 8px; padding: 6px 9px; border: 1px dashed var(--line); border-radius: 6px; }
+  .item .ask-box { margin-top: 8px; padding: 2px 0 2px 10px; border-left: 2px solid var(--line-strong); }
   .item .ask-box > .sum { font-weight: 500; font-size: 13px; }
   .chase { margin-top: 8px; padding: 6px 9px; background: var(--chip); border-radius: 6px; font-size: 12px; }
   .chase .row { display: flex; flex-wrap: wrap; gap: 4px 6px; align-items: center; margin-top: 4px; }
@@ -127,11 +147,6 @@
   .chase .preview { color: var(--muted); }
   .chase .preview.bad { color: var(--bad); }
   .chase .dflt { color: var(--muted); }
-  .folds { grid-column: 1 / -1; display: flex; flex-direction: column; gap: 8px; }
-  .folds section { padding: 6px 14px; }
-  .folds summary { cursor: pointer; list-style: revert; }
-  .folds summary h2 { display: inline; margin: 0; }
-  .folds details[open] summary { margin-bottom: 8px; }
   .empty { color: var(--muted); font-size: 13px; padding: 4px 0; }
   #toast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); background: var(--ink);
     color: var(--bg); padding: 8px 14px; border-radius: 8px; font-size: 13px; opacity: 0; transition: opacity .2s;
@@ -144,8 +159,7 @@
     padding: 6px 10px; border-radius: var(--radius); }
   nav.tabs a:hover { color: var(--ink); background: var(--surface-2); }
   nav.tabs a.on { background: var(--surface-2); color: var(--ink); font-weight: 600; }
-  .count { display: inline-block; min-width: 18px; margin-left: 4px; padding: 0 5px; border-radius: 999px;
-    background: var(--warn); color: var(--surface-0); font-size: 11px; font-weight: 700; text-align: center; }
+  .count { margin-left: auto; color: var(--warn); font: 500 var(--text-sm) var(--font-mono); }
   .count:empty { display: none; }
 
   /* memory */
@@ -154,7 +168,7 @@
   /* `hidden` must win over the display rules above (.confirm is flex, main is grid). */
   [hidden] { display: none !important; }
   .mem .col { display: grid; gap: 16px; min-width: 0; }
-  section.review { border-color: var(--warn); }
+  section.review { border-left: 3px solid var(--warn); }
   section.review.quiet { border-color: var(--line); }
   .hint { color: var(--muted); font-size: 12px; margin: 0 0 6px; }
   input[type=search], input[type=text], select { font: inherit; font-size: 13px; color: var(--ink); background: var(--chip);
@@ -202,7 +216,7 @@
     max-height: 50vh; overflow: auto; overflow-wrap: anywhere; }
   /* secret and login requests */
   .needs { padding: var(--gutter) var(--gutter) 0; }
-  .needs section { border-color: var(--warn); border-width: 2px; }
+
   .needs .item { scroll-margin-top: 12px; }
   .needs .item:target { outline: 2px solid var(--accent); outline-offset: 4px; border-radius: 6px; }
   .needs input[type=password], .needs input[type=text] { font: inherit; font-size: 13px; color: var(--ink); background: var(--chip);
@@ -299,29 +313,22 @@
 </aside>
 <div class="jmain">
 <div class="needs" id="needs" hidden>
-  <section><h2>Needs a credential or sign-in<span class="n"></span></h2>
-    <p class="hint">The assistant needs a credential or a sign-in. A value you paste goes from this page straight into the store shown — no model and no log sees it, and nothing here can show it back.</p>
-    <div class="list"></div></section>
+  <section class="psec alert"><details data-fold="needs" data-open><summary><h2>Needs a credential or sign-in</h2><span class="n"></span></summary><div class="psec-body">
+    <p class="hint">A value you paste goes from this page straight into the store shown — no model and no log sees it, and nothing here can show it back.</p>
+    <div class="list"></div></div></details></section>
 </div>
 <main id="today">
   <div class="needs" id="blind" hidden></div>
-  <section id="drafts" hidden><h2 title="Replies the assistant drafted. Send opens them, written, in Teams or Outlook; you press Send there.">Replies to send<span class="n"></span></h2><div class="list"></div></section>
-  <section id="onme"><h2>On me<span class="n"></span></h2>
-    <p class="hint">Your to-do list, each task once. When a task waits on someone it says "blocked on" them: click it to see what you are waiting for and why. Something you need from someone with no task of its own says "waiting on". Things that look done are at the bottom to confirm.</p>
+  <section id="drafts" class="psec" hidden><details data-fold="drafts" data-open><summary><h2 title="Replies the assistant drafted. Send opens them, written, in Teams or Outlook; you press Send there.">Replies to send</h2><span class="n"></span></summary><div class="psec-body"><div class="list"></div></div></details></section>
+  <section id="onme" class="psec"><details data-fold="onme" data-open><summary><h2 title="Your to-do list, each task once. When a task waits on someone it says &quot;blocked on&quot; them: click it to see what you are waiting for and why. Something you need from someone with no task of its own says &quot;waiting on&quot;. Things that look done are listed to confirm.">On me</h2><span class="n"></span></summary><div class="psec-body">
     <form class="row" id="addtask" title="A task because you say so. Others come from what people say in Teams, mail and meetings."><input type="text" name="text" maxlength="500" placeholder="+ task — what?" aria-label="New task"><input type="text" name="due" maxlength="60" placeholder="due (friday, tomorrow 3pm)" aria-label="Due" style="flex:0 1 13em"><button type="submit">Add</button></form>
-    <div class="list"></div></section>
-  <section id="runs" hidden><h2>Agent runs<span class="n"></span></h2><div class="list"></div></section>
-  <div class="folds">
-    <section id="selfnotes"><details data-fold="selfnotes"><summary><h2>Notes from your Claude sessions &amp; PRs<span class="n"></span></h2></summary>
-      <p class="hint">Older handoffs your own agents and PRs left behind ("verify in a browser before merge") — not asks from people. Your sessions and PRs no longer create cards (only people and your own "+ task" do); what is left here closes when its PR merges, or after a week untouched. Anything here that needs you is on On me instead.</p>
-      <div class="list"></div></details></section>
-    <section id="code"><details data-fold="code"><summary><h2>Code &amp; boards<span class="n"></span></h2></summary><div class="list"></div></details></section>
-    <section id="waiting"><details data-fold="waiting"><summary><h2 title="What people said they would do that you do not need for your own work. Not on your list; still tracked.">Others' work, not blocking you<span class="n"></span></h2></summary>
-      <p class="hint">People's own to-dos you heard about. Off your list because nothing of yours waits on them. If one does, press "This blocks me".</p>
-      <div class="list"></div></details></section>
-    <section id="closed"><details data-fold="closed"><summary><h2>Closed recently<span class="n"></span></h2></summary><div class="list"></div></details></section>
-    <section id="feed"><details data-fold="feed"><summary><h2 title="Everything the assistant told you: pushed (toast and PA chat), held for a digest, or feed only. Thumbs teach it what is worth an interruption.">From the assistant<span class="n"></span></h2></summary><div class="list"></div></details></section>
-  </div>
+    <div class="list"></div></div></details></section>
+  <section id="runs" class="psec" hidden><details data-fold="runs" data-open><summary><h2 title="Runs the assistant dispatched that are not factory jobs (those are on Build), and factory runs that are blocked on you.">Agent runs</h2><span class="n"></span></summary><div class="psec-body"><div class="list"></div></div></details></section>
+  <section id="selfnotes" class="psec"><details data-fold="selfnotes"><summary><h2 title="Older handoffs your own agents and PRs left behind. They no longer create cards; what is left closes when its PR merges, or after a week untouched. Anything here that needs you is on On me instead.">Notes from your Claude sessions &amp; PRs</h2><span class="n"></span></summary><div class="psec-body"><div class="list"></div></div></details></section>
+  <section id="code" class="psec"><details data-fold="code"><summary><h2>Code &amp; boards</h2><span class="n"></span></summary><div class="psec-body"><div class="list"></div></div></details></section>
+  <section id="waiting" class="psec"><details data-fold="waiting"><summary><h2 title="People&#39;s own to-dos you heard about. Off your list because nothing of yours waits on them. If one does, press &quot;This blocks me&quot;.">Others' work, not blocking you</h2><span class="n"></span></summary><div class="psec-body"><div class="list"></div></div></details></section>
+  <section id="closed" class="psec"><details data-fold="closed"><summary><h2>Closed recently</h2><span class="n"></span></summary><div class="psec-body"><div class="list"></div></div></details></section>
+  <section id="feed" class="psec"><details data-fold="feed"><summary><h2 title="Everything the assistant told you: pushed (toast and PA chat), held for a digest, or feed only. Thumbs teach it what is worth an interruption.">From the assistant</h2><span class="n"></span></summary><div class="psec-body"><div class="list"></div></div></details></section>
 </main>
 <div class="mtg" id="meetings-view" hidden>
   <section>
@@ -1156,13 +1163,22 @@ function render(s) {
   // Columns with nothing in them are not drawn: fewer boxes to read past.
   document.getElementById('drafts').hidden = !s.drafts.length;
 
-  const runs = [...s.runsActive.map((r) => ({ ...r, live: true })), ...s.runsReview];
+  // A run routed to the factory is a job on Build, with its state, PR and cost:
+  // here only when it is blocked (it waits on you), else one line pointing there.
+  const allRuns = [...s.runsActive.map((r) => ({ ...r, live: true })), ...s.runsReview];
+  const onBuild = allRuns.filter((r) => r.route === 'factory' && r.status !== 'blocked');
+  const runs = allRuns.filter((r) => !onBuild.includes(r));
   fill('runs', runs, (r) => el('div', { class: 'item' },
     el('div', { class: 'sum' }, r.task),
     el('div', { class: 'sub' }, ...joinParts([`run #${r.id}`, r.live ? r.status : r.status === 'blocked' ? `blocked — ${r.exit_note || 'see pa review'}` : 'done — review', r.mode,
       r.route === 'factory' ? `factory ${r.factory_job_id || ''}${r.factory_state ? ` · ${r.factory_state}` : ''}` : null,
       r.repo_path, link(r.mr_url, 'MR')]))), 'No agent runs.');
-  document.getElementById('runs').hidden = !runs.length;
+  if (onBuild.length) {
+    const more = el('div', { class: 'item sub' }, `${onBuild.length} factory run${onBuild.length === 1 ? '' : 's'} in progress or done: `, el('a', { href: 'factory' }, 'see Build'));
+    if (runs.length) document.querySelector('#runs .list').append(more);
+    else document.querySelector('#runs .list').replaceChildren(more);
+  }
+  document.getElementById('runs').hidden = !allRuns.length;
 
   const code = s.reviews.filter((r) => r.raw?.state === 'opened' || r.raw?.action);
   fill('code', code.slice(0, 15), (r) => el('div', { class: 'item' },
@@ -1328,7 +1344,10 @@ function renderOnMe(list) {
 // The folded sections (notes, code, closed, the assistant's feed) remember
 // whether you opened them — in this browser only, and only as a convenience.
 for (const fold of document.querySelectorAll('details[data-fold]')) {
-  try { fold.open = localStorage.getItem(`pa.fold.${fold.dataset.fold}`) === '1'; } catch { /* storage off: closed */ }
+  // Remembered per section; until you choose, what needs you is open (data-open) and the rest closed.
+  let saved = null;
+  try { saved = localStorage.getItem(`pa.fold.${fold.dataset.fold}`); } catch { /* storage off */ }
+  fold.open = saved === null ? fold.hasAttribute('data-open') : saved === '1';
   fold.addEventListener('toggle', () => {
     try { localStorage.setItem(`pa.fold.${fold.dataset.fold}`, fold.open ? '1' : '0'); } catch { /* storage off */ }
   });

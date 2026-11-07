@@ -253,9 +253,16 @@ a count, and every commitment appears on it once (`src/dashboard/board.js`, test
 - **Waiting on others** — what people owe you. A card whose chase asks when to follow up carries
   that question (below).
 
-**Replies to send** and **Agent runs** appear only when they have something. **Notes from your
-Claude sessions & PRs**, **Code & boards**, **Closed recently** and **From the assistant** are
-folded below (the page remembers which you opened, in this browser only). Every button shows that it is working and then what happened. Its **Chat** tab is
+Every section on the page is the same component: a header row with a disclosure arrow, the title
+and a count, and a body that folds away; the page remembers each one open or closed (this browser
+only, `pa.fold.<section>`). What needs you starts open (credentials, **Replies to send**, **On
+me**, **Agent runs**), the rest closed: **Notes from your Claude sessions & PRs**, **Code &
+boards**, **Others' work, not blocking you**, **Closed recently** and **From the assistant**.
+**Replies to send** and **Agent runs** appear only when they have something; **Agent runs** lists
+the runs that are not factory jobs, and a factory run only while it is blocked: the rest are jobs
+on Build, with their state, PR and cost, and the section links there. Colour is kept for meaning:
+amber marks what waits on you or on someone (a section's edge, *blocked on*, *question for you*,
+overdue), everything else is ink and grey. Each section's explanation is its title's tooltip. Every button shows that it is working and then what happened. Its **Chat** tab is
 a box onto the PA chat, the same conversation as in termhub ([below](#the-chat-tab-and-the-chat-api)).
 
 **Every card says where it came from and why it is there.** Cards on **On me** and **Waiting on
