@@ -209,6 +209,13 @@ async function handle(req, res) {
   if (req.method === 'GET' && url.pathname === '/') {
     return send(res, 200, pageHtml(issuePageToken()), 'text/html; charset=utf-8');
   }
+  // The destinations' names (nav.js DESTS) as URLs. A relative Location, so it
+  // lands right under termhub's /pa/ too.
+  const ALIAS = { '/ask': 'talk', '/plan': './', '/build': 'factory', '/map': 'architecture' };
+  if (req.method === 'GET' && ALIAS[url.pathname]) {
+    res.writeHead(302, { Location: ALIAS[url.pathname] + url.search, 'Cache-Control': 'no-store' });
+    return res.end();
+  }
   // The design system shared by every layer (theme.css) and the layer switcher
   // (nav.js). termhub serves byte copies of both; see the header of theme.css.
   if (req.method === 'GET' && (url.pathname === '/theme.css' || url.pathname === '/nav.js')) {

@@ -45,17 +45,19 @@
   'use strict';
 
   // ---- The destinations. Names live here and nowhere else: rename one on its line. ----
-  // host: which server serves it. path: under the PA's base (pa) or termhub's origin.
+  // id: the stable key (storage, ?jx=, data-layer); label: what you see.
+  // host: which server serves it. path: under the PA's base (pa) or termhub's origin
+  // (the PA also answers /ask /plan /build /map, termhub /run /meter, as aliases).
   // Alt+<n> follows the order.
   var DESTS = [
-    { id: 'talk', label: 'Talk', about: 'the voice face', host: 'pa', path: 'talk' },
-    { id: 'dashboard', label: 'Dashboard', about: 'the board, chat, memory, routines', host: 'pa', path: '' },
-    { id: 'factory', label: 'Factory', about: 'every job the software factory runs', host: 'pa', path: 'factory' },
-    { id: 'sessions', label: 'Sessions', about: 'every terminal in termhub', host: 'termhub', path: '/' },
-    { id: 'agenttime', label: 'Agent time', about: 'how long agents worked, and waited on you', host: 'termhub', path: '/dashboard' },
-    { id: 'architecture', label: 'Architecture', about: 'how the parts fit together', host: 'pa', path: 'architecture' },
+    { id: 'talk', label: 'Ask', about: 'talk to Jarvis', host: 'pa', path: 'talk' },
+    { id: 'dashboard', label: 'Plan', about: 'the board, chat, memory, routines', host: 'pa', path: '' },
+    { id: 'factory', label: 'Build', about: 'every job the software factory runs', host: 'pa', path: 'factory' },
+    { id: 'sessions', label: 'Run', about: 'every terminal in termhub', host: 'termhub', path: '/' },
+    { id: 'agenttime', label: 'Meter', about: 'how long agents worked, and waited on you', host: 'termhub', path: '/dashboard' },
+    { id: 'architecture', label: 'Map', about: 'how the parts fit together', host: 'pa', path: 'architecture' },
   ];
-  // Opening Talk starts the microphone on a desktop with the wake word on, so it is
+  // Opening Ask (Talk) starts the microphone on a desktop with the wake word on, so it is
   // never opened behind your back: only once you point at it or go to it.
   var NO_PREFETCH = { talk: true };
 

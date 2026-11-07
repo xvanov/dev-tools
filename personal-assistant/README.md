@@ -1476,10 +1476,15 @@ Talk, the dashboard, the factory and termhub are four depths of the same assista
 coordinates, the software factory dispatches and tracks the work, termhub drills into one live
 session. They share one design system and one navigation.
 
-There is no header bar. Each page shows only its one thing, full width (Talk the face, Dashboard
-the board, Factory the jobs, Sessions the terminal), plus a small **»** in the top-left corner.
-It opens a panel on the left: first the navigation, **1 Talk · 2 Dashboard · 3 Factory · 4
-Sessions · 5 Agent time · 6 Architecture** (**Alt+1..6** from anywhere, the terminal included) with
+The destinations are named for what you do there: **Ask** (Talk, the voice page), **Plan** (the
+dashboard), **Build** (the factory), **Run** (termhub's sessions), **Meter** (termhub's agent time)
+and **Map** (the architecture page). The older names stay in code, URLs and storage keys; the PA
+also answers `/ask`, `/plan`, `/build` and `/map`, and termhub `/run` and `/meter`.
+
+There is no header bar. Each page shows only its one thing, full width (Ask the face, Plan the
+board, Build the jobs, Run the terminal), plus a small **»** in the top-left corner.
+It opens a panel on the left: first the navigation, **1 Ask · 2 Plan · 3 Build · 4 Run · 5 Meter ·
+6 Map** (**Alt+1..6** from anywhere, the terminal included) with
 the theme toggle (system → light → dark, remembered per browser), then that page's own controls:
 Talk's voice settings, the Dashboard's views (Today, Meetings, Memory, Chat, Routines, Repos) and
 its sources, the Factory's status, spend and New job form, termhub's session list. Closed by
@@ -1497,12 +1502,12 @@ opens the same view and Back/Forward step through the switches. A frame forwards
 its Alt+N and its links to destinations to the top window by `postMessage`, which acts only on
 messages from its own frames. Pages are framed only by
 their own origin (`Content-Security-Policy: frame-ancestors 'self'` on every PA page; termhub
-also allows the PA's origin, whose shell hosts Sessions and Agent time cross-origin on loopback).
+also allows the PA's origin, whose shell hosts Run and Meter cross-origin on loopback).
 Implemented once in `theme.css` (`.jside`, `.jpanel-nav`, `.jx-frames`) and `nav.js`.
 
-- **Talk** is `/talk`, **Dashboard** is `/`, **Factory** is `/factory` (all relative, so they work
-  on `http://127.0.0.1:7300` and under termhub's `/pa/` on the tailnet alike).
-- **Sessions** is termhub's hub. Under `/pa/` it is the same origin (`/`); on loopback it is the
+- **Ask** is `/talk`, **Plan** is `/`, **Build** is `/factory`, **Map** is `/architecture` (all
+  relative, so they work on `http://127.0.0.1:7300` and under termhub's `/pa/` on the tailnet alike).
+- **Run** is termhub's hub, **Meter** its `/dashboard`. Under `/pa/` it is the same origin (`/`); on loopback it is the
   origin of the chat session's termhub URL (`GET /api/chat/session`), else `PA_TERMHUB_URL`, else
   `http://127.0.0.1:7000`. termhub's focus view, `/?focus=<id>` (one terminal full-window, no
   termhub chrome), stays as a link target into it — a card's session, a factory run's live session —

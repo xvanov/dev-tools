@@ -1464,8 +1464,7 @@ widen who can reach termhub (`TERMHUB_BIND=0.0.0.0`, Funnel instead of Serve) wi
 the PA by the same amount. If the PA ever needs a stricter boundary than termhub's, set
 `TERMHUB_PA_URL=` on that machine.
 
-**In the hub, the PA is reached only through the shared navigation** (Talk, Dashboard, Factory,
-Architecture: see *One look with the PA* below). The hub used to carry its own `PA ↗` / `PA chat`
+**In the hub, the PA is reached only through the shared navigation** (Ask, Plan, Build, Map: see *One look with the PA* below). The hub used to carry its own `PA ↗` / `PA chat`
 buttons; the navigation made them redundant and they are gone. The PA chat session is still a termhub session
 like any other, and the PA's Talk page still opens it through `POST /pa/api/chat/open`.
 
@@ -1490,16 +1489,17 @@ and the same layer switcher.
   cursor come from the plain `--term-*` tokens (`themeToken()` at the top of `app.js`), because
   Claude Code and opencode pick their colours for a dark background.
 - **No header bar.** nav.js puts a small » toggle in the top-left corner of every page and the
-  navigation (`Talk · Dashboard · Factory · Sessions · Agent time · Architecture`, names in one
-  array, `DESTS`) at the top of the page's panel (`[data-jside-nav]` here). termhub's index is
-  Sessions (`data-layer="termhub"`); `/dashboard` is Agent time (`data-layer="agenttime"`), which
+  navigation (`Ask · Plan · Build · Run · Meter · Map`, names in one array, `DESTS`; ids keep the
+  older names) at the top of the page's panel (`[data-jside-nav]` here). termhub's index is
+  Run (`data-layer="termhub"`, also served at `/run`); `/dashboard` (also `/meter`) is Meter, the
+  agent-time page (`data-layer="agenttime"`), which
   has no panel of its own, so nav.js gives it one with the navigation only.
 - **Switching does not load a page.** The page you opened is the shell; nav.js opens every other
   destination in a kept-alive iframe over it (`.jx-frames`; hidden ones use `visibility`, so a
   terminal under them never resizes) and switches by show/hide. On termhub every frame is
   same-origin (the PA through `/pa/`). The front sends `Content-Security-Policy: frame-ancestors
   'self' <PA origin>` on its HTML (`frameAncestors()` in `front.js`), so only termhub itself and
-  the PA's own pages (whose shell hosts Sessions and Agent time cross-origin on loopback) can
+  the PA's own pages (whose shell hosts Run and Meter cross-origin on loopback) can
   frame it. Inside a frame termhub's API calls are still same-origin to termhub, so the CSRF and
   Origin guards are unchanged. The URL is the shell's plus `?jx=<id>`; Back/Forward walk it.
 - **The sidebar is the settings panel** (`#sidebar[data-jside]`): closed by default, opened by the
@@ -1512,14 +1512,14 @@ and the same layer switcher.
   nav.js's state in step, whichever side moved first (toggle, swipe, scrim, a picked session).
   **Alt+1..6** switches from anywhere; the listener is capture-phase on `window` (in a frame it
   forwards to the shell), so it fires before xterm's textarea and the terminal never sees those
-  keys. Talk, Dashboard and Factory are the PA's (`/pa/talk`, `/pa/`, `/pa/factory`):
+  keys. Ask, Plan, Build and Map are the PA's (`/pa/talk`, `/pa/`, `/pa/factory`, `/pa/architecture`):
   nav.js asks `GET /pa/api/chat/session` on load and on tab focus, and dims them (`is-off`) when
   that fails: no PA, no working buttons.
 - **`/?focus=<id>`** is a deep link into Sessions, not a layer of its own: `body.focus` hides the
   corner toggle, sidebar, drawer and the desktop key bar, so what is left is the terminal (plus the key bar
   on a phone, which you can't type a Claude prompt without). `openDeepLink()` opens the session from
   `?focus=` as it does from `#session=`; the query is not cleared, so a reload stays focused. The
-  switcher becomes a small tab in the top-right corner showing only "Sessions" (whose link goes
+  switcher becomes a small tab in the top-right corner showing only "Run" (whose link goes
   back to the hub with that session open), opening on hover, keyboard focus or a tap, and always
   drawn in night colours since a terminal is under it. Links to one session (the PA's cards, a
   factory run) use `/?focus=<id>#session=<id>`; the hash makes an older front still open it.

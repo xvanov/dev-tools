@@ -82,8 +82,9 @@ function manifest() {
 }
 
 // Extensionless pages, so the idle dashboard has a URL worth typing and worth
-// putting in a notification: /dashboard, not /dashboard.html.
-const PAGES = { '/': '/index.html', '/dashboard': '/dashboard.html' };
+// putting in a notification: /dashboard, not /dashboard.html. /run and /meter are
+// the same two pages under their names in the Jarvis navigation (Run, Meter).
+const PAGES = { '/': '/index.html', '/dashboard': '/dashboard.html', '/run': '/index.html', '/meter': '/dashboard.html' };
 
 // Who may put termhub's pages in a frame: termhub itself (nav.js's shell hosts the
 // PA's pages from /pa/ and its own), and the PA's own origin, whose shell hosts

@@ -12,25 +12,25 @@
     {
       "id": "talk",
       "n": 1,
-      "name": "Talk",
+      "name": "Ask (Talk)",
       "summary": "Jarvis: a voice page with a fast local model that answers simple turns in about a second, and the PA chat (a Claude Code session) that does everything else behind permission prompts."
     },
     {
       "id": "dashboard",
       "n": 2,
-      "name": "Dashboard",
+      "name": "Plan (Dashboard)",
       "summary": "The worker ingests mail, Teams, GitHub, Jira and meetings, distils asks into commitments, and serves the board. Everything is in Postgres."
     },
     {
       "id": "factory",
       "n": 3,
-      "name": "Factory",
+      "name": "Build (Factory)",
       "summary": "software-factory: jobs (code, research, report) on two runtimes: metered API models through LiteLLM/OpenHands, or Claude Code on the subscription inside a termhub session."
     },
     {
       "id": "sessions",
       "n": 4,
-      "name": "Sessions",
+      "name": "Run (Sessions)",
       "summary": "termhub: the terminal supervisor every agent runs in. sessiond owns the PTYs and survives updates; the front serves the UI, the APIs and the /pa/ proxy."
     },
     {

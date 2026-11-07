@@ -263,8 +263,8 @@ first when one of them has died.
   drives the CLI through `--session-id`/`--resume` and its on-disk transcripts, so a CLI too old
   for the pin can break session restore and the model badge. `Update now` updates the CLI too.
 - **» (top-left corner) shows the sidebar.** It starts with the navigation shared with the
-  personal assistant's pages: **Talk · Dashboard · Factory · Sessions · Agent time ·
-  Architecture** (**Alt+1..6** anywhere) and the theme toggle (system, light or dark; the
+  personal assistant's pages: **Ask · Plan · Build · Run · Meter · Map** (**Alt+1..6**
+  anywhere; Run is this hub, Meter its agent-time page at `/dashboard`, also `/run` and `/meter`) and the theme toggle (system, light or dark; the
   terminal stays dark in all three). Under it: ⟳ Update, the session list and, on a desktop, the
   key bar. Hidden by default so the terminal takes the window; on a desktop the choice is
   remembered per browser. Switching is instant: the other pages open in frames over this one and
