@@ -370,6 +370,19 @@ const config = {
     decisionTimeoutMs: envInt('PA_FAST_DECISION_TIMEOUT_MS', 6000),
   },
 
+  // The local voice stack (voice/server.py, windows/install-voice.ps1): Kokoro
+  // speech and the smart-turn end-of-turn judge on loopback, proxied by the
+  // dashboard as /api/talk/tts and /api/talk/endpoint; the page's own models
+  // (Silero VAD, the "hey jarvis" wake word, onnxruntime-web) are served from
+  // `models` at /talk/models/. PA_VOICE_URL=off turns the service off: the
+  // page speaks with the browser's voices and ends turns on silence alone.
+  voice: {
+    url: env('PA_VOICE_URL', 'http://127.0.0.1:47830') === 'off' ? '' : env('PA_VOICE_URL', 'http://127.0.0.1:47830').replace(/\/+$/, ''),
+    defaultVoice: env('PA_VOICE', 'bf_isabella'),
+    models: expandHome(env('PA_VOICE_MODELS', path.join(dataDir, 'voice-models'))),
+    python: env('PA_VOICE_PYTHON', platform.defaults.venvPython(path.join(dataDir, 'voice-venv'))),
+  },
+
   dispatch: {
     port: envInt('PA_DISPATCH_PORT', 7300),
     // Loopback only. This process starts agents; it is not tailnet-safe.

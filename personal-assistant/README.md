@@ -80,6 +80,9 @@ Start-ScheduledTask pa-capture-mic
 Start-ScheduledTask pa-capture-loopback
 ```
 
+The local voice (Kokoro, the wake word, smart-turn; for `/talk`) is a separate, optional install:
+`.\windows\install-voice.ps1` (see "Setting up the local voice").
+
 ## Install (Linux)
 
 ```bash
@@ -1159,87 +1162,162 @@ asks first, because it changes how often you are interrupted.
 
 ### Talking to it by voice
 
-<http://127.0.0.1:7300/talk> is the same chat with no keyboard: you talk, it talks back, and the
-work happens in the background. A small ASCII face shows what it is doing (listening, thinking,
-talking, pleased when it finishes, worried when something is down), with the latest tool step in
-small print under it. Tap the face (or press Space) once to start: browsers allow the microphone
-and speech only after a gesture. From there the layer switcher at the top (below) drills down to
-the cards and the chat in text, then termhub, then the PA chat's session on its own.
+<http://127.0.0.1:7300/talk> is the same chat with no keyboard: you say "hey Jarvis", ask, it
+answers out loud, and the work happens in the background. A small ASCII face shows what it is doing
+(asleep, awake, listening, thinking, talking, pleased when it finishes, worried when something is
+down), with the latest tool step in small print under it. The layer switcher at the top (below)
+drills down to the cards and the chat in text, then termhub, then the PA chat's session on its own.
 
-- **Listening** is hands-free: an energy-based voice detector in the page (`talk.core.js`) notices
-  you start, waits for a pause of 650 ms, and sends that utterance (**Pause before sending** in
-  **settings**, 400–1500 ms: raise it if it cuts you off mid-thought). Hold Space (or the
-  button) to push-to-talk instead; turn hands-free off in **settings** if the room is noisy.
+Everything runs on this machine. What runs where:
+
+| Piece | Where | What |
+|---|---|---|
+| Wake word, VAD | the page (onnxruntime-web, WASM) | openWakeWord "hey jarvis"; Silero VAD v5 |
+| End of turn | voice service, 127.0.0.1:47830 | smart-turn v3.2 (CPU ONNX) |
+| Transcription | voice-dictation, 127.0.0.1:47821 | faster-whisper `small` fp16 (unchanged) |
+| System 1 | Ollama, 127.0.0.1:11434 | Llama 3.2 3B, forced JSON |
+| System 2 | termhub session | the PA chat (Claude Code) |
+| Voice | voice service, 127.0.0.1:47830 | Kokoro-82M on the GPU (PyTorch CUDA), 24 kHz |
+
+The page reaches every server piece through the PA (`/api/talk/…`, X-PA guarded), so it works the
+same through termhub's `/pa/` proxy from a phone.
+
+- **Wake word.** With **Wake word** on (the default at a desk; off on phones) the page listens for
+  "hey Jarvis" and nothing else: no transcription, nothing leaves the browser. Heard: a short chime,
+  the face wakes, and the next thing you say is the request. After the answer it stays in the
+  conversation for 8 s, so a follow-up needs no wake word; then it goes back to sleep. "Stop",
+  "thanks Jarvis", "that's all" end it at once. Space (hold) or the button talks without the wake
+  word, always. The model is openWakeWord's pre-trained `hey_jarvis` (Apache-2.0): three small ONNX
+  models per 80 ms of audio, measured at 7.6 ms median (p90 11.6 ms) per 80 ms frame in Edge on this
+  laptop, about 10% of one core, and only while asleep. With the wake word off the page is
+  hands-free as before (every utterance is a request), or push-to-talk.
+- **End of turn.** Silero VAD (0.9 ms per 32 ms frame in the page) says where speech is. At the first
+  200 ms pause the page asks smart-turn (`POST /api/talk/endpoint`, the last 8 s of the utterance)
+  whether you sound finished; yes ends the turn there, ~450 ms after you stopped; no keeps waiting up
+  to **Pause before sending** (650 ms default, 400–1500 in **settings**). Untick **Smart end of
+  turn** to use the timer alone. Without the models (not installed) the energy VAD does the job, as
+  before. *Why smart-turn is in the service and the wake word and VAD in the page:* termhub's `/pa/`
+  proxy passes only plain HTTP, no WebSocket upgrades, so a phone cannot stream audio to the service
+  continuously; the wake word must run all the time and must not ship the room's audio anywhere, so
+  it runs where the mic is. Smart-turn runs once per pause on a few seconds of audio: one HTTP POST
+  (~100–250 ms round trip here) costs less than running it in WASM, and keeps the Whisper feature
+  extraction byte-for-byte the model's own.
 - **Transcription** reuses voice-dictation's warm faster-whisper server (`PA_TRANSCRIBE_HOST` /
   `PA_TRANSCRIBE_PORT`, as capture does): the page sends a 16 kHz WAV to `POST /api/talk/transcribe`,
   which writes it to a temp file, hands the path to the server, and deletes the file. Whisper's
-  stock filler for silence ("Thank you.", "you") is dropped. The text then goes to the fast lane
-  (next bullet), which hands it to `/api/chat` with `source: "voice"` when the PA chat is needed.
-  While the chat is parked on a permission prompt or question, the chat refuses the send (409); the
-  page says once that it is waiting on an answer in termhub, and does not retry.
+  stock filler for silence ("Thank you.", "you") is dropped, and so is a leading "Jarvis". The
+  server unloads its model after half an hour idle and takes ~6 s to load it, so the PA hands it a
+  quarter second of silence when `/talk` opens and when you start speaking (`POST /api/talk/warm`,
+  which also clocks up the GPU voice). The text then goes to the fast lane (next bullet), which hands
+  it to `/api/chat` with `source: "voice"` when the PA chat is needed. While the chat is parked on a
+  permission prompt or question, the chat refuses the send (409); the page says once that it is
+  waiting on an answer in termhub, and does not retry.
 - **The fast lane ("System 1", `src/chat/fastLane.js`).** The PA chat takes 3–5 s before it says
   anything; a person answers within a second. So each spoken turn first goes to a quick model
-  (`PA_FAST_MODEL`, default `local/llama3.2:3b` in Ollama: one streamed call whose decision is
-  forced to JSON, `{label, route, say}`, kept loaded for `PA_FAST_KEEP_ALIVE` (24h), with
-  `PA_FAST_FALLBACK_MODEL`, `azure/pa`, when Ollama is down or has not decided within
-  `PA_FAST_LOCAL_TIMEOUT_MS` (2500); `ollama pull llama3.2:3b` once) that sees a compact snapshot of your day (the clock, open
-  asks with the most pressing few, the next day's meetings, live runs, waiting drafts — about a
-  kilobyte, rebuilt every `PA_FAST_CONTEXT_SECONDS` (60) in the background) and the last six turns.
-  It decides **answer** (small talk, thanks, "what's on today", "how many are overdue": it says the
-  whole answer, and nothing goes to the chat), **handoff** (it says a short "on it, checking your
-  mail" and your words go to the PA chat, whose answer is spoken when it arrives), or **both** (it
-  says what it knows and hands off the rest). Its words stream and are spoken sentence by sentence.
-  It **never acts**: it has no tools, and an "answer" to something that reads like an action
-  ("send…", "close…", "remind me…") is turned into a handoff before a word is spoken, so actions
-  always go through the PA chat's permission prompts. What is handed off is your own words,
-  verbatim; the model's reading of the task rides along as a labelled hint, because the snapshot
-  quotes other people's mail and must not be able to put words in your mouth. Turns it answered
-  itself are not in the PA chat's history (it keeps the last few for its own context).
-  `PA_FAST_ROUTER` picks who decides: `same` (default: the fast model, in the same streamed call —
-  the decision is the first line, the words follow), `rules` (a built-in keyword router, no model
-  call), another model string (a JSON-only router call, then the fast model writes the words), or
-  an `http(s)://` URL (POSTed `{ text, context, history }`, answers the decision JSON — for an
-  external classifier). `PA_FAST_EFFORT` (low) is the reasoning effort; `PA_FAST_LANE=0` turns it
-  off and the page sends straight to `/api/chat` as before. Spend is recorded as `fast-lane`.
-  Measured (Nov 2026, this laptop, 24 utterances): `local/llama3.2:3b` routes 23 of 24 (the miss
-  a safe hand-off), decides in 276 ms median, first word at 361 ms; a request it labels `action` or
-  `deep_task` is never "answered", and a hand-off's acknowledgement that reads as an answer ("I
-  couldn't find…") or a claim ("I've sent it") is replaced by "One moment." / "On it.".
-  Earlier (8 utterances): `azure/pa` decides in 0.4–1.4 s with the first words in the
-  same chunk; `cli/claude-haiku-5-5` takes 1.8–3.7 s (a `claude -p` process per turn);
-  `rules` + `azure/pa` decides at once and speaks in 0.5–1.5 s, but misroutes anything its
-  keywords do not cover.
-- **Speaking** reads each answer sentence by sentence as it arrives, in the browser's best natural
-  voice (Edge's "Online (Natural)" voices are good; pick another in **settings**). Code blocks,
+  (`PA_FAST_MODEL`, default `local/llama3.2:3b` in Ollama) that sees a compact snapshot of your day
+  (the clock, open asks with the most pressing few, the next day's meetings, live runs, waiting
+  drafts — about a kilobyte, rebuilt every `PA_FAST_CONTEXT_SECONDS` (60) in the background) and the
+  last six turns. It decides **answer** (small talk, thanks, "what's on today", "how many are
+  overdue": it says the whole answer, and nothing goes to the chat), **handoff** (it says a short "on
+  it, checking your mail" and your words go to the PA chat, whose answer is spoken when it arrives),
+  or **both** (it says what it knows and hands off the rest). Its words stream and are spoken
+  sentence by sentence. It **never acts**: it has no tools, and an "answer" to something that reads
+  like an action ("send…", "close…", "remind me…") is turned into a handoff before a word is spoken,
+  so actions always go through the PA chat's permission prompts. What is handed off is your own
+  words, verbatim; the model's reading of the task rides along as a labelled hint, because the
+  snapshot quotes other people's mail and must not be able to put words in your mouth. Turns it
+  answered itself are not in the PA chat's history (it keeps the last few for its own context).
+  - **Local by default.** A `local/` model gets one streamed call to Ollama's own `/api/chat` with
+    the decision forced to JSON by a schema (`format`): `{label, route, say}`. The route is known a
+    few tokens in, and `say` is spoken while it is still being written. Two guards on top: a request
+    the model labels `action` or `deep_task` is never "answered" (it is handed off, its words
+    unspoken), and a hand-off's acknowledgement is checked before it is said — "I couldn't find
+    anything" or "I've sent it" become "One moment." / "On it.". The model is kept loaded for
+    `PA_FAST_KEEP_ALIVE` (24h; 2.6 GB of GPU memory) and loaded when `/talk` opens. When Ollama is
+    down, or has not decided within `PA_FAST_LOCAL_TIMEOUT_MS` (2500, a model still loading), the
+    turn goes to `PA_FAST_FALLBACK_MODEL` (`azure/pa`, reasoning effort `PA_FAST_EFFORT`, low).
+    `PA_FAST_JSON=0` sends a local model the text format instead. Pull the model once:
+    `ollama pull llama3.2:3b`.
+  - Measured (Nov 2026, this laptop, 24 utterances): llama3.2:3b routes 23 of 24 (the miss is a safe
+    hand-off), decides in 276 ms median and says its first word at 361 ms. `azure/pa` decides in
+    0.4–1.4 s; `cli/claude-haiku-5-5` takes 1.8–3.7 s (a `claude -p` process per turn).
+  - `PA_FAST_ROUTER` picks who decides: `same` (default: the fast model, in the same streamed call),
+    `rules` (a built-in keyword router, no model call), another model string (a JSON-only router
+    call, then the fast model writes the words), or an `http(s)://` URL (POSTed `{ text, context,
+    history }`, answers the decision JSON). `PA_FAST_LANE=0` turns the fast lane off and the page
+    sends straight to `/api/chat` as before. Spend is recorded as `fast-lane`.
+- **Speaking** is Kokoro-82M (`voice/server.py`) on the GPU by default, in the British voice
+  `bf_isabella` (`PA_VOICE`, or **Voice** in **settings**: 27 English voices, British and American).
+  Each sentence is fetched from `POST /api/talk/tts` as it is complete and played through Web Audio
+  as the audio streams in, and the next sentence is synthesised while this one plays, so sentences
+  follow each other without a gap. First audio 200–400 ms after a sentence is handed over, so the
+  fast lane's first piece may end at a clause ("There is one overdue item," then the rest). When the
+  service is not running (or fails mid-answer) the page speaks with the browser's best natural
+  voice instead (**Speech engine** in **settings**: automatic, Kokoro, or the browser). Code blocks,
   tables and URLs are not read out: it says "the link" or "I put the details on the dashboard"
-  instead. The speech engine is one entry in a table in `talk.page.js`, so a local neural TTS can be
-  added beside it: an engine reports what its audio does (`onstart`, `onend`, and `onboundary` per
-  word or `onlevel` loudness where it can), and nothing else needs to change.
-- **The face follows the sound, not the queue.** Edge's natural voices fetch audio over the network
-  (measured 0.35–0.7 s from `speak()` to sound, 1.7 s cold), so while a sentence is on its way the
-  face looks up with its mouth shut ("about to speak"); the mouth moves from the engine's start
-  event, opens on each spoken word where the voice reports word boundaries (a gentle loop where it
-  does not), and closes between words and sentences (`createSpeechSync` in `talk.core.js`).
+  instead.
+- **The face follows the sound, not the queue.** An engine reports what its audio does: Kokoro its
+  loudness every 40 ms (an AnalyserNode), the browser's voices their word boundaries; the mouth
+  moves from the audio's start, follows the loudness or opens on each word, and closes between
+  words and sentences (`createSpeechSync` in `talk.core.js`). While a sentence is on its way the
+  face looks up with its mouth shut ("about to speak").
 - **What it says while it works.** A turn is often "let me check" → a tool → the answer. **Speak
   while working** in **settings**: *only on slow turns* (default) holds a step and says it only if
   the turn is still running after 4 s, so quick answers come without chatter and long ones still
   tell you something is happening; *every step*; or *only the answer*. Each block is spoken as
   soon as it arrives.
-- **Latency readout.** `/talk?debug=1` shows, per turn, where the time went: the pause wait,
-  transcription, typing into the session, the reply (Claude's turn plus the transcript tail), and
-  the voice starting. A fast-lane turn leads with its route, the time to the decision and to the
-  first token (both from the transcript), and a hand-off adds a line when the PA chat's answer
-  arrives.
+- **Latency readout.** `/talk?debug=1` shows, per turn, where the time went: the wait for the end of
+  turn (and whether smart-turn, the timer or a released button ended it), transcription, the fast
+  lane's decision and first token, the voice starting (and Kokoro's time to audio). A hand-off adds
+  a line when the PA chat's answer arrives. Measured on this laptop (Nov 2026; headless Edge, a
+  synthesized voice through a fake mic, "hey Jarvis" before each of five short questions answered by
+  the fast lane; three runs, 14 warm turns): **1.6–2.6 s from the end of speech to the first spoken
+  word, median 1.9 s** (one 3.3 s outlier) — end of turn 430–550 ms (smart-turn ended every one),
+  transcription 400–760 ms, the local model's first words 300–450 ms, Kokoro 200–400 ms to audio
+  (up to 800 ms while the GPU is shared). Hands-free with the wake word off: 2.1–2.5 s. The first
+  turn after the transcriber has been idle half an hour paid 6.8 s to load it, which the warm-up now
+  starts while you speak. A hand-off said its acknowledgement at 1.8 s and the PA chat's answer
+  arrived 6.5 s after the transcript.
 - **Barge-in and echo.** Start talking and it stops (a fast reply still streaming is dropped too;
-  a hand-off already made stands). While it speaks, the mic needs three times
-  the usual level for over a third of a second before it counts as you, so its own voice from the
-  speakers is not transcribed. With speakers loud and no headset, tick "stop listening" in
-  **settings** to turn barge-in off.
+  a hand-off already made stands). While it speaks, a start needs a near-certain voice (Silero 0.85,
+  or three times the usual level for the energy VAD) for over a third of a second, so its own voice
+  from the speakers is not transcribed; the mic has echo cancellation on. With speakers loud and no
+  headset, tick "stop listening" in **settings** to turn barge-in off.
 
-The microphone needs a secure page: `http://127.0.0.1` or `localhost` on this machine is fine, but
-the plain-HTTP tailnet address through termhub's `/pa/` proxy is not, so the page can still speak
-there but cannot hear. To talk from a phone, put termhub behind HTTPS (for example
-`tailscale serve`, which gives it a certificate on its `*.ts.net` name) and open `/pa/talk` there.
+#### Setting up the local voice (once)
+
+```powershell
+.\windows\install-voice.ps1      # venv, models, self-test, the pa-voice logon task (started)
+ollama pull llama3.2:3b          # the fast lane's model (Ollama must be installed and running)
+node bin\pa.js doctor            # "voice Kokoro on cuda, bf_isabella · smart-turn · page models ok"
+```
+
+`install-voice.ps1` is idempotent: it creates `%LOCALAPPDATA%\personal-assistant\voice-venv` (uv,
+Python 3.12) with PyTorch CUDA 12.8, Kokoro, onnxruntime and transformers; downloads smart-turn
+v3.2, Silero VAD, the openWakeWord models and onnxruntime-web into `voice-models` (served to the page
+at `/talk/models/`, so no CDN); runs `voice/selftest.py`; and registers `pa-voice`, which runs
+`voice/server.py` on 127.0.0.1:47830 at logon. The service opts itself out of Windows' power
+throttling (EcoQoS) — background processes otherwise run 5–10× slower on this laptop — and keeps
+Kokoro loaded (~0.9 GB of GPU memory). `PA_VOICE_URL=off` turns it off for the PA (browser voices,
+silence-only end of turn); `PA_VOICE_MODELS` moves the model folder.
+
+**No clicks, once.** Browsers start the mic and sound only after a gesture unless the site is
+allowed them. To have `/talk` listen as soon as it opens: in Edge open `http://127.0.0.1:7300/talk`,
+then **⋯ → Apps → Install this site as an app** (a window of its own, which you can pin and set to
+start at logon from `edge://apps`); in that window, the padlock → **Permissions for this site** →
+**Microphone: Allow** and **Sound: Allow** (or `edge://settings/content/microphone` and
+`…/content/sound`, adding `http://127.0.0.1:7300`). Without those the page shows one **Tap once to
+enable Jarvis** button and starts on that tap.
+
+**Phones.** The microphone needs a secure page: `http://127.0.0.1` or `localhost` on this machine is
+fine, but the plain-HTTP tailnet address through termhub's `/pa/` proxy is not, so the page can
+still speak there but cannot hear. Put termhub behind HTTPS (for example `tailscale serve`, which
+gives it a certificate on its `*.ts.net` name) and open `/pa/talk` there. On a touch screen it is
+hold-to-talk by default (a large button; the wake word is off), the first tap unlocks audio inside
+the gesture before asking for the mic (iOS), the screen stays on while it listens, and coming back
+from the background asks for one **Tap to resume**. It shares termhub's one-mic rule (the
+BroadcastChannel `voice-mic`, termhub's `voiceCapture.js`, copied as `src/dashboard/voiceCapture.js`):
+opening the mic in one takes it from the other, which says so.
 
 ### The Chat tab and the chat API
 
@@ -1274,6 +1352,11 @@ The contract (the voice page depends on it):
 | `GET /api/chat/history?limit=50` | `limit` 1–500 | `{ "messages": [event…] }`, oldest first, `user` and `assistant` only |
 | `GET /api/chat/session` | — | `{ sessionId, status, waitingOn, url }` — `url` opens the session in termhub |
 | `POST /api/talk/turn` | `{ "text": string }`, header `X-PA: 1` | The voice fast lane. NDJSON, one event per line: `{ type: "decision", route: "answer" \| "handoff" \| "both", say?, task?, reason, router, ms, overridden? }`, then `{ type: "delta", text }`… (words to speak), `{ type: "handoff", id, ms }` or `{ type: "handoff", error, status }` (409: waiting in termhub), and `{ type: "done", route, say, decisionMs, firstTokenMs, ms, model, router }`. 400 bad input, 403 no `X-PA`, 404 `{ disabled: true }` with `PA_FAST_LANE=0` |
+| `GET /api/talk/voice` | — | What the local voice offers: `{ tts: { ok, ready, device, error }, turn, voices: [{ id, label, lang }], defaultVoice, models: { vad, wake, ort } }` |
+| `POST /api/talk/tts` | `{ "text", "voice"? , "speed"? }`, header `X-PA: 1` | Kokoro speech, streamed: raw 16-bit little-endian PCM, 24 kHz mono (`audio/L16`), `X-First-Ms`. 503 when the voice service is down |
+| `POST /api/talk/endpoint` | 16 kHz mono 16-bit PCM (`audio/L16`) or a WAV, header `X-PA: 1` | smart-turn: `{ complete, probability, ms }` |
+| `POST /api/talk/warm` | header `X-PA: 1` | 202 at once; clocks the GPU voice up and loads an idle transcriber |
+| `GET /talk/models/<name>` | — | The page's models (Silero, openWakeWord, onnxruntime-web) from `PA_VOICE_MODELS`, by fixed name only |
 
 An event is `{ "id", "type", "text", "at" (ISO), "source"? }`:
 
@@ -1348,7 +1431,8 @@ src/commitments/     closing chat and mail asks you answered yourself (replyClos
                      the cross-thread duplicate pass (dedupe.js, pure half in semantic.js)
 src/dashboard/       the loopback web page: today, next meeting, replies, runs, secret requests, and the Memory, Chat, Routines and Repos tabs;
                      each card's links to its source, person, repo and session (links.js pure, cards.js);
-                     /talk, the voice page (talk.html + talk.page.js; talk.core.js pure; talk.js serves it and proxies to whisper);
+                     /talk, the voice page (talk.html + talk.page.js; talk.core.js pure; talk.voice.js its onnxruntime-web models and Kokoro playback;
+                     voiceCapture.js + micWorklet.js copied from termhub; talk.js serves it and proxies to whisper and the voice service);
                      theme.css + nav.js, the design system and layer switcher every layer shares (canonical; termhub copies them)
 src/secrets/         secret and login requests; the OS keyring facade (vault.js; stdin only)
 src/platform/        every OS decision: windows.js, linux.js, darwin.js behind one contract (index.js)
@@ -1367,9 +1451,10 @@ src/draft/           reply drafting, auto-drafts, and delivery links (never send
 src/mcp/server.js    the recall server: read-only, plus remember and request_secret, which only ask
 src/worker.js        the periodic passes
 audio/               capture and trim/transcribe (Python); devices_linux.py asks PipeWire/PulseAudio
+voice/               the local voice service: Kokoro TTS and smart-turn on 127.0.0.1:47830 (server.py), selftest.py
 teams/               the Teams local-cache reader (Python, its own venv)
 sql/                 numbered migrations
-windows/             install, and the WSL Postgres provisioner
+windows/             install, install-voice (the local voice stack), and the WSL Postgres provisioner
 linux/               install.sh, the native Postgres provisioner, systemd user units
 ```
 

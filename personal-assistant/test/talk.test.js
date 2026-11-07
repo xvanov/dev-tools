@@ -301,6 +301,223 @@ const C = require('../src/dashboard/talk.core');
   for (const id of ['endMs', 'voiceMode', 'debug']) assert.match(html, new RegExp(`id="${id}"`));
 }
 
+// ---- the first clause, early ------------------------------------------------------
+{
+  const s = C.createUtteranceStream({ firstClause: true });
+  assert.deepStrictEqual(s.push('There is one overdue'), []);
+  assert.deepStrictEqual(s.push('There is one overdue item on your list, due'), ['There is one overdue item on your list,'], 'a clause after four words goes early');
+  assert.deepStrictEqual(s.push('There is one overdue item on your list, due on the 29th, asked by Jon. Also'), ['due on the 29th, asked by Jon.'], 'then the rest of that sentence, once');
+  assert.deepStrictEqual(s.finish('There is one overdue item on your list, due on the 29th, asked by Jon. Also two meetings.'), ['Also two meetings.']);
+
+  const short = C.createUtteranceStream({ firstClause: true });
+  assert.deepStrictEqual(short.push('Yes, it is'), [], 'not after a single word');
+  assert.deepStrictEqual(short.push('Yes, it is done. '), ['Yes, it is done.']);
+  const num = C.createUtteranceStream({ firstClause: true });
+  assert.deepStrictEqual(num.push('You have spent about 1,200 dollars'), [], 'a thousands separator is not a clause');
+  const unfinished = C.createUtteranceStream({ firstClause: true });
+  unfinished.push('Your next meeting is the sync, at half');
+  assert.deepStrictEqual(unfinished.finish(), ['at half'], 'no full stop: the rest still comes');
+  const plain = C.createUtteranceStream();
+  assert.deepStrictEqual(plain.push('There is one overdue item on your list, due'), [], 'off by default (the chat stream)');
+}
+
+// ---- which voice speaks --------------------------------------------------------
+{
+  const both = { kokoro: true, browser: true };
+  assert.strictEqual(C.chooseTts('auto', both), 'kokoro', 'auto: the local voice when it is up');
+  assert.strictEqual(C.chooseTts('auto', { kokoro: false, browser: true }), 'browser', 'auto: the browser when it is down');
+  assert.strictEqual(C.chooseTts('browser', both), 'browser', 'a named engine wins');
+  assert.strictEqual(C.chooseTts('kokoro', { kokoro: false, browser: true }), 'browser', 'a named engine that is down falls back');
+  assert.strictEqual(C.chooseTts('nonsense', both), 'kokoro', 'an unknown setting is auto');
+  assert.strictEqual(C.chooseTts('browser', { kokoro: true, browser: false }), 'kokoro');
+  assert.strictEqual(C.chooseTts('auto', {}), null);
+}
+
+// ---- the sentence pipeline: fetch the next sentence while this one plays --------
+{
+  const started = [];
+  const aborted = [];
+  const pf = C.createPrefetcher({ depth: 2, start: (t) => (started.push(t), { t }), abort: (j) => aborted.push(j.t) });
+  pf.prefetch('Two.');
+  pf.prefetch('Two.'); // once per text
+  pf.prefetch('Three.');
+  pf.prefetch('Four.'); // over the depth: not started
+  assert.deepStrictEqual(started, ['Two.', 'Three.']);
+  assert.strictEqual(pf.get('Two.').t, 'Two.', 'a prefetched job is handed over');
+  assert.deepStrictEqual(started, ['Two.', 'Three.'], 'and not fetched again');
+  assert.strictEqual(pf.get('Five.').t, 'Five.', 'an unknown text starts now');
+  assert.deepStrictEqual(started, ['Two.', 'Three.', 'Five.']);
+  pf.clear();
+  assert.deepStrictEqual(aborted, ['Three.'], 'barge-in aborts what was waiting');
+  assert.strictEqual(pf.size, 0);
+}
+
+// ---- PCM in and out ------------------------------------------------------------------
+{
+  const dec = C.createPcmDecoder();
+  // 0x4000 = 0.5, 0xC000 = -0.5, split mid-sample across chunks.
+  const a = dec.push(new Uint8Array([0x00, 0x40, 0x00]));
+  const b = dec.push(new Uint8Array([0xc0]));
+  assert.deepStrictEqual(Array.from(a), [0.5]);
+  assert.deepStrictEqual(Array.from(b), [-0.5], 'an odd byte waits for its other half');
+  const pcm = C.floatToPcm16(Float32Array.from([0, 1, -1, 2]));
+  assert.deepStrictEqual(Array.from(pcm), [0, 0, 0xff, 0x7f, 0x00, 0x80, 0xff, 0x7f]);
+  assert.deepStrictEqual(Array.from(C.createPcmDecoder().push(C.floatToPcm16(Float32Array.from([0.25])))), [0.25]);
+}
+
+// ---- end of turn: Silero + smart-turn ---------------------------------------------------
+{
+  // Feed 32 ms frames: speech for `ms`, then silence; returns the events with times.
+  // The clock carries across calls for the same detector.
+  const clocks = new WeakMap();
+  function run(det, plan) {
+    const out = [];
+    let t = clocks.get(det) || 0;
+    for (const [prob, ms] of plan) {
+      for (let k = 0; k < ms; k += 32) {
+        t += 32;
+        clocks.set(det, t);
+        const ev = det.step(prob, t, 32);
+        if (ev) out.push([ev, t, det.pending]);
+      }
+    }
+    return out;
+  }
+  // Silence only: nothing.
+  assert.deepStrictEqual(run(C.createTurnDetector(), [[0.01, 2000]]), []);
+
+  // Smart-turn says done at the first pause: the turn ends then, not 650 ms later.
+  let det = C.createTurnDetector({ endMs: 650 });
+  let evs = run(det, [[0.9, 1000], [0.02, 224]]);
+  assert.deepStrictEqual(evs.map((e) => e[0]), ['start', 'check']);
+  const checkAt = evs[1][1];
+  const quiet = checkAt - det.lastVoice;
+  assert.ok(quiet >= 200 && quiet < 240, `asked after ~200 ms of quiet, got ${quiet}`);
+  assert.strictEqual(det.verdict(evs[1][2], true), 'end');
+  assert.strictEqual(det.state, 'silence');
+
+  // Not done: the silence timer still ends it, at endMs.
+  det = C.createTurnDetector({ endMs: 650 });
+  evs = run(det, [[0.9, 1000], [0.02, 224]]);
+  assert.strictEqual(det.verdict(evs[1][2], false), null);
+  evs = run(det, [[0.02, 700]]);
+  assert.strictEqual(evs.length, 1);
+  assert.strictEqual(evs[0][0], 'end');
+
+  // Talking again during the check: its answer is stale, and the next pause asks again.
+  det = C.createTurnDetector({ endMs: 650 });
+  evs = run(det, [[0.9, 1000], [0.02, 224]]);
+  const stale = evs[1][2];
+  run(det, [[0.9, 300]]);
+  assert.strictEqual(det.verdict(stale, true), null, 'a verdict about an old pause is ignored');
+  evs = run(det, [[0.02, 224]]);
+  assert.deepStrictEqual(evs.map((e) => e[0]), ['check'], 'the new pause is asked about');
+
+  // A cough: too short to ask about, cancelled at the timer.
+  det = C.createTurnDetector({ endMs: 650 });
+  evs = run(det, [[0.9, 192], [0.02, 800]]);
+  assert.deepStrictEqual(evs.map((e) => e[0]), ['start', 'cancel']);
+
+  // Hysteresis: once talking, a 0.4 frame is still voice.
+  det = C.createTurnDetector({ endMs: 650 });
+  evs = run(det, [[0.9, 600], [0.4, 900], [0.02, 224]]);
+  assert.deepStrictEqual(evs.map((e) => e[0]), ['start', 'check']);
+
+  // While the assistant speaks, a start needs a near-certain frame for bargeInMs.
+  det = C.createTurnDetector();
+  let t = 0;
+  let got = null;
+  for (let k = 0; k < 20; k++) got = det.step(0.7, (t += 32), 32, { echo: true }) || got;
+  assert.strictEqual(got, null, 'its own voice at 0.7 is not a barge-in');
+  for (let k = 0; k < 14 && !got; k++) got = det.step(0.95, (t += 32), 32, { echo: true });
+  assert.strictEqual(got, 'start');
+  assert.ok(t - 640 >= 350, 'after bargeInMs');
+
+  // endMs is clamped like the energy VAD's.
+  assert.strictEqual(C.createTurnDetector({ endMs: 50 }).endMs, C.END_MS_MIN);
+}
+
+// ---- wake word and conversation ---------------------------------------------------------
+{
+  const c = C.createConversation({ wake: true });
+  assert.strictEqual(c.state, 'asleep');
+  assert.ok(c.listensForWake() && !c.accepts(), 'asleep: only the wake word');
+  c.on('speech', 0);
+  assert.strictEqual(c.state, 'asleep', 'speech does not wake it');
+  c.on('wake', 1000);
+  assert.ok(c.accepts() && !c.listensForWake());
+  assert.strictEqual(c.tick(1000 + C.WAKE_DEFAULTS.awakeMs - 1), null);
+  assert.strictEqual(c.tick(1000 + C.WAKE_DEFAULTS.awakeMs), 'sleep', 'woken and nothing said: back to sleep');
+
+  c.on('wake', 10000);
+  c.on('speech', 10500);
+  c.on('sent', 11500);
+  assert.strictEqual(c.state, 'busy');
+  assert.strictEqual(c.tick(60000), null, 'a hand-off can take a while');
+  c.on('idle', 61000);
+  assert.strictEqual(c.state, 'follow');
+  assert.ok(c.accepts(), 'a follow-up needs no wake word');
+  c.on('speech', 61000 + C.WAKE_DEFAULTS.followMs - 100);
+  assert.strictEqual(c.state, 'busy');
+  c.on('idle', 80000);
+  assert.strictEqual(c.tick(80000 + C.WAKE_DEFAULTS.followMs), 'sleep', 'quiet after the answer: asleep');
+  c.on('wake', 90000);
+  c.on('stop', 91000);
+  assert.strictEqual(c.state, 'asleep', '"thanks Jarvis" ends it');
+  c.on('wake', 92000);
+  c.on('speech', 92100);
+  c.on('nothing', 93000);
+  assert.strictEqual(c.state, 'follow', 'noise is not an answer to wait for');
+  assert.strictEqual(c.tick(92000 + C.WAKE_DEFAULTS.busyMaxMs * 2), 'sleep');
+
+  const open = C.createConversation({ wake: false });
+  assert.strictEqual(open.state, 'open');
+  assert.ok(open.accepts() && !open.listensForWake(), 'wake word off: every utterance is a request');
+  open.on('idle', 0);
+  assert.strictEqual(open.tick(1e9), null, 'and it never sleeps');
+  open.wake = true;
+  assert.strictEqual(open.state, 'asleep');
+
+  for (const s of ['Stop.', 'stop', 'Thanks, Jarvis.', 'thank you jarvis', "That's all.", 'okay, stop talking', 'Never mind.', 'Goodbye Jarvis!']) assert.ok(C.isStopPhrase(s), s);
+  for (const s of ['Stop the build on main.', 'Thanks for the summary, what else is due?', 'Tell Jarvis to stop', 'what is on today']) assert.ok(!C.isStopPhrase(s), s);
+
+  assert.strictEqual(C.stripWakeWord("Jarvis, what's on today?"), "what's on today?");
+  assert.strictEqual(C.stripWakeWord('Hey Jarvis. Check my mail.'), 'Check my mail.');
+  assert.strictEqual(C.stripWakeWord('Ask Jarvis later'), 'Ask Jarvis later', 'only a leading wake word');
+
+  const w = C.createWakeTrigger({ threshold: 0.5, refractoryMs: 1500, warmupFrames: 3 });
+  assert.strictEqual(w.step(0.99, 0), false, 'the feature window is still filling');
+  w.step(0, 80);
+  w.step(0, 160);
+  assert.strictEqual(w.step(0.4, 240), false);
+  assert.strictEqual(w.step(0.8, 320), true, 'over the bar: woken');
+  assert.strictEqual(w.step(0.9, 400), false, 'the same "hey Jarvis" is not a second wake');
+  assert.strictEqual(w.step(0.9, 320 + 1500), true);
+
+  assert.strictEqual(C.wakeDefault({ coarsePointer: false }), true, 'on at a desk');
+  assert.strictEqual(C.wakeDefault({ coarsePointer: true }), false, 'off on a phone');
+  assert.strictEqual(C.expression({ asleep: true }), 'asleep');
+  assert.strictEqual(C.expression({ asleep: true, talking: true }), 'talking');
+  assert.strictEqual(C.expression({ awake: true, happy: true }), 'awake');
+
+  const line = C.formatLatency({ speechEnd: 0, vadEnd: 250, transcribed: 600, posted: 610, firstReply: 1000, audioStart: 1250, turnBy: 'smart-turn', turnP: 0.91, tts: 'kokoro', ttsFirstMs: 240 });
+  assert.match(line, /end by smart-turn \(p 0\.91\)/);
+  assert.match(line, /kokoro 240ms to audio/);
+}
+
+// ---- the page wires the local voice ----------------------------------------------------
+{
+  const html = fs.readFileSync(require.resolve('../src/dashboard/talk.html'), 'utf8');
+  const page = fs.readFileSync(require.resolve('../src/dashboard/talk.page.js'), 'utf8');
+  for (const id of ['wake', 'smartTurn', 'tapPrompt', 'ttsBackend', 'voice']) assert.match(html, new RegExp(`id="${id}"`), id);
+  const order = ['talk.core.js', 'talk.capture.js', 'talk.voice.js', 'talk.page.js'].map((f) => html.indexOf(`src="${f}"`));
+  assert.ok(order.every((i, k) => i > 0 && (k === 0 || i > order[k - 1])), 'scripts load in dependency order');
+  // iOS: the audio is unlocked inside the tap, before any await.
+  assert.match(page, /function tapped\(\) \{\s*unlockAudio\(\);/);
+  assert.match(page, /createMicOwner\(\{\s*app: 'pa-talk'/, 'the page joins the one-mic channel');
+  assert.match(page, /workletUrl: 'talk\.worklet\.js'/, 'a relative worklet URL works under /pa/');
+}
+
 // ---- the transcribe proxy, against a fake faster-whisper server --------------------
 (async () => {
   const { config } = require('../src/config');
@@ -355,6 +572,81 @@ const C = require('../src/dashboard/talk.core');
   // Transcriber down: a clear 503, not a hang.
   whisper.close();
   await assert.rejects(talk.transcribe(wav), (e) => e.status === 503 && /not reachable/.test(e.message));
+
+  // ---- the local voice service, through the PA ----------------------------------
+  for (const f of ['talk.voice.js', 'talk.capture.js', 'talk.worklet.js']) {
+    res = await fetch(`${base}/${f}`);
+    assert.strictEqual(res.status, 200, f);
+  }
+  const seen = [];
+  const voice = http.createServer((req, r) => {
+    let body = [];
+    req.on('data', (d) => body.push(d));
+    req.on('end', () => {
+      body = Buffer.concat(body);
+      seen.push({ method: req.method, url: req.url, type: req.headers['content-type'], bytes: body.length, origin: req.headers.origin });
+      if (req.url === '/health') return r.end(JSON.stringify({ ok: true, ready: true, device: 'cuda', turn: true }));
+      if (req.url === '/voices') return r.end(JSON.stringify({ voices: [{ id: 'bf_isabella', label: 'Isabella (British)' }] }));
+      if (req.url === '/tts') {
+        r.writeHead(200, { 'Content-Type': 'audio/L16; rate=24000; channels=1', 'X-First-Ms': '190', 'Set-Cookie': 'no=1' });
+        r.write(Buffer.alloc(480));
+        setTimeout(() => r.end(Buffer.alloc(480)), 20);
+        return;
+      }
+      if (req.url === '/endpoint') return r.end(JSON.stringify({ complete: true, probability: 0.93, ms: 60 }));
+      r.writeHead(404).end('{}');
+    });
+  });
+  await new Promise((r) => voice.listen(0, '127.0.0.1', r));
+  const modelsDir = fs.mkdtempSync(require('path').join(require('os').tmpdir(), 'pa-voice-models-'));
+  fs.writeFileSync(require('path').join(modelsDir, 'silero_vad.onnx'), 'onnx');
+  fs.writeFileSync(require('path').join(modelsDir, 'secret.txt'), 'nope');
+  config.voice.url = `http://127.0.0.1:${voice.address().port}`;
+  config.voice.models = modelsDir;
+
+  res = await fetch(`${base}/api/talk/voice`);
+  let info = await res.json();
+  assert.strictEqual(info.tts.ok, true);
+  assert.strictEqual(info.turn, true);
+  assert.strictEqual(info.voices[0].id, 'bf_isabella');
+  assert.deepStrictEqual(info.models, { vad: true, wake: false, ort: false });
+
+  res = await fetch(`${base}/api/talk/tts`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{"text":"Hi."}' });
+  assert.strictEqual(res.status, 403, 'X-PA guarded');
+  res = await fetch(`${base}/api/talk/tts`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-PA': '1' }, body: '{"text":"Hi."}' });
+  assert.strictEqual(res.status, 200);
+  assert.match(res.headers.get('content-type'), /^audio\/L16/);
+  assert.strictEqual(res.headers.get('x-first-ms'), '190');
+  assert.strictEqual(res.headers.get('set-cookie'), null, 'only the audio headers pass');
+  assert.strictEqual((await res.arrayBuffer()).byteLength, 960, 'streamed through whole');
+  const ttsSeen = seen.find((s) => s.url === '/tts');
+  assert.strictEqual(ttsSeen.origin, undefined, 'the service sees no browser Origin');
+
+  const pcm = Buffer.from(C.floatToPcm16(new Float32Array(16000)));
+  res = await fetch(`${base}/api/talk/endpoint`, { method: 'POST', headers: { 'Content-Type': 'audio/L16; rate=16000', 'X-PA': '1' }, body: pcm });
+  assert.deepStrictEqual(await res.json(), { complete: true, probability: 0.93, ms: 60 });
+  assert.strictEqual(seen.find((s) => s.url === '/endpoint').bytes, 32000);
+
+  // The page's models: by name only.
+  res = await fetch(`${base}/talk/models/silero_vad.onnx`);
+  assert.strictEqual(res.status, 200);
+  assert.strictEqual(await res.text(), 'onnx');
+  res = await fetch(`${base}/talk/models/secret.txt`);
+  assert.strictEqual(res.status, 404, 'nothing else in the folder is served');
+  res = await fetch(`${base}/talk/models/..%2F..%2Fpackage.json`);
+  assert.strictEqual(res.status, 404);
+  res = await fetch(`${base}/talk/models/hey_jarvis_v0.1.onnx`);
+  assert.strictEqual(res.status, 404, 'a known model that is not installed');
+
+  // The service down: a clear 503 for the page to fall back on.
+  voice.close();
+  config.voice.url = 'http://127.0.0.1:9';
+  await new Promise((r) => setTimeout(r, 3100)); // past the health cache
+  res = await fetch(`${base}/api/talk/tts`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-PA': '1' }, body: '{"text":"Hi."}' });
+  assert.strictEqual(res.status, 503);
+  info = await (await fetch(`${base}/api/talk/voice`)).json();
+  assert.strictEqual(info.tts.ok, false);
+  fs.rmSync(modelsDir, { recursive: true, force: true });
 
   server.close();
   console.log('talk ok');

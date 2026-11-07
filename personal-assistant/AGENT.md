@@ -120,6 +120,16 @@ two more guards in the same spirit: a request the model itself labels `action`/`
 "answered", and a hand-off's `say` is held until whole and replaced by the stock acknowledgement when
 it reads as an answer or a claim (`spokenAck`). Failing before a decision (Ollama down, or no route
 within `PA_FAST_LOCAL_TIMEOUT_MS`) falls back to `PA_FAST_FALLBACK_MODEL` on the text format.
+
+**The voice page hears the room; nothing it hears leaves the browser until a request is made.** The
+wake word ("hey jarvis", openWakeWord) and Silero VAD run in the page on onnxruntime-web
+(`talk.voice.js`); only an utterance after the wake word (or with the wake word off, hands-free or
+push-to-talk) is sent, to the PA's own `/api/talk/transcribe` and `/api/talk/endpoint`. Keep the
+wake word client-side. The local voice service (`voice/server.py`, 127.0.0.1:47830) is loopback only
+and refuses any request with an `Origin` header: browsers reach it only through the PA's X-PA-guarded
+proxy (`/api/talk/tts`, `/api/talk/endpoint`, `/api/talk/warm`). `/talk/models/` serves a fixed list
+of file names (`MODEL_FILES`), never a path. `src/dashboard/voiceCapture.js` and `micWorklet.js` are
+copies of termhub's (`test/voiceCaptureCopy.test.js`); change termhub's and copy them over.
 The acting verbs (`ASK_COMMANDS`) stay shell commands behind the prompt, through one launcher each
 (`pa-home/bin/pa-do`, …), because opencode's "Allow always" saves the command's first word + ` *`, cannot
 be turned off and outranks the config: on `node …/pa.js` that was `node *`; on a launcher it is that

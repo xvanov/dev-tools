@@ -211,8 +211,9 @@ async function handle(req, res) {
   }
 
   // ---- The voice page (dashboard/talk.js): /talk, its scripts, and
+  // its models (/talk/models/), the local voice service's proxy, and
   // POST /api/talk/transcribe (X-PA guarded there). ----
-  if (url.pathname === '/talk' || url.pathname.startsWith('/talk.') || url.pathname.startsWith('/api/talk/')) {
+  if (url.pathname === '/talk' || url.pathname.startsWith('/talk.') || url.pathname.startsWith('/talk/') || url.pathname.startsWith('/api/talk/')) {
     if (await require('./talk').route(req, res, url, { send })) return;
   }
   // ---- end voice page ----

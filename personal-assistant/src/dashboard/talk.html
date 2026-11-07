@@ -61,7 +61,8 @@
     color: var(--ink);
     transition: color .3s, text-shadow .3s;
   }
-  #face[data-expr="listening"] { color: var(--signal); text-shadow: 0 0 18px var(--signal-soft); }
+  #face[data-expr="listening"], #face[data-expr="awake"] { color: var(--signal); text-shadow: 0 0 18px var(--signal-soft); }
+  #face[data-expr="asleep"] { color: var(--ink-3); }
   #face[data-expr="concerned"] { color: var(--amber); }
   @media (max-width: 420px) { #face { font-size: 17px; } }
   #mood { font: var(--text-sm)/1 var(--font-mono); color: var(--ink-3); height: 1em; }
@@ -82,6 +83,18 @@
     box-shadow: var(--shadow-1);
   }
   #ptt:hover { border-color: var(--signal); }
+  /* Phones: hold-to-talk is the main control, so it is a thumb-sized target. */
+  @media (pointer: coarse) { #ptt { padding: 22px 44px; font-size: var(--text-md); -webkit-touch-callout: none; } }
+  #tapPrompt {
+    border: 1px solid var(--signal);
+    background: var(--signal);
+    color: var(--on-signal);
+    border-radius: var(--radius-pill);
+    padding: 12px 26px;
+    font: 600 var(--text-md)/1.2 var(--font-sans);
+    cursor: pointer;
+    box-shadow: var(--shadow-1);
+  }
   #ptt.down { color: var(--on-signal); background: var(--signal); border-color: var(--signal); }
   #settings {
     display: none;
@@ -123,7 +136,9 @@
 <div id="settings" aria-label="settings">
   <label for="ttsBackend">Speech engine</label><select id="ttsBackend"></select>
   <label for="voice">Voice</label><select id="voice"></select>
+  <label for="wake">Wake word</label><span><input type="checkbox" id="wake"> listen for "hey Jarvis" (heard in this page only)</span>
   <label for="handsFree">Hands-free</label><span><input type="checkbox" id="handsFree"> listen without holding Space</span>
+  <label for="smartTurn">Smart end of turn</label><span><input type="checkbox" id="smartTurn"> answer as soon as I sound finished</span>
   <label for="deafWhileTalking">While I talk</label><span><input type="checkbox" id="deafWhileTalking"> stop listening (no barge-in)</span>
   <label for="muted">Voice off</label><span><input type="checkbox" id="muted"> show answers, do not speak them</span>
   <label for="endMs">Pause before sending</label><span><input type="range" id="endMs" step="50"> <span id="endMsLabel"></span></span>
@@ -138,10 +153,13 @@
   <div id="caption"></div>
   <div id="heard"></div>
   <div id="notice"></div>
+  <button id="tapPrompt" type="button" hidden>Tap once to enable Jarvis</button>
   <button id="ptt" type="button">hold Space (or here) to talk</button>
 </main>
 <pre id="debug" hidden title="latency per turn (?debug=1)"></pre>
 <script src="talk.core.js"></script>
+<script src="talk.capture.js"></script>
+<script src="talk.voice.js"></script>
 <script src="talk.page.js"></script>
 </body>
 </html>

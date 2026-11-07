@@ -1604,6 +1604,16 @@ const commands = {
       lines.push(`  audio backlog: ${untranscribed.length} file(s) not transcribed, oldest ${Math.round(oldest / 60)}h — is the transcriber up (port ${config.audio.transcribePort})?`);
     }
 
+    // The local voice stack (voice/server.py, windows/install-voice.ps1).
+    {
+      const v = await require('../dashboard/talk').voiceInfo();
+      const missing = Object.entries(v.models).filter(([, ok]) => !ok).map(([k]) => k);
+      lines.push(
+        `  voice ${!config.voice.url ? 'off (PA_VOICE_URL=off): browser voices' : v.tts.ok ? `Kokoro on ${v.tts.device}, ${v.defaultVoice}${v.turn ? ' · smart-turn' : ' · NO smart-turn'}` : `DOWN at ${config.voice.url} (${v.tts.error || 'not ready'}) — Start-ScheduledTask pa-voice, or run windows\\install-voice.ps1`}` +
+          ` · page models ${missing.length ? `MISSING ${missing.join(', ')} in ${config.voice.models}` : 'ok'}`
+      );
+    }
+
     const newest = require('../backup').list()[0];
     const stale = !newest || Date.now() - newest.at.getTime() > (config.backup.everyHours + 6) * 3600_000;
     const tools = await require('../backup').toolsCheck().catch((err) => ({ ok: false, detail: err.message }));

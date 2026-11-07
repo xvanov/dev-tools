@@ -98,15 +98,31 @@
   // that are now complete, each exactly once. Accepts either cumulative text
   // (each event carries everything so far) or deltas (each carries the new
   // part): text that starts with what was already seen is cumulative.
-  function createUtteranceStream() {
+  //
+  // { firstClause: true }: the very first piece may end at a clause (a comma,
+  // semicolon or colon after at least four words) instead of waiting for the
+  // whole sentence. A neural voice synthesises a piece before any of it is
+  // heard, so a long first sentence ("There is one overdue item, due on the
+  // 29th, asked by …") is heard sooner as clause + rest.
+  const CLAUSE_RE = /^((?:\S+\s+){3,}?\S*[^\s\d][,;:])\s+\S/;
+
+  function createUtteranceStream(opts) {
+    const o = Object.assign({ firstClause: false }, opts || {});
     let full = '';
     let emitted = 0;
     let finished = false;
+    let clause = ''; // the first sentence's opening, already handed out
 
     function ingest(text) {
       const t = String(text || '');
       if (t.startsWith(full)) full = t;
       else full += t;
+    }
+    // The first sentence minus the clause already spoken.
+    function trimClause(list) {
+      if (!clause || emitted > 0 || !list.length || !list[0].startsWith(clause)) return list;
+      const rest = list[0].slice(clause.length).trim();
+      return rest ? [rest, ...list.slice(1)] : list.slice(1);
     }
 
     return {
@@ -115,8 +131,17 @@
         if (finished) return [];
         ingest(text);
         // speakable() trims; a trailing space is what proves "checked." ended.
-        const { sentences } = splitSentences(speakable(full).text + (/\s$/.test(full) ? ' ' : ''));
-        const fresh = sentences.slice(emitted);
+        const sp = speakable(full).text;
+        const { sentences } = splitSentences(sp + (/\s$/.test(full) ? ' ' : ''));
+        if (!sentences.length && o.firstClause && !clause) {
+          const m = CLAUSE_RE.exec(sp);
+          if (m) {
+            clause = m[1];
+            return [clause];
+          }
+          return [];
+        }
+        const fresh = trimClause(sentences.slice(emitted));
         emitted = sentences.length;
         return fresh;
       },
@@ -128,8 +153,9 @@
         if (text != null) ingest(text);
         const sp = speakable(full);
         const { sentences, rest } = splitSentences(sp.text);
-        const fresh = sentences.slice(emitted);
-        if (rest.trim()) fresh.push(rest.trim());
+        const all = sentences.slice(emitted);
+        if (rest.trim()) all.push(rest.trim());
+        const fresh = trimClause(all);
         emitted = Infinity;
         if (sp.omitted) fresh.push(DETAILS);
         return fresh;
@@ -516,9 +542,16 @@
   // `firstToken` (the first words of the fast reply). `posted` is when the
   // turn's response began; `firstReply` the first sentence handed to speech.
   function formatLatency(m) {
+    const ok0 = (x) => typeof x === 'number' && isFinite(x);
     const s = latencySlices(m);
     const f = (v) => (v == null ? '–' : v >= 1000 ? `${(v / 1000).toFixed(1)}s` : `${Math.round(v)}ms`);
-    const line = `silence ${f(s.silence)} · stt ${f(s.transcribe)} · send ${f(s.send)} · reply ${f(s.reply)} · voice ${f(s.voice)} = ${f(s.total)}`;
+    let line = `silence ${f(s.silence)} · stt ${f(s.transcribe)} · send ${f(s.send)} · reply ${f(s.reply)} · voice ${f(s.voice)} = ${f(s.total)}`;
+    // How the turn ended (smart-turn, the silence timer, a released button)
+    // and the voice: the engine, and Kokoro's time to its first audio.
+    const extra = [];
+    if (m.turnBy) extra.push(`end by ${m.turnBy}${typeof m.turnP === 'number' ? ` (p ${m.turnP.toFixed(2)})` : ''}`);
+    if (m.tts) extra.push(`${m.tts}${ok0(m.ttsFirstMs) ? ` ${f(m.ttsFirstMs)} to audio` : ''}`);
+    if (extra.length) line += ` [${extra.join(', ')}]`;
     if (!m.route) return line;
     const ok = (x) => typeof x === 'number' && isFinite(x);
     const from = (k) => (ok(m.transcribed) && ok(m[k]) ? m[k] - m.transcribed : null);
@@ -551,17 +584,355 @@
     };
   }
 
+  // ---- Speech out: which engine --------------------------------------------
+  //
+  // 'kokoro' is the local neural voice (voice/server.py through
+  // /api/talk/tts); 'browser' is speechSynthesis. The setting is 'auto'
+  // (Kokoro when the service says it is healthy, else the browser), or one of
+  // them by name; a named engine that is not there falls back to the other.
+  const TTS_PREFS = ['auto', 'kokoro', 'browser'];
+
+  function chooseTts(pref, avail) {
+    const a = avail || {};
+    const p = TTS_PREFS.includes(pref) ? pref : 'auto';
+    if (p === 'browser' && a.browser) return 'browser';
+    if (a.kokoro && p !== 'browser') return 'kokoro';
+    if (a.browser) return 'browser';
+    return a.kokoro ? 'kokoro' : null;
+  }
+
+  // ---- Speech out: fetching ahead ---------------------------------------------
+  //
+  // While one sentence plays, the next is already being synthesised: get(text)
+  // returns the fetch for that text, started now or earlier by prefetch(text);
+  // each started fetch is used once. At most `depth` are kept waiting (the
+  // service has one GPU and serialises them anyway). clear() drops them all
+  // (barge-in), calling `abort` on each.
+  function createPrefetcher(opts) {
+    const o = Object.assign({ depth: 2, start: null, abort: null }, opts || {});
+    const waiting = []; // [{ text, job }]
+    return {
+      prefetch(text) {
+        if (!text || waiting.some((w) => w.text === text)) return;
+        if (waiting.length >= o.depth) return;
+        waiting.push({ text, job: o.start(text) });
+      },
+      get(text) {
+        const i = waiting.findIndex((w) => w.text === text);
+        if (i >= 0) return waiting.splice(i, 1)[0].job;
+        return o.start(text);
+      },
+      clear() {
+        while (waiting.length) {
+          const w = waiting.shift();
+          if (o.abort) o.abort(w.job);
+        }
+      },
+      get size() {
+        return waiting.length;
+      },
+    };
+  }
+
+  // 16-bit little-endian PCM arriving in network chunks of any length (an odd
+  // byte waits for the next chunk) -> Float32 samples.
+  function createPcmDecoder() {
+    let carry = null;
+    return {
+      push(bytes) {
+        let b = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+        if (carry) {
+          const j = new Uint8Array(carry.length + b.length);
+          j.set(carry, 0);
+          j.set(b, carry.length);
+          b = j;
+          carry = null;
+        }
+        const n = b.length >> 1;
+        if (b.length & 1) carry = b.slice(b.length - 1);
+        const out = new Float32Array(n);
+        for (let i = 0; i < n; i++) {
+          let v = b[2 * i] | (b[2 * i + 1] << 8);
+          if (v >= 0x8000) v -= 0x10000;
+          out[i] = v / 32768;
+        }
+        return out;
+      },
+    };
+  }
+
+  // Float samples -> 16-bit PCM bytes (what /api/talk/endpoint reads).
+  function floatToPcm16(samples) {
+    const out = new Uint8Array(samples.length * 2);
+    for (let i = 0; i < samples.length; i++) {
+      const x = Math.max(-1, Math.min(1, samples[i]));
+      const v = x < 0 ? Math.round(x * 0x8000) : Math.round(x * 0x7fff);
+      out[2 * i] = v & 0xff;
+      out[2 * i + 1] = (v >> 8) & 0xff;
+    }
+    return out;
+  }
+
+  // ---- End of turn ------------------------------------------------------------------
+  //
+  // Silence alone is a poor judge: "send the report to… [thinking] …the
+  // finance team" has a pause in the middle, and a 650 ms wait cuts it there,
+  // while waiting longer makes every answer slow. So each frame comes with a
+  // speech probability (Silero VAD; the energy VAD's verdict where Silero is
+  // not loaded), and once the speaker has been quiet for `checkMs` (200) the
+  // caller asks smart-turn ("does this sound finished?") about the audio so
+  // far. Finished: the turn ends there, ~450 ms sooner than the timer.
+  // Not finished, or no answer: it ends at `endMs` of silence as before (the
+  // user's "Pause before sending"). A voice that comes back during the check
+  // makes its answer stale.
+  //
+  // step() returns 'start' | 'check' | 'end' | 'cancel' | null. After a
+  // 'check', the caller calls verdict(token, complete); it returns 'end' when
+  // that ends the turn now. The echo flag (the assistant is talking) raises
+  // the bar for a start, as the energy VAD does.
+  const TURN_DEFAULTS = {
+    onProb: 0.5, // a frame at or over this is speech
+    offProb: 0.35, // once talking, frames over this still count as voice
+    echoProb: 0.85, // while the assistant speaks
+    startMs: 150,
+    bargeInMs: 350,
+    checkMs: 200,
+    endMs: 650,
+    minUtteranceMs: 350,
+    maxUtteranceMs: 30000,
+  };
+
+  function createTurnDetector(opts) {
+    const o = Object.assign({}, TURN_DEFAULTS, opts || {});
+    o.endMs = Math.min(END_MS_MAX, Math.max(END_MS_MIN, Number(o.endMs) || TURN_DEFAULTS.endMs));
+    let state = 'silence'; // silence | maybe | speech
+    let since = 0;
+    let voicedMs = 0;
+    let lastVoice = 0;
+    let startedAt = 0;
+    let token = 0; // the check in flight, if any
+    let checked = false; // this pause has been asked about
+
+    return {
+      get state() {
+        return state;
+      },
+      get lastVoice() {
+        return lastVoice;
+      },
+      get startedAt() {
+        return startedAt;
+      },
+      get endMs() {
+        return o.endMs;
+      },
+      get pending() {
+        return token;
+      },
+      step(prob, now, frameMs, ctx) {
+        const echo = !!(ctx && ctx.echo);
+        if (state === 'silence') {
+          if (prob >= (echo ? o.echoProb : o.onProb)) {
+            state = 'maybe';
+            since = now;
+            voicedMs = frameMs;
+            lastVoice = now;
+          }
+          return null;
+        }
+        if (state === 'maybe') {
+          if (prob >= (echo ? o.echoProb : o.onProb)) {
+            voicedMs += frameMs;
+            lastVoice = now;
+          }
+          if (now - lastVoice > 200) {
+            state = 'silence';
+            return null;
+          }
+          if (voicedMs >= (echo ? o.bargeInMs : o.startMs)) {
+            state = 'speech';
+            startedAt = since;
+            checked = false;
+            token = 0;
+            return 'start';
+          }
+          return null;
+        }
+        // speech
+        if (prob >= o.offProb) {
+          lastVoice = now;
+          if (checked || token) {
+            // Talking again: whatever the check says is about a pause that ended.
+            checked = false;
+            token = 0;
+          }
+        }
+        if (now - startedAt >= o.maxUtteranceMs) {
+          state = 'silence';
+          token = 0;
+          return 'end';
+        }
+        const quiet = now - lastVoice;
+        if (quiet >= o.endMs) {
+          state = 'silence';
+          token = 0;
+          return lastVoice - startedAt >= o.minUtteranceMs ? 'end' : 'cancel';
+        }
+        if (!checked && quiet >= o.checkMs && lastVoice - startedAt >= o.minUtteranceMs) {
+          checked = true;
+          token = now;
+          return 'check';
+        }
+        return null;
+      },
+      // The check's token is `pending` right after step() returned 'check'.
+      verdict(t, complete) {
+        if (!t || t !== token || state !== 'speech') return null;
+        token = 0;
+        if (!complete) return null;
+        state = 'silence';
+        return 'end';
+      },
+      reset() {
+        state = 'silence';
+        token = 0;
+        checked = false;
+      },
+    };
+  }
+
+  // ---- Wake word and conversation -------------------------------------------------------
+  //
+  // With the wake word on, the page listens for "hey Jarvis" and nothing else:
+  // no transcription, nothing leaves the browser. States:
+  //   asleep     only the wake word is heard
+  //   awake      woken (a chime): the next utterance is the request; no
+  //              speech within `awakeMs` and it goes back to sleep
+  //   busy       a request is being answered (transcribing, the fast lane,
+  //              the PA chat, speaking); a hand-off can take a while
+  //   follow     the answer is done: for `followMs` (8 s) a follow-up needs
+  //              no wake word; silence puts it to sleep
+  // Events: wake, speech (an utterance began), sent (one was sent), stop (a
+  // stop phrase: "stop", "thanks Jarvis"), idle (nothing pending and nothing
+  // being said), activity (still working: a reply arrived). tick(now)
+  // returns 'sleep' when a window ran out. With the wake word off the machine
+  // stays 'open': every utterance is a request (the hands-free mode).
+  const WAKE_DEFAULTS = { awakeMs: 6000, followMs: 8000, busyMaxMs: 180000 };
+
+  function createConversation(opts) {
+    const o = Object.assign({ wake: true }, WAKE_DEFAULTS, opts || {});
+    let state = o.wake ? 'asleep' : 'open';
+    let until = Infinity;
+    const go = (s, now, ms) => {
+      state = s;
+      until = ms == null ? Infinity : now + ms;
+      return s;
+    };
+    return {
+      get state() {
+        return state;
+      },
+      get wake() {
+        return o.wake;
+      },
+      set wake(on) {
+        o.wake = !!on;
+        state = o.wake ? 'asleep' : 'open';
+        until = Infinity;
+      },
+      // Does an utterance that starts now count as a request?
+      accepts() {
+        return state !== 'asleep';
+      },
+      // Should the wake-word detector run? Only asleep: awake, every
+      // utterance is already a request (whisper's "Jarvis, …" is stripped).
+      listensForWake() {
+        return o.wake && state === 'asleep';
+      },
+      on(ev, now) {
+        if (!o.wake) return state;
+        if (ev === 'wake') return go('awake', now, o.awakeMs);
+        if (ev === 'stop') return go('asleep', now);
+        if (state === 'asleep') return state;
+        if (ev === 'speech') return go('busy', now, o.busyMaxMs);
+        if (ev === 'sent' || ev === 'activity') return state === 'busy' ? go('busy', now, o.busyMaxMs) : state;
+        if (ev === 'idle' && state === 'busy') return go('follow', now, o.followMs);
+        if (ev === 'nothing' && state === 'busy') return go('follow', now, o.followMs); // the utterance was noise
+        return state;
+      },
+      tick(now) {
+        if (!o.wake || now < until) return null;
+        go('asleep', now);
+        return 'sleep';
+      },
+    };
+  }
+
+  // "Stop", "thanks Jarvis", "that's all": end the conversation, send nothing.
+  const STOP_RE = /^(?:(?:ok(?:ay)?|alright|no)[,.!]?\s+)?(?:stop(?: it| talking| listening)?|shush|be quiet|quiet|cancel|never ?mind|that'?s (?:all|it)(?: for now)?|(?:thanks?|thank you|cheers),? jarvis|(?:good ?bye|bye|goodnight|good night|sleep),? jarvis|go to sleep|that will be all)(?:,? jarvis)?[\s.!]*$/i;
+
+  function isStopPhrase(text) {
+    return STOP_RE.test(String(text || '').trim());
+  }
+
+  // whisper hears the tail of the wake word in the request ("Jarvis, what's
+  // on today?"): it is not part of what was asked.
+  function stripWakeWord(text) {
+    return String(text || '')
+      .replace(/^\s*(?:(?:hey|hi|okay|ok|a)[,.]?\s+)?jarvis[,.!?]?\s*/i, '')
+      .replace(/^\s*,\s*/, '')
+      .trim();
+  }
+
+  // The wake word's score per 80 ms frame -> a detection: at or over
+  // `threshold`, then nothing for `refractoryMs` (one "hey Jarvis" scores over
+  // the bar for several frames in a row), and never in the first `warmupFrames`
+  // frames (the model's feature window is still filling).
+  function createWakeTrigger(opts) {
+    const o = Object.assign({ threshold: 0.5, refractoryMs: 1500, warmupFrames: 16 }, opts || {});
+    let frames = 0;
+    let quietUntil = 0;
+    let best = 0;
+    return {
+      get best() {
+        return best;
+      },
+      step(score, now) {
+        frames++;
+        if (frames <= o.warmupFrames) return false;
+        best = Math.max(best, score);
+        if (now < quietUntil || !(score >= o.threshold)) return false;
+        quietUntil = now + o.refractoryMs;
+        return true;
+      },
+      reset() {
+        frames = 0;
+        quietUntil = 0;
+      },
+    };
+  }
+
+  // The wake word: on by default where a desk is likely (a fine pointer), off
+  // on phones (always-on mic drains the battery, and the phone is in a pocket).
+  function wakeDefault(env) {
+    const e = env || {};
+    return !e.coarsePointer;
+  }
+
   // ---- The face -------------------------------------------------------------
   //
   // Which expression wins when several things are true at once. 'about' is
-  // the moment between handing a sentence to the speech engine and hearing it.
+  // the moment between handing a sentence to the speech engine and hearing it;
+  // 'awake' the wake word was just heard; 'asleep' waiting for it.
   function expression(s) {
     if (s.listening) return 'listening';
     if (s.talking) return 'talking';
     if (s.about) return 'about';
     if (s.thinking) return 'thinking';
+    if (s.awake) return 'awake';
     if (s.concerned) return 'concerned';
     if (s.happy) return 'happy';
+    if (s.asleep) return 'asleep';
     return 'idle';
   }
 
@@ -585,5 +956,18 @@
     encodeWav,
     isNoise,
     expression,
+    TTS_PREFS,
+    chooseTts,
+    createPrefetcher,
+    createPcmDecoder,
+    floatToPcm16,
+    TURN_DEFAULTS,
+    createTurnDetector,
+    WAKE_DEFAULTS,
+    createConversation,
+    isStopPhrase,
+    stripWakeWord,
+    createWakeTrigger,
+    wakeDefault,
   };
 });
