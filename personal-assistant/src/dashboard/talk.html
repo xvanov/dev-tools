@@ -20,7 +20,7 @@
   }
   /* The one thing: the face, centred in everything under the header. */
   main {
-    min-height: calc(100dvh - var(--jhead-h));
+    min-height: 100dvh;
     padding: var(--gutter);
     display: flex;
     flex-direction: column;
@@ -88,14 +88,12 @@
 </style>
 </head>
 <body>
-<header class="jhead">
-  <div data-jnav></div>
-  <!-- Kept for talk.page.js, which wires #toSession; the switcher above replaces both. -->
-  <span hidden>
-    <a id="toDashboard" href="./">dashboard</a>
-    <button id="toSession" type="button">session</button>
-  </span>
-</header>
+<h1 class="sr-only">Talk</h1>
+<!-- Kept for talk.page.js, which wires #toSession; the panel's navigation replaces both. -->
+<span hidden>
+  <a id="toDashboard" href="./">dashboard</a>
+  <button id="toSession" type="button">session</button>
+</span>
 <div class="jframe">
 <aside class="jside" id="settings" data-jside aria-label="Voice, microphone and listening settings">
 <div class="talk-settings">

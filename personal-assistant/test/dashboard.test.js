@@ -45,7 +45,7 @@ assert.ok(!hostAllowed(undefined));
     const html = fs.readFileSync(path.join(dir, page), 'utf8');
     assert.match(html, /<link rel="stylesheet" href="theme\.css">/, `${page} loads theme.css`);
     assert.match(html, new RegExp(`<script src="nav\\.js" data-layer="${layer}"></script>`), `${page} loads nav.js`);
-    assert.match(html, /data-jnav/, `${page} has a switcher slot`);
+    assert.match(html, /data-jside/, `${page} has a panel for nav.js's navigation`);
     assert.ok(!/#[0-9a-fA-F]{6}\b/.test(html.slice(0, html.indexOf('</style>'))), `${page}: colours come from theme.css, not the page`);
   }
   const { handle } = require('../src/dashboard/server');

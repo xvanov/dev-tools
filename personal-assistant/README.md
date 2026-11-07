@@ -1240,7 +1240,7 @@ asks first, because it changes how often you are interrupted.
 <http://127.0.0.1:7300/talk> is the same chat with no keyboard: you say "hey Jarvis", ask, it
 answers out loud, and the work happens in the background. A small ASCII face shows what it is doing
 (asleep, awake, listening, thinking, talking, pleased when it finishes, worried when something is
-down), with the latest tool step in small print under it. The layer switcher at the top (below)
+down), with the latest tool step in small print under it. The navigation in the » panel (below)
 drills down to the cards and the chat in text, then termhub, then the PA chat's session on its own.
 
 Everything runs on this machine. What runs where:
@@ -1474,22 +1474,31 @@ history and then dedupe the stream against it.
 
 Talk, the dashboard, the factory and termhub are four depths of the same assistant: Jarvis
 coordinates, the software factory dispatches and tracks the work, termhub drills into one live
-session. They share one design system and one layer switcher:
+session. They share one design system and one navigation.
 
-**» · jarvis · 1 Talk · 2 Dashboard · 3 Factory · 4 Sessions**, the same 44 px bar at the top of
-every page, the current layer a raised segment in full ink, **Alt+1..4** from anywhere (the
-terminal included).
+There is no header bar. Each page shows only its one thing, full width (Talk the face, Dashboard
+the board, Factory the jobs, Sessions the terminal), plus a small **»** in the top-left corner.
+It opens a panel on the left: first the navigation, **1 Talk · 2 Dashboard · 3 Factory · 4
+Sessions · 5 Agent time · 6 Architecture** (**Alt+1..6** from anywhere, the terminal included) with
+the theme toggle (system → light → dark, remembered per browser), then that page's own controls:
+Talk's voice settings, the Dashboard's views (Today, Meetings, Memory, Chat, Routines, Repos) and
+its sources, the Factory's status, spend and New job form, termhub's session list. Closed by
+default; on a wide screen the choice is remembered per destination (`jarvis.settings.<id>` in
+localStorage), and on a phone the panel slides over the page and always starts closed. The toggle
+shows an amber dot when one of the Dashboard's views counts something waiting on you. The names
+live in one array at the top of `nav.js` (`DESTS`): renaming a destination is a one-line change.
 
-Each layer shows only its one thing, full width: Talk the face, Dashboard the board, Factory the
-jobs, Sessions the terminal. Everything else (Talk's voice settings, the Dashboard's views
-(Today, Meetings, Memory, Chat, Routines, Repos) and its sources, the Factory's status, spend and
-New job form, termhub's session list) is in a settings panel on the left that the **»** toggle
-opens. Closed by default; on a wide screen the choice is remembered per layer
-(`jarvis.settings.<layer>` in localStorage), and on a phone the panel slides over the page and
-always starts closed. The toggle shows an amber dot when one of the Dashboard's views counts
-something waiting on you. The top of every panel holds the theme toggle (system → light → dark,
-remembered per browser) and **Architecture** (`/architecture`, a page of its own rather than a
-layer). Implemented once in `theme.css` (`.jhead`, `.jside`) and `nav.js` (`[data-jside]`).
+Switching is instant. The page you loaded is a shell, and every other destination opens in an
+iframe laid over it, created on first use (all but Talk are prefetched once the page is idle;
+Talk, which may start the microphone, loads when you point at it or go to it) and kept alive. Going
+back and forth is a show/hide, and a page you leave keeps running: Talk keeps listening. The URL
+is the shell's own plus `?jx=<id>` while another destination shows, so a reload or a shared link
+opens the same view and Back/Forward step through the switches. A frame forwards its panel clicks,
+its Alt+N and its links to destinations to the top window by `postMessage`, which acts only on
+messages from its own frames. Pages are framed only by
+their own origin (`Content-Security-Policy: frame-ancestors 'self'` on every PA page; termhub
+also allows the PA's origin, whose shell hosts Sessions and Agent time cross-origin on loopback).
+Implemented once in `theme.css` (`.jside`, `.jpanel-nav`, `.jx-frames`) and `nav.js`.
 
 - **Talk** is `/talk`, **Dashboard** is `/`, **Factory** is `/factory` (all relative, so they work
   on `http://127.0.0.1:7300` and under termhub's `/pa/` on the tailnet alike).

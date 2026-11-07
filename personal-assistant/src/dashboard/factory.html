@@ -12,7 +12,6 @@
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--surface-0); color: var(--ink);
     font: var(--text-base)/var(--leading) var(--font-sans); }
-  .jhead h1 { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); margin: 0; }
   .meta { color: var(--ink-2); font-size: var(--text-sm); }
   .meta.bad { color: var(--bad); }
 
@@ -35,8 +34,8 @@
   .new .row { grid-column: 1 / -1; display: flex; gap: 8px; align-items: center; }
 
   /* The one thing: the jobs, by group, across the whole width. */
-  main { display: grid; gap: 16px; padding: var(--gutter); grid-template-columns: repeat(auto-fit, minmax(min(340px, 100%), 1fr)); align-items: start; }
-  main:empty::before { content: "No jobs to show. The settings panel says why."; color: var(--ink-3); font-size: var(--text-sm); }
+  main { display: grid; gap: 16px; padding: var(--jtop) var(--gutter) var(--gutter); grid-template-columns: repeat(auto-fit, minmax(min(340px, 100%), 1fr)); align-items: start; }
+  main:empty::before { content: "No jobs to show. The panel (») says why."; color: var(--ink-3); font-size: var(--text-sm); }
   section { background: var(--surface-1); border: 1px solid var(--line); border-radius: var(--radius-lg); padding: 12px 14px; box-shadow: var(--shadow-1); }
   section h2 { margin: 0 0 8px; font-size: 13px; font-weight: 600; }
   section h2 .n { color: var(--ink-2); font: 500 var(--text-sm) var(--font-mono); margin-left: 6px; }
@@ -97,10 +96,7 @@
 </style>
 </head>
 <body>
-<header class="jhead">
-  <div data-jnav></div>
-  <h1>Factory</h1>
-</header>
+<h1 class="sr-only">Factory</h1>
 <div class="jframe">
 <aside class="jside" id="factory-settings" data-jside aria-label="Factory settings">
 <div>

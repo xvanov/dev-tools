@@ -126,6 +126,10 @@ function send(res, status, body, type = 'application/json') {
     'Content-Type': type,
     'Cache-Control': 'no-store',
     'X-Content-Type-Options': 'nosniff',
+    // A page may be framed only by a page of its own origin: nav.js's shell, which
+    // hosts the other destinations in frames (under termhub's /pa/ that origin is
+    // termhub's, so its Sessions page can host these too). Nothing else can.
+    ...(/^text\/html/.test(type) ? { 'Content-Security-Policy': "frame-ancestors 'self'" } : {}),
   });
   res.end(type === 'application/json' ? JSON.stringify(body) : body);
 }

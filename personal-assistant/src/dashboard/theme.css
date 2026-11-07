@@ -15,8 +15,9 @@
  *   2. Semantic  (--surface-*, --ink-*, --signal, ...) what the pages use. Light and
  *                dark come from one light-dark() each, keyed off `color-scheme`, so a
  *                value is never written twice.
- *   3. Components (.j-btn, .jhead, .jnav, .jside)  buttons, the header with the
- *      layer switcher, and the settings panel each layer hides by default.
+ *   3. Components (.j-btn, .jnav-toggle, .jside, .jpanel-nav, .jx-frames)  buttons,
+ *      the corner toggle, the panel that holds the navigation and each page's
+ *      settings, and the layer of kept-alive frames nav.js switches between.
  *
  * Swapping in a brand palette means overriding block 1 only, for example in a
  * file loaded after this one:  :root { --p-signal-day: #...; --p-signal-night: #...; }
@@ -125,9 +126,9 @@
   --focus-ring: 0 0 0 2px var(--surface-0), 0 0 0 4px var(--signal);
   --ease: cubic-bezier(.2, .7, .2, 1);
 
-  /* The page frame every layer shares (3c): one header height, one panel width,
-     one gutter. */
-  --jhead-h: 44px;
+  /* The page frame every layer shares (3c): one panel width, one gutter, and the
+     room the corner toggle needs above a page's content. */
+  --jtop: 44px;
   --jside-w: 280px;
   --gutter: 20px;
 }
@@ -136,6 +137,8 @@
 :root[data-theme="dark"] { color-scheme: dark; }
 
 :focus-visible { outline: 2px solid var(--signal); outline-offset: 2px; }
+/* Named for screen readers, not drawn: a page's h1 (the panel already says where you are). */
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; margin: 0; }
 
 /* ---- 3a. Buttons ----------------------------------------------------------- */
 .j-btn {
@@ -151,53 +154,16 @@
 .j-btn.quiet:hover { color: var(--signal); }
 .j-btn:disabled { opacity: .5; cursor: default; }
 
-/* ---- 3b. The header and the layer switcher (nav.js renders it) ------------ */
-/* One bar, the same on all four layers: [settings toggle] [jarvis] [layers].
-   The current layer reads as a raised segment in full ink; nothing glows. */
-.jhead {
-  position: sticky; top: 0; z-index: 15;
-  display: flex; align-items: center; gap: var(--space-3);
-  height: var(--jhead-h); flex: 0 0 var(--jhead-h);
-  padding: 0 var(--gutter);
-  background: var(--surface-1); border-bottom: 1px solid var(--line);
-  min-width: 0;
-}
-.jhead > .jnav { flex: 1 1 auto; }
-.jnav {
-  display: inline-flex; align-items: center; gap: var(--space-2);
-  font: 500 var(--text-sm)/1 var(--font-mono);
-  color: var(--ink-2);
-  min-width: 0;
-}
-.jnav-brand {
-  display: inline-flex; align-items: center; gap: 7px;
-  color: var(--ink); font-weight: 600; letter-spacing: .02em;
-}
-.jnav-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--signal); }
-.jnav-rail {
-  display: flex; align-items: stretch; gap: 2px;
-  list-style: none; margin: 0; padding: 2px;
-  background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--radius);
-  min-width: 0;
-}
-.jnav-rail li { display: flex; min-width: 0; }
-.jnav-seg {
-  display: inline-flex; align-items: center; gap: 6px;
-  padding: 5px 10px; border-radius: 5px;
-  color: var(--ink-2); text-decoration: none; white-space: nowrap;
-  cursor: pointer;
-}
-.jnav-seg kbd { font: inherit; font-size: 10.5px; color: var(--ink-3); min-width: 1ch; }
-.jnav-seg:hover { color: var(--ink); }
-.jnav-seg[aria-current="page"] {
-  color: var(--ink); font-weight: 600;
-  background: var(--surface-1); box-shadow: var(--shadow-1), 0 0 0 1px var(--line);
-}
-.jnav-seg[aria-current="page"] kbd { color: var(--ink-2); }
-.jnav-seg.is-off { opacity: .45; cursor: not-allowed; }
-.jnav-seg.is-busy { cursor: progress; }
+/* Every button answers the press itself, before any script has run: a pressed
+   look on the way down, no double-tap zoom wait on a phone, no grey flash. */
+button, .j-btn, [role="button"] { touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
+:where(button, .j-btn, [role="button"]):active:not(:disabled) { transform: translateY(1px); filter: brightness(.94); }
+@media (prefers-reduced-motion: reduce) { :where(button, .j-btn, [role="button"]):active:not(:disabled) { transform: none; } }
 
-/* Square icon buttons: the settings toggle and the theme toggle. */
+/* ---- 3b. The corner toggle and the panel's navigation (nav.js renders both) -- */
+/* No header bar: a page is its content plus one small » in the top-left corner,
+   which opens the panel. The panel starts with the navigation, then the page's
+   own settings. */
 .jnav-icon {
   display: inline-grid; place-items: center; flex: 0 0 auto;
   width: 28px; height: 28px; padding: 0;
@@ -206,15 +172,32 @@
 }
 .jnav-icon:hover { color: var(--ink); border-color: var(--line); }
 .jnav-icon svg { width: 14px; height: 14px; display: block; }
+.jnav-toggle {
+  position: fixed; top: 8px; left: 10px; z-index: 30;
+  background: color-mix(in srgb, var(--surface-1) 80%, transparent);
+  border-color: var(--line); opacity: .7;
+  transition: opacity .12s var(--ease);
+}
+.jnav-toggle:hover, .jnav-toggle:focus-visible, .jnav-toggle[aria-expanded="true"] { opacity: 1; }
 .jnav-toggle svg { transition: transform .15s var(--ease); }
-.jnav-toggle[aria-expanded="true"] { color: var(--ink); background: var(--surface-2); }
+.jnav-toggle[aria-expanded="true"] { background: var(--surface-2); color: var(--ink); }
 .jnav-toggle[aria-expanded="true"] svg { transform: scaleX(-1); }
 
-/* Narrow: digits and the brand word go, the dot stays. */
-@media (max-width: 560px) {
-  .jnav-seg kbd, .jnav-brand-word { display: none; }
-  .jnav-seg { padding: 6px 7px; }
+.jpanel-nav { display: flex; flex-direction: column; gap: 6px; }
+.jpanel-top { display: flex; justify-content: flex-end; min-height: 28px; }
+.jpanel-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 1px; }
+.jpanel-link {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 8px;
+  padding: 7px 10px; border-radius: var(--radius);
+  color: var(--ink-2); text-decoration: none; font-size: var(--text-base);
+  cursor: pointer;
 }
+.jpanel-link kbd { font: var(--text-xs)/1 var(--font-mono); color: var(--ink-3); }
+.jpanel-link:hover { color: var(--ink); background: var(--surface-2); }
+.jpanel-link:active { background: var(--line); }
+.jpanel-link[aria-current="page"] { color: var(--ink); font-weight: 600; background: var(--surface-2); }
+.jpanel-link.is-off { opacity: .45; cursor: not-allowed; }
+@media (pointer: coarse) { .jpanel-link kbd { display: none; } .jpanel-link { padding: 10px; } }
 
 /* termhub's ?focus= view: a terminal, so the switcher is a small tab in the corner that shows
    only where you are, and opens on hover, focus or a tap. It always takes the
@@ -222,11 +205,24 @@
 .jnav--float {
   color-scheme: dark;
   position: fixed; top: 6px; right: 10px; z-index: 25;
-  padding: 0; opacity: .55;
+  font: 500 var(--text-sm)/1 var(--font-mono);
+  opacity: .55;
   transition: opacity .15s var(--ease);
 }
-.jnav--float .jnav-brand, .jnav--float .jnav-toggle { display: none; }
-.jnav--float .jnav-rail { background: var(--surface-1); box-shadow: var(--shadow-2); }
+.jnav-rail {
+  display: flex; align-items: stretch; gap: 2px;
+  list-style: none; margin: 0; padding: 2px;
+  background: var(--surface-1); border: 1px solid var(--line); border-radius: var(--radius);
+  box-shadow: var(--shadow-2);
+}
+.jnav-rail li { display: flex; }
+.jnav-seg {
+  display: inline-flex; align-items: center;
+  padding: 5px 10px; border-radius: 5px;
+  color: var(--ink-2); text-decoration: none; white-space: nowrap; cursor: pointer;
+}
+.jnav-seg:hover { color: var(--ink); }
+.jnav-seg[aria-current="page"] { color: var(--ink); font-weight: 600; background: var(--surface-2); }
 .jnav--float .jnav-seg:not([aria-current="page"]) {
   max-width: 0; padding-left: 0; padding-right: 0; overflow: hidden;
   transition: max-width .18s var(--ease), padding .18s var(--ease);
@@ -241,19 +237,22 @@
   .jnav--float, .jnav--float .jnav-seg, .jnav-toggle svg { transition: none; }
 }
 
-/* ---- 3c. The page frame: header, then [settings panel | the one thing] ------ */
-/* Each layer shows only its one thing (the face, the board, the jobs, the
-   terminal). Everything else lives in its [data-jside] panel, which the header's
-   toggle opens: closed by default, remembered per layer (nav.js sets
-   <html data-settings="open|closed">). On a phone the panel slides over the page
-   instead of pushing it, and is never remembered open. */
+/* ---- 3c. The page frame: [panel | the one thing] ----------------------------- */
+/* Each page shows only its one thing (the face, the board, the jobs, the
+   terminal). The [data-jside] panel holds the navigation, then the page's own
+   controls; the corner toggle opens it. Closed by default, remembered per
+   destination (nav.js sets <html data-settings="open|closed">). On a phone the
+   panel slides over the page instead of pushing it, and always starts closed.
+   .jmain leaves room at the top for the toggle. */
 .jframe { display: flex; align-items: flex-start; min-width: 0; }
 .jmain { flex: 1 1 auto; min-width: 0; }
+/* Zero specificity: a page that pads its main itself (Factory) sets its own top. */
+:where(.jmain) { padding-top: calc(var(--jtop) - var(--gutter)); }
 .jside {
-  position: sticky; top: var(--jhead-h);
+  position: sticky; top: 0;
   flex: 0 0 var(--jside-w); width: var(--jside-w);
-  height: calc(100dvh - var(--jhead-h)); overflow-y: auto; overscroll-behavior: contain;
-  padding: var(--space-4);
+  height: 100dvh; overflow-y: auto; overscroll-behavior: contain;
+  padding: 8px var(--space-4) var(--space-4);
   display: flex; flex-direction: column; gap: var(--space-4);
   background: var(--surface-1); border-right: 1px solid var(--line);
   font-size: var(--text-sm);
@@ -263,15 +262,26 @@
   margin: 0 0 var(--space-2); font: 600 var(--text-xs)/1.2 var(--font-sans);
   text-transform: uppercase; letter-spacing: .06em; color: var(--ink-3);
 }
-/* nav.js puts the theme toggle and the Architecture link at the top of the panel. */
-.jside-tools { display: flex; align-items: center; gap: var(--space-2); }
-.jside-tools a { color: var(--ink-2); text-decoration: none; font: 500 var(--text-sm)/1 var(--font-mono); }
-.jside-tools a:hover { color: var(--ink); text-decoration: underline; }
-.jside-tools .jnav-icon { margin-left: auto; }
+/* A page with no controls of its own gets a panel with the navigation only. */
+.jside--auto { position: fixed; left: 0; top: 0; bottom: 0; z-index: 20; height: auto; box-shadow: var(--shadow-2); }
 @media (max-width: 760px) {
   .jside {
-    position: fixed; left: 0; top: var(--jhead-h); bottom: 0; z-index: 20;
+    position: fixed; left: 0; top: 0; bottom: 0; z-index: 20;
     width: min(var(--jside-w), calc(100vw - 48px)); height: auto;
     box-shadow: var(--shadow-2);
   }
 }
+
+/* ---- 3d. The shell: other destinations, kept alive over this page ------------ */
+/* nav.js lays each destination you go to over the page you loaded, in a frame
+   it keeps. Hidden ones use visibility, never display:none, so nothing inside
+   re-lays itself out (a terminal would resize) and switching back is free. */
+.jx-frames { position: fixed; inset: 0; z-index: 40; pointer-events: none; }
+.jx-frame {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  border: 0; background: var(--surface-0);
+  visibility: hidden; pointer-events: none;
+}
+.jx-frame.on { visibility: visible; pointer-events: auto; }
+:root.jx-away body > :not(.jx-frames) { visibility: hidden !important; }
+:root.jx-away { scrollbar-width: none; }
