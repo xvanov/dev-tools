@@ -17,7 +17,8 @@ Do not start editing before you have read it.
 2. The live tree must equal `origin/main` — `git fetch origin && git status -sb`.
    It has silently run dozens of commits behind before.
 3. Never `git add -A` in this tree (`state/**` is live runtime churn). Deploy
-   with `scripts/deploy-factory-from-main.sh`.
+   by `git pull --ff-only` of dev-tools `main` (docs/CUTOVER.md; the old
+   `scripts/deploy-factory-from-main.sh` self-deploy is retired).
 4. `factory/manager/**` and `bench/**` are forbidden to self-edit (operator PR
    only). Every self-edit merge surface stays staging-gated.
 5. Gate on the real artifact, never a proxy (a recorded flag, an `--auto`

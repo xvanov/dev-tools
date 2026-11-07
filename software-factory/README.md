@@ -212,7 +212,38 @@ flowchart LR
 - **Nothing merges on green unit tests alone.** The `smoke-green` gate boots the PR's own code on an isolated port and drives the core user journey live before auto-merge.
 - **Convergence machinery** keeps dev↔review loops short: the reviewer carries memory of its own previous findings, proposes concrete `FIND/REPLACE` edits, and a drift clamp stops goalpost-moving at cycle 3.
 
+## Jobs, kinds and runtimes (JOBS-API v1.2)
+
+The personal assistant (`dev-tools/personal-assistant`) hands the factory work
+through `uv run factory job … --json` — the contract is `docs/JOBS-API.md`.
+
+- **Kinds.** `code` (default) is a direction → stories → PRs, as above.
+  `research` and `report` deliver a markdown report kept by the factory
+  (`factory job report <id>`): one agent, no issue/branch/PR, in a read-only
+  checkout of the app's repo or a scratch dir (`factory/jobs/tasks.py`). Every
+  tick starts queued ones as detached workers.
+- **Runtimes.** `api` (default) is the routing above: OpenHands + LiteLLM on API
+  keys. `claude_session` runs the agent work as Claude Code on the operator's
+  claude.ai subscription (`factory/claude_session/`): for code, the dev step (solo
+  by default; with `--pipeline chain`, only the dev); for research/report, the
+  whole run. Each Claude Code run starts inside a termhub session on the factory
+  machine, so a human can open it live; `factory job status` lists every run with
+  its link. Subscription runs are never metered (`cost_usd` 0); their API-price
+  equivalent is reported as `subscription_equiv_usd`.
+
+## Where it runs
+
+Since 2026-11-06 the factory lives in the `xvanov/dev-tools` monorepo
+(`software-factory/`), and the live factory on k-911-x17 runs from
+`/home/k/dev-tools/software-factory` (`docs/CUTOVER.md`). Updating it is
+`git pull --ff-only` in `~/dev-tools`. The old self-deploy (sync from
+`xvanov/software-factory` `origin/main`) is retired, and the self-edit app
+`apps/factory` is paused (`self_tick_enabled: false`) until it targets dev-tools.
+
 ## The factory manages itself — scope cut 2026-08-07
+
+**Paused since 2026-11-06** (see *Where it runs*): what follows describes the
+self-edit loop as it worked while the factory was its own repo.
 
 Factory self-edits go through the chain like any other story and must pass the
 **staging twin** (`factory/manager/staging.py`): the diff is applied to a clone,

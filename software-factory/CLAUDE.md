@@ -9,6 +9,18 @@ An autonomous software factory: LLM personas turn markdown work orders
 ("directions") into reviewed, tested, merged pull requests, unattended, on
 cheap non-Anthropic models (Azure gpt-5.x + DeepSeek).
 
+**Since 2026-11-06 (JOBS-API v1.2):** it is also the layer the personal
+assistant dispatches ALL work through — `code` jobs (the chain/solo below) and
+`research`/`report` jobs (one agent writes a report the factory keeps,
+`factory/jobs/tasks.py`) — on either runtime: `api` (OpenHands + LiteLLM, the
+models above) or `claude_session` (Claude Code on the operator's subscription,
+started in a termhub session a human can open; `factory/claude_session/`). See
+`docs/JOBS-API.md`. **Location:** this tree is `software-factory/` in the
+`xvanov/dev-tools` monorepo; the live factory runs from
+`/home/k/dev-tools/software-factory` once `docs/CUTOVER.md` has been run
+(before that, from `/home/k/software-factory`). Loop 2 (self-edit) is paused
+and the old self-deploy is retired — see the cutover doc.
+
 **It ships, and the chain is measurably behind a single agent.** Three sweeps
 exist on one pinned SWE-rebench manifest. The current result is the
 **2026-08-11 replay** on the 18-instance working set (`pandas-63945` is a
@@ -66,7 +78,7 @@ YAML file (`factory/routes.yaml`) — a config value, not code.
 | Loop | Who drives | What it does |
 |------|-----------|--------------|
 | 1 | the factory | builds an **app** (`apps/sacrifice`) — the base case |
-| 2 | the factory | builds **itself** (`apps/factory`), staging-gated, self-merges |
+| 2 | the factory | builds **itself** (`apps/factory`), staging-gated, self-merges — **paused 2026-11-06** (`self_tick_enabled: false`, docs/CUTOVER.md) |
 | 3 | **you** | watch loops 1–2; when they wedge, diagnose, patch, restart |
 
 Loop 2 self-edits pass the **staging twin** (`factory/manager/staging.py`): the
@@ -107,7 +119,8 @@ uv run factory budget
 ```
 
 Then read the memory index at
-`/home/k/.claude/projects/-home-k-software-factory/memory/MEMORY.md` — the
+`/home/k/.claude/projects/-home-k-dev-tools-software-factory/memory/MEMORY.md`
+(the cutover copies it from `-home-k-software-factory/`) — the
 changelog of every failure class already diagnosed. Check it before
 re-diagnosing anything. Then `STATUS.md` (what works, measured, and the
 operator decisions). The **Exteroception v1 direction**
@@ -239,7 +252,9 @@ was retired 2026-08-07 along with the four LLM tiers.
 4. **Review adversarially** — a second pass whose only job is to break the
    fix's fail-safety. This has caught ~5 production bugs green tests hid.
 5. **Full `uv run pytest -q`**, then PR → real CI → squash-merge.
-6. **Deploy**: `scripts/deploy-factory-from-main.sh` (`--dry-run` first).
+6. **Deploy**: merge to dev-tools `main`, then `git pull --ff-only` in
+   `/home/k/dev-tools` (+ `uv sync --all-extras` if `uv.lock` changed). The old
+   `scripts/deploy-factory-from-main.sh` self-deploy is retired by the cutover.
 7. **Validate on the live loops.** "Green + reviewed" is not "works unattended".
 8. **Restart and re-verify**: check `systemctl --user status` Result +
    `errors=` across two runs. "Services up" ≠ "sustains".
@@ -253,8 +268,8 @@ was retired 2026-08-07 along with the four LLM tiers.
 - **Gate on the real artifact.** Never a recorded flag, a `--auto` *enable*, a
   dry-run's intent, or a green test-run without a commit. `proxy ≠ real` is the
   single most common bug class here.
-- **The live tree must equal `origin/main`.** It has silently run ~60 commits
-  behind. Verify at session start.
+- **The live tree must equal `origin/main`** (of dev-tools, after the cutover).
+  It has silently run ~60 commits behind. Verify at session start.
 - **Never `git add -A`** here (runtime churn). Deploy surgically.
 - `factory/manager/**` and `bench/**` are **forbidden to self-edit** — operator
   PR only. Every self-edit auto-merge surface stays staging-gated.
