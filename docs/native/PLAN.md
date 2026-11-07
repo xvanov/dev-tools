@@ -37,6 +37,7 @@ Design rationale: the plan page (proposal, 7 Nov 2026) and the research summary 
 | D10 | 2026-11-07 | **The plan ends with a workflow acceptance review**: an independent reviewer session runs each workflow in the Map and scores it against its metrics | Phase 8. The workflows (research, open a PR on DeepSeek, continue a PR, answer locally, Teams ask, phone) are the product; components passing tests is not enough. |
 | D11 | 2026-11-07 | **Implementation runs on the work laptop (Windows).** Two GitHub identities: `xvanov` (personal; this repo) and `kalinivanov-innergy` (work) | Git uses the SSH host aliases `github-xvanov` / `github-innergy`. `gh` picks the account by repo owner, never by whichever is active (P1). |
 | D12 | 2026-11-07 | **Desktop only; no week-long shadow run** | Phone app and the `phone` workflow are out of scope: 7.6 is the Tauri desktop shell only, Phase 8 skips `phone`. 3.4 is a one-shot comparison over a recorded query set instead of a week of shadowing. |
+| D13 | 2026-11-07 | **Each stack runs its own factory**; this repo gets a factory app and GitHub Actions CI | The work laptop's PA stops dispatching to the personal machine's factory (it crossed stacks); it uses a local factory (WSL until 2.3, then native). A factory app for `xvanov/dev-tools` is registered on both stacks so the golden path has a target; T6 adds the CI the "CI done" hop waits on. |
 
 ## Prerequisites (before phase 0)
 
