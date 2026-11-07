@@ -184,7 +184,11 @@ button, .j-btn, [role="button"] { touch-action: manipulation; -webkit-tap-highli
 .jnav-toggle[aria-expanded="true"] svg { transform: scaleX(-1); }
 
 .jpanel-nav { display: flex; flex-direction: column; gap: 6px; }
-.jpanel-top { display: flex; justify-content: flex-end; min-height: 28px; }
+.jpanel-top { display: flex; justify-content: flex-end; align-items: center; gap: 8px; min-height: 28px; }
+.jpanel-update { display: inline-flex; align-items: center; width: auto; padding: 0 8px; gap: 8px; font: var(--text-sm)/1 var(--font-sans, inherit); }
+.jpanel-update code { font: var(--text-xs)/1 var(--font-mono); color: var(--ink-3); }
+.jpanel-update.available span { color: var(--ink); font-weight: 600; }
+.jpanel-dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--amber); vertical-align: middle; }
 .jpanel-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 1px; }
 .jpanel-link {
   display: flex; align-items: baseline; justify-content: space-between; gap: 8px;

@@ -3705,7 +3705,15 @@ function wireEvents() {
   $('#dlg-open').onclick = submitDialog;
   $('#dialog-backdrop').onclick = (e) => { if (e.target.id === 'dialog-backdrop') closeDialog(); };
 
-  $('#update-btn').onclick = openUpdatePanel;
+  // Update is the whole system's, in the shared panel (nav.js); it lands here as
+  // #update because termhub owns the checkout and runs the updater.
+  const updateFromHash = () => {
+    if (location.hash !== '#update') return;
+    history.replaceState(null, '', location.pathname + location.search);
+    openUpdatePanel();
+  };
+  window.addEventListener('hashchange', updateFromHash);
+  updateFromHash();
   $('#update-close').onclick = closeUpdatePanel;
   $('#update-check').onclick = recheckUpdate;
   $('#update-apply').onclick = applyUpdate;

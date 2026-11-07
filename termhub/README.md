@@ -64,7 +64,7 @@ other machines to maintain.
   own push and **stops** the clock — you can't un-idle a session that's out of tokens. Off until
   you write a topic into `notify.json`; the measuring runs regardless. See
   [Agent time & idle tracking](#agent-time--idle-tracking).
-- **Update from the UI** — a ⟳ Update button checks GitHub (once a day in the background, and
+- **Update from the UI** — the system-wide **Update** at the top of every page's » panel (with the running version) checks GitHub (once a day in the background, and
   on demand) and, when the termhub tool itself has changed, opens a terminal that runs the
   safe blue-green updater. See [Updating safely](#updating-safely-terminals-survive).
 - **Run a command, get its output** — `POST /api/exec {argv, cwd?, timeoutMs?}` returns
@@ -170,7 +170,7 @@ Then browse to `http://<this-machine-tailscale-ip>:7000`.
 
 ## Updating safely (terminals survive)
 
-The easiest way is the **⟳ Update** button in the sidebar header — it opens a terminal that
+The easiest way is **Update** at the top of the » panel on any page — it opens Run's update dialog, whose **Update now** opens a terminal that
 runs the updater for you. To do it by hand instead, from **any termhub terminal on the machine**
 (so you can do it remotely from your phone/laptop):
 
@@ -261,7 +261,7 @@ first when one of them has died.
   filesystem as you type; leave blank for home) and a command. The **Command** box is a
   single editable combobox: type a command, pick a preset from the list, or clear it for a
   plain shell. The command runs in a fresh shell, so when it exits you still have a shell.
-- **⟳ Update** (sidebar header) — opens a panel showing whether termhub is behind GitHub and
+- **Update** (top of the » panel on every page; opens Run with `#update`) — a panel showing whether the system is behind GitHub and
   whether the tool itself changed, with the incoming commit list. **Update now** opens a
   terminal that runs the safe updater (see below); it stays clickable even when the check says
   up to date (**Re-deploy**) or could not run, and uncommitted edits are stashed around the pull
@@ -273,7 +273,7 @@ first when one of them has died.
 - **» (top-left corner) shows the sidebar.** It starts with the navigation shared with the
   personal assistant's pages: **Ask · Plan · Build · Run · Meter · Map** (**Alt+1..6**
   anywhere; Run is this hub, Meter its agent-time page at `/dashboard`, also `/run` and `/meter`) and the theme toggle (system, light or dark; the
-  terminal stays dark in all three). Under it: ⟳ Update, the session list and, on a desktop, the
+  terminal stays dark in all three). Under it: the session list and, on a desktop, the
   key bar. Hidden by default so the terminal takes the window; on a desktop the choice is
   remembered per browser. Switching is instant: the other pages open in frames over this one and
   stay alive, so terminals keep running and Talk keeps listening while you look elsewhere. The

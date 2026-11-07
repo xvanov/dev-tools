@@ -236,6 +236,7 @@
           latest[host] = v.commit;
           if (!loadedWith[host] && host === dest(current).host) loadedWith[host] = v.commit;
           for (var k in frames) if (dest(k).host === host && !frames[k].jxVersion) frames[k].jxVersion = v.commit;
+          updateBtns.forEach(paintUpdate);
           if (changed) refreshStale();
         }, function () { /* offline or restarting: try again next time */ });
     });
@@ -264,6 +265,8 @@
     });
     window.addEventListener('focus', checkVersions);
     setTimeout(checkVersions, 3000);
+    setTimeout(checkUpdate, 4000);
+    setInterval(checkUpdate, 30 * 60 * 1000);
   }
 
   function prefetch() {
@@ -330,6 +333,50 @@
     try { window.dispatchEvent(new CustomEvent('jarvis:settings', { detail: { open: open } })); } catch (e) { /* old browser */ }
   }
 
+  // ---- Update: one for the whole system ---------------------------------------------
+  // The stack (Ask, Plan, Build, Run, Meter, Map) is one repo and one version, so the
+  // update control is the system's, in every page's panel, not termhub's. termhub
+  // owns the checkout, so the check is its api/update/check and applying opens its
+  // update dialog (Run, #update), which runs the updater for the whole stack.
+  var updateBtns = [];
+  var updateInfo = null;
+  function paintUpdate(b) {
+    var avail = !!(updateInfo && (updateInfo.available || (updateInfo.claudeCli && updateInfo.claudeCli.installed && updateInfo.claudeCli.satisfied === false)));
+    var ver = (updateInfo && (updateInfo.version || updateInfo.current)) || shortCommit();
+    b.classList.toggle('available', avail);
+    b.innerHTML = '<span>Update' + (avail ? ' <i class="jpanel-dot"></i>' : '') + '</span>' + (ver ? '<code>' + String(ver).replace(/[<&>]/g, '') + '</code>' : '');
+    b.title = avail
+      ? 'An update is available for the whole system (' + (updateInfo.behind || 0) + ' commits). Click to review and apply.'
+      : 'Check for updates to the whole system';
+    b.setAttribute('aria-label', b.title);
+  }
+  function shortCommit() {
+    for (var h in latest) if (latest[h]) return String(latest[h]).slice(0, 7);
+    return '';
+  }
+  function updateButton() {
+    var b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'jnav-icon jpanel-update';
+    paintUpdate(b);
+    b.addEventListener('click', openUpdate);
+    updateBtns.push(b);
+    return b;
+  }
+  function checkUpdate() {
+    if (framed) return;
+    fetch(termhubBase() + '/api/update/check', { cache: 'no-store', credentials: 'include' })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (info) { if (info) { updateInfo = info; updateBtns.forEach(paintUpdate); } }, function () { /* not reachable from here */ });
+  }
+  function openUpdate() {
+    if (framed) { try { window.top.postMessage({ jarvis: 'update' }, '*'); } catch (e) { /* ignore */ } return; }
+    if (current === 'sessions') { location.hash = 'update'; return; }
+    if (!show('sessions')) return;
+    var f = frames.sessions;
+    if (f) f.src = hrefFor('sessions').split('#')[0] + '#update';
+  }
+
   // The navigation at the top of the panel: every destination, then the theme.
   function panelNav() {
     var box = document.createElement('nav');
@@ -337,6 +384,7 @@
     box.setAttribute('aria-label', 'Jarvis');
     var top = document.createElement('div');
     top.className = 'jpanel-top';
+    top.appendChild(updateButton());
     top.appendChild(themeButton());
     var list = document.createElement('ol');
     list.className = 'jpanel-list';
@@ -437,6 +485,12 @@
     // A frame asks to go somewhere. Only our own frames may.
     window.addEventListener('message', function (e) {
       var d = e.data;
+      if (d && d.jarvis === 'update') {
+        var own = false;
+        for (var j in frames) if (frames[j].contentWindow === e.source) own = true;
+        if (own) openUpdate();
+        return;
+      }
       if (!d || (d.jarvis !== 'go' && d.jarvis !== 'warm') || typeof d.id !== 'string') return;
       var mine = false;
       for (var k in frames) if (frames[k].contentWindow === e.source) mine = true;
