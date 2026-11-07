@@ -122,6 +122,12 @@ def submit_cmd(
     runtime: str = typer.Option(
         "api", "--runtime", help="api | claude_session (v1.2; default api)"
     ),
+    branch: str | None = typer.Option(
+        None, "--branch", help="v1.3: continue on this existing branch (and its open PR)"
+    ),
+    pr: str | None = typer.Option(
+        None, "--pr", help="v1.3: continue on this existing PR (updates it; opens none)"
+    ),
     as_json: bool = typer.Option(False, "--json", help="Print one JSON object"),
 ) -> None:
     """Create a job (code: a direction, pre-approved for --source pa/human;
@@ -140,6 +146,14 @@ def submit_cmd(
         if ask_file is not None and ask is not None:
             raise JobError("invalid_argument", "pass only one of --ask or --ask-file")
         text = read(ask_file, "--ask-file") if ask_file is not None else ask
+        pr_number: int | None = None
+        if pr is not None:
+            try:
+                pr_number = int(str(pr).strip().lstrip("#"))
+            except ValueError:
+                raise JobError(
+                    "invalid_argument", f"--pr must be a PR number, got {pr!r}"
+                ) from None
         return submit_job(
             _root(),
             SubmitRequest(
@@ -157,6 +171,8 @@ def submit_cmd(
                 api_spec_md=read(api_spec_file, "--api-spec-file"),
                 kind=kind,
                 runtime=runtime,
+                branch=branch,
+                pr=pr_number,
             ),
         )
 

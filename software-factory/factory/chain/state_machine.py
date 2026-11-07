@@ -309,6 +309,14 @@ class StoryRecord(SQLModel, table=True):
     # CLI's default).
     runtime: str = Field(default="api")
     runtime_model: str | None = None
+    # JOBS-API v1.3 branch/PR pickup (factory/chain/pickup.py), stamped at spawn
+    # from the direction's ``base:`` frontmatter. ``pickup_branch`` is an
+    # EXISTING branch a human owns (NULL = the factory's own story branch);
+    # ``pickup_pr`` its open PR (the PR is updated, never a second one opened);
+    # ``pickup_into`` the branch that PR merges into (NULL = default branch).
+    pickup_branch: str | None = None
+    pickup_pr: int | None = None
+    pickup_into: str | None = None
     github_issue_number: int | None = None
     github_branch: str | None = None
     github_pr_number: int | None = None

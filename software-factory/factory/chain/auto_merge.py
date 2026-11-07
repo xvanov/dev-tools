@@ -1595,7 +1595,8 @@ def _evaluate_one_pr(
             pr_number=fixture.pr_number,
             merge_method=merge_method,
             wait_for_ci=wait_for_ci,
-            delete_branch=delete_branch_after_merge,
+            # A picked-up branch (JOBS-API v1.3) is a human's: never deleted.
+            delete_branch=delete_branch_after_merge and not _story_is_pickup(fixture.story),
             github_client=github_client,
         )
         if merge_err is not None:
@@ -3175,6 +3176,12 @@ _CONFLICT_REBUILD_COMMENT = (
 )
 
 
+def _story_is_pickup(story: Any) -> bool:
+    from factory.chain.pickup import is_pickup
+
+    return story is not None and is_pickup(story)
+
+
 def _reset_branch_for_fresh_rebuild(
     *, story: StoryRecord, app_config: AppConfig, pr_number: int, root: Path
 ) -> bool:  # pragma: no cover - real-run path; drives gh/git side effects
@@ -3314,6 +3321,23 @@ def _handle_pr_conflict_rebuild(
         # Defensive: the caller already guards on this. Never rebuild a story
         # that isn't sitting in a mergeable state.
         return "failed"
+
+    if _story_is_pickup(story):
+        # JOBS-API v1.3: a picked-up branch and its PR belong to a human. A
+        # rebuild CLOSES the PR and DELETES the branch — never on their work.
+        # Report "exhausted" so the caller parks the story for a human to
+        # resolve the conflict (then ``factory job resume``).
+        try:
+            log_story_event(
+                story.id,
+                "conflict_rebuild_refused_pickup",
+                {"pr_number": pr_number, "branch": story.pickup_branch},
+                software_factory_root=root,
+                slug_hint=story.slug,
+            )
+        except Exception:  # noqa: BLE001
+            pass
+        return "exhausted"
 
     events = read_story_events(story.id, software_factory_root=root, slug_hint=story.slug)
     prior_rebuilds = [e for e in events if e.get("event") == "conflict_rebuild_redispatch"]
@@ -4366,6 +4390,7 @@ def auto_merge_tick(
             import subprocess
 
             from factory.app_config import resolve_app_repo_path
+            from factory.chain.pickup import is_pickup, story_into
             from factory.chain.worktree import ensure_worktree_for_story
 
             source_repo = resolve_app_repo_path(cfg, root)
@@ -4375,7 +4400,8 @@ def auto_merge_tick(
                 app=app,
                 story_id=db_story.github_issue_number,
                 slug=db_story.slug,
-                base_branch=cfg.default_branch or "main",
+                base_branch=story_into(db_story, cfg),
+                branch=str(db_story.pickup_branch) if is_pickup(db_story) else None,
             )
             # Fetch-before-trust: the gate must evaluate the EXACT commit that
             # will be squash-merged — origin/<feature_branch> — not whatever

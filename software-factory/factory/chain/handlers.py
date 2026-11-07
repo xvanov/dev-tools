@@ -118,16 +118,23 @@ def _writing_worktree(
 
     source_repo = resolve_app_repo_path(app_config, software_factory_root)
     from factory.chain.delivery_gate import stack_parent
+    from factory.chain.pickup import is_pickup, story_into
 
-    parent = stack_parent(story, Path(software_factory_root) / "state" / "factory.db")
+    pickup = is_pickup(story)
+    parent = (
+        None
+        if pickup
+        else stack_parent(story, Path(software_factory_root) / "state" / "factory.db")
+    )
     wt = ensure_worktree_for_story(
         source_repo,
         software_factory_root=software_factory_root,
         app=story.app,
         story_id=story.github_issue_number,
         slug=story.slug,
-        base_branch=app_config.default_branch or "main",
+        base_branch=story_into(story, app_config),
         stack_on=parent.github_branch if parent is not None else None,
+        branch=str(story.pickup_branch) if pickup else None,
     )
 
     # Refresh the worktree against the CURRENT base before the writing handler
@@ -141,30 +148,37 @@ def _writing_worktree(
     # merge` preserves uncommitted WIP that doesn't overlap the merged files,
     # and on ANY conflict/dirty-overlap we abort and proceed on the current
     # base (never silently clobber the dev's in-progress work).
-    base = app_config.default_branch or "main"
+    #
+    # A picked-up branch (JOBS-API v1.3) is refreshed from what its PR merges
+    # into (never blindly from the default branch: a PR into a release branch
+    # must not drag main in), and FIRST from its own remote tip, so commits a
+    # human pushed to it since the last dispatch are built on, not overwritten.
+    base = story_into(story, app_config)
+    refresh = [str(story.pickup_branch), base] if pickup else [base]
     try:
-        subprocess.run(
-            ["git", "fetch", "origin", base],
-            cwd=str(wt),
-            check=False,
-            capture_output=True,
-            timeout=60,
-        )
-        merged = subprocess.run(
-            ["git", "merge", "--no-edit", f"origin/{base}"],
-            cwd=str(wt),
-            capture_output=True,
-            text=True,
-            timeout=120,
-        )
-        if merged.returncode != 0:
+        for ref in refresh:
             subprocess.run(
-                ["git", "merge", "--abort"],
+                ["git", "fetch", "origin", f"+refs/heads/{ref}:refs/remotes/origin/{ref}"],
                 cwd=str(wt),
                 check=False,
                 capture_output=True,
                 timeout=60,
             )
+            merged = subprocess.run(
+                ["git", "merge", "--no-edit", f"origin/{ref}"],
+                cwd=str(wt),
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
+            if merged.returncode != 0:
+                subprocess.run(
+                    ["git", "merge", "--abort"],
+                    cwd=str(wt),
+                    check=False,
+                    capture_output=True,
+                    timeout=60,
+                )
     except (OSError, subprocess.SubprocessError):
         pass  # base refresh is best-effort; never block the writing handler
     finally:
@@ -225,6 +239,11 @@ _MIGRATION_COLUMNS: dict[str, str] = {
     # Pre-existing stories gain ``api`` = exactly today's dev dispatch.
     "runtime": "TEXT NOT NULL DEFAULT 'api'",
     "runtime_model": "TEXT",
+    # JOBS-API v1.3 branch/PR pickup stamp (StoryRecord.pickup_*). Pre-existing
+    # stories gain NULL = the factory's own branch, exactly as before.
+    "pickup_branch": "TEXT",
+    "pickup_pr": "INTEGER",
+    "pickup_into": "TEXT",
     # JSONL of prior dev sandbox attempts (one entry per chain-level retry):
     # ``[{attempt, ts, test_output_tail, files_touched, summary}, ...]``.
     # Fed forward into the next dev invocation's initial message so the LLM
@@ -626,10 +645,16 @@ def handle_stories_spawned(
     # template-probe:005 (solo) was split by PM into 4 stacked stories / 4
     # draft PRs, each re-containing its parent's diff.
     solo_job = routing.pipeline == "solo"
+    # JOBS-API v1.3: a job picked up on an existing branch/PR is ONE story too
+    # — two stories cannot share one human-owned branch (or one PR).
+    from factory.chain.pickup import pickup_of_direction, stamp_story
+
+    pickup = pickup_of_direction(direction)
+    single_story = solo_job or pickup is not None
 
     # Phase 7: dual-draft branch — spawn two interpretation stories,
     # regardless of how many child_stories the PM emitted.
-    if not solo_job and should_spawn_dual_draft(direction, pm_result):
+    if not single_story and should_spawn_dual_draft(direction, pm_result):
         interpretations = produce_interpretations(
             direction,
             pm_result,
@@ -868,7 +893,7 @@ def handle_stories_spawned(
         if fits:
             child_stories = [_collapse_child_stories(direction, child_stories, sums)]
 
-    if solo_job and len(child_stories) > 1:
+    if single_story and len(child_stories) > 1:
         # Solo: always ONE story, whatever PM's slicing and whatever its size
         # estimates. A4's size ceilings exist for the chain's 1800 s dev
         # horizon; the solo conversation is bounded by its own wall clock,
@@ -896,6 +921,7 @@ def handle_stories_spawned(
                     "chain_steps",
                     {
                         "event": "solo_story_collapsed",
+                        "reason": "solo" if solo_job else "branch_pickup",
                         "app": direction.app,
                         "direction_id": direction.id or direction.slug,
                         "pm_child_count": len(child_stories),
@@ -962,6 +988,8 @@ def handle_stories_spawned(
             points=points,
             estimated_seconds=estimated_seconds,
         )
+        # Branch/PR pickup (JOBS-API v1.3), stamped once like the level below.
+        stamp_story(story, direction)
         # Resolve + record the delivery level ONCE, here, so it cannot drift
         # mid-flight (see factory.chain.delivery_gate).
         from factory.chain.delivery_gate import log_spawn_level, record_spawn_level
@@ -2658,7 +2686,7 @@ def _handle_dev_once(
             payload["summary"] = "Dry-run dev failure: tests still red."
     else:
         from factory.chain import solo as _solo
-        from factory.chain.branch import feature_branch_name
+        from factory.chain.pickup import story_branch as _story_branch
         from factory.runner import LLMConfig, sandbox_run
 
         # Dev runs in the same per-story worktree test_impl already created.
@@ -2669,7 +2697,7 @@ def _handle_dev_once(
         story_file_path_obj = software_factory_root / "apps" / story.app / story.story_file_path
         difficulty = story.current_model_tier
 
-        branch = feature_branch_name(story.github_issue_number, story.slug)
+        branch = _story_branch(story)
         story.github_branch = branch
         persist_story(story, db)
 
@@ -5274,11 +5302,11 @@ def handle_docs_onboarder(
         persist_story(story, db)
         return HandlerResult(next_state=StoryState(story.state), payload=payload)
 
-    from factory.chain.branch import feature_branch_name
+    from factory.chain.pickup import story_branch as _story_branch
     from factory.runner import LLMConfig, sandbox_run
 
     target_repo = _writing_worktree(app_config, software_factory_root, story)
-    branch = feature_branch_name(story.github_issue_number, story.slug)
+    branch = _story_branch(story)
     story.github_branch = branch
     persist_story(story, db)
 
@@ -5548,8 +5576,11 @@ def _push_fix_to_existing_pr(
     import subprocess
 
     from factory.chain.delivery_gate import story_is_ci_watched
+    from factory.chain.pickup import is_pickup
 
-    watched = story_is_ci_watched(story)
+    # A picked-up branch (JOBS-API v1.3) belongs to a human whatever the level:
+    # fast-forward only, and never over commits the factory did not write.
+    watched = story_is_ci_watched(story) or is_pickup(story)
     branch = story.github_branch
     if not branch:
         return False, "no branch recorded on the story"
@@ -6712,7 +6743,7 @@ def _strip_own_added_fixable_lint(
 
 
 def _sync_and_push_story_branch(
-    target_repo: Path, base: str, branch: str, app_config: AppConfig
+    target_repo: Path, base: str, branch: str, app_config: AppConfig, *, pickup: bool = False
 ) -> None:
     """Re-merge base, prune-fetch, autoformat, then ``--force-with-lease`` push
     the story branch. Raises ``subprocess.CalledProcessError`` /
@@ -6722,6 +6753,37 @@ def _sync_and_push_story_branch(
     ``_push_story_branch``, so every level pushes exactly the same way.
     """
     import subprocess
+
+    if pickup:
+        # JOBS-API v1.3: the branch belongs to a human. Build on whatever they
+        # pushed since the worktree last synced (a clean merge), so the plain
+        # push below is a fast-forward; a conflict aborts and the push is then
+        # refused by GitHub rather than forced over their commits.
+        try:
+            subprocess.run(
+                ["git", "fetch", "origin", f"+refs/heads/{branch}:refs/remotes/origin/{branch}"],
+                cwd=str(target_repo),
+                check=False,
+                capture_output=True,
+                timeout=60,
+            )
+            own = subprocess.run(
+                ["git", "merge", "--no-edit", f"origin/{branch}"],
+                cwd=str(target_repo),
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
+            if own.returncode != 0:
+                subprocess.run(
+                    ["git", "merge", "--abort"],
+                    cwd=str(target_repo),
+                    check=False,
+                    capture_output=True,
+                    timeout=60,
+                )
+        except (subprocess.TimeoutExpired, OSError):
+            pass
 
     # Sync with the base before pushing. Sibling stories merge
     # continuously, so a branch cut earlier in the day is stale by PR
@@ -6788,8 +6850,12 @@ def _sync_and_push_story_branch(
     # non-fast-forward rejection against that stale history (story 5,
     # 2026-06-11). The lease still aborts if origin moved unexpectedly
     # since our last fetch.
+    #
+    # A picked-up branch (JOBS-API v1.3) is a human's: never forced, ever.
     subprocess.run(
-        ["git", "push", "--force-with-lease", "-u", "origin", str(branch)],
+        ["git", "push", "-u", "origin", str(branch)]
+        if pickup
+        else ["git", "push", "--force-with-lease", "-u", "origin", str(branch)],
         cwd=str(target_repo),
         check=True,
         capture_output=True,
@@ -6805,10 +6871,14 @@ def _push_story_branch(
     reported as False (the caller's bounded retry handles them)."""
     import subprocess
 
+    from factory.chain.pickup import is_pickup, story_into
+
     target_repo = _writing_worktree(app_config, software_factory_root, story)
-    base = app_config.default_branch or "main"
+    base = story_into(story, app_config)
     try:
-        _sync_and_push_story_branch(target_repo, base, str(story.github_branch), app_config)
+        _sync_and_push_story_branch(
+            target_repo, base, str(story.github_branch), app_config, pickup=is_pickup(story)
+        )
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError) as exc:
         try:
             from factory.manager.signals import write_git_event as _wge_err
@@ -6866,9 +6936,17 @@ def _open_pr_for_story(
     """
     import subprocess
 
+    from factory.chain.pickup import is_pickup, story_into
+
     target_repo = _writing_worktree(app_config, software_factory_root, story)
-    base = app_config.default_branch or "main"
+    base = story_into(story, app_config)
     branch = story.github_branch
+    pickup = is_pickup(story)
+    if pickup and story.pickup_pr:
+        # JOBS-API v1.3 ``--pr``: the PR already exists and belongs to a human.
+        # Deliver by pushing to its branch; never open a second PR, never touch
+        # its title/body/draft state.
+        return _update_picked_up_pr(story, app_config, software_factory_root, target_repo, base)
     if story.chain_kind == "docs":
         title = f"docs(context): {story.title}"
         summary_line = "Canonical context files added/updated."
@@ -6915,7 +6993,7 @@ def _open_pr_for_story(
         )
     )
     try:
-        _sync_and_push_story_branch(target_repo, base, str(branch), app_config)
+        _sync_and_push_story_branch(target_repo, base, str(branch), app_config, pickup=pickup)
         # Emit push signal — best-effort.
         try:
             from factory.manager.signals import write_git_event as _wge
@@ -7039,6 +7117,79 @@ def _open_pr_for_story(
         pass
 
     return pr_num
+
+
+def _picked_up_pr_state(app_config: AppConfig, pr_number: int) -> str | None:
+    """``OPEN`` / ``CLOSED`` / ``MERGED`` from GitHub, or ``None`` (unknown)."""
+    import subprocess
+
+    try:
+        proc = subprocess.run(
+            ["gh", "pr", "view", str(pr_number), "--repo", app_config.repo, "--json", "state"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if proc.returncode != 0:
+        return None
+    try:
+        return str(json.loads(proc.stdout or "{}").get("state") or "").upper() or None
+    except (ValueError, AttributeError):
+        return None
+
+
+def _update_picked_up_pr(
+    story: StoryRecord,
+    app_config: AppConfig,
+    software_factory_root: Path,
+    target_repo: Path,
+    base: str,
+) -> int | None:
+    """Push a picked-up story's work onto its EXISTING PR (JOBS-API v1.3).
+
+    Returns the PR number when the push landed and GitHub still reports the PR
+    OPEN; ``None`` otherwise (the caller's bounded PR-open retry then parks the
+    story). The PR is never re-created: a PR a human closed or merged stays so.
+    """
+    import subprocess
+
+    pr_number = int(story.pickup_pr or 0)
+    state = _picked_up_pr_state(app_config, pr_number)
+    error: str | None = None
+    if state != "OPEN":
+        error = f"picked-up PR #{pr_number} is {state or 'unknown'} on GitHub; not pushing"
+    else:
+        try:
+            _sync_and_push_story_branch(
+                target_repo, base, str(story.github_branch), app_config, pickup=True
+            )
+        except (
+            subprocess.CalledProcessError,
+            subprocess.TimeoutExpired,
+            FileNotFoundError,
+        ) as exc:
+            error = f"push to picked-up branch failed: {exc!r}"
+    try:
+        from factory.manager.signals import write_git_event as _wge
+
+        _wge(
+            kind="pr_open",
+            story_id=story.id,
+            pr_number=pr_number,
+            worktree_path=str(target_repo),
+            result="error" if error else "relinked",
+            error=error,
+            software_factory_root=software_factory_root,
+        )
+    except Exception:  # noqa: BLE001
+        pass
+    if error:
+        _logger.warning("story %s: %s", story.id, error)
+        return None
+    return pr_number
 
 
 # --------------------------------------------------------------------------- #

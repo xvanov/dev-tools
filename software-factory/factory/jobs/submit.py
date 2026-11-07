@@ -96,6 +96,8 @@ class SubmitRequest:
     api_spec_md: str | None = None
     kind: str = "code"  # v1.2: code | research | report
     runtime: str = "api"  # v1.2: api | claude_session
+    branch: str | None = None  # v1.3: continue on this existing branch
+    pr: int | None = None  # v1.3: continue on this existing PR
 
 
 # --------------------------------------------------------------------------- #
@@ -310,6 +312,13 @@ def submit_job(root: Path, req: SubmitRequest) -> dict[str, Any]:
         ok, detail = claude_available()
         if not ok:
             raise JobError("runtime_unavailable", f"claude_session is not available here: {detail}")
+    wants_pickup = bool((req.branch or "").strip()) or req.pr is not None
+    if wants_pickup and kind in TASK_KINDS:
+        raise JobError(
+            "invalid_argument", f"--branch/--pr only apply to code jobs (got --kind {kind})"
+        )
+    if (req.branch or "").strip() and req.pr is not None:
+        raise JobError("invalid_argument", "pass only one of --branch or --pr")
     if kind in TASK_KINDS:
         return _submit_task(
             root, req, kind, runtime, title, source, external_id, model_flags, claude_model
@@ -328,6 +337,25 @@ def submit_job(root: Path, req: SubmitRequest) -> dict[str, Any]:
     routing = resolve_routing(
         cfg, model_flags, pipeline, runtime=runtime, claude_model=claude_model
     )
+    pickup = None
+    if wants_pickup:
+        if external_id:
+            # A resubmit returns the original job without asking GitHub again
+            # (the PR may have merged since; that must not turn into an error).
+            existing = find_existing(root, source, external_id)
+            if existing is not None:
+                return _result(root, existing.app, existing.dir_path, existing.meta, created=False)
+        if requested is not None and requested.value == "push_to_main":
+            raise JobError(
+                "invalid_delivery",
+                "--delivery push_to_main cannot be combined with --branch/--pr "
+                "(the work stays on the picked-up branch)",
+            )
+        from factory.jobs.pickup import resolve_pickup
+
+        pickup = resolve_pickup(
+            cfg.repo, cfg.default_branch or "main", branch=req.branch, pr=req.pr
+        )
     # Frontmatter keeps the JOB's own request (``models:`` persona → model id,
     # ``pipeline:`` as requested) — exactly the keys
     # ``job_routing.resolve_for_direction`` reads at spawn.
@@ -344,6 +372,15 @@ def submit_job(root: Path, req: SubmitRequest) -> dict[str, Any]:
             existing_task = find_existing_task(root, source, external_id)
             if existing_task is not None:
                 return _task_result(existing_task, created=False)
+
+        if pickup is not None:
+            busy = _branch_busy(root, app, pickup.branch)
+            if busy:
+                raise JobError(
+                    "branch_busy",
+                    f"job {busy} is still working on branch {pickup.branch!r}; wait for it, "
+                    "cancel it, or resume it instead",
+                )
 
         direction_id = next_direction_id(app, root)
         slug = slugify(title)
@@ -362,17 +399,25 @@ def submit_job(root: Path, req: SubmitRequest) -> dict[str, Any]:
                 "delivery": requested.value if requested else None,
                 "models": models,
             }
+            if pickup is not None:
+                # v1.3, written only for a pickup so a v1 job's frontmatter is
+                # unchanged (factory/chain/pickup.py reads it at spawn).
+                meta["base"] = pickup.frontmatter()
             if runtime != RUNTIME_API:
                 # Written only when not the default, so a v1 job's frontmatter
                 # is exactly what it was.
                 meta["runtime"] = runtime
                 if claude_model:
                     meta["claude_model"] = claude_model
-            why = _demote_headings(ask) + (
-                f"\n\n_Submitted by `{source}`"
-                + (f" (external id `{external_id}`)" if external_id else "")
-                + " via `factory job submit`. The requester's verbatim ask is "
-                "`artifacts/ask.md`._"
+            why = (
+                _demote_headings(ask)
+                + (
+                    f"\n\n_Submitted by `{source}`"
+                    + (f" (external id `{external_id}`)" if external_id else "")
+                    + " via `factory job submit`. The requester's verbatim ask is "
+                    "`artifacts/ask.md`._"
+                )
+                + (_pickup_note(pickup) if pickup is not None else "")
             )
             (staging / "direction.md").write_text(
                 _build_direction_md(
@@ -387,6 +432,10 @@ def submit_job(root: Path, req: SubmitRequest) -> dict[str, Any]:
             )
             (staging / "artifacts").mkdir()
             (staging / "artifacts" / "ask.md").write_text(req.ask, encoding="utf-8")
+            if pickup is not None and pickup.review_md:
+                (staging / "artifacts" / "pr_review_threads.md").write_text(
+                    pickup.review_md.rstrip() + "\n", encoding="utf-8"
+                )
             if req.flow_md and req.flow_md.strip():
                 (staging / "flow.md").write_text(req.flow_md, encoding="utf-8")
             if req.api_spec_md and req.api_spec_md.strip():
@@ -412,8 +461,56 @@ def submit_job(root: Path, req: SubmitRequest) -> dict[str, Any]:
 
     _record_direction_row(root, app, direction_id, slug, source)
     result = _result(root, app, final, meta, created=True, cfg=cfg)
-    result["warnings"] = list(routing.warnings) + result["warnings"]
+    result["warnings"] = (
+        list(routing.warnings)
+        + (list(pickup.warnings) if pickup is not None else [])
+        + result["warnings"]
+    )
     return result
+
+
+def _pickup_note(pickup: Any) -> str:
+    """What the dev must know about the branch it continues on (v1.3)."""
+    where = f"`{pickup.branch}`"
+    if pickup.pr:
+        where += f" (open PR #{pickup.pr} into `{pickup.into}`)"
+    note = (
+        f"\n\n**Existing work.** This job continues on the existing branch {where}. "
+        "Build on what is already there; do not start over or revert it. The factory "
+        "commits onto that branch"
+        + (" and updates that PR (it opens no new one)." if pickup.pr else ".")
+    )
+    if pickup.review_md:
+        note += (
+            "\n\n**Unresolved review comments on the PR** (snapshot at submit; also "
+            "`artifacts/pr_review_threads.md`). Address each one that is still valid:\n\n"
+            + _demote_headings(pickup.review_md)
+        )
+    return note
+
+
+def base_view(meta: dict[str, Any]) -> dict[str, Any] | None:
+    """The ``base`` field of submit/status (v1.3): ``{"branch", "pr", "into"}``."""
+    from factory.chain.pickup import pickup_of_meta
+
+    return pickup_of_meta(meta)
+
+
+def _branch_busy(root: Path, app: str, branch: str) -> str | None:
+    """The id of an unfinished job of ``app`` already on ``branch``, else None."""
+    from factory.jobs.status import TERMINAL_JOB_STATES, job_status
+
+    for ref in iter_jobs(root, app=app):
+        base = base_view(ref.meta)
+        if base is None or base["branch"] != branch:
+            continue
+        try:
+            state = job_status(root, ref.job_id, github=False)["state"]
+        except Exception:  # noqa: BLE001 - unknown = busy (fail safe)
+            return ref.job_id
+        if state not in TERMINAL_JOB_STATES:
+            return ref.job_id
+    return None
 
 
 def _record_direction_row(root: Path, app: str, direction_id: str, slug: str, source: str) -> None:
@@ -467,6 +564,7 @@ def _result(
         "created": created,
         "kind": "code",
         "runtime": str(meta.get("runtime") or "api"),
+        "base": base_view(meta),
     }
     # Additive (not in the v1 success shape): a job with no flow.md, no
     # api_spec.md and no explore tag fails the backpressure gate
@@ -587,5 +685,6 @@ def _task_result(ref: TaskRef, *, created: bool) -> dict[str, Any]:
         "created": created,
         "kind": str(meta.get("kind")),
         "runtime": str(meta.get("runtime") or "api"),
+        "base": None,
         "warnings": [],
     }

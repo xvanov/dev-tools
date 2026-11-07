@@ -132,8 +132,16 @@ def ensure_worktree_for_story(
     slug: str,
     base_branch: str = "main",
     stack_on: str | None = None,
+    branch: str | None = None,
 ) -> Path:
     """Idempotently produce a private worktree for ``story_id`` on its branch.
+
+    ``branch`` (JOBS-API v1.3 pickup, ``factory/chain/pickup.py``): an EXISTING
+    remote branch a human owns, used instead of the factory's own
+    ``factory/story-<id>-<slug>``. When no local branch of that name exists it
+    is created from ``origin/<branch>`` (fetched first), so the work continues
+    on top of the human's commits; it is never cut from the base. A branch
+    that exists neither locally nor on origin is an error (never invented).
 
     ``stack_on`` (delivery levels below ``auto_merge``, review 2026-11-02
     SHOULD 5): the branch of an earlier sibling story that was DELIVERED but
@@ -158,7 +166,8 @@ def ensure_worktree_for_story(
 
     wt = worktree_path(software_factory_root, app, story_id, slug)
     wt.parent.mkdir(parents=True, exist_ok=True)
-    branch = feature_branch_name(story_id, slug)
+    pickup = branch is not None
+    branch = branch or feature_branch_name(story_id, slug)
 
     # If the worktree already exists with the expected branch, reuse it.
     if wt.exists() and (wt / ".git").exists():
@@ -195,7 +204,30 @@ def ensure_worktree_for_story(
     else:
         base_ref = base_branch
 
-    if stack_on:
+    if pickup:
+        # A picked-up branch continues from the human's own tip, never the base.
+        _run_git(
+            repo,
+            "fetch",
+            "origin",
+            f"+refs/heads/{branch}:refs/remotes/origin/{branch}",
+            check=False,
+        )
+        remote_ok = _run_git(
+            repo, "rev-parse", "--verify", "--quiet", f"origin/{branch}", check=False
+        )
+        if remote_ok.returncode == 0:
+            base_ref = f"origin/{branch}"
+        elif (
+            _run_git(
+                repo, "show-ref", "--verify", "--quiet", f"refs/heads/{branch}", check=False
+            ).returncode
+            != 0
+        ):
+            raise RuntimeError(
+                f"picked-up branch {branch!r} exists neither on origin nor locally in {repo}"
+            )
+    elif stack_on:
         local_ok = _run_git(
             repo, "show-ref", "--verify", "--quiet", f"refs/heads/{stack_on}", check=False
         )

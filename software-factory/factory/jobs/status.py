@@ -63,7 +63,7 @@ from factory.jobs.common import (
     state_db_path,
 )
 from factory.jobs.github import GitHubCache, GitHubView, PRInfo
-from factory.jobs.submit import effective_pipeline
+from factory.jobs.submit import base_view, effective_pipeline
 
 JOB_STATES: tuple[str, ...] = (
     "queued",
@@ -79,6 +79,35 @@ TERMINAL_JOB_STATES: frozenset[str] = frozenset({"done", "failed", "cancelled"})
 
 # How long a delivered job stays ``in_progress`` waiting for its PR's CI.
 CI_WAIT_S = 2 * 60 * 60
+
+#: v1.3: a job is STALLED when it reads ``in_progress`` / ``blocked`` (not
+#: because the factory is halted or paused) and nothing about it — no story
+#: row, no agent run — has changed for this long. Longer than any one bounded
+#: step (a 5400 s dev conversation, the 2 h CI watch), so a healthy job never
+#: reads stalled. Override with ``FACTORY_JOB_STALL_S``.
+STALL_S = 3 * 60 * 60
+
+
+def stall_seconds() -> float:
+    import os
+
+    try:
+        return max(60.0, float(os.environ.get("FACTORY_JOB_STALL_S") or STALL_S))
+    except ValueError:
+        return float(STALL_S)
+
+
+def is_stalled(state: str, updated_at: str | None, factory_block: str | None) -> bool:
+    if state not in ("in_progress", "blocked") or factory_block or not updated_at:
+        return False
+    try:
+        last = datetime.fromisoformat(str(updated_at))
+    except ValueError:
+        return False
+    if last.tzinfo is None:
+        last = last.replace(tzinfo=UTC)
+    return (datetime.now(UTC) - last).total_seconds() > stall_seconds()
+
 
 #: ``state.yaml`` key ``factory job cancel`` writes.
 CANCEL_KEY = "job_cancelled"
@@ -693,6 +722,12 @@ def _status_for(ctx: _Ctx, ref: JobRef) -> dict[str, Any]:
     run_rows = _run_rows(
         ctx, ref.app, ref.direction_id, [int(r["id"]) for r in rows if r.get("id") is not None]
     )
+    updated_at = _latest_ts(
+        [r.get("updated_at") for r in rows]
+        + [a.get("ts") for a in audit if isinstance(a, dict)]
+        + [state_yaml.get("created_at"), (cancel or {}).get("at")]
+        + [x for rr in runs_view(run_rows) for x in (rr.get("started_at"), rr.get("ended_at"))]
+    )
     return {
         "job_id": ref.job_id,
         "app": ref.app,
@@ -707,11 +742,7 @@ def _status_for(ctx: _Ctx, ref: JobRef) -> dict[str, Any]:
         "pr_urls": [v.pr_url for v in views if v.pr_url],
         "merged": bool(counted) and all(v.merged for v in counted),
         "cost_usd": _cost(ctx, ref, [int(r["id"]) for r in rows if r.get("id") is not None]),
-        "updated_at": _latest_ts(
-            [r.get("updated_at") for r in rows]
-            + [a.get("ts") for a in audit if isinstance(a, dict)]
-            + [state_yaml.get("created_at"), (cancel or {}).get("at")]
-        ),
+        "updated_at": updated_at,
         "why": why,
         # v1.2 (additive)
         "kind": "code",
@@ -719,6 +750,9 @@ def _status_for(ctx: _Ctx, ref: JobRef) -> dict[str, Any]:
         "report": None,
         "runs": runs_view(run_rows),
         "subscription_equiv_usd": subscription_equiv(run_rows),
+        # v1.3 (additive)
+        "base": base_view(meta),
+        "stalled": is_stalled(state, updated_at, ctx.factory_block),
     }
 
 
@@ -754,6 +788,8 @@ def _task_status_for(ctx: _Ctx, ref: Any) -> dict[str, Any]:
         "report": report_info(ref),
         "runs": runs_view(rows),
         "subscription_equiv_usd": subscription_equiv(rows),
+        "base": None,
+        "stalled": False,
     }
 
 
