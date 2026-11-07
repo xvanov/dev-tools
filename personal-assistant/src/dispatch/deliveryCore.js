@@ -198,6 +198,7 @@ function sourceLine(source, phrase = null, slug = null) {
     case 'mode': return 'from the mode you gave';
     case 'inferred': return phrase ? `from your words: "${phrase}"` : 'from your words';
     case 'repo_default': return `the default for ${slug || 'this repo'} (pa delivery set)`;
+    case 'kind': return 'a research or report job delivers its report only';
     default: return 'the assistant\'s default (PA_DELIVERY_DEFAULT)';
   }
 }

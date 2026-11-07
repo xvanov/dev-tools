@@ -862,6 +862,15 @@ each command prints — the contract is the factory's `docs/JOBS-API.md`.
 prompt) or puts it on a card (`pa propose`, which starts nothing). Accepting a card from the chat
 (`pa answer <id> yes [--delivery level]`), `pa delivery set` and `pa factory add` ask first.
 
+**Jarvis as coordinator**: the chat reads the factory through the `pa` tool without asking
+(`pa factory jobs` — every job by Needs you / Running / Delivered / Failed, from the worker's stored
+list; `pa factory status <job>`; `pa factory report <job>`) and acts behind a prompt: `pa factory
+submit --title … --ask … --kind code|research|report --runtime api|claude_session [--repo
+owner/name] [--delivery level] [--done …]` puts a **code** job on a card you accept — it never
+starts one — and starts a **research or report** job at once only when you asked the chat for it
+(else `--card`); `pa factory cancel <job>` (a PA run's job is dropped through `pa drop`) and `pa
+factory approve <job>` (only the `factory approve-direction` the job's own warning names).
+
 **The routing rule** (`src/dispatch/routeCore.js`, pure and tested) sends work to the factory only
 when all hold: the factory is configured, the mode changes code, the planner judged the ask
 *coding*, its repo is registered with the factory (`factory app list`), and it has done-criteria.

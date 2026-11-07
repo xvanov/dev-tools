@@ -346,6 +346,25 @@ const isV1 = (argv) => argv.includes('--kind') || argv.includes('--runtime');
     assert.throws(() => F.followCommand('widget:015; rm -rf /'), /not a factory job id/);
   }
 
+  // The chat (Jarvis as coordinator): reads on the `pa` tool, acts behind a prompt.
+  {
+    const chat = require('../src/chat/index');
+    const mcp = require('../src/mcp/server');
+    for (const v of ['factory jobs', 'factory status', 'factory report']) {
+      assert.ok(chat.ALLOW_COMMANDS.includes(v) && mcp.READ_VERBS[v], `${v} reads`);
+    }
+    for (const v of ['factory submit', 'factory cancel', 'factory approve']) {
+      assert.ok(chat.ASK_COMMANDS.includes(v) && !mcp.READ_VERBS[v], `${v} asks first`);
+    }
+    assert.throws(() => mcp.paToolArgv('factory jobs', ['--force']), /writes/);
+    assert.deepStrictEqual(mcp.paToolArgv('factory status', ['widget:015']), ['factory', 'status', 'widget:015']);
+    const md = chat.claudeMd();
+    assert.match(md, /A \*\*code\*\* job always becomes a card the user accepts — never started from here/);
+    assert.match(md, /only when the user explicitly asked you for that research or write-up/);
+    const s = chat.settingsJson();
+    assert.ok(!s.permissions.allow.some((r) => /factory/.test(r)), 'no factory verb is allowed without asking');
+  }
+
   fs.rmSync(tmp, { recursive: true, force: true });
   console.log('factory board ok');
 })().catch((err) => {
