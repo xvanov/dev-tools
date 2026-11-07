@@ -159,7 +159,8 @@ elif [ -n "$busy" ] && [ "${ALLOW_IN_PROGRESS:-0}" != 1 ]; then
 fi
 
 log "checking for live stories of the factory's self-edit app…"
-live_factory="$(cd "$OLD_ROOT" && uv run python - <<'PY' 2>/dev/null || echo "UNREADABLE"
+live_factory_stories() {
+  cd "$OLD_ROOT" && uv run python - 2>/dev/null <<'PY'
 import sqlite3
 from factory.chain.state_machine import StoryState, is_terminal
 con = sqlite3.connect("file:state/factory.db?mode=ro", uri=True)
@@ -172,7 +173,8 @@ for sid, state in con.execute("SELECT id, state FROM stories WHERE app = 'factor
         live.append(f"{sid}:{state}")
 print(" ".join(live))
 PY
-)"
+}
+live_factory="$(live_factory_stories)" || live_factory="UNREADABLE"
 [ "$live_factory" = "UNREADABLE" ] && die "could not read the stories table"
 [ -z "$live_factory" ] || die "apps/factory has live stories ($live_factory); they would open PRs against xvanov/software-factory — cancel or finish them first"
 
