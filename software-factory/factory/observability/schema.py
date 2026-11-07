@@ -82,6 +82,13 @@ _RUNS_NEW_COLUMNS: list[tuple[str, str]] = [
     # real call whose cost we could not read.
     ("premodel_infra", "BOOLEAN"),
     ("usage_reliable", "BOOLEAN"),
+    # JOBS-API v1.2 (runner.Run): runtime/billing/subscription equivalent and
+    # the termhub session of a Claude Code run. NULL = api / metered.
+    ("runtime", "VARCHAR"),
+    ("billing", "VARCHAR"),
+    ("subscription_equiv_usd", "REAL"),
+    ("session_json", "VARCHAR"),
+    ("started_at", "VARCHAR"),
 ]
 
 _STORIES_NEW_COLUMNS: list[tuple[str, str]] = [

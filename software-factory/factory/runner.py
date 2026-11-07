@@ -676,6 +676,18 @@ class Run(SQLModel, table=True):
     # must fall back to the old heuristic rather than assuming False.
     premodel_infra: bool | None = None
     usage_reliable: bool | None = None
+    # JOBS-API v1.2 — who did the work and who pays. NULL on every row the
+    # OpenHands/LiteLLM paths write = ``api`` / ``metered``. A Claude Code run
+    # (``factory.claude_session``) writes ``claude_session`` / ``subscription``,
+    # keeps ``cost_usd`` at 0 (nothing is metered, so the spend caps never see
+    # it) and records what it would have cost at API prices in
+    # ``subscription_equiv_usd``. ``session_json`` is the termhub session a
+    # human can open (``{machine, termhub_session_id, url}``).
+    runtime: str | None = None
+    billing: str | None = None
+    subscription_equiv_usd: float | None = None
+    session_json: str | None = None
+    started_at: str | None = None
 
 
 def _engine(db_path: Path | None = None) -> Any:

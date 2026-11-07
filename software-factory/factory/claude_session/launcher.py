@@ -1,0 +1,283 @@
+"""Start, observe and kill one Claude Code run's rounds.
+
+A run is one or more ROUNDS (``claude -p`` invocations; round 2+ ``--resume``
+the same Claude session with gate feedback). Each round is a generated bash
+script (:func:`build_round_script`) that:
+
+* ``cd``s to the run's working directory and UNSETS the API-key variables
+  (:data:`factory.claude_session.cli.BILLING_ENV_VARS`) so the run bills the
+  operator's subscription, never a key;
+* runs ``claude -p --output-format stream-json --verbose`` with the round's
+  prompt on stdin, ``tee``-ing the stream to ``stream-<n>.jsonl`` and piping it
+  through :mod:`factory.claude_session.pretty` for the human watching;
+* writes the exit code to ``exit-<n>`` (atomically) when it ends.
+
+The factory never reads the terminal: it waits for ``exit-<n>`` and parses
+``stream-<n>.jsonl``. The terminal is for humans.
+
+Launchers (the seam tests fake):
+
+* :class:`TermhubLauncher` — round 1 creates a termhub session whose command is
+  ``bash <round-1.sh>``; later rounds are typed into the same session, so a
+  human sees the whole run in one terminal. Kill = ``DELETE`` the session (its
+  PTY and process group go with it) plus a SIGTERM to the recorded pids.
+* :class:`LocalLauncher` — fallback when termhub cannot be reached: a detached
+  ``bash`` subprocess per round, output in ``terminal-<n>.log``. The run row
+  then has no ``session``.
+"""
+
+from __future__ import annotations
+
+import os
+import shlex
+import signal
+import subprocess
+import sys
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any, Protocol
+
+from factory.claude_session.cli import BILLING_ENV_VARS
+
+
+@dataclass
+class RoundPlan:
+    round_no: int
+    prompt_path: Path
+    script_path: Path
+    stream_path: Path
+    exit_path: Path
+    stderr_path: Path
+    pid_path: Path
+
+
+def round_plan(run_dir: Path, round_no: int) -> RoundPlan:
+    d = Path(run_dir)
+    return RoundPlan(
+        round_no=round_no,
+        prompt_path=d / f"prompt-{round_no}.md",
+        script_path=d / f"round-{round_no}.sh",
+        stream_path=d / f"stream-{round_no}.jsonl",
+        exit_path=d / f"exit-{round_no}",
+        stderr_path=d / f"stderr-{round_no}.log",
+        pid_path=d / f"pid-{round_no}",
+    )
+
+
+def build_claude_argv(
+    claude_bin: str,
+    *,
+    model: str | None,
+    session_uuid: str | None,
+    resume: str | None,
+    add_dirs: list[str] | None = None,
+) -> list[str]:
+    """The ``claude`` argv for one round. Pure."""
+    argv = [
+        claude_bin,
+        "-p",
+        "--output-format",
+        "stream-json",
+        "--verbose",
+        # Unattended: there is no human at a permission prompt. The run is
+        # confined by its working directory (a worktree / scratch dir) and by
+        # the factory's own gates, exactly like the OpenHands sandbox dev.
+        "--dangerously-skip-permissions",
+    ]
+    if model:
+        argv += ["--model", model]
+    if resume:
+        argv += ["--resume", resume]
+    elif session_uuid:
+        argv += ["--session-id", session_uuid]
+    for d in add_dirs or []:
+        argv += ["--add-dir", d]
+    return argv
+
+
+def build_round_script(
+    plan: RoundPlan,
+    *,
+    cwd: Path,
+    claude_argv: list[str],
+    title: str,
+    python_exe: str | None = None,
+    factory_root: Path | None = None,
+) -> str:
+    """The bash script for one round. Pure (returns text)."""
+    q = shlex.quote
+    py = python_exe or sys.executable
+    root = factory_root or Path(__file__).resolve().parents[2]
+    claude = " ".join(q(a) for a in claude_argv)
+    pretty = f"PYTHONPATH={q(str(root))} {q(py)} -m factory.claude_session.pretty"
+    tmp = f"{plan.exit_path}.tmp"
+    return "\n".join(
+        [
+            "#!/usr/bin/env bash",
+            f"# factory claude_session run — round {plan.round_no}",
+            f"cd {q(str(cwd))} || {{ echo 97 > {q(tmp)}; mv {q(tmp)} {q(str(plan.exit_path))}; exit 97; }}",
+            "unset " + " ".join(BILLING_ENV_VARS),
+            f"echo $$ > {q(str(plan.pid_path))}",
+            f"printf '%s\\n' {q(f'── factory: {title} — round {plan.round_no}')}",
+            f"{claude} < {q(str(plan.prompt_path))} 2> {q(str(plan.stderr_path))} "
+            f"| tee {q(str(plan.stream_path))} | {pretty}",
+            "rc=${PIPESTATUS[0]}",
+            f'echo "$rc" > {q(tmp)} && mv {q(tmp)} {q(str(plan.exit_path))}',
+            f'printf "── factory: round {plan.round_no} finished (exit %s)\\n" "$rc"',
+            "",
+        ]
+    )
+
+
+@dataclass
+class SessionInfo:
+    machine: str
+    termhub_session_id: str | None = None
+    url: str | None = None
+    extra: dict[str, Any] = field(default_factory=dict)
+
+    def as_json(self) -> dict[str, Any] | None:
+        if not self.termhub_session_id:
+            return None
+        return {
+            "machine": self.machine,
+            "termhub_session_id": self.termhub_session_id,
+            "url": self.url,
+        }
+
+
+class Launcher(Protocol):
+    def start(self, plan: RoundPlan, *, cwd: Path, title: str) -> SessionInfo: ...
+
+    def next_round(self, session: SessionInfo, plan: RoundPlan, *, cwd: Path) -> None: ...
+
+    def alive(self, session: SessionInfo) -> bool | None: ...
+
+    def kill(self, session: SessionInfo, plans: list[RoundPlan]) -> None: ...
+
+
+def _kill_pids(plans: list[RoundPlan]) -> None:
+    for plan in plans:
+        try:
+            pid = int(plan.pid_path.read_text().strip())
+        except (OSError, ValueError):
+            continue
+        try:
+            os.killpg(pid, signal.SIGTERM)  # type: ignore[attr-defined]
+            continue
+        except (OSError, AttributeError):
+            pass
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except OSError:
+            pass
+
+
+class TermhubLauncher:
+    def __init__(self, client: Any, machine: str) -> None:
+        self.client = client
+        self.machine = machine
+
+    def start(self, plan: RoundPlan, *, cwd: Path, title: str) -> SessionInfo:
+        sid = self.client.create_session(
+            cwd=str(cwd), command=f"bash {shlex.quote(str(plan.script_path))}", title=title
+        )
+        url = None
+        try:
+            url = self.client.session_url(sid)
+        except Exception:  # noqa: BLE001 - a link is nice-to-have
+            url = None
+        return SessionInfo(machine=self.machine, termhub_session_id=sid, url=url)
+
+    def next_round(self, session: SessionInfo, plan: RoundPlan, *, cwd: Path) -> None:
+        assert session.termhub_session_id
+        self.client.type_line(
+            session.termhub_session_id, f"bash {shlex.quote(str(plan.script_path))}"
+        )
+
+    def alive(self, session: SessionInfo) -> bool | None:
+        if not session.termhub_session_id:
+            return None
+        return self.client.alive(session.termhub_session_id)
+
+    def kill(self, session: SessionInfo, plans: list[RoundPlan]) -> None:
+        _kill_pids(plans)
+        if session.termhub_session_id:
+            self.client.kill(session.termhub_session_id)
+
+
+class LocalLauncher:
+    """No termhub: run each round as a detached local process."""
+
+    def __init__(self, machine: str) -> None:
+        self.machine = machine
+        self._procs: list[subprocess.Popen[bytes]] = []
+
+    def _spawn(self, plan: RoundPlan, cwd: Path) -> None:
+        log = plan.script_path.with_name(f"terminal-{plan.round_no}.log")
+        with log.open("ab") as out:
+            self._procs.append(
+                subprocess.Popen(  # noqa: S603
+                    ["bash", str(plan.script_path)],
+                    cwd=str(cwd),
+                    stdout=out,
+                    stderr=subprocess.STDOUT,
+                    stdin=subprocess.DEVNULL,
+                    start_new_session=True,
+                )
+            )
+
+    def start(self, plan: RoundPlan, *, cwd: Path, title: str) -> SessionInfo:
+        self._spawn(plan, cwd)
+        return SessionInfo(machine=self.machine, extra={"launcher": "local"})
+
+    def next_round(self, session: SessionInfo, plan: RoundPlan, *, cwd: Path) -> None:
+        self._spawn(plan, cwd)
+
+    def alive(self, session: SessionInfo) -> bool | None:
+        if not self._procs:
+            return None
+        return self._procs[-1].poll() is None
+
+    def kill(self, session: SessionInfo, plans: list[RoundPlan]) -> None:
+        _kill_pids(plans)
+        for proc in self._procs:
+            if proc.poll() is None:
+                try:
+                    proc.terminate()
+                except OSError:
+                    pass
+
+
+def select_launcher() -> tuple[Launcher, str | None]:
+    """termhub when reachable (or forced), else local. Returns ``(launcher, warning)``.
+
+    ``FACTORY_CLAUDE_LAUNCHER=local`` forces the local launcher;
+    ``=termhub`` forces termhub (a run then fails if termhub is down).
+    """
+    from factory.claude_session.termhub import TermhubClient, machine_name
+
+    mode = (os.environ.get("FACTORY_CLAUDE_LAUNCHER") or "auto").strip().lower()
+    machine = machine_name()
+    if mode == "local":
+        return LocalLauncher(machine), None
+    client = TermhubClient.from_env()
+    if mode == "termhub" or client.reachable():
+        return TermhubLauncher(client, machine), None
+    return LocalLauncher(machine), (
+        f"termhub not reachable at {client.base}; the run is not watchable live "
+        "(started as a local process, output in the run dir)"
+    )
+
+
+__all__ = [
+    "Launcher",
+    "LocalLauncher",
+    "RoundPlan",
+    "SessionInfo",
+    "TermhubLauncher",
+    "build_claude_argv",
+    "build_round_script",
+    "round_plan",
+    "select_launcher",
+]
