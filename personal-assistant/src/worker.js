@@ -254,6 +254,15 @@ async function main() {
     });
   }
 
+  // What people owe you, judged against your tasks: "blocked on them" or not
+  // on the board (commitments/blocks.js). Once per commitment, again when a
+  // task is added.
+  if (config.blocks.enabled) {
+    every(300, 'blocks', async () => {
+      await require('./commitments/blocks').pass();
+    });
+  }
+
   // After distillation, so a fresh ask has its commitment before a reply is
   // drafted for it.
   every(120, 'drafts', async () => {

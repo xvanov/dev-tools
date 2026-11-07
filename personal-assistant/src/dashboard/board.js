@@ -6,6 +6,13 @@
 //
 //   { onMe, waiting, notes, counts }
 //
+// The board is your to-do list. What someone owes you is on it only when it
+// blocks you (s.blocks, commitments/blocks.js): attached to the task it holds
+// up as `blockers` (the task is `blocked`), or its own card (`waitingOn`) when
+// no task of yours is it. A blocker that closed in the last days is listed on
+// its task as `unblocked`. The rest of what people owe you is `waiting`: not
+// drawn on the page.
+//
 // One card per commitment, shown once. The page used to draw "Needs you",
 // "Looks done?", "On you" and "From your own work" as separate columns from
 // separate queries, so one ask could sit in three of them. Now everything
@@ -133,21 +140,53 @@ function build(s, { now = Date.now() } = {}) {
   }
 
   const needsMe = (c) => Boolean(c.settled) || c.asks.length > 0;
+  // What people owe you, read as "does it block me?" (commitments/blocks.js).
+  // Not judged yet counts as blocking with no task: shown, not lost.
+  const blockOf = new Map((s.blocks || []).map((b) => [String(b.blocker_id), b]));
   const onMe = [];
   const waiting = [];
+  for (const c of cards.values()) Object.assign(c, { blockers: [], unblocked: [] });
   for (const [id, c] of cards) {
     if (c.selfNote && !needsMe(c)) continue; // stays in its folded group
-    if (c.direction === 'owed_by_me' || needsMe(c)) onMe.push(c);
-    else waiting.push(c);
-    c.column = c.direction === 'owed_by_me' || needsMe(c) ? 'onMe' : 'waiting';
-    c.group = c.column === 'onMe' && c.settled && !c.asks.length ? 'settled' : 'todo';
     c.pos = order.has(id) ? order.get(id) : order.size + 1;
+    if (c.direction !== 'owed_to_me') {
+      onMe.push(c);
+      continue;
+    }
+    const b = blockOf.get(id) || { verdict: 'blocks', task_id: null, why: null, pending: true };
+    c.block = b;
+    const task = b.verdict === 'blocks' && b.task_id != null ? cards.get(String(b.task_id)) : null;
+    if (task && task.direction !== 'owed_to_me' && !task.selfNote) {
+      // Shown on the task it holds up, not as a card of its own.
+      task.blockers.push(c);
+      c.column = 'blocker';
+    } else if (b.verdict === 'blocks' || c.asks.length) {
+      c.waitingOn = b.verdict === 'blocks';
+      onMe.push(c);
+    } else {
+      // Their work, not needed for yours: off the board.
+      c.column = 'waiting';
+      waiting.push(c);
+    }
   }
-  onMe.push(...standalone.map((c) => ({ ...c, column: 'onMe', group: 'todo', pos: -1 })));
+  // A blocker that closed (they delivered) shows on its task as unblocked.
+  for (const b of s.blocks || []) {
+    if (b.status !== 'done' || b.task_id == null) continue;
+    const task = cards.get(String(b.task_id));
+    if (task && task.direction !== 'owed_to_me') task.unblocked.push(b);
+  }
+  for (const c of onMe) {
+    c.column = 'onMe';
+    c.blocked = c.blockers.length > 0;
+    c.group = c.settled && !c.asks.length ? 'settled' : c.blocked || c.waitingOn ? 'blocked' : 'todo';
+  }
+  onMe.push(...standalone.map((c) => ({ ...c, blockers: [], unblocked: [], column: 'onMe', group: 'todo', pos: -1 })));
 
   // Real to-dos first — due, then ready to start (an offer waiting), then the
   // rest in the board's order — and the ones that look done last.
-  const rank = (c) => (c.group === 'settled' ? 10 : 0) + (c.standalone ? 0 : dueRank(c, now) === 0 ? 0 : c.asks.length ? 1 : 2);
+  // Blocked ones after the rest of the to-dos; one just unblocked goes up.
+  const rank = (c) => (c.group === 'settled' ? 10 : c.group === 'blocked' ? 5 : 0) +
+    (c.standalone ? 0 : dueRank(c, now) === 0 || c.unblocked?.length ? 0 : c.asks.length ? 1 : 2);
   onMe.sort((a, b) => rank(a) - rank(b) || (a.group === 'settled' ? (b.settled.confidence || 0) - (a.settled.confidence || 0) : 0) || a.pos - b.pos);
   waiting.sort((a, b) => a.pos - b.pos);
 
@@ -158,11 +197,12 @@ function build(s, { now = Date.now() } = {}) {
     .filter((g) => g.items.length);
 
   const todo = onMe.filter((c) => c.group === 'todo').length;
+  const blocked = onMe.filter((c) => c.group === 'blocked').length;
   return {
     onMe,
     waiting,
     notes,
-    counts: { onMe: onMe.length, todo, settled: onMe.length - todo, waiting: waiting.length, notes: notes.reduce((n, g) => n + g.items.length, 0) },
+    counts: { onMe: onMe.length, todo, blocked, settled: onMe.length - todo - blocked, waiting: waiting.length, notes: notes.reduce((n, g) => n + g.items.length, 0) },
   };
 }
 

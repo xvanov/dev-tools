@@ -114,6 +114,8 @@ async function state() {
   await require('./cards')
     .enrich(out)
     .catch((err) => log.warn('card links failed', { message: err.message }));
+  // Which of what people owe you blocks one of your tasks (commitments/blocks.js).
+  out.blocks = await require('../commitments/blocks').forBoard().catch(() => []);
   // The Today board's columns, one card per commitment (dashboard/board.js).
   out.board = require('./board').build(out);
   return out;
@@ -372,6 +374,19 @@ async function handle(req, res) {
       try {
         const r = await request.add({ text: str(body.text), due: str(body.due), for: str(body.for), owedToMe: body.owedToMe === true, via: 'board' });
         return send(res, 200, { ok: true, id: r.id, text: request.describe(r) });
+      } catch (err) {
+        if (err.status === 400) return send(res, 400, { error: err.message });
+        throw err;
+      }
+    }
+
+    // Your call on what someone owes you: it blocks a task of yours, or not.
+    m = url.pathname.match(/^\/api\/commitments\/(\d+)\/block$/);
+    if (m) {
+      try {
+        return send(res, 200, await require('../commitments/blocks').set(Number(m[1]), {
+          verdict: String(body.verdict), taskId: body.taskId == null ? null : Number(body.taskId),
+        }));
       } catch (err) {
         if (err.status === 400) return send(res, 400, { error: err.message });
         throw err;

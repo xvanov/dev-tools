@@ -95,6 +95,14 @@
   .flag.settled { color: var(--ok); }
   .flag.offer { color: var(--accent); }
   .flag.ask { color: var(--warn); }
+  .flag.blocked { color: var(--bad); cursor: pointer; }
+  .flag.unblocked { color: var(--ok); }
+  .blockers { margin-top: 8px; padding: 6px 9px; border-left: 3px solid var(--bad); background: var(--chip); border-radius: 6px; font-size: 13px; }
+  .blockers > summary { cursor: pointer; font-weight: 600; }
+  .blockers .blocker { margin-top: 8px; }
+  .blockers .blocker + .blocker { border-top: 1px solid var(--line); padding-top: 8px; }
+  .need { color: var(--muted); }
+  .unblocked-note { margin-top: 6px; font-size: 12px; color: var(--ok); }
   .item.settled .sum { color: var(--muted); }
   .item .ask-box { margin-top: 8px; padding: 6px 9px; border: 1px dashed var(--line); border-radius: 6px; }
   .item .ask-box > .sum { font-weight: 500; font-size: 13px; }
@@ -282,16 +290,18 @@
   <div class="needs" id="blind" hidden></div>
   <section id="drafts" hidden><h2 title="Replies the assistant drafted. Send opens them, written, in Teams or Outlook; you press Send there.">Replies to send<span class="n"></span></h2><div class="list"></div></section>
   <section id="onme"><h2>On me<span class="n"></span></h2>
-    <p class="hint">Everything that needs you, once each: asks to do, offers to start, questions to answer — and, at the bottom, things that look done for you to confirm.</p>
+    <p class="hint">Your to-do list, each task once. When a task waits on someone it says "blocked on" them: click it to see what you are waiting for and why. Something you need from someone with no task of its own says "waiting on". Things that look done are at the bottom to confirm.</p>
     <form class="row" id="addtask" title="A task because you say so. Others come from what people say in Teams, mail and meetings."><input type="text" name="text" maxlength="500" placeholder="+ task — what?" aria-label="New task"><input type="text" name="due" maxlength="60" placeholder="due (friday, tomorrow 3pm)" aria-label="Due" style="flex:0 1 13em"><button type="submit">Add</button></form>
     <div class="list"></div></section>
-  <section id="waiting"><h2 title="What people owe you. A card asking when to follow up has a default: leave it and it follows up then.">Waiting on others<span class="n"></span></h2><div class="list"></div></section>
   <section id="runs" hidden><h2>Agent runs<span class="n"></span></h2><div class="list"></div></section>
   <div class="folds">
     <section id="selfnotes"><details data-fold="selfnotes"><summary><h2>Notes from your Claude sessions &amp; PRs<span class="n"></span></h2></summary>
       <p class="hint">Older handoffs your own agents and PRs left behind ("verify in a browser before merge") — not asks from people. Your sessions and PRs no longer create cards (only people and your own "+ task" do); what is left here closes when its PR merges, or after a week untouched. Anything here that needs you is on On me instead.</p>
       <div class="list"></div></details></section>
     <section id="code"><details data-fold="code"><summary><h2>Code &amp; boards<span class="n"></span></h2></summary><div class="list"></div></details></section>
+    <section id="waiting"><details data-fold="waiting"><summary><h2 title="What people said they would do that you do not need for your own work. Not on your list; still tracked.">Others' work, not blocking you<span class="n"></span></h2></summary>
+      <p class="hint">People's own to-dos you heard about. Off your list because nothing of yours waits on them. If one does, press "This blocks me".</p>
+      <div class="list"></div></details></section>
     <section id="closed"><details data-fold="closed"><summary><h2>Closed recently<span class="n"></span></h2></summary><div class="list"></div></details></section>
     <section id="feed"><details data-fold="feed"><summary><h2 title="Everything the assistant told you: pushed (toast and PA chat), held for a digest, or feed only. Thumbs teach it what is worth an interruption.">From the assistant<span class="n"></span></h2></summary><div class="list"></div></details></section>
   </div>
@@ -509,6 +519,7 @@ let MACHINES = { machines: [{ name: '', label: 'this machine' }], modes: ['plan'
 fetch('api/machines').then((r) => r.json()).then((m) => { MACHINES = m; }).catch(() => {});
 const openContext = new Map();
 const openGroups = new Set();
+const openBlockers = new Set();
 
 function picker(options, value) {
   const s = el('select', {});
@@ -662,7 +673,15 @@ function commitmentCard(c) {
     toast(`draft #${r.id} written — it is at the top`);
   }));
   const canReply = c.direction === 'owed_by_me' && (c.source === 'graph_chat' || c.source === 'graph_mail');
-  const doneBtn = el('button', { title: c.direction === 'owed_to_me' ? 'They delivered: close it as done' : 'I did it: close it as done' }, 'Done');
+  const doneBtn = el('button', { title: c.direction === 'owed_to_me' ? 'They delivered: close it as done' : 'I did it: close it as done' }, c.direction === 'owed_to_me' ? 'They delivered' : 'Done');
+  // What someone owes you: is it holding you up? (src/commitments/blocks.js)
+  const blockBtn = c.direction !== 'owed_to_me' ? null : c.column === 'waiting'
+    ? el('button', { title: 'You need this from them to do your own work: put it on your list as a blocker' }, 'This blocks me')
+    : el('button', { title: 'You do not need this from them for your own work: take it off your list (it stays tracked, under "Others\' work")' }, 'Not blocking me');
+  blockBtn?.addEventListener('click', act(blockBtn, async () => {
+    await post(`api/commitments/${c.id}/block`, { verdict: c.column === 'waiting' ? 'blocks' : 'not_mine' });
+    toast(c.column === 'waiting' ? `#${c.id} is on your list as a blocker` : `#${c.id} is off your list`);
+  }));
   // On a card that asks when to follow up, closing it is the other half of
   // that question ("Don't remind me" keeps it open), so it says so.
   const dropBtn = c.chase
@@ -737,6 +756,11 @@ function commitmentCard(c) {
     c.settled ? el('span', { class: 'flag settled', title: 'The assistant found something that looks like it settles this, but is not sure enough to close it alone' }, 'looks done — confirm?') : null,
     asks.some((p) => p.kind === 'dispatch') ? el('span', { class: 'flag offer', title: 'A session is prepared: start it below' }, 'ready to start') : null,
     asks.some((p) => p.kind !== 'dispatch') ? el('span', { class: 'flag ask' }, 'question for you') : null,
+    c.blocked ? blockedFlag(c) : null,
+    c.waitingOn ? el('span', { class: 'flag blocked', title: c.block?.pending
+      ? 'Someone owes you this; whether it holds you up is checked within a few minutes'
+      : `You need this from ${c.who || 'them'}${c.block?.why ? `: ${c.block.why}` : ''}` }, `waiting on ${c.who || 'them'}`) : null,
+    (c.unblocked || []).length ? el('span', { class: 'flag unblocked', title: 'What blocked this was delivered' }, 'unblocked') : null,
   ];
   return el('div', { class: settledOnly ? 'item settled' : 'item' },
     el('div', { class: 'sum' }, ...flags, c.summary),
@@ -745,12 +769,60 @@ function commitmentCard(c) {
     alsoInChips(c),
     c.settled ? settledBlock(c) : null,
     ...asks.map((p) => askBlock(p, false)),
+    c.waitingOn && c.block?.why ? el('div', { class: 'sub need' }, `You need: ${c.block.why}`) : null,
+    (c.blockers || []).length ? blockersBlock(c) : null,
+    ...(c.unblocked || []).map((u) => el('div', { class: 'unblocked-note' },
+      `Unblocked: ${u.who || 'they'} delivered “${u.summary}”${u.closed_at ? ` ${ago(u.closed_at)}` : ''}`)),
     c.chase ? chaseBlock(c, c.chase) : null,
     settledOnly ? null : el('div', { class: 'actions' },
       canDo && (MACHINES.routes || []).length > 1 ? routePick : null,
       canDo && MACHINES.machines.length > 1 ? machinePick : null, canDo ? modePick : null, canDo ? deliveryPick : null, canDo ? doBtn : null,
-      canReply ? replyBtn : null, doneBtn, dropBtn),
+      canReply ? replyBtn : null, doneBtn, blockBtn, dropBtn),
     ctx);
+}
+
+// "blocked on Drew, Jacob": the people this task waits on. Clicking it opens
+// what exactly is owed and why.
+function blockedFlag(c) {
+  const names = [...new Set(c.blockers.map((b) => b.who || 'someone'))].join(', ');
+  const f = el('span', { class: 'flag blocked', title: 'Click to see what you are waiting for' }, `blocked on ${names}`);
+  f.addEventListener('click', () => {
+    const d = f.closest('.item')?.querySelector('details.blockers');
+    if (d) d.open = !d.open;
+  });
+  return f;
+}
+
+// What a blocked task waits for: each thing someone owes you, why you need
+// it, where it was said, and one click when it arrives.
+function blockersBlock(c) {
+  const d = el('details', { class: 'blockers' },
+    el('summary', {}, c.blockers.length === 1
+      ? `Waiting on ${c.blockers[0].who || 'them'}: ${c.blockers[0].summary}`
+      : `Waiting on ${c.blockers.length} things`),
+    ...c.blockers.map((b) => {
+      const got = el('button', { class: 'primary', title: 'They delivered: close it, and this task is unblocked' }, 'They delivered');
+      got.addEventListener('click', act(got, async () => {
+        await post(`api/commitments/${b.id}/status`, { status: 'done' });
+        toast(`#${c.id} unblocked`);
+      }));
+      const not = el('button', { title: 'This task does not need it: take it off the task' }, 'Not blocking this');
+      not.addEventListener('click', act(not, async () => {
+        await post(`api/commitments/${b.id}/block`, { verdict: 'not_mine' });
+        toast(`#${b.id} no longer blocks #${c.id}`);
+      }));
+      return el('div', { class: 'blocker' },
+        el('div', {}, el('strong', {}, b.who || 'Someone'), ` owes you: ${b.summary}`),
+        b.block?.why ? el('div', { class: 'need' }, `Why you need it: ${b.block.why}`) : null,
+        el('div', { class: 'sub' }, ...joinParts([`#${b.id}`, SOURCE[b.source] || b.source, ago(b.occurred_at)])),
+        linkChips(b),
+        b.settled ? settledBlock(b) : null,
+        b.chase ? chaseBlock(b, b.chase) : null,
+        el('div', { class: 'actions' }, got, not));
+    }));
+  d.open = openBlockers.has(String(c.id));
+  d.addEventListener('toggle', () => (d.open ? openBlockers.add(String(c.id)) : openBlockers.delete(String(c.id))));
+  return d;
 }
 
 // "Looks done?" on a card (src/ledger/reconcile.js): the quote that suggests
@@ -817,7 +889,7 @@ function chaseBlock(c, p) {
     if (!text.value.trim()) throw new Error('type when, or pick a chip');
     await set(text.value.trim());
   }));
-  const never = el('button', { title: 'Leaves it open under Waiting on others, but the assistant will not draft a follow-up or remind you about this one. (This was "Don\'t chase".)' }, 'Keep, but don\'t remind me');
+  const never = el('button', { title: 'Leaves it open, but the assistant will not draft a follow-up or remind you about this one. (This was "Don\'t chase".)' }, 'Keep, but don\'t remind me');
   never.addEventListener('click', act(never, () => set('never')));
   const usual = (p.options || []).find((o) => /\(usual\)/.test(o.label || ''));
   return el('div', { class: 'chase' },
@@ -1022,7 +1094,8 @@ function render(s) {
   // work keep their links only.
   for (const c of [...b.onMe, ...b.waiting]) c.onBoard = !c.standalone;
   renderOnMe(b.onMe);
-  fill('waiting', b.waiting, commitmentCard, 'Nobody owes you anything.');
+  fill('waiting', b.waiting, commitmentCard, 'Nothing.');
+  document.querySelector('#waiting .n').textContent = b.waiting.length ? String(b.waiting.length) : '';
   // One collapsed group per PR or session; open groups stay open across refreshes.
   fill('selfnotes', b.notes, (g) => {
     const d = el('details', { class: 'item' },

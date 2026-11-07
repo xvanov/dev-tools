@@ -260,6 +260,12 @@ const config = {
     sources: env('PA_COMMITMENT_SOURCES', 'default'),
   },
 
+  // Whether what people owe you blocks one of your tasks (src/commitments/blocks.js).
+  blocks: {
+    enabled: env('PA_BLOCKS', '1') !== '0',
+    model: modelEnv('PA_BLOCKS_MODEL', 'azure/pa'),
+  },
+
   dedupe: {
     enabled: env('PA_DEDUPE', '1') !== '0',
     model: modelEnv('PA_DEDUPE_MODEL', 'azure/pa'),

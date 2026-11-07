@@ -33,6 +33,8 @@ const state = {
     { id: 54, kind: 'question', commitment_id: '8', title: 'Which repo?', created_at: '2026-11-05T09:00:00Z', payload: { on: 'project' } },
     { id: 50, kind: 'dispatch', commitment_id: '3', title: 'the same row again', created_at: '2026-11-05T09:00:00Z', payload: {} },
   ],
+  // 4 is someone else's work you do not need; 5 has not been judged yet.
+  blocks: [{ blocker_id: '4', task_id: null, verdict: 'not_mine', status: 'open' }],
   looksDone: [
     { id: 60, commitment_id: '5', summary: 'ask 5', direction: 'owed_to_me', confidence: 0.6, created_at: '2026-11-05T08:00:00Z' },
     { id: 61, commitment_id: '6', summary: 'ask 6', direction: 'owed_by_me', confidence: 0.7, created_at: '2026-11-05T08:00:00Z' },
@@ -63,16 +65,49 @@ assert.ok(!all.includes('8'));
 assert.deepStrictEqual(card('7').also, ['8']);
 assert.strictEqual(card('7').asks[0].id, 54);
 
-// The follow-up question rides on its card, which stays under Waiting.
+// Someone else's work you do not need is off the board (its follow-up
+// question rides along).
 assert.deepStrictEqual(ids(b.waiting), ['4']);
 assert.strictEqual(card('4').chase.id, 51);
 assert.strictEqual(card('4').column, 'waiting');
 
 // A note that needs you moves out of its folded group; the rest stay folded.
 assert.deepStrictEqual(b.notes.map((g) => [g.label, ids(g.items)]), [['erp PR #1', ['20']], ['session', ['22']]]);
-assert.deepStrictEqual(b.counts, { onMe: 10, todo: 7, settled: 3, waiting: 1, notes: 2 });
+assert.deepStrictEqual(b.counts, { onMe: 10, todo: 7, blocked: 0, settled: 3, waiting: 1, notes: 2 });
 
 // Empty state.
-assert.deepStrictEqual(build({}).counts, { onMe: 0, todo: 0, settled: 0, waiting: 0, notes: 0 });
+assert.deepStrictEqual(build({}).counts, { onMe: 0, todo: 0, blocked: 0, settled: 0, waiting: 0, notes: 0 });
+
+// Blocked: what people owe you is shown on the task it holds up, or as its own
+// card when it has none; a blocker that closed shows the task as unblocked.
+{
+  const st = {
+    commitments: [
+      c(1), c(2), c(3),
+      c(10, { direction: 'owed_to_me', who: 'Quorvin' }), // blocks 1
+      c(11, { direction: 'owed_to_me', who: 'Brennith' }), // blocks, no task of yours
+      c(12, { direction: 'owed_to_me' }), // not yours to care about
+      c(13, { direction: 'owed_to_me' }), // not judged yet: shown, not lost
+    ],
+    blocks: [
+      { blocker_id: '10', task_id: '1', verdict: 'blocks', why: 'needs the field list', status: 'open' },
+      { blocker_id: '11', task_id: null, verdict: 'blocks', status: 'open' },
+      { blocker_id: '12', task_id: null, verdict: 'not_mine', status: 'open' },
+      { blocker_id: '14', task_id: '2', verdict: 'blocks', status: 'done', who: 'Talvaro', summary: 'send access' }, // delivered
+    ],
+  };
+  const x = build(st, { now });
+  // 2 just unblocked goes to the top; blocked ones after the to-dos.
+  assert.deepStrictEqual(ids(x.onMe), ['2', '3', '1', '11', '13']);
+  const k = (id) => x.onMe.find((y) => String(y.id) === id);
+  assert.strictEqual(k('1').blocked, true);
+  assert.deepStrictEqual(k('1').blockers.map((y) => String(y.id)), ['10']);
+  assert.strictEqual(k('1').group, 'blocked');
+  assert.strictEqual(k('11').waitingOn, true);
+  assert.strictEqual(k('13').waitingOn, true);
+  assert.deepStrictEqual(k('2').unblocked.map((y) => y.blocker_id), ['14']);
+  assert.deepStrictEqual(ids(x.waiting), ['12']);
+  assert.deepStrictEqual(x.counts, { onMe: 5, todo: 2, blocked: 3, settled: 0, waiting: 1, notes: 0 });
+}
 
 console.log('board: ok');
