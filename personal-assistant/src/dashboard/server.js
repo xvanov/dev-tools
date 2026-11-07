@@ -227,6 +227,12 @@ async function handle(req, res) {
   }
   // ---- end Factory layer ----
 
+  // ---- The architecture map (dashboard/architecture.js, architecture.json):
+  // read-only page + GET /api/architecture[?health=1]. ----
+  if (url.pathname === '/architecture' || url.pathname === '/architecture.client.js' || url.pathname === '/api/architecture') {
+    if (await require('./architecture').route(req, res, url, { send })) return;
+  }
+
   // The end state a Do would get, before it is pressed: the page shows it,
   // and must send it back as `confirmedLevel` to start an unattended one.
   let pm = req.method === 'GET' && url.pathname.match(/^\/api\/commitments\/(\d+)\/delivery$/);

@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jarvis · Architecture</title>
+<link rel="stylesheet" href="theme.css">
+<script src="nav.js" data-layer="architecture"></script>
+<style>
+  /* Colours and type come from theme.css (the Jarvis design system); only this
+     page's layout lives here. The content is architecture.json, rendered by
+     architecture.client.js with textContent only. */
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--surface-0); color: var(--ink);
+    font: var(--text-base)/var(--leading) var(--font-sans); }
+  header { padding: 12px 20px 4px; }
+  header > .jnav { margin-bottom: 8px; }
+  h1 { font-size: var(--text-xl); margin: 4px 0 2px; }
+  .intro { color: var(--ink-2); max-width: 980px; margin: 0 0 10px; }
+  .muted { color: var(--ink-2); }
+  .small { font-size: var(--text-sm); }
+  .xs { font-size: var(--text-xs); }
+  .mono { font-family: var(--font-mono); }
+
+  .bar { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; padding: 0 20px 10px; }
+  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: var(--radius-pill); overflow: hidden; background: var(--surface-1); }
+  .seg button { font: inherit; font-size: var(--text-sm); border: 0; background: transparent; color: var(--ink-2); padding: 5px 14px; cursor: pointer; }
+  .seg button[aria-pressed="true"] { background: var(--signal); color: var(--on-signal); }
+  .legend { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: var(--text-xs); color: var(--ink-2); align-items: center; }
+
+  .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: var(--ink-3); flex: none; vertical-align: middle; }
+  .dot.ok { background: var(--ok); }
+  .dot.down { background: var(--bad); }
+  .dot.planned { background: transparent; border: 1.5px dashed var(--ink-3); }
+  .dot.wait { background: var(--line-strong); }
+
+  .live { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 20px 12px; }
+  .chip { display: inline-flex; gap: 6px; align-items: center; background: var(--surface-1); border: 1px solid var(--line);
+    border-radius: var(--radius-pill); padding: 2px 10px; font-size: var(--text-xs); color: var(--ink-2); }
+  .chip b { color: var(--ink); font-weight: 600; font-family: var(--font-mono); overflow-wrap: anywhere; }
+  .chip { max-width: 100%; }
+  .chips { display: flex; flex-wrap: wrap; gap: 4px; }
+  .chips .chip { font-family: var(--font-mono); }
+  .chip.ask { border-color: var(--amber); }
+
+  .stacks { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(320px, 100%), 1fr)); gap: 12px; padding: 0 20px 14px; }
+  .stack { background: var(--surface-1); border: 1px solid var(--line); border-radius: var(--radius-lg); padding: 10px 14px; box-shadow: var(--shadow-1); }
+  .stack.on { border-color: var(--signal); }
+  .stack h2 { font-size: var(--text-md); margin: 0 0 2px; }
+  .stack ul { margin: 6px 0 4px; padding-left: 18px; }
+  .stack li { margin: 2px 0; font-size: var(--text-sm); }
+  .note { font-size: var(--text-xs); color: var(--ink-2); padding: 0 20px 12px; max-width: 980px; }
+
+  body { overflow-x: hidden; }
+  .wrap { display: grid; grid-template-columns: minmax(0, 1fr) 380px; gap: 16px; padding: 0 20px 24px; align-items: start; }
+  #diagram { position: relative; }
+  #edges { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; overflow: visible; }
+  #edges path { fill: none; stroke: var(--line-strong); stroke-width: 1.2; opacity: .55; transition: opacity .15s; }
+  #edges path.hot { stroke: var(--signal); stroke-width: 2; opacity: 1; }
+  #edges path.ghost { stroke-dasharray: 4 4; }
+  #edges path.dim { opacity: .12; }
+  #edges g.lbl { display: none; }
+  #edges g.lbl.hot { display: block; }
+  #edges g.lbl rect { fill: var(--surface-1); stroke: var(--signal); stroke-width: 1; }
+  #edges g.lbl text { fill: var(--ink); font: 11px var(--font-sans); }
+
+  .layer { display: grid; grid-template-columns: 170px minmax(0, 1fr); gap: 12px; padding: 14px 0; border-top: 1px solid var(--line); position: relative; }
+  .layer:first-child { border-top: 0; }
+  .layer .lname { font-weight: 700; font-size: var(--text-md); }
+  .layer .lname span { display: inline-grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; background: var(--signal-soft); color: var(--ink); font-size: var(--text-xs); margin-right: 6px; }
+  .layer .lsum { font-size: var(--text-xs); color: var(--ink-2); margin-top: 4px; }
+  .boxes { display: flex; flex-wrap: wrap; gap: 26px 22px; align-items: stretch; }
+
+  .comp { position: relative; z-index: 1; flex: 1 1 196px; max-width: 250px; min-width: 0; text-align: left; font: inherit; color: inherit; cursor: pointer;
+    background: var(--surface-1); border: 1px solid var(--line); border-radius: var(--radius); padding: 8px 10px; box-shadow: var(--shadow-1);
+    transition: border-color .15s, opacity .15s, box-shadow .15s; }
+  .comp:hover, .comp:focus-visible { border-color: var(--signal); outline: none; }
+  .comp.pinned { border-color: var(--signal); box-shadow: 0 0 0 2px var(--signal-soft), var(--shadow-1); }
+  .comp.hot { border-color: var(--signal); }
+  .comp.dim { opacity: .35; }
+  .comp.planned { border-style: dashed; background: var(--surface-0); }
+  .comp .cname { font-weight: 600; font-size: var(--text-sm); display: flex; gap: 6px; align-items: center; }
+  .comp .crole { font-size: var(--text-xs); color: var(--ink-2); margin-top: 3px; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+  .comp .badge { margin-left: auto; font-size: 10px; text-transform: uppercase; letter-spacing: .04em; color: var(--ink-2); border: 1px solid var(--line); border-radius: var(--radius-pill); padding: 0 6px; font-weight: 500; }
+  .comp .badge.landing { color: var(--amber); border-color: var(--amber); }
+  .comp .step { position: absolute; top: -10px; left: -10px; min-width: 22px; height: 22px; border-radius: 11px; background: var(--signal); color: var(--on-signal);
+    font: 600 11px/22px var(--font-sans); text-align: center; padding: 0 5px; display: none; }
+  .comp .step.on { display: block; }
+
+  aside { position: sticky; top: 12px; display: flex; flex-direction: column; gap: 14px; max-height: calc(100vh - 24px); overflow: auto; }
+  .panel { background: var(--surface-1); border: 1px solid var(--line); border-radius: var(--radius-lg); padding: 12px 14px; box-shadow: var(--shadow-1); }
+  .panel h2 { font-size: var(--text-md); margin: 0 0 4px; display: flex; gap: 8px; align-items: center; }
+  .panel h3 { font-size: var(--text-sm); margin: 12px 0 4px; color: var(--ink-2); text-transform: uppercase; letter-spacing: .04em; }
+  .panel dl { margin: 6px 0 0; display: grid; grid-template-columns: 1fr; gap: 2px; }
+  .panel dt { font-weight: 600; font-size: var(--text-sm); margin-top: 8px; }
+  .panel dd { margin: 0; font-size: var(--text-sm); color: var(--ink); }
+  .panel dd ul, .panel ul.plain { margin: 2px 0; padding-left: 18px; }
+  .panel dd li, .panel ul.plain li { margin: 1px 0; }
+  .panel .x { margin-left: auto; font: inherit; font-size: var(--text-xs); background: none; border: 1px solid var(--line); border-radius: var(--radius-pill); color: var(--ink-2); padding: 1px 8px; cursor: pointer; }
+  .panel table { border-collapse: collapse; font-size: var(--text-xs); width: 100%; }
+  .panel td { border-top: 1px solid var(--line); padding: 3px 4px; vertical-align: top; font-family: var(--font-mono); word-break: break-all; }
+  .linkish { font: inherit; background: none; border: 0; padding: 0; color: var(--signal); cursor: pointer; text-align: left; }
+  .linkish:hover { text-decoration: underline; }
+
+  .examples { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+  .ex { border: 1px solid var(--line); border-radius: var(--radius); padding: 6px 10px; cursor: pointer; background: var(--surface-0); }
+  .ex:hover, .ex.on { border-color: var(--signal); }
+  .ex .say { font-style: italic; font-size: var(--text-sm); color: var(--ink-2); }
+  .ex ol { margin: 6px 0 2px; padding-left: 20px; display: none; }
+  .ex.on ol { display: block; }
+  .ex li { font-size: var(--text-sm); margin: 3px 0; }
+  .ex li b { font-weight: 600; }
+
+  #tip { position: fixed; z-index: 10; max-width: 300px; pointer-events: none; display: none; background: var(--surface-2); border: 1px solid var(--line-strong);
+    border-radius: var(--radius); padding: 8px 10px; box-shadow: var(--shadow-2); font-size: var(--text-xs); }
+  #tip b { font-size: var(--text-sm); }
+
+  .err { color: var(--bad); padding: 0 20px; }
+
+  @media (max-width: 1100px) {
+    .wrap { grid-template-columns: 1fr; }
+    aside { position: static; max-height: none; }
+  }
+  @media (max-width: 760px) {
+    header, .bar, .live, .stacks, .wrap, .note { padding-left: 16px; padding-right: 16px; }
+    #edges { display: none; }
+    .layer { grid-template-columns: minmax(0, 1fr); }
+    .wrap { grid-template-columns: minmax(0, 1fr); }
+    .boxes { gap: 8px; }
+    .comp { flex-basis: 100%; max-width: none; }
+    .comp .crole { -webkit-line-clamp: unset; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <div data-jnav></div>
+  <h1>System architecture</h1>
+  <p class="intro" id="intro">Loading…</p>
+</header>
+<div class="bar">
+  <div class="seg" role="group" aria-label="Stack">
+    <button type="button" data-stack="work" aria-pressed="true">Work stack</button>
+    <button type="button" data-stack="personal" aria-pressed="false">Personal stack</button>
+  </div>
+  <div class="legend">
+    <span><i class="dot ok"></i> up</span>
+    <span><i class="dot down"></i> down</span>
+    <span><i class="dot"></i> no check / unknown</span>
+    <span><i class="dot planned"></i> planned</span>
+    <span id="checked" class="muted"></span>
+  </div>
+</div>
+<div class="live" id="live" aria-label="Configured on this machine"></div>
+<div class="stacks" id="stacks"></div>
+<div class="err" id="err" hidden></div>
+<div class="wrap">
+  <div id="diagram">
+    <svg id="edges" aria-hidden="true"></svg>
+    <div id="layers"></div>
+  </div>
+  <aside>
+    <section class="panel" id="details" aria-live="polite">
+      <h2>Details</h2>
+      <p class="muted small">Hover a component for a summary; click it to pin its full details here: model, context and compaction, tools, billing, storage, ports and code paths.</p>
+    </section>
+    <section class="panel">
+      <h2>Walk-throughs</h2>
+      <p class="muted small">Hover or click one to light up its path on the diagram, step by step.</p>
+      <ul class="examples" id="examples"></ul>
+    </section>
+  </aside>
+</div>
+<p class="note" id="maint"></p>
+<div id="tip" role="tooltip"></div>
+<script src="architecture.client.js"></script>
+</body>
+</html>

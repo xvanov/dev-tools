@@ -1,0 +1,1756 @@
+{
+  "version": 1,
+  "title": "System architecture",
+  "intro": "Four layers on two stacks. You talk to Jarvis (1), which reads and acts on the Dashboard's store (2), sends work to the Factory (3), and every long-running agent lives in a termhub session (4). The work stack and the personal stack run the same dev-tools code with different .env files; no data or credentials cross between them.",
+  "maintenance": "Rendered from personal-assistant/src/dashboard/architecture.json. Add, remove or rename a component, tool, port, model default or table in the same commit as the code (root CLAUDE.md, 'Architecture map'); test/architecture.test.js checks the parts it can.",
+  "statuses": {
+    "live": "Running today",
+    "landing": "Code on main, contract or rollout still landing",
+    "planned": "Planned, not installed"
+  },
+  "layers": [
+    {
+      "id": "talk",
+      "n": 1,
+      "name": "Talk",
+      "summary": "Jarvis: a voice page with a fast local model that answers simple turns in about a second, and the PA chat (a Claude Code session) that does everything else behind permission prompts."
+    },
+    {
+      "id": "dashboard",
+      "n": 2,
+      "name": "Dashboard",
+      "summary": "The worker ingests mail, Teams, GitHub, Jira and meetings, distils asks into commitments, and serves the board. Everything is in Postgres."
+    },
+    {
+      "id": "factory",
+      "n": 3,
+      "name": "Factory",
+      "summary": "software-factory: jobs (code, research, report) on two runtimes: metered API models through LiteLLM/OpenHands, or Claude Code on the subscription inside a termhub session."
+    },
+    {
+      "id": "sessions",
+      "n": 4,
+      "name": "Sessions",
+      "summary": "termhub: the terminal supervisor every agent runs in. sessiond owns the PTYs and survives updates; the front serves the UI, the APIs and the /pa/ proxy."
+    },
+    {
+      "id": "outside",
+      "n": 5,
+      "name": "Models and outside services",
+      "summary": "Where model calls and data go, and who pays: the Claude subscription, metered APIs (Azure, DeepSeek), the local GPU, GitHub and Microsoft 365."
+    }
+  ],
+  "stacks": [
+    {
+      "id": "work",
+      "name": "Work stack",
+      "machine": "Windows work laptop (plus its WSL Ubuntu)",
+      "identity": "the work GitHub account",
+      "runs": [
+        "PA worker + dashboard on 127.0.0.1:7300, Jarvis (/talk, PA chat), voice services",
+        "Postgres 16 + pgvector inside WSL Ubuntu on :5433 (kept alive by the pa-wsl-keepalive logon task)",
+        "termhub on Windows (front :7000, sessiond :7010)",
+        "a work factory in WSL Ubuntu: its own termhub on 127.0.0.1:7100 (sessiond :7110) and software-factory under the WSL user's ~/dev-tools/software-factory"
+      ],
+      "ingests": "work mail, Teams (connector + local cache), calendar, work GitHub, Jira, recorded meetings"
+    },
+    {
+      "id": "personal",
+      "name": "Personal stack",
+      "machine": "Linux box k-911-x17",
+      "identity": "the personal GitHub account (xvanov)",
+      "runs": [
+        "termhub (front :7000, published by Tailscale Serve on https :7443; sessiond :7010)",
+        "the personal factory at /home/k/dev-tools/software-factory, which also builds dev-tools itself",
+        "PA / Jarvis: planned, not installed"
+      ],
+      "ingests": "nothing yet (no PA installed)"
+    }
+  ],
+  "components": [
+    {
+      "id": "you",
+      "layer": "talk",
+      "name": "You: browser or phone",
+      "role": "Where you talk, read the board and open sessions.",
+      "stacks": {
+        "work": "live",
+        "personal": "live"
+      },
+      "where": {
+        "work": "Laptop browser at 127.0.0.1:7300, or a phone over the tailnet through termhub's /pa/ proxy",
+        "personal": "Browser or phone over the tailnet to termhub"
+      },
+      "details": {
+        "Reaches": [
+          "the dashboard directly on loopback (127.0.0.1:7300)",
+          "from anywhere else only through termhub (Tailscale Serve) and its /pa/ proxy, which rewrites Host to loopback and forwards X-PA"
+        ],
+        "Trust": "The dashboard is loopback-only and needs X-PA: 1 on every POST; termhub's trust model is the tailnet ACL."
+      },
+      "code": [
+        "termhub/lib/paProxy.js",
+        "personal-assistant/src/dashboard/nav.js"
+      ]
+    },
+    {
+      "id": "talk-page",
+      "layer": "talk",
+      "name": "/talk voice page",
+      "role": "Hears the room in the browser; sends only the utterance after the wake word.",
+      "stacks": {
+        "work": "live",
+        "personal": "planned"
+      },
+      "where": {
+        "work": "Browser tab served by the dashboard",
+        "personal": "Planned with the PA"
+      },
+      "health": "dashboard",
+      "details": {
+        "Wake word": "openWakeWord hey_jarvis_v0.1.onnx, client-side on onnxruntime-web (WASM, one thread)",
+        "Voice activity": "Silero VAD (silero_vad.onnx) in the page",
+        "Models served": "/talk/models/ serves a fixed list of file names (MODEL_FILES), never a path",
+        "End of turn": "POST /api/talk/endpoint, proxied to smart-turn in the voice service",
+        "Sends": [
+          "POST /api/talk/transcribe (the utterance only)",
+          "POST /api/talk/turn (fast lane)",
+          "POST /api/talk/tts (speech out)",
+          "POST /api/talk/warm when an utterance starts"
+        ],
+        "Privacy": "Nothing leaves the browser until a request is made; the wake word stays client-side."
+      },
+      "code": [
+        "personal-assistant/src/dashboard/talk.html",
+        "personal-assistant/src/dashboard/talk.voice.js",
+        "personal-assistant/src/dashboard/talk.page.js",
+        "personal-assistant/src/dashboard/talk.js"
+      ]
+    },
+    {
+      "id": "fast-lane",
+      "layer": "talk",
+      "name": "Fast lane (System 1)",
+      "role": "Answers simple spoken turns in about a second, or acknowledges and hands off to the PA chat. No tools.",
+      "stacks": {
+        "work": "live",
+        "personal": "planned"
+      },
+      "where": {
+        "work": "In the worker process (dashboard), POST /api/talk/turn",
+        "personal": "Planned with the PA"
+      },
+      "health": "ollama",
+      "details": {
+        "Model": "local/llama3.2:3b through Ollama's native /api/chat, decision forced to JSON {label, route, say}",
+        "Fallback": "azure/pa (PA_FAST_FALLBACK_MODEL) when Ollama is down or has not decided within 2500 ms (PA_FAST_LOCAL_TIMEOUT_MS)",
+        "Router": "PA_FAST_ROUTER=same: one streamed call decides and replies (alternatives: rules, a model string, an http(s) URL)",
+        "Prompt": [
+          "a snapshot of your day: a few hundred tokens (open asks by bucket, top 3 overdue and due, next 24 h of meetings, active runs, waiting drafts and review items, first 300 chars of your 'me' page)",
+          "the last 6 turns (chat history merged with turns it answered itself)",
+          "max 300 output tokens for the JSON decision, 400 for the text format"
+        ],
+        "Snapshot refresh": "Cached in memory, rebuilt in the background when older than 60 s (PA_FAST_CONTEXT_SECONDS)",
+        "Context window": "unknown: Ollama's default for the model (the PA does not set num_ctx)",
+        "Compaction": "none needed: every turn is a fresh prompt",
+        "Kept warm": "keep_alive 24h (PA_FAST_KEEP_ALIVE); warmed when /talk opens",
+        "Guards": [
+          "never answers an action-like request (guardDecision / looksLikeAction turn it into a hand-off)",
+          "a hand-off types your verbatim words into the PA chat; the model's task is only a labelled hint",
+          "a hand-off's spoken acknowledgement is replaced by the stock one when it reads as an answer (spokenAck)"
+        ],
+        "Billing": "free (local GPU); the azure/pa fallback is metered and recorded in llm_spend"
+      },
+      "env": [
+        {
+          "name": "PA_FAST_MODEL",
+          "default": "local/llama3.2:3b"
+        },
+        {
+          "name": "PA_FAST_FALLBACK_MODEL",
+          "default": "azure/pa"
+        },
+        {
+          "name": "PA_FAST_ROUTER",
+          "default": "same"
+        },
+        {
+          "name": "PA_FAST_KEEP_ALIVE",
+          "default": "24h"
+        },
+        {
+          "name": "PA_FAST_LOCAL_TIMEOUT_MS",
+          "default": "2500"
+        },
+        {
+          "name": "PA_FAST_CONTEXT_SECONDS",
+          "default": "60"
+        }
+      ],
+      "code": [
+        "personal-assistant/src/chat/fastLane.js",
+        "personal-assistant/src/dashboard/talk.js",
+        "personal-assistant/src/llm.js"
+      ]
+    },
+    {
+      "id": "voice",
+      "layer": "talk",
+      "name": "pa-voice service",
+      "role": "Speech out (Kokoro-82M on the GPU) and the end-of-turn judge (smart-turn v3.2 on the CPU).",
+      "stacks": {
+        "work": "live",
+        "personal": "planned"
+      },
+      "where": {
+        "work": "127.0.0.1:47830, loopback only, refuses any request with an Origin header",
+        "personal": "Planned with the PA"
+      },
+      "health": "voice",
+      "details": {
+        "Voice": "bf_isabella (PA_VOICE), 24 kHz mono, streamed sentence by sentence as raw 16-bit PCM",
+        "Endpoints": [
+          "GET /health",
+          "GET /voices",
+          "POST /tts",
+          "POST /warm (clocks the GPU up)",
+          "POST /endpoint (is the speaker done?)"
+        ],
+        "Reached through": "the dashboard's X-PA-guarded proxy: /api/talk/tts, /api/talk/endpoint, /api/talk/warm",
+        "Install": "personal-assistant/windows/install-voice.ps1 (venv under the data dir, PA_VOICE_PYTHON)"
+      },
+      "env": [
+        {
+          "name": "PA_VOICE_URL",
+          "default": "http://127.0.0.1:47830"
+        },
+        {
+          "name": "PA_VOICE",
+          "default": "bf_isabella"
+        }
+      ],
+      "code": [
+        "personal-assistant/voice/server.py",
+        "personal-assistant/src/dashboard/talk.js"
+      ]
+    },
+    {
+      "id": "whisper",
+      "layer": "talk",
+      "name": "faster-whisper transcriber",
+      "role": "Speech to text, shared with voice-dictation so one warm model serves both.",
+      "stacks": {
+        "work": "live",
+        "personal": "planned"
+      },
+      "where": {
+        "work": "127.0.0.1:47821, a raw TCP protocol (a WAV path in, text out)",
+        "personal": "Planned with the PA"
+      },
+      "health": "whisper",
+      "details": {
+        "Called by": "POST /api/talk/transcribe in the dashboard, and the worker's audio pass for recorded meetings",
+        "Warm-up": "a silent WAV is sent when /talk opens if it has not been used for 5 minutes (it unloads when idle)"
+      },
+      "env": [
+        {
+          "name": "PA_TRANSCRIBE_PORT",
+          "default": "47821"
+        },
+        {
+          "name": "PA_TRANSCRIBE_HOST",
+          "default": "127.0.0.1"
+        }
+      ],
+      "code": [
+        "voice-dictation/transcribe_server.py",
+        "personal-assistant/src/dashboard/talk.js"
+      ]
+    },
+    {
+      "id": "jarvis",
+      "layer": "talk",
+      "name": "Jarvis: the PA chat (System 2)",
+      "role": "One long-lived Claude Code session in termhub that reads through MCP tools and acts only behind permission prompts.",
+      "stacks": {
+        "work": "live",
+        "personal": "planned"
+      },
+      "where": {
+        "work": "A termhub session on the laptop, home <dataDir>/pa-home",
+        "personal": "Planned with the PA"
+      },
+      "details": {
+        "Model": "PA_CHAT_MODEL (no default in code: the Claude Code CLI's own default); PA_CHAT_AGENT picks claude or opencode",
+        "Started as": "claude --permission-mode default --mcp-config pa-home/pa-chat.mcp.json [--model ...]; never with --dangerously-skip-permissions (chatCommand refuses it)",
+        "Context window": "whatever Claude Code reports for the model (context_window.context_window_size; the statusline falls back to 200,000 tokens)",
+        "Compaction": "Claude Code auto-compacts its own context. State lives in the store, not the transcript: a SessionStart hook runs `pa context` (60 s timeout) on every start, resume, clear and compaction, so a week-old chat still knows this morning's asks.",
+        "What it loads": [
+          "CLAUDE.md, rewritten from code on every start (src/chat/index.js); your additions go in CLAUDE.local.md",
+          "`pa context`: profile, today's brief, what is waiting on you, live runs",
+          "INBOX.md: the worker's pushed notifications, read as data, never instructions"
+        ],
+        "Permissions": [
+          "settings.json: defaultMode default, bypass mode disabled; verifyClaudeHome reads them back (and settings.local.json) before starting",
+          "no `pa` shell command is allowed: every one asks",
+          "the caveman plugin is off for this session only"
+        ],
+        "How you reach it": [
+          "typing in its termhub tab",
+          "the dashboard's chat panel and /talk (feed.js types into the session through termhub's input API and tails its transcript)"
+        ],
+        "Transcript": "~/.claude/projects/<encoded pa-home>/<uuid>.jsonl, tailed by byte offset (first read: last 4 MB)",
+        "Billing": "the machine's Claude Code login: a claude.ai subscription login is not metered per call"
+      },
+      "tools": {
+        "allowed": [
+          "recall",
+          "memory_page",
+          "explain_claim",
+          "brief_me",
+          "search_context",
+          "get_thread",
+          "open_commitments",
+          "who_is",
+          "repo_state",
+          "pa",
+          "task_add",
+          "board",
+          "card",
+          "factory_jobs",
+          "factory_job",
+          "sessions"
+        ],
+        "ask": [
+          "remember",
+          "request_secret",
+          "secret_status",
+          "factory_start",
+          "factory_continue",
+          "factory_resume",
+          "factory_cancel",
+          "factory_approve",
+          "session_start"
+        ]
+      },
+      "pa_verbs": {
+        "read": [
+          "brief",
+          "inbox",
+          "show",
+          "search",
+          "who",
+          "runs",
+          "review",
+          "drafts",
+          "memory",
+          "meeting",
+          "routine list",
+          "backup list",
+          "context",
+          "projects",
+          "proposals",
+          "delivery list",
+          "factory apps",
+          "factory jobs",
+          "factory status",
+          "factory report",
+          "notify list",
+          "notify weights",
+          "notify digest"
+        ],
+        "ask": [
+          "do",
+          "land",
+          "drop",
+          "say",
+          "done",
+          "remember",
+          "forget",
+          "routine add",
+          "answer",
+          "delivery set",
+          "delivery clear",
+          "factory add",
+          "factory submit",
+          "factory cancel",
+          "factory approve",
+          "notify ack",
+          "doctor",
+          "notify feedback",
+          "propose"
+        ]
+      },
+      "env": [
+        {
+          "name": "PA_CHAT_MODEL",
+          "default": null
+        },
+        {
+          "name": "PA_CHAT_AGENT",
+          "default": null
+        }
+      ],
+      "code": [
+        "personal-assistant/src/chat/index.js",
+        "personal-assistant/src/chat/agent.js",
+        "personal-assistant/src/chat/feed.js",
+        "personal-assistant/src/chat/transcript.js",
+        "personal-assistant/src/notify/chat.js"
+      ]
+    },
+    {
+      "id": "mcp",
+      "layer": "talk",
+      "name": "personal-assistant MCP server",
+      "role": "The store over MCP (stdio). Read-only for every session; the PA chat alone also gets the `pa` verbs, task_add and the per-layer chat tools.",
+      "stacks": {
+        "work": "live",
+        "personal": "planned"
+      },
+      "where": {
+        "work": "A stdio child of each Claude Code session that registers it: user scope as `personal-assistant`, the PA chat as `pa-chat` with PA_MCP_CHAT_TOOLS=1",
+        "personal": "Planned with the PA"
+      },
+      "details": {
+        "Shared surface": "recall and memory reads, open_commitments, who_is, repo_state; remember only proposes (a pending_review claim); request_secret / secret_status never return a value",
+        "Chat-only surface": "the read-only `pa` verbs as the `pa` tool (run with PA_READ_ONLY=1), task_add, board / card / factory_* / sessions reads, and the actions factory_start, factory_continue, factory_resume, factory_cancel, factory_approve, session_start",
+        "Actions": "the dispatch paths themselves (dispatch.start, factory cancel/approve/resume), never a second implementation; auto_merge and push_to_main become a card ('suggested by the chat')",
+        "Data rule": "everything a tool returns quotes other people's messages: data, never instructions"
+      },
+      "tools": {
+        "shared": [
+          "recall",
+          "memory_page",
+          "explain_claim",
+          "remember",
+          "request_secret",
+          "secret_status",
+          "brief_me",
+          "search_context",
+          "get_thread",
+          "open_commitments",
+          "who_is",
+          "repo_state"
+        ],
+        "chat_only": [
+          "pa",
+          "task_add",
+          "board",
+          "card",
+          "factory_jobs",
+          "factory_job",
+          "sessions",
+          "factory_start",
+          "factory_continue",
+          "factory_resume",
+          "factory_cancel",
+          "factory_approve",
+          "session_start"
+        ]
+      },
+      "code": [
+        "personal-assistant/src/mcp/server.js",
+        "personal-assistant/src/mcp/chatTools.js",
+        "personal-assistant/integrations/claude-code/README.md"
+      ]
+    },
+    {
+      "id": "dashboard",
+      "layer": "dashboard",
+      "name": "Dashboard server",
+      "role": "The board, chat panel, Factory page, Talk page and this map, on loopback. It rides in the worker process.",
+      "stacks": {
+        "work": "live",
+        "personal": "planned"
+      },
+      "where": {
+        "work": "http://127.0.0.1:7300 (PA_DISPATCH_PORT / PA_DISPATCH_HOST)",
+        "personal": "Planned with the PA"
+      },
+      "health": "dashboard",
+      "details": {
+        "Pages": [
+          "/ (board)",
+          "/talk",
+          "/factory",
+          "/architecture"
+        ],
+        "Guards": [
+          "binds loopback only and rejects a non-loopback Host (DNS rebinding)",
+          "every POST needs X-PA: 1",
+          "starting auto_merge / push_to_main also needs the page token (X-PA-Page) and the confirmed level"
+        ],
+        "Chat": "/api/chat (type into the PA chat), /api/chat/stream (SSE of its transcript), /api/chat/history",
+        "Send": "never sends: a draft opens, already written, in Teams or Outlook and you press Send"
+      },
+      "env": [
+        {
+          "name": "PA_DISPATCH_PORT",
+          "default": "7300"
+        },
+        {
+          "name": "PA_DISPATCH_HOST",
+          "default": "127.0.0.1"
+        }
+      ],
+      "code": [
+        "personal-assistant/src/dashboard/server.js",
+        "personal-assistant/src/dashboard/board.js",
+        "personal-assistant/src/dashboard/factory.js",
+        "personal-assistant/src/dashboard/architecture.js"
+      ]
+    },
+    {
+      "id": "worker",
+      "layer": "dashboard",
+      "name": "Worker",
+      "role": "A scheduler of periodic passes (no job queue: work to do is a query). One per machine, held by a Postgres advisory lock.",
+      "stacks": {
+        "work": "live",
+        "personal": "planned"
+      },
+      "where": {
+        "work": "node src/worker.js on the laptop (also hosts the dashboard)",
+        "personal": "Planned with the PA"
+      },
+      "health": "dashboard",
+      "details": {
+        "Rule": "Passes never overlap themselves; a crash costs one tick, the next sees the same delta.",
+        "Model passes": [
+          "distill (PA_DISTILL_MODEL, default claude-opus-5)",
+          "reconcile, card context, repo profiles (PA_RECONCILE_MODEL, default claude-sonnet-5-5)",
+          "memory extract / decide / pages (default claude-sonnet-5-5 each)",
+          "blocks and dedupe (default azure/pa)",
+          "briefs, debriefs, reply-close, planner, routines, compose (default claude-sonnet-5-5)",
+          "Microsoft 365 connector relay (PA_CONNECTOR_MODEL, default claude-haiku-5-5; Claude Code only)"
+        ],
+        "Model strings": "provider/model (src/models.js). A bare Claude name uses the Anthropic API when ANTHROPIC_API_KEY is set, else a headless `claude -p` (the Claude Code login).",
+        "Spend": "every metered call lands in llm_spend; unknown prices are null, never estimated; daily budget PA_DAILY_BUDGET_USD (default 15) with essential vs discretionary passes"
+      },
+      "passes": [
+        "m365",
+        "calendar",
+        "github",
+        "jira",
+        "sessions",
+        "remote-sessions",
+        "capture-watchdog",
+        "meeting-gate",
+        "audio",
+        "distill",
+        "dedupe",
+        "blocks",
+        "drafts",
+        "reply-close",
+        "reconcile",
+        "durable",
+        "planner",
+        "card-context",
+        "health",
+        "memory-extract",
+        "memory-consolidate",
+        "memory-pages",
+        "memory-dream",
+        "meetings",
+        "repos-sync",
+        "projects-sync",
+        "embed",
+        "runs",
+        "factory",
+        "routines",
+        "routine-suggest",
+        "digest",
+        "eval",
+        "backup",
+        "self-notes",
+        "retention"
+      ],
+      "env": [
+        {
+          "name": "PA_DISTILL_MODEL",
+          "default": "claude-opus-5"
+        },
+        {
+          "name": "PA_RECONCILE_MODEL",
+          "default": "claude-sonnet-5-5"
+        },
+        {
+          "name": "PA_CONNECTOR_MODEL",
+          "default": "claude-haiku-5-5"
+        },
+        {
+          "name": "PA_BLOCKS_MODEL",
+          "default": "azure/pa"
+        },
+        {
+          "name": "PA_DEDUPE_MODEL",
+          "default": "azure/pa"
+        },
+        {
+          "name": "PA_COMPOSE_MODEL",
+          "default": "claude-sonnet-5-5"
+        },
+        {
+          "name": "PA_DAILY_BUDGET_USD",
+          "default": "15"
+        }
+      ],
+      "code": [
+        "personal-assistant/src/worker.js",
+        "personal-assistant/src/models.js",
+        "personal-assistant/src/llm.js",
+        "personal-assistant/src/budget.js"
+      ]
+    },
+    {
+      "id": "ingest",
+      "layer": "dashboard",
+      "name": "Ingest: connectors",
+      "role": "Captures mail, Teams, calendar, GitHub, Jira, Claude/Cursor sessions and meeting audio as append-only source items.",
+      "stacks": {
+        "work": "live",
+        "personal": "planned"
+      },
+      "where": {
+        "work": "Worker passes on the laptop",
+        "personal": "Planned with the PA"
+      },
+      "details": {
+        "Microsoft 365": "a headless `claude -p` relays the claude.ai connector calls; items are built from the tool_result blocks, never from model text",
+        "Teams cache": "reads the new Teams client's IndexedDB on disk, read-only, triggered by a change notification and served by one resident reader process (seconds behind, vs minutes for the connector)",
+        "GitHub": "the gh CLI (PA_GH_BIN), every 300 s",
+        "Jira": "API token, falling back to its connector, every 900 s",
+        "Sessions": "local Claude Code and Cursor transcripts; other machines' Claude sessions through their termhub (GET /api/claude/transcripts)",
+        "Meetings": "capture.py records, the audio pass trims and transcribes with faster-whisper",
+        "Rule": "capture is append-only and raw payloads are kept"
+      },
+      "code": [
+        "personal-assistant/src/ingest/index.js",
+        "personal-assistant/src/ingest/m365.js",
+        "personal-assistant/src/ingest/teamsLocal.js",
+        "personal-assistant/src/ingest/github.js",
+        "personal-assistant/src/ingest/jira.js",
+        "personal-assistant/src/ingest/remoteSessions.js"
+      ]
+    },
+    {
+      "id": "commitments",
+      "layer": "dashboard",
+      "name": "Commitments, ledger and board",
+      "role": "Distils asks into commitments, links blockers, dedupes, and changes status only through the ledger; the board is built from them.",
+      "stacks": {
+        "work": "live",
+        "personal": "planned"
+      },
+      "where": {
+        "work": "Worker passes + dashboard (/api/state)",
+        "personal": "Planned with the PA"
+      },
+      "details": {
+        "Only people create tasks": "sourcePolicy decides in code before any model call; bots, CI and the assistant's own sessions are evidence only",
+        "Blocks pass": "links what someone owes you to the task it holds up (commitment_block)",
+        "Ledger": "ledger.transition is the one writer of commitment.status; each change leaves a reversible ledger_transition row",
+        "Board": "One card per commitment: On me (with blockers and 'Looks done?'), Waiting, Notes (src/dashboard/board.js)",
+        "Memory": "claims carry a verbatim quote; memory supersedes, never deletes; agents only propose"
+      },
+      "code": [
+        "personal-assistant/src/distill/index.js",
+        "personal-assistant/src/commitments/blocks.js",
+        "personal-assistant/src/commitments/sourcePolicy.js",
+        "personal-assistant/src/ledger",
+        "personal-assistant/src/dashboard/board.js"
+      ]
+    },
+    {
+      "id": "notify",
+      "layer": "dashboard",
+      "name": "Notifications",
+      "role": "A feed in the dashboard, desktop toasts or ntfy pushes under an interrupt budget, and the PA chat's INBOX.md.",
+      "stacks": {
+        "work": "live",
+        "personal": "planned"
+      },
+      "where": {
+        "work": "Worker",
+        "personal": "Planned with the PA"
+      },
+      "details": {
+        "Budget": "PA_PUSH_BUDGET pushes (default 4), quiet hours 19-08, digests at 09:00 and 14:00",
+        "PA chat": "pushes go to pa-home/INBOX.md; the only text ever typed into the chat is a content-free doorbell, and only when nudgeDecision proves the session is idle at an empty prompt",
+        "ntfy": "fallback mode by default; bodies off unless PA_NTFY_BODY=1"
+      },
+      "env": [
+        {
+          "name": "PA_PUSH_BUDGET",
+          "default": "4"
+        },
+        {
+          "name": "PA_QUIET_HOURS",
+          "default": "19-08"
+        }
+      ],
+      "code": [
+        "personal-assistant/src/notify/index.js",
+        "personal-assistant/src/notify/chat.js",
+        "personal-assistant/src/notify/ntfy.js"
+      ]
+    },
+    {
+      "id": "dispatcher",
+      "layer": "dashboard",
+      "name": "Dispatcher",
+      "role": "Starts work: a Claude Code session in termhub (own worktree), or a factory job through the JOBS-API. Enforces delivery levels and modes.",
+      "stacks": {
+        "work": "live",
+        "personal": "planned"
+      },
+      "where": {
+        "work": "In-process (pa do, the dashboard's Do, the chat's action tools)",
+        "personal": "Planned with the PA"
+      },
+      "details": {
+        "Routes": "the factory is the default once PA_FACTORY_PATH is set (PA_DISPATCH_VIA); plan mode and --machine still mean a Claude session",
+        "Claude session": "POST /api/sessions on termhub with PA_CLAUDE_COMMAND (claude --dangerously-skip-permissions) in its own worktree; a no-push run gets no credentials in its env and a verified push block",
+        "Factory job": "`uv run factory job submit --json ...` run on PA_FACTORY_MACHINE through termhub's POST /api/exec (argv, no shell), content on stdin; idempotent on --source pa --external-id",
+        "Brief": "composed by PA_COMPOSE_MODEL (default claude-sonnet-5-5) from the card; private material is selected from, never copied in; deterministic fallback",
+        "Delivery levels": "none < branch < draft_pr < pr < auto_merge < push_to_main, set only from your side; the last two need a confirmed start",
+        "Factory defaults": "PA_FACTORY_RUNTIME api, PA_FACTORY_PIPELINE solo; the chat's factory_start defaults to claude_session unless you ask for the API",
+        "Which factory": "PA_FACTORY_MACHINE + PA_FACTORY_PATH in each stack's .env (the live values are shown at the top of this page)"
+      },
+      "env": [
+        {
+          "name": "PA_FACTORY_RUNTIME",
+          "default": "api"
+        },
+        {
+          "name": "PA_FACTORY_PIPELINE",
+          "default": "solo"
+        },
+        {
+          "name": "PA_FACTORY_POLL_SECONDS",
+          "default": "120"
+        },
+        {
+          "name": "PA_DELIVERY_DEFAULT",
+          "default": "draft_pr"
+        },
+        {
+          "name": "PA_CLAUDE_COMMAND",
+          "default": "claude --dangerously-skip-permissions"
+        },
+        {
+          "name": "PA_FACTORY_MACHINE",
+          "default": ""
+        },
+        {
+          "name": "PA_FACTORY_PATH",
+          "default": ""
+        }
+      ],
+      "code": [
+        "personal-assistant/src/dispatch/index.js",
+        "personal-assistant/src/dispatch/factory.js",
+        "personal-assistant/src/dispatch/factoryCore.js",
+        "personal-assistant/src/dispatch/exec.js",
+        "personal-assistant/src/dispatch/termhub.js",
+        "personal-assistant/src/dispatch/compose.js",
+        "personal-assistant/src/dispatch/deliveryCore.js"
+      ]
+    },
+    {
+      "id": "postgres",
+      "layer": "dashboard",
+      "name": "Postgres store",
+      "role": "Postgres 16 + pgvector: every item, commitment, claim, run, proposal and the factory board snapshot.",
+      "stacks": {
+        "work": "live",
+        "personal": "planned"
+      },
+      "where": {
+        "work": "Inside WSL Ubuntu on :5433, reached over WSL's localhost forwarding",
+        "personal": "Planned with the PA (native cluster or docker compose on :5433)"
+      },
+      "health": "postgres",
+      "details": {
+        "Migrations": "plain numbered SQL in personal-assistant/sql, applied by src/db/migrate.js",
+        "Durable tasks": "Absurd (vendored schema) for work that waits: chases, run reviews",
+        "Secrets": "never here: OS vault or the gitignored .env",
+        "Backups": "pg_dump every 24 h, 14 kept (PA_BACKUP_DIR)",
+        "WSL caveat": "WSL stops the distro when the last client exits; the pa-wsl-keepalive logon task holds it open"
+      },
+      "tables": [
+        "attention_weight",
+        "audio_episode",
+        "chunk",
+        "claim",
+        "claim_extraction",
+        "commitment",
+        "commitment_block",
+        "commitment_review",
+        "commitment_vector",
+        "consolidation",
+        "digest",
+        "distillation",
+        "draft",
+        "eval_case",
+        "eval_run",
+        "fact",
+        "factory_board",
+        "ledger_evidence",
+        "ledger_transition",
+        "llm_spend",
+        "meeting_brief",
+        "meeting_debrief",
+        "meeting_series",
+        "memory_page",
+        "notification",
+        "pa_install",
+        "person",
+        "person_identity",
+        "project",
+        "project_alias",
+        "proposal",
+        "reply_close",
+        "repo_delivery",
+        "repo_pr",
+        "routine",
+        "routine_run",
+        "run",
+        "secret_request",
+        "setting",
+        "source_item",
+        "sync_cursor"
+      ],
+      "env": [
+        {
+          "name": "PA_DATABASE_URL",
+          "default": "postgres://pa:pa@127.0.0.1:5433/pa"
+        }
+      ],
+      "code": [
+        "personal-assistant/sql",
+        "personal-assistant/src/db/index.js",
+        "personal-assistant/src/db/migrate.js",
+        "personal-assistant/src/durable/index.js"
+      ]
+    },
+    {
+      "id": "factory-api",
+      "layer": "factory",
+      "name": "JOBS-API (factory CLI)",
+      "role": "The one contract between the PA and the factory: `uv run factory job|app ... --json`, one JSON object out.",
+      "stacks": {
+        "work": "live",
+        "personal": "live"
+      },
+      "where": {
+        "work": "The work factory in WSL Ubuntu (~/dev-tools/software-factory)",
+        "personal": "k-911-x17, /home/k/dev-tools/software-factory"
+      },
+      "health": "factory-machine",
+      "details": {
+        "Contract": "software-factory/docs/JOBS-API.md, v1.2 (kinds, runtimes, runs, reports)",
+        "Commands": [
+          "job submit",
+          "job status",
+          "job list",
+          "job follow",
+          "job cancel",
+          "job report",
+          "app add | set | list"
+        ],
+        "Kinds": "code (direction to stories to PRs), research and report (one agent writes report.md; delivery none)",
+        "Continue and resume": "landing: the PA sends job submit --branch / --pr and job resume <id>; a factory without them refuses in its parser and the PA says the factory must be updated (not yet in JOBS-API.md on main)",
+        "Never": "the PA never imports factory code or reads its store"
+      },
+      "contract": "v1.2",
+      "code": [
+        "software-factory/docs/JOBS-API.md",
+        "software-factory/factory/cli_jobs.py",
+        "software-factory/factory/jobs/submit.py",
+        "software-factory/factory/jobs/status.py"
+      ]
+    },
+    {
+      "id": "factory-chain",
+      "layer": "factory",
+      "name": "Pipelines, gates and delivery",
+      "role": "Turns a job into reviewed, tested work: chain (PM, SM, dev, reviewer, gates) or solo (one dev agent + gates), then delivers at the job's level.",
+      "stacks": {
+        "work": "live",
+        "personal": "live"
+      },
+      "where": {
+        "work": "Work factory (WSL)",
+        "personal": "k-911-x17; factory-tick@<app> systemd timers drive it"
+      },
+      "details": {
+        "Personas": "prompts in factory/personas/*.md; the model per persona is factory/routes.yaml (job > app > routes.yaml)",
+        "Gates": "full test suite + live runtime smoke; reviewer must use a different model than any dev tier",
+        "CI watch": "draft_pr / pr watch every check on the PR; a red run goes back to the dev, at most 3 CI-fix cycles; never merged below auto_merge",
+        "Delivery": "none, branch, draft_pr, pr (delivered_*), auto_merge and push_to_main (deployed); push_to_main falls back to a PR on a protected branch",
+        "Research/report": "detached workers (python -m factory.jobs.worker), at most FACTORY_TASK_MAX_WORKERS (default 2), 5400 s wall clock",
+        "Self-edit": "apps/factory (the factory building itself) is paused since the cutover"
+      },
+      "personas": [
+        "acceptance_author",
+        "analyst",
+        "contract",
+        "dev",
+        "factory_self_context",
+        "onboarder",
+        "pm",
+        "researcher",
+        "reviewer",
+        "security",
+        "sm",
+        "tech_writer",
+        "test_designer",
+        "test_implementer",
+        "ux_auditor"
+      ],
+      "code": [
+        "software-factory/factory/chain/orchestrator.py",
+        "software-factory/factory/chain/solo.py",
+        "software-factory/factory/chain/delivery_gate.py",
+        "software-factory/factory/chain/auto_merge.py",
+        "software-factory/factory/jobs/tasks.py",
+        "software-factory/factory/personas"
+      ]
+    },
+    {
+      "id": "runtime-api",
+      "layer": "factory",
+      "name": "Runtime: api (metered)",
+      "role": "OpenHands agents in-process, models through LiteLLM. Billed per token to API keys; counted in cost_usd and the spend caps.",
+      "stacks": {
+        "work": "live",
+        "personal": "live"
+      },
+      "where": {
+        "work": "Work factory (WSL)",
+        "personal": "k-911-x17"
+      },
+      "details": {
+        "Default routes": "routes.yaml default_provider azure: azure_routes (dev deepseek-v4-pro, reviewer Kimi-K2.7-Code, ...); direct routes: dev deepseek/deepseek-coder (hard: azure/gpt-5.3-codex), reviewer azure/gpt-5.4",
+        "Overrides": "--model <persona>=<provider>/<model>; providers azure, azure_ai, deepseek, anthropic, openrouter, openai, openai_compat",
+        "Missing key": "degrades to the routes.yaml fallback with a warning",
+        "Rate limit": "one shared Azure deployment: model-driven sweeps run 4 wide",
+        "Billing": "metered: runs[].billing = metered, summed in cost_usd"
+      },
+      "models": [
+        "deepseek/deepseek-coder",
+        "deepseek/deepseek-chat",
+        "azure/gpt-5.4",
+        "azure/gpt-5.3-codex",
+        "azure/deepseek-v4-pro"
+      ],
+      "code": [
+        "software-factory/factory/routes.yaml",
+        "software-factory/factory/model_router.py",
+        "software-factory/factory/runner.py"
+      ]
+    },
+    {
+      "id": "runtime-claude",
+      "layer": "factory",
+      "name": "Runtime: claude_session (subscription)",
+      "role": "Claude Code does the agent work: `claude -p --output-format stream-json` inside a termhub session a human can open live.",
+      "stacks": {
+        "work": "live",
+        "personal": "live"
+      },
+      "where": {
+        "work": "Work factory (WSL), sessions in the WSL termhub",
+        "personal": "k-911-x17, sessions in its termhub"
+      },
+      "details": {
+        "Billing": "the operator's claude.ai subscription: API-key variables are unset for every run, and submit refuses (runtime_unavailable) when `claude auth status` is not a claude.ai login",
+        "Cost": "cost_usd is always 0; the API-price equivalent is summed in subscription_equiv_usd",
+        "Model": "--model claude_session=<name> (e.g. claude-sonnet-5-5); default: the CLI's default",
+        "Pipeline": "auto resolves to solo; under --pipeline chain only the dev persona is Claude Code",
+        "Bounds": "5400 s, at most 3 gate rounds, no-progress abort; a usage-limit message fails the run as infrastructure",
+        "termhub": "FACTORY_TERMHUB_URL (default http://127.0.0.1:7010, sessiond); FACTORY_TERMHUB_PUBLIC_URL is the origin a human opens. Without termhub the run starts as a local process and cannot be watched live.",
+        "Compaction": "unknown: each run is one Claude Code conversation; Claude Code compacts it if it fills"
+      },
+      "env": [
+        {
+          "name": "FACTORY_TERMHUB_URL",
+          "default": "http://127.0.0.1:7010"
+        },
+        {
+          "name": "FACTORY_TERMHUB_PUBLIC_URL",
+          "default": null
+        },
+        {
+          "name": "FACTORY_CLAUDE_BIN",
+          "default": null
+        }
+      ],
+      "code": [
+        "software-factory/factory/claude_session/run.py",
+        "software-factory/factory/claude_session/termhub.py",
+        "software-factory/factory/claude_session/cli.py",
+        "software-factory/factory/claude_session/ledger.py"
+      ]
+    },
+    {
+      "id": "factory-store",
+      "layer": "factory",
+      "name": "Factory state",
+      "role": "The factory's own store on its machine: sqlite plus a directory per job.",
+      "stacks": {
+        "work": "live",
+        "personal": "live"
+      },
+      "where": {
+        "work": "Work factory checkout (WSL)",
+        "personal": "/home/k/dev-tools/software-factory/state"
+      },
+      "details": {
+        "Database": "state/factory.db (sqlite): stories, runs, events, modes, job_cancellations",
+        "Research/report jobs": "state/jobs/<task_id>-<slug>/ (job.yaml, ask.md, brief.md, report.md, workspace, Claude run dir, worker.log)",
+        "Locks": "state/locks/story-<id>.lock around merge and cancel",
+        "Apps": "apps/<app>/config.yaml; only apps/factory and apps/template-probe are tracked in this public repo",
+        "PA side": "the worker stores the last `job list` in factory_board; it never reads this store"
+      },
+      "code": [
+        "software-factory/factory/settings/modes.py",
+        "software-factory/factory/runtime_state.py",
+        "software-factory/.gitignore"
+      ]
+    },
+    {
+      "id": "termhub",
+      "layer": "sessions",
+      "name": "termhub front",
+      "role": "The terminal UI and API: sessions, /api/exec, Claude transcripts, peers, voice, and the /pa/ proxy to the dashboard.",
+      "stacks": {
+        "work": "live",
+        "personal": "live"
+      },
+      "where": {
+        "work": "Windows laptop, 127.0.0.1:7000 (Tailscale Serve publishes it on the tailnet)",
+        "personal": "k-911-x17, front :7000, published by Tailscale Serve on https :7443"
+      },
+      "health": "termhub",
+      "details": {
+        "APIs": [
+          "POST /api/sessions {cwd, command, title} (X-Termhub: 1)",
+          "POST /api/sessions/:id/input (type into a session)",
+          "POST /api/exec: one argv, no shell, {code, stdout, stderr}",
+          "GET /api/claude/transcripts (read-only ~/.claude/projects)",
+          "GET /api/health"
+        ],
+        "/pa/ proxy": "the one sanctioned way to the dashboard off loopback (TERMHUB_PA_URL)",
+        "Peers": "<dataDir>/peers.json lists other machines; the browser merges their agent time",
+        "Idle tracking": "per-session working/waiting state and ntfy escalation; append-only <dataDir>/idle/YYYY-MM-DD.jsonl",
+        "Data dir": "%LOCALAPPDATA%\\termhub on Windows, ~/.local/termhub on Linux",
+        "Updates": "git pull --ff-only and restart the front only; sessions survive in sessiond"
+      },
+      "code": [
+        "termhub/front.js",
+        "termhub/lib/exec.js",
+        "termhub/lib/paProxy.js",
+        "termhub/lib/peers.js",
+        "termhub/lib/idleStore.js",
+        "termhub/AGENT.md"
+      ]
+    },
+    {
+      "id": "sessiond",
+      "layer": "sessions",
+      "name": "sessiond",
+      "role": "Owns the PTYs (node-pty), so sessions survive front updates; mirrors metadata to sessions.json for restore after a reboot.",
+      "stacks": {
+        "work": "live",
+        "personal": "live"
+      },
+      "where": {
+        "work": "127.0.0.1:7010",
+        "personal": "127.0.0.1:7010"
+      },
+      "health": "termhub",
+      "details": {
+        "Hosts": [
+          "the PA chat (Jarvis)",
+          "dispatched Claude Code sessions",
+          "on the factory machine: claude_session runs"
+        ],
+        "Restore": "a claude session re-opens as `claude --resume <uuid>` in its old cwd (the id termhub pinned with --session-id)",
+        "Restart": "restarting sessiond kills every live terminal: only on purpose"
+      },
+      "code": [
+        "termhub/sessiond.js",
+        "termhub/lib/session.js",
+        "termhub/lib/restore.js"
+      ]
+    },
+    {
+      "id": "termhub-wsl",
+      "layer": "sessions",
+      "name": "WSL termhub (work factory)",
+      "role": "A second termhub inside WSL Ubuntu for the work factory: its claude_session runs and the PA's /api/exec calls land here.",
+      "stacks": {
+        "work": "live"
+      },
+      "where": {
+        "work": "WSL Ubuntu, front 127.0.0.1:7100, sessiond 127.0.0.1:7110 (TERMHUB_PORT / TERMHUB_SESSIOND_PORT)"
+      },
+      "health": "termhub-wsl",
+      "details": {
+        "Why a second one": "the factory runs on Linux; WSL gives the work stack a Linux factory without crossing into the personal box",
+        "Factory points at it": "FACTORY_TERMHUB_URL should name its sessiond (:7110), since the default is :7010"
+      },
+      "code": [
+        "termhub/server.js",
+        "termhub/README.md"
+      ]
+    },
+    {
+      "id": "watchdog",
+      "layer": "sessions",
+      "name": "termhub watchdog",
+      "role": "Supervisor: signature, remedy, escalation. Windows scheduled task; on Linux systemd plus a watchdog that never restarts a healthy termhub.",
+      "stacks": {
+        "work": "live",
+        "personal": "live"
+      },
+      "where": {
+        "work": "Windows scheduled task (watchdog.ps1, a fresh process per cycle)",
+        "personal": "watchdog.sh, installed by termhub at start"
+      },
+      "details": {
+        "Why": "an outage once left the front down behind a port with nothing listening",
+        "Linux": "restarts only when termhub is down or unbound: a restart destroys every live terminal"
+      },
+      "code": [
+        "termhub/watchdog/watchdog.ps1",
+        "termhub/watchdog/watchdog.sh",
+        "termhub/lib/watchdogSetup.js"
+      ]
+    },
+    {
+      "id": "claude-sub",
+      "layer": "outside",
+      "name": "Claude Code (subscription)",
+      "role": "The claude CLI on a claude.ai login: the PA chat, dispatched sessions, the connector relay and claude_session factory runs.",
+      "stacks": {
+        "work": "live",
+        "personal": "live"
+      },
+      "details": {
+        "Used by": [
+          "Jarvis (interactive session)",
+          "dispatched sessions (pa do / session_start)",
+          "`claude -p` passes: connector relay, and bare-model passes when no ANTHROPIC_API_KEY",
+          "factory claude_session runs (API-key variables removed)"
+        ],
+        "PA login": "PA_CLAUDE_CONFIG_DIR gives `claude -p` children the PA's own login; dispatched sessions never get it",
+        "Billing": "subscription; usage limits apply and are not visible in advance"
+      },
+      "code": [
+        "personal-assistant/src/llm.js",
+        "termhub/lib/claudeCli.js"
+      ]
+    },
+    {
+      "id": "azure",
+      "layer": "outside",
+      "name": "Azure OpenAI / Foundry",
+      "role": "Metered models: the PA's azure/pa deployment, embeddings and rerank; the factory's azure_routes.",
+      "stacks": {
+        "work": "live",
+        "personal": "live"
+      },
+      "details": {
+        "PA": [
+          "azure/pa: blocks, dedupe, fast-lane fallback, and other passes per .env",
+          "embeddings text-embedding-3-small (1536 dims)",
+          "rerank cohere-rerank-v4-fast"
+        ],
+        "Factory": "azure_routes in routes.yaml (deepseek-v4-pro, Kimi-K2.7-Code, DeepSeek-V4-Flash)",
+        "Billing": "metered; PA spend in llm_spend, factory spend in cost_usd"
+      },
+      "env": [
+        {
+          "name": "PA_EMBED_DEPLOYMENT",
+          "default": "text-embedding-3-small"
+        },
+        {
+          "name": "PA_RERANK_DEPLOYMENT",
+          "default": "cohere-rerank-v4-fast"
+        }
+      ],
+      "code": [
+        "personal-assistant/src/models.js",
+        "software-factory/factory/routes.yaml"
+      ]
+    },
+    {
+      "id": "deepseek",
+      "layer": "outside",
+      "name": "DeepSeek API",
+      "role": "Metered models for factory personas (direct routes) and any PA pass set to deepseek/...",
+      "stacks": {
+        "work": "live",
+        "personal": "live"
+      },
+      "details": {
+        "Factory": "dev deepseek/deepseek-coder, pm / analyst / tech_writer deepseek/deepseek-chat (direct routes)",
+        "Billing": "metered"
+      },
+      "code": [
+        "software-factory/factory/routes.yaml"
+      ]
+    },
+    {
+      "id": "ollama",
+      "layer": "outside",
+      "name": "Ollama (local GPU)",
+      "role": "Local models for the fast lane: llama3.2:3b, kept loaded.",
+      "stacks": {
+        "work": "live",
+        "personal": "planned"
+      },
+      "where": {
+        "work": "http://127.0.0.1:11434 (PA_LOCAL_LLM_URL is its /v1)",
+        "personal": "Planned with the PA"
+      },
+      "health": "ollama",
+      "details": {
+        "Billing": "free (local)"
+      },
+      "env": [
+        {
+          "name": "PA_LOCAL_LLM_URL",
+          "default": "http://127.0.0.1:11434/v1"
+        }
+      ],
+      "code": [
+        "personal-assistant/src/llm.js"
+      ]
+    },
+    {
+      "id": "github",
+      "layer": "outside",
+      "name": "GitHub",
+      "role": "Source of work items (PA) and where the factory pushes branches, opens PRs and watches CI.",
+      "stacks": {
+        "work": "live",
+        "personal": "live"
+      },
+      "where": {
+        "work": "the work GitHub account",
+        "personal": "the personal account (xvanov)"
+      },
+      "details": {
+        "PA": "gh CLI ingest; GitHub puts work on you only where GitHub names you (githubGate)",
+        "Factory": "push, PR, CI checks, auto-merge per delivery level"
+      },
+      "code": [
+        "personal-assistant/src/ingest/github.js",
+        "personal-assistant/src/distill/githubGate.js"
+      ]
+    },
+    {
+      "id": "m365",
+      "layer": "outside",
+      "name": "Microsoft 365",
+      "role": "Mail, Teams and calendar, through the claude.ai connectors (and the local Teams cache). Read-only: nothing is ever sent.",
+      "stacks": {
+        "work": "live"
+      },
+      "where": {
+        "work": "Work tenant"
+      },
+      "details": {
+        "Access": "the connector logins only Claude Code holds; no Entra app registration",
+        "Send": "never: drafts open in Teams or Outlook for you to send"
+      },
+      "code": [
+        "personal-assistant/src/ingest/m365.js",
+        "personal-assistant/src/draft/deliver.js"
+      ]
+    }
+  ],
+  "edges": [
+    {
+      "from": "you",
+      "to": "talk-page",
+      "label": "speak (wake word)"
+    },
+    {
+      "from": "you",
+      "to": "dashboard",
+      "label": "board, chat panel (loopback)"
+    },
+    {
+      "from": "you",
+      "to": "termhub",
+      "label": "tailnet (Tailscale Serve)"
+    },
+    {
+      "from": "termhub",
+      "to": "dashboard",
+      "label": "/pa/ proxy"
+    },
+    {
+      "from": "talk-page",
+      "to": "whisper",
+      "label": "/api/talk/transcribe, then raw TCP"
+    },
+    {
+      "from": "talk-page",
+      "to": "fast-lane",
+      "label": "POST /api/talk/turn"
+    },
+    {
+      "from": "talk-page",
+      "to": "voice",
+      "label": "/api/talk/tts, /endpoint (proxied)"
+    },
+    {
+      "from": "fast-lane",
+      "to": "ollama",
+      "label": "/api/chat, forced JSON"
+    },
+    {
+      "from": "fast-lane",
+      "to": "azure",
+      "label": "fallback azure/pa"
+    },
+    {
+      "from": "fast-lane",
+      "to": "jarvis",
+      "label": "hand-off: your words typed in"
+    },
+    {
+      "from": "dashboard",
+      "to": "jarvis",
+      "label": "/api/chat in, transcript SSE out"
+    },
+    {
+      "from": "jarvis",
+      "to": "mcp",
+      "label": "MCP stdio (pa-chat)"
+    },
+    {
+      "from": "jarvis",
+      "to": "claude-sub",
+      "label": "model calls (subscription)"
+    },
+    {
+      "from": "sessiond",
+      "to": "jarvis",
+      "label": "hosts the PTY"
+    },
+    {
+      "from": "mcp",
+      "to": "postgres",
+      "label": "SQL reads"
+    },
+    {
+      "from": "mcp",
+      "to": "dispatcher",
+      "label": "factory_* / session_start"
+    },
+    {
+      "from": "notify",
+      "to": "jarvis",
+      "label": "INBOX.md + doorbell"
+    },
+    {
+      "from": "worker",
+      "to": "ingest",
+      "label": "periodic passes"
+    },
+    {
+      "from": "ingest",
+      "to": "m365",
+      "label": "claude -p connector relay"
+    },
+    {
+      "from": "ingest",
+      "to": "github",
+      "label": "gh CLI"
+    },
+    {
+      "from": "ingest",
+      "to": "postgres",
+      "label": "source_item (append-only)"
+    },
+    {
+      "from": "worker",
+      "to": "commitments",
+      "label": "distill, blocks, dedupe, reconcile"
+    },
+    {
+      "from": "commitments",
+      "to": "postgres",
+      "label": "commitment, ledger_transition"
+    },
+    {
+      "from": "worker",
+      "to": "notify",
+      "label": "interrupt budget"
+    },
+    {
+      "from": "worker",
+      "to": "claude-sub",
+      "label": "claude -p passes"
+    },
+    {
+      "from": "worker",
+      "to": "azure",
+      "label": "azure/pa, embeddings"
+    },
+    {
+      "from": "dashboard",
+      "to": "postgres",
+      "label": "/api/state"
+    },
+    {
+      "from": "dispatcher",
+      "to": "termhub",
+      "label": "POST /api/sessions"
+    },
+    {
+      "from": "dispatcher",
+      "to": "termhub-wsl",
+      "label": "/api/exec: uv run factory job ...",
+      "stacks": [
+        "work"
+      ]
+    },
+    {
+      "from": "dispatcher",
+      "to": "factory-api",
+      "label": "JOBS-API JSON"
+    },
+    {
+      "from": "worker",
+      "to": "factory-api",
+      "label": "job list poll (120 s) to factory_board"
+    },
+    {
+      "from": "factory-api",
+      "to": "factory-chain",
+      "label": "direction / task"
+    },
+    {
+      "from": "factory-chain",
+      "to": "runtime-api",
+      "label": "persona step"
+    },
+    {
+      "from": "factory-chain",
+      "to": "runtime-claude",
+      "label": "dev step / report"
+    },
+    {
+      "from": "factory-chain",
+      "to": "factory-store",
+      "label": "stories, runs, events"
+    },
+    {
+      "from": "factory-chain",
+      "to": "github",
+      "label": "push, PR, CI watch"
+    },
+    {
+      "from": "runtime-api",
+      "to": "deepseek",
+      "label": "LiteLLM (metered)"
+    },
+    {
+      "from": "runtime-api",
+      "to": "azure",
+      "label": "LiteLLM (metered)"
+    },
+    {
+      "from": "runtime-claude",
+      "to": "termhub-wsl",
+      "label": "create session (sessiond :7110)",
+      "stacks": [
+        "work"
+      ]
+    },
+    {
+      "from": "runtime-claude",
+      "to": "sessiond",
+      "label": "create session (FACTORY_TERMHUB_URL)",
+      "stacks": [
+        "personal"
+      ]
+    },
+    {
+      "from": "runtime-claude",
+      "to": "claude-sub",
+      "label": "claude -p stream-json"
+    },
+    {
+      "from": "termhub",
+      "to": "sessiond",
+      "label": "HTTP + WebSocket"
+    },
+    {
+      "from": "watchdog",
+      "to": "termhub",
+      "label": "health probe, remedy"
+    }
+  ],
+  "examples": [
+    {
+      "id": "whats-on",
+      "title": "A quick question, answered locally",
+      "say": "Hey Jarvis, what's on today?",
+      "steps": [
+        {
+          "c": "talk-page",
+          "t": "openWakeWord hears 'hey jarvis' in the browser; Silero VAD cuts the utterance; smart-turn (via /api/talk/endpoint) decides you are done."
+        },
+        {
+          "c": "whisper",
+          "t": "The WAV goes to /api/talk/transcribe; faster-whisper on :47821 returns the text."
+        },
+        {
+          "c": "fast-lane",
+          "t": "POST /api/talk/turn: llama3.2:3b sees the cached day snapshot and the last 6 turns, decides route 'answer' and streams one to three sentences."
+        },
+        {
+          "c": "ollama",
+          "t": "Local GPU call, kept loaded for 24 h. Cost: nothing."
+        },
+        {
+          "c": "voice",
+          "t": "/api/talk/tts: Kokoro speaks it as bf_isabella, sentence by sentence. Nothing reaches Claude."
+        }
+      ]
+    },
+    {
+      "id": "deepseek-pr",
+      "title": "Start a PR on the metered API",
+      "say": "Start the PR for card 412 with DeepSeek.",
+      "steps": [
+        {
+          "c": "talk-page",
+          "t": "Wake word, VAD, transcription as above."
+        },
+        {
+          "c": "fast-lane",
+          "t": "An action: the fast lane never answers it. It says 'On it.' and hands off your verbatim words."
+        },
+        {
+          "c": "jarvis",
+          "t": "Your words are typed into the PA chat through termhub. Claude Code calls card 412 (allowed) and then factory_start {card: 412, runtime: api, model: deepseek/deepseek-coder, delivery: pr}."
+        },
+        {
+          "c": "mcp",
+          "t": "factory_start is on no allow list: Claude Code shows a permission prompt and you approve it."
+        },
+        {
+          "c": "dispatcher",
+          "t": "dispatch.start composes the brief from the card (PA_COMPOSE_MODEL), writes a flow file, and runs `uv run factory job submit --json --runtime api --model dev=deepseek/deepseek-coder --delivery pr` on the factory machine."
+        },
+        {
+          "c": "termhub-wsl",
+          "t": "On the work stack the command runs through the WSL termhub's POST /api/exec (argv, no shell; content on stdin)."
+        },
+        {
+          "c": "factory-api",
+          "t": "The factory answers one JSON object with the job id; the PA records the run."
+        },
+        {
+          "c": "factory-chain",
+          "t": "Solo pipeline: one dev agent, then gates, a PR, and the CI watch (up to 3 CI-fix cycles)."
+        },
+        {
+          "c": "runtime-api",
+          "t": "OpenHands runs the dev step; LiteLLM calls DeepSeek."
+        },
+        {
+          "c": "deepseek",
+          "t": "Metered: the spend shows in the job's cost_usd."
+        },
+        {
+          "c": "github",
+          "t": "Branch pushed, ready PR opened, checks watched; delivered_pr, never merged."
+        },
+        {
+          "c": "worker",
+          "t": "The factory poll (every 120 s) stores `job list` in factory_board; the Factory page and the chat's factory_job show state, PR and cost; a notification tells you."
+        }
+      ]
+    },
+    {
+      "id": "review-fix",
+      "title": "Continue a PR on the subscription",
+      "say": "Fix the review comments on PR 12.",
+      "steps": [
+        {
+          "c": "fast-lane",
+          "t": "Hand-off to the PA chat."
+        },
+        {
+          "c": "jarvis",
+          "t": "Calls factory_continue {pr: 12, repo}: runtime defaults to claude_session because you did not ask for the API. You approve the prompt."
+        },
+        {
+          "c": "dispatcher",
+          "t": "`job submit --pr 12 --runtime claude_session`. Landing: a factory without --pr refuses in its parser and the job fails saying so, never resent as fresh work."
+        },
+        {
+          "c": "runtime-claude",
+          "t": "The factory checks `claude auth status` is a claude.ai login, then starts `claude -p --output-format stream-json` in a termhub session with API-key variables removed."
+        },
+        {
+          "c": "termhub-wsl",
+          "t": "The session lives in the WSL termhub; its URL is in runs[].session, so you can open it live from the Factory page."
+        },
+        {
+          "c": "claude-sub",
+          "t": "Billed to the subscription: cost_usd 0, the API-price equivalent goes to subscription_equiv_usd."
+        },
+        {
+          "c": "github",
+          "t": "The fix is pushed fast-forward to the same PR; the CI watch restarts on the new head."
+        }
+      ]
+    },
+    {
+      "id": "teams-ask",
+      "title": "Someone asks you for something in Teams",
+      "say": "(a colleague writes: 'can you send me the numbers by Friday?')",
+      "steps": [
+        {
+          "c": "m365",
+          "t": "The message lands in the Teams client; its local cache changes on disk."
+        },
+        {
+          "c": "ingest",
+          "t": "The change notification wakes the resident cache reader; the item is stored as a source_item in seconds (the connector pass confirms it minutes later, same row)."
+        },
+        {
+          "c": "commitments",
+          "t": "The distill pass (sourcePolicy first) extracts an owed_by_me commitment with an absolute due date; blocks and dedupe link it to related work."
+        },
+        {
+          "c": "postgres",
+          "t": "commitment row, with extracted_by and the raw payload kept."
+        },
+        {
+          "c": "dashboard",
+          "t": "The card appears under On me on the board."
+        },
+        {
+          "c": "notify",
+          "t": "Within the interrupt budget: a toast (or ntfy), and INBOX.md for the PA chat with a content-free doorbell when it is idle."
+        }
+      ]
+    },
+    {
+      "id": "research",
+      "title": "A research report",
+      "say": "Research how our deploy pipeline handles rollbacks and write it up.",
+      "steps": [
+        {
+          "c": "jarvis",
+          "t": "You asked for research explicitly, so the chat calls factory_start {kind: research, ask: your words}; you approve the prompt."
+        },
+        {
+          "c": "dispatcher",
+          "t": "A research job delivers none; its ask is your own words (no composing model)."
+        },
+        {
+          "c": "factory-api",
+          "t": "job submit --kind research returns an id like app:r0007."
+        },
+        {
+          "c": "factory-chain",
+          "t": "The next factory tick starts a detached worker (at most 2 at a time)."
+        },
+        {
+          "c": "runtime-claude",
+          "t": "One Claude Code conversation (claude_session by default from the chat) writes report.md; 5400 s cap."
+        },
+        {
+          "c": "factory-store",
+          "t": "state/jobs/r0007-<slug>/report.md is kept by the factory."
+        },
+        {
+          "c": "worker",
+          "t": "The poll sees it done; factory_job returns the report excerpt and the Factory page renders the report as a parsed tree (no HTML sink)."
+        }
+      ]
+    },
+    {
+      "id": "phone",
+      "title": "From your phone",
+      "say": "(open the board and talk to Jarvis away from the laptop)",
+      "steps": [
+        {
+          "c": "you",
+          "t": "The phone is on the tailnet; it opens termhub's https address (Tailscale Serve)."
+        },
+        {
+          "c": "termhub",
+          "t": "termhub's /pa/ proxy rewrites Host to loopback and forwards X-PA; the page's own URLs are relative, so everything works under /pa/."
+        },
+        {
+          "c": "dashboard",
+          "t": "The board, the chat panel and /talk work as on the laptop; nothing else exposes the dashboard."
+        },
+        {
+          "c": "jarvis",
+          "t": "The same PA chat session: typing on the phone, speaking, and typing in termhub are one conversation."
+        }
+      ]
+    }
+  ],
+  "health": {
+    "dashboard": {
+      "kind": "self",
+      "label": "Dashboard (this process)"
+    },
+    "postgres": {
+      "kind": "postgres",
+      "label": "Postgres"
+    },
+    "voice": {
+      "kind": "http",
+      "config": "voice.url",
+      "path": "/health",
+      "label": "pa-voice"
+    },
+    "ollama": {
+      "kind": "http",
+      "config": "providers.local.baseUrl",
+      "origin": true,
+      "path": "/api/tags",
+      "label": "Ollama"
+    },
+    "whisper": {
+      "kind": "tcp",
+      "hostConfig": "audio.transcribeHost",
+      "portConfig": "audio.transcribePort",
+      "label": "faster-whisper"
+    },
+    "termhub": {
+      "kind": "http",
+      "config": "termhub.url",
+      "path": "/api/health",
+      "label": "termhub (local)"
+    },
+    "termhub-wsl": {
+      "kind": "http",
+      "url": "http://127.0.0.1:7100/api/health",
+      "label": "WSL termhub"
+    },
+    "factory-machine": {
+      "kind": "machine",
+      "label": "Factory machine's termhub"
+    }
+  }
+}
