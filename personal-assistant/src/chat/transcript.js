@@ -63,6 +63,22 @@ function describeTool(name, input = {}) {
       case 'open_commitments': return 'checking open asks…';
       case 'who_is': return `looking up ${shorten(i.name || i.query || 'a person', 40)}…`;
       case 'get_thread': return 'reading a thread…';
+      case 'board': return 'reading your board…';
+      case 'card': return `reading card ${shorten(i.id, 20)}…`;
+      case 'factory_jobs': return 'checking factory jobs…';
+      case 'factory_job': return `checking factory job ${shorten(i.job, 40)}…`;
+      case 'sessions': return 'listing sessions…';
+      // The actions: what the permission prompt is for, named (src/chat/feed.js waitingText).
+      case 'factory_start':
+      case 'factory_continue': {
+        const on = i.branch ? ` on branch ${shorten(i.branch, 40)}` : i.pr ? ` on PR #${Number(i.pr) || '?'}` : '';
+        const what = i.title || (i.card ? `card ${i.card}` : i.ask) || 'a job';
+        return `starting a factory ${i.kind && i.kind !== 'code' ? `${i.kind} ` : ''}job${on}: ${shorten(what, 60)} (${i.runtime || 'claude_session'}${i.delivery ? `, ${i.delivery}` : ''})…`;
+      }
+      case 'factory_resume': return `resuming factory job ${shorten(i.job, 40)}…`;
+      case 'factory_cancel': return `cancelling factory job ${shorten(i.job, 40)}…`;
+      case 'factory_approve': return `approving factory job ${shorten(i.job, 40)}…`;
+      case 'session_start': return `starting a session${i.repo ? ` on ${shorten(i.repo, 40)}` : ''}: ${shorten(i.prompt, 50)}…`;
       default: return `using ${tool.replace(/_/g, ' ')}…`;
     }
   }

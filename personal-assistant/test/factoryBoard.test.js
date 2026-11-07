@@ -359,10 +359,13 @@ const isV1 = (argv) => argv.includes('--kind') || argv.includes('--runtime');
     assert.throws(() => mcp.paToolArgv('factory jobs', ['--force']), /writes/);
     assert.deepStrictEqual(mcp.paToolArgv('factory status', ['widget:015']), ['factory', 'status', 'widget:015']);
     const md = chat.claudeMd();
-    assert.match(md, /A \*\*code\*\* job always becomes a card the user accepts — never started from here/);
-    assert.match(md, /only when the user explicitly asked you for that research or write-up/);
+    // Jobs start through the factory_start tool, which asks on every call; the
+    // shell form (`pa factory submit`) still puts a code job on a card.
+    assert.match(md, /puts a\s+code job on a card instead/);
+    assert.match(md, /only when the user explicitly asked for that research or write-up/);
     const s = chat.settingsJson();
-    assert.ok(!s.permissions.allow.some((r) => /factory/.test(r)), 'no factory verb is allowed without asking');
+    assert.ok(!s.permissions.allow.some((r) => /^Bash\(.*factory/.test(r)), 'no factory verb is allowed without asking');
+    for (const t of chat.CHAT_ACTION_TOOLS) assert.ok(!s.permissions.allow.some((r) => r.endsWith(`__${t}`)), `${t} asks`);
   }
 
   // The Factory page (dashboard/factory.js): its pure checks, then its routes.

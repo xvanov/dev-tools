@@ -103,7 +103,14 @@ reads only through MCP tools: the read MCP tools, and the read-only `pa` verbs a
 (server `pa-chat`, `--mcp-config pa-home/pa-chat.mcp.json`, `PA_MCP_CHAT_TOOLS=1`). No `pa` shell
 command is allowed — a Bash prefix rule cannot tell `pa memory` from `pa memory run` — so every one,
 `pa propose` included, asks. The one write it makes without asking is the chat-only MCP tool `task_add`
-(a task the user explicitly asked for; reversible). Its CLAUDE.md is rewritten from code on every start — change it in
+(a task the user explicitly asked for; reversible). Its structured tools (`src/mcp/chatTools.js`,
+chat-only like `pa`) split the same way: the reads (`CHAT_READ_TOOLS`: board, card, factory_jobs,
+factory_job, sessions) are allowed; the actions (`CHAT_ACTION_TOOLS`: factory_start, factory_continue,
+factory_resume, factory_cancel, factory_approve, session_start) are on no allow list, so every call asks,
+and `verifyClaudeHome` refuses a home whose allow list names one or the whole server. The actions are
+the dispatch paths themselves (`dispatch.start`, `factory.cancelJob|approve|resume`), never a second
+implementation, and an unattended end state from them becomes a card (`suggested by the chat`), as
+`pa do` does for a non-interactive caller. Its CLAUDE.md is rewritten from code on every start — change it in
 `src/chat/index.js`, not on disk; the user's own additions go in `CLAUDE.local.md`. The chat may run
 on opencode instead (`PA_CHAT_AGENT`, `src/chat/agent.js`) only under the same guarantee, enforced
 differently because opencode parses a command line its own way and every bash allow-pattern was a

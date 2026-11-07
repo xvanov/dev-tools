@@ -68,6 +68,20 @@ function newestTranscript(dir) {
   return best;
 }
 
+/**
+ * Pure. What the chat is parked on, for the voice page and the chat panel.
+ * The prompt itself is answered only in termhub (typing at it from here could
+ * press an option), so this names the action — from the last tool call the
+ * transcript showed — and where to answer it. The word "termhub" is what the
+ * voice page keys its "waiting" state on.
+ */
+function waitingText(lastTool) {
+  const what = String(lastTool || '').replace(/…$/, '').trim();
+  return what
+    ? `waiting for your yes in termhub: ${what}`
+    : 'waiting for your answer in termhub (a permission prompt or a question)…';
+}
+
 const norm = (s) => String(s || '').replace(/\s+/g, ' ').trim();
 
 function httpError(status, message) {
@@ -103,6 +117,7 @@ function createFeed({
   // the transcript has shown the answer, its "idle" is the previous turn's.
   let turn = null;
   let lastRead = 0;
+  let lastTool = null;
 
   function publish(e, broadcast = true) {
     if (e.type !== 'status') {
@@ -180,6 +195,10 @@ function createFeed({
           }
         }
         if (turn && e.type === 'assistant' && e.final !== false) turn.answered = true;
+        // The last tool call of the turn: a permission prompt is always for
+        // the call the transcript showed last, so the wait can name it.
+        if (e.type === 'activity') lastTool = e.text;
+        else if (e.type === 'user') lastTool = null;
         publish(e, !quiet);
       }
     }
@@ -213,7 +232,7 @@ function createFeed({
     if (st.status !== 'thinking' && !held) turn = null;
     setStatus(st.status);
     if (st.waitingOn && !waitingOn) {
-      publish({ id: `wait-${Date.now()}`, type: 'activity', text: 'waiting for your answer in termhub (a permission prompt or a question)…', at: new Date().toISOString() });
+      publish({ id: `wait-${Date.now()}`, type: 'activity', text: waitingText(lastTool), at: new Date().toISOString() });
     }
     waitingOn = st.waitingOn;
   }
@@ -310,4 +329,4 @@ function feed() {
   return shared;
 }
 
-module.exports = { createFeed, feed, newestTranscript, SOURCES };
+module.exports = { waitingText, createFeed, feed, newestTranscript, SOURCES };

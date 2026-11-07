@@ -1,5 +1,7 @@
 'use strict';
 
+// (The chat's structured read tools — board … sessions — were added to the
+// agent block by hand when src/mcp/chatTools.js landed; same shape as `pa`.)
 // The ruleset opencode 1.18.15 resolved for the PA chat's "pa" agent from the
 // opencode.json src/chat/agent.js writes since every shell command asks
 // (`opencode debug agent pa` in a home holding only that file), with the
@@ -313,6 +315,31 @@ module.exports = [
  },
  {
   "permission": "personal-assistant_pa",
+  "action": "allow",
+  "pattern": "*"
+ },
+ {
+  "permission": "personal-assistant_board",
+  "action": "allow",
+  "pattern": "*"
+ },
+ {
+  "permission": "personal-assistant_card",
+  "action": "allow",
+  "pattern": "*"
+ },
+ {
+  "permission": "personal-assistant_factory_jobs",
+  "action": "allow",
+  "pattern": "*"
+ },
+ {
+  "permission": "personal-assistant_factory_job",
+  "action": "allow",
+  "pattern": "*"
+ },
+ {
+  "permission": "personal-assistant_sessions",
   "action": "allow",
   "pattern": "*"
  },

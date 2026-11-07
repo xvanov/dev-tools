@@ -120,6 +120,8 @@ function opencodeRules() {
   rules[`personal-assistant_${PA_TOOL}`] = 'allow';
   // A task the user explicitly asked for: reversible, and the tool says when (src/mcp/server.js).
   rules[`personal-assistant_${chat.TASK_TOOL}`] = 'allow';
+  // The structured reads (src/mcp/chatTools.js). Its actions stay on "*": ask.
+  for (const t of chat.CHAT_READ_TOOLS) rules[`personal-assistant_${t}`] = 'allow';
   return rules;
 }
 
@@ -189,6 +191,11 @@ function probes(pa = require('./index').paCommand()) {
     ['personal-assistant_remember', '*', 'ask'],
     ['personal-assistant_recall', '*', 'allow'],
     [`personal-assistant_${PA_TOOL}`, '*', 'allow'],
+    // The structured tools: reads allowed, every action asks.
+    ['personal-assistant_board', '*', 'allow'],
+    ['personal-assistant_factory_start', '*', 'ask'],
+    ['personal-assistant_factory_cancel', '*', 'ask'],
+    ['personal-assistant_session_start', '*', 'ask'],
   ];
 }
 

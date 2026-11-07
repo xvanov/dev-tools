@@ -859,12 +859,26 @@ each command prints — the contract is the factory's `docs/JOBS-API.md`.
 
 **Telling the PA chat**: it picks the end state from what you said, the route (`--via claude`, or
 `--via factory --pipeline chain|solo`) and models, and either starts it (`pa do`, behind a permission
-prompt) or puts it on a card (`pa propose`, which starts nothing). Accepting a card from the chat
+prompt; or the `factory_start` / `session_start` tools below) or puts it on a card (`pa propose`,
+which starts nothing). Accepting a card from the chat
 (`pa answer <id> yes [--delivery level]`), `pa delivery set` and `pa factory add` ask first.
 
-**Jarvis as coordinator**: the chat reads the factory through the `pa` tool without asking
-(`pa factory jobs` — every job by Needs you / Running / Delivered / Failed, from the worker's stored
-list; `pa factory status <job>`; `pa factory report <job>`) and acts behind a prompt: `pa factory
+**Jarvis as coordinator**: the chat works every layer through structured MCP tools
+(`src/mcp/chatTools.js`, listed only for the chat), one call each and compact JSON back. Reads run
+without a prompt: `board` (today's to-dos grouped todo / blocked / unblocked / looks done, with ids,
+who, due, repo, blockers, live run), `card <id>` (one card's full context: source excerpt, links,
+blockers, runs, offers), `factory_jobs` / `factory_job <job>` (state, PRs, CI, cost,
+subscription-equivalent, report excerpt, follow link) and `sessions` (termhub). Actions ask on every
+call: `factory_start` (from a card and/or your words; the brief is composed server-side from the
+card's context; runtime `claude_session` unless you ask for the API or name an API model; the end state
+from your words), `factory_continue` (a new job on an existing `--branch` / `--pr`), `factory_resume`,
+`factory_cancel`, `factory_approve` and `session_start` (a Claude session in its own worktree). They
+are `pa do` / `pa factory …` in-process — an end state that merges or pushes to main still becomes a
+card. "What are my tasks today?" → `board`; "start on that one, PR ready to merge, CI green" →
+`factory_start {card, delivery: pr, done: [...]}` → one prompt in termhub.
+
+The same reads are `pa` tool verbs (`pa factory jobs`, `pa factory status <job>`, `pa factory report
+<job>`), and the shell forms still work behind a prompt: `pa factory
 submit --title … --ask … --kind code|research|report --runtime api|claude_session [--repo
 owner/name] [--delivery level] [--done …]` puts a **code** job on a card you accept — it never
 starts one — and starts a **research or report** job at once only when you asked the chat for it
@@ -1168,7 +1182,9 @@ It is homed in `%LOCALAPPDATA%\personal-assistant\pa-home`, whose `CLAUDE.md` ma
 whose SessionStart hook loads `pa context` — your profile, today's brief, what is waiting on you —
 at every start, resume and compaction, so a long-running chat stays current without carrying
 history. It answers through the MCP tools (`recall`, `memory_page`, …) and acts through the `pa`
-CLI: read-only commands run freely; starting a run (`pa do`), landing, steering, closing,
+CLI, and reaches the board, the factory and termhub through structured tools (`board`, `card`,
+`factory_jobs`, `factory_start`, `session_start`, … — see "Jarvis as coordinator"): reads run freely;
+starting a run or job, landing, steering, closing,
 remembering and adding routines each ask you first. One write needs no prompt: when you tell it
 "create a task…" it adds one with its `task_add` tool (the same code as `pa task add`; Dismiss undoes
 it) — and only then, never for its own work. Put your own standing instructions in
@@ -1269,7 +1285,9 @@ same through termhub's `/pa/` proxy from a phone.
   which also clocks up the GPU voice). The text then goes to the fast lane (next bullet), which hands
   it to `/api/chat` with `source: "voice"` when the PA chat is needed. While the chat is parked on a
   permission prompt or question, the chat refuses the send (409); the page says once that it is
-  waiting on an answer in termhub, and does not retry.
+  waiting on an answer in termhub — naming the action from the last tool call ("waiting for your yes in
+  termhub: starting a factory job: card 412 (claude_session, pr)") — and does not retry. The prompt is
+  answered in termhub only: typing at it from here could press an option.
 - **The fast lane ("System 1", `src/chat/fastLane.js`).** The PA chat takes 3–5 s before it says
   anything; a person answers within a second. So each spoken turn first goes to a quick model
   (`PA_FAST_MODEL`, default `local/llama3.2:3b` in Ollama) that sees a compact snapshot of your day

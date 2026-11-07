@@ -17,6 +17,15 @@
 // user answers in the dashboard, and returns an id and a status. No tool here
 // returns a secret value — `secret_status` says configured or not, and where.
 //
+// The PA chat ("Jarvis") gets more, and only it (PA_MCP_CHAT_TOOLS=1, set
+// by its own MCP config): the read-only `pa` verbs, `task_add`, and the
+// structured tools in ./chatTools.js — fast reads of the board, the factory
+// and termhub, and the actions that start, continue, resume or cancel work.
+// Those actions are on no allow list: Claude Code asks the user on every
+// call, and the chat runs with bypass mode disabled (src/chat/index.js). No
+// other session can list them, so a coding session that skips permissions
+// never sees a tool that starts work.
+//
 // Uses the low-level Server rather than McpServer so tool schemas stay plain
 // JSON Schema: one less dependency, and the schemas are readable as data.
 
@@ -526,9 +535,19 @@ async function handle(name, args = {}) {
       return text(body || '(no output)');
     }
 
-    default:
+    default: {
+      // The chat's structured tools (src/mcp/chatTools.js): chat-only, like `pa`.
+      const chat = require('./chatTools');
+      if (chatToolsOn() && chat.ALL.some((t) => t.name === name)) return json(await chat.handle(name, args));
       throw new Error(`unknown tool ${name}`);
+    }
   }
+}
+
+// Compact JSON for the chat's structured tools: a model reads it as well as
+// pretty-printed, at a fraction of the tokens.
+function json(value) {
+  return { content: [{ type: 'text', text: JSON.stringify(value) }] };
 }
 
 // Recall as text a model reads well: verdict first, then the distilled layer
@@ -563,13 +582,18 @@ function formatRecall(r) {
   return lines.join('\n');
 }
 
+/** The tools this server lists: the shared read surface, plus the chat's own. */
+function listedTools(env = process.env) {
+  return chatToolsOn(env) ? [...TOOLS, PA_TOOL, TASK_TOOL, ...require('./chatTools').ALL] : TOOLS;
+}
+
 async function main() {
   const server = new Server(
     { name: 'personal-assistant', version: '0.1.0' },
     { capabilities: { tools: {} } }
   );
 
-  server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: chatToolsOn() ? [...TOOLS, PA_TOOL, TASK_TOOL] : TOOLS }));
+  server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: listedTools() }));
 
   server.setRequestHandler(CallToolRequestSchema, async (req) => {
     try {
@@ -584,7 +608,7 @@ async function main() {
   await server.connect(new StdioServerTransport());
 }
 
-module.exports = { TOOLS, PA_TOOL, TASK_TOOL, READ_VERBS, handle, formatRecall, paToolArgv, chatToolsOn };
+module.exports = { TOOLS, PA_TOOL, TASK_TOOL, READ_VERBS, handle, formatRecall, paToolArgv, chatToolsOn, listedTools };
 
 if (require.main === module) {
   main().catch(async (err) => {
