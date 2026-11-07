@@ -7,17 +7,19 @@ const B = require('../src/commitments/blocks');
 
 // Only ids asked for; a task not offered becomes null; a bad verdict is skipped.
 const v = B.parseVerdicts({ items: [
-  { id: 'B#10', verdict: 'blocks', task: 'T#1', why: 'needs the field list to build the sync' },
+  { id: 'B#10', verdict: 'blocks', task: 'T#1', why: 'needs the field list to build the sync', who: null },
   { id: 'B11', verdict: 'blocks', task: 'T#99', why: 'x' },
+  { id: 'B14', verdict: 'blocks', task: null, who: 'Torvan', why: 'y' },
   { id: '12', verdict: 'not_mine', task: 'T#1' },
   { id: 'B13', verdict: 'maybe' },
   { id: 'B77', verdict: 'blocks' },
   { id: 'B10', verdict: 'not_mine' },
-] }, ['10', '11', '12', '13'], ['1', '2']);
-assert.deepStrictEqual(v.get('10'), { verdict: 'blocks', taskId: '1', why: 'needs the field list to build the sync' });
-assert.deepStrictEqual(v.get('11'), { verdict: 'blocks', taskId: null, why: 'x' });
-assert.deepStrictEqual(v.get('12'), { verdict: 'not_mine', taskId: null, why: null });
+] }, ['10', '11', '12', '13', '14'], ['1', '2']);
+assert.deepStrictEqual(v.get('10'), { verdict: 'blocks', taskId: '1', why: 'needs the field list to build the sync', who: null });
+assert.deepStrictEqual(v.get('11'), { verdict: 'blocks', taskId: null, why: 'x', who: null });
+assert.deepStrictEqual(v.get('12'), { verdict: 'not_mine', taskId: null, why: null, who: null });
 assert.ok(!v.has('13') && !v.has('77'));
+assert.strictEqual(v.get('14').who, 'Torvan');
 assert.strictEqual(B.parseVerdicts(null, ['1'], []).size, 0);
 
 // What is due: never judged, its task closed, or a task added since it found none.

@@ -155,6 +155,8 @@ function build(s, { now = Date.now() } = {}) {
     }
     const b = blockOf.get(id) || { verdict: 'blocks', task_id: null, why: null, pending: true };
     c.block = b;
+    // No counterparty on the commitment: the name the blocks pass read from the message.
+    if (!c.who && b.who) c.who = b.who;
     const task = b.verdict === 'blocks' && b.task_id != null ? cards.get(String(b.task_id)) : null;
     if (task && task.direction !== 'owed_to_me' && !task.selfNote) {
       // Shown on the task it holds up, not as a card of its own.
