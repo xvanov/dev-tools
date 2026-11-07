@@ -36,6 +36,7 @@ Design rationale: the plan page (proposal, 7 Nov 2026) and the research summary 
 | D9 | 2026-11-07 | **Every agent run is watchable live in Run, whatever its runtime** (Claude Code, API models such as DeepSeek, opencode, local) | Today only `claude_session` runs show turn-by-turn work in a terminal; API runs show stage-level events via `factory job follow`. E2 closes the gap. |
 | D10 | 2026-11-07 | **The plan ends with a workflow acceptance review**: an independent reviewer session runs each workflow in the Map and scores it against its metrics | Phase 8. The workflows (research, open a PR on DeepSeek, continue a PR, answer locally, Teams ask, phone) are the product; components passing tests is not enough. |
 | D11 | 2026-11-07 | **Implementation runs on the work laptop (Windows).** Two GitHub identities: `xvanov` (personal; this repo) and `kalinivanov-innergy` (work) | Git uses the SSH host aliases `github-xvanov` / `github-innergy`. `gh` picks the account by repo owner, never by whichever is active (P1). |
+| D12 | 2026-11-07 | **Desktop only; no week-long shadow run** | Phone app and the `phone` workflow are out of scope: 7.6 is the Tauri desktop shell only, Phase 8 skips `phone`. 3.4 is a one-shot comparison over a recorded query set instead of a week of shadowing. |
 
 ## Prerequisites (before phase 0)
 
@@ -238,12 +239,12 @@ run mid-step; a job continued on an existing branch (`--branch`).
 - [ ] **3.2** Contract tests from 1.3 green on SQLite.
 - [ ] **3.3 Export from Postgres, copying existing vectors (no re-embedding, D5).** Optional
   int8 quantization is local arithmetic on the copied vectors, not an API call.
-- [ ] **3.4 Shadow run:** both backends answer the same searches for a week; compare results
-  and latency; recalibrate rerank thresholds.
+- [ ] **3.4 Shadow comparison (D12):** both backends answer the same recorded query set once;
+  compare results and latency; recalibrate rerank thresholds.
 - [ ] **3.5** Cutover on the personal stack, then the work stack; Litestream backup + restore
   drill.
 - [ ] **3.6** WSL off on the work laptop (D6); Postgres removed.
-- [ ] **Exit 3:** one SQLite file per stack, search quality ≥ Postgres on the shadow set.
+- [ ] **Exit 3:** one SQLite file per stack, search quality ≥ Postgres on the recorded query set.
 
 ## Phase 4: jarvisd
 
@@ -280,14 +281,14 @@ run mid-step; a job continued on an existing branch (`--branch`).
 - [ ] **7.4** Encrypted backups with a restore drill; signed self-update.
 - [ ] **7.5** OpenTelemetry into Meter, including the separate Claude subscription credit pool
   (since 15 Jun 2026) with API fallback when it runs out.
-- [ ] **7.6** Tauri desktop shell, then the phone app.
+- [ ] **7.6** Tauri desktop shell (phone app out of scope, D12).
 - [ ] **Exit 7:** install on a fresh Windows, macOS and Linux machine from one artifact.
 
 ## Phase 8: workflow acceptance review (the last phase; D10)
 
 Every workflow the Map lists must actually work, end to end, on the stack it belongs to, and
 meet its quality and speed metrics. The registry is `architecture.json`'s `examples` (today:
-`whats-on`, `deepseek-pr`, `review-fix`, `teams-ask`, `research`, `phone`); a workflow that is
+`whats-on`, `deepseek-pr`, `review-fix`, `teams-ask`, `research`; `phone` is out of scope, D12); a workflow that is
 not in the Map is not done, and a new one gets added there first.
 
 - [ ] **8.1 Acceptance criteria per workflow** in `architecture.json` (an `acceptance` block on
