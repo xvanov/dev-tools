@@ -16,8 +16,10 @@ permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.ref }}
-  # Only supersede stale PR runs; every commit on main gets its own verdict.
+  # A shared group also cancels *pending* runs, so only PRs share one; every
+  # push/dispatch gets a unique group and its own verdict.
+  group: ci-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  # Only supersede stale PR runs.
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
