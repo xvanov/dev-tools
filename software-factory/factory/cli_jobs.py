@@ -225,6 +225,21 @@ def cancel_cmd(
     _run(as_json, lambda: cancel_job(_root(), _need_job_id(job_id)))
 
 
+@job_app.command("resume")
+def resume_cmd(
+    job_id: str | None = typer.Argument(None, help="<app>:<direction_id> or <app>:r<NNNN>"),
+    as_json: bool = typer.Option(False, "--json", help="Print one JSON object"),
+    no_github: bool = typer.Option(
+        False, "--no-github", help="Skip GitHub lookups (local view only)"
+    ),
+) -> None:
+    """Pick a failed / cancelled / stalled job back up, keeping its finished
+    stories and continuing the rest from their existing branch, worktree and PR."""
+    from factory.jobs.resume import resume_job
+
+    _run(as_json, lambda: resume_job(_root(), _need_job_id(job_id), github=not no_github))
+
+
 @job_app.command("report")
 def report_cmd(
     job_id: str | None = typer.Argument(None, help="<app>:<task_id> of a research/report job"),
