@@ -162,6 +162,18 @@ only when `nudgeDecision` (`src/notify/chat.js`, tested) proves the session is C
 chat is never nudged: the screen rules are Claude's. When it cannot prove it, it skips: Enter on a
 permission prompt approves the action. Do not loosen a condition there without a test case for it.
 
+**A permission prompt is answered from a page only deliberately, and only for the chat's own actions.**
+The Talk page's Approve / Deny (`POST /api/chat/permission`, `src/chat/permission.js`) is the one path
+that presses a key at a prompt. It needs X-PA and the page token (issued with `/talk`), names the
+tool call by its `tool_use` id, and `decide` refuses unless every check holds: that call is the one
+the chat is parked on, it is a `mcp__pa-chat__` tool in `CHAT_ACTION_TOOLS` (never a shell command,
+an edit or any other tool, whose one-line description would not show what is approved), termhub says
+the session is Claude Code waiting with `idleReason: blocked`, and the screen read at that moment is
+Claude Code's "Do you want to proceed?" for that tool with no input box after it. Approve is one
+Enter with the cursor on "Yes" — never "Yes, and don't ask again", which would make every later
+call of the tool unasked; Deny is Esc. Anything else is a 409 and is answered in termhub. There is
+no voice answer: a "yes" heard in the room must not approve work.
+
 **One implementation per behaviour.** OpenClaw skills call the `pa` CLI. They do not talk to
 Postgres, and they do not reimplement dispatch. When the TUI and the CLI disagree about what
 `pa do` means, the bug is that there are two implementations.

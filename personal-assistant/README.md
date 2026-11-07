@@ -1287,8 +1287,12 @@ same through termhub's `/pa/` proxy from a phone.
   it to `/api/chat` with `source: "voice"` when the PA chat is needed. While the chat is parked on a
   permission prompt or question, the chat refuses the send (409); the page says once that it is
   waiting on an answer in termhub — naming the action from the last tool call ("waiting for your yes in
-  termhub: starting a factory job: card 412 (claude_session, pr)") — and does not retry. The prompt is
-  answered in termhub only: typing at it from here could press an option.
+  termhub: starting a factory job: card 412 (claude_session, pr)") — and does not retry. When the prompt is
+  for one of the chat's own actions (`factory_start`, `session_start`, …), the page shows it with
+  **Approve** and **Deny**: the server reads the session's screen, checks it really is Claude Code's
+  permission prompt for that tool call, and presses Enter on "Yes" (once — never "don't ask again") or
+  Esc. Any other prompt (a shell command, an edit) is answered in termhub. Saying "yes" does not
+  approve anything.
 - **The fast lane ("System 1", `src/chat/fastLane.js`).** The PA chat takes 3–5 s before it says
   anything; a person answers within a second. So each spoken turn first goes to a quick model
   (`PA_FAST_MODEL`, default `local/llama3.2:3b` in Ollama) that sees a compact snapshot of your day

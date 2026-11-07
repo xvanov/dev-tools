@@ -137,7 +137,12 @@ function entryEvents(entry) {
         const e = { id, type: 'assistant', text: String(b.text).trim(), at };
         if (final !== undefined) e.final = final;
         out.push(e);
-      } else if (b.type === 'tool_use') out.push({ id, type: 'activity', text: describeTool(b.name, b.input), at });
+      } else if (b.type === 'tool_use') {
+        // The tool's name and call id ride along (never its input): a permission
+        // prompt is for the last call, and the Talk page answers it by that id
+        // (src/chat/permission.js).
+        out.push({ id, type: 'activity', text: describeTool(b.name, b.input), at, tool: String(b.name || ''), toolUseId: String(b.id || '') });
+      }
     });
     return out;
   }

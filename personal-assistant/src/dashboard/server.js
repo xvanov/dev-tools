@@ -216,7 +216,7 @@ async function handle(req, res) {
   // its models (/talk/models/), the local voice service's proxy, and
   // POST /api/talk/transcribe (X-PA guarded there). ----
   if (url.pathname === '/talk' || url.pathname.startsWith('/talk.') || url.pathname.startsWith('/talk/') || url.pathname.startsWith('/api/talk/')) {
-    if (await require('./talk').route(req, res, url, { send })) return;
+    if (await require('./talk').route(req, res, url, { send, issuePageToken })) return;
   }
   // ---- end voice page ----
 
@@ -289,6 +289,15 @@ async function handle(req, res) {
     if (req.headers['x-pa'] !== '1') return send(res, 403, { error: 'missing X-PA header' });
     const body = await readJson(req);
     return send(res, 200, await require('../chat/feed').feed().send({ text: body.text, source: body.source || 'typed' }));
+  }
+  // Approve / Deny on the chat's permission prompt, from the Talk page. It
+  // answers a prompt that may start work, so it needs the page's token as well
+  // as X-PA, and src/chat/permission.js checks the screen before one keystroke.
+  if (req.method === 'POST' && url.pathname === '/api/chat/permission') {
+    if (req.headers['x-pa'] !== '1') return send(res, 403, { error: 'missing X-PA header' });
+    if (!pageTokenOk(req)) return send(res, 403, { error: 'answering a permission prompt needs the page token — reload the page' });
+    const body = await readJson(req);
+    return send(res, 200, await require('../chat/feed').feed().answerPermission({ answer: body.answer, toolUseId: body.toolUseId }));
   }
   if (req.method === 'GET' && url.pathname === '/api/chat/history') {
     return send(res, 200, { messages: require('../chat/feed').feed().history(url.searchParams.get('limit') || 50) });

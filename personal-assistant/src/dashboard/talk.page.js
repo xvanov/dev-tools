@@ -868,6 +868,8 @@
   let lastWaitingSaid = 0;
   function sayWaiting(text) {
     concerned(text || 'I am waiting on an answer in termhub.', 8000);
+    // A prompt answerable here says so itself (showPermission).
+    if (permission) return;
     if (Date.now() - lastWaitingSaid < 10000) return;
     lastWaitingSaid = Date.now();
     speaker.say(['I am waiting on an answer in termhub. Open the session to answer it.']);
@@ -994,8 +996,51 @@
   }
   setInterval(() => sayHeld(turnVoice.due(Date.now())), 250);
 
+  // ---- The chat's permission prompt: Approve / Deny here ----------------------------
+  // Only for the chat's own actions (the server says `approvable`); anything
+  // else is answered in termhub. The server reads the session's screen and
+  // refuses unless it really is that prompt (src/chat/permission.js): the
+  // buttons send the call's id, never a keystroke.
+  let permission = null;
+  function showPermission(p) {
+    permission = p && p.approvable && p.toolUseId ? p : null;
+    $('permission').hidden = !permission;
+    if (!permission) return;
+    $('permissionText').textContent = `Jarvis wants to: ${String(p.text || 'run an action').replace(/…$/, '')}`;
+    $('permYes').disabled = false;
+    $('permNo').disabled = false;
+    speaker.say([`I need your yes to go ahead: ${String(p.text || '').replace(/…$/, '')}.`]);
+  }
+  async function answerPermission(answer) {
+    if (!permission) return;
+    const meta = document.querySelector('meta[name="pa-page"]');
+    $('permYes').disabled = true;
+    $('permNo').disabled = true;
+    try {
+      const res = await fetch('api/chat/permission', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-PA': '1', 'X-PA-Page': meta ? meta.content : '' },
+        body: JSON.stringify({ answer, toolUseId: permission.toolUseId }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
+      showPermission(null);
+      notice(answer === 'yes' ? 'Approved.' : 'Denied.', 3000);
+    } catch (err) {
+      concerned(`Not answered: ${err.message}`, 8000);
+      $('permYes').disabled = false;
+      $('permNo').disabled = false;
+    }
+  }
+  $('permYes').addEventListener('click', () => answerPermission('yes'));
+  $('permNo').addEventListener('click', () => answerPermission('no'));
+
   function onEvent(ev) {
     if (!ev || !ev.type) return;
+    if (ev.type === 'permission') {
+      showPermission(ev.cleared ? null : ev);
+      return;
+    }
     if (ev.type === 'status') {
       st.offline = ev.text === 'offline';
       st.thinking = ev.text === 'thinking';
@@ -1062,6 +1107,8 @@
     };
     es.onopen = () => {
       if ($('notice').textContent.startsWith('Lost the dashboard')) notice('');
+      // A prompt already waiting when the page (re)connects: offer it too.
+      fetch('api/chat/session').then((r) => (r.ok ? r.json() : {})).then((x) => { if (x.permission) showPermission(x.permission); }).catch(() => {});
     };
     es.onerror = () => {
       st.thinking = false;

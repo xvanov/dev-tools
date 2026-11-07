@@ -119,6 +119,36 @@ function createFeed({
   let lastRead = 0;
   let lastTool = null;
 
+  // What the page may offer Approve/Deny for: the call the chat is parked on,
+  // when it is one of the chat's own actions (src/chat/permission.js). The
+  // screen is checked again when a button is pressed; this only says whether
+  // to show the buttons.
+  function permissionPending(st = { waitingOn }) {
+    if (!st.waitingOn || !lastTool?.toolUseId) return null;
+    const P = require('./permission');
+    return { toolUseId: lastTool.toolUseId, text: lastTool.text, approvable: Boolean(P.chatAction(lastTool.name)) };
+  }
+
+  /**
+   * Answers the permission prompt the chat is parked on: Approve (Enter on
+   * "1. Yes") or Deny (Esc), after src/chat/permission.js's checks against
+   * termhub's state and the screen read now. Throws 409 with the reason
+   * when any check fails: then it is answered in termhub.
+   */
+  async function answerPermission({ answer, toolUseId } = {}) {
+    await pollStatus();
+    const h = hub();
+    const session = sessionId ? (await h.listSessions()).find((s) => s.id === sessionId) || null : null;
+    const screen = session ? await h.screen(session.id) : '';
+    const pending = waitingOn && lastTool?.toolUseId ? { toolUseId: lastTool.toolUseId, name: lastTool.name } : null;
+    const d = require('./permission').decide({ answer, toolUseId, pending, session, screen });
+    if (!d.ok) throw httpError(409, d.reason);
+    for (const key of d.keys) await h.say(session.id, key, { submit: key === '' });
+    log.info('answered the chat permission prompt from the page', { tool: d.tool, answer });
+    publish({ id: `perm-answered-${Date.now()}`, type: 'permission', cleared: true, answered: answer, at: new Date().toISOString() });
+    return { ok: true, answer, tool: d.tool };
+  }
+
   function publish(e, broadcast = true) {
     if (e.type !== 'status') {
       if (seen.has(e.id)) return;
@@ -197,7 +227,7 @@ function createFeed({
         if (turn && e.type === 'assistant' && e.final !== false) turn.answered = true;
         // The last tool call of the turn: a permission prompt is always for
         // the call the transcript showed last, so the wait can name it.
-        if (e.type === 'activity') lastTool = e.text;
+        if (e.type === 'activity') lastTool = e.toolUseId ? { text: e.text, name: e.tool, toolUseId: e.toolUseId } : { text: e.text };
         else if (e.type === 'user') lastTool = null;
         publish(e, !quiet);
       }
@@ -232,8 +262,12 @@ function createFeed({
     if (st.status !== 'thinking' && !held) turn = null;
     setStatus(st.status);
     if (st.waitingOn && !waitingOn) {
-      publish({ id: `wait-${Date.now()}`, type: 'activity', text: waitingText(lastTool), at: new Date().toISOString() });
+      // The buttons first: a page that can answer here does not also say "go to termhub".
+      const p = permissionPending(st);
+      if (p) publish({ id: `perm-${p.toolUseId}-${Date.now()}`, type: 'permission', ...p, at: new Date().toISOString() });
+      publish({ id: `wait-${Date.now()}`, type: 'activity', text: waitingText(lastTool?.text), at: new Date().toISOString() });
     }
+    if (!st.waitingOn && waitingOn) publish({ id: `perm-clear-${Date.now()}`, type: 'permission', cleared: true, at: new Date().toISOString() });
     waitingOn = st.waitingOn;
   }
 
@@ -317,10 +351,10 @@ function createFeed({
     await pollStatus();
     let url = null;
     if (sessionId) url = await hub().sessionUrl(sessionId).catch(() => null);
-    return { sessionId, status, waitingOn, url };
+    return { sessionId, status, waitingOn, url, permission: permissionPending() };
   }
 
-  return { send, history, subscribe, session, readTranscript, pollStatus, stop };
+  return { send, history, subscribe, session, answerPermission, readTranscript, pollStatus, stop };
 }
 
 let shared = null;

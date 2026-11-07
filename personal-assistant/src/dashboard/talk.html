@@ -72,6 +72,15 @@
     cursor: pointer;
     box-shadow: var(--shadow-1);
   }
+  /* The chat's permission prompt, answered here (src/chat/permission.js). */
+  #permission { display: grid; gap: 8px; justify-items: center; max-width: 34em; padding: 10px 14px; border: 1px solid var(--amber); border-radius: var(--radius-md, 8px); background: var(--amber-soft); }
+  #permission[hidden] { display: none; }
+  #permissionText { font-size: var(--text-base); text-align: center; color: var(--ink); }
+  #permission .row { display: flex; gap: 10px; }
+  #permission button { border-radius: var(--radius-pill); padding: 8px 20px; font: 600 var(--text-md)/1.2 var(--font-sans); cursor: pointer; border: 1px solid var(--line-strong); background: var(--surface-1); color: var(--ink); }
+  #permission button.yes { background: var(--signal); border-color: var(--signal); color: var(--on-signal); }
+  #permission button:disabled { opacity: 0.5; cursor: default; }
+  @media (pointer: coarse) { #permission button { padding: 14px 30px; } }
   #ptt.down { color: var(--on-signal); background: var(--signal); border-color: var(--signal); }
   /* The settings panel (theme.css .jside): one control per row, its label above. */
   .talk-settings { display: grid; grid-template-columns: minmax(0, 1fr); gap: 4px; font-size: 13px; }
@@ -119,6 +128,10 @@
   <div id="caption"></div>
   <div id="heard"></div>
   <div id="notice"></div>
+  <div id="permission" role="alertdialog" aria-labelledby="permissionText" hidden>
+    <div id="permissionText"></div>
+    <div class="row"><button id="permYes" class="yes" type="button">Approve</button><button id="permNo" type="button">Deny</button></div>
+  </div>
   <button id="tapPrompt" type="button" hidden>Tap once to enable Jarvis</button>
   <button id="ptt" type="button">hold Space (or here) to talk</button>
   <pre id="debug" hidden title="latency per turn (?debug=1)"></pre>

@@ -242,15 +242,18 @@ function serveModel(res, name, { send }) {
   });
 }
 
-function pageHtml() {
+function pageHtml(token = null) {
   // Where the "session" link goes: the dashboard's termhub (PA_TERMHUB_URL).
   // Opened through termhub's /pa/ proxy, the page uses its own origin instead.
   const termhub = String(config.termhub.url || '').replace(/"/g, '&quot;');
-  return fs.readFileSync(path.join(DIR, 'talk.html'), 'utf8').replace('</head>', `<meta name="pa-termhub" content="${termhub}">\n</head>`);
+  // The page token (src/dashboard/server.js): the Approve/Deny buttons on a
+  // permission prompt send it back (POST /api/chat/permission).
+  const page = token ? `\n<meta name="pa-page" content="${String(token).replace(/[^A-Za-z0-9_-]/g, '')}">` : '';
+  return fs.readFileSync(path.join(DIR, 'talk.html'), 'utf8').replace('</head>', `<meta name="pa-termhub" content="${termhub}">${page}\n</head>`);
 }
 
 // Returns true when it answered the request.
-async function route(req, res, url, { send }) {
+async function route(req, res, url, { send, issuePageToken = null }) {
   if (req.method === 'GET' && url.pathname === '/talk') {
     // The fast lane's snapshot of the day is built now, not on the first turn.
     // So is the local fast model loaded (Ollama), and the GPU voice clocked up.
@@ -260,7 +263,7 @@ async function route(req, res, url, { send }) {
       fl.warm();
     }
     warmVoicePath();
-    send(res, 200, pageHtml(), 'text/html; charset=utf-8');
+    send(res, 200, pageHtml(issuePageToken ? issuePageToken() : null), 'text/html; charset=utf-8');
     return true;
   }
   if (req.method === 'GET' && ASSETS[url.pathname]) {
