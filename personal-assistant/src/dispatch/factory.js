@@ -200,6 +200,10 @@ async function submit(argv, { kind = 'code', runtime: rt = 'api' } = {}) {
     return await submitOnce(argv);
   } catch (err) {
     if (!(err instanceof F.FactoryError && err.code === 'unsupported_option')) throw err;
+    // Continuing a branch or PR needs a factory that has it: never resent without.
+    if (argv.some((a) => a === '--pr' || String(a).startsWith('--branch'))) {
+      throw new F.FactoryError('unsupported_option', 'this factory cannot continue an existing branch or PR yet (`job submit --branch/--pr`) — update the factory, or start a new job');
+    }
     if (kind !== 'code' || rt !== 'api') {
       throw new F.FactoryError('unsupported_option', `${err.message.replace(/^factory unsupported_option: /, '')}: a ${kind} job on the ${rt} runtime needs it — update the factory`);
     }
@@ -274,9 +278,10 @@ async function installId() {
 async function start({
   target, app, slug = null, task = null, mode: modeName, delivery = null, deliverySource = null, deliveryPhrase = null,
   pipeline = null, models = null, modelsExact = false, done = [], brief = null, briefBy = null, routeReason = null,
-  confirmedUnattended = false, again = false, title = null, jobKind = 'code', runtime = null,
+  confirmedUnattended = false, again = false, title = null, jobKind = 'code', runtime = null, branch = null, pr = null,
 }) {
   const kind = F.jobKind(jobKind);
+  if ((branch != null || pr != null) && kind !== 'code') throw new Error('only a code job continues a branch or PR');
   const rt = F.runtime(runtime || config.factory.runtime);
   if (kind === 'code' && modeName && resolveMode(modeName).name === 'plan') {
     throw new Error('plan mode is read-only and is not a factory job — send it to a Claude session (--via claude), or make it a research job (--kind research)');
@@ -362,6 +367,8 @@ async function start({
       externalId: run.external_id,
       kind,
       runtime: rt,
+      branch,
+      pr,
     });
 
   let job = null;
@@ -732,6 +739,24 @@ async function report(jobId) {
 }
 
 /**
+ * Carries on a job that stopped (`factory job resume <id> --json`). A factory
+ * without the command says so plainly rather than as a parse error.
+ */
+async function resume(jobId) {
+  let r;
+  try {
+    r = await call(F.resumeArgv(jobId));
+  } catch (err) {
+    if (err instanceof F.FactoryError && err.code === 'unsupported_command') {
+      throw Object.assign(new Error('this factory cannot resume jobs yet (`job resume`) — update the factory'), { status: 409 });
+    }
+    throw err;
+  }
+  await refreshBoard().catch(() => {});
+  return { jobId: String(r.job_id || jobId), state: r.state || null, why: r.why || null, raw: r };
+}
+
+/**
  * Cancels a job. One a live PA run holds is dropped through the dispatcher
  * (`pa drop`: it cancels the job and settles the run and its commitment);
  * any other is `factory job cancel`.
@@ -806,5 +831,5 @@ async function sweepUnsettled() {
 
 module.exports = {
   enabled, machine, call, apps, addApp, installId, start, settle, sweepUnsettled, status, cancel, apply, poll, runCommand, modelsFor, _setRunner,
-  submit, withoutV12, openFollow, refreshBoard, snapshot, snapshotJob, report, cancelJob, approve,
+  submit, withoutV12, openFollow, refreshBoard, snapshot, snapshotJob, report, cancelJob, approve, resume,
 };

@@ -314,7 +314,10 @@ passes `routeCore.guard`. Every job carries a kind (`code` | `research` | `repor
 deliverable is the factory's report) and its ask is the operator's own words
 (`factoryCore.researchAsk`, no composing model). A v1 factory refuses the v1.2 flags in its CLI
 parser (`unsupported_option`, before anything is written): a code job on `api` is resent without
-them, anything else fails saying so. The factory is the default route once configured
+them, anything else fails saying so. A code job may continue an existing branch or PR (`job submit --branch|--pr`,
+`F.BRANCH` checks the name); a factory without the flag refuses it in its parser and the job fails
+saying so — it is never resent without it, which would start fresh work instead. `job resume <id>`
+(`factory.resume`) on a factory without it says the factory must be updated. The factory is the default route once configured
 (`routeCore.defaultVia`; plan mode and `--machine` still mean a Claude session). Every code job is
 sent with a `--flow-file` (`factoryCore.flowMarkdown`,
 deterministic), since the factory parks a job without a flow; content reaches another machine

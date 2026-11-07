@@ -205,7 +205,7 @@ async function start({
   via = null, pipeline = null, models = null, done = null, app = null, routeReason: givenReason = null,
   agent = null, model = null, delivery = null, deliverySource = null, deliveryPhrase = null,
   brief = null, briefBy = null, frozen = false, register = false, confirmedUnattended = false, repoVerified = false,
-  jobKind = null, runtime = null, title = null,
+  jobKind = null, runtime = null, title = null, branch: onBranch = null, pr: onPr = null,
 }) {
   // A research or report job exists only on the factory (JOBS-API v1.2).
   const kind = require('./factoryCore').jobKind(jobKind);
@@ -248,11 +248,12 @@ async function start({
       return require('./factory').start({
         target, app: choice.app, slug: choice.slug, task, mode: modeName, pipeline, models, modelsExact: frozen, done: choice.done,
         routeReason: givenReason || choice.reason, delivery, deliverySource, deliveryPhrase, brief, briefBy, confirmedUnattended, again,
-        jobKind: kind, runtime, title,
+        jobKind: kind, runtime, title, branch: onBranch, pr: onPr,
       });
     }
     routeReason = givenReason || choice.reason;
   }
+  if (onBranch != null || onPr != null) throw new Error('continuing an existing branch or PR is a factory job — send it --via factory');
   // The end state, for a Claude session: what the PA does when it ends
   // (src/durable/tasks/runReview.js), and the session's own mode, enforced in
   // its worktree. Plan mode delivers nothing.

@@ -25,6 +25,8 @@ const ACTIVE_STATES = new Set(['queued', 'triaging', 'in_progress', 'blocked', '
 const JOB_ID = /^[A-Za-z0-9_.-]+:[A-Za-z0-9_.-]+$/;
 const PERSONA = /^[A-Za-z0-9_-]+$/;
 const MODEL = /^[A-Za-z0-9_.:/@-]+$/;
+// A plain git branch name: no leading '-', no '..', no spaces or shell syntax.
+const BRANCH = /^(?!-)(?!.*\.\.)(?!.*\.lock$)[A-Za-z0-9._/-]{1,200}(?<!\/)$/;
 
 function pipeline(name) {
   const p = String(name || 'auto').toLowerCase();
@@ -130,7 +132,11 @@ function researchAsk({ kind, title, ask = null, done = [], repo = null }) {
 // `kind` and `runtime` (v1.2) are sent when given; a v1 factory refuses the
 // unknown flags (`unsupported_option`) and factory.js resends a plain code/api
 // job without them. A research/report job needs no app and delivers `none`.
-function submitArgv({ app, title, ask = null, askFile = null, flowFile = null, done = [], pipeline: pipe = 'auto', delivery, models = {}, externalId, source = 'pa', kind = null, runtime: rt = null }) {
+//
+// `branch` / `pr` continue existing work: the job starts on that branch or
+// that PR's head instead of a fresh one (`job submit --branch|--pr`, a
+// factory newer than v1.2; an older one refuses the flag in its parser).
+function submitArgv({ app, title, ask = null, askFile = null, flowFile = null, done = [], pipeline: pipe = 'auto', delivery, models = {}, externalId, source = 'pa', kind = null, runtime: rt = null, branch = null, pr = null }) {
   const k = kind == null ? 'code' : jobKind(kind);
   if (!app && k === 'code') throw new Error('submit needs a factory app');
   if (!title) throw new Error('submit needs a title');
@@ -138,6 +144,10 @@ function submitArgv({ app, title, ask = null, askFile = null, flowFile = null, d
   if (externalId === undefined || externalId === null || externalId === '') throw new Error('submit needs an external id');
   if (!DELIVERIES.includes(delivery)) throw new Error(`unknown delivery "${delivery}"`);
   if (k !== 'code' && delivery !== 'none') throw new Error(`a ${k} job delivers a report, not ${delivery} — its delivery is none`);
+  if (branch != null && pr != null) throw new Error('continue a branch or a PR, not both');
+  if ((branch != null || pr != null) && k !== 'code') throw new Error('only a code job continues a branch or PR');
+  if (branch != null && !BRANCH.test(String(branch))) throw new Error(`"${branch}" is not a branch name`);
+  if (pr != null && !(Number.isInteger(Number(pr)) && Number(pr) > 0)) throw new Error(`"${pr}" is not a PR number`);
   // Free text goes as `--flag=value`: a title or criterion that starts with
   // "-" must not be read as an option by the factory's CLI parser.
   // The title and criteria are on the factory's command line (visible in `ps`)
@@ -154,6 +164,8 @@ function submitArgv({ app, title, ask = null, askFile = null, flowFile = null, d
   // job without one parks as needs_human every time (JOBS-API.md v1.1).
   if (flowFile) argv.push('--flow-file', String(flowFile));
   for (const d of done) argv.push(`--done=${redactSecrets(String(d))}`);
+  if (branch != null) argv.push(`--branch=${branch}`);
+  if (pr != null) argv.push('--pr', String(Number(pr)));
   argv.push('--pipeline', pipeline(pipe), '--delivery', delivery);
   for (const [persona, model] of Object.entries(models || {})) argv.push('--model', `${persona}=${model}`);
   argv.push('--source', source, '--external-id', String(externalId));
@@ -172,6 +184,10 @@ const REFUSAL_CODES = new Set([
   'review_independence', 'pipeline_unavailable', 'duplicate_key',
   // v1.2 refusals.
   'invalid_kind', 'invalid_runtime', 'runtime_unavailable',
+  // v1.3 (`--branch` / `--pr`): submit asks GitHub before writing anything,
+  // and refuses work it cannot safely continue.
+  'invalid_branch', 'branch_is_default', 'branch_not_found', 'pr_not_found', 'pr_not_open', 'pr_from_fork',
+  'github_unavailable', 'branch_busy',
   // Ours: the factory's CLI parser refused a flag it does not know (a v1
   // factory and --kind/--runtime). The parser stops before any command runs.
   'unsupported_option',
@@ -332,6 +348,12 @@ function followCommand(jobId, uv = 'uv') {
 function reportArgv(jobId) {
   if (!JOB_ID.test(String(jobId || ''))) throw new Error(`not a factory job id: "${jobId}"`);
   return ['job', 'report', String(jobId), '--json'];
+}
+
+/** `factory job resume <id> --json`: carry on a job that stopped. */
+function resumeArgv(jobId) {
+  if (!JOB_ID.test(String(jobId || ''))) throw new Error(`not a factory job id: "${jobId}"`);
+  return ['job', 'resume', String(jobId), '--json'];
 }
 
 /** `factory job cancel <id> --json`. */
@@ -615,6 +637,8 @@ module.exports = {
   researchAsk,
   reportArgv,
   cancelArgv,
+  resumeArgv,
+  BRANCH,
   approveArgv,
   safeUrl,
   GROUPS,
