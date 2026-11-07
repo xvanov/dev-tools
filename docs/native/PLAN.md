@@ -34,6 +34,22 @@ Design rationale: the plan page (proposal, 7 Nov 2026) and the research summary 
 | D7 | 2026-11-07 | System 1 (fast lane) becomes a **decide-then-speak** split: a calibrated classifier routes, a small model only speaks | Same idea as "System One" decision models (e.g. TypeSafe's Jev), built ourselves, free and local. Phase 0, item 0.6. |
 | D8 | 2026-11-07 | **The full stack is proven end to end, repeatedly**: a dummy task goes Plan → Build → Run sessions → a real PR in this repo, observable and drillable in all three views | Track E. Runs as the gate at every phase exit, so the rebuild never breaks the path that matters. |
 | D9 | 2026-11-07 | **Every agent run is watchable live in Run, whatever its runtime** (Claude Code, API models such as DeepSeek, opencode, local) | Today only `claude_session` runs show turn-by-turn work in a terminal; API runs show stage-level events via `factory job follow`. E2 closes the gap. |
+| D10 | 2026-11-07 | **The plan ends with a workflow acceptance review**: an independent reviewer session runs each workflow in the Map and scores it against its metrics | Phase 8. The workflows (research, open a PR on DeepSeek, continue a PR, answer locally, Teams ask, phone) are the product; components passing tests is not enough. |
+| D11 | 2026-11-07 | **Implementation runs on the work laptop (Windows).** Two GitHub identities: `xvanov` (personal; this repo) and `kalinivanov-innergy` (work) | Git uses the SSH host aliases `github-xvanov` / `github-innergy`. `gh` picks the account by repo owner, never by whichever is active (P1). |
+
+## Prerequisites (before phase 0)
+
+- [ ] **P1 GitHub identities.** Verified 2026-11-07: `git pull`/`git push` to this repo work
+  over `git@github-xvanov:xvanov/dev-tools.git` with the xvanov key. `gh` is logged in only
+  as `kalinivanov-innergy`, which has READ on `xvanov/dev-tools`, so it cannot open PRs here.
+  Fix: the user adds the xvanov account to `gh` (`gh auth login`, then
+  `gh auth switch --user kalinivanov-innergy` to keep work as the default), and every tool
+  that calls GitHub for a repo picks the token by owner
+  (`GH_TOKEN=$(gh auth token --user xvanov)` for `xvanov/*`). Done when `gh pr create
+  --draft` on a throwaway branch of this repo succeeds from this machine and the factory, and
+  an INNERGY repo still uses the work account.
+- [ ] **P2 Factory on this machine** can reach GitHub with the same per-owner rule (needed by
+  Track E's golden path).
 
 Standing rules carried over: default agent runtime is Claude Code sessions (API/DeepSeek only on
 request); voice never approves high-risk actions alone; work and personal stacks never connect.
@@ -266,6 +282,38 @@ run mid-step; a job continued on an existing branch (`--branch`).
   (since 15 Jun 2026) with API fallback when it runs out.
 - [ ] **7.6** Tauri desktop shell, then the phone app.
 - [ ] **Exit 7:** install on a fresh Windows, macOS and Linux machine from one artifact.
+
+## Phase 8: workflow acceptance review (the last phase; D10)
+
+Every workflow the Map lists must actually work, end to end, on the stack it belongs to, and
+meet its quality and speed metrics. The registry is `architecture.json`'s `examples` (today:
+`whats-on`, `deepseek-pr`, `review-fix`, `teams-ask`, `research`, `phone`); a workflow that is
+not in the Map is not done, and a new one gets added there first.
+
+- [ ] **8.1 Acceptance criteria per workflow** in `architecture.json` (an `acceptance` block on
+  each example): the outcome that must happen, the hops and their latency targets, a cost
+  ceiling, the views it must show in (Plan, Build, Run, Ask), the approvals policy requires,
+  and a quality rubric. Examples: `deepseek-pr` and `review-fix`: PR opened or updated, CI green,
+  a code review finds no blocker, the diff stays in scope; `research`: sources cited and
+  checked, no unsupported claims, the report answers the question asked; `whats-on`: answered
+  locally in under 0.7 s to first audio with correct facts; `teams-ask`: the ask lands on the
+  board with the right person, due date and source link. The drift test enforces the block's
+  shape.
+- [ ] **8.2 `e2e <workflow>`** generalizes E4: runs any registered workflow against the live
+  stack (with a dummy input where the real one would touch other people, e.g. a test chat
+  instead of a colleague), and collects evidence: per-hop timings, every link, transcripts,
+  screenshots of each view, cost.
+- [ ] **8.3 Reviewer sessions.** For each workflow, a separate reviewer session (a fresh agent
+  that did not implement it, on Claude Code) runs `e2e <workflow>`, inspects the evidence and
+  the outputs themselves (reads the PR, the report, the board card), and scores the workflow
+  against 8.1. It writes `docs/native/acceptance/<workflow>.md`: pass/fail per criterion,
+  measured numbers, evidence links, and defects found. Reviewers run in parallel, one per
+  workflow.
+- [ ] **8.4 Fix loop.** Every failed criterion becomes an item here; fixed by an implementing
+  session; the reviewer re-runs. The Map shows each workflow's latest verdict and date.
+- [ ] **Exit 8 (the plan's finish line):** every workflow in the Map passes its review on its
+  stack (work or personal, or both), and the user has watched at least `deepseek-pr`,
+  `research` and `whats-on` run live.
 
 ## Risks
 
