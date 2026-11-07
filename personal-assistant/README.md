@@ -1466,9 +1466,20 @@ Talk, the dashboard, the factory and termhub are four depths of the same assista
 coordinates, the software factory dispatches and tracks the work, termhub drills into one live
 session. They share one design system and one layer switcher:
 
-**jarvis · 1 Talk · 2 Dashboard · 3 Factory · 4 Sessions**, at the top of every page, the
-current one lit, **Alt+1..4** from anywhere (the terminal included), and a theme toggle at its
-end (system → light → dark, remembered per browser).
+**» · jarvis · 1 Talk · 2 Dashboard · 3 Factory · 4 Sessions**, the same 44 px bar at the top of
+every page, the current layer a raised segment in full ink, **Alt+1..4** from anywhere (the
+terminal included).
+
+Each layer shows only its one thing, full width: Talk the face, Dashboard the board, Factory the
+jobs, Sessions the terminal. Everything else (Talk's voice settings, the Dashboard's views
+(Today, Meetings, Memory, Chat, Routines, Repos) and its sources, the Factory's status, spend and
+New job form, termhub's session list) is in a settings panel on the left that the **»** toggle
+opens. Closed by default; on a wide screen the choice is remembered per layer
+(`jarvis.settings.<layer>` in localStorage), and on a phone the panel slides over the page and
+always starts closed. The toggle shows an amber dot when one of the Dashboard's views counts
+something waiting on you. The top of every panel holds the theme toggle (system → light → dark,
+remembered per browser) and **Architecture** (`/architecture`, a page of its own rather than a
+layer). Implemented once in `theme.css` (`.jhead`, `.jside`) and `nav.js` (`[data-jside]`).
 
 - **Talk** is `/talk`, **Dashboard** is `/`, **Factory** is `/factory` (all relative, so they work
   on `http://127.0.0.1:7300` and under termhub's `/pa/` on the tailnet alike).
@@ -1489,7 +1500,7 @@ load never calls the factory; only a click does. Actions: **Cancel** (a PA run's
 drop`), **Open in termhub** (a session on the factory machine running `uv run factory job follow
 <job>`), **Approve** (only on a needs_human job whose own warning names `factory approve-direction`,
 and only that one), and **New job** (title, ask, kind, runtime, optional repo, end state; a code job
-that would merge or push to main is confirmed on the page, as on a card). At the top: today's PA
+that would merge or push to main is confirmed on the page, as on a card). In the settings panel: today's PA
 model spend (`llm_spend`), the factory's metered spend and the subscription-equivalent of its Claude
 Code runs. On the board, a card's **Do** grows **kind** and **runtime** pickers when its route is the
 factory.

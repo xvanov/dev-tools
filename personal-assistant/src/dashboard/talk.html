@@ -10,41 +10,18 @@
   /* Colours, type and the layer switcher come from theme.css (the Jarvis design
      system); only this page's layout lives here. */
   * { box-sizing: border-box; }
-  html, body { height: 100%; margin: 0; }
+  html, body { margin: 0; }
   body {
     background: var(--surface-0);
     color: var(--ink);
-    font: var(--text-md)/var(--leading) var(--font-sans);
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    padding: var(--space-3) var(--space-4) var(--space-4);
+    font: var(--text-base)/var(--leading) var(--font-sans);
     user-select: none;
     -webkit-user-select: none;
   }
-  .talk-top {
-    width: 100%;
-    max-width: 760px;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    gap: var(--space-3);
-  }
-  #toggleSettings {
-    font: 500 var(--text-sm)/1 var(--font-mono);
-    color: var(--ink-2);
-    background: none;
-    border: 1px solid transparent;
-    border-radius: var(--radius);
-    padding: 7px 10px;
-    cursor: pointer;
-  }
-  #toggleSettings:hover { color: var(--signal); border-color: var(--line); }
-  #toggleSettings[aria-expanded="true"] { color: var(--signal); border-color: var(--line); background: var(--surface-1); }
+  /* The one thing: the face, centred in everything under the header. */
   main {
-    flex: 1;
-    width: 100%;
-    max-width: 640px;
+    min-height: calc(100dvh - var(--jhead-h));
+    padding: var(--gutter);
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -96,23 +73,10 @@
     box-shadow: var(--shadow-1);
   }
   #ptt.down { color: var(--on-signal); background: var(--signal); border-color: var(--signal); }
-  #settings {
-    display: none;
-    width: 100%;
-    max-width: 640px;
-    margin-top: var(--space-3);
-    background: var(--surface-1);
-    border: 1px solid var(--line);
-    border-radius: var(--radius-lg);
-    box-shadow: var(--shadow-1);
-    padding: var(--space-3) var(--space-4);
-    font-size: 13px;
-    gap: 10px 16px;
-    grid-template-columns: max-content 1fr;
-    align-items: center;
-  }
-  #settings > label { color: var(--ink-2); }
-  #settings.open { display: grid; }
+  /* The settings panel (theme.css .jside): one control per row, its label above. */
+  .talk-settings { display: grid; grid-template-columns: minmax(0, 1fr); gap: 4px; font-size: 13px; }
+  .talk-settings > label, .talk-settings > .lbl { color: var(--ink-2); margin-top: 8px; }
+  .talk-settings > label:first-child { margin-top: 0; }
   #settings select, #settings input[type=range] { width: 100%; max-width: 100%; accent-color: var(--signal); }
   #settings input[type=checkbox] { accent-color: var(--signal); }
   #settings select { background: var(--surface-2); color: var(--ink); border: 1px solid var(--line); border-radius: var(--radius); padding: 5px 6px; font: inherit; }
@@ -124,16 +88,17 @@
 </style>
 </head>
 <body>
-<header class="talk-top">
+<header class="jhead">
   <div data-jnav></div>
   <!-- Kept for talk.page.js, which wires #toSession; the switcher above replaces both. -->
   <span hidden>
     <a id="toDashboard" href="./">dashboard</a>
     <button id="toSession" type="button">session</button>
   </span>
-  <button id="toggleSettings" type="button" title="Voice, microphone and listening settings">settings</button>
 </header>
-<div id="settings" aria-label="settings">
+<div class="jframe">
+<aside class="jside" id="settings" data-jside aria-label="Voice, microphone and listening settings">
+<div class="talk-settings">
   <label for="ttsBackend">Speech engine</label><select id="ttsBackend"></select>
   <label for="voice">Voice</label><select id="voice"></select>
   <label for="wake">Wake word</label><span><input type="checkbox" id="wake"> listen for "hey Jarvis" (heard in this page only)</span>
@@ -144,9 +109,10 @@
   <label for="endMs">Pause before sending</label><span><input type="range" id="endMs" step="50"> <span id="endMsLabel"></span></span>
   <label for="voiceMode">Speak while working</label><select id="voiceMode"><option value="auto">only on slow turns (over 4 s)</option><option value="all">every step</option><option value="final">only the answer</option></select>
   <label for="sensitivity">Mic threshold</label><input type="range" id="sensitivity" min="0.003" max="0.06" step="0.001">
-  <span>Level</span><div class="meter"><i id="levelBar"></i><b id="threshMark"></b></div>
+  <span class="lbl">Level</span><div class="meter"><i id="levelBar"></i><b id="threshMark"></b></div>
 </div>
-<main>
+</aside>
+<main class="jmain">
   <div id="mood"></div>
   <pre id="face" role="img" aria-label="assistant face" title="Tap to start"></pre>
   <div id="activity"></div>
@@ -155,8 +121,9 @@
   <div id="notice"></div>
   <button id="tapPrompt" type="button" hidden>Tap once to enable Jarvis</button>
   <button id="ptt" type="button">hold Space (or here) to talk</button>
+  <pre id="debug" hidden title="latency per turn (?debug=1)"></pre>
 </main>
-<pre id="debug" hidden title="latency per turn (?debug=1)"></pre>
+</div>
 <script src="talk.core.js"></script>
 <script src="talk.capture.js"></script>
 <script src="talk.voice.js"></script>

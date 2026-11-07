@@ -12,24 +12,21 @@
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--surface-0); color: var(--ink);
     font: var(--text-base)/var(--leading) var(--font-sans); }
-  header { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center; padding: 12px 20px 6px; }
-  header > .jnav { flex: 1 0 100%; }
-  header h1 { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); margin: 0; }
+  .jhead h1 { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); margin: 0; }
   .meta { color: var(--ink-2); font-size: var(--text-sm); }
   .meta.bad { color: var(--bad); }
 
-  /* The spend line: today's PA model spend, the factory's metered spend and
-     what its Claude Code runs would have cost at API prices. */
-  .spend { display: flex; flex-wrap: wrap; gap: 8px; padding: 4px 20px 12px; }
-  .stat { background: var(--surface-1); border: 1px solid var(--line); border-radius: var(--radius); padding: 6px 12px;
-    display: flex; flex-direction: column; min-width: 150px; box-shadow: var(--shadow-1); }
-  .stat b { font: 600 var(--text-lg)/1.2 var(--font-mono); }
+  /* The settings panel (theme.css .jside): freshness, the spend line (today's PA
+     model spend, the factory's metered spend and what its Claude Code runs would
+     have cost at API prices), and the New job form. */
+  .spend { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+  .stat { background: var(--surface-2); border-radius: var(--radius); padding: 6px 8px;
+    display: flex; flex-direction: column; min-width: 0; }
+  .stat b { font: 600 var(--text-md)/1.2 var(--font-mono); }
   .stat span { color: var(--ink-2); font-size: var(--text-xs); }
 
-  .new { margin: 0 20px 14px; background: var(--surface-1); border: 1px solid var(--line); border-radius: var(--radius-lg);
-    padding: 8px 14px; box-shadow: var(--shadow-1); }
   .new > summary { cursor: pointer; font-weight: 600; font-size: 13px; }
-  .new form { display: grid; gap: 8px; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); margin: 10px 0 4px; }
+  .new form { display: grid; gap: 8px; grid-template-columns: minmax(0, 1fr); margin: 10px 0 4px; }
   .new label { display: flex; flex-direction: column; gap: 3px; font-size: var(--text-sm); color: var(--ink-2); }
   .new label.wide { grid-column: 1 / -1; }
   .new input, .new textarea, .new select { font: inherit; font-size: 13px; color: var(--ink); background: var(--surface-2);
@@ -37,7 +34,9 @@
   .new textarea { min-height: 84px; resize: vertical; }
   .new .row { grid-column: 1 / -1; display: flex; gap: 8px; align-items: center; }
 
-  main { display: grid; gap: 16px; padding: 0 20px 24px; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); align-items: start; }
+  /* The one thing: the jobs, by group, across the whole width. */
+  main { display: grid; gap: 16px; padding: var(--gutter); grid-template-columns: repeat(auto-fit, minmax(min(340px, 100%), 1fr)); align-items: start; }
+  main:empty::before { content: "No jobs to show. The settings panel says why."; color: var(--ink-3); font-size: var(--text-sm); }
   section { background: var(--surface-1); border: 1px solid var(--line); border-radius: var(--radius-lg); padding: 12px 14px; box-shadow: var(--shadow-1); }
   section h2 { margin: 0 0 8px; font-size: 13px; font-weight: 600; }
   section h2 .n { color: var(--ink-2); font: 500 var(--text-sm) var(--font-mono); margin-left: 6px; }
@@ -95,17 +94,24 @@
     color: var(--surface-0); padding: 8px 14px; border-radius: var(--radius); font-size: 13px; opacity: 0;
     transition: opacity .2s var(--ease); pointer-events: none; max-width: 90vw; z-index: 40; }
   #toast.show { opacity: 1; }
-  @media (max-width: 560px) { main, .spend { padding-left: 10px; padding-right: 10px; } .new { margin: 0 10px 12px; } }
 </style>
 </head>
 <body>
-<header>
+<header class="jhead">
   <div data-jnav></div>
   <h1>Factory</h1>
-  <span class="meta" id="updated">loading…</span>
 </header>
-<div class="spend" id="spend"></div>
-<details class="new" id="newjob">
+<div class="jframe">
+<aside class="jside" id="factory-settings" data-jside aria-label="Factory settings">
+<div>
+  <h2>Status</h2>
+  <span class="meta" id="updated">loading…</span>
+</div>
+<div>
+  <h2>Spend</h2>
+  <div class="spend" id="spend"></div>
+</div>
+<details class="new" id="newjob" open>
   <summary>New job</summary>
   <form id="newform" autocomplete="off">
     <label class="wide">Title <input name="title" maxlength="200" required placeholder="What is it, in a few words"></label>
@@ -118,7 +124,9 @@
     <div class="row"><button class="primary" type="submit">Start job</button><span class="meta" id="newhint"></span></div>
   </form>
 </details>
-<main id="board"></main>
+</aside>
+<main id="board" class="jmain"></main>
+</div>
 <div class="sheet" id="sheet" hidden>
   <div class="paper" role="dialog" aria-modal="true" aria-labelledby="sheet-title">
     <div class="bar"><h2 id="sheet-title">Report</h2><button type="button" id="sheet-close">Close</button></div>

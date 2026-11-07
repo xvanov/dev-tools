@@ -1171,7 +1171,6 @@
     turnVoice.mode = prefs.voiceMode;
     savePrefs();
   };
-  $('toggleSettings').onclick = () => $('settings').classList.toggle('open');
   if ('speechSynthesis' in window) speechSynthesis.onvoiceschanged = fillVoices;
   fillBackends();
   fillVoices();

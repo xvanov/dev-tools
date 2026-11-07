@@ -9,8 +9,17 @@
  * byte copy (`npm run sync-theme` in termhub; test/theme.test.js fails on drift).
  *
  * Usage: <script src="nav.js" data-layer="talk|dashboard|factory|termhub"></script> in <head>
- * (synchronous, so the remembered theme is set before first paint), plus an element
- * with [data-jnav] where the switcher goes. termhub pages say "termhub": that is
+ * (synchronous, so the remembered theme and settings state are set before first paint),
+ * plus an element with [data-jnav] where the switcher goes (inside <header class="jhead">).
+ *
+ * Settings: each layer shows only its one thing; its controls live in a [data-jside]
+ * panel. When the page has one, the switcher leads with a toggle for it, and nav.js
+ * puts the theme toggle and the Architecture link (/architecture, a page of its own,
+ * not a layer) at the top of it. Closed by default; the choice is remembered per
+ * layer (localStorage jarvis.settings.<layer>) on wide screens only: on a phone the
+ * panel is an overlay, so it always starts closed. The state is
+ * <html data-settings="open|closed">, and every change fires `jarvis:settings`
+ * ({detail: {open}}) on window, which termhub uses to slide its session list. termhub pages say "termhub": that is
  * Sessions, and on its ?focus= view (a link target, not a layer of its own) the
  * switcher shrinks to a tab in the corner. Alt+1..4 switches from anywhere, terminal
  * included (captured before xterm sees it).
@@ -41,6 +50,13 @@
     else root.removeAttribute('data-theme');
   }
   applyTheme(readTheme());
+
+  // ---- settings panel: closed until opened; remembered per layer on wide screens -------
+  var NARROW = window.matchMedia ? matchMedia('(max-width: 760px)') : { matches: false };
+  var settingsKey = 'jarvis.settings.' + (declared === 'termhub' ? 'sessions' : declared);
+  function readSettings() { try { return localStorage.getItem(settingsKey) === '1'; } catch (e) { return false; } }
+  var settingsOpen = !NARROW.matches && readSettings();
+  root.setAttribute('data-settings', settingsOpen ? 'open' : 'closed');
 
   // ---- where everything is -----------------------------------------------------------
   var onTermhub = declared === 'termhub';
@@ -86,6 +102,8 @@
 
   // ---- render ---------------------------------------------------------------------------
   var navs = [];
+  var themeBtns = [];
+  var toggles = [];
   var THEME_ICON = {
     '': '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.25" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M8 1.75a6.25 6.25 0 0 1 0 12.5z" fill="currentColor"/></svg>',
     light: '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="3.25" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M8 1v2M8 13v2M1 8h2M13 8h2M3.05 3.05l1.4 1.4M11.55 11.55l1.4 1.4M3.05 12.95l1.4-1.4M11.55 4.45l1.4-1.4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>',
@@ -102,7 +120,43 @@
     btn.setAttribute('aria-label', btn.title);
   }
 
-  function build(slot, variant) {
+  var TOGGLE_ICON = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 3.5L8 8l-4.5 4.5M8.5 3.5L13 8l-4.5 4.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+
+  function themeButton() {
+    var b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'jnav-icon jnav-theme';
+    paintTheme(b);
+    b.addEventListener('click', function () {
+      var next = NEXT_THEME[readTheme()];
+      writeTheme(next);
+      applyTheme(next);
+      themeBtns.forEach(paintTheme);
+    });
+    themeBtns.push(b);
+    return b;
+  }
+
+  function paintToggle(b) {
+    b.setAttribute('aria-expanded', settingsOpen ? 'true' : 'false');
+    b.title = (settingsOpen ? 'Hide' : 'Show') + ' settings';
+    b.setAttribute('aria-label', b.title);
+  }
+
+  // open: boolean. opts.persist === false: do not remember it (termhub's drawer).
+  function setSettings(open, opts) {
+    open = !!open;
+    if (!(opts && opts.persist === false) && !NARROW.matches) {
+      try { localStorage.setItem(settingsKey, open ? '1' : '0'); } catch (e) { /* private mode */ }
+    }
+    if (open === settingsOpen) return;
+    settingsOpen = open;
+    root.setAttribute('data-settings', open ? 'open' : 'closed');
+    toggles.forEach(paintToggle);
+    try { window.dispatchEvent(new CustomEvent('jarvis:settings', { detail: { open: open } })); } catch (e) { /* old browser */ }
+  }
+
+  function build(slot, variant, side) {
     var nav = document.createElement('nav');
     nav.className = 'jnav' + (variant ? ' jnav--' + variant : '');
     nav.setAttribute('aria-label', 'Jarvis layers');
@@ -110,15 +164,23 @@
     var rail = '<ol class="jnav-rail">' + LAYERS.map(function (l) {
       return '<li><a class="jnav-seg" data-layer="' + l.id + '" title="' + l.title + ' (Alt+' + l.key + ')"><kbd>' + l.key + '</kbd>' + l.label + '</a></li>';
     }).join('') + '</ol>';
-    nav.innerHTML = brand + rail + '<button type="button" class="jnav-theme"></button>';
-    var themeBtn = nav.querySelector('.jnav-theme');
-    paintTheme(themeBtn);
-    themeBtn.addEventListener('click', function () {
-      var next = NEXT_THEME[readTheme()];
-      writeTheme(next);
-      applyTheme(next);
-      navs.forEach(function (n) { paintTheme(n.querySelector('.jnav-theme')); });
-    });
+    nav.innerHTML = brand + rail;
+    if (variant !== 'float') {
+      if (side) {
+        var t = document.createElement('button');
+        t.type = 'button';
+        t.className = 'jnav-icon jnav-toggle';
+        t.innerHTML = TOGGLE_ICON;
+        if (side.id) t.setAttribute('aria-controls', side.id);
+        paintToggle(t);
+        t.addEventListener('click', function () { setSettings(!settingsOpen); });
+        toggles.push(t);
+        nav.insertBefore(t, nav.firstChild);
+      } else {
+        // No panel on this page: the theme toggle stays in the bar.
+        nav.appendChild(themeButton());
+      }
+    }
     nav.addEventListener('click', function (e) {
       var a = e.target.closest && e.target.closest('.jnav-seg');
       if (!a) return;
@@ -172,16 +234,39 @@
     go(LAYERS[Number(m[1]) - 1].id);
   }, true);
 
+  // The top of the settings panel: the Architecture page, and the theme toggle.
+  function sideTools(side) {
+    var tools = document.createElement('div');
+    tools.className = 'jside-tools';
+    var arch = document.createElement('a');
+    arch.href = paBase + 'architecture';
+    arch.textContent = 'Architecture';
+    arch.title = 'How the four layers fit together';
+    tools.appendChild(arch);
+    tools.appendChild(themeButton());
+    var slot = side.querySelector('[data-jside-tools]');
+    if (slot) slot.replaceWith(tools);
+    else side.insertBefore(tools, side.firstChild);
+  }
+
   function mount() {
+    var side = document.querySelector('[data-jside]');
     var slots = document.querySelectorAll('[data-jnav]');
     if (focusId) build(null, 'float');
-    for (var i = 0; i < slots.length; i++) build(slots[i], slots[i].getAttribute('data-jnav') || '');
+    for (var i = 0; i < slots.length; i++) build(slots[i], slots[i].getAttribute('data-jnav') || '', side);
     if (!navs.length) build(null, 'float');
+    if (side) sideTools(side);
     paint();
     fetchSession().then(paint);
     matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function () {
-      navs.forEach(function (n) { paintTheme(n.querySelector('.jnav-theme')); });
+      themeBtns.forEach(paintTheme);
     });
+    // On a phone the panel is an overlay: a tap outside it (and outside the bar) closes it.
+    document.addEventListener('pointerdown', function (e) {
+      if (!settingsOpen || !NARROW.matches || !side) return;
+      if (side.contains(e.target) || (e.target.closest && e.target.closest('.jhead'))) return;
+      setSettings(false);
+    }, true);
     // A tab left open: the PA may have started (or ended) its session since.
     document.addEventListener('visibilitychange', function () {
       if (document.visibilityState === 'visible') fetchSession().then(paint);
@@ -190,5 +275,13 @@
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', mount);
   else mount();
 
-  window.JarvisNav = { go: go, refresh: function () { return fetchSession().then(paint); } };
+  window.JarvisNav = {
+    go: go,
+    refresh: function () { return fetchSession().then(paint); },
+    settings: {
+      isOpen: function () { return settingsOpen; },
+      set: setSettings,
+      toggle: function (opts) { setSettings(!settingsOpen, opts); },
+    },
+  };
 })();
