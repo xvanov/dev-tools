@@ -116,9 +116,12 @@
           "POST /api/talk/transcribe (the utterance only)",
           "POST /api/talk/turn (fast lane)",
           "POST /api/talk/tts (speech out)",
-          "POST /api/talk/warm when an utterance starts"
+          "POST /api/talk/warm when an utterance starts",
+          "POST /api/chat/permission (a spoken yes or no to the chat's action prompt)"
         ],
-        "Privacy": "Nothing leaves the browser until a request is made; the wake word stays client-side."
+        "Privacy": "Nothing leaves the browser until a request is made; the wake word stays client-side.",
+        "Permission prompts": "Audio only, no buttons: Jarvis speaks the server-written question (transcript.askTool) and your next utterance answers it (talk.core.js createVoiceAsk: only while awake, only from words begun after the question, strict yes/no, unclear asked once more, 60 s window) via POST /api/chat/permission with the page token",
+        "Sleep": "\"Jarvis, sleep\" / \"stop listening\" / \"go to sleep\" (and the stop phrases) return it to wake-word-only, said aloud; windows: 6 s after the wake word, 8 s after an answer, 60 s after a question"
       },
       "code": [
         "personal-assistant/src/dashboard/talk.html",
@@ -293,7 +296,8 @@
         "Permissions": [
           "settings.json: defaultMode default, bypass mode disabled; verifyClaudeHome reads them back (and settings.local.json) before starting",
           "no `pa` shell command is allowed: every one asks",
-          "the caveman plugin is off for this session only"
+          "the caveman plugin is off for this session only",
+          "its action-tool prompts can also be answered by voice on Talk (while awake) or on the dashboard's Waiting for your yes card; src/chat/permission.js checks the screen first"
         ],
         "How you reach it": [
           "typing in its termhub tab",
@@ -396,7 +400,8 @@
         "personal-assistant/src/chat/agent.js",
         "personal-assistant/src/chat/feed.js",
         "personal-assistant/src/chat/transcript.js",
-        "personal-assistant/src/notify/chat.js"
+        "personal-assistant/src/notify/chat.js",
+        "personal-assistant/src/chat/permission.js"
       ]
     },
     {
@@ -479,10 +484,12 @@
         "Guards": [
           "binds loopback only and rejects a non-loopback Host (DNS rebinding)",
           "every POST needs X-PA: 1",
-          "starting auto_merge / push_to_main also needs the page token (X-PA-Page) and the confirmed level"
+          "starting auto_merge / push_to_main also needs the page token (X-PA-Page) and the confirmed level",
+          "answering the chat's permission prompt (POST /api/chat/permission) also needs the page token"
         ],
-        "Chat": "/api/chat (type into the PA chat), /api/chat/stream (SSE of its transcript), /api/chat/history",
-        "Send": "never sends: a draft opens, already written, in Teams or Outlook and you press Send"
+        "Chat": "/api/chat (type into the PA chat), /api/chat/stream (SSE of its transcript), /api/chat/history, /api/chat/permission (answer its action prompt)",
+        "Send": "never sends: a draft opens, already written, in Teams or Outlook and you press Send",
+        "Waiting for your yes": "a card at the top of the board (permission.client.js) for the PA chat's pending action prompt, with Approve / Deny through POST /api/chat/permission; src/chat/permission.js reads the session's screen before one keystroke (Enter on Yes, or Esc)"
       },
       "env": [
         {
@@ -498,7 +505,8 @@
         "personal-assistant/src/dashboard/server.js",
         "personal-assistant/src/dashboard/board.js",
         "personal-assistant/src/dashboard/factory.js",
-        "personal-assistant/src/dashboard/architecture.js"
+        "personal-assistant/src/dashboard/architecture.js",
+        "personal-assistant/src/dashboard/permission.client.js"
       ]
     },
     {
@@ -1548,7 +1556,7 @@
         },
         {
           "c": "mcp",
-          "t": "factory_start is on no allow list: Claude Code shows a permission prompt and you approve it."
+          "t": "factory_start is on no allow list: Claude Code shows a permission prompt. Jarvis asks \"Start a factory job for card 412 on the API with deepseek/deepseek-coder, opening a PR for review. Shall I?\" and you say yes (or press Approve on the dashboard)."
         },
         {
           "c": "dispatcher",

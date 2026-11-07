@@ -710,6 +710,9 @@
 
   function beginUtterance() {
     cancelFastTurn(); // barge-in: the fast reply in flight is dropped too
+    // When it began, and how: a spoken yes counts only from words begun after
+    // the question, while awake (createVoiceAsk).
+    mic.utter = { startedAt: Date.now(), ptt: Boolean(mic.ptt), state: conv.state };
     mic.frames = mic.preroll.slice();
     mic.recording = true;
     st.listening = true;
@@ -729,7 +732,7 @@
       conv.on('nothing', Date.now());
       return;
     }
-    send(C.encodeWav(all, RATE));
+    send(C.encodeWav(all, RATE), mic.utter || {});
   }
 
   async function post(path, body, type = 'application/json') {
@@ -739,21 +742,27 @@
     return data;
   }
 
-  async function send(wav) {
+  async function send(wav, utter = {}) {
     st.pending++;
     try {
       let { text } = await post('api/talk/transcribe', wav, 'audio/wav');
       latency.set('transcribed');
       if (conv.wake) text = C.stripWakeWord(text);
-      if (conv.wake && C.isStopPhrase(text)) {
+      // "Jarvis, sleep" / "stop listening" / "go to sleep" (and the other stop
+      // phrases when nothing is being asked): back to wake-word-only, said.
+      const sleepNow = conv.wake && (C.isSleepPhrase(text) || (!voiceAsk.pending && C.isStopPhrase(text)));
+      if (sleepNow) {
         heard(text);
         speaker.cancel();
         cancelFastTurn();
         conv.on('stop', Date.now());
         st.happyUntil = Date.now() + 1500;
         sleep();
+        speaker.say([voiceAsk.pending ? 'Going to sleep. Your yes is waiting on the dashboard.' : 'Going to sleep.']);
+        voiceAsk.clear();
         return;
       }
+      if (heardForAsk(text, utter)) return;
       if (C.isNoise(text)) {
         conv.on('nothing', Date.now());
         return;
@@ -868,8 +877,8 @@
   let lastWaitingSaid = 0;
   function sayWaiting(text) {
     concerned(text || 'I am waiting on an answer in termhub.', 8000);
-    // A prompt answerable here says so itself (showPermission).
-    if (permission) return;
+    // A prompt answered by voice asks its own question (offerPermission).
+    if (voiceAsk.pending) return;
     if (Date.now() - lastWaitingSaid < 10000) return;
     lastWaitingSaid = Date.now();
     speaker.say(['I am waiting on an answer in termhub. Open the session to answer it.']);
@@ -996,49 +1005,76 @@
   }
   setInterval(() => sayHeld(turnVoice.due(Date.now())), 250);
 
-  // ---- The chat's permission prompt: Approve / Deny here ----------------------------
-  // Only for the chat's own actions (the server says `approvable`); anything
-  // else is answered in termhub. The server reads the session's screen and
-  // refuses unless it really is that prompt (src/chat/permission.js): the
-  // buttons send the call's id, never a keystroke.
-  let permission = null;
-  function showPermission(p) {
-    permission = p && p.approvable && p.toolUseId ? p : null;
-    $('permission').hidden = !permission;
-    if (!permission) return;
-    $('permissionText').textContent = `Jarvis wants to: ${String(p.text || 'run an action').replace(/…$/, '')}`;
-    $('permYes').disabled = false;
-    $('permNo').disabled = false;
-    speaker.say([`I need your yes to go ahead: ${String(p.text || '').replace(/…$/, '')}.`]);
+  // ---- The chat's permission prompt, answered by voice --------------------------------
+  // Talk is audio in, audio out: no buttons (the click path is the dashboard's
+  // "Waiting for your yes" card). For one of the chat's own actions the server
+  // sends the question to ask ("Start a factory job for card 412 on your
+  // subscription, opening a PR for review. Shall I?"); the next utterance
+  // answers it under createVoiceAsk's rules (talk.core.js): only while awake,
+  // only from words begun after the question was spoken to the end, yes/no
+  // matched strictly, unclear asked once more, the window 60 s. The server
+  // still reads the session's screen before the one keystroke
+  // (src/chat/permission.js).
+  const voiceAsk = C.createVoiceAsk();
+  const asking = { gen: -1, speaking: false };
+  function speakAsk(question) {
+    asking.gen = speaker.gen;
+    asking.speaking = true;
+    speaker.say([question]);
   }
-  async function answerPermission(answer) {
-    if (!permission) return;
+  function offerPermission(p) {
+    if (!p || p.cleared) return voiceAsk.clear();
+    if (!p.approvable) return;
+    const q = voiceAsk.offer(p);
+    if (q) speakAsk(q);
+  }
+  // The question heard to its end opens the answer window; one cut off by
+  // barge-in does not (the next utterance gets the question again).
+  setInterval(() => {
+    const now = Date.now();
+    if (asking.speaking && !speaker.speaking) {
+      asking.speaking = false;
+      if (speaker.gen === asking.gen && voiceAsk.pending) {
+        voiceAsk.spoken(speaker.lastEnd || now);
+        conv.on('ask', now);
+      }
+    }
+    const t = voiceAsk.tick(now);
+    if (t) speaker.say([t.say]);
+  }, 250);
+  async function answerPermission(answer, toolUseId) {
     const meta = document.querySelector('meta[name="pa-page"]');
-    $('permYes').disabled = true;
-    $('permNo').disabled = true;
     try {
       const res = await fetch('api/chat/permission', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-PA': '1', 'X-PA-Page': meta ? meta.content : '' },
-        body: JSON.stringify({ answer, toolUseId: permission.toolUseId }),
+        body: JSON.stringify({ answer, toolUseId, via: 'voice' }),
       });
       const body = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
-      showPermission(null);
-      notice(answer === 'yes' ? 'Approved.' : 'Denied.', 3000);
+      speaker.say([answer === 'yes' ? 'Okay, going ahead.' : 'Okay, I will not.']);
     } catch (err) {
       concerned(`Not answered: ${err.message}`, 8000);
-      $('permYes').disabled = false;
-      $('permNo').disabled = false;
+      speaker.say([`I could not answer it from here. It is waiting on the dashboard.`]);
     }
   }
-  $('permYes').addEventListener('click', () => answerPermission('yes'));
-  $('permNo').addEventListener('click', () => answerPermission('no'));
+  // An utterance while a question is pending: true when it was handled here.
+  function heardForAsk(text, utter) {
+    if (!voiceAsk.pending) return false;
+    const awake = Boolean(utter.ptt) || (conv.wake && utter.state !== 'asleep');
+    const d = voiceAsk.hear({ text, startedAt: utter.startedAt || 0, awake }, Date.now());
+    if (d.kind === 'none') return false;
+    heard(text);
+    if (d.kind === 'answer') answerPermission(d.answer, d.toolUseId);
+    else if (d.kind === 'reask') speakAsk(d.say);
+    else speaker.say([d.say]);
+    return true;
+  }
 
   function onEvent(ev) {
     if (!ev || !ev.type) return;
     if (ev.type === 'permission') {
-      showPermission(ev.cleared ? null : ev);
+      offerPermission(ev);
       return;
     }
     if (ev.type === 'status') {
@@ -1108,7 +1144,7 @@
     es.onopen = () => {
       if ($('notice').textContent.startsWith('Lost the dashboard')) notice('');
       // A prompt already waiting when the page (re)connects: offer it too.
-      fetch('api/chat/session').then((r) => (r.ok ? r.json() : {})).then((x) => { if (x.permission) showPermission(x.permission); }).catch(() => {});
+      fetch('api/chat/session').then((r) => (r.ok ? r.json() : {})).then((x) => { if (x.permission) offerPermission(x.permission); }).catch(() => {});
     };
     es.onerror = () => {
       st.thinking = false;

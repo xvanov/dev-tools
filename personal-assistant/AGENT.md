@@ -162,17 +162,30 @@ only when `nudgeDecision` (`src/notify/chat.js`, tested) proves the session is C
 chat is never nudged: the screen rules are Claude's. When it cannot prove it, it skips: Enter on a
 permission prompt approves the action. Do not loosen a condition there without a test case for it.
 
-**A permission prompt is answered from a page only deliberately, and only for the chat's own actions.**
-The Talk page's Approve / Deny (`POST /api/chat/permission`, `src/chat/permission.js`) is the one path
-that presses a key at a prompt. It needs X-PA and the page token (issued with `/talk`), names the
-tool call by its `tool_use` id, and `decide` refuses unless every check holds: that call is the one
-the chat is parked on, it is a `mcp__pa-chat__` tool in `CHAT_ACTION_TOOLS` (never a shell command,
-an edit or any other tool, whose one-line description would not show what is approved), termhub says
-the session is Claude Code waiting with `idleReason: blocked`, and the screen read at that moment is
-Claude Code's "Do you want to proceed?" for that tool with no input box after it. Approve is one
-Enter with the cursor on "Yes" — never "Yes, and don't ask again", which would make every later
-call of the tool unasked; Deny is Esc. Anything else is a 409 and is answered in termhub. There is
-no voice answer: a "yes" heard in the room must not approve work.
+**A permission prompt is answered only deliberately, and only for the chat's own actions.** Two
+paths press a key at the chat's prompt, both through `POST /api/chat/permission`
+(`src/chat/permission.js`): the dashboard's "Waiting for your yes" card (`permission.client.js`,
+Approve / Deny) and a spoken yes or no on Talk. The endpoint needs X-PA and the page token (issued with
+`/` and `/talk`), names the tool call by its `tool_use` id, and `decide` refuses unless every check
+holds: that call is the one the chat is parked on, it is a `mcp__pa-chat__` tool in
+`CHAT_ACTION_TOOLS` (never a shell command, an edit or any other tool, whose one-line description would
+not show what is approved), termhub says the session is Claude Code waiting with `idleReason:
+blocked`, and the screen read at that moment is Claude Code's "Do you want to proceed?" for that tool
+with no input box after it. Approve is one Enter with the cursor on "Yes" — never "Yes, and don't ask
+again", which would make every later call of the tool unasked; Deny is Esc. Anything else is a 409.
+
+**Talk is audio in, audio out, and a spoken yes counts only while awake.** No buttons on `/talk`: the
+click path is the dashboard. Jarvis speaks the question the server wrote from the call's structured
+input (`transcript.askTool`: "Start a factory job for card 412 on your subscription, opening a PR for
+review. Shall I?"), and the next utterance answers it under `createVoiceAsk` (`talk.core.js`, tested):
+only from words *begun after* the question was spoken to the end (barge-in or words already on their
+way re-ask it), only while awake — woken by "hey Jarvis" or push-to-talk, never asleep and never in
+hands-free mode without the wake word — matched strictly by `permissionAnswer` (the whole utterance a
+yes or a no, filler aside; anything else is unclear, asked once more, then left on the dashboard, never
+guessed), within 60 s of the question. "Jarvis, sleep" / "stop listening" / "go to sleep" put it back
+to wake-word-only at once (said aloud); the conversation windows already return it there on their own
+(6 s after the wake word, 8 s after an answer, 60 s after a question). Do not add a model to this
+decision, and do not let a yes through on any other path.
 
 **One implementation per behaviour.** OpenClaw skills call the `pa` CLI. They do not talk to
 Postgres, and they do not reimplement dispatch. When the TUI and the CLI disagree about what

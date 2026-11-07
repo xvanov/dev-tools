@@ -297,7 +297,7 @@ async function handle(req, res) {
     if (req.headers['x-pa'] !== '1') return send(res, 403, { error: 'missing X-PA header' });
     if (!pageTokenOk(req)) return send(res, 403, { error: 'answering a permission prompt needs the page token — reload the page' });
     const body = await readJson(req);
-    return send(res, 200, await require('../chat/feed').feed().answerPermission({ answer: body.answer, toolUseId: body.toolUseId }));
+    return send(res, 200, await require('../chat/feed').feed().answerPermission({ answer: body.answer, toolUseId: body.toolUseId, via: body.via === 'voice' ? 'voice' : 'dashboard' }));
   }
   if (req.method === 'GET' && url.pathname === '/api/chat/history') {
     return send(res, 200, { messages: require('../chat/feed').feed().history(url.searchParams.get('limit') || 50) });
@@ -306,6 +306,11 @@ async function handle(req, res) {
     return send(res, 200, await require('../chat/feed').feed().session());
   }
   if (req.method === 'GET' && url.pathname === '/api/chat/stream') return chatStream(req, res);
+  // The board's "Waiting for your yes" card (permission.client.js): the click
+  // path for the chat's permission prompt; Talk answers it by voice.
+  if (req.method === 'GET' && url.pathname === '/permission.js') {
+    return send(res, 200, fs.readFileSync(path.join(__dirname, 'permission.client.js'), 'utf8'), 'text/javascript; charset=utf-8');
+  }
   if (req.method === 'GET' && url.pathname === '/chat.js') {
     return send(res, 200, fs.readFileSync(path.join(__dirname, 'chat.client.js'), 'utf8'), 'text/javascript; charset=utf-8');
   }

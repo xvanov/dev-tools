@@ -1288,11 +1288,16 @@ same through termhub's `/pa/` proxy from a phone.
   permission prompt or question, the chat refuses the send (409); the page says once that it is
   waiting on an answer in termhub — naming the action from the last tool call ("waiting for your yes in
   termhub: starting a factory job: card 412 (claude_session, pr)") — and does not retry. When the prompt is
-  for one of the chat's own actions (`factory_start`, `session_start`, …), the page shows it with
-  **Approve** and **Deny**: the server reads the session's screen, checks it really is Claude Code's
-  permission prompt for that tool call, and presses Enter on "Yes" (once — never "don't ask again") or
-  Esc. Any other prompt (a shell command, an edit) is answered in termhub. Saying "yes" does not
-  approve anything.
+  for one of the chat's own actions (`factory_start`, `session_start`, …), Jarvis asks out loud —
+  "Start a factory job for card 412 on your subscription, opening a PR for review. Shall I?" — and
+  your next words answer it: "yes", "do it", "go ahead" approve; "no", "cancel", "stop" deny; anything
+  else is asked once more, then left on the dashboard. Only while it is awake (after "hey Jarvis", or
+  push-to-talk), only from words you began after the question, within a minute. The server then reads
+  the session's screen, checks it really is Claude Code's permission prompt for that call, and presses
+  Enter on "Yes" (once — never "don't ask again") or Esc. Talk has no buttons; the dashboard shows the
+  same prompt as a "Waiting for your yes" card with Approve and Deny. Any other prompt (a shell command,
+  an edit) is answered in termhub. "Jarvis, sleep", "stop listening" or "go to sleep" puts it back to
+  waiting for the wake word.
 - **The fast lane ("System 1", `src/chat/fastLane.js`).** The PA chat takes 3–5 s before it says
   anything; a person answers within a second. So each spoken turn first goes to a quick model
   (`PA_FAST_MODEL`, default `local/llama3.2:3b` in Ollama) that sees a compact snapshot of your day

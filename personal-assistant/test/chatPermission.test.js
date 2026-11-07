@@ -97,19 +97,95 @@ assert.strictEqual(P.chatAction('mcp__pa-chat__remember'), null);
   assert.ok(!JSON.stringify(e).includes('secret words'), 'the input stays out of the stream');
 }
 
-// --- the page: parses, sends the page token, no HTML sink -------------------------
+// --- Talk is audio only; the dashboard has the buttons ------------------------------
 {
   const page = fs.readFileSync(path.join(__dirname, '../src/dashboard/talk.page.js'), 'utf8');
   new vm.Script(page, { filename: 'talk.page.js' });
-  assert.match(page, /'X-PA-Page': meta \? meta\.content : ''/);
-  assert.match(page, /JSON\.stringify\(\{ answer, toolUseId: permission\.toolUseId \}\)/);
-  const block = page.slice(page.indexOf('function showPermission'), page.indexOf('function onEvent'));
-  assert.match(block, /\$\('permissionText'\)\.textContent = /);
-  assert.ok(!/innerHTML|insertAdjacentHTML|document\.write/.test(block), 'the action text is set as text');
   const html = fs.readFileSync(path.join(__dirname, '../src/dashboard/talk.html'), 'utf8');
-  for (const id of ['permission', 'permissionText', 'permYes', 'permNo']) assert.match(html, new RegExp(`id="${id}"`));
-  const talk = require('../src/dashboard/talk');
-  assert.ok(talk.route, 'talk route');
+  for (const id of ['permission', 'permYes', 'permNo']) assert.ok(!new RegExp(`id="${id}"`).test(html), `no ${id} on Talk: audio in, audio out`);
+  assert.match(page, /C\.createVoiceAsk\(\)/, 'answered by voice');
+  assert.match(page, /'X-PA-Page': meta \? meta\.content : ''/);
+  assert.match(page, /JSON\.stringify\(\{ answer, toolUseId, via: 'voice' \}\)/);
+  const card = fs.readFileSync(path.join(__dirname, '../src/dashboard/permission.client.js'), 'utf8');
+  new vm.Script(card, { filename: 'permission.client.js' });
+  assert.ok(!/innerHTML|outerHTML|insertAdjacentHTML|document\.write/.test(card), 'the card sets text only');
+  assert.match(card, /'X-PA-Page': token\(\)/);
+  assert.match(card, /via: 'dashboard'/);
+  assert.match(fs.readFileSync(path.join(__dirname, '../src/dashboard/index.html'), 'utf8'), /<script src="permission\.js"><\/script>/);
+}
+
+// --- what Jarvis asks out loud ---------------------------------------------------------
+{
+  assert.strictEqual(T.askTool('mcp__pa-chat__factory_start', { card: '412', delivery: 'pr' }), 'Start a factory job for card 412 on your subscription, opening a PR for review. Shall I?');
+  assert.strictEqual(T.askTool('mcp__pa-chat__factory_start', { ask: 'add retries', runtime: 'api', model: 'deepseek/deepseek-coder', kind: 'research' }), 'Start a factory research job for add retries on the API with deepseek/deepseek-coder. Shall I?');
+  assert.strictEqual(T.askTool('mcp__pa-chat__factory_continue', { repo: 'acme/widget', pr: 12 }), 'Continue PR 12 on acme/widget in the factory on your subscription. Shall I?');
+  assert.strictEqual(T.askTool('mcp__pa-chat__factory_cancel', { job: 'widget:0042' }), 'Cancel factory job widget 0042. Shall I?');
+  assert.strictEqual(T.askTool('mcp__pa-chat__session_start', { repo: 'acme/widget', prompt: 'look at the flaky test', mode: 'plan' }), 'Start a Claude session on acme/widget, read only, to look at the flaky test. Shall I?');
+  assert.strictEqual(T.askTool('mcp__pa-chat__board', {}), null, 'a read is never asked');
+  assert.strictEqual(T.askTool('Bash', { command: 'pa do' }), null, 'a shell command is never asked by voice');
+  const [e] = T.entryEvents({ type: 'assistant', uuid: 'a9', message: { stop_reason: 'tool_use', content: [{ type: 'tool_use', id: 'toolu_09', name: 'mcp__pa-chat__factory_cancel', input: { job: 'widget:1' } }] } });
+  assert.strictEqual(e.ask, 'Cancel factory job widget 1. Shall I?');
+}
+
+// --- a spoken yes or no -------------------------------------------------------------
+{
+  const C = require('../src/dashboard/talk.core');
+  for (const t of ['Yes.', 'yes please', 'Okay, do it.', 'Go ahead, Jarvis.', 'Jarvis, yes', 'Sure.', 'Approve it', 'yes, go ahead']) assert.strictEqual(C.permissionAnswer(t), 'yes', t);
+  for (const t of ['No.', 'no thanks', 'Cancel that.', 'Stop.', "Don't.", 'Nope', 'Okay, cancel it.', 'deny']) assert.strictEqual(C.permissionAnswer(t), 'no', t);
+  for (const t of ['Yes, but on the API', 'maybe', 'yes no', 'what will it cost?', 'ok', 'Sure thing', '', 'no yes', 'Yes. '.repeat(20)]) assert.strictEqual(C.permissionAnswer(t), 'unclear', JSON.stringify(t));
+  for (const t of ['sleep', 'Jarvis, sleep', 'go to sleep', 'Stop listening', 'Go back to sleep.', 'Goodnight Jarvis']) assert.ok(C.isSleepPhrase(t), t);
+  for (const t of ['yes', 'sleep on it and decide', 'what time do I sleep']) assert.ok(!C.isSleepPhrase(t), t);
+  assert.ok(C.isStopPhrase('sleep'), '"Jarvis, sleep" ends the conversation');
+
+  const ask = C.createVoiceAsk({ windowMs: 60000 });
+  assert.strictEqual(ask.offer({ toolUseId: 't1' }), null, 'nothing to ask without a question');
+  assert.strictEqual(ask.offer({ toolUseId: 't1', ask: 'Cancel job w 1. Shall I?' }), 'Cancel job w 1. Shall I?');
+  assert.strictEqual(ask.offer({ toolUseId: 't1', ask: 'again' }), null, 'asked once per prompt');
+  // Words begun before the question ended answer nothing: it is asked again.
+  assert.deepStrictEqual(ask.hear({ text: 'yes', startedAt: 50, awake: true }, 100), { kind: 'reask', say: 'Cancel job w 1. Shall I?' });
+  ask.spoken(1000);
+  assert.strictEqual(ask.hear({ text: 'yes', startedAt: 900, awake: true }, 1500).kind, 'reask', 'begun during the question');
+  ask.spoken(2000);
+  assert.strictEqual(ask.hear({ text: 'yes', startedAt: 2500, awake: false }, 3000).kind, 'asleep', 'never while asleep');
+  assert.ok(ask.pending, 'still pending after an asleep yes');
+  assert.strictEqual(ask.hear({ text: 'hmm, which job?', startedAt: 3500, awake: true }, 4000).kind, 'reask', 'unclear: once more');
+  ask.spoken(5000);
+  assert.deepStrictEqual(ask.hear({ text: 'yes', startedAt: 5200, awake: true }, 5600), { kind: 'answer', answer: 'yes', toolUseId: 't1' });
+  assert.strictEqual(ask.pending, null);
+  // Unclear twice: left on the dashboard.
+  ask.offer({ toolUseId: 't2', ask: 'Q?' });
+  ask.spoken(0);
+  ask.hear({ text: 'what', startedAt: 10, awake: true }, 20);
+  ask.spoken(30);
+  assert.strictEqual(ask.hear({ text: 'erm', startedAt: 40, awake: true }, 50).kind, 'giveup');
+  assert.strictEqual(ask.pending, null);
+  // The window: the expiry is said once, and a yes after it is not an answer.
+  ask.offer({ toolUseId: 't3', ask: 'Q?' });
+  ask.spoken(0);
+  assert.strictEqual(ask.tick(59000), null);
+  assert.strictEqual(ask.tick(60001).kind, 'expired');
+  assert.strictEqual(ask.tick(60002), null);
+  assert.strictEqual(ask.hear({ text: 'yes', startedAt: 60500, awake: true }, 61000).kind, 'none', 'expired: the words go to the chat as usual');
+  ask.offer({ toolUseId: 't4', ask: 'Q?' });
+  ask.spoken(0);
+  assert.strictEqual(ask.hear({ text: 'yes', startedAt: 70000, awake: true }, 70500).kind, 'none', 'expired at hearing time');
+  ask.offer({ toolUseId: 't5', ask: 'Q?' });
+  ask.spoken(0);
+  assert.deepStrictEqual(ask.hear({ text: 'No, stop.', startedAt: 10, awake: true }, 20), { kind: 'answer', answer: 'no', toolUseId: 't5' });
+  ask.offer({ toolUseId: 't6', ask: 'Q?' });
+  ask.clear('t5');
+  assert.ok(ask.pending, 'clearing another prompt leaves this one');
+  ask.clear('t6');
+  assert.strictEqual(ask.pending, null);
+
+  // The conversation keeps listening for the answer, but never wakes for it.
+  const conv = C.createConversation({ wake: true });
+  assert.strictEqual(conv.on('ask', 0), 'asleep', 'asleep stays asleep: the answer needs "hey Jarvis"');
+  conv.on('wake', 0);
+  conv.on('speech', 100);
+  assert.strictEqual(conv.on('ask', 1000), 'follow');
+  assert.strictEqual(conv.tick(1000 + 59000), null, 'a minute to answer');
+  assert.strictEqual(conv.tick(1000 + 60001), 'sleep');
 }
 
 // --- feed.answerPermission over a fake termhub, then the route's guards -------------
@@ -143,7 +219,7 @@ assert.strictEqual(P.chatAction('mcp__pa-chat__remember'), null);
   await new Promise((r) => setTimeout(r, 80));
   const perm = got.find((e) => e.type === 'permission' && !e.cleared);
   assert.ok(perm, 'the page is offered the prompt');
-  assert.deepStrictEqual([perm.toolUseId, perm.approvable, perm.text], ['toolu_01', true, 'starting a factory job: card 412 (claude_session, pr)…']);
+  assert.deepStrictEqual([perm.toolUseId, perm.approvable, perm.text, perm.ask], ['toolu_01', true, 'starting a factory job: card 412 (claude_session, pr)…', 'Start a factory job for card 412 on your subscription, opening a PR for review. Shall I?']);
   assert.ok(got.indexOf(perm) < got.findIndex((e) => e.type === 'activity' && /termhub/.test(e.text)), 'buttons before the "go to termhub" line');
   assert.strictEqual((await feed.session()).permission.toolUseId, 'toolu_01', 'a page opened later sees it too');
 

@@ -126,7 +126,8 @@ function createFeed({
   function permissionPending(st = { waitingOn }) {
     if (!st.waitingOn || !lastTool?.toolUseId) return null;
     const P = require('./permission');
-    return { toolUseId: lastTool.toolUseId, text: lastTool.text, approvable: Boolean(P.chatAction(lastTool.name)) };
+    const approvable = Boolean(P.chatAction(lastTool.name));
+    return { toolUseId: lastTool.toolUseId, text: lastTool.text, approvable, ask: approvable ? lastTool.ask || null : null };
   }
 
   /**
@@ -135,7 +136,7 @@ function createFeed({
    * termhub's state and the screen read now. Throws 409 with the reason
    * when any check fails: then it is answered in termhub.
    */
-  async function answerPermission({ answer, toolUseId } = {}) {
+  async function answerPermission({ answer, toolUseId, via = 'dashboard' } = {}) {
     await pollStatus();
     const h = hub();
     const session = sessionId ? (await h.listSessions()).find((s) => s.id === sessionId) || null : null;
@@ -144,7 +145,7 @@ function createFeed({
     const d = require('./permission').decide({ answer, toolUseId, pending, session, screen });
     if (!d.ok) throw httpError(409, d.reason);
     for (const key of d.keys) await h.say(session.id, key, { submit: key === '' });
-    log.info('answered the chat permission prompt from the page', { tool: d.tool, answer });
+    log.info('answered the chat permission prompt from the page', { tool: d.tool, answer, via });
     publish({ id: `perm-answered-${Date.now()}`, type: 'permission', cleared: true, answered: answer, at: new Date().toISOString() });
     return { ok: true, answer, tool: d.tool };
   }
@@ -227,7 +228,7 @@ function createFeed({
         if (turn && e.type === 'assistant' && e.final !== false) turn.answered = true;
         // The last tool call of the turn: a permission prompt is always for
         // the call the transcript showed last, so the wait can name it.
-        if (e.type === 'activity') lastTool = e.toolUseId ? { text: e.text, name: e.tool, toolUseId: e.toolUseId } : { text: e.text };
+        if (e.type === 'activity') lastTool = e.toolUseId ? { text: e.text, name: e.tool, toolUseId: e.toolUseId, ask: e.ask || null } : { text: e.text };
         else if (e.type === 'user') lastTool = null;
         publish(e, !quiet);
       }

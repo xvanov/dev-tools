@@ -817,7 +817,10 @@
   // being said), activity (still working: a reply arrived). tick(now)
   // returns 'sleep' when a window ran out. With the wake word off the machine
   // stays 'open': every utterance is a request (the hands-free mode).
-  const WAKE_DEFAULTS = { awakeMs: 6000, followMs: 8000, busyMaxMs: 180000 };
+  // ask (the chat asked "shall I?" out loud): if awake, the follow-up window
+  // is `askMs` long, so the answer needs no wake word; asleep, it stays asleep
+  // (the answer then needs "hey Jarvis" first).
+  const WAKE_DEFAULTS = { awakeMs: 6000, followMs: 8000, busyMaxMs: 180000, askMs: 60000 };
 
   function createConversation(opts) {
     const o = Object.assign({ wake: true }, WAKE_DEFAULTS, opts || {});
@@ -857,6 +860,7 @@
         if (ev === 'speech') return go('busy', now, o.busyMaxMs);
         if (ev === 'sent' || ev === 'activity') return state === 'busy' ? go('busy', now, o.busyMaxMs) : state;
         if (ev === 'idle' && state === 'busy') return go('follow', now, o.followMs);
+        if (ev === 'ask') return go('follow', now, o.askMs);
         if (ev === 'nothing' && state === 'busy') return go('follow', now, o.followMs); // the utterance was noise
         return state;
       },
@@ -869,10 +873,110 @@
   }
 
   // "Stop", "thanks Jarvis", "that's all": end the conversation, send nothing.
-  const STOP_RE = /^(?:(?:ok(?:ay)?|alright|no)[,.!]?\s+)?(?:stop(?: it| talking| listening)?|shush|be quiet|quiet|cancel|never ?mind|that'?s (?:all|it)(?: for now)?|(?:thanks?|thank you|cheers),? jarvis|(?:good ?bye|bye|goodnight|good night|sleep),? jarvis|go to sleep|that will be all)(?:,? jarvis)?[\s.!]*$/i;
+  const STOP_RE = /^(?:(?:ok(?:ay)?|alright|no)[,.!]?\s+)?(?:stop(?: it| talking| listening)?|shush|be quiet|quiet|cancel|never ?mind|that'?s (?:all|it)(?: for now)?|(?:thanks?|thank you|cheers),? jarvis|(?:good ?bye|bye|goodnight|good night|sleep),? jarvis|(?:go (?:back )?to )?sleep(?: now)?|that will be all)(?:,? jarvis)?[\s.!]*$/i;
 
   function isStopPhrase(text) {
     return STOP_RE.test(String(text || '').trim());
+  }
+
+  // ---- A spoken yes or no to the chat's "shall I?" ------------------------------------
+  //
+  // Deterministic and strict: the whole utterance must be a yes or a no, with
+  // only filler around it ("okay", "please", "Jarvis"). Anything else —
+  // "yes but on the API", "maybe", a question, a yes and a no — is 'unclear',
+  // and the page asks once more; it never guesses.
+  const FILL = /(?:(?:ok(?:ay)?|alright|right|um+|uh+|well|so|then|please|thanks?|thank you|jarvis|now)[,.!]?\s*)*/.source;
+  const SEP = /[,.!]?\s*/.source;
+  const YES = /(?:yes|yeah|yep|yup|sure|do it|go ahead|go for it|approve(?:d| it)?|confirm(?:ed)?|please do|affirmative|start it|ship it|proceed|carry on|let'?s do it)/.source;
+  const NO = /(?:no|nope|nah|no thanks|cancel(?: it| that)?|stop|deny|denied|don'?t(?: do it)?|do not|not now|never ?mind|abort|reject(?: it)?|leave it)/.source;
+  const answerRe = (word) => new RegExp(`^${FILL}${word}(?:${SEP}${FILL}${word})*${SEP}${FILL}$`, 'i');
+  const YES_RE = answerRe(YES);
+  const NO_RE = answerRe(NO);
+
+  /** 'yes' | 'no' | 'unclear' for an answer to "shall I?". */
+  function permissionAnswer(text) {
+    const t = stripWakeWord(String(text || '')).replace(/[’‘]/g, "'").replace(/\s+/g, ' ').trim();
+    if (!t || t.length > 60) return 'unclear';
+    const yes = YES_RE.test(t);
+    const no = NO_RE.test(t);
+    if (yes === no) return 'unclear';
+    return yes ? 'yes' : 'no';
+  }
+
+  // ---- The spoken "shall I?" and its answer ---------------------------------------------
+  //
+  // The chat is parked on a permission prompt for one of its own actions; the
+  // page asks out loud and the user's next utterance answers it. The rules,
+  // all here so they are tested rather than spread over the page:
+  //   - an answer counts only from an utterance that STARTED after the
+  //     question was spoken to the end (barging into the question, or words
+  //     already on their way, answer nothing: the question is asked again);
+  //   - only while awake: woken by the wake word, or push-to-talk. Never in
+  //     hands-free mode without the wake word, never while asleep;
+  //   - yes / no by permissionAnswer(); unclear asks once more, then gives up
+  //     and leaves it on the dashboard — never a guess;
+  //   - the window closes `windowMs` after the question was spoken.
+  // Returns what the page should do: { kind, say?, answer?, toolUseId? }.
+  function createVoiceAsk(opts) {
+    const o = Object.assign({ windowMs: 60000, maxUnclear: 1 }, opts || {});
+    let ask = null; // { toolUseId, question, spokenAt, unclear }
+    const DASH = 'It is waiting on the dashboard.';
+    return {
+      get pending() {
+        return ask ? { toolUseId: ask.toolUseId, spokenAt: ask.spokenAt } : null;
+      },
+      // A prompt to ask about: the question to speak, or null if already asked.
+      offer(p) {
+        if (!p || !p.toolUseId || !p.ask) return null;
+        if (ask && ask.toolUseId === p.toolUseId) return null;
+        ask = { toolUseId: p.toolUseId, question: String(p.ask), spokenAt: null, unclear: 0 };
+        return ask.question;
+      },
+      // The question was heard to its end (not cut off).
+      spoken(now) {
+        if (ask && ask.spokenAt == null) ask.spokenAt = now;
+      },
+      clear(toolUseId) {
+        if (!ask || (toolUseId && ask.toolUseId !== toolUseId)) return;
+        ask = null;
+      },
+      hear({ text, startedAt, awake }, now) {
+        if (!ask) return { kind: 'none' };
+        if (ask.spokenAt != null && now - ask.spokenAt > o.windowMs) {
+          ask = null;
+          return { kind: 'none' };
+        }
+        if (!awake) return { kind: 'asleep', say: `I take a yes only after "hey Jarvis". ${DASH}` };
+        if (ask.spokenAt == null || !(startedAt >= ask.spokenAt)) {
+          // Spoken over the question, or already on its way: not an answer.
+          ask.spokenAt = null;
+          return { kind: 'reask', say: ask.question };
+        }
+        const a = permissionAnswer(text);
+        if (a === 'yes' || a === 'no') {
+          const id = ask.toolUseId;
+          ask = null;
+          return { kind: 'answer', answer: a, toolUseId: id };
+        }
+        if (ask.unclear >= o.maxUnclear) {
+          ask = null;
+          return { kind: 'giveup', say: `I did not catch a yes or a no. ${DASH}` };
+        }
+        ask.unclear++;
+        ask.spokenAt = null;
+        return { kind: 'reask', say: `Sorry, yes or no? ${ask.question}` };
+      },
+      tick(now) {
+        if (!ask || ask.spokenAt == null || now - ask.spokenAt <= o.windowMs) return null;
+        ask = null;
+        return { kind: 'expired', say: `I did not hear an answer. ${DASH}` };
+      },
+    };
+  }
+
+  // "Jarvis, sleep", "stop listening", "go to sleep": back to wake-word-only.
+  function isSleepPhrase(text) {
+    return /^(?:(?:ok(?:ay)?|alright)[,.!]?\s+)?(?:(?:go (?:back )?to )?sleep(?: now)?|stop listening|(?:good ?night|good ?bye|bye)(?:,? jarvis)?)(?:,? jarvis)?[\s.!]*$/i.test(stripWakeWord(String(text || '')).trim());
   }
 
   // whisper hears the tail of the wake word in the request ("Jarvis, what's
@@ -966,6 +1070,9 @@
     WAKE_DEFAULTS,
     createConversation,
     isStopPhrase,
+    isSleepPhrase,
+    createVoiceAsk,
+    permissionAnswer,
     stripWakeWord,
     createWakeTrigger,
     wakeDefault,

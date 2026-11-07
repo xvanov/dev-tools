@@ -48,6 +48,55 @@ function base(p) {
  * assistant is working ("searching your history: renewal…"). Never the tool's
  * full input: it can be long, and it can quote other people's messages.
  */
+const DELIVERY_SAID = {
+  none: 'committing without pushing',
+  branch: 'pushing a branch',
+  draft_pr: 'opening a draft PR',
+  pr: 'opening a PR for review',
+  auto_merge: 'merging it once checks pass',
+  push_to_main: 'pushing straight to main',
+};
+
+/**
+ * The question Jarvis asks out loud before one of the chat's actions runs
+ * ("Start a factory job for card 412 on your subscription, opening a PR for
+ * review. Shall I?"), or null for any other tool. From the tool's structured
+ * input only, shortened: the Talk page speaks it and the user's spoken yes or
+ * no answers the permission prompt (src/chat/permission.js).
+ */
+function askTool(name, input = {}) {
+  const m = /^mcp__pa-chat__([a-z_]+)$/.exec(String(name || ''));
+  if (!m) return null;
+  const i = input && typeof input === 'object' ? input : {};
+  const job = (j) => String(j || 'that job').replace(':', ' ');
+  const how = () => {
+    const parts = [];
+    parts.push(i.runtime === 'api' ? `on the API${i.model ? ` with ${shorten(i.model, 40)}` : ''}` : 'on your subscription');
+    if (DELIVERY_SAID[i.delivery]) parts.push(DELIVERY_SAID[i.delivery]);
+    return parts.join(', ');
+  };
+  let q;
+  switch (m[1]) {
+    case 'factory_start': {
+      const kind = i.kind && i.kind !== 'code' ? `${i.kind} ` : '';
+      const what = i.card ? `card ${shorten(i.card, 12)}` : shorten(i.title || i.ask || 'this', 70);
+      q = `Start a factory ${kind}job for ${what} ${how()}`;
+      break;
+    }
+    case 'factory_continue': {
+      const on = i.pr ? `PR ${Number(i.pr) || ''}` : `branch ${shorten(i.branch, 40)}`;
+      q = `Continue ${on} on ${shorten(i.repo || 'the repo', 40)} in the factory ${how()}`;
+      break;
+    }
+    case 'factory_resume': q = `Resume factory job ${job(i.job)}`; break;
+    case 'factory_cancel': q = `Cancel factory job ${job(i.job)}`; break;
+    case 'factory_approve': q = `Approve the direction factory job ${job(i.job)} is waiting on`; break;
+    case 'session_start': q = `Start a Claude session${i.repo ? ` on ${shorten(i.repo, 40)}` : ''}${i.mode === 'plan' ? ', read only,' : ''} to ${shorten(i.prompt, 70)}`; break;
+    default: return null;
+  }
+  return `${q.replace(/\s+/g, ' ').trim()}. Shall I?`;
+}
+
 function describeTool(name, input = {}) {
   const n = String(name || '');
   const i = input && typeof input === 'object' ? input : {};
@@ -141,7 +190,10 @@ function entryEvents(entry) {
         // The tool's name and call id ride along (never its input): a permission
         // prompt is for the last call, and the Talk page answers it by that id
         // (src/chat/permission.js).
-        out.push({ id, type: 'activity', text: describeTool(b.name, b.input), at, tool: String(b.name || ''), toolUseId: String(b.id || '') });
+        const e = { id, type: 'activity', text: describeTool(b.name, b.input), at, tool: String(b.name || ''), toolUseId: String(b.id || '') };
+        const ask = askTool(b.name, b.input);
+        if (ask) e.ask = ask;
+        out.push(e);
       }
     });
     return out;
@@ -186,4 +238,4 @@ function sessionStatus(session) {
   return { status: session.busy ? 'thinking' : 'idle', waitingOn: null };
 }
 
-module.exports = { projectDirFor, describeTool, entryEvents, parseLines, sessionStatus, textOf };
+module.exports = { projectDirFor, describeTool, askTool, entryEvents, parseLines, sessionStatus, textOf };
