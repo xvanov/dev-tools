@@ -221,6 +221,10 @@ _MIGRATION_COLUMNS: dict[str, str] = {
     # stories gain ``chain`` / NULL = exactly today's routing.
     "pipeline": "TEXT NOT NULL DEFAULT 'chain'",
     "model_overrides_json": "TEXT",
+    # JOBS-API v1.2 runtime stamp (StoryRecord.runtime / runtime_model).
+    # Pre-existing stories gain ``api`` = exactly today's dev dispatch.
+    "runtime": "TEXT NOT NULL DEFAULT 'api'",
+    "runtime_model": "TEXT",
     # JSONL of prior dev sandbox attempts (one entry per chain-level retry):
     # ``[{attempt, ts, test_output_tail, files_touched, summary}, ...]``.
     # Fed forward into the next dev invocation's initial message so the LLM
@@ -590,7 +594,7 @@ def handle_stories_spawned(
     from factory.job_routing import resolve_for_direction
 
     routing = resolve_for_direction(direction, app_config)
-    if routing.model_overrides or routing.pipeline != "chain":
+    if routing.model_overrides or routing.pipeline != "chain" or routing.runtime != "api":
         for warning in routing.warnings:
             _logger.warning("direction %s: %s", direction.id_slug, warning)
         if not dry_run:
@@ -605,6 +609,8 @@ def handle_stories_spawned(
                         "direction_id": direction.id or direction.slug,
                         "pipeline": routing.pipeline,
                         "pipeline_requested": routing.pipeline_requested,
+                        "runtime": routing.runtime,
+                        "claude_model": routing.claude_model,
                         "model_overrides": routing.model_overrides,
                         "model_sources": routing.model_sources,
                         "warnings": list(routing.warnings),
@@ -696,6 +702,8 @@ def handle_stories_spawned(
                 chain_kind=chain_kind,
                 pipeline=routing.pipeline,
                 model_overrides_json=routing.overrides_json(),
+                runtime=routing.runtime,
+                runtime_model=routing.claude_model,
                 github_issue_number=issue_number,
                 github_branch=f"story/{issue_number or 0}-{slug}",
                 story_file_path=story_file_path,
@@ -946,6 +954,8 @@ def handle_stories_spawned(
             chain_kind=chain_kind,
             pipeline=routing.pipeline,
             model_overrides_json=routing.overrides_json(),
+            runtime=routing.runtime,
+            runtime_model=routing.claude_model,
             github_issue_number=issue_number,
             github_branch=f"story/{issue_number or 0}-{slug}",
             story_file_path=story_file_path,
@@ -2799,7 +2809,45 @@ def _handle_dev_once(
                 "spend_cap_usd": _spend_cap,
             }
 
-        run_res = asyncio.run(
+        # JOBS-API v1.2: a story stamped ``runtime: claude_session`` runs its dev
+        # step as Claude Code (factory/claude_session) with the same story,
+        # context, prior attempts, findings, gate loop and wall clock; every
+        # step after it (commit, tech-writer, gates, CI watch, delivery) is
+        # unchanged. Read from the spawn stamp only.
+        if (getattr(story, "runtime", None) or "api") == "claude_session":
+            from factory.claude_session.run import claude_dev_run
+
+            if solo_kwargs:
+                log_story_event(
+                    story.id,
+                    "claude_session_dev",
+                    {
+                        "model": getattr(story, "runtime_model", None) or "cli default",
+                        "wall_clock_s": _dev_timeout_s,
+                        "spend_cap": "n/a (subscription, unmetered)",
+                    },
+                    software_factory_root=software_factory_root,
+                    slug_hint=story.slug,
+                )
+            run_res = claude_dev_run(
+                story_path=story_file_path_obj,
+                repo_path=Path(repo_path),
+                software_factory_root=software_factory_root,
+                db_path=db,
+                model=getattr(story, "runtime_model", None),
+                test_command=app_config.gates.test_command,
+                direction_chain=dev_chain,
+                prior_attempts=prior_attempts,
+                reviewer_findings=reviewer_findings,
+                story_id=story.id,
+                app=story.app,
+                direction_id=story.direction_id,
+                wall_clock_timeout_s=_dev_timeout_s,
+                **solo_kwargs,
+            )
+        else:
+            run_res = None
+        run_res = run_res or asyncio.run(
             sandbox_run(
                 persona="dev",
                 story_path=story_file_path_obj,

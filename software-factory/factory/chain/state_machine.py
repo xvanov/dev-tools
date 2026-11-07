@@ -303,6 +303,12 @@ class StoryRecord(SQLModel, table=True):
     # ``job_routing.route_for_story``.
     pipeline: str = Field(default="chain")
     model_overrides_json: str | None = None
+    # JOBS-API v1.2, stamped at spawn like ``pipeline``: who runs the DEV step
+    # (``api`` = OpenHands + LiteLLM; ``claude_session`` = Claude Code, see
+    # factory/claude_session) and, for Claude Code, the model name (NULL = the
+    # CLI's default).
+    runtime: str = Field(default="api")
+    runtime_model: str | None = None
     github_issue_number: int | None = None
     github_branch: str | None = None
     github_pr_number: int | None = None

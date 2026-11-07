@@ -87,6 +87,12 @@ class JobRouting:
     model_overrides: dict[str, str] = field(default_factory=dict)  # merged app+job
     model_sources: dict[str, str] = field(default_factory=dict)  # key -> "job"|"app"
     warnings: tuple[str, ...] = ()
+    # JOBS-API v1.2: who runs the DEV step. ``api`` = OpenHands + LiteLLM
+    # (routes.yaml); ``claude_session`` = Claude Code on the operator's
+    # subscription (factory/claude_session). ``claude_model`` is the Claude
+    # model name for it (None = the CLI's default).
+    runtime: str = "api"
+    claude_model: str | None = None
 
     def overrides_json(self) -> str | None:
         return json.dumps(self.model_overrides, sort_keys=True) if self.model_overrides else None
@@ -342,8 +348,15 @@ def resolve_job_routing(
     pipeline: str | None = None,
     source: str = "direction",
     routes_path: Path | None = None,
+    runtime: str | None = None,
+    claude_model: str | None = None,
 ) -> JobRouting:
     """Validate and merge a job's routing request against its app.
+
+    ``runtime`` (v1.2): ``api`` (default) or ``claude_session``. With
+    ``claude_session`` an ``auto`` pipeline means ``solo`` (one Claude Code
+    conversation); an explicit ``chain`` keeps the chain and only the dev
+    persona runs as Claude Code.
 
     Call at SUBMIT (``factory job submit``, before writing the direction) and
     again at SPAWN (``handle_stories_spawned``) — the app config or routes.yaml
@@ -360,7 +373,18 @@ def resolve_job_routing(
     # with no ANTHROPIC_API_KEY would otherwise review with the dev's model.
     # (Also covers a routes.yaml dev tier degrading onto a job-named reviewer.)
     check_runtime_independence(merged, sources, routes_path=routes_path)
-    effective, requested = resolve_pipeline(pipeline, app_config)
+    from factory.jobs.kinds import RUNTIME_CLAUDE, normalize_runtime
+
+    rt = normalize_runtime(runtime)
+    if rt is None:
+        raise JobRoutingError(
+            "invalid_runtime", f"runtime must be api or claude_session, got {runtime!r}"
+        )
+    if rt == RUNTIME_CLAUDE and (pipeline or "auto").strip().lower() == "auto":
+        effective, _ = resolve_pipeline("solo", app_config)
+        requested = "auto"
+    else:
+        effective, requested = resolve_pipeline(pipeline, app_config)
     warnings = tuple(
         f"{k}={v}: provider not configured in this environment — will degrade to the "
         "routes.yaml fallback until its key/base URL is set"
@@ -373,6 +397,8 @@ def resolve_job_routing(
         model_overrides=merged,
         model_sources=sources,
         warnings=warnings,
+        runtime=rt,
+        claude_model=(str(claude_model).strip() or None) if claude_model else None,
     )
 
 
@@ -385,6 +411,8 @@ def resolve_for_direction(direction: Any, app_config: AppConfig) -> JobRouting:
         job_models=fm.get("models"),
         pipeline=fm.get("pipeline"),
         source=f"direction {did} frontmatter",
+        runtime=fm.get("runtime"),
+        claude_model=fm.get("claude_model"),
     )
 
 
