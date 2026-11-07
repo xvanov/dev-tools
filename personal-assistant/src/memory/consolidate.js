@@ -51,7 +51,7 @@ async function backfillEmbeddings(limit = 256) {
     [limit]
   );
   if (!missing.length) return 0;
-  const vectors = await embed(missing.map((c) => `${c.subject_label}: ${c.text}`)).catch(() => null);
+  const vectors = await embed(missing.map((c) => `${c.subject_label}: ${c.text}`), { purpose: 'embed-claim' }).catch(() => null);
   if (!vectors) return 0;
   for (let i = 0; i < missing.length; i++) {
     await query('update claim set embedding = $2::vector where id = $1', [missing[i].id, toVector(vectors[i])]);

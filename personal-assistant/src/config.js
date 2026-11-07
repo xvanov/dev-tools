@@ -329,6 +329,8 @@ const config = {
     deployment: env('PA_EMBED_DEPLOYMENT', 'text-embedding-3-small'),
     apiVersion: env('PA_EMBED_API_VERSION', '2024-05-01-preview'),
     dimensions: envInt('PA_EMBED_DIMENSIONS', 1536),
+    // text-embedding-3-small list price, USD per million tokens; what llm_spend records.
+    usdPerMTokens: Number(env('PA_EMBED_USD_PER_MTOK', '0.02')) || 0.02,
     // Query-embedding cache (src/search/embedCache.js): in-memory entries, and rows kept in the table.
     cacheEntries: envInt('PA_EMBED_CACHE_ENTRIES', 500),
     cacheRows: envInt('PA_EMBED_CACHE_ROWS', 5000),

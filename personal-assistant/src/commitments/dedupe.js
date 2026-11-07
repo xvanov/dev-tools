@@ -31,9 +31,6 @@ const log = logger('dedupe');
 const PURPOSE = 'dedupe';
 const WINDOW_DAYS = 60;
 const PER_CALL = 20; // pairs per judge call
-// text-embedding-3-large list price per token; embed() reports no usage, so
-// the cost is estimated from characters (~4 per token).
-const EMBED_USD_PER_TOKEN = 0.13 / 1e6;
 
 function toVector(values) {
   return `[${values.map((v) => Number(v).toFixed(6)).join(',')}]`;
@@ -76,19 +73,13 @@ async function embedPending({ limit = 200 } = {}) {
   for (let i = 0; i < todo.length; i += 64) {
     const chunk = todo.slice(i, i + 64);
     const inputs = chunk.map(S.embeddingInput);
-    const started = Date.now();
-    const vectors = await embed(inputs).catch(() => null);
-    const tokens = inputs.reduce((n, s) => n + Math.ceil(s.length / 4), 0);
-    const cost = tokens * EMBED_USD_PER_TOKEN;
-    await budget.record({
-      purpose: `${PURPOSE}-embed`, model: config.embeddings.deployment, backend: 'azure',
-      costUsd: vectors ? cost : 0, inputTokens: tokens, durationMs: Date.now() - started, ok: Boolean(vectors),
-    });
+    // embed() meters itself (llm_spend, purpose dedupe-embed).
+    const vectors = await embed(inputs, { purpose: `${PURPOSE}-embed` }).catch(() => null);
     if (!vectors) {
       log.warn('embedding failed — duplicates are judged by anchors only until it works');
       break;
     }
-    usd += cost;
+    usd += vectors.usage?.usd || 0;
     for (let j = 0; j < chunk.length; j++) {
       const c = chunk[j];
       const isRef = /^https?:\/\/(www\.)?github\.com\//i.test(c.thread_external_id || '');

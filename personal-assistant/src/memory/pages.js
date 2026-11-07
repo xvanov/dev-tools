@@ -187,7 +187,7 @@ Tools and habits ME relies on, and how they work.
 Terse fragments. Cite [#id] only where a fact would otherwise be surprising.`;
 
 async function writePage({ kind, subjectId = 0, title, body, hash }) {
-  const vectors = await embed([`${title}\n${body}`.slice(0, 8000)]).catch(() => null);
+  const vectors = await embed([`${title}\n${body}`.slice(0, 8000)], { purpose: 'embed-page' }).catch(() => null);
   await query(
     `insert into memory_page (kind, subject_id, title, body, facts_hash, generated_by, embedding)
      values ($1,$2,$3,$4,$5,$6,$7::vector)
@@ -212,7 +212,7 @@ function pageTitle(displayName, body) {
 async function backfillPageEmbeddings(limit = 40) {
   const missing = await rows('select id, title, body from memory_page where embedding is null limit $1', [limit]);
   if (!missing.length) return 0;
-  const vectors = await embed(missing.map((p) => `${p.title}\n${p.body}`.slice(0, 8000))).catch(() => null);
+  const vectors = await embed(missing.map((p) => `${p.title}\n${p.body}`.slice(0, 8000)), { purpose: 'embed-page' }).catch(() => null);
   if (!vectors) return 0;
   for (let i = 0; i < missing.length; i++) {
     await query('update memory_page set embedding = $2::vector where id = $1', [missing[i].id, toVector(vectors[i])]);

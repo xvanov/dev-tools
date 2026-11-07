@@ -1428,7 +1428,7 @@ const commands = {
     if (!search.embeddingsConfigured()) {
       mark(false, 'embeddings', 'not configured — search is text-only');
     } else {
-      const probe = await search.embed(['ping']).catch(() => null);
+      const probe = await search.embed(['ping'], { purpose: 'embed-probe' }).catch(() => null);
       mark(
         Boolean(probe),
         'embeddings',

@@ -125,7 +125,7 @@ async function remember(text, { subject = null, kind = null, pending = false } =
   resolved = resolved || (await resolveSubject('me'));
   claimKind = claimKind || 'reference';
 
-  const vectors = await embed([`${resolved.label}: ${claimText}`]).catch(() => null);
+  const vectors = await embed([`${resolved.label}: ${claimText}`], { purpose: 'embed-claim' }).catch(() => null);
   const row = await one(
     `insert into claim (subject_kind, subject_id, subject_label, kind, text, quote, source_kind, confidence,
                         status, origin, extracted_by, embedding)

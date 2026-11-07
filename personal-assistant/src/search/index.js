@@ -36,6 +36,7 @@ const { chunkContext, CONTEXT_VERSION } = require('./context');
 const { mentionedPeople } = require('./entities');
 const { rerank, rerankConfigured, lastRerankError } = require('./rerank');
 const { logger } = require('../log');
+const budget = require('../budget');
 const { createQueryEmbedder, tableStore } = require('./embedCache');
 
 const log = logger('search');
@@ -50,7 +51,12 @@ function embeddingsConfigured() {
 // you looking in the wrong place.
 let lastEmbedError = null;
 
-async function embed(texts) {
+//
+// Every call is metered: tokens come from the endpoint's own `usage`, the price
+// from config.embeddings.usdPerMTokens, and the row lands in llm_spend under
+// `purpose` (so `pa spend` and the dashboard's Meter show embedding spend).
+// The result is the array of vectors, with `.usage = {tokens, usd}` attached.
+async function embed(texts, { purpose = 'embed' } = {}) {
   if (!embeddingsConfigured()) {
     lastEmbedError = 'no endpoint configured';
     return null;
@@ -63,6 +69,7 @@ async function embed(texts) {
   // The deployment's tokens-per-minute quota is shared; a backfill hits it.
   // Waiting what the endpoint asks is cheaper than failing the batch.
   let res;
+  const started = Date.now();
   for (let attempt = 0; ; attempt++) {
     res = await fetch(url, {
       method: 'POST',
@@ -76,18 +83,37 @@ async function embed(texts) {
   if (!res.ok) {
     lastEmbedError = `endpoint returned ${res.status} for deployment "${config.embeddings.deployment}"`;
     log.warn('embedding call failed', { status: res.status });
+    await budget.record({
+      purpose, model: config.embeddings.deployment, backend: 'azure', costUsd: 0,
+      durationMs: Date.now() - started, ok: false,
+    });
     return null;
   }
   lastEmbedError = null;
   const payload = await res.json();
-  return payload.data.map((d) => d.embedding);
+  const out = payload.data.map((d) => d.embedding);
+  const tokens = embedTokens(payload, texts);
+  const usd = (tokens * config.embeddings.usdPerMTokens) / 1e6;
+  await budget.record({
+    purpose, model: config.embeddings.deployment, backend: 'azure', costUsd: usd, inputTokens: tokens,
+    durationMs: Date.now() - started, ok: true,
+  });
+  out.usage = { tokens, usd };
+  return out;
+}
+
+// The endpoint reports tokens; if it ever does not, ~4 characters per token.
+function embedTokens(payload, texts) {
+  const n = Number(payload?.usage?.total_tokens ?? payload?.usage?.prompt_tokens);
+  if (Number.isFinite(n) && n >= 0) return n;
+  return texts.reduce((sum, s) => sum + Math.ceil(String(s).length / 4), 0);
 }
 
 // Query-time embeds only (never ingest): normalized text -> vector, from an LRU
 // in memory, then the query_embedding_cache table, then the endpoint. Returns
 // one vector or null; throws what embed() throws.
 const queryEmbedder = createQueryEmbedder({
-  embedFn: async (text) => (await embed([text]))?.[0] || null,
+  embedFn: async (text) => (await embed([text], { purpose: 'embed-query' }))?.[0] || null,
   model: () => config.embeddings.deployment,
   dims: () => config.embeddings.dimensions,
   max: config.embeddings.cacheEntries,
@@ -143,7 +169,7 @@ async function backfillEmbeddings({ limit = 128 } = {}) {
   // runs into its token limit; 64 at a time stays well under.
   for (let i = 0; i < pending.length; i += 64) {
     const batch = pending.slice(i, i + 64);
-    const vectors = await embed(batch.map(embeddingInput));
+    const vectors = await embed(batch.map(embeddingInput), { purpose: 'embed-chunk' });
     if (!vectors) break;
     for (let j = 0; j < batch.length; j++) {
       await query('update chunk set embedding = $2::vector where id = $1', [
@@ -379,6 +405,7 @@ module.exports = {
   backfillEmbeddings,
   backfillContext,
   embed,
+  embedTokens,
   embedQuery,
   queryEmbedder,
   embeddingInput,

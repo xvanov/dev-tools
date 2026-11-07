@@ -797,6 +797,7 @@
       "details": {
         "Migrations": "plain numbered SQL in personal-assistant/sql, applied by src/db/migrate.js",
         "Durable tasks": "Absurd (vendored schema) for work that waits: chases, run reviews",
+        "Embeddings (audit 2026-11-07)": "text-embedding-3-small, 1536 dims, embed once and never re-embed (plan D5). Embedded: message and document chunks (chunk), memory claims (claim), memory pages (memory_page), commitment text for semantic dedupe (commitment_vector). Never embedded: identifiers, statuses, board state, numbers, dates; PR and ticket refs dedupe by key (commitment anchors), not by vector. No call site embeds changing data or exact keys; stored vectors are 41.5k (31.1k chunks, 10.0k claims, 105 pages, 242 commitments) and re-embed only when their own text changes (a changed item body, a regenerated page) or when CONTEXT_VERSION is bumped, which is a decision, not a cleanup",
         "Query embeddings": "a search embeds its query once: normalized text (trimmed, whitespace collapsed, lower-cased) plus model and dimensions -> vector, in an in-memory LRU (PA_EMBED_CACHE_ENTRIES, 500) backed by query_embedding_cache (PA_EMBED_CACHE_ROWS, 5000 by last use); query time only, never ingest",
         "Secrets": "never here: OS vault or the gitignored .env",
         "Backups": "pg_dump every 24 h, 14 kept (PA_BACKUP_DIR)",
@@ -1195,12 +1196,17 @@
           "rerank cohere-rerank-v4-fast"
         ],
         "Factory": "azure_routes in routes.yaml (deepseek-v4-pro, Kimi-K2.7-Code, DeepSeek-V4-Flash)",
-        "Billing": "metered; PA spend in llm_spend, factory spend in cost_usd"
+        "Billing": "metered; PA spend in llm_spend, factory spend in cost_usd",
+        "Embedding spend": "every embed call records tokens (from the endpoint usage) and cost at PA_EMBED_USD_PER_MTOK ($0.02 per 1M tokens) in llm_spend under purposes embed-chunk, embed-claim, embed-page, embed-query, dedupe-embed, embed-probe; `pa spend` and the Meter show it. All stored vectors cost about $0.18 in total (35.5M characters at ~4 per token); a cached query costs nothing"
       },
       "env": [
         {
           "name": "PA_EMBED_DEPLOYMENT",
           "default": "text-embedding-3-small"
+        },
+        {
+          "name": "PA_EMBED_USD_PER_MTOK",
+          "default": "0.02"
         },
         {
           "name": "PA_RERANK_DEPLOYMENT",

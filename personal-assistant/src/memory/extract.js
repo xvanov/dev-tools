@@ -269,7 +269,7 @@ async function persistItem(item, kept, dropped, ctx) {
   for (const c of kept) resolved.push({ c, s: await resolveSubject(c, item, ctx) });
 
   const vectors = resolved.length
-    ? await embed(resolved.map(({ c, s }) => `${s.label}: ${c.text}`)).catch(() => null)
+    ? await embed(resolved.map(({ c, s }) => `${s.label}: ${c.text}`), { purpose: 'embed-claim' }).catch(() => null)
     : null;
 
   await withTx(async (tx) => {
