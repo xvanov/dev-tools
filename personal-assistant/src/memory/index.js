@@ -19,7 +19,7 @@
 const llm = require('../llm');
 const { config } = require('../config');
 const { rows, one, query } = require('../db');
-const { embed } = require('../search');
+const { embed, embedQuery } = require('../search');
 const { currentAsOf, believedAsOf, extractJson, CLAIM_KINDS } = require('./claims');
 const consolidate = require('./consolidate');
 const pages = require('./pages');
@@ -367,13 +367,13 @@ async function searchClaims(q, { subject = null, asOf = null, limit = 20 } = {})
     params
   );
   let vec = [];
-  const vectors = await embed([q]).catch(() => null);
-  if (vectors) {
+  const qv = await embedQuery(q).catch(() => null);
+  if (qv) {
     vec = await rows(
       `select c.*, 1 - (c.embedding <=> $1::vector) as rank from claim c
         where c.embedding is not null ${statusSql} ${w ? `and ${w.sql}` : ''}
         order by c.embedding <=> $1::vector limit $2`,
-      [toVector(vectors[0]), limit * 3, ...(w ? w.params : [])]
+      [toVector(qv), limit * 3, ...(w ? w.params : [])]
     );
   }
   const fused = rrf([lex, vec], [1.2, 1.0]);
@@ -389,7 +389,7 @@ async function searchClaims(q, { subject = null, asOf = null, limit = 20 } = {})
     if (out.length >= limit) break;
   }
   await noteUse(out.map((c) => c.id));
-  return { subject: s, results: out, lexicalOnly: !vectors };
+  return { subject: s, results: out, lexicalOnly: !qv };
 }
 
 // A claim with everything needed to decide whether to trust it: the quote,

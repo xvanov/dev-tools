@@ -27,7 +27,7 @@
 
 const { config } = require('../config');
 const { rows } = require('../db');
-const { search, embed } = require('../search');
+const { search, embedQuery } = require('../search');
 const { rerank } = require('../search/rerank');
 const memory = require('../memory');
 const llm = require('../llm');
@@ -46,7 +46,7 @@ function toVector(values) {
 }
 
 async function pageSearch(q, limit = 4) {
-  const vectors = await embed([q]).catch(() => null);
+  const qv = await embedQuery(q).catch(() => null);
   const lexical = await rows(
     `select id, kind, subject_id, title, left(body, 1500) as body,
             ts_rank(tsv, websearch_to_tsquery('english', $1)) as rank
@@ -54,12 +54,12 @@ async function pageSearch(q, limit = 4) {
       order by rank desc limit $2`,
     [q, limit]
   );
-  const semantic = vectors
+  const semantic = qv
     ? await rows(
         `select id, kind, subject_id, title, left(body, 1500) as body
            from memory_page where kind in ('person','project') and embedding is not null
           order by embedding <=> $1::vector limit $2`,
-        [toVector(vectors[0]), limit]
+        [toVector(qv), limit]
       )
     : [];
   return memory.rrf([lexical, semantic], [1, 1]).slice(0, limit).map((h) => h.row);

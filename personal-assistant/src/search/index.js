@@ -36,6 +36,7 @@ const { chunkContext, CONTEXT_VERSION } = require('./context');
 const { mentionedPeople } = require('./entities');
 const { rerank, rerankConfigured, lastRerankError } = require('./rerank');
 const { logger } = require('../log');
+const { createQueryEmbedder, tableStore } = require('./embedCache');
 
 const log = logger('search');
 
@@ -81,6 +82,18 @@ async function embed(texts) {
   const payload = await res.json();
   return payload.data.map((d) => d.embedding);
 }
+
+// Query-time embeds only (never ingest): normalized text -> vector, from an LRU
+// in memory, then the query_embedding_cache table, then the endpoint. Returns
+// one vector or null; throws what embed() throws.
+const queryEmbedder = createQueryEmbedder({
+  embedFn: async (text) => (await embed([text]))?.[0] || null,
+  model: () => config.embeddings.deployment,
+  dims: () => config.embeddings.dimensions,
+  max: config.embeddings.cacheEntries,
+  store: tableStore({ maxRows: config.embeddings.cacheRows }),
+});
+const embedQuery = (q) => queryEmbedder.get(q);
 
 function toVectorLiteral(values) {
   return `[${values.map((v) => Number(v).toFixed(6)).join(',')}]`;
@@ -214,9 +227,9 @@ async function lexical(q, limit, filters) {
 }
 
 async function vector(q, limit, filters) {
-  const vectors = await embed([q]);
-  if (!vectors) return [];
-  const params = [toVectorLiteral(vectors[0]), limit, limit * 4];
+  const qv = await embedQuery(q);
+  if (!qv) return [];
+  const params = [toVectorLiteral(qv), limit, limit * 4];
   const where = filterSql(filters, params);
   return withTx(async (client) => {
     // pgvector 0.6 has no iterative scan: HNSW returns ef_search candidates and
@@ -366,6 +379,8 @@ module.exports = {
   backfillEmbeddings,
   backfillContext,
   embed,
+  embedQuery,
+  queryEmbedder,
   embeddingInput,
   embeddingsConfigured,
   filterSql,

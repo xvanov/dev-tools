@@ -797,6 +797,7 @@
       "details": {
         "Migrations": "plain numbered SQL in personal-assistant/sql, applied by src/db/migrate.js",
         "Durable tasks": "Absurd (vendored schema) for work that waits: chases, run reviews",
+        "Query embeddings": "a search embeds its query once: normalized text (trimmed, whitespace collapsed, lower-cased) plus model and dimensions -> vector, in an in-memory LRU (PA_EMBED_CACHE_ENTRIES, 500) backed by query_embedding_cache (PA_EMBED_CACHE_ROWS, 5000 by last use); query time only, never ingest",
         "Secrets": "never here: OS vault or the gitignored .env",
         "Backups": "pg_dump every 24 h, 14 kept (PA_BACKUP_DIR)",
         "WSL caveat": "WSL stops the distro when the last client exits; the pa-wsl-keepalive logon task holds it open"
@@ -833,6 +834,7 @@
         "project",
         "project_alias",
         "proposal",
+        "query_embedding_cache",
         "reply_close",
         "repo_delivery",
         "repo_pr",
