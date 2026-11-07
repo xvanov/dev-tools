@@ -198,7 +198,8 @@ class TermhubLauncher:
     def alive(self, session: SessionInfo) -> bool | None:
         if not session.termhub_session_id:
             return None
-        return self.client.alive(session.termhub_session_id)
+        answer = self.client.alive(session.termhub_session_id)
+        return None if answer is None else bool(answer)
 
     def kill(self, session: SessionInfo, plans: list[RoundPlan]) -> None:
         _kill_pids(plans)
