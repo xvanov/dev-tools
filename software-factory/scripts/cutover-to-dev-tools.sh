@@ -219,16 +219,23 @@ run rsync -a --ignore-existing "$OLD_ROOT/apps/" "$NEW_ROOT/apps/"
 # 6. Pin every app's repo path to an absolute path resolved against the OLD
 #    root: the default/relative "../<name>" would otherwise resolve to
 #    /home/k/dev-tools/<name>. apps/factory keeps "." (it is paused).
-for cfg in "$NEW_ROOT"/apps/*/config.yaml; do
-  app="$(basename "$(dirname "$cfg")")"
+#    Loops over the OLD tree's apps so --dry-run (where step 5 copied nothing)
+#    still shows each rewrite; the file changed is always the new tree's.
+for old_cfg in "$OLD_ROOT"/apps/*/config.yaml "$NEW_ROOT"/apps/*/config.yaml; do
+  app="$(basename "$(dirname "$old_cfg")")"
   [ "$app" = factory ] && continue
-  raw="$(sed -n -E 's/^app_repo_path:[[:space:]]*"?([^"#]*[^"#[:space:]])"?.*/\1/p' "$cfg" | head -1)"
+  case " ${pinned_apps:-} " in *" $app "*) continue ;; esac
+  pinned_apps="${pinned_apps:-} $app"
+  cfg="$NEW_ROOT/apps/$app/config.yaml"
+  src="$cfg"
+  [ -f "$src" ] || src="$OLD_ROOT/apps/$app/config.yaml"
+  raw="$(sed -n -E 's/^app_repo_path:[[:space:]]*"?([^"#]*[^"#[:space:]])"?.*/\1/p' "$src" | head -1)"
   [ -n "$raw" ] || raw="../$app"
   case "$raw" in
     /*) continue ;;
   esac
   abs="$(cd "$OLD_ROOT" && realpath -m "$raw")"
-  if grep -qE '^app_repo_path:' "$cfg"; then
+  if grep -qE '^app_repo_path:' "$src"; then
     run sed -i -E "s#^app_repo_path:.*#app_repo_path: $abs  \# pinned by cutover-to-dev-tools.sh (was $raw)#" "$cfg"
   else
     run_sh "printf '\napp_repo_path: %s  # pinned by cutover-to-dev-tools.sh (was the ../%s default)\n' '$abs' '$app' >> '$cfg'"
