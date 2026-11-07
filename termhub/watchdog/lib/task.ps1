@@ -42,30 +42,41 @@ function Get-WatchdogTask {
   try { return (Get-ScheduledTask -TaskName $WatchdogTaskName -ErrorAction Stop) } catch { return $null }
 }
 
-# Does this task actually launch THIS checkout's watchdog? A machine whose repo was
-# moved or re-cloned elsewhere keeps a task pointing at a path that no longer exists,
-# and a task that fails to start looks identical to a machine that is simply healthy.
+# Does this task actually launch THIS checkout's watchdog (and headless, so an
+# Interactive task does not pop a console window on the desktop every 2 minutes)?
+# A machine whose repo was moved or re-cloned elsewhere keeps a task pointing at a
+# path that no longer exists, and a task registered before `conhost --headless`
+# flashes a PowerShell window on every tick.
 function Test-WatchdogTaskTargets {
   param($Task, [string]$Script)
   if (-not $Task) { return $false }
-  $act = (($Task.Actions | ForEach-Object { "$($_.Execute) $($_.Arguments)" }) -join ' ')
-  return ($act.ToLowerInvariant().Contains($Script.ToLowerInvariant()))
+  $act = (($Task.Actions | ForEach-Object { "$($_.Execute) $($_.Arguments)" }) -join ' ').ToLowerInvariant()
+  return ($act.Contains($Script.ToLowerInvariant()) -and $act.Contains('--headless'))
 }
 
 # Repetition is not a parameter on boot/logon triggers, so it is lifted off a
 # throwaway -Once trigger. Both triggers repeat: the -Once one drives the steady
-# state, and the boot trigger restarts the cycle after a reboot without relying on a
-# past-dated -Once trigger being re-armed.
+# state, and the boot/logon trigger restarts the cycle after a reboot without
+# relying on a past-dated -Once trigger being re-armed.
+#
+# An Interactive principal only runs while the user is logged on, and -AtStartup
+# (BootTrigger) requires Administrator privileges to register - which is why
+# non-elevated registration failed with "Access is denied". Use -AtStartup for
+# S4U and a per-user -AtLogOn trigger for Interactive.
 function New-WatchdogTriggers {
-  param([int]$IntervalMinutes)
+  param([int]$IntervalMinutes, [string]$LogonType = 'Interactive', [string]$UserId = $env:USERNAME)
   $donor = New-ScheduledTaskTrigger -Once -At (Get-Date) `
     -RepetitionInterval (New-TimeSpan -Minutes $IntervalMinutes) `
     -RepetitionDuration (New-TimeSpan -Days 3650)
   $once = New-ScheduledTaskTrigger -Once -At ((Get-Date).AddMinutes(1))
   $once.Repetition = $donor.Repetition
-  $boot = New-ScheduledTaskTrigger -AtStartup
-  $boot.Repetition = $donor.Repetition
-  return @($once, $boot)
+  $restart = if ($LogonType -eq 'S4U') {
+    New-ScheduledTaskTrigger -AtStartup
+  } else {
+    New-ScheduledTaskTrigger -AtLogOn -User $UserId
+  }
+  $restart.Repetition = $donor.Repetition
+  return @($once, $restart)
 }
 
 # Register (or re-register) the task. Never throws: returns
@@ -78,8 +89,12 @@ function Register-WatchdogTask {
     return @{ Ok = $false; LogonType = ''; Message = "no watchdog in this checkout ($script)" }
   }
 
-  $action = New-ScheduledTaskAction -Execute 'powershell.exe' `
-    -Argument "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$script`" -Quiet" `
+  # `conhost.exe --headless` is a GUI-subsystem host that runs the child on a
+  # windowless pseudoconsole. Under an Interactive principal (used on domain/Entra
+  # accounts and non-elevated installs), launching `powershell.exe` directly opens a
+  # visible console/Windows Terminal window on the desktop every 2 minutes.
+  $action = New-ScheduledTaskAction -Execute "$env:SystemRoot\System32\conhost.exe" `
+    -Argument "--headless powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$script`" -Quiet" `
     -WorkingDirectory $ProjectDir
 
   # MultipleInstances IgnoreNew is load-bearing: an escalation can hold the task for
@@ -103,7 +118,7 @@ function Register-WatchdogTask {
 
   try {
     Register-ScheduledTask -TaskName $WatchdogTaskName -Action $action `
-      -Trigger (New-WatchdogTriggers -IntervalMinutes $IntervalMinutes) `
+      -Trigger (New-WatchdogTriggers -IntervalMinutes $IntervalMinutes -LogonType $logon -UserId $me) `
       -Settings $settings -Principal $principal -Force `
       -Description "Watches termhub, repairs known failures from watchdog\remedies\, and escalates novel ones to Claude Code." | Out-Null
   } catch {
@@ -124,6 +139,9 @@ function Register-WatchdogTask {
   }
   if ("$($landed.Principal.LogonType)" -ne $logon) {
     return @{ Ok = $false; LogonType = $logon; Message = "the task still runs as $($landed.Principal.LogonType), not $logon (access denied? re-run elevated)" }
+  }
+  if (-not (Test-WatchdogTaskTargets -Task $landed -Script $script)) {
+    return @{ Ok = $false; LogonType = $logon; Message = "the task action was not updated to conhost --headless (access denied? re-run elevated)" }
   }
   return @{ Ok = $true; LogonType = $logon; Message = '' }
 }

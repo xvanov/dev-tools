@@ -222,7 +222,7 @@ function candidatesFromStatus(status) {
 
 function tailscaleStatus() {
   return new Promise((resolve) => {
-    execFile('tailscale', ['status', '--json'], { timeout: 5000, maxBuffer: 8 * 1024 * 1024 }, (err, stdout) => {
+    execFile('tailscale', ['status', '--json'], { timeout: 5000, maxBuffer: 8 * 1024 * 1024, windowsHide: true }, (err, stdout) => {
       if (err) return resolve(null);
       try { resolve(JSON.parse(stdout)); } catch { resolve(null); }
     });

@@ -36,7 +36,7 @@ let cache = null;            // { at, status }
 function tailscaleServeStatus() {
   if (cache && Date.now() - cache.at < CACHE_MS) return Promise.resolve(cache.status);
   return new Promise((resolve) => {
-    execFile('tailscale', ['serve', 'status', '--json'], { timeout: TIMEOUT_MS }, (err, stdout) => {
+    execFile('tailscale', ['serve', 'status', '--json'], { timeout: TIMEOUT_MS, windowsHide: true }, (err, stdout) => {
       let status = null;
       if (!err && stdout && stdout.trim()) {
         try { status = JSON.parse(stdout); } catch { status = null; }

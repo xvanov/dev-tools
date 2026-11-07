@@ -24,6 +24,7 @@ function resolveBindAddress() {
     const out = execFileSync('tailscale', ['ip', '-4'], {
       encoding: 'utf8',
       timeout: 3000,
+      windowsHide: true,
       stdio: ['ignore', 'pipe', 'ignore'],
     });
     const ip = out.split(/\s+/).map((s) => s.trim()).filter(Boolean)[0];

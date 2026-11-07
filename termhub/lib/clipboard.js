@@ -82,7 +82,7 @@ function runPiped(cmd, args, buffer) {
   return new Promise((resolve, reject) => {
     let child;
     try {
-      child = spawn(cmd, args, { stdio: ['pipe', 'ignore', 'pipe'] });
+      child = spawn(cmd, args, { stdio: ['pipe', 'ignore', 'pipe'], windowsHide: true });
     } catch (e) {
       return reject(e);
     }
@@ -137,7 +137,7 @@ async function setClipboardImageWindows(buffer, mimeType) {
       '  Start-Sleep -Milliseconds 120 ' +
       '} } finally { $img.Dispose() } ' +
       'Write-Error "clipboard did not accept the image"; exit 3';
-    await execFileP(windowsPowerShell(), ['-NoProfile', '-NonInteractive', '-Sta', '-Command', script]);
+    await execFileP(windowsPowerShell(), ['-NoProfile', '-NonInteractive', '-Sta', '-Command', script], { windowsHide: true });
   });
 }
 
@@ -151,7 +151,7 @@ async function clipboardHasImageWindows() {
     'Add-Type -AssemblyName System.Windows.Forms; ' +
     'if (-not [System.Windows.Forms.Clipboard]::ContainsImage()) { exit 1 }';
   try {
-    await execFileP(windowsPowerShell(), ['-NoProfile', '-NonInteractive', '-Sta', '-Command', script]);
+    await execFileP(windowsPowerShell(), ['-NoProfile', '-NonInteractive', '-Sta', '-Command', script], { windowsHide: true });
   } catch (e) {
     if (e && e.code === 1) throw new Error('the clipboard held no image when read back');
     throw new Error(`could not read the clipboard back: ${(e && e.message ? e.message : String(e)).split('\n')[0]}`);

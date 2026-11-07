@@ -134,8 +134,10 @@ $PsArgs     = "-NoProfile -ExecutionPolicy Bypass -File `"$StartPs1`" -PublishPo
 # --- auto-start (at logon) -------------------------------------------------
 if ($IsAdmin) {
   if (Test-Path $StartupVbs) { Remove-Item $StartupVbs -Force; Write-Host "termhub: removed Startup-folder launcher (using scheduled task)" }
-  $action    = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument $PsArgs -WorkingDirectory $Dir
-  $trigger   = New-ScheduledTaskTrigger -AtLogOn
+  # `conhost.exe --headless` prevents a visible console window from popping up at logon
+  # under the Interactive principal.
+  $action    = New-ScheduledTaskAction -Execute "$env:SystemRoot\System32\conhost.exe" -Argument "--headless powershell.exe $PsArgs" -WorkingDirectory $Dir
+  $trigger   = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
   $settings  = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1)
   $principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive
   Register-ScheduledTask -TaskName 'Termhub' -Action $action -Trigger $trigger -Settings $settings -Principal $principal -Force | Out-Null

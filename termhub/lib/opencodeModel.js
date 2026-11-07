@@ -38,7 +38,7 @@ function resolveBin() {
 function run(args, cwd) {
   const bin = resolveBin();
   if (!bin) return Promise.reject(new Error('opencode not found on PATH'));
-  return execFileP(bin, args, { cwd, shell: process.platform === 'win32', timeout: 10000 });
+  return execFileP(bin, args, { cwd, shell: process.platform === 'win32', timeout: 10000, windowsHide: true });
 }
 
 async function listSessions(cwd) {
