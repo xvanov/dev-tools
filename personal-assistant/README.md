@@ -1083,11 +1083,14 @@ sets one default for every pass that has no variable of its own. Per pass: `PA_D
 `PA_RECONCILE_MODEL`, `PA_CARD_CONTEXT_MODEL` (default: the reconcile model), `PA_PLANNER_MODEL`,
 `PA_DEDUPE_MODEL` (the cross-thread duplicate judge, default `azure/pa`),
 `PA_DRAFT_MODEL` and `PA_EVAL_MODEL` (default: the distill model), `PA_ROUTINE_MODEL`, and
-`PA_FAST_MODEL` (the voice fast lane, default `azure/pa`; see "Talking to it by voice").
+`PA_FAST_MODEL` (the voice fast lane, default `local/llama3.2:3b` in Ollama) with
+`PA_FAST_FALLBACK_MODEL` (default `azure/pa`) when the local model is down; see "Talking to it by voice".
 
 The fast lane streams its reply (`llm.stream()`): token by token on the Anthropic API and the
 OpenAI-compatible providers, and through `claude -p --output-format stream-json
 --include-partial-messages` on the CLI backend, which works but pays a process start per call.
+A `local/` call that asks for a JSON schema (`format`) or a `keepAlive` goes to Ollama's own
+`/api/chat` instead of its OpenAI-compatible endpoint, which can carry neither.
 
 **The connector relay is Claude Code only.** Microsoft 365 and the Jira connector fallback are
 reached by tool calls to the claude.ai connectors, and only Claude Code holds those logins, so
@@ -1176,7 +1179,10 @@ the cards and the chat in text, then termhub, then the PA chat's session on its 
   page says once that it is waiting on an answer in termhub, and does not retry.
 - **The fast lane ("System 1", `src/chat/fastLane.js`).** The PA chat takes 3–5 s before it says
   anything; a person answers within a second. So each spoken turn first goes to a quick model
-  (`PA_FAST_MODEL`, default `azure/pa`) that sees a compact snapshot of your day (the clock, open
+  (`PA_FAST_MODEL`, default `local/llama3.2:3b` in Ollama: one streamed call whose decision is
+  forced to JSON, `{label, route, say}`, kept loaded for `PA_FAST_KEEP_ALIVE` (24h), with
+  `PA_FAST_FALLBACK_MODEL`, `azure/pa`, when Ollama is down or has not decided within
+  `PA_FAST_LOCAL_TIMEOUT_MS` (2500); `ollama pull llama3.2:3b` once) that sees a compact snapshot of your day (the clock, open
   asks with the most pressing few, the next day's meetings, live runs, waiting drafts — about a
   kilobyte, rebuilt every `PA_FAST_CONTEXT_SECONDS` (60) in the background) and the last six turns.
   It decides **answer** (small talk, thanks, "what's on today", "how many are overdue": it says the
@@ -1195,7 +1201,11 @@ the cards and the chat in text, then termhub, then the PA chat's session on its 
   an `http(s)://` URL (POSTed `{ text, context, history }`, answers the decision JSON — for an
   external classifier). `PA_FAST_EFFORT` (low) is the reasoning effort; `PA_FAST_LANE=0` turns it
   off and the page sends straight to `/api/chat` as before. Spend is recorded as `fast-lane`.
-  Measured (Nov 2026, 8 utterances): `azure/pa` decides in 0.4–1.4 s with the first words in the
+  Measured (Nov 2026, this laptop, 24 utterances): `local/llama3.2:3b` routes 23 of 24 (the miss
+  a safe hand-off), decides in 276 ms median, first word at 361 ms; a request it labels `action` or
+  `deep_task` is never "answered", and a hand-off's acknowledgement that reads as an answer ("I
+  couldn't find…") or a claim ("I've sent it") is replaced by "One moment." / "On it.".
+  Earlier (8 utterances): `azure/pa` decides in 0.4–1.4 s with the first words in the
   same chunk; `cli/claude-haiku-5-5` takes 1.8–3.7 s (a `claude -p` process per turn);
   `rules` + `azure/pa` decides at once and speaks in 0.5–1.5 s, but misroutes anything its
   keywords do not cover.

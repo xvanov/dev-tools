@@ -184,6 +184,142 @@ function createReplySplitter({ maxLead = 40, maxDecision = 1500 } = {}) {
   };
 }
 
+/**
+ * Pure. Follows a forced-JSON reply ({"label", "route", "say"}, in that order,
+ * as the schema makes a local model write it) as it streams: push(delta) ->
+ * { route?: string (once, as soon as its value is closed), label?: string,
+ * say: string (the newly known part of the "say" value, unescaped) }. So the
+ * route is known a few tokens in and the words can be spoken while they are
+ * still being written. finish() -> the whole object (or null when it did not
+ * parse), for the record.
+ */
+function createJsonSayStreamer() {
+  let buf = '';
+  let route;
+  let label;
+  let sayStart = -1; // index in buf just after `"say": "`
+  let sayPos = -1; // how far the say value has been consumed
+  let sayDone = false;
+  const field = (name) => new RegExp(`"${name}"\\s*:\\s*"((?:[^"\\\\]|\\\\.)*)"`);
+  const ESC = { n: ' ', t: ' ', r: '', b: '', f: '', '"': '"', '\\': '\\', '/': '/' };
+
+  function readSay() {
+    let out = '';
+    let i = sayPos;
+    while (i < buf.length) {
+      const ch = buf[i];
+      if (ch === '"') {
+        sayDone = true;
+        i++;
+        break;
+      }
+      if (ch === '\\') {
+        if (i + 1 >= buf.length) break; // the escape is split across chunks
+        const e = buf[i + 1];
+        if (e === 'u') {
+          if (i + 6 > buf.length) break;
+          const code = parseInt(buf.slice(i + 2, i + 6), 16);
+          out += Number.isFinite(code) ? String.fromCharCode(code) : '';
+          i += 6;
+          continue;
+        }
+        out += ESC[e] ?? e;
+        i += 2;
+        continue;
+      }
+      out += ch;
+      i++;
+    }
+    sayPos = i;
+    return out;
+  }
+
+  return {
+    push(delta) {
+      buf += String(delta || '');
+      const out = { say: '' };
+      if (label === undefined) {
+        const m = field('label').exec(buf);
+        if (m) out.label = label = m[1];
+      }
+      if (route === undefined) {
+        const m = field('route').exec(buf);
+        if (m) out.route = route = m[1];
+      }
+      if (sayStart < 0) {
+        const m = /"say"\s*:\s*"/.exec(buf);
+        if (m) sayStart = sayPos = m.index + m[0].length;
+      }
+      if (sayStart >= 0 && !sayDone) out.say = readSay();
+      return out;
+    },
+    finish() {
+      try {
+        return JSON.parse(buf);
+      } catch {
+        return null;
+      }
+    },
+    get label() {
+      return label;
+    },
+    get route() {
+      return route;
+    },
+  };
+}
+
+// The forced-JSON decision a local model fills (Ollama `format`). The label
+// is the model's reading of the request, asked first: a 3B model routes
+// better once it has named the kind of request (llama3.2:3b routed 24 of 24
+// of the Nov 2026 bench set this way).
+const JSON_LABELS = ['chitchat', 'quick_lookup', 'action', 'deep_task'];
+const DECISION_SCHEMA = {
+  type: 'object',
+  properties: {
+    label: { type: 'string', enum: JSON_LABELS },
+    route: { type: 'string', enum: ROUTES },
+    say: { type: 'string' },
+  },
+  required: ['label', 'route', 'say'],
+};
+
+function jsonSystem() {
+  return `${COMMON}
+
+Classify what the user just said, choose a route, and write what to say aloud.
+Labels:
+- "chitchat": thanks, greetings, small talk, "how are you" -> route "answer"; reply briefly and warmly.
+- "quick_lookup": a quick question about the user's own day: asks, meetings, runs, the time -> route "answer" when the snapshot says it, "both" when it says part of it, else "handoff".
+- "action": do something (send, reply, remind, schedule, close, start, open, mute, mark, remember) -> route "handoff"; say a two to five word acknowledgement of what will happen, e.g. "On it." "Sure, I'll set that up." Never say it is done: nothing has been done yet.
+- "deep_task": search, investigate, research, review, read documents, explain why something happened, write or summarize at length -> route "handoff"; say a short acknowledgement of what will be looked into, under 12 words.
+A question whose answer is not in the snapshot or the conversation is never "answer": guessing is worse than checking.
+Answer only with the JSON object: {"label": ..., "route": "answer" | "handoff" | "both", "say": "the words to say aloud: one to three short sentences, no markdown"}.`;
+}
+
+/**
+ * Pure. What a hand-off says aloud, given the local model's `say`. A small
+ * model sometimes writes an answer where an acknowledgement belongs ("I
+ * couldn't find anything about that") — wrong before the PA chat has looked,
+ * and it claims a search that never happened; or claims the action is done.
+ * Those, and anything long, become the stock acknowledgement.
+ */
+const NOT_AN_ACK_RE = /\b(?:couldn'?t|could not|can'?t|cannot|unable|no (?:information|record|data|results?|messages?)|nothing (?:about|on|from)|not (?:find|found|sure|aware)|don'?t (?:have|know|see))\b|\b(?:i'?ve|i have|has been|have been|is now|are now|it'?s|all) (?:\w+ed|done|sent|set)\b|^done\b/i;
+function spokenAck(say, label) {
+  const s = tidySpoken(say).replace(/\s+/g, ' ').trim();
+  if (!s || NOT_AN_ACK_RE.test(s) || s.split(' ').length > 16) return label === 'action' ? ACTION_ACK : ACK;
+  return s;
+}
+
+// A local model ("local/…"): one streamed call with the decision forced to
+// JSON. PA_FAST_JSON=0 turns that off (the two-part text format instead).
+function usesJson(model, o) {
+  const want = String(o.json ?? 'auto').toLowerCase();
+  if (want === '0' || want === 'off' || want === 'false') return false;
+  if (want === '1' || want === 'on' || want === 'true') return true;
+  return /^local\//.test(String(model || ''));
+}
+
 // Pure. Text the fast model must never speak as if it were the answer: a
 // trailing fence, markdown emphasis.
 function tidySpoken(t) {
@@ -543,8 +679,71 @@ async function runTurn({ text, emit, signal = null, deps = {}, opts = {} }) {
   }, o.decisionTimeoutMs);
   timer.unref?.();
 
+  // A local model, forced to JSON: the route is known a few tokens in and
+  // `say` is spoken as it is written. Returns false when it failed before
+  // deciding (Ollama down, or no route within localTimeoutMs — a model that
+  // is still loading): the turn then goes to the fallback model, unharmed.
+  async function jsonTurn() {
+    const js = createJsonSayStreamer();
+    const lac = new AbortController();
+    const outer = () => lac.abort();
+    ac.signal.addEventListener('abort', outer, { once: true });
+    const slow = setTimeout(() => {
+      if (r.route == null) lac.abort();
+    }, o.localTimeoutMs);
+    slow.unref?.();
+    let decided = null;
+    let suppress = false;
+    try {
+      for await (const piece of d.stream({ system: jsonSystem(), prompt, model: o.model, maxTokens: 300, timeoutMs: 20_000, purpose: 'fast-lane', signal: lac.signal, format: DECISION_SCHEMA, keepAlive: o.keepAlive })) {
+        const out = js.push(piece);
+        if (out.route !== undefined && !decided) {
+          // The label is written first: a model that calls a request an
+          // action or a deep task and then "answers" it is guessing. Its
+          // words were written as an answer, so they are not spoken either.
+          const needsChat = out.route === 'answer' && (js.label === 'action' || js.label === 'deep_task');
+          const p = validateDecision({ route: needsChat ? 'handoff' : out.route, reason: `${o.model}: ${clip(js.label || '', 40)}${needsChat ? '; labelled as work: the PA chat does it' : ''}` }, { userText: text });
+          decided = decide(p.decision, p.ok);
+          if (!p.ok || r.overridden || needsChat) suppress = true;
+          if (suppress) speak(decided.route === 'answer' ? '' : r.overridden || js.label === 'action' ? ACTION_ACK : ACK);
+          startHandoff(decided);
+        }
+        if (out.say && decided && !suppress) {
+          // A hand-off's words are an acknowledgement, a few words long:
+          // held until whole, then checked (spokenAck), not streamed.
+          if (decided.route === 'handoff') ack += out.say;
+          else speak(tidySpoken(out.say));
+        }
+      }
+    } catch (err) {
+      if (signal?.aborted) throw err;
+      if (!decided) {
+        log.warn('local fast model failed; using the fallback', { model: o.model, message: err.message, ms: since() });
+        return false;
+      }
+      log.warn('local fast model failed after deciding', { message: err.message });
+    } finally {
+      clearTimeout(slow);
+      ac.signal.removeEventListener('abort', outer);
+    }
+    if (ack) speak(spokenAck(ack, js.label));
+    return !!decided;
+  }
+  let ack = '';
+
   try {
-    if (router === 'same') {
+    let model = o.model;
+    let handled = false;
+    if (router === 'same' && usesJson(o.model, o)) {
+      handled = await jsonTurn();
+      if (!handled) {
+        model = o.fallback || o.model;
+        r.fellBack = true;
+      }
+    }
+    if (handled) {
+      // decided, spoken and handed off above
+    } else if (router === 'same') {
       const split = createReplySplitter();
       let suppress = false;
       let decided = null;
@@ -557,7 +756,7 @@ async function runTurn({ text, emit, signal = null, deps = {}, opts = {} }) {
         startHandoff(decided);
       };
       try {
-        for await (const piece of d.stream({ system: combinedSystem(), prompt, model: o.model, effort: o.effort, reasoningEffort: o.effort, maxTokens: 400, timeoutMs: 20_000, purpose: 'fast-lane', signal: ac.signal })) {
+        for await (const piece of d.stream({ system: combinedSystem(), prompt, model, effort: o.effort, reasoningEffort: o.effort, maxTokens: 400, timeoutMs: 20_000, purpose: 'fast-lane', signal: ac.signal })) {
           const out = split.push(piece);
           if (out.decision !== undefined && !decided) onDecision(out.decision);
           if (out.text && !suppress) speak(tidySpoken(out.text));
@@ -619,13 +818,35 @@ async function runTurn({ text, emit, signal = null, deps = {}, opts = {} }) {
     }
     if (handoffP) await handoffP;
     if (r.route === 'answer' && r.say.trim()) d.remember(text, r.say.trim());
-    const done = { type: 'done', route: r.route, say: r.say.trim(), decisionMs: r.decisionMs, firstTokenMs: r.firstTokenMs, ms: since(), model: o.model, router };
+    const done = { type: 'done', route: r.route, say: r.say.trim(), decisionMs: r.decisionMs, firstTokenMs: r.firstTokenMs, ms: since(), model, router, ...(r.fellBack ? { fellBack: true } : {}) };
     emit(done);
     return { ...r, ms: done.ms };
   } finally {
     clearTimeout(timer);
     signal?.removeEventListener('abort', onAbort);
   }
+}
+
+// Loads the local fast model (and keeps it loaded) before the first turn:
+// the voice page calls this when it opens. A cold 3B model takes seconds to
+// load, which the first turn would otherwise spend on the fallback. At most
+// once a minute; never throws.
+let lastWarm = 0;
+function warm({ now = Date.now(), deps = {} } = {}) {
+  const o = config.fastLane;
+  if (!o.enabled || !usesJson(o.model, o) || now - lastWarm < 60_000) return null;
+  lastWarm = now;
+  const warmLocal = deps.warmLocal || require('../llm').warmLocal;
+  return Promise.resolve()
+    .then(() => warmLocal({ model: o.model, keepAlive: o.keepAlive }))
+    .then((ms) => {
+      log.debug('local fast model warm', { model: o.model, ms });
+      return ms;
+    })
+    .catch((err) => {
+      log.debug('local fast model not warmed', { message: err.message });
+      return null;
+    });
 }
 
 module.exports = {
@@ -647,4 +868,9 @@ module.exports = {
   replySystem,
   runTurn,
   setDeps,
+  warm,
+  usesJson,
+  createJsonSayStreamer,
+  DECISION_SCHEMA,
+  jsonSystem,
 };

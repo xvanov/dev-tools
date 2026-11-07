@@ -104,6 +104,25 @@ const { cliArgs, parseCliOutput, extractJson, childEnv, cliAccount } = require('
   assert.deepStrictEqual(req.body.stream_options, { include_usage: true });
   assert.strictEqual(req.body.reasoning_effort, 'low', 'said outright, whatever the deployment is called');
   assert.ok(!('stream' in compatRequest({ provider: 'local', model: 'm', prompt: 'p', maxTokens: 1, providers: { local: { baseUrl: 'http://l' } } }).body));
+
+  // Ollama's own /api/chat: what the OpenAI-compatible endpoint cannot carry.
+  const { ollamaBase, ollamaRequest, ollamaLine } = require('../src/llm');
+  assert.strictEqual(ollamaBase('http://127.0.0.1:11434/v1/'), 'http://127.0.0.1:11434');
+  assert.strictEqual(ollamaBase('http://box:11434'), 'http://box:11434');
+  const schema = { type: 'object', properties: { route: { type: 'string' } } };
+  const o = ollamaRequest({ model: 'llama3.2:3b', system: 's', prompt: 'p', maxTokens: 50, format: schema, keepAlive: '24h', providers: { local: { baseUrl: 'http://127.0.0.1:11434/v1' } } });
+  assert.strictEqual(o.url, 'http://127.0.0.1:11434/api/chat');
+  assert.deepStrictEqual(o.body.messages, [{ role: 'system', content: 's' }, { role: 'user', content: 'p' }]);
+  assert.strictEqual(o.body.format, schema);
+  assert.strictEqual(o.body.keep_alive, '24h');
+  assert.strictEqual(o.body.stream, true);
+  assert.deepStrictEqual(o.body.options, { temperature: 0, num_predict: 50 });
+  assert.ok(!o.headers.authorization, 'no key, no header');
+  const warmReq = ollamaRequest({ model: 'm', prompt: null, keepAlive: '24h', providers: { local: { baseUrl: 'http://l/v1' } } });
+  assert.deepStrictEqual(warmReq.body.messages, [], 'a load-only call has no messages');
+  assert.deepStrictEqual(ollamaLine({ message: { content: '{"ro' }, done: false }), { text: '{"ro', done: false, usage: null });
+  assert.deepStrictEqual(ollamaLine({ message: { content: '' }, done: true, prompt_eval_count: 300, eval_count: 20 }).usage, { costUsd: 0, inputTokens: 300, outputTokens: 20 });
+  assert.match(ollamaLine({ error: 'model not found' }).error, /not found/);
 }
 
 (async () => {

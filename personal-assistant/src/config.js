@@ -349,11 +349,22 @@ const config = {
   // decides and replies in one call), `rules` (built-in keyword router), a
   // model string (a separate router call), or an http(s) URL (POST
   // { text, context, history } -> decision JSON).
+  //
+  // The default is local: Llama 3.2 3B in Ollama (PA_LOCAL_LLM_URL), one
+  // streamed call whose decision is forced to JSON ({label, route, say};
+  // PA_FAST_JSON=auto uses that for local/ models), kept loaded for
+  // PA_FAST_KEEP_ALIVE. When it is down, or has not decided within
+  // PA_FAST_LOCAL_TIMEOUT_MS (a model still loading), the turn goes to
+  // PA_FAST_FALLBACK_MODEL instead.
   fastLane: {
     enabled: env('PA_FAST_LANE', '1') !== '0',
-    model: env('PA_FAST_MODEL', 'azure/pa'),
+    model: env('PA_FAST_MODEL', 'local/llama3.2:3b'),
+    fallback: env('PA_FAST_FALLBACK_MODEL', 'azure/pa'),
+    json: env('PA_FAST_JSON', 'auto'),
+    keepAlive: env('PA_FAST_KEEP_ALIVE', '24h'),
+    localTimeoutMs: envInt('PA_FAST_LOCAL_TIMEOUT_MS', 2500),
     router: env('PA_FAST_ROUTER', 'same'),
-    // Reasoning effort for an OpenAI/Azure reasoning model; Claude effort otherwise.
+    // Reasoning effort for an OpenAI/Azure reasoning model (the fallback too); Claude effort otherwise.
     effort: env('PA_FAST_EFFORT', 'low'),
     contextTtlMs: envInt('PA_FAST_CONTEXT_SECONDS', 60) * 1000,
     decisionTimeoutMs: envInt('PA_FAST_DECISION_TIMEOUT_MS', 6000),

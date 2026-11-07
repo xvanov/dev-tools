@@ -340,10 +340,131 @@ function splitAll(pieces) {
     assert.strictEqual(b.sent.length, 1);
   }
 
+  // ---- a local model, forced to JSON (Ollama `format`) ------------------------------------
+  {
+    // The streamer: route as soon as its value closes; `say` as it is written, unescaped.
+    const js = F.createJsonSayStreamer();
+    let o = js.push('{"label":"chit');
+    assert.strictEqual(o.route, undefined);
+    o = js.push('chat","route":"ans');
+    assert.strictEqual(o.label, 'chitchat');
+    assert.strictEqual(o.route, undefined, 'not until the value is closed');
+    o = js.push('wer", "say": "You\'re wel');
+    assert.strictEqual(o.route, 'answer');
+    assert.strictEqual(o.say, "You're wel");
+    o = js.push('come. \\"Any');
+    assert.strictEqual(o.say, 'come. "Any');
+    o = js.push('time.\\');
+    assert.strictEqual(o.say, 'time.', 'a split escape waits');
+    o = js.push('u0021"}');
+    assert.strictEqual(o.say, '!');
+    assert.strictEqual(js.push('').say, '', 'nothing after the closing quote');
+    assert.deepStrictEqual(js.finish(), { label: 'chitchat', route: 'answer', say: 'You\'re welcome. "Anytime.!' });
+
+    assert.strictEqual(F.usesJson('local/llama3.2:3b', { json: 'auto' }), true);
+    assert.strictEqual(F.usesJson('azure/pa', { json: 'auto' }), false);
+    assert.strictEqual(F.usesJson('local/x', { json: '0' }), false);
+    assert.deepStrictEqual(F.DECISION_SCHEMA.required, ['label', 'route', 'say']);
+    assert.deepStrictEqual(F.DECISION_SCHEMA.properties.route.enum, F.ROUTES);
+
+    const lopts = { model: 'local/llama3.2:3b', fallback: 'azure/pa', json: 'auto', keepAlive: '24h', localTimeoutMs: 300, router: 'same', decisionTimeoutMs: 3000, effort: 'low' };
+    // answer: one call, with the schema and keep_alive; words stream from `say`.
+    let calls = [];
+    let b = base({
+      stream: (a) => {
+        calls.push(a);
+        return script(['{"label":"chitchat","route":"answer",', '"say":"You are', ' welcome."}'])(a);
+      },
+    });
+    let t = await turn('Thanks!', b.deps, lopts);
+    assert.strictEqual(calls.length, 1);
+    assert.strictEqual(calls[0].model, 'local/llama3.2:3b');
+    assert.strictEqual(calls[0].format, F.DECISION_SCHEMA);
+    assert.strictEqual(calls[0].keepAlive, '24h');
+    assert.deepStrictEqual(t.events.map((e) => e.type), ['decision', 'delta', 'delta', 'done']);
+    assert.strictEqual(t.say, 'You are welcome.');
+    assert.match(t.events[0].reason, /chitchat/);
+    assert.strictEqual(t.events.at(-1).model, 'local/llama3.2:3b');
+    assert.deepStrictEqual(b.remembered, [['Thanks!', 'You are welcome.']]);
+
+    // handoff: the ack is spoken, the user's own words go to the chat.
+    b = base({ stream: script(['{"label":"deep_task","route":"handoff","say":"Checking your mail."}']) });
+    t = await turn('What did Quorvin say about the renewal?', b.deps, lopts);
+    assert.strictEqual(t.say, 'Checking your mail.');
+    assert.deepStrictEqual(b.sent, ['What did Quorvin say about the renewal?']);
+
+    // The never-act guard holds on the local path too.
+    b = base({ stream: script(['{"label":"chitchat","route":"answer","say":"Done, I sent it."}']) });
+    t = await turn('Send Brennith a note that I am late', b.deps, lopts);
+    assert.strictEqual(t.events[0].route, 'handoff');
+    assert.ok(t.events[0].overridden);
+    assert.strictEqual(t.say, 'On it.');
+    assert.deepStrictEqual(b.sent, ['Send Brennith a note that I am late']);
+
+    // A hand-off's words are an acknowledgement, not an answer or a claim.
+    b = base({ stream: script(['{"label":"quick_lookup","route":"handoff","say":"I couldn', "'t find anything about the voice stack.\"}"]) });
+    t = await turn('what did I last say about the voice stack', b.deps, lopts);
+    assert.strictEqual(t.say, 'One moment.', 'not "I could not find": nothing has been searched yet');
+    b = base({ stream: script(['{"label":"action","route":"handoff","say":"I\'ve muted notifications."}']) });
+    assert.strictEqual((await turn('mute notifications for an hour', b.deps, lopts)).say, 'On it.');
+    b = base({ stream: script(['{"label":"action","route":"handoff","say":"Sure, I\'ll set that up."}']) });
+    assert.strictEqual((await turn('start a focus timer', b.deps, lopts)).say, "Sure, I'll set that up.");
+
+    // Labelled as work but "answered": a guess. Handed off, its words not spoken.
+    b = base({ stream: script(['{"label":"deep_task","route":"answer","say":"The deploy failed because of MR 412."}']) });
+    t = await turn('why did the deploy fail yesterday', b.deps, lopts);
+    assert.strictEqual(t.events[0].route, 'handoff');
+    assert.strictEqual(t.say, 'One moment.');
+    assert.deepStrictEqual(b.sent, ['why did the deploy fail yesterday']);
+
+    // Ollama down: the fallback model (text format) answers instead.
+    calls = [];
+    b = base({
+      stream: (a) => {
+        calls.push(a);
+        if (a.model.startsWith('local/')) return script([], { fail: 'local: ECONNREFUSED' })(a);
+        return script(['{"route":"answer","reason":"hi"}\nHello.'])(a);
+      },
+    });
+    t = await turn('hello', b.deps, lopts);
+    assert.deepStrictEqual(calls.map((c) => c.model), ['local/llama3.2:3b', 'azure/pa']);
+    assert.strictEqual(calls[1].format, undefined, 'the fallback gets the text format');
+    assert.strictEqual(t.say, 'Hello.');
+    assert.strictEqual(t.events.at(-1).model, 'azure/pa');
+    assert.strictEqual(t.events.at(-1).fellBack, true);
+    assert.strictEqual(t.events.filter((e) => e.type === 'decision').length, 1, 'one decision, from the fallback');
+
+    // Too slow to decide (a model still loading): the fallback too.
+    calls = [];
+    b = base({
+      stream: (a) => {
+        calls.push(a);
+        if (a.model.startsWith('local/')) return script(['{"label":"chitchat",', '"route":"answer"'], { delayMs: 400 })(a);
+        return script(['{"route":"answer","reason":"hi"}\nHi.'])(a);
+      },
+    });
+    t = await turn('hi', b.deps, lopts);
+    assert.deepStrictEqual(calls.map((c) => c.model), ['local/llama3.2:3b', 'azure/pa']);
+    assert.strictEqual(t.say, 'Hi.');
+
+    // warm(): loads the local model with the long keep_alive, once a minute.
+    const { config } = require('../src/config');
+    const seen = [];
+    const save = { ...config.fastLane };
+    Object.assign(config.fastLane, { enabled: true, model: 'local/llama3.2:3b', json: 'auto', keepAlive: '24h' });
+    const w = await F.warm({ now: 1e12, deps: { warmLocal: async (a) => (seen.push(a), 42) } });
+    assert.strictEqual(w, 42);
+    assert.deepStrictEqual(seen, [{ model: 'local/llama3.2:3b', keepAlive: '24h' }]);
+    assert.strictEqual(F.warm({ now: 1e12 + 1000, deps: { warmLocal: async () => 1 } }), null, 'not again within a minute');
+    Object.assign(config.fastLane, save);
+  }
+
   // ---- POST /api/talk/turn ---------------------------------------------------------------
   {
     const { config } = require('../src/config');
     const { handle } = require('../src/dashboard/server');
+    // The text format; the local JSON path is covered above.
+    config.fastLane.model = 'azure/pa';
     const b = base({ stream: script(['{"route":"answer","reason":"x"}\nHi', ' there.']) });
     F.setDeps(b.deps);
     const server = http.createServer((req, res) => handle(req, res).catch((e) => res.writeHead(e.status || 500).end(e.message)));

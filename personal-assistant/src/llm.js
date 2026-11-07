@@ -520,6 +520,99 @@ async function* streamCompat({ route: r, system, prompt, effort, reasoningEffort
   }
 }
 
+// ------------------------------------------------ Ollama's own API ----
+//
+// A `local/` model is normally reached through the OpenAI-compatible
+// endpoint (PA_LOCAL_LLM_URL, Ollama's /v1 by default). Two things that
+// endpoint cannot carry go to Ollama's native /api/chat instead, when a
+// caller asks for them: `format` (a JSON schema the model is forced to fill —
+// the voice fast lane's decision) and `keepAlive` (how long the model stays
+// loaded: through /v1 every call resets it to Ollama's default five minutes,
+// and a cold 3B model takes seconds to load).
+
+// Pure: the native base URL from PA_LOCAL_LLM_URL (".../v1" or bare).
+function ollamaBase(baseUrl) {
+  return String(baseUrl || '').replace(/\/+$/, '').replace(/\/v1$/, '');
+}
+
+// Pure: one native chat request. Temperature 0: a router should not be creative.
+function ollamaRequest({ model, system, prompt, maxTokens, format = null, keepAlive = null, temperature = 0, key = null, providers = config.providers }) {
+  const messages = [];
+  if (system) messages.push({ role: 'system', content: system });
+  if (prompt != null) messages.push({ role: 'user', content: prompt });
+  const body = { model, messages, stream: true, options: { temperature } };
+  if (maxTokens) body.options.num_predict = maxTokens;
+  if (format) body.format = format;
+  if (keepAlive != null) body.keep_alive = keepAlive;
+  const headers = { 'content-type': 'application/json' };
+  if (key) headers.authorization = `Bearer ${key}`;
+  return { url: `${ollamaBase(providers.local.baseUrl)}/api/chat`, headers, body };
+}
+
+// Pure: one NDJSON line of a native chat stream -> { text, done, usage, error }.
+function ollamaLine(json) {
+  if (json?.error) return { error: String(json.error).slice(0, 300) };
+  const text = json?.message?.content ? String(json.message.content) : '';
+  const usage = json?.done ? { costUsd: 0, inputTokens: json.prompt_eval_count ?? null, outputTokens: json.eval_count ?? null } : null;
+  return { text, done: !!json?.done, usage };
+}
+
+async function* streamOllama({ route: r, system, prompt, maxTokens, timeoutMs, signal, acc, format, keepAlive }) {
+  const req = ollamaRequest({ model: r.model, system, prompt, maxTokens, format, keepAlive, key: models.providerKey('local') });
+  let res;
+  try {
+    res = await fetch(req.url, { method: 'POST', headers: req.headers, body: JSON.stringify(req.body), signal: anySignal(signal, timeoutMs) });
+  } catch (err) {
+    throw new Error(`local: ${err.name === 'TimeoutError' ? `timed out after ${Math.round(timeoutMs / 1000)}s` : err.cause?.code || err.message}`);
+  }
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    let json = null;
+    try {
+      json = JSON.parse(text);
+    } catch {}
+    throw new Error(`local ${res.status}: ${String(json?.error || text).slice(0, 300)}`);
+  }
+  const dec = new TextDecoder();
+  let carry = '';
+  for await (const chunk of res.body) {
+    carry += dec.decode(chunk, { stream: true });
+    let i;
+    while ((i = carry.indexOf('\n')) >= 0) {
+      const line = carry.slice(0, i).trim();
+      carry = carry.slice(i + 1);
+      if (!line) continue;
+      let json;
+      try {
+        json = JSON.parse(line);
+      } catch {
+        continue;
+      }
+      const c = ollamaLine(json);
+      if (c.error) throw new Error(`local: ${c.error}`);
+      if (c.usage) acc.usage = c.usage;
+      if (c.text) yield c.text;
+    }
+  }
+}
+
+/**
+ * Loads a local model and keeps it loaded for `keepAlive` (Ollama: a chat
+ * with no messages loads the model and answers at once). Resolves with the
+ * time it took; rejects when Ollama is not there.
+ */
+async function warmLocal({ model, keepAlive = '30m', timeoutMs = 60_000 } = {}) {
+  const r = models.route(model, { needs: 'text' });
+  if (r.provider !== 'local') throw new Error(`${model} is not a local/ model`);
+  const req = ollamaRequest({ model: r.model, prompt: null, keepAlive, key: models.providerKey('local') });
+  req.body.stream = false;
+  const t = Date.now();
+  const res = await fetch(req.url, { method: 'POST', headers: req.headers, body: JSON.stringify(req.body), signal: AbortSignal.timeout(timeoutMs) });
+  if (!res.ok) throw new Error(`local ${res.status}: ${(await res.text().catch(() => '')).slice(0, 200)}`);
+  await res.text();
+  return Date.now() - t;
+}
+
 async function* streamApi({ system, prompt, maxTokens, model, signal, acc }) {
   if (!models.providerKey('anthropic')) throw new Error(`anthropic/${model}: no key — set ANTHROPIC_API_KEY`);
   // No extended thinking: this path exists to be quick.
@@ -644,6 +737,8 @@ async function* stream({
   model = null,
   purpose = null,
   signal = null,
+  format = null,
+  keepAlive = null,
 }) {
   const raw = model || config.anthropic.model;
   const r = models.route(raw, { needs: 'text' });
@@ -657,7 +752,9 @@ async function* stream({
         ? streamCli({ system, prompt, effort, timeoutMs, model: r.model, signal, acc })
         : r.backend === 'api'
           ? streamApi({ system, prompt, maxTokens, model: r.model, signal, acc })
-          : streamCompat({ route: r, system, prompt, effort, reasoningEffort, maxTokens, timeoutMs, signal, acc });
+          : r.provider === 'local' && (format || keepAlive != null)
+            ? streamOllama({ route: r, system, prompt, maxTokens, timeoutMs, signal, acc, format, keepAlive })
+            : streamCompat({ route: r, system, prompt, effort, reasoningEffort, maxTokens, timeoutMs, signal, acc });
     yield* gen;
     ok = true;
   } finally {
@@ -801,6 +898,10 @@ module.exports = {
   spend: () => ({ ...spend }),
   complete,
   stream,
+  warmLocal,
+  ollamaBase,
+  ollamaRequest,
+  ollamaLine,
   sseData,
   compatChunk,
   cliStreamLine,

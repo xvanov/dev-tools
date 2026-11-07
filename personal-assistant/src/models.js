@@ -134,6 +134,7 @@ const PURPOSES = [
   { key: 'routine', env: 'PA_ROUTINE_MODEL', needs: 'text', get: (c) => c.routines.model, what: 'routines: parse, reports, suggestions' },
   { key: 'eval', env: 'PA_EVAL_MODEL', needs: 'json', get: (c) => c.eval.model, what: 'retrieval evals' },
   { key: 'fast-lane', env: 'PA_FAST_MODEL', needs: 'text', get: (c) => c.fastLane.model, what: 'voice fast lane: quick replies and routing' },
+  { key: 'fast-lane-fallback', env: 'PA_FAST_FALLBACK_MODEL', needs: 'text', get: (c) => c.fastLane.fallback, what: 'voice fast lane when the local model is down or slow' },
 ];
 
 function purpose(key) {

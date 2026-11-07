@@ -114,7 +114,12 @@ calls a model with no tools, and its one side effect is typing the user's own wo
 through `feed.send` — the same path as typing. Keep it that way: never give it tools or `pa` verbs,
 keep `guardDecision` turning an "answer" to an action-like request into a handoff, and keep what is
 handed off the verbatim utterance (the model's `task` only as a labelled hint), since its context
-snapshot quotes other people's messages.
+snapshot quotes other people's messages. The local default (`local/llama3.2:3b`, forced-JSON
+`{label, route, say}` through Ollama's native `/api/chat`, `llm.stream({ format, keepAlive })`) adds
+two more guards in the same spirit: a request the model itself labels `action`/`deep_task` is never
+"answered", and a hand-off's `say` is held until whole and replaced by the stock acknowledgement when
+it reads as an answer or a claim (`spokenAck`). Failing before a decision (Ollama down, or no route
+within `PA_FAST_LOCAL_TIMEOUT_MS`) falls back to `PA_FAST_FALLBACK_MODEL` on the text format.
 The acting verbs (`ASK_COMMANDS`) stay shell commands behind the prompt, through one launcher each
 (`pa-home/bin/pa-do`, …), because opencode's "Allow always" saves the command's first word + ` *`, cannot
 be turned off and outranks the config: on `node …/pa.js` that was `node *`; on a launcher it is that
