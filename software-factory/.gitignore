@@ -173,3 +173,7 @@ apps/*
 # ``factory job status|report``.
 state/jobs/
 state/claude_runs/
+# Directions the factory files and runs are machine-written runtime state
+# (direction 018): already-tracked ones stay tracked, new ones are never added.
+apps/factory/directions/
+apps/template-probe/directions/
