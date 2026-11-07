@@ -2013,9 +2013,12 @@ function enableVoice({ warm = true } = {}) {
   // announcement that was never armed. Arm whatever they're looking at. The
   // per-session 🔊 stays for running several sessions and choosing between them.
   armActiveSessionForVoice();
-  voice.status = voice.tts.available
-    ? 'voice ready'
-    : 'voice ready — no speech synthesis on this machine, announcements will be text only';
+  voice.status = 'voice ready';
+  // Said once, as a toast: a permanent strip line for a fact that never changes
+  // is noise the user has to read past every time they look down.
+  if (!voice.tts.available) {
+    toast('No speech synthesis on this machine: announcements will be text only').close(6000);
+  }
   // Playback works fine on the plain-HTTP origin; only the microphone doesn't.
   // Say which half the user is getting, and where the other half lives.
   if (!SECURE) voice.line = `🎤 ${secureHint()}`;
@@ -3412,6 +3415,38 @@ async function toggleVoiceArm(id, on) {
 
 // ---- the voice strip --------------------------------------------------------
 
+// A status other than the resting one ("mic off — …", an error) is news, so it
+// shows the strip until the line fade below resets it.
+function notice() {
+  return !!voice.status && voice.status !== 'voice ready';
+}
+
+// A line (what was spoken or heard) fades once nothing live holds it: long
+// enough to read, about a third of a second per word, 6-20 s.
+let lineFade = { line: '', timer: null };
+function scheduleLineFade() {
+  const busy = rec.want || voice.playing || !!voice.draft || !!voice.editing
+    || !!voice.confirm || stt.pending > 0;
+  const text = voice.line || (notice() ? voice.status : '');
+  if (!text || busy) {
+    if (lineFade.timer) { clearTimeout(lineFade.timer); lineFade.timer = null; }
+    lineFade.line = '';
+    return;
+  }
+  if (lineFade.timer && lineFade.line === text) return;
+  if (lineFade.timer) clearTimeout(lineFade.timer);
+  const words = text.split(/\s+/).length;
+  const ms = Math.max(6000, Math.min(20000, words * 330));
+  lineFade.line = text;
+  lineFade.timer = setTimeout(() => {
+    lineFade.timer = null;
+    if (voice.line === lineFade.line) voice.line = '';
+    else if (voice.status === lineFade.line) voice.status = 'voice ready';
+    else return;
+    renderVoice();
+  }, ms);
+}
+
 function renderVoice() {
   if (VOICE_DEBUG) {
     const dbg = document.getElementById('voice-debug');
@@ -3419,8 +3454,12 @@ function renderVoice() {
   }
   const bar = $('#voice-bar');
   if (!bar) return;
-  const show = voice.armed.size > 0 || rec.want || !!voice.draft || !!voice.editing
-    || voice.playing || !!voice.confirm || stt.pending > 0;
+  // The strip is a pop-up, not furniture: it shows while something is live
+  // (listening, speaking, a draft, a question) or a line is still fresh, and
+  // goes away on its own. Merely having a session armed is not a reason.
+  scheduleLineFade();
+  const show = rec.want || !!voice.draft || !!voice.editing
+    || voice.playing || !!voice.confirm || stt.pending > 0 || !!voice.line || notice();
   bar.classList.toggle('hidden', !show);
   if (!show) return;
 

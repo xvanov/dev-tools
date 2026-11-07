@@ -1828,6 +1828,12 @@ instinct as `?voicedebug=1`, which exists because a phone has no console.
   *One PTY, several screens*).
 - The voice strip sits directly above the key bar so the undo window's **Cancel** button lands
   under your thumb — the only reason to look at that strip in a hurry is to stop a send.
+- The voice strip is a pop-up, not a permanent bar: it shows while something is live (listening,
+  speaking, a draft, a confirmation, transcribing) or while a line or non-resting status is fresh,
+  and `scheduleLineFade()` clears that after 6–20 s (a third of a second per word). An armed
+  session alone no longer keeps it up, so "N sessions armed — audio is locked" only appears when
+  an announcement actually arrives before the tap. "No speech synthesis on this machine" is a
+  one-off toast.
 - Add the tab to your home screen for an app-like, full-screen experience. The icon is an inline
   SVG data URI (`rel=icon` plus `apple-touch-icon`) rather than a file: it costs no extra
   request, can't 404 behind the front's static handler, and needs nothing added to the deploy.
