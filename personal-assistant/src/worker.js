@@ -71,6 +71,20 @@ function every(seconds, name, fn) {
   return setInterval(tick, seconds * 1000);
 }
 
+// Run by the zero-downtime supervisor (src/supervisor), which talks over IPC.
+const supervised = process.env.PA_SUPERVISED === '1' && typeof process.send === 'function';
+
+let stopping = false;
+async function shutdown(signal) {
+  if (stopping) return;
+  stopping = true;
+  log.info('stopping', { signal });
+  // Bounded: a pool with a client still checked out (the lock wait, a pass
+  // mid-query) never finishes ending, and a stop must not hang a deploy.
+  await Promise.race([db.close().catch(() => {}), new Promise((r) => setTimeout(r, 3000))]);
+  process.exit(0);
+}
+
 async function main() {
   // Below normal, so everything the worker starts — every headless `claude
   // -p`, the audio pass — inherits it and yields to whatever you are typing
@@ -82,7 +96,23 @@ async function main() {
     /* not permitted here: run at the default */
   }
 
+  // The supervisor's messages (src/supervisor): `drain` once routing has moved
+  // to the next generation, `stop` once our in-flight requests are done. Its
+  // death closes the IPC channel, and a worker must not outlive it holding the
+  // lock and the passes. Drain only flips /healthz for now; Z2 (leases) will
+  // also hand the background passes over here.
+  if (supervised) {
+    process.on('message', (m) => {
+      if (m && m.type === 'drain') {
+        log.info('draining: routing moved to the next generation');
+        require('./dashboard/server').markDraining();
+      } else if (m && m.type === 'stop') shutdown('supervisor stop');
+    });
+    process.on('disconnect', () => shutdown('supervisor gone'));
+  }
+
   log.info('starting', {
+    generation: supervised ? Number(process.env.PA_SUPERVISOR_GENERATION) || null : undefined,
     m365Poll: config.m365.pollSeconds,
     db: config.databaseUrl.replace(/:[^:@/]*@/, ':***@'),
   });
@@ -110,6 +140,19 @@ async function main() {
     }
   }
 
+  // Under the supervisor (src/supervisor, PA_SUPERVISED=1) the dashboard
+  // comes up before the lock, on a port the OS picks, and /healthz says ready:
+  // the supervisor routes to it while the previous generation still holds the
+  // lock and runs the passes. The passes below start only once that one has
+  // drained and exited, so a roll never runs two of a pass (until Z2's leases
+  // replace the lock, this wait is the overlap guard).
+  const dashboard = require('./dashboard/server');
+  if (supervised) {
+    const server = await dashboard.start({ port: 0 });
+    process.send({ type: 'listening', port: server.address().port });
+    dashboard.markReady();
+  }
+
   // One worker at a time. `Stop-ScheduledTask` ends the conhost wrapper, not
   // node, so a "restart" can leave the old worker running beside the new one
   // — two of every pass, two dreams, two dashboards fighting for a port. A
@@ -120,22 +163,23 @@ async function main() {
     const { rows: got } = await lockClient.query('select pg_try_advisory_lock(7300) as ok');
     if (got[0].ok) break;
     if (attempt === 1) log.warn('another worker holds the lock — waiting for it to exit');
-    await new Promise((r) => setTimeout(r, 15_000));
+    await new Promise((r) => setTimeout(r, supervised ? 2000 : 15_000));
   }
+  if (supervised) log.info('holding the worker lock: starting passes');
 
   // The dashboard rides along with the worker: one process to keep alive.
   // A port clash must not stop ingest — and must not be permanent either: on
   // a restart the old worker can still hold the port for a few seconds, and a
   // single attempt left the dashboard down until the next restart.
   const startDashboard = (attempt = 1) =>
-    require('./dashboard/server')
+    dashboard
       .start()
+      .then(() => dashboard.markReady())
       .catch((err) => {
         log.warn('dashboard not started — retrying', { attempt, message: err.message });
         setTimeout(() => startDashboard(attempt + 1), Math.min(300, 10 * attempt) * 1000);
       });
-  startDashboard();
-
+  if (!supervised) startDashboard();
   const ingest = require('./ingest');
   const distill = require('./distill');
   const search = require('./search');
@@ -424,11 +468,6 @@ async function main() {
     if (result.rowCount) log.info('retention', { deleted: result.rowCount });
   });
 
-  const shutdown = async (signal) => {
-    log.info('stopping', { signal });
-    await db.close().catch(() => {});
-    process.exit(0);
-  };
   // A stray rejection in one pass must not end every other pass with it.
   process.on('unhandledRejection', (err) => {
     log.warn('unhandled rejection', { message: err?.message || String(err) });

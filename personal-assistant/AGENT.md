@@ -443,6 +443,16 @@ Postgres and nowhere else. Tests use invented names; fixtures never hold a real 
 - **No job queue.** "Work to do" is a query — items with no distillation row at the current
   prompt version. A queue table can get stuck, leak, or need draining after a crash; a query
   cannot. The worker is a scheduler of periodic passes, and passes never overlap themselves.
+- **How the worker runs.** Today the `pa-worker` task / unit runs `node src/worker.js`, which
+  binds the dashboard port itself. `src/supervisor` (Z1, being rolled out by Z4's deploy
+  command) owns that port instead and proxies to worker generations it forks with
+  `PA_SUPERVISED=1`; a supervised worker binds port 0, reports it over IPC, and answers
+  `/healthz` ready only after migrations and its dashboard are up. Keep the supervisor on node
+  builtins and never `require` worker code from it — it is the process a deploy must not
+  restart. Anything long-lived a worker serves (SSE, WebSocket) must survive being closed and
+  reconnected, because a roll closes it. Overlap risk: until Z2's leases, the only thing
+  stopping two generations running the same pass is the advisory lock a supervised worker
+  takes *after* it is ready; do not start timers, watchers or other background work before it.
 - **Secrets:** never in the repo, never in Postgres at all. There are few: GitHub and Microsoft
   365 ride on logins that already exist (`gh`, the claude.ai connectors); Jira prefers an API
   token (`PA_JIRA_API_TOKEN`) and falls back to its connector. A secret resolves real env →

@@ -904,6 +904,7 @@ const commands = {
     const url = `http://${config.dispatch.host}:${config.dispatch.port}/`;
     try {
       await require('../dashboard/server').start();
+      require('../dashboard/server').markReady();
     } catch (err) {
       if (err.code === 'EADDRINUSE') return out(`already running (the worker serves it): ${url}`);
       throw err;

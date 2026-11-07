@@ -263,6 +263,26 @@ The reader lives in its own venv (`%LOCALAPPDATA%\personal-assistant\teams-venv`
 which is not on PyPI and is installed from pinned GitHub archives. Without the venv, or without
 the new Teams, the pass is a no-op.
 
+## Zero-downtime restarts (the supervisor)
+
+Today the `pa-worker` task / unit runs `node src/worker.js`, which serves the dashboard on
+`127.0.0.1:7300` itself, so a restart leaves a gap. `node src/supervisor` (`npm run supervisor`)
+is the replacement being rolled out (`docs/native/PLAN.md`, Z1; the deploy command that uses it
+is Z4): it holds `127.0.0.1:PA_DISPATCH_PORT` and proxies it (HTTP, SSE, WebSocket) to a worker
+it starts with `PA_SUPERVISED=1` on a port the OS picks. To pick up new code without a gap:
+
+```
+node src/supervisor roll      # start a new worker beside the old, switch once its /healthz is ready, drain and stop the old
+node src/supervisor status    # which generation serves, on which private port, what is in flight
+```
+
+A roll waits up to 180 s for the new worker to be ready and up to 30 s for the old one's
+requests to finish; open event streams and WebSockets are closed and reconnect to the new one.
+A new worker that crashes or never gets ready is killed and the old one keeps serving (the roll
+exits non-zero). A supervised worker serves the dashboard before taking the worker lock, so
+background passes run only in the old one until it exits. The supervisor loads no worker code,
+so it never needs restarting for a deploy.
+
 ## Using it
 
 **The dashboard** is at <http://127.0.0.1:7300/> whenever the worker runs (or `pa dashboard`

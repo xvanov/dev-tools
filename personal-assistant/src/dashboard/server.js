@@ -264,6 +264,10 @@ async function handle(req, res) {
   // with the same parser the chase uses (src/util/when.js via chaseCore).
   // Which code this worker serves. Open pages poll it (nav.js) and reload
   // themselves once it changes, so an update reaches every open tab.
+  if (req.method === 'GET' && url.pathname === '/healthz') {
+    const ok = readiness.ready && !readiness.draining;
+    return send(res, ok ? 200 : 503, { ready: ok, draining: readiness.draining, commit: servedCommit(), pid: process.pid });
+  }
   if (req.method === 'GET' && url.pathname === '/api/version') {
     return send(res, 200, { commit: servedCommit() });
   }
@@ -555,6 +559,18 @@ function servedCommit() {
   return commitCache;
 }
 
+// GET /healthz: ready only once the process that serves this has finished
+// starting (src/worker.js calls markReady), and no longer once the supervisor
+// has moved routing away (markDraining). The supervisor (src/supervisor)
+// flips to a new generation on this, never on "the port answers".
+const readiness = { ready: false, draining: false };
+const markReady = () => {
+  readiness.ready = true;
+};
+const markDraining = () => {
+  readiness.draining = true;
+};
+
 function start({ port = config.dispatch.port, host = config.dispatch.host } = {}) {
   if (!hostAllowed(host)) throw new Error(`refusing to bind the dashboard to ${host}: loopback only`);
   const server = http.createServer((req, res) => {
@@ -566,10 +582,10 @@ function start({ port = config.dispatch.port, host = config.dispatch.host } = {}
   return new Promise((resolve, reject) => {
     server.once('error', reject);
     server.listen(port, host, () => {
-      log.info('listening', { url: `http://${host}:${port}/` });
+      log.info('listening', { url: `http://${host}:${server.address().port}/` });
       resolve(server);
     });
   });
 }
 
-module.exports = { start, hostAllowed, state, handle, issuePageToken, pageTokenOk };
+module.exports = { start, hostAllowed, state, handle, issuePageToken, pageTokenOk, markReady, markDraining };
