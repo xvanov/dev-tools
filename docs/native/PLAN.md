@@ -6,7 +6,8 @@ Design rationale: the plan page (proposal, 7 Nov 2026) and the research summary 
 ## How to work this plan (read first, implementing agent)
 
 1. Work top to bottom. A phase may start once the phase before it has its **Exit** box ticked,
-   except where an item says `parallel-ok`.
+   except where an item says `parallel-ok`. No Exit box is ticked without a green golden-path
+   run (Track E, `e2e`) on both stacks.
 2. Each `- [ ]` item is one unit of work: one or more commits to `main`, tests green, pushed
    (see the root `CLAUDE.md`). **Tick the box in the same commit that finishes the item** and
    append the short commit hash: `- [x] … (abc1234)`.
@@ -31,6 +32,8 @@ Design rationale: the plan page (proposal, 7 Nov 2026) and the research summary 
 | D5 | 2026-11-07 | **Keep embeddings as they are**: Azure `text-embedding-3-small`, 1536 dims, embed once, never re-embed | Supersedes the proposal's "local ONNX 512-dim re-embed". Measured: ~41k vectors cost ≈ $0.15 in total. Migration copies existing vectors. Use vectors only where meaning-search beats keywords. |
 | D6 | 2026-11-07 | No WSL anywhere when done | Follows from D2 + factory daemon + jarvisd. |
 | D7 | 2026-11-07 | System 1 (fast lane) becomes a **decide-then-speak** split: a calibrated classifier routes, a small model only speaks | Same idea as "System One" decision models (e.g. TypeSafe's Jev), built ourselves, free and local. Phase 0, item 0.6. |
+| D8 | 2026-11-07 | **The full stack is proven end to end, repeatedly**: a dummy task goes Plan → Build → Run sessions → a real PR in this repo, observable and drillable in all three views | Track E. Runs as the gate at every phase exit, so the rebuild never breaks the path that matters. |
+| D9 | 2026-11-07 | **Every agent run is watchable live in Run, whatever its runtime** (Claude Code, API models such as DeepSeek, opencode, local) | Today only `claude_session` runs show turn-by-turn work in a terminal; API runs show stage-level events via `factory job follow`. E2 closes the gap. |
 
 Standing rules carried over: default agent runtime is Claude Code sessions (API/DeepSeek only on
 request); voice never approves high-risk actions alone; work and personal stacks never connect.
@@ -104,6 +107,51 @@ with the app. Clients reconnect to the event stream with `Last-Event-ID` and mis
   deploy and asserts zero failed requests, no lost events, no dropped terminal.
 - [ ] **Exit Z:** a deploy on each stack with the Z6 test passing.
 
+## Track E: the full stack works end to end (D8, D9; gate for every phase exit)
+
+**The golden path.** One dummy feature for this repo travels the whole system, and the user can
+watch and drill into it at every level:
+
+1. **Plan**: a card is created (by voice in Ask, by Jarvis's `factory_start` tool, or by hand),
+   e.g. "Add a `pa version` verb that prints the served commit" (small, real, harmless).
+2. **Build**: the card is distilled into a factory job (brief, stories, gates). The job shows its
+   stages, runtime per step, cost so far, and links back to the card.
+3. **Run**: each agent step appears as a live session. Opening it shows the work as it happens.
+4. **PR**: the job opens a draft PR on this repo; CI runs; the PR link and CI state flow back to
+   the job (Build) and the card (Plan).
+5. **Drill-down both ways**: card → job → step → session → PR, and back from any of them.
+6. **Cleanup**: the PR is closed unmerged and its branch deleted (unless the user merges it).
+
+Variants, each run at least once per phase exit: all steps on `claude_session` (the default);
+**one step on an API model (DeepSeek)**; a resumed job (`factory job resume`) after killing the
+run mid-step; a job continued on an existing branch (`--branch`).
+
+- [ ] **E1 One id chain.** Card id ↔ job id ↔ run/step id ↔ session id ↔ PR number are stored
+  as links in the data (not inferred from titles), returned by the board, JOBS-API and session
+  APIs, and rendered as links in Plan, Build and Run. Jarvis's MCP tools return them too.
+- [ ] **E2 Every run is watchable (D9).** API-runtime steps emit the same turn-level stream as
+  `claude_session` (model turn, tool call, file diff summary, gate result, tokens and cost), to
+  the run's event log. Run opens it as a read-only live session rendered by the same pretty
+  renderer `claude_session` uses (`factory/claude_session/pretty.py`), started automatically
+  when the step starts, so API and Claude steps look the same in Run. Ends when the step ends;
+  stays reviewable afterwards (scrollback/transcript).
+- [ ] **E3 Live status in all three views.** Card state, job stage and session state update
+  within 1 s of a change (SSE from 0.4 / 1.4), including "waiting for your approval" with the
+  approve action reachable from Plan, Build and voice.
+- [ ] **E4 `e2e` command.** One command runs the golden path headless against the live stack,
+  creates the dummy card, waits for the PR, asserts every link in E1 resolves in every view's
+  API, asserts the API-runtime step produced a watchable session (E2), prints a timing per
+  hop (card → job started → first session output → PR opened → CI done), then cleans up.
+  `--keep` leaves the PR open for a human look. Prerequisite: the factory machine's `gh` can
+  push to this repo with the personal identity.
+- [ ] **E5 Baseline now.** Run E4 on today's system before phase 1 starts; record the timings
+  and every broken hop here as new items. Fix what is broken in phase 0.
+- [ ] **E6 Gate.** Each phase's Exit box below requires a green E4 run (all variants) on both
+  stacks, with the timings recorded in the targets table.
+- [ ] **Exit E:** the user runs the golden path by voice ("start a factory job for …"), watches
+  it in Plan, Build and Run, drills down from the card to the live session and the PR, and
+  each hop meets its timing target.
+
 ## Embeddings policy (D5, applies to every phase)
 
 - Keep Azure `text-embedding-3-small`, 1536 dims. Embed each item **once**, when it arrives;
@@ -144,6 +192,8 @@ with the app. Clients reconnect to the event stream with `Last-Event-ID` and mis
   - Done when: router decides in < 150 ms warm, no action-like turn is answered locally on
     the eval set, and `architecture.json` describes the new shape.
 - [ ] **0.7** T1, T2, T3 and Z1 landed (from the tracks above).
+- [ ] **0.8** E1, E4 and E5 landed: the golden path runs on today's system and its broken hops
+  are fixed. E2 (watchable API runs) lands here too if the baseline shows it missing.
 - [ ] **Exit 0:** measured again; targets table updated with new numbers.
 
 ## Phase 1: contracts and the repository layer
