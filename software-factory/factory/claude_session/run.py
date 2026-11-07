@@ -280,11 +280,12 @@ def claude_dev_run(
         error = "cancelled: the job was cancelled while Claude Code was running"
     last_text = conv.last_text
     recent = conv.rounds[-1].tool_calls[-8:] if conv.rounds else []
-    # No Claude result event at all (CLI crash, logged out, launch failure) and
-    # no grade taken: infrastructure, not a dev attempt. The handler's
+    # Claude did no work at all (CLI crash, logged out, launch failure, or an
+    # error result with zero output such as the subscription's usage limit)
+    # and no grade was taken: infrastructure, not a dev attempt. The handler's
     # ``_is_premodel_infra_failure`` needs ``test_run_passed is None`` for that.
     premodel = (
-        not conv.any_result and not conv.cancelled and not conv.timed_out and not conv.gate_rounds
+        conv.tokens_out == 0 and not conv.cancelled and not conv.timed_out and not conv.gate_rounds
     )
     return RunResult(
         success=passed,

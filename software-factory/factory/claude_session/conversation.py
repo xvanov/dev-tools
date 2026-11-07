@@ -218,10 +218,17 @@ def run_conversation(
             out.error = f"Claude Code round {round_no} ended with no result event: {err}".strip()
             out.stop_reason = "no_result"
             break
+        if result.is_error:
+            # Claude Code itself failed (usage limit, API error, auth): resuming
+            # the session with gate feedback would hit the same wall. Stop with
+            # Claude's own message. A round that did work is still graded below.
+            out.stop_reason = "claude_error"
+            out.error = (f"Claude Code error: {result.result_text or result.subtype or 'unknown'}")[
+                :500
+            ]
+            break
         if gate_check is None:
-            out.stop_reason = "error" if result.is_error else "done"
-            if result.is_error:
-                out.error = (result.result_text or result.subtype or "error")[:500]
+            out.stop_reason = "done"
             break
 
         # ---- grade the tree inside the conversation ---------------------- #
@@ -256,10 +263,14 @@ def run_conversation(
 
     # Killed mid-round (wall clock / no progress / lost session): grade the tree
     # as it stands, like the OpenHands soft deadline does. Never after a cancel.
+    worked = out.tokens_out > 0
     if (
         gate_check is not None
         and not out.cancelled
-        and out.stop_reason in ("wall_clock", "no_progress_first_write", "session_lost")
+        and (
+            out.stop_reason in ("wall_clock", "no_progress_first_write", "session_lost")
+            or (out.stop_reason == "claude_error" and worked)
+        )
     ):
         verdict = gate_check()
         out.final_verdict = verdict

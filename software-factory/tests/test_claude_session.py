@@ -34,7 +34,12 @@ from factory.runner import GateVerdict
 
 
 def _stream(
-    *, session: str = "sess-1", cost: float = 0.25, error: bool = False, text: str = "done"
+    *,
+    session: str = "sess-1",
+    cost: float = 0.25,
+    error: bool = False,
+    text: str = "done",
+    out_tokens: int = 40,
 ) -> str:
     events = [
         {"type": "system", "subtype": "init", "session_id": session, "model": "claude-x"},
@@ -60,7 +65,7 @@ def _stream(
                 "input_tokens": 10,
                 "cache_creation_input_tokens": 5,
                 "cache_read_input_tokens": 100,
-                "output_tokens": 40,
+                "output_tokens": out_tokens,
             },
         },
     ]
@@ -85,7 +90,12 @@ class FakeLauncher:
             (cwd / spec["write"]).write_text(f"round {plan.round_no}\n", encoding="utf-8")
         if not spec.get("no_result"):
             plan.stream_path.write_text(
-                _stream(cost=spec.get("cost", 0.25), error=spec.get("error", False)),
+                _stream(
+                    cost=spec.get("cost", 0.25),
+                    error=spec.get("error", False),
+                    text=spec.get("text", "done"),
+                    out_tokens=spec.get("out_tokens", 40),
+                ),
                 encoding="utf-8",
             )
         plan.exit_path.write_text("0\n", encoding="utf-8")
@@ -457,3 +467,59 @@ def test_job_cancel_probe_reads_only_the_durable_row(tmp_path: Path) -> None:
     mark_job_cancelled(db, "demo", "001", by="t")
     assert probe() is True
     assert claude_run.job_cancel_probe(db, "demo", "002")() is False
+
+
+# --------------------------------------------------------------------------- #
+# Claude Code error results (observed live 2026-11-06: usage_limit_reached)
+# --------------------------------------------------------------------------- #
+
+_LIMIT = "You've hit your individual spend limit"
+
+
+def test_error_result_stops_without_a_gate_round(tmp_path: Path) -> None:
+    launcher = FakeLauncher([{"error": True, "text": _LIMIT, "out_tokens": 0}])
+    graded: list[int] = []
+
+    def gate() -> GateVerdict:
+        graded.append(1)
+        return GateVerdict(passed=False, reason="no report")
+
+    res = _conv(tmp_path, launcher, gate_check=gate, max_gate_rounds=3)
+    assert res.stop_reason == "claude_error" and launcher.started == [1]
+    assert _LIMIT in (res.error or "") and not graded and not res.gate_rounds
+
+
+def test_error_result_after_work_is_still_graded(tmp_path: Path) -> None:
+    launcher = FakeLauncher([{"error": True, "text": "API error", "write": "a.txt"}])
+    res = _conv(
+        tmp_path,
+        launcher,
+        gate_check=lambda: GateVerdict(passed=True, reason="ok"),
+        max_gate_rounds=3,
+    )
+    assert res.stop_reason == "claude_error" and res.final_verdict.passed
+    assert res.gate_rounds[-1]["after"] == "claude_error"
+
+
+def test_usage_limit_on_the_dev_step_is_infrastructure(
+    tmp_path: Path, fake_claude: FakeLauncher
+) -> None:
+    fake_claude.rounds = [{"error": True, "text": _LIMIT, "out_tokens": 0}]
+    repo = tmp_path / "wt"
+    repo.mkdir()
+    story = tmp_path / "story.md"
+    story.write_text("s")
+    res = claude_run.claude_dev_run(
+        story_path=story,
+        repo_path=repo,
+        software_factory_root=tmp_path,
+        db_path=tmp_path / "state" / "factory.db",
+        model=None,
+        test_command="true",
+        story_id=1,
+        app="demo",
+        direction_id="001",
+        gate_check=lambda: GateVerdict(passed=False, reason="red"),
+        max_gate_rounds=3,
+    )
+    assert res.premodel_infra and res.test_run_passed is None and _LIMIT in (res.error or "")

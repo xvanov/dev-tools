@@ -463,7 +463,10 @@ apply: `apps/factory` without `solo_allowed: true` → `pipeline_unavailable`; s
 report `loggedIn: true`, or when it reports a login other than `claude.ai` (an API-key login would
 bill the key, which this runtime exists to avoid). The check runs at submit only; a stamped story
 whose CLI later disappears fails its dev step as infrastructure (bounded retries, no dev retry
-spent).
+spent). It cannot see the subscription's usage limit (that costs a model call): a run that hits it
+ends at once with Claude's message (`Claude Code error: You've hit your … limit …`), which a
+research/report job carries in `why` (state `failed`) and a code job's dev step treats as
+infrastructure (no dev retry spent; the bounded infra retries, then the story blocks loudly).
 
 **`factory job report`** on a code job → `{"error": "no_report"}` (exit 1); an unknown id →
 `not_found` as for `status`.
