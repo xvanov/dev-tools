@@ -90,7 +90,20 @@ def follow_job(
     last_status_at = time.monotonic()
     polls = 0
 
+    run_states: dict[Any, str] = {}
+
     def drain(st: dict[str, Any]) -> None:
+        # v1.2: agent runs (with the termhub link of a Claude Code run).
+        for run in reversed(st.get("runs") or []):
+            if run_states.get(run.get("id")) == run.get("state"):
+                continue
+            run_states[run.get("id")] = run.get("state")
+            link = (run.get("session") or {}).get("url")
+            out(
+                f"{_clock(None)} run {run.get('id')} {run.get('persona')} "
+                f"{run.get('runtime')} {run.get('model')} {run.get('state')}"
+                + (f" — watch: {link}" if link else "")
+            )
         for story in st["stories"]:
             sid = story["id"]
             if story_states.get(sid) != story["state"]:
@@ -141,6 +154,8 @@ def follow_job(
             f"{_clock(None)} job finished: {status['state']} "
             f"(merged={str(status['merged']).lower()} cost=${status['cost_usd']:.2f} PRs: {prs})"
         )
+        if status.get("report"):
+            out(f"{_clock(None)} report: {status['report']['path']}")
     sys.stdout.flush()
     return status
 

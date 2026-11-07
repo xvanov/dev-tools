@@ -230,6 +230,84 @@ def _cost(ctx: _Ctx, ref: JobRef, story_ids: list[int]) -> float:
     return round(float(rows[0]["c"]), 4) if rows else 0.0
 
 
+def _run_rows(ctx: _Ctx, app: str, direction_id: str, story_ids: list[int]) -> list[dict[str, Any]]:
+    """Every ``runs`` row of a job (its app+direction, or any of its stories)."""
+    clauses = ["(app = ? AND direction_id = ?)"]
+    args: list[Any] = [app, direction_id]
+    if story_ids:
+        clauses.append(f"story_id IN ({','.join('?' * len(story_ids))})")
+        args += story_ids
+    rows = _query(
+        ctx.conn,
+        f"SELECT * FROM runs WHERE {' OR '.join(clauses)} ORDER BY id DESC",
+        tuple(args),
+    )
+    return [dict(r) for r in rows]
+
+
+def _run_state(row: dict[str, Any]) -> str:
+    from factory.runner import _PROVISIONAL_RUN_ERROR
+
+    if row.get("error") == _PROVISIONAL_RUN_ERROR:
+        return "running"
+    return "ok" if row.get("success") else "failed"
+
+
+def _run_started(row: dict[str, Any]) -> str | None:
+    if row.get("started_at"):
+        return str(row["started_at"])
+    ts, dur = row.get("ts"), row.get("duration_s")
+    if not ts:
+        return None
+    if dur is None or _run_state(row) == "running":
+        return str(ts)
+    try:
+        from datetime import timedelta
+
+        return (datetime.fromisoformat(str(ts)) - timedelta(seconds=float(dur))).isoformat()
+    except (TypeError, ValueError):
+        return str(ts)
+
+
+def runs_view(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """``runs[]`` of the v1.2 status object (newest first)."""
+    import json as _json
+
+    from factory.jobs.kinds import billing_for
+
+    out: list[dict[str, Any]] = []
+    for r in rows:
+        runtime = str(r.get("runtime") or "api")
+        session = None
+        if r.get("session_json"):
+            try:
+                loaded = _json.loads(str(r["session_json"]))
+                session = loaded if isinstance(loaded, dict) else None
+            except ValueError:
+                session = None
+        state = _run_state(r)
+        out.append(
+            {
+                "id": r.get("id"),
+                "story_id": r.get("story_id"),
+                "persona": r.get("persona"),
+                "runtime": runtime,
+                "model": r.get("model"),
+                "state": state,
+                "cost_usd": round(float(r.get("cost_usd") or 0.0), 4),
+                "billing": str(r.get("billing") or billing_for(runtime)),
+                "started_at": _run_started(r),
+                "ended_at": None if state == "running" else r.get("ts"),
+                "session": session,
+            }
+        )
+    return out
+
+
+def subscription_equiv(rows: list[dict[str, Any]]) -> float:
+    return round(sum(float(r.get("subscription_equiv_usd") or 0.0) for r in rows), 4)
+
+
 # --------------------------------------------------------------------------- #
 # Story classification
 # --------------------------------------------------------------------------- #
@@ -612,6 +690,9 @@ def _status_for(ctx: _Ctx, ref: JobRef) -> dict[str, Any]:
     ]
     raw_audit = state_yaml.get("audit")
     audit: list[Any] = raw_audit if isinstance(raw_audit, list) else []
+    run_rows = _run_rows(
+        ctx, ref.app, ref.direction_id, [int(r["id"]) for r in rows if r.get("id") is not None]
+    )
     return {
         "job_id": ref.job_id,
         "app": ref.app,
@@ -620,7 +701,7 @@ def _status_for(ctx: _Ctx, ref: JobRef) -> dict[str, Any]:
         "external_id": meta.get("external_id"),
         "state": state,
         "terminal": state in TERMINAL_JOB_STATES,
-        "pipeline": effective_pipeline(cfg, meta.get("pipeline")),
+        "pipeline": effective_pipeline(cfg, meta.get("pipeline"), meta.get("runtime")),
         "delivery": level.value,
         "stories": stories,
         "pr_urls": [v.pr_url for v in views if v.pr_url],
@@ -632,6 +713,47 @@ def _status_for(ctx: _Ctx, ref: JobRef) -> dict[str, Any]:
             + [state_yaml.get("created_at"), (cancel or {}).get("at")]
         ),
         "why": why,
+        # v1.2 (additive)
+        "kind": "code",
+        "runtime": str(meta.get("runtime") or "api"),
+        "report": None,
+        "runs": runs_view(run_rows),
+        "subscription_equiv_usd": subscription_equiv(run_rows),
+    }
+
+
+def _task_status_for(ctx: _Ctx, ref: Any) -> dict[str, Any]:
+    """The status object of a research/report job (``factory.jobs.tasks``)."""
+    from factory.jobs.tasks import report_info, task_job_state
+
+    meta = ref.meta
+    state, why = task_job_state(ref, ctx.factory_block)
+    rows = _run_rows(ctx, ref.app_label, ref.task_id, [])
+    metered = round(sum(float(r.get("cost_usd") or 0.0) for r in rows), 4)
+    return {
+        "job_id": ref.job_id,
+        "app": ref.app,
+        "title": str(meta.get("title") or ref.dir_path.name),
+        "source": meta.get("source"),
+        "external_id": meta.get("external_id"),
+        "state": state,
+        "terminal": state in TERMINAL_JOB_STATES,
+        "pipeline": None,
+        "delivery": "none",
+        "stories": [],
+        "pr_urls": [],
+        "merged": False,
+        "cost_usd": metered,
+        "updated_at": _latest_ts(
+            [meta.get("updated_at"), meta.get("created_at"), meta.get("ended_at")]
+            + [r.get("ts") for r in rows]
+        ),
+        "why": why,
+        "kind": str(meta.get("kind")),
+        "runtime": str(meta.get("runtime") or "api"),
+        "report": report_info(ref),
+        "runs": runs_view(rows),
+        "subscription_equiv_usd": subscription_equiv(rows),
     }
 
 
@@ -641,6 +763,16 @@ def _ctx(root: Path, github: bool) -> _Ctx:
 
 
 def job_status(root: Path, job_id: str, *, github: bool = True) -> dict[str, Any]:
+    from factory.jobs.tasks import find_task, is_task_job_id
+
+    if is_task_job_id(job_id):
+        task = find_task(root, job_id)
+        ctx = _ctx(root, False)
+        try:
+            return _task_status_for(ctx, task)
+        finally:
+            if ctx.conn is not None:
+                ctx.conn.close()
     ref = find_job(root, job_id)
     ctx = _ctx(root, github)
     try:
@@ -665,6 +797,15 @@ def list_jobs(
             if source and str(ref.meta.get("source") or "") != source:
                 continue
             status = _status_for(ctx, ref)
+            if active and status["terminal"]:
+                continue
+            jobs.append(status)
+        from factory.jobs.tasks import iter_tasks
+
+        for task in iter_tasks(root, app=app):
+            if source and str(task.meta.get("source") or "") != source:
+                continue
+            status = _task_status_for(ctx, task)
             if active and status["terminal"]:
                 continue
             jobs.append(status)
@@ -708,6 +849,11 @@ def cancel_job(
 
     Idempotent: re-running re-parks anything an in-flight handler wrote back.
     """
+    from factory.jobs.tasks import cancel_task, is_task_job_id
+
+    if is_task_job_id(job_id):
+        return cancel_task(root, job_id, by=by)
+
     from factory.chain import delivery_gate
     from factory.chain.handlers import get_story
     from factory.directions.parser import parse_direction_dir

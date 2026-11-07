@@ -1,4 +1,4 @@
-# Factory ⇄ Personal Assistant job contract (v1, 2026-11-02)
+# Factory ⇄ Personal Assistant job contract (v1, 2026-11-02; v1.2 additions 2026-11-06 at the end)
 
 The one interface between the personal assistant (PA, dev-tools/personal-assistant) and the
 software factory (software-factory). The PA never imports factory code or reads its sqlite; it
@@ -346,3 +346,139 @@ Errors: `unknown_app`, `invalid_name`, `nothing_to_set`, `invalid_delivery`, `in
 
 ### `factory app list --json`
 `{"apps": [{"app", "repo", "path", "delivery": {"default"}, "pipeline_default"}]}`
+
+## v1.2 additions (2026-11-06): job kinds, runtimes, runs, reports
+
+Additive: every v1/v1.1 call keeps working and means what it meant.
+
+### Submit: new flags
+
+```
+--kind code|research|report      default code
+--runtime api|claude_session     default api
+```
+
+- `kind=code`: today's behaviour (a direction → stories → PRs at the job's delivery level).
+- `kind=research`: answer a question or investigate. The deliverable is a markdown REPORT kept by
+  the factory (`factory job report`). No branch, no PR, no issue. `--app`/`--repo` are OPTIONAL:
+  with one, the agent works read-only in a fresh checkout of that repo; without one, it works in
+  the factory's scratch workspace (no repo). `--done` lines are the questions the report must
+  answer. Delivery: only `none` (anything else → `invalid_delivery`). No flow.md/api_spec.md
+  needed (no backpressure gate, never `needs_human` for lack of them).
+- `kind=report`: like research, but the ask is to WRITE a document (a summary, a write-up, a
+  plan). Same deliverable, same rules.
+- `runtime=api`: the factory's own model routing (LiteLLM, routes.yaml, `--model` overrides,
+  keys from env). Unchanged for code. For research/report: one tool-using agent (OpenHands, as
+  the dev runs today) with the `dev` route (or `--model researcher=<id>`).
+- `runtime=claude_session`: Claude Code (the `claude` CLI on the factory machine, the operator's
+  subscription, not an API key) does the agent work:
+  - code: the dev step (solo pipeline: one Claude Code conversation in the story worktree; the
+    usual gates, CI watch and delivery). `--pipeline chain` with this runtime → the dev persona
+    only is Claude Code; other personas follow routes.yaml.
+  - research/report: one Claude Code conversation writes `report.md`.
+  - Each Claude Code run is started as a termhub session on the factory machine, so a human can
+    open it live. `--model` for it is a Claude model name (`claude_session=<model>`, e.g.
+    `claude-sonnet-5-5`); default: the CLI's default.
+  - Not available (no `claude` on PATH, not logged in) → submit refuses with
+    `{"error": "runtime_unavailable"}`.
+- Refusals: `invalid_kind`, `invalid_runtime`, `runtime_unavailable`, `invalid_delivery`.
+
+Success JSON adds `"kind"` and `"runtime"`.
+
+### Status / list: new fields
+
+```
+"kind": "code|research|report",
+"runtime": "api|claude_session",
+"report": {"title", "path", "excerpt": "<first ~600 chars>", "words": n} | null,
+"runs": [{"id", "story_id": n|null, "persona", "runtime", "model", "state": "running|ok|failed",
+          "cost_usd": number, "billing": "metered|subscription",
+          "started_at", "ended_at": ISO|null,
+          "session": {"machine", "termhub_session_id", "url"} | null}],
+"cost_usd": number,                 // METERED spend only (API keys) — unchanged meaning
+"subscription_equiv_usd": number    // what Claude Code runs would have cost at API prices
+```
+
+A research/report job is `done` when its report exists, `failed` when the agent ended without one,
+`in_progress` while it runs. `runs[]` lists every agent/LLM run of the job, newest first, with the
+termhub link while one is live (and after, for the transcript).
+
+### New command
+
+`factory job report <job_id>` prints the report markdown (not JSON). With `--json`:
+`{"job_id", "title", "markdown", "path"}`. No report yet → `{"error": "no_report"}`.
+
+### v1.2 as implemented (2026-11-06) — precisions the spec above left open
+
+Everything above holds. These are the details the implementation had to fix; the PA can rely on
+them.
+
+**Job ids.** A research/report job is NOT a direction (no PM, stories, issue or PR, so pm-sync
+never sees it). Its id is `<app>:r<NNNN>` (e.g. `demo:r0007`), or `scratch:r<NNNN>` when the job
+names no app. The `r` prefix keeps it apart from direction ids (all digits); both match the PA's
+`JOB_ID` pattern. Ids are global (one sequence for all apps). It lives in
+`state/jobs/<task_id>-<slug>/` (`job.yaml`, `ask.md`, `brief.md`, `report.md`, the workspace, the
+Claude run dir, `worker.log`).
+
+**Submit success shape for research/report.** `job_id`, `app` (`null` without an app),
+`direction_id` (= the task id, `r0007`), `direction_path` (the job dir), `pipeline: null`,
+`delivery: "none"`, `delivery_requested: null`, `created`, `kind`, `runtime`, `warnings`.
+`--pipeline` (other than `auto`), `--flow-file` and `--api-spec-file` are ignored for these kinds,
+with a warning. Idempotency on `(source, external-id)` spans both kinds: a resubmit returns the
+original job, whatever kind it is.
+
+**Status shape for research/report.** The v1 keys are all present: `stories: []`, `pr_urls: []`,
+`merged: false`, `pipeline: null`, `delivery: "none"`, `app` (`null` without an app). States:
+`queued` (waiting for a dispatch; `blocked` instead while the factory is halted or paused),
+`in_progress` (starting / running; also while a cancel is being carried out), `done`, `failed`,
+`cancelled`. `report.title` is the report's first `# ` heading (else the job title); `excerpt` is
+its first 600 characters; `words` is a whitespace word count.
+
+**Status for code jobs** gains the same v1.2 keys: `kind: "code"`, `runtime`, `report: null`,
+`runs[]` (every run row of the job's app+direction or any of its stories), and
+`subscription_equiv_usd`.
+
+**runs[].** `model` is the LiteLLM id for `api` runs and `claude_session/<model>` for Claude Code
+runs (`claude_session/default` until the run reports which model the CLI chose). `state` is
+`running` while the run row is still provisional. `started_at` is recorded for new runs; for older
+rows it is derived as `ended_at - duration`. A Claude Code run's `cost_usd` is always `0` (nothing
+is metered, so the spend caps never count it); its API-price equivalent is summed into
+`subscription_equiv_usd`. `session` is `null` for api runs, and for a Claude Code run that had to
+start without termhub (termhub unreachable → the run starts as a local process, output in the run
+dir, and the run cannot be watched live).
+
+**Models.** `--model claude_session=<name>` requires `--runtime claude_session` (else
+`bad_model_flag`); it is stored as `claude_model` in the frontmatter / `job.yaml`, never in
+`models:`. `researcher` is a persona (`factory/personas/researcher.md`), so
+`--model researcher=<provider>/<model>` validates like any other persona override. Without it an
+api research/report job uses the `dev` route (job, then app overrides, then routes.yaml).
+
+**Pipeline with `claude_session`.** `--pipeline auto` (or none) resolves to `solo` for a
+`claude_session` code job, and the submit/status `pipeline` says `solo`. Solo's refusals still
+apply: `apps/factory` without `solo_allowed: true` → `pipeline_unavailable`; submit there with
+`--pipeline chain`.
+
+**`runtime_unavailable`** is returned when `claude` is not found (PATH, `~/.local/bin`,
+`FACTORY_CLAUDE_BIN`), when `claude auth status` (run with the API-key variables removed) does not
+report `loggedIn: true`, or when it reports a login other than `claude.ai` (an API-key login would
+bill the key, which this runtime exists to avoid). The check runs at submit only; a stamped story
+whose CLI later disappears fails its dev step as infrastructure (bounded retries, no dev retry
+spent).
+
+**`factory job report`** on a code job → `{"error": "no_report"}` (exit 1); an unknown id →
+`not_found` as for `status`.
+
+**Cancel** of a research/report job returns the v1 cancel shape (`stories_parked: []`,
+`stories_left: []`). A queued job is cancelled at once; a running one is stopped (the Claude Code
+run's termhub session is killed, an OpenHands worker's process group is signalled) and reads
+`cancelled` once the worker has stopped. A `done` job is left alone, as for code jobs.
+
+**Scheduling.** Every `factory tick` (any app) starts queued research/report jobs as detached
+workers (`python -m factory.jobs.worker`), at most `FACTORY_TASK_MAX_WORKERS` (default 2) at a
+time, and marks a running job whose worker died as `failed`. `factory job dispatch [--json]
+[--dry-run]` does the same on demand. A tick never waits for the agent.
+
+**Bounds.** A research/report agent run has a 5400 s wall clock and at most 2 in-conversation
+checks of "the report file exists" (a missing report is sent back into the same conversation
+once). A `claude_session` code dev step has solo's bounds (5400 s, ≤ 3 gate rounds, the
+no-progress abort); under `--pipeline chain` it has the chain's dev timeout and no gate loop.

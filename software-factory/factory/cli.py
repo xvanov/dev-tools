@@ -1202,6 +1202,28 @@ def tick_cmd(
     except Exception as exc:  # noqa: BLE001 - never fail the tick on triage
         scheduled_results.append(("auto_pm_sync", f"errored:{exc!r}"[:60], 0, 0))
 
+    # JOBS-API v1.2: start queued research/report jobs (any app, or none) as
+    # detached workers, and reap dead ones. Never blocks on the agent run and
+    # never fails the tick. Every app's tick does this; the dispatch is
+    # serialised by its own lock and capped by FACTORY_TASK_MAX_WORKERS.
+    try:
+        from factory.jobs.tasks import dispatch_tasks
+
+        task_dispatch = dispatch_tasks(_FACTORY_ROOT, dry_run=dry_run)
+        if task_dispatch["started"] or task_dispatch["reaped"]:
+            scheduled_results.append(
+                (
+                    "task_jobs",
+                    ("started " + ",".join(task_dispatch["started"]))[:60]
+                    if task_dispatch["started"]
+                    else "reaped",
+                    len(task_dispatch["started"]),
+                    len(task_dispatch["reaped"]),
+                )
+            )
+    except Exception as exc:  # noqa: BLE001 - never fail the tick on task dispatch
+        scheduled_results.append(("task_jobs", f"errored:{exc!r}"[:60], 0, 0))
+
     # WS1.2 acceptance-oracle self-heal. A story that is EXPECTED to have an
     # independent acceptance oracle but whose authoring flaked (transient LLM
     # error at spawn) blocks on the ``acceptance-verified`` gate. Re-author such

@@ -116,10 +116,16 @@ def submit_cmd(
     api_spec_file: Path | None = typer.Option(
         None, "--api-spec-file", help="Optional api_spec.md content"
     ),
+    kind: str = typer.Option(
+        "code", "--kind", help="code | research | report (v1.2; default code)"
+    ),
+    runtime: str = typer.Option(
+        "api", "--runtime", help="api | claude_session (v1.2; default api)"
+    ),
     as_json: bool = typer.Option(False, "--json", help="Print one JSON object"),
 ) -> None:
-    """Create a job (a direction; pre-approved for --source pa/human). Idempotent on
-    (source, external-id)."""
+    """Create a job (code: a direction, pre-approved for --source pa/human;
+    research/report: a report job). Idempotent on (source, external-id)."""
     from factory.jobs.submit import SubmitRequest, submit_job
 
     def read(path: Path | None, flag: str) -> str | None:
@@ -149,6 +155,8 @@ def submit_cmd(
                 external_id=external_id,
                 flow_md=read(flow_file, "--flow-file"),
                 api_spec_md=read(api_spec_file, "--api-spec-file"),
+                kind=kind,
+                runtime=runtime,
             ),
         )
 
@@ -199,6 +207,48 @@ def cancel_cmd(
     from factory.jobs.status import cancel_job
 
     _run(as_json, lambda: cancel_job(_root(), _need_job_id(job_id)))
+
+
+@job_app.command("report")
+def report_cmd(
+    job_id: str | None = typer.Argument(None, help="<app>:<task_id> of a research/report job"),
+    as_json: bool = typer.Option(False, "--json", help="Print one JSON object"),
+) -> None:
+    """Print a research/report job's report (markdown; --json for an object)."""
+    from factory.jobs.tasks import is_task_job_id, report_markdown
+
+    def go() -> dict[str, Any]:
+        jid = _need_job_id(job_id)
+        if not is_task_job_id(jid):
+            from factory.jobs.status import job_status
+
+            job_status(_root(), jid, github=False)  # not_found / invalid_job_id first
+            raise JobError("no_report", f"job {jid} is a code job; it delivers PRs, not a report")
+        return report_markdown(_root(), jid)
+
+    if as_json:
+        _run(True, go)
+        return
+    _load_env()
+    try:
+        with contextlib.redirect_stdout(sys.stderr):
+            result = go()
+    except JobError as exc:
+        print(f"error ({exc.code}): {exc.message}", file=sys.stderr)
+        raise typer.Exit(code=_EXIT_ERROR) from None
+    sys.stdout.write(result["markdown"].rstrip("\n") + "\n")
+    sys.stdout.flush()
+
+
+@job_app.command("dispatch")
+def dispatch_cmd(
+    as_json: bool = typer.Option(False, "--json", help="Print one JSON object"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Report what would start"),
+) -> None:
+    """Start queued research/report jobs (every `factory tick` also does this)."""
+    from factory.jobs.tasks import dispatch_tasks
+
+    _run(as_json, lambda: dispatch_tasks(_root(), dry_run=dry_run))
 
 
 @job_app.command("follow")

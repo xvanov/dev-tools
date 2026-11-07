@@ -167,3 +167,9 @@ bench/swebench/benchmarks.db
 apps/*
 !apps/factory/
 !apps/template-probe/
+
+# JOBS-API v1.2 runtime: research/report jobs (job.yaml, report.md, workspaces)
+# and Claude Code run dirs (round scripts, stream-json). Runtime-only; read via
+# ``factory job status|report``.
+state/jobs/
+state/claude_runs/

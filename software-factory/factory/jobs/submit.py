@@ -56,6 +56,18 @@ from factory.jobs.common import (
     registered_apps,
     state_db_path,
 )
+from factory.jobs.kinds import (
+    CLAUDE_MODEL_KEY,
+    KINDS,
+    RUNTIME_API,
+    RUNTIME_CLAUDE,
+    RUNTIMES,
+    TASK_KINDS,
+    normalize_kind,
+    normalize_runtime,
+    split_claude_model,
+)
+from factory.jobs.tasks import TaskRef, create_task, find_existing_task
 
 SUBMITTED_BY = "factory job submit"
 
@@ -82,6 +94,8 @@ class SubmitRequest:
     external_id: str | None = None
     flow_md: str | None = None
     api_spec_md: str | None = None
+    kind: str = "code"  # v1.2: code | research | report
+    runtime: str = "api"  # v1.2: api | claude_session
 
 
 # --------------------------------------------------------------------------- #
@@ -133,7 +147,14 @@ def resolve_app(root: Path, app: str | None, repo: str | None) -> tuple[str, App
     return app, cfg
 
 
-def resolve_routing(cfg: AppConfig, models: list[str], pipeline: str | None) -> JobRouting:
+def resolve_routing(
+    cfg: AppConfig,
+    models: list[str],
+    pipeline: str | None,
+    *,
+    runtime: str | None = None,
+    claude_model: str | None = None,
+) -> JobRouting:
     """Validate the job's ``--model`` / ``--pipeline`` request with the SAME
     resolver spawn uses (``factory.job_routing.resolve_job_routing``), so a
     request submit accepts is one spawn will honour — and a bad one (bare model
@@ -147,17 +168,23 @@ def resolve_routing(cfg: AppConfig, models: list[str], pipeline: str | None) -> 
             job_models=parse_model_flags(models) if models else None,
             pipeline=pipeline,
             source="factory job submit --model",
+            runtime=runtime,
+            claude_model=claude_model,
         )
     except JobRoutingError as exc:
         raise JobError(exc.code, exc.message) from exc
 
 
-def effective_pipeline(cfg: AppConfig, requested: Any) -> str:
+def effective_pipeline(cfg: AppConfig, requested: Any, runtime: Any = None) -> str:
     """The pipeline a job resolves to (``auto`` → ``AppConfig.pipeline_default``,
-    whose ``auto`` means ``chain``). Read path (status/resubmit): never raises —
-    a request that can no longer be honoured reports the raw request."""
+    whose ``auto`` means ``chain``; with ``runtime: claude_session``, ``auto`` →
+    ``solo``). Read path (status/resubmit): never raises — a request that can no
+    longer be honoured reports the raw request."""
+    req = str(requested) if requested else None
+    if runtime == RUNTIME_CLAUDE and (req or "auto") == "auto":
+        req = "solo"
     try:
-        return resolve_pipeline(str(requested) if requested else None, cfg)[0]
+        return resolve_pipeline(req, cfg)[0]
     except JobRoutingError:
         return str(requested or "auto")
 
@@ -211,6 +238,13 @@ def _submit_lock(root: Path) -> Iterator[None]:
             fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 
+def claude_available() -> tuple[bool, str]:
+    """Seam: the ``claude_session`` availability check (tests replace it)."""
+    from factory.claude_session.cli import check_available
+
+    return check_available()
+
+
 def find_existing(root: Path, source: str, external_id: str) -> Any:
     for ref in iter_jobs(root):
         if (
@@ -253,6 +287,34 @@ def submit_job(root: Path, req: SubmitRequest) -> dict[str, Any]:
             raise JobError("invalid_argument", f"{flag} must be a single line (no CR/LF)")
     external_id = (req.external_id or "").strip() or None
 
+    # v1.2: kind + runtime. The defaults (code, api) are exactly v1/v1.1.
+    kind = normalize_kind(req.kind)
+    if kind is None:
+        raise JobError(
+            "invalid_kind", f"--kind must be one of {', '.join(KINDS)}, got {req.kind!r}"
+        )
+    runtime = normalize_runtime(req.runtime)
+    if runtime is None:
+        raise JobError(
+            "invalid_runtime",
+            f"--runtime must be one of {', '.join(RUNTIMES)}, got {req.runtime!r}",
+        )
+    model_flags, claude_model = split_claude_model(list(req.models))
+    if claude_model and runtime != RUNTIME_CLAUDE:
+        raise JobError(
+            "bad_model_flag",
+            f"--model {CLAUDE_MODEL_KEY}=... names a Claude Code model; it needs "
+            f"--runtime {RUNTIME_CLAUDE}",
+        )
+    if runtime == RUNTIME_CLAUDE:
+        ok, detail = claude_available()
+        if not ok:
+            raise JobError("runtime_unavailable", f"claude_session is not available here: {detail}")
+    if kind in TASK_KINDS:
+        return _submit_task(
+            root, req, kind, runtime, title, source, external_id, model_flags, claude_model
+        )
+
     pipeline = (req.pipeline or "auto").strip().lower()
     if pipeline not in PIPELINES:
         raise JobError("bad_pipeline", f"--pipeline must be one of {', '.join(PIPELINES)}")
@@ -263,7 +325,9 @@ def submit_job(root: Path, req: SubmitRequest) -> dict[str, Any]:
     except ValueError as exc:
         raise JobError("invalid_delivery", str(exc)) from exc
     app, cfg = resolve_app(root, req.app, req.repo)
-    routing = resolve_routing(cfg, list(req.models), pipeline)
+    routing = resolve_routing(
+        cfg, model_flags, pipeline, runtime=runtime, claude_model=claude_model
+    )
     # Frontmatter keeps the JOB's own request (``models:`` persona → model id,
     # ``pipeline:`` as requested) — exactly the keys
     # ``job_routing.resolve_for_direction`` reads at spawn.
@@ -277,6 +341,9 @@ def submit_job(root: Path, req: SubmitRequest) -> dict[str, Any]:
             existing = find_existing(root, source, external_id)
             if existing is not None:
                 return _result(root, existing.app, existing.dir_path, existing.meta, created=False)
+            existing_task = find_existing_task(root, source, external_id)
+            if existing_task is not None:
+                return _task_result(existing_task, created=False)
 
         direction_id = next_direction_id(app, root)
         slug = slugify(title)
@@ -295,6 +362,12 @@ def submit_job(root: Path, req: SubmitRequest) -> dict[str, Any]:
                 "delivery": requested.value if requested else None,
                 "models": models,
             }
+            if runtime != RUNTIME_API:
+                # Written only when not the default, so a v1 job's frontmatter
+                # is exactly what it was.
+                meta["runtime"] = runtime
+                if claude_model:
+                    meta["claude_model"] = claude_model
             why = _demote_headings(ask) + (
                 f"\n\n_Submitted by `{source}`"
                 + (f" (external id `{external_id}`)" if external_id else "")
@@ -388,10 +461,12 @@ def _result(
         "app": app,
         "direction_id": direction.id,
         "direction_path": str(dir_path),
-        "pipeline": effective_pipeline(cfg, meta.get("pipeline")),
+        "pipeline": effective_pipeline(cfg, meta.get("pipeline"), meta.get("runtime")),
         "delivery": effective_level(cfg.delivery, requested).value,
         "delivery_requested": requested if requested else None,
         "created": created,
+        "kind": "code",
+        "runtime": str(meta.get("runtime") or "api"),
     }
     # Additive (not in the v1 success shape): a job with no flow.md, no
     # api_spec.md and no explore tag fails the backpressure gate
@@ -426,3 +501,91 @@ def _result(
             )
     out["warnings"] = warnings
     return out
+
+
+# --------------------------------------------------------------------------- #
+# research / report (v1.2)
+# --------------------------------------------------------------------------- #
+
+
+def _submit_task(
+    root: Path,
+    req: SubmitRequest,
+    kind: str,
+    runtime: str,
+    title: str,
+    source: str,
+    external_id: str | None,
+    model_flags: list[str],
+    claude_model: str | None,
+) -> dict[str, Any]:
+    """A research/report job: no direction, no PR. See ``factory.jobs.tasks``."""
+    from factory.job_routing import validate_model_map
+
+    try:
+        requested = parse_level(req.delivery)
+    except ValueError as exc:
+        raise JobError("invalid_delivery", str(exc)) from exc
+    if requested is not None and requested.value != "none":
+        raise JobError(
+            "invalid_delivery",
+            f"a {kind} job delivers a report kept by the factory; --delivery can only be "
+            f"none (got {requested.value})",
+        )
+    app: str | None = None
+    repo: str | None = None
+    if req.app or req.repo:
+        app, cfg = resolve_app(root, req.app, req.repo)
+        repo = cfg.repo
+    try:
+        models = validate_model_map(
+            parse_model_flags(model_flags) if model_flags else None,
+            source="factory job submit --model",
+        )
+    except JobRoutingError as exc:
+        raise JobError(exc.code, exc.message) from exc
+    warnings: list[str] = []
+    if (req.pipeline or "auto").strip().lower() != "auto":
+        warnings.append(f"--pipeline is ignored for a {kind} job (one agent writes the report)")
+    if req.flow_md or req.api_spec_md:
+        warnings.append(f"--flow-file/--api-spec-file are ignored for a {kind} job")
+    with _submit_lock(root):
+        if external_id:
+            existing = find_existing(root, source, external_id)
+            if existing is not None:
+                return _result(root, existing.app, existing.dir_path, existing.meta, created=False)
+        ref, created = create_task(
+            root,
+            kind=kind,
+            runtime=runtime,
+            title=title,
+            ask=req.ask,
+            app=app,
+            repo=repo,
+            done=[d.strip() for d in req.done if d.strip()],
+            models=models,
+            claude_model=claude_model,
+            source=source,
+            external_id=external_id,
+        )
+    out = _task_result(ref, created=created)
+    if created:
+        out["warnings"] = warnings
+    return out
+
+
+def _task_result(ref: TaskRef, *, created: bool) -> dict[str, Any]:
+    meta = ref.meta
+    return {
+        "job_id": ref.job_id,
+        "app": ref.app,
+        "direction_id": ref.task_id,
+        "direction_path": str(ref.dir_path),
+        "pipeline": None,
+        "delivery": "none",
+        "delivery_requested": None,
+        "created": created,
+        "kind": str(meta.get("kind")),
+        "runtime": str(meta.get("runtime") or "api"),
+        "warnings": [],
+    }
