@@ -152,6 +152,7 @@
     f.setAttribute('allow', 'microphone; clipboard-read; clipboard-write; autoplay; fullscreen');
     f.src = hrefFor(id);
     f.addEventListener('load', function () { if (showing === id) titleFrom(id); });
+    f.jxVersion = latest[dest(id).host] || '';
     layer.appendChild(f);
     frames[id] = f;
     return f;
@@ -166,6 +167,9 @@
     opts = opts || {};
     if (!dest(id) || !reachable(id)) return false;
     if (id === showing) return true;
+    // Switching to an out-of-date page: load the new code instead of showing the old.
+    if (id === current && isStale(current)) { history.replaceState(null, '', urlWith(id)); location.reload(); return true; }
+    var leaving = showing;
     if (id !== current) {
       var f = frameFor(id);
       f.classList.add('on');
@@ -174,6 +178,7 @@
     root.classList.toggle('jx-away', id !== current);
     if (showing === current) baseTitle = document.title;
     showing = id;
+    if (leaving !== current && frames[leaving] && isStale(leaving)) dropFrame(leaving);
     titleFrom(id);
     if (!opts.fromHistory) history.pushState({ jx: id }, '', urlWith(id));
     // Keys go where the eyes are: a terminal takes typing at once.
@@ -203,6 +208,62 @@
     if (!dest(id) || id === current) return;
     if (framed) { try { window.top.postMessage({ jarvis: 'warm', id: id }, '*'); } catch (e) { /* ignore */ } return; }
     if (!frames[id] && reachable(id)) frameFor(id);
+  }
+
+  // ---- staying current: an update reaches pages that are already open -------------
+  // The shell asks each server which commit it serves (api/version) every minute and
+  // when the window comes back. Once one changes, frames you are not looking at are
+  // dropped (they reload when next opened), and the page you are looking at reloads
+  // the next time it is safe: when the tab is hidden, or when you switch to it.
+  var latest = {};      // host -> the commit it serves now
+  var loadedWith = {};  // host -> the commit the shell page itself loaded with
+  function versionUrl(host) { return host === 'pa' ? paBase + 'api/version' : termhubBase() + '/api/version'; }
+  function hostsInUse() {
+    var used = {};
+    used[dest(current).host] = true;
+    for (var k in frames) used[dest(k).host] = true;
+    return Object.keys(used);
+  }
+  function checkVersions() {
+    if (framed) return;
+    hostsInUse().forEach(function (host) {
+      if (host === 'pa' && !paUp) return;
+      fetch(versionUrl(host), { cache: 'no-store', credentials: 'include' })
+        .then(function (r) { return r.ok ? r.json() : null; })
+        .then(function (v) {
+          if (!v || !v.commit) return;
+          var changed = latest[host] && latest[host] !== v.commit;
+          latest[host] = v.commit;
+          if (!loadedWith[host] && host === dest(current).host) loadedWith[host] = v.commit;
+          for (var k in frames) if (dest(k).host === host && !frames[k].jxVersion) frames[k].jxVersion = v.commit;
+          if (changed) refreshStale();
+        }, function () { /* offline or restarting: try again next time */ });
+    });
+  }
+  function isStale(id) {
+    var host = dest(id).host;
+    if (!latest[host]) return false;
+    if (id === current) return !!loadedWith[host] && loadedWith[host] !== latest[host];
+    return !!frames[id] && !!frames[id].jxVersion && frames[id].jxVersion !== latest[host];
+  }
+  function dropFrame(id) { frames[id].remove(); delete frames[id]; }
+  // Out-of-date pages you are not looking at go now; the one you are looking at
+  // waits until the tab is hidden, so nothing reloads under your hands.
+  function refreshStale() {
+    if (document.hidden && isStale(current)) { location.reload(); return; }
+    for (var k in frames) {
+      if (!isStale(k)) continue;
+      if (k !== showing) dropFrame(k);
+      else if (document.hidden) { frames[k].jxVersion = latest[dest(k).host]; frames[k].src = hrefFor(k); }
+    }
+  }
+  if (!framed) {
+    setInterval(checkVersions, 60000);
+    document.addEventListener('visibilitychange', function () {
+      if (document.hidden) refreshStale(); else checkVersions();
+    });
+    window.addEventListener('focus', checkVersions);
+    setTimeout(checkVersions, 3000);
   }
 
   function prefetch() {

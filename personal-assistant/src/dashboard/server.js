@@ -262,6 +262,11 @@ async function handle(req, res) {
   }
   // What a typed follow-up time means, before it is set: the card previews it
   // with the same parser the chase uses (src/util/when.js via chaseCore).
+  // Which code this worker serves. Open pages poll it (nav.js) and reload
+  // themselves once it changes, so an update reaches every open tab.
+  if (req.method === 'GET' && url.pathname === '/api/version') {
+    return send(res, 200, { commit: servedCommit() });
+  }
   if (req.method === 'GET' && url.pathname === '/api/when') {
     const C = require('../durable/tasks/chaseCore');
     const canonical = C.cadenceAnswer(url.searchParams.get('text') || '');
@@ -533,6 +538,21 @@ async function handle(req, res) {
     }
   }
   return send(res, 404, { error: 'not found' });
+}
+
+// The commit this process started from; read once (a pull without a restart
+// does not change what is served). Falls back to the start time.
+let commitCache;
+function servedCommit() {
+  if (commitCache !== undefined) return commitCache;
+  try {
+    commitCache = require('child_process').execFileSync('git', ['rev-parse', 'HEAD'], {
+      cwd: __dirname, encoding: 'utf8', timeout: 5000, windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim();
+  } catch {
+    commitCache = 'started-' + Date.now();
+  }
+  return commitCache;
 }
 
 function start({ port = config.dispatch.port, host = config.dispatch.host } = {}) {

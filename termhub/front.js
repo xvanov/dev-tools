@@ -165,6 +165,12 @@ function createFront({ sessiondPort, port: serverPort = DEFAULT_FRONT_PORT, paUr
         .catch((e) => sendJson(res, 503, { ok: false, front: true, self, error: String(e.message || e) }));
     }
 
+    // Which code this front serves. Open pages poll it (nav.js) and reload
+    // themselves once it changes, so an update reaches every open tab.
+    if (req.method === 'GET' && pathname === '/api/version') {
+      return sendJson(res, 200, { commit: build.commit() });
+    }
+
     // Update check is the front's own business (it owns the git checkout and is
     // the tier that gets swapped) — answer it here, don't proxy to sessiond.
     if (req.method === 'GET' && pathname === '/api/update/check') {

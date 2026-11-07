@@ -30,7 +30,7 @@ function load(href, layer) {
   const window = {
     document, location: new URL(href), localStorage: { getItem: () => null, setItem: noop, removeItem: noop },
     matchMedia: () => ({ matches: false, addEventListener: noop }), addEventListener: noop,
-    history: { pushState: noop }, fetch: () => new Promise(noop), URL, URLSearchParams, setTimeout, CustomEvent: function () {},
+    history: { pushState: noop }, fetch: () => new Promise(noop), URL, URLSearchParams, setTimeout: noop, setInterval: noop, CustomEvent: function () {},
   };
   window.top = window;
   window.window = window;
