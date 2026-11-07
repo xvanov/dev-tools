@@ -38,13 +38,14 @@ for (const f of FILES) {
 
 // The pages load both, before their own styles, and the terminal takes its
 // colours from the tokens rather than a second palette.
-for (const page of ['index.html', 'dashboard.html']) {
+for (const [page, layer] of [['index.html', 'termhub'], ['dashboard.html', 'agenttime']]) {
   const html = fs.readFileSync(path.join(HERE, page), 'utf8');
   const theme = html.indexOf('/theme.css');
   assert.ok(theme > 0 && theme < html.indexOf('/styles.css'), `${page}: theme.css before styles.css`);
-  assert.match(html, /<script src="\/nav\.js" data-layer="termhub"><\/script>/, `${page}: loads nav.js as termhub`);
-  assert.match(html, /data-jnav/, `${page}: has a switcher slot`);
+  assert.match(html, new RegExp(`<script src="/nav\\.js" data-layer="${layer}"></script>`), `${page}: loads nav.js as ${layer}`);
 }
+// The session list is the panel nav.js opens, and the navigation goes at its top.
+assert.match(fs.readFileSync(path.join(HERE, 'index.html'), 'utf8'), /id="sidebar" data-jside/, 'the sidebar is the panel');
 const app = fs.readFileSync(path.join(HERE, 'app.js'), 'utf8');
 assert.match(app, /--term-bg/, 'xterm reads --term-bg');
 assert.match(app, /classList\.add\('focus'\)/, 'app.js has the ?focus= view');

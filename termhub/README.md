@@ -262,16 +262,17 @@ first when one of them has died.
   CLI** version against the one termhub is pinned to, with an **Update Claude** button — termhub
   drives the CLI through `--session-id`/`--resume` and its on-disk transcripts, so a CLI too old
   for the pin can break session restore and the model badge. `Update now` updates the CLI too.
-- **The header: » · jarvis · Talk · Dashboard · Factory · Sessions** (**Alt+1..4** anywhere) —
-  the bar shared with the personal assistant's pages: its voice page, its dashboard, its factory
-  page and this hub. A session also opens full-window at `/?focus=<id>` (no header, just the
-  terminal). The PA's pages are reached through the front's `/pa/` proxy, so they work from a
-  phone over the tailnet too. The look is a copy of the PA's design system (`web/theme.css`,
-  `web/nav.js`); see `AGENT.md` → *One look with the PA*.
-- **» (left of the header) shows the sidebar**: the session list, ⟳ Update, the
-  *Architecture* link and the theme toggle (system, light or dark; the terminal stays dark in
-  all three), and on a desktop the key bar. Hidden by default so the terminal takes the window;
-  on a desktop the choice is remembered per browser.
+- **» (top-left corner) shows the sidebar.** It starts with the navigation shared with the
+  personal assistant's pages: **Talk · Dashboard · Factory · Sessions · Agent time ·
+  Architecture** (**Alt+1..6** anywhere) and the theme toggle (system, light or dark; the
+  terminal stays dark in all three). Under it: ⟳ Update, the session list and, on a desktop, the
+  key bar. Hidden by default so the terminal takes the window; on a desktop the choice is
+  remembered per browser. Switching is instant: the other pages open in frames over this one and
+  stay alive, so terminals keep running and Talk keeps listening while you look elsewhere. The
+  PA's pages come through the front's `/pa/` proxy, so they work from a phone over the tailnet
+  too. A session also opens full-window at `/?focus=<id>` (no sidebar, just the terminal). The
+  look is a copy of the PA's design system (`web/theme.css`, `web/nav.js`); see `AGENT.md` →
+  *One look with the PA*.
 - Switch terminals via the sidebar — the only place session control lives. Each row is just the
   session's name (wrapped, never truncated), **✎** to rename and **✕** to close. **✕**
   **kills** it; there's no separate soft-close, so what you see is what happens.

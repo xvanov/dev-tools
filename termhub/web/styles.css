@@ -53,8 +53,8 @@ html, body {
   border-bottom: 1px solid var(--border);
 }
 .brand { font: 600 var(--text-base) var(--font-mono); letter-spacing: 0.02em; }
-/* The Architecture link and theme toggle (nav.js), under the head. */
-#sidebar > .jside-tools { padding: 8px 14px 0; }
+/* The Jarvis navigation (nav.js) heads the panel; the corner toggle sits in its top row. */
+#sidebar > .jpanel-nav { padding: 8px 10px 10px; border-bottom: 1px solid var(--border); }
 .machine-name { color: var(--accent); font-size: 12px; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #sidebar-close { display: none; background: none; border: none; color: var(--fg-dim); font-size: 16px; cursor: pointer; }
 
@@ -498,12 +498,12 @@ html, body {
 .hidden { display: none; }
 
 /* ---- scrim (mobile drawer backdrop) ---- */
-#scrim { display: none; position: fixed; inset: var(--jhead-h) 0 0 0; background: var(--scrim); z-index: 18; }
+#scrim { display: none; position: fixed; inset: 0; background: var(--scrim); z-index: 18; }
 
 /* ---- mobile ---- */
 @media (max-width: 760px) {
   #sidebar {
-    position: fixed; top: var(--jhead-h); bottom: 0; left: 0; z-index: 20;
+    position: fixed; top: 0; bottom: 0; left: 0; z-index: 20;
     transform: translateX(-100%); transition: transform 0.2s ease;
     box-shadow: var(--shadow-2);
   }
@@ -542,10 +542,10 @@ html, body {
 }
 
 /* ---- ?focus=<id>: one session, full window (a deep link into Sessions, see app.js) ----
-   No header, no sidebar, no drawer: the terminal and, on a phone, the key bar
+   No panel, no corner toggle, no drawer: the terminal and, on a phone, the key bar
    it cannot be typed into without. The layer switcher floats in the top-right
    corner (theme.css .jnav--float). */
-body.focus #sidebar, body.focus .jhead,
+body.focus #sidebar, body.focus .jnav-toggle,
 body.focus #scrim, body.focus #mouse-hint { display: none !important; }
 body.focus .term-pane { padding: 4px 6px; }
 @media (min-width: 761px) {

@@ -85,13 +85,28 @@ function manifest() {
 // putting in a notification: /dashboard, not /dashboard.html.
 const PAGES = { '/': '/index.html', '/dashboard': '/dashboard.html' };
 
+// Who may put termhub's pages in a frame: termhub itself (nav.js's shell hosts the
+// PA's pages from /pa/ and its own), and the PA's own origin, whose shell hosts
+// Sessions and Agent time when you browse the PA on loopback. Nobody else.
+function frameAncestors(env = process.env) {
+  const list = ["'self'"];
+  const pa = resolvePaUrl(env);
+  if (pa) {
+    list.push(pa.origin);
+    if (pa.hostname === '127.0.0.1') list.push(`${pa.protocol}//localhost${pa.port ? ':' + pa.port : ''}`);
+  }
+  return `frame-ancestors ${list.join(' ')}`;
+}
+
 function serveStatic(res, pathname) {
   let rel = PAGES[pathname] || pathname;
   rel = rel.replace(/\.\.+/g, ''); // basic traversal guard
   const file = path.join(WEB_DIR, rel);
   fs.readFile(file, (err, data) => {
     if (err) { res.writeHead(404, { 'Content-Type': 'text/plain' }); return res.end('Not found'); }
-    res.writeHead(200, { 'Content-Type': MIME[path.extname(file)] || 'application/octet-stream' });
+    const headers = { 'Content-Type': MIME[path.extname(file)] || 'application/octet-stream' };
+    if (path.extname(file) === '.html') headers['Content-Security-Policy'] = frameAncestors();
+    res.writeHead(200, headers);
     res.end(data);
   });
 }
