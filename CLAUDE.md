@@ -52,6 +52,16 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
 If a change makes a statement in a `README.md` or `AGENT.md` false, fix it **in the same commit**.
 Stale docs that describe a layout the code abandoned cost more than no docs — they get trusted.
 
+## Architecture map
+
+`personal-assistant/src/dashboard/architecture.json` is the living map of the whole system (Talk,
+Dashboard, Factory, Sessions; the work and personal stacks), rendered at the PA dashboard's
+`/architecture`. **When you add, remove or rename a component, MCP tool, `pa` verb, worker pass,
+table, port, model default, persona or storage location, update that JSON in the same commit.**
+`personal-assistant/test/architecture.test.js` enforces part of it (tools and their allow/ask split,
+verbs, passes, tables, personas, env defaults, code paths, edges); the prose facts are on you. Mark
+what is not built yet `planned`, what is half-landed `landing`, and write "unknown" rather than guess.
+
 ## software-factory
 
 Imported 2026-11-06 as a snapshot of `xvanov/software-factory` @ `39f9c26` (that repo keeps the full
