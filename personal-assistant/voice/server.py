@@ -411,7 +411,7 @@ def main(argv=None):
                 state.turn.predict(__import__('numpy').zeros(TURN_RATE, dtype='float32'))
                 log('smart-turn loaded')
             else:
-                log(f'no {turn_path}: /endpoint is off (run windows/install-voice.ps1)')
+                log(f'no {turn_path}: /endpoint is off (run windows/install-voice.ps1 or linux/install-voice.sh)')
             state.tts = Tts(device=args.device, default_voice=args.voice, log=log)
             for _ in range(2):
                 state.tts.warm()

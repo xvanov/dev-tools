@@ -256,27 +256,30 @@ async function sync({ full = false, profile = config.repos.profile } = {}) {
   }
 
   // 5. raven: the authoritative description of INNERGY repos.
-  try {
-    const ravenRow = all.find((r) => r.gitlab_path && r.gitlab_path.toLowerCase() === 'innergy-dev/raven');
-    const raven = await sources.ravenRepos(ravenRow?.repo_path || null);
-    if (raven.error) throw new Error(raven.error);
-    let hits = 0;
-    for (const d of drafts.values()) {
-      const key = String(d.row.gitlab_path || '').toLowerCase();
-      if (!key) continue;
-      const text = raven.map.get(key);
-      const base = key.split('/').pop();
-      if (text) {
-        d.raven = text;
-        hits++;
+  // PA_REPOS_RAVEN=0: a stack with no business reading it.
+  if (config.repos.raven) {
+    try {
+      const ravenRow = all.find((r) => r.gitlab_path && r.gitlab_path.toLowerCase() === 'innergy-dev/raven');
+      const raven = await sources.ravenRepos(ravenRow?.repo_path || null);
+      if (raven.error) throw new Error(raven.error);
+      let hits = 0;
+      for (const d of drafts.values()) {
+        const key = String(d.row.gitlab_path || '').toLowerCase();
+        if (!key) continue;
+        const text = raven.map.get(key);
+        const base = key.split('/').pop();
+        if (text) {
+          d.raven = text;
+          hits++;
+        }
+        if (key.startsWith('innergy-dev/') && (raven.systems || []).includes(base)) {
+          d.ravenDoc = `https://github.com/innergy-dev/raven/tree/main/knowledge/systems/${base}`;
+        }
       }
-      if (key.startsWith('innergy-dev/') && (raven.systems || []).includes(base)) {
-        d.ravenDoc = `https://github.com/innergy-dev/raven/tree/main/knowledge/systems/${base}`;
-      }
+      ok('raven', { from: raven.from, repos: raven.map.size, matched: hits });
+    } catch (err) {
+      fail('raven', err);
     }
-    ok('raven', { from: raven.from, repos: raven.map.size, matched: hits });
-  } catch (err) {
-    fail('raven', err);
   }
 
   // 6. Write the gathered facts, then the stats read back from repo_pr.

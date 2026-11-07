@@ -1,0 +1,26 @@
+# personal-assistant local voice: Kokoro TTS and the smart-turn end-of-turn
+# judge on 127.0.0.1:47830 (voice/server.py), proxied by the dashboard as
+# /api/talk/tts and /api/talk/endpoint. A systemd *user* unit, written by
+# linux/install-voice.sh (through linux/units.js) with __DIR__, __VOICE_PY__
+# and __VOICE_MODELS__ filled in. The counterpart of the Windows pa-voice task.
+#
+# Kokoro runs on the GPU when the venv's torch has CUDA and the driver answers,
+# else on the CPU (server.py falls back on its own); /health says which.
+
+[Unit]
+Description=personal-assistant local voice (Kokoro, smart-turn)
+After=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+WorkingDirectory=__DIR__
+Environment=PYTHONUNBUFFERED=1
+ExecStart="__VOICE_PY__" -I "__DIR__/voice/server.py" --models "__VOICE_MODELS__"
+Restart=always
+RestartSec=60
+KillMode=control-group
+TimeoutStopSec=20
+
+[Install]
+WantedBy=default.target

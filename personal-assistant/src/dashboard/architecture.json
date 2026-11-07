@@ -62,9 +62,11 @@
       "runs": [
         "termhub (front :7000, published by Tailscale Serve on https :7443; sessiond :7010)",
         "the personal factory at /home/k/dev-tools/software-factory, which also builds dev-tools itself",
-        "PA / Jarvis: planned, not installed"
+        "PA worker + dashboard on 127.0.0.1:7300 (systemd user unit pa-worker, linger), reached in a browser through termhub's /pa/ proxy",
+        "pa-voice on 127.0.0.1:47830 (Kokoro on the CPU, systemd user unit pa-voice)",
+        "Postgres 16 + pgvector: the system cluster on :5432, role pa, database pa_personal"
       ],
-      "ingests": "nothing yet (no PA installed)"
+      "ingests": "nothing: every source is off (PA_M365, PA_GITHUB, PA_JIRA, PA_TEAMS_CACHE, PA_AUDIO_ENABLED, PA_SESSIONS = 0); model credentials not yet chosen"
     }
   ],
   "components": [
@@ -100,11 +102,11 @@
       "role": "Hears the room in the browser; sends only the utterance after the wake word.",
       "stacks": {
         "work": "live",
-        "personal": "planned"
+        "personal": "live"
       },
       "where": {
         "work": "Browser tab served by the dashboard",
-        "personal": "Planned with the PA"
+        "personal": "Browser tab served by the dashboard, through termhub /pa/talk"
       },
       "health": "dashboard",
       "details": {
@@ -141,7 +143,7 @@
       },
       "where": {
         "work": "In the worker process (dashboard), POST /api/talk/turn",
-        "personal": "Planned with the PA"
+        "personal": "Off (PA_FAST_LANE=0): no Ollama on k-911-x17 yet"
       },
       "health": "ollama",
       "details": {
@@ -203,11 +205,11 @@
       "role": "Speech out (Kokoro-82M on the GPU) and the end-of-turn judge (smart-turn v3.2 on the CPU).",
       "stacks": {
         "work": "live",
-        "personal": "planned"
+        "personal": "live"
       },
       "where": {
         "work": "127.0.0.1:47830, loopback only, refuses any request with an Origin header",
-        "personal": "Planned with the PA"
+        "personal": "127.0.0.1:47830 on k-911-x17, Kokoro on the CPU (systemd user unit pa-voice)"
       },
       "health": "voice",
       "details": {
@@ -220,7 +222,7 @@
           "POST /endpoint (is the speaker done?)"
         ],
         "Reached through": "the dashboard's X-PA-guarded proxy: /api/talk/tts, /api/talk/endpoint, /api/talk/warm",
-        "Install": "personal-assistant/windows/install-voice.ps1 (venv under the data dir, PA_VOICE_PYTHON)"
+        "Install": "personal-assistant/windows/install-voice.ps1 (Windows, CUDA) or personal-assistant/linux/install-voice.sh (Linux, CPU torch unless --cuda; the pa-voice user unit); venv under the data dir, PA_VOICE_PYTHON"
       },
       "env": [
         {
@@ -234,7 +236,9 @@
       ],
       "code": [
         "personal-assistant/voice/server.py",
-        "personal-assistant/src/dashboard/talk.js"
+        "personal-assistant/src/dashboard/talk.js",
+        "personal-assistant/linux/install-voice.sh",
+        "personal-assistant/linux/pa-voice.service"
       ]
     },
     {
@@ -277,11 +281,11 @@
       "role": "One long-lived Claude Code session in termhub that reads through MCP tools and acts only behind permission prompts.",
       "stacks": {
         "work": "live",
-        "personal": "planned"
+        "personal": "landing"
       },
       "where": {
         "work": "A termhub session on the laptop, home <dataDir>/pa-home",
-        "personal": "Planned with the PA"
+        "personal": "A termhub session on k-911-x17, once its claude login is a personal one"
       },
       "details": {
         "Model": "PA_CHAT_MODEL (no default in code: the Claude Code CLI's own default); PA_CHAT_AGENT picks claude or opencode",
@@ -467,11 +471,11 @@
       "role": "The board, chat panel, Factory page, Talk page and this map, on loopback. It rides in the worker process.",
       "stacks": {
         "work": "live",
-        "personal": "planned"
+        "personal": "live"
       },
       "where": {
         "work": "http://127.0.0.1:7300 (PA_DISPATCH_PORT / PA_DISPATCH_HOST)",
-        "personal": "Planned with the PA"
+        "personal": "http://127.0.0.1:7300 on k-911-x17, through termhub /pa/ over the tailnet"
       },
       "health": "dashboard",
       "details": {
@@ -516,11 +520,11 @@
       "role": "A scheduler of periodic passes (no job queue: work to do is a query). One per machine, held by a Postgres advisory lock.",
       "stacks": {
         "work": "live",
-        "personal": "planned"
+        "personal": "live"
       },
       "where": {
         "work": "node src/worker.js on the laptop (also hosts the dashboard)",
-        "personal": "Planned with the PA"
+        "personal": "systemd user unit pa-worker on k-911-x17 (also hosts the dashboard)"
       },
       "health": "dashboard",
       "details": {
@@ -618,11 +622,11 @@
       "role": "Captures mail, Teams, calendar, GitHub, Jira, Claude/Cursor sessions and meeting audio as append-only source items.",
       "stacks": {
         "work": "live",
-        "personal": "planned"
+        "personal": "landing"
       },
       "where": {
         "work": "Worker passes on the laptop",
-        "personal": "Planned with the PA"
+        "personal": "Worker passes on k-911-x17, every source off until the personal sources are chosen"
       },
       "details": {
         "Microsoft 365": "a headless `claude -p` relays the claude.ai connector calls; items are built from the tool_result blocks, never from model text",
@@ -640,6 +644,12 @@
         "personal-assistant/src/ingest/github.js",
         "personal-assistant/src/ingest/jira.js",
         "personal-assistant/src/ingest/remoteSessions.js"
+      ],
+      "env": [
+        {
+          "name": "PA_SESSIONS",
+          "default": "1"
+        }
       ]
     },
     {
@@ -649,11 +659,11 @@
       "role": "Distils asks into commitments, links blockers, dedupes, and changes status only through the ledger; the board is built from them.",
       "stacks": {
         "work": "live",
-        "personal": "planned"
+        "personal": "live"
       },
       "where": {
         "work": "Worker passes + dashboard (/api/state)",
-        "personal": "Planned with the PA"
+        "personal": "Worker passes + dashboard on k-911-x17 (empty: nothing is ingested)"
       },
       "details": {
         "Only people create tasks": "sourcePolicy decides in code before any model call; bots, CI and the assistant's own sessions are evidence only",
@@ -677,11 +687,11 @@
       "role": "A feed in the dashboard, desktop toasts or ntfy pushes under an interrupt budget, and the PA chat's INBOX.md.",
       "stacks": {
         "work": "live",
-        "personal": "planned"
+        "personal": "live"
       },
       "where": {
         "work": "Worker",
-        "personal": "Planned with the PA"
+        "personal": "Worker on k-911-x17 (dashboard feed; no desktop session for notify-send)"
       },
       "details": {
         "Budget": "PA_PUSH_BUDGET pushes (default 4), quiet hours 19-08, digests at 09:00 and 14:00",
@@ -711,11 +721,11 @@
       "role": "Starts work: a Claude Code session in termhub (own worktree), or a factory job through the JOBS-API. Enforces delivery levels and modes.",
       "stacks": {
         "work": "live",
-        "personal": "planned"
+        "personal": "landing"
       },
       "where": {
         "work": "In-process (pa do, the dashboard's Do, the chat's action tools)",
-        "personal": "Planned with the PA"
+        "personal": "In-process on k-911-x17; the factory is this machine’s own, chat and Claude runs wait on a personal claude login"
       },
       "details": {
         "Routes": "the factory is the default once PA_FACTORY_PATH is set (PA_DISPATCH_VIA); plan mode and --machine still mean a Claude session",
@@ -773,11 +783,11 @@
       "role": "Postgres 16 + pgvector: every item, commitment, claim, run, proposal and the factory board snapshot.",
       "stacks": {
         "work": "live",
-        "personal": "planned"
+        "personal": "live"
       },
       "where": {
         "work": "Inside WSL Ubuntu on :5433, reached over WSL's localhost forwarding",
-        "personal": "Planned with the PA (native cluster or docker compose on :5433)"
+        "personal": "System Postgres 16 main cluster on :5432, role pa, database pa_personal (5433 is another app’s there)"
       },
       "health": "postgres",
       "details": {

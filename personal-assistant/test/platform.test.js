@@ -354,6 +354,11 @@ print(json.dumps({"active": d.active_sources(data["o"], data["s"]), "monitor": d
   assert.throws(() => units.render('X=__NOPE__', {}), /no value/);
   const worker = units.render(fs.readFileSync(path.join(__dirname, '..', 'linux', 'pa-worker.service'), 'utf8'), { DIR: '/pa', NODE: '/n' });
   assert.ok(worker.includes('ExecStart="/n" "/pa/src/worker.js"'));
+  const voice = units.render(fs.readFileSync(path.join(__dirname, '..', 'linux', 'pa-voice.service'), 'utf8'), {
+    DIR: '/pa', VOICE_PY: '/d/voice-venv/bin/python', VOICE_MODELS: '/d/voice models',
+  });
+  assert.ok(voice.includes('ExecStart="/d/voice-venv/bin/python" -I "/pa/voice/server.py" --models "/d/voice models"'));
+  assert.ok(!/__[A-Z_]+__/.test(voice), 'every voice placeholder filled');
 }
 
 // ------------------------------------------------- paths from other OSes --

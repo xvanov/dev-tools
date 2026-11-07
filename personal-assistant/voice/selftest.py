@@ -4,8 +4,10 @@
     python -I voice/selftest.py --models DIR    plus: the model files are there,
                                                 smart-turn answers, Kokoro speaks
     python -I voice/selftest.py --live URL      plus: a running service answers
+    ... --device cpu                            Kokoro is expected on the CPU, not the GPU
 
-install-voice.ps1 runs the second form; exit status 0 means it all worked.
+install-voice.ps1 and linux/install-voice.sh run the second form; exit status 0
+means it all worked.
 """
 
 import argparse
@@ -52,7 +54,7 @@ def unit():
     check('every voice id names its language', all(v[0] in 'ab' for v in server.VOICE_IDS))
 
 
-def models(d):
+def models(d, device='cuda'):
     for f in ['smart-turn-v3.2-cpu.onnx', 'silero_vad.onnx', 'melspectrogram.onnx', 'embedding_model.onnx',
               'hey_jarvis_v0.1.onnx', 'ort/ort.wasm.min.js', 'ort/ort-wasm-simd-threaded.wasm', 'ort/ort-wasm-simd-threaded.mjs']:
         p = os.path.join(d, f)
@@ -62,8 +64,8 @@ def models(d):
     t = time.perf_counter()
     p = turn.predict(np.zeros(16000 * 2, dtype=np.float32))
     check('smart-turn answers a probability', 0.0 <= p <= 1.0, f'{p:.3f} in {round((time.perf_counter() - t) * 1000)} ms')
-    tts = server.Tts(default_voice='bf_isabella')
-    check('Kokoro is on the GPU', tts.device == 'cuda', tts.device)
+    tts = server.Tts(device=device, default_voice='bf_isabella')
+    check(f'Kokoro is on the {"GPU" if device == "cuda" else device.upper()}', tts.device == device, tts.device)
     tts.warm()
     t = time.perf_counter()
     first = None
@@ -93,10 +95,11 @@ if __name__ == '__main__':
     ap.add_argument('--unit', action='store_true')
     ap.add_argument('--models')
     ap.add_argument('--live')
+    ap.add_argument('--device', default='cuda', choices=['cuda', 'cpu'])
     a = ap.parse_args()
     unit()
     if a.models and not a.unit:
-        models(a.models)
+        models(a.models, a.device)
     if a.live:
         live(a.live.rstrip('/'))
     print('voice selftest ' + ('FAILED: ' + ', '.join(failures) if failures else 'ok'))

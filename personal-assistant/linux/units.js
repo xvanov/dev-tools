@@ -9,7 +9,7 @@
 // and escaped for systemd: `%` is a specifier there (an `%i` in a path would
 // be expanded), and `"`/`\` would end or bend the quoting.
 //
-//   node linux/units.js [--worker] [--capture]
+//   node linux/units.js [--worker] [--capture] [--voice]
 
 const fs = require('fs');
 const path = require('path');
@@ -40,6 +40,8 @@ function values() {
     ROLL_MINUTES: config.audio.rollMinutes,
     SAMPLE_RATE: config.audio.sampleRate,
     MIC_ENV: mic ? `Environment="PA_AUDIO_MIC=${quote(mic)}"` : '# PA_AUDIO_MIC unset: headset|hands-free',
+    VOICE_PY: config.voice.python,
+    VOICE_MODELS: config.voice.models,
   };
 }
 
@@ -49,7 +51,7 @@ function unitDir() {
 }
 
 function main(argv) {
-  const want = { worker: argv.includes('--worker'), capture: argv.includes('--capture') };
+  const want = { worker: argv.includes('--worker'), capture: argv.includes('--capture'), voice: argv.includes('--voice') };
   const v = values();
   const dir = unitDir();
   fs.mkdirSync(dir, { recursive: true });
@@ -60,6 +62,7 @@ function main(argv) {
   };
   if (want.worker) write('pa-worker.service');
   if (want.capture) write('pa-capture@.service');
+  if (want.voice) write('pa-voice.service');
 }
 
 if (require.main === module) main(process.argv.slice(2));

@@ -24,6 +24,7 @@ const path = require('path');
 const { saveItems } = require('./store');
 const { headTail } = require('../util/text');
 const { logger } = require('../log');
+const { config } = require('../config');
 
 const log = logger('claude-sessions');
 
@@ -152,6 +153,7 @@ function transcriptFiles() {
 }
 
 async function run() {
+  if (!config.sessions.enabled) return 0;
   const files = transcriptFiles();
   if (!files.length) {
     log.debug('no transcripts found', { dir: PROJECTS_DIR });

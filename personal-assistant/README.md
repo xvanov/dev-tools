@@ -118,6 +118,35 @@ What each OS-specific piece becomes on Linux, and what `pa doctor` says when it 
 | Teams in seconds | no new Teams desktop client on Linux | `UNSUPPORTED`: the connector, every 3 min |
 | services | systemd user units; `loginctl enable-linger` for a headless box | — |
 
+**Into a Postgres the box already runs.** When 5433 is taken, or the machine already has a
+Postgres 16 cluster you would rather share, give the PA a role and database of its own there and
+skip the store step:
+
+```bash
+sudo apt install postgresql-16-pgvector
+sudo -u postgres psql -c "create role pa login password '<random>'"
+sudo -u postgres createdb -O pa -E UTF8 --locale=C -T template0 pa_personal
+sudo -u postgres psql -d pa_personal -c 'create extension vector' -c 'create extension pg_trgm'
+# .env: PA_DATABASE_URL=postgres://pa:<random>@127.0.0.1:5432/pa_personal and PA_PG_TOOLS=native
+node src/db/migrate.js && linux/install.sh --skip-db --no-audio --start
+```
+
+The extensions are created as the superuser because the `pa` role cannot; the first migration's
+`create extension if not exists` is then a no-op.
+
+**A stack that ingests nothing** (the personal stack on the Linux box: a dashboard, the board, the
+factory, no mail): `PA_M365=0 PA_GITHUB=0 PA_JIRA=0 PA_TEAMS_CACHE=0 PA_AUDIO_ENABLED=0
+PA_SESSIONS=0 PA_REPOS_RAVEN=0`. `PA_SESSIONS=0` stops reading Claude Code transcripts (this
+machine's and every `PA_MACHINES` machine's), which also keeps out the sessions of whatever account
+the box's own `claude` is signed in to; `PA_REPOS_RAVEN=0` stops the repo registry asking a `gh`
+that cannot see raven. The repo-root `.env` is read too (see `src/config.js`): a key there that this
+stack must not use is overridden by the same key left empty in `personal-assistant/.env`
+(`AZURE_OPENAI_API_KEY=`). `PA_CLAUDE_CONFIG_DIR` pointed at an empty folder keeps every
+`claude -p` pass off the box's default login until you sign that folder in
+(`CLAUDE_CONFIG_DIR=<folder> claude`, then `/login`); the worker and dashboard run without a model,
+and each model pass logs its failure and tries again next tick. The chat and dispatched runs start
+`claude` in a termhub session on the box's default login, so switch that login first.
+
 `pa doctor` is the answer to "why isn't it doing anything". It reports every credential, every
 source cursor, the distillation backlog, and whether termhub is reachable.
 
@@ -1394,6 +1423,19 @@ throttling (EcoQoS) — background processes otherwise run 5–10× slower on th
 Kokoro loaded (~0.9 GB of GPU memory). `PA_VOICE_URL=off` turns it off for the PA (browser voices,
 silence-only end of turn); `PA_VOICE_MODELS` moves the model folder.
 
+On Linux:
+
+```bash
+linux/install-voice.sh           # --cuda for a CUDA 12.8 torch; --no-unit, --no-start
+```
+
+The same steps with the CPU build of PyTorch by default (a fifth of the download, and Kokoro on a
+16-core CPU still has the first sentence out in about half a second), under
+`~/.local/share/personal-assistant/voice-venv` and `voice-models`, then a `pa-voice` systemd user
+unit (`linux/pa-voice.service`, rendered by `linux/units.js --voice`), enabled and started.
+`voice/selftest.py --device cpu` is its self-test. `server.py` falls back to the CPU on its own
+when the venv has CUDA but the driver does not answer.
+
 **No clicks, once.** Browsers start the mic and sound only after a gesture unless the site is
 allowed them. To have `/talk` listen as soon as it opens: in Edge open `http://127.0.0.1:7300/talk`,
 then **⋯ → Apps → Install this site as an app** (a window of its own, which you can pin and set to
@@ -1591,7 +1633,7 @@ voice/               the local voice service: Kokoro TTS and smart-turn on 127.0
 teams/               the Teams local-cache reader (Python, its own venv)
 sql/                 numbered migrations
 windows/             install, install-voice (the local voice stack), and the WSL Postgres provisioner
-linux/               install.sh, the native Postgres provisioner, systemd user units
+linux/               install.sh, install-voice.sh, the native Postgres provisioner, systemd user units
 ```
 
 ## Related

@@ -119,6 +119,8 @@ const transcript = [
   };
   assert.deepStrictEqual(remote.machinesToRead(machines, 'desk-01').map((m) => m.name), ['build-vm']);
   assert.deepStrictEqual(remote.machinesToRead({}, 'desk-01'), []);
+  // A host that names itself in another case is still itself.
+  assert.deepStrictEqual(remote.machinesToRead(machines, 'Desk-01').map((m) => m.name), ['build-vm']);
 }
 
 // ---- runMachine against a fake termhub --------------------------------------

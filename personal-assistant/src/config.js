@@ -195,6 +195,14 @@ const config = {
     timeoutMs: envInt('PA_TEAMS_CACHE_TIMEOUT_MS', 60_000),
   },
 
+  // Claude Code transcripts (~/.claude/projects here, and each PA_MACHINES
+  // machine's through its termhub) as source items. PA_SESSIONS=0 reads none:
+  // a stack that ingests nothing (the personal one on Linux) also leaves the
+  // sessions of whatever account the box's `claude` is signed in to alone.
+  sessions: {
+    enabled: env('PA_SESSIONS', '1') !== '0',
+  },
+
   // Through the `gh` CLI and its keyring login — no token in `.env`. Projects
   // v2 additionally needs `gh auth refresh -s read:project`.
   github: {
@@ -566,6 +574,9 @@ const config = {
     enabled: env('PA_REPOS', '1') !== '0',
     syncSeconds: envInt('PA_REPOS_SYNC_SECONDS', 3600),
     profile: env('PA_REPO_PROFILE', '1') !== '0',
+    // raven (INNERGY's knowledge base) as the repo map. PA_REPOS_RAVEN=0 for a
+    // stack whose `gh` cannot, or must not, read it.
+    raven: env('PA_REPOS_RAVEN', '1') !== '0',
     profileModel: env('PA_REPO_PROFILE_MODEL') || reconcileModel,
     profilesPerSync: envInt('PA_REPO_PROFILES_PER_SYNC', 60),
   },

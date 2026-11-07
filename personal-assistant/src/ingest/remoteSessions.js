@@ -84,9 +84,14 @@ function describeError(err, machine) {
   return `termhub on ${machine}: ${message}`.slice(0, 500);
 }
 
-/** Pure: the remote machines to read — PA_MACHINES minus this one. */
+/**
+ * Pure: the remote machines to read — PA_MACHINES minus this one. Host names
+ * are case-insensitive, so `k-box` in PA_MACHINES is still this machine when
+ * it calls itself `K-Box` (exec.js resolves it the same way).
+ */
 function machinesToRead(machines = config.termhub.machines, hostname = os.hostname()) {
-  return Object.values(machines || {}).filter((m) => m && m.name && m.name !== hostname);
+  const self = String(hostname || '').toLowerCase();
+  return Object.values(machines || {}).filter((m) => m && m.name && m.name.toLowerCase() !== self);
 }
 
 async function runMachine(machine, termhub) {
@@ -121,6 +126,7 @@ async function runMachine(machine, termhub) {
 }
 
 async function run() {
+  if (!config.sessions.enabled) return 0;
   const termhub = require('../dispatch/termhub');
   let changed = 0;
   for (const machine of machinesToRead()) {
