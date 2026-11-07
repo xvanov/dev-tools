@@ -189,7 +189,7 @@ run mid-step; a job continued on an existing branch (`--branch`).
 
 - [ ] **0.1 Factory brief without `claude -p`.** Write the brief with a direct API call or a
   warm session; removes ~4 s per job start.
-- [ ] **0.2 Query-embedding cache** (see policy). Removes 0.3–1 s per search.
+- [x] **0.2 Query-embedding cache** (see policy). Removes 0.3–1 s per search. (bc0a4d2)
 - [ ] **0.3 Embeddings audit.** List every `embed(` call site (`src/search`, `src/memory`,
   `src/recall`, `src/commitments`) against the policy; remove any that embed changing data or
   exact keys; write the result into `architecture.json`'s memory card. Record the measured
