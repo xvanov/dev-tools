@@ -1,0 +1,43 @@
+# E6 fast-lane excludes — HAND-CURATED capability list.
+# Rule: a file belongs here iff it boots a server, runs a sandbox/docker, or
+# spawns enough subprocesses to be parallelism-hostile (nested pytest, uv,
+# bulk git). NOT a speed list: everything here still runs in the post-merge
+# full lane. Guards: tests/test_fast_lane_manifest.py fails on stale entries;
+# the workflow's 5-minute step timeout on the fast lane is the budget
+# backstop if a heavy file is left out.
+tests/chain/test_chain_step_retry_events.py
+tests/test_a3_arrange_assert_split.py
+tests/test_acceptance_oracle.py
+tests/test_acceptance_oracle_executable.py
+tests/test_acceptance_oracle_green_means_something.py
+tests/test_acceptance_oracle_gutted_control.py
+tests/test_acceptance_oracle_out_of_process.py
+tests/test_autoformat_before_pr.py
+tests/test_deploy_app_config.py
+tests/test_deploy_runner.py
+tests/test_dev_commits_green_work.py
+tests/test_dev_cross_retry_memory.py
+tests/test_dev_no_test_modification.py
+tests/test_dev_nochange_test_repair.py
+tests/test_dev_sandbox_infra_guard.py
+tests/test_dev_underspecified_declaration.py
+tests/test_devloop_refinements.py
+tests/test_diff_paths.py
+tests/test_factory_self_deploy.py
+tests/test_handler_db_path_threading.py
+tests/test_handler_dev_inner_loop.py
+tests/test_handler_dev_memory.py
+tests/test_handler_docs_onboarder.py
+tests/test_handler_sandbox_repo_path.py
+tests/test_mutation.py
+tests/test_oracle_probe_cli.py
+tests/test_reviewer_replay.py
+tests/test_runner_attribution.py
+tests/test_runner_iteration_cap.py
+tests/test_runner_prompt_bodies.py
+tests/test_sandbox_timeout_usage_recovery.py
+tests/test_self_deploy_never_clobbers.py
+tests/test_swebench_adapter.py
+tests/test_swebench_bare_openhands_arms.py
+tests/test_swebench_integrity.py
+tests/test_ux_auditor.py

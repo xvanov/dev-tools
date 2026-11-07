@@ -1,0 +1,12 @@
+[Unit]
+Description=Poll: sync the running factory tree to origin/main after loop-1 merges
+
+[Timer]
+# First run 2 min after boot; thereafter 15 min after the previous run
+# finishes. Type=oneshot service → runs never overlap.
+OnActiveSec=2min
+OnUnitInactiveSec=15min
+AccuracySec=30s
+
+[Install]
+WantedBy=timers.target

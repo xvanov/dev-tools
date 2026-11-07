@@ -1,0 +1,22 @@
+[Unit]
+Description=Factory self-deploy — surgically sync the running factory tree to its own origin/main
+After=network-online.target
+
+[Service]
+Type=oneshot
+# PIN PATH so `uv` resolves. Without this the unit inherits the systemd USER
+# MANAGER's environment, which contains /home/k/.local/bin only because it was
+# imported from a graphical login session via
+# dbus-update-activation-environment. On a headless boot -- or any change in unit
+# ordering -- that vanishes, and `deploy-factory-from-main.sh`'s import gate
+# (bare `uv run python -m py_compile`, bare `uv run python -c`) fails. The script
+# then runs `_revert_one` over EVERY applied file and exits 1, so it reverts every
+# self-deploy forever while emitting only a syslog line: it fails SAFE but
+# SILENTLY. The same class already broke the smoke gate on the tick units
+# (2026-07-18), which is why factory-tick@.service carries this exact line via a
+# drop-in. This unit was the one that never got it.
+Environment=PATH=/home/k/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin
+WorkingDirectory=/home/k/software-factory
+ExecStart=/home/k/software-factory/scripts/deploy-factory-from-main.sh
+TimeoutStartSec=10m
+Nice=10

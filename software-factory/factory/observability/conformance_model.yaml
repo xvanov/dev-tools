@@ -1,0 +1,255 @@
+# Conformance model for the story control plane — the checker's ONLY input.
+#
+# This file is the abstract model that `factory/observability/conformance.py`
+# validates the runtime `state_writes` trace against. It is deliberately DATA,
+# checked in and read at runtime, rather than an import of
+# `factory.chain.state_machine._TRANSITIONS`.
+#
+# Why not just import the table?
+#   The emitter (`observability/state_trace.py`) projects implementation state
+#   into a trace; the checker judges that projection. If both read the same
+#   in-process object, a bug in that object is invisible to both — the checker
+#   would happily confirm whatever the state machine currently believes,
+#   including a wrong edge someone just added. Keeping the model as separate
+#   data means a change to the transition table must be made HERE too, and
+#   `tests/test_conformance.py::test_model_matches_the_transition_table` fails
+#   until it is. Drift becomes a CI failure instead of silent agreement.
+#   (Same argument as buzz's `buzz-conformance` crate, which re-implements the
+#   TLA+ `Next` relation in Rust rather than calling the production reducer.)
+#
+# Regenerate `legal_edges` after a transition-table change with:
+#   uv run python -c "from factory.chain.state_machine import _TRANSITIONS; \
+#     print('\n'.join(f'  - {{from: {f.value}, to: {t.value}}}' \
+#     for f,t in sorted({(f,t) for (f,_),t in _TRANSITIONS.items()}, \
+#     key=lambda p:(p[0].value,p[1].value))))"
+
+version: 1
+
+# Every (from_state -> to_state) pair reachable through `advance()`. Derived
+# from the (state, event) -> state table by dropping the event: the runtime
+# trace records what the state BECAME, not which event caused it, because the
+# direct-assignment writers below have no event at all.
+legal_edges:
+  - {from: ci_green, to: blocked_deploy_failed}
+  - {from: ci_green, to: delivered_branch}
+  - {from: ci_green, to: delivered_local}
+  - {from: ci_green, to: delivered_pr}
+  - {from: ci_green, to: deploy_pending}
+  - {from: deploy_pending, to: blocked_deploy_failed}
+  - {from: deploy_pending, to: deploy_pending}
+  - {from: deploy_pending, to: deployed}
+  - {from: dev_in_progress, to: blocked_tests_need_clarification}
+  - {from: dev_in_progress, to: blocked_underspecified}
+  - {from: dev_in_progress, to: dev_retry}
+  - {from: dev_in_progress, to: tests_green}
+  - {from: dev_retry, to: blocked_budget_exceeded}
+  - {from: dev_retry, to: blocked_tests_need_clarification}
+  - {from: dev_retry, to: blocked_underspecified}
+  - {from: dev_retry, to: dev_in_progress}
+  - {from: docs_enforcer_check, to: blocked_budget_exceeded}
+  - {from: docs_enforcer_check, to: blocked_deploy_failed}
+  - {from: docs_enforcer_check, to: delivered_branch}
+  - {from: docs_enforcer_check, to: delivered_local}
+  - {from: docs_enforcer_check, to: delivered_pr}
+  - {from: docs_enforcer_check, to: docs_enforcer_check}
+  - {from: docs_enforcer_check, to: pr_open}
+  - {from: docs_enforcer_check, to: reviewer_requested_changes}
+  - {from: docs_onboarder_done, to: blocked_budget_exceeded}
+  - {from: docs_onboarder_done, to: docs_enforcer_check}
+  - {from: docs_onboarder_in_progress, to: blocked_tests_need_clarification}
+  - {from: docs_onboarder_in_progress, to: docs_onboarder_done}
+  - {from: docs_sm_done, to: blocked_budget_exceeded}
+  - {from: docs_sm_done, to: docs_onboarder_in_progress}
+  - {from: docs_sm_in_progress, to: docs_sm_done}
+  - {from: pr_open, to: blocked_deploy_failed}
+  - {from: pr_open, to: delivered_branch}
+  - {from: pr_open, to: delivered_local}
+  - {from: pr_open, to: delivered_pr}
+  - {from: pr_open, to: deploy_pending}
+  - {from: ready_for_merge, to: blocked_deploy_failed}
+  - {from: ready_for_merge, to: delivered_branch}
+  - {from: ready_for_merge, to: delivered_local}
+  - {from: ready_for_merge, to: delivered_pr}
+  - {from: ready_for_merge, to: deploy_pending}
+  - {from: reviewer_done, to: blocked_budget_exceeded}
+  - {from: reviewer_done, to: tech_writer_in_progress}
+  - {from: reviewer_in_progress, to: blocked_review_nonconvergent}
+  - {from: reviewer_in_progress, to: reviewer_done}
+  - {from: reviewer_in_progress, to: reviewer_requested_changes}
+  - {from: reviewer_requested_changes, to: blocked_budget_exceeded}
+  - {from: reviewer_requested_changes, to: dev_in_progress}
+  - {from: sm_done, to: blocked_budget_exceeded}
+  - {from: sm_done, to: dev_in_progress}
+  - {from: sm_in_progress, to: sm_done}
+  - {from: story_created, to: blocked_budget_exceeded}
+  - {from: story_created, to: docs_sm_in_progress}
+  - {from: story_created, to: sm_in_progress}
+  - {from: tech_writer_done, to: blocked_budget_exceeded}
+  - {from: tech_writer_done, to: docs_enforcer_check}
+  - {from: tech_writer_in_progress, to: blocked_review_nonconvergent}
+  - {from: tech_writer_in_progress, to: reviewer_requested_changes}
+  - {from: tech_writer_in_progress, to: tech_writer_done}
+  - {from: tests_green, to: blocked_budget_exceeded}
+  - {from: tests_green, to: reviewer_in_progress}
+  - {from: tests_green, to: tech_writer_in_progress}
+
+# Sanctioned writers that bypass `advance()` on purpose. Each sets
+# `story.state` directly because its source state is "any in-flight state", so
+# wiring an EVENT_* edge from every possible origin would be noise (the
+# rationale is recorded per-sink in `state_machine.py`'s enum comments).
+#
+# Schema per entry:
+#   writer          `module.function` as the trace attributes it. Required.
+#   to              States this writer may produce. Omit for none.
+#   from            Source states it may write from. Default any.
+#   allow_rollback  Additionally permit a hop whose REVERSE direction is legal.
+#   why             Required. A bypass without a recorded rationale is how an
+#                   allowlist rots into a rubber stamp, so the loader rejects
+#                   an entry that omits it.
+#
+# `"*"` is a wildcard, used ONLY where the code is genuinely unbounded by
+# design. Prefer `allow_rollback` or an explicit list: a `to: ["*"]` entry
+# accepts forward phase-SKIPS too, which is the main bug class this model is
+# supposed to catch. (Verified: with wildcards, three synthetic skips —
+# story_created -> reviewer_done, sm_done -> pr_open, story_created -> deployed
+# — were all accepted. With the rules below, all three are rejected.)
+#
+# A listed writer producing an UNLISTED state is an `illegal_transition`. A
+# writer that appears in the trace but not here at all is a `coverage_breach`:
+# an undocumented path that changes control-plane state.
+#
+# Note on absences: writers that reach a state through `advance()` do NOT
+# belong here — those hops classify as `legal_edge`/`legal_path` on their own.
+# `webhook.openhands_events` is likewise absent because it only stamps `error`
+# and never touches `state`, so it emits no hops at all.
+allowed_direct_writes:
+  # --- orchestrator: reconciliation, pruning, crash recovery ---
+  - writer: orchestrator._prune_stale_in_progress
+    allow_rollback: true
+    why: >-
+      Rewinds a story stuck in an *_in_progress state (crashed handler, killed
+      process) to the dispatchable state it came from. Always a reverse hop, so
+      the rollback rule covers it exactly without a wildcard.
+  - writer: orchestrator._recover_blocked_stories
+    allow_rollback: true
+    why: >-
+      Un-blocks a story by returning it to the live state that led into the
+      blocked sink — the reverse of the edge that blocked it.
+  - writer: orchestrator.reconcile_closed_trackers
+    to: [closed_by_operator]
+    why: >-
+      The tracker issue was closed by a human, so the story is closed by
+      operator intent rather than by any chain event.
+  - writer: orchestrator.reconcile_from_github
+    to: ["*"]
+    why: >-
+      GitHub is authoritative (WS2.1); when the live PR/branch disagrees with
+      the DB, the DB is corrected to match reality. Genuinely unbounded: the
+      target is whatever external truth says, not a chain decision. This is the
+      one writer for which a wildcard is the honest description.
+  - writer: orchestrator.tick
+    to: [blocked_dependency_unmet]
+    allow_rollback: true
+    why: >-
+      Two paths, both narrow: the dependency gate parks a story whose
+      prerequisite is unmet, and the handler-crash guard restores `state` to
+      `from_state` so a crashed dispatch leaves no half-applied transition.
+  # --- auto-merge worker ---
+  - writer: auto_merge._park
+    to: [blocked_ci_unresolved]
+    why: >-
+      CI-failure recovery exhausted its attempts; the story parks so the worker
+      stops re-driving it every tick.
+  - writer: auto_merge._park_gate_block_exhausted
+    to: [blocked_ci_unresolved]
+    from: [pr_open, ci_green, ready_for_merge]
+    why: >-
+      A required gate (e.g. `smoke-green`) never passed after 3 consecutive
+      evaluations of the SAME head sha — the missing-gate-labels analogue of
+      `_park`'s CI-failure exhaustion, same terminal sink, so the worker stops
+      re-evaluating (and re-paying for tests-green/smoke-green at 600s a piece)
+      a verdict a new commit is required to change.
+  - writer: auto_merge._settle_non_merging_story
+    to: [blocked_deploy_failed]
+    why: >-
+      A story whose delivery level does not merge needed a PR opened and
+      `gh pr create` failed `_MAX_PR_CREATE_RETRIES` times; it parks for a
+      human, same sink and cap as the docs enforcer's PR-create exhaustion.
+      Its DELIVERED_* settles go through `advance()` and classify as edges.
+  - writer: delivery_gate.cas_story_state
+    to: [deploy_pending, blocked_deploy_failed, closed_by_operator]
+    from: [pr_open, ci_green, ready_for_merge, ci_pending, dev_in_progress, dev_retry, tests_green, reviewer_in_progress, reviewer_done, reviewer_requested_changes, tech_writer_in_progress, tech_writer_done, docs_enforcer_check, story_created, sm_in_progress, sm_done, blocked_ci_unresolved, blocked_deploy_failed, blocked_review_nonconvergent, blocked_budget_exceeded, blocked_tests_need_clarification, blocked_underspecified, blocked_dependency_unmet]
+    why: >-
+      Compare-and-set state write used under the per-story lock: the merge
+      pass committing DEPLOY_PENDING after a merge, a settle that failed
+      `_MAX_SETTLE_FAILURES` times parking in BLOCKED_DEPLOY_FAILED, and
+      `factory job cancel` parking in-flight work as CLOSED_BY_OPERATOR.
+  - writer: auto_merge._fall_back_push_to_main_to_pr
+    to: [blocked_deploy_failed]
+    from: [pr_open, ci_green, ready_for_merge]
+    why: >-
+      Delivery level `push_to_main` met a default branch that requires status
+      checks or a PR, so it falls back to a ready PR at `auto_merge`; when
+      `gh pr create` fails `_MAX_PR_CREATE_RETRIES` times the story parks for a
+      human. The fallback itself does not change state.
+  - writer: auto_merge._handle_ci_failure
+    to: [reviewer_requested_changes]
+    why: >-
+      Historical writer name of the CI-fix re-dispatch (before it moved into
+      `_redispatch_ci_fix`, 2026-11-02); kept so recorded state-write history
+      stays conformant.
+  - writer: auto_merge._redispatch_ci_fix
+    to: [reviewer_requested_changes]
+    why: >-
+      A red CI run routes the story back into the dev loop; reachable from any
+      post-PR state. Shared by the auto_merge CI loop (`_handle_ci_failure`)
+      and the draft_pr / pr CI watch (`_watch_ci_then_deliver`), both capped
+      at `_MAX_CI_FIX_CYCLES`.
+  - writer: auto_merge.deliver_watched_pr_with_note
+    to: [delivered_pr]
+    from: [dev_in_progress, dev_retry, tests_green, reviewer_requested_changes]
+    why: >-
+      A draft_pr / pr story's CI-fix cycle exhausted the dev. The PR already
+      exists and is the deliverable, so the story settles to DELIVERED_PR with a
+      note instead of pushing the failed fix and blocking; there is no DEV_* ->
+      DELIVERED_PR edge, so the write is direct (under the story lock).
+  - writer: auto_merge._handle_pr_conflict_rebuild
+    to: [reviewer_requested_changes]
+    why: >-
+      A conflicting PR is rebuilt from a fresh base, re-entering the dev loop
+      from whatever post-PR state the story was in.
+  - writer: auto_merge.auto_merge_tick
+    to: [superseded_by_sibling]
+    why: >-
+      Terminally supersedes a losing dual-draft alternative so it can never
+      merge a redundant second interpretation. Its OTHER writes go through
+      `advance(EVENT_MERGED)` and classify as legal edges, so only the
+      supersede needs declaring.
+  # --- dual-draft ---
+  - writer: dual_draft.retire_superseded_siblings
+    to: [superseded_by_sibling]
+    why: >-
+      A supersede can originate from ANY in-flight state; the sink is terminal
+      and absent from the dispatch table, so the chain stops driving it.
+  # --- SM handler ---
+  - writer: handlers.handle_sm
+    to: [story_created]
+    why: >-
+      SM returned an unusable plan; the story is rewound to its entry state to
+      be re-planned rather than advanced with a bad plan.
+  # --- FMS operational recovery playbooks ---
+  - writer: recovery.execute_retry_mergeable_blocked_story
+    to: [pr_open]
+    why: >-
+      The PR became mergeable again, so a story parked in a blocked sink is
+      returned to the merge path.
+  - writer: recovery.execute_redispatch_phantom_pr
+    to: [story_created]
+    why: >-
+      A `pr_open` row whose branch never existed is re-dispatched from the
+      start; there is no event for "this PR was a phantom".
+  - writer: recovery.execute_quarantine_invalid_enum_story
+    to: [quarantined_invalid_state]
+    why: >-
+      A poisoned row carries a state that is not a valid enum member, so no
+      `advance()` call is even possible — it is parked for an operator.

@@ -1,0 +1,169 @@
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+.env
+.env.local
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+dist/
+build/
+*.egg-info/
+state/*.db
+state/*.db-journal
+# Stray runtime state written OUTSIDE the root state/ dir. The db helpers
+# mkdir their parent relative to the PROCESS cwd, so running a query from
+# inside e.g. a direction dir scaffolds an empty `state/factory.db` there and it
+# gets committed as a binary. The rules above are root-anchored by design; this
+# one has to be recursive to catch the accidents.
+**/state/*.db
+**/state/*.db-journal
+state/dry_run_scratch/
+# Per-story event logs (JSONL, append-only, grow with chain activity).
+# Surface via ``factory why`` / ``factory trace``; recreated on demand.
+state/logs/
+# Factory-improver proposal JSONs. Each ``factory improve`` run writes
+# one; surfaced via the pinned GH issue and the L2 apply pass — durable
+# state lives in the PRs that result, not here.
+state/improvements/
+# Event-trigger debounce / daily-cap history for the factory_improver
+# (one ISO timestamp per fire, pruned to 24h). Pure runtime bookkeeping.
+state/.improver_run_history.json
+# Per-story git worktrees created by factory.chain.worktree. Each is a
+# linked working dir under state/worktrees/<app>-<id>-<slug>/; sharing
+# .git with the source app repo, NOT this one.
+state/worktrees/
+# FMS Phase-1 structured event streams (append-only NDJSON). Runtime-only;
+# read via ``factory manager signals dump``. Do NOT commit .ndjson files.
+state/events/
+# FMS runtime telemetry — concern documents (L2) and diagnosis proposals
+# (L3). Append-only runtime artifacts; the durable record is the PRs/issues
+# they produce. Read via ``factory manager ...`` CLI, never from git.
+state/concerns/
+state/manager_proposals/
+# Post-merge context-refresh scratch worktrees.
+state/context-refresh/
+# WS1.2 independent acceptance oracles — spec-derived acceptance tests authored
+# at story spawn and stored per-story under state/acceptance/<app>/<id>/. Runtime
+# artifacts kept OUT of the app repo AND the dev worktree so the dev never sees
+# them; the durable record is the merge gate result, not git.
+state/acceptance/
+# Per-app machine-writable runtime overrides (factory.runtime_state). Holds
+# machine flips like deploy_enabled that used to be written into config.yaml
+# in-place — split out so operator-authored config.yaml is never machine-
+# mutated and the two never drift. Runtime-only; config.yaml is the durable
+# operator default.
+state/runtime/
+# Halt/apply audit trails — runtime bookkeeping mutated by every
+# halt/resume/apply cycle; ``factory resume`` archives into them.
+state/.halt_history.json
+state/.manager_apply_history.json
+state/.improver_backoff.json
+state/*.log
+# Timestamped SQLite snapshots taken before destructive repairs (``state/*.db``
+# is already ignored; the ``.bak-<epoch>`` copies are the same data and run to
+# tens of MB each). Recovery artifacts, never part of the durable record.
+state/*.db.bak-*
+# L1 idle-generator bookkeeping — last-fire timestamp so the idle loop does not
+# re-fire within its cooldown. Pure runtime; recreated on demand.
+state/idle_generator.json
+# Manager escalation debounce history (one entry per L2->L3 escalation, pruned
+# on read). Runtime-only; the durable record is the concern/proposal PRs.
+state/.manager_escalation_history.json
+# Issue-hygiene watermarks (``<app>.last``) — the reconcile pass stores the last
+# swept cursor per app so it does not rescan closed issues every tick.
+state/issue_hygiene/
+
+# Diff-scoped mutation scores, one file per (app, head_sha): the durable record
+# of a ``factory mutation-score`` run AND its per-symbol cache, without which a
+# re-measurement costs one full test-suite run per symbol. Runtime, per-checkout.
+state/mutation/
+
+# Claude Code agent worktrees — linked working dirs sharing this repo's .git,
+# created per background agent and removed when unchanged. Never committed.
+# (``.claude/skills/`` IS tracked: those are checked-in project skills.)
+.claude/worktrees/
+
+# Direction artifacts — mockups, screen recordings, binaries a persona was given
+# as input. Keep them on disk next to their direction, but NEVER in git: three
+# exercise-demo mp4s put 50 MB into this repo's history permanently (git's pack
+# is 72 MB, almost all of it those files). Text siblings (direction.md, flow.md,
+# api_spec.md) are the reviewable source and stay tracked.
+#
+# Already-committed binaries are NOT removed by this rule — history still holds
+# them, and rewriting it would invalidate every open branch and PR. This stops
+# the bleeding; use git-lfs or object storage if you need new large inputs.
+apps/*/directions/*/artifacts/**
+!apps/*/directions/*/artifacts/.gitkeep
+
+# Machine-written direction state (direction 018). Direction 012 made the
+# ``directions`` TABLE authoritative for a direction's status; ``state.yaml`` is
+# now a projection the chain rewrites on every transition. It is still WRITTEN to
+# disk so an operator can read a status without querying the database, but it
+# must never be tracked: a tick that changes a status has to leave the tree
+# clean. ``factory directions-regenerate-state`` rebuilds it in a fresh clone.
+#
+# The human-authored siblings (direction.md, flow.md, api_spec.md) are the
+# reviewable source and stay tracked — only ``state.yaml`` is machine-written.
+apps/*/directions/*/state.yaml
+
+# Machine-written story markdown (direction 018). ``stories.sm_result_json`` is
+# the source of truth; the rendered markdown is a projection nothing reads out of
+# git. Two patterns, because the chain writes the file twice under two roots:
+#   * apps/<app>/stories/<id>-<slug>.md — where the SM handler writes it
+#     (``software_factory_root / "apps" / app / target_path``).
+#   * stories/<id>-<slug>.md — the SAME relative target_path the dev persona is
+#     handed, resolved against ITS worktree root. For the ``factory`` app that
+#     worktree shares this repo, so the copy lands at the repo root and the dev
+#     commits it. This was the dominant leak: nearly every merged story PR
+#     added one.
+# Both patterns contain a slash, so both are anchored to their own directory —
+# nothing outside them is affected, and non-``.md`` files in them stay tracked.
+apps/*/stories/*.md
+stories/*.md
+
+# coverage.py data file (never commit)
+.coverage
+
+# SWE-bench harness scratch: per-run clones, worktrees, docker logs and diffs.
+# The manifest, selftest verdicts and results.md ARE tracked — they are the
+# evidence. `runs/` is 350MB+ of reproducible working data and is not.
+# `results-archive/` is deliberately NOT ignored: `report` snapshots the
+# small per-row evidence files (result.json/audit.json/prediction.diff)
+# there so every published table stays backed by committed artifacts.
+bench/swebench/runs/
+
+# Phase-0 staging backups (bench/swebench/phase0_sail_ab.py p0_4-stage). Full
+# copies of real run dirs, including grade.log / grade-nodes.log — the hidden
+# test ids the record store marks answer_key and that `export` refuses to emit.
+bench/swebench/.phase0-backups/
+
+# selftest per-instance rows are the parallel driver INTERMEDIATE; `selftest.json`
+# is the artifact they merge into and the one source of truth the sweep reads.
+bench/swebench/selftest-rows/
+
+# The benchmark RECORD store's WAL sidecars — transient by definition, recreated
+# on every open, and meaningless without the db. `benchmarks.db` itself is
+# deliberately NOT ignored: it is the ONLY place a superseded attempt's figures
+# survive (`runs/` above is wiped by the next attempt of the same cell), so
+# ignoring it would put the durable record in the one directory git cannot see.
+# See bench/swebench/BENCHMARK-RECORDS.md.
+bench/swebench/benchmarks.db-wal
+bench/swebench/benchmarks.db-shm
+
+# The benchmark record store is REGENERABLE from results-archive/ (proven:
+# `benchmark_store ingest --runs-dir <archive> --swe-dir <archive>` rebuilds it
+# and `verify` reports 176 ok / 0 gone / 0 MISMATCH). Keeping the binary out of
+# git avoids two problems: opaque diffs and merge conflicts on a sqlite file,
+# and a pre-existing hole where `record()`/`_record_sweep()` do not thread
+# db_path, so ANY test run writes campaign/ingest_log rows into the committed
+# copy. The archive is the source of truth; this is the queryable index.
+bench/swebench/benchmarks.db
+
+# dev-tools import (2026-11-06): this tree lives in a PUBLIC repo. Only the
+# factory's own app configs are tracked; every other registered app (INNERGY
+# repos included) stays local to the factory machine and is never committed.
+apps/*
+!apps/factory/
+!apps/template-probe/

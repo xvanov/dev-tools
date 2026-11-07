@@ -1,0 +1,64 @@
+# Benchmark task matrix: improved factory (open models) vs plain Claude Code.
+#
+# Every task is a REAL pending item from sacrifice's backlog, run from the
+# same frozen base SHA in an isolated git worktree per (task, arm, run).
+# Done-criteria are identical across arms: sacrifice's own gate commands
+# (bench.py gate) + a blind LLM-judge rubric over the acceptance criteria
+# (bench.py rubric). See bench/README.md for the protocol.
+#
+# base_sha: frozen sacrifice commit for ALL tasks/arms (set once per campaign;
+# resolve with `git -C ../sacrifice rev-parse origin/main`).
+#
+# MUST be a literal 40-char SHA. It was previously "" with the comment
+# "resolved at setup time when empty", which silently re-resolved
+# ``origin/main`` on every invocation — so two arms run a week apart compared
+# different base trees and the campaign's own record could not say which. That
+# is why the July 2026 benchmark was retracted. ``_base_sha`` now REFUSES an
+# empty value rather than resolving one.
+base_sha: "b40e87aff06209919d65eb8b52cc0fec7002902f"  # sacrifice origin/main @ 2026-08-01
+
+app: sacrifice
+
+# Which gates count as done for each scope (labels match config.yaml keys).
+# Mirrors the factory's ACTUAL merge-blocking set (LOOP4_REQUIRED_GATE_LABELS
+# + smoke-green): tests + runtime smoke. Lint/typecheck are deliberately NOT
+# merge-blocking in the factory, and `npm run lint` false-fails in dep-less
+# worktrees — the rubric covers style/quality instead.
+gates:
+  backend: [test_command, smoke_command]
+  frontend: [test_command, smoke_command]
+  docs: []  # rubric-only
+
+tasks:
+  - id: t1_a11y_selector
+    scope: frontend
+    kind: small-audit
+    prompt_file: apps/sacrifice/directions/023-audit-goal-type-selector-accessibility/direction.md
+  - id: t2_proof_steps
+    scope: frontend
+    kind: small-feature
+    prompt_file: apps/sacrifice/directions/024-reduce-manual-proof-submission-steps/direction.md
+  - id: t3_csrf
+    scope: backend
+    kind: security
+    prompt_file: apps/sacrifice/directions/025-add-csrf-protections-to-cookie-authenticated-api-flows/direction.md
+  - id: t4_pledge_integrity
+    scope: backend
+    kind: hardening
+    prompt_file: apps/sacrifice/directions/026-harden-pledge-and-payment-state-integrity/direction.md
+  - id: t5_ssrf
+    scope: backend
+    kind: security
+    prompt_file: apps/sacrifice/directions/027-constrain-verifier-ssrf-and-sandbox-egress/direction.md
+  - id: t6_proof_binding
+    scope: backend
+    kind: hardening
+    prompt_file: apps/sacrifice/directions/028-bind-proof-artifacts-to-goal-and-submission-window/direction.md
+  - id: t7_docs
+    scope: docs
+    kind: docs
+    prompt_file: apps/sacrifice/stories/84-d010-rewrite-generator-pipeline-context-docs.md
+  - id: t8_epic_media_proof
+    scope: backend
+    kind: epic  # multi-surface long-horizon task; N=1, expected to favor Claude
+    prompt_file: apps/sacrifice/directions/015-support-direct-media-proof-submission-in-proof-flow/direction.md

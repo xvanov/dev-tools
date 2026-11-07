@@ -1,0 +1,50 @@
+name: factory
+repo: xvanov/software-factory
+default_branch: main
+context_dir: apps/factory/context
+app_repo_path: "."  # factory IS the app; resolves to the factory root itself
+
+# --------------------------------------------------------------------------- #
+# SELF-TICK GUARD (Tier 3 — FACTORY-SELF-TICK)
+# --------------------------------------------------------------------------- #
+# OFF by default. While False, pm-sync refuses to turn apps/factory directions
+# into chain stories, so merely having this config + directions on disk never
+# starts the factory building itself. The orchestrator flips this to True to
+# deliberately enable self-improvement through the chain. Independent of the
+# chain-side staging gate (auto_merge._evaluate_self_edit_gate), which ALWAYS
+# validates a factory self-edit on a cloned factory before it can merge — so
+# even with self-tick enabled, a fatal self-edit fails on the clone and never
+# touches the live factory.
+self_tick_enabled: true
+
+# The factory deploys nothing of itself through the app deploy path. Self-deploy
+# is handled by the staging + surgical-checkout flow (factory.manager.staging +
+# circuit_breaker), NOT by factory/deploy/orchestrator.py. Keep this disabled.
+deploy:
+  enabled: false
+
+# Gate commands run against the factory's OWN repo. These are exactly the
+# commands CLAUDE.md prescribes for the factory venv. ``test_command`` is the
+# factory's full suite — the behavioral bench a self-edit must keep green.
+gates:
+  lint_command: "uv run ruff check ."
+  format_check_command: "uv run ruff format --check ."
+  type_check_command: "uv run mypy factory"
+  test_command: "uv run pytest -q"
+  coverage_command: ""
+  e2e_command: ""
+  # No browser/E2E harness for the factory itself.
+  e2e_harness_ready: false
+  mutation_testing: false
+  # Flaky-red resilience: on a test-gate RED, rerun failures in isolation;
+  # a test that fails-then-passes is quarantined (non-blocking, recorded as
+  # tech debt) rather than blocking the merge. A consistent red still blocks.
+  flake_quarantine: true
+  # No runtime smoke gate for the factory: "does it run" is validated by the
+  # chain-side staging gate (clone + full suite + import/CLI smoke + dry-run
+  # tick), not by an app smoke_command. Leave unset so smoke-green is never a
+  # required merge gate here.
+  smoke_command: ""
+  smoke_harness_ready: false
+
+models: {}  # use default routing

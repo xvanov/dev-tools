@@ -1,0 +1,182 @@
+[
+  {
+    "instance": "alibaba__opensandbox-816",
+    "seq": 3,
+    "sessions": 1,
+    "recorded_verdict": "approve",
+    "oracle_resolved": false,
+    "control_chars": 23557,
+    "treatment_chars": 38313,
+    "evidence_chars": 15405
+  },
+  {
+    "instance": "conan-io__conan-19735_interface",
+    "seq": 2,
+    "sessions": 1,
+    "recorded_verdict": "approve",
+    "oracle_resolved": false,
+    "control_chars": 16781,
+    "treatment_chars": 29072,
+    "evidence_chars": 11539
+  },
+  {
+    "instance": "conan-io__conan-19750",
+    "seq": 4,
+    "sessions": 2,
+    "recorded_verdict": "approve",
+    "oracle_resolved": false,
+    "control_chars": 27833,
+    "treatment_chars": 50992,
+    "evidence_chars": 22407
+  },
+  {
+    "instance": "getmoto__moto-9841",
+    "seq": 6,
+    "sessions": 3,
+    "recorded_verdict": "request_changes",
+    "oracle_resolved": true,
+    "control_chars": 24851,
+    "treatment_chars": 45900,
+    "evidence_chars": 21699
+  },
+  {
+    "instance": "harumiweb__exstruct-113",
+    "seq": 5,
+    "sessions": 2,
+    "recorded_verdict": "approve",
+    "oracle_resolved": false,
+    "control_chars": 37984,
+    "treatment_chars": 53742,
+    "evidence_chars": 15073
+  },
+  {
+    "instance": "hiero-ledger__hiero-sdk-python-1914_interface",
+    "seq": 4,
+    "sessions": 2,
+    "recorded_verdict": "request_changes",
+    "oracle_resolved": false,
+    "control_chars": 57324,
+    "treatment_chars": 80730,
+    "evidence_chars": 22794
+  },
+  {
+    "instance": "hkuds__openharness-217",
+    "seq": 4,
+    "sessions": 2,
+    "recorded_verdict": "approve",
+    "oracle_resolved": true,
+    "control_chars": 27932,
+    "treatment_chars": 47200,
+    "evidence_chars": 18736
+  },
+  {
+    "instance": "idaholab__montepy-933_interface",
+    "seq": 6,
+    "sessions": 4,
+    "recorded_verdict": "request_changes",
+    "oracle_resolved": false,
+    "control_chars": 24105,
+    "treatment_chars": 48771,
+    "evidence_chars": 24011
+  },
+  {
+    "instance": "jsonpickle__jsonpickle-588",
+    "seq": 4,
+    "sessions": 2,
+    "recorded_verdict": "approve",
+    "oracle_resolved": true,
+    "control_chars": 30618,
+    "treatment_chars": 50175,
+    "evidence_chars": 19116
+  },
+  {
+    "instance": "keras-team__keras-22316",
+    "seq": 2,
+    "sessions": 1,
+    "recorded_verdict": "approve",
+    "oracle_resolved": true,
+    "control_chars": 21439,
+    "treatment_chars": 35313,
+    "evidence_chars": 14118
+  },
+  {
+    "instance": "keras-team__keras-22642",
+    "seq": 2,
+    "sessions": 1,
+    "recorded_verdict": "approve",
+    "oracle_resolved": true,
+    "control_chars": 21195,
+    "treatment_chars": 36926,
+    "evidence_chars": 16382
+  },
+  {
+    "instance": "line__line-bot-sdk-python-981_interface",
+    "seq": 4,
+    "sessions": 2,
+    "recorded_verdict": "approve",
+    "oracle_resolved": true,
+    "control_chars": 75291,
+    "treatment_chars": 97011,
+    "evidence_chars": 22371
+  },
+  {
+    "instance": "pyinfra-dev__pyinfra-1665",
+    "seq": 4,
+    "sessions": 2,
+    "recorded_verdict": "approve",
+    "oracle_resolved": false,
+    "control_chars": 22510,
+    "treatment_chars": 39317,
+    "evidence_chars": 16081
+  },
+  {
+    "instance": "raullenchai__rapid-mlx-289",
+    "seq": 4,
+    "sessions": 2,
+    "recorded_verdict": "approve",
+    "oracle_resolved": false,
+    "control_chars": 48098,
+    "treatment_chars": 67212,
+    "evidence_chars": 19763
+  },
+  {
+    "instance": "tox-dev__tox-3931",
+    "seq": 4,
+    "sessions": 2,
+    "recorded_verdict": "approve",
+    "oracle_resolved": false,
+    "control_chars": 20917,
+    "treatment_chars": 44525,
+    "evidence_chars": 22998
+  },
+  {
+    "instance": "ucfopen__canvasapi-716",
+    "seq": 2,
+    "sessions": 1,
+    "recorded_verdict": "approve",
+    "oracle_resolved": false,
+    "control_chars": 17206,
+    "treatment_chars": 27340,
+    "evidence_chars": 9437
+  },
+  {
+    "instance": "vyperlang__vyper-4801",
+    "seq": 2,
+    "sessions": 1,
+    "recorded_verdict": "approve",
+    "oracle_resolved": false,
+    "control_chars": 21393,
+    "treatment_chars": 40689,
+    "evidence_chars": 19946
+  },
+  {
+    "instance": "zauberzeug__nicegui-5858",
+    "seq": 4,
+    "sessions": 2,
+    "recorded_verdict": "approve",
+    "oracle_resolved": true,
+    "control_chars": 23042,
+    "treatment_chars": 27909,
+    "evidence_chars": 4356
+  }
+]

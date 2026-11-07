@@ -1,0 +1,247 @@
+caps:
+  # Multi-app parallelism cap. 10 is generous — each agent runs in its
+  # own git worktree under ``state/worktrees/`` so there's no shared
+  # working-tree contention. Higher caps work fine if hardware + hourly
+  # spend allow.
+  global_concurrent_agents: 10
+  # Per-repo cap — now decoupled from working-tree contention thanks to
+  # ``factory.chain.worktree``. Each in-flight story gets its own
+  # private worktree on disk so multiple stories can run in parallel
+  # against a single app without racing on ``ensure_feature_branch``.
+  # Set to 10 so non-active in-flight states (deploy_pending, dev_retry
+  # waiting on next tick, etc.) don't accidentally throttle dispatch.
+  per_repo_concurrent_agents: 10
+  # PILOT 2026-08-12: 300 -> 40 -> 75. This file is what ``load_spend_caps()``
+  # reads to feed ``bench/swebench_adapter.py:spend_guard`` — the ONLY thing
+  # that bounds a whole sweep, and it is a different setting from
+  # ``_BENCH_ROOT_CAPS`` in that file (which bounds one bench root). Lowering
+  # only the constant leaves the sweep bounded at 300.
+  #
+  # 75 is operator-authorised (2026-08-13) for a 16-run pilot: 8 instances x 2
+  # arms (``chain``, ``v32-solo``). The pessimistic projection is $50.97, from
+  # the prior sweep's measured token profile — 75 clears it with headroom and
+  # still STOPS, which an unbounded guard would not. Restore to 300 afterwards.
+  #
+  # RESTORED to the repo's documented ceiling (300) on operator instruction
+  # 2026-08-13: "dont worry about any caps for now, make sure that we complete
+  # all the runs ... dont stop any runs because of caps". The staged 40 -> 75 ->
+  # 34 sequence existed to keep a wrong $/instance projection survivable; that
+  # projection is now MEASURED (v32-solo $1.64/inst, chain $1.8-4.5/inst), so the
+  # guard is no longer the thing protecting us — the measurement is.
+  #
+  # Still not unbounded, deliberately: 300 is this repo's own long-standing
+  # ceiling, and the mid-sweep enforcement on ACTUAL accumulated cost still runs.
+  # Cumulative campaign spend is tracked outside the harness (the guard is
+  # per-sweep) and reported at the $50/$75/$100 thresholds.
+  daily_spend_usd: 300
+  # Operator-approved 2026-05-30: raised 15 -> 40 to let the ~29 re-dispatched
+  # stories reprocess in parallel without constant hourly-cap throttling.
+  # ``daily_spend_usd`` above is the real ceiling and is the ONLY place the
+  # daily cap is defined — it was also stated as $200 in CLAUDE.md, which
+  # disagreed with the configured value. Confirmed $300, 2026-08-01.
+  #
+  # Operator-approved 2026-08-03: raised 40 -> 80 -> 120 for the five-arm
+  # SWE-bench sweep. At the conservative $3/instance projection a single arm
+  # runs ~$57-60 in its first hour, so a $40/h cap refused work at ONE worker
+  # while the daily budget was barely touched. 80 was still too low: the
+  # factory arm's MEASURED cost on this manifest is $4.55/instance, projecting
+  # $86.48/h for its 19-instance sweep. 120 clears the measured worst arm with
+  # headroom and leaves ``daily_spend_usd: 300`` — the real ceiling — untouched.
+  # The hourly cap is a burst limiter, not the budget.
+  #
+  # PILOT 2026-08-12: 120 -> 40 -> 75 -> 34 -> 300, tracking daily_spend_usd.
+  # Held EQUAL to the daily figure so the hourly limiter can never be the thing
+  # that stops a run: a sweep should end on total spend, not be throttled into a
+  # longer run that costs the same.
+  hourly_spend_usd: 300
+  # Operator-declared 2026-08-08 (pre-sim hygiene, S5). Previously ABSENT
+  # here, which meant this cap silently defaulted to 5.0
+  # (``factory/settings/loader.py`` CapsConfig.per_story_spend_usd) while
+  # being enforced as a TERMINAL breaker (BLOCKED_BUDGET_EXCEEDED,
+  # ``factory/chain/orchestrator.py``) — a story that crosses it cannot
+  # resume. The repo's own MEASURED cost is $4.55/instance (see the
+  # hourly_spend_usd comment above), so the undeclared 5.0 default would
+  # have killed stories within ~10% of normal cost, and it made
+  # ``dev_convergence.per_story_budget_usd: 8.0`` below unreachable
+  # (8.0 > 5.0). Set to 12.0: headroom over BOTH the $4.55 measured figure
+  # and the 8.0 convergence budget it must exceed (8.0 < 12.0). Never park
+  # this near the measured cost — it is a terminal breaker, not a soft
+  # warning.
+  per_story_spend_usd: 12.0
+queues:
+  human_review_max_open_prs: 5
+  failing_ci_pause_threshold: 3
+rate_limits:
+  pm_invocations_per_hour: 4
+  security_runs_per_day: 2
+  ux_auditor_runs_per_day: 1  # throttled 2026-07-24 (was 4); see schedules: ux_audit
+modes:
+  default: normal
+  available: [normal, fix-only, drain-reviews, paused, exploratory, deploy-frozen, ux-audit-only]
+direction_defaults:
+  require_user_flow_for_ui: true
+  require_api_spec_for_backend: true
+  allow_explore_tag: true
+  max_dev_retries: 4
+  escalate_model_on_retry: true
+  require_context_update_per_pr: true
+  enforce_canonical_doc_paths: true
+# End-of-tick auto-merge worker. When ``enabled`` is true,
+# ``factory tick`` calls ``auto_merge_tick`` after every story handler
+# runs and merges PRs whose chain gates have passed. ``wait_for_ci``
+# uses ``gh pr merge --auto`` so GitHub holds the merge until required
+# checks pass; for repos without required checks the merge happens
+# immediately.
+auto_merge:
+  enabled: true
+  trigger: end_of_tick
+  merge_method: squash
+  delete_branch_after_merge: true
+  wait_for_ci: true
+# Auto PM-sync. When enabled, ``factory tick`` triages any direction still
+# in ``status: created`` into stories (same pipeline as ``factory pm-sync``),
+# so directions filed by a human never rot waiting for an operator to
+# remember the command. Bounded by ``rate_limits.pm_invocations_per_hour``
+# counted from real pm rows in the runs table.
+#
+# NOT a blank cheque since 2026-07-30: a MACHINE-FILED direction (any
+# ``scheduled-<persona>`` source, any other machine filer, or a direction
+# whose source cannot be determined) is NOT auto-triaged. It parks until an
+# operator runs ``factory approve-direction`` (``factory inbox`` lists what
+# is waiting). See ``factory/directions/approval.py`` — this is the
+# structural fix for the auditor treadmill described under
+# ``schedules: ux_audit`` below.
+auto_pm_sync:
+  enabled: true
+# Post-merge main-branch CI-health monitor (D004). When enabled, ``factory
+# tick`` polls each app's main branch once per tick for a REQUIRED status
+# check gone red AFTER merge and auto-files a ``ci-health`` direction so it
+# gets fixed through the normal chain. This is the POST-merge safety net;
+# the pre-merge required-check gate (branch protection) is unchanged and
+# remains the primary defense. Advisory (non-required) reds never file a
+# direction regardless of this flag.
+ci_health:
+  # Disabled 2026-08-08 for the duration of the pre-sim simulation (S6).
+  # ``ci_health`` has no per-app scoping in code (``factory/settings/
+  # loader.py::CiHealthConfig`` is a single global flag; ``orchestrator.tick``
+  # calls ``main_ci_health_tick`` for every app once per tick), so it cannot
+  # be turned off for sacrifice alone — it is global or nothing.
+  #
+  # Why it must be off right now: sacrifice's ``main`` is lint-RED as of
+  # 2026-08-08 at commit 24c841f (28 ruff errors + 14 files needing ``ruff
+  # format``), and ``lint`` is a REQUIRED check there. With this flag on,
+  # the post-merge monitor would see that required check red and auto-file
+  # a direction with ``source="ci-health"`` — which IS in
+  # ``_DETERMINISTIC_SOURCES`` (``factory/directions/approval.py``) and
+  # therefore BYPASSES operator approval, auto-triaging straight into a
+  # second concurrent story that competes with the simulation's own stories
+  # for the ``pm_invocations_per_hour`` quota.
+  #
+  # Do NOT fix this by editing the sacrifice repo from here — out of scope.
+  # The real fix is to green sacrifice's lint (28 errors + format) upstream.
+  # Re-enabling this flag afterward is an OPERATOR decision, not automatic.
+  enabled: false
+
+# Detector -> direction trigger (019 AC7 / Flow D). When enabled, ``factory
+# tick`` runs every registered detector in factory/manager/detectors/ once
+# per app per real tick (the deleted FMS L1 Watcher used to be their only
+# caller) and files at most a few machine directions per tick, deduped on a
+# stable signature so the same fault is never re-filed while a direction for
+# it is still open. Every filing is parked at the operator-approval gate.
+#
+# DEFAULT IS OFF (review round 2, 2026-08-07). AC7's verification is the
+# seeded unit test, not production traffic; a read-only re-measurement
+# against the live factory found this pass would have filed 48 machine
+# directions in its first ~16 ticks before the liveness/recency fixes
+# landed. Flip on per app after a soak — never globally on merge.
+detector_watch:
+  enabled: false
+# Deterministic operational-recovery cycle (factory.manager.recovery). When
+# enabled, ``factory tick`` runs run_recovery_cycle once per app per real
+# tick. PR #247 deleted factory/manager/apply.py, the ONLY caller of every
+# one of the six recovery playbooks (including recover-stuck-fixonly-mode and
+# quarantine-invalid-enum-story, each of which fixes a RECORDED live wedge:
+# a stuck non-normal mode blocked all dispatch; invalid-enum rows failed
+# every tick forever). Default ON, unlike detector_watch above: every
+# playbook here fixes a known wedge and the module is internally fail-safe
+# (forces dry-run while halted; per-cycle action cap + per-target cooldown),
+# so the risk of leaving it OFF (silent rot) outweighs the risk of ON. Flip
+# off only if a playbook proves counterproductive in the field.
+recovery:
+  enabled: true
+# Phase 6 scheduled personas. ``factory tick`` consults this on every run
+# and dispatches due entries via ``factory.chain.scheduled_tasks``. Rate
+# limits referenced by ``rate_limit_key`` look up the same-named field in
+# ``rate_limits:`` above.
+schedules:
+  # ralph and bug_hunt schedules (and their bug_hunter.py / ralph.md /
+  # bug_hunter.md personas) were deleted 2026-08-07 — 019 AC5. Zero human-
+  # visible outcomes ever attributed to either scanner.
+  - name: ux_audit
+    # DISABLED 2026-07-30 (second occurrence). Throttled 2026-07-24 from 4/day to
+    # weekly after it auto-filed D114/115/116 in ~2h and drove ~$145 projected EOD
+    # while feature work waited. Weekly was still too much: on 2026-07-30 it filed
+    # 015/016/017, all of which asked for BETTER INPUTS FOR THE AUDITOR ITSELF
+    # ("provide executable fixtures for UX audits", "seed blocked-story fixtures
+    # for UX audit", "attach gate findings to UX audit inputs"). auto_pm_sync then
+    # validated them without operator review, so they were one tick away from
+    # spawning stories and PRs. All three were closed by the operator.
+    #
+    # The failure is structural, not a cadence problem: an auditor that can file
+    # its own work orders will always find something to ask for, and every request
+    # is self-justifying. Re-enable only alongside a rule that an auto-filed
+    # direction needs operator approval before auto_pm_sync triages it — otherwise
+    # throttling just slows the treadmill down.
+    #
+    # That rule now EXISTS (2026-07-30, ``factory/directions/approval.py``): a
+    # ``scheduled-*`` direction parks until ``factory approve-direction``, and
+    # ``factory inbox`` lists what is waiting. Re-enabling this cron is still an
+    # OPERATOR decision — the gate bounds the cost of the treadmill (no PM calls,
+    # no stories, no PRs), it does not make the findings worth reviewing.
+    #
+    # Yearly (1 Jan 09:00) is "effectively off" while staying a VALID cron.
+    # Do NOT use an impossible date like 31 February to disable a schedule:
+    # ``scheduler.cron.is_due`` -> ``_previous_fire`` calls croniter UNGUARDED, so
+    # ``CroniterBadDateError`` would propagate into the tick on every pass. A
+    # disable trick that can crash the scheduler is worse than the schedule.
+    # ``factory ux-audit-now`` runs it on demand, which is the intended use.
+    cron: "0 9 1 1 *"
+    persona: ux_auditor
+    rate_limit_key: ux_auditor_runs_per_day
+  - name: security_weekly
+    # Fixed 2026-08-08 (pre-sim hygiene, S11): this cron was "0 9 * * *" —
+    # DAILY, despite the schedule's own name. ``factory/scheduler/cron.py``'s
+    # ``_DEFAULT_SCHEDULES`` fallback and module docstring both define
+    # ``security_weekly`` as "0 9 * * 1" (Monday), so the drift here was a
+    # dropped day-of-week field, not a deliberate change of cadence. Restored
+    # to match the name and the code's own default. ``security_runs_per_day:
+    # 2`` bounds same-day retries/reruns regardless of cron cadence — it is
+    # not evidence the cron itself should be daily. A daily security auditor
+    # is exactly the "auditor treadmill" pattern ``ux_audit`` above was
+    # throttled from 4/day down to yearly-disabled for: an auditor that can
+    # file its own work orders always finds something, and every finding is
+    # self-justifying. security_weekly filing two directions (117, 118) that
+    # parked at the operator-approval gate on 2026-08-08 is exactly that
+    # pattern recurring at daily cadence.
+    cron: "0 9 * * 1"
+    persona: security
+    rate_limit_key: security_runs_per_day
+  # factory_improver (event-triggered self-improvement) was retired
+  # 2026-08-07 (operator decision: 1 commit landed in 196 proposals).
+
+# In-tick run-until-green dev convergence (see DevConvergenceConfig).
+# ENABLED 2026-07-17 after the benchmark campaign exercised the loop across
+# 7 isolated-root stories (t1: two in-tick retries -> approved) with clean
+# budget-guard behavior. Safety: heartbeat reaping is PID-liveness only
+# (no wall-clock reaper), so a 45-min converging handler cannot be reaped.
+# The loop compresses the 5-minute tick gaps between dev retries into one
+# handler invocation — it does NOT grant extra attempts (_MAX_DEV_RETRIES
+# stays authoritative) and stops early on: inner-attempt cap, <1 retry of
+# headroom under the chain cap, per-story wall-clock/budget, or the global
+# hourly/daily caps.
+dev_convergence:
+  enabled: true
+  max_inner_attempts: 3
+  per_story_wall_clock_s: 2700
+  per_story_budget_usd: 8.0
+  dev_sandbox_timeout_s: 1800

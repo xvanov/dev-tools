@@ -1,0 +1,64 @@
+# ──────────────────────────────────────────────────────────────────────────
+# Software-factory app config for an app built from this template.
+#
+# Copy to:  software-factory/apps/<app>/config.yaml
+# Then:     mkdir -p software-factory/apps/<app>/directions
+#           uv run factory pm-sync --app <app>
+#           uv run factory tick --app <app>
+#
+# The gate commands are the SAME ones a human runs (`make lint`, `make
+# typecheck`, `make test`, `make smoke`), so the factory's merge gates and local
+# development cannot drift apart. If you change one, change both.
+#
+# Every command is prefixed with `scripts/ensure-deps.sh` because the factory
+# executes gates inside a throwaway git worktree — no node_modules, no generated
+# Prisma client. Without it every gate fails for a reason that has nothing to do
+# with the change under test.
+# ──────────────────────────────────────────────────────────────────────────
+
+name: template-probe
+repo: xvanov/template-probe
+default_branch: main
+
+# Absolute path to the checkout the factory builds in.
+app_repo_path: /home/k/template-probe
+
+# Where the tech-writer persona keeps the generated context docs.
+context_dir: apps/template-probe/context
+
+gates:
+  lint_command: "bash scripts/ensure-deps.sh && npm run lint"
+  format_check_command: "bash scripts/ensure-deps.sh && npm run format:check"
+  type_check_command: "bash scripts/ensure-deps.sh && npm run typecheck"
+  test_command: "bash scripts/ensure-deps.sh && npm run test"
+  coverage_command: ""
+
+  # The browser suite, against an already-running app. The smoke gate below
+  # starts one; on its own this needs BASE_URL pointing somewhere alive, so it is
+  # left out of the required set.
+  e2e_command: ""
+  e2e_harness_ready: false
+
+  # THE GATE THAT MATTERS. Builds for production, boots the standalone server on
+  # its own isolated stack (its own Compose project, DB, Redis, mail and ports,
+  # all derived from the worktree path so concurrent stories do not collide) and
+  # drives the real user journey — including the emailed confirmation link — in a
+  # browser. Without this a green test suite can still ship an app that does not
+  # start.
+  smoke_command: "bash scripts/smoke.sh"
+  smoke_harness_ready: true
+
+  # On a red test gate, rerun failures in isolation; a test that fails-then-passes
+  # is quarantined as tech debt rather than blocking the merge. Consistent reds
+  # still block.
+  flake_quarantine: true
+  mutation_testing: false
+
+# Deploy is off until you have somewhere to deploy to. When you turn it on, point
+# it at a script that pulls, migrates and restarts — and make sure the migration
+# runs BEFORE the new code serves traffic.
+deploy:
+  enabled: false
+
+# Empty = use the factory's default per-persona routing in factory/routes.yaml.
+models: {}

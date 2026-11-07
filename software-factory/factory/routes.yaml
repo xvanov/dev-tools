@@ -1,0 +1,262 @@
+# Per-persona LiteLLM model routing.
+# Edit freely — the model_router reads this at runtime. Self-improvement seam.
+#
+# Schema:
+#   default_provider: <azure|direct>          # which top-level routes block to read
+#   routes.<persona>: <model_id>              # direct-provider routes
+#   routes.<persona>.<difficulty>: <id>       # difficulty-aware persona (dev today)
+#   azure_routes.<persona>: <model_id>        # Azure-default routes block
+#   azure_routes.<persona>.<difficulty>: <id> # difficulty-aware Azure persona
+#   defaults.fallback: <model_id>             # used when persona missing from active routes
+#   defaults.azure_fallback: <model_id>       # used when persona missing under azure_routes
+#
+# API-key resolution is per-model-id prefix (factory/model_router.py::provider_env_key;
+# optional base URL from factory/model_router.py::provider_base_url):
+#   azure/…         → AZURE_API_KEY          (Azure OpenAI, base_url from AZURE_ENDPOINT)
+#   azure_ai/…      → AZURE_AI_API_KEY       (Azure AI Foundry)
+#   deepseek/…      → DEEPSEEK_API_KEY       (DeepSeek direct)
+#   anthropic/…     → ANTHROPIC_API_KEY      (optional ANTHROPIC_API_BASE)
+#   openrouter/…    → OPENROUTER_API_KEY     (optional OPENROUTER_API_BASE)
+#   openai/…        → OPENAI_API_KEY         (optional OPENAI_API_BASE)
+#   openai_compat/… → OPENAI_COMPAT_API_KEY  + OPENAI_COMPAT_API_BASE (REQUIRED) —
+#                     any OpenAI-compatible endpoint; sent to LiteLLM as openai/…
+# The same key/base URL reaches the dev's OpenHands sandbox (it runs in-process).
+# The router degrades any route — or per-app/per-job override — whose provider
+# key is missing to the block fallback (warn-once) — see model_router.route().
+#
+# Anthropic/Claude models: the 2026-07-15 rule "deliberately ABSENT" was
+# REVERSED by operator decision 2026-11-02 — models/providers must be
+# swappable for ANY persona, Anthropic included. The DEFAULT routes below are
+# unchanged (Azure/DeepSeek); the reversal makes other providers POSSIBLE via
+# this file, `apps/<app>/config.yaml::models`, or a job's `models:` frontmatter
+# (`factory job submit --model persona=id`).
+#
+# Override precedence, per persona key (`persona` or `persona.<difficulty>`):
+#   job (direction frontmatter `models`) > app (`config.yaml::models`) > this file.
+# Resolved and stamped on the story at spawn (factory/job_routing.py). Reviewer
+# independence (reviewer ≠ any dev tier) is checked on the EFFECTIVE map; a
+# colliding override is REFUSED at submit/spawn, never auto-fixed, and the
+# FACTORY_ALLOW_REVIEW_COLLISION hatch (model_router) does not apply to overrides.
+#
+# Provider selection precedence at runtime:
+#   1. FACTORY_PROVIDER env var ("azure" or "direct") overrides everything.
+#   2. default_provider (this file).
+#   3. "direct" if neither is set.
+
+default_provider: azure
+
+routes:
+  pm: deepseek/deepseek-chat
+  analyst: deepseek/deepseek-chat
+  # Interface-contract author. Reads the app's real route table + the spec and
+  # writes the direction's api_spec.md, which dev AND the dev-blind acceptance
+  # author both consume. Interface design is high-leverage and cheap (one call
+  # per direction), so it gets a capable model.
+  contract: deepseek/deepseek-chat
+  # SM emits a structured JSON plan; deepseek-chat intermittently returns a
+  # tiny malformed body falsely flagged finish_reason=length (operator-approved
+  # 2026-05-29). Use gpt-5.4 (JSON-reliable) here too so SM is consistent
+  # regardless of active provider; the azure_routes block already uses it.
+  sm: azure/gpt-5.4
+  dev:
+    standard: deepseek/deepseek-coder
+    # Hard tier: different family + code-specialist tier (see azure_routes).
+    hard: azure/gpt-5.3-codex
+  test_implementer: deepseek/deepseek-coder
+  # Same reviewer-independence constraint as azure_routes: dev.hard above is
+  # gpt-5.3-codex, so the reviewer must not be. See the azure_routes comment.
+  reviewer: azure/gpt-5.4
+  # WS1.2 independent acceptance oracle. Deliberately a DIFFERENT model family
+  # than dev (deepseek) so the test author and the implementer never share a
+  # model — reinforces independence. gpt-5.4 is JSON-reliable (schema mode).
+  acceptance_author: azure/gpt-5.4
+  tech_writer: deepseek/deepseek-chat
+  onboarder: azure/gpt-5.4
+  ux_auditor: azure/gpt-5.4
+  security: azure/gpt-5.3-codex
+  # factory_self_context (factory/manager/self_context.py, ``factory manager
+  # refresh-context``) used to borrow the manager_summarizer route entry
+  # purely as a mid-tier model-id lookup; that entry was deleted 2026-08-07
+  # with the L2 Summarizer tier. Give it its own entry instead.
+  factory_self_context: azure/gpt-5.4
+
+# Azure deployments at mv-coding-agent-foundry (rg innergy-internal-ai,
+# eastus2). Deployment list re-verified live 2026-08-08 via ARM
+# (``az cognitiveservices account deployment list``) — FIVE exist, not the
+# three this comment claimed until 2026-08-08:
+#   - deepseek-v4-pro     ver 2026-04-23, GlobalStandard,   500 TPM  [ROUTED]
+#   - Kimi-K2.7-Code      ver 2026-06-12, GlobalStandard,   100 TPM  [ROUTED]
+#   - DeepSeek-V4-Flash   ver 2026-04-23, DataZoneStandard, 250 TPM  [ROUTED]
+#   - gpt-5.4             ver 2026-03-05, GlobalStandard,   500 TPM  [not routed]
+#   - gpt-5.3-codex       ver 2026-02-24, GlobalStandard,   250 TPM  [not routed]
+#
+# The two gpt-5.x deployments are intentionally left in place but UNROUTED, so
+# reverting this open-weight decision is a routes.yaml edit with no infra work.
+#
+# NOTE on DeepSeek-V4-Flash: this resource only offers the ``2026-04-23``
+# build. The much stronger ``DeepSeek-V4-Flash-0731`` checkpoint (Artificial
+# Analysis index 52 vs ~30 for ours) is NOT available here — do not reason
+# about our Flash using published 0731 numbers.
+#
+# gpt-5.3-codex note (still true, kept for the rollback path): it is reachable
+# under AZURE_API_VERSION=2025-03-01-preview because LiteLLM bridges it to the
+# Responses API. A raw ``chat/completions`` POST returns "The requested
+# operation is unsupported" — that is expected, not a broken deployment.
+#
+azure_routes:
+  # ── OPEN-WEIGHT ONLY (operator decision 2026-08-08) ─────────────────────────
+  # Every persona runs an open-weight model. No gpt-5.x, no Claude. The three
+  # deployed open models, with REAL Azure retail meters (eastus2, verified
+  # 2026-08-08 against prices.azure.com) and the Artificial Analysis
+  # Intelligence Index:
+  #
+  #   azure/deepseek-v4-pro    idx 45  $1.74/$3.48/$0.145  Global   500 TPM
+  #   azure/Kimi-K2.7-Code     idx 43  $1.05/$4.40/$0.210  Global   100 TPM (quota MAXED)
+  #   azure/DeepSeek-V4-Flash  idx 30  $0.19/$0.51/$0.028  DataZone 250 TPM
+  #
+  # Allocation follows MEASURED evidence, not the index alone:
+  #   * dev gets the most capable model AND the only one with throughput
+  #     headroom. Over n=706 real dev runs, dev averages 239,515 TPM and peaks
+  #     at 546,860 — so Kimi (100 TPM, quota maxed 100/100 and NOT raisable)
+  #     and Flash (250) cannot host ANY sandbox dev tier.
+  #   * acceptance_author gets the second-most-capable model: the oracle is the
+  #     sensor 019 built, and it graded its first real story 2026-08-08
+  #     (story 172 / sacrifice PR #381). It must never share a model with dev.
+  #   * reviewer deliberately gets the CHEAPEST model. The B.1 Phase-1a
+  #     ablation measured no significant quality delta from removing the
+  #     reviewer entirely (9/18 vs 7/19, p=0.688), so reviewer capability is
+  #     not measurably load-bearing and paying a premium for it is poor value.
+  pm: azure/deepseek-v4-pro
+  analyst: azure/deepseek-v4-pro
+  # Interface-contract author (see the routes: block above). One call per
+  # DIRECTION, not per story, and its output is the substrate every later
+  # persona reads — so it gets the most capable open-weight model rather than
+  # the cheapest. It is not the grader, so it shares no independence
+  # constraint with dev; the grader (acceptance_author) still differs from dev.
+  contract: azure/deepseek-v4-pro
+  # SM emits a structured JSON plan. KNOWN RISK: gpt-5.4 held this route
+  # because ``deepseek-chat`` once intermittently returned a tiny malformed
+  # body falsely flagged finish_reason=length (2026-05-29). deepseek-v4-pro is
+  # a different, much stronger model and parsed ``json_object`` cleanly on a
+  # live check 2026-08-08 — but that failure was INTERMITTENT, so one green
+  # call does not disprove it. Watch ``sm`` for JSONDecodeError; the runner
+  # already retries output problems (``_MAX_OUTPUT_RETRIES``).
+  sm: azure/deepseek-v4-pro
+  # tech_writer emits the largest JSON of any text persona (context_updates
+  # for several files at once) and its output becomes the context docs every
+  # LATER story reads, so it gets Kimi (idx 43, verified 16k output cap) rather
+  # than the cheapest model. The delta is ~$0.025/story — not worth trading the
+  # shared context substrate for.
+  tech_writer: azure/Kimi-K2.7-Code
+  onboarder: azure/DeepSeek-V4-Flash
+  # WS1.2 independent acceptance oracle — deliberately a DIFFERENT model from
+  # every dev tier so the test author and the implementer never share one.
+  acceptance_author: azure/Kimi-K2.7-Code
+  ux_auditor: azure/Kimi-K2.7-Code
+  factory_self_context: azure/DeepSeek-V4-Flash
+
+  # Must differ from EVERY dev tier — enforced fatally at router load by
+  # ``model_router.check_review_independence``.
+  #
+  # 2026-08-10: moved OFF DeepSeek-V4-Flash on direct counter-evidence to the
+  # "reviewer capability is not load-bearing" allocation note above: Flash
+  # deadlocked story 187 FOUR review cycles with a sticky content
+  # hallucination — it QUOTED the dev's fixed token string
+  # ('this-is-not-a-valid-jwt', zero dots) while claiming it "is structurally
+  # a valid 3-part JWT (three dot-separated segments)", re-raised at medium
+  # every cycle until the churn guard parked the story, twice, through two
+  # rubric fixes (#302). A reviewer that hallucinates the diff's content is
+  # not cheap, it is a story-killer. Kimi shares no dev tier (independence
+  # holds: dev is deepseek-v4-pro) and reviewer traffic is tiny (5-17 s
+  # calls, ~2% of work time), so Kimi's maxed 100 TPM quota — already serving
+  # tech_writer/acceptance_author/security — absorbs it; the runner retries
+  # 429s. Revert if review-side 429s become visible in `factory audit`.
+  reviewer: azure/Kimi-K2.7-Code
+  security: azure/Kimi-K2.7-Code
+
+  # Dormant since 2026-05-30 (Loop-4 made dev own its tests). Deliberately kept
+  # OFF dev.standard so the ``test_implementer`` shared-model advisory, which
+  # fired under the old config, stays clear.
+  test_implementer: azure/DeepSeek-V4-Flash
+  dev:
+    standard: azure/deepseek-v4-pro
+    # KNOWN REGRESSION, accepted 2026-08-08. With only three open-weight
+    # deployments the hard tier can no longer be a DIFFERENT family. It was
+    # gpt-5.3-codex, an escape hatch for per-model failure modes (Azure
+    # content-filter blocks on deepseek completions, observed 2026-06-11).
+    # Kimi cannot take it (100 TPM vs dev's 239k TPM average) and Flash would
+    # be a capability DOWNGRADE for the hard tier, so hard == standard and the
+    # escalation is a no-op — exactly as it was before 2026-07-16.
+    # MITIGATION IF CONTENT-FILTER BLOCKS REAPPEAR: deploy ``DeepSeek-V3.2``
+    # (already in this resource's catalog, quota 1000 unused) or get the Kimi
+    # quota raised, then point this tier at it.
+    hard: azure/deepseek-v4-pro
+
+defaults:
+  fallback: deepseek/deepseek-chat
+  azure_fallback: azure/deepseek-v4-pro
+
+# Per-persona LLM constructor overrides for sandbox runs (OpenHands SDK
+# ``LLM(...)``), resolved by ``model_router.llm_params_for``. Allowlisted
+# keys: reasoning_effort, caching_prompt, max_output_tokens, temperature,
+# litellm_extra_body — anything else is dropped (config typos must not crash
+# LLM construction). ``max_output_tokens`` is injected automatically from
+# ``model_limits`` below; entries here override it. NOTE: ``reasoning_effort``
+# "none" must be QUOTED — bare ``none`` is YAML null and gets dropped.
+llm_params:
+  defaults:
+    caching_prompt: true # explicit — pins the SDK default
+  personas:
+    dev:
+      standard: { reasoning_effort: "none" } # deepseek-v4-pro: no reasoning surface
+      hard: { reasoning_effort: "none" } # now deepseek-v4-pro: no reasoning surface
+    test_implementer: { reasoning_effort: "none" }
+    # reviewer override removed 2026-08-10 with the move to Kimi — the
+    # "none" pin was DeepSeek-V4-Flash-specific (no reasoning surface);
+    # Kimi runs with its defaults, same as tech_writer/acceptance_author.
+
+# Agent-preset overrides for sandbox personas, resolved by
+# ``model_router.preset_for``. Known values: ``planning`` (OpenHands
+# plan-first agent with PLAN.md artifacts). Absent/unknown → default agent.
+# Experiment surface — keep empty until A/B'd on real stories.
+presets: {}
+
+# Per-model output-token caps. Looked up by the LiteLLM model id ``route()``
+# returns. The cap is the ``max_tokens`` (== max completion / output) value
+# the provider will honor in one call — distinct from the context window
+# (which governs input size, typically 100k–1M for current models).
+#
+# Picking values: pin to the model's stated output max; the provider bills
+# only what's used, not the cap, so generous caps cost nothing on outputs
+# that fit comfortably. Too low → truncation mid-JSON → JSONDecodeError.
+#
+# Fallback is ``defaults.max_output_tokens_default`` when a model is unlisted.
+model_limits:
+  # DeepSeek — chat/coder native cap is 8k output (May 2026).
+  deepseek/deepseek-chat: { max_output_tokens: 8192 }
+  deepseek/deepseek-coder: { max_output_tokens: 8192 }
+
+  # Azure deployments
+  # gpt-5.4 supports 16k output reliably (RFC 2026-02 lifted from 8k).
+  azure/gpt-5.4: { max_output_tokens: 16384 }
+  # azure/deepseek-v4-pro — same 8k native ceiling as direct DeepSeek.
+  azure/deepseek-v4-pro: { max_output_tokens: 8192 }
+  # azure/DeepSeek-V4-Flash — explicit, NOT the 8192 default: this model now
+  # serves reviewer/onboarder/factory_self_context, which used to get 16384 on
+  # gpt-5.4, and halving an output budget is how JSON truncates mid-object.
+  # 16384 verified accepted live 2026-08-08; the provider bills only what is
+  # used, so a generous cap costs nothing.
+  azure/DeepSeek-V4-Flash: { max_output_tokens: 16384 }
+  # gpt-5.3-codex — same 16k class as gpt-5.4. No longer routed as of
+  # 2026-08-08; kept so a rollback to the closed-model config needs no edit.
+  azure/gpt-5.3-codex: { max_output_tokens: 16384 }
+  # azure/Kimi-K2.7-Code — 256k context. 16k output verified live 2026-08-08
+  # (32k also accepted). 16k, not the 8192 default, because this model now
+  # writes the acceptance oracle: a long criteria body must not truncate
+  # mid-JSON.
+  azure/Kimi-K2.7-Code: { max_output_tokens: 16384 }
+
+# Conservative default if a model isn't in the table above.
+# Set under ``defaults`` so existing readers keep working.
+defaults_extra:
+  max_output_tokens_default: 8192

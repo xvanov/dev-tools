@@ -1,0 +1,19 @@
+# Everything under state/ is live runtime, and NOTHING here is source.
+#
+# Ignore-by-default rather than enumerating subdirectories. The root .gitignore
+# used to list them one at a time (state/logs/, state/worktrees/,
+# state/improvements/, …), which meant every NEW runtime directory arrived
+# untracked and stayed one `git add -A` away from being committed. That is how
+# `state/idle_ping/` showed up in `git status` after the idle-ping feature
+# shipped: nobody remembered to add a rule, and the rule set had no way to
+# notice.
+#
+# A denylist you must remember to extend is not a guardrail. This inverts it —
+# a new runtime path is ignored the moment it is written, with no maintenance —
+# and it matches what CLAUDE.md already promises: "state/** is runtime and
+# gitignored. Never `git add -A` here."
+#
+# If something under state/ ever genuinely needs tracking, allowlist that exact
+# path below with a `!` rule, so the exception is deliberate and reviewable.
+*
+!.gitignore

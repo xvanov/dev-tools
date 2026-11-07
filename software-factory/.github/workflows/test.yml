@@ -1,0 +1,485 @@
+name: test
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  # GitHub merge queue: re-test each PR against the ACTUAL post-merge base
+  # (main + everything ahead of it in the queue) before the merge lands. The
+  # SAME job names (lint / typecheck / pytest) run here as on pull_request, so
+  # the branch-protection required checks are real on the queue — a required
+  # check that never triggered on merge_group would silently pass the queue
+  # (the vacuous-required-check false-green). Kills "passed in isolation,
+  # broke main". The queue (like push) runs the FULL suite — the fast lane is
+  # a pull_request-only concession.
+  merge_group:
+
+permissions:
+  contents: read
+
+# ---------------------------------------------------------------------------
+# E6 (operator decision 2026-08-09): the PR-BLOCKING lane must finish in
+# under 60 seconds. Two lanes, one workflow:
+#
+#   pull_request  -> FAST lane: the suite MINUS tests/fast_lane_excludes.txt
+#                    (hand-curated capability rule: boots a server / runs a
+#                    sandbox or docker / parallelism-hostile subprocess
+#                    spawners — never "it was slow"), parallel via
+#                    pytest-xdist, no coverage. The 5-minute step timeout is
+#                    the budget backstop if a heavy file goes unclassified.
+#   push / queue  -> FULL suite with coverage (COVERAGE_CORE=sysmon), exactly
+#                    what gated every merge before E6. Runs post-merge.
+#
+# RED-BLOCKS-MERGES: STAGE 2 SHIPPED (2026-08-09). The `main-green` job below
+# reports whether main's own post-merge full lane is green. Adversarial review
+# showed the NAIVE version of this would make auto_merge's CI-failure handler
+# burn a dev run per open PR and then CLOSE every chain PR and terminally park
+# its story two ticks after main goes red. So the guard ships together with:
+#   * `auto_merge._CI_STATE_HOLD` — a red `main-green` (and ONLY `main-green`)
+#     classifies as an ENVIRONMENT HOLD: no dev dispatch, no redispatch event,
+#     no park, no PR close, no gate evaluation. The story waits.
+#   * a head-SHA-pinned query, because "newest completed run on main" lets a
+#     NEWER green run permanently mask an OLDER red one.
+#   * resume-scoped CI-fix counting, so `factory resume-story` can actually
+#     undo a park that a red environment caused.
+# STILL AN OPERATOR STEP: `main-green` is NOT a required check on main yet.
+# Making it required is a manual branch-protection change to be done AFTER this
+# merges AND the chain is redeployed (`scripts/deploy-factory-from-main.sh`) —
+# a live factory running pre-hold auto_merge code against a required
+# `main-green` is exactly the queue-destroying combination above. Until then a
+# red full lane on main must be fixed before anything else merges —
+# operator-enforced.
+#
+# Manifest guards (tests/test_fast_lane_manifest.py, runs in the fast lane):
+# stale entries fail; unlisted heavy files run slow-but-safe until the step
+# timeout forces classification.
+# ---------------------------------------------------------------------------
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Decide whether this change can skip the build/test work.
+  #
+  # WHY THIS IS A JOB AND NOT `paths-ignore`:
+  # `lint`, `typecheck` and `pytest` are REQUIRED status checks on `main`. A
+  # workflow suppressed by `paths-ignore` never reports those contexts at all,
+  # so GitHub leaves them "Expected — waiting for status" and the PR can never
+  # merge. That is the same vacuous-required-check class the `merge_group`
+  # comment above guards against, arrived at from the other direction.
+  #
+  # So the three jobs ALWAYS run and ALWAYS report. Only their expensive steps
+  # are conditional. A docs-only PR costs ~20 s of runner time instead of ~4 min
+  # and still satisfies branch protection.
+  # ---------------------------------------------------------------------------
+  changes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    outputs:
+      docs_only: ${{ steps.detect.outputs.docs_only }}
+    steps:
+      # E6: no checkout. This job sits on the critical path of every PR's
+      # required checks, and a full-history checkout made it ~15 s; the PR
+      # files API answers the same question in ~2 s. Pagination cap at 3
+      # pages (300 files) resolves to fail-safe like every other branch.
+      - id: detect
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+
+          # FAIL SAFE. Every uncertain path resolves to "run everything".
+          # A wrong `docs_only=true` is a false green on a required check —
+          # strictly worse than a slow build.
+          if [ "$EVENT_NAME" != "pull_request" ]; then
+            echo "event=$EVENT_NAME (not a PR) -> full suite"
+            echo "docs_only=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if ! CHANGED="$(gh api "repos/${REPO}/pulls/${PR}/files?per_page=100" \
+              --paginate --jq '.[].filename' 2>/dev/null | head -301)"; then
+            echo "could not list PR files -> full suite"
+            echo "docs_only=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [ -z "$CHANGED" ] || [ "$(echo "$CHANGED" | wc -l)" -gt 300 ]; then
+            echo "empty or oversized diff -> full suite"
+            echo "docs_only=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "changed files:"
+          echo "$CHANGED" | sed 's/^/  /'
+
+          # "Docs only" means EVERY changed path is a ROOT-LEVEL *.md file or
+          # lives under docs/ (prose and archives; no test reads them).
+          #
+          # Deliberately narrow beyond that, because markdown in this repo is
+          # often code:
+          #   factory/personas/*.md   are prompts, covered by contract tests
+          #                           (tests/handlers/test_prompt_contracts.py,
+          #                            tests/test_persona_loader.py)
+          #   apps/**/context/*.md    drive test_context_loader / canonical_paths
+          #   apps/**/directions/*.md drive test_direction_parser
+          # Those carve-outs must survive any future widening.
+          if echo "$CHANGED" | grep -qvE '^([^/]+\.md|docs/.+\.md)$'; then
+            echo "-> paths beyond root-markdown/docs present; full suite"
+            echo "docs_only=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "-> root-level markdown / docs/ only; skipping build/test steps"
+            echo "docs_only=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  lint:
+    needs: changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Skip notice
+        if: needs.changes.outputs.docs_only == 'true'
+        run: echo "Root-level markdown only — ruff has nothing to check."
+
+      - uses: actions/checkout@v4
+        if: needs.changes.outputs.docs_only != 'true'
+      - uses: astral-sh/setup-uv@v4
+        if: needs.changes.outputs.docs_only != 'true'
+        with:
+          enable-cache: true
+          python-version: "3.12"
+      - name: uv sync
+        if: needs.changes.outputs.docs_only != 'true'
+        run: uv sync --all-extras
+      - name: ruff check
+        if: needs.changes.outputs.docs_only != 'true'
+        run: uv run ruff check factory/ tests/ bench/
+
+  typecheck:
+    needs: changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Skip notice
+        if: needs.changes.outputs.docs_only == 'true'
+        run: echo "Root-level markdown only — no Python changed."
+
+      - uses: actions/checkout@v4
+        if: needs.changes.outputs.docs_only != 'true'
+      - uses: astral-sh/setup-uv@v4
+        if: needs.changes.outputs.docs_only != 'true'
+        with:
+          enable-cache: true
+          python-version: "3.12"
+      # E6: mypy is incremental — a warm .mypy_cache turns the package-wide
+      # run from ~40 s of re-analysis into seconds. Keyed on the lockfile
+      # (dependency stubs change the cache shape); restore-keys tolerates a
+      # stale-but-mostly-valid cache, which mypy revalidates per module.
+      - uses: actions/cache@v4
+        if: needs.changes.outputs.docs_only != 'true'
+        with:
+          path: .mypy_cache
+          key: mypy-${{ runner.os }}-${{ hashFiles('uv.lock') }}-${{ github.sha }}
+          restore-keys: |
+            mypy-${{ runner.os }}-${{ hashFiles('uv.lock') }}-
+            mypy-${{ runner.os }}-
+      - name: uv sync
+        if: needs.changes.outputs.docs_only != 'true'
+        run: uv sync --all-extras
+      # BLOCKING on the verification-truth code (factory/chain/gates/): this is
+      # the code that decides whether a PR is safe to merge, so it must not
+      # accrue type debt. The job FAILS if this subset regresses (WS1.6,
+      # 2026-07-19). The rest of factory/ carries ~85 pre-existing findings and
+      # is still surfaced as an advisory count until that debt is paid down.
+      - name: mypy (blocking on chain/gates)
+        if: needs.changes.outputs.docs_only != 'true'
+        run: uv run mypy factory/chain/gates/
+      - name: mypy (advisory, package-wide)
+        if: always() && needs.changes.outputs.docs_only != 'true'
+        run: |
+          uv run mypy factory/ > mypy.out 2>&1 || true
+          tail -3 mypy.out
+          COUNT=$(grep -c "error:" mypy.out || true)
+          echo "::warning::mypy: ${COUNT} package-wide findings (advisory — tracked debt)"
+
+  # The REQUIRED pytest contexts are the two shard legs, "pytest (1)" and
+  # "pytest (2)" — branch protection names them directly (no fan-in gate job:
+  # every jobs-graph hop costs ~10 s of runner pickup latency on the critical
+  # path). PRs get the fast lane split in two; a merge queue (if ever
+  # enabled) gets the FULL suite split the same way. Push-to-main coverage
+  # lives in `pytest-full` below. Deliberately NO `needs: changes` and no
+  # docs_only skip here: a docs-only PR just pays the ~40 s lane, which is
+  # cheaper than the hop it would take to skip it.
+  pytest:
+    if: github.event_name != 'push'
+    name: pytest (${{ matrix.shard }})
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
+    runs-on: ubuntu-latest
+    # Sized for a merge_group full-suite half; the fast-lane STEP carries its
+    # own 5-minute budget backstop.
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+          python-version: "3.12"
+
+      - name: uv sync --all-extras
+        run: uv sync --all-extras
+
+      # Deterministic halves: sorted test files, alternating by line number.
+      # The per-file wall distribution is flat (max ~8 s of ~137 s serial),
+      # so alternation splits evenly without a timing database.
+      - name: compute shard file list
+        env:
+          SHARD: ${{ matrix.shard }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT" = "pull_request" ]; then
+            # Fast lane: everything minus the hand-curated capability excludes.
+            grep -vE '^\s*(#|$)' tests/fast_lane_excludes.txt | sort > /tmp/excluded.txt
+            find tests -name "test_*.py" | sort | comm -23 - /tmp/excluded.txt > /tmp/pool.txt
+          else
+            # Merge queue: the FULL suite, split the same way.
+            find tests -name "test_*.py" | sort > /tmp/pool.txt
+          fi
+          awk -v s="$SHARD" 'NR % 2 == s % 2' /tmp/pool.txt > /tmp/shard.txt
+          echo "$(wc -l < /tmp/shard.txt) files in shard $SHARD"
+
+      # -------- FAST LANE: pull_request only ---------------------------------
+      # Capability rule (tests/fast_lane_excludes.txt): server boots /
+      # sandboxes / docker / bulk subprocess spawners run post-merge. No
+      # coverage. xdist loadfile keeps file-scoped fixtures on one worker.
+      # The manifest guard (tests/test_fast_lane_manifest.py) runs IN this
+      # lane, so a rotten manifest fails the PR that rotted it. The 5-minute
+      # step timeout is the budget backstop: an unclassified heavy file makes
+      # the lane loudly slow, never silently unguarded.
+      - name: pytest (fast lane — PR-blocking)
+        if: github.event_name == 'pull_request'
+        timeout-minutes: 5
+        run: uv run pytest -q --tb=short -n 4 --dist loadfile $(tr '\n' ' ' < /tmp/shard.txt)
+
+      # -------- MERGE QUEUE: full suite, no coverage --------------------------
+      - name: pytest (full suite — merge queue)
+        if: github.event_name == 'merge_group'
+        run: uv run pytest -q --tb=short $(tr '\n' ' ' < /tmp/shard.txt)
+
+  # ---------------------------------------------------------------------------
+  # E6 STAGE 2 — RED MAIN BLOCKS MERGES.
+  #
+  # The full suite runs POST-merge (`pytest-full`), so the PR-blocking lane can
+  # be fast. That trade is only safe if a red full lane on main STOPS the line;
+  # otherwise breakage compounds behind a green fast lane. This job is that
+  # stop: it reports main's own full-lane verdict as a check on every PR.
+  #
+  # WHAT IT ACTUALLY BOUNDS. This runs on `pull_request`, and GitHub does NOT
+  # re-run pull_request checks when the BASE branch moves — the verdict is
+  # computed at open/synchronize and then FROZEN on that head SHA. So a red main
+  # holds PRs opened or pushed-to AFTER main went red; PRs already open keep the
+  # green they were computed with. It bounds NEW work entering the queue, not
+  # work already in it. The same freeze is why a hold does not self-clear when
+  # main goes green — see ACTIVATION CHECKLIST (b).
+  #
+  # SOUNDNESS — pin to main's CURRENT head SHA. The obvious query ("the most
+  # recent completed push run on main") is UNSOUND: any newer green run
+  # permanently masks an older red one, so a broken main goes green the moment
+  # a docs commit lands on top of it. We resolve main's head SHA first and ask
+  # for THAT SHA's run.
+  #
+  # DOCUMENTED COMPROMISE — a just-merged SHA has an IN-PROGRESS run, not a
+  # completed one, so with no completed run for main's head we fall back to the
+  # most recent COMPLETED push run of this workflow, whatever its SHA. Do not
+  # read that as "a brief window after each merge": `pytest-full` is SERIALIZED
+  # (`concurrency: pytest-full-main`, cancel-in-progress false), so under
+  # back-to-back merges the fallback is the STEADY STATE, and the verdict it
+  # returns reaches back as far as the full-lane queue is backed up. That is
+  # exactly the staleness the pre-E6 world already had (main's last known
+  # verdict). It is a compromise, not a hole — the fallback still FAILS on a red
+  # verdict, so a red main is never reported green, only reported late.
+  #
+  # RENAME-PROOF — the workflow is resolved by NAME (`github.workflow`) through
+  # the workflows list, then queried by the numeric id. Resolving by filename
+  # would silently stop matching the day someone renames test.yml, and a query
+  # that matches nothing must never read as "green".
+  #
+  # FAIL-SAFE — 3 attempts on any API error, then FAIL. Every uncertain path
+  # here resolves to a red check, never a green one.
+  #
+  # PR-ONLY on purpose: on `push` this would ask about the commit that is
+  # currently being tested, and on `merge_group` a PR-only job never reports at
+  # all. NOTE for whoever enables the merge queue: making `main-green` required
+  # while it cannot run on `merge_group` would wedge the queue on a vacuous
+  # required check — give it a merge_group leg first.
+  #
+  # ACTIVATION CHECKLIST — status as of 2026-08-10: (a) and (b) are
+  # IMPLEMENTED in `factory/chain/auto_merge.py` (`_handle_main_green_hold` /
+  # `_continue_hold_episode`); (c) stays ACCEPTED. Making `main-green` a
+  # required status check on `main` is a MANUAL operator step in branch
+  # protection; the remaining precondition is 0:
+  #
+  #   0. That code is MERGED and the factory is redeployed from main
+  #      (`scripts/deploy-factory-from-main.sh`). The live chain needs
+  #      `auto_merge._CI_STATE_HOLD` before a red `main-green` can appear on its
+  #      PRs, or the pre-hold code closes those PRs and terminally parks their
+  #      stories two ticks later. Deploy first, protect second.
+  #   a. THE HOLD IS BOUNDED — DONE 2026-08-10. A hold episode older than 30
+  #      minutes sets `last_rejection_reason` (`ci_hold_main_red:` prefix, once
+  #      per episode) so the story reaches `factory inbox`. It does NOT park
+  #      the story or close the PR — the PR is innocent.
+  #   b. A RECOVERY TRIGGER EXISTS — DONE 2026-08-10. When main's HEAD moves
+  #      during a hold, the chain re-runs the held PR's failed `main-green` run
+  #      (`gh run rerun --failed`), at most once per new main commit
+  #      (`ci_hold_rerun` events carry the sha and are the dedupe). Runbook
+  #      backstop: after fixing main, re-run checks on every open PR.
+  #   c. THE `.github/**` SELF-EDIT GAP IS ACCEPTED IN WRITING. A chain PR that
+  #      touches ONLY `.github/**` does not trip the factory self-edit staging
+  #      twin, so no clone is run before it lands. Such a PR could rename a job
+  #      to `main-green` and thereby convert its OWN genuine CI failure into an
+  #      eternal hold — the one shape in which the hold suppresses a real red.
+  #      ACCEPTED FOR NOW, recorded rather than mitigated. Closing it means
+  #      staging-gating `.github/**` or deriving the hold's check name from
+  #      something a PR cannot rewrite.
+  # ---------------------------------------------------------------------------
+  main-green:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - name: main's full lane must be green
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          WF_NAME: ${{ github.workflow }}
+        run: |
+          set -euo pipefail
+
+          # 3 attempts, then a non-zero return the caller turns into a FAILED
+          # check. Never a silent empty answer — an empty answer downstream
+          # would look like "no red run found", i.e. green.
+          api() {
+            local path="$1" out
+            for attempt in 1 2 3; do
+              if out="$(gh api "$path" 2>/tmp/gh_api.err)"; then
+                printf '%s' "$out"
+                return 0
+              fi
+              echo "::warning::gh api failed (attempt ${attempt}/3): $path" >&2
+              sed 's/^/    /' /tmp/gh_api.err >&2 || true
+              sleep $(( attempt * 5 ))
+            done
+            return 1
+          }
+
+          fail() { echo "::error::$1"; exit 1; }
+
+          # --- 1. this workflow's numeric id, resolved by NAME ---------------
+          if ! WORKFLOWS="$(api "repos/${REPO}/actions/workflows?per_page=100")"; then
+            fail "could not list workflows for ${REPO} after 3 attempts (fail-safe)."
+          fi
+          WF_ID="$(echo "$WORKFLOWS" | jq -r --arg n "$WF_NAME" \
+            '[.workflows[] | select(.name == $n) | .id] | first // empty')"
+          if [ -z "$WF_ID" ]; then
+            fail "no workflow named '${WF_NAME}' in ${REPO} (fail-safe)."
+          fi
+          echo "workflow '${WF_NAME}' -> id ${WF_ID}"
+
+          # --- 2. main's CURRENT head sha -----------------------------------
+          if ! MAIN_COMMIT="$(api "repos/${REPO}/commits/main")"; then
+            fail "could not resolve main's head sha after 3 attempts (fail-safe)."
+          fi
+          MAIN_SHA="$(echo "$MAIN_COMMIT" | jq -r '.sha // empty')"
+          if [ -z "$MAIN_SHA" ]; then
+            fail "main's head sha came back empty (fail-safe)."
+          fi
+          echo "main head sha: ${MAIN_SHA}"
+
+          # --- 3. that SHA's completed push run ------------------------------
+          if ! PINNED="$(api "repos/${REPO}/actions/workflows/${WF_ID}/runs?head_sha=${MAIN_SHA}&event=push&status=completed&per_page=100")"; then
+            fail "could not query runs for ${MAIN_SHA} after 3 attempts (fail-safe)."
+          fi
+          RUN="$(echo "$PINNED" | jq -c '.workflow_runs | sort_by(.run_started_at) | last // empty')"
+          SOURCE="main head ${MAIN_SHA}"
+
+          # --- 4. fallback: most recent COMPLETED push run, any sha ----------
+          if [ -z "$RUN" ]; then
+            echo "no COMPLETED push run for ${MAIN_SHA} yet (its run is probably still in progress)."
+            echo "falling back to main's most recent completed verdict — the same staleness"
+            echo "the pre-E6 world had. A red fallback still fails this check."
+            if ! LATEST="$(api "repos/${REPO}/actions/workflows/${WF_ID}/runs?branch=main&event=push&status=completed&per_page=1")"; then
+              fail "could not query main's most recent completed run after 3 attempts (fail-safe)."
+            fi
+            RUN="$(echo "$LATEST" | jq -c '.workflow_runs[0] // empty')"
+            SOURCE="most recent completed push run (fallback)"
+          fi
+
+          if [ -z "$RUN" ]; then
+            fail "no completed push run for '${WF_NAME}' on main at all — cannot establish that main is green (fail-safe)."
+          fi
+
+          CONCLUSION="$(echo "$RUN" | jq -r '.conclusion // "unknown"')"
+          RUN_URL="$(echo "$RUN" | jq -r '.html_url // "(no url)"')"
+          RUN_SHA="$(echo "$RUN" | jq -r '.head_sha // "(no sha)"')"
+          echo "verdict source: ${SOURCE}"
+          echo "run ${RUN_URL} (sha ${RUN_SHA}) -> ${CONCLUSION}"
+
+          if [ "$CONCLUSION" != "success" ]; then
+            fail "main's full lane is ${CONCLUSION} at ${RUN_SHA} — ${RUN_URL}. This PR is HELD, not rejected: nothing is wrong with it. Fix main first."
+          fi
+          echo "main is green."
+
+  # -------- FULL LANE: push to main (post-merge) ------------------------------
+  # Everything, exactly as before E6, plus COVERAGE_CORE=sysmon (Python 3.12 +
+  # coverage >= 7.4): sys.monitoring instead of the classic trace function —
+  # same numbers, far less overhead. Not a required PR context; the interim
+  # rule (red main outranks everything) and the stage-2 main-green guard are
+  # what make this a gate.
+  pytest-full:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    # Serialize full-lane runs. E6 made back-to-back merges cheap, so
+    # post-merge full lanes now overlap — and every run's badge step pushes to
+    # the SAME python-coverage-comment-action-data branch, where the loser of
+    # the non-fast-forward race fails the whole job (observed first day out:
+    # three merges, three concurrent runs, e5374ec4's run red with a GREEN
+    # test step). cancel-in-progress stays false: every merged SHA must get
+    # its own full-suite verdict — cancelling one is a silent coverage gap.
+    concurrency:
+      group: pytest-full-main
+      cancel-in-progress: false
+    permissions:
+      # python-coverage-comment-action stores badge data on a repo branch
+      # (push to main).
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+          python-version: "3.12"
+      - name: uv sync --all-extras
+        run: uv sync --all-extras
+      - name: pytest with coverage (full lane)
+        env:
+          COVERAGE_CORE: sysmon
+        run: uv run pytest -q --tb=short --cov=factory --cov-report=
+      - name: Coverage comment + badge
+        uses: py-cov-action/python-coverage-comment-action@v3
+        with:
+          GITHUB_TOKEN: ${{ github.token }}
+          MINIMUM_GREEN: 80
+          MINIMUM_ORANGE: 60

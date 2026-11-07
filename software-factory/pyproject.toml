@@ -1,0 +1,106 @@
+[project]
+name = "software-factory"
+version = "0.0.1"
+description = "Factory orchestrator: per-persona, TDD-gated, context-aware code generation."
+requires-python = ">=3.12,<3.14"
+readme = "README.md"
+license = { text = "Proprietary" }
+authors = [{ name = "Kalin Ivanov" }]
+
+dependencies = [
+  "openhands-sdk==1.22.1",
+  "openhands-agent-server==1.22.1",
+  "openhands-tools==1.22.1",
+  "litellm>=1.83.14",
+  "pygithub>=2.5",
+  "typer>=0.12",
+  "pyyaml>=6",
+  "sqlmodel>=0.0.22",
+  "httpx>=0.27",
+  "python-frontmatter>=1",
+  "python-dotenv>=1",
+  "rich>=13",
+  "pydantic>=2",
+  "fastapi>=0.115",
+  "uvicorn>=0.30",
+  "croniter>=2",
+  "textual>=0.79",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8",
+  "pytest-asyncio>=0.23",
+  "pytest-cov>=5",
+  # E6: the PR-blocking fast lane runs the CPU-light majority of the suite in
+  # parallel (-n auto --dist loadfile). loadfile keeps same-file tests on one
+  # worker so file-scoped fixtures never split across processes.
+  "pytest-xdist>=3.5",
+  "ruff>=0.6",
+  "mypy>=1.10",
+  "types-PyYAML>=6",
+  # The EARS-triggered property-mode acceptance test generation (WS4.3) was
+  # deleted 2026-08-07 (019 AC5, factory/chain/ears.py). Kept as a generic dev
+  # extra: the acceptance oracle's harness resolution (see
+  # factory/chain/gates/acceptance_verified.py) must not ModuleNotFoundError if
+  # an author still chooses to hand-write a Hypothesis property test for a
+  # story, and apps that opt into their own property-mode acceptance carry
+  # hypothesis in the env their acceptance_test_command runs in.
+  "hypothesis>=6",
+]
+
+[project.scripts]
+factory = "factory.cli:app"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["factory"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W", "UP", "B"]
+ignore = ["E501", "B008"]  # E501 line length handled by formatter; B008 OK for Typer Option defaults
+
+[tool.ruff.format]
+quote-style = "double"
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_unused_ignores = true
+ignore_missing_imports = false
+exclude = ["tests/"]
+
+[[tool.mypy.overrides]]
+module = [
+  "openhands.*",
+  "litellm",
+  "litellm.*",
+  "frontmatter",
+  "github",
+  "github.*",
+  "fastapi",
+  "fastapi.*",
+  "uvicorn",
+  "uvicorn.*",
+  "croniter",
+  "croniter.*",
+]
+ignore_missing_imports = true
+follow_imports = "silent"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.coverage.run]
+# Required by python-coverage-comment-action: its container re-reads the
+# .coverage db from a different absolute root, so paths must be relative.
+relative_files = true
