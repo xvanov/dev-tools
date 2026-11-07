@@ -365,6 +365,19 @@ async function handle(req, res) {
     m = url.pathname.match(/^\/api\/sessions\/(\d+)\/open$/);
     if (m) return send(res, 200, await require('./cards').openSession(Number(m[1])));
 
+    // The board's "+ task" box: a task because you typed it (src/commitments/request.js).
+    if (url.pathname === '/api/tasks') {
+      const request = require('../commitments/request');
+      const str = (v) => (typeof v === 'string' ? v : null);
+      try {
+        const r = await request.add({ text: str(body.text), due: str(body.due), for: str(body.for), owedToMe: body.owedToMe === true, via: 'board' });
+        return send(res, 200, { ok: true, id: r.id, text: request.describe(r) });
+      } catch (err) {
+        if (err.status === 400) return send(res, 400, { error: err.message });
+        throw err;
+      }
+    }
+
     m = url.pathname.match(/^\/api\/commitments\/(\d+)\/status$/);
     if (m) {
       const { setStatus } = require('../commitments');

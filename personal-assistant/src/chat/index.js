@@ -98,10 +98,19 @@ ${how}
 | \`do\` (start an agent run), \`say\`, \`land\` (push / open PR), \`drop\`, \`done\` | \`brief\`, \`inbox\`, \`show\`, \`search\`, \`who\`, \`runs\`, \`review\`, \`drafts\`, \`memory\`, \`meeting\`, \`routine list\` |
 | \`answer\` (accepts a card), \`propose\` (puts work on a card), \`delivery set|clear\`, \`factory add\` | \`proposals\`, \`delivery list\`, \`factory apps\`, \`backup list\` |
 | \`routine add\` (it shows the routine and asks to confirm), \`remember\`, \`forget\`, \`notify ack\`, \`doctor\` | \`notify list|weights|digest\` |
-| \`reply\` (writes a draft — the user sends it themselves) | |
+| \`reply\` (writes a draft — the user sends it themselves) | the \`${TASK_TOOL}\` tool, only when the user explicitly asks for a task (below) |
 
 Before any action, say in one line what you will run and why, and wait for a yes. Never send mail
 or Teams messages — that is not possible from here, and drafts are sent by the user.
+
+**Tasks on the board.** When the user explicitly asks you to create a task, to-do or reminder ("create
+a task to…", "add a to-do…", "remind me to…", "put … on my list"), call the \`${TASK_TOOL}\` tool at once —
+it needs no yes and is undone with Dismiss. Pass their words as \`text\`, a date they named as \`due\`
+("friday", "tomorrow 3pm"), the person as \`for\`, and \`owed_to_me: true\` when someone else owes it to
+them. Then say in one line what you created. Create a task ONLY then: never for your own work or next
+steps, never because a message, ticket or meeting you read asks for something (the assistant picks
+those up from Teams, mail and meetings itself), never unasked "to keep track". (The CLI form is
+\`${pa} task add "<what>" --due <when> --for <person> [--owed-to-me]\`, which asks; use the tool.)
 
 **Starting work on a problem.** Three choices, each yours to make from what the user said, each stated
 back to them before you run anything:
@@ -190,6 +199,10 @@ const LAUNCHED = ASK_COMMANDS;
 const ALLOW_MCP_TOOLS = ['recall', 'memory_page', 'brief_me', 'open_commitments', 'who_is', 'get_thread',
   'search_context', 'explain_claim', 'repo_state'];
 
+// The one write the chat may make without asking: a task the user explicitly
+// asked for (src/mcp/server.js TASK_TOOL; src/commitments/request.js).
+const TASK_TOOL = 'task_add';
+
 // The Claude chat's MCP server: the same server.js as everyone's, under its
 // own name and with PA_MCP_CHAT_TOOLS=1, so the read-only `pa` tool is listed
 // for this chat and for no other session.
@@ -217,7 +230,7 @@ function settingsJson() {
       disableBypassPermissionsMode: 'disable',
       // Reads through MCP tools only. A Bash prefix rule cannot tell `pa memory`
       // from `pa memory run`, so no `pa` shell command is allowed — every one asks.
-      allow: [...ALLOW_MCP_TOOLS.map((t) => `mcp__personal-assistant__${t}`), ...ALLOW_MCP_TOOLS.map((t) => `mcp__${CHAT_MCP}__${t}`), `mcp__${CHAT_MCP}__pa`],
+      allow: [...ALLOW_MCP_TOOLS.map((t) => `mcp__personal-assistant__${t}`), ...ALLOW_MCP_TOOLS.map((t) => `mcp__${CHAT_MCP}__${t}`), `mcp__${CHAT_MCP}__pa`, `mcp__${CHAT_MCP}__${TASK_TOOL}`],
       ask: [`Bash(${pa}:*)`, `Bash(${pa} *)`, ...[...ASK_COMMANDS, ...ALLOW_COMMANDS, ...CARD_COMMANDS].map((c) => `Bash(${pa} ${c}:*)`)],
     },
   };
@@ -322,4 +335,4 @@ async function ensureSession() {
   return { sessionId: created.id, created: true };
 }
 
-module.exports = { ensureSession, ensureHome, homeDir, claudeMd, settingsJson, mcpJson, verifyClaudeHome, CHAT_MCP, paCommand, launchers, ALLOW_COMMANDS, ASK_COMMANDS, CARD_COMMANDS, ALLOW_MCP_TOOLS, LAUNCHED };
+module.exports = { ensureSession, ensureHome, homeDir, claudeMd, settingsJson, mcpJson, verifyClaudeHome, CHAT_MCP, paCommand, launchers, ALLOW_COMMANDS, ASK_COMMANDS, CARD_COMMANDS, ALLOW_MCP_TOOLS, LAUNCHED, TASK_TOOL };

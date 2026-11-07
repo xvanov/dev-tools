@@ -22,6 +22,7 @@ const { logger } = require('../log');
 const keep = require('./keep');
 const githubGate = require('./githubGate');
 const lists = require('./lists');
+const policy = require('../commitments/sourcePolicy');
 
 const log = logger('distill');
 
@@ -34,12 +35,19 @@ const MAX_BODY_CHARS = 24_000;
 // meeting. Extracting it twice would put every to-do on the list twice.
 const DEBRIEF_OWNED = `(si.source = 'audio' and coalesce(si.raw->>'kind', '') in ('meeting','call'))`;
 
+// Only sources that may create tasks are read at all (src/commitments/
+// sourcePolicy.js): a Claude session or any other excluded item never reaches
+// the model. Memory extraction and search read them on their own passes.
+function sourceAllowed() {
+  return policy.sourceSql('si.source', policy.distillSources());
+}
+
 async function pending(limit = 25) {
   return rows(
     `select si.* from source_item si
        left join distillation d
          on d.source_item_id = si.id and d.extracted_by = $1
-      where d.source_item_id is null and not ${DEBRIEF_OWNED}
+      where d.source_item_id is null and not ${DEBRIEF_OWNED} and ${sourceAllowed()}
         and length(si.body_text) >= $2
       order by si.occurred_at desc
       limit $3`,
@@ -52,7 +60,7 @@ async function pendingCount() {
     `select count(*)::int as n from source_item si
        left join distillation d
          on d.source_item_id = si.id and d.extracted_by = $1
-      where d.source_item_id is null and not ${DEBRIEF_OWNED} and length(si.body_text) >= $2`,
+      where d.source_item_id is null and not ${DEBRIEF_OWNED} and ${sourceAllowed()} and length(si.body_text) >= $2`,
     [PROMPT_VERSION, MIN_BODY_CHARS]
   );
   return r?.n ?? 0;
@@ -219,8 +227,22 @@ async function resolveReferences(item, result, candidates) {
 }
 
 async function distillOne(item, cached) {
-  const candidates = cached?.candidates || (await projects.candidates());
+  // Within an allowed source, only a person asking creates tasks: a bot's
+  // comment, an automated mail or your own GitHub activity is marked done
+  // without a model call (sourcePolicy.judge).
   const meRow = cached?.me || (await identity.me());
+  const login = cached && 'githubLogin' in cached ? cached.githubLogin : await identity.myHandle('github_username');
+  const verdict = policy.judge(item, {
+    sources: policy.distillSources(),
+    login,
+    me: { name: meRow?.display_name, email: meRow?.primary_email },
+  });
+  if (!verdict.ok) {
+    await markSkipped(item.id);
+    log.debug('not from a person — skipped', { id: item.id, source: item.source, why: verdict.why });
+    return { id: item.id, commitments: 0, facts: 0, skipped: verdict.why };
+  }
+  const candidates = cached?.candidates || (await projects.candidates());
   const meLabel = meRow ? `${meRow.display_name} <${meRow.primary_email || 'unknown'}>` : null;
 
   const ranked = candidates.length
@@ -240,7 +262,6 @@ async function distillOne(item, cached) {
     // are on the item (author, assignee, named reviewer, @mention), not left
     // to the model: a team's review queue or a PR's planned follow-up is not
     // yours (githubGate.js).
-    const login = cached && 'githubLogin' in cached ? cached.githubLogin : await identity.myHandle('github_username');
     const g = githubGate.gate(item, result.commitments, { login });
     if (g.dropped.length || g.moved.length) {
       log.info('github gate', { id: item.id, dropped: g.dropped.length, moved: g.moved.length });
@@ -281,18 +302,31 @@ async function run({ limit = 25 } = {}) {
   let commitments = 0;
   let facts = 0;
   let errors = 0;
+  let skipped = 0;
 
   for (const item of items) {
     const r = await distillOne(item, cached);
     if (r.error) errors++;
+    else if (r.skipped) skipped++;
     else {
       commitments += r.commitments;
       facts += r.facts;
     }
   }
 
-  log.info('distilled', { processed: items.length, commitments, facts, errors });
-  return { processed: items.length, commitments, facts, errors };
+  log.info('distilled', { processed: items.length, commitments, facts, errors, skipped });
+  return { processed: items.length, commitments, facts, errors, skipped };
+}
+
+// An item the source policy keeps off the board: marked distilled with
+// nothing found, so it is not fetched again. Its earlier commitments, if any,
+// are left alone (`pa policy close` handles those, reversibly).
+async function markSkipped(itemId) {
+  await query(
+    `insert into distillation (source_item_id, extracted_by, commitments, facts) values ($1, $2, 0, 0)
+     on conflict (source_item_id) do update set extracted_by = excluded.extracted_by, extracted_at = now(), error = null`,
+    [itemId, PROMPT_VERSION]
+  );
 }
 
 // Marks an item the debrief owns as distilled, so a worker still running code

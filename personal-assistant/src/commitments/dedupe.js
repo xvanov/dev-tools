@@ -24,6 +24,7 @@ const { rows, query } = require('../db');
 const { embed } = require('../search');
 const { logger } = require('../log');
 const S = require('./semantic');
+const policy = require('./sourcePolicy');
 
 const log = logger('dedupe');
 
@@ -54,13 +55,18 @@ const ACTED = (a) => `(${a}.status = 'dispatched' or ${a}.touched_at is not null
 
 const LIVE = `c.status in ('open','dispatched') and c.superseded_by is null`;
 
+// Only commitments from sources that may create tasks are paired: a card kept
+// from an excluded source (one you acted on) is neither a duplicate nor a
+// keeper for one (src/commitments/sourcePolicy.js).
+const POLICY = () => policy.sourceSql('si.source');
+
 /** Embeds open commitments that have no vector yet. Returns {embedded, usd}. */
 async function embedPending({ limit = 200 } = {}) {
   const todo = await rows(
     `select c.id, c.summary, c.detail, si.thread_external_id
        from commitment c join source_item si on si.id = c.source_item_id
        left join commitment_vector v on v.commitment_id = c.id
-      where v.commitment_id is null and ${LIVE}
+      where v.commitment_id is null and ${LIVE} and ${POLICY()}
         and c.extracted_at > now() - make_interval(days => $2)
       order by c.extracted_at desc limit $1`,
     [limit, WINDOW_DAYS]
@@ -111,7 +117,7 @@ async function loadPool() {
        join commitment_vector v on v.commitment_id = c.id
        join source_item si on si.id = c.source_item_id
        left join person p on p.id = c.counterparty_person_id
-      where ${LIVE} and c.extracted_at > now() - make_interval(days => $1)
+      where ${LIVE} and ${POLICY()} and c.extracted_at > now() - make_interval(days => $1)
       order by c.id`,
     [WINDOW_DAYS]
   );

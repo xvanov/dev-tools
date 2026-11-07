@@ -97,7 +97,8 @@ It is started *without* `--dangerously-skip-permissions` and *with* `--permissio
 reads only through MCP tools: the read MCP tools, and the read-only `pa` verbs as the MCP tool `pa`
 (server `pa-chat`, `--mcp-config pa-home/pa-chat.mcp.json`, `PA_MCP_CHAT_TOOLS=1`). No `pa` shell
 command is allowed — a Bash prefix rule cannot tell `pa memory` from `pa memory run` — so every one,
-`pa propose` included, asks. Its CLAUDE.md is rewritten from code on every start — change it in
+`pa propose` included, asks. The one write it makes without asking is the chat-only MCP tool `task_add`
+(a task the user explicitly asked for; reversible). Its CLAUDE.md is rewritten from code on every start — change it in
 `src/chat/index.js`, not on disk; the user's own additions go in `CLAUDE.local.md`. The chat may run
 on opencode instead (`PA_CHAT_AGENT`, `src/chat/agent.js`) only under the same guarantee, enforced
 differently because opencode parses a command line its own way and every bash allow-pattern was a
@@ -210,6 +211,18 @@ owner is not the user, or whose ref was not in the prompt. Every write is record
 `meeting_debrief.applied` with the columns it replaced, and undo restores them (unless someone
 changed them since). It never writes to a PR or ticket; news about one is a claim. The generic
 distiller skips meeting and call recordings (`DEBRIEF_OWNED`) so nothing is extracted twice.
+
+**Only people create tasks.** A commitment comes from what a person said or did — Teams, mail,
+meetings, a person on GitHub or Jira asking the user — or from the user asking for one (`pa task add`,
+the PA chat's `task_add`, the board's + task; source `pa_request`, `src/commitments/request.js`). Never
+from the assistant's own work: Claude and Cursor sessions (the PA chat's included), bots, automated
+mail, CI, team queues and the user's own GitHub activity are evidence only.
+`src/commitments/sourcePolicy.js` decides it in code before the model is called — `sourceSql` in
+`distill.pending` (and `dedupe`), `judge` per item in `distillOne` — and `PA_COMMITMENT_SOURCES`
+configures the sources. A new commitment writer goes through the same check, and a new source is
+excluded until it is added there. No agent may create a task about its own next step; the PA chat's
+`task_add` (the one write it makes without a prompt) is listed only for the chat (`PA_MCP_CHAT_TOOLS`)
+and is to be used only on the user's explicit request.
 
 **GitHub puts work on you only where GitHub names you.** `src/distill/githubGate.js` runs on the
 distiller's answer for every GitHub item: no commitment at all from an item you are not personally

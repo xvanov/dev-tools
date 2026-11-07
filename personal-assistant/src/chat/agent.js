@@ -118,6 +118,8 @@ function opencodeRules() {
   };
   for (const t of chat.ALLOW_MCP_TOOLS) rules[`personal-assistant_${t}`] = 'allow';
   rules[`personal-assistant_${PA_TOOL}`] = 'allow';
+  // A task the user explicitly asked for: reversible, and the tool says when (src/mcp/server.js).
+  rules[`personal-assistant_${chat.TASK_TOOL}`] = 'allow';
   return rules;
 }
 

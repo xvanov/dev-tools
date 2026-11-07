@@ -252,6 +252,14 @@ const config = {
   // commitments compared by embedding and anchors with every open one of the
   // last 60 days, confirmed by a cheap model in batches. Discretionary spend
   // (PA_BUDGET_DISCRETIONARY lists `dedupe`).
+  // Which sources may create commitments (src/commitments/sourcePolicy.js):
+  // groups (teams, mail, meetings, github, jira, requests, sessions) or source
+  // names, `-name` to take one out. Claude sessions are not in the default:
+  // the assistant's own work is evidence, never a task.
+  commitments: {
+    sources: env('PA_COMMITMENT_SOURCES', 'default'),
+  },
+
   dedupe: {
     enabled: env('PA_DEDUPE', '1') !== '0',
     model: modelEnv('PA_DEDUPE_MODEL', 'azure/pa'),

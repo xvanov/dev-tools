@@ -298,11 +298,39 @@ point plus one for the whole list. Three things keep that to one card:
 - *The card*: a card with folded duplicates shows **also mentioned in:** with a link to every other
   place they were said (`links.alsoLinks`), so folding loses no thread.
 
+**Only people put tasks on the board** (`src/commitments/sourcePolicy.js`). A card comes from what
+people say to you — Teams chats and channels, mail, meeting recordings and invites — from a person on
+GitHub or Jira asking you for something (a review requested of you by name, an @mention, a reviewer's
+comment on your PR, an issue or board card assigned to you), or from you asking for one (below). Your
+Claude and Cursor sessions — including the PA chat's own — never create cards: the assistant's own
+work and its handoff steps are not tasks. They are still ingested: the reconciler closes cards with
+them, and memory and search read them. Within an allowed source only a person counts: mail and chat
+from automated senders (`m365.isAutomated`), GitHub bots (`[bot]` logins, CodeRabbit, Snyk, dependabot,
+CI), Jira automation, team review queues, CI and state changes, and your own GitHub activity create
+nothing. The check runs before the model: excluded items are never sent to the distiller (in the week
+before the rule, ~86% of distilled items — almost all GitHub team-review notifications and Claude
+sessions — and most of the distill spend). `PA_COMMITMENT_SOURCES` sets the sources, as groups (`teams`,
+`mail`, `meetings`, `github`, `jira`, `requests`, `sessions`) or source names, `-name` to take one out
+(`default,-github`); `pa policy` prints what it resolves to, and `pa doctor` shows it. The duplicate pass
+pairs only commitments from allowed sources. `pa policy close` lists the open cards the policy would not
+have created, grouped by source; `--apply` drops them through the ledger (actor `reconciler`, reason
+"not from a person — source policy: …", so they are under **Closed recently** with **Reopen**), keeps
+and lists any you acted on (a run, a draft, your edit or status change), unfolds an allowed-source ask
+that was folded under one, and writes undo SQL to `<dataDir>/fixes/`.
+
+**A task because you said so.** `pa task add "<what>" [--due friday|tomorrow 3pm|2d|2026-11-20]
+[--for <person>] [--owed-to-me] [--project <name>]` puts it on the board at once (`src/commitments/request.js`;
+source `pa_request`, never distilled). `--for` names who it is for — or, with `--owed-to-me`, who owes it
+to you; a name that matches exactly one person links them, anything else is kept as text. Telling the PA
+chat "create a task to…" does the same through its `task_add` tool, which needs no permission prompt
+(it is reversible: **Dismiss**) and which the chat is told to use only when you explicitly ask — never for
+its own work or for something a message asked. The board has the same as a **+ task** box on **On me**.
+
 **Notes from your Claude sessions & PRs** (folded) holds what the distiller read from your own Claude
-sessions and your own PRs — agent handoffs like "verify the banner in a browser before merge" —
-apart from **On me**, which is what people asked of you or you promised them; a note that gets a
-question or a looks-done proposal moves to **On me** while it does. They are grouped one per PR or
-session, close when their PR merges or closes, and expire after a week nobody touched them
+sessions and your own PRs before the rule above — agent handoffs like "verify the banner in a browser
+before merge" — apart from **On me**; a note that gets a question or a looks-done proposal moves to
+**On me** while it does. No new ones are created. They are grouped one per PR or session, close when
+their PR merges or closes, and expire after a week nobody touched them
 (`src/commitments/selfNotes.js`; reopening or correcting one counts as touching it). Asks from
 people never expire. A GitHub issue someone else filed through your account is still their ask.
 Auto-drafted replies are never written for an ask that was your own message, and one already
@@ -453,6 +481,8 @@ pa search <words>               hybrid search over everything captured
 pa who Sam                      identities, threads, open commitments
 
 pa done 42 [--dismiss|--reopen] close a commitment yourself
+pa task add "Send the deck" --due friday --for Sam   a task because you asked for it
+pa policy [close [--apply]]     which sources create tasks; close cards the policy would not have made
 pa ledger 42                    every status change of #42, who made it and why
 pa ledger reconcile --dry-run   what the reconciler would close now (--id 1,2 to aim it)
 pa ledger looks-done            closes waiting for you; answer with <id> --yes|--no
@@ -1113,7 +1143,9 @@ whose SessionStart hook loads `pa context` — your profile, today's brief, what
 at every start, resume and compaction, so a long-running chat stays current without carrying
 history. It answers through the MCP tools (`recall`, `memory_page`, …) and acts through the `pa`
 CLI: read-only commands run freely; starting a run (`pa do`), landing, steering, closing,
-remembering and adding routines each ask you first. Put your own standing instructions in
+remembering and adding routines each ask you first. One write needs no prompt: when you tell it
+"create a task…" it adds one with its `task_add` tool (the same code as `pa task add`; Dismiss undoes
+it) — and only then, never for its own work. Put your own standing instructions in
 `pa-home\CLAUDE.local.md`.
 
 **Claude Code or opencode.** `PA_CHAT_AGENT=opencode` runs the chat in
@@ -1429,6 +1461,8 @@ src/meetings/        pre-meeting briefs: classify, gather evidence, learn from t
 src/commitments/     closing chat and mail asks you answered yourself (replyClose.js, pure half in replyCloseCore.js);
                      the cause-and-effect paragraph on cards (context.js, pure half in contextCore.js);
                      the cross-thread duplicate pass (dedupe.js, pure half in semantic.js)
+                     which sources may create tasks (sourcePolicy.js) and closing what it would not have made (policyClose.js);
+                     tasks you ask for (request.js: pa task add, the chat's task_add, the board's + task)
 src/dashboard/       the loopback web page: today, next meeting, replies, runs, secret requests, and the Memory, Chat, Routines and Repos tabs;
                      each card's links to its source, person, repo and session (links.js pure, cards.js);
                      /talk, the voice page (talk.html + talk.page.js; talk.core.js pure; talk.voice.js its onnxruntime-web models and Kokoro playback;

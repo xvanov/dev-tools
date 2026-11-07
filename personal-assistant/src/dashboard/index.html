@@ -283,12 +283,13 @@
   <section id="drafts" hidden><h2 title="Replies the assistant drafted. Send opens them, written, in Teams or Outlook; you press Send there.">Replies to send<span class="n"></span></h2><div class="list"></div></section>
   <section id="onme"><h2>On me<span class="n"></span></h2>
     <p class="hint">Everything that needs you, once each: asks to do, offers to start, questions to answer — and, at the bottom, things that look done for you to confirm.</p>
+    <form class="row" id="addtask" title="A task because you say so. Others come from what people say in Teams, mail and meetings."><input type="text" name="text" maxlength="500" placeholder="+ task — what?" aria-label="New task"><input type="text" name="due" maxlength="60" placeholder="due (friday, tomorrow 3pm)" aria-label="Due" style="flex:0 1 13em"><button type="submit">Add</button></form>
     <div class="list"></div></section>
   <section id="waiting"><h2 title="What people owe you. A card asking when to follow up has a default: leave it and it follows up then.">Waiting on others<span class="n"></span></h2><div class="list"></div></section>
   <section id="runs" hidden><h2>Agent runs<span class="n"></span></h2><div class="list"></div></section>
   <div class="folds">
     <section id="selfnotes"><details data-fold="selfnotes"><summary><h2>Notes from your Claude sessions &amp; PRs<span class="n"></span></h2></summary>
-      <p class="hint">Handoffs your own agents and PRs left behind ("verify in a browser before merge") — not asks from people. They close when the PR merges, or after a week untouched. Anything here that needs you is on On me instead.</p>
+      <p class="hint">Older handoffs your own agents and PRs left behind ("verify in a browser before merge") — not asks from people. Your sessions and PRs no longer create cards (only people and your own "+ task" do); what is left here closes when its PR merges, or after a week untouched. Anything here that needs you is on On me instead.</p>
       <div class="list"></div></details></section>
     <section id="code"><details data-fold="code"><summary><h2>Code &amp; boards<span class="n"></span></h2></summary><div class="list"></div></details></section>
     <section id="closed"><details data-fold="closed"><summary><h2>Closed recently<span class="n"></span></h2></summary><div class="list"></div></details></section>
@@ -440,6 +441,21 @@ const PAGE_TOKEN = (() => {
   if (m) m.remove();
   return t;
 })();
+
+// The "+ task" box on On me (POST /api/tasks, src/commitments/request.js).
+document.getElementById('addtask').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const f = e.currentTarget;
+  const text = f.elements.text.value.trim();
+  if (!text) return;
+  const button = f.querySelector('button');
+  const ok = await busy(button, async () => {
+    const r = await post('/api/tasks', { text, due: f.elements.due.value.trim() || null });
+    toast(r.text);
+  });
+  button.disabled = false;
+  if (ok) { f.reset(); refresh(); }
+});
 
 async function post(path, body) {
   const res = await fetch(path, {

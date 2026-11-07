@@ -48,6 +48,8 @@ const HELP = `pa — your context layer
                      [--preview]  print the route, end state and the brief that would be sent; start nothing
                      [--agent claude|opencode] [--model m]  which agent CLI and model (local runs)
     pa done <id> [--dismiss|--reopen] close a commitment yourself
+    pa task add "<what>" [--due when] [--for person] [--owed-to-me]  a task because you asked for it
+    pa policy [close [--apply]]      which sources create tasks; close cards the policy would not have made
     pa ledger <id>                   every status change of a commitment, and why
     pa ledger reconcile [--dry-run] [--id N,..] [--limit N]
                                      judge open commitments against newer items now
@@ -1446,6 +1448,11 @@ const commands = {
     const distill = require('../distill');
     lines.push('');
     lines.push(`  ${counts.items} items · ${counts.open_commitments} open commitments · ${await distill.pendingCount()} awaiting distillation`);
+    {
+      const d = require('../commitments/sourcePolicy').describe();
+      lines.push(`  tasks from: ${d.allowed.join(', ') || 'NOTHING — check PA_COMMITMENT_SOURCES'} (evidence only: ${d.excluded.join(', ') || 'none'})` +
+        `${d.unknown.length ? ` · PA_COMMITMENT_SOURCES has unknown ${d.unknown.join(', ')}` : ''}`);
+    }
     lines.push(`  ${counts.live_runs} live runs · ${counts.pending_drafts} pending drafts · ${counts.failed_items} items failed distillation`);
     const evalState = await db
       .one(`select (select count(*) from eval_case where active)::int as cases, (select max(ran_at) from eval_run) as last`)
@@ -1631,13 +1638,14 @@ Object.assign(commands, require('./memory').make(out, fail));
 Object.assign(commands, require('./secret').make(out, fail));
 Object.assign(commands, require('./meeting').make(out, fail));
 Object.assign(commands, require('./routine').make(out, fail));
+Object.assign(commands, require('./task').make(out, fail));
 
 async function main(argv) {
   const { command, args, flags, lists } = parseArgs(argv);
   const name = command || 'help';
 
   if (flags.help || name === 'help' || name === '--help') {
-    const topics = { memory: './memory', secret: './secret', routine: './routine', routines: './routine' };
+    const topics = { memory: './memory', secret: './secret', routine: './routine', routines: './routine', task: './task', policy: './task' };
     out(topics[args[0]] ? require(topics[args[0]]).HELP : HELP);
     return;
   }
