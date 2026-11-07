@@ -265,26 +265,6 @@
   .rt-status.err, .rt-fail { color: var(--bad); }
   .rt-preview { margin-top: 8px; padding: 8px 10px; border: 1px dashed var(--warn); border-radius: 8px; }
   ol.rt-lines { margin: 4px 0; padding-left: 22px; font-size: 12px; }
-  /* the PA chat: the same conversation as the termhub session */
-  .chat { padding: var(--gutter); max-width: 900px; }
-  section.chat-box { display: flex; flex-direction: column; height: calc(100dvh - var(--jtop) - var(--gutter)); min-height: 360px; padding: 0; }
-  .chat-head { display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: baseline; padding: 12px 14px 8px; border-bottom: 1px solid var(--line); }
-  .chat-head h2 { margin: 0; }
-  .chat-head a { margin-left: auto; font-size: 12px; color: var(--accent); text-decoration: none; }
-  .chat-state { font-size: 12px; color: var(--muted); }
-  .chat-state.thinking { color: var(--accent); }
-  .chat-state.offline { color: var(--warn); }
-  .chat-log { flex: 1 1 auto; overflow-y: auto; padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; }
-  .chat-msg { max-width: 85%; padding: 7px 11px; border-radius: 10px; white-space: pre-wrap; overflow-wrap: anywhere; }
-  .chat-msg.user { align-self: flex-end; background: var(--accent); color: var(--on-signal); border-bottom-right-radius: 3px; }
-  .chat-msg.assistant { align-self: flex-start; background: var(--chip); border-bottom-left-radius: 3px; }
-  .chat-msg .chat-meta { display: block; font-size: 10px; opacity: .7; margin-top: 3px; }
-  .chat-msg.activity { align-self: flex-start; background: none; color: var(--muted); font-size: 12px; padding: 0 11px; }
-  .chat-activity { min-height: 18px; padding: 0 14px; font-size: 12px; color: var(--accent); }
-  .chat-form { display: flex; gap: 8px; align-items: flex-end; padding: 8px 14px 12px; border-top: 1px solid var(--line); }
-  .chat-form textarea { flex: 1 1 auto; resize: none; max-height: 200px; font: inherit; color: var(--ink); background: var(--chip);
-    border: 1px solid var(--line); border-radius: 8px; padding: 6px 9px; }
-  .chat-form button { padding: 6px 14px; }
   .dot { display: inline-block; width: 7px; height: 7px; margin-left: 5px; border-radius: 50%; vertical-align: 1px; background: transparent; }
   .dot.thinking { background: var(--accent); }
   .dot.offline { background: var(--line); }
@@ -301,7 +281,6 @@
     <a href="#today" id="tab-today" title="Secrets and sign-ins waiting for you">Today<span class="count" id="needcount"></span></a>
     <a href="#meetings" id="tab-meetings" title="Upcoming and recorded meetings">Meetings<span class="count" id="mtgcount"></span></a>
     <a href="#memory" id="tab-memory" title="Claims waiting for review">Memory<span class="count" id="memcount"></span></a>
-    <a href="#chat" id="tab-chat" title="Talk to the assistant: the same conversation as the PA chat in termhub">Chat<span class="dot" id="chatdot"></span></a>
     <a href="#routines" id="tab-routines" title="Suggested routines waiting for you">Routines<span class="count" id="rtcount"></span></a>
   </nav>
 </div>
@@ -392,21 +371,6 @@
     <div class="rt-status" id="rt-suggest-status"></div>
   </section>
   <section id="rt-history"><h2>Run history<span class="n"></span></h2><div class="list"></div></section>
-</div>
-<div class="chat" id="chat-view" hidden>
-  <section class="chat-box">
-    <div class="chat-head">
-      <h2>PA chat</h2>
-      <span class="chat-state" id="chat-state">connecting…</span>
-      <a id="chat-open" href="#" target="_blank" rel="noopener" hidden>open in termhub</a>
-    </div>
-    <div class="chat-log" id="chat-log" aria-live="polite"><div class="empty">loading…</div></div>
-    <div class="chat-activity" id="chat-activity"></div>
-    <form id="chat-form" class="chat-form">
-      <textarea id="chat-input" rows="2" placeholder="Ask the assistant… (Enter sends, Shift+Enter for a new line)" autocomplete="off"></textarea>
-      <button type="submit" class="primary" id="chat-send">Send</button>
-    </form>
-  </section>
 </div>
 </div>
 </div>
@@ -2014,20 +1978,21 @@ async function focusDebrief() {
 
 // #today, #meetings, #memory, #memory/person/12, #memory/topic/<label>, #memory/me, #brief-<id>, #debrief-<id>
 function route() {
+  // The Chat view moved to Ask (its Text mode): an old #chat link goes there.
+  if ((location.hash || '').startsWith('#chat') && window.JarvisNav) {
+    history.replaceState(null, '', '#today');
+    window.JarvisNav.go('talk');
+  }
   const h = location.hash || '#today';
   const memory = h.startsWith('#memory');
   const routines = h.startsWith('#routines');
   const meetings = h.startsWith('#meetings') || h.startsWith('#brief-') || h.startsWith('#debrief-');
-  const chat = h.startsWith('#chat');
-  const today = !memory && !routines && !meetings && !chat;
+  const today = !memory && !routines && !meetings;
   document.getElementById('today').hidden = !today;
   document.getElementById('sources').hidden = !today;
   document.getElementById('meetings-view').hidden = !meetings;
   document.getElementById('memory').hidden = !memory;
   document.getElementById('routines').hidden = !routines;
-  document.getElementById('chat-view').hidden = !chat;
-  document.getElementById('tab-chat').classList.toggle('on', chat);
-  if (chat && typeof chatShown === 'function') chatShown();
   document.getElementById('tab-today').classList.toggle('on', today);
   document.getElementById('tab-meetings').classList.toggle('on', meetings);
   document.getElementById('tab-memory').classList.toggle('on', memory);
@@ -2066,7 +2031,6 @@ setInterval(loadMeetings, 60000);
 <script src="routines.js"></script>
 <!-- Repos tab: self-contained in repos.client.js (adds its own nav link and view) -->
 <script src="repos.js"></script>
-<script src="chat.js"></script>
 <script src="permission.js"></script>
 </body>
 </html>

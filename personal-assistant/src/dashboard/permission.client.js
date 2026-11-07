@@ -8,8 +8,10 @@
 // (src/chat/permission.js). Any other prompt (a shell command, an edit) is
 // listed with a link to answer it in termhub.
 //
-// Self-contained: one <script src="permission.js"> in index.html; the card is
-// made here and put first in <main id="today">. Text only — no HTML sinks.
+// Self-contained: one <script src="permission.js"> in index.html (Plan) and in
+// talk.html (Ask's Text mode); the card is made here and put first in
+// <main id="today">, or in the page's [data-permission-card]. Text only — no
+// HTML sinks.
 
 (function () {
   const STYLE = `
@@ -34,7 +36,7 @@
 
   function ensureCard() {
     if (card) return card;
-    const main = document.getElementById('today');
+    const main = document.getElementById('today') || document.querySelector('[data-permission-card]');
     if (!main) return null;
     document.head.append(el('style', { textContent: STYLE }));
     card = el('section', { id: 'chatyes', hidden: true });
@@ -43,7 +45,10 @@
     return card;
   }
 
+  // Plan's script reads the token once and removes its meta tag (PAGE_TOKEN in
+  // index.html), so look there first; Ask keeps the tag.
   function token() {
+    if (typeof PAGE_TOKEN === 'string' && PAGE_TOKEN) return PAGE_TOKEN; // eslint-disable-line no-undef
     const m = document.querySelector('meta[name="pa-page"]');
     return m ? m.content : '';
   }

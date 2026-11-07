@@ -292,8 +292,9 @@ at the top of the **Repos** view (*Review requests & board items*, from `GET /ap
 the runs that are not factory jobs, and a factory run only while it is blocked: the rest are jobs
 on Build, with their state, PR and cost, and the section links there. Colour is kept for meaning:
 amber marks what waits on you or on someone (a section's edge, *blocked on*, *question for you*,
-overdue), everything else is ink and grey. Each section's explanation is its title's tooltip. Every button shows that it is working and then what happened. Its **Chat** tab is
-a box onto the PA chat, the same conversation as in termhub ([below](#the-chat-tab-and-the-chat-api)).
+overdue), everything else is ink and grey. Each section's explanation is its title's tooltip.
+Every button shows that it is working and then what happened. Typing to the PA chat is on Ask, in
+its **Text** mode ([below](#asks-text-mode-and-the-chat-api)); an old `#chat` link goes there.
 
 **Every card says where it came from and why it is there.** Cards on **On me** and **Waiting on
 others** carry a row of links built from what ingest stored, with
@@ -1455,13 +1456,16 @@ from the background asks for one **Tap to resume**. It shares termhub's one-mic 
 BroadcastChannel `voice-mic`, termhub's `voiceCapture.js`, copied as `src/dashboard/voiceCapture.js`):
 opening the mic in one takes it from the other, which says so.
 
-### The Chat tab and the chat API
+### Ask's Text mode and the chat API
 
-The dashboard's **Chat** tab (and the voice page) talk to **the same live session**, not to a
-new `claude -p` per message, so typing there, speaking, and typing in termhub are one
-conversation. Enter sends, Shift+Enter is a new line; the tab's dot shows when the assistant is
-working, the line under the messages shows what it is doing ("searching your history…"), and
-**open in termhub** jumps to the session itself (`src/chat/feed.js`):
+Ask (`/talk`) has two modes, switched at the top of its » panel and remembered per browser
+(`jarvis.talk.mode`): **Voice** (the face, the default, no buttons) and **Text**, the same
+conversation as a transcript with a box to type in (`chat.client.js`). In Text mode a pending
+action prompt shows its **Approve** / **Deny** card (`permission.client.js`, the same card as on
+Plan). Both modes talk to **the same live session**, not to a new `claude -p` per message, so
+typing, speaking, and typing in termhub are one conversation. Enter sends, Shift+Enter is a new
+line; the line under the messages shows what it is doing ("searching your history…"), and **open
+the session** jumps to it in termhub (`src/chat/feed.js`):
 
 - **In:** the text is typed into the session through termhub (`POST /api/sessions/:id/input`,
   then Return as its own keystroke). No session running? `ensureSession()` starts one and the
@@ -1536,7 +1540,7 @@ board, Build the jobs, Run the terminal), plus a small **»** in the top-left co
 It opens a panel on the left: first the navigation, **1 Ask · 2 Plan · 3 Build · 4 Run · 5 Meter ·
 6 Map** (**Alt+1..6** from anywhere, the terminal included) with
 the theme toggle (system → light → dark, remembered per browser), then that page's own controls:
-Talk's voice settings, the Dashboard's views (Today, Meetings, Memory, Chat, Routines, Repos) and
+Ask's mode (Voice or Text) and voice settings, Plan's views (Today, Meetings, Memory, Routines, Repos) and
 its sources, the Factory's status, spend and New job form, termhub's session list. Closed by
 default; on a wide screen the choice is remembered per destination (`jarvis.settings.<id>` in
 localStorage), and on a phone the panel slides over the page and always starts closed. The toggle
@@ -1608,7 +1612,7 @@ src/commitments/     closing chat and mail asks you answered yourself (replyClos
                      the cross-thread duplicate pass (dedupe.js, pure half in semantic.js)
                      which sources may create tasks (sourcePolicy.js) and closing what it would not have made (policyClose.js);
                      tasks you ask for (request.js: pa task add, the chat's task_add, the board's + task)
-src/dashboard/       the loopback web page: today, next meeting, replies, runs, secret requests, and the Memory, Chat, Routines and Repos tabs;
+src/dashboard/       the loopback web page: today, next meeting, replies, runs, secret requests, and the Memory, Routines and Repos views; Ask's voice and text page;
                      each card's links to its source, person, repo and session (links.js pure, cards.js);
                      /talk, the voice page (talk.html + talk.page.js; talk.core.js pure; talk.voice.js its onnxruntime-web models and Kokoro playback;
                      voiceCapture.js + micWorklet.js copied from termhub; talk.js serves it and proxies to whisper and the voice service);
@@ -1616,7 +1620,7 @@ src/dashboard/       the loopback web page: today, next meeting, replies, runs, 
 src/secrets/         secret and login requests; the OS keyring facade (vault.js; stdin only)
 src/platform/        every OS decision: windows.js, linux.js, darwin.js behind one contract (index.js)
 src/routines/        cron parser, the typed action registry (repo_sync, prompt_report), runs, suggestions
-src/chat/            the PA chat session's home (index.js, agent.js) and its stream for the Chat tab and voice (feed.js; transcript.js pure); the voice fast lane (fastLane.js)
+src/chat/            the PA chat session's home (index.js, agent.js) and its stream for Ask's voice and text modes (feed.js; transcript.js pure); the voice fast lane (fastLane.js)
 src/notify/          notifications: toasts, the interrupt budget, digests, feedback weights, the PA chat inbox
 src/llm.js           model calls: Anthropic API, `claude -p`, or an OpenAI-compatible provider
 src/models.js        model strings, which backend each pass uses, and what it can do (pa doctor)

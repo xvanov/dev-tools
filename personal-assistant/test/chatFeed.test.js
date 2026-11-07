@@ -68,10 +68,14 @@ assert.deepStrictEqual(T.sessionStatus({ busy: true }), { status: 'thinking', wa
 const client = fs.readFileSync(path.join(__dirname, '../src/dashboard/chat.client.js'), 'utf8');
 new vm.Script(client, { filename: 'chat.client.js' });
 assert.ok(!/\.innerHTML|\.outerHTML|insertAdjacentHTML|document\.write/.test(client), 'no HTML sinks in the chat tab');
-const html = fs.readFileSync(path.join(__dirname, '../src/dashboard/index.html'), 'utf8');
+// It lives in Ask (talk.html) as the Text mode, no longer in Plan's Chat view.
+const html = fs.readFileSync(path.join(__dirname, '../src/dashboard/talk.html'), 'utf8');
 assert.match(html, /<script src="chat\.js"><\/script>/);
-assert.match(html, /id="tab-chat"/);
-assert.match(html, /id="chat-view"/);
+assert.match(html, /id="textmode"/);
+assert.match(html, /data-talk-mode-pick="text"/);
+assert.match(html, /data-permission-card/, 'Text mode shows the Approve / Deny card');
+const plan = fs.readFileSync(path.join(__dirname, '../src/dashboard/index.html'), 'utf8');
+assert.ok(!/id="chat-view"|id="tab-chat"|src="chat\.js"/.test(plan), 'Plan has no Chat view any more');
 // Relative, so it works behind termhub's /pa/ proxy.
 assert.match(client, /new EventSource\('api\/chat\/stream'\)/);
 

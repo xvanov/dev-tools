@@ -122,6 +122,7 @@
           "POST /api/chat/permission (a spoken yes or no to the chat's action prompt)"
         ],
         "Privacy": "Nothing leaves the browser until a request is made; the wake word stays client-side.",
+        "Modes": "Voice (the face, default) or Text, switched in the page's panel and remembered per browser (jarvis.talk.mode). Text mode is the same PA chat as a transcript with a box to type in (chat.client.js, POST /api/chat), and shows the Approve / Deny card for a pending action prompt (permission.client.js); Voice mode has no buttons.",
         "Permission prompts": "Audio only, no buttons: Jarvis speaks the server-written question (transcript.askTool) and your next utterance answers it (talk.core.js createVoiceAsk: only while awake, only from words begun after the question, strict yes/no, unclear asked once more, 60 s window) via POST /api/chat/permission with the page token",
         "Sleep": "\"Jarvis, sleep\" / \"stop listening\" / \"go to sleep\" (and the stop phrases) return it to wake-word-only, said aloud; windows: 6 s after the wake word, 8 s after an answer, 60 s after a question"
       },
@@ -129,7 +130,9 @@
         "personal-assistant/src/dashboard/talk.html",
         "personal-assistant/src/dashboard/talk.voice.js",
         "personal-assistant/src/dashboard/talk.page.js",
-        "personal-assistant/src/dashboard/talk.js"
+        "personal-assistant/src/dashboard/talk.js",
+        "personal-assistant/src/dashboard/chat.client.js",
+        "personal-assistant/src/dashboard/permission.client.js"
       ]
     },
     {
@@ -305,7 +308,7 @@
         ],
         "How you reach it": [
           "typing in its termhub tab",
-          "the dashboard's chat panel and /talk (feed.js types into the session through termhub's input API and tails its transcript)"
+          "Ask (/talk), by voice or in its Text mode (feed.js types into the session through termhub's input API and tails its transcript)"
         ],
         "Transcript": "~/.claude/projects/<encoded pa-home>/<uuid>.jsonl, tailed by byte offset (first read: last 4 MB)",
         "Billing": "the machine's Claude Code login: a claude.ai subscription login is not metered per call"
@@ -468,7 +471,7 @@
       "id": "dashboard",
       "layer": "dashboard",
       "name": "Dashboard server",
-      "role": "The board, chat panel, Factory page, Talk page and this map, on loopback. It rides in the worker process.",
+      "role": "The board (Plan), Ask's voice and text page, the Factory page (Build) and this map, on loopback. It rides in the worker process.",
       "stacks": {
         "work": "live",
         "personal": "live"
@@ -491,9 +494,10 @@
           "starting auto_merge / push_to_main also needs the page token (X-PA-Page) and the confirmed level",
           "answering the chat's permission prompt (POST /api/chat/permission) also needs the page token"
         ],
-        "Chat": "/api/chat (type into the PA chat), /api/chat/stream (SSE of its transcript), /api/chat/history, /api/chat/permission (answer its action prompt)",
+        "Chat": "/api/chat (type into the PA chat, from Ask's Text mode), /api/chat/stream (SSE of its transcript), /api/chat/history, /api/chat/permission (answer its action prompt)",
+        "Repos": "/api/repos: the repo registry with your latest PRs, and the GitHub/Jira review requests and board items still open (Plan's former Code & boards section)",
         "Send": "never sends: a draft opens, already written, in Teams or Outlook and you press Send",
-        "Waiting for your yes": "a card at the top of the board (permission.client.js) for the PA chat's pending action prompt, with Approve / Deny through POST /api/chat/permission; src/chat/permission.js reads the session's screen before one keystroke (Enter on Yes, or Esc)"
+        "Waiting for your yes": "a card at the top of the board and in Ask's Text mode (permission.client.js) for the PA chat's pending action prompt, with Approve / Deny through POST /api/chat/permission; src/chat/permission.js reads the session's screen before one keystroke (Enter on Yes, or Esc)"
       },
       "env": [
         {
@@ -1302,7 +1306,7 @@
     {
       "from": "you",
       "to": "dashboard",
-      "label": "board, chat panel (loopback)"
+      "label": "board, Ask (loopback)"
     },
     {
       "from": "you",
@@ -1718,7 +1722,7 @@
         },
         {
           "c": "dashboard",
-          "t": "The board, the chat panel and /talk work as on the laptop; nothing else exposes the dashboard."
+          "t": "The board and Ask (/talk, voice and text) work as on the laptop; nothing else exposes the dashboard."
         },
         {
           "c": "jarvis",

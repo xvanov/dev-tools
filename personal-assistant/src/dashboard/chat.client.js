@@ -1,142 +1,210 @@
 'use strict';
-// The Chat tab: the dashboard's box onto the PA chat — the same live Claude
-// Code session as termhub's "PA chat" and the voice page, so all three are
-// one conversation (src/chat/feed.js). Loaded after the page's main script
-// and uses its helpers (el, post, getJson, toast). Every value goes in through
-// textContent, never an HTML sink: replies quote other people's messages.
+// Ask's Text mode (talk.html): the typed side of the PA chat, the same live
+// Claude Code session that Ask speaks with and Run shows as a terminal, so it
+// is one conversation (src/chat/feed.js). It used to be the dashboard's Chat
+// tab. Ask's panel switches between Voice (the face, default) and Text (this
+// transcript and a box to type in); the choice is remembered in this browser
+// (jarvis.talk.mode). Voice mode has no buttons; in Text mode a pending
+// "shall I?" shows its Approve / Deny card (permission.client.js), mounted at
+// [data-permission-card].
+//
+// Self-contained: one function scope, its own helpers, nothing global but
+// window.JarvisChat. Every value goes in through textContent, never an HTML
+// sink: replies quote other people's messages. Relative URLs, so it works
+// under termhub's /pa/ too.
 
-const chat = { ids: new Set(), es: null, status: null, url: null };
+(function jarvisChat() {
+  const MODE_KEY = 'jarvis.talk.mode';
+  const chat = { ids: new Set(), es: null, status: null, url: null, started: false };
+  const $ = (id) => document.getElementById(id);
 
-function chatEls() {
-  return {
-    log: document.getElementById('chat-log'),
-    state: document.getElementById('chat-state'),
-    activity: document.getElementById('chat-activity'),
-    open: document.getElementById('chat-open'),
-    input: document.getElementById('chat-input'),
-    send: document.getElementById('chat-send'),
-    dot: document.getElementById('chatdot'),
-  };
-}
+  function el(tag, props, ...kids) {
+    const n = document.createElement(tag);
+    for (const [k, v] of Object.entries(props || {})) {
+      if (k === 'class') n.className = v;
+      else n.setAttribute(k, v);
+    }
+    for (const k of kids) if (k != null) n.append(k);
+    return n;
+  }
 
-function chatTime(iso) {
-  const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? '' : d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
-}
+  async function getJson(path) {
+    const res = await fetch(path, { cache: 'no-store' });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
+    return body;
+  }
 
-function chatAdd(e) {
-  if (!e || !e.id || chat.ids.has(e.id)) return;
-  if (e.type !== 'user' && e.type !== 'assistant') return;
-  chat.ids.add(e.id);
-  const { log } = chatEls();
-  const empty = log.querySelector('.empty');
-  if (empty) empty.remove();
-  const nearBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 80;
-  const meta = [chatTime(e.at), e.source === 'voice' ? 'spoken' : null].filter(Boolean).join(' · ');
-  log.append(el('div', { class: `chat-msg ${e.type}` }, String(e.text || ''), el('span', { class: 'chat-meta' }, meta)));
-  if (nearBottom || e.type === 'user') log.scrollTop = log.scrollHeight;
-}
+  async function post(path, body) {
+    const meta = document.querySelector('meta[name="pa-page"]');
+    const res = await fetch(path, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-PA': '1', 'X-PA-Page': meta ? meta.content : '' },
+      body: JSON.stringify(body || {}),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+    return data;
+  }
 
-const CHAT_STATE = { thinking: 'working…', idle: 'idle', offline: 'offline — sending a message starts it' };
+  function say(text) {
+    const n = $('chat-activity');
+    if (n) n.textContent = text;
+  }
 
-function chatStatus(text) {
-  chat.status = text;
-  const { state, dot, activity } = chatEls();
-  state.textContent = CHAT_STATE[text] || text;
-  state.className = `chat-state ${text}`;
-  dot.className = `dot ${text}`;
-  if (text !== 'thinking') activity.textContent = '';
-  if (text !== 'offline' && !chat.url) chatSession();
-  if (text === 'offline') chatLink(null);
-}
+  function chatTime(iso) {
+    const d = new Date(iso);
+    return Number.isNaN(d.getTime()) ? '' : d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+  }
 
-function chatLink(url) {
-  chat.url = url;
-  const { open } = chatEls();
-  open.hidden = !url;
-  if (url) open.href = url;
-}
+  function add(e) {
+    if (!e || !e.id || chat.ids.has(e.id)) return;
+    if (e.type !== 'user' && e.type !== 'assistant') return;
+    chat.ids.add(e.id);
+    const log = $('chat-log');
+    const empty = log.querySelector('.empty');
+    if (empty) empty.remove();
+    const nearBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 80;
+    const meta = [e.type === 'user' ? 'you' : 'Jarvis', chatTime(e.at), e.source === 'voice' ? 'spoken' : null].filter(Boolean).join(' · ');
+    log.append(el('div', { class: `chat-msg ${e.type}` }, el('span', { class: 'chat-meta' }, meta), el('div', { class: 'chat-text' }, String(e.text || ''))));
+    if (nearBottom || e.type === 'user') log.scrollTop = log.scrollHeight;
+  }
 
-async function chatSession() {
-  try {
-    const s = await getJson('api/chat/session');
-    chatLink(s && s.url);
-  } catch { /* the link is a convenience */ }
-}
+  const STATE = { thinking: 'working…', idle: 'idle', offline: 'offline — sending a message starts it' };
 
-async function chatHistory() {
-  try {
-    const r = await getJson('api/chat/history?limit=100');
-    const { log } = chatEls();
-    const list = (r && r.messages) || [];
-    if (!list.length && !chat.ids.size) log.replaceChildren(el('div', { class: 'empty' }, 'No messages yet. Say hello.'));
-    for (const m of list) chatAdd(m);
+  function status(text) {
+    chat.status = text;
+    const state = $('chat-state');
+    state.textContent = STATE[text] || text;
+    state.className = `chat-state ${text}`;
+    if (text !== 'thinking') say('');
+    if (text !== 'offline' && !chat.url) session();
+    if (text === 'offline') link(null);
+  }
+
+  function link(url) {
+    chat.url = url;
+    const open = $('chat-open');
+    open.hidden = !url;
+    if (url) open.href = url;
+  }
+
+  async function session() {
+    try {
+      const s = await getJson('api/chat/session');
+      link(s && /^https?:\/\//.test(s.url || '') ? s.url : null);
+    } catch { /* the link is a convenience */ }
+  }
+
+  async function history() {
+    try {
+      const r = await getJson('api/chat/history?limit=100');
+      const log = $('chat-log');
+      const list = (r && r.messages) || [];
+      if (!list.length && !chat.ids.size) log.replaceChildren(el('div', { class: 'empty' }, 'No messages yet. Say hello.'));
+      for (const m of list) add(m);
+      log.scrollTop = log.scrollHeight;
+    } catch (err) {
+      $('chat-log').replaceChildren(el('div', { class: 'empty' }, `Could not load the conversation: ${err.message}`));
+    }
+  }
+
+  function connect() {
+    if (chat.es || !window.EventSource) return;
+    const es = new EventSource('api/chat/stream');
+    chat.es = es;
+    let dropped = false;
+    es.onmessage = (msg) => {
+      let e;
+      try { e = JSON.parse(msg.data); } catch { return; }
+      if (e.type === 'status') status(e.text);
+      else if (e.type === 'activity') say(String(e.text || ''));
+      else add(e);
+    };
+    // EventSource reconnects by itself; fill what was missed while it was down.
+    es.onopen = () => { if (dropped) history(); dropped = false; };
+    es.onerror = () => { dropped = true; $('chat-state').textContent = 'reconnecting…'; };
+  }
+
+  async function send() {
+    const input = $('chat-input');
+    const button = $('chat-send');
+    const text = input.value.trim();
+    if (!text) return;
+    button.disabled = true;
+    // Optimistic: the line shows at once, marked as sending, and is confirmed by the stream.
+    const pending = el('div', { class: 'chat-msg user sending' }, el('span', { class: 'chat-meta' }, 'you · sending…'), el('div', { class: 'chat-text' }, text));
+    const log = $('chat-log');
+    const empty = log.querySelector('.empty');
+    if (empty) empty.remove();
+    log.append(pending);
     log.scrollTop = log.scrollHeight;
-  } catch (err) {
-    chatEls().log.replaceChildren(el('div', { class: 'empty' }, `Could not load the chat: ${err.message}`));
-  }
-}
-
-function chatConnect() {
-  if (chat.es) return;
-  const es = new EventSource('api/chat/stream');
-  chat.es = es;
-  let dropped = false;
-  es.onmessage = (msg) => {
-    let e;
-    try { e = JSON.parse(msg.data); } catch { return; }
-    if (e.type === 'status') chatStatus(e.text);
-    else if (e.type === 'activity') chatEls().activity.textContent = String(e.text || '');
-    else chatAdd(e);
-  };
-  // EventSource reconnects by itself; fill what was missed while it was down.
-  es.onopen = () => { if (dropped) chatHistory(); dropped = false; };
-  es.onerror = () => { dropped = true; chatEls().state.textContent = 'reconnecting…'; };
-}
-
-async function chatSend() {
-  const { input, send } = chatEls();
-  const text = input.value.trim();
-  if (!text) return;
-  send.disabled = true;
-  send.textContent = '…';
-  try {
-    const r = await post('api/chat', { text, source: 'typed' });
-    // The stream sends it too; shown here as well in case the stream is down.
-    chatAdd({ id: r.id, type: 'user', text, at: new Date().toISOString(), source: 'typed' });
     input.value = '';
-    chatGrow();
-  } catch (err) {
-    toast(err.message);
-  } finally {
-    send.disabled = false;
-    send.textContent = 'Send';
-    input.focus();
+    grow();
+    try {
+      const r = await post('api/chat', { text, source: 'typed' });
+      pending.remove();
+      add({ id: r.id, type: 'user', text, at: new Date().toISOString(), source: 'typed' });
+    } catch (err) {
+      pending.remove();
+      input.value = text;
+      grow();
+      say(`Not sent: ${err.message}`);
+    } finally {
+      button.disabled = false;
+      input.focus();
+    }
   }
-}
 
-function chatGrow() {
-  const { input } = chatEls();
-  input.style.height = 'auto';
-  input.style.height = `${Math.min(input.scrollHeight + 2, 200)}px`;
-}
+  function grow() {
+    const input = $('chat-input');
+    input.style.height = 'auto';
+    input.style.height = `${Math.min(input.scrollHeight + 2, 200)}px`;
+  }
 
-// Called by route() whenever the Chat tab is shown.
-function chatShown() {
-  const { log, input } = chatEls();
-  log.scrollTop = log.scrollHeight;
-  input.focus();
-}
+  // History first, then the stream, so messages land in order. Only once Text
+  // mode is first shown: in Voice mode the page already follows the stream itself.
+  function start() {
+    if (chat.started) return;
+    chat.started = true;
+    history().then(connect);
+  }
 
-(() => {
-  const { input } = chatEls();
-  document.getElementById('chat-form').addEventListener('submit', (ev) => { ev.preventDefault(); chatSend(); });
-  input.addEventListener('keydown', (ev) => {
-    if (ev.key === 'Enter' && !ev.shiftKey && !ev.isComposing) { ev.preventDefault(); chatSend(); }
-  });
-  input.addEventListener('input', chatGrow);
-  // History first, then the stream, so messages land in order. Connected on
-  // every tab, so the tab's dot shows when the assistant is working.
-  chatHistory().then(chatConnect);
-  if ((location.hash || '').startsWith('#chat')) chatEls().input.focus();
+  // ---- the mode switch ------------------------------------------------------------
+  function readMode() { try { return localStorage.getItem(MODE_KEY) === 'text' ? 'text' : 'voice'; } catch { return 'voice'; } }
+  function setMode(mode, remember) {
+    const text = mode === 'text';
+    document.documentElement.setAttribute('data-talk-mode', text ? 'text' : 'voice');
+    $('textmode').hidden = !text;
+    for (const b of document.querySelectorAll('[data-talk-mode-pick]')) b.setAttribute('aria-pressed', String(b.dataset.talkModePick === (text ? 'text' : 'voice')));
+    if (remember) { try { localStorage.setItem(MODE_KEY, text ? 'text' : 'voice'); } catch { /* storage off */ } }
+    if (text) {
+      start();
+      const log = $('chat-log');
+      log.scrollTop = log.scrollHeight;
+      if (remember) $('chat-input').focus();
+    }
+  }
+
+  function wire() {
+    $('chat-form').addEventListener('submit', (ev) => { ev.preventDefault(); send(); });
+    const input = $('chat-input');
+    input.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Enter' && !ev.shiftKey && !ev.isComposing) { ev.preventDefault(); send(); }
+    });
+    input.addEventListener('input', grow);
+    for (const b of document.querySelectorAll('[data-talk-mode-pick]')) {
+      b.addEventListener('click', () => {
+        setMode(b.dataset.talkModePick, true);
+        // On a phone the panel covers the page: picking a mode closes it.
+        if (window.JarvisNav && matchMedia('(max-width: 760px)').matches) window.JarvisNav.settings.set(false);
+      });
+    }
+    setMode(readMode(), false);
+  }
+
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', wire);
+  else wire();
+
+  window.JarvisChat = { setMode, mode: () => (document.documentElement.getAttribute('data-talk-mode') === 'text' ? 'text' : 'voice') };
 })();
