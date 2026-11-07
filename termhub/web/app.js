@@ -365,12 +365,9 @@ function renderRestorable(r) {
 // to switch terminals (it already showed an "open" indicator per session
 // independent of any tab strip, and its ✕ actually kills the session, unlike
 // the old tab-close which only detached — a common point of confusion). This
-// just keeps the mobile topbar's title and the terminal area's empty-state in
-// sync with what's open.
+// just keeps the terminal area's empty-state in sync with what's open.
 function updateChrome() {
   $('#empty-state').classList.toggle('hidden', state.open.size > 0);
-  const active = state.open.get(state.activeId);
-  $('#active-title').textContent = active ? (active.title || active.id) : 'termhub';
 }
 
 // ---- terminal lifecycle ---------------------------------------------------
@@ -3568,81 +3565,22 @@ function connectVoice() {
   ws.onerror = () => { try { ws.close(); } catch {} };
 }
 
-// ---- personal assistant (/pa/*, proxied by the front) ---------------------
-//
-// Two controls under the sidebar header: PA opens the dashboard in a new tab
-// (a plain link, so iOS never treats it as a popup), PA chat asks the PA for
-// its chat terminal and opens it here. Both stay hidden unless the PA answers —
-// the proxy can be switched off (TERMHUB_PA_URL=) and the PA may not be running,
-// and a button that can only fail is worse than no button.
-
-const PA_RECHECK_MS = 60000;
-let paCheckedAt = 0;
-let paChecking = null;
-
-function checkPa(force) {
-  if (paChecking) return paChecking;
-  if (!force && Date.now() - paCheckedAt < PA_RECHECK_MS) return Promise.resolve();
-  paCheckedAt = Date.now();
-  paChecking = api('/pa/api/state')
-    .then(() => true, () => false)
-    .then((up) => { $('#pa-row').classList.toggle('hidden', !up); })
-    .finally(() => { paChecking = null; });
-  return paChecking;
-}
-
-function paMessage(text, isError) {
-  const el = $('#pa-msg');
-  el.textContent = text || '';
-  el.classList.toggle('error', !!isError);
-}
-
-// The PA answers `{sessionId, created}`, where sessionId is a termhub session on
-// THIS machine (the PA started it through sessiond, or found its running one).
-// From there it's exactly a click on that row in the session list.
-async function openPaChat() {
-  const btn = $('#pa-chat');
-  if (btn.disabled) return;
-  btn.disabled = true;
-  btn.textContent = 'PA chat…';
-  paMessage('');
-  try {
-    let reply;
-    try {
-      reply = await api('/pa/api/chat/open', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json', 'X-PA': '1' },
-        body: '{}',
-      });
-    } catch (e) {
-      // A non-JSON body (an HTML error page) surfaces as a SyntaxError — say
-      // what happened, not what the parser thought of it.
-      throw new Error(e instanceof SyntaxError ? 'the PA gave an unreadable answer' : e.message);
-    }
-    if (!reply || !reply.sessionId) throw new Error('the PA did not name a session');
-    // A just-created session isn't in the list yet. refresh() hands back an
-    // in-flight poll if one is running — which may have started before the PA
-    // created it — so a miss earns one more, fresh, refresh.
-    await refresh();
-    let s = state.sessions.find((x) => x.id === reply.sessionId);
-    if (!s) { await refresh(); s = state.sessions.find((x) => x.id === reply.sessionId); }
-    if (!s) throw new Error(`session ${reply.sessionId} is not on this machine`);
-    openTerminal(s.id, s.title, s.kind);
-    if (isMobile()) closeDrawer();
-  } catch (e) {
-    // No re-check here: if the PA has gone away it would hide the row, and the
-    // error with it, the moment it appeared. The next focus check catches up.
-    paMessage(`PA chat failed: ${e.message || e}`, true);
-  } finally {
-    btn.disabled = false;
-    btn.textContent = 'PA chat';
-  }
-}
-
 // ---- drawer (mobile) ------------------------------------------------------
 
-function openDrawer() { document.body.classList.add('drawer-open'); }
-function closeDrawer() { document.body.classList.remove('drawer-open'); }
+// The drawer is the phone's form of the settings panel that the shared header's
+// toggle opens (nav.js). Keep the two in step both ways: the toggle, a tap
+// outside, a swipe and a picked session all end up here or in the listener below.
+function navSettings(open) {
+  const s = window.JarvisNav && window.JarvisNav.settings;
+  if (s) s.set(open);
+}
+function openDrawer() { document.body.classList.add('drawer-open'); navSettings(true); }
+function closeDrawer() { document.body.classList.remove('drawer-open'); navSettings(false); }
+window.addEventListener('jarvis:settings', (e) => {
+  if (isMobile()) document.body.classList.toggle('drawer-open', !!e.detail.open);
+  // On a desktop the terminal changes width as the panel slides; fit it after.
+  setTimeout(refitActive, 220);
+});
 
 // ---- drawer gestures (phone) ------------------------------------------------
 // Swipe in from the left edge to open the session list, swipe it back to close
@@ -3678,16 +3616,6 @@ const SWIPE_PX = 50;      // how far it must travel
   }, { capture: true, passive: true });
   document.addEventListener('touchend', () => { mode = null; }, { capture: true, passive: true });
 })();
-
-// ---- sidebar collapse (desktop) --------------------------------------------
-// Desktop-only max-real-estate toggle — mobile already keeps the sidebar out of
-// the way by default via the drawer above. Remembered across reloads the same
-// way the mouse-select hint dismissal is (see HINT_DISMISSED below).
-const SIDEBAR_COLLAPSED_KEY = 'termhub-sidebar-collapsed';
-function setSidebarCollapsed(on) {
-  document.body.classList.toggle('sidebar-collapsed', on);
-  try { localStorage.setItem(SIDEBAR_COLLAPSED_KEY, on ? '1' : '0'); } catch {}
-}
 
 // ---- misc -----------------------------------------------------------------
 
@@ -3728,20 +3656,13 @@ function syncViewportHeight() {
 
 function wireEvents() {
   $('#new-term-btn').onclick = () => openDialog();
-  $('#topbar-new').onclick = () => openDialog();
   cwdCombo = makeCombobox($('#dlg-cwd'), $('#dlg-cwd-list'), { getItems: dirItems, keepOpenOnPick: true });
   cmdCombo = makeCombobox($('#dlg-cmd'), $('#dlg-cmd-list'), { getItems: commandItems, keepOpenOnPick: false });
-  $('#menu-btn').onclick = openDrawer;
   $('#sidebar-close').onclick = closeDrawer;
   $('#scrim').onclick = closeDrawer;
-  $('#sidebar-collapse').onclick = () => setSidebarCollapsed(true);
-  $('#sidebar-expand').onclick = () => setSidebarCollapsed(false);
   $('#dlg-cancel').onclick = closeDialog;
   $('#dlg-open').onclick = submitDialog;
   $('#dialog-backdrop').onclick = (e) => { if (e.target.id === 'dialog-backdrop') closeDialog(); };
-
-  $('#pa-chat').onclick = openPaChat;
-  $('#pa-open').addEventListener('click', () => paMessage(''));
 
   $('#update-btn').onclick = openUpdatePanel;
   $('#update-close').onclick = closeUpdatePanel;
@@ -3814,10 +3735,6 @@ api('/api/info').then((info) => {
   state.limits = info.limits || null;
 }).catch(() => {});
 
-// Restore a persisted sidebar-collapse choice — desktop-only concept (see
-// setSidebarCollapsed above), so it's a no-op on mobile regardless of what's stored.
-if (!isMobile() && localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === '1') setSidebarCollapsed(true);
-
 // A handle on the live UI for diagnostics — the same instinct as ?voicedebug=1,
 // which exists because a phone has no console. `test/mobile/` drives the real UI
 // through this rather than through selectors that break for unrelated reasons,
@@ -3847,10 +3764,5 @@ document.addEventListener('visibilitychange', beatFocus);
 setInterval(updateMouseHint, 1000); // reflect entering/leaving a full-screen app
 backgroundUpdateCheck();
 setInterval(backgroundUpdateCheck, UPDATE_POLL_MS); // nudge ~once a day
-// PA buttons: once at load, then again when the tab comes back (at most once a
-// minute) — the PA starting or stopping is rare, and not worth a poll.
-checkPa(true);
-window.addEventListener('focus', () => checkPa());
 // Can this machine (or a peer) transcribe? Decides what 🎤 records with.
 checkServerStt();
-document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') checkPa(); });

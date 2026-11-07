@@ -262,21 +262,19 @@ first when one of them has died.
   CLI** version against the one termhub is pinned to, with an **Update Claude** button — termhub
   drives the CLI through `--session-id`/`--resume` and its on-disk transcripts, so a CLI too old
   for the pin can break session restore and the model badge. `Update now` updates the CLI too.
-- **PA ↗ / PA chat** (under the sidebar header, shown only while the personal assistant
-  answers through the front's `/pa/` proxy). **PA ↗** opens its dashboard in a new tab.
-  **PA chat** asks the PA for its chat terminal and opens it here, as if you had picked it from
-  the list. Phone included, over the tailnet. See `AGENT.md` → *The PA proxy*.
-- **Talk · Dashboard · Sessions · Session** (top of the sidebar, **Alt+1..4** anywhere) — the
-  layer switcher shared with the personal assistant's pages: its voice page, its dashboard, this
-  hub, and its chat session full-window at `/?focus=<id>` (no sidebar, just the terminal). The
-  toggle at its end picks system, light or dark; the terminal stays dark in all three. The look
-  is a copy of the PA's design system (`web/theme.css`, `web/nav.js`); see `AGENT.md` → *One look
-  with the PA*.
+- **The header: » · jarvis · Talk · Dashboard · Factory · Sessions** (**Alt+1..4** anywhere) —
+  the bar shared with the personal assistant's pages: its voice page, its dashboard, its factory
+  page and this hub. A session also opens full-window at `/?focus=<id>` (no header, just the
+  terminal). The PA's pages are reached through the front's `/pa/` proxy, so they work from a
+  phone over the tailnet too. The look is a copy of the PA's design system (`web/theme.css`,
+  `web/nav.js`); see `AGENT.md` → *One look with the PA*.
+- **» (left of the header) shows the sidebar**: the session list, ⟳ Update, the
+  *Architecture* link and the theme toggle (system, light or dark; the terminal stays dark in
+  all three), and on a desktop the key bar. Hidden by default so the terminal takes the window;
+  on a desktop the choice is remembered per browser.
 - Switch terminals via the sidebar — the only place session control lives. Each row is just the
   session's name (wrapped, never truncated), **✎** to rename and **✕** to close. **✕**
   **kills** it; there's no separate soft-close, so what you see is what happens.
-- **Collapse** (« in the sidebar header, desktop only) tucks the sidebar away for full-width
-  terminal real estate; a floating **»** button brings it back. Remembered across reloads.
 - **📎 (key bar) attaches a file** — the reliable way to get something onto the remote machine,
   and the only one that works on a phone. It opens the normal file picker (on iOS: Photo
   Library / Take Photo / Browse), takes several files at once, and shows upload progress and
@@ -399,7 +397,8 @@ a proper noun the recogniser already knows, so it comes back clean, and a loose 
 only buy false positives. `npm test` runs the matcher against both the accepted variants and a
 list of near-miss dictation that must *not* trigger.
 
-- On mobile: tap **☰** for the session drawer, **＋** for a new terminal, and use the key bar
+- On mobile: tap **»** (or swipe in from the left edge) for the session drawer and
+  **+ New terminal**, and use the key bar
   at the bottom for `Esc` / `Ctrl` / `Tab` / arrows / `^C` — swipe that group sideways for the
   ones that don't fit. **⌨ Copy Paste 🎤 📎** are pinned to the right of the bar and never
   scroll away, because each is the only way to do its job on a phone:

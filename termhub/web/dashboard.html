@@ -11,14 +11,14 @@
   <link rel="stylesheet" href="/dashboard.css" />
 </head>
 <body class="dash">
-  <header id="dash-head">
-    <div data-jnav></div>
-    <a id="back" href="/" title="Back to the terminals">‹ terminals</a>
-    <h1>agent time</h1>
-    <span id="dash-machine"></span>
-  </header>
+  <header class="jhead"><div data-jnav></div></header>
 
   <main id="dash-main">
+    <div id="dash-head">
+      <a id="back" href="/" title="Back to the terminals">‹ terminals</a>
+      <h1>agent time</h1>
+      <span id="dash-machine"></span>
+    </div>
     <!-- One card per machine, led by "all machines" — the sum across every
          reachable box. Picking a card points every panel below at it;
          /dashboard#all opens on the fleet. -->

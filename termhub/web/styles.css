@@ -11,8 +11,8 @@
   --accent: var(--signal);
   --accent-2: var(--amber);
   --danger: var(--bad);
-  /* --ok is a theme.css name already. Wide enough for the layer switcher. */
-  --sidebar-w: 280px;
+  /* --ok is a theme.css name already. The same width as every layer's panel. */
+  --sidebar-w: var(--jside-w);
 }
 
 * { box-sizing: border-box; }
@@ -30,7 +30,9 @@ html, body {
 
 /* --vvh tracks the visual viewport (set in JS) so the iOS keyboard never covers
    the terminal or key bar; falls back to dynamic vh where --vvh is unset. */
-#app { display: flex; height: 100dvh; height: var(--vvh, 100dvh); }
+#app { display: flex; flex-direction: column; height: 100dvh; height: var(--vvh, 100dvh); }
+/* Under the shared header: the session list (the settings panel) and the terminal. */
+#shell { flex: 1 1 auto; display: flex; min-height: 0; position: relative; }
 
 /* ---- sidebar ---- */
 #sidebar {
@@ -43,15 +45,6 @@ html, body {
   overflow: hidden; /* clips content during the collapse/expand width transition */
 }
 
-/* Floating button that brings the sidebar back once collapsed — lives outside
-   #sidebar since the sidebar (and everything in it) is width:0 at that point. */
-#sidebar-expand {
-  display: none;
-  position: fixed; top: 10px; left: 10px; z-index: 15;
-  background: var(--bg-3); border: 1px solid var(--border); color: var(--fg);
-  padding: 6px 10px; border-radius: 6px; cursor: pointer; font-size: 14px;
-}
-
 .sidebar-head {
   display: flex;
   align-items: center;
@@ -60,13 +53,10 @@ html, body {
   border-bottom: 1px solid var(--border);
 }
 .brand { font: 600 var(--text-base) var(--font-mono); letter-spacing: 0.02em; }
-/* The layer switcher (theme.css .jnav, rendered by nav.js) heads the sidebar. */
-#sidebar > .jnav { padding: 10px 10px 0; }
-#sidebar > .jnav .jnav-rail { flex: 1; justify-content: space-between; }
+/* The Architecture link and theme toggle (nav.js), under the head. */
+#sidebar > .jside-tools { padding: 8px 14px 0; }
 .machine-name { color: var(--accent); font-size: 12px; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #sidebar-close { display: none; background: none; border: none; color: var(--fg-dim); font-size: 16px; cursor: pointer; }
-#sidebar-collapse { background: none; border: none; color: var(--fg-dim); font-size: 16px; cursor: pointer; }
-#sidebar-collapse:hover { color: var(--accent); }
 
 .actions { display: flex; flex-direction: column; gap: 6px; padding: 10px; }
 .actions button {
@@ -150,9 +140,6 @@ html, body {
 /* ---- main ---- */
 #main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
 
-#topbar { display: none; align-items: center; gap: 10px; padding: 8px 10px; background: var(--bg-2); border-bottom: 1px solid var(--border); }
-#topbar button { background: var(--bg-3); border: 1px solid var(--border); color: var(--fg); font-size: 18px; line-height: 1; padding: 6px 12px; border-radius: 6px; cursor: pointer; }
-#active-title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; }
 
 /* ---- mouse-mode copy hint ---- */
 #mouse-hint {
@@ -412,22 +399,6 @@ html, body {
 }
 #version-line:empty { display: none; }
 
-/* ---- personal assistant (the front's /pa/* proxy) ----
-   Same look as ⟳ Update. Wraps so an error line gets its own row instead of
-   squeezing the buttons on a 280px sidebar. */
-#pa-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 8px 14px 0; }
-#pa-row.hidden { display: none; }
-.pa-btn {
-  background: var(--bg-3); border: 1px solid var(--border); color: var(--fg-dim);
-  font: inherit; font-size: 12px; padding: 4px 8px; border-radius: 6px; cursor: pointer;
-  white-space: nowrap; text-decoration: none; line-height: 1.4;
-}
-.pa-btn:hover { border-color: var(--accent); color: var(--fg); }
-.pa-btn:disabled { opacity: 0.6; cursor: progress; }
-#pa-msg { flex: 1 1 100%; font-size: 11px; color: var(--fg-dim); overflow-wrap: anywhere; }
-#pa-msg:empty { display: none; }
-#pa-msg.error { color: var(--danger); }
-
 #update-backdrop {
   position: fixed; inset: 0; background: var(--scrim);
   display: flex; align-items: center; justify-content: center; z-index: 35; padding: 16px;
@@ -527,34 +498,31 @@ html, body {
 .hidden { display: none; }
 
 /* ---- scrim (mobile drawer backdrop) ---- */
-#scrim { display: none; position: fixed; inset: 0; background: var(--scrim); z-index: 18; }
+#scrim { display: none; position: fixed; inset: var(--jhead-h) 0 0 0; background: var(--scrim); z-index: 18; }
 
 /* ---- mobile ---- */
 @media (max-width: 760px) {
-  #topbar { display: flex; }
   #sidebar {
-    position: fixed; top: 0; bottom: 0; left: 0; z-index: 20;
+    position: fixed; top: var(--jhead-h); bottom: 0; left: 0; z-index: 20;
     transform: translateX(-100%); transition: transform 0.2s ease;
     box-shadow: var(--shadow-2);
   }
   body.drawer-open #sidebar { transform: translateX(0); }
   body.drawer-open #scrim { display: block; }
   #sidebar-close { display: block; margin-left: auto; }
-  /* Collapsing is a desktop concept (mobile already keeps the sidebar tucked
-     away behind the drawer by default) — hide the toggle here. */
-  #sidebar-collapse { display: none; }
-  /* Thumb-sized in the drawer; desktop keeps them as compact as ⟳ Update. */
-  .pa-btn { font-size: 14px; padding: 8px 14px; }
 }
 
 /* On desktop the key bar is handy but optional; keep it compact. */
 @media (min-width: 761px) {
   #keybar .key { flex: 0 0 auto; min-height: 32px; }
 
-  /* ---- collapsible sidebar (desktop) ---- */
+  /* ---- the settings panel (desktop) ----
+     Closed by default: the terminal takes the window. The header's toggle
+     (nav.js, remembered per browser) slides the session list in, and with it
+     the key bar, which a desktop with a keyboard rarely needs. */
   #sidebar { transition: flex-basis 0.2s ease, width 0.2s ease; }
-  body.sidebar-collapsed #sidebar { width: 0; flex: 0 0 0; border-right: none; }
-  body.sidebar-collapsed #sidebar-expand { display: block; }
+  :root:not([data-settings="open"]) #sidebar { width: 0; flex: 0 0 0; border-right: none; }
+  :root:not([data-settings="open"]) #keybar { display: none; }
 }
 
 /* Voice diagnostics (?voicedebug=1 only) — deliberately plain: it exists to be
@@ -574,10 +542,10 @@ html, body {
 }
 
 /* ---- ?focus=<id>: one session, full window (a deep link into Sessions, see app.js) ----
-   No sidebar, no topbar, no drawer: the terminal and, on a phone, the key bar
+   No header, no sidebar, no drawer: the terminal and, on a phone, the key bar
    it cannot be typed into without. The layer switcher floats in the top-right
    corner (theme.css .jnav--float). */
-body.focus #sidebar, body.focus #topbar, body.focus #sidebar-expand,
+body.focus #sidebar, body.focus .jhead,
 body.focus #scrim, body.focus #mouse-hint { display: none !important; }
 body.focus .term-pane { padding: 4px 6px; }
 @media (min-width: 761px) {

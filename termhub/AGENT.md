@@ -1464,26 +1464,10 @@ widen who can reach termhub (`TERMHUB_BIND=0.0.0.0`, Funnel instead of Serve) wi
 the PA by the same amount. If the PA ever needs a stricter boundary than termhub's, set
 `TERMHUB_PA_URL=` on that machine.
 
-**In the hub (`#pa-row`, under the sidebar header).** Two controls styled like ⟳ Update,
-thumb-sized inside the phone drawer:
-
-- **PA ↗** is a plain `<a href="/pa/" target="_blank">`, not `window.open()`, so iOS never
-  treats it as a popup.
-- **PA chat** sends `POST /pa/api/chat/open` with `X-PA: 1`. The PA answers
-  `{sessionId, created}`, a termhub session on this machine, which it either just started
-  through sessiond or already had running. The hub then does exactly what a click on that row
-  does: `openTerminal(id, title, kind)`, and closes the drawer on a phone. A just-created
-  session isn't in `state.sessions` yet, and `refresh()` returns an in-flight poll that may
-  predate it, so a miss gets one fresh refresh before it counts as an error. While the request
-  runs the button reads `PA chat…`. A failure puts red text under the buttons (`#pa-msg`), and
-  the row deliberately **stays visible** so that text can be read: re-checking straight away
-  would hide the row and the error with it.
-- **Both are hidden unless `GET /pa/api/state` answers**: checked at load, and again on window
-  focus or when the tab becomes visible, at most once a minute (`checkPa`). Proxy disabled and
-  PA not running look the same from here, and in both cases no buttons is better than buttons
-  that can only fail.
-- They are kept out of the key bar on purpose. Its pinned tools are already as wide as a phone
-  allows (see *The key bar: keys scroll, tools don't*), and the PA isn't a terminal key.
+**In the hub, the PA is reached only through the shared header** (Talk, Dashboard, Factory: see
+*One look with the PA* below). The hub used to carry its own `PA ↗` / `PA chat` buttons; the
+header made them redundant and they are gone. The PA chat session is still a termhub session
+like any other, and the PA's Talk page still opens it through `POST /pa/api/chat/open`.
 
 The PA side documents its half (relative URLs, `POST /api/chat/open`) in
 `personal-assistant/AGENT.md`. Covered by `test/paProxy.test.js` (fake PA on an ephemeral port).
@@ -1505,16 +1489,26 @@ and the same layer switcher.
   `jarvis.theme`). **The terminal is always dark**: `#terminals` and xterm's background, text and
   cursor come from the plain `--term-*` tokens (`themeToken()` at the top of `app.js`), because
   Claude Code and opencode pick their colours for a dark background.
-- **The switcher** (`Talk · Dashboard · Factory · Sessions`) heads the sidebar (`[data-jnav]`,
-  tight variant: no brand, no key digits, which is why `--sidebar-w` is 280px), and the agent-time
-  dashboard's header. termhub is layer 4, Sessions. **Alt+1..4** switches from anywhere; the
+- **The header** (`<header class="jhead">` in `index.html`, the same bar and height on every
+  layer) holds the switcher (`Talk · Dashboard · Factory · Sessions`, `[data-jnav]`); so does the
+  agent-time dashboard's. termhub is layer 4, Sessions. The current layer is a raised segment in
+  full ink, nothing more.
+- **The sidebar is the settings panel** (`#sidebar[data-jside]`): closed by default, opened by the
+  header's » toggle that nav.js renders when a page has a `[data-jside]`. nav.js owns the state
+  (`<html data-settings="open|closed">`, localStorage `jarvis.settings.sessions`, remembered on
+  wide screens only) and fires `jarvis:settings` on each change. On a desktop CSS alone slides
+  the sidebar (`--sidebar-w` = theme.css `--jside-w`) and hides the key bar while it is closed;
+  `app.js` only refits the terminal. On a phone the same toggle opens the drawer:
+  `openDrawer()`/`closeDrawer()` and the `jarvis:settings` listener keep `body.drawer-open` and
+  nav.js's state in step, whichever side moved first (toggle, swipe, scrim, a picked session).
+  nav.js also puts the Architecture link (`/pa/architecture`) and the theme toggle at
+  `[data-jside-tools]`. **Alt+1..4** switches from anywhere; the
   listener is capture-phase on `window`, so it fires before xterm's textarea and the terminal never
   sees those keys. Talk, Dashboard and Factory are the PA's (`/pa/talk`, `/pa/`, `/pa/factory`):
   nav.js asks `GET /pa/api/chat/session` on load and on tab focus, and dims them (`is-off`) when
-  that fails, the same "no PA, no working buttons" rule as `#pa-row`. On a phone the switcher is in
-  the drawer.
+  that fails: no PA, no working buttons.
 - **`/?focus=<id>`** is a deep link into Sessions, not a layer of its own: `body.focus` hides the
-  sidebar, topbar, drawer and the desktop key bar, so what is left is the terminal (plus the key bar
+  header, sidebar, drawer and the desktop key bar, so what is left is the terminal (plus the key bar
   on a phone, which you can't type a Claude prompt without). `openDeepLink()` opens the session from
   `?focus=` as it does from `#session=`; the query is not cleared, so a reload stays focused. The
   switcher becomes a small tab in the top-right corner showing only "4 Sessions" (whose link goes

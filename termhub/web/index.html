@@ -7,7 +7,7 @@
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <!-- Dark browser chrome and status bar, so the app doesn't sit under a white
        strip. `black` rather than `black-translucent`: translucent draws the
-       page under the status bar, and the topbar would need its own inset. -->
+       page under the status bar, and the header would need its own inset. -->
   <meta name="theme-color" content="#0e1217" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black" />
   <!-- Per-machine, built by the front (see manifest() in front.js). -->
@@ -37,28 +37,26 @@
 </head>
 <body>
   <div id="app">
+    <!-- The header every Jarvis layer shares (theme.css .jhead): the settings
+         toggle, which shows the session list, and the layer switcher (nav.js). -->
+    <header class="jhead"><div data-jnav></div></header>
+
+    <div id="shell">
     <div id="scrim"></div>
 
-    <aside id="sidebar">
-      <!-- Talk · Dashboard · Sessions · Session (nav.js). -->
-      <div data-jnav="tight"></div>
+    <!-- The settings panel (data-jside): hidden until the header's toggle opens
+         it. On a desktop it pushes the terminal over and the choice is
+         remembered; on a phone it is a drawer over it. -->
+    <aside id="sidebar" data-jside aria-label="Sessions and settings">
       <div class="sidebar-head">
         <span class="brand">termhub</span>
         <span id="machine-name" class="machine-name">…</span>
         <button id="update-btn" title="Check for updates">⟳ Update</button>
-        <button id="sidebar-collapse" title="Collapse sidebar">&laquo;</button>
         <button id="sidebar-close" title="Close">✕</button>
       </div>
       <div id="version-line" title="current version"></div>
-      <!-- The personal assistant, through the front's /pa/* proxy. Hidden until
-           GET /pa/api/state answers (proxy off, or the PA not running, means no
-           buttons rather than buttons that fail). Up here, not in the key bar:
-           the key bar's pinned tools are already at the width a phone allows. -->
-      <div id="pa-row" class="hidden">
-        <a id="pa-open" class="pa-btn" href="/pa/" target="_blank" rel="noopener" title="Open the personal assistant's dashboard in a new tab">PA &#8599;</a>
-        <button id="pa-chat" class="pa-btn" title="Open the PA chat terminal (starts one if none is running)">PA chat</button>
-        <span id="pa-msg" role="status"></span>
-      </div>
+      <!-- nav.js puts the Architecture link and the theme toggle here. -->
+      <div data-jside-tools></div>
       <div class="actions">
         <button id="new-term-btn">+ New terminal</button>
       </div>
@@ -72,17 +70,7 @@
       <div class="sidebar-foot"><span id="status-line">connecting…</span></div>
     </aside>
 
-    <!-- Shown only on desktop while the sidebar is collapsed — the sidebar
-         itself is gone, so this floating button is the only way back. -->
-    <button id="sidebar-expand" title="Show sidebar">&raquo;</button>
-
     <main id="main">
-      <div id="topbar">
-        <button id="menu-btn" title="Menu">☰</button>
-        <span id="active-title">termhub</span>
-        <button id="topbar-new" title="New terminal">＋</button>
-      </div>
-
       <!-- Shown only on desktop while the active terminal runs a full-screen
            mouse-mode app (Claude Code, vim, less), where a plain drag is sent to
            the app instead of selecting text. Explains the Shift-to-select trick. -->
@@ -94,7 +82,7 @@
       <div id="terminals">
         <div id="empty-state">
           <p>No terminal open.</p>
-          <p>Tap <strong>＋</strong> or open the menu (<strong>☰</strong>) to start one.</p>
+          <p>Open the session list (<strong>&raquo;</strong>, top left) to start one.</p>
         </div>
         <!-- Shown only while scrolled up with newer output below. On a phone the
              answer to "I can't get back to the bottom" cannot be "keep flicking". -->
@@ -181,6 +169,7 @@
            photo library. -->
       <input id="file-input" type="file" multiple hidden />
     </main>
+    </div>
   </div>
 
   <!-- Upload progress / failure notices. Deliberately DOM, not terminal output:
