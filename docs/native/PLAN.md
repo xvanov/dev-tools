@@ -39,7 +39,7 @@ Design rationale: the plan page (proposal, 7 Nov 2026) and the research summary 
 
 ## Prerequisites (before phase 0)
 
-- [ ] **P1 GitHub identities.** Verified 2026-11-07: `git pull`/`git push` to this repo work
+- [x] **P1 GitHub identities.** Done 2026-11-07 from this machine: `gh` holds both accounts with `kalinivanov-innergy` active; draft PR xvanov/dev-tools#2 opened as xvanov via `GH_TOKEN=$(gh auth token --user xvanov)` and closed, branch deleted; innergy-dev/faas-cli reachable with WRITE as the work account. The factory half is P2. Verified 2026-11-07: `git pull`/`git push` to this repo work
   over `git@github-xvanov:xvanov/dev-tools.git` with the xvanov key. `gh` is logged in only
   as `kalinivanov-innergy`, which has READ on `xvanov/dev-tools`, so it cannot open PRs here.
   Fix: the user adds the xvanov account to `gh` (`gh auth login`, then
