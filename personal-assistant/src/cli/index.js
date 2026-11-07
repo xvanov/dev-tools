@@ -1371,10 +1371,17 @@ const commands = {
         try {
           const where = factory.machine() || 'this machine';
           const apps = await factory.apps({ fresh: true });
-          mark(true, 'factory', `${where} · ${config.factory.path} · ${apps.length} app(s): ${apps.map((a) => a.repo || a.app).slice(0, 6).join(', ')} · default --via ${config.factory.via}`);
+          mark(true, 'factory', `${where} · ${config.factory.path} · ${apps.length} app(s): ${apps.map((a) => a.repo || a.app).slice(0, 6).join(', ')} · default --via ${config.factory.via} · pipeline ${config.factory.pipeline} · runtime ${config.factory.runtime}`);
         } catch (err) {
-          mark(false, 'factory', err.message.slice(0, 160));
+          mark(false, 'factory', `${err.message.slice(0, 160)}${/exit 127|ENOENT/.test(err.message) ? ' — set PA_FACTORY_UV to the full path of uv there' : ''}`);
         }
+        // The /factory page reads the worker's snapshot (sql/031), never the factory.
+        const snap = await factory.snapshot();
+        const age = snap.polledAt ? Math.round((Date.now() - new Date(snap.polledAt).getTime()) / 60_000) : null;
+        const stale = age === null || age > Math.max(10, (config.factory.pollSeconds / 60) * 5);
+        mark(!stale && !snap.error, 'factory page', snap.polledAt
+          ? `${snap.jobs.length} job(s), listed ${age} min ago${snap.error ? ` · last list failed: ${snap.error.slice(0, 120)}` : ''}${stale ? ' — is the worker running?' : ''}`
+          : `no job list stored yet — the worker stores one every ${config.factory.pollSeconds}s${snap.error ? ` (last error: ${snap.error.slice(0, 120)})` : ''}`);
       }
     }
 

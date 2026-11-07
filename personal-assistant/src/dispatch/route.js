@@ -83,10 +83,18 @@ async function decide(o) {
  * (an accepted proposal): the done-criteria are the card's, even when empty
  * — never re-derived from the commitment at accept time.
  */
-async function forced({ target, mode, done = null, app = null, register = false, exactDone = false }) {
+async function forced({ target, mode, done = null, app = null, register = false, exactDone = false, jobKind = 'code' }) {
   const ctx = await context({ target, mode, done });
   if (exactDone) ctx.done = Array.isArray(done) ? done : [];
   if (!ctx.factoryEnabled) throw new Error('the factory is not configured — set PA_FACTORY_PATH (see `pa doctor`)');
+  // A research or report job needs no repo (JOBS-API v1.2): with one the
+  // factory registered, it reads that checkout; with any other, the repo is
+  // named in the ask and the job runs in the factory's scratch workspace.
+  if (jobKind && jobKind !== 'code') {
+    const hit = app ? ctx.apps.find((a) => a.app === app) : R.appFor(ctx.slug, ctx.apps);
+    if (app && !hit) throw new Error(`no factory app "${app}" — registered: ${ctx.apps.map((a) => a.app).join(', ') || 'none'}`);
+    return { route: 'factory', reason: `a ${jobKind} job`, app: hit ? hit.app : null, done: ctx.done, slug: ctx.slug, appPath: hit?.path || null };
+  }
   if (ctx.unavailable) throw new Error(`the factory did not answer: ${ctx.unavailable}`);
   if (ctx.mode === 'plan') throw new Error('plan mode is read-only and is not a factory job — use --via claude, or another mode');
   let hit = app ? ctx.apps.find((a) => a.app === app) : R.appFor(ctx.slug, ctx.apps);

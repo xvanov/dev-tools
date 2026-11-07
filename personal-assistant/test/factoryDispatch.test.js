@@ -372,7 +372,9 @@ async function factoryStart() {
   // Recorded on the run, then the commitment moves only through the ledger.
   const insert = store.queries.find((q) => /insert into run/.test(q.sql));
   assert.match(insert.sql, /'factory'/);
-  assert.deepStrictEqual(insert.params.slice(5), ['you chose the factory', 'coding', 'auto', 'draft_pr', { dev: 'model-a', reviewer: 'model-b' }, 'mode']);
+  // Pipeline solo by default (PA_FACTORY_PIPELINE); kind and runtime on the row (sql/031).
+  assert.deepStrictEqual(insert.params.slice(5), ['you chose the factory', 'coding', 'solo', 'draft_pr', { dev: 'model-a', reviewer: 'model-b' }, 'mode', 'code', 'api']);
+  assert.ok(submit.argv.includes('--kind') && submit.argv.includes('--runtime'), 'v1.2 flags sent');
   assert.ok(store.queries.some((q) => /factory_job_id = \$2/.test(q.sql) && q.params[1] === 'widget:017'));
   assert.deepStrictEqual(transitions, [{ commitmentId: 31, to: 'dispatched', actor: 'dispatch', reason: 'run #7: factory job widget:017', from: ['open'] }]);
   // Walk-in: a session following the job, in the factory checkout, stored on the run.

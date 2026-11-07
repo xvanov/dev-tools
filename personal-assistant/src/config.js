@@ -430,10 +430,21 @@ const config = {
     path: env('PA_FACTORY_PATH', ''),
     // A PA_MACHINES name; '' = this machine.
     machine: env('PA_FACTORY_MACHINE', ''),
+    // The `uv` the factory's commands run with on its machine. termhub's
+    // /api/exec runs without a login shell, so ~/.local/bin is often not on
+    // its PATH: give the full path there (e.g. /home/me/.local/bin/uv).
+    uv: env('PA_FACTORY_UV', 'uv'),
     // `pa do`'s route when --via is not given: claude | factory | auto.
-    via: env('PA_DISPATCH_VIA', 'claude'),
-    // chain | solo | auto (the factory decides).
-    pipeline: env('PA_FACTORY_PIPELINE', 'auto'),
+    // Unset: the factory once it is configured (it dispatches and tracks all
+    // work: code, research, reports), else a Claude session.
+    via: env('PA_DISPATCH_VIA', '') || (env('PA_FACTORY_PATH', '') ? 'factory' : 'claude'),
+    // chain | solo | auto (the factory decides). Solo by default: on the
+    // factory's own benchmark one agent beat the role chain.
+    pipeline: env('PA_FACTORY_PIPELINE', 'solo'),
+    // A job's runtime when none is picked: api (the factory's metered model
+    // routing) | claude_session (Claude Code on the factory machine, the
+    // operator's subscription). JOBS-API v1.2.
+    runtime: env('PA_FACTORY_RUNTIME', 'api'),
     // Per-persona model overrides passed with every job: `dev=model,reviewer=model`.
     models: env('PA_FACTORY_MODELS', ''),
     // How `auto` picks: `rule` (src/dispatch/routeCore.js). The seam for others.

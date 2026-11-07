@@ -16,6 +16,15 @@
 //   cancel(run)    `factory job cancel` (pa drop)
 //   status(run)    one job's status (pa review)
 //   apps()         `factory app list`, cached briefly
+//   refreshBoard() the worker pass behind the /factory page: the whole
+//                  `job list` into factory_board, and notices on what changed
+//   report/cancelJob/approve/openFollow  the factory page's and `pa factory`'s actions
+//
+// Every job carries a kind (code | research | report) and a runtime (api |
+// claude_session), JOBS-API v1.2. A research/report job needs no repo and
+// delivers `none`: its deliverable is a report the factory keeps. A v1
+// factory refuses the v1.2 flags; a code job on the api runtime is resent
+// without them (submit), anything else fails saying the factory is too old.
 //
 // The end state is the operator's call (operator decision 2026-11-02, no
 // ceiling): every job carries an explicit `--delivery` — what they said
@@ -82,9 +91,11 @@ function machine() {
   return name;
 }
 
-async function call(sub, { timeoutMs = config.factory.timeoutMs } = {}) {
+async function call(sub, { timeoutMs = config.factory.timeoutMs, maxOutputBytes = undefined } = {}) {
   if (!enabled()) throw new Error('the factory is not configured — set PA_FACTORY_PATH (and PA_FACTORY_MACHINE if it is not this machine)');
-  const res = await runCommand(machine(), F.factoryArgv(sub), { cwd: config.factory.path, timeoutMs });
+  const opts = { cwd: config.factory.path, timeoutMs };
+  if (maxOutputBytes) opts.maxOutputBytes = maxOutputBytes;
+  const res = await runCommand(machine(), F.factoryArgv(sub, config.factory.uv), opts);
   return F.parseResult(res);
 }
 
@@ -166,7 +177,7 @@ async function stage(where, runId, files) {
     }
     return { paths: out, dir: null };
   }
-  const argv = ['uv', 'run', 'python', '-c', WRITER];
+  const argv = [F.uvBinary(config.factory.uv), 'run', 'python', '-c', WRITER];
   const stdin = JSON.stringify({ run: Number(runId), files });
   const r = F.parseResult(await runCommand(where, argv, { cwd: config.factory.path, timeoutMs: config.factory.timeoutMs, stdin }));
   for (const name of Object.keys(files)) if (!r.paths?.[name]) throw new Error(`could not stage ${name} on ${where}`);
@@ -176,15 +187,41 @@ async function stage(where, runId, files) {
 // Best effort: a leftover private temp dir is litter, not a leak.
 async function unstage(where, dir) {
   if (!where || !dir) return;
-  await runCommand(where, ['uv', 'run', 'python', '-c', CLEANER, dir], { cwd: config.factory.path, timeoutMs: 60_000 }).catch((err) =>
+  await runCommand(where, [F.uvBinary(config.factory.uv), 'run', 'python', '-c', CLEANER, dir], { cwd: config.factory.path, timeoutMs: 60_000 }).catch((err) =>
     log.warn('could not remove the staged ask on the factory machine', { dir, message: err.message })
   );
+}
+
+// A v1 factory refuses --kind/--runtime in its CLI parser (nothing written).
+// A code job on the api runtime is exactly what v1 does without them, so it
+// is resent bare; anything else needs v1.2 and fails with that said.
+async function submit(argv, { kind = 'code', runtime: rt = 'api' } = {}) {
+  try {
+    return await submitOnce(argv);
+  } catch (err) {
+    if (!(err instanceof F.FactoryError && err.code === 'unsupported_option')) throw err;
+    if (kind !== 'code' || rt !== 'api') {
+      throw new F.FactoryError('unsupported_option', `${err.message.replace(/^factory unsupported_option: /, '')}: a ${kind} job on the ${rt} runtime needs it — update the factory`);
+    }
+    log.warn('the factory predates JOBS-API v1.2; resending the code job without --kind/--runtime');
+    return submitOnce(withoutV12(argv));
+  }
+}
+
+/** The submit argv minus the v1.2 flags (each a flag and its value). */
+function withoutV12(argv) {
+  const out = [];
+  for (let i = 0; i < argv.length; i++) {
+    if (argv[i] === '--kind' || argv[i] === '--runtime') { i++; continue; }
+    out.push(argv[i]);
+  }
+  return out;
 }
 
 // Submit, retried once on a transport failure (a lost answer): the run id is
 // the external id, so the factory returns the job it already made rather
 // than a second one. A contract error (unknown_repo, …) is not retried.
-async function submit(argv) {
+async function submitOnce(argv) {
   let first;
   try {
     first = await call(argv);
@@ -237,42 +274,56 @@ async function installId() {
 async function start({
   target, app, slug = null, task = null, mode: modeName, delivery = null, deliverySource = null, deliveryPhrase = null,
   pipeline = null, models = null, modelsExact = false, done = [], brief = null, briefBy = null, routeReason = null,
-  confirmedUnattended = false, again = false,
+  confirmedUnattended = false, again = false, title = null, jobKind = 'code', runtime = null,
 }) {
-  if (modeName && resolveMode(modeName).name === 'plan') {
-    throw new Error('plan mode is read-only and is not a factory job — send it to a Claude session (--via claude)');
+  const kind = F.jobKind(jobKind);
+  const rt = F.runtime(runtime || config.factory.runtime);
+  if (kind === 'code' && modeName && resolveMode(modeName).name === 'plan') {
+    throw new Error('plan mode is read-only and is not a factory job — send it to a Claude session (--via claude), or make it a research job (--kind research)');
   }
   const where = machine();
   const commitmentId = target.commitment ? Number(target.commitment.id) : null;
-  const label = task || target.commitment?.summary;
+  const label = title || task || target.commitment?.summary;
   if (!label) throw new Error('nothing to do — give a commitment id or a --task');
-  if (!app) throw new Error('no factory app for this work');
+  if (!app && kind === 'code') throw new Error('no factory app for this work');
   const pipe = F.pipeline(pipeline || config.factory.pipeline);
   const overrides = modelsExact ? F.parseModels(modelEntries(models)) : modelsFor(models);
-  const chosen = delivery
-    ? { delivery: D.delivery(delivery), source: deliverySource || 'explicit', phrase: deliveryPhrase || null }
-    : await require('./delivery').resolve({ mode: modeName ? resolveMode(modeName).name : null, operatorText: task, slug });
-  const runMode = modeName ? resolveMode(modeName).name : D.modeFor(chosen.delivery);
+  // A research/report job's deliverable is the factory's report: `none`, always (v1.2).
+  if (kind !== 'code' && delivery && D.delivery(delivery) !== 'none') {
+    throw new Error(`a ${kind} job delivers a report, not ${delivery} — leave the end state at none`);
+  }
+  const chosen = kind !== 'code'
+    ? { delivery: 'none', source: 'kind', phrase: null }
+    : delivery
+      ? { delivery: D.delivery(delivery), source: deliverySource || 'explicit', phrase: deliveryPhrase || null }
+      : await require('./delivery').resolve({ mode: modeName ? resolveMode(modeName).name : null, operatorText: task, slug });
+  const runMode = kind !== 'code' ? 'plan' : modeName ? resolveMode(modeName).name : D.modeFor(chosen.delivery);
   D.requireConfirmed(chosen.delivery, confirmedUnattended);
 
   const install = await installId();
   const run = await require('./runRow').insertRun(
     `insert into run (commitment_id, mode, task, repo_path, status, machine, route, route_reason, kind,
-                      pipeline, delivery_requested, models, delivery_source)
-     values ($1,$2,$3,$4,'starting',$5,'factory',$6,$7,$8,$9,$10,$11) returning *`,
+                      pipeline, delivery_requested, models, delivery_source, job_kind, runtime)
+     values ($1,$2,$3,$4,'starting',$5,'factory',$6,$7,$8,$9,$10,$11,$12,$13) returning *`,
     [commitmentId, runMode, label, target.repoPath || null, where || os.hostname(), routeReason, target.commitment?.kind || null,
-      pipe, chosen.delivery, Object.keys(overrides).length ? overrides : null, chosen.source],
+      pipe, chosen.delivery, Object.keys(overrides).length ? overrides : null, chosen.source, kind, rt],
     // The idempotency key, in the insert's own transaction: before anything is sent.
     { commitmentId, again, externalId: (row) => F.externalKey(install, row.id) }
   );
 
   // The ask: the card's frozen brief, or one composed now from the ask and
   // what the assistant gathered (src/dispatch/compose.js). Composition never
-  // fails a dispatch — the worst case is the deterministic brief.
+  // fails a dispatch — the worst case is the deterministic brief. A research
+  // or report job's ask is the operator's own words (factoryCore.researchAsk):
+  // no composing model, no gathered context.
   let ask = brief;
   let by = briefBy || (brief ? 'proposal' : null);
   let criteria = Array.isArray(done) ? done : [];
   let goal = null;
+  if (!ask && kind !== 'code') {
+    ask = F.researchAsk({ kind, title: label, ask: task || target.commitment?.detail || target.commitment?.summary, done: criteria, repo: slug });
+    by = 'research:operator';
+  }
   if (!ask) {
     try {
       const c = await require('./compose').compose({ target, task, done: criteria, app, slug, delivery: chosen.delivery, pipeline: pipe });
@@ -291,7 +342,8 @@ async function start({
     }
   }
   // Without a flow the factory parks the job as needs_human (JOBS-API v1.1).
-  const flow = F.flowMarkdown({ title: label, summary: goal || task || target.commitment?.summary, app, done: criteria, delivery: chosen.delivery });
+  // A research/report job needs none (v1.2: no backpressure gate for them).
+  const flow = kind === 'code' ? F.flowMarkdown({ title: label, summary: goal || task || target.commitment?.summary, app, done: criteria, delivery: chosen.delivery }) : null;
   // This machine's copy is the record (brief_path), wherever the factory runs.
   const briefPath = path.join(config.worktreesRoot, `run-${run.id}-BRIEF.md`);
   fs.mkdirSync(path.dirname(briefPath), { recursive: true });
@@ -308,6 +360,8 @@ async function start({
       delivery: chosen.delivery,
       models: overrides,
       externalId: run.external_id,
+      kind,
+      runtime: rt,
     });
 
   let job = null;
@@ -316,10 +370,12 @@ async function start({
   try {
     // On another machine the brief and flow travel over runCommand's stdin
     // into a private mkdtemp dir there (stage/WRITER), never on a command line.
-    const { paths: staged, dir } = await stage(where, run.id, where ? { 'BRIEF.md': ask, 'flow.md': flow } : { 'flow.md': flow });
+    const files = where ? { 'BRIEF.md': ask } : {};
+    if (flow) files['flow.md'] = flow;
+    const { paths: staged, dir } = Object.keys(files).length ? await stage(where, run.id, files) : { paths: {}, dir: null };
     stagedDir = dir;
     sent = true;
-    job = await submit(argvFor(staged));
+    job = await submit(argvFor(staged), { kind, runtime: rt });
     if (!F.JOB_ID.test(String(job.job_id || ''))) throw new F.FactoryError('bad_output', `job id "${job.job_id}"`);
     if (!(await recordJob(run, job, { delivery: chosen.delivery, pipe, briefPath, by }))) {
       await unstage(where, stagedDir);
@@ -372,25 +428,20 @@ async function start({
   let sessionId = null;
   let url = null;
   try {
-    const hub = termhub.forMachine(where);
-    const session = await hub.createSession({
-      cwd: config.factory.path,
-      command: F.followCommand(job.job_id),
-      title: `pa#${run.id} factory · ${label.slice(0, 40)}`,
-    });
-    sessionId = session.id;
+    ({ sessionId, url } = await openFollow(job.job_id, `pa#${run.id} factory · ${label.slice(0, 40)}`));
     await query('update run set termhub_session_id = $2 where id = $1', [run.id, sessionId]);
-    url = await hub.sessionUrl(sessionId).catch(() => null);
   } catch (err) {
     log.warn('factory job started, but its follow session did not open', { run: run.id, job: job.job_id, message: err.message });
   }
 
-  log.info('dispatched to the factory', { run: run.id, job: job.job_id, app, delivery: job.delivery || chosen.delivery, pipeline: job.pipeline || pipe, brief: by });
+  log.info('dispatched to the factory', { run: run.id, job: job.job_id, app, kind, runtime: rt, delivery: job.delivery || chosen.delivery, pipeline: job.pipeline || pipe, brief: by });
   return {
     id: run.id,
     route: 'factory',
     mode: runMode,
     jobId: job.job_id,
+    jobKind: job.kind || kind,
+    runtime: job.runtime || rt,
     created: job.created !== false,
     app,
     delivery: job.delivery || chosen.delivery,
@@ -407,6 +458,20 @@ async function start({
     routeReason,
     warnings,
   };
+}
+
+/**
+ * A termhub session on the factory's machine running `factory job follow`,
+ * so a human can walk into the job. Used at submit and by the factory page's
+ * "Open in termhub" (any job, not only the PA's).
+ * @returns {Promise<{sessionId: string, url: string|null}>}
+ */
+async function openFollow(jobId, title = null) {
+  const command = F.followCommand(jobId, config.factory.uv);
+  const hub = termhub.forMachine(machine());
+  const session = await hub.createSession({ cwd: config.factory.path, command, title: String(title || `factory · ${jobId}`).slice(0, 80) });
+  const url = await hub.sessionUrl(session.id).catch(() => null);
+  return { sessionId: session.id, url };
 }
 
 // The job, written onto its run — only while the run is still live. A run
@@ -506,6 +571,7 @@ async function apply(run, job) {
     nextOutcome !== (run.outcome || null) ||
     u.factory_state !== run.factory_state ||
     (u.cost_usd !== null && Number(run.cost_usd) !== u.cost_usd) ||
+    (u.subscription_equiv_usd !== null && run.subscription_equiv_usd !== undefined && Number(run.subscription_equiv_usd) !== u.subscription_equiv_usd) ||
     (u.mr_url && u.mr_url !== run.mr_url);
   if (changed) {
     await query(
@@ -516,6 +582,10 @@ async function apply(run, job) {
         where id = $1`,
       [run.id, nextStatus, nextOutcome, u.factory_state, u.cost_usd, u.mr_url, u.exit_note, u.delivery, u.terminal && wasLive]
     );
+    // sql/031: a separate statement, so a store not yet migrated still records the rest.
+    if (u.subscription_equiv_usd !== null) {
+      await query('update run set subscription_equiv_usd = $2 where id = $1', [run.id, u.subscription_equiv_usd]).catch(() => {});
+    }
   }
   const ended = u.terminal && wasLive;
   if (ended) {
@@ -588,6 +658,117 @@ async function poll() {
   return unsettled ? { checked: watched.length, changed, ended, unsettled } : { checked: watched.length, changed, ended };
 }
 
+// ------------------------------------------------- the factory page's data ----
+// `job list` can be long (every job, every story): room for it.
+const LIST_BYTES = 8 * 1024 * 1024;
+
+/**
+ * The worker pass behind the factory page (src/dashboard/factory.js) and
+ * `pa factory jobs`: the whole `factory job list --json` into factory_board
+ * (sql/031), so no page load calls the factory. Then it tells the user what
+ * changed since the last snapshot (factoryCore.notices): a job done, needing
+ * them, failed, or with a PR whose CI turned red. A job a PA run submitted has
+ * its end and its waits announced by the run pass (apply); only its CI is
+ * announced here.
+ */
+async function refreshBoard() {
+  if (!enabled()) return null;
+  const before = await one('select jobs, polled_at from factory_board where id = 1').catch(() => null);
+  let listed;
+  try {
+    listed = await call(['job', 'list', '--json'], { maxOutputBytes: LIST_BYTES });
+  } catch (err) {
+    await query(
+      `insert into factory_board (id, error, error_at) values (1, $1, now())
+       on conflict (id) do update set error = excluded.error, error_at = now()`,
+      [F.clip(err.message, 500)]
+    ).catch(() => {});
+    throw err;
+  }
+  const jobs = (Array.isArray(listed.jobs) ? listed.jobs : []).filter((j) => F.JOB_ID.test(String(j?.job_id || '')));
+  await query(
+    `insert into factory_board (id, jobs, polled_at, error, error_at) values (1, $1::jsonb, now(), null, null)
+     on conflict (id) do update set jobs = excluded.jobs, polled_at = now(), error = null, error_at = null`,
+    [JSON.stringify(jobs)]
+  );
+  const prev = before?.polled_at ? F.noticeState(before.jobs) : null;
+  const ours = await rows(`select distinct factory_job_id from run where route = 'factory' and factory_job_id is not null`).catch(() => []);
+  const covered = new Set(ours.map((r) => r.factory_job_id));
+  const said = F.notices(prev, jobs, { covered });
+  for (const n of said) {
+    await require('../notify')
+      .notify({ kind: 'info', title: n.title, body: n.body, url: n.url, dedupeKey: n.key })
+      .catch((err) => log.warn('factory notice not sent', { key: n.key, message: err.message }));
+  }
+  return { jobs: jobs.length, notices: said.length };
+}
+
+/** The last stored `job list` and when it was taken (never calls the factory). */
+async function snapshot() {
+  const r = await one('select jobs, polled_at, error, error_at from factory_board where id = 1').catch(() => null);
+  return { jobs: Array.isArray(r?.jobs) ? r.jobs : [], polledAt: r?.polled_at || null, error: r?.error || null, errorAt: r?.error_at || null };
+}
+
+/** One job from the snapshot, or null. */
+async function snapshotJob(jobId) {
+  return (await snapshot()).jobs.find((j) => j.job_id === jobId) || null;
+}
+
+/**
+ * A research/report job's report (JOBS-API v1.2 `job report --json`):
+ * {job_id, title, markdown, path}. A v1 factory has no such command.
+ */
+async function report(jobId) {
+  try {
+    const r = await call(F.reportArgv(jobId), { maxOutputBytes: LIST_BYTES });
+    return { jobId: String(r.job_id || jobId), title: String(r.title || ''), markdown: String(r.markdown || ''), path: r.path ? String(r.path) : null };
+  } catch (err) {
+    if (err instanceof F.FactoryError && err.code === 'no_report') return { jobId, title: '', markdown: '', path: null, none: true };
+    if (err instanceof F.FactoryError && err.code === 'unsupported_command') {
+      throw Object.assign(new Error('this factory has no reports yet (it predates JOBS-API v1.2)'), { status: 409 });
+    }
+    throw err;
+  }
+}
+
+/**
+ * Cancels a job. One a live PA run holds is dropped through the dispatcher
+ * (`pa drop`: it cancels the job and settles the run and its commitment);
+ * any other is `factory job cancel`.
+ */
+async function cancelJob(jobId) {
+  const argv = F.cancelArgv(jobId);
+  const run = await one(
+    `select id from run where route = 'factory' and factory_job_id = $1 and status in ('starting','running','waiting') order by id desc limit 1`,
+    [jobId]
+  ).catch(() => null);
+  if (run) {
+    const r = await require('./index').drop(Number(run.id));
+    await refreshBoard().catch(() => {});
+    return { jobId, run: Number(run.id), state: r?.cancelled ? 'cancelled' : 'ended', storiesParked: r?.storiesParked ?? null };
+  }
+  const r = await call(argv);
+  await refreshBoard().catch(() => {});
+  return { jobId, state: r.state || null, storiesParked: Array.isArray(r.stories_parked) ? r.stories_parked.length : null, why: r.why || null };
+}
+
+/**
+ * Approves a needs_human job's direction — only the approval the factory
+ * itself named for this job (factoryCore.approveArgv), read from the
+ * snapshot, never an id from the request. `approve-direction` prints text,
+ * not JSON: exit 0 is the answer.
+ */
+async function approve(jobId) {
+  if (!F.JOB_ID.test(String(jobId || ''))) throw Object.assign(new Error(`not a factory job id: "${jobId}"`), { status: 400 });
+  const job = await snapshotJob(jobId);
+  const argv = job ? F.approveArgv(job) : null;
+  if (!argv) throw Object.assign(new Error(`job ${jobId} is not waiting on an approval the factory named`), { status: 409 });
+  const res = await runCommand(machine(), F.factoryArgv(argv, config.factory.uv), { cwd: config.factory.path, timeoutMs: config.factory.timeoutMs });
+  if (res.code !== 0) throw new Error(`approve-direction failed (exit ${res.code}): ${F.clip(String(res.stderr || res.stdout || '').trim(), 300)}`);
+  await refreshBoard().catch(() => {});
+  return { jobId, approved: true, output: F.clip(String(res.stdout || '').trim(), 500) };
+}
+
 /**
  * Runs with no job recorded that are not known to have failed: a submit whose
  * answer was lost (`submit_unknown`), or a process that died between the run
@@ -623,4 +804,7 @@ async function sweepUnsettled() {
   return stuck.length;
 }
 
-module.exports = { enabled, machine, call, apps, addApp, installId, start, settle, sweepUnsettled, status, cancel, apply, poll, runCommand, modelsFor, _setRunner };
+module.exports = {
+  enabled, machine, call, apps, addApp, installId, start, settle, sweepUnsettled, status, cancel, apply, poll, runCommand, modelsFor, _setRunner,
+  submit, withoutV12, openFollow, refreshBoard, snapshot, snapshotJob, report, cancelJob, approve,
+};

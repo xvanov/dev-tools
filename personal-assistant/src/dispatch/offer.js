@@ -47,15 +47,27 @@ const PLAIN = (route) => Object.fromEntries(D.DELIVERIES.map((d) => [d, D.descri
 async function prepare({
   commitmentId = null, task = null, via = 'auto', mode = null, delivery = null, pipeline = null, models = null, done = null,
   app = null, repoPath = null, kind = undefined, register = false, useModel = true, why = null, suggestedBy = null,
+  jobKind = null, runtime = null, title = null,
 }) {
   const dispatch = require('./index');
   const route = require('./route');
-  if (repoPath) await dispatch.knownRepo(repoPath);
+  // A research or report job is a factory job (JOBS-API v1.2).
+  const jk = F.jobKind(jobKind);
+  const rt = runtime ? F.runtime(runtime) : null;
+  if (jk !== 'code' && via && String(via).toLowerCase() === 'claude') throw new Error(`a ${jk} job is a factory job — drop --via claude`);
+  if (jk !== 'code' || rt) via = 'factory';
+  if (repoPath && !(jk !== 'code' && require('./routeCore').normSlug(repoPath))) await dispatch.knownRepo(repoPath);
   const target = await dispatch.resolveTarget({ commitmentId, repoPath });
-  const label = task || target.commitment?.summary;
+  const label = title || task || target.commitment?.summary;
   if (!label) throw new Error('nothing to offer — give a commitment id or a --task');
-  const v = require('./routeCore').via(via);
-  const plan = mode && String(mode).toLowerCase() === 'plan';
+  const v = require('./routeCore').via(via || require('./routeCore').defaultVia({ configured: config.factory.via, mode }));
+  const plan = jk === 'code' && mode && String(mode).toLowerCase() === 'plan';
+  // The factory as the default route: a repo it does not know yet is
+  // registered on accept (the card says so) rather than refused — nothing
+  // outward happens before the yes.
+  if (!via && v === 'factory') register = true;
+
+  if (jk !== 'code') return prepareResearch({ target, task, title: label, jobKind: jk, runtime: rt, done, app, why, suggestedBy });
 
   let choice;
   if (plan || v === 'claude') {
@@ -101,6 +113,8 @@ async function prepare({
   if (viaFactory) {
     const pipe = F.pipeline(pipeline || config.factory.pipeline);
     const overrides = require('./factory').modelsFor(models);
+    payload.jobKind = 'code';
+    payload.runtime = rt || F.runtime(config.factory.runtime);
     const c = await require('./compose').compose({
       target, task, done: choice.done || [], app: choice.app, slug: choice.slug, appPath: choice.appPath || null,
       delivery: chosen.delivery, pipeline: pipe, useModel,
@@ -118,11 +132,52 @@ async function prepare({
     });
   }
 
-  const title = (viaFactory
+  const cardTitle = (viaFactory
     ? `Send to the factory: ${label}`
     : `Start a ${plan ? 'research' : 'coding'} session on: ${label}`).slice(0, 280);
   const body = cardBody({ payload, label, why, target });
-  return { title, body, payload, target };
+  return { title: cardTitle, body, payload, target };
+}
+
+/**
+ * A research or report job's card: the operator's words as the ask
+ * (factoryCore.researchAsk — no composing model), end state none, the repo if
+ * the factory knows it. Frozen like any offer: accept sends exactly this.
+ */
+async function prepareResearch({ target, task, title, jobKind, runtime, done, app, why, suggestedBy }) {
+  const route = require('./route');
+  const choice = await route.forced({ target, done, app, jobKind });
+  const rt = runtime || F.runtime(config.factory.runtime);
+  const criteria = choice.done || [];
+  const brief = F.researchAsk({ kind: jobKind, title, ask: task || target.commitment?.detail || target.commitment?.summary, done: criteria, repo: choice.slug });
+  const payload = {
+    frozen: true,
+    why: why ? C.clip(why, 500) : null,
+    suggestedBy: suggestedBy ? C.clip(suggestedBy, 40) : null,
+    via: 'factory',
+    routeReason: choice.reason,
+    jobKind,
+    runtime: rt,
+    title,
+    task: task || null,
+    repoPath: target.repoPath || null,
+    repoVerifiedAt: target.repoPath ? new Date().toISOString() : null,
+    slug: choice.slug || null,
+    delivery: 'none',
+    deliverySource: 'kind',
+    deliveryPhrase: null,
+    deliveryPlain: PLAIN('factory'),
+    mode: null,
+    app: choice.app || null,
+    register: false,
+    pipeline: F.pipeline(config.factory.pipeline),
+    models: {},
+    done: criteria,
+    brief,
+    briefBy: 'research:operator',
+  };
+  const verb = jobKind === 'report' ? 'Write a report' : 'Research';
+  return { title: `${verb} in the factory: ${title}`.slice(0, 280), body: cardBody({ payload, label: title, why, target }), payload, target };
 }
 
 /** The card's text: the end state first, in plain words. */
@@ -132,6 +187,16 @@ function cardBody({ payload: p, label, why, target }) {
   // The planner's note is model text: one line, labelled, so it can never pose
   // as the card's own "End state:" line.
   if (why) L.push(`Planner's note: ${C.clip(why, 500)}`, '');
+  if (p.jobKind && p.jobKind !== 'code') {
+    L.push(`End state: a ${p.jobKind === 'report' ? 'written report' : 'research report'} the factory keeps — no code changes, no branch, no PR.`);
+    L.push(`Route: software factory, ${p.jobKind} job on ${p.runtime === 'claude_session' ? 'a Claude session (subscription)' : 'API models (metered)'}${p.app ? `, reading ${p.slug || p.app}` : p.slug ? ` (${p.slug} is not registered: named in the ask only)` : ', no repo'}`);
+    if (p.done.length) {
+      L.push(`${p.jobKind === 'report' ? 'It must cover' : 'Questions'}:`);
+      for (const d of p.done) L.push(`  - ${d}`);
+    }
+    L.push(`Why this route: ${p.routeReason}`);
+    return L.join('\n');
+  }
   if (p.delivery) {
     L.push(`End state: ${p.delivery} — ${p.deliveryPlain[p.delivery]}${D.unattended(p.delivery) ? ' (NO HUMAN STEP AFTER YOUR YES)' : ''}`);
     L.push(`  (${D.sourceLine(p.deliverySource, p.deliveryPhrase, p.slug)})`);
@@ -139,7 +204,7 @@ function cardBody({ payload: p, label, why, target }) {
     L.push('End state: none — read-only research; it writes up findings and changes nothing.');
   }
   if (p.via === 'factory') {
-    L.push(`Route: software factory, app ${p.app || `(${p.slug}, registered on accept)`}, pipeline ${p.pipeline}${Object.keys(p.models || {}).length ? `, models ${Object.entries(p.models).map(([k, v]) => `${k}=${v}`).join(' ')}` : ''}`);
+    L.push(`Route: software factory, app ${p.app || `(${p.slug}, registered on accept)`}, pipeline ${p.pipeline}${Object.keys(p.models || {}).length ? `, models ${Object.entries(p.models).map(([k, v]) => `${k}=${v}`).join(' ')}` : ''}${p.runtime ? `, runtime ${p.runtime === 'claude_session' ? 'Claude session (subscription)' : 'API models'}` : ''}`);
     L.push(`Done when:${p.done.length ? '' : ' (no criteria — the factory is held to the goal only)'}`);
     for (const d of p.done) L.push(`  - ${d}`);
   } else {

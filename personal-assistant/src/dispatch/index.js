@@ -205,10 +205,21 @@ async function start({
   via = null, pipeline = null, models = null, done = null, app = null, routeReason: givenReason = null,
   agent = null, model = null, delivery = null, deliverySource = null, deliveryPhrase = null,
   brief = null, briefBy = null, frozen = false, register = false, confirmedUnattended = false, repoVerified = false,
+  jobKind = null, runtime = null, title = null,
 }) {
+  // A research or report job exists only on the factory (JOBS-API v1.2).
+  const kind = require('./factoryCore').jobKind(jobKind);
+  if (runtime) require('./factoryCore').runtime(runtime);
+  if (kind !== 'code' && via && String(via).toLowerCase() === 'claude') {
+    throw new Error(`a ${kind} job is a factory job — drop --via claude (or use --mode plan for a read-only Claude session)`);
+  }
+  if (kind !== 'code' || runtime) via = via || 'factory';
   // `--repo` must be a known project. A card's repo was checked when the card
   // was made (offer.js `repoVerifiedAt`) and is not re-judged at accept.
-  if (repoPath && !repoVerified) await knownRepo(repoPath);
+  // A research/report job only reads: an owner/name it names need not be a
+  // checkout here (the factory reads its own, or the ask just names it).
+  const readOnlySlug = kind !== 'code' && require('./routeCore').normSlug(repoPath);
+  if (repoPath && !repoVerified && !readOnlySlug) await knownRepo(repoPath);
   // One live run per commitment. A second Do while the first is still setting
   // up (a remote one takes a minute) started a second agent on the same ask.
   if (commitmentId && !again) {
@@ -223,20 +234,21 @@ async function start({
     }
   }
   if (delivery) delivery = D.delivery(delivery);
-  const route = require('./routeCore').via(via || config.factory.via);
+  const route = require('./routeCore').via(via || require('./routeCore').defaultVia({ configured: config.factory.via, mode: modeName, machine }));
   let routeReason = givenReason || (route === 'claude' && via ? 'you chose a Claude session' : null);
   if (route !== 'claude') {
     const target = await resolveTarget({ commitmentId, repoPath });
     const chooser = require('./route');
     const choice =
       route === 'factory'
-        ? await chooser.forced({ target, mode: modeName, done, app, register, exactDone: frozen })
+        ? await chooser.forced({ target, mode: modeName, done, app, register, exactDone: frozen, jobKind: kind })
         : await chooser.decide({ target, mode: modeName, done });
     if (choice.route === 'factory') {
       if (machine) throw new Error('--machine picks where a Claude session runs; the factory runs on PA_FACTORY_MACHINE');
       return require('./factory').start({
         target, app: choice.app, slug: choice.slug, task, mode: modeName, pipeline, models, modelsExact: frozen, done: choice.done,
         routeReason: givenReason || choice.reason, delivery, deliverySource, deliveryPhrase, brief, briefBy, confirmedUnattended, again,
+        jobKind: kind, runtime, title,
       });
     }
     routeReason = givenReason || choice.reason;

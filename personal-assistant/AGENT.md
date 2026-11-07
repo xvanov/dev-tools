@@ -304,7 +304,14 @@ Claude sessions (`test/factoryDispatch.test.js` checks the planner source). A jo
 commitment only through `ledger.transition` (actor `factory`) and only from `dispatched`, and
 GitHub reconcile closes only `open` asks, so a merged factory PR is never closed twice. A job id is
 checked against `factoryCore.JOB_ID` before it is typed into a terminal. Any route chooser's answer
-passes `routeCore.guard`. Every job is sent with a `--flow-file` (`factoryCore.flowMarkdown`,
+passes `routeCore.guard`. Every job carries a kind (`code` | `research` | `report`) and a runtime
+(`api` | `claude_session`), JOBS-API v1.2; a research/report job needs no repo, delivers `none` (its
+deliverable is the factory's report) and its ask is the operator's own words
+(`factoryCore.researchAsk`, no composing model). A v1 factory refuses the v1.2 flags in its CLI
+parser (`unsupported_option`, before anything is written): a code job on `api` is resent without
+them, anything else fails saying so. The factory is the default route once configured
+(`routeCore.defaultVia`; plan mode and `--machine` still mean a Claude session). Every code job is
+sent with a `--flow-file` (`factoryCore.flowMarkdown`,
 deterministic), since the factory parks a job without a flow; content reaches another machine
 on the writer's stdin (never argv, where `ps` shows it and a large brief overflows the limit), into
 a fresh `mkdtemp` directory (0700) with `O_EXCL|O_NOFOLLOW` files, removed once the factory has the

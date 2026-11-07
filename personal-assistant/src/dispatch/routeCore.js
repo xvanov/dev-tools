@@ -33,6 +33,19 @@ function via(name) {
   return v;
 }
 
+/**
+ * Pure. The route when the caller named none: PA_DISPATCH_VIA (which itself
+ * defaults to the factory once one is configured). A default is not a choice,
+ * so it yields where the factory cannot do what was asked: plan mode (read-only
+ * — a Claude session), or a run pinned to a machine (`--machine` picks where a
+ * Claude session runs; the factory runs on its own).
+ */
+function defaultVia({ configured = 'claude', mode = null, machine = null } = {}) {
+  const v = via(configured || 'claude');
+  if (v !== 'claude' && (String(mode || '').toLowerCase() === 'plan' || machine)) return 'claude';
+  return v;
+}
+
 function normSlug(s) {
   const t = String(s || '').trim().replace(/\.git$/i, '').toLowerCase();
   return SLUG.test(t) ? t : null;
@@ -153,4 +166,4 @@ function summarize(rows) {
     .sort((a, b) => a.route.localeCompare(b.route) || b.runs - a.runs || a.kind.localeCompare(b.kind));
 }
 
-module.exports = { ROUTES, VIAS, OUTCOMES, via, normSlug, appFor, doneCriteria, chooseRoute, guard, summarize };
+module.exports = { ROUTES, VIAS, OUTCOMES, via, defaultVia, normSlug, appFor, doneCriteria, chooseRoute, guard, summarize };

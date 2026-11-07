@@ -6,7 +6,9 @@
 // here is a test away (test/factoryDispatch.test.js).
 //
 // The one interface is the factory's job contract (software-factory
-// docs/JOBS-API.md, v1). The PA never imports factory code or reads its
+// docs/JOBS-API.md, v1, and the v1.2 additions: job kinds, runtimes, runs,
+// reports — every v1.2 field optional, so a v1 factory still works for code
+// jobs). The PA never imports factory code or reads its
 // sqlite: it runs `uv run factory job …` on the factory's machine and parses
 // the single JSON object each `--json` command prints.
 
@@ -53,9 +55,70 @@ function parseModels(list) {
   return out;
 }
 
-/** `uv run factory …` — the factory's CLI, run from its checkout. */
-function factoryArgv(sub) {
-  return ['uv', 'run', 'factory', ...sub];
+/**
+ * `uv run factory …` — the factory's CLI, run from its checkout. `uv` is the
+ * program to run (PA_FACTORY_UV): termhub's own PATH often lacks ~/.local/bin.
+ */
+function factoryArgv(sub, uv = 'uv') {
+  return [uvBinary(uv), 'run', 'factory', ...sub];
+}
+
+// A path or a bare program name. The walk-in session types it into a shell,
+// so it may hold nothing a shell reads.
+const UV = /^[A-Za-z0-9_./~-]+$/;
+function uvBinary(uv) {
+  const v = String(uv || 'uv').trim();
+  if (!UV.test(v)) throw new Error(`PA_FACTORY_UV "${v}" — want a path or a program name`);
+  return v;
+}
+
+// ---- v1.2: what kind of work, and who does it (JOBS-API v1.2) ---------------
+// code      a direction → stories → PRs at the job's delivery level (v1's only kind)
+// research  answer a question; the deliverable is a report the factory keeps
+// report    write a document; same deliverable, same rules
+// A research/report job delivers `none` (no branch, no PR) and needs no repo.
+const KINDS = ['code', 'research', 'report'];
+// api             the factory's own model routing (LiteLLM, API keys: metered)
+// claude_session  Claude Code on the factory machine (the operator's subscription)
+const RUNTIMES = ['api', 'claude_session'];
+
+function jobKind(name) {
+  const k = String(name || 'code').toLowerCase().trim();
+  if (!KINDS.includes(k)) throw new Error(`unknown kind "${name}" — one of: ${KINDS.join(', ')}`);
+  return k;
+}
+
+function runtime(name) {
+  const r = String(name || 'api').toLowerCase().trim().replace(/-/g, '_');
+  const v = r === 'claude' || r === 'subscription' ? 'claude_session' : r;
+  if (!RUNTIMES.includes(v)) throw new Error(`unknown runtime "${name}" — one of: ${RUNTIMES.join(', ')}`);
+  return v;
+}
+
+/**
+ * The ask for a research/report job: the operator's own words and the
+ * questions it must answer. No composing model — the ask is short, the user's,
+ * and nothing in it is private material gathered by the assistant.
+ */
+function researchAsk({ kind, title, ask = null, done = [], repo = null }) {
+  const { redactSecrets } = require('./composeCore');
+  const k = jobKind(kind);
+  if (k === 'code') throw new Error('researchAsk is for research and report jobs');
+  const lines = [
+    `# ${k === 'report' ? 'Write' : 'Research'}: ${clip(redactSecrets(title), 200)}`,
+    '',
+    k === 'report'
+      ? 'Write the document asked for below as markdown. It is the deliverable: no code changes, no branch, no PR.'
+      : 'Investigate the question below and answer it in a markdown report: what you found, the evidence (files, links, commands run), and what you are unsure of. No code changes, no branch, no PR.',
+    '',
+    '## The ask',
+    '',
+    redactSecrets(String(ask || title)).trim(),
+  ];
+  if (repo) lines.push('', `Repository: ${repo} (read it; change nothing).`);
+  const qs = (done || []).map((d) => redactSecrets(String(d)).trim()).filter(Boolean);
+  if (qs.length) lines.push('', `## ${k === 'report' ? 'It must cover' : 'Questions it must answer'}`, '', ...qs.map((q) => `- ${q}`));
+  return `${lines.join('\n')}\n`;
 }
 
 /**
@@ -63,18 +126,28 @@ function factoryArgv(sub) {
  * the factory makes (source, external-id) idempotent, so a resubmit after a
  * lost answer returns the same job instead of a second one.
  */
-function submitArgv({ app, title, ask = null, askFile = null, flowFile = null, done = [], pipeline: pipe = 'auto', delivery, models = {}, externalId, source = 'pa' }) {
-  if (!app) throw new Error('submit needs a factory app');
+//
+// `kind` and `runtime` (v1.2) are sent when given; a v1 factory refuses the
+// unknown flags (`unsupported_option`) and factory.js resends a plain code/api
+// job without them. A research/report job needs no app and delivers `none`.
+function submitArgv({ app, title, ask = null, askFile = null, flowFile = null, done = [], pipeline: pipe = 'auto', delivery, models = {}, externalId, source = 'pa', kind = null, runtime: rt = null }) {
+  const k = kind == null ? 'code' : jobKind(kind);
+  if (!app && k === 'code') throw new Error('submit needs a factory app');
   if (!title) throw new Error('submit needs a title');
   if (!ask && !askFile) throw new Error('submit needs the ask');
   if (externalId === undefined || externalId === null || externalId === '') throw new Error('submit needs an external id');
   if (!DELIVERIES.includes(delivery)) throw new Error(`unknown delivery "${delivery}"`);
+  if (k !== 'code' && delivery !== 'none') throw new Error(`a ${k} job delivers a report, not ${delivery} — its delivery is none`);
   // Free text goes as `--flag=value`: a title or criterion that starts with
   // "-" must not be read as an option by the factory's CLI parser.
   // The title and criteria are on the factory's command line (visible in `ps`)
   // and in its direction: redacted like the brief.
   const { redactSecrets } = require('./composeCore');
-  const argv = ['job', 'submit', '--json', '--app', String(app), `--title=${clip(redactSecrets(title), 200)}`];
+  const argv = ['job', 'submit', '--json'];
+  if (app) argv.push('--app', String(app));
+  argv.push(`--title=${clip(redactSecrets(title), 200)}`);
+  if (kind != null) argv.push('--kind', k);
+  if (rt != null) argv.push('--runtime', runtime(rt));
   if (askFile) argv.push('--ask-file', String(askFile));
   else argv.push(`--ask=${String(ask)}`);
   // The factory's backpressure gate needs a flow.md (or an api_spec.md): a
@@ -97,7 +170,17 @@ const REFUSAL_CODES = new Set([
   'unknown_repo', 'unknown_app', 'invalid_app_config', 'missing_argument', 'invalid_argument', 'bad_pipeline',
   'invalid_delivery', 'file_unreadable', 'bad_model_flag', 'bad_models', 'unknown_persona', 'bad_model_id',
   'review_independence', 'pipeline_unavailable', 'duplicate_key',
+  // v1.2 refusals.
+  'invalid_kind', 'invalid_runtime', 'runtime_unavailable',
+  // Ours: the factory's CLI parser refused a flag it does not know (a v1
+  // factory and --kind/--runtime). The parser stops before any command runs.
+  'unsupported_option',
 ]);
+
+// The CLI parser's (typer/click) refusal of an unknown flag: usage on stderr,
+// exit 2, no JSON — before the command body runs, so nothing was written.
+const UNKNOWN_OPTION = /\bNo such option\b|\bno such option\b|Got unexpected extra argument/;
+const UNKNOWN_COMMAND = /\bNo such command\b/i;
 
 function isRefusal(err) {
   return err instanceof FactoryError && REFUSAL_CODES.has(err.code);
@@ -141,6 +224,14 @@ function parseResult({ code, stdout, stderr, timedOut = false }) {
     obj = null;
   }
   if (!obj || typeof obj !== 'object' || Array.isArray(obj)) {
+    if (code === 2 && UNKNOWN_OPTION.test(String(stderr || ''))) {
+      const m = /No such option:?\s*'?([-\w]+)/i.exec(String(stderr || ''));
+      throw new FactoryError('unsupported_option', `this factory does not know ${m ? m[1] : 'a flag that was sent'} — it predates JOBS-API v1.2`);
+    }
+    if (code === 2 && UNKNOWN_COMMAND.test(String(stderr || ''))) {
+      const m = /No such command:?\s*'?([-\w]+)/i.exec(String(stderr || ''));
+      throw new FactoryError('unsupported_command', `this factory has no \`${m ? m[1] : '?'}\` command — it predates JOBS-API v1.2`);
+    }
     const tail = String(stderr || '').trim().split(/\r?\n/).slice(-3).join(' | ');
     throw new FactoryError('bad_output', `exit ${code}, no JSON object on stdout${tail ? ` — ${clip(tail, 300)}` : ''}`);
   }
@@ -232,9 +323,207 @@ function externalKey(installId, runId) {
 }
 
 /** The command a termhub session runs to "walk into" a job. */
-function followCommand(jobId) {
+function followCommand(jobId, uv = 'uv') {
   if (!JOB_ID.test(String(jobId || ''))) throw new Error(`not a factory job id: "${jobId}"`);
-  return `uv run factory job follow ${jobId}`;
+  return `${uvBinary(uv)} run factory job follow ${jobId}`;
+}
+
+/** `factory job report <id> --json` (v1.2). */
+function reportArgv(jobId) {
+  if (!JOB_ID.test(String(jobId || ''))) throw new Error(`not a factory job id: "${jobId}"`);
+  return ['job', 'report', String(jobId), '--json'];
+}
+
+/** `factory job cancel <id> --json`. */
+function cancelArgv(jobId) {
+  if (!JOB_ID.test(String(jobId || ''))) throw new Error(`not a factory job id: "${jobId}"`);
+  return ['job', 'cancel', String(jobId), '--json'];
+}
+
+const NAME = /^[A-Za-z0-9_.-]+$/;
+const APPROVE = /factory approve-direction\s+([A-Za-z0-9_.-]+)\s+--app\s+([A-Za-z0-9_.-]+)/;
+
+/**
+ * Pure. The approval a `needs_human` job asks for, as an argv — or null. Only
+ * when the factory itself names `factory approve-direction <id> --app <app>`
+ * (JOBS-API v1: the warning a non-pa/human source's job carries), and only
+ * for this job's own app and direction: a `why` cannot point the button at
+ * another job.
+ */
+function approveArgv(job) {
+  if (job?.state !== 'needs_human') return null;
+  const texts = [...(Array.isArray(job.warnings) ? job.warnings : []), job.why || ''].map(String);
+  const [app, dir] = String(job.job_id || '').split(':');
+  for (const t of texts) {
+    const m = APPROVE.exec(t);
+    if (!m || !NAME.test(m[1]) || !NAME.test(m[2])) continue;
+    if (m[2] !== app || (m[1] !== dir && !m[1].startsWith(`${dir}-`))) continue;
+    return ['approve-direction', m[1], '--app', m[2], '--note=approved from the personal assistant\'s factory page'];
+  }
+  return null;
+}
+
+/** Only http(s) links reach a page or a notification. */
+function safeUrl(u) {
+  const s = String(u || '');
+  return /^https?:\/\/[^\s"'<>]+$/.test(s) ? s : null;
+}
+
+function num(v) {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : 0;
+}
+
+/** A job's open PRs with CI failing (JOBS-API: `stories[].ci`, open PRs only). */
+function ciFailing(job) {
+  return (Array.isArray(job?.stories) ? job.stories : []).filter((s) => s?.ci?.state === 'failing');
+}
+
+const GROUPS = ['needs_you', 'running', 'delivered', 'ended'];
+
+/**
+ * Pure. Which column of the factory page a job goes in:
+ *   needs_you  needs_human or blocked, or still going with a PR whose CI fails
+ *   running    queued, triaging, in_progress
+ *   delivered  done
+ *   ended      failed or cancelled
+ */
+function groupOf(job) {
+  const s = job?.state;
+  if (s === 'done') return 'delivered';
+  if (s === 'failed' || s === 'cancelled') return 'ended';
+  if (s === 'needs_human' || s === 'blocked' || ciFailing(job).length) return 'needs_you';
+  return 'running';
+}
+
+/**
+ * Pure. One job as the factory page shows it, from a `job list --json` row.
+ * Every field v1.2 added is optional: a v1 factory's job is a code job on the
+ * api runtime with no report and no runs.
+ * @param {object} job
+ * @param {object} [pa]  the PA run that submitted it: {id, url}
+ */
+function jobView(job, pa = null) {
+  const kind = KINDS.includes(job?.kind) ? job.kind : 'code';
+  const report = job?.report && typeof job.report === 'object'
+    ? { title: clip(job.report.title || '', 200), excerpt: clip(job.report.excerpt || '', 800), words: num(job.report.words) || null }
+    : null;
+  const runs = (Array.isArray(job?.runs) ? job.runs : []).slice(0, 30).map((r) => ({
+    id: r?.id ?? null,
+    storyId: r?.story_id ?? null,
+    persona: r?.persona ? clip(r.persona, 40) : null,
+    runtime: RUNTIMES.includes(r?.runtime) ? r.runtime : null,
+    model: r?.model ? clip(r.model, 80) : null,
+    state: ['running', 'ok', 'failed'].includes(r?.state) ? r.state : String(r?.state || 'unknown').slice(0, 20),
+    costUsd: num(r?.cost_usd),
+    billing: r?.billing === 'subscription' ? 'subscription' : 'metered',
+    startedAt: r?.started_at || null,
+    endedAt: r?.ended_at || null,
+    session: r?.session && safeUrl(r.session.url) ? { machine: r.session.machine ? clip(r.session.machine, 60) : null, url: safeUrl(r.session.url) } : null,
+  }));
+  return {
+    jobId: String(job?.job_id || ''),
+    app: job?.app || null,
+    title: clip(job?.title || job?.job_id || '', 200),
+    kind,
+    runtime: RUNTIMES.includes(job?.runtime) ? job.runtime : 'api',
+    state: STATES.includes(job?.state) ? job.state : String(job?.state || 'unknown').slice(0, 30),
+    group: groupOf(job),
+    why: job?.why ? clip(job.why, 400) : null,
+    terminal: Boolean(job?.terminal) || ['done', 'failed', 'cancelled'].includes(job?.state),
+    delivery: job?.delivery || null,
+    pipeline: job?.pipeline || null,
+    source: job?.source || null,
+    stories: (Array.isArray(job?.stories) ? job.stories : []).slice(0, 30).map((s) => ({
+      id: s?.id ?? null,
+      state: String(s?.state || '').slice(0, 40),
+      prUrl: safeUrl(s?.pr_url),
+      prState: s?.pr_state || null,
+      ci: s?.ci && typeof s.ci === 'object'
+        ? { state: String(s.ci.state || 'none'), failing: (Array.isArray(s.ci.failing) ? s.ci.failing : []).slice(0, 8).map((f) => clip(typeof f === 'string' ? f : f?.name || JSON.stringify(f), 80)) }
+        : null,
+    })),
+    ciFailing: ciFailing(job).length > 0,
+    merged: Boolean(job?.merged),
+    costUsd: num(job?.cost_usd),
+    subscriptionEquivUsd: num(job?.subscription_equiv_usd),
+    report,
+    runs,
+    updatedAt: job?.updated_at || null,
+    canApprove: Boolean(approveArgv(job)),
+    canCancel: !(Boolean(job?.terminal) || ['done', 'failed', 'cancelled'].includes(job?.state)),
+    paRun: pa ? { id: pa.id, url: safeUrl(pa.url) } : null,
+  };
+}
+
+/**
+ * Pure. The factory page's data from the latest snapshot: jobs grouped, newest
+ * first in each group, and the spend line. `paRuns` maps a job id to the PA
+ * run that submitted it.
+ */
+function board(jobs, { paRuns = new Map(), paSpendToday = null, now = new Date() } = {}) {
+  const views = (Array.isArray(jobs) ? jobs : []).filter((j) => JOB_ID.test(String(j?.job_id || ''))).map((j) => jobView(j, paRuns.get(j.job_id) || null));
+  views.sort((a, b) => String(b.updatedAt || '').localeCompare(String(a.updatedAt || '')));
+  const groups = Object.fromEntries(GROUPS.map((g) => [g, views.filter((v) => v.group === g)]));
+  const day = new Date(now).toISOString().slice(0, 10);
+  const today = views.filter((v) => String(v.updatedAt || '').slice(0, 10) === day);
+  const sum = (list, k) => Math.round(list.reduce((s, v) => s + v[k], 0) * 100) / 100;
+  return {
+    groups,
+    counts: Object.fromEntries(GROUPS.map((g) => [g, groups[g].length])),
+    spend: {
+      paToday: paSpendToday == null ? null : Math.round(Number(paSpendToday) * 100) / 100,
+      factoryToday: { metered: sum(today, 'costUsd'), subscriptionEquiv: sum(today, 'subscriptionEquivUsd'), jobs: today.length },
+      factoryListed: { metered: sum(views, 'costUsd'), subscriptionEquiv: sum(views, 'subscriptionEquivUsd'), jobs: views.length },
+    },
+  };
+}
+
+/**
+ * Pure. What to tell the user after a poll, from the previous snapshot's
+ * per-job state and the new list: a job that reached done, needs_human or
+ * failed, and a job whose open PR's CI turned red. The first poll after a
+ * start (no previous snapshot) says nothing — it would replay history.
+ * `covered`: job ids whose state changes the run pass already announces
+ * (factory.apply, keyed per run); only their CI is announced here.
+ * @returns {Array<{key, title, body, url}>}
+ */
+function notices(prev, jobs, { covered = new Set() } = {}) {
+  if (!prev) return [];
+  const out = [];
+  for (const job of Array.isArray(jobs) ? jobs : []) {
+    const id = String(job?.job_id || '');
+    if (!JOB_ID.test(id)) continue;
+    const was = prev.get(id) || null;
+    const title = clip(job.title || id, 120);
+    const firstPr = (Array.isArray(job.pr_urls) ? job.pr_urls : []).map(safeUrl).find(Boolean) || null;
+    if (!covered.has(id) && job.state !== was?.state && ['done', 'needs_human', 'failed'].includes(job.state)) {
+      const what = { done: 'done', needs_human: 'needs you', failed: 'failed' }[job.state];
+      const kind = KINDS.includes(job.kind) && job.kind !== 'code' ? `${job.kind} ` : '';
+      out.push({
+        key: `factory-job:${id}:${job.state}`,
+        title: clip(`Factory ${kind}job ${id} ${what}: ${title}`, 200),
+        body: [job.why ? clip(job.why, 300) : null, job.state === 'done' && job.report?.excerpt ? clip(job.report.excerpt, 300) : null].filter(Boolean).join('\n') || title,
+        url: firstPr,
+      });
+    }
+    const red = ciFailing(job);
+    if (red.length && !was?.ciFailing) {
+      const s = red[0];
+      out.push({
+        key: `factory-ci:${id}:${red.map((r) => r.id).join(',')}`,
+        title: clip(`Factory job ${id}: CI failing on ${red.length === 1 ? 'its PR' : `${red.length} PRs`}`, 200),
+        body: [title, ...(s.ci.failing || []).slice(0, 4).map((f) => `- ${typeof f === 'string' ? f : f?.name || '?'}`)].join('\n'),
+        url: safeUrl(s.pr_url) || firstPr,
+      });
+    }
+  }
+  return out;
+}
+
+/** Pure. The per-job memory `notices` compares against next time. */
+function noticeState(jobs) {
+  return new Map((Array.isArray(jobs) ? jobs : []).filter((j) => j?.job_id).map((j) => [String(j.job_id), { state: j.state, ciFailing: ciFailing(j).length > 0 }]));
 }
 
 /**
@@ -251,9 +540,11 @@ function runUpdate(job) {
   const state = STATES.includes(job?.state) ? job.state : null;
   const prs = Array.isArray(job?.pr_urls) ? job.pr_urls.filter((u) => /^https?:\/\//.test(String(u))) : [];
   const cost = Number(job?.cost_usd);
+  const equiv = Number(job?.subscription_equiv_usd);
   const base = {
     factory_state: state || String(job?.state || 'unknown'),
     cost_usd: Number.isFinite(cost) ? cost : null,
+    subscription_equiv_usd: Number.isFinite(equiv) ? equiv : null,
     mr_url: prs[0] || null,
     exit_note: job?.why ? clip(job.why, 500) : null,
     delivery: DELIVERIES.includes(job?.delivery) ? job.delivery : null,
@@ -316,6 +607,22 @@ module.exports = {
   pipeline,
   parseModels,
   factoryArgv,
+  uvBinary,
+  KINDS,
+  RUNTIMES,
+  jobKind,
+  runtime,
+  researchAsk,
+  reportArgv,
+  cancelArgv,
+  approveArgv,
+  safeUrl,
+  GROUPS,
+  groupOf,
+  jobView,
+  board,
+  notices,
+  noticeState,
   submitArgv,
   flowMarkdown,
   parseResult,

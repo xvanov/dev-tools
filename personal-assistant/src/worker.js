@@ -367,9 +367,15 @@ async function main() {
   // Factory jobs (src/dispatch/factory.js): their status onto the run rows,
   // and a finished or failed one moves its commitment through the ledger.
   // A no-op, without a command, while no factory run is live.
+  // Then the whole job list for the /factory page (factory_board), and a
+  // notice for a job that finished, needs you, failed or has red CI.
   if (require('./dispatch/factory').enabled()) {
     every(config.factory.pollSeconds, 'factory', async () => {
-      await require('./dispatch/factory').poll();
+      const factory = require('./dispatch/factory');
+      let failed = null;
+      await factory.poll().catch((err) => { failed = err; });
+      await factory.refreshBoard();
+      if (failed) throw failed;
     });
   }
 

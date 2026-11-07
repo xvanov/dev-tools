@@ -87,6 +87,10 @@ const HANDLERS = {
         confirmedUnattended: true,
         repoVerified: true, // checked when the card was made, or just above
         routeReason: pl.routeReason ? `proposal: ${pl.routeReason}` : null,
+        // JOBS-API v1.2: what kind of work, and who does it (older cards: code, the default runtime).
+        jobKind: pl.via === 'factory' ? pl.jobKind || null : null,
+        runtime: pl.via === 'factory' ? pl.runtime || null : null,
+        title: pl.title || null,
       });
       return describeStart(run);
     }
@@ -118,7 +122,7 @@ const HANDLERS = {
 function describeStart(run) {
   if (run.route === 'factory') {
     if (run.submitUnknown) return `run #${run.id} sent to the factory; its answer was lost — the worker matches it to its job (pa review ${run.id})`;
-    return `run #${run.id} sent to the factory (job ${run.jobId}, ${run.delivery})`;
+    return `run #${run.id} sent to the factory (job ${run.jobId}, ${run.jobKind && run.jobKind !== 'code' ? `${run.jobKind}` : run.delivery})`;
   }
   return `run #${run.id} started (${run.mode}${run.delivery ? ` → ${run.delivery}` : ''})`;
 }

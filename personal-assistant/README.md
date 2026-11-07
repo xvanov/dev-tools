@@ -774,14 +774,26 @@ that is off or unreachable is an `ERROR` line on that cursor in `pa doctor`, not
 
 ### Runs in the software factory
 
-A second dispatch target next to Claude sessions: the software factory (PM → SM → dev → reviewer →
-merge gates, its own repo). `pa do 959 --via factory` sends the ask there as a job instead of
-starting a session; `--via auto` lets the routing rule choose and prints why; `--via claude` (the
-default, `PA_DISPATCH_VIA`) is everything before. The dashboard grows a route picker beside **Do**
-once the factory is configured. The PA never imports factory code: it runs `uv run factory job …`
-in the factory checkout (`PA_FACTORY_PATH`) on the factory's machine (`PA_FACTORY_MACHINE`, a
-`PA_MACHINES` name, or empty for this one) and reads the one JSON object each command prints — the
-contract is the factory's `docs/JOBS-API.md`.
+The software factory (PM → SM → dev → reviewer → merge gates, its own repo) dispatches and tracks
+all work once it is configured: code, research and reports. `pa do 959` sends the ask there as a
+job (the default route, `PA_DISPATCH_VIA`, is the factory once `PA_FACTORY_PATH` is set; plan mode
+and `--machine` still mean a Claude session); `--via claude` starts a Claude session as before;
+`--via auto` lets the routing rule choose and prints why. The dashboard grows route, kind and
+runtime pickers beside **Do** once the factory is configured. The PA never imports factory code: it
+runs `uv run factory job …` (`PA_FACTORY_UV` for the full path of `uv`, since termhub's exec has no
+login shell) in the factory checkout (`PA_FACTORY_PATH`) on the factory's machine
+(`PA_FACTORY_MACHINE`, a `PA_MACHINES` name, or empty for this one) and reads the one JSON object
+each command prints — the contract is the factory's `docs/JOBS-API.md`.
+
+- **Kind and runtime per job** (JOBS-API v1.2). `--kind code|research|report` (default code): a
+  research job answers a question and a report job writes a document; both deliver a markdown
+  report the factory keeps (`pa factory report <job>`), need no repo (`--repo owner/name` makes the
+  factory read it when registered, else the ask names it), deliver `none`, and send your own words
+  as the ask — no composed brief. `--runtime api|claude_session` (default `PA_FACTORY_RUNTIME`,
+  api): the factory's metered model routing, or Claude Code on the factory machine on your
+  subscription (each such run is a live termhub session there). Both are recorded on the run
+  (sql/031). A factory still on v1 refuses the new flags: a code job on `api` is resent without
+  them; anything else fails saying the factory needs updating.
 
 - **The end state is yours** (operator decision 2026-11-02, no ceiling). Every job carries an
   explicit `--delivery`: `none` (committed in the factory's worktree), `branch`, `draft_pr`, `pr`,
@@ -808,7 +820,8 @@ contract is the factory's `docs/JOBS-API.md`.
   your words, the criteria and the code pointers and nothing private. `pa do … --preview` prints the
   brief without sending; the card shows it. Done-criteria: `--done "…"` (repeatable) wins;
   otherwise the commitment's "what done looks like", else the model's.
-  `--pipeline chain|solo|auto` (`PA_FACTORY_PIPELINE`) and `--model persona=provider/model`
+  `--pipeline chain|solo|auto` (`PA_FACTORY_PIPELINE`, default solo: on the factory's own
+  benchmark one agent beat the role chain) and `--model persona=provider/model`
   (repeatable; `PA_FACTORY_MODELS` sets defaults) pass straight through; `--app` names the factory
   app when the repo cannot be read from the commitment; `--register` (or `pa factory add
   owner/name [--delivery-default level]`) registers a repo the factory does not know yet.
@@ -819,7 +832,7 @@ contract is the factory's `docs/JOBS-API.md`.
   pa` matched by external id): the job is adopted, or the run waits as `submit_unknown` and the
   worker asks again each pass, failing it only once the factory has answered "no such job" for ten
   minutes. A run left `starting` for two minutes is swept the same way.
-- **Every job carries a flow**: the factory's direction validator needs a `flow.md` (or an API spec)
+- **Every code job carries a flow**: the factory's direction validator needs a `flow.md` (or an API spec)
   and parks a job without one as `needs_human`. `factoryCore.flowMarkdown` writes it
   deterministically from the composed goal: numbered steps that restate the ask and turn each
   done-criterion into a "Check:" step. Ask and flow are files on the factory's machine: written
@@ -836,6 +849,10 @@ contract is the factory's `docs/JOBS-API.md`.
   through the ledger (actor `factory`); a failed or cancelled one reopens it. `none` delivery
   closes nothing — the work is in the factory, and the ask stays dispatched until you close it.
   GitHub reconcile only closes `open` asks, so a merged factory PR is never closed twice.
+  The same pass then stores the factory's whole `job list` (sql/031 `factory_board`) for the
+  **Factory** page and `pa factory jobs`, and notifies you when any job — yours from the PA or
+  not — is done, needs you, failed, or has a PR whose CI turned red (a job a PA run submitted
+  has its end and waits announced by the run, and only its CI here).
 - `pa review <run>` shows the job, its stories and PRs; `pa drop <run>` cancels the job (the factory
   keeps its evidence) and reopens the ask; `pa land`, `pa diff` and `pa say` refuse — the factory
   delivers and is steered on its own side.
