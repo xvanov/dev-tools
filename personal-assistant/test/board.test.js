@@ -44,7 +44,7 @@ const state = {
 
 const b = build(state, { now });
 const ids = (list) => list.map((x) => String(x.id));
-const all = [...ids(b.onMe), ...ids(b.waiting), ...b.notes.flatMap((g) => ids(g.items))];
+const all = [...ids(b.onMe), ...ids(b.waiting)];
 
 // Nothing twice, anywhere on the board.
 assert.strictEqual(new Set(all).size, all.length, `duplicates: ${all}`);
@@ -71,12 +71,14 @@ assert.deepStrictEqual(ids(b.waiting), ['4']);
 assert.strictEqual(card('4').chase.id, 51);
 assert.strictEqual(card('4').column, 'waiting');
 
-// A note that needs you moves out of its folded group; the rest stay folded.
-assert.deepStrictEqual(b.notes.map((g) => [g.label, ids(g.items)]), [['erp PR #1', ['20']], ['session', ['22']]]);
-assert.deepStrictEqual(b.counts, { onMe: 10, todo: 7, blocked: 0, settled: 3, waiting: 1, notes: 2 });
+// A note from your own work is on the board only when it needs you (21 has an
+// ask); the others (20, 22) are not drawn at all, and there is no notes list.
+assert.ok(all.includes('21') && !all.includes('20') && !all.includes('22'));
+assert.strictEqual(b.notes, undefined);
+assert.deepStrictEqual(b.counts, { onMe: 10, todo: 7, blocked: 0, settled: 3, waiting: 1 });
 
 // Empty state.
-assert.deepStrictEqual(build({}).counts, { onMe: 0, todo: 0, blocked: 0, settled: 0, waiting: 0, notes: 0 });
+assert.deepStrictEqual(build({}).counts, { onMe: 0, todo: 0, blocked: 0, settled: 0, waiting: 0 });
 
 // Blocked: what people owe you is shown on the task it holds up, or as its own
 // card when it has none; a blocker that closed shows the task as unblocked.
@@ -107,7 +109,7 @@ assert.deepStrictEqual(build({}).counts, { onMe: 0, todo: 0, blocked: 0, settled
   assert.strictEqual(k('13').waitingOn, true);
   assert.deepStrictEqual(k('2').unblocked.map((y) => y.blocker_id), ['14']);
   assert.deepStrictEqual(ids(x.waiting), ['12']);
-  assert.deepStrictEqual(x.counts, { onMe: 5, todo: 2, blocked: 3, settled: 0, waiting: 1, notes: 0 });
+  assert.deepStrictEqual(x.counts, { onMe: 5, todo: 2, blocked: 3, settled: 0, waiting: 1 });
 }
 
 console.log('board: ok');

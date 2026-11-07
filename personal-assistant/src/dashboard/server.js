@@ -118,6 +118,11 @@ async function state() {
   out.blocks = await require('../commitments/blocks').forBoard().catch(() => []);
   // The Today board's columns, one card per commitment (dashboard/board.js).
   out.board = require('./board').build(out);
+  // Inputs the page no longer draws: a note from your own work reaches it only
+  // through the board (when it needs you), and the open GitHub/Jira items are
+  // on the Repos view (GET api/repos, dashboard/repos.js).
+  delete out.selfNotes;
+  delete out.reviews;
   return out;
 }
 

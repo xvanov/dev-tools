@@ -4,7 +4,7 @@
 // rather than spread over the page (test/board.test.js). Pure: it reads the
 // state /api/state already gathered (after cards.enrich) and returns
 //
-//   { onMe, waiting, notes, counts }
+//   { onMe, waiting, counts }
 //
 // The board is your to-do list. What someone owes you is on it only when it
 // blocks you (s.blocks, commitments/blocks.js): attached to the task it holds
@@ -29,8 +29,8 @@
 //
 // On me is everything you must act on or confirm: your asks, then the ones
 // that look done. Waiting on others is the rest of what is owed to you. A
-// note from your own work leaves its folded group when something on it needs
-// you. A proposal with no commitment (a run to land) is its own card on On me.
+// note from your own work (s.selfNotes) is on the board only when something on
+// it needs you; the rest is not drawn (Plan no longer lists them). A proposal with no commitment (a run to land) is its own card on On me.
 // Two cards from the same source item with the same words are one card.
 
 const at = (x) => new Date(x || 0).getTime();
@@ -147,7 +147,7 @@ function build(s, { now = Date.now() } = {}) {
   const waiting = [];
   for (const c of cards.values()) Object.assign(c, { blockers: [], unblocked: [] });
   for (const [id, c] of cards) {
-    if (c.selfNote && !needsMe(c)) continue; // stays in its folded group
+    if (c.selfNote && !needsMe(c)) continue; // not on the board unless it needs you
     c.pos = order.has(id) ? order.get(id) : order.size + 1;
     if (c.direction !== 'owed_to_me') {
       onMe.push(c);
@@ -192,19 +192,12 @@ function build(s, { now = Date.now() } = {}) {
   onMe.sort((a, b) => rank(a) - rank(b) || (a.group === 'settled' ? (b.settled.confidence || 0) - (a.settled.confidence || 0) : 0) || a.pos - b.pos);
   waiting.sort((a, b) => a.pos - b.pos);
 
-  // Notes from your own work, less what moved to On me.
-  const shown = new Set(onMe.map((c) => String(c.id)));
-  const notes = groups
-    .map((g) => ({ ...g, items: g.items.filter((c) => !shown.has(String(c.id)) && cards.has(String(c.id))).map((c) => cards.get(String(c.id))) }))
-    .filter((g) => g.items.length);
-
   const todo = onMe.filter((c) => c.group === 'todo').length;
   const blocked = onMe.filter((c) => c.group === 'blocked').length;
   return {
     onMe,
     waiting,
-    notes,
-    counts: { onMe: onMe.length, todo, blocked, settled: onMe.length - todo - blocked, waiting: waiting.length, notes: notes.reduce((n, g) => n + g.items.length, 0) },
+    counts: { onMe: onMe.length, todo, blocked, settled: onMe.length - todo - blocked, waiting: waiting.length },
   };
 }
 

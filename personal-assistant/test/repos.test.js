@@ -158,4 +158,20 @@ const client = fs.readFileSync(path.join(__dirname, '../src/dashboard/repos.clie
 new vm.Script(client, { filename: 'repos.client.js' });
 assert.ok(!/\.innerHTML|\.outerHTML|insertAdjacentHTML|document\.write/.test(client), 'no HTML sinks in the Repos tab');
 
-console.log('repos ok');
+// --- the Repos view's open items (Plan's former "Code & boards"): still open
+// or asking something, newest first, at most 15, and only http(s) links.
+(async () => {
+  const briefPath = require.resolve('../src/brief');
+  require.cache[briefPath] = { id: briefPath, filename: briefPath, loaded: true, exports: { recentReviews: async () => [
+    { subject: 'Review: fix the importer', source: 'github_pr', raw: { state: 'opened', project: 'acme/app', webUrl: 'https://github.com/acme/app/pull/1' }, occurred_at: '2026-11-06T10:00:00Z' },
+    { subject: 'Review: fix the importer', source: 'github_notification', raw: { action: 'review_requested', project: 'acme/app' }, occurred_at: '2026-11-06T09:00:00Z' },
+    { subject: 'merged one', source: 'github_pr', raw: { state: 'merged', project: 'acme/app' }, occurred_at: '2026-11-05T10:00:00Z' },
+    { subject: 'You were mentioned', source: 'github_notification', raw: { action: 'mention', webUrl: 'javascript:alert(1)' }, occurred_at: '2026-11-04T10:00:00Z' },
+  ] } };
+  const open = await require('../src/dashboard/repos').openItems();
+  assert.deepStrictEqual(open.map((o) => o.subject), ['Review: fix the importer', 'You were mentioned'], 'one line per item, newest kept');
+  assert.strictEqual(open[0].url, 'https://github.com/acme/app/pull/1');
+  assert.strictEqual(open[0].project, 'acme/app');
+  assert.strictEqual(open[1].url, null, 'a non-http link is dropped');
+  console.log('repos ok');
+})().catch((err) => { console.error(err); process.exit(1); });

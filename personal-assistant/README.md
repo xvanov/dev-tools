@@ -285,8 +285,9 @@ a count, and every commitment appears on it once (`src/dashboard/board.js`, test
 Every section on the page is the same component: a header row with a disclosure arrow, the title
 and a count, and a body that folds away; the page remembers each one open or closed (this browser
 only, `pa.fold.<section>`). What needs you starts open (credentials, **Replies to send**, **On
-me**, **Agent runs**), the rest closed: **Notes from your Claude sessions & PRs**, **Code &
-boards**, **Others' work, not blocking you**, **Closed recently** and **From the assistant**.
+me**, **Agent runs**), the rest closed: **Others' work, not blocking you**, **Closed recently**
+and **From the assistant**. The open GitHub and Jira items that used to be **Code & boards** are
+at the top of the **Repos** view (*Review requests & board items*, from `GET /api/repos`).
 **Replies to send** and **Agent runs** appear only when they have something; **Agent runs** lists
 the runs that are not factory jobs, and a factory run only while it is blocked: the rest are jobs
 on Build, with their state, PR and cost, and the section links there. Colour is kept for meaning:
@@ -363,12 +364,12 @@ chat "create a task to…" does the same through its `task_add` tool, which need
 (it is reversible: **Dismiss**) and which the chat is told to use only when you explicitly ask — never for
 its own work or for something a message asked. The board has the same as a **+ task** box on **On me**.
 
-**Notes from your Claude sessions & PRs** (folded) holds what the distiller read from your own Claude
-sessions and your own PRs before the rule above — agent handoffs like "verify the banner in a browser
-before merge" — apart from **On me**; a note that gets a question or a looks-done proposal moves to
-**On me** while it does. No new ones are created. They are grouped one per PR or session, close when
-their PR merges or closes, and expire after a week nobody touched them
-(`src/commitments/selfNotes.js`; reopening or correcting one counts as touching it). Asks from
+Notes from your own Claude sessions and PRs read before the rule above (agent handoffs like
+"verify the banner in a browser before merge") are not listed on the page any more: one shows on
+**On me** only while it carries a question or a looks-done proposal. No new ones are created; the
+rest close when their PR merges or closes, or expire after a week nobody touched them
+(`src/commitments/selfNotes.js`, the worker's `self-notes` pass; reopening or correcting one counts
+as touching it), and `pa brief` still lists them. Asks from
 people never expire. A GitHub issue someone else filed through your account is still their ask.
 Auto-drafted replies are never written for an ask that was your own message, and one already
 written for one is retired.

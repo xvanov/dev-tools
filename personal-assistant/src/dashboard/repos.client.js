@@ -13,7 +13,7 @@
 // HTML sinks.
 
 (function reposTab() {
-  const S = { list: null, detail: null, filter: '', all: false, loading: false };
+  const S = { list: null, open: [], detail: null, filter: '', all: false, loading: false };
 
   const style = document.createElement('style');
   style.textContent = `
@@ -23,6 +23,8 @@
   #repos-view .rp-bar input[type=search] { flex: 1 1 220px; font: inherit; font-size: 13px; padding: 4px 8px;
     border: 1px solid var(--line, #ddd); border-radius: 6px; background: var(--panel, #fff); color: var(--ink, #111); }
   #repos-view .rp-meta { color: var(--muted, #666); font-size: 12px; }
+  #repos-view .rp-open { margin: 0 0 14px; background: var(--panel, #fff); border: 1px solid var(--line, #ddd); border-radius: 10px; padding: 10px 14px; }
+  #repos-view .rp-open h4 { margin: 0 0 4px; font-size: 14px; font-weight: 600; color: var(--ink, #111); letter-spacing: 0; text-transform: none; }
   #repos-view .rp-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 480px), 1fr)); gap: 12px; }
   #repos-view .rp-card { background: var(--panel, #fff); border: 1px solid var(--line, #ddd); border-radius: 10px; padding: 12px 14px; min-width: 0; }
   #repos-view .rp-head { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
@@ -242,7 +244,28 @@
         syncBtn,
         h('span', { class: 'rp-meta' }, `${list.length} repo${list.length === 1 ? '' : 's'}`)
       ),
+      openList(),
       list.length ? h('div', { class: 'rp-grid' }, list.map(card)) : h('div', { class: 'rp-empty' }, S.list ? 'No repos match.' : 'Loading…')
+    );
+  }
+
+  // Review requests and board items still open (GitHub, Jira), across repos:
+  // what Plan's "Code & boards" section listed before it moved here.
+  function openList() {
+    const items = S.open || [];
+    if (!items.length) return null;
+    return h(
+      'section',
+      { class: 'rp-open' },
+      h('h4', null, 'Review requests & board items ', h('span', { class: 'rp-meta' }, String(items.length))),
+      items.map((r) =>
+        h(
+          'div',
+          { class: 'rp-pr' },
+          r.url ? h('a', { href: r.url, target: '_blank', rel: 'noopener' }, r.subject || '(untitled)') : r.subject || '(untitled)',
+          h('span', { class: 'rp-meta' }, [r.project, r.at ? since(r.at) : null].filter(Boolean).map((x) => ` · ${x}`).join(''))
+        )
+      )
     );
   }
 
@@ -308,6 +331,7 @@
     try {
       const data = await api(`api/repos${S.all ? '?all=1' : ''}`);
       S.list = data.repos || [];
+      S.open = data.open || [];
       if (current().list) renderList();
     } catch (err) {
       say(err.message);

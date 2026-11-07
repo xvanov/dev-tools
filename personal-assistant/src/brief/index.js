@@ -13,6 +13,20 @@ const { rows } = require('../db');
 
 const DAY = 86400_000;
 
+// Pull requests, GitHub notifications, project items and Jira issues from the
+// last three weeks: the brief's "open MRs" and the Repos view's "Review
+// requests & board items" (dashboard/repos.js).
+function recentReviews() {
+  return rows(
+    `select subject, source, raw, occurred_at
+       from source_item
+      where source in ('github_pr','github_notification','github_project_item','jira_issue')
+        and occurred_at > now() - interval '21 days'
+      order by occurred_at desc
+      limit 20`
+  );
+}
+
 async function gather({ horizonDays = 7 } = {}) {
   // What people ask of me, and notes from my own work, kept apart
   // (src/commitments/selfNotes.js): the second is grouped and expires.
@@ -44,14 +58,7 @@ async function gather({ horizonDays = 7 } = {}) {
       limit 20`
   );
 
-  const reviews = await rows(
-    `select subject, raw, occurred_at
-       from source_item
-      where source in ('github_pr','github_notification','github_project_item','jira_issue')
-        and occurred_at > now() - interval '21 days'
-      order by occurred_at desc
-      limit 20`
-  );
+  const reviews = await recentReviews();
 
   const runsActive = await rows(
     `select id, task, mode, status, repo_path, termhub_session_id, started_at, route, factory_job_id, factory_state
@@ -165,4 +172,4 @@ async function brief(options) {
   return formatBrief(await gather(options), options);
 }
 
-module.exports = { brief, gather, formatBrief, bucket, relativeDue };
+module.exports = { brief, gather, formatBrief, bucket, relativeDue, recentReviews };
