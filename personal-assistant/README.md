@@ -244,7 +244,8 @@ a count, and every commitment appears on it once (`src/dashboard/board.js`, test
 - **On me** — everything you must act on or confirm: what you owe people, with **Do** (dispatch),
   **Reply**, **Done** and **Dismiss**; a prepared session (a *ready to start* flag, **Start it** /
   **Don't start** — declining runs nothing and leaves the ask on the list); a question for you
-  (**Skip** leaves it unanswered). At the bottom, under **Looks done — confirm?**, the asks the
+  (**Skip** leaves it unanswered). It takes the page's full width: **To do** on the left, and beside
+  it (below it on a phone) **Blocked or waiting**, then **Looks done — confirm?**, the asks the
   reconciler thinks are settled but was not sure enough to close, in either direction, each with
   the quote, **Confirm done** and **Keep open**. A prepared action, a question and a looks-done
   proposal are drawn on the card of the ask they are about, not as cards of their own; two
