@@ -190,10 +190,10 @@ run mid-step; a job continued on an existing branch (`--branch`).
 - [ ] **0.1 Factory brief without `claude -p`.** Write the brief with a direct API call or a
   warm session; removes ~4 s per job start.
 - [x] **0.2 Query-embedding cache** (see policy). Removes 0.3–1 s per search. (bc0a4d2)
-- [ ] **0.3 Embeddings audit.** List every `embed(` call site (`src/search`, `src/memory`,
+- [x] **0.3 Embeddings audit.** List every `embed(` call site (`src/search`, `src/memory`,
   `src/recall`, `src/commitments`) against the policy; remove any that embed changing data or
   exact keys; write the result into `architecture.json`'s memory card. Record the measured
-  monthly embedding spend in Meter.
+  monthly embedding spend in Meter. (60908b9)
 - [ ] **0.4 SSE instead of polling** for the board and Build (replace the 30 s and 120 s polls).
 - [ ] **0.5 Voice latency:** keep the fast-lane prompt prefix warm; TTS at the first clause
   instead of the first sentence; cut the fixed 200 ms silence wait where VAD already decided.
