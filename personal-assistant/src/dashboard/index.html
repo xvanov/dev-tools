@@ -647,6 +647,22 @@ function commitmentCard(c) {
   // The end state (src/dispatch/deliveryCore.js). Unpicked: the repo's default.
   const deliveryPick = picker([{ value: '', label: 'end state: the repo\'s default' },
     ...(MACHINES.deliveries || []).map((d) => ({ value: d.value, label: `${d.value} — ${d.plain}` }))], '');
+  // On the factory route: what kind of work, and who does it (JOBS-API v1.2).
+  // A research or report job delivers a report: no end state, no mode, no repo needed.
+  const kindPick = picker((MACHINES.kinds || []).map((k) => ({ value: k.value, label: k.label })), 'code');
+  const runtimePick = picker((MACHINES.runtimes || []).map((r) => ({ value: r.value, label: r.label })), MACHINES.defaultRuntime || 'api');
+  const factoryOnly = () => {
+    const f = routePick.value === 'factory';
+    kindPick.hidden = !f || !(MACHINES.kinds || []).length;
+    runtimePick.hidden = !f || !(MACHINES.runtimes || []).length;
+    const report = f && kindPick.value !== 'code';
+    modePick.hidden = report;
+    deliveryPick.hidden = report;
+    machinePick.hidden = f;
+  };
+  routePick.addEventListener('change', factoryOnly);
+  kindPick.addEventListener('change', factoryOnly);
+  factoryOnly();
   // A native disclosure: it opens and closes whatever else the card is doing.
   const ctx = el('details', { class: 'ctx-toggle' }, el('summary', {}, 'Context'));
   const loadContext = async (fresh = false) => {
@@ -696,25 +712,31 @@ function commitmentCard(c) {
     modePick.disabled = true;
     routePick.disabled = true;
     deliveryPick.disabled = true;
+    kindPick.disabled = true;
+    runtimePick.disabled = true;
     toast(routePick.value !== 'claude' ? 'sending it on its way…' : machinePick.value ? `setting up on ${machinePick.value} — this takes a minute; the session opens in the new tab` : 'starting the session…');
     try {
       // A mode left at its default is not a choice: the end state decides then.
-      const mode = modePick.value !== MACHINES.defaultMode ? modePick.value : undefined;
+      const onFactory = routePick.value === 'factory';
+      const kind = onFactory && !kindPick.hidden ? kindPick.value : null;
+      const report = kind && kind !== 'code';
+      const mode = !report && modePick.value !== MACHINES.defaultMode ? modePick.value : undefined;
       // The level this will resolve to (a repo default included), shown and
       // confirmed here when nothing human follows it; the server checks the
-      // page sent back exactly that level.
+      // page sent back exactly that level. A research/report job has none.
       const q = new URLSearchParams({ ...(mode ? { mode } : {}), ...(deliveryPick.value ? { delivery: deliveryPick.value } : {}) });
-      const pre = await (await fetch(`api/commitments/${c.id}/delivery?${q}`)).json();
+      const pre = report ? { unattended: false } : await (await fetch(`api/commitments/${c.id}/delivery?${q}`)).json();
       let confirmedLevel = null;
       if (pre.unattended) {
         if (!window.confirm(`End state: ${pre.delivery} — ${pre.plain}\n\nNo human step after this. Start it?`)) throw new Error('not started');
         confirmedLevel = pre.delivery;
       }
       const r = await post(`api/commitments/${c.id}/dispatch`, {
-        machine: routePick.value === 'factory' ? null : machinePick.value || null, mode, via: routePick.value, delivery: deliveryPick.value || null, confirmedLevel,
+        machine: onFactory ? null : machinePick.value || null, mode, via: routePick.value, delivery: report ? null : deliveryPick.value || null, confirmedLevel,
+        kind, runtime: onFactory && !runtimePick.hidden ? runtimePick.value : null,
       });
       toast(r.route === 'factory'
-        ? `run #${r.id} sent to the factory (job ${r.jobId}, delivers ${r.delivery})${(r.warnings || []).length ? ` — factory warned: ${r.warnings.join('; ')}` : ''}`
+        ? `run #${r.id} sent to the factory (job ${r.jobId}, ${r.jobKind && r.jobKind !== 'code' ? `${r.jobKind} — see Factory` : `delivers ${r.delivery}`})${(r.warnings || []).length ? ` — factory warned: ${r.warnings.join('; ')}` : ''}`
         : `run #${r.id} started (${r.mode}${r.delivery ? ` → ${r.delivery}` : ''}${r.machine ? ` on ${r.machine}` : ''})${r.routeReason && routePick.value === 'auto' ? ` — ${r.routeReason}` : ''}`);
       if (tab && r.url) tab.location.href = r.url;
       else if (r.url) window.open(r.url, '_blank');
@@ -725,6 +747,8 @@ function commitmentCard(c) {
       modePick.disabled = false;
       routePick.disabled = false;
       deliveryPick.disabled = false;
+      kindPick.disabled = false;
+      runtimePick.disabled = false;
       throw err;
     }
   }));
@@ -776,6 +800,7 @@ function commitmentCard(c) {
     c.chase ? chaseBlock(c, c.chase) : null,
     settledOnly ? null : el('div', { class: 'actions' },
       canDo && (MACHINES.routes || []).length > 1 ? routePick : null,
+      canDo && (MACHINES.kinds || []).length ? kindPick : null, canDo && (MACHINES.runtimes || []).length ? runtimePick : null,
       canDo && MACHINES.machines.length > 1 ? machinePick : null, canDo ? modePick : null, canDo ? deliveryPick : null, canDo ? doBtn : null,
       canReply ? replyBtn : null, doneBtn, blockBtn, dropBtn),
     ctx);

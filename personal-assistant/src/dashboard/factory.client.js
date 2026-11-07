@@ -1,0 +1,317 @@
+/* The Factory layer's page (served as /factory.js; server side in factory.js).
+ *
+ * Reads GET api/factory — the worker's stored `factory job list`, never a
+ * factory call — every 30 s, and renders the jobs by group. Everything an
+ * agent or another person wrote (titles, whys, reports) is set with
+ * textContent; a report arrives as a parsed tree (dashboard/markdown.js).
+ * URLs are relative so the page works under termhub's /pa/ proxy too.
+ */
+(function () {
+  'use strict';
+
+  var GROUPS = [
+    ['needs_you', 'Needs you'],
+    ['running', 'Running'],
+    ['delivered', 'Delivered'],
+    ['ended', 'Failed / cancelled'],
+  ];
+  var KIND = { code: 'code', research: 'research', report: 'report' };
+  var RUNTIME = { api: 'API', claude_session: 'Claude session' };
+  var data = null;
+  var busyForm = false;
+
+  // This page's token (server.js issuePageToken): kept in memory only.
+  var PAGE_TOKEN = (function () {
+    var m = document.querySelector('meta[name="pa-page"]');
+    var t = m ? m.getAttribute('content') : '';
+    if (m) m.remove();
+    return t;
+  })();
+
+  function el(tag, props) {
+    var n = document.createElement(tag);
+    var p = props || {};
+    Object.keys(p).forEach(function (k) {
+      if (k === 'class') n.className = p[k];
+      else if (k === 'text') n.textContent = p[k];
+      else if (k.indexOf('on') === 0) n.addEventListener(k.slice(2), p[k]);
+      else if (p[k] != null) n.setAttribute(k, p[k]);
+    });
+    for (var i = 2; i < arguments.length; i++) {
+      var kid = arguments[i];
+      if (kid == null || kid === false) continue;
+      n.append(kid);
+    }
+    return n;
+  }
+  function link(url, text) {
+    return url && /^https?:\/\//.test(url) ? el('a', { href: url, target: '_blank', rel: 'noopener noreferrer' }, text) : null;
+  }
+  function money(n) { return '$' + Number(n || 0).toFixed(2); }
+  function ago(iso) {
+    if (!iso) return '';
+    var s = (Date.now() - new Date(iso).getTime()) / 1000;
+    if (s < 90) return 'just now';
+    if (s < 5400) return Math.round(s / 60) + 'm ago';
+    if (s < 129600) return Math.round(s / 3600) + 'h ago';
+    return Math.round(s / 86400) + 'd ago';
+  }
+  function toast(text) {
+    var t = document.getElementById('toast');
+    t.textContent = text;
+    t.classList.add('show');
+    clearTimeout(toast.timer);
+    toast.timer = setTimeout(function () { t.classList.remove('show'); }, 5000);
+  }
+  function post(path, body) {
+    return fetch(path, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-PA': '1', 'X-PA-Page': PAGE_TOKEN },
+      body: JSON.stringify(body || {}),
+    }).then(function (res) {
+      return res.json().catch(function () { return {}; }).then(function (d) {
+        if (!res.ok) throw Object.assign(new Error(d.error || res.statusText), { status: res.status, data: d });
+        return d;
+      });
+    });
+  }
+  // A click shows it is working, then what happened, or why it failed.
+  function clicker(button, fn) {
+    button.addEventListener('click', function () {
+      var label = button.textContent;
+      button.disabled = true;
+      button.textContent = label + '…';
+      Promise.resolve().then(fn).then(function () { load(); }, function (err) {
+        toast(label + ' failed: ' + err.message);
+      }).then(function () {
+        button.disabled = false;
+        button.textContent = label;
+      });
+    });
+    return button;
+  }
+
+  // ---- the report sheet ---------------------------------------------------------
+  function inline(kids) {
+    return (kids || []).map(function (k) {
+      if (k.t === 'text') return document.createTextNode(k.v);
+      if (k.t === 'code') return el('code', { text: k.v });
+      if (k.t === 'b') return el.apply(null, ['strong', {}].concat(inline(k.kids)));
+      if (k.t === 'i') return el.apply(null, ['em', {}].concat(inline(k.kids)));
+      if (k.t === 'ref') return document.createTextNode('#' + k.id);
+      if (k.t === 'link' && /^https?:\/\//i.test(k.href)) return el.apply(null, ['a', { href: k.href, target: '_blank', rel: 'noopener noreferrer' }].concat(inline(k.kids)));
+      if (k.t === 'link') return el.apply(null, ['span', {}].concat(inline(k.kids)));
+      return document.createTextNode('');
+    });
+  }
+  function markdown(blocks) {
+    return el.apply(null, ['div', { class: 'md' }].concat((blocks || []).map(function (b) {
+      if (b.t === 'h') return el.apply(null, ['h' + Math.min(6, b.level + 2), {}].concat(inline(b.kids)));
+      if (b.t === 'p') return el.apply(null, ['p', {}].concat(inline(b.kids)));
+      if (b.t === 'quote') return el.apply(null, ['blockquote', {}].concat(inline(b.kids)));
+      if (b.t === 'pre') return el('pre', { text: b.text });
+      if (b.t === 'hr') return el('hr');
+      if (b.t === 'ul' || b.t === 'ol') {
+        return el.apply(null, [b.t, {}].concat(b.items.map(function (it) {
+          return el.apply(null, ['li', { class: 'd' + it.depth }].concat(inline(it.kids)));
+        })));
+      }
+      return null;
+    })));
+  }
+  var sheet = document.getElementById('sheet');
+  function closeSheet() { sheet.hidden = true; }
+  document.getElementById('sheet-close').addEventListener('click', closeSheet);
+  sheet.addEventListener('click', function (e) { if (e.target === sheet) closeSheet(); });
+  document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && !sheet.hidden) closeSheet(); });
+  function readReport(job) {
+    document.getElementById('sheet-title').textContent = (job.report && job.report.title) || job.title;
+    document.getElementById('sheet-meta').textContent = 'loading the report from the factory…';
+    var body = document.getElementById('sheet-body');
+    body.replaceChildren();
+    sheet.hidden = false;
+    return fetch('api/factory/report?job=' + encodeURIComponent(job.jobId), { cache: 'no-store' })
+      .then(function (r) { return r.json().then(function (d) { if (!r.ok) throw new Error(d.error || r.statusText); return d; }); })
+      .then(function (r) {
+        document.getElementById('sheet-meta').textContent = r.none ? 'No report yet.' : job.jobId + (r.path ? ' · ' + r.path : '');
+        body.replaceChildren(markdown(r.blocks));
+      }, function (err) {
+        document.getElementById('sheet-meta').textContent = 'Could not read it: ' + err.message;
+      });
+  }
+
+  // ---- one job --------------------------------------------------------------------
+  function chip(text, cls, title) { return el('span', { class: 'chip ' + (cls || ''), title: title || null, text: text }); }
+
+  function storyLine(s) {
+    var ci = s.ci && s.ci.state && s.ci.state !== 'none'
+      ? chip('CI ' + s.ci.state + (s.ci.failing && s.ci.failing.length ? ': ' + s.ci.failing.join(', ') : ''), 'ci-' + s.ci.state)
+      : null;
+    return el('li', {}, el('span', { class: 'mono', text: 'story ' + s.id }), chip(s.state || '?'),
+      s.prUrl ? link(s.prUrl, /\/pull\/(\d+)/.test(s.prUrl) ? 'PR #' + s.prUrl.match(/\/pull\/(\d+)/)[1] : 'PR') : null,
+      s.prState ? chip(s.prState) : null, ci);
+  }
+
+  function runLine(r) {
+    return el('li', {},
+      chip(r.state, r.state === 'failed' ? 's-failed' : r.state === 'ok' ? 's-done' : ''),
+      el('span', { text: [r.persona, RUNTIME[r.runtime] || r.runtime, r.model].filter(Boolean).join(' · ') }),
+      el('span', { class: 'cost', text: money(r.costUsd) + (r.billing === 'subscription' ? ' sub-equiv' : '') }),
+      r.session ? link(r.session.url, r.state === 'running' ? 'watch live' : 'session') : null);
+  }
+
+  function jobCard(j) {
+    var actions = el('div', { class: 'actions' });
+    if (j.report) actions.append(clicker(el('button', { class: 'primary', type: 'button', text: 'Read report' }), function () { return readReport(j); }));
+    if (j.canApprove) {
+      actions.append(clicker(el('button', { class: 'primary', type: 'button', title: 'Run the approve-direction the factory named for this job', text: 'Approve' }), function () {
+        return post('api/factory/jobs/' + encodeURIComponent(j.jobId) + '/approve').then(function () { toast(j.jobId + ' approved'); });
+      }));
+    }
+    actions.append(clicker(el('button', { type: 'button', title: 'Start a termhub session on the factory machine following this job', text: 'Open in termhub' }), function () {
+      var tab = window.open('about:blank', '_blank');
+      return post('api/factory/jobs/' + encodeURIComponent(j.jobId) + '/open').then(function (r) {
+        if (tab && r.url) tab.location.href = r.url;
+        else if (tab) tab.close();
+        toast('following ' + j.jobId + ' in termhub');
+      }, function (err) { if (tab) tab.close(); throw err; });
+    }));
+    if (j.canCancel) {
+      actions.append(clicker(el('button', { class: 'danger', type: 'button', text: 'Cancel' }), function () {
+        if (!window.confirm('Cancel ' + j.jobId + '? Its stories are parked; delivered work stays.')) return null;
+        return post('api/factory/jobs/' + encodeURIComponent(j.jobId) + '/cancel').then(function (r) { toast(j.jobId + ': ' + (r.state || 'cancel sent')); });
+      }));
+    }
+    if (j.paRun) actions.append(j.paRun.url ? link(j.paRun.url, 'run #' + j.paRun.id) : chip('run #' + j.paRun.id, 'mono'));
+
+    var running = j.runs.filter(function (r) { return r.state === 'running'; });
+    var others = j.runs.filter(function (r) { return r.state !== 'running'; });
+    return el('div', { class: 'job ' + j.group },
+      el('div', { class: 't', text: j.title }),
+      el('div', { class: 'chips' },
+        chip(j.jobId, 'mono'),
+        chip(KIND[j.kind] || j.kind, 'k-' + j.kind),
+        chip(RUNTIME[j.runtime] || j.runtime, 'r-' + j.runtime),
+        j.app ? chip(j.app) : null,
+        chip(j.state.replace('_', ' '), 's-' + j.state),
+        j.ciFailing ? chip('CI failing', 'ci-failing') : null,
+        j.delivery && j.kind === 'code' ? chip(j.delivery) : null,
+        j.updatedAt ? chip(ago(j.updatedAt)) : null),
+      j.why ? el('div', { class: 'why', text: j.why }) : null,
+      j.stories.length ? el.apply(null, ['ul', { class: 'stories' }].concat(j.stories.slice(0, 6).map(storyLine))) : null,
+      j.stories.length > 6 ? el('div', { class: 'meta', text: '… ' + (j.stories.length - 6) + ' more stories' }) : null,
+      j.report ? el('div', { class: 'excerpt', title: j.report.words ? j.report.words + ' words' : null, text: j.report.excerpt || '(no excerpt)' }) : null,
+      running.length ? el.apply(null, ['ul', { class: 'runs' }].concat(running.map(runLine))) : null,
+      others.length ? el('details', { class: 'more' }, el('summary', { text: others.length + ' finished run' + (others.length === 1 ? '' : 's') }),
+        el.apply(null, ['ul', { class: 'runs' }].concat(others.map(runLine)))) : null,
+      el('div', { class: 'cost', text: money(j.costUsd) + ' metered' + (j.subscriptionEquivUsd ? ' · ' + money(j.subscriptionEquivUsd) + ' subscription-equivalent' : '') }),
+      actions);
+  }
+
+  // ---- the page ---------------------------------------------------------------------
+  function stat(value, label) { return el('div', { class: 'stat' }, el('b', { text: value }), el('span', { text: label })); }
+
+  function render() {
+    var board = document.getElementById('board');
+    var updated = document.getElementById('updated');
+    if (!data.enabled) {
+      updated.textContent = 'The factory is not configured — set PA_FACTORY_PATH (and PA_FACTORY_MACHINE), see .env.example.';
+      board.replaceChildren();
+      document.getElementById('newjob').hidden = true;
+      return;
+    }
+    updated.className = 'meta' + (data.error ? ' bad' : '');
+    updated.textContent = data.polledAt
+      ? 'jobs as of ' + ago(data.polledAt) + (data.machine ? ' · on ' + data.machine : '') + (data.error ? ' · the last list failed: ' + data.error : '')
+      : 'no job list yet — the worker stores one every ' + data.pollSeconds + ' s' + (data.error ? ' (last error: ' + data.error + ')' : '');
+    var s = data.spend;
+    document.getElementById('spend').replaceChildren(
+      stat(s.paToday == null ? '—' : money(s.paToday), 'PA model spend today' + (data.spendCap ? ' (cap ' + money(data.spendCap) + ')' : '')),
+      stat(money(s.factoryToday.metered), 'factory metered, ' + s.factoryToday.jobs + ' job(s) touched today'),
+      stat(money(s.factoryToday.subscriptionEquiv), 'subscription-equivalent today'),
+      stat(money(s.factoryListed.metered), 'metered, all ' + s.factoryListed.jobs + ' listed jobs'));
+    board.replaceChildren.apply(board, GROUPS.map(function (g) {
+      var list = data.groups[g[0]] || [];
+      return el.apply(null, ['section', { class: g[0] },
+        el('h2', {}, g[1], el('span', { class: 'n', text: String(list.length) }))]
+        .concat(list.length ? list.map(jobCard) : [el('div', { class: 'empty', text: g[0] === 'needs_you' ? 'Nothing waits on you.' : 'None.' })]));
+    }));
+    fillForm();
+  }
+
+  // ---- New job ----------------------------------------------------------------------
+  var form = document.getElementById('newform');
+  var filled = false;
+  function options(select, list, value) {
+    select.replaceChildren.apply(select, list.map(function (o) {
+      var opt = el('option', { value: o.value, text: o.label });
+      if (o.value === value) opt.selected = true;
+      return opt;
+    }));
+  }
+  function fillForm() {
+    if (filled) return;
+    filled = true;
+    options(form.elements.kind, data.kinds || [], 'code');
+    options(form.elements.runtime, data.runtimes || [], data.defaultRuntime || 'api');
+    options(form.elements.delivery, [{ value: '', label: "the repo's default" }].concat((data.deliveries || []).map(function (d) {
+      return { value: d.value, label: d.value + ' — ' + d.plain };
+    })), '');
+    kindChanged();
+  }
+  function kindChanged() {
+    var code = form.elements.kind.value === 'code';
+    form.querySelector('[data-code]').hidden = !code;
+    form.elements.repo.required = code;
+    document.getElementById('newhint').textContent = code
+      ? 'Starts now on the factory; it delivers at the end state you pick.'
+      : 'A ' + form.elements.kind.value + ' job changes nothing: the factory writes a report you read here.';
+  }
+  form.elements.kind.addEventListener('change', kindChanged);
+  form.addEventListener('submit', function (e) {
+    e.preventDefault();
+    if (busyForm) return;
+    busyForm = true;
+    var f = form.elements;
+    var body = {
+      title: f.title.value, ask: f.ask.value, kind: f.kind.value, runtime: f.runtime.value,
+      repo: f.repo.value || null, delivery: f.kind.value === 'code' ? f.delivery.value || null : null, done: f.done.value,
+    };
+    var button = form.querySelector('button[type="submit"]');
+    button.disabled = true;
+    var send = function (b) {
+      return post('api/factory/jobs', b).catch(function (err) {
+        // Merging or pushing to main with no human step: confirm that level here.
+        if (err.status === 409 && err.data && err.data.delivery && !b.confirmedLevel) {
+          if (!window.confirm('End state: ' + err.data.delivery + ' — ' + err.data.plain + '\n\nNo human step after this. Start it?')) throw new Error('not started');
+          return send(Object.assign({}, b, { confirmedLevel: err.data.delivery }));
+        }
+        throw err;
+      });
+    };
+    send(body).then(function (r) {
+      toast(r.submitUnknown ? 'run #' + r.id + ' sent; the factory\'s answer was lost — the worker matches it'
+        : 'run #' + r.id + ' → factory job ' + r.jobId + ' (' + r.jobKind + ', ' + (RUNTIME[r.runtime] || r.runtime) + ')');
+      form.reset();
+      filled = false;
+      fillForm();
+      load();
+    }, function (err) { toast('Start job failed: ' + err.message); }).then(function () {
+      busyForm = false;
+      button.disabled = false;
+    });
+  });
+
+  function load() {
+    return fetch('api/factory', { cache: 'no-store' })
+      .then(function (r) { return r.json().then(function (d) { if (!r.ok) throw new Error(d.error || r.statusText); return d; }); })
+      .then(function (d) { data = d; render(); }, function (err) {
+        var u = document.getElementById('updated');
+        u.className = 'meta bad';
+        u.textContent = 'could not load: ' + err.message;
+      });
+  }
+  load();
+  setInterval(function () { if (document.visibilityState === 'visible' && sheet.hidden) load(); }, 30000);
+  document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'visible') load(); });
+})();

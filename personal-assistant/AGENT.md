@@ -80,7 +80,12 @@ the id must be a UUID and a machine missing from `PA_MACHINES` is refused, never
 Card links are built server-side from stored URLs and only `http(s)` ones are rendered. The Memory tab's writes (remember, forget,
 approve, merge) are POSTs under the same guards, and memory pages reach the browser as a parsed
 tree (`src/dashboard/markdown.js`) built with `textContent` — the page has no HTML sink, and
-`test/memoryui.test.js` fails if one appears.
+`test/memoryui.test.js` fails if one appears. The Factory page (`/factory`) is the same: its
+writes (Cancel, Approve, Open in termhub, New job) are POSTs under the same guards, a job id is
+checked against `factoryCore.JOB_ID` before anything, Approve runs only the `approve-direction` the
+factory named in that job's own warning (read from the stored list, never from the request), a new
+code job at `auto_merge`/`push_to_main` needs the page token and the level confirmed, and a report —
+agent-written — arrives as a parsed tree (`test/factoryBoard.test.js` fails on an HTML sink).
 
 The one sanctioned way off loopback is **termhub's `/pa/` proxy** (`TERMHUB_PA_URL`), which
 rewrites `Host` to loopback and forwards `X-PA`. That reaches exactly the people who can already

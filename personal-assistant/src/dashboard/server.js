@@ -220,6 +220,13 @@ async function handle(req, res) {
   }
   // ---- end voice page ----
 
+  // ---- The Factory layer (dashboard/factory.js, factory.html): every factory
+  // job from the worker's stored list, and its actions (X-PA guarded there). ----
+  if (url.pathname === '/factory' || url.pathname === '/factory.js' || url.pathname === '/api/factory' || url.pathname.startsWith('/api/factory/')) {
+    if (await require('./factory').route(req, res, url, { send, readJson, issuePageToken, pageTokenOk })) return;
+  }
+  // ---- end Factory layer ----
+
   // The end state a Do would get, before it is pressed: the page shows it,
   // and must send it back as `confirmedLevel` to start an unattended one.
   let pm = req.method === 'GET' && url.pathname.match(/^\/api\/commitments\/(\d+)\/delivery$/);
@@ -255,6 +262,8 @@ async function handle(req, res) {
       // The end states the operator may pick on Do (src/dispatch/deliveryCore.js);
       // none picked: the repo's default, else PA_DELIVERY_DEFAULT.
       deliveries: require('../dispatch/deliveryCore').DELIVERIES.map((d) => ({ value: d, plain: require('../dispatch/deliveryCore').describe(d) })),
+      // On the factory route: the job's kind and runtime (JOBS-API v1.2).
+      ...(require('../dispatch/factory').enabled() ? require('./factory').pickers() : {}),
     });
   }
   // One commitment with what it came from, so it can be judged before it is
@@ -443,9 +452,22 @@ async function handle(req, res) {
       const D = require('../dispatch/deliveryCore');
       const delivery = typeof body.delivery === 'string' && body.delivery ? body.delivery : null;
       if (delivery && !D.isDelivery(delivery)) return send(res, 400, { error: `unknown delivery "${delivery.slice(0, 40)}"` });
-      // What the start will resolve to — a repo default included. Confirmed only
-      // when the page showed exactly that level and sent it back, with its token.
-      const resolved = await dispatch.previewDelivery({ commitmentId: Number(m[1]), mode: body.mode || undefined, delivery });
+      // JOBS-API v1.2, on the factory route only: what kind of work, who does it.
+      const F = require('../dispatch/factoryCore');
+      let jobKind = null;
+      let runtime = null;
+      try {
+        jobKind = typeof body.kind === 'string' && body.kind ? F.jobKind(body.kind) : null;
+        runtime = typeof body.runtime === 'string' && body.runtime ? F.runtime(body.runtime) : null;
+      } catch (err) {
+        return send(res, 400, { error: err.message });
+      }
+      // A research/report job delivers its report only: nothing to confirm.
+      const resolved = jobKind && jobKind !== 'code'
+        ? { delivery: 'none' }
+        // What the start will resolve to — a repo default included. Confirmed only
+        // when the page showed exactly that level and sent it back, with its token.
+        : await dispatch.previewDelivery({ commitmentId: Number(m[1]), mode: body.mode || undefined, delivery });
       const confirmed = D.unattended(resolved.delivery) && body.confirmedLevel === resolved.delivery && pageTokenOk(req);
       if (D.unattended(resolved.delivery) && !confirmed) {
         return send(res, 409, {
@@ -461,12 +483,15 @@ async function handle(req, res) {
         via: body.via ? String(body.via) : null,
         // The level the page confirmed, pinned: a repo default changing in
         // between cannot swap in another one.
-        delivery: confirmed ? resolved.delivery : delivery,
+        delivery: jobKind && jobKind !== 'code' ? null : confirmed ? resolved.delivery : delivery,
         confirmedUnattended: confirmed,
+        jobKind,
+        runtime,
       });
       return send(res, 200, {
         id: run.id, mode: run.mode, machine: run.machine || null, url: run.url, repoPath: run.repoPath,
         route: run.route || 'claude', routeReason: run.routeReason || null, jobId: run.jobId || null, delivery: run.delivery || null,
+        jobKind: run.jobKind || null, runtime: run.runtime || null,
         warnings: run.warnings || [],
       });
     }

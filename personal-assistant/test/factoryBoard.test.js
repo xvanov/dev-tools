@@ -365,6 +365,69 @@ const isV1 = (argv) => argv.includes('--kind') || argv.includes('--runtime');
     assert.ok(!s.permissions.allow.some((r) => /factory/.test(r)), 'no factory verb is allowed without asking');
   }
 
+  // The Factory page (dashboard/factory.js): its pure checks, then its routes.
+  {
+    const P = require('../src/dashboard/factory');
+    assert.deepStrictEqual(P.jobAction('/api/factory/jobs/widget%3A015/cancel'), { jobId: 'widget:015', verb: 'cancel' });
+    assert.deepStrictEqual(P.jobAction('/api/factory/jobs/widget:015/open'), { jobId: 'widget:015', verb: 'open' });
+    assert.strictEqual(P.jobAction('/api/factory/jobs/widget%3A015%3Bls/cancel'), null, 'a job id is checked before anything');
+    assert.strictEqual(P.jobAction('/api/factory/jobs/%E0%A4%A/cancel'), null);
+    assert.strictEqual(P.jobAction('/api/factory/jobs/widget:015/delete'), null);
+    const r = P.newJob({ title: ' Export latency ', ask: 'Why slow?', kind: 'research', runtime: 'claude_session', done: 'what changed\n\nhow to fix' });
+    assert.deepStrictEqual([r.title, r.task, r.jobKind, r.runtime, r.repoPath, r.delivery, r.done, r.register, r.via],
+      ['Export latency', 'Why slow?', 'research', 'claude_session', null, null, ['what changed', 'how to fix'], false, 'factory']);
+    const c = P.newJob({ title: 'Add retries', kind: 'code', repo: 'acme/widget', delivery: 'pr' });
+    assert.deepStrictEqual([c.task, c.delivery, c.register, c.runtime], ['Add retries', 'pr', true, 'api']);
+    assert.throws(() => P.newJob({ title: 'x', kind: 'code' }), (e) => e.status === 400 && /needs a repo/.test(e.message));
+    assert.throws(() => P.newJob({ title: 'x', kind: 'research', delivery: 'pr' }), /end state is none/);
+    assert.throws(() => P.newJob({ title: 'x', kind: 'research', repo: '/home/me/../etc' }), /owner\/name/);
+    assert.throws(() => P.newJob({ title: '', kind: 'research' }), /title/);
+    assert.throws(() => P.newJob({ title: 'x', kind: 'poem' }), (e) => e.status === 400);
+    assert.throws(() => P.newJob({ title: 'x', kind: 'code', repo: 'a/b', delivery: 'yolo' }), /unknown delivery/);
+    assert.deepStrictEqual(P.pickers().kinds.map((k) => k.value), ['code', 'research', 'report']);
+
+    stub('budget', { async status() { return { today: 0.42, cap: 5 }; } });
+    const server = require('../src/dashboard/server');
+    const call = (method, url, { headers = {}, body = null } = {}) => new Promise((resolve, reject) => {
+      const { Readable } = require('stream');
+      const req = Readable.from(body ? [JSON.stringify(body)] : []);
+      Object.assign(req, { method, url, headers: { host: '127.0.0.1:7300', ...headers } });
+      const res = {
+        status: 0, headers: {}, body: '', headersSent: false,
+        writeHead(s, h) { this.status = s; this.headers = h; this.headersSent = true; },
+        end(b) { this.body = String(b || ''); resolve(this); },
+      };
+      // As server.start does: a thrown error's status, else 500.
+      server.handle(req, res).catch((err) => {
+        if (res.headersSent) return reject(err);
+        res.writeHead(err.status || 500, {});
+        res.end(JSON.stringify({ error: err.message }));
+      });
+    });
+    const page = await call('GET', '/factory');
+    assert.strictEqual(page.status, 200);
+    assert.match(page.body, /<script src="nav\.js" data-layer="factory"><\/script>/, 'the switcher, as the Factory layer');
+    assert.match(page.body, /<link rel="stylesheet" href="theme\.css">/, 'the shared theme');
+    assert.match(page.body, /<meta name="pa-page" content="[^"]+">/, 'a page token for unattended levels');
+    assert.match(page.body, /src="factory\.js"/, 'relative: works under termhub\'s /pa/');
+    const client = await call('GET', '/factory.js');
+    assert.doesNotMatch(client.body, /innerHTML|outerHTML|insertAdjacentHTML|document\.write/, 'no HTML sink: agents wrote this text');
+    store.board = { jobs: [{ job_id: 'widget:015', title: 'a', state: 'needs_human', warnings: ['factory approve-direction 015 --app widget'] }], polled_at: new Date() };
+    const b = JSON.parse((await call('GET', '/api/factory')).body);
+    assert.deepStrictEqual([b.enabled, b.counts.needs_you, b.groups.needs_you[0].canApprove, b.spend.paToday], [true, 1, true, 0.42]);
+    assert.strictEqual((await call('POST', '/api/factory/jobs/widget:015/cancel')).status, 403, 'X-PA on every POST');
+    assert.strictEqual((await call('GET', '/api/factory/report?job=..%2Fx')).status, 400);
+    assert.strictEqual((await call('POST', '/api/factory/jobs', { headers: { 'x-pa': '1' }, body: { title: 'x', kind: 'code' } })).status, 400);
+    calls = [];
+    answer = (argv) => (argv.includes('approve-direction') ? { code: 0, stdout: 'ok', stderr: '' } : json({ jobs: store.board.jobs }));
+    const ok = await call('POST', '/api/factory/jobs/widget%3A015/approve', { headers: { 'x-pa': '1' } });
+    assert.strictEqual(ok.status, 200);
+    assert.ok(calls.some((c) => c.argv.includes('approve-direction')));
+    const m = JSON.parse((await call('GET', '/api/machines')).body);
+    assert.deepStrictEqual(m.runtimes.map((x) => x.value), ['api', 'claude_session'], 'the card\'s Do gets the runtime picker');
+    assert.strictEqual(m.defaultRoute, 'factory');
+  }
+
   fs.rmSync(tmp, { recursive: true, force: true });
   console.log('factory board ok');
 })().catch((err) => {
