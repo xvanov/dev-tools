@@ -1,4 +1,4 @@
-# Factory ⇄ Personal Assistant job contract (v1, 2026-11-02; v1.2 additions 2026-11-06 at the end)
+# Factory ⇄ Personal Assistant job contract (v1, 2026-11-02; v1.2 additions 2026-11-06 and v1.3 additions 2026-11-07 at the end)
 
 The one interface between the personal assistant (PA, dev-tools/personal-assistant) and the
 software factory (software-factory). The PA never imports factory code or reads its sqlite; it
@@ -485,3 +485,122 @@ time, and marks a running job whose worker died as `failed`. `factory job dispat
 checks of "the report file exists" (a missing report is sent back into the same conversation
 once). A `claude_session` code dev step has solo's bounds (5400 s, ≤ 3 gate rounds, the
 no-progress abort); under `--pipeline chain` it has the chain's dev timeout and no gate loop.
+
+## v1.3 additions (2026-11-07): pick up existing work, resume a job
+
+Additive: every v1–v1.2 call keeps working and means what it meant. How it works, with
+examples: `docs/RESUME.md`.
+
+### Submit: continue on an existing branch or PR
+
+```
+--branch <name>                  work on this EXISTING branch of the app's repo
+--pr <number>                    work on this EXISTING open PR (its head branch); `#42` is accepted
+```
+
+Code jobs only. Submit asks GitHub once (via `gh`) and writes what it found to the direction
+frontmatter as `base: {branch, pr, into}`; the chain stamps it on the story at spawn
+(`StoryRecord.pickup_branch / pickup_pr / pickup_into`) like the delivery level, so it never
+drifts mid-flight.
+
+- `--pr N`: the PR must be OPEN and from a branch of the app's own repo. `branch` = its head
+  branch, `into` = its base branch.
+- `--branch B`: the branch must exist on GitHub and must not be the default branch. If an open PR
+  (not from a fork) has `B` as its head, the job adopts it exactly as if `--pr` had been given.
+  Otherwise `pr` is `null`.
+- The job is always ONE story (no PM slices, no dual-draft): two stories cannot share a branch.
+- The story worktree is cut from `origin/<branch>` (the human's tip), never from the default
+  branch. Before every writing step and before every push the factory fetches and merges
+  `origin/<branch>` (commits a human pushed meanwhile) and then `origin/<into>` (a clean merge,
+  aborted on conflict, exactly like the existing base refresh).
+- Pushes to the branch are plain fast-forward pushes, never `--force` or `--force-with-lease`. A
+  CI-fix push is refused (and the story delivered with a note) if the branch has commits the
+  factory did not write, as for `draft_pr`/`pr` today.
+- With a PR: delivery UPDATES that PR. `gh pr create` is never run, and the PR's title, body,
+  draft state and base are never changed. The story's `github_pr_number` is set to it when the
+  delivery step runs; from then on the usual CI watch / CI-fix loop / auto-merge run on it. If
+  the PR is no longer open at that point nothing is pushed and the bounded PR-open retry parks
+  the story.
+- Without a PR: levels `draft_pr`/`pr`/`auto_merge` open one from the branch into the default
+  branch (or relink one opened since); `branch` just pushes; `none` commits locally.
+- Never destructive on a picked-up branch: no conflict rebuild (it would close the PR and delete
+  the branch; the story parks in `blocked_deploy_failed` for a human instead, event
+  `conflict_rebuild_refused_pickup`), and no `--delete-branch` after an auto-merge.
+- With a PR, its UNRESOLVED review threads (any reviewer, human or bot) are read at submit and
+  appended to the ask (also `artifacts/pr_review_threads.md`, at most 30 threads), so the dev
+  addresses them. This is a snapshot: comments posted after submit are not read.
+- `--delivery push_to_main` cannot be combined with `--branch`/`--pr`.
+
+Success JSON adds `"base": {"branch", "pr", "into"} | null` (`null` for every other job,
+including research/report). Warnings may name a PR into a non-default branch or unreadable
+review threads. A resubmit with the same `(source, external-id)` returns the original job
+without asking GitHub.
+
+Refusals (exit 1): `invalid_argument` (both flags; `--branch`/`--pr` on a research/report job;
+a non-numeric `--pr`), `invalid_branch`, `branch_is_default`, `branch_not_found`, `pr_not_found`,
+`pr_not_open` (merged or closed), `pr_from_fork`, `github_unavailable` (GitHub could not be asked;
+fail safe, nothing is written), `branch_busy` (another unfinished job of the app already works on
+that branch), `invalid_delivery` (`push_to_main` with a pickup).
+
+### Status / list: new fields
+
+```
+"base": {"branch": "<name>", "pr": n | null, "into": "<branch>"} | null,
+"stalled": bool
+```
+
+`stalled` is true when the job reads `in_progress` or `blocked` (but NOT because the factory is
+halted or paused) and nothing about it (no story row, direction audit entry, or agent run start
+or end) changed for 3 h. `FACTORY_JOB_STALL_S` overrides it (60 s minimum). 3 h is longer than
+any bounded step (a 5400 s dev conversation, the 2 h CI watch), so a healthy job never reads
+stalled. Research/report jobs always report `stalled: false` (a dead worker is already reaped to
+`failed`).
+
+### New command: `factory job resume <job_id> --json [--no-github]`
+
+Picks a job back up. Allowed when the job is `failed`, `cancelled`, `needs_human` with stories
+parked for a human, or `stalled`.
+
+- Finished stories are kept: merged (`deploy_pending`/`deployed`), `delivered_*`, and dual-draft
+  losers.
+- Every other story is re-entered with the operator story-resume (`factory resume-story`, point
+  `auto`, `factory/chain/resume.py`). It keeps the story's branch, worktree state, PR, issue,
+  story file, dev/review history and spend, and resets only the counters that would re-park it.
+  A story with a PR goes back to the merge gates / CI watch (`pr_open`, no persona re-runs); one
+  whose dev or SM ran goes back to dev (`dev_retry`) on its existing branch; only a story that
+  never started goes back to `story_created`. Each writes a `story_resumed` event (actor
+  `factory job resume`) that also resets the merge-gate block and CI-fix windows.
+- A cancelled job is un-cancelled first: its `job_cancellations` row is deleted and
+  `state.yaml::job_cancelled` moves to `previous_cancel` (plus a `job_resumed` audit entry). Its
+  closed direction re-opens as `pm-validated` when it has stories (never re-triaged) or `created`
+  when it was cancelled before triage (PM triages it again). The resumed stories' GitHub issues
+  are re-opened (best effort; skipped with `--no-github`).
+- Everything is planned before anything is written: if no story can be resumed, nothing changes.
+- A picked-up story whose PR a human closed is not resumed (the factory never re-opens a human's
+  PR); it is listed in `stories_left`.
+- Research/report jobs: `failed`/`cancelled` → `queued`; the agent runs again from a fresh
+  workspace on the next tick (`job.yaml::resumed` keeps the history).
+
+Success:
+`{"job_id", "state": "<state after>", "was": "<state before>", "resumed": [{"id", "from_state",
+"to_state", "point"}], "kept": [{"id", "state"}], "stories_left": [{"id", "state", "reason"}],
+"requeued": bool, "why"}`. `requeued` is true when the job went back to triage (code) or to the
+dispatch queue (research/report) rather than resuming stories.
+
+Refusals (exit 1): `job_running` (queued, triaging, or in_progress/blocked and not stalled),
+`job_done`, `not_resumable` (no stories, and the direction is `created` awaiting approval or
+`needs-direction`: resubmit with what is missing), `resume_refused` (every unfinished story's
+resume was refused; `message` lists why, e.g. the per-story spend cap, a PR GitHub could not
+read, a dependency in a dead sink), plus `not_found` / `invalid_job_id` / `missing_argument`.
+
+### The "ready to merge" bar: what exists and what does not
+
+- Local dev loop (tests until green): yes. Chain dev retries; solo / `claude_session` run
+  in-conversation gate rounds.
+- Local review loop: yes for `chain` (reviewer ↔ dev, capped). `solo` has no reviewer.
+- CI watch + CI-fix loop on the PR: yes. `draft_pr`/`pr` watch before delivery; `auto_merge`
+  fixes before merging; at most 3 cycles.
+- Automated review comments (e.g. a review bot): partly. A picked-up PR's unresolved threads are
+  fed to the dev at submit (a snapshot). Comments posted later are not read, and threads are
+  never replied to or resolved.
+- Merge: only at `auto_merge` (gates + required CI). A draft PR is never merged or marked ready.
