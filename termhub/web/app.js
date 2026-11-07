@@ -1684,7 +1684,9 @@ function renderUpdatePanel(info, loading) {
   status.className = 'warn';
   status.textContent =
     `${info.behind} commit${info.behind === 1 ? '' : 's'} behind ${info.upstream || 'upstream'} — `
-    + (info.toolChanged ? 'termhub itself changed.' : 'no termhub changes (other tools in the repo).');
+    + (info.toolChanged
+      ? `changes to ${(info.parts && info.parts.length ? info.parts : ['termhub']).join(', ')}.`
+      : 'nothing in the running stack changed (other tools in the repo).');
   if (info.subjects && info.subjects.length) {
     const ul = document.createElement('ul');
     ul.className = 'commit-list';

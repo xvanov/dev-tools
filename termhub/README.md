@@ -179,7 +179,15 @@ cd <project-dir>
 .\windows\update.ps1
 ```
 
-It's deterministic and reversible:
+One update covers the whole stack, not just termhub: after termhub is serving the new
+version, it runs `personal-assistant/windows/redeploy.ps1` (Linux: `personal-assistant/linux/redeploy.sh`,
+before termhub's restart), which installs the assistant's dependencies if they changed, restarts
+`pa-worker` and waits until it serves the new commit; on Linux it also restarts `pa-voice` when
+its code changed and runs `uv sync` for the factory when its lockfile changed. Pages that are
+already open reload themselves: the shell (`nav.js`) polls each server's `api/version` and
+swaps out-of-date pages when you are not looking at them.
+
+termhub's own steps are deterministic and reversible:
 
 1. `git pull --ff-only` (records the old commit for rollback; aborts cleanly if not a fast-forward).
 2. Starts a new **green** `front` on the alternate loopback port and health-checks it

@@ -299,6 +299,16 @@ if ($sessiondCommit -and (($sessiondCommit -ne $newHead) -or ($sessiondDirty -eq
 Write-Host ""
 Confirm-WatchdogTask
 
+# 5d) The rest of the stack. One pull updated the whole repo, so the assistant is
+# redeployed to the same commit here (npm install if its deps changed, restart
+# pa-worker, wait until it serves the new commit). Non-fatal, like 5c: termhub is
+# already serving the new front. Open pages reload themselves (nav.js api/version).
+$paRedeploy = Join-Path (Split-Path $ProjectDir -Parent) 'personal-assistant\windows\redeploy.ps1'
+if (Test-Path $paRedeploy) {
+  Write-Host ""
+  & powershell -NoProfile -ExecutionPolicy Bypass -File $paRedeploy -From $rollback
+}
+
 # 6) Update the Claude Code CLI too. termhub's Claude integration is
 # version-coupled (see lib/claudeCli.js): it pins conversations with
 # --session-id, resumes them with --resume, and parses the on-disk transcript.

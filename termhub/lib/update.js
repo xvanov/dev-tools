@@ -16,6 +16,8 @@ const path = require('path');
 const claudeCli = require('./claudeCli');
 
 const PROJECT_DIR = path.join(__dirname, '..'); // .../termhub
+// The parts of the repo one update deploys.
+const STACK_PARTS = ['termhub', 'personal-assistant', 'software-factory'];
 
 // Re-running `git fetch` on every poll is wasteful; serve a recent result unless
 // the caller forces a refresh (the "Check again" button).
@@ -100,17 +102,21 @@ async function compute() {
   const behindRes = await git(['rev-list', '--count', 'HEAD..@{u}']);
   const behind = Number(behindRes.out) || 0;
 
-  // Which part of the repo changed? termhub sits under this prefix; only changes
-  // touching it should prompt "the tool changed".
+  // Which part of the repo changed? The updater redeploys the whole stack (termhub,
+  // then personal-assistant/windows|linux/redeploy), so a change to any part of it
+  // counts; other tools in the repo do not.
   const prefixRes = await git(['rev-parse', '--show-prefix']);
   const prefix = prefixRes.out; // e.g. "termhub/" ('' if termhub is the repo root)
   let toolChanged = behind > 0 && !prefix; // repo-root install: any change is the tool
 
   let subjects = [];
+  let parts = [];
   if (behind > 0) {
     const names = await git(['diff', '--name-only', 'HEAD..@{u}']);
     if (names.ok && prefix) {
-      toolChanged = names.out.split('\n').some((f) => f && f.startsWith(prefix));
+      const files = names.out.split('\n').filter(Boolean);
+      parts = STACK_PARTS.filter((p) => files.some((f) => f.startsWith(p + '/')));
+      toolChanged = parts.length > 0;
     }
     const log = await git(['log', '--no-merges', '--format=%h\x1f%s', '-n', '20', 'HEAD..@{u}']);
     if (log.ok && log.out) {
@@ -127,6 +133,7 @@ async function compute() {
     claudeCli: claude,
     behind,
     toolChanged,
+    parts,
     current: head.out.slice(0, 7),
     latest: upstream.ok ? upstream.out.slice(0, 7) : null,
     upstream: upstreamRef.out,

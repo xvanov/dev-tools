@@ -327,6 +327,14 @@ else
   say "claude CLI not on PATH - skipping the CLI update."
 fi
 
+# 3b) The rest of the stack, BEFORE the restart for the same reason as 4): one pull
+# updated the whole repo, so the assistant is redeployed to the same commit (deps,
+# pa-worker restart, pa-voice if its code changed) and the factory's deps synced.
+# Non-fatal. Open pages reload themselves (nav.js api/version).
+if [ -f "$PROJECT_DIR/../personal-assistant/linux/redeploy.sh" ]; then
+  bash "$PROJECT_DIR/../personal-assistant/linux/redeploy.sh" "$ROLLBACK" 2>&1 || true
+fi
+
 # 4) The watchdog. BEFORE the restart, because the restart kills this terminal.
 #
 # This is the step that makes a machine self-supervising without a second manual
