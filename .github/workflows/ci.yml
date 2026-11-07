@@ -1,0 +1,151 @@
+name: ci
+
+# One workflow, path-filtered per tool. A `changes` job decides which tools a
+# push/PR touched; each tool's jobs run on Linux, macOS and Windows in parallel.
+# workflow_dispatch (and any change to this file) runs everything.
+# No secrets are used or needed: tests run against local fixtures only.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    outputs:
+      pa: ${{ steps.f.outputs.pa }}
+      termhub: ${{ steps.f.outputs.termhub }}
+      factory: ${{ steps.f.outputs.factory }}
+      ios: ${{ steps.f.outputs.ios }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: f
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_PR: ${{ github.event.pull_request.base.sha }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          set -u
+          all() { for k in pa termhub factory ios; do echo "$k=true" >> "$GITHUB_OUTPUT"; done; exit 0; }
+          [ "$EVENT" = "workflow_dispatch" ] && all
+          if [ "$EVENT" = "pull_request" ]; then BASE="$BASE_PR"; else BASE="$BEFORE"; fi
+          # New branch / forced push / unknown base: run everything (fail safe).
+          if [ -z "$BASE" ] || echo "$BASE" | grep -qE '^0+$' || ! git cat-file -e "$BASE^{commit}" 2>/dev/null; then all; fi
+          CHANGED="$(git diff --name-only "$BASE" HEAD)"
+          echo "changed files:"; echo "$CHANGED" | sed 's/^/  /'
+          echo "$CHANGED" | grep -q '^\.github/workflows/ci\.yml$' && all
+          hit() { echo "$CHANGED" | grep -qE "$1" && echo true || echo false; }
+          echo "pa=$(hit '^personal-assistant/')" >> "$GITHUB_OUTPUT"
+          echo "termhub=$(hit '^termhub/')" >> "$GITHUB_OUTPUT"
+          echo "factory=$(hit '^software-factory/')" >> "$GITHUB_OUTPUT"
+          echo "ios=$(hit '^ios-messages/')" >> "$GITHUB_OUTPUT"
+
+  personal-assistant:
+    needs: changes
+    if: needs.changes.outputs.pa == 'true'
+    name: personal-assistant (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: personal-assistant
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: personal-assistant/package-lock.json
+      # Bun / cargo+sccache caches arrive with phases 1 and 5 (plan T6/T7).
+      - run: npm ci
+      - run: npm test
+
+  termhub:
+    needs: changes
+    if: needs.changes.outputs.termhub == 'true'
+    name: termhub (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: termhub
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: termhub/package-lock.json
+      - run: npm ci
+      - run: npm test
+
+  software-factory:
+    needs: changes
+    if: needs.changes.outputs.factory == 'true'
+    name: software-factory (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    # The factory is POSIX-only until phase 2.3 ports it (native Windows,
+    # macOS). Until then the macOS and Windows legs run but may not fail the
+    # workflow; Linux is the gate.
+    continue-on-error: ${{ matrix.os != 'ubuntu-latest' }}
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: software-factory
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: software-factory/uv.lock
+          python-version: "3.12"
+      - run: uv sync --all-extras
+      - run: uv run pytest -q --tb=short -n auto --dist loadfile
+
+  ios-messages:
+    needs: changes
+    if: needs.changes.outputs.ios == 'true'
+    name: ios-messages (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: ios-messages
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: ios-messages/requirements.txt
+      - run: python -m pip install -r requirements.txt pytest
+      - run: python -m pytest -q tests

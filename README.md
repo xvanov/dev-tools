@@ -16,6 +16,13 @@ Internal tooling for AI-assisted workflows: push-to-talk dictation, batch transc
 | [personal-assistant](./personal-assistant/) | Context layer over Outlook/Teams/GitLab/meetings that distils asks into typed commitments, dispatches them to Claude Code sessions you can attach to, and drafts the reply when the work lands |
 | [ios-messages](./ios-messages/) | Decrypt messages from an iPhone backup (iMazing/iTunes), export every conversation as text, sort property chats into tenants / landlords / contractors (house group chats included), and pseudonymize them consistently across chats |
 
+## CI
+
+[`.github/workflows/ci.yml`](./.github/workflows/ci.yml) runs each tool's tests on Linux, macOS and
+Windows in parallel, only for the tools a change touched (path-filtered; "Run workflow" runs all).
+Covers personal-assistant, termhub, software-factory (pytest via uv; the macOS and Windows legs are
+allowed to fail until the factory is ported, plan phase 2.3) and ios-messages. No secrets are used.
+
 ## Quick start
 
 Clone:
