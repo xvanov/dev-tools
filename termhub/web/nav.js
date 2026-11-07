@@ -333,16 +333,22 @@
 
   // A plain left click on a link to a destination switches instead of loading a page:
   // the panel's own links, and any a page has (termhub's "agent time" bar, its back link).
-  function destOfLink(a) {
-    var named = a.getAttribute('data-dest');
-    if (named) return named;
+  // Only a link to ANOTHER destination is a switch. A link into this page (a view
+  // like #memory, an anchor, a hash route) is the page's own business and must
+  // reach it untouched: Plan's views are such links.
+  function destOfHref(href) {
     var u;
-    try { u = new URL(a.href, location.href); } catch (e) { return null; }
+    try { u = new URL(href, location.href); } catch (e) { return null; }
+    if (u.search) return null;
     for (var i = 0; i < DESTS.length; i++) {
-      var t = new URL(hrefFor(DESTS[i].id), location.href);
-      if (t.origin === u.origin && t.pathname.replace(/\/$/, '') === u.pathname.replace(/\/$/, '') && !u.search) return DESTS[i].id;
+      var id = DESTS[i].id;
+      var t = new URL(hrefFor(id), location.href);
+      if (t.origin === u.origin && t.pathname.replace(/\/$/, '') === u.pathname.replace(/\/$/, '')) return id === current ? null : id;
     }
     return null;
+  }
+  function destOfLink(a) {
+    return a.getAttribute('data-dest') || destOfHref(a.getAttribute('href') || '');
   }
   document.addEventListener('click', function (e) {
     if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
@@ -444,6 +450,7 @@
   window.JarvisNav = {
     destinations: DESTS,
     go: go,
+    linkTarget: destOfHref, // which destination a link switches to, or null (test/nav.test.js)
     refresh: function () { return fetchSession().then(paint); },
     settings: {
       isOpen: function () { return settingsOpen; },
