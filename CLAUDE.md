@@ -62,6 +62,12 @@ table, port, model default, persona or storage location, update that JSON in the
 verbs, passes, tables, personas, env defaults, code paths, edges); the prose facts are on you. Mark
 what is not built yet `planned`, what is half-landed `landing`, and write "unknown" rather than guess.
 
+## Native rebuild plan
+
+`docs/native/PLAN.md` is the tracked plan for the native rebuild (TypeScript/Bun core, Rust
+`ptyd`, SQLite, zero-downtime deploys, fast parallel tests). Its decision log is binding. When a
+commit finishes a plan item, tick that item's box in the same commit with the short hash.
+
 ## software-factory
 
 Imported 2026-11-06 as a snapshot of `xvanov/software-factory` @ `39f9c26` (that repo keeps the full
