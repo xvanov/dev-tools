@@ -61,6 +61,12 @@
     touch-action: none;
     box-shadow: var(--shadow-1);
   }
+  /* Voice mode is the face and nothing else: no status words, no captions, no
+     buttons. Space and the wake word talk; a caption appears only with "Voice
+     off" (then text is the only output); the tap prompt only when the browser
+     needs the one gesture before audio can play. */
+  #mood, #activity, #heard, #notice, #ptt { display: none !important; }
+  body:not(.voice-off) #caption { display: none; }
   #ptt:hover { border-color: var(--signal); }
   /* Phones: hold-to-talk is the main control, so it is a thumb-sized target. */
   @media (pointer: coarse) { #ptt { padding: 22px 44px; font-size: var(--text-md); -webkit-touch-callout: none; } }

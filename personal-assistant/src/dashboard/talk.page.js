@@ -1218,11 +1218,13 @@
     speaker.cancel();
     speaker.say(['This is how I sound.']);
   };
+  document.body.classList.toggle('voice-off', !!prefs.muted);
   for (const key of ['handsFree', 'deafWhileTalking', 'muted', 'wake', 'smartTurn']) {
     $(key).checked = !!prefs[key];
     $(key).onchange = (e) => {
       prefs[key] = e.target.checked;
       savePrefs();
+      if (key === 'muted') document.body.classList.toggle('voice-off', prefs.muted);
       if (key === 'muted' && prefs.muted) speaker.cancel();
       if (key === 'wake') {
         conv.wake = prefs.wake;
