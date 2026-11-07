@@ -180,7 +180,7 @@ function refresh() {
       // sessions are filtered out: they have no transcript, so an armed flag on
       // one can only ever be a lie the sidebar would have to render.
       voice.armed = new Set(state.sessions.filter((x) => x.voiceArmed && x.canSpeak).map((x) => x.id));
-      $('#machine-name').textContent = state.machine;
+      $('#machine-name').textContent = state.machine ? state.machine + ' · ' : '';
       setPageTitle();
       const n = state.sessions.length;
       const live = state.sessions.filter((x) => x.alive).length;
@@ -3699,7 +3699,8 @@ function wireEvents() {
   $('#new-term-btn').onclick = () => openDialog();
   cwdCombo = makeCombobox($('#dlg-cwd'), $('#dlg-cwd-list'), { getItems: dirItems, keepOpenOnPick: true });
   cmdCombo = makeCombobox($('#dlg-cmd'), $('#dlg-cmd-list'), { getItems: commandItems, keepOpenOnPick: false });
-  $('#sidebar-close').onclick = closeDrawer;
+  // No ✕ of its own: the shared » toggle (nav.js) opens and closes the panel on
+  // every page, Run included.
   $('#scrim').onclick = closeDrawer;
   $('#dlg-cancel').onclick = closeDialog;
   $('#dlg-open').onclick = submitDialog;

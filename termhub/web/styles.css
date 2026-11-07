@@ -45,6 +45,7 @@ html, body {
   overflow: hidden; /* clips content during the collapse/expand width transition */
 }
 
+.run-title { padding: 0 12px; margin-top: 10px; }
 .sidebar-head {
   display: flex;
   align-items: center;

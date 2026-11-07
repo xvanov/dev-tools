@@ -41,16 +41,12 @@
     <div id="scrim"></div>
 
     <!-- The panel (data-jside): hidden until the corner toggle (nav.js) opens
-         it. It starts with the Jarvis navigation, then this page's own: the
-         session list and Update. On a desktop it pushes the terminal over and
+         it. It starts with the Jarvis navigation, then this page's own section,
+         titled like every other page's: the sessions. On a desktop it pushes the terminal over and
          the choice is remembered; on a phone it is a drawer over it. -->
     <aside id="sidebar" data-jside aria-label="Navigation, sessions and settings">
       <div data-jside-nav></div>
-      <div class="sidebar-head">
-        <span class="brand">termhub</span>
-        <span id="machine-name" class="machine-name">…</span>
-        <button id="sidebar-close" title="Close">✕</button>
-      </div>
+      <h2 class="jside-title run-title">Sessions</h2>
       <div class="actions">
         <button id="new-term-btn">+ New terminal</button>
       </div>
@@ -61,7 +57,7 @@
         <span id="idle-total">—</span>
       </a>
       <div id="session-list"></div>
-      <div class="sidebar-foot"><span id="status-line">connecting…</span></div>
+      <div class="sidebar-foot"><span id="machine-name"></span><span id="status-line">connecting…</span></div>
     </aside>
 
     <main id="main">

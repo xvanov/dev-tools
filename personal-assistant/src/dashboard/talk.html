@@ -85,6 +85,7 @@
   .talk-settings { display: grid; grid-template-columns: minmax(0, 1fr); gap: 4px; font-size: 13px; }
   .talk-settings > label, .talk-settings > .lbl { color: var(--ink-2); margin-top: 8px; }
   .talk-settings > label:first-child { margin-top: 0; }
+  .talk-settings > h2 { margin-top: var(--space-3, 12px); }
   #settings select, #settings input[type=range] { width: 100%; max-width: 100%; accent-color: var(--signal); }
   #settings input[type=checkbox] { accent-color: var(--signal); }
   #settings select { background: var(--surface-2); color: var(--ink); border: 1px solid var(--line); border-radius: var(--radius); padding: 5px 6px; font: inherit; }
@@ -141,7 +142,8 @@
 <div class="jframe">
 <aside class="jside" id="settings" data-jside aria-label="Mode, voice, microphone and listening settings">
 <div class="talk-settings">
-  <div class="talk-mode-row"><span class="talk-mode" role="group" aria-label="Mode"><button type="button" data-talk-mode-pick="voice" aria-pressed="true">Voice</button><button type="button" data-talk-mode-pick="text" aria-pressed="false">Text</button></span></div>
+  <div class="talk-mode-row"><h2>Mode</h2><span class="talk-mode" role="group" aria-label="Mode"><button type="button" data-talk-mode-pick="voice" aria-pressed="true">Voice</button><button type="button" data-talk-mode-pick="text" aria-pressed="false">Text</button></span></div>
+  <h2 class="talk-voice-title">Voice</h2>
   <label for="ttsBackend">Speech engine</label><select id="ttsBackend"></select>
   <label for="voice">Voice</label><select id="voice"></select>
   <label for="wake">Wake word</label><span><input type="checkbox" id="wake"> listen for "hey Jarvis" (heard in this page only)</span>
