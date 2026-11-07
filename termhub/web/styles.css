@@ -573,7 +573,7 @@ html, body {
   word-break: break-word;
 }
 
-/* ---- layer 4: one session, full window (`/?focus=<id>`, see app.js) ----
+/* ---- ?focus=<id>: one session, full window (a deep link into Sessions, see app.js) ----
    No sidebar, no topbar, no drawer: the terminal and, on a phone, the key bar
    it cannot be typed into without. The layer switcher floats in the top-right
    corner (theme.css .jnav--float). */

@@ -1444,21 +1444,37 @@ history and then dedupe the stream against it.
 
 ### One look, four layers
 
-Talk, the dashboard, termhub and the PA chat's raw session are four depths of the same
-assistant, and they share one design system and one layer switcher:
+Talk, the dashboard, the factory and termhub are four depths of the same assistant: Jarvis
+coordinates, the software factory dispatches and tracks the work, termhub drills into one live
+session. They share one design system and one layer switcher:
 
-**jarvis · 1 Talk · 2 Dashboard · 3 Sessions · 4 Session**, at the top of every page, the
+**jarvis · 1 Talk · 2 Dashboard · 3 Factory · 4 Sessions**, at the top of every page, the
 current one lit, **Alt+1..4** from anywhere (the terminal included), and a theme toggle at its
 end (system → light → dark, remembered per browser).
 
-- **Talk** is `/talk`, **Dashboard** is `/` (both relative, so they work on
-  `http://127.0.0.1:7300` and under termhub's `/pa/` on the tailnet alike).
+- **Talk** is `/talk`, **Dashboard** is `/`, **Factory** is `/factory` (all relative, so they work
+  on `http://127.0.0.1:7300` and under termhub's `/pa/` on the tailnet alike).
 - **Sessions** is termhub's hub. Under `/pa/` it is the same origin (`/`); on loopback it is the
   origin of the chat session's termhub URL (`GET /api/chat/session`), else `PA_TERMHUB_URL`, else
-  `http://127.0.0.1:7000`.
-- **Session** is termhub's focus view, `/?focus=<id>`: the PA chat's terminal full-window, no
-  termhub chrome. With no chat session yet it starts one (`POST /api/chat/open`) first. There the
-  switcher shrinks to a small tab in the corner that opens on hover or a tap.
+  `http://127.0.0.1:7000`. termhub's focus view, `/?focus=<id>` (one terminal full-window, no
+  termhub chrome), stays as a link target into it — a card's session, a factory run's live session —
+  and there the switcher shrinks to a small tab in the corner that opens on hover or a tap.
+
+**The Factory page** (`/factory`, `src/dashboard/factory.js`, `factory.html`,
+`factory.client.js`) shows every factory job — the PA's and anyone else's — grouped **Needs you**
+(needs_human, blocked, or a live job whose PR's CI is red) / **Running** / **Delivered** / **Failed
+or cancelled**: title, kind, runtime, app, state and the factory's `why`, each story with its PR
+link and CI state, cost metered and subscription-equivalent, a research/report job's excerpt with
+**Read report** (`factory job report`, rendered from a parsed tree, never HTML), and its runs with
+links to their live termhub sessions. The data is the worker's stored `job list` (sql/031): a page
+load never calls the factory; only a click does. Actions: **Cancel** (a PA run's job through `pa
+drop`), **Open in termhub** (a session on the factory machine running `uv run factory job follow
+<job>`), **Approve** (only on a needs_human job whose own warning names `factory approve-direction`,
+and only that one), and **New job** (title, ask, kind, runtime, optional repo, end state; a code job
+that would merge or push to main is confirmed on the page, as on a card). At the top: today's PA
+model spend (`llm_spend`), the factory's metered spend and the subscription-equivalent of its Claude
+Code runs. On the board, a card's **Do** grows **kind** and **runtime** pickers when its route is the
+factory.
 
 The colours, type and shapes are tokens in `src/dashboard/theme.css` (served at `/theme.css`);
 the switcher is `src/dashboard/nav.js` (`/nav.js`). These are the canonical copies: termhub

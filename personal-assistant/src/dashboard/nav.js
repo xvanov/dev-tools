@@ -2,17 +2,18 @@
  *
  *   1 Talk       PA /talk                 (relative: works on :7300 and under termhub's /pa/)
  *   2 Dashboard  PA /
- *   3 Sessions   termhub /
- *   4 Session    termhub /?focus=<PA chat session id>   (one terminal, no termhub chrome)
+ *   3 Factory    PA /factory              (every software-factory job: code, research, reports)
+ *   4 Sessions   termhub /                (and its /?focus=<id> deep link: one terminal, no chrome)
  *
  * CANONICAL COPY: personal-assistant/src/dashboard/nav.js. termhub/web/nav.js is a
  * byte copy (`npm run sync-theme` in termhub; test/theme.test.js fails on drift).
  *
- * Usage: <script src="nav.js" data-layer="talk|dashboard|termhub"></script> in <head>
+ * Usage: <script src="nav.js" data-layer="talk|dashboard|factory|termhub"></script> in <head>
  * (synchronous, so the remembered theme is set before first paint), plus an element
- * with [data-jnav] where the switcher goes. termhub pages say "termhub" and the
- * script picks Sessions or Session from ?focus=. Alt+1..4 switches from anywhere,
- * terminal included (captured before xterm sees it).
+ * with [data-jnav] where the switcher goes. termhub pages say "termhub": that is
+ * Sessions, and on its ?focus= view (a link target, not a layer of its own) the
+ * switcher shrinks to a tab in the corner. Alt+1..4 switches from anywhere, terminal
+ * included (captured before xterm sees it).
  *
  * Where the links go:
  *   - on termhub, or on the PA through termhub's /pa/ proxy: one origin, so the PA is
@@ -20,7 +21,8 @@
  *   - on the PA directly (127.0.0.1:7300): termhub is the origin of the chat
  *     session's url (GET api/chat/session), else <meta name="pa-termhub">, else
  *     http://127.0.0.1:7000.
- * Session asks the PA for its chat session (api/chat/session; api/chat/open starts one).
+ * Whether the PA answers (so whether Talk, Dashboard and Factory work from termhub) is
+ * read from api/chat/session.
  */
 (function () {
   'use strict';
@@ -44,11 +46,10 @@
   var onTermhub = declared === 'termhub';
   var proxied = /^\/pa(\/|$)/.test(location.pathname);
   var focusId = onTermhub ? new URLSearchParams(location.search).get('focus') : null;
-  var current = onTermhub ? (focusId ? 'session' : 'sessions') : declared;
+  var current = onTermhub ? 'sessions' : declared;
   var paBase = onTermhub ? '/pa/' : new URL('./', location.href).pathname;
   var sameOrigin = onTermhub || proxied;
   var termhub = ''; // origin of termhub; '' = this one
-  var chatId = null;
   var paUp = true;
 
   function termhubBase() {
@@ -57,47 +58,30 @@
     var meta = document.querySelector('meta[name="pa-termhub"]');
     return ((meta && meta.content) || 'http://127.0.0.1:7000').replace(/\/$/, '');
   }
-  function sessionHref(id) {
-    // ?focus= is layer 4; the hash makes an older termhub at least open the session.
-    return termhubBase() + '/?focus=' + encodeURIComponent(id) + '#session=' + encodeURIComponent(id);
-  }
-
   var LAYERS = [
     { id: 'talk', key: '1', label: 'Talk', title: 'Talk: the voice face', pa: true },
     { id: 'dashboard', key: '2', label: 'Dashboard', title: 'Dashboard: the board, chat, memory, routines', pa: true },
-    { id: 'sessions', key: '3', label: 'Sessions', title: 'Sessions: every terminal in termhub', pa: false },
-    { id: 'session', key: '4', label: 'Session', title: "Session: the assistant's own Claude session, full window", pa: true },
+    { id: 'factory', key: '3', label: 'Factory', title: 'Factory: every job the software factory runs — code, research, reports', pa: true },
+    { id: 'sessions', key: '4', label: 'Sessions', title: 'Sessions: every terminal in termhub; open one to drill in', pa: false },
   ];
 
   function hrefFor(id) {
     if (id === 'talk') return paBase + 'talk';
     if (id === 'dashboard') return paBase;
-    // From layer 4 back up, keep the session open in the hub.
+    if (id === 'factory') return paBase + 'factory';
+    // From a ?focus= view back to the hub, keep that session open there.
     if (id === 'sessions') return termhubBase() + '/' + (focusId ? '#session=' + encodeURIComponent(focusId) : '');
-    if (id === 'session') return chatId ? sessionHref(chatId) : (focusId ? location.href : '#');
     return '#';
   }
 
-  // ---- the chat session (Session's target) ------------------------------------------
+  // ---- is the PA there, and where is termhub ----------------------------------------
   function fetchSession() {
     return fetch(paBase + 'api/chat/session', { cache: 'no-store' })
       .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
       .then(function (s) {
         paUp = true;
-        chatId = (s && s.sessionId) || null;
         if (!sameOrigin && s && s.url) { try { termhub = new URL(s.url).origin; } catch (e) { /* keep default */ } }
-        return chatId;
-      }, function () { paUp = !onTermhub; return null; });
-  }
-  function openSession() {
-    if (chatId) return Promise.resolve(chatId);
-    return fetch(paBase + 'api/chat/open', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', 'X-PA': '1' },
-      body: '{}',
-    })
-      .then(function (r) { return r.json().then(function (b) { if (!r.ok) throw new Error(b.error || 'HTTP ' + r.status); return b; }); })
-      .then(function (b) { if (!b.sessionId) throw new Error('the assistant named no session'); chatId = b.sessionId; return chatId; });
+      }, function () { paUp = !onTermhub; });
   }
 
   // ---- render ---------------------------------------------------------------------------
@@ -138,15 +122,13 @@
     nav.addEventListener('click', function (e) {
       var a = e.target.closest && e.target.closest('.jnav-seg');
       if (!a) return;
-      // Layer 4's tab: a tap on "where you are" opens the switcher on a phone.
+      // The ?focus= view's tab: a tap on "where you are" opens the switcher on a phone.
       if (variant === 'float' && a.getAttribute('data-layer') === current && !nav.classList.contains('open')) {
         e.preventDefault();
         nav.classList.add('open');
         return;
       }
-      var plain = !(e.ctrlKey || e.metaKey || e.shiftKey || e.button === 1);
-      if (a.classList.contains('is-off')) { e.preventDefault(); return; }
-      if (a.getAttribute('data-layer') === 'session' && !chatId && plain) { e.preventDefault(); go('session'); }
+      if (a.classList.contains('is-off')) e.preventDefault();
     });
     if (variant === 'float') {
       document.addEventListener('pointerdown', function (e) { if (!nav.contains(e.target)) nav.classList.remove('open'); }, true);
@@ -177,15 +159,7 @@
     if (id === current) return;
     var layer = LAYERS.filter(function (l) { return l.id === id; })[0];
     if (!layer || (layer.pa && !paUp)) return;
-    if (id !== 'session' || chatId) { location.href = hrefFor(id); return; }
-    navs.forEach(function (n) { var a = n.querySelector('[data-layer="session"]'); a.classList.add('is-busy'); });
-    openSession().then(function (sid) { location.href = sessionHref(sid); }, function (err) {
-      navs.forEach(function (n) {
-        var a = n.querySelector('[data-layer="session"]');
-        a.classList.remove('is-busy');
-        a.title = 'Could not open the session: ' + err.message;
-      });
-    });
+    location.href = hrefFor(id);
   }
 
   // Capture phase on window: runs before xterm's own key handler on its textarea.
@@ -200,7 +174,7 @@
 
   function mount() {
     var slots = document.querySelectorAll('[data-jnav]');
-    if (current === 'session') build(null, 'float');
+    if (focusId) build(null, 'float');
     for (var i = 0; i < slots.length; i++) build(slots[i], slots[i].getAttribute('data-jnav') || '');
     if (!navs.length) build(null, 'float');
     paint();

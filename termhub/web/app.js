@@ -297,7 +297,7 @@ function beatFocus() {
   })).catch(() => {});
 }
 
-// Layer 4 of the Jarvis switcher (nav.js): `/?focus=<id>` is that one session,
+// The Sessions layer's deep link (nav.js): `/?focus=<id>` is that one session,
 // full window, with none of the hub around it (body.focus in styles.css). The
 // query survives the hash clean-up below, so a reload stays in focus.
 const FOCUS_ID = new URLSearchParams(location.search).get('focus');

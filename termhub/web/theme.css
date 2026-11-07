@@ -2,8 +2,8 @@
  *
  *   1 Talk       personal-assistant /talk
  *   2 Dashboard  personal-assistant /
- *   3 Sessions   termhub /
- *   4 Session    termhub /?focus=<id>
+ *   3 Factory    personal-assistant /factory
+ *   4 Sessions   termhub / (and its /?focus=<id> view of one terminal)
  *
  * CANONICAL COPY: personal-assistant/src/dashboard/theme.css (served at /theme.css).
  * termhub/web/theme.css is a byte-for-byte copy, so termhub keeps its look when the
@@ -202,7 +202,7 @@
 .jnav--tight .jnav-brand, .jnav--tight .jnav-seg kbd { display: none; }
 .jnav--tight .jnav-seg { padding: 5px 6px; }
 
-/* Layer 4: a terminal, so the switcher is a small tab in the corner that shows
+/* termhub's ?focus= view: a terminal, so the switcher is a small tab in the corner that shows
    only where you are, and opens on hover, focus or a tap. It always takes the
    night colours, because what is under it is always the terminal. */
 .jnav--float {
