@@ -1,4 +1,4 @@
-# Jarvis native rebuild: tracked plan
+﻿# Jarvis native rebuild: tracked plan
 
 Status: **approved 2026-11-07, not started.** This file is the source of truth for progress.
 Design rationale: the plan page (proposal, 7 Nov 2026) and the research summary in [DESIGN.md](DESIGN.md).
@@ -10,9 +10,9 @@ Design rationale: the plan page (proposal, 7 Nov 2026) and the research summary 
    run (Track E, `e2e`) on both stacks.
 2. Each `- [ ]` item is one unit of work: one or more commits to `main`, tests green, pushed
    (see the root `CLAUDE.md`). **Tick the box in the same commit that finishes the item** and
-   append the short commit hash: `- [x] … (abc1234)`.
+   append the short commit hash: `- [x] â€¦ (abc1234)`.
 3. If an item turns out wrong or needs splitting, edit it here in the same commit and say why
-   in the commit body. Do not silently skip an item; mark it `- [~] … — dropped: <reason>`.
+   in the commit body. Do not silently skip an item; mark it `- [~] â€¦ â€” dropped: <reason>`.
 4. Keep the system working after every commit. Both stacks deploy by `git pull` from `main`.
 5. When a component, port, table or tool changes, update
    `personal-assistant/src/dashboard/architecture.json` in the same commit (root `CLAUDE.md`,
@@ -29,15 +29,15 @@ Design rationale: the plan page (proposal, 7 Nov 2026) and the research summary 
 | D2 | 2026-11-07 | **SQLite** (WAL, FTS5, vectors as BLOBs, SQLCipher), one file per stack | Postgres-as-child-process (plan B) rejected. |
 | D3 | 2026-11-07 | Plan is tracked here and handed to an implementing agent | Phase 0 starts now. |
 | D4 | 2026-11-07 | **Tests and builds must be very fast; parallelize everywhere.** Deploys are **zero-downtime.** | Cross-cutting track T and track Z; both start in phase 0. |
-| D5 | 2026-11-07 | **Keep embeddings as they are**: Azure `text-embedding-3-small`, 1536 dims, embed once, never re-embed | Supersedes the proposal's "local ONNX 512-dim re-embed". Measured: ~41k vectors cost ≈ $0.15 in total. Migration copies existing vectors. Use vectors only where meaning-search beats keywords. |
+| D5 | 2026-11-07 | **Keep embeddings as they are**: Azure `text-embedding-3-small`, 1536 dims, embed once, never re-embed | Supersedes the proposal's "local ONNX 512-dim re-embed". Measured: ~41k vectors cost â‰ˆ $0.15 in total. Migration copies existing vectors. Use vectors only where meaning-search beats keywords. |
 | D6 | 2026-11-07 | No WSL anywhere when done | Follows from D2 + factory daemon + jarvisd. |
 | D7 | 2026-11-07 | System 1 (fast lane) becomes a **decide-then-speak** split: a calibrated classifier routes, a small model only speaks | Same idea as "System One" decision models (e.g. TypeSafe's Jev), built ourselves, free and local. Phase 0, item 0.6. |
-| D8 | 2026-11-07 | **The full stack is proven end to end, repeatedly**: a dummy task goes Plan → Build → Run sessions → a real PR in this repo, observable and drillable in all three views | Track E. Runs as the gate at every phase exit, so the rebuild never breaks the path that matters. |
+| D8 | 2026-11-07 | **The full stack is proven end to end, repeatedly**: a dummy task goes Plan â†’ Build â†’ Run sessions â†’ a real PR in this repo, observable and drillable in all three views | Track E. Runs as the gate at every phase exit, so the rebuild never breaks the path that matters. |
 | D9 | 2026-11-07 | **Every agent run is watchable live in Run, whatever its runtime** (Claude Code, API models such as DeepSeek, opencode, local) | Today only `claude_session` runs show turn-by-turn work in a terminal; API runs show stage-level events via `factory job follow`. E2 closes the gap. |
 | D10 | 2026-11-07 | **The plan ends with a workflow acceptance review**: an independent reviewer session runs each workflow in the Map and scores it against its metrics | Phase 8. The workflows (research, open a PR on DeepSeek, continue a PR, answer locally, Teams ask, phone) are the product; components passing tests is not enough. |
 | D11 | 2026-11-07 | **Implementation runs on the work laptop (Windows).** Two GitHub identities: `xvanov` (personal; this repo) and `kalinivanov-innergy` (work) | Git uses the SSH host aliases `github-xvanov` / `github-innergy`. `gh` picks the account by repo owner, never by whichever is active (P1). |
 | D12 | 2026-11-07 | **Desktop only; no week-long shadow run** | Phone app and the `phone` workflow are out of scope: 7.6 is the Tauri desktop shell only, Phase 8 skips `phone`. 3.4 is a one-shot comparison over a recorded query set instead of a week of shadowing. |
-| D13 | 2026-11-07 | **Each stack runs its own factory**; this repo gets a factory app and GitHub Actions CI | The work laptop's PA stops dispatching to the personal machine's factory (it crossed stacks); it uses a local factory (WSL until 2.3, then native). A factory app for `xvanov/dev-tools` is registered on both stacks so the golden path has a target; T6 adds the CI the "CI done" hop waits on. |
+| D13 | 2026-11-07 | **Each stack runs its own factory**; this repo gets a factory app and GitHub Actions CI | The work laptop's PA stops dispatching to the personal machine's factory (it crossed stacks); it uses a local factory running natively on Windows: item 2.3 is pulled forward into phase 0, with no WSL interim step. A factory app for `xvanov/dev-tools` is registered on both stacks so the golden path has a target; T6 adds the CI the "CI done" hop waits on. |
 
 ## Prerequisites (before phase 0)
 
@@ -60,10 +60,10 @@ request); voice never approves high-risk actions alone; work and personal stacks
 
 | Measure | Today (measured) | Target |
 |---|---|---|
-| Voice: end of speech to first audio | 1.3–2.0 s | < 0.7 s |
-| Jarvis tool call | 4–10 s | < 1 s plus model time |
-| Start a factory job, to "started" | 10–25 s | < 1 s |
-| Board/Build updates | 30–120 s polling | pushed, < 200 ms |
+| Voice: end of speech to first audio | 1.3â€“2.0 s | < 0.7 s |
+| Jarvis tool call | 4â€“10 s | < 1 s plus model time |
+| Start a factory job, to "started" | 10â€“25 s | < 1 s |
+| Board/Build updates | 30â€“120 s polling | pushed, < 200 ms |
 | PA test suite (68 files) | ~2 min, serial, stops at first failure | < 20 s, parallel, full report |
 | termhub test suite (25 files) | ~3.5 min | < 20 s |
 | Factory test suite | ~12 min serial, ~6 min on 16 cores (with parallel-unsafe errors) | < 90 s, clean in parallel |
@@ -77,7 +77,7 @@ request); voice never approves high-risk actions alone; work and personal stacks
 ## Track T: fast tests and builds (cross-cutting, starts in phase 0)
 
 - [ ] **T1 Parallel test runner for PA and termhub.** Replace the `&&` chains in `package.json`
-  with one runner that runs every test file in a worker pool (cores − 1), never stops early,
+  with one runner that runs every test file in a worker pool (cores âˆ’ 1), never stops early,
   prints a per-file pass/fail/time table and exits non-zero on any failure. Keep the file list
   in one place (glob `test/*.test.js`, with an explicit skip list for the known
   environment-bound files, each with a reason). `parallel-ok`
@@ -137,14 +137,14 @@ watch and drill into it at every level:
 3. **Run**: each agent step appears as a live session. Opening it shows the work as it happens.
 4. **PR**: the job opens a draft PR on this repo; CI runs; the PR link and CI state flow back to
    the job (Build) and the card (Plan).
-5. **Drill-down both ways**: card → job → step → session → PR, and back from any of them.
+5. **Drill-down both ways**: card â†’ job â†’ step â†’ session â†’ PR, and back from any of them.
 6. **Cleanup**: the PR is closed unmerged and its branch deleted (unless the user merges it).
 
 Variants, each run at least once per phase exit: all steps on `claude_session` (the default);
 **one step on an API model (DeepSeek)**; a resumed job (`factory job resume`) after killing the
 run mid-step; a job continued on an existing branch (`--branch`).
 
-- [ ] **E1 One id chain.** Card id ↔ job id ↔ run/step id ↔ session id ↔ PR number are stored
+- [ ] **E1 One id chain.** Card id â†” job id â†” run/step id â†” session id â†” PR number are stored
   as links in the data (not inferred from titles), returned by the board, JOBS-API and session
   APIs, and rendered as links in Plan, Build and Run. Jarvis's MCP tools return them too.
 - [ ] **E2 Every run is watchable (D9).** API-runtime steps emit the same turn-level stream as
@@ -159,14 +159,14 @@ run mid-step; a job continued on an existing branch (`--branch`).
 - [ ] **E4 `e2e` command.** One command runs the golden path headless against the live stack,
   creates the dummy card, waits for the PR, asserts every link in E1 resolves in every view's
   API, asserts the API-runtime step produced a watchable session (E2), prints a timing per
-  hop (card → job started → first session output → PR opened → CI done), then cleans up.
+  hop (card â†’ job started â†’ first session output â†’ PR opened â†’ CI done), then cleans up.
   `--keep` leaves the PR open for a human look. Prerequisite: the factory machine's `gh` can
   push to this repo with the personal identity.
 - [ ] **E5 Baseline now.** Run E4 on today's system before phase 1 starts; record the timings
   and every broken hop here as new items. Fix what is broken in phase 0.
 - [ ] **E6 Gate.** Each phase's Exit box below requires a green E4 run (all variants) on both
   stacks, with the timings recorded in the targets table.
-- [ ] **Exit E:** the user runs the golden path by voice ("start a factory job for …"), watches
+- [ ] **Exit E:** the user runs the golden path by voice ("start a factory job for â€¦"), watches
   it in Plan, Build and Run, drills down from the card to the live session and the PR, and
   each hop meets its timing target.
 
@@ -180,7 +180,7 @@ run mid-step; a job continued on an existing branch (`--branch`).
 - Never embed identifiers, statuses, board state, numbers, dates, or anything with an exact
   key (PR/ticket references dedupe by key, not by vector). Use SQL lookups and FTS5 keyword
   search for those.
-- Cache query embeddings (normalized query text → vector, LRU in memory + table), so a
+- Cache query embeddings (normalized query text â†’ vector, LRU in memory + table), so a
   repeated question costs nothing.
 
 ---
@@ -189,7 +189,7 @@ run mid-step; a job continued on an existing branch (`--branch`).
 
 - [ ] **0.1 Factory brief without `claude -p`.** Write the brief with a direct API call or a
   warm session; removes ~4 s per job start.
-- [x] **0.2 Query-embedding cache** (see policy). Removes 0.3–1 s per search. (bc0a4d2)
+- [x] **0.2 Query-embedding cache** (see policy). Removes 0.3â€“1 s per search. (bc0a4d2)
 - [ ] **0.3 Embeddings audit.** List every `embed(` call site (`src/search`, `src/memory`,
   `src/recall`, `src/commitments`) against the policy; remove any that embed changing data or
   exact keys; write the result into `architecture.json`'s memory card. Record the measured
@@ -245,7 +245,7 @@ run mid-step; a job continued on an existing branch (`--branch`).
 - [ ] **3.5** Cutover on the personal stack, then the work stack; Litestream backup + restore
   drill.
 - [ ] **3.6** WSL off on the work laptop (D6); Postgres removed.
-- [ ] **Exit 3:** one SQLite file per stack, search quality ≥ Postgres on the recorded query set.
+- [ ] **Exit 3:** one SQLite file per stack, search quality â‰¥ Postgres on the recorded query set.
 
 ## Phase 4: jarvisd
 
@@ -324,4 +324,4 @@ not in the Map is not done, and a new one gets added there first.
 - Windows sandboxing is the least mature of the three OSes.
 - SQLite move: dialect bugs, FTS ranking drift, rerank thresholds need recalibrating (3.4).
 - Still moving: MCP auth spec, Tauri mobile, sqlite-vec's nearest-neighbour index (not needed below ~1M
-  vectors; exact scan is 10–30 ms).
+  vectors; exact scan is 10â€“30 ms).
