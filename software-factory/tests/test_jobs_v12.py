@@ -211,6 +211,25 @@ def test_dispatch_starts_up_to_the_cap_and_reaps_dead_workers(
     assert st["state"] == "failed" and "worker" in st["why"]
 
 
+def test_orphaned_claim_is_reaped_after_the_stale_window(
+    root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    job = _research()
+    ref = tasks.find_task(root, job["job_id"])
+    meta = tasks.read_meta(ref.dir_path)
+    meta.update(state="starting", worker_pid=None, updated_at="2020-01-01T00:00:00+00:00")
+    tasks.write_meta(ref.dir_path, meta)
+    out = tasks.dispatch_tasks(root, dry_run=True)
+    assert out["reaped"] == [job["job_id"]]
+
+
+def test_list_filters_scratch_jobs_by_app(root: Path) -> None:
+    job = _research()
+    assert [j["job_id"] for j in list_jobs(root, app="scratch", github=False)["jobs"]] == [
+        job["job_id"]
+    ]
+
+
 def test_dispatch_cli_and_dry_run(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(tasks, "spawn_worker", lambda r, ref: 1)
     job = _research()

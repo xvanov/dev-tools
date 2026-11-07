@@ -646,7 +646,7 @@ def dispatch_tasks(root: Path, *, dry_run: bool = False) -> dict[str, Any]:
             if pid and pid_alive(int(pid)):
                 live += 1
                 continue
-            if state == STARTING and not pid:
+            if state == STARTING and not pid and not _stale(ref.meta, STARTING_STALE_S):
                 live += 1  # claimed, worker not up yet
                 continue
             reaped.append(ref.job_id)
@@ -684,6 +684,19 @@ def dispatch_tasks(root: Path, *, dry_run: bool = False) -> dict[str, Any]:
                 continue
             update_meta(ref.dir_path, worker_pid=pid)
     return {"started": started, "reaped": reaped, "blocked": blocked}
+
+
+#: A job claimed (``starting``) but with no worker pid this long after its last
+#: update was orphaned by a dispatcher that died mid-claim.
+STARTING_STALE_S = 300
+
+
+def _stale(meta: dict[str, Any], seconds: float) -> bool:
+    try:
+        last = datetime.fromisoformat(str(meta.get("updated_at")))
+    except (TypeError, ValueError):
+        return True
+    return (datetime.now(UTC) - last).total_seconds() > seconds
 
 
 def _factory_blocked(root: Path) -> str | None:
