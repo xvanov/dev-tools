@@ -1,0 +1,14 @@
+[Unit]
+Description=ptyd (termhub's terminal host; plan 5.1)
+# Its own unit, not a child of termhub.service: `systemctl --user restart termhub`
+# (every update on Linux) kills the whole termhub cgroup, and ptyd's terminals must
+# outlive that. Restarting THIS unit ends the terminals: only on purpose.
+
+[Service]
+Type=simple
+ExecStart=__PTYD__ --port __PORT__
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=default.target
