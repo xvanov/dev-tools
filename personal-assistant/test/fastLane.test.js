@@ -213,7 +213,9 @@ function splitAll(pieces) {
       deps: { snapshot: async () => 'Now: Friday', history: () => [], handoff: async (t) => (sent.push(t), { id: 'u-1' }), remember: (a, b) => remembered.push([a, b]), ...over },
     };
   };
-  const opts = { model: 'azure/pa', router: 'same', decisionTimeoutMs: 2000, effort: 'low' };
+  // decisionTimeoutMs is a ceiling, not a speed claim: an HTTP router round trip took > 2 s on a loaded box and the
+  // turn fell back to its default line ("One moment." instead of "Let me look.").
+  const opts = { model: 'azure/pa', router: 'same', decisionTimeoutMs: 20000, effort: 'low' };
   async function turn(text, deps, o = opts) {
     const events = [];
     const r = await F.runTurn({ text, emit: (e) => events.push(e), deps, opts: o });
@@ -276,8 +278,8 @@ function splitAll(pieces) {
   }
   // Too slow to decide: aborted and handed off.
   {
-    const b = base({ stream: script(['{"route":', '"answer"}\nhi'], { delayMs: 300 }) });
-    const { events } = await turn('hello', b.deps, { ...opts, decisionTimeoutMs: 100 });
+    const b = base({ stream: script(['{"route":', '"answer"}\nhi'], { delayMs: 60000 }) });
+    const { events } = await turn('hello', b.deps, { ...opts, decisionTimeoutMs: 1000 });
     assert.strictEqual(events[0].route, 'handoff');
     assert.strictEqual(b.sent.length, 1);
   }
@@ -367,7 +369,7 @@ function splitAll(pieces) {
     assert.deepStrictEqual(F.DECISION_SCHEMA.required, ['label', 'route', 'say']);
     assert.deepStrictEqual(F.DECISION_SCHEMA.properties.route.enum, F.ROUTES);
 
-    const lopts = { model: 'local/llama3.2:3b', fallback: 'azure/pa', json: 'auto', keepAlive: '24h', localTimeoutMs: 300, router: 'same', decisionTimeoutMs: 3000, effort: 'low' };
+    const lopts = { model: 'local/llama3.2:3b', fallback: 'azure/pa', json: 'auto', keepAlive: '24h', localTimeoutMs: 1000, router: 'same', decisionTimeoutMs: 20000, effort: 'low' };
     // answer: one call, with the schema and keep_alive; words stream from `say`.
     let calls = [];
     let b = base({
@@ -439,7 +441,7 @@ function splitAll(pieces) {
     b = base({
       stream: (a) => {
         calls.push(a);
-        if (a.model.startsWith('local/')) return script(['{"label":"chitchat",', '"route":"answer"'], { delayMs: 400 })(a);
+        if (a.model.startsWith('local/')) return script(['{"label":"chitchat",', '"route":"answer"'], { delayMs: 60000 })(a); // aborted at localTimeoutMs
         return script(['{"route":"answer","reason":"hi"}\nHi.'])(a);
       },
     });
@@ -536,7 +538,7 @@ function splitAll(pieces) {
   // ---- runTurn with the logprob router (decide, then speak) -----------------------------
   {
     const lp = (answer_here, hand_off, action) => async (a) => ({ p: { answer_here, hand_off, action }, lp: {}, ms: 9, model: a.model });
-    const popts = { model: 'local/llama3.2:3b', fallback: 'azure/pa', router: 'logprob', answerThreshold: '0.85', keepAlive: '24h', localTimeoutMs: 300, decisionTimeoutMs: 3000, effort: 'low', enabled: true };
+    const popts = { model: 'local/llama3.2:3b', fallback: 'azure/pa', router: 'logprob', answerThreshold: '0.85', keepAlive: '24h', localTimeoutMs: 1000, decisionTimeoutMs: 20000, effort: 'low', enabled: true };
     const primed = [];
     // Confident answer: the router decides, then the answerer speaks.
     let calls = [];

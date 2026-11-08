@@ -16,6 +16,14 @@ const endpoint = require('../src/dashboard/events');
 const pace = require('../src/dispatch/factoryPace');
 
 const tick = (ms = 0) => new Promise((r) => setTimeout(r, ms));
+// Wait for a condition rather than sleeping and hoping: a loaded machine stretches every timer.
+async function until(cond, what, ms = 15000) {
+  const end = Date.now() + ms;
+  while (!cond()) {
+    if (Date.now() > end) assert.fail('timed out waiting for: ' + what);
+    await tick(5);
+  }
+}
 
 // ---- the bus -------------------------------------------------------------------
 {
@@ -120,7 +128,7 @@ function sse(port, pathAndQuery, headers = {}) {
   return {
     frames,
     req,
-    async waitFor(n, ms = 2000) {
+    async waitFor(n, ms = 20000) {
       const until = Date.now() + ms;
       while (frames.length < n) {
         if (Date.now() > until) throw new Error(`waited for ${n} frames, got ${frames.length}: ${JSON.stringify(frames.map(({ receivedAt, ...f }) => f))}`);
@@ -161,7 +169,8 @@ function sse(port, pathAndQuery, headers = {}) {
     assert.ok(a.frames.slice(1).every((f) => f.topic === 'board'), 'only the topics asked for');
     lat.sort((x, y) => x - y);
     console.log(`  bus -> SSE client latency over loopback: p50 ${lat[10].toFixed(2)} ms, max ${lat[19].toFixed(2)} ms`);
-    assert.ok(lat[19] < 200, `an event reaches the client well inside a second (max ${lat[19]} ms)`);
+    // ~1 ms idle. A ceiling that still fails for a poll-based feed (the old 30 s polls), not for a busy machine.
+    assert.ok(lat[19] < 5000, `an event reaches the client promptly (max ${lat[19]} ms)`);
     const lastSeen = a.frames[a.frames.length - 1].id;
     a.close();
 
@@ -246,7 +255,7 @@ function sse(port, pathAndQuery, headers = {}) {
       onReconnect: () => reconnects++,
       retryMs: [5],
     });
-    await tick(5);
+    await until(() => clients.length >= 1 && clients[0].queries.length >= 1 && l.connected(), 'the listener connects and LISTENs');
     assert.deepStrictEqual(clients[0].queries, ['listen pa_events']);
     assert.ok(l.connected());
     clients[0].emit('notification', { channel: 'pa_events', payload: '{"topic":"run","id":3,"status":"waiting"}' });
@@ -257,7 +266,7 @@ function sse(port, pathAndQuery, headers = {}) {
     // The connection drops; the next attempt fails; the one after holds.
     clients[0].emit('error', new Error('terminated'));
     assert.ok(clients[0].ended);
-    await tick(60);
+    await until(() => clients.length >= 3 && l.connected(), 'a failed attempt, then a held reconnect');
     assert.strictEqual(clients.length, 3);
     assert.ok(l.connected());
     assert.strictEqual(reconnects, 1, 'a reconnect asks the pages to refetch (notifications were lost)');
@@ -347,7 +356,7 @@ function sse(port, pathAndQuery, headers = {}) {
     await r4.waitFor(1);
     assert.strictEqual(r4.frames[0].topic, 'resync');
     r4.close();
-    await tick(20);
+    await until(() => bus.subscribers() === 0, 'closed streams unsubscribe');
     assert.strictEqual(bus.subscribers(), 0);
     server.close();
   }
@@ -380,17 +389,18 @@ function sse(port, pathAndQuery, headers = {}) {
     es.emit({ topic: 'board', id: 'x-1' }, 'x-1');
     es.emit({ topic: 'run', id: 'x-2' }, 'x-2');
     es.emit({ topic: 'board', id: 'x-3' }, 'x-3');
-    await tick(30);
+    await until(() => board >= 1, 'the burst refetches');
+    await tick(30); // and not a second time
     assert.strictEqual(board, 1, 'a burst is one refetch');
     assert.strictEqual(fact, 0, 'other topics do not wake it');
     assert.deepStrictEqual(seen, ['board', 'run', 'board']);
     es.emit({ topic: 'resync', id: 'y-9' }, 'y-9');
-    await tick(30);
+    await until(() => board >= 2 && fact >= 1, 'resync refetches everything');
     assert.deepStrictEqual([board, fact], [2, 1], 'resync refetches everything');
     // The browser gave up (a 502 during a roll): reopened with the last id.
     es.readyState = 2;
     es.onerror();
-    await tick(1100);
+    await until(() => sources.length >= 2, 'the page reopens the stream after the error', 30000);
     assert.strictEqual(sources.length, 2);
     assert.strictEqual(sources[1].url, 'api/events?lastEventId=y-9');
     s1.close();
