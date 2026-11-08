@@ -54,8 +54,6 @@ from typer.testing import CliRunner
 from factory.directions.parser import parse_direction_dir
 from factory.directions.route_premise import (
     check_direction_route_premises,
-    find_shipped_route_claims,
-    load_api_surface,
     render_route_table_block,
     route_segments,
 )

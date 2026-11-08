@@ -69,7 +69,7 @@ stub('db', stubTx({
 stub('ledger', { async transition() { return { changed: true }; } });
 stub('durable', { async spawn() { return null; }, async emit() { return null; } });
 stub('dispatch/trust', { ensureTrusted() {} });
-stub('recall', { async recall() { return null; } });
+stub('recall', { async recall() { return null; }, async recallClaims() { return null; } });
 stub('memory', { async getPage() { return null; } });
 
 const hub = { created: [], killed: [], envApplied: true };

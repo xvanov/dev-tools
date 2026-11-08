@@ -139,8 +139,11 @@ async function health({ now = Date.now() } = {}) {
 function liveConfig(cfg = config) {
   let db = null;
   try {
-    const u = new URL(cfg.databaseUrl);
-    db = `${u.hostname}:${u.port}${u.pathname}`;
+    if (cfg.db === 'sqlite') db = `sqlite:${cfg.sqlitePath}`;
+    else {
+      const u = new URL(cfg.databaseUrl);
+      db = `${u.hostname}:${u.port}${u.pathname}`;
+    }
   } catch {
     db = null;
   }

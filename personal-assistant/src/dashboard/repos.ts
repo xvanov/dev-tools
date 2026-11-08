@@ -10,10 +10,16 @@
 //   GET  /api/repos/<name>          one repo: profile, folders, branches, every PR, linked asks
 //   POST /api/repos/<name>/hide     off the tab (unhide puts it back)
 //   POST /api/repos/sync            start a sync; answers at once, the page re-reads later
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+type Row = import('../repo/types.ts').Row;
+type Req = import('http').IncomingMessage;
+type Res = import('http').ServerResponse;
 
 const repos = () => require('../repos');
 
-let syncing = null;
+let syncing: Promise<unknown> | null = null;
 
 // What Plan's "Code & boards" section used to list: GitHub and Jira items from
 // the last three weeks that are still open or ask something of you.
@@ -23,24 +29,24 @@ async function openItems() {
   // same PR can come several times. Newest first, so the first one seen stays.
   const seen = new Set();
   return items
-    .filter((r) => r.raw?.state === 'opened' || r.raw?.action)
-    .filter((r) => {
-      const k = `${r.subject}|${r.raw?.project || ''}`;
+    .filter((r: Row) => (r.raw as Row | undefined)?.state === 'opened' || (r.raw as Row | undefined)?.action)
+    .filter((r: Row) => {
+      const k = `${r.subject}|${(r.raw as Row | undefined)?.project || ''}`;
       if (seen.has(k)) return false;
       seen.add(k);
       return true;
     })
     .slice(0, 15)
-    .map((r) => ({
+    .map((r: Row) => ({
       subject: r.subject,
       source: r.source,
-      project: r.raw?.project || null,
-      url: /^https?:\/\//.test(r.raw?.webUrl || '') ? r.raw.webUrl : null,
+      project: (r.raw as Row | undefined)?.project || null,
+      url: /^https?:\/\//.test(String((r.raw as Row | undefined)?.webUrl || '')) ? (r.raw as Row).webUrl : null,
       at: r.occurred_at,
     }));
 }
 
-async function route(method, url) {
+async function route(method: string, url: URL) {
   const parts = url.pathname.replace(/^\/api\/repos\/?/, '').split('/').filter(Boolean).map(decodeURIComponent);
   if (method === 'GET' && parts.length === 0) {
     const list = await repos().list({ all: url.searchParams.get('all') === '1', prs: 5 });
@@ -51,7 +57,7 @@ async function route(method, url) {
     if (!syncing) {
       syncing = repos()
         .sync()
-        .catch((err) => ({ error: err.message }))
+        .catch((err: Error) => ({ error: err.message }))
         .finally(() => {
           syncing = null;
         });

@@ -387,19 +387,31 @@ function create(db: Db) {
 
     async eligiblePeople(minInteractions: unknown) {
       return db.rows(
-        `with h as (select pi.person_id, ${HANDLE_SQL} as handle, pi.kind, pi.value from person_identity pi),
+        // Each table is read once and joined, not once per person: per person, the
+        // member-email check parsed every item's JSON again (69 s on the work
+        // stack's 106 people and 6.8k items, all of it blocking the event loop).
+        `with h as materialized (select pi.person_id, ${HANDLE_SQL} as handle, pi.kind, pi.value from person_identity pi),
+          authored as (
+            select h.person_id, count(distinct si.id) as n from source_item si join h on si.author_identity = h.handle group by 1
+          ),
+          members as materialized (
+            select si.id as item, m.value as email from source_item si, json_each(si.raw, '$.memberEmails') m
+             where json_type(si.raw, '$.memberEmails') is not null
+          ),
+          shared as (
+            select h.person_id, count(distinct mb.item) as n from members mb join h on h.kind = 'smtp' and lower(h.value) = mb.email group by 1
+          ),
+          commitments as (select counterparty_person_id as pid, count(*) as n from commitment group by 1),
+          claims as (select subject_id as pid, count(*) as n from claim where subject_kind = 'person' and status = 'active' group by 1),
           stats as (
             select p.id, p.display_name,
-                   (select count(*) from source_item si
-                     where si.author_identity in (select handle from h where h.person_id = p.id)) as authored,
-                   (select count(*) from source_item si
-                     where json_type(si.raw, '$.memberEmails') is not null
-                       and exists (select 1 from json_each(si.raw, '$.memberEmails') m
-                                    where m.value in (select lower(value) from h where h.person_id = p.id and h.kind = 'smtp'))) as shared,
-                   (select count(*) from commitment c where c.counterparty_person_id = p.id) as commitments,
-                   (select count(*) from claim c where c.subject_kind = 'person' and c.subject_id = p.id
-                                                   and c.status = 'active') as claims
+                   coalesce(a.n, 0) as authored, coalesce(s.n, 0) as shared,
+                   coalesce(cm.n, 0) as commitments, coalesce(cl.n, 0) as claims
               from person p
+              left join authored a on a.person_id = p.id
+              left join shared s on s.person_id = p.id
+              left join commitments cm on cm.pid = p.id
+              left join claims cl on cl.pid = p.id
              where not p.is_me
                and not (lower(p.display_name) like '%[bot]%' or lower(p.display_name) like 'github:dependabot%'
                         or lower(p.display_name) like '%coderabbit%')

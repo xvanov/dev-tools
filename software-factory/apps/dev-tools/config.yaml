@@ -40,7 +40,9 @@ deploy:
   enabled: false
 
 gates:
-  lint_command: "cd software-factory && uv run ruff check ."
+  # --all-extras: ruff is a dev extra; a story worktree's fresh (or half-made)
+  # .venv would otherwise lack it and the lint gate would fail on a missing tool.
+  lint_command: "cd software-factory && uv run --all-extras ruff check ."
   format_check_command: ""
   type_check_command: ""
   test_command: "node scripts/gate-changed.js"

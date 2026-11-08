@@ -63,11 +63,13 @@ async function nodeTool(name) {
 
 async function factory() {
   const dir = path.join(top, 'software-factory');
-  if (!fs.existsSync(path.join(dir, '.venv'))) {
+  const py = path.join(dir, '.venv', process.platform === 'win32' ? 'Scripts/python.exe' : 'bin/python');
+  // Check the interpreter, not the directory: an interrupted venv creation leaves a
+  // .venv with only Lib/ (seen in a story worktree), which `uv sync` repairs.
+  if (!fs.existsSync(py) || !fs.existsSync(path.join(path.dirname(py), process.platform === 'win32' ? 'pytest.exe' : 'pytest'))) {
     const r = await run('software-factory (uv sync)', 'uv', ['sync', '--all-extras'], dir);
     if (r.code !== 0) return r;
   }
-  const py = path.join(dir, '.venv', process.platform === 'win32' ? 'Scripts/python.exe' : 'bin/python');
   return run('software-factory', py, [path.join(top, 'scripts', 'changed-pytest.py'), '--since', base], top);
 }
 

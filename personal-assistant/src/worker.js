@@ -154,7 +154,8 @@ async function main() {
   log.info('starting', {
     generation: supervised ? Number(process.env.PA_SUPERVISOR_GENERATION) || null : undefined,
     m365Poll: config.m365.pollSeconds,
-    db: config.databaseUrl.replace(/:[^:@/]*@/, ':***@'),
+    db: config.db === 'sqlite' ? `sqlite:${config.sqlitePath}` : config.databaseUrl.replace(/:[^:@/]*@/, ':***@'),
+    ...(onlyPasses.length ? { onlyPasses } : {}),
   });
 
   // A blocked loop answers nothing, /healthz included: say so, with what ran.

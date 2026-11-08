@@ -267,19 +267,34 @@ function cachedStatement(conn, sql) {
   return s;
 }
 
+// A statement runs on the event loop (better-sqlite3 is synchronous), so a
+// slow one stalls the whole process, the dashboard included: say which one.
+const SLOW_MS = Number(process.env.PA_SQLITE_SLOW_MS) || 250;
+let slowLog = null;
+function noteSlow(ms, sql) {
+  slowLog ||= require('../log').logger('sqlite');
+  slowLog.warn('slow statement', { ms: Math.round(ms), sql: sql.replace(/\s+/g, ' ').trim().slice(0, 300) });
+}
+
 /** Runs one statement on `conn`: pg's {rows, rowCount}. */
 function runOn(conn, text, params) {
   const { sql, order } = translate(text);
   const stmt = cachedStatement(conn, sql);
   const args = order.map((i) => encode(params ? params[i] : undefined));
-  if (stmt.reader) {
-    const rows = stmt.all(...args);
-    const dec = rowDecoder(stmt);
-    if (dec) rows.forEach(dec);
-    return { rows, rowCount: rows.length };
+  const t0 = performance.now();
+  try {
+    if (stmt.reader) {
+      const rows = stmt.all(...args);
+      const dec = rowDecoder(stmt);
+      if (dec) rows.forEach(dec);
+      return { rows, rowCount: rows.length };
+    }
+    const info = stmt.run(...args);
+    return { rows: [], rowCount: info.changes };
+  } finally {
+    const ms = performance.now() - t0;
+    if (ms > SLOW_MS) noteSlow(ms, sql);
   }
-  const info = stmt.run(...args);
-  return { rows: [], rowCount: info.changes };
 }
 
 function mutex() {
@@ -529,6 +544,11 @@ function createSqliteBackend(file, { key = null } = {}) {
       removeListener(event, fn) {
         events.off(event, fn);
         return client;
+      },
+      /** pg's Client.end(), for code that owns its connection (the live-feed listener). */
+      end() {
+        client.release();
+        return Promise.resolve();
       },
       release() {
         if (released) return;

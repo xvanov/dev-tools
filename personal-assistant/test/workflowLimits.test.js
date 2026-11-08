@@ -7,7 +7,7 @@
 const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
-const wl = require('../src/dashboard/workflowLimits');
+const wl = require('../src/dashboard/workflowLimits.ts');
 const arch = require('../src/dashboard/architecture').load();
 
 const defaults = wl.defaults(arch);

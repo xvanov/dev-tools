@@ -116,14 +116,60 @@ async function codeHints(repo, text) {
     log.debug('git ls-files failed', { message: err.message });
     return { files: [], reuse: [], conventions: [], keywords: kws };
   }
-  const hits = {};
-  for (const kw of kws) {
-    // -F: the keyword is a literal, never a pattern; -l: names only.
-    const out = await git(repo, ['grep', '-l', '-i', '-I', '-F', '-e', kw]).catch((err) => String(err.stdout || ''));
-    hits[kw] = out.split(/\r?\n/).filter(Boolean).slice(0, 40);
-  }
+  const hits = await keywordHits(repo, kws);
   const { reuse, conventions } = C.rankHints({ files, hits, keywords: kws });
   return { files, reuse, conventions, keywords: kws };
+}
+
+const SCAN_MS = 6000; // one scan of a big checkout (47k files) takes ~5 s; a slower one is cut short
+const HITS_PER_KEYWORD = 40;
+const MAX_SCANNED_FILES = 4000;
+
+/**
+ * The files (first HITS_PER_KEYWORD each, in git order) that contain each
+ * keyword, case-insensitively, text files only. One `git grep` over all the
+ * keywords finds the files that match any of them; which keyword matched
+ * where is then read off those few files. (One grep per keyword scanned the
+ * whole tree eight times: 60 s on a 47k-file repo, and running them in
+ * parallel is slower still, since they fight over the disk.) A scan that
+ * overruns SCAN_MS keeps what it found.
+ */
+async function keywordHits(repo, kws) {
+  const hits = Object.fromEntries(kws.map((k) => [k, []]));
+  if (!kws.length) return hits;
+  // -F: the keywords are literals, never patterns; -l: names only.
+  const args = ['grep', '-l', '-i', '-I', '-F', ...kws.flatMap((k) => ['-e', k])];
+  let out = '';
+  let cut = false;
+  try {
+    out = await new Promise((resolve, reject) => {
+      execFile('git', args, { cwd: repo, maxBuffer: 16 * 1024 * 1024, timeout: SCAN_MS, windowsHide: true, env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } }, (err, stdout) => {
+        if (err && err.killed) cut = true;
+        // exit 1 is "no match"; a timeout keeps the partial list.
+        if (err && !err.killed && err.code !== 1) reject(err);
+        else resolve(String(stdout || ''));
+      });
+    });
+  } catch (err) {
+    log.debug('git grep failed', { message: err.message });
+    return hits;
+  }
+  const lines = out.split(/\r?\n/).filter(Boolean);
+  if (cut) lines.pop(); // may be half a path
+  const files = lines.slice(0, MAX_SCANNED_FILES);
+  const lower = kws.map((k) => k.toLowerCase());
+  const full = () => kws.every((k) => hits[k].length >= HITS_PER_KEYWORD);
+  for (let i = 0; i < files.length && !full(); i += 64) {
+    const batch = files.slice(i, i + 64);
+    const texts = await Promise.all(batch.map((f) => fs.promises.readFile(path.join(repo, f)).then((b) => (b.length > 2_000_000 ? null : b.toString('utf8').toLowerCase())).catch(() => null)));
+    batch.forEach((f, j) => {
+      if (texts[j] == null) return;
+      lower.forEach((k, n) => {
+        if (hits[kws[n]].length < HITS_PER_KEYWORD && texts[j].includes(k)) hits[kws[n]].push(f);
+      });
+    });
+  }
+  return hits;
 }
 
 // --- gather, compose, render ---------------------------------------------------------------
@@ -135,14 +181,16 @@ async function codeHints(repo, text) {
  */
 async function gather({ target, task = null, done = [], app = null, slug = null, appPath = null }) {
   const dispatch = require('./index');
-  const [related, memory] = await Promise.all([
-    dispatch.relatedContext ? dispatch.relatedContext(target.item).catch(() => []) : [],
-    dispatch.memoryContext ? dispatch.memoryContext(target, task).catch(() => ({})) : {},
-  ]);
   const operatorAsk = task || null;
   const title = task || target.commitment?.summary || '';
   const repo = localRepo([target.repoPath, target.project?.repo_path, appPath]);
-  const hints = await codeHints(repo, [operatorAsk, target.commitment?.summary, target.commitment?.detail, ...(done || [])].filter(Boolean).join('\n'));
+  // Independent of each other, so concurrent: the repo search (seconds on a
+  // big checkout) no longer waits for the memory recall, nor the reverse.
+  const [related, memory, hints] = await Promise.all([
+    dispatch.relatedContext ? dispatch.relatedContext(target.item).catch(() => []) : [],
+    dispatch.memoryContext ? dispatch.memoryContext(target, task).catch(() => ({})) : {},
+    codeHints(repo, [operatorAsk, target.commitment?.summary, target.commitment?.detail, ...(done || [])].filter(Boolean).join('\n')),
+  ]);
   return {
     title,
     operatorAsk,

@@ -7,10 +7,17 @@
 // a preview and saves nothing; only the second POST, carrying the preview you
 // looked at, stores it. A run answers as soon as its run row exists — a
 // repo_sync takes minutes — and the page polls until it ends.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+type Row = import('../repo/types.ts').Row;
+type Req = import('http').IncomingMessage;
+type Res = import('http').ServerResponse;
+type HttpError = import('./types.ts').HttpError;
 
 const routines = () => require('../routines');
 
-function pick(body) {
+function pick(body: Row) {
   return {
     title: String(body.title || ''),
     schedule: String(body.schedule || ''),
@@ -20,31 +27,31 @@ function pick(body) {
   };
 }
 
-function startRun(id, { dryRun }) {
+function startRun(id: number | string, { dryRun }: { dryRun?: boolean }) {
   return new Promise((resolve, reject) => {
     let started = false;
     routines()
       .runRoutine(id, {
         dryRun,
-        onStarted: (run) => {
+        onStarted: (run: Row) => {
           started = true;
           resolve({ runId: run.id, started: true });
         },
       })
-      .catch((err) => {
+      .catch((err: Error) => {
         if (!started) reject(err);
       });
   });
 }
 
-async function route(method, url, body) {
+async function route(method: string, url: URL, body: Row) {
   const r = routines();
   const p = url.pathname;
 
   if (method === 'GET' && p === '/api/routines') {
     const [list, history] = await Promise.all([r.list(), r.history({ limit: 40 })]);
     return {
-      routines: list.map((x) => ({ ...x, plain: r.plainWords(x), changes: safeChanges(r, x.action) })),
+      routines: list.map((x: Row) => ({ ...x, plain: r.plainWords(x), changes: safeChanges(r, x.action) })),
       history,
       actions: r.actions.catalog(),
     };
@@ -55,7 +62,7 @@ async function route(method, url, body) {
   if (p === '/api/routines/preview') return r.preview(pick(body));
   if (p === '/api/routines') {
     if (body.confirmed !== true) {
-      const err = new Error('not confirmed');
+      const err: HttpError = new Error('not confirmed');
       err.status = 400;
       throw err;
     }
@@ -64,7 +71,7 @@ async function route(method, url, body) {
   }
   if (p === '/api/routines/suggest') {
     const rows = await require('../routines/suggest').suggest();
-    return { proposed: rows.map((x) => ({ id: x.id, title: x.title })) };
+    return { proposed: rows.map((x: Row) => ({ id: x.id, title: x.title })) };
   }
   const m = p.match(/^\/api\/routines\/(\d+)\/(run|dry-run|pause|resume|accept|reject|delete)$/);
   if (m) {
@@ -77,7 +84,8 @@ async function route(method, url, body) {
   return undefined;
 }
 
-function safeChanges(r, action) {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function safeChanges(r: any, action: unknown) {
   try {
     return r.actions.get(action).changes;
   } catch {

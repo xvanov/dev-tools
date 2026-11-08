@@ -763,7 +763,7 @@ async function factoryRegister() {
 // --- MUST-FIX 15: one live run per commitment, under a lock --------------------------
 
 async function liveRunGuard() {
-  const { LOCK_SPACE } = require('../src/repo/runs');
+  const { LOCK_SPACE } = require('../src/repo/runs.ts');
   const { runs } = require('../src/repo');
   const v = { commitmentId: 31, mode: 'mr', task: 't', repoPath: null, machine: 'm', routeReason: null, kind: null, delivery: 'pr', deliverySource: 'default' };
   global.__txLocks = [];

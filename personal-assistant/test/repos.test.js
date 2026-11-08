@@ -168,7 +168,7 @@ assert.ok(!/\.innerHTML|\.outerHTML|insertAdjacentHTML|document\.write/.test(cli
     { subject: 'merged one', source: 'github_pr', raw: { state: 'merged', project: 'acme/app' }, occurred_at: '2026-11-05T10:00:00Z' },
     { subject: 'You were mentioned', source: 'github_notification', raw: { action: 'mention', webUrl: 'javascript:alert(1)' }, occurred_at: '2026-11-04T10:00:00Z' },
   ] } };
-  const open = await require('../src/dashboard/repos').openItems();
+  const open = await require('../src/dashboard/repos.ts').openItems();
   assert.deepStrictEqual(open.map((o) => o.subject), ['Review: fix the importer', 'You were mentioned'], 'one line per item, newest kept');
   assert.strictEqual(open[0].url, 'https://github.com/acme/app/pull/1');
   assert.strictEqual(open[0].project, 'acme/app');

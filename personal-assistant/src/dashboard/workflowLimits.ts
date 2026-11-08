@@ -13,32 +13,42 @@
 //
 // A POST needs X-PA, like every write (server.js). Not a merge-or-push, so no
 // page token.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+type Row = import('../repo/types.ts').Row;
+type Req = import('http').IncomingMessage;
+/** architecture.json: the workflow examples and their cost acceptance. */
+type Arch = { examples?: { id: string; acceptance?: { cost?: { max_usd?: number } } }[] };
+type Res = import('http').ServerResponse;
+type Ctx = import('./types.ts').Ctx;
+type Repos = import('./types.ts').Repos;
 
 const MAX_USD = 100000;
 
 /** Pure. The workflows with a ceiling: { id: default } from architecture.json's examples. */
-function defaults(arch) {
-  const out = {};
+function defaults(arch: Arch) {
+  const out: Record<string, number> = {};
   for (const x of arch.examples || []) {
     const c = x.acceptance && x.acceptance.cost;
-    if (c && Number.isFinite(c.max_usd)) out[x.id] = c.max_usd;
+    if (c && typeof c.max_usd === 'number' && Number.isFinite(c.max_usd)) out[x.id] = c.max_usd;
   }
   return out;
 }
 
 /** Pure. { <workflow>: {default, override, effective, custom} }; overrides: {workflow, max_usd}[]. */
-function effective(arch, overrides) {
+function effective(arch: Arch, overrides: Row[] | null | undefined) {
   const byWf = new Map((overrides || []).map((o) => [o.workflow, Number(o.max_usd)]));
-  const out = {};
+  const out: Record<string, { default: number; override: number | null; effective: number; custom: boolean }> = {};
   for (const [id, def] of Object.entries(defaults(arch))) {
-    const o = byWf.has(id) ? byWf.get(id) : null;
+    const o = byWf.has(id) ? (byWf.get(id) ?? null) : null;
     out[id] = { default: def, override: o, effective: o ?? def, custom: o !== null };
   }
   return out;
 }
 
 /** Pure. A POST body's {workflow, max_usd} checked against the known workflows, or { error }. */
-function parseChange(arch, body) {
+function parseChange(arch: Arch, body: Row): { error: string; workflow?: undefined; max_usd?: undefined } | { error?: undefined; workflow: string; max_usd: number | null } {
   const wf = body && body.workflow;
   if (typeof wf !== 'string' || !(wf in defaults(arch))) return { error: 'unknown workflow' };
   if (body.max_usd === null) return { workflow: wf, max_usd: null };
@@ -47,12 +57,12 @@ function parseChange(arch, body) {
   return { workflow: wf, max_usd: Math.round(n * 10000) / 10000 };
 }
 
-async function current({ arch, repo }) {
+async function current({ arch, repo }: { arch: Arch; repo: Repos }) {
   return { limits: effective(arch, await repo.workflowLimits.all()) };
 }
 
 /** The route. Returns true when it answered. `repo` and `arch` are injectable for tests. */
-async function route(req, res, url, { send, readJson, repo = require('../repo'), arch = require('./architecture').load() }) {
+async function route(req: Req, res: Res, url: URL, { send, readJson, repo = require('../repo'), arch = require('./architecture').load() }: Pick<Ctx, 'send' | 'readJson'> & { repo?: Repos; arch?: Arch }) {
   if (url.pathname !== '/api/workflow-limits') return false;
   try {
     if (req.method === 'GET') {
@@ -68,7 +78,7 @@ async function route(req, res, url, { send, readJson, repo = require('../repo'),
       send(res, 405, { error: 'method not allowed' });
     }
   } catch (err) {
-    send(res, 500, { error: err.message });
+    send(res, 500, { error: (err as Error).message });
   }
   return true;
 }

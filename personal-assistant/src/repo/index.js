@@ -29,7 +29,7 @@ const AGGREGATES = {
   audio: () => require('./audio.ts'),
   audit: () => require('./audit.ts'),
   backupDrill: () => require('./backupDrill.ts'),
-  commitments: () => require('./commitments'),
+  commitments: () => require('./commitments.ts'),
   drafts: () => require('./drafts.ts'),
   durable: () => require('./durable.ts'),
   evals: () => require('./evals.ts'),
@@ -46,10 +46,10 @@ const AGGREGATES = {
   proposals: () => require('./proposals.ts'),
   repos: () => require('./repos.ts'),
   routines: () => require('./routines.ts'),
-  runs: () => require('./runs'),
+  runs: () => require('./runs.ts'),
   search: () => require('./search.ts'),
   secrets: () => require('./secrets.ts'),
-  sources: () => require('./sources'),
+  sources: () => require('./sources.ts'),
   spend: () => require('./spend.ts'),
   system: () => require('./system.ts'),
   telemetry: () => require('./telemetry.ts'),
@@ -112,6 +112,8 @@ const poolBackend = {
   notify: (channel, payload) => require('../db').notify(channel, payload),
   /** Closes the pool (a SQLite restore swaps the file under it). */
   close: () => require('../db').close(),
+  /** One dedicated connection (a pg pool client, or a SQLite session) for LISTEN and locks. */
+  connect: () => require('../db').getPool().connect(),
   get dialect() {
     return require('../db').dialect;
   },
