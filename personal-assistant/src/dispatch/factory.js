@@ -7,7 +7,7 @@
 // docs/JOBS-API.md, v1). This file never imports factory code or reads its
 // store: it runs `uv run factory job …` in the factory's checkout on the
 // factory's machine (PA_FACTORY_PATH, PA_FACTORY_MACHINE) through
-// `runCommand` (src/dispatch/exec.js) and parses the one JSON object each
+// `runCommand` (src/dispatch/exec.ts) and parses the one JSON object each
 // `--json` command prints.
 //
 //   start({...})   submit the job, record it on a run row, open the walk-in session
@@ -51,7 +51,7 @@ const path = require('path');
 
 const { config } = require('../config.ts');
 const repository = require('../repo');
-const { mode: resolveMode } = require('./modes');
+const { mode: resolveMode } = require('./modes.ts');
 const F = require('./factoryCore');
 const D = require('./deliveryCore');
 const termhub = require('./termhub');
@@ -61,13 +61,13 @@ const { logger } = require('../log.ts');
 const log = logger('factory');
 
 // ------------------------------------------------------------ the runner ----
-// Every factory command goes through exec.js: this machine via child_process,
+// Every factory command goes through exec.ts: this machine via child_process,
 // another machine through its termhub's /api/exec.
 let runnerOverride = null;
 
 function runCommand(machineName, argv, opts) {
   if (runnerOverride) return runnerOverride(machineName, argv, opts);
-  return require('./exec').runCommand(machineName, argv, opts);
+  return require('./exec.ts').runCommand(machineName, argv, opts);
 }
 
 /** Tests only: swap the command runner. */

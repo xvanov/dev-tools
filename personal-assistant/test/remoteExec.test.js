@@ -1,6 +1,6 @@
 'use strict';
 
-// Commands on any machine (src/dispatch/exec.js) and remote dispatch to a
+// Commands on any machine (src/dispatch/exec.ts) and remote dispatch to a
 // Linux/macOS machine (src/dispatch/remote.js).
 //
 // What earns a test: runCommand's contract (argv verbatim, no shell; exit code,
@@ -29,7 +29,7 @@ if (!require('./_portable').ensurePosixTools()) throw new Error('sh is not avail
 process.env.PA_MACHINES = 'lab=http://127.0.0.1:1|/srv/repos|linux, winbox=http://127.0.0.1:1|C:\\source';
 
 const { parseMachines } = require('../src/config.ts');
-const { runCommand, normalise } = require('../src/dispatch/exec');
+const { runCommand, normalise } = require('../src/dispatch/exec.ts');
 const remote = require('../src/dispatch/remote');
 const { config } = require('../src/config.ts');
 

@@ -12,8 +12,13 @@
 // agent can commit all it likes; `git push` fails with a clear message, and the
 // dispatcher restores the real URL only when `pa land` decides the run has
 // earned it.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
 
-const MODES = {
+type ModeName = 'plan' | 'local' | 'branch' | 'mr' | 'full';
+type ModeSpec = { order: number; mayCommit: boolean; mayPush: boolean; mayOpenMr: boolean; mayDraftReply: boolean; stopCondition: string };
+
+const MODES: Record<ModeName, ModeSpec> = {
   plan: {
     order: 0,
     mayCommit: false,
@@ -61,11 +66,11 @@ const MODES = {
 
 const DEFAULT_MODE = 'local';
 
-function isMode(name) {
-  return Object.prototype.hasOwnProperty.call(MODES, name);
+function isMode(name: unknown): name is ModeName {
+  return Object.prototype.hasOwnProperty.call(MODES, name as PropertyKey);
 }
 
-function mode(name) {
+function mode(name: string | null | undefined): ModeSpec & { name: ModeName } {
   const key = String(name || DEFAULT_MODE).toLowerCase();
   if (!isMode(key)) {
     throw new Error(`unknown mode "${name}" — one of: ${Object.keys(MODES).join(', ')}`);
@@ -75,7 +80,7 @@ function mode(name) {
 
 // Sending is never a mode. `full` drafts a reply into the worktree; `pa send`
 // is a separate, interactive act by a human.
-function describe(name) {
+function describe(name: string | null | undefined) {
   const m = mode(name);
   const can = [];
   if (m.mayCommit) can.push('commit');

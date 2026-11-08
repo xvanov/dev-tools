@@ -10,7 +10,7 @@ const path = require('path');
 const { config } = require('../src/config.ts');
 const { agentOf, modelArg } = require('../src/agentCli.ts');
 const agent = require('../src/chat/agent.ts');
-const { dispatchCommand } = require('../src/dispatch/agent');
+const { dispatchCommand } = require('../src/dispatch/agent.ts');
 const chat = require('../src/chat');
 const notifyChat = require('../src/notify/chat.ts');
 

@@ -31,7 +31,7 @@ const DELIVERY_BY_MODE = { plan: null, local: 'none', branch: 'branch', mr: 'dra
 
 // The Claude session's own mode for a delivery level — "mapped to existing
 // modes where possible". The mode is enforced in the worktree (src/dispatch/
-// modes.js: a `local` worktree's pushurl is a dead address), and anything past
+// modes.ts: a `local` worktree's pushurl is a dead address), and anything past
 // what the agent may do itself is done by the assistant when the session ends:
 // `pr` and `auto_merge` run as `mr` (the agent opens a draft) and the PA marks
 // it ready / merges it; `push_to_main` runs as `local` — no push credentials in

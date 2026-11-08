@@ -213,7 +213,7 @@ async function openSession(itemId: number | string) {
   // A dispatched run that may not push is resumed as it was started: without
   // push credentials (src/dispatch/remote.js), or not at all.
   const run = await repo.runs.modeByWorktree(info.cwd).catch(() => null);
-  const mayPush = !run || require('../dispatch/modes').mode(run.mode).mayPush;
+  const mayPush = !run || require('../dispatch/modes.ts').mode(run.mode).mayPush;
   const created = mayPush ? await hub.createSession(spec) : await require('../dispatch/remote').createNoPushSession(hub, spec, machine);
   return { ok: true, url: `${hub.base}/#session=${encodeURIComponent(created.id)}`, resumed: true };
 }

@@ -47,7 +47,7 @@ the end state is what the PA does, not a limit on what that agent can do. The sa
 no-push run: it is the operator's OS user, so `GH_CONFIG_DIR=$HOME/.config/gh gh …` or `~/.ssh/id_*`
 restores the login. **The real boundary for work that must never exceed its level is a separate OS
 user (or machine) without those credentials — not set up yet; a follow-up.** `pa doctor` says so on
-every run (`run isolation`). `PA_SANDBOX=on` (default off; `src/dispatch/sandbox.js`, native plan
+every run (`run isolation`). `PA_SANDBOX=on` (default off; `src/dispatch/sandbox.ts`, native plan
 5.2/5.3) is the first step: the session starts inside the factory's OS sandbox, whose environment
 is an allowlist (no token, no SSH socket, no gh login) and whose filesystem hides the profile, and
 pushes / draft PRs go through a broker capped at the mode's ceiling. It covers `plan` sessions
@@ -412,7 +412,7 @@ judged "investigate" with a known repo, at most `PA_EAGER_RUNS_PER_DAY` a day an
 **The factory is a dispatch target under the same rules, reached only through its contract.**
 `--via factory` (`src/dispatch/factory.js`) sends a run to the software factory instead of a
 Claude session. The PA never imports factory code or reads its store: it runs `uv run factory
-job|app …` through `runCommand` (`src/dispatch/exec.js`) and parses the one JSON object the
+job|app …` through `runCommand` (`src/dispatch/exec.ts`) and parses the one JSON object the
 factory's `docs/JOBS-API.md` says each command prints. Every job is sent with an explicit
 `--delivery` (the end state above; `plan` is never a job) and the factory honours it as asked. A
 factory job changes code, so the planner only ever *offers* one; its own runs stay `plan`-mode

@@ -65,7 +65,7 @@ assert.strictEqual(claudeScreenState(squashed), 'trust');
 assert.deepStrictEqual(trustKeys(squashed), ['\x1b[B', '']);
 assert.strictEqual(claudeScreenState(squashed + '❯Try"fix lint"⏵⏵bypasspermissionson'), 'ready');
 {
-  const { withTrust, key } = require('../src/dispatch/trust');
+  const { withTrust, key } = require('../src/dispatch/trust.ts');
   const dir = process.platform === 'win32' ? 'C:\\data\\worktrees' : '/data/worktrees';
   const next = withTrust({ projects: { other: { x: 1 } }, keep: true }, dir);
   assert.strictEqual(next.projects[key(dir)].hasTrustDialogAccepted, true);

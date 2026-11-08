@@ -13,6 +13,10 @@
 // (termhub.briefClaude reads Claude's screen). opencode's screen is not
 // Claude's, so it gets the same fixed prompt as `--prompt` on its command line
 // and nothing is typed.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+type Config = import('../types.ts').Config;
 
 const { config } = require('../config.ts');
 const { agentOf, hasFlag, modelArg, AGENTS } = require('../agentCli.ts');
@@ -21,11 +25,11 @@ const { agentOf, hasFlag, modelArg, AGENTS } = require('../agentCli.ts');
 // so anything a shell would interpret means the text changed and is refused.
 const SAFE_PROMPT = /^[^"$`%\\\r\n!]*$/;
 
-function dispatchCommand({ agent = null, model = null, prompt = null, c = config } = {}) {
-  const kind = agent || c.termhub.agent || 'claude';
+function dispatchCommand({ agent = null, model = null, prompt = null, c = config }: { agent?: string | null; model?: string | null; prompt?: string | null; c?: Config } = {}): { agent: string; model: string | null; command: string; typesPrompt: boolean } {
+  const kind: string = agent || c.termhub.agent || 'claude';
   if (!AGENTS.includes(kind)) throw new Error(`dispatch agent must be ${AGENTS.join(' or ')}, not "${kind}"`);
   const chosen = model || c.termhub.model || null;
-  let line;
+  let line: string;
   if (kind === 'claude') {
     line = String(c.termhub.claudeCommand).trim();
     if (agentOf(line) !== 'claude') throw new Error(`PA_CLAUDE_COMMAND must start claude, not "${line.split(/\s/)[0]}"`);

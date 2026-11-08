@@ -94,7 +94,7 @@ function defaultDataDir() {
 }
 
 // Other machines a run can be dispatched to (src/dispatch/remote.js) and
-// commands run on (src/dispatch/exec.js), each with its own termhub and its
+// commands run on (src/dispatch/exec.ts), each with its own termhub and its
 // own repos root, and optionally its OS:
 //   PA_MACHINES=mv-automated-vm=http://mv-automated-vm.example.ts.net:7000|C:\source
 //   PA_MACHINES=lab=http://lab.example.ts.net:7000|/home/k/repos|linux
@@ -363,7 +363,7 @@ const config = {
     url: env('PA_TERMHUB_URL', 'http://127.0.0.1:7000'),
     claudeCommand: env('PA_CLAUDE_COMMAND', 'claude --dangerously-skip-permissions'),
     // Which agent a dispatched run starts (claude | opencode) and on which
-    // model, unless `pa do --agent/--model` says otherwise (src/dispatch/agent.js).
+    // model, unless `pa do --agent/--model` says otherwise (src/dispatch/agent.ts).
     // PA_CLAUDE_COMMAND stays the claude command line.
     agent: env('PA_DISPATCH_AGENT', 'claude'),
     model: env('PA_DISPATCH_MODEL'),
@@ -467,7 +467,7 @@ const config = {
   // The software factory as a second dispatch target (src/dispatch/factory.js,
   // contract: software-factory docs/JOBS-API.md). Off until PA_FACTORY_PATH
   // names the factory's checkout on its machine. Its commands run there
-  // through src/dispatch/exec.js; the walk-in session opens in that
+  // through src/dispatch/exec.ts; the walk-in session opens in that
   // machine's termhub, so a remote factory machine must be in PA_MACHINES.
   factory: {
     // The checkout `uv run factory …` runs in, as a path on the factory's machine.

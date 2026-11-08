@@ -228,7 +228,7 @@ async function compose(runId: any, { channel = null }: { channel?: string | null
     review.commits || '(none)',
     '',
     `PULL REQUEST: ${run.mr_url || '(none opened)'}`,
-    `MODE: ${run.mode} — ${require('../dispatch/modes').describe(run.mode)}`,
+    `MODE: ${run.mode} — ${require('../dispatch/modes.ts').describe(run.mode)}`,
     '',
     `CHANNEL: ${target.channel === 'teams' ? 'Teams message' : 'email'}`,
   ].join('\n');

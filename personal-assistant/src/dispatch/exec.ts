@@ -7,7 +7,7 @@
 //
 // `null` (or '') is THIS machine: child_process.spawn with `shell: false`.
 // A name from PA_MACHINES is that machine, through its termhub's
-// `POST /api/exec` (termhub/lib/exec.js) — the same contract, run there.
+// `POST /api/exec` (termhub/lib/exec.ts) — the same contract, run there.
 // Either way argv is an array that no shell ever sees, so a value in it is a
 // value, never syntax; a caller that wants a shell names one in argv[0] and
 // owns the quoting.
@@ -27,6 +27,15 @@
 // "the command ran and failed".
 //
 // The optional fields are extensions; `cwd` and `timeoutMs` are the contract.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+type ExecOptions = { cwd?: string | null | undefined; timeoutMs?: number | undefined; maxOutputBytes?: number | undefined; stdin?: string | null | undefined; env?: Record<string, string> | null | undefined };
+type Truncated = { stdout: boolean; stderr: boolean };
+type ExecResult = { code: number; stdout: string; stderr: string; timedOut?: boolean; signal?: string; truncated?: Truncated; error?: string };
+/** A command's outcome as runLocal sees it, or as termhub's /api/exec answers it. */
+type RawResult = { code: number | null; stdout?: string; stderr?: string; timedOut?: boolean; signal?: string | null; truncated?: Truncated; error?: string | null };
+type Machine = { name: string; url: string };
 
 const { spawn } = require('child_process');
 const os = require('os');
@@ -37,7 +46,7 @@ const DEFAULT_OUTPUT_BYTES = 1024 * 1024;
 const TIMEOUT_CODE = 124;
 const NOT_FOUND_CODE = 127;
 
-function checkArgv(argv) {
+function checkArgv(argv: unknown): asserts argv is string[] {
   if (!Array.isArray(argv) || !argv.length || !argv.every((a) => typeof a === 'string') || !argv[0]) {
     throw new TypeError('runCommand: argv must be a non-empty array of strings');
   }
@@ -45,7 +54,7 @@ function checkArgv(argv) {
 
 // Which machine a name means. Strict on purpose: a typo must not quietly run
 // the command here instead of there.
-function resolveMachine(name) {
+function resolveMachine(name: string | null | undefined): Machine | null {
   if (name == null || name === '') return null;
   const machine = config.termhub.machines[name];
   if (machine) return machine;
@@ -57,8 +66,8 @@ function resolveMachine(name) {
 }
 
 // termhub's answer → this module's. Pure; exported for tests.
-function normalise(r) {
-  const out = { code: r.code, stdout: r.stdout || '', stderr: r.stderr || '' };
+function normalise(r: RawResult): ExecResult {
+  const out: ExecResult = { code: r.code as number, stdout: r.stdout || '', stderr: r.stderr || '' };
   if (r.timedOut) {
     out.code = TIMEOUT_CODE;
     out.timedOut = true;
@@ -74,9 +83,9 @@ function normalise(r) {
   return out;
 }
 
-function runLocal(argv, { cwd, timeoutMs = DEFAULT_TIMEOUT_MS, maxOutputBytes = DEFAULT_OUTPUT_BYTES, stdin, env } = {}) {
+function runLocal(argv: string[], { cwd, timeoutMs = DEFAULT_TIMEOUT_MS, maxOutputBytes = DEFAULT_OUTPUT_BYTES, stdin, env }: ExecOptions = {}): Promise<ExecResult> {
   return new Promise((resolve) => {
-    let child;
+    let child: import('child_process').ChildProcessWithoutNullStreams;
     try {
       child = spawn(argv[0], argv.slice(1), {
         cwd: cwd || os.homedir(),
@@ -86,14 +95,14 @@ function runLocal(argv, { cwd, timeoutMs = DEFAULT_TIMEOUT_MS, maxOutputBytes = 
         detached: process.platform !== 'win32',
         stdio: ['pipe', 'pipe', 'pipe'],
       });
-    } catch (err) {
+    } catch (err: any) {
       return resolve(normalise({ code: null, error: String(err.message || err) }));
     }
-    const buf = { stdout: [], stderr: [] };
+    const buf: { stdout: Buffer[]; stderr: Buffer[] } = { stdout: [], stderr: [] };
     const size = { stdout: 0, stderr: 0 };
-    const truncated = { stdout: false, stderr: false };
-    for (const name of ['stdout', 'stderr']) {
-      child[name].on('data', (chunk) => {
+    const truncated: Truncated = { stdout: false, stderr: false };
+    for (const name of ['stdout', 'stderr'] as const) {
+      child[name].on('data', (chunk: Buffer) => {
         const room = maxOutputBytes - size[name];
         if (room <= 0) { truncated[name] = true; return; }
         const keep = chunk.length > room ? chunk.subarray(0, room) : chunk;
@@ -106,26 +115,26 @@ function runLocal(argv, { cwd, timeoutMs = DEFAULT_TIMEOUT_MS, maxOutputBytes = 
     child.stdin.end(stdin || undefined);
 
     let timedOut = false;
-    let error = null;
+    let error: string | null = null;
     let done = false;
     const kill = () => {
       try {
         if (process.platform === 'win32') {
           spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' }).on('error', () => {});
         } else {
-          process.kill(-child.pid, 'SIGKILL');
+          process.kill(-(child.pid as number), 'SIGKILL');
         }
       } catch {
         try { child.kill('SIGKILL'); } catch { /* gone */ }
       }
     };
-    let grace = null;
+    let grace: ReturnType<typeof setTimeout> | undefined;
     const timer = setTimeout(() => {
       timedOut = true;
       kill();
       grace = setTimeout(() => finish(null, 'SIGKILL'), 5000);
     }, timeoutMs);
-    function finish(code, signal) {
+    function finish(code: number | null, signal: string | null) {
       if (done) return;
       done = true;
       clearTimeout(timer);
@@ -140,13 +149,13 @@ function runLocal(argv, { cwd, timeoutMs = DEFAULT_TIMEOUT_MS, maxOutputBytes = 
         truncated,
       }));
     }
-    child.on('error', (err) => { error = `${err.code || 'error'}: ${err.message}`; finish(null, null); });
-    child.on('close', (code, signal) => finish(code, signal));
+    child.on('error', (err: NodeJS.ErrnoException) => { error = `${err.code || 'error'}: ${err.message}`; finish(null, null); });
+    child.on('close', (code: number | null, signal: string | null) => finish(code, signal));
   });
 }
 
-async function runRemote(machine, argv, { cwd, timeoutMs = DEFAULT_TIMEOUT_MS, maxOutputBytes, stdin, env } = {}) {
-  const body = { argv, timeoutMs };
+async function runRemote(machine: Machine, argv: string[], { cwd, timeoutMs = DEFAULT_TIMEOUT_MS, maxOutputBytes, stdin, env }: ExecOptions = {}): Promise<ExecResult> {
+  const body: { argv: string[]; timeoutMs: number } & ExecOptions = { argv, timeoutMs };
   if (cwd) body.cwd = cwd;
   if (maxOutputBytes) body.maxOutputBytes = maxOutputBytes;
   if (stdin != null) body.stdin = stdin;
@@ -162,7 +171,7 @@ async function runRemote(machine, argv, { cwd, timeoutMs = DEFAULT_TIMEOUT_MS, m
       // termhub enforces the command's own deadline; this only bounds the wire.
       signal: AbortSignal.timeout(timeoutMs + 30_000),
     });
-  } catch (err) {
+  } catch (err: any) {
     throw Object.assign(new Error(`termhub on ${machine.name} unreachable: ${err.message}`), { code: 'EXEC_UNREACHABLE' });
   }
   const text = await res.text().catch(() => '');
@@ -192,7 +201,7 @@ async function runRemote(machine, argv, { cwd, timeoutMs = DEFAULT_TIMEOUT_MS, m
  * contract; the signature is relied on by other dispatchers — extend it with
  * optional fields only.
  */
-async function runCommand(machineName, argv, opts = {}) {
+async function runCommand(machineName: string | null | undefined, argv: string[], opts: ExecOptions = {}): Promise<ExecResult> {
   checkArgv(argv);
   const machine = resolveMachine(machineName);
   return machine ? runRemote(machine, argv, opts) : runLocal(argv, opts);

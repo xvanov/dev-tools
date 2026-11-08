@@ -2,7 +2,7 @@
 
 // The agent CLIs pa starts in termhub — `claude` or `opencode` — and how a
 // model string becomes that CLI's `--model`. Pure; shared by the PA chat
-// (src/chat/agent.js) and dispatched runs (src/dispatch/agent.js).
+// (src/chat/agent.js) and dispatched runs (src/dispatch/agent.ts).
 //
 // The two CLIs read model strings differently:
 //   claude    a Claude id. `cli/…`, `anthropic/…` and bare names all mean that

@@ -23,7 +23,7 @@
 //   4. The worktree must exist (`/api/dirs`) before the session is opened in
 //      it and `claude` is typed.
 //
-// All of that goes through termhub's `POST /api/exec` (src/dispatch/exec.js):
+// All of that goes through termhub's `POST /api/exec` (src/dispatch/exec.ts):
 // argv arrays, no shell, each step's exit code checked. An older termhub
 // without that route gets the old way — the same steps TYPED into a fresh
 // shell (PowerShell on Windows, POSIX sh on Linux/macOS) — but only for a mode
@@ -35,7 +35,7 @@
 // machine's disk, so for a remote run they say so and point at the session.
 
 const { config, MACHINE_OS } = require('../config.ts');
-const { runCommand } = require('./exec');
+const { runCommand } = require('./exec.ts');
 
 const CHUNK = 1800;
 const GIT_ENV = { GIT_TERMINAL_PROMPT: '0', GCM_INTERACTIVE: 'never' };

@@ -17,7 +17,7 @@ const fs = require('fs');
 const path = require('path');
 
 const { config } = require('../config.ts');
-const { mode: resolveMode } = require('./modes');
+const { mode: resolveMode } = require('./modes.ts');
 const R = require('./routeCore');
 const factory = require('./factory');
 const { logger } = require('../log.ts');

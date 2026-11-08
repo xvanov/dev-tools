@@ -14,7 +14,7 @@
 // conventions inline — it points at the `innergy-knowledge` skill, because a
 // second copy of those conventions goes stale and then gets trusted.
 
-const { mode: resolveMode, describe } = require('./modes');
+const { mode: resolveMode, describe } = require('./modes.ts');
 const { describe: describeDelivery } = require('./deliveryCore');
 
 function fence(text) {

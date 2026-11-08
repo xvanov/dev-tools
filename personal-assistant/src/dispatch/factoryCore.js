@@ -225,7 +225,7 @@ class FactoryError extends Error {
  * extra lines — breaks the contract and is reported, never guessed at.
  */
 function parseResult({ code, stdout, stderr, timedOut = false }) {
-  // exec.js answers a timeout (124) and a missing program (127) as results,
+  // exec.ts answers a timeout (124) and a missing program (127) as results,
   // not throws. Neither is the factory's answer, so they surface as transport
   // failures — plain Errors, which submit() retries once (idempotent on the
   // external id) — never as a FactoryError, which it would not.

@@ -68,7 +68,7 @@ stub('db', stubTx({
 }));
 stub('ledger', { async transition() { return { changed: true }; } });
 stub('durable', { async spawn() { return null; }, async emit() { return null; } });
-stub('dispatch/trust', { ensureTrusted() {} });
+stub('dispatch/trust.ts', { ensureTrusted() {} });
 stub('recall', { async recall() { return null; }, async recallClaims() { return null; } });
 stub('memory', { async getPage() { return null; } });
 
@@ -142,7 +142,7 @@ const sharedPushurls = (repo) => {
     assert.strictEqual(git(r.worktreePath, 'remote', 'get-url', '--push', 'origin').trim(), BLOCKED, 'the run itself is blocked');
     // Idempotent: nothing left to clear.
     const remote = require('../src/dispatch/remote');
-    const run = (argv) => require('../src/dispatch/exec').runCommand(null, argv, { timeoutMs: 30_000 });
+    const run = (argv) => require('../src/dispatch/exec.ts').runCommand(null, argv, { timeoutMs: 30_000 });
     assert.deepStrictEqual(await remote.clearLegacyBlock({ machine: { name: 'here' }, repo, blockedPushUrl: BLOCKED, run }), []);
     // Only the dead value goes: a user's own pushurl beside it, on the same
     // remote or another, is kept.

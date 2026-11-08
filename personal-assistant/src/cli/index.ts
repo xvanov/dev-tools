@@ -956,7 +956,7 @@ const commands: Json = {
   async runs(args: any, flags: any) {
     if (args[0] === 'stats') {
       const days = flagInt(flags, 'days', 90);
-      const list = await require('../dispatch/stats').byRoute({ days });
+      const list = await require('../dispatch/stats.ts').byRoute({ days });
       if (!list.length) return out(`no runs in the last ${days} days`);
       out(`last ${days} days — success = delivered or merged, of the runs that finished`);
       out(`${'route'.padEnd(8)} ${'kind'.padEnd(12)} ${'runs'.padStart(4)} ${'deliv'.padStart(5)} ${'merged'.padStart(6)} ${'failed'.padStart(6)} ${'dropped'.padStart(7)} ${'open'.padStart(4)} ${'success'.padStart(7)} ${'$'.padStart(8)} ${'$/success'.padStart(9)}`);
@@ -1458,7 +1458,7 @@ const commands: Json = {
       mark(false, 'chat agent', `REFUSED — ${err.message}`);
     }
     try {
-      const d = require('../dispatch/agent').dispatchCommand();
+      const d = require('../dispatch/agent.ts').dispatchCommand();
       mark(true, 'dispatch agent', d.command);
     } catch (err: any) {
       mark(false, 'dispatch agent', `REFUSED — ${err.message}`);

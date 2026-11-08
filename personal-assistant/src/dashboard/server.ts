@@ -308,8 +308,8 @@ const ROUTES: Route[] = [
     handle: ({ res, send }) =>
       send(res, 200, {
         machines: [{ name: '', label: 'this machine' }, ...Object.keys(config.termhub.machines).map((name) => ({ name, label: name }))],
-        modes: Object.keys(require('../dispatch/modes').MODES),
-        defaultMode: require('../dispatch/modes').mode().name,
+        modes: Object.keys(require('../dispatch/modes.ts').MODES),
+        defaultMode: require('../dispatch/modes.ts').mode().name,
         // Where the work goes: a Claude session, the software factory, or let
         // the routing rule pick (src/dispatch/routeCore.js). Factory only when configured.
         routes: require('../dispatch/factory').enabled() ? ['claude', 'factory', 'auto'] : ['claude'],

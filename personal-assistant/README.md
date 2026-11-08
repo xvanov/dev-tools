@@ -819,11 +819,11 @@ other OS, is refused rather than guessed around. `pa doctor` shows each machine'
 OS and whether its termhub can run commands. A factory job on any of them
 can be followed (next section).
 
-A run's worktree is trusted ahead of time (the worktrees root is marked trusted in `~/.claude.json`, `src/dispatch/trust.js`), so Claude never stops at its folder-trust question; if the question shows anyway, the cursor is moved to *Yes* first, since newer Claude Code puts it on *No, exit*.
+A run's worktree is trusted ahead of time (the worktrees root is marked trusted in `~/.claude.json`, `src/dispatch/trust.ts`), so Claude never stops at its folder-trust question; if the question shows anyway, the cursor is moved to *Yes* first, since newer Claude Code puts it on *No, exit*.
 
 The dispatcher cannot touch that disk, so it has that machine's termhub run the setup —
 `POST /api/exec`, one command at a time, argv arrays with no shell, each exit code checked
-(`src/dispatch/exec.js`) — and checks the result through termhub's API before starting Claude:
+(`src/dispatch/exec.ts`) — and checks the result through termhub's API before starting Claude:
 `git fetch`, a worktree under `<reposRoot>/.pa-worktrees/run-<id>` (backslashes on Windows) on
 branch `pa/<id>-…`, and `BRIEF.md` written from stdin and its size read back. For a mode that may
 not push, every remote's pushurl is set to the dead address **in the worktree's own config**
@@ -837,7 +837,7 @@ worktree never appears — but only for `branch`, `mr` and `full`. A typed push 
 back, so a `plan` or `local` run there is refused until termhub on that machine is updated.
 
 The same primitive is available to other code: `runCommand(machine | null, argv, {cwd, timeoutMs})`
-→ `{code, stdout, stderr}` in `src/dispatch/exec.js` (`null` is this machine). A timeout is code
+→ `{code, stdout, stderr}` in `src/dispatch/exec.ts` (`null` is this machine). A timeout is code
 124, a missing program 127; it rejects only when the command could not be put to the machine at
 all (unknown name, termhub down or too old). `pa say`, `pa attach`, `pa runs` and
 `pa drop` work as for a local run; `pa review`, `pa diff` and `pa land` run git on this disk, so
@@ -1718,7 +1718,7 @@ src/chat/            the PA chat session's home (index.js, agent.js) and its str
 src/notify/          notifications: toasts, the interrupt budget, digests, feedback weights, the PA chat inbox
 src/llm.js           model calls: Anthropic API, `claude -p`, or an OpenAI-compatible provider
 src/models.js        model strings, which backend each pass uses, and what it can do (pa doctor)
-src/agentCli.js      claude | opencode command lines for the chat (src/chat/agent.js) and runs (src/dispatch/agent.js)
+src/agentCli.js      claude | opencode command lines for the chat (src/chat/agent.js) and runs (src/dispatch/agent.ts)
 src/budget.js        model spend: one llm_spend row per call, the daily cap on discretionary work
 src/backup.js        nightly pg_dump, restore, re-ingest
 src/dispatch/        worktrees, briefs, termhub sessions, modes, landing; the factory route

@@ -9,15 +9,20 @@
 // The file is Claude Code's own and is rewritten by every running session, so
 // this writes only when the mark is missing, and atomically (temp + rename).
 // termhub.briefClaude still answers the question if it shows up anyway.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+/** ~/.claude.json: Claude Code's own file, kept whole except for the one mark. */
+type ClaudeConfig = { projects?: Record<string, { hasTrustDialogAccepted?: boolean; [k: string]: unknown }>; [k: string]: unknown };
 
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-const key = (dir) => path.resolve(dir).replace(/\\/g, '/');
+const key = (dir: string): string => path.resolve(dir).replace(/\\/g, '/');
 
 /** Pure: the config with `dir` trusted, or null when it already is. */
-function withTrust(cfg, dir) {
+function withTrust(cfg: ClaudeConfig, dir: string): ClaudeConfig | null {
   const k = key(dir);
   const projects = cfg.projects || {};
   const cur = projects[k] || projects[path.resolve(dir)];
@@ -25,8 +30,8 @@ function withTrust(cfg, dir) {
   return { ...cfg, projects: { ...projects, [k]: { ...(cur || {}), hasTrustDialogAccepted: true } } };
 }
 
-function ensureTrusted(dir, file = path.join(os.homedir(), '.claude.json')) {
-  let cfg;
+function ensureTrusted(dir: string, file: string = path.join(os.homedir(), '.claude.json')): boolean {
+  let cfg: ClaudeConfig;
   try {
     cfg = JSON.parse(fs.readFileSync(file, 'utf8'));
   } catch {

@@ -1016,7 +1016,7 @@
         "personal-assistant/src/dispatch/index.js",
         "personal-assistant/src/dispatch/factory.js",
         "personal-assistant/src/dispatch/factoryCore.js",
-        "personal-assistant/src/dispatch/exec.js",
+        "personal-assistant/src/dispatch/exec.ts",
         "personal-assistant/src/dispatch/termhub.js",
         "personal-assistant/src/dispatch/compose.js",
         "personal-assistant/src/dispatch/deliveryCore.js",
@@ -1463,7 +1463,7 @@
         "software-factory/factory/sandbox/host.py",
         "software-factory/factory/sandbox/policy.py",
         "software-factory/factory/claude_session/run.py",
-        "personal-assistant/src/dispatch/sandbox.js"
+        "personal-assistant/src/dispatch/sandbox.ts"
       ]
     },
     {

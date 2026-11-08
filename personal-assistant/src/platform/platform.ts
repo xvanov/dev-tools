@@ -3,7 +3,7 @@
 // The platform layer: every decision that depends on the operating system is
 // made here, once, and nowhere else. The rest of the tool asks this module —
 // it never tests `process.platform` itself. (Exceptions, out of this layer's
-// scope: src/dispatch/remote.js and src/dispatch/exec.js, which decide by the
+// scope: src/dispatch/remote.js and src/dispatch/exec.ts, which decide by the
 // *target* machine's OS, not this one's.)
 //
 // One implementation per behaviour per OS, all with the same shape:

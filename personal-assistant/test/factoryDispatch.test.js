@@ -245,7 +245,7 @@ assert.throws(() => R.via('carrier-pigeon'), /unknown route/);
 // --- the runner: exec.js, and how its results read as factory answers ------------
 
 async function execLocal() {
-  const { runCommand } = require('../src/dispatch/exec');
+  const { runCommand } = require('../src/dispatch/exec.ts');
   const ok = await runCommand(null, [process.execPath, '-e', 'process.stdout.write(JSON.stringify({a: process.argv[1]}))', 'x="1"; echo $HOME'], { cwd: tmp });
   assert.deepStrictEqual([ok.code, JSON.parse(ok.stdout)], [0, { a: 'x="1"; echo $HOME' }], 'argv verbatim, no shell');
   const bad = await runCommand(null, [process.execPath, '-e', 'process.stdout.write("{}"); process.exit(3)']);

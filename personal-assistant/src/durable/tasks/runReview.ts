@@ -142,7 +142,7 @@ async function run({ runId }: { runId?: any }, ctx: any) {
 
   const landed = await ctx.step('land', async () => {
     const dispatch = require('../../dispatch');
-    const modes = require('../../dispatch/modes');
+    const modes = require('../../dispatch/modes.ts');
     const r = await repo.runs.modeStatusMr(runId);
     if (r.status === 'landed') return { mrUrl: r.mr_url, already: true };
     if (!modes.mode(r.mode).mayPush) await repo.runs.setModeMr(runId);

@@ -481,7 +481,7 @@ function create(db: Db) {
       );
     },
 
-    // --- for src/dispatch/stats.js
+    // --- for src/dispatch/stats.ts
 
     /**
      * Runs started in the last `days` days with their commitment's kind, for

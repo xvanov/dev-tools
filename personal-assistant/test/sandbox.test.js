@@ -1,6 +1,6 @@
 'use strict';
 
-// PA_SANDBOX (src/dispatch/sandbox.js): the flag, the mode → broker ceiling
+// PA_SANDBOX (src/dispatch/sandbox.ts): the flag, the mode → broker ceiling
 // map, the refusal for modes it cannot cover, the host spec, the wrapped
 // command line, and start() against a fake host. No real sandbox here — the
 // sandbox itself is tested in software-factory (tests/test_sandbox_*.py).
@@ -9,7 +9,7 @@ const assert = require('assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const S = require('../src/dispatch/sandbox');
+const S = require('../src/dispatch/sandbox.ts');
 
 // --- flag ----------------------------------------------------------------------
 assert.strictEqual(S.enabled({}), false, 'default off');

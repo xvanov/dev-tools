@@ -5,7 +5,7 @@
 // visible to the session working in it.
 
 const assert = require('assert');
-const { mode, describe, isMode } = require('../src/dispatch/modes');
+const { mode, describe, isMode } = require('../src/dispatch/modes.ts');
 const { buildBrief } = require('../src/dispatch/brief');
 const { slug } = require('../src/dispatch');
 
@@ -17,7 +17,7 @@ const { slug } = require('../src/dispatch');
   assert.strictEqual(mode('full').mayDraftReply, true);
 
   // Sending is not a mode, at any level. `full` drafts; a human sends.
-  for (const name of Object.keys(require('../src/dispatch/modes').MODES)) {
+  for (const name of Object.keys(require('../src/dispatch/modes.ts').MODES)) {
     assert.ok(!('maySend' in mode(name)), `${name} must not have a send capability`);
   }
 }

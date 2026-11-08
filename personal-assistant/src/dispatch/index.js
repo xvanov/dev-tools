@@ -17,7 +17,7 @@ const { promisify } = require('util');
 
 const { config } = require('../config.ts');
 const repository = require('../repo');
-const { mode: resolveMode } = require('./modes');
+const { mode: resolveMode } = require('./modes.ts');
 const { buildBrief, openingPrompt } = require('./brief');
 const D = require('./deliveryCore');
 const termhub = require('./termhub');
@@ -247,7 +247,7 @@ async function start({
     throw new Error(`delivery \`${chosen.delivery}\` is carried out by the assistant when the session ends, which it can only do for runs on this machine — use none, branch or draft_pr on ${machine}, or run it here`);
   }
   modeName = chosen.mode;
-  // Which agent and model (src/dispatch/agent.js), resolved before anything
+  // Which agent and model (src/dispatch/agent.ts), resolved before anything
   // is created so a bad choice leaves no run row or worktree behind.
   if (machine && !termhub.isLocal(machine)) {
     // src/dispatch/remote.js types that machine's own claude. A choice made
@@ -258,13 +258,13 @@ async function start({
     }
     return startRemote({ commitmentId, task, modeName, repoPath, machineName: machine, routeReason, chosen, again });
   }
-  // Which agent and model (src/dispatch/agent.js), resolved before anything
+  // Which agent and model (src/dispatch/agent.ts), resolved before anything
   // is created so a bad choice leaves no run row or worktree behind.
-  const launch = require('./agent').dispatchCommand({ agent, model, prompt: openingPrompt({}) });
+  const launch = require('./agent.ts').dispatchCommand({ agent, model, prompt: openingPrompt({}) });
   const m = resolveMode(modeName);
-  // PA_SANDBOX=on (src/dispatch/sandbox.js): refused up front for a mode it
+  // PA_SANDBOX=on (src/dispatch/sandbox.ts): refused up front for a mode it
   // cannot cover yet, so nothing runs unsandboxed and nothing is left behind.
-  const sandbox = require('./sandbox');
+  const sandbox = require('./sandbox.ts');
   const sandboxed = sandbox.enabled();
   if (sandboxed) sandbox.requireSandboxable(m.name);
   const target = await resolveTarget({ commitmentId, repoPath });
@@ -282,7 +282,7 @@ async function start({
     throw new Error(`${repo} is not a git repository`);
   }
 
-  const localRun = (argv) => require('./exec').runCommand(null, argv, { timeoutMs: 60_000, env: { GIT_TERMINAL_PROMPT: '0' } });
+  const localRun = (argv) => require('./exec.ts').runCommand(null, argv, { timeoutMs: 60_000, env: { GIT_TERMINAL_PROMPT: '0' } });
   // The push block older code put on the SHARED config (it blocked the main
   // checkout, and every new no-push run then failed its leak check). Before
   // anything is created, so a failure here leaves nothing behind.
@@ -362,12 +362,12 @@ async function start({
     fs.writeFileSync(briefPath, briefText, 'utf8');
 
     // Every worktree is a folder Claude has never seen; trusted ahead of time
-    // so its session does not stop at the trust question (src/dispatch/trust.js).
+    // so its session does not stop at the trust question (src/dispatch/trust.ts).
     try {
       // The run's own folder too: a folder once refused (an earlier attempt)
       // carries its own "not trusted" entry, which outranks the root's.
-      require('./trust').ensureTrusted(config.worktreesRoot);
-      if (worktreePath) require('./trust').ensureTrusted(worktreePath);
+      require('./trust.ts').ensureTrusted(config.worktreesRoot);
+      if (worktreePath) require('./trust.ts').ensureTrusted(worktreePath);
     } catch (err) {
       log.warn('could not mark the worktrees trusted', { message: err.message });
     }

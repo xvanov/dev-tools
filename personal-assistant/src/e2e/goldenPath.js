@@ -55,7 +55,7 @@ function defaultDeps() {
     prLinksOf: (runIds) => repo.runs.prLinksOf(runIds),
     stepSessionsOf: (runIds) => repo.runs.stepSessionsOf(runIds),
     gh: (args, owner) => gh(config.github.bin, args, owner),
-    runCommand: (machine, argv, opts) => require('../dispatch/exec').runCommand(machine, argv, opts),
+    runCommand: (machine, argv, opts) => require('../dispatch/exec.ts').runCommand(machine, argv, opts),
     subscribe,
   };
 }
