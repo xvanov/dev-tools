@@ -242,6 +242,20 @@ def group_alive(pgid: int) -> bool:
             return False
 
 
+#: NTSTATUS a Windows process exits with when a DLL's initialisation failed in
+#: the loader, before any of the program's own code ran. Seen from ``git``
+#: under a starved machine (docs/WINDOWS.md); it did nothing, so a retry is safe.
+STATUS_DLL_INIT_FAILED = 0xC0000142
+
+
+def failed_to_start(returncode: int | None) -> bool:
+    """Did the process die in the Windows loader (``STATUS_DLL_INIT_FAILED``)?
+
+    Never true on POSIX, whose exit codes are 0-255 (negative for signals).
+    """
+    return returncode is not None and (returncode & 0xFFFFFFFF) == STATUS_DLL_INIT_FAILED
+
+
 #: Variables a Windows process cannot run without (CPython's ``os.urandom``
 #: needs SYSTEMROOT; ``cmd /c`` needs COMSPEC; most tools need TEMP and the
 #: profile dirs). An env allow-list built for POSIX (PATH, HOME, LANG) drops
@@ -264,9 +278,11 @@ def essential_env(environ: dict[str, str] | None = None) -> dict[str, str]:
 
 __all__ = [
     "IS_WINDOWS",
+    "STATUS_DLL_INIT_FAILED",
     "WINDOWS_ESSENTIAL_ENV",
     "detached_popen_kwargs",
     "essential_env",
+    "failed_to_start",
     "group_alive",
     "kill_tree",
     "lock_file",

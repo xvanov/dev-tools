@@ -141,6 +141,37 @@ process. Use `factory.oscompat.pid_alive`.
   POSTs job state changes to the personal assistant's
   `/api/factory/events` (`--pa-events-url`, `$FACTORY_PA_EVENTS_URL`, `off`).
 
+## git exits 0xC0000142
+
+At 16:36Z on 2026-11-08 a dev-tools tick's `git worktree add` exited 3221225794
+(0xC0000142, `STATUS_DLL_INIT_FAILED`) with empty stderr: git died in the Windows
+loader before running. At 16:34Z a `show-ref` probe most likely failed the same
+way, since the chain took its "no such branch" path for a branch that existed.
+The same commands worked at 16:41Z.
+
+- **Not the creation flags.** Serve starts each tick with
+  `CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW`, which gives the tick one hidden
+  console. git (a plain `subprocess.run`) inherits it and opens no console of its
+  own. `CREATE_NO_WINDOW` on every git call would start a console host per call:
+  more desktop heap, not less. The `factory-serve` task is an Interactive logon
+  (the user's desktop, 20 MB desktop heap), not the 768 KB non-interactive one.
+- **The machine was starved.** From 16:29Z to 16:40Z every app's tick took
+  170–370 s instead of 6–15 s. The System log has no hard-error popup (event 26)
+  and no resource-exhaustion warning (event 2004) for that window, and at 17:2xZ
+  there was no console-host leak (46 conhosts, mostly services). Which resource
+  ran out (desktop heap, commit, something else) is unknown.
+- **What the factory does.** `branch._run_git` retries a git that exited
+  `STATUS_DLL_INIT_FAILED` (it never ran, so a retry is safe), up to 3 attempts
+  in all, and names the status in the error.
+
+## Story worktree leftovers
+
+A file still held open (a process the killed tick left behind, an editor, AV)
+stops `git worktree remove` and `rmtree` part way on Windows, leaving a tree
+without its `.git`. `ensure_worktree_for_story` clears such a tree (remove,
+rmtree, prune), renames it to `<name>.stale-<ns>` if it still cannot be
+deleted, and re-creates the worktree from the story branch.
+
 ## Linux
 
 Serve runs there too: `scripts/systemd/factory-serve.service` (a user unit;

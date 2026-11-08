@@ -26,10 +26,16 @@ fatal error — we never silently stash or discard the operator's edits.
 
 from __future__ import annotations
 
+import logging
 import os
 import re
 import subprocess
+import time
 from pathlib import Path
+
+from factory.oscompat import STATUS_DLL_INIT_FAILED, failed_to_start
+
+_logger = logging.getLogger(__name__)
 
 _BRANCH_PREFIX = "factory/story"
 
@@ -55,6 +61,9 @@ def feature_branch_name(story_id: int | None, slug: str) -> str:
 #: command so the operator's git config is never changed.
 _GIT_CONFIG: tuple[str, ...] = ("-c", "core.longpaths=true") if os.name == "nt" else ()
 
+_GIT_START_ATTEMPTS = 3
+_GIT_START_RETRY_S = 2.0
+
 
 def _run_git(
     repo_path: Path, *args: str, check: bool = True, timeout: float = 30
@@ -64,19 +73,32 @@ def _run_git(
     ``timeout`` defaults to 30 s; checkout-sized operations (``worktree add``
     of a large repo) pass more — on Windows with real-time AV scanning, a
     ~1000-file checkout of the dev-tools monorepo measured well over 30 s.
+
+    A git that died in the Windows loader (``STATUS_DLL_INIT_FAILED``) never
+    ran, so it is retried, up to 3 attempts in all. Unretried, a ``show-ref``
+    probe read the failure as "no such branch" (2026-11-08).
     """
-    proc = subprocess.run(
-        ["git", *_GIT_CONFIG, *args],
-        cwd=str(repo_path),
-        capture_output=True,
-        text=True,
-        check=False,
-        timeout=timeout,
-    )
+    for attempt in range(_GIT_START_ATTEMPTS):
+        proc = subprocess.run(
+            ["git", *_GIT_CONFIG, *args],
+            cwd=str(repo_path),
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=timeout,
+        )
+        if not failed_to_start(proc.returncode) or attempt == _GIT_START_ATTEMPTS - 1:
+            break
+        _logger.warning(
+            "git %s did not start (0x%08X, STATUS_DLL_INIT_FAILED); retrying",
+            args[0] if args else "", STATUS_DLL_INIT_FAILED,
+        )
+        time.sleep(_GIT_START_RETRY_S * (attempt + 1))
     if check and proc.returncode != 0:
+        status = " (STATUS_DLL_INIT_FAILED: git never started)" if failed_to_start(proc.returncode) else ""
         raise RuntimeError(
             f"git {' '.join(args)} failed in {repo_path}: "
-            f"rc={proc.returncode} stderr={proc.stderr.strip()[:300]}"
+            f"rc={proc.returncode}{status} stderr={proc.stderr.strip()[:300]}"
         )
     return proc
 

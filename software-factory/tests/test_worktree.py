@@ -78,6 +78,47 @@ def test_git_calls_carry_longpaths_on_windows(monkeypatch: pytest.MonkeyPatch, t
     assert seen == [want]
 
 
+def _scripted_git(monkeypatch: pytest.MonkeyPatch, rcs: list[int]) -> list[list[str]]:
+    from factory.chain import branch
+
+    seen: list[list[str]] = []
+
+    def fake_run(cmd, **_kw):
+        seen.append(cmd)
+        return subprocess.CompletedProcess(cmd, rcs[min(len(seen), len(rcs)) - 1], "", "")
+
+    monkeypatch.setattr(branch.subprocess, "run", fake_run)
+    monkeypatch.setattr(branch.time, "sleep", lambda s: None)
+    return seen
+
+
+def test_git_that_failed_to_start_is_retried(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """2026-11-08 16:36Z: `git worktree add` exited 0xC0000142 with no stderr
+    under a starved machine; the same command worked 5 min later."""
+    from factory.chain import branch
+
+    seen = _scripted_git(monkeypatch, [0xC0000142, 0])
+    assert branch._run_git(tmp_path, "show-ref", "--verify", "x", check=False).returncode == 0
+    assert len(seen) == 2
+
+
+def test_git_start_retries_are_capped_and_named(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    from factory.chain import branch
+
+    seen = _scripted_git(monkeypatch, [0xC0000142])
+    with pytest.raises(RuntimeError, match="STATUS_DLL_INIT_FAILED"):
+        branch._run_git(tmp_path, "worktree", "add", "x")
+    assert len(seen) == 3
+
+
+def test_ordinary_git_failures_are_not_retried(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    from factory.chain import branch
+
+    seen = _scripted_git(monkeypatch, [128])
+    assert branch._run_git(tmp_path, "worktree", "add", "x", check=False).returncode == 128
+    assert len(seen) == 1
+
+
 def test_ensure_creates_worktree_and_checks_out_branch(tmp_path: Path) -> None:
     src = tmp_path / "src"
     factory_root = tmp_path / "factory"
