@@ -18,10 +18,11 @@ Internal tooling for AI-assisted workflows: push-to-talk dictation, batch transc
 
 ## CI
 
-[`.github/workflows/ci.yml`](./.github/workflows/ci.yml) runs each tool's tests on Linux, macOS and
-Windows in parallel, only for the tools a change touched (path-filtered; "Run workflow" runs all).
-Covers personal-assistant, termhub, software-factory (pytest via uv; the macOS and Windows legs are
-allowed to fail until the factory is ported, plan phase 2.3) and ios-messages. No secrets are used.
+[`.github/workflows/ci.yml`](./.github/workflows/ci.yml) runs each tool's tests on Linux and
+Windows in parallel (no macOS, plan D14), only for the tools a change touched (path-filtered; "Run
+workflow" runs all). Covers personal-assistant, termhub, software-factory (pytest via uv;
+informational until its tests are repo-portable and it is ported to Windows, plan phase 2.3) and
+ios-messages. No secrets are used.
 
 ## Quick start
 
