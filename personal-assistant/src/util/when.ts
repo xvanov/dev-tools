@@ -15,9 +15,21 @@
 // an ISO date or date-time ("2026-11-10", "2026-11-10 14:00", and the
 // "2026-11-10T14:00" a date-time picker sends); and its own canonical forms
 // back ("at:<ISO>"). Anything in the past, or more than a year out, is null.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
 
-const UNIT_MS = { m: 60_000, h: 3600_000, d: 86400_000, w: 7 * 86400_000 };
-const UNIT_WORDS = [
+type Unit = 'm' | 'h' | 'd' | 'w';
+type HourMinute = [number, number];
+
+interface When {
+  at: Date;
+  kind: 'duration' | 'absolute';
+  canonical: string;
+  ms?: number;
+}
+
+const UNIT_MS: Record<Unit, number> = { m: 60_000, h: 3600_000, d: 86400_000, w: 7 * 86400_000 };
+const UNIT_WORDS: Array<[RegExp, Unit]> = [
   [/^(m|min|mins|minute|minutes)$/, 'm'],
   [/^(h|hr|hrs|hour|hours)$/, 'h'],
   [/^(d|day|days)$/, 'd'],
@@ -27,13 +39,13 @@ const DAYS = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 
 const MORNING = 9;
 const MAX_AHEAD_MS = 366 * 86400_000;
 
-function unitOf(word) {
+function unitOf(word: string): Unit | null {
   for (const [re, u] of UNIT_WORDS) if (re.test(word)) return u;
   return null;
 }
 
 // "9", "9:30", "3pm", "3:30 pm", "15:00", "at 15:00" → [h, m] or null.
-function timeOf(text) {
+function timeOf(text: string): HourMinute | null {
   const m = /^(?:at\s*)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)?$/.exec(text.trim());
   if (!m) return null;
   let h = Number(m[1]);
@@ -47,34 +59,30 @@ function timeOf(text) {
 }
 
 // "mon", "tues", "thurs", "friday": three letters or more of the day's name.
-function dayIndex(word) {
+function dayIndex(word: string): number {
   if (word.length < 3) return -1;
   return DAYS.findIndex((full) => full.startsWith(word));
 }
 
-function at(base, [h, m]) {
+function at(base: Date, [h, m]: HourMinute): Date {
   const d = new Date(base);
   d.setHours(h, m, 0, 0);
   return d;
 }
 
-function result(date, now, kind, extra = {}) {
-  if (!date || Number.isNaN(+date) || date <= now || date - now > MAX_AHEAD_MS) return null;
-  return { at: date, kind, canonical: kind === 'duration' ? extra.canonical : `at:${date.toISOString()}`, ...extra };
+function result(date: Date | null, now: Date, kind: When['kind'], extra: { canonical?: string; ms?: number } = {}): When | null {
+  if (!date || Number.isNaN(+date) || date <= now || +date - +now > MAX_AHEAD_MS) return null;
+  return { at: date, kind, canonical: kind === 'duration' ? extra.canonical ?? '' : `at:${date.toISOString()}`, ...extra };
 }
 
-/**
- * @param {string} text what was typed
- * @param {Date} [now]
- * @returns {{at: Date, kind: 'duration'|'absolute', canonical: string, ms?: number} | null}
- */
-function parseWhen(text, now = new Date()) {
+/** What was typed, as a time after `now`; null when it is not one, is past, or is over a year out. */
+function parseWhen(text: string | null | undefined, now: Date | number | string = new Date()): When | null {
   now = new Date(now);
   const t = String(text || '').trim().toLowerCase().replace(/\s+/g, ' ');
   if (!t || t.length > 60) return null;
 
   // Our own canonical form, and ISO from a date-time picker or a hand.
-  if (t.startsWith('at:')) return result(new Date(text.trim().slice(3)), now, 'absolute');
+  if (t.startsWith('at:')) return result(new Date(String(text).trim().slice(3)), now, 'absolute');
   let m = /^(\d{4})-(\d{2})-(\d{2})(?:[ t](\d{1,2}):(\d{2}))?$/.exec(t);
   if (m) {
     const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]), m[4] ? Number(m[4]) : MORNING, m[5] ? Number(m[5]) : 0);
@@ -84,8 +92,9 @@ function parseWhen(text, now = new Date()) {
 
   // A duration: "5m", "5 min", "in 2 hours", "1.5h".
   m = /^(?:in )?(\d+(?:\.\d+)?) ?([a-z]+)$/.exec(t);
-  if (m && unitOf(m[2])) {
-    const u = unitOf(m[2]);
+  const durationUnit = m ? unitOf(m[2] as string) : null;
+  if (m && durationUnit) {
+    const u = durationUnit;
     const n = Number(m[1]);
     if (!(n > 0)) return null;
     const ms = Math.round(n * UNIT_MS[u]);
@@ -94,8 +103,9 @@ function parseWhen(text, now = new Date()) {
   }
   // "an hour", "a day", "a week".
   m = /^(?:in )?an? ([a-z]+)$/.exec(t);
-  if (m && unitOf(m[1])) {
-    const u = unitOf(m[1]);
+  const oneUnit = m ? unitOf(m[1] as string) : null;
+  if (m && oneUnit) {
+    const u = oneUnit;
     return result(new Date(now.getTime() + UNIT_MS[u]), now, 'duration', { canonical: `1${u}`, ms: UNIT_MS[u] });
   }
 
@@ -108,7 +118,7 @@ function parseWhen(text, now = new Date()) {
   // "<day word> [time]".
   m = /^(today|tonight|tomorrow|tmrw|tmr|(?:next )?[a-z]+)(?: (?:at )?(.+))?$/.exec(t);
   if (m) {
-    const word = m[1];
+    const word = m[1] as string;
     const time = m[2] ? timeOf(m[2]) : null;
     if (m[2] && !time) return null;
     const d = new Date(now);

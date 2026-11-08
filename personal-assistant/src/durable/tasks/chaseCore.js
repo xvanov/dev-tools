@@ -24,7 +24,7 @@ const CADENCES = [
 ];
 
 const cadence = (value) => CADENCES.find((c) => c.value === value) || null;
-const { parseWhen } = require('../../util/when');
+const { parseWhen } = require('../../util/when.ts');
 
 /** The buttons for the question, the usual answer marked. */
 function cadenceOptions(usual) {
@@ -35,7 +35,7 @@ function cadenceOptions(usual) {
  * When to chase for a cadence answer, counted from `from`. The fixed answers
  * (4h, 1d, 2d, 1w) stay inside working hours, so "in 4 hours" at 16:00 means
  * the next morning. Anything else typed or picked on the dashboard ("5m",
- * "tomorrow 3pm", "at:<ISO>", src/util/when.js) is taken literally. Null:
+ * "tomorrow 3pm", "at:<ISO>", src/util/when.ts) is taken literally. Null:
  * don't chase. Undefined: not an answer I understand.
  */
 function chaseAtFor(value, from) {

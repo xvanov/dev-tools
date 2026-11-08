@@ -13,7 +13,7 @@
 //   add(opts)                                       write it; returns the new commitment
 
 const crypto = require('crypto');
-const { parseWhen } = require('../util/when');
+const { parseWhen } = require('../util/when.ts');
 
 const SOURCE = 'pa_request';
 const EXTRACTED_BY = 'pa-request-v1';
@@ -28,7 +28,7 @@ function fail(message) {
 
 /**
  * Pure. What was asked for, checked: {summary, detail, dueAt, direction, forName, project}.
- * `due` takes what src/util/when.js reads ("friday", "tomorrow 3pm", "2d",
+ * `due` takes what src/util/when.ts reads ("friday", "tomorrow 3pm", "2d",
  * "2026-11-20"), with an optional leading "by".
  */
 function parse({ text, due = null, for: forName = null, owedToMe = false, project = null } = {}, now = new Date()) {

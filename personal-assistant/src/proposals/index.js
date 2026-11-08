@@ -126,7 +126,7 @@ function describeStart(run) {
 async function decide(id, { accept, answer = null, delivery = null }) {
   if (delivery) delivery = require('../dispatch/deliveryCore').delivery(delivery);
   // "When should I follow up?" takes a fixed answer or a typed time ("2h",
-  // "fri 3pm", a date — src/util/when.js), stored canonical so the chase does
+  // "fri 3pm", a date — src/util/when.ts), stored canonical so the chase does
   // exactly what was previewed. One it cannot read is refused, not guessed.
   if (accept && answer) {
     const q = await repo.proposals.payloadOf(id);

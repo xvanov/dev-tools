@@ -4,7 +4,7 @@
 //
 // Someone promised me something in chat or mail. First it asks me, on that
 // ask's card under "Waiting on others", when to follow up: a chip (5 min to
-// next week), anything src/util/when.js reads ("2h", "fri 3pm", a date), or
+// next week), anything src/util/when.ts reads ("2h", "fri 3pm", a date), or
 // not at all — the span I last gave for that person marked usual. No answer by
 // the default time (a working morning two days later, just after it was due,
 // or my usual cadence for them) and it goes with the default. Then it sleeps

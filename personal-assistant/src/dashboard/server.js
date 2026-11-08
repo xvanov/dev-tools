@@ -249,7 +249,7 @@ async function handle(req, res) {
     return send(res, 200, { ...r, plain: r.delivery ? D.describe(r.delivery) : null, unattended: D.unattended(r.delivery) });
   }
   // What a typed follow-up time means, before it is set: the card previews it
-  // with the same parser the chase uses (src/util/when.js via chaseCore).
+  // with the same parser the chase uses (src/util/when.ts via chaseCore).
   // Which code this worker serves. Open pages poll it (nav.js) and reload
   // themselves once it changes, so an update reaches every open tab.
   if (req.method === 'GET' && url.pathname === '/healthz') {
