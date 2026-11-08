@@ -15,6 +15,8 @@ const { passes } = require('../src/util/exclusive');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Advisory locks: key -> {session, count}. Same shape of SQL the lease sends.
+const overlaps = [];
+
 function fakePg() {
   const locks = new Map();
   let sessions = 0;
@@ -28,7 +30,11 @@ function fakePg() {
       on: (ev, fn) => (handlers[ev] = fn),
       async query(text, params) {
         if (client.dead) throw new Error('connection terminated');
+        // pg wants one query at a time per client (overlap is gone in pg 9).
+        if (client.busy) overlaps.push(text);
+        client.busy = true;
         await sleep(1);
+        client.busy = false;
         const k = keyOf(params);
         if (/pg_try_advisory_lock/.test(text)) {
           const l = locks.get(k);
@@ -99,7 +105,8 @@ async function testHandOverIsPrompt() {
   });
 
   assert.strictEqual(await a.own.takeOver(), true);
-  await sleep(30);
+  // Lock queries are queued on the one lock connection (a few timer ticks).
+  await sleep(150);
   assert.deepStrictEqual(ran.a.sort(), ['distill', 'embed']);
 
   // B waits: nothing of its runs while A holds the lease.
@@ -218,6 +225,7 @@ async function main() {
   await testCalledOffWait();
   await testLostConnection();
   testWorkerDeclaresEverythingOnTheScheduler();
+  assert.deepStrictEqual(overlaps, [], 'two queries at once on the lock connection');
   console.log('lease: ok');
 }
 

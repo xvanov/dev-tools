@@ -44,7 +44,18 @@ function createLease({ connect, pollMs = 500, log = null, key = WORKER_KEY, pass
 
   async function lockClient() {
     if (client) return client;
-    const c = await connect();
+    const raw = await connect();
+    // Every pass shares this one connection; pg wants one query at a time on
+    // a client (overlapping ones are deprecated, and gone in pg 9), so queue.
+    let tail = Promise.resolve();
+    const c = Object.create(raw);
+    c.query = (...args) => {
+      const run = tail.then(() => raw.query(...args));
+      tail = run.catch(() => {});
+      return run;
+    };
+    c.release = (...args) => raw.release(...args);
+    c.on = (...args) => raw.on?.(...args);
     c.on?.('error', (err) => {
       if (client !== c) return;
       client = null;
