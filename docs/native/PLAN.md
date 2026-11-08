@@ -269,7 +269,7 @@ run mid-step; a job continued on an existing branch (`--branch`).
   between 5 s full checks). Measured in `tests/test_serve_push_latency.py` (real story write, real
   `list_jobs`, fake PA over HTTP): 182-404 ms from the write to the PA over 9 transitions, so job
   stage reaches Build in about 0.2-0.45 s. A PA that is down costs a log line, never a transition.
-  Measured locally. The live stacks pick it up when serve restarts on the new HEAD.
+  Measured locally. The live stacks pick it up when serve restarts on the new HEAD. (e88e204)
 - [x] **E4 `e2e` command.** One command runs the golden path headless against the live stack,
   creates the dummy card, waits for the PR, asserts every link in E1 resolves in every view's
   API, asserts the API-runtime step produced a watchable session (E2), prints a timing per
