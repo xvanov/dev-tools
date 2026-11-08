@@ -27,6 +27,7 @@
 // test/deploy.test.js; --dry-run prints them and changes nothing.
 
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const http = require('http');
 const { execFileSync, spawnSync } = require('child_process');
@@ -153,7 +154,8 @@ function parseArgs(argv) {
 // within a minute: the second rolled while the first watched, the first saw a
 // commit it did not deploy, called that unhealthy and rolled the second one
 // back. A lock file beside the supervisor's log, holding the owner's pid; a
-// dead owner's lock is taken over. A second deploy waits for the first.
+// dead owner's lock is taken over. A second deploy is refused (exit 5), saying
+// who holds it; the supervisor holds a lock of its own too (index.js, "lock").
 function lockPath() {
   return path.join(path.dirname(path.dirname(sup.defaultLogFile())), 'deploy.lock');
 }
@@ -167,7 +169,7 @@ function alive(pid) {
   }
 }
 
-async function acquireDeployLock({ file = lockPath(), waitMs = 15 * 60_000, pollMs = 2000, say = () => {} } = {}) {
+async function acquireDeployLock({ file = lockPath(), waitMs = 0, pollMs = 2000, say = () => {} } = {}) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   const deadline = Date.now() + waitMs;
   let told = false;
@@ -199,7 +201,11 @@ async function acquireDeployLock({ file = lockPath(), waitMs = 15 * 60_000, poll
       fs.rmSync(file, { force: true });
       continue;
     }
-    if (Date.now() > deadline) throw new Error(`another deploy (pid ${held && held.pid}) has held ${file} too long`);
+    if (Date.now() >= deadline) {
+      const e = new Error(`refused: another deploy is running (pid ${held && held.pid}, since ${held && held.at}); run again once it has finished`);
+      e.code = 'DEPLOY_LOCKED';
+      throw e;
+    }
     if (!told && held) say(`another deploy is running (pid ${held.pid}, since ${held.at}) - waiting for it`);
     told = true;
     await new Promise((r) => setTimeout(r, pollMs));
@@ -209,7 +215,15 @@ async function acquireDeployLock({ file = lockPath(), waitMs = 15 * 60_000, poll
 async function deploy(argv, opts = {}) {
   const o = parseArgs(argv);
   if (o.dryRun) return deployUnlocked(argv, opts);
-  const lock = await acquireDeployLock({ say: (m) => (o.json ? process.stderr : process.stdout).write(`deploy: ${m}\n`) });
+  const tell = (m) => (o.json ? process.stderr : process.stdout).write(`deploy: ${m}\n`);
+  let lock;
+  try {
+    lock = await acquireDeployLock({ say: tell });
+  } catch (err) {
+    if (err.code !== 'DEPLOY_LOCKED') throw err;
+    tell(err.message);
+    return { code: 5, result: { refused: err.message } };
+  }
   try {
     return await deployUnlocked(argv, opts);
   } finally {
@@ -276,8 +290,25 @@ async function deployUnlocked(argv, { say } = {}) {
   if (p.action === 'none') return { code: 0, result };
   if (p.action === 'restart') return { code: supervisor ? 4 : 3, result };
 
+  // The supervisor's deploy lock, for the roll and the whole health watch:
+  // a roll or rollback from anyone else meanwhile is refused (index.js). A
+  // supervisor too old to know the command answers "unknown command": go on.
+  const owner = `deploy.js ${os.hostname()} pid ${process.pid} -> ${head.slice(0, 7)}`;
+  const locked = await sup.request(control, { cmd: 'lock', owner, ttlMs: 15 * 60_000 }).catch((err) => ({ ok: false, error: err.message }));
+  if (!locked.ok && !/unknown command/.test(String(locked.error))) {
+    say(locked.error);
+    return { code: 5, result: { ...result, refused: locked.error } };
+  }
+  try {
+    return await rollAndWatch({ o, say, control, port, head, result, owner });
+  } finally {
+    await sup.request(control, { cmd: 'unlock', owner }).catch(() => {});
+  }
+}
+
+async function rollAndWatch({ o, say, control, port, head, result, owner }) {
   say(`rolling to ${head.slice(0, 7)}`);
-  const rolled = await sup.request(control, { cmd: 'roll' }).catch((err) => ({ ok: false, error: err.message }));
+  const rolled = await sup.request(control, { cmd: 'roll', owner }).catch((err) => ({ ok: false, error: err.message }));
   if (!rolled.ok) {
     say(`roll refused: ${rolled.error} - the previous generation keeps serving`);
     return { code: 1, result: { ...result, roll: rolled } };
@@ -298,7 +329,7 @@ async function deployUnlocked(argv, { say } = {}) {
     return { code: 0, result: { ...result, generation: rolled.generation, verdict: v } };
   }
   say(`unhealthy (${v.why}) - rolling back`);
-  const back = await sup.request(control, { cmd: 'rollback' }).catch((err) => ({ ok: false, error: err.message }));
+  const back = await sup.request(control, { cmd: 'rollback', owner }).catch((err) => ({ ok: false, error: err.message }));
   if (back.ok) say(`rolled back to generation ${back.generation} (pid ${back.pid}); the checkout stays at ${head.slice(0, 7)}`);
   else {
     // The supervisor kept the new generation serving (undrained): say what

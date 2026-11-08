@@ -107,7 +107,11 @@ async function lockCases() {
     lc.release();
     // A live holder that never lets go: the waiter gives up, saying who.
     const ld = await acquireDeployLock({ file });
-    await assert.rejects(acquireDeployLock({ file, pollMs: 20, waitMs: 100 }), /another deploy \(pid \d+\)/);
+    await assert.rejects(acquireDeployLock({ file, pollMs: 20, waitMs: 100 }), /refused: another deploy is running \(pid \d+/);
+    // By default a second deploy does not wait: it is refused at once.
+    const t0 = Date.now();
+    await assert.rejects(acquireDeployLock({ file }), (e) => e.code === 'DEPLOY_LOCKED');
+    assert.ok(Date.now() - t0 < 1000);
     ld.release();
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });

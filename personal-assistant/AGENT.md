@@ -505,6 +505,11 @@ Postgres and nowhere else. Tests use invented names; fixtures never hold a real 
   not started by the supervisor becomes the supervisor before loading any worker code
   (`PA_NO_SUPERVISOR=1` runs the bare worker, for debugging).
   A change to `src/supervisor/index.js` therefore costs one restart gap; keep it rare.
+  **One deploy at a time:** `deploy.js` takes a lock file (`<state dir>/deploy.lock`) and the
+  supervisor's own deploy lock (`{"cmd":"lock","owner"}`, 15 min ttl) for the roll and the whole
+  health watch. A second deploy, or a `roll`/`rollback` from anyone else, is refused with who
+  holds it (`deploy.js` exits 5, the scripts say "refused"), and a second roll while one runs is
+  refused rather than merged. Two overlapping deploys once dropped each other's rollback target.
 - **The deploy test (Z6).** `node src/e2e/deployTest.js` rolls a supervisor while it hammers
   `/api/version`, holds an `/api/events` stream (reconnecting with `Last-Event-ID`) and a termhub
   terminal, and fails on any failed request, lost/duplicated/out-of-order event, `resync`, or

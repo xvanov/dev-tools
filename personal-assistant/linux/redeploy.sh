@@ -95,7 +95,8 @@ if unit pa-worker.service; then
   rm -rf "$TMP"
 fi
 
-# 2. deploy.js: 0 done, 1 failed (previous generation serving), 3 no supervisor, 4 supervisor changed.
+# 2. deploy.js: 0 done, 1 failed (previous generation serving), 3 no supervisor, 4 supervisor changed,
+#    5 refused (another deploy is running).
 ARGS=(src/supervisor/deploy.js)
 [ -n "$FROM" ] && ARGS+=(--from "$FROM")
 [ "$DRY" = 1 ] && ARGS+=(--dry-run)
@@ -103,6 +104,7 @@ ARGS=(src/supervisor/deploy.js)
 CODE=$?
 
 if [ "$CODE" = 0 ] && [ "$UNIT_CHANGED" = 0 ]; then exit 0; fi
+if [ "$CODE" = 5 ]; then say "refused - another deploy is running (see above). Nothing changed."; exit 0; fi
 if [ "$CODE" = 1 ]; then say "the deploy did not take; the lines above say which generation serves."; exit 0; fi
 if [ "$HAS_UNIT" = 0 ]; then say "no pa-worker unit on this machine - skipping the restart."; exit 0; fi
 if [ "$DRY" = 1 ]; then say "would restart pa-worker and wait for ${HEAD_SHA:0:7}"; exit 0; fi

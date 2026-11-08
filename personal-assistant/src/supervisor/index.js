@@ -317,11 +317,11 @@ function createSupervisor({
         say('warn', 'serving generation exited', { generation: n, code, signal });
         // The one it replaced is still here: go back to it, at once.
         if (standby && !standby.exited) {
-          rollback().catch((err) => {
+          rollback({ internal: true }).catch((err) => {
             say('warn', 'fallback to the standby failed', { message: err.message });
-            if (respawn) roll().catch(() => {});
+            if (respawn) roll({ internal: true }).catch(() => {});
           });
-        } else if (respawn) setTimeout(() => roll().catch(() => {}), Math.min(60_000, 1000 * 2 ** Math.min(crashes++, 6)));
+        } else if (respawn) setTimeout(() => roll({ internal: true }).catch(() => {}), Math.min(60_000, 1000 * 2 ** Math.min(crashes++, 6)));
       }
     }));
     child.on('message', (m) => {
@@ -397,11 +397,62 @@ function createSupervisor({
     stopGeneration(s);
   }
 
+  // ---- the deploy lock ----
+  // One deploy at a time. Two deploys once interleaved on the live stack: the
+  // second roll dropped the first one's standby, and the first one's health
+  // check then saw a commit it had not deployed and found nothing to roll
+  // back to. A deploy (src/supervisor/deploy.js) takes this lock for its whole
+  // run (roll and health watch) with an owner name; while it is held, a roll
+  // or rollback from anyone else is refused with who holds it. It expires
+  // after its ttl, so a deploy that died cannot wedge the supervisor. The
+  // supervisor's own respawn after a crash is not a deploy and ignores it.
+  const DEPLOY_LOCK_MS = 15 * 60_000;
+  let deployLock = null; // {owner, since, until}
+
+  function lockHeld() {
+    if (deployLock && Date.now() > deployLock.until) deployLock = null;
+    return deployLock;
+  }
+
+  function guard(owner) {
+    const h = lockHeld();
+    if (h && h.owner !== owner) throw new Error(`refused: another deploy holds the supervisor (${h.owner}, since ${h.since}); run again once it has finished`);
+  }
+
+  function lock(owner, ttlMs = DEPLOY_LOCK_MS) {
+    if (!owner) throw new Error('lock needs an owner');
+    guard(owner);
+    if (rolling) throw new Error('refused: a roll is in progress');
+    const h = lockHeld();
+    deployLock = { owner, since: h ? h.since : new Date().toISOString(), until: Date.now() + Math.min(Math.max(Number(ttlMs) || DEPLOY_LOCK_MS, 1000), 60 * 60_000) };
+    say('info', 'deploy lock taken', { owner });
+    return status();
+  }
+
+  function unlock(owner) {
+    const h = lockHeld();
+    if (h && h.owner === owner) {
+      deployLock = null;
+      say('info', 'deploy lock released', { owner });
+    }
+    return status();
+  }
+
   // Start N+1, flip to it once ready, retire N (kept as the standby). One
-  // roll at a time; a roll asked for during one shares its result.
-  function roll() {
+  // roll at a time: a second one asked for meanwhile is refused (it used to
+  // share the first one's result, which hid that two deploys were running).
+  function roll({ owner = null, internal = false } = {}) {
     if (closing) return Promise.reject(new Error('supervisor is closing'));
-    if (rolling) return rolling;
+    if (internal) {
+      if (rolling) return rolling;
+    } else {
+      try {
+        guard(owner);
+      } catch (err) {
+        return Promise.reject(err);
+      }
+      if (rolling) return Promise.reject(new Error('refused: a roll is already in progress'));
+    }
     rolling = (async () => {
       // A newer deploy supersedes the rollback target of the last one.
       dropStandby();
@@ -428,8 +479,15 @@ function createSupervisor({
   // Back to the standby: the serving generation (if any) drains first, so it
   // lets go of the passes' lease (Z2) before the standby asks for it again;
   // the standby is undrained, waited for, flipped to; the other is stopped.
-  function rollback() {
+  function rollback({ owner = null, internal = false } = {}) {
     if (closing) return Promise.reject(new Error('supervisor is closing'));
+    if (!internal) {
+      try {
+        guard(owner);
+      } catch (err) {
+        return Promise.reject(err);
+      }
+    }
     if (rolling) return Promise.reject(new Error('a roll is in progress; roll back once it has finished'));
     const back = standby;
     if (!back || back.exited) return Promise.reject(new Error('no previous generation to roll back to (none kept, or its hold expired)'));
@@ -465,6 +523,7 @@ function createSupervisor({
       workerPort: current ? current.port : null,
       standby: standby && !standby.exited ? { generation: standby.n, pid: standby.pid } : null,
       rolling: !!rolling,
+      deployLock: lockHeld() ? { owner: deployLock.owner, since: deployLock.since, until: new Date(deployLock.until).toISOString() } : null,
       generations: [...gens].map((g) => ({ n: g.n, pid: g.pid, port: g.port, inflight: g.inflight, streams: g.streams.size, requests: inFlight(g) })),
     };
   }
@@ -608,15 +667,19 @@ function createSupervisor({
           const nl = buf.indexOf('\n');
           if (nl < 0) return;
           let cmd;
+          let msg;
           try {
-            cmd = JSON.parse(buf.slice(0, nl)).cmd;
+            msg = JSON.parse(buf.slice(0, nl));
+            cmd = msg.cmd;
           } catch {
             return sock.end(JSON.stringify({ ok: false, error: 'bad request' }) + '\n');
           }
           let reply;
           try {
-            if (cmd === 'roll') reply = await roll();
-            else if (cmd === 'rollback') reply = await rollback();
+            if (cmd === 'roll') reply = await roll({ owner: msg.owner || null });
+            else if (cmd === 'rollback') reply = await rollback({ owner: msg.owner || null });
+            else if (cmd === 'lock') reply = lock(msg.owner, msg.ttlMs);
+            else if (cmd === 'unlock') reply = unlock(msg.owner);
             else if (cmd === 'status') reply = status();
             else reply = { ok: false, error: `unknown command ${cmd}` };
           } catch (err) {
@@ -644,7 +707,7 @@ function createSupervisor({
     }
     await serveControl(where);
     say('info', 'listening', { url: `http://${host}:${publicPort()}/`, control: where });
-    await roll();
+    await roll({ internal: true });
     return status();
   }
 
@@ -660,7 +723,7 @@ function createSupervisor({
     await Promise.all([...gens].map((g) => stopGeneration(g)));
   }
 
-  return { start, roll, rollback, status, close, server, controlPath: () => (control ? control.address() : null) };
+  return { start, roll, rollback, lock, unlock, status, close, server, controlPath: () => (control ? control.address() : null) };
 }
 
 // One JSON line to a supervisor's control socket; resolves with its answer.

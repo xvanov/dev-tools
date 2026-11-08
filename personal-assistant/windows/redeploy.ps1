@@ -103,8 +103,10 @@ try {
   } finally { Pop-Location }
   $head = (& git -C $PaDir rev-parse HEAD 2>$null).Trim()
 
-  # 0 done (or nothing to do), 1 failed and rolled back, 3 no supervisor, 4 supervisor changed.
+  # 0 done (or nothing to do), 1 failed and rolled back, 3 no supervisor, 4 supervisor changed,
+  # 5 refused: another deploy is running.
   if ($code -eq 0 -and -not $taskChanged) { return }
+  if ($code -eq 5) { Write-Host "stack update: refused - another deploy is running (see above). Nothing changed." -ForegroundColor Yellow; return }
   if ($code -eq 1) { Write-Host "stack update: the deploy did not take; the lines above say which generation serves." -ForegroundColor Yellow; return }
   if (-not $hasTask) { Say "no pa-worker task on this machine - skipping the restart."; return }
   # 3, 4, or the task was just rewritten to the supervisor (the one-time bootstrap).

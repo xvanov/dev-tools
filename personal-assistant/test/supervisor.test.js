@@ -257,6 +257,7 @@ async function main() {
       }
       const nothing = await request(cp2, { cmd: 'rollback' });
       assert.strictEqual(nothing.ok, false, 'no standby before the first roll');
+
       const r2 = await request(cp2, { cmd: 'roll' });
       assert.strictEqual(r2.generation, 2);
       assert.deepStrictEqual(r2.standby, { generation: 1, pid: g1pid });
@@ -289,6 +290,27 @@ async function main() {
       assert.strictEqual(sup2.status().standby, null);
       assert.strictEqual((await request(cp2, { cmd: 'rollback' })).ok, false);
       assert.match(sup2.status().source, /^[0-9a-f]{12}$/);
+      // The deploy lock: while one deploy holds it, another's roll, rollback
+      // or lock is refused with who holds it; its own go through.
+      const genBefore = sup2.status().generation;
+      const held = await request(cp2, { cmd: 'lock', owner: 'deploy A' });
+      assert.strictEqual(held.ok, true, JSON.stringify(held));
+      assert.strictEqual(held.deployLock.owner, 'deploy A');
+      for (const msg of [{ cmd: 'roll' }, { cmd: 'roll', owner: 'deploy B' }, { cmd: 'rollback', owner: 'deploy B' }, { cmd: 'lock', owner: 'deploy B' }]) {
+        const r = await request(cp2, msg);
+        assert.strictEqual(r.ok, false, `${JSON.stringify(msg)} went through a held lock`);
+        assert.match(r.error, /refused: another deploy holds the supervisor \(deploy A/);
+      }
+      assert.strictEqual(sup2.status().generation, genBefore, 'a refused roll changed nothing');
+      // Two rolls at once from the holder: the second is refused, not merged.
+      const [ra, rb] = await Promise.all([request(cp2, { cmd: 'roll', owner: 'deploy A' }), request(cp2, { cmd: 'roll', owner: 'deploy A' })]);
+      assert.deepStrictEqual([ra.ok, rb.ok].sort(), [false, true]);
+      assert.match((ra.ok ? rb : ra).error, /a roll is already in progress/);
+      assert.strictEqual((await request(cp2, { cmd: 'unlock', owner: 'deploy A' })).deployLock, null);
+      // The lock expires: a deploy that died cannot wedge the supervisor.
+      await request(cp2, { cmd: 'lock', owner: 'dead deploy', ttlMs: 1000 });
+      await sleep(1200);
+      assert.strictEqual(sup2.status().deployLock, null);
     } finally {
       const last = sup2.status().generations.map((g) => g.pid);
       await sup2.close();
