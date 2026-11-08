@@ -24,7 +24,7 @@
 // row is the digest itself and always pushes: you chose its times.
 
 const { config } = require('../config');
-const { one, rows, query } = require('../db');
+const repo = require('../repo');
 const { logger } = require('../log');
 const budget = require('./budget');
 const ntfy = require('./ntfy');
@@ -72,7 +72,7 @@ async function notify({ kind, title, body = '', url = null, dedupeKey = null, to
   if (!KINDS.includes(kind)) throw new Error(`unknown notification kind "${kind}"`);
   if (!budget.PRIORITIES.includes(priority)) throw new Error(`unknown priority "${priority}"`);
   // Dedupe before anything is decided: a repeat must not spend budget.
-  if (dedupeKey && (await one('select 1 from notification where dedupe_key = $1', [dedupeKey]))) return null;
+  if (dedupeKey && (await repo.notifications.exists(dedupeKey))) return null;
 
   const now = new Date();
   const verdict = !show
@@ -88,13 +88,9 @@ async function notify({ kind, title, body = '', url = null, dedupeKey = null, to
           now,
         });
 
-  const row = await one(
-    `insert into notification (kind, title, body, url, dedupe_key, priority, delivery)
-     values ($1,$2,$3,$4,$5,$6,$7)
-     on conflict (dedupe_key) do nothing
-     returning *`,
-    [kind, String(title).slice(0, 300), String(body).slice(0, 8000), url, dedupeKey, priority, verdict.delivery]
-  );
+  const row = await repo.notifications.insert({
+    kind, title: String(title).slice(0, 300), body: String(body).slice(0, 8000), url, dedupeKey, priority, delivery: verdict.delivery,
+  });
   if (!row) return null;
   if (verdict.delivery === 'push') {
     const sent = [];
@@ -104,10 +100,7 @@ async function notify({ kind, title, body = '', url = null, dedupeKey = null, to
     if (chat.inbox) sent.push('chat');
     if (chat.nudged) sent.push('chat-nudge');
     if (sent.length) {
-      await query(
-        `update notification set channel_sent = $2::text[], toasted_at = case when $3::boolean then now() else toasted_at end where id = $1`,
-        [row.id, sent, ok]
-      );
+      await repo.notifications.markSent(row.id, sent, ok);
       row.channel_sent = sent;
     }
   }
@@ -126,28 +119,19 @@ function quietHours() {
 }
 
 async function weightOf(kind) {
-  const r = await one('select weight from attention_weight where kind = $1', [kind]).catch(() => null);
-  return r ? Number(r.weight) : 1;
+  return (await repo.notifications.weight(kind).catch(() => null)) ?? 1;
 }
 
 async function pushedSince(start) {
-  const r = await one(
-    `select count(*)::int as n from notification where delivery = 'push' and kind <> 'digest' and created_at >= $1`,
-    [start]
-  );
-  return r ? r.n : 0;
+  return repo.notifications.pushedSince(start);
 }
 
 async function feed({ limit = 30, unreadOnly = false } = {}) {
-  return rows(
-    `select * from notification ${unreadOnly ? 'where read_at is null' : ''}
-      order by created_at desc limit $1`,
-    [limit]
-  );
+  return repo.notifications.feed({ limit, unreadOnly });
 }
 
 async function markRead(id) {
-  await query('update notification set read_at = coalesce(read_at, now()) where id = $1', [id]);
+  await repo.notifications.markRead(id);
   // The PA chat's INBOX.md lists unread pushes; an acked one leaves it.
   await require('./chat').writeInbox().catch(() => {});
 }
@@ -159,28 +143,21 @@ async function markRead(id) {
  */
 async function feedback(id, value) {
   if (value !== 'up' && value !== 'down' && value !== null) throw new Error('feedback is up, down or null');
-  const { withTx } = require('../db');
-  return withTx(async (client) => {
-    const { rows: found } = await client.query('select * from notification where id = $1 for update', [id]);
-    const n = found[0];
+  return repo.withTx(async (r) => {
+    const n = await r.notifications.lockById(id);
     if (!n) throw new Error(`no notification #${id}`);
     const kind = budget.attentionKind(n);
-    const { rows: w } = await client.query('select weight from attention_weight where kind = $1 for update', [kind]);
-    const before = w[0] ? Number(w[0].weight) : 1;
+    const before = (await r.notifications.lockWeight(kind)) ?? 1;
     const after = budget.nextWeight(before, n.feedback || null, value);
-    await client.query('update notification set feedback = $2, feedback_at = now() where id = $1', [id, value]);
-    await client.query(
-      `insert into attention_weight (kind, weight, updated_at) values ($1, $2, now())
-       on conflict (kind) do update set weight = excluded.weight, updated_at = now()`,
-      [kind, after]
-    );
+    await r.notifications.setFeedback(id, value);
+    await r.notifications.setWeight(kind, after);
     log.info('feedback', { id, kind, value, before, after });
     return { id: Number(id), kind, feedback: value, weight: after, previous: before };
   });
 }
 
 async function weights() {
-  return rows('select kind, weight, updated_at from attention_weight order by weight, kind');
+  return repo.notifications.weights();
 }
 
 module.exports = { notify, feed, markRead, feedback, weights, toast, toastXml, dashboardUrl, quietHours, KINDS };

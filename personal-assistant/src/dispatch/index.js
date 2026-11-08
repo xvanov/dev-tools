@@ -302,11 +302,11 @@ async function start({
     if (cleared.length) log.info('removed an old shared push block', { repo, remotes: cleared });
   }
 
-  const run = await require('./runRow').insertRun(
-    `insert into run (commitment_id, mode, task, repo_path, status, machine, route, route_reason, kind,
-                      delivery, delivery_requested, delivery_source)
-     values ($1,$2,$3,$4,'starting',$5,'claude',$6,$7,$8,$8,$9) returning *`,
-    [commitmentId, m.name, label, repo, os.hostname(), routeReason, target.commitment?.kind || null, chosen.delivery, chosen.source],
+  const run = await require('../repo').runs.insertClaude(
+    {
+      commitmentId, mode: m.name, task: label, repoPath: repo, machine: os.hostname(), routeReason,
+      kind: target.commitment?.kind || null, delivery: chosen.delivery, deliverySource: chosen.source,
+    },
     { commitmentId, again }
   );
 
@@ -453,11 +453,11 @@ async function startRemote({ commitmentId, task, modeName, repoPath, machineName
   }
   const repo = remote.remoteRepoPath(machine, target.repoPath);
 
-  const run = await require('./runRow').insertRun(
-    `insert into run (commitment_id, mode, task, repo_path, status, machine, route, route_reason, kind,
-                      delivery, delivery_requested, delivery_source)
-     values ($1,$2,$3,$4,'starting',$5,'claude',$6,$7,$8,$8,$9) returning *`,
-    [commitmentId, m.name, label, repo, machine.name, routeReason, target.commitment?.kind || null, chosen.delivery, chosen.source],
+  const run = await require('../repo').runs.insertClaude(
+    {
+      commitmentId, mode: m.name, task: label, repoPath: repo, machine: machine.name, routeReason,
+      kind: target.commitment?.kind || null, delivery: chosen.delivery, deliverySource: chosen.source,
+    },
     { commitmentId, again }
   );
   const branch = `pa/${run.id}-${slug(label)}`;

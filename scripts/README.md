@@ -37,6 +37,14 @@ Per-tool settings live in `<tool>/test/runner.config.js` (every `skip` and `seri
   connects to a database not named `pa_test_*`, and the runner points `PA_DATABASE_URL` at a blocked name. A test
   that only reaches the db incidentally uses `require('./_fakeDb').install()` first; one that needs real rows
   creates a throwaway `pa_test_*` database. Pinned by `personal-assistant/test/dbGuard.test.js`.
+  The one that does is the repository contract (`personal-assistant/test/repoContract.test.js`, plan 1.3): it
+  creates `pa_test_contract_<pid>_<rand>` on the server `PA_TEST_PG_URL` names (any database there, e.g.
+  `postgres://pa:pa@127.0.0.1:5433/postgres`; CI's contract job sets it), migrates it and drops it. Unset, it tries
+  that local default and skips when it is unreachable. The role needs `CREATEDB`, and since `vector` and `pg_trgm`
+  need a superuser to create, a template holding them lets a plain role migrate. One-time setup on a stack's server
+  (done on the work laptop's WSL Postgres, port 5433):
+  `alter role pa createdb; create database pa_test_template owner pa;` then, in `pa_test_template`,
+  `create extension vector; create extension pg_trgm; alter database pa_test_template is_template true;`.
 - A test that starts a PTY (termhub) must kill it and wait for it before removing its temp dir.
   `Session.kill()` does that on Windows (`taskkill /T /F`, then waits); remove dirs with
   `fs.rmSync(dir, { recursive: true, force: true, maxRetries: 30, retryDelay: 100 })`.

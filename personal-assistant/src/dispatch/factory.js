@@ -320,12 +320,12 @@ async function start({
   D.requireConfirmed(chosen.delivery, confirmedUnattended);
 
   const install = await installId();
-  const run = await require('./runRow').insertRun(
-    `insert into run (commitment_id, mode, task, repo_path, status, machine, route, route_reason, kind,
-                      pipeline, delivery_requested, models, delivery_source, job_kind, runtime)
-     values ($1,$2,$3,$4,'starting',$5,'factory',$6,$7,$8,$9,$10,$11,$12,$13) returning *`,
-    [commitmentId, runMode, label, target.repoPath || null, where || os.hostname(), routeReason, target.commitment?.kind || null,
-      pipe, chosen.delivery, Object.keys(overrides).length ? overrides : null, chosen.source, kind, rt],
+  const run = await require('../repo').runs.insertFactory(
+    {
+      commitmentId, mode: runMode, task: label, repoPath: target.repoPath || null, machine: where || os.hostname(),
+      routeReason, kind: target.commitment?.kind || null, pipeline: pipe, deliveryRequested: chosen.delivery,
+      models: Object.keys(overrides).length ? overrides : null, deliverySource: chosen.source, jobKind: kind, runtime: rt,
+    },
     // The idempotency key, in the insert's own transaction: before anything is sent.
     { commitmentId, again, externalId: (row) => F.externalKey(install, row.id) }
   );

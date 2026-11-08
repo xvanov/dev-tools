@@ -70,7 +70,11 @@ async function one(text, params) {
 }
 
 async function withTx(fn) {
-  const client = await getPool().connect();
+  return txOn(getPool(), fn);
+}
+
+async function txOn(p, fn) {
+  const client = await p.connect();
   try {
     await client.query('BEGIN');
     const result = await fn(client);
@@ -97,6 +101,27 @@ async function close() {
   }
 }
 
+/**
+ * A backend over its own pool for `url`, with the same interface as this
+ * module (query, rows, one, withTx, close). The repository layer (src/repo)
+ * runs on any backend; the contract tests (test/repoContract.test.js) make one
+ * for a throwaway pa_test_* database. The test guard applies to it as well.
+ */
+function createBackend(url, { max = 5 } = {}) {
+  assertSafeForTests(url);
+  const p = new Pool({ connectionString: url, max, idleTimeoutMillis: 10_000, connectionTimeoutMillis: 15_000 });
+  p.on('error', () => {});
+  const q = (text, params) => p.query(text, params);
+  return {
+    query: q,
+    rows: async (text, params) => (await q(text, params)).rows,
+    one: async (text, params) => (await q(text, params)).rows[0] ?? null,
+    withTx: (fn) => txOn(p, fn),
+    close: () => p.end(),
+    pool: p,
+  };
+}
+
 // Cheap liveness + capability probe for `pa doctor`.
 async function probe() {
   const r = await query(
@@ -106,4 +131,4 @@ async function probe() {
   return r.rows[0];
 }
 
-module.exports = { assertSafeForTests, getPool, query, rows, one, withTx, close, probe };
+module.exports = { assertSafeForTests, getPool, query, rows, one, withTx, close, probe, createBackend };

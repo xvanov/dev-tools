@@ -33,7 +33,7 @@ const world = {
 };
 const store = { queries: [], nextRun: 70 };
 
-// The guarded run insert (src/dispatch/runRow.js) runs in a transaction: the
+// The guarded run insert (src/repo/runs.js) runs in a transaction: the
 // same stub answers its queries, and the live-run re-check sees store.liveRun.
 function stubTx(db) {
   db.withTx = async (fn) => fn({

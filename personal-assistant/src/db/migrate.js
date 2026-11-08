@@ -15,8 +15,12 @@ const { logger } = require('../log');
 const log = logger('migrate');
 const SQL_DIR = path.resolve(__dirname, '..', '..', 'sql');
 
-async function ensureRegistry() {
-  await query(`
+// `db` defaults to the process's pool (src/db); the contract tests pass a
+// backend for their throwaway database (src/db createBackend).
+const POOL = { withTx, query };
+
+async function ensureRegistry(db = POOL) {
+  await db.query(`
     create table if not exists schema_migration (
       version    text primary key,
       applied_at timestamptz not null default now()
@@ -31,8 +35,8 @@ function migrationFiles() {
     .sort();
 }
 
-async function applied() {
-  const r = await query('select version from schema_migration');
+async function applied(db = POOL) {
+  const r = await db.query('select version from schema_migration');
   return new Set(r.rows.map((row) => row.version));
 }
 
@@ -44,9 +48,9 @@ function expandIncludes(sql) {
   return sql.replace(/^-- include: (\S+)\s*$/gm, (_, rel) => fs.readFileSync(path.resolve(SQL_DIR, rel), 'utf8'));
 }
 
-async function migrate() {
-  await ensureRegistry();
-  const done = await applied();
+async function migrate(db = POOL) {
+  await ensureRegistry(db);
+  const done = await applied(db);
   const pending = migrationFiles().filter((f) => !done.has(f));
 
   if (!pending.length) {
@@ -58,7 +62,7 @@ async function migrate() {
     // A byte-order mark (an editor's, on Windows) is a syntax error to Postgres:
     // 032 shipped with one and stopped every worker that had not applied it yet.
     const sql = expandIncludes(fs.readFileSync(path.join(SQL_DIR, file), 'utf8').replace(/^﻿/, ''));
-    await withTx(async (client) => {
+    await db.withTx(async (client) => {
       await client.query(sql);
       await client.query('insert into schema_migration (version) values ($1)', [file]);
     });

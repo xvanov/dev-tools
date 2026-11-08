@@ -1,0 +1,74 @@
+'use strict';
+
+// The repository layer (native plan 1.2): every SQL statement the PA runs
+// lives in one of the aggregate modules in this directory, behind a named,
+// documented method. Code outside src/repo (and src/db, which owns the pool and
+// migrations) never writes SQL. That is what lets phase 3 swap Postgres for
+// SQLite: a second backend implements the same methods, and the contract tests
+// (test/repoContract.test.js, test/contract/*.contract.js) are the oracle both
+// must pass.
+//
+// Shape:
+//   const repo = require('../repo');
+//   await repo.notifications.feed({ limit: 30 });
+//   await repo.withTx(async (r) => { await r.notifications.lockById(id); ... });
+//
+// Each aggregate module exports `create(db, repos)`, where `db` is a backend
+// with src/db's interface ({query, rows, one, withTx}) and `repos` is the set it
+// belongs to (for an aggregate that needs another). The default set runs on the
+// process's pool and resolves src/db at CALL time, so a test that stubs src/db
+// in require.cache (test/_fakeDb.js, or a SQL-matching fake) still answers every
+// query, before or after this module loads. `withTx(fn)` hands `fn` a set bound
+// to one transaction's client; inside it, a nested withTx joins the same
+// transaction.
+//
+// Adding an aggregate: a file here exporting create(), a line in AGGREGATES,
+// and a contract file in test/contract/ covering every method (1.3).
+
+const AGGREGATES = {
+  events: () => require('./events'),
+  notifications: () => require('./notifications'),
+  runs: () => require('./runs'),
+};
+
+/** A backend over a transaction's client: its query, and withTx that joins it. */
+function clientBackend(client) {
+  const query = (text, params) => client.query(text, params);
+  const b = {
+    query,
+    rows: async (text, params) => (await query(text, params)).rows,
+    one: async (text, params) => (await query(text, params)).rows[0] ?? null,
+    withTx: (fn) => fn(client),
+    inTx: true,
+  };
+  return b;
+}
+
+/** The repository set over `db` (a backend with src/db's interface). */
+function createRepos(db) {
+  const repos = {};
+  for (const [name, load] of Object.entries(AGGREGATES)) {
+    let made = null;
+    Object.defineProperty(repos, name, {
+      enumerable: true,
+      get: () => (made ||= load().create(db, repos)),
+    });
+  }
+  /** Runs fn(reposInTx) in one transaction (joins an open one). */
+  repos.withTx = (fn) => (db.inTx ? fn(repos) : db.withTx((client) => fn(createRepos(clientBackend(client)))));
+  repos.backend = db;
+  return repos;
+}
+
+// The process's pool, resolved per call (see above).
+const poolBackend = {
+  query: (text, params) => require('../db').query(text, params),
+  rows: (text, params) => require('../db').rows(text, params),
+  one: (text, params) => require('../db').one(text, params),
+  withTx: (fn) => require('../db').withTx(fn),
+};
+
+module.exports = createRepos(poolBackend);
+module.exports.createRepos = createRepos;
+module.exports.clientBackend = clientBackend;
+module.exports.AGGREGATES = Object.keys(AGGREGATES);

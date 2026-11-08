@@ -268,12 +268,28 @@ run mid-step; a job continued on an existing branch (`--branch`).
 
 ## Phase 1: contracts and the repository layer
 
-- [ ] **1.1 JSON Schemas (D15)** for Job, Run, Card, Event, Approval, mirroring JOBS-API v1.3
-  and the MCP tools. One source; TS types generated; Python and Rust validate against it.
+- [x] **1.1 JSON Schemas (D15)** for Job, Run, Card, Event, Approval, mirroring JOBS-API v1.4
+  and the MCP tools. One source; TS types generated; Python and Rust validate against it. (52d2b79)
+  `schemas/*.schema.json` at the repo root; `schemas/gen-types.js` writes `types.d.ts`; the PA
+  validates with the dependency-free `schemas/index.js` (it throws on any keyword it does not
+  implement, so it never means less than Python's), the factory with `factory/contract_schemas.py`
+  (`jsonschema`). Tested on both sides against real objects (job status, chainOf/runChain, card
+  and board views, bus frames, permission prompts). Rust validates when Rust lands (phase 5).
 - [ ] **1.2 Repository interface** over today's Postgres: every one of the ~590 SQL call sites
   goes through a typed repository method. No behaviour change.
+  Scope: the PA only (579 sites in 69 modules; termhub has no SQL). The factory keeps its own
+  SQLModel/SQLite store: it is Python and stays so (D15), JOBS-API v1.4 already keeps the PA out
+  of it, and it is SQLite already, so phase 3 has nothing to move there. Shape: `src/repo/<aggregate>.js`
+  exports `create(db)` with named, JSDoc-typed methods; `repo.withTx(fn)` gives `fn` the set bound
+  to one transaction; the default set resolves `src/db` at call time, so tests that stub `src/db`
+  keep working. SQL text moves verbatim. `test/repoBoundary.test.js` lists the modules not yet
+  converted (it may only shrink) and fails on SQL anywhere else.
 - [ ] **1.3 Contract tests** for every repository method, runnable against any backend. This is
   the oracle for phase 3.
+  `test/repoContract.test.js` runs `test/contract/<aggregate>.contract.js` against each backend in
+  `test/contract/_backends.js` (today Postgres: a throwaway `pa_test_contract_*` database, migrated,
+  dropped; phase 3 adds SQLite), and fails when an aggregate method has no case. CI runs it in its own
+  job with a pgvector service container; locally it uses the work stack's server (scripts/README.md).
 - [ ] **1.4 Events outbox table** + one SSE endpoint with `Last-Event-ID` replay.
 - [ ] **Exit 1:** all SQL behind repositories; contract tests green on Postgres.
 

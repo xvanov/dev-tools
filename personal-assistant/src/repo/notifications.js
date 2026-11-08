@@ -1,0 +1,115 @@
+'use strict';
+
+// Aggregate: notifications. Tables: notification (the feed every proactive
+// message lands in) and attention_weight (your thumbs, per attention kind).
+// Callers: src/notify (index.js, digest.js, chat.js).
+
+/**
+ * @typedef {object} NotificationRow
+ * @property {number|string} id
+ * @property {string} kind
+ * @property {string} title
+ * @property {string} body
+ * @property {string|null} url
+ * @property {string|null} dedupe_key
+ * @property {string} priority    urgent | normal | digest
+ * @property {string} delivery    push | digest | feed
+ * @property {string[]|null} channel_sent
+ * @property {Date|null} toasted_at
+ * @property {Date|null} read_at
+ * @property {string|null} feedback  up | down | null
+ * @property {Date|null} feedback_at
+ * @property {Date} created_at
+ */
+
+function create(db) {
+  return {
+    /** Whether a notification with this dedupe key exists. */
+    async exists(dedupeKey) {
+      return Boolean(await db.one('select 1 from notification where dedupe_key = $1', [dedupeKey]));
+    },
+
+    /**
+     * Inserts one; null when its dedupe key is taken (a repeat is a no-op).
+     * @returns {Promise<NotificationRow|null>}
+     */
+    async insert({ kind, title, body, url, dedupeKey, priority, delivery }) {
+      return db.one(
+        `insert into notification (kind, title, body, url, dedupe_key, priority, delivery)
+     values ($1,$2,$3,$4,$5,$6,$7)
+     on conflict (dedupe_key) do nothing
+     returning *`,
+        [kind, title, body, url, dedupeKey, priority, delivery]
+      );
+    },
+
+    /** Records the channels a push went out on; `toasted` stamps toasted_at. */
+    async markSent(id, channels, toasted) {
+      await db.query(
+        `update notification set channel_sent = $2::text[], toasted_at = case when $3::boolean then now() else toasted_at end where id = $1`,
+        [id, channels, toasted]
+      );
+    },
+
+    /** Pushes (not the digest itself) created at or after `start`. */
+    async pushedSince(start) {
+      const r = await db.one(
+        `select count(*)::int as n from notification where delivery = 'push' and kind <> 'digest' and created_at >= $1`,
+        [start]
+      );
+      return r ? r.n : 0;
+    },
+
+    /** The feed, newest first. @returns {Promise<NotificationRow[]>} */
+    async feed({ limit = 30, unreadOnly = false } = {}) {
+      return db.rows(
+        `select * from notification ${unreadOnly ? 'where read_at is null' : ''}
+      order by created_at desc limit $1`,
+        [limit]
+      );
+    },
+
+    /** Marks one read (the first read time is kept). */
+    async markRead(id) {
+      await db.query('update notification set read_at = coalesce(read_at, now()) where id = $1', [id]);
+    },
+
+    /** One notification, locked for update (inside withTx). @returns {Promise<NotificationRow|null>} */
+    async lockById(id) {
+      return db.one('select * from notification where id = $1 for update', [id]);
+    },
+
+    /** Sets your thumb on one. `value`: up | down | null. */
+    async setFeedback(id, value) {
+      await db.query('update notification set feedback = $2, feedback_at = now() where id = $1', [id, value]);
+    },
+
+    /** The weight of an attention kind, or null when it has none (callers treat that as 1). */
+    async weight(kind) {
+      const r = await db.one('select weight from attention_weight where kind = $1', [kind]);
+      return r ? Number(r.weight) : null;
+    },
+
+    /** weight(), locked for update (inside withTx). */
+    async lockWeight(kind) {
+      const r = await db.one('select weight from attention_weight where kind = $1 for update', [kind]);
+      return r ? Number(r.weight) : null;
+    },
+
+    /** Sets an attention kind's weight. */
+    async setWeight(kind, weight) {
+      await db.query(
+        `insert into attention_weight (kind, weight, updated_at) values ($1, $2, now())
+       on conflict (kind) do update set weight = excluded.weight, updated_at = now()`,
+        [kind, weight]
+      );
+    },
+
+    /** Every attention weight, lowest first. */
+    async weights() {
+      return db.rows('select kind, weight, updated_at from attention_weight order by weight, kind');
+    },
+  };
+}
+
+module.exports = { create };

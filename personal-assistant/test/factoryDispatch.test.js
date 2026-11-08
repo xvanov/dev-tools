@@ -271,7 +271,7 @@ const store = { queries: [], watched: [], nextId: 7 };
 const INSTALL = '0f1e2d3c-4b5a-6978-8a9b-acbdcedf0011';
 const KEY = `${INSTALL}-7`;
 
-// The guarded run insert (src/dispatch/runRow.js) runs in a transaction: the
+// The guarded run insert (src/repo/runs.js) runs in a transaction: the
 // same stub answers its queries, and the live-run re-check sees store.liveRun.
 function stubTx(db) {
   db.withTx = async (fn) => fn({
@@ -763,20 +763,23 @@ async function factoryRegister() {
 // --- MUST-FIX 15: one live run per commitment, under a lock --------------------------
 
 async function liveRunGuard() {
-  const { insertRun, LOCK_SPACE } = require('../src/dispatch/runRow');
+  const { LOCK_SPACE } = require('../src/repo/runs');
+  const { runs } = require('../src/repo');
+  const v = { commitmentId: 31, mode: 'mr', task: 't', repoPath: null, machine: 'm', routeReason: null, kind: null, delivery: 'pr', deliverySource: 'default' };
   global.__txLocks = [];
   global.__liveRun = { id: 99 };
-  await assert.rejects(insertRun('insert into run (x) values ($1) returning *', [1], { commitmentId: 31 }), (e) => e.code === 'live_run' && /#31 already has run #99/.test(e.message));
+  await assert.rejects(runs.insertClaude(v, { commitmentId: 31 }), (e) => e.code === 'live_run' && /#31 already has run #99/.test(e.message));
   assert.deepStrictEqual(global.__txLocks, [[LOCK_SPACE, 31]], 'the re-check runs under the commitment\'s lock');
-  const again = await insertRun('insert into run (x) values ($1) returning *', [1], { commitmentId: 31, again: true });
+  const again = await runs.insertClaude(v, { commitmentId: 31, again: true });
   assert.strictEqual(again.id, store.nextId, '--again starts a second one on purpose');
   global.__liveRun = null;
-  assert.strictEqual((await insertRun('insert into run (x) values ($1) returning *', [1], { commitmentId: 31 })).id, store.nextId);
+  assert.strictEqual((await runs.insertClaude(v, { commitmentId: 31 })).id, store.nextId);
   store.queries.length = 0;
-  // Every run insert goes through it.
+  // Every run insert goes through the guarded repository methods.
   for (const f of ['index.js', 'factory.js']) {
     const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'dispatch', f), 'utf8');
-    assert.ok(!/await one\(\s*`insert into run/.test(src), `${f}: no unguarded run insert`);
+    assert.ok(!/insert into run\b/.test(src), `${f}: no run insert outside src/repo/runs.js`);
+    assert.ok(/runs\.insert(Claude|Factory)\(/.test(src), `${f}: inserts through the runs repository`);
   }
 }
 
