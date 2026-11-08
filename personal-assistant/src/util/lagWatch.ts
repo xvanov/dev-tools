@@ -6,12 +6,22 @@
 // with what was running, so the next one names its cause.
 //
 // A chained setTimeout, unref'd: it never keeps the process alive.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
 
-function watchLag({ log, everyMs = 250, thresholdMs = 1000, running = () => [], timers = { setTimeout, clearTimeout }, now = Date.now } = {}) {
-  let t = null;
+interface LagLog {
+  warn(message: string, fields?: Record<string, unknown>): unknown;
+}
+interface LagTimers {
+  setTimeout(fn: () => void, ms: number): { unref?: () => unknown };
+  clearTimeout(t: unknown): unknown;
+}
+
+function watchLag({ log, everyMs = 250, thresholdMs = 1000, running = () => [], timers = { setTimeout, clearTimeout }, now = Date.now }: { log?: LagLog | null; everyMs?: number; thresholdMs?: number; running?: () => unknown; timers?: LagTimers; now?: () => number } = {}) {
+  let t: { unref?: () => unknown } | null = null;
   let stopped = false;
   let worst = 0;
-  const tick = (expected) => {
+  const tick = (expected: number): void => {
     if (stopped) return;
     const lag = now() - expected;
     if (lag > worst) worst = lag;

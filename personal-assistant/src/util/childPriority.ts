@@ -15,17 +15,21 @@
 // through ChildProcess.prototype.spawn; the sync ones (spawnSync,
 // execFileSync) do not and keep Normal, which is fine — they are short, and
 // the worker avoids them on any repeated path.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+type SetPriority = (pid: number, priority?: number) => void;
 
 const os = require('os');
 const { ChildProcess } = require('child_process');
 
 let installed = false;
 
-function lowerChildren({ priority = os.constants.priority.PRIORITY_BELOW_NORMAL, setPriority = os.setPriority } = {}) {
+function lowerChildren({ priority = os.constants.priority.PRIORITY_BELOW_NORMAL, setPriority = os.setPriority }: { priority?: number; setPriority?: SetPriority } = {}): boolean {
   if (installed) return false;
   installed = true;
   const original = ChildProcess.prototype.spawn;
-  ChildProcess.prototype.spawn = function spawnLowered(...args) {
+  ChildProcess.prototype.spawn = function spawnLowered(this: { pid?: number }, ...args: unknown[]) {
     const r = original.apply(this, args);
     if (this.pid) {
       try {
@@ -45,7 +49,7 @@ function lowerChildren({ priority = os.constants.priority.PRIORITY_BELOW_NORMAL,
 // CPU, stalled for seconds, and live deploys failed their health watch and
 // rolled back. Their own work is light (the heavy work is in children, which
 // lowerChildren keeps below normal), so this costs the machine nothing.
-function serveAboveNormal({ setPriority = os.setPriority } = {}) {
+function serveAboveNormal({ setPriority = os.setPriority }: { setPriority?: SetPriority } = {}): boolean {
   try {
     setPriority(os.constants.priority.PRIORITY_ABOVE_NORMAL);
     return true;

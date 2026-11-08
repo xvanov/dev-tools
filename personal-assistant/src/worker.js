@@ -83,7 +83,7 @@ const supervised = process.env.PA_SUPERVISED === '1' && typeof process.send === 
 // runs only while this process holds the generation lease. Nothing in this
 // file may start background work any other way (test/lease.test.js checks).
 let ownership = null;
-const lease = require('./util/lease').createLease({
+const lease = require('./util/lease.ts').createLease({
   connect: () => db.getPool().connect(),
   // Supervised, the next generation must take over within 2 s of the old one
   // letting go; unsupervised, a second worker only waits for the first to die.
@@ -123,8 +123,8 @@ async function main() {
   // Below normal for everything the worker starts, not for the worker: it
   // serves the dashboard, and a below-normal process gets no CPU at all
   // while other work fills every core (src/util/childPriority.js).
-  require('./util/childPriority').lowerChildren();
-  require('./util/childPriority').serveAboveNormal();
+  require('./util/childPriority.ts').lowerChildren();
+  require('./util/childPriority.ts').serveAboveNormal();
 
   // The supervisor's messages (src/supervisor): `drain` once routing has moved
   // to the next generation — stop the schedulers and release the lease now,
@@ -159,7 +159,7 @@ async function main() {
   });
 
   // A blocked loop answers nothing, /healthz included: say so, with what ran.
-  require('./util/lagWatch').watchLag({ log, running: () => sched.running() });
+  require('./util/lagWatch.ts').watchLag({ log, running: () => sched.running() });
 
   // A pass whose model cannot do its job (a connector relay set to a
   // non-Claude-Code backend, an unknown provider) is said once, loudly, at
@@ -552,7 +552,7 @@ const memoryPass = (file, opts) => () => MEMORY_PASSES[file]().run(opts);
   // of every pass, two dashboards fighting for a port. The lease (a session
   // advisory lock on a dedicated connection) makes the second one wait; it is
   // released on `drain`, or the moment the holder dies.
-  ownership = require('./util/lease').createOwnership({ lease, scheduler: sched, log });
+  ownership = require('./util/lease.ts').createOwnership({ lease, scheduler: sched, log });
   const owned = ownership.takeOver();
   if (supervised) {
     // The live feed listens before this generation is routed to, so the

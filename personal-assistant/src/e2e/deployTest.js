@@ -422,7 +422,7 @@ async function run(argv, { log = (m) => process.stderr.write(`[deploy-test ${sta
   // This process's own stalls: a client that gets no CPU times requests out
   // that the server answered. Recorded so the report can tell them apart.
   const clientStalls = [];
-  const lag = require('../util/lagWatch').watchLag({ log: { warn: (m, f) => clientStalls.push({ at: stamp(), ms: f.ms }) }, thresholdMs: 1000 });
+  const lag = require('../util/lagWatch.ts').watchLag({ log: { warn: (m, f) => clientStalls.push({ at: stamp(), ms: f.ms }) }, thresholdMs: 1000 });
   log(`${o.live ? 'live' : 'spare'} stack at ${base}`);
   const rollsPlanned = o.live ? 1 : o.rolls;
   let term = null;

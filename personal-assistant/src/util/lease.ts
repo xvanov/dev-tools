@@ -25,14 +25,40 @@
 //
 // The old non-supervised guard was the same 7300 lock, held until exit; it
 // still is when nothing ever calls release().
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+type Db = import('../repo/types.ts').Db;
+
+/** A pg client used only for locks. */
+interface LockClient {
+  query(...args: unknown[]): Promise<unknown>;
+  release(err?: unknown): unknown;
+  on?(event: string, fn: (err: Error) => void): unknown;
+}
+interface LeaseLog {
+  info(message: string, fields?: Record<string, unknown>): unknown;
+  warn(message: string, fields?: Record<string, unknown>): unknown;
+  debug?(message: string, fields?: Record<string, unknown>): unknown;
+}
+interface Lease {
+  acquire(): Promise<boolean>;
+  release(): Promise<void>;
+  held(): boolean;
+}
+interface OwnershipScheduler {
+  start(): unknown;
+  stop(): Promise<unknown> | unknown;
+  running(): unknown;
+}
 
 const WORKER_KEY = 7300;
 const PASS_SPACE = 7301;
 
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /** The lock statements, on the lock connection (src/repo/leases.js). */
-function locksOn(client) {
+function locksOn(client: LockClient | Pick<Db, 'query'>) {
   const { createRepos, clientBackend } = require('../repo');
   return createRepos(clientBackend(client)).leases;
 }
@@ -42,27 +68,27 @@ function locksOn(client) {
  * onLost(err): the lock connection died while the lease was held (the locks
  * went with it); the owner must stop its passes and acquire again.
  */
-function createLease({ connect, pollMs = 500, log = null, key = WORKER_KEY, passSpace = PASS_SPACE, onLost = () => {} } = {}) {
-  let client = null;
+function createLease({ connect, pollMs = 500, log = null, key = WORKER_KEY, passSpace = PASS_SPACE, onLost = () => {} }: { connect: () => Promise<LockClient>; pollMs?: number; log?: LeaseLog | null; key?: number; passSpace?: number; onLost?: (err: Error) => unknown }) {
+  let client: LockClient | null = null;
   let held = false;
   let wanted = false; // an acquire() loop is running and has not been called off
   let attempt = 0; // bumps on every release(), so a stale acquire() loop knows it lost
 
-  async function lockClient() {
+  async function lockClient(): Promise<LockClient> {
     if (client) return client;
     const raw = await connect();
     // Every pass shares this one connection; pg wants one query at a time on
     // a client (overlapping ones are deprecated, and gone in pg 9), so queue.
-    let tail = Promise.resolve();
-    const c = Object.create(raw);
-    c.query = (...args) => {
+    let tail: Promise<unknown> = Promise.resolve();
+    const c: LockClient = Object.create(raw);
+    c.query = (...args: unknown[]) => {
       const run = tail.then(() => raw.query(...args));
       tail = run.catch(() => {});
       return run;
     };
-    c.release = (...args) => raw.release(...args);
-    c.on = (...args) => raw.on?.(...args);
-    c.on?.('error', (err) => {
+    c.release = (...args: unknown[]) => (raw.release as (...a: unknown[]) => unknown)(...args);
+    c.on = (...args: unknown[]) => (raw.on as ((...a: unknown[]) => unknown) | undefined)?.(...args);
+    c.on?.('error', (err: Error) => {
       if (client !== c) return;
       client = null;
       const was = held;
@@ -103,7 +129,7 @@ function createLease({ connect, pollMs = 500, log = null, key = WORKER_KEY, pass
         if (!warned && log) log.info('another worker generation holds the lease — waiting for it');
         warned = true;
       } catch (err) {
-        if (log) log.warn('lease check failed — retrying', { message: err.message });
+        if (log) log.warn('lease check failed — retrying', { message: (err as Error).message });
       }
       await sleep(pollMs);
     }
@@ -123,14 +149,14 @@ function createLease({ connect, pollMs = 500, log = null, key = WORKER_KEY, pass
    * Runs fn as pass `name` if this process holds the lease and no other process
    * is running that pass. Resolves to whether it ran.
    */
-  async function runPass(name, fn) {
+  async function runPass(name: string, fn: () => unknown) {
     if (!held || !client) return false;
     const c = client;
-    let got;
+    let got: boolean;
     try {
       got = await locksOn(c).tryPassLock(passSpace, name);
     } catch (err) {
-      if (log) log.warn('pass lock failed — skipping this tick', { name, message: err.message });
+      if (log) log.warn('pass lock failed — skipping this tick', { name, message: (err as Error).message });
       return false;
     }
     if (!got) {
@@ -169,9 +195,9 @@ function createLease({ connect, pollMs = 500, log = null, key = WORKER_KEY, pass
  * schedulers), hand over (stop the schedulers, release the lease), and recover
  * a lost lease. `scheduler` is src/util/scheduler.ts.
  */
-function createOwnership({ lease, scheduler, log = null, onOwned = () => {} }) {
+function createOwnership({ lease, scheduler, log = null, onOwned = () => {} }: { lease: Lease; scheduler: OwnershipScheduler; log?: LeaseLog | null; onOwned?: () => unknown }) {
   let want = false;
-  let taking = null;
+  let taking: Promise<boolean> | null = null;
 
   function takeOver() {
     want = true;
@@ -203,7 +229,7 @@ function createOwnership({ lease, scheduler, log = null, onOwned = () => {} }) {
     if (log) log.info('released the worker lease', { ms: Date.now() - t0, running: scheduler.running() });
   }
 
-  async function lost(err) {
+  async function lost(err: Error | null | undefined) {
     if (log) log.warn('lost the worker lease (lock connection died) — stopping passes and re-acquiring', { message: err && err.message });
     await scheduler.stop();
     if (want) {

@@ -68,7 +68,7 @@ const path = require('path');
 
 // ---- children run below normal; the worker itself does not ----
 async function priority() {
-  const { lowerChildren } = require('../src/util/childPriority');
+  const { lowerChildren } = require('../src/util/childPriority.ts');
   const calls = [];
   lowerChildren({ priority: 10, setPriority: (pid, p) => calls.push([pid, p]) });
   const { execFile } = require('child_process');
@@ -78,13 +78,13 @@ async function priority() {
   assert.deepStrictEqual(calls, [[pid, 10]], 'execFile children are lowered');
   const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'worker.js'), 'utf8');
   assert.ok(!/os'\)\.setPriority\(/.test(src), 'the worker must not lower itself: it serves the dashboard');
-  assert.ok(/childPriority'\)\.lowerChildren\(\)/.test(src));
-  assert.ok(/childPriority'\)\.serveAboveNormal\(\)/.test(src), 'the worker serves above normal');
+  assert.ok(/childPriority(?:\.ts)?'\)\.lowerChildren\(\)/.test(src));
+  assert.ok(/childPriority(?:\.ts)?'\)\.serveAboveNormal\(\)/.test(src), 'the worker serves above normal');
 }
 
 // ---- the stall detector names a blocked loop ----
 async function lag() {
-  const { watchLag } = require('../src/util/lagWatch');
+  const { watchLag } = require('../src/util/lagWatch.ts');
   const seen = [];
   const w = watchLag({ log: { warn: (m, f) => seen.push({ m, f }) }, everyMs: 20, thresholdMs: 150, running: () => ['distill'] });
   await new Promise((r) => setTimeout(r, 60));

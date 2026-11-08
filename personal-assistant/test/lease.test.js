@@ -8,7 +8,7 @@
 const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
-const { createLease, createOwnership } = require('../src/util/lease');
+const { createLease, createOwnership } = require('../src/util/lease.ts');
 const { createScheduler } = require('../src/util/scheduler.ts');
 const { passes } = require('../src/util/exclusive.ts');
 
