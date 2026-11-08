@@ -1077,9 +1077,9 @@
       },
       "health": "postgres",
       "details": {
-        "Migrations": "plain numbered SQL in personal-assistant/sql, applied by src/db/migrate.js at worker start",
+        "Migrations": "plain numbered SQL in personal-assistant/sql, applied by src/db/migrate.ts at worker start",
         "Repository layer (plan 1.2, 1.3)": "live: every SQL statement is in src/repo/<aggregate>.js behind a named method (src/repo/sqlite/ holds the SQLite twins, PA_DB); code elsewhere calls repo.<aggregate>.<method>() and repo.withTx(). test/repoBoundary.test.js fails on SQL or a db/pg require anywhere else (POOL_ONLY names the few that hold a connection), test/repoCalls.test.js on a call to a method that does not exist. test/repoContract.test.js runs every method's contract (test/contract/*.contract.js) on a throwaway pa_test_* Postgres database and on SQLite",
-        "Expand/contract (Z3)": "a roll runs the previous generation on the new schema, so after 032 every migration is additive; drops, renames, retypes and tightened constraints ship later as a contract migration marked `-- contract: <expand file>`. test/migrations.test.js (src/db/migrationRules.js) enforces it, refuses edits to applied migrations and checks the previous commit's INSERTs against the new schema without Postgres",
+        "Expand/contract (Z3)": "a roll runs the previous generation on the new schema, so after 032 every migration is additive; drops, renames, retypes and tightened constraints ship later as a contract migration marked `-- contract: <expand file>`. test/migrations.test.js (src/db/migrationRules.ts) enforces it, refuses edits to applied migrations and checks the previous commit's INSERTs against the new schema without Postgres",
         "Durable tasks": "Absurd (vendored schema) for work that waits: chases, run reviews",
         "Embeddings (audit 2026-11-07)": "text-embedding-3-small, 1536 dims, embed once and never re-embed (plan D5). Embedded: message and document chunks (chunk), memory claims (claim), memory pages (memory_page), commitment text for semantic dedupe (commitment_vector). Never embedded: identifiers, statuses, board state, numbers, dates; PR and ticket refs dedupe by key (commitment anchors), not by vector. No call site embeds changing data or exact keys; stored vectors are 41.5k (31.1k chunks, 10.0k claims, 105 pages, 242 commitments) and re-embed only when their own text changes (a changed item body, a regenerated page) or when CONTEXT_VERSION is bumped, which is a decision, not a cleanup",
         "Query embeddings": "a search embeds its query once: normalized text (trimmed, whitespace collapsed, lower-cased) plus model and dimensions -> vector, in an in-memory LRU (PA_EMBED_CACHE_ENTRIES, 500) backed by query_embedding_cache (PA_EMBED_CACHE_ROWS, 5000 by last use); query time only, never ingest",
@@ -1151,8 +1151,8 @@
       "code": [
         "personal-assistant/sql",
         "personal-assistant/src/db/index.js",
-        "personal-assistant/src/db/migrate.js",
-        "personal-assistant/src/db/migrationRules.js",
+        "personal-assistant/src/db/migrate.ts",
+        "personal-assistant/src/db/migrationRules.ts",
         "personal-assistant/test/migrations.test.js",
         "personal-assistant/src/repo/index.ts",
         "personal-assistant/test/repoContract.test.js",
@@ -1177,18 +1177,18 @@
       },
       "details": {
         "Backend (plan 3.1)": "src/db/sqlite.js: better-sqlite3-multiple-ciphers (optional dependency; N-API prebuilds for Windows and Linux) with src/db's interface. $n placeholders, Date/JSON/boolean encoding, and rows decoded by declared column type (timestamptz -> Date, jsonb and arrays -> JSON, boolean, vector -> Float32Array), so the SQLite repositories return what pg does. Writes and transactions take an in-process lock and BEGIN IMMEDIATE; plain reads use a second, read-only connection",
-        "Schema": "sql-sqlite/*.sql, applied by src/db/sqlite.js migrate() (src/db/migrate.js hands over when PA_DB=sqlite): the same tables and columns as sql/001-038, tsvector columns as FTS5 tables (chunk_fts, chunk_fts_exact, claim_fts, memory_page_fts), the event triggers writing event_outbox under pa_event_seq, and `lease` for what were advisory locks",
+        "Schema": "sql-sqlite/*.sql, applied by src/db/sqlite.js migrate() (src/db/migrate.ts hands over when PA_DB=sqlite): the same tables and columns as sql/001-038, tsvector columns as FTS5 tables (chunk_fts, chunk_fts_exact, claim_fts, memory_page_fts), the event triggers writing event_outbox under pa_event_seq, and `lease` for what were advisory locks",
         "Repositories": "src/repo/sqlite/<aggregate>.js, the twin of each src/repo/<aggregate>.js; createRepos() loads them when the backend says dialect sqlite. Every aggregate phase 1.2 has converted has its twin; each states where SQLite cannot say what Postgres says (FTS5 bm25 ranks, ASCII-only lower()/like, regexes tested in JS, millisecond timestamps), for the 3.4 shadow comparison",
         "Contract (plan 3.2)": "test/repoContract.test.js runs every case on postgres and sqlite (a throwaway encrypted pa_test_* file, no server; CI runs it on Linux and Windows and fails if SQLite is skipped). Strict: a repository method without its SQLite twin fails (PA_CONTRACT_STRICT=0 reports todo for work in progress). Green on every aggregate of 1.2",
         "Encryption": "PA_SQLITE_KEY set: SQLCipher v4 (PRAGMA cipher=sqlcipher, legacy=4, key); the key lives in the OS vault or the gitignored .env",
         "Vectors": "1536 float32 per BLOB, copied from Postgres (D5: never re-embedded); exact scan with vec_distance_cosine (sqlite-vec, optional dependency; a JS fallback otherwise)",
         "LISTEN/NOTIFY": "no NOTIFY: after a commit the backend reads the new event_outbox rows and hands them to sessions (pool.connect()) that LISTENed, in-process only; other processes read event_outbox",
-        "Shadow comparison (plan 3.4)": "pa db compare --sqlite <file> (src/db/shadow.js): eval questions and recorded searches through the same repository methods on Postgres (read only) and an export. Work stack 2026-11-08: board reads identical; vectors 0.98-1.0 overlap; SQLite hit@10 0.771 vs 0.625 and MRR 0.519 vs 0.413 on the eval gold items; nothing to recalibrate (rank fusion, reranker-scale abstain)",
+        "Shadow comparison (plan 3.4)": "pa db compare --sqlite <file> (src/db/shadow.ts): eval questions and recorded searches through the same repository methods on Postgres (read only) and an export. Work stack 2026-11-08: board reads identical; vectors 0.98-1.0 overlap; SQLite hit@10 0.771 vs 0.625 and MRR 0.519 vs 0.413 on the eval gold items; nothing to recalibrate (rank fusion, reranker-scale abstain)",
         "Vector search": "two stages (sql-sqlite/007): sign bits per vector in chunk_bits / claim_bits ranked by Hamming distance, the best 400 re-ranked by exact cosine; 40-80 ms p50 over 31k chunks (an exact scan was ~530 ms; Postgres's approximate HNSW ~20 ms)",
         "Keyword search": "FTS5 (porter and exact indexes), Postgres's English stop words; items ranked on narrow columns, text read for the top rows only, each index's best 2,000 chunks when no filter applies. 61 ms p50 on the work stack (Postgres 0.9 s)",
         "Cutover (3.5)": "docs/native/CUTOVER-SQLITE.md: rehearse (export + compare while running), stop writers, export, compare, PA_DB=sqlite in .env, start, verify (doctor, live feed, e2e, backup drill); rollback is unsetting PA_DB (Postgres is never written)",
         "Backups (3.5 prep)":"src/backupSqlite.js, behind the same pa backup / pa backup restore --to / pa restore: VACUUM INTO snapshots on a read-only connection (consistent, compacted, still encrypted with PA_SQLITE_KEY): pa-latest.sqlite refreshed by the hourly backup pass when older than PA_SQLITE_SNAPSHOT_MINUTES (RPO), the nightly encrypted .pabak bundle with pa.sqlite and a manifest; the drill restores into a new scratch file and runs integrity_check, the FTS integrity checks, foreign_key_check, row counts and a search. Not Litestream: it cannot open a SQLCipher file and has no supported Windows build. Work stack size: 453 MB snapshot in 6 s, bundle 10 s, drill 10-12 s",
-        "Export (plan 3.3)": "pa db export --to sqlite <file> (src/db/export.js): a read-only snapshot of Postgres into a new SQLite file, ids kept, vectors float for float (D5), Absurd's tasks into the SQLite queue, row counts and sampled vectors verified",
+        "Export (plan 3.3)": "pa db export --to sqlite <file> (src/db/export.ts): a read-only snapshot of Postgres into a new SQLite file, ids kept, vectors float for float (D5), Absurd's tasks into the SQLite queue, row counts and sampled vectors verified",
         "Durable tasks (D19)": "Absurd is Postgres-only, so on SQLite the same tasks run on src/durable/sqliteQueue.js: spawn once per key, step checkpoints, sleepFor, awaitEvent with timeout, retries with backoff, over sql-sqlite/006 (durable_task, durable_checkpoint, durable_event); a worker's claim on a task is a lease row. src/durable/index.js picks the engine by store"
       },
       "env": [
@@ -1213,8 +1213,8 @@
         "personal-assistant/src/db/sqlite.js",
         "personal-assistant/src/repo/sqlite",
         "personal-assistant/src/durable/sqliteQueue.js",
-        "personal-assistant/src/db/export.js",
-        "personal-assistant/src/db/shadow.js",
+        "personal-assistant/src/db/export.ts",
+        "personal-assistant/src/db/shadow.ts",
         "personal-assistant/test/contract/_backends.js",
         "personal-assistant/test/repoContract.test.js"
       ]

@@ -241,7 +241,7 @@ const commands = {
   },
 
   async migrate() {
-    const { migrate } = require('../db/migrate');
+    const { migrate } = require('../db/migrate.ts');
     const result = await migrate();
     out(result.applied.length ? `applied: ${result.applied.join(', ')}` : 'schema already up to date');
   },
@@ -251,7 +251,7 @@ const commands = {
   async db(args, flags) {
     if (args[0] === 'compare' && typeof flags.sqlite === 'string') {
       // Plan 3.4: the same recorded queries on Postgres (read only) and an exported file.
-      const r = await require('../db/shadow').compare({ pgUrl: config.databaseUrl, file: flags.sqlite, key: config.sqliteKey || null, log: flags.json ? () => {} : (m) => out(`  ${m}`) });
+      const r = await require('../db/shadow.ts').compare({ pgUrl: config.databaseUrl, file: flags.sqlite, key: config.sqliteKey || null, log: flags.json ? () => {} : (m) => out(`  ${m}`) });
       if (flags.json) return out(JSON.stringify(r, null, 2));
       const s = r.summary;
       out(`${s.queries} queries (${s.eval} eval cases with gold items, ${s.recorded} recorded with vectors)`);
@@ -265,7 +265,7 @@ const commands = {
     if (args[0] !== 'export' || flags.to !== 'sqlite' || !args[1]) {
       return fail('usage: pa db export --to sqlite <file>   (a new file; PA_SQLITE_KEY set encrypts it)\n       pa db compare --sqlite <file> [--json]   (plan 3.4: the same queries on both stores)');
     }
-    const { exportToSqlite } = require('../db/export');
+    const { exportToSqlite } = require('../db/export.ts');
     const r = await exportToSqlite({ pgUrl: config.databaseUrl, file: args[1], key: config.sqliteKey || null, log: (m) => out(`  ${m}`) });
     out('');
     for (const t of r.tables) if (t.pg != null) out(`${t.ok ? 'ok ' : 'BAD'} ${t.table.padEnd(24)} postgres ${String(t.pg).padStart(7)}  sqlite ${String(t.sqlite).padStart(7)}`);

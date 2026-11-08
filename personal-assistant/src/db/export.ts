@@ -30,6 +30,31 @@
 //
 // Not copied: schema_migration (each store records its own files), and the
 // tsvector columns (FTS5 replaces them).
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+/** A row from either driver, read column by column (information_schema, absurd's tables, the copy). */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type Json = Record<string, any>;
+type Conn = { query(text: string, params?: unknown[]): Promise<{ rows: Json[] }> };
+type PgClient = Conn & { connect(): Promise<void>; end(): Promise<void> };
+/** The SQLite backend (src/db/sqlite.ts createSqliteBackend), as the export uses it. */
+type Lite = Conn & {
+  rows(text: string, params?: unknown[]): Promise<Json[]>;
+  one(text: string, params?: unknown[]): Promise<Json | null>;
+  exec(sql: string): Promise<void>;
+  withTx<T>(fn: (c: Conn) => Promise<T>): Promise<T>;
+  migrate(): Promise<unknown>;
+  close(): Promise<void>;
+};
+type Log = (line: string) => void;
+type Durable = { tasks: number; checkpoints: number; events: number; sqlite: { tasks: number; events: number }; ok: boolean };
+type Report = {
+  file: string; ok: boolean; durable: Durable | null; fk: Json[];
+  tables: { table: string; pg: number | null; sqlite: number; ok: boolean; note?: string }[];
+  vectors: { table: string; column: string; checked: number; ok: boolean; bad: number }[];
+  missing?: string[]; fts?: { chunk_fts: number; chunk: number; ok: boolean };
+};
 
 const fs = require('fs');
 const path = require('path');
@@ -39,14 +64,15 @@ const BATCH = 1000;
 const VECTOR_SAMPLE = 50;
 
 /** pgvector text ('[0.1,0.2]') -> the float32 BLOB a SQLite vector column holds. */
-function vectorFromText(text) {
+function vectorFromText(text: string | null | undefined) {
   if (text == null) return null;
   const f = Float32Array.from(JSON.parse(text));
   return Buffer.from(f.buffer, f.byteOffset, f.byteLength);
 }
 
 /** A value read from pg (type `udt`) as SQLite stores it. */
-function convert(v, udt) {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function convert(v: any, udt: string) {
   if (v == null) return null;
   if (udt === 'vector') return vectorFromText(v);
   if (udt === 'jsonb' || udt === 'json') return JSON.stringify(v);
@@ -62,16 +88,16 @@ function convert(v, udt) {
  * `key` when given). Resolves the report: {file, tables: [{table, pg, sqlite,
  * ok}], vectors: [{table, checked, ok}], durable, fk, ok}.
  */
-async function exportToSqlite({ pgUrl, file, key = null, log = () => {} }) {
+async function exportToSqlite({ pgUrl, file, key = null, log = () => {} }: { pgUrl: string; file: string; key?: string | null; log?: Log }) {
   const target = path.resolve(file);
   if (fs.existsSync(target)) throw new Error(`${target} exists: export writes a new file only`);
   const { Client } = require('pg');
   const { createSqliteBackend } = require('./sqlite');
 
-  const pg = new Client({ connectionString: pgUrl, options: '-c default_transaction_read_only=on' });
+  const pg: PgClient = new Client({ connectionString: pgUrl, options: '-c default_transaction_read_only=on' });
   await pg.connect();
-  const lite = createSqliteBackend(target, { key });
-  const report = { file: target, tables: [], vectors: [], durable: null, fk: [], ok: false };
+  const lite: Lite = createSqliteBackend(target, { key });
+  const report: Report = { file: target, tables: [], vectors: [], durable: null, fk: [], ok: false };
   try {
     await pg.query('begin isolation level repeatable read read only');
     await lite.migrate();
@@ -92,7 +118,7 @@ async function exportToSqlite({ pgUrl, file, key = null, log = () => {} }) {
          join information_schema.key_column_usage k on k.constraint_name = tc.constraint_name and k.table_schema = tc.table_schema
         where tc.table_schema = 'public' and tc.constraint_type = 'PRIMARY KEY' group by 1`
     );
-    const pk = Object.fromEntries(pkOf.rows.map((r) => [r.table_name, r.cols.split(',')]));
+    const pk: Record<string, string[]> = Object.fromEntries(pkOf.rows.map((r) => [r.table_name, r.cols.split(',')]));
 
     for (const table of liteTables) {
       const pcols = pgCols.rows.filter((c) => c.table_name === table);
@@ -103,7 +129,7 @@ async function exportToSqlite({ pgUrl, file, key = null, log = () => {} }) {
       const lcols = new Set((await lite.rows(`select name from pragma_table_info('${table}')`)).map((r) => r.name));
       const cols = pcols.filter((c) => lcols.has(c.column_name) && c.udt_name !== 'tsvector');
       const sel = cols.map((c) => (c.udt_name === 'vector' ? `"${c.column_name}"::text as "${c.column_name}"` : `"${c.column_name}"`)).join(', ');
-      const order = (pk[table] || [cols[0].column_name]).map((c) => `"${c}"`).join(', ');
+      const order = (pk[table] || [cols[0]?.column_name]).map((c) => `"${c}"`).join(', ');
       const ins = `insert into ${table} (${cols.map((c) => `"${c.column_name}"`).join(', ')}) values (${cols.map((_, i) => `$${i + 1}`).join(', ')})`;
       let copied = 0;
       for (let offset = 0; ; offset += BATCH) {
@@ -119,7 +145,7 @@ async function exportToSqlite({ pgUrl, file, key = null, log = () => {} }) {
     }
 
     // The outbox's counter continues where Postgres's sequence is.
-    const seq = await pg.query(`select last_value, is_called from pa_event_seq`).catch(() => ({ rows: [] }));
+    const seq = await pg.query(`select last_value, is_called from pa_event_seq`).catch(() => ({ rows: [] as Json[] }));
     if (seq.rows[0]) {
       const last = Number(seq.rows[0].last_value) - (seq.rows[0].is_called ? 0 : 1);
       await lite.query('update pa_event_seq set last_value = $1 where id = 1', [last]);
@@ -135,30 +161,30 @@ async function exportToSqlite({ pgUrl, file, key = null, log = () => {} }) {
     for (const table of liteTables) {
       const has = pgCols.rows.some((c) => c.table_name === table);
       if (!has) continue;
-      const p = Number((await pg.query(`select count(*) as n from public."${table}"`)).rows[0].n);
-      const s = Number((await lite.one(`select count(*) as n from ${table}`)).n);
+      const p = Number((await pg.query(`select count(*) as n from public."${table}"`)).rows[0]?.n);
+      const s = Number((await lite.one(`select count(*) as n from ${table}`))?.n);
       report.tables.push({ table, pg: p, sqlite: s, ok: p === s });
       const vcols = pgCols.rows.filter((c) => c.table_name === table && c.udt_name === 'vector').map((c) => c.column_name);
       for (const col of vcols) {
-        const keyCols = pk[table];
+        const keyCols = pk[table] ?? [];
         const sample = await pg.query(
           `select ${keyCols.map((k) => `"${k}"`).join(', ')}, "${col}"::text as v from public."${table}" where "${col}" is not null order by random() limit ${VECTOR_SAMPLE}`
         );
         let bad = 0;
         for (const r of sample.rows) {
-          const udtOf = (k) => pgCols.rows.find((c) => c.table_name === table && c.column_name === k).udt_name;
+          const udtOf = (k: string) => pgCols.rows.find((c) => c.table_name === table && c.column_name === k)?.udt_name;
           const got = await lite.one(`select ${col} as v from ${table} where ${keyCols.map((k, i) => `${k} = $${i + 1}`).join(' and ')}`, keyCols.map((k) => convert(r[k], udtOf(k))));
           const want = Float32Array.from(JSON.parse(r.v));
-          if (!got || !got.v || got.v.length !== want.length || got.v.some((x, i) => x !== want[i])) bad++;
+          if (!got || !got.v || got.v.length !== want.length || got.v.some((x: number, i: number) => x !== want[i])) bad++;
         }
         report.vectors.push({ table, column: col, checked: sample.rows.length, ok: bad === 0, bad });
       }
     }
     // A Postgres table with no SQLite twin would be left behind: say so (and fail).
-    const pgTables = [...new Set(pgCols.rows.map((c) => c.table_name))].filter((t) => t !== 'schema_migration');
+    const pgTables = [...new Set<string>(pgCols.rows.map((c) => c.table_name))].filter((t) => t !== 'schema_migration');
     report.missing = pgTables.filter((t) => !liteTables.includes(t));
     const fts = await lite.one('select (select count(*) from chunk_fts) as fts, (select count(*) from chunk) as chunks');
-    report.fts = { chunk_fts: Number(fts.fts), chunk: Number(fts.chunks), ok: Number(fts.fts) === Number(fts.chunks) };
+    report.fts = { chunk_fts: Number(fts?.fts), chunk: Number(fts?.chunks), ok: Number(fts?.fts) === Number(fts?.chunks) };
     report.ok = !report.missing.length && report.tables.every((t) => t.ok) && report.vectors.every((v) => v.ok) && !report.fk.length && report.fts.ok && (!report.durable || report.durable.ok);
     await pg.query('rollback');
     return report;
@@ -169,7 +195,7 @@ async function exportToSqlite({ pgUrl, file, key = null, log = () => {} }) {
 }
 
 /** Absurd's queue `pa` -> durable_task / durable_checkpoint / durable_event (D19). */
-async function copyDurable(pg, lite, log) {
+async function copyDurable(pg: PgClient, lite: Lite, log: Log): Promise<Durable | null> {
   const has = await pg.query(`select 1 from information_schema.tables where table_schema = 'absurd' and table_name = 't_pa'`);
   if (!has.rows.length) return null;
   const tasks = (
@@ -180,7 +206,7 @@ async function copyDurable(pg, lite, log) {
         order by t.enqueue_at, t.task_id`
     )
   ).rows;
-  const ids = new Map();
+  const ids = new Map<unknown, unknown>();
   await lite.withTx(async (c) => {
     for (const t of tasks) {
       const state = t.state === 'running' ? 'pending' : t.state;
@@ -192,7 +218,7 @@ async function copyDurable(pg, lite, log) {
         [t.task_name, JSON.stringify(t.params ?? {}), t.idempotency_key || `absurd:${t.task_id}`, state, runAt, waiting, t.attempts || 0, t.max_attempts || 5,
           t.completed_payload == null ? null : JSON.stringify(t.completed_payload), (t.enqueue_at || new Date()).toISOString()]
       );
-      ids.set(t.task_id, ins.rows[0].id);
+      ids.set(t.task_id, ins.rows[0]?.id);
     }
   });
   const cps = (await pg.query(`select task_id, checkpoint_name, state from absurd.c_pa where status = 'committed'`)).rows;
@@ -218,7 +244,7 @@ async function copyDurable(pg, lite, log) {
     }
   });
   const n = await lite.one('select (select count(*) from durable_task) as t, (select count(*) from durable_checkpoint) as c, (select count(*) from durable_event) as e');
-  const r = { tasks: tasks.length, checkpoints: cps.length, events: events.length, sqlite: { tasks: Number(n.t), events: Number(n.e) } };
+  const r: Durable = { tasks: tasks.length, checkpoints: cps.length, events: events.length, sqlite: { tasks: Number(n?.t), events: Number(n?.e) }, ok: false };
   r.ok = r.sqlite.tasks === r.tasks && r.sqlite.events === r.events;
   log(`durable: ${r.tasks} tasks, ${r.checkpoints} checkpoints, ${r.events} events`);
   return r;

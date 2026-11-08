@@ -6,6 +6,13 @@
 //
 // Each file runs inside one transaction, so a half-applied migration is not a
 // state this tool can reach.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+type Row = import('../repo/types.ts').Row;
+type Db = import('../repo/types.ts').Db;
+/** What migrating needs of a backend: the pool (src/db) or a contract test's. */
+type Target = Pick<Db, 'query' | 'withTx'> & { dialect?: string };
 
 const fs = require('fs');
 const path = require('path');
@@ -17,9 +24,9 @@ const SQL_DIR = path.resolve(__dirname, '..', '..', 'sql');
 
 // `db` defaults to the process's pool (src/db); the contract tests pass a
 // backend for their throwaway database (src/db createBackend).
-const POOL = { withTx, query };
+const POOL: Target = { withTx, query };
 
-async function ensureRegistry(db = POOL) {
+async function ensureRegistry(db: Target = POOL) {
   await db.query(`
     create table if not exists schema_migration (
       version    text primary key,
@@ -31,11 +38,11 @@ async function ensureRegistry(db = POOL) {
 function migrationFiles() {
   return fs
     .readdirSync(SQL_DIR)
-    .filter((f) => f.endsWith('.sql'))
+    .filter((f: string) => f.endsWith('.sql'))
     .sort();
 }
 
-async function applied(db = POOL) {
+async function applied(db: Target = POOL) {
   const r = await db.query('select version from schema_migration');
   return new Set(r.rows.map((row) => row.version));
 }
@@ -44,17 +51,17 @@ async function applied(db = POOL) {
 // holding one `-- include: <path relative to sql/>` line, so the upstream
 // file stays byte-for-byte as published and the migration that applied it is
 // still a numbered, recorded file in this directory.
-function expandIncludes(sql) {
-  return sql.replace(/^-- include: (\S+)\s*$/gm, (_, rel) => fs.readFileSync(path.resolve(SQL_DIR, rel), 'utf8'));
+function expandIncludes(sql: string) {
+  return sql.replace(/^-- include: (\S+)\s*$/gm, (_: string, rel: string) => fs.readFileSync(path.resolve(SQL_DIR, rel), 'utf8'));
 }
 
-async function migrate(db = POOL) {
+async function migrate(db: Target = POOL) {
   // SQLite (PA_DB=sqlite, plan 3.1) has its own schema files: sql-sqlite/.
   if (db.dialect === 'sqlite') return require('./sqlite').migrate(db);
   if (db === POOL && require('./index').dialect === 'sqlite') return require('./sqlite').migrate(require('./index').sqliteBackend());
   await ensureRegistry(db);
   const done = await applied(db);
-  const pending = migrationFiles().filter((f) => !done.has(f));
+  const pending = migrationFiles().filter((f: string) => !done.has(f));
 
   if (!pending.length) {
     log.info('schema up to date', { applied: done.size });

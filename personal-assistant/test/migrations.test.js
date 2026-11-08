@@ -17,8 +17,8 @@ const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
-const R = require('../src/db/migrationRules');
-const { expandIncludes } = require('../src/db/migrate');
+const R = require('../src/db/migrationRules.ts');
+const { expandIncludes } = require('../src/db/migrate.ts');
 
 const PA = path.join(__dirname, '..');
 const SQL = path.join(PA, 'sql');

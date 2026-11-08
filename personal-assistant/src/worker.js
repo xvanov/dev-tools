@@ -172,7 +172,7 @@ async function main() {
   // (or after WSL drops the distro) it is routinely down for a minute; exiting
   // spent the task's five restarts in ten minutes and left the worker dead for
   // a week. Retrying here costs nothing and has no ceiling.
-  const { migrate } = require('./db/migrate');
+  const { migrate } = require('./db/migrate.ts');
   for (let attempt = 1; ; attempt++) {
     try {
       await migrate();

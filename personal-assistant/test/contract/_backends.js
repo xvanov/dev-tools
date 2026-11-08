@@ -51,7 +51,7 @@ async function postgres() {
     await c.end().catch(() => {});
   };
   try {
-    await require('../../src/db/migrate').migrate(db);
+    await require('../../src/db/migrate.ts').migrate(db);
   } catch (err) {
     await teardown();
     throw err;

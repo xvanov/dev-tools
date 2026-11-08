@@ -33,7 +33,7 @@ async function main() {
     await db.query(`insert into llm_spend (purpose, backend, ok, cost_usd) values ('export-test', 'api', false, 0.125)`);
     const seqBefore = Number((await db.one('select last_value from pa_event_seq')).last_value);
 
-    const { exportToSqlite } = require('../src/db/export');
+    const { exportToSqlite } = require('../src/db/export.ts');
     const file = path.join(dir, 'pa_test_export.sqlite');
     const url = db.pool.options.connectionString;
     const r = await exportToSqlite({ pgUrl: url, file, key: 'export-test-key' });

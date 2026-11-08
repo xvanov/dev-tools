@@ -19,6 +19,16 @@
 // No reranker and no embedding calls: both depend only on what the stores
 // return, and fusion is rank-based, so ts_rank and bm25 scales never meet a
 // threshold. What can differ is which candidates come back, in what order.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+type Client = import('../repo/types.ts').Client;
+type Repos = import('../repo/types.ts').Repos;
+/** Rows and the report's per-query and per-leg bags, read and built key by key. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type Json = Record<string, any>;
+/** One timed call: its value, or its error, and how long it took. */
+type Timed = { v?: Json[]; err?: string; ms: number };
 
 const { createRepos } = require('../repo');
 const { fuse } = require('../search/fuse');
@@ -29,7 +39,7 @@ const { normalizeQuery } = require('../search/embedCache');
 const K = 10;
 
 // src/search's author_identity spellings per identity kind (people leg).
-function authorForms(identity) {
+function authorForms(identity: string) {
   const [kind, ...rest] = identity.split(':');
   const value = rest.join(':');
   if (kind === 'smtp') return [value];
@@ -39,16 +49,16 @@ function authorForms(identity) {
   return [value];
 }
 
-function pgReadOnly(url) {
+function pgReadOnly(url: string) {
   const { Pool } = require('pg');
   const pool = new Pool({ connectionString: url, max: 4, options: '-c default_transaction_read_only=on' });
   pool.on('error', () => {});
-  const query = (t, p) => pool.query(t, p);
+  const query = (t: string, p?: unknown[]): Promise<{ rows: Json[] }> => pool.query(t, p);
   return {
     query,
-    rows: async (t, p) => (await query(t, p)).rows,
-    one: async (t, p) => (await query(t, p)).rows[0] ?? null,
-    withTx: async (fn) => {
+    rows: async (t: string, p?: unknown[]) => (await query(t, p)).rows,
+    one: async (t: string, p?: unknown[]) => (await query(t, p)).rows[0] ?? null,
+    withTx: async <T>(fn: (c: Client) => Promise<T>): Promise<T> => {
       const c = await pool.connect();
       try {
         await c.query('begin read only');
@@ -66,39 +76,39 @@ function pgReadOnly(url) {
   };
 }
 
-async function timed(fn) {
+async function timed(fn: () => Promise<unknown>): Promise<Timed> {
   const t0 = process.hrtime.bigint();
   try {
     const v = await fn();
-    return { v, ms: Number(process.hrtime.bigint() - t0) / 1e6 };
+    return { v: v as Json[], ms: Number(process.hrtime.bigint() - t0) / 1e6 };
   } catch (err) {
-    return { err: err.message, ms: Number(process.hrtime.bigint() - t0) / 1e6 };
+    return { err: (err as Error).message, ms: Number(process.hrtime.bigint() - t0) / 1e6 };
   }
 }
 
-const ids = (list) => (list || []).map((r) => String(r.id));
-function overlap(a, b, k = K) {
+const ids = (list: Json[] | null | undefined) => (list || []).map((r) => String(r.id));
+function overlap(a: Json[] | null | undefined, b: Json[] | null | undefined, k: number = K) {
   const A = new Set(ids(a).slice(0, k));
   const B = ids(b).slice(0, k);
   if (!A.size && !B.length) return 1;
   return B.filter((x) => A.has(x)).length / Math.max(A.size, B.length);
 }
-function pct(xs, p) {
+function pct(xs: number[], p: number) {
   const s = xs.filter((x) => Number.isFinite(x)).sort((a, b) => a - b);
   return s.length ? s[Math.min(s.length - 1, Math.floor((p / 100) * s.length))] : null;
 }
 
 /** The search legs and fusion of src/search, on one repository set. */
-async function hybrid(repos, q, vectorLiteral, people) {
+async function hybrid(repos: Repos, q: string, vectorLiteral: unknown, people: Json[]) {
   const filters = { sources: null, since: null, until: null };
   const pool = 30;
-  const out = { legs: {} };
+  const out: Json = { legs: {} };
   out.legs.lexical = await timed(async () => {
     const strict = await repos.search.lexicalPass(q, pool, filters, true);
     if (strict.length >= Math.ceil(pool / 3)) return strict;
     const loose = await repos.search.lexicalPass(q, pool, filters, false);
-    const seen = new Set(strict.map((r) => r.id));
-    return [...strict, ...loose.filter((r) => !seen.has(r.id))].slice(0, pool);
+    const seen = new Set(strict.map((r: Json) => r.id));
+    return [...strict, ...loose.filter((r: Json) => !seen.has(r.id))].slice(0, pool);
   });
   out.legs.vector = vectorLiteral ? await timed(() => repos.search.vectorPass(vectorLiteral, pool, filters)) : { v: [], ms: 0 };
   out.legs.people = await timed(async () => {
@@ -107,12 +117,12 @@ async function hybrid(repos, q, vectorLiteral, people) {
     if (!named.length) return [];
     const authors = named.flatMap((p) => p.identities.flatMap(authorForms));
     const patterns = [
-      ...named.flatMap((p) => p.identities.filter((i) => i.startsWith('smtp:')).map((i) => `%${i.slice(5)}%`)),
+      ...named.flatMap((p) => p.identities.filter((i: string) => i.startsWith('smtp:')).map((i: string) => `%${i.slice(5)}%`)),
       ...named.filter((p) => /\s/.test(p.display_name)).map((p) => `%${p.display_name}%`),
     ];
     return repos.search.peopleItems(authors, patterns, pool, filters);
   });
-  out.fused = fuse([out.legs.lexical.v || [], out.legs.vector.v || [], out.legs.people.v || []], [1.2, 1.0, 0.6]).map((h) => ({ id: h.id }));
+  out.fused = fuse([out.legs.lexical.v || [], out.legs.vector.v || [], out.legs.people.v || []], [1.2, 1.0, 0.6]).map((h: Json) => ({ id: h.id }));
   out.claims = await timed(() => repos.memory.searchClaimsLexical(q, { limit: K }));
   out.pages = await timed(() => repos.memory.searchPagesLexical(q, 4));
   if (vectorLiteral) {
@@ -122,7 +132,7 @@ async function hybrid(repos, q, vectorLiteral, people) {
   return out;
 }
 
-function goldScore(fused, gold) {
+function goldScore(fused: Json[], gold: string[] | null) {
   if (!gold || !gold.length) return null;
   const top = ids(fused).slice(0, K);
   const g = new Set(gold.map(String));
@@ -135,7 +145,7 @@ function goldScore(fused, gold) {
  * and latency percentiles per store, eval hit@10 / MRR per store, and the
  * board reads' agreement.
  */
-async function compare({ pgUrl, file, key = null, log = () => {} }) {
+async function compare({ pgUrl, file, key = null, log = () => {} }: { pgUrl: string; file: string; key?: string | null; log?: (line: string) => void }) {
   const { createSqliteBackend } = require('./sqlite');
   const pgdb = pgReadOnly(pgUrl);
   const lite = createSqliteBackend(file, { key });
@@ -150,11 +160,11 @@ async function compare({ pgUrl, file, key = null, log = () => {} }) {
     ];
     const peopleP = await P.search.knownPeople();
     const peopleS = await S.search.knownPeople();
-    const rows = [];
+    const rows: Json[] = [];
     for (const [i, x] of queries.entries()) {
       // Alternate which store goes first, so a warm cache favours neither.
       const order = i % 2 ? ['s', 'p'] : ['p', 's'];
-      const got = {};
+      const got: Json = {};
       for (const w of order) got[w] = await hybrid(w === 'p' ? P : S, x.q, x.vector, w === 'p' ? peopleP : peopleS);
       const legs = ['lexical', 'vector', 'people'];
       rows.push({
@@ -186,8 +196,8 @@ async function compare({ pgUrl, file, key = null, log = () => {} }) {
     }
 
     // The board's reads: the same rows in the same order.
-    const board = [];
-    const reads = [
+    const board: Json[] = [];
+    const reads: [string, (r: Repos) => Promise<unknown>][] = [
       ['open asks on me', (r) => r.commitments.listForTool('owed_by_me', null, 100)],
       ['open asks owed to me', (r) => r.commitments.listForTool('owed_to_me', null, 100)],
       ['inbox', (r) => r.commitments.inboxList(null, 100)],
@@ -203,10 +213,10 @@ async function compare({ pgUrl, file, key = null, log = () => {} }) {
       board.push({ name, rows: { p: a.v ? a.v.length : a.err, s: b.v ? b.v.length : b.err }, same, sameSet, ms: { p: a.ms, s: b.ms } });
     }
 
-    const summary = { queries: rows.length, eval: cases.length, recorded: cached.length, legs: {}, latency: {}, eval_scores: {} };
+    const summary: Json = { queries: rows.length, eval: cases.length, recorded: cached.length, legs: {}, latency: {}, eval_scores: {} };
     for (const leg of ['lexical', 'vector', 'people', 'fused', 'claims', 'pages', 'claimsVec', 'pagesVec']) {
       const v = rows.map((r) => r.overlap[leg]).filter((x) => x != null);
-      if (v.length) summary.legs[leg] = { n: v.length, mean: v.reduce((a, b) => a + b, 0) / v.length, identical: v.filter((x) => x === 1).length };
+      if (v.length) summary.legs[leg] = { n: v.length, mean: v.reduce((a: number, b: number) => a + b, 0) / v.length, identical: v.filter((x) => x === 1).length };
     }
     for (const w of ['p', 's']) {
       for (const leg of ['lexical', 'vector', 'people', 'claims', 'pages', 'claimsVec', 'pagesVec']) {

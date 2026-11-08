@@ -34,7 +34,7 @@ async function main() {
   const { config } = require('../src/config');
   try {
     assert.strictEqual(db.dialect, 'sqlite');
-    await require('../src/db/migrate').migrate();
+    await require('../src/db/migrate.ts').migrate();
     for (let i = 0; i < 25; i++) await repo.notifications.insert({ kind: 'info', title: `n${i}`, body: 'quarterly figures', url: null, dedupeKey: null, priority: 'normal', delivery: 'feed' });
 
     // The nightly bundle: encrypted, with pa.sqlite and a manifest.
