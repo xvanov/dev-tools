@@ -81,7 +81,11 @@ function deps0(): Deps {
     },
     spendToday: () => require('../budget.ts').status().then((s: Json) => s.today),
     jobReport: (id: string) => factory.report(id),
-    claudeAuth: () => d.runCommand(factory.machine(), ['claude', 'auth', 'status'], { timeoutMs: 30_000 }),
+    // On the factory's own machine (where --on runs the dry run), claude as the factory finds it: termhub's exec PATH lacks ~/.local/bin (8.4.43).
+    claudeAuth: () => {
+      const m = factory.machine();
+      return d.runCommand(m, [m ? 'claude' : require('../config.ts').claudeBinary(), 'auth', 'status'], { timeoutMs: 30_000 });
+    },
     fastLaneOn: () => Boolean(d.config.fastLane?.enabled),
     hubBase: (machine: string | null | undefined) => require('../dispatch/termhub.ts').forMachine(machine || null).base,
     capture: (dir: string, pages: Page[]) => S.capture(dir, pages),

@@ -1366,12 +1366,19 @@ not in the Map is not done, and a new one gets added there first.
     detail, not counted. On #66's live answer the check passes with "the job's only PR is #66;
     #69 opened meanwhile from other branches, not counted". (this commit:
     `fix(personal-assistant): count only the job's own PRs in review-fix`)
-  - [ ] **8.4.43 review-fix: the dry run's claude check fails over `--on`.** `claudeAuth` runs
+  - [x] **8.4.43 review-fix: the dry run's claude check fails over `--on`.** `claudeAuth` runs
     bare `claude auth status` through the factory machine's termhub exec, whose PATH lacks
     `~/.local/bin`, so it fails with `spawn claude ENOENT`. claude is installed there and logged in
     (`claude.ai`), and factory serve finds it (its unit has `~/.local/bin` on PATH; the factory's
     own check also looks there). Resolve claude the way the factory does, or ask the factory's
     runtime check.
+    Done. `claudeBinary()` in `src/config.ts` looks the way the factory's `claude_binary()`
+    does: `PA_CLAUDE_BIN` when it is a path, else the name on PATH, else `~/.local/bin` and
+    `~/.claude/local`. The check runs that on the factory's own machine, which is where `--on`
+    runs the dry run. A remote factory machine still gets bare `claude`. Reproduced on the
+    laptop with `~/.local/bin` taken off PATH: bare `claude` gave `spawn claude ENOENT`, the
+    resolved path answered with a claude.ai login. (this commit:
+    `fix(personal-assistant): find claude off PATH in the e2e dry run`)
   - [ ] **8.4.44 review-fix: the job's end is not pushed.** At the job's end serve pushed
     `dev-tools:007=in_progress` (22:45:23.099). PA's run row ended, and "Factory run #8: done"
     was raised, only at its next poll (22:45:50.209): 27.3 s after the job's `done`, against

@@ -839,8 +839,27 @@ function forgetSecret(name: string) {
   else secretCache.clear();
 }
 
+/**
+ * The `claude` to run on this machine: PA_CLAUDE_BIN when it is a path, else
+ * `bin` on PATH, else where the installer puts it (~/.local/bin, ~/.claude/local),
+ * as the factory's claude_binary() looks. termhub's /api/exec and a systemd
+ * unit often run without ~/.local/bin on PATH. Not found: `bin` as given.
+ */
+function claudeBinary(bin: string = config.claudeBin, { env: e = process.env, platform = process.platform, home = os.homedir(), exists = (p: string) => { try { return fs.statSync(p).isFile(); } catch { return false; } } }: { env?: NodeJS.ProcessEnv; platform?: string; home?: string; exists?: (p: string) => boolean } = {}): string {
+  const p = platform === 'win32' ? path.win32 : path.posix;
+  if (/[\\/]/.test(bin)) return bin;
+  const exts = platform === 'win32' ? ['.exe', '.cmd', ''] : [''];
+  for (const dir of String(e.PATH || e.Path || '').split(platform === 'win32' ? ';' : ':').filter(Boolean)) {
+    for (const x of exts) if (exists(p.join(dir, bin + x))) return bin;
+  }
+  for (const dir of [p.join(home, '.local', 'bin'), p.join(home, '.claude', 'local')]) {
+    for (const x of exts) if (exists(p.join(dir, bin + x))) return p.join(dir, bin + x);
+  }
+  return bin;
+}
+
 // PA_SQLITE_KEY resolves as any secret does (the environment, the OS vault,
 // then .env), at use: `pa secret set PA_SQLITE_KEY` keeps it out of files.
 Object.defineProperty(config, 'sqliteKey', { enumerable: true, configurable: true, get: () => secret('PA_SQLITE_KEY') || '' });
 
-module.exports = { config, env, envInt, parseEnvFile, parseMachines, MACHINE_OS, secret, secretSource, forgetSecret };
+module.exports = { config, env, envInt, parseEnvFile, parseMachines, MACHINE_OS, secret, secretSource, forgetSecret, claudeBinary };
