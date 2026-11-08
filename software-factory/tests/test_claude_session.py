@@ -192,6 +192,11 @@ def test_argv_and_script_unset_api_keys_and_resume(tmp_path: Path) -> None:
     assert str(plan.stream_path) in script and "PIPESTATUS[0]" in script
     assert "factory.claude_session.pretty" in script
     assert f"mv {plan.exit_path}.tmp {plan.exit_path}" in script.replace("'", "")
+    # E5.6: no background commands in a headless run (env var + deny rules).
+    assert "export CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1" in script
+    i = argv2.index("--disallowedTools")
+    assert argv2[i + 1 :] == ["Bash(run_in_background:true)", "PowerShell(run_in_background:true)"]
+    assert claude_cli.clean_env({"ANTHROPIC_API_KEY": "x"}) == {"CLAUDE_CODE_DISABLE_BACKGROUND_TASKS": "1"}
 
 
 def test_split_claude_model() -> None:

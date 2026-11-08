@@ -29,10 +29,27 @@ BILLING_ENV_VARS: tuple[str, ...] = (
 )
 
 
+#: Set for every run (plan E5.6). A headless ``claude -p`` that starts a Bash
+#: command with ``run_in_background`` ends its turn "waiting for a completion
+#: notification" and the run stays open until the command exits (it waited 50
+#: min on a hung gate in E5 run 4). This removes the parameter from Bash,
+#: PowerShell and subagents (Claude Code env-vars reference), so every command
+#: runs in the foreground and its result comes back in the same turn.
+RUN_ENV: dict[str, str] = {"CLAUDE_CODE_DISABLE_BACKGROUND_TASKS": "1"}
+
+#: The same, as deny rules (``--disallowedTools``): a CLI that predates the
+#: variable still refuses the background form.
+DISALLOWED_TOOLS: tuple[str, ...] = (
+    "Bash(run_in_background:true)",
+    "PowerShell(run_in_background:true)",
+)
+
+
 def clean_env(base: Mapping[str, str] | None = None) -> dict[str, str]:
     env = dict(os.environ if base is None else base)
     for name in BILLING_ENV_VARS:
         env.pop(name, None)
+    env.update(RUN_ENV)
     return env
 
 

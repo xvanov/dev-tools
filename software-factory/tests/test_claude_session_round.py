@@ -30,7 +30,7 @@ lines = [
     {"type": "system", "subtype": "init", "session_id": "sess-9", "model": "m"},
     {"type": "assistant", "message": {"content": [{"type": "text", "text": "héllo — " + prompt}]}},
     {"type": "result", "subtype": "success", "is_error": False, "session_id": "sess-9",
-     "total_cost_usd": 0.01, "result": "leak=%s" % leak},
+     "total_cost_usd": 0.01, "result": "leak=%s bg=%s" % (leak, os.environ.get("CLAUDE_CODE_DISABLE_BACKGROUND_TASKS"))},
 ]
 for ev in lines:
     sys.stdout.buffer.write((json.dumps(ev, ensure_ascii=False) + "\n").encode("utf-8"))
@@ -77,7 +77,7 @@ def test_round_runner_end_to_end(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     # Byte-faithful stream (UTF-8, no re-encoding), the billing key removed.
     stream = Path(spec["stream_path"]).read_bytes().decode("utf-8")
     assert "héllo — do it" in stream
-    assert '"leak=False"' in stream
+    assert '"leak=False bg=1"' in stream  # billing key gone, background tasks off (E5.6)
     assert Path(spec["exit_path"]).read_text().strip() == "3"
     assert not Path(spec["exit_path"] + ".tmp").exists()
     assert "diag line" in Path(spec["stderr_path"]).read_text()

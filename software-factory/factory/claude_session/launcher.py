@@ -44,7 +44,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
 
-from factory.claude_session.cli import BILLING_ENV_VARS
+from factory.claude_session.cli import BILLING_ENV_VARS, DISALLOWED_TOOLS, RUN_ENV
 from factory.oscompat import IS_WINDOWS, detached_popen_kwargs, kill_tree
 
 
@@ -103,6 +103,8 @@ def build_claude_argv(
         argv += ["--session-id", session_uuid]
     for d in add_dirs or []:
         argv += ["--add-dir", d]
+    # Plan E5.6: no background commands in a headless run (see cli.RUN_ENV).
+    argv += ["--disallowedTools", *DISALLOWED_TOOLS]
     return argv
 
 
@@ -149,6 +151,7 @@ def build_round_script(
             f"# factory claude_session run — round {plan.round_no}",
             f"cd {q(str(cwd))} || {{ echo 97 > {q(tmp)}; mv {q(tmp)} {q(str(plan.exit_path))}; exit 97; }}",
             "unset " + " ".join(BILLING_ENV_VARS),
+            *(f"export {k}={q(v)}" for k, v in RUN_ENV.items()),
             f"echo $$ > {q(str(plan.pid_path))}",
             f"printf '%s\\n' {q(f'── factory: {title} — round {plan.round_no}')}",
             f"{claude} < {q(str(plan.prompt_path))} 2> {q(str(plan.stderr_path))} "
