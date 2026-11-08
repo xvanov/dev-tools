@@ -258,7 +258,7 @@ async function main() {
   // --- what Talk shows while a prompt waits -------------------------------------------
   {
     const { describeTool } = require('../src/chat/transcript.ts');
-    const { waitingText } = require('../src/chat/feed');
+    const { waitingText } = require('../src/chat/feed.ts');
     assert.strictEqual(describeTool('mcp__pa-chat__factory_start', { card: '412', delivery: 'pr' }), 'starting a factory job: card 412 (claude_session, pr)…');
     assert.strictEqual(describeTool('mcp__pa-chat__factory_continue', { repo: 'acme/widget', pr: 12, ask: 'fix review', runtime: 'api' }), 'starting a factory job on PR #12: fix review (api)…');
     assert.strictEqual(describeTool('mcp__pa-chat__board', {}), 'reading your board…');

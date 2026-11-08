@@ -16,7 +16,7 @@ const vm = require('vm');
 
 const P = require('../src/chat/permission.ts');
 const T = require('../src/chat/transcript.ts');
-const { createFeed } = require('../src/chat/feed');
+const { createFeed } = require('../src/chat/feed.ts');
 
 // A Claude Code permission prompt for an MCP tool, as termhub's replay gives it.
 const PROMPT = (tool = 'factory_start', cursor = 1, extra = '') => [

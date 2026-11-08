@@ -101,7 +101,7 @@ async function shutdown(signal: unknown) {
   stopping = true;
   log.info('stopping', { signal });
   try {
-    require('./chat/feed').stopChat();
+    require('./chat/feed.ts').stopChat();
   } catch {
     /* no chat here */
   }
@@ -134,11 +134,11 @@ async function main() {
         require('./dashboard/server.ts').markDraining();
         if (ownership) ownership.handOver().catch((err: Error) => log.warn('hand-over failed', { message: err.message }));
         // The SDK chat (PA_CHAT_ENGINE=sdk) lives here: close it so the next generation resumes it.
-        require('./chat/feed').drainChat().catch((err: Error) => log.warn('chat drain failed', { message: err.message }));
+        require('./chat/feed.ts').drainChat().catch((err: Error) => log.warn('chat drain failed', { message: err.message }));
       } else if (m && m.type === 'undrain') {
         log.info('undrained: routing moved back here (rollback) — taking the passes back');
         require('./dashboard/server.ts').markDraining(false);
-        require('./chat/feed').undrainChat();
+        require('./chat/feed.ts').undrainChat();
         if (ownership) ownership.takeOver().catch((err: Error) => log.warn('take-over failed', { message: err.message }));
       } else if (m && m.type === 'stop') shutdown('supervisor stop');
     });

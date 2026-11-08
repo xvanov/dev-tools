@@ -307,7 +307,7 @@ async function route(req: Req, res: Res, url: URL, { send, issuePageToken = null
     // The fast lane's snapshot of the day is built now, not on the first turn.
     // So is the local fast model loaded (Ollama), and the GPU voice clocked up.
     if (config.fastLane.enabled) {
-      const fl = require('../chat/fastLane');
+      const fl = require('../chat/fastLane.ts');
       fl.snapshotCache().warm();
       fl.warm();
     }
@@ -445,7 +445,7 @@ async function turn(req: Req, res: Res, { send }: { send: Ctx['send'] }) {
         } else if (e?.type === 'error') telemetry.fail(s, 'turn error');
         emit(e);
       };
-      await require('../chat/fastLane').runTurn({ text, emit: seen, signal: ac.signal });
+      await require('../chat/fastLane.ts').runTurn({ text, emit: seen, signal: ac.signal });
     });
   } catch (err) {
     if (!ac.signal.aborted) emit({ type: 'error', error: (err as Error).message });

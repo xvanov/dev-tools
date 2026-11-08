@@ -9,9 +9,9 @@ const assert = require('assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const S = require('../src/chat/sdkFeed');
+const S = require('../src/chat/sdkFeed.ts');
 const T = require('../src/chat/transcript.ts');
-const { engine } = require('../src/chat/feed');
+const { engine } = require('../src/chat/feed.ts');
 
 const tick = () => new Promise((r) => setImmediate(r));
 async function until(fn, what, ms = 2000) {

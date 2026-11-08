@@ -20,6 +20,12 @@
 //
 // Our own typed message is shown at once (with its source) and its echo from
 // the transcript is dropped, so a client sees it once, with our id.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+type Row = import('../repo/types.ts').Row;
+/** JSON read or built key by key (src/types.ts): loose until its producer is TypeScript. */
+type Json = import('../types.ts').Json;
 
 const fs = require('fs');
 const os = require('os');
@@ -43,11 +49,11 @@ function projectsRoot() {
   return path.join(os.homedir(), '.claude', 'projects');
 }
 
-function sameDir(a, b) {
+function sameDir(a: any, b: any) {
   return path.resolve(String(a || '')).toLowerCase() === path.resolve(String(b || '')).toLowerCase();
 }
 
-function newestTranscript(dir) {
+function newestTranscript(dir: any) {
   let names;
   try {
     names = fs.readdirSync(dir);
@@ -75,16 +81,16 @@ function newestTranscript(dir) {
  * transcript showed — and where to answer it. The word "termhub" is what the
  * voice page keys its "waiting" state on.
  */
-function waitingText(lastTool) {
+function waitingText(lastTool: any) {
   const what = String(lastTool || '').replace(/…$/, '').trim();
   return what
     ? `waiting for your yes in termhub: ${what}`
     : 'waiting for your answer in termhub (a permission prompt or a question)…';
 }
 
-const norm = (s) => String(s || '').replace(/\s+/g, ' ').trim();
+const norm = (s: any) => String(s || '').replace(/\s+/g, ' ').trim();
 
-function httpError(status, message) {
+function httpError(status: any, message: any) {
   return Object.assign(new Error(message), { status });
 }
 
@@ -103,28 +109,28 @@ function createFeed({
   fastPollMs = 200,
   statusMs = 2000,
 } = {}) {
-  const events = [];
+  const events: any[] = [];
   const seen = new Set();
-  const subs = new Set();
-  let pending = [];
-  let file = null;
+  const subs = new Set<any>();
+  let pending: any[] = [];
+  let file: any = null;
   let offset = 0;
   let rest = Buffer.alloc(0);
-  let status = null;
-  let waitingOn = null;
-  let sessionId = null;
-  let timers = [];
+  let status: any = null;
+  let waitingOn: any = null;
+  let sessionId: any = null;
+  let timers: any[] = [];
   // The turn our last send started: until termhub has been seen working or
   // the transcript has shown the answer, its "idle" is the previous turn's.
-  let turn = null;
+  let turn: any = null;
   let lastRead = 0;
-  let lastTool = null;
+  let lastTool: any = null;
 
   // What the page may offer Approve/Deny for: the call the chat is parked on,
   // when it is one of the chat's own actions (src/chat/permission.js). The
   // screen is checked again when a button is pressed; this only says whether
   // to show the buttons.
-  function permissionPending(st = { waitingOn }) {
+  function permissionPending(st: any = { waitingOn }) {
     if (!st.waitingOn || !lastTool?.toolUseId) return null;
     const P = require('./permission.ts');
     const approvable = Boolean(P.chatAction(lastTool.name));
@@ -137,10 +143,10 @@ function createFeed({
    * termhub's state and the screen read now. Throws 409 with the reason
    * when any check fails: then it is answered in termhub.
    */
-  async function answerPermission({ answer, toolUseId, via = 'dashboard' } = {}) {
+  async function answerPermission({ answer, toolUseId, via = 'dashboard' }: { answer?: any; toolUseId?: any; via?: string | undefined } = {}) {
     await pollStatus();
     const h = hub();
-    const session = sessionId ? (await h.listSessions()).find((s) => s.id === sessionId) || null : null;
+    const session = sessionId ? (await h.listSessions()).find((s: any) => s.id === sessionId) || null : null;
     const screen = session ? await h.screen(session.id) : '';
     const pending = waitingOn && lastTool?.toolUseId ? { toolUseId: lastTool.toolUseId, name: lastTool.name } : null;
     const d = require('./permission.ts').decide({ answer, toolUseId, pending, session, screen });
@@ -154,7 +160,7 @@ function createFeed({
       const req = await policy.withJobDelivery({ tool: d.tool, action: answer === 'yes' ? 'approve' : 'deny', channel: via, subject: toolUseId, args: lastTool?.args }, jobLookup);
       const verdict = await policy.enforce(req);
       await policy.consumeStepUp(req, verdict); // a passkey tap is spent on this one approval
-    } catch (err) {
+    } catch (err: any) {
       if (err.code === 'POLICY_DENIED' || err.code === 'STEPUP_REQUIRED') throw Object.assign(httpError(403, err.message), err.needsStepUp ? { needsStepUp: true, approvalId: err.approvalId } : {});
       throw err;
     }
@@ -164,7 +170,7 @@ function createFeed({
     return { ok: true, answer, tool: d.tool };
   }
 
-  function publish(e, broadcast = true) {
+  function publish(e: any, broadcast: boolean = true) {
     if (e.type !== 'status') {
       if (seen.has(e.id)) return;
       seen.add(e.id);
@@ -175,13 +181,13 @@ function createFeed({
     for (const fn of subs) {
       try {
         fn(e);
-      } catch (err) {
+      } catch (err: any) {
         log.debug('subscriber failed', { message: err.message });
       }
     }
   }
 
-  function setStatus(next) {
+  function setStatus(next: any) {
     if (next === status) return;
     status = next;
     publish({ id: `status-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`, type: 'status', text: next, at: new Date().toISOString() });
@@ -213,7 +219,7 @@ function createFeed({
       } finally {
         fs.closeSync(fd);
       }
-    } catch (err) {
+    } catch (err: any) {
       log.debug('transcript read failed', { message: err.message });
       return;
     }
@@ -251,14 +257,14 @@ function createFeed({
 
   async function findSession() {
     const sessions = await hub().listSessions();
-    return sessions.find((s) => s.alive !== false && sameDir(s.cwd, home())) || null;
+    return sessions.find((s: any) => s.alive !== false && sameDir(s.cwd, home())) || null;
   }
 
   async function pollStatus() {
     let session = null;
     try {
       session = await findSession();
-    } catch (err) {
+    } catch (err: any) {
       log.debug('termhub unreachable', { message: err.message });
     }
     sessionId = session ? session.id : null;
@@ -309,7 +315,7 @@ function createFeed({
   }
 
   /** Calls fn(event) for every new event; returns the unsubscribe. */
-  function subscribe(fn) {
+  function subscribe(fn: any) {
     subs.add(fn);
     readTranscript();
     start();
@@ -324,13 +330,13 @@ function createFeed({
     };
   }
 
-  function history(limit = 50) {
+  function history(limit: number = 50) {
     readTranscript();
     const n = Math.min(Math.max(1, Number(limit) || 50), MAX_EVENTS);
     return events.filter((e) => e.type === 'user' || e.type === 'assistant').slice(-n);
   }
 
-  async function send({ text, source = 'typed' } = {}) {
+  async function send({ text, source = 'typed' }: { text?: any; source?: string | undefined } = {}) {
     if (typeof text !== 'string' || !text.trim()) throw httpError(400, 'text must be a non-empty string');
     if (text.length > MAX_TEXT) throw httpError(400, `text is over ${MAX_TEXT} characters`);
     if (!SOURCES.includes(source)) throw httpError(400, `source must be ${SOURCES.join(' or ')}`);
@@ -352,7 +358,7 @@ function createFeed({
     if (created) {
       // A new Claude needs seconds to reach its prompt; answer now and
       // deliver when it is ready.
-      h.briefClaude(h, id, clean).catch((err) => {
+      h.briefClaude(h, id, clean).catch((err: Error) => {
         log.warn('first chat message not delivered', { message: err.message });
         publish({ id: `err-${Date.now()}`, type: 'activity', text: `could not type into the PA session: ${err.message}`, at: new Date().toISOString() });
       });
@@ -377,16 +383,16 @@ function createFeed({
  * termhub session) or 'sdk' (src/chat/sdkFeed.js). Anything else is
  * 'terminal', with a warning.
  */
-function engine(value = require('../config.ts').config.chat.engine) {
+function engine(value: any = require('../config.ts').config.chat.engine) {
   const v = String(value || 'terminal').trim().toLowerCase();
   if (v === 'sdk' || v === 'terminal') return v;
   log.warn('PA_CHAT_ENGINE is neither terminal nor sdk; using terminal', { value });
   return 'terminal';
 }
 
-let shared = null;
+let shared: any = null;
 function feed() {
-  if (!shared) shared = engine() === 'sdk' ? require('./sdkFeed').createSdkFeed() : createFeed();
+  if (!shared) shared = engine() === 'sdk' ? require('./sdkFeed.ts').createSdkFeed() : createFeed();
   return shared;
 }
 
@@ -395,7 +401,7 @@ function feed() {
  * this process. A no-op when no chat was started here or the engine is the
  * terminal one (that session lives in termhub and survives a roll).
  */
-async function drainChat(opts) {
+async function drainChat(opts: any) {
   if (shared && typeof shared.drain === 'function') return shared.drain(opts);
   return null;
 }

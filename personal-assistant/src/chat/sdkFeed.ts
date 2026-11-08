@@ -24,6 +24,12 @@
 // Billing: the SDK runs the bundled Claude Code on the machine's own Claude
 // login, like the terminal chat. ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN are
 // removed from its environment so it never silently bills the API instead.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+type Row = import('../repo/types.ts').Row;
+/** JSON read or built key by key (src/types.ts): loose until its producer is TypeScript. */
+type Json = import('../types.ts').Json;
 
 const fs = require('fs');
 const os = require('os');
@@ -44,7 +50,7 @@ const ANSWERS = ['yes', 'no'];
 const SESSION_FILE = '.pa-chat-sdk-session.json';
 const VIEW_MAX_BYTES = 8 * 1024 * 1024;
 
-function httpError(status, message) {
+function httpError(status: any, message: any) {
   return Object.assign(new Error(message), { status });
 }
 
@@ -53,7 +59,7 @@ function httpError(status, message) {
  * API credentials (so it signs in with the machine's Claude login, i.e. the
  * subscription), marked as the PA chat the way termhub's session is.
  */
-function subscriptionEnv(base = process.env) {
+function subscriptionEnv(base: any = process.env) {
   const env = { ...base };
   delete env.ANTHROPIC_API_KEY;
   delete env.ANTHROPIC_AUTH_TOKEN;
@@ -63,7 +69,7 @@ function subscriptionEnv(base = process.env) {
 }
 
 /** Pure. `mcp__pa-chat__factory_start` → {server: 'pa-chat', tool: 'factory_start'}; `Read` → {server: null, tool: 'Read'}. */
-function splitTool(name) {
+function splitTool(name: any) {
   const m = /^mcp__(.+?)__(.+)$/.exec(String(name || ''));
   return m ? { server: m[1], tool: m[2] } : { server: null, tool: String(name || '') };
 }
@@ -75,7 +81,7 @@ function splitTool(name) {
  * it to Claude Code's own permission settings.
  * @returns {{decision: 'allow'|'deny'|'ask', reason: string} | null}  null: no opinion
  */
-function hookDecision(toolName, res) {
+function hookDecision(toolName: any, res: any) {
   if (res && res.decision === 'deny') return { decision: 'deny', reason: `denied by policy (${res.rule})${res.reason ? `: ${res.reason}` : ''}` };
   if (P.chatAction(toolName)) return { decision: 'ask', reason: 'the chat\'s actions always ask the user' };
   if (res && res.rule && res.rule !== 'default' && (res.decision === 'allow' || res.decision === 'ask')) return { decision: res.decision, reason: `policy rule ${res.rule}` };
@@ -87,7 +93,7 @@ const DETAIL_MAX = 2000;
 const VOICE_MAX = 160;
 
 /** Pure. Whether a Read/Grep/Glob call stays inside `home` (no path: its cwd, home). */
-function insideHome(home, input = {}) {
+function insideHome(home: any, input: any = {}) {
   const i = input && typeof input === 'object' ? input : {};
   const target = i.file_path || i.path || '';
   if (!target) return true;
@@ -96,7 +102,7 @@ function insideHome(home, input = {}) {
   return abs === root || abs.startsWith(root + path.sep);
 }
 
-const clip = (s, n) => {
+const clip = (s: any, n: any) => {
   const t = String(s ?? '');
   return t.length > n ? `${t.slice(0, n)}… (${t.length - n} more characters)` : t;
 };
@@ -106,7 +112,7 @@ const clip = (s, n) => {
  * file and its change, or the tool's whole input. Never shortened silently:
  * a cut says how much is left out.
  */
-function genericDetail(name, input = {}) {
+function genericDetail(name: any, input: any = {}) {
   const i = input && typeof input === 'object' ? input : {};
   switch (name) {
     case 'Bash':
@@ -118,14 +124,14 @@ function genericDetail(name, input = {}) {
 }
 
 /** Pure. The card's headline and Talk's question for a generic prompt. */
-function genericAsk(name, input = {}, title = null) {
+function genericAsk(name: any, input: any = {}, title: any | null = null) {
   const i = input && typeof input === 'object' ? input : {};
   const { server, tool } = splitTool(name);
   let what;
   if (title) what = String(title).replace(/[.?!\s]+$/, '');
   else if (name === 'Bash' || name === 'PowerShell') what = `Claude wants to run a command${i.description ? `: ${String(i.description).trim()}` : ''}`;
   else if (name === 'Edit' || name === 'Write') what = `Claude wants to change ${path.basename(String(i.file_path || 'a file'))}`;
-  else what = `Claude wants to use ${tool.replace(/_/g, ' ')}${server ? ` (${server})` : ''}`;
+  else what = `Claude wants to use ${(tool ?? '').replace(/_/g, ' ')}${server ? ` (${server})` : ''}`;
   return `${what.replace(/\s+/g, ' ').trim()}. Allow once?`;
 }
 
@@ -133,31 +139,31 @@ function genericAsk(name, input = {}, title = null) {
  * Pure. Whether a generic prompt may be answered by voice: only when what it
  * approves can be heard whole (a short command or input), never an edit.
  */
-function genericVoiceOk(name, input = {}) {
+function genericVoiceOk(name: any, input: any = {}) {
   if (name === 'Edit' || name === 'Write' || name === 'NotebookEdit') return false;
   const d = genericSpoken(name, input);
   return d.length <= VOICE_MAX && !d.includes('\n');
 }
 
 /** Pure. The exact input in one line, for a spoken question: the command, or compact JSON. */
-function genericSpoken(name, input = {}) {
+function genericSpoken(name: any, input: any = {}) {
   const i = input && typeof input === 'object' ? input : {};
   return name === 'Bash' || name === 'PowerShell' ? String(i.command ?? '') : JSON.stringify(i);
 }
 
 /** `p`, or null once `ms` have passed (a slow termhub must not hold a page's request). */
-function withTimeout(p, ms) {
-  let t;
+function withTimeout(p: any, ms: any) {
+  let t: any;
   return Promise.race([Promise.resolve(p), new Promise((r) => (t = setTimeout(() => r(null), ms)))]).finally(() => clearTimeout(t));
 }
 
 /** An async iterable the SDK reads user messages from; push() to send, close() to end. */
 function createInputQueue() {
-  const items = [];
-  let wake = null;
+  const items: any[] = [];
+  let wake: any = null;
   let closed = false;
   return {
-    push(m) {
+    push(m: any) {
       items.push(m);
       if (wake) wake();
     },
@@ -180,7 +186,7 @@ function createInputQueue() {
 function defaultPrepare() {
   const chat = require('./index');
   const home = chat.ensureHome();
-  const read = (f) => { try { return JSON.parse(fs.readFileSync(path.join(home, '.claude', f), 'utf8')); } catch { return null; } };
+  const read = (f: any) => { try { return JSON.parse(fs.readFileSync(path.join(home, '.claude', f), 'utf8')); } catch { return null; } };
   // permissionMode 'default' is passed below; verifyClaudeHome checks the rest.
   const problems = chat.verifyClaudeHome({ settings: read('settings.json'), local: read('settings.local.json'), command: '--permission-mode default' });
   if (problems.length) throw new Error(`Claude chat refused: ${problems.join('; ')}`);
@@ -204,32 +210,32 @@ function createSdkFeed({
   jobLookup = null,
   env = () => subscriptionEnv(),
   hub = () => require('../dispatch/termhub'),
-  viewCommand = (file) => {
+  viewCommand = (file: any) => {
     const js = path.join(require('../config.ts').config.toolDir, 'src', 'chat', 'sdkView.js').replace(/\\/g, '/');
     return `node "${js}" --follow "${file.replace(/\\/g, '/')}"`;
   },
 } = {}) {
-  const events = [];
+  const events: any[] = [];
   const seen = new Set();
-  const subs = new Set();
+  const subs = new Set<any>();
   const approvals = new Map(); // toolUseId -> pending approval, oldest first
   let status = 'offline';
   let idleSince = 0;
   let draining = false;
-  let q = null;
-  let input = null;
-  let starting = null;
+  let q: any = null;
+  let input: any = null;
+  let starting: any = null;
   let sessionId = readSessionId();
   let seeded = false;
   let seeding = false;
-  let home = null;
+  let home: any = null;
   // Streaming state: the API message being streamed, and text blocks of the
   // current message whose `final` is not known yet.
   const textCount = new Map(); // message id -> text blocks seen (for ids)
   const streamIds = new Map(); // `${message id}#${block index}` -> event id
   const streamText = new Map(); // event id -> text so far
-  let streamMsg = null;
-  let held = [];
+  let streamMsg: any = null;
+  let held: any[] = [];
 
   function readSessionId() {
     try {
@@ -239,11 +245,11 @@ function createSdkFeed({
     }
   }
 
-  function saveSessionId(id) {
+  function saveSessionId(id: any) {
     try {
       fs.mkdirSync(stateDir(), { recursive: true });
       fs.writeFileSync(path.join(stateDir(), SESSION_FILE), JSON.stringify({ sessionId: id }), 'utf8');
-    } catch (err) {
+    } catch (err: any) {
       log.warn('could not save the chat session id', { message: err.message });
     }
   }
@@ -256,11 +262,11 @@ function createSdkFeed({
   // chat by cwd and must not mistake the view for it.
   const viewDir = () => path.join(stateDir(), 'sdk-view');
   const viewFile = () => path.join(viewDir(), 'chat.jsonl');
-  let view = null; // {id, url}
+  let view: any = null; // {id, url}
   let viewChecked = 0;
-  let viewing = null;
+  let viewing: any = null;
 
-  function logView(e) {
+  function logView(e: any) {
     try {
       fs.mkdirSync(viewDir(), { recursive: true });
       fs.appendFileSync(viewFile(), `${JSON.stringify(e)}\n`, 'utf8');
@@ -283,20 +289,20 @@ function createSdkFeed({
     const dir = viewDir();
     fs.mkdirSync(dir, { recursive: true });
     if (!fs.existsSync(viewFile())) fs.writeFileSync(viewFile(), '', 'utf8');
-    const same = (a, b) => path.resolve(String(a || '')).toLowerCase() === path.resolve(String(b || '')).toLowerCase();
-    const live = (await h.listSessions()).find((s) => s.alive !== false && same(s.cwd, dir));
+    const same = (a: any, b: any) => path.resolve(String(a || '')).toLowerCase() === path.resolve(String(b || '')).toLowerCase();
+    const live = (await h.listSessions()).find((s: any) => s.alive !== false && same(s.cwd, dir));
     const id = live ? live.id : (await h.createSession({ cwd: dir, command: viewCommand(viewFile()), title: 'PA chat (SDK)' })).id;
     const url = await h.sessionUrl(id).catch(() => null);
     return { id, url };
   }
 
   // The view, found or started; checked at most every 30 s, never throws.
-  async function ensureView({ force = false } = {}) {
+  async function ensureView({ force = false }: { force?: boolean | undefined } = {}) {
     if (!force && Date.now() - viewChecked < 30_000) return view;
     if (!viewing) {
       viewing = findOrStartView()
         .then((v) => (view = v))
-        .catch((err) => {
+        .catch((err: Error) => {
           log.debug('no Run view for the SDK chat', { message: err.message });
           view = null;
           return null;
@@ -309,7 +315,7 @@ function createSdkFeed({
     return viewing;
   }
 
-  function publish(e, { keep = true } = {}) {
+  function publish(e: any, { keep = true }: { keep?: boolean | undefined } = {}) {
     if (keep && e.type !== 'status') {
       if (seen.has(e.id)) return;
       seen.add(e.id);
@@ -320,7 +326,7 @@ function createSdkFeed({
     for (const fn of subs) {
       try {
         fn(e);
-      } catch (err) {
+      } catch (err: any) {
         log.debug('subscriber failed', { message: err.message });
       }
     }
@@ -328,7 +334,7 @@ function createSdkFeed({
 
   const now = () => new Date().toISOString();
 
-  function setStatus(next) {
+  function setStatus(next: any) {
     if (next === status) return;
     status = next;
     if (next === 'idle') idleSince = Date.now();
@@ -371,7 +377,7 @@ function createSdkFeed({
 
   // ------------------------------------------------------------ approvals --
 
-  function pendingView(p) {
+  function pendingView(p: any) {
     const v = { toolUseId: p.toolUseId, text: p.text, approvable: true, ask: p.ask || null };
     if (p.generic) Object.assign(v, { generic: true, detail: p.detail, voice: p.voice });
     return v;
@@ -388,15 +394,15 @@ function createSdkFeed({
     else publish({ id: `perm-clear-${Date.now()}`, type: 'permission', cleared: true, at: now() });
   }
 
-  async function audit(p, action, channel) {
+  async function audit(p: any, action: any, channel: any) {
     try {
       await policy().authorize({ tool: splitTool(p.name).tool, action, channel, actor: 'pa-chat', subject: p.toolUseId, args: p.input });
-    } catch (err) {
+    } catch (err: any) {
       log.warn('could not audit a chat approval', { message: err.message });
     }
   }
 
-  function settle(p, result, { answered = null } = {}) {
+  function settle(p: any, result: any, { answered = null }: { answered?: any | null | undefined } = {}) {
     if (!approvals.has(p.toolUseId)) return;
     approvals.delete(p.toolUseId);
     clearTimeout(p.timer);
@@ -406,7 +412,7 @@ function createSdkFeed({
   }
 
   // canUseTool: Claude Code's permission prompt, as a callback.
-  function canUseTool(toolName, toolInput, opts = {}) {
+  function canUseTool(toolName: any, toolInput: any, opts: any = {}) {
     const toolUseId = String(opts.toolUseID || '');
     if (!toolUseId) return Promise.resolve({ behavior: 'deny', message: 'a permission request without a tool_use id cannot be answered' });
     // The chat's own actions keep their spoken question; anything else (a shell
@@ -423,7 +429,7 @@ function createSdkFeed({
       }
     }
     return new Promise((resolve) => {
-      const p = {
+      const p: any = {
         toolUseId,
         name: toolName,
         input: toolInput || {},
@@ -457,14 +463,14 @@ function createSdkFeed({
   }
 
   // PreToolUse: every call, whatever the settings files allow, meets the policy.
-  async function preToolUse(hookInput) {
+  async function preToolUse(hookInput: any) {
     const name = hookInput?.tool_name;
     const { server, tool } = splitTool(name);
     let res = null;
     try {
       // An MCP call is audited by the MCP server itself (src/mcp/server.js); a built-in one here.
       res = await policy().authorize({ tool, action: 'call', channel: 'chat', actor: 'pa-chat', args: hookInput?.tool_input || {} }, { audit: !server });
-    } catch (err) {
+    } catch (err: any) {
       log.warn('policy unavailable for a chat tool call; Claude Code\'s settings decide', { message: err.message, tool: name });
     }
     let d = hookDecision(name, res);
@@ -479,7 +485,7 @@ function createSdkFeed({
    * (never "don't ask again"), Deny refuses it. Refused (409) when the id is not
    * the one waiting; 403 when the policy bars the channel (voice and a merge…).
    */
-  async function answerPermission({ answer, toolUseId, via = 'dashboard' } = {}) {
+  async function answerPermission({ answer, toolUseId, via = 'dashboard' }: { answer?: any; toolUseId?: any; via?: string | undefined } = {}) {
     if (!ANSWERS.includes(answer)) throw httpError(409, 'answer must be yes or no');
     if (!approvals.size) throw httpError(409, 'the PA chat is not waiting on a permission prompt');
     const p = approvals.get(String(toolUseId || ''));
@@ -493,7 +499,7 @@ function createSdkFeed({
       const verdict = await pol.enforce(req);
       // A passkey tap (7.1) is spent on this one approval, before it is released.
       if (typeof pol.consumeStepUp === 'function') await pol.consumeStepUp(req, verdict);
-    } catch (err) {
+    } catch (err: any) {
       if (err.code === 'POLICY_DENIED' || err.code === 'STEPUP_REQUIRED') throw Object.assign(httpError(403, err.message), err.needsStepUp ? { needsStepUp: true, approvalId: err.approvalId } : {});
       throw err;
     }
@@ -510,19 +516,19 @@ function createSdkFeed({
 
   // ------------------------------------------------------------- the stream --
 
-  function textId(msgId) {
+  function textId(msgId: any) {
     const n = (textCount.get(msgId) || 0) + 1;
     textCount.set(msgId, n);
     if (textCount.size > 200) textCount.delete(textCount.keys().next().value);
     return `${msgId}:t${n}`;
   }
 
-  function flushHeld(final) {
+  function flushHeld(final: any) {
     for (const e of held) publish(final === undefined ? e : { ...e, final });
     held = [];
   }
 
-  function onStreamEvent(ev) {
+  function onStreamEvent(ev: any) {
     if (!ev || !ev.type) return;
     if (ev.type === 'message_start') {
       streamMsg = { id: ev.message?.id || `m-${crypto.randomUUID()}`, texts: 0 };
@@ -550,11 +556,11 @@ function createSdkFeed({
     }
   }
 
-  function onAssistant(m) {
+  function onAssistant(m: any) {
     const msg = m.message || {};
     const msgId = msg.id || m.uuid;
     const blocks = Array.isArray(msg.content) ? msg.content : [];
-    blocks.forEach((b, k) => {
+    blocks.forEach((b: any, k: any) => {
       if (!b) return;
       if (b.type === 'text') {
         // Counted even when empty: the streamed blocks are numbered the same way.
@@ -562,7 +568,7 @@ function createSdkFeed({
         if (String(b.text || '').trim()) held.push({ id, type: 'assistant', text: String(b.text).trim(), at: now() });
       } else if (b.type === 'tool_use') {
         flushHeld(false); // text before a tool call is a step, not the answer
-        const e = { id: `${m.uuid || msgId}:${k}`, type: 'activity', text: T.describeTool(b.name, b.input), at: now(), tool: String(b.name || ''), toolUseId: String(b.id || '') };
+        const e: Json = { id: `${m.uuid || msgId}:${k}`, type: 'activity', text: T.describeTool(b.name, b.input), at: now(), tool: String(b.name || ''), toolUseId: String(b.id || '') };
         const ask = T.askTool(b.name, b.input);
         if (ask) e.ask = ask;
         publish(e);
@@ -571,7 +577,7 @@ function createSdkFeed({
     if (msg.stop_reason) flushHeld(msg.stop_reason !== 'tool_use');
   }
 
-  function onResult(m) {
+  function onResult(m: any) {
     flushHeld(true);
     if (m.subtype !== 'success' || m.is_error) {
       const why = [m.subtype, ...(Array.isArray(m.errors) ? m.errors : [])].filter(Boolean).join(': ');
@@ -581,7 +587,7 @@ function createSdkFeed({
     setStatus('idle');
   }
 
-  function onMessage(m) {
+  function onMessage(m: any) {
     if (!m || typeof m !== 'object') return;
     // A subagent's own traffic is not the chat speaking.
     if (m.parent_tool_use_id) return;
@@ -633,7 +639,7 @@ function createSdkFeed({
     (async () => {
       try {
         for await (const msg of mine) onMessage(msg);
-      } catch (err) {
+      } catch (err: any) {
         log.warn('the SDK chat ended with an error', { message: err.message });
         publish({ id: `err-${Date.now()}`, type: 'activity', text: `the chat stopped: ${err.message}`, at: now() });
       } finally {
@@ -659,12 +665,12 @@ function createSdkFeed({
     }
     try {
       return await starting;
-    } catch (err) {
+    } catch (err: any) {
       throw httpError(503, `the PA chat could not start: ${err.message}`);
     }
   }
 
-  async function send({ text, source = 'typed' } = {}) {
+  async function send({ text, source = 'typed' }: { text?: any; source?: string | undefined } = {}) {
     if (typeof text !== 'string' || !text.trim()) throw httpError(400, 'text must be a non-empty string');
     if (text.length > MAX_TEXT) throw httpError(400, `text is over ${MAX_TEXT} characters`);
     if (!SOURCES.includes(source)) throw httpError(400, `source must be ${SOURCES.join(' or ')}`);
@@ -680,14 +686,14 @@ function createSdkFeed({
   }
 
   /** Calls fn(event) for every new event; returns the unsubscribe. */
-  function subscribe(fn) {
+  function subscribe(fn: any) {
     subs.add(fn);
     seedHistory();
     fn({ id: `status-now-${Date.now()}`, type: 'status', text: status, at: now() });
     return () => subs.delete(fn);
   }
 
-  function history(limit = 50) {
+  function history(limit: number = 50) {
     seedHistory();
     const n = Math.min(Math.max(1, Number(limit) || 50), MAX_EVENTS);
     return events.filter((e) => e.type === 'user' || e.type === 'assistant').slice(-n);
@@ -708,7 +714,7 @@ function createSdkFeed({
    * a running session, idle for at least `minIdleMs` since its last turn, with
    * nothing waiting on a yes. Never starts a session (INBOX.md still has it).
    */
-  function doorbell(id, { minIdleMs = 2 * 60_000 } = {}) {
+  function doorbell(id: any, { minIdleMs = 2 * 60_000 }: { minIdleMs?: number | undefined } = {}) {
     const n = Number(id);
     if (!Number.isInteger(n) || n <= 0) return { ok: false, reason: 'bad notification id' };
     if (!q || !input) return { ok: false, reason: 'no PA chat session' };
@@ -737,7 +743,7 @@ function createSdkFeed({
    * is closed, and the new generation resumes the session by its id on its
    * first message. undrain() (a rollback) just lets the next message restart it.
    */
-  async function drain({ waitMs = 20_000 } = {}) {
+  async function drain({ waitMs = 20_000 }: { waitMs?: number | undefined } = {}) {
     draining = true;
     for (const p of [...approvals.values()]) {
       publish({ id: `perm-drain-${p.toolUseId}`, type: 'activity', text: `not done, the PA is restarting: ${p.text.replace(/…$/, '')}`, at: now() });

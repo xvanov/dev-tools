@@ -217,7 +217,7 @@ async function deliver(row: Row) {
     log.warn('inbox not written', { message: (err as Error).message });
   }
   if (!out.inbox || !config.notify.chatNudge) return out;
-  if (require('../chat/feed').engine() === 'sdk') {
+  if (require('../chat/feed.ts').engine() === 'sdk') {
     try {
       Object.assign(out, await ringSdk(row.id, config.notify.chatNudgeIdleMinutes * 60_000));
     } catch (err) {

@@ -10,7 +10,7 @@ const os = require('os');
 const path = require('path');
 const vm = require('vm');
 const T = require('../src/chat/transcript.ts');
-const { createFeed } = require('../src/chat/feed');
+const { createFeed } = require('../src/chat/feed.ts');
 
 const at = '2026-11-06T10:00:00.000Z';
 const user = (uuid, content, extra = {}) => ({ type: 'user', uuid, timestamp: at, message: { role: 'user', content }, ...extra });

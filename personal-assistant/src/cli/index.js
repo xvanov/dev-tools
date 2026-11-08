@@ -341,7 +341,7 @@ const commands = {
   async chat() {
     // On the SDK engine the chat lives inside the PA worker, not in termhub:
     // starting one from here would be a second conversation.
-    if (require('../chat/feed').engine() === 'sdk') {
+    if (require('../chat/feed.ts').engine() === 'sdk') {
       out('the PA chat runs inside the PA worker (PA_CHAT_ENGINE=sdk): talk to it on Ask (/talk) or the dashboard\'s chat box');
       return;
     }
@@ -1198,7 +1198,7 @@ const commands = {
     if (action === 'router') {
       const E = require('../eval/router.ts');
       const R = require('../chat/fastRouter.ts');
-      const F = require('../chat/fastLane');
+      const F = require('../chat/fastLane.ts');
       const model = flags.model && flags.model !== true ? String(flags.model) : config.fastLane.model;
       if (!/^local\//.test(model)) return fail(`the router scores log-probabilities from a local/ model; ${model} is not one (--model local/llama3.2:3b)`);
       const repeat = flagInt(flags, 'repeat', 3);

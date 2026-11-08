@@ -170,7 +170,7 @@ function chatStream(req: Req, res: Res) {
     'X-Content-Type-Options': 'nosniff',
   });
   res.write('retry: 3000\n\n');
-  const unsubscribe = require('../chat/feed').feed().subscribe((e: Row) => {
+  const unsubscribe = require('../chat/feed.ts').feed().subscribe((e: Row) => {
     res.write(`id: ${e.id}\ndata: ${JSON.stringify(e)}\n\n`);
   });
   const ping = setInterval(() => res.write(': ping\n\n'), 20_000);
@@ -302,14 +302,14 @@ async function handle(req: Req, res: Res) {
   // takes the same X-PA guard as every other POST.
   if (req.method === 'POST' && url.pathname === '/api/chat/open') {
     if (req.headers['x-pa'] !== '1') return send(res, 403, { error: 'missing X-PA header' });
-    return send(res, 200, await require('../chat/feed').openChat());
+    return send(res, 200, await require('../chat/feed.ts').openChat());
   }
   // The chat box and the voice page talk to that same session
   // (src/chat/feed.js; contract in the README, "Talking to it").
   if (req.method === 'POST' && url.pathname === '/api/chat') {
     if (req.headers['x-pa'] !== '1') return send(res, 403, { error: 'missing X-PA header' });
     const body: Row = await readJson(req);
-    return send(res, 200, await require('../chat/feed').feed().send({ text: body.text, source: body.source || 'typed' }));
+    return send(res, 200, await require('../chat/feed.ts').feed().send({ text: body.text, source: body.source || 'typed' }));
   }
   // Approve / Deny on the chat's permission prompt, from the Talk page. It
   // answers a prompt that may start work, so it needs the page's token as well
@@ -318,22 +318,22 @@ async function handle(req: Req, res: Res) {
     if (req.headers['x-pa'] !== '1') return send(res, 403, { error: 'missing X-PA header' });
     if (!pageTokenOk(req)) return send(res, 403, { error: 'answering a permission prompt needs the page token — reload the page' });
     const body: Row = await readJson(req);
-    return send(res, 200, await require('../chat/feed').feed().answerPermission({ answer: body.answer, toolUseId: body.toolUseId, via: body.via === 'voice' ? 'voice' : 'dashboard' }));
+    return send(res, 200, await require('../chat/feed.ts').feed().answerPermission({ answer: body.answer, toolUseId: body.toolUseId, via: body.via === 'voice' ? 'voice' : 'dashboard' }));
   }
   // The worker's INBOX doorbell for the SDK chat (src/notify/chat.js): a
   // notification id only; the line typed is fixed (nudgeText), never content.
   if (req.method === 'POST' && url.pathname === '/api/chat/doorbell') {
     if (req.headers['x-pa'] !== '1') return send(res, 403, { error: 'missing X-PA header' });
-    const f = require('../chat/feed');
+    const f = require('../chat/feed.ts');
     if (f.engine() !== 'sdk') return send(res, 409, { error: 'the doorbell endpoint is for the SDK engine' });
     const body: Row = await readJson(req);
     return send(res, 200, f.feed().doorbell(body.id, { minIdleMs: Number(body.minIdleMs) >= 0 ? Number(body.minIdleMs) : undefined }));
   }
   if (req.method === 'GET' && url.pathname === '/api/chat/history') {
-    return send(res, 200, { messages: require('../chat/feed').feed().history(url.searchParams.get('limit') || 50) });
+    return send(res, 200, { messages: require('../chat/feed.ts').feed().history(url.searchParams.get('limit') || 50) });
   }
   if (req.method === 'GET' && url.pathname === '/api/chat/session') {
-    return send(res, 200, await require('../chat/feed').feed().session());
+    return send(res, 200, await require('../chat/feed.ts').feed().session());
   }
   if (req.method === 'GET' && url.pathname === '/api/chat/stream') return chatStream(req, res);
   // The board's "Waiting for your yes" card (permission.client.js): the click

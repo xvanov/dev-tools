@@ -7,7 +7,7 @@
 
 const assert = require('assert');
 const http = require('http');
-const F = require('../src/chat/fastLane');
+const F = require('../src/chat/fastLane.ts');
 
 // ---- validateDecision / parseDecision ---------------------------------------------
 {

@@ -205,7 +205,7 @@
         }
       ],
       "code": [
-        "personal-assistant/src/chat/fastLane.js",
+        "personal-assistant/src/chat/fastLane.ts",
         "personal-assistant/src/chat/fastRouter.ts",
         "personal-assistant/src/eval/router.ts",
         "personal-assistant/src/eval/router-cases.json",
@@ -326,7 +326,7 @@
         "Billing": "the machine's Claude Code login: a claude.ai subscription login is not metered per call",
         "Engine": [
           "PA_CHAT_ENGINE=terminal: a termhub session in pa-home (the engine before 4.2); its prompts are answered by reading the screen (src/chat/permission.ts)",
-          "PA_CHAT_ENGINE=sdk (the default since plan 4.2): the Claude Agent SDK (@anthropic-ai/claude-agent-sdk) inside the PA worker, src/chat/sdkFeed.js. Same home, CLAUDE.md, settings, SessionStart hook and pa-chat MCP server; one streaming query() resumed by its session id (pa-home/.pa-chat-sdk-session.json); answers stream into /api/chat/stream as partial events",
+          "PA_CHAT_ENGINE=sdk (the default since plan 4.2): the Claude Agent SDK (@anthropic-ai/claude-agent-sdk) inside the PA worker, src/chat/sdkFeed.ts. Same home, CLAUDE.md, settings, SessionStart hook and pa-chat MCP server; one streaming query() resumed by its session id (pa-home/.pa-chat-sdk-session.json); answers stream into /api/chat/stream as partial events",
           "SDK approvals are typed callbacks: a PreToolUse hook puts every call through src/policy (deny refuses; the six action tools always ask), canUseTool waits for the dashboard card or a spoken yes (POST /api/chat/permission, then policy.enforce), and no answer within PA_CHAT_APPROVAL_TIMEOUT_MS (5 min) is a deny audited on channel timeout. Any other prompt (a `pa` shell verb, an edit, remember) gets a generic allow-once card showing the call's whole input, answerable by voice only when that input is short enough to hear whole and the policy allows voice (never an edit); a policy allow for Read/Grep/Glob holds inside pa-home only",
           "SDK billing: the bundled Claude Code signs in with the machine's Claude login (measured: apiKeySource none, a Team subscription); ANTHROPIC_API_KEY and ANTHROPIC_AUTH_TOKEN are removed from its environment so it never bills the API. Headless use draws on the subscription's separate credit pool (since 15 Jun 2026)",
           "SDK doorbell: the worker's fixed INBOX line reaches it as a user turn through POST /api/chat/doorbell (the id only), under the terminal doorbell's conditions: a running session, idle long enough, nothing waiting on a yes",
@@ -435,8 +435,8 @@
       "code": [
         "personal-assistant/src/chat/index.js",
         "personal-assistant/src/chat/agent.ts",
-        "personal-assistant/src/chat/feed.js",
-        "personal-assistant/src/chat/sdkFeed.js",
+        "personal-assistant/src/chat/feed.ts",
+        "personal-assistant/src/chat/sdkFeed.ts",
         "personal-assistant/src/chat/sdkView.js",
         "personal-assistant/src/chat/transcript.ts",
         "personal-assistant/src/notify/chat.ts",
