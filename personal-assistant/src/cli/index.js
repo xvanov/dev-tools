@@ -1131,7 +1131,7 @@ const commands = {
       }
       const r = await backup.drill({ file: args[1], to: flags.to, keep: flagBool(flags, 'keep'), adminUrl: typeof flags['admin-url'] === 'string' ? flags['admin-url'] : null, template: typeof flags.template === 'string' ? flags.template : null, say: out });
       out(`${r.ok ? 'PASS' : 'FAIL'}  ${r.file}  → ${r.to}${r.kept ? ' (kept)' : ' (dropped)'}  ${r.tables} tables, ${r.seconds} s`);
-      out(r.compared ? `  row counts match the manifest${r.problems.length ? `, except ${r.problems.length}:` : ''}` : '  no manifest in this backup (plain dump): tables restored, row counts not compared');
+      out(r.compared ? `  row counts match the ${r.against || 'manifest'}${r.problems.length ? `, except ${r.problems.length}:` : ''}` : '  no manifest in this backup (plain dump): tables restored, row counts not compared');
       for (const p of r.problems.slice(0, 20)) out(`    ${p.table}: expected ${p.expected}, restored ${p.got === null ? 'none' : p.got}`);
       if (r.state) out(`  factory state: ${r.state.files} files restored, ${r.state.expectedFiles} at backup${r.state.ok ? '' : ' — MISMATCH'}`);
       if (!r.ok) process.exitCode = 1;

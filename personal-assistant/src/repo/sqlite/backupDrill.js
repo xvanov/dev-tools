@@ -23,6 +23,23 @@ function create(db) {
       return out;
     },
 
+    /**
+     * What is wrong with this store file, if anything (the SQLite backup drill,
+     * src/backupSqlite.js): integrity_check, each FTS index's integrity-check,
+     * foreign_key_check. [] when it can be trusted.
+     */
+    async integrityProblems() {
+      const problems = [];
+      const ic = await db.rows('pragma integrity_check');
+      if (!(ic.length === 1 && ic[0].integrity_check === 'ok')) problems.push(`integrity_check: ${ic.slice(0, 3).map((r) => r.integrity_check).join('; ')}`);
+      for (const t of ['chunk_fts', 'chunk_fts_exact', 'claim_fts', 'memory_page_fts']) {
+        await db.query(`insert into ${t} (${t}) values ('integrity-check')`).catch((err) => problems.push(`${t}: ${err.message}`));
+      }
+      const fk = await db.rows('select * from pragma_foreign_key_check limit 5');
+      if (fk.length) problems.push(`foreign keys: ${JSON.stringify(fk)}`);
+      return problems;
+    },
+
     async createDatabase() {
       throw notHere();
     },

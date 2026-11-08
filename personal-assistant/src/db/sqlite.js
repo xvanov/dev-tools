@@ -541,6 +541,21 @@ function createSqliteBackend(file, { key = null } = {}) {
   return backend;
 }
 
+/**
+ * A consistent copy of the store file `src` at `dest` (a new file):
+ * VACUUM INTO on its own read-only connection, so the writer keeps writing.
+ * The copy is compacted and keeps the store's encryption (same key).
+ */
+function snapshotFile(src, dest, { key = null } = {}) {
+  if (fs.existsSync(dest)) throw new Error(`${dest} exists`);
+  const conn = open(src, { key, readonly: true });
+  try {
+    conn.prepare('vacuum into ?').run(dest);
+  } finally {
+    conn.close();
+  }
+}
+
 // ---- migrations (sql-sqlite/*.sql) ------------------------------------------
 
 function migrationFiles() {
@@ -576,6 +591,7 @@ module.exports = {
   translate,
   encode,
   vectorBlob,
+  snapshotFile,
   signBits,
   hammingSql,
   holderGone,

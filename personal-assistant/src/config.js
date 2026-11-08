@@ -698,6 +698,9 @@ const config = {
     dir: env('PA_BACKUP_DIR', path.join(dataDir, 'backups')),
     keep: envInt('PA_BACKUP_KEEP', 14),
     everyHours: envInt('PA_BACKUP_EVERY_HOURS', 24),
+    // PA_DB=sqlite: the rolling snapshot pa-latest.sqlite is refreshed by the
+    // hourly backup pass when older than this (src/backupSqlite.js).
+    snapshotMinutes: envInt('PA_SQLITE_SNAPSHOT_MINUTES', 60),
     // The distro that hosts Postgres on Windows; pg_dump runs inside it.
     wslDistro: env('PA_WSL_DISTRO', 'Ubuntu'),
     // How pg_dump/pg_restore are reached: 'wsl:<distro>' (Windows), 'native',

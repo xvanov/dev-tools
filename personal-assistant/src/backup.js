@@ -39,6 +39,9 @@ const crypt = require('./backupCrypto');
 const exec = promisify(execFile);
 const log = logger('backup');
 
+// PA_DB=sqlite: the same verbs on a SQLite file (src/backupSqlite.js); Postgres is unchanged.
+const sqliteStore = () => repo.backend.dialect === 'sqlite';
+
 // `.pabak` is the encrypted bundle (pg_dump + factory state + a manifest, see
 // bundle() below); `.dump` is a bare pg_dump, what older versions wrote and
 // what a machine with no keychain still writes.
@@ -230,10 +233,11 @@ function tarBin() {
  * backup time, which the restore drill checks), in a tar, encrypted with
  * AES-256-GCM (src/backupCrypto.js). Consumes `dumpFile`.
  */
-async function bundle({ dumpFile, out, key, state = factoryStateDir(), counts }) {
+async function bundle({ dumpFile, out, key, state = factoryStateDir(), counts, entry = 'pa.dump' }) {
   const stage = fs.mkdtempSync(path.join(path.dirname(out), '.stage-'));
   try {
-    fs.renameSync(dumpFile, path.join(stage, 'pa.dump'));
+    // entry: pa.dump (pg_dump), or pa.sqlite (a SQLite store's snapshot, src/backupSqlite.js).
+    fs.renameSync(dumpFile, path.join(stage, entry));
     if (counts === undefined) counts = await require('./repo').backupDrill.tableCounts().catch(() => null);
     const manifest = {
       format: 1,
@@ -246,7 +250,7 @@ async function bundle({ dumpFile, out, key, state = factoryStateDir(), counts })
     const tarFile = path.join(stage, 'bundle.tar');
     const args = ['-cf', tarFile];
     if (state) args.push(...STATE_EXCLUDE.map((n) => `--exclude=state/${n}`));
-    args.push('-C', stage, 'manifest.json', 'pa.dump');
+    args.push('-C', stage, 'manifest.json', entry);
     if (state) args.push('-C', path.dirname(state), path.basename(state));
     await runTool({ cmd: tarBin(), args });
     return { bytes: crypt.encryptFile(tarFile, out, key), manifest };
@@ -278,7 +282,8 @@ function unpack(file, { key = null } = {}) {
       /* a bundle without one still restores; the drill says it could not compare */
     }
     const stateDir = path.join(dir, 'state');
-    return { dir, dumpFile: path.join(dir, 'pa.dump'), manifest, stateDir: fs.existsSync(stateDir) ? stateDir : null };
+    const store = fs.existsSync(path.join(dir, 'pa.sqlite')) ? 'pa.sqlite' : 'pa.dump';
+    return { dir, dumpFile: path.join(dir, store), manifest, stateDir: fs.existsSync(stateDir) ? stateDir : null };
   } catch (err) {
     fs.rmSync(dir, { recursive: true, force: true });
     throw err;
@@ -286,6 +291,7 @@ function unpack(file, { key = null } = {}) {
 }
 
 async function dump({ dir = config.backup.dir, keep = config.backup.keep, plain = false } = {}) {
+  if (sqliteStore()) return require('./backupSqlite').dump({ dir, keep, plain });
   fs.mkdirSync(dir, { recursive: true });
   const id = stamp();
   const plainFinal = path.join(dir, `pa-${id}.dump`);
@@ -326,6 +332,7 @@ async function dump({ dir = config.backup.dir, keep = config.backup.keep, plain 
 // The worker's nightly pass. It also runs once at worker start, so it skips
 // when a recent dump exists rather than writing one per restart.
 async function dumpIfDue() {
+  if (sqliteStore()) return require('./backupSqlite').dumpIfDue();
   const newest = list()[0];
   if (newest && Date.now() - newest.at.getTime() < config.backup.everyHours * 3600_000) return null;
   return dump();
@@ -347,6 +354,7 @@ async function dumpIfDue() {
 // the restore goes there instead (the drill's scratch database): then the
 // extensions are the caller's job and the install id is left alone.
 async function restore(file, { url = null } = {}) {
+  if (sqliteStore()) return require('./backupSqlite').restore(file);
   if (!fs.existsSync(file)) throw new Error(`no such file: ${file}`);
   if (crypt.isEncrypted(file)) {
     const unpacked = unpack(file);
@@ -474,6 +482,7 @@ function compareCounts(expected, got) {
  * or a `template` database that already holds them.
  */
 async function drill({ file = (list()[0] || {}).file, to, keep = false, adminUrl = null, template = null, say = () => {} } = {}) {
+  if (sqliteStore()) return require('./backupSqlite').drill({ file, to, keep, say });
   if (!file) throw new Error(`no backups in ${config.backup.dir}`);
   if (!require('./repo/backupDrill').NAME_RE.test(String(to || ''))) {
     throw new Error('--to wants a lowercase database name (letters, digits, underscore), e.g. pa_drill');

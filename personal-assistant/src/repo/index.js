@@ -106,6 +106,8 @@ const poolBackend = {
   one: (text, params) => require('../db').one(text, params),
   withTx: (fn) => require('../db').withTx(fn),
   notify: (channel, payload) => require('../db').notify(channel, payload),
+  /** Closes the pool (a SQLite restore swaps the file under it). */
+  close: () => require('../db').close(),
   get dialect() {
     return require('../db').dialect;
   },
