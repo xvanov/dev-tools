@@ -855,6 +855,35 @@ not in the Map is not done, and a new one gets added there first.
     out the talk-page hop. The talk-page hop is not measured at all (/api/talk/endpoint could be).
     The Ask screenshot shows the idle Talk page, not the turn. Time the first sentence, add the
     smart-turn call, and capture the page after a driven turn.
+  - [ ] **8.4.8 research: the tool call takes 2.3 s (target 1 s).** `factory_start` returned
+    2312 ms after the call: run row 19:52:09.56, factory job created 19:52:10.96, PA "dispatched"
+    19:52:11.30, so about 1.4 s is the `job submit` round trip. Down from 13.5 s on 8.2's run
+    (8.2.2), still over. Profile the submit (uv/python start-up per CLI call through serve's
+    /api/cli) ([acceptance/research.md](acceptance/research.md)).
+  - [ ] **8.4.9 research: approval to "started" takes ~2.1 s (target 1 s), and the e2e reads
+    11.5 s.** `factory_start` returned at 19:52:11.3, serve woke and dispatched at 19:52:12, and the
+    job's `started_at` is 19:52:13.40. The e2e polls `job status` every 10 s (`--poll 10`), so it
+    timed 11472 ms. Time the hop from the job's `started_at`, and cut the wake-to-worker start.
+    (The model's first turn is another 10.2 s later, at 19:52:23.6: checkout and brief.)
+  - [ ] **8.4.10 research: the worker hop is not measured, and PA learns state changes 6-7 s late.**
+    The job ended at 19:53:35.25, serve pushed `done` at 19:53:41, and PA recorded it at 19:53:41.14
+    (its event loop was blocked 1230 ms then). `in_progress` was pushed at 19:52:12 and recorded at
+    19:52:19.4. The board can't redraw within 200 ms of a change PA hears about 6 s later. Measure
+    the hop (factory `updated_at` → the board's change), then find where serve's push waits.
+  - [ ] **8.4.11 research: the e2e's screenshots show no data.** `chrome-headless-shell
+    --screenshot` shoots at page load, before /api/state and termhub answer. Plan shows an empty
+    "On me", Build shows "No jobs to show", and Run shows "No terminal open". Shot over CDP 12 s after
+    load, the same pages show card #6773 and the researcher's terminal with its links. Capture after
+    the data loads (CDP, or a ready marker the pages set), and add the Ask view.
+  - [ ] **8.4.12 research: the approval is not exercised.** The e2e calls `chatTools.handle
+    ('factory_start')` directly, so the policy audit log has no row for the run. Live policy does
+    say `ask` (`pa audit check factory_start`). Drive the call through the permission path, or at
+    least record the policy decision in the evidence.
+  - [ ] **8.4.13 research: e2e cleanup leaves sessions, and `--sweep` is not scoped.** The research
+    runner drops the card but leaves the follow and researcher termhub sessions alive (the golden
+    path kills them). `pa e2e --sweep` acts on every open e2e card, so during parallel reviews it
+    would cancel another reviewer's live job and close its PR. Kill the run's sessions in research
+    cleanup, and let `--sweep` take a marker or skip runs still inside their timeout.
 - [ ] **8.5 Architecture map review.** A full pass over `architecture.json` (the `/architecture`
   page) against the finished system: every component, process, port, table, tool, workflow and
   storage location as it now runs on both stacks (jarvisd, ptyd, native factory, SQLite,
