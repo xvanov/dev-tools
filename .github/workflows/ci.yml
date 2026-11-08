@@ -373,10 +373,17 @@ jobs:
           cargo fmt --check
           cargo clippy --locked --all-targets -- -D warnings
           cargo test --locked
-      # One retry: the bundlers fetch tools from github.com, which has answered 504.
-      # The second pass is incremental (sccache, and cargo's own target dir).
+      # Retries: the bundlers fetch tools from github.com release downloads, which
+      # have answered 504 for minutes at a time (runs 42467783684, 42469079754).
+      # Later passes are incremental (cargo's target dir), so a retry costs the
+      # wait, not a rebuild. Once one download lands, the tools cache above keeps it.
       - run: |
-          node scripts/build.js --release || { echo "::warning::build failed once; retrying in 20 s"; sleep 20; bash $GITHUB_WORKSPACE/.github/scripts/run.sh node scripts/build.js --release; }
+          for wait in 30 90; do
+            node scripts/build.js --release && exit 0
+            echo "::warning::build failed; retrying in ${wait} s"
+            sleep "$wait"
+          done
+          bash $GITHUB_WORKSPACE/.github/scripts/run.sh node scripts/build.js --release
         shell: bash
       - uses: actions/upload-artifact@v4
         with:
