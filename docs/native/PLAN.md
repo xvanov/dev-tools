@@ -275,7 +275,7 @@ run mid-step; a job continued on an existing branch (`--branch`).
 ## Phase 1: contracts and the repository layer
 
 - [x] **1.1 JSON Schemas (D15)** for Job, Run, Card, Event, Approval, mirroring JOBS-API v1.4
-  and the MCP tools. One source; TS types generated; Python and Rust validate against it. (52d2b79)
+  and the MCP tools. One source; TS types generated; Python and Rust validate against it. (52d2b79, ca701ce)
   `schemas/*.schema.json` at the repo root; `schemas/gen-types.js` writes `types.d.ts`; the PA
   validates with the dependency-free `schemas/index.js` (it throws on any keyword it does not
   implement, so it never means less than Python's), the factory with `factory/contract_schemas.py`
@@ -296,7 +296,13 @@ run mid-step; a job continued on an existing branch (`--branch`).
   `test/contract/_backends.js` (today Postgres: a throwaway `pa_test_contract_*` database, migrated,
   dropped; phase 3 adds SQLite), and fails when an aggregate method has no case. CI runs it in its own
   job with a pgvector service container; locally it uses the work stack's server (scripts/README.md).
-- [ ] **1.4 Events outbox table** + one SSE endpoint with `Last-Event-ID` replay.
+- [x] **1.4 Events outbox table** + one SSE endpoint with `Last-Event-ID` replay. (cefef7a)
+  `sql/036`: the 034 trigger also writes each event to `event_outbox` under its `pa_event_seq`
+  number (Z6) in the writer's transaction; NOTIFY stays the live wake-up. `GET /api/events`
+  replays a `g<n>` the ring does not hold from the table (across restarts and generations), and a
+  LISTEN that reconnects backfills from it. Kept 3 days (pruned by the trigger); a client more than
+  1000 events or 3 days behind resyncs. Delivery is at least once in commit order: two
+  transactions committing out of sequence order can replay one event twice (ids dedupe it).
 - [ ] **Exit 1:** all SQL behind repositories; contract tests green on Postgres.
 
 ## Phase 2: factory as a daemon
