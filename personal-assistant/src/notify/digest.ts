@@ -157,7 +157,7 @@ async function runDue({ now = new Date() }: { now?: Date } = {}) {
   if (!row) return null; // another process wrote this slot
   if (items.held.length) await repo.notifications.attachToDigest(row.id, items.held);
   if (text.count) {
-    const { notify, dashboardUrl } = require('./index.ts');
+    const { notify, dashboardUrl } = require('./notify.ts');
     await notify({
       kind: 'digest',
       title: text.title,
