@@ -85,6 +85,18 @@ def reap_stale_heartbeats(db_path: Path) -> int:
     return removed
 
 
+def live_story_ids(db_path: Path) -> set[int]:
+    """Story ids with a handler running right now in a live process.
+
+    Reaps dead rows first, so a story whose tick was killed is not in the set.
+    """
+    reap_stale_heartbeats(db_path)
+    engine = _engine(db_path)
+    with Session(engine) as session:
+        rows = list(session.exec(select(LiveHandler)).all())
+    return {int(r.story_id) for r in rows if r.story_id is not None and _pid_alive(r.pid)}
+
+
 @contextmanager
 def live_handler(
     db_path: Path,

@@ -89,6 +89,8 @@ _RUNS_NEW_COLUMNS: list[tuple[str, str]] = [
     ("subscription_equiv_usd", "REAL"),
     ("session_json", "VARCHAR"),
     ("started_at", "VARCHAR"),
+    # The process checkpointing a provisional row (runner.Run.owner_pid).
+    ("owner_pid", "INTEGER"),
 ]
 
 _STORIES_NEW_COLUMNS: list[tuple[str, str]] = [

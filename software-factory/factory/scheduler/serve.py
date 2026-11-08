@@ -27,8 +27,11 @@ What it does, every ``poll_s`` (1 s):
   there is never a stale lease). Each tick it starts also takes
   ``state/locks/tick-<app>.lock`` (``FACTORY_TICK_LOCK=1``), so a tick orphaned
   by a killed serve is never doubled by the next serve.
-* **Timeout.** A tick running longer than ``tick_timeout_s`` (default 3600 s)
-  is killed (whole tree).
+* **Timeout.** A tick running longer than ``tick_timeout_s`` (default 3 h) is
+  killed (whole tree), and the provisional ``runs`` rows its dead processes
+  owned are closed as failed. Each tick is told the same number as its budget
+  (``FACTORY_TICK_BUDGET_S``), so the orchestrator never starts an agent step
+  that cannot finish before the kill (a solo dev step needs 5400 s + 1500 s).
 
 ``factory serve --status`` reports the lease holder (``state/scheduler/serve.json``).
 """
@@ -60,9 +63,15 @@ from factory.state_dir import state_dir
 
 DEFAULT_INTERVAL_S = 300.0
 DEFAULT_POLL_S = 1.0
-DEFAULT_TICK_TIMEOUT_S = 3600.0
+#: Must not be below the orchestrator's ``_DEFAULT_TICK_BUDGET_S`` (the old
+#: systemd ``TimeoutStartSec=3h``): at 3600 s serve killed a solo dev step the
+#: orchestrator had budgeted 6900 s for, 58 min into a live run (2026-11-08).
+DEFAULT_TICK_TIMEOUT_S = 3 * 3600.0
 #: Env var that makes ``factory tick`` take the per-app tick lock.
 TICK_LOCK_ENV = "FACTORY_TICK_LOCK"
+#: Env var the orchestrator reads as its tick budget; serve sets it to its own
+#: tick timeout so the two can never disagree.
+TICK_BUDGET_ENV = "FACTORY_TICK_BUDGET_S"
 ALL_APPS = "*"
 
 
@@ -382,11 +391,18 @@ def _default_dispatch(root: Path) -> dict[str, Any]:
     return dispatch_tasks(root)
 
 
+def _default_close_orphans(root: Path, reason: str) -> list[int]:
+    from factory.runner import close_orphaned_provisional_runs
+
+    return close_orphaned_provisional_runs(state_dir(Path(root)) / "factory.db", reason=reason)
+
+
 @dataclass
 class Scheduler:
     cfg: ServeConfig
     spawn: Spawn = _default_spawn
     dispatch: Callable[[Path], dict[str, Any]] = _default_dispatch
+    close_orphans: Callable[[Path, str], list[int]] = _default_close_orphans
     clock: Callable[[], float] = time.monotonic
     out: Callable[[str], None] = field(default=lambda line: print(line, flush=True))
     running: dict[str, _Running] = field(default_factory=dict)
@@ -442,6 +458,7 @@ class Scheduler:
         log.flush()
         env = dict(os.environ)
         env[TICK_LOCK_ENV] = "1"
+        env[TICK_BUDGET_ENV] = str(int(self.cfg.tick_timeout_s))
         env.setdefault("PYTHONUNBUFFERED", "1")
         try:
             proc = self.spawn(tick_argv(app), Path(self.cfg.root), log, env)
@@ -467,11 +484,21 @@ class Scheduler:
                     rc = run.proc.wait(timeout=10)
                 except subprocess.TimeoutExpired:
                     continue
+                self._close_orphans(f"tick {app} killed after {self.cfg.tick_timeout_s:.0f}s")
             if rc is None:
                 continue
             run.log.close()
             del self.running[app]
             self.log(f"tick {app} exited {rc} after {now - run.started:.1f}s")
+
+    def _close_orphans(self, reason: str) -> None:
+        try:
+            closed = self.close_orphans(Path(self.cfg.root), reason)
+        except Exception as exc:  # noqa: BLE001 - housekeeping never kills serve
+            self.log(f"closing orphaned runs failed: {exc!r}")
+            return
+        if closed:
+            self.log(f"closed orphaned run rows {closed} ({reason})")
 
     # -- one poll ------------------------------------------------------------- #
 
@@ -520,11 +547,17 @@ class Scheduler:
             self._reap()
             if self.running:
                 sleep(0.5)
+        killed = False
         for app, run in list(self.running.items()):
             self.log(f"tick {app} still running at shutdown; killing it")
             kill_tree(run.proc.pid, force=True)
+            with contextlib.suppress(subprocess.TimeoutExpired):
+                run.proc.wait(timeout=10)
             run.log.close()
             del self.running[app]
+            killed = True
+        if killed:
+            self._close_orphans("tick killed at serve shutdown")
 
     def snapshot(self) -> dict[str, Any]:
         return {

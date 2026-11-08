@@ -690,6 +690,12 @@ class Run(SQLModel, table=True):
     subscription_equiv_usd: float | None = None
     session_json: str | None = None
     started_at: str | None = None
+    # The pid of the process checkpointing a PROVISIONAL row (in-process API
+    # runs only). A tick killed mid-step never writes the final row; with the
+    # owner dead, :func:`close_orphaned_provisional_runs` closes the row and
+    # the stale-story pass may recover the story. NULL = not owned by a
+    # process we can probe (a claude_session row: its run outlives the tick).
+    owner_pid: int | None = None
 
 
 def _engine(db_path: Path | None = None) -> Any:
@@ -918,6 +924,7 @@ def _upsert_provisional_run(
                 usage_reliable=None,
                 session_json=session_json,
                 started_at=started_at,
+                owner_pid=os.getpid(),
             )
         else:
             if session_json is not None:
@@ -931,6 +938,52 @@ def _upsert_provisional_run(
         session.commit()
         session.refresh(row)
         return row.id
+
+
+def close_orphaned_provisional_runs(
+    db_path: Path | None = None,
+    *,
+    reason: str,
+    alive: Callable[[int], bool] | None = None,
+) -> list[int]:
+    """Close provisional ``runs`` rows whose owning process is gone.
+
+    A tick killed mid-step (serve's tick timeout, systemd, OOM) never writes
+    the final row, so ``job status`` showed the dead step as ``running`` for
+    good. Each closed row becomes a failed run with ``reason`` in its error;
+    its booked spend stays. Rows with no ``owner_pid`` are never touched.
+    Returns the closed row ids. Never raises.
+    """
+    from sqlmodel import select
+
+    from factory.oscompat import pid_alive
+
+    probe = alive or pid_alive
+    closed: list[int] = []
+    try:
+        engine = _engine(db_path)
+        with Session(engine) as session:
+            rows = session.exec(
+                select(Run).where(Run.error == _PROVISIONAL_RUN_ERROR)  # type: ignore[arg-type]
+            ).all()
+            now = datetime.now(UTC).isoformat()
+            for row in rows:
+                pid = row.owner_pid
+                if not pid or probe(int(pid)) or row.id is None:
+                    continue
+                row.error = truncate_error(
+                    f"killed: owner process {pid} exited before the run finished ({reason})"
+                )
+                row.success = False
+                row.ts = now
+                session.add(row)
+                closed.append(row.id)
+            if closed:
+                session.commit()
+    except Exception:  # noqa: BLE001 - housekeeping must never break a tick or serve
+        _log.warning("closing orphaned provisional runs failed", exc_info=True)
+        return []
+    return closed
 
 
 # --------------------------------------------------------------------------- #

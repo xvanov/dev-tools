@@ -44,13 +44,19 @@ class Harness:
         self.spawned: list[tuple[str, FakeProc, dict[str, str]]] = []
         self.dispatches = 0
         self.lines: list[str] = []
+        self.orphan_closes: list[str] = []
         self.sched = serve.Scheduler(
             serve.ServeConfig(root=root, apps=apps, interval_s=interval, tick_timeout_s=timeout),
             spawn=self._spawn,
             dispatch=self._dispatch,
+            close_orphans=self._close_orphans,
             clock=lambda: self.now,
             out=self.lines.append,
         )
+
+    def _close_orphans(self, root: Path, reason: str) -> list[int]:
+        self.orphan_closes.append(reason)
+        return [37]
 
     def _spawn(self, argv: list[str], cwd: Path, log: Any, env: dict[str, str]) -> FakeProc:
         proc = FakeProc()
@@ -159,6 +165,37 @@ def test_tick_over_timeout_is_killed(tmp_path: Path, _no_real_kills: list[int]) 
     h.sched.step()
     assert killed == [proc.pid]
     assert "a" not in h.sched.running or h.sched.running["a"].proc is not proc
+    # The killed tick's in-flight run row must not stay "running".
+    assert h.orphan_closes == ["tick a killed after 100s"]
+    assert any("closed orphaned run rows [37]" in line for line in h.lines)
+
+
+def test_a_tick_that_exits_by_itself_closes_nothing(tmp_path: Path) -> None:
+    h = Harness(tmp_path, ["a"], timeout=100.0)
+    h.sched.step()
+    h.spawned[0][1].rc = 0
+    h.now = 50
+    h.sched.step()
+    assert h.orphan_closes == []
+
+
+def test_tick_budget_is_serve_timeout(tmp_path: Path) -> None:
+    """The orchestrator sizes agent dispatch by FACTORY_TICK_BUDGET_S; serve
+    hands it its own kill deadline so a step is never started past it."""
+    h = Harness(tmp_path, ["a"], timeout=5000.0)
+    h.sched.step()
+    assert h.spawned[0][2][serve.TICK_BUDGET_ENV] == "5000"
+
+
+def test_default_tick_timeout_fits_a_solo_dev_step() -> None:
+    """2026-11-08: serve killed at 3600 s a solo dev step the orchestrator had
+    budgeted 6900 s for (job dev-tools:013)."""
+    from factory.chain import orchestrator as orch
+    from factory.chain.solo import SOLO_DEV_WALL_CLOCK_S
+    from factory.runner import _GATE_GRADING_GRACE_S
+
+    assert serve.DEFAULT_TICK_TIMEOUT_S >= orch._DEFAULT_TICK_BUDGET_S
+    assert serve.DEFAULT_TICK_TIMEOUT_S > SOLO_DEV_WALL_CLOCK_S + _GATE_GRADING_GRACE_S
 
 
 def test_request_and_consume_wakes(tmp_path: Path) -> None:

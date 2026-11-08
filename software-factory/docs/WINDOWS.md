@@ -103,6 +103,15 @@ process. Use `factory.oscompat.pid_alive`.
 - Ticks each app as a fresh subprocess (`python -m factory tick --app <app>`),
   every `--interval` seconds (default 300), never two ticks of one app at once.
   A tick that moved a story re-wakes its app at once (capped at 30 in a row).
+- Kills a tick after `--tick-timeout` seconds (default 10800, the old systemd
+  `TimeoutStartSec=3h`) and passes the same number to the tick as
+  `FACTORY_TICK_BUDGET_S`, so the tick never starts an agent step that cannot
+  finish in time (a solo dev step needs 6900 s). At 3600 s serve killed a live
+  dev step (2026-11-08). After a kill, serve closes the provisional `runs` rows
+  whose owning process died (`runs.owner_pid`), so the step no longer shows as
+  `running`; the next tick does the same for ticks killed any other way. The
+  stale-story pass skips a story whose handler still has a live
+  `live_handlers` row.
 - `factory on` / `off` / `power` manage serve: the `factory-serve` task on
   Windows, `factory-serve.service` on Linux (where `factory on` then never
   enables the old `factory-tick@` timers).

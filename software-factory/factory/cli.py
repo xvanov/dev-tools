@@ -1511,7 +1511,10 @@ def serve_cmd(
     interval: float = typer.Option(
         None, "--interval", help="Seconds between ticks of one app (default $FACTORY_SERVE_INTERVAL_S or 300)."
     ),
-    tick_timeout: float = typer.Option(3600.0, "--tick-timeout", help="Kill a tick running longer than this."),
+    tick_timeout: float = typer.Option(
+        10800.0, "--tick-timeout",
+        help="Kill a tick running longer than this (seconds; also the tick's own budget, FACTORY_TICK_BUDGET_S).",
+    ),
     status: bool = typer.Option(False, "--status", help="Print the running serve's status as JSON and exit."),
     allow_systemd: bool = typer.Option(
         False, "--allow-with-systemd", help="Run even though factory-tick systemd timers are active (Linux)."

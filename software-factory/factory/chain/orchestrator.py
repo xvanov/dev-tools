@@ -1254,10 +1254,22 @@ def _prune_stale_in_progress(
     with Session(eng) as session:
         candidates = session.exec(select(StoryRecord).where(StoryRecord.app == app)).all()
 
+    # A step runs far longer than the threshold (a solo dev step: 5400 s) and
+    # never touches the story row meanwhile, so age alone cannot tell a dead
+    # step from a live one. A live_handlers row whose pid is alive can.
+    from factory.observability.heartbeat import live_story_ids
+
+    try:
+        live = live_story_ids(db)
+    except Exception:  # noqa: BLE001 - fail safe: an unreadable table recovers nothing
+        return []
+
     recovered: list[tuple[str, str, str]] = []
     for story in candidates:
         target = _STALE_RECOVERY_MAP.get(story.state)
         if target is None:
+            continue
+        if story.id is not None and story.id in live:
             continue
         if story.state == "tech_writer_in_progress":
             from factory.chain.solo import is_solo
@@ -2882,6 +2894,10 @@ def tick(
                 except Exception as exc:
                     summary.errors.append((app, f"branch-freshening failed (non-fatal): {exc!r}"))
 
+            # A tick killed mid-step left its provisional runs row "running".
+            from factory.runner import close_orphaned_provisional_runs
+
+            close_orphaned_provisional_runs(db, reason="owner gone at tick start")
             try:
                 recovered = _prune_stale_in_progress(db, app, settings=settings, root=root)
                 for slug, from_state, to_state in recovered:
