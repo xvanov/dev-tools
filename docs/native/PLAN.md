@@ -513,8 +513,12 @@ run mid-step; a job continued on an existing branch (`--branch`).
 - [x] **7.1** Passkey sessions; voice never approves merges, pushes to main or secret reveals. (7998d85; Approve with passkey button on Plan and Build, a141d7a) Built and tested behind `PA_PASSKEYS=off|on` (default off); enabling it on the live stacks is pending the owner. Recovery: `pa passkeys reset` at a local terminal. The voice rule itself is 4.3's; its enforce() will call `src/auth/stepup.js` (policy wires it).
 - [~] **7.2** Per-stack CA and mTLS between machines of one stack. — dropped: D15, Tailscale
   ACLs already separate the stacks.
-- [ ] **7.3** Secrets in the OS keychain, labelled by stack.
-- [ ] **7.4** Encrypted backups with a restore drill; signed self-update.
+- [x] **7.3** Secrets in the OS keychain, labelled by stack. (0b6faff) Pending user: the live
+  `pa secrets migrate --from-env --apply` on each stack (dry run first).
+- [x] **7.4** Encrypted backups with a restore drill; signed self-update. (0b6faff) Pending user: the
+  first `pa backup restore --to <scratch>` drill on each stack (role needs CREATEDB plus the
+  extensions: `--admin-url` superuser or `--template`); signing is warn-only until a trusted-signers
+  file exists (docs/native/SIGNED-UPDATES.md). The SQLite-file backup/drill lands with 3.x.
 - [x] **7.5** OpenTelemetry into Meter, including the separate Claude subscription credit pool
   (since 15 Jun 2026) with API fallback when it runs out. Spans (voice turn, tool call, factory
   CLI call, deploy; the Python factory's hops posted to `POST /api/telemetry`) land in
