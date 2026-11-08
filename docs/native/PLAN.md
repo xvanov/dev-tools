@@ -430,6 +430,13 @@ run mid-step; a job continued on an existing branch (`--branch`).
 
 - [ ] **4.1** TypeScript/Bun core absorbs the PA worker, dashboard, MCP server and termhub
   front; strict TS, module by module.
+  Design and order: [JARVISD.md](JARVISD.md). Stage 1 (host) landed: `jarvisd/` (strict tsconfig,
+  Bun pinned in its package.json) boots the PA worker unchanged under Bun; the PA's own tests run
+  under Bun (`jarvisd/scripts/parity.js`; the contract on Postgres, since the SQLite driver's native
+  addon aborts Bun); `node scripts/build.js --only jarvisd` makes one executable (`--check` smoke);
+  CI runs it on Windows and Linux. Next: the supervisor forks a jarvisd generation, then modules
+  become `.ts` leaves first (repo, events, policy, schemas types; then dashboard, MCP, passes; the
+  termhub front last).
 - [x] **4.2** Chat moves to the Agent SDK: approvals become typed callbacks instead of reading
   the terminal screen. (cdae3d5) `PA_CHAT_ENGINE=sdk` (`src/chat/sdkFeed.js`) is the default
   since the gaps closed (055ded3, 28fe6b1, 1e13823, b6a072e); `terminal` stays selectable. Same tools (pa-chat MCP server),

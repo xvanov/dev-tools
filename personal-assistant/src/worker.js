@@ -399,7 +399,9 @@ async function main() {
   // Memory: claims → consolidation → pages, and a nightly dream. Each pass is
   // a query over its own marker table, so they need no ordering beyond this.
   if (config.memory.enabled) {
-    const memoryPass = (file, opts) => () => require(`./memory/${file}`).run(opts);
+    // Literal requires, so a bundler (jarvisd, plan 4.1) sees each pass module.
+const MEMORY_PASSES = { extract: () => require('./memory/extract'), consolidate: () => require('./memory/consolidate'), pages: () => require('./memory/pages'), dream: () => require('./memory/dream') };
+const memoryPass = (file, opts) => () => MEMORY_PASSES[file]().run(opts);
     every(300, 'memory-extract', memoryPass('extract', { limit: 16 }));
     every(300, 'memory-consolidate', memoryPass('consolidate', { limit: 60 }));
     every(3600, 'memory-pages', memoryPass('pages', { limit: 20 }));
@@ -569,4 +571,5 @@ if (require.main === module) {
   });
 }
 
-module.exports = { sched };
+// main: jarvisd (plan 4.1) boots the worker through it, under Bun.
+module.exports = { sched, main };

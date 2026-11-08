@@ -34,6 +34,7 @@ jobs:
       ios: ${{ steps.f.outputs.ios }}
       ptyd: ${{ steps.f.outputs.ptyd }}
       build: ${{ steps.f.outputs.build }}
+      jarvisd: ${{ steps.f.outputs.jarvisd }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -45,7 +46,7 @@ jobs:
           BEFORE: ${{ github.event.before }}
         run: |
           set -u
-          all() { for k in pa termhub factory ios ptyd build; do echo "$k=true" >> "$GITHUB_OUTPUT"; done; exit 0; }
+          all() { for k in pa termhub factory ios ptyd build jarvisd; do echo "$k=true" >> "$GITHUB_OUTPUT"; done; exit 0; }
           [ "$EVENT" = "workflow_dispatch" ] && all
           if [ "$EVENT" = "pull_request" ]; then BASE="$BASE_PR"; else BASE="$BEFORE"; fi
           # New branch / forced push / unknown base: run everything (fail safe).
@@ -62,8 +63,8 @@ jobs:
           # The conformance suite holds ptyd to sessiond's protocol: a change to either side reruns it.
           echo "ptyd=$(hit '^(ptyd|termhub)/')" >> "$GITHUB_OUTPUT"
           # Everything scripts/build.js compiles (T7): ptyd and the desktop shell (7.6).
-          # Everything scripts/build.js compiles (T7): ptyd and the desktop shell (7.6).
           echo "build=$(hit '^(ptyd|desktop)/|^scripts/build\.js$')" >> "$GITHUB_OUTPUT"
+          echo "jarvisd=$(hit '^(jarvisd|scripts/build\.js)')" >> "$GITHUB_OUTPUT"
 
   personal-assistant:
     needs: changes
@@ -135,6 +136,51 @@ jobs:
           PA_TESTING: '1'
           PA_DATABASE_URL: postgres://pa:pa@127.0.0.1:1/blocked_in_tests
           PA_TEST_PG_URL: postgres://pa:pa@127.0.0.1:5432/postgres
+      # The same contract on Postgres under Bun (plan 4.1): jarvisd runs this code.
+      - run: npm ci
+        working-directory: jarvisd
+      - run: bash $GITHUB_WORKSPACE/.github/scripts/run.sh ../jarvisd/node_modules/bun/bin/bun.exe test/repoContract.test.js
+        shell: bash
+        env:
+          PA_TESTING: '1'
+          PA_DATABASE_URL: postgres://pa:pa@127.0.0.1:1/blocked_in_tests
+          PA_TEST_PG_URL: postgres://pa:pa@127.0.0.1:5432/postgres
+          PA_CONTRACT_BACKENDS: postgres
+
+  # jarvisd (plan 4.1): strict typecheck, the PA's test files that jarvisd absorbs
+  # first run under Bun unchanged (scripts/parity.js), and the compiled
+  # executable's --check, on both OSes.
+  jarvisd:
+    needs: changes
+    if: needs.changes.outputs.pa == 'true' || needs.changes.outputs.jarvisd == 'true'
+    name: jarvisd (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: jarvisd
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            jarvisd/package-lock.json
+            personal-assistant/package-lock.json
+      - run: npm ci
+      - run: npm ci
+        working-directory: personal-assistant
+      - run: bash $GITHUB_WORKSPACE/.github/scripts/run.sh npm test
+        shell: bash
+      - run: bash $GITHUB_WORKSPACE/.github/scripts/run.sh node ../scripts/build.js --only jarvisd
+        shell: bash
+      - run: bash $GITHUB_WORKSPACE/.github/scripts/run.sh ./dist/jarvisd --check
+        shell: bash
 
   termhub:
     needs: changes

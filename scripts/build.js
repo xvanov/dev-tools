@@ -21,9 +21,9 @@
 //            (NSIS .exe on Windows, .deb on Linux); other profiles build the
 //            binary only (`tauri build --debug --no-bundle`). Needs `npm ci` in
 //            desktop/ (the Tauri CLI), and on Linux the WebKitGTK dev packages.
-//   jarvisd  planned: `bun build --compile` per OS lands with plan 4.1 (the
-//            TypeScript/Bun core). Listed so the shape is fixed; skipped with a
-//            note until its entrypoint exists.
+//   jarvisd  `bun build --compile` of jarvisd/src/main.ts (plan 4.1): one executable
+//            with the Bun runtime and the PA worker's whole module graph bundled in.
+//            Needs `npm ci` in jarvisd/ (Bun comes from npm) and personal-assistant/.
 //
 // Signing is plan 7.4. The hook is here already: with DEVTOOLS_SIGN_CMD set,
 // every artifact is passed to it (`<cmd> <file>`, run through the shell) after
@@ -109,9 +109,19 @@ const TARGETS = {
     },
   },
   jarvisd: {
-    describe: 'TypeScript/Bun core, `bun build --compile` (plan 4.1)',
+    describe: 'TypeScript/Bun core, `bun build --compile` (plan 4.1; jarvisd/, docs/native/JARVISD.md)',
     available() {
-      return 'planned: lands with plan 4.1 (no jarvisd entrypoint yet)';
+      if (!fs.existsSync(path.join(REPO, 'jarvisd', 'node_modules', 'bun', 'bin', 'bun.exe'))) return 'jarvisd/node_modules missing (npm ci in jarvisd/ and personal-assistant/)';
+      if (!fs.existsSync(path.join(REPO, 'personal-assistant', 'node_modules'))) return 'personal-assistant/node_modules missing (npm ci there: the worker is bundled in)';
+      return null;
+    },
+    command({ profile }) {
+      // The npm package's own binary (bin/bun.exe on every OS), not the .cmd shim spawn() cannot run.
+      const bun = path.join(REPO, 'jarvisd', 'node_modules', 'bun', 'bin', 'bun.exe');
+      const out = path.join(REPO, 'jarvisd', 'dist', 'jarvisd');
+      const args = ['build', '--compile', 'src/main.ts', '--outfile', out];
+      if (profile !== 'debug') args.push('--minify-syntax', '--minify-whitespace');
+      return { cmd: bun, args, cwd: path.join(REPO, 'jarvisd'), env: { ...process.env }, artifacts: [`${out}${EXE}`] };
     },
   },
 };

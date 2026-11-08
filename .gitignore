@@ -38,6 +38,8 @@ combined-summary.md
 # and the contract schemas with their examples (plan 1.1)
 !schemas/*.json
 !schemas/examples/*.json
+# and jarvisd's compiler config (plan 4.1)
+!jarvisd/tsconfig.json
 
 # Claude Code agent worktrees — one machine-local checkout per agent, each with
 # its own `.git` FILE pointing back into this repo's worktree metadata. Tracking

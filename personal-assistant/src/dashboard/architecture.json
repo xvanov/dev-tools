@@ -527,6 +527,31 @@
       ]
     },
     {
+      "id": "jarvisd",
+      "layer": "dashboard",
+      "name": "jarvisd (TypeScript/Bun core)",
+      "role": "Plan 4.1: the core moving to strict TypeScript on Bun. Today it boots the PA worker's CommonJS unchanged under Bun, as one compiled executable per OS; modules become .ts one at a time, leaves first (docs/native/JARVISD.md).",
+      "stacks": {
+        "work": "landing",
+        "personal": "planned"
+      },
+      "where": {
+        "work": "Built and tested in CI (Windows and Linux); the worker still runs under Node until the supervisor forks a jarvisd generation",
+        "personal": "Not deployed"
+      },
+      "details": {
+        "Stage": "1 of 7: host. jarvisd/src/main.ts requires personal-assistant/src/worker.js statically, so bun build --compile bundles the whole worker graph",
+        "Parity": "jarvisd/scripts/parity.js runs the PA's schemas, events, dashboard, repository boundary/calls/contract (Postgres), migrations, architecture and lease tests under Bun",
+        "Known gap": "the optional SQLite driver (better-sqlite3-multiple-ciphers) aborts Bun 1.3 on load; under jarvisd SQLite moves to bun:sqlite (stage 2)",
+        "Build": "node scripts/build.js --only jarvisd (Bun from jarvisd/package.json); jarvisd --check loads the graph and exits"
+      },
+      "code": [
+        "jarvisd/src/main.ts",
+        "jarvisd/scripts/parity.js",
+        "docs/native/JARVISD.md"
+      ]
+    },
+    {
       "id": "supervisor",
       "layer": "dashboard",
       "name": "Supervisor (zero-downtime)",

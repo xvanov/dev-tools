@@ -33,11 +33,12 @@
 //
 // Must not require config.js: config takes its defaults from here.
 
-const IMPL = { win32: './windows', linux: './linux', darwin: './darwin' };
+// Literal requires, so a bundler (jarvisd's bun build --compile, plan 4.1) sees every implementation.
+const IMPL = { win32: () => require('./windows'), linux: () => require('./linux'), darwin: () => require('./darwin') };
 
 /** The implementation for a Node `process.platform` value. Other Unixes get Linux's. */
 function select(platform = process.platform) {
-  return require(IMPL[platform] || './linux');
+  return (IMPL[platform] || IMPL.linux)();
 }
 
 const current = select();
