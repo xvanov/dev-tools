@@ -366,8 +366,12 @@ def test_solo_dispatch_uses_long_horizon_gate_loop_and_brief(
     monkeypatch.setattr(runner_module, "sandbox_run", _green, raising=True)
     monkeypatch.setattr(handlers_module, "route", lambda *a, **kw: "azure/gpt-5.4")
 
-    handle_dev(story, _app(temp_root), temp_root, dry_run=False, db_path=db)
+    handle_dev(
+        story, _app(temp_root, test_command="node scripts/gate-changed.js"), temp_root,
+        dry_run=False, db_path=db,
+    )
 
+    assert "`node scripts/gate-changed.js`" in seen["brief_addendum"]
     assert seen["wall_clock_timeout_s"] == solo.SOLO_DEV_WALL_CLOCK_S == 5400
     assert seen["max_gate_rounds"] == solo.SOLO_MAX_GATE_ROUNDS
     assert seen["no_progress_abort_s"] == solo.SOLO_NO_PROGRESS_ABORT_S

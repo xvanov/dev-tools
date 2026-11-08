@@ -972,7 +972,7 @@
         "Delivery levels": "none < branch < draft_pr < pr < auto_merge < push_to_main, set only from your side; the last two need a confirmed start",
         "Factory defaults": "PA_FACTORY_RUNTIME api, PA_FACTORY_PIPELINE solo; the chat's factory_start defaults to claude_session unless you ask for the API",
         "Which factory": "PA_FACTORY_MACHINE + PA_FACTORY_PATH in each stack's .env (the live values are shown at the top of this page)",
-        "Factory pacing": "the worker's factory pass (src/dispatch/factoryPace.js) runs every PA_FACTORY_ACTIVE_POLL_SECONDS (5) while a job is queued, triaging or in progress, at once when a factory on this machine writes state/factory.db (watched, never read), and every PA_FACTORY_POLL_SECONDS (120) otherwise. Each pass is a `uv run factory` call: about 5 s of Python start-up on the work laptop, which is why the sub-second path is the factory's push (POST /api/factory/events)"
+        "Factory pacing": "the worker's factory pass (src/dispatch/factoryPace.ts) runs every PA_FACTORY_ACTIVE_POLL_SECONDS (5) while a job is queued, triaging or in progress, at once when a factory on this machine writes state/factory.db (watched, never read), and every PA_FACTORY_POLL_SECONDS (120) otherwise. Each pass is a `uv run factory` call: about 5 s of Python start-up on the work laptop, which is why the sub-second path is the factory's push (POST /api/factory/events)"
       },
       "env": [
         {
@@ -1020,7 +1020,7 @@
         "personal-assistant/src/dispatch/termhub.ts",
         "personal-assistant/src/dispatch/compose.ts",
         "personal-assistant/src/dispatch/deliveryCore.ts",
-        "personal-assistant/src/dispatch/factoryPace.js"
+        "personal-assistant/src/dispatch/factoryPace.ts"
       ]
     },
     {
@@ -1480,7 +1480,7 @@
         "personal": "~/.local/share/software-factory/state once `factory state migrate` has run there (until then /home/k/dev-tools/software-factory/state)"
       },
       "details": {
-        "Location": "outside the repo, so no story worktree or agent working directory sits inside the live checkout: factory/state_dir.py resolves the gitignored software-factory/.state-dir pointer, else software-factory/state (no environment override, so a worktree copy of the factory never inherits the live state); `factory state migrate` (an operator step, serve stopped) moves it and writes the pointer, `factory state where` prints it; the PA reads the same pointer (resolveStateDir in src/dispatch/factoryPace.js) for the pacer's watch and the backup bundle",
+        "Location": "outside the repo, so no story worktree or agent working directory sits inside the live checkout: factory/state_dir.py resolves the gitignored software-factory/.state-dir pointer, else software-factory/state (no environment override, so a worktree copy of the factory never inherits the live state); `factory state migrate` (an operator step, serve stopped) moves it and writes the pointer, `factory state where` prints it; the PA reads the same pointer (resolveStateDir in src/dispatch/factoryPace.ts) for the pacer's watch and the backup bundle",
         "Database": "state/factory.db (sqlite): stories, runs, events, modes, job_cancellations",
         "Research/report jobs": "state/jobs/<task_id>-<slug>/ (job.yaml, ask.md, brief.md, report.md, workspace, Claude run dir, worker.log)",
         "Locks": "state/locks/story-<id>.lock around merge and cancel; serve.lock and tick-<app>.lock under factory serve (flock on Linux, LockFileEx on Windows: factory/oscompat.py)",

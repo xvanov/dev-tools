@@ -497,7 +497,7 @@ run mid-step; a job continued on an existing branch (`--branch`).
   (`~/.local/share/...` on Linux), refuses while a lock or the DB is held, or for a target in
   the repo, non-empty or on another filesystem, undoes a failed rename, writes the pointer and
   re-links the worktrees (`git worktree repair`); `factory state where`; serve refuses a pointer
-  to a missing dir. The PA reads the same pointer (`resolveStateDir`, `factoryPace.js`; the
+  to a missing dir. The PA reads the same pointer (`resolveStateDir`, `factoryPace.ts`; the
   backup bundle keeps the dir's own name). Full suite on Windows: 4157 passed, 202 skipped, 4
   failed (three pass alone; `test_no_first_write_watchdog_pauses_and_still_grades` fails the
   same on main, a wall-clock budget). Migrated on both machines 2026-11-08 (~17:00Z) with serve
@@ -624,11 +624,12 @@ run mid-step; a job continued on an existing branch (`--branch`).
 
 - [x] **4.1** TypeScript/Bun core absorbs the PA worker, dashboard, MCP server and termhub
   front; strict TS, module by module. Done: the PA's server-side modules are strict TS (browser
-  files and entry shims stay JS; dispatch, durable, e2e and audio are converting as chunk D), the dashboard has one typed router, and `jarvisd front` runs
+  files and entry shims stay JS; chunk D, dispatch, durable, e2e and audio, finished with
+  1659567), the dashboard has one typed router, and `jarvisd front` runs
   termhub's front under Bun 1.4.4 with its tests (and the front swap) in the parity set
   ([JARVISD.md](JARVISD.md) Status). termhub's front and lib are TS too. Left: the stacks'
-  switch to `jarvisd front`, the in-process front (Exit 4), ES exports, `pa` as a thin client,
-  and the `supervisor.test.js` flake under load.
+  switch to `jarvisd front`, the in-process front (Exit 4), ES exports and `pa` as a thin
+  client. The `supervisor.test.js` flake under load is fixed (92a25c8).
   Design and order: [JARVISD.md](JARVISD.md). Stage 1 (host) landed: `jarvisd/` (strict tsconfig,
   Bun pinned in its package.json) boots the PA worker unchanged under Bun; the PA's own tests run
   under Bun (`jarvisd/scripts/parity.js`; the contract on SQLite and Postgres, since Bun 1.4.4

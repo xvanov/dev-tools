@@ -443,14 +443,14 @@ const memoryPass = (file: string, opts?: unknown) => () => (MEMORY_PASSES[file] 
   // A no-op, without a command, while no factory run is live.
   // Then the whole job list for the /factory page (factory_board), and a
   // notice for a job that finished, needs you, failed or has red CI.
-  // Paced, not fixed (src/dispatch/factoryPace.js): every 5 s while a job
+  // Paced, not fixed (src/dispatch/factoryPace.ts): every 5 s while a job
   // moves, at once when a factory on this machine writes its state, else every
   // PA_FACTORY_POLL_SECONDS. Its writes reach the pages through the live feed.
   // A service on the scheduler: its timer, watcher and subscription run only
   // while this generation holds the lease, and stop on drain.
   if (require('./dispatch/factory.ts').enabled()) sched.service('factory-pacer', () => {
     const factory = require('./dispatch/factory.ts');
-    const pace = require('./dispatch/factoryPace');
+    const pace = require('./dispatch/factoryPace.ts');
     const pacer = pace.createPacer({
       run: () =>
         exclusive('factory', async () => {

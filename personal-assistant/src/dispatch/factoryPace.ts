@@ -18,6 +18,30 @@
 //
 // The pass writes factory_board and the run rows; their triggers put the
 // change on the live feed (sql/034_events_notify.sql).
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+type Json = import('../types.ts').Json;
+/** Injectable for tests; a handle is whatever their setTimeout returns. */
+type Timers = { setTimeout: (fn: () => void, ms: number) => any; clearTimeout: (handle: any) => void };
+type PacerOptions = {
+  run: () => unknown;
+  nextMs: () => number | Promise<number>;
+  minGapMs?: number;
+  onError?: (err: unknown) => void;
+  timers?: Timers;
+  clock?: () => number;
+};
+type Pacer = {
+  start(firstMs?: number): void;
+  kick(): void;
+  hurry(ms: number): void;
+  stop(): void;
+  busy(quietMs?: number): boolean;
+};
+type ReadFile = (p: string) => string;
+type FsWatcher = { on?: (event: string, fn: () => void) => unknown; close: () => void };
+type Watch = (dir: string, options: { persistent: boolean }, listener: (type: string, file: string | Buffer | null) => void) => FsWatcher;
 
 const fs = require('fs');
 const os = require('os');
@@ -26,12 +50,12 @@ const path = require('path');
 const MOVING = new Set(['queued', 'triaging', 'in_progress']);
 
 /** Pure. Whether any job in a `job list` is moving. */
-function moving(jobs) {
-  return (Array.isArray(jobs) ? jobs : []).some((j) => MOVING.has(j?.state));
+function moving(jobs: unknown): boolean {
+  return (Array.isArray(jobs) ? jobs : []).some((j: Json | null | undefined) => MOVING.has(j?.state));
 }
 
 /** Pure. Milliseconds to the next pass. */
-function nextDelayMs({ jobs, slowSeconds, fastSeconds }) {
+function nextDelayMs({ jobs, slowSeconds, fastSeconds }: { jobs: unknown; slowSeconds: number; fastSeconds: number }): number {
   return (moving(jobs) ? Math.min(fastSeconds, slowSeconds) : slowSeconds) * 1000;
 }
 
@@ -41,15 +65,15 @@ function nextDelayMs({ jobs, slowSeconds, fastSeconds }) {
  * runs one more pass right after it; kicks closer than minGapMs to the last
  * pass's end wait out the gap. Never two passes at a time.
  */
-function createPacer({ run, nextMs, minGapMs = 500, onError = () => {}, timers = { setTimeout, clearTimeout }, clock = Date.now }) {
-  let timer = null;
+function createPacer({ run, nextMs, minGapMs = 500, onError = () => {}, timers = { setTimeout, clearTimeout }, clock = Date.now }: PacerOptions): Pacer {
+  let timer: any = null;
   let running = false;
   let again = false;
   let stopped = false;
   let lastEnd = 0;
   let dueAt = Infinity;
 
-  function at(ms) {
+  function at(ms: number): void {
     if (stopped) return;
     timers.clearTimeout(timer);
     dueAt = clock() + Math.max(0, ms);
@@ -57,7 +81,7 @@ function createPacer({ run, nextMs, minGapMs = 500, onError = () => {}, timers =
     timer?.unref?.();
   }
 
-  async function tick() {
+  async function tick(): Promise<void> {
     timer = null;
     dueAt = Infinity;
     if (stopped) return;
@@ -76,7 +100,7 @@ function createPacer({ run, nextMs, minGapMs = 500, onError = () => {}, timers =
     lastEnd = clock();
     if (stopped) return;
     if (again) return at(minGapMs);
-    let wait;
+    let wait: number;
     try {
       wait = await nextMs();
     } catch (err) {
@@ -99,7 +123,7 @@ function createPacer({ run, nextMs, minGapMs = 500, onError = () => {}, timers =
       at(lastEnd + minGapMs - clock());
     },
     /** The next pass within `ms` at the latest (a job was just submitted: it moves now). */
-    hurry(ms) {
+    hurry(ms: number) {
       if (stopped || running) return;
       if (dueAt - clock() > ms) at(Math.max(ms, lastEnd + minGapMs - clock()));
     },
@@ -118,11 +142,14 @@ function createPacer({ run, nextMs, minGapMs = 500, onError = () => {}, timers =
  * The factory's state directory when the factory runs on this machine and
  * the directory is there, else null (a remote factory is paced by polling).
  */
-function localStateDir(factoryConfig, { hostname = os.hostname(), exists = fs.existsSync, readFile } = {}) {
+function localStateDir(
+  factoryConfig: { machine?: string | null; path?: string | null } | null | undefined,
+  { hostname = os.hostname(), exists = fs.existsSync, readFile }: { hostname?: string; exists?: (p: string) => boolean; readFile?: ReadFile } = {},
+): string | null {
   const machine = String(factoryConfig?.machine || '').trim();
   if (machine && machine.toLowerCase() !== hostname.toLowerCase()) return null;
   if (!factoryConfig?.path) return null;
-  const dir = resolveStateDir(factoryConfig.path, { readFile });
+  const dir = resolveStateDir(factoryConfig.path, readFile ? { readFile } : {});
   return exists(dir) ? dir : null;
 }
 
@@ -131,7 +158,7 @@ function localStateDir(factoryConfig, { hostname = os.hostname(), exists = fs.ex
  * pointer (written by `factory state migrate`, which moves state out of the
  * repo), else `<root>/state`. Mirrors software-factory/factory/state_dir.py.
  */
-function resolveStateDir(factoryPath, { readFile = (p) => fs.readFileSync(p, 'utf8') } = {}) {
+function resolveStateDir(factoryPath: string, { readFile = (p: string) => fs.readFileSync(p, 'utf8') }: { readFile?: ReadFile } = {}): string {
   try {
     const text = String(readFile(path.join(factoryPath, '.state-dir')) || '').trim();
     if (text && path.isAbsolute(text)) return text;
@@ -146,10 +173,10 @@ function resolveStateDir(factoryPath, { readFile = (p) => fs.readFileSync(p, 'ut
  * the write was ours. Returns the stop function, or null when the directory
  * cannot be watched.
  */
-function watchState(dir, { onChange, ignore = () => false, watch = fs.watch }) {
-  let w;
+function watchState(dir: string, { onChange, ignore = () => false, watch = fs.watch }: { onChange: () => void; ignore?: () => boolean; watch?: Watch }): (() => void) | null {
+  let w: FsWatcher;
   try {
-    w = watch(dir, { persistent: false }, (type, file) => {
+    w = watch(dir, { persistent: false }, (_type, file) => {
       if (file && !/^factory\.db/.test(String(file))) return;
       if (ignore()) return;
       onChange();

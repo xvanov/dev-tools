@@ -159,6 +159,9 @@ reviewer audits your story-silent choices against it.
   Then re-run the full suite.
 * Run the test suite after every implementation change. Commit only when
   green. If you cannot reach green, write a brief failure summary and exit.
+* Commit, and stop there: never `git push`, never open a pull request, never
+  `git commit --no-verify`. Delivery (push, pull request) is the factory's
+  job. The repo's pre-commit hook runs tests and can take minutes; wait for it.
 * Update the story file's **Dev Agent Record** (Completion Notes, File List)
   before you finish — REPLACE stale notes so the record describes CURRENT
   behavior only; the reviewer reads it as truth. The story file lives at

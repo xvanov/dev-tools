@@ -13,7 +13,7 @@ const { EventEmitter } = require('events');
 const { createBus } = require('../src/events/bus.ts');
 const events = require('../src/events');
 const endpoint = require('../src/dashboard/events.ts');
-const pace = require('../src/dispatch/factoryPace');
+const pace = require('../src/dispatch/factoryPace.ts');
 
 const tick = (ms = 0) => new Promise((r) => setTimeout(r, ms));
 // Wait for a condition rather than sleeping and hoping: a loaded machine stretches every timer.
@@ -442,7 +442,7 @@ function sse(port, pathAndQuery, headers = {}) {
     assert.strictEqual(events.CHANNEL, 'pa_events');
   }
 
-  // ---- the factory pass's pacing (factoryPace.js) ---------------------------------------
+  // ---- the factory pass's pacing (factoryPace.ts) ---------------------------------------
   {
     assert.strictEqual(pace.moving([{ state: 'done' }, { state: 'needs_human' }]), false, 'parked on a human is not moving');
     assert.strictEqual(pace.moving([{ state: 'done' }, { state: 'in_progress' }]), true);

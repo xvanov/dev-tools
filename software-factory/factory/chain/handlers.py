@@ -2824,7 +2824,9 @@ def _handle_dev_once(
                     software_factory_root=software_factory_root,
                     slug_hint=story.slug,
                 )
-            _brief = _solo.build_solo_brief(dev_direction)
+            _brief = _solo.build_solo_brief(
+                dev_direction, test_command=app_config.gates.test_command
+            )
             if _static:
                 _brief = (
                     (_brief or "")
