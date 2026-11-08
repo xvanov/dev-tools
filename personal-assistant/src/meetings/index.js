@@ -495,7 +495,7 @@ function sourceOf(quote, items, verify) {
 }
 
 async function learnOccurrence(m, kind, items) {
-  const { verifyQuote, headTail } = require('../memory/claims');
+  const { verifyQuote, headTail } = require('../memory/claims.ts');
   const transcript = items.map((i) => i.body_text).join('\n\n');
   const reply = await llm.complete({
     system: P.LEARN_SYSTEM,
@@ -548,7 +548,7 @@ async function learnOccurrence(m, kind, items) {
     ids.push(row.id);
   }
   if (ids.length && config.memory.enabled) {
-    await require('../memory/consolidate').consolidateClaims(ids).catch((err) => log.warn('consolidate failed', { message: err.message }));
+    await require('../memory/consolidate.ts').consolidateClaims(ids).catch((err) => log.warn('consolidate failed', { message: err.message }));
   }
   log.info('learned', { asks: learned.asks.length, said: learned.said.length, claims: ids.length });
   return { learned, claims: ids.length };

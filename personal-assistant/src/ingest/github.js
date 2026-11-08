@@ -308,7 +308,7 @@ async function run() {
   const login = auth.login;
   if (cursor?.state?.claimed !== login) {
     const user = await api('/user');
-    await require('../distill/identity').claimForMe('github_username', login, {
+    await require('../distill/identity.ts').claimForMe('github_username', login, {
       displayName: user.name || login,
       email: user.email || null,
     });

@@ -25,7 +25,7 @@ const llm = require('../llm');
 const { config } = require('../config.ts');
 const repo = require('../repo');
 const { logger } = require('../log.ts');
-const { headTail } = require('../memory/claims');
+const { headTail } = require('../memory/claims.ts');
 const spool = require('../audio/spool');
 const { attendable, eventRange } = require('../audio/episodes');
 const core = require('./core');
@@ -119,7 +119,7 @@ async function openTasks(ctx) {
 
 async function personFor(counterparty, attendees) {
   if (!counterparty) return null;
-  const identity = require('../distill/identity');
+  const identity = require('../distill/identity.ts');
   const c = String(counterparty).trim();
   if (c.includes('@')) return identity.resolve(c.toLowerCase());
   // A name: an attendee whose name or address matches it, else a person
@@ -281,7 +281,7 @@ async function apply(ep, prepared) {
     });
   });
   if (claimIds.length && config.memory.enabled) {
-    await require('../memory/consolidate').consolidateClaims(claimIds).catch((err) => log.warn('consolidate failed', { message: err.message }));
+    await require('../memory/consolidate.ts').consolidateClaims(claimIds).catch((err) => log.warn('consolidate failed', { message: err.message }));
   }
   return debrief;
 }

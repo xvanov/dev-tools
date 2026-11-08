@@ -4,7 +4,7 @@
 // database, no model. What the prompt says, what a reply is allowed to mean,
 // and what closing would change — each a decision a test can reach.
 
-const { verifyQuote } = require('../memory/claims');
+const { verifyQuote } = require('../memory/claims.ts');
 const { changedSince } = require('../meetings/debriefCore');
 
 const VERSION = 'reply-close-v1';

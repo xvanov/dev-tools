@@ -21,7 +21,7 @@ const { config } = require('../config.ts');
 const m365 = require('./m365');
 const { saveItems, getCursor } = require('./store');
 const repo = require('../repo');
-const identity = require('../distill/identity');
+const identity = require('../distill/identity.ts');
 const { htmlToText, contentHash } = require('../util/text.ts');
 const { logger } = require('../log.ts');
 

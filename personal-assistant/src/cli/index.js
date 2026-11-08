@@ -1634,8 +1634,8 @@ const commands = {
     // Memory
     try {
       const mem = await require('../memory').stats();
-      const left = await require('../memory/extract').pendingCount();
-      const unconsolidated = await require('../memory/consolidate').pendingCount();
+      const left = await require('../memory/extract.ts').pendingCount();
+      const unconsolidated = await require('../memory/consolidate.ts').pendingCount();
       lines.push(`  memory ${config.memory.enabled ? 'on' : 'off'} · ${mem.active} active claims · ${mem.pages} pages · ${left} items awaiting claims · ${unconsolidated} claims awaiting consolidation`);
     } catch (err) {
       lines.push(`  memory: not migrated (${err.message.slice(0, 60)}) — run \`pa migrate\``);

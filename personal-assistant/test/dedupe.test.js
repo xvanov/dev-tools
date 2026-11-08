@@ -7,7 +7,7 @@
 
 const assert = require('assert');
 const S = require('../src/commitments/semantic');
-const { collapse, listLines } = require('../src/distill/lists');
+const { collapse, listLines } = require('../src/distill/lists.ts');
 const { alsoLinks } = require('../src/dashboard/links.ts');
 
 // ------------------------------------------------------------- anchors ----

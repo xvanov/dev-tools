@@ -4,7 +4,7 @@
 // bitemporal belief, and page hashing. The names here are invented.
 
 const assert = require('assert');
-const m = require('../src/memory/claims');
+const m = require('../src/memory/claims.ts');
 
 // ------------------------------------------------------------ evidence -----
 
@@ -165,7 +165,7 @@ const m = require('../src/memory/claims');
 // ---------------------------------------------------------- the passes ----
 
 {
-  const extract = require('../src/memory/extract');
+  const extract = require('../src/memory/extract.ts');
   const item = {
     id: 7,
     source: 'graph_chat',
@@ -202,7 +202,7 @@ const m = require('../src/memory/claims');
 }
 
 {
-  const { renderIndex } = require('../src/memory/pages');
+  const { renderIndex } = require('../src/memory/pages.ts');
   const idx = renderIndex({
     people: [{ name: 'Brannoc Vale', claims: [{ kind: 'expertise', text: 'Knows the ledger.' }, { kind: 'role', text: 'Leads payments.' }] }],
     projects: [{ name: 'quill-api', claims: [{ kind: 'status', text: 'In beta.' }] }],
@@ -211,7 +211,7 @@ const m = require('../src/memory/claims');
   assert.ok(idx.includes('**Brannoc Vale** — Leads payments. Knows the ledger.'));
   assert.ok(idx.includes('**quill-api** — In beta.'));
   assert.ok(idx.includes('billing migration'));
-  const { pageTitle } = require('../src/memory/pages');
+  const { pageTitle } = require('../src/memory/pages.ts');
   assert.strictEqual(pageTitle('github:qbrannoc', '# Quill Brannoc\n\nLeads payments.'), 'Quill Brannoc');
   assert.strictEqual(pageTitle('qbrannoc-acme', 'no heading'), 'qbrannoc-acme');
   assert.strictEqual(pageTitle('Quill Brannoc', '# Someone Else'), 'Quill Brannoc');

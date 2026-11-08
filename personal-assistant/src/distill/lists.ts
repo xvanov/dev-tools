@@ -17,26 +17,31 @@
 //             naming the set.
 //
 // Pure: distill/index.js calls it on the model's answer before persisting.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+type Row = Record<string, any>;
+type Db = import('../repo/types.ts').Db;
 
 const { covers } = require('../commitments/semantic');
 
 const NAMES = 0.34; // share of a commitment's words the umbrella or list line must contain
 const SPELLED = 0.6; // ... for an umbrella over a single other commitment
 
-function sameParty(a, b) {
+function sameParty(a: any, b: any) {
   return String(a.counterparty || '').toLowerCase() === String(b.counterparty || '').toLowerCase();
 }
 
-function earliest(list) {
-  const due = list.map((c) => c.dueAt).filter(Boolean).sort();
+function earliest(list: any) {
+  const due = list.map((c: any) => c.dueAt).filter(Boolean).sort();
   return due[0] || null;
 }
 
-function itemLines(list) {
-  return list.map((c) => `- ${c.summary}`).join('\n');
+function itemLines(list: any) {
+  return list.map((c: any) => `- ${c.summary}`).join('\n');
 }
 
-function merged(head, parts, { summary = head.summary } = {}) {
+function merged(head: any, parts: any, { summary = head.summary }: { summary?: any } = {}) {
   const all = [head, ...parts];
   const items = itemLines(parts);
   const detail = [head.detail, `Items:\n${items}`].filter(Boolean).join('\n').slice(0, 2000);
@@ -45,19 +50,19 @@ function merged(head, parts, { summary = head.summary } = {}) {
     summary: summary.slice(0, 300),
     detail,
     dueAt: earliest(all),
-    project: head.project || parts.find((p) => p.project)?.project || null,
-    projectReason: head.project ? head.projectReason : parts.find((p) => p.project)?.projectReason || null,
+    project: head.project || parts.find((p: any) => p.project)?.project || null,
+    projectReason: head.project ? head.projectReason : parts.find((p: any) => p.project)?.projectReason || null,
     confidence: Math.max(...all.map((c) => c.confidence ?? 0)),
   };
 }
 
 /** The lines of a numbered or bulleted list in a body, list markers removed. */
-function listLines(body) {
+function listLines(body: any) {
   return String(body || '')
     .split(/\r?\n/)
     .map((l) => l.match(/^\s*(?:\d{1,2}[.)]|[-*•])\s+(.+)$/))
     .filter(Boolean)
-    .map((m) => m[1].trim())
+    .map((m: any) => m[1].trim())
     .filter((l) => l.length > 3);
 }
 
@@ -66,7 +71,7 @@ function listLines(body) {
  * @param {string} [body]  the item's text
  * @returns {{commitments: Array, collapsed: number}}
  */
-function collapse(commitments, body = '') {
+function collapse(commitments: any, body: string = '') {
   let list = [...commitments];
   let collapsed = 0;
 
@@ -93,7 +98,7 @@ function collapse(commitments, body = '') {
   // A list in the body, restated item by item.
   const lines = listLines(body);
   if (lines.length >= 2) {
-    const groups = new Map(); // direction|party → [{c, line}]
+    const groups = new Map<any, any>(); // direction|party → [{c, line}]
     for (const c of list) {
       let bestLine = -1;
       let bestScore = 0;
@@ -107,11 +112,11 @@ function collapse(commitments, body = '') {
       groups.get(key).push({ c, line: bestLine });
     }
     for (const g of groups.values()) {
-      const distinct = new Set(g.map((x) => x.line));
+      const distinct = new Set(g.map((x: any) => x.line));
       if (g.length < 2 || distinct.size < 2) continue;
-      const parts = g.map((x) => x.c).filter((c, i, a) => a.indexOf(c) === i && a.every((o) => sameParty(o, c)));
+      const parts = g.map((x: any) => x.c).filter((c: any, i: any, a: any) => a.indexOf(c) === i && a.every((o: any) => sameParty(o, c)));
       if (parts.length < 2) continue;
-      const short = parts.map((p) => p.summary.replace(/[.;]+$/, ''));
+      const short = parts.map((p: any) => p.summary.replace(/[.;]+$/, ''));
       const summary = `Handle the ${parts.length} listed items: ${short.join('; ')}`;
       const head = { ...parts[0], detail: null };
       const one = merged(head, parts, { summary: summary.length > 100 ? `${summary.slice(0, 97).replace(/\s+\S*$/, '')}…` : summary });

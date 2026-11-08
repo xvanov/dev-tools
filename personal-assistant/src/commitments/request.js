@@ -58,7 +58,7 @@ function parse({ text, due = null, for: forName = null, owedToMe = false, projec
 // name first, then the start of one). Never creates a person from a bare name.
 async function findPerson(name) {
   if (!name) return null;
-  const identity = require('../distill/identity');
+  const identity = require('../distill/identity.ts');
   if (name.includes('@')) return identity.resolve(name, name);
   const repo = require('../repo');
   const exact = await repo.people.othersByExactName(name);

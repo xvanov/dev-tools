@@ -14,6 +14,11 @@
 // a bump re-distills every item on the expensive model. The "one list, one
 // commitment" rule was added without one: history was folded by the duplicate
 // pass instead (commitments/dedupe.js), and new items get the rule.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+type Row = Record<string, any>;
+type Db = import('../repo/types.ts').Db;
 
 const PROMPT_VERSION = 'distill-v1';
 
@@ -57,8 +62,8 @@ Rules that matter more than completeness:
 - **confidence is about the ask, not the project.** Use below 0.5 when you are inferring an obligation that was not stated plainly.
 - Quote nothing verbatim in summary. Write it as an instruction the reader could act on.`;
 
-function buildUserMessage(item, { meLabel, candidates, ranked }) {
-  const lines = [];
+function buildUserMessage(item: any, { meLabel, candidates, ranked }: { meLabel?: any | null; candidates?: any | null; ranked?: any | null }) {
+  const lines: any[] = [];
   lines.push(`ME: ${meLabel || 'the mailbox owner'}`);
   lines.push('');
   lines.push('ITEM');
@@ -79,7 +84,7 @@ function buildUserMessage(item, { meLabel, candidates, ranked }) {
   lines.push('CANDIDATE PROJECTS (name [remote owner/repo] — aliases)');
   if (candidates?.length) {
     for (const c of candidates.slice(0, 80)) {
-      const aliases = (c.aliases || []).map((a) => a.alias).slice(0, 6).join(', ');
+      const aliases = (c.aliases || []).map((a: any) => a.alias).slice(0, 6).join(', ');
       lines.push(`  - ${c.name}${c.gitlabPath ? ` [${c.gitlabPath}]` : ''}${aliases ? ` — ${aliases}` : ''}`);
     }
   } else {
@@ -102,9 +107,9 @@ function buildUserMessage(item, { meLabel, candidates, ranked }) {
 // instructions. Extracting the outermost object is cheaper than a retry, and a
 // genuinely unparseable answer still has to fail loudly rather than silently
 // distil to nothing.
-function extractJson(text) {
+function extractJson(text: any) {
   if (!text) throw new Error('empty response');
-  const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i) as any;
   const body = fenced ? fenced[1] : text;
   const start = body.indexOf('{');
   const end = body.lastIndexOf('}');
@@ -112,13 +117,13 @@ function extractJson(text) {
   return JSON.parse(body.slice(start, end + 1));
 }
 
-function clampConfidence(v) {
+function clampConfidence(v: any) {
   const n = Number(v);
   if (!Number.isFinite(n)) return 0.5;
   return Math.max(0, Math.min(1, n));
 }
 
-function parseDue(value, referenceIso) {
+function parseDue(value: any, referenceIso: any) {
   if (!value) return null;
   const d = new Date(value);
   if (Number.isNaN(d.getTime())) return null;
@@ -129,15 +134,15 @@ function parseDue(value, referenceIso) {
   return d.toISOString();
 }
 
-function parseResponse(text, { referenceIso } = {}) {
+function parseResponse(text: any, { referenceIso }: { referenceIso?: any | null } = {}) {
   const parsed = extractJson(text);
   const commitments = Array.isArray(parsed.commitments) ? parsed.commitments : [];
   const facts = Array.isArray(parsed.facts) ? parsed.facts : [];
 
   return {
     commitments: commitments
-      .filter((c) => c && typeof c.summary === 'string' && c.summary.trim())
-      .map((c) => ({
+      .filter((c: any) => c && typeof c.summary === 'string' && c.summary.trim())
+      .map((c: any) => ({
         direction: c.direction === 'owed_to_me' ? 'owed_to_me' : 'owed_by_me',
         summary: String(c.summary).trim().slice(0, 300),
         detail: c.detail ? String(c.detail).trim().slice(0, 2000) : null,
@@ -148,9 +153,9 @@ function parseResponse(text, { referenceIso } = {}) {
         confidence: clampConfidence(c.confidence),
       })),
     facts: facts
-      .filter((f) => f && typeof f.summary === 'string' && f.summary.trim())
-      .filter((f) => ['decision', 'blocker', 'preference', 'reference'].includes(f.kind))
-      .map((f) => ({
+      .filter((f: any) => f && typeof f.summary === 'string' && f.summary.trim())
+      .filter((f: any) => ['decision', 'blocker', 'preference', 'reference'].includes(f.kind))
+      .map((f: any) => ({
         kind: f.kind,
         summary: String(f.summary).trim().slice(0, 300),
         detail: f.detail ? String(f.detail).trim().slice(0, 2000) : null,

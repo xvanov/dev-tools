@@ -11,10 +11,15 @@
 // identifier, or on an email match, and never on display name alone. Two people
 // called "Alex" merged into one is a data-loss bug you find out about by
 // sending the wrong person a message.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+type Row = Record<string, any>;
+type Db = import('../repo/types.ts').Db;
 
 const repo = require('../repo');
 
-function parseIdentity(raw) {
+function parseIdentity(raw: any) {
   if (!raw) return null;
   const value = String(raw).trim();
   if (!value) return null;
@@ -32,12 +37,12 @@ async function me() {
 
 // Your own handle of one kind (`github_username`), or null before that
 // source has signed in and claimed it.
-async function myHandle(kind) {
+async function myHandle(kind: any) {
   const r = await repo.people.myHandle(kind);
   return r?.value || null;
 }
 
-async function setMe({ displayName, email }) {
+async function setMe({ displayName, email }: { displayName?: any | null; email?: any | null }) {
   const existing = await me();
   if (existing) {
     await repo.people.setNames(
@@ -53,14 +58,14 @@ async function setMe({ displayName, email }) {
   return row.id;
 }
 
-async function addIdentity(personId, kind, value) {
+async function addIdentity(personId: any, kind: any, value: any) {
   await repo.people.addIdentity(personId, kind, value);
 }
 
 // Resolves an identity string to a person, creating one when it is genuinely
 // new. `displayName` is used only for the label on a newly created row — never
 // to match an existing one.
-async function resolve(rawIdentity, displayName) {
+async function resolve(rawIdentity: any, displayName: any) {
   const parsed = parseIdentity(rawIdentity);
   if (!parsed) return null;
 
@@ -98,7 +103,7 @@ async function resolve(rawIdentity, displayName) {
 // sign-in has yet (GitHub may well be the first source to run). An earlier
 // pass that already filed the handle as a stranger is merged back, so "who"
 // stops naming you as the person you owe.
-async function claimForMe(kind, value, { displayName, email } = {}) {
+async function claimForMe(kind: any, value: any, { displayName, email }: { displayName?: any | null; email?: any | null } = {}) {
   const meId = (await me())?.id || (await setMe({ displayName, email }));
   const owner = await repo.people.identityOwner(kind, value);
   if (owner && String(owner.person_id) !== String(meId)) await merge(meId, owner.person_id);
@@ -117,12 +122,12 @@ async function claimForMe(kind, value, { displayName, email } = {}) {
 // it is derived, and the caller regenerates the survivor's (memory.mergePeople).
 // The survivor keeps its own name unless it only had a handle and the other
 // had a real one.
-async function merge(intoId, fromId) {
+async function merge(intoId: any, fromId: any) {
   if (String(intoId) === String(fromId)) return { claims: 0 };
-  return repo.withTx(async (r) => {
+  return repo.withTx(async (r: any) => {
     const both = await r.people.pair(intoId, fromId);
-    const into = both.find((p) => String(p.id) === String(intoId));
-    const from = both.find((p) => String(p.id) === String(fromId));
+    const into = both.find((p: any) => String(p.id) === String(intoId));
+    const from = both.find((p: any) => String(p.id) === String(fromId));
     if (!into || !from) throw Object.assign(new Error('no such person'), { status: 404 });
     if (from.is_me) {
       throw Object.assign(new Error('cannot merge yourself away; merge the other person into you'), { status: 409 });
@@ -142,7 +147,7 @@ async function merge(intoId, fromId) {
 }
 
 // A display name a human would write, rather than an address or a handle.
-function looksHuman(name) {
+function looksHuman(name: any) {
   return /\s/.test(String(name || '').trim()) && !/@|^(github|gitlab|aad):/i.test(String(name));
 }
 

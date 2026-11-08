@@ -7,13 +7,18 @@
 // rebuilds the two pages everything else leans on: `me` and the `index`.
 //
 // Like everything in memory, it closes claims and never deletes them.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+type Row = Record<string, any>;
+type Db = import('../repo/types.ts').Db;
 
 const llm = require('../llm');
 const { config } = require('../config.ts');
 const repo = require('../repo');
 const { logger } = require('../log.ts');
-const { parseMerges, isStale, dreamDue } = require('./claims');
-const pages = require('./pages');
+const { parseMerges, isStale, dreamDue } = require('./claims.ts');
+const pages = require('./pages.ts');
 
 const log = logger('memory.dream');
 
@@ -29,27 +34,27 @@ async function lastRun() {
   return r?.value?.at || null;
 }
 
-async function markRun(stats) {
+async function markRun(stats: any) {
   await repo.memory.saveDreamMarker(SETTING, { at: new Date().toISOString(), stats });
 }
 
 // Subjects with enough active claims to be worth a look, and with something
 // new since the last dream — an unchanged subject was already tidied.
-async function dedupe(since) {
+async function dedupe(since: any) {
   const subjects = await repo.memory.dedupeSubjects(MIN_CLAIMS_FOR_DEDUPE, since);
   let merged = 0;
   let calls = 0;
   for (const s of subjects) {
     const claims = await repo.memory.subjectClaims(s.subject_kind, s.subject_id, s.label);
     const prompt = claims
-      .map((c) => `${c.id} [${c.kind}] (${new Date(c.valid_at).toISOString().slice(0, 10)}, conf ${Number(c.confidence).toFixed(2)}): ${c.text}`)
+      .map((c: any) => `${c.id} [${c.kind}] (${new Date(c.valid_at).toISOString().slice(0, 10)}, conf ${Number(c.confidence).toFixed(2)}): ${c.text}`)
       .join('\n');
     let groups;
     try {
       const text = await llm.complete({ system: DEDUPE_SYSTEM, prompt, model: config.memory.decideModel, effort: 'low', maxTokens: 2000, purpose: 'memory-dream' });
       calls++;
-      groups = parseMerges(text, claims.map((c) => c.id));
-    } catch (err) {
+      groups = parseMerges(text, claims.map((c: any) => c.id));
+    } catch (err: any) {
       log.warn('dedupe failed', { subject: s.subject_kind, message: err.message });
       continue;
     }
@@ -63,22 +68,22 @@ async function dedupe(since) {
 // Status and blocker claims that have outlived what they described. Their
 // validity ends where it was said to, or now; the row stays, so the history
 // of what was true when is intact.
-async function expireStale(now = new Date()) {
+async function expireStale(now: any = new Date()) {
   const candidates = await repo.memory.staleCandidates();
-  const stale = candidates.filter((c) => isStale(c, now)).map((c) => c.id);
+  const stale = candidates.filter((c: any) => isStale(c, now)).map((c: any) => c.id);
   if (!stale.length) return 0;
   return repo.memory.expireClaims(stale);
 }
 
-async function run({ force = false } = {}) {
+async function run({ force = false }: { force?: boolean } = {}) {
   const last = await lastRun();
   if (!force && !dreamDue(new Date(), last, config.memory.dreamHour)) return { skipped: true };
 
   const started = Date.now();
   const deduped = await dedupe(force ? null : last);
   const expired = await expireStale();
-  const me = await pages.mePage({ force: true }).catch((err) => ({ error: err.message }));
-  await pages.indexPage().catch((err) => log.warn('index failed', { message: err.message }));
+  const me = await pages.mePage({ force: true }).catch((err: Error) => ({ error: err.message }));
+  await pages.indexPage().catch((err: Error) => log.warn('index failed', { message: err.message }));
   const stats = { ...deduped, expired, me: me.written ? 'written' : me.skipped || me.error, seconds: Math.round((Date.now() - started) / 1000) };
   await markRun(stats);
   log.info('dreamt', stats);

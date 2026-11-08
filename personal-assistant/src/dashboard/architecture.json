@@ -851,7 +851,7 @@
         "Memory": "claims carry a verbatim quote; memory supersedes, never deletes; agents only propose"
       },
       "code": [
-        "personal-assistant/src/distill/index.js",
+        "personal-assistant/src/distill/index.ts",
         "personal-assistant/src/commitments/blocks.js",
         "personal-assistant/src/commitments/sourcePolicy.js",
         "personal-assistant/src/ledger",
@@ -1805,7 +1805,7 @@
       },
       "code": [
         "personal-assistant/src/ingest/github.js",
-        "personal-assistant/src/distill/githubGate.js"
+        "personal-assistant/src/distill/githubGate.ts"
       ]
     },
     {

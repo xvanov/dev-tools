@@ -3,6 +3,11 @@
 // The pure half of the memory layer: no database, no model. Everything that
 // decides whether a claim is believed, whether its evidence is real, and what a
 // model's answer means lives here, where a test can reach it.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+type Row = Record<string, any>;
+type Db = import('../repo/types.ts').Db;
 
 const crypto = require('crypto');
 
@@ -18,7 +23,7 @@ const DECISIONS = ['ADD', 'SUPERSEDE', 'DUPLICATE', 'NOOP'];
 // Folds the differences a model introduces when it copies text — curly quotes,
 // dashes, markdown quote marks, runs of whitespace, case — so that "verbatim"
 // means the words, not the bytes.
-function normalise(text) {
+function normalise(text: any) {
   return String(text || '')
     .normalize('NFKC')
     .replace(/[‘’‚‛′]/g, "'")
@@ -32,7 +37,7 @@ function normalise(text) {
     .toLowerCase();
 }
 
-function words(text) {
+function words(text: any) {
   return normalise(text).match(/[\p{L}\p{N}][\p{L}\p{N}'-]*/gu) || [];
 }
 
@@ -44,7 +49,7 @@ function words(text) {
 //   'fuzzy'     — not verbatim, but 85% of its words appear in one window of
 //                 the body. Close enough to keep for review, not to believe.
 //   null        — not there. The claim's evidence is invented; drop it.
-function verifyQuote(quote, body) {
+function verifyQuote(quote: any, body: any) {
   // Models like to wrap a quote in quote marks; those are not part of it.
   const q = normalise(quote).replace(/^["'\s]+|["'\s]+$/g, '');
   const b = normalise(body);
@@ -70,10 +75,10 @@ function verifyQuote(quote, body) {
   const bw = words(b);
   if (qw.length < 4 || !bw.length) return null;
   const width = Math.ceil(qw.length * 1.5);
-  const need = new Map();
+  const need = new Map<any, any>();
   for (const w of qw) need.set(w, (need.get(w) || 0) + 1);
   for (let start = 0; start < bw.length; start += Math.max(1, Math.floor(qw.length / 3))) {
-    const window = new Map();
+    const window = new Map<any, any>();
     for (const w of bw.slice(start, start + width)) window.set(w, (window.get(w) || 0) + 1);
     let hit = 0;
     for (const [w, n] of need) hit += Math.min(n, window.get(w) || 0);
@@ -86,9 +91,9 @@ function verifyQuote(quote, body) {
 
 // Every balanced top-level JSON value in `text`, in order. String-aware, so a
 // brace inside a quote does not end an object early.
-function jsonValues(text) {
+function jsonValues(text: any) {
   const s = String(text);
-  const out = [];
+  const out: any[] = [];
   let i = 0;
   while (i < s.length) {
     const open = s.slice(i).search(/[[{]/);
@@ -126,9 +131,9 @@ function jsonValues(text) {
 // Models wrap JSON in fences, add a sentence before or after it, and now and
 // then answer in two objects. The whole reply is tried first; failing that,
 // every balanced value is collected and their arrays concatenated by key.
-function extractJson(text) {
+function extractJson(text: any) {
   if (!text) throw new Error('empty response');
-  const fenced = String(text).match(/```(?:json)?\s*([\s\S]*?)```/i);
+  const fenced = String(text).match(/```(?:json)?\s*([\s\S]*?)```/i) as any;
   const body = fenced ? fenced[1] : String(text);
   try {
     return JSON.parse(body.trim());
@@ -138,7 +143,7 @@ function extractJson(text) {
   const values = jsonValues(fenced ? body : text);
   if (!values.length) throw new Error('no JSON in response');
   if (values.length === 1) return values[0];
-  const merged = {};
+  const merged: Record<string, any> = {};
   for (const v of values) {
     if (Array.isArray(v)) {
       merged.items = (merged.items || []).concat(v);
@@ -151,13 +156,13 @@ function extractJson(text) {
   return merged;
 }
 
-function clamp01(v, fallback = 0.5) {
+function clamp01(v: any, fallback: number = 0.5) {
   const n = Number(v);
   if (!Number.isFinite(n)) return fallback;
   return Math.max(0, Math.min(1, n));
 }
 
-function isoOrNull(v) {
+function isoOrNull(v: any) {
   if (!v) return null;
   const d = new Date(v);
   return Number.isNaN(d.getTime()) ? null : d.toISOString();
@@ -166,11 +171,11 @@ function isoOrNull(v) {
 // The claims pass answers for several items at once. Each claim names the item
 // it came from; a claim naming an item that was not in the batch is dropped,
 // because its quote cannot be checked against anything.
-function parseClaimsResponse(text, itemIds) {
+function parseClaimsResponse(text: any, itemIds: any) {
   const parsed = extractJson(text);
   const list = Array.isArray(parsed) ? parsed : Array.isArray(parsed.claims) ? parsed.claims : [];
   const allowed = new Set((itemIds || []).map(String));
-  const out = [];
+  const out: any[] = [];
   for (const c of list) {
     if (!c || typeof c.text !== 'string' || !c.text.trim()) continue;
     if (!allowed.has(String(c.item))) continue;
@@ -200,10 +205,10 @@ function parseClaimsResponse(text, itemIds) {
 // One consolidation decision per new claim. A target that was not among that
 // claim's candidates is a hallucinated id; the claim is kept (ADD) rather than
 // letting the model supersede something it was never shown.
-function parseDecisions(text, candidatesByClaim) {
+function parseDecisions(text: any, candidatesByClaim: any) {
   const parsed = extractJson(text);
   const list = Array.isArray(parsed) ? parsed : Array.isArray(parsed.decisions) ? parsed.decisions : [];
-  const out = new Map();
+  const out = new Map<any, any>();
   for (const d of list) {
     if (!d) continue;
     const claimId = String(d.claim ?? d.id ?? '');
@@ -232,20 +237,20 @@ function parseDecisions(text, candidatesByClaim) {
 // The dream pass's dedupe answer: groups of claims about one subject that say
 // the same thing. Ids outside the subject's list, a claim kept and dropped at
 // once, or a claim dropped twice are ignored rather than trusted.
-function parseMerges(text, allowedIds) {
+function parseMerges(text: any, allowedIds: any) {
   const parsed = extractJson(text);
   const list = Array.isArray(parsed) ? parsed : Array.isArray(parsed.duplicates) ? parsed.duplicates : [];
   const allowed = new Set((allowedIds || []).map(String));
-  const dropped = new Set();
-  const kept = new Set();
-  const out = [];
+  const dropped = new Set<any>();
+  const kept = new Set<any>();
+  const out: any[] = [];
   for (const g of list) {
     if (!g) continue;
     const keep = String(g.keep ?? '');
     if (!allowed.has(keep) || dropped.has(keep)) continue;
     const drop = (Array.isArray(g.drop) ? g.drop : [])
       .map(String)
-      .filter((id) => allowed.has(id) && id !== keep && !dropped.has(id) && !kept.has(id));
+      .filter((id: any) => allowed.has(id) && id !== keep && !dropped.has(id) && !kept.has(id));
     if (!drop.length) continue;
     kept.add(keep);
     for (const id of drop) dropped.add(id);
@@ -260,11 +265,11 @@ function parseMerges(text, allowedIds) {
 // it by T and had not yet stopped believing it; it is *valid as of T* when the
 // world it describes held at T. "What did we think on the 3rd about the 1st"
 // is believedAsOf(c, 3rd) && validAsOf(c, 1st).
-function t(v) {
+function t(v: any): any {
   return v == null ? null : new Date(v).getTime();
 }
 
-function believedAsOf(claim, asOf = new Date()) {
+function believedAsOf(claim: any, asOf: any = new Date()) {
   const at = t(asOf);
   if (t(claim.recorded_at) != null && t(claim.recorded_at) > at) return false;
   if (claim.expired_at != null && t(claim.expired_at) <= at) return false;
@@ -274,14 +279,14 @@ function believedAsOf(claim, asOf = new Date()) {
   return true;
 }
 
-function validAsOf(claim, asOf = new Date()) {
+function validAsOf(claim: any, asOf: any = new Date()) {
   const at = t(asOf);
   if (claim.valid_at != null && t(claim.valid_at) > at) return false;
   if (claim.invalid_at != null && t(claim.invalid_at) <= at) return false;
   return true;
 }
 
-function currentAsOf(claim, asOf = new Date()) {
+function currentAsOf(claim: any, asOf: any = new Date()) {
   return believedAsOf(claim, asOf) && validAsOf(claim, asOf);
 }
 
@@ -289,7 +294,7 @@ function currentAsOf(claim, asOf = new Date()) {
 // and rot quietly. A status with no stated end is assumed stale after
 // `statusDays`; a blocker after `blockerDays`. Everything else is durable
 // until something supersedes it.
-function isStale(claim, now = new Date(), { statusDays = 21, blockerDays = 45 } = {}) {
+function isStale(claim: any, now: any = new Date(), { statusDays = 21, blockerDays = 45 }: { statusDays?: number; blockerDays?: number } = {}) {
   if (claim.status !== 'active') return false;
   const at = t(now);
   if (claim.invalid_at != null && t(claim.invalid_at) <= at) return true;
@@ -301,7 +306,7 @@ function isStale(claim, now = new Date(), { statusDays = 21, blockerDays = 45 } 
 
 // The nightly pass runs once a day after `hour` local time, and regardless
 // once a day and a half has gone by (a laptop asleep at night still dreams).
-function dreamDue(now, lastRun, hour) {
+function dreamDue(now: any, lastRun: any, hour: any) {
   if (!lastRun) return true;
   const since = (t(now) - t(lastRun)) / 3600_000;
   if (since >= 36) return true;
@@ -314,7 +319,7 @@ function dreamDue(now, lastRun, hour) {
 // the ids and texts of the active claims and the state of the commitments that
 // feed it, plus the page prompt version — so a new prompt rebuilds every page
 // once, and an unchanged person costs nothing.
-function factsHash({ claims = [], commitments = [], extra = [], version = '' }) {
+function factsHash({ claims = [], commitments = [], extra = [], version = '' }: { claims?: any; commitments?: any; extra?: any; version?: string }) {
   const h = crypto.createHash('sha256');
   h.update(`v:${version}\n`);
   for (const c of [...claims].sort((a, b) => Number(a.id) - Number(b.id))) {
@@ -329,11 +334,11 @@ function factsHash({ claims = [], commitments = [], extra = [], version = '' }) 
 
 // Rough token count for budget checks: four characters a token is close enough
 // to keep the profile under its ceiling without a tokenizer dependency.
-function approxTokens(text) {
+function approxTokens(text: any) {
   return Math.ceil(String(text || '').length / 4);
 }
 
-function truncateToTokens(text, maxTokens) {
+function truncateToTokens(text: any, maxTokens: any) {
   const s = String(text || '');
   const max = maxTokens * 4;
   if (s.length <= max) return s;
@@ -344,7 +349,7 @@ function truncateToTokens(text, maxTokens) {
 
 // Bodies can be very long (a coding session transcript); the start says what
 // the work was and the end says where it landed.
-function headTail(text, max) {
+function headTail(text: any, max: any) {
   const s = String(text || '');
   if (s.length <= max) return s;
   const head = Math.floor(max * 0.6);

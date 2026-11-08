@@ -5,7 +5,7 @@
 // what a judge can read, what the judge is told, what its answer is allowed to
 // mean, and what is applied on its own versus proposed.
 
-const { verifyQuote } = require('../memory/claims');
+const { verifyQuote } = require('../memory/claims.ts');
 
 const VERSION = 'ledger-v1';
 const EFFECTS = ['closes', 'moot', 'progresses', 'none'];

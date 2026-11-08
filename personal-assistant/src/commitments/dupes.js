@@ -20,7 +20,7 @@
 // and a near-verbatim repeat in that neighbourhood is settled here without a
 // model call.
 
-const { words } = require('../distill/keep');
+const { words } = require('../distill/keep.ts');
 
 /** Jaccard overlap of the two summaries' content words, 0..1. */
 function similarity(a, b) {

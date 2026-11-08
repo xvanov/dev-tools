@@ -5,7 +5,7 @@
 // meeting is over, and what applying an update would change — each of them a
 // decision a test can reach.
 
-const { verifyQuote } = require('../memory/claims');
+const { verifyQuote } = require('../memory/claims.ts');
 
 const VERSION = 'debrief-v1';
 const UPDATE_KINDS = ['done', 'due_changed', 'blocked', 'new_info'];

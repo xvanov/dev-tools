@@ -21,7 +21,7 @@ const { config } = require('../config.ts');
 const repo = require('../repo');
 const ledger = require('../ledger');
 const policy = require('./sourcePolicy');
-const identity = require('../distill/identity');
+const identity = require('../distill/identity.ts');
 
 const ACTOR = 'reconciler';
 

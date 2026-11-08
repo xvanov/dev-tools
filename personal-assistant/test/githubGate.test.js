@@ -4,7 +4,7 @@
 // in, and a PR's own planned work stays with its author. Invented names only.
 
 const assert = require('assert');
-const { gate, involvement, mentions } = require('../src/distill/githubGate');
+const { gate, involvement, mentions } = require('../src/distill/githubGate.ts');
 const { notificationItem, searchItem } = require('../src/ingest/github');
 
 const ME = 'alex-dev';

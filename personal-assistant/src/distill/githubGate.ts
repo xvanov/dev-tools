@@ -22,12 +22,17 @@
 //
 // Pure: no I/O. `involvement` reads the stored item; the cleanup and the
 // tests feed it items enriched from the live API.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+type Row = Record<string, any>;
+type Db = import('../repo/types.ts').Db;
 
 const SOURCES = new Set(['github_notification', 'github_pr', 'github_issue', 'github_project_item']);
 
 // Notification reasons that name you, not a team or a subscription.
 // https://docs.github.com/en/rest/activity/notifications#about-notification-reasons
-const REASON_ROLE = {
+const REASON_ROLE: Record<string, any> = {
   author: 'author',
   assign: 'assignee',
   review_requested: 'reviewer',
@@ -46,16 +51,16 @@ const REVIEW_SHAPED = /\b(re-?review|review|approve|approval|sign[- ]?off|look (
 const DELIVERY_SHAPED =
   /\b(deliver|ship|open|raise|submit|land|finish|complete|implement|build|write|create|send)\b[^.]{0,60}\b(prs?|pull requests?|follow[- ]?ups?)\b|\bfollow[- ]?up (?:pr|pull request|change)s?\b/i;
 
-function handleOf(identity) {
-  const m = /^github:(.+)$/i.exec(String(identity || ''));
+function handleOf(identity: any) {
+  const m = /^github:(.+)$/i.exec(String(identity || '')) as any;
   return m ? m[1].toLowerCase() : null;
 }
 
-function sameLogin(a, b) {
+function sameLogin(a: any, b: any) {
   return !!a && !!b && String(a).toLowerCase() === String(b).toLowerCase();
 }
 
-function mentions(text, login) {
+function mentions(text: any, login: any) {
   if (!text || !login) return false;
   const esc = login.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   return new RegExp(`(^|[^\\w/-])@${esc}(?![\\w-])`, 'i').test(text);
@@ -65,10 +70,10 @@ function mentions(text, login) {
  * The ways `login` is personally part of a stored GitHub item.
  * @returns {{roles: Set<string>, personal: boolean, ownsWork: boolean, author: string|null}}
  */
-function involvement(item, login) {
+function involvement(item: any, login: any) {
   const raw = item.raw || {};
-  const roles = new Set();
-  const has = (list) => Array.isArray(list) && list.some((u) => sameLogin(u, login));
+  const roles = new Set<any>();
+  const has = (list: any) => Array.isArray(list) && list.some((u) => sameLogin(u, login));
 
   let author = null;
   if (item.source === 'github_notification') {
@@ -102,20 +107,20 @@ function involvement(item, login) {
  * @param {{login: string|null}} me  your GitHub login; without it nothing is judged
  * @returns {{commitments: object[], dropped: {c: object, why: string}[], moved: object[]}}
  */
-function gate(item, commitments, { login } = {}) {
-  const out = { commitments, dropped: [], moved: [] };
+function gate(item: any, commitments: any, { login }: { login?: any | null } = {}) {
+  const out = { commitments, dropped: [] as any[], moved: [] as any[] };
   if (!SOURCES.has(item?.source) || !login || !commitments?.length) return out;
 
   const inv = involvement(item, login);
   if (!inv.personal) {
-    out.dropped = commitments.map((c) => ({ c, why: 'not personally involved (team, watch or subscription only)' }));
+    out.dropped = commitments.map((c: any) => ({ c, why: 'not personally involved (team, watch or subscription only)' }));
     out.commitments = [];
     return out;
   }
   if (inv.ownsWork) return out;
 
   const reviewOnly = [...inv.roles].every((r) => r === 'reviewer');
-  const kept = [];
+  const kept: any[] = [];
   for (const c of commitments) {
     if (c.direction !== 'owed_by_me') {
       kept.push(c);

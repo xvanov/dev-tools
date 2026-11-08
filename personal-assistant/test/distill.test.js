@@ -4,7 +4,7 @@
 // otherwise reach the commitments table and be believed.
 
 const assert = require('assert');
-const { parseResponse, extractJson, buildUserMessage } = require('../src/distill/prompt');
+const { parseResponse, extractJson, buildUserMessage } = require('../src/distill/prompt.ts');
 
 const REF = '2026-09-01T10:00:00.000Z';
 
@@ -124,7 +124,7 @@ const REF = '2026-09-01T10:00:00.000Z';
 
 {
   // Re-distilling keeps what anything acted on, and what it says again.
-  const keep = require('../src/distill/keep');
+  const keep = require('../src/distill/keep.ts');
   const existing = [
     { id: 1, status: 'done', summary: 'Open a fix PR for the export timeout', touched: false, refs: true },
     { id: 2, status: 'open', summary: 'Send Ysolde the rollout notes', touched: false, refs: false },

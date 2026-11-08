@@ -20,7 +20,7 @@
 // marked `partial` rather than dropped.
 
 const llm = require('../llm');
-const identity = require('../distill/identity');
+const identity = require('../distill/identity.ts');
 const { getCursor, saveItems } = require('./store');
 const { logger } = require('../log.ts');
 

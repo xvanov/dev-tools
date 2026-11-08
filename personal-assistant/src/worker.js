@@ -404,7 +404,7 @@ async function main() {
   // a query over its own marker table, so they need no ordering beyond this.
   if (config.memory.enabled) {
     // Literal requires, so a bundler (jarvisd, plan 4.1) sees each pass module.
-const MEMORY_PASSES = { extract: () => require('./memory/extract'), consolidate: () => require('./memory/consolidate'), pages: () => require('./memory/pages'), dream: () => require('./memory/dream') };
+const MEMORY_PASSES = { extract: () => require('./memory/extract.ts'), consolidate: () => require('./memory/consolidate.ts'), pages: () => require('./memory/pages.ts'), dream: () => require('./memory/dream.ts') };
 const memoryPass = (file, opts) => () => MEMORY_PASSES[file]().run(opts);
     every(300, 'memory-extract', memoryPass('extract', { limit: 16 }));
     every(300, 'memory-consolidate', memoryPass('consolidate', { limit: 60 }));

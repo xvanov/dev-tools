@@ -25,7 +25,7 @@
 // same work, a subset of a bigger commitment (folds into the bigger one), or
 // different.
 
-const { words } = require('../distill/keep');
+const { words } = require('../distill/keep.ts');
 
 /** Cosine similarity of two equal-length vectors, -1..1 (0 for a missing one). */
 function cosine(a, b) {

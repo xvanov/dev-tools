@@ -15,15 +15,20 @@
 // row at CLAIMS_VERSION. Machine noise and items another item already covers
 // (a review-request notification for a PR that is ingested itself) are not
 // work at all.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+type Row = Record<string, any>;
+type Db = import('../repo/types.ts').Db;
 
 const llm = require('../llm');
 const { config } = require('../config.ts');
 const repo = require('../repo');
-const identity = require('../distill/identity');
+const identity = require('../distill/identity.ts');
 const projects = require('../projects');
 const { embed } = require('../search');
 const { logger } = require('../log.ts');
-const { parseClaimsResponse, verifyQuote, headTail } = require('./claims');
+const { parseClaimsResponse, verifyQuote, headTail } = require('./claims.ts');
 
 const log = logger('memory.extract');
 
@@ -34,7 +39,7 @@ const BATCH_ITEMS = 8;
 const AUDIO_CAP = 3;
 const PER_ITEM_CAP = 8;
 
-function bodyBudget(source) {
+function bodyBudget(source: any) {
   return source === 'claude_session' ? 12_000 : 6_000;
 }
 
@@ -78,11 +83,11 @@ Rules that matter more than completeness:
 - At most ${PER_ITEM_CAP} claims per item; prefer the few most useful.
 - confidence below 0.5 when you are inferring rather than reading it plainly.`;
 
-function peopleOf(item) {
+function peopleOf(item: any) {
   const raw = item.raw || {};
-  const people = [];
-  const seen = new Set();
-  const add = (handle, name, role) => {
+  const people: any[] = [];
+  const seen = new Set<any>();
+  const add = (handle: any, name: any, role: any) => {
     if (!handle) return;
     const h = String(handle).trim();
     if (!h || seen.has(h.toLowerCase()) || h === 'me') return;
@@ -93,7 +98,7 @@ function peopleOf(item) {
   add(item.author_identity, raw.fromName, 'author');
   if (Array.isArray(raw.memberEmails)) {
     const names = typeof raw.members === 'string' ? raw.members.split(/\s*,\s*/) : [];
-    raw.memberEmails.forEach((e, i) => add(e, names[i] || null, 'member'));
+    raw.memberEmails.forEach((e: any, i: any) => add(e, names[i] || null, 'member'));
   }
   for (const e of [].concat(raw.to || [], raw.cc || [])) add(e, null, 'recipient');
   if (raw.assignee) add(raw.assignee, raw.assignee, 'assignee');
@@ -106,8 +111,8 @@ function peopleOf(item) {
   return people.slice(0, 20);
 }
 
-function renderItem(item) {
-  const lines = [];
+function renderItem(item: any) {
+  const lines: any[] = [];
   const isAudio = item.source === 'audio';
   lines.push(`=== ITEM ${item.id} (${isAudio ? 'TRANSCRIPT' : item.source}) ${new Date(item.occurred_at).toISOString().slice(0, 10)}`);
   if (item.subject) lines.push(`SUBJECT: ${item.subject}`);
@@ -124,7 +129,7 @@ function renderItem(item) {
   return lines.join('\n');
 }
 
-function buildPrompt(items, meLabel, projectNames) {
+function buildPrompt(items: any, meLabel: any, projectNames: any) {
   const head = [
     `ME: ${meLabel || 'the mailbox owner'}`,
     `KNOWN PROJECTS: ${projectNames.slice(0, 60).join(', ') || '(none)'}`,
@@ -135,9 +140,9 @@ function buildPrompt(items, meLabel, projectNames) {
 
 // Packs items into batches by size, so one long coding session does not share
 // a call with seven others and blow the budget.
-function batches(items) {
-  const out = [];
-  let cur = [];
+function batches(items: any) {
+  const out: any[] = [];
+  let cur: any[] = [];
   let size = 0;
   for (const item of items) {
     const n = Math.min((item.body_text || '').length, bodyBudget(item.source)) + 400;
@@ -153,7 +158,7 @@ function batches(items) {
   return out;
 }
 
-async function pending(limit) {
+async function pending(limit: any) {
   return repo.memory.pendingExtraction(CLAIMS_VERSION, limit, MIN_BODY_CHARS);
 }
 
@@ -163,11 +168,11 @@ async function pendingCount() {
 
 // Names a handle-ish display name gets replaced by: a person row created from
 // a bare email is labelled with the email until a message shows their name.
-function looksLikeHandle(name) {
+function looksLikeHandle(name: any) {
   return !name || /@|^github:|^gitlab:|^aad:/.test(name);
 }
 
-async function resolveSubject(c, item, ctx) {
+async function resolveSubject(c: any, item: any, ctx: any) {
   if (c.subjectKind === 'me') {
     return { subjectKind: 'me', subjectId: ctx.me?.id ?? null, label: 'me' };
   }
@@ -210,8 +215,8 @@ async function resolveSubject(c, item, ctx) {
 
 // Applies the evidence rule and the per-item caps. Returns the claims to keep
 // (with a status) and how many were dropped.
-function vet(claims, item) {
-  const keep = [];
+function vet(claims: any, item: any) {
+  const keep: any[] = [];
   let dropped = 0;
   const cap = item.source === 'audio' ? AUDIO_CAP : PER_ITEM_CAP;
   const haystack = `${item.subject || ''}\n${item.body_text || ''}`;
@@ -235,19 +240,19 @@ function vet(claims, item) {
   return { keep, dropped };
 }
 
-function toVector(values) {
-  return `[${values.map((v) => Number(v).toFixed(6)).join(',')}]`;
+function toVector(values: any) {
+  return `[${values.map((v: any) => Number(v).toFixed(6)).join(',')}]`;
 }
 
-async function persistItem(item, kept, dropped, ctx) {
-  const resolved = [];
+async function persistItem(item: any, kept: any, dropped: any, ctx: any) {
+  const resolved: any[] = [];
   for (const c of kept) resolved.push({ c, s: await resolveSubject(c, item, ctx) });
 
   const vectors = resolved.length
     ? await embed(resolved.map(({ c, s }) => `${s.label}: ${c.text}`), { purpose: 'embed-claim' }).catch(() => null)
     : null;
 
-  await repo.withTx(async (r) => {
+  await repo.withTx(async (r: any) => {
     // Re-running an item at the same version replaces only claims nobody has
     // consolidated yet; consolidated ones are memory and stay.
     await r.memory.deleteUnconsolidatedClaims(item.id, CLAIMS_VERSION);
@@ -276,13 +281,13 @@ async function persistItem(item, kept, dropped, ctx) {
   return resolved.length;
 }
 
-async function markFailed(items, message) {
+async function markFailed(items: any, message: any) {
   for (const item of items) {
     await repo.memory.recordExtractionError(item.id, CLAIMS_VERSION, String(message).slice(0, 500));
   }
 }
 
-async function runBatch(batch, ctx) {
+async function runBatch(batch: any, ctx: any) {
   const prompt = buildPrompt(batch, ctx.meLabel, ctx.projectNames);
   let parsed;
   try {
@@ -294,8 +299,8 @@ async function runBatch(batch, ctx) {
       maxTokens: 8000,
       purpose: 'memory-extract',
     });
-    parsed = parseClaimsResponse(text, batch.map((i) => i.id));
-  } catch (err) {
+    parsed = parseClaimsResponse(text, batch.map((i: any) => i.id));
+  } catch (err: any) {
     log.warn('batch failed', { items: batch.length, message: err.message });
     await markFailed(batch, err.message);
     return { items: batch.length, claims: 0, dropped: 0, errors: batch.length };
@@ -304,7 +309,7 @@ async function runBatch(batch, ctx) {
   let claims = 0;
   let dropped = 0;
   for (const item of batch) {
-    const mine = parsed.filter((c) => c.itemId === String(item.id));
+    const mine = parsed.filter((c: any) => c.itemId === String(item.id));
     const v = vet(mine, item);
     claims += await persistItem(item, v.keep, v.dropped, ctx);
     dropped += v.dropped;
@@ -318,20 +323,20 @@ async function context() {
   return {
     me,
     meLabel: me ? `${me.display_name}${me.primary_email ? ` <${me.primary_email}>` : ''}` : null,
-    projectNames: list.map((p) => p.name),
+    projectNames: list.map((p: any) => p.name),
   };
 }
 
-async function run({ limit = 24, concurrency = 1 } = {}) {
+async function run({ limit = 24, concurrency = 1 }: { limit?: number; concurrency?: number } = {}) {
   const items = await pending(limit);
   if (!items.length) return { items: 0, claims: 0, dropped: 0, errors: 0 };
   const ctx = await context();
-  const totals = { items: 0, claims: 0, dropped: 0, errors: 0 };
+  const totals: Record<string, any> = { items: 0, claims: 0, dropped: 0, errors: 0 };
   const queue = batches(items);
   const workers = Array.from({ length: Math.max(1, concurrency) }, async () => {
     while (queue.length) {
       const r = await runBatch(queue.shift(), ctx);
-      for (const k of Object.keys(totals)) totals[k] += r[k];
+      for (const k of Object.keys(totals)) totals[k] += (r as any)[k];
     }
   });
   await Promise.all(workers);

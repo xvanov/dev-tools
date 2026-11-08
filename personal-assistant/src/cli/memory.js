@@ -90,21 +90,21 @@ function make(out, fail) {
         const llm = require('../llm');
         const t0 = Date.now();
         if (which === 'extract' || which === 'all') {
-          const extract = require('../memory/extract');
+          const extract = require('../memory/extract.ts');
           const r = await extract.run({ limit: limit || 40, concurrency: flagInt(flags, 'concurrency', 1) });
           out(`extract: ${r.items} items → ${r.claims} claims (${r.dropped} dropped for bad evidence)${r.errors ? `, ${r.errors} failed` : ''}; ${await extract.pendingCount()} items left`);
         }
         if (which === 'consolidate' || which === 'all') {
-          const r = await require('../memory/consolidate').run({ limit: limit || 120 });
+          const r = await require('../memory/consolidate.ts').run({ limit: limit || 120 });
           const c = r.claims;
           out(`consolidate: ${c.claims} claims (add ${c.add}, supersede ${c.supersede}, duplicate ${c.duplicate}, noop ${c.noop}); commitments reviewed ${r.commitments.reviewed}, superseded ${r.commitments.superseded}`);
         }
         if (which === 'pages' || which === 'all') {
-          const r = await require('../memory/pages').run({ limit: limit || 40 });
+          const r = await require('../memory/pages.ts').run({ limit: limit || 40 });
           out(`pages: ${r.written} written, ${r.unchanged} unchanged, ${r.skipped} skipped${r.errors ? `, ${r.errors} failed` : ''}`);
         }
         if (which === 'dream') {
-          const r = await require('../memory/dream').run({ force: true });
+          const r = await require('../memory/dream.ts').run({ force: true });
           out(`dream: ${JSON.stringify(r)}`);
         }
         const spend = llm.spend();

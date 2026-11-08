@@ -5,7 +5,7 @@
 const assert = require('assert');
 const core = require('../src/meetings/core');
 const P = require('../src/meetings/prompt');
-const { verifyQuote } = require('../src/memory/claims');
+const { verifyQuote } = require('../src/memory/claims.ts');
 const { toastXml } = require('../src/notify');
 
 const ME = 'brannoc@example.test';
