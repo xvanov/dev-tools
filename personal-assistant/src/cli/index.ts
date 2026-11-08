@@ -113,6 +113,7 @@ const HELP = `pa — your context layer
     pa help routine                 every routine verb
 
   Plumbing
+    pa version                       the commit the PA worker serves, or the local checkout short hash
     pa login                        check the Microsoft 365 connector and record who you are
     pa sync [--source s]            force an ingest pass
     pa distill [--limit n]          force a distillation pass
@@ -1803,13 +1804,15 @@ Object.assign(commands, require('./routine.ts').make(out, fail));
 Object.assign(commands, require('./task.ts').make(out, fail));
 Object.assign(commands, require('./e2e.ts').make(out, fail));
 Object.assign(commands, require('./audit.ts').make(out, fail));
+Object.assign(commands, require('./version.ts').make(out, fail));
 
 // `pa help <topic>`: each module exports its own HELP. Required by a computed
 // path, so test/cliHelp.test.js loads every one (requiresResolve.test.js sees
 // only literal requires, and Node never adds `.ts`).
 const HELP_TOPICS: Record<string, string> = {
   memory: './memory.ts', secret: './secret.ts', secrets: './secret.ts', passkeys: './passkeys.ts',
-  routine: './routine.ts', routines: './routine.ts', task: './task.ts', policy: './task.ts', e2e: './e2e.ts', audit: './audit.ts',
+  meeting: './meeting.ts', routine: './routine.ts', routines: './routine.ts', task: './task.ts', policy: './task.ts',
+  e2e: './e2e.ts', audit: './audit.ts', version: './version.ts',
 };
 
 async function main(argv: string[]) {
