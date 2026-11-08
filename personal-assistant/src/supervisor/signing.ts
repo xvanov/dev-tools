@@ -22,19 +22,22 @@
 // `-c gpg.ssh.allowedSignersFile=`, so no git config is edited anywhere.
 //
 // Node builtins only, like deploy.js: it runs when node_modules is broken.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
 
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
 // Same places as src/platform: %LOCALAPPDATA% on Windows, XDG data on Linux.
-function defaultDataDir({ env = process.env, platform = process.platform, home = os.homedir() } = {}) {
+function defaultDataDir({ env = process.env, platform = process.platform, home = os.homedir() }: { env?: Record<string, string | undefined>; platform?: string; home?: string } = {}) {
   if (env.PA_DATA_DIR) return env.PA_DATA_DIR;
   if (platform === 'win32') return path.join(env.LOCALAPPDATA || path.join(home, 'AppData', 'Local'), 'personal-assistant');
   return path.join(env.XDG_DATA_HOME || path.join(home, '.local', 'share'), 'personal-assistant');
 }
 
-function allowedSignersPath(env = process.env) {
+function allowedSignersPath(env: Record<string, string | undefined> = process.env) {
   return env.PA_ALLOWED_SIGNERS || path.join(defaultDataDir({ env }), 'allowed_signers');
 }
 
@@ -43,16 +46,16 @@ function allowedSignersPath(env = process.env) {
  * Only 'G' (good signature from an allowed signer) passes.
  * @returns {{ok: boolean, total: number, bad: {commit: string, status: string}[]}}
  */
-function judge(logOutput) {
+function judge(logOutput: unknown): { ok: boolean; total: number; bad: { commit: string; status: string }[] } {
   const rows = String(logOutput || '').split('\n').map((l) => l.trim()).filter(Boolean).map((l) => {
     const [commit, status] = l.split('\t');
-    return { commit, status: status || '?' };
+    return { commit: commit ?? '', status: status || '?' };
   });
   const bad = rows.filter((r) => r.status !== 'G');
   return { ok: bad.length === 0, total: rows.length, bad };
 }
 
-const STATUS_WORDS = {
+const STATUS_WORDS: Record<string, string> = {
   N: 'not signed',
   B: 'bad signature',
   U: 'signed, validity unknown',
@@ -70,7 +73,7 @@ const STATUS_WORDS = {
  *   git: runs git in the repo and returns stdout (throws on failure).
  * @returns {{state: 'verified'|'warned'|'refused', mode: 'enforce'|'warn', total: number, message: string, bad?: object[]}}
  */
-function verifyPulled({ range, git, env = process.env, say = () => {}, exists = fs.existsSync, require: required = env.PA_REQUIRE_SIGNED === '1' }) {
+function verifyPulled({ range, git, env = process.env, say = () => {}, exists = fs.existsSync, require: required = env.PA_REQUIRE_SIGNED === '1' }: { range: string; git: (args: string[]) => string; env?: Record<string, string | undefined>; say?: (line: string) => void; exists?: (p: string) => boolean; require?: boolean }) {
   const file = allowedSignersPath(env);
   const have = exists(file);
   const enforce = have || required;
@@ -84,7 +87,7 @@ function verifyPulled({ range, git, env = process.env, say = () => {}, exists = 
     const args = have ? ['-c', `gpg.ssh.allowedSignersFile=${file}`] : [];
     out = git([...args, 'log', '--format=%H%x09%G?', range]);
   } catch (err) {
-    const message = `could not check commit signatures (${String(err.message).split('\n')[0]})`;
+    const message = `could not check commit signatures (${String((err as Error).message).split('\n')[0]})`;
     if (enforce) {
       say(`${message}: refusing the update`);
       return { state: 'refused', mode: 'enforce', total: 0, message };

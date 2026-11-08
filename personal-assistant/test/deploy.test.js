@@ -7,7 +7,7 @@
 const assert = require('assert');
 const path = require('path');
 const { spawnSync, execFileSync } = require('child_process');
-const { plan, verdict, parseArgs } = require('../src/supervisor/deploy');
+const { plan, verdict, parseArgs } = require('../src/supervisor/deploy.ts');
 
 const PA = path.join(__dirname, '..');
 const live = { ok: true, generation: 3, pid: 10, source: 'aaaaaaaaaaaa' };
@@ -20,7 +20,7 @@ const live = { ok: true, generation: 3, pid: 10, source: 'aaaaaaaaaaaa' };
 {
   const fs = require('fs');
   const os = require('os');
-  const D = require('../src/supervisor/deploy');
+  const D = require('../src/supervisor/deploy.ts');
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pa-deploy-bun-'));
   const write = (pin) => fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ devDependencies: { bun: pin } }));
   try {
@@ -44,7 +44,7 @@ const live = { ok: true, generation: 3, pid: 10, source: 'aaaaaaaaaaaa' };
     fs.rmSync(dir, { recursive: true, force: true });
   }
   // deploy.js never runs npm ci in jarvisd/.
-  const src = fs.readFileSync(path.join(PA, 'src', 'supervisor', 'deploy.js'), 'utf8');
+  const src = fs.readFileSync(path.join(PA, 'src', 'supervisor', 'deploy.ts'), 'utf8');
   assert.ok(!/['"]ci['"]/.test(src), 'no npm ci in deploy.js');
 }
 
@@ -145,7 +145,7 @@ const live = { ok: true, generation: 3, pid: 10, source: 'aaaaaaaaaaaa' };
 
 // ---- one deploy at a time ----
 async function lockCases() {
-  const { acquireDeployLock } = require('../src/supervisor/deploy');
+  const { acquireDeployLock } = require('../src/supervisor/deploy.ts');
   const fs = require('fs');
   const os = require('os');
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pa-deploylock-'));
