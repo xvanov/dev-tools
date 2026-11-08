@@ -254,6 +254,23 @@ function create(db) {
     async subjectAndBody(id) {
       return db.one('select subject, body_text from source_item where id = $1', [id]);
     },
+
+    /**
+     * Rewinds the date cursors (state.since) of `sources` (all when empty) to
+     * `since`, dropping delta tokens. Resolves the sources rewound.
+     */
+    async rewindCursors(since, sources) {
+      const at = since instanceof Date ? since.toISOString() : String(since);
+      const r = await db.rows(
+        `update sync_cursor
+        set state = json_set(state, '$.since', $1), delta_token = null
+      where json_type(state, '$.since') is not null
+        and (json_array_length($2) = 0 or source in (select value from json_each($2)))
+      returning source`,
+        [at, sources || []]
+      );
+      return r.map((x) => x.source);
+    },
   };
 }
 

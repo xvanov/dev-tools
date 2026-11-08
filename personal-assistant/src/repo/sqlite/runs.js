@@ -73,6 +73,14 @@ function create(db) {
       order by ended_at desc nulls last limit 10`
       );
     },
+
+    /** A commitment's newest runs (3): {id, status, mode, branch, mr_url, started_at}. */
+    async recentForCommitment(commitmentId) {
+      return db.rows(
+        'select id, status, mode, branch, mr_url, started_at from run where commitment_id = $1 order by started_at desc, id desc limit 3',
+        [commitmentId]
+      );
+    },
   };
 }
 

@@ -368,12 +368,17 @@ run mid-step; a job continued on an existing branch (`--branch`).
   postgres) picks the backend; `src/db/sqlite.js` (better-sqlite3-multiple-ciphers: SQLCipher v4,
   WAL, FTS5; sqlite-vec for `vec_distance_cosine`, JS fallback), `sql-sqlite/` (every table of
   sql/001-037, FTS5 for the tsvectors, event triggers, `lease` for advisory locks),
-  `src/repo/sqlite/<aggregate>.js` loaded by `createRepos()` for the sqlite dialect. Ported:
-  events, leases, notifications, runs, spend, workflowLimits, audit. Left: the rest of 1.2.
+  `src/repo/sqlite/<aggregate>.js` loaded by `createRepos()` for the sqlite dialect. Every
+  aggregate converted so far has its twin (2026-11-08: audio, audit, commitments, drafts, evals,
+  events, leases, ledger, meetings, memory, notifications, people, projects, proposals, runs,
+  search, secrets, sources, spend, system, workflowLimits). Left: the aggregates 1.2 has not
+  converted yet; tick with 1.2. Differences SQLite cannot avoid are stated in each twin (FTS5
+  bm25 ranks vs ts_rank, ASCII-only `lower()`/`like`, regexes tested in JS, ms timestamps) for 3.4.
 - [ ] **3.2** Contract tests from 1.3 green on SQLite.
   In progress: `repoContract.test.js` runs every case on both backends (SQLite: a throwaway
   encrypted file, no server, so CI's matrix runs it on Linux and Windows); a case needing a method
   SQLite lacks is `todo` until `PA_CONTRACT_STRICT=1`, which must pass before this is ticked.
+  2026-11-08: strict run green, 794 cases on both backends (every converted aggregate).
 - [ ] **3.3 Export from Postgres, copying existing vectors (no re-embedding, D5).** Optional
   int8 quantization is local arithmetic on the copied vectors, not an API call.
 - [ ] **3.4 Shadow comparison (D12):** both backends answer the same recorded query set once;

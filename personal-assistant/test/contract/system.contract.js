@@ -1,16 +1,21 @@
 'use strict';
 
-// Contract: src/repo/system.js (see test/repoContract.test.js).
+// Contract: src/repo/system.js (see test/repoContract.test.js). What the
+// store has is backend-specific: Postgres extensions and server version, or
+// SQLite's built-in modules (sqlite-vec when loaded) and library version.
+
+const isSqlite = (repos) => repos.backend.dialect === 'sqlite';
 
 module.exports = {
   'installedExtensions: the ones present, of those asked': async ({ repos, assert }) => {
-    const got = await repos.system.installedExtensions(['vector', 'pg_trgm', 'no_such_extension']);
-    assert.deepStrictEqual(got.sort(), ['pg_trgm', 'vector']);
+    const [ask, want] = isSqlite(repos) ? [['fts5', 'json', 'no_such_extension'], ['fts5', 'json']] : [['vector', 'pg_trgm', 'no_such_extension'], ['pg_trgm', 'vector']];
+    const got = await repos.system.installedExtensions(ask);
+    assert.deepStrictEqual(got.sort(), want);
   },
 
   'serverMajor: a whole major version': async ({ repos, assert }) => {
     const v = await repos.system.serverMajor();
-    assert.ok(Number.isInteger(v) && v >= 13, String(v));
+    assert.ok(Number.isInteger(v) && v >= (isSqlite(repos) ? 3 : 13), String(v));
   },
 
   // --- for src/cli, src/chat/fastLane.js, src/dashboard (chunk G)
