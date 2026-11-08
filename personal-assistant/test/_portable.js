@@ -31,6 +31,27 @@ function ensurePosixTools() {
   return false;
 }
 
+// On Windows, puts Git for Windows' real git.exe (ucrt64/mingw64 bin) ahead of the cmd\git.exe
+// launcher on PATH, for this process and its children. The launcher starts a second process for
+// every call: about a third of each git call's ~0.3 s here, and git-heavy tests make hundreds.
+// Same git, same version; returns the directory used, or null (a no-op elsewhere).
+function preferDirectGit() {
+  if (!WIN) return null;
+  const found = spawnSync('where', ['git'], { encoding: 'utf8', windowsHide: true });
+  const roots = new Set(['C:\\Program Files\\Git']);
+  for (const g of (found.stdout || '').split(/\r?\n/).filter(Boolean)) roots.add(path.resolve(path.dirname(g), '..'));
+  for (const root of roots) {
+    for (const sub of ['ucrt64', 'mingw64', 'clangarm64']) {
+      const dir = path.join(root, sub, 'bin');
+      if (fs.existsSync(path.join(dir, 'git.exe'))) {
+        process.env.PATH = `${dir}${path.delimiter}${process.env.PATH}`;
+        return dir;
+      }
+    }
+  }
+  return null;
+}
+
 // `python3` on Linux/macOS, `python` on Windows (where python3 is only a Store stub, if present).
 function pythonCommand() {
   for (const c of WIN ? ['python', 'python3'] : ['python3', 'python']) {
@@ -40,4 +61,4 @@ function pythonCommand() {
   throw new Error('no python 3 on PATH');
 }
 
-module.exports = { ensurePosixTools, pythonCommand, WIN };
+module.exports = { ensurePosixTools, preferDirectGit, pythonCommand, WIN };

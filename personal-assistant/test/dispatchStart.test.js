@@ -23,6 +23,8 @@ const { execFileSync } = require('child_process');
 const { owns } = require('../../scripts/shard');
 // git runs `!helper` credential helpers and this test runs `sh -c`: on Windows, borrow Git's sh.
 if (!require('./_portable').ensurePosixTools()) throw new Error('sh is not available (install Git for Windows)');
+// ~200 git processes: skip Git for Windows' launcher process on each (test/_portable.js).
+require('./_portable').preferDirectGit();
 
 const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pa-start-')));
 process.env.PA_WORKTREES_ROOT = path.join(tmp, 'worktrees');
@@ -95,15 +97,32 @@ const { noPushEnv } = require('../src/dispatch/remote');
 const BLOCKED = dispatch.BLOCKED_PUSH_URL;
 
 const git = (cwd, ...args) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } });
+// A clone and its bare origin, with one commit pushed. Built with git once per
+// process, then copied: five git processes per repo (each 0.1-0.7 s on
+// Windows) made this file the slowest in the suite. The copy's only
+// difference is origin's path, rewritten in the clone's config.
+let template = null;
 function makeRepo(name) {
+  if (!template) {
+    const origin = path.join(tmp, '_template-origin.git');
+    const repo = path.join(tmp, '_template');
+    git(tmp, 'init', '-q', '--bare', '-b', 'main', origin);
+    git(tmp, 'init', '-q', '-b', 'main', repo);
+    git(repo, '-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-q', '--allow-empty', '-m', 'first');
+    git(repo, 'remote', 'add', 'origin', origin);
+    git(repo, 'push', '-q', 'origin', 'main');
+    git(repo, 'fetch', '-q', 'origin'); // origin/main, as a push leaves it
+    template = { origin, repo, url: git(repo, 'remote', 'get-url', 'origin').trim() };
+  }
   const origin = path.join(tmp, `${name}-origin.git`);
   const repo = path.join(tmp, 'repos', name);
   fs.mkdirSync(path.dirname(repo), { recursive: true });
-  git(tmp, 'init', '-q', '--bare', '-b', 'main', origin);
-  git(tmp, 'init', '-q', '-b', 'main', repo);
-  git(repo, '-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-q', '--allow-empty', '-m', 'first');
-  git(repo, 'remote', 'add', 'origin', origin);
-  git(repo, 'push', '-q', 'origin', 'main');
+  fs.cpSync(template.origin, origin, { recursive: true });
+  fs.cpSync(template.repo, repo, { recursive: true });
+  const cfg = path.join(repo, '.git', 'config');
+  // Git writes backslashes in config values escaped (`C:\\Temp\\...`).
+  const esc = (s) => s.replace(/\\/g, '\\\\');
+  fs.writeFileSync(cfg, fs.readFileSync(cfg, 'utf8').split(esc(template.url)).join(esc(origin)));
   return { origin, repo };
 }
 const sharedPushurls = (repo) => {
@@ -155,12 +174,12 @@ const sharedPushurls = (repo) => {
     fill({ ...process.env, GIT_TERMINAL_PROMPT: '0' });
     assert.ok(fs.existsSync(marker), 'control: the helper is called without the env');
     fs.rmSync(marker);
-    fill({ ...process.env, ...noPushEnv().env });
+    fill({ ...process.env, ...noPushEnv().env, GIT_TERMINAL_PROMPT: '0' }); // no prompt: the question is only what helpers answer
     assert.ok(!fs.existsSync(marker), 'credential.helper reset: the helper is not called');
     git(repo, 'config', '--local', '--unset', 'credential.helper');
     // ...and neither does Git Credential Manager / gh's helper hand out a token for github.com (the empty
     // credential.helper resets every helper configured before it, URL-scoped ones included).
-    const ghCred = (() => { try { return execFileSync('git', ['credential', 'fill'], { cwd: repo, input: 'protocol=https\nhost=github.com\n\n', env: { ...process.env, ...noPushEnv().env }, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }); } catch { return ''; } })();
+    const ghCred = (() => { try { return execFileSync('git', ['credential', 'fill'], { cwd: repo, input: 'protocol=https\nhost=github.com\n\n', env: { ...process.env, ...noPushEnv().env, GIT_TERMINAL_PROMPT: '0', GCM_INTERACTIVE: 'never' }, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }); } catch { return ''; } })();
     assert.ok(!/^password=/m.test(ghCred), 'git credential fill for github.com returns no password in a no-push session');
   }
 

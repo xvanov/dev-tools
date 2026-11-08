@@ -3,7 +3,7 @@ module.exports = {
   skip: [],
   serial: [],
   // Git-heavy files made of independent blocks (Windows spawns are ~0.1 s each): run each as parallel shards.
-  shards: { 'dispatchStart.test.js': 5, 'remoteExec.test.js': 4 },
+  shards: { 'dispatchStart.test.js': 10, 'remoteExec.test.js': 4 },
   // No test may reach a real Postgres (the work stack's PA database lives on 5433): point the pool
   // at a closed port so a stray query fails at once instead of touching, or waiting on, real data.
   env: { PA_TESTING: '1', PA_DATABASE_URL: 'postgres://pa:pa@127.0.0.1:1/blocked_in_tests' },

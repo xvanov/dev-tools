@@ -186,7 +186,9 @@ function sse(port, pathAndQuery, headers = {}) {
     await d.waitFor(2);
     assert.strictEqual(d.frames[1].topic, 'factory', 'no topics: everything');
     d.close();
-    await tick(20);
+    // The server sees each close when the socket's FIN arrives: 20 ms was not
+    // always enough on a loaded machine. Wait for it, up to 5 s.
+    for (let i = 0; i < 250 && bus.subscribers() > 0; i++) await tick(20);
     assert.strictEqual(bus.subscribers(), 0, 'closed streams unsubscribe');
     server.close();
   }
