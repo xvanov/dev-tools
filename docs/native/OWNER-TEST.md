@@ -53,9 +53,27 @@ On **Ask**, say: "With DeepSeek, start a factory job for dev-tools: <a small cha
   session.
 - [ ] A ready PR opens with green CI, nothing is merged, and the job's cost stays under $2.
 
-## 5. Terminals survive (the new system)
+## 5. A Teams ask (teams-ask, Exit 8)
+
+Between 08:00 and 19:00 (outside those hours the toast waits for the digest), with Teams
+running. In a PowerShell window:
+
+```powershell
+cd C:\repos\dev-tools\personal-assistant
+node bin\pa.js e2e teams-ask --test-chat 48:notes
+```
+
+It prints one test phrase. Type it, exactly and as one message, into your chat with yourself.
+
+- [ ] Within seconds the run reports the message stored, then distilled into a card.
+- [ ] The card is on **Plan**, names you as the person asking, carries the due date the phrase
+  implies, and its link opens the message in Teams.
+- [ ] A notification pops up for the new ask.
+- [ ] The run drops the test card at the end (delete the message in Teams if you like).
+
+## 6. Terminals survive (the new system)
 
 - [ ] In **Run**, start something long in a terminal (e.g. a `ping -t` loop). Ask the lead to
   restart sessiond: the terminal is still there afterwards, with its output.
 
-When 1-4 pass, the lead ticks Exit E and Exit 8.
+When 1-5 pass, the lead ticks Exit E and Exit 8.
