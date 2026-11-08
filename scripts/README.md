@@ -17,6 +17,7 @@ node scripts/build.js --only ptyd --release
 | target | how | status |
 |---|---|---|
 | `ptyd` | `cargo build --locked --profile <p>` in `ptyd/` | live |
+| `desktop` | `tauri build` in `desktop/`: installers (NSIS on Windows, .deb on Linux) on `--release`, the bare binary (`--debug --no-bundle`) otherwise | live; needs `npm ci` in `desktop/` |
 | `jarvisd` | `bun build --compile` per OS | skipped with a note until plan 4.1 adds its entrypoint |
 
 Profiles: `--release` (thin LTO; what CI publishes), `--local` (release-speed code, no LTO,

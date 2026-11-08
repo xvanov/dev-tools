@@ -33,6 +33,7 @@ jobs:
       factory: ${{ steps.f.outputs.factory }}
       ios: ${{ steps.f.outputs.ios }}
       ptyd: ${{ steps.f.outputs.ptyd }}
+      build: ${{ steps.f.outputs.build }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -44,7 +45,7 @@ jobs:
           BEFORE: ${{ github.event.before }}
         run: |
           set -u
-          all() { for k in pa termhub factory ios ptyd; do echo "$k=true" >> "$GITHUB_OUTPUT"; done; exit 0; }
+          all() { for k in pa termhub factory ios ptyd build; do echo "$k=true" >> "$GITHUB_OUTPUT"; done; exit 0; }
           [ "$EVENT" = "workflow_dispatch" ] && all
           if [ "$EVENT" = "pull_request" ]; then BASE="$BASE_PR"; else BASE="$BEFORE"; fi
           # New branch / forced push / unknown base: run everything (fail safe).
@@ -60,6 +61,9 @@ jobs:
           echo "ios=$(hit '^ios-messages/')" >> "$GITHUB_OUTPUT"
           # The conformance suite holds ptyd to sessiond's protocol: a change to either side reruns it.
           echo "ptyd=$(hit '^(ptyd|termhub)/')" >> "$GITHUB_OUTPUT"
+          # Everything scripts/build.js compiles (T7): ptyd and the desktop shell (7.6).
+          # Everything scripts/build.js compiles (T7): ptyd and the desktop shell (7.6).
+          echo "build=$(hit '^(ptyd|desktop)/|^scripts/build\.js$')" >> "$GITHUB_OUTPUT"
 
   personal-assistant:
     needs: changes
@@ -219,20 +223,22 @@ jobs:
         run: bash $GITHUB_WORKSPACE/.github/scripts/run.sh node test/ptydBackend.test.js
 
   # Build pipeline (plan T7): `node scripts/build.js` builds every compiled target
-  # (ptyd today; jarvisd's `bun build --compile` joins with plan 4.1) per OS in
-  # parallel, release profile, and dist/<os>-<arch>/ (binaries + manifest.json
-  # with sha256) is published as a build artifact. Signing hook: DEVTOOLS_SIGN_CMD
-  # (plan 7.4), unset here.
+  # (ptyd; the Tauri desktop shell's installers, plan 7.6: NSIS on Windows, .deb
+  # on Linux; jarvisd's `bun build --compile` joins with plan 4.1) per OS in
+  # parallel, release profile, and dist/<os>-<arch>/ (binaries, installers and a
+  # manifest.json with sha256) is published as a build artifact. The desktop
+  # crate's fmt/clippy/unit tests run here, since on Linux they need WebKitGTK.
+  # Signing hook: DEVTOOLS_SIGN_CMD (plan 7.4), unset here.
   build:
     needs: changes
-    if: needs.changes.outputs.ptyd == 'true'
+    if: needs.changes.outputs.build == 'true'
     name: build (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 25
+    timeout-minutes: 40
     env:
       CARGO_TERM_COLOR: never
       CARGO_INCREMENTAL: '0'
@@ -241,14 +247,35 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
       - uses: mozilla-actions/sccache-action@v0.0.9
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: ptyd
+          workspaces: |
+            ptyd
+            desktop/src-tauri
           cache-targets: 'false'
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+      - name: Tauri system packages (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev
+      - run: npm ci
+        working-directory: desktop
+      - name: desktop fmt / clippy / unit tests
+        working-directory: desktop/src-tauri
+        shell: bash
+        run: |
+          set -e
+          cargo fmt --check
+          cargo clippy --locked --all-targets -- -D warnings
+          cargo test --locked
       - run: bash $GITHUB_WORKSPACE/.github/scripts/run.sh node scripts/build.js --release
         shell: bash
       - uses: actions/upload-artifact@v4

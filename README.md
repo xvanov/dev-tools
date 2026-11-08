@@ -12,6 +12,7 @@ Internal tooling for AI-assisted workflows: push-to-talk dictation, batch transc
 | [claude-ctx-statusline](./claude-ctx-statusline/) | Shows context window usage in the Claude Code status bar |
 | [keep-awake](./keep-awake/) | Keeps a Windows session awake (F15 tap + execution-state) so it never idle-logs-out; auto-starts at logon |
 | [termhub](./termhub/) | Mobile-friendly web terminal over Tailscale — one server per machine; open/reattach shell sessions, incl. Claude Code (Windows + Linux) |
+| [desktop](./desktop/) | Jarvis desktop shell (Tauri 2, plan 7.6): the stack's browser shell in its own window, tray, notifications for what needs you, work/personal switcher (Windows + Linux) |
 | [ptyd](./ptyd/) | Rust terminal host for termhub (plan 5.1): owns the PTYs and speaks sessiond's session protocol; opt-in via `TERMHUB_PTYD=1` |
 | [disk-janitor](./disk-janitor/) | Safe, scheduled reclamation of rebuildable disk space (package caches + aged temp/cache); whitelist-only, never touches user data (Windows + Ubuntu/Debian) |
 | [personal-assistant](./personal-assistant/) | Context layer over Outlook/Teams/GitLab/meetings that distils asks into typed commitments, dispatches them to Claude Code sessions you can attach to, and drafts the reply when the work lands |
@@ -147,6 +148,7 @@ dev-tools/
 ├── claude-ctx-statusline/    # Claude Code statusLine helper
 ├── keep-awake/               # Windows keep-session-awake helper
 ├── termhub/                  # web terminal over Tailscale (agent + hub + xterm.js UI)
+├── desktop/                  # Jarvis desktop shell (Tauri 2, plan 7.6)
 ├── ptyd/                     # Rust terminal host for termhub (opt-in, plan 5.1)
 ├── disk-janitor/             # scheduled, whitelist-only disk reclamation
 ├── personal-assistant/       # context layer: ingest → distil → recall → dispatch → draft

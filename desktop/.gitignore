@@ -1,0 +1,6 @@
+node_modules/
+src-tauri/target/
+src-tauri/gen/
+# The root .gitignore ignores *.json; these are source.
+!src-tauri/tauri.conf.json
+!src-tauri/capabilities/*.json

@@ -17,6 +17,10 @@
 // Targets today:
 //   ptyd     cargo build. Locally incremental; in CI (CARGO_INCREMENTAL=0) through
 //            sccache when it is on PATH (RUSTC_WRAPPER is set only if unset).
+//   desktop  the Tauri desktop shell (plan 7.6). --release bundles installers
+//            (NSIS .exe on Windows, .deb on Linux); other profiles build the
+//            binary only (`tauri build --debug --no-bundle`). Needs `npm ci` in
+//            desktop/ (the Tauri CLI), and on Linux the WebKitGTK dev packages.
 //   jarvisd  planned: `bun build --compile` per OS lands with plan 4.1 (the
 //            TypeScript/Bun core). Listed so the shape is fixed; skipped with a
 //            note until its entrypoint exists.
@@ -36,7 +40,8 @@ const { spawn, spawnSync } = require('child_process');
 
 const REPO = path.join(__dirname, '..');
 const EXE = process.platform === 'win32' ? '.exe' : '';
-const PLATFORM = `${process.platform === 'win32' ? 'windows' : process.platform}-${process.arch}`;
+const TAURI_CLI = path.join(REPO, 'desktop', 'node_modules', '@tauri-apps', 'cli', 'tauri.js');
+const PLATFORM =`${process.platform === 'win32' ? 'windows' : process.platform}-${process.arch}`;
 
 function onPath(cmd) {
   const r = spawnSync(process.platform === 'win32' ? 'where' : 'which', [cmd], { encoding: 'utf8', windowsHide: true });
@@ -65,6 +70,41 @@ const TARGETS = {
         cwd: path.join(REPO, 'ptyd'),
         env,
         artifacts: [path.join(REPO, 'ptyd', 'target', profile, `ptyd${EXE}`)],
+      };
+    },
+  },
+  desktop: {
+    describe: 'Jarvis desktop shell (desktop/, Tauri 2): installers on --release',
+    available() {
+      if (!cargoBin()) return 'no cargo (install rustup: https://rustup.rs)';
+      if (!fs.existsSync(TAURI_CLI)) return 'no Tauri CLI (npm ci in desktop/)';
+      return null;
+    },
+    command({ profile }) {
+      const release = profile === 'release';
+      const target = path.join(REPO, 'desktop', 'src-tauri', 'target');
+      const env = { ...process.env };
+      if (!env.RUSTC_WRAPPER && env.CARGO_INCREMENTAL === '0' && onPath('sccache')) env.RUSTC_WRAPPER = 'sccache';
+      // cargo has to be findable by the Tauri CLI too.
+      const cargo = cargoBin();
+      if (cargo && cargo !== 'cargo') env.PATH = `${path.dirname(cargo)}${path.delimiter}${env.PATH || ''}`;
+      return {
+        cmd: process.execPath,
+        // Release builds the installers (NSIS on Windows, .deb on Linux); the
+        // other profiles build the bare binary, so a local rebuild stays incremental.
+        args: [TAURI_CLI, 'build', ...(release ? [] : ['--debug', '--no-bundle'])],
+        cwd: path.join(REPO, 'desktop'),
+        env,
+        artifacts: () => {
+          if (!release) return [path.join(target, 'debug', `jarvis-desktop${EXE}`)];
+          const out = [];
+          for (const [dir, ext] of [['nsis', '.exe'], ['deb', '.deb']]) {
+            const d = path.join(target, 'release', 'bundle', dir);
+            if (!fs.existsSync(d)) continue;
+            for (const f of fs.readdirSync(d)) if (f.endsWith(ext)) out.push(path.join(d, f));
+          }
+          return out;
+        },
       };
     },
   },
@@ -137,7 +177,9 @@ async function buildOne(name, opts, outDir) {
   const seconds = (Date.now() - t0) / 1000;
   if (code !== 0) return { name, status: 'failed', note: `exit ${code}`, seconds };
   const artifacts = [];
-  for (const src of spec.artifacts) {
+  const sources = typeof spec.artifacts === 'function' ? spec.artifacts() : spec.artifacts;
+  if (!sources.length) return { name, status: 'failed', note: 'built, but produced no artifact', seconds };
+  for (const src of sources) {
     if (!fs.existsSync(src)) return { name, status: 'failed', note: `no artifact at ${src}`, seconds };
     const dest = path.join(outDir, path.basename(src));
     fs.copyFileSync(src, dest);

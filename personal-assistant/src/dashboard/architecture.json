@@ -1422,6 +1422,33 @@
       ]
     },
     {
+      "id": "desktop",
+      "layer": "sessions",
+      "name": "Jarvis desktop shell",
+      "role": "Tauri 2 app (plan 7.6; desktop only, D12): the active stack's browser shell (termhub front, the PA under /pa/) in its own window, a tray icon, OS notifications from the PA's /api/events and a work/personal stack switcher. One stack connected at a time, each with its own webview data directory. Built in CI; not installed on either machine yet.",
+      "stacks": {
+        "work": "landing",
+        "personal": "landing"
+      },
+      "where": {
+        "work": "desktop app (NSIS installer from CI's build job); opens http://127.0.0.1:7000/ by default",
+        "personal": "desktop app (.deb from CI's build job); its address is set in the app's settings"
+      },
+      "details": {
+        "Notifications": "follows <stack>/pa/api/events?topics=board,run with Last-Event-ID; notifies a pending proposal (waiting for your approval), a pending secret request or draft, and a run that is waiting, landed or failed",
+        "Stacks": "stacks.json in the app config dir; switching destroys the old window and stops its event stream before the new one starts",
+        "Start at login": "off by default; the tray or settings turns it on (autostart plugin, starts with --hidden into the tray)",
+        "Security": "the stack window is a remote page with no IPC; only the local settings window may call the app",
+        "Build": "node scripts/build.js --only desktop (Tauri CLI via npm ci in desktop/; WebKitGTK dev packages on Linux)"
+      },
+      "code": [
+        "desktop/src-tauri/src/lib.rs",
+        "desktop/src-tauri/src/events.rs",
+        "desktop/src-tauri/src/config.rs",
+        "desktop/README.md"
+      ]
+    },
+    {
       "id": "ptyd",
       "layer": "sessions",
       "name": "ptyd",
@@ -1751,6 +1778,11 @@
       "from": "sessiond",
       "to": "jarvis",
       "label": "hosts the PTY"
+    },
+    {
+      "from": "desktop",
+      "to": "termhub",
+      "label": "opens the browser shell; follows /pa/api/events for notifications"
     },
     {
       "from": "sessiond",

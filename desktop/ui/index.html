@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Jarvis settings</title>
+  <link rel="stylesheet" href="settings.css">
+</head>
+<body>
+  <main>
+    <h1>Jarvis</h1>
+    <p class="lead">Which stack this window opens. Only one is connected at a time, and each keeps its own
+      cookies and storage.</p>
+    <section id="stacks"></section>
+    <section class="toggles">
+      <label><input type="checkbox" id="notifications"> Notifications (approvals, secrets, drafts, runs)</label>
+      <label><input type="checkbox" id="autostart"> Start at login (in the tray)</label>
+    </section>
+    <p id="status" role="status"></p>
+  </main>
+  <template id="stack-tpl">
+    <form class="stack">
+      <div class="head">
+        <h2></h2>
+        <span class="badge">connected</span>
+      </div>
+      <label>Address <input name="url" type="url" placeholder="http://127.0.0.1:7000/" autocomplete="off"></label>
+      <label>Events (optional) <input name="events" type="url" placeholder="defaults to &lt;address&gt;/pa/api/events" autocomplete="off"></label>
+      <div class="actions">
+        <button type="submit">Save</button>
+        <button type="button" class="use">Use this stack</button>
+      </div>
+    </form>
+  </template>
+  <script src="settings.js"></script>
+</body>
+</html>
