@@ -923,7 +923,7 @@ not in the Map is not done, and a new one gets added there first.
     job's `started_at` is 19:52:13.40. The e2e polls `job status` every 10 s (`--poll 10`), so it
     timed 11472 ms. Time the hop from the job's `started_at`, and cut the wake-to-worker start.
     (The model's first turn is another 10.2 s later, at 19:52:23.6: checkout and brief.)
-    Measurement fixed (partly met): a research job's status now carries `started_at` (JOBS-API
+    Measurement fixed in 53e4e54 (partly met): a research job's status now carries `started_at` (JOBS-API
     v1.5), and the e2e times approval to started from it. A code job uses its first
     `runs[].started_at`, and the poll only when the factory has no stamp. The research runtime hop
     now ends at the job's `updated_at`. Status is polled every 1 s while a start is due. Still
@@ -938,7 +938,7 @@ not in the Map is not done, and a new one gets added there first.
     "On me", Build shows "No jobs to show", and Run shows "No terminal open". Shot over CDP 12 s after
     load, the same pages show card #6773 and the researcher's terminal with its links. Capture after
     the data loads (CDP, or a ready marker the pages set), and add the Ask view.
-    Done: the shell is now driven over CDP (its own `--remote-debugging-port` and the runtime's
+    Done (0959a0b): the shell is now driven over CDP (its own `--remote-debugging-port` and the runtime's
     WebSocket, no new dependency). Each page is shot once its own loaded signal holds and the
     network has been quiet for 500 ms, or after 20 s, when the shot is marked `ready: false`. The
     signals: Plan and Build `#updated` past "loading…", Ask `#chat-log`, Run termhub's open session.
@@ -951,7 +951,7 @@ not in the Map is not done, and a new one gets added there first.
     ('factory_start')` directly, so the policy audit log has no row for the run. Live policy does
     say `ask` (`pa audit check factory_start`). Drive the call through the permission path, or at
     least record the policy decision in the evidence.
-    Done: every action tool the e2e calls (factory_start and factory_continue, factory_resume with
+    Done (aa5e03a): every action tool the e2e calls (factory_start and factory_continue, factory_resume with
     `--resume`) goes through the steps a user's approval takes, headless. First the policy is asked
     about the call as the chat's hook asks it, and must answer `ask`. Then the prompt is answered
     on a new policy channel, `e2e`, which the default policy allows for approvals only (an e2e call
@@ -967,7 +967,7 @@ not in the Map is not done, and a new one gets added there first.
     path kills them). `pa e2e --sweep` acts on every open e2e card, so during parallel reviews it
     would cancel another reviewer's live job and close its PR. Kill the run's sessions in research
     cleanup, and let `--sweep` take a marker or skip runs still inside their timeout.
-    Done: research and golden-path cleanup kill the step sessions and the run's follow session
+    Done (522345e): research and golden-path cleanup kill the step sessions and the run's follow session
     (read from the run row, since it can open after factory_start returns). Research screenshots
     are taken before cleanup. `--sweep` leaves any card a run may still own: a live job the factory
     updated in the last 90 min (the longest hop timeout), or a finished job or jobless card younger
