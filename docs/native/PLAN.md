@@ -833,7 +833,7 @@ not in the Map is not done, and a new one gets added there first.
   - [x] **8.2.2 factory_start spends ~11-13 s before any model call.** Research has no compose step,
     yet the tool call took 13.5 s. In golden-path runs, about 11 s of factory_start goes to gathering
     the card's context before compose (3.3 s) and the submit (~1.3 s). Profile the card-context step
-    (dispatch/brief) against the 1 s tool-call target. (HASH)
+    (dispatch/brief) against the 1 s tool-call target. (002f99e)
     - Cause: there is no card-context model call on this path. The time went to routing, and every
       chat MCP process and every `pa e2e` run starts cold. `factory app list` through serve answers
       empty (above), so each new process fell back to a `uv run factory` spawn: 2.8 s warm, 14.2 s
