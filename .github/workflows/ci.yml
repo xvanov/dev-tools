@@ -1,7 +1,8 @@
 name: ci
 
 # One workflow, path-filtered per tool. A `changes` job decides which tools a
-# push/PR touched; each tool's jobs run on Linux, macOS and Windows in parallel.
+# push/PR touched; each tool's jobs run on Linux and Windows in parallel (plan D14:
+# no macOS).
 # workflow_dispatch (and any change to this file) runs everything.
 # No secrets are used or needed: tests run against local fixtures only.
 
@@ -63,7 +64,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
     defaults:
@@ -88,7 +89,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
     defaults:
@@ -102,10 +103,6 @@ jobs:
           cache: npm
           cache-dependency-path: termhub/package-lock.json
       - run: npm ci
-      # node-pty's prebuilt spawn-helper loses its exec bit through the npm tarball on
-      # macOS (posix_spawnp failed); restore it.
-      - if: runner.os == 'macOS'
-        run: chmod +x node_modules/node-pty/prebuilds/*/spawn-helper
       - run: bash $GITHUB_WORKSPACE/.github/scripts/run.sh npm test
         shell: bash
 
@@ -116,7 +113,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     # Informational for now on every OS (a red leg is visible but does not fail the
     # run): 38 factory tests need content this public repo does not track
@@ -146,7 +143,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 10
     defaults:
