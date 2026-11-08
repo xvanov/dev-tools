@@ -1096,11 +1096,13 @@ function create(db: Db) {
       return r;
     },
 
-    /** The e2e test's own cards (summary e2e-<uuid>, made by the request path): {id, status}. The regex runs in JS. */
+    /** The e2e test's own cards (summary e2e-<uuid>, made by the request path): {id, status, marker, created_at}. The regex runs in JS. */
     async e2eCards() {
-      const rows = await db.rows(`select id, status, summary from commitment where summary like '%e2e-%' and extracted_by = 'pa-request-v1'`);
-      const re = /e2e-[0-9a-f]{8}-[0-9a-f]{4}-/;
-      return rows.filter((r) => re.test(String(r.summary))).map(({ id, status }) => ({ id, status }));
+      const rows = await db.rows(`select id, status, summary, extracted_at from commitment where summary like '%e2e-%' and extracted_by = 'pa-request-v1'`);
+      const re = /e2e-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f-]*/;
+      return rows
+        .filter((r) => re.test(String(r.summary)))
+        .map(({ id, status, summary, extracted_at }) => ({ id, status, marker: (re.exec(String(summary)) as RegExpExecArray)[0], created_at: extracted_at }));
     },
   };
 }

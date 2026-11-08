@@ -23,7 +23,7 @@ type Lists = { timeout?: string[] };
 type Options = {
   dryRun: boolean; sweep: boolean; keep: boolean; resume: boolean; json: boolean;
   runtime: string; model: string | null; repo: string; branch: string | null; poll: number; timeouts: Timeouts;
-  stack: string | null; on: string | null; remotePath: string | null; report: string | null;
+  stack: string | null; on: string | null; remotePath: string | null; report: string | null; marker: string | null;
 };
 /** Hop id → when it was first seen (ms since epoch). */
 type Timeline = Record<string, number | null | undefined>;
@@ -70,6 +70,16 @@ const DEFAULT_TIMEOUTS: Timeouts = {
   views: 300,
 };
 
+// `pa e2e research`'s own cap on its job (workflows.ts, --timeout research=<s>).
+const RESEARCH_TIMEOUT_S = 5400;
+// `--sweep` without --marker leaves another run's card alone while that run
+// may still own it. A live job is abandoned once the factory has not updated it
+// for longer than the longest hop timeout (its run gives up before that); a
+// finished job, or a card with no job, after SWEEP_GRACE_S, the time its run
+// may still spend on view checks, evidence and screenshots.
+const SWEEP_LIVE_S = Math.max(...Object.values(DEFAULT_TIMEOUTS), RESEARCH_TIMEOUT_S);
+const SWEEP_GRACE_S = 900;
+
 const RUNTIMES = ['claude_session', 'api'];
 const DEFAULT_REPO = 'xvanov/dev-tools';
 const TERMINAL = new Set(['done', 'failed', 'cancelled']);
@@ -80,7 +90,10 @@ const USAGE = `pa e2e — the golden path, headless, against the live stack (pla
   pa e2e [--runtime claude_session|api] [--model m] [--resume] [--branch name] [--keep]
          [--repo owner/name] [--poll 10] [--timeout hop=seconds]... [--json] [--report file]
   pa e2e --dry-run      check config and that every API answers; creates nothing
-  pa e2e --sweep        close leftover e2e cards, PRs, jobs and sessions (by marker)
+  pa e2e --sweep        close leftover e2e cards, PRs, jobs and sessions that no run still owns:
+                        a live job untouched by the factory for ${SWEEP_LIVE_S / 60} min, or a finished
+                        one (or a card with no job) after ${SWEEP_GRACE_S / 60} min; others are listed and left
+  pa e2e --sweep --marker e2e-<uuid>  clean that one run now, live or not
   pa e2e --on <machine> [same flags]  run it on a PA_MACHINES machine (the other stack) and
                                       collect its JSON report
   --stack work|personal  a label for the report
@@ -135,6 +148,9 @@ function parseOptions(flags: Flags = {}, lists: Lists = {}): Options {
   if (!Number.isFinite(poll) || poll < 1 || poll > 600) throw bad('--poll is seconds between 1 and 600');
   const stack = str(flags, 'stack');
   if (stack && !['work', 'personal'].includes(stack)) throw bad('--stack is work or personal');
+  const marker = str(flags, 'marker');
+  if (marker && !/^e2e-[0-9a-f]{8}-[0-9a-f-]+$/.test(marker)) throw bad(`--marker is a run's e2e-<uuid> (got "${marker}")`);
+  if (marker && !bool(flags, 'sweep')) throw bad('--marker goes with --sweep');
   const o: Options = {
     dryRun: bool(flags, 'dry-run'),
     sweep: bool(flags, 'sweep'),
@@ -151,9 +167,62 @@ function parseOptions(flags: Flags = {}, lists: Lists = {}): Options {
     on: str(flags, 'on'),
     remotePath: str(flags, 'remote-path'),
     report: str(flags, 'report'),
+    marker,
   };
   if (o.dryRun && o.sweep) throw bad('--dry-run and --sweep are separate runs');
   return o;
+}
+
+type SweepCard = { id: number | string; status?: string | null; marker?: string | null; created_at?: unknown };
+type SweepRun = { id: number | string; commitment_id?: number | string | null; factory_job_id?: string | null; factory_state?: string | null; started_at?: unknown };
+/** The factory's fresh word on a job (`job status`), or null when it could not be asked. */
+type JobNow = { state?: string | null; updated_at?: unknown } | null | undefined;
+
+function ms(v: unknown): number | null {
+  if (v == null || v === '') return null;
+  const t = new Date(v as string | number | Date).getTime();
+  return Number.isFinite(t) ? t : null;
+}
+
+/**
+ * Pure. Whether `--sweep` may clean this e2e card and everything its runs
+ * made. `--marker` names one run: that card is cleaned whatever its state.
+ * Otherwise a card is left while a run may still own it: a job the factory
+ * updated within `liveS` (its last word is `job status`'s updated_at, else the
+ * stored state and the run's start), a finished job within `graceS`, and a
+ * card with no job within `graceS` of being made. No time to judge by: left.
+ */
+function sweepVerdict(
+  card: SweepCard,
+  runs: SweepRun[],
+  jobs: Record<string, JobNow>,
+  { now, marker = null, liveS = SWEEP_LIVE_S, graceS = SWEEP_GRACE_S }: { now: number; marker?: string | null; liveS?: number; graceS?: number }
+): { sweep: boolean; why: string } {
+  if (marker) return card.marker === marker ? { sweep: true, why: `named by --marker ${marker}` } : { sweep: false, why: 'another run (--marker)' };
+  const min = (s: number) => `${Math.round(s / 60)} min`;
+  const mine = runs.filter((r) => String(r.commitment_id) === String(card.id) && r.factory_job_id);
+  let ended = 0;
+  for (const r of mine) {
+    const job = r.factory_job_id as string;
+    const fresh = jobs[job];
+    const state = fresh?.state || r.factory_state || null;
+    const at = ms(fresh?.updated_at) ?? ms(r.started_at) ?? ms(card.created_at);
+    if (at == null) return { sweep: false, why: `job ${job}: no time to judge by; clean it with --marker` };
+    const ageS = (now - at) / 1000;
+    if (!TERMINAL.has(state as string)) {
+      if (ageS <= liveS) return { sweep: false, why: `job ${job} is ${state || 'in an unknown state'}, last updated ${min(ageS)} ago: a run may still own it (abandoned after ${min(liveS)})` };
+    } else {
+      if (ageS <= graceS) return { sweep: false, why: `job ${job} ended ${min(ageS)} ago: its run may still be collecting evidence (left for ${min(graceS)})` };
+      ended++;
+    }
+  }
+  if (!mine.length) {
+    const at = ms(card.created_at);
+    if (at == null) return { sweep: false, why: 'no job and no time to judge by; clean it with --marker' };
+    if ((now - at) / 1000 <= graceS) return { sweep: false, why: `no job yet, made ${min((now - at) / 1000)} ago: a run may be starting it` };
+    return { sweep: true, why: 'no job' };
+  }
+  return { sweep: true, why: ended === mine.length ? 'every job finished' : 'abandoned: no factory update for longer than any hop may take' };
 }
 
 /** Pure. The variant this run exercises, for the report. */
@@ -577,8 +646,8 @@ function remoteArgv(flags: Flags = {}, lists: Lists = {}): string[] {
 }
 
 module.exports = {
-  MARKER_RE, HOPS, RESUME_HOPS, DEFAULT_TIMEOUTS, DEFAULT_REPO, TERMINAL, USAGE,
-  parseOptions, variant, hopsFor, dummyCard, chainIds, observe, nextHop, overdue, deadEnd,
+  MARKER_RE, HOPS, RESUME_HOPS, DEFAULT_TIMEOUTS, DEFAULT_REPO, TERMINAL, USAGE, RESEARCH_TIMEOUT_S, SWEEP_LIVE_S, SWEEP_GRACE_S,
+  parseOptions, sweepVerdict, variant, hopsFor, dummyCard, chainIds, observe, nextHop, overdue, deadEnd,
   findCard, checkPlanBoard, checkCardDetail, checkBuild, checkRun, checkMcpCard, checkMcpJob, checkGithub, checkWatchable,
   stripAnsi, nonEmpty, summarize, table, remoteArgv, prNumberOf,
 };

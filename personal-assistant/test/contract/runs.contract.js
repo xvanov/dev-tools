@@ -547,15 +547,19 @@ module.exports = {
   'jobsOfCommitments: the runs of the commitments with job and state': async ({ repos, seed, db, assert }) => {
     const c = await seed.commitment();
     const id = await seed.run({ commitmentId: c });
-    await db.query(`update run set factory_job_id = 'app:7', factory_state = 'in_progress' where id = $1`, [id]);
+    await db.query(`update run set factory_job_id = 'app:7', factory_state = 'in_progress', termhub_session_id = 'fs-1', machine = 'box' where id = $1`, [id]);
     const got = await repos.runs.jobsOfCommitments([c]);
-    assert.deepStrictEqual(got.map((r) => [Number(r.id), r.factory_job_id, r.factory_state]), [[id, 'app:7', 'in_progress']]);
+    assert.deepStrictEqual(
+      got.map((r) => [Number(r.id), Number(r.commitment_id), r.factory_job_id, r.factory_state, r.termhub_session_id, r.machine]),
+      [[id, c, 'app:7', 'in_progress', 'fs-1', 'box']]
+    );
+    assert.ok(!Number.isNaN(new Date(got[0].started_at).getTime()), 'started_at is a time');
   },
 
   'prLinksOf: the distinct PRs of runs': async ({ repos, seed, assert }) => {
     const id = await seed.run();
     await repos.runs.upsertPr(id, { url: 'https://pr/5', number: 5, story_id: null, state: 'open', ci_state: null, ci_failing: null });
-    assert.deepStrictEqual((await repos.runs.prLinksOf([id])).map((r) => [r.pr_number, r.pr_url]), [[5, 'https://pr/5']]);
+    assert.deepStrictEqual((await repos.runs.prLinksOf([id])).map((r) => [Number(r.run_id), r.pr_number, r.pr_url]), [[id, 5, 'https://pr/5']]);
   },
 
   'stepSessionsOf: the sessions of runs\' steps': async ({ repos, seed, assert }) => {
@@ -563,6 +567,6 @@ module.exports = {
     const step = (step_id, sess) => ({ step_id, job_id: 'j', story_id: null, persona: 'dev', runtime: 'api', model: 'm', state: 'running', started_at: null, ended_at: null, machine: 'box', termhub_session_id: sess, url: null });
     await repos.runs.upsertStep(id, step('a', 'ss-1'));
     await repos.runs.upsertStep(id, step('b', null));
-    assert.deepStrictEqual((await repos.runs.stepSessionsOf([id])).map((r) => [r.termhub_session_id, r.machine]), [['ss-1', 'box']]);
+    assert.deepStrictEqual((await repos.runs.stepSessionsOf([id])).map((r) => [Number(r.run_id), r.termhub_session_id, r.machine]), [[id, 'ss-1', 'box']]);
   },
 };

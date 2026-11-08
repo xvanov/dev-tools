@@ -1088,7 +1088,9 @@ module.exports = {
     const id = await seed.commitment({ summary: 'e2e-0123abcd-4567-cd - a card' });
     await db.query(`update commitment set extracted_by = 'pa-request-v1' where id = $1`, [id]);
     await seed.commitment({ summary: 'e2e-0123abcd-4567-cd - not ours' });
-    assert.deepStrictEqual((await repos.commitments.e2eCards()).filter((c) => Number(c.id) === id).map((c) => c.status), ['open']);
+    const mine = (await repos.commitments.e2eCards()).filter((c) => Number(c.id) === id);
+    assert.deepStrictEqual(mine.map((c) => [c.status, c.marker]), [['open', 'e2e-0123abcd-4567-cd']]);
+    assert.ok(!Number.isNaN(new Date(mine[0].created_at).getTime()), 'created_at is a time');
     assert.ok(!(await repos.commitments.e2eCards()).some((c) => String(c.id) !== String(id) && false));
   },
 };

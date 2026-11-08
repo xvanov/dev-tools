@@ -10,8 +10,9 @@
 // must all link the same card, run, job, steps, sessions and PR (E1). An
 // API-runtime step must have been watchable (E2). Cleanup always runs unless
 // --keep: PR closed with its branch, job cancelled if live, card dropped,
-// step sessions killed. `--sweep` cleans what an interrupted run left, by the
-// `e2e-<uuid>` marker on its card.
+// step and follow sessions killed. `--sweep` cleans what an interrupted run
+// left, by the `e2e-<uuid>` marker on its card, and only what no run still
+// owns; `--sweep --marker <id>` cleans that one run.
 //
 // The rules (hops, assertions, the report) are pure, in goldenPathCore.ts.
 // Every outside call goes through `deps`, so tests can swap them.
@@ -362,7 +363,7 @@ async function golden(o: Options, deps: Deps): Promise<Json> {
     }
     const chain = ids as Ids | null;
     if (o.keep) {
-      cleanup.push(`kept (--keep): card #${cardId ?? '-'}, job ${start?.job ?? '-'}, PR ${chain?.prs?.map((p) => `#${p.number}`).join(' ') || '-'}; \`pa e2e --sweep\` removes them`);
+      cleanup.push(`kept (--keep): card #${cardId ?? '-'}, job ${start?.job ?? '-'}, PR ${chain?.prs?.map((p) => `#${p.number}`).join(' ') || '-'}; \`pa e2e --sweep --marker ${marker}\` removes them`);
     } else {
       cleanup.push(...(await clean(o, deps, { cardId, job: start?.job, ids: chain, lastJob })));
     }
@@ -409,11 +410,7 @@ async function clean(o: Options, deps: Deps, { cardId, job, ids, lastJob }: { ca
     const r = await safely(() => deps.chat('factory_cancel', { job }));
     done.push(r.ok ? `job ${job} cancelled` : `job ${job} NOT cancelled: ${r.error}`);
   }
-  for (const session of (ids?.steps || []).map((x) => x.session).filter((x) => x != null)) {
-    const r = await safely(() => deps.hub(session.machine).killSession(session.id));
-    if (!r.ok) done.push(`session ${session.id} NOT killed: ${r.error}`);
-    else if (r.value) done.push(`session ${session.id} killed`);
-  }
+  done.push(...(await killSessions(deps, await ownSessions(deps, cardId, ids))));
   if (cardId) {
     const r = await safely(() => deps.closeCard(cardId));
     done.push(r.ok ? `card #${cardId} dropped` : `card #${cardId} NOT dropped: ${r.error}`);
@@ -421,20 +418,75 @@ async function clean(o: Options, deps: Deps, { cardId, job, ids, lastJob }: { ca
   return done;
 }
 
+type HubSession = { id: string; machine: string | null };
+
+/**
+ * The termhub sessions one card's runs opened: each step's (from the
+ * factory's status, and as stored on run_step) and the PA run's follow
+ * session (stored on the run row; it may open after factory_start returns).
+ */
+async function ownSessions(deps: Deps, cardId: string | number | null, ids: { steps?: Step[] } | null): Promise<HubSession[]> {
+  const out = new Map<string, HubSession>();
+  for (const s of ids?.steps || []) if (s.session) out.set(s.session.id, { id: s.session.id, machine: s.session.machine || null });
+  if (cardId != null && deps.jobsOfCommitments) {
+    const runs = await safely<Json[]>(() => deps.jobsOfCommitments([Number(cardId)]));
+    const rows: Json[] = runs.ok ? runs.value : [];
+    for (const r of rows) if (r.termhub_session_id) out.set(String(r.termhub_session_id), { id: String(r.termhub_session_id), machine: r.machine || null });
+    const runIds = rows.map((r) => Number(r.id));
+    const steps = runIds.length && deps.stepSessionsOf ? await safely<Json[]>(() => deps.stepSessionsOf(runIds)) : null;
+    for (const s of steps?.ok ? steps.value : []) out.set(String(s.termhub_session_id), { id: String(s.termhub_session_id), machine: s.machine || null });
+  }
+  return [...out.values()];
+}
+
+async function killSessions(deps: Deps, sessions: HubSession[]): Promise<string[]> {
+  const done: string[] = [];
+  for (const s of sessions) {
+    const r = await safely(() => deps.hub(s.machine).killSession(s.id));
+    if (!r.ok) done.push(`session ${s.id} NOT killed: ${r.error}`);
+    else if (r.value) done.push(`session ${s.id} killed`);
+  }
+  return done;
+}
+
 /**
  * `--sweep`: what interrupted runs left, found by the marker on their cards
  * and the ids stored against them (E1: run, run_step, run_pr), never by
- * titles alone.
+ * titles alone. Only cards no run may still own (C.sweepVerdict), or the one
+ * `--marker` names: parallel runs (8.3's reviewers) sweep without touching
+ * each other's live job, PR or sessions.
  */
 async function sweep(o: Options, deps: Deps): Promise<Json> {
   const cleanup: string[] = [];
   const errors: string[] = [];
-  const cards: Json[] = await deps.e2eCards();
-  const ids = cards.map((c) => Number(c.id));
-  const runs: Json[] = ids.length ? await deps.jobsOfCommitments(ids) : [];
+  const seen: Json[] = await deps.e2eCards();
+  const named: Json[] = o.marker ? seen.filter((c) => c.marker === o.marker) : seen;
+  if (o.marker && !named.length) errors.push(`no e2e card carries ${o.marker}`);
+  const allRuns: Json[] = named.length ? await deps.jobsOfCommitments(named.map((c) => Number(c.id))) : [];
+  // The factory's own state and last update for every job whose stored state
+  // could still be live or recent; older finished ones are judged as stored.
+  const now: number = deps.now();
+  const jobs: Record<string, Json | null> = {};
+  for (const r of allRuns.filter((x) => x.factory_job_id)) {
+    const startedS = (now - (new Date(r.started_at).getTime() || 0)) / 1000;
+    if (C.TERMINAL.has(r.factory_state) && startedS > C.SWEEP_LIVE_S) continue;
+    const st = await safely(() => deps.jobStatus(r.factory_job_id));
+    jobs[r.factory_job_id] = st.ok ? st.value : null;
+  }
+  const cards: Json[] = [];
+  for (const c of named) {
+    const v = C.sweepVerdict(c, allRuns, jobs, { now, marker: o.marker });
+    if (v.sweep) cards.push(c);
+    else cleanup.push(`left card #${c.id} (${c.marker || 'no marker'}): ${v.why}`);
+  }
+  const ids = new Set(cards.map((c) => String(c.id)));
+  const runs = allRuns.filter((r) => ids.has(String(r.commitment_id)));
   const runIds = runs.map((r) => Number(r.id));
   const prs: Json[] = runIds.length ? await deps.prLinksOf(runIds).catch(() => []) : [];
-  const sessions: Json[] = runIds.length ? await deps.stepSessionsOf(runIds).catch(() => []) : [];
+  const steps: Json[] = runIds.length ? await deps.stepSessionsOf(runIds).catch(() => []) : [];
+  const sessions = new Map<string, HubSession>();
+  for (const r of runs) if (r.termhub_session_id) sessions.set(String(r.termhub_session_id), { id: String(r.termhub_session_id), machine: r.machine || null });
+  for (const s of steps) sessions.set(String(s.termhub_session_id), { id: String(s.termhub_session_id), machine: s.machine || null });
   for (const p of prs) {
     const n = C.prNumberOf(p.pr_number, p.pr_url);
     if (!n) continue;
@@ -445,21 +497,21 @@ async function sweep(o: Options, deps: Deps): Promise<Json> {
     const r = await deps.gh(['pr', 'close', String(n), '--repo', o.repo, '--delete-branch'], owner(o.repo));
     cleanup.push(r.code === 0 ? `PR #${n} closed, branch deleted` : `PR #${n} NOT closed: ${r.stderr.trim().slice(0, 160)}`);
   }
-  for (const r of runs.filter((x) => x.factory_job_id && !C.TERMINAL.has(x.factory_state))) {
+  for (const r of runs.filter((x) => x.factory_job_id && !C.TERMINAL.has(jobs[x.factory_job_id]?.state || x.factory_state))) {
     const c = await safely(() => deps.chat('factory_cancel', { job: r.factory_job_id }));
     cleanup.push(c.ok ? `job ${r.factory_job_id} cancelled` : `job ${r.factory_job_id}: ${c.error}`);
   }
-  for (const s of sessions) {
-    const k = await safely(() => deps.hub(s.machine).killSession(s.termhub_session_id));
-    if (k.ok && k.value) cleanup.push(`session ${s.termhub_session_id} killed`);
+  for (const s of sessions.values()) {
+    const k = await safely(() => deps.hub(s.machine).killSession(s.id));
+    if (k.ok && k.value) cleanup.push(`session ${s.id} killed`);
   }
   for (const c of cards.filter((x) => ['open', 'dispatched'].includes(x.status))) {
     const r = await safely(() => deps.closeCard(c.id));
     if (r.ok) cleanup.push(`card #${c.id} dropped`);
     else errors.push(`card #${c.id}: ${r.error}`);
   }
-  if (!cleanup.length) cleanup.push(`nothing left over (${cards.length} e2e card(s) seen, all closed)`);
-  return { ok: !errors.length, kind: 'sweep', marker: null, stack: o.stack, variant: null, hops: [], ids: null, checks: [], failed: [], errors, cleanup };
+  if (!cleanup.length) cleanup.push(`nothing left over (${seen.length} e2e card(s) seen, all closed)`);
+  return { ok: !errors.length, kind: 'sweep', marker: o.marker, stack: o.stack, variant: null, hops: [], ids: null, checks: [], failed: [], errors, cleanup };
 }
 
 // ---------------------------------------------------------------- remote ----
@@ -521,4 +573,4 @@ function writeReport(file: string, report: Json): void {
   fs.writeFileSync(file, JSON.stringify(report, null, 2) + os.EOL);
 }
 
-module.exports = { main, dryRun, golden, sweep, remote, clean, viewChecksFor, writeReport, defaultDeps, safely, scrollbacks, sessionLists, owner };
+module.exports = { main, dryRun, golden, sweep, remote, clean, ownSessions, killSessions, viewChecksFor, writeReport, defaultDeps, safely, scrollbacks, sessionLists, owner };

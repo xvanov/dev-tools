@@ -896,11 +896,17 @@ not in the Map is not done, and a new one gets added there first.
     ('factory_start')` directly, so the policy audit log has no row for the run. Live policy does
     say `ask` (`pa audit check factory_start`). Drive the call through the permission path, or at
     least record the policy decision in the evidence.
-  - [ ] **8.4.13 research: e2e cleanup leaves sessions, and `--sweep` is not scoped.** The research
+  - [x] **8.4.13 research: e2e cleanup leaves sessions, and `--sweep` is not scoped.** The research
     runner drops the card but leaves the follow and researcher termhub sessions alive (the golden
     path kills them). `pa e2e --sweep` acts on every open e2e card, so during parallel reviews it
     would cancel another reviewer's live job and close its PR. Kill the run's sessions in research
     cleanup, and let `--sweep` take a marker or skip runs still inside their timeout.
+    Done: research and golden-path cleanup kill the step sessions and the run's follow session
+    (read from the run row, since it can open after factory_start returns). Research screenshots
+    are taken before cleanup. `--sweep` leaves any card a run may still own: a live job the factory
+    updated in the last 90 min (the longest hop timeout), or a finished job or jobless card younger
+    than 15 min. It lists what it left. `--sweep --marker e2e-<uuid>` cleans that one run now.
+    Unit-tested; not run on the live stack, because reviewers were running there.
 - [ ] **8.5 Architecture map review.** A full pass over `architecture.json` (the `/architecture`
   page) against the finished system: every component, process, port, table, tool, workflow and
   storage location as it now runs on both stacks (jarvisd, ptyd, native factory, SQLite,

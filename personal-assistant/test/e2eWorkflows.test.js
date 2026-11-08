@@ -57,7 +57,7 @@ test('wav wraps PCM with a valid header; ndjson skips bad lines', () => {
 function fakeDeps(over = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pa-e2e-wf-'));
   let clock = 1_000_000;
-  const log = { chat: [], closed: [], posts: [], shots: [] };
+  const log = { chat: [], closed: [], posts: [], shots: [], killed: [] };
   const deps = {
     config: { termhub: { machines: {} } },
     now: () => clock,
@@ -105,7 +105,9 @@ function fakeDeps(over = {}) {
     },
     jobStatus: async () => ({ job_id: 'dev-tools:r001', state: clock > 1_030_000 ? 'done' : 'in_progress', cost_usd: 0, stories: [], runs: [{ id: 3, runtime: 'claude_session', state: 'ok', session: { termhub_session_id: 'rs1', links: { job: 'dev-tools:r001', step: '3' } } }] }),
     jobReport: async () => ({ markdown: `# Dirty tree\n\n${'termhub/windows/update.ps1:42 refuses a dirty tree. '.repeat(10)}` }),
-    hub: () => ({ screen: async () => 'reading update.ps1', listSessions: async () => [{ id: 'rs1', alive: false, links: { job: 'dev-tools:r001', step: '3' } }], killSession: async () => true }),
+    hub: () => ({ screen: async () => 'reading update.ps1', listSessions: async () => [{ id: 'rs1', alive: false, links: { job: 'dev-tools:r001', step: '3' } }], killSession: async (id) => { log.killed.push(id); return true; } }),
+    jobsOfCommitments: async () => [{ id: 7, commitment_id: 90, factory_job_id: 'dev-tools:r001', factory_state: 'done', termhub_session_id: 'follow7', machine: null }],
+    stepSessionsOf: async () => [{ run_id: 7, termhub_session_id: 'rs1', machine: null }],
     factoryEnabled: () => true,
     factoryMachine: () => null,
     factoryApps: async () => [{ app: 'dev-tools', repo: 'xvanov/dev-tools' }],
@@ -143,6 +145,23 @@ test('research: a research job to report.md, no PR, linked in Plan, Run and the 
   assert.deepStrictEqual(log.closed, ['90']);
   assert.ok(!log.chat.some(([n]) => n === 'factory_cancel'), 'a done job is not cancelled');
   assert.ok(log.shots.includes('plan') && log.shots.includes('run-rs1'));
+  assert.deepStrictEqual(log.killed.sort(), ['follow7', 'rs1'], 'the step and follow sessions are killed');
+  assert.ok(s.cleanup.some((c) => /session follow7 killed/.test(c)));
+});
+
+test('research: screenshots are taken before cleanup; --keep leaves the sessions and names its sweep', async () => {
+  const { deps, log } = fakeDeps();
+  const capture = deps.capture;
+  deps.capture = async (d, pages) => {
+    assert.deepStrictEqual(log.killed, [], 'no session killed before the shots');
+    assert.deepStrictEqual(log.closed, [], 'card still up for the shots');
+    return capture(d, pages);
+  };
+  const s = await R.main('research', { keep: true }, {}, deps);
+  assert.strictEqual(s.ok, true, JSON.stringify(s.failed.concat(s.errors)));
+  assert.deepStrictEqual(log.killed, []);
+  assert.deepStrictEqual(log.closed, []);
+  assert.ok(s.cleanup.some((c) => /--sweep --marker e2e-12345678-1234-1234-1234-123456789abc/.test(c)), s.cleanup.join('\n'));
 });
 
 test('dry runs create nothing and cover every workflow', async () => {

@@ -488,20 +488,24 @@ function create(db: Db) {
 
     // --- for src/e2e/goldenPath.ts
 
-    /** Runs of these commitments: {id, factory_job_id, factory_state}. */
+    /** Runs of these commitments: {id, commitment_id, factory_job_id, factory_state, started_at, termhub_session_id, machine}. */
     async jobsOfCommitments(commitmentIds: unknown[]) {
-      return db.rows('select id, factory_job_id, factory_state from run where commitment_id in (select value from json_each($1))', [ids(commitmentIds)]);
+      return db.rows(
+        `select id, commitment_id, factory_job_id, factory_state, started_at, termhub_session_id, machine
+           from run where commitment_id in (select value from json_each($1))`,
+        [ids(commitmentIds)]
+      );
     },
 
-    /** The distinct PRs of these runs: {pr_number, pr_url}. */
+    /** The distinct PRs of these runs: {run_id, pr_number, pr_url}. */
     async prLinksOf(runIds: unknown[]) {
-      return db.rows('select distinct number as pr_number, url as pr_url from run_pr where run_id in (select value from json_each($1))', [ids(runIds)]);
+      return db.rows('select distinct run_id, number as pr_number, url as pr_url from run_pr where run_id in (select value from json_each($1))', [ids(runIds)]);
     },
 
-    /** The sessions of these runs' steps: {termhub_session_id, machine}. */
+    /** The sessions of these runs' steps: {run_id, termhub_session_id, machine}. */
     async stepSessionsOf(runIds: unknown[]) {
       return db.rows(
-        'select termhub_session_id, machine from run_step where run_id in (select value from json_each($1)) and termhub_session_id is not null',
+        'select run_id, termhub_session_id, machine from run_step where run_id in (select value from json_each($1)) and termhub_session_id is not null',
         [ids(runIds)]
       );
     },

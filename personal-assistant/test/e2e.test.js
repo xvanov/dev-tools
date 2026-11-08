@@ -368,18 +368,102 @@ test('dry run creates nothing and reports each check', async () => {
   assert.ok(crossed.failed.some((f) => /D13/.test(f)));
 });
 
-test('sweep closes leftovers found through stored links', async () => {
+const HOUR = 3_600_000;
+const MARK = (n) => `e2e-0000000${n}-1234-1234-1234-123456789abc`;
+
+test('sweepVerdict: a live or just-finished run is left; abandoned, finished or --marker is swept', () => {
+  const now = 10 * HOUR;
+  const card = { id: 70, status: 'dispatched', marker: MARK(1), created_at: new Date(now - 3 * HOUR).toISOString() };
+  const run = { id: 5, commitment_id: 70, factory_job_id: 'dev-tools:0007', factory_state: 'in_progress', started_at: new Date(now - 3 * HOUR).toISOString() };
+  const at = (msAgo) => new Date(now - msAgo).toISOString();
+  // Another reviewer's live job, updated a minute ago by the factory.
+  let v = C.sweepVerdict(card, [run], { 'dev-tools:0007': { state: 'in_progress', updated_at: at(60_000) } }, { now });
+  assert.strictEqual(v.sweep, false);
+  assert.ok(/may still own it/.test(v.why), v.why);
+  // No factory update for longer than the longest hop timeout: abandoned.
+  v = C.sweepVerdict(card, [run], { 'dev-tools:0007': { state: 'in_progress', updated_at: at((C.SWEEP_LIVE_S + 60) * 1000) } }, { now });
+  assert.strictEqual(v.sweep, true, v.why);
+  // The factory could not be asked: the stored state and the run's start decide.
+  assert.strictEqual(C.sweepVerdict(card, [{ ...run, started_at: at(60_000) }], { 'dev-tools:0007': null }, { now }).sweep, false);
+  // Finished a minute ago: its run may still be taking screenshots.
+  v = C.sweepVerdict(card, [run], { 'dev-tools:0007': { state: 'done', updated_at: at(60_000) } }, { now });
+  assert.ok(!v.sweep && /collecting evidence/.test(v.why), v.why);
+  assert.strictEqual(C.sweepVerdict(card, [run], { 'dev-tools:0007': { state: 'done', updated_at: at((C.SWEEP_GRACE_S + 60) * 1000) } }, { now }).sweep, true);
+  // A card with no job yet: a run may be starting it.
+  assert.strictEqual(C.sweepVerdict({ ...card, created_at: at(5000) }, [], {}, { now }).sweep, false);
+  assert.strictEqual(C.sweepVerdict(card, [], {}, { now }).sweep, true);
+  assert.strictEqual(C.sweepVerdict({ ...card, created_at: null }, [], {}, { now }).sweep, false, 'no time to judge by: left');
+  // --marker: that run now, live or not; every other card is left.
+  assert.strictEqual(C.sweepVerdict(card, [run], { 'dev-tools:0007': { state: 'in_progress', updated_at: at(1000) } }, { now, marker: MARK(1) }).sweep, true);
+  assert.strictEqual(C.sweepVerdict(card, [run], {}, { now, marker: MARK(2) }).sweep, false);
+});
+
+test('options: --marker is an e2e marker and goes with --sweep', () => {
+  assert.strictEqual(C.parseOptions({ sweep: true, marker: MARK(1) }).marker, MARK(1));
+  assert.throws(() => C.parseOptions({ sweep: true, marker: 'card 70' }), /e2e-<uuid>/);
+  assert.throws(() => C.parseOptions({ marker: MARK(1) }), /with --sweep/);
+});
+
+function sweepFakes() {
   const { deps, log } = fakes({ jobs: [JOB_RUNNING] });
-  deps.e2eCards = async () => [{ id: 70, status: 'open' }, { id: 71, status: 'dropped' }];
-  deps.jobsOfCommitments = async () => [{ id: 5, factory_job_id: 'dev-tools:0007', factory_state: 'in_progress' }];
-  deps.prLinksOf = async () => [{ pr_number: 9, pr_url: 'https://github.com/xvanov/dev-tools/pull/9' }];
-  deps.stepSessionsOf = async () => [{ termhub_session_id: 'abc123', machine: null }];
+  const now = 10 * HOUR;
+  deps.now = () => now;
+  const iso = (msAgo) => new Date(now - msAgo).toISOString();
+  // 70: another reviewer's live run. 72: abandoned hours ago. 71: long closed.
+  deps.e2eCards = async () => [
+    { id: 70, status: 'dispatched', marker: MARK(0), created_at: iso(120_000) },
+    { id: 71, status: 'dropped', marker: MARK(1), created_at: iso(30 * HOUR) },
+    { id: 72, status: 'dispatched', marker: MARK(2), created_at: iso(5 * HOUR) },
+  ];
+  deps.jobsOfCommitments = async (ids) => [
+    { id: 5, commitment_id: 70, factory_job_id: 'dev-tools:0007', factory_state: 'in_progress', started_at: iso(110_000), termhub_session_id: 'follow5', machine: null },
+    { id: 6, commitment_id: 72, factory_job_id: 'dev-tools:0008', factory_state: 'in_progress', started_at: iso(5 * HOUR), termhub_session_id: 'follow6', machine: null },
+  ].filter((r) => ids.includes(r.commitment_id));
+  deps.jobStatus = async (id) => (id === 'dev-tools:0007'
+    ? { job_id: id, state: 'in_progress', updated_at: iso(30_000) }
+    : { job_id: id, state: 'in_progress', updated_at: iso(4 * HOUR) });
+  deps.prLinksOf = async (runIds) => [
+    { run_id: 5, pr_number: 9, pr_url: 'https://github.com/xvanov/dev-tools/pull/9' },
+    { run_id: 6, pr_number: 10, pr_url: 'https://github.com/xvanov/dev-tools/pull/10' },
+  ].filter((p) => runIds.includes(p.run_id));
+  deps.stepSessionsOf = async (runIds) => [
+    { run_id: 5, termhub_session_id: 'step5', machine: null },
+    { run_id: 6, termhub_session_id: 'step6', machine: null },
+  ].filter((s) => runIds.includes(s.run_id));
+  return { deps, log };
+}
+
+test('sweep cleans only what no run still owns, and leaves a parallel run\'s live job, PR and sessions', async () => {
+  const { deps, log } = sweepFakes();
   const r = await G.main({ sweep: true }, {}, deps);
-  assert.strictEqual(r.ok, true);
-  assert.ok(log.gh.some(([a]) => a.startsWith('pr close 9')));
-  assert.ok(log.chat.some(([n, a]) => n === 'factory_cancel' && a.job === 'dev-tools:0007'));
+  assert.strictEqual(r.ok, true, r.errors.join('; '));
+  assert.ok(log.gh.some(([a]) => a.startsWith('pr close 10')));
+  assert.ok(!log.gh.some(([a]) => a.startsWith('pr close 9')), "the live run's PR stays open");
+  assert.deepStrictEqual(log.chat.filter(([n]) => n === 'factory_cancel').map(([, a]) => a.job), ['dev-tools:0008']);
+  assert.deepStrictEqual(log.killed.sort(), ['follow6', 'step6']);
+  assert.deepStrictEqual(log.closed, ['72']);
+  assert.ok(r.cleanup.some((c) => /^left card #70 .*may still own it/.test(c)), r.cleanup.join('\n'));
+});
+
+test('sweep --marker cleans that one run now, live job and follow session included', async () => {
+  const { deps, log } = sweepFakes();
+  const r = await G.main({ sweep: true, marker: MARK(0) }, {}, deps);
+  assert.strictEqual(r.ok, true, r.errors.join('; '));
+  assert.strictEqual(r.marker, MARK(0));
+  assert.ok(log.gh.some(([a]) => a.startsWith('pr close 9')) && !log.gh.some(([a]) => a.startsWith('pr close 10')));
+  assert.deepStrictEqual(log.chat.filter(([n]) => n === 'factory_cancel').map(([, a]) => a.job), ['dev-tools:0007']);
+  assert.deepStrictEqual(log.killed.sort(), ['follow5', 'step5']);
   assert.deepStrictEqual(log.closed, ['70']);
-  assert.deepStrictEqual(log.killed, ['abc123']);
+  const none = await G.main({ sweep: true, marker: MARK(9) }, {}, sweepFakes().deps);
+  assert.ok(!none.ok && /no e2e card carries/.test(none.errors[0]));
+});
+
+test('golden path cleanup kills the follow session stored on the run, not only the step sessions', async () => {
+  const { deps, log } = fakes({ jobs: [JOB_RUNNING, JOB_PR, JOB_CI] });
+  deps.jobsOfCommitments = async () => [{ id: 5, commitment_id: 77, factory_job_id: 'dev-tools:0007', factory_state: 'done', termhub_session_id: 'follow5', machine: null }];
+  const r = await G.main({}, {}, deps);
+  assert.strictEqual(r.ok, true, JSON.stringify(r.failed.concat(r.errors)));
+  assert.deepStrictEqual(log.killed.sort(), ['abc123', 'follow5']);
 });
 
 (async () => {

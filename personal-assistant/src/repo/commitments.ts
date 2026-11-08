@@ -1251,9 +1251,12 @@ function create(db: Db) {
 
     // --- for src/e2e/goldenPath.ts
 
-    /** The e2e test's own cards (summary `e2e-<uuid>`, made by the request path): {id, status}. */
+    /** The e2e test's own cards (summary `e2e-<uuid>`, made by the request path): {id, status, marker, created_at}. */
     async e2eCards() {
-      return db.rows(`select id, status from commitment where summary ~ 'e2e-[0-9a-f]{8}-[0-9a-f]{4}-' and extracted_by = 'pa-request-v1'`);
+      return db.rows(
+        `select id, status, substring(summary from 'e2e-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f-]*') as marker, extracted_at as created_at
+           from commitment where summary ~ 'e2e-[0-9a-f]{8}-[0-9a-f]{4}-' and extracted_by = 'pa-request-v1'`
+      );
     },
   };
 }

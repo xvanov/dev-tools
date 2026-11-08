@@ -261,14 +261,16 @@ async function research(acc: Acceptance, o: Options, deps: Deps, folder: string)
     checks.push(check('ask', 'factory_job tool → card and report', mj.ok && String(mj.value.card) === cardId && mj.value.report, mj.ok ? null : mj.error));
     const cost = Number(lastJob.cost_usd || 0);
     const steps: Json[] = ids.steps.filter((s: Json) => s.session);
+    const pages: Page[] = [
+      { name: 'plan', url: `${deps.paBase}/` },
+      { name: 'build', url: `${deps.paBase}/factory` },
+      ...steps.slice(0, 2).map((s) => ({ name: `run-${s.session.id}`, url: `${deps.hubBase(s.session.machine)}/#session=${encodeURIComponent(s.session.id)}` })),
+    ];
+    // Screenshots now, while the card and the sessions still exist.
+    const shots = await deps.capture(path.join(folder, 'screenshots'), pages);
     return {
-      measured, checks, transcripts, notes, cleanup, usd: cost,
+      measured, checks, transcripts, notes, cleanup, usd: cost, shots, pages: [],
       links: { card: cardId, run: runId, job, sessions: steps.map((s) => s.session.id), report: `${deps.paBase}/api/factory/report?job=${encodeURIComponent(jobId)}` },
-      pages: [
-        { name: 'plan', url: `${deps.paBase}/` },
-        { name: 'build', url: `${deps.paBase}/factory` },
-        ...steps.slice(0, 2).map((s) => ({ name: `run-${s.session.id}`, url: `${deps.hubBase(s.session.machine)}/#session=${encodeURIComponent(s.session.id)}` })),
-      ],
     };
   } finally {
     if (job && !(lastJob && C.TERMINAL.has(lastJob.state))) {
@@ -276,9 +278,10 @@ async function research(acc: Acceptance, o: Options, deps: Deps, folder: string)
       cleanup.push(r.ok ? `job ${job} cancelled` : `job ${job} NOT cancelled: ${r.error}`);
     }
     if (!o.keep) {
+      cleanup.push(...(await G.killSessions(deps, await G.ownSessions(deps, cardId, lastJob ? C.chainIds(lastJob) : null))));
       const r = await G.safely(() => deps.closeCard(cardId));
       cleanup.push(r.ok ? `card #${cardId} dropped` : `card #${cardId} NOT dropped: ${r.error}`);
-    } else cleanup.push(`kept (--keep): card #${cardId}`);
+    } else cleanup.push(`kept (--keep): card #${cardId} and its sessions; \`pa e2e --sweep --marker ${marker}\` removes them`);
   }
 }
 
