@@ -28,7 +28,9 @@
 type Inputs = import('../types.ts').Json;
 type Hint = { path: string; why: string };
 type Composed = { goal: string; done: string[]; constraints: string[]; decisions: string[]; facts: string[]; reuse: Hint[]; conventions: string[]; questions: string[] };
-type Meta = { title?: string | null; app?: string | null; slug?: string | null; delivery?: string | null; deliveryPlain?: string | null; pipeline?: string | null; by?: string | null };
+/** What a factory_continue job adds commits to (JOBS-API v1.3 `--branch` / `--pr`). */
+type Continues = { branch?: string | null; pr?: number | null };
+type Meta = { title?: string | null; app?: string | null; slug?: string | null; delivery?: string | null; deliveryPlain?: string | null; pipeline?: string | null; by?: string | null; continues?: Continues | null };
 type Dropped = { field: string; why: string };
 
 const ENGINEERING_RULE =
@@ -269,11 +271,39 @@ function buildPrompt(i: Inputs): { system: string; prompt: string } {
     L.push(r(i.personNote, 1200));
     L.push('');
   }
+  const cont = continuesOf(i.continues);
+  if (cont) {
+    L.push('## This continues existing work');
+    L.push(`The builder adds commits to ${continuesLabel(cont)} in this repository; it opens no new pull request. Write nothing about opening, creating or merging a pull request.`);
+    if (cont.pr) {
+      L.push(`PR #${cont.pr}'s unresolved review comments are NOT in this input: the factory reads them from GitHub when the job is submitted and appends them to your brief. Do not write that the request lacks their detail and do not ask what they say; where the ask is about them, the goal is to address each still-valid comment.`);
+    }
+    L.push('');
+  }
   L.push('## Existing files in the repository that look related');
   if ((i.codeHints || []).length) for (const h of i.codeHints) L.push(`- ${h.path} — ${h.why}`);
   else L.push('(the assistant could not look at the repository)');
   return { system: SYSTEM, prompt: L.join('\n') };
 }
+
+/** Pure. A usable `continues` ({branch, pr}), or null. */
+function continuesOf(c: Continues | null | undefined): { branch: string | null; pr: number | null } | null {
+  if (!c || typeof c !== 'object') return null;
+  const pr = Number(c.pr);
+  const out = { branch: c.branch ? clip(c.branch, 120) : null, pr: Number.isInteger(pr) && pr > 0 ? pr : null };
+  return out.branch || out.pr ? out : null;
+}
+
+function continuesLabel(c: { branch: string | null; pr: number | null }): string {
+  if (c.pr) return `PR #${c.pr}${c.branch ? ` (branch \`${c.branch}\`)` : ''}`;
+  return `the existing branch \`${c.branch}\``;
+}
+
+// An item that tells the builder to open a pull request: never right for a
+// continuation (the factory updates the PR, or handles one for a branch).
+const OPENS_PR = /\b(open|create|raise|submit|file)\b[^.]{0,40}\b(pull request|draft pr|pr)\b/i;
+// A question about the review comments: the threads the factory appends answer it.
+const ABOUT_COMMENTS = /\b(review|comments?|threads?|reviewers?)\b/i;
 
 // --- holding the answer to the rules ---------------------------------------------------
 
@@ -337,11 +367,23 @@ function checkComposed(raw: Inputs | null | undefined, i: Inputs): { composed: C
       .filter((s): s is string => Boolean(s))
       .slice(0, max);
 
+  const cont = continuesOf(i.continues);
+  // A continuation's brief never asks for a new PR, nor asks about the review
+  // comments the factory appends (the model is told; this holds it to that).
+  const keep = (field: string) => (s: string): boolean => {
+    if (!cont) return true;
+    if (OPENS_PR.test(s)) { dropped.push({ field, why: 'a continuation opens no pull request' }); return false; }
+    if (cont.pr && field === 'questions' && ABOUT_COMMENTS.test(s)) { dropped.push({ field, why: 'the factory appends the PR\'s review threads' }); return false; }
+    return true;
+  };
+  const listKept = (v: unknown, field: string, max: number): string[] => list(v, field, LIMITS.done * 2).filter(keep(field)).slice(0, max);
+
   const fb = fallbackComposed(i);
-  const goal = (typeof raw?.goal === 'string' && clean(raw.goal, LIMITS.goal, 'goal')) || fb.goal;
+  const rawGoal = typeof raw?.goal === 'string' ? clean(raw.goal, LIMITS.goal, 'goal') : null;
+  const goal = (rawGoal && keep('goal')(rawGoal) ? rawGoal : null) || fb.goal;
 
   const given: string[] = (i.done || []).map((d: unknown) => clip(redactSecrets(d), LIMITS.item)).filter(Boolean);
-  const proposed = list(raw?.done, 'done', LIMITS.done);
+  const proposed = listKept(raw?.done, 'done', LIMITS.done);
   const seen = new Set(given.map((d) => d.toLowerCase()));
   const done = [...given, ...(given.length ? [] : proposed.filter((d) => !seen.has(d.toLowerCase())))].slice(0, LIMITS.done);
 
@@ -363,13 +405,13 @@ function checkComposed(raw: Inputs | null | undefined, i: Inputs): { composed: C
     composed: {
       goal,
       done,
-      constraints: list(raw?.constraints, 'constraints', LIMITS.constraints),
-      decisions: list(raw?.decisions, 'decisions', LIMITS.decisions),
-      facts: list(raw?.facts, 'facts', LIMITS.facts),
+      constraints: listKept(raw?.constraints, 'constraints', LIMITS.constraints),
+      decisions: listKept(raw?.decisions, 'decisions', LIMITS.decisions),
+      facts: listKept(raw?.facts, 'facts', LIMITS.facts),
       // The model's picks, or — when it named none — the ranked hints.
       reuse: reuse.length ? reuse : fb.reuse,
       conventions: fb.conventions,
-      questions: list(raw?.questions, 'questions', LIMITS.questions),
+      questions: listKept(raw?.questions, 'questions', LIMITS.questions),
     },
     dropped,
   };
@@ -407,6 +449,14 @@ const STOP: Record<string, string> = {
   push_to_main: 'When every gate passes, the change is fast-forwarded onto the default branch with no pull request. Keep it small, tested and reviewable as a commit.',
 };
 
+/** Pure. A continuation's stop condition: commits on the existing work, never a new PR. */
+function continuationStop(c: { branch: string | null; pr: number | null }): string {
+  if (c.pr) {
+    return `Commit onto PR #${c.pr}'s branch${c.branch ? ` \`${c.branch}\`` : ''}; the factory pushes it fast-forward (never forced) and that PR is updated. Open no new pull request, leave the PR's title, description, draft state and base as they are, and never merge it.`;
+  }
+  return `Commit onto the existing branch \`${c.branch}\`; the factory pushes it fast-forward (never forced). Do not open, close or merge a pull request yourself.`;
+}
+
 /**
  * Pure. The brief as markdown. Deterministic for a given composed object, so
  * what the card shows is byte-for-byte what is sent.
@@ -418,12 +468,22 @@ function render(c: Composed, meta: Meta = {}): string {
   L.push(`# ${clip(meta.title || c.goal, 200)}`);
   L.push('');
   const where = [meta.app ? `factory app \`${meta.app}\`` : null, meta.slug ? `\`${meta.slug}\`` : null].filter(Boolean).join(', ');
-  L.push(`Sent by the operator's personal assistant${where ? ` for ${where}` : ''}. Delivery: \`${meta.delivery || 'unknown'}\`${meta.deliveryPlain ? ` — ${meta.deliveryPlain}` : ''}${meta.pipeline ? ` Pipeline: \`${meta.pipeline}\`.` : ''}`);
+  const cont = continuesOf(meta.continues);
+  const how = cont
+    ? `Continues ${continuesLabel(cont)}.`
+    : `Delivery: \`${meta.delivery || 'unknown'}\`${meta.deliveryPlain ? ` — ${meta.deliveryPlain}` : ''}`;
+  L.push(`Sent by the operator's personal assistant${where ? ` for ${where}` : ''}. ${how}${meta.pipeline ? ` Pipeline: \`${meta.pipeline}\`.` : ''}`);
   L.push('');
   L.push('## Goal');
   L.push('');
   L.push(c.goal || '_(see the title)_');
   L.push('');
+  if (cont?.pr) {
+    L.push('## Review comments');
+    L.push('');
+    L.push(`The factory appends PR #${cont.pr}'s unresolved review threads to this brief, read from GitHub when the job was submitted. Address each one that is still valid, and say in the commit message which you left and why.`);
+    L.push('');
+  }
   L.push('## Done when');
   L.push('');
   if (c.done.length) for (const d of c.done) L.push(`- [ ] ${d}`);
@@ -471,7 +531,7 @@ function render(c: Composed, meta: Meta = {}): string {
   }
   L.push('## Stop condition');
   L.push('');
-  L.push(STOP[meta.delivery || ''] || `Deliver \`${meta.delivery}\`.`);
+  L.push(cont ? continuationStop(cont) : STOP[meta.delivery || ''] || `Deliver \`${meta.delivery}\`.`);
   L.push('');
   L.push('> The delivery level is enforced outside this job, not merely requested here. Nothing is ever sent to the requester.');
   L.push('');
@@ -485,6 +545,7 @@ module.exports = {
   LIMITS,
   SYSTEM,
   STOP,
+  continuationStop,
   redactSecrets,
   keywords,
   rankHints,

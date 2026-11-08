@@ -499,13 +499,14 @@ async function start({
   let by: string | null = briefBy || (brief ? 'proposal' : null);
   let criteria: string[] = Array.isArray(done) ? done : [];
   let goal: string | null = null;
+  const continues = branch != null || pr != null ? { branch: branch ?? null, pr: pr ?? null } : null;
   if (!ask && kind !== 'code') {
     ask = F.researchAsk({ kind, title: label, ask: task || target.commitment?.detail || target.commitment?.summary, done: criteria, repo: slug });
     by = 'research:operator';
   }
   if (!ask) {
     try {
-      const c = await require('./compose.ts').compose({ target, task, done: criteria, app, slug, delivery: chosen.delivery, pipeline: pipe });
+      const c = await require('./compose.ts').compose({ target, task, done: criteria, app, slug, delivery: chosen.delivery, pipeline: pipe, continues });
       ask = c.brief;
       by = c.by;
       criteria = c.done;
@@ -515,7 +516,7 @@ async function start({
       log.warn('brief composition failed; sending the deterministic brief', { run: run.id, message: String((err as Error).message).slice(0, 200) });
       const C = require('./composeCore.ts');
       const fb = C.fallbackComposed({ title: label, operatorAsk: task, summary: target.commitment?.summary, detail: target.commitment?.detail, done: criteria });
-      ask = C.render(fb, { title: label, app, slug, delivery: chosen.delivery, deliveryPlain: D.describe(chosen.delivery), pipeline: pipe, by: 'compose:fallback' });
+      ask = C.render(fb, { title: label, app, slug, delivery: chosen.delivery, deliveryPlain: D.describe(chosen.delivery), pipeline: pipe, by: 'compose:fallback', continues });
       by = 'compose:fallback';
       criteria = fb.done;
       goal = fb.goal;
@@ -523,7 +524,7 @@ async function start({
   }
   // Without a flow the factory parks the job as needs_human (JOBS-API v1.1).
   // A research/report job needs none (v1.2: no backpressure gate for them).
-  const flow: string | null = kind === 'code' ? F.flowMarkdown({ title: label, summary: goal || task || target.commitment?.summary, app, done: criteria, delivery: chosen.delivery }) : null;
+  const flow: string | null = kind === 'code' ? F.flowMarkdown({ title: label, summary: goal || task || target.commitment?.summary, app, done: criteria, delivery: chosen.delivery, continues }) : null;
   // This machine's copy is the record (brief_path), wherever the factory runs.
   const briefPath = path.join(config.worktreesRoot, `run-${run.id}-BRIEF.md`);
   fs.mkdirSync(path.dirname(briefPath), { recursive: true });

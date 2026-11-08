@@ -206,6 +206,50 @@ const inputs = {
   assert.match(C.render(C.fallbackComposed({ title: 't' }), { delivery: 'none' }), /None identified by the assistant\. That is not evidence there is none/);
 }
 
+// --- a continuation (8.4.27): no delivery instructions, review threads come from the factory --
+
+{
+  const cont = { ...inputs, operatorAsk: 'Fix the review comments on PR 12.', continues: { branch: 'fix/retry', pr: 12 } };
+  const { prompt } = C.buildPrompt(cont);
+  assert.match(prompt, /## This continues existing work\nThe builder adds commits to PR #12 \(branch `fix\/retry`\)/);
+  assert.match(prompt, /unresolved review comments are NOT in this input: the factory reads them from GitHub/);
+  assert.match(prompt, /Write nothing about opening, creating or merging a pull request/);
+  assert.ok(!/continues existing work/.test(C.buildPrompt(inputs).prompt), 'a new job is told nothing of the sort');
+
+  // What the model wrote anyway is held to it.
+  const { composed, dropped } = C.checkComposed({
+    goal: 'Address the unresolved review comments on PR 12.',
+    done: ['Every still-valid review comment is addressed', 'Push and open a DRAFT pull request'],
+    constraints: ['Do not create a new PR', 'Keep the public API unchanged'],
+    questions: ['The request has no detail about the review comments: which ones?', 'Is the retry count configurable today?'],
+  }, cont);
+  assert.deepStrictEqual(composed.done, ['Every still-valid review comment is addressed']);
+  assert.deepStrictEqual(composed.constraints, ['Keep the public API unchanged']);
+  assert.deepStrictEqual(composed.questions, ['Is the retry count configurable today?']);
+  assert.ok(dropped.some((d) => d.why === 'the factory appends the PR\'s review threads'));
+  assert.strictEqual(C.checkComposed({ goal: 'Fix them and open a pull request.' }, cont).composed.goal, 'Fix the review comments on PR 12.', 'a goal that opens a PR falls back to the ask');
+  assert.deepStrictEqual(C.checkComposed({ done: ['Open a draft PR'] }, inputs).composed.done, ['Open a draft PR'], 'a new job keeps it');
+
+  const meta = { title: 'Fix review comments', app: 'widget', slug: 'acme/widget', delivery: 'draft_pr', deliveryPlain: 'Opens a draft PR.', pipeline: 'solo', continues: cont.continues };
+  const brief = C.render(composed, meta);
+  assert.match(brief, /Continues PR #12 \(branch `fix\/retry`\)\. Pipeline/);
+  assert.match(brief, /## Review comments\n\nThe factory appends PR #12's unresolved review threads to this brief/);
+  assert.match(brief, /## Stop condition\n\nCommit onto PR #12's branch `fix\/retry`; the factory pushes it fast-forward \(never forced\) and that PR is updated\. Open no new pull request/);
+  for (const banned of ['Delivery: `draft_pr`', 'Opens a draft PR', C.STOP.draft_pr, 'no detail about']) assert.ok(!brief.includes(banned), `no ${banned}`);
+  const fb = C.render(C.fallbackComposed(cont), meta);
+  assert.ok(!fb.includes(C.STOP.draft_pr) && fb.includes('Open no new pull request'), 'the fallback brief too');
+  const onBranch = C.render(C.fallbackComposed(cont), { ...meta, continues: { branch: 'spike', pr: null } });
+  assert.match(onBranch, /Continues the existing branch `spike`\./);
+  assert.match(onBranch, /Do not open, close or merge a pull request yourself\./);
+  assert.ok(!/## Review comments/.test(onBranch), 'no PR: no threads to expect');
+
+  const F = require('../src/dispatch/factoryCore.ts');
+  const flow = F.flowMarkdown({ title: 't', app: 'widget', delivery: 'draft_pr', continues: { branch: 'fix/retry', pr: 12 } });
+  assert.match(flow, /Commit onto PR #12's branch; that PR is updated and no new one is opened\./);
+  assert.ok(!/Deliver `draft_pr`/.test(flow));
+  assert.match(F.flowMarkdown({ title: 't', delivery: 'draft_pr' }), /Deliver `draft_pr`\./);
+}
+
 // --- compose.js: the model call is swappable, and failure falls back ----------------------
 
 async function composeModule() {

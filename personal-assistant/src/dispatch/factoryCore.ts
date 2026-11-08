@@ -294,7 +294,7 @@ function parseResult({ code, stdout, stderr, timedOut = false }: ExecResult): Jo
  * check. The factory's direction validator requires a flow (or an API spec);
  * the requester's own words travel in the ask file next to it.
  */
-function flowMarkdown({ title: rawTitle, summary: rawSummary = null, app = null, done: rawDone = [], delivery = null }: { title: string; summary?: string | null; app?: string | null; done?: string[] | null; delivery?: string | null }): string {
+function flowMarkdown({ title: rawTitle, summary: rawSummary = null, app = null, done: rawDone = [], delivery = null, continues = null }: { title: string; summary?: string | null; app?: string | null; done?: string[] | null; delivery?: string | null; continues?: { branch?: string | null; pr?: number | null } | null }): string {
   const { redactSecrets } = require('./composeCore.ts');
   const title: string = redactSecrets(rawTitle);
   const summary: string | null = rawSummary === null ? null : redactSecrets(rawSummary);
@@ -304,7 +304,11 @@ function flowMarkdown({ title: rawTitle, summary: rawSummary = null, app = null,
   steps.push(`Make the change: ${clip(summary || title, 400)}.`);
   for (const d of done) steps.push(`Check: ${clip(d, 400)}`);
   steps.push('The existing tests still pass, and new behaviour is covered by a test.');
-  if (delivery) steps.push(`Deliver \`${delivery}\`.`);
+  if (continues && (continues.pr || continues.branch)) {
+    steps.push(continues.pr
+      ? `Commit onto PR #${continues.pr}'s branch; that PR is updated and no new one is opened.`
+      : `Commit onto the existing branch \`${clip(continues.branch, 120)}\`.`);
+  } else if (delivery) steps.push(`Deliver \`${delivery}\`.`);
   return [
     `# Flow: ${clip(title, 200)}`,
     '',

@@ -970,7 +970,7 @@
         "Claude session": "POST /api/sessions on termhub with PA_CLAUDE_COMMAND (claude --dangerously-skip-permissions) in its own worktree; a no-push run gets no credentials in its env and a verified push block",
         "Factory job": "`uv run factory job submit --json ...` run on PA_FACTORY_MACHINE through termhub's POST /api/exec (argv, no shell), content on stdin, or here through child_process when PA_FACTORY_MACHINE is empty, `local` or this host (the work stack, with PYTHONUTF8=1 on Windows); idempotent on --source pa --external-id",
         "Start path (8.2.2)": "the registered apps (`factory app list`) and each checkout's owner/name (`gh repo view`, at most daily) are kept in the store's setting table (factory.apps, dispatch.repo_slugs), so a new process (each chat's MCP server, `pa e2e`, the CLI) picks the app with no factory call or spawn; an app the stored list lacks is asked for again before anything is refused. factory_start answers timings_ms (route, prepare, gather, compose_model, submit, follow)",
-        "Brief": "composed by PA_COMPOSE_MODEL (default claude-sonnet-5-5; with no Anthropic key it takes a keyed PA_COMPOSE_FALLBACK_MODEL such as azure/<deployment> instead of `claude -p`) from the card; private material is selected from, never copied in; deterministic fallback",
+        "Brief": "composed by PA_COMPOSE_MODEL (default claude-sonnet-5-5; with no Anthropic key it takes a keyed PA_COMPOSE_FALLBACK_MODEL such as azure/<deployment> instead of `claude -p`) from the card; private material is selected from, never copied in; deterministic fallback. A continuation (factory_continue) gets no delivery instructions: it commits onto the PR or branch and opens no PR, and the PR's review threads are left to the factory, which appends them at submit",
         "Delivery levels": "none < branch < draft_pr < pr < auto_merge < push_to_main, set only from your side; the last two need a confirmed start",
         "Factory defaults": "PA_FACTORY_RUNTIME api, PA_FACTORY_PIPELINE solo; the chat's factory_start defaults to claude_session unless you ask for the API",
         "Which factory": "PA_FACTORY_MACHINE + PA_FACTORY_PATH in each stack's .env (the live values are shown at the top of this page)",
@@ -2310,7 +2310,7 @@
         },
         {
           "c": "dispatcher",
-          "t": "`job submit --pr 12 --runtime claude_session`. Landing: a factory without --pr refuses in its parser and the job fails saying so, never resent as fresh work."
+          "t": "The brief says \"commit onto PR #12's branch, open no new pull request\" and leaves the review comments to the factory. `job submit --pr 12 --runtime claude_session` reads the PR and its unresolved review threads in one GraphQL call, with `claude auth status` alongside, and appends the threads to the brief. Landing: a factory without --pr refuses in its parser and the job fails saying so, never resent as fresh work."
         },
         {
           "c": "runtime-claude",

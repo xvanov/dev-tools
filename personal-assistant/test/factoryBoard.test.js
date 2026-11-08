@@ -308,6 +308,29 @@ const isV1 = (argv) => argv.includes('--kind') || argv.includes('--runtime');
     assert.strictEqual(sessions[0].command, '/home/tester/.local/bin/uv run factory job follow widget:030');
   }
 
+  // 8.4.27: a continuation's brief and flow say "commit onto the PR", never "open a draft PR".
+  {
+    calls = [];
+    const sent = {};
+    let prompt = null;
+    answer = (argv) => {
+      for (const flag of ['--ask-file', '--flow-file']) {
+        const f = argv.find((a, i) => argv[i - 1] === flag);
+        if (f) sent[flag] = fs.readFileSync(f, 'utf8');
+      }
+      return json({ job_id: 'widget:031', app: 'widget', pipeline: 'solo', delivery: 'draft_pr', created: true, kind: 'code', runtime: 'api', warnings: [], base: { branch: 'fix/retry', pr: 12, into: 'main' } });
+    };
+    require('../src/dispatch/compose.ts')._setModel(async (p) => { prompt = p.prompt; return JSON.stringify({ goal: 'Address the review comments on PR 12.', done: [], constraints: [], decisions: [], facts: [], reuse: [], questions: ['The request has no detail about the comments.'] }); });
+    const r = await factory.start({ target, app: 'widget', task: 'Fix the review comments on PR 12.', delivery: 'draft_pr', pr: 12 });
+    assert.strictEqual(r.jobId, 'widget:031');
+    assert.match(prompt, /the factory reads them from GitHub/);
+    assert.match(sent['--ask-file'], /Continues PR #12\./);
+    assert.match(sent['--ask-file'], /Open no new pull request/);
+    assert.ok(!/DRAFT pull request|no detail about the comments/.test(sent['--ask-file']), sent['--ask-file']);
+    assert.match(sent['--flow-file'], /Commit onto PR #12's branch/);
+    assert.ok(!/Deliver `draft_pr`/.test(sent['--flow-file']));
+  }
+
   // A research job against a v1 factory: it needs v1.2 — the run fails, said plainly.
   {
     calls = [];

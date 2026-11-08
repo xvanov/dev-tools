@@ -6,7 +6,7 @@
 // call through PA's own model/provider abstraction (src/llm.js, any
 // text-capable provider; PA_COMPOSE_MODEL).
 //
-//   compose({target, task, done, app, slug, delivery, pipeline})
+//   compose({target, task, done, app, slug, delivery, pipeline, continues})
 //     → {brief, composed, by, dropped, hints}
 //
 // It never fails a dispatch: no model, a model error, an answer that is not
@@ -25,7 +25,9 @@ type Hints = { files: string[]; reuse: Hint[]; conventions: string[]; keywords: 
 type Composed = Json;
 /** A dispatch target (dispatch.resolveTarget): store rows, read column by column. */
 type Target = Json;
-type GatherOptions = { target: Target; task?: string | null; done?: string[] | null; app?: string | null; slug?: string | null; appPath?: string | null };
+/** A factory_continue job's existing work: the brief opens no PR and expects the factory's review threads. */
+type Continues = { branch?: string | null; pr?: number | null } | null;
+type GatherOptions = { target: Target; task?: string | null; done?: string[] | null; app?: string | null; slug?: string | null; appPath?: string | null; continues?: Continues };
 
 const fs = require('fs');
 const path = require('path');
@@ -196,7 +198,7 @@ async function keywordHits(repo: string, kws: string[]): Promise<Record<string, 
  * and the assistant's memory. Private material is gathered so the model can
  * pick the facts the task needs; composeCore keeps it from leaving wholesale.
  */
-async function gather({ target, task = null, done = [], app = null, slug = null, appPath = null }: GatherOptions): Promise<Json> {
+async function gather({ target, task = null, done = [], app = null, slug = null, appPath = null, continues = null }: GatherOptions): Promise<Json> {
   const dispatch = require('./index.ts');
   const operatorAsk = task || null;
   const title = task || target.commitment?.summary || '';
@@ -225,6 +227,7 @@ async function gather({ target, task = null, done = [], app = null, slug = null,
     app,
     slug,
     repo,
+    continues,
   };
 }
 
@@ -256,9 +259,10 @@ async function compose({
   pipeline = null,
   route = 'factory',
   useModel = true,
+  continues = null,
 }: GatherOptions & { delivery: string | null; pipeline?: string | null; route?: string; useModel?: boolean }): Promise<{ brief: string; composed: Composed; by: string; done: string[]; goal: string; hints: number; ms: { gather: number; model: number } }> {
   const started = Date.now();
-  const inputs = await gather({ target, task, done, app, slug, appPath });
+  const inputs = await gather({ target, task, done, app, slug, appPath, continues });
   const gathered = Date.now();
   const { composed, by } = await composeFrom(inputs, { useModel });
   const brief = C.render(composed, {
@@ -269,6 +273,7 @@ async function compose({
     deliveryPlain: describeDelivery(delivery, { route }),
     pipeline,
     by,
+    continues,
   });
   return { brief, composed, by, done: composed.done, goal: composed.goal, hints: composed.reuse.length, ms: { gather: gathered - started, model: Date.now() - gathered } };
 }
