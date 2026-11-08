@@ -388,7 +388,7 @@ print(json.dumps({"active": d.active_sources(data["o"], data["s"]), "monitor": d
 {
   const probe = (env) =>
     JSON.parse(
-      execFileSync(process.execPath, ['-e', `const {config}=require(${JSON.stringify(path.join(__dirname, '..', 'src', 'config'))});console.log(JSON.stringify(config.teamsCache))`], {
+      execFileSync(process.execPath, ['-e', `const {config}=require(${JSON.stringify(path.join(__dirname, '..', 'src', 'config.ts'))});console.log(JSON.stringify(config.teamsCache))`], {
         env: { PATH: process.env.PATH, HOME: process.env.HOME || os.homedir(), PA_TEAMS_CACHE: '1', ...env },
       }).toString()
     );
