@@ -17,7 +17,7 @@ def main(argv: list[str]) -> int:
         return 2
     root, job_id = Path(argv[0]), argv[1]
     try:
-        from dotenv import load_dotenv
+        from factory.keychain import load_dotenv
 
         load_dotenv(root / ".env", override=False)
     except Exception:  # noqa: BLE001 - env loading is best-effort

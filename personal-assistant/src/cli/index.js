@@ -112,7 +112,9 @@ const HELP = `pa — your context layer
     pa distill [--limit n]          force a distillation pass
     pa migrate                      apply database migrations
     pa mic status|pause <mins>|on   always-on capture control
-    pa backup [list] [--dir d]      dump the whole store now (the worker does it nightly)
+    pa backup [list] [--dir d]      dump the whole store now, encrypted (the worker does it nightly)
+    pa backup restore --to <db> [file]  restore drill: into a throwaway database, row counts checked
+    pa backup key init | export --to <file>  the backup key (kept in the keychain)
     pa restore [file] [--yes]       replace the store with a dump (newest by default)
     pa reingest --days N [--source s]  rewind sources so history is fetched again
     pa doctor                       what is configured, what is stale, what is broken
@@ -1076,7 +1078,32 @@ const commands = {
       for (const b of all) out(`${b.at.toISOString().slice(0, 16).replace('T', ' ')}  ${(b.bytes / 1e6).toFixed(1).padStart(7)} MB  ${b.file}`);
       return;
     }
-    const r = await backup.dump({ dir: flags.dir || config.backup.dir });
+    if (args[0] === 'key') {
+      if (args[1] === 'init') {
+        const r = backup.keyInit();
+        return out(r.created ? 'backup key stored in the keychain (PA_BACKUP_KEY). Copy it off this machine: pa backup key export --to <file>' : 'a backup key is already set');
+      }
+      if (args[1] === 'export') {
+        if (typeof flags.to !== 'string') return fail('usage: pa backup key export --to <new file>');
+        const r = backup.keyExport(flags.to);
+        return out(`key written to ${r.file} (mode 600, not printed). Keep it off this machine; anyone holding it can read the backups.`);
+      }
+      return fail('usage: pa backup key init | pa backup key export --to <new file>');
+    }
+    if (args[0] === 'restore') {
+      // The drill: a backup into a throwaway database, row counts checked, database dropped.
+      if (typeof flags.to !== 'string') {
+        return fail('usage: pa backup restore --to <scratch db name> [file] [--keep] [--admin-url postgres://…] [--template <db with the extensions>]\n  restores into a throwaway database and checks it; the live store is never touched (pa restore replaces it)');
+      }
+      const r = await backup.drill({ file: args[1], to: flags.to, keep: flagBool(flags, 'keep'), adminUrl: typeof flags['admin-url'] === 'string' ? flags['admin-url'] : null, template: typeof flags.template === 'string' ? flags.template : null, say: out });
+      out(`${r.ok ? 'PASS' : 'FAIL'}  ${r.file}  → ${r.to}${r.kept ? ' (kept)' : ' (dropped)'}  ${r.tables} tables, ${r.seconds} s`);
+      out(r.compared ? `  row counts match the manifest${r.problems.length ? `, except ${r.problems.length}:` : ''}` : '  no manifest in this backup (plain dump): tables restored, row counts not compared');
+      for (const p of r.problems.slice(0, 20)) out(`    ${p.table}: expected ${p.expected}, restored ${p.got === null ? 'none' : p.got}`);
+      if (r.state) out(`  factory state: ${r.state.files} files restored, ${r.state.expectedFiles} at backup${r.state.ok ? '' : ' — MISMATCH'}`);
+      if (!r.ok) process.exitCode = 1;
+      return;
+    }
+    const r = await backup.dump({ dir: flags.dir || config.backup.dir, plain: flagBool(flags, 'plain') });
     out(`${r.file} (${(r.bytes / 1e6).toFixed(1)} MB)${r.pruned ? ` · pruned ${r.pruned} old` : ''}`);
   },
 
@@ -1712,7 +1739,7 @@ const commands = {
     const stale = !newest || Date.now() - newest.at.getTime() > (config.backup.everyHours + 6) * 3600_000;
     const tools = await require('../backup').toolsCheck().catch((err) => ({ ok: false, detail: err.message }));
     lines.push(
-      `  backup ${newest ? `${relative(newest.at)} · ${(newest.bytes / 1e6).toFixed(1)} MB` : 'NONE'}` +
+      `  backup ${newest ? `${relative(newest.at)} · ${(newest.bytes / 1e6).toFixed(1)} MB${newest.encrypted ? ' · encrypted' : ' · PLAIN (pa backup key init)'}` : 'NONE'}` +
         `${stale ? ' — `pa backup`' : ''} · ${config.backup.dir} · via ${config.backup.pgTools}` +
         `${tools.detail ? ` (${tools.ok ? '' : 'BROKEN: '}${tools.detail})` : ''}`
     );
@@ -1724,6 +1751,7 @@ const commands = {
 Object.assign(commands, require('./memory').make(out, fail));
 Object.assign(commands, require('./secret').make(out, fail));
 Object.assign(commands, require('./passkeys').make(out, fail));
+commands.secrets = commands.secret; // `pa secrets migrate` reads better than `pa secret migrate`
 Object.assign(commands, require('./meeting').make(out, fail));
 Object.assign(commands, require('./routine').make(out, fail));
 Object.assign(commands, require('./task').make(out, fail));
@@ -1735,7 +1763,7 @@ async function main(argv) {
   const name = command || 'help';
 
   if (flags.help || name === 'help' || name === '--help') {
-    const topics = { memory: './memory', secret: './secret', passkeys: './passkeys', routine: './routine', routines: './routine', task: './task', policy: './task', e2e: './e2e', audit: './audit' };
+    const topics = { memory: './memory', secret: './secret', secrets: './secret', passkeys: './passkeys', routine: './routine', routines: './routine', task: './task', policy: './task', e2e: './e2e', audit: './audit' };
     out(topics[args[0]] ? require(topics[args[0]]).HELP : HELP);
     return;
   }

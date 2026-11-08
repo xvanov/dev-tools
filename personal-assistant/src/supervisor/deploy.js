@@ -6,8 +6,12 @@
 //   node src/supervisor/deploy.js [--pull] [--from <commit>] [--dry-run] [--json]
 //                                 [--watch-seconds 60]
 //
-//   1. --pull: `git pull --ff-only` (the commit before it becomes --from).
-//      termhub's updater has already pulled and passes --from instead.
+//   1. --pull: `git fetch`, then the signature check on what was fetched
+//      (signing.js), then `git merge --ff-only` (the commit before it becomes
+//      --from). termhub's updater has already pulled and passes --from
+//      instead; the same check runs on from..HEAD and refuses the roll.
+//      Until a trusted-signers file exists a missing signature only warns
+//      (--require-signed / PA_REQUIRE_SIGNED=1 makes it refuse regardless).
 //   2. npm install, when package.json / package-lock.json changed (or no --from).
 //   3. build: `npm run build` when package.json has one (none yet: T7).
 //   4. roll: the supervisor (src/supervisor) starts generation N+1, flips to
@@ -18,7 +22,8 @@
 //
 // Exit codes, for the wrappers (windows/redeploy.ps1, linux/redeploy.sh):
 //   0  deployed, or nothing under personal-assistant/ changed
-//   1  failed: the roll was refused (N still serves) or rolled back
+//   1  failed: the roll was refused (N still serves) or rolled back, or the
+//      pulled commits are not signed by a trusted key (nothing was rolled)
 //   3  no supervisor answers: restart the service (the bootstrap path)
 //   4  the supervisor's own code changed: restart the service (brief gap)
 //
@@ -32,6 +37,7 @@ const path = require('path');
 const http = require('http');
 const { execFileSync, spawnSync } = require('child_process');
 const sup = require('./index');
+const signed = require('./signing');
 
 const PA_DIR = path.join(__dirname, '..', '..');
 const WATCH_SECONDS = 60;
@@ -144,6 +150,7 @@ function parseArgs(argv) {
     else if (a === '--from') o.from = argv[++i] || '';
     else if (a === '--dry-run') o.dryRun = true;
     else if (a === '--json') o.json = true;
+    else if (a === '--require-signed') o.requireSigned = true;
     else if (a === '--watch-seconds') o.watchSeconds = Math.max(1, Number(argv[++i]) || WATCH_SECONDS);
     else throw new Error(`unknown argument ${a}`);
   }
@@ -245,15 +252,39 @@ async function deployUnlocked(argv, { say } = {}) {
   const control = sup.defaultControlPath(port);
 
   let from = o.from;
+  let signing = null;
   if (o.pull) {
     from = git(['rev-parse', 'HEAD']);
     if (o.dryRun) say(`would run: git pull --ff-only (from ${from.slice(0, 7)})`);
     else {
-      say('git pull --ff-only');
-      git(['pull', '--ff-only'], { stdio: ['ignore', 'inherit', 'inherit'] });
+      // `git pull --ff-only` as its two halves, so the signatures are checked
+      // on what was fetched BEFORE the checkout moves to it.
+      say('git fetch');
+      git(['fetch'], { stdio: ['ignore', 'inherit', 'inherit'] });
+      let upstream = null;
+      try {
+        upstream = git(['rev-parse', '--verify', '--quiet', '@{u}']);
+      } catch {
+        /* no upstream: the merge below fails the way pull would */
+      }
+      if (upstream && upstream !== from) {
+        signing = signed.verifyPulled({ range: `${from}..${upstream}`, git: (a) => git(a), say, require: o.requireSigned || undefined });
+        if (signing.state === 'refused') return { code: 1, result: { head: from, from, signing } };
+      }
+      say('git merge --ff-only');
+      git(['merge', '--ff-only', '@{u}'], { stdio: ['ignore', 'inherit', 'inherit'] });
     }
   }
   const head = git(['rev-parse', 'HEAD']);
+  // Pulled by someone else (termhub's updater, `--from`): the checkout has
+  // already moved, so the most this can do is refuse to roll to it.
+  if (!signing && head !== from) {
+    signing = signed.verifyPulled({ range: from && resolves(from) ? `${from}..${head}` : `${head}^!`, git: (a) => git(a), say, require: o.requireSigned || undefined });
+    if (signing.state === 'refused') {
+      say(`the checkout is at ${head.slice(0, 7)} and was not deployed; nothing was rolled`);
+      return { code: 1, result: { head, from: from || null, signing } };
+    }
+  }
   let changed = null;
   // A previous commit this clone does not have (a shallow clone, as CI checks
   // out, or a typo): everything counts as changed. Deploying too much is safe;
@@ -275,7 +306,7 @@ async function deployUnlocked(argv, { say } = {}) {
     sourceOnDisk: sup.sourceHash(path.join(__dirname, 'index.js')),
     hasBuild: !!(pkg.scripts && pkg.scripts.build),
   });
-  const result = { head, from: from || null, port, ...p, supervisor: supervisor ? { generation: supervisor.generation, pid: supervisor.pid, source: supervisor.source || null } : null };
+  const result = { head, from: from || null, port, ...p, signing: signing ? { state: signing.state, mode: signing.mode, total: signing.total } : null, supervisor: supervisor ? { generation: supervisor.generation, pid: supervisor.pid, source: supervisor.source || null } : null };
   for (const r of p.reasons) say(r);
 
   if (o.dryRun) {

@@ -251,10 +251,18 @@ function toast(spec, { env = process.env } = {}) {
 // so — as on Windows — **the value travels on stdin, never in argv**.
 // `lookup` prints it on stdout, which only this process reads.
 
-const SERVICE = 'personal-assistant';
+// Labelled by stack: `service=dev-tools stack=<stack> name=<NAME>`. Entries
+// from before the label are `service=personal-assistant name=<NAME>`; reads
+// fall back to them, a write moves the entry, a delete clears both.
+const SERVICE = 'dev-tools';
+const LEGACY_SERVICE = 'personal-assistant';
 
 function attrs(name) {
-  return ['service', SERVICE, 'name', name];
+  return ['service', SERVICE, 'stack', common.stack(), 'name', name];
+}
+
+function legacyAttrs(name) {
+  return ['service', LEGACY_SERVICE, 'name', name];
 }
 
 const vault = {
@@ -268,15 +276,15 @@ const vault = {
       case 'set':
         return {
           command: 'secret-tool',
-          args: ['store', `--label=${SERVICE}: ${request.name}`, ...attrs(request.name)],
+          args: ['store', `--label=${SERVICE} [${common.stack()}]: ${request.name}`, ...attrs(request.name)],
           input: String(request.value),
         };
       case 'get':
-        return { command: 'secret-tool', args: ['lookup', ...attrs(request.name)] };
+        return { command: 'secret-tool', args: ['lookup', ...(request.legacy ? legacyAttrs(request.name) : attrs(request.name))] };
       case 'delete':
-        return { command: 'secret-tool', args: ['clear', ...attrs(request.name)] };
+        return { command: 'secret-tool', args: ['clear', ...(request.legacy ? legacyAttrs(request.name) : attrs(request.name))] };
       case 'list':
-        return { command: 'secret-tool', args: ['search', '--all', 'service', SERVICE] };
+        return { command: 'secret-tool', args: ['search', '--all', ...(request.legacy ? ['service', LEGACY_SERVICE] : ['service', SERVICE, 'stack', common.stack()])] };
       default:
         throw new Error('unknown op');
     }
@@ -286,36 +294,52 @@ const vault = {
   // stdout can hold a value and never becomes a message.
   run(request, runner) {
     const fail = (r) => ({ ok: false, error: r.error ? String(r.error) : (r.stderr || '').trim() || `secret-tool exited ${r.status}` });
-    if (request.op === 'set') {
-      const r = runner(vault.invocation(request));
-      return r.error || r.status !== 0 ? fail(r) : { ok: true };
-    }
-    if (request.op === 'get') {
-      const r = runner(vault.invocation(request));
+    // One lookup in one generation (stack-labelled, or the legacy one).
+    const lookup = (name, legacy) => {
+      const r = runner(vault.invocation({ op: 'get', name, legacy }));
       if (r.error) return fail(r);
       if (r.status === 0) return { ok: true, found: true, value: String(r.stdout).replace(/\r?\n$/, '') };
       return (r.stderr || '').trim() ? fail(r) : { ok: true, found: false };
+    };
+    if (request.op === 'set') {
+      const r = runner(vault.invocation(request));
+      if (r.error || r.status !== 0) return fail(r);
+      // Move, not copy: an old unlabelled entry would otherwise shadow nothing
+      // but linger; best effort, a failure here does not fail the write.
+      if (lookup(request.name, true).found) runner(vault.invocation({ op: 'delete', name: request.name, legacy: true }));
+      return { ok: true };
+    }
+    if (request.op === 'get') {
+      const a = lookup(request.name, false);
+      if (!a.ok || a.found) return a;
+      return lookup(request.name, true);
     }
     if (request.op === 'delete') {
       // `clear` says nothing either way; ask first so the answer can say
       // whether there was anything to remove.
-      const had = vault.run({ op: 'get', name: request.name }, runner);
-      if (!had.ok) return had;
-      if (!had.found) return { ok: true, found: false };
-      const r = runner(vault.invocation(request));
-      return r.error || r.status !== 0 ? fail(r) : { ok: true, found: true };
+      let found = false;
+      for (const legacy of [false, true]) {
+        const had = lookup(request.name, legacy);
+        if (!had.ok) return had;
+        if (!had.found) continue;
+        const r = runner(vault.invocation({ op: 'delete', name: request.name, legacy }));
+        if (r.error || r.status !== 0) return fail(r);
+        found = true;
+      }
+      return { ok: true, found };
     }
     if (request.op === 'list') {
-      const r = runner(vault.invocation(request));
-      if (r.error) return fail(r);
       // `search` prints each item's secret too; only the name attributes are
       // read out of it, and the text goes nowhere else — not even an error.
       const names = [];
-      for (const line of `${r.stdout || ''}\n${r.stderr || ''}`.split(/\r?\n/)) {
-        const m = /^attribute\.name = ([A-Z][A-Z0-9_]{1,63})$/.exec(line.trim());
-        if (m && !names.includes(m[1])) names.push(m[1]);
+      for (const legacy of [false, true]) {
+        const r = runner(vault.invocation({ op: 'list', legacy }));
+        if (r.error) return fail(r);
+        for (const line of `${r.stdout || ''}\n${r.stderr || ''}`.split(/\r?\n/)) {
+          const m = /^attribute\.name = ([A-Z][A-Z0-9_]{1,63})$/.exec(line.trim());
+          if (m && !names.includes(m[1])) names.push(m[1]);
+        }
       }
-      if (r.status !== 0 && !names.length) return { ok: true, names: [] };
       return { ok: true, names };
     }
     return { ok: false, error: 'unknown op' };

@@ -137,4 +137,13 @@ function statfsFree(dir) {
   return Number(s.bavail) * Number(s.bsize);
 }
 
-module.exports = { which, forgetWhich, runSync, run, spawnDetached, pipeTo, statfsFree };
+// Which stack this machine runs: 'work' (the Windows laptop) or 'personal'
+// (Linux). Secrets in the OS keychain are labelled with it, so Credential
+// Manager / Seahorse show whose each entry is. PA_STACK overrides the guess.
+function stack({ env = process.env, platform = process.platform } = {}) {
+  const v = String(env.PA_STACK || '').trim().toLowerCase();
+  if (v === 'work' || v === 'personal') return v;
+  return platform === 'win32' ? 'work' : 'personal';
+}
+
+module.exports = { stack, which, forgetWhich, runSync, run, spawnDetached, pipeTo, statfsFree };

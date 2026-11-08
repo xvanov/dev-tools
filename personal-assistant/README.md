@@ -1207,12 +1207,30 @@ on Linux) and keeps the newest 14 (`PA_BACKUP_DIR`, `PA_BACKUP_KEEP`). Where `pg
 where the store runs (`PA_PG_TOOLS`): `wsl:<distro>` on Windows, `native` for a native Linux
 cluster, `docker:pa-postgres` for the compose container — whose own `pg_dump` always matches the
 server, its output streamed to the file. `pa doctor` flags a native `pg_dump` older than the server
-before the nightly dump finds out. The dumps hold everything, so keep
-them somewhere only you can read. `pa doctor` shows the age of the newest one.
+before the nightly dump finds out. `pa doctor` shows the age of the newest one.
+
+**Backups are encrypted.** Each one is a single `pa-<stamp>.pabak`: the `pg_dump`, the factory's
+`state/` directory (when the factory runs on this machine; logs and locks left out) and a manifest
+of table row counts, in one tar sealed with AES-256-GCM. The key is the `PA_BACKUP_KEY` secret in
+the OS keychain (labelled by stack); the first backup generates it. **Copy it off the machine** with
+`pa backup key export --to <new file>` (mode 600, never printed) and keep that somewhere safe:
+without it a backup is unreadable, and the keychain goes with the machine. A machine with no
+keychain still writes a plain `.dump` and logs a warning; `pa restore` reads both.
+
+**Restore drill.** An untested backup is a hope. `pa backup restore --to pa_drill` decrypts the
+newest backup, restores it into a throwaway database `pa_drill`, compares every table's row count
+with the manifest (2% or 10 rows of slack: the store keeps writing while it dumps), checks the
+factory state came back, and drops the database. It never touches the live store. It needs a role
+that may `CREATE DATABASE` and either the `vector`/`pg_trgm` extensions creatable by it
+(`--admin-url postgres://<superuser>@host:port/postgres`) or a `--template <database>` that already
+has them. Run it once per stack after setting up, and after any change to the backup path. Exit
+code 1 on a mismatch.
 
 ```
-pa backup                 dump now
+pa backup                 dump now (encrypted; --plain to skip)
 pa backup list            what is there
+pa backup restore --to <scratch>   the drill: restore into a throwaway database and verify
+pa backup key init | export --to <file>   the backup key
 pa restore [file]         replace the store with a dump (newest by default); asks first
 pa reingest --days 180    no dump? rewind the sources and fetch history again
 ```

@@ -14,6 +14,7 @@ const path = require('path');
 const { execFileSync, spawnSync } = require('child_process');
 
 const platform = require('../src/platform');
+const common = require('../src/platform/common');
 const linux = platform.select('linux');
 const windows = platform.select('win32');
 const darwin = platform.select('darwin');
@@ -148,35 +149,43 @@ const darwin = platform.select('darwin');
 
   const inv = linux.vault.invocation({ op: 'set', name: NAME, value: FAKE });
   assert.strictEqual(inv.command, 'secret-tool');
-  assert.deepStrictEqual(inv.args, ['store', `--label=personal-assistant: ${NAME}`, 'service', 'personal-assistant', 'name', NAME]);
+  assert.deepStrictEqual(inv.args, ['store', `--label=dev-tools [${common.stack()}]: ${NAME}`, 'service', 'dev-tools', 'stack', common.stack(), 'name', NAME]);
   assert.strictEqual(inv.input, FAKE, 'the value is stdin, verbatim, no trailing newline');
   for (const op of ['get', 'delete', 'list']) assert.ok(!('input' in linux.vault.invocation({ op, name: NAME })), `${op} sends nothing`);
 
   // A fake secret-tool, through the real facade.
   vault.useBackend('linux');
-  const store = new Map([['OTHER_ENTRY', 'other-value-zz']]);
+  // Keyed by service/name, like the real thing's attributes. OTHER_ENTRY is
+  // an old, unlabelled entry: still readable, listed, and moved on rewrite.
+  const store = new Map([['personal-assistant/OTHER_ENTRY', 'other-value-zz']]);
+  const stored = (n) => store.get(`dev-tools/${n}`);
   const seen = [];
   vault.setRunner(({ command, args, input }) => {
     seen.push({ command, args });
     assert.strictEqual(command, 'secret-tool');
     const name = args[args.indexOf('name') + 1];
+    const key = `${args[args.indexOf('service') + 1]}/${name}`;
     switch (args[0]) {
       case 'store':
         if (input === 'make-it-fail') return { stdout: '', stderr: `cannot store ${input}`, status: 1 };
-        store.set(name, input);
+        assert.strictEqual(args[args.indexOf('stack') + 1], common.stack(), 'new entries carry the stack');
+        store.set(key, input);
         return { stdout: '', stderr: '', status: 0 };
       case 'lookup':
-        return store.has(name) ? { stdout: store.get(name), stderr: '', status: 0 } : { stdout: '', stderr: '', status: 1 };
+        return store.has(key) ? { stdout: store.get(key), stderr: '', status: 0 } : { stdout: '', stderr: '', status: 1 };
       case 'clear':
-        store.delete(name);
+        store.delete(key);
         return { stdout: '', stderr: '', status: 0 };
-      case 'search':
+      case 'search': {
         // secret-tool prints each secret with its attributes; only names may come out.
+        const svc = args[args.indexOf('service') + 1];
+        const mine = [...store].filter(([k]) => k.startsWith(`${svc}/`));
         return {
-          stdout: [...store].map(([n, v]) => `[/org/freedesktop/secrets/collection/login/${n}]\nlabel = personal-assistant: ${n}\nsecret = ${v}\nattribute.service = personal-assistant\nattribute.name = ${n}\n`).join(''),
+          stdout: mine.map(([k, v]) => `[/x]\nsecret = ${v}\nattribute.service = ${svc}\nattribute.name = ${k.split('/')[1]}\n`).join(''),
           stderr: '',
-          status: store.size ? 0 : 1,
+          status: mine.length ? 0 : 1,
         };
+      }
       default:
         return { stdout: '', stderr: 'unknown', status: 2 };
     }
@@ -184,10 +193,13 @@ const darwin = platform.select('darwin');
   assert.strictEqual(vault.available(), true);
   assert.match(vault.label(), /Secret Service/);
   vault.set(NAME, FAKE);
-  assert.strictEqual(store.get(NAME), FAKE);
+  assert.strictEqual(stored(NAME), FAKE);
   assert.strictEqual(vault.get(NAME), FAKE);
   assert.strictEqual(vault.get('PA_NOT_THERE'), null, 'a miss is null, not an error');
-  assert.deepStrictEqual(vault.list(), ['OTHER_ENTRY', NAME].sort(), 'names only');
+  assert.deepStrictEqual(vault.list(), ['OTHER_ENTRY', NAME].sort(), 'names only, both generations');
+  assert.strictEqual(vault.get('OTHER_ENTRY'), 'other-value-zz', 'an unlabelled entry is still read');
+  vault.set('OTHER_ENTRY', 'moved-value');
+  assert.ok(!store.has('personal-assistant/OTHER_ENTRY') && stored('OTHER_ENTRY') === 'moved-value', 'a rewrite moves it under the stack label');
   assert.throws(() => vault.set(NAME, 'make-it-fail'), (err) => !err.message.includes('make-it-fail') && /redacted/.test(err.message), 'a failure is scrubbed of the value');
   assert.strictEqual(vault.remove(NAME), true);
   assert.strictEqual(vault.remove(NAME), false);
@@ -199,7 +211,7 @@ const darwin = platform.select('darwin');
 
   // And through config.secret: real env → vault → .env, source reported, never the value.
   const cfg = require('../src/config');
-  store.set('PA_TEST_FROM_KEYRING', 'kr-value');
+  store.set('dev-tools/PA_TEST_FROM_KEYRING', 'kr-value');
   cfg.forgetSecret();
   delete process.env.PA_TEST_FROM_KEYRING;
   assert.strictEqual(cfg.secret('PA_TEST_FROM_KEYRING'), 'kr-value');

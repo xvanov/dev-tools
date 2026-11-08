@@ -26,6 +26,7 @@
 // a half-written file never looks like the newest good backup.
 
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const { execFile, spawn } = require('child_process');
 const { promisify } = require('util');
@@ -33,11 +34,16 @@ const { promisify } = require('util');
 const { config } = require('./config');
 const repo = require('./repo');
 const { logger } = require('./log');
+const crypt = require('./backupCrypto');
 
 const exec = promisify(execFile);
 const log = logger('backup');
 
-const PATTERN = /^pa-(\d{8}-\d{6})\.dump$/;
+// `.pabak` is the encrypted bundle (pg_dump + factory state + a manifest, see
+// bundle() below); `.dump` is a bare pg_dump, what older versions wrote and
+// what a machine with no keychain still writes.
+const PATTERN = /^pa-(\d{8}-\d{6})\.(dump|pabak)$/;
+const KEY_NAME = 'PA_BACKUP_KEY';
 
 function stamp(date = new Date()) {
   return date.toISOString().replace(/[-:]/g, '').replace('T', '-').slice(0, 15);
@@ -57,7 +63,7 @@ function list(dir = config.backup.dir) {
     .map((n) => {
       const file = path.join(dir, n);
       const st = fs.statSync(file);
-      return { file, name: n, bytes: st.size, at: st.mtime };
+      return { file, name: n, bytes: st.size, at: st.mtime, encrypted: n.endsWith('.pabak') };
     });
 }
 
@@ -162,18 +168,153 @@ function runTool({ cmd, args, stdoutFile, env }, { timeoutMs = 30 * 60_000 } = {
   });
 }
 
-async function dump({ dir = config.backup.dir, keep = config.backup.keep } = {}) {
+// ------------------------------------------------------------ encryption --
+
+// The backup key: 32 random bytes, base64, the PA_BACKUP_KEY secret (env, the
+// OS keychain labelled by stack, or .env: config.secret). With `create`, a
+// missing key is generated into the keychain. Never into .env: a key beside
+// the backups protects nothing. Returns null when there is none and none can
+// be stored, and the caller decides (a dump then stays plain and says so).
+function backupKey({ create = false } = {}) {
+  const cfg = require('./config');
+  const have = cfg.secret(KEY_NAME);
+  if (have) return { key: crypt.parseKey(have), created: false };
+  if (!create) return null;
+  const vault = require('./secrets/vault');
+  if (!vault.available()) return null;
+  const key = crypt.generateKey();
+  vault.set(KEY_NAME, key.toString('base64'));
+  cfg.forgetSecret(KEY_NAME);
+  return { key, created: true };
+}
+
+// The factory's state dir, when the factory runs on this machine.
+function factoryStateDir() {
+  const f = config.factory;
+  if (!f.path || f.machine) return null;
+  const dir = path.join(f.path, 'state');
+  return fs.existsSync(dir) ? dir : null;
+}
+
+// What a backup leaves out of the factory state: logs are huge and rebuildable,
+// locks are meaningless on another machine.
+const STATE_EXCLUDE = ['logs', 'locks'];
+
+function stateStats(dir) {
+  let files = 0;
+  let bytes = 0;
+  const walk = (d, top) => {
+    for (const e of fs.readdirSync(d, { withFileTypes: true })) {
+      if (top && STATE_EXCLUDE.includes(e.name)) continue;
+      const p = path.join(d, e.name);
+      if (e.isDirectory()) walk(p, false);
+      else if (e.isFile()) {
+        files += 1;
+        bytes += fs.statSync(p).size;
+      }
+    }
+  };
+  walk(dir, true);
+  return { files, bytes };
+}
+
+// Windows ships bsdtar as System32\tar.exe; a `tar` from Git for Windows on
+// PATH is GNU tar and reads "C:\..." as host:path. Name the system one.
+function tarBin() {
+  return process.platform === 'win32' ? path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'tar.exe') : 'tar';
+}
+
+/**
+ * The encrypted bundle: `pa.dump` (the pg_dump), `state/` (the factory's state
+ * dir, when the factory is local) and `manifest.json` (the table row counts at
+ * backup time, which the restore drill checks), in a tar, encrypted with
+ * AES-256-GCM (src/backupCrypto.js). Consumes `dumpFile`.
+ */
+async function bundle({ dumpFile, out, key, state = factoryStateDir(), counts }) {
+  const stage = fs.mkdtempSync(path.join(path.dirname(out), '.stage-'));
+  try {
+    fs.renameSync(dumpFile, path.join(stage, 'pa.dump'));
+    if (counts === undefined) counts = await require('./repo').backupDrill.tableCounts().catch(() => null);
+    const manifest = {
+      format: 1,
+      createdAt: new Date().toISOString(),
+      stack: require('./platform/common').stack(),
+      counts,
+      state: state ? stateStats(state) : null,
+    };
+    fs.writeFileSync(path.join(stage, 'manifest.json'), JSON.stringify(manifest, null, 2));
+    const tarFile = path.join(stage, 'bundle.tar');
+    const args = ['-cf', tarFile];
+    if (state) args.push(...STATE_EXCLUDE.map((n) => `--exclude=state/${n}`));
+    args.push('-C', stage, 'manifest.json', 'pa.dump');
+    if (state) args.push('-C', path.dirname(state), path.basename(state));
+    await runTool({ cmd: tarBin(), args });
+    return { bytes: crypt.encryptFile(tarFile, out, key), manifest };
+  } finally {
+    fs.rmSync(stage, { recursive: true, force: true });
+  }
+}
+
+/**
+ * Decrypts and unpacks a `.pabak` into a fresh private folder (the caller
+ * removes `dir`). Throws, leaving nothing behind, on a wrong key or a damaged
+ * file: nothing is extracted from a bundle that failed authentication.
+ */
+function unpack(file, { key = null } = {}) {
+  const k = key || (backupKey() || {}).key;
+  if (!k) throw new Error(`${file} is encrypted and there is no ${KEY_NAME} on this machine (keychain, env or .env)`);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pa-unpack-'));
+  try {
+    const tarFile = path.join(dir, 'bundle.tar');
+    crypt.decryptFile(file, tarFile, k);
+    // Sync, like the decrypt: this is the restore path, not a worker pass.
+    const r = require('child_process').spawnSync(tarBin(), ['-xf', tarFile, '-C', dir], { windowsHide: true, encoding: 'utf8' });
+    if (r.error || r.status !== 0) throw new Error(`tar could not unpack the backup: ${String(r.stderr || r.error).trim().slice(0, 200)}`);
+    fs.rmSync(tarFile, { force: true });
+    let manifest = null;
+    try {
+      manifest = JSON.parse(fs.readFileSync(path.join(dir, 'manifest.json'), 'utf8'));
+    } catch {
+      /* a bundle without one still restores; the drill says it could not compare */
+    }
+    const stateDir = path.join(dir, 'state');
+    return { dir, dumpFile: path.join(dir, 'pa.dump'), manifest, stateDir: fs.existsSync(stateDir) ? stateDir : null };
+  } catch (err) {
+    fs.rmSync(dir, { recursive: true, force: true });
+    throw err;
+  }
+}
+
+async function dump({ dir = config.backup.dir, keep = config.backup.keep, plain = false } = {}) {
   fs.mkdirSync(dir, { recursive: true });
-  const name = `pa-${stamp()}.dump`;
-  const final = path.join(dir, name);
-  const partial = `${final}.partial`;
+  const id = stamp();
+  const plainFinal = path.join(dir, `pa-${id}.dump`);
+  const partial = `${plainFinal}.partial`;
   const started = Date.now();
   try {
     await runTool(dumpCommand(parseTools(config.backup.pgTools), { url: config.databaseUrl, file: partial }));
-    fs.renameSync(partial, final);
   } catch (err) {
     fs.rmSync(partial, { force: true });
     throw new Error(`pg_dump failed: ${(err.stderr || err.message).trim().slice(0, 300)}`);
+  }
+  let final = plainFinal;
+  const k = plain ? null : backupKey({ create: true });
+  if (k) {
+    final = path.join(dir, `pa-${id}.pabak`);
+    try {
+      await bundle({ dumpFile: partial, out: final, key: k.key });
+    } catch (err) {
+      fs.rmSync(final, { force: true });
+      throw new Error(`encrypting the backup failed: ${String(err.stderr || err.message).trim().slice(0, 300)}`);
+    } finally {
+      fs.rmSync(partial, { force: true });
+    }
+    if (k.created) {
+      log.warn(`a new backup key was stored in the keychain as ${KEY_NAME}; backups cannot be read without it. Copy it off this machine: pa backup key export --to <file>`);
+    }
+  } else {
+    fs.renameSync(partial, plainFinal);
+    if (!plain) log.warn(`backup written UNENCRYPTED: no ${KEY_NAME} and no keychain to hold one (pa backup key init)`);
   }
   const bytes = fs.statSync(final).size;
   const pruned = toPrune(list(dir), keep);
@@ -200,11 +341,28 @@ async function dumpIfDue() {
 // (windows/setup-wsl-postgres.sh, linux/setup-postgres.sh, or the compose
 // container's first start) — on a rebuilt machine, run that first and it
 // leaves an empty database with both extensions, ready for this.
-async function restore(file) {
+//
+// `file` may be an encrypted `.pabak` bundle: it is decrypted and unpacked to a
+// private temp folder first, and the folder is removed after. With `url` set
+// the restore goes there instead (the drill's scratch database): then the
+// extensions are the caller's job and the install id is left alone.
+async function restore(file, { url = null } = {}) {
   if (!fs.existsSync(file)) throw new Error(`no such file: ${file}`);
-  const have = await repo.system.installedExtensions(['vector', 'pg_trgm']);
-  if (have.length < 2) {
-    throw new Error(`the database lacks the vector/pg_trgm extensions — run ${require('./platform').services.dbProvision} first`);
+  if (crypt.isEncrypted(file)) {
+    const unpacked = unpack(file);
+    try {
+      return await restore(unpacked.dumpFile, { url });
+    } finally {
+      fs.rmSync(unpacked.dir, { recursive: true, force: true });
+    }
+  }
+  const live = !url;
+  const target = url || config.databaseUrl;
+  if (live) {
+    const have = await repo.system.installedExtensions(['vector', 'pg_trgm']);
+    if (have.length < 2) {
+      throw new Error(`the database lacks the vector/pg_trgm extensions — run ${require('./platform').services.dbProvision} first`);
+    }
   }
   const tools = parseTools(config.backup.pgTools);
   const listFile = `${file}.restore-list`;
@@ -217,7 +375,7 @@ async function restore(file) {
     const { stdout } = await runTool(toolCommand(tools, 'pg_restore', ['--list', view(file)]));
     fs.writeFileSync(listFile, restoreList(stdout));
     if (inside) await runTool({ cmd: 'docker', args: ['cp', listFile, `${tools.container}:${view(listFile)}`] });
-    const db = splitPassword(tools.mode === 'docker' ? containerUrl(config.databaseUrl) : config.databaseUrl);
+    const db = splitPassword(tools.mode === 'docker' ? containerUrl(target) : target);
     await runTool(
       toolCommand(tools, 'pg_restore', [
         '--clean',
@@ -235,8 +393,8 @@ async function restore(file) {
     fs.rmSync(listFile, { force: true });
     if (inside) await runTool({ cmd: 'docker', args: ['exec', tools.container, 'rm', '-f', view(file), view(listFile)] }).catch(() => {});
   }
-  await rotateInstallId();
-  log.info('restored', { file });
+  if (live) await rotateInstallId();
+  log.info('restored', { file, scratch: !live });
 }
 
 /**
@@ -284,5 +442,117 @@ async function toolsCheck() {
   return { ok: true, detail: `pg_dump ${client || '?'}` };
 }
 
+// ------------------------------------------------------------ the drill --
+
+/**
+ * Pure: the restored tables against the counts recorded at backup time.
+ * Rows move between the dump and the count, so a table passes within
+ * max(10, 2%) of what the manifest says; a table the manifest has and the
+ * restore lacks always fails.
+ * @returns {{ok: boolean|null, checked: number, problems: {table: string, expected: number, got: number|null}[]}}
+ */
+function compareCounts(expected, got) {
+  if (!expected) return { ok: null, checked: 0, problems: [] };
+  const problems = [];
+  for (const [table, want] of Object.entries(expected)) {
+    const have = Object.prototype.hasOwnProperty.call(got, table) ? got[table] : null;
+    const tol = Math.max(10, Math.ceil(want * 0.02));
+    if (have === null || Math.abs(have - want) > tol) problems.push({ table, expected: want, got: have });
+  }
+  return { ok: problems.length === 0, checked: Object.keys(expected).length, problems };
+}
+
+/**
+ * The restore drill (`pa backup restore --to <scratch>`): restores a backup
+ * into a throwaway database, checks the row counts against the manifest, and
+ * drops the database. Never touches the live one: `to` must not be it, must
+ * not exist, and is created and dropped here.
+ *
+ * Needs a role that may CREATE DATABASE, and the vector/pg_trgm extensions in
+ * the new database: either a role allowed to create them (`adminUrl`
+ * overrides the connection used for everything, default the store's own URL),
+ * or a `template` database that already holds them.
+ */
+async function drill({ file = (list()[0] || {}).file, to, keep = false, adminUrl = null, template = null, say = () => {} } = {}) {
+  if (!file) throw new Error(`no backups in ${config.backup.dir}`);
+  if (!require('./repo/backupDrill').NAME_RE.test(String(to || ''))) {
+    throw new Error('--to wants a lowercase database name (letters, digits, underscore), e.g. pa_drill');
+  }
+  const base = new URL(adminUrl || config.databaseUrl);
+  const liveName = decodeURIComponent(new URL(config.databaseUrl).pathname.replace(/^\//, ''));
+  if (to === liveName || to === 'postgres' || to.startsWith('template')) throw new Error(`refusing to restore into "${to}": give the drill its own scratch database name`);
+  const withDb = (name) => {
+    const u = new URL(base);
+    u.pathname = `/${name}`;
+    return u.toString();
+  };
+  const started = Date.now();
+  const admin = repo.openAt(withDb('postgres'), { max: 1 });
+  let unpacked = null;
+  let scratch = null;
+  let created = false;
+  try {
+    const drillAdmin = admin.backupDrill;
+    if (await drillAdmin.databaseExists(to)) throw new Error(`database "${to}" already exists: the drill only ever creates and drops its own`);
+    say(crypt.isEncrypted(file) ? 'decrypting and unpacking' : 'reading a plain dump (no manifest to compare against)');
+    unpacked = crypt.isEncrypted(file) ? unpack(file) : { dir: null, dumpFile: file, manifest: null, stateDir: null };
+    say(`creating ${to}`);
+    await drillAdmin.createDatabase(to, { template });
+    created = true;
+    scratch = repo.openAt(withDb(to), { max: 2 });
+    const scratchRepo = scratch.backupDrill;
+    try {
+      await scratchRepo.ensureExtensions();
+    } catch (err) {
+      throw new Error(`the scratch database cannot get the vector/pg_trgm extensions (${err.message}). Give the drill a role that may create them (--admin-url postgres://<superuser>@host:port/postgres), or a --template database that already has them`);
+    }
+    say('restoring');
+    await restore(unpacked.dumpFile, { url: withDb(to) });
+    const got = await scratchRepo.tableCounts();
+    const rows = compareCounts(unpacked.manifest && unpacked.manifest.counts, got);
+    const want = unpacked.manifest && unpacked.manifest.state;
+    const have = unpacked.stateDir ? stateStats(unpacked.stateDir) : null;
+    const stateOk = !want || !want.files ? null : Boolean(have) && Math.abs(have.files - want.files) <= Math.max(10, Math.ceil(want.files * 0.1));
+    const restored = Object.keys(got).length;
+    const ok = restored > 0 && rows.ok !== false && stateOk !== false;
+    return {
+      ok,
+      file,
+      to,
+      kept: Boolean(keep),
+      tables: restored,
+      compared: rows.ok !== null,
+      problems: rows.problems,
+      state: want ? { expectedFiles: want.files, files: have ? have.files : 0, ok: stateOk } : null,
+      seconds: Math.round((Date.now() - started) / 1000),
+    };
+  } finally {
+    if (scratch) await scratch.close().catch(() => {});
+    if (created && !keep) await admin.backupDrill.dropDatabase(to).catch((err) => log.warn('could not drop the drill database', { to, error: err.message }));
+    await admin.close().catch(() => {});
+    if (unpacked && unpacked.dir) fs.rmSync(unpacked.dir, { recursive: true, force: true });
+  }
+}
+
+/** `pa backup key init`: makes sure a key is in the keychain. Never returns it. */
+function keyInit() {
+  const k = backupKey({ create: true });
+  if (!k) throw new Error(`no keychain here to hold the backup key: set ${KEY_NAME} in the environment instead`);
+  return { created: k.created };
+}
+
+/**
+ * `pa backup key export --to <file>`: writes the key to a new file (mode 600,
+ * refuses to overwrite) so it can be kept off this machine: without it a
+ * backup is unreadable after the keychain is lost. The key is not printed.
+ */
+function keyExport(to) {
+  const k = backupKey();
+  if (!k) throw new Error(`no ${KEY_NAME} on this machine yet: run \`pa backup key init\``);
+  fs.writeFileSync(to, `${k.key.toString('base64')}\n`, { flag: 'wx', mode: 0o600 });
+  return { file: path.resolve(to) };
+}
+
 module.exports = {
+  compareCounts, drill, keyInit, keyExport, backupKey, bundle, unpack, stateStats,
   rotateInstallId, dump, dumpIfDue, restore, reingest, list, toPrune, stamp, wslPath, restoreList, parseTools, containerUrl, dumpCommand, toolCommand, toolsCheck, splitPassword };

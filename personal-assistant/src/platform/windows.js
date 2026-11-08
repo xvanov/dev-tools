@@ -170,7 +170,11 @@ async function toast(spec) {
 // The script carries no data; the request (op, name, value) is a base64 JSON
 // line on stdin, so no character in a value can break out of anything.
 
-const RESOURCE = 'personal-assistant';
+// Entries are labelled by stack: resource `dev-tools/<stack>`. Entries written
+// before the label existed live under `personal-assistant`; a read falls back
+// to it, a write moves the entry, a delete clears both.
+const LEGACY_RESOURCE = 'personal-assistant';
+const stackResource = () => `dev-tools/${common.stack()}`;
 
 // A missing entry is {ok:true, found:false}, not an error: PasswordVault throws
 // "Element not found" for both "no such credential" and "empty vault".
@@ -183,12 +187,12 @@ try {
   $req = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($line)) | ConvertFrom-Json
   [void][Windows.Security.Credentials.PasswordVault, Windows.Security.Credentials, ContentType = WindowsRuntime]
   $vault = New-Object Windows.Security.Credentials.PasswordVault
-  $res = '${RESOURCE}'
-  function Find($name) { try { return $vault.Retrieve($res, $name) } catch { return $null } }
+  $res = $req.resource
+  $resources = @($req.resource, $req.legacy)
+  function Find($name) { foreach ($r in $resources) { try { return $vault.Retrieve($r, $name) } catch {} } return $null }
   switch ($req.op) {
     'set' {
-      $old = Find $req.name
-      if ($old) { $vault.Remove($old) }
+      foreach ($r in $resources) { try { $vault.Remove($vault.Retrieve($r, $req.name)) } catch {} }
       $vault.Add((New-Object Windows.Security.Credentials.PasswordCredential($res, $req.name, $req.value)))
       Answer @{ ok = $true }
     }
@@ -198,14 +202,14 @@ try {
       else { $c.RetrievePassword(); Answer @{ ok = $true; found = $true; value = $c.Password } }
     }
     'delete' {
-      $c = Find $req.name
-      if ($c) { $vault.Remove($c) }
-      Answer @{ ok = $true; found = [bool]$c }
+      $found = $false
+      foreach ($r in $resources) { try { $vault.Remove($vault.Retrieve($r, $req.name)); $found = $true } catch {} }
+      Answer @{ ok = $true; found = $found }
     }
     'list' {
       $names = @()
-      try { $names = @($vault.FindAllByResource($res) | ForEach-Object { $_.UserName }) } catch {}
-      Answer @{ ok = $true; names = $names }
+      foreach ($r in $resources) { try { $names += @($vault.FindAllByResource($r) | ForEach-Object { $_.UserName }) } catch {} }
+      Answer @{ ok = $true; names = @($names | Sort-Object -Unique) }
     }
     default { Answer @{ ok = $false; error = 'unknown op' } }
   }
@@ -226,7 +230,7 @@ const vault = {
     return {
       command: 'powershell.exe',
       args: ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', VAULT_ENCODED],
-      input: Buffer.from(JSON.stringify(request), 'utf8').toString('base64') + '\n',
+      input: Buffer.from(JSON.stringify({ ...request, resource: stackResource(), legacy: LEGACY_RESOURCE }), 'utf8').toString('base64') + '\n',
     };
   },
   // One process per request; its last stdout line is the JSON answer.

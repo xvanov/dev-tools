@@ -287,7 +287,7 @@ const config = {
   },
 
   anthropic: {
-    apiKey: env('ANTHROPIC_API_KEY'),
+    apiKey: null, // the keychain, then env: lazySecrets() below
     // Distillation is extraction, not reasoning-heavy work: the cost lever is
     // effort, not a smaller model. See AGENT.md.
     model: distillModel,
@@ -332,7 +332,7 @@ const config = {
   // at paraphrase and perfectly usable.
   embeddings: {
     endpoint: env('AZURE_OPENAI_ENDPOINT') || env('AZURE_FOUNDRY_ENDPOINT'),
-    apiKey: env('AZURE_OPENAI_API_KEY') || env('AZURE_FOUNDRY_API_KEY'),
+    apiKey: null, // the keychain, then env: lazySecrets() below
     deployment: env('PA_EMBED_DEPLOYMENT', 'text-embedding-3-small'),
     apiVersion: env('PA_EMBED_API_VERSION', '2024-05-01-preview'),
     dimensions: envInt('PA_EMBED_DIMENSIONS', 1536),
@@ -780,6 +780,23 @@ function secret(name) {
 function secretSource(name) {
   return resolveSecret(name).source;
 }
+
+// The two keys the config object carries are read through secret() on every
+// access, not once at load: the keychain is a process per read (~0.6 s on
+// Windows), which no pa verb that never calls a model should pay, and a key
+// stored after startup is picked up. Assignable, because tests and callers
+// that hold a key of their own set one.
+function lazySecret(obj, prop, ...names) {
+  let override;
+  Object.defineProperty(obj, prop, {
+    enumerable: true,
+    configurable: true,
+    get: () => (override !== undefined ? override : names.map((n) => secret(n)).find(Boolean) || null),
+    set: (v) => { override = v; },
+  });
+}
+lazySecret(config.anthropic, 'apiKey', 'ANTHROPIC_API_KEY');
+lazySecret(config.embeddings, 'apiKey', 'AZURE_OPENAI_API_KEY', 'AZURE_FOUNDRY_API_KEY');
 
 function forgetSecret(name) {
   vaultNames = null;

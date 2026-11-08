@@ -479,7 +479,14 @@ has no value column) and answered in the dashboard or with `pa secret set`; the 
 straight into the OS vault — Windows Credential Manager (through PowerShell), or the Secret Service
 on Linux (through `secret-tool`) — or the gitignored `.env`, and the reply says only where. Every
 vault backend gets the value on **stdin, never argv** (`src/secrets/vault.js` is the one facade;
-the backends are in `src/platform/`). Code reads a
+the backends are in `src/platform/`). Entries are **labelled by stack** (`work` on Windows,
+`personal` on Linux; `PA_STACK` overrides): Credential Manager resource `dev-tools/<stack>`, Secret
+Service `service=dev-tools stack=<stack> name=<NAME>`; entries from before the label (`personal-assistant`)
+are still read and move on the next write. `pa secrets migrate --from-env` moves `.env` values into
+the keychain: dry run by default, names only, a line is emptied (`NAME=`) only after the keychain
+reads back the same value, and only names the code resolves through the keychain move
+(`src/secrets/migrate.js`). The software-factory reads its provider keys from the same keychain
+when `.env` leaves them unset (`software-factory/factory/keychain.py`). Code reads a
 secret with `config.secret(name)` and nothing else; errors are scrubbed of it. Agents may
 `request_secret` and ask `secret_status` (configured or not); do not add a tool, endpoint or CLI
 verb that shows a value. `test/secrets.test.js` fails if one echoes.
@@ -554,7 +561,9 @@ Postgres and nowhere else. Tests use invented names; fixtures never hold a real 
   (`spawnSync`, `execFileSync`) on a path the worker takes repeatedly; the vault's names are
   listed once per 5 minutes for exactly this reason (`src/config.js`, `inVault`).
 - **Deploying (Z4).** `windows/redeploy.ps1` / `linux/redeploy.sh` (called by termhub's
-  updater) → `src/supervisor/deploy.js`: install, build, roll, watch health 60 s, `rollback`
+  updater) → `src/supervisor/deploy.js`: verify the pulled commits' SSH signatures
+  (`src/supervisor/signing.js`; it only warns until a trusted-signers file exists, and refuses
+  after: `docs/native/SIGNED-UPDATES.md`), install, build, roll, watch health 60 s, `rollback`
   if it fails. Its decisions are pure (`plan`, `verdict`, `test/deploy.test.js`); keep them
   so, and keep it on node builtins (it must run when `node_modules` is what broke). The
   scripts keep the old stop/kill/start path for exit codes 3 (no supervisor: bootstrap) and 4

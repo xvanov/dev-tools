@@ -34,7 +34,7 @@ def _root() -> Path:
 
 def _load_env() -> None:
     try:
-        from dotenv import load_dotenv
+        from factory.keychain import load_dotenv
 
         load_dotenv(_root() / ".env", override=False)
     except Exception:  # noqa: BLE001 - env loading is best-effort

@@ -7,6 +7,7 @@
 // stdin, never from an argument: an argument lands in shell history and is
 // visible to every process on the machine for as long as `pa` runs.
 
+const path = require('path');
 const { flagBool } = require('./parseArgs');
 
 const HELP = `
@@ -16,6 +17,10 @@ const HELP = `
     pa secret request <NAME> --purpose "…" [--hint "…"] [--url https://…] [--env-file]
                                          ask for it in the dashboard instead
     pa secret delete <NAME>              remove it from the OS keyring and .env
+    pa secrets migrate --from-env [--file <.env>] [--apply]
+                                         move secret values from .env into the OS keyring, labelled
+                                         by stack. A dry run (names only) unless --apply; a moved
+                                         line becomes NAME= . Never prints a value.
 `;
 
 function day(v) {
@@ -112,6 +117,34 @@ function make(out, fail) {
         out(r.status === 'configured'
           ? `${name} is already configured — \`pa secret set ${name}\` replaces it`
           : `request #${r.id} ${r.existing ? 'already open' : 'opened'} — answer it in the dashboard (Needs a credential or sign-in)`);
+        return;
+      }
+
+      if (sub === 'migrate') {
+        if (!flagBool(flags, 'from-env')) return fail('usage: pa secrets migrate --from-env [--file <.env>] [--apply]');
+        const migrate = require('../secrets/migrate');
+        const vault = require('../secrets/vault');
+        const cfg = require('../config');
+        const toolDir = cfg.config.toolDir;
+        const defaults = migrate.defaultSources({ toolDir, repoRoot: path.resolve(toolDir, '..') });
+        const only = typeof flags.file === 'string' ? path.resolve(flags.file) : null;
+        const sources = only ? [defaults.find((s) => s.file === only) || { file: only, readable: migrate.PA_READABLE }] : defaults;
+        const apply = flagBool(flags, 'apply');
+        const r = migrate.migrate(sources, { vault, apply, onStored: (n) => cfg.forgetSecret(n) });
+        if (!r.available) return fail(`${vault.label()} is not available on this machine — nothing moved`);
+        const words = {
+          move: 'would move',
+          dedupe: 'already in the keyring (same value): would empty the .env line',
+          conflict: 'KEPT: the keyring holds a different value',
+          kept: 'kept in .env (nothing reads it from the keyring)',
+          empty: 'already empty',
+          moved: 'moved',
+          deduped: 'emptied (the keyring already had it)',
+          failed: 'FAILED, .env untouched',
+        };
+        if (!r.rows.length) out('no secrets found in the .env files');
+        for (const row of r.rows) out(`  ${row.name.padEnd(26)} ${words[row.action]}  (${row.file})${row.error ? ` ${row.error}` : ''}`);
+        if (!apply && r.rows.some((x) => x.action === 'move' || x.action === 'dedupe')) out('\n  dry run, nothing changed. Re-run with --apply to move them.');
         return;
       }
 

@@ -1,4 +1,4 @@
-﻿'use strict';
+'use strict';
 
 // The repository layer (native plan 1.2): every SQL statement the PA runs
 // lives in one of the aggregate modules in this directory, behind a named,
@@ -28,6 +28,7 @@
 const AGGREGATES = {
   audio: () => require('./audio'),
   audit: () => require('./audit'),
+  backupDrill: () => require('./backupDrill'),
   commitments: () => require('./commitments'),
   drafts: () => require('./drafts'),
   durable: () => require('./durable'),
@@ -124,6 +125,13 @@ function on(tx) {
 
 module.exports = createRepos(poolBackend);
 module.exports.createRepos = createRepos;
+/** The repository set over its own connection pool for url (the backup drill's scratch and maintenance databases); .close() ends the pool. */
+module.exports.openAt = (url, opts) => {
+  const backend = require('../db').createBackend(url, opts);
+  const set = createRepos(backend);
+  set.close = () => backend.close();
+  return set;
+};
 module.exports.clientBackend = clientBackend;
 module.exports.on = on;
 module.exports.AGGREGATES = Object.keys(AGGREGATES);
