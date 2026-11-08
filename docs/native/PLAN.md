@@ -213,14 +213,27 @@ run mid-step; a job continued on an existing branch (`--branch`).
   tick) meet it, and Approve is on Plan, Build and voice; job stage in Build is 5-6 s for a local
   factory (each `uv run factory` costs ~5 s of Python start-up) until the native factory (2.3)
   calls the PA's `POST /api/factory/events` on each job transition (measured 26 ms to Build).
-- [ ] **E4 `e2e` command.** One command runs the golden path headless against the live stack,
+- [x] **E4 `e2e` command.** One command runs the golden path headless against the live stack,
   creates the dummy card, waits for the PR, asserts every link in E1 resolves in every view's
   API, asserts the API-runtime step produced a watchable session (E2), prints a timing per
   hop (card → job started → first session output → PR opened → CI done), then cleans up.
   `--keep` leaves the PR open for a human look. Prerequisite: the factory machine's `gh` can
   push to this repo with the personal identity.
+  (1f1ee4f) `pa e2e [--dry-run|--sweep|--keep|--resume|--branch b|--runtime api --model m|--on machine]`.
+  The dry-run was green on the work stack 2026-11-08 at ca701ce, with config, build, plan, run, mcp and
+  github all passing.
 - [ ] **E5 Baseline now.** Run E4 on today's system before phase 1 starts; record the timings
   and every broken hop here as new items. Fix what is broken in phase 0.
+  Run 1 (work stack, claude_session, draft_pr, 2026-11-08 03:19Z; card #6758, job dev-tools:004):
+  card 0.2 s → job started +108.5 s (factory_start itself took 37 s) → first session output
+  NOT REACHED after 600 s. Cleanup ran (job cancelled, card dropped). Broken hops:
+  - [ ] **E5.1 Plan's /api/state is down.** It returned 500 `repo.sources.calendarToday is not a function` at
+    3b37fe1; during the run it and /api/commitments/:id exceeded 30 s.
+  - [ ] **E5.2 Planning steps are not watchable (E2).** The job's first step (`sm`, runtime api, state ok)
+    had `session: null` even though the job runtime is claude_session, so its planning work never
+    shows in Run.
+  - [ ] **E5.3 Dev step starts late.** After 10 min the dev step (the first session) had not started:
+    the factory moves a story one step per 300 s tick. Card to job started took 109 s against a < 1 s target.
 - [ ] **E6 Gate.** Each phase's Exit box below requires a green E4 run (all variants) on both
   stacks, with the timings recorded in the targets table.
 - [ ] **Exit E:** the user runs the golden path by voice ("start a factory job for …"), watches
