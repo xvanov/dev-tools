@@ -109,9 +109,11 @@ routing, drain N, stop N. Terminals live in `ptyd`, a separate process, so they 
 with the app. Clients reconnect to the event stream with `Last-Event-ID` and miss nothing
 (outbox, phase 1).
 
-- [ ] **Z1 Supervisor with socket handoff** for the PA worker today (Node): holds the port,
+- [x] **Z1 Supervisor with socket handoff** for the PA worker today (Node): holds the port,
   spawns generation N+1, waits for `/healthz` ready, flips, sends N `drain`, kills N after
   in-flight requests finish (timeout 30 s). Works on Windows and Linux. `parallel-ok`
+  Built as a reverse proxy (`personal-assistant/src/supervisor`), not fd passing, which
+  Windows cannot do; control socket `node src/supervisor roll|status` for Z4. (262f4ab)
 - [ ] **Z2 Single-owner background work.** Schedulers and passes take a DB lease, so during the
   overlap only one generation runs them; the new one takes over when the old releases.
 - [ ] **Z3 Expand/contract migrations.** Every schema change is additive first; old and new
