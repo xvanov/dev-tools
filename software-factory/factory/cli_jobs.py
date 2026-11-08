@@ -10,7 +10,6 @@ also a JSON error instead of Typer's plain-text usage message.
 
 from __future__ import annotations
 
-import contextlib
 import json
 import sys
 from collections.abc import Callable
@@ -19,6 +18,7 @@ from typing import Any
 
 import typer
 
+from factory.capture import stdout_to_stderr
 from factory.jobs.common import JobError
 
 _FACTORY_ROOT = Path(__file__).resolve().parent.parent
@@ -80,7 +80,7 @@ def _run(as_json: bool, fn: Callable[[], dict[str, Any]]) -> None:
     _load_env()
     code = 0
     try:
-        with contextlib.redirect_stdout(sys.stderr):
+        with stdout_to_stderr():
             result = fn()
     except JobError as exc:
         result, code = exc.as_json(), _EXIT_ERROR
@@ -262,7 +262,7 @@ def report_cmd(
         return
     _load_env()
     try:
-        with contextlib.redirect_stdout(sys.stderr):
+        with stdout_to_stderr():
             result = go()
     except JobError as exc:
         print(f"error ({exc.code}): {exc.message}", file=sys.stderr)

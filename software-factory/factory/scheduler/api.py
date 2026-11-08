@@ -36,7 +36,6 @@ of after the PA's next ``job list``.
 from __future__ import annotations
 
 import contextlib
-import io
 import json
 import subprocess
 import threading
@@ -62,6 +61,8 @@ _ALLOWED: dict[str, set[str] | None] = {
 }
 
 _CLI_LOCK = threading.Lock()
+#: Verbs that change nothing: run concurrently (each with its own capture).
+_READ_ONLY = (["job", "status"], ["job", "list"], ["job", "report"], ["app", "list"])
 
 
 def allowed(argv: list[str]) -> bool:
@@ -78,11 +79,14 @@ def run_cli(argv: list[str]) -> dict[str, Any]:
     """Run one ``factory`` CLI command in-process: ``{code, stdout, stderr}``."""
     import typer.main
 
+    from factory.capture import capture
     from factory.cli import app
 
-    out, err = io.StringIO(), io.StringIO()
     code = 0
-    with _CLI_LOCK, contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+    # Each call captures its own stdout/stderr (factory.capture), so read-only
+    # verbs run concurrently; state-changing ones still go one at a time.
+    lock = _CLI_LOCK if argv[:2] not in _READ_ONLY else contextlib.nullcontext()
+    with lock, capture() as (out, err):
         try:
             rc = typer.main.get_command(app).main(
                 args=list(argv), prog_name="factory", standalone_mode=False
@@ -277,10 +281,10 @@ class JobStatePusher:
 
 
 def _list_jobs_local(root: Path) -> list[dict[str, Any]]:
+    from factory.capture import capture
     from factory.jobs.status import list_jobs
 
-    # Same lock as run_cli: both swap the process-wide stdout.
-    with _CLI_LOCK, contextlib.redirect_stdout(io.StringIO()):
+    with capture():  # anything it prints stays out of other threads' output
         res = list_jobs(root, github=False)
     jobs = res.get("jobs") if isinstance(res, dict) else None
     return list(jobs or [])

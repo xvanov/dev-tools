@@ -65,6 +65,55 @@ def test_run_cli_usage_error_is_a_reply_not_a_crash() -> None:
     assert res["code"] != 0
 
 
+def test_capture_is_per_thread_and_never_leaks(tmp_path: Path) -> None:
+    import sys
+    import threading
+
+    from factory import capture
+
+    results: dict[int, tuple[str, str]] = {}
+    gate = threading.Barrier(8)
+
+    def worker(i: int) -> None:
+        with capture.capture() as (out, err):
+            gate.wait()
+            for _ in range(50):
+                print(f"out-{i}")
+                with capture.stdout_to_stderr():
+                    print(f"noise-{i}")  # the CLI's diverted chatter
+            results[i] = (out.getvalue(), err.getvalue())
+
+    threads = [threading.Thread(target=worker, args=(i,)) for i in range(8)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    for i, (out, err) in results.items():
+        assert set(out.split()) == {f"out-{i}"}
+        assert set(err.split()) == {f"noise-{i}"}
+    # Outside a capture, writes still reach the real stream (a router, not a sink).
+    assert not capture.capturing()
+    assert sys.stdout is not None
+
+
+def test_read_only_calls_run_concurrently_and_stay_separate() -> None:
+    import threading
+
+    outs: dict[str, dict[str, Any]] = {}
+
+    def call(jid: str) -> None:
+        outs[jid] = api.run_cli(["job", "status", jid, "--json", "--no-github"])
+
+    threads = [threading.Thread(target=call, args=(f"nope{i}:00{i}",)) for i in range(4)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    for jid, res in outs.items():
+        body = json.loads(res["stdout"])  # exactly one JSON object each
+        assert jid.split(":")[0] in body["message"]
+
+
 def test_api_guards_and_serves(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[list[str]] = []
     monkeypatch.setattr(api, "run_cli", lambda argv: {"code": 0, "stdout": '{"ok": 1}\n', "stderr": ""})
