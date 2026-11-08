@@ -238,8 +238,9 @@ factory reconcile-issues            # close issues left open by completed work
 factory new-direction               # interactive; or the `new-direction` skill
 ```
 
-Continuous operation = systemd **user** units. Chain code is picked up next
-tick. There is no manager daemon anymore to restart — `factory-manager.service`
+Continuous operation = systemd **user** units on Linux; on Windows, `factory
+serve` in the `factory-serve` logon task (`docs/WINDOWS.md`; no WSL). Chain
+code is picked up next tick. There is no manager daemon anymore to restart — `factory-manager.service`
 was retired 2026-08-07 along with the four LLM tiers.
 
 ## The loop-3 playbook

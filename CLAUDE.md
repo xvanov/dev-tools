@@ -76,6 +76,8 @@ commit finishes a plan item, tick that item's box in the same commit with the sh
 Imported 2026-11-06 as a snapshot of `xvanov/software-factory` @ `39f9c26` (that repo keeps the full
 history, `apps/sacrifice` and the `bench/swebench` results). It is a Python/uv tool with its own
 `CLAUDE.md` and `AGENTS.md` — read those first. It runs on the Linux machine (k-911-x17), from
-`/home/k/dev-tools/software-factory` once `software-factory/docs/CUTOVER.md` has been run. This repo is
+`/home/k/dev-tools/software-factory` once `software-factory/docs/CUTOVER.md` has been run. The work stack
+runs its own factory natively on Windows (`software-factory/docs/WINDOWS.md`: `factory serve` as a
+logon task instead of systemd timers). This repo is
 public: only `apps/factory` and `apps/template-probe` are tracked; every other registered app's
 config stays local to the factory machine (see `software-factory/.gitignore`).
