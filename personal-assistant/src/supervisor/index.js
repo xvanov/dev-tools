@@ -67,9 +67,88 @@ const READY_TIMEOUT_MS = 180_000;
 const STOP_GRACE_MS = 10_000;
 const HOP = new Set(['connection', 'keep-alive', 'proxy-connection', 'transfer-encoding', 'upgrade', 'te', 'trailer']);
 
+// The log file: on Windows the pa-worker task runs under `conhost --headless`,
+// so stdout goes nowhere, and a generation that never got ready left no trace.
+// The supervisor's own lines and every generation's stdout/stderr (prefixed
+// `[gen N]`) go to <state dir>/logs/supervisor.log, rotated at `maxBytes`
+// into .1 … .<keep>. Synchronous appends: a few lines a second at most, and a
+// line written just before a crash must not sit in a buffer.
+function createLogFile(file, { maxBytes = 5 * 1024 * 1024, keep = 3 } = {}) {
+  let size = 0;
+  let broken = false;
+  try {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    size = fs.existsSync(file) ? fs.statSync(file).size : 0;
+  } catch {
+    broken = true;
+  }
+  function rotate() {
+    for (let i = keep; i >= 1; i--) {
+      const from = i === 1 ? file : `${file}.${i - 1}`;
+      try {
+        if (fs.existsSync(from)) fs.renameSync(from, `${file}.${i}`);
+      } catch {
+        /* a reader holds it open: keep appending */
+      }
+    }
+    size = fs.existsSync(file) ? fs.statSync(file).size : 0;
+  }
+  return {
+    file,
+    write(text) {
+      if (broken || !text) return;
+      try {
+        if (size + text.length > maxBytes) rotate();
+        fs.appendFileSync(file, text);
+        size += Buffer.byteLength(text);
+      } catch {
+        /* a full disk must not take the supervisor down */
+      }
+    },
+  };
+}
+
+// Where the log lives: PA_DATA_DIR, else the platform's state dir — the same
+// defaults as src/platform (not required here: the supervisor loads no PA code).
+function defaultLogFile() {
+  const custom = envSetting('PA_DATA_DIR', '');
+  const base = custom
+    || (process.platform === 'win32'
+      ? path.join(process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'), 'personal-assistant')
+      : path.join(process.env.XDG_DATA_HOME || path.join(os.homedir(), '.local', 'share'), 'personal-assistant'));
+  return path.join(base, 'logs', 'supervisor.log');
+}
+
+let logFile = null; // set by cli(); tests run without one
+
 function log(level, message, fields) {
   const line = [new Date().toISOString(), level.toUpperCase().padEnd(5), '[supervisor]', message, fields ? JSON.stringify(fields) : ''].join(' ').trimEnd();
   (level === 'info' ? process.stdout : process.stderr).write(line + '\n');
+  if (logFile) logFile.write(line + '\n');
+}
+
+// A generation's output: to our own stdout/stderr (journald on Linux) and the
+// log file, one prefixed line at a time.
+function relay(stream, n, out) {
+  if (!stream) return;
+  let buf = '';
+  stream.setEncoding('utf8');
+  stream.on('data', (chunk) => {
+    buf += chunk;
+    let i;
+    while ((i = buf.indexOf('\n')) >= 0) {
+      const line = `[gen ${n}] ${buf.slice(0, i).replace(/\r$/, '')}\n`;
+      buf = buf.slice(i + 1);
+      out.write(line);
+      if (logFile) logFile.write(line);
+    }
+  });
+  stream.on('end', () => {
+    if (buf) {
+      out.write(`[gen ${n}] ${buf}\n`);
+      if (logFile) logFile.write(`[gen ${n}] ${buf}\n`);
+    }
+  });
 }
 
 // PA_DISPATCH_* without loading config.js: real env, then the tool's .env,
@@ -147,9 +226,14 @@ function createSupervisor({
     const child = fork(worker, [], {
       cwd: path.dirname(worker),
       env: { ...process.env, ...env, PA_SUPERVISED: '1', PA_SUPERVISOR_GENERATION: String(n) },
-      stdio: ['ignore', 'inherit', 'inherit', 'ipc'],
+      // With a log file, a generation's output is relayed into it (relay()).
+      stdio: logFile ? ['ignore', 'pipe', 'pipe', 'ipc'] : ['ignore', 'inherit', 'inherit', 'ipc'],
       windowsHide: true,
     });
+    if (logFile) {
+      relay(child.stdout, n, process.stdout);
+      relay(child.stderr, n, process.stderr);
+    }
     const gen = {
       n,
       child,
@@ -553,6 +637,8 @@ async function cli(argv) {
     process.stderr.write('usage: node src/supervisor [run | roll | rollback | status]\n');
     process.exit(2);
   }
+  logFile = createLogFile(process.env.PA_SUPERVISOR_LOG || defaultLogFile());
+  log('info', 'supervisor starting', { pid: process.pid, source: SOURCE, log: logFile.file });
   const sup = createSupervisor();
   const stop = async (signal) => {
     log('info', 'stopping', { signal });
@@ -572,4 +658,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { createSupervisor, request, defaultControlPath, probe, envSetting, sourceHash, cli, DEFAULT_PORT };
+module.exports = { createSupervisor, request, defaultControlPath, probe, envSetting, sourceHash, cli, createLogFile, defaultLogFile, DEFAULT_PORT };

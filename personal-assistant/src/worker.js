@@ -91,7 +91,10 @@ const lease = require('./util/lease').createLease({
   log,
   onLost: (err) => ownership && ownership.lost(err),
 });
-const sched = require('./util/scheduler').createScheduler({ passes, lease, log });
+// First ticks spread over 2–20 s, not 2–5: a generation taking over starts
+// two dozen passes at once, and their cold start is CPU it shares with
+// serving the dashboard.
+const sched = require('./util/scheduler').createScheduler({ passes, lease, log, firstTickMs: () => 2000 + Math.random() * 18_000 });
 const every = (seconds, name, fn) => sched.every(seconds, name, fn);
 const exclusive = (name, fn) => sched.run(name, fn);
 
@@ -147,6 +150,9 @@ async function main() {
     db: config.databaseUrl.replace(/:[^:@/]*@/, ':***@'),
   });
 
+  // A blocked loop answers nothing, /healthz included: say so, with what ran.
+  require('./util/lagWatch').watchLag({ log, running: () => sched.running() });
+
   // A pass whose model cannot do its job (a connector relay set to a
   // non-Claude-Code backend, an unknown provider) is said once, loudly, at
   // start — each call refuses too, but this names the variable to fix.
@@ -180,7 +186,8 @@ async function main() {
   if (supervised) {
     const server = await dashboard.start({ port: 0 });
     process.send({ type: 'listening', port: server.address().port });
-    dashboard.markReady();
+    // Ready only at the end of main(): the module loading and pass setup in
+    // between blocked the loop for seconds, right after the flip.
   }
 
   // The dashboard rides along with the worker: one process to keep alive.
@@ -539,6 +546,7 @@ async function main() {
   // released on `drain`, or the moment the holder dies.
   ownership = require('./util/lease').createOwnership({ lease, scheduler: sched, log });
   const owned = ownership.takeOver();
+  if (supervised) dashboard.markReady();
   if (!supervised) {
     await owned;
     startDashboard();

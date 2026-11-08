@@ -507,7 +507,9 @@
         "Rollback": "{\"cmd\":\"rollback\"}: drain the serving generation, undrain the standby, wait for its /healthz (30 s), flip back, stop the other. Only while a standby is held (150 s after a roll)",
         "Deploy (Z4)": "windows/redeploy.ps1, linux/redeploy.sh (run by termhub's Update after its pull, or by hand with -Pull/--pull and -DryRun/--dry-run) → node src/supervisor/deploy.js: npm install when the package files changed, npm run build when one exists (none yet), roll, then /healthz + /api/version every 2 s for 60 s; 3 failed probes in a row, or not the new commit at the end → rollback, exit 1",
         "Restart fallback": "the scripts restart the task/unit (stop, kill node src/supervisor and src/worker.js, start, wait up to 120 s for the new commit) only when deploy.js exits 3 (no supervisor answers: the bootstrap) or 4 (src/supervisor/index.js changed), or when they just rewrote a task/unit that still named src/worker.js",
-        "Bootstrap": "node src/worker.js not started by the supervisor (an older task or unit, which a non-elevated deploy cannot rewrite) becomes the supervisor before loading any worker code; PA_NO_SUPERVISOR=1 runs the bare worker"
+        "Bootstrap": "node src/worker.js not started by the supervisor (an older task or unit, which a non-elevated deploy cannot rewrite) becomes the supervisor before loading any worker code; PA_NO_SUPERVISOR=1 runs the bare worker",
+        "Log": "<state dir>/logs/supervisor.log (PA_DATA_DIR, else %LOCALAPPDATA%\\personal-assistant or ~/.local/share/personal-assistant; PA_SUPERVISOR_LOG overrides): the supervisor's lines and each generation's stdout/stderr as [gen N], rotated at 5 MB, 3 kept. Workers log 'event loop blocked' for any stall over 1 s",
+        "Readiness": "a generation says ready only at the end of its startup (passes declared, lease requested), not when its port opens: the module loading in between blocked the loop for seconds right after the flip"
       },
       "code": [
         "personal-assistant/src/supervisor/index.js",
@@ -520,7 +522,9 @@
         "personal-assistant/linux/pa-worker.service",
         "personal-assistant/test/supervisor.test.js",
         "personal-assistant/test/lease.test.js",
-        "personal-assistant/test/deploy.test.js"
+        "personal-assistant/test/deploy.test.js",
+        "personal-assistant/src/util/lagWatch.js",
+        "personal-assistant/test/stalls.test.js"
       ]
     },
     {

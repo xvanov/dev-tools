@@ -470,6 +470,16 @@ Postgres and nowhere else. Tests use invented names; fixtures never hold a real 
   builtins and never `require` worker code from it — it is the process a deploy must not
   restart. Anything long-lived a worker serves (SSE, WebSocket) must survive being closed and
   reconnected, because a roll closes it.
+- **Logs.** The worker logs to stdout, which the Windows task (`conhost --headless`) throws
+  away. The supervisor writes its own lines and every generation's output (prefixed
+  `[gen N]`) to `<state dir>/logs/supervisor.log`, rotated at 5 MB into `.1`–`.3`: state dir
+  is `PA_DATA_DIR`, else `%LOCALAPPDATA%\personal-assistant` on Windows and
+  `$XDG_DATA_HOME/personal-assistant` (`~/.local/share/...`) on Linux; `PA_SUPERVISOR_LOG`
+  overrides the file. Look there first when a roll fails. A worker logs
+  `event loop blocked {ms, running}` for any stall over 1 s (`src/util/lagWatch.js`): a
+  blocked loop fails `/healthz`, and the deploy rolls back. Never call a synchronous process
+  (`spawnSync`, `execFileSync`) on a path the worker takes repeatedly; the vault's names are
+  listed once per 5 minutes for exactly this reason (`src/config.js`, `inVault`).
 - **Deploying (Z4).** `windows/redeploy.ps1` / `linux/redeploy.sh` (called by termhub's
   updater) → `src/supervisor/deploy.js`: install, build, roll, watch health 60 s, `rollback`
   if it fails. Its decisions are pure (`plan`, `verdict`, `test/deploy.test.js`); keep them

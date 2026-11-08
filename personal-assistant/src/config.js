@@ -678,6 +678,27 @@ const config = {
 const secretCache = new Map();
 const MISS_TTL_MS = 60_000;
 
+// Every vault read is a synchronous process (PowerShell on Windows, ~0.6 s),
+// and a miss was re-read every minute per name: a fresh worker generation's
+// first passes asked for a dozen unset names at once and blocked its event
+// loop past the deploy's health watch, which rolled it back. So the vault's
+// NAMES are listed once (one process) and kept for five minutes; a name not
+// in the list is a miss without asking. A secret stored from another process
+// is picked up within five minutes (forgetSecret() at once).
+const VAULT_LIST_TTL_MS = 5 * 60_000;
+let vaultNames = null; // { names: Set | null, at }
+
+function inVault(vault, name) {
+  if (!vaultNames || Date.now() - vaultNames.at > VAULT_LIST_TTL_MS) {
+    try {
+      vaultNames = { names: new Set(vault.list()), at: Date.now() };
+    } catch {
+      vaultNames = { names: null, at: Date.now() }; // cannot list: ask per name, as before
+    }
+  }
+  return vaultNames.names ? vaultNames.names.has(name) : true;
+}
+
 function envFileSecret(name) {
   const tool = parseEnvFile(path.join(TOOL_DIR, '.env'))[name];
   if (tool) return { value: tool, source: '.env' };
@@ -692,7 +713,7 @@ function resolveSecret(name) {
   if (process.env[name]) found = { value: process.env[name], source: 'env' };
   if (!found) {
     const vault = require('./secrets/vault');
-    if (vault.available()) {
+    if (vault.available() && inVault(vault, name)) {
       try {
         const v = vault.get(name);
         if (v) found = { value: v, source: 'credential-manager' };
@@ -719,6 +740,7 @@ function secretSource(name) {
 }
 
 function forgetSecret(name) {
+  vaultNames = null;
   if (name) secretCache.delete(name);
   else secretCache.clear();
 }
