@@ -42,6 +42,57 @@ deploy already done):
    overlap above 0.95, no errors. Time the export: it is most of the downtime below. Delete
    the scratch file after.
 
+6. Optional, and done once on the work laptop on 2026-11-08 (below): a worker rehearsal on that
+   scratch file, which touches no outside service and no person.
+
+### Worker rehearsal on a scratch copy
+
+A second worker, on a copy, on a spare port, with only the local passes. Set, for that process
+only:
+
+```
+PA_NO_SUPERVISOR=1  PA_DB=sqlite  PA_SQLITE_PATH=<scratch>.sqlite  PA_SQLITE_KEY=<its key>
+PA_DATABASE_URL=postgres://pa:pa@127.0.0.1:1/blocked     # any stray Postgres path fails, never reaches the live one
+PA_DATA_DIR=<scratch>/data  PA_BACKUP_DIR=<scratch>/backups  PA_BACKUP_KEY=<a scratch key>
+PA_DISPATCH_PORT=7399  PA_TOASTS=0  PA_NTFY=off  PA_CHAT_NUDGE=0  PA_FACTORY_MACHINE=none
+PA_M365=0 PA_TEAMS_CACHE=0 PA_SESSIONS=0 PA_GITHUB=0 PA_JIRA=0 PA_AUDIO_ENABLED=0
+PA_AUDIO_MEETING_GATE=0 PA_BRIEFS=0 PA_REPOS=0 PA_PLANNER=0 PA_CARD_CONTEXT=0 PA_FAST_LANE=0
+PA_REPLY_CLOSE=0 PA_DEDUPE=0 PA_BLOCKS=0 PA_RECONCILE=0
+PA_ONLY_PASSES=memory-extract,memory-consolidate,memory-pages,memory-dream,routines,durable,durable-worker,backup,retention
+```
+
+and run `node src/worker.js`. `PA_ONLY_PASSES` is what makes it safe: several passes have no
+switch of their own, and they shell out to logged-in `claude -p` and `gh`. The factory pacer
+stays off because its poll can submit or cancel jobs on the live factory. The board can be
+refreshed read-only, once, with `refreshBoard()` (`factory job list`).
+
+Result on the work laptop, 2026-11-08, on a fresh export (453 MB, encrypted):
+- Start: migrations, the lease (a row in `lease`), the durable worker, and the dashboard on
+  :7399, all within a second.
+- 12 minutes monitored:
+  - `/healthz` answered 63 of 63, median 35 ms. One 4.3 s stall is the nightly bundle's
+    encryption, which is synchronous, as it is for Postgres dumps.
+  - 0 sockets to Postgres, 0 pass failures, 0 errors. Memory held at 89 MB.
+- Passes:
+  - memory wrote 3 pages; routines had nothing due.
+  - The durable queue took the 10 chases copied from Absurd as sleeping and due, within a
+    second of start; 7 completed and 3 are asleep until their time.
+  - The backup pass wrote `pa-latest.sqlite` (9 s, off the event loop) and the nightly
+    `.pabak` (20 s).
+  - `pa backup restore --to` on that bundle: PASS, 79 tables, row counts match.
+- Live feed:
+  - An insert from another process reached `/api/events` as `g6702` within the poll.
+  - `Last-Event-ID: g6690` replayed the 12 events after it.
+  - The board, `/factory` and `/architecture` pages load (54-430 ms).
+  - The factory board refreshed read-only from `factory serve`: 10 jobs.
+- What the first tries found, all fixed before this run:
+  - The pages pass held the event loop for 69 s; it now takes 324 ms.
+  - The hourly snapshot blocked for 6+ s; it now runs on a worker thread.
+  - The live-feed listener opened a Postgres connection to `PA_DATABASE_URL` (read-only
+    LISTEN on the live store during those first tries); on SQLite it now uses a session of
+    the store.
+  - Statements over 250 ms are now logged: 24 in this run, 250-413 ms each.
+
 ## The cutover
 
 There is no delta to replay: writers are stopped for the few minutes the export takes, so the

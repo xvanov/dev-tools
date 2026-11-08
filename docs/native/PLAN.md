@@ -529,6 +529,19 @@ run mid-step; a job continued on an existing branch (`--branch`).
   Tested at work-stack size: a 453 MB snapshot in 6 s, the bundle in 10 s, the drill PASS in
   10-12 s. Also ready: live-feed events from other processes arrive through a 500 ms outbox
   poll, `pa doctor` reports the SQLite store, and `PA_SQLITE_KEY` resolves from the OS vault.
+  Worker rehearsal (2026-11-08, work laptop, details in the runbook): a second worker on a fresh
+  encrypted export, port 7399, `PA_ONLY_PASSES` (new) limiting it to memory, routines, durable,
+  backup and retention, Postgres URL pointed at a closed port, no toasts or pushes.
+  - Over 12 minutes: healthz 63/63 (median 35 ms), 0 Postgres sockets, 0 pass failures.
+  - The durable queue ran the chases copied from Absurd; the memory pass wrote pages.
+  - Backup snapshot and bundle written; the drill PASS.
+  - Live feed: a cross-process event and `Last-Event-ID` replay both work.
+  - The factory board refreshed read-only.
+
+  The first tries found three problems, fixed before it (b0b3a8e, 4510d82):
+  - a 69 s pages query blocking the event loop;
+  - the snapshot on the main thread;
+  - the live-feed listener opening its own Postgres connection, read-only, to the live store.
 - [ ] **3.6** WSL off on the work laptop (D6); Postgres removed. Also retire the other WSL
   leftovers: the old termhub `server.js` in WSL (ports 7100/7110) and its watchdog timer, the
   `pa-wsl-keepalive` scheduled task, the unused WSL factory checkout, and any Docker/Rancher
