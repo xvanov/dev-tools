@@ -241,6 +241,9 @@ run mid-step; a job continued on an existing branch (`--branch`).
   - [ ] **E5.2 Planning steps are not watchable (E2).** The job's first step (`sm`, runtime api, state ok)
     had `session: null` even though the job runtime is claude_session, so its planning work never
     shows in Run.
+    Fixed in code (717699c, 15cbc74), live after the next deploy: every model step of a job opens
+    E2's stream and termhub session, text steps included (PM triage, SM, reviewer: `text_run`), with
+    E1 links on a runs row opened at the step's start; PM triage now carries the job's app/direction.
   - [ ] **E5.3 Dev step starts late.** After 10 min the dev step (the first session) had not started:
     the factory moves a story one step per 300 s tick. Card to job started took 109 s against a < 1 s target.
   Run 2 (same variant, first_output timeout 1800 s, 04:19Z; card #6759, job dev-tools:005): card 0.3 s,
@@ -253,6 +256,14 @@ run mid-step; a job continued on an existing branch (`--branch`).
     factory_start took 2 min 19 s, and the job again stayed `queued` past the 300 s job_started limit.
     A concurrent smoke job (dev-tools:006) on the same app was live the whole time, so the job may have been
     serialized behind it (asked factory-native). The live feed delivered 17 run/factory events.
+    factory-native: yes, serialized. One tick per app at a time, and a tick runs agent steps
+    synchronously: 006's tick (with its onboarder inside) held dev-tools for 339 s, so 007's triage
+    waited. Measured on serve after 2.2 (dev-tools:008, alone on the app): submit 1.3 s, wake tick
+    +2 s, PM triage call starts +7.9 s; with 15cbc74 that step's runs row opens at its start, so
+    job_started reads ~8 s. The PM call itself takes ~146 s (azure/deepseek-v4-pro). Left: (a) a
+    new job's triage should not queue behind another job's long step on the same app (a separate
+    intake lane in serve); (b) the PA's factory_start (compose + submit) took 2-3 min in runs 2-3:
+    needs PA-side timing to split compose from submit (submit through serve is ~1-2 s).
 - [ ] **E6 Gate.** Each phase's Exit box below requires a green E4 run (all variants) on both
   stacks, with the timings recorded in the targets table.
 - [ ] **Exit E:** the user runs the golden path by voice ("start a factory job for …"), watches
