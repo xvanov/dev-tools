@@ -2,9 +2,15 @@
 
 // `pa routine` — recurring typed actions. Kept in its own file so
 // cli/index.js only has to wire it in.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+type Row = import('../repo/types.ts').Row;
+/** JSON read or built key by key (src/types.ts): loose until its producer is TypeScript. */
+type Json = import('../types.ts').Json;
 
 const readline = require('readline');
-const { flagInt, flagBool } = require('./parseArgs');
+const { flagInt, flagBool } = require('./parseArgs.ts');
 
 const HELP = `
   Routines (actions that change things on this machine, on a schedule)
@@ -20,33 +26,33 @@ const HELP = `
     pa routine actions                 what a routine is allowed to do
 `;
 
-function ask(question) {
+function ask(question: any) {
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
   return new Promise((resolve) => {
-    rl.question(`${question} `, (answer) => {
+    rl.question(`${question} `, (answer: any) => {
       rl.close();
       resolve(/^y(es)?$/i.test(answer.trim()));
     });
   });
 }
 
-function when(v) {
+function when(v: any) {
   if (!v) return '—';
   const d = new Date(v);
   return `${d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })} ${d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}`;
 }
 
-function make(out, fail) {
+function make(out: any, fail: any) {
   const R = () => require('../routines');
 
-  function showPreview(p) {
+  function showPreview(p: any) {
     out(`  ${p.title}`);
     out(`  ${p.plain}`);
     out(p.changes ? `  ACTION — will change things on this machine: ${p.changes}` : '  Read-only — changes nothing on this machine');
     out(`  schedule: ${p.schedule}   next: ${p.nextRuns.map(when).join(' · ')}`);
   }
 
-  function line(r) {
+  function line(r: any) {
     const flags = [r.status, r.origin === 'suggested' ? 'suggested' : null].filter(Boolean).join(', ');
     const last = r.last_summary ? `  last: ${r.last_ok === false ? 'FAILED ' : ''}${r.last_summary}` : '';
     return [
@@ -57,7 +63,7 @@ function make(out, fail) {
     ].filter(Boolean).join('\n');
   }
 
-  async function routine(args, flags) {
+  async function routine(args: any, flags: any) {
     const sub = (args[0] || 'list').toLowerCase();
     const id = args[1];
     const routines = R();
@@ -114,7 +120,7 @@ function make(out, fail) {
       out(`${dryRun ? 'Dry run of' : 'Running'} #${r.id} ${r.title}…`);
       const run = await routines.runRoutine(id, { dryRun, fetch: flags.fetch !== false });
       out(`${run.ok ? '' : 'FAILED: '}${run.summary}`);
-      run.lines.forEach((l, i) => out(`  ${i + 1}. ${l}`));
+      run.lines.forEach((l: any, i: any) => out(`  ${i + 1}. ${l}`));
       return;
     }
     if (['pause', 'resume', 'accept', 'reject'].includes(sub)) {

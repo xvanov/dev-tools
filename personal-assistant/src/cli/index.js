@@ -14,7 +14,7 @@ const readline = require('readline');
 
 const { config } = require('../config.ts');
 const platform = require('../platform');
-const { parseArgs, flagInt, flagBool } = require('./parseArgs');
+const { parseArgs, flagInt, flagBool } = require('./parseArgs.ts');
 // The pool, for its lifecycle only (probe, close): every statement is a repository method.
 const db = require('../db');
 const repository = require('../repo');
@@ -1788,15 +1788,15 @@ const commands = {
   },
 };
 
-Object.assign(commands, require('./memory').make(out, fail));
-Object.assign(commands, require('./secret').make(out, fail));
-Object.assign(commands, require('./passkeys').make(out, fail));
+Object.assign(commands, require('./memory.ts').make(out, fail));
+Object.assign(commands, require('./secret.ts').make(out, fail));
+Object.assign(commands, require('./passkeys.ts').make(out, fail));
 commands.secrets = commands.secret; // `pa secrets migrate` reads better than `pa secret migrate`
-Object.assign(commands, require('./meeting').make(out, fail));
-Object.assign(commands, require('./routine').make(out, fail));
-Object.assign(commands, require('./task').make(out, fail));
-Object.assign(commands, require('./e2e').make(out, fail));
-Object.assign(commands, require('./audit').make(out, fail));
+Object.assign(commands, require('./meeting.ts').make(out, fail));
+Object.assign(commands, require('./routine.ts').make(out, fail));
+Object.assign(commands, require('./task.ts').make(out, fail));
+Object.assign(commands, require('./e2e.ts').make(out, fail));
+Object.assign(commands, require('./audit.ts').make(out, fail));
 
 async function main(argv) {
   const { command, args, flags, lists } = parseArgs(argv);

@@ -3,8 +3,14 @@
 // `pa task add` — a task because you said so (src/commitments/request.js) —
 // and `pa policy`, which sources may create tasks at all
 // (src/commitments/sourcePolicy.js) and closing the cards it would not have made.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
 
-const { flagBool } = require('./parseArgs');
+type Row = import('../repo/types.ts').Row;
+/** JSON read or built key by key (src/types.ts): loose until its producer is TypeScript. */
+type Json = import('../types.ts').Json;
+
+const { flagBool } = require('./parseArgs.ts');
 
 const HELP = `
   Tasks
@@ -22,7 +28,7 @@ const HELP = `
  * The text is every positional after `add`; a boolean flag that swallowed a
  * word (`--owed-to-me Fix it`) gives the word back.
  */
-function addOptions(args, flags) {
+function addOptions(args: any, flags: any) {
   const words = args.slice(1).map(String);
   let owedToMe = false;
   const o = flags['owed-to-me'];
@@ -30,13 +36,13 @@ function addOptions(args, flags) {
     owedToMe = true;
     words.unshift(o);
   } else owedToMe = flagBool(flags, 'owed-to-me');
-  const str = (name) => (typeof flags[name] === 'string' ? flags[name] : null);
+  const str = (name: any) => (typeof flags[name] === 'string' ? flags[name] : null);
   return { text: words.join(' '), due: str('due'), for: str('for'), owedToMe, project: str('project'), via: 'cli' };
 }
 
-function make(out, fail) {
+function make(out: any, fail: any) {
   return {
-    async task(args, flags) {
+    async task(args: any, flags: any) {
       const sub = String(args[0] || '').toLowerCase();
       if (sub !== 'add') return fail(require('../commitments/request.ts').USAGE);
       const request = require('../commitments/request.ts');
@@ -44,7 +50,7 @@ function make(out, fail) {
       out(request.describe(r));
     },
 
-    async policy(args, flags) {
+    async policy(args: any, flags: any) {
       const sub = String(args[0] || '').toLowerCase();
       const policy = require('../commitments/sourcePolicy.ts');
       if (!sub || sub === 'show') {

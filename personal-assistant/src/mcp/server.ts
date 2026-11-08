@@ -310,7 +310,7 @@ function paToolArgv(command: unknown, args: unknown[] = []) {
   if (!Array.isArray(args) || !args.every((a: unknown) => typeof a === 'string')) throw new Error('args must be an array of strings');
   const words = String(command).split(' ');
   const argv = [...words, ...args];
-  const { parseArgs } = require('../cli/parseArgs');
+  const { parseArgs } = require('../cli/parseArgs.ts');
   const parsed = parseArgs(argv);
   // The fixed words come first, so the verb and its sub-command are ours; the
   // first positional after them is the one a writing sub-command would take.

@@ -13,6 +13,12 @@
 // HTTP route does it. A lost phone or a wiped authenticator is therefore a
 // one-minute fix at the keyboard, not a lockout. The other exit, when the
 // dashboard is unreachable for any reason, is setting PA_PASSKEYS=off.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+type Row = import('../repo/types.ts').Row;
+/** JSON read or built key by key (src/types.ts): loose until its producer is TypeScript. */
+type Json = import('../types.ts').Json;
 
 const readline = require('readline');
 
@@ -24,14 +30,14 @@ const HELP = `
     Lost everything and cannot reach the dashboard? Set PA_PASSKEYS=off and restart the PA.
 `;
 
-function ask(question) {
+function ask(question: any) {
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-  return new Promise((resolve) => rl.question(question, (a) => { rl.close(); resolve(a); }));
+  return new Promise<string>((resolve) => rl.question(question, (a: any) => { rl.close(); resolve(a); }));
 }
 
-function make(out, fail) {
+function make(out: any, fail: any) {
   return {
-    async passkeys(args) {
+    async passkeys(args: any) {
       const { enabled } = require('../auth/settings.ts');
       const sub = (args[0] || 'status').toLowerCase();
 

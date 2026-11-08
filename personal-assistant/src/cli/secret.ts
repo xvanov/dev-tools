@@ -6,9 +6,15 @@
 // `set` reads the value from a hidden prompt (nothing echoed) or from piped
 // stdin, never from an argument: an argument lands in shell history and is
 // visible to every process on the machine for as long as `pa` runs.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+type Row = import('../repo/types.ts').Row;
+/** JSON read or built key by key (src/types.ts): loose until its producer is TypeScript. */
+type Json = import('../types.ts').Json;
 
 const path = require('path');
-const { flagBool } = require('./parseArgs');
+const { flagBool } = require('./parseArgs.ts');
 
 const HELP = `
   Secrets
@@ -23,18 +29,18 @@ const HELP = `
                                          line becomes NAME= . Never prints a value.
 `;
 
-function day(v) {
+function day(v: any) {
   return v ? new Date(v).toISOString().replace('T', ' ').slice(0, 16) : '';
 }
 
 // Reads a line from the terminal with echo off. Raw mode means we see each
 // key: Enter ends, Backspace edits, Ctrl+C aborts. Nothing is written back
 // except the prompt and a newline.
-function readHidden(prompt) {
+function readHidden(prompt: any) {
   const stdin = process.stdin;
   if (!stdin.isTTY) {
     // Piped: `Get-Clipboard | pa secret set NAME`. Still not argv.
-    return new Promise((resolve, reject) => {
+    return new Promise<string>((resolve, reject) => {
       let data = '';
       stdin.setEncoding('utf8');
       stdin.on('data', (d) => { data += d; });
@@ -42,13 +48,13 @@ function readHidden(prompt) {
       stdin.on('error', reject);
     });
   }
-  return new Promise((resolve, reject) => {
+  return new Promise<string>((resolve, reject) => {
     process.stderr.write(prompt);
     let value = '';
     stdin.setRawMode(true);
     stdin.resume();
     stdin.setEncoding('utf8');
-    const finish = (err) => {
+    const finish = (err?: any) => {
       stdin.setRawMode(false);
       stdin.pause();
       stdin.removeListener('data', onData);
@@ -56,7 +62,7 @@ function readHidden(prompt) {
       if (err) reject(err);
       else resolve(value);
     };
-    function onData(chunk) {
+    function onData(chunk: any) {
       for (const ch of chunk) {
         if (ch === '\r' || ch === '\n') return finish();
         if (ch === '\u0003') return finish(new Error('cancelled'));
@@ -68,9 +74,9 @@ function readHidden(prompt) {
   });
 }
 
-function make(out, fail) {
+function make(out: any, fail: any) {
   return {
-    async secret(args, flags) {
+    async secret(args: any, flags: any) {
       const secrets = require('../secrets');
       const sub = (args[0] || 'list').toLowerCase();
       const name = args[1];
@@ -128,11 +134,11 @@ function make(out, fail) {
         const toolDir = cfg.config.toolDir;
         const defaults = migrate.defaultSources({ toolDir, repoRoot: path.resolve(toolDir, '..') });
         const only = typeof flags.file === 'string' ? path.resolve(flags.file) : null;
-        const sources = only ? [defaults.find((s) => s.file === only) || { file: only, readable: migrate.PA_READABLE }] : defaults;
+        const sources = only ? [defaults.find((s: any) => s.file === only) || { file: only, readable: migrate.PA_READABLE }] : defaults;
         const apply = flagBool(flags, 'apply');
-        const r = migrate.migrate(sources, { vault, apply, onStored: (n) => cfg.forgetSecret(n) });
+        const r = migrate.migrate(sources, { vault, apply, onStored: (n: any) => cfg.forgetSecret(n) });
         if (!r.available) return fail(`${vault.label()} is not available on this machine — nothing moved`);
-        const words = {
+        const words: Json = {
           move: 'would move',
           dedupe: 'already in the keyring (same value): would empty the .env line',
           conflict: 'KEPT: the keyring holds a different value',
@@ -144,7 +150,7 @@ function make(out, fail) {
         };
         if (!r.rows.length) out('no secrets found in the .env files');
         for (const row of r.rows) out(`  ${row.name.padEnd(26)} ${words[row.action]}  (${row.file})${row.error ? ` ${row.error}` : ''}`);
-        if (!apply && r.rows.some((x) => x.action === 'move' || x.action === 'dedupe')) out('\n  dry run, nothing changed. Re-run with --apply to move them.');
+        if (!apply && r.rows.some((x: any) => x.action === 'move' || x.action === 'dedupe')) out('\n  dry run, nothing changed. Re-run with --apply to move them.');
         return;
       }
 

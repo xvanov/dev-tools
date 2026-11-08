@@ -1,6 +1,12 @@
 'use strict';
 
 // `pa audit`: the policy engine's audit log (plan 4.3; src/policy, src/repo/audit.js).
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+type Row = import('../repo/types.ts').Row;
+/** JSON read or built key by key (src/types.ts): loose until its producer is TypeScript. */
+type Json = import('../types.ts').Json;
 
 const HELP = `pa audit — every decision of the policy engine, hash-chained
 
@@ -17,9 +23,9 @@ The policy is src/policy/default.policy.json plus your untracked override (PA_PO
 <data dir>/policy.json).
 `;
 
-function make(out, fail) {
+function make(out: any, fail: any) {
   return {
-    async audit(args, flags) {
+    async audit(args: any, flags: any) {
       const sub = args[0] || 'help';
       if (sub === 'help') return out(HELP);
       if (sub === 'verify') {

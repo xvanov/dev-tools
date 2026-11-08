@@ -17,12 +17,18 @@
 //  - A repeated flag keeps its last value in `flags`, as before; every value it
 //    was given is in `lists[name]`, in order, for the few verbs that take a
 //    flag more than once (`pa do --done a --done b`).
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
 
-function parseArgs(argv) {
+type Row = import('../repo/types.ts').Row;
+/** JSON read or built key by key (src/types.ts): loose until its producer is TypeScript. */
+type Json = import('../types.ts').Json;
+
+function parseArgs(argv: string[]) {
   const args = [];
-  const flags = {};
-  const lists = {};
-  const set = (name, value) => {
+  const flags: Json = {};
+  const lists: Json = {};
+  const set = (name: any, value: any) => {
     flags[name] = value;
     if (typeof value === 'string') (lists[name] = lists[name] || []).push(value);
   };
@@ -36,6 +42,7 @@ function parseArgs(argv) {
       args.push(token);
       continue;
     }
+    if (token === undefined) continue;
     if (token === '--') {
       literal = true;
       continue;
@@ -83,14 +90,14 @@ function parseArgs(argv) {
 
 // Flags arrive as strings; commands that mean numbers should say so once here
 // rather than sprinkling Number() through the handlers.
-function flagInt(flags, name, fallback = null) {
+function flagInt(flags: any, name: any, fallback: any | null = null) {
   const v = flags[name];
   if (v === undefined || v === true || v === false) return fallback;
   const n = Number.parseInt(String(v), 10);
   return Number.isFinite(n) ? n : fallback;
 }
 
-function flagBool(flags, name, fallback = false) {
+function flagBool(flags: any, name: any, fallback: boolean = false) {
   const v = flags[name];
   if (v === undefined) return fallback;
   if (v === true || v === false) return v;

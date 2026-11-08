@@ -522,7 +522,7 @@
         "personal-assistant/src/policy/index.js",
         "personal-assistant/src/policy/default.policy.json",
         "personal-assistant/src/repo/audit.ts",
-        "personal-assistant/src/cli/audit.js",
+        "personal-assistant/src/cli/audit.ts",
         "personal-assistant/test/policy.test.js"
       ]
     },
@@ -682,7 +682,7 @@
         "personal-assistant/src/auth/stepup.ts",
         "personal-assistant/src/dashboard/auth.ts",
         "personal-assistant/src/dashboard/login.client.js",
-        "personal-assistant/src/cli/passkeys.js",
+        "personal-assistant/src/cli/passkeys.ts",
         "personal-assistant/test/passkeys.test.js",
         "personal-assistant/test/dashboardAuth.test.js"
       ]
@@ -1057,7 +1057,7 @@
         "personal-assistant/src/e2e/workflows.js",
         "personal-assistant/src/e2e/workflowsCore.js",
         "personal-assistant/src/e2e/screens.js",
-        "personal-assistant/src/cli/e2e.js",
+        "personal-assistant/src/cli/e2e.ts",
         "personal-assistant/test/e2e.test.js",
         "personal-assistant/test/e2eWorkflows.test.js"
       ]

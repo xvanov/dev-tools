@@ -6,7 +6,7 @@
 // type an option at an agent.
 
 const assert = require('assert');
-const { parseArgs, flagInt, flagBool } = require('../src/cli/parseArgs');
+const { parseArgs, flagInt, flagBool } = require('../src/cli/parseArgs.ts');
 
 {
   const r = parseArgs(['brief']);

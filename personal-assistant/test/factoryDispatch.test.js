@@ -210,7 +210,7 @@ assert.throws(() => R.via('carrier-pigeon'), /unknown route/);
 // --- parseArgs: a flag given twice ---------------------------------------------------
 
 {
-  const { parseArgs } = require('../src/cli/parseArgs');
+  const { parseArgs } = require('../src/cli/parseArgs.ts');
   const r = parseArgs(['do', '12', '--via', 'factory', '--done', 'a', '--done=b, with a comma', '--model', 'dev=x']);
   assert.deepStrictEqual(r.lists.done, ['a', 'b, with a comma']);
   assert.strictEqual(r.flags.done, 'b, with a comma', 'flags keep the last value, as before');

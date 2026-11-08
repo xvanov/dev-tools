@@ -2,8 +2,14 @@
 
 // `pa memory`, `pa remember`, `pa forget` — the memory layer's verbs. Kept in
 // their own file so cli/index.js only has to wire them in.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
 
-const { flagInt, flagBool } = require('./parseArgs');
+type Row = import('../repo/types.ts').Row;
+/** JSON read or built key by key (src/types.ts): loose until its producer is TypeScript. */
+type Json = import('../types.ts').Json;
+
+const { flagInt, flagBool } = require('./parseArgs.ts');
 
 const HELP = `
   Memory
@@ -17,11 +23,11 @@ const HELP = `
     pa forget <claim> | item:<id>   retract a claim, or everything read from an item
 `;
 
-function day(v) {
+function day(v: any) {
   return v ? new Date(v).toISOString().slice(0, 10) : '';
 }
 
-function claimLine(c) {
+function claimLine(c: any) {
   const flags = [];
   if (c.status !== 'active') flags.push(c.status);
   if (c.origin === 'explicit') flags.push('noted');
@@ -33,9 +39,9 @@ function claimLine(c) {
   ].filter(Boolean).join('\n');
 }
 
-function make(out, fail) {
+function make(out: any, fail: any) {
   return {
-    async memory(args, flags) {
+    async memory(args: any, flags: any) {
       const memory = require('../memory');
       const sub = (args[0] || '').toLowerCase();
 
@@ -133,7 +139,7 @@ function make(out, fail) {
       out(`${page.body}\n\n(generated ${day(page.generated_at)} · \`pa memory claims ${name}\` for the evidence)`);
     },
 
-    async remember(args, flags) {
+    async remember(args: any, flags: any) {
       const text = args.join(' ');
       if (!text) return fail('usage: pa remember "<note>" [--about name] [--kind k]');
       const memory = require('../memory');
@@ -147,7 +153,7 @@ function make(out, fail) {
       else if (c.decision === 'duplicate') out(`  already known as #${c.target_id}`);
     },
 
-    async forget(args) {
+    async forget(args: any) {
       const arg = String(args[0] || '');
       const m = arg.match(/^item:(\d+)$/i);
       if (!m && !/^\d+$/.test(arg)) return fail('usage: pa forget <claim-id> | item:<source-item-id>');

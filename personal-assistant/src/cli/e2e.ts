@@ -5,6 +5,12 @@
 // Map (plan 8.2; src/e2e/workflows.js), with evidence in a run folder.
 // Prints a table and the JSON report (`--json`: the JSON alone), and exits
 // non-zero on any missed hop, failed check or cost over the ceiling.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+type Row = import('../repo/types.ts').Row;
+/** JSON read or built key by key (src/types.ts): loose until its producer is TypeScript. */
+type Json = import('../types.ts').Json;
 
 const { USAGE } = require('../e2e/goldenPathCore');
 
@@ -15,9 +21,9 @@ const HELP = `${USAGE}
         evidence (summary.json, transcripts, screenshots) in <PA data dir>/e2e/<stamp>-<workflow>/
   pa e2e all --dry-run                              every workflow's dry run`;
 
-function make(out, fail) {
+function make(out: any, fail: any) {
   return {
-    async e2e(args, flags, lists) {
+    async e2e(args: any, flags: any, lists: any) {
       const C = require('../e2e/goldenPathCore');
       const which = args[0] ? String(args[0]) : null;
       if (args.length > 1) return fail(`pa e2e takes one workflow (got "${args.join(' ')}")\n${HELP}`);
@@ -25,7 +31,7 @@ function make(out, fail) {
       let report;
       try {
         report = await require('../e2e/goldenPath').main(flags, lists);
-      } catch (err) {
+      } catch (err: any) {
         if (err.usage) return fail(`${err.message}\n${HELP}`);
         throw err;
       }
@@ -42,7 +48,7 @@ function make(out, fail) {
     },
   };
 
-  async function workflow(which, flags, lists) {
+  async function workflow(which: any, flags: any, lists: any) {
     const W = require('../e2e/workflowsCore');
     const runner = require('../e2e/workflows');
     const ids = which === 'all' ? W.workflows(require('../dashboard/architecture.json')) : [which];
@@ -52,7 +58,7 @@ function make(out, fail) {
       let s;
       try {
         s = await runner.main(id, flags, lists);
-      } catch (err) {
+      } catch (err: any) {
         if (err.usage) return fail(`${err.message}\n${HELP}`);
         throw err;
       }

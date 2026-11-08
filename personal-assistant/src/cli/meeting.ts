@@ -1,6 +1,12 @@
 'use strict';
 
 // `pa meeting …` — pre-meeting briefs from the terminal (src/meetings).
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+type Row = import('../repo/types.ts').Row;
+/** JSON read or built key by key (src/types.ts): loose until its producer is TypeScript. */
+type Json = import('../types.ts').Json;
 
 const HELP = `pa meeting — pre-meeting briefs
 
@@ -19,11 +25,11 @@ const HELP = `pa meeting — pre-meeting briefs
   pa meeting undo <debrief-id> <n>    take back item n of a debrief
 `;
 
-function make(out, fail) {
-  const { flagInt, flagBool } = require('./parseArgs');
-  const local = (iso) => new Date(iso).toLocaleString([], { weekday: 'short', hour: '2-digit', minute: '2-digit', month: 'short', day: 'numeric' });
+function make(out: any, fail: any) {
+  const { flagInt, flagBool } = require('./parseArgs.ts');
+  const local = (iso: any) => new Date(iso).toLocaleString([], { weekday: 'short', hour: '2-digit', minute: '2-digit', month: 'short', day: 'numeric' });
 
-  function printBrief(r) {
+  function printBrief(r: any) {
     const b = r.brief;
     out(`${local(r.meeting.start)} · ${r.meeting.subject} · ${r.kind} (${r.kindSource})`);
     out('');
@@ -32,14 +38,14 @@ function make(out, fail) {
     if (Object.keys(refs).length) {
       out('');
       out('Sources:');
-      for (const [label, ref] of Object.entries(refs)) out(`  ${label}  ${ref.key}${ref.url ? `  ${ref.url}` : ''}`);
+      for (const [label, ref] of Object.entries(refs) as [string, any][]) out(`  ${label}  ${ref.key}${ref.url ? `  ${ref.url}` : ''}`);
     }
     out('');
     out(`brief #${b.id} · ${b.notification_id ? `notified #${b.notification_id}` : 'not notified'} · event ${r.meeting.eventId.slice(0, 24)}…`);
   }
 
   return {
-    async meeting(args, flags) {
+    async meeting(args: any, flags: any) {
       const meetings = require('../meetings');
       const sub = args[0] || 'help';
       if (sub === 'help') return out(HELP);
@@ -100,7 +106,7 @@ function make(out, fail) {
         const { itemLine } = require('../meetings/debriefCore.ts');
         const items = r.debrief ? r.debrief.applied.items : r.plan.items;
         if (!items.length) out('  nothing for you in this one');
-        items.forEach((it, i) => {
+        items.forEach((it: any, i: any) => {
           out(`  ${i + 1}. ${itemLine(it)}${it.commitmentId && it.type !== 'update' ? `  (#${it.commitmentId})` : ''}`);
           out(`     "${it.quote}"`);
         });

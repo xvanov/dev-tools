@@ -118,8 +118,8 @@ const long = R.parse({ text: 'z'.repeat(300) }, now);
 assert.ok(long.summary.length <= 200 && long.detail.length === 300, 'a long task keeps its words in detail');
 assert.match(R.describe({ id: 9, summary: 'Ship it', direction: 'owed_to_me', who: 'Bryn', personFound: false, dueAt: null }), /task #9: Ship it · owed to you by Bryn · \(no single person/);
 
-const { addOptions } = require('../src/cli/task');
-const { parseArgs } = require('../src/cli/parseArgs');
+const { addOptions } = require('../src/cli/task.ts');
+const { parseArgs } = require('../src/cli/parseArgs.ts');
 const cli = (line) => {
   const p = parseArgs(line);
   return addOptions(p.args, p.flags);
