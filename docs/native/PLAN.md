@@ -302,9 +302,11 @@ run mid-step; a job continued on an existing branch (`--branch`).
     personal-assistant change, the dev session ran in `<worktree>/software-factory`, installed its dev
     extra and ran the full suite, which took over 10 min and hung at 98%. A monorepo app needs a gate
     per changed tool (personal-assistant: `npm test`).
-  - [ ] **E5.8 Step sessions carry no E1 links in termhub.** GET :7000/api/sessions shows `links` empty
+  - [x] **E5.8 Step sessions carry no E1 links in termhub.** GET :7000/api/sessions shows `links` empty
     on every factory step session (pm, sm, dev of dev-tools:009), so Run cannot lead back to the job
-    or step.
+    or step. Fixed by 7e9bbb8 once the work sessiond was restarted (by the owner, 2026-11-08):
+    the work stack's e2e of dev-tools:013 showed every step session listed with its job and
+    step links.
   - [x] **E5.5 factory serve returns empty stdout for some CLI commands** (`app list --json`, the submit
     path), so nothing can be dispatched through serve (sent to factory-native).
     factory-native: yes, serialized. One tick per app at a time, and a tick runs agent steps
@@ -377,11 +379,10 @@ run mid-step; a job continued on an existing branch (`--branch`).
     threshold 0.85. Router p50 98–124 ms, p95 129–175 ms warm. One run under heavy parallel
     agent load had p50 176 ms. (0163ef0)
 - [x] **0.7** T1, T2, T3 and Z1 landed (from the tracks above). (T1 5bc7a6d, T2 d3f7a19, T3 32587f8, Z1 262f4ab)
-- [ ] **0.8** E1, E4 and E5 landed: the golden path runs on today's system and its broken hops
+- [x] **0.8** E1, E4 and E5 landed: the golden path runs on today's system and its broken hops
   are fixed. E2 (watchable API runs) lands here too if the baseline shows it missing.
   2026-11-08: E1, E4 and E5 have landed, and the golden path is green on the personal stack. On the work
-  stack only E5.8 is left (termhub step sessions carry no links: the old sessiond). It waits on the
-  user's sessiond restart; tick this once a work run shows the links.
+  stack E5.8 was the last; its links showed after the owner's sessiond restart (see E5.8).
 - [ ] **Exit 0:** measured again; targets table updated with new numbers.
 
 ## Phase 1: contracts and the repository layer
@@ -499,9 +500,13 @@ run mid-step; a job continued on an existing branch (`--branch`).
   to a missing dir. The PA reads the same pointer (`resolveStateDir`, `factoryPace.js`; the
   backup bundle keeps the dir's own name). Full suite on Windows: 4157 passed, 202 skipped, 4
   failed (three pass alone; `test_no_first_write_watchdog_pauses_and_still_grades` fails the
-  same on main, a wall-clock budget). Left, on each machine with the factory off: `factory
-  state migrate`, re-run install-serve.ps1 (or copy the new systemd unit: the old one passes an
-  absolute `--log-file` under the repo), restart serve and the PA worker (docs/WINDOWS.md).
+  same on main, a wall-clock budget). Migrated on both machines 2026-11-08 (~17:00Z) with serve
+  and the PA worker stopped, per docs/WINDOWS.md: work 29 MB to `%LOCALAPPDATA%`, personal to
+  `~/.local/share/software-factory/state`; serve ticks every app from there and each repo's
+  `state/` holds only `.gitignore`. On Windows `factory off` disables the serve task but leaves
+  its processes running, so stop the task (`Stop-ScheduledTask factory-serve`) and its
+  `factory serve` processes before migrating. Six personal `context-refresh` worktrees of an
+  untracked app failed to re-link; their git metadata had been pruned long before.
 - [ ] **2.5b Real dev-tools context through a docs job (open).** After 2.5, file a docs job so
   the onboarder writes `software-factory/apps/dev-tools/context/` in a worktree and delivers it
   as a PR (context is tracked by design; do not gitignore it).
