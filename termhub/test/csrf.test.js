@@ -25,10 +25,10 @@ process.env.TERMHUB_DATA_DIR = tmp;       // never touch the live archive / idle
 delete process.env.TERMHUB_NTFY_TOPIC;     // and never push a notification
 
 const WebSocket = require('ws');
-const { checkRequest, checkUpgrade, setLearnedNames } = require('../lib/requestGuard');
+const { checkRequest, checkUpgrade, setLearnedNames } = require('../lib/requestGuard.ts');
 const { createSessiond } = require('../sessiond');
-const { createFront } = require('../front');
-const peers = require('../lib/peers');
+const { createFront } = require('../front.ts');
+const peers = require('../lib/peers.ts');
 
 // ---- the rules (pure) -------------------------------------------------------
 
@@ -191,7 +191,7 @@ const listen = (server) => new Promise((ok) => server.listen(0, '127.0.0.1', () 
 
 // No tailnet name learned and none configured: a startup warning naming TERMHUB_ALLOWED_HOSTS.
 {
-  const { selfNamesWarning } = require('../lib/requestGuard');
+  const { selfNamesWarning } = require('../lib/requestGuard.ts');
   const w = selfNamesWarning(new Set(), {});
   require('assert').match(w, /TERMHUB_ALLOWED_HOSTS/);
   require('assert').match(w, /tailscale/);

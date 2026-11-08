@@ -20,6 +20,11 @@
 //
 // A bare host gets the default publish port. Entries may also be full URLs, for
 // a machine published somewhere unusual.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+/** JSON read or built key by key (lib/types.ts): loose until its producer is TypeScript. */
+type Json = import('./types.ts').Json;
 
 const fs = require('fs');
 const path = require('path');
@@ -56,7 +61,7 @@ function peersFile() {
   return path.join(dataDir(), 'peers.json');
 }
 
-function normalize(entry) {
+function normalize(entry: any) {
   const raw = String(entry || '').trim().replace(/\/+$/, '');
   if (!raw) return null;
   if (/^https?:\/\//i.test(raw)) return raw;
@@ -82,7 +87,7 @@ function readFileList() {
 function list() {
   const fromEnv = String(process.env.TERMHUB_PEERS || '').split(',');
   const entries = fromEnv.some((s) => s.trim()) ? fromEnv : readFileList();
-  const out = [];
+  const out: any[] = [];
   for (const e of entries) {
     const url = normalize(e);
     if (url && !out.includes(url)) out.push(url);
@@ -90,8 +95,8 @@ function list() {
   return out;
 }
 
-function save(entries) {
-  const peers = [];
+function save(entries: any) {
+  const peers: any[] = [];
   for (const e of entries || []) {
     const url = normalize(e);
     if (url && !peers.includes(url)) peers.push(url);
@@ -111,15 +116,15 @@ function save(entries) {
 // address comes from there: the request still carries the name, so TLS
 // verification against the ts.net certificate is unchanged.
 const TS_HOSTS_TTL_MS = 60 * 1000;
-const tsHosts = { at: 0, map: new Map(), pending: null };
+const tsHosts: any = { at: 0, map: new Map(), pending: null };
 
 // DNSName (no trailing dot, lowercased) -> first IPv4 tailnet address.
 // Kept apart from the spawn so it can be tested against captured output.
-function hostsFromStatus(status) {
+function hostsFromStatus(status: any) {
   const map = new Map();
-  const add = (p) => {
+  const add = (p: any) => {
     if (!p || !p.DNSName) return;
-    const ip = (p.TailscaleIPs || []).find((a) => /^\d+\.\d+\.\d+\.\d+$/.test(a));
+    const ip = (p.TailscaleIPs || []).find((a: any) => /^\d+\.\d+\.\d+\.\d+$/.test(a));
     if (ip) map.set(String(p.DNSName).replace(/\.$/, '').toLowerCase(), ip);
   };
   add(status && status.Self);
@@ -127,7 +132,7 @@ function hostsFromStatus(status) {
   return map;
 }
 
-function tailnetAddress(hostname) {
+function tailnetAddress(hostname: any) {
   const key = String(hostname).toLowerCase();
   if (Date.now() - tsHosts.at < TS_HOSTS_TTL_MS) return Promise.resolve(tsHosts.map.get(key) || null);
   if (!tsHosts.pending) {
@@ -140,11 +145,11 @@ function tailnetAddress(hostname) {
 
 // A `lookup` for http(s).get: the system resolver first, the tailnet's own
 // address book for a `.ts.net` name it can't find.
-function lookup(hostname, options, cb) {
+function lookup(hostname: any, options: any, cb: any) {
   if (typeof options === 'function') { cb = options; options = {}; }
-  dns.lookup(hostname, options, (err, address, family) => {
+  dns.lookup(hostname, options, (err: any, address: any, family: any) => {
     if (!err || !/\.ts\.net$/i.test(hostname)) return cb(err, address, family);
-    tailnetAddress(hostname).then((ip) => {
+    tailnetAddress(hostname).then((ip: any) => {
       if (!ip) return cb(err);
       if (options && options.all) return cb(null, [{ address: ip, family: 4 }]);
       return cb(null, ip, 4);
@@ -155,10 +160,10 @@ function lookup(hostname, options, cb) {
 // GET JSON from a peer. Resolves `null` for anything that isn't a clean 200 —
 // a machine that is asleep, rebooting, or not running termhub is the expected
 // case here, not an error worth propagating into the UI as a failure.
-function fetchJson(url, { timeoutMs = PROBE_TIMEOUT_MS } = {}) {
-  return new Promise((resolve) => {
+function fetchJson(url: any, { timeoutMs = PROBE_TIMEOUT_MS }: { timeoutMs?: any } = {}) {
+  return new Promise<any>((resolve) => {
     let settled = false;
-    const done = (v) => { if (!settled) { settled = true; resolve(v); } };
+    const done = (v: any) => { if (!settled) { settled = true; resolve(v); } };
     let target;
     try { target = new URL(url); } catch { return done(null); }
     const lib = target.protocol === 'http:' ? http : https;
@@ -172,10 +177,10 @@ function fetchJson(url, { timeoutMs = PROBE_TIMEOUT_MS } = {}) {
       path: target.pathname + target.search,
       timeout: timeoutMs,
       lookup,
-    }, (res) => {
+    }, (res: any) => {
       let raw = '';
       res.setEncoding('utf8');
-      res.on('data', (c) => { raw += c; });
+      res.on('data', (c: any) => { raw += c; });
       res.on('end', () => {
         if (res.statusCode !== 200) return done(null);
         try { done(JSON.parse(raw)); } catch { done(null); }
@@ -189,7 +194,7 @@ function fetchJson(url, { timeoutMs = PROBE_TIMEOUT_MS } = {}) {
 // Ask one peer who it is. `/api/ping` is sessiond's identity endpoint, proxied
 // by the front — so a 200 here means "termhub is up on this URL AND its
 // supervisor is reachable", which is exactly the bar for showing it as online.
-async function identify(url) {
+async function identify(url: any) {
   const info = await fetchJson(`${url}/api/ping`);
   if (!info || !info.ok) return { url, online: false, machine: null };
   return { url, online: true, machine: info.machine || null, sessions: info.sessions ?? null, commit: info.commit || null };
@@ -207,9 +212,9 @@ function status() {
 // spawn so it can be tested against captured output (test/peers.test.js).
 // Offline peers are dropped: probing a machine Tailscale already says is down
 // costs one timeout each and can only produce "offline", which we knew.
-function candidatesFromStatus(status) {
-  const out = [];
-  const add = (p) => {
+function candidatesFromStatus(status: any) {
+  const out: any[] = [];
+  const add = (p: any) => {
     if (!p || !p.DNSName || !p.Online) return;
     // Phones and tablets never run termhub; skipping them is not an
     // optimisation, it's avoiding a pointless 2.5s timeout per device.
@@ -221,16 +226,16 @@ function candidatesFromStatus(status) {
 }
 
 function tailscaleStatus() {
-  return new Promise((resolve) => {
-    execFile('tailscale', ['status', '--json'], { timeout: 5000, maxBuffer: 8 * 1024 * 1024, windowsHide: true }, (err, stdout) => {
+  return new Promise<any>((resolve) => {
+    execFile('tailscale', ['status', '--json'], { timeout: 5000, maxBuffer: 8 * 1024 * 1024, windowsHide: true }, (err: any, stdout: any) => {
       if (err) return resolve(null);
       try { resolve(JSON.parse(stdout)); } catch { resolve(null); }
     });
   });
 }
 
-async function mapLimit(items, limit, fn) {
-  const out = [];
+async function mapLimit(items: any, limit: any, fn: any) {
+  const out: any[] = [];
   let i = 0;
   const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
     while (i < items.length) {
@@ -254,7 +259,7 @@ async function scan() {
     for (const t of PROBE_TARGETS) targets.push({ ...c, url: `${t.scheme}://${c.host}:${t.port}` });
   }
 
-  const results = await mapLimit(targets, SCAN_CONCURRENCY, async (t) => {
+  const results = await mapLimit(targets, SCAN_CONCURRENCY, async (t: any) => {
     const info = await identify(t.url);
     return info.online ? { url: t.url, machine: info.machine || t.name, sessions: info.sessions } : null;
   });

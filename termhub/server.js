@@ -23,9 +23,9 @@
 // a different (older) build than the tailnet URL for the same port.
 
 const { startSessiond } = require('./sessiond');
-const { startFront } = require('./front');
-const { DEFAULT_SESSIOND_PORT } = require('./lib/state');
-const { probeSessiond, probeFront } = require('./lib/probe');
+const { startFront } = require('./front.ts');
+const { DEFAULT_SESSIOND_PORT } = require('./lib/state.ts');
+const { probeSessiond, probeFront } = require('./lib/probe.ts');
 const { ensureWatchdog } = require('./lib/watchdogSetup');
 
 const FRONT_PORT = Number(process.env.TERMHUB_PORT) || 7000;

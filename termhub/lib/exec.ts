@@ -38,12 +38,17 @@
 // machine only once every terminal there had been killed. Nothing here needs
 // to outlive a front — a run is bounded and its caller is waiting on the
 // response — so the persistent tier has no claim on it.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+/** JSON read or built key by key (lib/types.ts): loose until its producer is TypeScript. */
+type Json = import('./types.ts').Json;
 
 const { spawn } = require('child_process');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { checkProgrammaticRequest } = require('./requestGuard');
+const { checkProgrammaticRequest } = require('./requestGuard.ts');
 
 const DEFAULT_TIMEOUT_MS = 60_000;
 const MAX_TIMEOUT_MS = 30 * 60_000;
@@ -61,7 +66,7 @@ const live = new Set();
 /**
  * Pure: the request body → a validated spec, or {error}. Exported for tests.
  */
-function parseSpec(body, { home = os.homedir() } = {}) {
+function parseSpec(body: any, { home = os.homedir() }: { home?: any } = {}) {
   if (!body || typeof body !== 'object' || Array.isArray(body)) return { error: 'body must be a JSON object' };
   const { argv } = body;
   if (!Array.isArray(argv) || !argv.length) return { error: 'argv must be a non-empty array of strings' };
@@ -76,7 +81,7 @@ function parseSpec(body, { home = os.homedir() } = {}) {
     cwd = body.cwd;
   }
 
-  const num = (v, dflt, max, name) => {
+  const num = (v: any, dflt: any, max: any, name: any) => {
     if (v == null) return dflt;
     const n = Number(v);
     if (!Number.isFinite(n) || n <= 0) return { error: `${name} must be a positive number` };
@@ -89,10 +94,10 @@ function parseSpec(body, { home = os.homedir() } = {}) {
 
   if (body.stdin != null && typeof body.stdin !== 'string') return { error: 'stdin must be a string' };
 
-  let env = null;
+  let env: Record<string, string> | null = null;
   if (body.env != null) {
     if (typeof body.env !== 'object' || Array.isArray(body.env)) return { error: 'env must be an object of strings' };
-    env = {};
+    env = {} as Record<string, string>;
     for (const [k, v] of Object.entries(body.env)) {
       if (!ENV_NAME.test(k) || typeof v !== 'string' || v.includes('\0')) return { error: `env.${k} is not a NAME=string pair` };
       env[k] = v;
@@ -101,7 +106,7 @@ function parseSpec(body, { home = os.homedir() } = {}) {
   return { argv, cwd, timeoutMs, maxOutputBytes, stdin: body.stdin == null ? null : body.stdin, env };
 }
 
-function killTree(child) {
+function killTree(child: any) {
   if (!child.pid) return;
   try {
     if (process.platform === 'win32') {
@@ -123,8 +128,8 @@ process.once('exit', () => { for (const child of live) killTree(child); });
  * truncated, durationMs, error?}; never rejects. `onAbort(fn)` registers the
  * caller's "client went away" hook.
  */
-function runSpec(spec, { onAbort } = {}) {
-  return new Promise((resolve) => {
+function runSpec(spec: any, { onAbort }: { onAbort?: any } = {}) {
+  return new Promise<any>((resolve) => {
     const started = Date.now();
     let stat;
     try { stat = fs.statSync(spec.cwd); } catch { stat = null; }
@@ -133,7 +138,7 @@ function runSpec(spec, { onAbort } = {}) {
         truncated: { stdout: false, stderr: false }, durationMs: 0, error: `cwd ${spec.cwd} is not a directory` });
     }
 
-    let child;
+    let child: any;
     try {
       child = spawn(spec.argv[0], spec.argv.slice(1), {
         cwd: spec.cwd,
@@ -143,7 +148,7 @@ function runSpec(spec, { onAbort } = {}) {
         detached: process.platform !== 'win32', // own process group, so a timeout kills the tree
         stdio: ['pipe', 'pipe', 'pipe'],
       });
-    } catch (e) {
+    } catch (e: any) {
       // Node refuses some spawns synchronously (e.g. a .cmd/.bat without a
       // shell on Windows — EINVAL since the 2024 batch-file fix).
       return resolve({ code: null, signal: null, stdout: '', stderr: '', timedOut: false,
@@ -151,11 +156,11 @@ function runSpec(spec, { onAbort } = {}) {
     }
     live.add(child);
 
-    const out = { stdout: [], stderr: [] };
-    const size = { stdout: 0, stderr: 0 };
-    const truncated = { stdout: false, stderr: false };
+    const out: Json = { stdout: [], stderr: [] };
+    const size: Json = { stdout: 0, stderr: 0 };
+    const truncated: Json = { stdout: false, stderr: false };
     for (const name of ['stdout', 'stderr']) {
-      child[name].on('data', (chunk) => {
+      child[name].on('data', (chunk: any) => {
         const room = spec.maxOutputBytes - size[name];
         if (room <= 0) { truncated[name] = true; return; }
         const keep = chunk.length > room ? chunk.subarray(0, room) : chunk;
@@ -170,9 +175,9 @@ function runSpec(spec, { onAbort } = {}) {
     else child.stdin.end();
 
     let timedOut = false;
-    let spawnError = null;
+    let spawnError: any = null;
     let settled = false;
-    let grace = null;
+    let grace: any = null;
     const timer = setTimeout(() => {
       timedOut = true;
       killTree(child);
@@ -182,13 +187,13 @@ function runSpec(spec, { onAbort } = {}) {
     }, spec.timeoutMs);
     if (onAbort) onAbort(() => { if (!settled) killTree(child); });
 
-    function finish(code, signal) {
+    function finish(code: any, signal: any) {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
       clearTimeout(grace);
       live.delete(child);
-      const result = {
+      const result: Json = {
         code: timedOut ? null : code,
         signal: signal || null,
         stdout: Buffer.concat(out.stdout).toString('utf8'),
@@ -202,8 +207,8 @@ function runSpec(spec, { onAbort } = {}) {
       resolve(result);
     }
 
-    child.on('error', (e) => { spawnError = `${e.code || 'error'}: ${e.message}`; finish(null, null); });
-    child.on('close', (code, signal) => finish(code, signal));
+    child.on('error', (e: any) => { spawnError = `${e.code || 'error'}: ${e.message}`; finish(null, null); });
+    child.on('close', (code: any, signal: any) => finish(code, signal));
   });
 }
 
@@ -211,12 +216,12 @@ function runSpec(spec, { onAbort } = {}) {
 // soon as the cap is crossed, and a body not finished within `timeoutMs`
 // answers 408. Either way the caller closes the connection (`close: true`),
 // since the rest of the body is not going to be read.
-function readJson(req, maxBytes, timeoutMs = BODY_TIMEOUT_MS) {
-  return new Promise((resolve) => {
-    const chunks = [];
+function readJson(req: any, maxBytes: any, timeoutMs: any = BODY_TIMEOUT_MS) {
+  return new Promise<any>((resolve) => {
+    const chunks: any[] = [];
     let total = 0;
     let done = false;
-    const settle = (v) => {
+    const settle = (v: any) => {
       if (done) return;
       done = true;
       clearTimeout(timer);
@@ -224,7 +229,7 @@ function readJson(req, maxBytes, timeoutMs = BODY_TIMEOUT_MS) {
       resolve(v);
     };
     const timer = setTimeout(() => settle({ status: 408, error: `body not received within ${timeoutMs} ms`, close: true }), timeoutMs);
-    function onData(c) {
+    function onData(c: any) {
       total += c.length;
       if (total > maxBytes) {
         chunks.length = 0;
@@ -251,7 +256,7 @@ function readJson(req, maxBytes, timeoutMs = BODY_TIMEOUT_MS) {
  * tests: `env` feeds the request guard, `home` the default cwd, `bodyTimeoutMs`
  * the body-read deadline.
  */
-function handle(req, res, url, { sendJson, env, home, bodyTimeoutMs = BODY_TIMEOUT_MS } = {}) {
+function handle(req: any, res: any, url: any, { sendJson, env, home, bodyTimeoutMs = BODY_TIMEOUT_MS }: { sendJson?: any; env?: Record<string, string | undefined> | null; home?: any; bodyTimeoutMs?: any } = {}) {
   if (url.pathname !== '/api/exec') return false;
   if (req.method !== 'POST') {
     // No CORS headers, ever: a preflight that gets this fails, which is the point.
@@ -292,7 +297,7 @@ function handle(req, res, url, { sendJson, env, home, bodyTimeoutMs = BODY_TIMEO
     running += 1;
     try {
       const result = await runSpec(spec, {
-        onAbort: (kill) => res.on('close', () => { if (!res.writableFinished) kill(); }),
+        onAbort: (kill: any) => res.on('close', () => { if (!res.writableFinished) kill(); }),
       });
       // Program name and outcome only: argv and output can hold anything.
       console.log(`[exec] ${path.basename(spec.argv[0])} in ${spec.cwd} -> `
@@ -301,7 +306,7 @@ function handle(req, res, url, { sendJson, env, home, bodyTimeoutMs = BODY_TIMEO
     } finally {
       running -= 1;
     }
-  })().catch((e) => sendJson(res, 500, { error: String(e.message || e) }));
+  })().catch((e: any) => sendJson(res, 500, { error: String(e.message || e) }));
   return true;
 }
 

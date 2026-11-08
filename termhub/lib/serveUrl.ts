@@ -1,5 +1,11 @@
 'use strict';
 
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+/** JSON read or built key by key (lib/types.ts): loose until its producer is TypeScript. */
+type Json = import('./types.ts').Json;
+
 const { execFile } = require('child_process');
 
 // The HTTPS address of this machine, as Tailscale Serve actually publishes it.
@@ -31,12 +37,12 @@ const TIMEOUT_MS = 3000;
 // time alone, so a second front port asking within the window would be handed
 // the first one's address — wrong, and invisible in production only because a
 // front asks about nothing but itself.
-let cache = null;            // { at, status }
+let cache: any = null;            // { at, status }
 
 function tailscaleServeStatus() {
   if (cache && Date.now() - cache.at < CACHE_MS) return Promise.resolve(cache.status);
-  return new Promise((resolve) => {
-    execFile('tailscale', ['serve', 'status', '--json'], { timeout: TIMEOUT_MS, windowsHide: true }, (err, stdout) => {
+  return new Promise<any>((resolve) => {
+    execFile('tailscale', ['serve', 'status', '--json'], { timeout: TIMEOUT_MS, windowsHide: true }, (err: any, stdout: any) => {
       let status = null;
       if (!err && stdout && stdout.trim()) {
         try { status = JSON.parse(stdout); } catch { status = null; }
@@ -53,7 +59,7 @@ function tailscaleServeStatus() {
 // on a box where the front binds it directly, and both are this same front.
 // Requiring an exact host match would answer "no HTTPS address" on one of the
 // two supported layouts.
-function proxyTargetsPort(proxy, port) {
+function proxyTargetsPort(proxy: any, port: any) {
   try {
     const u = new URL(proxy);
     return Number(u.port) === Number(port);
@@ -62,12 +68,12 @@ function proxyTargetsPort(proxy, port) {
   }
 }
 
-function findServeUrl(status, port) {
+function findServeUrl(status: any, port: any) {
   const web = status && status.Web;
   if (!web || typeof web !== 'object') return null;
-  for (const [hostPort, entry] of Object.entries(web)) {
+  for (const [hostPort, entry] of Object.entries(web) as [string, any][]) {
     const handlers = (entry && entry.Handlers) || {};
-    for (const handler of Object.values(handlers)) {
+    for (const handler of Object.values(handlers) as any[]) {
       if (handler && handler.Proxy && proxyTargetsPort(handler.Proxy, port)) {
         return `https://${hostPort}/`;
       }
@@ -79,7 +85,7 @@ function findServeUrl(status, port) {
 // Resolve the published HTTPS URL for a front listening on `port`.
 // The `tailscale` spawn behind this is cached: the client asks only from an
 // insecure origin, but it asks on every load.
-async function secureUrlForPort(port) {
+async function secureUrlForPort(port: any) {
   return findServeUrl(await tailscaleServeStatus(), port);
 }
 

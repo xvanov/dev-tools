@@ -37,8 +37,8 @@ const { forKind: transcriptFor } = require('./transcriptRead');
 const {
   classifyClaude, classifyOpencode, isTracked, shouldAnnounceExit, WAITING, LIMITED, WORKING,
 } = require('./idleState');
-const { readState } = require('./state');
-const { secureUrlForPort } = require('./serveUrl');
+const { readState } = require('./state.ts');
+const { secureUrlForPort } = require('./serveUrl.ts');
 
 const POLL_MS = 1000;
 

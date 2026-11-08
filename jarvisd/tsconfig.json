@@ -17,5 +17,5 @@
     "skipLibCheck": true,
     "noEmit": true
   },
-  "include": ["src", "test", "../schemas/types.d.ts", "../personal-assistant/src/**/*.ts"]
+  "include": ["src", "test", "../schemas/types.d.ts", "../personal-assistant/src/**/*.ts", "../termhub/*.ts", "../termhub/lib/**/*.ts"]
 }

@@ -24,6 +24,11 @@
 //
 // Served by the FRONT, for the reason lib/exec.js is: an update swaps the
 // front and never restarts sessiond.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+/** JSON read or built key by key (lib/types.ts): loose until its producer is TypeScript. */
+type Json = import('./types.ts').Json;
 
 const fs = require('fs');
 const path = require('path');
@@ -39,7 +44,7 @@ const RATE_MAX = 60;
 const READ_DEFAULT = 50;
 const READ_MAX = 500;
 
-function clip(v) {
+function clip(v: any) {
   if (typeof v === 'string') return v.length > MAX_STRING ? `${v.slice(0, MAX_STRING)}…` : v;
   if (typeof v === 'number' || typeof v === 'boolean' || v === null) return v;
   // Nested values are flattened to a clipped string: this is a log line, not a
@@ -48,9 +53,9 @@ function clip(v) {
 }
 
 /** Pure: an untrusted body -> the line to store, or null if it isn't one. */
-function sanitize(body, { now = Date.now(), ua = '' } = {}) {
+function sanitize(body: any, { now = Date.now(), ua = '' }: { now?: number | undefined; ua?: any } = {}) {
   if (!body || typeof body !== 'object' || Array.isArray(body)) return null;
-  const out = { ts: new Date(now).toISOString() };
+  const out: Json = { ts: new Date(now).toISOString() };
   let n = 0;
   for (const [k, v] of Object.entries(body)) {
     if (n >= MAX_FIELDS) break;
@@ -63,7 +68,7 @@ function sanitize(body, { now = Date.now(), ua = '' } = {}) {
   return out;
 }
 
-function createClientLog({ dir = dataDir(), now = () => Date.now() } = {}) {
+function createClientLog({ dir = dataDir(), now = () => Date.now() }: { dir?: any; now?: any } = {}) {
   const file = path.join(dir, FILE_NAME);
   let windowStart = 0;
   let inWindow = 0;
@@ -77,7 +82,7 @@ function createClientLog({ dir = dataDir(), now = () => Date.now() } = {}) {
     return true;
   }
 
-  function append(line) {
+  function append(line: any) {
     try {
       fs.mkdirSync(dir, { recursive: true });
       try {
@@ -91,7 +96,7 @@ function createClientLog({ dir = dataDir(), now = () => Date.now() } = {}) {
     }
   }
 
-  function read(n = READ_DEFAULT) {
+  function read(n: any = READ_DEFAULT) {
     const want = Math.max(1, Math.min(READ_MAX, Number(n) || READ_DEFAULT));
     let text = '';
     try { text = fs.readFileSync(file, 'utf8'); } catch { return []; }
@@ -100,7 +105,7 @@ function createClientLog({ dir = dataDir(), now = () => Date.now() } = {}) {
     });
   }
 
-  function handle(req, res, url, { sendJson }) {
+  function handle(req: any, res: any, url: any, { sendJson }: { sendJson?: any }) {
     if (url.pathname !== '/api/client-log') return false;
     if (req.method === 'GET') {
       sendJson(res, 200, { entries: read(url.searchParams.get('n')) });
@@ -115,7 +120,7 @@ function createClientLog({ dir = dataDir(), now = () => Date.now() } = {}) {
     let raw = '';
     let over = false;
     req.setEncoding('utf8');
-    req.on('data', (c) => {
+    req.on('data', (c: any) => {
       if (over) return;
       raw += c;
       if (raw.length > MAX_BODY_BYTES) over = true;

@@ -12,16 +12,21 @@
 //
 // Computed once, synchronously, at startup: it's one git call per process and
 // `/api/ping` is polled, so it must never pay for it.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+/** JSON read or built key by key (lib/types.ts): loose until its producer is TypeScript. */
+type Json = import('./types.ts').Json;
 
 const { execFileSync } = require('child_process');
 const path = require('path');
 
 const PROJECT_DIR = path.join(__dirname, '..');
 
-let cached; // undefined = not computed yet, null = unavailable (not a git tree)
-let cachedDirty; // was the tree modified when this process started?
+let cached: any; // undefined = not computed yet, null = unavailable (not a git tree)
+let cachedDirty: any; // was the tree modified when this process started?
 
-function git(args) {
+function git(args: any) {
   try {
     return execFileSync('git', ['-C', PROJECT_DIR, ...args], {
       encoding: 'utf8',

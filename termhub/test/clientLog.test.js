@@ -13,8 +13,8 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const http = require('http');
-const { createFront } = require('../front');
-const { sanitize, RATE_MAX, MAX_BODY_BYTES } = require('../lib/clientLog');
+const { createFront } = require('../front.ts');
+const { sanitize, RATE_MAX, MAX_BODY_BYTES } = require('../lib/clientLog.ts');
 
 function listen(server) {
   return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve(server.address().port)));

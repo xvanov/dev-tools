@@ -91,7 +91,7 @@
         "Trust": "The dashboard is loopback-only and needs X-PA: 1 on every POST; termhub's trust model is the tailnet ACL."
       },
       "code": [
-        "termhub/lib/paProxy.js",
+        "termhub/lib/paProxy.ts",
         "personal-assistant/src/dashboard/nav.js"
       ]
     },
@@ -1521,13 +1521,13 @@
         "Passkey gate (plan 7.1)": "Off unless PA_PASSKEYS=on in the front's environment. On: a remote request to /api/* or /ws/* (not /api/health, /api/version or /pa/*) must carry a live passkey session; the front holds no passkeys and asks the PA dashboard's GET /api/auth/check with the browser's Cookie (answers cached 10 s), so there is one sign-in at /pa/login. A request straight from this machine (loopback peer, no X-Forwarded-For or Tailscale-* header) is never refused; a PA that does not answer refuses remote requests with 503."
       },
       "code": [
-        "termhub/front.js",
-        "termhub/lib/exec.js",
-        "termhub/lib/paProxy.js",
-        "termhub/lib/peers.js",
+        "termhub/front.ts",
+        "termhub/lib/exec.ts",
+        "termhub/lib/paProxy.ts",
+        "termhub/lib/peers.ts",
         "termhub/lib/idleStore.js",
         "termhub/AGENT.md",
-        "termhub/lib/passkeyGate.js",
+        "termhub/lib/passkeyGate.ts",
         "termhub/test/passkeyGate.test.js"
       ]
     },

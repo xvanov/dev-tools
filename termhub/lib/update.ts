@@ -8,6 +8,11 @@
 // user to update only when it matters). It does NOT apply anything — applying is
 // done by opening a terminal that runs the platform updater (windows/update.ps1),
 // so the blue-green swap survives the front being replaced under it.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+/** JSON read or built key by key (lib/types.ts): loose until its producer is TypeScript. */
+type Json = import('./types.ts').Json;
 
 const { execFile } = require('child_process');
 const fs = require('fs');
@@ -24,9 +29,9 @@ const STACK_PARTS = ['termhub', 'personal-assistant', 'software-factory'];
 const CACHE_TTL_MS = 60 * 1000;
 let cache = { at: 0, data: null };
 
-function git(args, timeoutMs = 10000) {
-  return new Promise((resolve) => {
-    execFile('git', ['-C', PROJECT_DIR, ...args], { timeout: timeoutMs, windowsHide: true }, (err, stdout) => {
+function git(args: any, timeoutMs: number = 10000) {
+  return new Promise<any>((resolve) => {
+    execFile('git', ['-C', PROJECT_DIR, ...args], { timeout: timeoutMs, windowsHide: true }, (err: any, stdout: any) => {
       resolve({ ok: !err, out: (stdout || '').trim(), err });
     });
   });
@@ -110,17 +115,17 @@ async function compute() {
   let toolChanged = behind > 0 && !prefix; // repo-root install: any change is the tool
 
   let subjects = [];
-  let parts = [];
+  let parts: any[] = [];
   if (behind > 0) {
     const names = await git(['diff', '--name-only', 'HEAD..@{u}']);
     if (names.ok && prefix) {
       const files = names.out.split('\n').filter(Boolean);
-      parts = STACK_PARTS.filter((p) => files.some((f) => f.startsWith(p + '/')));
+      parts = STACK_PARTS.filter((p) => files.some((f: any) => f.startsWith(p + '/')));
       toolChanged = parts.length > 0;
     }
     const log = await git(['log', '--no-merges', '--format=%h\x1f%s', '-n', '20', 'HEAD..@{u}']);
     if (log.ok && log.out) {
-      subjects = log.out.split('\n').map((line) => {
+      subjects = log.out.split('\n').map((line: any) => {
         const [hash, ...rest] = line.split('\x1f');
         return { hash, subject: rest.join('\x1f') };
       });
@@ -149,16 +154,16 @@ async function compute() {
 // that throws. The UI enables its button on `command`, and the update script
 // copes with a missing upstream, a failed fetch or a dirty tree on its own —
 // so a check that could not compare refs must never be what stops an update.
-function withCommand(data) {
+function withCommand(data: any) {
   return { ...data, command: updateCommand(), cwd: PROJECT_DIR };
 }
 
-async function checkForUpdate({ force = false } = {}) {
+async function checkForUpdate({ force = false }: { force?: boolean | undefined } = {}) {
   if (!force && cache.data && Date.now() - cache.at < CACHE_TTL_MS) return cache.data;
   let data;
   try {
     data = withCommand(await compute());
-  } catch (e) {
+  } catch (e: any) {
     data = withCommand({ available: false, error: String((e && e.message) || e), checkedAt: Date.now() });
   }
   cache = { at: Date.now(), data };

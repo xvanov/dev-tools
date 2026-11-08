@@ -1,0 +1,385 @@
+'use strict';
+
+// termhub front — the SWAPPABLE tier.
+//
+// Serves the web UI (web/) and reverse-proxies everything else to sessiond:
+//   - HTTP  /api/*        -> http://127.0.0.1:<sessiondPort>/api/*
+//   - WS    /ws/term/:id  -> raw socket pipe to the same sessiond
+//   - WS    /ws/voice     -> same, the voice-announcement feed
+//   - HTTP  POST /api/exec -> answered here: runs one argv, returns output + exit code
+//   - HTTP  /api/transcribe -> answered here: a WAV in, whisper's text out (lib/transcribe.js)
+//   - HTTP  /pa/*         -> the personal assistant's dashboard ($TERMHUB_PA_URL,
+//                            default http://127.0.0.1:7300), prefix stripped
+// It owns no terminals, so it can be restarted/replaced at will. Updates start a
+// second front on the alternate loopback port, health-check it, then re-point
+// Tailscale Serve at it — the browser reconnects through the new front to the
+// SAME PTYs in sessiond and replays scrollback. Terminals survive.
+//
+//     node front.js       # listens on $TERMHUB_BIND:$TERMHUB_FRONT_PORT, proxies to sessiond
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+/** JSON read or built key by key (lib/types.ts): loose until its producer is TypeScript. */
+type Json = import('./lib/types.ts').Json;
+
+const http = require('http');
+const net = require('net');
+const fs = require('fs');
+const path = require('path');
+const os = require('os');
+const { URL } = require('url');
+
+const { resolveBindAddress } = require('./lib/bind.ts');
+const { DEFAULT_FRONT_PORT, DEFAULT_SESSIOND_PORT, claimPidFile } = require('./lib/state.ts');
+const { checkForUpdate } = require('./lib/update.ts');
+const { probeJson } = require('./lib/probe.ts');
+const { secureUrlForPort } = require('./lib/serveUrl.ts');
+const peers = require('./lib/peers.ts');
+const build = require('./lib/build.ts');
+const { resolvePaUrl, createPaProxy } = require('./lib/paProxy.ts');
+const transcripts = require('./lib/transcripts.ts');
+const execRoute = require('./lib/exec.ts');
+const { checkRequest, checkUpgrade, refuseUpgrade, learnSelfNamesAndWarn } = require('./lib/requestGuard.ts');
+const cursorTranscripts = require('./lib/cursorTranscripts.ts');
+const { createClientLog } = require('./lib/clientLog.ts');
+const { createPasskeyGate } = require('./lib/passkeyGate.ts');
+const { createTranscriber } = require('./lib/transcribe.ts');
+
+const WEB_DIR = path.join(__dirname, 'web');
+
+const MIME: Json = {
+  '.html': 'text/html; charset=utf-8',
+  '.js': 'text/javascript; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.svg': 'image/svg+xml',
+  '.ico': 'image/x-icon',
+  '.json': 'application/json',
+};
+
+// Once headers are out there is no status left to send: cut the connection so
+// the client sees a truncated response instead of the front throwing
+// ERR_HTTP_HEADERS_SENT — which is uncaught and takes the whole process down.
+function sendJson(res: any, status: any, body: any) {
+  if (res.headersSent) return res.destroy();
+  const data = JSON.stringify(body);
+  res.writeHead(status, { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(data) });
+  res.end(data);
+}
+
+// The install manifest is built per request, not shipped as a file, because its
+// name is the machine's. With one termhub per machine, a static "termhub" would
+// put several identical icons on the home screen — the same reason
+// setPageTitle() in app.js names the tab after the machine. It is what makes
+// Android's "Add to Home screen" open termhub as a standalone app (no URL bar)
+// instead of a bookmark; iOS reads the apple-mobile-web-app-* metas instead.
+function manifest() {
+  const machine = process.env.TERMHUB_MACHINE || os.hostname();
+  return {
+    name: `${machine} · termhub`,
+    short_name: machine,
+    start_url: '/',
+    scope: '/',
+    display: 'standalone',
+    orientation: 'any',
+    background_color: '#15171c',
+    theme_color: '#15171c',
+    icons: [{ src: '/icon.svg', sizes: 'any', type: 'image/svg+xml', purpose: 'any' }],
+  };
+}
+
+// Extensionless pages, so the idle dashboard has a URL worth typing and worth
+// putting in a notification: /dashboard, not /dashboard.html. /run and /meter are
+// the same two pages under their names in the Jarvis navigation (Run, Meter).
+const PAGES: Json = { '/': '/index.html', '/dashboard': '/dashboard.html', '/run': '/index.html', '/meter': '/dashboard.html' };
+
+// Who may put termhub's pages in a frame: termhub itself (nav.js's shell hosts the
+// PA's pages from /pa/ and its own), and the PA's own origin, whose shell hosts
+// Sessions and Agent time when you browse the PA on loopback. Nobody else.
+function frameAncestors(env: Record<string, string | undefined> = process.env) {
+  const list = ["'self'"];
+  const pa = resolvePaUrl(env);
+  if (pa) {
+    list.push(pa.origin);
+    if (pa.hostname === '127.0.0.1') list.push(`${pa.protocol}//localhost${pa.port ? ':' + pa.port : ''}`);
+  }
+  return `frame-ancestors ${list.join(' ')}`;
+}
+
+function serveStatic(res: any, pathname: any) {
+  let rel = PAGES[pathname] || pathname;
+  rel = rel.replace(/\.\.+/g, ''); // basic traversal guard
+  const file = path.join(WEB_DIR, rel);
+  fs.readFile(file, (err: any, data: any) => {
+    if (err) { res.writeHead(404, { 'Content-Type': 'text/plain' }); return res.end('Not found'); }
+    const headers: Json = { 'Content-Type': MIME[path.extname(file)] || 'application/octet-stream' };
+    if (path.extname(file) === '.html') headers['Content-Security-Policy'] = frameAncestors();
+    res.writeHead(200, headers);
+    res.end(data);
+  });
+}
+
+// Ask sessiond if it's alive (used by /api/health and the updater's probe).
+function pingSessiond(sessiondPort: any, timeoutMs: number = 2000) {
+  return probeJson({ port: sessiondPort, path: '/api/ping', timeoutMs });
+}
+
+// `paUrl` is for tests; left undefined, TERMHUB_PA_URL decides (see lib/paProxy.js).
+// `clientLogDir` is for tests too; left undefined, the data dir (lib/paths.js).
+// `transcribe` is for tests too: options for createTranscriber (env, peer list).
+function createFront({ sessiondPort, port: serverPort = DEFAULT_FRONT_PORT, paUrl, clientLogDir, transcribe }: { sessiondPort?: any; port?: any; paUrl?: any; clientLogDir?: any; transcribe?: any }) {
+  const handlePa = createPaProxy(paUrl === undefined ? resolvePaUrl() : resolvePaUrl({ TERMHUB_PA_URL: paUrl }));
+  const clientLog = createClientLog(clientLogDir ? { dir: clientLogDir } : {});
+  const transcriber = createTranscriber(transcribe || {});
+  // Passkey sessions (plan 7.1): off unless PA_PASSKEYS=on; see lib/passkeyGate.js.
+  const gate = createPasskeyGate({ paUrl: resolvePaUrl(process.env) });
+  const handleRequest = (req: any, res: any) => {
+    const url = new URL(req.url, 'http://localhost');
+    const { pathname } = url;
+
+    // Every /api/* and /pa/* request: Host must name this machine and Origin
+    // (when a browser sends one) must be this host; a state-changing /api/*
+    // request also needs `X-Termhub: 1` and a non-"simple" Content-Type. This
+    // is the CSRF / DNS-rebinding guard — see lib/requestGuard.js. Here, before
+    // anything is proxied, so an old sessiond is covered by a new front.
+    const refused = checkRequest(req, pathname);
+    if (refused) {
+      sendJson(res, refused.status, { error: refused.error });
+      req.resume();
+      return undefined;
+    }
+
+    // /pa/* is the personal assistant's dashboard, not ours — see lib/paProxy.js.
+    if (handlePa(req, res)) return undefined;
+
+    // Local health check — proves the front is up AND can reach sessiond. The
+    // updater polls this on the green port before flipping Tailscale Serve.
+    //
+    // `self` carries the same identity block sessiond's /api/ping does, so one
+    // request answers both "is green healthy?" and "is green actually the new
+    // code, talking to the supervisor I think it is?". Present on the 503 path
+    // too — a front that can't reach sessiond is exactly when you want to know
+    // which front and which port it was looking at.
+    if (req.method === 'GET' && pathname === '/api/health') {
+      const self = {
+        entry: 'front',
+        pid: process.pid,
+        port: serverPort,
+        commit: build.commit(),
+        dirty: build.dirty(),
+        sessiondPort,
+      };
+      return pingSessiond(sessiondPort)
+        .then((info: any) => sendJson(res, 200, { ok: true, front: true, self, sessiond: info }))
+        .catch((e: any) => sendJson(res, 503, { ok: false, front: true, self, error: String(e.message || e) }));
+    }
+
+    // Which code this front serves. Open pages poll it (nav.js) and reload
+    // themselves once it changes, so an update reaches every open tab.
+    if (req.method === 'GET' && pathname === '/api/version') {
+      return sendJson(res, 200, { commit: build.commit() });
+    }
+
+    // Update check is the front's own business (it owns the git checkout and is
+    // the tier that gets swapped) — answer it here, don't proxy to sessiond.
+    if (req.method === 'GET' && pathname === '/api/update/check') {
+      const force = url.searchParams.get('force') === '1';
+      return checkForUpdate({ force })
+        .then((info: any) => sendJson(res, 200, info))
+        .catch((e: any) => sendJson(res, 500, { available: false, error: String(e.message || e) }));
+    }
+
+    // Where this machine answers over HTTPS, if it does. The front's own
+    // business for the same reason the update check is: it knows which port it
+    // listens on, and Serve's config is about that port — sessiond (on loopback,
+    // behind the proxy) knows neither. Answers `{secureUrl: null}` rather than a
+    // guess when Serve isn't publishing this front; see lib/serveUrl.js.
+    if (req.method === 'GET' && pathname === '/api/secure-url') {
+      return secureUrlForPort(serverPort)
+        .then((secureUrl: any) => sendJson(res, 200, { secureUrl }))
+        .catch(() => sendJson(res, 200, { secureUrl: null }));
+    }
+
+    // Run one command, non-interactively, and return its output and exit code
+    // (lib/exec.js). Here, not in sessiond, for the same reason as transcripts;
+    // guarded against cross-origin and rebound-DNS browsers (lib/requestGuard.js).
+    if (execRoute.handle(req, res, url, { sendJson })) return undefined;
+
+    // Browser-side failures (the phone's mic errors, mostly), one JSON line
+    // each, so they can be read off the machine — lib/clientLog.js.
+    if (clientLog.handle(req, res, url, { sendJson })) return undefined;
+
+    // Speech to text for the 🎤 button: one WAV per utterance, through this
+    // machine's whisper server or a configured peer's — lib/transcribe.js.
+    if (transcriber.handle(req, res, url, { sendJson })) return undefined;
+
+    // Read-only Claude transcripts for the personal assistant on another
+    // machine. Here, not in sessiond, so an update ships it (lib/transcripts.js).
+    if (transcripts.handle(req, res, url, { sendJson })) return undefined;
+    if (cursorTranscripts.handle(req, res, url, { sendJson })) return undefined;
+
+    // ---- peers (the dashboard's machine strip) -------------------------------
+    // The front's business, not sessiond's: sessiond binds loopback and talks to
+    // nothing outward, while this tier already reaches the tailnet. Stats are
+    // never merged here — each peer answers for itself and the dashboard shows
+    // them side by side (see lib/peers.js).
+    if (req.method === 'GET' && pathname === '/api/peers') {
+      return peers.status()
+        .then((list: any) => sendJson(res, 200, { peers: list }))
+        .catch(() => sendJson(res, 200, { peers: [] }));
+    }
+
+    // One-time discovery: which tailnet machines actually run termhub. Not run
+    // on page load — 14 tailnet peers here, of which 3 are termhub, and probing
+    // the rest is a wall of timeouts.
+    if (req.method === 'GET' && pathname === '/api/peers/scan') {
+      return peers.scan()
+        .then((r: any) => sendJson(res, 200, r))
+        .catch((e: any) => sendJson(res, 200, { available: false, found: [], error: String(e.message || e) }));
+    }
+
+    if (req.method === 'POST' && pathname === '/api/peers') {
+      let raw = '';
+      req.on('data', (c: any) => { raw += c; if (raw.length > 1e5) req.destroy(); });
+      return req.on('end', () => {
+        try {
+          const body = raw ? JSON.parse(raw) : {};
+          return sendJson(res, 200, { peers: peers.save(body.peers || []) });
+        } catch (e: any) {
+          return sendJson(res, 400, { error: String(e.message || e) });
+        }
+      });
+    }
+
+    // Read one peer's idle data through us, rather than from the browser
+    // directly: same origin (no CORS on every machine), and it works from a
+    // phone whose browser can reach this machine but might not have the peer's
+    // name resolving.
+    //
+    // **Only configured peers are reachable through this.** The URL comes from
+    // peers.json, never from the request — a `?url=` parameter here would make
+    // the front a general-purpose fetcher for anything on the tailnet, which is
+    // a much bigger thing than a dashboard.
+    const peerMatch = /^\/api\/peers\/([^/]+)\/(idle|history)$/.exec(pathname);
+    if (req.method === 'GET' && peerMatch) {
+      const want = decodeURIComponent(peerMatch[1]!);
+      const target = peers.list().find((u: any) => u === want || new URL(u).hostname === want);
+      if (!target) return sendJson(res, 404, { error: 'not a configured peer' });
+      const suffix = peerMatch[2] === 'idle' ? '/api/idle' : `/api/idle/history${url.search || ''}`;
+      return peers.fetchJson(`${target}${suffix}`, { timeoutMs: 5000 })
+        .then((data: any) => (data
+          ? sendJson(res, 200, data)
+          : sendJson(res, 502, { error: 'peer did not answer' })))
+        .catch((e: any) => sendJson(res, 502, { error: String(e.message || e) }));
+    }
+
+    // Everything under /api/* is the supervisor's — proxy it.
+    //
+    // Either side can drop mid-stream (sessiond resetting a socket, a phone
+    // closing the tab), so every stream gets an error listener and a drop on
+    // one side tears down the other. An unhandled 'error' here is fatal to the
+    // front — see test/frontProxy.test.js.
+    if (pathname.startsWith('/api/')) {
+      const proxyReq = http.request(
+        { host: '127.0.0.1', port: sessiondPort, method: req.method, path: req.url, headers: req.headers },
+        (proxyRes: any) => {
+          proxyRes.on('error', () => res.destroy());
+          res.writeHead(proxyRes.statusCode, proxyRes.headers);
+          proxyRes.pipe(res);
+        },
+      );
+      proxyReq.on('error', (e: any) => sendJson(res, 502, { error: `sessiond unreachable: ${e.message}` }));
+      req.on('error', () => proxyReq.destroy());
+      res.on('close', () => { if (!res.writableFinished) proxyReq.destroy(); });
+      return req.pipe(proxyReq);
+    }
+
+    if (pathname === '/manifest.webmanifest') {
+      const body = JSON.stringify(manifest());
+      res.writeHead(200, { 'Content-Type': 'application/manifest+json', 'Content-Length': Buffer.byteLength(body) });
+      return res.end(body);
+    }
+
+    return serveStatic(res, pathname);
+  };
+  const server = http.createServer((req: any, res: any) => {
+    if (!gate.enabled) return handleRequest(req, res);
+    const at = req.url.indexOf('?');
+    return gate.verdict(req, at === -1 ? req.url : req.url.slice(0, at)).then((v: any) => {
+      if (v.ok) return handleRequest(req, res);
+      sendJson(res, v.status, { error: v.error });
+      return req.resume();
+    });
+  });
+
+  // ---- WebSocket upgrade proxy ----------------------------------------------
+  // Pipe the raw upgrade socket straight to sessiond, which owns the PTY and
+  // does the actual WebSocket handshake. The front never parses WS frames.
+  server.on('upgrade', (req: any, clientSocket: any, head: any) => {
+    const url = new URL(req.url, 'http://localhost');
+    // /ws/term/:id is a PTY stream; /ws/voice is the page-wide announcement feed.
+    if (!/^\/ws\/(term\/[^/]+|voice)$/.test(url.pathname)) return clientSocket.destroy();
+    // A page on any origin can open a WebSocket here and type into a shell
+    // (cross-site WebSocket hijacking): refuse a foreign Origin or a rebound Host.
+    const refused = checkUpgrade(req);
+    if (refused) return refuseUpgrade(clientSocket, refused);
+
+    // Passkey sessions (plan 7.1): a remote upgrade needs a live session too.
+    const proxy = () => {
+    const upstream = net.connect(sessiondPort, '127.0.0.1', () => {
+      // Replay the request line + headers verbatim so sessiond's WebSocketServer
+      // sees an ordinary upgrade request.
+      let head1 = `${req.method} ${req.url} HTTP/1.1\r\n`;
+      for (let i = 0; i < req.rawHeaders.length; i += 2) {
+        head1 += `${req.rawHeaders[i]}: ${req.rawHeaders[i + 1]}\r\n`;
+      }
+      upstream.write(head1 + '\r\n');
+      if (head && head.length) upstream.write(head);
+      upstream.pipe(clientSocket);
+      clientSocket.pipe(upstream);
+    });
+    upstream.on('error', () => clientSocket.destroy());
+    clientSocket.on('error', () => upstream.destroy());
+    };
+    if (!gate.enabled) return proxy();
+    return gate.verdict(req, url.pathname).then((v: any) => (v.ok ? proxy() : refuseUpgrade(clientSocket, v)));
+  });
+
+  return server;
+}
+
+// `claimPid` is opt-in and claimed inside the listen callback, for the same
+// reason sessiond does it that way: winning the bind is what makes a process the
+// front on that port, so a loser must not leave its pid behind — nor delete the
+// incumbent's on the way out (see removeOwnPidFile in lib/state.js).
+function startFront({ port = DEFAULT_FRONT_PORT, sessiondPort = DEFAULT_SESSIOND_PORT, host, claimPid = false }: { port?: any; sessiondPort?: any; host?: any; claimPid?: boolean | undefined } = {}) {
+  const bindHost = host || resolveBindAddress();
+  const server = createFront({ sessiondPort, port });
+  build.commit(); // warm the cache off the request path
+  learnSelfNamesAndWarn(); // this machine's MagicDNS name (warns if it cannot); , for the Host check (lib/requestGuard.js)
+  server.on('error', (err: any) => {
+    if (err.code === 'EADDRINUSE') {
+      console.error(`[front] ${bindHost}:${port} is already in use — another front or a `
+        + '`node server.js` owns it. Refusing to start a second front on this port.');
+      process.exit(3);
+    }
+    throw err;
+  });
+  server.listen(port, bindHost, () => {
+    if (claimPid) claimPidFile(`front-${port}`, port);
+    console.log(`[front] listening on http://${bindHost}:${port} -> sessiond 127.0.0.1:${sessiondPort} `
+      + `(pid ${process.pid}, ${build.shortCommit() || 'no commit'})`);
+    if (bindHost === '127.0.0.1' && !process.env.TERMHUB_BIND) {
+      console.log('[front] bound to loopback only — publish it with Tailscale Serve, or set TERMHUB_BIND.');
+    }
+  });
+  return server;
+}
+
+/** `node front.js`: the default ports, and this front claims the pid file (front.js, the entry). */
+function run() {
+  startFront({ port: DEFAULT_FRONT_PORT, sessiondPort: DEFAULT_SESSIOND_PORT, claimPid: true });
+}
+
+module.exports = { createFront, startFront, pingSessiond, run };
+
+if (require.main === module) run();

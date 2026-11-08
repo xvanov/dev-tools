@@ -7,7 +7,7 @@
 //   node test/passkeyGate.test.js
 
 const assert = require('assert');
-const { createPasskeyGate, isRemote, guarded } = require('../lib/passkeyGate');
+const { createPasskeyGate, isRemote, guarded } = require('../lib/passkeyGate.ts');
 
 const local = (headers = {}) => ({ headers, socket: { remoteAddress: '127.0.0.1' } });
 const serve = (headers = {}) => ({ headers: { 'x-forwarded-for': '100.64.0.2', 'tailscale-user-login': 'k@example.com', ...headers }, socket: { remoteAddress: '127.0.0.1' } });

@@ -30,7 +30,7 @@ function asPlatform(p, fn) {
   }
 }
 
-const { updateCommand, PROJECT_DIR } = require('../lib/update');
+const { updateCommand, PROJECT_DIR } = require('../lib/update.ts');
 
 console.log('\nupdate command');
 
@@ -113,7 +113,7 @@ check('process.platform was restored', process.platform === realPlatform, proces
 // Stop, where `& git ... 2>&1` throws on git's first stderr line. The pull must go
 // through Invoke-Git, or the script dies before it can heal a diverged branch.
 (async () => {
-  const { checkForUpdate } = require('../lib/update');
+  const { checkForUpdate } = require('../lib/update.ts');
   const info = await checkForUpdate({ force: true });
   check('every check answer carries the update command', !!info.command, JSON.stringify(info).slice(0, 200));
   check('every check answer carries the cwd', info.cwd === PROJECT_DIR);

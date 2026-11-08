@@ -47,6 +47,11 @@
 //
 // Served by the FRONT, for the reason lib/exec.js is: an update swaps the
 // front and never restarts sessiond.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+/** JSON read or built key by key (lib/types.ts): loose until its producer is TypeScript. */
+type Json = import('./types.ts').Json;
 
 const fs = require('fs');
 const os = require('os');
@@ -76,7 +81,7 @@ const MAX_QUEUED = 4;
 const HOP_HEADER = 'x-termhub-transcribe-hop';
 const WAV_TYPES = new Set(['audio/wav', 'audio/x-wav', 'audio/wave', 'audio/vnd.wave']);
 
-function settings(env = process.env) {
+function settings(env: Record<string, string | undefined> = process.env) {
   const port = Number(env.TERMHUB_TRANSCRIBE_PORT || env.TRANSCRIBE_PORT || DEFAULT_PORT);
   return {
     enabled: String(env.TERMHUB_TRANSCRIBE || '').toLowerCase() !== 'off',
@@ -87,18 +92,18 @@ function settings(env = process.env) {
 }
 
 /** Pure: is this body a RIFF/WAVE file worth handing to whisper? null = yes, else why not. */
-function wavProblem(buf) {
+function wavProblem(buf: any) {
   if (!buf || buf.length < 44) return 'no audio';
   if (buf.toString('ascii', 0, 4) !== 'RIFF' || buf.toString('ascii', 8, 12) !== 'WAVE') return 'not a WAV file';
   return null;
 }
 
 /** Pure: which configured peers may serve, given TERMHUB_TRANSCRIBE_PEER. */
-function eligiblePeers(peerUrls, peerSetting) {
+function eligiblePeers(peerUrls: any, peerSetting: any) {
   const s = String(peerSetting || '').trim().toLowerCase();
   if (s === 'off' || s === '0' || s === 'none') return [];
   if (!s) return [...peerUrls];
-  return peerUrls.filter((u) => {
+  return peerUrls.filter((u: any) => {
     let host = '';
     try { host = new URL(u).hostname.toLowerCase(); } catch { return false; }
     return u.toLowerCase() === s || u.toLowerCase() === s.replace(/\/+$/, '') || host === s || host.split('.')[0] === s;
@@ -112,12 +117,12 @@ function eligiblePeers(peerUrls, peerSetting) {
  *   hop       the request already came from a peer: local only
  * -> {kind:'local'} | {kind:'peer', url} | {kind:'none', reason}
  */
-function chooseBackend({ enabled = true, localUp, peers = [], hop = false, host, port }) {
+function chooseBackend({ enabled = true, localUp, peers = [], hop = false, host, port }: { enabled?: boolean | undefined; localUp?: any; peers?: any; hop?: boolean | undefined; host?: any; port?: any }) {
   if (!enabled) return { kind: 'none', reason: 'server-side transcription is off on this machine (TERMHUB_TRANSCRIBE=off)' };
   if (localUp) return { kind: 'local' };
   const where = `${host || DEFAULT_HOST}:${port || DEFAULT_PORT}`;
   if (hop) return { kind: 'none', reason: `no whisper server on ${where} on this machine` };
-  const peer = peers.find((p) => p && p.local === true);
+  const peer = peers.find((p: any) => p && p.local === true);
   if (peer) return { kind: 'peer', url: peer.url };
   const asked = peers.length;
   return {
@@ -129,11 +134,11 @@ function chooseBackend({ enabled = true, localUp, peers = [], hop = false, host,
 
 // ---- the local whisper server --------------------------------------------------
 
-function probePort(host, port, timeoutMs = LOCAL_PROBE_MS) {
-  return new Promise((resolve) => {
+function probePort(host: any, port: any, timeoutMs: any = LOCAL_PROBE_MS) {
+  return new Promise<any>((resolve) => {
     const sock = net.createConnection({ host, port });
     let done = false;
-    const finish = (ok) => { if (done) return; done = true; sock.destroy(); resolve(ok); };
+    const finish = (ok: any) => { if (done) return; done = true; sock.destroy(); resolve(ok); };
     sock.setTimeout(timeoutMs, () => finish(false));
     // transcribe_server.py reads an empty request, answers nothing and closes:
     // a bare connect is a harmless probe.
@@ -143,14 +148,14 @@ function probePort(host, port, timeoutMs = LOCAL_PROBE_MS) {
 }
 
 // One request to the faster-whisper server: path in, text out.
-function askWhisper(file, { host, port, timeoutMs = WHISPER_TIMEOUT_MS }) {
-  return new Promise((resolve, reject) => {
-    const chunks = [];
+function askWhisper(file: any, { host, port, timeoutMs = WHISPER_TIMEOUT_MS }: { host?: any; port?: any; timeoutMs?: any }) {
+  return new Promise<any>((resolve, reject) => {
+    const chunks: any[] = [];
     const sock = net.createConnection({ host, port });
     sock.setTimeout(timeoutMs, () => sock.destroy(Object.assign(new Error('the whisper server timed out'), { status: 504 })));
     sock.on('connect', () => sock.end(file, 'utf8'));
-    sock.on('data', (d) => chunks.push(d));
-    sock.on('error', (err) => {
+    sock.on('data', (d: any) => chunks.push(d));
+    sock.on('error', (err: any) => {
       if (!err.status) {
         err.status = 503;
         err.unreachable = true;
@@ -158,7 +163,7 @@ function askWhisper(file, { host, port, timeoutMs = WHISPER_TIMEOUT_MS }) {
       }
       reject(err);
     });
-    sock.on('close', (hadError) => {
+    sock.on('close', (hadError: any) => {
       if (hadError) return;
       const text = Buffer.concat(chunks).toString('utf8');
       if (text.startsWith('ERROR:')) return reject(Object.assign(new Error(text.slice(6).trim() || 'whisper error'), { status: 502 }));
@@ -167,7 +172,7 @@ function askWhisper(file, { host, port, timeoutMs = WHISPER_TIMEOUT_MS }) {
   });
 }
 
-async function transcribeLocal(audio, { host, port, tmpDir = os.tmpdir() }) {
+async function transcribeLocal(audio: any, { host, port, tmpDir = os.tmpdir() }: { host?: any; port?: any; tmpDir?: any }) {
   const file = path.join(tmpDir, `termhub-stt-${process.pid}-${crypto.randomBytes(8).toString('hex')}.wav`);
   await fs.promises.writeFile(file, audio, { mode: 0o600 });
   try {
@@ -184,10 +189,10 @@ async function transcribeLocal(audio, { host, port, tmpDir = os.tmpdir() }) {
 // with Tailscale DNS turned off next to a corporate VPN). TLS still verifies
 // against the name.
 let tsMap = { at: 0, map: new Map() };
-function tailnetIp(hostname, hostsFromStatus) {
+function tailnetIp(hostname: any, hostsFromStatus: any) {
   if (Date.now() - tsMap.at < 60_000) return Promise.resolve(tsMap.map.get(hostname.toLowerCase()) || null);
-  return new Promise((resolve) => {
-    execFile('tailscale', ['status', '--json'], { timeout: 5000, maxBuffer: 8 * 1024 * 1024, windowsHide: true }, (err, stdout) => {
+  return new Promise<any>((resolve) => {
+    execFile('tailscale', ['status', '--json'], { timeout: 5000, maxBuffer: 8 * 1024 * 1024, windowsHide: true }, (err: any, stdout: any) => {
       let map = new Map();
       if (!err) { try { map = hostsFromStatus(JSON.parse(stdout)); } catch {} }
       tsMap = { at: Date.now(), map };
@@ -196,10 +201,10 @@ function tailnetIp(hostname, hostsFromStatus) {
   });
 }
 
-function makeLookup(hostsFromStatus) {
-  return (hostname, options, cb) => {
+function makeLookup(hostsFromStatus: any) {
+  return (hostname: any, options: any, cb: any) => {
     if (typeof options === 'function') { cb = options; options = {}; }
-    dns.lookup(hostname, options, (err, address, family) => {
+    dns.lookup(hostname, options, (err: any, address: any, family: any) => {
       if (!err || !/\.ts\.net$/i.test(hostname) || !hostsFromStatus) return cb(err, address, family);
       tailnetIp(hostname, hostsFromStatus).then((ip) => {
         if (!ip) return cb(err);
@@ -213,10 +218,10 @@ function makeLookup(hostsFromStatus) {
 // POST the WAV to a peer's /api/transcribe, as a program (no Origin): the
 // peer's guard wants its own name in Host (the URL gives it), X-Termhub and a
 // non-simple Content-Type, like any other client.
-function postToPeer(url, audio, { timeoutMs = PEER_TIMEOUT_MS, lookup } = {}) {
-  return new Promise((resolve, reject) => {
+function postToPeer(url: any, audio: any, { timeoutMs = PEER_TIMEOUT_MS, lookup }: { timeoutMs?: any; lookup?: any } = {}) {
+  return new Promise<any>((resolve, reject) => {
     let target;
-    try { target = new URL('/api/transcribe', url); } catch (e) { return reject(e); }
+    try { target = new URL('/api/transcribe', url); } catch (e: any) { return reject(e); }
     const lib = target.protocol === 'http:' ? http : https;
     const req = lib.request({
       protocol: target.protocol,
@@ -232,33 +237,33 @@ function postToPeer(url, audio, { timeoutMs = PEER_TIMEOUT_MS, lookup } = {}) {
         'X-Termhub': '1',
         'X-Termhub-Transcribe-Hop': '1',
       },
-    }, (res) => {
+    }, (res: any) => {
       let raw = '';
       res.setEncoding('utf8');
-      res.on('data', (c) => { raw += c; });
+      res.on('data', (c: any) => { raw += c; });
       res.on('end', () => {
         let body = null;
         try { body = JSON.parse(raw); } catch {}
         if (res.statusCode === 200 && body && typeof body.text === 'string') return resolve(body.text);
-        const err = new Error(`peer ${target.host} answered ${res.statusCode}${body && body.error ? `: ${body.error}` : ''}`);
+        const err: any = new Error(`peer ${target.host} answered ${res.statusCode}${body && body.error ? `: ${body.error}` : ''}`);
         err.status = res.statusCode === 503 ? 503 : 502;
         reject(err);
       });
     });
     req.on('timeout', () => req.destroy(Object.assign(new Error(`peer ${target.host} timed out`), { status: 504 })));
-    req.on('error', (e) => reject(Object.assign(e, { status: e.status || 502 })));
+    req.on('error', (e: any) => reject(Object.assign(e, { status: e.status || 502 })));
     req.end(audio);
   });
 }
 
 // ---- the route -----------------------------------------------------------------
 
-function readBody(req, limit) {
-  return new Promise((resolve, reject) => {
-    const chunks = [];
+function readBody(req: any, limit: any) {
+  return new Promise<any>((resolve, reject) => {
+    const chunks: any[] = [];
     let size = 0;
     let over = false;
-    req.on('data', (d) => {
+    req.on('data', (d: any) => {
       if (over) return;
       size += d.length;
       if (size > limit) { over = true; chunks.length = 0; return; }
@@ -283,9 +288,9 @@ function createTranscriber({
   now = () => Date.now(),
   tmpDir,
   rateMax = RATE_MAX,
-} = {}) {
+}: { env?: Record<string, string | undefined>; listPeers?: any; fetchJson?: any; hostsFromStatus?: any; now?: any; tmpDir?: any; rateMax?: any } = {}) {
   if (!listPeers || !fetchJson) {
-    const peers = require('./peers');
+    const peers = require('./peers.ts');
     listPeers = listPeers || peers.list;
     fetchJson = fetchJson || peers.fetchJson;
     hostsFromStatus = hostsFromStatus || peers.hostsFromStatus;
@@ -297,7 +302,7 @@ function createTranscriber({
   let windowStart = 0;
   let inWindow = 0;
 
-  async function localUp(cfg, { fresh = false } = {}) {
+  async function localUp(cfg: any, { fresh = false }: { fresh?: boolean | undefined } = {}) {
     const key = `${cfg.host}:${cfg.port}`;
     if (!fresh && localCache.key === key && now() - localCache.at < LOCAL_CACHE_MS) return localCache.up;
     const up = await probePort(cfg.host, cfg.port);
@@ -305,9 +310,9 @@ function createTranscriber({
     return up;
   }
 
-  async function peerStates(cfg) {
+  async function peerStates(cfg: any) {
     const urls = eligiblePeers(listPeers(), cfg.peer);
-    return Promise.all(urls.map(async (url) => {
+    return Promise.all(urls.map(async (url: any) => {
       const hit = peerCache.get(url);
       if (hit && now() - hit.at < PEER_CACHE_MS) return { url, local: hit.local };
       const r = await fetchJson(`${url}/api/transcribe?local=1`, { timeoutMs: 2500 }).catch(() => null);
@@ -317,7 +322,7 @@ function createTranscriber({
     }));
   }
 
-  async function resolve({ hop = false, fresh = false } = {}) {
+  async function resolve({ hop = false, fresh = false }: { hop?: boolean | undefined; fresh?: boolean | undefined } = {}) {
     const cfg = settings(env);
     if (!cfg.enabled) return { cfg, choice: chooseBackend({ enabled: false }), peers: [], up: false };
     const up = await localUp(cfg, { fresh });
@@ -333,7 +338,7 @@ function createTranscriber({
     return true;
   }
 
-  async function status({ localOnly = false } = {}) {
+  async function status({ localOnly = false }: { localOnly?: boolean | undefined } = {}) {
     const { cfg, up, peers, choice } = await resolve({ hop: localOnly });
     return {
       available: choice.kind !== 'none',
@@ -348,14 +353,14 @@ function createTranscriber({
   // One utterance through the chosen backend. A local server that was up a few
   // seconds ago and is not now (restarting, unloaded and crashed) is re-checked
   // once and the peer tried instead, rather than failing the utterance.
-  async function run(audio, { hop }) {
+  async function run(audio: any, { hop }: { hop?: any }) {
     let { cfg, choice } = await resolve({ hop });
     const started = now();
     if (choice.kind === 'local') {
       try {
         const text = await transcribeLocal(audio, { host: cfg.host, port: cfg.port, tmpDir });
         return { text, ms: now() - started, backend: 'local' };
-      } catch (e) {
+      } catch (e: any) {
         if (!e.unreachable) throw e;
         localCache = { at: -Infinity, up: false, key: '' };
         ({ cfg, choice } = await resolve({ hop, fresh: true }));
@@ -366,7 +371,7 @@ function createTranscriber({
       try {
         const text = await postToPeer(choice.url, audio, { lookup });
         return { text, ms: now() - started, backend: 'peer', peer: choice.url };
-      } catch (e) {
+      } catch (e: any) {
         peerCache.delete(choice.url);   // ask it again next time
         throw e;
       }
@@ -374,12 +379,12 @@ function createTranscriber({
     throw Object.assign(new Error(choice.reason), { status: 503, reason: 'no-backend' });
   }
 
-  function handle(req, res, url, { sendJson }) {
+  function handle(req: any, res: any, url: any, { sendJson }: { sendJson?: any }) {
     if (url.pathname !== '/api/transcribe') return false;
     if (req.method === 'GET') {
       status({ localOnly: url.searchParams.get('local') === '1' })
         .then((s) => sendJson(res, 200, s))
-        .catch((e) => sendJson(res, 500, { available: false, error: String(e.message || e) }));
+        .catch((e: any) => sendJson(res, 500, { available: false, error: String(e.message || e) }));
       return true;
     }
     if (req.method !== 'POST') {
@@ -388,7 +393,7 @@ function createTranscriber({
       req.resume();
       return true;
     }
-    const type = String(req.headers['content-type'] || '').split(';')[0].trim().toLowerCase();
+    const type = String(req.headers['content-type'] || '').split(';')[0]!.trim().toLowerCase();
     if (!WAV_TYPES.has(type)) {
       sendJson(res, 415, { error: 'send a 16 kHz mono WAV as audio/wav' });
       req.resume();
@@ -404,13 +409,13 @@ function createTranscriber({
       .then((audio) => {
         const bad = wavProblem(audio);
         if (bad) throw Object.assign(new Error(bad), { status: 400 });
-        return limit(() => run(audio, { hop })).catch((e) => {
+        return limit(() => run(audio, { hop })).catch((e: any) => {
           if (e.busy) throw Object.assign(new Error('transcription is busy — try again'), { status: 503, reason: 'busy' });
           throw e;
         });
       })
       .then((out) => sendJson(res, 200, out))
-      .catch((e) => sendJson(res, e.status || 500, {
+      .catch((e: any) => sendJson(res, e.status || 500, {
         error: String(e.message || e),
         ...(e.reason ? { reason: e.reason } : {}),
       }));

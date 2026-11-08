@@ -98,7 +98,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   process.env.GH_TOKEN = 'inherited-secret';
   process.env.PA_TEST_KEEP = 'kept';
   const { createSessiond } = require('../sessiond');
-  const { createFront } = require('../front');
+  const { createFront } = require('../front.ts');
   const sessiond = createSessiond({ entry: 'test', port: 0 });
   const sPort = await listen(sessiond);
   const front = createFront({ sessiondPort: sPort, port: 0, paUrl: '' });

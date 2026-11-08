@@ -12,9 +12,9 @@
 const assert = require('assert');
 const http = require('http');
 const net = require('net');
-const { createFront } = require('../front');
-const { resolvePaUrl } = require('../lib/paProxy');
-const { setLearnedNames } = require('../lib/requestGuard');
+const { createFront } = require('../front.ts');
+const { resolvePaUrl } = require('../lib/paProxy.ts');
+const { setLearnedNames } = require('../lib/requestGuard.ts');
 setLearnedNames(['mybox.tailnet.ts.net']); // this machine's own MagicDNS name (tailscale status Self.DNSName)
 
 function listen(server) {

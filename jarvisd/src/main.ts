@@ -44,7 +44,7 @@ export function loadWorker(): Worker {
 
 /** termhub's front (termhub/front.js), bundled too. It holds no terminals, so Bun can run it. */
 export function loadFront(): Front {
-  return require('../../termhub/front.js') as Front;
+  return require('../../termhub/front.ts') as Front;
 }
 
 /** `--name value` from argv, as a number when it is one. */

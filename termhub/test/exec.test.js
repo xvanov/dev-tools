@@ -14,9 +14,9 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const http = require('http');
-const { handle: execHandle, parseSpec, runSpec, MAX_TIMEOUT_MS, MAX_CONCURRENT, BODY_TIMEOUT_MS } = require('../lib/exec');
-const { checkProgrammaticRequest, hostAllowed, hostnameOf, setLearnedNames, selfNamesFromStatus, learnSelfNames } = require('../lib/requestGuard');
-const { createFront } = require('../front');
+const { handle: execHandle, parseSpec, runSpec, MAX_TIMEOUT_MS, MAX_CONCURRENT, BODY_TIMEOUT_MS } = require('../lib/exec.ts');
+const { checkProgrammaticRequest, hostAllowed, hostnameOf, setLearnedNames, selfNamesFromStatus, learnSelfNames } = require('../lib/requestGuard.ts');
+const { createFront } = require('../front.ts');
 
 const node = process.execPath;
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'termhub-exec-'));

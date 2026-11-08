@@ -18,7 +18,7 @@
 // constructed guess — a URL that cannot connect is worse than admitting there
 // isn't one, because it reads as termhub being broken rather than unconfigured.
 
-const { findServeUrl, proxyTargetsPort } = require('../lib/serveUrl');
+const { findServeUrl, proxyTargetsPort } = require('../lib/serveUrl.ts');
 
 let pass = 0;
 const failures = [];

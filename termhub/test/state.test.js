@@ -25,7 +25,7 @@ const path = require('path');
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'termhub-state-test-'));
 process.env.TERMHUB_DATA_DIR = TMP;
 
-const state = require('../lib/state');
+const state = require('../lib/state.ts');
 
 let pass = 0;
 const failures = [];

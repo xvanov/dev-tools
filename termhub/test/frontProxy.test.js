@@ -14,7 +14,7 @@
 
 const assert = require('assert');
 const http = require('http');
-const { createFront } = require('../front');
+const { createFront } = require('../front.ts');
 
 function listen(server) {
   return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve(server.address().port)));

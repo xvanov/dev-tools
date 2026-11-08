@@ -18,6 +18,11 @@
 //     the connect timeout covers a port that accepts nothing.
 //   - **No response timeout.** Some PA actions run a model for minutes; cutting
 //     them off at the proxy would turn a slow answer into a lost one.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+/** JSON read or built key by key (lib/types.ts): loose until its producer is TypeScript. */
+type Json = import('./types.ts').Json;
 
 const http = require('http');
 const https = require('https');
@@ -29,7 +34,7 @@ const CONNECT_TIMEOUT_MS = 5000;
 
 // `TERMHUB_PA_URL` unset -> the default; set to the empty string -> disabled.
 // Anything unparseable also disables it rather than guessing.
-function resolvePaUrl(env = process.env) {
+function resolvePaUrl(env: Record<string, string | undefined> = process.env) {
   const raw = env.TERMHUB_PA_URL === undefined ? DEFAULT_PA_URL : String(env.TERMHUB_PA_URL).trim();
   if (!raw) return null;
   try {
@@ -42,14 +47,14 @@ function resolvePaUrl(env = process.env) {
 
 // Same convention as front.js: once headers are out, the only honest move left
 // is to cut the connection.
-function sendJson(res, status, body) {
+function sendJson(res: any, status: any, body: any) {
   if (res.headersSent) return res.destroy();
   const data = JSON.stringify(body);
   res.writeHead(status, { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(data) });
   return res.end(data);
 }
 
-function sendDown(req, res, status, message) {
+function sendDown(req: any, res: any, status: any, message: any) {
   if (res.headersSent) return res.destroy();
   const wantsHtml = req.method === 'GET' && /text\/html/.test(req.headers.accept || '');
   if (!wantsHtml) return sendJson(res, status, { error: message });
@@ -66,14 +71,14 @@ function sendDown(req, res, status, message) {
   return res.end(page);
 }
 
-function escapeHtml(s) {
-  return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+function escapeHtml(s: any) {
+  return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' } as Record<string, string>)[c] as string);
 }
 
 // Returns a handler `(req, res) => boolean` — true when it took the request.
 // `target` is a URL from resolvePaUrl, or null for "disabled".
-function createPaProxy(target) {
-  return function handlePa(req, res) {
+function createPaProxy(target: any) {
+  return function handlePa(req: any, res: any) {
     const qAt = req.url.indexOf('?');
     const pathname = qAt === -1 ? req.url : req.url.slice(0, qAt);
     const search = qAt === -1 ? '' : req.url.slice(qAt);
@@ -104,7 +109,7 @@ function createPaProxy(target) {
       method: req.method,
       path: upstreamPath,
       headers,
-    }, (proxyRes) => {
+    }, (proxyRes: any) => {
       proxyRes.on('error', () => res.destroy());
       const out = { ...proxyRes.headers };
       // A path-absolute redirect from the PA means a path on the PA; keep it
@@ -116,13 +121,13 @@ function createPaProxy(target) {
       proxyRes.pipe(res);
     });
 
-    proxyReq.on('socket', (sock) => {
+    proxyReq.on('socket', (sock: any) => {
       if (!sock.connecting) return;
       const t = setTimeout(() => proxyReq.destroy(new Error('connect timed out')), CONNECT_TIMEOUT_MS);
       sock.once('connect', () => clearTimeout(t));
       sock.once('close', () => clearTimeout(t));
     });
-    proxyReq.on('error', (e) => sendDown(req, res, 502, `PA not running at ${target.origin}: ${e.code || e.message}`));
+    proxyReq.on('error', (e: any) => sendDown(req, res, 502, `PA not running at ${target.origin}: ${e.code || e.message}`));
     req.on('error', () => proxyReq.destroy());
     res.on('close', () => { if (!res.writableFinished) proxyReq.destroy(); });
     req.pipe(proxyReq);

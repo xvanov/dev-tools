@@ -13,8 +13,8 @@ const assert = require('assert');
 const fs = require('fs');
 const net = require('net');
 const http = require('http');
-const { createFront } = require('../front');
-const T = require('../lib/transcribe');
+const { createFront } = require('../front.ts');
+const T = require('../lib/transcribe.ts');
 const VC = require('../web/voiceCapture');
 
 function listen(server) {
@@ -167,7 +167,7 @@ const noPeers = { listPeers: () => [], fetchJson: async () => null };
 
   // ---- through a peer: B has no whisper, A (configured as B's peer) does -----------------
   const peerA = `http://127.0.0.1:${portA}`;
-  const peers = require('../lib/peers');
+  const peers = require('../lib/peers.ts');
   const frontB = createFront({
     sessiondPort: 1, paUrl: '',
     transcribe: { env: { TERMHUB_TRANSCRIBE_PORT: String(deadPort) }, listPeers: () => [peerA], fetchJson: peers.fetchJson },

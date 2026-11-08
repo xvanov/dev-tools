@@ -31,12 +31,17 @@
 //
 // Pure apart from reading env, the hostname and the learned tailnet name, so
 // it is tested directly.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+/** JSON read or built key by key (lib/types.ts): loose until its producer is TypeScript. */
+type Json = import('./types.ts').Json;
 
 const os = require('os');
 const net = require('net');
 const { execFile } = require('child_process');
 
-function hostnameOf(hostHeader) {
+function hostnameOf(hostHeader: any) {
   const h = String(hostHeader || '').trim().toLowerCase();
   if (!h) return '';
   if (h.startsWith('[')) { // [::1]:7000
@@ -62,10 +67,10 @@ const LEARN_MIN_INTERVAL_MS = 30_000;
 const LEARN_TIMEOUT_MS = 3000;
 let learned = new Set();
 let lastLearnAt = 0;
-let learning = null;
+let learning: any = null;
 
 /** Pure: `tailscale status --json` → this machine's own names (lowercased, no trailing dot). */
-function selfNamesFromStatus(status) {
+function selfNamesFromStatus(status: any) {
   const names = new Set();
   const self = status && status.Self;
   if (!self || typeof self !== 'object') return names;
@@ -77,8 +82,8 @@ function selfNamesFromStatus(status) {
 }
 
 function defaultStatus() {
-  return new Promise((resolve) => {
-    execFile('tailscale', ['status', '--json'], { timeout: LEARN_TIMEOUT_MS, windowsHide: true }, (err, stdout) => {
+  return new Promise<any>((resolve) => {
+    execFile('tailscale', ['status', '--json'], { timeout: LEARN_TIMEOUT_MS, windowsHide: true }, (err: any, stdout: any) => {
       if (err || !stdout) return resolve(null);
       try { resolve(JSON.parse(stdout)); } catch { resolve(null); }
     });
@@ -89,7 +94,7 @@ function defaultStatus() {
  * Learn this machine's MagicDNS name. `readStatus` is for tests. Resolves to
  * the learned set. A failed read keeps the previous answer.
  */
-function learnSelfNames({ readStatus = defaultStatus } = {}) {
+function learnSelfNames({ readStatus = defaultStatus }: { readStatus?: any } = {}) {
   if (learning) return learning;
   lastLearnAt = Date.now();
   learning = Promise.resolve()
@@ -110,7 +115,7 @@ function learnSelfNames({ readStatus = defaultStatus } = {}) {
  * stands in for it: the tailnet address then answers 403 until the name is
  * put in TERMHUB_ALLOWED_HOSTS. Null when there is nothing to say.
  */
-function selfNamesWarning(names, env = process.env) {
+function selfNamesWarning(names: any, env: Record<string, string | undefined> = process.env) {
   if (names && names.size) return null;
   if (String(env.TERMHUB_ALLOWED_HOSTS || '').split(',').some((n) => /\.ts\.net\.?$/i.test(n.trim()))) return null;
   return '[termhub] could not learn this machine\'s tailnet name (is `tailscale` on termhub\'s PATH, and up?) — ' +
@@ -119,8 +124,8 @@ function selfNamesWarning(names, env = process.env) {
 }
 
 /** Learn at startup and say so once if it did not work. */
-function learnSelfNamesAndWarn(logWarn = (m) => console.warn(m)) {
-  return learnSelfNames().then((names) => {
+function learnSelfNamesAndWarn(logWarn: any = (m: any) => console.warn(m)) {
+  return learnSelfNames().then((names: any) => {
     const w = selfNamesWarning(names);
     if (w) logWarn(w);
     return names;
@@ -128,12 +133,12 @@ function learnSelfNamesAndWarn(logWarn = (m) => console.warn(m)) {
 }
 
 /** Tests: replace the learned names outright (and suppress background learning). */
-function setLearnedNames(names) {
+function setLearnedNames(names: any) {
   learned = new Set([...(names || [])].map((n) => String(n).toLowerCase().replace(/\.$/, '')));
   lastLearnAt = Date.now();
 }
 
-function allowedNames(env = process.env) {
+function allowedNames(env: Record<string, string | undefined> = process.env) {
   const names = new Set(['localhost', ...learned]);
   for (const n of [os.hostname(), env.TERMHUB_MACHINE]) {
     if (!n) continue;
@@ -147,7 +152,7 @@ function allowedNames(env = process.env) {
 }
 
 /** True when `Host` names this machine rather than someone's rebound domain. */
-function hostAllowed(hostHeader, env = process.env) {
+function hostAllowed(hostHeader: any, env: Record<string, string | undefined> = process.env) {
   const host = hostnameOf(hostHeader);
   if (!host) return false;
   if (net.isIP(host)) return true;
@@ -164,7 +169,7 @@ function hostAllowed(hostHeader, env = process.env) {
 // The Origin rule, shared: a request a browser sends on behalf of some page
 // carries that page's Origin, and it must be this very host. Non-browser
 // clients (curl, the personal assistant, a peer termhub) send none.
-function checkOrigin(h) {
+function checkOrigin(h: any) {
   if (!h.origin) return null;
   let originHost = null;
   try { originHost = new URL(h.origin).host.toLowerCase(); } catch { /* "null" or junk */ }
@@ -174,7 +179,7 @@ function checkOrigin(h) {
   return null;
 }
 
-function checkHostAndOrigin(req, env) {
+function checkHostAndOrigin(req: any, env: Record<string, string | undefined>) {
   const h = req.headers || {};
   if (!hostAllowed(h.host, env)) {
     return { status: 403, error: `Host "${h.host || ''}" is not this machine (set TERMHUB_ALLOWED_HOSTS to allow another name)` };
@@ -187,11 +192,11 @@ function checkHostAndOrigin(req, env) {
  * `method` and `headers`. The strict form, for a route that is only ever
  * called by programs with a JSON body: `POST /api/exec`.
  */
-function checkProgrammaticRequest(req, { env = process.env } = {}) {
+function checkProgrammaticRequest(req: any, { env = process.env }: { env?: Record<string, string | undefined> } = {}) {
   const h = req.headers || {};
   const refused = checkHostAndOrigin(req, env);
   if (refused) return refused;
-  const type = String(h['content-type'] || '').split(';')[0].trim().toLowerCase();
+  const type = String(h['content-type'] || '').split(';')[0]!.trim().toLowerCase();
   if (type !== 'application/json') return { status: 415, error: 'Content-Type must be application/json' };
   if (h['x-termhub'] !== '1') return { status: 403, error: 'missing X-Termhub: 1 header' };
   return null;
@@ -225,7 +230,7 @@ const READ_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
  *
  * Returns null to proceed, else {status, error}.
  */
-function checkRequest(req, pathname, { env = process.env } = {}) {
+function checkRequest(req: any, pathname: any, { env = process.env }: { env?: Record<string, string | undefined> } = {}) {
   const api = pathname.startsWith('/api/');
   const pa = pathname === '/pa' || pathname.startsWith('/pa/');
   if (!api && !pa) return null;
@@ -236,7 +241,7 @@ function checkRequest(req, pathname, { env = process.env } = {}) {
   if (!api || READ_METHODS.has(method)) return null;
   const h = req.headers || {};
   if (h['x-termhub'] !== '1') return { status: 403, error: 'missing X-Termhub: 1 header' };
-  const type = String(h['content-type'] || '').split(';')[0].trim().toLowerCase();
+  const type = String(h['content-type'] || '').split(';')[0]!.trim().toLowerCase();
   if (SIMPLE_TYPES.has(type)) return { status: 415, error: `Content-Type ${type} is not accepted (send application/json)` };
   return null;
 }
@@ -248,13 +253,13 @@ function checkRequest(req, pathname, { env = process.env } = {}) {
  * and `Origin` alone. Browsers always send `Origin` on a WebSocket; programs
  * (the personal assistant's `ws` client) send none and pass.
  */
-function checkUpgrade(req, { env = process.env } = {}) {
+function checkUpgrade(req: any, { env = process.env }: { env?: Record<string, string | undefined> } = {}) {
   return checkHostAndOrigin(req, env);
 }
 
 // Answer a refused websocket upgrade with a plain HTTP status rather than a
 // silent reset, so a client (or someone debugging one) can see why.
-function refuseUpgrade(socket, { status, error }) {
+function refuseUpgrade(socket: any, { status, error }: { status?: any; error?: any }) {
   const body = JSON.stringify({ error });
   const reason = status === 403 ? 'Forbidden' : 'Refused';
   try {

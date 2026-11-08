@@ -28,6 +28,11 @@
 // This adds no capability to termhub's trust model (anyone who can reach it can
 // already open a shell and `cat` these files); it only makes the read
 // structured, bounded and safe to automate.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+/** JSON read or built key by key (lib/types.ts): loose until its producer is TypeScript. */
+type Json = import('./types.ts').Json;
 
 const fs = require('fs');
 const os = require('os');
@@ -50,7 +55,7 @@ function projectsRoot() {
   return path.join(os.homedir(), '.claude', 'projects');
 }
 
-function realOrNull(p) {
+function realOrNull(p: any) {
   try {
     return fs.realpathSync(p);
   } catch {
@@ -58,7 +63,7 @@ function realOrNull(p) {
   }
 }
 
-function inside(root, p) {
+function inside(root: any, p: any) {
   const rel = path.relative(root, p);
   return !!rel && !rel.startsWith('..') && !path.isAbsolute(rel);
 }
@@ -67,7 +72,7 @@ function inside(root, p) {
  * Newest transcripts first: [{id, project, file, mtimeMs, size}].
  * `since` (epoch ms) drops anything not modified after it.
  */
-function listTranscripts({ root = projectsRoot(), since = 0, limit = DEFAULT_LIMIT } = {}) {
+function listTranscripts({ root = projectsRoot(), since = 0, limit = DEFAULT_LIMIT }: { root?: any; since?: number | undefined; limit?: any } = {}) {
   const cap = Math.min(Math.max(1, Number(limit) || DEFAULT_LIMIT), MAX_LIMIT);
   const after = Number(since) || 0;
   let projects;
@@ -105,10 +110,10 @@ function listTranscripts({ root = projectsRoot(), since = 0, limit = DEFAULT_LIM
  * The absolute path for a transcript id, or {error, status} when the id is not
  * one this route serves. Never throws.
  */
-function resolveTranscript(id, { root = projectsRoot() } = {}) {
+function resolveTranscript(id: any, { root = projectsRoot() }: { root?: any } = {}) {
   const parts = String(id || '').split('/');
   if (parts.length !== 2) return { status: 400, error: 'id must be <project>/<file>.jsonl' };
-  const [project, file] = parts;
+  const [project = '', file = ''] = parts;
   if (!PROJECT_RE.test(project) || project === '.' || project === '..' || !FILE_RE.test(file)) {
     return { status: 400, error: 'not a transcript id' };
   }
@@ -132,7 +137,7 @@ function resolveTranscript(id, { root = projectsRoot() } = {}) {
  * `sendJson(res, status, body)` is the caller's, so errors look like every
  * other route's.
  */
-function handle(req, res, url, { sendJson, machine = process.env.TERMHUB_MACHINE || os.hostname(), root } = {}) {
+function handle(req: any, res: any, url: any, { sendJson, machine = process.env.TERMHUB_MACHINE || os.hostname(), root }: { sendJson?: any; machine?: any; root?: any } = {}) {
   if (req.method !== 'GET') return false;
   const opts = root ? { root } : {};
   if (url.pathname === '/api/claude/transcripts') {

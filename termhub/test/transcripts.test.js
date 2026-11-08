@@ -14,7 +14,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const http = require('http');
-const { listTranscripts, resolveTranscript, handle } = require('../lib/transcripts');
+const { listTranscripts, resolveTranscript, handle } = require('../lib/transcripts.ts');
 
 const base = fs.mkdtempSync(path.join(os.tmpdir(), 'termhub-transcripts-'));
 const root = path.join(base, 'projects');

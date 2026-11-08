@@ -18,7 +18,7 @@ const DATA = fs.mkdtempSync(path.join(os.tmpdir(), 'termhub-peers-'));
 process.env.TERMHUB_DATA_DIR = DATA;
 delete process.env.TERMHUB_PEERS;
 
-const peers = require('../lib/peers');
+const peers = require('../lib/peers.ts');
 
 let passed = 0;
 function ok(name, fn) {

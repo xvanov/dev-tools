@@ -1,10 +1,16 @@
 'use strict';
 
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+/** JSON read or built key by key (lib/types.ts): loose until its producer is TypeScript. */
+type Json = import('./types.ts').Json;
+
 const os = require('os');
 const { execFileSync } = require('child_process');
 
 // Tailscale assigns addresses out of the 100.64.0.0/10 CGNAT range.
-function isTailscaleV4(addr) {
+function isTailscaleV4(addr: any) {
   const m = /^(\d+)\.(\d+)\./.exec(addr);
   if (!m) return false;
   const a = Number(m[1]);
@@ -27,7 +33,7 @@ function resolveBindAddress() {
       windowsHide: true,
       stdio: ['ignore', 'pipe', 'ignore'],
     });
-    const ip = out.split(/\s+/).map((s) => s.trim()).filter(Boolean)[0];
+    const ip = out.split(/\s+/).map((s: any) => s.trim()).filter(Boolean)[0];
     if (ip && isTailscaleV4(ip)) return ip;
   } catch {
     // tailscale CLI not present or errored — fall through to interface scan.
