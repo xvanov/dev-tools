@@ -39,6 +39,7 @@ Design rationale: the plan page (proposal, 7 Nov 2026) and the research summary 
 | D12 | 2026-11-07 | **Desktop only; no week-long shadow run** | Phone app and the `phone` workflow are out of scope: 7.6 is the Tauri desktop shell only, Phase 8 skips `phone`. 3.4 is a one-shot comparison over a recorded query set instead of a week of shadowing. |
 | D13 | 2026-11-07 | **Each stack runs its own factory**; this repo gets a factory app and GitHub Actions CI | The work laptop's PA stops dispatching to the personal machine's factory (it crossed stacks); it uses a local factory running natively on Windows: item 2.3 is pulled forward into phase 0, with no WSL interim step. A factory app for `xvanov/dev-tools` is registered on both stacks so the golden path has a target; T6 adds the CI the "CI done" hop waits on. |
 | D14 | 2026-11-07 | **No macOS**: Windows and Linux only | No macOS CI jobs, no macOS sandbox, no macOS install in Exit 7. Both stacks run on Windows or Linux. |
+| D15 | 2026-11-07 | **Cut the factory port to TS, protobuf and mTLS** | Phase 6 dropped: once the factory is a native daemon (phase 2) the port gains little beyond one language, so Python stays. 1.1 uses JSON Schema instead of protobuf/ConnectRPC: one schema source, TS types generated, Python/Rust validate against it; transport is JSON over HTTP + SSE. 7.2 dropped: the stacks never connect and Tailscale ACLs already separate them. |
 
 ## Prerequisites (before phase 0)
 
@@ -219,8 +220,8 @@ run mid-step; a job continued on an existing branch (`--branch`).
 
 ## Phase 1: contracts and the repository layer
 
-- [ ] **1.1 Protobuf schemas** for Job, Run, Card, Event, Approval, mirroring JOBS-API v1.3
-  and the MCP tools. One source; generated TS, Rust and Python types.
+- [ ] **1.1 JSON Schemas (D15)** for Job, Run, Card, Event, Approval, mirroring JOBS-API v1.3
+  and the MCP tools. One source; TS types generated; Python and Rust validate against it.
 - [ ] **1.2 Repository interface** over today's Postgres: every one of the ~590 SQL call sites
   goes through a typed repository method. No behaviour change.
 - [ ] **1.3 Contract tests** for every repository method, runnable against any backend. This is
@@ -230,7 +231,7 @@ run mid-step; a job continued on an existing branch (`--branch`).
 
 ## Phase 2: factory as a daemon
 
-- [ ] **2.1** The current Python factory runs as a long-lived ConnectRPC service (no process
+- [ ] **2.1** The current Python factory runs as a long-lived JSON-over-HTTP service (no process
   spawn per call).
 - [ ] **2.2** An in-process scheduler with DB leases replaces systemd timers and `fcntl` locks.
 - [ ] **2.3** Runs natively on Windows (no WSL); the work stack's factory moves off WSL.
@@ -273,14 +274,15 @@ run mid-step; a job continued on an existing branch (`--branch`).
 
 ## Phase 6: factory into TypeScript
 
-- [ ] **6.1** Port gate by gate behind the Job contract; Python kept only as an optional
-  runtime plugin (OpenHands).
-- [ ] **Exit 6:** factory runs in jarvisd; Python not required.
+- [~] **6.1** Port gate by gate behind the Job contract; Python kept only as an optional
+  runtime plugin (OpenHands). — dropped: D15, the factory stays Python as a native daemon.
+- [~] **Exit 6:** factory runs in jarvisd; Python not required. — dropped: D15.
 
 ## Phase 7: hardening and reach
 
 - [ ] **7.1** Passkey sessions; voice never approves merges, pushes to main or secret reveals.
-- [ ] **7.2** Per-stack CA and mTLS between machines of one stack.
+- [~] **7.2** Per-stack CA and mTLS between machines of one stack. — dropped: D15, Tailscale
+  ACLs already separate the stacks.
 - [ ] **7.3** Secrets in the OS keychain, labelled by stack.
 - [ ] **7.4** Encrypted backups with a restore drill; signed self-update.
 - [ ] **7.5** OpenTelemetry into Meter, including the separate Claude subscription credit pool
