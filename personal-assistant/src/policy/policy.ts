@@ -13,7 +13,8 @@
 //           args?, subject?}
 //   tool     the bare tool name (factory_start, recall, pa) or verb
 //   channel  where it came from: mcp (a coding session), chat (the PA chat's
-//            MCP), voice, dashboard, termhub, cli, factory
+//            MCP), voice, dashboard, termhub, cli, factory, e2e (`pa e2e`
+//            answering the prompt for its own dummy call, headless)
 //   args     used to classify (delivery level, the pa verb) and hashed for the
 //            audit row; never stored
 //

@@ -63,6 +63,9 @@ function defaultDeps(): Deps {
     addCard: (text: string) => require('../commitments/request.ts').add({ text, via: 'cli' }),
     closeCard: (id: number | string) => require('../commitments.ts').setStatus(Number(id), 'dropped'),
     chat: (name: string, args: Json) => require('../mcp/chatTools.ts').handle(name, args),
+    answerPrompt: (name: string, args: Json, subject: string) => answerPrompt(name, args, subject),
+    chatCall: (name: string, args: Json) => chatCall(name, args),
+    auditRows: (tool: string) => repo.audit.recent({ tool, limit: 100 }),
     factoryEnabled: () => factory.enabled(),
     factoryMachine: () => factory.machine(),
     factoryApps: () => factory.apps({ fresh: true }),
@@ -169,6 +172,50 @@ async function sessionLists(deps: Deps, steps: Step[]): Promise<Record<string, J
   return out;
 }
 
+// ------------------------------------------------------------- approvals ----
+
+const E2E_ACTOR = 'pa-e2e';
+
+/**
+ * A user's yes to a chat action tool, with `pa e2e` as the user (8.4.12),
+ * through the same policy steps: the chat's PreToolUse hook asks the policy
+ * about the call (deny refuses; ask is Claude Code's prompt), then the answer
+ * is enforced and audited as an approval on the e2e channel, its subject the
+ * prompt's id. chatCall() then makes and audits the call as the chat's MCP
+ * server does (src/mcp/server.ts handle).
+ */
+async function answerPrompt(name: string, args: Json, subject: string, { repo = null }: { repo?: Json | null } = {}): Promise<Json> {
+  const policy = require('../policy');
+  const asked = policy.evaluate({ tool: name, action: 'call', channel: 'chat', actor: E2E_ACTOR, args });
+  if (asked.decision === 'deny') throw Object.assign(new Error(`denied by policy (${asked.rule}): ${asked.reason || name}`), { code: 'POLICY_DENIED' });
+  if (asked.decision !== 'ask') return { prompted: false, rule: asked.rule };
+  const answer = await policy.enforce({ tool: name, action: 'approve', channel: 'e2e', actor: E2E_ACTOR, subject, args }, repo ? { repo } : {});
+  if (answer.decision !== 'allow') throw Object.assign(new Error(`approval not accepted (${answer.rule}): ${answer.reason || name}`), { code: 'POLICY_ASK' });
+  return { prompted: true, rule: asked.rule, answer: answer.decision, answerRule: answer.rule };
+}
+
+/** The approved call, audited on the chat channel as the chat's MCP server does, then the tool. */
+async function chatCall(name: string, args: Json, { repo = null }: { repo?: Json | null } = {}): Promise<Json> {
+  await require('../policy').enforce({ tool: name, action: 'call', channel: 'chat', actor: E2E_ACTOR, args }, repo ? { repo } : {});
+  return require('../mcp/chatTools.ts').handle(name, args);
+}
+
+/** Dry: the policy prompts for `tool` and takes the e2e channel's answer (evaluated, not audited). */
+function policyDry(tool: string): Check {
+  const P = require('../policy');
+  const call = P.evaluate({ tool, action: 'call', channel: 'chat', actor: E2E_ACTOR, args: {} });
+  const answer = P.evaluate({ tool, action: 'approve', channel: 'e2e', actor: E2E_ACTOR, args: {} });
+  const ok = call.decision === 'ask' && answer.decision === 'allow';
+  return { view: 'policy', check: `${tool} prompts and takes the e2e approval`, ok, detail: `call ${call.decision} (${call.rule}); e2e answer ${answer.decision} (${answer.rule})` };
+}
+
+/** The approval's audit rows for one call (C.checkApproval); a call the policy did not prompt for fails. */
+async function approvalChecks(deps: Deps, tool: string, prompt: Json | null, subject: string, callSubject: string | null): Promise<Check[]> {
+  if (!prompt?.prompted) return [{ view: 'policy', check: `${tool} prompted for approval`, ok: false, detail: `the policy answered ${prompt?.rule || '?'} without a prompt: nothing was approved` }];
+  const rows = await safely<Json[]>(() => deps.auditRows(tool));
+  return C.checkApproval(rows.ok ? rows.value : null, { tool, subject, callSubject, actor: E2E_ACTOR }, rows.error);
+}
+
 // --------------------------------------------------------------- dry run ----
 
 /** Config and reachability of everything a run touches; creates nothing. */
@@ -221,6 +268,7 @@ async function dryRun(o: Options, deps: Deps): Promise<Check[]> {
   }
   const sessions = await safely(() => deps.chat('sessions', {}));
   add('mcp', 'sessions tool answers', sessions.ok, sessions.error);
+  checks.push(policyDry(o.branch ? 'factory_continue' : 'factory_start'));
 
   const repo: RunResult = await deps.gh(['repo', 'view', o.repo, '--json', 'viewerPermission'], owner(o.repo));
   let perm: string | null = null;
@@ -269,14 +317,17 @@ async function golden(o: Options, deps: Deps): Promise<Json> {
     timeline = { ...timeline, card: deps.now() };
     deps.log(`card #${cardId} (${marker})`);
 
-    // 2. Build: the chat's own tool, as Jarvis calls it.
+    // 2. Build: the chat's own tool, as Jarvis calls it, approved as a user approves it.
     const args: Json = { card: cardId, ask: card.ask, title: card.title, runtime: o.runtime, delivery: o.delivery || 'draft_pr', repo: o.repo };
     if (o.model) args.model = o.model;
     if (o.branch) args.branch = o.branch;
+    const tool = o.branch ? 'factory_continue' : 'factory_start';
+    const prompt: Json = await deps.answerPrompt(tool, args, `${marker}:${tool}`);
     const called = deps.now();
-    const started: Json | null = await deps.chat(o.branch ? 'factory_continue' : 'factory_start', args);
+    const started: Json | null = await deps.chatCall(tool, args);
     start = started;
     startCall = { at: called, ms: deps.now() - called };
+    checks.push(...(await approvalChecks(deps, tool, prompt, `${marker}:${tool}`, cardId)));
     if (started?.started !== true || !started.job) throw new Error(`factory_start did not start a job: ${JSON.stringify(started).slice(0, 300)}`);
     deps.log(`run ${started.run} job ${started.job}`);
 
@@ -313,7 +364,12 @@ async function golden(o: Options, deps: Deps): Promise<Json> {
       if (o.resume && timeline.killed != null && timeline.resumed == null) {
         const stopped = job && (C.TERMINAL.has(job.state) || job.state === 'needs_human' || job.stalled || (C.chainIds(job) as Ids).steps.every((s) => s.state !== 'running'));
         if (stopped) {
-          const r = await safely(() => deps.chat('factory_resume', { job: started.job }));
+          const r = await safely(async () => {
+            const asked = await deps.answerPrompt('factory_resume', { job: started.job }, `${marker}:factory_resume`);
+            const v = await deps.chatCall('factory_resume', { job: started.job });
+            checks.push(...(await approvalChecks(deps, 'factory_resume', asked, `${marker}:factory_resume`, started.job)));
+            return v;
+          });
           if (r.ok) {
             timeline = { ...timeline, resumed: deps.now() };
             deps.log(`resumed (${r.value.was} → ${r.value.state})`);
@@ -576,4 +632,4 @@ function writeReport(file: string, report: Json): void {
   fs.writeFileSync(file, JSON.stringify(report, null, 2) + os.EOL);
 }
 
-module.exports = { main, dryRun, golden, sweep, remote, clean, ownSessions, killSessions, viewChecksFor, writeReport, defaultDeps, safely, scrollbacks, sessionLists, owner };
+module.exports = { main, dryRun, golden, sweep, remote, clean, ownSessions, killSessions, answerPrompt, chatCall, approvalChecks, policyDry, E2E_ACTOR, viewChecksFor, writeReport, defaultDeps, safely, scrollbacks, sessionLists, owner };

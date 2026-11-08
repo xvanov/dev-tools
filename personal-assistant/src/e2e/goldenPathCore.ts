@@ -404,6 +404,24 @@ function result(view: string, check: string, ok: unknown, detail: unknown = null
   return r;
 }
 
+/**
+ * Pure. The approval's audit trail (8.4.12): among one tool's audit rows (newest
+ * first), the e2e channel's approval of `subject` was allowed, and after it (a
+ * higher seq) the call itself was audited from the chat by `actor` for
+ * `callSubject` (the card or job, as policy's subjectOf derives it).
+ */
+function checkApproval(rows: unknown, w: { tool: string; subject: string; callSubject: unknown; actor: string }, error: unknown = null): Check[] {
+  if (!Array.isArray(rows)) return [result('policy', `${w.tool} audit rows`, false, error || 'audit log not readable')];
+  const approve = (rows as Json[]).find((r) => r.action === 'approve' && r.channel === 'e2e' && r.subject === w.subject);
+  const call = (rows as Json[]).find(
+    (r) => r.action === 'call' && r.channel === 'chat' && r.actor === w.actor && String(r.subject) === String(w.callSubject) && (!approve || Number(r.seq) > Number(approve.seq))
+  );
+  return [
+    result('policy', `${w.tool} approved on the e2e channel (audit row)`, approve?.decision === 'allow', approve ? `seq ${approve.seq}: ${approve.decision} (${approve.rule})` : `no approve row for ${w.subject}`),
+    result('policy', `${w.tool} call audited after the approval`, call && call.decision !== 'deny', call ? `seq ${call.seq}: ${call.decision} (${call.rule})` : `no chat call row for ${w.callSubject} after the approval`),
+  ];
+}
+
 /** Pure. The first object in `tree` whose `id` is `id` and that carries a `chain` list. */
 function findCard(tree: unknown, id: unknown, seen: Set<object> = new Set()): Json | null {
   if (!tree || typeof tree !== 'object' || seen.has(tree)) return null;
@@ -682,6 +700,6 @@ function remoteArgv(flags: Flags = {}, lists: Lists = {}): string[] {
 module.exports = {
   MARKER_RE, HOPS, RESUME_HOPS, DEFAULT_TIMEOUTS, DEFAULT_REPO, TERMINAL, USAGE, RESEARCH_TIMEOUT_S, SWEEP_LIVE_S, SWEEP_GRACE_S,
   parseOptions, sweepVerdict, variant, hopsFor, dummyCard, chainIds, observe, nextHop, overdue, deadEnd, startedAt, endedAt, pollMs,
-  findCard, checkPlanBoard, checkCardDetail, checkBuild, checkRun, checkMcpCard, checkMcpJob, checkGithub, checkWatchable,
+  checkApproval, findCard, checkPlanBoard, checkCardDetail, checkBuild, checkRun, checkMcpCard, checkMcpJob, checkGithub, checkWatchable,
   stripAnsi, nonEmpty, summarize, table, remoteArgv, prNumberOf,
 };

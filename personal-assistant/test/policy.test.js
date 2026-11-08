@@ -33,8 +33,13 @@ const ev = (req, pol = policy) => P.evaluate({ action: 'call', channel: 'chat', 
     assert.strictEqual(ev({ tool: t }).decision, 'ask');
     // answering the prompt for it is accepted from the user's own channels
     for (const channel of ['dashboard', 'termhub', 'cli']) assert.strictEqual(ev({ tool: t, action: 'approve', channel }).decision, 'allow', `${t} approve via ${channel}`);
+    // ...and from `pa e2e`'s headless channel (8.4.12), which answers only approvals, never calls
+    assert.deepStrictEqual([ev({ tool: t, action: 'approve', channel: 'e2e' }).decision, ev({ tool: t, action: 'approve', channel: 'e2e' }).rule], ['allow', 'approve-chat-actions']);
+    assert.strictEqual(ev({ tool: t, action: 'call', channel: 'e2e' }).decision, 'ask');
   }
 }
+// The e2e channel does not loosen the voice lock or approve anything beyond the chat's actions.
+assert.strictEqual(ev({ tool: 'factory_merge', action: 'approve', channel: 'e2e' }).decision, 'ask');
 
 // built-in tools: only the reads, only from the chat; edits and shell commands ask
 for (const t of ['Read', 'Grep', 'Glob']) assert.strictEqual(ev({ tool: t }).decision, 'allow');

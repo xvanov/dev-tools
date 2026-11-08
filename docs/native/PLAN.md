@@ -947,10 +947,21 @@ not in the Map is not done, and a new one gets added there first.
     acceptance block lists `ask` gets `/talk` shot. Checked with the real headless shell against a
     local page whose data arrives 2 s after load: shot at 3.0 s with the data in, and no browser
     left running. Not yet on a real run.
-  - [ ] **8.4.12 research: the approval is not exercised.** The e2e calls `chatTools.handle
+  - [x] **8.4.12 research: the approval is not exercised.** The e2e calls `chatTools.handle
     ('factory_start')` directly, so the policy audit log has no row for the run. Live policy does
     say `ask` (`pa audit check factory_start`). Drive the call through the permission path, or at
     least record the policy decision in the evidence.
+    Done: every action tool the e2e calls (factory_start and factory_continue, factory_resume with
+    `--resume`) goes through the steps a user's approval takes, headless. First the policy is asked
+    about the call as the chat's hook asks it, and must answer `ask`. Then the prompt is answered
+    on a new policy channel, `e2e`, which the default policy allows for approvals only (an e2e call
+    still asks). That answer is enforced and audited as an approve, with actor `pa-e2e` and subject
+    `<marker>:<tool>`. Last, the call is audited on channel `chat`, as the chat's MCP server audits
+    it. The run reads `audit_log` back and fails without both rows, in order (view `policy`). A
+    policy that never asks also fails, since nothing was approved. Dry runs check that the policy
+    prompts for the tool and accepts the e2e answer. Unit-tested against the real policy with a fake
+    audit store; not yet on a real run. The answer is the harness's own: it is not the dashboard
+    card or Claude Code's prompt UI.
   - [x] **8.4.13 research: e2e cleanup leaves sessions, and `--sweep` is not scoped.** The research
     runner drops the card but leaves the follow and researcher termhub sessions alive (the golden
     path kills them). `pa e2e --sweep` acts on every open e2e card, so during parallel reviews it

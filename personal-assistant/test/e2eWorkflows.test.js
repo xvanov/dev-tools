@@ -57,7 +57,7 @@ test('wav wraps PCM with a valid header; ndjson skips bad lines', () => {
 function fakeDeps(over = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pa-e2e-wf-'));
   let clock = 1_000_000;
-  const log = { chat: [], closed: [], posts: [], shots: [], killed: [] };
+  const log = { chat: [], closed: [], posts: [], shots: [], killed: [], audit: [] };
   const deps = {
     config: { termhub: { machines: {} } },
     now: () => clock,
@@ -114,6 +114,16 @@ function fakeDeps(over = {}) {
     claudeAuth: async () => ({ code: 0, stdout: '{"loggedIn": true, "authMethod": "claude.ai"}', stderr: '' }),
     dbProbe: async () => ({ ok: 1 }),
     gh: async () => ({ code: 0, stdout: JSON.stringify({ viewerPermission: 'ADMIN' }), stderr: '' }),
+    // the policy's audit log as answerPrompt and chatCall write it (newest first)
+    answerPrompt: async (tool, args, subject) => {
+      log.audit.unshift({ seq: log.audit.length + 1, tool, action: 'approve', channel: 'e2e', actor: 'pa-e2e', subject, decision: 'allow', rule: 'approve-chat-actions' });
+      return { prompted: true, rule: 'chat-actions-ask', answer: 'allow' };
+    },
+    chatCall: async (tool, args) => {
+      log.audit.unshift({ seq: log.audit.length + 1, tool, action: 'call', channel: 'chat', actor: 'pa-e2e', subject: String(args.job ?? args.card), decision: 'ask', rule: 'chat-actions-ask' });
+      return deps.chat(tool, args);
+    },
+    auditRows: async (tool) => log.audit.filter((r) => r.tool === tool),
     ...over,
   };
   return { deps, log, dir };
@@ -140,6 +150,8 @@ test('research: a research job to report.md, no PR, linked in Plan, Run and the 
   assert.strictEqual(s.ok, true, JSON.stringify(s.failed.concat(s.errors)));
   const start = log.chat.find(([n]) => n === 'factory_start')[1];
   assert.deepStrictEqual([start.kind, start.runtime, start.card], ['research', 'claude_session', '90']);
+  assert.deepStrictEqual(log.audit.map((a) => [a.action, a.channel]).reverse(), [['approve', 'e2e'], ['call', 'chat']], 'the start went through the approval');
+  assert.ok(s.checks.filter((c) => c.view === 'policy').length === 2 && s.checks.filter((c) => c.view === 'policy').every((c) => c.ok));
   assert.ok(fs.existsSync(path.join(s.folder, 'report.md')));
   assert.ok(s.transcripts.includes('transcripts/session-rs1.txt'));
   assert.deepStrictEqual(log.closed, ['90']);

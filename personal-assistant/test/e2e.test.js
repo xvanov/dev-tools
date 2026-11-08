@@ -287,7 +287,24 @@ function fakes({ jobs, failStart = false, prBranch = 'factory/0007-1', alive = t
       return { code: 1, stdout: '', stderr: 'unexpected' };
     },
   };
+  auditFakes(deps, log);
   return { deps, log };
+}
+
+// The policy's audit log as answerPrompt and chatCall write it (newest first); the call goes on to deps.chat.
+function auditFakes(deps, log) {
+  log.audit = [];
+  let seq = 0;
+  const row = (r) => log.audit.unshift({ seq: ++seq, actor: 'pa-e2e', ...r });
+  deps.answerPrompt = async (tool, args, subject) => {
+    row({ tool, action: 'approve', channel: 'e2e', subject, decision: 'allow', rule: 'approve-chat-actions' });
+    return { prompted: true, rule: 'chat-actions-ask', answer: 'allow' };
+  };
+  deps.chatCall = async (tool, args) => {
+    row({ tool, action: 'call', channel: 'chat', subject: String(args.job ?? args.card), decision: 'ask', rule: 'chat-actions-ask' });
+    return deps.chat(tool, args);
+  };
+  deps.auditRows = async (tool) => log.audit.filter((r) => r.tool === tool);
 }
 
 test('runner: a green golden path times every hop, checks every view, and cleans up', async () => {
@@ -298,7 +315,8 @@ test('runner: a green golden path times every hop, checks every view, and cleans
   assert.ok(C.MARKER_RE.test(log.card));
   const start = log.chat.find(([n]) => n === 'factory_start')[1];
   assert.deepStrictEqual([start.card, start.runtime, start.delivery, start.repo], ['77', 'claude_session', 'draft_pr', 'xvanov/dev-tools']);
-  for (const v of ['plan', 'plan-card', 'build', 'run', 'mcp', 'github', 'e2']) assert.ok(r.checks.some((c) => c.view === v), v);
+  for (const v of ['plan', 'plan-card', 'build', 'run', 'mcp', 'github', 'e2', 'policy']) assert.ok(r.checks.some((c) => c.view === v), v);
+  assert.deepStrictEqual(log.audit.map((a) => [a.action, a.channel, a.subject]).reverse(), [['approve', 'e2e', 'e2e-12345678-1234-1234-1234-123456789abc:factory_start'], ['call', 'chat', '77']], 'approved, then called');
   assert.ok(log.gh.some(([a, o]) => a === 'pr close 9 --repo xvanov/dev-tools --delete-branch' && o === 'xvanov'));
   assert.ok(!log.chat.some(([n]) => n === 'factory_cancel'), 'a done job is not cancelled');
   assert.deepStrictEqual(log.closed, ['77']);
@@ -340,6 +358,43 @@ test('runner: a hop past its timeout ends the run, and cleanup still cancels the
   assert.ok(r.errors.some((e) => /timed out waiting for pr_opened/.test(e)), r.errors.join('; '));
   assert.ok(log.chat.some(([n]) => n === 'factory_cancel'));
   assert.deepStrictEqual(log.closed, ['77']);
+});
+
+test('runner: the start must leave its approval in the audit log (8.4.12)', async () => {
+  const { deps, log } = fakes({ jobs: [JOB_RUNNING, JOB_PR, JOB_CI] });
+  deps.auditRows = async () => [];
+  const r = await G.main({}, {}, deps);
+  assert.strictEqual(r.ok, false);
+  assert.ok(r.failed.some((f) => /factory_start approved on the e2e channel/.test(f) && /no approve row/.test(f)), r.failed.join('; '));
+  assert.ok(log.chat.some(([n]) => n === 'factory_start'), 'the run itself still goes on; the check fails it');
+
+  const quiet = fakes({ jobs: [JOB_RUNNING, JOB_PR, JOB_CI] });
+  quiet.deps.answerPrompt = async () => ({ prompted: false, rule: 'override-allow' });
+  const q = await G.main({}, {}, quiet.deps);
+  assert.ok(q.failed.some((f) => /prompted for approval/.test(f) && /override-allow/.test(f)), 'a policy that never asks approved nothing');
+});
+
+test('approvals: answerPrompt and the call write the rows checkApproval wants, through the real policy', async () => {
+  const P = require('../src/policy');
+  const rows = [];
+  const repo = { audit: { append: async (e) => { rows.unshift({ seq: rows.length + 1, ...e }); return e; } } };
+  const args = { card: '77', kind: 'research', ask: 'q', runtime: 'claude_session', repo: 'xvanov/dev-tools' };
+  const subject = 'e2e-12345678-1234-1234-1234-123456789abc:factory_start';
+  const asked = await G.answerPrompt('factory_start', args, subject, { repo });
+  assert.deepStrictEqual([asked.prompted, asked.rule, asked.answer], [true, 'chat-actions-ask', 'allow']);
+  assert.strictEqual(rows.length, 1, 'only the answer is audited; the hook question is evaluate-only, as in the chat');
+  // the call as chatCall audits it (chatTools.handle itself is not run here)
+  await P.enforce({ tool: 'factory_start', action: 'call', channel: 'chat', actor: G.E2E_ACTOR, args }, { repo });
+  assert.deepStrictEqual(rows.map((r) => [r.action, r.channel, r.actor, r.subject, r.decision]), [
+    ['call', 'chat', 'pa-e2e', '77', 'ask'],
+    ['approve', 'e2e', 'pa-e2e', subject, 'allow'],
+  ]);
+  allOk(C.checkApproval(rows, { tool: 'factory_start', subject, callSubject: '77', actor: G.E2E_ACTOR }));
+  // a call row older than the approval does not count, nor one from another actor
+  assert.ok(!C.checkApproval([rows[1], { ...rows[0], seq: 0 }], { tool: 'factory_start', subject, callSubject: '77', actor: G.E2E_ACTOR })[1].ok);
+  assert.ok(!C.checkApproval(rows, { tool: 'factory_start', subject, callSubject: '77', actor: 'pa-chat' })[1].ok);
+  assert.ok(!C.checkApproval(null, { tool: 'factory_start', subject, callSubject: '77', actor: G.E2E_ACTOR }, 'db down')[0].ok);
+  assert.strictEqual(G.policyDry('factory_start').ok, true);
 });
 
 test('runner: a start that does not start is an error, and the card is still dropped', async () => {

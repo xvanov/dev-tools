@@ -137,6 +137,7 @@ async function dry(id: string, acc: Acceptance, o: Options, deps: Deps): Promise
     const tools = require('../mcp/chatTools.ts');
     const tool = id === 'research' ? 'factory_start' : 'factory_continue';
     checks.push(check('ask', `chat tool ${tool}`, tools.CHAT_ACTION_TOOL_NAMES.includes(tool)));
+    checks.push(G.policyDry(tool));
     if (id === 'review-fix') notes.push('a real run needs --pr <n>: one of your own PRs with review comments (left open; only the fix is pushed)');
   } else if (id === 'deepseek-pr') {
     const base = await G.dryRun({ ...o, runtime: 'api', model: o.model }, deps);
@@ -224,10 +225,13 @@ async function research(acc: Acceptance, o: Options, deps: Deps, folder: string)
   let lastJob: Json | null = null;
   let runId: number | string | null = null;
   try {
+    const args: Json = { card: cardId, kind: 'research', ask, runtime: 'claude_session', repo: o.repo };
+    const prompt: Json = await deps.answerPrompt('factory_start', args, `${marker}:factory_start`);
     const t0: number = deps.now();
-    const start: Json | null = await deps.chat('factory_start', { card: cardId, kind: 'research', ask, runtime: 'claude_session', repo: o.repo });
+    const start: Json | null = await deps.chatCall('factory_start', args);
     const tStarted: number = deps.now();
-    measured.jarvis = { ms: tStarted - t0, note: 'factory_start round trip (tool call, no composing model for research)' };
+    measured.jarvis = { ms: tStarted - t0, note: 'factory_start round trip after the approval (audited call, no composing model for research)' };
+    checks.push(...(await G.approvalChecks(deps, 'factory_start', prompt, `${marker}:factory_start`, cardId)));
     if (start?.started !== true || !start.job) throw new Error(`factory_start did not start a job: ${JSON.stringify(start).slice(0, 300)}`);
     const jobId: string = start.job;
     job = jobId;
