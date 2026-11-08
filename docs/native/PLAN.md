@@ -1363,7 +1363,7 @@ not in the Map is not done, and a new one gets added there first.
     timeout. The CLI also exits 1 when a run's `summary.json` is missing. The same page now
     settles in 41 s with the fallback's shot and leaves no browser behind. (this commit:
     `fix(personal-assistant): never let a screenshot stall an e2e run`)
-  - [ ] **8.4.41 review-fix: a `claude_session` job is not free.** `dev-tools:007` cost $0.0271
+  - [x] **8.4.41 review-fix: a `claude_session` job is not free.** Resolved by decision D26 (d3e3061): the ceiling for subscription workflows is $0.05 a job, and the factory's planning and docs steps stay metered on Flash. `dev-tools:007` cost $0.0271
     metered. pm ($0.0016) and sm ($0.0020) ran on azure/DeepSeek-V4-Flash, and tech_writer
     ($0.0236) on azure/Kimi-K2.7-Code. Only dev ran on the subscription ($0, $0.0131
     API-equivalent). That is what JOBS-API v1.2 specifies (only the dev step is Claude Code). But
