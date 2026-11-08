@@ -72,6 +72,13 @@ async function main() {
       throw new Error('boom');
     });
     q.registerTask({ name: 'early-event' }, async (p, ctx) => ctx.awaitEvent('already', { stepName: 'w' }));
+    // A name used twice in one run is two checkpoints (name, name#2), as in Absurd.
+    q.registerTask({ name: 'repeat' }, async (p, ctx) => {
+      const a = await ctx.step('x', async () => 'first');
+      const b = await ctx.step('x', async () => 'second');
+      await ctx.sleepFor('nap', 0.05);
+      return [a, b];
+    });
 
     // Idempotency: the same key is the same task.
     const s1 = await q.spawn('steps', { n: 1 }, { idempotencyKey: 'steps:1' });
@@ -110,6 +117,15 @@ async function main() {
       return r.state === 'completed' && r;
     });
     assert.deepStrictEqual(early.result, { first: true });
+
+    const rp = await q.spawn('repeat', {}, { idempotencyKey: 'repeat:1' });
+    const repeated = await until('repeat completed', async () => {
+      const r = await state(rp.taskID);
+      return r.state === 'completed' && r;
+    });
+    assert.deepStrictEqual(repeated.result, ['first', 'second'], 'resumed after the sleep, both steps kept their own results');
+    assert.strictEqual(typeof (await repos.durable.checkpoint(rp.taskID, 'nap')).value, 'string', "a sleep's checkpoint is its wake time, as Absurd's");
+    assert.ok(await repos.durable.checkpoint(rp.taskID, 'x#2'));
 
     // Failures retry with backoff, then the task is failed for good.
     const f = await q.spawn('flaky', {}, { idempotencyKey: 'flaky:1' });

@@ -74,47 +74,59 @@ class SqliteQueue {
   }
 
   /** The context a handler gets for task row `task`. */
+  // Checkpoints are kept as absurd-sdk keeps them, so a task copied from
+  // Postgres (pa db export, plan 3.3) resumes where it was: a name used again
+  // in one run is `name#2`, `name#3`...; a step's value is its JSON result; a
+  // sleep's is its wake time (ISO text); an event wait's is the payload. The
+  // wait's deadline and a timeout that fired are kept beside it (`@deadline`,
+  // `@timeout`), which Absurd holds in its own tables.
   context(task) {
     const d = this.repos.durable;
     const id = task.id;
+    const used = new Map();
+    const cpName = (name) => {
+      const n = (used.get(name) || 0) + 1;
+      used.set(name, n);
+      return n === 1 ? name : `${name}#${n}`;
+    };
     return {
       taskID: id,
       async step(name, fn) {
-        const cp = await d.checkpoint(id, name);
-        if (cp) return cp.value;
+        const cp = cpName(name);
+        const had = await d.checkpoint(id, cp);
+        if (had) return had.value;
         const v = await fn();
-        // As Absurd: what a step returns is kept as JSON (a Date comes back a string).
+        // What a step returns is kept as JSON (a Date comes back a string), as in Absurd.
         const saved = v === undefined ? null : JSON.parse(JSON.stringify(v));
-        await d.saveCheckpoint(id, name, saved);
+        await d.saveCheckpoint(id, cp, saved);
         return saved;
       },
       async sleepFor(name, seconds) {
-        const cp = await d.checkpoint(id, name);
-        const until = cp ? Date.parse(cp.value.until) : Date.now() + Math.max(0, Number(seconds) || 0) * 1000;
-        if (!cp) await d.saveCheckpoint(id, name, { until: iso(until) });
+        const cp = cpName(name);
+        const had = await d.checkpoint(id, cp);
+        const until = had && typeof had.value === 'string' ? Date.parse(had.value) : Date.now() + Math.max(0, Number(seconds) || 0) * 1000;
+        if (!had) await d.saveCheckpoint(id, cp, iso(until));
         if (Date.now() >= until) return;
         throw new Suspend(iso(until));
       },
       awaitEvent: async (event, { stepName = null, timeout = null } = {}) => {
-        const name = stepName || `$event:${event}`;
-        const cp = await d.checkpoint(id, name);
-        if (cp) {
-          if (cp.value && cp.value.timedOut) throw new TimeoutError(`timed out waiting for ${event}`);
-          return cp.value ? cp.value.payload : null;
-        }
+        const cp = cpName(stepName || `$awaitEvent:${event}`);
+        const had = await d.checkpoint(id, cp);
+        if (had) return had.value;
+        if (await d.checkpoint(id, `${cp}@timeout`)) throw new TimeoutError(`Timed out waiting for event "${event}"`);
         const got = await d.event(this.queue, event);
         if (got) {
-          await d.saveCheckpoint(id, name, { payload: got.payload });
+          await d.saveCheckpoint(id, cp, got.payload);
           return got.payload;
         }
         let deadline = null;
-        if (timeout != null) {
-          const dl = await d.checkpoint(id, `${name}#deadline`);
-          deadline = dl ? Date.parse(dl.value.until) : Date.now() + Number(timeout) * 1000;
-          if (!dl) await d.saveCheckpoint(id, `${name}#deadline`, { until: iso(deadline) });
+        if (timeout != null && Number.isFinite(Number(timeout))) {
+          const dl = await d.checkpoint(id, `${cp}@deadline`);
+          deadline = dl && typeof dl.value === 'string' ? Date.parse(dl.value) : Date.now() + Math.max(0, Number(timeout)) * 1000;
+          if (!dl) await d.saveCheckpoint(id, `${cp}@deadline`, iso(deadline));
           if (Date.now() >= deadline) {
-            await d.saveCheckpoint(id, name, { timedOut: true });
-            throw new TimeoutError(`timed out waiting for ${event}`);
+            await d.saveCheckpoint(id, `${cp}@timeout`, true);
+            throw new TimeoutError(`Timed out waiting for event "${event}"`);
           }
         }
         throw new Suspend(deadline == null ? null : iso(deadline), event);
