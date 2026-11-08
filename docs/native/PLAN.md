@@ -251,7 +251,10 @@ run mid-step; a job continued on an existing branch (`--branch`).
   compare results and latency; recalibrate rerank thresholds.
 - [ ] **3.5** Cutover on the personal stack, then the work stack; Litestream backup + restore
   drill.
-- [ ] **3.6** WSL off on the work laptop (D6); Postgres removed.
+- [ ] **3.6** WSL off on the work laptop (D6); Postgres removed. Also retire the other WSL
+  leftovers: the old termhub `server.js` in WSL (ports 7100/7110) and its watchdog timer, the
+  `pa-wsl-keepalive` scheduled task, the unused WSL factory checkout, and any Docker/Rancher
+  dependency of the API runtime (OpenHands workspace runs as a local process; 5.2 isolates it).
 - [ ] **Exit 3:** one SQLite file per stack, search quality ≥ Postgres on the recorded query set.
 
 ## Phase 4: jarvisd
@@ -291,7 +294,9 @@ run mid-step; a job continued on an existing branch (`--branch`).
 - [ ] **7.5** OpenTelemetry into Meter, including the separate Claude subscription credit pool
   (since 15 Jun 2026) with API fallback when it runs out.
 - [ ] **7.6** Tauri desktop shell (phone app out of scope, D12).
-- [ ] **Exit 7:** install on a fresh Windows and a fresh Linux machine from one artifact each.
+- [ ] **Exit 7:** install on a fresh Windows and a fresh Linux machine with one install script
+  each (jarvisd and ptyd binaries, plus the Python factory via `uv`, which fetches its own
+  Python; D15).
 
 ## Phase 8: workflow acceptance review (the last phase; D10)
 
