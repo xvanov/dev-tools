@@ -1090,10 +1090,10 @@ def author_acceptance_test(
     test_path.write_text(content, encoding="utf-8")
 
     rel = test_path.relative_to(Path(software_factory_root))
-    story.acceptance_test_ref = str(rel)
+    story.acceptance_test_ref = rel.as_posix()  # stored: same on every OS
     _persist(story, software_factory_root, db_path)
-    _emit(software_factory_root, "authored", story, ref=str(rel))
-    return str(rel)
+    _emit(software_factory_root, "authored", story, ref=rel.as_posix())
+    return rel.as_posix()
 
 
 def _default_author(software_factory_root: Path, db_path: Path | None) -> AuthorFn:

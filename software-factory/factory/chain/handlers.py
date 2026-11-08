@@ -1050,7 +1050,9 @@ def _substitute_issue_number_in_path(
         # a chain bug (split story?) than the SM's intent.
         if m.group(1) == "0":
             new_name = f"{issue_number}-{m.group(2)}"
-            return str(path.with_name(new_name))
+            # as_posix: a repo-relative path stored in the DB and frontmatter
+            # (str() would write backslashes on Windows).
+            return path.with_name(new_name).as_posix()
         return target_path_rel
     # No numeric prefix; conventionalize.
     return f"stories/{issue_number}-{slug}.md"

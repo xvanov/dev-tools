@@ -1281,25 +1281,29 @@ def _ablation_probe_command(
     an approval on the ``unknown`` ⇒ ablation route — the one place AC2's
     exclusion guarantee was not actually enforced.
     """
-    parts = [
-        shlex.quote(sys.executable), shlex.quote(str(_ORACLE_PROBE_PATH)),
-        "--factory-root", shlex.quote(str(factory_root)),
+    argv = [
+        sys.executable, str(_ORACLE_PROBE_PATH),
+        "--factory-root", str(factory_root),
         "--tree", ".",
-        "--oracle", shlex.quote(dest_name),
-        "--boot-command", shlex.quote(boot.command),
-        "--boot-cwd", shlex.quote(boot.cwd or ""),
-        "--health-path", shlex.quote(boot.health_path),
+        "--oracle", dest_name,
+        "--boot-command", boot.command,
+        "--boot-cwd", boot.cwd or "",
+        "--health-path", boot.health_path,
         "--boot-timeout", str(boot.boot_timeout_seconds),
         "--run-timeout", str(boot.run_timeout_seconds),
         "--shutdown-grace", str(boot.shutdown_grace_seconds),
-        "--env-passthrough", shlex.quote(",".join(boot.env_passthrough)),
-        "--run-id", shlex.quote(run_id),
+        "--env-passthrough", ",".join(boot.env_passthrough),
+        "--run-id", run_id,
     ]
     for k, v in (boot.env or {}).items():
-        parts += ["--env", shlex.quote(f"{k}={v}")]
+        argv += ["--env", f"{k}={v}"]
     for c in sorted(credited):
-        parts += ["--credit", shlex.quote(c)]
-    return " ".join(parts)
+        argv += ["--credit", c]
+    # The command runs through the platform shell: POSIX sh quoting, or
+    # cmd.exe's (double quotes; sh's single quotes mean nothing to cmd).
+    if sys.platform == "win32":
+        return subprocess.list2cmdline(argv)
+    return " ".join(shlex.quote(a) for a in argv)
 
 
 def _ablation_can_fail(

@@ -198,7 +198,8 @@ class Launcher(Protocol):
 def round_argv(plan: RoundPlan, *, python_exe: str | None = None) -> list[str]:
     """Windows: the argv that runs one round (``-I``: never import a ``factory``
     package from the run's working directory instead of the installed one)."""
-    return [python_exe or sys.executable, "-I", "-m", "factory.claude_session.round", str(plan.script_path)]
+    # -X utf8: -I ignores PYTHONUTF8, and the runner must not read as cp1252.
+    return [python_exe or sys.executable, "-I", "-X", "utf8", "-m", "factory.claude_session.round", str(plan.script_path)]
 
 
 def _ps_quote(s: str) -> str:

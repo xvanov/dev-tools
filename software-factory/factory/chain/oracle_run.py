@@ -152,8 +152,11 @@ def _oracle_env(*, base_url: str, run_id: str) -> dict[str, str]:
     app package on ``sys.path``. Belt-and-braces alongside the static check."""
     import os
 
-    env: dict[str, str] = {}
-    for key in ("PATH", "HOME", "LANG", "LC_ALL", "TMPDIR"):
+    from factory.oscompat import essential_env
+
+    # Windows: SYSTEMROOT/TEMP/... or the interpreter cannot start (empty on POSIX).
+    env: dict[str, str] = essential_env()
+    for key in ("PATH", "HOME", "LANG", "LC_ALL", "TMPDIR", "PYTHONUTF8"):
         val = os.environ.get(key)
         if val is not None:
             env[key] = val

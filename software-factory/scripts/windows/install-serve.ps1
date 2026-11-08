@@ -58,7 +58,8 @@ if (-not (Test-Path $py)) { throw "no venv at $py; run without -SkipSync" }
 $log = Join-Path $root 'state\logs\serve.log'
 New-Item -ItemType Directory -Force (Split-Path -Parent $log) | Out-Null
 
-$serveArgs = @('-m', 'factory', 'serve', '--interval', "$IntervalSeconds", '--log-file', "`"$log`"")
+# -X utf8: UTF-8 mode, as on Linux (serve also passes PYTHONUTF8=1 to its children).
+$serveArgs = @('-X', 'utf8', '-m', 'factory', 'serve', '--interval', "$IntervalSeconds", '--log-file', "`"$log`"")
 foreach ($a in $Apps) { $serveArgs += @('--app', $a) }
 
 # A console program from an Interactive logon task gets a visible console

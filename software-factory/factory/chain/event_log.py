@@ -88,7 +88,8 @@ def log_story_event(
                 record[key] = repr(val)
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        with path.open("a", encoding="utf-8") as f:
+        # newline="\n": LF on Windows too (text mode would write CRLF).
+        with path.open("a", encoding="utf-8", newline="\n") as f:
             f.write(json.dumps(record) + "\n")
     except OSError as exc:
         # Last-resort fallback — never escalate. Stderr makes the failure

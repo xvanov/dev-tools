@@ -122,7 +122,8 @@ def read_tail_bytes(path: str | Path, max_bytes: int) -> str:
             data = fh.read()
     except OSError:
         return ""
-    text = data.decode("utf-8", "replace")
+    # CRLF -> LF: a stream appended in text mode on Windows has CRLF endings.
+    text = data.decode("utf-8", "replace").replace("\r\n", "\n")
     if start > 0:
         # Drop the (likely partial) first line — we seeked into the middle.
         nl = text.find("\n")
@@ -164,5 +165,5 @@ def read_tail_lines(path: str | Path, max_lines: int) -> list[str]:
         return []
 
     text = buf.decode("utf-8", "replace")
-    lines = [ln for ln in text.split("\n") if ln.strip()]
+    lines = [ln.rstrip("\r") for ln in text.split("\n") if ln.strip()]
     return lines[-max_lines:]

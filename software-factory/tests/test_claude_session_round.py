@@ -107,14 +107,14 @@ def test_round_command_per_os(tmp_path: Path) -> None:
     run = tmp_path / "my run"
     plan = round_plan(run, 1, windows=True)
     ps = round_command(plan, windows=True, shell="powershell", python_exe=r"C:\py dir\python.exe")
-    assert ps.startswith("& 'C:\\py dir\\python.exe' -I -m factory.claude_session.round '")
+    assert ps.startswith("& 'C:\\py dir\\python.exe' -I -X utf8 -m factory.claude_session.round '")
     assert ps.endswith("round-1.json'")
     cmd = round_command(plan, windows=True, shell="cmd", python_exe=r"C:\py dir\python.exe")
-    assert cmd.startswith('"C:\\py dir\\python.exe" -I -m factory.claude_session.round "')
+    assert cmd.startswith('"C:\\py dir\\python.exe" -I -X utf8 -m factory.claude_session.round "')
     posix = round_command(round_plan(run, 1, windows=False), windows=False)
     assert posix.startswith("bash ") and posix.endswith("round-1.sh'")
 
 
 def test_round_argv_isolates_from_the_run_cwd(tmp_path: Path) -> None:
     argv = round_argv(round_plan(tmp_path, 1, windows=True), python_exe="py")
-    assert argv[:4] == ["py", "-I", "-m", "factory.claude_session.round"]
+    assert argv[:6] == ["py", "-I", "-X", "utf8", "-m", "factory.claude_session.round"]

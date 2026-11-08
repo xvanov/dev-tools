@@ -110,7 +110,8 @@ def _attribute_writer() -> str:
                 frame = sys._getframe(depth)
             except ValueError:  # walked off the top of the stack
                 break
-            filename = frame.f_code.co_filename
+            # Forward slashes, so the fragments match Windows paths too.
+            filename = frame.f_code.co_filename.replace("\\", "/")
             name = frame.f_code.co_name
             if filename.startswith("<") or any(
                 frag in filename for frag in _LIBRARY_PATH_FRAGMENTS

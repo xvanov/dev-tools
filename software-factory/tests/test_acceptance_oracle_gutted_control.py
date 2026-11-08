@@ -70,7 +70,9 @@ def test_stub_torn_down_even_when_the_body_raises() -> None:
             port_holder["url"] = stub.base_url
             raise RuntimeError("boom")
     # The port must be free again — connecting now must fail outright.
-    with pytest.raises(httpx.ConnectError):
+    # (On Windows a refused loopback connect is retried by the OS and surfaces
+    # as a connect TIMEOUT, not a refusal; either means nothing listens.)
+    with pytest.raises((httpx.ConnectError, httpx.ConnectTimeout)):
         httpx.get(port_holder["url"] + "/health", timeout=1)
 
 

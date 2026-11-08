@@ -262,7 +262,7 @@ def test_tests_meaningful_fails_on_direct_db_bootstrap_diff(
     db_findings = [fnd for fnd in findings if fnd["kind"] == "direct_db_bootstrap"]
     assert len(db_findings) >= 1, f"Expected >=1 direct_db_bootstrap, got {db_findings}"
     fnd = db_findings[0]
-    assert fnd["path"].endswith("tests/test_bootstrap.py"), f"path={fnd['path']}"
+    assert fnd["path"].replace("\\", "/").endswith("tests/test_bootstrap.py"), f"path={fnd['path']}"
     assert fnd["line"] == 3
     assert "create_engine" in fnd["code_excerpt"]
     assert "factory.observability.schema.migrate" in fnd["why_slop"], (

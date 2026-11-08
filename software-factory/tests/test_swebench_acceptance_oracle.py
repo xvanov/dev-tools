@@ -235,9 +235,10 @@ def test_the_authored_oracle_is_relocated_out_of_the_factory_root(
     assert story.acceptance_expected is True
     # The ref the CHAIN wrote is recorded, and the story now points at the
     # relocated ABSOLUTE path — which ``ref_is_readable`` and the gate accept.
-    assert prov["authored_ref"] == str(
+    # Stored refs are POSIX on every OS (factory.chain.acceptance).
+    assert prov["authored_ref"] == (
         Path("state") / "acceptance" / "swebench" / "7" / A._ACCEPTANCE_STORED_NAME
-    )
+    ).as_posix()
     assert story.acceptance_test_ref == str(stored)
     from factory.chain.acceptance import ref_is_readable
 

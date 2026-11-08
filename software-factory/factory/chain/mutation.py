@@ -678,9 +678,16 @@ def _run_suite(cwd: Path, test_command: str, timeout_s: int) -> tuple[str, str]:
     output = (proc.stdout or "") + (proc.stderr or "")
     if proc.returncode == 0:
         return GREEN, output
+    if proc.returncode == 1 and _CMD_NOT_FOUND in output:
+        # Windows: cmd.exe reports an unknown command as exit 1, not 127.
+        return INFRA, f"command not found (cmd.exe, exit 1; not a test failure)\n{output}"
     if proc.returncode == 1:
         return RED, output
     return INFRA, f"exit={proc.returncode} (not a test failure)\n{output}"
+
+
+#: cmd.exe's "command not found" (exit 1 under ``cmd /c``, so not tellable by code).
+_CMD_NOT_FOUND = "is not recognized as an internal or external command"
 
 
 # --------------------------------------------------------------------------- #

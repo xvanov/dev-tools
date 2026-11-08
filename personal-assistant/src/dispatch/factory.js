@@ -105,7 +105,11 @@ async function call(sub, { timeoutMs = config.factory.timeoutMs, maxOutputBytes 
   if (!enabled()) throw new Error('the factory is not configured — set PA_FACTORY_PATH (and PA_FACTORY_MACHINE if it is not this machine)');
   const opts = { cwd: config.factory.path, timeoutMs };
   if (maxOutputBytes) opts.maxOutputBytes = maxOutputBytes;
-  const res = await runCommand(machine(), F.factoryArgv(sub, config.factory.uv), opts);
+  const where = machine();
+  // A factory on this Windows machine runs in Python's UTF-8 mode, as on
+  // Linux: without it every un-annotated read_text() decodes as cp1252.
+  if (!where && process.platform === 'win32') opts.env = { PYTHONUTF8: '1' };
+  const res = await runCommand(where, F.factoryArgv(sub, config.factory.uv), opts);
   return F.parseResult(res);
 }
 

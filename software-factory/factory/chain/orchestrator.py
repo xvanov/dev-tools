@@ -2630,6 +2630,18 @@ def _mark_issue_hygiene_ran(root: Path, app: str) -> None:
         pass
 
 
+def _drop_dry_run_db(path: Path) -> None:
+    """Remove a dry-run tick's temp DB copy; never raises.
+
+    On Windows a pooled SQLite connection still holding the file makes the
+    unlink fail; a leftover temp copy is litter, not a reason to fail the tick.
+    """
+    try:
+        path.unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
 def tick(
     software_factory_root: Path,
     app: str,
@@ -2683,7 +2695,7 @@ def tick(
         cfg = load_app_config(app, root)
     except FileNotFoundError as exc:
         if _dry_run_db_temp is not None:
-            _dry_run_db_temp.unlink(missing_ok=True)
+            _drop_dry_run_db(_dry_run_db_temp)
         return TickSummary(app=app, dry_run=dry_run, errors=[(app, f"app config missing: {exc}")])
 
     # Phase 7 — halt check (double defence: also enforced in drive_chain.sh).
@@ -2697,7 +2709,7 @@ def tick(
             halt_state = get_halt_state(root=root) or {}
             _halt_reason = halt_state.get("reason", "unknown")
             if _dry_run_db_temp is not None:
-                _dry_run_db_temp.unlink(missing_ok=True)
+                _drop_dry_run_db(_dry_run_db_temp)
             return TickSummary(
                 app=app,
                 dry_run=dry_run,
@@ -3834,7 +3846,7 @@ def tick(
             pass
         # Clean up the dry-run temp DB regardless of success or failure.
         if _dry_run_db_temp is not None:
-            _dry_run_db_temp.unlink(missing_ok=True)
+            _drop_dry_run_db(_dry_run_db_temp)
 
     return summary
 

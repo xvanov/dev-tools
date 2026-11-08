@@ -1469,6 +1469,12 @@ def serve_cmd(
 
     load_dotenv()
     load_dotenv(_FACTORY_ROOT / ".env", override=False)
+    import sys as _sys
+
+    if _sys.platform == "win32":
+        # Every tick and worker serve starts runs in UTF-8 mode, as on Linux
+        # (otherwise un-annotated read_text() decodes as cp1252).
+        os.environ["PYTHONUTF8"] = "1"
 
     if status:
         import json as _json
