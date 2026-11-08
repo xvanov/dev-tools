@@ -2286,9 +2286,9 @@
           }
         ],
         "verdict": {
-          "result": null,
-          "date": null,
-          "report": null
+          "result": "fail",
+          "date": "2026-11-08",
+          "report": "docs/native/acceptance/deepseek-pr.md"
         }
       }
     },

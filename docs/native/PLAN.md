@@ -955,6 +955,52 @@ not in the Map is not done, and a new one gets added there first.
     updated in the last 90 min (the longest hop timeout), or a finished job or jobless card younger
     than 15 min. It lists what it left. `--sweep --marker e2e-<uuid>` cleans that one run now.
     Unit-tested; not run on the live stack, because reviewers were running there.
+  - [ ] **8.4.14 deepseek-pr: the tool call takes 6.7 s (target 1 s excluding model time).** Card at
+    19:56:39.0, compose's model call ended 19:56:44.74 (2954 ms), PA "dispatched" 19:56:45.74: about
+    2.8 s before compose and 1.0 s of submit, so ≈3.7 s without the model. Measured on `c0c2a3e`,
+    before 002f99e. Re-measure with its `timings_ms`, then cut what remains
+    ([acceptance/deepseek-pr.md](acceptance/deepseek-pr.md)).
+  - [ ] **8.4.15 deepseek-pr: approval to "started" is ≈2.9 s (target 1 s); the e2e read 11.1 s.**
+    factory_start returned ≈19:56:45.7, and the job sat `queued` ("waiting for pm-sync on the next
+    factory tick") until the pm step started at 19:56:48.59. Same root as 8.4.9: a submit should
+    wake the tick. The steps also waited 20 s (pm to sm) and 35 s (sm to dev) between ticks.
+  - [ ] **8.4.16 deepseek-pr: the worker hop is not measured.** One sample: PR #63 closed at
+    20:24:37Z, the PA `run` row reached the live feed at 20:25:01 (24 s) and `factory_board` at
+    20:25:08 (31 s). The factory's `updated_at` moved only at 20:28:52, so it can't time the change.
+    Re-measure once serve runs e88e204 (E3 push), with 8.4.10's measurement.
+  - [ ] **8.4.17 deepseek-pr: step session links open a 404.** Plan's card chain, Build and
+    `factory_job` give `http://127.0.0.1:7010/#session=…` for every factory step, and sessiond's
+    `GET /` is 404; only the run's follow session links to the front (:7000). Set
+    `FACTORY_TERMHUB_PUBLIC_URL` to the front on the work stack (or default it there), and have the
+    e2e GET each link it reports, not only find the session in `/api/sessions`.
+  - [ ] **8.4.18 deepseek-pr: the API dev still hangs PowerShell on a multi-line `git commit -m`.**
+    It did so twice in dev-tools:018 (20:05-20:12, 7.6 min, 18 turns, $0.16 of the $1.11 step),
+    with 73e824d's prompt rule in place, and it considered `--no-verify` before using `-F`. The
+    served `c0c2a3e` predates E6.1's guard (e2b0323). Re-run with it served, and check the stream
+    for guard refusals instead of `>>` prompts.
+  - [ ] **8.4.19 deepseek-pr: the generated diff fails review and scope.** PR #63's `pa version`
+    runs its git fallback without a `cwd`, so it prints another repo's commit, or nothing, when run
+    outside the checkout (the dashboard uses `cwd: __dirname`). It hardcodes
+    `127.0.0.1:7300` instead of `config.dispatch`, and it adds an unrequested `meeting`
+    HELP_TOPICS entry. Tests and lint can't catch either, and the solo pipeline has no review step.
+    Add a review pass before the PR (or put the precedents in the brief), then re-run.
+  - [ ] **8.4.20 deepseek-pr: the dev prompt says "NO CONTEXT AVAILABLE … You are likely the
+    Onboarder persona".** The work factory has no `apps/dev-tools/context/project.md` or
+    `navigation.md`, so a dev step is told to write the context set and spends its first ~25 of 76
+    turns exploring. Generate the context on the work factory (local, untracked), and keep the
+    Onboarder text out of other personas' prompts.
+  - [ ] **8.4.21 deepseek-pr: the dummy card asks the agent to "open a draft PR".** The workflow
+    delivers a ready PR, and the factory forbids the agent from opening one.
+    `goldenPathCore.dummyCard` should word the ask by delivery and say the factory delivers.
+  - [ ] **8.4.22 deepseek-pr: Map and e2e drift.** The Map's steps and `cost.basis` name
+    `deepseek/deepseek-coder`, but `pa e2e deepseek-pr` runs `azure/deepseek-v4-pro`. The e2e also
+    times the jarvis hop including compose's model call, which the target excludes: subtract
+    `timings_ms.compose_model`.
+  - [ ] **8.4.23 deepseek-pr: PA keeps stale state after a job ends.** Run rows kept a live
+    `factory_state` for dev-tools:004-015, hours after the factory ended them, so `--sweep`
+    reported "cancelled" for each. The `card` tool's narrative said run #29 "is still running"
+    after card #6774 was `done`. Sync `run.factory_state` on terminal jobs, and refresh the card
+    context when the run lands.
 - [ ] **8.5 Architecture map review.** A full pass over `architecture.json` (the `/architecture`
   page) against the finished system: every component, process, port, table, tool, workflow and
   storage location as it now runs on both stacks (jarvisd, ptyd, native factory, SQLite,
