@@ -2,6 +2,11 @@
 module.exports = {
   skip: [],
   serial: [],
+  // Run on CI only (CI=true): too load-sensitive to be a reliable local or pre-commit signal.
+  ciOnly: [
+    { file: 'supervisor.test.js', reason: 'load-sensitive; D17' },
+    { file: 'lease.test.js', reason: 'load-sensitive; D17' },
+  ],
   // Git-heavy files made of independent blocks (Windows spawns are ~0.1 s each): run each as parallel shards.
   shards: { 'dispatchStart.test.js': 5, 'remoteExec.test.js': 4 },
   // No test may reach a real Postgres (the work stack's PA database lives on 5433): point the pool

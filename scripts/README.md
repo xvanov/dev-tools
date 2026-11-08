@@ -22,6 +22,7 @@ Per-tool settings live in `<tool>/test/runner.config.js` (every `skip` and `seri
 |---|---|
 | `skip: [{file, reason}]` | not run |
 | `skip: [{file, reason, platform: 'linux'}]` | runs **only** on that `process.platform`; skipped everywhere else |
+| `ciOnly: [{file, reason}]` | runs only when `CI` is set (GitHub Actions sets it); skipped locally and in the pre-commit hook. PA: `supervisor`, `lease` (load-sensitive; D17) |
 | `serial: [{file, reason}]` | run alone after the pool (for a test that cannot share the machine) |
 | `env: {NAME: 'v'}` | added to every test's environment (PA points `PA_DATABASE_URL` at a closed port, so no test can touch a real database) |
 | `shards: {'x.test.js': 4}` | run one slow file as 4 parallel processes; its independent top-level blocks are wrapped in `if (owns()) { ... }` from `shard.js` (round-robin; unsharded runs own every block) |

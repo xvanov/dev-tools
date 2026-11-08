@@ -15,6 +15,7 @@
 // Per-tool lists live in <tool>/test/runner.config.js (module.exports = ...):
 //   skip:    [{ file: 'x.test.js', reason: '...' }]                      // not run at all
 //   skip:    [{ file: 'z.test.js', reason: '...', platform: 'linux' }]   // run ONLY on that process.platform
+//   ciOnly:  [{ file: 'u.test.js', reason: '...' }]                      // runs only when CI is set; skipped locally and in pre-commit
 //   serial:  [{ file: 'y.test.js', reason: '...' }]                      // run alone, after the pool
 //   env:     { NAME: 'value' }                                           // added to every test's environment
 //   touches: { 'w.test.js': ['src/'] }                                   // --changed: directories a test walks
@@ -49,7 +50,7 @@ function loadConfig(testDir) {
     if (!e || !e.file || !e.reason) throw new Error(`${name} entries need {file, reason}: ${JSON.stringify(e)}`);
     return e;
   });
-  return { skip: norm(cfg.skip, 'skip'), serial: norm(cfg.serial, 'serial'), env: cfg.env || {}, touches: cfg.touches || {}, narrow: cfg.narrow || {}, shards: cfg.shards || {} };
+  return { skip: norm(cfg.skip, 'skip'), serial: norm(cfg.serial, 'serial'), env: cfg.env || {}, touches: cfg.touches || {}, ciOnly: norm(cfg.ciOnly, 'ciOnly'), narrow: cfg.narrow || {}, shards: cfg.shards || {} };
 }
 
 // One test file, or one shard of it (job = 'x.test.js' or { file, shard, shards }).
@@ -103,9 +104,11 @@ async function main() {
   const cfg = loadConfig(testDir);
   // A skip with `platform` means "only runs there": it is skipped everywhere else.
   const skipped = new Map(cfg.skip.filter((e) => !e.platform || e.platform !== process.platform).map((e) => [e.file, e.reason]));
+  // ciOnly: load-sensitive tests that run on CI (CI=true, as GitHub Actions sets it) and nowhere else.
+  if (!process.env.CI) for (const e of cfg.ciOnly) skipped.set(e.file, `${e.reason} (CI only)`);
   const serial = new Map(cfg.serial.map((e) => [e.file, e.reason]));
   let all = fs.readdirSync(testDir).filter((f) => f.endsWith('.test.js')).sort();
-  for (const f of [...cfg.skip.map((e) => e.file), ...serial.keys()]) {
+  for (const f of [...cfg.skip.map((e) => e.file), ...cfg.ciOnly.map((e) => e.file), ...serial.keys()]) {
     if (!all.includes(f)) { console.error(`runner.config.js names a missing file: ${f}`); process.exit(2); }
   }
   if (opts.filters.length) all = all.filter((f) => opts.filters.some((s) => f.includes(s)));
