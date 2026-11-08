@@ -36,8 +36,8 @@
 //   - NOTIFY: the event triggers (sql-sqlite/003) write event_outbox in the
 //     writer's transaction, as sql/036 does; after a commit this process reads
 //     the new rows and hands them to sessions that LISTENed, as
-//     {channel, payload}. Delivery is in-process only: another process sees the
-//     events in event_outbox (src/repo events.after), not as a wake-up.
+//     {channel, payload}. Events another process commits are picked up by a
+//     500 ms poll of the outbox counter while anyone listens.
 
 const crypto = require('crypto');
 const fs = require('fs');
@@ -388,6 +388,34 @@ function createSqliteBackend(file, { key = null } = {}) {
     setImmediate(() => bus.emit('notify', { channel, payload: body, processId: process.pid }));
   }
 
+  // Events another process wrote (the `pa` CLI, the MCP server, the other
+  // worker generation) reach this process's listeners within POLL_MS: while
+  // anyone listens, the outbox counter is read every POLL_MS (one indexed
+  // read of a one-row table), as LISTEN would have woken them on Postgres.
+  const POLL_MS = 500;
+  let poller = null;
+  let polling = 0;
+  function startPolling() {
+    polling++;
+    if (poller || memory) return;
+    poller = setInterval(() => {
+      if (closed || lock.held) return; // a local commit flushes on its own
+      try {
+        flushEvents();
+      } catch {
+        /* the next tick tries again */
+      }
+    }, POLL_MS);
+    poller.unref();
+  }
+  function stopPolling() {
+    polling = Math.max(0, polling - 1);
+    if (!polling && poller) {
+      clearInterval(poller);
+      poller = null;
+    }
+  }
+
   function isRead(sql) {
     return cachedStatement(writer, translate(sql).sql).readonly;
   }
@@ -463,13 +491,18 @@ function createSqliteBackend(file, { key = null } = {}) {
         if (!channels.size) {
           if (!bus.listenerCount('notify')) lastSeq = seqNow();
           bus.on('notify', relay);
+          startPolling();
         }
         channels.add(channel);
       },
       unlisten(channel) {
+        const had = channels.size > 0;
         if (channel === '*') channels.clear();
         else channels.delete(channel);
-        if (!channels.size) bus.off('notify', relay);
+        if (had && !channels.size) {
+          bus.off('notify', relay);
+          stopPolling();
+        }
       },
     };
     let released = false;
@@ -516,6 +549,7 @@ function createSqliteBackend(file, { key = null } = {}) {
   async function close() {
     if (closed) return;
     closed = true;
+    if (poller) clearInterval(poller);
     bus.removeAllListeners();
     if (reader) reader.close();
     writer.close();
