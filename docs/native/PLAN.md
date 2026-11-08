@@ -497,7 +497,7 @@ run mid-step; a job continued on an existing branch (`--branch`).
   (`~/.local/share/...` on Linux), refuses while a lock or the DB is held, or for a target in
   the repo, non-empty or on another filesystem, undoes a failed rename, writes the pointer and
   re-links the worktrees (`git worktree repair`); `factory state where`; serve refuses a pointer
-  to a missing dir. The PA reads the same pointer (`resolveStateDir`, `factoryPace.js`; the
+  to a missing dir. The PA reads the same pointer (`resolveStateDir`, `factoryPace.ts`; the
   backup bundle keeps the dir's own name). Full suite on Windows: 4157 passed, 202 skipped, 4
   failed (three pass alone; `test_no_first_write_watchdog_pauses_and_still_grades` fails the
   same on main, a wall-clock budget). Migrated on both machines 2026-11-08 (~17:00Z) with serve

@@ -44,7 +44,7 @@ const { config } = require('./config.ts');
 const repo = require('./repo');
 const { logger } = require('./log.ts');
 const crypt = require('./backupCrypto.ts');
-const { resolveStateDir } = require('./dispatch/factoryPace.js');
+const { resolveStateDir } = require('./dispatch/factoryPace.ts');
 
 const exec = promisify(execFile);
 const log = logger('backup');

@@ -930,7 +930,7 @@ each command prints — the contract is the factory's `docs/JOBS-API.md`.
   in the checkout, titled with the ask; the card's session link and `pa attach` open it.
 - **Status comes back** every `PA_FACTORY_ACTIVE_POLL_SECONDS` (5) while a job is queued,
   triaging or in progress, at once when a factory on this machine writes its `state/factory.db`
-  (watched, never read; `src/dispatch/factoryPace.js`), and every `PA_FACTORY_POLL_SECONDS` (120)
+  (watched, never read; `src/dispatch/factoryPace.ts`), and every `PA_FACTORY_POLL_SECONDS` (120)
   otherwise: one `factory job list --source pa --active`, plus `job status` for jobs that ended
   since. A factory can also push a job's new state (`POST /api/factory/events`, below), which
   Build shows at once; the next pass overwrites it with the full list. A blocked job makes the run `waiting` and
