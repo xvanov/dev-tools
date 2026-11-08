@@ -240,14 +240,28 @@ jobs:
     env:
       CARGO_TERM_COLOR: never
       CARGO_INCREMENTAL: '0'
-      SCCACHE_GHA_ENABLED: 'true'
-      RUSTC_WRAPPER: sccache
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
-      - uses: mozilla-actions/sccache-action@v0.0.9
+      # sccache is a speed-up, never a requirement: its setup fetches a release
+      # from GitHub and has failed there ("Unable to locate executable file:
+      # undefined"). Pinned, allowed to fail, and only a successful setup turns
+      # the wrapper on; otherwise cargo builds without it.
+      - id: sccache
+        uses: mozilla-actions/sccache-action@v0.0.9
+        continue-on-error: true
+        with:
+          version: v0.10.0
+          # The post step runs $SCCACHE_PATH --show-stats; after a failed setup that
+          # is "undefined" and fails the job. Stats are printed by hand instead.
+          disable_annotations: true
+      - if: steps.sccache.outcome == 'success'
+        shell: bash
+        run: |
+          echo "SCCACHE_GHA_ENABLED=true" >> "$GITHUB_ENV"
+          echo "RUSTC_WRAPPER=sccache" >> "$GITHUB_ENV"
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: ptyd
@@ -303,14 +317,28 @@ jobs:
     env:
       CARGO_TERM_COLOR: never
       CARGO_INCREMENTAL: '0'
-      SCCACHE_GHA_ENABLED: 'true'
-      RUSTC_WRAPPER: sccache
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
-      - uses: mozilla-actions/sccache-action@v0.0.9
+      # sccache is a speed-up, never a requirement: its setup fetches a release
+      # from GitHub and has failed there ("Unable to locate executable file:
+      # undefined"). Pinned, allowed to fail, and only a successful setup turns
+      # the wrapper on; otherwise cargo builds without it.
+      - id: sccache
+        uses: mozilla-actions/sccache-action@v0.0.9
+        continue-on-error: true
+        with:
+          version: v0.10.0
+          # The post step runs $SCCACHE_PATH --show-stats; after a failed setup that
+          # is "undefined" and fails the job. Stats are printed by hand instead.
+          disable_annotations: true
+      - if: steps.sccache.outcome == 'success'
+        shell: bash
+        run: |
+          echo "SCCACHE_GHA_ENABLED=true" >> "$GITHUB_ENV"
+          echo "RUSTC_WRAPPER=sccache" >> "$GITHUB_ENV"
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: |
