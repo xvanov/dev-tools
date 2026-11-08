@@ -244,7 +244,7 @@ async function terminal({ spare, termhubBase, durationTicks }) {
     command = `node "${script}"`;
     cleanup = async () => fs.rmSync(cwd, { recursive: true, force: true });
   }
-  const created = await th.getJson(port, '/api/sessions', { host, method: 'POST', body: { command, cwd, title: 'deploy test (Z6)', cols: 100, rows: 40 } });
+  const created = await th.getJson(port, '/api/sessions', { host, method: 'POST', timeoutMs: 20_000, body: { command, cwd, title: 'deploy test (Z6)', cols: 100, rows: 40 } });
   if (created.status !== 201) throw new Error(`termhub would not start a session: ${created.status} ${created.text}`);
   const id = created.body.id;
   const t = th.watchTerminal(WebSocket, `ws://${host}:${port}/ws/term/${encodeURIComponent(id)}`);
@@ -263,7 +263,7 @@ async function terminal({ spare, termhubBase, durationTicks }) {
     },
     stop: async () => {
       await t.close();
-      await th.getJson(port, `/api/sessions/${encodeURIComponent(id)}`, { host, method: 'DELETE' }).catch(() => {});
+      await th.getJson(port, `/api/sessions/${encodeURIComponent(id)}`, { host, method: 'DELETE', timeoutMs: 20_000 }).catch(() => {});
       await cleanup();
     },
   };
