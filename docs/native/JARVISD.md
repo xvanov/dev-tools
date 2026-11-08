@@ -112,12 +112,18 @@ short gap as the bootstrap), not a roll. On the work laptop (the pa-worker task 
    C:\repos\dev-tools\jarvisd\src\main.ts --check` prints `jarvisd ok`.
 3. Add `PA_RUNTIME=bun` to `personal-assistant\.env` (the supervisor reads it there; `PA_BUN`
    names another Bun if wanted).
-4. `Stop-ScheduledTask pa-worker; Start-ScheduledTask pa-worker`.
+4. `powershell -File C:\repos\dev-tools\personal-assistant\windows\redeploy.ps1 -Restart`. Not
+   `Stop-ScheduledTask`/`Start-ScheduledTask` alone: the task runs elevated, so stopping it leaves
+   the old supervisor (and its generations) running, and the new one cannot take the port.
+   `redeploy.ps1`'s restart ends the supervisor and its generations by command line (node.exe and,
+   on Bun, bun.exe running `jarvisd\src\main.ts`), then starts the task and waits for
+   `/api/version`. `-Restart` forces that restart when a roll would otherwise do (a runtime
+   switch changes no code). Done live on the work stack 2026-11-08.
 5. Verify: `node src\supervisor status` (in `personal-assistant/`) shows `"runtime": "bun"` and a
    generation; the supervisor log says `spawned generation ... runtime: bun`; the dashboard,
    `/api/events` and a factory job behave as before. `pa doctor` should be unchanged.
 
-Rollback: delete the `PA_RUNTIME=bun` line (or set `node`) and restart the task again (step 4).
+Rollback: delete the `PA_RUNTIME=bun` line (or set `node`) and run step 4 again.
 Deploys (`windows\redeploy.ps1`) keep working either way; `deploy.js` also re-runs `npm ci` in
 `jarvisd/` when its package files change.
 
@@ -133,6 +139,6 @@ setup; T7's cargo and Bun caches apply.
 
 - [x] Stage 1: host, Bun parity, compiled build, CI on Windows and Linux.
 - [x] Supervisor runs jarvisd generations (`PA_RUNTIME=bun`), tested with the fixture worker.
-- [ ] A live run of the work stack with `PA_RUNTIME=bun`.
+- [x] The work stack runs on Bun (`PA_RUNTIME=bun`, 2026-11-08).
 - [x] First module in strict TS: `src/events/bus.ts` (the pattern above).
 - [ ] Stage 2 onward, as above.

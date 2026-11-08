@@ -22,7 +22,9 @@
 # means nothing to do. -Pull: pull here first (when not run by termhub's updater).
 # -DryRun: say what would happen, change nothing. Never throws: a failure is reported, and
 # termhub's own update has already succeeded by the time this runs.
-param([string]$From = '', [switch]$Pull, [switch]$DryRun)
+# -Restart: restart the supervisor after the deploy even when a roll would do: what a switch of
+# PA_RUNTIME (node | bun, plan 4.1) needs, since the supervisor reads it when it starts.
+param([string]$From = '', [switch]$Pull, [switch]$DryRun, [switch]$Restart)
 
 $ErrorActionPreference = 'Continue'
 $PaDir = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
@@ -70,8 +72,9 @@ function Restart-PaTask([string]$Head) {
   Stop-ScheduledTask -TaskName 'pa-worker' -ErrorAction SilentlyContinue
   # Stop-ScheduledTask ends conhost, not node: the supervisor (`src\supervisor`), its
   # generations and a pre-supervisor worker (`src\worker.js`) are ended here. Not deploy.js.
-  Get-CimInstance Win32_Process -Filter "Name='node.exe'" |
-    Where-Object { $_.CommandLine -match 'src[\\/](worker\.js|supervisor)("|\s|$)' } |
+  # Bun generations (PA_RUNTIME=bun) run jarvisd\src\main.ts in bun.exe: ended too.
+  Get-CimInstance Win32_Process -Filter "Name='node.exe' OR Name='bun.exe'" |
+    Where-Object { $_.CommandLine -match 'src[\\/](worker\.js|supervisor)("|\s|$)|jarvisd[\\/]src[\\/]main\.ts' } |
     ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
   Start-Sleep -Milliseconds 500
   Start-ScheduledTask -TaskName 'pa-worker'
@@ -105,7 +108,7 @@ try {
 
   # 0 done (or nothing to do), 1 failed and rolled back, 3 no supervisor, 4 supervisor changed,
   # 5 refused: another deploy is running.
-  if ($code -eq 0 -and -not $taskChanged) { return }
+  if ($code -eq 0 -and -not $taskChanged -and -not $Restart) { return }
   if ($code -eq 5) { Write-Host "stack update: refused - another deploy is running (see above). Nothing changed." -ForegroundColor Yellow; return }
   if ($code -eq 1) { Write-Host "stack update: the deploy did not take; the lines above say which generation serves." -ForegroundColor Yellow; return }
   if (-not $hasTask) { Say "no pa-worker task on this machine - skipping the restart."; return }
