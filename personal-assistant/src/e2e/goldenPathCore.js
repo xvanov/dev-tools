@@ -350,13 +350,18 @@ function checkBuild(factory, ids) {
  * which job and step it belongs to, and is alive or has scrollback to review.
  * `sessionsByMachine` maps a machine name ('' for the factory's own) to its list.
  */
-function checkRun(sessionsByMachine, ids, { scrollback = {} } = {}) {
+function checkRun(sessionsByMachine, ids, { scrollback = {}, stopped = new Set() } = {}) {
   const out = [];
   const withSession = ids.steps.filter((s) => s.session);
   if (!withSession.length) return [result('run', 'step sessions', false, 'no step has a session')];
   for (const s of withSession) {
     const list = sessionsByMachine[s.session.machine || ''] || sessionsByMachine[''] || [];
     const got = list.find((x) => String(x.id) === s.session.id);
+    // The attempt the resume variant cancelled may be gone; the resumed one is checked.
+    if (!got && stopped.has(s.session.id)) {
+      out.push(result('run', `session ${s.session.id} (cancelled attempt)`, true, 'cancelled by --resume, not listed'));
+      continue;
+    }
     out.push(result('run', `session ${s.session.id} listed`, got, got ? null : `not in termhub /api/sessions${s.session.machine ? ` on ${s.session.machine}` : ''}`));
     if (!got) continue;
     const L = got.links || {};

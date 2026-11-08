@@ -194,7 +194,7 @@ test('remoteArgv passes plain flags, never --on/--report, and refuses shell-look
 // -------------------------------------------------- the runner, with fakes ----
 
 function fakes({ jobs, failStart = false, prBranch = 'factory/0007-1', alive = true } = {}) {
-  const log = { chat: [], gh: [], killed: [], closed: [], sleeps: 0 };
+  const log = { chat: [], gh: [], killed: [], closed: [], stopped: [], sleeps: 0 };
   let clock = 0;
   let poll = 0;
   const deps = {
@@ -234,6 +234,7 @@ function fakes({ jobs, failStart = false, prBranch = 'factory/0007-1', alive = t
     factoryMachine: () => null,
     factoryApps: async () => [{ app: 'dev-tools', repo: 'xvanov/dev-tools' }],
     jobStatus: async () => jobs[Math.min(poll++, jobs.length - 1)],
+    stopJob: async (id) => { log.stopped.push(id); return { job_id: id, state: 'cancelled' }; },
     hub: () => ({
       screen: async () => '● Reading personal-assistant/src/cli/index.js',
       listSessions: async () => [{ id: 'abc123', alive, links: { job: 'dev-tools:0007', step: '41' } }],
@@ -315,25 +316,31 @@ test('runner: a start that does not start is an error, and the card is still dro
   assert.deepStrictEqual(log.closed, ['77']);
 });
 
-test('runner: --resume kills the running step after its first output, then resumes', async () => {
-  const killedJob = { ...JOB_RUNNING, state: 'failed', runs: [{ ...JOB_RUNNING.runs[0], state: 'failed' }] };
-  const { deps, log } = fakes({ jobs: [JOB_RUNNING, killedJob, JOB_RUNNING, JOB_PR, JOB_CI] });
+test('runner: --resume cancels the job mid-step through the factory, then resumes it', async () => {
+  const cancelled = { ...JOB_RUNNING, state: 'cancelled', runs: [{ ...JOB_RUNNING.runs[0], state: 'cancelled' }] };
+  const { deps, log } = fakes({ jobs: [JOB_RUNNING, cancelled, JOB_RUNNING, JOB_PR, JOB_CI] });
   const r = await G.main({ resume: true }, {}, deps);
   assert.strictEqual(r.ok, true, JSON.stringify(r.failed.concat(r.errors)));
   assert.deepStrictEqual(r.hops.map((h) => h.hop), ['card', 'job_started', 'first_output', 'killed', 'resumed', 'pr_opened', 'ci_done']);
+  assert.deepStrictEqual(log.stopped, ['dev-tools:0007']);
+  assert.ok(!log.chat.some(([n]) => n === 'factory_cancel'), "the chat's cancel would drop the PA run");
   assert.ok(log.chat.some(([n]) => n === 'factory_resume'));
-  assert.ok(log.killed.includes('abc123'));
 });
 
-test('runner: --resume waits for a claude_session step; an API step\'s viewer session is not the step', async () => {
+test('runner: --resume waits for a claude_session step; an API step\'s session is only a viewer', async () => {
   const planning = { ...JOB_RUNNING, runs: [{ id: 40, story_id: 1, runtime: 'api', persona: 'pm', state: 'running', session: { machine: '', termhub_session_id: 'view40', links: { job: 'dev-tools:0007', step: '40' } } }] };
-  const killedJob = { ...JOB_RUNNING, state: 'failed', runs: [{ ...JOB_RUNNING.runs[0], state: 'failed' }] };
-  const { deps, log } = fakes({ jobs: [planning, planning, JOB_RUNNING, killedJob, JOB_RUNNING, JOB_PR, JOB_CI] });
+  const cancelled = { ...JOB_RUNNING, state: 'cancelled', runs: [{ ...JOB_RUNNING.runs[0], state: 'cancelled' }] };
+  const { deps, log } = fakes({ jobs: [planning, planning, JOB_RUNNING, cancelled, JOB_RUNNING, JOB_PR, JOB_CI] });
   const r = await G.main({ resume: true }, {}, deps);
   assert.strictEqual(r.ok, true, JSON.stringify(r.failed.concat(r.errors)));
-  assert.ok(!log.killed.slice(0, 1).includes('view40'), 'the API viewer is not killed as the step');
-  assert.strictEqual(log.killed[0], 'abc123');
-  assert.ok(log.chat.some(([n]) => n === 'factory_resume'));
+  assert.deepStrictEqual(log.stopped, ['dev-tools:0007'], 'one cancel, made once the claude_session step ran');
+  assert.ok(r.hops.find((h) => h.hop === 'killed').sinceStartS > r.hops.find((h) => h.hop === 'first_output').sinceStartS);
+});
+
+test('run view: the cancelled attempt\'s session may be gone; any other must be listed', () => {
+  const ids = C.chainIds(JOB_RUNNING, { card: 77, run: 5 });
+  allOk(C.checkRun({ '': [] }, ids, { stopped: new Set(['abc123']) }));
+  assert.ok(C.checkRun({ '': [] }, ids).some((c) => !c.ok && /listed/.test(c.check)));
 });
 
 test('runner: --branch continues the branch through factory_continue', async () => {

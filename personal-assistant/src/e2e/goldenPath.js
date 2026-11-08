@@ -48,6 +48,9 @@ function defaultDeps() {
     factoryMachine: () => factory.machine(),
     factoryApps: () => factory.apps({ fresh: true }),
     jobStatus: (id) => factory.call(['job', 'status', id, '--json']),
+    // The factory's own cancel: the chat's factory_cancel also drops the PA run
+    // that holds the job, which a resumed job still needs for its links.
+    stopJob: (id) => factory.call(require('../dispatch/factoryCore.ts').cancelArgv(id)),
     hub: (machine) => termhub.forMachine(machine || null),
     dbProbe: () => repo.system.ping(),
     e2eCards: () => repo.commitments.e2eCards(),
@@ -223,6 +226,7 @@ async function golden(o, deps) {
   let start = null;
   let startCall = null;
   let lastJob = null;
+  const cancelledSessions = new Set();
   // The live feed (0.4) wakes the poll early when a run or the factory board
   // changes; the factory's own status stays the clock for every hop.
   let wake = null;
@@ -269,15 +273,18 @@ async function golden(o, deps) {
       timeline = seen.timeline;
       for (const h of seen.reached) deps.log(`hop ${h} (+${Math.round((now - t0) / 1000)} s)`);
 
-      // Only a claude_session step's terminal is the step itself: an API step's
-      // session is a read-only viewer (E2), and killing it stops nothing.
+      // Stop the run mid-step with the factory's cancel, which `job resume`
+      // accepts. Killing the session is not a stop: the factory replaces a lost
+      // claude_session within ~30 s by itself, and an API step's session is
+      // only a viewer (E2). So wait for a claude_session step to be running.
       const workers = ids.steps.filter((x) => x.session && x.state === 'running' && x.runtime === 'claude_session');
       if (o.resume && timeline.first_output != null && timeline.killed == null && workers.length) {
-        for (const s of workers) {
-          await safely(() => deps.hub(s.session.machine).killSession(s.session.id));
-        }
-        timeline = { ...timeline, killed: deps.now() };
-        deps.log(`killed the running step (${workers.map((s) => `${s.persona || 'step'} ${s.step}`).join(', ')}); waiting for the job to stop`);
+        const r = await safely(() => deps.stopJob(start.job));
+        if (r.ok) {
+          for (const s of workers) cancelledSessions.add(s.session.id);
+          timeline = { ...timeline, killed: deps.now() };
+          deps.log(`cancelled the job mid-step (${workers.map((s) => `${s.persona || 'step'} ${s.step}`).join(', ')}); waiting for it to stop`);
+        } else deps.log(`cancel refused, retrying: ${r.error}`);
       }
       if (o.resume && timeline.killed != null && timeline.resumed == null) {
         const stopped = lastJob && (C.TERMINAL.has(lastJob.state) || lastJob.state === 'needs_human' || lastJob.stalled || C.chainIds(lastJob).steps.every((s) => s.state !== 'running'));
@@ -312,7 +319,7 @@ async function golden(o, deps) {
       const until = deps.now() + o.timeouts.views * 1000;
       let viewChecks = [];
       for (;;) {
-        viewChecks = await viewChecksFor(o, deps, ids);
+        viewChecks = await viewChecksFor(o, deps, ids, cancelledSessions);
         if (viewChecks.every((c) => c.ok) || deps.now() > until) break;
         await nap(o.poll * 1000);
       }
@@ -339,7 +346,7 @@ async function golden(o, deps) {
   return report;
 }
 
-async function viewChecksFor(o, deps, ids) {
+async function viewChecksFor(o, deps, ids, cancelledSessions = new Set()) {
   const out = [];
   const state = await safely(() => deps.getJson(`${deps.paBase}/api/state`));
   out.push(...(state.ok ? C.checkPlanBoard(state.value, ids) : [{ view: 'plan', check: 'GET /api/state', ok: false, detail: state.error }]));
@@ -348,7 +355,7 @@ async function viewChecksFor(o, deps, ids) {
   const fac = await safely(() => deps.getJson(`${deps.paBase}/api/factory`));
   out.push(...(fac.ok ? C.checkBuild(fac.value, ids) : [{ view: 'build', check: 'GET /api/factory', ok: false, detail: fac.error }]));
   const sb = await scrollbacks(deps, ids.steps);
-  out.push(...C.checkRun(await sessionLists(deps, ids.steps), ids, { scrollback: sb }));
+  out.push(...C.checkRun(await sessionLists(deps, ids.steps), ids, { scrollback: sb, stopped: cancelledSessions }));
   const mcard = await safely(() => deps.chat('card', { id: ids.card }));
   out.push(...(mcard.ok ? C.checkMcpCard(mcard.value, ids) : [{ view: 'mcp', check: 'card tool', ok: false, detail: mcard.error }]));
   const mjob = await safely(() => deps.chat('factory_job', { job: ids.job, fresh: true }));
