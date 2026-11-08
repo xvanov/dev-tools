@@ -141,7 +141,6 @@ FLAKY_UNDER_LOAD = (
     "tests/test_a3_arrange_assert_split.py",
     "tests/test_acceptance_oracle",
     "tests/test_oracle_probe_cli.py",
-    "tests/test_cli_tui.py::test_baselines_cli_runs_and_returns_count",  # no such table: stories, depends on test order
 )
 
 

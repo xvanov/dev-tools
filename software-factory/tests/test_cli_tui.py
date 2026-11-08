@@ -20,6 +20,12 @@ def _runner_with_root(root: Path) -> tuple[CliRunner, object]:
 def test_baselines_cli_runs_and_returns_count(tmp_path: Path) -> None:
     """``factory baselines`` reports how many cells it recomputed."""
     (tmp_path / "state").mkdir(parents=True, exist_ok=True)
+    from sqlmodel import SQLModel
+
+    from factory.chain.state_machine import StoryRecord  # noqa: F401  (registers stories)
+    from factory.runner import _engine
+
+    SQLModel.metadata.create_all(_engine(tmp_path / "state" / "factory.db"))  # runs + stories
     runner, cli_mod = _runner_with_root(tmp_path)
     result = runner.invoke(cli_mod.app, ["baselines"])
     assert result.exit_code == 0, result.stdout

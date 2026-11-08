@@ -52,6 +52,9 @@ def test_a_unit_that_reaches_uv_pins_path(unit: Path) -> None:
     exec_lines = [ln for ln in text.splitlines() if ln.startswith("ExecStart=")]
     assert exec_lines, f"{unit.name} has no ExecStart"
 
+    if all(".venv/bin/python" in ln for ln in exec_lines):
+        return  # runs the venv interpreter directly: no uv on its path to pin
+
     reaches_uv = any("uv " in ln or ln.endswith("uv") for ln in exec_lines)
     if not reaches_uv:
         # Follow the script it runs: the failure is inside the script, not the unit.

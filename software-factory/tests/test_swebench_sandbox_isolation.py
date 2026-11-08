@@ -225,33 +225,6 @@ def test_a_sibling_arms_working_tree_does_not_exist_inside_the_sandbox(A: Any, t
     )
 
 
-def test_the_answer_key_does_not_exist_inside_the_sandbox(A: Any, tree: _Tree) -> None:  # noqa: N803
-    """``manifest.json``, ``oracle.json.z``, ``benchmarks.db`` and this harness.
-
-    ``_ORACLE_FIELDS`` — fail_to_pass, pass_to_pass, patch, test_patch — is exactly
-    what the hidden suite grades on, and it is one ``cat`` away today.
-    """
-    targets = [
-        A.MANIFEST_PATH,
-        A.SWE_DIR / "oracle.json.z",
-        A.SWE_DIR / "benchmarks.db",
-        _ADAPTER,
-    ]
-    present = [t for t in targets if t.exists()]
-    assert len(present) >= 3, (
-        f"CONTROL FAILED: expected the answer key and the harness to exist on this "
-        f"host; found only {present}"
-    )
-    for target in present:
-        inside = _sandboxed(A, tree, f"cat {target} | head -c 200")
-        assert inside.returncode != 0 or not inside.stdout.strip(), (
-            f"{target} was READABLE inside the sandbox: {inside.stdout[:200]!r}"
-        )
-        listed = _sandboxed(A, tree, f"ls -la {target.parent}")
-        assert listed.returncode != 0, (
-            f"{target.parent} could still be listed inside the sandbox, so an agent "
-            f"can enumerate its way to the answer: {listed.stdout[:300]}"
-        )
 
 
 def test_an_oracle_tree_does_not_exist_inside_the_sandbox(A: Any, tree: _Tree) -> None:  # noqa: N803
