@@ -12,7 +12,7 @@
 
 const { config } = require('../config');
 const repo = require('../repo');
-const L = require('./links');
+const L = require('./links.ts');
 
 function hubs() {
   const machines = {};

@@ -5,7 +5,7 @@
 // ids are invented.
 
 const assert = require('assert');
-const L = require('../src/dashboard/links');
+const L = require('../src/dashboard/links.ts');
 const K = require('../src/commitments/contextCore');
 
 const hubs = { local: 'http://127.0.0.1:7000/', machines: { 'build-vm': 'http://build-vm.tail:7000' } };

@@ -10,10 +10,29 @@
 //            {t:'pre', text} {t:'quote', kids} {t:'hr'}
 //   inline:  {t:'text', v} {t:'code', v} {t:'b'|'i', kids} {t:'link', href, kids}
 //            {t:'ref', id}   — a cited item, [#123]; the page links it to the item view
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+type Inline =
+  | { t: 'text'; v: string }
+  | { t: 'code'; v: string }
+  | { t: 'b'; kids: Inline[] }
+  | { t: 'i'; kids: Inline[] }
+  | { t: 'link'; href: string; kids: Inline[] }
+  | { t: 'ref'; id: number };
+type Item = { depth: number; kids: Inline[] };
+type List = { t: 'ul'; items: Item[] } | { t: 'ol'; items: Item[] };
+type Block =
+  | { t: 'h'; level: number; kids: Inline[] }
+  | { t: 'p'; kids: Inline[] }
+  | { t: 'quote'; kids: Inline[] }
+  | List
+  | { t: 'pre'; text: string }
+  | { t: 'hr' };
 
 const MAX = 200_000;
 
-function pushText(out, v) {
+function pushText(out: Inline[], v: string) {
   if (!v) return;
   const last = out[out.length - 1];
   if (last && last.t === 'text') last.v += v;
@@ -22,7 +41,7 @@ function pushText(out, v) {
 
 // A bracketed citation: [#12], [#12, #34], [#note]. Ids become refs; anything
 // else in the brackets stays text.
-function citation(inner, out) {
+function citation(inner: string, out: Inline[]) {
   pushText(out, '[');
   const parts = inner.split(/(#\d+)/);
   for (const p of parts) {
@@ -46,21 +65,21 @@ const INLINE = new RegExp(
   'g'
 );
 
-function parseInline(text, depth = 0) {
+function parseInline(text: unknown, depth: number = 0): Inline[] {
   const s = String(text ?? '');
-  const out = [];
+  const out: Inline[] = [];
   let at = 0;
   const re = new RegExp(INLINE.source, 'g');
   let m;
   while ((m = re.exec(s))) {
     pushText(out, s.slice(at, m.index));
     at = m.index + m[0].length;
-    const nest = (v) => (depth < 2 ? parseInline(v, depth + 1) : [{ t: 'text', v }]);
+    const nest = (v: string | undefined): Inline[] => (depth < 2 ? parseInline(v, depth + 1) : [{ t: 'text', v: v ?? '' }]);
     if (m[1] != null) out.push({ t: 'code', v: m[1] });
     else if (m[2] != null || m[3] != null) out.push({ t: 'b', kids: nest(m[2] ?? m[3]) });
     else if (m[4] != null) {
       // Only web links. A javascript: or data: URL in a page is shown as text.
-      if (/^https?:\/\/[^\s]+$/i.test(m[5])) out.push({ t: 'link', href: m[5], kids: nest(m[4]) });
+      if (m[5] != null && /^https?:\/\/[^\s]+$/i.test(m[5])) out.push({ t: 'link', href: m[5], kids: nest(m[4]) });
       else pushText(out, m[0]);
     } else if (m[6] != null) citation(m[6], out);
     else if (m[7] != null || m[8] != null) out.push({ t: 'i', kids: nest(m[7] ?? m[8]) });
@@ -71,12 +90,12 @@ function parseInline(text, depth = 0) {
   return out;
 }
 
-function parseMarkdown(md) {
+function parseMarkdown(md: unknown) {
   const lines = String(md ?? '').slice(0, MAX).replace(/\r\n?/g, '\n').split('\n');
-  const blocks = [];
-  let para = [];
-  let list = null;
-  let quote = [];
+  const blocks: Block[] = [];
+  let para: string[] = [];
+  let list: List | null = null;
+  let quote: string[] = [];
 
   const flushPara = () => {
     if (para.length) blocks.push({ t: 'p', kids: parseInline(para.join(' ')) });
@@ -97,12 +116,12 @@ function parseMarkdown(md) {
   };
 
   for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
+    const line = lines[i] ?? '';
     const fence = line.match(/^\s*(```|~~~)/);
     if (fence) {
       flushAll();
-      const body = [];
-      for (i++; i < lines.length && !lines[i].trim().startsWith(fence[1]); i++) body.push(lines[i]);
+      const body: string[] = [];
+      for (i++; i < lines.length && !(lines[i] ?? '').trim().startsWith(fence[1] ?? ''); i++) body.push(lines[i] ?? '');
       blocks.push({ t: 'pre', text: body.join('\n') });
       continue;
     }
@@ -113,7 +132,7 @@ function parseMarkdown(md) {
     const h = line.match(/^\s{0,3}(#{1,6})\s+(.*?)\s*#*\s*$/);
     if (h) {
       flushAll();
-      blocks.push({ t: 'h', level: h[1].length, kids: parseInline(h[2]) });
+      blocks.push({ t: 'h', level: (h[1] ?? '').length, kids: parseInline(h[2]) });
       continue;
     }
     if (/^\s{0,3}([-*_])(\s*\1){2,}\s*$/.test(line)) {
@@ -125,26 +144,29 @@ function parseMarkdown(md) {
     if (q) {
       flushPara();
       flushList();
-      quote.push(q[1]);
+      quote.push(q[1] ?? '');
       continue;
     }
     const li = line.match(/^(\s*)([-*+]|\d{1,3}[.)])\s+(.*)$/);
     if (li) {
       flushPara();
       flushQuote();
-      const type = /\d/.test(li[2]) ? 'ol' : 'ul';
-      const depth = Math.min(4, Math.floor(li[1].replace(/\t/g, '  ').length / 2));
-      if (!list || (list.t !== type && depth === 0)) {
+      const type = /\d/.test(li[2] ?? '') ? 'ol' : 'ul';
+      const depth = Math.min(4, Math.floor((li[1] ?? '').replace(/\t/g, '  ').length / 2));
+      // A cast: TypeScript does not see the closures above reassign `list`.
+      let cur = list as List | null;
+      if (!cur || (cur.t !== type && depth === 0)) {
         flushList();
-        list = { t: type, items: [] };
+        cur = { t: type, items: [] } as List;
+        list = cur;
       }
-      list.items.push({ depth, kids: parseInline(li[3]) });
+      cur.items.push({ depth, kids: parseInline(li[3]) });
       continue;
     }
     // A continuation line of a list item joins it; anything else is prose.
     if (list && /^\s+\S/.test(line)) {
       const last = list.items[list.items.length - 1];
-      last.kids = parseInline(`${inlineText(last.kids)} ${line.trim()}`);
+      if (last) last.kids = parseInline(`${inlineText(last.kids)} ${line.trim()}`);
       continue;
     }
     flushList();
@@ -156,15 +178,15 @@ function parseMarkdown(md) {
 }
 
 // The plain text of an inline tree (citations as "[#id]" are dropped).
-function inlineText(kids) {
+function inlineText(kids: Inline[] | null | undefined): string {
   return (kids || [])
-    .map((k) => (k.t === 'text' || k.t === 'code' ? k.v : k.t === 'ref' ? `#${k.id}` : inlineText(k.kids)))
+    .map((k): string => (k.t === 'text' || k.t === 'code' ? k.v : k.t === 'ref' ? `#${k.id}` : inlineText(k.kids)))
     .join('');
 }
 
 // One line to show next to a page's title in a list: the first line of prose
 // under the heading, citations and markup stripped.
-function pageSummary(body, max = 160) {
+function pageSummary(body: unknown, max: number = 160) {
   for (const b of parseMarkdown(body)) {
     if (b.t === 'h' || b.t === 'hr' || b.t === 'pre') continue;
     const kids = b.t === 'ul' || b.t === 'ol' ? b.items[0]?.kids : b.kids;

@@ -15,57 +15,71 @@
 // resume, transcriptUrl, itemId}` because the useful thing about one is where it
 // ran and how to get back into it, not a URL. `hubs` is `{local, machines}`:
 // this machine's termhub URL and each PA_MACHINES name's.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
 
-const SOURCE_LABEL = {
+type Row = import('../repo/types.ts').Row;
+type Link = { kind: string; label: string; url: string };
+/** termhub base URLs: this machine's, and each PA_MACHINES name's. */
+type Hubs = { local?: unknown; machines?: Record<string, unknown> } | null | undefined;
+type Person = { name?: string; email?: string; github?: string; is_me?: boolean };
+/** The source_item.raw fields links read (connector-specific, all optional). */
+type Raw = {
+  machine?: string; transcript?: string; cwd?: string; gitBranch?: string;
+  chatTopic?: string; chatType?: string; webUrl?: string; webLink?: string; url?: string;
+  boardUrl?: string; board?: string;
+};
+
+const SOURCE_LABEL: Record<string, string> = {
   graph_mail: 'Email', graph_chat: 'Teams message', graph_event: 'Calendar event',
   github_notification: 'GitHub', github_pr: 'GitHub PR', github_issue: 'GitHub issue',
   github_project_item: 'GitHub board item', jira_issue: 'Jira',
 };
 
-function isHttp(url) {
+function isHttp(url: unknown): url is string {
   return typeof url === 'string' && /^https?:\/\/[^\s]+$/i.test(url);
 }
 
 // Teams ids are `{chatId}/{messageId}`: when the connector gave no webUrl, the
 // message deep link is the same one Teams itself builds.
-function teamsMessageUrl(externalId) {
+function teamsMessageUrl(externalId: number | string) {
   const m = /^(19:[^/]+)\/(\d+)$/.exec(String(externalId || ''));
   if (!m) return null;
-  return `https://teams.microsoft.com/l/message/${encodeURIComponent(m[1])}/${m[2]}?context=${encodeURIComponent('{"contextType":"chat"}')}`;
+  return `https://teams.microsoft.com/l/message/${encodeURIComponent(m[1] ?? '')}/${m[2]}?context=${encodeURIComponent('{"contextType":"chat"}')}`;
 }
 
 /** A Teams 1:1 chat with someone, by their work address. */
-function teamsChatUrl(email) {
+function teamsChatUrl(email: string | undefined) {
   const e = String(email || '').trim();
   if (!/^[^\s@/?#]+@[^\s@/?#]+\.[^\s@/?#]+$/.test(e)) return null;
   return `https://teams.microsoft.com/l/chat/0/0?users=${encodeURIComponent(e)}`;
 }
 
 /** github.com/<owner>/<repo> for a project path, or null if it is not one. */
-function repoLink(path) {
+function repoLink(path: unknown): Link | null {
   const p = String(path || '').trim().replace(/^\/+|\/+$/g, '').replace(/\.git$/, '');
   if (!/^[\w.-]+\/[\w.-]+$/.test(p)) return null;
   return { kind: 'repo', label: p, url: `https://github.com/${p}` };
 }
 
 /** The termhub base URL for a machine name ('' or unknown: this machine). */
-function hubFor(hubs, machine) {
+function hubFor(hubs: Hubs, machine: string | null) {
   const base = (machine && hubs?.machines?.[machine]) || hubs?.local || null;
   return base ? String(base).replace(/\/+$/, '') : null;
 }
 
 // termhub serves ~/.claude/projects as `<project>/<file>.jsonl`. A remote
 // session's raw.transcript is already that id; a local one is the full path.
-function transcriptId(transcript) {
+function transcriptId(transcript: unknown) {
   const parts = String(transcript || '').split(/[\\/]+/).filter(Boolean);
-  if (parts.length < 2 || !/\.jsonl$/i.test(parts[parts.length - 1])) return null;
+  if (parts.length < 2 || !/\.jsonl$/i.test(parts[parts.length - 1] ?? '')) return null;
   return `${parts[parts.length - 2]}/${parts[parts.length - 1]}`;
 }
 
 /** A Claude session item, as where it ran and how to get back into it. */
-function sessionInfo(item, hubs) {
+function sessionInfo(item: Row | null | undefined, hubs: Hubs) {
   if (!item || item.source !== 'claude_session') return null;
-  const raw = item.raw || {};
+  const raw = (item.raw || {}) as Raw;
   const machine = raw.machine || null;
   const ext = String(item.external_id || '');
   const id = machine && ext.startsWith(`${machine}:`) ? ext.slice(machine.length + 1) : ext;
@@ -86,17 +100,17 @@ function sessionInfo(item, hubs) {
 }
 
 /** Links to a source item itself. `label` names the kind of thing it opens. */
-function sourceLinks(item, { kind = 'source', prefix = '' } = {}) {
+function sourceLinks(item: Row | null | undefined, { kind = 'source', prefix = '' }: { kind?: string; prefix?: string } = {}) {
   if (!item) return [];
-  const raw = item.raw || {};
-  const out = [];
-  const add = (label, url) => {
+  const raw = (item.raw || {}) as Raw;
+  const out: Link[] = [];
+  const add = (label: string, url: unknown) => {
     if (isHttp(url)) out.push({ kind, label: prefix ? `${prefix} ${label}` : label, url });
   };
   switch (item.source) {
     case 'graph_chat': {
       const where = raw.chatTopic ? ` in “${raw.chatTopic}”` : raw.chatType === 'oneOnOne' ? ' (1:1 chat)' : '';
-      add(`Teams message${where}`, raw.webUrl || teamsMessageUrl(item.external_id));
+      add(`Teams message${where}`, raw.webUrl || teamsMessageUrl(item.external_id as number | string));
       break;
     }
     case 'graph_mail':
@@ -112,10 +126,10 @@ function sourceLinks(item, { kind = 'source', prefix = '' } = {}) {
     }
     default:
       if (String(item.source || '').startsWith('github')) {
-        add(githubLabel(raw.webUrl) || SOURCE_LABEL[item.source] || 'GitHub', raw.webUrl || (isHttp(item.thread_external_id) ? item.thread_external_id : null));
+        add(githubLabel(raw.webUrl) || SOURCE_LABEL[String(item.source)] || 'GitHub', raw.webUrl || (isHttp(item.thread_external_id) ? item.thread_external_id : null));
         if (raw.boardUrl && raw.boardUrl !== raw.webUrl) add(`board ${raw.board || ''}`.trim(), raw.boardUrl);
       } else {
-        add(SOURCE_LABEL[item.source] || 'source', raw.webUrl || raw.webLink || raw.url);
+        add(SOURCE_LABEL[String(item.source)] || 'source', raw.webUrl || raw.webLink || raw.url);
       }
   }
   return out;
@@ -123,13 +137,13 @@ function sourceLinks(item, { kind = 'source', prefix = '' } = {}) {
 
 // A label for a GitHub URL: "PR owner/repo#12", "issue owner/repo#3",
 // "branch owner/repo:name", "commit owner/repo@abc1234", or the repo itself.
-function githubLabel(url) {
+function githubLabel(url: unknown) {
   const m = /^https?:\/\/github\.com\/([\w.-]+\/[\w-]+(?:\.(?!git\b)[\w-]+)*)(?:\/(pull|issues|tree|commit|compare|blob)\/([^\s?#]+))?/i.exec(String(url || ''));
   if (!m) return null;
   const [, repo, what, rest] = m;
   if (!what) return repo;
-  if (/^blob$/i.test(what)) return `file ${repo}/${decodeURIComponent(rest).split('/').slice(1).join('/')}`;
-  const ref = decodeURIComponent(rest.replace(/[/.,;:)\]]+$/, ''));
+  if (/^blob$/i.test(what)) return `file ${repo}/${decodeURIComponent(rest ?? '').split('/').slice(1).join('/')}`;
+  const ref = decodeURIComponent((rest ?? '').replace(/[/.,;:)\]]+$/, ''));
   if (/^pull$/i.test(what)) return `PR ${repo}#${ref.split('/')[0]}`;
   if (/^issues$/i.test(what)) return `issue ${repo}#${ref.split('/')[0]}`;
   if (/^tree$/i.test(what)) return `branch ${repo}:${ref}`;
@@ -140,16 +154,16 @@ function githubLabel(url) {
 const URL_RE = /https?:\/\/[^\s<>"'`)\]}|]+/gi;
 
 /** GitHub and Jira links found in free text, labelled and deduplicated. */
-function mentionedLinks(text, { limit = 6 } = {}) {
-  const out = [];
-  const seen = new Set();
+function mentionedLinks(text: unknown, { limit = 6 }: { limit?: number } = {}) {
+  const out: Link[] = [];
+  const seen = new Set<string>();
   for (const m of String(text || '').matchAll(URL_RE)) {
     let url = m[0].replace(/[.,;:!?*_]+$/, '');
-    let label = null;
+    let label: string | null | undefined = null;
     if (/^https?:\/\/github\.com\//i.test(url)) {
       // A PR's sub-page (files, a comment anchor) is still that PR.
       const pr = /^(https?:\/\/github\.com\/[\w.-]+\/[\w.-]+\/(?:pull|issues)\/\d+)/i.exec(url);
-      if (pr) url = pr[1];
+      if (pr) url = pr[1] ?? url;
       label = githubLabel(url);
       // github.com itself, an org or a user page: not a thing the card is about.
       if (!label) continue;
@@ -171,9 +185,9 @@ function mentionedLinks(text, { limit = 6 } = {}) {
 }
 
 /** A Teams chat with the person, and their GitHub. Nothing for me. */
-function personLinks(person) {
+function personLinks(person: Person | null | undefined): Link[] {
   if (!person || person.is_me || !person.name) return [];
-  const out = [];
+  const out: Link[] = [];
   const chat = teamsChatUrl(person.email);
   if (chat) out.push({ kind: 'person', label: `Chat with ${person.name}`, url: chat });
   if (person.github && /^[\w-]+$/.test(person.github)) {
@@ -196,17 +210,17 @@ function personLinks(person) {
  * @param {object} [o.evidence] the evidence source_item, same shape as item
  * @param {object} [o.hubs]     {local, machines}
  */
-function cardLinks({ item, text = '', person = null, project = null, runs = [], evidence = null, hubs = {} }) {
-  const all = [
+function cardLinks({ item, text = '', person = null, project = null, runs = [], evidence = null, hubs = {} }: { item?: Row | null; text?: string; person?: Person | null; project?: unknown; runs?: Row[] | null; evidence?: Row | null; hubs?: Hubs }) {
+  const all: Link[] = [
     ...sourceLinks(item),
     ...personLinks(person),
-    ...[repoLink(project)].filter(Boolean),
+    ...[repoLink(project)].filter((l): l is Link => Boolean(l)),
     ...mentionedLinks(text),
-    ...(runs || []).filter((r) => isHttp(r.mr_url)).map((r) => ({ kind: 'run', label: `${githubLabel(r.mr_url) || 'PR'} (run #${r.id})`, url: r.mr_url })),
+    ...(runs || []).filter((r) => isHttp(r.mr_url)).map((r) => ({ kind: 'run', label: `${githubLabel(r.mr_url) || 'PR'} (run #${r.id})`, url: String(r.mr_url) })),
     ...(evidence ? sourceLinks(evidence, { kind: 'evidence', prefix: 'evidence:' }) : []),
   ];
-  const seen = new Set();
-  const links = [];
+  const seen = new Set<string>();
+  const links: Link[] = [];
   for (const l of all) {
     const key = l.url.replace(/\/+$/, '').toLowerCase();
     if (seen.has(key)) continue;
@@ -227,10 +241,10 @@ function cardLinks({ item, text = '', person = null, project = null, runs = [], 
  * @param {Array<{id, item}>} members  folded commitments with their source items
  * @returns {Array<{kind:'also', label, url, id}>}
  */
-function alsoLinks(own, members, { limit = 8 } = {}) {
-  const key = (u) => String(u).replace(/\/+$/, '').toLowerCase();
+function alsoLinks(own: Link[] | null | undefined, members: { id?: unknown; item?: Row | null }[] | null | undefined, { limit = 8 }: { limit?: number } = {}) {
+  const key = (u: unknown) => String(u).replace(/\/+$/, '').toLowerCase();
   const seen = new Set((own || []).map((l) => key(l.url)));
-  const out = [];
+  const out: (Link & { id: unknown })[] = [];
   for (const m of members || []) {
     for (const l of sourceLinks(m.item)) {
       if (seen.has(key(l.url))) continue;

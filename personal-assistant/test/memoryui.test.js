@@ -8,7 +8,7 @@ const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
-const { parseMarkdown, parseInline, inlineText, pageSummary } = require('../src/dashboard/markdown');
+const { parseMarkdown, parseInline, inlineText, pageSummary } = require('../src/dashboard/markdown.ts');
 const { duplicatePairs, handleOf, route, clean } = require('../src/dashboard/memory');
 
 // ------------------------------------------------------------ markdown -----

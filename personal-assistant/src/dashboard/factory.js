@@ -159,7 +159,7 @@ async function route(req, res, url, { send, readJson, issuePageToken, pageTokenO
       return true;
     }
     const r = await require('../dispatch/factory').report(jobId);
-    send(res, 200, { jobId: r.jobId, title: r.title, path: r.path, none: Boolean(r.none), blocks: require('./markdown').parseMarkdown(r.markdown || '') });
+    send(res, 200, { jobId: r.jobId, title: r.title, path: r.path, none: Boolean(r.none), blocks: require('./markdown.ts').parseMarkdown(r.markdown || '') });
     return true;
   }
   if (req.method !== 'POST' || !url.pathname.startsWith('/api/factory/')) return false;

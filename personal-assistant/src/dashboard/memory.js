@@ -7,7 +7,7 @@
 // with the X-PA header. Nothing here renders HTML: pages go out as the tree
 // markdown.js parses, and the browser builds them with textContent.
 
-const { parseMarkdown, pageSummary } = require('./markdown');
+const { parseMarkdown, pageSummary } = require('./markdown.ts');
 
 // ------------------------------------------------------ duplicate people ----
 //
