@@ -719,7 +719,11 @@ def handle_stories_spawned(
             )
 
             dd_estimated_seconds = _est_secs_dd(
-                db_path=db, points=dd_points, chain_kind=chain_kind, pipeline=routing.pipeline
+                db_path=db,
+                points=dd_points,
+                chain_kind=chain_kind,
+                pipeline=routing.pipeline,
+                runtime=routing.runtime,
             )
             story = StoryRecord(
                 direction_id=direction.id or direction.slug,
@@ -953,7 +957,11 @@ def handle_stories_spawned(
         except (TypeError, ValueError):
             points = 3
         estimated_seconds = estimate_story_seconds(
-            db_path=db, points=points, chain_kind=chain_kind, pipeline=routing.pipeline
+            db_path=db,
+            points=points,
+            chain_kind=chain_kind,
+            pipeline=routing.pipeline,
+            runtime=routing.runtime,
         )
         issue_number = None
         story_file_path = f"stories/0-{slug}.md"
@@ -2310,6 +2318,53 @@ _MAX_REVIEW_STUCK = 2
 _MAX_REVIEW_CYCLES = 3
 
 
+def _review_cycle_cap(story: Any) -> int:
+    """Review cycles ``story`` may spend: the chain's cap, or solo's first review
+    plus one fix round (``solo.SOLO_MAX_REVIEW_CYCLES``)."""
+    from factory.chain.solo import SOLO_MAX_REVIEW_CYCLES, is_solo
+
+    return SOLO_MAX_REVIEW_CYCLES if is_solo(story) else _MAX_REVIEW_CYCLES
+
+
+def _block_on_review_collision(
+    story: StoryRecord, reason: str, *, db: Path, software_factory_root: Path
+) -> HandlerResult:
+    """Fail CLOSED on a reviewer that would share the dev's model: no model call,
+    no review cycle counted, the story parks for a human."""
+    story.state = advance(story, EVENT_REVIEW_NONCONVERGENT).value
+    story.error = reason
+    story.last_rejection_reason = reason
+    persist_story(story, db)
+    log_story_event(
+        story.id,
+        "review_independence_refused",
+        {"reason": reason[:500], "reviewer_cycles": story.reviewer_cycles},
+        software_factory_root=software_factory_root,
+        slug_hint=story.slug,
+    )
+    return HandlerResult(
+        next_state=StoryState(story.state), payload={"summary": reason}, error=reason
+    )
+
+
+def _review_model_collision(story: Any, reviewer_model: str) -> str | None:
+    """Why ``reviewer_model`` may not review ``story``, or ``None``.
+
+    ``model_router.check_review_independence`` (routes.yaml) and
+    ``job_routing.check_runtime_independence`` (spawn) refuse a reviewer that
+    shares a dev tier's model, but a provider key that disappears after spawn
+    degrades the reviewer to ``azure_fallback`` — today the dev's own model.
+    """
+    tiers = {t: _route_for(story, "dev", t) for t in ("standard", "hard")}
+    shared = sorted(t for t, m in tiers.items() if m == reviewer_model)
+    if not shared:
+        return None
+    return (
+        f"review independence: reviewer and {', '.join(f'dev.{t}' for t in shared)} "
+        f"both resolve to {reviewer_model!r}; a model may not review its own diff"
+    )
+
+
 def _is_premodel_infra_failure(run_res: Any) -> bool:
     """True when a sandbox run failed before any model work began.
 
@@ -2825,7 +2880,9 @@ def _handle_dev_once(
                     slug_hint=story.slug,
                 )
             _brief = _solo.build_solo_brief(
-                dev_direction, test_command=app_config.gates.test_command
+                dev_direction,
+                test_command=app_config.gates.test_command,
+                reviewed=_solo.solo_reviews(story),
             )
             if _static:
                 _brief = (
@@ -3190,8 +3247,9 @@ def _handle_dev_once(
         from factory.chain.solo import is_solo as _is_solo_green
 
         if _is_solo_green(story):
-            # No reviewer will overwrite these: a CI-fix / enforcer finding that
-            # dev just resolved must not be re-rendered into a LATER attempt.
+            # A CI-fix / enforcer / review finding that dev just resolved must not
+            # be re-rendered into a LATER attempt, and an unreviewed solo story
+            # has no reviewer to overwrite it.
             story.reviewer_result_json = None
         persist_story(story, db)
         return HandlerResult(next_state=StoryState(story.state), payload=payload)
@@ -4400,6 +4458,7 @@ def handle_review(
     db = db_path or (state_dir(software_factory_root) / "factory.db")
     story.state = advance(story, EVENT_REVIEWER_STARTED).value
     persist_story(story, db)
+    max_cycles = _review_cycle_cap(story)
 
     # Empty-diff short-circuit. Real (non-fixture, non-dry-run) reviews only:
     # fixture-driven and dry-run tests never touch git and must be
@@ -4455,7 +4514,7 @@ def handle_review(
         if (
             empty_diff is True
             and story.dev_retries + 1 < _max_dev_retries(software_factory_root)
-            and story.reviewer_cycles + 1 < _MAX_REVIEW_CYCLES
+            and story.reviewer_cycles + 1 < max_cycles
         ):
             # Back to dev via ``reviewer_request_changes`` — the chain's existing
             # "dev, do more work" route. Deliberately NOT a new transition: from
@@ -4517,7 +4576,7 @@ def handle_review(
                     "dev_retries": story.dev_retries,
                     "cap": _max_dev_retries(software_factory_root),
                     "reviewer_cycles": story.reviewer_cycles,
-                    "reviewer_cycles_cap": _MAX_REVIEW_CYCLES,
+                    "reviewer_cycles_cap": max_cycles,
                     "reviewer_called": False,
                     "reason": (
                         "empty diff with retry headroom — back to dev instead of a "
@@ -4673,6 +4732,13 @@ def handle_review(
             )
             _assert_no_broken_prompt_markers(full_prompt, where="handle_review")
             model_id = _route_for(story, persona)
+            from factory.chain.solo import is_solo as _is_solo_review
+
+            collision = _review_model_collision(story, model_id) if _is_solo_review(story) else None
+            if collision is not None:
+                return _block_on_review_collision(
+                    story, collision, db=db, software_factory_root=software_factory_root
+                )
             result_any = text_run(
                 persona=persona,
                 prompt=full_prompt,
@@ -4856,7 +4922,7 @@ def handle_review(
             software_factory_root=software_factory_root,
             extra={
                 "retry_attempt": story.reviewer_cycles,
-                "retry_cap": _MAX_REVIEW_CYCLES,
+                "retry_cap": max_cycles,
                 "consecutive_same": consecutive_same,
                 "stuck_cap": _MAX_REVIEW_STUCK,
                 "stuck": stuck,
@@ -4865,7 +4931,7 @@ def handle_review(
                 "non_improving": non_improving,
             },
         )
-        if stuck or non_improving or story.reviewer_cycles >= _MAX_REVIEW_CYCLES:
+        if stuck or non_improving or story.reviewer_cycles >= max_cycles:
             story.state = advance(story, EVENT_REVIEW_NONCONVERGENT).value
             if stuck:
                 reason = f"same findings repeated {consecutive_same}x (stuck)"
@@ -4875,7 +4941,7 @@ def handle_review(
                     f"({prev_score} -> {score})"
                 )
             else:
-                reason = f"hit hard cap of {_MAX_REVIEW_CYCLES} cycles"
+                reason = f"hit hard cap of {max_cycles} cycles"
             story.error = (
                 f"Review did not converge ({reason}); routed to "
                 f"{StoryState.BLOCKED_REVIEW_NONCONVERGENT.value} for human review."
@@ -4888,7 +4954,7 @@ def handle_review(
                     pr.create_issue_comment(
                         f"⚠️ Convergence guard: this PR has been through "
                         f"{story.reviewer_cycles} reviewer cycles without "
-                        f"approval (max {_MAX_REVIEW_CYCLES}). The dev↔reviewer "
+                        f"approval (max {max_cycles}). The dev↔reviewer "
                         f"loop is not converging; routing to human review "
                         f"instead of dispatching dev again."
                     )
@@ -4959,19 +5025,22 @@ def handle_tech_writer(
 ) -> HandlerResult:
     """Run the Tech-Writer persona; apply context updates to the app repo.
 
-    Entered from ``REVIEWER_DONE`` (chain) or, for a SOLO story only, directly
-    from ``TESTS_GREEN`` (no reviewer round-trip; see factory/chain/solo.py).
+    Entered from ``REVIEWER_DONE`` (chain, api-runtime solo) or, for an
+    unreviewed solo story only, directly from ``TESTS_GREEN`` (see
+    factory/chain/solo.py).
     """
     db = db_path or (state_dir(software_factory_root) / "factory.db")
     if StoryState(story.state) is StoryState.TESTS_GREEN:
-        from factory.chain.solo import is_solo
+        from factory.chain.solo import is_solo, solo_reviews
 
-        if not is_solo(story):
-            # Fail SAFE: the TESTS_GREEN → tech_writer edge exists for solo
-            # stories only. A chain story must never skip its reviewer.
+        if not is_solo(story) or solo_reviews(story):
+            # Fail SAFE: the TESTS_GREEN → tech_writer edge exists for
+            # unreviewed solo stories only. A reviewed story must never skip
+            # its reviewer.
             raise IllegalTransitionError(
-                f"story {story.id}: tech_writer from tests_green is solo-only "
-                f"(pipeline={getattr(story, 'pipeline', None)!r})"
+                f"story {story.id}: tech_writer from tests_green is for unreviewed "
+                f"solo stories only (pipeline={getattr(story, 'pipeline', None)!r}, "
+                f"runtime={getattr(story, 'runtime', None)!r})"
             )
     story.state = advance(story, EVENT_TECH_WRITER_STARTED).value
     persist_story(story, db)
@@ -6964,9 +7033,16 @@ def _open_pr_for_story(
         summary_line = "Canonical context files added/updated."
     else:
         title = f"feat({story.scope or 'app'}): {story.title}"
-        from factory.chain.solo import is_solo
+        from factory.chain.solo import is_solo, solo_reviews
 
-        if is_solo(story):
+        if solo_reviews(story):
+            summary_line = (
+                "Code + tests written by ONE dev agent in a single long conversation "
+                "(solo pipeline); checked in-conversation by the app's test command, "
+                "approved by an independent reviewer model, then by the docs-enforcer "
+                "and the merge gates."
+            )
+        elif is_solo(story):
             summary_line = (
                 "Code + tests written by ONE dev agent in a single long conversation "
                 "(solo pipeline: no separate reviewer); checked in-conversation by "

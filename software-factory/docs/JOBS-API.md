@@ -141,8 +141,12 @@ Sharpened 2026-11-02 (`factory/job_routing.py`):
   direction or app config afterwards does not change an in-flight story.
 - **`solo` is accepted** (production engine: `factory/chain/solo.py`). A solo story runs
   SM → ONE dev conversation (5400 s wall clock, up to 3 in-conversation gate rounds, a
-  no-progress abort, ≤ 3 dev attempts) → tech-writer → docs-enforcer → the story's delivery
-  level → the SAME merge gates and CI as `chain`. Only the reviewer round-trip is removed.
+  no-progress abort, ≤ 3 dev attempts) → [review] → tech-writer → docs-enforcer → the
+  story's delivery level → the SAME merge gates and CI as `chain`. The review runs on the
+  `api` runtime only: the chain's reviewer persona (routes.yaml's model, never a dev tier's;
+  one resolving to the dev's model is refused) for at most 2 cycles, so a blocking finding
+  gets ONE fix round and one that survives it parks the story in
+  `blocked_review_nonconvergent`. A `claude_session` solo story has no reviewer.
   The acceptance oracle is NOT required: when the app enables it, it is a required merge gate
   and its leak check blocks every solo dev dispatch; otherwise the independent checks are
   the test command, the merge gates and CI. A solo job is always ONE story and ONE PR: PM's
@@ -627,7 +631,8 @@ read, a dependency in a dead sink), plus `not_found` / `invalid_job_id` / `missi
 
 - Local dev loop (tests until green): yes. Chain dev retries; solo / `claude_session` run
   in-conversation gate rounds.
-- Local review loop: yes for `chain` (reviewer ↔ dev, capped). `solo` has no reviewer.
+- Local review loop: yes for `chain` (reviewer ↔ dev, 3 cycles) and `api`-runtime `solo`
+  (2 cycles: one fix round). `claude_session` `solo` has no reviewer.
 - CI watch + CI-fix loop on the PR: yes. `draft_pr`/`pr` watch before delivery; `auto_merge`
   fixes before merging; at most 3 cycles. The watch (and `ci` in `factory job status`, and
   the `push_to_main` main-green hold) counts only the checks that decide something

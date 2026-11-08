@@ -1042,12 +1042,21 @@ not in the Map is not done, and a new one gets added there first.
     with 73e824d's prompt rule in place, and it considered `--no-verify` before using `-F`. The
     served `c0c2a3e` predates E6.1's guard (e2b0323). Re-run with it served, and check the stream
     for guard refusals instead of `>>` prompts.
-  - [ ] **8.4.19 deepseek-pr: the generated diff fails review and scope.** PR #63's `pa version`
+  - [x] **8.4.19 deepseek-pr: the generated diff fails review and scope.** PR #63's `pa version`
     runs its git fallback without a `cwd`, so it prints another repo's commit, or nothing, when run
     outside the checkout (the dashboard uses `cwd: __dirname`). It hardcodes
     `127.0.0.1:7300` instead of `config.dispatch`, and it adds an unrequested `meeting`
     HELP_TOPICS entry. Tests and lint can't catch either, and the solo pipeline has no review step.
     Add a review pass before the PR (or put the precedents in the brief), then re-run.
+    Done, not re-run: an API-runtime solo story now goes from `tests_green` to the chain's
+    reviewer (routes.yaml's `azure/Kimi-K2.7-Code`; the dev is `azure/deepseek-v4-pro`) before
+    the tech-writer and the PR. It gets at most 2 cycles (`solo.SOLO_MAX_REVIEW_CYCLES`), so a
+    blocking finding gets one fix round in a fresh dev conversation, and a blocker that survives it
+    parks the story in `blocked_review_nonconvergent` instead of shipping. A reviewer that resolves
+    to a dev tier's model (a degraded key falls back to the dev's model) is refused without a model
+    call. claude_session solo keeps no reviewer: its dev is Claude Code in a session the operator
+    watches, and PR #63's gap was the unattended API runtime. The dev brief, the PR body, the
+    `solo_checks` event and the ETA follow the runtime.
   - [ ] **8.4.20 deepseek-pr: the dev prompt says "NO CONTEXT AVAILABLE … You are likely the
     Onboarder persona".** The work factory has no `apps/dev-tools/context/project.md` or
     `navigation.md`, so a dev step is told to write the context set and spends its first ~25 of 76

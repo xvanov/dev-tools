@@ -516,8 +516,8 @@ def _dispatch_for_story(story: StoryRecord) -> str | None:
 
     Pure wrapper around ``_DISPATCH`` plus two branches: ``STORY_CREATED``
     depends on ``story.chain_kind`` (tdd → sm, docs → docs_sm), and
-    ``TESTS_GREEN`` depends on ``story.pipeline`` (chain → review, solo →
-    tech_writer).
+    ``TESTS_GREEN`` depends on ``story.pipeline`` and ``story.runtime`` (chain
+    and api-runtime solo → review, claude_session solo → tech_writer).
     """
     state = StoryState(story.state)
     if state == StoryState.STORY_CREATED:
@@ -525,11 +525,11 @@ def _dispatch_for_story(story: StoryRecord) -> str | None:
             return "docs_sm"
         return "sm"
     if state == StoryState.TESTS_GREEN:
-        # SOLO pipeline: no reviewer round-trip. Read from the spawn stamp on
-        # the row, never from live config (factory/chain/solo.py).
-        from factory.chain.solo import is_solo
+        # Read from the spawn stamps on the row, never from live config
+        # (factory/chain/solo.py).
+        from factory.chain.solo import is_solo, solo_reviews
 
-        if is_solo(story):
+        if is_solo(story) and not solo_reviews(story):
             return "tech_writer"
     return _DISPATCH.get(state)
 
@@ -1272,11 +1272,11 @@ def _prune_stale_in_progress(
         if story.id is not None and story.id in live:
             continue
         if story.state == "tech_writer_in_progress":
-            from factory.chain.solo import is_solo
+            from factory.chain.solo import is_solo, solo_reviews
 
-            if is_solo(story):
-                # A solo story never had a reviewer verdict: re-enter where it
-                # actually came from (TESTS_GREEN dispatches tech_writer for solo).
+            if is_solo(story) and not solo_reviews(story):
+                # An unreviewed solo story never had a reviewer verdict: re-enter
+                # where it actually came from (TESTS_GREEN dispatches tech_writer).
                 target = "tests_green"
         try:
             updated_iso = story.updated_at or story.created_at

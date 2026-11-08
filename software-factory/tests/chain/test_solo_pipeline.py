@@ -5,7 +5,10 @@ are faked):
 
 * spawn stamping — the mode is read once at spawn and lives on the row;
 * state machine — ONE new edge (TESTS_GREEN → tech_writer), no new state,
-  solo-only dispatch, and a chain story can never take the edge;
+  dispatched for claude_session solo only; a chain or api-runtime solo story
+  can never take the edge;
+* review before delivery (api runtime) — one fix round, then parked; a
+  reviewer on the dev's model is refused;
 * retry cap — solo stops at 3 dev conversations, chain is untouched, and the
   early stall guard stays reachable;
 * gate feedback — a red gate's REASON is sent back into the SAME conversation,
@@ -200,20 +203,21 @@ def test_one_new_edge_and_no_new_state() -> None:
     assert "solo" not in {st.value for st in StoryState}
 
 
-def test_dispatch_routes_tests_green_by_pipeline() -> None:
-    chain = StoryRecord(
-        direction_id="1", app="a", title="t", slug="s", state=StoryState.TESTS_GREEN.value
-    )
-    solo_s = StoryRecord(
-        direction_id="1",
-        app="a",
-        title="t",
-        slug="s",
-        state=StoryState.TESTS_GREEN.value,
-        pipeline="solo",
-    )
-    assert orch._dispatch_for_story(chain) == "review"
-    assert orch._dispatch_for_story(solo_s) == "tech_writer"
+def test_dispatch_routes_tests_green_by_pipeline_and_runtime() -> None:
+    def _green(**kw: Any) -> StoryRecord:
+        return StoryRecord(
+            direction_id="1", app="a", title="t", slug="s", state=StoryState.TESTS_GREEN.value, **kw
+        )
+
+    assert orch._dispatch_for_story(_green()) == "review"
+    # 8.4.19: an api-runtime solo story is reviewed once before delivery ...
+    assert orch._dispatch_for_story(_green(pipeline="solo")) == "review"
+    assert solo.solo_reviews(_green(pipeline="solo"))
+    # ... a claude_session one keeps the reviewer-free edge.
+    claude = _green(pipeline="solo", runtime="claude_session")
+    assert orch._dispatch_for_story(claude) == "tech_writer"
+    assert not solo.solo_reviews(claude)
+    assert not solo.solo_reviews(_green(runtime="claude_session"))
     # Every other state dispatches identically for both pipelines.
     for st in orch._DISPATCH:
         if st is StoryState.TESTS_GREEN:
@@ -238,11 +242,24 @@ def test_tech_writer_refuses_tests_green_for_a_chain_story(temp_root: Path) -> N
     assert get_story(story.id or 0, temp_root / "state" / "factory.db").state == "tests_green"
 
 
+def test_tech_writer_refuses_tests_green_for_a_reviewed_solo_story(temp_root: Path) -> None:
+    story = _story_at(StoryState.TESTS_GREEN, temp_root)
+    with pytest.raises(IllegalTransitionError):
+        handle_tech_writer(
+            story,
+            _app(temp_root),
+            temp_root,
+            dry_run=True,
+            db_path=temp_root / "state" / "factory.db",
+        )
+    assert get_story(story.id or 0, temp_root / "state" / "factory.db").state == "tests_green"
+
+
 def test_green_solo_story_hands_off_to_the_shared_delivery_path(temp_root: Path) -> None:
     """TESTS_GREEN → tech_writer → TECH_WRITER_DONE → docs_enforcer: the same
     PR-open / delivery-level site (``handle_docs_enforcer``) the chain uses."""
     db = temp_root / "state" / "factory.db"
-    story = _story_at(StoryState.TESTS_GREEN, temp_root)
+    story = _story_at(StoryState.TESTS_GREEN, temp_root, runtime="claude_session")
     assert orch._dispatch_for_story(story) == "tech_writer"
     res = handle_tech_writer(story, _app(temp_root), temp_root, dry_run=True, db_path=db)
     assert res.next_state is StoryState.TECH_WRITER_DONE
@@ -253,15 +270,112 @@ def test_green_solo_story_hands_off_to_the_shared_delivery_path(temp_root: Path)
     assert after.reviewer_cycles == 0
 
 
-def test_stale_solo_tech_writer_rolls_back_to_tests_green(temp_root: Path) -> None:
+# --------------------------------------------------------------------------- #
+# Review before delivery (api runtime, PLAN.md 8.4.19)
+# --------------------------------------------------------------------------- #
+
+
+def _blocking(what: str, score: float) -> dict[str, Any]:
+    return {
+        "verdict": "request_changes",
+        "summary": what,
+        "findings": [
+            {"severity": "high", "criterion": "correctness", "location": "src/x.py:1", "what": what}
+        ],
+        "test_quality_findings": [],
+        "test_quality_score": score,
+    }
+
+
+def test_reviewed_solo_story_approves_into_the_shared_delivery_path(temp_root: Path) -> None:
+    from factory.chain.handlers import handle_review
+
+    db = temp_root / "state" / "factory.db"
+    app = _app(temp_root)
+    story = _story_at(StoryState.TESTS_GREEN, temp_root)
+    approve = {"verdict": "approve", "findings": [], "test_quality_score": 0.9}
+    res = handle_review(story, app, temp_root, dry_run=True, db_path=db, fixture=approve)
+    assert res.next_state is StoryState.REVIEWER_DONE
+    after = get_story(story.id or 0, db)
+    assert after is not None and orch._dispatch_for_story(after) == "tech_writer"
+    handle_tech_writer(after, app, temp_root, dry_run=True, db_path=db)
+    done = get_story(story.id or 0, db)
+    assert done is not None and orch._dispatch_for_story(done) == "docs_enforcer"
+
+
+def test_reviewed_solo_story_gets_one_fix_round_then_parks(temp_root: Path) -> None:
+    """A blocker goes back to dev ONCE; one that survives the fix parks the story
+    for a human (``SOLO_MAX_REVIEW_CYCLES``), where the chain would loop again."""
+    from factory.chain.handlers import _MAX_REVIEW_CYCLES, handle_review
+
+    assert solo.SOLO_MAX_REVIEW_CYCLES == 2 < _MAX_REVIEW_CYCLES
+    db = temp_root / "state" / "factory.db"
+    app = _app(temp_root)
+    story = _story_at(StoryState.TESTS_GREEN, temp_root)
+    first = handle_review(
+        story, app, temp_root, dry_run=True, db_path=db, fixture=_blocking("git without cwd", 0.4)
+    )
+    assert first.next_state is StoryState.REVIEWER_REQUESTED_CHANGES
+    back = get_story(story.id or 0, db)
+    assert back is not None and orch._dispatch_for_story(back) == "dev"
+
+    # The fix round: dev went green again. A DIFFERENT blocker at a HIGHER score
+    # keeps the stuck and non-improving guards out of it: this pins the cap.
+    back.state = StoryState.TESTS_GREEN.value
+    persist_story(back, db)
+    second = handle_review(
+        back, app, temp_root, dry_run=True, db_path=db, fixture=_blocking("port hardcoded", 0.6)
+    )
+    assert second.next_state is StoryState.BLOCKED_REVIEW_NONCONVERGENT
+    final = get_story(story.id or 0, db)
+    assert final is not None and final.reviewer_cycles == 2
+    assert "hit hard cap of 2 cycles" in (final.error or "")
+
+
+def test_reviewed_solo_story_refuses_a_reviewer_on_the_dev_model(
+    temp_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A reviewer key that degrades to ``azure_fallback`` (the dev's model) after
+    spawn must not review: fail closed, no model call, no cycle counted."""
+    from factory.chain.handlers import handle_review
+
+    db = temp_root / "state" / "factory.db"
+    story = _story_at(StoryState.TESTS_GREEN, temp_root, github_branch="story/z")
+    monkeypatch.setattr(handlers_module, "route", lambda *a, **kw: "azure/deepseek-v4-pro")
+    monkeypatch.setattr(
+        handlers_module,
+        "_fetch_pr_diff_for_review",
+        lambda *a, **kw: "diff --git a/src/x.py b/src/x.py\n+x = 1\n",
+    )
+
+    def _no_model(*a: Any, **kw: Any) -> Any:
+        raise AssertionError("the reviewer model must not be called")
+
+    monkeypatch.setattr(runner_module, "text_run", _no_model, raising=True)
+    res = handle_review(story, _app(temp_root), temp_root, dry_run=False, db_path=db)
+    assert res.next_state is StoryState.BLOCKED_REVIEW_NONCONVERGENT
+    final = get_story(story.id or 0, db)
+    assert final is not None and final.reviewer_cycles == 0
+    assert "review independence" in (final.error or "")
+    assert _events(final, temp_root, "review_independence_refused")
+
+
+def test_stale_solo_tech_writer_rolls_back_to_where_it_came_from(temp_root: Path) -> None:
     db = temp_root / "state" / "factory.db"
     old = (datetime.now(UTC) - timedelta(hours=2)).isoformat()
-    s_solo = _story_at(StoryState.TECH_WRITER_IN_PROGRESS, temp_root, slug="a", updated_at=old)
+    s_solo = _story_at(
+        StoryState.TECH_WRITER_IN_PROGRESS,
+        temp_root,
+        slug="a",
+        runtime="claude_session",
+        updated_at=old,
+    )
     s_chain = _story_at(
         StoryState.TECH_WRITER_IN_PROGRESS, temp_root, slug="b", pipeline="chain", updated_at=old
     )
+    s_reviewed = _story_at(StoryState.TECH_WRITER_IN_PROGRESS, temp_root, slug="c", updated_at=old)
     # persist_story stamps updated_at=now; force it back.
-    for s in (s_solo, s_chain):
+    for s in (s_solo, s_chain, s_reviewed):
         with Session(_engine(db)) as session:
             row = session.get(StoryRecord, s.id)
             assert row is not None
@@ -271,6 +385,7 @@ def test_stale_solo_tech_writer_rolls_back_to_tests_green(temp_root: Path) -> No
     orch._prune_stale_in_progress(db, "sacrifice", settings=None, root=temp_root)
     assert get_story(s_solo.id or 0, db).state == "tests_green"  # type: ignore[union-attr]
     assert get_story(s_chain.id or 0, db).state == "reviewer_done"  # type: ignore[union-attr]
+    assert get_story(s_reviewed.id or 0, db).state == "reviewer_done"  # type: ignore[union-attr]
 
 
 # --------------------------------------------------------------------------- #
@@ -367,8 +482,11 @@ def test_solo_dispatch_uses_long_horizon_gate_loop_and_brief(
     monkeypatch.setattr(handlers_module, "route", lambda *a, **kw: "azure/gpt-5.4")
 
     handle_dev(
-        story, _app(temp_root, test_command="node scripts/gate-changed.js"), temp_root,
-        dry_run=False, db_path=db,
+        story,
+        _app(temp_root, test_command="node scripts/gate-changed.js"),
+        temp_root,
+        dry_run=False,
+        db_path=db,
     )
 
     assert "`node scripts/gate-changed.js`" in seen["brief_addendum"]
@@ -384,13 +502,15 @@ def test_solo_dispatch_uses_long_horizon_gate_loop_and_brief(
     after = get_story(story.id or 0, db)
     assert after is not None
     assert after.state == StoryState.TESTS_GREEN.value
-    assert orch._dispatch_for_story(after) == "tech_writer"
-    assert after.reviewer_result_json is None  # consumed; nothing will overwrite it
+    assert orch._dispatch_for_story(after) == "review"
+    assert after.reviewer_result_json is None  # consumed; never re-rendered later
+    assert "ONE independent review, by a different model" in seen["brief_addendum"]
+    assert "There is NO separate reviewer" not in seen["brief_addendum"]
 
     plan = _events(after, temp_root, "solo_checks")
     assert len(plan) == 1
     p = plan[0]
-    assert p["reviewer"].startswith("skipped")
+    assert p["reviewer"].startswith("independent review before delivery")
     assert p["in_conversation_checks"] == ["test_command", "non_empty_change"]
     assert "disabled" in p["acceptance_oracle"]
     assert p["oracle_leak_precheck"].startswith("not applicable")
@@ -1369,16 +1489,24 @@ def test_factory_app_needs_an_explicit_solo_opt_in() -> None:
     assert jr.resolve_job_routing(own, pipeline="chain").pipeline == "chain"
 
 
-def test_estimator_has_no_reviewer_time_for_solo(tmp_path: Path) -> None:
+def test_estimator_has_reviewer_time_only_for_reviewed_stories(tmp_path: Path) -> None:
     from factory.observability import estimator as est
 
+    claude = "claude_session"
     assert "reviewer" in est.remaining_handlers_for_story("tests_green", "tdd")
-    assert "reviewer" not in est.remaining_handlers_for_story("tests_green", "tdd", "solo")
-    assert est.total_handlers_for_chain("tdd", "solo") == est.total_handlers_for_chain("tdd") - 1
-    chain_s = est.estimate_story_seconds(db_path=tmp_path / "e.db", points=3)
-    solo_s = est.estimate_story_seconds(db_path=tmp_path / "e.db", points=3, pipeline="solo")
-    assert chain_s is not None and solo_s is not None
-    assert solo_s == pytest.approx(chain_s - est._COLD_START_HANDLER_SECONDS["reviewer"][3])
+    assert "reviewer" in est.remaining_handlers_for_story("tests_green", "tdd", "solo")
+    assert "reviewer" not in est.remaining_handlers_for_story("tests_green", "tdd", "solo", claude)
+    assert est.total_handlers_for_chain("tdd", "solo") == est.total_handlers_for_chain("tdd")
+    assert (
+        est.total_handlers_for_chain("tdd", "solo", claude)
+        == est.total_handlers_for_chain("tdd") - 1
+    )
+    db = tmp_path / "e.db"
+    chain_s = est.estimate_story_seconds(db_path=db, points=3)
+    api_s = est.estimate_story_seconds(db_path=db, points=3, pipeline="solo")
+    claude_s = est.estimate_story_seconds(db_path=db, points=3, pipeline="solo", runtime=claude)
+    assert chain_s is not None and api_s == chain_s and claude_s is not None
+    assert claude_s == pytest.approx(chain_s - est._COLD_START_HANDLER_SECONDS["reviewer"][3])
 
 
 def test_solo_cap_keeps_the_stall_guard_reachable_even_if_configured_low() -> None:
@@ -1402,6 +1530,7 @@ def test_green_solo_story_reaches_the_331_delivery_gate(
         temp_root,
         delivery_level="none",
         github_branch="story/1-z",
+        runtime="claude_session",
     )
     app = _app(temp_root)
     handle_tech_writer(story, app, temp_root, dry_run=True, db_path=db)

@@ -383,6 +383,7 @@ def in_flight_stories(db_path: Path, app: str | None = None) -> list[StoryRow]:
         chain_kind = r["chain_kind"] or "tdd"
         # ``pipeline`` is absent on a DB that predates per-job routing.
         pipeline = r["pipeline"] if "pipeline" in r.keys() else None
+        runtime = r["runtime"] if "runtime" in r.keys() else None
         out.append(
             StoryRow(
                 id=int(r["id"]),
@@ -401,11 +402,11 @@ def in_flight_stories(db_path: Path, app: str | None = None) -> list[StoryRow]:
                 dev_retries=int(r["dev_retries"] or 0),
                 last_rejection_reason=r["last_rejection_reason"],
                 completed_handlers=completed_handlers_for_story(
-                    r["state"], chain_kind, pipeline
+                    r["state"], chain_kind, pipeline, runtime
                 ),
-                total_handlers=total_handlers_for_chain(chain_kind, pipeline),
+                total_handlers=total_handlers_for_chain(chain_kind, pipeline, runtime),
                 remaining_handlers=remaining_handlers_for_story(
-                    r["state"], chain_kind, pipeline
+                    r["state"], chain_kind, pipeline, runtime
                 ),
             )
         )
@@ -434,6 +435,7 @@ def stories_for_direction(
         chain_kind = r["chain_kind"] or "tdd"
         # ``pipeline`` is absent on a DB that predates per-job routing.
         pipeline = r["pipeline"] if "pipeline" in r.keys() else None
+        runtime = r["runtime"] if "runtime" in r.keys() else None
         out.append(
             StoryRow(
                 id=int(r["id"]),
@@ -452,11 +454,11 @@ def stories_for_direction(
                 dev_retries=int(r["dev_retries"] or 0),
                 last_rejection_reason=r["last_rejection_reason"],
                 completed_handlers=completed_handlers_for_story(
-                    r["state"], chain_kind, pipeline
+                    r["state"], chain_kind, pipeline, runtime
                 ),
-                total_handlers=total_handlers_for_chain(chain_kind, pipeline),
+                total_handlers=total_handlers_for_chain(chain_kind, pipeline, runtime),
                 remaining_handlers=remaining_handlers_for_story(
-                    r["state"], chain_kind, pipeline
+                    r["state"], chain_kind, pipeline, runtime
                 ),
             )
         )

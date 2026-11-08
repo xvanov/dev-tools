@@ -73,12 +73,13 @@ _TDD_FULL_CHAIN = [
     "tech_writer",
 ]
 _DOCS_FULL_CHAIN = ["docs_sm", "onboarder"]
-# SOLO pipeline (factory/chain/solo.py): the tdd chain with no reviewer step.
+# SOLO pipeline (factory/chain/solo.py): a claude_session solo story runs the tdd
+# chain with no reviewer step; an api-runtime one is reviewed (``solo_reviews``).
 _SOLO_SKIPPED = frozenset({"reviewer"})
 
 
-def _drop_solo(personas: list[str], pipeline: str | None) -> list[str]:
-    if (pipeline or "chain") != "solo":
+def _drop_solo(personas: list[str], pipeline: str | None, runtime: str | None = None) -> list[str]:
+    if (pipeline or "chain") != "solo" or (runtime or "api") != "claude_session":
         return list(personas)
     return [p for p in personas if p not in _SOLO_SKIPPED]
 
@@ -146,31 +147,40 @@ def _engine(db_path: Path):
 
 
 def remaining_handlers_for_story(
-    state: str, chain_kind: str = "tdd", pipeline: str | None = None
+    state: str,
+    chain_kind: str = "tdd",
+    pipeline: str | None = None,
+    runtime: str | None = None,
 ) -> list[str]:
     """Return the ordered list of personas a story still needs to run.
 
-    ``pipeline="solo"`` drops the reviewer (a solo story never runs one)."""
+    ``pipeline="solo"`` with ``runtime="claude_session"`` drops the reviewer
+    (that story never runs one)."""
     if chain_kind == "docs":
         return list(_REMAINING_BY_STATE_DOCS.get(state, []))
-    return _drop_solo(_REMAINING_BY_STATE_TDD.get(state, []), pipeline)
+    return _drop_solo(_REMAINING_BY_STATE_TDD.get(state, []), pipeline, runtime)
 
 
-def total_handlers_for_chain(chain_kind: str = "tdd", pipeline: str | None = None) -> int:
+def total_handlers_for_chain(
+    chain_kind: str = "tdd", pipeline: str | None = None, runtime: str | None = None
+) -> int:
     """Total handler steps in the chain from story-creation to PR-open."""
     if chain_kind == "docs":
         return len(_DOCS_FULL_CHAIN)
-    return len(_drop_solo(_TDD_FULL_CHAIN, pipeline))
+    return len(_drop_solo(_TDD_FULL_CHAIN, pipeline, runtime))
 
 
 def completed_handlers_for_story(
-    state: str, chain_kind: str = "tdd", pipeline: str | None = None
+    state: str,
+    chain_kind: str = "tdd",
+    pipeline: str | None = None,
+    runtime: str | None = None,
 ) -> int:
     """How many handlers have already completed for a story in ``state``."""
     return max(
         0,
-        total_handlers_for_chain(chain_kind, pipeline)
-        - len(remaining_handlers_for_story(state, chain_kind, pipeline)),
+        total_handlers_for_chain(chain_kind, pipeline, runtime)
+        - len(remaining_handlers_for_story(state, chain_kind, pipeline, runtime)),
     )
 
 
@@ -278,7 +288,12 @@ def baseline_seconds(
 
 
 def estimate_story_seconds(
-    *, db_path: Path, points: int, chain_kind: str = "tdd", pipeline: str | None = None
+    *,
+    db_path: Path,
+    points: int,
+    chain_kind: str = "tdd",
+    pipeline: str | None = None,
+    runtime: str | None = None,
 ) -> float | None:
     """Sum baseline seconds across every handler in the chain at ``points``.
 
@@ -287,7 +302,9 @@ def estimate_story_seconds(
     estimate. Returns ``None`` only if neither source has data.
     """
     chain = (
-        _DOCS_FULL_CHAIN if chain_kind == "docs" else _drop_solo(_TDD_FULL_CHAIN, pipeline)
+        _DOCS_FULL_CHAIN
+        if chain_kind == "docs"
+        else _drop_solo(_TDD_FULL_CHAIN, pipeline, runtime)
     )
     total = 0.0
     any_source = False

@@ -20,6 +20,8 @@ def test_solo_brief_names_the_gate_test_command() -> None:
 
 def test_solo_brief_without_a_test_command_names_none() -> None:
     assert "The test command is" not in solo.build_solo_brief(None)
+    assert "There is NO separate reviewer" in solo.build_solo_brief(None)
+    assert "There is NO separate reviewer" not in solo.build_solo_brief(None, reviewed=True)
 
 
 def test_windows_terminal_rules_forbid_multiline_quoted_arguments() -> None:

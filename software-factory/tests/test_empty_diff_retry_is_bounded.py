@@ -205,5 +205,6 @@ def test_the_guard_names_both_budgets() -> None:
     src = inspect.getsource(handle_review)
     i = src.index("empty_diff is True")
     window = src[i : i + 400]
-    assert "story.reviewer_cycles + 1 < _MAX_REVIEW_CYCLES" in window
+    assert "max_cycles = _review_cycle_cap(story)" in src
+    assert "story.reviewer_cycles + 1 < max_cycles" in window
     assert "_max_dev_retries(" in window

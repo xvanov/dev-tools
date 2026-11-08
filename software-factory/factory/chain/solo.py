@@ -4,12 +4,13 @@ Operator decision 2026-11-02, built on the B.1 design (``b1_solo_mode_design``).
 A story stamped ``pipeline: solo`` at spawn (``factory/job_routing.py``) runs:
 
     SM → dev (ONE long conversation, in-conversation gate feedback)
-       → TESTS_GREEN → tech_writer → docs_enforcer → PR / delivery level
+       → TESTS_GREEN → [review, api runtime only] → tech_writer → docs_enforcer
+       → PR / delivery level
        → the SAME merge gates (``gates/evaluator.required_gate_labels``) → deploy
 
-What it removes, and nothing else: the reviewer round-trip
-(``TESTS_GREEN → review``) and the N fresh dev conversations that each read a
-summary of the last one. What it keeps: SM, the worktree, the commit, the
+What it removes, and nothing else: the multi-cycle reviewer round-trip (one
+bounded review remains on the api runtime, see below) and the N fresh dev
+conversations that each read a summary of the last one. What it keeps: SM, the worktree, the commit, the
 tech-writer, the delivery-level enforcement at the PR-open site
 (``handlers.handle_docs_enforcer`` / ``chain/delivery_gate.py``), every merge
 gate, CI, deploy, the per-story budget breaker and the dev-retry exhaustion
@@ -24,7 +25,19 @@ and ``b1_phase1a_reviewer_ablation_result``.
 The mode is read from the STORY ROW (``StoryRecord.pipeline``), never from live
 config: a story spawned under one mode finishes under it.
 
-**Independence.** With no reviewer, the checks the dev cannot influence are the
+**Review before delivery (API runtime).** The ablation's REWORK came from up to
+three review cycles. What having NO review cost is a diff that passes its tests
+and lint and is still wrong: the deepseek-pr job's PR #63 ran ``git`` without a
+``cwd``, hardcoded a port the config owns and added an unrequested help entry
+(PLAN.md 8.4.19). So an ``api``-runtime solo story takes the chain's reviewer
+once before delivery (``solo_reviews``) — on routes.yaml's reviewer model, which
+must differ from every dev tier — with at most ``SOLO_MAX_REVIEW_CYCLES``
+cycles: a blocking finding gets ONE fix round in a fresh dev conversation, and
+a blocker that survives it parks the story in ``blocked_review_nonconvergent``
+for a human instead of shipping. A ``claude_session`` solo story keeps no
+reviewer: its dev is Claude Code in a session the operator can watch and steer.
+
+**Independence.** Beyond that review, the checks the dev cannot influence are the
 app's merge gates and CI. The acceptance oracle is used when the app enables it
 (``gates.acceptance_oracle``) — it is then a REQUIRED merge gate, and its leak
 check runs as a blocking precondition on every solo dev dispatch — but it is NOT
@@ -68,6 +81,10 @@ SOLO_MAX_DEV_ATTEMPTS = 3
 #: far earlier than this.
 SOLO_NO_PROGRESS_ABORT_S = 1800
 
+#: Review cycles for a reviewed solo story: the first review plus ONE fix round
+#: (the chain allows ``handlers._MAX_REVIEW_CYCLES``).
+SOLO_MAX_REVIEW_CYCLES = 2
+
 _JOB_TEXT_CAP = 16_000
 
 
@@ -80,6 +97,16 @@ def is_solo(story: Any) -> bool:
     if (getattr(story, "chain_kind", "tdd") or "tdd") == "docs":
         return False
     return (getattr(story, "pipeline", "chain") or "chain") == SOLO
+
+
+def solo_reviews(story: Any) -> bool:
+    """True when a solo story is reviewed before delivery: the ``api`` runtime only.
+
+    Reads the spawn stamps (``pipeline``, ``runtime``) like ``is_solo``.
+    """
+    from factory.jobs.kinds import RUNTIME_CLAUDE
+
+    return is_solo(story) and (getattr(story, "runtime", None) or "api") != RUNTIME_CLAUDE
 
 
 def requires_production_delta(app_config: Any) -> bool:
@@ -180,22 +207,37 @@ def _story_ledger_spend(story_id: int | None, db_path: Path) -> float:
 # --------------------------------------------------------------------------- #
 
 
-def build_solo_brief(direction: Any | None, *, test_command: str | None = None) -> str:
+def build_solo_brief(
+    direction: Any | None, *, test_command: str | None = None, reviewed: bool = False
+) -> str:
     """The solo addendum appended to the dev's initial message.
 
     The dev already receives the persona prompt, the repo context prelude
     (``compose_context_prelude``) and the SM story file. Solo adds the job's own
     text (the direction body — today only ANCESTOR directions reach the dev) and
-    the working rules that replace the reviewer: reuse before writing, follow
-    the repo's conventions, own the tests. ``test_command`` (the app's gate
-    command) is named so the dev runs what the gate runs.
+    the working rules that stand in for review cycles: reuse before writing,
+    follow the repo's conventions, own the tests. ``test_command`` (the app's
+    gate command) is named so the dev runs what the gate runs. ``reviewed``
+    (``solo_reviews``) says whether one independent review follows.
     """
+    if reviewed:
+        who = (
+            "ONE independent review, by a different model, reads your diff once "
+            "your tests are green, before the merge gates (the repo's test suite, "
+            "its configured gates and CI) run on it. A blocking finding comes back "
+            "to you once; one that survives the fix stops the job. Get it right "
+            "the first time:"
+        )
+    else:
+        who = (
+            "There is NO separate reviewer on this job. You are the only agent that "
+            "will read this code before the merge gates (the repo's test suite, its "
+            "configured gates and CI) run on it. Work accordingly:"
+        )
     parts = [
         "# Solo pipeline — you own this job end to end",
         "",
-        "There is NO separate reviewer on this job. You are the only agent that "
-        "will read this code before the merge gates (the repo's test suite, its "
-        "configured gates and CI) run on it. Work accordingly:",
+        who,
         "",
         "1. **Find and reuse existing code first.** Before writing anything new, "
         "search the repo (grep/find) for functions, helpers, models, fixtures and "
@@ -645,7 +687,12 @@ def checks_plan(app_config: Any, story: Any) -> dict[str, Any]:
     in_conv.extend(name for name, _ in static_gate_commands(app_config))
     return {
         "pipeline": SOLO,
-        "reviewer": "skipped (solo pipeline)",
+        "reviewer": (
+            f"independent review before delivery (max {SOLO_MAX_REVIEW_CYCLES} cycles: "
+            "one fix round)"
+            if solo_reviews(story)
+            else "skipped (solo pipeline, claude_session runtime)"
+        ),
         "in_conversation_checks": in_conv,
         "test_command": getattr(gates, "test_command", None),
         "max_gate_rounds": SOLO_MAX_GATE_ROUNDS,
@@ -667,6 +714,7 @@ __all__ = [
     "SOLO_DEV_WALL_CLOCK_S",
     "SOLO_MAX_DEV_ATTEMPTS",
     "SOLO_MAX_GATE_ROUNDS",
+    "SOLO_MAX_REVIEW_CYCLES",
     "SOLO_NO_PROGRESS_ABORT_S",
     "build_solo_brief",
     "checks_plan",
@@ -679,6 +727,7 @@ __all__ = [
     "max_dev_attempts",
     "oracle_leak_precheck",
     "requires_production_delta",
+    "solo_reviews",
     "spend_cap_for",
     "branch_is_empty_ro",
     "production_delta_ro",
