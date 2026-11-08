@@ -2,7 +2,8 @@
 
 A monorepo of independent personal tools, one directory each: `termhub`, `voice-dictation`,
 `claude-ctx-statusline`, `disk-janitor`, `keep-awake`, `summarize-recording`, `bootstrap`,
-`personal-assistant`, `ios-messages`, `software-factory`.
+`personal-assistant`, `ios-messages`, `software-factory`, `ptyd` (Rust; termhub's terminal host,
+see `ptyd/README.md`).
 Tools with deeper docs carry their own `AGENT.md` (`termhub/AGENT.md`, `voice-dictation/AGENT.md`) —
 read that before changing the tool.
 

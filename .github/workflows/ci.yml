@@ -32,6 +32,7 @@ jobs:
       termhub: ${{ steps.f.outputs.termhub }}
       factory: ${{ steps.f.outputs.factory }}
       ios: ${{ steps.f.outputs.ios }}
+      ptyd: ${{ steps.f.outputs.ptyd }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -43,7 +44,7 @@ jobs:
           BEFORE: ${{ github.event.before }}
         run: |
           set -u
-          all() { for k in pa termhub factory ios; do echo "$k=true" >> "$GITHUB_OUTPUT"; done; exit 0; }
+          all() { for k in pa termhub factory ios ptyd; do echo "$k=true" >> "$GITHUB_OUTPUT"; done; exit 0; }
           [ "$EVENT" = "workflow_dispatch" ] && all
           if [ "$EVENT" = "pull_request" ]; then BASE="$BASE_PR"; else BASE="$BEFORE"; fi
           # New branch / forced push / unknown base: run everything (fail safe).
@@ -57,6 +58,8 @@ jobs:
           echo "termhub=$(hit '^termhub/')" >> "$GITHUB_OUTPUT"
           echo "factory=$(hit '^(software-factory|schemas)/')" >> "$GITHUB_OUTPUT"
           echo "ios=$(hit '^ios-messages/')" >> "$GITHUB_OUTPUT"
+          # The conformance suite holds ptyd to sessiond's protocol: a change to either side reruns it.
+          echo "ptyd=$(hit '^(ptyd|termhub)/')" >> "$GITHUB_OUTPUT"
 
   personal-assistant:
     needs: changes
@@ -150,6 +153,68 @@ jobs:
       - run: npm ci
       - run: bash $GITHUB_WORKSPACE/.github/scripts/run.sh npm test
         shell: bash
+
+  # ptyd (plan 5.1): the Rust terminal host. Lint, unit tests, then the termhub
+  # protocol conformance suite against the built binary (sessiond, ptyd and
+  # sessiond-on-ptyd legs; PTYD_REQUIRED=1 makes a missing binary a failure,
+  # where the termhub job above SKIPs those legs) and the sessiond-restart test.
+  # Compiles go through sccache (GitHub cache backend); rust-cache keeps the
+  # cargo registry and git deps.
+  ptyd:
+    needs: changes
+    if: needs.changes.outputs.ptyd == 'true'
+    name: ptyd (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    env:
+      CARGO_TERM_COLOR: never
+      CARGO_INCREMENTAL: '0'
+      SCCACHE_GHA_ENABLED: 'true'
+      RUSTC_WRAPPER: sccache
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: mozilla-actions/sccache-action@v0.0.9
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ptyd
+          cache-targets: 'false'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: termhub/package-lock.json
+      - name: cargo fmt / clippy / test / build
+        working-directory: ptyd
+        shell: bash
+        run: |
+          set -e
+          cargo fmt --check
+          cargo clippy --locked --all-targets -- -D warnings
+          cargo test --locked
+          cargo build --locked
+          sccache --show-stats || true
+      - run: npm ci
+        working-directory: termhub
+      - name: conformance (sessiond, ptyd, sessiond+ptyd)
+        working-directory: termhub
+        shell: bash
+        env:
+          PTYD_REQUIRED: '1'
+          CONFORMANCE_TRACE: '1'
+        run: bash $GITHUB_WORKSPACE/.github/scripts/run.sh node test/ptydConformance.test.js
+      - name: sessiond restart keeps terminals (TERMHUB_PTYD=1)
+        working-directory: termhub
+        shell: bash
+        env:
+          PTYD_REQUIRED: '1'
+        run: bash $GITHUB_WORKSPACE/.github/scripts/run.sh node test/ptydBackend.test.js
 
   software-factory:
     needs: changes

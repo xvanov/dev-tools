@@ -14,6 +14,8 @@ const opencodeApi = require('./opencodeApi');
 const { injectAfterClaudeExe, injectAfterOpencodeExe, injectAfterCursorExe } = require('./restore');
 const { ScreenMirror } = require('./screenMirror');
 const { applyEnvSpec } = require('./sessionEnv');
+const ptydClient = require('./ptydClient');
+const { RemotePty } = ptydClient;
 
 // How often to actually shell out to `opencode export` to refresh a session's
 // model (lib/opencodeModel.js's getModel is a ~1.4s subprocess spawn — far too
@@ -114,6 +116,15 @@ function injectSessionId(command, uuid) {
   return injectAfterClaudeExe(command, `--session-id ${uuid}`);
 }
 
+// True when terminal output holds a printable character outside escape sequences.
+function hasVisibleText(data) {
+  const plain = String(data)
+    .replace(/\x1b\][^\x07\x1b]*(\x07|\x1b\\)/g, '')
+    .replace(/\x1b\[[0-9;?<>=!]*[ -\/]*[@-~]/g, '')
+    .replace(/[\x00-\x1f\x7f]/g, '');
+  return plain.length > 0;
+}
+
 // Strip leftover control bytes from an assembled input line.
 function stripControl(s) {
   return s.replace(/[\x00-\x1f\x7f]/g, '');
@@ -144,8 +155,25 @@ function genId() {
 }
 
 class Session {
-  constructor({ cwd, command, title, cols, rows, maxBytes, onExit, onInputLine, agentSessionId, envSpec, noRc, links } = {}) {
-    this.id = genId();
+  // `adopt` (ptyd mode only): an existing ptyd session to take over after a
+  // sessiond restart — `{info, entry}`, ptyd's session info and this session's
+  // archive entry (or null). Nothing is spawned and no command is run: the
+  // terminal is already there, still running whatever it was running.
+  constructor({ cwd, command, title, cols, rows, maxBytes, onExit, onInputLine, agentSessionId, envSpec, noRc, links, adopt } = {}) {
+    if (adopt) {
+      const { info, entry } = adopt;
+      const e = entry || {};
+      cwd = info.cwd;
+      command = e.command !== undefined ? e.command : info.command;
+      title = e.title || info.title; // renames and links are sessiond's: its archive has the latest
+      cols = info.cols;
+      rows = info.rows;
+      agentSessionId = e.agentSessionId || null;
+      envSpec = e.envSpec || null;
+      noRc = e.noRc === true || info.noRc === true;
+      links = entry ? e.links || null : info.links || null;
+    }
+    this.id = adopt ? adopt.info.id : genId();
     // What this session belongs to (card, run, job, step, …; lib/sessionLinks.js).
     this.links = links || null;
     // Start the shell without rc/profile files (lib/shell.js shellArgs), so they
@@ -174,7 +202,9 @@ class Session {
     this.agentSessionId = agentSessionId || null;
     this._discoveryAborted = false;
     this._opencodeModelCache = { checkedAt: 0, model: null, modelLabel: null };
-    if (this.kind === 'claude' && !this.agentSessionId && !hasOwnSessionIdentity(this.command)) {
+    if (adopt) {
+      // An adopted command is the final one it was launched with; nothing to splice.
+    } else if (this.kind === 'claude' && !this.agentSessionId && !hasOwnSessionIdentity(this.command)) {
       const uuid = crypto.randomUUID();
       this.command = injectSessionId(this.command, uuid);
       this.agentSessionId = uuid;
@@ -235,9 +265,10 @@ class Session {
     this.cols = cols || 80;
     this.rows = rows || 24;
     this.title = title || this.command || baseName(this.shell);
-    this.created = Date.now();
-    this.lastActivity = Date.now();
-    this.lastInputAt = 0;   // when the human last typed; 0 = never (see write())
+    this.created = adopt ? (adopt.entry && adopt.entry.created) || adopt.info.created : Date.now();
+    this.lastActivity = adopt ? adopt.info.lastActivity || Date.now() : Date.now();
+    this.lastInputAt = adopt ? adopt.info.lastInputAt || 0 : 0;   // when the human last typed; 0 = never (see write())
+    if (adopt && adopt.info.shell) this.shell = adopt.info.shell;
     this.alive = false;
     this.exitCode = null;
 
@@ -278,7 +309,18 @@ class Session {
     // and every other client is told the new size so it renders at it.
     this.sizeOwner = null;
 
-    this._spawn();
+    if (adopt) this._adopt(adopt.info);
+    else this._spawn();
+  }
+
+  // ptyd mode: take over a terminal ptyd already hosts. Its replay seeds the
+  // screen mirror (as raw output, at the size ptyd reports).
+  _adopt(info) {
+    this.pty = new RemotePty({ id: this.id });
+    this.alive = info.alive !== false;
+    this.exitCode = info.exitCode ?? null;
+    this.rcSkipped = shellArgs(this.shell, { noRc: this.noRc }).rcSkipped;
+    this._wirePty();
   }
 
   _spawn() {
@@ -313,28 +355,54 @@ class Session {
         if (k === name || (process.platform === 'win32' && k.toUpperCase() === name)) delete spawnEnv[k];
       }
     }
-    this.pty = pty.spawn(this.shell, launch.args, {
-      name: 'xterm-256color',
-      cols: this.cols,
-      rows: this.rows,
-      cwd: this.cwd,
-      env: spawnEnv,
-    });
+    if (ptydClient.enabled()) {
+      // ptyd builds the environment by the same rules from its own (which it
+      // inherited from the sessiond that started it): TERM, TERMHUB_SESSION_ID
+      // (it is given this id), the parent-agent variables stripped, rc
+      // variables removed for noRc. So it is sent only the caller's changes.
+      const spec = this.envSpec || {};
+      this.pty = new RemotePty({
+        id: this.id,
+        create: {
+          cwd: this.cwd, shell: this.shell, cols: this.cols, rows: this.rows, title: this.title,
+          noRc: this.noRc, links: this.links,
+          ...(this.envSpec ? { env: spec.env || {}, unsetEnv: spec.unset || [] } : {}),
+        },
+      });
+    } else {
+      this.pty = pty.spawn(this.shell, launch.args, {
+        name: 'xterm-256color',
+        cols: this.cols,
+        rows: this.rows,
+        cwd: this.cwd,
+        env: spawnEnv,
+      });
+    }
     this.alive = true;
 
     // Surface a bad working directory in the terminal itself (buffered so it also
     // shows up in replay on reconnect) rather than failing session creation.
-    if (this._cwdNotice) {
-      const notice = `\x1b[33m[termhub] ${this._cwdNotice}\x1b[0m\r\n`;
-      this._buffer(notice);
-      this._broadcast({ type: 'output', data: notice });
-    }
+    if (this._cwdNotice) this.notice(`\x1b[33m[termhub] ${this._cwdNotice}\x1b[0m\r\n`);
 
+    this._wirePty();
+
+    // If an initial command was requested (e.g. `claude …`), run it *inside* the
+    // shell (not as the PTY process) so the user still has a shell after it exits.
+    if (this.command) {
+      this._pendingCommand = this.command;
+      // Fallback in case the shell emits no startup output before going quiet.
+      this._cmdFallback = setTimeout(() => this._maybeRunCommand(), 1500);
+    }
+  }
+
+  _wirePty() {
     this.pty.onData((data) => {
       // Run the initial command once the shell has actually produced its prompt,
       // rather than after a fixed delay — a guessed timeout races the shell's
-      // startup (rc files, etc.) and the keystrokes get dropped.
-      this._maybeRunCommand();
+      // startup (rc files, etc.) and the keystrokes get dropped. On ptyd, ConPTY's
+      // opening mode switches (escape sequences only) arrive before the shell
+      // exists, so they don't count; ptyd applies the same rule to its own.
+      if (!(this.pty && this.pty.remote) || hasVisibleText(data)) this._maybeRunCommand();
       this.lastActivity = Date.now();
       this._buffer(data);
       this._broadcast({ type: 'output', data });
@@ -352,14 +420,6 @@ class Session {
       this._broadcast({ type: 'exit', code: exitCode });
       if (this.onExit) { try { this.onExit(exitCode); } catch { /* hook must not break exit */ } }
     };
-
-    // If an initial command was requested (e.g. `claude …`), run it *inside* the
-    // shell (not as the PTY process) so the user still has a shell after it exits.
-    if (this.command) {
-      this._pendingCommand = this.command;
-      // Fallback in case the shell emits no startup output before going quiet.
-      this._cmdFallback = setTimeout(() => this._maybeRunCommand(), 1500);
-    }
   }
 
   _maybeRunCommand() {
@@ -487,6 +547,9 @@ class Session {
   // replay) without sending it to the shell as input.
   notice(text) {
     const msg = text.endsWith('\r\n') ? text : text + '\r\n';
+    // In ptyd mode the line goes into ptyd's replay too (so it survives a
+    // sessiond restart) and comes back here as output, like everything else.
+    if (this.pty && this.pty.remote) { this.pty.notice(msg); return; }
     this._buffer(msg);
     this._broadcast({ type: 'output', data: msg });
   }
@@ -771,6 +834,11 @@ class Session {
     this._screen.dispose();
     this._discoveryAborted = true; // stop an in-flight opencode session-id discovery loop
     this._stopOpencodeApi();       // and its event-stream reconnect loop, which would retry forever
+    // ptyd takes the whole tree down itself (taskkill /T on Windows, the process
+    // group on Linux) when the session is deleted there.
+    // Returns a promise that settles once ptyd has (sessiond's DELETE awaits it,
+    // as callers rely on the tree being gone, e.g. to remove the cwd next).
+    if (this.pty && this.pty.remote) return this.pty.kill();
     if (this.alive) {
       // Windows: pty.kill() closes the pseudoconsole but leaves the shell's children running, still
       // holding the cwd. Take the whole tree down first and wait for it, so a caller that removes the

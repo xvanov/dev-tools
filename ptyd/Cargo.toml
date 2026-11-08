@@ -1,0 +1,23 @@
+[package]
+name = "ptyd"
+version = "0.1.0"
+edition = "2021"
+description = "Terminal host for termhub: owns PTYs and speaks sessiond's session protocol (HTTP + WebSocket)."
+license = "MIT"
+publish = false
+
+[dependencies]
+axum = { version = "0.8", default-features = false, features = ["http1", "json", "tokio", "ws", "query"] }
+portable-pty = "0.9"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "sync", "time", "signal"] }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 4
+strip = true

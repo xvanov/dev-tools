@@ -1289,7 +1289,7 @@
           "on the factory machine: claude_session runs"
         ],
         "Restore": "a claude session re-opens as `claude --resume <uuid>` in its old cwd (the id termhub pinned with --session-id)",
-        "Restart": "restarting sessiond kills every live terminal: only on purpose",
+        "Restart": "restarting sessiond kills every live terminal: only on purpose. Opt-in TERMHUB_PTYD=1 (not deployed yet) moves the PTYs into ptyd and a restarted sessiond adopts them",
         "Live state (plan E3)": "the idle hub classifies every agent session once a second (working, waiting on you, limited); each change and each exit goes out as a `session-state` message on the page-wide /ws/voice feed, and Run redraws its sidebar on it instead of waiting for its 2 s poll"
       },
       "code": [
@@ -1297,6 +1297,53 @@
         "termhub/lib/session.js",
         "termhub/lib/restore.js",
         "termhub/lib/idleHub.js"
+      ]
+    },
+    {
+      "id": "ptyd",
+      "layer": "sessions",
+      "name": "ptyd",
+      "role": "Rust terminal host (plan 5.1, portable-pty: ConPTY on Windows, a PTY on Linux) speaking sessiond's session protocol. Opt-in: with TERMHUB_PTYD=1 sessiond keeps its PTYs in ptyd, so a sessiond restart no longer ends the terminals. Not deployed on either stack yet.",
+      "stacks": {
+        "work": "landing",
+        "personal": "landing"
+      },
+      "where": {
+        "work": "127.0.0.1:7020 when enabled (TERMHUB_PTYD_PORT); started detached by sessiond if none answers",
+        "personal": "127.0.0.1:7020 when enabled (TERMHUB_PTYD_PORT); started detached by sessiond if none answers"
+      },
+      "env": [
+        {
+          "name": "TERMHUB_PTYD",
+          "default": null
+        },
+        {
+          "name": "TERMHUB_PTYD_PORT",
+          "default": "7020"
+        },
+        {
+          "name": "TERMHUB_PTYD_BIN",
+          "default": null
+        }
+      ],
+      "details": {
+        "Protocol": [
+          "GET /api/ping (entry: ptyd), GET /api/info",
+          "GET/POST /api/sessions {cwd, command, title, cols, rows, env, unsetEnv, noRc, links; ptyd extensions: id, shell}",
+          "PATCH/DELETE /api/sessions/:id, POST /api/sessions/:id/input, POST /api/sessions/:id/notice (extension)",
+          "WebSocket /ws/term/:id: input/resize up; replay (screen: raw), output, size, exit down"
+        ],
+        "Conformance": "termhub/test/ptydConformance.test.js runs one black-box suite against sessiond, ptyd and sessiond on ptyd; CI's ptyd job runs it on Windows and Linux",
+        "Restart survival": "termhub/test/ptydBackend.test.js: sessiond is killed mid-command and restarted; the new one adopts the session from ptyd under the same id and loses no output",
+        "Not in ptyd": "voice, idle episodes, uploads, the archive and restore stay in sessiond; replay is raw bytes (sessiond keeps its own screen mirror on top)",
+        "Build": "cargo build --release in ptyd/ (rustup, MSVC build tools on Windows)"
+      },
+      "code": [
+        "ptyd/src/main.rs",
+        "ptyd/src/session.rs",
+        "ptyd/README.md",
+        "termhub/lib/ptydClient.js",
+        "termhub/test/ptydConformance.test.js"
       ]
     },
     {
@@ -1572,6 +1619,11 @@
       "from": "sessiond",
       "to": "jarvis",
       "label": "hosts the PTY"
+    },
+    {
+      "from": "sessiond",
+      "to": "ptyd",
+      "label": "PTY backend when TERMHUB_PTYD=1 (session protocol, HTTP + WebSocket on loopback)"
     },
     {
       "from": "mcp",

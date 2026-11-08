@@ -280,6 +280,24 @@ live terminal** (PTYs are sessiond's memory and can't be migrated) and they come
 of the ones it kills. Use it for sessiond-side changes; `update.ps1` prints a reminder when a pull
 touched `sessiond.js` or `lib/` while the running supervisor is still on the old commit.
 
+### ptyd: terminals that survive a sessiond restart (opt-in, plan 5.1)
+
+`TERMHUB_PTYD=1` moves the PTYs out of sessiond into **ptyd**, the Rust terminal host in
+[`../ptyd`](../ptyd/README.md). sessiond keeps everything else (screen mirror, voice, idle
+tracking, uploads, the archive) and drives ptyd over the same session protocol it serves
+(`lib/ptydClient.js`: a `RemotePty` standing in for node-pty's IPty). On start it adopts the
+sessions ptyd still has, under the same ids and with the archive's metadata, so with the flag on a
+sessiond restart no longer ends terminals. `/api/ping` reports `ptyHost: 'ptyd' | 'node-pty'`.
+`TERMHUB_PTYD_PORT` (7020) and `TERMHUB_PTYD_BIN` (default `../ptyd/target/release/ptyd`, then
+`debug`) say where; with nothing answering, sessiond starts one detached, logging to
+`logs/ptyd.out.log`. Build it first: `cd ptyd && cargo build --release`.
+
+Off by default and not wired into the start/update scripts yet. Proofs:
+`test/ptydConformance.test.js` runs one black-box protocol suite against sessiond, ptyd and
+sessiond-on-ptyd (the ptyd legs SKIP without a built binary, fail with `PTYD_REQUIRED=1`, as in
+CI's ptyd job); `test/ptydBackend.test.js` kills sessiond mid-command and checks the next one
+adopts the session without losing output.
+
 ### Session persistence (surviving reboots)
 
 PTYs live only in `sessiond`'s memory, so a machine reboot kills every terminal and the sidebar

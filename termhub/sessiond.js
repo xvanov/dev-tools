@@ -40,6 +40,7 @@ const idleStore = require('./lib/idleStore');
 const { checkRequest, checkUpgrade, refuseUpgrade, learnSelfNamesAndWarn } = require('./lib/requestGuard');
 const { parseEnvSpec } = require('./lib/sessionEnv');
 const { parseNoRc } = require('./lib/shell');
+const ptydClient = require('./lib/ptydClient');
 
 // A pasted/dropped image, base64-inflated in transit — cap comfortably above a
 // full-screen screenshot (a few MB as PNG) while still bounding memory use.
@@ -182,6 +183,27 @@ function trackSession(session) {
   session.onInputLine = (line) => archive.addHistory(session.id, line);
 }
 
+// ptyd mode (TERMHUB_PTYD=1, lib/ptydClient.js): the terminals ptyd still hosts
+// outlived the previous sessiond. Take them back under the same ids, with the
+// archive's metadata (title, links, the agent's conversation id), so the
+// sidebar, voice and idle tracking carry on as if nothing had restarted.
+async function adoptPtydSessions(sessions) {
+  const live = await ptydClient.listSessions();
+  let n = 0;
+  for (const info of live) {
+    if (!info || !info.id || sessions.has(info.id)) continue;
+    const entry = archive.get(info.id);
+    const session = new Session({ adopt: { info, entry } });
+    trackSession(session);
+    sessions.set(session.id, session);
+    if (!entry) archive.upsert(session.archiveEntry());
+    else if (entry.endedAt && session.alive) archive.patch(session.id, { endedAt: null });
+    n++;
+  }
+  if (n) console.log(`[sessiond] adopted ${n} terminal(s) from ptyd`);
+  return n;
+}
+
 // ---- server factory -------------------------------------------------------
 
 function createSessiond({ entry = 'sessiond', port: serverPort = DEFAULT_SESSIOND_PORT } = {}) {
@@ -231,6 +253,12 @@ function createSessiond({ entry = 'sessiond', port: serverPort = DEFAULT_SESSION
   // poll. The idle hub ticks once a second, which bounds the delay.
   forwardSessionStates(idle, voice);
 
+  if (ptydClient.enabled()) {
+    adoptPtydSessions(sessions).catch((err) => {
+      console.error(`[sessiond] ptyd: ${err && err.message ? err.message : err}`);
+    });
+  }
+
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, 'http://localhost');
     const { pathname } = url;
@@ -269,6 +297,8 @@ function createSessiond({ entry = 'sessiond', port: serverPort = DEFAULT_SESSION
           commit: build.commit(),
           dirty: build.dirty(),
           startedAt: STARTED_AT,
+          // Where the PTYs live: in this process, or in ptyd (TERMHUB_PTYD=1).
+          ptyHost: ptydClient.enabled() ? 'ptyd' : 'node-pty',
         });
       }
 
@@ -391,7 +421,7 @@ function createSessiond({ entry = 'sessiond', port: serverPort = DEFAULT_SESSION
       if (req.method === 'DELETE' && idMatch) {
         const id = decodeURIComponent(idMatch[1]);
         const session = sessions.get(id);
-        if (session) { session.kill(); sessions.delete(id); }
+        if (session) { sessions.delete(id); await session.kill(); }
         // Drop it from the archive too: a DELETE means "close it" / "forget it",
         // for both a live session and a restorable one. Idempotent.
         archive.remove(id);

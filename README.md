@@ -12,6 +12,7 @@ Internal tooling for AI-assisted workflows: push-to-talk dictation, batch transc
 | [claude-ctx-statusline](./claude-ctx-statusline/) | Shows context window usage in the Claude Code status bar |
 | [keep-awake](./keep-awake/) | Keeps a Windows session awake (F15 tap + execution-state) so it never idle-logs-out; auto-starts at logon |
 | [termhub](./termhub/) | Mobile-friendly web terminal over Tailscale — one server per machine; open/reattach shell sessions, incl. Claude Code (Windows + Linux) |
+| [ptyd](./ptyd/) | Rust terminal host for termhub (plan 5.1): owns the PTYs and speaks sessiond's session protocol; opt-in via `TERMHUB_PTYD=1` |
 | [disk-janitor](./disk-janitor/) | Safe, scheduled reclamation of rebuildable disk space (package caches + aged temp/cache); whitelist-only, never touches user data (Windows + Ubuntu/Debian) |
 | [personal-assistant](./personal-assistant/) | Context layer over Outlook/Teams/GitLab/meetings that distils asks into typed commitments, dispatches them to Claude Code sessions you can attach to, and drafts the reply when the work lands |
 | [ios-messages](./ios-messages/) | Decrypt messages from an iPhone backup (iMazing/iTunes), export every conversation as text, sort property chats into tenants / landlords / contractors (house group chats included), and pseudonymize them consistently across chats |
@@ -20,7 +21,8 @@ Internal tooling for AI-assisted workflows: push-to-talk dictation, batch transc
 
 [`.github/workflows/ci.yml`](./.github/workflows/ci.yml) runs each tool's tests on Linux and
 Windows in parallel (no macOS, plan D14), only for the tools a change touched (path-filtered; "Run
-workflow" runs all). Covers personal-assistant, termhub, software-factory (pytest via uv;
+workflow" runs all). Covers personal-assistant, termhub, ptyd (cargo fmt/clippy/test, then the
+termhub protocol conformance suite against the built binary), software-factory (pytest via uv;
 informational until its tests are repo-portable and it is ported to Windows, plan phase 2.3) and
 ios-messages. No secrets are used.
 
@@ -145,6 +147,7 @@ dev-tools/
 ├── claude-ctx-statusline/    # Claude Code statusLine helper
 ├── keep-awake/               # Windows keep-session-awake helper
 ├── termhub/                  # web terminal over Tailscale (agent + hub + xterm.js UI)
+├── ptyd/                     # Rust terminal host for termhub (opt-in, plan 5.1)
 ├── disk-janitor/             # scheduled, whitelist-only disk reclamation
 ├── personal-assistant/       # context layer: ingest → distil → recall → dispatch → draft
 └── ios-messages/             # iPhone backup → text export → tenants/landlords/contractors → anonymize
