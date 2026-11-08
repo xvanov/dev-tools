@@ -72,6 +72,9 @@ jobs:
         working-directory: personal-assistant
     steps:
       - uses: actions/checkout@v4
+        with:
+          # deploy.test.js dry-runs the redeploy wrapper from HEAD~1.
+          fetch-depth: 2
       - uses: actions/setup-node@v4
         with:
           node-version: 22
