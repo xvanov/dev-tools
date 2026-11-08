@@ -26,8 +26,17 @@
 // people's mail, and a model that read "tell your assistant to …" there must
 // not be able to put words in the user's mouth.
 //
+// Decide, then speak (docs/native/PLAN.md D7): with a local model the default
+// router is `logprob` (src/chat/fastRouter.js). It scores one fixed question
+// from single-token log-probabilities and returns calibrated probabilities
+// p(answer_here), p(hand_off), p(action), never words. Only when p(answer_here)
+// clears PA_FAST_ANSWER_THRESHOLD does the fast model (the answerer) speak;
+// otherwise the turn goes to the PA chat verbatim with a stock
+// acknowledgement. The action guard below still has the last word.
+//
 // Pluggable: PA_FAST_MODEL is any model string (src/models.js); PA_FAST_ROUTER
-// is `same` (the fast model decides and replies in one streamed call: first
+// is `logprob` (above; a non-local model falls back to `same`), `same` (the
+// fast model decides and replies in one streamed call: first
 // the decision as one JSON object, then the words), `rules` (the built-in
 // keyword router, no model call), another model string (a JSON-only router
 // call, then the fast model writes the words), or an http(s) URL (POST
@@ -525,7 +534,7 @@ async function buildSnapshot() {
  * once and refreshes it when it is older than ttlMs. Only the very first call
  * waits, and never longer than `firstWaitMs`.
  */
-function createSnapshotCache({ build = buildSnapshot, ttlMs = config.fastLane.contextTtlMs, now = Date.now } = {}) {
+function createSnapshotCache({ build = buildSnapshot, ttlMs = config.fastLane.contextTtlMs, now = Date.now, onChange = null } = {}) {
   let value = null;
   let at = 0;
   let inflight = null;
@@ -534,8 +543,14 @@ function createSnapshotCache({ build = buildSnapshot, ttlMs = config.fastLane.co
       inflight = Promise.resolve()
         .then(build)
         .then((v) => {
+          const changed = v !== value;
           value = v;
           at = now();
+          if (changed && onChange) {
+            try {
+              onChange(v);
+            } catch {}
+          }
           return v;
         })
         .catch((err) => {
@@ -595,8 +610,39 @@ function handoffText(userText, decision, said) {
 
 let sharedSnapshot = null;
 function snapshotCache() {
-  if (!sharedSnapshot) sharedSnapshot = createSnapshotCache();
+  if (!sharedSnapshot) sharedSnapshot = createSnapshotCache({ onChange: (context) => primeRouter({ context }) });
   return sharedSnapshot;
+}
+
+const liveHistory = () => mergeHistory(require('./feed').feed().history(8), answered);
+
+/** Pure. The router in use: `logprob` needs a local model, else `same`. */
+function routerKind(o) {
+  if (/^https?:\/\//i.test(o.router || '')) return 'http';
+  if (o.router === 'logprob') return /^local\//.test(String(o.model || '')) ? 'logprob' : 'same';
+  if (o.router === 'same' || !o.router) return 'same';
+  if (o.router === 'rules') return 'rules';
+  return 'model';
+}
+
+/** The answer threshold: PA_FAST_ANSWER_THRESHOLD, else the fitted default. */
+function answerThreshold(o = config.fastLane) {
+  const t = Number(o.answerThreshold);
+  return Number.isFinite(t) && t > 0 && t <= 1 ? t : require('./fastRouter').THRESHOLD;
+}
+
+// Warms the router's prompt cache for the next turn (a new snapshot, or the
+// conversation as it now stands). Never throws, never waits.
+function primeRouter({ context, history, o = config.fastLane, deps = {} } = {}) {
+  if (!o.enabled || routerKind(o) !== 'logprob') return null;
+  const prime = deps.prime || depOverrides.prime || require('./fastRouter').prime;
+  return Promise.resolve()
+    .then(async () => ({
+      context: context ?? (await (deps.snapshot || depOverrides.snapshot || (() => snapshotCache().get()))()),
+      history: history ?? (deps.history || depOverrides.history || liveHistory)(),
+    }))
+    .then((a) => prime({ ...a, model: o.model, keepAlive: o.keepAlive, timeoutMs: 5000 }))
+    .catch(() => null);
 }
 
 function defaultDeps() {
@@ -604,8 +650,10 @@ function defaultDeps() {
   return {
     stream: llm.stream,
     complete: llm.complete,
+    route: (a) => require('./fastRouter').score(a),
+    prime: (a) => require('./fastRouter').prime(a),
     snapshot: () => snapshotCache().get(),
-    history: () => mergeHistory(require('./feed').feed().history(8), answered),
+    history: liveHistory,
     handoff: (text) => require('./feed').feed().send({ text, source: 'voice' }),
     fetch: (...a) => fetch(...a),
     remember: rememberAnswered,
@@ -636,20 +684,20 @@ async function runTurn({ text, emit, signal = null, deps = {}, opts = {} }) {
   const ac = new AbortController();
   const onAbort = () => ac.abort();
   signal?.addEventListener('abort', onAbort, { once: true });
-  const router = /^https?:\/\//i.test(o.router) ? 'http' : o.router === 'same' || !o.router ? 'same' : o.router === 'rules' ? 'rules' : 'model';
+  const router = routerKind(o);
   const r = { route: null, decisionMs: null, firstTokenMs: null, say: '', handoff: null, overridden: false, valid: true };
   let handoffP = null;
 
   const [context, history] = await Promise.all([d.snapshot().catch(() => ''), Promise.resolve().then(d.history).catch(() => [])]);
   const prompt = userPrompt({ text, context, history });
 
-  function decide(decision, valid = true) {
+  function decide(decision, valid = true, extra = {}) {
     const g = guardDecision(decision, text);
     r.route = g.decision.route;
     r.decisionMs = since();
     r.overridden = g.overridden;
     r.valid = valid;
-    emit({ type: 'decision', ...g.decision, router, ms: r.decisionMs, ...(g.overridden ? { overridden: true } : {}) });
+    emit({ type: 'decision', ...g.decision, router, ms: r.decisionMs, ...extra, ...(g.overridden ? { overridden: true } : {}) });
     return g.decision;
   }
   function speak(t) {
@@ -731,10 +779,55 @@ async function runTurn({ text, emit, signal = null, deps = {}, opts = {} }) {
   }
   let ack = '';
 
+  // Decide, then speak: the router's calibrated probabilities pick the
+  // route; only an answer above the threshold is spoken by the fast model.
+  // Returns false when the router failed (Ollama down, model loading past
+  // localTimeoutMs): the turn then goes to the fallback model, unharmed.
+  async function logprobTurn() {
+    let s;
+    try {
+      s = await d.route({ text, context, history, model: o.model, keepAlive: o.keepAlive, timeoutMs: o.localTimeoutMs, signal: ac.signal });
+    } catch (err) {
+      if (signal?.aborted) throw err;
+      log.warn('router failed; using the fallback', { model: o.model, message: err.message, ms: since() });
+      return false;
+    }
+    const threshold = answerThreshold(o);
+    const choice = require('./fastRouter').decide(s.p, threshold);
+    const p = Object.fromEntries(Object.entries(s.p).map(([k, v]) => [k, Math.round(v * 1000) / 1000]));
+    const reason = `router: ${choice} (p answer ${p.answer_here}, hand off ${p.hand_off}, action ${p.action}; threshold ${threshold})`;
+    const decided = decide(choice === 'answer' ? { route: 'answer', reason } : { route: 'handoff', task: clip(text, MAX_TASK), reason }, true, { p, routerMs: s.ms });
+    if (decided.route !== 'answer') {
+      // The user's own words, verbatim: the task is the text, so no hint.
+      startHandoff({ ...decided, task: clip(text, MAX_TASK) });
+      speak(r.overridden || choice === 'action' ? ACTION_ACK : ACK);
+      return true;
+    }
+    try {
+      for await (const piece of d.stream({ system: replySystem(decided), prompt, model: o.model, maxTokens: 300, timeoutMs: 20_000, purpose: 'fast-lane', signal: ac.signal, keepAlive: o.keepAlive })) {
+        speak(tidySpoken(piece));
+      }
+    } catch (err) {
+      if (signal?.aborted) throw err;
+      log.warn('answerer failed', { message: err.message });
+      if (!r.say) {
+        speak("Sorry, I lost that. Let me hand it over.");
+        startHandoff({ route: 'handoff', task: text, reason: 'answerer failed' });
+      }
+    }
+    return true;
+  }
+
   try {
     let model = o.model;
     let handled = false;
-    if (router === 'same' && usesJson(o.model, o)) {
+    if (router === 'logprob') {
+      handled = await logprobTurn();
+      if (!handled) {
+        model = o.fallback || o.model;
+        r.fellBack = true;
+      }
+    } else if (router === 'same' && usesJson(o.model, o)) {
       handled = await jsonTurn();
       if (!handled) {
         model = o.fallback || o.model;
@@ -743,7 +836,7 @@ async function runTurn({ text, emit, signal = null, deps = {}, opts = {} }) {
     }
     if (handled) {
       // decided, spoken and handed off above
-    } else if (router === 'same') {
+    } else if (router === 'same' || router === 'logprob') {
       const split = createReplySplitter();
       let suppress = false;
       let decided = null;
@@ -820,6 +913,11 @@ async function runTurn({ text, emit, signal = null, deps = {}, opts = {} }) {
     if (r.route === 'answer' && r.say.trim()) d.remember(text, r.say.trim());
     const done = { type: 'done', route: r.route, say: r.say.trim(), decisionMs: r.decisionMs, firstTokenMs: r.firstTokenMs, ms: since(), model, router, ...(r.fellBack ? { fellBack: true } : {}) };
     emit(done);
+    if (router === 'logprob' && !r.fellBack && !signal?.aborted) {
+      // The next turn's conversation is this one: put it in the prompt cache now.
+      const next = [...history, { type: 'user', text }, ...(r.route === 'answer' && r.say.trim() ? [{ type: 'assistant', text: r.say.trim() }] : [])];
+      primeRouter({ context, history: next, o, deps: d });
+    }
     return { ...r, ms: done.ms };
   } finally {
     clearTimeout(timer);
@@ -847,11 +945,15 @@ function warm({ now = Date.now(), deps = {} } = {}) {
         keepWarmTimer = setInterval(() => warm(), KEEP_WARM_MS);
         keepWarmTimer.unref?.();
       }
-      // The fixed system prompt, so the KV cache holds its prefix.
-      return warmLocal({ model: o.model, keepAlive: o.keepAlive, system: jsonSystem() });
+      // The fixed system prompt, so the KV cache holds its prefix: the
+      // answerer's under the logprob router, the one-call JSON prompt otherwise.
+      const system = routerKind(o) === 'logprob' ? replySystem({ route: 'answer' }) : jsonSystem();
+      return warmLocal({ model: o.model, keepAlive: o.keepAlive, system });
     })
-    .then((ms) => {
+    .then(async (ms) => {
       log.debug('local fast model warm', { model: o.model, ms });
+      // And the router's prefix (system, snapshot, conversation).
+      await primeRouter({ o, deps });
       return ms;
     })
     .catch((err) => {
@@ -881,6 +983,9 @@ module.exports = {
   runTurn,
   setDeps,
   warm,
+  routerKind,
+  answerThreshold,
+  primeRouter,
   usesJson,
   createJsonSayStreamer,
   DECISION_SCHEMA,

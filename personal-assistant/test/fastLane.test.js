@@ -451,14 +451,156 @@ function splitAll(pieces) {
     const { config } = require('../src/config');
     const seen = [];
     const save = { ...config.fastLane };
-    Object.assign(config.fastLane, { enabled: true, model: 'local/llama3.2:3b', json: 'auto', keepAlive: '24h' });
-    const w = await F.warm({ now: 1e12, deps: { warmLocal: async (a) => (seen.push(a), 42) } });
+    Object.assign(config.fastLane, { enabled: true, model: 'local/llama3.2:3b', json: 'auto', keepAlive: '24h', router: 'logprob' });
+    const primed = [];
+    const w = await F.warm({ now: 1e12, deps: { warmLocal: async (a) => (seen.push(a), 42), prime: async (a) => primed.push(a), snapshot: async () => 'Now: Friday', history: () => [] } });
     assert.strictEqual(w, 42);
     assert.deepStrictEqual(seen.map((a) => [a.model, a.keepAlive, typeof a.system]), [['local/llama3.2:3b', '24h', 'string']]);
     assert.ok(seen[0].system.length > 200, 'the warm ping carries the fixed system prompt (the KV prefix)');
-    assert.strictEqual(seen[0].system, F.jsonSystem(), 'the very prompt a turn sends');
+    assert.strictEqual(seen[0].system, F.replySystem({ route: 'answer' }), "under logprob: the answerer's prompt");
+    assert.strictEqual(primed.length, 1, 'and the router prompt is put in the cache');
+    assert.strictEqual(primed[0].context, 'Now: Friday');
     assert.strictEqual(F.warm({ now: 1e12 + 1000, deps: { warmLocal: async () => 1 } }), null, 'not again within a minute');
+    // With the one-call JSON router: its prompt.
+    seen.length = 0;
+    Object.assign(config.fastLane, { router: 'same' });
+    await F.warm({ now: 1e12 + 120_000, deps: { warmLocal: async (a) => (seen.push(a), 1) } });
+    assert.strictEqual(seen[0].system, F.jsonSystem(), 'the very prompt a turn sends');
     Object.assign(config.fastLane, save);
+  }
+
+  // ---- the logprob router (src/chat/fastRouter.js) --------------------------------------
+  {
+    const R = require('../src/chat/fastRouter');
+    // Letters from top_logprobs: variants summed, a missing one floored, none -> null.
+    const lp = R.letterLogprobs([{ token: 'A', logprob: Math.log(0.5) }, { token: ' A', logprob: Math.log(0.2) }, { token: 'B', logprob: Math.log(0.25) }, { token: 'The', logprob: -3 }]);
+    assert.ok(Math.abs(lp.answer_here - Math.log(0.7)) < 1e-9);
+    assert.ok(Math.abs(lp.hand_off - Math.log(0.25)) < 1e-9);
+    assert.strictEqual(lp.action, -20);
+    assert.strictEqual(R.letterLogprobs([{ token: 'Sure', logprob: -0.1 }]), null);
+    // Calibration: identity at T=1, b=0 renormalizes over the three letters.
+    const raw = { T: 1, b: { answer_here: 0, hand_off: 0, action: 0 } };
+    let p = R.calibrate({ answer_here: Math.log(0.6), hand_off: Math.log(0.3), action: Math.log(0.1) }, raw);
+    assert.ok(Math.abs(p.answer_here - 0.6) < 1e-9 && Math.abs(p.action - 0.1) < 1e-9);
+    p = R.calibrate({ answer_here: Math.log(0.6), hand_off: Math.log(0.3), action: Math.log(0.1) }, { T: 1, b: { answer_here: -5, hand_off: 0, action: 0 } });
+    assert.ok(p.answer_here < 0.05, 'a negative bias pulls p(answer_here) down');
+    // decide(): answer only above the threshold; else the likelier of the two.
+    assert.strictEqual(R.decide({ answer_here: 0.9, hand_off: 0.05, action: 0.05 }, 0.85), 'answer');
+    assert.strictEqual(R.decide({ answer_here: 0.8, hand_off: 0.15, action: 0.05 }, 0.85), 'handoff');
+    assert.strictEqual(R.decide({ answer_here: 0.8, hand_off: 0.05, action: 0.15 }, 0.85), 'action');
+    // The prompt: snapshot first, last two turns, the words and the question last.
+    const pr = R.routerPrompt({ text: 'check my mail from Quorvin', context: 'Now: Friday', history: [{ type: 'user', text: 'one' }, { type: 'assistant', text: 'two' }, { type: 'user', text: 'three' }] });
+    assert.ok(pr.indexOf('Now: Friday') < pr.indexOf('check my mail'));
+    assert.ok(!pr.includes('one') && pr.includes('assistant: two') && pr.includes('user: three'));
+    assert.ok(pr.endsWith('A, B or C?'));
+    // A primed prompt is a prefix of the real one up to the words.
+    const head = R.routerPrompt({ text: '', context: 'c', history: [] });
+    assert.ok(R.routerPrompt({ text: 'hi', context: 'c', history: [] }).startsWith(head.slice(0, head.indexOf('""') + 1)));
+    // The request: one token, logprobs, the native endpoint, keep_alive.
+    const req = R.routerRequest({ model: 'llama3.2:3b', text: 'hi', context: '', history: [], keepAlive: '24h', baseUrl: 'http://127.0.0.1:11434/v1' });
+    assert.strictEqual(req.url, 'http://127.0.0.1:11434/api/chat');
+    assert.strictEqual(req.body.logprobs, true);
+    assert.strictEqual(req.body.options.num_predict, 1);
+    assert.strictEqual(req.body.options.temperature, 0);
+    assert.strictEqual(req.body.keep_alive, '24h');
+    assert.strictEqual(req.body.messages[0].content, R.ROUTER_SYSTEM, 'the system prompt never changes: it stays cached');
+
+    // score() against a mocked Ollama.
+    const reply = (body, status = 200) => async () => ({ ok: status < 400, status, text: async () => JSON.stringify(body) });
+    const top = [{ token: 'B', logprob: -0.2 }, { token: 'A', logprob: -2 }, { token: 'C', logprob: -3 }];
+    let posted = null;
+    const s = await R.score({ text: 'check my mail from Quorvin', model: 'local/llama3.2:3b', baseUrl: 'http://x', key: '', cal: raw, post: async (url, init) => ((posted = { url, body: JSON.parse(init.body) }), reply({ message: { content: 'B' }, logprobs: [{ token: 'B', logprob: -0.2, top_logprobs: top }] })()) });
+    assert.strictEqual(posted.body.model, 'llama3.2:3b', 'the local/ prefix is dropped');
+    assert.ok(s.p.hand_off > s.p.answer_here && s.p.hand_off > s.p.action);
+    assert.ok(Math.abs(s.p.answer_here + s.p.hand_off + s.p.action - 1) < 1e-9);
+    await assert.rejects(R.score({ text: 'x', model: 'local/m', baseUrl: 'http://x', key: '', post: reply({ message: { content: 'B' } }) }), /no logprobs/);
+    await assert.rejects(R.score({ text: 'x', model: 'local/m', baseUrl: 'http://x', key: '', post: reply({ error: 'model not found' }, 404) }), /router 404: model not found/);
+    await assert.rejects(R.score({ text: 'x', model: 'local/m', baseUrl: 'http://x', key: '', post: reply({ logprobs: [{ top_logprobs: [{ token: 'Sure', logprob: -0.1 }] }] }) }), /no A\/B\/C/);
+    assert.strictEqual(await R.prime({ model: 'local/m', baseUrl: 'http://x', key: '', post: async () => { throw new Error('ECONNREFUSED'); } }), null, 'prime never throws');
+
+    // Fitting: separable rows -> a threshold that answers none of the non-answers.
+    const rows = [];
+    for (let i = 0; i < 10; i++) {
+      rows.push({ expect: 'answer', lp: { answer_here: -0.1, hand_off: -3, action: -4 } });
+      rows.push({ expect: 'handoff', lp: { answer_here: -0.9, hand_off: -0.6, action: -3 } });
+      rows.push({ expect: 'action', lp: { answer_here: -0.7, hand_off: -3, action: -0.8 } });
+    }
+    const cal = R.fitCalibration(rows);
+    const scored = rows.map((r) => ({ ...r, p: R.calibrate(r.lp, cal) }));
+    const th = R.pickThreshold(scored);
+    assert.ok(scored.filter((r) => r.expect !== 'answer').every((r) => r.p.answer_here < th));
+    assert.ok(scored.filter((r) => r.expect === 'answer').every((r) => r.p.answer_here >= th), 'and still answers the answerable');
+    assert.ok(scored.filter((r) => r.expect === 'action').every((r) => R.decide(r.p, th) === 'action'));
+  }
+
+  // ---- runTurn with the logprob router (decide, then speak) -----------------------------
+  {
+    const lp = (answer_here, hand_off, action) => async (a) => ({ p: { answer_here, hand_off, action }, lp: {}, ms: 9, model: a.model });
+    const popts = { model: 'local/llama3.2:3b', fallback: 'azure/pa', router: 'logprob', answerThreshold: '0.85', keepAlive: '24h', localTimeoutMs: 300, decisionTimeoutMs: 3000, effort: 'low', enabled: true };
+    const primed = [];
+    // Confident answer: the router decides, then the answerer speaks.
+    let calls = [];
+    let b = base({ route: lp(0.95, 0.04, 0.01), prime: async (a) => primed.push(a), stream: (a) => (calls.push(a), script(['You have ', 'two overdue.'])(a)) });
+    let t = await turn('how many are overdue?', b.deps, popts);
+    assert.strictEqual(t.events[0].type, 'decision');
+    assert.strictEqual(t.events[0].route, 'answer');
+    assert.strictEqual(t.events[0].router, 'logprob');
+    assert.deepStrictEqual(t.events[0].p, { answer_here: 0.95, hand_off: 0.04, action: 0.01 });
+    assert.strictEqual(t.say, 'You have two overdue.');
+    assert.strictEqual(calls.length, 1);
+    assert.strictEqual(calls[0].keepAlive, '24h');
+    assert.ok(!calls[0].format, 'the answerer writes words, not a decision');
+    assert.deepStrictEqual(b.sent, []);
+    assert.deepStrictEqual(b.remembered, [['how many are overdue?', 'You have two overdue.']]);
+    await new Promise((r) => setImmediate(r));
+    assert.deepStrictEqual(primed.at(-1).history.map((e) => e.text), ['how many are overdue?', 'You have two overdue.'], 'the next turn is primed');
+
+    // Below the threshold: no words from the model; the user's words go to Jarvis verbatim.
+    calls = [];
+    b = base({ route: lp(0.7, 0.25, 0.05), prime: async () => {}, stream: (a) => (calls.push(a), script(['nope'])(a)) });
+    t = await turn('check my mail from Quorvin', b.deps, popts);
+    assert.strictEqual(t.events[0].route, 'handoff');
+    assert.strictEqual(calls.length, 0, 'the answerer is never called');
+    assert.strictEqual(t.say, 'One moment.');
+    assert.deepStrictEqual(b.sent, ['check my mail from Quorvin']);
+
+    // An action: "On it.", verbatim.
+    b = base({ route: lp(0.1, 0.2, 0.7), prime: async () => {}, stream: script(['nope']) });
+    t = await turn('let Brennith know I am late', b.deps, popts);
+    assert.strictEqual(t.say, 'On it.');
+    assert.deepStrictEqual(b.sent, ['let Brennith know I am late']);
+
+    // A confident "answer" to something that reads as an action: the guard wins.
+    b = base({ route: lp(0.99, 0.005, 0.005), prime: async () => {}, stream: script(['Sent.']) });
+    t = await turn('send Brennith the notes', b.deps, popts);
+    assert.strictEqual(t.events[0].route, 'handoff');
+    assert.ok(t.events[0].overridden);
+    assert.strictEqual(t.say, 'On it.');
+    assert.deepStrictEqual(b.sent, ['send Brennith the notes']);
+
+    // The threshold is configurable.
+    b = base({ route: lp(0.7, 0.25, 0.05), prime: async () => {}, stream: script(['Hi.']) });
+    t = await turn('hello', b.deps, { ...popts, answerThreshold: '0.6' });
+    assert.strictEqual(t.events[0].route, 'answer');
+    assert.strictEqual(F.answerThreshold({ answerThreshold: 'x' }), require('../src/chat/fastRouter').THRESHOLD);
+
+    // Router down: the fallback model's one-call path, unharmed.
+    calls = [];
+    b = base({ route: async () => { throw new Error('router: ECONNREFUSED'); }, prime: async () => {}, stream: (a) => (calls.push(a), script(['{"route":"answer","reason":"hi"}\nHello.'])(a)) });
+    t = await turn('hello', b.deps, popts);
+    assert.deepStrictEqual(calls.map((c) => c.model), ['azure/pa']);
+    assert.strictEqual(t.say, 'Hello.');
+    assert.strictEqual(t.events.at(-1).fellBack, true);
+
+    // The answerer fails before a word: an apology and a hand-off.
+    b = base({ route: lp(0.95, 0.04, 0.01), prime: async () => {}, stream: script([], { fail: 'local: reset' }) });
+    t = await turn('what is on today', b.deps, popts);
+    assert.match(t.say, /hand it over/);
+    assert.deepStrictEqual(b.sent, ['what is on today']);
+
+    // logprob needs a local model: a hosted one uses `same`.
+    assert.strictEqual(F.routerKind({ router: 'logprob', model: 'azure/pa' }), 'same');
+    assert.strictEqual(F.routerKind({ router: 'logprob', model: 'local/llama3.2:3b' }), 'logprob');
   }
 
   // ---- POST /api/talk/turn ---------------------------------------------------------------

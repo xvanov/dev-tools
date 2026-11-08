@@ -1373,7 +1373,7 @@ same through termhub's `/pa/` proxy from a phone.
   words, verbatim; the model's reading of the task rides along as a labelled hint, because the
   snapshot quotes other people's mail and must not be able to put words in your mouth. Turns it
   answered itself are not in the PA chat's history (it keeps the last few for its own context).
-  - **Local by default.** A `local/` model gets one streamed call to Ollama's own `/api/chat` with
+  - **Local by default.** With `PA_FAST_ROUTER=same`, a `local/` model gets one streamed call to Ollama's own `/api/chat` with
     the decision forced to JSON by a schema (`format`): `{label, route, say}`. The route is known a
     few tokens in, and `say` is spoken while it is still being written. Two guards on top: a request
     the model labels `action` or `deep_task` is never "answered" (it is handed off, its words
@@ -1387,7 +1387,21 @@ same through termhub's `/pa/` proxy from a phone.
   - Measured (Nov 2026, this laptop, 24 utterances): llama3.2:3b routes 23 of 24 (the miss is a safe
     hand-off), decides in 276 ms median and says its first word at 361 ms. `azure/pa` decides in
     0.4–1.4 s; `cli/claude-haiku-5-5` takes 1.8–3.7 s (a `claude -p` process per turn).
-  - `PA_FAST_ROUTER` picks who decides: `same` (default: the fast model, in the same streamed call),
+  - **Decide, then speak** (the default, `PA_FAST_ROUTER=logprob`, `src/chat/fastRouter.js`). The
+    router writes no words: one call to the local model, one generated token, answering a fixed
+    question, "A (answer here), B (hand off, needs a lookup) or C (an action)?". The token's top
+    log-probabilities are calibrated (temperature plus a per-class bias) into `p(answer_here)`,
+    `p(hand_off)` and `p(action)`. Only when `p(answer_here)` is at least
+    `PA_FAST_ANSWER_THRESHOLD` (0.85) does the fast model speak the answer, in a second call.
+    Otherwise your words go to the PA chat verbatim with "One moment." ("On it." when an action is
+    likelier). The action guard still has the last word. `pa eval router [--fit] [--misses]` scores
+    the router on `src/eval/router-cases.json`: 83 turns, anonymized from the PA chat log and
+    including "check my mail from <name>", which the one-call JSON route used to answer itself.
+    It reports accuracy, the turns that would wrongly be answered here, and latency warm. `--fit`
+    re-fits the calibration and the threshold. Nov 2026, this laptop: 84% 3-way accuracy, no
+    action or lookup answered here, router p50 122 ms / p95 156 ms warm.
+  - `PA_FAST_ROUTER` picks who decides: `logprob` (default with a `local/` model, above), `same`
+    (the fast model, in the same streamed call; the default for a hosted model),
     `rules` (a built-in keyword router, no model call), another model string (a JSON-only router
     call, then the fast model writes the words), or an `http(s)://` URL (POSTed `{ text, context,
     history }`, answers the decision JSON). `PA_FAST_LANE=0` turns the fast lane off and the page
@@ -1513,7 +1527,7 @@ The contract (the voice page depends on it):
 | `GET /api/chat/stream` | — | Server-Sent Events; each `data:` is one event (below). No replay: the first event is the current `status`, then live events only. A `: ping` comment every 20 s |
 | `GET /api/chat/history?limit=50` | `limit` 1–500 | `{ "messages": [event…] }`, oldest first, `user` and `assistant` only |
 | `GET /api/chat/session` | — | `{ sessionId, status, waitingOn, url }` — `url` opens the session in termhub |
-| `POST /api/talk/turn` | `{ "text": string }`, header `X-PA: 1` | The voice fast lane. NDJSON, one event per line: `{ type: "decision", route: "answer" \| "handoff" \| "both", say?, task?, reason, router, ms, overridden? }`, then `{ type: "delta", text }`… (words to speak), `{ type: "handoff", id, ms }` or `{ type: "handoff", error, status }` (409: waiting in termhub), and `{ type: "done", route, say, decisionMs, firstTokenMs, ms, model, router }`. 400 bad input, 403 no `X-PA`, 404 `{ disabled: true }` with `PA_FAST_LANE=0` |
+| `POST /api/talk/turn` | `{ "text": string }`, header `X-PA: 1` | The voice fast lane. NDJSON, one event per line: `{ type: "decision", route: "answer" \| "handoff" \| "both", say?, task?, reason, router, ms, p?, routerMs?, overridden? }` (`p`: the `logprob` router's `{ answer_here, hand_off, action }`), then `{ type: "delta", text }`… (words to speak), `{ type: "handoff", id, ms }` or `{ type: "handoff", error, status }` (409: waiting in termhub), and `{ type: "done", route, say, decisionMs, firstTokenMs, ms, model, router }`. 400 bad input, 403 no `X-PA`, 404 `{ disabled: true }` with `PA_FAST_LANE=0` |
 | `GET /api/talk/voice` | — | What the local voice offers: `{ tts: { ok, ready, device, error }, turn, voices: [{ id, label, lang }], defaultVoice, models: { vad, wake, ort } }` |
 | `POST /api/talk/tts` | `{ "text", "voice"? , "speed"? }`, header `X-PA: 1` | Kokoro speech, streamed: raw 16-bit little-endian PCM, 24 kHz mono (`audio/L16`), `X-First-Ms`. 503 when the voice service is down |
 | `POST /api/talk/endpoint` | 16 kHz mono 16-bit PCM (`audio/L16`) or a WAV, header `X-PA: 1` | smart-turn: `{ complete, probability, ms }` |

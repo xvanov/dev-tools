@@ -28,6 +28,7 @@ combined-summary.md
 !package-lock.json
 # and the architecture map, which is data the dashboard renders
 !personal-assistant/src/dashboard/architecture.json
+!personal-assistant/src/eval/router-cases.json
 
 # Claude Code agent worktrees — one machine-local checkout per agent, each with
 # its own `.git` FILE pointing back into this repo's worktree metadata. Tracking

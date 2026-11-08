@@ -133,6 +133,12 @@ two more guards in the same spirit: a request the model itself labels `action`/`
 "answered", and a hand-off's `say` is held until whole and replaced by the stock acknowledgement when
 it reads as an answer or a claim (`spokenAck`). Failing before a decision (Ollama down, or no route
 within `PA_FAST_LOCAL_TIMEOUT_MS`) falls back to `PA_FAST_FALLBACK_MODEL` on the text format.
+Since 0.6 (D7) the default router is `logprob` (`src/chat/fastRouter.js`): decide, then speak. The
+router returns calibrated probabilities from one token's log-probabilities and never words, and the
+answerer only speaks above `PA_FAST_ANSWER_THRESHOLD`. Changing its prompt or model invalidates
+the calibration: re-run `pa eval router --fit`, paste the printed constants into `fastRouter.js`,
+and keep "no action answered here" at 0. The eval set (`src/eval/router-cases.json`) is public:
+people and companies in it are placeholders only.
 
 **The voice page hears the room; nothing it hears leaves the browser until a request is made.** The
 wake word ("hey jarvis", openWakeWord) and Silero VAD run in the page on onnxruntime-web

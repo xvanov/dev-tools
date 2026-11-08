@@ -159,4 +159,49 @@ assert.ok(prompt.includes('commitment: send notes'));
 assert.throws(() => P.casePrompt('nonsense', []), /no prompt/);
 assert.ok(P.gradePrompt([{ i: 0, question: 'q', reference: null, answer: 'UNKNOWN' }]).includes('NONE'));
 
-console.log('eval ok');
+// ------------------------------------------------------ the fast-lane router --
+// `pa eval router` (src/eval/router.js) and its eval set. The model is mocked.
+(async () => {
+  const E = require('../src/eval/router');
+  const set = E.loadCases();
+  assert.ok(set.snapshot.startsWith('Now:'));
+  assert.ok(set.cases.length >= 60);
+  for (const c of set.cases) {
+    assert.ok(['answer', 'handoff', 'action'].includes(c.expect), c.text);
+    assert.ok(['logged', 'synthetic', 'known-miss'].includes(c.origin), c.text);
+  }
+  for (const x of ['answer', 'handoff', 'action']) assert.ok(set.cases.filter((c) => c.expect === x).length >= 15, x);
+  assert.ok(set.cases.some((c) => /^check my mail from /i.test(c.text) && c.expect === 'handoff'), 'the known miss is in the set');
+  // Public repo: people are placeholders, never names.
+  for (const c of set.cases) {
+    for (const m of c.text.matchAll(/\b(?:from|to|with|tell|let|that) ([A-Z][a-z]+)\b/g)) {
+      assert.ok(['Person', 'Example', 'Jarvis', 'Monday', 'Thursday', 'Tuesday', 'Friday', 'Claude', 'Teams', 'GitHub'].includes(m[1]), `a name in the eval set? ${m[1]}`);
+    }
+  }
+
+  // A mocked router: answerable turns get a confident A, the rest are split.
+  const fake = async ({ text, cal }) => {
+    const c = set.cases.find((x) => x.text === text) || { expect: 'answer' };
+    const lp = c.expect === 'answer' ? { answer_here: -0.1, hand_off: -3, action: -4 } : c.expect === 'handoff' ? { answer_here: -1, hand_off: -0.5, action: -3 } : { answer_here: -1, hand_off: -3, action: -0.5 };
+    return { p: require('../src/chat/fastRouter').calibrate(lp, cal || E.RAW), lp, ms: 100, model: 'm' };
+  };
+  const scored = await E.scoreCases({ model: 'local/m', repeat: 2, score: fake });
+  assert.strictEqual(scored.rows.length, set.cases.length);
+  assert.strictEqual(scored.ms.length, set.cases.length * 2);
+  const lines = [];
+  const r = E.report(scored, { cal: E.RAW, threshold: 0.5, guard: () => false, fit: true, misses: true, out: (l) => lines.push(l) });
+  assert.strictEqual(r.metrics.answeredAction.length, 0);
+  assert.strictEqual(r.metrics.correct, set.cases.length);
+  assert.ok(lines.some((l) => /latency warm \(\d+ calls\): p50 100 ms/.test(l)));
+  assert.ok(lines.some((l) => /constants for src\/chat\/fastRouter\.js/.test(l)));
+  // The guard turns a router "answer" into an action, and that is counted.
+  const e = E.evaluate([{ text: 'send it', expect: 'action', lp: { answer_here: -0.01, hand_off: -6, action: -6 } }], { cal: E.RAW, threshold: 0.5, guard: () => true });
+  assert.strictEqual(e.answeredAction.length, 0);
+  assert.strictEqual(e.answeredActionRouter.length, 1);
+  assert.strictEqual(E.quantile([5, 1, 3], 0.5), 3);
+
+  console.log('eval ok');
+})().catch((err) => {
+  console.error(err);
+  process.exit(1);
+});

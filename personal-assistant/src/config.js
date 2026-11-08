@@ -372,14 +372,17 @@ const config = {
 
   // The voice page's fast lane ("System 1", src/chat/fastLane.js): a quick
   // model answers simple spoken turns itself and acknowledges the rest while
-  // handing them to the PA chat. PA_FAST_ROUTER: `same` (the fast model
-  // decides and replies in one call), `rules` (built-in keyword router), a
-  // model string (a separate router call), or an http(s) URL (POST
+  // handing them to the PA chat. PA_FAST_ROUTER: `logprob` (decide, then
+  // speak: calibrated probabilities from one-token log-probabilities, the
+  // fast model speaks only above PA_FAST_ANSWER_THRESHOLD), `same` (the fast
+  // model decides and replies in one call), `rules` (built-in keyword router),
+  // a model string (a separate router call), or an http(s) URL (POST
   // { text, context, history } -> decision JSON).
   //
-  // The default is local: Llama 3.2 3B in Ollama (PA_LOCAL_LLM_URL), one
-  // streamed call whose decision is forced to JSON ({label, route, say};
-  // PA_FAST_JSON=auto uses that for local/ models), kept loaded for
+  // The default is local: Llama 3.2 3B in Ollama (PA_LOCAL_LLM_URL), the
+  // `logprob` router then the answerer (with `same`, one streamed call whose
+  // decision is forced to JSON {label, route, say}; PA_FAST_JSON=auto uses
+  // that for local/ models), kept loaded for
   // PA_FAST_KEEP_ALIVE. When it is down, or has not decided within
   // PA_FAST_LOCAL_TIMEOUT_MS (a model still loading), the turn goes to
   // PA_FAST_FALLBACK_MODEL instead.
@@ -390,7 +393,11 @@ const config = {
     json: env('PA_FAST_JSON', 'auto'),
     keepAlive: env('PA_FAST_KEEP_ALIVE', '24h'),
     localTimeoutMs: envInt('PA_FAST_LOCAL_TIMEOUT_MS', 2500),
-    router: env('PA_FAST_ROUTER', 'same'),
+    // `logprob`: decide, then speak (src/chat/fastRouter.js); needs a local/ model, else `same`.
+    router: env('PA_FAST_ROUTER', 'logprob'),
+    // The answerer speaks only when the router's p(answer_here) is at least this
+    // (fitted with `pa eval router --fit`).
+    answerThreshold: env('PA_FAST_ANSWER_THRESHOLD', '0.85'),
     // Reasoning effort for an OpenAI/Azure reasoning model (the fallback too); Claude effort otherwise.
     effort: env('PA_FAST_EFFORT', 'low'),
     contextTtlMs: envInt('PA_FAST_CONTEXT_SECONDS', 60) * 1000,

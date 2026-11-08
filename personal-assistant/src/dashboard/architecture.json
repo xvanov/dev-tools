@@ -140,7 +140,7 @@
       "id": "fast-lane",
       "layer": "talk",
       "name": "Fast lane (System 1)",
-      "role": "Answers simple spoken turns in about a second, or acknowledges and hands off to the PA chat. No tools.",
+      "role": "Decide, then speak (D7): a router returns calibrated probabilities p(answer_here), p(hand_off), p(action); only above the answer threshold does a small model speak the answer, otherwise your words go to the PA chat verbatim. No tools.",
       "stacks": {
         "work": "live",
         "personal": "planned"
@@ -151,20 +151,24 @@
       },
       "health": "ollama",
       "details": {
-        "Model": "local/llama3.2:3b through Ollama's native /api/chat, decision forced to JSON {label, route, say}",
-        "Fallback": "azure/pa (PA_FAST_FALLBACK_MODEL) when Ollama is down or has not decided within 2500 ms (PA_FAST_LOCAL_TIMEOUT_MS)",
-        "Router": "PA_FAST_ROUTER=same: one streamed call decides and replies (alternatives: rules, a model string, an http(s) URL)",
+        "Model": "local/llama3.2:3b through Ollama's native /api/chat, for both the router and the answerer",
+        "Router": "PA_FAST_ROUTER=logprob (src/chat/fastRouter.js): one call, one generated token. The model is asked a fixed question, 'A (answer here), B (hand off: needs a lookup) or C (action)?', and the top log-probabilities of that token are calibrated (temperature 0.397 plus a per-class bias, fitted by `pa eval router --fit`) into p(answer_here), p(hand_off), p(action). Alternatives: same (the older one-call JSON {label, route, say}), rules, a model string, an http(s) URL",
+        "Answerer": "speaks only when p(answer_here) >= 0.85 (PA_FAST_ANSWER_THRESHOLD): a second streamed call that writes one to three sentences. Below it, the user's words go to the PA chat verbatim with 'One moment.' (or 'On it.' when p(action) > p(hand_off))",
+        "Eval": "`pa eval router`: 83 turns in src/eval/router-cases.json (anonymized logged turns, the known miss 'check my mail from <name>', and synthetic ones), 3-way accuracy, turns answered here that should not be, latency warm. Nov 2026 on this laptop's RTX 3000 Ada: 0 action turns answered here; see PLAN.md 0.6 for the numbers",
+        "Prompt cache": "the router's system prompt and examples never change; the snapshot comes next, then the last two turns, then the words. After each turn, and when the snapshot changes, a one-token call with the next turn's prefix fills Ollama's cache, so a turn pays only for its own words",
+        "Fallback": "azure/pa (PA_FAST_FALLBACK_MODEL) when Ollama is down or the router has not answered within 2500 ms (PA_FAST_LOCAL_TIMEOUT_MS): the one-call text format decides and replies",
         "Prompt": [
           "a snapshot of your day: a few hundred tokens (open asks by bucket, top 3 overdue and due, next 24 h of meetings, active runs, waiting drafts and review items, first 300 chars of your 'me' page)",
-          "the last 6 turns (chat history merged with turns it answered itself)",
-          "max 300 output tokens for the JSON decision, 400 for the text format"
+          "router: the last 2 turns, 200 chars each; answerer: the last 6 turns (chat history merged with turns it answered itself)",
+          "router: 1 output token; answerer: max 300 output tokens"
         ],
         "Snapshot refresh": "Cached in memory, rebuilt in the background when older than 60 s (PA_FAST_CONTEXT_SECONDS)",
         "Context window": "unknown: Ollama's default for the model (the PA does not set num_ctx)",
         "Compaction": "none needed: every turn is a fresh prompt",
-        "Kept warm": "keep_alive 24h (PA_FAST_KEEP_ALIVE); when /talk opens, and every 4 minutes after, a one-token request carrying the fixed system prompt primes the KV cache prefix (llm.warmLocal with system)",
+        "Kept warm": "keep_alive 24h (PA_FAST_KEEP_ALIVE); when /talk opens, and every 4 minutes after, a one-token request carrying the fixed system prompt primes the KV cache prefix (llm.warmLocal with system; the answerer's prompt under the logprob router, which also primes its own prefix)",
         "Guards": [
-          "never answers an action-like request (guardDecision / looksLikeAction turn it into a hand-off)",
+          "the router never writes words, so it cannot answer a turn by itself; below the threshold nothing local is spoken but the stock acknowledgement",
+          "never answers an action-like request (guardDecision / looksLikeAction turn it into a hand-off, whatever the router said)",
           "a hand-off types your verbatim words into the PA chat; the model's task is only a labelled hint",
           "a hand-off's spoken acknowledgement is replaced by the stock one when it reads as an answer (spokenAck)"
         ],
@@ -181,7 +185,11 @@
         },
         {
           "name": "PA_FAST_ROUTER",
-          "default": "same"
+          "default": "logprob"
+        },
+        {
+          "name": "PA_FAST_ANSWER_THRESHOLD",
+          "default": "0.85"
         },
         {
           "name": "PA_FAST_KEEP_ALIVE",
@@ -198,6 +206,9 @@
       ],
       "code": [
         "personal-assistant/src/chat/fastLane.js",
+        "personal-assistant/src/chat/fastRouter.js",
+        "personal-assistant/src/eval/router.js",
+        "personal-assistant/src/eval/router-cases.json",
         "personal-assistant/src/dashboard/talk.js",
         "personal-assistant/src/llm.js"
       ]
@@ -1598,7 +1609,7 @@
         },
         {
           "c": "fast-lane",
-          "t": "POST /api/talk/turn: llama3.2:3b sees the cached day snapshot and the last 6 turns, decides route 'answer' and streams one to three sentences."
+          "t": "POST /api/talk/turn: the router (llama3.2:3b, one token) scores the turn against the cached day snapshot; p(answer_here) clears 0.85, so the answerer streams one to three sentences."
         },
         {
           "c": "ollama",

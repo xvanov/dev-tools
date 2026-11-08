@@ -115,6 +115,7 @@ const HELP = `pa — your context layer
     pa doctor                       what is configured, what is stale, what is broken
     pa spend [--days N]             model spend per day and per pass (default 7 days)
     pa eval seed|list|add|drop|run  retrieval eval harness (pa eval for details)
+    pa eval router [--fit]          voice fast lane router: accuracy and latency on its eval set
 `;
 
 function out(text) {
@@ -1132,8 +1133,24 @@ const commands = {
   // The retrieval eval harness. Cases live in the database only — they are
   // real questions about real mail.
   async eval(args, flags) {
-    const ev = require('../eval');
     const action = args[0] || 'help';
+
+    // The voice fast lane's router (System 1): its own eval set in the repo
+    // (anonymized logged turns), no database. Needs Ollama.
+    if (action === 'router') {
+      const E = require('../eval/router');
+      const R = require('../chat/fastRouter');
+      const F = require('../chat/fastLane');
+      const model = flags.model && flags.model !== true ? String(flags.model) : config.fastLane.model;
+      if (!/^local\//.test(model)) return fail(`the router scores log-probabilities from a local/ model; ${model} is not one (--model local/llama3.2:3b)`);
+      const repeat = flagInt(flags, 'repeat', 3);
+      out(`scoring ${E.loadCases().cases.length} turns on ${model}, ${repeat}x each (warm) ...`);
+      const s = await E.scoreCases({ model, keepAlive: config.fastLane.keepAlive, repeat });
+      E.report(s, { cal: R.CALIBRATION, threshold: F.answerThreshold(), guard: F.looksLikeAction, fit: flagBool(flags, 'fit'), misses: flagBool(flags, 'misses'), out });
+      return;
+    }
+
+    const ev = require('../eval');
 
     if (action === 'seed') {
       const { seed } = require('../eval/seed');
@@ -1214,6 +1231,7 @@ const commands = {
     pa eval drop <id>[,id]  /  restore <id>    deactivate a bad case / bring it back
     pa eval add "<question>" --gold 1,2 [--answer "..."]   log a miss by hand
     pa eval run [--retriever search] [--k 10] [--threshold x] [--judge] [--misses]
+    pa eval router [--repeat 3] [--fit] [--misses] [--model local/x]   the voice fast lane's router: accuracy, latency
   retrievers: ${ev.retrievers.names().join(', ')}`);
   },
 
