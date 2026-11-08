@@ -210,7 +210,7 @@ async function main() {
       worker: path.join(__dirname, 'fixtures', 'supervisorWorker.js'),
       port: 0,
       controlPath: cp2,
-      env: { DUMMY_DIR: dir2 },
+      env: { DUMMY_DIR: dir2, KEEPALIVE_MS: '300' },
       drainTimeoutMs: 2000,
       stopGraceMs: 3000,
       holdMs: 4000,
@@ -227,6 +227,14 @@ async function main() {
     try {
       const s1 = await sup2.start();
       const g1pid = s1.pid;
+
+      // The worker closes idle keep-alive sockets (300 ms here, 5 s for real)
+      // while the supervisor's pool still holds them: a GET that lands on one
+      // is resent, never a 502 (found on the first live deploy).
+      for (let i = 0; i < 12; i++) {
+        assert.strictEqual(await version(s1.port), 'gen-1');
+        await sleep(280 + (i % 4) * 15);
+      }
       const nothing = await request(cp2, { cmd: 'rollback' });
       assert.strictEqual(nothing.ok, false, 'no standby before the first roll');
       const r2 = await request(cp2, { cmd: 'roll' });

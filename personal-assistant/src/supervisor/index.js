@@ -157,7 +157,10 @@ function createSupervisor({
       port: null,
       inflight: 0,
       streams: new Set(),
-      agent: new http.Agent({ keepAlive: true }),
+      // Pooled sockets idle for 2 s are dropped, well before the worker's
+      // server closes them (Node's keepAliveTimeout, 5 s): reusing one it had
+      // just closed answered ECONNRESET as a 502.
+      agent: new http.Agent({ keepAlive: true, timeout: 2000 }),
       exited: false,
       startedAt: Date.now(),
       onIdle: null,
@@ -356,8 +359,12 @@ function createSupervisor({
       else if (state === 'stream') gen.streams.delete(endStream);
       state = 'done';
     };
-    const upstream = http.request(
-      { host: '127.0.0.1', port: gen.port, method: req.method, path: req.url, headers: forwardHeaders(req.headers), agent: gen.agent },
+    let upstream;
+    const forward = (retried) => {
+    upstream = http.request(
+      // timeout 0: no idle limit while in use (an event stream may be quiet);
+      // the agent's own timeout applies only to sockets back in its pool.
+      { host: '127.0.0.1', port: gen.port, method: req.method, path: req.url, headers: forwardHeaders(req.headers), agent: gen.agent, timeout: 0 },
       (ures) => {
         res.writeHead(ures.statusCode, ures.statusMessage, forwardHeaders(ures.headers));
         res.flushHeaders();
@@ -379,19 +386,26 @@ function createSupervisor({
         ures.pipe(res);
       }
     );
+    const sent = upstream;
     upstream.on('error', (err) => {
-      if (state === 'done') return;
+      if (state === 'done' || sent !== upstream) return;
+      // A pooled socket the worker closed as idle just as we reused it: the
+      // request never reached it. Safe to send again when it has no body.
+      if (!retried && !res.headersSent && sent.reusedSocket && err.code === 'ECONNRESET' && (req.method === 'GET' || req.method === 'HEAD')) return forward(true);
       if (!res.headersSent) {
         res.writeHead(502, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: 'worker unreachable', message: err.message }));
       } else res.destroy();
       release();
     });
+    if (retried) upstream.end();
+    else req.pipe(upstream);
+    };
     res.on('close', () => {
       if (!res.writableFinished) upstream.destroy();
       release();
     });
-    req.pipe(upstream);
+    forward(false);
   });
   // WebSocket (and any other Upgrade): a byte pipe to the generation. It is a
   // stream: a roll closes it and the client reconnects.

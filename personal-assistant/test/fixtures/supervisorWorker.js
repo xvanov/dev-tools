@@ -58,6 +58,9 @@ process.on('message', (m) => {
 });
 process.on('disconnect', () => process.exit(0));
 
+// A short idle timeout makes the supervisor reuse sockets this side just closed.
+if (process.env.KEEPALIVE_MS) server.keepAliveTimeout = Number(process.env.KEEPALIVE_MS);
+
 server.listen(0, '127.0.0.1', () => {
   process.send({ type: 'listening', port: server.address().port });
   setTimeout(() => (ready = true), 300);
