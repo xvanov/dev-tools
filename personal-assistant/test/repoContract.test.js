@@ -111,6 +111,13 @@ async function main() {
     if (pick.length && !pick.includes(bname)) continue;
     const b = await make();
     if (b.skip) {
+      // SQLite needs no server, so in CI (Linux and Windows) it must run: a skip
+      // there means the optional driver did not install, and would hide breakage.
+      if (bname === 'sqlite' && process.env.CI) {
+        failed++;
+        console.log(`FAIL sqlite: skipped in CI (${b.skip})`);
+        continue;
+      }
       console.log(`SKIP ${bname}: ${b.skip}`);
       continue;
     }
