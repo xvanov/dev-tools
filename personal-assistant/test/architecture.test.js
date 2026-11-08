@@ -147,7 +147,7 @@ for (const id of Object.keys(A.health)) assert.ok(A.components.some((c) => c.hea
 // The worker's passes (every(<s>, '<name>', ...) in src/worker.js, and the
 // self-paced ones it runs through exclusive('<name>', ...), e.g. factory).
 {
-  const src = fs.readFileSync(path.join(PA, 'src', 'worker.js'), 'utf8');
+  const src = fs.readFileSync(path.join(PA, 'src', 'worker.ts'), 'utf8');
   const passes = [...new Set([...src.matchAll(/(?:every\([^,]+,\s*|exclusive\()'([^']+)'/g)].map((m) => m[1]))];
   assert.ok(passes.length > 10);
   same(byId.worker.passes, passes, 'worker.passes');

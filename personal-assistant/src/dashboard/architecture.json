@@ -540,7 +540,7 @@
         "personal": "Not deployed"
       },
       "details": {
-        "Stage": "1 of 7: host. jarvisd/src/main.ts requires personal-assistant/src/worker.js statically, so bun build --compile bundles the whole worker graph",
+        "Stage": "1 of 7: host. jarvisd/src/main.ts requires personal-assistant/src/worker.ts statically, so bun build --compile bundles the whole worker graph",
         "Parity": "jarvisd/scripts/parity.js runs the PA's schemas, events, dashboard, repository boundary/calls/contract (Postgres), migrations, architecture and lease tests under Bun",
         "Known gap": "the optional SQLite driver (better-sqlite3-multiple-ciphers) aborts Bun 1.3 on load; under jarvisd SQLite moves to bun:sqlite (stage 2)",
         "Build": "node scripts/build.js --only jarvisd (Bun from jarvisd/package.json); jarvisd --check loads the graph and exits"
@@ -578,8 +578,8 @@
         "Rule": "node builtins only; never loads worker code, so a deploy never needs to restart it",
         "Rollback": "{\"cmd\":\"rollback\"}: drain the serving generation, undrain the standby, wait for its /healthz (30 s), flip back, stop the other. Only while a standby is held (150 s after a roll)",
         "Deploy (Z4)": "windows/redeploy.ps1, linux/redeploy.sh (run by termhub's Update after its pull, or by hand with -Pull/--pull and -DryRun/--dry-run) → node src/supervisor/deploy.js: npm install when the package files changed, npm run build when one exists (none yet), roll, then /healthz + /api/version every 2 s for 60 s; 3 failed probes in a row, or not the new commit at the end → rollback, exit 1",
-        "Restart fallback": "the scripts restart the task/unit (stop, kill node src/supervisor and src/worker.js, start, wait up to 120 s for the new commit) only when deploy.js exits 3 (no supervisor answers: the bootstrap) or 4 (src/supervisor/index.ts changed), or when they just rewrote a task/unit that still named src/worker.js",
-        "Bootstrap": "node src/worker.js not started by the supervisor (an older task or unit, which a non-elevated deploy cannot rewrite) becomes the supervisor before loading any worker code; PA_NO_SUPERVISOR=1 runs the bare worker",
+        "Restart fallback": "the scripts restart the task/unit (stop, kill node src/supervisor and src/worker.ts, start, wait up to 120 s for the new commit) only when deploy.js exits 3 (no supervisor answers: the bootstrap) or 4 (src/supervisor/index.ts changed), or when they just rewrote a task/unit that still named src/worker.ts",
+        "Bootstrap": "node src/worker.ts not started by the supervisor (an older task or unit, which a non-elevated deploy cannot rewrite) becomes the supervisor before loading any worker code; PA_NO_SUPERVISOR=1 runs the bare worker",
         "Log": "<state dir>/logs/supervisor.log (PA_DATA_DIR, else %LOCALAPPDATA%\\personal-assistant or ~/.local/share/personal-assistant; PA_SUPERVISOR_LOG overrides): the supervisor's lines and each generation's stdout/stderr as [gen N], rotated at 5 MB, 3 kept. Workers log 'event loop blocked' for any stall over 1 s",
         "Readiness": "a generation says ready only at the end of its startup (passes declared, lease requested), not when its port opens: the module loading in between blocked the loop for seconds right after the flip",
         "Deploy test (Z6)": "node src/e2e/deployTest.js: during real rolls, 4 loops of GET /api/version, an /api/events stream reconnecting with Last-Event-ID while events are produced, and a termhub terminal printing ticks; passes only with zero failed requests, every event exactly once in order with no resync, and the terminal socket held with no tick missing. Spare mode (a supervisor on a free port, test/fixtures/deployWorker.js, a throwaway termhub) runs in test/deployTest.test.js; --live [--deploy] runs it against the stack (events through pg_notify and pa_event_seq)",
@@ -592,7 +592,7 @@
       "code": [
         "personal-assistant/src/supervisor/index.ts",
         "personal-assistant/src/supervisor/deploy.js",
-        "personal-assistant/src/worker.js",
+        "personal-assistant/src/worker.ts",
         "personal-assistant/src/util/lease.ts",
         "personal-assistant/src/util/scheduler.ts",
         "personal-assistant/windows/redeploy.ps1",
@@ -697,7 +697,7 @@
         "personal": "live"
       },
       "where": {
-        "work": "a generation of the supervisor (pa-worker task → node src/supervisor → src/worker.js); also hosts the dashboard",
+        "work": "a generation of the supervisor (pa-worker task → node src/supervisor → src/worker.ts); also hosts the dashboard",
         "personal": "systemd user unit pa-worker (node src/supervisor once redeployed) on k-911-x17 (also hosts the dashboard)"
       },
       "health": "dashboard",
@@ -787,7 +787,7 @@
         }
       ],
       "code": [
-        "personal-assistant/src/worker.js",
+        "personal-assistant/src/worker.ts",
         "personal-assistant/src/models.ts",
         "personal-assistant/src/llm.ts",
         "personal-assistant/src/budget.ts"

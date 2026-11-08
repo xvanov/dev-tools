@@ -32,7 +32,7 @@ export function loadWorker(): Worker {
     require(stand);
     return { main: async () => {} };
   }
-  return require('../../personal-assistant/src/worker.js') as Worker;
+  return require('../../personal-assistant/src/worker.ts') as Worker;
 }
 
 /** The supervisor (personal-assistant/src/supervisor/index.ts), bundled too. */

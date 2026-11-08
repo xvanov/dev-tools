@@ -216,7 +216,7 @@ async function testSchedulerStops() {
 // The worker must not start background work outside the scheduler: every
 // timer and watcher goes through sched, which runs only under the lease.
 function testWorkerDeclaresEverythingOnTheScheduler() {
-  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'worker.js'), 'utf8');
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'worker.ts'), 'utf8');
   assert.ok(!/\bsetInterval\s*\(/.test(src), 'worker.js must not call setInterval: use every()');
   assert.ok(!/pg_try_advisory_lock/.test(src), 'the lock lives in src/util/lease.js');
   assert.ok(/sched\.service\('teams-cache'/.test(src), 'the Teams watcher is a scheduler service');

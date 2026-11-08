@@ -76,7 +76,7 @@ async function priority() {
     const c = execFile(process.execPath, ['-e', '0'], () => resolve(c.pid));
   });
   assert.deepStrictEqual(calls, [[pid, 10]], 'execFile children are lowered');
-  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'worker.js'), 'utf8');
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'worker.ts'), 'utf8');
   assert.ok(!/os'\)\.setPriority\(/.test(src), 'the worker must not lower itself: it serves the dashboard');
   assert.ok(/childPriority(?:\.ts)?'\)\.lowerChildren\(\)/.test(src));
   assert.ok(/childPriority(?:\.ts)?'\)\.serveAboveNormal\(\)/.test(src), 'the worker serves above normal');

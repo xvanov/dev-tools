@@ -139,7 +139,7 @@ const live = { ok: true, generation: 3, pid: 10, source: 'aaaaaaaaaaaa' };
   const src = require('fs').readFileSync(path.join(PA, 'src', 'worker.js'), 'utf8');
   const hand = src.indexOf("require('./supervisor')");
   assert.ok(hand > 0, 'worker.js starts the supervisor when not supervised');
-  assert.ok(hand < src.indexOf("require('./config.ts')"), 'before any worker code is loaded');
+  assert.ok(hand < src.indexOf("require('./worker.ts')"), 'before any worker code is loaded');
   assert.match(src, /PA_SUPERVISED !== '1' && process\.env\.PA_NO_SUPERVISOR !== '1'/);
 }
 
