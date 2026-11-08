@@ -483,6 +483,14 @@ module.exports = {
     assert.deepStrictEqual([r.context, r.context_at instanceof Date], [null, true]);
   },
 
+  'clearContext: forgets the paragraph, so the card is due for a new one': async ({ repos, seed, db, assert }) => {
+    const c = await seed.commitment();
+    await repos.commitments.setContext(c, 'the run is still going', 'v1 m');
+    await repos.commitments.clearContext(c);
+    const r = await db.one('select context, context_at from commitment where id = $1', [c]);
+    assert.deepStrictEqual([r.context, r.context_at], [null, null]);
+  },
+
   // --- src/commitments/dedupe.js
 
   'unvectored: open recent commitments with no vector yet': async ({ repos, seed, assert }) => {

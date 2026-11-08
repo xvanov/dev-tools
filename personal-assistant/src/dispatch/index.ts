@@ -879,6 +879,7 @@ async function drop(runId: RunId, { force = false }: { force?: boolean } = {}): 
     await repository.runs.markFactoryDropped(runId);
     if (run.commitment_id) {
       await ledger.transition({ commitmentId: run.commitment_id, to: 'open', actor: 'dispatch', reason: `run #${runId} dropped`, from: ['dispatched'] });
+      await repository.commitments.clearContext(run.commitment_id).catch(() => {});
     }
     return { factory: true, cancelled, storiesParked, jobId: run.factory_job_id };
   }

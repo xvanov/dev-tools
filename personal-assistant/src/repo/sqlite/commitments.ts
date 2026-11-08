@@ -492,6 +492,11 @@ function create(db: Db) {
       await db.query(`update commitment set context_at = ${NOW} where id = $1`, [id]);
     },
 
+    /** Forgets the context: a run on the card ended, so it is written again (or not shown once the card is closed). */
+    async clearContext(id: number | string) {
+      await db.query('update commitment set context = null, context_at = null where id = $1', [id]);
+    },
+
     // --- src/commitments/dedupe.js
 
     /** Open commitments with no vector yet, newest first. */

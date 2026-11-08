@@ -448,13 +448,19 @@ function create(db: Db) {
       );
     },
 
-    /** Factory runs with a job that are live, or were delivered in the last 14 days. */
+    /**
+     * Factory runs with a job that are live, were delivered in the last 14 days,
+     * or started in them with a job the factory has not ended yet (a run dropped
+     * on the PA's side first keeps being asked until its job's last state is on it).
+     */
     async watchedFactoryRuns() {
       return db.rows(
         `select * from run
       where route = 'factory' and factory_job_id is not null
         and (status in ('starting','running','waiting')
-             or (outcome = 'delivered' and ended_at > now() - interval '14 days'))`
+             or (outcome = 'delivered' and ended_at > now() - interval '14 days')
+             or (factory_state in ('queued','triaging','in_progress','blocked','needs_human')
+                 and started_at > now() - interval '14 days'))`
       );
     },
 

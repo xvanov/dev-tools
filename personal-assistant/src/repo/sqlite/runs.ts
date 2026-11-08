@@ -14,6 +14,10 @@ const { LiveRunError } = require('../runs.ts');
 const { NOW, DAY, sinceMs } = require('./_sql.ts');
 
 const LIVE = "('starting','running','waiting')";
+// A job the factory has not ended (factoryCore.ACTIVE_STATES): a run that ended
+// on the PA's side first (dropped, cancelled from the chat) is still asked
+// until the factory's last word is on it (8.4.23).
+const FACTORY_LIVE = "('queued','triaging','in_progress','blocked','needs_human')";
 const ids = (list: unknown[]) => (list || []).map(Number);
 
 function create(db: Db) {
@@ -359,12 +363,13 @@ function create(db: Db) {
       );
     },
 
-    /** Factory runs with a job that are live, or were delivered in the last 14 days. */
+    /** Factory runs with a job that are live, were delivered in the last 14 days, or started in them with a job not ended yet. */
     async watchedFactoryRuns() {
       return db.rows(
         `select * from run
       where route = 'factory' and factory_job_id is not null
-        and (status in ${LIVE} or (outcome = 'delivered' and ended_at > $1))`,
+        and (status in ${LIVE} or (outcome = 'delivered' and ended_at > $1)
+             or (factory_state in ${FACTORY_LIVE} and started_at > $1))`,
         [sinceMs(14 * DAY)]
       );
     },

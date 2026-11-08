@@ -1031,6 +1031,15 @@ not in the Map is not done, and a new one gets added there first.
     reported "cancelled" for each. The `card` tool's narrative said run #29 "is still running"
     after card #6774 was `done`. Sync `run.factory_state` on terminal jobs, and refresh the card
     context when the run lands.
+    Done. The push side was sound: POST /api/factory/events lands in the worker's own process, so
+    its in-process notify hurries the pass. The gap was runs the PA ended first (`drop`, which the
+    chat's factory_cancel and the old e2e cleanup use): `markFactoryDropped` left the last live
+    `factory_state`, and `watchedFactoryRuns` asked only live or delivered runs, so the job's
+    `cancelled` never reached the row. The pass now also asks runs from the last 14 days whose
+    `factory_state` is still live, keeping their own status and outcome. The card's context
+    paragraph is never rewritten once the card closes, so it is cleared (`clearContext`) when a
+    run lands or is dropped; an open card gets a new one on the next context pass. Unit- and
+    contract-tested; not run live.
 - [ ] **8.5 Architecture map review.** A full pass over `architecture.json` (the `/architecture`
   page) against the finished system: every component, process, port, table, tool, workflow and
   storage location as it now runs on both stacks (jarvisd, ptyd, native factory, SQLite,

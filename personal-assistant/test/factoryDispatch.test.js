@@ -558,6 +558,8 @@ async function factoryPoll() {
   assert.deepStrictEqual(transitions.map((t) => [t.commitmentId, t.to, t.actor, t.from]), [[31, 'done', 'factory', ['dispatched']]]);
   assert.deepStrictEqual(notes.map((n) => n.dedupeKey.split(':')[0]), ['factory-end', 'factory-wait']);
   assert.ok(!store.queries.some((q) => q.params && q.params[0] === 9), 'a job that is not this run\'s is left alone');
+  const cleared = store.queries.filter((q) => /update commitment set context = null/.test(q.sql)).map((q) => q.params[0]);
+  assert.deepStrictEqual(cleared, [31], 'the card\'s context is written again once its run lands (8.4.23)');
 
   // Seen again unchanged: no write, no second close, no second notification.
   transitions.length = 0;
@@ -573,6 +575,16 @@ async function factoryPoll() {
   const merged = store.queries.find((q) => /^\s*update run set status/.test(q.sql));
   assert.deepStrictEqual([merged.params[1], merged.params[2]], ['landed', 'merged']);
   assert.deepStrictEqual(transitions, []);
+
+  // 8.4.23: a run dropped on the PA's side while its job still moved is asked
+  // until the factory's last state is on it; it keeps its own status and outcome.
+  store.queries.length = 0;
+  store.watched = [{ id: 10, commitment_id: 34, task: 'Dropped', status: 'dropped', factory_job_id: 'widget:021', factory_state: 'in_progress', outcome: 'dropped' }];
+  answers['job status'] = json({ job_id: 'widget:021', source: 'pa', external_id: '10', state: 'cancelled', terminal: true });
+  assert.deepStrictEqual(await factory.poll(), { checked: 1, changed: 1, ended: 0 });
+  const synced = store.queries.find((q) => /^\s*update run set status/.test(q.sql));
+  assert.deepStrictEqual([synced.params[1], synced.params[2], synced.params[3]], ['dropped', 'dropped', 'cancelled']);
+  assert.deepStrictEqual(transitions, [], 'no second commitment move');
 }
 
 async function routeDecide() {

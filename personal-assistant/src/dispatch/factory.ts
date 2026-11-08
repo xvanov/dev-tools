@@ -758,9 +758,11 @@ async function apply(run: Run, job: Job): Promise<{ changed: boolean; ended: boo
   const u = F.runUpdate(job);
   const wasLive = LIVE.includes(run.status);
   // A run already ended (dropped by hand, or a delivered one watched for its
-  // merge) keeps its status; only the measurements move.
+  // merge) keeps its status; only the measurements and the factory's state
+  // move. Its own outcome stays, except that a delivered one may become merged.
   const nextStatus = wasLive ? u.status : run.status;
-  const nextOutcome = u.outcome || run.outcome || null;
+  const keepsOutcome = !wasLive && run.outcome && run.outcome !== 'delivered';
+  const nextOutcome = keepsOutcome ? run.outcome : u.outcome || run.outcome || null;
   const changed =
     nextStatus !== run.status ||
     nextOutcome !== (run.outcome || null) ||
@@ -793,6 +795,8 @@ async function apply(run: Run, job: Job): Promise<{ changed: boolean; ended: boo
     if (move && run.commitment_id) {
       await ledger.transition({ commitmentId: run.commitment_id, to: move.to, actor: 'factory', reason: move.reason, from: move.from });
     }
+    // The card's context paragraph was written while the run went on (8.4.23).
+    if (run.commitment_id) await repository.commitments.clearContext(run.commitment_id).catch(() => {});
     await require('../notify')
       .notify({
         kind: 'info',
@@ -856,7 +860,8 @@ async function chains(runIds: Array<number | string> | null | undefined): Promis
 /**
  * The worker pass. One `job list --source pa --active` for everything still
  * going, plus `job status` for runs it no longer lists (they ended since the
- * last pass) and for delivered runs watched a fortnight for their merge.
+ * last pass), for delivered runs watched a fortnight for their merge, and for
+ * runs the PA ended first (a drop) until their job's last state is on them.
  */
 async function poll(): Promise<{ checked: number; changed?: number; ended?: number; unsettled?: number }> {
   if (!enabled()) return { checked: 0 };

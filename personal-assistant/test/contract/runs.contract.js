@@ -409,8 +409,12 @@ module.exports = {
     const delivered = await mk('done', ", outcome = 'delivered', ended_at = now()");
     const old = await mk('done', ", outcome = 'delivered', ended_at = now() - interval '30 days'");
     const failed = await mk('failed');
+    // 8.4.23: ended on the PA's side while the job still moved.
+    const dropped = await mk('dropped', ", factory_state = 'in_progress'");
+    const settled = await mk('dropped', ", factory_state = 'cancelled'");
     const ids = (await repos.runs.watchedFactoryRuns()).map((r) => Number(r.id));
     assert.ok(ids.includes(live) && ids.includes(delivered) && !ids.includes(old) && !ids.includes(failed));
+    assert.ok(ids.includes(dropped) && !ids.includes(settled), 'asked until the factory has ended the job');
   },
 
   'distinctFactoryJobIds: the job ids of factory runs': async ({ repos, seed, db, assert, uniq }) => {
