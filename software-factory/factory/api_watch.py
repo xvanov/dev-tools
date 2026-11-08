@@ -545,7 +545,9 @@ def start_watch(
         # A text-only step (PM triage, SM, ...) has no worktree to diff.
         diff_fn=(lambda: git_diff_summary(Path(repo_path))) if diff else None,
     )
-    title = f"factory {persona} · {app}:{direction_id} story {story_id} · {model}"
+    # A job-level step (PM triage) has no story yet: no "story None" in the title.
+    story_part = f" story {story_id}" if story_id is not None else ""
+    title = f"factory {persona} · {app}:{direction_id}{story_part} · {model}"
     stream.init(run_id=d.name, model=model, cwd=str(repo_path), persona=persona, title=title)
     watch = ApiWatch(stream=stream)
     if mode == "file":
