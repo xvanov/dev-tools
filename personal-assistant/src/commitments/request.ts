@@ -11,6 +11,11 @@
 //
 //   parse({text, due, for, owedToMe, project}, now)  pure: validate and resolve the due date
 //   add(opts)                                       write it; returns the new commitment
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+type Row = Record<string, any>;
+type Db = import('../repo/types.ts').Db;
 
 const crypto = require('crypto');
 const { parseWhen } = require('../util/when.ts');
@@ -22,7 +27,7 @@ const VIAS = new Set(['cli', 'chat', 'board']);
 
 const USAGE = 'usage: pa task add "<what>" [--due <when>] [--for <person>] [--owed-to-me] [--project <name>]';
 
-function fail(message) {
+function fail(message: string) {
   return Object.assign(new Error(message), { status: 400 });
 }
 
@@ -31,7 +36,7 @@ function fail(message) {
  * `due` takes what src/util/when.ts reads ("friday", "tomorrow 3pm", "2d",
  * "2026-11-20"), with an optional leading "by".
  */
-function parse({ text, due = null, for: forName = null, owedToMe = false, project = null } = {}, now = new Date()) {
+function parse({ text, due = null, for: forName = null, owedToMe = false, project = null }: { text?: string | null; due?: any; for?: any; owedToMe?: boolean; project?: any } = {}, now: any = new Date()) {
   const words = String(text ?? '').replace(/\s+/g, ' ').trim();
   if (!words) throw fail(`what is the task? ${USAGE}`);
   if (words.length > MAX_TEXT) throw fail(`a task is one line (${MAX_TEXT} characters at most); put the rest in the conversation`);
@@ -56,7 +61,7 @@ function parse({ text, due = null, for: forName = null, owedToMe = false, projec
 
 // A person by address, or by a name that matches exactly one person (whole
 // name first, then the start of one). Never creates a person from a bare name.
-async function findPerson(name) {
+async function findPerson(name: string | null) {
   if (!name) return null;
   const identity = require('../distill/identity.ts');
   if (name.includes('@')) return identity.resolve(name, name);
@@ -72,7 +77,7 @@ async function findPerson(name) {
  * Writes the task. `via` says where you asked (cli, chat, board).
  * @returns {Promise<{id: number, itemId: number, summary, direction, dueAt, who: string|null, personFound: boolean, project: string|null}>}
  */
-async function add(opts = {}, { now = new Date() } = {}) {
+async function add(opts: any = {}, { now = new Date() }: { now?: any } = {}) {
   const t = parse(opts, now);
   const via = VIAS.has(opts.via) ? opts.via : 'cli';
   const { saveItems } = require('../ingest/store.ts');
@@ -100,7 +105,7 @@ async function add(opts = {}, { now = new Date() } = {}) {
   const detail = [t.detail, t.forName && !personId ? `${t.direction === 'owed_to_me' ? 'From' : 'For'}: ${t.forName}` : null]
     .filter(Boolean)
     .join('\n') || null;
-  const row = await repo.withTx((r) =>
+  const row = await repo.withTx((r: any) =>
     r.commitments.insertRequested({
       itemId: item.id,
       direction: t.direction,
@@ -128,7 +133,7 @@ async function add(opts = {}, { now = new Date() } = {}) {
 }
 
 /** Pure. One line saying what was created. */
-function describe(r) {
+function describe(r: any) {
   const parts = [`task #${r.id}: ${r.summary}`];
   if (r.direction === 'owed_to_me') parts.push(`owed to you by ${r.who}`);
   else if (r.who) parts.push(`for ${r.who}`);

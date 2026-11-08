@@ -28,7 +28,7 @@ function render(template, values) {
 }
 
 function values() {
-  const { config, env } = require('../src/config');
+  const { config, env } = require('../src/config.ts');
   const mic = env('PA_AUDIO_MIC');
   return {
     DIR: path.resolve(__dirname, '..'),

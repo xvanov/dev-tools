@@ -1619,7 +1619,7 @@ const commands = {
     lines.push('');
     lines.push(`  ${counts.items} items · ${counts.open_commitments} open commitments · ${await distill.pendingCount()} awaiting distillation`);
     {
-      const d = require('../commitments/sourcePolicy').describe();
+      const d = require('../commitments/sourcePolicy.ts').describe();
       lines.push(`  tasks from: ${d.allowed.join(', ') || 'NOTHING — check PA_COMMITMENT_SOURCES'} (evidence only: ${d.excluded.join(', ') || 'none'})` +
         `${d.unknown.length ? ` · PA_COMMITMENT_SOURCES has unknown ${d.unknown.join(', ')}` : ''}`);
     }
@@ -1730,7 +1730,7 @@ const commands = {
 
     // Asks closed by my own reply in the thread (src/commitments/replyClose.js).
     try {
-      const r = await require('../commitments/replyClose').stats();
+      const r = await require('../commitments/replyClose.ts').stats();
       lines.push(
         `  reply-close ${config.replyClose.enabled ? 'on' : 'off (PA_REPLY_CLOSE=0)'} · ${r.closed} closed by your replies of ${r.judged} judged` +
           `${r.failed ? ` · ${r.failed} FAILED` : ''} · last ${r.last ? relative(r.last) : 'never'}`

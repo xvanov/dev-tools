@@ -104,7 +104,7 @@ function create(db: Db) {
 
     /** Open and dispatched commitments for the brief (see src/repo/commitments.js). */
     async openForBrief(selfNote: unknown, limit: number) {
-      const { SELF_NOTE } = require('../../commitments/selfNotes');
+      const { SELF_NOTE } = require('../../commitments/selfNotes.ts');
       return db.rows(
         `select c.id, c.summary, c.detail, c.direction, c.due_at, c.status, c.confidence,
               c.project_confidence, c.repo_path,
@@ -125,7 +125,7 @@ function create(db: Db) {
 
     /** Open asks of mine with no plan, under a week old, not notes, no pending evidence or run. */
     async toPlan(limit: number) {
-      const { SELF_NOTE } = require('../../commitments/selfNotes');
+      const { SELF_NOTE } = require('../../commitments/selfNotes.ts');
       return db.rows(
         `select c.id, c.summary, c.detail, c.repo_path, c.project_id, pr.name as project,
             per.display_name as who, si.source, substr(si.body_text, 1, 800) as ask_text
@@ -886,7 +886,7 @@ function create(db: Db) {
 
     /** For `pa doctor`: open commitments (not notes to myself) and how many have a context paragraph. */
     async cardContextCounts() {
-      const { SELF_NOTE } = require('../../commitments/selfNotes');
+      const { SELF_NOTE } = require('../../commitments/selfNotes.ts');
       return db.one(
         `select count(*) as n, count(c.context) as with_context
            from commitment c join source_item si on si.id = c.source_item_id

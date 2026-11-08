@@ -81,7 +81,7 @@ function create(db: Db) {
      * @returns {Promise<object[]>}
      */
     async openForBrief(selfNote: unknown, limit: number) {
-      const { SELF_NOTE } = require('../commitments/selfNotes');
+      const { SELF_NOTE } = require('../commitments/selfNotes.ts');
       return db.rows(
         `select c.id, c.summary, c.detail, c.direction, c.due_at, c.status, c.confidence,
               c.project_confidence, c.repo_path,
@@ -107,7 +107,7 @@ function create(db: Db) {
      * @returns {Promise<object[]>}
      */
     async toPlan(limit: number) {
-      const { SELF_NOTE } = require('../commitments/selfNotes');
+      const { SELF_NOTE } = require('../commitments/selfNotes.ts');
       return db.rows(
         `select c.id, c.summary, c.detail, c.repo_path, c.project_id, pr.name as project,
             per.display_name as who, si.source, left(si.body_text, 800) as ask_text
@@ -1071,7 +1071,7 @@ function create(db: Db) {
      * @returns {Promise<{n: number, with_context: number}>}
      */
     async cardContextCounts() {
-      const { SELF_NOTE } = require('../commitments/selfNotes');
+      const { SELF_NOTE } = require('../commitments/selfNotes.ts');
       return db.one(
         `select count(*)::int as n, count(c.context)::int as with_context
            from commitment c join source_item si on si.id = c.source_item_id

@@ -226,7 +226,7 @@ const m = require('../src/memory/claims.ts');
 
 {
   // Commitment restatements (commitments/dupes.js), on pairs from the board.
-  const d = require('../src/commitments/dupes');
+  const d = require('../src/commitments/dupes.ts');
   // Word-for-word repeats are settled without a model.
   assert.ok(d.sameAsk('Turn on the shared index ConfigCat flags for the pilot tenants', 'Turn on the shared index ConfigCat flags for pilot tenants'));
   assert.ok(d.sameAsk('Merge and sync argocdstate#153 to enable indexer pods in production', 'Merge and sync argocdstate#153 to enable indexer pods in production'));

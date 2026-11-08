@@ -4,7 +4,7 @@
 // or by number and project), else per session; newest group first.
 
 const assert = require('assert');
-const { groupKey, group } = require('../src/commitments/selfNotes');
+const { groupKey, group } = require('../src/commitments/selfNotes.ts');
 
 const pr = 'https://github.com/acme/widgets/pull/162';
 assert.deepStrictEqual(groupKey({ thread_external_id: pr, summary: 'Rebase the banner PR' }), { key: 'widgets#162', label: 'widgets PR #162' });

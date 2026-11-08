@@ -6,7 +6,7 @@
 // invented.
 
 const assert = require('assert');
-const R = require('../src/commitments/replyCloseCore');
+const R = require('../src/commitments/replyCloseCore.ts');
 
 const ask = {
   item_id: 10,

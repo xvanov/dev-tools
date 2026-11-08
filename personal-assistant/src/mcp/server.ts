@@ -487,7 +487,7 @@ async function dispatchTool(name: string, args: Json = {}) {
 
     case 'task_add': {
       if (!chatToolsOn()) throw new Error('unknown tool task_add');
-      const request = require('../commitments/request');
+      const request = require('../commitments/request.ts');
       const r = await request.add({
         text: args.text,
         due: args.due || null,

@@ -852,8 +852,8 @@
       },
       "code": [
         "personal-assistant/src/distill/index.ts",
-        "personal-assistant/src/commitments/blocks.js",
-        "personal-assistant/src/commitments/sourcePolicy.js",
+        "personal-assistant/src/commitments/blocks.ts",
+        "personal-assistant/src/commitments/sourcePolicy.ts",
         "personal-assistant/src/ledger",
         "personal-assistant/src/dashboard/board.ts"
       ]

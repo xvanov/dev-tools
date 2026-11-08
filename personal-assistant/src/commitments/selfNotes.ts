@@ -14,6 +14,11 @@
 //     per PR or session (groupKey), not on "On you".
 //   - expire() closes the ones nobody touched for EXPIRE_DAYS. A PR merging
 //     or closing still closes them first (ingest/githubReconcile.js).
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+type Row = Record<string, any>;
+type Db = import('../repo/types.ts').Db;
 
 const repo = require('../repo');
 const ledger = require('../ledger');
@@ -36,7 +41,7 @@ const SELF_NOTE = `(
 )`;
 
 /** Pure: which group a note belongs to — its PR, else its session or thread. */
-function groupKey(c) {
+function groupKey(c: any) {
   const text = `${c.thread_external_id || ''} ${c.summary || ''} ${c.detail || ''}`;
   const pr = /github\.com\/([^/\s]+)\/([^/\s#?]+)\/pull\/(\d+)/.exec(text);
   if (pr) return { key: `${pr[2]}#${pr[3]}`.toLowerCase(), label: `${pr[2]} PR #${pr[3]}` };
@@ -47,16 +52,16 @@ function groupKey(c) {
 }
 
 /** Pure: notes grouped, newest group first, newest note first within a group. */
-function group(notes) {
+function group(notes: any) {
   const groups = new Map();
   for (const c of notes) {
     const g = groupKey(c);
     if (!groups.has(g.key)) groups.set(g.key, { ...g, items: [] });
     groups.get(g.key).items.push(c);
   }
-  const at = (c) => new Date(c.occurred_at || 0).getTime();
+  const at = (c: any) => new Date(c.occurred_at || 0).getTime();
   return [...groups.values()]
-    .map((g) => ({ ...g, items: g.items.sort((a, b) => at(b) - at(a)) }))
+    .map((g) => ({ ...g, items: g.items.sort((a: any, b: any) => at(b) - at(a)) }))
     .sort((a, b) => at(b.items[0]) - at(a.items[0]));
 }
 
@@ -64,7 +69,7 @@ function group(notes) {
  * Closes self-notes nobody touched for EXPIRE_DAYS (dispatched ones are a
  * run's business and are left alone). Returns how many.
  */
-async function expire({ days = EXPIRE_DAYS } = {}) {
+async function expire({ days = EXPIRE_DAYS }: { days?: number } = {}) {
   const due = await repo.commitments.expiredSelfNotes(String(days), SELF_NOTE);
   let count = 0;
   for (const { id } of due) {

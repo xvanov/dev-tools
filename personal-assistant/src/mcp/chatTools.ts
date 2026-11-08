@@ -486,7 +486,7 @@ async function boardTool({ limit = 25 }: { limit?: number } = {}) {
   s.looksDone = await require('../ledger/reconcile').proposals().catch(() => []);
   s.needsYou = await require('../proposals').pending().catch(() => []);
   await require('../dashboard/cards.ts').enrich(s).catch(() => {});
-  s.blocks = await require('../commitments/blocks').forBoard().catch(() => []);
+  s.blocks = await require('../commitments/blocks.ts').forBoard().catch(() => []);
   const board = require('../dashboard/board.ts').build(s);
   const ids = board.onMe.filter((c: Json) => !c.standalone).map((c: Json) => Number(c.id)).filter(Number.isFinite);
   const extras = new Map();

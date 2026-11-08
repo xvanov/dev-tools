@@ -27,7 +27,7 @@ const { logger } = require('../log.ts');
 const keep = require('./keep.ts');
 const githubGate = require('./githubGate.ts');
 const lists = require('./lists.ts');
-const policy = require('../commitments/sourcePolicy');
+const policy = require('../commitments/sourcePolicy.ts');
 
 const log = logger('distill');
 

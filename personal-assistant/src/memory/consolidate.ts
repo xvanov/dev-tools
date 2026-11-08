@@ -35,7 +35,7 @@ const repo = require('../repo');
 const { embed } = require('../search');
 const { logger } = require('../log.ts');
 const { parseDecisions, extractJson } = require('./claims.ts');
-const dupes = require('../commitments/dupes');
+const dupes = require('../commitments/dupes.ts');
 
 const log = logger('memory.consolidate');
 

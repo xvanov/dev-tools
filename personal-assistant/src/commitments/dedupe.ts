@@ -16,6 +16,11 @@
 //   backfill()    one-off over every open commitment: pair, judge, fold
 //                 (dry run unless {apply: true}; {confirmed} applies a dry
 //                 run's folds without asking the model again)
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+type Row = Record<string, any>;
+type Db = import('../repo/types.ts').Db;
 
 const llm = require('../llm.ts');
 const budget = require('../budget.ts');
@@ -23,8 +28,8 @@ const { config } = require('../config.ts');
 const repo = require('../repo');
 const { embed } = require('../search');
 const { logger } = require('../log.ts');
-const S = require('./semantic');
-const policy = require('./sourcePolicy');
+const S = require('./semantic.ts');
+const policy = require('./sourcePolicy.ts');
 
 const log = logger('dedupe');
 
@@ -32,7 +37,7 @@ const PURPOSE = 'dedupe';
 const WINDOW_DAYS = 60;
 const PER_CALL = 20; // pairs per judge call
 
-function toVector(values) {
+function toVector(values: any[]) {
   return `[${values.map((v) => Number(v).toFixed(6)).join(',')}]`;
 }
 
@@ -42,7 +47,7 @@ function toVector(values) {
 const POLICY = () => policy.sourceSql('si.source');
 
 /** Embeds open commitments that have no vector yet. Returns {embedded, usd}. */
-async function embedPending({ limit = 200 } = {}) {
+async function embedPending({ limit = 200 }: { limit?: number } = {}) {
   const todo = await repo.commitments.unvectored(limit, WINDOW_DAYS, POLICY());
   let embedded = 0;
   let usd = 0;
@@ -101,22 +106,22 @@ When unsure, "different": a duplicate left on the board costs a glance, a task w
 
 Return ONLY JSON: {"pairs": [{"pair": "<key>", "a_includes_b": true | false, "b_includes_a": true | false, "verdict": "same" | "subset" | "different", "keep": "A" | "B" | null, "why": "<under 12 words>"}]}`;
 
-function line(tag, c) {
+function line(tag: any, c: any) {
   const day = c.extracted_at ? new Date(c.extracted_at).toISOString().slice(0, 10) : '';
   const where = [c.source, c.place].filter(Boolean).join(': ').slice(0, 60);
   const detail = c.detail ? ` — ${String(c.detail).replace(/\s+/g, ' ').slice(0, 300)}` : '';
   return `  ${tag} #${c.id} [${c.direction}${c.who ? `, with ${c.who}` : ''}${where ? `, ${where}` : ''}, ${day}] ${c.summary}${detail}`;
 }
 
-function render(batch, byId) {
+function render(batch: any, byId: any) {
   return batch
-    .map((p) => [`PAIR ${p.key}${p.shared?.length ? ` (both mention ${p.shared.join(', ')})` : ''}`, line('A', byId.get(p.a)), line('B', byId.get(p.b))].join('\n'))
+    .map((p: any) => [`PAIR ${p.key}${p.shared?.length ? ` (both mention ${p.shared.join(', ')})` : ''}`, line('A', byId.get(p.a)), line('B', byId.get(p.b))].join('\n'))
     .join('\n\n');
 }
 
 /** One judge call over a few pairs. Returns parseVerdicts' map, or null on failure. */
-async function judge(batch, byId) {
-  const asked = new Map(batch.map((p) => [p.key, p]));
+async function judge(batch: any, byId: any) {
+  const asked = new Map(batch.map((p: any) => [p.key, p]));
   try {
     const text = await llm.complete({
       system: SYSTEM,
@@ -129,7 +134,7 @@ async function judge(batch, byId) {
       purpose: PURPOSE,
     });
     return S.parseVerdicts(text, asked);
-  } catch (err) {
+  } catch (err: any) {
     log.warn('judge call failed', { pairs: batch.length, message: err.message });
     return null;
   }
@@ -137,7 +142,7 @@ async function judge(batch, byId) {
 
 // Follows superseded_by to the live survivor (a keeper folded earlier in the
 // same run), so a fold never points at a hidden row.
-async function rootOf(id) {
+async function rootOf(id: any) {
   const r = await repo.commitments.survivorOf(id);
   return r[0] ? String(r[0].id) : null;
 }
@@ -148,7 +153,7 @@ async function rootOf(id) {
  * followed to its live survivor first.
  * @returns {{drop, keep, relation}|null} the fold made, or null
  */
-async function applyFold(f) {
+async function applyFold(f: any) {
   const keep = await rootOf(f.keep);
   const drop = await rootOf(f.drop);
   // Already one group (or the keeper vanished): nothing to do.
@@ -167,10 +172,10 @@ async function applyFold(f) {
  * (semantic.umbrellaFolds) once all the verdicts are in.
  * @returns {{calls, verdicts: Map, folds: Array, failed: number}}
  */
-async function judgeAndFold(pairList, byId, { apply = true, maxCalls = Infinity } = {}) {
-  const out = { calls: 0, verdicts: new Map(), folds: [], failed: 0 };
+async function judgeAndFold(pairList: any, byId: any, { apply = true, maxCalls = Infinity }: { apply?: boolean; maxCalls?: any } = {}) {
+  const out = { calls: 0, verdicts: new Map(), folds: [] as any[], failed: 0 };
   const subsets = [];
-  const fold = async (f) => {
+  const fold = async (f: any) => {
     const made = apply ? await applyFold(f) : f;
     if (made) out.folds.push(made);
   };
@@ -198,7 +203,7 @@ async function judgeAndFold(pairList, byId, { apply = true, maxCalls = Infinity 
   return out;
 }
 
-async function markChecked(ids, verdicts = new Map()) {
+async function markChecked(ids: any[], verdicts: any = new Map()) {
   for (const id of ids) {
     await repo.commitments.markVectorChecked(id, verdicts.get(String(id)) || null);
   }
@@ -209,14 +214,14 @@ async function markChecked(ids, verdicts = new Map()) {
  * candidates, fold. Discretionary (`budget.allow`): over today's cap it does
  * nothing, and duplicates wait for tomorrow rather than the budget.
  */
-async function pass({ limit = 24 } = {}) {
+async function pass({ limit = 24 }: { limit?: number } = {}) {
   if (!(await budget.allow(PURPOSE))) return { skipped: 'budget' };
   const e = await embedPending({ limit: 200 });
   // Vectors whose commitment has left the board since need no judgement.
   await repo.commitments.checkVectorsOffBoard();
   const pool = await loadPool();
-  const byId = new Map(pool.map((c) => [c.id, c]));
-  const fresh = pool.filter((c) => !c.checked_at).slice(0, limit);
+  const byId = new Map(pool.map((c: any) => [c.id, c]));
+  const fresh = pool.filter((c: any) => !c.checked_at).slice(0, limit);
   if (!fresh.length) return { embedded: e.embedded, checked: 0, folded: 0, calls: 0 };
 
   const asked = new Map();
@@ -235,7 +240,7 @@ async function pass({ limit = 24 } = {}) {
   const r = await judgeAndFold(list, byId);
   // A commitment is checked when every pair it is in was answered; a failed
   // call leaves it for the next pass.
-  const done = fresh.filter((c) => of.get(c.id).every((k) => asked.get(k).judged)).map((c) => c.id);
+  const done = fresh.filter((c: any) => of.get(c.id).every((k: any) => asked.get(k).judged)).map((c: any) => c.id);
   const notes = new Map();
   for (const f of r.folds) notes.set(String(f.drop), { keep: f.keep, relation: f.relation, why: f.why, by: PURPOSE });
   await markChecked(done, notes);
@@ -250,15 +255,15 @@ async function pass({ limit = 24 } = {}) {
  * read before anything changes. `confirmed` applies the folds a dry run
  * confirmed, so applying never asks the model a second time.
  */
-async function backfill({ apply = false, maxCalls = 60, confirmed = null } = {}) {
+async function backfill({ apply = false, maxCalls = 60, confirmed = null }: { apply?: boolean; maxCalls?: number; confirmed?: any } = {}) {
   const e = await embedPending({ limit: 5000 });
   const pool = await loadPool();
-  const byId = new Map(pool.map((c) => [c.id, c]));
+  const byId = new Map(pool.map((c: any) => [c.id, c]));
   const list = S.pairs(pool);
   let r;
   if (confirmed) {
     // Apply what a dry run confirmed, in its order, without asking again.
-    r = { calls: 0, verdicts: new Map(), folds: [], failed: 0 };
+    r = { calls: 0, verdicts: new Map(), folds: [] as any[], failed: 0 };
     for (const f of confirmed) {
       if (!byId.has(String(f.keep)) || !byId.has(String(f.drop))) continue;
       const made = await applyFold(f);

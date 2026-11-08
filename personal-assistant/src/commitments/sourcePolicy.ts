@@ -27,6 +27,11 @@
 //            item before the model call (judge()).
 //
 // Pure, apart from reading config: the tests feed it items.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+type Row = Record<string, any>;
+type Db = import('../repo/types.ts').Db;
 
 const { config } = require('../config.ts');
 
@@ -55,19 +60,19 @@ const SOURCE_NAME = /^[a-z][a-z0-9_]*$/;
  * like one, and reported.
  * @returns {{sources: Set<string>, unknown: string[]}}
  */
-function parseSpec(spec) {
+function parseSpec(spec: any) {
   const text = String(spec == null || String(spec).trim() === '' ? 'default' : spec);
   const sources = new Set();
   const unknown = [];
   for (const raw of text.split(/[\s,]+/).filter(Boolean)) {
     const neg = raw.startsWith('-');
     const word = (neg ? raw.slice(1) : raw).toLowerCase();
-    const names = word === 'default' ? parseSpec(DEFAULT_SPEC).sources : GROUPS[word] || (SOURCE_NAME.test(word) ? [word] : null);
+    const names = word === 'default' ? parseSpec(DEFAULT_SPEC).sources : (GROUPS as Record<string, string[]>)[word] || (SOURCE_NAME.test(word) ? [word] : null);
     if (!names) {
       unknown.push(raw);
       continue;
     }
-    if (!GROUPS[word] && word !== 'default' && !Object.values(GROUPS).some((g) => g.includes(word))) unknown.push(raw);
+    if (!(GROUPS as Record<string, string[]>)[word] && word !== 'default' && !Object.values(GROUPS).some((g) => g.includes(word))) unknown.push(raw);
     for (const n of names) (neg ? sources.delete(n) : sources.add(n));
   }
   return { sources, unknown };
@@ -78,14 +83,14 @@ function allowedSources() {
 }
 
 /** Pure. A SQL boolean for "this source may create commitments" — names are validated, so inlined. */
-function sourceSql(column, sources = allowedSources()) {
+function sourceSql(column: any, sources: any = allowedSources()) {
   const list = [...sources].filter((s) => SOURCE_NAME.test(s));
   if (!list.length) return 'false';
   return `${column} in (${list.map((s) => `'${s}'`).join(', ')})`;
 }
 
 /** Pure. The sources the distiller reads: allowed, less the ones created whole. */
-function distillSources(sources = allowedSources()) {
+function distillSources(sources: any = allowedSources()) {
   return new Set([...sources].filter((s) => !DIRECT.has(s)));
 }
 
@@ -100,17 +105,17 @@ const GITHUB_BOT =
 // Jira's own automation and the apps that post as users.
 const JIRA_BOT = /^(automation( for jira)?|jira( (automation|service management|software))?|github( for jira)?|bitbucket|confluence|system|.*\bbot\b.*|.*\[bot\])$/i;
 
-function githubLogin(identity) {
+function githubLogin(identity: any) {
   if (!identity) return null;
   const s = String(identity).trim();
   return (s.toLowerCase().startsWith('github:') ? s.slice(7) : s) || null;
 }
 
-function isGithubBot(login) {
+function isGithubBot(login: any) {
   return !!login && GITHUB_BOT.test(String(login).trim());
 }
 
-function sameLogin(a, b) {
+function sameLogin(a: any, b: any) {
   return !!a && !!b && String(a).toLowerCase() === String(b).toLowerCase();
 }
 
@@ -123,9 +128,9 @@ const GITHUB_ASKS = new Set(['review_requested', 'mention', 'assign', 'comment',
  * GitHub item. `login` is your GitHub login (null: not known, so only bots
  * and the reason are judged).
  */
-function githubAsk(item, login) {
+function githubAsk(item: any, login: any) {
   const raw = item.raw || {};
-  const human = (who, role) => {
+  const human = (who: any, role: string) => {
     if (!who) return { ok: false, why: `no ${role} on record` };
     if (isGithubBot(who)) return { ok: false, why: `${role} is a bot (${who})` };
     if (sameLogin(who, login)) return { ok: false, why: 'your own activity' };
@@ -151,7 +156,7 @@ function githubAsk(item, login) {
     case 'github_issue':
       return human(latest, 'author');
     case 'github_project_item': {
-      const assigned = Array.isArray(raw.assignees) && raw.assignees.some((a) => sameLogin(a, login));
+      const assigned = Array.isArray(raw.assignees) && raw.assignees.some((a: any) => sameLogin(a, login));
       if (login && !assigned) return { ok: false, why: 'a board card not assigned to you' };
       return human(latest, 'author');
     }
@@ -160,13 +165,13 @@ function githubAsk(item, login) {
   }
 }
 
-function sameName(a, b) {
-  const n = (s) => String(s || '').trim().toLowerCase();
+function sameName(a: any, b: any) {
+  const n = (s: any) => String(s || '').trim().toLowerCase();
   return !!n(a) && n(a) === n(b);
 }
 
 /** Pure. A person other than you wrote or last commented on the Jira issue. */
-function jiraAsk(item, me = {}) {
+function jiraAsk(item: any, me: any = {}) {
   const who = item.author_identity || item.raw?.reporter || null;
   if (!who) return { ok: false, why: 'no author on record' };
   if (JIRA_BOT.test(String(who).trim())) return { ok: false, why: `author is automation (${who})` };
@@ -179,7 +184,7 @@ function jiraAsk(item, me = {}) {
  * @param item a source_item row (source, author_identity, raw)
  * @param {{sources?: Set<string>, login?: string|null, me?: {name?, email?}, isAutomated?: (addr) => boolean}} o
  */
-function judge(item, { sources = allowedSources(), login = null, me = {}, isAutomated = null } = {}) {
+function judge(item: any, { sources = allowedSources(), login = null, me = {}, isAutomated = null }: { sources?: any; login?: any; me?: any; isAutomated?: any } = {}) {
   if (!item) return { ok: false, why: 'no item' };
   if (!sources.has(item.source)) return { ok: false, why: `source ${item.source} does not create tasks (PA_COMMITMENT_SOURCES)` };
   const automated = isAutomated || require('../ingest/m365.ts').isAutomated;
@@ -205,7 +210,7 @@ function judge(item, { sources = allowedSources(), login = null, me = {}, isAuto
 }
 
 /** For `pa doctor` and `pa policy`: the setting as read. */
-function describe(spec = config.commitments?.sources) {
+function describe(spec: any = config.commitments?.sources) {
   const { sources, unknown } = parseSpec(spec);
   const all = new Set(Object.values(GROUPS).flat());
   return {

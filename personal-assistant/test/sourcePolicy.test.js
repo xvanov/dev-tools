@@ -6,7 +6,7 @@
 // Invented names throughout.
 
 const assert = require('assert');
-const P = require('../src/commitments/sourcePolicy');
+const P = require('../src/commitments/sourcePolicy.ts');
 
 // ---------------------------------------------------------------- setting --
 const def = P.parseSpec('default').sources;
@@ -95,7 +95,7 @@ no({ source: 'jira_issue', author_identity: null, raw: {} }, 'nobody on record')
 assert.strictEqual(P.judge({ source: 'graph_mail', author_identity: 'bryn.oakes@example.test' }, { ...ctx, sources: P.parseSpec('teams').sources }).ok, false);
 
 // ------------------------------------------------------- pa task add --
-const R = require('../src/commitments/request');
+const R = require('../src/commitments/request.ts');
 const now = new Date(2026, 10, 5, 10, 0); // Thursday 5 Nov 2026, 10:00 local
 let t = R.parse({ text: '  Send the  rollout notes to the pod ' }, now);
 assert.deepStrictEqual(
@@ -151,7 +151,7 @@ assert.deepStrictEqual(mcp.TASK_TOOL.inputSchema.required, ['text']);
   if (prev !== undefined) process.env.PA_MCP_CHAT_TOOLS = prev;
 
   // ------------------------------------------------------- backfill split --
-  const PC = require('../src/commitments/policyClose');
+  const PC = require('../src/commitments/policyClose.ts');
   const rows = [
     { id: 1, source: 'claude_session', summary: 'Wire in the widget', direction: 'owed_by_me', raw: {} },
     { id: 2, source: 'claude_session', summary: 'Run the e2e suite', direction: 'owed_by_me', raw: {}, has_run: true },

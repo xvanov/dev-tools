@@ -6,7 +6,7 @@
 // commitment per list. Names are invented.
 
 const assert = require('assert');
-const S = require('../src/commitments/semantic');
+const S = require('../src/commitments/semantic.ts');
 const { collapse, listLines } = require('../src/distill/lists.ts');
 const { alsoLinks } = require('../src/dashboard/links.ts');
 

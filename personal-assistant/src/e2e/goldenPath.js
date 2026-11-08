@@ -41,7 +41,7 @@ function defaultDeps() {
       if (!res.ok) throw Object.assign(new Error(`${res.status} on ${url.replace(/\?.*/, '')}: ${text.slice(0, 160)}`), { status: res.status });
       return text ? JSON.parse(text) : null;
     },
-    addCard: (text) => require('../commitments/request').add({ text, via: 'cli' }),
+    addCard: (text) => require('../commitments/request.ts').add({ text, via: 'cli' }),
     closeCard: (id) => require('../commitments.ts').setStatus(Number(id), 'dropped'),
     chat: (name, args) => require('../mcp/chatTools.ts').handle(name, args),
     factoryEnabled: () => factory.enabled(),

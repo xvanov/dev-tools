@@ -19,11 +19,16 @@
 // direction), ranked by how alike the summaries are rather than how recent,
 // and a near-verbatim repeat in that neighbourhood is settled here without a
 // model call.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+type Row = Record<string, any>;
+type Db = import('../repo/types.ts').Db;
 
 const { words } = require('../distill/keep.ts');
 
 /** Jaccard overlap of the two summaries' content words, 0..1. */
-function similarity(a, b) {
+function similarity(a: any, b: any) {
   const x = words(a);
   const y = words(b);
   if (!x.size || !y.size) return 0;
@@ -34,12 +39,12 @@ function similarity(a, b) {
 
 // Numbers, PR/issue refs and versions: "Review ERP PRs 2021-2023" and
 // "Review ERP PRs 2024-2026" share every other word and are different asks.
-function refs(s) {
+function refs(s: any) {
   return new Set([...words(s)].filter((w) => /\d/.test(w)));
 }
 
 /** Near-verbatim: the same ask with no room for a model to disagree. */
-function sameAsk(a, b) {
+function sameAsk(a: any, b: any) {
   if (similarity(a, b) < SAME_AT) return false;
   const x = refs(a);
   const y = refs(b);
@@ -55,12 +60,12 @@ const SAME_AT = 0.8;
  * @param {Array<{id, summary}>} pool  open, same direction, older, not c — from the same item, thread or person
  * @param {number} [n]
  */
-function neighbours(c, pool, n = 6) {
+function neighbours(c: any, pool: any, n: number = 6) {
   const seen = new Set();
   return pool
-    .filter((o) => (seen.has(String(o.id)) ? false : seen.add(String(o.id))))
-    .map((o) => ({ ...o, similarity: similarity(c.summary, o.summary) }))
-    .sort((a, b) => b.similarity - a.similarity || Number(b.id) - Number(a.id))
+    .filter((o: any) => (seen.has(String(o.id)) ? false : seen.add(String(o.id))))
+    .map((o: any) => ({ ...o, similarity: similarity(c.summary, o.summary) }))
+    .sort((a: any, b: any) => b.similarity - a.similarity || Number(b.id) - Number(a.id))
     .slice(0, n);
 }
 
@@ -71,7 +76,7 @@ function neighbours(c, pool, n = 6) {
  * that would hide the work from the board.
  * @returns {{keep, drop}} ids
  */
-function survivor(newer, older) {
+function survivor(newer: any, older: any) {
   if (older.acted && !newer.acted) return { keep: older.id, drop: newer.id };
   return { keep: newer.id, drop: older.id };
 }

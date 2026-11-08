@@ -28,7 +28,7 @@ function recentReviews() {
 async function gather({ horizonDays = 7 }: { horizonDays?: number } = {}) {
   // What people ask of me, and notes from my own work, kept apart
   // (src/commitments/selfNotes.js): the second is grouped and expires.
-  const { group } = require('../commitments/selfNotes');
+  const { group } = require('../commitments/selfNotes.ts');
   const commitments = await repo.commitments.openForBrief(false, 60);
   const selfNotes = group(await repo.commitments.openForBrief(true, 200));
 

@@ -18,13 +18,18 @@
 // `reply_close` row keyed by the newest reply it saw, so the same reply is
 // never judged twice at one prompt version — which is also why a commitment
 // reopened with `pa done --reopen` stays open until I write again.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+type Row = Record<string, any>;
+type Db = import('../repo/types.ts').Db;
 
 const llm = require('../llm.ts');
 const { config } = require('../config.ts');
 const repo = require('../repo');
 const { logger } = require('../log.ts');
 const { myAuthorForms } = require('../draft');
-const R = require('./replyCloseCore');
+const R = require('./replyCloseCore.ts');
 const ledger = require('../ledger');
 
 const log = logger('reply-close');
@@ -38,7 +43,7 @@ const MAX_ATTEMPTS = 3;
 // from chat or mail with a reply of mine in the window that no judgement at
 // this version has seen yet.
 
-async function repliesFor(c, me) {
+async function repliesFor(c: any, me: any) {
   const list = await repo.commitments.replyCloseReplies(me, c.source, c.thread_external_id, c.item_id, c.occurred_at, {
     windowDays: WINDOW_DAYS,
     limit: R.MAX_REPLIES * 2,
@@ -46,7 +51,7 @@ async function repliesFor(c, me) {
   return R.selectReplies(c, list);
 }
 
-async function judge(c, me) {
+async function judge(c: any, me: any) {
   const replies = await repliesFor(c, me);
   if (!replies.length) return { verdict: 'unrelated', close: false, reason: 'no replies with text' };
   const { prompt, refs } = R.buildPrompt(c, replies);
@@ -62,15 +67,15 @@ async function judge(c, me) {
   return R.parseVerdict(llm.extractJson(reply), refs);
 }
 
-async function recordError(c, err) {
+async function recordError(c: any, err: any) {
   // The message is ours (a parse or spawn failure), never a body; clipped anyway.
   await repo.commitments.recordReplyCloseError(c, R.VERSION, String(err.message || err).slice(0, 300));
 }
 
 // Closes it if it is still open as it was read; the commitment row is locked
 // so a hand edit in between wins.
-async function apply(c, j, now) {
-  return repo.withTx(async (r) => {
+async function apply(c: any, j: any, now: any) {
+  return repo.withTx(async (r: any) => {
     const cur = await r.commitments.lockStatus(c.id);
     const plan = R.planClose(cur, j, { source: c.source, now });
     if (plan.set) {
@@ -90,19 +95,19 @@ async function apply(c, j, now) {
  * @param {number}  [o.limit]   commitments judged per pass
  * @param {boolean} [o.dryRun]  judge and report, write nothing (no markers either)
  */
-async function pass({ now = new Date(), limit = 8, dryRun = false } = {}) {
+async function pass({ now = new Date(), limit = 8, dryRun = false }: { now?: any; limit?: number; dryRun?: boolean } = {}) {
   const me = await myAuthorForms();
   const candidates = await repo.commitments.replyCloseCandidates(me, R.VERSION, limit, {
     windowDays: WINDOW_DAYS,
     sources: SOURCES,
     maxAttempts: MAX_ATTEMPTS,
   });
-  const out = { judged: 0, closed: 0, errors: 0, results: [] };
+  const out = { judged: 0, closed: 0, errors: 0, results: [] as any[] };
   for (const c of candidates) {
     try {
       const j = await judge(c, me);
       out.judged++;
-      const result = { commitmentId: Number(c.id), verdict: j.verdict, close: j.close, quote: j.quote, messageId: j.message ? Number(j.message.id) : null, reason: j.reason };
+      const result: any = { commitmentId: Number(c.id), verdict: j.verdict, close: j.close, quote: j.quote, messageId: j.message ? Number(j.message.id) : null, reason: j.reason };
       if (dryRun) {
         result.wouldClose = !!R.planClose(c, j, { source: c.source, now }).set;
       } else {
@@ -114,7 +119,7 @@ async function pass({ now = new Date(), limit = 8, dryRun = false } = {}) {
         }
       }
       out.results.push(result);
-    } catch (err) {
+    } catch (err: any) {
       out.errors++;
       log.warn('judgement failed', { commitment: Number(c.id), message: String(err.message).slice(0, 120) });
       if (!dryRun) await recordError(c, err).catch(() => {});
@@ -130,7 +135,7 @@ async function pass({ now = new Date(), limit = 8, dryRun = false } = {}) {
  * left alone, and says so). The judgement row stays, so the same reply does
  * not close it again.
  */
-async function undo(commitmentId) {
+async function undo(commitmentId: any) {
   const row = await repo.commitments.latestAppliedReplyClose(commitmentId);
   if (!row) return { ok: false, result: `no reply-close to undo on #${commitmentId}` };
   // Closes made since the ledger existed are undone through it; older ones
@@ -142,7 +147,7 @@ async function undo(commitmentId) {
     return { ok: true, result: u.result };
   }
   let result = 'undone';
-  await repo.withTx(async (r) => {
+  await repo.withTx(async (r: any) => {
     const cur = await r.commitments.lockStatus(commitmentId);
     const { set, before } = row.applied;
     if (!cur) result = 'the commitment is gone';

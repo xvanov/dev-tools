@@ -320,7 +320,7 @@ async function main() {
   // Within the daily budget; a commitment is judged once.
   if (config.dedupe.enabled) {
     every(180, 'dedupe', async () => {
-      await require('./commitments/dedupe').pass({ limit: 24 });
+      await require('./commitments/dedupe.ts').pass({ limit: 24 });
     });
   }
 
@@ -329,7 +329,7 @@ async function main() {
   // task is added.
   if (config.blocks.enabled) {
     every(300, 'blocks', async () => {
-      await require('./commitments/blocks').pass();
+      await require('./commitments/blocks.ts').pass();
     });
   }
 
@@ -343,7 +343,7 @@ async function main() {
   // closed, with the quote that answered it. Judged once per new reply.
   if (config.replyClose.enabled) {
     every(300, 'reply-close', async () => {
-      await require('./commitments/replyClose').pass({ limit: 8 });
+      await require('./commitments/replyClose.ts').pass({ limit: 8 });
     });
   }
 
@@ -384,7 +384,7 @@ async function main() {
   // cards on the board, within the daily budget (src/commitments/context.js).
   if (config.cardContext.enabled) {
     every(120, 'card-context', async () => {
-      await require('./commitments/context').pass();
+      await require('./commitments/context.ts').pass();
     });
   }
 
@@ -522,7 +522,7 @@ const memoryPass = (file: string, opts?: unknown) => () => (MEMORY_PASSES[file] 
   // Notes from my own sessions and PRs nobody touched for a week are closed
   // (src/commitments/selfNotes.js); asks from people never expire.
   every(3600, 'self-notes', async () => {
-    await require('./commitments/selfNotes').expire();
+    await require('./commitments/selfNotes.ts').expire();
   });
 
   every(3600, 'retention', async () => {

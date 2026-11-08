@@ -14,19 +14,24 @@
 // A folded copy (superseded_by) of a closed card that comes from an allowed
 // source is unfolded, so a person's ask is never left hidden behind a closed
 // session note. Both changes are written to an undo SQL file.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+type Row = Record<string, any>;
+type Db = import('../repo/types.ts').Db;
 
 const fs = require('fs');
 const path = require('path');
 const { config } = require('../config.ts');
 const repo = require('../repo');
 const ledger = require('../ledger');
-const policy = require('./sourcePolicy');
+const policy = require('./sourcePolicy.ts');
 const identity = require('../distill/identity.ts');
 
 const ACTOR = 'reconciler';
 
 /** Pure. Why a card counts as acted on by you, or null. */
-function actedBy(c) {
+function actedBy(c: any) {
   const why = [];
   if (c.has_run) why.push('run');
   if (c.has_draft) why.push('draft');
@@ -40,7 +45,7 @@ function actedBy(c) {
  * @param list  rows of repo.commitments.policyCandidates()
  * @param ctx   sourcePolicy.judge's options (sources, login, me)
  */
-function split(list, ctx) {
+function split(list: any[], ctx: any) {
   const close = [];
   const keep = [];
   for (const c of list) {
@@ -54,13 +59,13 @@ function split(list, ctx) {
 }
 
 /** Pure. {source: count} for a list. */
-function bySource(list) {
-  const out = {};
+function bySource(list: any[]) {
+  const out: Record<string, any> = {};
   for (const c of list) out[c.source] = (out[c.source] || 0) + 1;
   return Object.fromEntries(Object.entries(out).sort((a, b) => b[1] - a[1]));
 }
 
-function sqlStr(v) {
+function sqlStr(v: any) {
   return v == null ? 'null' : `'${String(v).replace(/'/g, "''")}'`;
 }
 
@@ -76,15 +81,15 @@ async function context() {
 /**
  * @returns {{close, keep, unfold, applied?: {closed, transitions, undoFile}}}
  */
-async function run({ apply = false, now = new Date() } = {}) {
+async function run({ apply = false, now = new Date() }: { apply?: boolean; now?: any } = {}) {
   const ctx = await context();
   const plan = split(await repo.commitments.policyCandidates(), ctx);
   const closeIds = plan.close.map((c) => Number(c.id));
   // Allowed-source copies folded under a card about to close: they come back.
   const unfold = closeIds.length
-    ? (await repo.commitments.foldedUnder(closeIds)).filter((c) => policy.judge(c, ctx).ok)
+    ? (await repo.commitments.foldedUnder(closeIds)).filter((c: any) => policy.judge(c, ctx).ok)
     : [];
-  const out = { ...plan, unfold, before: null, after: null };
+  const out: any = { ...plan, unfold, before: null, after: null };
   if (!apply) return out;
 
   const undo = [
@@ -119,7 +124,7 @@ async function run({ apply = false, now = new Date() } = {}) {
         at: now.toISOString(),
         closed: plan.close.map((c) => ({ id: Number(c.id), source: c.source, summary: c.summary, why: c.why })),
         kept: plan.keep.map((c) => ({ id: Number(c.id), source: c.source, summary: c.summary, why: c.why, acted: c.acted })),
-        unfolded: unfold.map((u) => ({ id: Number(u.id), was: Number(u.superseded_by), source: u.source, summary: u.summary })),
+        unfolded: unfold.map((u: any) => ({ id: Number(u.id), was: Number(u.superseded_by), source: u.source, summary: u.summary })),
       },
       null,
       2
@@ -131,11 +136,11 @@ async function run({ apply = false, now = new Date() } = {}) {
 }
 
 /** Pure. The report `pa policy close` prints. */
-function report(r, { apply = false } = {}) {
+function report(r: any, { apply = false }: { apply?: boolean } = {}) {
   const lines = [];
-  const line = (c, extra = '') => `  #${c.id} ${c.direction === 'owed_to_me' ? '←' : '→'} ${String(c.summary).slice(0, 110)}${extra}`;
+  const line = (c: any, extra: string = '') => `  #${c.id} ${c.direction === 'owed_to_me' ? '←' : '→'} ${String(c.summary).slice(0, 110)}${extra}`;
   lines.push(`${apply ? 'Closed' : 'Would close'} ${r.close.length} open card(s) the source policy would not have created:`);
-  const groups = {};
+  const groups: Record<string, any[]> = {};
   for (const c of r.close) (groups[c.source] = groups[c.source] || []).push(c);
   for (const [source, list] of Object.entries(groups).sort((a, b) => b[1].length - a[1].length)) {
     lines.push('', `${source} (${list.length})`);

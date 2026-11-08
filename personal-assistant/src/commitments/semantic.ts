@@ -24,11 +24,16 @@
 // PR/issue ref, a URL, a ticket key), and the judge has three answers: the
 // same work, a subset of a bigger commitment (folds into the bigger one), or
 // different.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+type Row = Record<string, any>;
+type Db = import('../repo/types.ts').Db;
 
 const { words } = require('../distill/keep.ts');
 
 /** Cosine similarity of two equal-length vectors, -1..1 (0 for a missing one). */
-function cosine(a, b) {
+function cosine(a: any, b: any) {
   if (!a || !b || a.length !== b.length || !a.length) return 0;
   let dot = 0;
   let x = 0;
@@ -42,7 +47,7 @@ function cosine(a, b) {
 }
 
 /** pgvector's text form "[0.1,0.2]" (or an array) to numbers. */
-function parseVector(v) {
+function parseVector(v: any) {
   if (Array.isArray(v)) return v.map(Number);
   if (typeof v !== 'string') return null;
   const s = v.trim().replace(/^\[|\]$/g, '');
@@ -50,7 +55,7 @@ function parseVector(v) {
 }
 
 /** What gets embedded for a commitment. */
-function embeddingInput(c) {
+function embeddingInput(c: any) {
   return [c.summary, c.detail].filter(Boolean).join('\n').slice(0, 4000);
 }
 
@@ -70,17 +75,17 @@ const NOT_KEYS = new Set(['UTF', 'ISO', 'SHA', 'HTTP', 'TLS', 'SSL', 'GPT', 'COV
  * @param {string} text
  * @param {string} [threadUrl] the source item's thread, when it is a PR or issue
  */
-function anchors(text, threadUrl = null) {
+function anchors(text: string, threadUrl: any = null) {
   const out = new Set();
   const s = String(text || '');
   const ghRe = /https?:\/\/(?:www\.)?github\.com\/[\w.-]+\/([\w.-]+)\/(?:pull|issues)\/(\d+)/gi;
   for (const src of [s, String(threadUrl || '')]) {
-    for (const m of src.matchAll(ghRe)) out.add(`${m[1].toLowerCase()}#${Number(m[2])}`);
+    for (const m of src.matchAll(ghRe)) out.add(`${m[1]!.toLowerCase()}#${Number(m[2])}`);
   }
   // owner/repo#N or repo#N — a repo name has a letter and is not a lone word
   // like "PR" or "issue".
   for (const m of s.matchAll(/(?:^|[\s(\[`'"])(?:[\w.-]+\/)?([A-Za-z][\w.-]*[A-Za-z0-9_])#(\d+)\b/g)) {
-    const repo = m[1].toLowerCase();
+    const repo = m[1]!.toLowerCase();
     if (['pr', 'mr', 'issue', 'issues', 'pull', 'ticket', 'bug', 'item', 'no', 'number'].includes(repo)) continue;
     out.add(`${repo}#${Number(m[2])}`);
   }
@@ -96,8 +101,8 @@ function anchors(text, threadUrl = null) {
     out.add(`url:${host}${u.pathname.replace(/\/+$/, '').toLowerCase()}`);
   }
   for (const m of s.matchAll(/\b([A-Z][A-Z0-9]{1,9})-(\d{1,6})\b/g)) {
-    if (NOT_KEYS.has(m[1])) continue;
-    out.add(`jira:${m[1].toLowerCase()}-${Number(m[2])}`);
+    if (NOT_KEYS.has(m[1]!)) continue;
+    out.add(`jira:${m[1]!.toLowerCase()}-${Number(m[2])}`);
   }
   return [...out].sort();
 }
@@ -122,7 +127,7 @@ const MAX_CANDIDATES = 8;
  * draft for (".../48%3Adrafts/-4.19:abc@thread.v2?..."), and that chat is the
  * thread that matters — the sent message lands there.
  */
-function threadKey(thread, webUrl = null) {
+function threadKey(thread: any, webUrl: any = null) {
   const t = String(thread || '');
   if (/^48:drafts$/i.test(t) && webUrl) {
     let u = String(webUrl);
@@ -132,7 +137,7 @@ function threadKey(thread, webUrl = null) {
       /* keep it encoded */
     }
     const m = u.match(/48:drafts\/-?\d+\.(19:[^?/]+)/i);
-    if (m) return m[1].toLowerCase();
+    if (m) return m[1]!.toLowerCase();
   }
   return t ? t.toLowerCase() : null;
 }
@@ -143,7 +148,7 @@ function threadKey(thread, webUrl = null) {
  * meeting note often resolves nobody, and then its direction is the
  * distiller's guess).
  */
-function comparable(a, b) {
+function comparable(a: any, b: any) {
   return a.direction === b.direction || !a.has_party || !b.has_party;
 }
 
@@ -153,13 +158,13 @@ function comparable(a, b) {
  * @param {Array} pool  open, unfolded, recent — not including c
  * @returns {Array<{...o, cosine, shared:string[], sameThread:boolean}>}
  */
-function candidates(c, pool, { threshold = THRESHOLD, floor = ANCHOR_FLOOR, threadFloor = THREAD_FLOOR, max = MAX_CANDIDATES } = {}) {
+function candidates(c: any, pool: any, { threshold = THRESHOLD, floor = ANCHOR_FLOOR, threadFloor = THREAD_FLOOR, max = MAX_CANDIDATES }: { threshold?: any; floor?: any; threadFloor?: any; max?: number } = {}) {
   const mine = new Set(c.anchors || []);
   const out = [];
   for (const o of pool) {
     if (String(o.id) === String(c.id) || !comparable(c, o)) continue;
     const cos = cosine(c.vector, o.vector);
-    const shared = (o.anchors || []).filter((a) => mine.has(a));
+    const shared = (o.anchors || []).filter((a: any) => mine.has(a));
     const sameThread = Boolean((c.thread && c.thread === o.thread) || (c.source_item_id != null && String(c.source_item_id) === String(o.source_item_id)));
     if (cos >= threshold || (shared.length && cos >= floor) || (sameThread && cos >= threadFloor)) {
       out.push({ ...o, cosine: cos, shared, sameThread });
@@ -179,7 +184,7 @@ function candidates(c, pool, { threshold = THRESHOLD, floor = ANCHOR_FLOOR, thre
  * @param {Array} items  [{id, ...}] with .vector, .anchors, .direction, .has_party, .thread
  * @returns {Array<{key, a, b, cosine, shared, sameThread}>} a < b by id
  */
-function pairs(items, opts = {}) {
+function pairs(items: any[], opts: any = {}) {
   const out = new Map();
   for (const i of items) {
     for (const o of candidates(i, items, opts)) {
@@ -212,10 +217,10 @@ const VERDICTS = new Set(['same', 'subset', 'different']);
  * @param {Map<string, {a, b}>} asked  pair key → its ids (a = A, b = B)
  * @returns {Map<string, {verdict, keep:string|null, drop:string|null, why:string}>}
  */
-function parseVerdicts(answer, asked) {
+function parseVerdicts(answer: string, asked: any) {
   const parsed = typeof answer === 'string' ? extractJson(answer) : answer;
   const out = new Map();
-  const yes = (x) => x === true || String(x).toLowerCase() === 'true';
+  const yes = (x: any) => x === true || String(x).toLowerCase() === 'true';
   for (const v of Array.isArray(parsed?.pairs) ? parsed.pairs : []) {
     const key = String(v?.pair ?? '');
     const p = asked.get(key);
@@ -243,10 +248,10 @@ function parseVerdicts(answer, asked) {
   return out;
 }
 
-function extractJson(text) {
+function extractJson(text: string) {
   if (!text) throw new Error('empty response');
   const fenced = String(text).match(/```(?:json)?\s*([\s\S]*?)```/i);
-  const body = fenced ? fenced[1] : String(text);
+  const body = fenced ? fenced[1]! : String(text);
   const start = body.indexOf('{');
   const end = body.lastIndexOf('}');
   if (start < 0 || end <= start) throw new Error('no JSON object in response');
@@ -285,9 +290,9 @@ function extractJson(text) {
  * @param {{sameThread?:boolean}} [pair]
  * @returns {{drop:string, keep:string, relation:'same'|'subset', cover?:number}|null}
  */
-function resolveVerdict(v, byId, pair = {}) {
+function resolveVerdict(v: any, byId: any, pair: any = {}) {
   if (!v || v.verdict === 'different' || !v.keep || !v.drop) return null;
-  const acted = (id) => Boolean(byId.get(String(id))?.acted);
+  const acted = (id: any) => Boolean(byId.get(String(id))?.acted);
   let cover;
   // A shared anchor (the same PR, ticket or URL) pins both to one object:
   // "merge X" and "merge and sync X" are one card wherever they were said.
@@ -328,7 +333,7 @@ const UMBRELLA_WEAK = 0.25;
  * @param {Array<{drop, keep, cover}>} subsets  from resolveVerdict
  * @returns {Array<{drop, keep, relation:'subset', cover}>}
  */
-function umbrellaFolds(subsets, { strong = UMBRELLA_STRONG, weak = UMBRELLA_WEAK } = {}) {
+function umbrellaFolds(subsets: any, { strong = UMBRELLA_STRONG, weak = UMBRELLA_WEAK }: { strong?: any; weak?: any } = {}) {
   const byKeep = new Map();
   for (const s of subsets) {
     if (!byKeep.has(s.keep)) byKeep.set(s.keep, new Map());
@@ -349,8 +354,8 @@ function umbrellaFolds(subsets, { strong = UMBRELLA_STRONG, weak = UMBRELLA_WEAK
 
 // Share of `part`'s content words that appear in `whole`, 0..1. Word stems
 // (first five letters) so "creating"/"create" and "named"/"name" meet.
-function covers(whole, part) {
-  const stem = (w) => w.slice(0, 5);
+function covers(whole: any, part: any) {
+  const stem = (w: string) => w.slice(0, 5);
   const x = new Set([...words(whole)].map(stem));
   const y = [...new Set([...words(part)].map(stem))];
   if (!y.length) return 0;

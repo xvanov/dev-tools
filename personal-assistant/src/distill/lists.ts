@@ -23,7 +23,7 @@
 type Row = Record<string, any>;
 type Db = import('../repo/types.ts').Db;
 
-const { covers } = require('../commitments/semantic');
+const { covers } = require('../commitments/semantic.ts');
 
 const NAMES = 0.34; // share of a commitment's words the umbrella or list line must contain
 const SPELLED = 0.6; // ... for an umbrella over a single other commitment

@@ -38,15 +38,15 @@ function make(out, fail) {
   return {
     async task(args, flags) {
       const sub = String(args[0] || '').toLowerCase();
-      if (sub !== 'add') return fail(require('../commitments/request').USAGE);
-      const request = require('../commitments/request');
+      if (sub !== 'add') return fail(require('../commitments/request.ts').USAGE);
+      const request = require('../commitments/request.ts');
       const r = await request.add(addOptions(args, flags));
       out(request.describe(r));
     },
 
     async policy(args, flags) {
       const sub = String(args[0] || '').toLowerCase();
-      const policy = require('../commitments/sourcePolicy');
+      const policy = require('../commitments/sourcePolicy.ts');
       if (!sub || sub === 'show') {
         const d = policy.describe();
         out(`PA_COMMITMENT_SOURCES=${d.spec}`);
@@ -58,7 +58,7 @@ function make(out, fail) {
       }
       if (sub !== 'close') return fail('usage: pa policy [close [--apply]]');
       const apply = flagBool(flags, 'apply');
-      const pc = require('../commitments/policyClose');
+      const pc = require('../commitments/policyClose.ts');
       const r = await pc.run({ apply });
       out(pc.report(r, { apply }));
     },

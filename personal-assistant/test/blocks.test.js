@@ -3,7 +3,7 @@
 // Does what someone owes you block you? (src/commitments/blocks.js) — the pure parts.
 
 const assert = require('assert');
-const B = require('../src/commitments/blocks');
+const B = require('../src/commitments/blocks.ts');
 
 // Only ids asked for; a task not offered becomes null; a bad verdict is skipped.
 const v = B.parseVerdicts({ items: [

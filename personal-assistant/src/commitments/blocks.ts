@@ -15,13 +15,18 @@
 // Unblocking needs no pass of its own: the blocker closes — you press "They
 // delivered", or the reconciler (src/ledger/reconcile.js) sees it done in a
 // later message — and the board shows the task as unblocked.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+type Row = Record<string, any>;
+type Db = import('../repo/types.ts').Db;
 
 const llm = require('../llm.ts');
 const budget = require('../budget.ts');
 const { config } = require('../config.ts');
 const repo = require('../repo');
 const { logger } = require('../log.ts');
-const policy = require('./sourcePolicy');
+const policy = require('./sourcePolicy.ts');
 
 const log = logger('blocks');
 const PURPOSE = 'blocks';
@@ -47,15 +52,15 @@ When unsure whether the person needs it, "blocks" with task null: a hidden block
 
 Return ONLY JSON: {"items": [{"id": "B<id>", "verdict": "blocks" | "not_mine", "task": "T<id>" | null, "who": "..." | null, "why": "..."}]}`;
 
-const clip = (s, n) => String(s || '').replace(/\s+/g, ' ').trim().slice(0, n);
+const clip = (s: any, n: number) => String(s || '').replace(/\s+/g, ' ').trim().slice(0, n);
 
 /** Pure. The prompt for one batch. */
-function render(tasks, blockers) {
+function render(tasks: any, blockers: any) {
   const t = tasks.length
-    ? tasks.map((c) => `T#${c.id} ${clip(c.summary, 160)}${c.detail ? ` — ${clip(c.detail, 200)}` : ''}`).join('\n')
+    ? tasks.map((c: any) => `T#${c.id} ${clip(c.summary, 160)}${c.detail ? ` — ${clip(c.detail, 200)}` : ''}`).join('\n')
     : '(none)';
   const b = blockers
-    .map((c) => `B#${c.id} [${c.who || 'unknown person'}${c.place ? `, ${clip(c.place, 50)}` : ''}] ${clip(c.summary, 200)}${c.detail ? ` — ${clip(c.detail, 300)}` : ''}${c.body ? `\n    message: ${clip(c.body, 400)}` : ''}`)
+    .map((c: any) => `B#${c.id} [${c.who || 'unknown person'}${c.place ? `, ${clip(c.place, 50)}` : ''}] ${clip(c.summary, 200)}${c.detail ? ` — ${clip(c.detail, 300)}` : ''}${c.body ? `\n    message: ${clip(c.body, 400)}` : ''}`)
     .join('\n');
   return `TASKS:\n${t}\n\nOTHER PEOPLE OWE:\n${b}`;
 }
@@ -64,7 +69,7 @@ function render(tasks, blockers) {
  * Pure. The model's reply → Map blockerId → {verdict, taskId, why}. Ids not
  * asked for, and tasks not offered, are dropped; a bad verdict is skipped.
  */
-function parseVerdicts(value, blockerIds, taskIds) {
+function parseVerdicts(value: any, blockerIds: any[], taskIds: any[]) {
   const out = new Map();
   const asked = new Set([...blockerIds].map(String));
   const tasks = new Set([...taskIds].map(String));
@@ -86,14 +91,14 @@ function parseVerdicts(value, blockerIds, taskIds) {
 async function load() {
   const src = policy.sourceSql('si.source');
   const tasks = await repo.commitments.blockTasks(src);
-  const lastTask = tasks.reduce((m, c) => Math.max(m, new Date(c.extracted_at).getTime()), 0);
+  const lastTask = tasks.reduce((m: any, c: any) => Math.max(m, new Date(c.extracted_at).getTime()), 0);
   const blockers = await repo.commitments.blockCandidates(src);
   return { tasks, blockers, lastTask };
 }
 
 /** Pure. Which blockers to (re)judge. */
-function due(blockers, lastTask) {
-  return blockers.filter((b) => {
+function due(blockers: any, lastTask: any) {
+  return blockers.filter((b: any) => {
     if (b.manual) return false;
     if (!b.verdict) return true;
     if (b.task_gone) return true;
@@ -103,18 +108,18 @@ function due(blockers, lastTask) {
 }
 
 /** Drops a proposed task link whose two commitments are not close in meaning. */
-async function checkLinks(verdicts) {
+async function checkLinks(verdicts: any) {
   const pairs = [...verdicts].filter(([, v]) => v.taskId);
   if (!pairs.length) return;
   const sims = await repo.commitments
     .blockLinkCosines(pairs.map(([id]) => id), pairs.map(([, v]) => v.taskId))
     .catch(() => []);
-  const cos = new Map(sims.map((r) => [r.b, Number(r.cos)]));
-  for (const [id, v] of pairs) if (!(cos.get(String(id)) >= MIN_LINK_COSINE)) v.taskId = null;
+  const cos = new Map<string, number>(sims.map((r: any) => [r.b, Number(r.cos)]));
+  for (const [id, v] of pairs) if (!((cos.get(String(id)) ?? 0) >= MIN_LINK_COSINE)) v.taskId = null;
 }
 
 /** Judges what is due. Returns {judged, blocks, failed}. */
-async function pass({ limit = 60 } = {}) {
+async function pass({ limit = 60 }: { limit?: number } = {}) {
   const { tasks, blockers, lastTask } = await load();
   const todo = due(blockers, lastTask).slice(0, limit);
   if (!todo.length) return { judged: 0, blocks: 0, failed: 0 };
@@ -130,8 +135,8 @@ async function pass({ limit = 60 } = {}) {
         system: SYSTEM, prompt: render(tasks, batch), model: config.blocks.model,
         effort: 'medium', maxTokens: 4000, purpose: PURPOSE,
       });
-      verdicts = parseVerdicts(llm.extractJson(text), batch.map((b) => b.id), tasks.map((t) => t.id));
-    } catch (err) {
+      verdicts = parseVerdicts(llm.extractJson(text), batch.map((b: any) => b.id), tasks.map((t: any) => t.id));
+    } catch (err: any) {
       log.warn('judge call failed', { n: batch.length, message: err.message });
       failed += batch.length;
       continue;
@@ -148,7 +153,7 @@ async function pass({ limit = 60 } = {}) {
 }
 
 /** Your call on a card: it blocks (optionally a given task), or it is not yours to care about. */
-async function set(blockerId, { verdict, taskId = null, why = null }) {
+async function set(blockerId: any, { verdict, taskId = null, why = null }: { verdict?: any; taskId?: any | null; why?: any }) {
   if (verdict !== 'blocks' && verdict !== 'not_mine') throw Object.assign(new Error('verdict must be blocks or not_mine'), { status: 400 });
   await repo.commitments.upsertBlockManual(blockerId, taskId, verdict, why);
   return { ok: true };
@@ -158,7 +163,7 @@ async function set(blockerId, { verdict, taskId = null, why = null }) {
  * For the board: every judged blocker that is open, or closed in the last
  * few days while blocking an open task (that task shows "unblocked").
  */
-async function forBoard({ days = 3 } = {}) {
+async function forBoard({ days = 3 }: { days?: number } = {}) {
   return repo.commitments.blocksForBoard(days);
 }
 
