@@ -2704,6 +2704,45 @@ async def sandbox_run(
         from factory.api_watch import start_watch
 
         _watch_root = software_factory_root or Path(db_path or _DEFAULT_DB_PATH).parent.parent
+
+        def _upsert_step(row_id: int | None, session_json: str | None = None) -> int | None:
+            return _upsert_provisional_run(
+                row_id,
+                db_path=db_path,
+                persona=persona,
+                model=llm_config.model,
+                tokens_in=0,
+                tokens_out=0,
+                cached_input_tokens=0,
+                cost_usd=0.0,
+                duration_s=_elapsed(),
+                story_path=str(story_path),
+                repo_path=str(repo_path),
+                story_id=story_id,
+                model_tier=difficulty,
+                direction_id=direction_id,
+                app=app,
+                session_json=session_json,
+                started_at=_started_at,
+            )
+
+        def _open_step() -> tuple[int | None, dict[str, str] | None]:
+            # Called only when a termhub session is about to be created: the
+            # step row first, so the session's links (JOBS-API v1.4) name it.
+            from factory.claude_session.run import job_external_id, session_links
+
+            with _ledger_lock:
+                _ledger["id"] = _upsert_step(None)
+                row_id = _ledger["id"]
+            links = session_links(
+                app=app,
+                direction_id=direction_id,
+                story_id=story_id,
+                row_id=row_id,
+                extra={"external": job_external_id(Path(_watch_root), app, direction_id)},
+            )
+            return row_id, links
+
         _watch = start_watch(
             software_factory_root=Path(_watch_root),
             repo_path=Path(repo_path),
@@ -2713,30 +2752,13 @@ async def sandbox_run(
             story_id=story_id,
             direction_id=direction_id,
             usage_fn=lambda: _live_cost(),
+            open_step=_open_step,
         )
         if _watch is not None and _watch.warning:
             _log.info("api watch: %s", _watch.warning)
-        if _watch is not None and _watch.session:
+        if _watch is not None and _watch.session and _watch.step_id is not None:
             with _ledger_lock:
-                _ledger["id"] = _upsert_provisional_run(
-                    None,
-                    db_path=db_path,
-                    persona=persona,
-                    model=llm_config.model,
-                    tokens_in=0,
-                    tokens_out=0,
-                    cached_input_tokens=0,
-                    cost_usd=0.0,
-                    duration_s=_elapsed(),
-                    story_path=str(story_path),
-                    repo_path=str(repo_path),
-                    story_id=story_id,
-                    model_tier=difficulty,
-                    direction_id=direction_id,
-                    app=app,
-                    session_json=json.dumps(_watch.session, sort_keys=True),
-                    started_at=_started_at,
-                )
+                _upsert_step(_watch.step_id, json.dumps(_watch.session, sort_keys=True))
     except Exception:  # noqa: BLE001 - a watch must never break a run
         _log.warning("api watch: start failed", exc_info=True)
 

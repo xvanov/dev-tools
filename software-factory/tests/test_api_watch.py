@@ -396,10 +396,12 @@ class _FakeClient:
         self.created: list[dict[str, str]] = []
         self.fail = fail
 
-    def create_session(self, *, cwd: str, command: str, title: str) -> str:
+    def create_session(
+        self, *, cwd: str, command: str, title: str, links: dict[str, str] | None = None
+    ) -> str:
         if self.fail:
             raise RuntimeError("termhub 500")
-        self.created.append({"cwd": cwd, "command": command, "title": title})
+        self.created.append({"cwd": cwd, "command": command, "title": title, "links": links})
         return "th-1"
 
     def session_url(self, sid: str) -> str:
@@ -650,7 +652,12 @@ def test_sandbox_run_streams_and_links_the_session(
     # While running: a provisional row carrying the session.
     error_during, session_during = seen["during"]
     assert error_during == runner._PROVISIONAL_RUN_ERROR
-    assert json.loads(session_during)["termhub_session_id"] == "th-1"
+    during = json.loads(session_during)
+    assert during["termhub_session_id"] == "th-1"
+    # JOBS-API v1.4 links: the step row existed before the session, so it is named.
+    assert client.created[0]["links"] == during["links"]
+    assert during["links"]["job"] == "factory:042" and during["links"]["story"] == "7"
+    step_during = during["links"]["step"]
 
     # After: ONE finalised row that still links the (reviewable) session.
     con = sqlite3.connect(db)
@@ -658,6 +665,8 @@ def test_sandbox_run_streams_and_links_the_session(
     rows = [dict(r) for r in con.execute("SELECT * FROM runs")]
     con.close()
     assert len(rows) == 1 and rows[0]["success"] == 1 and rows[0]["cost_usd"] == 0.02
+    assert str(rows[0]["id"]) == step_during
+    assert json.loads(rows[0]["session_json"])["links"]["step"] == step_during
     assert rows[0]["started_at"]
     [view] = runs_view(rows)
     assert view["state"] == "ok" and view["session"]["url"].endswith("#session=th-1")

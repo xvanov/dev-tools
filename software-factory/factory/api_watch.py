@@ -423,6 +423,7 @@ class ApiWatch:
     stream: ApiStream
     session: dict[str, Any] | None = None  # session_json for the runs row
     warning: str | None = None
+    step_id: int | None = None  # the provisional runs row ``open_step`` opened
 
 
 def stream_dir(
@@ -519,8 +520,13 @@ def start_watch(
     story_id: Any,
     direction_id: str | None,
     usage_fn: UsageFn | None = None,
+    open_step: Callable[[], tuple[int | None, dict[str, str] | None]] | None = None,
 ) -> ApiWatch | None:
     """Open the stream file (and, when termhub is reachable, the live session).
+
+    ``open_step`` is called only when a session is about to be created: it
+    opens the run's provisional ``runs`` row and returns ``(row_id, links)``,
+    so the session's termhub ``links`` carry the step id.
 
     ``None`` when ``FACTORY_API_WATCH=off`` or the file cannot be created.
     """
@@ -550,12 +556,21 @@ def start_watch(
         watch.warning = watch.warning or "termhub not reachable; the run streams to its file only"
         return watch
     client, machine = picked
+    # The step (its ``runs`` row) exists BEFORE the session, so the session's
+    # links (JOBS-API v1.4, termhub ``links``) can name it.
+    links: dict[str, str] | None = None
+    if open_step is not None:
+        try:
+            watch.step_id, links = open_step()
+        except Exception:  # noqa: BLE001
+            _log.warning("api watch: opening the step row failed", exc_info=True)
     try:
         # cwd = FACTORY_ROOT: on Windows that is what makes ``-m factory…``
         # resolve (see ``follow_command``). FACTORY_TERMHUB_SHELL=cmd for a
         # Windows termhub whose sessions run cmd.exe instead of PowerShell.
         command = follow_command(stream.path, shell=os.environ.get("FACTORY_TERMHUB_SHELL"))
-        sid = client.create_session(cwd=str(FACTORY_ROOT), command=command, title=title)
+        extra: dict[str, Any] = {"links": links} if links else {}
+        sid = client.create_session(cwd=str(FACTORY_ROOT), command=command, title=title, **extra)
     except Exception as exc:  # noqa: BLE001
         watch.warning = f"termhub session not created: {exc}"
         return watch
@@ -570,6 +585,8 @@ def start_watch(
         "url": url,
         "stream": str(stream.path),
     }
+    if links:
+        watch.session["links"] = dict(links)
     try:
         (d / "session.json").write_text(json.dumps(watch.session), encoding="utf-8")
     except OSError:
