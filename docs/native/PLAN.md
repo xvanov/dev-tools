@@ -43,7 +43,7 @@ Design rationale: the plan page (proposal, 7 Nov 2026) and the research summary 
 | D14 | 2026-11-07 | **No macOS**: Windows and Linux only | No macOS CI jobs, no macOS sandbox, no macOS install in Exit 7. Both stacks run on Windows or Linux. |
 | D15 | 2026-11-07 | **Cut the factory port to TS, protobuf and mTLS** | Phase 6 dropped: once the factory is a native daemon (phase 2) the port gains little beyond one language, so Python stays. 1.1 uses JSON Schema instead of protobuf/ConnectRPC: one schema source, TS types generated, Python/Rust validate against it; transport is JSON over HTTP + SSE. 7.2 dropped: the stacks never connect and Tailscale ACLs already separate them. |
 | D16 | 2026-11-08 | **Phase 1 (and 2.1/2.2) start in parallel with the end of phase 0** | They are refactors with no behaviour change and don't depend on the golden path; waiting on Exit 0 left most agents idle. Exit gates are unchanged: Exit 1 and Exit 2 still need a green e2e run on both stacks. |
-| D17 | 2026-11-08 | **Prune test work** | Delete the factory tests for `apps/sacrifice` and `bench/swebench` (not in this repo; they only fail or skip). Drop T5 (timing budget in CI). The load-sensitive `supervisor` and `lease` tests were to run in CI only, but were de-flaked first (80f48d5, 20 loaded runs green), so they stay local. Suite time targets are unchanged. |
+| D17 | 2026-11-08 | **Prune test work** | Delete the factory tests for `apps/sacrifice` and `bench/swebench` (not in this repo; they only fail or skip). Drop T5 (timing budget in CI). The load-sensitive `supervisor` and `lease` tests run in CI only (0489d56), not locally or in pre-commit; they were also de-flaked (80f48d5). Suite time targets are unchanged. |
 
 ## Prerequisites (before phase 0)
 
