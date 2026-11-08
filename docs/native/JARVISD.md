@@ -120,7 +120,7 @@ short gap as the bootstrap), not a roll. On the work laptop (the pa-worker task 
    `redeploy.ps1`'s restart ends the supervisor and its generations by command line (node.exe and,
    on Bun, bun.exe running `jarvisd\src\main.ts`), then starts the task and waits for
    `/api/version`. `-Restart` forces that restart when a roll would otherwise do (a runtime
-   switch changes no code). Done live on the work stack 2026-11-08.
+   switch changes no code). Tried live on the work stack 2026-11-08 (see Status).
 5. Verify: `node src\supervisor status` (in `personal-assistant/`) shows `"runtime": "bun"` and a
    generation; the supervisor log says `spawned generation ... runtime: bun`; the dashboard,
    `/api/events` and a factory job behave as before. `pa doctor` should be unchanged.
@@ -145,6 +145,8 @@ setup; T7's cargo and Bun caches apply.
 
 - [x] Stage 1: host, Bun parity, compiled build, CI on Windows and Linux.
 - [x] Supervisor runs jarvisd generations (`PA_RUNTIME=bun`), tested with the fixture worker.
-- [x] The work stack runs on Bun (`PA_RUNTIME=bun`, 2026-11-08).
+- [ ] The work stack on Bun. Switched 2026-11-08 and rolled back to Node the same day: on Bun,
+  Talk's transcription came back empty (Bun reset the half-closed socket to whisper; fixed in
+  2aad672, now covered by the Bun parity set). Next try after that fix is deployed.
 - [x] Leaves in strict TS: `events/bus`, `util/{text,exclusive,scheduler,when}`, `policy`.
 - [ ] Stage 2 onward, as above.
