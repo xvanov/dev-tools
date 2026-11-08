@@ -1,20 +1,15 @@
 'use strict';
 
-// Plan 1.2: SQL lives only in src/repo (the repositories) and src/db (the pool
-// and migrations). A module elsewhere that requires src/db, or calls
-// .query/.rows/.one with a SQL literal, has not been converted. PENDING lists
-// the modules not converted yet; it may only shrink. A file not on it that has
-// SQL fails, and so does a file on it that no longer has any (delete its line).
-// Exit 1 needs PENDING empty.
+// Plan 1.2 (done): SQL lives only in src/repo (the repositories) and src/db
+// (the pool and migrations). A module elsewhere that requires src/db or the pg
+// driver, or calls .query/.rows/.one with a SQL literal, fails here: put the
+// statement in a repository method (with its contract case and SQLite twin).
 
 const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
 
 const ROOT = path.join(__dirname, '..');
-
-const PENDING = new Set([
-]);
 
 // May require src/db for the pool's lifecycle (a dedicated connection, close
 // on exit), never to run a statement; a SQL call in them still fails.
@@ -53,9 +48,6 @@ const hasSql = (f) => {
 };
 
 const unconverted = files.filter(hasSql);
-const notListed = unconverted.filter((f) => !PENDING.has(f));
-const stale = [...PENDING].filter((f) => !fs.existsSync(path.join(ROOT, f)) || !hasSql(f));
 
-assert.deepStrictEqual(notListed, [], `SQL outside src/repo (move it into a repository method):\n  ${notListed.join('\n  ')}`);
-assert.deepStrictEqual(stale, [], `converted (or gone): delete these lines from PENDING in test/repoBoundary.test.js:\n  ${stale.join('\n  ')}`);
-console.log(`repoBoundary: ok (${PENDING.size} module(s) still to convert)`);
+assert.deepStrictEqual(unconverted, [], `SQL outside src/repo (move it into a repository method):\n  ${unconverted.join('\n  ')}`);
+console.log(`repoBoundary: ok (${files.length} modules, SQL only in src/repo and src/db)`);

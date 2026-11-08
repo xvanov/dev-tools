@@ -312,25 +312,23 @@ run mid-step; a job continued on an existing branch (`--branch`).
   implement, so it never means less than Python's), the factory with `factory/contract_schemas.py`
   (`jsonschema`). Tested on both sides against real objects (job status, chainOf/runChain, card
   and board views, bus frames, permission prompts). Rust validates when Rust lands (phase 5).
-- [ ] **1.2 Repository interface** over today's Postgres: every one of the ~590 SQL call sites
-  goes through a typed repository method. No behaviour change.
+- [x] **1.2 Repository interface** over today's Postgres: every one of the ~590 SQL call sites
+  goes through a typed repository method. No behaviour change. (c664f1d ... 5d4c7a2)
   Scope: the PA only (579 sites in 69 modules; termhub has no SQL). The factory keeps its own
   SQLModel/SQLite store: it is Python and stays so (D15), JOBS-API v1.4 already keeps the PA out
   of it, and it is SQLite already, so phase 3 has nothing to move there. Shape: `src/repo/<aggregate>.js`
   exports `create(db)` with named, JSDoc-typed methods; `repo.withTx(fn)` gives `fn` the set bound
   to one transaction; the default set resolves `src/db` at call time, so tests that stub `src/db`
-  keep working. SQL text moves verbatim. `test/repoBoundary.test.js` lists the modules not yet
-  converted (it may only shrink) and fails on SQL anywhere else; `test/repoCalls.test.js` fails on
-  a `repo.<agg>.<method>(` call whose method does not exist (a575804).
-  Done: chunks A meetings (0e6f2c7), B memory/search (4dd952a), C commitments (ca2d764), D ledger,
-  proposals, drafts, secrets (d251fa7, a15c566, 8a4d936), F ingest/repos/routines (3e590f5),
-  G cli/dashboard/fastLane (a562a4b), eval and backup (d557ad6), and the lead's notify, lease,
-  budget, worker (cbafe98). **Left: chunk E, 13 modules** (dispatch/{index,factory,delivery,stats},
-  durable/{index,spawners,tasks/chase,tasks/runReview}, e2e/{goldenPath,deployTest}, mcp/{chatTools,
-  server}, dashboard/factory). Close-out when PENDING is empty: tick 1.2 and 1.3, mark the
-  repository layer live in architecture.json, delete PENDING.
-- [ ] **1.3 Contract tests** for every repository method, runnable against any backend. This is
-  the oracle for phase 3.
+  keep working. SQL text moves verbatim. `test/repoBoundary.test.js` fails on SQL (or a `src/db` or
+  `pg` require) anywhere outside `src/repo` and `src/db`, except the few POOL_ONLY modules that hold a
+  connection; `test/repoCalls.test.js` fails on a `repo.<agg>.<method>(` call whose method does not
+  exist (a575804).
+  Chunks: A meetings (0e6f2c7), B memory/search (4dd952a), C commitments (ca2d764), D ledger,
+  proposals, drafts, secrets (d251fa7, a15c566, 8a4d936), E dispatch/durable/e2e/mcp (5d4c7a2),
+  F ingest/repos/routines (3e590f5), G cli/dashboard/fastLane (a562a4b), eval and backup (d557ad6),
+  notify, lease, budget, worker (cbafe98).
+- [x] **1.3 Contract tests** for every repository method, runnable against any backend. This is
+  the oracle for phase 3. (c664f1d; strict on SQLite since da223d5)
   `test/repoContract.test.js` runs `test/contract/<aggregate>.contract.js` against each backend in
   `test/contract/_backends.js` (today Postgres: a throwaway `pa_test_contract_*` database, migrated,
   dropped; phase 3 adds SQLite), and fails when an aggregate method has no case. CI runs it in its own
