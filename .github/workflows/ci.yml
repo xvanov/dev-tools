@@ -159,7 +159,7 @@ jobs:
   # executable's --check, on both OSes.
   jarvisd:
     needs: changes
-    if: needs.changes.outputs.pa == 'true' || needs.changes.outputs.jarvisd == 'true'
+    if: needs.changes.outputs.pa == 'true' || needs.changes.outputs.jarvisd == 'true' || needs.changes.outputs.termhub == 'true'
     name: jarvisd (${{ matrix.os }})
     strategy:
       fail-fast: false
@@ -179,9 +179,13 @@ jobs:
           cache-dependency-path: |
             jarvisd/package-lock.json
             personal-assistant/package-lock.json
+            termhub/package-lock.json
       - run: npm ci
       - run: npm ci
         working-directory: personal-assistant
+      # termhub's front runs in jarvisd (`jarvisd front`): bundled into the executable, and its tests in the parity set.
+      - run: npm ci
+        working-directory: termhub
       - run: bash $GITHUB_WORKSPACE/.github/scripts/run.sh npm test
         shell: bash
       - run: bash $GITHUB_WORKSPACE/.github/scripts/run.sh node ../scripts/build.js --only jarvisd

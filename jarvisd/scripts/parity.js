@@ -11,11 +11,13 @@
 //
 // A file that skips itself (repoContract with no Postgres reachable) passes.
 
+const fs = require('fs');
 const path = require('path');
 const { spawnSync } = require('child_process');
 
 const JARVISD = path.join(__dirname, '..');
 const PA = path.join(JARVISD, '..', 'personal-assistant');
+const TERMHUB = path.join(JARVISD, '..', 'termhub');
 const BUN = path.join(JARVISD, 'node_modules', 'bun', 'bin', 'bun.exe');
 
 const FILES = [
@@ -40,16 +42,38 @@ const FILES = [
   'talkWhisper.test.js',
 ];
 
+// termhub's front (plan 4.1): jarvisd's `front` role runs termhub/front.js under Bun. Its own
+// tests run under Bun; sessiond, which owns the PTYs (node-pty, or ptyd), stays on Node, so the
+// swap test runs under Node with every front it starts in jarvisd (TERMHUB_FRONT_JARVISD=1):
+// a front killed and replaced mid-command, the terminal's output whole through the new one.
+const TERMHUB_FILES = [
+  'frontProxy.test.js',
+  'paProxy.test.js',
+  'passkeyGate.test.js',
+  'exec.test.js',
+  'transcribe.test.js',
+  'clientLog.test.js',
+  'serveUrl.test.js',
+  'peers.test.js',
+  'update.test.js',
+  ['frontSwap.test.js', { TERMHUB_FRONT_JARVISD: '1' }, 'node'],
+];
+
 const cfg = require(path.join(PA, 'test', 'runner.config.js'));
 const only = process.argv.slice(2);
 const env = { ...process.env, ...cfg.env };
 
 let failed = 0;
-for (const entry of FILES) {
-  const [f, extra] = Array.isArray(entry) ? entry : [entry, {}];
+const runs = [
+  ...FILES.map((e) => [PA, ...(Array.isArray(e) ? e : [e, {}])]),
+  ...(fs.existsSync(path.join(TERMHUB, 'node_modules')) ? TERMHUB_FILES.map((e) => [TERMHUB, ...(Array.isArray(e) ? e : [e, {}])]) : []),
+];
+if (!fs.existsSync(path.join(TERMHUB, 'node_modules'))) console.log('termhub: node_modules missing, its front tests not run (npm ci there)');
+for (const [cwd, f, extra, runtime] of runs) {
   if (only.length && !only.some((o) => f.includes(o))) continue;
   const t0 = Date.now();
-  const r = spawnSync(BUN, [path.join('test', f)], { cwd: PA, env: { ...env, ...extra }, encoding: 'utf8', windowsHide: true, timeout: 300_000 });
+  const exe = runtime === 'node' ? process.execPath : BUN;
+  const r = spawnSync(exe, [path.join('test', f)], { cwd, env: { ...env, ...extra }, encoding: 'utf8', windowsHide: true, timeout: 300_000 });
   const ok = r.status === 0;
   if (!ok) failed++;
   console.log(`${f.padEnd(24)} ${ok ? 'pass' : 'FAIL'}  ${((Date.now() - t0) / 1000).toFixed(1)}s`);

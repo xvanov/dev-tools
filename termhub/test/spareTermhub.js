@@ -72,6 +72,19 @@ function proc(code, env) {
   return child;
 }
 
+// jarvisd's front role from source, under the pinned Bun (jarvisd/package.json).
+function jarvisdFront(port, sessiondPort, env) {
+  const jd = path.join(ROOT, '..', 'jarvisd');
+  const bun = path.join(jd, 'node_modules', 'bun', 'bin', 'bun.exe');
+  const child = spawn(bun, [path.join(jd, 'src', 'main.ts'), 'front', '--port', String(port), '--sessiond-port', String(sessiondPort), '--host', '127.0.0.1'], { cwd: ROOT, env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+  let out = '';
+  child.stdout.on('data', (c) => (out += c));
+  child.stderr.on('data', (c) => (out += c));
+  child.output = () => out;
+  child.exited = new Promise((r) => child.once('exit', r));
+  return child;
+}
+
 async function startSpareTermhub() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'termhub-spare-'));
   const env = { ...process.env, TERMHUB_DATA_DIR: dir };
@@ -83,7 +96,10 @@ async function startSpareTermhub() {
   const fronts = [];
   async function startFront() {
     const port = await freePort();
-    const front = proc(`require('./front').startFront({ port: ${port}, sessiondPort: ${sessiondPort}, host: '127.0.0.1' })`, env);
+    // TERMHUB_FRONT_JARVISD=1: the front runs in jarvisd under Bun (plan 4.1); sessiond stays on Node.
+    const front = process.env.TERMHUB_FRONT_JARVISD === '1'
+      ? jarvisdFront(port, sessiondPort, env)
+      : proc(`require('./front').startFront({ port: ${port}, sessiondPort: ${sessiondPort}, host: '127.0.0.1' })`, env);
     front.port = port;
     await waitFor(async () => (await getJson(port, '/api/health')).status === 200, 60_000, 'front');
     fronts.push(front);

@@ -12,8 +12,8 @@
     "test": "tsc -p . && node scripts/parity.js && bun src/main.ts --check && node ../personal-assistant/test/supervisorBun.test.js"
   },
   "devDependencies": {
-    "@types/bun": "1.3.13",
-    "bun": "1.3.13",
+    "@types/bun": "1.4.4",
+    "bun": "1.4.4",
     "typescript": "5.9.3"
   }
 }

@@ -13,6 +13,9 @@
 //       the dashboard port and runs generations of this same executable
 //   jarvisd generation                              a worker generation (what
 //       the supervisor starts, with PA_SUPERVISED=1); also the default
+//   jarvisd front [--port N] [--sessiond-port N] [--host H]
+//       termhub's front (plan 4.1): the web UI, the proxy to sessiond (which owns
+//       the terminals, or ptyd does) and /pa/ to the dashboard
 //   jarvisd --check                                 load everything, start nothing
 
 interface Worker {
@@ -21,6 +24,10 @@ interface Worker {
 
 interface Supervisor {
   cli(argv: string[]): Promise<void>;
+}
+
+interface Front {
+  startFront(o: { port?: number; sessiondPort?: number; host?: string; claimPid?: boolean }): unknown;
 }
 
 /** The PA worker module (CommonJS), bundled into the executable. */
@@ -33,6 +40,17 @@ export function loadWorker(): Worker {
     return { main: async () => {} };
   }
   return require('../../personal-assistant/src/worker.ts') as Worker;
+}
+
+/** termhub's front (termhub/front.js), bundled too. It holds no terminals, so Bun can run it. */
+export function loadFront(): Front {
+  return require('../../termhub/front.js') as Front;
+}
+
+/** `--name value` from argv, as a number when it is one. */
+function flag(args: string[], name: string): string | undefined {
+  const i = args.indexOf(`--${name}`);
+  return i >= 0 ? args[i + 1] : undefined;
 }
 
 /** The supervisor (personal-assistant/src/supervisor/index.ts), bundled too. */
@@ -53,6 +71,7 @@ if (import.meta.main) {
     const w = loadWorker();
     if (typeof w.main !== 'function') throw new Error('the PA worker has no main()');
     if (typeof loadSupervisor().cli !== 'function') throw new Error('the supervisor has no cli()');
+    if (typeof loadFront().startFront !== 'function') throw new Error('the termhub front has no startFront()');
     console.log(`jarvisd ok: bun ${Bun.version}`);
     process.exit(0);
   } else if (args[0] === 'supervise') {
@@ -63,6 +82,18 @@ if (import.meta.main) {
     process.env.PA_JARVISD_SELF = /^bun(\.exe)?$/i.test(require('node:path').basename(process.execPath)) ? 'bun' : 'exe';
     process.env.PA_RUNTIME = 'jarvisd';
     loadSupervisor().cli(args.slice(1)).catch(fail('supervise'));
+  } else if (args[0] === 'front') {
+    // As `node front.js`: the default ports claim the pid file; ports given
+    // (a spare front, an update's second front) do not.
+    const port = flag(args, 'port');
+    const sessiondPort = flag(args, 'sessiond-port');
+    const host = flag(args, 'host');
+    loadFront().startFront({
+      ...(port ? { port: Number(port) } : {}),
+      ...(sessiondPort ? { sessiondPort: Number(sessiondPort) } : {}),
+      ...(host ? { host } : {}),
+      claimPid: !port,
+    });
   } else {
     loadWorker().main().catch(fail('generation'));
   }
