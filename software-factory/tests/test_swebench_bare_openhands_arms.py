@@ -835,13 +835,14 @@ def test_openhands_runs_the_factory_dev_route_and_iteration_budget(A: Any) -> No
     # The budget comes from the ONE arm registry, which _resolve_max_steps reads.
     assert A._ARMS["openhands"].max_steps == A._OPENHANDS_ITERATION_CAP
     assert A._resolve_max_steps("openhands", None) == A._OPENHANDS_ITERATION_CAP
-    # The factory dev's own per-attempt cap is sandbox_run's signature default.
+    # The factory dev's own per-attempt cap is sandbox_run's signature default;
+    # sandbox_run is a guard wrapper, so the signature lives on the impl.
     runner_src = _RUNNER.read_text(encoding="utf-8")
     tree = ast.parse(runner_src)
     fn = next(
         n
         for n in ast.walk(tree)
-        if isinstance(n, ast.AsyncFunctionDef) and n.name == "sandbox_run"
+        if isinstance(n, ast.AsyncFunctionDef) and n.name == "_sandbox_run_impl"
     )
     idx = fn.args.kwonlyargs.index(
         next(a for a in fn.args.kwonlyargs if a.arg == "max_iterations")
