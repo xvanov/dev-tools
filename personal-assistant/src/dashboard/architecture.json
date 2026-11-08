@@ -1150,7 +1150,7 @@
       ],
       "code": [
         "personal-assistant/sql",
-        "personal-assistant/src/db/index.js",
+        "personal-assistant/src/db/index.ts",
         "personal-assistant/src/db/migrate.ts",
         "personal-assistant/src/db/migrationRules.ts",
         "personal-assistant/test/migrations.test.js",
