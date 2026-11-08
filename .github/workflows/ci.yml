@@ -357,6 +357,14 @@ jobs:
           sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev
       - run: npm ci
         working-directory: desktop
+      # Tauri downloads NSIS from github.com to bundle the Windows installer, and
+      # that download has 504'd (run 42467783684). Keep it between runs.
+      - name: Tauri bundler tools cache (Windows)
+        if: runner.os == 'Windows'
+        uses: actions/cache@v4
+        with:
+          path: ~\AppData\Local\tauri
+          key: tauri-tools-${{ runner.os }}-nsis-3.13
       - name: desktop fmt / clippy / unit tests
         working-directory: desktop/src-tauri
         shell: bash
@@ -365,7 +373,10 @@ jobs:
           cargo fmt --check
           cargo clippy --locked --all-targets -- -D warnings
           cargo test --locked
-      - run: bash $GITHUB_WORKSPACE/.github/scripts/run.sh node scripts/build.js --release
+      # One retry: the bundlers fetch tools from github.com, which has answered 504.
+      # The second pass is incremental (sccache, and cargo's own target dir).
+      - run: |
+          node scripts/build.js --release || { echo "::warning::build failed once; retrying in 20 s"; sleep 20; bash $GITHUB_WORKSPACE/.github/scripts/run.sh node scripts/build.js --release; }
         shell: bash
       - uses: actions/upload-artifact@v4
         with:
