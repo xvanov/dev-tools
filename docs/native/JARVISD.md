@@ -54,7 +54,13 @@ surfaces move only once everything under them is typed.
 6. **Surfaces.** Dashboard routes into one typed router, the MCP server and chat tools, `cli`
    (`pa` becomes a thin client of jarvisd's API where it now opens its own pool).
 7. **termhub front last**: its HTTP/WebSocket server and the `/pa/` proxy move into jarvisd's
-   gateway once `ptyd` (5.1) owns the PTYs; termhub's `server.js` then retires.
+   gateway once `ptyd` (5.1) owns the PTYs; termhub's `server.js` then retires. Done as a role:
+   `jarvisd front [--port N] [--sessiond-port N] [--host H]` runs `termhub/front.js` under Bun,
+   bundled into the executable. sessiond stays on Node (node-pty aborts Bun; with
+   `TERMHUB_PTYD=1` the terminals are in ptyd anyway). It needed Bun 1.4: on 1.3.13 a
+   `node:http` server's `upgrade` socket took no writes, so every WebSocket through the front
+   hung (terminals, the voice feed). The parity set runs termhub's front tests under Bun and
+   `frontSwap.test.js` with every front in jarvisd (`TERMHUB_FRONT_JARVISD=1`).
 
 How a module moves (the pattern is `personal-assistant/src/events/bus.ts`, the first one):
 
@@ -187,7 +193,7 @@ short gap as the bootstrap), not a roll. On the work laptop (the pa-worker task 
 `node src\supervisor` in `personal-assistant/`):
 
 1. `git -C C:\repos\dev-tools pull --ff-only`, then `npm ci` in `C:\repos\dev-tools\jarvisd`
-   (installs the pinned Bun; `jarvisd\node_modules\bun\bin\bun.exe --version` says 1.3.13).
+   (installs the pinned Bun; `jarvisd\node_modules\bun\bin\bun.exe --version` says 1.4.4).
 2. Check the graph loads: `C:\repos\dev-tools\jarvisd\node_modules\bun\bin\bun.exe
    C:\repos\dev-tools\jarvisd\src\main.ts --check` prints `jarvisd ok`.
 3. Add `PA_RUNTIME=bun` to `personal-assistant\.env` (the supervisor reads it there; `PA_BUN`
@@ -235,4 +241,15 @@ setup; T7's cargo and Bun caches apply.
   `talk.page.js`, `voiceCapture.js`, ...) stay JS. `mcp/server.js` stays as the entry Claude
   Code and the chat start, and runs `server.ts`. JSON a JS producer hands over (board cards,
   factory views, tool arguments) is a documented loose `Json` record until that producer is TS.
-- [ ] Stage 2's `db`, stages 3 to 5, the one typed router, `cli`, as above.
+- [x] Stage 2's rest: `repo/index.ts` and `db/*.ts` (`index.js` shims for both directories).
+- [x] Stages 3 to 5 for the root modules (config, log, llm, budget, models, backup, the worker
+  itself: `worker.js` is the entry shim), chat, cli and the supervisor's deploy; chunks A to D
+  (util, events, telemetry, platform, auth, secrets, notify, search, recall; ingest, distill,
+  memory, projects, repos, brief; commitments, ledger, proposals, draft, meetings, routines,
+  eval; dispatch, durable, e2e, audio, still converting) by parallel agents. Values a JS producer hands over are
+  `any`/`Json` until it switches to ES exports. `test/requiresResolve.test.js` fails on a
+  relative require that resolves to no file (Node never adds `.ts`).
+- [x] The one typed router (`dashboard/router.ts`, the `ROUTES` table in `server.ts`).
+- [x] The termhub front in jarvisd (`jarvisd front`), under the parity set, on Bun 1.4.4.
+- [ ] Modules switch to ES exports (then `Repos`, `Config` and `Json` get real types); `pa` as a
+  thin client of jarvisd's API; termhub's `server.js` and the separate `front` process retire.
