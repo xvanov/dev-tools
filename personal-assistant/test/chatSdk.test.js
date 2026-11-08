@@ -14,13 +14,30 @@ const T = require('../src/chat/transcript.ts');
 const { engine } = require('../src/chat/feed.ts');
 
 const tick = () => new Promise((r) => setImmediate(r));
-async function until(fn, what, ms = 2000) {
-  const end = Date.now() + ms;
-  while (!fn()) {
-    if (Date.now() > end) throw new Error(`timed out waiting for ${what}`);
-    await tick();
-  }
+// A wait is re-checked when something it waits on happens: a feed event, or a
+// call on one of the fakes below (each calls changed()). No clock: a loaded
+// machine outran a fixed 2 s. A wait nothing can satisfy any more leaves the
+// event loop empty, and beforeExit names it.
+const waiting = new Map();
+function changed() {
+  for (const check of [...waiting.keys()]) check();
 }
+function until(fn, what) {
+  return new Promise((resolve) => {
+    const check = () => {
+      if (!fn()) return;
+      waiting.delete(check);
+      resolve();
+    };
+    waiting.set(check, what);
+    check();
+  });
+}
+process.on('beforeExit', () => {
+  if (!waiting.size) return;
+  console.error(`never happened: ${[...waiting.values()].join(', ')}`);
+  process.exit(1);
+});
 
 // A stand-in for @anthropic-ai/claude-agent-sdk's query(): the test reads what
 // the feed streams in and emits what the SDK would stream out.
@@ -56,6 +73,7 @@ function fakeSdk() {
     gen.close = () => {
       run.closed = true;
       run.end();
+      changed();
     };
     return gen;
   }
@@ -72,6 +90,7 @@ function fakePolicy(rules = {}) {
     },
     async authorize(req, opts = {}) {
       calls.authorize.push({ req, opts });
+      changed();
       const r = rules[req.tool];
       return r || { decision: 'ask', rule: 'default', reason: 'no rule matches', tags: [] };
     },
@@ -99,6 +118,7 @@ function fakeHub() {
       const s = { id: `view-${created.length + 1}`, cwd: o.cwd, alive: true };
       created.push(o);
       sessions.push(s);
+      changed();
       return { id: s.id };
     },
     async sessionUrl(id) {
@@ -110,7 +130,7 @@ function fakeHub() {
 function makeFeed({ dir, sdk, policy, timeoutMs = 60_000, root = path.join(dir, 'projects'), hub = fakeHub() }) {
   const home = path.join(dir, 'pa-home');
   fs.mkdirSync(home, { recursive: true });
-  return S.createSdkFeed({
+  const feed = S.createSdkFeed({
     loadSdk: async () => ({ query: sdk.query }),
     prepare: () => ({ home, mcpServers: { 'pa-chat': { type: 'stdio', command: 'node', args: ['server.js'], env: { PA_MCP_CHAT_TOOLS: '1' } } } }),
     policy: () => policy,
@@ -122,6 +142,9 @@ function makeFeed({ dir, sdk, policy, timeoutMs = 60_000, root = path.join(dir, 
     hub: () => hub,
     viewCommand: (file) => `node sdkView.js --follow "${file}"`,
   });
+  // After the test's own subscriber has seen the event too.
+  feed.subscribe(() => queueMicrotask(changed));
+  return feed;
 }
 
 const sdkMsg = {

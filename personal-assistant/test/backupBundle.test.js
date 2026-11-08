@@ -19,6 +19,12 @@ const crypt = require('../src/backupCrypto.ts');
 
 (async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pa-bundle-'));
+  // unpack() extracts under os.tmpdir(), which reads these on every call: this
+  // file's own folder, so another run's unpack is never counted as this one's.
+  const tmp = path.join(dir, 'tmp');
+  fs.mkdirSync(tmp);
+  for (const v of ['TMPDIR', 'TEMP', 'TMP']) process.env[v] = tmp;
+  const unpackDirs = () => fs.readdirSync(tmp).filter((n) => n.startsWith('pa-unpack-'));
   try {
     // ---- compareCounts ----
     assert.deepStrictEqual(backup.compareCounts({ a: 100, b: 0 }, { a: 101, b: 0, extra: 5 }), { ok: true, checked: 2, problems: [] });
@@ -71,14 +77,15 @@ const crypt = require('../src/backupCrypto.ts');
     fs.rmSync(viaEnv.dir, { recursive: true, force: true });
 
     // Wrong key and damaged file: refused, nothing left in temp.
-    const before = fs.readdirSync(os.tmpdir()).filter((n) => n.startsWith('pa-unpack-')).length;
+    assert.strictEqual(os.tmpdir(), tmp);
+    assert.deepStrictEqual(unpackDirs(), [], 'the good unpacks were cleaned up by the test');
     assert.throws(() => backup.unpack(out, { key: crypto.randomBytes(32) }), /authentication/);
     const damaged = path.join(dir, 'damaged.pabak');
     const bytes = Buffer.from(raw);
     bytes[bytes.length - 100] ^= 1;
     fs.writeFileSync(damaged, bytes);
     assert.throws(() => backup.unpack(damaged, { key }), /authentication/);
-    assert.strictEqual(fs.readdirSync(os.tmpdir()).filter((n) => n.startsWith('pa-unpack-')).length, before, 'no unpack folder left behind');
+    assert.deepStrictEqual(unpackDirs(), [], 'no unpack folder left behind');
 
     // A state dir moved out of the repo under another name (`factory state migrate --to`).
     const moved = path.join(dir, 'sf-state');
