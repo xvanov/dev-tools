@@ -14,7 +14,7 @@ const path = require('path');
 
 // ---- unset secrets do not each start a process ----
 {
-  const vault = require('../src/secrets/vault');
+  const vault = require('../src/secrets/vault.ts');
   vault.useBackend('windows');
   const ops = [];
   const store = new Map([['PA_TEST_STALL_PRESENT', 'v1']]);

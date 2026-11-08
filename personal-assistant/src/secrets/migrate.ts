@@ -18,6 +18,11 @@
 //    and an empty value is "unset" to every reader (config.env, dotenv).
 //  - A name already in the keychain with a *different* value is never
 //    overwritten: it is reported and the `.env` line stays.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+type Row = import('../repo/types.ts').Row;
+type Db = import('../repo/types.ts').Db;
 
 const fs = require('fs');
 const path = require('path');
@@ -37,23 +42,23 @@ const PA_READABLE = [
 // kept, so nothing sensitive is overlooked.
 const LOOKS_SECRET = /(KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|PAT)$/;
 
-function parseLine(raw) {
+function parseLine(raw: string) {
   const m = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=(.*)$/.exec(raw);
   if (!m) return null;
-  let v = m[2].trim();
+  let v = (m[2] as string).trim();
   if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) v = v.slice(1, -1);
-  return { name: m[1], value: v };
+  return { name: m[1] as string, value: v };
 }
 
 /** The factory's own key names: what its .env.example declares and the factory reads (software-factory/factory/keychain.py). */
-function factoryReadable(exampleFile) {
+function factoryReadable(exampleFile: string) {
   let text = '';
   try {
     text = fs.readFileSync(exampleFile, 'utf8');
   } catch {
     return [];
   }
-  const out = [];
+  const out: string[] = [];
   for (const raw of text.split(/\r?\n/)) {
     const p = parseLine(raw);
     if (p && NAME_RE.test(p.name) && LOOKS_SECRET.test(p.name)) out.push(p.name);
@@ -62,11 +67,11 @@ function factoryReadable(exampleFile) {
 }
 
 /** Blanks `NAME=` lines in place (other lines, comments and order kept); the file is written whole, then renamed. */
-function blankEnvLines(file, names) {
+function blankEnvLines(file: string, names: string[]) {
   const text = fs.readFileSync(file, 'utf8');
   const eol = text.includes('\r\n') ? '\r\n' : '\n';
   const set = new Set(names);
-  const lines = text.split(/\r?\n/).map((l) => {
+  const lines = text.split(/\r?\n/).map((l: string) => {
     const p = parseLine(l);
     return p && set.has(p.name) ? `${p.name}=` : l;
   });
@@ -83,10 +88,14 @@ function blankEnvLines(file, names) {
  * @param {{file: string, readable: string[]}[]} sources
  * @returns {{file: string, name: string, action: 'move'|'dedupe'|'conflict'|'kept'|'empty'}[]}
  */
-function plan(sources, have) {
-  const rows = [];
+type Source = { file: string; readable: string[] };
+type PlanRow = { file: string; name: string | undefined; action: string; error?: string };
+type VaultLike = { available(): boolean; get(n: string): string | null; set(n: string, v: string): void; scrub?: (text: unknown, value?: string) => string };
+
+function plan(sources: Source[], have: (name: string, value: string) => string | null): PlanRow[] {
+  const rows: PlanRow[] = [];
   for (const { file, readable } of sources) {
-    let text;
+    let text: string;
     try {
       text = fs.readFileSync(file, 'utf8');
     } catch {
@@ -96,7 +105,7 @@ function plan(sources, have) {
     for (const raw of text.split(/\r?\n/)) {
       const p = parseLine(raw);
       if (!p || !NAME_RE.test(p.name) || seen.has(p.name)) continue;
-      const movable = readable.includes(p.name);
+      const movable = readable.includes(p.name as string);
       if (!movable && !LOOKS_SECRET.test(p.name)) continue;
       seen.add(p.name);
       if (!p.value) {
@@ -107,7 +116,7 @@ function plan(sources, have) {
         rows.push({ file, name: p.name, action: 'kept' });
         continue;
       }
-      const h = have(p.name, p.value);
+      const h = have(p.name as string, p.value);
       rows.push({ file, name: p.name, action: h === 'same' ? 'dedupe' : h === 'different' ? 'conflict' : 'move' });
     }
   }
@@ -115,7 +124,7 @@ function plan(sources, have) {
 }
 
 /** The value of NAME in a file (internal: handed straight to the vault, never returned). */
-function valueIn(file, name) {
+function valueIn(file: string, name: string) {
   for (const raw of fs.readFileSync(file, 'utf8').split(/\r?\n/)) {
     const p = parseLine(raw);
     if (p && p.name === name) return p.value;
@@ -128,10 +137,10 @@ function valueIn(file, name) {
  * @param {{vault: {available(): boolean, get(n): string|null, set(n, v): void}, apply?: boolean, onStored?: (name: string) => void}} o
  * @returns {{available: boolean, apply: boolean, rows: object[]}} names, files and verdicts only
  */
-function migrate(sources, { vault, apply = false, onStored = () => {} }) {
+function migrate(sources: Source[], { vault, apply = false, onStored = () => {} }: { vault: VaultLike; apply?: boolean; onStored?: (name: string) => void }) {
   if (!vault.available()) return { available: false, apply, rows: [] };
-  const have = (name, value) => {
-    let cur = null;
+  const have = (name: string, value: string) => {
+    let cur: string | null = null;
     try {
       cur = vault.get(name);
     } catch {
@@ -142,18 +151,18 @@ function migrate(sources, { vault, apply = false, onStored = () => {} }) {
   const rows = plan(sources, have);
   if (!apply) return { available: true, apply, rows };
 
-  const blanks = new Map(); // file -> names to empty
+  const blanks = new Map<string, string[]>(); // file -> names to empty
   for (const r of rows) {
     if (r.action !== 'move' && r.action !== 'dedupe') continue;
-    const value = valueIn(r.file, r.name);
+    const value = valueIn(r.file, r.name as string);
     if (r.action === 'move') {
       try {
-        vault.set(r.name, value);
-        if (vault.get(r.name) !== value) throw new Error('read-back differs');
-        onStored(r.name);
+        vault.set(r.name as string, value);
+        if (vault.get(r.name as string) !== value) throw new Error('read-back differs');
+        onStored(r.name as string);
       } catch (err) {
         r.action = 'failed';
-        r.error = vault.scrub ? vault.scrub(err.message, value) : 'could not store';
+        r.error = vault.scrub ? vault.scrub((err as Error).message, value) : 'could not store';
         continue;
       }
       r.action = 'moved';
@@ -161,14 +170,14 @@ function migrate(sources, { vault, apply = false, onStored = () => {} }) {
       r.action = 'deduped';
     }
     if (!blanks.has(r.file)) blanks.set(r.file, []);
-    blanks.get(r.file).push(r.name);
+    blanks.get(r.file)!.push(r.name as string);
   }
   for (const [file, names] of blanks) blankEnvLines(file, names);
   return { available: true, apply, rows };
 }
 
 /** The .env files `pa secrets migrate` looks at by default, with what each may move. */
-function defaultSources({ toolDir, repoRoot }) {
+function defaultSources({ toolDir, repoRoot }: { toolDir?: unknown; repoRoot?: unknown }) {
   const factoryDir = path.join(repoRoot, 'software-factory');
   return [
     { file: path.join(toolDir, '.env'), readable: PA_READABLE },

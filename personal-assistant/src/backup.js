@@ -183,7 +183,7 @@ function backupKey({ create = false } = {}) {
   const have = cfg.secret(KEY_NAME);
   if (have) return { key: crypt.parseKey(have), created: false };
   if (!create) return null;
-  const vault = require('./secrets/vault');
+  const vault = require('./secrets/vault.ts');
   if (!vault.available()) return null;
   const key = crypt.generateKey();
   vault.set(KEY_NAME, key.toString('base64'));

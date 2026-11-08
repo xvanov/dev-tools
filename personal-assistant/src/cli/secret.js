@@ -98,7 +98,7 @@ function make(out, fail) {
         const value = await readHidden(`${name} (input hidden): `);
         if (!value.trim()) return fail('nothing entered — nothing stored');
         const r = await secrets.store(name, value, { target, by: 'cli' });
-        out(`stored ${r.name} in ${r.stored === 'env-file' ? 'personal-assistant/.env' : require('../secrets/vault').label()}`);
+        out(`stored ${r.name} in ${r.stored === 'env-file' ? 'personal-assistant/.env' : require('../secrets/vault.ts').label()}`);
         return;
       }
 
@@ -122,8 +122,8 @@ function make(out, fail) {
 
       if (sub === 'migrate') {
         if (!flagBool(flags, 'from-env')) return fail('usage: pa secrets migrate --from-env [--file <.env>] [--apply]');
-        const migrate = require('../secrets/migrate');
-        const vault = require('../secrets/vault');
+        const migrate = require('../secrets/migrate.ts');
+        const vault = require('../secrets/vault.ts');
         const cfg = require('../config.ts');
         const toolDir = cfg.config.toolDir;
         const defaults = migrate.defaultSources({ toolDir, repoRoot: path.resolve(toolDir, '..') });

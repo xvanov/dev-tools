@@ -145,7 +145,7 @@ const darwin = platform.select('darwin');
 {
   const FAKE = 'fake-linux-tok-Q9z-not-real';
   const NAME = 'PA_TEST_LINUX_TOKEN';
-  const vault = require('../src/secrets/vault');
+  const vault = require('../src/secrets/vault.ts');
 
   const inv = linux.vault.invocation({ op: 'set', name: NAME, value: FAKE });
   assert.strictEqual(inv.command, 'secret-tool');

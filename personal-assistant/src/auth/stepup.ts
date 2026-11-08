@@ -10,14 +10,18 @@
 //
 // With PA_PASSKEYS off nothing here applies: requiresStepUp() is false and the
 // approval path is whatever it was before.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
 
-const { enabled } = require('./settings');
+type Repos = Record<string, any>;
+
+const { enabled } = require('./settings.ts');
 
 /** The approval kinds that always need a passkey tap. */
 const HIGH_RISK = new Set(['merge', 'push_main', 'secret_reveal']);
 
 /** Whether an approval of `kind` needs a passkey step-up right now. */
-function requiresStepUp(kind) {
+function requiresStepUp(kind: string) {
   return enabled() && HIGH_RISK.has(String(kind));
 }
 
@@ -31,14 +35,14 @@ function requiresStepUp(kind) {
  * @param {{repos?: object, now?: Date, consume?: boolean}} [opts]
  * @returns {Promise<{ok: boolean, reason: string}>}
  */
-async function hasStepUp(approvalId, { repos, now = new Date(), consume = false } = {}) {
+async function hasStepUp(approvalId: number | string, { repos, now = new Date(), consume = false }: { repos?: Repos | undefined; now?: Date | null | undefined; consume?: boolean } = {}) {
   if (!approvalId || typeof approvalId !== 'string') return { ok: false, reason: 'no approval id' };
   const r = repos || require('../repo');
   const ok = consume ? await r.passkeys.consumeStepUp(approvalId, now) : await r.passkeys.hasStepUp(approvalId, now);
   return ok ? { ok: true, reason: 'passkey step-up' } : { ok: false, reason: 'needs a fresh passkey assertion for this approval' };
 }
 
-const KIND_BY_DELIVERY = { auto_merge: 'merge', push_to_main: 'push_main' };
+const KIND_BY_DELIVERY: Record<string, string> = { auto_merge: 'merge', push_to_main: 'push_main' };
 
 /**
  * The dashboard's own gate for the two delivery levels that run with no human
@@ -51,7 +55,7 @@ const KIND_BY_DELIVERY = { auto_merge: 'merge', push_to_main: 'push_main' };
  *   (the grant is used up); else the refusal to send, which tells the page
  *   which approval id to ask a passkey tap for (paAuth.stepUp) before retrying.
  */
-async function demandForDelivery(level, approvalId, { repos, now } = {}) {
+async function demandForDelivery(level: string, approvalId: number | string, { repos, now }: { repos?: Repos | undefined; now?: Date | null | undefined } = {}) {
   const kind = KIND_BY_DELIVERY[level];
   if (!kind || !requiresStepUp(kind)) return null;
   const r = await hasStepUp(approvalId, { repos, now, consume: true });
@@ -69,8 +73,8 @@ async function demandForDelivery(level, approvalId, { repos, now } = {}) {
 eedsStepUp and the pprovalId to ask the tap for, which is
  * what makes the page show "Approve with passkey" instead of a dead end.
  */
-function errorBody(err) {
-  const body = { error: String(err && err.message || err) };
+function errorBody(err: any) {
+  const body: { error: string; needsStepUp?: boolean; approvalId?: string } = { error: String(err && err.message || err) };
   if (err && err.needsStepUp && typeof err.approvalId === 'string') {
     body.needsStepUp = true;
     body.approvalId = err.approvalId;

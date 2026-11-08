@@ -16,21 +16,29 @@
 //     opened for B, whose challenge the authenticator signed.
 //
 // Nothing here reads the request or sets a cookie: src/dashboard/auth.js does.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+type Repos = Record<string, any>;
+type Row = Record<string, any>;
+type Rand = (n: number) => Buffer;
+type Open = { kind: string; challenge: unknown; expires: number; approvalId?: number | string | null };
 
 const crypto = require('crypto');
-const { settings } = require('./settings');
+const { settings } = require('./settings.ts');
 
 const OWNER = { name: 'owner', id: Buffer.from('pa-owner-v1') };
 const MAX_OPEN = 50;
 
-const b64 = (buf) => Buffer.from(buf).toString('base64url');
+const b64 = (buf: Uint8Array | string) => Buffer.from(buf).toString('base64url');
 
 function lib() {
   return require('@simplewebauthn/server');
 }
 
 class AuthError extends Error {
-  constructor(message, status = 400) {
+  status: number;
+  constructor(message: string, status: number = 400) {
     super(message);
     this.status = status;
   }
@@ -40,20 +48,20 @@ class AuthError extends Error {
  * @param {{repos: object, now?: () => Date, rand?: (n:number)=>Buffer}} deps
  *   `now` and `rand` are injected by tests (fixed clock, fixed challenges).
  */
-function createCeremonies({ repos, now = () => new Date(), rand = crypto.randomBytes }) {
-  const open = new Map(); // ceremonyId -> {kind, challenge, approvalId, expires}
+function createCeremonies({ repos, now = () => new Date(), rand = crypto.randomBytes }: { repos: Repos; now?: () => Date; rand?: Rand }) {
+  const open = new Map<string, Open>(); // ceremonyId -> {kind, challenge, approvalId, expires}
 
-  function remember(kind, challenge, extra = {}) {
+  function remember(kind: string, challenge: unknown, extra: { approvalId?: number | string | null } = {}) {
     const t = now().getTime();
     for (const [id, c] of open) if (c.expires <= t) open.delete(id);
-    while (open.size >= MAX_OPEN) open.delete(open.keys().next().value);
+    while (open.size >= MAX_OPEN) open.delete(open.keys().next().value as string);
     const ceremonyId = b64(rand(16));
     open.set(ceremonyId, { kind, challenge, expires: t + settings().challengeMs, ...extra });
     return ceremonyId;
   }
 
   /** Takes (and removes) the open ceremony: single use, right kind, not expired. */
-  function take(ceremonyId, kind) {
+  function take(ceremonyId: number | string | null | undefined, kind: string): Open {
     const c = open.get(String(ceremonyId));
     open.delete(String(ceremonyId));
     if (!c || c.kind !== kind || c.expires <= now().getTime()) throw new AuthError('unknown or expired ceremony');
@@ -77,17 +85,17 @@ function createCeremonies({ repos, now = () => new Date(), rand = crypto.randomB
         userID: OWNER.id,
         challenge,
         attestationType: 'none',
-        excludeCredentials: existing.map((c) => ({ id: c.id, transports: c.transports })),
+        excludeCredentials: existing.map((c: Row) => ({ id: c.id, transports: c.transports })),
         authenticatorSelection: { residentKey: 'preferred', userVerification: 'required' },
       });
       return { ceremonyId: remember('register', options.challenge), options };
     },
 
     /** Verifies the browser's create() result and stores the passkey. @returns {{id: string}} */
-    async verifyRegistration({ ceremonyId, response, label = '' }) {
+    async verifyRegistration({ ceremonyId, response, label = '' }: { ceremonyId?: number | string | null; response?: any; label?: string }) {
       const s = settings();
       const c = take(ceremonyId, 'register');
-      let v;
+      let v: any;
       try {
         v = await lib().verifyRegistrationResponse({
           response,
@@ -97,7 +105,7 @@ function createCeremonies({ repos, now = () => new Date(), rand = crypto.randomB
           requireUserVerification: true,
         });
       } catch (err) {
-        throw new AuthError(`registration refused: ${err.message}`);
+        throw new AuthError(`registration refused: ${(err as Error).message}`);
       }
       if (!v.verified) throw new AuthError('registration refused');
       const cred = v.registrationInfo.credential;
@@ -112,7 +120,7 @@ function createCeremonies({ repos, now = () => new Date(), rand = crypto.randomB
     },
 
     /** Options for navigator.credentials.get(): a sign-in, or a step-up for `approvalId`. */
-    async authenticationOptions({ approvalId = null } = {}) {
+    async authenticationOptions({ approvalId = null }: { approvalId?: number | string | null } = {}) {
       const s = settings();
       const creds = await credentialsFor();
       if (!creds.length) throw new AuthError('no passkey is registered', 409);
@@ -123,7 +131,7 @@ function createCeremonies({ repos, now = () => new Date(), rand = crypto.randomB
       const options = await lib().generateAuthenticationOptions({
         rpID: s.rpId,
         challenge,
-        allowCredentials: creds.map((c) => ({ id: c.id, transports: c.transports })),
+        allowCredentials: creds.map((c: Row) => ({ id: c.id, transports: c.transports })),
         userVerification: 'required',
       });
       const ceremonyId = remember(approvalId ? 'stepup' : 'login', options.challenge, { approvalId });
@@ -136,14 +144,14 @@ function createCeremonies({ repos, now = () => new Date(), rand = crypto.randomB
      * caller must also pass: a mismatch is refused).
      * @returns {Promise<{credentialId: string, approvalId: string|null}>}
      */
-    async verifyAuthentication({ ceremonyId, response, approvalId = null }) {
+    async verifyAuthentication({ ceremonyId, response, approvalId = null }: { ceremonyId?: number | string | null; response?: any; approvalId?: number | string | null }) {
       const s = settings();
       const kind = approvalId ? 'stepup' : 'login';
       const c = take(ceremonyId, kind);
       if (kind === 'stepup' && c.approvalId !== approvalId) throw new AuthError('this assertion was made for another approval');
       const stored = await repos.passkeys.getCredential(String(response && response.id));
       if (!stored) throw new AuthError('unknown passkey', 401);
-      let v;
+      let v: any;
       try {
         v = await lib().verifyAuthenticationResponse({
           response,
@@ -159,7 +167,7 @@ function createCeremonies({ repos, now = () => new Date(), rand = crypto.randomB
           requireUserVerification: true,
         });
       } catch (err) {
-        throw new AuthError(`assertion refused: ${err.message}`, 401);
+        throw new AuthError(`assertion refused: ${(err as Error).message}`, 401);
       }
       if (!v.verified) throw new AuthError('assertion refused', 401);
       await repos.passkeys.touchCredential(stored.id, v.authenticationInfo.newCounter, now());
@@ -167,7 +175,7 @@ function createCeremonies({ repos, now = () => new Date(), rand = crypto.randomB
     },
 
     /** Records the step-up grant for the approval a verified assertion was made for. */
-    async grantStepUp({ credentialId, approvalId }) {
+    async grantStepUp({ credentialId, approvalId }: { credentialId?: number | string | null; approvalId?: number | string | null }) {
       const t = now();
       await repos.passkeys.grantStepUp({ approvalId, credentialId, now: t, expiresAt: new Date(t.getTime() + settings().stepUpMs) });
     },

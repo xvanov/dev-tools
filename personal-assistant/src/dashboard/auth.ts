@@ -38,9 +38,9 @@ type Module = import('./types.ts').Module;
 
 const fs = require('fs');
 const path = require('path');
-const { enabled } = require('../auth/settings');
-const session = require('../auth/session');
-const { createCeremonies, AuthError } = require('../auth/ceremony');
+const { enabled } = require('../auth/settings.ts');
+const session = require('../auth/session.ts');
+const { createCeremonies, AuthError } = require('../auth/ceremony.ts');
 
 const APPROVAL_ID = /^[A-Za-z0-9._:-]{1,128}$/;
 const PUBLIC = new Set(['/login', '/login.js', '/theme.css', '/nav.js', '/healthz', '/api/version']);
@@ -154,7 +154,7 @@ async function route(req: Req, res: Res, url: URL, { send, readJson }: { send: C
       send(res, 401, { error: 'passkey sign-in required', login: true });
       return true;
     }
-    send(res, 200, { enabled: true, registered: count, signedIn: Boolean(s), rpId: require('../auth/settings').settings().rpId });
+    send(res, 200, { enabled: true, registered: count, signedIn: Boolean(s), rpId: require('../auth/settings.ts').settings().rpId });
     return true;
   }
 

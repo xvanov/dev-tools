@@ -14,13 +14,16 @@
 //   PA_PASSKEY_SESSION_MIN idle lifetime of a session cookie, minutes, slides on use (30)
 //   PA_PASSKEY_SESSION_MAX_HOURS  hard ceiling on a session, hours (12)
 //   PA_PASSKEY_STEPUP_SEC  how long a step-up assertion stays valid for its approval (120)
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
 
-function str(name, fallback) {
+
+function str<T>(name: string, fallback: T): string | T {
   const v = process.env[name];
   return v === undefined || v === '' ? fallback : v;
 }
 
-function num(name, fallback) {
+function num<T>(name: string, fallback: T): number | T {
   const n = Number(str(name, ''));
   return Number.isFinite(n) && n > 0 ? n : fallback;
 }
@@ -31,18 +34,18 @@ function enabled() {
 
 function settings() {
   const port = Number(process.env.PA_DISPATCH_PORT) || 7300;
-  const origins = str('PA_PASSKEY_ORIGINS', '')
+  const origins = String(str('PA_PASSKEY_ORIGINS', ''))
     .split(',')
-    .map((s) => s.trim().replace(/\/+$/, ''))
+    .map((s: string) => s.trim().replace(/\/+$/, ''))
     .filter(Boolean);
   return {
     enabled: enabled(),
     rpId: str('PA_PASSKEY_RP_ID', 'localhost'),
     rpName: 'PA',
     origins: origins.length ? origins : [`http://localhost:${port}`, `http://127.0.0.1:${port}`],
-    idleMs: num('PA_PASSKEY_SESSION_MIN', 30) * 60_000,
-    hardMs: num('PA_PASSKEY_SESSION_MAX_HOURS', 12) * 3600_000,
-    stepUpMs: num('PA_PASSKEY_STEPUP_SEC', 120) * 1000,
+    idleMs: Number(num('PA_PASSKEY_SESSION_MIN', 30)) * 60_000,
+    hardMs: Number(num('PA_PASSKEY_SESSION_MAX_HOURS', 12)) * 3600_000,
+    stepUpMs: Number(num('PA_PASSKEY_STEPUP_SEC', 120)) * 1000,
     challengeMs: 120_000,
   };
 }

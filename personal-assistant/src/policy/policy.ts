@@ -264,7 +264,7 @@ const STEPUP_RULE = 'stepup-required';
  */
 async function withStepUp(res: PolicyResult, request: PolicyRequest, { repo = null, stepup = null, stepUp = true }: AuthorizeOptions = {}): Promise<PolicyResult> {
   if (!stepUp || res.decision === 'deny' || request.action !== 'approve') return res;
-  const S: StepUp = stepup || require('../auth/stepup');
+  const S: StepUp = stepup || require('../auth/stepup.ts');
   const needs = res.tags.filter((t) => S.requiresStepUp(t));
   if (!needs.length) return res;
   let ok = false;
@@ -311,7 +311,7 @@ async function authorize(request: PolicyRequest, { audit = true, repo = null, st
  * runs; a no-op when the approval needed no step-up.
  */
 async function consumeStepUp(request: PolicyRequest, res: PolicyResult, { repo = null, stepup = null }: AuthorizeOptions = {}): Promise<boolean> {
-  const S: StepUp = stepup || require('../auth/stepup');
+  const S: StepUp = stepup || require('../auth/stepup.ts');
   if (request.action !== 'approve' || !(res.tags || []).some((t) => S.requiresStepUp(t))) return false;
   return (await S.hasStepUp(request.subject, { ...(repo ? { repos: repo } : {}), consume: true })).ok;
 }

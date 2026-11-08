@@ -762,7 +762,7 @@ function resolveSecret(name: string) {
   let found = null;
   if (process.env[name]) found = { value: process.env[name], source: 'env' };
   if (!found) {
-    const vault = require('./secrets/vault');
+    const vault = require('./secrets/vault.ts');
     if (vault.available() && inVault(vault, name)) {
       try {
         const v = vault.get(name);

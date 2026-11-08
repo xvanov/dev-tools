@@ -5,16 +5,22 @@
 // database does not hand out live cookies). Short idle lifetime that slides
 // while the page is used, capped by a hard ceiling so a session cannot be
 // renewed forever. Only a passkey assertion creates one (src/auth/ceremony.js).
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+type Req = import('http').IncomingMessage;
+type Repos = Record<string, any>;
+type Rand = (n: number) => Buffer;
 
 const crypto = require('crypto');
-const { settings } = require('./settings');
+const { settings } = require('./settings.ts');
 
 const COOKIE = 'pa_session';
 
-const hash = (token) => crypto.createHash('sha256').update(token).digest('hex');
+const hash = (token: string) => crypto.createHash('sha256').update(token).digest('hex');
 
-function parseCookies(header) {
-  const out = {};
+function parseCookies(header: unknown) {
+  const out: Record<string, string> = {};
   for (const part of String(header || '').split(';')) {
     const i = part.indexOf('=');
     if (i > 0) out[part.slice(0, i).trim()] = part.slice(i + 1).trim();
@@ -22,23 +28,23 @@ function parseCookies(header) {
   return out;
 }
 
-function cookieValue(req) {
+function cookieValue(req: Req) {
   const v = parseCookies(req.headers && req.headers.cookie)[COOKIE];
   return v && /^[A-Za-z0-9_-]{20,128}$/.test(v) ? v : null;
 }
 
 /** Set-Cookie value. `secure` is true when the browser reached us over https. */
-function setCookie(token, maxAgeSec, secure) {
+function setCookie(token: string, maxAgeSec: number, secure: boolean) {
   return `${COOKIE}=${token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${Math.max(0, Math.floor(maxAgeSec))}${secure ? '; Secure' : ''}`;
 }
 
-const clearCookie = (secure) => setCookie('', 0, secure);
+const clearCookie = (secure: boolean) => setCookie('', 0, secure);
 
 /**
  * Opens a session for `credentialId` and returns the cookie to set.
  * @returns {Promise<{token: string, setCookie: string, expiresAt: Date}>}
  */
-async function issue(repos, credentialId, { now = new Date(), secure = false, rand = crypto.randomBytes } = {}) {
+async function issue(repos: Repos, credentialId: number | string, { now = new Date(), secure = false, rand = crypto.randomBytes }: { now?: Date; secure?: boolean; rand?: Rand } = {}) {
   const s = settings();
   const token = rand(32).toString('base64url');
   const expiresAt = new Date(now.getTime() + s.idleMs);
@@ -53,7 +59,7 @@ async function issue(repos, credentialId, { now = new Date(), secure = false, ra
  * the result says so, so the caller can re-issue the cookie with the new age.
  * @returns {Promise<{credentialId: string, tokenHash: string, renewed: boolean, setCookie: string|null}|null>}
  */
-async function validate(repos, req, { now = new Date(), secure = false } = {}) {
+async function validate(repos: Repos, req: Req, { now = new Date(), secure = false }: { now?: Date; secure?: boolean } = {}) {
   const token = cookieValue(req);
   if (!token) return null;
   const tokenHash = hash(token);
@@ -74,7 +80,7 @@ async function validate(repos, req, { now = new Date(), secure = false } = {}) {
 }
 
 /** Ends the session behind a request's cookie (logout). */
-async function end(repos, req) {
+async function end(repos: Repos, req: Req) {
   const token = cookieValue(req);
   if (token) await repos.passkeys.deleteSession(hash(token));
 }

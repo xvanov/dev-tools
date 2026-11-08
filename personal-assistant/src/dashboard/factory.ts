@@ -191,7 +191,7 @@ async function route(req: Req, res: Res, url: URL, { send, readJson, issuePageTo
         }
         // With passkeys on, a tap bound to exactly this task, repo and level (the server derives the id).
         const digest = require('crypto').createHash('sha256').update(JSON.stringify([o.task, o.repoPath || null, resolved.delivery])).digest('hex').slice(0, 32);
-        const need = await require('../auth/stepup').demandForDelivery(resolved.delivery, `job:${digest}`);
+        const need = await require('../auth/stepup.ts').demandForDelivery(resolved.delivery, `job:${digest}`);
         if (need) {
           send(res, need.status, need.body);
           return true;

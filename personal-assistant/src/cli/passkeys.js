@@ -32,7 +32,7 @@ function ask(question) {
 function make(out, fail) {
   return {
     async passkeys(args) {
-      const { enabled } = require('../auth/settings');
+      const { enabled } = require('../auth/settings.ts');
       const sub = (args[0] || 'status').toLowerCase();
 
       if (sub === 'status') {

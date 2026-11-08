@@ -17,10 +17,10 @@ process.env.PA_PASSKEY_ORIGINS = wa.ORIGIN;
 process.env.PA_PASSKEY_RP_ID = wa.RP_ID;
 process.env.PA_PASSKEYS = 'on';
 
-const { createCeremonies } = require('../src/auth/ceremony');
-const session = require('../src/auth/session');
-const stepup = require('../src/auth/stepup');
-const { settings } = require('../src/auth/settings');
+const { createCeremonies } = require('../src/auth/ceremony.ts');
+const session = require('../src/auth/session.ts');
+const stepup = require('../src/auth/stepup.ts');
+const { settings } = require('../src/auth/settings.ts');
 
 // ---- fixed clock and deterministic randomness -----------------------------
 let clock = new Date('2026-11-07T10:00:00Z').getTime();
