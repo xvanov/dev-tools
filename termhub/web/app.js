@@ -138,7 +138,7 @@ window.addEventListener('unhandledrejection', (e) => {
 // only rebuild when this signature actually changes.
 function uiSignature() {
   const live = state.sessions
-    .map((s) => `${s.id}:${s.alive ? 1 : 0}:${s.title || ''}`).join('|');
+    .map((s) => `${s.id}:${s.alive ? 1 : 0}:${s.title || ''}:${s.links ? JSON.stringify(s.links) : ''}`).join('|');
   const rest = state.restorable
     .map((r) => `${r.id}:${r.kind}:${(r.history || []).length}`).join('|');
   const open = [...state.open.values()].map((t) => `${t.id}:${t.title || ''}`).join(',');
@@ -196,6 +196,31 @@ function refresh() {
   return refreshing;
 }
 
+// A session's links (GET /api/sessions `links`) as the row's second line. Plan
+// and Build are the PA's pages under termhub's /pa/ proxy; nav.js turns a click
+// into a switch to that destination and carries the #card-/#job= anchor along.
+function sessionLinksHtml(links) {
+  if (!links || typeof links !== 'object') return '';
+  const enc = encodeURIComponent;
+  const parts = [];
+  const a = (href, text, title) => `<a href="${escapeHtml(href)}" title="${escapeHtml(title)}">${escapeHtml(text)}</a>`;
+  const plain = (text) => `<span>${escapeHtml(text)}</span>`;
+  if (links.card) parts.push(a(`/pa/#card-${enc(links.card)}`, `card #${links.card}`, 'Open the card in Plan'));
+  if (links.run) parts.push(links.card ? plain(`run #${links.run}`) : plain(`pa run #${links.run}`));
+  if (links.job) parts.push(a(`/pa/factory#job=${enc(links.job)}`, `job ${links.job}`, 'Open the job in Build'));
+  if (links.step) parts.push(links.job
+    ? a(`/pa/factory#job=${enc(links.job)}&step=${enc(links.step)}`, `step ${links.step}`, 'This step in Build')
+    : plain(`step ${links.step}`));
+  if (links.story) parts.push(plain(`story ${links.story}`));
+  if (links.pr && /^https?:\/\//.test(links.pr)) {
+    const n = /\/pull\/(\d+)/.exec(links.pr);
+    parts.push(`<a href="${escapeHtml(links.pr)}" target="_blank" rel="noopener" title="Open the PR">${escapeHtml(n ? `PR #${n[1]}` : 'PR')}</a>`);
+  } else if (links.pr) {
+    parts.push(plain(`PR #${links.pr}`));
+  }
+  return parts.length ? `<span class="s-links">${parts.join('')}</span>` : '';
+}
+
 function renderSessions() {
   const list = $('#session-list');
   list.innerHTML = '';
@@ -216,10 +241,13 @@ function renderSessions() {
     // narrow sidebar they crowded the title down to an ellipsis, and the name
     // is the one thing you need to pick the right terminal. The title wraps
     // rather than truncates for the same reason. Today's total stays above.
+    // The one exception: what the session belongs to (card, job, step, PR), as
+    // links under the name — stored ids (lib/sessionLinks.js), not read off the title.
     item.innerHTML =
-      `<span class="title">${escapeHtml(s.title || s.id)}</span>` +
+      `<span class="title">${escapeHtml(s.title || s.id)}${sessionLinksHtml(s.links)}</span>` +
       `<button class="rename" title="Rename session">&#9998;</button>` +
       `<button class="kill" title="Close session">&#10005;</button>`;
+    for (const a of item.querySelectorAll('.s-links a')) a.addEventListener('click', (ev) => ev.stopPropagation());
     // The whole row opens the terminal — clicking anywhere but the buttons
     // (which stop propagation) counts, so you don't have to hit the text exactly.
     item.onclick = () => { openTerminal(s.id, s.title, s.kind); if (isMobile()) closeDrawer(); };
@@ -3804,6 +3832,11 @@ syncViewportHeight();
 connectVoice();
 renderVoice();
 refresh().then(openDeepLink);   // a tapped notification names a session in the hash
+// ... and so does a link from Plan or Build once this page is already open (nav.js
+// sets the hash on the kept-alive Run frame): open that session then too.
+window.addEventListener('hashchange', () => {
+  if (/^#session=/.test(location.hash || '')) refresh().then(openDeepLink);
+});
 setInterval(refresh, 2000); // keep the sidebar "working" status roughly live
 refreshIdle();
 setInterval(refreshIdle, 5000);      // today's totals; the badges tick locally

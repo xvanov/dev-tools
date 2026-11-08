@@ -143,8 +143,10 @@ function genId() {
 }
 
 class Session {
-  constructor({ cwd, command, title, cols, rows, maxBytes, onExit, onInputLine, agentSessionId, envSpec, noRc } = {}) {
+  constructor({ cwd, command, title, cols, rows, maxBytes, onExit, onInputLine, agentSessionId, envSpec, noRc, links } = {}) {
     this.id = genId();
+    // What this session belongs to (card, run, job, step, …; lib/sessionLinks.js).
+    this.links = links || null;
     // Start the shell without rc/profile files (lib/shell.js shellArgs), so they
     // cannot re-export what envSpec removed. rcSkipped says whether it could.
     this.noRc = noRc === true;
@@ -498,6 +500,7 @@ class Session {
       agentSessionId: this.agentSessionId,
       envSpec: this.envSpec,
       noRc: this.noRc, // a restore must skip rc files too, or they re-export what envSpec removed
+      links: this.links, // a restored session still belongs to its card/job/step
       created: this.created,
       endedAt: null,
       history: [],
@@ -777,6 +780,7 @@ class Session {
     return {
       id: this.id,
       title: this.title,
+      links: this.links,
       cwd: this.cwd,
       command: this.command,
       kind: this.kind,

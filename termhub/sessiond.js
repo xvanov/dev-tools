@@ -31,6 +31,7 @@ const { suggestDirs } = require('./lib/dirs');
 const { stageClipboardImage, clipboardTarget, probeClipboard } = require('./lib/clipboard');
 const { saveUploadedFile, saveImageAttachment } = require('./lib/uploads');
 const { applyInput } = require('./lib/sessionInput');
+const { parseLinks, mergeLinks } = require('./lib/sessionLinks');
 const tts = require('./lib/tts');
 const summarizer = require('./lib/summarize');
 const { VoiceHub, wakeWord: voiceWakeWord } = require('./lib/voiceHub');
@@ -213,6 +214,7 @@ function createSessiond({ entry = 'sessiond', port: serverPort = DEFAULT_SESSION
       .filter((e) => !liveIds.has(e.id))
       .map((e) => ({
         id: e.id, title: e.title, cwd: e.cwd, command: e.command, kind: e.kind,
+        links: e.links || null,
         created: e.created, endedAt: e.endedAt,
         history: Array.isArray(e.history) ? e.history.slice(-30) : [],
       }));
@@ -282,7 +284,7 @@ function createSessiond({ entry = 'sessiond', port: serverPort = DEFAULT_SESSION
           home: os.homedir(),
           // What this build can do that an older one cannot; read by callers
           // that must refuse rather than degrade (lib/sessionEnv.js).
-          features: ['session-env', 'session-norc'],
+          features: ['session-env', 'session-norc', 'session-links'],
           clipboardImage: canClip,
           limits: {
             imageBytes: canClip ? MAX_CLIPBOARD_IMAGE_BYTES : MAX_UPLOAD_FILE_BYTES,
@@ -315,6 +317,9 @@ function createSessiond({ entry = 'sessiond', port: serverPort = DEFAULT_SESSION
         const session = new Session({
           cwd: body.cwd, command: body.command, title: body.title, cols: body.cols, rows: body.rows,
           envSpec: envReq.spec, noRc: rcReq.noRc,
+          // What it belongs to (card, run, job, step; lib/sessionLinks.js). Metadata:
+          // anything unrecognised is dropped, never a reason to refuse the session.
+          links: parseLinks(body.links),
         });
         trackSession(session);
         warnIfClaudeCliStale(session);
@@ -361,6 +366,7 @@ function createSessiond({ entry = 'sessiond', port: serverPort = DEFAULT_SESSION
           cwd: entry.cwd, command, title: entry.title, cols: body.cols, rows: body.rows,
           agentSessionId: (entry.kind === 'claude' || entry.kind === 'opencode' || entry.kind === 'cursor') ? entry.agentSessionId : null,
           envSpec: entry.envSpec || null, // a no-push run comes back without credentials too
+          links: parseLinks(entry.links), // ... and still belongs to its card/job/step
           noRc: entry.noRc === true,      // ... and without the rc files that would re-export them
         });
         trackSession(session);
@@ -392,8 +398,13 @@ function createSessiond({ entry = 'sessiond', port: serverPort = DEFAULT_SESSION
         const session = sessions.get(id);
         if (!session) return sendJson(res, 404, { error: 'no such session' });
         const body = await readBody(req);
-        session.rename(body.title);
+        if (body.title !== undefined) session.rename(body.title);
         archive.patch(id, { title: session.title });
+        // Links learnt after the start (a PR opened later): added, or removed with null.
+        if (body.links !== undefined) {
+          session.links = mergeLinks(session.links, body.links);
+          archive.patch(id, { links: session.links });
+        }
         // `paused` opts a session out of idle tracking (lib/idleHub.js reads it
         // through isTracked()) without touching the PTY. Deliberately not
         // persisted to the archive: it's a live-monitoring toggle, meaningless
@@ -663,6 +674,7 @@ function createSessiond({ entry = 'sessiond', port: serverPort = DEFAULT_SESSION
           cwd: entry.cwd, command, title: entry.title, cols: body.cols, rows: body.rows,
           agentSessionId: (entry.kind === 'claude' || entry.kind === 'opencode' || entry.kind === 'cursor') ? entry.agentSessionId : null,
           envSpec: entry.envSpec || null, // a no-push run comes back without credentials too
+          links: parseLinks(entry.links), // ... and still belongs to its card/job/step
           noRc: entry.noRc === true,      // ... and without the rc files that would re-export them
         });
         trackSession(session);

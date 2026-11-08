@@ -98,9 +98,9 @@ Every request that changes something (any method but GET/HEAD/OPTIONS under `/ap
 
 HTTP API (served by `sessiond`, proxied by `front`): `GET /api/info`, `GET /api/sessions`
 (returns `{sessions, restorable}` — live PTYs plus archived sessions from a previous run),
-`POST /api/sessions` (`{cwd?, command?, title?, cols, rows}`), `POST /api/sessions/:id/restore`
+`POST /api/sessions` (`{cwd?, command?, title?, cols, rows, links?}` — `links` is what the session belongs to, `{card?, run?, job?, step?, story?, external?, pr?}`, ids only, unknown or malformed entries dropped (`lib/sessionLinks.js`); returned on every session in `GET /api/sessions` and rendered as Plan/Build links under its name in Run), `POST /api/sessions/:id/restore`
 (re-open an archived session), `DELETE /api/sessions/:id` (kill a live session and/or forget an
-archived one), `PATCH /api/sessions/:id` (`{title?, paused?}` — `paused` opts a session out of
+archived one), `PATCH /api/sessions/:id` (`{title?, paused?, links?}` — `links` adds keys, `null` removes one; `paused` opts a session out of
 idle tracking without touching its PTY; see *Agent time & idle tracking* below),
 `POST /api/sessions/:id/input` (`{data, submit?}` → `{ok, bytes}`; types into a live session
 without holding a socket open — `submit:false` fills the prompt without pressing return, so text

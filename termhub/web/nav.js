@@ -138,7 +138,7 @@
     else u.searchParams.set('jx', id);
     return u.pathname + u.search + u.hash;
   }
-  function frameFor(id) {
+  function frameFor(id, hash) {
     if (frames[id]) return frames[id];
     if (!layer) {
       layer = document.createElement('div');
@@ -150,7 +150,7 @@
     f.title = dest(id).label;
     // What the pages inside need from the browser: Talk and termhub's mic, termhub's paste.
     f.setAttribute('allow', 'microphone; clipboard-read; clipboard-write; autoplay; fullscreen');
-    f.src = hrefFor(id);
+    f.src = hrefFor(id) + (hash || '');
     f.addEventListener('load', function () { if (showing === id) titleFrom(id); });
     f.jxVersion = latest[dest(id).host] || '';
     layer.appendChild(f);
@@ -191,14 +191,30 @@
     return id && dest(id) ? id : current;
   }
 
+  // A link's anchor into the page it switches to (#card-12, #job=app:015): carried
+  // along so a drill-down from Run to a job in Build lands on that job. Only a plain
+  // id-shaped anchor; anything else is dropped and the destination opens as it is.
+  var ANCHOR = /^#[A-Za-z0-9_.:=&%-]{1,300}$/;
+  function anchorOk(h) { return typeof h === 'string' && ANCHOR.test(h) ? h : ''; }
+  function seek(id, hash) {
+    if (!hash) return;
+    if (id === current) { if (location.hash !== hash) location.hash = hash; return; }
+    var f = frames[id];
+    if (!f) return;
+    try { f.contentWindow.location.hash = hash; } catch (e) { f.src = hrefFor(id) + hash; }
+  }
+
   // One way to go anywhere, from the panel, a key, or a link.
-  function go(id) {
+  function go(id, hash) {
     if (!dest(id)) return;
+    hash = anchorOk(hash);
     if (framed) {
-      try { window.top.postMessage({ jarvis: 'go', id: id }, '*'); } catch (e) { location.href = hrefFor(id); }
+      try { window.top.postMessage({ jarvis: 'go', id: id, hash: hash }, '*'); } catch (e) { location.href = hrefFor(id) + hash; }
       return;
     }
+    if (hash && id !== current && !frames[id] && reachable(id)) frameFor(id, hash);
     if (!show(id)) return;
+    seek(id, hash);
     if (NARROW.matches && id !== current) setSettings(false);
   }
 
@@ -467,7 +483,9 @@
     if (!id) return;
     e.preventDefault();
     if (a.classList.contains('is-off')) return;
-    go(id);
+    var hash = '';
+    try { hash = new URL(a.getAttribute('href') || '', location.href).hash; } catch (err) { /* none */ }
+    go(id, hash);
   });
 
   // Alt+1..6 from anywhere. Capture phase on window: runs before xterm's own key
@@ -495,7 +513,7 @@
       var mine = false;
       for (var k in frames) if (frames[k].contentWindow === e.source) mine = true;
       if (!mine) return;
-      if (d.jarvis === 'go') go(d.id);
+      if (d.jarvis === 'go') go(d.id, d.hash);
       else warm(d.id);
     });
     window.addEventListener('popstate', function () { show(fromUrl(), { fromHistory: true }); });

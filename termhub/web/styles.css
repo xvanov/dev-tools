@@ -83,6 +83,10 @@ html, body {
 .session-item.active { background: var(--bg-3); box-shadow: inset 3px 0 0 var(--accent); }
 .session-item .title { flex: 1; min-width: 0; overflow-wrap: anywhere; line-height: 1.3; }
 .session-item.dead .title { color: var(--fg-dim); text-decoration: line-through; }
+/* What the session belongs to (card, job, step, PR): a small second line. */
+.session-item .s-links { display: flex; flex-wrap: wrap; gap: 0 8px; font-size: 11px; color: var(--fg-dim); margin-top: 2px; }
+.session-item .s-links a { color: var(--fg-dim); text-decoration: none; }
+.session-item .s-links a:hover { color: var(--fg); text-decoration: underline; }
 .session-item .rename, .session-item .kill {
   flex: 0 0 auto; background: none; border: none; color: var(--fg-dim); cursor: pointer; font-size: 14px; padding: 4px 5px;
 }
