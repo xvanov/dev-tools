@@ -127,9 +127,12 @@ with the app. Clients reconnect to the event stream with `Last-Event-ID` and mis
   code both run on the new schema; the cleanup migration ships one release later. A test
   runs the previous release's code against the new schema. Without Postgres: the previous
   commit's INSERTs are checked against a schema modelled from `sql/`. (f25ea8e)
-- [ ] **Z4 Deploy command.** `deploy` = `git pull --ff-only` + install + build + Z1 handoff +
+- [x] **Z4 Deploy command.** `deploy` = `git pull --ff-only` + install + build + Z1 handoff +
   rollback by flipping back if health fails within 60 s. Replaces the stop/kill/start
-  restart. Same on both stacks.
+  restart. Same on both stacks. `src/supervisor/deploy.js` behind `windows/redeploy.ps1` /
+  `linux/redeploy.sh`; the restart stays only to bootstrap or when the supervisor itself
+  changes. Live on the work stack 2026-11-07 (roll and rollback under load: 1 request in
+  ~880 timed out at 10 s around the flip, left for Z6). (9207f32)
 - [ ] **Z5 termhub sessions survive deploys** (already via sessiond; make it explicit and
   tested), later replaced by `ptyd` (phase 5).
 - [ ] **Z6 Deploy test.** A test hammers the dashboard, an SSE stream and a terminal during a
