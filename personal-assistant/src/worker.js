@@ -94,7 +94,10 @@ const lease = require('./util/lease').createLease({
 // First ticks spread over 2–20 s, not 2–5: a generation taking over starts
 // two dozen passes at once, and their cold start is CPU it shares with
 // serving the dashboard.
-const sched = require('./util/scheduler.ts').createScheduler({ passes, lease, log, firstTickMs: () => 2000 + Math.random() * 18_000 });
+// PA_ONLY_PASSES=a,b,memory-*: only those passes and services run (a rehearsal on a
+// copy of the store, docs/native/CUTOVER-SQLITE.md); unset, all of them.
+const onlyPasses = String(process.env.PA_ONLY_PASSES || '').split(',').map((s) => s.trim()).filter(Boolean);
+const sched = require('./util/scheduler.ts').createScheduler({ passes, lease, log, firstTickMs: () => 2000 + Math.random() * 18_000, only: onlyPasses });
 const every = (seconds, name, fn) => sched.every(seconds, name, fn);
 const exclusive = (name, fn) => sched.run(name, fn);
 

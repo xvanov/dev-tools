@@ -51,6 +51,8 @@ interface SchedulerOptions {
   timers?: Timers;
   firstTickMs?: () => number;
   serviceStopMs?: number;
+  /** Pass and service names to run, the rest declared but never started (a trailing * matches a prefix). Empty: all. */
+  only?: string[];
 }
 
 function createScheduler({
@@ -60,8 +62,12 @@ function createScheduler({
   timers = { setTimeout, clearTimeout, setInterval, clearInterval } as unknown as Timers,
   firstTickMs = () => 2000 + Math.random() * 3000,
   serviceStopMs = 1500,
+  only = [],
 }: SchedulerOptions) {
   const defs: Def[] = [];
+  // PA_ONLY_PASSES (src/worker.js): a rehearsal on a copy of the store runs only
+  // the passes named, so nothing reaches outside services or people.
+  const allowed = (name: string): boolean => !only.length || only.some((p) => (p.endsWith('*') ? name.startsWith(p.slice(0, -1)) : p === name));
   let live: Live[] = [];
   let running = false;
 
@@ -101,12 +107,14 @@ function createScheduler({
   }
 
   function every(seconds: number, name: string, fn: PassFn): void {
+    if (!allowed(name)) return void (log && log.warn('pass not scheduled (PA_ONLY_PASSES)', { name }));
     const d: Def = { kind: 'every', seconds, name, fn };
     defs.push(d);
     if (running) startDef(d);
   }
 
   function service(name: string, start: () => ServiceHandle | Promise<ServiceHandle>): void {
+    if (!allowed(name)) return void (log && log.warn('service not started (PA_ONLY_PASSES)', { name }));
     const d: Def = { kind: 'service', name, start };
     defs.push(d);
     if (running) startDef(d);
