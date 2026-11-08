@@ -104,10 +104,10 @@ request); voice never approves high-risk actions alone; work and personal stacks
   `--hostname`, `gh api` and `git credential fill` give no real token).
   `supervisor`, `deploy` (a ~9 s PowerShell cold start) and `lease` (80-200 ms sleeps; failed in
   two loaded full runs, alone it always passes) are the remaining slow or load-sensitive files.
-- [ ] **T3 Factory tests in parallel.** `pytest -n auto` (xdist is installed) must pass with
+- [x] **T3 Factory tests in parallel.** `pytest -n auto` (xdist is installed) must pass with
   the same results as serial. Fix the parallel-unsafe ones (`test_benchmark_record_store.py`
   errors under `-n 16`: shared runs dir). Mark true integration tests `@slow` and keep them out
-  of the default run. `parallel-ok`
+  of the default run. `parallel-ok` (be7d440, 71a4b7d, 14521ee, 32587f8). Tests that only covered apps/sacrifice and bench/swebench data were deleted (D17); `slow` is off by default, `-n auto` is the default; a fake `claude` guards every test; oracle-boot tests are `flaky_under_load` (run in CI, skipped by the hook). The Linux factory leg gates CI; the full Windows suite is informational (fec5637).
 - [x] **T4 Changed-files mode.** `npm test -- --changed` (and the factory equivalent) runs only
   tests that import a changed module (static import graph). Wire it into the pre-commit hook,
   keep the full suite for CI. Target < 5 s. (4253252, 2736d74)
@@ -325,7 +325,7 @@ run mid-step; a job continued on an existing branch (`--branch`).
     on 83 turns, llama3.2:3b: 84–87% 3-way, 0 action and 0 lookup turns answered locally,
     threshold 0.85. Router p50 98–124 ms, p95 129–175 ms warm. One run under heavy parallel
     agent load had p50 176 ms. (0163ef0)
-- [ ] **0.7** T1, T2, T3 and Z1 landed (from the tracks above).
+- [x] **0.7** T1, T2, T3 and Z1 landed (from the tracks above). (T1 5bc7a6d, T2 d3f7a19, T3 32587f8, Z1 262f4ab)
 - [ ] **0.8** E1, E4 and E5 landed: the golden path runs on today's system and its broken hops
   are fixed. E2 (watchable API runs) lands here too if the baseline shows it missing.
 - [ ] **Exit 0:** measured again; targets table updated with new numbers.
