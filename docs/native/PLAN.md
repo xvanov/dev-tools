@@ -1036,7 +1036,7 @@ not in the Map is not done, and a new one gets added there first.
     sessiond. The PA re-points any loopback link at the factory machine's front (`PA_TERMHUB_URL`
     or `PA_MACHINES`) where factory JSON enters (`factory.call`) and where stored step links are
     read, so old rows open too. The golden path GETs each step link (`link opens`). Unit-tested;
-    not run live.
+    not run live. (eb7be37)
   - [ ] **8.4.18 deepseek-pr: the API dev still hangs PowerShell on a multi-line `git commit -m`.**
     It did so twice in dev-tools:018 (20:05-20:12, 7.6 min, 18 turns, $0.16 of the $1.11 step),
     with 73e824d's prompt rule in place, and it considered `--no-verify` before using `-F`. The
@@ -1056,7 +1056,7 @@ not in the Map is not done, and a new one gets added there first.
     to a dev tier's model (a degraded key falls back to the dev's model) is refused without a model
     call. claude_session solo keeps no reviewer: its dev is Claude Code in a session the operator
     watches, and PR #63's gap was the unattended API runtime. The dev brief, the PR body, the
-    `solo_checks` event and the ETA follow the runtime.
+    `solo_checks` event and the ETA follow the runtime. (8b00685)
   - [ ] **8.4.20 deepseek-pr: the dev prompt says "NO CONTEXT AVAILABLE … You are likely the
     Onboarder persona".** The work factory has no `apps/dev-tools/context/project.md` or
     `navigation.md`, so a dev step is told to write the context set and spends its first ~25 of 76
@@ -1067,6 +1067,7 @@ not in the Map is not done, and a new one gets added there first.
     `goldenPathCore.dummyCard` should word the ask by delivery and say the factory delivers.
     Done: the ask describes only the change and carries the marker; delivery is factory_start's
     `delivery`, never the card's. A test refuses an ask that mentions a PR, a push or a merge.
+    (6f0aa15)
   - [x] **8.4.22 deepseek-pr: Map and e2e drift.** The Map's steps and `cost.basis` name
     `deepseek/deepseek-coder`, but `pa e2e deepseek-pr` runs `azure/deepseek-v4-pro`. The e2e also
     times the jarvis hop including compose's model call, which the target excludes: subtract
@@ -1074,8 +1075,8 @@ not in the Map is not done, and a new one gets added there first.
     Done: the example's steps and cost basis name `azure/deepseek-v4-pro` (and the azure routes of
     the other steps), and a test keeps them so. The jarvis hop is the round trip less
     `timings_ms.compose_model` (`workflowsCore.toolCallMs`); a PA without it is timed whole and
-    the note says so. The verdict is unchanged.
-  - [ ] **8.4.23 deepseek-pr: PA keeps stale state after a job ends.** Run rows kept a live
+    the note says so. The verdict is unchanged. (00a5a39)
+  - [x] **8.4.23 deepseek-pr: PA keeps stale state after a job ends.** Run rows kept a live
     `factory_state` for dev-tools:004-015, hours after the factory ended them, so `--sweep`
     reported "cancelled" for each. The `card` tool's narrative said run #29 "is still running"
     after card #6774 was `done`. Sync `run.factory_state` on terminal jobs, and refresh the card
@@ -1088,7 +1089,7 @@ not in the Map is not done, and a new one gets added there first.
     `factory_state` is still live, keeping their own status and outcome. The card's context
     paragraph is never rewritten once the card closes, so it is cleared (`clearContext`) when a
     run lands or is dropped; an open card gets a new one on the next context pass. Unit- and
-    contract-tested; not run live.
+    contract-tested; not run live. (5c9defa)
 - [ ] **8.5 Architecture map review.** A full pass over `architecture.json` (the `/architecture`
   page) against the finished system: every component, process, port, table, tool, workflow and
   storage location as it now runs on both stacks (jarvisd, ptyd, native factory, SQLite,
