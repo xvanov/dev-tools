@@ -53,9 +53,10 @@ Design rationale: the plan page (proposal, 7 Nov 2026) and the research summary 
   --draft` on a throwaway branch of this repo succeeds from this machine and the factory, and
   an INNERGY repo still uses the work account.
 - [x] **P2 Factory on this machine** can reach GitHub with the same per-owner rule (needed by
-  Track E's golden path). (33e3b01, d57e6a9) Verified 2026-11-07 natively on Windows: the factory's
-  `gh_auth` resolver (Popen hook) opened draft PR xvanov/dev-tools#3 as `xvanov` on a throwaway
-  branch, closed it and deleted the branch; a non-xvanov owner resolved to the active work account.
+  Track E's golden path). (33e3b01, d57e6a9, 295833a) Verified natively on Windows 2026-11-07: the factory's
+  `gh_auth` resolver (Popen hook) opened draft PR xvanov/dev-tools#3, and the `bin\gh.cmd` shim
+  opened #4, both as `xvanov` on throwaway branches over the SSH remote; both were closed and their
+  branches deleted. A non-xvanov owner resolved to the active work account.
   Tracked app `software-factory/apps/dev-tools`. Windows factory run itself is item 2.3.
 
 Standing rules carried over: default agent runtime is Claude Code sessions (API/DeepSeek only on
