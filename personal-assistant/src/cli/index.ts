@@ -1211,7 +1211,8 @@ const commands: Json = {
       const repeat = flagInt(flags, 'repeat', 3);
       out(`scoring ${E.loadCases().cases.length} turns on ${model}, ${repeat}x each (warm) ...`);
       const s = await E.scoreCases({ model, keepAlive: config.fastLane.keepAlive, repeat });
-      E.report(s, { cal: R.CALIBRATION, threshold: F.answerThreshold(), guard: F.looksLikeAction, fit: flagBool(flags, 'fit'), misses: flagBool(flags, 'misses'), out });
+      const at = E.snapshotNow();
+      E.report(s, { cal: R.CALIBRATION, threshold: F.answerThreshold(), guard: (t: string) => F.guardRoute(t, at), fit: flagBool(flags, 'fit'), misses: flagBool(flags, 'misses'), out });
       return;
     }
     // And its answerer: is what it says true to the snapshot (src/eval/answerer-cases.json)?

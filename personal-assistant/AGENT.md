@@ -152,7 +152,8 @@ case-insensitively against per-verb allow/deny lists, writing flags (`--force`, 
 **The voice fast lane only speaks or hands off** (`src/chat/fastLane.js`, `POST /api/talk/turn`). It
 calls a model with no tools, and its one side effect is typing the user's own words into the PA chat
 through `feed.send` — the same path as typing. Keep it that way: never give it tools or `pa` verbs,
-keep `guardDecision` turning an "answer" to an action-like request into a handoff, and keep what is
+keep `guardDecision` turning an "answer" to an action-like request into a handoff (and one about a
+day the snapshot does not hold, `looksBeyondSnapshot`, into a plain hand-off), and keep what is
 handed off the verbatim utterance (the model's `task` only as a labelled hint), since its context
 snapshot quotes other people's messages. The local default (`local/llama3.2:3b`, forced-JSON
 `{label, route, say}` through Ollama's native `/api/chat`, `llm.stream({ format, keepAlive })`) adds

@@ -198,6 +198,24 @@ assert.ok(P.gradePrompt([{ i: 0, question: 'q', reference: null, answer: 'UNKNOW
   const e = E.evaluate([{ text: 'send it', expect: 'action', lp: { answer_here: -0.01, hand_off: -6, action: -6 } }], { cal: E.RAW, threshold: 0.5, guard: () => true });
   assert.strictEqual(e.answeredAction.length, 0);
   assert.strictEqual(e.answeredActionRouter.length, 1);
+  // A guard route: a look-up the router would answer is handed off, and counted as the router's.
+  const week = { text: "what's on this week?", expect: 'handoff', lp: { answer_here: -0.01, hand_off: -6, action: -6 } };
+  const ew = E.evaluate([week], { cal: E.RAW, threshold: 0.5, guard: () => 'handoff' });
+  assert.strictEqual(ew.correct, 1);
+  assert.strictEqual(ew.answeredNonAnswer.length, 0);
+  assert.strictEqual(ew.answeredLookupRouter.length, 1);
+  // The fit leaves out what the day guard hands off, so a confident week question does not raise the threshold.
+  const sat = E.snapshotNow();
+  assert.strictEqual(new Date(sat).getDay(), 6, 'the eval snapshot is a Saturday');
+  const answerable = { text: "what's on today?", expect: 'answer', lp: { answer_here: -0.3, hand_off: -1.5, action: -6 } };
+  const lookup = { text: 'who emailed me?', expect: 'handoff', lp: { answer_here: -1.5, hand_off: -0.3, action: -6 } };
+  const dayGuard = (t) => require('../src/chat/fastLane.ts').guardRoute(t, sat);
+  const rows3 = [answerable, lookup, week];
+  const guarded = E.fitThreshold(rows3, E.RAW, dayGuard);
+  const eg = E.evaluate(rows3, { cal: E.RAW, threshold: guarded, guard: dayGuard });
+  assert.strictEqual(eg.answeredNonAnswer.length, 0);
+  assert.strictEqual(eg.missedAnswers, 0, 'the answerable turn still clears the threshold');
+  assert.ok(E.fitThreshold(rows3, E.RAW) > guarded, 'unguarded, the week question raises the threshold');
   assert.strictEqual(E.quantile([5, 1, 3], 0.5), 3);
 
   // ---- the fast-lane answerer (`pa eval answerer`, src/eval/answerer.ts). The model is mocked.

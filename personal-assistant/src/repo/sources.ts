@@ -85,17 +85,18 @@ function create(db: Db) {
     },
 
     /**
-     * Calendar events from two hours ago to a day ahead (20).
+     * Calendar events from two hours ago to `until` (default: a day ahead), oldest first (40).
      * @returns {Promise<{subject: string, occurred_at: Date, raw: object}[]>}
      */
-    async calendarToday() {
+    async calendarToday(until: Date | string | number | null = null) {
       return db.rows(
         `select subject, occurred_at, raw
        from source_item
       where source = 'graph_event'
-        and occurred_at between now() - interval '2 hours' and now() + interval '1 day'
+        and occurred_at between now() - interval '2 hours' and coalesce($1::timestamptz, now() + interval '1 day')
       order by occurred_at
-      limit 20`
+      limit 40`,
+        [until == null ? null : new Date(until as string | number | Date)]
       );
     },
 

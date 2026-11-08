@@ -32,7 +32,11 @@ async function gather({ horizonDays = 7 }: { horizonDays?: number } = {}) {
   const commitments = await repo.commitments.openForBrief(false, 60);
   const selfNotes = group(await repo.commitments.openForBrief(true, 200));
 
-  const meetings = await repo.sources.calendarToday();
+  // Through the end of tomorrow (local), so "what's on tomorrow?" in the
+  // evening is answered from all of tomorrow, not the part before this hour.
+  const endOfTomorrow = new Date();
+  endOfTomorrow.setHours(48, 0, 0, 0);
+  const meetings = await repo.sources.calendarToday(endOfTomorrow);
 
   const reviews = await recentReviews();
 

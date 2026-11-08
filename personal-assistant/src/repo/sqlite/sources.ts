@@ -78,16 +78,16 @@ function create(db: Db) {
       );
     },
 
-    /** Calendar events from two hours ago to a day ahead (20). */
-    async calendarToday() {
+    /** Calendar events from two hours ago to `until` (default: a day ahead), oldest first (40). */
+    async calendarToday(until: Date | string | number | null = null) {
       const now = Date.now();
       return db.rows(
         `select subject, occurred_at, raw
        from source_item
       where source = 'graph_event' and occurred_at between $1 and $2
       order by occurred_at
-      limit 20`,
-        [shift(now, -2 * HOUR), shift(now, DAY)]
+      limit 40`,
+        [shift(now, -2 * HOUR), until == null ? shift(now, DAY) : shift(until, 0)]
       );
     },
 

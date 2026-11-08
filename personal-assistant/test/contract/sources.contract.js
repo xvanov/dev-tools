@@ -97,6 +97,16 @@ module.exports = {
     assert.deepStrictEqual(got.map((r) => r.subject), [`${tag} a`, `${tag} b`]);
   },
 
+  'calendarToday: to a given end instead of a day ahead': async ({ repos, seed, assert }) => {
+    const tag = `cal-until-${Math.random()}`;
+    await seed.item({ subject: `${tag} soon`, occurredAt: new Date(Date.now() + 3600_000) });
+    await seed.item({ subject: `${tag} day-and-a-half`, occurredAt: new Date(Date.now() + 36 * 3600_000) });
+    await seed.item({ subject: `${tag} after`, occurredAt: new Date(Date.now() + 40 * 3600_000) });
+    const subjects = async (until) => (await repos.sources.calendarToday(until)).filter((r) => String(r.subject).startsWith(tag)).map((r) => r.subject);
+    assert.deepStrictEqual(await subjects(), [`${tag} soon`]);
+    assert.deepStrictEqual(await subjects(new Date(Date.now() + 38 * 3600_000)), [`${tag} soon`, `${tag} day-and-a-half`]);
+  },
+
   'eventsBetween: calendar events in [from, to], oldest first, with the event columns': async ({ repos, seed, assert }) => {
     const from = new Date('2097-03-01T10:00:00Z');
     const a = await seed.item({ occurredAt: new Date('2097-03-01T10:30:00Z'), subject: 'A', body: 'body A', author: 'org@x.test', raw: { k: 1 } });

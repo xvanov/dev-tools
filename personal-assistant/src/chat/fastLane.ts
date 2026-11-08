@@ -363,15 +363,45 @@ function looksLikeAction(text: any) {
   return ACTION_RE.test(t) || POLITE_ACTION_RE.test(t);
 }
 
+// A question about days the snapshot does not hold: it has today's and
+// tomorrow's meetings only. The 3B router reads "what's on this week?" as
+// "what's on today?" (p 0.97), and an answer from two days would sound whole.
+const WEEKDAYS = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+const BEYOND_RE = /\b(?:week|weekend|yesterday|next month|this month)\b/i;
+const WEEKDAY_RE = new RegExp(`\\b(${WEEKDAYS.join('|')})s?\\b`, 'gi');
+
+/** Pure. Asks about a day other than today or tomorrow (local, from `now`). */
+function looksBeyondSnapshot(text: any, now: number = Date.now()) {
+  const t = String(text || '');
+  if (BEYOND_RE.test(t)) return true;
+  const d = new Date(now).getDay();
+  const near = new Set([WEEKDAYS[d], WEEKDAYS[(d + 1) % 7]]);
+  for (const m of t.matchAll(WEEKDAY_RE)) if (!near.has(m[1]!.toLowerCase())) return true;
+  return false;
+}
+
 /** Pure. The decision after the guards: { decision, overridden }. */
-function guardDecision(decision: any, userText: any) {
+function guardDecision(decision: any, userText: any, now: number = Date.now()) {
   if (decision.route === 'answer' && looksLikeAction(userText)) {
     return {
       overridden: true,
       decision: { route: 'handoff', task: clip(userText, MAX_TASK), reason: `${decision.reason ? decision.reason + '; ' : ''}reads as an action: the PA chat does those` },
     };
   }
+  if (decision.route === 'answer' && looksBeyondSnapshot(userText, now)) {
+    return {
+      overridden: true,
+      decision: { route: 'handoff', task: clip(userText, MAX_TASK), reason: `${decision.reason ? decision.reason + '; ' : ''}asks about a day the snapshot does not hold` },
+    };
+  }
   return { overridden: false, decision };
+}
+
+/** The eval's guard: what a turn the router would answer becomes, or null. */
+function guardRoute(text: any, now: number = Date.now()) {
+  if (looksLikeAction(text)) return 'action';
+  if (looksBeyondSnapshot(text, now)) return 'handoff';
+  return null;
 }
 
 // ---------------------------------------------------------- the rules router ----
@@ -512,11 +542,13 @@ function formatSnapshot(data: any, { now = Date.now(), waiting = null, me = '', 
   return lines.join('\n');
 }
 
-// The calendar rows are a rolling window (now - 2 h .. now + 24 h), so in the
-// afternoon most of them are tomorrow's. Each day gets its own heading, and
-// today's is always there: with only bare times, a 3B model spoke Monday's
-// meetings as Sunday's (docs/native/acceptance/whats-on.md). Titles are
-// quoted: they are names of meetings, not people to meet.
+// The calendar rows run from two hours ago to the end of tomorrow (brief
+// gather), so in the afternoon most of them are tomorrow's. Each day gets its
+// own heading, and today's and tomorrow's are always there: with only bare
+// times, a 3B model spoke Monday's meetings as Sunday's
+// (docs/native/acceptance/whats-on.md). Titles are quoted: they are names of
+// meetings, not people to meet. Later days are said to be missing, so "this
+// week" is looked up rather than answered from two days.
 const MEETINGS_PER_DAY = 6;
 function meetingLines(rows: any[], now: number) {
   const { dayOf } = require('../util/when.ts');
@@ -545,16 +577,12 @@ function meetingLines(rows: any[], now: number) {
     const list = n ? `${head}, ${n}: ${g!.items.join('; ')}${g!.more ? `; and ${g!.more} more` : ''}.` : `${head}: ${none}`;
     return `${list}${g?.cancelled.length ? ` Cancelled: ${g.cancelled.join('; ')}.` : ''}`;
   };
-  const out = [line(days.get(0), `Meetings today (${today.date})`, 'none left today.')];
-  // The window ends 24 h from now: tomorrow is only known up to this time.
   const tomorrow = dayOf(now + 86400_000, now);
-  if (!days.has(tomorrow.offset)) out.push(line(undefined, `Meetings tomorrow (${tomorrow.date}) until ${hhmm(now)}`, 'none.'));
-  for (const [offset, g] of [...days.entries()].sort((a, b) => a[0] - b[0])) {
-    if (offset === 0) continue;
-    const head = g.day.word === 'tomorrow' ? `Meetings tomorrow (${g.day.date})` : `Meetings on ${g.day.date}`;
-    out.push(line(g, `${head} until ${hhmm(now)} (later ones are not in this snapshot)`, 'none.'));
-  }
-  return out;
+  return [
+    line(days.get(0), `Meetings today (${today.date})`, 'none left today.'),
+    line(days.get(tomorrow.offset), `Meetings tomorrow (${tomorrow.date})`, 'none.'),
+    'Meetings after tomorrow: not in this snapshot.',
+  ];
 }
 
 async function buildSnapshot() {
@@ -1020,6 +1048,8 @@ module.exports = {
   createReplySplitter,
   looksLikeAction,
   guardDecision,
+  guardRoute,
+  looksBeyondSnapshot,
   rulesDecision,
   formatSnapshot,
   createSnapshotCache,

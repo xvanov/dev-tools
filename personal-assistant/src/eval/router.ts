@@ -20,6 +20,11 @@ function loadCases(file: any = path.join(__dirname, 'router-cases.json')) {
   return require(file);
 }
 
+/** The local instant the eval snapshot was taken at ("now", local time without a zone), in ms. */
+function snapshotNow(set: any = loadCases()) {
+  return new Date(String(set.now)).getTime();
+}
+
 const pct = (n: number, d: any) => (d ? `${((100 * n) / d).toFixed(1)}%` : '-');
 function quantile(xs: any, q: any) {
   const s = [...xs].sort((a, b) => a - b);
@@ -28,27 +33,42 @@ function quantile(xs: any, q: any) {
 
 /**
  * Pure. Scored rows ({ text, expect, lp, ms }) under one calibration and
- * threshold -> metrics. `guard` is the fast lane's looksLikeAction: a turn
- * the router would answer but that reads as an action is handed off.
+ * threshold -> metrics. `guard` is the fast lane's guardRoute: a turn the
+ * router would answer but that reads as an action, or asks about a day the
+ * snapshot does not hold, becomes that route ('action' | 'handoff'; true is
+ * 'action').
  */
 function evaluate(rows: any, { cal, threshold, guard = () => false }: { cal?: any; threshold?: any; guard?: any }) {
-  const out: any = { n: rows.length, correct: 0, localCorrect: 0, answeredNonAnswer: [] as any[], answeredAction: [] as any[], answeredActionRouter: [] as any[], missedAnswers: 0, perCase: [] as any[] };
+  const out: any = { n: rows.length, correct: 0, localCorrect: 0, answeredNonAnswer: [] as any[], answeredAction: [] as any[], answeredActionRouter: [] as any[], answeredLookupRouter: [] as any[], missedAnswers: 0, perCase: [] as any[] };
   for (const r of rows) {
     const p = R.calibrate(r.lp, cal);
     let route = R.decide(p, threshold);
     const routerRoute = route;
-    if (route === 'answer' && guard(r.text)) route = 'action';
+    if (route === 'answer') {
+      const g = guard(r.text);
+      if (g) route = g === true ? 'action' : g;
+    }
     const ok = route === r.expect;
     if (ok) out.correct++;
     if ((route === 'answer') === (r.expect === 'answer')) out.localCorrect++;
     if (route === 'answer' && r.expect !== 'answer') out.answeredNonAnswer.push(r);
     if (route === 'answer' && r.expect === 'action') out.answeredAction.push(r);
     if (routerRoute === 'answer' && r.expect === 'action') out.answeredActionRouter.push(r);
+    if (routerRoute === 'answer' && r.expect === 'handoff') out.answeredLookupRouter.push(r);
     if (r.expect === 'answer' && route !== 'answer') out.missedAnswers++;
     out.perCase.push({ ...r, p, route, routerRoute, ok });
   }
   out.answers = rows.filter((r: any) => r.expect === 'answer').length;
   return out;
+}
+
+/**
+ * The threshold for `cal`. Turns the guard hands off whatever the router says
+ * (a day the snapshot does not hold) do not raise it; actions still do, so the
+ * router alone answers none of them.
+ */
+function fitThreshold(rows: any, cal: any, guard: any = () => null) {
+  return R.pickThreshold(rows.filter((r: any) => guard(r.text) !== 'handoff').map((r: any) => ({ ...r, p: R.calibrate(r.lp, cal) })));
 }
 
 /** Leave-one-out accuracy of fit + threshold: how it does on turns it was not fitted on. */
@@ -59,7 +79,7 @@ function leaveOneOut(rows: any, guard: any) {
   for (let i = 0; i < rows.length; i++) {
     const train = rows.filter((_: any, j: any) => j !== i);
     const cal = R.fitCalibration(train, { iters: 1500 });
-    const threshold = R.pickThreshold(train.map((r: any) => ({ ...r, p: R.calibrate(r.lp, cal) })));
+    const threshold = fitThreshold(train, cal, guard);
     const e: any = evaluate([rows[i]], { cal, threshold, guard });
     correct += e.correct;
     answeredAction += e.answeredAction.length;
@@ -100,14 +120,14 @@ function report({ rows, ms }: { rows?: any; ms?: any }, { cal, threshold, guard,
   let usedThreshold = threshold;
   if (fit) {
     usedCal = R.fitCalibration(rows);
-    usedThreshold = R.pickThreshold(rows.map((r: any) => ({ ...r, p: R.calibrate(r.lp, usedCal) })));
+    usedThreshold = fitThreshold(rows, usedCal, guard);
   }
   const e = evaluate(rows, { cal: usedCal, threshold: usedThreshold, guard });
   const byExpect = (x: any) => rows.filter((r: any) => r.expect === x).length;
   say(`router eval · ${rows.length} turns (${byExpect('answer')} answer, ${byExpect('handoff')} handoff, ${byExpect('action')} action) · calibration T=${usedCal.T} b=${JSON.stringify(usedCal.b)} · threshold p(answer_here) >= ${usedThreshold}${fit ? ' (fitted on this set)' : ''}`);
   say(`  raw argmax (no calibration, no guard): ${pct(raw.correct, raw.n)} correct, ${raw.answeredAction.length} action and ${raw.answeredNonAnswer.length} non-answer turns answered here`);
   say(`  routed: ${pct(e.correct, e.n)} correct (3-way), ${pct(e.localCorrect, e.n)} on answer-here vs Jarvis`);
-  say(`  answered here but should not be: ${e.answeredNonAnswer.length} (actions: ${e.answeredAction.length}; by the router alone, before the action guard: ${e.answeredActionRouter.length})`);
+  say(`  answered here but should not be: ${e.answeredNonAnswer.length} (actions: ${e.answeredAction.length}; by the router alone, before the guards: ${e.answeredActionRouter.length} actions, ${e.answeredLookupRouter.length} look-ups)`);
   say(`  answerable turns handed to Jarvis anyway: ${e.missedAnswers} of ${e.answers}`);
   if (fit) {
     const loo = leaveOneOut(rows, guard);
@@ -124,4 +144,4 @@ function report({ rows, ms }: { rows?: any; ms?: any }, { cal, threshold, guard,
   return { metrics: e, cal: usedCal, threshold: usedThreshold, latency: { p50: quantile(ms, 0.5), p95: quantile(ms, 0.95), max: Math.max(...ms) } };
 }
 
-module.exports = { loadCases, evaluate, leaveOneOut, scoreCases, report, quantile, RAW };
+module.exports = { loadCases, snapshotNow, evaluate, fitThreshold, leaveOneOut, scoreCases, report, quantile, RAW };

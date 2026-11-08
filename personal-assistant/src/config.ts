@@ -416,7 +416,7 @@ const config = {
     router: env('PA_FAST_ROUTER', 'logprob'),
     // The answerer speaks only when the router's p(answer_here) is at least this
     // (fitted with `pa eval router --fit`).
-    answerThreshold: env('PA_FAST_ANSWER_THRESHOLD', '0.85'),
+    answerThreshold: env('PA_FAST_ANSWER_THRESHOLD', '0.64'),
     // Reasoning effort for an OpenAI/Azure reasoning model (the fallback too); Claude effort otherwise.
     effort: env('PA_FAST_EFFORT', 'low'),
     contextTtlMs: envInt('PA_FAST_CONTEXT_SECONDS', 60) * 1000,

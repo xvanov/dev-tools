@@ -33,13 +33,13 @@ const LETTERS: Record<string, string> = { A: 'answer_here', B: 'hand_off', C: 'a
 const FLOOR = -20; // log-probability of a letter missing from top_logprobs
 
 // Fitted by `pa eval router --fit` on src/eval/router-cases.json (llama3.2:3b,
-// 2026-11-07). Re-fit after changing the prompt or the model.
-const CALIBRATION = { T: 0.397, b: { answer_here: -0.46, hand_off: -0.771, action: 0 } };
-const THRESHOLD = 0.85;
+// 2026-11-08). Re-fit after changing the prompt or the model.
+const CALIBRATION = { T: 0.461, b: { answer_here: -1.214, hand_off: -0.404, action: 0 } };
+const THRESHOLD = 0.64;
 
 const ROUTER_SYSTEM = `You route what the user says to their voice assistant. Reply with one letter only.
-A = small talk, or a question whose whole answer is written in the snapshot or the conversation (counts, due dates, today's meetings, the time and date, what was just said).
-B = a question that needs looking something up that the snapshot does not show: mail, messages, chats, documents, tickets, PRs, past meetings, memory, the web, or details beyond the snapshot's lines.
+A = small talk, or a question whose whole answer is written in the snapshot or the conversation (counts, due dates, today's and tomorrow's meetings, the time and date, what was just said). "What's on" today or tomorrow means the user's meetings then; the week, or any later day, is not in the snapshot.
+B = a question that needs looking something up that the snapshot does not show: mail, messages, chats, documents, tickets, PRs, past meetings, meetings after tomorrow or the whole week, memory, the web, or details beyond the snapshot's lines.
 C = asks for something to be done or changed: send, reply, tell, forward, remind, remember, schedule, book, move, cancel, close, mark, approve, start, draft, merge, set up. Anything the user wants to happen is C, however it is phrased.
 If unsure between A and anything else, it is not A.
 
@@ -47,6 +47,7 @@ Examples:
 "hey there" -> A
 "how many asks are due soon?" -> A
 "what's my first meeting tomorrow?" -> A
+"what have I got on tomorrow afternoon?" -> A
 "what did you say about the overdue ones?" -> A
 "perfect, thanks a lot" -> A
 "what did the vendor send me yesterday?" -> B
@@ -54,6 +55,8 @@ Examples:
 "check whether my report got a reply" -> B
 "what does the design doc say about caching?" -> B
 "look up the ticket for the outage" -> B
+"how's the rest of my week looking?" -> B
+"am I free on Thursday?" -> B
 "write back to the vendor that we agree" -> C
 "get the slides over to my manager" -> C
 "put a reminder in for Friday" -> C

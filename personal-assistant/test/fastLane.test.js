@@ -108,6 +108,27 @@ function splitAll(pieces) {
   assert.ok(!F.guardDecision({ route: 'handoff', task: 'x', reason: '' }, 'send it').overridden);
 }
 
+// ---- guards: days the snapshot does not hold go to the PA chat ----------------------
+{
+  const sat = new Date(2026, 10, 7, 18, 40).getTime(); // a Saturday, local
+  for (const t of ["what's on this week?", 'what does my week look like?', 'anything this weekend?', 'what did I miss yesterday?', "what's on Wednesday?", 'any meetings on Tuesdays?', "what's on next week?"]) {
+    assert.ok(F.looksBeyondSnapshot(t, sat), t);
+    const g = F.guardDecision({ route: 'answer', reason: 'm' }, t, sat);
+    assert.ok(g.overridden, t);
+    assert.strictEqual(g.decision.route, 'handoff');
+    assert.match(g.decision.reason, /a day the snapshot does not hold/);
+    assert.strictEqual(F.guardRoute(t, sat), 'handoff');
+  }
+  // Today and tomorrow, by name or not, are in it; so is a "weekly" meeting.
+  for (const t of ["What's on tomorrow?", "what's on today?", 'anything Saturday evening?', 'what have I got on Sunday?', 'when is the weekly platform sync tomorrow?']) {
+    assert.ok(!F.looksBeyondSnapshot(t, sat), t);
+    assert.ok(!F.guardDecision({ route: 'answer', reason: 'm' }, t, sat).overridden, t);
+    assert.strictEqual(F.guardRoute(t, sat), null);
+  }
+  // An action outranks it.
+  assert.strictEqual(F.guardRoute('move Wednesday\'s sync to ten', sat), 'action');
+}
+
 // ---- the rules router ---------------------------------------------------------------
 {
   assert.strictEqual(F.rulesDecision('Thanks, great!').route, 'answer');
@@ -153,9 +174,11 @@ function splitAll(pieces) {
   assert.match(down, /unreachable/);
 }
 
-// The calendar window is now - 2 h .. now + 24 h: on a Sunday afternoon every
-// row can be Monday's. Each day has its own heading, and today's says when
-// nothing is left (docs/native/acceptance/whats-on.md, 8.4.1). Local time.
+// The calendar window is now - 2 h .. the end of tomorrow: on a Sunday
+// afternoon every row can be Monday's. Each day has its own heading, and
+// today's says when nothing is left (docs/native/acceptance/whats-on.md,
+// 8.4.1); tomorrow is whole (8.4.39) and later days are said to be missing.
+// Local time.
 {
   const now = new Date(2026, 10, 8, 14, 53).getTime();
   const at = (d, h, m = 0) => new Date(2026, 10, d, h, m).toISOString();
@@ -168,7 +191,8 @@ function splitAll(pieces) {
   ];
   const text = F.formatSnapshot(data(monday), { now });
   assert.match(text, /Meetings today \(Sunday 8 November\): none left today\./);
-  assert.match(text, /Meetings tomorrow \(Monday 9 November\) until 14:53 \(later ones are not in this snapshot\), 3: /);
+  assert.match(text, /Meetings tomorrow \(Monday 9 November\), 3: /);
+  assert.match(text, /\nMeetings after tomorrow: not in this snapshot\./);
   const tomorrow = text.slice(text.indexOf('Meetings tomorrow')).split('\n')[0];
   for (const t of ['10:00 "Vendor review"', '11:00 "Team standup"', '11:30 "Planning"', 'Cancelled: 04:00 "Early sync".']) assert.ok(tomorrow.includes(t), `${t} under tomorrow:\n${text}`);
   // A meeting later today, and one that started half an hour ago.
@@ -179,7 +203,10 @@ function splitAll(pieces) {
   assert.ok(!todayBlock.includes('Team standup'), both);
   // Nothing tomorrow either: said, so "nothing tomorrow morning" is not a guess.
   const quiet = F.formatSnapshot(data([{ subject: 'Wrap-up', occurred_at: at(8, 17) }]), { now });
-  assert.match(quiet, /Meetings tomorrow \(Monday 9 November\) until 14:53: none\./);
+  assert.match(quiet, /Meetings tomorrow \(Monday 9 November\): none\./);
+  // A meeting late tomorrow evening is tomorrow's, not cut at this hour.
+  const late = F.formatSnapshot(data([...monday, { subject: 'Evening call', occurred_at: at(9, 19) }]), { now });
+  assert.match(late, /Meetings tomorrow \(Monday 9 November\), 4: .*19:00 "Evening call"/);
   assert.match(F.formatSnapshot(data([]), { now }), /none in the assistant's calendar data/);
 }
 {
