@@ -101,6 +101,14 @@ runs only the 20 smallest selected files as a smoke subset and leaves the full s
 runs the whole selection.
 (import graph by regex, `conftest.py` and fixture-file-name edges, no plugins).
 
+### Factory gate (`gate-changed.js`)
+
+`node scripts/gate-changed.js [--since REF]` is the software-factory's test gate for stories on this
+repo (`software-factory/apps/dev-tools/config.yaml`): the changed-files mode above, against the merge
+base with `REF` (default `origin/main`), for every touched tool. Unlike the hook it installs a tool's
+dependencies when the story worktree has none (`npm ci`, `uv sync --all-extras`) instead of
+skipping it, and a tool that cannot run fails the gate.
+
 ## Pre-commit hook
 
 `scripts/hooks/pre-commit` runs the public-repo guard (`guard: N files clean`, ios-messages), then

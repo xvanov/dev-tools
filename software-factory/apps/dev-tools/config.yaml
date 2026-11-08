@@ -7,9 +7,12 @@
 #     the same checkout the factory runs from; stories build in per-story git
 #     worktrees of it, never in the live tree.
 #   * Gate commands run with cwd = the story worktree ROOT (the monorepo root),
-#     not software-factory/. Every tool has its own toolchain, so the default
-#     gate is the factory's own suite via `cd software-factory`. Widen it per
-#     direction (e.g. `cd termhub && npm test`) once a tool's tests are stable.
+#     not software-factory/. The test gate is scripts/gate-changed.js: only the
+#     tests the story's change can reach (run-tests.js --changed for each Node
+#     tool, changed-pytest.py with its smoke cap for the factory), against the
+#     merge base with origin/main, installing a tool's deps when the worktree
+#     lacks them. CI runs the full suites (plan E5.7: the whole factory suite
+#     ran > 10 min and hung for a personal-assistant change).
 #   * GitHub access is per repo owner: xvanov -> `gh auth token --user xvanov`
 #     (factory/gh_auth.py). Never `gh auth switch`.
 #   * Known limit (docs/native/PLAN.md 2.3): FACTORY_REPO in app_config.py is
@@ -40,7 +43,7 @@ gates:
   lint_command: "cd software-factory && uv run ruff check ."
   format_check_command: ""
   type_check_command: ""
-  test_command: "cd software-factory && uv run pytest -q"
+  test_command: "node scripts/gate-changed.js"
   coverage_command: ""
   e2e_command: ""
   e2e_harness_ready: false
