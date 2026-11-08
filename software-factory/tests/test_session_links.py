@@ -20,7 +20,12 @@ import pytest
 from factory.claude_session import cli as claude_cli
 from factory.claude_session import run as claude_run
 from factory.claude_session.launcher import RoundPlan, SessionInfo, TermhubLauncher
-from factory.claude_session.termhub import TermhubClient
+from factory.claude_session.termhub import (
+    DEFAULT_FRONT_URL,
+    DEFAULT_URL,
+    TermhubClient,
+    TermhubError,
+)
 
 
 def test_session_links_names_job_step_story_and_extras() -> None:
@@ -89,6 +94,61 @@ def test_termhub_client_puts_links_in_the_body(monkeypatch: pytest.MonkeyPatch) 
     assert c.create_session(cwd="/w", command="x", title="t") == "s1"
     assert sent[0]["links"] == {"job": "a:1"}
     assert "links" not in sent[1]
+
+
+def _fake_hub(monkeypatch: pytest.MonkeyPatch, answers: dict[str, Any]) -> list[str]:
+    """``/api/secure-url`` per origin: a dict is the front's answer; absent is a 404 or down."""
+    asked: list[str] = []
+
+    def fake_call(self: TermhubClient, path: str, *, origin: str | None = None, **_: Any) -> Any:
+        root = origin or self.base
+        asked.append(root)
+        if root not in answers:
+            raise TermhubError(f"termhub 404 on GET {path}")
+        return answers[root]
+
+    monkeypatch.setattr(TermhubClient, "_call", fake_call)
+    return asked
+
+
+def test_session_url_on_the_default_sessiond_base_opens_the_front(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # 8.4.17: sessiond (:7010) 404s both /api/secure-url and GET /; the link is the front's.
+    asked = _fake_hub(monkeypatch, {DEFAULT_FRONT_URL: {"secureUrl": None}})
+    c = TermhubClient(base=DEFAULT_URL)
+    assert c.session_url("s1") == "http://127.0.0.1:7000/#session=s1"
+    assert asked == [DEFAULT_URL, DEFAULT_FRONT_URL]
+    assert c.session_url("s2") == "http://127.0.0.1:7000/#session=s2"
+    assert len(asked) == 2, "the answered origin is kept"
+
+
+def test_session_url_prefers_the_fronts_published_https_origin(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _fake_hub(monkeypatch, {DEFAULT_FRONT_URL: {"secureUrl": "https://box.example/"}})
+    assert TermhubClient(base=DEFAULT_URL).session_url("s1") == "https://box.example/#session=s1"
+
+
+def test_session_url_with_nothing_answering_is_still_the_front_and_asks_again(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    asked = _fake_hub(monkeypatch, {})
+    c = TermhubClient(base=DEFAULT_URL)
+    assert c.session_url("s1") == "http://127.0.0.1:7000/#session=s1"
+    c.session_url("s1")
+    assert len(asked) == 4, "a guess is not cached"
+
+
+def test_session_url_keeps_a_base_that_is_a_front_and_the_public_override(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    asked = _fake_hub(monkeypatch, {"http://hub:7100": {"secureUrl": None}})
+    assert TermhubClient(base="http://hub:7100").session_url("s") == "http://hub:7100/#session=s"
+    assert asked == ["http://hub:7100"]
+    c = TermhubClient(base=DEFAULT_URL, public="https://th.example")
+    assert c.session_url("s") == "https://th.example/#session=s"
+    assert len(asked) == 1, "FACTORY_TERMHUB_PUBLIC_URL is not asked about"
 
 
 class _LinkLauncher:

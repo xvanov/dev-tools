@@ -1375,7 +1375,7 @@
         "Model": "--model claude_session=<name> (e.g. claude-sonnet-5-5); default: the CLI's default",
         "Pipeline": "auto resolves to solo; under --pipeline chain only the dev persona is Claude Code",
         "Bounds": "5400 s, at most 3 gate rounds, no-progress abort; a usage-limit message fails the run as infrastructure",
-        "termhub": "FACTORY_TERMHUB_URL (default http://127.0.0.1:7010, sessiond); FACTORY_TERMHUB_PUBLIC_URL is the origin a human opens. Without termhub the run starts as a local process and cannot be watched live.",
+        "termhub": "FACTORY_TERMHUB_URL (default http://127.0.0.1:7010, sessiond) is the API; a step's session link is termhub's front: FACTORY_TERMHUB_PUBLIC_URL if set, else the front's /api/secure-url (Tailscale HTTPS), else the front itself (http://127.0.0.1:7000), never sessiond, which serves no page (8.4.17). The PA re-points any loopback link at that machine's front (PA_TERMHUB_URL or PA_MACHINES). Without termhub the run starts as a local process and cannot be watched live.",
         "Compaction": "unknown: each run is one Claude Code conversation; Claude Code compacts it if it fills",
         "Credit pool": "a claude_session run draws from the Claude credit pool (not metered per run here): its total_cost_usd and token usage are posted to the PA (POST /api/telemetry, when PA_TELEMETRY_URL is set) and counted against PA_CLAUDE_POOL_USD; once spent, with PA_CLAUDE_POOL_FALLBACK_API=1, the PA dispatches new jobs on the api runtime (see the Meter component)"
       },

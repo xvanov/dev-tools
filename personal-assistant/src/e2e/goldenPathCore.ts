@@ -499,11 +499,13 @@ function checkBuild(factory: Json | null | undefined, ids: Ids): Check[] {
  * Pure. Run: termhub GET /api/sessions — each step's session is there, says
  * which job and step it belongs to, and is alive or has scrollback to review.
  * `sessionsByMachine` maps a machine name ('' for the factory's own) to its list.
+ * `pages` maps a session id to what GET of its link answered (a status, or an
+ * error): the link must open a page, not sessiond's 404 (8.4.17).
  */
 function checkRun(
   sessionsByMachine: Record<string, Json[] | null | undefined>,
   ids: Ids,
-  { scrollback = {}, stopped = new Set() }: { scrollback?: Record<string, string | null | undefined>; stopped?: Set<string> } = {}
+  { scrollback = {}, stopped = new Set(), pages = {} }: { scrollback?: Record<string, string | null | undefined>; stopped?: Set<string>; pages?: Record<string, number | string> } = {}
 ): Check[] {
   const out: Check[] = [];
   const withSession = ids.steps.filter((s): s is Step & { session: StepSession } => Boolean(s.session));
@@ -517,6 +519,8 @@ function checkRun(
       continue;
     }
     out.push(result('run', `session ${s.session.id} listed`, got, got ? null : `not in termhub /api/sessions${s.session.machine ? ` on ${s.session.machine}` : ''}`));
+    const page = pages[s.session.id];
+    if (page !== undefined) out.push(result('run', `session ${s.session.id} link opens`, page === 200, `GET ${String(s.session.url || '').replace(/#.*/, '')} → ${page}`));
     if (!got) continue;
     const L = got.links || {};
     out.push(result('run', `session ${s.session.id} → job`, L.job === ids.job, `links.job ${L.job || 'none'}`));

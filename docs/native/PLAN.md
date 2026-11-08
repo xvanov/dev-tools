@@ -986,11 +986,17 @@ not in the Map is not done, and a new one gets added there first.
     20:24:37Z, the PA `run` row reached the live feed at 20:25:01 (24 s) and `factory_board` at
     20:25:08 (31 s). The factory's `updated_at` moved only at 20:28:52, so it can't time the change.
     Re-measure once serve runs e88e204 (E3 push), with 8.4.10's measurement.
-  - [ ] **8.4.17 deepseek-pr: step session links open a 404.** Plan's card chain, Build and
+  - [x] **8.4.17 deepseek-pr: step session links open a 404.** Plan's card chain, Build and
     `factory_job` give `http://127.0.0.1:7010/#session=…` for every factory step, and sessiond's
     `GET /` is 404; only the run's follow session links to the front (:7000). Set
     `FACTORY_TERMHUB_PUBLIC_URL` to the front on the work stack (or default it there), and have the
     e2e GET each link it reports, not only find the session in `/api/sessions`.
+    Done: no env needed on either stack. The factory's link origin is `FACTORY_TERMHUB_PUBLIC_URL`,
+    else the `/api/secure-url` of the base or termhub's front (:7000), else the front, never
+    sessiond. The PA re-points any loopback link at the factory machine's front (`PA_TERMHUB_URL`
+    or `PA_MACHINES`) where factory JSON enters (`factory.call`) and where stored step links are
+    read, so old rows open too. The golden path GETs each step link (`link opens`). Unit-tested;
+    not run live.
   - [ ] **8.4.18 deepseek-pr: the API dev still hangs PowerShell on a multi-line `git commit -m`.**
     It did so twice in dev-tools:018 (20:05-20:12, 7.6 min, 18 turns, $0.16 of the $1.11 step),
     with 73e824d's prompt rule in place, and it considered `--no-verify` before using `-F`. The

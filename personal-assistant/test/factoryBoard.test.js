@@ -146,6 +146,23 @@ const V1_JOB = {
   assert.strictEqual(F.groupOf({ state: 'queued' }), 'running');
 }
 
+// --- 8.4.17: a step's session link opens termhub's front, not sessiond -----------------------
+
+{
+  const front = 'http://127.0.0.1:7000';
+  assert.strictEqual(F.frontUrl('http://127.0.0.1:7010/#session=s1', front), 'http://127.0.0.1:7000/#session=s1', 'sessiond serves no page');
+  assert.strictEqual(F.frontUrl('http://localhost:7010/#session=s1', 'https://forge.example/'), 'https://forge.example/#session=s1', 'a remote factory: its machine\'s front');
+  assert.strictEqual(F.frontUrl('http://127.0.0.1:7000/#session=s1', front), 'http://127.0.0.1:7000/#session=s1');
+  assert.strictEqual(F.frontUrl('https://forge.example/#session=s1', front), 'https://forge.example/#session=s1', 'a published origin is kept');
+  assert.strictEqual(F.frontUrl('http://127.0.0.1:7010/#session=s1', null), 'http://127.0.0.1:7010/#session=s1');
+  assert.strictEqual(F.frontUrl('javascript:alert(1)', front), null);
+  const job = { job_id: 'a:1', runs: [{ id: 1, session: { termhub_session_id: 's1', url: 'http://127.0.0.1:7010/#session=s1' } }, { id: 2, session: null }] };
+  assert.strictEqual(F.frontSessions({ jobs: [job] }, front).jobs[0].runs[0].session.url, 'http://127.0.0.1:7000/#session=s1', 'job list');
+  const single = { job_id: 'a:2', runs: [{ id: 3, session: { url: 'http://127.0.0.1:7010/#session=s3' } }] };
+  assert.strictEqual(F.frontSessions(single, front).runs[0].session.url, 'http://127.0.0.1:7000/#session=s3', 'job status');
+  assert.strictEqual(F.frontSessions(null, front), null);
+}
+
 // --- the page: grouped, newest first, and the spend line -------------------------------------
 
 {

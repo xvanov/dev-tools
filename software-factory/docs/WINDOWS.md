@@ -201,8 +201,10 @@ personal assistant worker afterwards.
 ## Config on Windows
 
 - termhub: `FACTORY_TERMHUB_URL` defaults to `http://127.0.0.1:7010` (sessiond on
-  Windows too). termhub's shell is PowerShell; set `FACTORY_TERMHUB_SHELL=cmd` if
-  it runs `cmd`.
+  Windows too). A step's session link is termhub's front, not sessiond (which
+  serves no page): the front's published HTTPS origin, else
+  `http://127.0.0.1:7000`, unless `FACTORY_TERMHUB_PUBLIC_URL` says otherwise.
+  termhub's shell is PowerShell; set `FACTORY_TERMHUB_SHELL=cmd` if it runs `cmd`.
 - Gate, smoke and boot commands in `apps/<app>/config.yaml` run through `cmd.exe`
   on Windows (`shell=True`). Write them for `cmd` (or call `powershell -Command`).
 - Booted apps get the Windows essentials (`SYSTEMROOT`, `TEMP`, `COMSPEC`, ...) on

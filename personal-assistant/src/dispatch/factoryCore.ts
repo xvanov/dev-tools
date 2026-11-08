@@ -446,6 +446,45 @@ function isoOrNull(v: unknown): string | null {
   return Number.isFinite(t) ? new Date(t).toISOString() : null;
 }
 
+const LOOPBACK = new Set(['127.0.0.1', 'localhost', '[::1]', '::1']);
+
+/**
+ * Pure. A session link as a person opens it (plan 8.4.17). A loopback link
+ * other than `front` (the factory machine's termhub front) is re-pointed at
+ * `front`, keeping its `#session=` anchor: an older factory reported its API
+ * base, sessiond on :7010, which serves no page, and a loopback address means
+ * nothing off the factory's machine. Any other link is kept.
+ */
+function frontUrl(url: unknown, front: string | null | undefined): string | null {
+  const s = safeUrl(url);
+  if (!s || !front) return s;
+  let u: URL;
+  let f: URL;
+  try {
+    u = new URL(s);
+    f = new URL(front);
+  } catch {
+    return s;
+  }
+  if (!LOOPBACK.has(u.hostname) || u.origin === f.origin) return s;
+  return `${front.replace(/\/+$/, '')}/${u.hash}`;
+}
+
+/**
+ * Pure. A factory answer (a job or `{jobs: [...]}`) with every
+ * `runs[].session.url` through frontUrl, in place.
+ */
+function frontSessions<T>(result: T, front: string | null | undefined): T {
+  if (!front || !result || typeof result !== 'object') return result;
+  const r = result as Job;
+  for (const j of Array.isArray(r.jobs) ? r.jobs : [r]) {
+    for (const run of Array.isArray(j?.runs) ? j.runs : []) {
+      if (run?.session && typeof run.session === 'object' && run.session.url) run.session.url = frontUrl(run.session.url, front);
+    }
+  }
+  return result;
+}
+
 /**
  * Pure. One id chain (plan E1): what a job's status says about its PRs and its
  * agent steps, as the rows of run_pr and run_step (sql/033). Every field the
@@ -801,6 +840,8 @@ module.exports = {
   BRANCH,
   approveArgv,
   safeUrl,
+  frontUrl,
+  frontSessions,
   prNumber,
   chainOf,
   runChain,

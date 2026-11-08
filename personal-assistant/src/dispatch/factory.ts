@@ -166,11 +166,13 @@ async function call(sub: string[], { timeoutMs = config.factory.timeoutMs, maxOu
   const opts: ExecOptions = { cwd: config.factory.path, timeoutMs };
   if (maxOutputBytes) opts.maxOutputBytes = maxOutputBytes;
   const where = machine();
+  // Step session links open on the factory machine's termhub front (8.4.17).
+  const front = termhub.forMachine(where).base;
   // A factory on this machine with `factory serve` running answers in-process
   // over localhost (plan 2.1): ~50-200 ms instead of 5-10 s of `uv run`.
   if (!where && !runnerOverride) {
     const served = await viaServe(sub, timeoutMs);
-    if (served) return F.parseResult(served);
+    if (served) return F.frontSessions(F.parseResult(served), front);
   }
   // A factory on this Windows machine runs in Python's UTF-8 mode, as on
   // Linux: without it every un-annotated read_text() decodes as cp1252.
@@ -179,7 +181,7 @@ async function call(sub: string[], { timeoutMs = config.factory.timeoutMs, maxOu
   const verb = String(sub[0] || 'call');
   return require('../telemetry').span('factory.cli', `factory ${verb}`, { verb, sub: String(sub[1] || '').slice(0, 24) }, async () => {
     const res = await runCommand(where, F.factoryArgv(sub, config.factory.uv), opts);
-    return F.parseResult(res);
+    return F.frontSessions(F.parseResult(res), front);
   });
 }
 
@@ -844,8 +846,10 @@ async function chains(runIds: Array<number | string> | null | undefined): Promis
     repository.runs.prsOf(ids).catch(() => []),
     repository.runs.stepsOf(ids).catch(() => []),
   ]);
+  let front: string | null = null;
+  try { front = termhub.forMachine(machine()).base; } catch { /* PA_FACTORY_MACHINE misnamed: links as stored */ }
   for (const p of prs) out.get(String(p.run_id))?.prs.push(p);
-  for (const s of steps) out.get(String(s.run_id))?.steps.push(s);
+  for (const s of steps) out.get(String(s.run_id))?.steps.push({ ...s, url: F.frontUrl(s.url, front) });
   return out;
 }
 

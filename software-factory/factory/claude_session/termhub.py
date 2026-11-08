@@ -18,8 +18,10 @@ Config (env, usually set in the factory's ``.env``):
 * ``FACTORY_TERMHUB_URL`` — API base, default ``http://127.0.0.1:7010``
   (termhub's sessiond on the same machine).
 * ``FACTORY_TERMHUB_PUBLIC_URL`` — the origin a human opens (e.g. the
-  Tailscale HTTPS address). Default: ``/api/secure-url`` if the base answers
-  it, else the base.
+  Tailscale HTTPS address). Default: the ``/api/secure-url`` of the first of
+  the base and termhub's front (``http://127.0.0.1:7000``) that answers it, or
+  that front's own origin when Serve publishes nothing. Never sessiond's: it
+  serves no page, so a link to it is a 404 (plan 8.4.17).
 """
 
 from __future__ import annotations
@@ -34,6 +36,9 @@ from dataclasses import dataclass
 from typing import Any
 
 DEFAULT_URL = "http://127.0.0.1:7010"
+# termhub's front on the same machine: the page a session link opens, and the
+# only process that answers /api/secure-url.
+DEFAULT_FRONT_URL = "http://127.0.0.1:7000"
 
 
 class TermhubError(RuntimeError):
@@ -45,6 +50,7 @@ class TermhubClient:
     base: str
     public: str | None = None
     timeout_s: float = 15.0
+    front: str = DEFAULT_FRONT_URL
 
     @classmethod
     def from_env(cls) -> TermhubClient:
@@ -52,20 +58,29 @@ class TermhubClient:
         public = (os.environ.get("FACTORY_TERMHUB_PUBLIC_URL") or "").rstrip("/") or None
         return cls(base=base, public=public)
 
-    def _call(self, path: str, *, method: str = "GET", body: Any = None) -> Any:
+    def _call(
+        self,
+        path: str,
+        *,
+        method: str = "GET",
+        body: Any = None,
+        origin: str | None = None,
+        timeout_s: float | None = None,
+    ) -> Any:
+        root = origin or self.base
         data = json.dumps(body).encode() if body is not None else None
         headers = {"X-Termhub": "1"}
         if data is not None:
             headers["Content-Type"] = "application/json"
-        req = urllib.request.Request(self.base + path, data=data, method=method, headers=headers)
+        req = urllib.request.Request(root + path, data=data, method=method, headers=headers)
         try:
-            with urllib.request.urlopen(req, timeout=self.timeout_s) as resp:  # noqa: S310
+            with urllib.request.urlopen(req, timeout=timeout_s or self.timeout_s) as resp:  # noqa: S310
                 raw = resp.read()
         except urllib.error.HTTPError as exc:
             detail = exc.read()[:200].decode(errors="replace") if exc.fp else ""
             raise TermhubError(f"termhub {exc.code} on {method} {path}: {detail}") from exc
         except (urllib.error.URLError, OSError) as exc:
-            raise TermhubError(f"termhub unreachable at {self.base}: {exc}") from exc
+            raise TermhubError(f"termhub unreachable at {root}: {exc}") from exc
         if not raw:
             return None
         try:
@@ -131,14 +146,16 @@ class TermhubClient:
     def public_origin(self) -> str:
         if self.public:
             return self.public
-        try:
-            payload = self._call("/api/secure-url")
-            if isinstance(payload, dict) and payload.get("secureUrl"):
-                self.public = str(payload["secureUrl"]).rstrip("/")
-                return self.public
-        except TermhubError:
-            pass
-        return self.base
+        front = self.front.rstrip("/")
+        for origin in dict.fromkeys([self.base, front]):
+            try:
+                payload = self._call("/api/secure-url", origin=origin, timeout_s=5.0)
+            except TermhubError:
+                continue  # sessiond 404s the route; a front that is down cannot answer
+            secure = payload.get("secureUrl") if isinstance(payload, dict) else None
+            self.public = str(secure or origin).rstrip("/")
+            return self.public
+        return front
 
     def session_url(self, session_id: str) -> str:
         return f"{self.public_origin()}/#session={urllib.parse.quote(session_id)}"
@@ -148,4 +165,4 @@ def machine_name() -> str:
     return socket.gethostname()
 
 
-__all__ = ["DEFAULT_URL", "TermhubClient", "TermhubError", "machine_name"]
+__all__ = ["DEFAULT_FRONT_URL", "DEFAULT_URL", "TermhubClient", "TermhubError", "machine_name"]

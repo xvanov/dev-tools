@@ -187,6 +187,14 @@ test('run: each step session listed with matching links, alive or with scrollbac
   assert.ok(!C.checkRun({ '': [] }, IDS)[0].ok);
 });
 
+test('run: a step session link must open a page, not sessiond\'s 404 (8.4.17)', () => {
+  const sessions = { '': [{ id: 'abc123', alive: true, links: { job: 'dev-tools:0007', step: '41' } }] };
+  allOk(C.checkRun(sessions, IDS, { pages: { abc123: 200 } }));
+  const dead = C.checkRun(sessions, IDS, { pages: { abc123: 404 } }).find((c) => /link opens/.test(c.check));
+  assert.ok(dead && !dead.ok && /h\/ → 404/.test(dead.detail), dead && dead.detail);
+  assert.ok(!C.checkRun(sessions, IDS).some((c) => /link opens/.test(c.check)), 'no GET, no check');
+});
+
 test('mcp and github', () => {
   allOk(C.checkMcpCard({ runs: [{ run: 5, job: 'dev-tools:0007', steps: [{ step: '41' }], prs: [{ number: 9 }] }] }, IDS));
   assert.ok(!C.checkMcpCard({ runs: [] }, IDS)[0].ok);

@@ -30,7 +30,7 @@ type Options = Json;
 type Flags = Record<string, string | boolean | undefined>;
 type Lists = { timeout?: string[] };
 type Check = { view: string; check: string; ok: boolean; detail?: string; skipped?: boolean };
-type Step = { step: string; session: { id: string; machine: string | null } | null; state: string | null; runtime: string | null; persona: string | null };
+type Step = { step: string; session: { id: string; machine: string | null; url?: string | null } | null; state: string | null; runtime: string | null; persona: string | null };
 type Ids = { card: string | null; run: number | null; job: string; steps: Step[]; prs: Array<{ number: number | null; url: string }> };
 type RunResult = { code: number; stdout: string; stderr: string };
 type Safe<T> = { ok: true; value: T; error?: undefined } | { ok: false; error: string; value?: undefined };
@@ -59,6 +59,11 @@ function defaultDeps(): Deps {
       const text = await res.text();
       if (!res.ok) throw Object.assign(new Error(`${res.status} on ${url.replace(/\?.*/, '')}: ${text.slice(0, 160)}`), { status: res.status });
       return text ? JSON.parse(text) : null;
+    },
+    async pageStatus(url: string) {
+      const res = await fetch(url, { signal: AbortSignal.timeout(5000) });
+      await res.body?.cancel();
+      return res.status;
     },
     addCard: (text: string) => require('../commitments/request.ts').add({ text, via: 'cli' }),
     closeCard: (id: number | string) => require('../commitments.ts').setStatus(Number(id), 'dropped'),
@@ -159,6 +164,20 @@ async function scrollbacks(deps: Deps, steps: Step[]): Promise<Record<string, st
     if (!session) continue;
     const r = await safely<string>(() => deps.hub(session.machine).screen(session.id, { tailChars: 4000 }));
     out[session.id] = r.ok ? r.value : '';
+  }
+  return out;
+}
+
+// What GET of each step's session link answers (its status, or the error):
+// the page a person opens from Plan, Build or the chat (8.4.17).
+async function linkPages(deps: Deps, steps: Step[]): Promise<Record<string, number | string>> {
+  const out: Record<string, number | string> = {};
+  if (!deps.pageStatus) return out;
+  for (const s of steps) {
+    const url = s.session?.url;
+    if (!s.session || !url) continue;
+    const r = await safely<number>(() => deps.pageStatus(url.replace(/#.*/, '')));
+    out[s.session.id] = r.ok ? r.value : r.error;
   }
   return out;
 }
@@ -441,7 +460,7 @@ async function viewChecksFor(o: Options, deps: Deps, ids: Ids, cancelledSessions
   const fac = await safely(() => deps.getJson(`${deps.paBase}/api/factory`));
   out.push(...(fac.ok ? C.checkBuild(fac.value, ids) : [{ view: 'build', check: 'GET /api/factory', ok: false, detail: fac.error }]));
   const sb = await scrollbacks(deps, ids.steps);
-  out.push(...C.checkRun(await sessionLists(deps, ids.steps), ids, { scrollback: sb, stopped: cancelledSessions }));
+  out.push(...C.checkRun(await sessionLists(deps, ids.steps), ids, { scrollback: sb, stopped: cancelledSessions, pages: await linkPages(deps, ids.steps) }));
   const mcard = await safely(() => deps.chat('card', { id: ids.card }));
   out.push(...(mcard.ok ? C.checkMcpCard(mcard.value, ids) : [{ view: 'mcp', check: 'card tool', ok: false, detail: mcard.error }]));
   const mjob = await safely(() => deps.chat('factory_job', { job: ids.job, fresh: true }));
