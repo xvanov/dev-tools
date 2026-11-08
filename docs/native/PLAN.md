@@ -372,7 +372,7 @@ run mid-step; a job continued on an existing branch (`--branch`).
     `bash -c`, `pwsh -Command`, `python -c`). Ctrl-C did not clear the `>>` prompt in dev-tools:017
     (only a reset did), so an observation stuck at `>>` on PowerShell resets the terminal and
     returns the error; tested against a real PowerShell. If the guard cannot install, the run is
-    refused (fail safe).
+    refused (fail safe). (e2b0323)
 - [ ] **Exit E:** the user runs the golden path by voice ("start a factory job for …"), watches
   it in Plan, Build and Run, drills down from the card to the live session and the PR, and
   each hop meets its timing target.
