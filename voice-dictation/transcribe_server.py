@@ -116,14 +116,47 @@ def _idle_watcher() -> None:
                 _unload()
 
 
+RATE = 16000
+# Whisper decodes 30 s windows. Within one, timestamps buy nothing; across
+# several, they are where the next window starts without cutting a word.
+ONE_WINDOW_SEC = 28
+
+
+def _read_audio(path: str):
+    """A 16 kHz mono 16-bit WAV (the PA's and the recorder's) as float32 samples;
+    None for any other file, which faster-whisper decodes itself. Its decoder
+    (PyAV, then a gc.collect on every call) costs ~50 ms of a ~250 ms request."""
+    import wave
+
+    import numpy as np
+
+    try:
+        with wave.open(path, "rb") as w:
+            if w.getnchannels() != 1 or w.getsampwidth() != 2 or w.getframerate() != RATE:
+                return None
+            pcm = w.readframes(w.getnframes())
+    except (wave.Error, EOFError):
+        return None
+    return np.frombuffer(pcm, dtype="<i2").astype(np.float32) / 32768.0
+
+
+def _options(audio) -> dict:
+    """faster-whisper's options for this audio (None: not read here, length unknown)."""
+    opts = {"language": None if LANGUAGE == "auto" else LANGUAGE, "beam_size": 1}
+    if audio is not None and len(audio) <= ONE_WINDOW_SEC * RATE:
+        opts["without_timestamps"] = True
+    return opts
+
+
 def _transcribe(audio_path: str) -> str:
     global _last_used, _model, _cuda_disabled_until
     with _lock:
         for attempt in (1, 2):
             try:
                 _load()
-                lang = None if LANGUAGE == "auto" else LANGUAGE
-                segments, _info = _model.transcribe(audio_path, language=lang, beam_size=1)
+                audio = _read_audio(audio_path)
+                source = audio_path if audio is None else audio
+                segments, _info = _model.transcribe(source, **_options(audio))
                 text = " ".join(seg.text.strip() for seg in segments)
                 _last_used = time.time()
                 return text

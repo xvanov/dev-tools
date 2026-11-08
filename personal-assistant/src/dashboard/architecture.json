@@ -274,7 +274,8 @@
       "health": "whisper",
       "details": {
         "Called by": "POST /api/talk/transcribe in the dashboard, and the worker's audio pass for recorded meetings",
-        "Warm-up": "a silent WAV is sent when /talk opens if it has not been used for 5 minutes (it unloads when idle)"
+        "Warm-up": "a silent WAV is sent when /talk opens if it has not been used for 5 minutes (it unloads when idle)",
+        "Decoding": "small, float16, beam 1. A 16 kHz mono 16-bit WAV is read straight into numpy (faster-whisper's own decoder costs ~50 ms a call), and a clip that fits one 30 s window is decoded without timestamps: 232 -> 167 ms back to back for a two-second question. Takes effect when the deployed copy is updated and the transcriber restarted"
       },
       "env": [
         {
