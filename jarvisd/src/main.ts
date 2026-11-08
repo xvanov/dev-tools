@@ -3,34 +3,67 @@
 // Stage 1 of the move (docs/native/JARVISD.md): jarvisd boots the PA worker's
 // CommonJS unchanged. Bun runs it as is (the contract, dashboard and event
 // tests pass under Bun), so the process, its ports and its supervisor protocol
-// are the PA's own. The require below is static, so `bun build --compile`
+// are the PA's own. The requires below are static, so `bun build --compile`
 // bundles the whole worker graph (and its npm packages) into one executable.
 // Modules then become strict TypeScript one at a time, leaves first, without
 // the entrypoint changing.
+//
+// One executable, three roles (plan 4.4):
+//   jarvisd supervise [run|roll|rollback|status]   the supervisor (Z1): owns
+//       the dashboard port and runs generations of this same executable
+//   jarvisd generation                              a worker generation (what
+//       the supervisor starts, with PA_SUPERVISED=1); also the default
+//   jarvisd --check                                 load everything, start nothing
 
 interface Worker {
   main(): Promise<void>;
 }
 
+interface Supervisor {
+  cli(argv: string[]): Promise<void>;
+}
+
 /** The PA worker module (CommonJS), bundled into the executable. */
 export function loadWorker(): Worker {
+  // A test can run a stand-in worker (the supervisor's fixtures) in a
+  // generation of the real executable: PA_GENERATION_MODULE names its file.
+  const stand = process.env.PA_GENERATION_MODULE;
+  if (stand) {
+    require(stand);
+    return { main: async () => {} };
+  }
   return require('../../personal-assistant/src/worker.js') as Worker;
+}
+
+/** The supervisor (personal-assistant/src/supervisor/index.ts), bundled too. */
+export function loadSupervisor(): Supervisor {
+  return require('../../personal-assistant/src/supervisor/index.ts') as Supervisor;
 }
 
 if (import.meta.main) {
   process.env.PA_RUNTIME = `bun ${Bun.version}`;
-  // --check: load the worker's whole module graph and stop, starting nothing
-  // (what CI and scripts/build.js smoke-test the binary with).
-  if (process.argv.includes('--check')) {
+  const args = process.argv.slice(2);
+  const fail = (what: string) => (err: unknown) => {
+    console.error(`jarvisd ${what} failed:`, err instanceof Error ? err.message : err);
+    process.exit(1);
+  };
+  // --check: load the worker's and the supervisor's whole module graph and
+  // stop, starting nothing (what CI and scripts/build.js smoke-test with).
+  if (args.includes('--check')) {
     const w = loadWorker();
     if (typeof w.main !== 'function') throw new Error('the PA worker has no main()');
+    if (typeof loadSupervisor().cli !== 'function') throw new Error('the supervisor has no cli()');
     console.log(`jarvisd ok: bun ${Bun.version}`);
     process.exit(0);
+  } else if (args[0] === 'supervise') {
+    // Generations are this executable (`generation`), unless PA_RUNTIME says
+    // otherwise; the supervisor drops PA_JARVISD_SELF from their environment.
+    // 'exe': this is the compiled executable, so a generation is
+    // "<this exe> generation"; 'bun': run from source by the bun binary.
+    process.env.PA_JARVISD_SELF = /^bun(\.exe)?$/i.test(require('node:path').basename(process.execPath)) ? 'bun' : 'exe';
+    process.env.PA_RUNTIME = 'jarvisd';
+    loadSupervisor().cli(args.slice(1)).catch(fail('supervise'));
+  } else {
+    loadWorker().main().catch(fail('generation'));
   }
-  loadWorker()
-    .main()
-    .catch((err: unknown) => {
-      console.error('jarvisd failed to start:', err instanceof Error ? err.message : err);
-      process.exit(1);
-    });
 }

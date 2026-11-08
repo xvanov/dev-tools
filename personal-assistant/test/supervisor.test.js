@@ -344,9 +344,12 @@ async function main() {
 
   // The supervisor must not load worker code (it is what a deploy must not change).
   {
-    const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'supervisor', 'index.js'), 'utf8');
+    // index.ts is the supervisor (plan 4.4); index.js only re-exports it.
+    const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'supervisor', 'index.ts'), 'utf8');
     const reqs = [...src.matchAll(/require\('([^']+)'\)/g)].map((m) => m[1]);
     assert.deepStrictEqual(reqs.filter((r) => r.startsWith('.')), [], 'the supervisor requires local modules');
+    const shim = fs.readFileSync(path.join(__dirname, '..', 'src', 'supervisor', 'index.js'), 'utf8');
+    assert.deepStrictEqual([...shim.matchAll(/require\('([^']+)'\)/g)].map((m) => m[1]), ['./index.ts'], 'index.js is only the shim');
   }
 
   console.log('supervisor tests ok');

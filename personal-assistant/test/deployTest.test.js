@@ -56,8 +56,10 @@ async function tlsSpoken() {
 }
 
 // ---- the real thing, on a spare supervisor ----
+// With PA_JARVISD_EXE (CI's jarvisd job), the compiled jarvisd is the
+// supervisor (plan 4.4); otherwise this file's supervisor, in process.
 tlsSpoken()
-  .then(() => run(['--rolls', '2'], { log: () => {} }))
+  .then(() => run(['--rolls', '2', ...(process.env.PA_JARVISD_EXE ? ['--binary', process.env.PA_JARVISD_EXE] : [])], { log: () => {} }))
   .then(
   (r) => {
     // A machine too busy to run the clients proves nothing either way (the

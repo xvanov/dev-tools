@@ -96,11 +96,37 @@ with `child_process.fork(worker)` and talks to it over IPC (`ready`, `drain`). F
 forks the jarvisd entry with `execPath` set to Bun and `serialization: 'json'` (Bun's IPC speaks
 Node's JSON protocol; Node generations use JSON too now); the protocol (`PA_SUPERVISED`,
 `/healthz`, `drain`, lease release) is unchanged. `PA_RUNTIME=bun` in the supervisor's
-environment selects it (`runtimeSpec` in `src/supervisor/index.js`; Bun from `PA_BUN`, else
+environment selects it (`runtimeSpec` in `src/supervisor/index.ts`; Bun from `PA_BUN`, else
 jarvisd's pinned npm install), and every generation then runs `jarvisd/src/main.ts` under Bun;
 `test/supervisorBun.test.js` starts and rolls Bun generations. The runtime is read when the
 supervisor starts, so switching a stack is a supervisor restart (the bootstrap path), and so is
-switching back. Phase 4.4 later folds the supervisor into jarvisd itself.
+switching back.
+
+**4.4: one executable.** The supervisor is strict TypeScript now
+(`personal-assistant/src/supervisor/index.ts`; `index.js` is a two-line shim for `node
+src/supervisor`), and the compiled jarvisd carries it:
+
+- `jarvisd supervise [run|roll|rollback|status]` is the supervisor; its generations are the same
+  executable, `jarvisd generation` (the default role). A machine runs one jarvisd binary (plus
+  `ptyd`). Run from source (`bun src/main.ts supervise`), generations run the source under Bun.
+- Which executable a new generation runs is read at every roll: `PA_JARVISD_EXE`, else the file
+  named in `current` beside the running binary (or in `jarvisd/dist/`), else the running binary.
+  A deploy (`src/supervisor/deploy.js`, when `status.runtime` is `jarvisd`) builds
+  `jarvisd-<commit>[.exe]` next to it with `JARVISD_OUT` (Windows will not overwrite a running
+  .exe), points `current` at it and rolls; a failed roll points it back. jarvisd/ and schemas/
+  changes count as changes for such a deploy.
+- `status.source` is the supervisor source's hash, embedded at build (`scripts/build.js` passes
+  `--define process.env.PA_SUPERVISOR_SOURCE_BUILT`), so a deploy still knows when the
+  supervisor itself changed (exit 4: restart the service onto the new binary).
+- `PA_GENERATION_MODULE` makes a generation run a stand-in file instead of the worker; tests use
+  it to run the supervisor's fixture workers inside the real executable.
+- Tests with the compiled binary (`PA_JARVISD_EXE`, CI's jarvisd job on Windows and Linux):
+  `test/supervisorBinary.test.js` (start, roll, rollback, deploy lock, roll to `current`, no
+  generation outlives its supervisor) and `test/deployTest.test.js` (the Z6 spare-port deploy
+  test with jarvisd as the supervisor, `deployTest.js --binary`).
+- Not done here: switching a live stack's task/unit to `jarvisd supervise` (the lead's live
+  switch), and a launcher that restarts the service onto a new binary when the supervisor
+  itself changed.
 
 ### Switching a stack to Bun (and back)
 

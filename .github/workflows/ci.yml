@@ -188,6 +188,14 @@ jobs:
         shell: bash
       - run: bash $GITHUB_WORKSPACE/.github/scripts/run.sh ./dist/jarvisd --check
         shell: bash
+      # The compiled jarvisd as its own supervisor (plan 4.4): rolls, rollback,
+      # the deploy lock and the Z6 deploy test, with fixture generations.
+      - run: |
+          exe="$PWD/dist/jarvisd"; [ -f "$exe.exe" ] && exe="$exe.exe"
+          exe="$(cygpath -w "$exe" 2>/dev/null || echo "$exe")"
+          PA_JARVISD_EXE="$exe" bash $GITHUB_WORKSPACE/.github/scripts/run.sh node ../personal-assistant/test/supervisorBinary.test.js
+          PA_JARVISD_EXE="$exe" bash $GITHUB_WORKSPACE/.github/scripts/run.sh node ../personal-assistant/test/deployTest.test.js
+        shell: bash
 
   termhub:
     needs: changes

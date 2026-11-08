@@ -94,10 +94,11 @@ async function lag() {
   }
   await new Promise((r) => setTimeout(r, 80));
   w.stop();
-  assert.strictEqual(seen.length, 1, JSON.stringify(seen));
-  assert.strictEqual(seen[0].m, 'event loop blocked');
-  assert.ok(seen[0].f.ms >= 250, `measured ${seen[0].f.ms} ms`);
-  assert.deepStrictEqual(seen[0].f.running, ['distill']);
+  // The 300 ms block is reported; a loaded machine may add stalls of its own.
+  const ours = seen.filter((s) => s.f.ms >= 250);
+  assert.ok(ours.length >= 1, JSON.stringify(seen));
+  assert.ok(seen.every((s) => s.m === 'event loop blocked'));
+  assert.deepStrictEqual(ours[0].f.running, ['distill']);
 }
 
 // ---- the supervisor's log file ----

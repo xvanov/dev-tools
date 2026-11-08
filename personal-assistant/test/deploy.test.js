@@ -82,11 +82,23 @@ const live = { ok: true, generation: 3, pid: 10, source: 'aaaaaaaaaaaa' };
   assert.strictEqual(p({ changed: [], supervisor: null }).action, 'none');
 
   // The supervisor's own code changed: it cannot roll itself.
-  r = p({ changed: ['personal-assistant/src/supervisor/index.js'], sourceOnDisk: 'bbbbbbbbbbbb' });
+  r = p({ changed: ['personal-assistant/src/supervisor/index.ts'], sourceOnDisk: 'bbbbbbbbbbbb' });
   assert.strictEqual(r.action, 'restart');
   assert.match(r.reasons[0], /own code changed/);
   // A supervisor too old to report its source is rolled (it cannot tell).
   assert.strictEqual(p({ changed: ['personal-assistant/src/x.js'], supervisor: { ok: true } }).action, 'roll');
+
+  // A compiled jarvisd supervising (plan 4.4): a roll builds a new executable
+  // first, and changes to jarvisd/ or schemas/ count, as they are in it.
+  const bin = { ...live, runtime: 'jarvisd' };
+  r = p({ changed: ['personal-assistant/src/x.js'], supervisor: bin });
+  assert.deepStrictEqual([r.action, r.binary], ['roll', true]);
+  r = p({ changed: ['jarvisd/src/main.ts'], supervisor: bin });
+  assert.deepStrictEqual([r.action, r.binary], ['roll', true]);
+  assert.strictEqual(p({ changed: ['jarvisd/src/main.ts'], supervisor: live }).action, 'none', 'a Node supervisor runs no jarvisd code');
+  assert.strictEqual(p({ changed: ['personal-assistant/src/x.js'], supervisor: live }).binary, false);
+  r = p({ changed: ['personal-assistant/src/supervisor/index.ts'], supervisor: bin, sourceOnDisk: 'bbbbbbbbbbbb' });
+  assert.deepStrictEqual([r.action, r.binary], ['restart', false], 'its own supervisor changed: restart, no roll');
 }
 
 // ---- verdict ----

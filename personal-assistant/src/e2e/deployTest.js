@@ -19,6 +19,7 @@
 //        [--termhub http://127.0.0.1:7000]      via pg_notify with pa_event_seq (sql/035);
 //        [--deploy [-- <deploy.js args>]]       the roll is the control socket's, or with
 //                                               --deploy a real `src/supervisor/deploy.js`
+//   --binary <jarvisd exe>  spare mode with the compiled jarvisd as the supervisor (plan 4.4)
 //   --rolls N (spare, default 2)  --json  --no-terminal
 //
 // Exit 0 when every assertion holds; 1 otherwise, with the report.
@@ -51,6 +52,7 @@ function parseArgs(argv) {
     else if (a === '--json') o.json = true;
     else if (a === '--no-terminal') o.terminal = false;
     else if (a === '--verbose') o.verbose = true;
+    else if (a === '--binary') o.binary = argv[++i];
     else throw new Error(`unknown argument ${a}`);
   }
   return o;
@@ -343,6 +345,49 @@ async function run(argv, { log = (m) => process.stderr.write(`[deploy-test ${sta
       }
       const r = await sup.request(control, { cmd: 'roll' });
       return { ok: r.ok, detail: r.ok ? `generation ${r.generation}` : r.error };
+    };
+  } else if (o.binary) {
+    // Spare mode with the compiled jarvisd as the supervisor (plan 4.4): its
+    // own process on a free port, generations of the same executable running
+    // the fixture worker.
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pa-deploytest-'));
+    producer = await feedProducer();
+    const controlPath = process.platform === 'win32' ? `\\\\.\\pipe\\pa-deploytest-${process.pid}-${Date.now()}` : path.join(dir, 'control.sock');
+    const port = await new Promise((resolve) => {
+      const srv = require('net').createServer().listen(0, '127.0.0.1', () => {
+        const p = srv.address().port;
+        srv.close(() => resolve(p));
+      });
+    });
+    const env = {
+      ...process.env,
+      PA_DISPATCH_PORT: String(port),
+      PA_SUPERVISOR_CONTROL: controlPath,
+      PA_SUPERVISOR_LOG: path.join(dir, 'supervisor.log'),
+      PA_GENERATION_MODULE: path.join(PA_DIR, 'test', 'fixtures', 'deployWorker.js'),
+      DEPLOY_FEED: producer.url,
+    };
+    delete env.PA_RUNTIME;
+    delete env.PA_JARVISD_EXE;
+    const child = spawn(path.resolve(o.binary), ['supervise'], { env, stdio: o.verbose ? 'inherit' : 'ignore', windowsHide: true });
+    const exited = new Promise((r) => child.once('exit', r));
+    let st = null;
+    for (let i = 0; i < 150 && !(st && st.generation); i++) {
+      st = await sup.request(controlPath, { cmd: 'status' }, 1000).catch(() => null);
+      if (!(st && st.generation)) await sleep(200);
+    }
+    if (!(st && st.generation)) throw new Error(`${o.binary} supervise did not start a generation`);
+    log(`compiled supervisor: ${path.basename(o.binary)}, runtime ${st.runtime}`);
+    base = `http://127.0.0.1:${port}`;
+    roll = async () => {
+      const r = await sup.request(controlPath, { cmd: 'roll' }).catch((err) => ({ ok: false, error: err.message }));
+      return { ok: r.ok, detail: r.ok ? `generation ${r.generation}` : r.error };
+    };
+    teardown = async () => {
+      child.kill();
+      await exited;
+      await sleep(300);
+      fs.rmSync(dir, { recursive: true, force: true });
     };
   } else {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pa-deploytest-'));

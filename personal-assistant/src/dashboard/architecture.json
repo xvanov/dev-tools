@@ -578,17 +578,18 @@
         "Rule": "node builtins only; never loads worker code, so a deploy never needs to restart it",
         "Rollback": "{\"cmd\":\"rollback\"}: drain the serving generation, undrain the standby, wait for its /healthz (30 s), flip back, stop the other. Only while a standby is held (150 s after a roll)",
         "Deploy (Z4)": "windows/redeploy.ps1, linux/redeploy.sh (run by termhub's Update after its pull, or by hand with -Pull/--pull and -DryRun/--dry-run) → node src/supervisor/deploy.js: npm install when the package files changed, npm run build when one exists (none yet), roll, then /healthz + /api/version every 2 s for 60 s; 3 failed probes in a row, or not the new commit at the end → rollback, exit 1",
-        "Restart fallback": "the scripts restart the task/unit (stop, kill node src/supervisor and src/worker.js, start, wait up to 120 s for the new commit) only when deploy.js exits 3 (no supervisor answers: the bootstrap) or 4 (src/supervisor/index.js changed), or when they just rewrote a task/unit that still named src/worker.js",
+        "Restart fallback": "the scripts restart the task/unit (stop, kill node src/supervisor and src/worker.js, start, wait up to 120 s for the new commit) only when deploy.js exits 3 (no supervisor answers: the bootstrap) or 4 (src/supervisor/index.ts changed), or when they just rewrote a task/unit that still named src/worker.js",
         "Bootstrap": "node src/worker.js not started by the supervisor (an older task or unit, which a non-elevated deploy cannot rewrite) becomes the supervisor before loading any worker code; PA_NO_SUPERVISOR=1 runs the bare worker",
         "Log": "<state dir>/logs/supervisor.log (PA_DATA_DIR, else %LOCALAPPDATA%\\personal-assistant or ~/.local/share/personal-assistant; PA_SUPERVISOR_LOG overrides): the supervisor's lines and each generation's stdout/stderr as [gen N], rotated at 5 MB, 3 kept. Workers log 'event loop blocked' for any stall over 1 s",
         "Readiness": "a generation says ready only at the end of its startup (passes declared, lease requested), not when its port opens: the module loading in between blocked the loop for seconds right after the flip",
         "Deploy test (Z6)": "node src/e2e/deployTest.js: during real rolls, 4 loops of GET /api/version, an /api/events stream reconnecting with Last-Event-ID while events are produced, and a termhub terminal printing ticks; passes only with zero failed requests, every event exactly once in order with no resync, and the terminal socket held with no tick missing. Spare mode (a supervisor on a free port, test/fixtures/deployWorker.js, a throwaway termhub) runs in test/deployTest.test.js; --live [--deploy] runs it against the stack (events through pg_notify and pa_event_seq)",
         "Priority": "the worker runs at Normal; everything it starts is lowered to Below Normal as it spawns (src/util/childPriority.js). A below-normal worker got no CPU while other work filled every core and stalled up to 173 s",
         "Keep-alive": "the worker dashboard keeps idle sockets 65 s; the supervisor resends a GET that meets ECONNRESET on a reused socket. status and a timed-out drain list what is in flight (method, path, age)",
-        "Deploy lock": "one deploy at a time: deploy.js holds <state dir>/deploy.lock (owner pid) and the supervisor's lock ({\"cmd\":\"lock\",\"owner\",\"ttlMs\"}, 15 min, released by {\"cmd\":\"unlock\"}) through the roll and the health watch; meanwhile any other roll, rollback or lock is refused naming the holder (deploy.js exit 5), and a roll during a roll is refused, not merged. The supervisor's crash respawn is not a deploy and ignores it"
+        "Deploy lock": "one deploy at a time: deploy.js holds <state dir>/deploy.lock (owner pid) and the supervisor's lock ({\"cmd\":\"lock\",\"owner\",\"ttlMs\"}, 15 min, released by {\"cmd\":\"unlock\"}) through the roll and the health watch; meanwhile any other roll, rollback or lock is refused naming the holder (deploy.js exit 5), and a roll during a roll is refused, not merged. The supervisor's crash respawn is not a deploy and ignores it",
+        "jarvisd (4.4)": "strict TypeScript (src/supervisor/index.ts; index.js a shim). The compiled jarvisd runs it: `jarvisd supervise` owns the port, its generations are `jarvisd generation`; the executable for each new generation is PA_JARVISD_EXE, else `current` beside the binary (written by a deploy that built jarvisd-<commit> next to it), else itself. status.runtime says node, bun or jarvisd; status.source is embedded at build. Tested with the compiled binary on Windows and Linux CI (test/supervisorBinary.test.js, deployTest --binary). Live stacks still run node src/supervisor until switched"
       },
       "code": [
-        "personal-assistant/src/supervisor/index.js",
+        "personal-assistant/src/supervisor/index.ts",
         "personal-assistant/src/supervisor/deploy.js",
         "personal-assistant/src/worker.js",
         "personal-assistant/src/util/lease.js",
@@ -605,7 +606,9 @@
         "personal-assistant/test/deployTest.test.js",
         "personal-assistant/test/fixtures/deployWorker.js",
         "personal-assistant/src/util/childPriority.js",
-        "termhub/test/frontSwap.test.js"
+        "termhub/test/frontSwap.test.js",
+        "jarvisd/src/main.ts",
+        "personal-assistant/test/supervisorBinary.test.js"
       ]
     },
     {
@@ -1407,13 +1410,34 @@
         ]
       },
       "env": [
-        { "name": "FACTORY_SANDBOX", "default": "off" },
-        { "name": "PA_SANDBOX", "default": "off" },
-        { "name": "FACTORY_SANDBOX_PASS_ENV", "default": "CLAUDE_CODE_OAUTH_TOKEN" },
-        { "name": "SANDBOX_EGRESS_ALLOW", "default": null },
-        { "name": "SANDBOX_EGRESS_ALLOW_ONLY", "default": null },
-        { "name": "SANDBOX_READ_PATHS", "default": null },
-        { "name": "FACTORY_GITHUB_API_URL", "default": null }
+        {
+          "name": "FACTORY_SANDBOX",
+          "default": "off"
+        },
+        {
+          "name": "PA_SANDBOX",
+          "default": "off"
+        },
+        {
+          "name": "FACTORY_SANDBOX_PASS_ENV",
+          "default": "CLAUDE_CODE_OAUTH_TOKEN"
+        },
+        {
+          "name": "SANDBOX_EGRESS_ALLOW",
+          "default": null
+        },
+        {
+          "name": "SANDBOX_EGRESS_ALLOW_ONLY",
+          "default": null
+        },
+        {
+          "name": "SANDBOX_READ_PATHS",
+          "default": null
+        },
+        {
+          "name": "FACTORY_GITHUB_API_URL",
+          "default": null
+        }
       ],
       "code": [
         "software-factory/factory/sandbox/__init__.py",

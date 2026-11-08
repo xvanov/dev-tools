@@ -290,7 +290,7 @@ A new worker that crashes or never gets ready is killed and the old one keeps se
 exits non-zero); a serving one that dies while a standby is kept is replaced by the standby.
 Background passes move with a lease (Z2, `src/util/lease.js`): the old generation hands them
 over on drain, the new one takes them within a second. The supervisor loads no worker code, so
-a deploy restarts it only when `src/supervisor/index.js` itself changed.
+a deploy restarts it only when `src/supervisor/index.ts` itself changed.
 
 ## Using it
 

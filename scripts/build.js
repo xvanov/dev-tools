@@ -119,9 +119,16 @@ const TARGETS = {
       // The npm package's own binary (bin/bun.exe on every OS), not the .cmd shim spawn() cannot run.
       const bun = path.join(REPO, 'jarvisd', 'node_modules', 'bun', 'bin', 'bun.exe');
       const out = path.join(REPO, 'jarvisd', 'dist', 'jarvisd');
-      const args = ['build', '--compile', 'src/main.ts', '--outfile', out];
+      // JARVISD_OUT: another output path (a deploy builds beside the running
+      // binary, which Windows will not let it replace; plan 4.4).
+      const target = process.env.JARVISD_OUT ? path.resolve(process.env.JARVISD_OUT).replace(/\.exe$/i, '') : out;
+      // The supervisor reports a hash of its source so a deploy knows when it
+      // changed; a compiled binary cannot read its source back, so embed it.
+      const supSrc = fs.readFileSync(path.join(REPO, 'personal-assistant', 'src', 'supervisor', 'index.ts'));
+      const supHash = require('crypto').createHash('sha1').update(supSrc).digest('hex').slice(0, 12);
+      const args = ['build', '--compile', 'src/main.ts', '--outfile', target, '--define', `process.env.PA_SUPERVISOR_SOURCE_BUILT=${JSON.stringify(supHash)}`];
       if (profile !== 'debug') args.push('--minify-syntax', '--minify-whitespace');
-      return { cmd: bun, args, cwd: path.join(REPO, 'jarvisd'), env: { ...process.env }, artifacts: [`${out}${EXE}`] };
+      return { cmd: bun, args, cwd: path.join(REPO, 'jarvisd'), env: { ...process.env }, artifacts: [`${target}${EXE}`] };
     },
   },
 };

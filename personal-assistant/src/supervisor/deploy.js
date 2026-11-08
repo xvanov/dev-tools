@@ -48,11 +48,15 @@ const FAILS_IN_A_ROW = 3;
  * What to do. changed: files changed since `from` (repo-relative), or null
  * when there is no `from` (treat everything as changed). supervisor: its
  * status, or null if none answers. sourceOnDisk: hash of
- * src/supervisor/index.js now. hasBuild: package.json has scripts.build.
+ * src/supervisor/index.ts now. hasBuild: package.json has scripts.build.
+ * A supervisor that is a compiled jarvisd (status.runtime 'jarvisd', plan 4.4)
+ * rolls to a newly built executable: jarvisd/ and schemas/ changes count too,
+ * and the plan says `binary` (deploy.js builds it beside the running one).
  */
 function plan({ from, changed, supervisor, sourceOnDisk, hasBuild = false, prefix = 'personal-assistant/' }) {
   const reasons = [];
-  const pa = changed === null ? null : changed.filter((f) => f.startsWith(prefix));
+  const binary = !!(supervisor && supervisor.runtime === 'jarvisd');
+  const pa = changed === null ? null : changed.filter((f) => f.startsWith(prefix) || (binary && (f.startsWith('jarvisd/') || f.startsWith('schemas/'))));
   const touched = pa === null || pa.length > 0;
   const deps = pa === null || pa.some((f) => /(^|\/)package(-lock)?\.json$/.test(f.slice(prefix.length)) && !f.slice(prefix.length).includes('/'));
   const install = deps;
@@ -73,7 +77,8 @@ function plan({ from, changed, supervisor, sourceOnDisk, hasBuild = false, prefi
   }
   if (install) reasons.push(pa === null ? 'npm install (no previous commit to compare)' : 'npm install (package files changed)');
   if (build) reasons.push('npm run build');
-  return { action, install, build, reasons };
+  if (binary && action === 'roll') reasons.push('build a new jarvisd executable and roll to it');
+  return { action, install, build, binary: binary && action === 'roll', reasons };
 }
 
 /**
@@ -340,7 +345,7 @@ async function deployUnlocked(argv, { say } = {}) {
     from,
     changed,
     supervisor: supervisor && supervisor.ok ? supervisor : null,
-    sourceOnDisk: sup.sourceHash(path.join(__dirname, 'index.js')),
+    sourceOnDisk: sup.sourceHash(path.join(__dirname, 'index.ts')),
     hasBuild: !!(pkg.scripts && pkg.scripts.build),
   });
   const result = { head, from: from || null, port, ...p, signing: signing ? { state: signing.state, mode: signing.mode, total: signing.total } : null, supervisor: supervisor ? { generation: supervisor.generation, pid: supervisor.pid, source: supervisor.source || null } : null };
@@ -385,11 +390,62 @@ async function deployUnlocked(argv, { say } = {}) {
     say(locked.error);
     return { code: 5, result: { ...result, refused: locked.error } };
   }
+  // A compiled jarvisd: build the new executable beside the running one
+  // (Windows will not replace a running .exe) and point jarvisd/dist/current
+  // at it; the supervisor starts each generation from that pointer. A failed
+  // roll points it back.
+  let pointer = null;
+  if (p.binary) {
+    try {
+      pointer = buildJarvisd(head, say);
+    } catch (err) {
+      say(`jarvisd build failed: ${err.message} - nothing rolled`);
+      await sup.request(control, { cmd: 'unlock', owner }).catch(() => {});
+      return { code: 1, result: { ...result, build: err.message } };
+    }
+  }
   try {
-    return await rollAndWatch({ o, say, control, port, head, result, owner });
+    const r = await rollAndWatch({ o, say, control, port, head, result, owner });
+    if (r.code !== 0 && pointer) pointer.restore();
+    return r;
   } finally {
     await sup.request(control, { cmd: 'unlock', owner }).catch(() => {});
   }
+}
+
+/**
+ * Builds jarvisd/dist/jarvisd-<commit>[.exe] (scripts/build.js, JARVISD_OUT)
+ * and writes its name to jarvisd/dist/current. Returns {file, restore()}.
+ */
+function buildJarvisd(head, say) {
+  const repo = git(['rev-parse', '--show-toplevel']);
+  const dist = path.join(repo, 'jarvisd', 'dist');
+  const name = `jarvisd-${head.slice(0, 7)}${process.platform === 'win32' ? '.exe' : ''}`;
+  const pointerFile = path.join(dist, 'current');
+  let before = null;
+  try {
+    before = fs.readFileSync(pointerFile, 'utf8');
+  } catch {
+    /* none yet */
+  }
+  say(`building ${name}`);
+  const r = spawnSync(process.execPath, [path.join(repo, 'scripts', 'build.js'), '--only', 'jarvisd'], {
+    cwd: repo,
+    env: { ...process.env, JARVISD_OUT: path.join(dist, name) },
+    stdio: 'inherit',
+    windowsHide: true,
+  });
+  if (r.status !== 0 || !fs.existsSync(path.join(dist, name))) throw new Error(`scripts/build.js exited ${r.status}`);
+  fs.mkdirSync(dist, { recursive: true });
+  fs.writeFileSync(pointerFile, `${name}\n`);
+  return {
+    file: path.join(dist, name),
+    restore: () => {
+      if (before === null) fs.rmSync(pointerFile, { force: true });
+      else fs.writeFileSync(pointerFile, before);
+      say(`jarvisd/dist/current points back at ${before ? before.trim() : 'nothing'}`);
+    },
+  };
 }
 
 async function rollAndWatch({ o, say, control, port, head, result, owner }) {

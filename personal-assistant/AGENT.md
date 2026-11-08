@@ -545,7 +545,9 @@ Postgres and nowhere else. Tests use invented names; fixtures never hold a real 
   cannot. The worker is a scheduler of periodic passes, and passes never overlap themselves.
 - **How the worker runs.** The `pa-worker` task / unit runs `node src/supervisor` (Z1), which
   owns the dashboard port and proxies to worker generations it forks with
-  `PA_SUPERVISED=1`; a supervised worker binds port 0, reports it over IPC, and answers
+  `PA_SUPERVISED=1`. The supervisor is `src/supervisor/index.ts` (strict TS, plan 4.4; `index.js`
+  is a shim), and the compiled jarvisd runs it too: `jarvisd supervise`, whose generations are
+  `jarvisd generation` (docs/native/JARVISD.md, "4.4"); a supervised worker binds port 0, reports it over IPC, and answers
   `/healthz` ready only after migrations and its dashboard are up. Keep the supervisor on node
   builtins and never `require` worker code from it — it is the process a deploy must not
   restart. Anything long-lived a worker serves (SSE, WebSocket) must survive being closed and
@@ -571,7 +573,7 @@ Postgres and nowhere else. Tests use invented names; fixtures never hold a real 
   where they may (a task registered elevated refuses). They need not: `node src/worker.js`
   not started by the supervisor becomes the supervisor before loading any worker code
   (`PA_NO_SUPERVISOR=1` runs the bare worker, for debugging).
-  A change to `src/supervisor/index.js` therefore costs one restart gap; keep it rare.
+  A change to `src/supervisor/index.ts` therefore costs one restart gap; keep it rare.
   **One deploy at a time:** `deploy.js` takes a lock file (`<state dir>/deploy.lock`) and the
   supervisor's own deploy lock (`{"cmd":"lock","owner"}`, 15 min ttl) for the roll and the whole
   health watch. A second deploy, or a `roll`/`rollback` from anyone else, is refused with who
