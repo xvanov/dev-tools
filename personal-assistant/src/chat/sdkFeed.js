@@ -196,6 +196,7 @@ function createSdkFeed({
   const subs = new Set();
   const approvals = new Map(); // toolUseId -> pending approval, oldest first
   let status = 'offline';
+  let idleSince = 0;
   let q = null;
   let input = null;
   let starting = null;
@@ -248,6 +249,7 @@ function createSdkFeed({
   function setStatus(next) {
     if (next === status) return;
     status = next;
+    if (next === 'idle') idleSince = Date.now();
     publish({ id: `status-${Date.now()}-${crypto.randomBytes(3).toString('hex')}`, type: 'status', text: next, at: now() });
   }
 
@@ -601,6 +603,26 @@ function createSdkFeed({
     return { engine: 'sdk', sessionId, status, waitingOn: approvals.size ? 'dashboard' : null, url: null, permission: permissionPending() };
   }
 
+  /**
+   * The worker's INBOX doorbell (src/notify/chat.js), on this engine: the
+   * fixed, content-free line for notification `id` as a user turn — only into
+   * a running session, idle for at least `minIdleMs` since its last turn, with
+   * nothing waiting on a yes. Never starts a session (INBOX.md still has it).
+   */
+  function doorbell(id, { minIdleMs = 2 * 60_000 } = {}) {
+    const n = Number(id);
+    if (!Number.isInteger(n) || n <= 0) return { ok: false, reason: 'bad notification id' };
+    if (!q || !input) return { ok: false, reason: 'no PA chat session' };
+    if (approvals.size) return { ok: false, reason: 'waiting on an approval' };
+    if (status !== 'idle') return { ok: false, reason: `state ${status}` };
+    if (!(Date.now() - idleSince >= minIdleMs)) return { ok: false, reason: 'idle too briefly' };
+    const text = require('../notify/chat').nudgeText(n);
+    publish({ id: `u-${crypto.randomUUID()}`, type: 'user', text, at: now() });
+    setStatus('thinking');
+    input.push({ type: 'user', message: { role: 'user', content: text }, parent_tool_use_id: null, ...(sessionId ? { session_id: sessionId } : {}) });
+    return { ok: true, reason: 'idle, nothing waiting' };
+  }
+
   /** POST /api/chat/open: start (or resume) the session without a message. */
   async function open() {
     const { created } = await ensureStarted();
@@ -617,7 +639,7 @@ function createSdkFeed({
     }
   }
 
-  return { send, history, subscribe, session, open, answerPermission, stop, canUseTool, preToolUse, onMessage };
+  return { send, history, subscribe, session, open, doorbell, answerPermission, stop, canUseTool, preToolUse, onMessage };
 }
 
 module.exports = { createSdkFeed, subscriptionEnv, splitTool, hookDecision, insideHome, genericDetail, genericAsk, genericVoiceOk, createInputQueue, SDK_MODULE, SESSION_FILE };

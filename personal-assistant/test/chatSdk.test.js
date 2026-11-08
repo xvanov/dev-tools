@@ -160,6 +160,7 @@ const sdkMsg = {
       const unsub = feed.subscribe((e) => got.push(e));
       assert.strictEqual(got[0].type, 'status');
       assert.strictEqual(got[0].text, 'offline', 'no session until the first message');
+      assert.deepStrictEqual(feed.doorbell(1, { minIdleMs: 0 }), { ok: false, reason: 'no PA chat session' }, 'the doorbell never starts a session');
 
       const sent = await feed.send({ text: 'what is on today?\r\n', source: 'voice' });
       const run = sdk.runs[0];
@@ -216,6 +217,24 @@ const sdkMsg = {
       run.emit({ ...sdkMsg.assistant('msg_sub', [{ type: 'text', text: 'subagent says' }], 'end_turn'), parent_tool_use_id: 'tu_x' });
       await tick();
       assert.ok(!got.some((e) => e.text === 'subagent says'));
+
+      // The INBOX doorbell: the fixed line, as a user turn, only when idle long enough and nothing waits.
+      assert.deepStrictEqual(feed.doorbell(42, { minIdleMs: 60_000 }), { ok: false, reason: 'idle too briefly' });
+      assert.strictEqual(feed.doorbell('x; rm', { minIdleMs: 0 }).reason, 'bad notification id');
+      assert.deepStrictEqual(feed.doorbell(42, { minIdleMs: 0 }), { ok: true, reason: 'idle, nothing waiting' });
+      assert.deepStrictEqual((await run.next()).message, { role: 'user', content: 'PA inbox: notification 42 is waiting. Read INBOX.md.' });
+      assert.ok(got.some((e) => e.type === 'user' && /notification 42/.test(e.text) && !e.source), 'shown like the terminal doorbell: no source');
+      assert.deepStrictEqual(feed.doorbell(43, { minIdleMs: 0 }), { ok: false, reason: 'state thinking' }, 'never during a turn');
+      run.emit(sdkMsg.result());
+      await until(() => got.filter((e) => e.type === 'status' && e.text === 'idle').length === 3, 'idle after the doorbell');
+      const rung = [];
+      const r = await require('../src/notify/chat').ringSdk(7, 120_000, async (url, body) => {
+        rung.push([url, body]);
+        return { ok: true, reason: 'idle, nothing waiting' };
+      });
+      assert.deepStrictEqual(r, { nudged: true, reason: 'idle, nothing waiting' });
+      assert.match(rung[0][0], /^http:\/\/[^/]+\/api\/chat\/doorbell$/);
+      assert.deepStrictEqual(rung[0][1], { id: 7, minIdleMs: 120_000 }, 'only the id travels, never content');
 
       // An error result is shown, and the turn still ends.
       await feed.send({ text: 'again' });

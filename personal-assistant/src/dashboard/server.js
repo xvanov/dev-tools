@@ -333,6 +333,15 @@ async function handle(req, res) {
     const body = await readJson(req);
     return send(res, 200, await require('../chat/feed').feed().answerPermission({ answer: body.answer, toolUseId: body.toolUseId, via: body.via === 'voice' ? 'voice' : 'dashboard' }));
   }
+  // The worker's INBOX doorbell for the SDK chat (src/notify/chat.js): a
+  // notification id only; the line typed is fixed (nudgeText), never content.
+  if (req.method === 'POST' && url.pathname === '/api/chat/doorbell') {
+    if (req.headers['x-pa'] !== '1') return send(res, 403, { error: 'missing X-PA header' });
+    const f = require('../chat/feed');
+    if (f.engine() !== 'sdk') return send(res, 409, { error: 'the doorbell endpoint is for the SDK engine' });
+    const body = await readJson(req);
+    return send(res, 200, f.feed().doorbell(body.id, { minIdleMs: Number(body.minIdleMs) >= 0 ? Number(body.minIdleMs) : undefined }));
+  }
   if (req.method === 'GET' && url.pathname === '/api/chat/history') {
     return send(res, 200, { messages: require('../chat/feed').feed().history(url.searchParams.get('limit') || 50) });
   }

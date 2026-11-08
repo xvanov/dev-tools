@@ -181,6 +181,25 @@ function sameDir(a, b) {
 }
 
 /**
+ * The SDK engine's doorbell: the chat lives in the PA worker, so ring it
+ * through the worker's own loopback endpoint (from the worker or any `pa`
+ * process alike). The id is all that is sent; sdkFeed.doorbell applies the
+ * same conditions as nudgeDecision (running, idle long enough, nothing pending).
+ * `post` is injectable for tests.
+ */
+async function ringSdk(id, minIdleMs, post = null) {
+  const host = config.dispatch.host === '0.0.0.0' ? '127.0.0.1' : config.dispatch.host;
+  const send = post || (async (url, body) => {
+    const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-PA': '1' }, body: JSON.stringify(body), signal: AbortSignal.timeout(3000) });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+    return data;
+  });
+  const r = await send(`http://${host}:${config.dispatch.port}/api/chat/doorbell`, { id: Number(id), minIdleMs });
+  return { nudged: Boolean(r && r.ok), reason: (r && r.reason) || null };
+}
+
+/**
  * Delivers a pushed notification to the PA chat: INBOX.md always (when the
  * chat home exists), the nudge only when nudgeDecision allows. Never starts a
  * session. Returns whether the chat got it ('inbox' and/or 'nudged').
@@ -193,6 +212,15 @@ async function deliver(row) {
     log.warn('inbox not written', { message: err.message });
   }
   if (!out.inbox || !config.notify.chatNudge) return out;
+  if (require('../chat/feed').engine() === 'sdk') {
+    try {
+      Object.assign(out, await ringSdk(row.id, config.notify.chatNudgeIdleMinutes * 60_000));
+    } catch (err) {
+      out.reason = err.message;
+    }
+    log.debug('chat delivery', { id: row.id, ...out });
+    return out;
+  }
   try {
     const termhub = require('../dispatch/termhub');
     const home = path.dirname(inboxPath());
@@ -217,4 +245,4 @@ async function deliver(row) {
   return out;
 }
 
-module.exports = { deliver, writeInbox, renderInbox, promptContent, nudgeDecision, nudgeText, inboxPath, oneLine };
+module.exports = { deliver, ringSdk, writeInbox, renderInbox, promptContent, nudgeDecision, nudgeText, inboxPath, oneLine };

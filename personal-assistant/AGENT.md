@@ -169,6 +169,9 @@ only when `nudgeDecision` (`src/notify/chat.js`, tested) proves the session is C
 `kind`), finished its turn, is not on a permission prompt, and has an empty input box. An opencode
 chat is never nudged: the screen rules are Claude's. When it cannot prove it, it skips: Enter on a
 permission prompt approves the action. Do not loosen a condition there without a test case for it.
+On the SDK engine the same fixed line is a user turn instead (`POST /api/chat/doorbell` with the id
+only, `sdkFeed.doorbell`): only into a running session, idle for the same minimum, with no approval
+waiting; it never starts one.
 
 **A permission prompt is answered only deliberately, and only for the chat's own actions.** Two
 paths press a key at the chat's prompt, both through `POST /api/chat/permission`
