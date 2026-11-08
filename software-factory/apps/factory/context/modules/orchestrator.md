@@ -134,7 +134,8 @@ zero human-visible outcomes; see "Idle detection was deleted" below.
   `_recover_blocked_stories()` re-enters `BLOCKED_TESTS_NEED_CLARIFICATION` /
   `BLOCKED_REVIEW_NONCONVERGENT` at `SM_DONE`, capped at `_MAX_AUTO_RECOVERIES`
   (2), short-circuiting when a recovery reproduces the identical failure
-  signature.
+  signature. A solo story parked in `BLOCKED_REVIEW_NONCONVERGENT` is left to
+  a human (`factory job resume`): its review cap already allowed one fix round.
 
 - **E6 stage-2 environment hold (ACTIVE 2026-08-10, #294 + #298 + branch
   protection).** Before the CI-failure loop and before `_evaluate_one_pr`,

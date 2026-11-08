@@ -1057,6 +1057,9 @@ not in the Map is not done, and a new one gets added there first.
     call. claude_session solo keeps no reviewer: its dev is Claude Code in a session the operator
     watches, and PR #63's gap was the unattended API runtime. The dev brief, the PR body, the
     `solo_checks` event and the ETA follow the runtime. (8b00685)
+    Follow-up: the blocked-story recovery pass skips a solo story parked in
+    `blocked_review_nonconvergent`; it could otherwise restart it twice more, each a fresh dev
+    conversation. A human resumes it (`factory job resume`).
   - [ ] **8.4.20 deepseek-pr: the dev prompt says "NO CONTEXT AVAILABLE … You are likely the
     Onboarder persona".** The work factory has no `apps/dev-tools/context/project.md` or
     `navigation.md`, so a dev step is told to write the context set and spends its first ~25 of 76

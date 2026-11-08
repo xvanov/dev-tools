@@ -63,6 +63,49 @@ def test_recovers_review_nonconvergent(tmp_path: Path) -> None:
     assert out and out[0][2] == StoryState.SM_DONE.value
 
 
+def test_solo_review_nonconvergent_is_left_to_a_human(tmp_path: Path) -> None:
+    """A solo story parks here after its one fix round (SOLO_MAX_REVIEW_CYCLES).
+    Recovering it would restart it in a fresh dev conversation up to
+    _MAX_AUTO_RECOVERIES more times; a human resumes it instead."""
+    db = _seed(tmp_path)
+    s = persist_story(
+        StoryRecord(
+            direction_id="099", app="sacrifice", title="t", slug="solo-b",
+            scope="backend", state=StoryState.BLOCKED_REVIEW_NONCONVERGENT.value,
+            pipeline="solo", runtime="api", reviewer_cycles=2,
+        ),
+        db,
+    )
+    assert _recover_blocked_stories(db, "sacrifice", root=tmp_path) == []
+    assert _recover_blocked_stories(db, "sacrifice", root=tmp_path) == []
+
+    from sqlmodel import Session, select
+    with Session(create_engine(f"sqlite:///{db}")) as ses:
+        r = ses.exec(select(StoryRecord).where(StoryRecord.id == s.id)).one()
+    assert r.state == StoryState.BLOCKED_REVIEW_NONCONVERGENT.value
+    assert r.reviewer_cycles == 2
+    events = read_story_events(s.id, software_factory_root=tmp_path, slug_hint=s.slug)
+    assert not [e for e in events if e.get("event", "").startswith("auto_recovery")]
+
+
+def test_solo_tests_need_clarification_is_still_recovered(tmp_path: Path) -> None:
+    """Only the review park is a human's: a solo story blocked for another
+    reason keeps the bounded recovery."""
+    db = _seed(tmp_path)
+    persist_story(
+        StoryRecord(
+            direction_id="099", app="sacrifice", title="t", slug="solo-a",
+            scope="backend", state=StoryState.BLOCKED_TESTS_NEED_CLARIFICATION.value,
+            pipeline="solo", runtime="api",
+        ),
+        db,
+    )
+    out = _recover_blocked_stories(db, "sacrifice", root=tmp_path)
+    assert out == [
+        ("solo-a", StoryState.BLOCKED_TESTS_NEED_CLARIFICATION.value, StoryState.SM_DONE.value)
+    ]
+
+
 def test_deploy_failed_is_not_auto_recovered(tmp_path: Path) -> None:
     """deploy_failed is handled at the merge layer (auto_merge reconcile), not here."""
     db = _seed(tmp_path)

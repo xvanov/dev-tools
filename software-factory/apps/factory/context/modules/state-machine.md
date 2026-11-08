@@ -138,6 +138,9 @@ of `is_terminal()` (see "Dependency-deferral cap" below).
   recorded at the prior recovery — an unchanged signature escalates
   immediately instead of burning another cycle. `BLOCKED_DEPLOY_FAILED` is
   excluded on purpose; that's handled by `auto_merge._attempt_pr_reconcile`.
+  A solo story in `BLOCKED_REVIEW_NONCONVERGENT` is skipped too
+  (`_human_resumes_only`): it already had its one fix round
+  (`solo.SOLO_MAX_REVIEW_CYCLES`), so a human resumes it (`factory job resume`).
 
 ### Dual-draft sibling supersession
 
@@ -176,7 +179,7 @@ are absent from `_DISPATCH` and `auto_merge._MERGEABLE_STATES`:
 | `DEPLOYED` | `EVENT_DEPLOY_SUCCEEDED` / `EVENT_DEPLOY_SKIPPED` | n/a — success |
 | `BLOCKED_TESTS_NEED_CLARIFICATION` | dev/docs-onboarder exhaustion | auto-recovered to `SM_DONE` (capped), `factory resume-story`, or human |
 | `BLOCKED_DEPLOY_FAILED` | `EVENT_DEPLOY_FAILED` / `EVENT_PR_UNMERGEABLE` | `auto_merge._attempt_pr_reconcile`, or human |
-| `BLOCKED_REVIEW_NONCONVERGENT` | `EVENT_REVIEW_NONCONVERGENT` (stuck/non-improving/capped review cycles, empty-diff short-circuit, or an unfetchable diff at review/tech_writer time) | auto-recovered to `SM_DONE` (capped), `factory resume-story`, or human |
+| `BLOCKED_REVIEW_NONCONVERGENT` | `EVENT_REVIEW_NONCONVERGENT` (stuck/non-improving/capped review cycles, empty-diff short-circuit, or an unfetchable diff at review/tech_writer time) | auto-recovered to `SM_DONE` (capped; never a solo story), `factory resume-story`, or human |
 | `BLOCKED_BUDGET_EXCEEDED` | `EVENT_BUDGET_EXCEEDED` | `factory resume-story` (zeroes `total_attempts`, NEVER the spend ledger; refuses over-cap without `--force`) or raise `caps.per_story_*` |
 | `SUPERSEDED_BY_SIBLING` | `dual_draft.close_abandoned_draft_sibling` (direct assignment) | `factory resume-story` (offered only while the direction has nothing deployed AND the row banked real work) |
 | `BLOCKED_CI_UNRESOLVED` | `auto_merge._handle_ci_failure` giving up (direct assignment) | `factory resume-story --at gates` (reopens the PR and re-grades it; no persona re-runs) |

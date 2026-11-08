@@ -1345,6 +1345,21 @@ _AUTO_RECOVERABLE_STATES: dict[str, str] = {
 }
 
 
+def _human_resumes_only(story: StoryRecord) -> bool:
+    """True for a blocked story the recovery pass must leave to a human.
+
+    A solo story in ``blocked_review_nonconvergent`` already had its one fix
+    round (``solo.SOLO_MAX_REVIEW_CYCLES``): the park IS its review cap. A
+    recovery would re-enter it at SM_DONE in a fresh dev conversation, up to
+    ``_MAX_AUTO_RECOVERIES`` more times, which turns a 2-cycle cap into 6 and
+    throws away the conversation the solo pipeline exists to keep. A human
+    resumes it (``factory job resume``) or closes it.
+    """
+    from factory.chain.solo import is_solo
+
+    return story.state == StoryState.BLOCKED_REVIEW_NONCONVERGENT.value and is_solo(story)
+
+
 def _normalize_failure_text(raw: str) -> str:
     """Strip volatile bits (timestamps, paths, durations, addresses/ids) from
     ``raw`` failure text so a re-run that fails for the identical reason
@@ -1466,7 +1481,7 @@ def _recover_blocked_stories(db: Path, app: str, *, root: Path) -> list[tuple[st
     recovered: list[tuple[str, str, str]] = []
     for story in candidates:
         target = _AUTO_RECOVERABLE_STATES.get(story.state)
-        if target is None:
+        if target is None or _human_resumes_only(story):
             continue
 
         events = read_story_events(story.id, software_factory_root=root, slug_hint=story.slug)
