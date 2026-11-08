@@ -114,11 +114,7 @@ async function boardData() {
   const snap = await factory.snapshot();
   const ids = snap.jobs.map((j) => j.job_id).filter((id) => F.JOB_ID.test(String(id || '')));
   const runs = ids.length
-    ? await require('../db').rows(
-      `select distinct on (factory_job_id) id, commitment_id, factory_job_id, termhub_session_id, machine from run
-        where route = 'factory' and factory_job_id = any($1::text[]) order by factory_job_id, id desc`,
-      [ids]
-    ).catch(() => [])
+    ? await require('../repo').runs.latestRunPerJob(ids).catch(() => [])
     : [];
   // Plan E1: the run that submitted a job, and its card, so Build links back to Plan.
   const paRuns = new Map(runs.map((r) => [r.factory_job_id, { id: Number(r.id), url: termhubUrl(r), card: r.commitment_id }]));

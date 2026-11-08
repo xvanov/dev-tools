@@ -216,6 +216,14 @@ function create(db) {
       order by d.created_at desc limit 30`
       );
     },
+
+    // --- for src/durable/tasks/chase.js
+
+    /** How many nudges were drafted today. */
+    async nudgesToday() {
+      const r = await db.one(`select count(*)::int as n from draft where origin = 'nudge' and created_at >= date_trunc('day', now())`);
+      return r.n;
+    },
   };
 }
 

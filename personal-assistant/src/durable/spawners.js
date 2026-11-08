@@ -9,24 +9,14 @@
 // nothing twice. The key carries a version: `chase2:` since a chase first asks
 // me for its cadence; the `chase:` tasks before it were cancelled.
 
-const { rows } = require('../db');
+const repo = require('../repo');
 const { logger } = require('../log');
 const C = require('./tasks/chaseCore');
 
 const log = logger('durable');
 
 async function chases() {
-  const due = await rows(
-    `select c.id from commitment c
-       join source_item si on si.id = c.source_item_id
-       left join person per on per.id = c.counterparty_person_id
-      where c.status = 'open' and c.direction = 'owed_to_me' and c.superseded_by is null
-        and c.counterparty_person_id is not null and not coalesce(per.is_me, false)
-        and si.source in ('graph_chat', 'graph_mail')
-        and si.occurred_at > now() - interval '${C.MAX_AGE_DAYS} days'
-        and not exists (select 1 from absurd.t_pa t where t.idempotency_key = 'chase2:' || c.id)
-      limit 50`
-  );
+  const due = await repo.durable.commitmentsWithoutChase(C.MAX_AGE_DAYS);
   const durable = require('./index');
   for (const { id } of due) await durable.spawn('chase', { commitmentId: Number(id) }, { key: `chase2:${id}` });
   if (due.length) log.info('chases scheduled', { count: due.length });

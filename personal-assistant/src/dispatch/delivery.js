@@ -11,7 +11,7 @@
 //   resolve({explicit, mode, operatorText, slug})  → {delivery, source, phrase}
 
 const { config } = require('../config');
-const { one, rows, query } = require('../db');
+const repo = require('../repo');
 const D = require('./deliveryCore');
 const { normSlug } = require('./routeCore');
 
@@ -24,28 +24,23 @@ function key(slug) {
 async function defaultFor(slug) {
   const s = normSlug(slug);
   if (!s) return null;
-  const r = await one('select delivery from repo_delivery where repo = $1', [s]).catch(() => null);
+  const r = await repo.repos.deliveryOf(s).catch(() => null);
   return r && D.isDelivery(r.delivery) ? r.delivery : null;
 }
 
 async function setDefault(slug, level) {
   const d = D.delivery(level);
   const s = key(slug);
-  await query(
-    `insert into repo_delivery (repo, delivery) values ($1, $2)
-     on conflict (repo) do update set delivery = excluded.delivery, updated_at = now()`,
-    [s, d]
-  );
+  await repo.repos.setDelivery(s, d);
   return { repo: s, delivery: d };
 }
 
 async function clearDefault(slug) {
-  const r = await query('delete from repo_delivery where repo = $1', [key(slug)]);
-  return (r.rowCount || 0) > 0;
+  return repo.repos.clearDelivery(key(slug));
 }
 
 async function list() {
-  return rows('select repo, delivery, updated_at from repo_delivery order by repo');
+  return repo.repos.deliveries();
 }
 
 function fallback() {

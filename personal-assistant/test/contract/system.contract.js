@@ -90,4 +90,22 @@ module.exports = {
     await repos.system.setSetting(key, { day: '2026-11-08' });
     assert.deepStrictEqual((await repos.system.setting(key)).value, { day: '2026-11-08' });
   },
+
+  // --- for dispatch/factory.js (chunk E)
+
+  'insertInstallIfNone: makes the id the install only when none exists': async ({ repos, db, assert }) => {
+    await db.query('delete from pa_install');
+    const a = '00000000-0000-4000-8000-000000000001';
+    const b = '00000000-0000-4000-8000-000000000002';
+    await repos.system.insertInstallIfNone(a);
+    await repos.system.insertInstallIfNone(b);
+    assert.deepStrictEqual((await db.rows('select id::text as id from pa_install')).map((r) => r.id), [a]);
+  },
+
+  'firstInstall: the first install\'s id; null when none': async ({ repos, db, assert }) => {
+    await db.query('delete from pa_install');
+    assert.strictEqual(await repos.system.firstInstall(), null);
+    await repos.system.insertInstallIfNone('00000000-0000-4000-8000-000000000003');
+    assert.strictEqual(String((await repos.system.firstInstall()).id), '00000000-0000-4000-8000-000000000003');
+  },
 };

@@ -82,4 +82,12 @@ module.exports = {
       client.release();
     }
   },
+  // --- for e2e/deployTest.js (chunk E)
+
+  'publishProbe: publishes without throwing, outbox or not': async ({ repos, db, assert }) => {
+    await repos.events.publishProbe(1);
+    await repos.events.publishProbe(2);
+    const n = await db.one(`select count(*)::int as n from event_outbox where topic = 'deploytest'`).catch(() => null);
+    if (n) assert.ok(n.n >= 2, 'rows in the outbox');
+  },
 };

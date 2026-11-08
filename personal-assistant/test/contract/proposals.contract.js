@@ -81,4 +81,33 @@ module.exports = {
     assert.deepStrictEqual([got.kind, got.payload], ['dispatch', { delivery: 'pr' }]);
     assert.strictEqual(await repos.proposals.kindAndPayload(999999999), null);
   },
+  // --- for chat tools, chase (chunk E)
+
+  'rowForChat: a proposal\'s fields for the chat; null when gone': async ({ repos, assert }) => {
+    const row = await repos.proposals.insert(P({ title: 'Offer', body: 'why', payload: { delivery: 'pr' } }));
+    const got = await repos.proposals.rowForChat(row.id);
+    assert.deepStrictEqual([got.kind, got.title, got.body, got.status, got.payload], ['question', 'Offer', 'why', 'pending', { delivery: 'pr' }]);
+    assert.strictEqual(await repos.proposals.rowForChat(999999999), null);
+  },
+
+  'pendingOfCommitment: a commitment\'s pending proposals, newest first, five at most': async ({ repos, seed, assert }) => {
+    const c = await seed.commitment();
+    const a = await repos.proposals.insert(P({ commitmentId: c, title: 'older' }));
+    await new Promise((r) => setTimeout(r, 5));
+    const b = await repos.proposals.insert(P({ commitmentId: c, title: 'newer' }));
+    await repos.proposals.insert(P({ title: 'other commitment' }));
+    await repos.proposals.decide(a.id, 'rejected', 'no');
+    assert.deepStrictEqual((await repos.proposals.pendingOfCommitment(c)).map((r) => String(r.id)), [String(b.id)]);
+  },
+
+  'cadenceAnswers: accepted cadence answers about a person\'s asks, newest first': async ({ repos, seed, assert }) => {
+    const p = await seed.personWith();
+    const c = await seed.commitment();
+    await seed.commitmentSet(c, { counterparty_person_id: p });
+    const a = await repos.proposals.insert(P({ commitmentId: c, payload: { on: 'cadence' } }));
+    await repos.proposals.decide(a.id, 'accepted', 'Tuesdays 3pm');
+    const other = await repos.proposals.insert(P({ commitmentId: c, payload: { on: 'project' } }));
+    await repos.proposals.decide(other.id, 'accepted', 'not a cadence');
+    assert.deepStrictEqual((await repos.proposals.cadenceAnswers(p)).map((r) => r.answer), ['Tuesdays 3pm']);
+  },
 };

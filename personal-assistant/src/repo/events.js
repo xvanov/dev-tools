@@ -13,7 +13,16 @@
  * @property {Date} at
  */
 
+// As the row triggers do (sql/036): number the event, write it to the outbox,
+// NOTIFY: one statement, so a generation that replays from the outbox (plan
+// 1.4) finds it. A stack without the outbox yet: NOTIFY only.
+const PROBE_OUTBOX = `with s as (select nextval('pa_event_seq') as seq),
+    o as (insert into event_outbox (seq, topic, payload) select seq, 'deploytest', jsonb_build_object('n', $1::int, 'seq', seq) from s returning seq)
+    select pg_notify('pa_events', json_build_object('topic', 'deploytest', 'n', $1::int, 'seq', (select seq from o))::text)`;
+const PROBE_NOTIFY_ONLY = "select pg_notify('pa_events', json_build_object('topic', 'deploytest', 'n', $1::int, 'seq', nextval('pa_event_seq'))::text)";
+
 function create(db) {
+  let probeNotifyOnly = false;
   return {
     /**
      * The sequence's value now: every event numbered at or under it was
@@ -54,6 +63,27 @@ function create(db) {
     async oldest() {
       const r = await db.one('select min(seq)::text as seq from event_outbox');
       return r && r.seq != null ? r.seq : null;
+    },
+
+    // --- for src/e2e/deployTest.js
+
+    /**
+     * Publishes a `deploytest` event numbered `n`: sequence, outbox row and
+     * NOTIFY in one statement. A store without the outbox yet gets the NOTIFY
+     * only (and keeps doing so).
+     * @param {number} n
+     */
+    async publishProbe(n) {
+      if (!probeNotifyOnly) {
+        try {
+          await db.query(PROBE_OUTBOX, [n]);
+          return;
+        } catch (err) {
+          if (!/event_outbox/.test(err.message)) throw err;
+          probeNotifyOnly = true;
+        }
+      }
+      await db.query(PROBE_NOTIFY_ONLY, [n]);
     },
   };
 }

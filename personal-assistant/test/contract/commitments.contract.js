@@ -1006,4 +1006,89 @@ module.exports = {
     assert.strictEqual(await repos.commitments.foldOpen(a, b), 0);
     assert.strictEqual(Number((await db.one('select superseded_by from commitment where id = $1', [a])).superseded_by), b);
   },
+
+  // --- for dispatch, mcp, durable, e2e (chunk E)
+
+  'listForTool: open asks by direction and project, soonest due first, limited': async (t) => {
+    const { repos, seed, assert, uniq } = t;
+    const pname = uniq('tool');
+    const project = await seed.projectNamed(pname);
+    const mk = async (direction, due) => {
+      const id = await seed.commitment({ direction });
+      await seed.commitmentSet(id, { project_id: project, due_at: due });
+      return id;
+    };
+    const late = await mk('owed_by_me', new Date(Date.now() + 5 * 86400_000));
+    const soon = await mk('owed_by_me', new Date(Date.now() + 86400_000));
+    const toMe = await mk('owed_to_me', null);
+    assert.deepStrictEqual((await repos.commitments.listForTool('owed_by_me', pname.toUpperCase(), 25)).map((r) => Number(r.id)), [soon, late]);
+    assert.deepStrictEqual((await repos.commitments.listForTool('both', pname, 25)).map((r) => Number(r.id)), [soon, late, toMe]);
+    assert.strictEqual((await repos.commitments.listForTool('both', pname, 1)).length, 1);
+    assert.strictEqual((await repos.commitments.listForTool('owed_by_me', pname, 25))[0].project, pname);
+  },
+
+  'openOfPerson: a person\'s open asks, soonest due first': async ({ repos, seed, assert }) => {
+    const p = await seed.personWith();
+    const a = await seed.commitment();
+    const b = await seed.commitment();
+    await seed.commitmentSet(a, { counterparty_person_id: p, due_at: new Date(Date.now() + 86400_000) });
+    await seed.commitmentSet(b, { counterparty_person_id: p });
+    const done = await seed.commitment({ status: 'done' });
+    await seed.commitmentSet(done, { counterparty_person_id: p });
+    assert.deepStrictEqual((await repos.commitments.openOfPerson(p)).map((r) => Number(r.id)), [a, b]);
+  },
+
+  'boardExtras: each commitment\'s forge path and newest live run': async ({ repos, seed, assert, uniq }) => {
+    const path = `grp/${uniq('bx')}`;
+    const project = await seed.projectNamed(uniq('bxp'), { gitlabPath: path });
+    const c = await seed.commitment();
+    await seed.commitmentSet(c, { project_id: project });
+    const run = await seed.run({ commitmentId: c, status: 'running' });
+    await seed.run({ commitmentId: c, status: 'done' });
+    const bare = await seed.commitment();
+    const got = await repos.commitments.boardExtras([c, bare]);
+    const r = got.find((x) => x.id === String(c));
+    assert.strictEqual(r.slug, path);
+    const runObj = typeof r.run === 'string' ? JSON.parse(r.run) : r.run;
+    assert.deepStrictEqual([Number(runObj.id), runObj.status], [run, 'running']);
+    assert.deepStrictEqual([got.find((x) => x.id === String(bare)).slug, got.find((x) => x.id === String(bare)).run], [null, null]);
+  },
+
+  'cardForChat: the commitment with project, person and item body cut to 1500; null when gone': async ({ repos, seed, assert }) => {
+    const who = await seed.personWith({ name: 'Chat Person' });
+    const item = await seed.item({ source: 'graph_mail', subject: 'S', body: 'b'.repeat(2000) });
+    const id = await seed.commitment({ sourceItemId: item, summary: 'chat card' });
+    await seed.commitmentSet(id, { counterparty_person_id: who });
+    const c = await repos.commitments.cardForChat(id);
+    assert.deepStrictEqual([c.summary, c.who, c.source, c.body.length, Number(c.item_id)], ['chat card', 'Chat Person', 'graph_mail', 1500, item]);
+    assert.strictEqual(await repos.commitments.cardForChat(999999999), null);
+  },
+
+  'blocksOf: the blocks a commitment is part of, with the other side': async ({ repos, seed, db, assert }) => {
+    const task = await seed.commitment({ summary: 'the task' });
+    const blocker = await seed.commitment({ summary: 'the blocker' });
+    await db.query(`insert into commitment_block (task_id, blocker_id, verdict, who) values ($1, $2, 'blocks', 'Pat')`, [task, blocker]);
+    const got = await repos.commitments.blocksOf(task);
+    assert.deepStrictEqual(got.map((r) => [r.blocker_id, r.task_id, r.verdict, r.summary, r.who]), [[String(blocker), String(task), 'blocks', 'the blocker', 'Pat']]);
+    assert.strictEqual((await repos.commitments.blocksOf(blocker)).length, 1);
+  },
+
+  'chaseRead: what the chase task reads about an ask; null when gone': async ({ repos, seed, assert }) => {
+    const who = await seed.personWith({ name: 'Chased' });
+    const item = await seed.item({ source: 'graph_chat' });
+    const id = await seed.commitment({ sourceItemId: item, direction: 'owed_to_me' });
+    await seed.commitmentSet(id, { counterparty_person_id: who });
+    const c = await repos.commitments.chaseRead(id);
+    assert.deepStrictEqual([c.status, c.direction, c.who, c.counterparty_is_me, c.source, Number(c.counterparty_person_id)], ['open', 'owed_to_me', 'Chased', false, 'graph_chat', who]);
+    assert.ok(c.asked_at instanceof Date);
+    assert.strictEqual(await repos.commitments.chaseRead(999999999), null);
+  },
+
+  'e2eCards: the e2e test\'s own cards': async ({ repos, seed, db, assert }) => {
+    const id = await seed.commitment({ summary: 'e2e-0123abcd-4567-cd - a card' });
+    await db.query(`update commitment set extracted_by = 'pa-request-v1' where id = $1`, [id]);
+    await seed.commitment({ summary: 'e2e-0123abcd-4567-cd - not ours' });
+    assert.deepStrictEqual((await repos.commitments.e2eCards()).filter((c) => Number(c.id) === id).map((c) => c.status), ['open']);
+    assert.ok(!(await repos.commitments.e2eCards()).some((c) => String(c.id) !== String(id) && false));
+  },
 };

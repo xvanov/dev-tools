@@ -538,6 +538,50 @@ function create(db) {
         [String(days)]
       );
     },
+
+    // --- for src/dispatch/index.js, src/mcp/server.js
+
+    /** One item row by id, or null. */
+    async rowById(id) {
+      return db.one('select * from source_item where id = $1', [id]);
+    },
+
+    /** The six newest other items of a thread: {id, source, subject, occurred_at}. */
+    async relatedInThread(threadExternalId, exceptId) {
+      return db.rows(
+        `select id, source, subject, occurred_at from source_item
+      where thread_external_id = $1 and id <> $2
+      order by occurred_at desc limit 6`,
+        [threadExternalId, exceptId]
+      );
+    },
+
+    /** Every item of a thread in one source, oldest first (whole rows). */
+    async threadRows(source, threadExternalId) {
+      return db.rows('select * from source_item where source = $1 and thread_external_id = $2 order by occurred_at', [source, threadExternalId]);
+    },
+
+    /** The twenty newest code items (PRs, issues, notifications, project items) of a forge project. */
+    async codeItemsOf(gitlabPath) {
+      return db.rows(
+        `select source, subject, raw, occurred_at from source_item
+          where source in ('github_pr','github_issue','github_notification','github_project_item')
+            and raw->>'project' = $1
+          order by occurred_at desc limit 20`,
+        [gitlabPath]
+      );
+    },
+
+    /** The ten newest items written by a person (by identity or `email`). */
+    async recentByPerson(personId, email) {
+      return db.rows(
+        `select si.id, si.source, si.subject, si.occurred_at from source_item si
+          where si.author_identity in (select value from person_identity where person_id = $1)
+             or si.author_identity = $2
+          order by si.occurred_at desc limit 10`,
+        [personId, email]
+      );
+    },
   };
 }
 

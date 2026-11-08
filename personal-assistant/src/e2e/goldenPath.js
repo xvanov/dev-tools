@@ -26,7 +26,7 @@ function defaultDeps() {
   const { config } = require('../config');
   const termhub = require('../dispatch/termhub');
   const factory = require('../dispatch/factory');
-  const db = require('../db');
+  const repo = require('../repo');
   const paBase = `http://${config.dispatch.host === '0.0.0.0' ? '127.0.0.1' : config.dispatch.host}:${config.dispatch.port}`;
   return {
     config,
@@ -49,8 +49,11 @@ function defaultDeps() {
     factoryApps: () => factory.apps({ fresh: true }),
     jobStatus: (id) => factory.call(['job', 'status', id, '--json']),
     hub: (machine) => termhub.forMachine(machine || null),
-    dbProbe: () => db.one('select 1 as ok'),
-    rows: (sql, params) => db.rows(sql, params),
+    dbProbe: () => repo.system.ping(),
+    e2eCards: () => repo.commitments.e2eCards(),
+    jobsOfCommitments: (ids) => repo.runs.jobsOfCommitments(ids),
+    prLinksOf: (runIds) => repo.runs.prLinksOf(runIds),
+    stepSessionsOf: (runIds) => repo.runs.stepSessionsOf(runIds),
     gh: (args, owner) => gh(config.github.bin, args, owner),
     runCommand: (machine, argv, opts) => require('../dispatch/exec').runCommand(machine, argv, opts),
     subscribe,
@@ -381,19 +384,12 @@ async function clean(o, deps, { cardId, job, ids, lastJob }) {
 async function sweep(o, deps) {
   const cleanup = [];
   const errors = [];
-  const cards = await deps.rows(
-    `select id, status from commitment where summary ~ 'e2e-[0-9a-f]{8}-[0-9a-f]{4}-' and extracted_by = 'pa-request-v1'`,
-    []
-  );
+  const cards = await deps.e2eCards();
   const ids = cards.map((c) => Number(c.id));
-  const runs = ids.length
-    ? await deps.rows(`select id, factory_job_id, factory_state from run where commitment_id = any($1::bigint[])`, [ids])
-    : [];
+  const runs = ids.length ? await deps.jobsOfCommitments(ids) : [];
   const runIds = runs.map((r) => Number(r.id));
-  const prs = runIds.length ? await deps.rows(`select distinct number as pr_number, url as pr_url from run_pr where run_id = any($1::bigint[])`, [runIds]).catch(() => []) : [];
-  const sessions = runIds.length
-    ? await deps.rows(`select termhub_session_id, machine from run_step where run_id = any($1::bigint[]) and termhub_session_id is not null`, [runIds]).catch(() => [])
-    : [];
+  const prs = runIds.length ? await deps.prLinksOf(runIds).catch(() => []) : [];
+  const sessions = runIds.length ? await deps.stepSessionsOf(runIds).catch(() => []) : [];
   for (const p of prs) {
     const n = C.prNumberOf(p.pr_number, p.pr_url);
     if (!n) continue;

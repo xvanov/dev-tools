@@ -1164,6 +1164,92 @@ function create(db) {
       );
       return r.rowCount || 0;
     },
+
+    // --- for src/mcp, src/durable/tasks/chase.js
+
+    /** Open asks for the chat's task list, soonest due first. @param {string} direction owed_by_me | owed_to_me | both */
+    async listForTool(direction, project, limit) {
+      return db.rows(
+        `select c.id, c.summary, c.detail, c.direction, c.due_at, c.confidence,
+                p.name as project, c.repo_path, per.display_name as who
+           from commitment c
+           left join project p on p.id = c.project_id
+           left join person per on per.id = c.counterparty_person_id
+          where c.status in ('open','dispatched') and c.superseded_by is null
+            and ($1 = 'both' or c.direction = $1)
+            and ($2::text is null or lower(p.name) = lower($2))
+          order by c.due_at nulls last, c.extracted_at desc
+          limit $3`,
+        [direction, project, limit]
+      );
+    },
+
+    /** A person's open asks (twenty, soonest due first). */
+    async openOfPerson(personId) {
+      return db.rows(
+        `select id, direction, summary, due_at from commitment
+          where counterparty_person_id = $1 and status in ('open','dispatched')
+          order by due_at nulls last limit 20`,
+        [personId]
+      );
+    },
+
+    /** For each commitment, its project's forge path and its newest live run. */
+    async boardExtras(ids) {
+      return db.rows(
+        `select c.id::text as id, p.gitlab_path as slug,
+              (select json_build_object('id', r.id, 'status', r.status, 'route', r.route, 'job', r.factory_job_id, 'state', r.factory_state)
+                 from run r where r.commitment_id = c.id and r.status in ('starting','running','waiting')
+                order by r.started_at desc limit 1) as run
+         from commitment c left join project p on p.id = c.project_id
+        where c.id = any($1::bigint[])`,
+        [ids]
+      );
+    },
+
+    /** One commitment with project, person and its item (body cut to 1500), for the chat's card view. */
+    async cardForChat(id) {
+      return db.one(
+        `select c.id, c.direction, c.status, c.summary, c.detail, c.due_at, c.repo_path, p.name as project, p.gitlab_path as slug,
+            per.display_name as who, si.id as item_id, si.source, si.subject, si.occurred_at, left(si.body_text, 1500) as body
+       from commitment c
+       left join project p on p.id = c.project_id
+       left join person per on per.id = c.counterparty_person_id
+       join source_item si on si.id = c.source_item_id
+      where c.id = $1`,
+        [id]
+      );
+    },
+
+    /** The blocks a commitment is part of (as task or blocker), with the other side. */
+    async blocksOf(id) {
+      return db.rows(
+        `select b.blocker_id::text, b.task_id::text, b.verdict, c.summary, c.status, coalesce(p.display_name, b.who, '') as who
+         from commitment_block b join commitment c on c.id = b.blocker_id left join person p on p.id = c.counterparty_person_id
+        where (b.task_id = $1 or b.blocker_id = $1) and c.superseded_by is null`,
+        [id]
+      );
+    },
+
+    /** What the chase task reads about an ask. */
+    async chaseRead(id) {
+      return db.one(
+        `select c.id, c.status, c.direction, c.summary, c.due_at, c.counterparty_person_id,
+            coalesce(per.is_me, false) as counterparty_is_me, per.display_name as who,
+            si.source, si.occurred_at as asked_at
+       from commitment c join source_item si on si.id = c.source_item_id
+       left join person per on per.id = c.counterparty_person_id
+      where c.id = $1`,
+        [id]
+      );
+    },
+
+    // --- for src/e2e/goldenPath.js
+
+    /** The e2e test's own cards (summary `e2e-<uuid>`, made by the request path): {id, status}. */
+    async e2eCards() {
+      return db.rows(`select id, status from commitment where summary ~ 'e2e-[0-9a-f]{8}-[0-9a-f]{4}-' and extracted_by = 'pa-request-v1'`);
+    },
   };
 }
 

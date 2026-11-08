@@ -127,6 +127,32 @@ function create(db) {
     async activeNamePaths() {
       return db.rows('select name, repo_path from project where active');
     },
+
+    // --- for src/dispatch/index.js, src/mcp/server.js
+
+    /** The active project whose folder or forge path is `repoPath` (forge path caseless), or null. */
+    async activeByRepo(repoPath) {
+      return db.one(
+        `select id, repo_path, gitlab_path from project
+      where active and (repo_path = $1 or lower(gitlab_path) = lower($1)) limit 1`,
+        [repoPath]
+      );
+    },
+
+    /** One project row by id, or null. */
+    async rowById(id) {
+      return db.one('select * from project where id = $1', [id]);
+    },
+
+    /** A project by name or forge path (caseless), or by an alias; null when none. */
+    async findLoose(name) {
+      return db.one(
+        `select * from project
+          where lower(name) = lower($1) or lower(gitlab_path) = lower($1)
+             or id = (select project_id from project_alias where lower(alias) = lower($1) limit 1)`,
+        [name]
+      );
+    },
   };
 }
 

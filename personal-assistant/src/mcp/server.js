@@ -33,7 +33,9 @@ const { Server } = require('@modelcontextprotocol/sdk/server/index.js');
 const { StdioServerTransport } = require('@modelcontextprotocol/sdk/server/stdio.js');
 const { ListToolsRequestSchema, CallToolRequestSchema } = require('@modelcontextprotocol/sdk/types.js');
 
-const { rows, one, close } = require('../db');
+// The pool, for closing it on exit only: every statement is a repository method.
+const { close } = require('../db');
+const repository = require('../repo');
 const { search } = require('../search');
 const { brief } = require('../brief');
 const { sourceLabel } = require('../dispatch/brief');
@@ -436,14 +438,9 @@ async function dispatchTool(name, args = {}) {
     }
 
     case 'get_thread': {
-      const seed = await one('select * from source_item where id = $1', [args.item_id]);
+      const seed = await repository.sources.rowById(args.item_id);
       if (!seed) return text(`No item #${args.item_id}.`);
-      const thread = seed.thread_external_id
-        ? await rows(
-            'select * from source_item where source = $1 and thread_external_id = $2 order by occurred_at',
-            [seed.source, seed.thread_external_id]
-          )
-        : [seed];
+      const thread = seed.thread_external_id ? await repository.sources.threadRows(seed.source, seed.thread_external_id) : [seed];
       return text(
         thread
           .map(
@@ -456,70 +453,24 @@ async function dispatchTool(name, args = {}) {
 
     case 'open_commitments': {
       const direction = args.direction || 'owed_by_me';
-      const list = await rows(
-        `select c.id, c.summary, c.detail, c.direction, c.due_at, c.confidence,
-                p.name as project, c.repo_path, per.display_name as who
-           from commitment c
-           left join project p on p.id = c.project_id
-           left join person per on per.id = c.counterparty_person_id
-          where c.status in ('open','dispatched') and c.superseded_by is null
-            and ($1 = 'both' or c.direction = $1)
-            and ($2::text is null or lower(p.name) = lower($2))
-          order by c.due_at nulls last, c.extracted_at desc
-          limit $3`,
-        [direction, args.project || null, args.limit ?? 25]
-      );
+      const list = await repository.commitments.listForTool(direction, args.project || null, args.limit ?? 25);
       return text(list);
     }
 
     case 'who_is': {
-      const person = await one(
-        `select * from person
-          where lower(display_name) like lower($1) or lower(primary_email) like lower($1)
-             or id = (select person_id from person_identity where lower(value) like lower($1) limit 1)
-          limit 1`,
-        [`%${args.name}%`]
-      );
+      const person = await repository.people.findLoose(`%${args.name}%`);
       if (!person) return text(`No one matching "${args.name}".`);
-      const identities = await rows('select kind, value from person_identity where person_id = $1', [
-        person.id,
-      ]);
-      const commitments = await rows(
-        `select id, direction, summary, due_at from commitment
-          where counterparty_person_id = $1 and status in ('open','dispatched')
-          order by due_at nulls last limit 20`,
-        [person.id]
-      );
-      const recent = await rows(
-        `select si.id, si.source, si.subject, si.occurred_at from source_item si
-          where si.author_identity in (select value from person_identity where person_id = $1)
-             or si.author_identity = $2
-          order by si.occurred_at desc limit 10`,
-        [person.id, person.primary_email]
-      );
+      const identities = await repository.people.identitiesOf(person.id);
+      const commitments = await repository.commitments.openOfPerson(person.id);
+      const recent = await repository.sources.recentByPerson(person.id, person.primary_email);
       return text({ person, identities, commitments, recent });
     }
 
     case 'repo_state': {
-      const project = await one(
-        `select * from project
-          where lower(name) = lower($1) or lower(gitlab_path) = lower($1)
-             or id = (select project_id from project_alias where lower(alias) = lower($1) limit 1)`,
-        [args.project]
-      );
+      const project = await repository.projects.findLoose(args.project);
       if (!project) return text(`No project matching "${args.project}".`);
-      const codeItems = await rows(
-        `select source, subject, raw, occurred_at from source_item
-          where source in ('github_pr','github_issue','github_notification','github_project_item')
-            and raw->>'project' = $1
-          order by occurred_at desc limit 20`,
-        [project.gitlab_path]
-      );
-      const runs = await rows(
-        `select id, task, mode, status, branch, mr_url, started_at, route, factory_job_id from run
-          where repo_path = $1 order by started_at desc limit 10`,
-        [project.repo_path]
-      );
+      const codeItems = await repository.sources.codeItemsOf(project.gitlab_path);
+      const runs = await repository.runs.inRepo(project.repo_path);
       return text({ project, code: codeItems, runs });
     }
 

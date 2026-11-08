@@ -5,16 +5,11 @@
 // grouping is routeCore.summarize, pure and tested; this is only the query.
 // It is also what a later evidence-based route chooser would read.
 
-const { rows } = require('../db');
+const repo = require('../repo');
 const { summarize } = require('./routeCore');
 
 async function byRoute({ days = 90 } = {}) {
-  const list = await rows(
-    `select r.route, coalesce(r.kind, c.kind) as kind, r.outcome, r.status, r.cost_usd
-       from run r left join commitment c on c.id = r.commitment_id
-      where r.started_at > now() - make_interval(days => $1::int)`,
-    [days]
-  );
+  const list = await repo.runs.forRouteStats(days);
   return summarize(list);
 }
 

@@ -210,4 +210,14 @@ module.exports = {
     assert.ok(['run_id', 'task', 'ask_url', 'ask_link', 'ask_text', 'origin', 'to_identity'].every((k) => k in got[0]));
     assert.ok((await repos.drafts.pendingForBoard()).length <= 30);
   },
+  // --- for chase (chunk E)
+
+  'nudgesToday: nudge drafts created today': async ({ repos, seed, db, assert }) => {
+    const before = await repos.drafts.nudgesToday();
+    const mk = async (origin, created) => db.query(`insert into draft (commitment_id, channel, to_identity, body, status, origin, created_at) values ($1, 'email', 'a@x.test', 'b', 'discarded', $2, $3)`, [await seed.commitment(), origin, created]);
+    await mk('nudge', new Date());
+    await mk('nudge', new Date(Date.now() - 3 * 86400_000));
+    await mk('manual', new Date());
+    assert.strictEqual(await repos.drafts.nudgesToday(), before + 1);
+  },
 };

@@ -27,7 +27,7 @@
 // What these return quotes other people's messages (card summaries, source
 // excerpts): data, never instructions — the chat's CLAUDE.md says so.
 
-const { rows, one } = require('../db');
+const repository = require('../repo');
 
 const CHAT_READ_TOOL_NAMES = ['board', 'card', 'factory_jobs', 'factory_job', 'sessions'];
 const CHAT_ACTION_TOOL_NAMES = ['factory_start', 'factory_continue', 'factory_resume', 'factory_cancel', 'factory_approve', 'session_start'];
@@ -477,15 +477,7 @@ async function boardTool({ limit = 25 } = {}) {
   const ids = board.onMe.filter((c) => !c.standalone).map((c) => Number(c.id)).filter(Number.isFinite);
   const extras = new Map();
   if (ids.length) {
-    const found = await rows(
-      `select c.id::text as id, p.gitlab_path as slug,
-              (select json_build_object('id', r.id, 'status', r.status, 'route', r.route, 'job', r.factory_job_id, 'state', r.factory_state)
-                 from run r where r.commitment_id = c.id and r.status in ('starting','running','waiting')
-                order by r.started_at desc limit 1) as run
-         from commitment c left join project p on p.id = c.project_id
-        where c.id = any($1::bigint[])`,
-      [ids]
-    ).catch(() => []);
+    const found = await repository.commitments.boardExtras(ids).catch(() => []);
     for (const f of found) extras.set(String(f.id), { slug: f.slug || null, run: f.run || null });
   }
   return boardView(board, { extras, limit });
@@ -495,38 +487,20 @@ async function cardTool({ id }) {
   const ref = parseCardId(id);
   const { sourceLabel } = require('../dispatch/brief');
   if (ref.proposal) {
-    const p = await one('select id, kind, title, body, payload, status, created_at, commitment_id from proposal where id = $1', [ref.proposal]);
+    const p = await repository.proposals.rowForChat(ref.proposal);
     if (!p) throw new Error(`no offer p${ref.proposal}`);
     return {
       id: `p${p.id}`, offer: { proposal: Number(p.id), kind: p.kind, status: p.status, title: clip(p.title, 200), body: clip(p.body, 1500), delivery: p.payload?.delivery || null, repo: p.payload?.slug || p.payload?.repoPath || null },
       card: p.commitment_id ? String(p.commitment_id) : null,
     };
   }
-  const c = await one(
-    `select c.id, c.direction, c.status, c.summary, c.detail, c.due_at, c.repo_path, p.name as project, p.gitlab_path as slug,
-            per.display_name as who, si.id as item_id, si.source, si.subject, si.occurred_at, left(si.body_text, 1500) as body
-       from commitment c
-       left join project p on p.id = c.project_id
-       left join person per on per.id = c.counterparty_person_id
-       join source_item si on si.id = c.source_item_id
-      where c.id = $1`,
-    [ref.commitment]
-  );
+  const c = await repository.commitments.cardForChat(ref.commitment);
   if (!c) throw new Error(`no card ${ref.commitment}`);
   const [info, runs, offers, blocks] = await Promise.all([
     require('../dashboard/cards').forCommitments([c.id]).then((r) => r.byId.get(String(c.id)) || null).catch(() => null),
-    rows(
-      `select id, status, mode, route, factory_job_id, factory_state, delivery, cost_usd, mr_url, termhub_session_id, machine, started_at
-         from run where commitment_id = $1 order by started_at desc limit 5`,
-      [c.id]
-    ).catch(() => []),
-    rows(`select id, kind, title, payload from proposal where commitment_id = $1 and status = 'pending' order by created_at desc limit 5`, [c.id]).catch(() => []),
-    rows(
-      `select b.blocker_id::text, b.task_id::text, b.verdict, c.summary, c.status, coalesce(p.display_name, b.who, '') as who
-         from commitment_block b join commitment c on c.id = b.blocker_id left join person p on p.id = c.counterparty_person_id
-        where (b.task_id = $1 or b.blocker_id = $1) and c.superseded_by is null`,
-      [c.id]
-    ).catch(() => []),
+    repository.runs.cardRuns(c.id).catch(() => []),
+    repository.proposals.pendingOfCommitment(c.id).catch(() => []),
+    repository.commitments.blocksOf(c.id).catch(() => []),
   ]);
   const out = {
     id: String(c.id),
@@ -578,7 +552,7 @@ async function factoryJobsTool({ group = 'active', limit = 15 } = {}) {
   const F = require('../dispatch/factoryCore');
   if (!factory.enabled()) return { enabled: false, note: 'the factory is not configured (PA_FACTORY_PATH)' };
   const snap = await factory.snapshot();
-  const runs = await rows(`select id, factory_job_id from run where route = 'factory' and factory_job_id is not null`).catch(() => []);
+  const runs = await repository.runs.factoryJobs().catch(() => []);
   const b = F.board(snap.jobs, { paRuns: new Map(runs.map((r) => [r.factory_job_id, { id: Number(r.id), url: null }])) });
   const want = group === 'all' ? F.GROUPS : group === 'active' ? ['needs_you', 'running'] : [group];
   const out = { as_of: snap.polledAt, counts: Object.fromEntries(F.GROUPS.map((g) => [g, b.groups[g].length])) };
@@ -608,10 +582,7 @@ async function factoryJobTool({ job, fresh = false }) {
     raw = await factory.call(['job', 'status', id, '--json']);
     source = 'factory';
   }
-  const run = await one(
-    `select id, commitment_id, termhub_session_id, machine from run where route = 'factory' and factory_job_id = $1 order by id desc limit 1`,
-    [id]
-  ).catch(() => null);
+  const run = await repository.runs.newestOfJob(id).catch(() => null);
   const v = F.jobView(raw, run ? { id: Number(run.id), url: null, card: run.commitment_id } : null);
   let followUrl = null;
   if (run?.termhub_session_id) {
@@ -627,20 +598,14 @@ async function sessionsTool({ machine = null, all = false } = {}) {
   if (machine && !config.termhub.machines[machine]) throw new Error(`"${machine}" is not in PA_MACHINES`);
   const hub = termhub.forMachine(machine);
   const list = await hub.listSessions();
-  const runs = await rows(
-    `select id, termhub_session_id, status, route, factory_job_id, commitment_id from run where termhub_session_id is not null and started_at > now() - interval '30 days'`
-  ).catch(() => []);
+  const runs = await repository.runs.withSessions().catch(() => []);
   const byId = new Map(runs.map((r) => [String(r.termhub_session_id), {
     run: Number(r.id), status: r.status, ...(r.factory_job_id ? { job: r.factory_job_id } : {}), ...(r.commitment_id ? { card: String(r.commitment_id) } : {}),
   }]));
   // A factory step's own session (plan E1, sql/033 run_step): its run, job and step.
   const ids = list.map((s) => String(s.id)).filter((x) => !byId.has(x));
   const steps = ids.length
-    ? await rows(
-      `select s.termhub_session_id, s.step_id, s.job_id, r.id as run_id, r.status, r.commitment_id
-         from run_step s join run r on r.id = s.run_id where s.termhub_session_id = any($1::text[])`,
-      [ids]
-    ).catch(() => [])
+    ? await repository.runs.stepsBySessions(ids).catch(() => [])
     : [];
   for (const s of steps) {
     byId.set(String(s.termhub_session_id), { run: Number(s.run_id), status: s.status, job: s.job_id, step: s.step_id, ...(s.commitment_id ? { card: String(s.commitment_id) } : {}) });

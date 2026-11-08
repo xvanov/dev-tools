@@ -223,4 +223,23 @@ module.exports = {
     const got = new Map((await repos.people.emailsByAadOid([o1, o2])).map((r) => [r.oid, r.email]));
     assert.deepStrictEqual([got.get(o1), got.get(o2)], ['a-primary@x.test', 'b-smtp@x.test']);
   },
+
+  // --- for dispatch, mcp (chunk E)
+
+  'rowById: the whole person row; null when gone': async ({ repos, seed, assert }) => {
+    const id = await seed.personWith({ name: 'Row Person' });
+    assert.strictEqual((await repos.people.rowById(id)).display_name, 'Row Person');
+    assert.strictEqual(await repos.people.rowById(999999999), null);
+  },
+
+  'findLoose: name, email or identity matching an ilike pattern': async ({ repos, seed, assert, uniq }) => {
+    const tag = uniq('zq').replace('-', '');
+    const p = await seed.personWith({ name: `Loose ${tag} Name`, email: null });
+    assert.strictEqual(Number((await repos.people.findLoose(`%${tag}%`)).id), p);
+    const q = await seed.personWith({ name: 'Plain', email: null });
+    const ident = uniq('identzq').replace('-', '');
+    await seed.identity(q, 'smtp', `${ident}@x.test`);
+    assert.strictEqual(Number((await repos.people.findLoose(`%${ident}%`)).id), q);
+    assert.strictEqual(await repos.people.findLoose('%nobody-matches-this-zzz%'), null);
+  },
 };

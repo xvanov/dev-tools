@@ -202,4 +202,34 @@ module.exports = {
     await repos.repos.upsertPr(id, PR(repo, 2));
     assert.deepStrictEqual((await repos.repos.prsOf(id)).map((p) => p.number), [2, 1]);
   },
+  // --- for dispatch/delivery.js (chunk E)
+
+  'setDelivery: sets a repo\'s default; a repeat changes it': async ({ repos, assert, uniq }) => {
+    const slug = `own/${uniq('repo')}`;
+    await repos.repos.setDelivery(slug, 'branch');
+    assert.strictEqual((await repos.repos.deliveryOf(slug)).delivery, 'branch');
+    await repos.repos.setDelivery(slug, 'pr');
+    assert.strictEqual((await repos.repos.deliveryOf(slug)).delivery, 'pr');
+  },
+
+  'deliveryOf: a repo\'s default, or null': async ({ repos, assert, uniq }) => {
+    assert.strictEqual(await repos.repos.deliveryOf(`own/${uniq('none')}`), null);
+  },
+
+  'clearDelivery: whether the repo had a default': async ({ repos, assert, uniq }) => {
+    const slug = `own/${uniq('repo')}`;
+    await repos.repos.setDelivery(slug, 'branch');
+    assert.strictEqual(await repos.repos.clearDelivery(slug), true);
+    assert.strictEqual(await repos.repos.clearDelivery(slug), false);
+  },
+
+  'deliveries: every repo\'s default by repo': async ({ repos, assert, uniq }) => {
+    const a = `own/${uniq('a')}`;
+    const b = `own/${uniq('b')}`;
+    await repos.repos.setDelivery(b, 'pr');
+    await repos.repos.setDelivery(a, 'branch');
+    const got = (await repos.repos.deliveries()).filter((r) => [a, b].includes(r.repo));
+    assert.deepStrictEqual(got.map((r) => [r.repo, r.delivery]), [[a, 'branch'], [b, 'pr']].sort((x, y) => (x[0] < y[0] ? -1 : 1)));
+    assert.ok(got[0].updated_at instanceof Date);
+  },
 };

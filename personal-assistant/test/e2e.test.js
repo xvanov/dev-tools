@@ -237,7 +237,10 @@ function fakes({ jobs, failStart = false, prBranch = 'factory/0007-1', alive = t
       killSession: async (id) => { log.killed.push(id); return true; },
     }),
     dbProbe: async () => ({ ok: 1 }),
-    rows: async () => [],
+    e2eCards: async () => [],
+    jobsOfCommitments: async () => [],
+    prLinksOf: async () => [],
+    stepSessionsOf: async () => [],
     async gh(args, owner) {
       log.gh.push([args.join(' '), owner]);
       if (args[0] === 'pr' && args[1] === 'view') return { code: 0, stdout: JSON.stringify({ number: 9, headRefName: prBranch, isDraft: true, state: 'OPEN' }), stderr: '' };
@@ -346,13 +349,10 @@ test('dry run creates nothing and reports each check', async () => {
 
 test('sweep closes leftovers found through stored links', async () => {
   const { deps, log } = fakes({ jobs: [JOB_RUNNING] });
-  deps.rows = async (sql) => {
-    if (/from commitment/.test(sql)) return [{ id: 70, status: 'open' }, { id: 71, status: 'dropped' }];
-    if (/from run where/.test(sql)) return [{ id: 5, factory_job_id: 'dev-tools:0007', factory_state: 'in_progress' }];
-    if (/from run_pr/.test(sql)) return [{ pr_number: 9, pr_url: 'https://github.com/xvanov/dev-tools/pull/9' }];
-    if (/from run_step/.test(sql)) return [{ termhub_session_id: 'abc123', machine: null }];
-    return [];
-  };
+  deps.e2eCards = async () => [{ id: 70, status: 'open' }, { id: 71, status: 'dropped' }];
+  deps.jobsOfCommitments = async () => [{ id: 5, factory_job_id: 'dev-tools:0007', factory_state: 'in_progress' }];
+  deps.prLinksOf = async () => [{ pr_number: 9, pr_url: 'https://github.com/xvanov/dev-tools/pull/9' }];
+  deps.stepSessionsOf = async () => [{ termhub_session_id: 'abc123', machine: null }];
   const r = await G.main({ sweep: true }, {}, deps);
   assert.strictEqual(r.ok, true);
   assert.ok(log.gh.some(([a]) => a.startsWith('pr close 9')));

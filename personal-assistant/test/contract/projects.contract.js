@@ -125,4 +125,34 @@ module.exports = {
     assert.deepStrictEqual(got.find((r) => r.name === live), { name: live, repo_path: '/r/live' });
     assert.ok(!got.some((r) => r.name === dead));
   },
+  // --- for dispatch, mcp (chunk E)
+
+  'activeByRepo: an active project by folder or forge path': async ({ repos, seed, assert, uniq }) => {
+    const folder = `/r/${uniq('f')}`;
+    const path = `Grp/${uniq('p')}`;
+    const id = await seed.projectNamed(uniq('act'), { repoPath: folder, gitlabPath: path });
+    await seed.projectNamed(uniq('off'), { repoPath: `${folder}-off`, active: false });
+    assert.strictEqual(Number((await repos.projects.activeByRepo(folder)).id), id);
+    assert.strictEqual(Number((await repos.projects.activeByRepo(path.toLowerCase())).id), id);
+    assert.strictEqual(await repos.projects.activeByRepo(`${folder}-off`), null);
+  },
+
+  'rowById: the whole project row; null when gone': async ({ repos, seed, assert, uniq }) => {
+    const name = uniq('rb');
+    const id = await seed.projectNamed(name);
+    assert.strictEqual((await repos.projects.rowById(id)).name, name);
+    assert.strictEqual(await repos.projects.rowById(999999999), null);
+  },
+
+  'findLoose: by name or forge path caseless, or by alias': async ({ repos, seed, db, assert, uniq }) => {
+    const name = uniq('Loose');
+    const path = `grp/${uniq('lp')}`;
+    const id = await seed.projectNamed(name, { gitlabPath: path });
+    assert.strictEqual(Number((await repos.projects.findLoose(name.toUpperCase())).id), id);
+    assert.strictEqual(Number((await repos.projects.findLoose(path.toUpperCase())).id), id);
+    const alias = uniq('alias');
+    await db.query('insert into project_alias (project_id, alias) values ($1, $2)', [id, alias]);
+    assert.strictEqual(Number((await repos.projects.findLoose(alias)).id), id);
+    assert.strictEqual(await repos.projects.findLoose(uniq('none')), null);
+  },
 };

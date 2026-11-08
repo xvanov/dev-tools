@@ -17,21 +17,13 @@
 // waits for the next morning.
 
 const { TimeoutError } = require('absurd-sdk');
-const { one, rows } = require('../../db');
+const repo = require('../../repo');
 const C = require('./chaseCore');
 
 const name = 'chase';
 
 async function read(commitmentId) {
-  return one(
-    `select c.id, c.status, c.direction, c.summary, c.due_at, c.counterparty_person_id,
-            coalesce(per.is_me, false) as counterparty_is_me, per.display_name as who,
-            si.source, si.occurred_at as asked_at
-       from commitment c join source_item si on si.id = c.source_item_id
-       left join person per on per.id = c.counterparty_person_id
-      where c.id = $1`,
-    [commitmentId]
-  );
+  return repo.commitments.chaseRead(commitmentId);
 }
 
 // Waits for the close event until `at`. True: it closed.
@@ -49,12 +41,7 @@ async function closedBy(ctx, stepName, commitmentId, at) {
 // more (chaseCore.usualWorthy). "Don't remind me about this one" or "Friday
 // 3pm" was about that ask, so it is not carried to the next.
 async function usualCadence(personId) {
-  const list = await rows(
-    `select p.answer from proposal p join commitment c on c.id = p.commitment_id
-      where p.payload->>'on' = 'cadence' and p.status = 'accepted' and c.counterparty_person_id = $1
-      order by p.decided_at desc limit 10`,
-    [personId]
-  );
+  const list = await repo.proposals.cadenceAnswers(personId);
   return list.map((r) => r.answer).find(C.usualWorthy) || null;
 }
 
@@ -112,8 +99,7 @@ async function run({ commitmentId }, ctx) {
   // A slot today, or the next morning: never more than a few nudges a day.
   for (let i = 0; i < 5; i++) {
     const slot = await ctx.step('slot', async () => {
-      const r = await one(`select count(*)::int as n from draft where origin = 'nudge' and created_at >= date_trunc('day', now())`);
-      return r.n < C.MAX_NUDGES_PER_DAY ? null : C.workingMorning(new Date(Date.now() + 86400_000)).toISOString();
+      return (await repo.drafts.nudgesToday()) < C.MAX_NUDGES_PER_DAY ? null : C.workingMorning(new Date(Date.now() + 86400_000)).toISOString();
     });
     if (!slot) break;
     if (await closedBy(ctx, 'wait-slot', commitmentId, slot)) return { result: 'closed while queued' };

@@ -25,7 +25,9 @@
 // that process also serves the dashboard and every other pass.
 
 const { Absurd } = require('absurd-sdk');
+// The pool, only to hand absurd-sdk its connection: every statement is a repository method.
 const db = require('../db');
+const repository = require('../repo');
 const { logger } = require('../log');
 
 const log = logger('durable');
@@ -65,7 +67,7 @@ async function startWorker() {
 
 /** Counts per task and state, for `pa doctor`. */
 async function stats() {
-  return db.rows(`select task_name, state, count(*)::int as n from absurd.t_${QUEUE} group by 1, 2 order by 1, 2`);
+  return repository.durable.stats(QUEUE);
 }
 
 module.exports = { spawn, emit, startWorker, stats, client, QUEUE };

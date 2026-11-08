@@ -206,25 +206,14 @@ async function pgProducer() {
   const { Client } = require('pg');
   const c = new Client({ connectionString: config.databaseUrl, connectionTimeoutMillis: 10_000 });
   await c.connect();
-  // As the row triggers do (sql/036): number the event, write it to the
-  // outbox, NOTIFY — one transaction, so a generation that replays from the
-  // outbox (plan 1.4) finds it. A stack without the outbox yet: NOTIFY only.
-  const OUTBOX = `with s as (select nextval('pa_event_seq') as seq),
-    o as (insert into event_outbox (seq, topic, payload) select seq, 'deploytest', jsonb_build_object('n', $1::int, 'seq', seq) from s returning seq)
-    select pg_notify('pa_events', json_build_object('topic', 'deploytest', 'n', $1::int, 'seq', (select seq from o))::text)`;
-  const NOTIFY_ONLY = "select pg_notify('pa_events', json_build_object('topic', 'deploytest', 'n', $1::int, 'seq', nextval('pa_event_seq'))::text)";
-  let sql = OUTBOX;
+  // The statement is repo.events.publishProbe (sql/036: number the event, write the
+  // outbox, NOTIFY, in one transaction); this connection is only its own session.
+  const events = require('../repo').createRepos(require('../repo').clientBackend(c)).events;
   let n = 0;
   return {
     emit: async () => {
       n++;
-      try {
-        await c.query(sql, [n]);
-      } catch (err) {
-        if (sql !== OUTBOX || !/event_outbox/.test(err.message)) throw err;
-        sql = NOTIFY_ONLY;
-        await c.query(sql, [n]);
-      }
+      await events.publishProbe(n);
       return n;
     },
     close: () => c.end(),

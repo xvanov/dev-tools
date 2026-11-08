@@ -183,6 +183,24 @@ function create(db) {
         [oids]
       );
     },
+
+    // --- for src/dispatch/index.js, src/mcp/server.js
+
+    /** One person row by id, or null. */
+    async rowById(id) {
+      return db.one('select * from person where id = $1', [id]);
+    },
+
+    /** The first person whose name or email, or an identity, matches an ilike pattern; null when none. */
+    async findLoose(pattern) {
+      return db.one(
+        `select * from person
+          where lower(display_name) like lower($1) or lower(primary_email) like lower($1)
+             or id = (select person_id from person_identity where lower(value) like lower($1) limit 1)
+          limit 1`,
+        [pattern]
+      );
+    },
   };
 }
 

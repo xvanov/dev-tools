@@ -452,4 +452,49 @@ module.exports = {
     const ids = (await repos.sources.recentClaudeSessions(7)).map((r) => Number(r.id));
     assert.ok(ids.indexOf(b) >= 0 && ids.indexOf(b) < ids.indexOf(a) && !ids.includes(c));
   },
+
+  // --- for dispatch, mcp (chunk E)
+
+  'rowById: the whole item row; null when gone': async ({ repos, seed, assert }) => {
+    const id = await seed.item({ subject: 'whole', body: 'text' });
+    const r = await repos.sources.rowById(id);
+    assert.deepStrictEqual([r.subject, r.body_text, 'content_hash' in r], ['whole', 'text', true]);
+    assert.strictEqual(await repos.sources.rowById(999999999), null);
+  },
+
+  'relatedInThread: the other items of a thread, newest first, six at most': async ({ repos, seed, assert, uniq }) => {
+    const thr = uniq('thr');
+    const ids = [];
+    for (let i = 0; i < 8; i++) ids.push(await seed.item({ thread: thr, occurredAt: new Date(Date.now() - (30 - i) * 60_000) }));
+    const got = await repos.sources.relatedInThread(thr, ids[7]);
+    assert.deepStrictEqual(got.map((r) => Number(r.id)), [ids[6], ids[5], ids[4], ids[3], ids[2], ids[1]]);
+  },
+
+  'threadRows: every item of a thread in one source, oldest first': async ({ repos, seed, assert, uniq }) => {
+    const thr = uniq('thr');
+    const a = await seed.item({ source: 'graph_chat', thread: thr, occurredAt: new Date(Date.now() - 2000) });
+    const b = await seed.item({ source: 'graph_chat', thread: thr, occurredAt: new Date(Date.now() - 1000) });
+    await seed.item({ source: 'graph_mail', thread: thr });
+    assert.deepStrictEqual((await repos.sources.threadRows('graph_chat', thr)).map((r) => Number(r.id)), [a, b]);
+  },
+
+  'codeItemsOf: code items of a forge project, newest first': async ({ repos, seed, assert, uniq }) => {
+    const path = `grp/${uniq('code')}`;
+    const a = await seed.item({ source: 'github_pr', occurredAt: new Date(Date.now() - 2000), raw: { project: path } });
+    const b = await seed.item({ source: 'github_issue', occurredAt: new Date(Date.now() - 1000), raw: { project: path } });
+    await seed.item({ source: 'graph_mail', raw: { project: path } });
+    const got = await repos.sources.codeItemsOf(path);
+    assert.deepStrictEqual(got.map((r) => r.source), ['github_issue', 'github_pr']);
+    assert.ok(a && b);
+  },
+
+  'recentByPerson: items written by a person (identity or address), newest first': async ({ repos, seed, assert, uniq }) => {
+    const p = await seed.personWith();
+    const ident = uniq('gh');
+    await seed.identity(p, 'github_username', ident);
+    const a = await seed.item({ author: ident, occurredAt: new Date(Date.now() - 2000) });
+    const b = await seed.item({ author: 'me@x.test', occurredAt: new Date(Date.now() - 1000) });
+    await seed.item({ author: 'other' });
+    assert.deepStrictEqual((await repos.sources.recentByPerson(p, 'me@x.test')).map((r) => Number(r.id)), [b, a]);
+  },
 };

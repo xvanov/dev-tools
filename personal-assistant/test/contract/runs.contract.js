@@ -174,4 +174,395 @@ module.exports = {
     assert.deepStrictEqual([r.repo_path, r.worktree_path], ['/w/r', '/wt/1']);
     assert.ok(!rows.some((x) => Number(x.id) === done));
   },
+
+  // --- for dispatch, durable, mcp, e2e (chunk E)
+
+  'liveForCommitment: the newest live run of a commitment; null when none live': async ({ repos, seed, assert }) => {
+    const c = await seed.commitment();
+    assert.strictEqual(await repos.runs.liveForCommitment(c), null);
+    await seed.run({ commitmentId: c, status: 'done' });
+    const live = await seed.run({ commitmentId: c, status: 'waiting' });
+    const got = await repos.runs.liveForCommitment(c);
+    assert.strictEqual(Number(got.id), live);
+    assert.ok('machine' in got);
+  },
+
+  'setWorktree: records worktree and branch': async ({ repos, seed, db, assert }) => {
+    const id = await seed.run();
+    await repos.runs.setWorktree(id, '/w/x', 'pa/1-x');
+    const r = await db.one('select worktree_path, branch from run where id = $1', [id]);
+    assert.deepStrictEqual([r.worktree_path, r.branch], ['/w/x', 'pa/1-x']);
+  },
+
+  'markRunning: session, brief, status running': async ({ repos, seed, db, assert }) => {
+    const id = await seed.run({ status: 'starting' });
+    await repos.runs.markRunning(id, 'sess-1', '/b.md');
+    const r = await db.one('select status, termhub_session_id, brief_path from run where id = $1', [id]);
+    assert.deepStrictEqual([r.status, r.termhub_session_id, r.brief_path], ['running', 'sess-1', '/b.md']);
+  },
+
+  'markStartFailed: failed with outcome, end time and note': async ({ repos, seed, db, assert }) => {
+    const id = await seed.run({ status: 'starting' });
+    await repos.runs.markStartFailed(id, 'start failed: x');
+    const r = await db.one('select status, outcome, exit_note, ended_at from run where id = $1', [id]);
+    assert.deepStrictEqual([r.status, r.outcome, r.exit_note, r.ended_at instanceof Date], ['failed', 'failed', 'start failed: x', true]);
+  },
+
+  'markRemoteStartFailed: failed, keeping the session that was opened': async ({ repos, seed, db, assert }) => {
+    const id = await seed.run({ status: 'starting' });
+    await repos.runs.markRemoteStartFailed(id, 'sess-r', 'boom');
+    const r = await db.one('select status, termhub_session_id, exit_note from run where id = $1', [id]);
+    assert.deepStrictEqual([r.status, r.termhub_session_id, r.exit_note], ['failed', 'sess-r', 'boom']);
+  },
+
+  'markRemoteRunning: running with session, brief, worktree and branch': async ({ repos, seed, db, assert }) => {
+    const id = await seed.run({ status: 'starting' });
+    await repos.runs.markRemoteRunning(id, { sessionId: 's', briefPath: '/b', worktreePath: '/w', branch: 'br' });
+    const r = await db.one('select status, termhub_session_id, brief_path, worktree_path, branch from run where id = $1', [id]);
+    assert.deepStrictEqual([r.status, r.termhub_session_id, r.brief_path, r.worktree_path, r.branch], ['running', 's', '/b', '/w', 'br']);
+  },
+
+  'recent: all runs, or those on your plate, newest first, limited': async ({ repos, seed, assert }) => {
+    const live = await seed.run({ status: 'running' });
+    const failed = await seed.run({ status: 'failed' });
+    const plate = (await repos.runs.recent(false, 500)).map((r) => Number(r.id));
+    assert.ok(plate.includes(live) && !plate.includes(failed));
+    assert.ok((await repos.runs.recent(true, 500)).map((r) => Number(r.id)).includes(failed));
+    assert.strictEqual((await repos.runs.recent(true, 1)).length, 1);
+    const times = (await repos.runs.recent(true, 50)).map((r) => new Date(r.started_at).getTime());
+    assert.deepStrictEqual(times, [...times].sort((a, b) => b - a));
+  },
+
+  'setDiffStat: stores the stat as json': async ({ repos, seed, db, assert }) => {
+    const id = await seed.run();
+    await repos.runs.setDiffStat(id, { stat: '1 file', commits: 2, uncommitted: 0 });
+    assert.deepStrictEqual((await db.one('select diff_stat from run where id = $1', [id])).diff_stat, { stat: '1 file', commits: 2, uncommitted: 0 });
+  },
+
+  'markLanded: landed, delivered, with the MR link': async ({ repos, seed, db, assert }) => {
+    const id = await seed.run();
+    await repos.runs.markLanded(id, 'https://pr/1');
+    const r = await db.one('select status, mr_url, outcome, ended_at from run where id = $1', [id]);
+    assert.deepStrictEqual([r.status, r.mr_url, r.outcome, r.ended_at instanceof Date], ['landed', 'https://pr/1', 'delivered', true]);
+  },
+
+  'markPushedToMain: landed, merged; keeps an end time and a note when none given': async ({ repos, seed, db, assert }) => {
+    const id = await seed.run({ endedAt: new Date('2026-01-01T00:00:00Z') });
+    await db.query(`update run set exit_note = 'kept' where id = $1`, [id]);
+    await repos.runs.markPushedToMain(id, null);
+    const r = await db.one('select status, outcome, exit_note, ended_at from run where id = $1', [id]);
+    assert.deepStrictEqual([r.status, r.outcome, r.exit_note, r.ended_at.toISOString()], ['landed', 'merged', 'kept', '2026-01-01T00:00:00.000Z']);
+    await repos.runs.markPushedToMain(id, 'ci green');
+    assert.strictEqual((await db.one('select exit_note from run where id = $1', [id])).exit_note, 'ci green');
+  },
+
+  'block: blocked with a reason, unless landed or dropped': async ({ repos, seed, db, assert }) => {
+    const a = await seed.run({ status: 'running' });
+    const b = await seed.run({ status: 'landed' });
+    await repos.runs.block(a, 'CI failed');
+    await repos.runs.block(b, 'late');
+    const s = async (id) => (await db.one('select status, exit_note from run where id = $1', [id]));
+    assert.deepStrictEqual([(await s(a)).status, (await s(a)).exit_note, (await s(b)).status], ['blocked', 'CI failed', 'landed']);
+  },
+
+  'markFactoryDropped: dropped, keeping an earlier end time and outcome': async ({ repos, seed, db, assert }) => {
+    const id = await seed.run({ endedAt: new Date('2026-01-01T00:00:00Z') });
+    await db.query(`update run set outcome = 'delivered' where id = $1`, [id]);
+    await repos.runs.markFactoryDropped(id);
+    const r = await db.one('select status, outcome, ended_at from run where id = $1', [id]);
+    assert.deepStrictEqual([r.status, r.outcome, r.ended_at.toISOString()], ['dropped', 'delivered', '2026-01-01T00:00:00.000Z']);
+  },
+
+  'markDropped: dropped with outcome dropped unless one is set': async ({ repos, seed, db, assert }) => {
+    const id = await seed.run();
+    await repos.runs.markDropped(id);
+    const r = await db.one('select status, outcome from run where id = $1', [id]);
+    assert.deepStrictEqual([r.status, r.outcome], ['dropped', 'dropped']);
+  },
+
+  'markDone: done with the end time and note': async ({ repos, seed, db, assert }) => {
+    const id = await seed.run();
+    await repos.runs.markDone(id, 'finished');
+    const r = await db.one('select status, exit_note, ended_at from run where id = $1', [id]);
+    assert.deepStrictEqual([r.status, r.exit_note, r.ended_at instanceof Date], ['done', 'finished', true]);
+  },
+
+  'activeForReconcile: live runs that are not factory runs': async ({ repos, seed, db, assert }) => {
+    const a = await seed.run({ status: 'running' });
+    const f = await seed.run({ status: 'running' });
+    await db.query(`update run set route = 'factory' where id = $1`, [f]);
+    const d = await seed.run({ status: 'done' });
+    const ids = (await repos.runs.activeForReconcile()).map((r) => Number(r.id));
+    assert.ok(ids.includes(a) && !ids.includes(f) && !ids.includes(d));
+  },
+
+  'setStatus: sets the status': async ({ repos, seed, db, assert }) => {
+    const id = await seed.run({ status: 'running' });
+    await repos.runs.setStatus(id, 'waiting');
+    assert.strictEqual((await db.one('select status from run where id = $1', [id])).status, 'waiting');
+  },
+
+  'markSubmitRefused: failed with the note, brief path and author': async ({ repos, seed, db, assert }) => {
+    const id = await seed.run({ status: 'starting' });
+    await repos.runs.markSubmitRefused(id, 'refused', '/b', 'agent');
+    const r = await db.one('select status, exit_note, brief_path, brief_by from run where id = $1', [id]);
+    assert.deepStrictEqual([r.status, r.exit_note, r.brief_path, r.brief_by], ['failed', 'refused', '/b', 'agent']);
+  },
+
+  'setSession: stores the follow session': async ({ repos, seed, db, assert }) => {
+    const id = await seed.run();
+    await repos.runs.setSession(id, 'follow-1');
+    assert.strictEqual((await db.one('select termhub_session_id from run where id = $1', [id])).termhub_session_id, 'follow-1');
+  },
+
+  'recordJob: running and queued while live; false once the run ended': async ({ repos, seed, db, assert }) => {
+    const id = await seed.run({ status: 'starting' });
+    const ok = await repos.runs.recordJob(id, { jobId: 'app:0001', delivery: 'pr', pipeline: 'solo', briefPath: '/b', warnings: ['w1'], exitNote: 'factory warned: w1', by: 'me' });
+    assert.strictEqual(ok, true);
+    const r = await db.one('select status, factory_job_id, factory_state, delivery, pipeline, factory_warnings, exit_note, brief_by from run where id = $1', [id]);
+    assert.deepStrictEqual([r.status, r.factory_job_id, r.factory_state, r.delivery, r.pipeline, r.factory_warnings, r.exit_note, r.brief_by], ['running', 'app:0001', 'queued', 'pr', 'solo', ['w1'], 'factory warned: w1', 'me']);
+    const ended = await seed.run({ status: 'done' });
+    assert.strictEqual(await repos.runs.recordJob(ended, { jobId: 'app:0002', delivery: null, pipeline: null, briefPath: null, warnings: [], exitNote: null, by: null }), false);
+  },
+
+  'markLateJobCancelled: remembers the job, state cancelled': async ({ repos, seed, db, assert }) => {
+    const id = await seed.run({ status: 'done' });
+    await repos.runs.markLateJobCancelled(id, 'app:0009');
+    const r = await db.one('select factory_job_id, factory_state from run where id = $1', [id]);
+    assert.deepStrictEqual([r.factory_job_id, r.factory_state], ['app:0009', 'cancelled']);
+  },
+
+  'markSubmitFailed: failed only while no job is recorded': async ({ repos, seed, db, assert }) => {
+    const a = await seed.run({ status: 'starting' });
+    const b = await seed.run({ status: 'starting' });
+    await db.query(`update run set factory_job_id = 'app:1' where id = $1`, [b]);
+    await repos.runs.markSubmitFailed(a, 'no job');
+    await repos.runs.markSubmitFailed(b, 'no job');
+    const s = async (id) => (await db.one('select status, factory_state from run where id = $1', [id]));
+    assert.deepStrictEqual([(await s(a)).status, (await s(a)).factory_state, (await s(b)).status], ['failed', 'not_submitted', 'starting']);
+  },
+
+  'markSubmitUnknown: waiting, submit_unknown, only while no job is recorded': async ({ repos, seed, db, assert }) => {
+    const a = await seed.run({ status: 'starting' });
+    await repos.runs.markSubmitUnknown(a, 'lost', '/b');
+    const r = await db.one('select status, factory_state, exit_note, brief_path from run where id = $1', [a]);
+    assert.deepStrictEqual([r.status, r.factory_state, r.exit_note, r.brief_path], ['waiting', 'submit_unknown', 'lost', '/b']);
+  },
+
+  'applyFactoryState: status, outcome, cost, MR; end time stamped once when ended': async ({ repos, seed, db, assert }) => {
+    const id = await seed.run({ status: 'running' });
+    await repos.runs.applyFactoryState(id, { status: 'done', outcome: 'delivered', factoryState: 'delivered', costUsd: 1.5, mrUrl: 'https://pr/9', exitNote: null, delivery: 'pr', ended: true });
+    const r = await db.one('select status, outcome, factory_state, cost_usd, mr_url, delivery, ended_at, outcome_at from run where id = $1', [id]);
+    assert.deepStrictEqual([r.status, r.outcome, r.factory_state, Number(r.cost_usd), r.mr_url, r.delivery, r.ended_at instanceof Date, r.outcome_at instanceof Date], ['done', 'delivered', 'delivered', 1.5, 'https://pr/9', 'pr', true, true]);
+    await repos.runs.applyFactoryState(id, { status: 'done', outcome: 'delivered', factoryState: 'delivered', costUsd: null, mrUrl: null, exitNote: null, delivery: null, ended: true });
+    assert.strictEqual(Number((await db.one('select cost_usd from run where id = $1', [id])).cost_usd), 1.5, 'null keeps');
+  },
+
+  'setSubscriptionEquiv: stores the figure': async ({ repos, seed, db, assert }) => {
+    const id = await seed.run();
+    await repos.runs.setSubscriptionEquiv(id, 2.25);
+    assert.strictEqual(Number((await db.one('select subscription_equiv_usd from run where id = $1', [id])).subscription_equiv_usd), 2.25);
+  },
+
+  'upsertPr: records a PR; a repeat updates what changed': async ({ repos, seed, assert }) => {
+    const id = await seed.run();
+    await repos.runs.upsertPr(id, { url: 'https://pr/1', number: 1, story_id: 11, state: 'open', ci_state: 'pending', ci_failing: null });
+    await repos.runs.upsertPr(id, { url: 'https://pr/1', number: 1, story_id: 11, state: 'merged', ci_state: 'passed', ci_failing: ['lint'] });
+    const prs = await repos.runs.prsOf([id]);
+    assert.strictEqual(prs.length, 1);
+    assert.deepStrictEqual([prs[0].state, prs[0].ci_state, prs[0].ci_failing], ['merged', 'passed', ['lint']]);
+  },
+
+  'upsertStep: records a step; a repeat updates what changed': async ({ repos, seed, assert }) => {
+    const id = await seed.run();
+    const step = (over = {}) => ({ step_id: 'dev-1', job_id: 'app:1', story_id: 12, persona: 'dev', runtime: 'api', model: 'm', state: 'running', started_at: '2026-01-01T00:00:00Z', ended_at: null, machine: null, termhub_session_id: 'sess', url: null, ...over });
+    await repos.runs.upsertStep(id, step());
+    await repos.runs.upsertStep(id, step({ state: 'done', ended_at: '2026-01-01T01:00:00Z' }));
+    const steps = await repos.runs.stepsOf([id]);
+    assert.strictEqual(steps.length, 1);
+    assert.deepStrictEqual([steps[0].state, steps[0].termhub_session_id, steps[0].ended_at instanceof Date], ['done', 'sess', true]);
+  },
+
+  'prsOf: the PRs of runs by run then number': async ({ repos, seed, assert }) => {
+    const id = await seed.run();
+    await repos.runs.upsertPr(id, { url: 'https://pr/b', number: 2, story_id: null, state: 'open', ci_state: null, ci_failing: null });
+    await repos.runs.upsertPr(id, { url: 'https://pr/a', number: 1, story_id: null, state: 'open', ci_state: null, ci_failing: null });
+    assert.deepStrictEqual((await repos.runs.prsOf([id])).map((p) => p.number), [1, 2]);
+    assert.deepStrictEqual(await repos.runs.prsOf([]), []);
+  },
+
+  'stepsOf: the steps of runs, newest first within a run': async ({ repos, seed, assert }) => {
+    const id = await seed.run();
+    const mk = (step_id, at) => ({ step_id, job_id: 'j', story_id: null, persona: 'dev', runtime: 'api', model: 'm', state: 'done', started_at: at, ended_at: null, machine: null, termhub_session_id: null, url: null });
+    await repos.runs.upsertStep(id, mk('old', '2026-01-01T00:00:00Z'));
+    await repos.runs.upsertStep(id, mk('new', '2026-01-02T00:00:00Z'));
+    assert.deepStrictEqual((await repos.runs.stepsOf([id])).map((s) => s.step_id), ['new', 'old']);
+  },
+
+  'watchedFactoryRuns: factory runs with a job that are live or were delivered lately': async ({ repos, seed, db, assert, uniq }) => {
+    const mk = async (status, extra = '') => {
+      const id = await seed.run({ status });
+      await db.query(`update run set route = 'factory', factory_job_id = $2 ${extra} where id = $1`, [id, uniq('job')]);
+      return id;
+    };
+    const live = await mk('running');
+    const delivered = await mk('done', ", outcome = 'delivered', ended_at = now()");
+    const old = await mk('done', ", outcome = 'delivered', ended_at = now() - interval '30 days'");
+    const failed = await mk('failed');
+    const ids = (await repos.runs.watchedFactoryRuns()).map((r) => Number(r.id));
+    assert.ok(ids.includes(live) && ids.includes(delivered) && !ids.includes(old) && !ids.includes(failed));
+  },
+
+  'distinctFactoryJobIds: the job ids of factory runs': async ({ repos, seed, db, assert, uniq }) => {
+    const job = uniq('job');
+    await db.query(`update run set route = 'factory', factory_job_id = $2 where id = $1`, [await seed.run(), job]);
+    await db.query(`update run set route = 'factory' where id = $1`, [await seed.run()]);
+    const got = (await repos.runs.distinctFactoryJobIds()).map((r) => r.factory_job_id);
+    assert.strictEqual(got.filter((j) => j === job).length, 1);
+    assert.ok(!got.includes(null));
+  },
+
+  'liveRunOfJob: the newest live run of a job; null once ended': async ({ repos, seed, db, assert, uniq }) => {
+    const job = uniq('job');
+    const a = await seed.run({ status: 'running' });
+    await db.query(`update run set route = 'factory', factory_job_id = $2 where id = $1`, [a, job]);
+    assert.strictEqual(Number((await repos.runs.liveRunOfJob(job)).id), a);
+    await db.query(`update run set status = 'done' where id = $1`, [a]);
+    assert.strictEqual(await repos.runs.liveRunOfJob(job), null);
+  },
+
+  'unsettledFactory: factory runs whose submit was never confirmed, with their age': async ({ repos, seed, db, assert }) => {
+    const unknown = await seed.run({ status: 'waiting' });
+    await db.query(`update run set route = 'factory', factory_state = 'submit_unknown' where id = $1`, [unknown]);
+    const stale = await seed.run({ status: 'starting' });
+    await db.query(`update run set route = 'factory', started_at = now() - interval '10 minutes' where id = $1`, [stale]);
+    const fresh = await seed.run({ status: 'starting' });
+    await db.query(`update run set route = 'factory' where id = $1`, [fresh]);
+    const got = await repos.runs.unsettledFactory();
+    const ids = got.map((r) => Number(r.id));
+    assert.ok(ids.includes(unknown) && ids.includes(stale) && !ids.includes(fresh));
+    assert.ok(Number(got.find((r) => Number(r.id) === stale).age_ms) > 9 * 60_000);
+  },
+
+  'forRouteStats: runs of the last days with their commitment kind': async ({ repos, seed, db, assert }) => {
+    const c = await seed.commitment();
+    await seed.commitmentSet(c, { kind: 'coding' });
+    const id = await seed.run({ commitmentId: c, status: 'done' });
+    const old = await seed.run({ status: 'done' });
+    await db.query(`update run set started_at = now() - interval '200 days' where id = $1`, [old]);
+    const got = await repos.runs.forRouteStats(90);
+    assert.ok(got.some((r) => r.kind === 'coding' && r.status === 'done'));
+    assert.ok(['route', 'kind', 'outcome', 'status', 'cost_usd'].every((k) => k in got[0]));
+    assert.ok(id);
+  },
+
+  'forReview: the run fields a review needs; null when gone': async ({ repos, seed, assert }) => {
+    const id = await seed.run({ task: 'review me' });
+    const r = await repos.runs.forReview(id);
+    assert.deepStrictEqual([r.task, r.status, r.mode], ['review me', 'running', 'plan']);
+    assert.ok(['commitment_id', 'machine', 'mr_url', 'delivery'].every((k) => k in r));
+    assert.strictEqual(await repos.runs.forReview(999999999), null);
+  },
+
+  'repoPathOf: a run\'s repo folder': async ({ repos, seed, db, assert }) => {
+    const id = await seed.run();
+    await db.query(`update run set repo_path = '/r/x' where id = $1`, [id]);
+    assert.strictEqual((await repos.runs.repoPathOf(id)).repo_path, '/r/x');
+  },
+
+  'modeStatusMr: mode, status and MR link': async ({ repos, seed, db, assert }) => {
+    const id = await seed.run({ status: 'landed' });
+    await db.query(`update run set mr_url = 'https://pr/3' where id = $1`, [id]);
+    const r = await repos.runs.modeStatusMr(id);
+    assert.deepStrictEqual([r.mode, r.status, r.mr_url], ['plan', 'landed', 'https://pr/3']);
+  },
+
+  'setModeMr: forces the mode to mr': async ({ repos, seed, db, assert }) => {
+    const id = await seed.run();
+    await repos.runs.setModeMr(id);
+    assert.strictEqual((await db.one('select mode from run where id = $1', [id])).mode, 'mr');
+  },
+
+  'markMergedOutcome: outcome merged, keeping the note when none given': async ({ repos, seed, db, assert }) => {
+    const id = await seed.run();
+    await db.query(`update run set exit_note = 'keep' where id = $1`, [id]);
+    await repos.runs.markMergedOutcome(id, null);
+    let r = await db.one('select outcome, exit_note, outcome_at from run where id = $1', [id]);
+    assert.deepStrictEqual([r.outcome, r.exit_note, r.outcome_at instanceof Date], ['merged', 'keep', true]);
+    await repos.runs.markMergedOutcome(id, 'ci green');
+    r = await db.one('select exit_note from run where id = $1', [id]);
+    assert.strictEqual(r.exit_note, 'ci green');
+  },
+
+  'latestRunPerJob: for each job id its run': async ({ repos, seed, db, assert, uniq }) => {
+    const job = uniq('job');
+    const a = await seed.run();
+    await db.query(`update run set route = 'factory', factory_job_id = $2 where id = $1`, [a, job]);
+    const got = await repos.runs.latestRunPerJob([job, uniq('none')]);
+    assert.deepStrictEqual(got.map((r) => [Number(r.id), r.factory_job_id]), [[a, job]]);
+    assert.deepStrictEqual(await repos.runs.latestRunPerJob([]), []);
+  },
+
+  'newestOfJob: the run of one factory job; null for none': async ({ repos, seed, db, assert, uniq }) => {
+    const job = uniq('job');
+    const a = await seed.run();
+    await db.query(`update run set route = 'factory', factory_job_id = $2 where id = $1`, [a, job]);
+    assert.strictEqual(Number((await repos.runs.newestOfJob(job)).id), a);
+    assert.strictEqual(await repos.runs.newestOfJob(uniq('none')), null);
+  },
+
+  'cardRuns: a commitment\'s five newest runs': async ({ repos, seed, assert }) => {
+    const c = await seed.commitment();
+    const ids = [];
+    for (let i = 0; i < 6; i++) ids.push(await seed.run({ commitmentId: c, status: 'done' }));
+    const got = await repos.runs.cardRuns(c);
+    assert.strictEqual(got.length, 5);
+    assert.ok(['route', 'factory_job_id', 'delivery', 'cost_usd', 'termhub_session_id'].every((k) => k in got[0]));
+  },
+
+  'withSessions: runs with a session started in the last 30 days': async ({ repos, seed, db, assert }) => {
+    const a = await seed.run();
+    await db.query(`update run set termhub_session_id = 'ws-1' where id = $1`, [a]);
+    const old = await seed.run();
+    await db.query(`update run set termhub_session_id = 'ws-2', started_at = now() - interval '60 days' where id = $1`, [old]);
+    await seed.run();
+    const ids = (await repos.runs.withSessions()).map((r) => Number(r.id));
+    assert.ok(ids.includes(a) && !ids.includes(old));
+  },
+
+  'stepsBySessions: the steps whose sessions are listed, with their run': async ({ repos, seed, assert }) => {
+    const id = await seed.run({ status: 'running' });
+    await repos.runs.upsertStep(id, { step_id: 'dev', job_id: 'app:5', story_id: null, persona: 'dev', runtime: 'api', model: 'm', state: 'running', started_at: null, ended_at: null, machine: null, termhub_session_id: 'bs-1', url: null });
+    const got = await repos.runs.stepsBySessions(['bs-1', 'bs-none']);
+    assert.deepStrictEqual(got.map((r) => [r.termhub_session_id, r.step_id, Number(r.run_id), r.status]), [['bs-1', 'dev', id, 'running']]);
+  },
+
+  'inRepo: the ten newest runs in a repo folder': async ({ repos, seed, db, assert, uniq }) => {
+    const path = `/r/${uniq('repo')}`;
+    for (let i = 0; i < 11; i++) await db.query(`update run set repo_path = $2 where id = $1`, [await seed.run(), path]);
+    assert.strictEqual((await repos.runs.inRepo(path)).length, 10);
+    assert.deepStrictEqual(await repos.runs.inRepo(`${path}-none`), []);
+  },
+
+  'jobsOfCommitments: the runs of the commitments with job and state': async ({ repos, seed, db, assert }) => {
+    const c = await seed.commitment();
+    const id = await seed.run({ commitmentId: c });
+    await db.query(`update run set factory_job_id = 'app:7', factory_state = 'in_progress' where id = $1`, [id]);
+    const got = await repos.runs.jobsOfCommitments([c]);
+    assert.deepStrictEqual(got.map((r) => [Number(r.id), r.factory_job_id, r.factory_state]), [[id, 'app:7', 'in_progress']]);
+  },
+
+  'prLinksOf: the distinct PRs of runs': async ({ repos, seed, assert }) => {
+    const id = await seed.run();
+    await repos.runs.upsertPr(id, { url: 'https://pr/5', number: 5, story_id: null, state: 'open', ci_state: null, ci_failing: null });
+    assert.deepStrictEqual((await repos.runs.prLinksOf([id])).map((r) => [r.pr_number, r.pr_url]), [[5, 'https://pr/5']]);
+  },
+
+  'stepSessionsOf: the sessions of runs\' steps': async ({ repos, seed, assert }) => {
+    const id = await seed.run();
+    const step = (step_id, sess) => ({ step_id, job_id: 'j', story_id: null, persona: 'dev', runtime: 'api', model: 'm', state: 'running', started_at: null, ended_at: null, machine: 'box', termhub_session_id: sess, url: null });
+    await repos.runs.upsertStep(id, step('a', 'ss-1'));
+    await repos.runs.upsertStep(id, step('b', null));
+    assert.deepStrictEqual((await repos.runs.stepSessionsOf([id])).map((r) => [r.termhub_session_id, r.machine]), [['ss-1', 'box']]);
+  },
 };

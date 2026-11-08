@@ -50,7 +50,7 @@ const os = require('os');
 const path = require('path');
 
 const { config } = require('../config');
-const { one, rows, query } = require('../db');
+const repository = require('../repo');
 const { mode: resolveMode } = require('./modes');
 const F = require('./factoryCore');
 const D = require('./deliveryCore');
@@ -309,8 +309,8 @@ let installCache = null;
 async function installId() {
   if (installCache) return installCache;
   const made = require('crypto').randomUUID();
-  await query('insert into pa_install (id) select $1 where not exists (select 1 from pa_install)', [made]).catch(() => {});
-  const r = await one('select id from pa_install order by created_at limit 1').catch(() => null);
+  await repository.system.insertInstallIfNone(made).catch(() => {});
+  const r = await repository.system.firstInstall().catch(() => null);
   installCache = r?.id || made;
   return installCache;
 }
@@ -453,10 +453,7 @@ async function start({
     const refused = !job && (F.isRefusal(err) || err instanceof F.NotSentError);
     if (!sent || refused) {
       await unstage(where, stagedDir);
-      await query(
-        `update run set status = 'failed', outcome = 'failed', outcome_at = now(), ended_at = now(), exit_note = $2, brief_path = $3, brief_by = $4 where id = $1`,
-        [run.id, String(err.message).slice(0, 500), briefPath, by]
-      );
+      await repository.runs.markSubmitRefused(run.id, String(err.message).slice(0, 500), briefPath, by);
       throw err;
     }
     // A submit went out and something after it failed: the factory may well
@@ -492,7 +489,7 @@ async function start({
   let url = null;
   try {
     ({ sessionId, url } = await openFollow(job.job_id, `pa#${run.id} factory · ${label.slice(0, 40)}`, { card: commitmentId, run: run.id, job: job.job_id }));
-    await query('update run set termhub_session_id = $2 where id = $1', [run.id, sessionId]);
+    await repository.runs.setSession(run.id, sessionId);
   } catch (err) {
     log.warn('factory job started, but its follow session did not open', { run: run.id, job: job.job_id, message: err.message });
   }
@@ -549,17 +546,19 @@ async function openFollow(jobId, title = null, links = null) {
 // id kept on the row as evidence. Returns whether the run is live.
 async function recordJob(run, job, { delivery, pipe, briefPath, by }) {
   const warnings = Array.isArray(job.warnings) ? job.warnings.map((w) => F.clip(w, 300)).slice(0, 20) : [];
-  const r = await query(
-    `update run set factory_job_id = $2, delivery = $3, pipeline = $4, brief_path = coalesce($5, brief_path), status = 'running',
-                    factory_state = 'queued', factory_warnings = $6, exit_note = $7, brief_by = coalesce($8, brief_by)
-      where id = $1 and status in ('starting', 'waiting', 'running')`,
-    [run.id, job.job_id, job.delivery || delivery || null, job.pipeline || pipe || null, briefPath || null,
-      warnings.length ? JSON.stringify(warnings) : null, warnings.length ? F.clip(`factory warned: ${warnings.join('; ')}`, 500) : null, by || null]
-  );
-  if (r && r.rowCount === 0) {
+  const recorded = await repository.runs.recordJob(run.id, {
+    jobId: job.job_id,
+    delivery: job.delivery || delivery || null,
+    pipeline: job.pipeline || pipe || null,
+    briefPath: briefPath || null,
+    warnings,
+    exitNote: warnings.length ? F.clip(`factory warned: ${warnings.join('; ')}`, 500) : null,
+    by: by || null,
+  });
+  if (!recorded) {
     log.warn('a job turned up for a run that already ended; cancelling it', { run: run.id, job: job.job_id });
     await call(['job', 'cancel', job.job_id, '--json']).catch((err) => log.error('could not cancel the late job', { run: run.id, job: job.job_id, message: err.message }));
-    await query(`update run set factory_job_id = coalesce(factory_job_id, $2), factory_state = 'cancelled' where id = $1`, [run.id, job.job_id]).catch(() => {});
+    await repository.runs.markLateJobCancelled(run.id, job.job_id).catch(() => {});
     return false;
   }
   return true;
@@ -595,17 +594,9 @@ async function settle(run, { jobId = null, ageMs = 0, note = null, extra = {} } 
       if (!live) return { verdict: 'cancelled', job, asked };
       log.info('adopted the factory job for an unsettled submit', { run: run.id, job: job.job_id });
     } else if (verdict === 'fail') {
-      await query(
-        `update run set status = 'failed', outcome = 'failed', outcome_at = now(), ended_at = now(), factory_state = 'not_submitted',
-                        exit_note = $2 where id = $1 and factory_job_id is null`,
-        [run.id, F.clip(`the factory has no job for run #${run.id}${note ? ` (${note})` : ''}`, 500)]
-      );
+      await repository.runs.markSubmitFailed(run.id, F.clip(`the factory has no job for run #${run.id}${note ? ` (${note})` : ''}`, 500));
     } else {
-      await query(
-        `update run set status = 'waiting', factory_state = 'submit_unknown', exit_note = $2, brief_path = coalesce($3, brief_path)
-          where id = $1 and factory_job_id is null`,
-        [run.id, F.clip(`submit sent; the factory's answer was lost${note ? ` (${note})` : ''} — the worker matches it by external id`, 500), extra.briefPath || null]
-      );
+      await repository.runs.markSubmitUnknown(run.id, F.clip(`submit sent; the factory's answer was lost${note ? ` (${note})` : ''} — the worker matches it by external id`, 500), extra.briefPath || null);
     }
   } catch (err) {
     log.error('could not record an unsettled submit; the worker will retry it', { run: run.id, message: err.message });
@@ -643,17 +634,19 @@ async function apply(run, job) {
     (u.subscription_equiv_usd !== null && run.subscription_equiv_usd !== undefined && Number(run.subscription_equiv_usd) !== u.subscription_equiv_usd) ||
     (u.mr_url && u.mr_url !== run.mr_url);
   if (changed) {
-    await query(
-      `update run set status = $2, outcome = $3, outcome_at = case when $3::text is distinct from outcome then now() else outcome_at end,
-                      factory_state = $4, cost_usd = coalesce($5, cost_usd), mr_url = coalesce($6, mr_url),
-                      exit_note = coalesce($7, exit_note), delivery = coalesce($8, delivery),
-                      ended_at = case when $9 and ended_at is null then now() else ended_at end
-        where id = $1`,
-      [run.id, nextStatus, nextOutcome, u.factory_state, u.cost_usd, u.mr_url, u.exit_note, u.delivery, u.terminal && wasLive]
-    );
+    await repository.runs.applyFactoryState(run.id, {
+      status: nextStatus,
+      outcome: nextOutcome,
+      factoryState: u.factory_state,
+      costUsd: u.cost_usd,
+      mrUrl: u.mr_url,
+      exitNote: u.exit_note,
+      delivery: u.delivery,
+      ended: u.terminal && wasLive,
+    });
     // sql/031: a separate statement, so a store not yet migrated still records the rest.
     if (u.subscription_equiv_usd !== null) {
-      await query('update run set subscription_equiv_usd = $2 where id = $1', [run.id, u.subscription_equiv_usd]).catch(() => {});
+      await repository.runs.setSubscriptionEquiv(run.id, u.subscription_equiv_usd).catch(() => {});
     }
   }
   // Plan E1: every PR (number, state, CI) and every step with its session, on
@@ -698,36 +691,10 @@ async function apply(run, job) {
 async function recordChain(runId, job) {
   const { prs, steps } = F.chainOf(job);
   for (const p of prs) {
-    await query(
-      `insert into run_pr (run_id, url, number, story_id, state, ci_state, ci_failing, updated_at)
-       values ($1, $2, $3, $4, $5, $6, $7::jsonb, now())
-       on conflict (run_id, url) do update set
-         number = coalesce(excluded.number, run_pr.number), story_id = coalesce(excluded.story_id, run_pr.story_id),
-         state = coalesce(excluded.state, run_pr.state), ci_state = coalesce(excluded.ci_state, run_pr.ci_state),
-         ci_failing = coalesce(excluded.ci_failing, run_pr.ci_failing), updated_at = now()
-       where (run_pr.number, run_pr.story_id, run_pr.state, run_pr.ci_state, run_pr.ci_failing)
-             is distinct from (coalesce(excluded.number, run_pr.number), coalesce(excluded.story_id, run_pr.story_id),
-                               coalesce(excluded.state, run_pr.state), coalesce(excluded.ci_state, run_pr.ci_state),
-                               coalesce(excluded.ci_failing, run_pr.ci_failing))`,
-      [runId, p.url, p.number, p.story_id, p.state, p.ci_state, p.ci_failing ? JSON.stringify(p.ci_failing) : null]
-    );
+    await repository.runs.upsertPr(runId, p);
   }
   for (const s of steps) {
-    await query(
-      `insert into run_step (run_id, step_id, job_id, story_id, persona, runtime, model, state, started_at, ended_at, machine, termhub_session_id, url, updated_at)
-       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, now())
-       on conflict (run_id, step_id) do update set
-         job_id = excluded.job_id, story_id = excluded.story_id, persona = excluded.persona, runtime = excluded.runtime,
-         model = excluded.model, state = excluded.state, started_at = excluded.started_at, ended_at = excluded.ended_at,
-         machine = coalesce(excluded.machine, run_step.machine),
-         termhub_session_id = coalesce(excluded.termhub_session_id, run_step.termhub_session_id),
-         url = coalesce(excluded.url, run_step.url), updated_at = now()
-       where (run_step.state, run_step.ended_at, run_step.termhub_session_id, run_step.url, run_step.model)
-             is distinct from (excluded.state, excluded.ended_at::timestamptz,
-                               coalesce(excluded.termhub_session_id, run_step.termhub_session_id),
-                               coalesce(excluded.url, run_step.url), excluded.model)`,
-      [runId, s.step_id, s.job_id, s.story_id, s.persona, s.runtime, s.model, s.state, s.started_at, s.ended_at, s.machine, s.termhub_session_id, s.url]
-    );
+    await repository.runs.upsertStep(runId, s);
   }
   return { prs: prs.length, steps: steps.length };
 }
@@ -742,12 +709,8 @@ async function chains(runIds) {
   const out = new Map(ids.map((id) => [String(id), { prs: [], steps: [] }]));
   if (!ids.length) return out;
   const [prs, steps] = await Promise.all([
-    rows(`select run_id, url, number, story_id, state, ci_state, ci_failing from run_pr where run_id = any($1::bigint[]) order by run_id, number nulls last, url`, [ids]).catch(() => []),
-    rows(
-      `select run_id, step_id, job_id, story_id, persona, runtime, model, state, started_at, ended_at, machine, termhub_session_id, url
-         from run_step where run_id = any($1::bigint[]) order by run_id, started_at desc nulls last, step_id desc`,
-      [ids]
-    ).catch(() => []),
+    repository.runs.prsOf(ids).catch(() => []),
+    repository.runs.stepsOf(ids).catch(() => []),
   ]);
   for (const p of prs) out.get(String(p.run_id))?.prs.push(p);
   for (const s of steps) out.get(String(s.run_id))?.steps.push(s);
@@ -762,12 +725,7 @@ async function chains(runIds) {
 async function poll() {
   if (!enabled()) return { checked: 0 };
   const unsettled = await sweepUnsettled();
-  const watched = await rows(
-    `select * from run
-      where route = 'factory' and factory_job_id is not null
-        and (status in ('starting','running','waiting')
-             or (outcome = 'delivered' and ended_at > now() - interval '14 days'))`
-  );
+  const watched = await repository.runs.watchedFactoryRuns();
   if (!watched.length) return unsettled ? { checked: 0, unsettled } : { checked: 0 };
   const listed = await call(['job', 'list', '--json', '--source', 'pa', '--active']);
   const byId = new Map((Array.isArray(listed.jobs) ? listed.jobs : []).map((j) => [j.job_id, j]));
@@ -809,26 +767,18 @@ const LIST_BYTES = 8 * 1024 * 1024;
  */
 async function refreshBoard() {
   if (!enabled()) return null;
-  const before = await one('select jobs, polled_at from factory_board where id = 1').catch(() => null);
+  const before = await repository.factoryBoard.row().catch(() => null);
   let listed;
   try {
     listed = await call(['job', 'list', '--json'], { maxOutputBytes: LIST_BYTES });
   } catch (err) {
-    await query(
-      `insert into factory_board (id, error, error_at) values (1, $1, now())
-       on conflict (id) do update set error = excluded.error, error_at = now()`,
-      [F.clip(err.message, 500)]
-    ).catch(() => {});
+    await repository.factoryBoard.recordError(F.clip(err.message, 500)).catch(() => {});
     throw err;
   }
   const jobs = (Array.isArray(listed.jobs) ? listed.jobs : []).filter((j) => F.JOB_ID.test(String(j?.job_id || '')));
-  await query(
-    `insert into factory_board (id, jobs, polled_at, error, error_at) values (1, $1::jsonb, now(), null, null)
-     on conflict (id) do update set jobs = excluded.jobs, polled_at = now(), error = null, error_at = null`,
-    [JSON.stringify(jobs)]
-  );
+  await repository.factoryBoard.store(jobs);
   const prev = before?.polled_at ? F.noticeState(before.jobs) : null;
-  const ours = await rows(`select distinct factory_job_id from run where route = 'factory' and factory_job_id is not null`).catch(() => []);
+  const ours = await repository.runs.distinctFactoryJobIds().catch(() => []);
   const covered = new Set(ours.map((r) => r.factory_job_id));
   const said = F.notices(prev, jobs, { covered });
   for (const n of said) {
@@ -872,23 +822,16 @@ async function pushed(body) {
   const patches = pushedPatches(body);
   let patched = 0;
   for (const p of patches) {
-    const r = await query(
-      `update factory_board set jobs = (
-         select coalesce(jsonb_agg(case when j->>'job_id' = $1 then j || $2::jsonb else j end order by n), '[]'::jsonb)
-           from jsonb_array_elements(jobs) with ordinality as e(j, n))
-        where id = 1 and exists (select 1 from jsonb_array_elements(jobs) j where j->>'job_id' = $1 and j->>'state' is distinct from $3)`,
-      [p.jobId, JSON.stringify(p.patch), p.patch.state]
-    );
-    patched += r.rowCount || 0;
+    patched += await repository.factoryBoard.patchJob(p.jobId, p.patch, p.patch.state);
   }
   // Wake the pacer even when nothing was patched (a new job, or only its why).
-  if (patches.length) await query(`select pg_notify('pa_events', $1)`, [JSON.stringify({ topic: 'factory', table: 'push', op: 'push', jobs: patches.map((p) => p.jobId) })]);
+  if (patches.length) await repository.factoryBoard.notifyPush(patches.map((p) => p.jobId));
   return { ok: true, received: patches.length, patched };
 }
 
 /** The last stored `job list` and when it was taken (never calls the factory). */
 async function snapshot() {
-  const r = await one('select jobs, polled_at, error, error_at from factory_board where id = 1').catch(() => null);
+  const r = await repository.factoryBoard.row().catch(() => null);
   return { jobs: Array.isArray(r?.jobs) ? r.jobs : [], polledAt: r?.polled_at || null, error: r?.error || null, errorAt: r?.error_at || null };
 }
 
@@ -939,10 +882,7 @@ async function resume(jobId) {
  */
 async function cancelJob(jobId) {
   const argv = F.cancelArgv(jobId);
-  const run = await one(
-    `select id from run where route = 'factory' and factory_job_id = $1 and status in ('starting','running','waiting') order by id desc limit 1`,
-    [jobId]
-  ).catch(() => null);
+  const run = await repository.runs.liveRunOfJob(jobId).catch(() => null);
   if (run) {
     const r = await require('./index').drop(Number(run.id));
     await refreshBoard().catch(() => {});
@@ -985,12 +925,7 @@ async function approve(jobId, { channel = 'cli' } = {}) {
  * other. Returns how many were looked at (0: no factory call at all).
  */
 async function sweepUnsettled() {
-  const stuck = await rows(
-    `select *, extract(epoch from (now() - started_at)) * 1000 as age_ms from run
-      where route = 'factory' and factory_job_id is null
-        and (factory_state = 'submit_unknown' and status = 'waiting'
-             or status = 'starting' and started_at < now() - interval '2 minutes')`
-  ).catch(() => []);
+  const stuck = await repository.runs.unsettledFactory().catch(() => []);
   for (const run of stuck) {
     const r = await settle(run, { ageMs: Number(run.age_ms) || 0, extra: { by: run.brief_by } });
     if (r.verdict === 'fail') {

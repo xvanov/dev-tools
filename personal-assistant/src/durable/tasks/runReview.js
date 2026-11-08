@@ -27,7 +27,7 @@
 // src/dispatch/merge.js) marked ready and merged once its checks pass.
 
 const { TimeoutError } = require('absurd-sdk');
-const { one } = require('../../db');
+const repo = require('../../repo');
 
 const merger = require('../../dispatch/merge');
 const D = require('../../dispatch/deliveryCore');
@@ -49,7 +49,7 @@ async function run({ runId }, ctx) {
   if (!ended) return { result: 'run never ended' };
 
   const found = await ctx.step('review', async () => {
-    const r = await one('select id, status, mode, task, commitment_id, machine, mr_url, delivery from run where id = $1', [runId]);
+    const r = await repo.runs.forReview(runId);
     // Local runs record this machine's hostname: only another machine's run is skipped.
     const local = require('../../dispatch/termhub').isLocal(r?.machine);
     if (!r || !local || r.status === 'landed' || r.status === 'dropped' || r.mr_url) return null;
@@ -105,7 +105,7 @@ async function run({ runId }, ctx) {
     const pushed = await ctx.step('push-branch', async () => {
       try {
         const r = await require('../../dispatch').pushBranch(runId);
-        const rr = await one('select repo_path from run where id = $1', [runId]);
+        const rr = await repo.runs.repoPathOf(runId);
         return { ok: true, sha: r.sha, base: r.base, branch: r.branch, slug: await merger.slugOf(rr.repo_path).catch(() => null) };
       } catch (err) {
         return { ok: false, why: String(err.stderr || err.message).trim().slice(0, 200) };
@@ -137,9 +137,9 @@ async function run({ runId }, ctx) {
   const landed = await ctx.step('land', async () => {
     const dispatch = require('../../dispatch');
     const modes = require('../../dispatch/modes');
-    const r = await one('select mode, status, mr_url from run where id = $1', [runId]);
+    const r = await repo.runs.modeStatusMr(runId);
     if (r.status === 'landed') return { mrUrl: r.mr_url, already: true };
-    if (!modes.mode(r.mode).mayPush) await require('../../db').query(`update run set mode = 'mr' where id = $1`, [runId]);
+    if (!modes.mode(r.mode).mayPush) await repo.runs.setModeMr(runId);
     return dispatch.land(runId, { openMr: plan ? plan.pr !== null : true });
   });
   await ctx.step('say-landed', () =>
@@ -172,7 +172,7 @@ async function run({ runId }, ctx) {
   // Merging: the operator chose auto_merge for this run, or — a run from
   // before delivery levels — the repo is one of mine (PA_MERGE_REPOS).
   const may = await ctx.step('merge-policy', async () => {
-    const r = await one('select repo_path from run where id = $1', [runId]);
+    const r = await repo.runs.repoPathOf(runId);
     const slug = await merger.slugOf(r.repo_path).catch(() => null);
     return { slug, may: plan ? plan.merge : merger.mayMerge(slug) };
   });
@@ -181,7 +181,7 @@ async function run({ runId }, ctx) {
   // Never before CI passed on the PR's own commit (bounded wait), and only that commit.
   const sha = await ctx.step('head', () => require('../../dispatch').headOf(runId).catch(() => null));
   const base = await ctx.step('base', async () => {
-    const r = await one('select repo_path from run where id = $1', [runId]);
+    const r = await repo.runs.repoPathOf(runId);
     return require('../../dispatch').defaultBranch(r.repo_path).catch(() => 'main');
   });
   if (!sha || !may.slug) return blocked(ctx, runId, found, 'could not read the PR\'s commit or repo to check its CI — the PR is left open', landed.mrUrl);
@@ -201,7 +201,7 @@ async function run({ runId }, ctx) {
       await merger.ready(landed.mrUrl).catch(() => {});
       await merger.mergeAt(landed.mrUrl, sha);
       // The measured outcome (sql/024, `pa runs stats`).
-      await require('../../db').query(`update run set outcome = 'merged', outcome_at = now(), exit_note = coalesce($2, exit_note) where id = $1`, [runId, gate.note || null]).catch(() => {});
+      await repo.runs.markMergedOutcome(runId, gate.note || null).catch(() => {});
       return { ok: true };
     } catch (err) {
       return { ok: false, why: String(err.stderr || err.message).trim().slice(0, 200) };

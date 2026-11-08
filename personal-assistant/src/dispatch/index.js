@@ -16,7 +16,7 @@ const { execFile } = require('child_process');
 const { promisify } = require('util');
 
 const { config } = require('../config');
-const { one, rows, query } = require('../db');
+const repository = require('../repo');
 const { mode: resolveMode } = require('./modes');
 const { buildBrief, openingPrompt } = require('./brief');
 const D = require('./deliveryCore');
@@ -100,11 +100,7 @@ async function worktreeBase(repoPath) {
  * is never started in an arbitrary directory a message or a typo pointed at.
  */
 async function knownRepo(repoPath) {
-  const p = await one(
-    `select id, repo_path, gitlab_path from project
-      where active and (repo_path = $1 or lower(gitlab_path) = lower($1)) limit 1`,
-    [String(repoPath)]
-  ).catch(() => null);
+  const p = await repository.projects.activeByRepo(String(repoPath)).catch(() => null);
   if (!p) throw new Error(`${repoPath} is not a known project's repo — \`pa projects\` lists them (\`pa projects sync\` adds new checkouts)`);
   return p;
 }
@@ -112,16 +108,12 @@ async function knownRepo(repoPath) {
 async function resolveTarget({ commitmentId, repoPath }) {
   if (!commitmentId) return { commitment: null, item: null, project: null, person: null, repoPath };
 
-  const commitment = await one('select * from commitment where id = $1', [commitmentId]);
+  const commitment = await repository.commitments.byId(commitmentId);
   if (!commitment) throw new Error(`no commitment #${commitmentId}`);
 
-  const item = await one('select * from source_item where id = $1', [commitment.source_item_id]);
-  const project = commitment.project_id
-    ? await one('select * from project where id = $1', [commitment.project_id])
-    : null;
-  const person = commitment.counterparty_person_id
-    ? await one('select * from person where id = $1', [commitment.counterparty_person_id])
-    : null;
+  const item = await repository.sources.rowById(commitment.source_item_id);
+  const project = commitment.project_id ? await repository.projects.rowById(commitment.project_id) : null;
+  const person = commitment.counterparty_person_id ? await repository.people.rowById(commitment.counterparty_person_id) : null;
 
   const resolved = repoPath || commitment.repo_path || project?.repo_path || null;
   return { commitment, item, project, person, repoPath: resolved };
@@ -129,12 +121,7 @@ async function resolveTarget({ commitmentId, repoPath }) {
 
 async function relatedContext(item) {
   if (!item?.thread_external_id) return [];
-  return rows(
-    `select id, source, subject, occurred_at from source_item
-      where thread_external_id = $1 and id <> $2
-      order by occurred_at desc limit 6`,
-    [item.thread_external_id, item.id]
-  );
+  return repository.sources.relatedInThread(item.thread_external_id, item.id);
 }
 
 // The memory's contribution to a brief. Never blocks a dispatch: any piece
@@ -223,11 +210,7 @@ async function start({
   // One live run per commitment. A second Do while the first is still setting
   // up (a remote one takes a minute) started a second agent on the same ask.
   if (commitmentId && !again) {
-    const live = await one(
-      `select id, machine from run where commitment_id = $1 and status in ('starting','running','waiting')
-        order by started_at desc limit 1`,
-      [commitmentId]
-    );
+    const live = await repository.runs.liveForCommitment(commitmentId);
     if (live) {
       const where = termhub.isLocal(live.machine) ? '' : ` on ${live.machine}`;
       throw new Error(`#${commitmentId} already has run #${live.id}${where} — attach to it (pa attach ${live.id}), or drop it first`);
@@ -349,11 +332,7 @@ async function start({
         });
       }
 
-      await query('update run set worktree_path = $2, branch = $3 where id = $1', [
-        run.id,
-        worktreePath,
-        branch,
-      ]);
+      await repository.runs.setWorktree(run.id, worktreePath, branch);
     }
 
     let briefText = await briefFor(target, { modeName: m.name, run: { ...run, worktree_path: worktreePath, branch }, task, delivery: chosen.delivery });
@@ -407,10 +386,7 @@ async function start({
       ? await termhub.createSession(spec)
       : await require('./remote').createNoPushSession(termhub, spec, null, { fam: require('../platform').id === 'windows' ? 'windows' : 'posix', runId: run.id });
 
-    await query(
-      `update run set termhub_session_id = $2, brief_path = $3, status = 'running' where id = $1`,
-      [run.id, session.id, briefPath]
-    );
+    await repository.runs.markRunning(run.id, session.id, briefPath);
   } catch (err) {
     if (sandboxHost) {
       try { process.kill(sandboxHost.pid); } catch { /* already gone */ }
@@ -455,10 +431,7 @@ async function rollbackStart({ run, repo, worktreePath, branch, worktreeMade, se
     await git(repo, ['worktree', 'prune']).catch(() => {});
     if (branch) await git(repo, ['branch', '-D', branch]).catch(() => {});
   }
-  await query(
-    `update run set status = 'failed', outcome = 'failed', outcome_at = now(), ended_at = now(), exit_note = $2 where id = $1`,
-    [run.id, `start failed: ${String(err?.message || err)}`.slice(0, 500)]
-  ).catch((e) => log.warn('could not mark the failed run', { run: run.id, message: e.message }));
+  await repository.runs.markStartFailed(run.id, `start failed: ${String(err?.message || err)}`.slice(0, 500)).catch((e) => log.warn('could not mark the failed run', { run: run.id, message: e.message }));
   log.warn('run failed to start; rolled back', { run: run.id, message: String(err?.message || err).slice(0, 300) });
 }
 
@@ -504,18 +477,11 @@ async function startRemote({ commitmentId, task, modeName, repoPath, machineName
       blockedPushUrl: BLOCKED_PUSH_URL,
     });
   } catch (err) {
-    await query(
-      `update run set status = 'failed', outcome = 'failed', outcome_at = now(), termhub_session_id = $2, exit_note = $3, ended_at = now() where id = $1`,
-      [run.id, err.sessionId || null, err.message.slice(0, 500)]
-    );
+    await repository.runs.markRemoteStartFailed(run.id, err.sessionId || null, err.message.slice(0, 500));
     throw err;
   }
 
-  await query(
-    `update run set termhub_session_id = $2, brief_path = $3, worktree_path = $4, branch = $5, status = 'running'
-      where id = $1`,
-    [run.id, started.sessionId, started.briefPath, started.worktreePath, branch]
-  );
+  await repository.runs.markRemoteRunning(run.id, { sessionId: started.sessionId, briefPath: started.briefPath, worktreePath: started.worktreePath, branch });
   if (commitmentId) {
     await ledger.transition({ commitmentId, to: 'dispatched', actor: 'dispatch', reason: `run #${run.id}`, from: ['open'] });
   }
@@ -604,16 +570,11 @@ function localOnly(run, verb) {
 }
 
 async function get(runId) {
-  return one('select * from run where id = $1', [runId]);
+  return repository.runs.byId(runId);
 }
 
 async function list({ all = false, limit = 20 } = {}) {
-  return rows(
-    all
-      ? 'select * from run order by started_at desc limit $1'
-      : `select * from run where status in ('starting','running','waiting','done','blocked') order by started_at desc limit $1`,
-    [limit]
-  );
+  return repository.runs.recent(all, limit);
 }
 
 async function steer(runId, text) {
@@ -664,10 +625,7 @@ async function review(runId) {
   ]);
 
   const uncommitted = status.trim().split('\n').filter(Boolean).length;
-  if (!readOnly()) await query('update run set diff_stat = $2 where id = $1', [
-    runId,
-    { stat: stat.trim(), commits: logOut.trim().split('\n').filter(Boolean).length, uncommitted },
-  ]);
+  if (!readOnly()) await repository.runs.setDiffStat(runId, { stat: stat.trim(), commits: logOut.trim().split('\n').filter(Boolean).length, uncommitted });
 
   return { run, stat: stat.trim(), commits: logOut.trim(), uncommitted, status: status.trim() };
 }
@@ -716,10 +674,7 @@ async function land(runId, { openMr = null } = {}) {
     });
   }
 
-  await query(`update run set status = 'landed', mr_url = $2, ended_at = now(), outcome = 'delivered', outcome_at = now() where id = $1`, [
-    runId,
-    mrUrl,
-  ]);
+  await repository.runs.markLanded(runId, mrUrl);
   if (run.commitment_id) {
     await ledger.transition({ commitmentId: run.commitment_id, to: 'done', actor: 'dispatch', reason: `run #${runId} landed${mrUrl ? `: ${mrUrl}` : ''}` });
   }
@@ -777,11 +732,7 @@ async function pushToMain(runId, { sha, note = null } = {}) {
   if (!/^[0-9a-f]{7,40}$/i.test(String(sha || ''))) throw new Error('pushToMain needs the commit CI passed');
   const base = await defaultBranch(run.repo_path);
   await git(run.worktree_path, ['push', 'origin', `${sha}:refs/heads/${base}`]);
-  await query(
-    `update run set status = 'landed', ended_at = coalesce(ended_at, now()), outcome = 'merged', outcome_at = now(),
-                    exit_note = coalesce($2, exit_note) where id = $1`,
-    [runId, note]
-  );
+  await repository.runs.markPushedToMain(runId, note);
   if (run.commitment_id) {
     await ledger.transition({ commitmentId: run.commitment_id, to: 'done', actor: 'dispatch', reason: `run #${runId} pushed to ${base}`, from: ['open', 'dispatched'] });
   }
@@ -801,7 +752,7 @@ async function headOf(runId) {
  * for me as `blocked` with the reason.
  */
 async function blockRun(runId, reason) {
-  await query(`update run set status = 'blocked', exit_note = $2 where id = $1 and status not in ('landed', 'dropped')`, [runId, String(reason).slice(0, 500)]);
+  await repository.runs.block(runId, String(reason).slice(0, 500));
 }
 
 // A draft pull request through the signed-in `gh` CLI — the same login GitHub
@@ -862,11 +813,7 @@ async function drop(runId, { force = false } = {}) {
       storiesParked = Array.isArray(c?.stories_parked) ? c.stories_parked.length : Number.isFinite(c?.stories_parked) ? c.stories_parked : null;
     }
     if (run.termhub_session_id) await termhub.forMachine(run.machine).killSession(run.termhub_session_id).catch(() => {});
-    await query(
-      `update run set status = 'dropped', ended_at = coalesce(ended_at, now()),
-                      outcome = coalesce(outcome, 'dropped'), outcome_at = coalesce(outcome_at, now()) where id = $1`,
-      [runId]
-    );
+    await repository.runs.markFactoryDropped(runId);
     if (run.commitment_id) {
       await ledger.transition({ commitmentId: run.commitment_id, to: 'open', actor: 'dispatch', reason: `run #${runId} dropped`, from: ['dispatched'] });
     }
@@ -890,7 +837,7 @@ async function drop(runId, { force = false } = {}) {
         branch: run.branch,
       });
     }
-    await query(`update run set status = 'dropped', ended_at = now(), outcome = coalesce(outcome, 'dropped'), outcome_at = coalesce(outcome_at, now()) where id = $1`, [runId]);
+    await repository.runs.markDropped(runId);
     if (run.commitment_id) {
       await ledger.transition({ commitmentId: run.commitment_id, to: 'open', actor: 'dispatch', reason: `run #${runId} dropped`, from: ['dispatched'] });
     }
@@ -918,7 +865,7 @@ async function drop(runId, { force = false } = {}) {
     await git(run.repo_path, ['worktree', 'prune']).catch(() => {});
   }
 
-  await query(`update run set status = 'dropped', ended_at = now(), outcome = coalesce(outcome, 'dropped'), outcome_at = coalesce(outcome_at, now()) where id = $1`, [runId]);
+  await repository.runs.markDropped(runId);
   if (run.commitment_id) {
     await ledger.transition({ commitmentId: run.commitment_id, to: 'open', actor: 'dispatch', reason: `run #${runId} dropped`, from: ['dispatched'] });
   }
@@ -929,10 +876,7 @@ async function drop(runId, { force = false } = {}) {
 // by the worker when a session disappears.
 async function markDone(runId, note) {
   require('./remote').removeNoGhDirs(runId);
-  await query(`update run set status = 'done', ended_at = now(), exit_note = $2 where id = $1`, [
-    runId,
-    note || null,
-  ]);
+  await repository.runs.markDone(runId, note || null);
   // Wakes its run_review task (src/durable/tasks/runReview.js).
   await require('../durable').emit(`run-ended:${runId}`, { note: note || null }).catch(() => {});
 }
@@ -948,12 +892,7 @@ async function markDone(runId, note) {
 const WAIT_NOTIFY_MS = 60_000;
 
 async function reconcile() {
-  const active = await rows(
-    // A factory run's session only follows its job; the job's status is the
-    // factory pass's to read (src/dispatch/factory.js poll), not termhub's.
-    `select id, task, status, termhub_session_id, machine from run
-      where status in ('starting','running','waiting') and route <> 'factory'`
-  );
+  const active = await repository.runs.activeForReconcile();
   // Each run is checked against its own machine's termhub. A machine that
   // cannot be reached says nothing about its runs, so they are left alone
   // rather than closed as "session ended".
@@ -988,7 +927,7 @@ async function reconcile() {
     if (!s) continue;
     const waiting = s.idleState && s.idleState !== 'working' && (s.idleMs ?? 0) >= WAIT_NOTIFY_MS;
     const next = waiting ? 'waiting' : 'running';
-    if (next !== run.status) await query('update run set status = $2 where id = $1', [run.id, next]);
+    if (next !== run.status) await repository.runs.setStatus(run.id, next);
     if (waiting) {
       const row = await require('../notify')
         .notify({
