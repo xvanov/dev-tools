@@ -47,7 +47,10 @@ if (-not $SkipSync) {
   Write-Host "==> uv sync --all-extras"
   Push-Location $root
   try {
-    & $uv.Source sync --all-extras
+    # --compile-bytecode: otherwise the first ticks compile thousands of .pyc
+    # files (litellm, openai) under real-time AV scanning; measured >10 min of
+    # cold start for three parallel ticks on a fresh venv.
+    & $uv.Source sync --all-extras --compile-bytecode
     if ($LASTEXITCODE -ne 0) { throw "uv sync failed with exit code $LASTEXITCODE" }
   } finally { Pop-Location }
 }
