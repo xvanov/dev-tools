@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from factory import telemetry
 from factory.claude_session import ledger
 from factory.claude_session.conversation import ConversationResult, run_conversation
 from factory.claude_session.launcher import Launcher, select_launcher
@@ -234,23 +235,26 @@ def run_claude(
             pass
 
     try:
-        conv = run_conversation(
-            cwd=Path(cwd),
-            run_dir=Path(run_dir),
-            prompt=prompt,
-            title=title,
-            launcher=launcher,
-            claude_bin=claude_bin,
-            model=model,
-            wall_clock_s=wall_clock_s,
-            gate_check=gate_check,
-            max_gate_rounds=max_gate_rounds,
-            no_progress_abort_s=no_progress_abort_s,
-            cancelled=cancelled or (lambda: False),
-            on_session=_on_session,
-            add_dirs=add_dirs,
-            argv_wrap=argv_wrap,
-        )
+        with telemetry.span("factory.claude_session", persona, persona=persona) as tel:
+            conv = run_conversation(
+                cwd=Path(cwd),
+                run_dir=Path(run_dir),
+                prompt=prompt,
+                title=title,
+                launcher=launcher,
+                claude_bin=claude_bin,
+                model=model,
+                wall_clock_s=wall_clock_s,
+                gate_check=gate_check,
+                max_gate_rounds=max_gate_rounds,
+                no_progress_abort_s=no_progress_abort_s,
+                cancelled=cancelled or (lambda: False),
+                on_session=_on_session,
+                add_dirs=add_dirs,
+                argv_wrap=argv_wrap,
+            )
+            tel["stop_reason"] = conv.stop_reason
+            tel["rounds"] = len(conv.rounds)
     finally:
         if sandbox is not None:
             sandbox.close()
@@ -273,6 +277,19 @@ def run_claude(
         usage_reliable=conv.any_result,
         model=actual_model,
     )
+    # The credit pool (native plan 7.5): the run's total_cost_usd and token usage go
+    # to the PA's Meter. Only when Claude reported a result: a launch that never
+    # reached the model drew nothing.
+    if conv.any_result:
+        telemetry.record_usage(
+            purpose=f"factory-{persona}",
+            model=actual_model,
+            cost_usd=conv.subscription_equiv_usd,
+            tokens_in=conv.tokens_in,
+            tokens_out=conv.tokens_out,
+            duration_ms=round(conv.duration_s * 1000),
+            ok=bool(ok),
+        )
     return ClaudeRunOutcome(conv, row_id, warning)
 
 

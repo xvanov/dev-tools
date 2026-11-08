@@ -100,6 +100,11 @@ to start while any is active.
   on Windows (`shell=True`). Write them for `cmd` (or call `powershell -Command`).
 - Booted apps get the Windows essentials (`SYSTEMROOT`, `TEMP`, `COMSPEC`, ...) on
   top of their `env_passthrough`.
+- Meter (native plan 7.5): set `PA_TELEMETRY_URL=http://127.0.0.1:7300` (the PA's
+  dashboard) in the factory's environment and the factory posts its hop spans and each
+  `claude_session` run's `total_cost_usd` and token usage to `POST /api/telemetry`.
+  Unset (the default) means nothing is posted. The PA counts those runs against
+  `PA_CLAUDE_POOL_USD`; see `personal-assistant/README.md`.
 
 ## Agent sandbox (FACTORY_SANDBOX, default off)
 

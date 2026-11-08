@@ -73,6 +73,7 @@ from factory.delivery import DeliveryLevel
 from factory.directions.parser import Direction, list_direction_dirs, parse_direction_dir
 from factory.model_router import max_output_tokens_for, route
 from factory.runtime_state import effective_deploy_enabled
+from factory.telemetry import traced
 
 _logger = logging.getLogger(__name__)
 
@@ -1259,6 +1260,7 @@ def _with_full_coverage_mandate(
     )
 
 
+@traced("factory.sm")
 def handle_sm(
     story: StoryRecord,
     app_config: AppConfig,
@@ -2488,6 +2490,7 @@ def _try_resume_dev_from_checkpoint(
     )
 
 
+@traced("factory.dev")
 def handle_dev(
     story: StoryRecord,
     app_config: AppConfig,
@@ -4374,6 +4377,7 @@ def _slop_findings_for_story(
         return []
 
 
+@traced("factory.review")
 def handle_review(
     story: StoryRecord,
     app_config: AppConfig,
@@ -4939,6 +4943,7 @@ def _dry_run_tech_writer(story: StoryRecord, context_dir: str | None = None) -> 
     }
 
 
+@traced("factory.tech_writer")
 def handle_tech_writer(
     story: StoryRecord,
     app_config: AppConfig,
@@ -7294,6 +7299,7 @@ def _close_issues_on_deploy(
         pass
 
 
+@traced("deploy")
 def handle_deploy(
     story: StoryRecord,
     app_config: AppConfig,
