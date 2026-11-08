@@ -59,26 +59,34 @@ const log = logger('worker');
 const passes = require('./util/exclusive').passes({
   onError: (name, err) => log.warn('pass failed', { name, message: err.message }),
 });
-function exclusive(name, fn) {
-  if (passes.isRunning(name)) log.debug('skipping overlapping pass', { name });
-  return passes.run(name, fn);
-}
-
-function every(seconds, name, fn) {
-  const tick = () => exclusive(name, fn);
-  // One immediate pass so a freshly started worker is useful straight away.
-  setTimeout(tick, 2000 + Math.random() * 3000);
-  return setInterval(tick, seconds * 1000);
-}
 
 // Run by the zero-downtime supervisor (src/supervisor), which talks over IPC.
 const supervised = process.env.PA_SUPERVISED === '1' && typeof process.send === 'function';
+
+// Single-owner background work (src/util/lease.js, docs/native/PLAN.md Z2):
+// every timer, watcher and in-process worker below is declared on `sched` and
+// runs only while this process holds the generation lease. Nothing in this
+// file may start background work any other way (test/lease.test.js checks).
+let ownership = null;
+const lease = require('./util/lease').createLease({
+  connect: () => db.getPool().connect(),
+  // Supervised, the next generation must take over within 2 s of the old one
+  // letting go; unsupervised, a second worker only waits for the first to die.
+  pollMs: Number(process.env.PA_LEASE_POLL_MS) || (supervised ? 500 : 15_000),
+  log,
+  onLost: (err) => ownership && ownership.lost(err),
+});
+const sched = require('./util/scheduler').createScheduler({ passes, lease, log });
+const every = (seconds, name, fn) => sched.every(seconds, name, fn);
+const exclusive = (name, fn) => sched.run(name, fn);
 
 let stopping = false;
 async function shutdown(signal) {
   if (stopping) return;
   stopping = true;
   log.info('stopping', { signal });
+  if (ownership) await Promise.race([ownership.handOver().catch(() => {}), new Promise((r) => setTimeout(r, 2000))]);
+  await lease.close();
   // Bounded: a pool with a client still checked out (the lock wait, a pass
   // mid-query) never finishes ending, and a stop must not hang a deploy.
   await Promise.race([db.close().catch(() => {}), new Promise((r) => setTimeout(r, 3000))]);
@@ -97,15 +105,22 @@ async function main() {
   }
 
   // The supervisor's messages (src/supervisor): `drain` once routing has moved
-  // to the next generation, `stop` once our in-flight requests are done. Its
-  // death closes the IPC channel, and a worker must not outlive it holding the
-  // lock and the passes. Drain only flips /healthz for now; Z2 (leases) will
-  // also hand the background passes over here.
+  // to the next generation — stop the schedulers and release the lease now,
+  // not at exit, so the next generation takes the passes over within its
+  // poll (Z2); `undrain` when a rollback moves routing back here — take the
+  // lease and the passes back; `stop` once our in-flight requests are done.
+  // Its death closes the IPC channel, and a worker must not outlive it holding
+  // the lease and the passes.
   if (supervised) {
     process.on('message', (m) => {
       if (m && m.type === 'drain') {
-        log.info('draining: routing moved to the next generation');
+        log.info('draining: routing moved to the next generation — handing the passes over');
         require('./dashboard/server').markDraining();
+        if (ownership) ownership.handOver().catch((err) => log.warn('hand-over failed', { message: err.message }));
+      } else if (m && m.type === 'undrain') {
+        log.info('undrained: routing moved back here (rollback) — taking the passes back');
+        require('./dashboard/server').markDraining(false);
+        if (ownership) ownership.takeOver().catch((err) => log.warn('take-over failed', { message: err.message }));
       } else if (m && m.type === 'stop') shutdown('supervisor stop');
     });
     process.on('disconnect', () => shutdown('supervisor gone'));
@@ -141,31 +156,17 @@ async function main() {
   }
 
   // Under the supervisor (src/supervisor, PA_SUPERVISED=1) the dashboard
-  // comes up before the lock, on a port the OS picks, and /healthz says ready:
-  // the supervisor routes to it while the previous generation still holds the
-  // lock and runs the passes. The passes below start only once that one has
-  // drained and exited, so a roll never runs two of a pass (until Z2's leases
-  // replace the lock, this wait is the overlap guard).
+  // comes up before the lease, on a port the OS picks, and /healthz says
+  // ready: the supervisor routes to it while the previous generation still
+  // holds the lease and runs the passes. The passes are declared below and
+  // start only once the previous generation has released the lease on
+  // `drain` (src/util/lease.js) — so a roll never runs two of a pass.
   const dashboard = require('./dashboard/server');
   if (supervised) {
     const server = await dashboard.start({ port: 0 });
     process.send({ type: 'listening', port: server.address().port });
     dashboard.markReady();
   }
-
-  // One worker at a time. `Stop-ScheduledTask` ends the conhost wrapper, not
-  // node, so a "restart" can leave the old worker running beside the new one
-  // — two of every pass, two dreams, two dashboards fighting for a port. A
-  // session advisory lock held on a dedicated connection makes the second
-  // one wait; it is released the moment the first process dies.
-  const lockClient = await db.getPool().connect();
-  for (let attempt = 1; ; attempt++) {
-    const { rows: got } = await lockClient.query('select pg_try_advisory_lock(7300) as ok');
-    if (got[0].ok) break;
-    if (attempt === 1) log.warn('another worker holds the lock — waiting for it to exit');
-    await new Promise((r) => setTimeout(r, supervised ? 2000 : 15_000));
-  }
-  if (supervised) log.info('holding the worker lock: starting passes');
 
   // The dashboard rides along with the worker: one process to keep alive.
   // A port clash must not stop ingest — and must not be permanent either: on
@@ -179,7 +180,6 @@ async function main() {
         log.warn('dashboard not started — retrying', { attempt, message: err.message });
         setTimeout(() => startDashboard(attempt + 1), Math.min(300, 10 * attempt) * 1000);
       });
-  if (!supervised) startDashboard();
   const ingest = require('./ingest');
   const distill = require('./distill');
   const search = require('./search');
@@ -203,16 +203,18 @@ async function main() {
   // (that pass chose its items before this one existed). Not awaited: the
   // cache pass stays tens of milliseconds whatever distill costs.
   if (config.teamsCache.enabled) {
-    require('./ingest/teamsLocal').watch({
-      onResult: (r) => {
-        if (!r.fresh) return;
-        passes
-          .soon('distill', () => distill.run({ limit: 5 }))
-          .then((ran) => ran && passes.soon('drafts', () => require('./draft').autoDraft({ limit: 3 })))
-          .then(() => config.reconcile.enabled && exclusive('reconcile', () => require('./ledger/reconcile').pass()))
-          .catch(() => {});
-      },
-    });
+    sched.service('teams-cache', () =>
+      require('./ingest/teamsLocal').watch({
+        onResult: (r) => {
+          if (!r.fresh) return;
+          sched
+            .soon('distill', () => distill.run({ limit: 5 }))
+            .then((ran) => ran && sched.soon('drafts', () => require('./draft').autoDraft({ limit: 3 })))
+            .then(() => config.reconcile.enabled && exclusive('reconcile', () => require('./ledger/reconcile').pass()))
+            .catch(() => {});
+        },
+      })
+    );
   }
 
   every(config.m365.calendarPollSeconds, 'calendar', async () => {
@@ -336,10 +338,11 @@ async function main() {
   // waiting to be landed. The Absurd worker runs inside this process; the
   // pass below spawns the tasks the store says should exist.
   if (config.durable.enabled) {
-    require('./durable')
-      .startWorker()
-      .then(() => log.info('durable worker started'))
-      .catch((err) => log.warn('durable worker not started', { message: err.message }));
+    sched.service('durable-worker', async () => {
+      const w = await require('./durable').startWorker();
+      log.info('durable worker started');
+      return () => w.close();
+    });
     every(600, 'durable', async () => {
       await require('./durable/spawners').pass();
     });
@@ -474,6 +477,19 @@ async function main() {
   });
   process.on('SIGINT', () => shutdown('SIGINT'));
   process.on('SIGTERM', () => shutdown('SIGTERM'));
+
+  // Everything is declared; now run it, under the lease. One worker at a
+  // time: `Stop-ScheduledTask` ends the conhost wrapper, not node, so an old
+  // restart could leave the previous worker running beside the new one — two
+  // of every pass, two dashboards fighting for a port. The lease (a session
+  // advisory lock on a dedicated connection) makes the second one wait; it is
+  // released on `drain`, or the moment the holder dies.
+  ownership = require('./util/lease').createOwnership({ lease, scheduler: sched, log });
+  const owned = ownership.takeOver();
+  if (!supervised) {
+    await owned;
+    startDashboard();
+  }
 }
 
 if (require.main === module) {
@@ -483,4 +499,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { every, exclusive };
+module.exports = { sched };

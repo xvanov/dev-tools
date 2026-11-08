@@ -491,13 +491,16 @@
         "Failed roll": "a generation that exits or is not ready in time is killed; N keeps serving and the roll answers ok: false",
         "Crash": "the serving generation exiting on its own is replaced by a new one, backing off 1 s to 60 s",
         "Control": "one JSON line on a local socket: \\\\.\\pipe\\pa-supervisor-<port> on Windows, $XDG_RUNTIME_DIR/pa-supervisor-<port>.sock elsewhere; {\"cmd\":\"roll\"} or {\"cmd\":\"status\"}; `node src/supervisor roll|status`; SIGHUP rolls on Linux",
-        "Background passes": "a supervised worker serves HTTP before it takes the worker lock (pg_try_advisory_lock(7300)), so during a roll only the old generation runs passes; the new one starts them once the old has exited (Z2 replaces this with leases)",
+        "Background passes": "single owner (Z2, src/util/lease.js): every timer, watcher and the durable worker is declared on the scheduler (src/util/scheduler.js) and runs only while its generation holds the lease, pg_advisory_lock(7300) on a dedicated connection. On drain the old generation stops its schedulers and releases the lease at once; the new one polls every 500 ms and takes over within a second. Each pass run also holds pg_advisory_lock(7301, hashtext(name)), so a pass the old generation is still finishing is skipped by the new one until it ends; every other pass moves over at once. Undrain (rollback) takes the lease and the passes back",
         "Rule": "node builtins only; never loads worker code, so a deploy never needs to restart it"
       },
       "code": [
         "personal-assistant/src/supervisor/index.js",
         "personal-assistant/src/worker.js",
-        "personal-assistant/test/supervisor.test.js"
+        "personal-assistant/src/util/lease.js",
+        "personal-assistant/src/util/scheduler.js",
+        "personal-assistant/test/supervisor.test.js",
+        "personal-assistant/test/lease.test.js"
       ]
     },
     {
@@ -555,7 +558,7 @@
       "id": "worker",
       "layer": "dashboard",
       "name": "Worker",
-      "role": "A scheduler of periodic passes (no job queue: work to do is a query). One per machine, held by a Postgres advisory lock.",
+      "role": "A scheduler of periodic passes (no job queue: work to do is a query). One owner of the passes per machine: a Postgres advisory-lock lease (src/util/lease.js), handed between generations on a roll.",
       "stacks": {
         "work": "live",
         "personal": "live"

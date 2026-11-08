@@ -452,9 +452,16 @@ Postgres and nowhere else. Tests use invented names; fixtures never hold a real 
   `/healthz` ready only after migrations and its dashboard are up. Keep the supervisor on node
   builtins and never `require` worker code from it — it is the process a deploy must not
   restart. Anything long-lived a worker serves (SSE, WebSocket) must survive being closed and
-  reconnected, because a roll closes it. Overlap risk: until Z2's leases, the only thing
-  stopping two generations running the same pass is the advisory lock a supervised worker
-  takes *after* it is ready; do not start timers, watchers or other background work before it.
+  reconnected, because a roll closes it.
+- **Single-owner background work (Z2).** Two generations overlap during a roll, so every
+  timer, watcher and in-process worker in `src/worker.js` is declared on the scheduler
+  (`src/util/scheduler.js`: `every(...)` for passes, `sched.service(name, start)` for anything
+  that returns a stop handle) and runs only while the generation holds the lease
+  (`src/util/lease.js`: advisory lock 7300 on a dedicated connection). On `drain` the old
+  generation stops its schedulers and releases the lease at once, without waiting for passes
+  in flight; each pass run holds its own lock (7301, hashtext(name)), so the new generation
+  skips just that pass until the old run ends. Never start a `setInterval`, `fs.watch` or
+  worker loop in `worker.js` outside the scheduler — `test/lease.test.js` checks.
 - **Secrets:** never in the repo, never in Postgres at all. There are few: GitHub and Microsoft
   365 ride on logins that already exist (`gh`, the claude.ai connectors); Jira prefers an API
   token (`PA_JIRA_API_TOKEN`) and falls back to its connector. A secret resolves real env →

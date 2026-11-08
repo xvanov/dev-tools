@@ -544,8 +544,8 @@ async function handle(req, res) {
   return send(res, 404, { error: 'not found' });
 }
 
-// The commit this process started from; read once (a pull without a restart
-// does not change what is served). Falls back to the start time.
+// The commit this process started from; read once, at start() (a pull without
+// a restart does not change what is served). Falls back to the start time.
 let commitCache;
 function servedCommit() {
   if (commitCache !== undefined) return commitCache;
@@ -567,12 +567,16 @@ const readiness = { ready: false, draining: false };
 const markReady = () => {
   readiness.ready = true;
 };
-const markDraining = () => {
-  readiness.draining = true;
+// Undone (markDraining(false)) when a rollback moves routing back here.
+const markDraining = (on = true) => {
+  readiness.draining = on;
 };
 
 function start({ port = config.dispatch.port, host = config.dispatch.host } = {}) {
   if (!hostAllowed(host)) throw new Error(`refusing to bind the dashboard to ${host}: loopback only`);
+  // Now, not at the first request: a generation kept for a rollback is first
+  // asked after the pull, and must still name the commit it started from.
+  servedCommit();
   const server = http.createServer((req, res) => {
     handle(req, res).catch((err) => {
       log.warn('request failed', { path: String(req.url).split('?')[0], message: err.message });
