@@ -11,7 +11,7 @@ type Db = import('../types.ts').Db;
 type Row = import('../types.ts').Row;
 
 const { LiveRunError } = require('../runs.ts');
-const { NOW, DAY, sinceMs } = require('./_sql');
+const { NOW, DAY, sinceMs } = require('./_sql.ts');
 
 const LIVE = "('starting','running','waiting')";
 const ids = (list: unknown[]) => (list || []).map(Number);

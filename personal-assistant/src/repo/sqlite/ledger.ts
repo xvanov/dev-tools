@@ -11,7 +11,7 @@ type Db = import('../types.ts').Db;
 type Row = import('../types.ts').Row;
 
 const { STATUS_COLUMNS, WINDOW_DAYS } = require('../ledger.ts');
-const { NOW, sinceMs } = require('./_sql');
+const { NOW, sinceMs } = require('./_sql.ts');
 
 const SESSION_SETTLE_MINUTES = 10;
 

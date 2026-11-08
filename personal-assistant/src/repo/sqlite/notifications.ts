@@ -8,7 +8,7 @@
 type Db = import('../types.ts').Db;
 type Row = import('../types.ts').Row;
 
-const { NOW, HOUR, DAY, sinceMs } = require('./_sql');
+const { NOW, HOUR, DAY, sinceMs } = require('./_sql.ts');
 
 function create(db: Db) {
   return {

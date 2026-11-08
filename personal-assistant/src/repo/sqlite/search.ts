@@ -33,7 +33,7 @@ const CANDIDATES = 400;
 // How many chunks per FTS index an unfiltered keyword search ranks into items
 // (plan 3.4: the same top 30 items as ranking every match, on the eval set).
 const TOP_CHUNKS = 2000;
-const { NOW } = require('./_sql');
+const { NOW } = require('./_sql.ts');
 
 const ITEM = `si.id, si.source, si.subject, si.occurred_at, si.author_identity,
               si.thread_external_id`;

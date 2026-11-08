@@ -11,7 +11,7 @@
 type Db = import('../types.ts').Db;
 type Row = import('../types.ts').Row;
 
-const { NOW, DAY, sinceMs } = require('./_sql');
+const { NOW, DAY, sinceMs } = require('./_sql.ts');
 
 // run_at for a task that waits for an event with no timeout.
 const NEVER = '9999-12-31T00:00:00.000Z';

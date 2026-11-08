@@ -17,12 +17,14 @@
 //   (at at time zone tz)::date    pa_local_day(at, tz)
 //   nulls last / nulls first      the same (SQLite >= 3.30)
 
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
 const NOW = "strftime('%Y-%m-%dT%H:%M:%fZ','now')";
 const HOUR = 3600_000;
 const DAY = 24 * HOUR;
 
 /** The instant `ms` milliseconds before now (or before `from`), as stored. */
-function sinceMs(ms, from = Date.now()) {
+function sinceMs(ms: number, from: Date | string | number = Date.now()) {
   return new Date(new Date(from).getTime() - ms).toISOString();
 }
 

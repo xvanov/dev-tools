@@ -9,7 +9,7 @@
 type Db = import('../types.ts').Db;
 type Row = import('../types.ts').Row;
 
-const { NOW } = require('./_sql');
+const { NOW } = require('./_sql.ts');
 
 function create(db: Db) {
   const tx = <T>(fn: (q: Pick<Db, 'query'>) => Promise<T>): Promise<T> => (db.inTx ? fn(db) : db.withTx(fn));

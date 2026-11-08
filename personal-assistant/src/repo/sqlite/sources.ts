@@ -10,7 +10,7 @@
 type Db = import('../types.ts').Db;
 type Row = import('../types.ts').Row;
 
-const { NOW, HOUR, DAY, sinceMs } = require('./_sql');
+const { NOW, HOUR, DAY, sinceMs } = require('./_sql.ts');
 
 const EVENT_COLS = 'id, external_id, subject, body_text, occurred_at, author_identity, raw';
 const MIN = 60_000;

@@ -18,9 +18,8 @@ export interface Ctx {
   pageTokenOk: (req: Req, now?: number) => boolean;
 }
 
-/** repo/index.js's aggregates, loosely typed until the registry itself is TypeScript. */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export type Repos = Record<string, any>;
+/** A repository set (repo/index.ts). */
+export type Repos = import('../repo/types.ts').Repos;
 
 /** A JS module's exports, loosely typed until that module is TypeScript. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any

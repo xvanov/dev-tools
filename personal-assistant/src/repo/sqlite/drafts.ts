@@ -8,7 +8,7 @@
 type Db = import('../types.ts').Db;
 type Row = import('../types.ts').Row;
 
-const { NOW, DAY, sinceMs } = require('./_sql');
+const { NOW, DAY, sinceMs } = require('./_sql.ts');
 
 // "I already answered": a message from me in the same thread, after the ask.
 // SQL fragment over `si`; $1 = my author forms (a JSON array).

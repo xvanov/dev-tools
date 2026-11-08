@@ -9,7 +9,7 @@ type Db = import('../types.ts').Db;
 type Row = import('../types.ts').Row;
 
 const { ROW_COLUMNS } = require('../repos.ts');
-const { NOW } = require('./_sql');
+const { NOW } = require('./_sql.ts');
 
 const toDate = (v: unknown) => (v == null || v instanceof Date ? v : new Date(v as string | number));
 const json = (v: unknown) => (v == null ? null : typeof v === 'string' ? JSON.parse(v) : v);

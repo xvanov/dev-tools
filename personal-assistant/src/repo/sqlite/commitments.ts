@@ -13,7 +13,7 @@
 type Db = import('../types.ts').Db;
 type Row = import('../types.ts').Row;
 
-const { NOW, DAY, sinceMs } = require('./_sql');
+const { NOW, DAY, sinceMs } = require('./_sql.ts');
 
 const LIVE = `c.status in ('open','dispatched') and c.superseded_by is null`;
 

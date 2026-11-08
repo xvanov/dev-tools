@@ -6,7 +6,7 @@
 
 type Db = import('../types.ts').Db;
 
-const { NOW } = require('./_sql');
+const { NOW } = require('./_sql.ts');
 
 function create(db: Db) {
   return {

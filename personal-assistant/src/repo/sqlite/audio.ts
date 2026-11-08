@@ -8,7 +8,7 @@
 type Db = import('../types.ts').Db;
 type Row = import('../types.ts').Row;
 
-const { HOUR, sinceMs } = require('./_sql');
+const { HOUR, sinceMs } = require('./_sql.ts');
 
 const MIN_CHARS = 400;
 

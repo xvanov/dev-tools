@@ -1154,7 +1154,7 @@
         "personal-assistant/src/db/migrate.js",
         "personal-assistant/src/db/migrationRules.js",
         "personal-assistant/test/migrations.test.js",
-        "personal-assistant/src/repo/index.js",
+        "personal-assistant/src/repo/index.ts",
         "personal-assistant/test/repoContract.test.js",
         "personal-assistant/test/repoBoundary.test.js",
         "personal-assistant/src/durable/index.js",

@@ -28,3 +28,14 @@ export interface Db {
   inTx?: boolean;
   session?: { id: string; listen(channel: string): void };
 }
+
+/**
+ * A repository set (repo/index.ts createRepos): each aggregate's methods, and
+ * withTx/backend. The aggregates are CommonJS, so their method types cannot be
+ * named here yet: loose until they switch to ES exports (docs/native/JARVISD.md).
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export type Repos = Record<string, any> & {
+  withTx<T>(fn: (r: Repos) => Promise<T>): Promise<T>;
+  backend: Db;
+};

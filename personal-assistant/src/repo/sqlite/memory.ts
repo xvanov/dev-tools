@@ -24,7 +24,7 @@ type Db = import('../types.ts').Db;
 type Row = import('../types.ts').Row;
 type Subject = { kind?: unknown; id?: unknown; label?: unknown };
 
-const { NOW, DAY, sinceMs } = require('./_sql');
+const { NOW, DAY, sinceMs } = require('./_sql.ts');
 const { hammingSql } = require('../../db/sqlite');
 
 const HANDLE_SQL = `case pi.kind when 'github_username' then 'github:' || pi.value
