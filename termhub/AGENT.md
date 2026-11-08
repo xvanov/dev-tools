@@ -1479,7 +1479,7 @@ and the same layer switcher.
 
 - **`web/theme.css` and `web/nav.js` are copies.** The canonical files are
   `../personal-assistant/src/dashboard/theme.css` and `nav.js`; termhub keeps copies so it looks
-  and works the same where the PA isn't installed. `test/theme.test.js` (first in `npm test`)
+  and works the same where the PA isn't installed. `test/theme.test.js` (runs in `npm test` like every other test file)
   fails when a copy drifts, and `npm run sync-theme` copies the canonical ones over. Edit the PA's
   copy, never this one. The test skips when `../personal-assistant` is absent.
 - **`styles.css` keeps its own variable names** (`--bg`, `--bg-2`, `--fg`, `--accent`, …) as

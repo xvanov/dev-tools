@@ -599,7 +599,7 @@ On Linux set these with `systemctl --user edit termhub`; on Windows via `setx` +
 | `lib/peers.js` | Other termhub machines: the configured list, tailnet discovery, and reading their idle data |
 | `test/peers.test.js` | Peer-list and discovery-filter tests |
 | `test/idle.test.js` | Idle state-machine and episode-log tests |
-| `test/voiceCommands.test.js` | Wake-word and command-parser tests — `npm test`, no framework, no deps |
+| `test/voiceCommands.test.js` | Wake-word and command-parser tests (`npm test` runs every `test/*.test.js` in parallel via `../scripts/run-tests.js`; skip/serial lists with reasons in `test/runner.config.js`) — no framework, no deps |
 | `lib/state.js` | Deployment state (`state.json`) + pid-file helpers shared by the tiers and scripts |
 | `lib/dirs.js` | Directory autocomplete for the new-terminal dialog |
 | `lib/shell.js` | Default-shell resolution per OS |

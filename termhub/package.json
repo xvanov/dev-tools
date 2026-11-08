@@ -10,7 +10,7 @@
     "front": "node front.js",
     "vendor": "cp node_modules/@xterm/xterm/lib/xterm.js web/vendor/xterm.js && cp node_modules/@xterm/xterm/css/xterm.css web/vendor/xterm.css && cp node_modules/@xterm/addon-fit/lib/addon-fit.js web/vendor/addon-fit.js && cp node_modules/@xterm/addon-webgl/lib/addon-webgl.js web/vendor/addon-webgl.js",
     "sync-theme": "node test/theme.test.js --write",
-    "test": "node test/theme.test.js && node test/theme.test.js && node test/voiceCommands.test.js && node test/speechErrors.test.js && node test/voiceCapture.test.js && node test/transcribe.test.js && node test/clientLog.test.js && node test/restore.test.js && node test/claudeCli.test.js && node test/claudeModel.test.js && node test/state.test.js && node test/serveUrl.test.js && node test/update.test.js && node test/updateHeal.test.js && node test/idle.test.js && node test/peers.test.js && node test/clipboard.test.js && node test/input.test.js && node test/frontProxy.test.js && node test/paProxy.test.js && node test/transcripts.test.js && node test/screen.test.js && node test/exec.test.js && node test/csrf.test.js && node test/sessionEnv.test.js && node test/archive.test.js"
+    "test": "node ../scripts/run-tests.js"
   },
   "termhub": {
     "claudeCli": {
