@@ -161,7 +161,8 @@ function bunInstallPlan({ jarvisdDir = JARVISD_DIR, exists = fs.existsSync }: { 
 }
 
 function git(args: string[], opts: object = {}): string {
-  return execFileSync('git', ['-C', PA_DIR, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, ...opts }).trim();
+  // execFileSync returns null when stdout is inherited (fetch, merge).
+  return String(execFileSync('git', ['-C', PA_DIR, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, ...opts }) ?? '').trim();
 }
 
 function resolves(rev: string) {
