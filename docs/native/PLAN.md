@@ -501,7 +501,7 @@ run mid-step; a job continued on an existing branch (`--branch`).
   `jarvisd supervise` runs the supervisor (now strict TS, `src/supervisor/index.ts`) and rolls
   generations of itself; supervisor, deploy lock and the Z6 spare-port deploy test pass with the
   compiled binary in CI's jarvisd job on Windows and Linux (run 42466776763). Live stacks still
-  run `node src/supervisor` until switched. (09aa7cf)
+  run `node src/supervisor` until switched. (276a21c)
 - [ ] **Exit 4:** one process per machine, typed approvals, Z6 deploy test green.
 
 ## Phase 5: ptyd and the sandbox (Rust, D1)
