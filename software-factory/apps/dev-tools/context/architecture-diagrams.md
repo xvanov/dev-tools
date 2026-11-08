@@ -26,7 +26,7 @@ flowchart TB
         SF <-->|jobs API| PA
     end
 
-    subgraph "Linux Machine (k-911-x17)"
+    subgraph "The personal machine (Linux)"
         TH_L[termhub<br/>single process]
         SF_L[software-factory<br/>Python/uv]
         PA_L[personal-assistant<br/>Node.js]
@@ -47,18 +47,28 @@ flowchart TB
     subgraph "External Services"
         GH[GitHub]
         M365[Microsoft 365<br/>Outlook/Teams]
-        AZURE[Azure OpenAI]
+        AZURE[Azure AI<br/>gpt-5.x, DeepSeek, Kimi]
+        DEEPSEEK[DeepSeek API]
         ANTHROPIC[Anthropic API]
         NTFY[ntfy.sh]
     end
 
     PA -->|commitments, draft| M365
     PA -->|status sync| GH
+    PA -->|LLM calls| ANTHROPIC
+    PA -->|LLM calls| AZURE
     SF -->|PRs, issues| GH
-    SF -->|LLM calls| AZURE
-    SF -->|LLM calls| ANTHROPIC
+    SF -->|api runtime: LLM calls| AZURE
+    SF -->|api runtime: LLM calls| DEEPSEEK
+    SF -->|claude_session runtime:<br/>Claude Code in a session| TH
     TH -->|idle notifications| NTFY
 ```
+
+The factory's default routes (`software-factory/factory/routes.yaml`) are all Azure
+(gpt-5.x, Kimi) and DeepSeek; an Anthropic model is reachable only through an explicit
+per-persona override in that file, an app's `config.yaml::models` or a job's `models:`.
+Its `claude_session` runtime runs Claude Code inside a termhub session rather than
+calling a model API itself.
 
 ## termhub two-tier architecture
 

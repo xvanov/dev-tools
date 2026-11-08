@@ -10,7 +10,8 @@ lands. Never sends anything without human confirmation.
 
 ## Language / Runtime
 
-TypeScript / JavaScript on Node.js 22+ (also runs on Bun via jarvisd). Key
+TypeScript / JavaScript on Node.js 24+, the version the root `install.ps1`
+requires (CI tests on Node 22; `package.json` says `>=20`); also runs on Bun via jarvisd. Key
 dependencies: various (see `package.json`) — Microsoft Graph, Anthropic API,
 Claude Code CLI, GitLab API, termhub API, Postgres/SQLite.
 

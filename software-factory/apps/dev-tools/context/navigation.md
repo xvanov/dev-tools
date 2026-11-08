@@ -126,3 +126,7 @@
 
 - `CLAUDE.md` — root working agreement (commit style, architecture map, docs policy)
 - `scripts/README.md` — test runner, build, pre-commit hook, conventions
+- `scripts/hooks/pre-commit` — the hook: ios-messages guard, then changed-files tests
+- `personal-assistant/src/dashboard/architecture.json` — the living system map,
+  updated in the same commit as any component change
+- `docs/native/PLAN.md` — the native rebuild plan; its decision log is binding

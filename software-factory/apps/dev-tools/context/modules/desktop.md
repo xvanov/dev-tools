@@ -9,8 +9,10 @@ the window hides it to the tray.
 
 ## Language / Runtime
 
-TypeScript (UI) + Rust (Tauri 2 backend). Key dependencies: Tauri 2, the Tauri
-Rust crate set (webkit2gtk on Linux, WebView2 on Windows).
+Rust (Tauri 2) with a plain HTML/CSS/JS settings window (`desktop/ui/`); no
+TypeScript. The stack window is the remote termhub front page. Node is only the
+Tauri CLI (`npm ci` in `desktop/`). Key dependencies: Tauri 2 (WebKitGTK on
+Linux, WebView2 on Windows).
 
 ## Platforms
 
@@ -23,8 +25,11 @@ WebView2 ships with Windows 11.
 cd desktop/src-tauri && cargo test
 ```
 
-Unit tests: config parsing, SSE parsing, notification rules. The Rust crate
-also runs `cargo fmt --check` and `cargo clippy` in CI.
+Six Rust unit tests (`src-tauri/src/config.rs`, `events.rs`): config parsing,
+SSE parsing, notification rules. There is no `desktop` CI job: CI's `build` job
+(Linux and Windows) runs `cargo fmt --check`, `cargo clippy -D warnings` and
+`cargo test` on the crate, then builds the installers. It runs only when
+`ptyd/`, `desktop/` or `scripts/build.js` change.
 
 ## Install / Deploy
 

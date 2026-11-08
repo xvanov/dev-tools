@@ -39,16 +39,16 @@
 
 | Module | Language | Runtime | Platform | Has tests? | CI job |
 |--------|----------|---------|----------|------------|--------|
-| termhub | TypeScript / JS | Node.js 18+ | Windows, Linux | npm test (custom runner) | termhub |
+| termhub | TypeScript / JS | Node.js 24+ (CI: 22) | Windows, Linux | npm test (custom runner) | termhub |
 | ptyd | Rust | Rust (MSVC) | Windows, Linux | cargo test | ptyd (conformance via termhub) |
-| desktop | TypeScript / Rust | Tauri 2 (Node + Rust) | Windows, Linux | cargo test (unit) | build |
+| desktop | Rust + HTML/JS settings window | Tauri 2 | Windows, Linux | cargo test (6 unit tests) | no own job: `build` runs fmt, clippy, cargo test |
 | jarvisd | TypeScript | Bun | Windows, Linux | tsc + parity + --check | jarvisd |
-| personal-assistant | TypeScript / JS | Node.js 22+ | Windows, Linux | npm test (custom runner) | personal-assistant |
-| software-factory | Python | uv (Python 3.12) | Windows, Linux | pytest via uv | software-factory |
+| personal-assistant | TypeScript / JS | Node.js 24+ (CI: 22) | Windows, Linux | npm test (custom runner) | personal-assistant, personal-assistant-contract |
+| software-factory | Python | uv (Python 3.12–3.13) | Windows, Linux | pytest via uv (~4,255 tests) | software-factory, software-factory-windows-2x |
 | voice-dictation | Python | Python 3.10+ | Windows, Linux | None (manual smoke) | None |
 | summarize-recording | Python | Python 3.10+ | Windows, Linux | None | None |
 | claude-ctx-statusline | JavaScript | Node.js | Windows, Linux, macOS | None | None |
-| disk-janitor | Python | Python 3.9+ (stdlib only) | Windows, Linux | None (stdlib only, tested via CI) | None (part of build) |
+| disk-janitor | Python | Python 3.9+ (stdlib only) | Windows, Linux | None | None |
 | keep-awake | PowerShell | PowerShell 5.1+ | Windows only | None | None |
 | bootstrap | Bash / PowerShell | Bash, PowerShell | Linux, Windows | None | None |
 | ios-messages | Python | Python 3.12+ | Windows, Linux | pytest | ios-messages |

@@ -10,7 +10,9 @@ time tracking with ntfy push escalation, and a safe blue-green updater.
 
 ## Language / Runtime
 
-TypeScript / JavaScript on Node.js 18+. Key dependencies: `node-pty` (PTY
+TypeScript / JavaScript on Node.js 24+, the version the root `install.ps1` requires
+for the whole stack (CI tests on Node 22; `package.json`'s `engines` field still
+says `>=18`). Key dependencies: `node-pty` (PTY
 allocation), `ws` (WebSocket), `@xterm/headless` (server-side terminal emulation),
 `@xterm/xterm` (browser UI, vendored).
 
