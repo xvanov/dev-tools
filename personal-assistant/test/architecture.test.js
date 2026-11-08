@@ -201,7 +201,7 @@ for (const id of Object.keys(A.health)) assert.ok(A.components.some((c) => c.hea
 
 // ------------------------------------------------------------ the server ----
 {
-  const arch = require('../src/dashboard/architecture');
+  const arch = require('../src/dashboard/architecture.ts');
   // Checks resolve to loopback or a configured machine, never a host from the JSON.
   const cfg = {
     voice: { url: 'http://127.0.0.1:47830' },

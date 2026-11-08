@@ -16,6 +16,20 @@
 //
 // Read-only: no POST, so no X-PA guard is needed. The page renders the JSON
 // with textContent only (no HTML sink).
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+type Row = import('../repo/types.ts').Row;
+type Req = import('http').IncomingMessage;
+type Res = import('http').ServerResponse;
+type Ctx = import('./types.ts').Ctx;
+
+/** A health check from architecture.json. */
+type Check = { kind?: string; hostConfig?: string; portConfig?: string; url?: string; config?: string; origin?: boolean; path?: string; label?: string };
+/** What resolveCheck() makes of one. */
+type Target = { error: string } | { kind: 'self' } | { kind: 'postgres' } | { kind: 'tcp'; host: unknown; port: number } | { kind: 'http'; url: string; remote?: boolean };
+type Probe = { state: string; detail: string };
+type NetError = Error & { code?: string };
 
 const fs = require('fs');
 const net = require('net');
@@ -35,13 +49,13 @@ function load() {
   return JSON.parse(fs.readFileSync(DATA, 'utf8'));
 }
 
-function pick(obj, dotted) {
-  return String(dotted || '').split('.').reduce((o, k) => (o == null ? undefined : o[k]), obj);
+function pick(obj: unknown, dotted: unknown): unknown {
+  return String(dotted || '').split('.').reduce<unknown>((o, k) => (o == null ? undefined : (o as Row)[k]), obj);
 }
 
-function isLoopback(u) {
+function isLoopback(u: unknown) {
   try {
-    const h = new URL(u).hostname.replace(/^\[|\]$/g, '');
+    const h = new URL(u as string).hostname.replace(/^\[|\]$/g, '');
     return h === '127.0.0.1' || h === 'localhost' || h === '::1';
   } catch {
     return false;
@@ -49,7 +63,7 @@ function isLoopback(u) {
 }
 
 /** Pure. A check's target: { kind, url } | { kind, host, port } | { kind } | { error }. */
-function resolveCheck(check, cfg = config) {
+function resolveCheck(check: Check | null | undefined, cfg: unknown = config): Target {
   if (!check || typeof check !== 'object') return { error: 'no check' };
   if (check.kind === 'self' || check.kind === 'postgres') return { kind: check.kind };
   if (check.kind === 'tcp') {
@@ -62,7 +76,7 @@ function resolveCheck(check, cfg = config) {
   if (check.kind === 'http') {
     let base = check.url || pick(cfg, check.config);
     if (!base) return { error: 'not configured' };
-    if (check.origin) base = new URL(base).origin;
+    if (check.origin) base = new URL(base as string).origin;
     const url = String(base).replace(/\/+$/, '') + (check.path || '');
     if (!isLoopback(url)) return { error: 'not loopback' };
     return { kind: 'http', url };
@@ -70,7 +84,7 @@ function resolveCheck(check, cfg = config) {
   if (check.kind === 'machine') {
     const name = pick(cfg, 'factory.machine');
     if (!name) return pick(cfg, 'factory.path') ? { kind: 'self' } : { error: 'no factory configured' };
-    const m = (pick(cfg, 'dispatch.machines') || {})[name];
+    const m = ((pick(cfg, 'dispatch.machines') || {}) as Record<string, { url?: string; termhub?: string } | undefined>)[String(name)];
     const base = m && (m.url || m.termhub);
     if (!base) return { error: `machine ${name} not in PA_MACHINES` };
     return { kind: 'http', url: String(base).replace(/\/+$/, '') + '/api/health', remote: true };
@@ -78,45 +92,45 @@ function resolveCheck(check, cfg = config) {
   return { error: `unknown check kind ${check.kind}` };
 }
 
-function probeHttp(url, timeoutMs) {
-  return new Promise((resolve) => {
+function probeHttp(url: string, timeoutMs: number) {
+  return new Promise<Probe>((resolve) => {
     const lib = url.startsWith('https:') ? https : http;
-    const req = lib.get(url, { timeout: timeoutMs }, (res) => {
+    const req = lib.get(url, { timeout: timeoutMs }, (res: import('http').IncomingMessage) => {
       res.resume();
-      resolve(res.statusCode >= 200 && res.statusCode < 300 ? { state: 'ok', detail: `HTTP ${res.statusCode}` } : { state: 'down', detail: `HTTP ${res.statusCode}` });
+      resolve((res.statusCode ?? 0) >= 200 && (res.statusCode ?? 0) < 300 ? { state: 'ok', detail: `HTTP ${res.statusCode}` } : { state: 'down', detail: `HTTP ${res.statusCode}` });
     });
     req.on('timeout', () => req.destroy(new Error('timed out')));
-    req.on('error', (err) => resolve({ state: 'down', detail: err.code || err.message }));
+    req.on('error', (err: NetError) => resolve({ state: 'down', detail: err.code || err.message }));
   });
 }
 
-function probeTcp(host, port, timeoutMs) {
-  return new Promise((resolve) => {
+function probeTcp(host: unknown, port: number, timeoutMs: number) {
+  return new Promise<Probe>((resolve) => {
     const sock = net.connect({ host, port });
-    const done = (r) => {
+    const done = (r: Probe) => {
       sock.destroy();
       resolve(r);
     };
     sock.setTimeout(timeoutMs, () => done({ state: 'down', detail: 'timed out' }));
     sock.once('connect', () => done({ state: 'ok', detail: `listening on ${port}` }));
-    sock.once('error', (err) => done({ state: 'down', detail: err.code || err.message }));
+    sock.once('error', (err: NetError) => done({ state: 'down', detail: err.code || err.message }));
   });
 }
 
-async function probePostgres(timeoutMs) {
-  const timer = new Promise((resolve) => setTimeout(() => resolve({ state: 'down', detail: 'timed out' }), timeoutMs).unref());
+async function probePostgres(timeoutMs: number) {
+  const timer = new Promise<Probe>((resolve) => setTimeout(() => resolve({ state: 'down', detail: 'timed out' }), timeoutMs).unref());
   const q = Promise.resolve()
     .then(() => require('../repo').system.ping())
     .then(() => ({ state: 'ok', detail: 'select 1' }))
-    .catch((err) => ({ state: 'down', detail: err.code || err.message }));
+    .catch((err: NetError) => ({ state: 'down', detail: err.code || err.message }));
   return Promise.race([q, timer]);
 }
 
-async function runCheck(check, { cfg = config, timeoutMs = TIMEOUT_MS } = {}) {
+async function runCheck(check: Check | null | undefined, { cfg = config, timeoutMs = TIMEOUT_MS }: { cfg?: unknown; timeoutMs?: number } = {}) {
   const t = resolveCheck(check, cfg);
   const started = Date.now();
-  let r;
-  if (t.error) r = { state: 'unknown', detail: t.error };
+  let r: Probe;
+  if ('error' in t) r = { state: 'unknown', detail: t.error };
   else if (t.kind === 'self') r = { state: 'ok', detail: 'answering' };
   else if (t.kind === 'postgres') r = await probePostgres(timeoutMs);
   else if (t.kind === 'tcp') r = await probeTcp(t.host, t.port, timeoutMs);
@@ -124,24 +138,24 @@ async function runCheck(check, { cfg = config, timeoutMs = TIMEOUT_MS } = {}) {
   return { ...r, ms: Date.now() - started };
 }
 
-let cached = null;
-async function health({ now = Date.now() } = {}) {
+let cached: { at: number; value: { at: string; health: Record<string, unknown> } } | null = null;
+async function health({ now = Date.now() }: { now?: number } = {}) {
   if (cached && now - cached.at < CACHE_MS) return cached.value;
   const checks = load().health || {};
   const ids = Object.keys(checks);
-  const results = await Promise.all(ids.map((id) => runCheck(checks[id]).catch((err) => ({ state: 'unknown', detail: err.message }))));
+  const results = await Promise.all(ids.map((id) => runCheck(checks[id]).catch((err: Error) => ({ state: 'unknown', detail: err.message }))));
   const value = { at: new Date(now).toISOString(), health: Object.fromEntries(ids.map((id, i) => [id, { label: checks[id].label || id, ...results[i] }])) };
   cached = { at: now, value };
   return value;
 }
 
 /** Pure. The configured values worth showing next to the diagram; never a secret. */
-function liveConfig(cfg = config) {
-  let db = null;
+function liveConfig(cfg: Row = config) {
+  let db: string | null = null;
   try {
     if (cfg.db === 'sqlite') db = `sqlite:${cfg.sqlitePath}`;
     else {
-      const u = new URL(cfg.databaseUrl);
+      const u = new URL(cfg.databaseUrl as string);
       db = `${u.hostname}:${u.port}${u.pathname}`;
     }
   } catch {
@@ -171,7 +185,7 @@ function liveConfig(cfg = config) {
   };
 }
 
-async function route(req, res, url, { send }) {
+async function route(req: Req, res: Res, url: URL, { send }: { send: Ctx['send'] }) {
   if (req.method !== 'GET') return false;
   if (url.pathname === '/architecture') {
     send(res, 200, fs.readFileSync(PAGE, 'utf8'), 'text/html; charset=utf-8');

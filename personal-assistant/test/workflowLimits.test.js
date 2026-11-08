@@ -8,7 +8,7 @@ const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
 const wl = require('../src/dashboard/workflowLimits.ts');
-const arch = require('../src/dashboard/architecture').load();
+const arch = require('../src/dashboard/architecture.ts').load();
 
 const defaults = wl.defaults(arch);
 assert.deepStrictEqual(Object.keys(defaults).sort(), ['deepseek-pr', 'research', 'review-fix', 'teams-ask', 'whats-on'], 'phone is out of scope: no ceiling');
