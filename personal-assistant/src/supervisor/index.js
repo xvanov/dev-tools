@@ -29,7 +29,7 @@
 //   GET /healthz        200 {ready: true} once startup has completed
 //
 // Rollback (Z4): the generation a roll replaced is kept, drained, for
-// holdMs (90 s) after the flip — the standby. `rollback` undrains it and
+// holdMs (150 s: the drain, 30 s at most, plus the deploy's 60 s watch, with room) after the flip — the standby. `rollback` undrains it and
 // flips back; the deploy command (deploy.js) asks for that when the new
 // generation's health fails within 60 s. A serving generation that dies
 // while a standby exists is replaced by the standby rather than a fresh one.
@@ -51,7 +51,7 @@ const { fork } = require('child_process');
 
 const DEFAULT_PORT = 7300;
 const DRAIN_TIMEOUT_MS = 30_000;
-const HOLD_MS = 90_000;
+const HOLD_MS = 150_000;
 const UNDRAIN_TIMEOUT_MS = 30_000;
 
 // What this process is running, for deploy.js to compare with the disk.

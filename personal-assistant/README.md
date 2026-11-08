@@ -280,7 +280,7 @@ own code changed. By hand:
 
 ```
 node src/supervisor roll       # start a new worker beside the old, switch once its /healthz is ready, drain the old
-node src/supervisor rollback   # back to the previous generation (kept, drained, for 90 s after a roll)
+node src/supervisor rollback   # back to the previous generation (kept, drained, for 150 s after a roll)
 node src/supervisor status     # which generation serves, the standby, what is in flight
 ```
 
