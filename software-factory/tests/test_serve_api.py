@@ -96,6 +96,59 @@ def test_capture_is_per_thread_and_never_leaks(tmp_path: Path) -> None:
     assert sys.stdout is not None
 
 
+#: One harmless call per served verb (no side effects: refusals, unknown ids,
+#: dry runs) and the JSON key its stdout must carry.
+_EVERY_SERVED_VERB = [
+    (["job", "submit", "--json"], "error"),  # refused: --title missing
+    (["job", "status", "nope:001", "--json", "--no-github"], "error"),
+    (["job", "list", "--json", "--no-github", "--app", "nope"], "jobs"),
+    (["job", "cancel", "nope:001", "--json"], "error"),
+    (["job", "resume", "nope:001", "--json", "--no-github"], "error"),
+    (["job", "report", "nope:r0001", "--json"], "error"),
+    (["job", "dispatch", "--dry-run", "--json"], "started"),
+    (["app", "list", "--json"], "apps"),  # typer.echo: the live empty-stdout bug
+    (["app", "set", "nope-app", "--json"], "error"),
+]
+
+
+@pytest.mark.parametrize(("argv", "key"), _EVERY_SERVED_VERB, ids=lambda v: " ".join(v) if isinstance(v, list) else v)
+def test_every_served_verb_returns_its_json_on_stdout(argv: list[str], key: str) -> None:
+    """Regression (6e96a0d): a served verb answered exit 0 with an EMPTY stdout."""
+    from factory import capture
+
+    capture.install()  # as under serve: the per-thread router is in place
+    res = api.run_cli(argv)
+    assert res["stdout"].strip(), f"{argv}: empty stdout (code {res['code']}, stderr {res['stderr'][:200]!r})"
+    body = json.loads(res["stdout"])  # exactly one JSON object
+    assert key in body
+
+
+def test_submit_and_reads_run_concurrently_each_with_its_own_json() -> None:
+    import threading
+
+    from factory import capture
+
+    capture.install()
+    calls = [argv for argv, _ in _EVERY_SERVED_VERB] * 3
+    outs: list[tuple[list[str], dict[str, Any]]] = []
+    lock = threading.Lock()
+
+    def go(argv: list[str]) -> None:
+        res = api.run_cli(argv)
+        with lock:
+            outs.append((argv, res))
+
+    threads = [threading.Thread(target=go, args=(a,)) for a in calls]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert len(outs) == len(calls)
+    for argv, res in outs:
+        body = json.loads(res["stdout"])  # never empty, never two objects glued together
+        assert isinstance(body, dict), argv
+
+
 def test_router_exposes_nothing_click_could_write_around() -> None:
     """click finds a console via fileno() (Windows) or isatty(), and a binary
     writer via .buffer; any of them lets typer.echo bypass the capture."""

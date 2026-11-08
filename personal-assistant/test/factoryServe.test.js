@@ -49,6 +49,19 @@ function serve(handler) {
   assert.strictEqual(t.code, 124);
   assert.ok(t.timedOut);
 
+  // Exit 0 with an empty stdout (a lost capture): a read is asked again through
+  // the CLI (null); a submit is an error, never re-run.
+  const empty = await serve((req, res) => {
+    req.resume();
+    req.on('end', () => { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ code: 0, stdout: '', stderr: '' })); });
+  });
+  const eurl = `http://127.0.0.1:${empty.address().port}`;
+  assert.strictEqual(await factory.viaServe(['app', 'list', '--json'], 5000, eurl), null);
+  const sub = await factory.viaServe(['job', 'submit', '--json'], 5000, eurl);
+  assert.strictEqual(sub.code, 1);
+  assert.match(sub.stderr, /no output; not retried/);
+  empty.close();
+
   // Disabled: no URL, spawn.
   assert.strictEqual(await factory.viaServe(['job', 'list'], 1000, ''), null);
 

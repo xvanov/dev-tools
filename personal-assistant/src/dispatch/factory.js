@@ -156,7 +156,15 @@ async function viaServe(sub, timeoutMs, url = config.factory.serveUrl) {
   if (res.status !== 200) return null; // verb not served (400) or a guard mismatch (403): use the CLI
   const body = await res.json().catch(() => null);
   if (!body || typeof body.code !== 'number') return null;
-  return { code: body.code, stdout: String(body.stdout || ''), stderr: String(body.stderr || '') };
+  const out = { code: body.code, stdout: String(body.stdout || ''), stderr: String(body.stderr || '') };
+  // A success with no JSON on stdout is not a success (seen live: serve's output
+  // capture lost a verb's stdout). A read-only verb is asked again through the
+  // CLI; a state-changing one may have run, so it is reported, never re-run.
+  if (out.code === 0 && !out.stdout.includes('{')) {
+    if (READ_ONLY.has(sub.slice(0, 2).join(' '))) return null;
+    return { code: 1, stdout: '', stderr: 'factory serve answered exit 0 with no output; not retried: the command may have run' };
+  }
+  return out;
 }
 
 let appsCache = null;
