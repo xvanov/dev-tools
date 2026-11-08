@@ -227,8 +227,9 @@ run mid-step; a job continued on an existing branch (`--branch`).
   Run 1 (work stack, claude_session, draft_pr, 2026-11-08 03:19Z; card #6758, job dev-tools:004):
   card 0.2 s → job started +108.5 s (factory_start itself took 37 s) → first session output
   NOT REACHED after 600 s. Cleanup ran (job cancelled, card dropped). Broken hops:
-  - [ ] **E5.1 Plan's /api/state is down.** It returned 500 `repo.sources.calendarToday is not a function` at
-    3b37fe1; during the run it and /api/commitments/:id exceeded 30 s.
+  - [x] **E5.1 Plan's /api/state is down.** It returned 500 `repo.sources.calendarToday is not a function` at
+    3b37fe1; during the run it and /api/commitments/:id exceeded 30 s. Fixed in 94c4de3: 3b37fe1 was an
+    in-between main where a caller landed before its repo method.
   - [ ] **E5.2 Planning steps are not watchable (E2).** The job's first step (`sm`, runtime api, state ok)
     had `session: null` even though the job runtime is claude_session, so its planning work never
     shows in Run.
