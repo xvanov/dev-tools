@@ -1345,6 +1345,20 @@ _AUTO_RECOVERABLE_STATES: dict[str, str] = {
 }
 
 
+def _recovery_target(story: StoryRecord) -> str | None:
+    """The state a blocked ``story`` re-enters the chain at, or None.
+
+    A docs-chain story has no dev step: SM_DONE dispatches dev, which refuses
+    documentation-only work (story 17, 2026-11-08: parked
+    ``blocked_underspecified``). It re-enters at DOCS_SM_DONE, which re-runs
+    the docs onboarder (or commits the output a failed commit left behind).
+    """
+    target = _AUTO_RECOVERABLE_STATES.get(story.state)
+    if target is not None and (story.chain_kind or "tdd") == "docs":
+        return StoryState.DOCS_SM_DONE.value
+    return target
+
+
 def _human_resumes_only(story: StoryRecord) -> bool:
     """True for a blocked story the recovery pass must leave to a human.
 
@@ -1451,7 +1465,8 @@ def _recover_blocked_stories(db: Path, app: str, *, root: Path) -> list[tuple[st
     """Re-dispatch blocked stories so since-shipped chain fixes reach them.
 
     For each story in an auto-recoverable blocked state, reset it to the
-    re-entry point (SM_DONE → dev) with retry/cycle counters cleared (the
+    re-entry point (SM_DONE → dev; DOCS_SM_DONE → docs_onboarder for a docs
+    story, see ``_recovery_target``) with retry/cycle counters cleared (the
     last reviewer findings are kept — see inline comment) so it flows through the current
     chain from scratch. Bounded to ``_MAX_AUTO_RECOVERIES``
     per story via ``auto_recovery`` events in the per-story log; once exhausted
@@ -1480,7 +1495,7 @@ def _recover_blocked_stories(db: Path, app: str, *, root: Path) -> list[tuple[st
 
     recovered: list[tuple[str, str, str]] = []
     for story in candidates:
-        target = _AUTO_RECOVERABLE_STATES.get(story.state)
+        target = _recovery_target(story)
         if target is None or _human_resumes_only(story):
             continue
 

@@ -66,6 +66,7 @@ Per story:
 | merged, `delivered_*`, dual-draft loser | kept as it is |
 | has a PR | back to the merge gates / CI watch on that PR (no persona re-runs) |
 | dev or SM already ran | back to dev, on its existing branch and worktree |
+| docs chain, its SM ran | back to the docs onboarder; output a failed commit left in the worktree is committed, not re-generated |
 | never started | rebuilt from the SM |
 
 Each story keeps its branch, PR, issue, history and spend. Only the counters that would re-park

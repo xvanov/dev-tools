@@ -109,13 +109,28 @@ from factory.state_dir import state_dir
 # tech_writer model never returned parseable JSON, then burned two full recoveries
 # ($5.96) rediscovering that. Resuming at ``reviewer_done`` re-runs ONLY the step
 # that failed, keeping the approved diff and the reviewer's verdict.
+#
+# ``docs`` is the docs chain's (``chain_kind == "docs"``) only step before the PR:
+# it re-runs the docs onboarder, which commits the output a failed commit left in
+# the worktree instead of paying for a new pass. A docs story has no dev, review
+# or tech-writer step, and a code story no onboarder (``_CHAIN_POINTS``).
 RESUME_POINTS: dict[str, str] = {
     "gates": StoryState.PR_OPEN.value,
     "tech_writer": StoryState.REVIEWER_DONE.value,
     "review": StoryState.TESTS_GREEN.value,
     "dev": StoryState.DEV_RETRY.value,
+    "docs": StoryState.DOCS_SM_DONE.value,
     "sm": StoryState.STORY_CREATED.value,
 }
+
+_CHAIN_POINTS: dict[str, frozenset[str]] = {
+    "docs": frozenset({"gates", "docs", "sm"}),
+    "tdd": frozenset({"gates", "tech_writer", "review", "dev", "sm"}),
+}
+
+
+def _is_docs(story: StoryRecord) -> bool:
+    return (story.chain_kind or "tdd") == "docs"
 
 # Human-readable justification for every counter this module clears, surfaced in
 # the ``story_resumed`` event and in ``--dry-run`` output. Kept as data so the
@@ -239,6 +254,10 @@ def infer_point(story: StoryRecord) -> str:
     * the SM really ran        -> ``dev``    (skip the SM; its story file is on disk)
     * nothing banked           -> ``sm``     (a true rebuild)
 
+    A docs-chain story has no dev: a PR -> ``gates``, its SM ran -> ``docs``,
+    else ``sm`` (which dispatches the docs SM). Story 17 (2026-11-08) went to
+    dev from ``sm_done`` and the dev refused documentation-only work.
+
     ``github_branch`` is deliberately NOT evidence, even though it reads like the
     most obvious signal. It is populated with a PLANNED branch name when the
     story row is spawned, long before anything is built — sacrifice story 182 sat
@@ -251,6 +270,8 @@ def infer_point(story: StoryRecord) -> str:
     """
     if story.github_pr_number:
         return "gates"
+    if _is_docs(story):
+        return "docs" if story.sm_result_json else "sm"
     if _json_len(story.dev_attempts_json) > 0:
         return "dev"
     if story.sm_result_json:
@@ -294,6 +315,13 @@ def plan_resume(
     if point != "auto" and point not in RESUME_POINTS:
         plan.refusals.append(
             f"unknown resume point {point!r}; valid: {', '.join(sorted(RESUME_POINTS))}"
+        )
+        return plan
+    chain = "docs" if _is_docs(story) else "tdd"
+    if chosen not in _CHAIN_POINTS[chain]:
+        plan.refusals.append(
+            f"resume point {chosen!r} is not a step of the {chain} chain; valid: "
+            f"{', '.join(sorted(_CHAIN_POINTS[chain]))}"
         )
         return plan
 
