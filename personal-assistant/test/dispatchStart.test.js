@@ -125,6 +125,7 @@ function makeRepo(name) {
   fs.writeFileSync(cfg, fs.readFileSync(cfg, 'utf8').split(esc(template.url)).join(esc(origin)));
   return { origin, repo };
 }
+const contextCleared = () => store.queries.filter((q) => /update commitment set context = null/.test(q.sql)).map((q) => q.params[0]);
 const sharedPushurls = (repo) => {
   try { return git(repo, 'config', '--local', '--get-all', 'remote.origin.pushurl').trim().split('\n').filter(Boolean); } catch { return []; }
 };
@@ -235,11 +236,16 @@ const sharedPushurls = (repo) => {
     fs.rmSync(path.join(r.worktreePath, 'BRIEF.md'));
     git(r.worktreePath, '-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-q', '--allow-empty', '-m', 'work');
     const row = store.runs.get(r.id);
-    Object.assign(row, { worktree_path: r.worktreePath, branch: r.branch, route: 'claude', machine: os.hostname() });
+    Object.assign(row, { worktree_path: r.worktreePath, branch: r.branch, route: 'claude', machine: os.hostname(), commitment_id: 71 });
+    store.queries.length = 0;
     const landed = await dispatch.land(r.id);
     assert.strictEqual(landed.pushed, true);
+    assert.deepStrictEqual(contextCleared(), [71], 'the card\'s context is written again once its run lands (8.4.23)');
     assert.deepStrictEqual(sharedPushurls(repo), [origin], 'the user\'s pushurl survives a land');
     assert.ok(git(origin, 'branch', '--list', r.branch).includes(r.branch.split('/').pop()), 'the branch reached origin');
+    store.queries.length = 0;
+    await dispatch.drop(r.id, { force: true });
+    assert.deepStrictEqual(contextCleared(), [71], 'and once it is dropped');
   }
 
   // ---- MUST-FIX 2: `gh` is logged out in a no-push session ---------------------------
@@ -357,8 +363,11 @@ const sharedPushurls = (repo) => {
       const spec = hub.created[0];
       expectNoPush(spec, r.id, `${delivery}: no push credentials in the session`);
       assert.ok(fs.existsSync(spec.env.GH_CONFIG_DIR));
+      store.runs.get(r.id).commitment_id = 72;
+      store.queries.length = 0;
       await dispatch.markDone(r.id, 'session ended');
       assert.ok(!fs.existsSync(spec.env.GH_CONFIG_DIR), 'removed when the run ends');
+      assert.deepStrictEqual(contextCleared(), [72], `${delivery}: the card's context is written again once its session ends`);
       assert.strictEqual(git(r.worktreePath, 'remote', 'get-url', '--push', 'origin').trim(), BLOCKED, `${delivery}: push blocked in the worktree`);
     }
     hub.created.length = 0;
@@ -386,8 +395,11 @@ const sharedPushurls = (repo) => {
     assert.strictEqual(git(origin, 'rev-parse', 'main').trim(), mainBefore, 'main untouched before CI');
     // Step two, after CI: main fast-forwarded to exactly the checked commit.
     git(r.worktreePath, '-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-q', '--allow-empty', '-m', 'after CI ran');
+    row.commitment_id = 73;
+    store.queries.length = 0;
     await dispatch.pushToMain(r.id, { sha: pushed.sha });
     assert.strictEqual(git(origin, 'rev-parse', 'main').trim(), pushed.sha, 'the checked commit, not a later one');
+    assert.deepStrictEqual(contextCleared(), [73], 'and once it reaches main');
     // A main that moved on refuses: no force.
     const other = path.join(tmp, 'other-clone');
     git(tmp, 'clone', '-q', origin, other);

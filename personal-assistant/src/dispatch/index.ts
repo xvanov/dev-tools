@@ -636,6 +636,12 @@ async function get(runId: RunId): Promise<Run | null> {
   return repository.runs.byId(runId);
 }
 
+// The card's context paragraph names its runs' status and is rewritten only
+// when its thread moves, so a run that ends forgets it (8.4.23).
+async function forgetContext(run: Run | null): Promise<void> {
+  if (run?.commitment_id) await repository.commitments.clearContext(run.commitment_id).catch(() => {});
+}
+
 async function list({ all = false, limit = 20 }: { all?: boolean; limit?: number } = {}): Promise<Run[]> {
   return repository.runs.recent(all, limit);
 }
@@ -741,6 +747,7 @@ async function land(runId: RunId, { openMr = null }: { openMr?: boolean | null }
   if (run.commitment_id) {
     await ledger.transition({ commitmentId: run.commitment_id, to: 'done', actor: 'dispatch', reason: `run #${runId} landed${mrUrl ? `: ${mrUrl}` : ''}` });
   }
+  await forgetContext(run);
 
   return { pushed: true, branch: run.branch, mrUrl };
 }
@@ -799,6 +806,7 @@ async function pushToMain(runId: RunId, { sha, note = null }: { sha?: string; no
   if (run.commitment_id) {
     await ledger.transition({ commitmentId: run.commitment_id, to: 'done', actor: 'dispatch', reason: `run #${runId} pushed to ${base}`, from: ['open', 'dispatched'] });
   }
+  await forgetContext(run);
   return { pushed: true, base };
 }
 
@@ -879,8 +887,8 @@ async function drop(runId: RunId, { force = false }: { force?: boolean } = {}): 
     await repository.runs.markFactoryDropped(runId);
     if (run.commitment_id) {
       await ledger.transition({ commitmentId: run.commitment_id, to: 'open', actor: 'dispatch', reason: `run #${runId} dropped`, from: ['dispatched'] });
-      await repository.commitments.clearContext(run.commitment_id).catch(() => {});
     }
+    await forgetContext(run);
     return { factory: true, cancelled, storiesParked, jobId: run.factory_job_id };
   }
 
@@ -905,6 +913,7 @@ async function drop(runId: RunId, { force = false }: { force?: boolean } = {}): 
     if (run.commitment_id) {
       await ledger.transition({ commitmentId: run.commitment_id, to: 'open', actor: 'dispatch', reason: `run #${runId} dropped`, from: ['dispatched'] });
     }
+    await forgetContext(run);
     return { remote: true, removed, worktree: run.worktree_path, machine: run.machine };
   }
 
@@ -933,6 +942,7 @@ async function drop(runId: RunId, { force = false }: { force?: boolean } = {}): 
   if (run.commitment_id) {
     await ledger.transition({ commitmentId: run.commitment_id, to: 'open', actor: 'dispatch', reason: `run #${runId} dropped`, from: ['dispatched'] });
   }
+  await forgetContext(run);
   return true;
 }
 
@@ -941,6 +951,7 @@ async function drop(runId: RunId, { force = false }: { force?: boolean } = {}): 
 async function markDone(runId: RunId, note?: string | null): Promise<void> {
   require('./remote.ts').removeNoGhDirs(runId);
   await repository.runs.markDone(runId, note || null);
+  await forgetContext(await get(runId).catch(() => null));
   // Wakes its run_review task (src/durable/tasks/runReview.ts).
   await require('../durable').emit(`run-ended:${runId}`, { note: note || null }).catch(() => {});
 }

@@ -1093,6 +1093,9 @@ not in the Map is not done, and a new one gets added there first.
     paragraph is never rewritten once the card closes, so it is cleared (`clearContext`) when a
     run lands or is dropped; an open card gets a new one on the next context pass. Unit- and
     contract-tested; not run live. (5c9defa)
+    Follow-up: a Claude-session run (the PA's `claude` route) had the same stale paragraph: `pa
+    land`, `push_to_main`, a drop and a session that ended moved the card or the run and kept it.
+    Each now clears it too (`dispatch.forgetContext`); no SQL changed.
   - [ ] **8.4.24 review-fix: the personal factory never ticks `sacrifice`, and nothing says so.**
     `sacrifice:131` (PR #418) was accepted and sat `queued` ("waiting for pm-sync on the next
     factory tick") for 340 s until cancelled. Serve's interval ticks ran dev-tools, factory and
