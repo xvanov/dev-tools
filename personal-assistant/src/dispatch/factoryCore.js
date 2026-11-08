@@ -66,8 +66,9 @@ function factoryArgv(sub, uv = 'uv') {
 }
 
 // A path or a bare program name. The walk-in session types it into a shell,
-// so it may hold nothing a shell reads.
-const UV = /^[A-Za-z0-9_./~-]+$/;
+// so it may hold nothing a shell reads. A Windows path (`C:\…\uv.exe`) is
+// allowed: a drive prefix and backslashes, still no spaces or shell syntax.
+const UV = /^(?:[A-Za-z]:)?[A-Za-z0-9_./~\\-]+$/;
 function uvBinary(uv) {
   const v = String(uv || 'uv').trim();
   if (!UV.test(v)) throw new Error(`PA_FACTORY_UV "${v}" — want a path or a program name`);

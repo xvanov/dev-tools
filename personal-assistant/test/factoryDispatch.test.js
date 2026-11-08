@@ -436,6 +436,14 @@ async function factoryStart() {
     };
     const remote = await factory.start({ target, app: 'widget', mode: 'mr', done: ['retries tested'] });
     config.factory.machine = '';
+    // Empty, `local` (any case) or this host's name: this machine, run locally
+    // (no termhub /api/exec). An unknown name is refused, never run "here".
+    const ms = { forge: { name: 'forge' } };
+    for (const local of ['', '  ', 'local', 'LOCAL', 'myhost', 'MyHost']) {
+      assert.strictEqual(factory.factoryMachine(local, ms, 'myhost'), null, `"${local}" is this machine`);
+    }
+    assert.strictEqual(factory.factoryMachine('forge', ms, 'myhost'), 'forge');
+    assert.throws(() => factory.factoryMachine('elsewhere', ms, 'myhost'), /not in PA_MACHINES/);
     assert.deepStrictEqual(calls.map((c) => c.machine), ['forge', 'forge', 'forge'], 'stage, submit, clean up');
     assert.ok(!calls[0].argv.some((a) => /Add retries to the export/.test(a)), 'contents never on a command line');
     assert.ok(!calls[0].argv.some((a) => a.length > 2000 && /^[A-Za-z0-9+/=]+$/.test(a)), 'not base64 on argv either');
@@ -452,7 +460,8 @@ async function factoryStart() {
     const big = 'x'.repeat(300 * 1024);
     const bigOut = JSON.parse(py(['uv', 'run', 'python', '-c', calls[0].argv[4]], { stdin: JSON.stringify({ run: 9, files: { 'BRIEF.md': big } }) }).stdout);
     assert.strictEqual(fs.readFileSync(bigOut.paths['BRIEF.md'], 'utf8').length, big.length);
-    // O_EXCL|O_NOFOLLOW: a planted symlink is never written through.
+    // O_EXCL|O_NOFOLLOW: a planted symlink is never written through. (POSIX
+    // only: Windows has no O_NOFOLLOW and needs Developer Mode to symlink.)
     const victim = path.join(otherTmp, 'victim');
     fs.writeFileSync(victim, 'keep');
     const link = path.join(bigOut.dir, 'flow.md');

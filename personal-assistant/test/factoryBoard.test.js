@@ -47,6 +47,10 @@ assert.throws(() => F.runtime('gpu'), /unknown runtime/);
 assert.deepStrictEqual(F.factoryArgv(['job', 'list', '--json'], '/home/tester/.local/bin/uv').slice(0, 3), ['/home/tester/.local/bin/uv', 'run', 'factory']);
 assert.throws(() => F.factoryArgv(['x'], 'uv; rm -rf ~'), /PA_FACTORY_UV/, 'typed into a shell by the walk-in: no shell syntax');
 assert.strictEqual(F.followCommand('widget:017', '/opt/uv'), '/opt/uv run factory job follow widget:017');
+// A native Windows factory: a drive-letter path to uv.exe is a path, not syntax.
+assert.strictEqual(F.uvBinary('C:\\Users\\tester\\.local\\bin\\uv.exe'), 'C:\\Users\\tester\\.local\\bin\\uv.exe');
+assert.throws(() => F.uvBinary('C:\\Program Files\\uv.exe'), /PA_FACTORY_UV/, 'no spaces: the walk-in types it into a shell');
+assert.throws(() => F.uvBinary('uv & calc'), /PA_FACTORY_UV/);
 
 // --- the v1.2 submit command line ---------------------------------------------------
 

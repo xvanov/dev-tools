@@ -81,14 +81,22 @@ function enabled() {
 
 /**
  * The factory's machine as runCommand and termhub want it: null for this one,
- * else a PA_MACHINES name. A name that is not in PA_MACHINES would silently be
- * treated as "here" by termhub, so it is refused instead.
+ * else a PA_MACHINES name. Empty, `local` or this machine's hostname mean this
+ * machine: commands run here through child_process (no termhub /api/exec) and
+ * walk-in sessions open on the local termhub. A name that is not in
+ * PA_MACHINES would silently be treated as "here" by termhub, so it is refused
+ * instead.
  */
 function machine() {
-  const name = String(config.factory.machine || '').trim();
-  if (!name || name === os.hostname()) return null;
-  if (!config.termhub.machines[name]) {
-    throw new Error(`PA_FACTORY_MACHINE "${name}" is not in PA_MACHINES — add it there (its termhub URL) or leave it empty for this machine`);
+  return factoryMachine(config.factory.machine, config.termhub.machines);
+}
+
+/** Pure core of machine(); exported for tests. */
+function factoryMachine(raw, machines, hostname = os.hostname()) {
+  const name = String(raw || '').trim();
+  if (!name || name.toLowerCase() === 'local' || name.toLowerCase() === String(hostname).toLowerCase()) return null;
+  if (!machines[name]) {
+    throw new Error(`PA_FACTORY_MACHINE "${name}" is not in PA_MACHINES — add it there (its termhub URL), or leave it empty (or "local") for this machine`);
   }
   return name;
 }
@@ -952,7 +960,7 @@ async function sweepUnsettled() {
 }
 
 module.exports = {
-  enabled, machine, call, apps, addApp, installId, start, settle, sweepUnsettled, status, cancel, apply, poll, runCommand, modelsFor, _setRunner,
+  enabled, machine, factoryMachine, call, apps, addApp, installId, start, settle, sweepUnsettled, status, cancel, apply, poll, runCommand, modelsFor, _setRunner,
   submit, withoutV12, openFollow, refreshBoard, snapshot, snapshotJob, report, cancelJob, approve, resume, recordChain, chains,
   pushed, pushedPatches,
 };
