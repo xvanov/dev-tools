@@ -129,6 +129,7 @@ const HELP = `pa — your context layer
     pa spend [--days N]             model spend per day and per pass (default 7 days)
     pa eval seed|list|add|drop|run  retrieval eval harness (pa eval for details)
     pa eval router [--fit]          voice fast lane router: accuracy and latency on its eval set
+    pa eval answerer                voice fast lane answerer: right day, every meeting, titles as titles
     pa e2e [--dry-run|--sweep]      the golden path end to end on the live stack, timed per hop (pa help e2e)
     pa audit verify|tail|check      the policy audit log: verify its hash chain, show the newest rows, or dry-run a decision (pa help audit)
 `;
@@ -1213,6 +1214,17 @@ const commands: Json = {
       E.report(s, { cal: R.CALIBRATION, threshold: F.answerThreshold(), guard: F.looksLikeAction, fit: flagBool(flags, 'fit'), misses: flagBool(flags, 'misses'), out });
       return;
     }
+    // And its answerer: is what it says true to the snapshot (src/eval/answerer-cases.json)?
+    if (action === 'answerer') {
+      const E = require('../eval/answerer.ts');
+      const model = flags.model && flags.model !== true ? String(flags.model) : config.fastLane.model;
+      const repeat = flagInt(flags, 'repeat', 2);
+      out(`answering ${E.loadCases().cases.length} cases on ${model}, ${repeat}x each ...`);
+      const rows = await E.runCases({ model, keepAlive: config.fastLane.keepAlive, repeat });
+      const r = E.report(rows, { out, verbose: flagBool(flags, 'v') || flagBool(flags, 'verbose') });
+      if (r.ok < r.n) process.exitCode = 1;
+      return;
+    }
 
     const ev = require('../eval');
 
@@ -1296,6 +1308,7 @@ const commands: Json = {
     pa eval add "<question>" --gold 1,2 [--answer "..."]   log a miss by hand
     pa eval run [--retriever search] [--k 10] [--threshold x] [--judge] [--misses]
     pa eval router [--repeat 3] [--fit] [--misses] [--model local/x]   the voice fast lane's router: accuracy, latency
+    pa eval answerer [--repeat 2] [-v] [--model local/x]   its answerer: right day, every meeting, titles as titles
   retrievers: ${ev.retrievers.names().join(', ')}`);
   },
 

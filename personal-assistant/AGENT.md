@@ -164,8 +164,10 @@ Since 0.6 (D7) the default router is `logprob` (`src/chat/fastRouter.js`): decid
 router returns calibrated probabilities from one token's log-probabilities and never words, and the
 answerer only speaks above `PA_FAST_ANSWER_THRESHOLD`. Changing its prompt or model invalidates
 the calibration: re-run `pa eval router --fit`, paste the printed constants into `fastRouter.js`,
-and keep "no action answered here" at 0. The eval set (`src/eval/router-cases.json`) is public:
-people and companies in it are placeholders only.
+and keep "no action answered here" at 0. Changing the answerer's prompt (`ANSWER_RULES`) or the
+snapshot's format: run `pa eval answerer` and `pa eval router`. The eval sets
+(`src/eval/router-cases.json`, `src/eval/answerer-cases.json`) are public: people, companies and
+meeting titles in them are placeholders only.
 
 **The voice page hears the room; nothing it hears leaves the browser until a request is made.** The
 wake word ("hey jarvis", openWakeWord) and Silero VAD run in the page on onnxruntime-web

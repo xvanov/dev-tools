@@ -153,6 +153,44 @@ function splitAll(pieces) {
   assert.match(down, /unreachable/);
 }
 
+// The calendar window is now - 2 h .. now + 24 h: on a Sunday afternoon every
+// row can be Monday's. Each day has its own heading, and today's says when
+// nothing is left (docs/native/acceptance/whats-on.md, 8.4.1). Local time.
+{
+  const now = new Date(2026, 10, 8, 14, 53).getTime();
+  const at = (d, h, m = 0) => new Date(2026, 10, d, h, m).toISOString();
+  const data = (meetings) => ({ commitments: [], meetings, runsActive: [], runsReview: [] });
+  const monday = [
+    { subject: 'Early sync', occurred_at: at(9, 4), raw: { isCancelled: true } },
+    { subject: 'Vendor review', occurred_at: at(9, 10) },
+    { subject: 'Team standup', occurred_at: at(9, 11) },
+    { subject: 'Planning', occurred_at: at(9, 11, 30) },
+  ];
+  const text = F.formatSnapshot(data(monday), { now });
+  assert.match(text, /Meetings today \(Sunday 8 November\): none left today\./);
+  assert.match(text, /Meetings tomorrow \(Monday 9 November\) until 14:53 \(later ones are not in this snapshot\), 3: /);
+  const tomorrow = text.slice(text.indexOf('Meetings tomorrow')).split('\n')[0];
+  for (const t of ['10:00 "Vendor review"', '11:00 "Team standup"', '11:30 "Planning"', 'Cancelled: 04:00 "Early sync".']) assert.ok(tomorrow.includes(t), `${t} under tomorrow:\n${text}`);
+  // A meeting later today, and one that started half an hour ago.
+  const both = F.formatSnapshot(data([{ subject: 'Retro', occurred_at: at(8, 14, 30) }, { subject: 'Wrap-up', occurred_at: at(8, 17) }, ...monday]), { now });
+  const todayBlock = both.slice(both.indexOf('Meetings today'), both.indexOf('Meetings tomorrow'));
+  assert.match(todayBlock, /14:30 "Retro" \(started\)/);
+  assert.match(todayBlock, /17:00 "Wrap-up"/);
+  assert.ok(!todayBlock.includes('Team standup'), both);
+  // Nothing tomorrow either: said, so "nothing tomorrow morning" is not a guess.
+  const quiet = F.formatSnapshot(data([{ subject: 'Wrap-up', occurred_at: at(8, 17) }]), { now });
+  assert.match(quiet, /Meetings tomorrow \(Monday 9 November\) until 14:53: none\./);
+  assert.match(F.formatSnapshot(data([]), { now }), /none in the assistant's calendar data/);
+}
+{
+  const { dayOf } = require('../src/util/when.ts');
+  const now = new Date(2026, 10, 8, 23, 59);
+  assert.deepStrictEqual(dayOf(new Date(2026, 10, 9, 0, 1), now), { offset: 1, word: 'tomorrow', date: 'Monday 9 November' });
+  assert.strictEqual(dayOf(new Date(2026, 10, 8, 0, 0), now).word, 'today');
+  assert.strictEqual(dayOf(new Date(2026, 10, 10, 9), now).word, 'Tuesday');
+  assert.strictEqual(dayOf(new Date(2026, 10, 7, 22), now).word, 'yesterday');
+}
+
 // ---- history, and what is handed off -----------------------------------------------
 {
   const chat = [

@@ -433,9 +433,22 @@ ${ROUTE_RULES}
 Reply with one JSON object and nothing else: {"route": "answer" | "handoff" | "both", "task": "...", "reason": "a few words", "say": "optional: for handoff, the short acknowledgement"}`;
 }
 
+// How the answerer speaks a day. A 3B model given bare times spoke Monday's
+// meetings as Sunday's, called a meeting's title the people it is "with", and
+// dropped one of four (docs/native/acceptance/whats-on.md, 8.4.1-8.4.2). The
+// short opening sentence is for the voice: speech starts once the first
+// sentence is complete, so a 20-word one costs half a second before a sound.
+const ANSWER_RULES = `Answer the user fully, in one to four short spoken sentences. Never a list, never the snapshot's lines copied out.
+Your first sentence is at most six words and ends with a full stop, so it can be spoken at once: "Three meetings today." "Nothing left today." "Two asks are overdue." "You're welcome." Then the details.
+Meetings:
+- The quoted text after a meeting's time is its title. Say it as a title: "Team standup at 11:00", "the Vendor review at 10:00". Never say who a meeting is with: the snapshot has no attendees, and a title is not a person or a team.
+- Today's meetings are only those under "Meetings today"; tomorrow's only those under "Meetings tomorrow". Never call tomorrow's meetings today's.
+- Asked what is on a day, name every meeting listed under that day with its time, and leave none out. Say a cancelled one is cancelled.
+- If "Meetings today" says none are left, say that plainly first; then you may name tomorrow's first meeting, saying it is tomorrow.`;
+
 function replySystem(decision: any) {
   const what = ({
-    answer: 'Answer the user fully, in one to three short sentences.',
+    answer: ANSWER_RULES,
     handoff: 'Say only a short acknowledgement of what will happen next, under 12 words (the main session is taking it: ' + JSON.stringify(decision.task || '') + ').',
     both: 'Say the part you can answer from the snapshot in at most two sentences, then that you are checking the rest (the main session is taking: ' + JSON.stringify(decision.task || '') + ').',
   } as Record<string, string>)[decision.route];
@@ -489,16 +502,7 @@ function formatSnapshot(data: any, { now = Date.now(), waiting = null, me = '', 
   const item = (c: any) => `${clip(c.summary, 90)}${c.who ? ` (${clip(c.who, 30)})` : ''}${c.due_at ? `, due ${new Date(c.due_at).toISOString().slice(0, 10)}` : ''}`;
   const top = [...b.overdue.slice(0, 3).map((c: any) => 'overdue: ' + item(c)), ...b.due.slice(0, 3).map((c: any) => 'due: ' + item(c))];
   if (top.length) lines.push('Most pressing:\n' + top.map((s) => '- ' + s).join('\n'));
-  const meetings = ((data && data.meetings) || []).filter((m: any) => new Date(m.occurred_at).getTime() > now - 3600_000);
-  if (meetings.length) {
-    lines.push(
-      'Meetings (next 24h):\n' +
-        meetings
-          .slice(0, 5)
-          .map((m: any) => `- ${new Date(m.occurred_at).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })} ${clip(m.subject, 70)}`)
-          .join('\n')
-    );
-  } else lines.push("Meetings (next 24h): none in the assistant's calendar data.");
+  lines.push(...meetingLines((data && data.meetings) || [], now));
   const runs = (data && data.runsActive) || [];
   const review = (data && data.runsReview) || [];
   if (runs.length || review.length) {
@@ -506,6 +510,51 @@ function formatSnapshot(data: any, { now = Date.now(), waiting = null, me = '', 
   }
   if (waiting) lines.push(`Also waiting: ${waiting.drafts} reply drafts to send, ${waiting.review} memory items to review.`);
   return lines.join('\n');
+}
+
+// The calendar rows are a rolling window (now - 2 h .. now + 24 h), so in the
+// afternoon most of them are tomorrow's. Each day gets its own heading, and
+// today's is always there: with only bare times, a 3B model spoke Monday's
+// meetings as Sunday's (docs/native/acceptance/whats-on.md). Titles are
+// quoted: they are names of meetings, not people to meet.
+const MEETINGS_PER_DAY = 6;
+function meetingLines(rows: any[], now: number) {
+  const { dayOf } = require('../util/when.ts');
+  const hhmm = (t: number) => new Date(t).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+  const today = dayOf(now, now);
+  type Day = { day: { word: string; date: string }; items: string[]; cancelled: string[]; more: number };
+  const days = new Map<number, Day>();
+  for (const m of rows) {
+    const t = new Date(m.occurred_at).getTime();
+    if (!Number.isFinite(t) || t <= now - 3600_000) continue;
+    const day = dayOf(t, now);
+    if (day.offset < 0) continue;
+    if (!days.has(day.offset)) days.set(day.offset, { day, items: [], cancelled: [], more: 0 });
+    const g = days.get(day.offset)!;
+    const title = `${hhmm(t)} "${clip(String(m.subject || '').replace(/^\s*cancell?ed:\s*/i, ''), 70)}"`;
+    if (m.raw?.isCancelled) g.cancelled.push(title);
+    else if (g.items.length >= MEETINGS_PER_DAY) g.more++;
+    else g.items.push(`${title}${t <= now ? ' (started)' : ''}`);
+  }
+  if (!rows.length) return [`Meetings today and tomorrow: none in the assistant's calendar data.`];
+  // One line per day, not a bulleted list: a small model copies a list out
+  // line by line, and a voice cannot speak one. Cancelled ones apart, so
+  // "every meeting" does not count them.
+  const line = (g: Day | undefined, head: string, none: string) => {
+    const n = g ? g.items.length + g.more : 0;
+    const list = n ? `${head}, ${n}: ${g!.items.join('; ')}${g!.more ? `; and ${g!.more} more` : ''}.` : `${head}: ${none}`;
+    return `${list}${g?.cancelled.length ? ` Cancelled: ${g.cancelled.join('; ')}.` : ''}`;
+  };
+  const out = [line(days.get(0), `Meetings today (${today.date})`, 'none left today.')];
+  // The window ends 24 h from now: tomorrow is only known up to this time.
+  const tomorrow = dayOf(now + 86400_000, now);
+  if (!days.has(tomorrow.offset)) out.push(line(undefined, `Meetings tomorrow (${tomorrow.date}) until ${hhmm(now)}`, 'none.'));
+  for (const [offset, g] of [...days.entries()].sort((a, b) => a[0] - b[0])) {
+    if (offset === 0) continue;
+    const head = g.day.word === 'tomorrow' ? `Meetings tomorrow (${g.day.date})` : `Meetings on ${g.day.date}`;
+    out.push(line(g, `${head} until ${hhmm(now)} (later ones are not in this snapshot)`, 'none.'));
+  }
+  return out;
 }
 
 async function buildSnapshot() {

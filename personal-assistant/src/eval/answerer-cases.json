@@ -1,0 +1,50 @@
+{
+  "about": "Eval set for the voice fast lane's answerer (docs/native/PLAN.md 8.4.1-8.4.2): what it says once the router lets it answer. Every name and title is a placeholder. Each case builds its snapshot with the real formatSnapshot from `now` (local time) and `meetings` (minutes from midnight of `now`'s day: 600 = 10:00 today, 1440 + 600 = 10:00 tomorrow). Checks: `times` must all be spoken (any of `anyTimes`), `notToday` times may only be spoken with the word tomorrow (or the weekday), `empty` = it must say nothing is left, `noTimes` = no clock time at all, and no title may be turned into who the meeting is with.",
+  "cases": [
+    {
+      "id": "sunday-afternoon-today",
+      "note": "the reviewer's case: Sunday 14:53, nothing left today, four meetings on Monday",
+      "now": "2026-11-08T14:53:00",
+      "meetings": [[1680, "Canceled: Early sync", true], [2040, "Vendor review"], [2100, "Team standup"], [2130, "Planning"]],
+      "text": "What's on today?",
+      "empty": true,
+      "notToday": ["04:00", "10:00", "11:00", "11:30"]
+    },
+    {
+      "id": "sunday-afternoon-tomorrow",
+      "now": "2026-11-08T14:53:00",
+      "meetings": [[1680, "Canceled: Early sync", true], [2040, "Vendor review"], [2100, "Team standup"], [2130, "Planning"]],
+      "text": "What's on tomorrow?",
+      "times": ["10:00", "11:00", "11:30"]
+    },
+    {
+      "id": "monday-morning-today",
+      "now": "2026-11-09T08:10:00",
+      "meetings": [[600, "Vendor review"], [660, "Team standup"], [690, "Planning"], [900, "Design crit"]],
+      "text": "What's on today?",
+      "times": ["10:00", "11:00", "11:30", "15:00"]
+    },
+    {
+      "id": "evening-one-left",
+      "now": "2026-11-10T16:20:00",
+      "meetings": [[1020, "Wrap-up"], [2010, "Team standup"], [2100, "Platform sync"]],
+      "text": "Anything left on my calendar today?",
+      "times": ["17:00"],
+      "notToday": ["09:30", "11:00"]
+    },
+    {
+      "id": "first-tomorrow",
+      "now": "2026-11-10T19:05:00",
+      "meetings": [[2010, "Team standup"], [2100, "Platform sync"]],
+      "text": "What's my first meeting tomorrow?",
+      "anyTimes": ["09:30"]
+    },
+    {
+      "id": "small-talk",
+      "now": "2026-11-09T08:10:00",
+      "meetings": [[600, "Vendor review"], [660, "Team standup"]],
+      "text": "Thanks, that's helpful.",
+      "noTimes": true
+    }
+  ]
+}

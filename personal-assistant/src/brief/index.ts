@@ -104,10 +104,22 @@ function formatBrief(data: any, { now = Date.now() }: { now?: any } = {}) {
     );
   }
 
-  section('TODAY', data.meetings, (m: any) => {
-    const attendees = (m.raw?.attendees || []).length;
-    return `  ${timeOf(m.occurred_at)}  ${m.subject}${attendees ? `  (${attendees} people)` : ''}`;
-  });
+  // The calendar rows are a rolling window (now - 2 h .. now + 24 h): in the
+  // afternoon most are tomorrow's, so each local day gets its own heading.
+  const { dayOf } = require('../util/when.ts');
+  const byDay = new Map<number, { title: string; items: any[] }>();
+  for (const m of data.meetings || []) {
+    const d = dayOf(m.occurred_at, now);
+    const title = d.offset === 0 ? 'TODAY' : d.offset === 1 ? 'TOMORROW' : d.offset === -1 ? 'YESTERDAY' : d.date.toUpperCase();
+    if (!byDay.has(d.offset)) byDay.set(d.offset, { title, items: [] });
+    byDay.get(d.offset)!.items.push(m);
+  }
+  for (const [, g] of [...byDay.entries()].sort((a, b) => a[0] - b[0])) {
+    section(g.title, g.items, (m: any) => {
+      const attendees = (m.raw?.attendees || []).length;
+      return `  ${timeOf(m.occurred_at)}  ${m.subject}${attendees ? `  (${attendees} people)` : ''}${m.raw?.isCancelled ? '  [cancelled]' : ''}`;
+    });
+  }
 
   const openMrs = data.reviews.filter((r: any) => r.raw?.state === 'opened' || r.raw?.action);
   section('CODE & BOARDS', openMrs.slice(0, 8), (r: any) =>

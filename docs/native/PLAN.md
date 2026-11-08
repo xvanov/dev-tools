@@ -869,16 +869,22 @@ not in the Map is not done, and a new one gets added there first.
   workflow.
 - [ ] **8.4 Fix loop.** Every failed criterion becomes an item here; fixed by an implementing
   session; the reviewer re-runs. The Map shows each workflow's latest verdict and date.
-  - [ ] **8.4.1 whats-on: tomorrow's meetings are spoken as "today".** `calendarToday()` is a
+  - [x] **8.4.1 whats-on: tomorrow's meetings are spoken as "today".** `calendarToday()` is a
     rolling now−2 h..now+24 h window. The fast-lane snapshot lists it as "Meetings (next 24h)" with a
     bare HH:MM, so on Sunday afternoon Monday's 10:00 and 11:00 come out as "today" (and `pa brief`
     prints the same rows under TODAY). Put the local day on each meeting, or split them into Today
     and Tomorrow, in both the snapshot and the brief. Add a router-eval case for an evening "what's on
     today?" ([acceptance/whats-on.md](acceptance/whats-on.md)).
-  - [ ] **8.4.2 whats-on: the answer turns meeting titles into attendees and drops a meeting.** "a
+    The snapshot now has one line per local day ("Meetings today (Sunday 8 November): none left
+    today.", then tomorrow's up to this time, cancelled ones apart, titles quoted); `pa brief` prints
+    TODAY and TOMORROW. On the live work stack's Sunday data the turn now says "There are no
+    meetings today." Router eval: two evening cases added, both answered; 0 actions answered here.
+  - [x] **8.4.2 whats-on: the answer turns meeting titles into attendees and drops a meeting.** "a
     meeting at 10:00 with <title>", "a standup at 11:00 with <team>": the snapshot has titles, not
     attendees, and the 11:30 meeting is left out. 13 of 13 turns gave this same answer. Tell the
     answerer to quote titles as titles and to give every meeting (or the count). Add eval cases.
+    `ANSWER_RULES` in fastLane.ts, and `pa eval answerer` (6 placeholder day snapshots built by the
+    real formatter): 2 of 6 pass on the old prompt and snapshot, 6 of 6 now.
   - [ ] **8.4.3 whats-on: the fast lane takes 728 ms to the first sentence (target 200).** Median
     of 10 turns, range 626-843 ms. Router 75 ms, first token 219 ms. The answer is one 20-word
     sentence, so sentence-by-sentence TTS cannot start until it ends. Lead with a short clause (for

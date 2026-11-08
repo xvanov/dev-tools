@@ -152,4 +152,25 @@ function parseWhen(text: string | null | undefined, now: Date | number | string 
   return null;
 }
 
-module.exports = { parseWhen, timeOf };
+interface Day {
+  /** Local calendar days from `now`'s: 0 today, 1 tomorrow, -1 yesterday. */
+  offset: number;
+  /** "today", "tomorrow", "yesterday", else the weekday ("Tuesday"). */
+  word: string;
+  /** "Monday 9 November". */
+  date: string;
+}
+
+/** Which local day `t` falls on, seen from `now`. A rolling window ("the next 24 h") spans two of them. */
+function dayOf(t: Date | number | string, now: Date | number | string = new Date()): Day {
+  const a = new Date(t);
+  const n = new Date(now);
+  const da = new Date(a.getFullYear(), a.getMonth(), a.getDate());
+  const dn = new Date(n.getFullYear(), n.getMonth(), n.getDate());
+  const offset = Math.round((+da - +dn) / UNIT_MS.d); // round: a DST day is 23 or 25 h
+  const weekday = da.toLocaleDateString('en-GB', { weekday: 'long' });
+  const word = offset === 0 ? 'today' : offset === 1 ? 'tomorrow' : offset === -1 ? 'yesterday' : weekday;
+  return { offset, word, date: da.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' }) };
+}
+
+module.exports = { parseWhen, timeOf, dayOf };

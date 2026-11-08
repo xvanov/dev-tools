@@ -200,6 +200,43 @@ assert.ok(P.gradePrompt([{ i: 0, question: 'q', reference: null, answer: 'UNKNOW
   assert.strictEqual(e.answeredActionRouter.length, 1);
   assert.strictEqual(E.quantile([5, 1, 3], 0.5), 3);
 
+  // ---- the fast-lane answerer (`pa eval answerer`, src/eval/answerer.ts). The model is mocked.
+  const A = require('../src/eval/answerer.ts');
+  const aset = A.loadCases();
+  assert.ok(aset.cases.length >= 6);
+  const byId = Object.fromEntries(aset.cases.map((c) => [c.id, c]));
+  for (const c of aset.cases) {
+    assert.ok(Array.isArray(c.meetings) && c.text, c.id);
+    for (const [, subject] of c.meetings) assert.ok(!/\b(?:with|for) [A-Z][a-z]+\b/.test(subject), `a name in a title? ${subject}`);
+  }
+  // Its snapshot is the real one: Sunday afternoon, nothing left today, Monday's four.
+  const snap = A.caseSnapshot(byId['sunday-afternoon-today']).context;
+  assert.match(snap, /Meetings today \(Sunday 8 November\): none left today\./);
+  assert.match(snap, /Meetings tomorrow \(Monday 9 November\)/);
+  assert.deepStrictEqual([...A.spokenTimes('At 10:00, then 11 am, 3pm and 11:30 a.m.; two of them')].sort(), ['10:00', '11:00', '11:30', '15:00']);
+  // The answer the reviewer heard 13 times fails for all three reasons.
+  const heard = 'You have a meeting at 10:00 with Vendor review, and you also have a standup at 11:00 with the Team.';
+  const fails = A.checkAnswer(byId['sunday-afternoon-today'], heard);
+  assert.ok(fails.some((f) => /as today's/.test(f)), fails.join('; '));
+  assert.ok(fails.some((f) => /nothing is left/.test(f)), fails.join('; '));
+  assert.ok(fails.some((f) => /into who it is with/.test(f)), fails.join('; '));
+  assert.ok(A.checkAnswer(byId['sunday-afternoon-tomorrow'], 'Three meetings tomorrow. Vendor review at 10:00 and Team standup at 11:00.').some((f) => /11:30/.test(f)), 'a dropped meeting is caught');
+  assert.deepStrictEqual(A.checkAnswer(byId['sunday-afternoon-today'], 'Nothing left today. Tomorrow starts with Vendor review at 10:00.'), []);
+  assert.deepStrictEqual(A.checkAnswer(byId['sunday-afternoon-tomorrow'], 'Four tomorrow. The early sync at 4:00 is cancelled; then Vendor review at 10:00, Team standup at 11:00 and Planning at 11:30.'), []);
+  assert.strictEqual(A.openerWords('Nothing left today. Tomorrow at 10.'), 3);
+  const answers = { "What's on today?": 'Nothing left today. Tomorrow starts at 10:00.' };
+  const fakeStream = async function* ({ prompt }) {
+    const text = /The user just said: "(.*)"/.exec(prompt)[1].replace(/\\"/g, '"');
+    for (const w of (answers[text] || "You're welcome.").split(/(?<= )/)) yield w;
+  };
+  const rows = await A.runCases({ model: 'local/m', repeat: 1, stream: fakeStream });
+  assert.strictEqual(rows.length, aset.cases.length);
+  const alines = [];
+  A.report(rows, { out: (l) => alines.push(l) });
+  assert.ok(/answerer eval · \d+ answers/.test(alines[0]));
+  assert.ok(rows.find((r) => r.id === 'sunday-afternoon-today').fails.length === 0);
+  assert.ok(rows.find((r) => r.id === 'monday-morning-today').fails.length > 0, 'a wrong answer fails');
+
   console.log('eval ok');
 })().catch((err) => {
   console.error(err);

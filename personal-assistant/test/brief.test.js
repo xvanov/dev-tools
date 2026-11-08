@@ -63,6 +63,34 @@ const iso = (offsetDays) => new Date(NOW + offsetDays * 86400_000).toISOString()
   assert.match(text, /merge_requests\/9/);
 }
 
+// The calendar window runs 24 h ahead: on a Sunday afternoon Monday's meetings
+// are listed under TOMORROW, never under TODAY (docs/native/acceptance/whats-on.md).
+{
+  const sun = new Date(2026, 10, 8, 14, 53).getTime(); // local time
+  const at = (d, h, m = 0) => new Date(2026, 10, d, h, m).toISOString();
+  const text = formatBrief(
+    {
+      commitments: [],
+      meetings: [
+        { subject: 'Wrap-up', occurred_at: at(8, 16) },
+        { subject: 'Early sync', occurred_at: at(9, 4), raw: { isCancelled: true } },
+        { subject: 'Team standup', occurred_at: at(9, 11) },
+      ],
+      reviews: [],
+      runsActive: [],
+      runsReview: [],
+    },
+    { now: sun }
+  );
+  const today = text.indexOf('TODAY');
+  const tomorrow = text.indexOf('TOMORROW');
+  assert.ok(today > 0 && tomorrow > today, text);
+  assert.ok(text.indexOf('Wrap-up') < tomorrow && text.indexOf('Team standup') > tomorrow, text);
+  assert.match(text, /Early sync.*\[cancelled\]/);
+  const none = formatBrief({ commitments: [], meetings: [{ subject: 'Team standup', occurred_at: at(9, 11) }], reviews: [], runsActive: [], runsReview: [] }, { now: sun });
+  assert.ok(!/TODAY/.test(none) && /TOMORROW/.test(none), none);
+}
+
 {
   const empty = formatBrief(
     { commitments: [], meetings: [], reviews: [], runsActive: [], runsReview: [] },

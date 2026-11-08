@@ -1,6 +1,6 @@
 {
   "about": "Eval set for the voice fast lane's router (System 1, docs/native/PLAN.md item 0.6). 'logged' cases are real turns from the PA chat transcript, anonymized: every name, company and repo is a placeholder (Person A..F, Example Corp, the docs repo). 'synthetic' cases are written in the same voice to cover what the log does not. 'known-miss' is the turn the old fast lane answered itself. expect: answer = the fast lane may say the whole answer from the snapshot or the conversation; handoff = Jarvis must look something up; action = Jarvis must do something. Every case is scored against the one snapshot below.",
-  "snapshot": "Now: Saturday 7 November, 18:40\nAbout the user: Engineer on the platform team. Works from home on Fridays.\nOpen asks: 2 overdue, 3 due soon, 1 asked with no date, 2 waiting on others.\nMost pressing:\n- overdue: Send the Q4 estimate to Person A (Person A), due 2026-11-05\n- overdue: Review the onboarding doc (Person B), due 2026-11-06\n- due: Prepare the demo for Example Corp (Person C), due 2026-11-09\n- due: Renew the build certificate, due 2026-11-10\nMeetings (next 24h):\n- 09:30 Weekly platform sync\n- 14:00 1:1 with Person B\nAgent runs: 1 running (fix the flaky login test), 2 waiting for review.\nAlso waiting: 3 reply drafts to send, 4 memory items to review.",
+  "snapshot": "Now: Saturday 7 November, 18:40\nAbout the user: Engineer on the platform team. Works from home on Fridays.\nOpen asks: 2 overdue, 3 due soon, 1 asked with no date, 2 waiting on others.\nMost pressing:\n- overdue: Send the Q4 estimate to Person A (Person A), due 2026-11-05\n- overdue: Review the onboarding doc (Person B), due 2026-11-06\n- due: Prepare the demo for Example Corp (Person C), due 2026-11-09\n- due: Renew the build certificate, due 2026-11-10\nMeetings today (Saturday 7 November): none left today.\nMeetings tomorrow (Sunday 8 November) until 18:40 (later ones are not in this snapshot), 2: 09:30 \"Weekly platform sync\"; 14:00 \"1:1 with Person B\".\nAgent runs: 1 running (fix the flaky login test), 2 waiting for review.\nAlso waiting: 3 reply drafts to send, 4 memory items to review.",
   "cases": [
     { "origin": "logged", "expect": "answer", "text": "Hi, this is a test from the dashboard chat box. Reply with just one short sentence, no tools." },
     { "origin": "logged", "expect": "handoff", "text": "What is in your INBOX right now? One sentence." },
@@ -29,6 +29,8 @@
     { "origin": "synthetic", "expect": "answer", "text": "how are you doing?" },
     { "origin": "synthetic", "expect": "answer", "text": "how many are overdue?" },
     { "origin": "synthetic", "expect": "answer", "text": "what's on today?" },
+    { "origin": "synthetic", "expect": "answer", "text": "anything left on my calendar today?" },
+    { "origin": "synthetic", "expect": "answer", "text": "do I have anything this evening?" },
     { "origin": "synthetic", "expect": "answer", "text": "what meetings do I have tomorrow morning?" },
     { "origin": "synthetic", "expect": "answer", "text": "when is my one on one with Person B?" },
     { "origin": "synthetic", "expect": "answer", "text": "how many runs are waiting for review?" },

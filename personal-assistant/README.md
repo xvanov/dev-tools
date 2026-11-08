@@ -1448,11 +1448,15 @@ same through termhub's `/pa/` proxy from a phone.
     `PA_FAST_ANSWER_THRESHOLD` (0.85) does the fast model speak the answer, in a second call.
     Otherwise your words go to the PA chat verbatim with "One moment." ("On it." when an action is
     likelier). The action guard still has the last word. `pa eval router [--fit] [--misses]` scores
-    the router on `src/eval/router-cases.json`: 83 turns, anonymized from the PA chat log and
+    the router on `src/eval/router-cases.json`: 85 turns, anonymized from the PA chat log and
     including "check my mail from <name>", which the one-call JSON route used to answer itself.
     It reports accuracy, the turns that would wrongly be answered here, and latency warm. `--fit`
     re-fits the calibration and the threshold. Nov 2026, this laptop: 84% 3-way accuracy, no
-    action or lookup answered here, router p50 122 ms / p95 156 ms warm.
+    action or lookup answered here, router p50 122 ms / p95 156 ms warm. `pa eval answerer` checks
+    what the answerer then says against `src/eval/answerer-cases.json` (day snapshots built by the
+    real formatter, placeholders only): the right day, every meeting, titles said as titles, never
+    as who a meeting is "with". The snapshot's calendar is a rolling 24 h, so it names each day:
+    "Meetings today (...): none left today." and then tomorrow's, up to this time.
   - `PA_FAST_ROUTER` picks who decides: `logprob` (default with a `local/` model, above), `same`
     (the fast model, in the same streamed call; the default for a hosted model),
     `rules` (a built-in keyword router, no model call), another model string (a JSON-only router
