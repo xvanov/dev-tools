@@ -156,7 +156,7 @@ module.exports = {
     const c = await seed.commitment();
     await seed.transition(c, { actor: 'reconciler', to: 'done', at: new Date(Date.now() - 60_000) });
     await seed.transition(c, { actor: 'you', from: 'done', to: 'open' });
-    await seed.evidence(c, { effect: 'closes', quote: 'p', confidence: 0.9 });
+    await seed.pendingEvidence(c, { effect: 'closes', quote: 'p', confidence: 0.9 });
     const after = await repos.ledger.reconcileStats();
     assert.deepStrictEqual([after.closed - before.closed, after.reopened - before.reopened, after.proposed - before.proposed], [1, 1, 1]);
     assert.ok(after.last instanceof Date);
@@ -188,5 +188,32 @@ module.exports = {
     assert.deepStrictEqual(got.filter((r) => Number(r.commitment_id) === a).map((r) => r.quote), ['second', 'first']);
     assert.deepStrictEqual(got.filter((r) => Number(r.commitment_id) === b).map((r) => r.quote), ['on b']);
     assert.deepStrictEqual(await repos.ledger.progressQuotes([]), []);
+  },
+
+    // --- for src/commitments/context.js, src/commitments/replyClose.js
+
+  'pendingEvidenceFor: undecided, unapplied evidence that it is done or moot, newest first, at most two': async ({ repos, seed, assert }) => {
+    const c = await seed.commitment();
+    await seed.pendingEvidence(c, { effect: 'closes', quote: 'one' });
+    await seed.pendingEvidence(c, { effect: 'moot', quote: 'two' });
+    await seed.pendingEvidence(c, { effect: 'closes', quote: 'three' });
+    await seed.pendingEvidence(c, { effect: 'progresses', quote: 'not a close' });
+    await seed.pendingEvidence(c, { effect: 'closes', quote: 'applied', applied: true });
+    await seed.pendingEvidence(c, { effect: 'closes', quote: 'decided', decision: 'rejected' });
+    const got = await repos.ledger.pendingEvidenceFor(c);
+    assert.deepStrictEqual(got.map((r) => r.quote), ['three', 'two']);
+    assert.deepStrictEqual(Object.keys(got[0]).sort(), ['confidence', 'effect', 'quote']);
+    assert.deepStrictEqual(await repos.ledger.pendingEvidenceFor(await seed.commitment()), []);
+  },
+
+  'latestReplyCloseTransition: the newest live transition the reply-close pass made': async ({ repos, seed, assert }) => {
+    const c = await seed.commitment();
+    assert.strictEqual(await repos.ledger.latestReplyCloseTransition(c), null);
+    await seed.transition(c, { actor: 'you' });
+    const older = await seed.transition(c, { actor: 'reply-close', at: new Date(Date.now() - 3600_000) });
+    const newer = await seed.transition(c, { actor: 'reply-close' });
+    await seed.transition(c, { actor: 'reply-close', undoneAt: new Date() });
+    assert.strictEqual(Number((await repos.ledger.latestReplyCloseTransition(c)).id), newer);
+    assert.notStrictEqual(newer, older);
   },
 };

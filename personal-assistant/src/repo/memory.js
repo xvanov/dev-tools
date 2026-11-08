@@ -1016,6 +1016,54 @@ function create(db) {
     async retract(id) {
       await db.query(`update claim set status = 'retracted' where id = $1 and status <> 'retracted'`, [id]);
     },
+
+    // --- for src/distill/index.js
+
+    /** Deletes the facts one item gave at one prompt version (a re-distillation replaces them). */
+    async deleteFactsOf(itemId, version) {
+      await db.query('delete from fact where source_item_id = $1 and extracted_by = $2', [itemId, version]);
+    },
+
+    /** Inserts one fact distilled from an item. `payload` is stored as jsonb. */
+    async insertFact(itemId, kind, summary, payload, occurredAt, version) {
+      await db.query(
+        `insert into fact (source_item_id, kind, summary, payload, occurred_at, extracted_by)
+         values ($1,$2,$3,$4,$5,$6)`,
+        [itemId, kind, summary, payload, occurredAt, version]
+      );
+    },
+
+    // --- for src/distill/identity.js (a person merge; run inside repo.withTx)
+
+    /**
+     * Makes claims about `fromId` claims about you (`me`).
+     * @returns {Promise<number>} claims moved
+     */
+    async repointClaimsToMe(intoId, fromId) {
+      const r = await db.query(
+        `update claim set subject_kind = 'me', subject_id = $1, subject_label = 'me'
+            where subject_kind = 'person' and subject_id = $2`,
+        [intoId, fromId]
+      );
+      return r.rowCount;
+    },
+
+    /**
+     * Makes claims about person `fromId` claims about person `intoId`, labelled `name`.
+     * @returns {Promise<number>} claims moved
+     */
+    async repointClaims(intoId, fromId, name) {
+      const r = await db.query(
+        `update claim set subject_id = $1, subject_label = $3 where subject_kind = 'person' and subject_id = $2`,
+        [intoId, fromId, name]
+      );
+      return r.rowCount;
+    },
+
+    /** Deletes a person's memory page (derived; the caller regenerates the survivor's). */
+    async deletePersonPage(personId) {
+      await db.query(`delete from memory_page where kind = 'person' and subject_id = $1`, [personId]);
+    },
   };
 }
 

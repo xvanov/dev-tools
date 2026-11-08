@@ -86,4 +86,17 @@ module.exports = {
     if (mine.length === 2) assert.deepStrictEqual(mine, [recent, old]);
     assert.ok(['id', 'task', 'mode', 'status', 'exit_note', 'repo_path', 'mr_url', 'ended_at'].every((k) => k in got[0]));
   },
+
+    // --- for src/commitments/context.js
+
+  'recentForCommitment: a commitment\'s three newest runs': async ({ repos, seed, assert }) => {
+    const c = await seed.commitment();
+    const made = [];
+    for (let i = 0; i < 4; i++) made.push(await repos.runs.insertClaude(claude({ commitmentId: c }), { commitmentId: c, again: true }));
+    const got = await repos.runs.recentForCommitment(c);
+    assert.strictEqual(got.length, 3);
+    assert.deepStrictEqual(Object.keys(got[0]).sort(), ['branch', 'id', 'mode', 'mr_url', 'started_at', 'status']);
+    assert.ok(!got.some((r) => String(r.id) === String(made[0].id)) || got.every((r) => r.started_at <= got[0].started_at), 'newest first');
+    assert.deepStrictEqual(await repos.runs.recentForCommitment(await seed.commitment()), []);
+  },
 };

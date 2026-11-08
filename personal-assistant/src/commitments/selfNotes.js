@@ -15,7 +15,7 @@
 //   - expire() closes the ones nobody touched for EXPIRE_DAYS. A PR merging
 //     or closing still closes them first (ingest/githubReconcile.js).
 
-const { rows } = require('../db');
+const repo = require('../repo');
 const ledger = require('../ledger');
 const { logger } = require('../log');
 
@@ -65,15 +65,7 @@ function group(notes) {
  * run's business and are left alone). Returns how many.
  */
 async function expire({ days = EXPIRE_DAYS } = {}) {
-  const due = await rows(
-    `select c.id from commitment c
-       join source_item si on si.id = c.source_item_id
-       left join person per on per.id = c.counterparty_person_id
-      where c.status = 'open' and c.superseded_by is null
-        and coalesce(c.touched_at, si.occurred_at) < now() - ($1 || ' days')::interval
-        and ${SELF_NOTE}`,
-    [String(days)]
-  );
+  const due = await repo.commitments.expiredSelfNotes(String(days), SELF_NOTE);
   let count = 0;
   for (const { id } of due) {
     const r = await ledger.transition({

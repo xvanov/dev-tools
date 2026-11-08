@@ -60,14 +60,11 @@ async function findPerson(name) {
   if (!name) return null;
   const identity = require('../distill/identity');
   if (name.includes('@')) return identity.resolve(name, name);
-  const { rows } = require('../db');
-  const exact = await rows('select id, display_name from person where not is_me and lower(display_name) = lower($1) limit 2', [name]);
+  const repo = require('../repo');
+  const exact = await repo.people.othersByExactName(name);
   if (exact.length === 1) return exact[0].id;
   if (exact.length > 1) return null;
-  const prefix = await rows(
-    `select id from person where not is_me and lower(display_name) like lower($1) || '%' limit 2`,
-    [name.replace(/[\\%_]/g, (c) => `\\${c}`)]
-  );
+  const prefix = await repo.people.othersByNamePrefix(name.replace(/[\\%_]/g, (c) => `\\${c}`));
   return prefix.length === 1 ? prefix[0].id : null;
 }
 
@@ -79,7 +76,7 @@ async function add(opts = {}, { now = new Date() } = {}) {
   const t = parse(opts, now);
   const via = VIAS.has(opts.via) ? opts.via : 'cli';
   const { saveItems } = require('../ingest/store');
-  const { one, withTx } = require('../db');
+  const repo = require('../repo');
 
   let projectRow = null;
   if (t.project) {
@@ -99,32 +96,24 @@ async function add(opts = {}, { now = new Date() } = {}) {
       raw: { via, for: t.forName, owedToMe: t.direction === 'owed_to_me', due: opts.due || null, project: projectRow?.name || null },
     },
   ]);
-  const item = await one('select id from source_item where source = $1 and external_id = $2', [SOURCE, externalId]);
+  const item = await repo.sources.idByExternal(SOURCE, externalId);
   const detail = [t.detail, t.forName && !personId ? `${t.direction === 'owed_to_me' ? 'From' : 'For'}: ${t.forName}` : null]
     .filter(Boolean)
     .join('\n') || null;
-  const row = await withTx(async (c) =>
-    (
-      await c.query(
-        `insert into commitment
-           (source_item_id, direction, summary, detail, counterparty_person_id, due_at, project_id, repo_path,
-            project_confidence, project_rationale, confidence, extracted_by)
-         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,1,$11) returning id`,
-        [
-          item.id,
-          t.direction,
-          t.summary,
-          detail,
-          personId,
-          t.dueAt,
-          projectRow?.id ?? null,
-          projectRow?.repo_path ?? null,
-          projectRow ? 1 : null,
-          projectRow ? 'named when the task was created' : null,
-          EXTRACTED_BY,
-        ]
-      )
-    ).rows[0]
+  const row = await repo.withTx((r) =>
+    r.commitments.insertRequested({
+      itemId: item.id,
+      direction: t.direction,
+      summary: t.summary,
+      detail,
+      personId,
+      dueAt: t.dueAt,
+      projectId: projectRow?.id ?? null,
+      repoPath: projectRow?.repo_path ?? null,
+      projectConfidence: projectRow ? 1 : null,
+      projectRationale: projectRow ? 'named when the task was created' : null,
+      extractedBy: EXTRACTED_BY,
+    })
   );
   return {
     id: Number(row.id),

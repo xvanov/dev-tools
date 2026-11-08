@@ -989,4 +989,52 @@ module.exports = {
     await repos.memory.retract(id);
     assert.strictEqual(await status(id), 'retracted');
   },
+
+    // --- for src/distill/index.js
+
+  'insertFact: a fact distilled from an item, with its payload': async ({ repos, seed, db, assert }) => {
+    const item = await seed.sourceItem();
+    const at = new Date(Date.now() - 3600_000);
+    await repos.memory.insertFact(item, 'decision', 'we chose X', { detail: 'because' }, at, 'v1');
+    const r = await db.one('select * from fact where source_item_id = $1', [item]);
+    assert.deepStrictEqual([r.kind, r.summary, r.payload, r.extracted_by, r.occurred_at.getTime()], ['decision', 'we chose X', { detail: 'because' }, 'v1', at.getTime()]);
+  },
+
+  'deleteFactsOf: one item\'s facts at one prompt version only': async ({ repos, seed, db, assert }) => {
+    const [item, other] = [await seed.sourceItem(), await seed.sourceItem()];
+    const at = new Date();
+    await repos.memory.insertFact(item, 'decision', 'v1 fact', {}, at, 'v1');
+    await repos.memory.insertFact(item, 'decision', 'v2 fact', {}, at, 'v2');
+    await repos.memory.insertFact(other, 'decision', 'other item', {}, at, 'v1');
+    await repos.memory.deleteFactsOf(item, 'v1');
+    const left = await db.rows('select summary from fact where source_item_id = any($1::bigint[]) order by summary', [[item, other]]);
+    assert.deepStrictEqual(left.map((r) => r.summary), ['other item', 'v2 fact']);
+  },
+
+  // --- for src/distill/identity.js
+
+  'repointClaimsToMe: claims about a person become claims about you': async ({ repos, seed, db, assert }) => {
+    const [from, into, bystander] = [await seed.person(), await seed.person(), await seed.person()];
+    const [a, b, c] = [await seed.claimAbout(from), await seed.claimAbout(from), await seed.claimAbout(bystander)];
+    assert.strictEqual(await repos.memory.repointClaimsToMe(into, from), 2);
+    const rows = await db.rows('select id, subject_kind, subject_id, subject_label from claim where id = any($1::bigint[]) order by id', [[a, b, c]]);
+    assert.deepStrictEqual(rows.map((r) => [r.subject_kind, Number(r.subject_id), r.subject_label]), [['me', into, 'me'], ['me', into, 'me'], ['person', bystander, 'someone']]);
+  },
+
+  'repointClaims: claims about one person become claims about another, relabelled': async ({ repos, seed, db, assert }) => {
+    const [from, into] = [await seed.person(), await seed.person()];
+    const a = await seed.claimAbout(from);
+    assert.strictEqual(await repos.memory.repointClaims(into, from, 'New Name'), 1);
+    const r = await db.one('select subject_kind, subject_id, subject_label from claim where id = $1', [a]);
+    assert.deepStrictEqual([r.subject_kind, Number(r.subject_id), r.subject_label], ['person', into, 'New Name']);
+    assert.strictEqual(await repos.memory.repointClaims(into, from, 'x'), 0);
+  },
+
+  'deletePersonPage: removes that person\'s page only': async ({ repos, seed, db, assert }) => {
+    const [a, b] = [await seed.person(), await seed.person()];
+    const [pa, pb] = [await seed.personPage(a), await seed.personPage(b)];
+    await repos.memory.deletePersonPage(a);
+    const left = (await db.rows('select id from memory_page where id = any($1::bigint[])', [[pa, pb]])).map((r) => Number(r.id));
+    assert.deepStrictEqual(left, [pb]);
+  },
 };

@@ -59,6 +59,111 @@ function create(db) {
     async myIdentities() {
       return db.rows(`select pi.kind, pi.value from person_identity pi join person p on p.id = pi.person_id where p.is_me`);
     },
+
+    /** The person row that is you, or null before sign-in. */
+    async meRow() {
+      return db.one('select * from person where is_me limit 1');
+    },
+
+    /** Your display name (lowest id when several are flagged), or null. @returns {Promise<{display_name}|null>} */
+    async meName() {
+      return db.one('select display_name from person where is_me order by id limit 1');
+    },
+
+    /**
+     * Your own handle of one identity kind (e.g. github_username).
+     * @returns {Promise<{value: string}|null>}
+     */
+    async myHandle(kind) {
+      return db.one(
+        `select pi.value from person_identity pi join person p on p.id = pi.person_id
+      where p.is_me and pi.kind = $1 order by pi.value limit 1`,
+        [kind]
+      );
+    },
+
+    /** Renames the person and sets their primary email. */
+    async setNames(id, displayName, primaryEmail) {
+      await db.query('update person set display_name = $2, primary_email = $3 where id = $1', [id, displayName, primaryEmail]);
+    },
+
+    /** Inserts the is_me person and returns it. @returns {Promise<{id}>} */
+    async insertMe(displayName, primaryEmail) {
+      return db.one('insert into person (display_name, primary_email, is_me) values ($1,$2,true) returning id', [displayName, primaryEmail]);
+    },
+
+    /** Files an identity (kind, value) under a person; one already filed is left as it is. */
+    async addIdentity(personId, kind, value) {
+      await db.query(
+        'insert into person_identity (person_id, kind, value) values ($1,$2,$3) ' + 'on conflict (kind, value) do nothing',
+        [personId, kind, value]
+      );
+    },
+
+    /**
+     * Up to two people with this display name (case-insensitive); two means ambiguous.
+     * @returns {Promise<Array<{id}>>}
+     */
+    async byDisplayName(name) {
+      return (await db.query('select id from person where lower(display_name) = lower($1) limit 2', [name])).rows;
+    },
+
+    /** The identity row of (kind, value): who owns it. @returns {Promise<{person_id}|null>} */
+    async identityOwner(kind, value) {
+      return db.one('select person_id from person_identity where kind = $1 and value = $2', [kind, value]);
+    },
+
+    /** The person whose primary_email is `email` (lower case). @returns {Promise<{id}|null>} */
+    async byPrimaryEmail(email) {
+      return db.one('select id from person where lower(primary_email) = $1', [email]);
+    },
+
+    /** Inserts a person (not you) and returns it. @returns {Promise<{id}>} */
+    async insert(displayName, primaryEmail) {
+      return db.one('insert into person (display_name, primary_email) values ($1,$2) returning id', [displayName, primaryEmail]);
+    },
+
+    /**
+     * Others (not you) whose display name equals `name`, case-insensitive; at most two.
+     * @returns {Promise<Array<{id, display_name}>>}
+     */
+    async othersByExactName(name) {
+      return db.rows('select id, display_name from person where not is_me and lower(display_name) = lower($1) limit 2', [name]);
+    },
+
+    /**
+     * Others whose display name starts with `escapedPrefix` (LIKE-escaped by
+     * the caller), case-insensitive; at most two.
+     * @returns {Promise<Array<{id}>>}
+     */
+    async othersByNamePrefix(escapedPrefix) {
+      return db.rows(`select id from person where not is_me and lower(display_name) like lower($1) || '%' limit 2`, [escapedPrefix]);
+    },
+
+    // --- merge (src/distill/identity.js), meant to run inside repo.withTx
+
+    /** Both rows of a merge (person rows), by id. @returns {Promise<object[]>} */
+    async pair(intoId, fromId) {
+      return (await db.query('select * from person where id = any($1::bigint[])', [[intoId, fromId]])).rows;
+    },
+
+    /** Moves every identity from one person to another. */
+    async moveIdentities(intoId, fromId) {
+      await db.query('update person_identity set person_id = $1 where person_id = $2', [intoId, fromId]);
+    },
+
+    /** Deletes a person. */
+    async deleteById(id) {
+      await db.query('delete from person where id = $1', [id]);
+    },
+
+    /**
+     * Sets the display name and fills primary_email when empty. After the
+     * delete of the other person: primary_email is unique and they may share it.
+     */
+    async renameKeepingEmail(id, displayName, fallbackEmail) {
+      await db.query('update person set display_name = $2, primary_email = coalesce(primary_email, $3) where id = $1', [id, displayName, fallbackEmail]);
+    },
   };
 }
 

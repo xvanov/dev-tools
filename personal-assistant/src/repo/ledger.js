@@ -270,6 +270,33 @@ function create(db) {
             (select max(created_at) from ledger_evidence) as last`
       );
     },
+
+    // --- for src/commitments/context.js, src/commitments/replyClose.js
+
+    /**
+     * The pending (unapplied, undecided) evidence that a commitment is done or moot, newest first, at most two.
+     * @returns {Promise<Array<{effect, quote, confidence}>>}
+     */
+    async pendingEvidenceFor(commitmentId) {
+      return db.rows(
+        `select effect, quote, confidence from ledger_evidence
+      where commitment_id = $1 and effect in ('closes','moot') and not applied and decision is null
+      order by created_at desc limit 2`,
+        [commitmentId]
+      );
+    },
+
+    /**
+     * The id of the newest not yet undone transition the reply-close pass made on a commitment.
+     * @returns {Promise<{id}|null>}
+     */
+    async latestReplyCloseTransition(commitmentId) {
+      return db.one(
+        `select id from ledger_transition where commitment_id = $1 and actor = 'reply-close' and undone_at is null
+      order by at desc, id desc limit 1`,
+        [commitmentId]
+      );
+    },
   };
 }
 

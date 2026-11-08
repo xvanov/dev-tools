@@ -252,4 +252,13 @@ module.exports = {
     assert.deepStrictEqual([ra.subject, ra.author_identity, ra.raw.webUrl], ['A', 'ada@example.com', 'https://x.example/a']);
     assert.ok(ra.occurred_at instanceof Date && 'body_text' in ra && 'source' in ra);
   },
+
+    // --- for src/commitments/request.js, src/projects/index.js
+
+
+  'subjectAndBody: the item\'s subject and body, or null': async ({ repos, seed, assert }) => {
+    const id = await seed.sourceItem({ subject: 'Hello', body: 'World' });
+    assert.deepStrictEqual({ ...(await repos.sources.subjectAndBody(id)) }, { subject: 'Hello', body_text: 'World' });
+    assert.strictEqual(await repos.sources.subjectAndBody(0), null);
+  },
 };

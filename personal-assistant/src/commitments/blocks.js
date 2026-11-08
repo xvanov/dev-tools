@@ -19,7 +19,7 @@
 const llm = require('../llm');
 const budget = require('../budget');
 const { config } = require('../config');
-const { rows, query } = require('../db');
+const repo = require('../repo');
 const { logger } = require('../log');
 const policy = require('./sourcePolicy');
 
@@ -31,7 +31,6 @@ const PER_CALL = 20;
 // hangs a blocker on an unrelated one ("app registration" on "Docebo sync").
 // Below this cosine, or with no vectors, the blocker stands on its own.
 const MIN_LINK_COSINE = 0.45;
-const LIVE = `c.status in ('open','dispatched') and c.superseded_by is null`;
 
 const SYSTEM = `You keep one person's to-do list. Only their own tasks belong on it. Other people's work matters only when the person NEEDS it to do their own work — then their task is blocked on that person.
 
@@ -86,23 +85,9 @@ function parseVerdicts(value, blockerIds, taskIds) {
 
 async function load() {
   const src = policy.sourceSql('si.source');
-  const tasks = await rows(
-    `select c.id, c.summary, c.detail, c.extracted_at from commitment c join source_item si on si.id = c.source_item_id
-      where ${LIVE} and c.direction = 'owed_by_me' and ${src} order by c.id`
-  );
+  const tasks = await repo.commitments.blockTasks(src);
   const lastTask = tasks.reduce((m, c) => Math.max(m, new Date(c.extracted_at).getTime()), 0);
-  const blockers = await rows(
-    `select c.id, c.summary, c.detail, coalesce(p.display_name, '') as who,
-            coalesce(si.raw->>'chatTopic', si.subject, '') as place, si.body_text as body,
-            b.verdict, b.task_id, b.manual, b.judged_at,
-            (b.task_id is not null and not exists (select 1 from commitment t where t.id = b.task_id
-               and t.status in ('open','dispatched') and t.superseded_by is null)) as task_gone
-       from commitment c
-       join source_item si on si.id = c.source_item_id
-       left join person p on p.id = c.counterparty_person_id
-       left join commitment_block b on b.blocker_id = c.id
-      where ${LIVE} and c.direction = 'owed_to_me' and ${src} order by c.id`
-  );
+  const blockers = await repo.commitments.blockCandidates(src);
   return { tasks, blockers, lastTask };
 }
 
@@ -121,13 +106,9 @@ function due(blockers, lastTask) {
 async function checkLinks(verdicts) {
   const pairs = [...verdicts].filter(([, v]) => v.taskId);
   if (!pairs.length) return;
-  const sims = await rows(
-    `select x.b::text as b, 1 - (vb.embedding <=> vt.embedding) as cos
-       from unnest($1::bigint[], $2::bigint[]) as x(b, t)
-       join commitment_vector vb on vb.commitment_id = x.b
-       join commitment_vector vt on vt.commitment_id = x.t`,
-    [pairs.map(([id]) => id), pairs.map(([, v]) => v.taskId)]
-  ).catch(() => []);
+  const sims = await repo.commitments
+    .blockLinkCosines(pairs.map(([id]) => id), pairs.map(([, v]) => v.taskId))
+    .catch(() => []);
   const cos = new Map(sims.map((r) => [r.b, Number(r.cos)]));
   for (const [id, v] of pairs) if (!(cos.get(String(id)) >= MIN_LINK_COSINE)) v.taskId = null;
 }
@@ -157,13 +138,7 @@ async function pass({ limit = 60 } = {}) {
     }
     await checkLinks(verdicts);
     for (const [id, v] of verdicts) {
-      await query(
-        `insert into commitment_block (blocker_id, task_id, verdict, why, who, judged_at) values ($1, $2, $3, $4, $5, now())
-         on conflict (blocker_id) do update set task_id = excluded.task_id, verdict = excluded.verdict, why = excluded.why,
-           who = excluded.who, judged_at = now()
-          where not commitment_block.manual`,
-        [id, v.taskId, v.verdict, v.why, v.who]
-      );
+      await repo.commitments.upsertBlockJudged(id, v.taskId, v.verdict, v.why, v.who);
       judged++;
       if (v.verdict === 'blocks') blocks++;
     }
@@ -175,12 +150,7 @@ async function pass({ limit = 60 } = {}) {
 /** Your call on a card: it blocks (optionally a given task), or it is not yours to care about. */
 async function set(blockerId, { verdict, taskId = null, why = null }) {
   if (verdict !== 'blocks' && verdict !== 'not_mine') throw Object.assign(new Error('verdict must be blocks or not_mine'), { status: 400 });
-  await query(
-    `insert into commitment_block (blocker_id, task_id, verdict, why, manual, judged_at) values ($1, $2, $3, $4, true, now())
-     on conflict (blocker_id) do update set task_id = coalesce(excluded.task_id, case when excluded.verdict = 'blocks' then commitment_block.task_id end),
-       verdict = excluded.verdict, why = coalesce(excluded.why, commitment_block.why), manual = true, judged_at = now()`,
-    [blockerId, taskId, verdict, why]
-  );
+  await repo.commitments.upsertBlockManual(blockerId, taskId, verdict, why);
   return { ok: true };
 }
 
@@ -189,18 +159,7 @@ async function set(blockerId, { verdict, taskId = null, why = null }) {
  * few days while blocking an open task (that task shows "unblocked").
  */
 async function forBoard({ days = 3 } = {}) {
-  return rows(
-    `select b.blocker_id::text, b.task_id::text, b.verdict, b.why, b.manual,
-            c.status, c.closed_at, c.closed_reason, c.summary, coalesce(p.display_name, b.who, '') as who
-       from commitment_block b
-       join commitment c on c.id = b.blocker_id
-       left join person p on p.id = c.counterparty_person_id
-      where c.superseded_by is null
-        and (c.status in ('open','dispatched')
-             or (b.verdict = 'blocks' and b.task_id is not null and c.status = 'done'
-                 and c.closed_at > now() - make_interval(days => $1)))`,
-    [days]
-  );
+  return repo.commitments.blocksForBoard(days);
 }
 
 module.exports = { pass, set, forBoard, render, parseVerdicts, due, SYSTEM };

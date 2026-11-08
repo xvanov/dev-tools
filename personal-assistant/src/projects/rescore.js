@@ -15,7 +15,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const { rows, query } = require('../db');
+const repo = require('../repo');
 const resolve = require('./resolve');
 const { candidates: loadCandidates } = require('./index');
 const { evidenceText } = require('../distill');
@@ -48,18 +48,7 @@ function judge(c, candidates) {
  */
 async function rescore({ apply = false, project = null, ids = null, logDir = null } = {}) {
   const candidates = await loadCandidates();
-  const list = await rows(
-    `select c.id, c.project_id, c.repo_path, c.project_confidence, c.project_rationale, c.summary, c.detail,
-            si.source, si.subject, si.body_text, si.raw, p.name as project
-       from commitment c
-       join source_item si on si.id = c.source_item_id
-       join project p on p.id = c.project_id
-      where c.status in ('open','dispatched') and c.superseded_by is null
-        and ($1::text is null or lower(p.name) = lower($1::text))
-        and ($2::bigint[] is null or c.id = any($2::bigint[]))
-      order by c.id`,
-    [project, ids && ids.length ? ids : null]
-  );
+  const list = await repo.commitments.projectLinks(project, ids && ids.length ? ids : null);
   const out = { checked: list.length, keep: 0, clear: [], logFile: null };
   for (const c of list) {
     const v = judge(c, candidates);
@@ -80,12 +69,12 @@ async function rescore({ apply = false, project = null, ids = null, logDir = nul
   const changed = [];
   for (const r of out.clear) {
     // Guarded on the old value: a row the worker changed meanwhile is left alone.
-    const res = await query(
-      `update commitment set project_id = null, repo_path = null, project_confidence = null, project_rationale = $2
-        where id = $1 and project_id = $3 and superseded_by is null`,
-      [r.id, `cleared: ${r.reason} (was ${r.from}: ${r.before.project_rationale || 'no reason'})`.slice(0, 500), r.before.project_id]
+    const cleared = await repo.commitments.clearProject(
+      r.id,
+      `cleared: ${r.reason} (was ${r.from}: ${r.before.project_rationale || 'no reason'})`.slice(0, 500),
+      r.before.project_id
     );
-    if (res.rowCount) changed.push(r);
+    if (cleared) changed.push(r);
   }
   out.applied = changed.length;
   if (logDir && changed.length) {

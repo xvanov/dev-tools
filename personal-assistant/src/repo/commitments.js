@@ -3,6 +3,66 @@
 // Aggregate: commitments. Tables: commitment, commitment_block, commitment_review, commitment_vector, reply_close, distillation.
 // Owner while plan 1.2 is converting: chunk C (commitments). Not converted yet.
 
+const LIVE = `c.status in ('open','dispatched') and c.superseded_by is null`;
+
+// Every commitment folded into the same survivor as `id` (superseded_by
+// chains), `id` itself excluded. `union`, not `union all`: a cycle ends.
+const DUPLICATE_SET_SQL = `
+  with recursive up as (
+         select id, superseded_by from commitment where id = $1
+         union select c.id, c.superseded_by from commitment c join up on c.id = up.superseded_by),
+       root as (select id from up where superseded_by is null limit 1),
+       down as (
+         select id from root
+         union select c.id from commitment c join down on c.superseded_by = down.id)
+  select d.id from down d join commitment c on c.id = d.id
+   where d.id <> $1 and c.status in ('open', 'dispatched')`;
+
+// Open unfolded cards with what acted on them (src/commitments/policyClose.js).
+const POLICY_CANDIDATES = `
+  select c.id, c.summary, c.direction, c.status, c.touched_at, c.closed_at, c.closed_reason,
+         si.id as item_id, si.source, si.author_identity, si.raw,
+         c.touched_at is not null as touched,
+         exists (select 1 from run r where r.commitment_id = c.id) as has_run,
+         exists (select 1 from draft d where d.commitment_id = c.id) as has_draft,
+         exists (select 1 from ledger_transition t where t.commitment_id = c.id and t.actor = 'you') as you_moved
+    from commitment c join source_item si on si.id = c.source_item_id
+   where c.status = 'open' and c.superseded_by is null
+   order by c.id`;
+
+// Who wrote an item, as a name: the connector's display name, the person the
+// identity resolves to, or the raw identity.
+const AUTHOR = (t) => `coalesce(${t}.raw->>'fromName',
+  (select p.display_name from person_identity pi join person p on p.id = pi.person_id
+    where lower(pi.value) = lower(regexp_replace(coalesce(${t}.author_identity, ''), '^github:', '')) limit 1),
+  ${t}.author_identity)`;
+
+// Whether anything has acted on a commitment: a run, a draft, a status change
+// in the ledger, a reply that closed it, your hand. Narrower than the review
+// pass's test (memory/consolidate.js), which also counts a judgement that
+// changed nothing — a reply judged "not discharged", a piece of evidence the
+// reconciler weighed. Those are on nearly every chat ask, and counting them
+// protected exactly the per-item copies the dedupe pass exists to fold. (A
+// pending "looks done?" proposal on a folded copy is shown on its survivor:
+// ledger/reconcile.js.)
+const ACTED = (a) => `(${a}.status = 'dispatched' or ${a}.touched_at is not null
+   or exists (select 1 from draft d where d.commitment_id = ${a}.id)
+   or exists (select 1 from run r where r.commitment_id = ${a}.id)
+   or exists (select 1 from ledger_transition t where t.commitment_id = ${a}.id)
+   or exists (select 1 from reply_close rc where rc.commitment_id = ${a}.id and rc.applied is not null and rc.undone_at is null))`;
+
+// The item's live commitments, with whether anything has acted on them
+// (src/distill/keep.js decides what a re-distillation may replace).
+const EXISTING = `
+  select c.id, c.status, c.summary, c.touched_at is not null as touched,
+         (exists (select 1 from draft d where d.commitment_id = c.id)
+          or exists (select 1 from run r where r.commitment_id = c.id)
+          or exists (select 1 from ledger_transition t where t.commitment_id = c.id)
+          or exists (select 1 from ledger_evidence e where e.commitment_id = c.id)
+          or exists (select 1 from reply_close rc where rc.commitment_id = c.id)) as refs
+    from commitment c
+   where c.source_item_id = $1 and c.superseded_by is null`;
+
 function create(db) {
   return {
     // --- for brief/index.js
@@ -212,6 +272,750 @@ function create(db) {
     /** One commitment row, or null (the debrief's undo reads it before restoring columns). */
     async rowForUndo(id) {
       return db.one('select * from commitment where id = $1', [id]);
+    },
+
+    // --- src/commitments.js
+
+    /**
+     * A commitment's id, status and summary; null when there is none.
+     * @param {number|string} id
+     * @returns {Promise<{id, status: string, summary: string}|null>}
+     */
+    async summaryRow(id) {
+      return db.one('select id, status, summary from commitment where id = $1', [id]);
+    },
+
+    /**
+     * The open rest of `id`'s duplicate group (superseded_by chains), `id`
+     * itself excluded.
+     * @param {number|string} id
+     * @returns {Promise<Array<{id}>>}
+     */
+    async openDuplicatesOf(id) {
+      return db.rows(DUPLICATE_SET_SQL, [id]);
+    },
+
+    /**
+     * Closed in the last `days` days, newest first, with the source and who
+     * closed it last.
+     * @param {number|string} days  as text for the interval
+     * @param {number} limit
+     * @returns {Promise<object[]>} id, summary, status, closed_reason, closed_at, source, url, actor
+     */
+    async recentlyClosed(days, limit) {
+      return db.rows(
+        `select c.id, c.summary, c.status, c.closed_reason, c.closed_at, si.source,
+            coalesce(si.raw->>'webUrl', si.thread_external_id) as url,
+            (select t.actor from ledger_transition t where t.commitment_id = c.id and t.undone_at is null
+              order by t.at desc, t.id desc limit 1) as actor
+       from commitment c join source_item si on si.id = c.source_item_id
+      where c.closed_at > now() - ($1 || ' days')::interval
+      order by c.closed_at desc limit $2`,
+        [days, limit]
+      );
+    },
+
+    // --- src/commitments/blocks.js
+
+    /**
+     * Your own open tasks (owed_by_me) from sources the policy allows.
+     * @param {string} srcSql  sourcePolicy.sourceSql('si.source')
+     * @returns {Promise<Array<{id, summary, detail, extracted_at}>>}
+     */
+    async blockTasks(srcSql) {
+      return db.rows(
+        `select c.id, c.summary, c.detail, c.extracted_at from commitment c join source_item si on si.id = c.source_item_id
+      where ${LIVE} and c.direction = 'owed_by_me' and ${srcSql} order by c.id`
+      );
+    },
+
+    /**
+     * Open owed_to_me commitments with their block verdict, if any.
+     * @param {string} srcSql  sourcePolicy.sourceSql('si.source')
+     * @returns {Promise<object[]>}
+     */
+    async blockCandidates(srcSql) {
+      return db.rows(
+        `select c.id, c.summary, c.detail, coalesce(p.display_name, '') as who,
+            coalesce(si.raw->>'chatTopic', si.subject, '') as place, si.body_text as body,
+            b.verdict, b.task_id, b.manual, b.judged_at,
+            (b.task_id is not null and not exists (select 1 from commitment t where t.id = b.task_id
+               and t.status in ('open','dispatched') and t.superseded_by is null)) as task_gone
+       from commitment c
+       join source_item si on si.id = c.source_item_id
+       left join person p on p.id = c.counterparty_person_id
+       left join commitment_block b on b.blocker_id = c.id
+      where ${LIVE} and c.direction = 'owed_to_me' and ${srcSql} order by c.id`
+      );
+    },
+
+    /**
+     * Cosine similarity of each (blocker, task) pair that has vectors on both.
+     * @param {Array<number|string>} blockerIds
+     * @param {Array<number|string>} taskIds  parallel to blockerIds
+     * @returns {Promise<Array<{b: string, cos: number|string}>>}
+     */
+    async blockLinkCosines(blockerIds, taskIds) {
+      return db.rows(
+        `select x.b::text as b, 1 - (vb.embedding <=> vt.embedding) as cos
+       from unnest($1::bigint[], $2::bigint[]) as x(b, t)
+       join commitment_vector vb on vb.commitment_id = x.b
+       join commitment_vector vt on vt.commitment_id = x.t`,
+        [blockerIds, taskIds]
+      );
+    },
+
+    /** Writes the model's verdict on a blocker; a row you set by hand (manual) is never changed. */
+    async upsertBlockJudged(blockerId, taskId, verdict, why, who) {
+      await db.query(
+        `insert into commitment_block (blocker_id, task_id, verdict, why, who, judged_at) values ($1, $2, $3, $4, $5, now())
+         on conflict (blocker_id) do update set task_id = excluded.task_id, verdict = excluded.verdict, why = excluded.why,
+           who = excluded.who, judged_at = now()
+          where not commitment_block.manual`,
+        [blockerId, taskId, verdict, why, who]
+      );
+    },
+
+    /** Your call on a card: writes the verdict and marks it manual. */
+    async upsertBlockManual(blockerId, taskId, verdict, why) {
+      await db.query(
+        `insert into commitment_block (blocker_id, task_id, verdict, why, manual, judged_at) values ($1, $2, $3, $4, true, now())
+     on conflict (blocker_id) do update set task_id = coalesce(excluded.task_id, case when excluded.verdict = 'blocks' then commitment_block.task_id end),
+       verdict = excluded.verdict, why = coalesce(excluded.why, commitment_block.why), manual = true, judged_at = now()`,
+        [blockerId, taskId, verdict, why]
+      );
+    },
+
+    /**
+     * Every judged blocker that is open, or closed in the last `days` days
+     * while blocking an open task.
+     * @param {number} days
+     * @returns {Promise<object[]>}
+     */
+    async blocksForBoard(days) {
+      return db.rows(
+        `select b.blocker_id::text, b.task_id::text, b.verdict, b.why, b.manual,
+            c.status, c.closed_at, c.closed_reason, c.summary, coalesce(p.display_name, b.who, '') as who
+       from commitment_block b
+       join commitment c on c.id = b.blocker_id
+       left join person p on p.id = c.counterparty_person_id
+      where c.superseded_by is null
+        and (c.status in ('open','dispatched')
+             or (b.verdict = 'blocks' and b.task_id is not null and c.status = 'done'
+                 and c.closed_at > now() - make_interval(days => $1)))`,
+        [days]
+      );
+    },
+
+    // --- src/commitments/policyClose.js
+
+    /**
+     * Open, unfolded commitments with their source item and what acted on
+     * them (a run, a draft, a move of yours).
+     * @returns {Promise<object[]>}
+     */
+    async policyCandidates() {
+      return db.rows(POLICY_CANDIDATES);
+    },
+
+    /**
+     * Open or dispatched commitments folded under any of `ids`.
+     * @param {Array<number>} ids
+     * @returns {Promise<Array<{id, superseded_by, summary, source, author_identity, raw}>>}
+     */
+    async foldedUnder(ids) {
+      return db.rows(
+        `select c.id, c.superseded_by, c.summary, si.source, si.author_identity, si.raw
+           from commitment c join source_item si on si.id = c.source_item_id
+          where c.status in ('open','dispatched') and c.superseded_by = any($1::bigint[])`,
+        [ids]
+      );
+    },
+
+    /**
+     * Unfolds a commitment still folded under `supersededBy`.
+     * @returns {Promise<boolean>} whether a row changed
+     */
+    async unfold(id, supersededBy) {
+      const r = await db.query('update commitment set superseded_by = null where id = $1 and superseded_by = $2', [id, supersededBy]);
+      return Boolean(r.rowCount);
+    },
+
+    // --- src/commitments/selfNotes.js
+
+    /**
+     * Ids of open self-notes nobody touched for `days` days.
+     * @param {string} days  as text for the interval
+     * @param {string} selfNoteSql  selfNotes.SELF_NOTE (needs `si` and `per` in scope)
+     * @returns {Promise<Array<{id}>>}
+     */
+    async expiredSelfNotes(days, selfNoteSql) {
+      return db.rows(
+        `select c.id from commitment c
+       join source_item si on si.id = c.source_item_id
+       left join person per on per.id = c.counterparty_person_id
+      where c.status = 'open' and c.superseded_by is null
+        and coalesce(c.touched_at, si.occurred_at) < now() - ($1 || ' days')::interval
+        and ${selfNoteSql}`,
+        [days]
+      );
+    },
+
+    // --- src/commitments/context.js
+
+    /**
+     * Commitments on a card whose context is missing or stale, most visible first.
+     * @param {number} limit
+     * @param {string} version  `<prompt version> <model>` the context is written by
+     * @param {number} refreshMinutes
+     * @param {string} selfNoteSql  selfNotes.SELF_NOTE
+     * @returns {Promise<Array<{id, prio}>>}
+     */
+    async dueForContext(limit, version, refreshMinutes, selfNoteSql) {
+      return db.rows(
+        `with card as (
+       select p.commitment_id as id, 0 as prio from proposal p
+        where p.status = 'pending' and p.commitment_id is not null and (p.expires_at is null or p.expires_at > now())
+       union all
+       select e.commitment_id, 1 from ledger_evidence e
+        where e.effect in ('closes','moot') and not e.applied and e.decision is null
+       union all
+       select c.id, 2 from commitment c
+         join source_item si on si.id = c.source_item_id
+         left join person per on per.id = c.counterparty_person_id
+        where c.status in ('open','dispatched') and c.superseded_by is null and not ${selfNoteSql}
+     )
+     select c.id, min(card.prio) as prio
+       from card join commitment c on c.id = card.id
+       join source_item si on si.id = c.source_item_id
+      where c.status in ('open','dispatched') and c.superseded_by is null
+        and (c.context_at is null
+             or (c.context_at < now() - make_interval(mins => $3)
+                 and (c.context is null or c.context_by is distinct from $2
+                      or exists (select 1 from source_item t
+                                  where t.fetched_at > c.context_at
+                                    and (t.id = si.id or (si.source <> 'claude_session' and si.thread_external_id is not null
+                                         and t.source = si.source and t.thread_external_id = si.thread_external_id))))))
+      group by c.id
+      order by min(card.prio), c.id desc
+      limit $1`,
+        [limit, version, refreshMinutes]
+      );
+    },
+
+    /**
+     * What the context prompt needs for one commitment: the card, its project,
+     * counterparty and source item. Null when it is gone.
+     * @param {number|string} id
+     * @returns {Promise<object|null>}
+     */
+    async contextCard(id) {
+      return db.one(
+        `select c.id, c.summary, c.detail, c.direction, c.status, c.due_at, c.kind,
+            coalesce(p.gitlab_path, p.name) as project, per.display_name as who,
+            si.id as item_id, si.source, si.subject, si.occurred_at, si.thread_external_id,
+            si.raw - 'members' - 'memberEmails' - 'audioPaths' as raw,
+            left(si.body_text, 20000) as body, ${AUTHOR('si')} as author
+       from commitment c
+       left join project p on p.id = c.project_id
+       left join person per on per.id = c.counterparty_person_id
+       join source_item si on si.id = c.source_item_id
+      where c.id = $1`,
+        [id]
+      );
+    },
+
+    /**
+     * The messages around a source item in its thread: up to four before it,
+     * up to nine from it on (unsorted).
+     * @param {string} source
+     * @param {string} threadExternalId
+     * @param {Date} occurredAt  of the source item
+     * @param {number|string} itemId  of the source item
+     * @returns {Promise<Array<{id, occurred_at, body: string, author}>>}
+     */
+    async contextThread(source, threadExternalId, occurredAt, itemId) {
+      const cols = `t.id, t.occurred_at, left(t.body_text, 900) as body, ${AUTHOR('t')} as author`;
+      return db.rows(
+        `(select ${cols} from source_item t
+         where t.source = $1 and t.thread_external_id = $2 and t.occurred_at < $3 and t.id <> $4
+         order by t.occurred_at desc limit 4)
+       union all
+       (select ${cols} from source_item t
+         where t.source = $1 and t.thread_external_id = $2 and (t.occurred_at >= $3 or t.id = $4)
+         order by t.occurred_at asc limit 9)`,
+        [source, threadExternalId, occurredAt, itemId]
+      );
+    },
+
+    /**
+     * Stores a card's context paragraph (kept when `text` is null) and stamps
+     * when and by what it was written.
+     */
+    async setContext(id, text, by) {
+      await db.query(`update commitment set context = coalesce($2, context), context_at = now(), context_by = $3 where id = $1`, [id, text, by]);
+    },
+
+    /** Stamps context_at, so a failed card is retried after the refresh interval. */
+    async stampContextAt(id) {
+      await db.query('update commitment set context_at = now() where id = $1', [id]);
+    },
+
+    // --- src/commitments/dedupe.js
+
+    /**
+     * Open commitments with no vector yet, newest first.
+     * @param {number} limit
+     * @param {number} windowDays
+     * @param {string} policySql  sourcePolicy.sourceSql('si.source')
+     * @returns {Promise<Array<{id, summary, detail, thread_external_id}>>}
+     */
+    async unvectored(limit, windowDays, policySql) {
+      return db.rows(
+        `select c.id, c.summary, c.detail, si.thread_external_id
+       from commitment c join source_item si on si.id = c.source_item_id
+       left join commitment_vector v on v.commitment_id = c.id
+      where v.commitment_id is null and ${LIVE} and ${policySql}
+        and c.extracted_at > now() - make_interval(days => $2)
+      order by c.extracted_at desc limit $1`,
+        [limit, windowDays]
+      );
+    },
+
+    /** Stores a commitment's embedding (`vector` as '[..]' text) and anchors; a second is a no-op. */
+    async insertVector(commitmentId, vector, anchors) {
+      await db.query(
+        `insert into commitment_vector (commitment_id, embedding, anchors) values ($1, $2::vector, $3)
+         on conflict (commitment_id) do nothing`,
+        [commitmentId, vector, anchors]
+      );
+    },
+
+    /**
+     * The open, unfolded, recent commitments with a vector: the comparison
+     * pool. `embedding` is the vector as text.
+     * @param {number} windowDays
+     * @param {string} policySql  sourcePolicy.sourceSql('si.source')
+     * @returns {Promise<object[]>}
+     */
+    async dedupePool(windowDays, policySql) {
+      return db.rows(
+        `select c.id, c.summary, c.detail, c.direction, c.status, c.due_at, c.extracted_at, c.source_item_id,
+            (c.counterparty_person_id is not null and not coalesce(p.is_me, false)) as has_party,
+            coalesce(p.display_name, '') as who, si.source, si.thread_external_id,
+            coalesce(si.raw->>'webUrl', si.raw->>'webLink') as web_url,
+            coalesce(si.raw->>'chatTopic', si.subject, '') as place,
+            v.embedding::text as embedding, v.anchors, v.checked_at,
+            ${ACTED('c')} as acted
+       from commitment c
+       join commitment_vector v on v.commitment_id = c.id
+       join source_item si on si.id = c.source_item_id
+       left join person p on p.id = c.counterparty_person_id
+      where ${LIVE} and ${policySql} and c.extracted_at > now() - make_interval(days => $1)
+      order by c.id`,
+        [windowDays]
+      );
+    },
+
+    /**
+     * Follows superseded_by to the live survivor of `id`; null when the chain
+     * has none.
+     * @returns {Promise<Array<{id}>>} zero or one row
+     */
+    async survivorOf(id) {
+      return db.rows(
+        `with recursive up as (select id, superseded_by, 0 as n from commitment where id = $1
+        union all select c.id, c.superseded_by, up.n + 1 from commitment c join up on c.id = up.superseded_by where up.n < 20)
+     select id from up where superseded_by is null limit 1`,
+        [id]
+      );
+    },
+
+    /**
+     * Folds `drop` under `keep`, only while `drop` is a live row nothing else
+     * folded meanwhile.
+     * @returns {Promise<boolean>} whether the fold was made
+     */
+    async fold(drop, keep) {
+      const r = await db.query(
+        `update commitment set superseded_by = $2
+      where id = $1 and superseded_by is null and status in ('open','dispatched')`,
+        [drop, keep]
+      );
+      return Boolean(r.rowCount);
+    },
+
+    /** Marks as checked the vectors whose commitment has left the board. */
+    async checkVectorsOffBoard() {
+      await db.query(
+        `update commitment_vector v set checked_at = now()
+       from commitment c where c.id = v.commitment_id and v.checked_at is null
+        and not (c.status in ('open','dispatched') and c.superseded_by is null)`
+      );
+    },
+
+    /** Marks one vector checked, with the fold note (or null) as its verdict. */
+    async markVectorChecked(commitmentId, verdict) {
+      await db.query(`update commitment_vector set checked_at = now(), verdict = $2 where commitment_id = $1`, [commitmentId, verdict]);
+    },
+
+    /** Marks every unchecked vector checked (the one-off backfill). */
+    async checkAllVectors() {
+      await db.query(`update commitment_vector set checked_at = coalesce(checked_at, now())`);
+    },
+
+    // --- src/commitments/replyClose.js
+
+    /**
+     * Open owed_by_me asks from `sources` with a reply of mine in the window
+     * that no judgement at this version has seen yet.
+     * @param {string[]} me  my author forms (lower case)
+     * @param {string} version  reply-close prompt version
+     * @param {number} limit
+     * @param {{windowDays: number, sources: string[], maxAttempts: number}} o
+     * @returns {Promise<object[]>}
+     */
+    async replyCloseCandidates(me, version, limit, { windowDays, sources, maxAttempts }) {
+      return db.rows(
+        `
+  select c.id, c.summary, c.detail, c.due_at, c.status, c.closed_at, c.closed_reason,
+         si.id as item_id, si.source, si.thread_external_id, si.occurred_at, si.author_identity,
+         si.subject, si.body_text, p.display_name as counterparty,
+         last.id as last_message_id, last.occurred_at as last_at
+    from commitment c
+    join source_item si on si.id = c.source_item_id
+    left join person p on p.id = c.counterparty_person_id
+    cross join lateral (
+      select mine.id, mine.occurred_at from source_item mine
+       where mine.source = si.source and mine.thread_external_id = si.thread_external_id
+         and mine.id <> si.id
+         and mine.occurred_at > si.occurred_at
+         and mine.occurred_at <= si.occurred_at + interval '${windowDays} days'
+         and lower(coalesce(mine.author_identity, '')) = any($1::text[])
+       order by mine.occurred_at desc, mine.id desc limit 1) last
+   where c.status = 'open' and c.direction = 'owed_by_me' and c.superseded_by is null
+     and si.source = any('{${sources.join(',')}}'::text[]) and si.thread_external_id is not null
+     and not exists (
+       select 1 from reply_close r
+        where r.commitment_id = c.id and r.extracted_by = $2 and r.last_message_id = last.id
+          and (r.error is null or r.attempts >= ${maxAttempts}))
+   order by last.occurred_at desc
+   limit $3`,
+        [me, version, limit]
+      );
+    },
+
+    /**
+     * My later messages in the thread of a source item, within the window.
+     * @param {string[]} me  my author forms
+     * @param {string} source
+     * @param {string} threadExternalId
+     * @param {number|string} itemId  the ask's source item
+     * @param {Date} occurredAt  of the ask
+     * @param {{windowDays: number, limit: number}} o
+     * @returns {Promise<Array<{id, occurred_at, body_text}>>}
+     */
+    async replyCloseReplies(me, source, threadExternalId, itemId, occurredAt, { windowDays, limit }) {
+      return db.rows(
+        `select mine.id, mine.occurred_at, mine.body_text from source_item mine
+      where mine.source = $2 and mine.thread_external_id = $3 and mine.id <> $4
+        and mine.occurred_at > $5 and mine.occurred_at <= $5::timestamptz + interval '${windowDays} days'
+        and lower(coalesce(mine.author_identity, '')) = any($1::text[])
+      order by mine.occurred_at, mine.id limit ${limit}`,
+        [me, source, threadExternalId, itemId, occurredAt]
+      );
+    },
+
+    /**
+     * Records a judgement; the same (commitment, version, last message) is
+     * updated and its attempts counted.
+     * @param {{id, last_message_id}} c
+     * @param {string} version
+     * @param {{verdict, quote, message?: {id}, confidence?: number}} j
+     * @param {object|null} applied  what was changed, for undo
+     */
+    async recordReplyClose(c, version, j, applied = null) {
+      await db.query(
+        `insert into reply_close (commitment_id, extracted_by, last_message_id, verdict, quote, message_id, confidence, applied, attempts, error)
+     values ($1, $2, $3, $4, $5, $6, $7, $8, 1, null)
+     on conflict (commitment_id, extracted_by, last_message_id) do update
+        set verdict = excluded.verdict, quote = excluded.quote, message_id = excluded.message_id,
+            confidence = excluded.confidence, applied = excluded.applied, error = null,
+            attempts = reply_close.attempts + 1, judged_at = now()`,
+        [c.id, version, c.last_message_id, j.verdict, j.quote, j.message?.id ?? null, j.confidence ?? null, applied]
+      );
+    },
+
+    /** Records a failed judgement (`message` is clipped by the caller). */
+    async recordReplyCloseError(c, version, message) {
+      await db.query(
+        `insert into reply_close (commitment_id, extracted_by, last_message_id, error, attempts)
+     values ($1, $2, $3, $4, 1)
+     on conflict (commitment_id, extracted_by, last_message_id) do update
+        set error = excluded.error, attempts = reply_close.attempts + 1, judged_at = now()`,
+        // The message is ours (a parse or spawn failure), never a body; clipped anyway.
+        [c.id, version, c.last_message_id, message]
+      );
+    },
+
+    /**
+     * The commitment's status columns, row-locked (use inside withTx).
+     * @returns {Promise<{id, status, closed_at, closed_reason}|null>}
+     */
+    async lockStatus(id) {
+      return db.one('select id, status, closed_at, closed_reason from commitment where id = $1 for update', [id]);
+    },
+
+    /**
+     * The newest applied, not yet undone reply-close judgement on a commitment.
+     * @returns {Promise<object|null>} the reply_close row
+     */
+    async latestAppliedReplyClose(commitmentId) {
+      return db.one(
+        `select * from reply_close where commitment_id = $1 and applied is not null and undone_at is null
+      order by judged_at desc limit 1`,
+        [commitmentId]
+      );
+    },
+
+    /** Marks a reply_close row undone, with what the undo said. */
+    async markReplyCloseUndone(id, result) {
+      await db.query('update reply_close set undone_at = now(), undo = $2 where id = $1', [id, result]);
+    },
+
+    /** Puts back the columns a close overwrote. */
+    async restoreClosedState(id, status, closedAt, closedReason) {
+      await db.query('update commitment set status = $2, closed_at = $3, closed_reason = $4 where id = $1', [id, status, closedAt, closedReason]);
+    },
+
+    /**
+     * Counts for `pa doctor`: closed (still closed as the pass left it),
+     * judged, failed (out of attempts) and the last judgement time.
+     * @param {number} maxAttempts
+     * @returns {Promise<{closed: number, judged: number, failed: number, last: Date|null}>}
+     */
+    async replyCloseStats(maxAttempts) {
+      return db.one(
+        `select count(*) filter (where r.applied is not null and r.undone_at is null
+                              and c.closed_reason = r.applied->'set'->>'closed_reason')::int as closed,
+            count(*) filter (where r.error is null)::int as judged,
+            count(*) filter (where r.error is not null and r.attempts >= ${maxAttempts})::int as failed,
+            max(r.judged_at) as last
+       from reply_close r left join commitment c on c.id = r.commitment_id`
+      );
+    },
+
+    // --- src/commitments/request.js
+
+    /**
+     * Inserts a task you asked for (confidence 1) and returns its id.
+     * @param {{itemId, direction, summary, detail, personId, dueAt, projectId, repoPath, projectConfidence, projectRationale, extractedBy}} v
+     * @returns {Promise<{id}>}
+     */
+    async insertRequested(v) {
+      return db.one(
+        `insert into commitment
+           (source_item_id, direction, summary, detail, counterparty_person_id, due_at, project_id, repo_path,
+            project_confidence, project_rationale, confidence, extracted_by)
+         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,1,$11) returning id`,
+        [v.itemId, v.direction, v.summary, v.detail, v.personId, v.dueAt, v.projectId, v.repoPath, v.projectConfidence, v.projectRationale, v.extractedBy]
+      );
+    },
+
+    // --- src/distill/index.js
+
+    /**
+     * Source items with no distillation at this prompt version, newest first.
+     * @param {string} version  prompt version
+     * @param {number} minChars
+     * @param {number} limit
+     * @param {string} skipSql  the items to leave out (`not ...`), a SQL predicate on `si`
+     * @param {string} allowedSql  sources that may create tasks, a SQL predicate on `si`
+     * @returns {Promise<object[]>} source_item rows
+     */
+    async pendingDistill(version, minChars, limit, skipSql, allowedSql) {
+      return db.rows(
+        `select si.* from source_item si
+       left join distillation d
+         on d.source_item_id = si.id and d.extracted_by = $1
+      where d.source_item_id is null and not ${skipSql} and ${allowedSql}
+        and length(si.body_text) >= $2
+      order by si.occurred_at desc
+      limit $3`,
+        [version, minChars, limit]
+      );
+    },
+
+    /**
+     * How many items {@link pendingDistill} would return (without a limit).
+     * @returns {Promise<{n: number}|null>}
+     */
+    async pendingDistillCount(version, minChars, skipSql, allowedSql) {
+      return db.one(
+        `select count(*)::int as n from source_item si
+       left join distillation d
+         on d.source_item_id = si.id and d.extracted_by = $1
+      where d.source_item_id is null and not ${skipSql} and ${allowedSql} and length(si.body_text) >= $2`,
+        [version, minChars]
+      );
+    },
+
+    /**
+     * An item's live commitments with whether anything has acted on them.
+     * @returns {Promise<Array<{id, status, summary, touched: boolean, refs: boolean}>>}
+     */
+    async liveForItem(itemId) {
+      return db.rows(EXISTING, [itemId]);
+    },
+
+    /** Deletes commitments by id (re-distillation replacing what nothing acted on). */
+    async deleteByIds(ids) {
+      await db.query('delete from commitment where id = any($1::bigint[])', [ids]);
+    },
+
+    /**
+     * Inserts one distilled commitment.
+     * @param {{itemId, direction, summary, detail, personId, dueAt, projectId, repoPath, projectConfidence, projectRationale, confidence, extractedBy}} v
+     */
+    async insertDistilled(v) {
+      await db.query(
+        `insert into commitment
+           (source_item_id, direction, summary, detail, counterparty_person_id, due_at,
+            project_id, repo_path, project_confidence, project_rationale, confidence, extracted_by)
+         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+        [v.itemId, v.direction, v.summary, v.detail, v.personId, v.dueAt, v.projectId, v.repoPath, v.projectConfidence, v.projectRationale, v.confidence, v.extractedBy]
+      );
+    },
+
+    /** Marks an item distilled with its counts; clears any earlier error. */
+    async upsertDistillation(itemId, version, commitments, facts) {
+      await db.query(
+        `insert into distillation (source_item_id, extracted_by, commitments, facts, error)
+       values ($1,$2,$3,$4,null)
+       on conflict (source_item_id) do update set
+         extracted_by = excluded.extracted_by,
+         extracted_at = now(),
+         commitments  = excluded.commitments,
+         facts        = excluded.facts,
+         error        = null`,
+        [itemId, version, commitments, facts]
+      );
+    },
+
+    /** Marks an item failed, with the (clipped) error, so the pass moves on. */
+    async markDistillFailed(itemId, version, error) {
+      await db.query(
+        `insert into distillation (source_item_id, extracted_by, error)
+       values ($1,$2,$3)
+       on conflict (source_item_id) do update set
+         extracted_by = excluded.extracted_by, extracted_at = now(), error = excluded.error`,
+        [itemId, version, error]
+      );
+    },
+
+    /** Marks an item the source policy keeps off the board as distilled with nothing found. */
+    async markDistillSkipped(itemId, version) {
+      await db.query(
+        `insert into distillation (source_item_id, extracted_by, commitments, facts) values ($1, $2, 0, 0)
+     on conflict (source_item_id) do update set extracted_by = excluded.extracted_by, extracted_at = now(), error = null`,
+        [itemId, version]
+      );
+    },
+
+    /** Marks an item the debrief owns as distilled (a no-op when it already is). */
+    async markDistillOwnedByDebrief(itemId, version) {
+      await db.query(`insert into distillation (source_item_id, extracted_by) values ($1, $2) on conflict (source_item_id) do nothing`, [itemId, version]);
+    },
+
+    // --- src/distill/identity.js, src/projects/index.js
+
+    /** Re-points every commitment's counterparty from one person to another (a person merge). */
+    async reassignCounterparty(intoId, fromId) {
+      await db.query('update commitment set counterparty_person_id = $1 where counterparty_person_id = $2', [intoId, fromId]);
+    },
+
+    /** One commitment row by id (null when gone). */
+    async byId(id) {
+      return db.one('select * from commitment where id = $1', [id]);
+    },
+
+    /** Distinct projects of commitments extracted in the last 14 days (at most 20). */
+    async recentProjectIds() {
+      return db.rows(
+        `select distinct project_id from commitment
+      where project_id is not null and extracted_at > now() - interval '14 days'
+      order by project_id limit 20`
+      );
+    },
+
+    /** The (at most 5) projects a person's commitments most often sit in. @returns {Promise<Array<{project_id, n}>>} */
+    async projectsOfPerson(personId) {
+      return db.rows(
+        `select project_id, count(*) as n from commitment
+          where counterparty_person_id = $1 and project_id is not null
+          group by project_id order by n desc limit 5`,
+        [personId]
+      );
+    },
+
+    /** The project of the newest commitment from a thread, or null. @returns {Promise<{project_id}|null>} */
+    async projectOfThread(threadExternalId) {
+      return db.one(
+        `select c.project_id from commitment c
+           join source_item si on si.id = c.source_item_id
+          where si.thread_external_id = $1 and c.project_id is not null
+          order by c.extracted_at desc limit 1`,
+        [threadExternalId]
+      );
+    },
+
+    /**
+     * Points a commitment at a project (or clears it); a by-hand correction
+     * also stamps touched_at.
+     */
+    async setProject(id, projectId, repoPath, confidence, rationale) {
+      await db.query(
+        `update commitment set project_id = $2, repo_path = $3, project_confidence = $4,
+                           project_rationale = $5,
+                           touched_at = case when $5 = 'corrected by hand' then now() else touched_at end
+      where id = $1`,
+        [id, projectId, repoPath, confidence, rationale]
+      );
+    },
+
+    /**
+     * Open, unfolded commitments that have a project, with the item's text.
+     * @param {string|null} project  only this project (by name)
+     * @param {number[]|null} ids  only these commitments
+     * @returns {Promise<object[]>}
+     */
+    async projectLinks(project, ids) {
+      return db.rows(
+        `select c.id, c.project_id, c.repo_path, c.project_confidence, c.project_rationale, c.summary, c.detail,
+            si.source, si.subject, si.body_text, si.raw, p.name as project
+       from commitment c
+       join source_item si on si.id = c.source_item_id
+       join project p on p.id = c.project_id
+      where c.status in ('open','dispatched') and c.superseded_by is null
+        and ($1::text is null or lower(p.name) = lower($1::text))
+        and ($2::bigint[] is null or c.id = any($2::bigint[]))
+      order by c.id`,
+        [project, ids]
+      );
+    },
+
+    /**
+     * Clears a commitment's project, guarded on the old project so a row
+     * changed meanwhile is left alone.
+     * @returns {Promise<boolean>} whether a row changed
+     */
+    async clearProject(id, rationale, oldProjectId) {
+      const res = await db.query(
+        `update commitment set project_id = null, repo_path = null, project_confidence = null, project_rationale = $2
+        where id = $1 and project_id = $3 and superseded_by is null`,
+        [id, rationale, oldProjectId]
+      );
+      return Boolean(res.rowCount);
     },
   };
 }

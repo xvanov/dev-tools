@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
 const { config } = require('../config');
-const { query, rows, one } = require('../db');
+const repo = require('../repo');
 const { scoreCandidates } = require('./resolve');
 const { logger } = require('../log');
 
@@ -178,33 +178,18 @@ function staleProjects(projects, exists) {
 
 async function upsertProject({ name, gitlabPath, repoPath }) {
   const existing =
-    (gitlabPath && (await one('select * from project where gitlab_path = $1', [gitlabPath]))) ||
-    (repoPath && (await one('select * from project where repo_path = $1', [repoPath]))) ||
-    (await one('select * from project where lower(name) = lower($1)', [name]));
+    (gitlabPath && (await repo.projects.byGitlabPath(gitlabPath))) ||
+    (repoPath && (await repo.projects.byRepoPath(repoPath))) ||
+    (await repo.projects.byNameCaseless(name));
 
   if (existing) {
     // Renamed to the canonical folder's name when that name is free, so the
     // distiller is shown `optimizer`, not the worktree it was first seen as.
-    await query(
-      `update project set
-         name        = case when $4::text is not null and lower(name) <> lower($4::text)
-                             and not exists (select 1 from project o where lower(o.name) = lower($4::text) and o.id <> $1)
-                            then $4::text else name end,
-         gitlab_path = coalesce($2, gitlab_path),
-         repo_path   = coalesce($3, repo_path),
-         active      = true,
-         retired_at  = null,
-         retired_reason = null
-       where id = $1`,
-      [existing.id, gitlabPath, repoPath, name]
-    );
+    await repo.projects.refresh(existing.id, gitlabPath, repoPath, name);
     return existing.id;
   }
 
-  const created = await one(
-    'insert into project (name, gitlab_path, repo_path) values ($1,$2,$3) returning id',
-    [name, gitlabPath, repoPath]
-  );
+  const created = await repo.projects.insert(name, gitlabPath, repoPath);
   return created.id;
 }
 
@@ -214,40 +199,27 @@ async function addAlias(projectId, alias, origin = 'seeded', learnedFrom = null)
   // A corrected alias outranks a seeded one and is allowed to take an alias
   // over from a seed — that is the whole point of correcting it.
   const weight = origin === 'corrected' ? 2.0 : origin === 'observed' ? 1.2 : 1.0;
-  const res = await query(
-    `insert into project_alias (project_id, alias, origin, weight, learned_from)
-     values ($1,$2,$3,$4,$5)
-     on conflict (lower(alias)) do update set
-       project_id   = case when project_alias.origin = 'corrected' and excluded.origin <> 'corrected'
-                           then project_alias.project_id else excluded.project_id end,
-       origin       = case when project_alias.origin = 'corrected' and excluded.origin <> 'corrected'
-                           then project_alias.origin else excluded.origin end,
-       weight       = greatest(project_alias.weight, excluded.weight),
-       learned_from = coalesce(excluded.learned_from, project_alias.learned_from)
-     returning id`,
-    [projectId, clean, origin, weight, learnedFrom]
-  );
-  return res.rows.length > 0;
+  return repo.projects.upsertAlias(projectId, clean, origin, weight, learnedFrom);
 }
 
 // Seeds from the git repos under your repos root.
 async function sync() {
   const seen = [];
 
-  for (const repo of groupRepos(scanRepos(config.reposRoot))) {
-    const name = repo.dirName;
+  for (const found of groupRepos(scanRepos(config.reposRoot))) {
+    const name = found.dirName;
     const id = await upsertProject({
       name,
-      gitlabPath: repo.gitlabPath,
-      repoPath: repo.repoPath,
+      gitlabPath: found.gitlabPath,
+      repoPath: found.repoPath,
     });
-    await addAlias(id, repo.dirName);
-    for (const other of repo.others) await addAlias(id, other);
-    if (repo.gitlabPath) {
-      await addAlias(id, repo.gitlabPath.split('/').pop());
-      await addAlias(id, repo.gitlabPath);
+    await addAlias(id, found.dirName);
+    for (const other of found.others) await addAlias(id, other);
+    if (found.gitlabPath) {
+      await addAlias(id, found.gitlabPath.split('/').pop());
+      await addAlias(id, found.gitlabPath);
     }
-    if (repo.title) await addAlias(id, repo.title);
+    if (found.title) await addAlias(id, found.title);
     seen.push({ id, name, source: 'local' });
   }
 
@@ -261,13 +233,10 @@ async function sync() {
 // commitments and runs point at it — and a folder that comes back is
 // reactivated by upsertProject on the next sync.
 async function retireMissing({ exists = fs.existsSync } = {}) {
-  const all = await rows('select id, name, repo_path, active from project');
+  const all = await repo.projects.allForRetire();
   const stale = staleProjects(all, exists);
   for (const p of stale) {
-    await query(
-      `update project set active = false, retired_at = now(), retired_reason = $2 where id = $1 and active`,
-      [p.id, `repo folder gone: ${p.repo_path}`]
-    );
+    await repo.projects.retire(p.id, `repo folder gone: ${p.repo_path}`);
   }
   if (stale.length) log.info('projects retired', { ids: stale.map((p) => p.id) });
   return stale.map((p) => ({ id: p.id, name: p.name, repoPath: p.repo_path }));
@@ -278,12 +247,8 @@ async function retireMissing({ exists = fs.existsSync } = {}) {
 // machine (`paths`) and every forge path it has had (`remotePaths` — the
 // archived GitLab original of a repo that moved to GitHub, a second remote).
 async function candidates() {
-  const projects = await rows(
-    `select id, name, gitlab_path, repo_path, last_touched_at,
-            coalesce(local_paths, '{}'::jsonb) as local_paths, coalesce(remote_urls, '{}') as remote_urls
-       from project where active order by name`
-  );
-  const aliases = await rows('select project_id, alias, origin, weight from project_alias');
+  const projects = await repo.projects.activeForCandidates();
+  const aliases = await repo.projects.allAliases();
   const byProject = new Map();
   for (const a of aliases) {
     if (!byProject.has(a.project_id)) byProject.set(a.project_id, []);
@@ -312,28 +277,9 @@ async function candidates() {
 // Context that makes the scorer better than string matching: what you touched
 // lately, and what the person asking usually works on.
 async function scoringContext({ authorPersonId, threadExternalId } = {}) {
-  const recent = await rows(
-    `select distinct project_id from commitment
-      where project_id is not null and extracted_at > now() - interval '14 days'
-      order by project_id limit 20`
-  );
-  const authored = authorPersonId
-    ? await rows(
-        `select project_id, count(*) as n from commitment
-          where counterparty_person_id = $1 and project_id is not null
-          group by project_id order by n desc limit 5`,
-        [authorPersonId]
-      )
-    : [];
-  const thread = threadExternalId
-    ? await one(
-        `select c.project_id from commitment c
-           join source_item si on si.id = c.source_item_id
-          where si.thread_external_id = $1 and c.project_id is not null
-          order by c.extracted_at desc limit 1`,
-        [threadExternalId]
-      )
-    : null;
+  const recent = await repo.commitments.recentProjectIds();
+  const authored = authorPersonId ? await repo.commitments.projectsOfPerson(authorPersonId) : [];
+  const thread = threadExternalId ? await repo.commitments.projectOfThread(threadExternalId) : null;
 
   return {
     recentProjectIds: recent.map((r) => r.project_id),
@@ -353,16 +299,7 @@ async function guess(text, ctx) {
 // Retired projects are not answers: correcting an ask to a repo that is gone
 // from disk would hand a dispatched run a folder that does not exist.
 async function byName(name) {
-  return one(
-    `select * from project
-      where active
-        and (lower(name) = lower($1)
-         or lower(gitlab_path) = lower($1)
-         or id = (select project_id from project_alias where lower(alias) = lower($1) limit 1))
-      order by (lower(name) = lower($1)) desc
-      limit 1`,
-    [name]
-  );
+  return repo.projects.byNameOrAlias(name);
 }
 
 // Learns the phrases a corrected commitment was actually described with. Short
@@ -398,7 +335,7 @@ async function learnAliases(projectId, commitment, item, commitmentId) {
  * @returns {{project, learned: string[], before: {project_id, repo_path, project_confidence, project_rationale}}}
  */
 async function correct(commitmentId, projectName, { learn = true, rationale = 'corrected by hand' } = {}) {
-  const commitment = await one('select * from commitment where id = $1', [commitmentId]);
+  const commitment = await repo.commitments.byId(commitmentId);
   if (!commitment) throw new Error(`no commitment #${commitmentId}`);
   let project = null;
   if (projectName != null) {
@@ -411,27 +348,17 @@ async function correct(commitmentId, projectName, { learn = true, rationale = 'c
     project_confidence: commitment.project_confidence,
     project_rationale: commitment.project_rationale,
   };
-  await query(
-    `update commitment set project_id = $2, repo_path = $3, project_confidence = $4,
-                           project_rationale = $5,
-                           touched_at = case when $5 = 'corrected by hand' then now() else touched_at end
-      where id = $1`,
-    [commitmentId, project?.id ?? null, project?.repo_path ?? null, project ? 1.0 : null, rationale]
-  );
+  await repo.commitments.setProject(commitmentId, project?.id ?? null, project?.repo_path ?? null, project ? 1.0 : null, rationale);
   let learned = [];
   if (project && learn) {
-    const item = await one('select subject, body_text from source_item where id = $1', [commitment.source_item_id]);
+    const item = await repo.sources.subjectAndBody(commitment.source_item_id);
     learned = await learnAliases(project.id, commitment, item, commitmentId);
   }
   return { project, learned, before };
 }
 
 async function list() {
-  return rows(
-    `select p.*, (select count(*) from project_alias a where a.project_id = p.id) as aliases,
-            (select count(*) from commitment c where c.project_id = p.id) as commitments
-       from project p where p.active order by p.name`
-  );
+  return repo.projects.listWithCounts();
 }
 
 module.exports = {

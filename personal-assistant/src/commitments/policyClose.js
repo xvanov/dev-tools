@@ -18,23 +18,12 @@
 const fs = require('fs');
 const path = require('path');
 const { config } = require('../config');
-const { rows, query } = require('../db');
+const repo = require('../repo');
 const ledger = require('../ledger');
 const policy = require('./sourcePolicy');
 const identity = require('../distill/identity');
 
 const ACTOR = 'reconciler';
-
-const CANDIDATES = `
-  select c.id, c.summary, c.direction, c.status, c.touched_at, c.closed_at, c.closed_reason,
-         si.id as item_id, si.source, si.author_identity, si.raw,
-         c.touched_at is not null as touched,
-         exists (select 1 from run r where r.commitment_id = c.id) as has_run,
-         exists (select 1 from draft d where d.commitment_id = c.id) as has_draft,
-         exists (select 1 from ledger_transition t where t.commitment_id = c.id and t.actor = 'you') as you_moved
-    from commitment c join source_item si on si.id = c.source_item_id
-   where c.status = 'open' and c.superseded_by is null
-   order by c.id`;
 
 /** Pure. Why a card counts as acted on by you, or null. */
 function actedBy(c) {
@@ -48,7 +37,7 @@ function actedBy(c) {
 
 /**
  * Pure. Splits open cards into {close, keep} by the policy.
- * @param list  rows of CANDIDATES
+ * @param list  rows of repo.commitments.policyCandidates()
  * @param ctx   sourcePolicy.judge's options (sources, login, me)
  */
 function split(list, ctx) {
@@ -89,16 +78,11 @@ async function context() {
  */
 async function run({ apply = false, now = new Date() } = {}) {
   const ctx = await context();
-  const plan = split(await rows(CANDIDATES), ctx);
+  const plan = split(await repo.commitments.policyCandidates(), ctx);
   const closeIds = plan.close.map((c) => Number(c.id));
   // Allowed-source copies folded under a card about to close: they come back.
   const unfold = closeIds.length
-    ? (await rows(
-        `select c.id, c.superseded_by, c.summary, si.source, si.author_identity, si.raw
-           from commitment c join source_item si on si.id = c.source_item_id
-          where c.status in ('open','dispatched') and c.superseded_by = any($1::bigint[])`,
-        [closeIds]
-      )).filter((c) => policy.judge(c, ctx).ok)
+    ? (await repo.commitments.foldedUnder(closeIds)).filter((c) => policy.judge(c, ctx).ok)
     : [];
   const out = { ...plan, unfold, before: null, after: null };
   if (!apply) return out;
@@ -120,8 +104,8 @@ async function run({ apply = false, now = new Date() } = {}) {
     );
   }
   for (const u of unfold) {
-    const r = await query('update commitment set superseded_by = null where id = $1 and superseded_by = $2', [u.id, u.superseded_by]);
-    if (r.rowCount) undo.push(`update commitment set superseded_by = ${Number(u.superseded_by)} where id = ${Number(u.id)} and superseded_by is null;`);
+    const unfolded = await repo.commitments.unfold(u.id, u.superseded_by);
+    if (unfolded) undo.push(`update commitment set superseded_by = ${Number(u.superseded_by)} where id = ${Number(u.id)} and superseded_by is null;`);
   }
   undo.push('commit;', '');
   const dir = path.join(config.dataDir, 'fixes');
@@ -168,4 +152,4 @@ function report(r, { apply = false } = {}) {
   return lines.join('\n');
 }
 
-module.exports = { run, split, actedBy, bySource, report, ACTOR, CANDIDATES };
+module.exports = { run, split, actedBy, bySource, report, ACTOR };

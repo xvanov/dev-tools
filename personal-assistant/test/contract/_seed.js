@@ -194,6 +194,48 @@ function postgres(db) {
       );
       return Number(r.id);
     },
+
+    // --- for the commitments, people and projects contracts (chunk C)
+
+    /** Sets columns on a commitment (seed only; the allow-list is the columns those contracts need). */
+    async setCommitment(id, cols) {
+      const allowed = ['project_id', 'repo_path', 'project_rationale', 'touched_at', 'superseded_by', 'closed_at', 'closed_reason', 'context', 'context_at', 'context_by', 'counterparty_person_id', 'extracted_at', 'status', 'direction', 'kind', 'detail'];
+      const keys = Object.keys(cols).filter((k) => allowed.includes(k));
+      await db.query(`update commitment set ${keys.map((k, i) => `${k} = $${i + 2}`).join(', ')} where id = $1`, [id, ...keys.map((k) => cols[k])]);
+    },
+    /** Sets columns on a source item (seed only). `raw` is stored as jsonb. */
+    async setItem(id, cols) {
+      const allowed = ['thread_external_id', 'author_identity', 'raw', 'occurred_at', 'body_text', 'subject', 'fetched_at', 'source'];
+      const keys = Object.keys(cols).filter((k) => allowed.includes(k));
+      await db.query(`update source_item set ${keys.map((k, i) => `${k} = $${i + 2}`).join(', ')} where id = $1`, [id, ...keys.map((k) => (k === 'raw' ? JSON.stringify(cols[k]) : cols[k]))]);
+    },
+    /** A project (active unless o.active === false); returns its id. */
+    async projectNamed(name, o = {}) {
+      const r = await db.one(`insert into project (name, gitlab_path, repo_path, active) values ($1, $2, $3, $4) returning id`, [name, o.gitlabPath || null, o.repoPath || null, o.active !== false]);
+      return Number(r.id);
+    },
+    /** Ledger evidence on a commitment (effect closes, not applied, undecided by default); returns its id. */
+    async pendingEvidence(commitmentId, o = {}) {
+      const r = await db.one(
+        `insert into ledger_evidence (commitment_id, effect, quote, confidence, method, extracted_by, applied, decision)
+         values ($1, $2, $3, $4, 'rule', 'contract-seed', $5, $6) returning id`,
+        [commitmentId, o.effect || 'closes', o.quote || 'q', o.confidence ?? 0.9, Boolean(o.applied), o.decision || null]
+      );
+      return Number(r.id);
+    },
+    /** An active claim about a subject (person by default); returns its id. */
+    async claimAbout(subjectId, o = {}) {
+      const r = await db.one(
+        `insert into claim (subject_kind, subject_id, subject_label, kind, text, origin) values ($1, $2, $3, 'role', 'a seeded claim', 'explicit') returning id`,
+        [o.subjectKind || 'person', subjectId, o.label || 'someone']
+      );
+      return Number(r.id);
+    },
+    /** A person's memory page; returns its id. */
+    async personPage(personId) {
+      const r = await db.one(`insert into memory_page (kind, subject_id, title, body, facts_hash) values ('person', $1, 'T', 'B', 'h') returning id`, [personId]);
+      return Number(r.id);
+    },
   };
   return seed;
 }

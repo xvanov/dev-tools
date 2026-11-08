@@ -12,7 +12,7 @@
 // called "Alex" merged into one is a data-loss bug you find out about by
 // sending the wrong person a message.
 
-const { one, query, withTx } = require('../db');
+const repo = require('../repo');
 
 function parseIdentity(raw) {
   if (!raw) return null;
@@ -27,45 +27,34 @@ function parseIdentity(raw) {
 }
 
 async function me() {
-  return one('select * from person where is_me limit 1');
+  return repo.people.meRow();
 }
 
 // Your own handle of one kind (`github_username`), or null before that
 // source has signed in and claimed it.
 async function myHandle(kind) {
-  const r = await one(
-    `select pi.value from person_identity pi join person p on p.id = pi.person_id
-      where p.is_me and pi.kind = $1 order by pi.value limit 1`,
-    [kind]
-  );
+  const r = await repo.people.myHandle(kind);
   return r?.value || null;
 }
 
 async function setMe({ displayName, email }) {
   const existing = await me();
   if (existing) {
-    await query('update person set display_name = $2, primary_email = $3 where id = $1', [
+    await repo.people.setNames(
       existing.id,
       displayName || existing.display_name,
-      (email || existing.primary_email || '').toLowerCase() || null,
-    ]);
+      (email || existing.primary_email || '').toLowerCase() || null
+    );
     if (email) await addIdentity(existing.id, 'smtp', email.toLowerCase());
     return existing.id;
   }
-  const row = await one(
-    'insert into person (display_name, primary_email, is_me) values ($1,$2,true) returning id',
-    [displayName || 'me', (email || '').toLowerCase() || null]
-  );
+  const row = await repo.people.insertMe(displayName || 'me', (email || '').toLowerCase() || null);
   if (email) await addIdentity(row.id, 'smtp', email.toLowerCase());
   return row.id;
 }
 
 async function addIdentity(personId, kind, value) {
-  await query(
-    'insert into person_identity (person_id, kind, value) values ($1,$2,$3) ' +
-      'on conflict (kind, value) do nothing',
-    [personId, kind, value]
-  );
+  await repo.people.addIdentity(personId, kind, value);
 }
 
 // Resolves an identity string to a person, creating one when it is genuinely
@@ -82,36 +71,25 @@ async function resolve(rawIdentity, displayName) {
 
   if (parsed.kind === 'display_name') {
     // A bare name is not an identity. Match one only if it is unambiguous.
-    const hits = await query(
-      'select id from person where lower(display_name) = lower($1) limit 2',
-      [parsed.value]
-    );
-    return hits.rows.length === 1 ? hits.rows[0].id : null;
+    const hits = await repo.people.byDisplayName(parsed.value);
+    return hits.length === 1 ? hits[0].id : null;
   }
 
-  const found = await one('select person_id from person_identity where kind = $1 and value = $2', [
-    parsed.kind,
-    parsed.value,
-  ]);
+  const found = await repo.people.identityOwner(parsed.kind, parsed.value);
   if (found) return found.person_id;
 
   // An email we have not seen as an identity may still belong to a person whose
   // primary_email matches — that happens when the person row came from a
   // calendar attendee list before any message arrived.
   if (parsed.kind === 'smtp') {
-    const byEmail = await one('select id from person where lower(primary_email) = $1', [
-      parsed.value,
-    ]);
+    const byEmail = await repo.people.byPrimaryEmail(parsed.value);
     if (byEmail) {
       await addIdentity(byEmail.id, 'smtp', parsed.value);
       return byEmail.id;
     }
   }
 
-  const created = await one(
-    'insert into person (display_name, primary_email) values ($1,$2) returning id',
-    [displayName || parsed.value, parsed.kind === 'smtp' ? parsed.value : null]
-  );
+  const created = await repo.people.insert(displayName || parsed.value, parsed.kind === 'smtp' ? parsed.value : null);
   await addIdentity(created.id, parsed.kind, parsed.value);
   return created.id;
 }
@@ -122,7 +100,7 @@ async function resolve(rawIdentity, displayName) {
 // stops naming you as the person you owe.
 async function claimForMe(kind, value, { displayName, email } = {}) {
   const meId = (await me())?.id || (await setMe({ displayName, email }));
-  const owner = await one('select person_id from person_identity where kind = $1 and value = $2', [kind, value]);
+  const owner = await repo.people.identityOwner(kind, value);
   if (owner && String(owner.person_id) !== String(meId)) await merge(meId, owner.person_id);
   else if (!owner) await addIdentity(meId, kind, value);
   return meId;
@@ -141,41 +119,25 @@ async function claimForMe(kind, value, { displayName, email } = {}) {
 // had a real one.
 async function merge(intoId, fromId) {
   if (String(intoId) === String(fromId)) return { claims: 0 };
-  return withTx(async (tx) => {
-    const both = await tx.query('select * from person where id = any($1::bigint[])', [[intoId, fromId]]);
-    const into = both.rows.find((p) => String(p.id) === String(intoId));
-    const from = both.rows.find((p) => String(p.id) === String(fromId));
+  return repo.withTx(async (r) => {
+    const both = await r.people.pair(intoId, fromId);
+    const into = both.find((p) => String(p.id) === String(intoId));
+    const from = both.find((p) => String(p.id) === String(fromId));
     if (!into || !from) throw Object.assign(new Error('no such person'), { status: 404 });
     if (from.is_me) {
       throw Object.assign(new Error('cannot merge yourself away; merge the other person into you'), { status: 409 });
     }
 
-    await tx.query('update person_identity set person_id = $1 where person_id = $2', [intoId, fromId]);
-    await tx.query('update commitment set counterparty_person_id = $1 where counterparty_person_id = $2', [
-      intoId,
-      fromId,
-    ]);
+    await r.people.moveIdentities(intoId, fromId);
+    await r.commitments.reassignCounterparty(intoId, fromId);
 
     const name = !looksHuman(into.display_name) && looksHuman(from.display_name) ? from.display_name : into.display_name;
-    const moved = into.is_me
-      ? await tx.query(
-          `update claim set subject_kind = 'me', subject_id = $1, subject_label = 'me'
-            where subject_kind = 'person' and subject_id = $2`,
-          [intoId, fromId]
-        )
-      : await tx.query(
-          `update claim set subject_id = $1, subject_label = $3 where subject_kind = 'person' and subject_id = $2`,
-          [intoId, fromId, name]
-        );
-    await tx.query(`delete from memory_page where kind = 'person' and subject_id = $1`, [fromId]);
-    await tx.query('delete from person where id = $1', [fromId]);
+    const moved = into.is_me ? await r.memory.repointClaimsToMe(intoId, fromId) : await r.memory.repointClaims(intoId, fromId, name);
+    await r.memory.deletePersonPage(fromId);
+    await r.people.deleteById(fromId);
     // After the delete: primary_email is unique, and the two may share it.
-    await tx.query('update person set display_name = $2, primary_email = coalesce(primary_email, $3) where id = $1', [
-      intoId,
-      name,
-      from.primary_email,
-    ]);
-    return { claims: moved.rowCount, isMe: into.is_me };
+    await r.people.renameKeepingEmail(intoId, name, from.primary_email);
+    return { claims: moved, isMe: into.is_me };
   });
 }
 

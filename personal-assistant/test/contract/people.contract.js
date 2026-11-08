@@ -2,12 +2,17 @@
 
 // Contract: src/repo/people.js (see test/repoContract.test.js).
 
+/** The is_me person, made when there is none yet. */
+async function me({ repos }) {
+  return (await repos.people.meRow()) || { id: (await repos.people.insertMe('Me Example', null)).id };
+}
+
 module.exports = {
   'me: the person flagged is_me': async ({ repos, seed, db, assert }) => {
     await db.query(`update person set is_me = false where is_me`);
-    assert.strictEqual(await repos.people.me(), null);
+    assert.strictEqual(await repos.people.meRow(), null);
     const id = await seed.personWith({ name: 'Me Myself', email: 'me@x.test', isMe: true });
-    const me = await repos.people.me();
+    const me = await repos.people.meRow();
     assert.deepStrictEqual([Number(me.id), me.display_name, me.primary_email], [id, 'Me Myself', 'me@x.test']);
   },
 
@@ -58,5 +63,146 @@ module.exports = {
     const ids = await repos.people.myIdentities();
     assert.ok(ids.some((i) => i.kind === 'smtp' && i.value === 'me@example.com'));
     assert.ok(!ids.some((i) => i.value === 'else@example.com'));
+  },
+
+  'meRow: null before sign-in, then the whole is_me row': async ({ repos, assert }) => {
+    const first = await repos.people.meRow();
+    const made = first || (await repos.people.insertMe('Me Example', 'me@example.com'));
+    const got = await repos.people.meRow();
+    assert.ok(got.is_me);
+    assert.strictEqual(String(got.id), String(first ? first.id : made.id));
+  },
+
+  'meName: the display name of the is_me person': async ({ repos, assert, ...t }) => {
+    await me({ repos });
+    const row = await repos.people.meName();
+    assert.strictEqual(typeof row.display_name, 'string');
+  },
+
+  'myHandle: your own handle of one identity kind': async ({ repos, assert, uniq, ...t }) => {
+    const m = await me({ repos });
+    const kind = uniq('kind');
+    assert.strictEqual(await repos.people.myHandle(kind), null);
+    await repos.people.addIdentity(m.id, kind, 'zed');
+    await repos.people.addIdentity(m.id, kind, 'abe');
+    assert.strictEqual((await repos.people.myHandle(kind)).value, 'abe', 'lowest value first');
+  },
+
+  'setNames: display name and primary email': async ({ repos, seed, assert, uniq }) => {
+    const p = await seed.person('Before');
+    const email = `${uniq('sn')}@example.com`;
+    await repos.people.setNames(p, 'After', email);
+    const row = await repos.people.byPrimaryEmail(email);
+    assert.strictEqual(Number(row.id), p);
+    assert.strictEqual((await repos.people.pair(p, p))[0].display_name, 'After');
+  },
+
+  'insertMe: the is_me person, returned with its id': async ({ repos, assert }) => {
+    const row = await repos.people.insertMe('Another Me', null);
+    assert.ok(row.id);
+    const pair = await repos.people.pair(row.id, row.id);
+    assert.deepStrictEqual([pair[0].display_name, pair[0].is_me, pair[0].primary_email], ['Another Me', true, null]);
+    await repos.people.deleteById(row.id);
+  },
+
+  'addIdentity: files an identity once; the first owner keeps it': async ({ repos, seed, assert, uniq }) => {
+    const [a, b] = [await seed.person(), await seed.person()];
+    const value = `${uniq('id')}@example.com`;
+    await repos.people.addIdentity(a, 'smtp', value);
+    await repos.people.addIdentity(b, 'smtp', value);
+    assert.strictEqual(Number((await repos.people.identityOwner('smtp', value)).person_id), a);
+  },
+
+  'byDisplayName: up to two people with the name, case-insensitive': async ({ repos, seed, assert, uniq }) => {
+    const name = uniq('Nameless');
+    assert.deepStrictEqual(await repos.people.byDisplayName(name), []);
+    const a = await seed.person(name);
+    assert.deepStrictEqual((await repos.people.byDisplayName(name.toUpperCase())).map((r) => Number(r.id)), [a]);
+    await seed.person(name);
+    await seed.person(name);
+    assert.strictEqual((await repos.people.byDisplayName(name)).length, 2, 'two means ambiguous');
+  },
+
+  'identityOwner: who owns (kind, value), or null': async ({ repos, seed, assert, uniq }) => {
+    const p = await seed.person();
+    const value = uniq('owner');
+    assert.strictEqual(await repos.people.identityOwner('gitlab_username', value), null);
+    await repos.people.addIdentity(p, 'gitlab_username', value);
+    assert.strictEqual(Number((await repos.people.identityOwner('gitlab_username', value)).person_id), p);
+    assert.strictEqual(await repos.people.identityOwner('github_username', value), null, 'kind matters');
+  },
+
+  'byPrimaryEmail: matches a lower-case address case-insensitively': async ({ repos, assert, uniq }) => {
+    const email = `${uniq('pe')}@example.com`;
+    const row = await repos.people.insert('Mixed', email.toUpperCase());
+    assert.strictEqual(Number((await repos.people.byPrimaryEmail(email)).id), Number(row.id));
+    assert.strictEqual(await repos.people.byPrimaryEmail('nobody@example.com'), null);
+  },
+
+  'insert: a person that is not you': async ({ repos, assert }) => {
+    const row = await repos.people.insert('Someone', null);
+    const got = (await repos.people.pair(row.id, row.id))[0];
+    assert.deepStrictEqual([got.display_name, got.is_me, got.primary_email], ['Someone', false, null]);
+  },
+
+  'othersByExactName: not you, case-insensitive, at most two': async ({ repos, seed, assert, uniq }) => {
+    const name = uniq('Exact Person');
+    assert.deepStrictEqual(await repos.people.othersByExactName(name), []);
+    const a = await seed.person(name);
+    const got = await repos.people.othersByExactName(name.toLowerCase());
+    assert.deepStrictEqual(got.map((r) => [Number(r.id), r.display_name]), [[a, name]]);
+    await seed.person(name);
+    await seed.person(name);
+    assert.strictEqual((await repos.people.othersByExactName(name)).length, 2);
+    const meRow = await repos.people.insertMe(uniq('Exact Me'), null);
+    assert.deepStrictEqual(await repos.people.othersByExactName((await repos.people.pair(meRow.id, meRow.id))[0].display_name), []);
+    await repos.people.deleteById(meRow.id);
+  },
+
+  'othersByNamePrefix: starts with the (escaped) prefix, case-insensitive, at most two': async ({ repos, seed, assert, uniq }) => {
+    const stem = uniq('Zq').replace('-', '');
+    const a = await seed.person(`${stem} Alpha`);
+    assert.deepStrictEqual((await repos.people.othersByNamePrefix(stem.toLowerCase())).map((r) => Number(r.id)), [a]);
+    assert.deepStrictEqual(await repos.people.othersByNamePrefix(`\\%${stem}`), [], 'an escaped % is a literal character, not a wildcard');
+    await seed.person(`${stem} Beta`);
+    await seed.person(`${stem} Gamma`);
+    assert.strictEqual((await repos.people.othersByNamePrefix(stem)).length, 2);
+  },
+
+  'pair: both rows of a merge by id': async ({ repos, seed, assert }) => {
+    const [a, b] = [await seed.person('A'), await seed.person('B')];
+    const got = await repos.people.pair(a, b);
+    assert.deepStrictEqual(got.map((r) => Number(r.id)).sort((x, y) => x - y), [a, b].sort((x, y) => x - y));
+    assert.strictEqual((await repos.people.pair(a, 0)).length, 1);
+  },
+
+  'moveIdentities: every identity of one person to another': async ({ repos, seed, assert, uniq }) => {
+    const [from, into] = [await seed.person(), await seed.person()];
+    const [v1, v2] = [uniq('mv'), uniq('mv')];
+    await repos.people.addIdentity(from, 'github_username', v1);
+    await repos.people.addIdentity(from, 'gitlab_username', v2);
+    await repos.people.moveIdentities(into, from);
+    assert.strictEqual(Number((await repos.people.identityOwner('github_username', v1)).person_id), into);
+    assert.strictEqual(Number((await repos.people.identityOwner('gitlab_username', v2)).person_id), into);
+  },
+
+  'deleteById: removes the person and its identities': async ({ repos, seed, assert, uniq }) => {
+    const p = await seed.person();
+    const v = uniq('del');
+    await repos.people.addIdentity(p, 'github_username', v);
+    await repos.people.deleteById(p);
+    assert.deepStrictEqual(await repos.people.pair(p, p), []);
+    assert.strictEqual(await repos.people.identityOwner('github_username', v), null);
+  },
+
+  'renameKeepingEmail: sets the name; fills primary_email only when empty': async ({ repos, seed, assert, uniq }) => {
+    const emailA = `${uniq('rk')}@example.com`;
+    const a = await repos.people.insert('A', null);
+    await repos.people.renameKeepingEmail(a.id, 'A2', emailA);
+    let row = (await repos.people.pair(a.id, a.id))[0];
+    assert.deepStrictEqual([row.display_name, row.primary_email], ['A2', emailA]);
+    await repos.people.renameKeepingEmail(a.id, 'A3', `${uniq('rk')}@example.com`);
+    row = (await repos.people.pair(a.id, a.id))[0];
+    assert.deepStrictEqual([row.display_name, row.primary_email], ['A3', emailA], 'an existing email is kept');
   },
 };

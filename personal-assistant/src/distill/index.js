@@ -13,7 +13,7 @@
 // off — items under a length threshold, and bodies that are pure machine noise.
 
 const llm = require('../llm');
-const { rows, one, query, withTx } = require('../db');
+const repo = require('../repo');
 const { PROMPT_VERSION, SYSTEM, buildUserMessage, parseResponse } = require('./prompt');
 const identity = require('./identity');
 const projects = require('../projects');
@@ -43,26 +43,11 @@ function sourceAllowed() {
 }
 
 async function pending(limit = 25) {
-  return rows(
-    `select si.* from source_item si
-       left join distillation d
-         on d.source_item_id = si.id and d.extracted_by = $1
-      where d.source_item_id is null and not ${DEBRIEF_OWNED} and ${sourceAllowed()}
-        and length(si.body_text) >= $2
-      order by si.occurred_at desc
-      limit $3`,
-    [PROMPT_VERSION, MIN_BODY_CHARS, limit]
-  );
+  return repo.commitments.pendingDistill(PROMPT_VERSION, MIN_BODY_CHARS, limit, DEBRIEF_OWNED, sourceAllowed());
 }
 
 async function pendingCount() {
-  const r = await one(
-    `select count(*)::int as n from source_item si
-       left join distillation d
-         on d.source_item_id = si.id and d.extracted_by = $1
-      where d.source_item_id is null and not ${DEBRIEF_OWNED} and ${sourceAllowed()} and length(si.body_text) >= $2`,
-    [PROMPT_VERSION, MIN_BODY_CHARS]
-  );
+  const r = await repo.commitments.pendingDistillCount(PROMPT_VERSION, MIN_BODY_CHARS, DEBRIEF_OWNED, sourceAllowed());
   return r?.n ?? 0;
 }
 
@@ -74,75 +59,42 @@ async function callModel(item, context) {
   return parseResponse(text, { referenceIso: new Date(item.occurred_at).toISOString() });
 }
 
-// The item's live commitments, with whether anything has acted on them
-// (src/distill/keep.js decides what a re-distillation may replace).
-const EXISTING = `
-  select c.id, c.status, c.summary, c.touched_at is not null as touched,
-         (exists (select 1 from draft d where d.commitment_id = c.id)
-          or exists (select 1 from run r where r.commitment_id = c.id)
-          or exists (select 1 from ledger_transition t where t.commitment_id = c.id)
-          or exists (select 1 from ledger_evidence e where e.commitment_id = c.id)
-          or exists (select 1 from reply_close rc where rc.commitment_id = c.id)) as refs
-    from commitment c
-   where c.source_item_id = $1 and c.superseded_by is null`;
-
 // Writes one item's results. The distillation marker goes in the same
 // transaction as the rows it explains, so a crash mid-write cannot leave an
 // item marked done with half its commitments missing. A commitment anything
 // has acted on survives a re-distillation untouched (keep.js).
 async function persist(item, result, resolved) {
-  return withTx(async (client_) => {
-    const existing = (await client_.query(EXISTING, [item.id])).rows;
+  return repo.withTx(async (r) => {
+    // The item's live commitments, with whether anything has acted on them
+    // (src/distill/keep.js decides what a re-distillation may replace).
+    const existing = await r.commitments.liveForItem(item.id);
     const p = keep.plan(existing, result.commitments);
-    if (p.remove.length) await client_.query('delete from commitment where id = any($1::bigint[])', [p.remove]);
-    await client_.query('delete from fact where source_item_id = $1 and extracted_by = $2', [
-      item.id,
-      PROMPT_VERSION,
-    ]);
+    if (p.remove.length) await r.commitments.deleteByIds(p.remove);
+    await r.memory.deleteFactsOf(item.id, PROMPT_VERSION);
 
     for (const c of p.insert) {
       const match = resolved.byCommitment.get(c);
-      await client_.query(
-        `insert into commitment
-           (source_item_id, direction, summary, detail, counterparty_person_id, due_at,
-            project_id, repo_path, project_confidence, project_rationale, confidence, extracted_by)
-         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
-        [
-          item.id,
-          c.direction,
-          c.summary,
-          c.detail,
-          match?.personId ?? null,
-          c.dueAt,
-          match?.projectId ?? null,
-          match?.repoPath ?? null,
-          match?.projectConfidence ?? null,
-          match?.projectRationale ?? null,
-          c.confidence,
-          PROMPT_VERSION,
-        ]
-      );
+      await r.commitments.insertDistilled({
+        itemId: item.id,
+        direction: c.direction,
+        summary: c.summary,
+        detail: c.detail,
+        personId: match?.personId ?? null,
+        dueAt: c.dueAt,
+        projectId: match?.projectId ?? null,
+        repoPath: match?.repoPath ?? null,
+        projectConfidence: match?.projectConfidence ?? null,
+        projectRationale: match?.projectRationale ?? null,
+        confidence: c.confidence,
+        extractedBy: PROMPT_VERSION,
+      });
     }
 
     for (const f of result.facts) {
-      await client_.query(
-        `insert into fact (source_item_id, kind, summary, payload, occurred_at, extracted_by)
-         values ($1,$2,$3,$4,$5,$6)`,
-        [item.id, f.kind, f.summary, { detail: f.detail }, item.occurred_at, PROMPT_VERSION]
-      );
+      await r.memory.insertFact(item.id, f.kind, f.summary, { detail: f.detail }, item.occurred_at, PROMPT_VERSION);
     }
 
-    await client_.query(
-      `insert into distillation (source_item_id, extracted_by, commitments, facts, error)
-       values ($1,$2,$3,$4,null)
-       on conflict (source_item_id) do update set
-         extracted_by = excluded.extracted_by,
-         extracted_at = now(),
-         commitments  = excluded.commitments,
-         facts        = excluded.facts,
-         error        = null`,
-      [item.id, PROMPT_VERSION, result.commitments.length, result.facts.length]
-    );
+    await r.commitments.upsertDistillation(item.id, PROMPT_VERSION, result.commitments.length, result.facts.length);
   });
 }
 
@@ -278,13 +230,7 @@ async function distillOne(item, cached) {
   } catch (err) {
     // A failed item is marked with its error so the pass moves on, and so the
     // failure is visible in `pa doctor` rather than being retried forever.
-    await query(
-      `insert into distillation (source_item_id, extracted_by, error)
-       values ($1,$2,$3)
-       on conflict (source_item_id) do update set
-         extracted_by = excluded.extracted_by, extracted_at = now(), error = excluded.error`,
-      [item.id, PROMPT_VERSION, String(err.message).slice(0, 500)]
-    );
+    await repo.commitments.markDistillFailed(item.id, PROMPT_VERSION, String(err.message).slice(0, 500));
     log.warn('item failed', { id: item.id, source: item.source, message: err.message });
     return { id: item.id, error: err.message };
   }
@@ -322,20 +268,13 @@ async function run({ limit = 25 } = {}) {
 // nothing found, so it is not fetched again. Its earlier commitments, if any,
 // are left alone (`pa policy close` handles those, reversibly).
 async function markSkipped(itemId) {
-  await query(
-    `insert into distillation (source_item_id, extracted_by, commitments, facts) values ($1, $2, 0, 0)
-     on conflict (source_item_id) do update set extracted_by = excluded.extracted_by, extracted_at = now(), error = null`,
-    [itemId, PROMPT_VERSION]
-  );
+  await repo.commitments.markDistillSkipped(itemId, PROMPT_VERSION);
 }
 
 // Marks an item the debrief owns as distilled, so a worker still running code
 // from before DEBRIEF_OWNED existed does not extract it as well.
 async function markOwnedByDebrief(itemId) {
-  await query(
-    `insert into distillation (source_item_id, extracted_by) values ($1, $2) on conflict (source_item_id) do nothing`,
-    [itemId, PROMPT_VERSION]
-  );
+  await repo.commitments.markDistillOwnedByDebrief(itemId, PROMPT_VERSION);
 }
 
 module.exports = { run, distillOne, pending, pendingCount, markOwnedByDebrief, resolveReferences, evidenceText, PROMPT_VERSION };

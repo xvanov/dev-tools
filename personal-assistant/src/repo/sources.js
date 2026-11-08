@@ -313,6 +313,13 @@ function create(db) {
         [ids]
       );
     },
+
+    // --- for src/commitments/request.js, src/projects/index.js
+
+    /** An item's subject and body, or null. @returns {Promise<{subject, body_text}|null>} */
+    async subjectAndBody(id) {
+      return db.one('select subject, body_text from source_item where id = $1', [id]);
+    },
   };
 }
 

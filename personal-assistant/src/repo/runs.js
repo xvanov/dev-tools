@@ -110,6 +110,19 @@ function create(db) {
       order by ended_at desc nulls last limit 10`
       );
     },
+
+    // --- for src/commitments/context.js
+
+    /**
+     * A commitment's three newest runs.
+     * @returns {Promise<Array<{id, status, mode, branch, mr_url, started_at}>>}
+     */
+    async recentForCommitment(commitmentId) {
+      return db.rows(
+        `select id, status, mode, branch, mr_url, started_at from run where commitment_id = $1 order by started_at desc limit 3`,
+        [commitmentId]
+      );
+    },
   };
 }
 

@@ -20,7 +20,7 @@
 const llm = require('../llm');
 const budget = require('../budget');
 const { config } = require('../config');
-const { rows, query } = require('../db');
+const repo = require('../repo');
 const { embed } = require('../search');
 const { logger } = require('../log');
 const S = require('./semantic');
@@ -36,22 +36,6 @@ function toVector(values) {
   return `[${values.map((v) => Number(v).toFixed(6)).join(',')}]`;
 }
 
-// Whether anything has acted on a commitment: a run, a draft, a status change
-// in the ledger, a reply that closed it, your hand. Narrower than the review
-// pass's test (memory/consolidate.js), which also counts a judgement that
-// changed nothing — a reply judged "not discharged", a piece of evidence the
-// reconciler weighed. Those are on nearly every chat ask, and counting them
-// protected exactly the per-item copies this pass exists to fold. (A pending
-// "looks done?" proposal on a folded copy is shown on its survivor:
-// ledger/reconcile.js.)
-const ACTED = (a) => `(${a}.status = 'dispatched' or ${a}.touched_at is not null
-   or exists (select 1 from draft d where d.commitment_id = ${a}.id)
-   or exists (select 1 from run r where r.commitment_id = ${a}.id)
-   or exists (select 1 from ledger_transition t where t.commitment_id = ${a}.id)
-   or exists (select 1 from reply_close rc where rc.commitment_id = ${a}.id and rc.applied is not null and rc.undone_at is null))`;
-
-const LIVE = `c.status in ('open','dispatched') and c.superseded_by is null`;
-
 // Only commitments from sources that may create tasks are paired: a card kept
 // from an excluded source (one you acted on) is neither a duplicate nor a
 // keeper for one (src/commitments/sourcePolicy.js).
@@ -59,15 +43,7 @@ const POLICY = () => policy.sourceSql('si.source');
 
 /** Embeds open commitments that have no vector yet. Returns {embedded, usd}. */
 async function embedPending({ limit = 200 } = {}) {
-  const todo = await rows(
-    `select c.id, c.summary, c.detail, si.thread_external_id
-       from commitment c join source_item si on si.id = c.source_item_id
-       left join commitment_vector v on v.commitment_id = c.id
-      where v.commitment_id is null and ${LIVE} and ${POLICY()}
-        and c.extracted_at > now() - make_interval(days => $2)
-      order by c.extracted_at desc limit $1`,
-    [limit, WINDOW_DAYS]
-  );
+  const todo = await repo.commitments.unvectored(limit, WINDOW_DAYS, POLICY());
   let embedded = 0;
   let usd = 0;
   for (let i = 0; i < todo.length; i += 64) {
@@ -83,11 +59,7 @@ async function embedPending({ limit = 200 } = {}) {
     for (let j = 0; j < chunk.length; j++) {
       const c = chunk[j];
       const isRef = /^https?:\/\/(www\.)?github\.com\//i.test(c.thread_external_id || '');
-      await query(
-        `insert into commitment_vector (commitment_id, embedding, anchors) values ($1, $2::vector, $3)
-         on conflict (commitment_id) do nothing`,
-        [c.id, toVector(vectors[j]), S.anchors(`${c.summary}\n${c.detail || ''}`, isRef ? c.thread_external_id : null)]
-      );
+      await repo.commitments.insertVector(c.id, toVector(vectors[j]), S.anchors(`${c.summary}\n${c.detail || ''}`,isRef ? c.thread_external_id : null));
       embedded++;
     }
   }
@@ -96,22 +68,7 @@ async function embedPending({ limit = 200 } = {}) {
 
 /** The open, unfolded, recent commitments with a vector: the comparison pool. */
 async function loadPool() {
-  const list = await rows(
-    `select c.id, c.summary, c.detail, c.direction, c.status, c.due_at, c.extracted_at, c.source_item_id,
-            (c.counterparty_person_id is not null and not coalesce(p.is_me, false)) as has_party,
-            coalesce(p.display_name, '') as who, si.source, si.thread_external_id,
-            coalesce(si.raw->>'webUrl', si.raw->>'webLink') as web_url,
-            coalesce(si.raw->>'chatTopic', si.subject, '') as place,
-            v.embedding::text as embedding, v.anchors, v.checked_at,
-            ${ACTED('c')} as acted
-       from commitment c
-       join commitment_vector v on v.commitment_id = c.id
-       join source_item si on si.id = c.source_item_id
-       left join person p on p.id = c.counterparty_person_id
-      where ${LIVE} and ${POLICY()} and c.extracted_at > now() - make_interval(days => $1)
-      order by c.id`,
-    [WINDOW_DAYS]
-  );
+  const list = await repo.commitments.dedupePool(WINDOW_DAYS, POLICY());
   for (const c of list) {
     c.id = String(c.id);
     c.vector = S.parseVector(c.embedding);
@@ -181,12 +138,7 @@ async function judge(batch, byId) {
 // Follows superseded_by to the live survivor (a keeper folded earlier in the
 // same run), so a fold never points at a hidden row.
 async function rootOf(id) {
-  const r = await rows(
-    `with recursive up as (select id, superseded_by, 0 as n from commitment where id = $1
-        union all select c.id, c.superseded_by, up.n + 1 from commitment c join up on c.id = up.superseded_by where up.n < 20)
-     select id from up where superseded_by is null limit 1`,
-    [id]
-  );
+  const r = await repo.commitments.survivorOf(id);
   return r[0] ? String(r[0].id) : null;
 }
 
@@ -205,12 +157,8 @@ async function applyFold(f) {
   // its group along. "Part of" is not: a part already folded as the same as
   // something else says nothing about that something.
   if (f.relation === 'subset' && drop !== String(f.drop)) return null;
-  const r = await query(
-    `update commitment set superseded_by = $2
-      where id = $1 and superseded_by is null and status in ('open','dispatched')`,
-    [drop, keep]
-  );
-  return r.rowCount ? { ...f, drop, keep } : null;
+  const folded = await repo.commitments.fold(drop, keep);
+  return folded ? { ...f, drop, keep } : null;
 }
 
 /**
@@ -252,10 +200,7 @@ async function judgeAndFold(pairList, byId, { apply = true, maxCalls = Infinity 
 
 async function markChecked(ids, verdicts = new Map()) {
   for (const id of ids) {
-    await query(`update commitment_vector set checked_at = now(), verdict = $2 where commitment_id = $1`, [
-      id,
-      verdicts.get(String(id)) || null,
-    ]);
+    await repo.commitments.markVectorChecked(id, verdicts.get(String(id)) || null);
   }
 }
 
@@ -268,11 +213,7 @@ async function pass({ limit = 24 } = {}) {
   if (!(await budget.allow(PURPOSE))) return { skipped: 'budget' };
   const e = await embedPending({ limit: 200 });
   // Vectors whose commitment has left the board since need no judgement.
-  await query(
-    `update commitment_vector v set checked_at = now()
-       from commitment c where c.id = v.commitment_id and v.checked_at is null
-        and not (c.status in ('open','dispatched') and c.superseded_by is null)`
-  );
+  await repo.commitments.checkVectorsOffBoard();
   const pool = await loadPool();
   const byId = new Map(pool.map((c) => [c.id, c]));
   const fresh = pool.filter((c) => !c.checked_at).slice(0, limit);
@@ -329,7 +270,7 @@ async function backfill({ apply = false, maxCalls = 60, confirmed = null } = {})
   if (apply) {
     // Everything on the board now has been judged once; the worker's pass
     // takes only what is extracted from here on.
-    await query(`update commitment_vector set checked_at = coalesce(checked_at, now())`);
+    await repo.commitments.checkAllVectors();
   }
   return { embedded: e.embedded, embedUsd: e.usd, pool: pool.length, pairs: list, byId, ...r };
 }
