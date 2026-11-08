@@ -199,8 +199,8 @@ run mid-step; a job continued on an existing branch (`--branch`).
   exact keys; write the result into `architecture.json`'s memory card. Record the measured
   monthly embedding spend in Meter. (60908b9)
 - [ ] **0.4 SSE instead of polling** for the board and Build (replace the 30 s and 120 s polls).
-- [ ] **0.5 Voice latency:** keep the fast-lane prompt prefix warm; TTS at the first clause
-  instead of the first sentence; cut the fixed 200 ms silence wait where VAD already decided.
+- [x] **0.5 Voice latency:** keep the fast-lane prompt prefix warm; TTS at the first clause
+  instead of the first sentence; cut the fixed 200 ms silence wait where VAD already decided. (ffc2d5a)
 - [ ] **0.6 System 1 decide-then-speak (D7).** Split the fast lane into:
   - a **router** that returns calibrated probabilities, not text: `p(answer_here)`,
     `p(hand_off)`, `p(action)`. First version: the local model scores fixed yes/no questions
