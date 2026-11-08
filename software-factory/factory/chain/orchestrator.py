@@ -22,7 +22,7 @@ import os
 import re
 import time
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -2608,6 +2608,16 @@ def _build_current_state(
 _ISSUE_HYGIENE_INTERVAL_S = 3600  # autonomous issue-reconcile: at most once/hour/app
 
 
+def _worktree_keep_ids(stories: Iterable[StoryRecord]) -> set[int]:
+    """The ids ``prune_stale_worktrees`` must keep for ``stories``.
+
+    Worktrees are named by the GitHub issue number (0 without one), not the
+    story row id. Keyed by row id, every tick pruned the in-flight story's own
+    worktree (2026-11-08: story 11's worktree was ``dev-tools-35-...``).
+    """
+    return {int(s.github_issue_number or 0) for s in stories}
+
+
 def _issue_hygiene_marker(root: Path, app: str) -> Path:
     return state_dir(root) / "issue_hygiene" / f"{app}.last"
 
@@ -3015,7 +3025,7 @@ def tick(
                 from factory.app_config import resolve_app_repo_path
                 from factory.chain.worktree import prune_stale_worktrees
 
-                active_ids: set[int] = {s.id for s in stories if s.id is not None}
+                active_ids = _worktree_keep_ids(stories)
                 # KEEP worktrees of blocked stories: blocked states mean
                 # "awaiting operator resolution or auto-recovery", and both
                 # use the worktree — the operator resolves merge conflicts in
@@ -3041,7 +3051,7 @@ def tick(
                             ),
                         )
                     ).all()
-                active_ids |= {r.id for r in blocked_rows if r.id is not None}
+                active_ids |= _worktree_keep_ids(blocked_rows)
                 source_repo = resolve_app_repo_path(cfg, root)
                 if source_repo.exists():
                     prune_stale_worktrees(
