@@ -242,7 +242,7 @@ async function bundle({ dumpFile, out, key, state = factoryStateDir(), counts, e
     const manifest = {
       format: 1,
       createdAt: new Date().toISOString(),
-      stack: require('./platform/common').stack(),
+      stack: require('./platform/common.ts').stack(),
       counts,
       state: state ? stateStats(state) : null,
     };

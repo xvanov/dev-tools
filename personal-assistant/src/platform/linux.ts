@@ -18,40 +18,50 @@
 //
 // Every command is built by a pure function (…Command, parse…) so the tests
 // pin exactly what runs, without running it.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+type Env = Record<string, string | undefined>;
+type Row = Record<string, any>;
+type Action = { label?: string; url?: string };
+type RunResult = { stdout: string; stderr: string; status: number | null; error?: string };
+/** Runs a vault process (platform/common.ts runSync's shape). */
+type Runner = (inv: { command: string; args: string[]; input?: string }) => RunResult;
+type Which = (bin: string) => string | null;
 
 const fs = require('fs');
 const os = require('os');
 // posix: this file models that OS's paths, whichever OS evaluates it (tests run it on Windows).
 const path = require('path').posix;
 
-const common = require('./common');
+const common = require('./common.ts');
 
 const id = 'linux';
 const label = 'Linux';
 
 const PA_CAPTURE_UNIT = 'pa-capture@.service';
 
-function home(env = process.env) {
+function home(env: Env = process.env) {
   return env.HOME || os.homedir();
 }
 
-function xdgData(env = process.env) {
+function xdgData(env: Env = process.env) {
   return env.XDG_DATA_HOME || path.join(home(env), '.local', 'share');
 }
 
-function xdgConfig(env = process.env) {
+function xdgConfig(env: Env = process.env) {
   return env.XDG_CONFIG_HOME || path.join(home(env), '.config');
 }
 
 const defaults = {
-  dataDir: (env = process.env) => path.join(xdgData(env), 'personal-assistant'),
-  reposRoot: (env = process.env) => path.join(home(env), 'repos'),
-  venvPython: (venvDir) => path.join(venvDir, 'bin', 'python'),
+  dataDir: (env: Env = process.env) => path.join(xdgData(env), 'personal-assistant'),
+  reposRoot: (env: Env = process.env) => path.join(home(env), 'repos'),
+  venvPython: (venvDir: string) => path.join(venvDir, 'bin', 'python'),
   // No default: see teamsCache. PA_TEAMS_CACHE_DIR opts in.
   teamsCacheDir: () => null,
   // A native pg_dump when one is installed (linux/install.sh --native), else
   // the compose container's own (--docker), which always matches the server.
-  pgTools: ({ which = common.which } = {}) => (which('pg_dump') ? 'native' : which('docker') ? 'docker:pa-postgres' : 'native'),
+  pgTools: ({ which = common.which }: { which?: Which } = {}) => (which('pg_dump') ? 'native' : which('docker') ? 'docker:pa-postgres' : 'native'),
 };
 
 // There is no new Teams desktop client for Linux (Microsoft retired the old
@@ -66,7 +76,7 @@ const teamsCache = {
 };
 
 // Teams web caches in Chromium-family profiles, for `pa doctor` to point at.
-function teamsWebCaches(env = process.env) {
+function teamsWebCaches(env: Env = process.env) {
   const roots = [
     'microsoft-edge', 'microsoft-edge-beta', 'microsoft-edge-dev', 'google-chrome', 'chromium',
     path.join('BraveSoftware', 'Brave-Browser'),
@@ -76,7 +86,7 @@ function teamsWebCaches(env = process.env) {
   for (const root of roots) {
     let profiles = [];
     try {
-      profiles = fs.readdirSync(root).filter((n) => n === 'Default' || /^Profile \d+$/.test(n));
+      profiles = fs.readdirSync(root).filter((n: string) => n === 'Default' || /^Profile \d+$/.test(n));
     } catch {
       continue;
     }
@@ -91,7 +101,7 @@ function teamsWebCaches(env = process.env) {
 }
 
 // ext4 and friends are case-sensitive: /repos/Quill and /repos/quill differ.
-function pathKey(p) {
+function pathKey(p: Row) {
   return path.resolve(String(p)).replace(/[\\/]+$/, '');
 }
 
@@ -99,24 +109,24 @@ function pathKey(p) {
 
 // A graphical session to open things in. A systemd user unit gets these once
 // the desktop imports them into the user manager (GNOME and KDE do).
-function hasDisplay(env = process.env) {
+function hasDisplay(env: Env = process.env) {
   return Boolean(env.WAYLAND_DISPLAY || env.DISPLAY);
 }
 
 // notify-send and the Secret Service both live on the session bus.
-function hasSessionBus(env = process.env) {
+function hasSessionBus(env: Env = process.env) {
   if (env.DBUS_SESSION_BUS_ADDRESS) return true;
   const runtime = env.XDG_RUNTIME_DIR || (typeof process.getuid === 'function' ? `/run/user/${process.getuid()}` : null);
   return Boolean(runtime && fs.existsSync(path.join(runtime, 'bus')));
 }
 
-function openCommand(url) {
+function openCommand(url: string | URL) {
   return { cmd: 'xdg-open', args: [String(url)] };
 }
 
 // Headless (a server, an SSH session): nothing to open in, so say so and let
 // the caller print the link instead.
-function openUrl(url, { env = process.env } = {}) {
+function openUrl(url: string | URL, { env = process.env }: { env?: Env } = {}) {
   if (!hasDisplay(env) || !common.which('xdg-open')) return false;
   const c = openCommand(url);
   return common.spawnDetached(c.cmd, c.args);
@@ -124,21 +134,21 @@ function openUrl(url, { env = process.env } = {}) {
 
 // Wayland first: under XWayland both DISPLAY and WAYLAND_DISPLAY are set, and
 // only wl-copy reaches the clipboard native Wayland apps paste from.
-function clipboardCommand({ env = process.env, which = common.which } = {}) {
+function clipboardCommand({ env = process.env, which = common.which }: { env?: Env; which?: Which } = {}) {
   if (env.WAYLAND_DISPLAY && which('wl-copy')) return { cmd: 'wl-copy', args: [] };
   if (env.DISPLAY && which('xclip')) return { cmd: 'xclip', args: ['-selection', 'clipboard'] };
   if (env.DISPLAY && which('xsel')) return { cmd: 'xsel', args: ['--clipboard', '--input'] };
   return null;
 }
 
-function copyToClipboard(text) {
+function copyToClipboard(text: string) {
   const c = clipboardCommand();
   return c ? common.pipeTo(c.cmd, c.args, text) : Promise.resolve(false);
 }
 
 // An msteams: handler — teams-for-linux registers one. Without it, xdg-open
 // on msteams: opens nothing, so drafts go to the Teams web app instead.
-let teamsHandler;
+let teamsHandler: boolean | undefined;
 function teamsDesktop() {
   if (teamsHandler === undefined) {
     teamsHandler = common.which('xdg-mime')
@@ -152,13 +162,13 @@ function teamsDesktop() {
 
 // Notification bodies are a markup subset on most servers (GNOME, KDE, dunst):
 // escape it, so a message containing "<b>" is shown, not interpreted.
-function markupEscape(s) {
+function markupEscape(s: unknown) {
   return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
 // libnotify ≥ 0.7.10 has --action/--wait: the click opens the link, as a
 // Windows toast does. Older ones (Ubuntu 22.04 ships 0.7.9) show it unclickable.
-let actionSupport;
+let actionSupport: boolean | undefined;
 function notifySendHasActions() {
   if (actionSupport === undefined) {
     const r = common.runSync('notify-send', ['--help'], { timeoutMs: 5000 });
@@ -173,7 +183,7 @@ function notifySendHasActions() {
  * is ever in a notification. `links` maps the action keys notify-send prints
  * back to the URL each opens.
  */
-function toastCommand({ title, body, url, actions = [] }, { withActions = false } = {}) {
+function toastCommand({ title, body, url, actions = [] }: { title?: string | null; body?: string | null; url?: string | null; actions?: Action[] }, { withActions = false }: { withActions?: boolean } = {}) {
   const lines = String(body || '')
     .split(/\r?\n/)
     .map((l) => l.trim())
@@ -181,18 +191,18 @@ function toastCommand({ title, body, url, actions = [] }, { withActions = false 
     .slice(0, 4)
     .join('\n');
   const args = ['--app-name=personal-assistant', '--expire-time=15000'];
-  const links = {};
+  const links: Record<string, string> = {};
   if (withActions) {
     if (/^https?:\/\//.test(url || '')) {
       args.push('--action=default=Open');
-      links.default = url;
+      links.default = url as string;
     }
     actions
       .filter((a) => a && /^https?:\/\//.test(a.url || ''))
       .slice(0, 3)
       .forEach((a, i) => {
         args.push(`--action=a${i}=${String(a.label || 'Open').replace(/[\r\n=]/g, ' ').slice(0, 40)}`);
-        links[`a${i}`] = a.url;
+        links[`a${i}`] = a.url as string;
       });
     if (Object.keys(links).length) args.push('--wait');
   }
@@ -200,13 +210,13 @@ function toastCommand({ title, body, url, actions = [] }, { withActions = false 
   return { cmd: 'notify-send', args, links };
 }
 
-function toast(spec, { env = process.env } = {}) {
+function toast(spec: Row, { env = process.env }: { env?: Env } = {}) {
   if (!hasSessionBus(env) || !common.which('notify-send')) return Promise.resolve(false);
   const c = toastCommand(spec, { withActions: hasDisplay(env) && notifySendHasActions() });
   const waits = c.args.includes('--wait');
-  return new Promise((resolve) => {
+  return new Promise<boolean>((resolve) => {
     const { spawn } = require('child_process');
-    let child;
+    let child: any;
     try {
       child = spawn(c.cmd, c.args, { stdio: ['ignore', 'pipe', 'ignore'] });
     } catch {
@@ -215,7 +225,7 @@ function toast(spec, { env = process.env } = {}) {
     }
     let out = '';
     let settled = false;
-    const settle = (v) => {
+    const settle = (v: boolean) => {
       if (!settled) {
         settled = true;
         resolve(v);
@@ -228,9 +238,9 @@ function toast(spec, { env = process.env } = {}) {
     const shown = waits ? setTimeout(() => settle(true), 1500) : null;
     const reaper = waits ? setTimeout(() => child.kill(), 10 * 60_000) : null;
     if (reaper) reaper.unref();
-    child.stdout.on('data', (d) => { out += d; });
+    child.stdout.on('data', (d: Buffer) => { out += d; });
     child.on('error', () => settle(false));
-    child.on('close', (code) => {
+    child.on('close', (code: number | null) => {
       if (shown) clearTimeout(shown);
       if (reaper) clearTimeout(reaper);
       const link = c.links[out.trim()];
@@ -257,11 +267,11 @@ function toast(spec, { env = process.env } = {}) {
 const SERVICE = 'dev-tools';
 const LEGACY_SERVICE = 'personal-assistant';
 
-function attrs(name) {
+function attrs(name: string) {
   return ['service', SERVICE, 'stack', common.stack(), 'name', name];
 }
 
-function legacyAttrs(name) {
+function legacyAttrs(name: string) {
   return ['service', LEGACY_SERVICE, 'name', name];
 }
 
@@ -269,9 +279,9 @@ const vault = {
   id: 'credential-manager',
   label: 'the Secret Service keyring',
   where: 'the Secret Service keyring (GNOME Keyring / KWallet; encrypted, your login only)',
-  available: ({ env = process.env } = {}) => Boolean(common.which('secret-tool')) && hasSessionBus(env),
+  available: ({ env = process.env }: { env?: Env } = {}) => Boolean(common.which('secret-tool')) && hasSessionBus(env),
   /** The one process a request turns on; for 'set', the value is its stdin. */
-  invocation(request) {
+  invocation(request: Row) {
     switch (request.op) {
       case 'set':
         return {
@@ -292,10 +302,10 @@ const vault = {
   // secret-tool answers in exit codes: lookup exits 1, silently, when there is
   // no such entry. Error text comes from stderr only (the caller scrubs it);
   // stdout can hold a value and never becomes a message.
-  run(request, runner) {
-    const fail = (r) => ({ ok: false, error: r.error ? String(r.error) : (r.stderr || '').trim() || `secret-tool exited ${r.status}` });
+  run(request: Row, runner: Runner) {
+    const fail = (r: Row) => ({ ok: false, error: r.error ? String(r.error) : (r.stderr || '').trim() || `secret-tool exited ${r.status}` });
     // One lookup in one generation (stack-labelled, or the legacy one).
-    const lookup = (name, legacy) => {
+    const lookup = (name: string, legacy: boolean): { ok: boolean; found?: boolean; value?: string; error?: string } => {
       const r = runner(vault.invocation({ op: 'get', name, legacy }));
       if (r.error) return fail(r);
       if (r.status === 0) return { ok: true, found: true, value: String(r.stdout).replace(/\r?\n$/, '') };
@@ -331,13 +341,13 @@ const vault = {
     if (request.op === 'list') {
       // `search` prints each item's secret too; only the name attributes are
       // read out of it, and the text goes nowhere else — not even an error.
-      const names = [];
+      const names: string[] = [];
       for (const legacy of [false, true]) {
         const r = runner(vault.invocation({ op: 'list', legacy }));
         if (r.error) return fail(r);
         for (const line of `${r.stdout || ''}\n${r.stderr || ''}`.split(/\r?\n/)) {
           const m = /^attribute\.name = ([A-Z][A-Z0-9_]{1,63})$/.exec(line.trim());
-          if (m && !names.includes(m[1])) names.push(m[1]);
+          if (m && !names.includes(m[1] as string)) names.push(m[1] as string);
         }
       }
       return { ok: true, names };
@@ -349,7 +359,7 @@ const vault = {
 // ------------------------------------------------------------- capture ----
 
 /** Pure: `pactl list short sources` → Map(index → source name). */
-function parseShortSources(text) {
+function parseShortSources(text: string) {
   const out = new Map();
   for (const line of String(text || '').split(/\r?\n/)) {
     const [idx, name] = line.split('\t');
@@ -362,9 +372,10 @@ function parseShortSources(text) {
  * Pure: `pactl list source-outputs` (LC_ALL=C) → one record per recording
  * stream: {index, source, corked, props}.
  */
-function parseSourceOutputs(text) {
-  const outputs = [];
-  let cur = null;
+function parseSourceOutputs(text: string) {
+  type Out = { index: string | undefined; source: string | null; corked: boolean; props: Record<string, string | undefined> };
+  const outputs: Out[] = [];
+  let cur: Out | null = null;
   let inProps = false;
   for (const raw of String(text || '').split(/\r?\n/)) {
     const head = /^Source Output #(\d+)/.exec(raw);
@@ -382,14 +393,14 @@ function parseSourceOutputs(text) {
     }
     const prop = /^([a-z0-9_.-]+) = "(.*)"$/i.exec(line);
     if (inProps && prop) {
-      cur.props[prop[1]] = prop[2];
+      cur.props[prop[1] as string] = prop[2];
       continue;
     }
     const field = /^([A-Za-z ]+): (.*)$/.exec(line);
     if (field) {
       inProps = false;
-      if (field[1] === 'Source') cur.source = field[2].trim();
-      if (field[1] === 'Corked') cur.corked = field[2].trim() === 'yes';
+      if (field[1] === 'Source') cur.source = (field[2] as string).trim();
+      if (field[1] === 'Corked') cur.corked = (field[2] as string).trim() === 'yes';
     }
   }
   return outputs;
@@ -398,7 +409,7 @@ function parseSourceOutputs(text) {
 // Not a call: our own recorder and voice-dictation (Python, as on Windows),
 // level meters (pavucontrol, the GNOME/KDE volume applets) and anything
 // recording a monitor — that is the speakers, not the microphone.
-function isNotACall(o, sourceName) {
+function isNotACall(o: Row, sourceName: string | null) {
   const p = o.props;
   const bin = String(p['application.process.binary'] || '');
   if (/^python[0-9.]*$/i.test(path.basename(bin))) return true;
@@ -413,9 +424,9 @@ function isNotACall(o, sourceName) {
  * counterpart of the Windows registry read in parseMicHolders. A corked
  * (paused) stream still holds the device, as a muted Teams call does.
  */
-function micHoldersFromPactl(sourceOutputsText, shortSourcesText) {
+function micHoldersFromPactl(sourceOutputsText: string, shortSourcesText: string) {
   const sources = parseShortSources(shortSourcesText);
-  const holders = [];
+  const holders: string[] = [];
   for (const o of parseSourceOutputs(sourceOutputsText)) {
     const name = sources.get(o.source) || null;
     if (isNotACall(o, name)) continue;
@@ -428,7 +439,7 @@ function micHoldersFromPactl(sourceOutputsText, shortSourcesText) {
 // Our own processes must parse pactl in English whatever the desktop's locale.
 const PACTL_ENV = { LC_ALL: 'C' };
 
-function unitDir(env = process.env) {
+function unitDir(env: Env = process.env) {
   return path.join(xdgConfig(env), 'systemd', 'user');
 }
 
@@ -436,12 +447,12 @@ const capture = {
   backend: 'PipeWire/PulseAudio (soundcard): the mic, and the default sink\'s monitor as loopback',
   // Restarting a unit that was never installed fails every ten minutes and
   // notifies you each time; `pa doctor` reports the missing unit instead.
-  installed: ({ env = process.env } = {}) => fs.existsSync(path.join(unitDir(env), PA_CAPTURE_UNIT)),
-  restartHint: (stream) => `systemctl --user restart pa-capture@${stream}`,
+  installed: ({ env = process.env }: { env?: Env } = {}) => fs.existsSync(path.join(unitDir(env), PA_CAPTURE_UNIT)),
+  restartHint: (stream: string) => `systemctl --user restart pa-capture@${stream}`,
   // systemd stops the whole cgroup, so unlike the Windows task there is no
   // orphaned python to hunt down by command line.
-  restartCommand: (stream) => ({ cmd: 'systemctl', args: ['--user', 'restart', `pa-capture@${stream}.service`] }),
-  async restart(stream) {
+  restartCommand: (stream: string) => ({ cmd: 'systemctl', args: ['--user', 'restart', `pa-capture@${stream}.service`] }),
+  async restart(stream: string) {
     if (!/^(mic|loopback)$/.test(stream)) throw new Error(`unknown stream ${stream}`);
     const c = capture.restartCommand(stream);
     const r = await common.run(c.cmd, c.args, { timeoutMs: 60_000 });
@@ -464,7 +475,7 @@ const capture = {
   },
 };
 
-async function freeBytes(dir) {
+async function freeBytes(dir: string) {
   return common.statfsFree(dir);
 }
 
@@ -477,7 +488,7 @@ const services = {
 
 // What only Linux can get wrong: no keyring, no notification daemon, no
 // clipboard tool, no sound server, capture units not installed.
-async function doctor({ ntfyConfigured = false, audioEnabled = true, env = process.env } = {}) {
+async function doctor({ ntfyConfigured = false, audioEnabled = true, env = process.env }: { ntfyConfigured?: boolean; audioEnabled?: boolean; env?: Env } = {}) {
   const lines = [];
   const bus = hasSessionBus(env);
   lines.push(
@@ -514,7 +525,7 @@ async function doctor({ ntfyConfigured = false, audioEnabled = true, env = proce
       lines.push({
         ok: !r.error && r.status === 0,
         label: 'sound server',
-        detail: server ? server[1].trim() : `unreachable (${(r.stderr || r.error || '').trim().slice(0, 60)}) — capture cannot open a device`,
+        detail: server ? (server[1] as string).trim() : `unreachable (${(r.stderr || r.error || '').trim().slice(0, 60)}) — capture cannot open a device`,
       });
     }
     lines.push({

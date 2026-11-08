@@ -13,13 +13,23 @@
 //   Teams     the connector only
 //
 // Store, open, clipboard, toasts and disk space are native.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+type Env = Record<string, string | undefined>;
+type Row = Record<string, any>;
+type Action = { label?: string; url?: string };
+type RunResult = { stdout: string; stderr: string; status: number | null; error?: string };
+/** Runs a vault process (platform/common.ts runSync's shape). */
+type Runner = (inv: { command: string; args: string[]; input?: string }) => RunResult;
+type Which = (bin: string) => string | null;
 
 const os = require('os');
 // posix: this file models that OS's paths, whichever OS evaluates it (tests run it on Windows).
 const path = require('path').posix;
 
-const common = require('./common');
-const linux = require('./linux');
+const common = require('./common.ts');
+const linux = require('./linux.ts');
 
 const id = 'darwin';
 const label = 'macOS';
@@ -27,7 +37,7 @@ const label = 'macOS';
 const defaults = {
   dataDir: () => path.join(os.homedir(), 'Library', 'Application Support', 'personal-assistant'),
   reposRoot: () => path.join(os.homedir(), 'repos'),
-  venvPython: (venvDir) => path.join(venvDir, 'bin', 'python'),
+  venvPython: (venvDir: string) => path.join(venvDir, 'bin', 'python'),
   teamsCacheDir: () => null,
   pgTools: linux.defaults.pgTools,
 };
@@ -35,15 +45,15 @@ const defaults = {
 const teamsCache = { supported: false, why: 'not built for macOS — Teams arrives through the Microsoft 365 connector' };
 
 // APFS is case-insensitive by default.
-function pathKey(p) {
+function pathKey(p: Row) {
   return path.resolve(String(p)).replace(/[\\/]+$/, '').toLowerCase();
 }
 
-function openCommand(url) {
+function openCommand(url: string | URL) {
   return { cmd: 'open', args: [String(url)] };
 }
 
-function openUrl(url) {
+function openUrl(url: string | URL) {
   const c = openCommand(url);
   return common.spawnDetached(c.cmd, c.args);
 }
@@ -52,7 +62,7 @@ function clipboardCommand() {
   return { cmd: 'pbcopy', args: [] };
 }
 
-function copyToClipboard(text) {
+function copyToClipboard(text: string) {
   return common.pipeTo('pbcopy', [], text);
 }
 
@@ -62,7 +72,7 @@ function teamsDesktop() {
 
 // The title and body are argv items read by the script, never spliced into
 // it, so nothing in a message can become AppleScript.
-function toastCommand({ title, body }) {
+function toastCommand({ title, body }: { title?: string | null; body?: string | null }) {
   const lines = String(body || '').split(/\r?\n/).map((l) => l.trim()).filter(Boolean).slice(0, 4).join('\n');
   return {
     cmd: 'osascript',
@@ -76,7 +86,7 @@ function toastCommand({ title, body }) {
   };
 }
 
-async function toast(spec) {
+async function toast(spec: Row) {
   const c = toastCommand(spec);
   const r = await common.run(c.cmd, c.args, { timeoutMs: 15_000 });
   return !r.error && r.status === 0;
@@ -108,7 +118,7 @@ const capture = {
   },
 };
 
-async function freeBytes(dir) {
+async function freeBytes(dir: string) {
   return common.statfsFree(dir);
 }
 
@@ -119,7 +129,7 @@ const services = {
   dbProvision: 'docker compose up -d',
 };
 
-async function doctor({ audioEnabled = true } = {}) {
+async function doctor({ audioEnabled = true }: { audioEnabled?: boolean } = {}) {
   const lines = [{ ok: false, label: 'secret store', detail: 'DEGRADED: no vault on macOS — secrets are read from env and .env only' }];
   if (audioEnabled) lines.push({ ok: false, label: 'capture', detail: 'UNSUPPORTED on macOS — set PA_AUDIO_ENABLED=0' });
   return lines;

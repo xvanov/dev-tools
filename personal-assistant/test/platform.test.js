@@ -14,7 +14,7 @@ const path = require('path');
 const { execFileSync, spawnSync } = require('child_process');
 
 const platform = require('../src/platform');
-const common = require('../src/platform/common');
+const common = require('../src/platform/common.ts');
 const linux = platform.select('linux');
 const windows = platform.select('win32');
 const darwin = platform.select('darwin');

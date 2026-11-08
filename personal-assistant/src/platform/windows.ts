@@ -8,42 +8,52 @@
 // The store lives in WSL (AGENT.md, "The store lives in WSL"); toasts and the
 // credential vault are WinRT reached through Windows PowerShell; capture runs as
 // two logon tasks registered by windows/install.ps1.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+type Env = Record<string, string | undefined>;
+type Row = Record<string, any>;
+type Action = { label?: string; url?: string };
+type RunResult = { stdout: string; stderr: string; status: number | null; error?: string };
+/** Runs a vault process (platform/common.ts runSync's shape). */
+type Runner = (inv: { command: string; args: string[]; input?: string }) => RunResult;
+type Which = (bin: string) => string | null;
 
 const os = require('os');
 const path = require('path');
 const { execFile } = require('child_process');
 const { promisify } = require('util');
 
-const common = require('./common');
+const common = require('./common.ts');
 
 const exec = promisify(execFile);
 
 const id = 'windows';
 const label = 'Windows';
 
-function localAppData(env = process.env) {
+function localAppData(env: Env = process.env) {
   return env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local');
 }
 
 const defaults = {
-  dataDir: (env = process.env) => path.join(localAppData(env), 'personal-assistant'),
+  dataDir: (env: Env = process.env) => path.join(localAppData(env), 'personal-assistant'),
   reposRoot: () => 'C:\\repos',
-  venvPython: (venvDir) => path.join(venvDir, 'Scripts', 'python.exe'),
+  venvPython: (venvDir: string) => path.join(venvDir, 'Scripts', 'python.exe'),
   // The new Teams (MSTeams package) is a WebView2 app; its IndexedDB lives here.
-  teamsCacheDir: (env = process.env) =>
+  teamsCacheDir: (env: Env = process.env) =>
     path.join(
       localAppData(env),
       'Packages', 'MSTeams_8wekyb3d8bbwe', 'LocalCache', 'Microsoft', 'MSTeams', 'EBWebView',
       'WV2Profile_tfw', 'IndexedDB', 'https_teams.microsoft.com_0.indexeddb'
     ),
   // pg_dump runs inside the WSL distro that hosts Postgres (src/backup.js).
-  pgTools: ({ wslDistro = 'Ubuntu' } = {}) => `wsl:${wslDistro}`,
+  pgTools: ({ wslDistro = 'Ubuntu' }: { wslDistro?: string } = {}) => `wsl:${wslDistro}`,
 };
 
 const teamsCache = { supported: true, why: 'the new Teams desktop client keeps chats in IndexedDB on this disk' };
 
 // NTFS is case-insensitive: C:\Repos and c:\repos are one folder.
-function pathKey(p) {
+function pathKey(p: Row) {
   return path.resolve(String(p)).replace(/[\\/]+$/, '').toLowerCase();
 }
 
@@ -65,7 +75,7 @@ function pathKey(p) {
 // and openUrl answers false so the caller prints the link instead.
 const OPEN_SCHEMES = new Set(['http:', 'https:', 'msteams:']);
 
-function openCommand(url) {
+function openCommand(url: string | URL) {
   let u;
   try { u = new URL(String(url)); } catch { return null; }
   if (!OPEN_SCHEMES.has(u.protocol)) return null;
@@ -74,7 +84,7 @@ function openCommand(url) {
   return { cmd: 'rundll32.exe', args: ['url.dll,FileProtocolHandler', href] };
 }
 
-function openUrl(url) {
+function openUrl(url: string | URL) {
   const c = openCommand(url);
   if (!c) return false;
   return common.spawnDetached(c.cmd, c.args);
@@ -84,7 +94,7 @@ function clipboardCommand() {
   return { cmd: 'clip', args: [] };
 }
 
-function copyToClipboard(text) {
+function copyToClipboard(text: string) {
   return common.pipeTo('clip', [], text);
 }
 
@@ -95,7 +105,7 @@ function teamsDesktop() {
 
 // ------------------------------------------------------------- toasts ----
 
-function xmlEscape(s) {
+function xmlEscape(s: unknown) {
   return String(s ?? '')
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
@@ -106,7 +116,7 @@ function xmlEscape(s) {
 
 // Toast XML: title, up to ~4 lines of body, a click that opens `url`, and
 // optional buttons that each open their own link (a meeting's join link).
-function toastXml({ title, body, url, actions = [] }) {
+function toastXml({ title, body, url, actions = [] }: { title?: string | null; body?: string | null; url?: string | null; actions?: Action[] }) {
   const lines = String(body || '')
     .split(/\r?\n/)
     .map((l) => l.trim())
@@ -137,7 +147,7 @@ function toastXml({ title, body, url, actions = [] }) {
 // (registered on every Windows install, so no Start-menu shortcut or AUMID
 // registration is needed). The XML travels base64-encoded so nothing in a
 // title can break out of the script.
-function toastCommand(spec) {
+function toastCommand(spec: Row) {
   const xml64 = Buffer.from(toastXml(spec), 'utf8').toString('base64');
   const script = [
     '[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] | Out-Null',
@@ -150,7 +160,7 @@ function toastCommand(spec) {
   return { cmd: 'powershell.exe', args: ['-NoProfile', '-NonInteractive', '-Command', script] };
 }
 
-async function toast(spec) {
+async function toast(spec: Row) {
   const c = toastCommand(spec);
   const r = await common.run(c.cmd, c.args, { timeoutMs: 30_000 });
   return !r.error && r.status === 0;
@@ -192,7 +202,7 @@ try {
   function Find($name) { foreach ($r in $resources) { try { return $vault.Retrieve($r, $name) } catch {} } return $null }
   switch ($req.op) {
     'set' {
-      foreach ($r in $resources) { try { $vault.Remove($vault.Retrieve($r, $req.name)) } catch {} }
+      foreach($r in $resources) { try { $vault.Remove($vault.Retrieve($r, $req.name)) } catch {} }
       $vault.Add((New-Object Windows.Security.Credentials.PasswordCredential($res, $req.name, $req.value)))
       Answer @{ ok = $true }
     }
@@ -203,12 +213,12 @@ try {
     }
     'delete' {
       $found = $false
-      foreach ($r in $resources) { try { $vault.Remove($vault.Retrieve($r, $req.name)); $found = $true } catch {} }
+      foreach($r in $resources) { try { $vault.Remove($vault.Retrieve($r, $req.name)); $found = $true } catch {} }
       Answer @{ ok = $true; found = $found }
     }
     'list' {
       $names = @()
-      foreach ($r in $resources) { try { $names += @($vault.FindAllByResource($r) | ForEach-Object { $_.UserName }) } catch {} }
+      foreach($r in $resources) { try { $names += @($vault.FindAllByResource($r) | ForEach-Object { $_.UserName }) } catch {} }
       Answer @{ ok = $true; names = @($names | Sort-Object -Unique) }
     }
     default { Answer @{ ok = $false; error = 'unknown op' } }
@@ -226,7 +236,7 @@ const vault = {
   where: 'Windows Credential Manager (encrypted, your Windows account only)',
   available: () => true,
   /** The exact process a vault call starts: the value is in `input`, never in `args`. */
-  invocation(request) {
+  invocation(request: Row) {
     return {
       command: 'powershell.exe',
       args: ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', VAULT_ENCODED],
@@ -234,12 +244,12 @@ const vault = {
     };
   },
   // One process per request; its last stdout line is the JSON answer.
-  run(request, runner) {
+  run(request: Row, runner: Runner) {
     const r = runner(vault.invocation(request));
     if (r.error) return { ok: false, error: String(r.error) };
     const last = String(r.stdout || '').trim().split(/\r?\n/).pop();
     try {
-      return JSON.parse(last);
+      return JSON.parse(last as string);
     } catch {
       return { ok: false, error: `unreadable reply (exit ${r.status})` };
     }
@@ -256,8 +266,8 @@ const CAM_KEY = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\CapabilityA
 // Pure: the apps holding the microphone (or camera), from `reg query /s /v
 // LastUsedTimeStop` output. Python is left out: that is our own recorder and
 // voice-dictation, and counting them would keep the gate open forever.
-function parseMicHolders(regOutput) {
-  const holders = [];
+function parseMicHolders(regOutput: unknown) {
+  const holders: string[] = [];
   let key = null;
   for (const line of String(regOutput).split(/\r?\n/)) {
     if (/^HKEY_/i.test(line)) {
@@ -265,8 +275,8 @@ function parseMicHolders(regOutput) {
       continue;
     }
     const m = /^\s+LastUsedTimeStop\s+REG_QWORD\s+(0x[0-9a-f]+)/i.exec(line);
-    if (!m || !key || BigInt(m[1]) !== 0n) continue;
-    const app = key.split('\\').pop().replace(/#/g, '\\');
+    if (!m || !key || BigInt(m[1] as string) !== 0n) continue;
+    const app = (key.split('\\').pop() as string).replace(/#/g, '\\');
     if (/\\pythonw?\.exe$/i.test(app)) continue;
     if (!holders.includes(app)) holders.push(app);
   }
@@ -276,10 +286,10 @@ function parseMicHolders(regOutput) {
 const capture = {
   backend: 'WASAPI (soundcard + pycaw), two logon tasks',
   installed: () => true,
-  restartHint: (stream) => `Start-ScheduledTask pa-capture-${stream}`,
+  restartHint: (stream: string) => `Start-ScheduledTask pa-capture-${stream}`,
   // Ending the task leaves the python child running (the task's process is a
   // wrapper), so the recorder itself is killed by its command line.
-  restartCommand(stream) {
+  restartCommand(stream: string) {
     const task = `pa-capture-${stream}`;
     const ps = [
       `Stop-ScheduledTask -TaskName '${task}' -ErrorAction SilentlyContinue`,
@@ -289,12 +299,12 @@ const capture = {
     ].join('; ');
     return { cmd: 'powershell.exe', args: ['-NoProfile', '-NonInteractive', '-Command', ps] };
   },
-  async restart(stream) {
+  async restart(stream: string) {
     const c = capture.restartCommand(stream);
     await exec(c.cmd, c.args, { windowsHide: true, timeout: 60_000 });
   },
   async micHolders() {
-    const queryKey = async (k) => {
+    const queryKey = async (k: string) => {
       try {
         const { stdout } = await exec('reg.exe', ['query', k, '/s', '/v', 'LastUsedTimeStop'], {
           windowsHide: true,
@@ -303,7 +313,7 @@ const capture = {
         return stdout;
       } catch (err) {
         // reg exits non-zero when some subkeys lack the value; the rest is still on stdout.
-        return err.stdout || '';
+        return (err as { stdout?: string }).stdout || '';
       }
     };
     const [micOut, camOut] = await Promise.all([queryKey(MIC_KEY), queryKey(CAM_KEY)]);
@@ -312,7 +322,7 @@ const capture = {
 };
 
 // Free bytes on the drive holding `dir` (its drive letter).
-async function freeBytes(dir) {
+async function freeBytes(dir: string) {
   const drive = path.parse(path.resolve(dir)).root.slice(0, 1);
   const { stdout } = await exec(
     'powershell.exe',
