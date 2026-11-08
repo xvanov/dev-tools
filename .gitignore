@@ -29,6 +29,12 @@ combined-summary.md
 # and the architecture map, which is data the dashboard renders
 !personal-assistant/src/dashboard/architecture.json
 !personal-assistant/src/eval/router-cases.json
+# and every JSON file that is source (config defaults, fixtures): *.json above is meant for
+# recordings and transcripts, and kept hiding source files agents added (3 times on 2026-11-08)
+!personal-assistant/src/**/*.json
+!personal-assistant/test/**/*.json
+!termhub/lib/**/*.json
+!termhub/test/**/*.json
 # and the contract schemas with their examples (plan 1.1)
 !schemas/*.json
 !schemas/examples/*.json
