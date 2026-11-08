@@ -335,7 +335,7 @@ a Claude session says which machine and folder it ran in and when, shows `claude
 links its transcript, and has **Open in termhub**, which opens the running session on that machine
 or starts one resuming it. Above the links is a short paragraph — who asked what, what led to it,
 what has happened since, and what is expected now and from whom — written by the worker a few
-cards at a time (`src/commitments/context.js`, every two minutes, `PA_CARD_CONTEXT=0` turns it off)
+cards at a time (`src/commitments/context.ts`, every two minutes, `PA_CARD_CONTEXT=0` turns it off)
 and rewritten when the thread has news; it is discretionary spend (`card-context`). A chase's
 "when should I follow up?" question sits on the card of the ask it is about, under that paragraph.
 
@@ -347,7 +347,7 @@ point plus one for the whole list. Three things keep that to one card:
   summary names the set and whose detail lists the items (a prompt rule; `src/distill/lists.js`
   collapses an umbrella-plus-items or item-per-list-line answer if the model still splits). New
   items only — the prompt version was not bumped, so history is not re-distilled.
-- *The duplicate pass* (`src/commitments/dedupe.js`, pure half `semantic.js`, every three minutes,
+- *The duplicate pass* (`src/commitments/dedupe.ts`, pure half `semantic.js`, every three minutes,
   `PA_DEDUPE=0` turns it off): each new open commitment is embedded (summary + detail, stored in
   `commitment_vector`) and paired with open commitments of the last 60 days from **any** thread,
   source or person — cosine ≥ 0.60, or ≥ 0.38 in the same conversation (a Teams draft counts as
@@ -366,7 +366,7 @@ point plus one for the whole list. Three things keep that to one card:
 - *The card*: a card with folded duplicates shows **also mentioned in:** with a link to every other
   place they were said (`links.alsoLinks`), so folding loses no thread.
 
-**Only people put tasks on the board** (`src/commitments/sourcePolicy.js`). A card comes from what
+**Only people put tasks on the board** (`src/commitments/sourcePolicy.ts`). A card comes from what
 people say to you — Teams chats and channels, mail, meeting recordings and invites — from a person on
 GitHub or Jira asking you for something (a review requested of you by name, an @mention, a reviewer's
 comment on your PR, an issue or board card assigned to you), or from you asking for one (below). Your
@@ -387,7 +387,7 @@ and lists any you acted on (a run, a draft, your edit or status change), unfolds
 that was folded under one, and writes undo SQL to `<dataDir>/fixes/`.
 
 **A task because you said so.** `pa task add "<what>" [--due friday|tomorrow 3pm|2d|2026-11-20]
-[--for <person>] [--owed-to-me] [--project <name>]` puts it on the board at once (`src/commitments/request.js`;
+[--for <person>] [--owed-to-me] [--project <name>]` puts it on the board at once (`src/commitments/request.ts`;
 source `pa_request`, never distilled). `--for` names who it is for — or, with `--owed-to-me`, who owes it
 to you; a name that matches exactly one person links them, anything else is kept as text. Telling the PA
 chat "create a task to…" does the same through its `task_add` tool, which needs no permission prompt
@@ -398,7 +398,7 @@ Notes from your own Claude sessions and PRs read before the rule above (agent ha
 "verify the banner in a browser before merge") are not listed on the page any more: one shows on
 **On me** only while it carries a question or a looks-done proposal. No new ones are created; the
 rest close when their PR merges or closes, or expire after a week nobody touched them
-(`src/commitments/selfNotes.js`, the worker's `self-notes` pass; reopening or correcting one counts
+(`src/commitments/selfNotes.ts`, the worker's `self-notes` pass; reopening or correcting one counts
 as touching it), and `pa brief` still lists them. Asks from
 people never expire. A GitHub issue someone else filed through your account is still their ask.
 Auto-drafted replies are never written for an ask that was your own message, and one already
@@ -418,7 +418,7 @@ and if you are only a reviewer what you owe is the review. That is checked in co
 answers (`src/distill/githubGate.js`), not asked of it.
 
 Asks from Teams and mail close the same way once you have answered them yourself
-(`src/commitments/replyClose.js`, every five minutes, `PA_REPLY_CLOSE=0` turns it off). An open
+(`src/commitments/replyClose.ts`, every five minutes, `PA_REPLY_CLOSE=0` turns it off). An open
 owed_by_me commitment with a later message from you in the same chat or mail thread (within two
 weeks) is shown to a model beside that ask; only a reply that delivers what was owed — the answer,
 even a "no", or "fixed it" — closes it, never a promise ("I'll look tomorrow") or half an answer.
@@ -428,7 +428,7 @@ reply it saw, with what the close replaced, so the same reply is never judged tw
 (or `pa done <id> --reopen`) sticks until you write in that thread again. `pa doctor` shows the
 count.
 
-**The reconciler keeps the rest true** (`src/ledger/reconcile.js`, every minute and right after a
+**The reconciler keeps the rest true** (`src/ledger/reconcile.ts`, every minute and right after a
 fresh Teams message; `PA_RECONCILE=0` turns it off, `PA_RECONCILE_AUTO=0` makes every close a
 proposal). It is level-triggered: each open commitment, in either direction, is judged against
 everything *related* that arrived since it was last judged — the same thread first, what the other
@@ -760,7 +760,7 @@ pa meeting learn                    learn from meetings that just ended now
 Minutes after a recorded meeting or call ends, a toast: *"Debrief: Ledger sync — 2 to-dos for
 you, 1 updated, 1 decision"*, with a numbered list, and the full meeting card in the dashboard's
 **Meetings** tab (short summary of what happened, what was decided, your action items and updates,
-and the transcript; defaults to today's meetings). `src/meetings/debrief.js`, run in the worker's audio pass:
+and the transcript; defaults to today's meetings). `src/meetings/debrief.ts`, run in the worker's audio pass:
 
 1. **When.** A meeting or call episode is debriefed once it is over: its calendar
    slot has ended, the audio past the end is transcribed, and nobody spoke in the last ~100 s of
@@ -1194,7 +1194,7 @@ deterministic eval once a day.
 
 The cases are real questions about real mail, so **they live in the database only**: never in
 fixtures, tests or commits. A new retriever is one `register(...)` line in
-`src/eval/retrievers.js`. `--retriever search-fused` runs search with the reranker off, to
+`src/eval/retrievers.ts`. `--retriever search-fused` runs search with the reranker off, to
 measure what the reranker adds.
 
 ## Backup and recovery

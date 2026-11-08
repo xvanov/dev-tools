@@ -7,7 +7,7 @@ pushes me**. It extends `PLAN.md`; where the two disagree, this file is newer an
 **Status, 2026-10-25: all four phases are built and running.**
 
 - Phase 1, the board tells the truth: `src/ledger` (one transition function,
-  `ledger_transition`, undo); the reconciler (`src/ledger/reconcile.js`, every minute, auto-close
+  `ledger_transition`, undo); the reconciler (`src/ledger/reconcile.ts`, every minute, auto-close
   at ≥ 0.8, a "Looks done?" card below that); re-distillation that keeps closed work
   (`distill/keep.js`); head+tail Claude sessions; the source-health banner and toast
   (`ingest/health.js`).

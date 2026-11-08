@@ -12,7 +12,7 @@ retention action, never a cleanup.
 
 **Nothing is sent without a human.** This tool has no code path that puts a message on the
 wire. Drafts — including the ones the worker writes on its own — are delivered by opening them,
-already written, in Teams or Outlook (`src/draft/deliver.js`), and the human presses Send there.
+already written, in Teams or Outlook (`src/draft/deliver.ts`), and the human presses Send there.
 `pa send` and the dashboard's Send button both do exactly that and nothing more. If the
 connector is ever granted `Mail.Send`/`ChatMessage.Send`, using them is a conversation, not a
 patch — and no worker, cron job, skill or agent may ever trigger a send.
@@ -320,7 +320,7 @@ claims, consolidation, pages, card context — says so, and nothing a message sa
 no pass takes an action other than writing rows. Keep it that way when adding one.
 
 **A debrief writes only what the user owes or is owed, each with a verified quote; its updates
-are reversible.** `src/meetings/debrief.js` turns a recorded meeting into to-dos, owed-to-me,
+are reversible.** `src/meetings/debrief.ts` turns a recorded meeting into to-dos, owed-to-me,
 updates to existing commitments and decisions — never other people's tasks — and
 `debriefCore.parseDebrief` drops any item whose quote is not verbatim in the transcript, whose
 owner is not the user, or whose ref was not in the prompt. Every write is recorded in
@@ -330,10 +330,10 @@ distiller skips meeting and call recordings (`DEBRIEF_OWNED`) so nothing is extr
 
 **Only people create tasks.** A commitment comes from what a person said or did — Teams, mail,
 meetings, a person on GitHub or Jira asking the user — or from the user asking for one (`pa task add`,
-the PA chat's `task_add`, the board's + task; source `pa_request`, `src/commitments/request.js`). Never
+the PA chat's `task_add`, the board's + task; source `pa_request`, `src/commitments/request.ts`). Never
 from the assistant's own work: Claude and Cursor sessions (the PA chat's included), bots, automated
 mail, CI, team queues and the user's own GitHub activity are evidence only.
-`src/commitments/sourcePolicy.js` decides it in code before the model is called — `sourceSql` in
+`src/commitments/sourcePolicy.ts` decides it in code before the model is called — `sourceSql` in
 `distill.pending` (and `dedupe`), `judge` per item in `distillOne` — and `PA_COMMITMENT_SOURCES`
 configures the sources. A new commitment writer goes through the same check, and a new source is
 excluded until it is added there. No agent may create a task about its own next step; the PA chat's
@@ -350,7 +350,7 @@ or issue you neither wrote nor are assigned, delivery of the item's own work mov
 who you are; a new GitHub source must record those or its items owe you nothing.
 
 **A reply closes a commitment only on a verbatim quote of my own message, and reversibly.**
-`src/commitments/replyClose.js` closes an open owed_by_me ask from chat or mail only when
+`src/commitments/replyClose.ts` closes an open owed_by_me ask from chat or mail only when
 `replyCloseCore.parseVerdict` finds the quote in the reply of mine it names and the verdict is
 "discharged" — a promise or a partial answer closes nothing. The close is recorded in
 `reply_close.applied` with the columns it replaced, and the row is keyed by the newest reply
@@ -515,8 +515,8 @@ org's conventions is worse than none.
 
 **Retrieval changes are judged by `pa eval run`, not by anecdote.** Run it before and after any
 change to `src/search/` or a memory retriever, and put the per-qtype numbers in the commit body.
-A new retriever plugs in with one `register(...)` line in `src/eval/retrievers.js` and is scored
-on the same cases. The metrics in `src/eval/metrics.js` are pure and unit-tested; keep them that
+A new retriever plugs in with one `register(...)` line in `src/eval/retrievers.ts` and is scored
+on the same cases. The metrics in `src/eval/metrics.ts` are pure and unit-tested; keep them that
 way.
 
 **Eval cases are private data.** `eval_case` holds real questions about real mail, so it lives in
