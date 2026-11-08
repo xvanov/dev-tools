@@ -50,7 +50,7 @@ async function commitmentContext(id: number | string) {
   const c = await repo.commitments.contextForDashboard(id);
   if (!c) return { error: `no commitment #${id}` };
   const thread = c.thread_external_id ? await repo.sources.threadItems(c.thread_external_id) : [];
-  const termhub = require('../dispatch/termhub');
+  const termhub = require('../dispatch/termhub.ts');
   const runs = (await repo.runs.detailsForCommitment(id)).map((r: Row) => ({
     ...r,
     url: r.termhub_session_id ? `${termhub.forMachine(r.machine).base}/#session=${encodeURIComponent(r.termhub_session_id as string)}` : null,

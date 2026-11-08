@@ -209,7 +209,7 @@ function createSdkFeed({
   approvalTimeoutMs = () => require('../config.ts').config.chat.approvalTimeoutMs,
   jobLookup = null,
   env = () => subscriptionEnv(),
-  hub = () => require('../dispatch/termhub'),
+  hub = () => require('../dispatch/termhub.ts'),
   viewCommand = (file: any) => {
     const js = path.join(require('../config.ts').config.toolDir, 'src', 'chat', 'sdkView.js').replace(/\\/g, '/');
     return `node "${js}" --follow "${file.replace(/\\/g, '/')}"`;

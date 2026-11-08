@@ -80,7 +80,7 @@ stub('db', stubTx({
 const transitions = [];
 stub('ledger', { async transition(t) { transitions.push(t); return { changed: true }; } });
 stub('notify', { async notify() { return { id: 1 }; } });
-stub('dispatch/termhub', {
+stub('dispatch/termhub.ts', {
   isLocal: () => true,
   forMachine: () => ({ async createSession() { return { id: 'sess-1' }; }, async sessionUrl() { return 'https://hub.example/#s'; } }),
 });

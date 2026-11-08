@@ -221,7 +221,7 @@ assert.throws(() => R.via('carrier-pigeon'), /unknown route/);
 // --- the brief, as a factory job's ask ------------------------------------------------
 
 {
-  const { buildBrief } = require('../src/dispatch/brief');
+  const { buildBrief } = require('../src/dispatch/brief.ts');
   const base = { commitment: { summary: 'Add retries to the export', detail: 'retries tested' }, modeName: 'mr', run: { id: 7, worktree_path: '/w', branch: 'pa/7' } };
   const claude = buildBrief(base);
   const factory = buildBrief({ ...base, factory: { app: 'widget', delivery: 'draft_pr' } });
@@ -314,7 +314,7 @@ stub('ledger', { async transition(t) { transitions.push(t); return { changed: tr
 const notes = [];
 stub('notify', { async notify(n) { notes.push(n); return { id: notes.length }; } });
 const sessions = [];
-stub('dispatch/termhub', {
+stub('dispatch/termhub.ts', {
   isLocal: () => true,
   forMachine: () => ({
     async createSession(s) { sessions.push(s); return { id: 'sess-1' }; },
@@ -389,7 +389,7 @@ async function factoryStart() {
   // reported at once (no url), and the session is recorded on the run when it opens.
   {
     const { config } = require('../src/config.ts');
-    const hub = require('../src/dispatch/termhub');
+    const hub = require('../src/dispatch/termhub.ts');
     const realFor = hub.forMachine;
     hub.forMachine = () => ({
       async createSession() { await new Promise((r) => setTimeout(r, 400)); return { id: 'sess-slow' }; },

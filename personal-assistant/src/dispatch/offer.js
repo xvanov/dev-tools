@@ -88,7 +88,7 @@ async function prepare({
 
   const chosen = plan
     ? { delivery: null, source: null, phrase: null }
-    : await require('./delivery').resolve({ explicit: delivery, mode: mode || null, operatorText: task, slug: choice.slug });
+    : await require('./delivery.ts').resolve({ explicit: delivery, mode: mode || null, operatorText: task, slug: choice.slug });
 
   const payload = {
     frozen: true,

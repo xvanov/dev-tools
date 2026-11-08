@@ -108,7 +108,7 @@ function newJob(body: Row) {
 function termhubUrl(r: Row) {
   if (!r.termhub_session_id) return null;
   try {
-    return `${require('../dispatch/termhub').forMachine(r.machine).base}/#session=${encodeURIComponent(r.termhub_session_id as string)}`;
+    return `${require('../dispatch/termhub.ts').forMachine(r.machine).base}/#session=${encodeURIComponent(r.termhub_session_id as string)}`;
   } catch {
     return null;
   }

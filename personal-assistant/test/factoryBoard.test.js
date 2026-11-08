@@ -236,7 +236,7 @@ stub('ledger', { async transition() { return { changed: true }; } });
 const notes = [];
 stub('notify', { async notify(n) { notes.push(n); return { id: notes.length }; } });
 const sessions = [];
-stub('dispatch/termhub', {
+stub('dispatch/termhub.ts', {
   isLocal: () => true,
   forMachine: () => ({
     async createSession(s) { sessions.push(s); return { id: `sess-${sessions.length}` }; },

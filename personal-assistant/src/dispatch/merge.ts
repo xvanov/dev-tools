@@ -19,6 +19,17 @@
 //   summarizeCommit({checkRuns, statuses})  pure: → {state, names}
 //   ciGate({...})                           pure: proceed | wait | block, and why
 //   commitChecks(slug, sha) / requiredChecks(slug, base)
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+type Json = import('../types.ts').Json;
+type Bucket = 'pending' | 'pass' | 'fail';
+type CommitState = 'none' | 'pending' | 'pass' | 'fail';
+type CommitChecks = { state: CommitState; names: string[]; failed: string[] };
+type Required = { known: boolean; contexts: string[]; strict?: boolean };
+type GateAction = { action: 'proceed' | 'wait' | 'block'; reason?: string; note?: string };
+/** gh's answer for a PR (prState), or a test's stand-in. */
+type PrView = { baseRefName?: string; headRefOid?: string; isCrossRepository?: boolean; state?: string };
 
 const { execFile } = require('child_process');
 const { promisify } = require('util');
@@ -26,7 +37,7 @@ const { config } = require('../config.ts');
 
 const exec = promisify(execFile);
 
-function mayMerge(slug, list = config.dispatch.mergeRepos) {
+function mayMerge(slug: unknown, list: string[] = config.dispatch.mergeRepos): boolean {
   const s = String(slug || '').toLowerCase();
   if (!s.includes('/')) return false;
   const owner = s.split('/')[0];
@@ -38,40 +49,42 @@ function mayMerge(slug, list = config.dispatch.mergeRepos) {
 
 // `gh pr checks --json bucket`: pass, fail, pending, skipping, cancel. No
 // checks at all is a pass: there is nothing to wait for.
-function summarize(rows) {
+function summarize(rows: Array<{ bucket?: string }> | null | undefined): Bucket {
   const buckets = (rows || []).map((r) => r.bucket);
   if (buckets.some((b) => b === 'fail' || b === 'cancel')) return 'fail';
   if (buckets.some((b) => b === 'pending')) return 'pending';
   return 'pass';
 }
 
-const gh = (args, cwd) => exec(config.github.bin, args, { cwd, windowsHide: true, maxBuffer: 4 * 1024 * 1024 });
+const gh = (args: string[], cwd?: string): Promise<{ stdout: string; stderr: string }> =>
+  exec(config.github.bin, args, { cwd, windowsHide: true, maxBuffer: 4 * 1024 * 1024 });
 
-async function slugOf(dir) {
+async function slugOf(dir: string): Promise<string> {
   const { stdout } = await gh(['repo', 'view', '--json', 'nameWithOwner', '--jq', '.nameWithOwner'], dir);
   return stdout.trim();
 }
 
-async function checks(url) {
+async function checks(url: string): Promise<Bucket> {
   try {
     const { stdout } = await gh(['pr', 'checks', url, '--json', 'name,bucket']);
     return summarize(JSON.parse(stdout || '[]'));
   } catch (err) {
     // gh exits non-zero both for "no checks reported" and for failing checks;
     // the JSON on stdout, when there is any, is still the answer.
-    const out = String(err.stdout || '').trim();
+    const e = err as { stdout?: unknown; stderr?: unknown };
+    const out = String(e.stdout || '').trim();
     if (out.startsWith('[')) return summarize(JSON.parse(out));
-    if (/no checks reported/i.test(String(err.stderr || ''))) return 'pass';
+    if (/no checks reported/i.test(String(e.stderr || ''))) return 'pass';
     throw err;
   }
 }
 
-async function ready(url) {
+async function ready(url: string): Promise<void> {
   await gh(['pr', 'ready', url]);
 }
 
 // No --delete-branch: from a checkout it also switches branches there.
-async function merge(url) {
+async function merge(url: string): Promise<void> {
   await gh(['pr', 'merge', url, '--squash']);
 }
 
@@ -86,13 +99,10 @@ const CI_SETTLE_MS = 3 * 60_000;
 
 const BAD = new Set(['failure', 'cancelled', 'timed_out', 'action_required', 'startup_failure', 'stale']);
 
-/**
- * Pure. GitHub's check runs and commit statuses for one commit, as one state.
- * @returns {{state: 'none'|'pending'|'pass'|'fail', names: Array<string>, failed: Array<string>}}
- */
-function summarizeCommit({ checkRuns = [], statuses = [] } = {}) {
-  const names = [];
-  const failed = [];
+/** Pure. GitHub's check runs and commit statuses for one commit, as one state. */
+function summarizeCommit({ checkRuns = [], statuses = [] }: { checkRuns?: Json[] | null; statuses?: Json[] | null } = {}): CommitChecks {
+  const names: string[] = [];
+  const failed: string[] = [];
   let pending = false;
   for (const r of checkRuns || []) {
     names.push(r.name);
@@ -119,14 +129,23 @@ function summarizeCommit({ checkRuns = [], statuses = [] } = {}) {
  *     first poll that shows one green check may be before the others exist);
  *   - with no required checks, the same green set on two polls in a row;
  *   - no checks at all: only when none are required, and noted on the run.
- * @param {object} o
- * @param {{state, names, failed}} o.checks     summarizeCommit, this poll
- * @param {{state, names}} [o.previous]         the poll before
- * @param {{known: boolean, contexts: Array<string>}} o.required
- * @param {number} o.elapsedMs
- * @returns {{action: 'proceed'|'wait'|'block', reason?: string, note?: string}}
+ * `checks` is summarizeCommit's for this poll, `previous` the poll before.
  */
-function ciGate({ checks, previous = null, required, elapsedMs, limitMs = CI_LIMIT_MS, settleMs = CI_SETTLE_MS }) {
+function ciGate({
+  checks,
+  previous = null,
+  required,
+  elapsedMs,
+  limitMs = CI_LIMIT_MS,
+  settleMs = CI_SETTLE_MS,
+}: {
+  checks: CommitChecks;
+  previous?: { state: CommitState; names: string[] } | null;
+  required: Required | null | undefined;
+  elapsedMs: number;
+  limitMs?: number;
+  settleMs?: number;
+}): GateAction {
   const late = elapsedMs >= limitMs;
   const mins = Math.round(limitMs / 60_000);
   if (checks.state === 'fail') return { action: 'block', reason: `CI failed: ${checks.failed.slice(0, 5).join(', ')}` };
@@ -155,11 +174,23 @@ function ciGate({ checks, previous = null, required, elapsedMs, limitMs = CI_LIM
  * the checked commit, and — unless the repo itself requires branches to be up
  * to date (GitHub then refuses a stale merge) — that commit already contains
  * the base as it is NOW (compare: behind_by 0), so the squash GitHub makes is
- * the tree CI tested. Anything unreadable refuses.
- * @param {number|null} o.behindBy  commits on the base the head does not have; null = could not read
- * @returns {string|null} why not, or null to merge
+ * the tree CI tested. Anything unreadable refuses. `behindBy` is the commits
+ * on the base the head does not have (null: could not read). Returns why not,
+ * or null to merge.
  */
-function mergeRefusal({ pr, defaultBranch, sha, behindBy, strict }) {
+function mergeRefusal({
+  pr,
+  defaultBranch,
+  sha,
+  behindBy,
+  strict,
+}: {
+  pr: PrView | null | undefined;
+  defaultBranch: string;
+  sha: string;
+  behindBy: number | null | undefined;
+  strict?: boolean;
+}): string | null {
   if (!pr) return 'could not read the PR';
   if (pr.baseRefName !== defaultBranch) return `the PR targets ${pr.baseRefName}, not ${defaultBranch}`;
   if (pr.isCrossRepository) return 'the PR comes from another repository';
@@ -174,12 +205,13 @@ function mergeRefusal({ pr, defaultBranch, sha, behindBy, strict }) {
   return null;
 }
 
-async function ghJson(args) {
+// GitHub's REST JSON, read key by key.
+async function ghJson(args: string[]): Promise<Json | null> {
   const { stdout } = await gh(['api', ...args]);
   return JSON.parse(stdout || 'null');
 }
 
-async function commitChecks(slug, sha) {
+async function commitChecks(slug: string, sha: string): Promise<CommitChecks> {
   if (!/^[0-9a-f]{7,40}$/i.test(String(sha))) throw new Error(`not a commit: ${sha}`);
   const [runs, status] = await Promise.all([
     ghJson([`repos/${slug}/commits/${sha}/check-runs?per_page=100`]),
@@ -193,8 +225,8 @@ async function commitChecks(slug, sha) {
  * without admin through the branch endpoint) and repository rulesets. Either
  * one unreadable → `known: false`, which never counts as "none required".
  */
-async function requiredChecks(slug, base) {
-  const contexts = new Set();
+async function requiredChecks(slug: string, base: string): Promise<Required & { strict: boolean }> {
+  const contexts = new Set<string>();
   let known = true;
   let strict = false;
   try {
@@ -219,26 +251,26 @@ async function requiredChecks(slug, base) {
   return { known, contexts: [...contexts], strict };
 }
 
-async function prState(url) {
+async function prState(url: string): Promise<PrView | null> {
   const { stdout } = await gh(['pr', 'view', url, '--json', 'baseRefName,headRefOid,isCrossRepository,state']);
   return JSON.parse(stdout || 'null');
 }
 
 /** Commits on `base` that `sha` does not contain (GitHub compare), or null. */
-async function behindBy(slug, base, sha) {
+async function behindBy(slug: string, base: string, sha: string): Promise<number | null> {
   if (!/^[0-9a-f]{7,40}$/i.test(String(sha))) return null;
   const c = await ghJson([`repos/${slug}/compare/${encodeURIComponent(base)}...${sha}`]);
-  return Number.isFinite(Number(c?.behind_by)) ? Number(c.behind_by) : null;
+  return Number.isFinite(Number(c?.behind_by)) ? Number(c?.behind_by) : null;
 }
 
-async function branchSha(slug, branch) {
+async function branchSha(slug: string, branch: string): Promise<string | null> {
   const c = await ghJson([`repos/${slug}/commits/${encodeURIComponent(branch)}`]);
   return c?.sha || null;
 }
 
 // Only the commit the gate passed is merged: a push after the checks ran is
 // refused by GitHub rather than merged unchecked.
-async function mergeAt(url, sha) {
+async function mergeAt(url: string, sha: string): Promise<void> {
   await gh(['pr', 'merge', url, '--squash', '--match-head-commit', sha]);
 }
 

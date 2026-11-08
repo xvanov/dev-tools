@@ -24,7 +24,7 @@
 //
 // A run from before delivery levels (delivery null) keeps the old rule: a
 // draft PR, opened without asking, and in my own repos (PA_MERGE_REPOS,
-// src/dispatch/merge.js) marked ready and merged once its checks pass.
+// src/dispatch/merge.ts) marked ready and merged once its checks pass.
 //
 // Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
 
@@ -35,7 +35,7 @@ type Json = import('../../types.ts').Json;
 const { TimeoutError } = require('absurd-sdk');
 const repo = require('../../repo');
 
-const merger = require('../../dispatch/merge');
+const merger = require('../../dispatch/merge.ts');
 const D = require('../../dispatch/deliveryCore.ts');
 
 const name = 'run_review';
@@ -57,7 +57,7 @@ async function run({ runId }: { runId?: any }, ctx: any) {
   const found = await ctx.step('review', async () => {
     const r = await repo.runs.forReview(runId);
     // Local runs record this machine's hostname: only another machine's run is skipped.
-    const local = require('../../dispatch/termhub').isLocal(r?.machine);
+    const local = require('../../dispatch/termhub.ts').isLocal(r?.machine);
     if (!r || !local || r.status === 'landed' || r.status === 'dropped' || r.mr_url) return null;
     const rev = await require('../../dispatch').review(runId);
     const commits = (rev.commits || '').split('\n').filter(Boolean);

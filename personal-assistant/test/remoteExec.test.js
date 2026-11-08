@@ -1,7 +1,7 @@
 'use strict';
 
 // Commands on any machine (src/dispatch/exec.ts) and remote dispatch to a
-// Linux/macOS machine (src/dispatch/remote.js).
+// Linux/macOS machine (src/dispatch/remote.ts).
 //
 // What earns a test: runCommand's contract (argv verbatim, no shell; exit code,
 // timeout and missing-program outcomes; strict machine names; termhub's
@@ -30,7 +30,7 @@ process.env.PA_MACHINES = 'lab=http://127.0.0.1:1|/srv/repos|linux, winbox=http:
 
 const { parseMachines } = require('../src/config.ts');
 const { runCommand, normalise } = require('../src/dispatch/exec.ts');
-const remote = require('../src/dispatch/remote');
+const remote = require('../src/dispatch/remote.ts');
 const { config } = require('../src/config.ts');
 
 const node = process.execPath;

@@ -24,7 +24,7 @@ const C = require('./goldenPathCore');
 
 function defaultDeps() {
   const { config } = require('../config.ts');
-  const termhub = require('../dispatch/termhub');
+  const termhub = require('../dispatch/termhub.ts');
   const factory = require('../dispatch/factory');
   const repo = require('../repo');
   const paBase = `http://${config.dispatch.host === '0.0.0.0' ? '127.0.0.1' : config.dispatch.host}:${config.dispatch.port}`;

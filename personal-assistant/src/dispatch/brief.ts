@@ -13,11 +13,30 @@
 // where meaning goes missing), and it does not repeat the org's engineering
 // conventions inline — it points at the `innergy-knowledge` skill, because a
 // second copy of those conventions goes stale and then gets trusted.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+type Json = import('../types.ts').Json;
+/** What the assistant's memory adds (see buildBrief). */
+type Memory = { facts?: Array<{ subject: string; text: string; itemId?: number | string | null }>; person?: string | null; project?: string | null };
+/** Store rows: the commitment, item, project and person, read column by column. */
+type BriefInputs = {
+  commitment?: Json | null;
+  item?: Json | null;
+  project?: Json | null;
+  person?: Json | null;
+  modeName: string;
+  run: Json;
+  related?: Json[];
+  memory?: Memory;
+  factory?: { app: string; delivery: string } | null;
+  delivery?: string | null;
+};
 
 const { mode: resolveMode, describe } = require('./modes.ts');
 const { describe: describeDelivery } = require('./deliveryCore.ts');
 
-function fence(text) {
+function fence(text: unknown): string {
   const body = String(text || '').trim();
   if (!body) return '_(empty)_';
   const ticks = body.includes('```') ? '````' : '```';
@@ -37,9 +56,9 @@ function fence(text) {
 // (src/dispatch/deliveryCore.ts): the session works within its mode, and what
 // lies past it — marking the PR ready, merging, pushing to main — the
 // assistant does itself when the session ends.
-function buildBrief({ commitment, item, project, person, modeName, run, related = [], memory = {}, factory = null, delivery = null }) {
+function buildBrief({ commitment, item, project, person, modeName, run, related = [], memory = {}, factory = null, delivery = null }: BriefInputs): string {
   const m = resolveMode(modeName);
-  const lines = [];
+  const lines: string[] = [];
 
   lines.push(`# ${commitment ? commitment.summary : run.task}`);
   lines.push('');
@@ -173,7 +192,7 @@ function buildBrief({ commitment, item, project, person, modeName, run, related 
 }
 
 // What each factory delivery level means, for the job's ask (JOBS-API.md).
-const FACTORY_STOP = {
+const FACTORY_STOP: Record<string, string> = {
   none: 'Commit in the factory\'s own worktree. Push nothing and open no pull request.',
   branch: 'Push the branch. Do not open a pull request.',
   draft_pr: 'Push and open a DRAFT pull request. Never mark it ready and never merge it.',
@@ -184,7 +203,7 @@ const FACTORY_STOP = {
 
 // What the assistant does after a Claude session ends, per delivery level —
 // told to the session so it leaves the work in the shape that step needs.
-const AFTER = {
+const AFTER: Record<string, string> = {
   none: 'Nothing leaves this worktree.',
   branch: 'When you finish, the assistant pushes the branch if you have not.',
   draft_pr: 'When you finish, the assistant opens the draft pull request if you have not.',
@@ -193,9 +212,9 @@ const AFTER = {
   push_to_main: 'You cannot push. When you finish, the assistant pushes your commits straight onto the default branch (fast-forward only) — so commit only finished, tested work, on top of the current default branch.',
 };
 
-function sourceLabel(source) {
+function sourceLabel(source: string): string {
   return (
-    {
+    ({
       graph_mail: 'Email',
       graph_chat: 'Teams chat',
       graph_event: 'Calendar',
@@ -206,13 +225,13 @@ function sourceLabel(source) {
       jira_issue: 'Jira issue',
       audio: 'Recorded conversation',
       claude_session: 'Your Claude session',
-    }[source] || source
+    } as Record<string, string>)[source] || source
   );
 }
 
 // The first thing typed at the session. Short on purpose: the brief is the
 // context, and repeating it into the prompt just burns tokens twice.
-function openingPrompt(run) {
+function openingPrompt(run?: unknown): string {
   return `Read BRIEF.md in this worktree, then do what it asks. It states where you must stop; that boundary is enforced outside this session, so treat it as a fact rather than a preference.`;
 }
 

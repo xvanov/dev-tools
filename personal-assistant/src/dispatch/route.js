@@ -35,7 +35,7 @@ async function slugFor(target) {
   const given = R.normSlug(target.repoPath);
   if (given && !fs.existsSync(target.repoPath)) return given;
   if (target.repoPath && fs.existsSync(path.join(target.repoPath, '.git'))) {
-    return R.normSlug(await require('./merge').slugOf(target.repoPath).catch(() => null));
+    return R.normSlug(await require('./merge.ts').slugOf(target.repoPath).catch(() => null));
   }
   return null;
 }

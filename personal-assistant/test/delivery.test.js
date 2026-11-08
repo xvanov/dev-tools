@@ -133,7 +133,7 @@ stub('db', stubTx({
 const notes = [];
 stub('notify', { async notify(n) { notes.push(n); return { id: notes.length }; } });
 
-const store2 = require('../src/dispatch/delivery');
+const store2 = require('../src/dispatch/delivery.ts');
 const dispatch = require('../src/dispatch');
 
 async function repoDefaults() {
@@ -178,7 +178,7 @@ async function sessionDelivery() {
 // --- the CI gate before a merge or a push to main (pure) ----------------------------------
 
 function ciGateRules() {
-  const M = require('../src/dispatch/merge');
+  const M = require('../src/dispatch/merge.ts');
   const sc = M.summarizeCommit;
   assert.deepStrictEqual(sc({}), { state: 'none', names: [], failed: [] });
   assert.strictEqual(sc({ checkRuns: [{ name: 'test', status: 'in_progress' }] }).state, 'pending');
@@ -235,7 +235,7 @@ function ciGateRules() {
 // --- run_review carries out the recorded delivery -------------------------------------
 
 async function runReview() {
-  const merge = require('../src/dispatch/merge');
+  const merge = require('../src/dispatch/merge.ts');
   const did = [];
   let ci = 'pass';
   let required = { known: true, contexts: [] };

@@ -23,7 +23,7 @@ process.env.PA_FACTORY_MACHINE = '';
 process.env.PA_FACTORY_UV = '/home/tester/.local/bin/uv';
 
 const F = require('../src/dispatch/factoryCore.ts');
-const T = require('../src/dispatch/termhub');
+const T = require('../src/dispatch/termhub.ts');
 const C = require('../src/mcp/chatTools.ts');
 
 // --- PR numbers -----------------------------------------------------------------------
@@ -137,7 +137,7 @@ stub('db', {
 stub('ledger', { async transition() { return { changed: true }; } });
 stub('notify', { async notify() { return { id: 1 }; } });
 const created = [];
-stub('dispatch/termhub', {
+stub('dispatch/termhub.ts', {
   isLocal: () => true,
   sessionLinks: T.sessionLinks,
   forMachine: () => ({
@@ -182,7 +182,7 @@ const factory = require('../src/dispatch/factory');
   assert.deepStrictEqual(created.at(-1).links, { job: 'widget:031' });
 
   // The real client puts the links in the POST body, and leaves them out when there are none.
-  delete require.cache[require.resolve('../src/dispatch/termhub')];
+  delete require.cache[require.resolve('../src/dispatch/termhub.ts')];
   const bodies = [];
   const server = http.createServer((req, res) => {
     let raw = '';
@@ -190,7 +190,7 @@ const factory = require('../src/dispatch/factory');
     req.on('end', () => { bodies.push(JSON.parse(raw || '{}')); res.writeHead(200, { 'Content-Type': 'application/json' }); res.end('{"id":"s1"}'); });
   });
   await new Promise((ok) => server.listen(0, '127.0.0.1', ok));
-  const real = require('../src/dispatch/termhub').client(`http://127.0.0.1:${server.address().port}`);
+  const real = require('../src/dispatch/termhub.ts').client(`http://127.0.0.1:${server.address().port}`);
   await real.createSession({ cwd: '/tmp', command: '', title: 't', links: { card: 412, run: 45, job: 'widget:031' } });
   await real.createSession({ cwd: '/tmp', command: '', title: 't' });
   server.close();

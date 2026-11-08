@@ -54,7 +54,7 @@ const repository = require('../repo');
 const { mode: resolveMode } = require('./modes.ts');
 const F = require('./factoryCore.ts');
 const D = require('./deliveryCore.ts');
-const termhub = require('./termhub');
+const termhub = require('./termhub.ts');
 const ledger = require('../ledger');
 const { logger } = require('../log.ts');
 
@@ -213,7 +213,7 @@ function modelEntries(m) {
  * though the PA sends `--delivery` on every job regardless.
  */
 async function addApp({ repo, deliveryDefault = null, path: clonePath = null }) {
-  const level = deliveryDefault || (await require('./delivery').defaultFor(repo).catch(() => null)) || require('./delivery').fallback();
+  const level = deliveryDefault || (await require('./delivery.ts').defaultFor(repo).catch(() => null)) || require('./delivery.ts').fallback();
   const r = await call(F.appAddArgv({ repo, deliveryDefault: D.delivery(level), path: clonePath }));
   appsCache = null;
   if (!r.app) throw new F.FactoryError('bad_output', 'app add answered without an app');
@@ -392,7 +392,7 @@ async function start({
     ? { delivery: 'none', source: 'kind', phrase: null }
     : delivery
       ? { delivery: D.delivery(delivery), source: deliverySource || 'explicit', phrase: deliveryPhrase || null }
-      : await require('./delivery').resolve({ mode: modeName ? resolveMode(modeName).name : null, operatorText: task, slug });
+      : await require('./delivery.ts').resolve({ mode: modeName ? resolveMode(modeName).name : null, operatorText: task, slug });
   const runMode = kind !== 'code' ? 'plan' : modeName ? resolveMode(modeName).name : D.modeFor(chosen.delivery);
   D.requireConfirmed(chosen.delivery, confirmedUnattended);
 

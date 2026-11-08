@@ -199,7 +199,7 @@ const notifyChat = require('../src/notify/chat.ts');
   assert.throws(() => dispatchCommand({ c, agent: 'cursor' }), /claude or opencode/);
   assert.throws(() => dispatchCommand({ c: { termhub: { ...c.termhub, claudeCommand: 'claude --model x' } }, model: 'claude-opus-5' }), /keep one/);
   // The real opening prompt fits a command line.
-  const { openingPrompt } = require('../src/dispatch/brief');
+  const { openingPrompt } = require('../src/dispatch/brief.ts');
   assert.ok(dispatchCommand({ c, agent: 'opencode', prompt: openingPrompt({}) }).command.includes('BRIEF.md'));
 
   // ------------------------------------------------ nudge fail-safe ----

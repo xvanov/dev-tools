@@ -171,7 +171,7 @@ const transcript = [
   assert.deepStrictEqual(fetched, ['C--source-orchard/sess-0001.jsonl']);
 
   // run(): an unreachable machine is recorded on its own cursor, not thrown.
-  const termhubModule = require('../src/dispatch/termhub');
+  const termhubModule = require('../src/dispatch/termhub.ts');
   const realClient = termhubModule.client;
   const { config } = require('../src/config.ts');
   const realMachines = config.termhub.machines;

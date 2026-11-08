@@ -43,7 +43,7 @@ const ESC = '\x1b';
 
 const squash = (text: string) => String(text || '').replace(/\s+/g, '');
 const QUESTION = 'Doyouwanttoproceed?';
-// Claude Code's input box (src/dispatch/termhub.js READY): seen after the
+// Claude Code's input box (src/dispatch/termhub.ts READY): seen after the
 // question, the prompt was already answered.
 const READY = /\?forshortcuts|shift\+tabtocycle|bypasspermissions/gi;
 

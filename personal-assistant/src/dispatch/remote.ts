@@ -33,6 +33,25 @@
 //
 // What does not cross the wire: `pa review/diff/land` run git on this
 // machine's disk, so for a remote run they say so and point at the session.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+type Json = import('../types.ts').Json;
+type ErrorWithCode = import('../types.ts').ErrorWithCode;
+/** 'windows' | 'linux' | 'macos' (config.ts MACHINE_OS). */
+type Os = string;
+type Family = 'windows' | 'posix';
+/** A PA_MACHINES entry (config.ts). */
+type Machine = { name: string; url: string; reposRoot: string; os?: Os | null };
+/** exec.ts's runCommand result, the fields used here. */
+type RunResult = { code: number; stdout: string; stderr: string; error?: string };
+type RunOptions = { timeoutMs?: number; stdin?: string; env?: Record<string, string> };
+type Run = (argv: string[], opts?: RunOptions) => Promise<RunResult>;
+/** A termhub client (termhub.ts client(), or a test's stand-in). */
+type Hub = Json;
+type Mode = { name: string; mayPush: boolean };
+type NoPush = { env: Record<string, string>; unsetEnv: string[] };
+type SetupSpec = { repo: string; worktree: string; branch: string; mayPush: boolean; brief: string; blockedPushUrl: string };
 
 const { config, MACHINE_OS } = require('../config.ts');
 const { runCommand } = require('./exec.ts');
@@ -44,22 +63,22 @@ const GIT_ENV = { GIT_TERMINAL_PROMPT: '0', GCM_INTERACTIVE: 'never' };
 // PowerShell single-quoted literal. PowerShell also reads the curly quotes
 // ‘ ’ ‚ ‛ as single quotes, so each is doubled too, or one in a path or a
 // title ends the string early.
-function psq(text) {
+function psq(text: unknown): string {
   return `'${String(text).replace(/['\u2018\u2019\u201A\u201B]/g, (q) => q + q)}'`;
 }
 
 // POSIX sh single-quoted literal: close, escaped quote, reopen.
-function shq(text) {
+function shq(text: unknown): string {
   return `'${String(text).replace(/'/g, `'\\''`)}'`;
 }
 
 // ---- which OS, and its paths ----------------------------------------------
 
-const isWindowsPath = (p) => /^[A-Za-z]:([\\/]|$)|^\\\\/.test(String(p));
-const isPosixPath = (p) => String(p).startsWith('/');
+const isWindowsPath = (p: unknown): boolean => /^[A-Za-z]:([\\/]|$)|^\\\\/.test(String(p));
+const isPosixPath = (p: unknown): boolean => String(p).startsWith('/');
 
 /** 'windows' | 'posix' — how paths are written there. */
-function family(os) {
+function family(os: Os | null | undefined): Family {
   return os === 'windows' ? 'windows' : 'posix';
 }
 
@@ -67,7 +86,7 @@ function family(os) {
  * Pure: the OS a machine is known to run without asking it — PA_MACHINES' own
  * field, else read off the repos root (`C:\…` vs `/…`). null when neither says.
  */
-function declaredOs(machine) {
+function declaredOs(machine: Pick<Machine, 'os' | 'reposRoot'>): Os | null {
   if (machine.os) return machine.os;
   if (isWindowsPath(machine.reposRoot)) return 'windows';
   if (isPosixPath(machine.reposRoot)) return 'linux';
@@ -75,7 +94,7 @@ function declaredOs(machine) {
 }
 
 /** termhub's `process.platform` → our name for it. */
-function platformOs(platform) {
+function platformOs(platform: unknown): Os | null {
   return MACHINE_OS[String(platform || '').toLowerCase()] || null;
 }
 
@@ -85,8 +104,8 @@ function platformOs(platform) {
  * itself (a Windows box with a `/home/...` repos root cannot work). `hub` is
  * that machine's termhub client.
  */
-async function resolveOs(machine, hub) {
-  let reported = null;
+async function resolveOs(machine: Machine, hub: Hub): Promise<Os> {
+  let reported: Os | null = null;
   try {
     reported = platformOs((await hub.api('/api/info', { timeoutMs: 5000 }))?.platform);
   } catch {
@@ -104,33 +123,33 @@ async function resolveOs(machine, hub) {
   return os;
 }
 
-function joinFor(fam, root, ...parts) {
+function joinFor(fam: Family, root: string, ...parts: string[]): string {
   const sep = fam === 'windows' ? '\\' : '/';
   const base = String(root).replace(/[\\/]+$/, '');
   return [fam === 'posix' && base === '' ? '' : base, ...parts].join(sep) || sep;
 }
 
-function joinWin(root, ...parts) {
+function joinWin(root: string, ...parts: string[]): string {
   return joinFor('windows', root, ...parts);
 }
 
-function machineFamily(machine) {
+function machineFamily(machine: Pick<Machine, 'os' | 'reposRoot'>): Family {
   return family(declaredOs(machine) || 'windows');
 }
 
 /** Where a repo lives on that machine: same folder name, under its repos root. */
-function remoteRepoPath(machine, localRepoPath) {
-  const name = String(localRepoPath).replace(/[\\/]+$/, '').split(/[\\/]/).pop();
+function remoteRepoPath(machine: Pick<Machine, 'os' | 'reposRoot'>, localRepoPath: string): string {
+  const name = String(localRepoPath).replace(/[\\/]+$/, '').split(/[\\/]/).pop() as string;
   return joinFor(machineFamily(machine), machine.reposRoot, name);
 }
 
-function remoteWorktreePath(machine, runId) {
+function remoteWorktreePath(machine: Pick<Machine, 'os' | 'reposRoot'>, runId: number | string): string {
   return joinFor(machineFamily(machine), machine.reposRoot, '.pa-worktrees', `run-${runId}`);
 }
 
 // Directory listings from termhub are compared the way that OS compares names.
-function samePath(fam, a, b) {
-  const norm = (p) => String(p).replace(/[\\/]+$/, '');
+function samePath(fam: Family, a: string, b: string): boolean {
+  const norm = (p: string): string => String(p).replace(/[\\/]+$/, '');
   return fam === 'windows' ? norm(a).toLowerCase() === norm(b).toLowerCase() : norm(a) === norm(b);
 }
 
@@ -142,7 +161,7 @@ function samePath(fam, a, b) {
  * default), POSIX sh otherwise. Only used against a termhub too old for
  * /api/exec, and only for modes that may push (see the header).
  */
-function setupLines({ repo, worktree, branch, mayPush, brief, blockedPushUrl, os = 'windows' }) {
+function setupLines({ repo, worktree, branch, mayPush, brief, blockedPushUrl, os = 'windows' }: SetupSpec & { os?: Os }): string[] {
   if (family(os) === 'posix') return posixSetupLines({ repo, worktree, branch, mayPush, brief, blockedPushUrl });
   const lines = [
     `git -C ${psq(repo)} fetch origin --prune`,
@@ -165,7 +184,7 @@ function setupLines({ repo, worktree, branch, mayPush, brief, blockedPushUrl, os
   return lines;
 }
 
-function posixSetupLines({ repo, worktree, branch, mayPush, brief, blockedPushUrl }) {
+function posixSetupLines({ repo, worktree, branch, mayPush, brief, blockedPushUrl }: SetupSpec): string[] {
   const lines = [
     `git -C ${shq(repo)} fetch origin --prune`,
     `paBase=$(git -C ${shq(repo)} symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null || echo origin/main)`,
@@ -191,7 +210,7 @@ function posixSetupLines({ repo, worktree, branch, mayPush, brief, blockedPushUr
 
 // ---- the exec path ----------------------------------------------------------
 
-function failure(machine, what, r) {
+function failure(machine: Pick<Machine, 'name'>, what: string, r: RunResult): Error {
   const why = (r.error || r.stderr || r.stdout || `exit ${r.code}`).trim().split(/\r?\n/).slice(-4).join(' | ');
   return new Error(`${what} failed on ${machine.name}: ${why.slice(0, 400)}`);
 }
@@ -202,8 +221,8 @@ function failure(machine, what, r) {
  * report the dead URL and the main checkout's must not. Throws otherwise.
  * `run(argv)` runs on the machine. Exported for tests.
  */
-async function blockPush({ machine, repo, worktree, blockedPushUrl, run }) {
-  const must = async (argv, what) => {
+async function blockPush({ machine, repo, worktree, blockedPushUrl, run }: { machine: Pick<Machine, 'name'>; repo: string; worktree: string; blockedPushUrl: string; run: Run }): Promise<void> {
+  const must = async (argv: string[], what: string): Promise<string> => {
     const r = await run(argv);
     if (r.code !== 0) throw failure(machine, what, r);
     return r.stdout;
@@ -236,17 +255,19 @@ async function blockPush({ machine, repo, worktree, blockedPushUrl, run }) {
  * for every remote; leaves any other pushurl alone. Idempotent; returns the
  * remotes it cleared. `run(argv)` runs on the machine. Exported for tests.
  */
-async function clearLegacyBlock({ machine, repo, blockedPushUrl, run }) {
+async function clearLegacyBlock({ machine, repo, blockedPushUrl, run }: { machine: Pick<Machine, 'name'>; repo: string; blockedPushUrl: string; run: Run }): Promise<string[]> {
   const r = await run(['git', '-C', repo, 'config', '--local', '--get-regexp', '^remote\\..*\\.pushurl$']);
   if (r.code !== 0) return []; // exit 1: no pushurl at all
   const exact = `^${String(blockedPushUrl).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`;
-  const cleared = [];
+  const cleared: string[] = [];
   for (const line of String(r.stdout).split(/\r?\n/)) {
     const m = /^(remote\..+\.pushurl)\s+(.*)$/i.exec(line.trim());
-    if (!m || m[2].trim() !== blockedPushUrl) continue;
-    const u = await run(['git', '-C', repo, 'config', '--local', '--unset-all', m[1], exact]);
-    if (u.code !== 0) throw failure(machine, `removing the old shared push block on ${m[1]}`, u);
-    cleared.push(m[1].slice('remote.'.length, -'.pushurl'.length));
+    if (!m) continue;
+    const [, key = '', url = ''] = m;
+    if (url.trim() !== blockedPushUrl) continue;
+    const u = await run(['git', '-C', repo, 'config', '--local', '--unset-all', key, exact]);
+    if (u.code !== 0) throw failure(machine, `removing the old shared push block on ${key}`, u);
+    cleared.push(key.slice('remote.'.length, -'.pushurl'.length));
   }
   return cleared;
 }
@@ -281,7 +302,7 @@ const NO_PUSH_UNSET = [
  * under the worktrees root that does not exist, which gh reads as "not
  * logged in".
  */
-function noGhBase() {
+function noGhBase(): string {
   const fs = require('fs');
   const path = require('path');
   const base = path.join(config.dataDir, 'no-gh');
@@ -290,16 +311,16 @@ function noGhBase() {
   return base;
 }
 
-function noGhDir(runId = null) {
+function noGhDir(runId: number | string | null = null): string {
   const fs = require('fs');
   const path = require('path');
-  const dir = fs.mkdtempSync(path.join(noGhBase(), runId != null ? `run-${Number(runId)}-` : 'tmp-'));
+  const dir: string = fs.mkdtempSync(path.join(noGhBase(), runId != null ? `run-${Number(runId)}-` : 'tmp-'));
   fs.chmodSync(dir, 0o700);
   return dir;
 }
 
 /** The run's private gh config dirs, gone. Best effort; returns how many. */
-function removeNoGhDirs(runId) {
+function removeNoGhDirs(runId: number | string): number {
   const fs = require('fs');
   const path = require('path');
   let n = 0;
@@ -318,7 +339,7 @@ function removeNoGhDirs(runId) {
 }
 
 /** Pure. { env, unsetEnv } for a no-push run's termhub session. */
-function noPushEnv({ ghConfigDir = null, runId = null } = {}) {
+function noPushEnv({ ghConfigDir = null, runId = null }: { ghConfigDir?: string | null; runId?: number | string | null } = {}): NoPush {
   return {
     env: {
       GIT_TERMINAL_PROMPT: '0',
@@ -346,9 +367,9 @@ function noPushEnv({ ghConfigDir = null, runId = null } = {}) {
  * an ssh-agent would otherwise undo the session env). POSIX shells only;
  * Windows relies on termhub skipping the profile (`noRc`).
  */
-function noPushCommand(command, { env, unsetEnv }, fam = 'posix') {
+function noPushCommand(command: string, { env, unsetEnv }: NoPush, fam: Family = 'posix'): string {
   if (!command || fam === 'windows') return command;
-  const q = (v) => `'${String(v).replace(/'/g, `'\\''`)}'`;
+  const q = (v: unknown): string => `'${String(v).replace(/'/g, `'\\''`)}'`;
   return ['env', ...unsetEnv.flatMap((k) => ['-u', k]), ...Object.entries(env).map(([k, v]) => `${k}=${q(v)}`), command].join(' ');
 }
 
@@ -360,11 +381,16 @@ function noPushCommand(command, { env, unsetEnv }, fam = 'posix') {
  * credential) or, on Windows, did not skip the profile. Enforced, not
  * requested.
  */
-async function createNoPushSession(hub, spec, machineName, { ghConfigDir = null, fam = 'posix', runId = null } = {}) {
+async function createNoPushSession(
+  hub: Hub,
+  spec: Json,
+  machineName: string | null | undefined,
+  { ghConfigDir = null, fam = 'posix', runId = null }: { ghConfigDir?: string | null; fam?: Family; runId?: number | string | null } = {}
+): Promise<Json> {
   const ne = noPushEnv({ ghConfigDir, runId });
   const env = { ...(spec.env || {}), ...ne.env };
   const session = await hub.createSession({ ...spec, command: noPushCommand(spec.command, { ...ne, env }, fam), env, unsetEnv: ne.unsetEnv, noRc: true });
-  const refuse = async (why) => {
+  const refuse = async (why: string): Promise<never> => {
     await hub.killSession(session.id).catch(() => {});
     throw new Error(`termhub${machineName ? ` on ${machineName}` : ''} ${why} — update termhub there, or dispatch as \`branch\`/\`mr\``);
   };
@@ -373,7 +399,7 @@ async function createNoPushSession(hub, spec, machineName, { ghConfigDir = null,
   return Object.assign(session, { noPush: ne });
 }
 
-function writeBriefArgv(fam, briefPath) {
+function writeBriefArgv(fam: Family, briefPath: string): string[] {
   if (fam === 'windows') {
     // Base64 over stdin: the console's code page cannot mangle ASCII.
     return ['powershell', '-NoProfile', '-NonInteractive', '-Command',
@@ -382,7 +408,7 @@ function writeBriefArgv(fam, briefPath) {
   return ['sh', '-c', 'cat > "$1"', 'sh', briefPath];
 }
 
-function sizeArgv(fam, file) {
+function sizeArgv(fam: Family, file: string): string[] {
   if (fam === 'windows') {
     return ['powershell', '-NoProfile', '-NonInteractive', '-Command', `(Get-Item -LiteralPath ${psq(file)}).Length`];
   }
@@ -394,10 +420,20 @@ function sizeArgv(fam, file) {
  * /api/exec. Every step's exit code is checked; throws on the first that fails.
  * `run` defaults to runCommand on that machine (tests pass their own).
  */
-async function setupViaExec({ machine, os, repo, worktree, branch, mayPush, brief, blockedPushUrl, run }) {
+async function setupViaExec({
+  machine,
+  os,
+  repo,
+  worktree,
+  branch,
+  mayPush,
+  brief,
+  blockedPushUrl,
+  run,
+}: SetupSpec & { machine: Pick<Machine, 'name'>; os: Os; run?: Run | null | undefined }): Promise<{ briefPath: string }> {
   const fam = family(os);
-  const exec = run || ((argv, opts = {}) => runCommand(machine.name, argv, { timeoutMs: 120_000, env: GIT_ENV, ...opts }));
-  const must = async (argv, what, opts) => {
+  const exec: Run = run || ((argv, opts = {}) => runCommand(machine.name, argv, { timeoutMs: 120_000, env: GIT_ENV, ...opts }));
+  const must = async (argv: string[], what: string, opts?: RunOptions): Promise<string> => {
     const r = await exec(argv, opts);
     if (r.code !== 0) throw failure(machine, what, r);
     return r.stdout;
@@ -429,8 +465,8 @@ async function setupViaExec({ machine, os, repo, worktree, branch, mayPush, brie
 
 // ---- the machine ------------------------------------------------------------
 
-function machineNamed(name) {
-  const machine = config.termhub.machines[name];
+function machineNamed(name: string): Machine {
+  const machine: Machine | undefined = config.termhub.machines[name];
   if (!machine) {
     const known = Object.keys(config.termhub.machines);
     throw new Error(
@@ -440,9 +476,9 @@ function machineNamed(name) {
   return machine;
 }
 
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
-async function waitFor(check, { timeoutMs, everyMs = 2000 }) {
+async function waitFor(check: () => Promise<boolean>, { timeoutMs, everyMs = 2000 }: { timeoutMs: number; everyMs?: number }): Promise<boolean> {
   const until = Date.now() + timeoutMs;
   for (;;) {
     if (await check().catch(() => false)) return true;
@@ -451,8 +487,8 @@ async function waitFor(check, { timeoutMs, everyMs = 2000 }) {
   }
 }
 
-async function listed(hub, fam, parent, target) {
-  return (await hub.dirs(joinFor(fam, parent, ''))).some((d) => samePath(fam, d, target));
+async function listed(hub: Hub, fam: Family, parent: string, target: string): Promise<boolean> {
+  return ((await hub.dirs(joinFor(fam, parent, ''))) as string[]).some((d) => samePath(fam, d, target));
 }
 
 /**
@@ -461,7 +497,29 @@ async function listed(hub, fam, parent, target) {
  * session id attached (err.sessionId) when setup failed after a session was
  * opened, so the caller can record it.
  */
-async function startOnMachine({ machine, hub, run, repo, branch, mode, brief, title, blockedPushUrl, exec }) {
+async function startOnMachine({
+  machine,
+  hub,
+  run,
+  repo,
+  branch,
+  mode,
+  brief,
+  title,
+  blockedPushUrl,
+  exec,
+}: {
+  machine: Machine;
+  hub: Hub;
+  run: Json;
+  repo: string;
+  branch: string;
+  mode: Mode;
+  brief: string;
+  title: string;
+  blockedPushUrl: string;
+  exec?: Run | null;
+}): Promise<{ sessionId: string; worktreePath: string; briefPath: string; url: string; os: Os; via: 'exec' | 'typed' }> {
   const os = await resolveOs(machine, hub);
   const fam = family(os);
   const name = repo.split(/[\\/]/).pop();
@@ -473,12 +531,12 @@ async function startOnMachine({ machine, hub, run, repo, branch, mode, brief, ti
   const parent = joinFor(fam, machine.reposRoot, '.pa-worktrees');
   const spec = { machine, os, repo, worktree, branch, mayPush: mode.mayPush, brief, blockedPushUrl };
 
-  let via = 'exec';
-  let session;
+  let via: 'exec' | 'typed' = 'exec';
+  let session: Json | undefined;
   try {
     await setupViaExec({ ...spec, run: exec });
   } catch (err) {
-    if (err.code !== 'EXEC_UNSUPPORTED') throw err;
+    if ((err as ErrorWithCode).code !== 'EXEC_UNSUPPORTED') throw err;
     if (!mode.mayPush) {
       throw new Error(
         `termhub on ${machine.name} is too old to run commands (no /api/exec), so a \`${mode.name}\` run's push block ` +
@@ -486,27 +544,30 @@ async function startOnMachine({ machine, hub, run, repo, branch, mode, brief, ti
       );
     }
     via = 'typed';
-    session = await hub.createSession({ cwd: machine.reposRoot, command: '', title });
+    const shell: Json = await hub.createSession({ cwd: machine.reposRoot, command: '', title });
+    session = shell;
     await sleep(2500); // the shell draws its first prompt before it reads input
-    for (const line of setupLines({ ...spec, os })) await hub.say(session.id, line);
+    for (const line of setupLines({ ...spec, os })) await hub.say(shell.id, line);
   }
 
-  const fail = (message) => Object.assign(new Error(message), { sessionId: session?.id || null });
+  const fail = (message: string): Error => Object.assign(new Error(message), { sessionId: session?.id || null });
   const made = await waitFor(() => listed(hub, fam, parent, worktree), { timeoutMs: via === 'typed' ? 120_000 : 15_000 });
   if (!made) throw fail(`the worktree never appeared on ${machine.name}${session ? ' — open the session to see why' : ''}`);
 
   if (!session) {
+    let opened: Json;
     try {
-      session = mode.mayPush
+      opened = mode.mayPush
         ? await hub.createSession({ cwd: worktree, command: '', title, env: { PA_DISPATCHED_RUN: String(run.id) }, links: { card: run.commitment_id, run: run.id } })
         : await createNoPushSession(hub, { cwd: worktree, command: '', title, env: { PA_DISPATCHED_RUN: String(run.id) }, links: { card: run.commitment_id, run: run.id } }, machine.name, { ghConfigDir: `${worktree}.no-gh`, fam });
     } catch (err) {
       // Nothing runs in it: take the worktree back down, as a failed setup does.
-      const undo = exec || ((argv) => runCommand(machine.name, argv, { timeoutMs: 120_000, env: GIT_ENV }));
+      const undo: Run = exec || ((argv) => runCommand(machine.name, argv, { timeoutMs: 120_000, env: GIT_ENV }));
       await undo(['git', '-C', repo, 'worktree', 'remove', '--force', worktree]).catch(() => {});
       await undo(['git', '-C', repo, 'branch', '-D', branch]).catch(() => {});
       throw err;
     }
+    session = opened;
     await sleep(2500);
   }
   // The caller waits for Claude's prompt and types the brief (briefClaude).
@@ -527,16 +588,30 @@ async function startOnMachine({ machine, hub, run, repo, branch, mode, brief, ti
  * `pa drop --force` for a remote run: removes its worktree and branch on that
  * machine, then checks through termhub's API that the worktree is gone.
  */
-async function removeOnMachine({ machine, hub, repo, worktree, branch, exec }) {
+async function removeOnMachine({
+  machine,
+  hub,
+  repo,
+  worktree,
+  branch,
+  exec,
+}: {
+  machine: Machine;
+  hub: Hub;
+  repo: string;
+  worktree: string;
+  branch?: string | null;
+  exec?: Run | null;
+}): Promise<boolean> {
   const os = await resolveOs(machine, hub);
   const fam = family(os);
   const parent = joinFor(fam, machine.reposRoot, '.pa-worktrees');
-  const run = exec || ((argv) => runCommand(machine.name, argv, { timeoutMs: 120_000, env: GIT_ENV }));
+  const run: Run = exec || ((argv) => runCommand(machine.name, argv, { timeoutMs: 120_000, env: GIT_ENV }));
   try {
     await run(['git', '-C', repo, 'worktree', 'remove', '--force', worktree]);
     if (branch) await run(['git', '-C', repo, 'branch', '-D', branch]);
   } catch (err) {
-    if (err.code !== 'EXEC_UNSUPPORTED') throw err;
+    if ((err as ErrorWithCode).code !== 'EXEC_UNSUPPORTED') throw err;
     const session = await hub.createSession({ cwd: machine.reposRoot, command: '', title: `pa cleanup ${worktree.split(/[\\/]/).pop()}` });
     try {
       const q = fam === 'windows' ? psq : shq;
@@ -557,24 +632,28 @@ async function removeOnMachine({ machine, hub, repo, worktree, branch, exec }) {
  * last is what a `local`/`plan` run there needs. Never throws.
  * Returns {ok, os, exec, detail}.
  */
-async function probeMachine(machine, { hub, exec } = {}) {
+async function probeMachine(
+  machine: Machine,
+  { hub, exec }: { hub: Hub; exec?: Run | null }
+): Promise<{ ok: boolean; os: Os | null; exec: boolean; detail: string }> {
   const r = await hub.reachable();
   if (!r.ok) return { ok: false, os: null, exec: false, detail: `${machine.url} — ${r.error}` };
-  let os;
+  let os: Os;
   try {
     os = await resolveOs(machine, hub);
   } catch (err) {
-    return { ok: false, os: null, exec: false, detail: `${machine.url} — ${err.message}` };
+    return { ok: false, os: null, exec: false, detail: `${machine.url} — ${(err as Error).message}` };
   }
-  const run = exec || ((argv) => runCommand(machine.name, argv, { timeoutMs: 15_000 }));
+  const run: Run = exec || ((argv) => runCommand(machine.name, argv, { timeoutMs: 15_000 }));
   let execOk = false;
-  let execNote;
+  let execNote: string;
   try {
     const v = await run(['git', '--version']);
     execOk = v.code === 0;
     execNote = execOk ? v.stdout.trim().replace(/^git version /, 'git ') : 'commands run, but git is not on its PATH';
   } catch (err) {
-    execNote = err.code === 'EXEC_UNSUPPORTED' ? 'termhub too old to run commands (no /api/exec) — update it there; only branch/mr runs can go there' : err.message;
+    const e = err as ErrorWithCode;
+    execNote = e.code === 'EXEC_UNSUPPORTED' ? 'termhub too old to run commands (no /api/exec) — update it there; only branch/mr runs can go there' : e.message;
   }
   return { ok: execOk, os, exec: execOk, detail: `${machine.url} · ${os} · repos ${machine.reposRoot} · ${execNote}` };
 }

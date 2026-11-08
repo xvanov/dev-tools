@@ -73,7 +73,7 @@ stub('recall', { async recall() { return null; }, async recallClaims() { return 
 stub('memory', { async getPage() { return null; } });
 
 const hub = { created: [], killed: [], envApplied: true };
-stub('dispatch/termhub', {
+stub('dispatch/termhub.ts', {
   isLocal: () => true,
   forMachine: () => { throw new Error('no remote here'); },
   async createSession(spec) {
@@ -93,7 +93,7 @@ function expectNoPush(spec, runId, msg) {
   assert.match(path.basename(spec.env.GH_CONFIG_DIR), new RegExp(`^run-${runId}-`), 'a private dir for this run');
 }
 
-const { noPushEnv } = require('../src/dispatch/remote');
+const { noPushEnv } = require('../src/dispatch/remote.ts');
 const BLOCKED = dispatch.BLOCKED_PUSH_URL;
 
 const git = (cwd, ...args) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } });
@@ -141,7 +141,7 @@ const sharedPushurls = (repo) => {
     assert.strictEqual(git(repo, 'remote', 'get-url', '--push', 'origin').trim(), origin, 'the main checkout pushes again');
     assert.strictEqual(git(r.worktreePath, 'remote', 'get-url', '--push', 'origin').trim(), BLOCKED, 'the run itself is blocked');
     // Idempotent: nothing left to clear.
-    const remote = require('../src/dispatch/remote');
+    const remote = require('../src/dispatch/remote.ts');
     const run = (argv) => require('../src/dispatch/exec.ts').runCommand(null, argv, { timeoutMs: 30_000 });
     assert.deepStrictEqual(await remote.clearLegacyBlock({ machine: { name: 'here' }, repo, blockedPushUrl: BLOCKED, run }), []);
     // Only the dead value goes: a user's own pushurl beside it, on the same
@@ -216,7 +216,7 @@ const sharedPushurls = (repo) => {
   // ...and so does a failure in the push block itself (any error after the row).
   if (owns()) {
     const { repo } = makeRepo('badblock');
-    const remote = require('../src/dispatch/remote');
+    const remote = require('../src/dispatch/remote.ts');
     const real = remote.blockPush;
     remote.blockPush = async () => { throw new Error('the push block did not take'); };
     store.queries.length = 0;
@@ -285,7 +285,7 @@ const sharedPushurls = (repo) => {
     // The command re-applies the env after the shell's rc files (an rc that exports GH_TOKEN).
     const rc = path.join(tmp, 'evil-rc');
     fs.writeFileSync(rc, 'export GH_TOKEN=ghp_FROMRCFROMRCFROMRCFROMRCFROMRCFROMRC12\n');
-    const cmd = require('../src/dispatch/remote').noPushCommand('sh -c \'echo "token=${GH_TOKEN:-none} cfg=$GH_CONFIG_DIR"\'', ne);
+    const cmd = require('../src/dispatch/remote.ts').noPushCommand('sh -c \'echo "token=${GH_TOKEN:-none} cfg=$GH_CONFIG_DIR"\'', ne);
     const outp = execFileSync('sh', ['-c', `. '${rc}'; ${cmd}`], { encoding: 'utf8' }).trim();
     assert.strictEqual(outp, `token=pa-no-push-sentinel cfg=${ne.env.GH_CONFIG_DIR}`, "the rc GH_TOKEN is overridden");
     // A local no-push start asks termhub to skip rc files and wraps the command.

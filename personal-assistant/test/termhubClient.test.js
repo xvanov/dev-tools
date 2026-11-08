@@ -1,6 +1,6 @@
 'use strict';
 
-// The termhub session client (src/dispatch/termhub.js) against termhub's
+// The termhub session client (src/dispatch/termhub.ts) against termhub's
 // CSRF guard (termhub/lib/requestGuard.js).
 //
 // What earns a test: termhub refuses a state-changing request without
@@ -18,7 +18,7 @@ const path = require('path');
 const http = require('http');
 const { WebSocketServer } = require('ws');
 
-const { client } = require('../src/dispatch/termhub');
+const { client } = require('../src/dispatch/termhub.ts');
 
 const termhubDir = path.join(__dirname, '..', '..', 'termhub');
 const haveTermhub = fs.existsSync(path.join(termhubDir, 'lib', 'requestGuard.ts'))
@@ -126,7 +126,7 @@ async function exercise(base, seen, label) {
 // pa doctor: a termhub reached by its tailnet name, and the fix when it refuses it.
 {
   const assert = require('assert');
-  const { tailnetCheck } = require('../src/dispatch/termhub');
+  const { tailnetCheck } = require('../src/dispatch/termhub.ts');
   assert.strictEqual(tailnetCheck('http://127.0.0.1:7000', { ok: false, error: 'x' }), null, 'not a tailnet name: no line');
   assert.deepStrictEqual(tailnetCheck('https://box.tail1.ts.net', { ok: true }).ok, true);
   const refused = tailnetCheck('https://box.tail1.ts.net/', { ok: false, error: 'termhub 403 on /api/health: host not allowed' });

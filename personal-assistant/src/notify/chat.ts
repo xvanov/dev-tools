@@ -227,7 +227,7 @@ async function deliver(row: Row) {
     return out;
   }
   try {
-    const termhub = require('../dispatch/termhub');
+    const termhub = require('../dispatch/termhub.ts');
     const home = path.dirname(inboxPath());
     const payload = await termhub.api('/api/sessions', { timeoutMs: 3000 });
     const sessions = payload?.sessions || payload || [];

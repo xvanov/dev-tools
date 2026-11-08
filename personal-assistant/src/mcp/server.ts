@@ -49,7 +49,7 @@ const { close } = require('../db');
 const repository = require('../repo');
 const { search } = require('../search');
 const { brief } = require('../brief');
-const { sourceLabel } = require('../dispatch/brief');
+const { sourceLabel } = require('../dispatch/brief.ts');
 
 const TOOLS = [
   {

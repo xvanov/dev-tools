@@ -2161,7 +2161,7 @@ user actually meant to paste.
 
   Callers that send it: the web UI (`web/app.js` `api()`/`withGuard()`/`uploadWithProgress()`,
   `web/dashboard.js` `GUARD_HEADERS`), the personal assistant's termhub client
-  (`personal-assistant/src/dispatch/termhub.js`) and its `/api/exec` caller, and the mobile test
+  (`personal-assistant/src/dispatch/termhub.ts`) and its `/api/exec` caller, and the mobile test
   harness. Peers (`lib/peers.js`) and the scripts only make GETs, by IP or by the target's own `*.ts.net`
   name (which that target has learned as its own), and need nothing. **A personal assistant older than this rule** cannot start or type into sessions on an
   updated termhub (403) — update both. Likewise a browser tab still running the old `app.js`

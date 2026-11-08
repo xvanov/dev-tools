@@ -59,8 +59,8 @@ const local = (y, m, d, h = 0, min = 0) => new Date(y, m - 1, d, h, min);
 }
 
 {
-  // Merging is mine alone outside the repos I listed (src/dispatch/merge.js).
-  const M = require('../src/dispatch/merge');
+  // Merging is mine alone outside the repos I listed (src/dispatch/merge.ts).
+  const M = require('../src/dispatch/merge.ts');
   const list = ['innergy-dev/mv-assistant', 'xvanov/*'];
   assert.strictEqual(M.mayMerge('innergy-dev/mv-assistant', list), true);
   assert.strictEqual(M.mayMerge('INNERGY-dev/MV-Assistant', list), true);

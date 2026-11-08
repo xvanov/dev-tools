@@ -202,7 +202,7 @@ module.exports = {
     await repos.repos.upsertPr(id, PR(repo, 2));
     assert.deepStrictEqual((await repos.repos.prsOf(id)).map((p) => p.number), [2, 1]);
   },
-  // --- for dispatch/delivery.js (chunk E)
+  // --- for dispatch/delivery.ts (chunk E)
 
   'setDelivery: sets a repo\'s default; a repeat changes it': async ({ repos, assert, uniq }) => {
     const slug = `own/${uniq('repo')}`;

@@ -93,7 +93,7 @@ function defaultDataDir() {
   return platform.defaults.dataDir();
 }
 
-// Other machines a run can be dispatched to (src/dispatch/remote.js) and
+// Other machines a run can be dispatched to (src/dispatch/remote.ts) and
 // commands run on (src/dispatch/exec.ts), each with its own termhub and its
 // own repos root, and optionally its OS:
 //   PA_MACHINES=mv-automated-vm=http://mv-automated-vm.example.ts.net:7000|C:\source
@@ -441,7 +441,7 @@ const config = {
     // Loopback only. This process starts agents; it is not tailnet-safe.
     host: env('PA_DISPATCH_HOST', '127.0.0.1'),
     // Repos where a finished run's PR is merged once its checks pass
-    // (src/dispatch/merge.js): mine alone. Elsewhere it stays a draft for me.
+    // (src/dispatch/merge.ts): mine alone. Elsewhere it stays a draft for me.
     mergeRepos: env(
       'PA_MERGE_REPOS',
       'innergy-dev/mv-assistant,innergy-dev/engineering-assistant,innergy-dev/mv-pipeline,innergy-dev/innergy-dispatch,xvanov/*'

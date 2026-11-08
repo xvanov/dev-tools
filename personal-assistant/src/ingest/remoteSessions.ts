@@ -132,7 +132,7 @@ async function runMachine(machine: any, termhub: any) {
 
 async function run() {
   if (!config.sessions.enabled) return 0;
-  const termhub = require('../dispatch/termhub');
+  const termhub = require('../dispatch/termhub.ts');
   let changed = 0;
   for (const machine of machinesToRead()) {
     try {

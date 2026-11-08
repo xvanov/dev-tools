@@ -6,7 +6,7 @@
 
 const assert = require('assert');
 const { parseMachines } = require('../src/config.ts');
-const { setupLines, remoteRepoPath, remoteWorktreePath, psq } = require('../src/dispatch/remote');
+const { setupLines, remoteRepoPath, remoteWorktreePath, psq } = require('../src/dispatch/remote.ts');
 
 // --- PA_MACHINES ------------------------------------------------------------
 
@@ -52,7 +52,7 @@ assert.ok(local[local.length - 1].startsWith('Set-Location'), 'ends in the workt
 
 // --- what Claude's screen is asking for ------------------------------------
 
-const { claudeScreenState, trustKeys } = require('../src/dispatch/termhub');
+const { claudeScreenState, trustKeys } = require('../src/dispatch/termhub.ts');
 assert.strictEqual(claudeScreenState(''), null);
 // The newer prompt has the cursor on "No, exit": Enter alone quits Claude.
 const newTrust = ' Quick safety check: Is this a project you created or one you trust?\n ❯ No, exit\n   Yes, I trust this folder\n Enter to confirm';

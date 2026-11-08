@@ -20,7 +20,7 @@ patch — and no worker, cron job, skill or agent may ever trigger a send.
 **A dispatched run never touches the main working tree.** Own worktree under
 `../.pa-worktrees/<run-id>`, own branch, removed by `pa drop`. The root `CLAUDE.md` is explicit
 that a dirty tree breaks termhub's updater — dispatched work must not be able to cause that.
-A run on another machine (`--machine`, `src/dispatch/remote.js`; Windows, Linux or macOS) gets
+A run on another machine (`--machine`, `src/dispatch/remote.ts`; Windows, Linux or macOS) gets
 the same: its worktree and the pushurl block are made on that machine through termhub's
 `POST /api/exec` (exit codes checked, no shell) before `claude` is typed, and the dispatcher
 checks the worktree exists through termhub's API rather than trusting the shell.

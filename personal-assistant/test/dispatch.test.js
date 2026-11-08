@@ -6,7 +6,7 @@
 
 const assert = require('assert');
 const { mode, describe, isMode } = require('../src/dispatch/modes.ts');
-const { buildBrief } = require('../src/dispatch/brief');
+const { buildBrief } = require('../src/dispatch/brief.ts');
 const { slug } = require('../src/dispatch');
 
 {

@@ -33,7 +33,7 @@ type Json = import('../types.ts').Json;
 const fs = require('fs');
 const path = require('path');
 const { config } = require('../config.ts');
-const termhub = require('../dispatch/termhub');
+const termhub = require('../dispatch/termhub.ts');
 const { logger } = require('../log.ts');
 
 const log = logger('chat');

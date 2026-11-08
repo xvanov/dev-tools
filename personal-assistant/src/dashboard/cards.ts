@@ -102,7 +102,7 @@ async function chainsFor(commitmentIds: unknown[], { perCard = 3 }: { perCard?: 
   if (!runs.length) return out;
   const F = require('../dispatch/factoryCore.ts');
   const stored = await require('../dispatch/factory').chains(runs.map((r: Row) => r.id));
-  const termhub = require('../dispatch/termhub');
+  const termhub = require('../dispatch/termhub.ts');
   for (const r of runs) {
     let sessionUrl: string | null = null;
     if (r.termhub_session_id) {
@@ -201,7 +201,7 @@ async function openSession(itemId: number | string) {
   if (machine && !config.termhub.machines[machine]) {
     return { ok: false, error: `${machine} is not in PA_MACHINES — run \`${info.resume}\` in ${info.cwd} on ${machine}` };
   }
-  const hub = require('../dispatch/termhub').forMachine(machine);
+  const hub = require('../dispatch/termhub.ts').forMachine(machine);
   const open = (await hub.listSessions().catch(() => [])).find((s: Row) => s.agentSessionId === info.id);
   if (open) return { ok: true, url: `${hub.base}/#session=${encodeURIComponent(open.id)}`, resumed: false };
   const exe = String(config.termhub.claudeCommand || 'claude').trim().split(/\s+/)[0] || 'claude';
@@ -211,10 +211,10 @@ async function openSession(itemId: number | string) {
     title: String(item.subject || 'Claude session').slice(0, 60),
   };
   // A dispatched run that may not push is resumed as it was started: without
-  // push credentials (src/dispatch/remote.js), or not at all.
+  // push credentials (src/dispatch/remote.ts), or not at all.
   const run = await repo.runs.modeByWorktree(info.cwd).catch(() => null);
   const mayPush = !run || require('../dispatch/modes.ts').mode(run.mode).mayPush;
-  const created = mayPush ? await hub.createSession(spec) : await require('../dispatch/remote').createNoPushSession(hub, spec, machine);
+  const created = mayPush ? await hub.createSession(spec) : await require('../dispatch/remote.ts').createNoPushSession(hub, spec, machine);
   return { ok: true, url: `${hub.base}/#session=${encodeURIComponent(created.id)}`, resumed: true };
 }
 

@@ -18,9 +18,9 @@ const { promisify } = require('util');
 const { config } = require('../config.ts');
 const repository = require('../repo');
 const { mode: resolveMode } = require('./modes.ts');
-const { buildBrief, openingPrompt } = require('./brief');
+const { buildBrief, openingPrompt } = require('./brief.ts');
 const D = require('./deliveryCore.ts');
-const termhub = require('./termhub');
+const termhub = require('./termhub.ts');
 const ledger = require('../ledger');
 const { logger } = require('../log.ts');
 
@@ -250,7 +250,7 @@ async function start({
   // Which agent and model (src/dispatch/agent.ts), resolved before anything
   // is created so a bad choice leaves no run row or worktree behind.
   if (machine && !termhub.isLocal(machine)) {
-    // src/dispatch/remote.js types that machine's own claude. A choice made
+    // src/dispatch/remote.ts types that machine's own claude. A choice made
     // for this run is refused rather than dropped; the defaults
     // (PA_DISPATCH_AGENT/MODEL) are for local runs and do not apply.
     if ((agent && agent !== 'claude') || model) {
@@ -287,7 +287,7 @@ async function start({
   // checkout, and every new no-push run then failed its leak check). Before
   // anything is created, so a failure here leaves nothing behind.
   if (repo) {
-    const cleared = await require('./remote').clearLegacyBlock({ machine: { name: 'this machine' }, repo, blockedPushUrl: BLOCKED_PUSH_URL, run: localRun });
+    const cleared = await require('./remote.ts').clearLegacyBlock({ machine: { name: 'this machine' }, repo, blockedPushUrl: BLOCKED_PUSH_URL, run: localRun });
     if (cleared.length) log.info('removed an old shared push block', { repo, remotes: cleared });
   }
 
@@ -324,7 +324,7 @@ async function start({
         // remote run uses too: every remote blocked in the worktree's OWN config
         // (a plain `git config` there writes the shared one, blocking the main
         // checkout and every other run), then read back. Throws if it didn't take.
-        await require('./remote').blockPush({
+        await require('./remote.ts').blockPush({
           machine: { name: 'this machine' },
           repo,
           worktree: worktreePath,
@@ -382,10 +382,10 @@ async function start({
       links: { card: commitmentId, run: run.id },
     };
     // A run that may not push also starts without push credentials
-    // (src/dispatch/remote.js noPushEnv); refused if termhub cannot do that.
+    // (src/dispatch/remote.ts noPushEnv); refused if termhub cannot do that.
     session = m.mayPush
       ? await termhub.createSession(spec)
-      : await require('./remote').createNoPushSession(termhub, spec, null, { fam: require('../platform').id === 'windows' ? 'windows' : 'posix', runId: run.id });
+      : await require('./remote.ts').createNoPushSession(termhub, spec, null, { fam: require('../platform').id === 'windows' ? 'windows' : 'posix', runId: run.id });
 
     await repository.runs.markRunning(run.id, session.id, briefPath);
   } catch (err) {
@@ -426,7 +426,7 @@ async function start({
 // effort, each step on its own: the original error is what the caller sees.
 async function rollbackStart({ run, repo, worktreePath, branch, worktreeMade, session, err }) {
   if (session?.id) await termhub.killSession(session.id).catch(() => {});
-  require('./remote').removeNoGhDirs(run.id);
+  require('./remote.ts').removeNoGhDirs(run.id);
   if (worktreeMade && repo && worktreePath) {
     await git(repo, ['worktree', 'remove', '--force', worktreePath]).catch(() => {});
     await git(repo, ['worktree', 'prune']).catch(() => {});
@@ -436,11 +436,11 @@ async function rollbackStart({ run, repo, worktreePath, branch, worktreeMade, se
   log.warn('run failed to start; rolled back', { run: run.id, message: String(err?.message || err).slice(0, 300) });
 }
 
-// The same run, on another machine's termhub (src/dispatch/remote.js). The
+// The same run, on another machine's termhub (src/dispatch/remote.ts). The
 // repo is the local one's namesake under that machine's repos root; the
 // worktree, the pushurl block and BRIEF.md are made there, by the session.
 async function startRemote({ commitmentId, task, modeName, repoPath, machineName, routeReason = null, chosen = { delivery: null, source: null }, again = false }) {
-  const remote = require('./remote');
+  const remote = require('./remote.ts');
   const machine = remote.machineNamed(machineName);
   const hub = termhub.forMachine(machine.name);
   const m = resolveMode(modeName);
@@ -522,7 +522,7 @@ async function previewDelivery({ commitmentId = null, task = null, mode = undefi
     const target = await resolveTarget({ commitmentId, repoPath }).catch(() => null);
     slugName = target ? await require('./route').slugFor(target).catch(() => null) : null;
   }
-  return require('./delivery').resolve({ mode: mode ? resolveMode(mode).name : null, operatorText: task, slug: slugName });
+  return require('./delivery.ts').resolve({ mode: mode ? resolveMode(mode).name : null, operatorText: task, slug: slugName });
 }
 
 /**
@@ -548,7 +548,7 @@ async function sessionDelivery({ modeName, delivery, deliverySource, deliveryPhr
       const target = await resolveTarget({ commitmentId, repoPath }).catch(() => null);
       slugName = target ? await require('./route').slugFor(target).catch(() => null) : null;
     }
-    chosen = await require('./delivery').resolve({ mode: explicitMode, operatorText: task, slug: slugName });
+    chosen = await require('./delivery.ts').resolve({ mode: explicitMode, operatorText: task, slug: slugName });
   }
   const sessionMode = explicitMode || D.modeFor(chosen.delivery);
   if (chosen.delivery === 'none' && resolveMode(sessionMode).mayPush) {
@@ -786,7 +786,7 @@ async function openMergeRequest(run) {
 async function drop(runId, { force = false } = {}) {
   const run = await get(runId);
   if (!run) throw new Error(`no run #${runId}`);
-  require('./remote').removeNoGhDirs(runId);
+  require('./remote.ts').removeNoGhDirs(runId);
 
   // A factory job is cancelled in the factory (it parks or closes its
   // stories and keeps the evidence); its follow session goes too.
@@ -829,7 +829,7 @@ async function drop(runId, { force = false } = {}) {
     if (run.termhub_session_id) await hub.killSession(run.termhub_session_id).catch(() => {});
     let removed = false;
     if (force && run.worktree_path) {
-      const remote = require('./remote');
+      const remote = require('./remote.ts');
       removed = await remote.removeOnMachine({
         machine: remote.machineNamed(run.machine),
         hub,
@@ -876,7 +876,7 @@ async function drop(runId, { force = false } = {}) {
 // Marks a run as finished-and-awaiting-review. Called by `pa review --done` and
 // by the worker when a session disappears.
 async function markDone(runId, note) {
-  require('./remote').removeNoGhDirs(runId);
+  require('./remote.ts').removeNoGhDirs(runId);
   await repository.runs.markDone(runId, note || null);
   // Wakes its run_review task (src/durable/tasks/runReview.ts).
   await require('../durable').emit(`run-ended:${runId}`, { note: note || null }).catch(() => {});

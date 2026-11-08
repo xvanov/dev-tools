@@ -8,7 +8,7 @@
 // Until this existed, the only way to make a machine do something through
 // termhub was to open a session and *type* at a shell — and then guess, from
 // a screen, whether it worked. The personal assistant sets dispatched runs up
-// on other machines this way (personal-assistant/src/dispatch/remote.js), and
+// on other machines this way (personal-assistant/src/dispatch/remote.ts), and
 // a typed `git worktree add` that failed looked exactly like one still running.
 //
 // It adds no capability: anyone who can reach termhub can open a shell and run

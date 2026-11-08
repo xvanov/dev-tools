@@ -216,7 +216,7 @@ function create(db: Db) {
       );
     },
 
-    // --- for src/dispatch/delivery.js (chunk E)
+    // --- for src/dispatch/delivery.ts (chunk E)
 
     /** A repo's default delivery level: {delivery}, or null. */
     async deliveryOf(repo: unknown) {

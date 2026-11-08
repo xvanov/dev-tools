@@ -392,7 +392,7 @@ function sessionRow(s: Json, { runs = new Map(), base = null }: { runs?: Map<str
   const run = runs.get(String(s.id));
   if (run) out.run = run;
   // What termhub says the session belongs to (plan E1: stored ids, not the title).
-  const links = require('../dispatch/termhub').sessionLinks(s.links);
+  const links = require('../dispatch/termhub.ts').sessionLinks(s.links);
   if (links) out.links = links;
   if (base) out.url = `${base}/#session=${encodeURIComponent(s.id)}`;
   return out;
@@ -471,7 +471,7 @@ function factoryPlan(args: Json = {}, { card = null }: { card?: Json | null } = 
 
 function hubBase(machine: string | null = null) {
   try {
-    return require('../dispatch/termhub').forMachine(machine).base;
+    return require('../dispatch/termhub.ts').forMachine(machine).base;
   } catch {
     return null;
   }
@@ -499,7 +499,7 @@ async function boardTool({ limit = 25 }: { limit?: number } = {}) {
 
 async function cardTool({ id }: { id?: number | string | null }) {
   const ref = parseCardId(id);
-  const { sourceLabel } = require('../dispatch/brief');
+  const { sourceLabel } = require('../dispatch/brief.ts');
   if (ref.proposal) {
     const p = await repository.proposals.rowForChat(ref.proposal);
     if (!p) throw new Error(`no offer p${ref.proposal}`);
@@ -607,7 +607,7 @@ async function factoryJobTool({ job, fresh = false }: { job?: Json | null; fresh
 }
 
 async function sessionsTool({ machine = null, all = false }: { machine?: string | null; all?: boolean } = {}) {
-  const termhub = require('../dispatch/termhub');
+  const termhub = require('../dispatch/termhub.ts');
   const { config } = require('../config.ts');
   if (machine && !config.termhub.machines[machine]) throw new Error(`"${machine}" is not in PA_MACHINES`);
   const hub = termhub.forMachine(machine);

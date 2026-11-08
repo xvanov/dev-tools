@@ -6,7 +6,7 @@
 // here, speaking, and typing in termhub are one conversation.
 //
 //   in    text is typed into the session through termhub
-//         (POST /api/sessions/:id/input, src/dispatch/termhub.js `say`). A
+//         (POST /api/sessions/:id/input, src/dispatch/termhub.ts `say`). A
 //         session that was not running is started by ensureSession() and
 //         briefed once Claude is at its prompt (briefClaude: it answers the
 //         folder-trust question on the way).
@@ -102,7 +102,7 @@ function httpError(status: any, message: any) {
 function createFeed({
   home = () => require('./index.ts').homeDir(),
   root = projectsRoot,
-  hub = () => require('../dispatch/termhub'),
+  hub = () => require('../dispatch/termhub.ts'),
   ensureSession = () => require('./index.ts').ensureSession(),
   jobLookup = null, // (jobId) => {delivery} | null; default: the factory's snapshot (src/policy withJobDelivery)
   pollMs = 1000,

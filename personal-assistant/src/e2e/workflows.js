@@ -57,7 +57,7 @@ function deps0() {
     jobReport: (id) => factory.report(id),
     claudeAuth: () => d.runCommand(factory.machine(), ['claude', 'auth', 'status'], { timeoutMs: 30_000 }),
     fastLaneOn: () => Boolean(d.config.fastLane?.enabled),
-    hubBase: (machine) => require('../dispatch/termhub').forMachine(machine || null).base,
+    hubBase: (machine) => require('../dispatch/termhub.ts').forMachine(machine || null).base,
     capture: (dir, pages) => require('./screens').capture(dir, pages),
     browser: () => require('./screens').browser(),
     write(file, text) {

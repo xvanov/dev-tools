@@ -138,7 +138,7 @@ async function busyPaths() {
   const busy = [];
   let known = true;
   try {
-    const termhub = require('../../dispatch/termhub');
+    const termhub = require('../../dispatch/termhub.ts');
     for (const s of await termhub.listSessions()) {
       if (s.alive === false || !s.cwd) continue;
       busy.push({ path: s.cwd, label: `termhub session "${s.title || s.id}"` });

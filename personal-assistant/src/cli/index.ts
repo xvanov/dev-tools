@@ -658,7 +658,7 @@ const commands: Json = {
   },
 
   async delivery(args: any) {
-    const store = require('../dispatch/delivery');
+    const store = require('../dispatch/delivery.ts');
     const D = require('../dispatch/deliveryCore.ts');
     const [sub, repo, level] = args;
     if (!sub || sub === 'list') {
@@ -980,14 +980,14 @@ const commands: Json = {
       out(
         `#${String(r.id).padEnd(4)} ${r.status.padEnd(9)} ${r.mode.padEnd(7)} ${r.route === 'factory' ? 'factory ' : ''}${r.task}` +
           `\n      ${r.route === 'factory' ? `job ${r.factory_job_id || '(not submitted)'}${r.factory_state ? ` · ${r.factory_state}` : ''}${r.cost_usd != null ? ` · $${Number(r.cost_usd).toFixed(2)}` : ''}` : r.branch || '(no branch)'} · ${relative(r.started_at)}` +
-          `${require('../dispatch/termhub').isLocal(r.machine) ? '' : ` · on ${r.machine}`}${r.mr_url ? ` · ${r.mr_url}` : ''}`
+          `${require('../dispatch/termhub.ts').isLocal(r.machine) ? '' : ` · on ${r.machine}`}${r.mr_url ? ` · ${r.mr_url}` : ''}`
       );
     }
   },
 
   async attach(args: any) {
     const dispatch = require('../dispatch');
-    const termhub = require('../dispatch/termhub');
+    const termhub = require('../dispatch/termhub.ts');
     const run = await dispatch.get(Number(args[0]));
     if (!run) return fail(`no run #${args[0]}`);
     if (!run.termhub_session_id) return fail(`run #${run.id} has no session`);
@@ -1529,7 +1529,7 @@ const commands: Json = {
     {
       const D = require('../dispatch/deliveryCore.ts');
       const raw = String(config.dispatch.deliveryDefault || '');
-      const n = await require('../dispatch/delivery').list().then((l: any) => l.length, () => null);
+      const n = await require('../dispatch/delivery.ts').list().then((l: any) => l.length, () => null);
       if (D.isDelivery(raw)) {
         mark(true, 'delivery', `default ${raw}${D.unattended(raw) ? ' (UNATTENDED: no human step after a yes)' : ''} · ${n === null ? 'repo defaults unreadable — run `pa migrate`' : `${n} repo default(s)`}`);
       } else {
@@ -1561,7 +1561,7 @@ const commands: Json = {
     }
 
     // termhub
-    const termhub = require('../dispatch/termhub');
+    const termhub = require('../dispatch/termhub.ts');
     const hub = await termhub.reachable();
     mark(hub.ok, 'termhub', hub.ok ? config.termhub.url : `${config.termhub.url} — ${hub.error}`);
     // Reachable by tailnet name: a termhub that cannot learn its own MagicDNS
@@ -1578,7 +1578,7 @@ const commands: Json = {
     // Each machine: reachable, which OS (and does PA_MACHINES agree), and can
     // its termhub run commands (POST /api/exec) — remote setup needs that.
     for (const machine of Object.values(config.termhub.machines) as any[]) {
-      const r = await require('../dispatch/remote').probeMachine(machine, { hub: termhub.forMachine(machine.name) });
+      const r = await require('../dispatch/remote.ts').probeMachine(machine, { hub: termhub.forMachine(machine.name) });
       mark(r.ok, `termhub · ${machine.name}`, r.detail);
     }
 
