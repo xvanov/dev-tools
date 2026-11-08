@@ -376,7 +376,7 @@ print(json.dumps({"active": d.active_sources(data["o"], data["s"]), "monitor": d
 
 // ------------------------------------------------- paths from other OSes --
 {
-  const { toItem } = require('../src/ingest/claudeSessions');
+  const { toItem } = require('../src/ingest/claudeSessions.ts');
   const item = toItem({ sessionId: 's1', title: null, cwd: 'C:\\repos\\quill\\', turns: [], firstAt: null, lastAt: null }, 'x.jsonl', { machine: 'win-box' });
   assert.strictEqual(item.subject, 'Claude session in quill (on win-box)', 'a Windows cwd read on Linux names its folder');
   const posix = toItem({ sessionId: 's2', cwd: '/home/q/repos/quill', turns: [] }, 'y.jsonl');

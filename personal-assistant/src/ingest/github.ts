@@ -12,23 +12,28 @@
 // for *state*. Then Projects v2 items assigned to you, which is where the
 // Kanban lives — that needs the `read:project` scope, and without it the rest
 // still runs and `pa doctor` says what is missing.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+type Row = Record<string, any>;
+type Db = import('../repo/types.ts').Db;
 
 const { execFile } = require('child_process');
 const { config } = require('../config.ts');
-const { saveItems, getCursor } = require('./store');
+const { saveItems, getCursor } = require('./store.ts');
 const { logger } = require('../log.ts');
 
 const log = logger('github');
 
-function gh(args, { timeoutMs = 60_000 } = {}) {
-  return new Promise((resolve, reject) => {
+function gh(args: any, { timeoutMs = 60_000 }: { timeoutMs?: number } = {}) {
+  return new Promise<any>((resolve, reject) => {
     execFile(
       config.github.bin,
       args,
       { timeout: timeoutMs, windowsHide: true, maxBuffer: 64 * 1024 * 1024 },
-      (err, stdout, stderr) => {
+      (err: any, stdout: any, stderr: any) => {
         if (err) {
-          const e = new Error(`gh ${args[0]} ${args[1] || ''}: ${(stderr || err.message).trim().slice(0, 300)}`);
+          const e: any = new Error(`gh ${args[0]} ${args[1] || ''}: ${(stderr || err.message).trim().slice(0, 300)}`);
           e.stderr = stderr || '';
           return reject(e);
         }
@@ -38,11 +43,11 @@ function gh(args, { timeoutMs = 60_000 } = {}) {
   });
 }
 
-async function api(path) {
+async function api(path: any) {
   return JSON.parse(await gh(['api', path]));
 }
 
-async function graphql(query, vars = {}) {
+async function graphql(query: any, vars: any = {}) {
   const args = ['api', 'graphql', '-f', `query=${query}`];
   for (const [k, v] of Object.entries(vars)) args.push('-F', `${k}=${v}`);
   return JSON.parse(await gh(args));
@@ -52,22 +57,22 @@ async function graphql(query, vars = {}) {
 // scopes are visible without a request that fails on them.
 async function status() {
   try {
-    const out = await gh(['auth', 'status', '--active']).catch((e) => {
+    const out = await gh(['auth', 'status', '--active']).catch((e: any) => {
       throw new Error(e.stderr || e.message);
     });
     const login = out.match(/account (\S+)/)?.[1] || null;
-    const scopes = (out.match(/Token scopes: (.*)/)?.[1] || '').replace(/'/g, '').split(/,\s*/).filter(Boolean);
+    const scopes = (out.match(/Token scopes: (.*)/)?.[1] || '').replace(/'/g, '').split(/,\s*/).filter(Boolean) as any;
     return { ok: true, login, scopes };
-  } catch (err) {
+  } catch (err: any) {
     return { ok: false, error: err.message.split('\n')[0] };
   }
 }
 
 // `org/number:Field=Value` rules, comma- or space-separated.
-function parseBoards(spec) {
-  const out = [];
+function parseBoards(spec: any) {
+  const out: any[] = [];
   for (const part of String(spec || '').split(/[\s,]+/).filter(Boolean)) {
-    const m = part.match(/^([^/\s]+)\/(\d+):([^=]+)=(.+)$/);
+    const m = part.match(/^([^/\s]+)\/(\d+):([^=]+)=(.+)$/) as any;
     if (!m) throw new Error(`PA_GITHUB_BOARDS: cannot read "${part}" — expected org/number:Field=Value`);
     out.push({ org: m[1], number: Number(m[2]), field: m[3], value: m[4] });
   }
@@ -79,7 +84,7 @@ function configured() {
 }
 
 // `https://api.github.com/repos/o/r/pulls/12` → `https://github.com/o/r/pull/12`
-function htmlUrl(apiUrl) {
+function htmlUrl(apiUrl: any) {
   if (!apiUrl) return null;
   return apiUrl
     .replace('https://api.github.com/repos/', 'https://github.com/')
@@ -90,12 +95,12 @@ function htmlUrl(apiUrl) {
 // notification reason as one made to you. Only a request naming you is an
 // ask; a team request is the team's queue. `detail.requestedMe` is read from
 // the PR's own requested_reviewers list (false when only a team is named).
-function reviewAction(reason, detail) {
+function reviewAction(reason: any, detail: any) {
   if (reason !== 'review_requested' || !detail || detail.requestedMe !== false) return reason;
   return 'team_review_requested';
 }
 
-function notificationItem(n, detail) {
+function notificationItem(n: any, detail: any) {
   const subject = n.subject || {};
   const url = htmlUrl(subject.url) || n.repository?.html_url || null;
   const action = reviewAction(n.reason, detail);
@@ -130,7 +135,7 @@ function notificationItem(n, detail) {
 
 // `reviewRequested`: the PR came from the `user-review-requested:` search, so
 // a review is asked of you by name — the gate's only evidence of it.
-function searchItem(kind, it, { reviewRequested = false } = {}) {
+function searchItem(kind: any, it: any, { reviewRequested = false }: { reviewRequested?: boolean } = {}) {
   const repo = it.repository_url?.replace('https://api.github.com/repos/', '') || null;
   return {
     externalId: `${kind}/${repo}#${it.number}`,
@@ -144,8 +149,8 @@ function searchItem(kind, it, { reviewRequested = false } = {}) {
       state: it.state === 'open' ? 'opened' : it.state,
       draft: !!it.draft,
       webUrl: it.html_url,
-      labels: (it.labels || []).map((l) => l.name),
-      assignees: (it.assignees || []).map((a) => a.login),
+      labels: (it.labels || []).map((l: any) => l.name),
+      assignees: (it.assignees || []).map((a: any) => a.login),
       ...(reviewRequested ? { reviewRequested: true } : {}),
     },
   };
@@ -194,9 +199,9 @@ query($id: ID!, $after: String) {
 
 const MAX_PAGES = 20;
 
-async function boardItemsFor(project, login, watch) {
-  const out = [];
-  let after = null;
+async function boardItemsFor(project: any, login: any, watch: any) {
+  const out: any[] = [];
+  let after: any = null;
   for (let page = 0; page < MAX_PAGES; page++) {
     const data = await graphql(PROJECT_PAGE, { id: project.id, after: after ?? 'null' });
     const items = data.data?.node?.items;
@@ -210,8 +215,8 @@ async function boardItemsFor(project, login, watch) {
 
 // Field name → values, lower-cased. A multi-select comes back as one
 // comma-joined string ("Pi, Xi"), so it is split.
-function fieldMap(node) {
-  const map = {};
+function fieldMap(node: any) {
+  const map: Record<string, any> = {};
   for (const f of node.fields?.nodes || []) {
     const name = f?.field?.name;
     const raw = f?.value ?? f?.name ?? f?.text;
@@ -226,14 +231,14 @@ function fieldMap(node) {
 // the pod's work whether or not anyone has put their name on a card yet. A
 // watched card nobody assigned to you is context, though: the distiller's
 // GitHub gate keeps its facts and none of its commitments.
-function projectItems(project, login, watch = []) {
-  const out = [];
+function projectItems(project: any, login: any, watch: any = []) {
+  const out: any[] = [];
   for (const node of project.items?.nodes || []) {
     const c = node.content;
     if (!c || node.isArchived) continue;
-    const assignees = (c.assignees?.nodes || []).map((a) => a.login);
+    const assignees = (c.assignees?.nodes || []).map((a: any) => a.login);
     const fields = fieldMap(node);
-    const watched = watch.some((w) => (fields[w.field.toLowerCase()] || []).includes(w.value.toLowerCase()));
+    const watched = watch.some((w: any) => (fields[w.field.toLowerCase()] || []).includes(w.value.toLowerCase()));
     if (!assignees.includes(login) && !watched) continue;
     if (c.state && c.state !== 'OPEN') continue;
     out.push({
@@ -264,14 +269,14 @@ function projectItems(project, login, watch = []) {
 // to you. CI noise does not get a second request.
 const CONVERSATIONAL = new Set(['mention', 'team_mention', 'comment', 'assign', 'author', 'review_requested', 'manual']);
 
-async function detailFor(n, login) {
+async function detailFor(n: any, login: any) {
   if (!CONVERSATIONAL.has(n.reason) || !n.subject?.url) return null;
   try {
     const subject = await api(n.subject.url.replace('https://api.github.com', ''));
     const requestedMe = Array.isArray(subject.requested_reviewers)
-      ? subject.requested_reviewers.some((u) => u.login === login)
+      ? subject.requested_reviewers.some((u: any) => u.login === login)
       : null;
-    let comment = null;
+    let comment: any = null;
     let commentAuthor = subject.user?.login || null;
     const latest = n.subject.latest_comment_url;
     if (latest && latest !== n.subject.url) {
@@ -288,7 +293,7 @@ async function detailFor(n, login) {
       state: subject.state || null,
       merged: subject.merged ?? null,
     };
-  } catch (err) {
+  } catch (err: any) {
     log.debug('notification detail failed', { id: n.id, message: err.message });
     return null;
   }
@@ -315,31 +320,31 @@ async function run() {
   }
 
   const notifications = await api(`/notifications?all=false&per_page=50&since=${encodeURIComponent(since)}`);
-  const notifItems = [];
+  const notifItems: any[] = [];
   for (const n of notifications.slice(0, 40)) {
     notifItems.push(notificationItem(n, await detailFor(n, login)));
   }
 
   // `user-review-requested`, not `review-requested`: the latter also matches
   // every PR requested from a team you are in.
-  const q = (s) => `/search/issues?per_page=50&q=${encodeURIComponent(s)}`;
+  const q = (s: any) => `/search/issues?per_page=50&q=${encodeURIComponent(s)}`;
   const [authored, reviewing, assigned] = await Promise.all([
     api(q(`is:open is:pr author:${login} archived:false`)),
     api(q(`is:open is:pr user-review-requested:${login} archived:false`)),
     api(q(`is:open is:issue assignee:${login} archived:false`)),
   ]);
-  const prs = new Map();
-  const requested = new Set(reviewing.items.map((it) => it.html_url));
+  const prs = new Map<any, any>();
+  const requested = new Set(reviewing.items.map((it: any) => it.html_url));
   for (const it of [...authored.items, ...reviewing.items]) prs.set(it.html_url, it);
 
   // Projects v2: optional, scope-gated, and never fatal to the rest.
-  let boardItems = [];
-  let projectsNote = null;
+  let boardItems: any[] = [];
+  let projectsNote: any = null;
   if (!auth.scopes.includes('read:project') && !auth.scopes.includes('project')) {
     projectsNote = 'needs read:project — run `gh auth refresh -s read:project`';
   } else {
     const watchRules = parseBoards(config.github.boardsSpec);
-    const orgs = new Set(config.github.orgs.length ? config.github.orgs : (await api('/user/orgs')).map((o) => o.login));
+    const orgs = new Set(config.github.orgs.length ? config.github.orgs : (await api('/user/orgs')).map((o: any) => o.login));
     for (const b of watchRules) orgs.add(b.org);
     for (const org of orgs) {
       try {
@@ -348,7 +353,7 @@ async function run() {
           const watch = watchRules.filter((b) => b.org === org && b.number === p.number);
           if (!p.closed) boardItems.push(...(await boardItemsFor(p, login, watch)));
         }
-      } catch (err) {
+      } catch (err: any) {
         projectsNote = `org ${org}: ${err.message.slice(0, 120)}`;
         log.warn('project items failed', { org, message: err.message });
       }
@@ -358,12 +363,12 @@ async function run() {
   let changed = 0;
   changed += await saveItems('github_notification', notifItems, null);
   changed += await saveItems('github_pr', [...prs.values()].map((it) => searchItem('pr', it, { reviewRequested: requested.has(it.html_url) })), null);
-  changed += await saveItems('github_issue', assigned.items.map((it) => searchItem('issue', it)), null);
+  changed += await saveItems('github_issue', assigned.items.map((it: any) => searchItem('issue', it)), null);
   changed += await saveItems('github_project_item', boardItems, null);
 
   await saveItems('github', [], {
     source: 'github',
-    deltaToken: null,
+    deltaToken: null as any,
     // Overlap by an hour, as GitLab does: `since` is second-granular and the
     // clocks are not ours.
     state: {
@@ -375,9 +380,9 @@ async function run() {
   });
 
   // Never fatal: closing settled commitments is housekeeping, ingest is not.
-  await require('./githubReconcile')
+  await require('./githubReconcile.ts')
     .reconcile({ api, login })
-    .catch((err) => log.warn('reconcile failed', { message: err.message }));
+    .catch((err: any) => log.warn('reconcile failed', { message: err.message }));
 
   return changed;
 }

@@ -17,11 +17,16 @@
 // termhub reads these same files to summarise turns for its spoken
 // announcements — see `termhub/lib` before changing the parsing here, so the
 // two never disagree about which message is the last one.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+type Row = Record<string, any>;
+type Db = import('../repo/types.ts').Db;
 
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { saveItems } = require('./store');
+const { saveItems } = require('./store.ts');
 const { headTail } = require('../util/text.ts');
 const { logger } = require('../log.ts');
 const { config } = require('../config.ts');
@@ -32,7 +37,7 @@ const PROJECTS_DIR = path.join(os.homedir(), '.claude', 'projects');
 const MAX_SESSIONS_PER_PASS = 40;
 const MAX_BODY = 60_000;
 
-function textOf(content) {
+function textOf(content: any) {
   if (typeof content === 'string') return content;
   if (!Array.isArray(content)) return '';
   return content
@@ -44,24 +49,24 @@ function textOf(content) {
 
 // A user entry with an array content is usually a tool result being fed back,
 // not something a human typed. `promptSource` marks the real ones.
-function isHumanPrompt(entry) {
+function isHumanPrompt(entry: any) {
   if (entry.type !== 'user') return false;
   if (typeof entry.message?.content === 'string') return true;
   return Boolean(entry.promptSource);
 }
 
-function parseTranscript(text) {
-  const turns = [];
-  let sessionId = null;
-  let title = null;
-  let cwd = null;
-  let gitBranch = null;
-  let firstAt = null;
-  let lastAt = null;
+function parseTranscript(text: any) {
+  const turns: any[] = [];
+  let sessionId: any = null;
+  let title: any = null;
+  let cwd: any = null;
+  let gitBranch: any = null;
+  let firstAt: any = null;
+  let lastAt: any = null;
 
   for (const line of text.split('\n')) {
     if (!line.trim()) continue;
-    let entry;
+    let entry: any;
     try {
       entry = JSON.parse(line);
     } catch {
@@ -96,18 +101,18 @@ function parseTranscript(text) {
 // overwritten by a remote one, or the reverse.
 // The last folder of a cwd from any OS: a remote Windows session's
 // `C:\\repos\\quill` is read on Linux too, where path.basename would not split it.
-function folderName(cwd) {
+function folderName(cwd: any) {
   return String(cwd).replace(/[\\/]+$/, '').split(/[\\/]/).pop() || String(cwd);
 }
 
-function toItem(parsed, file, { machine = null } = {}) {
+function toItem(parsed: any, file: any, { machine = null }: { machine?: any | null } = {}) {
   const body = parsed.turns
-    .map((t) => `${t.role === 'me' ? '>>' : '<<'} ${t.text}`)
+    .map((t: any) => `${t.role === 'me' ? '>>' : '<<'} ${t.text}`)
     .join('\n\n');
 
   const sessionId = parsed.sessionId || path.basename(file, '.jsonl');
   const subject = parsed.title || `Claude session in ${folderName(parsed.cwd || 'unknown')}`;
-  const raw = {
+  const raw: Record<string, any> = {
     cwd: parsed.cwd,
     gitBranch: parsed.gitBranch,
     turns: parsed.turns.length,
@@ -129,10 +134,10 @@ function toItem(parsed, file, { machine = null } = {}) {
 
 function transcriptFiles() {
   if (!fs.existsSync(PROJECTS_DIR)) return [];
-  const out = [];
+  const out: any[] = [];
   for (const dir of fs.readdirSync(PROJECTS_DIR)) {
     const full = path.join(PROJECTS_DIR, dir);
-    let stat;
+    let stat: any;
     try {
       stat = fs.statSync(full);
     } catch {
@@ -160,9 +165,9 @@ async function run() {
     return 0;
   }
 
-  const items = [];
+  const items: any[] = [];
   for (const f of files) {
-    let text;
+    let text: any;
     try {
       text = fs.readFileSync(f.path, 'utf8');
     } catch {
@@ -175,7 +180,7 @@ async function run() {
 
   return saveItems('claude_session', items, {
     source: 'claude_session',
-    deltaToken: null,
+    deltaToken: null as any,
     state: { scanned: files.length },
   });
 }

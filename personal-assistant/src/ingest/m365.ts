@@ -18,16 +18,21 @@
 // results carry a ~250-character summary; anything that does not fit is read
 // with read_resource, up to a cap, and the rest keep their summary and are
 // marked `partial` rather than dropped.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+type Row = Record<string, any>;
+type Db = import('../repo/types.ts').Db;
 
 const llm = require('../llm');
 const identity = require('../distill/identity.ts');
-const { getCursor, saveItems } = require('./store');
+const { getCursor, saveItems } = require('./store.ts');
 const { logger } = require('../log.ts');
 
 const log = logger('m365');
 
 const PREFIX = 'mcp__claude_ai_Microsoft_365__';
-const tool = (name) => PREFIX + name;
+const tool = (name: any) => PREFIX + name;
 
 // The search tools return at most 25 per page. A pass reads at most this many
 // pages, so a backlog (first run, a week offline) drains over several passes
@@ -46,25 +51,25 @@ const READ_VISIBLE_TOKENS = 500;
 const AUTOMATED_SENDER =
   /(^|[.@])(notifications@github\.com|noreply|no-reply|donotreply|do-not-reply|mailer-daemon|jira@|confluence@)|@(atlassian\.net|teams\.microsoft\.com|github\.com)$/i;
 
-function isAutomated(address) {
+function isAutomated(address: any) {
   return !address || AUTOMATED_SENDER.test(String(address));
 }
 
 // "Since" with an hour of overlap, as the other sources do: search filters are
 // second-granular and the content hash makes a re-read row a no-op.
-function sinceFrom(cursor, { firstRunDays }) {
+function sinceFrom(cursor: any, { firstRunDays }: { firstRunDays?: any | null }) {
   const since = cursor?.state?.since;
   return since || new Date(Date.now() - firstRunDays * 86400_000).toISOString();
 }
 
-function nextSince(passStarted) {
+function nextSince(passStarted: any) {
   return new Date(new Date(passStarted).getTime() - 3600_000).toISOString();
 }
 
 // Paged search prompt. The paging rule is spelled out because the connector's
 // own note tells the model to page "if the user asked about everything", and a
 // relay has no user to ask.
-function searchPrompt(toolName, params) {
+function searchPrompt(toolName: any, params: any) {
   return [
     'You are a data relay with no user. Use only the Microsoft 365 tools named below.',
     `Call ${toolName} with exactly these arguments: ${JSON.stringify({ ...params, offset: 0 })}`,
@@ -74,7 +79,7 @@ function searchPrompt(toolName, params) {
   ].join('\n');
 }
 
-function readPrompt(uris) {
+function readPrompt(uris: any) {
   return [
     'You are a data relay with no user. Use only the read_resource tool.',
     'Call read_resource once for each URI below, passing it verbatim. Make the calls in parallel.',
@@ -91,12 +96,12 @@ function readPrompt(uris) {
 // A failed page costs that page, not the pass: the connector's backend has
 // transient "Error POSTing to endpoint" failures, and only when every call
 // failed is the search an error.
-function searchResults(calls, toolName) {
-  const seen = new Set();
-  const items = [];
+function searchResults(calls: any, toolName: any) {
+  const seen = new Set<any>();
+  const items: any[] = [];
   let more = false;
   let errors = 0;
-  const mine = calls.filter((c) => c.name === tool(toolName));
+  const mine = calls.filter((c: any) => c.name === tool(toolName));
   for (const call of mine) {
     if (call.error) {
       errors++;
@@ -120,7 +125,7 @@ function searchResults(calls, toolName) {
   return { items, more: more || errors > 0 };
 }
 
-async function searchOnce(toolName, params, timeoutMs) {
+async function searchOnce(toolName: any, params: any, timeoutMs: any) {
   const calls = await llm.toolCalls({
     prompt: searchPrompt(toolName, params),
     tools: [tool(toolName)],
@@ -128,7 +133,7 @@ async function searchOnce(toolName, params, timeoutMs) {
     visibleTokens: SEARCH_VISIBLE_TOKENS,
     purpose: 'connector',
   });
-  if (!calls.some((c) => c.name === tool(toolName))) {
+  if (!calls.some((c: any) => c.name === tool(toolName))) {
     throw new Error(`${toolName} was not called — is the Microsoft 365 connector connected? Run /mcp in Claude Code.`);
   }
   return searchResults(calls, toolName);
@@ -139,8 +144,8 @@ async function searchOnce(toolName, params, timeoutMs) {
 // the next round asks for everything before the oldest item seen, so a
 // backlog is walked from the top down instead of silently losing its older
 // half. `dateKey` names the item's timestamp field.
-async function search(toolName, params, { dateKey = null, maxRounds = 4, timeoutMs = 300_000 } = {}) {
-  const all = new Map();
+async function search(toolName: any, params: any, { dateKey = null, maxRounds = 4, timeoutMs = 300_000 }: { dateKey?: any | null; maxRounds?: number; timeoutMs?: number } = {}) {
+  const all = new Map<any, any>();
   let before = params.beforeDateTime || null;
   for (let round = 0; round < maxRounds; round++) {
     const { items, more } = await searchOnce(
@@ -160,8 +165,8 @@ async function search(toolName, params, { dateKey = null, maxRounds = 4, timeout
 
 // Reads full resources by URI. Returns a Map uri → resource; a URI that failed
 // is simply absent, and its item keeps the search summary.
-async function readAll(uris, { timeoutMs = 300_000 } = {}) {
-  const out = new Map();
+async function readAll(uris: any, { timeoutMs = 300_000 }: { timeoutMs?: number } = {}) {
+  const out = new Map<any, any>();
   if (!uris.length) return out;
   const calls = await llm.toolCalls({
     prompt: readPrompt(uris),
@@ -172,7 +177,7 @@ async function readAll(uris, { timeoutMs = 300_000 } = {}) {
   });
   for (const call of calls) {
     if (call.name !== tool('read_resource') || call.error) continue;
-    const result = call.results.find((r) => r && typeof r === 'object');
+    const result = call.results.find((r: any) => r && typeof r === 'object');
     if (result) out.set(call.input.uri, result);
   }
   return out;
@@ -190,7 +195,7 @@ async function whoAmI() {
     timeoutMs: 120_000,
     purpose: 'connector',
   });
-  const me = calls.find((c) => c.name === tool('get_me'))?.results.find((r) => r && r.id);
+  const me = calls.find((c: any) => c.name === tool('get_me'))?.results.find((r: any) => r && r.id);
   if (!me) throw new Error('get_me returned nothing — is the Microsoft 365 connector connected? Run /mcp in Claude Code.');
   const profile = {
     id: me.id,
@@ -199,7 +204,7 @@ async function whoAmI() {
   };
   await identity.claimForMe('smtp', profile.mail, { displayName: profile.displayName, email: profile.mail });
   await identity.claimForMe('aad_oid', profile.id);
-  await saveItems('m365', [], { source: 'm365', deltaToken: null, state: { ...(cursor?.state || {}), me: profile } });
+  await saveItems('m365', [], { source: 'm365', deltaToken: null as any, state: { ...(cursor?.state || {}), me: profile } });
   log.info('signed in', { as: profile.mail });
   return profile;
 }
@@ -211,10 +216,10 @@ async function grantedScopes() {
     timeoutMs: 120_000,
     purpose: 'connector',
   });
-  const call = calls.find((c) => c.name === tool('get_granted_scopes'));
+  const call = calls.find((c: any) => c.name === tool('get_granted_scopes'));
   if (!call) throw new Error('the Microsoft 365 connector is not available — run /mcp in Claude Code');
   if (call.error) throw new Error(call.error);
-  return call.results.find((r) => r && Array.isArray(r.grantedScopes))?.grantedScopes || [];
+  return call.results.find((r: any) => r && Array.isArray(r.grantedScopes))?.grantedScopes || [];
 }
 
 module.exports = {

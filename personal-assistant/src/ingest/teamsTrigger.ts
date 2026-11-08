@@ -18,42 +18,47 @@
 //
 // The state machine is pure (now is passed in) so the rules are testable
 // without timers; `scheduler` drives it with real (or fake) ones.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+type Row = Record<string, any>;
+type Db = import('../repo/types.ts').Db;
 
 function initial() {
-  return { first: null, last: null, running: false };
+  return { first: null as any, last: null as any, running: false };
 }
 
 // An event at `now` (a file changed, or a fallback poll asked for a pass).
-function onEvent(s, now) {
+function onEvent(s: any, now: any) {
   return { ...s, first: s.first ?? now, last: now };
 }
 
 // When the pending burst is due, or null when nothing is pending or a pass
 // is running (it will be asked again when that pass is done).
-function dueAt(s, { quietMs, maxWaitMs }) {
+function dueAt(s: any, { quietMs, maxWaitMs }: { quietMs?: any | null; maxWaitMs?: any | null }) {
   if (s.running || s.first == null) return null;
   return Math.min(s.last + quietMs, s.first + maxWaitMs);
 }
 
 // A timer fired at `now`: start a pass if one is due. The events up to now
 // are the pass's; anything later starts a new burst.
-function onTimer(s, now, opts) {
+function onTimer(s: any, now: any, opts: any) {
   const due = dueAt(s, opts);
   if (due == null || now < due) return { state: s, run: false };
-  return { state: { first: null, last: null, running: true }, run: true };
+  return { state: { first: null as any, last: null as any, running: true }, run: true };
 }
 
-function onDone(s) {
+function onDone(s: any) {
   return { ...s, running: false };
 }
 
 // Drives the machine. `run` is the pass (a promise); `timers` and `now` are
 // injectable for tests. `poke()` is an event; `stop()` cancels what is
 // pending and lets a running pass finish.
-function scheduler({ run, quietMs = 400, maxWaitMs = 1500, now = Date.now, timers = { setTimeout, clearTimeout } }) {
+function scheduler({ run, quietMs = 400, maxWaitMs = 1500, now = Date.now, timers = { setTimeout, clearTimeout } }: { run?: any | null; quietMs?: number; maxWaitMs?: number; now?: any; timers?: any }) {
   const opts = { quietMs, maxWaitMs };
   let s = initial();
-  let timer = null;
+  let timer: any = null;
   let stopped = false;
 
   function arm() {

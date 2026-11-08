@@ -7,6 +7,11 @@
 // lost silently — the cursor claims we already have them. Advance the cursor
 // first and a crash loses them just as quietly. One transaction, or a
 // re-fetched page next pass, which the unique constraint makes harmless.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+type Row = Record<string, any>;
+type Db = import('../repo/types.ts').Db;
 
 const repo = require('../repo');
 const { contentHash, chunkText } = require('../util/text.ts');
@@ -18,7 +23,7 @@ const log = logger('ingest');
 // The upsert (on conflict do update, so an edited message's newer body is
 // kept and re-opens it for distillation) is repo.sources.upsertItem.
 
-function normalise(item) {
+function normalise(item: any) {
   const body = (item.bodyText || '').trim();
   return {
     source: item.source,
@@ -35,8 +40,8 @@ function normalise(item) {
 
 // Returns the number of rows that were new or genuinely changed. Unchanged
 // items are not counted, so "0 new" in a poll log means exactly that.
-async function saveItems(source, items, cursor) {
-  return repo.withTx(async (r) => {
+async function saveItems(source: any, items: any, cursor: any) {
+  return repo.withTx(async (r: any) => {
     let changed = 0;
     for (const raw of items) {
       const it = normalise({ ...raw, source });
@@ -72,16 +77,16 @@ async function saveItems(source, items, cursor) {
 
 // A cursor alone, for a pass that read nothing worth saving — without the
 // per-save log line, which a five-second pass would turn into noise.
-async function saveCursor(cursor) {
-  await repo.withTx((r) => r.sources.saveCursor({ source: cursor.source, deltaToken: cursor.deltaToken ?? null, state: cursor.state ?? {} }));
+async function saveCursor(cursor: any) {
+  await repo.withTx((r: any) => r.sources.saveCursor({ source: cursor.source, deltaToken: cursor.deltaToken ?? null, state: cursor.state ?? {} }));
 }
 
-async function getCursor(source) {
+async function getCursor(source: any) {
   return repo.sources.getCursor(source);
 }
 
-async function recordError(source, message) {
-  await repo.withTx((r) => r.sources.recordCursorError(source, String(message).slice(0, 500)));
+async function recordError(source: any, message: any) {
+  await repo.withTx((r: any) => r.sources.recordCursorError(source, String(message).slice(0, 500)));
 }
 
 async function cursors() {

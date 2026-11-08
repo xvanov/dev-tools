@@ -35,7 +35,7 @@ assert.ok(d.excluded.includes('claude_session') && d.excluded.includes('jira_iss
 assert.ok(d.allowed.includes('pa_request'));
 
 // ------------------------------------------------------------------ items --
-const ctx = { sources: def, login: 'quill-dev', me: { name: 'Quill Morrow', email: 'quill@example.test' }, isAutomated: require('../src/ingest/m365').isAutomated };
+const ctx = { sources: def, login: 'quill-dev', me: { name: 'Quill Morrow', email: 'quill@example.test' }, isAutomated: require('../src/ingest/m365.ts').isAutomated };
 const ok = (item, why) => assert.strictEqual(P.judge(item, ctx).ok, true, why);
 const no = (item, why) => assert.strictEqual(P.judge(item, ctx).ok, false, why);
 

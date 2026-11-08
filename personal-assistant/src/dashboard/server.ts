@@ -62,7 +62,7 @@ async function state() {
   const { gather } = require('../brief');
   const data = await gather({ horizonDays: 7 });
   const drafts = await repo.drafts.pendingForBoard();
-  const health = require('../ingest/health');
+  const health = require('../ingest/health.ts');
   const sources = await health.sources();
   // Sources that keep failing: the board cannot see what was settled there.
   const blind = health.blind(sources);

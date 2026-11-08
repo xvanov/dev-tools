@@ -3,8 +3,13 @@
 // Shared transcript parsing for agent sessions (Claude Code and Cursor agent CLI).
 // Keep in sync with termhub/lib/claudeTranscript.js and cursorTranscript.js for
 // "which message is last" semantics.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
 
-function textOf(content) {
+type Row = Record<string, any>;
+type Db = import('../repo/types.ts').Db;
+
+function textOf(content: any) {
   if (typeof content === 'string') return content;
   if (!Array.isArray(content)) return '';
   return content
@@ -14,25 +19,25 @@ function textOf(content) {
     .trim();
 }
 
-function isHumanPrompt(entry) {
+function isHumanPrompt(entry: any) {
   if (entry.type !== 'user') return false;
   if (typeof entry.message?.content === 'string') return true;
   return Boolean(entry.promptSource);
 }
 
 /** Claude Code JSONL (`type` field). */
-function parseClaudeTranscript(text) {
-  const turns = [];
-  let sessionId = null;
-  let title = null;
-  let cwd = null;
-  let gitBranch = null;
-  let firstAt = null;
-  let lastAt = null;
+function parseClaudeTranscript(text: any) {
+  const turns: any[] = [];
+  let sessionId: any = null;
+  let title: any = null;
+  let cwd: any = null;
+  let gitBranch: any = null;
+  let firstAt: any = null;
+  let lastAt: any = null;
 
   for (const line of text.split('\n')) {
     if (!line.trim()) continue;
-    let entry;
+    let entry: any;
     try {
       entry = JSON.parse(line);
     } catch {
@@ -61,16 +66,16 @@ function parseClaudeTranscript(text) {
 }
 
 /** Cursor agent CLI JSONL (`role` field). */
-function parseCursorTranscript(text) {
-  const turns = [];
-  let sessionId = null;
-  let cwd = null;
-  let firstAt = null;
-  let lastAt = null;
+function parseCursorTranscript(text: any) {
+  const turns: any[] = [];
+  let sessionId: any = null;
+  let cwd: any = null;
+  let firstAt: any = null;
+  let lastAt: any = null;
 
   for (const line of text.split('\n')) {
     if (!line.trim()) continue;
-    let entry;
+    let entry: any;
     try {
       entry = JSON.parse(line);
     } catch {
@@ -97,20 +102,20 @@ function parseCursorTranscript(text) {
   }
 
   const title = cwd ? `Cursor session in ${require('path').basename(cwd)}` : 'Cursor agent session';
-  return { sessionId, title, cwd, gitBranch: null, firstAt, lastAt, turns, provider: 'cursor' };
+  return { sessionId, title, cwd, gitBranch: null as any, firstAt, lastAt, turns, provider: 'cursor' };
 }
 
-function toItem(parsed, file, { machine = null, source = 'claude_session' } = {}) {
+function toItem(parsed: any, file: any, { machine = null, source = 'claude_session' }: { machine?: any | null; source?: string } = {}) {
   const { headTail } = require('../util/text.ts');
   const MAX_BODY = 60_000;
   const body = parsed.turns
-    .map((t) => `${t.role === 'me' ? '>>' : '<<'} ${t.text}`)
+    .map((t: any) => `${t.role === 'me' ? '>>' : '<<'} ${t.text}`)
     .join('\n\n');
 
   const sessionId = parsed.sessionId || require('path').basename(String(file), '.jsonl');
   const provider = parsed.provider || (source === 'cursor_session' ? 'cursor' : 'claude');
   const subject = parsed.title || `${provider} session`;
-  const raw = {
+  const raw: Record<string, any> = {
     provider,
     cwd: parsed.cwd,
     gitBranch: parsed.gitBranch,

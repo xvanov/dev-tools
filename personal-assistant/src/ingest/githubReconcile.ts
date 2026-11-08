@@ -23,6 +23,11 @@
 // about a PR used to be distilled into a fresh "Review PR …" card. The older
 // ones are marked `superseded_by` the newest, as consolidation does for any
 // restatement; nothing is deleted.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+type Row = Record<string, any>;
+type Db = import('../repo/types.ts').Db;
 
 const repo = require('../repo');
 const ledger = require('../ledger');
@@ -32,8 +37,8 @@ const log = logger('github');
 
 const PR_URL = /github\.com\/([^/\s]+)\/([^/\s#?]+)\/pull\/(\d+)/;
 
-function prRef(text) {
-  const m = PR_URL.exec(String(text || ''));
+function prRef(text: any) {
+  const m = PR_URL.exec(String(text || '')) as any;
   return m ? { owner: m[1], repo: m[2], number: Number(m[3]), key: `${m[1]}/${m[2]}#${m[3]}`.toLowerCase() } : null;
 }
 
@@ -47,7 +52,7 @@ const PR_NUMBER = /\b(?:PR|pull request)\s*#?(\d+)\b/gi;
  * @param {object} c  {summary, detail, url (the GitHub item's own URL, '' otherwise), projectPath (owner/repo of its project)}
  * @returns {{ref, fromText: boolean}|null}
  */
-function refFor(c) {
+function refFor(c: any) {
   const own = prRef(c.url);
   if (own) return { ref: own, fromText: false };
   const summary = String(c.summary || '');
@@ -79,7 +84,7 @@ const LIST_NUMBER = /(?<![\w.\-])#?(\d{1,6})(?![\w\-]|\.\d)/g;
  * @param {object} c  as refFor, plus projectName (the project's short name, e.g. "erp")
  * @returns {{refs: Array, fromText: true}|null}
  */
-function refsFor(c) {
+function refsFor(c: any) {
   const single = refFor(c);
   if (single) return { refs: [single.ref], fromText: single.fromText };
   const summary = String(c.summary || '').replace(HAVE_SOMEONE, '');
@@ -103,16 +108,16 @@ function refsFor(c) {
  * and at least one merged; dropped if all closed unmerged; otherwise open.
  * @param {Array} list  [{ref, pr}] with pr as in verdict
  */
-function settledAll(list) {
-  if (!list.length || list.some(({ pr }) => !pr || (!pr.merged && pr.state !== 'closed'))) return null;
-  const nums = list.map(({ ref }) => `#${ref.number}`).join(', ');
-  const merged = list.filter(({ pr }) => pr.merged);
+function settledAll(list: any) {
+  if (!list.length || list.some(({ pr }: any) => !pr || (!pr.merged && pr.state !== 'closed'))) return null;
+  const nums = list.map(({ ref }: any) => `#${ref.number}`).join(', ');
+  const merged = list.filter(({ pr }: any) => pr.merged);
   if (!merged.length) return { status: 'dropped', reason: `PRs ${nums} closed without merging` };
-  const last = merged.map(({ pr }) => pr.mergedAt).filter(Boolean).sort().pop();
+  const last = merged.map(({ pr }: any) => pr.mergedAt).filter(Boolean).sort().pop();
   return { status: 'done', reason: `PRs ${nums} merged or closed${day(last)}` };
 }
 
-function day(iso) {
+function day(iso: any) {
   return iso ? ` ${String(iso).slice(0, 10)}` : '';
 }
 
@@ -124,17 +129,17 @@ function day(iso) {
  * @param {string} login
  * @returns {{status:'done'|'dropped', reason:string}|null}
  */
-function verdict(c, pr, myReviews, login) {
+function verdict(c: any, pr: any, myReviews: any, login: any) {
   if (!pr) return null;
   if (pr.merged) return { status: 'done', reason: `PR merged${day(pr.mergedAt)}` };
   if (pr.state === 'closed') return { status: 'dropped', reason: `PR closed without merging${day(pr.closedAt)}` };
 
   const isReview = c.action === 'review_requested' || c.action === 'team_review_requested' || REVIEW_ASK.test(c.summary || '');
-  const reviews = (myReviews || []).map((r) => (typeof r === 'string' ? { state: r, submittedAt: null } : r));
+  const reviews = (myReviews || []).map((r: any) => (typeof r === 'string' ? { state: r, submittedAt: null as any } : r));
   // A review submitted after the ask was made answers it, however it was asked.
   const askedAt = c.askedAt ? new Date(c.askedAt).getTime() : null;
   const answering = reviews.filter(
-    (r) => r.state !== 'PENDING' && (askedAt == null || !r.submittedAt || new Date(r.submittedAt).getTime() > askedAt)
+    (r: any) => r.state !== 'PENDING' && (askedAt == null || !r.submittedAt || new Date(r.submittedAt).getTime() > askedAt)
   );
   if (c.fromText) {
     if (!isReview || pr.authorLogin === login || !answering.length) return null;
@@ -154,15 +159,15 @@ function verdict(c, pr, myReviews, login) {
  * @returns {Array} [{id, supersededBy}] — older review asks point at the newest
  *   (a dispatched one is kept in preference, and is never superseded)
  */
-function duplicatePlan(list) {
-  const groups = new Map();
+function duplicatePlan(list: any) {
+  const groups = new Map<any, any>();
   for (const c of list) {
     if (c.supersededBy != null || !c.key || !PR_ACTION.test(c.summary || '') || !REVIEW_ASK.test(c.summary || '')) continue;
     const k = `${c.direction || ''} ${c.key}`;
     if (!groups.has(k)) groups.set(k, []);
     groups.get(k).push(c);
   }
-  const out = [];
+  const out: any[] = [];
   for (const group of groups.values()) {
     if (group.length < 2) continue;
     const sorted = [...group].sort((a, b) => Number(a.id) - Number(b.id));
@@ -174,7 +179,7 @@ function duplicatePlan(list) {
 
 async function openWithRefs() {
   const list = await repo.commitments.withPrRefs();
-  const out = [];
+  const out: any[] = [];
   for (const c of list) {
     const r = refsFor({ summary: c.summary, detail: c.detail, url: c.url, projectPath: c.project_path, projectName: c.project_name });
     if (r) out.push({ ...c, askedAt: c.asked_at, refs: r.refs, ref: r.refs.length === 1 ? r.refs[0] : null, fromText: r.fromText });
@@ -182,22 +187,22 @@ async function openWithRefs() {
   return out;
 }
 
-async function lookup(api, ref, login) {
+async function lookup(api: any, ref: any, login: any) {
   const p = await api(`/repos/${ref.owner}/${ref.repo}/pulls/${ref.number}`);
   const pr = {
     state: p.state,
     merged: Boolean(p.merged || p.merged_at),
     mergedAt: p.merged_at || null,
     closedAt: p.closed_at || null,
-    requestedLogins: (p.requested_reviewers || []).map((u) => u.login),
+    requestedLogins: (p.requested_reviewers || []).map((u: any) => u.login),
     authorLogin: p.user?.login || null,
   };
-  let mine = [];
+  let mine: any[] = [];
   if (!pr.merged && pr.state === 'open') {
     const reviews = await api(`/repos/${ref.owner}/${ref.repo}/pulls/${ref.number}/reviews?per_page=100`);
     mine = reviews
-      .filter((r) => r.user?.login === login)
-      .map((r) => ({ state: r.state, submittedAt: r.submitted_at || null }));
+      .filter((r: any) => r.user?.login === login)
+      .map((r: any) => ({ state: r.state, submittedAt: r.submitted_at || null }));
   }
   return { pr, mine };
 }
@@ -209,15 +214,15 @@ async function lookup(api, ref, login) {
  * Dispatched ones are never closed here — a run owns them.
  * @returns {{checked, closes: [{id, status, reason, pr}], duplicates: [{id, supersededBy, pr}]}}
  */
-async function plan({ api, login }) {
+async function plan({ api, login }: { api?: any | null; login?: any | null }) {
   const open = await openWithRefs();
   // One lookup per PR, however many commitments name it.
-  const looks = new Map();
-  const look = (ref) => {
+  const looks = new Map<any, any>();
+  const look = (ref: any) => {
     if (!looks.has(ref.key)) {
       looks.set(
         ref.key,
-        lookup(api, ref, login).catch((err) => {
+        lookup(api, ref, login).catch((err: any) => {
           log.debug('reconcile: PR lookup failed', { pr: ref.key, message: err.message });
           return null;
         })
@@ -226,17 +231,17 @@ async function plan({ api, login }) {
     return looks.get(ref.key);
   };
 
-  const closes = [];
-  const settled = new Set();
+  const closes: any[] = [];
+  const settled = new Set<any>();
   for (const c of open) {
     const looked = await Promise.all(c.refs.map(look));
     if (c.status !== 'open' || looked.some((l) => !l)) continue;
     const v =
       c.refs.length === 1
         ? verdict(c, looked[0].pr, looked[0].mine, login)
-        : settledAll(c.refs.map((ref, i) => ({ ref, pr: looked[i].pr })));
+        : settledAll(c.refs.map((ref: any, i: any) => ({ ref, pr: looked[i].pr })));
     if (!v) continue;
-    closes.push({ id: c.id, status: v.status, reason: v.reason, pr: c.refs.map((r) => r.key).join(' ') });
+    closes.push({ id: c.id, status: v.status, reason: v.reason, pr: c.refs.map((r: any) => r.key).join(' ') });
     settled.add(String(c.id));
   }
 
@@ -249,7 +254,7 @@ async function plan({ api, login }) {
   return { checked: looks.size, closes, duplicates };
 }
 
-async function reconcile({ api, login }) {
+async function reconcile({ api, login }: { api?: any | null; login?: any | null }) {
   const { checked, closes, duplicates } = await plan({ api, login });
   let closed = 0;
   for (const c of closes) {

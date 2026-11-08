@@ -4,7 +4,7 @@
 // trusted: malformed keys are dropped, and the item shape is pinned.
 
 const assert = require('assert');
-const { buildJql, buildPrompt, parseReply, issueItem } = require('../src/ingest/jira');
+const { buildJql, buildPrompt, parseReply, issueItem } = require('../src/ingest/jira.ts');
 
 {
   const jql = buildJql('2026-10-01T08:30:59.000Z');
@@ -46,7 +46,7 @@ assert.throws(() => parseReply('{"nope":1}'), /no issues array/);
 // objects; restIssue flattens them to the relay's shape so issueItem sees one
 // shape from either route. Invented data throughout.
 
-const { restIssue, parseRest, adfText, normaliseSite, searchRest } = require('../src/ingest/jira');
+const { restIssue, parseRest, adfText, normaliseSite, searchRest } = require('../src/ingest/jira.ts');
 
 const adf = (...paras) => ({
   type: 'doc',

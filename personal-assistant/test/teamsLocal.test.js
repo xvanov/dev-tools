@@ -6,8 +6,8 @@
 // names and ids are invented.
 
 const assert = require('assert');
-const local = require('../src/ingest/teamsLocal');
-const chat = require('../src/ingest/graphChat');
+const local = require('../src/ingest/teamsLocal.ts');
+const chat = require('../src/ingest/graphChat.ts');
 const { contentHash } = require('../src/util/text.ts');
 
 const ME_OID = '11111111-2222-4333-8444-555555555555';

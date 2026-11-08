@@ -39,19 +39,24 @@
 //
 // Privacy: message bodies go to the store and nowhere else. Logs carry counts
 // and timings; the reader never writes to Teams' files or keeps one open.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+type Row = Record<string, any>;
+type Db = import('../repo/types.ts').Db;
 
 const fs = require('fs');
 const path = require('path');
 
 const { config } = require('../config.ts');
 const repo = require('../repo');
-const { saveItems, saveCursor, getCursor, recordError } = require('./store');
+const { saveItems, saveCursor, getCursor, recordError } = require('./store.ts');
 const { htmlToText } = require('../util/text.ts');
-const { namesMe } = require('./graphChat');
+const { namesMe } = require('./graphChat.ts');
 const { logger } = require('../log.ts');
 const platform = require('../platform');
-const trigger = require('./teamsTrigger');
-const readers = require('./teamsReader');
+const trigger = require('./teamsTrigger.ts');
+const readers = require('./teamsReader.ts');
 
 const log = logger('teams-cache');
 
@@ -71,12 +76,12 @@ const PERSON_TYPES = new Set(['Text', 'RichText/Html', 'RichText']);
 
 // ---------------------------------------------------------------- pure --
 
-function oidOf(mri) {
-  const m = String(mri || '').match(/^8:orgid:([0-9a-f-]{36})$/i);
+function oidOf(mri: any) {
+  const m = String(mri || '').match(/^8:orgid:([0-9a-f-]{36})$/i) as any;
   return m ? m[1].toLowerCase() : null;
 }
 
-function isSystem(msg) {
+function isSystem(msg: any) {
   if (!msg || !msg.id || !msg.conversationId) return true;
   if (msg.deleted) return true;
   if (!PERSON_TYPES.has(msg.messageType)) return true;
@@ -85,7 +90,7 @@ function isSystem(msg) {
 }
 
 // The connector's chatType vocabulary: oneOnOne, group, meeting, channel.
-function chatTypeOf(conversationId, conv, known) {
+function chatTypeOf(conversationId: any, conv: any, known: any) {
   const id = String(conversationId || '');
   if (/@thread\.tacv2$/i.test(id)) return 'channel';
   if (known) return known;
@@ -96,18 +101,18 @@ function chatTypeOf(conversationId, conv, known) {
   return 'group';
 }
 
-function bodyOf(msg) {
+function bodyOf(msg: any) {
   return msg.messageType === 'Text' ? String(msg.content || '').trim() : htmlToText(msg.content);
 }
 
-function mentionsMe(msg, text, me) {
+function mentionsMe(msg: any, text: any, me: any) {
   const mine = me?.id ? `8:orgid:${String(me.id).toLowerCase()}` : null;
-  const mentioned = (msg.mentions || []).map((m) => String(m).toLowerCase());
+  const mentioned = (msg.mentions || []).map((m: any) => String(m).toLowerCase());
   return Boolean(mine && mentioned.includes(mine)) || namesMe(text, me);
 }
 
 // Teams deep links: open the message itself, in a chat or a channel thread.
-function webUrlFor(msg, chatType, conv) {
+function webUrlFor(msg: any, chatType: any, conv: any) {
   const base = `https://teams.microsoft.com/l/message/${encodeURIComponent(msg.conversationId)}/${msg.id}`;
   if (chatType !== 'channel') return `${base}?context=${encodeURIComponent('{"contextType":"chat"}')}`;
   const q = new URLSearchParams();
@@ -116,7 +121,7 @@ function webUrlFor(msg, chatType, conv) {
   return `${base}?${q}`;
 }
 
-function iso(ms) {
+function iso(ms: any) {
   const n = Number(ms);
   return Number.isFinite(n) && n > 0 ? new Date(n).toISOString() : null;
 }
@@ -128,7 +133,7 @@ function iso(ms) {
 //   thread      the newest graph_chat row of this chat: {subject, raw}
 //   authorEmail the sender's address, when the store already knows it
 //   policy      config.m365.teamsChannels
-function toItem(msg, ctx = {}) {
+function toItem(msg: any, ctx: any = {}): any {
   if (isSystem(msg)) return null;
   const { me = null, conv = null, thread = null, authorEmail = null, policy = 'mentions' } = ctx;
   const known = thread?.raw?.chatType || null;
@@ -187,7 +192,7 @@ function toItem(msg, ctx = {}) {
 //    the row's author and subject kept so nothing else churns;
 //  - a row this reader wrote: rewritten from the cache, keeping an address
 //    the connector upgraded it to, so a re-read never downgrades it.
-function planWrite(item, existing) {
+function planWrite(item: any, existing: any) {
   if (!item) return null;
   if (!existing) return item;
   const fromCache = existing.raw?.via === 'teams-cache';
@@ -209,15 +214,15 @@ function planWrite(item, existing) {
 
 // A new message worth distilling now rather than at the next tick: someone
 // else's, in a chat, or naming you in a channel.
-function isFresh(item) {
+function isFresh(item: any) {
   return Boolean(item) && item.raw.via === 'teams-cache' && !item.mine && (item.raw.chatType !== 'channel' || item.raw.mentionsMe);
 }
 
-function parseOutput(stdout) {
-  const out = { messages: [], convs: new Map(), status: null };
+function parseOutput(stdout: any) {
+  const out = { messages: [] as any[], convs: new Map<any, any>(), status: null as any };
   for (const line of String(stdout || '').split(/\r?\n/)) {
     if (!line.trim()) continue;
-    let rec;
+    let rec: any;
     try {
       rec = JSON.parse(line);
     } catch {
@@ -238,7 +243,7 @@ function paths() {
 }
 
 // Newest mtime and the active log's size: changes whenever Teams writes.
-function signature(dir) {
+function signature(dir: any) {
   let newest = 0;
   let logs = '';
   for (const name of fs.readdirSync(dir)) {
@@ -254,8 +259,8 @@ function signature(dir) {
 // One-shot by default (`pa sync`, which must exit when done); `watch` swaps
 // in the resident reader for the worker's lifetime.
 const readerOpts = () => ({ python: config.teamsCache.python, script: SCRIPT, timeoutMs: config.teamsCache.timeoutMs });
-let reader = null;
-function runReader(args) {
+let reader: any = null;
+function runReader(args: any) {
   if (!reader) reader = readers.oneShot(readerOpts());
   return reader.request(args);
 }
@@ -263,55 +268,55 @@ function runReader(args) {
 // Whether a file-change notification names something a pass would read: the
 // log and tables. LOG, LOCK, MANIFEST and CURRENT change alongside them and
 // add nothing. No name (allowed by the API) counts.
-function relevantChange(filename) {
+function relevantChange(filename: any) {
   return !filename || /\.(log|ldb)$/i.test(String(filename));
 }
 
 // Sender addresses the store already knows: by AAD id (person_identity), and
 // by display name within the same chat (the connector's rows carry both).
-async function knownAuthors(messages) {
-  const oids = [...new Set(messages.map((m) => oidOf(m.creator)).filter(Boolean))];
-  const byOid = new Map();
+async function knownAuthors(messages: any) {
+  const oids = [...new Set(messages.map((m: any) => oidOf(m.creator)).filter(Boolean))];
+  const byOid = new Map<any, any>();
   if (oids.length) {
     for (const r of await repo.people.emailsByAadOid(oids)) {
       if (r.email) byOid.set(r.oid, r.email.toLowerCase());
     }
   }
-  const threads = [...new Set(messages.map((m) => m.conversationId))];
-  const byName = new Map();
+  const threads = [...new Set(messages.map((m: any) => m.conversationId))];
+  const byName = new Map<any, any>();
   for (const r of await repo.sources.chatSenderEmails(threads)) {
     byName.set(`${r.chat}\n${r.name}`, r.email);
   }
-  return (m) => byOid.get(oidOf(m.creator)) || byName.get(`${m.conversationId}\n${m.fromName}`) || null;
+  return (m: any) => byOid.get(oidOf(m.creator)) || byName.get(`${m.conversationId}\n${m.fromName}`) || null;
 }
 
 // The newest connector row of each chat: its subject and members are what
 // the cache does not carry.
-async function threadInfo(conversationIds) {
-  const map = new Map();
+async function threadInfo(conversationIds: any) {
+  const map = new Map<any, any>();
   for (const r of await repo.sources.chatHeads(conversationIds)) {
     map.set(r.chat, { subject: r.subject, raw: r.raw || {} });
   }
   return map;
 }
 
-async function existingRows(externalIds) {
-  const map = new Map();
+async function existingRows(externalIds: any) {
+  const map = new Map<any, any>();
   for (const r of await repo.sources.chatMessagesByExternalId(externalIds)) {
     map.set(r.external_id, r);
   }
   return map;
 }
 
-let lastSignature = null;
+let lastSignature: any = null;
 let lastPersist = 0;
-let memo = null; // cursor state between persists
+let memo: any = null; // cursor state between persists
 
 // One pass. Returns { changed, fresh, skipped? }. Never throws for a missing
 // Teams or venv — those are states, reported by `pa doctor`. `force` reads
 // without comparing the directory's signature first: a change notification
 // already says something moved, so the readdir and stats would be waste.
-async function pass({ force = false } = {}) {
+async function pass({ force = false }: { force?: boolean } = {}) {
   if (!config.teamsCache.enabled) return { changed: 0, fresh: 0, skipped: 'off' };
   const { leveldb, blobs } = paths();
   if (!fs.existsSync(leveldb)) return { changed: 0, fresh: 0, skipped: 'no cache' };
@@ -353,7 +358,7 @@ async function pass({ force = false } = {}) {
     const me = cursor?.state?.me || null;
     const authorOf = await knownAuthors(messages);
     const threads = await threadInfo([...new Set(messages.map((m) => m.conversationId))]);
-    const items = messages
+    const items: any[] = messages
       .map((m) => {
         const item = toItem(m, {
           me,
@@ -371,14 +376,14 @@ async function pass({ force = false } = {}) {
     fresh = writes.filter((w) => !existing.has(w.externalId) && isFresh(w)).length;
     kept = writes.length;
     if (writes.length) {
-      changed = await saveItems('graph_chat', writes.map(({ mine, ...w }) => w), { source: CURSOR, deltaToken: null, state });
+      changed = await saveItems('graph_chat', writes.map(({ mine, ...w }) => w), { source: CURSOR, deltaToken: null as any, state });
       lastPersist = now;
     }
     const lags = writes.filter((w) => !existing.has(w.externalId)).map((w) => Math.round((now - Date.parse(w.occurredAt)) / 100) / 10);
     log.info('read', { messages: messages.length, kept, changed, fresh, lagSeconds: lags, ms: status.ms, bytes: status.bytes });
   }
   if (!kept && (now - lastPersist > CURSOR_PERSIST_MS || first)) {
-    await saveCursor({ source: CURSOR, deltaToken: null, state });
+    await saveCursor({ source: CURSOR, deltaToken: null as any, state });
     lastPersist = now;
   }
   if (status.ldbSkipped) log.debug('tables skipped after a compaction', { skipped: status.ldbSkipped });
@@ -389,13 +394,13 @@ async function pass({ force = false } = {}) {
 
 // The worker's entry point. A failure is recorded on the cursor for `pa
 // doctor` and logged once per distinct message, not every five seconds.
-let lastError = null;
-async function tick(opts) {
+let lastError: any = null;
+async function tick(opts: any) {
   try {
     const r = await pass(opts);
     lastError = null;
     return r;
-  } catch (err) {
+  } catch (err: any) {
     if (err.message !== lastError) log.warn('pass failed', { message: err.message });
     lastError = err.message;
     await recordError(CURSOR, err.message).catch(() => {});
@@ -406,20 +411,20 @@ async function tick(opts) {
 // The worker's driver: change notifications, debounced, plus the fallback
 // poll (see the top of this file). `onResult` gets every pass's result.
 // Returns { stop, stats }. Injectable fs.watch and timers for tests.
-function watch({ onResult = () => {}, fsWatch = fs.watch, timers = { setTimeout, clearTimeout }, now = Date.now } = {}) {
+function watch({ onResult = () => {}, fsWatch = fs.watch, timers = { setTimeout, clearTimeout }, now = Date.now }: { onResult?: any; fsWatch?: any; timers?: any; now?: any } = {}) {
   const tc = config.teamsCache;
   if (tc.resident) {
     if (reader) reader.close();
     reader = readers.resident(readerOpts());
   }
-  let watcher = null;
+  let watcher: any = null;
   let stopped = false;
-  let fallbackTimer = null;
+  let fallbackTimer: any = null;
   let wantForce = false; // a notification asked for this pass
   let heard = 0; // relevant notifications, ever
   let heardAtCheck = 0; // ... as of the last fallback check
   let silent = false; // no notification between the last two fallback checks
-  const stats = { notifications: 0, passes: 0, fallbackChecks: 0, rearms: 0 };
+  const stats: Record<string, any> = { notifications: 0, passes: 0, fallbackChecks: 0, rearms: 0 };
 
   const sched = trigger.scheduler({
     quietMs: tc.debounceMs,
@@ -446,7 +451,7 @@ function watch({ onResult = () => {}, fsWatch = fs.watch, timers = { setTimeout,
     },
   });
 
-  function drop(w) {
+  function drop(w: any) {
     if (watcher === w) watcher = null;
     try {
       w.close();
@@ -458,30 +463,30 @@ function watch({ onResult = () => {}, fsWatch = fs.watch, timers = { setTimeout,
   function arm() {
     if (watcher || stopped || !tc.watch) return;
     const { leveldb } = paths();
-    let w;
+    let w: any;
     try {
-      w = fsWatch(leveldb, { persistent: false }, (_type, filename) => {
+      w = fsWatch(leveldb, { persistent: false }, (_type: any, filename: any) => {
         if (stopped || !relevantChange(filename)) return;
         stats.notifications++;
         heard++;
         wantForce = true;
         sched.poke();
       });
-    } catch (err) {
+    } catch (err: any) {
       // No directory (Teams not installed or mid-update): the fast poll
       // runs and tries again.
       log.debug('watch not armed', { code: err.code || err.message });
       return;
     }
     stats.rearms++;
-    const lost = (why) => {
+    const lost = (why: any) => {
       if (watcher !== w) return;
       log.info('watcher lost — polling until re-armed', { why });
       drop(w);
       sched.poke(); // whatever it missed
       scheduleFallback();
     };
-    w.on('error', (err) => lost(err.code || err.message));
+    w.on('error', (err: any) => lost(err.code || err.message));
     w.on('close', () => lost('closed'));
     watcher = w;
   }
@@ -551,7 +556,7 @@ async function status() {
   const st = cursor?.state || {};
   if (cursor?.last_error) return { ok: false, detail: `last pass failed: ${String(cursor.last_error).slice(0, 80)}` };
   if (!st.lastReadAt) return { ok: false, detail: 'never read — is the worker running?' };
-  const ago = (t) => `${Math.max(0, Math.round((Date.now() - new Date(t).getTime()) / 1000))}s ago`;
+  const ago = (t: any) => `${Math.max(0, Math.round((Date.now() - new Date(t).getTime()) / 1000))}s ago`;
   return {
     ok: Date.now() - Date.parse(st.lastReadAt) < 10 * 60_000,
     detail: `last message ${st.newestArrival ? ago(Number(st.newestArrival)) : 'none yet'} · last read ${ago(st.lastReadAt)}${experimental}`,

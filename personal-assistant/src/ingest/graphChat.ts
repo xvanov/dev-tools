@@ -16,10 +16,15 @@
 // The search returns a ~250-character summary. Messages cut short ("…") are
 // read in full through the chat URI form, which works for channel posts too;
 // the channel URI form returns NOT_FOUND for the same message.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+type Row = Record<string, any>;
+type Db = import('../repo/types.ts').Db;
 
 const { config } = require('../config.ts');
-const m365 = require('./m365');
-const { saveItems, getCursor } = require('./store');
+const m365 = require('./m365.ts');
+const { saveItems, getCursor } = require('./store.ts');
 const repo = require('../repo');
 const identity = require('../distill/identity.ts');
 const { htmlToText, contentHash } = require('../util/text.ts');
@@ -30,32 +35,32 @@ const log = logger('teams');
 const FIRST_RUN_DAYS = 3;
 
 // teams:///teams/{teamId}/channels/{channelId}/messages → ids, decoded.
-function channelIds(channelUri) {
-  const m = String(channelUri || '').match(/^teams:\/\/\/teams\/([^/]+)\/channels\/([^/]+)\/messages/);
+function channelIds(channelUri: any) {
+  const m = String(channelUri || '').match(/^teams:\/\/\/teams\/([^/]+)\/channels\/([^/]+)\/messages/) as any;
   return m ? { teamId: decodeURIComponent(m[1]), channelId: decodeURIComponent(m[2]) } : null;
 }
 
-function isTruncated(summary) {
+function isTruncated(summary: any) {
   return /(\.\.\.|…)\s*$/.test(String(summary || ''));
 }
 
-function namesMe(text, me) {
+function namesMe(text: any, me: any) {
   if (!me) return false;
   const t = String(text || '').toLowerCase();
-  const first = String(me.displayName || '').split(/\s+/)[0].toLowerCase();
+  const first = String(me.displayName || '').split(/\s+/)[0]!.toLowerCase();
   return (first.length > 2 && new RegExp(`\\b${first.replace(/[^a-z0-9]/g, '')}\\b`).test(t)) ||
-    t.includes(String(me.mail || '').split('@')[0]);
+    t.includes(String(me.mail || '').split('@')[0]!);
 }
 
-function readUri(hit) {
+function readUri(hit: any) {
   return hit.chatUri ? `${hit.chatUri}/${hit.id}` : hit.uri;
 }
 
 // A reply that quotes an earlier message carries the quote as a
 // `messageReference` attachment, not in its body. Without it "no, I have a full
 // plan" answers nothing anyone can see.
-function quotedOf(full) {
-  const out = [];
+function quotedOf(full: any) {
+  const out: any[] = [];
   for (const a of Array.isArray(full?.attachments) ? full.attachments : []) {
     if (a?.contentType !== 'messageReference' || !a.content) continue;
     try {
@@ -71,14 +76,14 @@ function quotedOf(full) {
 
 // A link's target, kept beside its text: "the pr <branch name>" is no use
 // without the URL it pointed at.
-function withHrefs(html) {
+function withHrefs(html: any) {
   return String(html).replace(/<a\b[^>]*\bhref="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi, (m, href, label) => {
     const text = label.replace(/<[^>]+>/g, '').trim();
     return text && text !== href ? `${label} (${href})` : href;
   });
 }
 
-function bodyOf(hit, full) {
+function bodyOf(hit: any, full: any) {
   const body = full?.body;
   const quoted = quotedOf(full);
   const text = body?.content ? (body.contentType === 'html' ? htmlToText(withHrefs(body.content)) : body.content) : hit.summary || '';
@@ -91,10 +96,10 @@ function bodyOf(hit, full) {
 const REPAIR_TRIES = 3;
 // Only a person's message in a real chat (not the `48:` system threads, not an
 // id the cache could not read): the relay balks at a batch of junk URIs.
-async function repairEmpty({ limit = 5 } = {}) {
+async function repairEmpty({ limit = 5 }: { limit?: number } = {}) {
   const empty = await repo.sources.emptyChatMessages(limit, REPAIR_TRIES);
   if (!empty.length) return 0;
-  const uriOf = (r) => {
+  const uriOf = (r: any) => {
     const id = r.raw?.messageId || String(r.external_id).split('/').pop();
     return r.raw?.teamId && r.raw?.channelId
       ? `teams:///teams/${r.raw.teamId}/channels/${r.raw.channelId}/messages/${id}`
@@ -115,7 +120,7 @@ async function repairEmpty({ limit = 5 } = {}) {
   return fixed;
 }
 
-function toItem(hit, full, chats, me) {
+function toItem(hit: any, full: any, chats: any, me: any) {
   const channel = channelIds(hit.channelUri);
   const chat = chats.get(hit.chatId) || null;
   const fromEmail = hit.from?.email ? String(hit.from.email).toLowerCase() : null;
@@ -136,7 +141,7 @@ function toItem(hit, full, chats, me) {
       fromName: hit.from?.displayName || null,
       webUrl: hit.webUrl || full?.webUrl || null,
       importance: hit.importance || null,
-      mentionsMe: mentions.some((m) => m.mentioned?.user?.id === me?.id) || namesMe(text, me),
+      mentionsMe: mentions.some((m: any) => m.mentioned?.user?.id === me?.id) || namesMe(text, me),
       teamId: channel?.teamId || null,
       channelId: channel?.channelId || null,
       messageId: hit.id,
@@ -156,7 +161,7 @@ async function recentChats() {
     timeoutMs: 120_000,
     purpose: 'connector',
   });
-  const map = new Map();
+  const map = new Map<any, any>();
   for (const call of calls) {
     for (const c of call.results) {
       if (!c || !c.id) continue;
@@ -164,8 +169,8 @@ async function recentChats() {
       map.set(c.id, {
         chatType: c.chatType || c.type || null,
         topic: c.topic || null,
-        members: members.map((m) => m.displayName || m.email).filter(Boolean).join(', ') || null,
-        memberEmails: members.map((m) => String(m.email || '').toLowerCase()).filter((e) => e.includes('@')),
+        members: members.map((m: any) => m.displayName || m.email).filter(Boolean).join(', ') || null,
+        memberEmails: members.map((m: any) => String(m.email || '').toLowerCase()).filter((e: any) => e.includes('@')),
       });
     }
   }
@@ -178,7 +183,7 @@ async function recentChats() {
 // sender address where only an AAD id was known, a chat's real topic where
 // the cache had none — and otherwise leaves the content hash alone, so the
 // item is not distilled twice.
-function mergeCached(item, cached) {
+function mergeCached(item: any, cached: any) {
   if (!cached) return item;
   const author = String(cached.author_identity || '');
   const upgradeAuthor = !author.includes('@') && String(item.authorIdentity || '').includes('@');
@@ -202,26 +207,26 @@ function mergeCached(item, cached) {
   };
 }
 
-async function cachedRows(externalIds) {
-  if (!externalIds.length) return new Map();
+async function cachedRows(externalIds: any) {
+  if (!externalIds.length) return new Map<any, any>();
   const found = await repo.sources.cachedChatMessages(externalIds);
-  return new Map(found.map((r) => [r.external_id, r]));
+  return new Map<any, any>(found.map((r: any) => [r.external_id, r]));
 }
 
 // The cache knows a sender only by AAD id; once the connector names the
 // address, remember the pair so the next cached message has it at once.
-async function learnSenders(pairs) {
+async function learnSenders(pairs: any) {
   for (const { oid, email } of pairs) {
     try {
       const personId = await identity.resolve(email);
       if (personId) await identity.addIdentity(personId, 'aad_oid', oid);
-    } catch (err) {
+    } catch (err: any) {
       log.debug('sender not learned', { message: err.message });
     }
   }
 }
 
-function keep(hit, me) {
+function keep(hit: any, me: any) {
   const from = String(hit.from?.email || '').toLowerCase();
   if (m365.isAutomated(from)) return false;
   if (!hit.channelUri) return true;
@@ -242,18 +247,18 @@ async function run() {
     { query: '*', afterDateTime: since, limit: 25 },
     { dateKey: 'createdDateTime' }
   );
-  const wanted = hits.filter((h) => keep(h, me));
+  const wanted = hits.filter((h: any) => keep(h, me));
 
-  const chats = wanted.some((h) => !h.channelUri) ? await recentChats().catch(() => new Map()) : new Map();
-  const cached = await cachedRows(wanted.map((h) => `${h.chatId}/${h.id}`));
+  const chats = wanted.some((h: any) => !h.channelUri) ? await recentChats().catch(() => new Map<any, any>()) : new Map<any, any>();
+  const cached = await cachedRows(wanted.map((h: any) => `${h.chatId}/${h.id}`));
   const toRead = wanted
-    .filter((h) => isTruncated(h.summary) && !cached.get(`${h.chatId}/${h.id}`)?.body_text)
+    .filter((h: any) => isTruncated(h.summary) && !cached.get(`${h.chatId}/${h.id}`)?.body_text)
     .slice(0, m365.MAX_READS)
     .map(readUri);
   const full = await m365.readAll(toRead);
 
-  const learned = [];
-  const items = wanted.map((h) => {
+  const learned: any[] = [];
+  const items = wanted.map((h: any) => {
     const prior = cached.get(`${h.chatId}/${h.id}`) || null;
     const item = mergeCached(toItem(h, full.get(readUri(h)), chats, me), prior);
     if (prior?.raw?.fromId && !String(prior.author_identity || '').includes('@') && item.authorIdentity?.includes('@')) {
@@ -263,12 +268,12 @@ async function run() {
   });
   const changed = await saveItems('graph_chat', items, {
     source: 'graph_chat',
-    deltaToken: null,
+    deltaToken: null as any,
     state: { since: m365.nextSince(passStarted) },
   });
   await learnSenders(learned);
   log.info('relayed', { found: hits.length, kept: wanted.length, read: full.size, fromCache: cached.size, changed });
-  await repairEmpty().catch((err) => log.warn('repair failed', { message: String(err.message).slice(0, 160) }));
+  await repairEmpty().catch((err: any) => log.warn('repair failed', { message: String(err.message).slice(0, 160) }));
   return changed;
 }
 

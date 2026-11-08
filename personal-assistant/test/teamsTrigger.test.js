@@ -10,11 +10,11 @@ const assert = require('assert');
 const { EventEmitter } = require('events');
 const { PassThrough } = require('stream');
 
-const t = require('../src/ingest/teamsTrigger');
+const t = require('../src/ingest/teamsTrigger.ts');
 const { passes } = require('../src/util/exclusive.ts');
-const readers = require('../src/ingest/teamsReader');
+const readers = require('../src/ingest/teamsReader.ts');
 const { config } = require('../src/config.ts');
-const local = require('../src/ingest/teamsLocal');
+const local = require('../src/ingest/teamsLocal.ts');
 
 // A virtual clock: setTimeout/clearTimeout that only advance on `advance`.
 function clock() {

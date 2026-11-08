@@ -5,7 +5,7 @@
 
 const assert = require('assert');
 const { gate, involvement, mentions } = require('../src/distill/githubGate.ts');
-const { notificationItem, searchItem } = require('../src/ingest/github');
+const { notificationItem, searchItem } = require('../src/ingest/github.ts');
 
 const ME = 'alex-dev';
 const by = (summary, direction = 'owed_by_me') => ({ direction, summary, detail: null, counterparty: null });

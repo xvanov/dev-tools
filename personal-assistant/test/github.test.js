@@ -4,7 +4,7 @@
 // filter that keeps other people's cards out of your list.
 
 const assert = require('assert');
-const { notificationItem, searchItem, projectItems, htmlUrl } = require('../src/ingest/github');
+const { notificationItem, searchItem, projectItems, htmlUrl } = require('../src/ingest/github.ts');
 
 assert.strictEqual(
   htmlUrl('https://api.github.com/repos/innergy-dev/platform/pulls/100'),
@@ -73,7 +73,7 @@ assert.strictEqual(
 }
 
 {
-  const { parseBoards, fieldMap } = require('../src/ingest/github');
+  const { parseBoards, fieldMap } = require('../src/ingest/github.ts');
   assert.deepStrictEqual(parseBoards('innergy-dev/7:Pod=Xi'), [{ org: 'innergy-dev', number: 7, field: 'Pod', value: 'Xi' }]);
   assert.strictEqual(parseBoards('').length, 0);
   assert.strictEqual(parseBoards('a/1:F=x, b/2:G=y').length, 2);

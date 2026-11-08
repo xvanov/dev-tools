@@ -152,7 +152,7 @@ const item = (key, text, extra = {}) => ({ key, text, ...extra });
 
 async function ghSearch(q) {
   if (!config.github.enabled) return [];
-  const { api } = require('../ingest/github');
+  const { api } = require('../ingest/github.ts');
   try {
     const r = await api(`/search/issues?per_page=20&q=${encodeURIComponent(q)}`);
     return r.items || [];

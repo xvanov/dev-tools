@@ -1,10 +1,16 @@
 'use strict';
 
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+type Row = Record<string, any>;
+type Db = import('../repo/types.ts').Db;
+
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { saveItems } = require('./store');
-const { parseCursorTranscript, toItem } = require('./agentTranscript');
+const { saveItems } = require('./store.ts');
+const { parseCursorTranscript, toItem } = require('./agentTranscript.ts');
 const { logger } = require('../log.ts');
 
 const log = logger('cursor-sessions');
@@ -13,10 +19,10 @@ const MAX_SESSIONS_PER_PASS = 40;
 
 function transcriptFiles() {
   if (!fs.existsSync(PROJECTS_DIR)) return [];
-  const out = [];
+  const out: any[] = [];
   for (const project of fs.readdirSync(PROJECTS_DIR)) {
     const agentRoot = path.join(PROJECTS_DIR, project, 'agent-transcripts');
-    let sessions;
+    let sessions: any;
     try {
       sessions = fs.readdirSync(agentRoot, { withFileTypes: true });
     } catch {
@@ -41,9 +47,9 @@ async function run() {
     log.debug('no cursor transcripts found', { dir: PROJECTS_DIR });
     return 0;
   }
-  const items = [];
+  const items: any[] = [];
   for (const f of files) {
-    let text;
+    let text: any;
     try {
       text = fs.readFileSync(f.path, 'utf8');
     } catch {
@@ -55,7 +61,7 @@ async function run() {
   }
   return saveItems('cursor_session', items, {
     source: 'cursor_session',
-    deltaToken: null,
+    deltaToken: null as any,
     state: { scanned: files.length },
   });
 }

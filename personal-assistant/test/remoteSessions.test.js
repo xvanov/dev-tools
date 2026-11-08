@@ -13,7 +13,7 @@ const assert = require('assert');
 const path = require('path');
 
 // ---- fake store, installed before the module under test loads it ----------
-const storePath = require.resolve('../src/ingest/store');
+const storePath = require.resolve('../src/ingest/store.ts');
 const cursors = new Map();
 const saved = [];
 require.cache[storePath] = {
@@ -32,8 +32,8 @@ require.cache[storePath] = {
   },
 };
 
-const remote = require('../src/ingest/remoteSessions');
-const local = require('../src/ingest/claudeSessions');
+const remote = require('../src/ingest/remoteSessions.ts');
+const local = require('../src/ingest/claudeSessions.ts');
 
 const line = (o) => JSON.stringify(o);
 const transcript = [

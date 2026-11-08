@@ -15,12 +15,17 @@
 // trusted, and why the poll is slow. The connector also times out often
 // enough that when it fails and there is no token, the pass opens a secret
 // request for one (requestCredentials) — the dashboard asks the human.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+type Row = Record<string, any>;
+type Db = import('../repo/types.ts').Db;
 
 const path = require('path');
 const { config, secret, secretSource, parseEnvFile } = require('../config.ts');
 const repo = require('../repo');
 const llm = require('../llm');
-const { saveItems, getCursor } = require('./store');
+const { saveItems, getCursor } = require('./store.ts');
 const { logger } = require('../log.ts');
 
 const TOKEN = 'PA_JIRA_API_TOKEN';
@@ -42,18 +47,18 @@ function configured() {
 
 // Second-granular JQL date, in UTC. Jira compares in the user's timezone, so
 // the hour of overlap applied to the cursor covers the difference.
-function jqlDate(iso) {
+function jqlDate(iso: any) {
   return new Date(iso).toISOString().slice(0, 16).replace('T', ' ');
 }
 
-function buildJql(sinceIso) {
+function buildJql(sinceIso: any) {
   return (
     `(assignee = currentUser() OR reporter = currentUser() OR watcher = currentUser()) ` +
     `AND updated >= "${jqlDate(sinceIso)}" ORDER BY updated DESC`
   );
 }
 
-function buildPrompt({ cloudId, jql, max }) {
+function buildPrompt({ cloudId, jql, max }: { cloudId?: any | null; jql?: any | null; max?: any | null }) {
   return [
     'You are a data relay. Use only the Atlassian tools.',
     cloudId
@@ -76,15 +81,15 @@ function buildPrompt({ cloudId, jql, max }) {
 
 const KEY = /^[A-Z][A-Z0-9_]+-\d+$/;
 
-function parseReply(text) {
+function parseReply(text: any) {
   const parsed = llm.extractJson(text);
   if (!parsed || !Array.isArray(parsed.issues)) throw new Error('Jira relay returned no issues array');
   const site = typeof parsed.site === 'string' ? parsed.site.replace(/\/+$/, '') : null;
-  const issues = parsed.issues.filter((i) => i && KEY.test(String(i.key || '')) && i.summary);
+  const issues = parsed.issues.filter((i: any) => i && KEY.test(String(i.key || '')) && i.summary);
   return { cloudId: parsed.cloudId || null, site, issues };
 }
 
-function issueItem(issue, site) {
+function issueItem(issue: any, site: any) {
   const url = site ? `${site}/browse/${issue.key}` : null;
   const comment = issue.lastComment?.body
     ? `Latest comment by ${issue.lastComment.author || 'someone'}:\n${issue.lastComment.body}`
@@ -117,7 +122,7 @@ function issueItem(issue, site) {
 // ------------------------------------------------------------------ REST --
 
 // `acme`, `acme.atlassian.net` or `https://acme.atlassian.net/` → the origin.
-function normaliseSite(site) {
+function normaliseSite(site: any) {
   if (!site) return null;
   let s = String(site).trim().replace(/\/+$/, '');
   if (!/^https?:\/\//i.test(s)) s = `https://${s.includes('.') ? s : `${s}.atlassian.net`}`;
@@ -131,11 +136,11 @@ function normaliseSite(site) {
 
 // Atlassian Document Format → plain text. Only the node kinds that carry
 // words matter; everything else contributes its children.
-function adfText(node) {
+function adfText(node: any): string {
   if (node == null) return '';
   if (typeof node === 'string') return node;
   if (Array.isArray(node)) return node.map(adfText).join('');
-  const kids = adfText(node.content);
+  const kids: string = adfText(node.content);
   switch (node.type) {
     case 'text': return node.text || '';
     case 'hardBreak': return '\n';
@@ -149,12 +154,12 @@ function adfText(node) {
   }
 }
 
-function plain(adf, max = 1500) {
+function plain(adf: any, max: number = 1500) {
   return adfText(adf).replace(/\n{3,}/g, '\n\n').trim().slice(0, max);
 }
 
 // Jira's `2026-10-10T10:00:00.000+0000` → ISO.
-function isoTime(s) {
+function isoTime(s: any) {
   if (!s) return null;
   const d = new Date(String(s).replace(/([+-]\d\d)(\d\d)$/, '$1:$2'));
   return Number.isNaN(d.getTime()) ? null : d.toISOString();
@@ -162,7 +167,7 @@ function isoTime(s) {
 
 // One issue from /rest/api/3/search/jql → the relay's issue shape, so both
 // routes feed issueItem() identically.
-function restIssue(raw) {
+function restIssue(raw: any) {
   const f = raw?.fields || {};
   const comments = Array.isArray(f.comment?.comments) ? f.comment.comments : [];
   const last = comments[comments.length - 1];
@@ -183,16 +188,16 @@ function restIssue(raw) {
   };
 }
 
-function parseRest(json) {
+function parseRest(json: any) {
   const issues = (Array.isArray(json?.issues) ? json.issues : [])
     .map(restIssue)
-    .filter((i) => KEY.test(String(i.key || '')) && i.summary);
+    .filter((i: any) => KEY.test(String(i.key || '')) && i.summary);
   return { issues, nextPageToken: json?.nextPageToken || null, isLast: json?.isLast !== false || !json?.nextPageToken };
 }
 
 // Non-secret Jira settings the dashboard may have just written to .env:
 // re-read the files rather than trust the copy config took at startup.
-function freshEnv(name) {
+function freshEnv(name: any) {
   return (
     process.env[name] ||
     parseEnvFile(path.join(config.toolDir, '.env'))[name] ||
@@ -215,23 +220,23 @@ async function accountEmail() {
 
 // What the REST route has and lacks. `source` says where the token lives;
 // the token itself is only read inside searchRest().
-async function restAuth(cursor) {
+async function restAuth(cursor: any) {
   const site = normaliseSite(config.jira.site || freshEnv('PA_JIRA_SITE') || cursor?.state?.site);
   const email = await accountEmail();
   const source = secretSource(TOKEN);
-  const missing = [];
+  const missing: any[] = [];
   if (!site) missing.push('PA_JIRA_SITE');
   if (!email) missing.push('PA_JIRA_EMAIL');
   if (!source) missing.push(TOKEN);
   return { ok: missing.length === 0, site, email, source, missing };
 }
 
-async function searchRest({ site, email }, jql, { max = 100, fetchImpl = fetch } = {}) {
+async function searchRest({ site, email }: { site?: any | null; email?: any | null }, jql: any, { max = 100, fetchImpl = fetch }: { max?: number; fetchImpl?: any } = {}) {
   const token = secret(TOKEN);
   if (!token) throw new Error(`${TOKEN} is not configured`);
   const auth = `Basic ${Buffer.from(`${email}:${token}`).toString('base64')}`;
-  const issues = [];
-  let next = null;
+  const issues: any[] = [];
+  let next: any = null;
   do {
     const res = await fetchImpl(`${site}/rest/api/3/search/jql`, {
       method: 'POST',
@@ -259,9 +264,9 @@ async function searchRest({ site, email }, jql, { max = 100, fetchImpl = fetch }
  * token is a secret (Credential Manager); site and email are not, so they
  * are asked for as .env values.
  */
-async function requestCredentials(auth, requestedBy = 'ingest:jira') {
+async function requestCredentials(auth: any, requestedBy: string = 'ingest:jira') {
   const secrets = require('../secrets');
-  const asks = [];
+  const asks: any[] = [];
   if (auth.missing.includes(TOKEN)) {
     asks.push(secrets.requestSecret({
       name: TOKEN,
@@ -292,10 +297,10 @@ async function requestCredentials(auth, requestedBy = 'ingest:jira') {
   return Promise.all(asks);
 }
 
-async function save(issues, site, state) {
-  return saveItems('jira_issue', issues.map((i) => issueItem(i, site)), {
+async function save(issues: any, site: any, state: any) {
+  return saveItems('jira_issue', issues.map((i: any) => issueItem(i, site)), {
     source: 'jira',
-    deltaToken: null,
+    deltaToken: null as any,
     state,
   });
 }
@@ -321,13 +326,13 @@ async function run() {
 
   try {
     return await relay({ cursor, since, cloudId, nextSince });
-  } catch (err) {
-    await requestCredentials(auth).catch((e) => log.warn('could not open a secret request', { message: e.message }));
+  } catch (err: any) {
+    await requestCredentials(auth).catch((e: any) => log.warn('could not open a secret request', { message: e.message }));
     throw err;
   }
 }
 
-async function relay({ since, cloudId, nextSince }) {
+async function relay({ since, cloudId, nextSince }: { cursor?: any; since?: any | null; cloudId?: any | null; nextSince?: any | null }) {
   const text = await llm.complete({
     prompt: buildPrompt({ cloudId, jql: buildJql(since), max: 50 }),
     tools: TOOLS,
@@ -335,10 +340,10 @@ async function relay({ since, cloudId, nextSince }) {
     timeoutMs: 240_000,
     purpose: 'connector',
   });
-  let parsed;
+  let parsed: any;
   try {
     parsed = parseReply(text);
-  } catch (err) {
+  } catch (err: any) {
     // The relay explains itself in prose when it cannot reach the connector
     // ("tools aren't available", "still connecting"). That sentence is the
     // diagnosis; "no JSON" is not.

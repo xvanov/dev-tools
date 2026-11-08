@@ -816,12 +816,12 @@
         "Rule": "capture is append-only and raw payloads are kept"
       },
       "code": [
-        "personal-assistant/src/ingest/index.js",
-        "personal-assistant/src/ingest/m365.js",
-        "personal-assistant/src/ingest/teamsLocal.js",
-        "personal-assistant/src/ingest/github.js",
-        "personal-assistant/src/ingest/jira.js",
-        "personal-assistant/src/ingest/remoteSessions.js"
+        "personal-assistant/src/ingest/index.ts",
+        "personal-assistant/src/ingest/m365.ts",
+        "personal-assistant/src/ingest/teamsLocal.ts",
+        "personal-assistant/src/ingest/github.ts",
+        "personal-assistant/src/ingest/jira.ts",
+        "personal-assistant/src/ingest/remoteSessions.ts"
       ],
       "env": [
         {
@@ -1804,7 +1804,7 @@
         "Factory": "push, PR, CI checks, auto-merge per delivery level"
       },
       "code": [
-        "personal-assistant/src/ingest/github.js",
+        "personal-assistant/src/ingest/github.ts",
         "personal-assistant/src/distill/githubGate.ts"
       ]
     },
@@ -1824,7 +1824,7 @@
         "Send": "never: drafts open in Teams or Outlook for you to send"
       },
       "code": [
-        "personal-assistant/src/ingest/m365.js",
+        "personal-assistant/src/ingest/m365.ts",
         "personal-assistant/src/draft/deliver.js"
       ]
     }

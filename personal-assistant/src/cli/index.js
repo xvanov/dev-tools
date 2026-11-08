@@ -282,7 +282,7 @@ const commands = {
   // the claude.ai Microsoft 365 connector, connected once with `/mcp`. This
   // checks the connector answers and records who "me" is.
   async login() {
-    const m365 = require('../ingest/m365');
+    const m365 = require('../ingest/m365.ts');
     const me = await m365.whoAmI().catch((err) => {
       throw new Error(`${err.message}\nIn Claude Code: /mcp → claude.ai Microsoft 365 → Authenticate.`);
     });
@@ -1336,7 +1336,7 @@ const commands = {
 
     // Microsoft
     if (config.m365.enabled) {
-      const m365 = require('../ingest/m365');
+      const m365 = require('../ingest/m365.ts');
       const scopes = await m365.grantedScopes().catch((err) => err);
       await login(!(scopes instanceof Error), {
         key: 'login:m365',
@@ -1356,7 +1356,7 @@ const commands = {
     } else {
       mark(true, 'microsoft 365', 'off (PA_M365=0)');
     }
-    const teamsCache = await require('../ingest/teamsLocal').status().catch((err) => ({ ok: false, detail: err.message }));
+    const teamsCache = await require('../ingest/teamsLocal.ts').status().catch((err) => ({ ok: false, detail: err.message }));
     mark(teamsCache.ok, 'teams cache', teamsCache.detail);
 
     // What only this OS can get wrong (src/platform): keyring, notifier,
@@ -1370,7 +1370,7 @@ const commands = {
     }
 
     // GitHub, Anthropic, embeddings
-    const github = require('../ingest/github');
+    const github = require('../ingest/github.ts');
     if (github.configured()) {
       const gh = await github.status();
       mark(gh.ok, 'github', gh.ok ? `gh · ${gh.login}` : `gh not signed in — run \`gh auth login\``);
@@ -1395,7 +1395,7 @@ const commands = {
     // is checkable; without it the connector sign-in lives in Claude Code and
     // the last pass's outcome is the only honest signal.
     if (config.jira.enabled) {
-      const jira = require('../ingest/jira');
+      const jira = require('../ingest/jira.ts');
       const jc = await repository.sources.cursorRow('jira').catch(() => null);
       const rest = await jira.restAuth(jc).catch(() => ({ ok: false, missing: [] }));
       const ok = Boolean(jc && !jc.last_error && (jc.state?.cloudId || jc.state?.site));
@@ -1606,7 +1606,7 @@ const commands = {
     // Cursors and backlog
     lines.push('');
     lines.push('  sources');
-    const { cursors } = require('../ingest/store');
+    const { cursors } = require('../ingest/store.ts');
     for (const c of await cursors()) {
       lines.push(
         `    ${c.source.padEnd(22)} ${relative(c.last_run_at).padEnd(12)}` +

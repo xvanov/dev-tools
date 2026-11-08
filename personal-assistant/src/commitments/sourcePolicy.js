@@ -182,7 +182,7 @@ function jiraAsk(item, me = {}) {
 function judge(item, { sources = allowedSources(), login = null, me = {}, isAutomated = null } = {}) {
   if (!item) return { ok: false, why: 'no item' };
   if (!sources.has(item.source)) return { ok: false, why: `source ${item.source} does not create tasks (PA_COMMITMENT_SOURCES)` };
-  const automated = isAutomated || require('../ingest/m365').isAutomated;
+  const automated = isAutomated || require('../ingest/m365.ts').isAutomated;
   switch (item.source) {
     case 'graph_mail':
       if (automated(item.author_identity)) return { ok: false, why: 'automated sender' };

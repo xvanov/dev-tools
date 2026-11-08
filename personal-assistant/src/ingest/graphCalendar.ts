@@ -16,9 +16,14 @@
 // Teams meeting transcripts would be the better record of a meeting, and the
 // connector is granted the scope, but this tenant switches Graph transcript
 // access off — so meetings are captured by the local audio streams instead.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
 
-const m365 = require('./m365');
-const { saveItems } = require('./store');
+type Row = Record<string, any>;
+type Db = import('../repo/types.ts').Db;
+
+const m365 = require('./m365.ts');
+const { saveItems } = require('./store.ts');
 const { logger } = require('../log.ts');
 
 const log = logger('calendar');
@@ -29,19 +34,19 @@ const WINDOW_FORWARD_DAYS = 30;
 // {dateTime, timeZone} → ISO. The connector reports the mailbox zone or UTC;
 // only UTC (and its spellings) can be read without a zone database, which is
 // what this mailbox returns.
-function isoOf(t) {
+function isoOf(t: any) {
   if (!t?.dateTime) return null;
   const zone = String(t.timeZone || 'UTC');
   const base = t.dateTime.replace(/\.\d+$/, '');
   return /^(utc|gmt|etc\/utc)$/i.test(zone) ? `${base}Z` : base;
 }
 
-function occurrenceId(ev) {
+function occurrenceId(ev: any) {
   return `${ev.id}@${isoOf(ev.start) || 'unknown'}`;
 }
 
-function toItem(ev) {
-  const attendees = (ev.attendees || []).map((a) => String(a).toLowerCase()).filter((a) => a.includes('@'));
+function toItem(ev: any) {
+  const attendees = (ev.attendees || []).map((a: any) => String(a).toLowerCase()).filter((a: any) => a.includes('@'));
   const start = isoOf(ev.start);
   // Every occurrence of a recurring meeting comes back with the series' id,
   // so the id alone made each occurrence overwrite the last — the store kept
@@ -79,10 +84,10 @@ const NEAR_BACK_DAYS = 2;
 const NEAR_FORWARD_DAYS = 8;
 const FAR_EVERY_MS = 3600_000;
 
-function windows(now, { lastFarAt = null } = {}) {
+function windows(now: any, { lastFarAt = null }: { lastFarAt?: any | null } = {}) {
   const day = 86400_000;
   const t = now.getTime();
-  const iso = (ms) => new Date(ms).toISOString();
+  const iso = (ms: any) => new Date(ms).toISOString();
   const out = [[iso(t - NEAR_BACK_DAYS * day), iso(t + NEAR_FORWARD_DAYS * day)]];
   const far = !lastFarAt || t - new Date(lastFarAt).getTime() >= FAR_EVERY_MS;
   if (far) {
@@ -97,10 +102,10 @@ function windows(now, { lastFarAt = null } = {}) {
 async function run() {
   await m365.whoAmI();
   const now = new Date();
-  const cursor = await require('./store').getCursor('graph_event');
+  const cursor = await require('./store.ts').getCursor('graph_event');
   const plan = windows(now, { lastFarAt: cursor?.state?.lastFarAt });
 
-  const byId = new Map();
+  const byId = new Map<any, any>();
   for (const [after, before] of plan.windows) {
     const events = await m365.search('outlook_calendar_search', {
       query: '*',
@@ -114,9 +119,9 @@ async function run() {
   const events = [...byId.values()];
   const changed = await saveItems('graph_event', events.map(toItem), {
     source: 'graph_event',
-    deltaToken: null,
+    deltaToken: null as any,
     state: {
-      window: [plan.windows[0][0], plan.windows[0][1]],
+      window: [plan.windows[0]![0], plan.windows[0]![1]],
       lastFarAt: plan.far ? now.toISOString() : cursor?.state?.lastFarAt || null,
     },
   });

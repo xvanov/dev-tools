@@ -11,6 +11,11 @@
 //
 //   blind(sources, now)   pure: the failing sources worth telling you about
 //   pass()                the worker's check: notify once per outage
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+type Row = Record<string, any>;
+type Db = import('../repo/types.ts').Db;
 
 const repo = require('../repo');
 const { logger } = require('../log.ts');
@@ -20,7 +25,7 @@ const log = logger('health');
 // A poll can fail once and be fine next time; tell only when it keeps failing.
 const GRACE_MINUTES = 20;
 
-const LABEL = {
+const LABEL: Record<string, any> = {
   graph_chat: 'Teams chats (Microsoft 365)',
   graph_mail: 'Outlook mail (Microsoft 365)',
   graph_event: 'Outlook calendar (Microsoft 365)',
@@ -28,7 +33,7 @@ const LABEL = {
   jira: 'Jira',
 };
 
-function hintFor(source, error) {
+function hintFor(source: any, error: any) {
   const e = String(error || '');
   if (/connector|\/mcp|needs-auth|not called/i.test(e)) return 'Run /mcp in Claude Code and reconnect the connector.';
   if (source === 'github' && /auth|401|gh auth/i.test(e)) return 'Run `gh auth login`.';
@@ -39,14 +44,14 @@ function hintFor(source, error) {
  * @param {Array} sources [{source, last_run_at, last_error, last_item_at}]
  * @returns {Array<{source, label, since, hint, error}>}
  */
-function blind(sources, now = new Date()) {
-  const out = [];
+function blind(sources: any, now: any = new Date()) {
+  const out: any[] = [];
   for (const s of sources || []) {
     if (!s.last_error) continue;
     // `last_item_at` is the newest item that source ever brought: how long the
     // board has been missing it. With none, the failing run is all we know.
     const since = s.last_item_at ? new Date(s.last_item_at) : new Date(s.last_run_at || now);
-    if (now - since < GRACE_MINUTES * 60_000) continue;
+    if ((now as any) - (since as any) < GRACE_MINUTES * 60_000) continue;
     out.push({ source: s.source, label: LABEL[s.source] || s.source, since: since.toISOString(), hint: hintFor(s.source, s.last_error), error: String(s.last_error).slice(0, 200) });
   }
   return out;

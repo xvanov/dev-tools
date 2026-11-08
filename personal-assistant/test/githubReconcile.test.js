@@ -4,8 +4,8 @@
 // requests were never addressed to the reader.
 
 const assert = require('assert');
-const { verdict, prRef, refFor, refsFor, settledAll, duplicatePlan } = require('../src/ingest/githubReconcile');
-const { reviewAction } = require('../src/ingest/github');
+const { verdict, prRef, refFor, refsFor, settledAll, duplicatePlan } = require('../src/ingest/githubReconcile.ts');
+const { reviewAction } = require('../src/ingest/github.ts');
 
 const me = 'quill';
 const review = { summary: 'Review PR #12 on the importer', action: 'review_requested' };

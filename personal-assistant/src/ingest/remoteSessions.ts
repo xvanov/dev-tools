@@ -23,11 +23,16 @@
 //   plan(listing, known, max)   pure: which transcripts to fetch, what to keep
 //   describeError(err, name)    pure: what `pa doctor` should say
 //   run()                       the worker's pass
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+type Row = Record<string, any>;
+type Db = import('../repo/types.ts').Db;
 
 const os = require('os');
 const { config } = require('../config.ts');
-const { saveItems, saveCursor, getCursor, recordError } = require('./store');
-const { parseTranscript, toItem } = require('./claudeSessions');
+const { saveItems, saveCursor, getCursor, recordError } = require('./store.ts');
+const { parseTranscript, toItem } = require('./claudeSessions.ts');
 const { logger } = require('../log.ts');
 
 const log = logger('remote-sessions');
@@ -37,7 +42,7 @@ const LIST_LIMIT = 100;
 // spread over several passes, newest first, rather than done in one.
 const MAX_FETCH_PER_PASS = 20;
 
-const cursorKey = (machine) => `claude_session@${machine}`;
+const cursorKey = (machine: any) => `claude_session@${machine}`;
 
 /**
  * Pure. `listing` is termhub's [{id, mtimeMs, size}] (newest first); `known`
@@ -53,9 +58,9 @@ const cursorKey = (machine) => `claude_session@${machine}`;
 // an automation VM's long-finished work among them.
 const MAX_AGE_MS = 7 * 86400_000;
 
-function plan(listing, known = {}, max = MAX_FETCH_PER_PASS, now = Date.now()) {
-  const fetch = [];
-  const keep = {};
+function plan(listing: any, known: any = {}, max: any = MAX_FETCH_PER_PASS, now: any = Date.now()) {
+  const fetch: any[] = [];
+  const keep: Record<string, any> = {};
   for (const t of listing || []) {
     if (!t || typeof t.id !== 'string') continue;
     if (!(now - Number(t.mtimeMs) <= MAX_AGE_MS)) continue;
@@ -74,7 +79,7 @@ function plan(listing, known = {}, max = MAX_FETCH_PER_PASS, now = Date.now()) {
 }
 
 /** Pure: the one line `pa doctor` shows for a machine whose pass was skipped. */
-function describeError(err, machine) {
+function describeError(err: any, machine: any) {
   const status = err && err.status;
   const message = String((err && err.message) || err || 'unknown error');
   if (status === 404 && /not found/i.test(message)) {
@@ -89,25 +94,25 @@ function describeError(err, machine) {
  * are case-insensitive, so `k-box` in PA_MACHINES is still this machine when
  * it calls itself `K-Box` (exec.js resolves it the same way).
  */
-function machinesToRead(machines = config.termhub.machines, hostname = os.hostname()) {
+function machinesToRead(machines: any = config.termhub.machines, hostname: any = os.hostname()) {
   const self = String(hostname || '').toLowerCase();
-  return Object.values(machines || {}).filter((m) => m && m.name && m.name.toLowerCase() !== self);
+  return (Object.values(machines || {}) as any[]).filter((m) => m && m.name && m.name.toLowerCase() !== self);
 }
 
-async function runMachine(machine, termhub) {
+async function runMachine(machine: any, termhub: any) {
   const key = cursorKey(machine.name);
   const hub = termhub.client(machine.url);
   const listing = await hub.claudeTranscripts({ limit: LIST_LIMIT });
   const cursor = await getCursor(key);
   const { fetch, keep } = plan(listing, cursor?.state?.files || {});
 
-  const items = [];
+  const items: any[] = [];
   let failed = 0;
   for (const t of fetch) {
-    let text;
+    let text: any;
     try {
       text = await hub.claudeTranscript(t.id);
-    } catch (err) {
+    } catch (err: any) {
       // One unreadable file (deleted, over the size cap) does not cost the rest.
       failed++;
       log.debug('transcript fetch failed', { machine: machine.name, status: err.status || null });
@@ -120,8 +125,8 @@ async function runMachine(machine, termhub) {
   }
 
   const state = { files: keep, listed: listing.length, fetched: fetch.length - failed, failed };
-  if (items.length) return saveItems('claude_session', items, { source: key, deltaToken: null, state });
-  await saveCursor({ source: key, deltaToken: null, state });
+  if (items.length) return saveItems('claude_session', items, { source: key, deltaToken: null as any, state });
+  await saveCursor({ source: key, deltaToken: null as any, state });
   return 0;
 }
 
@@ -132,7 +137,7 @@ async function run() {
   for (const machine of machinesToRead()) {
     try {
       changed += await runMachine(machine, termhub);
-    } catch (err) {
+    } catch (err: any) {
       const message = describeError(err, machine.name);
       log.warn('machine skipped', { machine: machine.name, message });
       await recordError(cursorKey(machine.name), message).catch(() => {});

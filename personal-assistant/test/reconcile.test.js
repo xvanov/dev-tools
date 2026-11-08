@@ -123,7 +123,7 @@ console.log('reconcile: ok');
 
 {
   // Source health: only sources that keep failing, measured from their newest item.
-  const H = require('../src/ingest/health');
+  const H = require('../src/ingest/health.ts');
   const now = new Date('2026-10-25T12:00:00Z');
   const b = H.blind(
     [

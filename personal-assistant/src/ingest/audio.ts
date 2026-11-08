@@ -11,19 +11,24 @@
 // it exactly as it sees an email. That is the point of having one commitments
 // table: a promise made out loud and a promise made in writing are the same
 // kind of thing to everyone downstream.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+type Row = Record<string, any>;
+type Db = import('../repo/types.ts').Db;
 
 const fs = require('fs');
 const path = require('path');
 const { config } = require('../config.ts');
 const repo = require('../repo');
-const { saveItems } = require('./store');
+const { saveItems } = require('./store.ts');
 const { toEpisodes, splitAtEvents, classify, episodeChanged, renderTranscript, isSubstantial } = require('../audio/episodes');
 const { logger } = require('../log.ts');
 
 const log = logger('audio');
 
-function sidecarFiles(spool) {
-  const found = [];
+function sidecarFiles(spool: any) {
+  const found: any[] = [];
   for (const stream of ['mic', 'loopback']) {
     const dir = path.join(spool, stream);
     if (!fs.existsSync(dir)) continue;
@@ -34,17 +39,17 @@ function sidecarFiles(spool) {
   return found;
 }
 
-function readSidecar(file) {
+function readSidecar(file: any) {
   try {
     const parsed = JSON.parse(fs.readFileSync(file, 'utf8'));
     return { ...parsed, __file: file };
-  } catch (err) {
+  } catch (err: any) {
     log.warn('unreadable sidecar', { file: path.basename(file), message: err.message });
     return null;
   }
 }
 
-async function calendarWindow(fromIso, toIso) {
+async function calendarWindow(fromIso: any, toIso: any) {
   return repo.sources.calendarWindow(fromIso, toIso);
 }
 
@@ -53,7 +58,7 @@ async function calendarWindow(fromIso, toIso) {
 // speech group arrived late, after a failed transcription was retried, or a
 // meeting boundary now cuts it). Rows already matched in this pass are not
 // matched twice.
-async function existingFor(episode, claimed) {
+async function existingFor(episode: any, claimed: any) {
   return repo.audio.continuing({ startedAt: episode.started_at, endedAt: episode.ended_at, claimed, stream: episode.streams.join('+') });
 }
 
@@ -62,7 +67,7 @@ async function existingFor(episode, claimed) {
 // two meetings stored as one before they were cut apart. Their speech now
 // lives in another row; marking them keeps them (capture is append-only) and
 // keeps the debrief from reading the same conversation twice.
-async function supersedeLeftovers(episodes, claimed) {
+async function supersedeLeftovers(episodes: any, claimed: any) {
   let n = 0;
   for (const e of episodes) {
     n += await repo.audio.supersedeWithin(e.started_at, e.ended_at, claimed);
@@ -85,7 +90,7 @@ async function run() {
   const events = await calendarWindow(first, last);
   const episodes = splitAtEvents(joined, events);
 
-  const claimed = new Set();
+  const claimed = new Set<any>();
   let changed = 0;
 
   for (const episode of episodes) {
@@ -128,7 +133,7 @@ async function run() {
               speechSeconds: Math.round(episode.speech_seconds),
               attendees: meta.attendees,
               endedAt: episode.ended_at,
-              audioPaths: episode.parts.map((p) => p.audio_path),
+              audioPaths: episode.parts.map((p: any) => p.audio_path),
             },
           },
         ],
@@ -161,7 +166,7 @@ async function run() {
     }
     try {
       await repo.audio.update([...values, existing.id]);
-    } catch (err) {
+    } catch (err: any) {
       // Another row already holds this (stream, start) — a fragment stored
       // before the rest of its conversation arrived. Keep this row's key.
       if (err.code !== '23505') throw err;
@@ -182,7 +187,7 @@ async function run() {
 
   await saveItems('audio', [], {
     source: 'audio',
-    deltaToken: null,
+    deltaToken: null as any,
     state: { sidecars: sidecars.length, episodes: episodes.length },
   });
 

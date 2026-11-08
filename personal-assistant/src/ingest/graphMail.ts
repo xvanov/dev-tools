@@ -13,9 +13,14 @@
 //
 // The source id stays `graph_mail`: it is what every stored row, the distiller
 // and the dashboard already key on.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
 
-const m365 = require('./m365');
-const { saveItems, getCursor } = require('./store');
+type Row = Record<string, any>;
+type Db = import('../repo/types.ts').Db;
+
+const m365 = require('./m365.ts');
+const { saveItems, getCursor } = require('./store.ts');
 const { htmlToText, stripQuoted } = require('../util/text.ts');
 const { logger } = require('../log.ts');
 
@@ -23,12 +28,12 @@ const log = logger('mail');
 
 const FIRST_RUN_DAYS = 3;
 
-function addressOf(recipient) {
+function addressOf(recipient: any) {
   const a = recipient?.emailAddress?.address || recipient?.address || recipient;
   return typeof a === 'string' && a.includes('@') ? a.toLowerCase() : null;
 }
 
-function bodyOf(full, hit) {
+function bodyOf(full: any, hit: any) {
   const body = full?.body;
   if (body?.content) {
     return body.contentType === 'html' ? htmlToText(body.content) : body.content;
@@ -39,7 +44,7 @@ function bodyOf(full, hit) {
 // `hit` is the search result, `full` the read_resource message when there is
 // one. Search gives sender and dates reliably; recipients and the conversation
 // id only come with the full read.
-function toItem(hit, full, me) {
+function toItem(hit: any, full: any, me: any) {
   const from = addressOf(full?.from) || addressOf(hit.sender);
   return {
     externalId: hit.id,
@@ -69,25 +74,25 @@ async function run() {
 
   const hits = (
     await m365.search('outlook_email_search', { afterDateTime: since, limit: 25 }, { dateKey: 'receivedDateTime' })
-  ).filter((h) => !isDraftFolder(h));
-  const wanted = hits.filter((h) => !m365.isAutomated(h.sender) || h.sender === me.mail);
+  ).filter((h: any) => !isDraftFolder(h));
+  const wanted = hits.filter((h: any) => !m365.isAutomated(h.sender) || h.sender === me.mail);
 
   // Newest first gets the reads when there are more than the cap.
-  wanted.sort((a, b) => String(b.receivedDateTime).localeCompare(String(a.receivedDateTime)));
-  const toRead = wanted.slice(0, m365.MAX_READS).map((h) => h.uri).filter(Boolean);
+  wanted.sort((a: any, b: any) => String(b.receivedDateTime).localeCompare(String(a.receivedDateTime)));
+  const toRead = wanted.slice(0, m365.MAX_READS).map((h: any) => h.uri).filter(Boolean);
   const full = await m365.readAll(toRead);
 
-  const items = wanted.map((h) => toItem(h, full.get(h.uri), me));
+  const items = wanted.map((h: any) => toItem(h, full.get(h.uri), me));
   const changed = await saveItems('graph_mail', items, {
     source: 'graph_mail',
-    deltaToken: null,
+    deltaToken: null as any,
     state: { since: m365.nextSince(passStarted) },
   });
   log.info('relayed', { found: hits.length, kept: wanted.length, read: full.size, changed });
   return changed;
 }
 
-function isDraftFolder(hit) {
+function isDraftFolder(hit: any) {
   return /drafts/i.test(String(hit.folderName || hit.parentFolder || ''));
 }
 

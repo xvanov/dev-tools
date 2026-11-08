@@ -234,7 +234,7 @@ async function main() {
   // cache pass stays tens of milliseconds whatever distill costs.
   if (config.teamsCache.enabled) {
     sched.service('teams-cache', () =>
-      require('./ingest/teamsLocal').watch({
+      require('./ingest/teamsLocal.ts').watch({
         onResult: (r) => {
           if (!r.fresh) return;
           sched
@@ -397,7 +397,7 @@ async function main() {
   // A source that keeps failing blinds the reconciler: one toast per outage,
   // and a banner on the dashboard (src/ingest/health.js).
   every(600, 'health', async () => {
-    await require('./ingest/health').pass();
+    await require('./ingest/health.ts').pass();
   });
 
   // Memory: claims → consolidation → pages, and a nightly dream. Each pass is

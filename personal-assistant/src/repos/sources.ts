@@ -25,7 +25,7 @@ const crypto = require('crypto');
 const { execFile } = require('child_process');
 const { config } = require('../config.ts');
 const repo = require('../repo');
-const { gh } = require('../ingest/github');
+const { gh } = require('../ingest/github.ts');
 const merge = require('./merge.ts');
 
 function git(dir: any, args: any, timeoutMs: number = 20_000) {

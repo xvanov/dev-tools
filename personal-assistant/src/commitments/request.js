@@ -75,7 +75,7 @@ async function findPerson(name) {
 async function add(opts = {}, { now = new Date() } = {}) {
   const t = parse(opts, now);
   const via = VIAS.has(opts.via) ? opts.via : 'cli';
-  const { saveItems } = require('../ingest/store');
+  const { saveItems } = require('../ingest/store.ts');
   const repo = require('../repo');
 
   let projectRow = null;

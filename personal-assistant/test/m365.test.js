@@ -10,10 +10,10 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { parseToolStream } = require('../src/llm');
-const { searchResults, isAutomated, PREFIX } = require('../src/ingest/m365');
-const mail = require('../src/ingest/graphMail');
-const chat = require('../src/ingest/graphChat');
-const calendar = require('../src/ingest/graphCalendar');
+const { searchResults, isAutomated, PREFIX } = require('../src/ingest/m365.ts');
+const mail = require('../src/ingest/graphMail.ts');
+const chat = require('../src/ingest/graphChat.ts');
+const calendar = require('../src/ingest/graphCalendar.ts');
 
 const line = (o) => JSON.stringify(o);
 const use = (id, name, input) => line({ type: 'assistant', message: { content: [{ type: 'tool_use', id, name, input }] } });
