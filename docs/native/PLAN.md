@@ -415,7 +415,8 @@ not in the Map is not done, and a new one gets added there first.
 
 - [x] **8.1 Acceptance criteria per workflow** in `architecture.json` (an `acceptance` block on
   each example): the outcome that must happen, the hops and their latency targets, a cost
-  ceiling, the views it must show in (Plan, Build, Run, Ask), the approvals policy requires,
+  ceiling (the JSON value is the default; the user can edit it on the `/architecture` page, stored in the
+  PA DB and read from `GET /api/workflow-limits` by the e2e runner, the reviewers and Meter), the views it must show in (Plan, Build, Run, Ask), the approvals policy requires,
   and a quality rubric. Examples: `deepseek-pr` and `review-fix`: PR opened or updated, CI green,
   a code review finds no blocker, the diff stays in scope; `research`: sources cited and
   checked, no unsupported claims, the report answers the question asked; `whats-on`: answered

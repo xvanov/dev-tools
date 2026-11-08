@@ -50,6 +50,7 @@ const AGGREGATES = {
   sources: () => require('./sources'),
   spend: () => require('./spend'),
   system: () => require('./system'),
+  workflowLimits: () => require('./workflowLimits'),
 };
 
 /** A backend over a transaction's client: its query, and withTx that joins it. */

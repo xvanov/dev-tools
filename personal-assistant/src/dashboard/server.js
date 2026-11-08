@@ -353,6 +353,11 @@ async function handle(req, res) {
     return send(res, 200, { secrets: r.secrets, pending: r.pending, vaultError: r.vaultError });
   }
 
+  // Workflow cost ceilings (dashboard/workflowLimits.js): GET, and a POST behind X-PA there.
+  if (url.pathname === '/api/workflow-limits') {
+    if (await require('./workflowLimits').route(req, res, url, { send, readJson })) return;
+  }
+
   // The Memory tab (dashboard/memory.js). Same guards: a POST needs X-PA.
   if (url.pathname.startsWith('/api/memory/')) {
     if (req.method === 'POST' && req.headers['x-pa'] !== '1') return send(res, 403, { error: 'missing X-PA header' });

@@ -993,7 +993,8 @@
         "secret_request",
         "setting",
         "source_item",
-        "sync_cursor"
+        "sync_cursor",
+        "workflow_limit"
       ],
       "env": [
         {

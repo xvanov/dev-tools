@@ -12,6 +12,7 @@
   var health = {};
   var stack = 'work';
   var pinned = null; // component id
+  var limits = {}; // workflow id -> {default, override, effective, custom} (api/workflow-limits)
   var example = null; // example id (pinned)
   var hoverEx = null;
   var hoverComp = null;
@@ -379,7 +380,57 @@
     if (!v || !v.result) return 'not yet reviewed';
     return v.result + (v.date ? ' on ' + v.date : '');
   }
-  function acceptanceBlock(a) {
+  // The cost ceiling: the JSON's number is the default; the user can override
+  // it (stored by the PA, GET/POST api/workflow-limits). Clicks and keys here
+  // must not toggle the walk-through card around them.
+  function money(n) { return '$' + Number(n).toString(); }
+  function costRow(id, cost) {
+    var lim = limits[id] || { default: cost.max_usd, override: null, effective: cost.max_usd, custom: false };
+    var row = el('div', 'acc-row acc-cost');
+    ['click', 'keydown'].forEach(function (t) { row.addEventListener(t, function (ev) { ev.stopPropagation(); }); });
+    row.appendChild(el('b', null, 'Cost ceiling: '));
+    row.appendChild(document.createTextNode(money(lim.effective) + ' '));
+    row.appendChild(el('span', 'verdict ' + (lim.custom ? 'custom' : 'none'), lim.custom ? 'custom (default ' + money(lim.default) + ')' : 'default'));
+    row.appendChild(document.createTextNode(' — ' + cost.basis + ' '));
+    var input = el('input', 'acc-input');
+    input.type = 'number';
+    input.min = '0';
+    input.step = '0.01';
+    input.value = String(lim.effective);
+    input.setAttribute('aria-label', 'Cost ceiling in USD for ' + id);
+    var save = el('button', null, 'Save');
+    var reset = el('button', null, 'Reset to default');
+    reset.disabled = !lim.custom;
+    var msg = el('span', 'acc-msg');
+    function post(value) {
+      msg.textContent = 'saving…';
+      fetch('api/workflow-limits', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-PA': '1' },
+        body: JSON.stringify({ workflow: id, max_usd: value }),
+      })
+        .then(function (r) { return r.json().then(function (j) { if (!r.ok) throw new Error(j.error || 'HTTP ' + r.status); return j; }); })
+        .then(function (j) { limits = j.limits || limits; renderExamples(); })
+        .catch(function (err) { msg.textContent = 'not saved: ' + err.message; });
+    }
+    save.addEventListener('click', function () {
+      var n = input.value === '' ? NaN : Number(input.value);
+      if (!isFinite(n) || n < 0) { msg.textContent = 'enter a number of USD, 0 or more'; return; }
+      post(n);
+    });
+    reset.addEventListener('click', function () { post(null); });
+    [input, save, reset, msg].forEach(function (e) { row.appendChild(document.createTextNode(' ')); row.appendChild(e); });
+    return row;
+  }
+
+  function loadLimits() {
+    fetch('api/workflow-limits', { cache: 'no-store' })
+      .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+      .then(function (j) { limits = j.limits || {}; if (data) renderExamples(); })
+      .catch(function () { /* the defaults from architecture.json stand */ });
+  }
+
+  function acceptanceBlock(a, id) {
     var box = el('div', 'acc');
     if (!a) return box;
     if (a.outOfScope) {
@@ -392,7 +443,6 @@
     head.appendChild(el('span', 'verdict ' + (a.verdict && a.verdict.result || 'none'), verdictText(a.verdict)));
     box.appendChild(head);
     var rows = [['Outcome', a.outcome]];
-    rows.push(['Cost ceiling', '$' + a.cost.max_usd + ' (' + a.cost.basis + ')']);
     rows.push(['Shows in', a.views.map(function (v) { return v.charAt(0).toUpperCase() + v.slice(1); }).join(', ')]);
     rows.push(['Approvals', a.approvals.length ? a.approvals.join(', ') : 'none']);
     rows.forEach(function (r) {
@@ -409,6 +459,7 @@
       item.appendChild(document.createTextNode(': ' + h.what + ' — ' + (h.max_ms != null ? 'under ' + h.max_ms + ' ms' : h.unbounded)));
       hops.appendChild(item);
     });
+    box.appendChild(costRow(id, a.cost));
     box.appendChild(el('div', 'acc-sub', 'Hops'));
     box.appendChild(hops);
     var rub = el('ul', 'acc-list');
@@ -441,7 +492,7 @@
         ol.appendChild(item);
       });
       li.appendChild(ol);
-      li.appendChild(acceptanceBlock(x.acceptance));
+      li.appendChild(acceptanceBlock(x.acceptance, x.id));
       li.addEventListener('mouseenter', function () { hoverEx = x.id; drawEdges(); });
       li.addEventListener('mouseleave', function () { hoverEx = null; drawEdges(); });
       var toggle = function () { example = example === x.id ? null : x.id; renderExamples(); drawEdges(); };
@@ -494,6 +545,7 @@
       renderHeader();
       renderAll();
       loadHealth();
+      loadLimits();
       setInterval(loadHealth, 30000);
     })
     .catch(function (err) {
