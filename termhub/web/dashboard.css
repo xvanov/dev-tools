@@ -189,7 +189,24 @@ button.ds-go[disabled] { opacity: 0.6; cursor: default; }
 .ds-go:hover { border-color: var(--accent); }
 .ds-go.gone { color: var(--fg-dim); cursor: default; }
 
+/* ---- model spend and latency (meterModel.js) ---- */
+#model-meter { display: flex; flex-direction: column; gap: 10px; }
+.mm-row { display: grid; grid-template-columns: minmax(80px, 160px) 1fr auto; gap: 10px; align-items: center; padding: 3px 0; font-size: 12px; }
+.mm-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg); }
+.mm-bar { height: 6px; background: var(--bg-3); border-radius: 3px; overflow: hidden; }
+.mm-bar > span { display: block; height: 100%; background: var(--accent-2); }
+.mm-num { color: var(--fg-dim); white-space: nowrap; }
+.mm-num b { color: var(--fg); font-weight: 600; }
+.mm-sub { color: var(--fg-dim); font-size: 11px; margin-top: 6px; }
+.mm-cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; }
+.mm-cols h3 { margin: 0 0 4px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.6px; color: var(--fg-dim); }
+.mm-pool-nums { font-size: 13px; color: var(--fg-dim); margin-bottom: 6px; }
+.mm-pool-nums b { color: var(--fg); font-size: 16px; }
+.mm-pool.good .mm-bar > span { background: var(--ok); }
+.mm-pool.bad .mm-bar > span { background: var(--danger); }
+
 @media (max-width: 640px) {
+  .mm-row { grid-template-columns: 1fr; gap: 2px; }
   #timeline { --tl-label: 96px; }
   #score-card { flex-direction: column; align-items: flex-start; }
 }

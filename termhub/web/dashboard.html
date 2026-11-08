@@ -78,9 +78,24 @@
       <div id="day-sessions"></div>
     </section>
 
+    <!-- The model side of the meter (plan 7.5): what the personal assistant
+         measured. Read from /pa/api/meter, so it is the PA's machine, not the
+         selected card's. -->
+    <section class="panel" id="model-meter">
+      <div class="panel-head"><h2>Claude credit pool</h2></div>
+      <div data-mm="pool"><div class="list-note">Loading…</div></div>
+      <div class="panel-head"><h2>latency per hop</h2></div>
+      <div data-mm="latency"><div class="list-note">Loading…</div></div>
+      <div class="panel-head"><h2>model spend, last 14 days</h2></div>
+      <div data-mm="spend"><div class="list-note">Loading…</div></div>
+      <div class="panel-head"><h2>workflow cost ceilings</h2></div>
+      <div data-mm="limits"><div class="list-note">Loading…</div></div>
+    </section>
+
     <div id="toast" class="hidden"></div>
   </main>
 
   <script src="/dashboard.js"></script>
+  <script src="/meterModel.js"></script>
 </body>
 </html>
