@@ -38,6 +38,7 @@ import contextlib
 import json
 import logging
 import os
+import sys
 import threading
 import time
 from collections.abc import Callable
@@ -2247,6 +2248,25 @@ def _workdir_rule(repo_path: Path) -> str:
     )
 
 
+def _terminal_rules(platform: str = sys.platform) -> str:
+    """Prompt rules for the agent's terminal on ``platform`` ("" when none).
+
+    On Windows the OpenHands terminal is PowerShell. A double-quoted argument
+    spanning lines (``git commit -m``, ``python -c``, ``node -e``) left it at a
+    ``>>`` continuation prompt four times in one 2026-11-08 run, and each time
+    the agent spent minutes on Ctrl-C and a terminal reset.
+    """
+    if platform != "win32":
+        return ""
+    return (
+        "Your terminal is PowerShell on Windows. Never pass a multi-line quoted "
+        "argument: a newline inside quotes leaves PowerShell waiting at a `>>` prompt "
+        "and the terminal hangs. Commit with `git commit -F <message file>` or a "
+        "single-line `git commit -m \"...\"`. For a script longer than one line, write "
+        "it to a file and run the file instead of `python -c` or `node -e`."
+    )
+
+
 async def sandbox_run(*args: Any, **kwargs: Any) -> RunResult:
     """:func:`_sandbox_run_impl` under a :class:`factory.live_tree_guard.LiveTreeGuard`.
 
@@ -2385,6 +2405,8 @@ async def _sandbox_run_impl(
     if brief_addendum:
         initial_user_text = f"{initial_user_text.rstrip()}\n\n---\n\n{brief_addendum.strip()}\n"
     initial_user_text = f"{initial_user_text.rstrip()}\n\n{_workdir_rule(repo_path)}\n"
+    if _terminal_rules():
+        initial_user_text = f"{initial_user_text.rstrip()}\n\n{_terminal_rules()}\n"
 
     # Log prompt telemetry HERE — the moment the initial message exists and
     # before any failure path, mirroring the ``text_run`` site. Until this

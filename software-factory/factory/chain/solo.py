@@ -180,14 +180,15 @@ def _story_ledger_spend(story_id: int | None, db_path: Path) -> float:
 # --------------------------------------------------------------------------- #
 
 
-def build_solo_brief(direction: Any | None) -> str:
+def build_solo_brief(direction: Any | None, *, test_command: str | None = None) -> str:
     """The solo addendum appended to the dev's initial message.
 
     The dev already receives the persona prompt, the repo context prelude
     (``compose_context_prelude``) and the SM story file. Solo adds the job's own
     text (the direction body — today only ANCESTOR directions reach the dev) and
     the working rules that replace the reviewer: reuse before writing, follow
-    the repo's conventions, own the tests.
+    the repo's conventions, own the tests. ``test_command`` (the app's gate
+    command) is named so the dev runs what the gate runs.
     """
     parts = [
         "# Solo pipeline — you own this job end to end",
@@ -214,6 +215,14 @@ def build_solo_brief(direction: Any | None) -> str:
         "6. If the job cannot be done as written, end with `UNDERSPECIFIED: <why>` "
         "instead of guessing.",
     ]
+    if test_command:
+        parts += [
+            "",
+            f"**The test command is `{test_command}`**, the same command the gate "
+            "runs. Run it to test your change; it picks the tests your change can "
+            "reach. Do not run test files one by one or another tool's whole suite: "
+            "that costs time the gate does not need.",
+        ]
     body = ""
     if direction is not None:
         body = (getattr(direction, "raw_body", "") or "").strip()
