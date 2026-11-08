@@ -12,14 +12,20 @@
 // attendees. One with both streams and no calendar entry is a call. One with
 // only the mic is you talking — to someone in the room, or to a dictation
 // hotkey. Anything else is ambient, which is a real category and not a failure.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+type Row = import('../repo/types.ts').Row;
+/** JSON read or built key by key (src/types.ts): loose until its producer is TypeScript. */
+type Json = import('../types.ts').Json;
 
 const DEFAULT_GAP_SECONDS = 90;
 
-function ms(iso) {
+function ms(iso: any) {
   return new Date(iso).getTime();
 }
 
-function overlaps(a, b, toleranceMs) {
+function overlaps(a: any, b: any, toleranceMs: any) {
   return ms(a.started_at) - toleranceMs <= ms(b.ended_at) && ms(b.started_at) - toleranceMs <= ms(a.ended_at);
 }
 
@@ -28,7 +34,7 @@ function overlaps(a, b, toleranceMs) {
  * @param {Array} sidecars parsed sidecar objects
  * @param {object} options {gapSeconds}
  */
-function toEpisodes(sidecars, { gapSeconds = DEFAULT_GAP_SECONDS } = {}) {
+function toEpisodes(sidecars: any, { gapSeconds = DEFAULT_GAP_SECONDS }: { gapSeconds?: any } = {}) {
   const tolerance = gapSeconds * 1000;
   const sorted = [...sidecars].sort((a, b) => ms(a.started_at) - ms(b.started_at));
   const episodes = [];
@@ -57,7 +63,7 @@ function toEpisodes(sidecars, { gapSeconds = DEFAULT_GAP_SECONDS } = {}) {
 
 // A calendar dateTime is zone-less UTC from this connector; an ISO string
 // with a zone is read as one. Seven-digit fractions are trimmed to three.
-function timeOf(t) {
+function timeOf(t: any) {
   if (!t) return null;
   const raw = typeof t === 'string' ? t : t.dateTime;
   if (!raw) return null;
@@ -66,7 +72,7 @@ function timeOf(t) {
   return Number.isFinite(v) ? v : null;
 }
 
-function eventRange(event) {
+function eventRange(event: any) {
   const start = timeOf(event.raw?.start) ?? ms(event.occurred_at);
   const end = timeOf(event.raw?.end) ?? start + 30 * 60_000;
   return { start, end };
@@ -76,7 +82,7 @@ const CANCELLED = /^\s*(canceled|cancelled)\s*:/i;
 
 // An event a conversation can belong to: not cancelled, not an all-day
 // marker, not a slot you marked free.
-function attendable(event) {
+function attendable(event: any) {
   const raw = event.raw || {};
   if (raw.isCancelled === true || CANCELLED.test(event.subject || '')) return false;
   if (raw.isAllDay === true) return false;
@@ -101,35 +107,35 @@ function attendable(event) {
  * @param {Array} calendarEvents source_item rows for graph_event
  * @param {object} [opts] {edgeMs} how far inside the episode a start must be
  */
-function splitAtEvents(episodes, calendarEvents = [], { edgeMs = 120_000 } = {}) {
+function splitAtEvents(episodes: any, calendarEvents: any = [], { edgeMs = 120_000 }: { edgeMs?: number } = {}) {
   const events = calendarEvents.filter(attendable).map(eventRange);
-  const out = [];
+  const out: any[] = [];
   for (const episode of episodes) {
     const start = ms(episode.started_at);
     const end = ms(episode.ended_at);
-    const cuts = [...new Set(events.map((e) => e.start))]
-      .filter((s) => s > start + edgeMs && s < end - edgeMs)
-      .filter((s) => !events.some((o) => o.start < s - edgeMs && o.end > s + edgeMs))
-      .sort((a, b) => a - b);
+    const cuts = [...new Set<any>(events.map((e: any) => e.start))]
+      .filter((s: any) => s > start + edgeMs && s < end - edgeMs)
+      .filter((s: any) => !events.some((o: any) => o.start < s - edgeMs && o.end > s + edgeMs))
+      .sort((a: any, b: any) => a - b);
     if (!cuts.length) {
       out.push(episode);
       continue;
     }
-    const buckets = cuts.map(() => []).concat([[]]);
+    const buckets: any[][] = cuts.map((): any[] => []).concat([[]]);
     for (const part of episode.parts) {
       const mid = (ms(part.started_at) + ms(part.ended_at)) / 2;
-      const i = cuts.findIndex((c) => mid < c);
-      buckets[i < 0 ? cuts.length : i].push(part);
+      const i = cuts.findIndex((c: any) => mid < c);
+      (buckets[i < 0 ? cuts.length : i] as any[]).push(part);
     }
     for (const parts of buckets) {
       if (!parts.length) continue;
-      const sorted = [...parts].sort((a, b) => ms(a.started_at) - ms(b.started_at));
+      const sorted = [...parts].sort((a: any, b: any) => ms(a.started_at) - ms(b.started_at));
       out.push({
         started_at: sorted[0].started_at,
-        ended_at: sorted.reduce((m, p) => (ms(p.ended_at) > ms(m) ? p.ended_at : m), sorted[0].ended_at),
-        speech_seconds: sorted.reduce((n, p) => n + (p.speech_seconds || 0), 0),
+        ended_at: sorted.reduce((m: any, p: any) => (ms(p.ended_at) > ms(m) ? p.ended_at : m), sorted[0].ended_at),
+        speech_seconds: sorted.reduce((n: number, p: any) => n + (p.speech_seconds || 0), 0),
         parts: sorted,
-        streams: [...new Set(sorted.map((p) => p.stream))].sort(),
+        streams: [...new Set(sorted.map((p: any) => p.stream))].sort(),
       });
     }
   }
@@ -141,7 +147,7 @@ function splitAtEvents(episodes, calendarEvents = [], { edgeMs = 120_000 } = {})
  * (more speech, a later end), the other stream arriving, or a new calendar
  * link all count; a re-run over unchanged sidecars does not.
  */
-function episodeChanged(row, episode, meta) {
+function episodeChanged(row: any, episode: any, meta: any) {
   if (!row) return true;
   return (
     Math.abs(ms(row.ended_at) - ms(episode.ended_at)) > 1000 ||
@@ -157,7 +163,7 @@ function episodeChanged(row, episode, meta) {
  * @param {object} episode from toEpisodes
  * @param {Array} calendarEvents [{external_id, subject, occurred_at, raw:{end:{dateTime}, attendees, categories}}]
  */
-function classify(episode, calendarEvents = []) {
+function classify(episode: any, calendarEvents: any = []) {
   const start = ms(episode.started_at);
   const end = ms(episode.ended_at);
 
@@ -202,18 +208,18 @@ function classify(episode, calendarEvents = []) {
 // names: the mic is you with certainty, the loopback is "them" with certainty,
 // and guessing which of three people on a call said a line is exactly the kind
 // of confident wrongness this design avoids by not mixing the streams.
-function renderTranscript(episode) {
+function renderTranscript(episode: any) {
   return episode.parts
-    .filter((p) => (p.transcript || '').trim())
-    .sort((a, b) => ms(a.started_at) - ms(b.started_at))
-    .map((p) => `${p.stream === 'mic' ? 'Me' : 'Them'}: ${p.transcript.trim()}`)
+    .filter((p: any) => (p.transcript || '').trim())
+    .sort((a: any, b: any) => ms(a.started_at) - ms(b.started_at))
+    .map((p: any) => `${p.stream === 'mic' ? 'Me' : 'Them'}: ${p.transcript.trim()}`)
     .join('\n\n');
 }
 
-function isSubstantial(episode, { minSeconds = 20 } = {}) {
+function isSubstantial(episode: any, { minSeconds = 20 }: { minSeconds?: number } = {}) {
   return (
     episode.speech_seconds >= minSeconds &&
-    episode.parts.some((p) => (p.transcript || '').trim().length > 40)
+    episode.parts.some((p: any) => (p.transcript || '').trim().length > 40)
   );
 }
 

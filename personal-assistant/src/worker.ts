@@ -278,24 +278,24 @@ async function main() {
   // five minutes regardless (it also recovers files a dead capture left).
   let lastAudioSweep = 0;
   // A recorder that is up but writing nothing is restarted, and a disk that
-  // is filling up is reported before it stops capture (src/audio/watchdog.js).
+  // is filling up is reported before it stops capture (src/audio/watchdog.ts).
   every(60, 'capture-watchdog', async () => {
-    const watchdog = require('./audio/watchdog');
+    const watchdog = require('./audio/watchdog.ts');
     await watchdog.checkCapture();
     await watchdog.checkDisk();
   });
 
   // Records during meetings only: a calendar meeting, or another app on the
-  // microphone for the unplanned call (src/audio/gate.js).
+  // microphone for the unplanned call (src/audio/gate.ts).
   if (config.audio.enabled && config.audio.gate.enabled) {
     every(config.audio.gate.pollSeconds, 'meeting-gate', async () => {
-      await require('./audio/gate').tick();
+      await require('./audio/gate.ts').tick();
     });
   }
 
   every(config.audio.enabled ? 60 : 86400, 'audio', async () => {
     if (!config.audio.enabled) return;
-    const spool = require('./audio/spool');
+    const spool = require('./audio/spool.ts');
     const debrief = require('./meetings/debrief.ts');
     if (config.meetings.debrief) {
       const rolled = await debrief.rollIfUseful().catch((err: Error) => log.warn('roll check failed', { message: err.message }));

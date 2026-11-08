@@ -1188,7 +1188,7 @@ const commands: Json = {
       return out(config.audio.gate.enabled ? 'capture on (the meeting gate pauses it again after the next meeting)' : 'capture on');
     }
 
-    const p = require('../audio/gate').readPause(pauseFile);
+    const p = require('../audio/gate.ts').readPause(pauseFile);
     if (p.state === 'gate') return out('capture: idle — the meeting gate starts it for a meeting or a call');
     if (p.state === 'on') return out(p.expired ? `capture: on (pause expired ${p.expired})` : 'capture: on');
     out(`capture: paused ${p.until ? `until ${p.until}` : 'until `pa mic on`'}`);
@@ -1702,7 +1702,7 @@ const commands: Json = {
     // Post-meeting debriefs, and whether capture has ever honoured an early roll.
     try {
       const d = await repository.meetings.debriefStats();
-      const rolled = require('../audio/spool').lastRoll(config.audio.rollFile);
+      const rolled = require('../audio/spool.ts').lastRoll(config.audio.rollFile);
       lines.push(
         `  debriefs ${config.meetings.debrief ? 'on' : 'off (PA_DEBRIEF=0)'} · ${d.ok} written` +
           `${d.failed ? ` · ${d.failed} FAILED (pa meeting debriefs)` : ''} · last ${d.last ? relative(d.last) : 'never'}` +
@@ -1746,7 +1746,7 @@ const commands: Json = {
     }
 
     // Audio
-    const pause = require('../audio/gate').readPause().state;
+    const pause = require('../audio/gate.ts').readPause().state;
     const audioState = ({ on: 'recording', gate: 'idle until a meeting', user: 'PAUSED by you' } as Record<string, string>)[pause];
     lines.push('');
     lines.push(

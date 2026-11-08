@@ -22,7 +22,7 @@ const path = require('path');
 const { config } = require('../config.ts');
 const repo = require('../repo');
 const { saveItems } = require('./store.ts');
-const { toEpisodes, splitAtEvents, classify, episodeChanged, renderTranscript, isSubstantial } = require('../audio/episodes');
+const { toEpisodes, splitAtEvents, classify, episodeChanged, renderTranscript, isSubstantial } = require('../audio/episodes.ts');
 const { logger } = require('../log.ts');
 
 const log = logger('audio');

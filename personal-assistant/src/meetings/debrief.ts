@@ -31,8 +31,8 @@ const { config } = require('../config.ts');
 const repo = require('../repo');
 const { logger } = require('../log.ts');
 const { headTail } = require('../memory/claims.ts');
-const spool = require('../audio/spool');
-const { attendable, eventRange } = require('../audio/episodes');
+const spool = require('../audio/spool.ts');
+const { attendable, eventRange } = require('../audio/episodes.ts');
 const core = require('./core.ts');
 const D = require('./debriefCore.ts');
 
@@ -420,7 +420,7 @@ async function lastDebrief(episodeId: any) {
  */
 async function due({ now = new Date(), coverage = undefined }: { now?: any; coverage?: any } = {}) {
   const cov = coverage !== undefined ? coverage : spool.coverage(config.audioDir, { rollMinutes: config.audio.rollMinutes, now: now.getTime() });
-  const paused = require('../audio/gate').readPause().state !== 'on' && !spool.needsProcessing(config.audioDir);
+  const paused = require('../audio/gate.ts').readPause().state !== 'on' && !spool.needsProcessing(config.audioDir);
   const list = await repo.audio.awaitingDebrief(now);
   const out = [];
   for (const ep of list) {

@@ -13,6 +13,12 @@
 //
 // The disk check fires before that happens: a notification once free space
 // on the spool's drive drops under the threshold, so there is time to act.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+type Row = import('../repo/types.ts').Row;
+/** JSON read or built key by key (src/types.ts): loose until its producer is TypeScript. */
+type Json = import('../types.ts').Json;
 
 const fs = require('fs');
 const path = require('path');
@@ -29,12 +35,12 @@ const lastRestart = new Map();
 
 // Paused by you or by the meeting gate: either way silence is the point.
 function paused() {
-  return require('./gate').readPause().state !== 'on';
+  return require('./gate.ts').readPause().state !== 'on';
 }
 
 // Newest write to any raw capture file in a stream's spool (speech files are
 // written by the processing pass, not the recorder, so they do not count).
-function lastWrite(stream) {
+function lastWrite(stream: any) {
   const dir = path.join(config.audioDir, stream);
   let newest = 0;
   let names = [];
@@ -56,10 +62,10 @@ function lastWrite(stream) {
 }
 
 // Pure: which streams need a restart.
-function staleStreams({ now, writes, isPaused, lastRestarts }) {
+function staleStreams({ now, writes, isPaused, lastRestarts }: { now?: any; writes?: any; isPaused?: any; lastRestarts?: any }) {
   if (isPaused) return [];
   return Object.entries(writes)
-    .filter(([stream, at]) => now - at > STALE_MS && now - (lastRestarts[stream] || 0) > RESTART_COOLDOWN_MS)
+    .filter(([stream, at]: [string, any]) => now - at > STALE_MS && now - (lastRestarts[stream] || 0) > RESTART_COOLDOWN_MS)
     .map(([stream]) => stream);
 }
 
@@ -69,7 +75,7 @@ async function checkCapture() {
   // minutes with a notification each time.
   if (!config.audio.enabled || !platform.capture.installed()) return [];
   const now = Date.now();
-  const writes = { mic: lastWrite('mic'), loopback: lastWrite('loopback') };
+  const writes: Record<string, any> = { mic: lastWrite('mic'), loopback: lastWrite('loopback') };
   const stale = staleStreams({ now, writes, isPaused: paused(), lastRestarts: Object.fromEntries(lastRestart) });
   for (const stream of stale) {
     lastRestart.set(stream, now);
@@ -78,7 +84,7 @@ async function checkCapture() {
     let ok = true;
     try {
       await platform.capture.restart(stream);
-    } catch (err) {
+    } catch (err: any) {
       ok = false;
       log.warn('recorder restart failed', { stream, message: err.message });
     }

@@ -5,7 +5,7 @@
 // path may quietly mix them into one anonymous transcript.
 
 const assert = require('assert');
-const { toEpisodes, classify, renderTranscript, isSubstantial } = require('../src/audio/episodes');
+const { toEpisodes, classify, renderTranscript, isSubstantial } = require('../src/audio/episodes.ts');
 
 const at = (mins, secs = 0) =>
   new Date(Date.UTC(2026, 8, 1, 9, mins, secs)).toISOString();

@@ -303,7 +303,7 @@ Source Output #94
   fs.rmSync(tmp, { recursive: true, force: true });
 
   // The Windows registry read the gate used before, unchanged and re-exported.
-  assert.strictEqual(require('../src/audio/gate').micHolders, windows.parseMicHolders);
+  assert.strictEqual(require('../src/audio/gate.ts').micHolders, windows.parseMicHolders);
   assert.deepStrictEqual(windows.capture.restartCommand('mic').cmd, 'powershell.exe');
 
   // The capture process's own reader (audio/devices_linux.py) agrees with the gate's.

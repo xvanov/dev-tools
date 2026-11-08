@@ -20,12 +20,18 @@
 // The gate never removes your pause (`pa mic pause`): silence you asked for
 // wins over any meeting. And it only pauses on the way *out* of a meeting, so
 // `pa mic on` between meetings records until the next meeting ends.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+type Row = import('../repo/types.ts').Row;
+/** JSON read or built key by key (src/types.ts): loose until its producer is TypeScript. */
+type Json = import('../types.ts').Json;
 
 const fs = require('fs');
 const path = require('path');
 const { config } = require('../config.ts');
 const { logger } = require('../log.ts');
-const { attendable, eventRange } = require('./episodes');
+const { attendable, eventRange } = require('./episodes.ts');
 const platform = require('../platform');
 
 const log = logger('meeting-gate');
@@ -34,7 +40,7 @@ const GATE_MARKER = 'meeting-gate';
 
 // Who holds the pause file: 'on' (nobody), 'user' (`pa mic pause`, or a file
 // we cannot read — honoured the way capture.py honours it), or 'gate'.
-function readPause(file = config.audio.pauseFile) {
+function readPause(file: any = config.audio.pauseFile) {
   let until;
   try {
     until = fs.readFileSync(file, 'utf8').trim();
@@ -50,7 +56,7 @@ function readPause(file = config.audio.pauseFile) {
 
 // An event worth recording: attendable, and with someone else in it — a solo
 // focus block is not a conversation.
-function meetingEvent(event) {
+function meetingEvent(event: any) {
   if (!attendable(event)) return false;
   const raw = event.raw || {};
   const attendees = Array.isArray(raw.attendees) ? raw.attendees.length : Number(raw.attendees) || 0;
@@ -58,11 +64,11 @@ function meetingEvent(event) {
 }
 
 // Pure: is a calendar meeting on at `now`?
-function calendarActive(events, now, { leadMs, graceMs }) {
+function calendarActive(events: any, now: any, { leadMs, graceMs }: { leadMs?: any; graceMs?: any }) {
   return events
     .filter(meetingEvent)
     .map(eventRange)
-    .some((e) => e.start - leadMs <= now && now < e.end + graceMs);
+    .some((e: any) => e.start - leadMs <= now && now < e.end + graceMs);
 }
 
 // Who holds the microphone is the platform's to answer (src/platform): the
@@ -82,7 +88,7 @@ const micHolders = platform.select('win32').parseMicHolders;
  * @param {?boolean} s.wanted   what the last tick wanted (null on the first tick)
  * @returns {{want: boolean, action: 'resume'|'pause'|'none', reason: string}}
  */
-function decide({ calendar, call, pause, wanted }) {
+function decide({ calendar, call, pause, wanted }: { calendar?: any; call?: any; pause?: any; wanted?: any }) {
   const want = calendar || call;
   const reason = calendar ? 'calendar meeting' : call ? 'call in progress' : 'no meeting';
   if (pause === 'user') return { want, action: 'none', reason: 'paused by you' };
@@ -95,14 +101,14 @@ async function currentMicHolders() {
   return platform.capture.micHolders().catch(() => []);
 }
 
-async function upcomingEvents(now) {
+async function upcomingEvents(now: any) {
   return require('../repo').sources.calendarAroundNow(now);
 }
 
-let wanted = null;
+let wanted: any = null;
 let lastCallAt = 0;
 
-async function tick({ now = Date.now() } = {}) {
+async function tick({ now = Date.now() }: { now?: number } = {}) {
   const g = config.audio.gate;
   const holders = await currentMicHolders();
   if (holders.length) lastCallAt = now;

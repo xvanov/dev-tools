@@ -7,6 +7,12 @@
 // Names are capture's (audio/naming.py): `YYYYMMDDTHHMM[SS][-n].wav`, local
 // time, `.wav.done` when capture closed it (its content: the UTC close time),
 // `.processed` when process.py is finished with it.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+type Row = import('../repo/types.ts').Row;
+/** JSON read or built key by key (src/types.ts): loose until its producer is TypeScript. */
+type Json = import('../types.ts').Json;
 
 const fs = require('fs');
 const path = require('path');
@@ -15,7 +21,7 @@ const STREAMS = ['mic', 'loopback'];
 const STEM = /^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})?(?:-\d+)?$/;
 
 /** Local start time a capture stem names, as a Date, or null. */
-function stemStart(stem) {
+function stemStart(stem: any) {
   const m = STEM.exec(stem);
   if (!m) return null;
   const [, y, mo, d, h, mi, s] = m;
@@ -23,7 +29,7 @@ function stemStart(stem) {
   return Number.isNaN(t.getTime()) ? null : t;
 }
 
-function list(dir) {
+function list(dir: any) {
   try {
     return fs.readdirSync(dir);
   } catch {
@@ -31,7 +37,7 @@ function list(dir) {
   }
 }
 
-function readDone(file) {
+function readDone(file: any) {
   try {
     const text = fs.readFileSync(file, 'utf8').trim();
     // "recovered <time>" is when process.py found an orphan, not when its
@@ -48,16 +54,16 @@ function readDone(file) {
  * Capture files per stream: [{stream, stem, start, done, doneAt, processed}].
  * @param {string} spool
  */
-function files(spool) {
-  const out = [];
+function files(spool: any) {
+  const out: any[] = [];
   for (const stream of STREAMS) {
     const dir = path.join(spool, stream);
-    const names = new Set(list(dir));
-    const stems = new Set();
+    const names = new Set<string>(list(dir));
+    const stems = new Set<string>();
     for (const n of names) {
       if (n.endsWith('.speech.wav') || n.endsWith('.speech.json')) continue;
       const m = /^(.+?)\.(wav|wav\.done|processed)$/.exec(n);
-      if (m) stems.add(m[1]);
+      if (m) stems.add(m[1] as string);
     }
     for (const stem of stems) {
       const start = stemStart(stem);
@@ -78,7 +84,7 @@ function files(spool) {
 }
 
 /** True when a finished capture file is waiting for process.py. */
-function needsProcessing(spool) {
+function needsProcessing(spool: any) {
   return files(spool).some((f) => f.hasWav && f.done && !f.processed);
 }
 
@@ -91,7 +97,7 @@ function needsProcessing(spool) {
  * an episode that ended at 10:05 with coverage at 10:20 had fifteen quiet
  * minutes; with coverage at 10:06 nobody knows yet.
  */
-function coverage(spool, { rollMinutes = 15, now = Date.now(), activeHours = 3 } = {}) {
+function coverage(spool: any, { rollMinutes = 15, now = Date.now(), activeHours = 3 }: { rollMinutes?: number; now?: number; activeHours?: number } = {}) {
   const all = files(spool);
   const ends = [];
   for (const stream of STREAMS) {
@@ -105,7 +111,7 @@ function coverage(spool, { rollMinutes = 15, now = Date.now(), activeHours = 3 }
 }
 
 /** When capture was last asked to roll early (ms), or 0. */
-function lastRoll(rollFile) {
+function lastRoll(rollFile: any) {
   try {
     return fs.statSync(rollFile).mtimeMs;
   } catch {
@@ -118,7 +124,7 @@ function lastRoll(rollFile) {
  * the file's mtime with when it opened its file, so touching it is the whole
  * request; nothing deletes it.
  */
-function requestRoll(rollFile, reason = '') {
+function requestRoll(rollFile: any, reason: string = '') {
   fs.mkdirSync(path.dirname(rollFile), { recursive: true });
   fs.writeFileSync(rollFile, `${new Date().toISOString()} ${reason}\n`.trimStart());
 }

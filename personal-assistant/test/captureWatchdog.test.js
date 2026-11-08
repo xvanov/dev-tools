@@ -4,7 +4,7 @@
 // two minutes — unless capture is paused, or it was restarted moments ago.
 
 const assert = require('assert');
-const { staleStreams, STALE_MS } = require('../src/audio/watchdog');
+const { staleStreams, STALE_MS } = require('../src/audio/watchdog.ts');
 
 const now = 10_000_000;
 const fresh = now - 10_000;

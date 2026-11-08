@@ -26,7 +26,7 @@ function create(db: Db) {
       return r.rowCount || 0;
     },
 
-    // --- for audio/gate.js
+    // --- for audio/gate.ts
 
     /**
      * Calendar events from 12 hours before `now` to 1 hour after.

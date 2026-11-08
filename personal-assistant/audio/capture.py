@@ -89,7 +89,7 @@ def paused(pause_file: str) -> bool:
         with open(pause_file, "r", encoding="utf-8") as fh:
             until = fh.read().strip()
         # Empty is `pa mic pause` with no end; "meeting-gate" is the worker's
-        # meeting gate between meetings (src/audio/gate.js).
+        # meeting gate between meetings (src/audio/gate.ts).
         if not until or until == "meeting-gate":
             return True
         return dt.datetime.fromisoformat(until.replace("Z", "+00:00")) > dt.datetime.now(dt.timezone.utc)

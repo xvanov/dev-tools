@@ -6,7 +6,7 @@
 
 const assert = require('assert');
 const D = require('../src/meetings/debriefCore.ts');
-const { splitAtEvents, classify, episodeChanged } = require('../src/audio/episodes');
+const { splitAtEvents, classify, episodeChanged } = require('../src/audio/episodes.ts');
 
 const transcript = [
   'Me: Morning. I can take the ledger import fix, I will have it up by Friday.',

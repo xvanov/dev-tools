@@ -721,7 +721,7 @@ async function overview({ days = 1, hours = 24, now = new Date() }: { days?: num
 
   past.sort((a, b) => new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime());
 
-  const pauseState = require('../audio/gate').readPause().state;
+  const pauseState = require('../audio/gate.ts').readPause().state;
   return {
     days,
     since: since.toISOString(),

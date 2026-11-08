@@ -1133,7 +1133,7 @@ into the next is cut at the second one's start, so each meeting gets its own epi
 
 Capture records during meetings, not all day. Recording every second fed the transcriber
 music, videos and an empty room — a CPU core and a slice of the GPU from login to shutdown — so
-the worker's **meeting gate** (`src/audio/gate.js`) keeps the recorders paused, holding no
+the worker's **meeting gate** (`src/audio/gate.ts`) keeps the recorders paused, holding no
 device, except while a calendar meeting with other people in it is on (from two minutes before
 its start to five after its end) or another app holds the microphone. The second is the
 unplanned call: a Teams ring, a Zoom link in chat, a Meet tab. Windows records which app holds

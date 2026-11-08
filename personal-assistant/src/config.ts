@@ -525,7 +525,7 @@ const config = {
     // Touched by the worker when a meeting ends; capture finishes its current
     // file within a second (audio/capture.py, audio/naming.py).
     rollFile: env('PA_AUDIO_ROLL_FILE', path.join(dataDir, 'audio.roll')),
-    // The meeting gate (src/audio/gate.js): capture records only while a
+    // The meeting gate (src/audio/gate.ts): capture records only while a
     // calendar meeting is on or another app holds the microphone.
     gate: {
       enabled: env('PA_AUDIO_MEETING_GATE', '1') !== '0',

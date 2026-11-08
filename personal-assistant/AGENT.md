@@ -463,7 +463,7 @@ happens before the yes: registering a repo with the factory (`factory app add`) 
 
 **Capture never stops for the assistant.** The worker's only levers on `capture.py` are the pause
 file (`pa mic pause`) and the roll file, which makes capture finish its file and continue in a
-new one. The meeting gate (`src/audio/gate.js`) writes the pause file between meetings with the
+new one. The meeting gate (`src/audio/gate.ts`) writes the pause file between meetings with the
 marker `meeting-gate` and removes only a file holding that marker: it never lifts a pause you
 made, and it never pauses mid-meeting. A capture file is never opened for writing twice
 (`audio/naming.py`).
