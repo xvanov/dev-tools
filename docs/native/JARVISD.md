@@ -226,4 +226,12 @@ setup; T7's cargo and Bun caches apply.
   Talk's transcription came back empty (Bun reset the half-closed socket to whisper; fixed in
   2aad672, now covered by the Bun parity set). Next try after that fix is deployed.
 - [x] Leaves in strict TS: `events/bus`, `util/{text,exclusive,scheduler,when}`, `policy`.
-- [ ] Stage 2 onward, as above.
+- [x] Stage 2, the repository layer: every aggregate in `repo/` and its SQLite twin in
+  `repo/sqlite/` is strict TS (`repo/index.js` and `repo/_sql.js` stay JS for now; `db` next).
+- [x] Stage 6, first part: the dashboard's server modules (`dashboard/*.ts`, with the types-only
+  `dashboard/types.ts`: `Ctx`, `Req`/`Res`, `HttpError`) and the MCP server (`mcp/server.ts`,
+  `mcp/chatTools.ts`). Files the browser loads (`*.client.js`, `nav.js`, `talk.core.js`,
+  `talk.page.js`, `voiceCapture.js`, ...) stay JS. `mcp/server.js` stays as the entry Claude
+  Code and the chat start, and runs `server.ts`. JSON a JS producer hands over (board cards,
+  factory views, tool arguments) is a documented loose `Json` record until that producer is TS.
+- [ ] Stage 2's `db`, stages 3 to 5, the one typed router, `cli`, as above.
