@@ -242,6 +242,12 @@ run mid-step; a job continued on an existing branch (`--branch`).
     shows in Run.
   - [ ] **E5.3 Dev step starts late.** After 10 min the dev step (the first session) had not started:
     the factory moves a story one step per 300 s tick. Card to job started took 109 s against a < 1 s target.
+  Run 2 (same variant, first_output timeout 1800 s, 04:19Z; card #6759, job dev-tools:005): card 0.3 s,
+  then job started NOT REACHED. factory_start took 3 min 19 s, and the job then stayed `queued` until the
+  300 s job_started limit (341 s). Cleanup ran (job cancelled, card dropped, no PR).
+  - [ ] **E5.4 Job start is slow and can stall in queued.** factory_start (compose + submit) took 37 s in
+    run 1 and 199 s in run 2, and run 2's job never left `queued` in 5 min. Before 2.2 a queued job waited
+    for the next 300 s tick.
 - [ ] **E6 Gate.** Each phase's Exit box below requires a green E4 run (all variants) on both
   stacks, with the timings recorded in the targets table.
 - [ ] **Exit E:** the user runs the golden path by voice ("start a factory job for …"), watches
