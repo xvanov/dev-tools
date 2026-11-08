@@ -627,6 +627,24 @@ const C = require('../src/dashboard/talk.core');
   const after = pings;
   await new Promise((r) => setTimeout(r, 100));
   assert.strictEqual(pings, after, 'no pings after the transcription');
+
+  // An utterance's start (POST /api/talk/warm) refreshes a snapshot that would go stale before its turn.
+  {
+    const FL = require('../src/chat/fastLane.ts');
+    const saved = { cache: FL.snapshotCache, enabled: config.fastLane.enabled, voice: config.voice.url };
+    const warmed = [];
+    FL.snapshotCache = () => ({ warm: (o) => warmed.push(o) });
+    config.fastLane.enabled = true;
+    config.voice.url = '';
+    res = await fetch(`${base}/api/talk/warm`, { method: 'POST', headers: { 'X-PA': '1' } });
+    assert.strictEqual(res.status, 202);
+    assert.strictEqual(warmed.length, 1);
+    assert.ok(warmed[0].marginMs >= 10_000, `with a margin for the utterance and its turn (${warmed[0].marginMs})`);
+    talk.stopWhisperWarm();
+    Object.assign(config.fastLane, { enabled: saved.enabled });
+    config.voice.url = saved.voice;
+    FL.snapshotCache = saved.cache;
+  }
   whisper.off('connection', onPing);
 
   // The page and its scripts are served, the page with the termhub URL.

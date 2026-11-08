@@ -252,6 +252,20 @@ function splitAll(pieces) {
     assert.strictEqual(await cache.get(), 'v2', 'and refreshed behind');
     const slow = F.createSnapshotCache({ build: () => new Promise((r) => setTimeout(() => r('late'), 200)) });
     assert.strictEqual(await slow.get({ firstWaitMs: 10 }), '', 'the first turn does not wait long');
+    // warm({ marginMs }) at an utterance's start: one that would go stale before its turn is rebuilt now.
+    const tick = () => new Promise((r) => setImmediate(r));
+    assert.strictEqual(builds, 2);
+    clock = 5400;
+    cache.warm({ marginMs: 500 });
+    await tick();
+    assert.strictEqual(builds, 2, 'fresh past the margin: kept');
+    clock = 5600;
+    cache.warm();
+    await tick();
+    assert.strictEqual(builds, 2, 'within the ttl a plain warm keeps it');
+    cache.warm({ marginMs: 500 });
+    await tick();
+    assert.strictEqual(builds, 3, 'stale before its turn would come: rebuilt now');
   }
 
   // ---- runTurn with a scripted model ---------------------------------------------------
@@ -275,7 +289,7 @@ function splitAll(pieces) {
     return {
       sent,
       remembered,
-      deps: { snapshot: async () => 'Now: Friday', history: () => [], handoff: async (t) => (sent.push(t), { id: 'u-1' }), remember: (a, b) => remembered.push([a, b]), ...over },
+      deps: { snapshot: async () => 'Now: Friday', history: () => [], handoff: async (t) => (sent.push(t), { id: 'u-1' }), remember: (a, b) => remembered.push([a, b]), warmLocal: async () => 0, ...over },
     };
   };
   // decisionTimeoutMs is a ceiling, not a speed claim: an HTTP router round trip took > 2 s on a loaded box and the
@@ -525,6 +539,7 @@ function splitAll(pieces) {
     assert.deepStrictEqual(seen.map((a) => [a.model, a.keepAlive, typeof a.system]), [['local/llama3.2:3b', '24h', 'string']]);
     assert.ok(seen[0].system.length > 200, 'the warm ping carries the fixed system prompt (the KV prefix)');
     assert.strictEqual(seen[0].system, F.replySystem({ route: 'answer' }), "under logprob: the answerer's prompt");
+    assert.match(seen[0].prompt, /Now: Friday[\s\S]*The user just said: ""$/, 'with the snapshot, up to the words');
     assert.strictEqual(primed.length, 1, 'and the router prompt is put in the cache');
     assert.strictEqual(primed[0].context, 'Now: Friday');
     assert.strictEqual(F.warm({ now: 1e12 + 1000, deps: { warmLocal: async () => 1 } }), null, 'not again within a minute');
@@ -607,7 +622,9 @@ function splitAll(pieces) {
     const primed = [];
     // Confident answer: the router decides, then the answerer speaks.
     let calls = [];
-    let b = base({ route: lp(0.95, 0.04, 0.01), prime: async (a) => primed.push(a), stream: (a) => (calls.push(a), script(['You have ', 'two overdue.'])(a)) });
+    const order = [];
+    const answerPrimed = [];
+    let b = base({ route: lp(0.95, 0.04, 0.01), prime: async (a) => (order.push('router'), primed.push(a)), warmLocal: async (a) => (order.push('answerer'), answerPrimed.push(a), 1), stream: (a) => (calls.push(a), script(['You have ', 'two overdue.'])(a)) });
     let t = await turn('how many are overdue?', b.deps, popts);
     assert.strictEqual(t.events[0].type, 'decision');
     assert.strictEqual(t.events[0].route, 'answer');
@@ -619,8 +636,14 @@ function splitAll(pieces) {
     assert.ok(!calls[0].format, 'the answerer writes words, not a decision');
     assert.deepStrictEqual(b.sent, []);
     assert.deepStrictEqual(b.remembered, [['how many are overdue?', 'You have two overdue.']]);
-    await new Promise((r) => setImmediate(r));
+    for (let i = 0; i < 5; i++) await new Promise((r) => setImmediate(r));
     assert.deepStrictEqual(primed.at(-1).history.map((e) => e.text), ['how many are overdue?', 'You have two overdue.'], 'the next turn is primed');
+    // The answerer's prefix too, first: its system prompt, the snapshot and the turn just spoken, up to the words.
+    assert.deepStrictEqual(order, ['answerer', 'router']);
+    assert.strictEqual(answerPrimed[0].system, F.replySystem({ route: 'answer' }));
+    assert.strictEqual(answerPrimed[0].keepAlive, '24h');
+    const next = F.userPrompt({ text: 'and tomorrow?', context: 'Now: Friday', history: [{ type: 'user', text: 'how many are overdue?' }, { type: 'assistant', text: 'You have two overdue.' }] });
+    assert.ok(next.startsWith(answerPrimed[0].prompt.slice(0, -1)), "a prefix of the next turn's prompt up to its words");
 
     // Below the threshold: no words from the model; the user's words go to Jarvis verbatim.
     calls = [];

@@ -173,6 +173,9 @@ async function transcribe(audio: Buffer, opts?: WhisperOpts) {
 const SILENCE_WAV = Buffer.from(require('./talk.core').encodeWav(new Float32Array(4000), 16000));
 const WHISPER_PING_GAP_MS = 400;
 const WHISPER_PING_MAX_MS = 10_000;
+// An utterance and its turn, from the warm at its start: the fast lane's
+// snapshot is refreshed then if it would go stale within this.
+const UTTERANCE_MS = 20_000;
 const whisperPings = { until: 0, running: false };
 function keepWhisperWarm(now: number = Date.now(), { gapMs = WHISPER_PING_GAP_MS, maxMs = WHISPER_PING_MAX_MS }: { gapMs?: number; maxMs?: number } = {}) {
   whisperPings.until = now + maxMs;
@@ -382,6 +385,10 @@ async function route(req: Req, res: Res, url: URL, { send, issuePageToken = null
     }
     req.resume();
     warmVoicePath(Date.now(), { keep: true });
+    // An utterance has begun: its turn comes in a second or more. A snapshot
+    // rebuilt inside the turn held the loop and re-primed Ollama under it
+    // (+100-250 ms to the first token); rebuilt now, it is primed by then.
+    if (config.fastLane.enabled) require('../chat/fastLane.ts').snapshotCache().warm({ marginMs: UTTERANCE_MS });
     send(res, 202, { ok: true });
     return true;
   }

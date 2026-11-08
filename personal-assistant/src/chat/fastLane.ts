@@ -650,8 +650,10 @@ function createSnapshotCache({ build = buildSnapshot, ttlMs = config.fastLane.co
       clearTimeout(timer);
       return v || '';
     },
-    warm() {
-      if (value == null || now() - at > ttlMs) refresh();
+    // `marginMs`: refresh one that will be stale that soon, so a turn arriving
+    // then finds it fresh and does not rebuild it (and re-prime Ollama) mid-turn.
+    warm({ marginMs = 0 }: { marginMs?: number } = {}) {
+      if (value == null || now() - at > ttlMs - marginMs) refresh();
     },
   };
 }
@@ -688,7 +690,7 @@ function handoffText(userText: any, decision: any, said: any) {
 
 let sharedSnapshot: any = null;
 function snapshotCache() {
-  if (!sharedSnapshot) sharedSnapshot = createSnapshotCache({ onChange: (context: any) => primeRouter({ context }) });
+  if (!sharedSnapshot) sharedSnapshot = createSnapshotCache({ onChange: (context: any) => primeTurn({ context }) });
   return sharedSnapshot;
 }
 
@@ -709,18 +711,48 @@ function answerThreshold(o: any = config.fastLane) {
   return Number.isFinite(t) && t > 0 && t <= 1 ? t : require('./fastRouter.ts').THRESHOLD;
 }
 
+type PrimeArgs = { context?: any; history?: any; o?: any; deps?: any };
+
+// What the next turn will see, unless given.
+async function nextTurnInputs({ context, history, deps = {} }: PrimeArgs) {
+  return {
+    context: context ?? (await (deps.snapshot || depOverrides.snapshot || (() => snapshotCache().get()))()),
+    history: history ?? (deps.history || depOverrides.history || liveHistory)(),
+  };
+}
+
 // Warms the router's prompt cache for the next turn (a new snapshot, or the
 // conversation as it now stands). Never throws, never waits.
-function primeRouter({ context, history, o = config.fastLane, deps = {} }: { context?: any; history?: any; o?: any; deps?: any } = {}) {
+function primeRouter({ context, history, o = config.fastLane, deps = {} }: PrimeArgs = {}) {
   if (!o.enabled || routerKind(o) !== 'logprob') return null;
   const prime = deps.prime || depOverrides.prime || require('./fastRouter.ts').prime;
   return Promise.resolve()
-    .then(async () => ({
-      context: context ?? (await (deps.snapshot || depOverrides.snapshot || (() => snapshotCache().get()))()),
-      history: history ?? (deps.history || depOverrides.history || liveHistory)(),
-    }))
+    .then(() => nextTurnInputs({ context, history, deps }))
     .then((a) => prime({ ...a, model: o.model, keepAlive: o.keepAlive, timeoutMs: 5000 }))
     .catch(() => null);
+}
+
+/** The answerer's system prompt and its user message up to the words: what its cache should hold. */
+function answererPrefix({ context, history }: { context?: any; history?: any }) {
+  return { system: replySystem({ route: 'answer' }), prompt: userPrompt({ text: '', context, history }) };
+}
+
+// The same for the answerer: its system prompt, the snapshot and the
+// conversation. Ollama keeps one prefix per slot (OLLAMA_NUM_PARALLEL); with
+// two, the router and the answerer each keep theirs, so a new snapshot is not
+// read again inside the turn. Never throws.
+function primeAnswerer({ context, history, o = config.fastLane, deps = {} }: PrimeArgs = {}) {
+  if (!o.enabled || routerKind(o) !== 'logprob') return null;
+  const warmLocal = deps.warmLocal || depOverrides.warmLocal || require('../llm.ts').warmLocal;
+  return Promise.resolve()
+    .then(() => nextTurnInputs({ context, history, deps }))
+    .then((a) => warmLocal({ model: o.model, keepAlive: o.keepAlive, timeoutMs: 5000, ...answererPrefix(a) }))
+    .catch(() => null);
+}
+
+// Both, the router last: with a single slot the turn's first call keeps its prefix.
+function primeTurn(a: PrimeArgs = {}) {
+  return Promise.resolve(primeAnswerer(a)).then(() => primeRouter(a));
 }
 
 function defaultDeps() {
@@ -994,7 +1026,7 @@ async function runTurn({ text, emit, signal = null, deps = {}, opts = {} }: { te
     if (router === 'logprob' && !r.fellBack && !signal?.aborted) {
       // The next turn's conversation is this one: put it in the prompt cache now.
       const next = [...(history as any[]), { type: 'user', text }, ...(r.route === 'answer' && r.say.trim() ? [{ type: 'assistant', text: r.say.trim() }] : [])];
-      primeRouter({ context, history: next, o, deps: d });
+      primeTurn({ context, history: next, o, deps: d });
     }
     return { ...r, ms: done.ms };
   } finally {
@@ -1016,17 +1048,20 @@ function warm({ now = Date.now(), deps = {} }: { now?: number | undefined; deps?
   lastWarm = now;
   const warmLocal = deps.warmLocal || require('../llm.ts').warmLocal;
   return Promise.resolve()
-    .then(() => {
+    .then(async () => {
       // Re-primed every few minutes: another model or a long idle can drop
       // the prefix from Ollama's cache while keep_alive holds the weights.
       if (!deps.warmLocal && !keepWarmTimer) {
         keepWarmTimer = setInterval(() => warm(), KEEP_WARM_MS);
         keepWarmTimer.unref?.();
       }
-      // The fixed system prompt, so the KV cache holds its prefix: the
-      // answerer's under the logprob router, the one-call JSON prompt otherwise.
-      const system = routerKind(o) === 'logprob' ? replySystem({ route: 'answer' }) : jsonSystem();
-      return warmLocal({ model: o.model, keepAlive: o.keepAlive, system });
+      // So the KV cache holds the prefix: the answerer's (system, snapshot,
+      // conversation) under the logprob router, the one-call JSON prompt otherwise.
+      if (routerKind(o) === 'logprob') {
+        const a = await nextTurnInputs({ deps }).catch(() => ({ context: '', history: [] }));
+        return warmLocal({ model: o.model, keepAlive: o.keepAlive, ...answererPrefix(a) });
+      }
+      return warmLocal({ model: o.model, keepAlive: o.keepAlive, system: jsonSystem() });
     })
     .then(async (ms) => {
       log.debug('local fast model warm', { model: o.model, ms });
@@ -1066,6 +1101,9 @@ module.exports = {
   routerKind,
   answerThreshold,
   primeRouter,
+  primeAnswerer,
+  primeTurn,
+  answererPrefix,
   usesJson,
   createJsonSayStreamer,
   DECISION_SCHEMA,

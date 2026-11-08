@@ -617,16 +617,17 @@ async function* streamOllama({ route: r, system, prompt, maxTokens, timeoutMs, s
  * with no messages loads the model and answers at once). Resolves with the
  * time it took; rejects when Ollama is not there.
  */
-async function warmLocal({ model, keepAlive = '30m', system = null, timeoutMs = 60_000 }: { model?: string | null; keepAlive?: string; system?: unknown; timeoutMs?: number } = {}) {
+async function warmLocal({ model, keepAlive = '30m', system = null, prompt = '', timeoutMs = 60_000 }: { model?: string | null; keepAlive?: string; system?: unknown; prompt?: string; timeoutMs?: number } = {}) {
   const r = models.route(model, { needs: 'text' });
   if (r.provider !== 'local') throw new Error(`${model} is not a local/ model`);
   // With a `system` prompt it also primes the KV cache: Ollama reuses the
   // longest token prefix shared with the previous request, so one request that
-  // carries the fixed system prompt and generates a single token lets the next
-  // real turn skip evaluating that prefix (first turn 1.1 s, warm 0.25 s;
-  // docs/native/DESIGN.md). Without one it is a bare load.
+  // carries the fixed system prompt (and `prompt`, the next turn's user message
+  // up to its words) and generates a single token lets the next real turn skip
+  // evaluating that prefix (first turn 1.1 s, warm 0.25 s; docs/native/DESIGN.md).
+  // Without one it is a bare load.
   const req = system
-    ? ollamaRequest({ model: r.model, system, prompt: '', maxTokens: 1, keepAlive, key: models.providerKey('local') })
+    ? ollamaRequest({ model: r.model, system, prompt, maxTokens: 1, keepAlive, key: models.providerKey('local') })
     : ollamaRequest({ model: r.model, prompt: null, keepAlive, key: models.providerKey('local') });
   req.body.stream = false;
   const t = Date.now();
