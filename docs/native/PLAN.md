@@ -460,7 +460,8 @@ run mid-step; a job continued on an existing branch (`--branch`).
     an admin step, ask first).
   - Windows: folders every local user can read (`C:\repos`) stay readable until the operator
     runs `python -m factory.sandbox.exec setup --deny-read C:\repos` (an ACL change, ask first).
-  - The Linux integration test runs in CI only (bubblewrap); not yet seen green there.
+  - Linux is verified in CI only (bubblewrap on the runner; the integration tests pass there
+    since 3948e2d), not yet on the personal stack's machine.
   - PA code modes are refused while sandboxed: the session cannot write the shared `.git`, so
     it cannot commit. Next: the broker commits the session's tree into its mirror.
   - API runtime: the terminal is sandboxed on Linux only (OpenHands' PowerShell probe falls
