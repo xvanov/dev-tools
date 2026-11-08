@@ -722,6 +722,14 @@ not in the Map is not done, and a new one gets added there first.
     serve's /api/cli it returns code 0 with empty stdout; job list and status are fine (sent to
     factory-native).
   - teams-ask: dry run OK. A real run needs a test chat with only you in it, so it is refused.
+  - research: dry run OK. Real run (e013834, 11:56Z; card #6765): report.md delivered with file:line
+    citations, no PR, $0. Research conversation 75.7 s; tool call 13.5 s (target 1 s); approval to
+    "started" 3.4 s (target 1 s). Run links failed only on E5.8. Evidence:
+    `e2e/20261108T115604Z-research/` (report, transcript, 3 screenshots).
+  - [ ] **8.2.2 factory_start spends ~11-13 s before any model call.** Research has no compose step,
+    yet the tool call took 13.5 s. In golden-path runs, about 11 s of factory_start goes to gathering
+    the card's context before compose (3.3 s) and the submit (~1.3 s). Profile the card-context step
+    (dispatch/brief) against the 1 s tool-call target.
 - [ ] **8.3 Reviewer sessions.** For each workflow, a separate reviewer session (a fresh agent
   that did not implement it, on Claude Code) runs `e2e <workflow>`, inspects the evidence and
   the outputs themselves (reads the PR, the report, the board card), and scores the workflow
