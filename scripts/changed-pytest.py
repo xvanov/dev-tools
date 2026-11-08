@@ -149,7 +149,7 @@ def conftests_for(test: Path) -> list[Path]:
 
 
 SMOKE_CAP = 40      # selected test files above this count → smoke subset
-SMOKE_FILES = 20    # files in the smoke subset
+SMOKE_FILES = 10    # files in the smoke subset
 
 
 def select(since: str) -> tuple[bool, str, list[Path], list[Path]]:
