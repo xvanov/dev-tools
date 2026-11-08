@@ -269,12 +269,15 @@ async function golden(o, deps) {
       timeline = seen.timeline;
       for (const h of seen.reached) deps.log(`hop ${h} (+${Math.round((now - t0) / 1000)} s)`);
 
-      if (o.resume && timeline.first_output != null && timeline.killed == null) {
-        for (const s of ids.steps.filter((x) => x.session && x.state === 'running')) {
+      // Only a claude_session step's terminal is the step itself: an API step's
+      // session is a read-only viewer (E2), and killing it stops nothing.
+      const workers = ids.steps.filter((x) => x.session && x.state === 'running' && x.runtime === 'claude_session');
+      if (o.resume && timeline.first_output != null && timeline.killed == null && workers.length) {
+        for (const s of workers) {
           await safely(() => deps.hub(s.session.machine).killSession(s.session.id));
         }
         timeline = { ...timeline, killed: deps.now() };
-        deps.log('killed the running step; waiting for the job to stop');
+        deps.log(`killed the running step (${workers.map((s) => `${s.persona || 'step'} ${s.step}`).join(', ')}); waiting for the job to stop`);
       }
       if (o.resume && timeline.killed != null && timeline.resumed == null) {
         const stopped = lastJob && (C.TERMINAL.has(lastJob.state) || lastJob.state === 'needs_human' || lastJob.stalled || C.chainIds(lastJob).steps.every((s) => s.state !== 'running'));

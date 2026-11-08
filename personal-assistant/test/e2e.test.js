@@ -325,6 +325,17 @@ test('runner: --resume kills the running step after its first output, then resum
   assert.ok(log.killed.includes('abc123'));
 });
 
+test('runner: --resume waits for a claude_session step; an API step\'s viewer session is not the step', async () => {
+  const planning = { ...JOB_RUNNING, runs: [{ id: 40, story_id: 1, runtime: 'api', persona: 'pm', state: 'running', session: { machine: '', termhub_session_id: 'view40', links: { job: 'dev-tools:0007', step: '40' } } }] };
+  const killedJob = { ...JOB_RUNNING, state: 'failed', runs: [{ ...JOB_RUNNING.runs[0], state: 'failed' }] };
+  const { deps, log } = fakes({ jobs: [planning, planning, JOB_RUNNING, killedJob, JOB_RUNNING, JOB_PR, JOB_CI] });
+  const r = await G.main({ resume: true }, {}, deps);
+  assert.strictEqual(r.ok, true, JSON.stringify(r.failed.concat(r.errors)));
+  assert.ok(!log.killed.slice(0, 1).includes('view40'), 'the API viewer is not killed as the step');
+  assert.strictEqual(log.killed[0], 'abc123');
+  assert.ok(log.chat.some(([n]) => n === 'factory_resume'));
+});
+
 test('runner: --branch continues the branch through factory_continue', async () => {
   const { deps, log } = fakes({ jobs: [JOB_RUNNING, JOB_CI] });
   await G.main({ branch: 'feat/x' }, {}, deps);
