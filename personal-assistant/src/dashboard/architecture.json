@@ -583,6 +583,7 @@
         "Log": "<state dir>/logs/supervisor.log (PA_DATA_DIR, else %LOCALAPPDATA%\\personal-assistant or ~/.local/share/personal-assistant; PA_SUPERVISOR_LOG overrides): the supervisor's lines and each generation's stdout/stderr as [gen N], rotated at 5 MB, 3 kept. Workers log 'event loop blocked' for any stall over 1 s",
         "Readiness": "a generation says ready only at the end of its startup (passes declared, lease requested), not when its port opens: the module loading in between blocked the loop for seconds right after the flip",
         "Deploy test (Z6)": "node src/e2e/deployTest.js: during real rolls, 4 loops of GET /api/version, an /api/events stream reconnecting with Last-Event-ID while events are produced, and a termhub terminal printing ticks; passes only with zero failed requests, every event exactly once in order with no resync, and the terminal socket held with no tick missing. Spare mode (a supervisor on a free port, test/fixtures/deployWorker.js, a throwaway termhub) runs in test/deployTest.test.js; --live [--deploy] runs it against the stack (events through pg_notify and pa_event_seq)",
+        "pa version": "src/cli/version.js: the commit the running worker serves, from GET /api/version on 127.0.0.1:PA_DISPATCH_PORT (2 s timeout); when that does not answer, `git rev-parse --short HEAD` of the checkout. The line names its source (dashboard + URL, or local checkout + why); --json prints {commit, source, url|reason}",
         "Priority": "the worker runs at Normal; everything it starts is lowered to Below Normal as it spawns (src/util/childPriority.js). A below-normal worker got no CPU while other work filled every core and stalled up to 173 s",
         "Keep-alive": "the worker dashboard keeps idle sockets 65 s; the supervisor resends a GET that meets ECONNRESET on a reused socket. status and a timed-out drain list what is in flight (method, path, age)",
         "Deploy lock": "one deploy at a time: deploy.js holds <state dir>/deploy.lock (owner pid) and the supervisor's lock ({\"cmd\":\"lock\",\"owner\",\"ttlMs\"}, 15 min, released by {\"cmd\":\"unlock\"}) through the roll and the health watch; meanwhile any other roll, rollback or lock is refused naming the holder (deploy.js exit 5), and a roll during a roll is refused, not merged. The supervisor's crash respawn is not a deploy and ignores it",
@@ -592,6 +593,8 @@
       "code": [
         "personal-assistant/src/supervisor/index.ts",
         "personal-assistant/src/supervisor/deploy.js",
+        "personal-assistant/src/cli/version.js",
+        "personal-assistant/test/version.test.js",
         "personal-assistant/src/worker.js",
         "personal-assistant/src/util/lease.js",
         "personal-assistant/src/util/scheduler.ts",

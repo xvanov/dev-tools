@@ -120,6 +120,7 @@ const HELP = `pa — your context layer
     pa restore [file] [--yes]       replace the store with a dump (newest by default)
     pa reingest --days N [--source s]  rewind sources so history is fetched again
     pa doctor                       what is configured, what is stale, what is broken
+    pa version [--json]             the commit the running worker serves (dashboard), else this checkout's short hash
     pa spend [--days N]             model spend per day and per pass (default 7 days)
     pa eval seed|list|add|drop|run  retrieval eval harness (pa eval for details)
     pa eval router [--fit]          voice fast lane router: accuracy and latency on its eval set
@@ -1797,6 +1798,7 @@ Object.assign(commands, require('./routine').make(out, fail));
 Object.assign(commands, require('./task').make(out, fail));
 Object.assign(commands, require('./e2e').make(out, fail));
 Object.assign(commands, require('./audit').make(out, fail));
+Object.assign(commands, require('./version').make(out, fail));
 
 async function main(argv) {
   const { command, args, flags, lists } = parseArgs(argv);
