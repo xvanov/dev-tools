@@ -52,8 +52,11 @@ Design rationale: the plan page (proposal, 7 Nov 2026) and the research summary 
   (`GH_TOKEN=$(gh auth token --user xvanov)` for `xvanov/*`). Done when `gh pr create
   --draft` on a throwaway branch of this repo succeeds from this machine and the factory, and
   an INNERGY repo still uses the work account.
-- [ ] **P2 Factory on this machine** can reach GitHub with the same per-owner rule (needed by
-  Track E's golden path).
+- [x] **P2 Factory on this machine** can reach GitHub with the same per-owner rule (needed by
+  Track E's golden path). (33e3b01, d57e6a9) Verified 2026-11-07 natively on Windows: the factory's
+  `gh_auth` resolver (Popen hook) opened draft PR xvanov/dev-tools#3 as `xvanov` on a throwaway
+  branch, closed it and deleted the branch; a non-xvanov owner resolved to the active work account.
+  Tracked app `software-factory/apps/dev-tools`. Windows factory run itself is item 2.3.
 
 Standing rules carried over: default agent runtime is Claude Code sessions (API/DeepSeek only on
 request); voice never approves high-risk actions alone; work and personal stacks never connect.
