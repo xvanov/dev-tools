@@ -2182,7 +2182,75 @@ PERSONA_ITERATION_CAPS: dict[str, int] = {
 }
 
 
-async def sandbox_run(
+def _workdir_rule(repo_path: Path) -> str:
+    """The prompt line that pins an agent's writes to its working directory."""
+    return (
+        f"Your working directory is `{repo_path}`. Create and edit files only inside it, "
+        "with paths relative to it. Never write anywhere else, even if you find another "
+        "checkout of this repository (for example the one this worktree hangs off): that "
+        "is a live tree other programs run from."
+    )
+
+
+async def sandbox_run(*args: Any, **kwargs: Any) -> RunResult:
+    """:func:`_sandbox_run_impl` under a :class:`factory.live_tree_guard.LiveTreeGuard`.
+
+    Files the agent wrote into the live checkout instead of its worktree are
+    moved into the worktree and reported (event ``wrote_outside_worktree``,
+    appended to ``RunResult.summary``). Same signature as the implementation.
+    """
+    import inspect as _inspect
+
+    bound = _inspect.signature(_sandbox_run_impl).bind(*args, **kwargs)
+    params = bound.arguments
+    guard = None
+    if not params.get("dry_run"):
+        try:
+            from factory.live_tree_guard import LiveTreeGuard
+
+            guard = LiveTreeGuard(Path(params["repo_path"]))
+        except Exception:  # noqa: BLE001 - the guard never blocks a run
+            guard = None
+    result = await _sandbox_run_impl(*args, **kwargs)
+    if guard is None:
+        return result
+    try:
+        report = guard.check()
+    except Exception:  # noqa: BLE001
+        report = None
+    if report is None:
+        return result
+    note = report.note()
+    print(f"[runner] {note}")
+    sid = params.get("story_id")
+    root = params.get("software_factory_root")
+    if sid is not None and root is not None:
+        with contextlib.suppress(Exception):
+            from factory.chain.event_log import log_story_event
+            from factory.live_tree_guard import EVENT_WROTE_OUTSIDE_WORKTREE
+
+            log_story_event(
+                sid,
+                EVENT_WROTE_OUTSIDE_WORKTREE,
+                {
+                    "persona": params.get("persona"),
+                    "live": report.live,
+                    "moved": report.moved,
+                    "left": report.left,
+                    "modified": report.modified,
+                },
+                software_factory_root=Path(root),
+            )
+    with contextlib.suppress(Exception):
+        result.summary = f"{result.summary.rstrip()}\n\n[factory] {note}".lstrip()
+        result.files_changed = [
+            *result.files_changed,
+            *(m for m in report.moved if m not in result.files_changed),
+        ]
+    return result
+
+
+async def _sandbox_run_impl(
     persona: str,
     story_path: Path,
     repo_path: Path,
@@ -2261,6 +2329,7 @@ async def sandbox_run(
     )
     if brief_addendum:
         initial_user_text = f"{initial_user_text.rstrip()}\n\n---\n\n{brief_addendum.strip()}\n"
+    initial_user_text = f"{initial_user_text.rstrip()}\n\n{_workdir_rule(repo_path)}\n"
 
     # Log prompt telemetry HERE — the moment the initial message exists and
     # before any failure path, mirroring the ``text_run`` site. Until this
@@ -3365,6 +3434,10 @@ async def sandbox_run(
         gate_stop_reason=str(_gate_state.get("stop") or ""),
         spend_cap_hit_usd=_gate_state.get("spend_cap_cost_usd"),
     )
+
+
+# ``inspect.signature(sandbox_run)`` reports the implementation's parameters.
+sandbox_run.__wrapped__ = _sandbox_run_impl  # type: ignore[attr-defined]
 
 
 # --------------------------------------------------------------------------- #
