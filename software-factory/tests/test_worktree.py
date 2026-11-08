@@ -330,3 +330,113 @@ def test_ensure_rejects_non_git_directory(tmp_path: Path) -> None:
             story_id=1,
             slug="x",
         )
+
+
+# --------------------------------------------------------------------------- #
+# A killed attempt's leftovers (2026-11-08, job dev-tools:013): every dev retry
+# failed `git worktree add` with "already exists" until the job timed out.
+# --------------------------------------------------------------------------- #
+
+
+def _story_with_commit(tmp_path: Path, sid: int = 35, slug: str = "e2e") -> tuple[Path, Path, Path]:
+    src = tmp_path / "src"
+    factory_root = tmp_path / "factory"
+    factory_root.mkdir()
+    _init_repo(src)
+    wt = ensure_worktree_for_story(src, software_factory_root=factory_root, app="dev-tools", story_id=sid, slug=slug)
+    (wt / "work.txt").write_text("attempt 1\n", encoding="utf-8")
+    subprocess.run(["git", "add", "work.txt"], cwd=str(wt), check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "attempt 1"], cwd=str(wt), check=True)
+    return src, factory_root, wt
+
+
+def _ensure_again(src: Path, factory_root: Path, sid: int = 35, slug: str = "e2e") -> Path:
+    return ensure_worktree_for_story(src, software_factory_root=factory_root, app="dev-tools", story_id=sid, slug=slug)
+
+
+def test_ensure_recovers_a_half_deleted_worktree(tmp_path: Path) -> None:
+    """The live failure: a prune stopped part way (a locked file on Windows)
+    took the worktree's ``.git`` and left the rest of the tree behind."""
+    src, factory_root, wt = _story_with_commit(tmp_path)
+    (wt / ".git").unlink()
+    (wt / "leftover.log").write_text("x", encoding="utf-8")
+
+    again = _ensure_again(src, factory_root)
+
+    assert again == wt
+    assert _current_branch(again) == "factory/story-35-e2e"
+    assert (again / "work.txt").read_text(encoding="utf-8") == "attempt 1\n"  # the branch's commit
+    assert not (again / "leftover.log").exists()
+
+
+def test_ensure_recovers_a_worktree_whose_registration_was_pruned(tmp_path: Path) -> None:
+    import shutil
+
+    src, factory_root, wt = _story_with_commit(tmp_path)
+    shutil.rmtree(src / ".git" / "worktrees")  # `.git` now points at nothing
+
+    again = _ensure_again(src, factory_root)
+
+    assert _current_branch(again) == "factory/story-35-e2e"
+    assert (again / "work.txt").exists()
+
+
+def test_ensure_renames_an_undeletable_leftover_aside(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A tree a live process still holds cannot be deleted; the retry must
+    not fail on it forever."""
+    from factory.chain import worktree as wt_mod
+
+    src, factory_root, wt = _story_with_commit(tmp_path)
+    (wt / ".git").unlink()
+    monkeypatch.setattr(wt_mod.shutil, "rmtree", lambda *a, **k: None)
+
+    again = _ensure_again(src, factory_root)
+
+    assert _current_branch(again) == "factory/story-35-e2e"
+    asides = [p for p in wt.parent.iterdir() if p.name.startswith(f"{wt.name}.stale-")]
+    assert len(asides) == 1
+
+
+def test_ensure_falls_back_when_the_branch_probe_misreports(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """2026-11-08 16:34Z: `show-ref` failed for another reason (rc != 1), the
+    chain chose `worktree add -b` and git said the branch already exists."""
+    from factory.chain import worktree as wt_mod
+
+    src, factory_root, wt = _story_with_commit(tmp_path)
+    wt_mod.remove_worktree_for_story(src, software_factory_root=factory_root, app="dev-tools", story_id=35, slug="e2e")
+    real = wt_mod._run_git
+
+    def flaky(repo: Path, *args: str, **kw):  # type: ignore[no-untyped-def]
+        if args[:1] == ("show-ref",):
+            return subprocess.CompletedProcess(["git", *args], 3221225794, "", "")
+        return real(repo, *args, **kw)
+
+    monkeypatch.setattr(wt_mod, "_run_git", flaky)
+    again = _ensure_again(src, factory_root)
+
+    assert _current_branch(again) == "factory/story-35-e2e"
+    assert (again / "work.txt").exists()
+
+
+def test_tick_prune_keeps_the_worktree_of_an_in_flight_story(tmp_path: Path) -> None:
+    """Worktrees are named by the GitHub issue number; the tick keyed its keep
+    set by the story row id and pruned story 11's `dev-tools-35-...` tree."""
+    from factory.chain.orchestrator import _worktree_keep_ids
+    from factory.chain.state_machine import StoryRecord
+
+    src, factory_root, wt = _story_with_commit(tmp_path)
+    story = StoryRecord(
+        id=11, github_issue_number=35, direction_id="d", app="dev-tools", title="t",
+        slug="e2e", scope="backend", state="dev_retry",
+    )
+
+    prune_stale_worktrees(
+        src, software_factory_root=factory_root, app="dev-tools",
+        active_story_ids=_worktree_keep_ids([story]),
+    )
+
+    assert (wt / ".git").exists()

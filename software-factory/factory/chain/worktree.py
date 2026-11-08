@@ -69,6 +69,7 @@ from __future__ import annotations
 import logging
 import re
 import shutil
+import time
 from pathlib import Path
 
 from factory.chain.branch import (
@@ -186,20 +187,24 @@ def ensure_worktree_for_story(
 
     # If the worktree already exists with the expected branch, reuse it.
     if wt.exists() and (wt / ".git").exists():
-        _sweep_acceptance_oracles(wt, story_id=story_id)
         head_proc = _run_git(wt, "rev-parse", "--abbrev-ref", "HEAD", check=False)
-        if head_proc.returncode == 0 and head_proc.stdout.strip() == branch:
+        if head_proc.returncode == 0:
+            _sweep_acceptance_oracles(wt, story_id=story_id)
+            if head_proc.stdout.strip() == branch:
+                return wt
+            # Mismatch: switch the worktree to the right branch. ``git worktree
+            # repair`` is for path-link mismatches; ``checkout`` handles the
+            # branch flip inside the worktree.
+            _run_git(wt, "checkout", branch, check=False)
             return wt
-        # Mismatch: switch the worktree to the right branch. ``git worktree
-        # repair`` is for path-link mismatches; ``checkout`` handles the
-        # branch flip inside the worktree.
-        _run_git(wt, "checkout", branch, check=False)
-        return wt
+        # A ``.git`` that git cannot read: the worktree's admin entry was
+        # pruned under it. Fall through and re-create it.
 
-    # If the path exists but isn't a git worktree (leftover from a manual
-    # cleanup), remove it so ``git worktree add`` can recreate.
+    # Anything else at the path (a killed attempt's half-deleted tree, a manual
+    # cleanup's leftovers) must go, or ``git worktree add`` fails with
+    # "already exists" on every tick.
     if wt.exists():
-        shutil.rmtree(wt, ignore_errors=True)
+        _clear_worktree_dir(repo, wt)
 
     # Ensure the source's tree isn't dirty in a way that blocks
     # ``git worktree add`` — same idea as ``ensure_feature_branch`` does
@@ -262,12 +267,25 @@ def ensure_worktree_for_story(
     branch_check = _run_git(
         repo, "show-ref", "--verify", "--quiet", f"refs/heads/{branch}", check=False
     )
+    # Drop registrations of worktrees whose directory is gone: git refuses to
+    # check a branch out a second time while a stale entry still claims it.
+    _run_git(repo, "worktree", "prune", check=False, timeout=WORKTREE_GIT_TIMEOUT_S)
     _wt_error: str | None = None
     try:
         if branch_check.returncode == 0:
             _run_git(repo, "worktree", "add", str(wt), branch, timeout=WORKTREE_GIT_TIMEOUT_S)
         else:
-            _run_git(repo, "worktree", "add", "-b", branch, str(wt), base_ref, timeout=WORKTREE_GIT_TIMEOUT_S)
+            try:
+                _run_git(
+                    repo, "worktree", "add", "-b", branch, str(wt), base_ref,
+                    timeout=WORKTREE_GIT_TIMEOUT_S,
+                )
+            except RuntimeError as exc:
+                # The probe said "no branch" but git says it exists (a probe
+                # that failed for another reason): check the branch out instead.
+                if "a branch named" not in str(exc):
+                    raise
+                _run_git(repo, "worktree", "add", str(wt), branch, timeout=WORKTREE_GIT_TIMEOUT_S)
     except Exception as _wt_exc:
         _wt_error = repr(_wt_exc)
         raise
@@ -290,6 +308,32 @@ def ensure_worktree_for_story(
         pass
 
     return wt
+
+
+def _clear_worktree_dir(repo: Path, wt: Path) -> None:
+    """Remove whatever is at ``wt`` so ``git worktree add`` can recreate it.
+
+    On Windows a file still held open (a process the killed tick left behind,
+    an editor, AV) makes both ``git worktree remove`` and ``rmtree`` stop part
+    way, leaving a tree without its ``.git``. If it cannot be deleted it is
+    renamed aside; if even that fails, the error says so instead of git's
+    bare "already exists".
+    """
+    _run_git(repo, "worktree", "remove", "--force", str(wt), check=False, timeout=WORKTREE_GIT_TIMEOUT_S)
+    if wt.exists():
+        shutil.rmtree(wt, ignore_errors=True)
+    _run_git(repo, "worktree", "prune", check=False, timeout=WORKTREE_GIT_TIMEOUT_S)
+    if not wt.exists():
+        return
+    aside = wt.with_name(f"{wt.name}.stale-{time.time_ns()}")
+    try:
+        wt.rename(aside)
+    except OSError as exc:
+        raise RuntimeError(
+            f"leftover worktree directory {wt} cannot be removed or renamed: "
+            f"a process still holds files in it ({exc})"
+        ) from exc
+    _logger.warning("renamed undeletable leftover worktree %s to %s", wt, aside)
 
 
 # Untracked-but-runtime-required files at the source repo root that the
@@ -390,9 +434,11 @@ def prune_stale_worktrees(
 ) -> list[Path]:
     """Remove worktree dirs whose StoryRecord is no longer active.
 
-    ``active_story_ids`` is the set of in-flight story ids — anything
-    not in that set with a worktree under ``state/worktrees/`` is
-    fair game. Returns the list of paths that were removed.
+    ``active_story_ids`` holds the ids the worktrees are NAMED by (the
+    ``story_id`` given to :func:`ensure_worktree_for_story`: the GitHub issue
+    number, 0 without one), not ``StoryRecord.id``. Anything not in that set
+    with a worktree under ``state/worktrees/`` is fair game. Returns the list
+    of paths that were removed.
 
     Resilient: filesystem errors are swallowed so a tick can't be
     taken down by a stuck worktree.
