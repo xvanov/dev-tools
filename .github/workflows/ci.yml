@@ -425,6 +425,11 @@ jobs:
           sudo apt-get install -y bubblewrap
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
       - run: uv sync --all-extras
+      # The dev-tools app's lint gate runs this on every story: a red main fails every
+      # story's gate, so CI catches it first (Linux only; ruff is OS-independent).
+      - if: runner.os == 'Linux'
+        run: bash $GITHUB_WORKSPACE/.github/scripts/run.sh uv run ruff check .
+        shell: bash
       - run: bash $GITHUB_WORKSPACE/.github/scripts/run.sh uv run pytest -q --tb=short -n auto --dist loadfile
         shell: bash
 

@@ -107,7 +107,7 @@ try {
 """
 
 
-def _run(cmd: list[str], stdin: str | None) -> "subprocess.CompletedProcess[str] | None":
+def _run(cmd: list[str], stdin: str | None) -> subprocess.CompletedProcess[str] | None:
     try:
         return subprocess.run(  # noqa: S603 - fixed argv, value-free
             cmd,

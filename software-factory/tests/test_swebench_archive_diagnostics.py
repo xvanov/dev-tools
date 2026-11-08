@@ -27,7 +27,6 @@ Every test here holds one property of the fix:
 
 from __future__ import annotations
 
-import gzip
 import importlib.util
 import inspect
 import json
