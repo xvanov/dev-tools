@@ -229,7 +229,7 @@ function suggestedBy() {
   return process.env.PA_CHAT_SESSION === '1' ? 'the chat' : 'a non-interactive caller';
 }
 
-// An offer (src/dispatch/offer.js), as the card would show it.
+// An offer (src/dispatch/offer.ts), as the card would show it.
 function printOffer({ body, payload }: { body?: Row | null | undefined; payload?: any }, { preview }: { preview?: any }) {
   if (preview) out('PREVIEW — nothing started, nothing sent.\n');
   out(body);
@@ -573,7 +573,7 @@ const commands: Json = {
     if (flagBool(flags, 'preview')) {
       // Composing is a model call made ahead of any decision: under the daily budget.
       o.useModel = await require('../budget.ts').allow('propose').catch(() => false);
-      return printOffer(await require('../dispatch/offer').prepare(o), { preview: true });
+      return printOffer(await require('../dispatch/offer.ts').prepare(o), { preview: true });
     }
 
     // The end state, shown BEFORE anything starts. One that merges or pushes to
@@ -591,7 +591,7 @@ const commands: Json = {
         return fail(`refused: run #${process.env.PA_DISPATCHED_RUN}'s agent may not start work that ${pre.delivery === 'push_to_main' ? 'pushes to main' : 'merges'} with no human step`);
       }
       if (!interactive()) {
-        const row = await require('../dispatch/offer').propose({
+        const row = await require('../dispatch/offer.ts').propose({
           ...o, useModel: await require('../budget.ts').allow('propose').catch(() => false), suggestedBy: suggestedBy(),
         });
         out(row ? `NOT started: put on a card for you to accept — proposal ${row.id} (dashboard → On me)` : 'NOT started: already on a card');
@@ -650,7 +650,7 @@ const commands: Json = {
     o.useModel = await require('../budget.ts').allow('propose').catch(() => false);
     if (!o.useModel) out('daily model budget reached — the card carries the deterministic brief (no model)');
     if (!interactive()) o.suggestedBy = suggestedBy();
-    const row = await require('../dispatch/offer').propose(o);
+    const row = await require('../dispatch/offer.ts').propose(o);
     if (!row) return out('already offered');
     out(`proposal ${row.id} · ${row.title}`);
     printOffer({ body: row.body, payload: row.payload }, { preview: false });
@@ -750,7 +750,7 @@ const commands: Json = {
       if (kind === 'code' || flagBool(flags, 'card')) {
         o.useModel = await require('../budget.ts').allow('propose').catch(() => false);
         if (!interactive()) o.suggestedBy = suggestedBy();
-        const row = await require('../dispatch/offer').propose(o);
+        const row = await require('../dispatch/offer.ts').propose(o);
         if (!row) return out('already offered');
         out(`proposal ${row.id} · ${row.title}`);
         printOffer({ body: row.body, payload: row.payload }, { preview: false });

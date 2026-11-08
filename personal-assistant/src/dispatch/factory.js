@@ -35,7 +35,7 @@
 // deliveryCore.ts). A factory job changes code, so the planner never starts one
 // on its own: it is always a proposal you say yes to (src/agent/planner.ts).
 //
-// The ask is a COMPOSED brief (src/dispatch/compose.js): the goal, done
+// The ask is a COMPOSED brief (src/dispatch/compose.ts): the goal, done
 // criteria, constraints, decisions and pointers to existing code the task
 // needs — not the operator's memory pages or message bodies wholesale.
 //
@@ -350,7 +350,7 @@ async function installId() {
  * Sends one PA run to the factory.
  * @param {object} o
  * @param {object} o.target   dispatch's resolveTarget() result
- * @param {string} o.app      the registered factory app (route.js resolved it)
+ * @param {string} o.app      the registered factory app (route.ts resolved it)
  * @param {string} [o.slug]   owner/name of the repo
  * @param {string} [o.task]   the operator's own words, if they typed them
  * @param {string} [o.mode]   an explicitly given PA mode; plan is refused
@@ -408,7 +408,7 @@ async function start({
   );
 
   // The ask: the card's frozen brief, or one composed now from the ask and
-  // what the assistant gathered (src/dispatch/compose.js). Composition never
+  // what the assistant gathered (src/dispatch/compose.ts). Composition never
   // fails a dispatch — the worst case is the deterministic brief. A research
   // or report job's ask is the operator's own words (factoryCore.researchAsk):
   // no composing model, no gathered context.
@@ -422,7 +422,7 @@ async function start({
   }
   if (!ask) {
     try {
-      const c = await require('./compose').compose({ target, task, done: criteria, app, slug, delivery: chosen.delivery, pipeline: pipe });
+      const c = await require('./compose.ts').compose({ target, task, done: criteria, app, slug, delivery: chosen.delivery, pipeline: pipe });
       ask = c.brief;
       by = c.by;
       criteria = c.done;

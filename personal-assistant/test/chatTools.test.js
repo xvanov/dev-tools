@@ -194,7 +194,7 @@ async function main() {
         return { route: 'factory', id: 21, jobId: 'widget:0050', jobKind: 'code', runtime: o.runtime, app: 'widget', delivery: preview, deliveryRequested: preview, pipeline: 'solo', created: true, warnings: [], url: 'http://hub/#session=f9' };
       },
     });
-    stub('../src/dispatch/offer', { propose: async (o) => { proposed.push(o); return { id: 77, title: 'Start: export retries' }; } });
+    stub('../src/dispatch/offer.ts', { propose: async (o) => { proposed.push(o); return { id: 77, title: 'Start: export retries' }; } });
     stub('../src/budget.ts', { allow: async () => true });
 
     const r = await T.handle('factory_start', { card: '412', delivery: 'pr', done: ['CI green'] });
@@ -219,7 +219,7 @@ async function main() {
     assert.strictEqual(s.mode, 'plan');
     assert.strictEqual(s.delivery, null, 'plan delivers nothing');
     await assert.rejects(() => T.handle('factory_cancel', { job: 'not a job' }), /not a factory job id/);
-    for (const rel of ['../src/dispatch', '../src/dispatch/offer', '../src/budget.ts']) delete require.cache[require.resolve(rel)];
+    for (const rel of ['../src/dispatch', '../src/dispatch/offer.ts', '../src/budget.ts']) delete require.cache[require.resolve(rel)];
   }
 
   // --- the permission split -------------------------------------------------------------

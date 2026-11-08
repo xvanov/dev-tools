@@ -203,7 +203,7 @@ async function start({
   }
   if (kind !== 'code' || runtime) via = via || 'factory';
   // `--repo` must be a known project. A card's repo was checked when the card
-  // was made (offer.js `repoVerifiedAt`) and is not re-judged at accept.
+  // was made (offer.ts `repoVerifiedAt`) and is not re-judged at accept.
   // A research/report job only reads: an owner/name it names need not be a
   // checkout here (the factory reads its own, or the ask just names it).
   const readOnlySlug = kind !== 'code' && require('./routeCore.ts').normSlug(repoPath);
@@ -222,7 +222,7 @@ async function start({
   let routeReason = givenReason || (route === 'claude' && via ? 'you chose a Claude session' : null);
   if (route !== 'claude') {
     const target = await resolveTarget({ commitmentId, repoPath });
-    const chooser = require('./route');
+    const chooser = require('./route.ts');
     const choice =
       route === 'factory'
         ? await chooser.forced({ target, mode: modeName, done, app, register, exactDone: frozen, jobKind: kind })
@@ -520,7 +520,7 @@ async function previewDelivery({ commitmentId = null, task = null, mode = undefi
   let slugName = null;
   if (!mode && !D.infer(task)) {
     const target = await resolveTarget({ commitmentId, repoPath }).catch(() => null);
-    slugName = target ? await require('./route').slugFor(target).catch(() => null) : null;
+    slugName = target ? await require('./route.ts').slugFor(target).catch(() => null) : null;
   }
   return require('./delivery.ts').resolve({ mode: mode ? resolveMode(mode).name : null, operatorText: task, slug: slugName });
 }
@@ -546,7 +546,7 @@ async function sessionDelivery({ modeName, delivery, deliverySource, deliveryPhr
     let slugName = null;
     if (!explicitMode && !D.infer(task)) {
       const target = await resolveTarget({ commitmentId, repoPath }).catch(() => null);
-      slugName = target ? await require('./route').slugFor(target).catch(() => null) : null;
+      slugName = target ? await require('./route.ts').slugFor(target).catch(() => null) : null;
     }
     chosen = await require('./delivery.ts').resolve({ mode: explicitMode, operatorText: task, slug: slugName });
   }

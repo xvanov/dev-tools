@@ -13,6 +13,19 @@
 // JSON — each falls back to composeCore.fallbackComposed, which carries the
 // operator's own words and the code hints and nothing private. The model is
 // swappable for tests (_setModel).
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+type Json = import('../types.ts').Json;
+type Config = import('../types.ts').Config;
+type ModelCall = (o: { system: string; prompt: string }) => Promise<string> | string;
+type Hint = { path: string; why: string };
+type Hints = { files: string[]; reuse: Hint[]; conventions: string[]; keywords: string[] };
+/** composeCore's Composed; its type cannot be named across a CommonJS module yet. */
+type Composed = Json;
+/** A dispatch target (dispatch.resolveTarget): store rows, read column by column. */
+type Target = Json;
+type GatherOptions = { target: Target; task?: string | null; done?: string[] | null; app?: string | null; slug?: string | null; appPath?: string | null };
 
 const fs = require('fs');
 const path = require('path');
@@ -27,10 +40,10 @@ const { logger } = require('../log.ts');
 const exec = promisify(execFile);
 const log = logger('compose');
 
-let modelOverride = null;
+let modelOverride: ModelCall | null = null;
 
 /** Tests only: replace the model call. fn({system, prompt}) → reply text. */
-function _setModel(fn) {
+function _setModel(fn: ModelCall | null): void {
   modelOverride = fn;
 }
 
@@ -43,10 +56,10 @@ function _setModel(fn) {
  * respected as is. Nothing keyed: the configured model, i.e. `claude -p`.
  * Pure: `c`, `read` and `hasAnthropicKey` are injectable for tests.
  */
-function pickModel({ c = config, read, hasAnthropicKey = Boolean(c.anthropic.apiKey) } = {}) {
+function pickModel({ c = config, read, hasAnthropicKey = Boolean(c.anthropic.apiKey) }: { c?: Config; read?: (name: string) => string | null | undefined; hasAnthropicKey?: boolean } = {}): string {
   const models = require('../models.ts');
-  const configured = c.dispatch.composeModel;
-  const keyed = (value) => {
+  const configured: string = c.dispatch.composeModel;
+  const keyed = (value: string | null | undefined): boolean => {
     if (!value) return false;
     try {
       const r = models.route(value, { hasAnthropicKey });
@@ -65,9 +78,9 @@ function pickModel({ c = config, read, hasAnthropicKey = Boolean(c.anthropic.api
   return configured;
 }
 
-let lastModel = null;
+let lastModel: string | null = null;
 
-async function callModel({ system, prompt }) {
+async function callModel({ system, prompt }: { system: string; prompt: string }): Promise<string> {
   if (modelOverride) return modelOverride({ system, prompt });
   const llm = require('../llm.ts');
   const model = pickModel();
@@ -78,18 +91,18 @@ async function callModel({ system, prompt }) {
     log.info('compose model call', { model, ms: Date.now() - started });
     return reply;
   } catch (err) {
-    log.warn('compose model call failed', { model, ms: Date.now() - started, message: err.message });
+    log.warn('compose model call failed', { model, ms: Date.now() - started, message: (err as Error).message });
     throw err;
   }
 }
 
-function extractJson(text) {
+function extractJson(text: unknown): Json | null {
   return require('../llm.ts').extractJson(String(text || ''));
 }
 
 // --- the repo: what exists that the change should reuse ---------------------------------
 
-async function git(cwd, args) {
+async function git(cwd: string, args: string[]): Promise<string> {
   const { stdout } = await exec('git', args, { cwd, maxBuffer: 16 * 1024 * 1024, timeout: 15_000, windowsHide: true, env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } });
   return stdout;
 }
@@ -99,21 +112,21 @@ async function git(cwd, args) {
  * repo path, the project's, or the factory app's path when the factory runs
  * here. A remote-only repo gets no hints, and the brief says so.
  */
-function localRepo(candidates) {
+function localRepo(candidates: unknown[]): string | null {
   for (const p of candidates) {
     if (p && typeof p === 'string' && fs.existsSync(path.join(p, '.git'))) return p;
   }
   return null;
 }
 
-async function codeHints(repo, text) {
+async function codeHints(repo: string | null, text: string): Promise<Hints> {
   if (!repo) return { files: [], reuse: [], conventions: [], keywords: [] };
-  const kws = C.keywords(text);
-  let files = [];
+  const kws: string[] = C.keywords(text);
+  let files: string[] = [];
   try {
     files = (await git(repo, ['ls-files'])).split(/\r?\n/).filter(Boolean).slice(0, 50_000);
   } catch (err) {
-    log.debug('git ls-files failed', { message: err.message });
+    log.debug('git ls-files failed', { message: (err as Error).message });
     return { files: [], reuse: [], conventions: [], keywords: kws };
   }
   const hits = await keywordHits(repo, kws);
@@ -134,16 +147,16 @@ const MAX_SCANNED_FILES = 4000;
  * parallel is slower still, since they fight over the disk.) A scan that
  * overruns SCAN_MS keeps what it found.
  */
-async function keywordHits(repo, kws) {
-  const hits = Object.fromEntries(kws.map((k) => [k, []]));
+async function keywordHits(repo: string, kws: string[]): Promise<Record<string, string[]>> {
+  const hits: Record<string, string[]> = Object.fromEntries(kws.map((k) => [k, []]));
   if (!kws.length) return hits;
   // -F: the keywords are literals, never patterns; -l: names only.
   const args = ['grep', '-l', '-i', '-I', '-F', ...kws.flatMap((k) => ['-e', k])];
   let out = '';
   let cut = false;
   try {
-    out = await new Promise((resolve, reject) => {
-      execFile('git', args, { cwd: repo, maxBuffer: 16 * 1024 * 1024, timeout: SCAN_MS, windowsHide: true, env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } }, (err, stdout) => {
+    out = await new Promise<string>((resolve, reject) => {
+      execFile('git', args, { cwd: repo, maxBuffer: 16 * 1024 * 1024, timeout: SCAN_MS, windowsHide: true, env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } }, (err: (Error & { killed?: boolean; code?: unknown }) | null, stdout: unknown) => {
         if (err && err.killed) cut = true;
         // exit 1 is "no match"; a timeout keeps the partial list.
         if (err && !err.killed && err.code !== 1) reject(err);
@@ -151,21 +164,23 @@ async function keywordHits(repo, kws) {
       });
     });
   } catch (err) {
-    log.debug('git grep failed', { message: err.message });
+    log.debug('git grep failed', { message: (err as Error).message });
     return hits;
   }
   const lines = out.split(/\r?\n/).filter(Boolean);
   if (cut) lines.pop(); // may be half a path
   const files = lines.slice(0, MAX_SCANNED_FILES);
   const lower = kws.map((k) => k.toLowerCase());
-  const full = () => kws.every((k) => hits[k].length >= HITS_PER_KEYWORD);
+  const full = (): boolean => kws.every((k) => (hits[k] as string[]).length >= HITS_PER_KEYWORD);
   for (let i = 0; i < files.length && !full(); i += 64) {
     const batch = files.slice(i, i + 64);
-    const texts = await Promise.all(batch.map((f) => fs.promises.readFile(path.join(repo, f)).then((b) => (b.length > 2_000_000 ? null : b.toString('utf8').toLowerCase())).catch(() => null)));
+    const texts: Array<string | null> = await Promise.all(batch.map((f) => fs.promises.readFile(path.join(repo, f)).then((b: Buffer) => (b.length > 2_000_000 ? null : b.toString('utf8').toLowerCase())).catch(() => null)));
     batch.forEach((f, j) => {
-      if (texts[j] == null) return;
+      const text = texts[j];
+      if (text == null) return;
       lower.forEach((k, n) => {
-        if (hits[kws[n]].length < HITS_PER_KEYWORD && texts[j].includes(k)) hits[kws[n]].push(f);
+        const list = hits[kws[n] as string] as string[];
+        if (list.length < HITS_PER_KEYWORD && text.includes(k)) list.push(f);
       });
     });
   }
@@ -179,7 +194,7 @@ async function keywordHits(repo, kws) {
  * and the assistant's memory. Private material is gathered so the model can
  * pick the facts the task needs; composeCore keeps it from leaving wholesale.
  */
-async function gather({ target, task = null, done = [], app = null, slug = null, appPath = null }) {
+async function gather({ target, task = null, done = [], app = null, slug = null, appPath = null }: GatherOptions): Promise<Json> {
   const dispatch = require('./index');
   const operatorAsk = task || null;
   const title = task || target.commitment?.summary || '';
@@ -198,8 +213,8 @@ async function gather({ target, task = null, done = [], app = null, slug = null,
     detail: target.commitment?.detail || null,
     done: done || [],
     message: target.item?.body_text ? { source: target.item.source, body: target.item.body_text } : null,
-    related: (related || []).map((r) => r.subject).filter(Boolean),
-    facts: (memory?.facts || []).map((f) => ({ subject: f.subject, text: f.text })),
+    related: ((related || []) as Json[]).map((r) => r.subject).filter(Boolean),
+    facts: ((memory?.facts || []) as Json[]).map((f) => ({ subject: f.subject, text: f.text })),
     personNote: memory?.person || null,
     projectNote: memory?.project || null,
     codeHints: hints.reuse,
@@ -211,30 +226,35 @@ async function gather({ target, task = null, done = [], app = null, slug = null,
   };
 }
 
-/**
- * Composes from gathered inputs. Pure apart from the model call.
- * @returns {Promise<{composed, by, dropped}>}
- */
-async function composeFrom(inputs, { useModel = true } = {}) {
+/** Composes from gathered inputs. Pure apart from the model call. */
+async function composeFrom(inputs: Json, { useModel = true }: { useModel?: boolean } = {}): Promise<{ composed: Composed; by: string; dropped: Array<{ field: string; why: string }> }> {
   if (!useModel) return { composed: C.fallbackComposed(inputs), by: 'compose:fallback', dropped: [] };
   try {
     const reply = await callModel(C.buildPrompt(inputs));
     const raw = extractJson(reply);
     if (!raw || typeof raw !== 'object') throw new Error('no JSON in the answer');
     const { composed, dropped } = C.checkComposed(raw, inputs);
-    if (dropped.length) log.info('brief: dropped items that broke the rules', { dropped: dropped.map((d) => `${d.field}: ${d.why}`).slice(0, 10) });
+    if (dropped.length) log.info('brief: dropped items that broke the rules', { dropped: (dropped as Array<{ field: string; why: string }>).map((d) => `${d.field}: ${d.why}`).slice(0, 10) });
     return { composed, by: `compose:${modelOverride ? 'test' : lastModel || config.dispatch.composeModel}`, dropped };
   } catch (err) {
-    log.warn('brief composition fell back to the deterministic brief', { message: String(err.message).slice(0, 200) });
+    log.warn('brief composition fell back to the deterministic brief', { message: String((err as Error).message).slice(0, 200) });
     return { composed: C.fallbackComposed(inputs), by: 'compose:fallback', dropped: [] };
   }
 }
 
-/**
- * The whole step: gather, compose, render.
- * @returns {Promise<{brief: string, composed: object, by: string, done: Array<string>, goal: string, hints: number}>}
- */
-async function compose({ target, task = null, done = [], app = null, slug = null, appPath = null, delivery, pipeline = null, route = 'factory', useModel = true }) {
+/** The whole step: gather, compose, render. */
+async function compose({
+  target,
+  task = null,
+  done = [],
+  app = null,
+  slug = null,
+  appPath = null,
+  delivery,
+  pipeline = null,
+  route = 'factory',
+  useModel = true,
+}: GatherOptions & { delivery: string | null; pipeline?: string | null; route?: string; useModel?: boolean }): Promise<{ brief: string; composed: Composed; by: string; done: string[]; goal: string; hints: number }> {
   const inputs = await gather({ target, task, done, app, slug, appPath });
   const { composed, by } = await composeFrom(inputs, { useModel });
   const brief = C.render(composed, {

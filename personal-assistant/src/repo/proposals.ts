@@ -1,7 +1,7 @@
 'use strict';
 
 // Aggregate: proposals. Table: proposal (a question or an offer waiting on
-// you: land, dispatch, question). Callers: src/proposals, src/dispatch/offer.js.
+// you: land, dispatch, question). Callers: src/proposals, src/dispatch/offer.ts.
 //
 // Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
 

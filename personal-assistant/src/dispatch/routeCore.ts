@@ -3,7 +3,7 @@
 // Which route a piece of work takes: a Claude Code session (the dispatcher's
 // own worktree + termhub session) or the software factory (a job: PM → SM →
 // dev → reviewer → gates, src/dispatch/factory.js). Pure, like plannerCore:
-// the impure half (src/dispatch/route.js) gathers the facts and calls this.
+// the impure half (src/dispatch/route.ts) gathers the facts and calls this.
 //
 // The rule, v1 — deterministic on purpose, so it can be tested and so the
 // measured outcomes (sql/024, `pa runs stats`) are of a rule you can name:
@@ -19,7 +19,7 @@
 // The seam for something smarter (an LLM, or a chooser that reads the
 // outcomes table): any chooser returns {route, reason}, and `guard` holds its
 // answer to the hard limits below whatever it says. Register it in
-// src/dispatch/route.js; the guard stays here.
+// src/dispatch/route.ts; the guard stays here.
 //
 // Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
 

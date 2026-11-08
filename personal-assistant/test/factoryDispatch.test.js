@@ -328,7 +328,7 @@ stub('dispatch/index', {
 
 // The brief-composition model: never a real call from a test.
 const composeCalls = [];
-require('../src/dispatch/compose')._setModel(async ({ prompt }) => {
+require('../src/dispatch/compose.ts')._setModel(async ({ prompt }) => {
   composeCalls.push(prompt);
   return JSON.stringify({ goal: 'Retry the export on transient errors.', done: ['model criterion'], constraints: ['keep the CSV format'], decisions: [], facts: [], reuse: [], questions: [] });
 });
@@ -574,7 +574,7 @@ async function factoryPoll() {
 }
 
 async function routeDecide() {
-  const route = require('../src/dispatch/route');
+  const route = require('../src/dispatch/route.ts');
   const { config } = require('../src/config.ts');
   answers = { 'app list': json({ apps: [{ app: 'widget', repo: 'acme/widget', path: '/srv/repos/widget' }] }) };
   const target = { commitment: { id: 40, kind: 'coding', detail: '- retries tested' }, project: { gitlab_path: 'acme/widget' }, repoPath: null };
@@ -770,7 +770,7 @@ async function factoryRegister() {
   assert.throws(() => F.appAddArgv({ repo: 'acme/w', deliveryDefault: 'yolo' }), /unknown delivery/);
   assert.ok(!F.appAddArgv({ repo: 'a/b' }).includes('--delivery-max'), 'the contract has no ceiling');
 
-  const route = require('../src/dispatch/route');
+  const route = require('../src/dispatch/route.ts');
   calls.length = 0;
   store.repoDefault = 'pr';
   let registered = false;

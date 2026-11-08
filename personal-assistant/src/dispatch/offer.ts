@@ -16,6 +16,45 @@
 // are on the card, not invented after the yes). The one thing the operator
 // may change at accept is the delivery, and the brief is re-rendered
 // (deterministically, from the same composed content) for the level picked.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+type Json = import('../types.ts').Json;
+/** A dispatch target (dispatch.resolveTarget): store rows, read column by column. */
+type Target = Json;
+/** The frozen offer: stored as the proposal's JSON payload, read back at accept. */
+type Payload = Json;
+type Offer = { title: string; body: string; payload: Payload; target: Target };
+type PrepareOptions = {
+  commitmentId?: number | string | null;
+  /** the operator's own words (never a third party's) */
+  task?: string | null;
+  /** claude | factory | auto */
+  via?: string | null;
+  /** an explicit legacy mode (plan = read-only research) */
+  mode?: string | null;
+  /** an explicit end state */
+  delivery?: string | null;
+  /** chain | solo | auto */
+  pipeline?: string | null;
+  /** persona=model */
+  models?: string[] | null;
+  done?: string[] | null;
+  app?: string | null;
+  repoPath?: string | null;
+  /** the planner's kind for the commitment */
+  kind?: string | null | undefined;
+  /** register an unknown repo with the factory at accept */
+  register?: boolean;
+  /** compose with a model (false: the deterministic brief) */
+  useModel?: boolean;
+  /** a line for the card (the planner's brief) */
+  why?: string | null;
+  suggestedBy?: string | null;
+  jobKind?: string | null;
+  runtime?: string | null;
+  title?: string | null;
+};
 
 const { config } = require('../config.ts');
 const D = require('./deliveryCore.ts');
@@ -25,40 +64,23 @@ const { logger } = require('../log.ts');
 
 const log = logger('offer');
 
-const PLAIN = (route) => Object.fromEntries(D.DELIVERIES.map((d) => [d, D.describe(d, { route })]));
+const PLAIN = (route: string): Record<string, string> => Object.fromEntries((D.DELIVERIES as string[]).map((d) => [d, D.describe(d, { route })]));
 
-/**
- * @param {object} o
- * @param {number} [o.commitmentId]
- * @param {string} [o.task]          the operator's own words (never a third party's)
- * @param {string} [o.via]           claude | factory | auto
- * @param {string} [o.mode]          an explicit legacy mode (plan = read-only research)
- * @param {string} [o.delivery]      an explicit end state
- * @param {string} [o.pipeline]      chain | solo | auto
- * @param {Array<string>} [o.models] persona=model
- * @param {Array<string>} [o.done]
- * @param {string} [o.app]
- * @param {string} [o.repoPath]
- * @param {string} [o.kind]          the planner's kind for the commitment
- * @param {boolean} [o.register]     register an unknown repo with the factory at accept
- * @param {boolean} [o.useModel]     compose with a model (false: the deterministic brief)
- * @param {string} [o.why]           a line for the card (the planner's brief)
- */
 async function prepare({
   commitmentId = null, task = null, via = 'auto', mode = null, delivery = null, pipeline = null, models = null, done = null,
   app = null, repoPath = null, kind = undefined, register = false, useModel = true, why = null, suggestedBy = null,
   jobKind = null, runtime = null, title = null,
-}) {
+}: PrepareOptions): Promise<Offer> {
   const dispatch = require('./index');
-  const route = require('./route');
+  const route = require('./route.ts');
   // A research or report job is a factory job (JOBS-API v1.2).
   const jk = F.jobKind(jobKind);
   const rt = runtime ? F.runtime(runtime) : null;
   if (jk !== 'code' && via && String(via).toLowerCase() === 'claude') throw new Error(`a ${jk} job is a factory job — drop --via claude`);
   if (jk !== 'code' || rt) via = 'factory';
   if (repoPath && !(jk !== 'code' && require('./routeCore.ts').normSlug(repoPath))) await dispatch.knownRepo(repoPath);
-  const target = await dispatch.resolveTarget({ commitmentId, repoPath });
-  const label = title || task || target.commitment?.summary;
+  const target: Target = await dispatch.resolveTarget({ commitmentId, repoPath });
+  const label: string | null | undefined = title || task || target.commitment?.summary;
   if (!label) throw new Error('nothing to offer — give a commitment id or a --task');
   const v = require('./routeCore.ts').via(via || require('./routeCore.ts').defaultVia({ configured: config.factory.via, mode }));
   const plan = jk === 'code' && mode && String(mode).toLowerCase() === 'plan';
@@ -69,7 +91,8 @@ async function prepare({
 
   if (jk !== 'code') return prepareResearch({ target, task, title: label, jobKind: jk, runtime: rt, done, app, why, suggestedBy });
 
-  let choice;
+  // route.ts's decision, plus `register` when the repo is registered on accept.
+  let choice: Json;
   if (plan || v === 'claude') {
     choice = { route: 'claude', reason: plan ? 'plan mode is read-only; the factory only builds' : 'you chose a Claude session', app: null, done: done || [], slug: await route.slugFor(target).catch(() => null) };
   } else if (v === 'factory') {
@@ -78,7 +101,7 @@ async function prepare({
       choice = await route.forced({ target, mode: mode || undefined, done, app });
     } catch (err) {
       const slug = await route.slugFor(target).catch(() => null);
-      if (!(register && slug && /not registered/.test(err.message))) throw err;
+      if (!(register && slug && /not registered/.test((err as Error).message))) throw err;
       choice = { route: 'factory', reason: `you chose the factory; ${slug} is registered with it on accept`, app: null, done: done || require('./routeCore.ts').doneCriteria(target.commitment), slug, register: true };
     }
   } else {
@@ -90,7 +113,7 @@ async function prepare({
     ? { delivery: null, source: null, phrase: null }
     : await require('./delivery.ts').resolve({ explicit: delivery, mode: mode || null, operatorText: task, slug: choice.slug });
 
-  const payload = {
+  const payload: Payload = {
     frozen: true,
     why: why ? C.clip(why, 500) : null,
     suggestedBy: suggestedBy ? C.clip(suggestedBy, 40) : null,
@@ -115,7 +138,7 @@ async function prepare({
     const overrides = require('./factory').modelsFor(models);
     payload.jobKind = 'code';
     payload.runtime = rt || F.runtime(config.factory.runtime);
-    const c = await require('./compose').compose({
+    const c = await require('./compose.ts').compose({
       target, task, done: choice.done || [], app: choice.app, slug: choice.slug, appPath: choice.appPath || null,
       delivery: chosen.delivery, pipeline: pipe, useModel,
     });
@@ -135,7 +158,7 @@ async function prepare({
   const cardTitle = (viaFactory
     ? `Send to the factory: ${label}`
     : `Start a ${plan ? 'research' : 'coding'} session on: ${label}`).slice(0, 280);
-  const body = cardBody({ payload, label, why, target });
+  const body = cardBody({ payload, label: label as string, why, target });
   return { title: cardTitle, body, payload, target };
 }
 
@@ -144,13 +167,33 @@ async function prepare({
  * (factoryCore.researchAsk — no composing model), end state none, the repo if
  * the factory knows it. Frozen like any offer: accept sends exactly this.
  */
-async function prepareResearch({ target, task, title, jobKind, runtime, done, app, why, suggestedBy }) {
-  const route = require('./route');
+async function prepareResearch({
+  target,
+  task,
+  title,
+  jobKind,
+  runtime,
+  done,
+  app,
+  why,
+  suggestedBy,
+}: {
+  target: Target;
+  task: string | null;
+  title: string;
+  jobKind: string;
+  runtime: string | null;
+  done: string[] | null;
+  app: string | null;
+  why: string | null;
+  suggestedBy: string | null;
+}): Promise<Offer> {
+  const route = require('./route.ts');
   const choice = await route.forced({ target, done, app, jobKind });
   const rt = runtime || F.runtime(config.factory.runtime);
-  const criteria = choice.done || [];
+  const criteria: string[] = choice.done || [];
   const brief = F.researchAsk({ kind: jobKind, title, ask: task || target.commitment?.detail || target.commitment?.summary, done: criteria, repo: choice.slug });
-  const payload = {
+  const payload: Payload = {
     frozen: true,
     why: why ? C.clip(why, 500) : null,
     suggestedBy: suggestedBy ? C.clip(suggestedBy, 40) : null,
@@ -181,8 +224,8 @@ async function prepareResearch({ target, task, title, jobKind, runtime, done, ap
 }
 
 /** The card's text: the end state first, in plain words. */
-function cardBody({ payload: p, label, why, target }) {
-  const L = [];
+function cardBody({ payload: p, label, why, target }: { payload: Payload; label: string; why?: string | null; target?: Target | null }): string {
+  const L: string[] = [];
   if (p.suggestedBy) L.push(`Suggested by ${p.suggestedBy} — check the end state before you accept.`, '');
   // The planner's note is model text: one line, labelled, so it can never pose
   // as the card's own "End state:" line.
@@ -218,15 +261,15 @@ function cardBody({ payload: p, label, why, target }) {
  * The brief for a frozen offer at a (possibly changed) delivery level. Pure:
  * the same composed content, re-rendered — never recomposed after the card.
  */
-function briefAt(payload, delivery) {
+function briefAt(payload: Payload | null | undefined, delivery: string | null): string | null {
   if (!payload?.composed) return payload?.brief || null;
   if (delivery === payload.delivery && payload.brief) return payload.brief;
   return C.render(payload.composed, { ...payload.briefMeta, delivery, deliveryPlain: D.describe(delivery) });
 }
 
-async function propose(o) {
+async function propose(o: PrepareOptions & { dedupeKey?: string | null; expiresAt?: Date | null }): Promise<Json | null> {
   const { title, body, payload, target } = await prepare(o);
-  const row = await require('../proposals').create({
+  const row: Json | null = await require('../proposals').create({
     kind: 'dispatch',
     commitmentId: target.commitment ? Number(target.commitment.id) : null,
     title,

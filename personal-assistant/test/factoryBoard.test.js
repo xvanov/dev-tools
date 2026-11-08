@@ -263,7 +263,7 @@ const isV1 = (argv) => argv.includes('--kind') || argv.includes('--runtime');
   {
     calls = [];
     answer = (argv) => (isV1(argv) ? V1_REFUSAL : json({ job_id: 'widget:030', app: 'widget', pipeline: 'solo', delivery: 'draft_pr', created: true, warnings: [] }));
-    require('../src/dispatch/compose')._setModel(async () => JSON.stringify({ goal: 'g', done: [], constraints: [], decisions: [], facts: [], reuse: [], questions: [] }));
+    require('../src/dispatch/compose.ts')._setModel(async () => JSON.stringify({ goal: 'g', done: [], constraints: [], decisions: [], facts: [], reuse: [], questions: [] }));
     const r = await factory.start({ target, app: 'widget', task: 'Add retries to the export', delivery: 'draft_pr' });
     const submits = calls.filter((c) => c.argv.includes('submit'));
     assert.strictEqual(submits.length, 2, 'once with the v1.2 flags, once without');

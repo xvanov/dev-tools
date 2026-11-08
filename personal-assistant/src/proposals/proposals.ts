@@ -42,7 +42,7 @@ async function pending({ limit = 40 }: { limit?: number } = {}) {
 // Typed actions for proposals no task is waiting on. Each gets the proposal
 // and my answer and returns a short result line.
 const HANDLERS = {
-  // Start a run on an ask. A frozen offer (src/dispatch/offer.js) runs
+  // Start a run on an ask. A frozen offer (src/dispatch/offer.ts) runs
   // exactly what its card showed — route, app, done-criteria, brief,
   // pipeline, models — at the delivery level shown, or the one I picked on the
   // card when accepting. An older proposal without frozen values is a run in
@@ -74,7 +74,7 @@ const HANDLERS = {
         done: Array.isArray(pl.done) ? pl.done : [],
         pipeline: pl.pipeline || null,
         models: pl.models || null,
-        brief: pl.via === 'factory' ? require('../dispatch/offer').briefAt(pl, delivery) : null,
+        brief: pl.via === 'factory' ? require('../dispatch/offer.ts').briefAt(pl, delivery) : null,
         briefBy: pl.briefBy || null,
         frozen: true,
         // Accepting the card IS the operator's confirmation of its end state

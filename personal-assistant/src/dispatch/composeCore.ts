@@ -1,6 +1,6 @@
 'use strict';
 
-// The pure half of brief composition (src/dispatch/compose.js): what a factory
+// The pure half of brief composition (src/dispatch/compose.ts): what a factory
 // job's brief may carry, and how it is written. No database, no processes,
 // no model — test/compose.test.js pins every rule.
 //
@@ -24,7 +24,7 @@
 //
 // Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
 
-/** What compose.js gather() hands over (the ask, the to-do, private context, code hints): loose until it is TS. */
+/** What compose.ts gather() hands over (the ask, the to-do, private context, code hints): loose until it is TS. */
 type Inputs = import('../types.ts').Json;
 type Hint = { path: string; why: string };
 type Composed = { goal: string; done: string[]; constraints: string[]; decisions: string[]; facts: string[]; reuse: Hint[]; conventions: string[]; questions: string[] };
@@ -223,7 +223,7 @@ Return ONLY JSON: {"goal": "...", "done": [...], "constraints": [...], "decision
 /**
  * Pure. The model's prompt. Every input is redacted of secrets here, before
  * it is sent anywhere.
- * @param {object} i  see compose.js gather()
+ * @param {object} i  see compose.ts gather()
  */
 function buildPrompt(i: Inputs): { system: string; prompt: string } {
   const r = (s: unknown, n: number) => clip(redactSecrets(s), n);

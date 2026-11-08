@@ -209,7 +209,7 @@ const inputs = {
 // --- compose.js: the model call is swappable, and failure falls back ----------------------
 
 async function composeModule() {
-  const compose = require('../src/dispatch/compose');
+  const compose = require('../src/dispatch/compose.ts');
   let prompts = 0;
   compose._setModel(async () => { prompts++; return 'Here you go:\n```json\n{"goal": "Retry storage timeouts.", "done": ["timeouts retried"], "reuse": [{"path": "src/util/backoff.js", "why": "helper"}]}\n```'; });
   const a = await compose.composeFrom(inputs);
@@ -250,7 +250,7 @@ async function composeModule() {
 // --- model choice: a keyed path beats `claude -p` ---------------------------------------------
 
 {
-  const { pickModel } = require('../src/dispatch/compose');
+  const { pickModel } = require('../src/dispatch/compose.ts');
   const cfg = (composeModel, fallback = null, endpoint = 'https://example.invalid') => ({
     anthropic: { apiKey: '' },
     providers: { azure: { endpoint } },

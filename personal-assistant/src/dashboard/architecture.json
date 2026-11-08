@@ -1018,7 +1018,7 @@
         "personal-assistant/src/dispatch/factoryCore.ts",
         "personal-assistant/src/dispatch/exec.ts",
         "personal-assistant/src/dispatch/termhub.ts",
-        "personal-assistant/src/dispatch/compose.js",
+        "personal-assistant/src/dispatch/compose.ts",
         "personal-assistant/src/dispatch/deliveryCore.ts",
         "personal-assistant/src/dispatch/factoryPace.js"
       ]

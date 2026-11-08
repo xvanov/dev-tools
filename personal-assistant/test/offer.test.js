@@ -1,6 +1,6 @@
 'use strict';
 
-// Offers (src/dispatch/offer.js) and accepting them (src/proposals): what the
+// Offers (src/dispatch/offer.ts) and accepting them (src/proposals): what the
 // card shows — route, app, end state, pipeline, models, done-criteria and the
 // composed brief — is frozen into the proposal and is exactly what runs at
 // accept (M7). The store, the factory CLI, termhub and the model are stubbed;
@@ -88,7 +88,7 @@ stub('memory', { async getPage() { return null; } });
 stub('recall', { async recall() { return { abstain: true, claims: [] }; } });
 
 let composeCalls = 0;
-require('../src/dispatch/compose')._setModel(async () => {
+require('../src/dispatch/compose.ts')._setModel(async () => {
   composeCalls++;
   return JSON.stringify({ goal: 'Retry the export on transient storage errors.', done: ['ignored: criteria were given'], constraints: ['keep the CSV format'], facts: [], decisions: [], reuse: [], questions: [] });
 });
@@ -106,7 +106,7 @@ factory._setRunner(async (machine, argv) => {
   throw new Error(`unexpected ${argv.join(' ')}`);
 });
 
-const offer = require('../src/dispatch/offer');
+const offer = require('../src/dispatch/offer.ts');
 const proposals = require('../src/proposals');
 
 (async () => {

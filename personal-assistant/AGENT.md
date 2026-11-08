@@ -447,7 +447,7 @@ factory cannot be asked. One live run per commitment holds under concurrency: ev
 through `runRow.insertRun`, which re-checks under a transaction-scoped advisory lock.
 
 **A factory brief carries what the task needs, not my private material.** The ask is composed
-(`src/dispatch/compose.js`; every rule pure and tested in `composeCore.js`): goal, done-criteria,
+(`src/dispatch/compose.ts`; every rule pure and tested in `composeCore.js`): goal, done-criteria,
 constraints, decisions, facts, pointers to existing files to reuse or extend, and the fixed
 instruction to search before writing, extend rather than duplicate, follow conventions and add
 tests. Memory pages and message bodies go to the composing model to select from and never into
@@ -457,7 +457,7 @@ The model is a mockable seam (`compose._setModel`) and is chosen by `compose.pic
 path (Anthropic API, else `PA_COMPOSE_FALLBACK_MODEL` with its key present) beats `claude -p`, which
 is only the last resort. When it fails, the brief is the deterministic
 one, which holds nothing private. What a dispatch card shows is frozen in the proposal
-(`src/dispatch/offer.js`) and is exactly what runs at accept — app, criteria, brief, pipeline,
+(`src/dispatch/offer.ts`) and is exactly what runs at accept — app, criteria, brief, pipeline,
 models, end state (re-rendered, never recomposed, if I change it on the card). Nothing outward
 happens before the yes: registering a repo with the factory (`factory app add`) waits for accept.
 

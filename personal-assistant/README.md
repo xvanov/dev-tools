@@ -511,7 +511,7 @@ read-only research run started on its own — `plan` mode, so it can neither com
 most `PA_EAGER_RUNS_PER_DAY` (2) a day and only within the daily budget; you get a toast with the
 session. A *coding* ask with a known repo gets a *ready to start* offer on its **On me** card, "start a coding session?" —
 or, when the routing rule picks the software factory (below), "send to the factory?". Everything
-the card shows is decided before you see it and frozen into the proposal (`src/dispatch/offer.js`):
+the card shows is decided before you see it and frozen into the proposal (`src/dispatch/offer.ts`):
 the route and its reason, the **end state** in plain words (loud when nothing human follows your
 yes), the app, pipeline and models, the done-criteria, and — one click away — the exact brief that
 will be sent. Accepting runs exactly that; the only thing you can change on the card is the end
@@ -891,7 +891,7 @@ each command prints — the contract is the factory's `docs/JOBS-API.md`.
   agent running as your OS user can still restore them from disk, so the real boundary is a separate
   OS user, not set up yet — `pa doctor` says so) and run review does the rest. `plan` is never
   a factory job.
-- **The ask is a composed brief** (`src/dispatch/compose.js`, rules in `composeCore.js`): a model
+- **The ask is a composed brief** (`src/dispatch/compose.ts`, rules in `composeCore.js`): a model
   (`PA_COMPOSE_MODEL`, any text-capable provider; a bare Claude model with no `ANTHROPIC_API_KEY`
   would cost ~4 s of `claude -p` startup, so set `PA_COMPOSE_FALLBACK_MODEL=azure/<deployment>` — used
   instead whenever its key is present; the log line `compose model call` shows the path and latency) writes the goal, done-criteria, constraints,
@@ -986,7 +986,7 @@ when all hold: the factory is configured, the mode changes code, the planner jud
 *coding*, its repo is registered with the factory (`factory app list`), and it has done-criteria.
 Anything else — investigate, ambiguous, `plan`, an unknown or unregistered repo, nothing to check
 the result against — is a Claude session. `PA_ROUTE_CHOOSER` picks a different chooser registered
-in `src/dispatch/route.js` (the seam for an LLM or evidence-based one); whatever it says is held to
+in `src/dispatch/route.ts` (the seam for an LLM or evidence-based one); whatever it says is held to
 the hard limits (configured, not `plan`, registered repo).
 
 **Which route works** is measured: every run records its route, the reason, the ask's kind, and its
@@ -1722,8 +1722,8 @@ src/agentCli.js      claude | opencode command lines for the chat (src/chat/agen
 src/budget.js        model spend: one llm_spend row per call, the daily cap on discretionary work
 src/backup.js        nightly pg_dump, restore, re-ingest
 src/dispatch/        worktrees, briefs, termhub sessions, modes, landing; the factory route
-                     (factory.js, pure half factoryCore.js), the routing rule (route.js, routeCore.js),
-                     `pa runs stats` (stats.js)
+                     (factory.js, pure half factoryCore.ts), the routing rule (route.ts, routeCore.ts),
+                     `pa runs stats` (stats.ts)
 src/draft/           reply drafting, auto-drafts, and delivery links (never sends)
 src/mcp/server.js    the recall server: read-only, plus remember and request_secret, which only ask
 src/worker.js        the periodic passes

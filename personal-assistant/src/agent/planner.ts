@@ -84,12 +84,12 @@ async function act(p: Json) {
   }
   if (p.action === 'offer_run') {
     // Everything the card shows is decided now and frozen into the proposal
-    // (src/dispatch/offer.js): route, app, the end state, pipeline, models,
+    // (src/dispatch/offer.ts): route, app, the end state, pipeline, models,
     // done-criteria and the composed brief — accepting runs exactly that. A
     // factory job changes code, so it is only ever offered, never started
     // here. The end state is the repo's default (or PA_DELIVERY_DEFAULT): it
     // is never inferred from the ask's text, which someone else wrote.
-    const offer = require('../dispatch/offer');
+    const offer = require('../dispatch/offer.ts');
     const useModel = await require('../budget.ts').allow('planner').catch(() => false);
     const o = {
       commitmentId: c.id,
