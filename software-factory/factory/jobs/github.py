@@ -133,12 +133,24 @@ class GitHubView:
             index[number] = info
         return info
 
-    def ci(self, number: int) -> dict[str, Any] | None:
+    def api_json(self, path: str) -> Any:
+        """``gh api <path>`` parsed, or ``None`` on any failure (not cached)."""
+        proc = self._call(["api", path])
+        if proc is None or proc.returncode != 0:
+            return None
+        try:
+            return json.loads(proc.stdout or "null")
+        except json.JSONDecodeError:
+            return None
+
+    def ci(self, number: int, scope: Any = None) -> dict[str, Any] | None:
         """The PR's CI rollup: ``{"state", "failing", "pending"}``, or ``None``.
 
         ``state`` is ``passing`` (every check finished green), ``failing`` (any
         check failed), ``pending`` (none failed, some still running) or
         ``none`` (no checks reported). One ``gh pr view`` per PR, cached.
+        ``scope`` (a ``factory.ci_scope.CiScope``) leaves out the checks that
+        decide nothing; they are listed under ``ignored``.
         """
         if number in self._ci:
             return self._ci[number]
@@ -154,7 +166,12 @@ class GitHubView:
             except (json.JSONDecodeError, AttributeError):
                 rows = None
             if isinstance(rows, list):
+                ignored: list[str] = []
+                if scope is not None:
+                    rows, ignored = scope.apply(rows)
                 result = summarize_checks(rows)
+                if ignored:
+                    result["ignored"] = ignored
         self._ci[number] = result
         return result
 

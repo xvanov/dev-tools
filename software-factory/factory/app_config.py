@@ -338,6 +338,14 @@ class AppConfig(BaseModel):
     # ``factory serve --app`` / FACTORY_SERVE_APPS override it.
     serve_tick: bool = False
 
+    # Which PR checks the CI watch counts (factory/ci_scope.py). GitHub's
+    # required status checks (branch protection / rulesets) win when set;
+    # else ``ci_required_checks`` (check names) when non-empty; else every
+    # check except ``ci_informational_checks`` (fnmatch patterns) and the
+    # jobs the repo's workflows mark ``continue-on-error``.
+    ci_required_checks: list[str] = Field(default_factory=list)
+    ci_informational_checks: list[str] = Field(default_factory=list)
+
     @property
     def repo_owner(self) -> str:
         return self.repo.split("/", 1)[0]

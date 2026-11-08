@@ -629,7 +629,12 @@ read, a dependency in a dead sink), plus `not_found` / `invalid_job_id` / `missi
   in-conversation gate rounds.
 - Local review loop: yes for `chain` (reviewer ↔ dev, capped). `solo` has no reviewer.
 - CI watch + CI-fix loop on the PR: yes. `draft_pr`/`pr` watch before delivery; `auto_merge`
-  fixes before merging; at most 3 cycles.
+  fixes before merging; at most 3 cycles. The watch (and `ci` in `factory job status`, and
+  the `push_to_main` main-green hold) counts only the checks that decide something
+  (`factory/ci_scope.py`): GitHub's required checks (branch protection / rulesets) when set;
+  else the app config's `ci_required_checks`; else every check except
+  `ci_informational_checks` (fnmatch patterns) and `continue-on-error` jobs in the repo's
+  workflows. Ignored checks are listed under `ignored`.
 - Automated review comments (e.g. a review bot): partly. A picked-up PR's unresolved threads are
   fed to the dev at submit (a snapshot). Comments posted later are not read, and threads are
   never replied to or resolved.

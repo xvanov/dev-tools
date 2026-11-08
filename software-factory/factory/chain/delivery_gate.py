@@ -505,7 +505,20 @@ def push_to_main_preflight(app_config: Any, base: str, *, run: Any = None) -> tu
                 f"{base} is governed by ruleset rule(s) {blocking!r}; "
                 "a direct push would bypass them"
             )
-        # 3. Main-green: every check on the base head must be green.
+        # 3. Main-green: every check that COUNTS on the base head must be green.
+        #    On an unprotected base (the only one a push can land on; GitHub's
+        #    required checks were just read above and are none) the app
+        #    config's required list or informational checks decide what counts
+        #    (factory/ci_scope.py): a continue-on-error leg never holds a push.
+        #    A protected base keeps counting every check (it is refused anyway).
+        from factory import ci_scope
+
+        scope: Any = ci_scope.CiScope()
+        if refusal is None:
+            try:
+                scope = ci_scope.resolve_ci_scope(app_config, base=base, gh_json=lambda _p: None)
+            except Exception:  # noqa: BLE001 - unknown scope: every check counts
+                scope = ci_scope.CiScope()
         runs, err = _gh_api_json(f"repos/{repo}/commits/{base}/check-runs?per_page=100", runner)
         if err is not None or not isinstance(runs, dict):
             return PREFLIGHT_HOLD, f"could not read {base}'s checks: {err or 'bad payload'}"
@@ -515,6 +528,8 @@ def push_to_main_preflight(app_config: Any, base: str, *, run: Any = None) -> tu
             if not isinstance(cr, dict):
                 continue
             name = str(cr.get("name") or "?")
+            if not scope.counts(name):
+                continue
             if cr.get("status") != "completed":
                 running.append(name)
             elif (cr.get("conclusion") or "") in _RED_CONCLUSIONS:
@@ -526,6 +541,8 @@ def push_to_main_preflight(app_config: Any, base: str, *, run: Any = None) -> tu
             if not isinstance(st, dict):
                 continue
             state = st.get("state")
+            if not scope.counts(str(st.get("context") or "?")):
+                continue
             if state in ("failure", "error"):
                 red.append(str(st.get("context") or "?"))
             elif state == "pending":

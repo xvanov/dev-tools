@@ -41,7 +41,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from factory.app_config import AppConfig, load_app_config
+from factory import ci_scope
+from factory.app_config import AppConfig, load_app_config, resolve_app_repo_path
 from factory.chain.orchestrator import _PENDING_HUMAN_STATES
 from factory.chain.state_machine import (
     DELIVERED_UNMERGED_STATES,
@@ -670,10 +671,22 @@ def _status_for(ctx: _Ctx, ref: JobRef) -> dict[str, Any]:
 
     # CI of every still-open PR: "delivered" means the PR exists, not that its
     # checks pass — say so, so the caller never reports a red PR as done-and-good.
+    # Informational checks (factory/ci_scope.py) are left out, as the chain's
+    # CI watch leaves them out.
     ci_by_story: dict[Any, dict[str, Any] | None] = {}
+    scope: Any = None
     for v in views:
         if gh is not None and v.pr_number and v.pr_state == "open":
-            ci_by_story[v.row.get("id")] = gh.ci(v.pr_number)
+            if scope is None:
+                try:
+                    scope = ci_scope.resolve_ci_scope(
+                        cfg,
+                        repo_root=resolve_app_repo_path(cfg, ctx.root),
+                        gh_json=gh.api_json,
+                    )
+                except Exception:  # noqa: BLE001 - unknown scope: count every check
+                    scope = None
+            ci_by_story[v.row.get("id")] = gh.ci(v.pr_number, scope)
     red = [
         (v.pr_number, ci_by_story[v.row.get("id")])
         for v in views

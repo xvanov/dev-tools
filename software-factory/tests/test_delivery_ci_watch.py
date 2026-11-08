@@ -777,6 +777,7 @@ def test_should4_query_pr_checks_marks_only_real_failures_genuine(
         return subprocess.CompletedProcess(cmd, 0, stdout=out, stderr="")
 
     monkeypatch.setattr(subprocess, "run", _run)
+    monkeypatch.setattr(am.ci_scope, "resolve_ci_scope", lambda *a, **k: am.ci_scope.CiScope())
     ci = am._query_pr_checks(app_config=_cfg(L.PR), pr_number=5)
     assert ci is not None
     assert ci["state"] == "failing"

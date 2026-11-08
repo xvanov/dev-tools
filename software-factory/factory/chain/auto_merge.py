@@ -33,6 +33,7 @@ from typing import Any
 
 from sqlmodel import Field, Session, SQLModel, create_engine, select
 
+from factory import ci_scope
 from factory.app_config import (
     FACTORY_REPO,  # noqa: F401 - re-exported for callers/tests
     AppConfig,
@@ -3650,9 +3651,12 @@ def _query_pr_checks(*, app_config: AppConfig, pr_number: int) -> dict[str, Any]
          "genuine": [failing names whose conclusion is a real FAILURE],
          "head_sha": "<the PR head commit the rollup describes>" | None}
 
-    ALL checks, not just required ones (``_query_ci_state`` reads
-    ``--required``): a ``draft_pr`` / ``pr`` repo often has no branch
-    protection at all, and the human the PR is handed to reads every check.
+    Every check that COUNTS (``factory.ci_scope``): the required checks when
+    branch protection / rulesets / ``ci_required_checks`` name some, else all
+    checks but the informational ones (``ci_informational_checks``,
+    ``continue-on-error`` jobs). A ``draft_pr`` / ``pr`` repo often has no
+    branch protection at all, and the human the PR is handed to reads every
+    check that decides anything. ``ignored`` lists the checks left out.
     Same reducer ``factory job status`` uses (``jobs.github.summarize_checks``),
     so the watch and the status report agree on what "red" means. ``genuine``
     applies ``_GENUINE_FAILURE_CONCLUSIONS`` (the rule ``_ci_failure_is_genuine``
@@ -3692,7 +3696,15 @@ def _query_pr_checks(*, app_config: AppConfig, pr_number: int) -> dict[str, Any]
         return None
     if not isinstance(rows, list):
         return None
+    # Informational checks (not required / continue-on-error) never decide
+    # the watch: see factory/ci_scope.py.
+    try:
+        scope = ci_scope.resolve_ci_scope(app_config, use_cache=True)
+        rows, ignored = scope.apply(rows)
+    except Exception:  # noqa: BLE001 - an unknown scope counts every check
+        ignored = []
     summary = summarize_checks(rows)
+    summary["ignored"] = ignored
     failing = set(summary.get("failing") or [])
     genuine: set[str] = set()
     for row in rows:
@@ -3976,12 +3988,14 @@ def _watch_ci_then_deliver(
         )
 
     if ci_state == "none":
+        ignored = [str(n) for n in (ci.get("ignored") or [])][:5]
+        only_info = f" (only informational checks: {', '.join(ignored)})" if ignored else ""
         if age < DELIVERY_NO_CHECKS_GRACE_S:
-            return _act(f"waiting for CI on PR #{pr}: no checks reported yet")
+            return _act(f"waiting for CI on PR #{pr}: no checks reported yet{only_info}")
         return _deliver(
             f"no CI checks on PR #{pr}",
             f"CI: no checks reported on PR #{pr} within "
-            f"{DELIVERY_NO_CHECKS_GRACE_S // 60} min — delivered without a CI verdict",
+            f"{DELIVERY_NO_CHECKS_GRACE_S // 60} min{only_info} — delivered without a CI verdict",
         )
 
     if ci_state == "failing":
