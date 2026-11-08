@@ -1,7 +1,8 @@
 """``factory job submit --branch / --pr`` — resolve existing work on GitHub (v1.3).
 
-Submit asks GitHub, once, what the job will continue on, and refuses anything
-it cannot safely work on. What it resolves is written to the direction's
+Submit asks GitHub, in one GraphQL read, what the job will continue on (the PR
+or branch and the PR's review threads), and refuses anything it cannot safely
+work on. What it resolves is written to the direction's
 frontmatter as ``base: {branch, pr, into}`` (``factory/chain/pickup.py`` reads
 it at spawn). Every GitHub read goes through ``factory.jobs.github._run_gh``,
 the seam the tests fake.
@@ -30,7 +31,6 @@ from typing import Any
 from factory.jobs import github as gh_mod
 from factory.jobs.common import JobError
 
-_PR_FIELDS = "number,state,url,headRefName,baseRefName,isCrossRepository,isDraft"
 #: Unresolved review threads fed to the dev (a snapshot taken at submit).
 MAX_REVIEW_THREADS = 30
 _COMMENT_CHARS = 1200
@@ -82,19 +82,78 @@ def _not_found(proc: Any) -> bool:
     )
 
 
-def _pr_view(repo: str, number: int) -> dict[str, Any]:
-    proc = _gh(["pr", "view", str(number), "--repo", repo, "--json", _PR_FIELDS])
+_PR_NODE = """
+  number state url headRefName baseRefName isCrossRepository isDraft
+  reviewThreads(first: 100) {
+    nodes {
+      isResolved
+      isOutdated
+      path
+      line
+      comments(first: 5) { nodes { author { login } body } }
+    }
+  }
+"""
+
+#: One read for ``--pr``: the PR and its review threads together (8.4.26: the
+#: three serial calls this replaced cost seconds per submit).
+_PR_QUERY = (
+    "query($owner: String!, $name: String!, $number: Int!) {\n"
+    "  repository(owner: $owner, name: $name) {\n"
+    "    pullRequest(number: $number) {" + _PR_NODE + "}\n"
+    "  }\n"
+    "}\n"
+)
+
+#: One read for ``--branch``: the branch (null when missing) and its open PRs.
+_BRANCH_QUERY = (
+    "query($owner: String!, $name: String!, $ref: String!) {\n"
+    "  repository(owner: $owner, name: $name) {\n"
+    "    ref(qualifiedName: $ref) {\n"
+    "      name\n"
+    "      associatedPullRequests(states: OPEN, first: 10) { nodes {" + _PR_NODE + "} }\n"
+    "    }\n"
+    "  }\n"
+    "}\n"
+)
+
+
+def _graphql(repo: str, query: str, what: str, **variables: Any) -> dict[str, Any]:
+    """``repository`` from one GraphQL read. Raises ``JobError``.
+
+    A missing repository or PR is GitHub's NOT_FOUND: ``pr_not_found`` (the
+    caller reads it as "no such PR"); anything else is ``github_unavailable``.
+    """
+    owner, _, name = repo.partition("/")
+    args = ["api", "graphql", "-f", f"query={query}", "-F", f"owner={owner}", "-F", f"name={name}"]
+    for key, value in variables.items():
+        # -F types an int; a branch ref stays a string (-f).
+        args += ["-F" if isinstance(value, int) else "-f", f"{key}={value}"]
+    proc = _gh(args)
     if proc.returncode != 0:
         if _not_found(proc):
-            raise JobError("pr_not_found", f"no PR #{number} in {repo}")
+            raise JobError("pr_not_found", f"{what} not found in {repo}")
         raise JobError(
-            "github_unavailable",
-            f"gh pr view #{number} failed: {(proc.stderr or '').strip()[:200]}",
+            "github_unavailable", f"{what}: gh failed: {(proc.stderr or '').strip()[:200]}"
         )
-    data = _json(proc, f"gh pr view #{number}")
-    if not isinstance(data, dict):
-        raise JobError("github_unavailable", f"gh pr view #{number}: unexpected output")
-    return data
+    data = _json(proc, what)
+    if not isinstance(data, dict) or data.get("errors"):
+        errors = data.get("errors") if isinstance(data, dict) else None
+        if errors and all((e or {}).get("type") == "NOT_FOUND" for e in errors):
+            raise JobError("pr_not_found", f"{what} not found in {repo}")
+        raise JobError("github_unavailable", f"{what}: {str(errors or data)[:200]}")
+    repository = (data.get("data") or {}).get("repository")
+    if not isinstance(repository, dict):
+        raise JobError("pr_not_found", f"{what}: no repository {repo}")
+    return repository
+
+
+def read_pr(repo: str, number: int) -> dict[str, Any]:
+    """The PR and its review threads in one read. Raises ``JobError``."""
+    pr = _graphql(repo, _PR_QUERY, f"PR #{number}", number=number).get("pullRequest")
+    if not isinstance(pr, dict):
+        raise JobError("pr_not_found", f"no PR #{number} in {repo}")
+    return pr
 
 
 def _check_pr(data: dict[str, Any], repo: str) -> None:
@@ -109,87 +168,35 @@ def _check_pr(data: dict[str, Any], repo: str) -> None:
         )
 
 
-def _branch_exists(repo: str, branch: str) -> bool:
-    proc = _gh(["api", f"repos/{repo}/branches/{branch}", "--silent"])
-    if proc.returncode == 0:
-        return True
-    if _not_found(proc):
-        return False
-    raise JobError(
-        "github_unavailable", f"gh api branch lookup failed: {(proc.stderr or '').strip()[:200]}"
-    )
-
-
-def _open_pr_for_branch(repo: str, branch: str) -> dict[str, Any] | None:
-    proc = _gh(
-        ["pr", "list", "--repo", repo, "--head", branch, "--state", "open", "--json", _PR_FIELDS]
-    )
-    if proc.returncode != 0:
-        raise JobError(
-            "github_unavailable", f"gh pr list --head failed: {(proc.stderr or '').strip()[:200]}"
-        )
-    rows = _json(proc, "gh pr list --head")
+def read_branch(repo: str, branch: str) -> tuple[bool, dict[str, Any] | None]:
+    """Whether ``branch`` exists, and its open same-repo PR, in one read."""
+    found = _graphql(repo, _BRANCH_QUERY, f"branch {branch!r}", ref=f"refs/heads/{branch}")
+    ref = found.get("ref")
+    if not isinstance(ref, dict):
+        return False, None
+    nodes = ((ref.get("associatedPullRequests") or {}).get("nodes")) or []
     own = [
         r
-        for r in (rows if isinstance(rows, list) else [])
+        for r in nodes
         if isinstance(r, dict)
         and not r.get("isCrossRepository")
         and str(r.get("headRefName") or "") == branch
     ]
-    return own[0] if own else None
+    return True, (own[0] if own else None)
 
 
-_THREADS_QUERY = """
-query($owner: String!, $name: String!, $number: Int!) {
-  repository(owner: $owner, name: $name) {
-    pullRequest(number: $number) {
-      reviewThreads(first: 100) {
-        nodes {
-          isResolved
-          isOutdated
-          path
-          line
-          comments(first: 5) { nodes { author { login } body } }
-        }
-      }
-    }
-  }
-}
-"""
-
-
-def review_threads_md(repo: str, number: int) -> tuple[str, str | None]:
+def review_threads_md(pr: dict[str, Any]) -> tuple[str, str | None]:
     """The PR's UNRESOLVED review threads as markdown (a submit-time snapshot).
 
-    Returns ``(markdown, warning)``. Fail-soft: a failed read is a warning,
-    never a refusal — the PR itself was already verified.
+    ``pr`` is a node from :func:`read_pr` / :func:`read_branch`, threads
+    included. Returns ``(markdown, warning)``: threads it cannot read are a
+    warning, never a refusal (the PR itself is verified).
     """
-    owner, _, name = repo.partition("/")
+    number = pr.get("number")
     try:
-        proc = gh_mod._run_gh(
-            [
-                "api",
-                "graphql",
-                "-f",
-                f"query={_THREADS_QUERY}",
-                "-F",
-                f"owner={owner}",
-                "-F",
-                f"name={name}",
-                "-F",
-                f"number={number}",
-            ]
-        )
-    except Exception as exc:  # noqa: BLE001
-        return "", f"could not read PR #{number} review threads: {exc}"
-    if proc.returncode != 0:
-        return "", f"could not read PR #{number} review threads: {(proc.stderr or '')[:200]}"
-    try:
-        nodes = json.loads(proc.stdout or "{}")["data"]["repository"]["pullRequest"][
-            "reviewThreads"
-        ]["nodes"]
-    except (json.JSONDecodeError, KeyError, TypeError):
-        return "", f"could not parse PR #{number} review threads"
+        nodes = pr["reviewThreads"]["nodes"]
+    except (KeyError, TypeError):
+        return "", f"could not read PR #{number} review threads"
     lines: list[str] = []
     open_threads = [n for n in nodes or [] if isinstance(n, dict) and not n.get("isResolved")]
     for thread in open_threads[:MAX_REVIEW_THREADS]:
@@ -219,7 +226,7 @@ def resolve_pickup(repo: str, default_branch: str, *, branch: str | None, pr: in
     if pr is not None:
         if int(pr) <= 0:
             raise JobError("invalid_argument", f"--pr must be a positive PR number, got {pr}")
-        data = _pr_view(repo, int(pr))
+        data = read_pr(repo, int(pr))
         _check_pr(data, repo)
         head = str(data.get("headRefName") or "")
         if not head:
@@ -228,9 +235,9 @@ def resolve_pickup(repo: str, default_branch: str, *, branch: str | None, pr: in
         name = head
     else:
         name = validate_branch_name(branch or "")
-        if not _branch_exists(repo, name):
+        exists, found = read_branch(repo, name)
+        if not exists:
             raise JobError("branch_not_found", f"no branch {name!r} in {repo}")
-        found = _open_pr_for_branch(repo, name)
     if name == (default_branch or "main"):
         raise JobError(
             "branch_is_default",
@@ -243,7 +250,7 @@ def resolve_pickup(repo: str, default_branch: str, *, branch: str | None, pr: in
         out.into = str(found.get("baseRefName") or "") or out.into
         out.pr_url = str(found.get("url") or "") or None
         out.draft = bool(found.get("isDraft"))
-        md, warning = review_threads_md(repo, out.pr)
+        md, warning = review_threads_md(found)
         out.review_md = md
         if warning:
             out.warnings.append(warning)
@@ -256,4 +263,11 @@ def resolve_pickup(repo: str, default_branch: str, *, branch: str | None, pr: in
     return out
 
 
-__all__ = ["Pickup", "resolve_pickup", "review_threads_md", "validate_branch_name"]
+__all__ = [
+    "Pickup",
+    "read_branch",
+    "read_pr",
+    "resolve_pickup",
+    "review_threads_md",
+    "validate_branch_name",
+]

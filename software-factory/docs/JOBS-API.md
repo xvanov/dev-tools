@@ -532,7 +532,9 @@ examples: `docs/RESUME.md`.
 --pr <number>                    work on this EXISTING open PR (its head branch); `#42` is accepted
 ```
 
-Code jobs only. Submit asks GitHub once (via `gh`) and writes what it found to the direction
+Code jobs only. Submit asks GitHub once (one `gh api graphql` read of the PR, or of the branch
+and its open PRs, review threads included; on `claude_session` the runtime check runs alongside
+it) and writes what it found to the direction
 frontmatter as `base: {branch, pr, into}`; the chain stamps it on the story at spawn
 (`StoryRecord.pickup_branch / pickup_pr / pickup_into`) like the delivery level, so it never
 drifts mid-flight.
@@ -566,8 +568,8 @@ drifts mid-flight.
 - `--delivery push_to_main` cannot be combined with `--branch`/`--pr`.
 
 Success JSON adds `"base": {"branch", "pr", "into"} | null` (`null` for every other job,
-including research/report). Warnings may name a PR into a non-default branch or unreadable
-review threads. A resubmit with the same `(source, external-id)` returns the original job
+including research/report). Warnings may name a PR into a non-default branch or review threads
+missing from GitHub's answer. A resubmit with the same `(source, external-id)` returns the original job
 without asking GitHub.
 
 Refusals (exit 1): `invalid_argument` (both flags; `--branch`/`--pr` on a research/report job;

@@ -243,6 +243,11 @@ def _load_shim() -> Any:
         (["api", "repos/o/r/branches/main/protection"], "o/r"),
         (["api", "/repos/o/r/pulls"], "o/r"),
         (["repo", "clone", "o/r", "dest"], "o/r"),
+        (
+            ["api", "graphql", "-f", "query=q", "-F", "owner=o", "-F", "name=r", "-F", "number=1"],
+            "o/r",
+        ),
+        (["api", "graphql", "-f", "query=q", "-F", "owner=o"], None),
         (["api", "user"], None),
         (["pr", "list"], None),
     ],
@@ -284,7 +289,9 @@ def test_cli_threads_app_repo_into_the_client(monkeypatch: pytest.MonkeyPatch) -
     from pathlib import Path
 
     monkeypatch.setattr(cli, "_FACTORY_ROOT", Path(__file__).resolve().parents[1])
-    monkeypatch.setattr(gh_provider, "build_github_client", lambda repo=None: seen.append(repo) or object())
+    monkeypatch.setattr(
+        gh_provider, "build_github_client", lambda repo=None: seen.append(repo) or object()
+    )
     cli._ensure_github_client("xvanov/dev-tools")
     cli._ensure_github_client()
     assert seen == ["xvanov/dev-tools", None]

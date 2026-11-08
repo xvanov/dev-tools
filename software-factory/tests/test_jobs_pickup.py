@@ -107,27 +107,39 @@ def _fake_gh(
 ) -> Any:
     calls: list[list[str]] = []
 
+    threads = _THREADS["data"]["repository"]["pullRequest"]["reviewThreads"]
+
+    def node(pr: dict[str, Any]) -> dict[str, Any]:
+        return {**pr, "reviewThreads": threads}
+
     def run(args: list[str]) -> subprocess.CompletedProcess[str]:
         calls.append(args)
         ok = lambda out: subprocess.CompletedProcess(args, 0, json.dumps(out), "")  # noqa: E731
-        if args[:2] == ["pr", "view"]:
-            n = int(args[2])
+        assert args[:2] == ["api", "graphql"], args
+        var = dict(a.split("=", 1) for a in args[2:] if "=" in a and not a.startswith("query="))
+        query = next(a for a in args if a.startswith("query="))
+        assert (var["owner"], var["name"]) == tuple(REPO.split("/")), "owner/name pin the token"
+        if "pullRequest(number" in query:
+            n = int(var["number"])
             if prs and n in prs:
-                return ok(prs[n])
+                return ok({"data": {"repository": {"pullRequest": node(prs[n])}}})
             return subprocess.CompletedProcess(
-                args, 1, "", "GraphQL: Could not resolve to a PullRequest"
+                args, 1, "", f"GraphQL: Could not resolve to a PullRequest with the number of {n}."
             )
-        if args[:2] == ["pr", "list"] and "--head" in args:
-            return ok(head_prs or [])
-        if args[:2] == ["pr", "list"]:
-            return ok(list((prs or {}).values()))
-        if args[:2] == ["api", "graphql"]:
-            return ok(_THREADS)
-        if args[0] == "api" and "/branches/" in args[1]:
-            name = args[1].split("/branches/", 1)[1]
-            if branches and name in branches:
-                return subprocess.CompletedProcess(args, 0, "", "")
-            return subprocess.CompletedProcess(args, 1, "", "gh: Not Found (HTTP 404)")
+        if "ref(qualifiedName" in query:
+            name = var["ref"].removeprefix("refs/heads/")
+            if not (branches and name in branches):
+                return ok({"data": {"repository": {"ref": None}}})
+            mine = [node(p) for p in head_prs or [] if p.get("headRefName") == name]
+            return ok(
+                {
+                    "data": {
+                        "repository": {
+                            "ref": {"name": name, "associatedPullRequests": {"nodes": mine}}
+                        }
+                    }
+                }
+            )
         raise AssertionError(args)
 
     run.calls = calls  # type: ignore[attr-defined]
@@ -228,12 +240,64 @@ def test_submit_branch_adopts_its_open_pr(root: Path, monkeypatch: pytest.Monkey
     monkeypatch.setattr(
         gh_mod,
         "_run_gh",
-        _fake_gh(branches={"feature/login"}, head_prs=[_pr(9, baseRefName="release/2")]),
+        _fake_gh(
+            branches={"feature/login"},
+            head_prs=[
+                _pr(8, headRefName="feature/login", isCrossRepository=True),
+                _pr(9, baseRefName="release/2"),
+            ],
+        ),
     )
     code, obj = _submit("--branch", "feature/login")
     assert code == 0, obj
-    assert obj["base"] == {"branch": "feature/login", "pr": 9, "into": "release/2"}
+    assert obj["base"] == {"branch": "feature/login", "pr": 9, "into": "release/2"}, (
+        "not the fork's"
+    )
     assert any("release/2" in w for w in obj["warnings"])
+    body = (Path(obj["direction_path"]) / "direction.md").read_text(encoding="utf-8")
+    assert "Handle None." in body, "the adopted PR's threads come with the same read"
+
+
+def test_submit_pr_is_one_github_read(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    gh = _fake_gh(prs={42: _pr()})
+    monkeypatch.setattr(gh_mod, "_run_gh", gh)
+    assert _submit("--pr", "42")[0] == 0
+    assert len(gh.calls) == 1, gh.calls  # type: ignore[attr-defined]
+    gh = _fake_gh(branches={"wip"})
+    monkeypatch.setattr(gh_mod, "_run_gh", gh)
+    assert _submit("--branch", "wip", "--external-id", "b")[0] == 0
+    assert len(gh.calls) == 1, gh.calls  # type: ignore[attr-defined]
+
+
+def test_claude_check_runs_alongside_the_github_read(
+    root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import threading
+
+    import factory.jobs.submit as submit_mod
+
+    asked = threading.Event()
+    gh = _fake_gh(prs={42: _pr()})
+
+    def slow_gh(args: list[str]) -> subprocess.CompletedProcess[str]:
+        asked.set()
+        return gh(args)
+
+    # Serial (claude first), this would wait out the timeout and refuse.
+    monkeypatch.setattr(
+        submit_mod,
+        "claude_available",
+        lambda: (True, "ok") if asked.wait(5) else (False, "ran before GitHub was asked"),
+    )
+    monkeypatch.setattr(gh_mod, "_run_gh", slow_gh)
+    code, obj = _submit("--pr", "42", "--runtime", "claude_session")
+    assert code == 0, obj
+
+    # Its refusal still wins over the PR's own.
+    monkeypatch.setattr(submit_mod, "claude_available", lambda: (False, "not logged in"))
+    monkeypatch.setattr(gh_mod, "_run_gh", _fake_gh(prs={}))
+    rc, obj = _submit("--pr", "7", "--runtime", "claude_session", "--external-id", "x")
+    assert rc == 1 and obj["error"] == "runtime_unavailable", obj
 
 
 def test_submit_branch_without_a_pr(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:

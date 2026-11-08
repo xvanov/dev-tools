@@ -27,7 +27,8 @@ import re
 import shutil
 import sys
 import uuid
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -244,6 +245,32 @@ def claude_available() -> tuple[bool, str]:
     return check_available()
 
 
+def _require_claude() -> None:
+    ok, detail = claude_available()
+    if not ok:
+        raise JobError("runtime_unavailable", f"claude_session is not available here: {detail}")
+
+
+def _with_claude_check[T](needed: bool, work: Callable[[], T]) -> T:
+    """``work()`` with the claude_session check running alongside it.
+
+    Both take about a second (``claude auth status``; a GitHub read), so a
+    ``--pr`` submit on claude_session waits for the slower, not the sum. The
+    check's refusal wins over whatever ``work`` raised, as when it ran first.
+    """
+    if not needed:
+        return work()
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        check = pool.submit(_require_claude)
+        try:
+            out = work()
+        except JobError:
+            check.result()
+            raise
+        check.result()
+        return out
+
+
 def find_existing(root: Path, source: str, external_id: str) -> Any:
     for ref in iter_jobs(root):
         if (
@@ -305,11 +332,10 @@ def submit_job(root: Path, req: SubmitRequest) -> dict[str, Any]:
             f"--model {CLAUDE_MODEL_KEY}=... names a Claude Code model; it needs "
             f"--runtime {RUNTIME_CLAUDE}",
         )
-    if runtime == RUNTIME_CLAUDE:
-        ok, detail = claude_available()
-        if not ok:
-            raise JobError("runtime_unavailable", f"claude_session is not available here: {detail}")
     wants_pickup = bool((req.branch or "").strip()) or req.pr is not None
+    if runtime == RUNTIME_CLAUDE and not wants_pickup:
+        # A pickup checks it alongside its GitHub read (_with_claude_check).
+        _require_claude()
     if wants_pickup and kind in TASK_KINDS:
         raise JobError(
             "invalid_argument", f"--branch/--pr only apply to code jobs (got --kind {kind})"
@@ -341,6 +367,8 @@ def submit_job(root: Path, req: SubmitRequest) -> dict[str, Any]:
             # (the PR may have merged since; that must not turn into an error).
             existing = find_existing(root, source, external_id)
             if existing is not None:
+                if runtime == RUNTIME_CLAUDE:
+                    _require_claude()
                 return _result(root, existing.app, existing.dir_path, existing.meta, created=False)
         if requested is not None and requested.value == "push_to_main":
             raise JobError(
@@ -350,8 +378,11 @@ def submit_job(root: Path, req: SubmitRequest) -> dict[str, Any]:
             )
         from factory.jobs.pickup import resolve_pickup
 
-        pickup = resolve_pickup(
-            cfg.repo, cfg.default_branch or "main", branch=req.branch, pr=req.pr
+        pickup = _with_claude_check(
+            runtime == RUNTIME_CLAUDE,
+            lambda: resolve_pickup(
+                cfg.repo, cfg.default_branch or "main", branch=req.branch, pr=req.pr
+            ),
         )
     # Frontmatter keeps the JOB's own request (``models:`` persona → model id,
     # ``pipeline:`` as requested) — exactly the keys

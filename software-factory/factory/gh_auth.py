@@ -97,9 +97,7 @@ def repo_from_cwd(cwd: str | os.PathLike[str] | None = None) -> str | None:
 def _gh_token(user: str | None, gh_bin: str = "gh") -> str | None:
     cmd = [gh_bin, "auth", "token"] + (["--user", user] if user else [])
     try:
-        r = subprocess.run(
-            cmd, capture_output=True, text=True, check=False, timeout=_TIMEOUT_S
-        )
+        r = subprocess.run(cmd, capture_output=True, text=True, check=False, timeout=_TIMEOUT_S)
     except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
         return None
     if r.returncode != 0:
@@ -166,6 +164,15 @@ def repo_from_gh_args(args: list[str]) -> str | None:
             m = re.match(r"^/?repos/([^/]+/[^/?]+)", a)
             if m:
                 return m.group(1)
+        if len(args) > 1 and args[1] == "graphql":
+            # No repo in the path: a query's ``owner``/``name`` variables name it.
+            fields: dict[str, str] = {}
+            for flag, value in zip(args, args[1:], strict=False):
+                if flag in ("-F", "-f", "--field", "--raw-field") and "=" in value:
+                    key, _, val = value.partition("=")
+                    fields[key] = val
+            if fields.get("owner") and fields.get("name"):
+                return f"{fields['owner']}/{fields['name']}"
     if args and args[0] == "repo":
         for a in args[2:]:
             if not a.startswith("-") and repo_owner(a):
