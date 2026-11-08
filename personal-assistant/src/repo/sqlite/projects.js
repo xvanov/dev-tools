@@ -108,6 +108,11 @@ function create(db) {
        from project p where p.active order by p.name`
       );
     },
+
+    /** Active projects' names and folders, for `pa doctor`. */
+    async activeNamePaths() {
+      return db.rows('select name, repo_path from project where active');
+    },
   };
 }
 

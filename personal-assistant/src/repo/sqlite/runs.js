@@ -81,6 +81,47 @@ function create(db) {
         [commitmentId]
       );
     },
+
+    /** A commitment's runs for the dashboard's detail view, newest first. */
+    async detailsForCommitment(commitmentId) {
+      return db.rows(
+        `select id, status, mode, machine, branch, started_at, termhub_session_id, route, route_reason,
+              factory_job_id, factory_state, factory_warnings, delivery, cost_usd, mr_url from run
+        where commitment_id = $1 order by started_at desc, id desc`,
+        [commitmentId]
+      );
+    },
+
+    /** The factory runs that have a job: {id, factory_job_id}. */
+    async factoryJobs() {
+      return db.rows(`select id, factory_job_id from run where route = 'factory' and factory_job_id is not null`);
+    },
+
+    /** The mode of the newest run that used a worktree, or null. */
+    async modeByWorktree(worktreePath) {
+      return db.one('select mode from run where worktree_path = $1 order by started_at desc, id desc limit 1', [worktreePath]);
+    },
+
+    /** Runs of these commitments that have a PR or MR link, newest first. */
+    async mrLinksFor(commitmentIds) {
+      return db.rows(
+        `select id, commitment_id, mr_url from run where commitment_id in (select value from json_each($1)) and mr_url is not null
+          order by started_at desc, id desc`,
+        [(commitmentIds || []).map(Number)]
+      );
+    },
+
+    /** The newest `perCard` runs of each commitment, newest first, numbered (`n`). */
+    async newestPerCommitment(commitmentIds, perCard) {
+      return db.rows(
+        `select * from (
+       select id, commitment_id, status, route, machine, termhub_session_id, factory_job_id, factory_state, mr_url,
+              row_number() over (partition by commitment_id order by started_at desc, id desc) as n
+         from run where commitment_id in (select value from json_each($1))) r
+      where n <= $2 order by commitment_id, n`,
+        [(commitmentIds || []).map(Number), perCard]
+      );
+    },
   };
 }
 

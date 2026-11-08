@@ -265,6 +265,19 @@ function create(db) {
         [commitmentId]
       );
     },
+
+    /** The source items evidence rows point at, for a "looks done" card. */
+    async evidenceItems(evidenceIds) {
+      const rows = await db.rows(
+        `select e.id as evidence_id, si.id, si.source, si.external_id, si.thread_external_id, si.subject, si.occurred_at,
+                  json_remove(si.raw, '$.members', '$.memberEmails', '$.audioPaths') as raw
+             from ledger_evidence e join source_item si on si.id = e.source_item_id
+            where e.id in (select value from json_each($1))`,
+        [(evidenceIds || []).map(Number)]
+      );
+      for (const r of rows) if (typeof r.raw === 'string') r.raw = JSON.parse(r.raw);
+      return rows;
+    },
   };
 }
 

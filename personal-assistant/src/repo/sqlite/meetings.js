@@ -148,6 +148,29 @@ function create(db) {
         [id, at, result]
       );
     },
+
+    /** For `pa doctor`: briefs written and failed, the last delivered, and series learned from transcripts. */
+    async briefStats() {
+      const r = await db.one(
+        `select (select count(*) from meeting_brief where error is null) as ok,
+                (select count(*) from meeting_brief where error is not null) as failed,
+                (select max(created_at) from meeting_brief where notification_id is not null) as last,
+                (select count(*) from meeting_series where json_type(profile, '$.learnedFrom') is not null) as learned`
+      );
+      if (r && typeof r.last === 'string') r.last = new Date(r.last);
+      return r;
+    },
+
+    /** For `pa doctor`: debriefs written, those that failed three times, and the last written. */
+    async debriefStats() {
+      const r = await db.one(
+        `select (select count(*) from meeting_debrief where error is null) as ok,
+                (select count(*) from meeting_debrief where error is not null and attempts >= 3) as failed,
+                (select max(created_at) from meeting_debrief where error is null) as last`
+      );
+      if (r && typeof r.last === 'string') r.last = new Date(r.last);
+      return r;
+    },
   };
 }
 

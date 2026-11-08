@@ -207,6 +207,12 @@ function create(db) {
       return { hit };
     },
 
+    /** Active cases and the last run's time: {cases, last}. */
+    async state() {
+      const r = await db.one('select (select count(*) from eval_case where active) as cases, (select max(ran_at) from eval_run) as last');
+      return { ...r, last: r.last == null ? null : new Date(r.last) };
+    },
+
     /** Up to 400 distinct subjects of a reasonable length: [{subject}]. */
     async sampleSubjects() {
       return db.rows(

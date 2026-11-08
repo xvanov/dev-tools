@@ -271,6 +271,28 @@ function create(db) {
       );
       return r.map((x) => x.source);
     },
+
+    /** One Claude session item by id, or null (another source's id is null too). */
+    async claudeSessionItem(id) {
+      return db.one(
+        `select id, source, external_id, subject, occurred_at, raw from source_item where id = $1 and source = 'claude_session'`,
+        [id]
+      );
+    },
+
+    /** A connector's cursor: {last_run_at, last_error, state}, or null. */
+    async cursorRow(source) {
+      return db.one('select last_run_at, last_error, state from sync_cursor where source = $1', [source]);
+    },
+
+    /** The newest twelve items of a thread, newest first (body cut to 600 chars). */
+    async threadItems(threadExternalId) {
+      return db.rows(
+        `select id, author_identity, occurred_at, substr(body_text, 1, 600) as body from source_item
+          where thread_external_id = $1 order by occurred_at desc, id desc limit 12`,
+        [threadExternalId]
+      );
+    },
   };
 }
 

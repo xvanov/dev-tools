@@ -182,6 +182,21 @@ function create(db) {
         [myForms || [], minConfidence, limit, sinceMs(2 * DAY)]
       );
     },
+
+    /** Drafts waiting for you (pending or edited), newest first (30), with the ask they answer. */
+    async pendingForBoard() {
+      return db.rows(
+        `select d.id, d.run_id, d.commitment_id, d.channel, d.to_identity, d.subject, d.body, d.status,
+            d.origin, d.created_at, r.task, c.summary as ask, si.raw->>'webUrl' as ask_url,
+            si.raw->>'webLink' as ask_link, si.body_text as ask_text
+       from draft d
+       left join run r on r.id = d.run_id
+       left join commitment c on c.id = d.commitment_id
+       left join source_item si on si.id = d.source_item_id
+      where d.status in ('pending','edited')
+      order by d.created_at desc, d.id desc limit 30`
+      );
+    },
   };
 }
 

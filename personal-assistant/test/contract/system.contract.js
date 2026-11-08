@@ -26,7 +26,7 @@ module.exports = {
 
   'appliedMigrations: versions, oldest first': async ({ repos, assert }) => {
     const got = await repos.system.appliedMigrations();
-    assert.ok(got.length > 5);
+    assert.ok(got.length > 0); // the backend's own migration files (sql/ or sql-sqlite/)
     const v = got.map((r) => r.version);
     assert.deepStrictEqual(v, [...v].sort());
   },
