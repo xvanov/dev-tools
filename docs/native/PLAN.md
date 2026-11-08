@@ -435,9 +435,26 @@ run mid-step; a job continued on an existing branch (`--branch`).
   the start/update scripts (and restart ptyd only on purpose), then retire node-pty; replay is
   raw bytes (sessiond's mirror covers the UI).
 - [ ] **5.2** Agent sandbox per run: sandbox-runtime on Linux, restricted account on
-  Windows, egress allowlist proxy.
-- [ ] **5.3** Credential broker: keys never enter the sandbox; pushes and PRs go through the
-  broker, checked against the run's delivery ceiling.
+  Windows, egress allowlist proxy. Landed behind `FACTORY_SANDBOX` / `PA_SANDBOX` (default
+  off): the proxy (cb46b10) and the OS sandbox (421e621): bubblewrap on Linux (used directly,
+  not sandbox-runtime: the proxy and broker need our own unix-socket relays), a restricted
+  Low-integrity token in a job object on Windows instead of an account (no account created).
+  Open before the tick:
+  - Windows egress is proxy-routed, not enforced (needs a firewall rule or a separate account:
+    an admin step, ask first).
+  - Windows: folders every local user can read (`C:\repos`) stay readable until the operator
+    runs `python -m factory.sandbox.exec setup --deny-read C:\repos` (an ACL change, ask first).
+  - The Linux integration test runs in CI only (bubblewrap); not yet seen green there.
+  - PA code modes are refused while sandboxed: the session cannot write the shared `.git`, so
+    it cannot commit. Next: the broker commits the session's tree into its mirror.
+  - API runtime: the terminal is sandboxed on Linux only (OpenHands' PowerShell probe falls
+    back unsandboxed, so Windows refuses); its file editor tool runs unsandboxed.
+  - Claude Code needs its model credential inside (`CLAUDE_CODE_OAUTH_TOKEN`); no run has
+    used the flag live yet.
+- [x] **5.3** Credential broker: keys never enter the sandbox; pushes and PRs go through the
+  broker, checked against the run's delivery ceiling. (2031b73, 421e621) Ceilings `none` /
+  `push_branch` / `draft_pr` from the delivery level or PA mode; per-owner token via
+  `gh_auth`; never runs git in the agent's checkout.
 - [ ] **Exit 5:** agents run sandboxed on Windows and Linux; termhub's node-pty host retired.
 
 ## Phase 6: factory into TypeScript
