@@ -503,6 +503,10 @@ const config = {
     pollSeconds: envInt('PA_FACTORY_POLL_SECONDS', 120),
     activePollSeconds: envInt('PA_FACTORY_ACTIVE_POLL_SECONDS', 5),
     timeoutMs: envInt('PA_FACTORY_TIMEOUT_MS', 120_000),
+    // How long factory_start waits for the follow (walk-in) termhub session
+    // before answering without it: opening one takes ~9 s on Windows, and the
+    // job runs whether or not it is open. It finishes in the background.
+    followWaitMs: envInt('PA_FACTORY_FOLLOW_WAIT_MS', 800),
   },
 
   audio: {

@@ -169,11 +169,30 @@ async function viaServe(sub, timeoutMs, url = config.factory.serveUrl) {
 
 let appsCache = null;
 async function apps({ fresh = false } = {}) {
-  if (!fresh && appsCache && Date.now() - appsCache.at < 60_000) return appsCache.apps;
-  const r = await call(['app', 'list', '--json']);
-  const list = Array.isArray(r.apps) ? r.apps : [];
-  appsCache = { at: Date.now(), apps: list };
-  return list;
+  const age = appsCache ? Date.now() - appsCache.at : Infinity;
+  if (!fresh && age < 60_000) return appsCache.apps;
+  // Stale-while-revalidate: the registered apps change rarely, and refreshing
+  // them is a factory CLI call (2.5 s when `serve` is not running), so a list
+  // up to 15 min old is answered at once while a refresh runs behind it.
+  if (!fresh && age < 15 * 60_000) {
+    refreshApps().catch((err) => log.debug('apps refresh failed', { message: err.message }));
+    return appsCache.apps;
+  }
+  return refreshApps();
+}
+
+let appsRefresh = null;
+function refreshApps() {
+  if (!appsRefresh) {
+    appsRefresh = call(['app', 'list', '--json'])
+      .then((r) => {
+        const list = Array.isArray(r.apps) ? r.apps : [];
+        appsCache = { at: Date.now(), apps: list };
+        return list;
+      })
+      .finally(() => { appsRefresh = null; });
+  }
+  return appsRefresh;
 }
 
 function modelsFor(extra) {
@@ -501,14 +520,22 @@ async function start({
   // Walk-in: a termhub session on the factory's machine following the job,
   // so "Open in termhub" on the card lands on it. Not fatal: the job runs
   // whether or not anyone watches.
+  // Opening one takes seconds on some machines (~9 s termhub on Windows), so
+  // the answer waits only config.factory.followWaitMs for it; a slower one
+  // finishes in the background and is recorded on the run when it opens.
   let sessionId = null;
   let url = null;
-  try {
-    ({ sessionId, url } = await openFollow(job.job_id, `pa#${run.id} factory · ${label.slice(0, 40)}`, { card: commitmentId, run: run.id, job: job.job_id }));
-    await repository.runs.setSession(run.id, sessionId);
-  } catch (err) {
-    log.warn('factory job started, but its follow session did not open', { run: run.id, job: job.job_id, message: err.message });
-  }
+  const opening = (async () => {
+    const s = await openFollow(job.job_id, `pa#${run.id} factory · ${label.slice(0, 40)}`, { card: commitmentId, run: run.id, job: job.job_id });
+    await repository.runs.setSession(run.id, s.sessionId);
+    return s;
+  })();
+  opening.catch((err) => log.warn('factory job started, but its follow session did not open', { run: run.id, job: job.job_id, message: err.message }));
+  let waitTimer;
+  const early = await Promise.race([opening.catch(() => null), new Promise((resolve) => { waitTimer = setTimeout(() => resolve(undefined), config.factory.followWaitMs); })]);
+  clearTimeout(waitTimer);
+  if (early) ({ sessionId, url } = early);
+  else if (early === undefined) log.info('the follow session is still opening; answering without it', { run: run.id, job: job.job_id, waitedMs: config.factory.followWaitMs });
 
   log.info('dispatched to the factory', { run: run.id, job: job.job_id, app, kind, runtime: rt, delivery: job.delivery || chosen.delivery, pipeline: job.pipeline || pipe, brief: by });
   return {

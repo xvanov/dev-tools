@@ -385,6 +385,33 @@ async function factoryStart() {
     links: { card: 31, run: 7, job: 'widget:017' } });
   assert.ok(store.queries.some((q) => /termhub_session_id = \$2/.test(q.sql) && q.params[1] === 'sess-1'));
 
+  // A follow session that is slow to open does not hold the answer: the job is
+  // reported at once (no url), and the session is recorded on the run when it opens.
+  {
+    const { config } = require('../src/config.ts');
+    const hub = require('../src/dispatch/termhub');
+    const realFor = hub.forMachine;
+    hub.forMachine = () => ({
+      async createSession() { await new Promise((r) => setTimeout(r, 400)); return { id: 'sess-slow' }; },
+      async sessionUrl(id) { return `https://hub.example/#session=${id}`; },
+      async killSession() { return true; },
+    });
+    const wasWait = config.factory.followWaitMs;
+    config.factory.followWaitMs = 50;
+    try {
+      answers = { 'job submit': json({ job_id: 'widget:018', app: 'widget', direction_id: '018', pipeline: 'chain', delivery: 'draft_pr', created: true, warnings: [] }) };
+      const t = Date.now();
+      const slow = await factory.start({ target: { commitment: { id: 32, summary: 'Add retries to the export', kind: 'coding' }, repoPath: '/repos/widget' }, app: 'widget', mode: 'mr', routeReason: 'you chose the factory' });
+      assert.ok(Date.now() - t < 350, 'answered without waiting for the session');
+      assert.deepStrictEqual([slow.jobId, slow.url, slow.sessionId], ['widget:018', null, null]);
+      await new Promise((r) => setTimeout(r, 500));
+      assert.ok(store.queries.some((q) => /termhub_session_id = \$2/.test(q.sql) && q.params[1] === 'sess-slow'), 'the late session is still recorded');
+    } finally {
+      config.factory.followWaitMs = wasWait;
+      hub.forMachine = realFor;
+    }
+  }
+
   // Plan mode never reaches the factory or the store.
   calls.length = 0;
   const before = store.queries.length;
