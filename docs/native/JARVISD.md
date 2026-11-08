@@ -255,5 +255,10 @@ setup; T7's cargo and Bun caches apply.
   relative require that resolves to no file (Node never adds `.ts`).
 - [x] The one typed router (`dashboard/router.ts`, the `ROUTES` table in `server.ts`).
 - [x] The termhub front in jarvisd (`jarvisd front`), under the parity set, on Bun 1.4.4.
-- [ ] Modules switch to ES exports (then `Repos`, `Config` and `Json` get real types); `pa` as a
-  thin client of jarvisd's API; termhub's `server.js` and the separate `front` process retire.
+- [x] termhub's front, `lib/`, sessiond and server in strict TS (b524295, 6bad58b, 6edacc5); entries
+  `front.js`, `sessiond.js`, `server.js`, `lib/ptyHost.js` stay JS (started by path).
+- [ ] Left: switch the stacks' front to `jarvisd front` (the lead does it); then the in-process
+  front (one jarvisd process owns 7000 and 7300, Exit 4); modules to ES exports (then `Repos`,
+  `Config` and `Json` get real types); `pa` as a thin client of jarvisd's API; chunk D (dispatch,
+  e2e) finishing; `test/supervisor.test.js` fails ~1 in 3 under the full parallel suite (~150 s,
+  passes alone): a load-dependent timeout to fix.
