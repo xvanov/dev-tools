@@ -410,7 +410,7 @@ judged "investigate" with a known repo, at most `PA_EAGER_RUNS_PER_DAY` a day an
 `dispatch` proposal and starts only on your yes. Do not widen the mode it may start alone.
 
 **The factory is a dispatch target under the same rules, reached only through its contract.**
-`--via factory` (`src/dispatch/factory.js`) sends a run to the software factory instead of a
+`--via factory` (`src/dispatch/factory.ts`) sends a run to the software factory instead of a
 Claude session. The PA never imports factory code or reads its store: it runs `uv run factory
 job|app …` through `runCommand` (`src/dispatch/exec.ts`) and parses the one JSON object the
 factory's `docs/JOBS-API.md` says each command prints. Every job is sent with an explicit

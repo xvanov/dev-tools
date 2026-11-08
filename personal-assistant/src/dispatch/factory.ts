@@ -44,6 +44,64 @@
 // factory says (`job status` by id, or `job list` by external id): adopted,
 // failed, or left `waiting` as `submit_unknown` for the worker to settle —
 // never stuck in `starting`.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+type Json = import('../types.ts').Json;
+type ErrorWithCode = import('../types.ts').ErrorWithCode;
+/** A run row (repo/runs), read column by column. */
+type Run = Json;
+/** One job as the factory's `--json` commands print it (JOBS-API.md). */
+type Job = Json;
+/** A dispatch target (dispatch.resolveTarget): store rows, read column by column. */
+type Target = Json;
+type ExecOptions = { cwd?: string | null; timeoutMs?: number; maxOutputBytes?: number; stdin?: string | null; env?: Record<string, string> | null };
+type ExecResult = { code: number; stdout: string; stderr: string; timedOut?: boolean; signal?: string; truncated?: Json; error?: string };
+type Runner = (machineName: string | null, argv: string[], opts: ExecOptions) => Promise<ExecResult>;
+type CallOptions = { timeoutMs?: number; maxOutputBytes?: number | undefined };
+type Staged = { paths: Record<string, string>; dir: string | null };
+type Models = Record<string, string>;
+type ModelsInput = string[] | string | Models | null | undefined;
+type RecordExtra = { delivery?: string | null; pipe?: string | null; briefPath?: string | null; by?: string | null };
+type Verdict = 'adopt' | 'fail' | 'unknown' | 'cancelled';
+type Settled = { verdict: Verdict; job: Job | null; asked: boolean };
+type StartOptions = {
+  /** dispatch's resolveTarget() result */
+  target: Target;
+  /** the registered factory app (route.ts resolved it) */
+  app: string | null;
+  /** owner/name of the repo */
+  slug?: string | null;
+  /** the operator's own words, if they typed them */
+  task?: string | null;
+  /** an explicitly given PA mode; plan is refused */
+  mode?: string | null;
+  /** the end state; resolved when not given */
+  delivery?: string | null;
+  deliverySource?: string | null;
+  deliveryPhrase?: string | null;
+  pipeline?: string | null;
+  /** `persona=model` entries, over PA_FACTORY_MODELS */
+  models?: ModelsInput;
+  /** a proposal's frozen models: used as they are */
+  modelsExact?: boolean;
+  /** acceptance criteria */
+  done?: string[];
+  /** a frozen brief (the card's): sent exactly, not recomposed */
+  brief?: string | null;
+  briefBy?: string | null;
+  routeReason?: string | null;
+  confirmedUnattended?: boolean;
+  again?: boolean;
+  title?: string | null;
+  jobKind?: string;
+  runtime?: string | null;
+  branch?: string | null;
+  pr?: number | string | null;
+};
+type Chain = { prs: Json[]; steps: Json[] };
+type Patch = { jobId: string; patch: Json };
+type Notice = { key: string; title: string; body: string; url: string | null };
 
 const fs = require('fs');
 const os = require('os');
@@ -63,19 +121,19 @@ const log = logger('factory');
 // ------------------------------------------------------------ the runner ----
 // Every factory command goes through exec.ts: this machine via child_process,
 // another machine through its termhub's /api/exec.
-let runnerOverride = null;
+let runnerOverride: Runner | null = null;
 
-function runCommand(machineName, argv, opts) {
+function runCommand(machineName: string | null, argv: string[], opts: ExecOptions): Promise<ExecResult> {
   if (runnerOverride) return runnerOverride(machineName, argv, opts);
   return require('./exec.ts').runCommand(machineName, argv, opts);
 }
 
 /** Tests only: swap the command runner. */
-function _setRunner(fn) {
+function _setRunner(fn: Runner | null): void {
   runnerOverride = fn;
 }
 
-function enabled() {
+function enabled(): boolean {
   return Boolean(config.factory.path);
 }
 
@@ -87,12 +145,12 @@ function enabled() {
  * PA_MACHINES would silently be treated as "here" by termhub, so it is refused
  * instead.
  */
-function machine() {
+function machine(): string | null {
   return factoryMachine(config.factory.machine, config.termhub.machines);
 }
 
 /** Pure core of machine(); exported for tests. */
-function factoryMachine(raw, machines, hostname = os.hostname()) {
+function factoryMachine(raw: string | null | undefined, machines: Record<string, unknown>, hostname: string = os.hostname()): string | null {
   const name = String(raw || '').trim();
   if (!name || name.toLowerCase() === 'local' || name.toLowerCase() === String(hostname).toLowerCase()) return null;
   if (!machines[name]) {
@@ -101,9 +159,9 @@ function factoryMachine(raw, machines, hostname = os.hostname()) {
   return name;
 }
 
-async function call(sub, { timeoutMs = config.factory.timeoutMs, maxOutputBytes = undefined } = {}) {
+async function call(sub: string[], { timeoutMs = config.factory.timeoutMs, maxOutputBytes = undefined }: CallOptions = {}): Promise<Json> {
   if (!enabled()) throw new Error('the factory is not configured — set PA_FACTORY_PATH (and PA_FACTORY_MACHINE if it is not this machine)');
-  const opts = { cwd: config.factory.path, timeoutMs };
+  const opts: ExecOptions = { cwd: config.factory.path, timeoutMs };
   if (maxOutputBytes) opts.maxOutputBytes = maxOutputBytes;
   const where = machine();
   // A factory on this machine with `factory serve` running answers in-process
@@ -134,9 +192,9 @@ const READ_ONLY = new Set(['job status', 'job list', 'job report', 'app list']);
  * (it may have run; a second submit would be a second job): it answers like a
  * timed-out command. Other connection errors fall back for read-only verbs only.
  */
-async function viaServe(sub, timeoutMs, url = config.factory.serveUrl) {
+async function viaServe(sub: string[], timeoutMs: number, url: string | null | undefined = config.factory.serveUrl): Promise<ExecResult | null> {
   if (!url) return null;
-  let res;
+  let res: Response;
   try {
     res = await fetch(`${url.replace(/\/$/, '')}/api/cli`, {
       method: 'POST',
@@ -144,7 +202,8 @@ async function viaServe(sub, timeoutMs, url = config.factory.serveUrl) {
       body: JSON.stringify({ argv: sub }),
       signal: AbortSignal.timeout(timeoutMs),
     });
-  } catch (err) {
+  } catch (e) {
+    const err = e as ErrorWithCode & { cause?: { code?: string } };
     const code = err?.cause?.code || err?.code;
     if (code === 'ECONNREFUSED') return null; // nothing listening: nothing ran
     if (err?.name === 'TimeoutError' || err?.name === 'AbortError') {
@@ -154,9 +213,9 @@ async function viaServe(sub, timeoutMs, url = config.factory.serveUrl) {
     return { code: 1, stdout: '', stderr: `factory serve connection failed (${code || err?.message}); not retried: the command may have run` };
   }
   if (res.status !== 200) return null; // verb not served (400) or a guard mismatch (403): use the CLI
-  const body = await res.json().catch(() => null);
+  const body = (await res.json().catch(() => null)) as Json | null;
   if (!body || typeof body.code !== 'number') return null;
-  const out = { code: body.code, stdout: String(body.stdout || ''), stderr: String(body.stderr || '') };
+  const out: ExecResult = { code: body.code, stdout: String(body.stdout || ''), stderr: String(body.stderr || '') };
   // A success with no JSON on stdout is not a success (seen live: serve's output
   // capture lost a verb's stdout). A read-only verb is asked again through the
   // CLI; a state-changing one may have run, so it is reported, never re-run.
@@ -167,26 +226,27 @@ async function viaServe(sub, timeoutMs, url = config.factory.serveUrl) {
   return out;
 }
 
-let appsCache = null;
-async function apps({ fresh = false } = {}) {
-  const age = appsCache ? Date.now() - appsCache.at : Infinity;
-  if (!fresh && age < 60_000) return appsCache.apps;
+let appsCache: { at: number; apps: Json[] } | null = null;
+async function apps({ fresh = false }: { fresh?: boolean } = {}): Promise<Json[]> {
+  const cached = appsCache;
+  const age = cached ? Date.now() - cached.at : Infinity;
+  if (cached && !fresh && age < 60_000) return cached.apps;
   // Stale-while-revalidate: the registered apps change rarely, and refreshing
   // them is a factory CLI call (2.5 s when `serve` is not running), so a list
   // up to 15 min old is answered at once while a refresh runs behind it.
-  if (!fresh && age < 15 * 60_000) {
-    refreshApps().catch((err) => log.debug('apps refresh failed', { message: err.message }));
-    return appsCache.apps;
+  if (cached && !fresh && age < 15 * 60_000) {
+    refreshApps().catch((err: Error) => log.debug('apps refresh failed', { message: err.message }));
+    return cached.apps;
   }
   return refreshApps();
 }
 
-let appsRefresh = null;
-function refreshApps() {
+let appsRefresh: Promise<Json[]> | null = null;
+function refreshApps(): Promise<Json[]> {
   if (!appsRefresh) {
     appsRefresh = call(['app', 'list', '--json'])
       .then((r) => {
-        const list = Array.isArray(r.apps) ? r.apps : [];
+        const list: Json[] = Array.isArray(r.apps) ? r.apps : [];
         appsCache = { at: Date.now(), apps: list };
         return list;
       })
@@ -195,13 +255,13 @@ function refreshApps() {
   return appsRefresh;
 }
 
-function modelsFor(extra) {
+function modelsFor(extra: ModelsInput): Models {
   return { ...F.parseModels(config.factory.models), ...F.parseModels(modelEntries(extra)) };
 }
 
 // `persona=model` entries from a list, a string, or an {persona: model} object
 // (the frozen form a proposal keeps).
-function modelEntries(m) {
+function modelEntries(m: ModelsInput): string[] | string {
   if (!m) return [];
   if (Array.isArray(m) || typeof m === 'string') return m;
   return Object.entries(m).map(([k, v]) => `${k}=${v}`);
@@ -212,7 +272,7 @@ function modelEntries(m) {
  * `--delivery-default` is this repo's PA default, else PA_DELIVERY_DEFAULT —
  * though the PA sends `--delivery` on every job regardless.
  */
-async function addApp({ repo, deliveryDefault = null, path: clonePath = null }) {
+async function addApp({ repo, deliveryDefault = null, path: clonePath = null }: { repo: string; deliveryDefault?: string | null; path?: string | null }): Promise<Json> {
   const level = deliveryDefault || (await require('./delivery.ts').defaultFor(repo).catch(() => null)) || require('./delivery.ts').fallback();
   const r = await call(F.appAddArgv({ repo, deliveryDefault: D.delivery(level), path: clonePath }));
   appsCache = null;
@@ -253,9 +313,9 @@ const CLEANER = [
   "print(json.dumps({'removed': ok}))",
 ].join('\n');
 
-async function stage(where, runId, files) {
+async function stage(where: string | null, runId: number | string, files: Record<string, string>): Promise<Staged> {
   if (!where) {
-    const out = {};
+    const out: Record<string, string> = {};
     for (const [name, text] of Object.entries(files)) {
       const p = path.join(config.worktreesRoot, `run-${runId}-${name}`);
       fs.mkdirSync(path.dirname(p), { recursive: true });
@@ -272,9 +332,9 @@ async function stage(where, runId, files) {
 }
 
 // Best effort: a leftover private temp dir is litter, not a leak.
-async function unstage(where, dir) {
+async function unstage(where: string | null, dir: string | null): Promise<void> {
   if (!where || !dir) return;
-  await runCommand(where, [F.uvBinary(config.factory.uv), 'run', 'python', '-c', CLEANER, dir], { cwd: config.factory.path, timeoutMs: 60_000 }).catch((err) =>
+  await runCommand(where, [F.uvBinary(config.factory.uv), 'run', 'python', '-c', CLEANER, dir], { cwd: config.factory.path, timeoutMs: 60_000 }).catch((err: Error) =>
     log.warn('could not remove the staged ask on the factory machine', { dir, message: err.message })
   );
 }
@@ -282,13 +342,14 @@ async function unstage(where, dir) {
 // A v1 factory refuses --kind/--runtime in its CLI parser (nothing written).
 // A code job on the api runtime is exactly what v1 does without them, so it
 // is resent bare; anything else needs v1.2 and fails with that said.
-async function submit(argv, { kind = 'code', runtime: rt = 'api' } = {}) {
+async function submit(argv: string[], { kind = 'code', runtime: rt = 'api' }: { kind?: string; runtime?: string } = {}): Promise<Job> {
   try {
     return await submitOnce(argv);
-  } catch (err) {
+  } catch (e) {
+    const err = e as ErrorWithCode;
     if (!(err instanceof F.FactoryError && err.code === 'unsupported_option')) throw err;
     // Continuing a branch or PR needs a factory that has it: never resent without.
-    if (argv.some((a) => a === '--pr' || String(a).startsWith('--branch'))) {
+    if (argv.some((a: string) => a === '--pr' || String(a).startsWith('--branch'))) {
       throw new F.FactoryError('unsupported_option', 'this factory cannot continue an existing branch or PR yet (`job submit --branch/--pr`) — update the factory, or start a new job');
     }
     if (kind !== 'code' || rt !== 'api') {
@@ -300,11 +361,12 @@ async function submit(argv, { kind = 'code', runtime: rt = 'api' } = {}) {
 }
 
 /** The submit argv minus the v1.2 flags (each a flag and its value). */
-function withoutV12(argv) {
-  const out = [];
+function withoutV12(argv: string[]): string[] {
+  const out: string[] = [];
   for (let i = 0; i < argv.length; i++) {
-    if (argv[i] === '--kind' || argv[i] === '--runtime') { i++; continue; }
-    out.push(argv[i]);
+    const a = argv[i] as string;
+    if (a === '--kind' || a === '--runtime') { i++; continue; }
+    out.push(a);
   }
   return out;
 }
@@ -312,18 +374,18 @@ function withoutV12(argv) {
 // Submit, retried once on a transport failure (a lost answer): the run id is
 // the external id, so the factory returns the job it already made rather
 // than a second one. A contract error (unknown_repo, …) is not retried.
-async function submitOnce(argv) {
-  let first;
+async function submitOnce(argv: string[]): Promise<Job> {
+  let first: Job;
   try {
     first = await call(argv);
   } catch (err) {
     if (err instanceof F.FactoryError || err instanceof F.NotSentError) throw err;
-    log.warn('job submit failed, retrying once with the same external id', { message: err.message });
+    log.warn('job submit failed, retrying once with the same external id', { message: (err as Error).message });
     try {
       return await call(argv);
     } catch (again) {
       // The first attempt may have made the job: "not sent" now says nothing about it.
-      if (again instanceof F.NotSentError) throw new Error(`${again.message} (after an earlier attempt whose answer was lost)`);
+      if (again instanceof F.NotSentError) throw new Error(`${(again as Error).message} (after an earlier attempt whose answer was lost)`);
       throw again;
     }
   }
@@ -336,37 +398,23 @@ async function submitOnce(argv) {
 }
 
 // This install's id (sql/026 pa_install): made once, then read.
-let installCache = null;
-async function installId() {
+let installCache: string | null = null;
+async function installId(): Promise<string> {
   if (installCache) return installCache;
-  const made = require('crypto').randomUUID();
+  const made: string = require('crypto').randomUUID();
   await repository.system.insertInstallIfNone(made).catch(() => {});
   const r = await repository.system.firstInstall().catch(() => null);
-  installCache = r?.id || made;
-  return installCache;
+  const id: string = r?.id || made;
+  installCache = id;
+  return id;
 }
 
-/**
- * Sends one PA run to the factory.
- * @param {object} o
- * @param {object} o.target   dispatch's resolveTarget() result
- * @param {string} o.app      the registered factory app (route.ts resolved it)
- * @param {string} [o.slug]   owner/name of the repo
- * @param {string} [o.task]   the operator's own words, if they typed them
- * @param {string} [o.mode]   an explicitly given PA mode; plan is refused
- * @param {string} [o.delivery]  the end state; resolved when not given
- * @param {string} [o.pipeline]
- * @param {Array<string>|string|object} [o.models]  `persona=model` entries, over PA_FACTORY_MODELS
- * @param {boolean} [o.modelsExact]  a proposal's frozen models: used as they are
- * @param {Array<string>} [o.done]  acceptance criteria
- * @param {string} [o.brief]  a frozen brief (the card's): sent exactly, not recomposed
- * @param {string} [o.routeReason]
- */
+/** Sends one PA run to the factory. */
 async function start({
   target, app, slug = null, task = null, mode: modeName, delivery = null, deliverySource = null, deliveryPhrase = null,
   pipeline = null, models = null, modelsExact = false, done = [], brief = null, briefBy = null, routeReason = null,
   confirmedUnattended = false, again = false, title = null, jobKind = 'code', runtime = null, branch = null, pr = null,
-}) {
+}: StartOptions): Promise<Json> {
   const kind = F.jobKind(jobKind);
   if ((branch != null || pr != null) && kind !== 'code') throw new Error('only a code job continues a branch or PR');
   // The credit pool (src/claudePool.js): with PA_CLAUDE_POOL_FALLBACK_API on and the pool spent,
@@ -379,7 +427,7 @@ async function start({
   }
   const where = machine();
   const commitmentId = target.commitment ? Number(target.commitment.id) : null;
-  const label = title || task || target.commitment?.summary;
+  const label: string = title || task || target.commitment?.summary;
   if (!label) throw new Error('nothing to do — give a commitment id or a --task');
   if (!app && kind === 'code') throw new Error('no factory app for this work');
   const pipe = F.pipeline(pipeline || config.factory.pipeline);
@@ -388,7 +436,7 @@ async function start({
   if (kind !== 'code' && delivery && D.delivery(delivery) !== 'none') {
     throw new Error(`a ${kind} job delivers a report, not ${delivery} — leave the end state at none`);
   }
-  const chosen = kind !== 'code'
+  const chosen: { delivery: string; source: string; phrase: string | null } = kind !== 'code'
     ? { delivery: 'none', source: 'kind', phrase: null }
     : delivery
       ? { delivery: D.delivery(delivery), source: deliverySource || 'explicit', phrase: deliveryPhrase || null }
@@ -397,14 +445,14 @@ async function start({
   D.requireConfirmed(chosen.delivery, confirmedUnattended);
 
   const install = await installId();
-  const run = await require('../repo').runs.insertFactory(
+  const run: Run = await require('../repo').runs.insertFactory(
     {
       commitmentId, mode: runMode, task: label, repoPath: target.repoPath || null, machine: where || os.hostname(),
       routeReason, kind: target.commitment?.kind || null, pipeline: pipe, deliveryRequested: chosen.delivery,
       models: Object.keys(overrides).length ? overrides : null, deliverySource: chosen.source, jobKind: kind, runtime: rt,
     },
     // The idempotency key, in the insert's own transaction: before anything is sent.
-    { commitmentId, again, externalId: (row) => F.externalKey(install, row.id) }
+    { commitmentId, again, externalId: (row: Run) => F.externalKey(install, row.id) }
   );
 
   // The ask: the card's frozen brief, or one composed now from the ask and
@@ -412,10 +460,10 @@ async function start({
   // fails a dispatch — the worst case is the deterministic brief. A research
   // or report job's ask is the operator's own words (factoryCore.researchAsk):
   // no composing model, no gathered context.
-  let ask = brief;
-  let by = briefBy || (brief ? 'proposal' : null);
-  let criteria = Array.isArray(done) ? done : [];
-  let goal = null;
+  let ask: string | null = brief;
+  let by: string | null = briefBy || (brief ? 'proposal' : null);
+  let criteria: string[] = Array.isArray(done) ? done : [];
+  let goal: string | null = null;
   if (!ask && kind !== 'code') {
     ask = F.researchAsk({ kind, title: label, ask: task || target.commitment?.detail || target.commitment?.summary, done: criteria, repo: slug });
     by = 'research:operator';
@@ -428,7 +476,7 @@ async function start({
       criteria = c.done;
       goal = c.goal;
     } catch (err) {
-      log.warn('brief composition failed; sending the deterministic brief', { run: run.id, message: String(err.message).slice(0, 200) });
+      log.warn('brief composition failed; sending the deterministic brief', { run: run.id, message: String((err as Error).message).slice(0, 200) });
       const C = require('./composeCore.ts');
       const fb = C.fallbackComposed({ title: label, operatorAsk: task, summary: target.commitment?.summary, detail: target.commitment?.detail, done: criteria });
       ask = C.render(fb, { title: label, app, slug, delivery: chosen.delivery, deliveryPlain: D.describe(chosen.delivery), pipeline: pipe, by: 'compose:fallback' });
@@ -439,13 +487,13 @@ async function start({
   }
   // Without a flow the factory parks the job as needs_human (JOBS-API v1.1).
   // A research/report job needs none (v1.2: no backpressure gate for them).
-  const flow = kind === 'code' ? F.flowMarkdown({ title: label, summary: goal || task || target.commitment?.summary, app, done: criteria, delivery: chosen.delivery }) : null;
+  const flow: string | null = kind === 'code' ? F.flowMarkdown({ title: label, summary: goal || task || target.commitment?.summary, app, done: criteria, delivery: chosen.delivery }) : null;
   // This machine's copy is the record (brief_path), wherever the factory runs.
   const briefPath = path.join(config.worktreesRoot, `run-${run.id}-BRIEF.md`);
   fs.mkdirSync(path.dirname(briefPath), { recursive: true });
   fs.writeFileSync(briefPath, ask, 'utf8');
 
-  const argvFor = (staged) =>
+  const argvFor = (staged: Record<string, string>): string[] =>
     F.submitArgv({
       app,
       title: label,
@@ -462,24 +510,26 @@ async function start({
       pr,
     });
 
-  let job = null;
+  let job: Job | null = null;
   let sent = false;
-  let stagedDir = null;
+  let stagedDir: string | null = null;
   try {
     // On another machine the brief and flow travel over runCommand's stdin
     // into a private mkdtemp dir there (stage/WRITER), never on a command line.
-    const files = where ? { 'BRIEF.md': ask } : {};
+    const files: Record<string, string> = where ? { 'BRIEF.md': ask as string } : {};
     if (flow) files['flow.md'] = flow;
-    const { paths: staged, dir } = Object.keys(files).length ? await stage(where, run.id, files) : { paths: {}, dir: null };
+    const { paths: staged, dir }: Staged = Object.keys(files).length ? await stage(where, run.id, files) : { paths: {}, dir: null };
     stagedDir = dir;
     sent = true;
-    job = await submit(argvFor(staged), { kind, runtime: rt });
-    if (!F.JOB_ID.test(String(job.job_id || ''))) throw new F.FactoryError('bad_output', `job id "${job.job_id}"`);
-    if (!(await recordJob(run, job, { delivery: chosen.delivery, pipe, briefPath, by }))) {
+    const submitted = await submit(argvFor(staged), { kind, runtime: rt });
+    job = submitted;
+    if (!F.JOB_ID.test(String(submitted.job_id || ''))) throw new F.FactoryError('bad_output', `job id "${submitted.job_id}"`);
+    if (!(await recordJob(run, submitted, { delivery: chosen.delivery, pipe, briefPath, by }))) {
       await unstage(where, stagedDir);
-      throw Object.assign(new Error(`run #${run.id} was dropped while its job was being submitted; job ${job.job_id} was cancelled`), { code: 'run_ended' });
+      throw Object.assign(new Error(`run #${run.id} was dropped while its job was being submitted; job ${submitted.job_id} was cancelled`), { code: 'run_ended' });
     }
-  } catch (err) {
+  } catch (e) {
+    const err = e as ErrorWithCode;
     if (err.code === 'run_ended') throw err;
     // The factory refused it before writing anything (F.REFUSAL_CODES), or the
     // command never ran (exit 127, F.NotSentError), or nothing was ever sent:
@@ -506,16 +556,18 @@ async function start({
     }
     job = settled.job;
   }
+  if (!job) throw new Error(`run #${run.id}: the factory answered without a job`);
 
   await unstage(where, stagedDir);
-  const warnings = Array.isArray(job.warnings) ? job.warnings.map((w) => F.clip(w, 300)).slice(0, 20) : [];
+  const warnings: string[] = Array.isArray(job.warnings) ? job.warnings.map((w: unknown) => F.clip(w, 300)).slice(0, 20) : [];
   if (warnings.length) log.warn('factory accepted the job with warnings', { run: run.id, job: job.job_id, warnings });
   if (commitmentId) {
     // After the job is recorded: a ledger hiccup must not orphan it.
     await ledger
       .transition({ commitmentId, to: 'dispatched', actor: 'dispatch', reason: `run #${run.id}: factory job ${job.job_id}`, from: ['open'] })
-      .catch((err) => log.warn('job recorded, but its commitment did not move to dispatched', { run: run.id, message: err.message }));
+      .catch((err: Error) => log.warn('job recorded, but its commitment did not move to dispatched', { run: run.id, message: err.message }));
   }
+  const jobId: string = job.job_id;
 
   // Walk-in: a termhub session on the factory's machine following the job,
   // so "Open in termhub" on the card lands on it. Not fatal: the job runs
@@ -523,16 +575,16 @@ async function start({
   // Opening one takes seconds on some machines (~9 s termhub on Windows), so
   // the answer waits only config.factory.followWaitMs for it; a slower one
   // finishes in the background and is recorded on the run when it opens.
-  let sessionId = null;
-  let url = null;
+  let sessionId: string | null = null;
+  let url: string | null = null;
   const opening = (async () => {
-    const s = await openFollow(job.job_id, `pa#${run.id} factory · ${label.slice(0, 40)}`, { card: commitmentId, run: run.id, job: job.job_id });
+    const s = await openFollow(jobId, `pa#${run.id} factory · ${label.slice(0, 40)}`, { card: commitmentId, run: run.id, job: jobId });
     await repository.runs.setSession(run.id, s.sessionId);
     return s;
   })();
-  opening.catch((err) => log.warn('factory job started, but its follow session did not open', { run: run.id, job: job.job_id, message: err.message }));
-  let waitTimer;
-  const early = await Promise.race([opening.catch(() => null), new Promise((resolve) => { waitTimer = setTimeout(() => resolve(undefined), config.factory.followWaitMs); })]);
+  opening.catch((err: Error) => log.warn('factory job started, but its follow session did not open', { run: run.id, job: jobId, message: err.message }));
+  let waitTimer: ReturnType<typeof setTimeout> | undefined;
+  const early = await Promise.race([opening.catch(() => null), new Promise<undefined>((resolve) => { waitTimer = setTimeout(() => resolve(undefined), config.factory.followWaitMs); })]);
   clearTimeout(waitTimer);
   if (early) ({ sessionId, url } = early);
   else if (early === undefined) log.info('the follow session is still opening; answering without it', { run: run.id, job: job.job_id, waitedMs: config.factory.followWaitMs });
@@ -571,15 +623,15 @@ async function start({
  * "Open in termhub" (any job, not only the PA's).
  * @returns {Promise<{sessionId: string, url: string|null}>}
  */
-async function openFollow(jobId, title = null, links = null) {
+async function openFollow(jobId: string, title: string | null = null, links: Json | null = null): Promise<{ sessionId: string; url: string | null }> {
   const command = F.followCommand(jobId, config.factory.uv);
   const hub = termhub.forMachine(machine());
-  const session = await hub.createSession({
+  const session: { id: string } = await hub.createSession({
     cwd: config.factory.path, command, title: String(title || `factory · ${jobId}`).slice(0, 80),
     // Plan E1: the session names its job (and the card and run, when a PA run started it).
     links: { ...(links || {}), job: jobId },
   });
-  const url = await hub.sessionUrl(session.id).catch(() => null);
+  const url: string | null = await hub.sessionUrl(session.id).catch(() => null);
   return { sessionId: session.id, url };
 }
 
@@ -587,8 +639,8 @@ async function openFollow(jobId, title = null, links = null) {
 // dropped (or failed) while its submit was in flight is not brought back to
 // `running`: the job it turns out to have is cancelled in the factory, and its
 // id kept on the row as evidence. Returns whether the run is live.
-async function recordJob(run, job, { delivery, pipe, briefPath, by }) {
-  const warnings = Array.isArray(job.warnings) ? job.warnings.map((w) => F.clip(w, 300)).slice(0, 20) : [];
+async function recordJob(run: Run, job: Job, { delivery, pipe, briefPath, by }: RecordExtra): Promise<boolean> {
+  const warnings: string[] = Array.isArray(job.warnings) ? job.warnings.map((w: unknown) => F.clip(w, 300)).slice(0, 20) : [];
   const recorded = await repository.runs.recordJob(run.id, {
     jobId: job.job_id,
     delivery: job.delivery || delivery || null,
@@ -600,7 +652,7 @@ async function recordJob(run, job, { delivery, pipe, briefPath, by }) {
   });
   if (!recorded) {
     log.warn('a job turned up for a run that already ended; cancelling it', { run: run.id, job: job.job_id });
-    await call(['job', 'cancel', job.job_id, '--json']).catch((err) => log.error('could not cancel the late job', { run: run.id, job: job.job_id, message: err.message }));
+    await call(['job', 'cancel', job.job_id, '--json']).catch((err: Error) => log.error('could not cancel the late job', { run: run.id, job: job.job_id, message: err.message }));
     await repository.runs.markLateJobCancelled(run.id, job.job_id).catch(() => {});
     return false;
   }
@@ -612,10 +664,9 @@ async function recordJob(run, job, { delivery, pipe, briefPath, by }) {
  * what the factory says now (factoryCore.submitVerdict): adopted (recorded,
  * then followed like any other), failed, or left `waiting` as
  * `submit_unknown`. Never left `starting`.
- * @returns {Promise<{verdict: 'adopt'|'fail'|'unknown', job: object|null}>}
  */
-async function settle(run, { jobId = null, ageMs = 0, note = null, extra = {} } = {}) {
-  let job = null;
+async function settle(run: Run, { jobId = null, ageMs = 0, note = null, extra = {} }: { jobId?: string | null; ageMs?: number; note?: string | null; extra?: RecordExtra } = {}): Promise<Settled> {
+  let job: Job | null = null;
   let asked = false;
   try {
     if (jobId && F.JOB_ID.test(String(jobId))) {
@@ -628,12 +679,14 @@ async function settle(run, { jobId = null, ageMs = 0, note = null, extra = {} } 
       job = F.jobForRun(l.jobs, run.external_id || run.id);
     }
   } catch (err) {
-    log.warn('could not ask the factory about an unsettled submit', { run: run.id, message: String(err.message).slice(0, 200) });
+    log.warn('could not ask the factory about an unsettled submit', { run: run.id, message: String((err as Error).message).slice(0, 200) });
   }
-  const verdict = F.submitVerdict({ job, asked, ageMs });
+  const verdict: Verdict = F.submitVerdict({ job, asked, ageMs });
   try {
     if (verdict === 'adopt') {
-      const live = await recordJob(run, job, { delivery: extra.delivery, pipe: extra.pipe, briefPath: extra.briefPath, by: extra.by });
+      // submitVerdict adopts only a job it was given.
+      job = job as Job;
+      const live = await recordJob(run, job, { delivery: extra.delivery ?? null, pipe: extra.pipe ?? null, briefPath: extra.briefPath ?? null, by: extra.by ?? null });
       if (!live) return { verdict: 'cancelled', job, asked };
       log.info('adopted the factory job for an unsettled submit', { run: run.id, job: job.job_id });
     } else if (verdict === 'fail') {
@@ -642,16 +695,16 @@ async function settle(run, { jobId = null, ageMs = 0, note = null, extra = {} } 
       await repository.runs.markSubmitUnknown(run.id, F.clip(`submit sent; the factory's answer was lost${note ? ` (${note})` : ''} — the worker matches it by external id`, 500), extra.briefPath || null);
     }
   } catch (err) {
-    log.error('could not record an unsettled submit; the worker will retry it', { run: run.id, message: err.message });
+    log.error('could not record an unsettled submit; the worker will retry it', { run: run.id, message: (err as Error).message });
   }
   return { verdict, job, asked };
 }
 
-async function status(run) {
+async function status(run: Run): Promise<Job> {
   return call(['job', 'status', run.factory_job_id, '--json']);
 }
 
-async function cancel(run) {
+async function cancel(run: Run): Promise<Json> {
   return call(['job', 'cancel', run.factory_job_id, '--json']);
 }
 
@@ -660,9 +713,8 @@ const LIVE = ['starting', 'running', 'waiting'];
 /**
  * Writes one job's status onto its run, and — the first time the job is seen
  * terminal — moves the commitment through the ledger and says so.
- * @returns {Promise<{changed: boolean, ended: boolean}>}
  */
-async function apply(run, job) {
+async function apply(run: Run, job: Job): Promise<{ changed: boolean; ended: boolean }> {
   const u = F.runUpdate(job);
   const wasLive = LIVE.includes(run.status);
   // A run already ended (dropped by hand, or a delivered one watched for its
@@ -694,8 +746,8 @@ async function apply(run, job) {
   }
   // Plan E1: every PR (number, state, CI) and every step with its session, on
   // every pass — a step's session or a PR's CI can change while nothing above does.
-  await recordChain(run.id, job).catch((err) => log.debug('run links not recorded', { run: run.id, message: err.message }));
-  const ended = u.terminal && wasLive;
+  await recordChain(run.id, job).catch((err: Error) => log.debug('run links not recorded', { run: run.id, message: err.message }));
+  const ended = Boolean(u.terminal && wasLive);
   if (ended) {
     const move = F.commitmentMove(job);
     if (move && run.commitment_id) {
@@ -731,8 +783,8 @@ async function apply(run, job) {
  * (sql/033), upserted, only rows that changed rewritten. Rows are never deleted:
  * a step or PR the factory stops listing keeps its last known state.
  */
-async function recordChain(runId, job) {
-  const { prs, steps } = F.chainOf(job);
+async function recordChain(runId: number | string, job: Job): Promise<{ prs: number; steps: number }> {
+  const { prs, steps }: Chain = F.chainOf(job);
   for (const p of prs) {
     await repository.runs.upsertPr(runId, p);
   }
@@ -745,13 +797,12 @@ async function recordChain(runId, job) {
 /**
  * Plan E1: the stored chain of some runs, keyed by run id — their PRs and their
  * steps with sessions. Empty before sql/033 is applied.
- * @returns {Promise<Map<string, {prs: object[], steps: object[]}>>}
  */
-async function chains(runIds) {
+async function chains(runIds: Array<number | string> | null | undefined): Promise<Map<string, Chain>> {
   const ids = [...new Set((runIds || []).map(Number).filter(Number.isFinite))];
-  const out = new Map(ids.map((id) => [String(id), { prs: [], steps: [] }]));
+  const out = new Map<string, Chain>(ids.map((id) => [String(id), { prs: [], steps: [] }]));
   if (!ids.length) return out;
-  const [prs, steps] = await Promise.all([
+  const [prs, steps]: [Json[], Json[]] = await Promise.all([
     repository.runs.prsOf(ids).catch(() => []),
     repository.runs.stepsOf(ids).catch(() => []),
   ]);
@@ -765,19 +816,19 @@ async function chains(runIds) {
  * going, plus `job status` for runs it no longer lists (they ended since the
  * last pass) and for delivered runs watched a fortnight for their merge.
  */
-async function poll() {
+async function poll(): Promise<{ checked: number; changed?: number; ended?: number; unsettled?: number }> {
   if (!enabled()) return { checked: 0 };
   const unsettled = await sweepUnsettled();
-  const watched = await repository.runs.watchedFactoryRuns();
+  const watched: Run[] = await repository.runs.watchedFactoryRuns();
   if (!watched.length) return unsettled ? { checked: 0, unsettled } : { checked: 0 };
   const listed = await call(['job', 'list', '--json', '--source', 'pa', '--active']);
-  const byId = new Map((Array.isArray(listed.jobs) ? listed.jobs : []).map((j) => [j.job_id, j]));
+  const byId = new Map<string, Job>((Array.isArray(listed.jobs) ? listed.jobs : []).map((j: Job) => [j.job_id, j]));
   let changed = 0;
   let ended = 0;
   for (const run of watched) {
     const job =
       byId.get(run.factory_job_id) ||
-      (await status(run).catch((err) => {
+      (await status(run).catch((err: Error) => {
         log.debug('job status failed', { run: run.id, job: run.factory_job_id, message: err.message });
         return null;
       }));
@@ -800,7 +851,7 @@ async function poll() {
 const LIST_BYTES = 8 * 1024 * 1024;
 
 /**
- * The worker pass behind the factory page (src/dashboard/factory.js) and
+ * The worker pass behind the factory page (src/dashboard/factory.ts) and
  * `pa factory jobs`: the whole `factory job list --json` into factory_board
  * (sql/031), so no page load calls the factory. Then it tells the user what
  * changed since the last snapshot (factoryCore.notices): a job done, needing
@@ -808,26 +859,26 @@ const LIST_BYTES = 8 * 1024 * 1024;
  * its end and its waits announced by the run pass (apply); only its CI is
  * announced here.
  */
-async function refreshBoard() {
+async function refreshBoard(): Promise<{ jobs: number; notices: number } | null> {
   if (!enabled()) return null;
-  const before = await repository.factoryBoard.row().catch(() => null);
-  let listed;
+  const before: Json | null = await repository.factoryBoard.row().catch(() => null);
+  let listed: Json;
   try {
     listed = await call(['job', 'list', '--json'], { maxOutputBytes: LIST_BYTES });
   } catch (err) {
-    await repository.factoryBoard.recordError(F.clip(err.message, 500)).catch(() => {});
+    await repository.factoryBoard.recordError(F.clip((err as Error).message, 500)).catch(() => {});
     throw err;
   }
-  const jobs = (Array.isArray(listed.jobs) ? listed.jobs : []).filter((j) => F.JOB_ID.test(String(j?.job_id || '')));
+  const jobs: Job[] = (Array.isArray(listed.jobs) ? listed.jobs : []).filter((j: Job | null) => F.JOB_ID.test(String(j?.job_id || '')));
   await repository.factoryBoard.store(jobs);
   const prev = before?.polled_at ? F.noticeState(before.jobs) : null;
-  const ours = await repository.runs.distinctFactoryJobIds().catch(() => []);
+  const ours: Json[] = await repository.runs.distinctFactoryJobIds().catch(() => []);
   const covered = new Set(ours.map((r) => r.factory_job_id));
-  const said = F.notices(prev, jobs, { covered });
+  const said: Notice[] = F.notices(prev, jobs, { covered });
   for (const n of said) {
     await require('../notify')
       .notify({ kind: 'info', title: n.title, body: n.body, url: n.url, dedupeKey: n.key })
-      .catch((err) => log.warn('factory notice not sent', { key: n.key, message: err.message }));
+      .catch((err: Error) => log.warn('factory notice not sent', { key: n.key, message: err.message }));
   }
   return { jobs: jobs.length, notices: said.length };
 }
@@ -839,13 +890,14 @@ const PUSHED_FIELDS = ['state', 'why', 'updated_at'];
  * Pure. A factory's pushed job statuses (one, or {jobs: [...]}) as clean
  * patches: a valid job id, a known state, and only PUSHED_FIELDS. At most 50.
  */
-function pushedPatches(body) {
-  const list = Array.isArray(body?.jobs) ? body.jobs : body && typeof body === 'object' ? [body] : [];
-  const out = [];
+function pushedPatches(body: unknown): Patch[] {
+  const b = body as Json | null | undefined;
+  const list: Json[] = Array.isArray(b?.jobs) ? b.jobs : b && typeof b === 'object' ? [b] : [];
+  const out: Patch[] = [];
   for (const j of list.slice(0, 50)) {
     const id = String(j?.job_id || '');
     if (!F.JOB_ID.test(id) || !F.STATES.includes(j?.state)) continue;
-    const patch = { state: j.state };
+    const patch: Json = { state: j.state };
     if (typeof j.why === 'string') patch.why = j.why.slice(0, 1000);
     if (typeof j.updated_at === 'string' && !Number.isNaN(Date.parse(j.updated_at))) patch.updated_at = j.updated_at;
     out.push({ jobId: id, patch: Object.fromEntries(Object.entries(patch).filter(([k]) => PUSHED_FIELDS.includes(k))) });
@@ -861,7 +913,7 @@ function pushedPatches(body) {
  * worker's pacer takes the full list soon after, which overwrites the patch
  * with the truth. A job the list does not hold yet waits for that pass.
  */
-async function pushed(body) {
+async function pushed(body: unknown): Promise<{ ok: true; received: number; patched: number }> {
   const patches = pushedPatches(body);
   let patched = 0;
   for (const p of patches) {
@@ -873,13 +925,13 @@ async function pushed(body) {
 }
 
 /** The last stored `job list` and when it was taken (never calls the factory). */
-async function snapshot() {
-  const r = await repository.factoryBoard.row().catch(() => null);
+async function snapshot(): Promise<{ jobs: Job[]; polledAt: unknown; error: string | null; errorAt: unknown }> {
+  const r: Json | null = await repository.factoryBoard.row().catch(() => null);
   return { jobs: Array.isArray(r?.jobs) ? r.jobs : [], polledAt: r?.polled_at || null, error: r?.error || null, errorAt: r?.error_at || null };
 }
 
 /** One job from the snapshot, or null. */
-async function snapshotJob(jobId) {
+async function snapshotJob(jobId: string): Promise<Job | null> {
   return (await snapshot()).jobs.find((j) => j.job_id === jobId) || null;
 }
 
@@ -887,11 +939,12 @@ async function snapshotJob(jobId) {
  * A research/report job's report (JOBS-API v1.2 `job report --json`):
  * {job_id, title, markdown, path}. A v1 factory has no such command.
  */
-async function report(jobId) {
+async function report(jobId: string): Promise<{ jobId: string; title: string; markdown: string; path: string | null; none?: true }> {
   try {
     const r = await call(F.reportArgv(jobId), { maxOutputBytes: LIST_BYTES });
     return { jobId: String(r.job_id || jobId), title: String(r.title || ''), markdown: String(r.markdown || ''), path: r.path ? String(r.path) : null };
-  } catch (err) {
+  } catch (e) {
+    const err = e as ErrorWithCode;
     if (err instanceof F.FactoryError && err.code === 'no_report') return { jobId, title: '', markdown: '', path: null, none: true };
     if (err instanceof F.FactoryError && err.code === 'unsupported_command') {
       throw Object.assign(new Error('this factory has no reports yet (it predates JOBS-API v1.2)'), { status: 409 });
@@ -904,11 +957,12 @@ async function report(jobId) {
  * Carries on a job that stopped (`factory job resume <id> --json`). A factory
  * without the command says so plainly rather than as a parse error.
  */
-async function resume(jobId) {
-  let r;
+async function resume(jobId: string): Promise<{ jobId: string; state: string | null; why: string | null; raw: Json }> {
+  let r: Json;
   try {
     r = await call(F.resumeArgv(jobId));
-  } catch (err) {
+  } catch (e) {
+    const err = e as ErrorWithCode;
     if (err instanceof F.FactoryError && err.code === 'unsupported_command') {
       throw Object.assign(new Error('this factory cannot resume jobs yet (`job resume`) — update the factory'), { status: 409 });
     }
@@ -923,11 +977,11 @@ async function resume(jobId) {
  * (`pa drop`: it cancels the job and settles the run and its commitment);
  * any other is `factory job cancel`.
  */
-async function cancelJob(jobId) {
+async function cancelJob(jobId: string): Promise<Json> {
   const argv = F.cancelArgv(jobId);
-  const run = await repository.runs.liveRunOfJob(jobId).catch(() => null);
+  const run: Run | null = await repository.runs.liveRunOfJob(jobId).catch(() => null);
   if (run) {
-    const r = await require('./index').drop(Number(run.id));
+    const r: Json | null = await require('./index').drop(Number(run.id));
     await refreshBoard().catch(() => {});
     return { jobId, run: Number(run.id), state: r?.cancelled ? 'cancelled' : 'ended', storiesParked: r?.storiesParked ?? null };
   }
@@ -942,7 +996,7 @@ async function cancelJob(jobId) {
  * snapshot, never an id from the request. `approve-direction` prints text,
  * not JSON: exit 0 is the answer.
  */
-async function approve(jobId, { channel = 'cli' } = {}) {
+async function approve(jobId: string, { channel = 'cli' }: { channel?: string } = {}): Promise<{ jobId: string; approved: true; output: string }> {
   if (!F.JOB_ID.test(String(jobId || ''))) throw Object.assign(new Error(`not a factory job id: "${jobId}"`), { status: 400 });
   const job = await snapshotJob(jobId);
   // Policy (plan 4.3): audited with the job's delivery, and refused for a channel the policy bars (voice never approves a merge).
@@ -967,8 +1021,8 @@ async function approve(jobId, { channel = 'cli' } = {}) {
  * against `job list` by its external id; adopted ones then poll like any
  * other. Returns how many were looked at (0: no factory call at all).
  */
-async function sweepUnsettled() {
-  const stuck = await repository.runs.unsettledFactory().catch(() => []);
+async function sweepUnsettled(): Promise<number> {
+  const stuck: Run[] = await repository.runs.unsettledFactory().catch(() => []);
   for (const run of stuck) {
     const r = await settle(run, { ageMs: Number(run.age_ms) || 0, extra: { by: run.brief_by } });
     if (r.verdict === 'fail') {
@@ -983,7 +1037,7 @@ async function sweepUnsettled() {
     }
     if (r.verdict === 'adopt' && run.commitment_id) {
       await ledger
-        .transition({ commitmentId: run.commitment_id, to: 'dispatched', actor: 'factory', reason: `run #${run.id}: factory job ${r.job.job_id} (answer recovered)`, from: ['open'] })
+        .transition({ commitmentId: run.commitment_id, to: 'dispatched', actor: 'factory', reason: `run #${run.id}: factory job ${(r.job as Job).job_id} (answer recovered)`, from: ['open'] })
         .catch(() => {});
     }
   }

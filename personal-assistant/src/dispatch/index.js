@@ -157,7 +157,7 @@ function scopeFacts(facts, { personId = null, projectId = null } = {}) {
 }
 
 // The BRIEF for a target — the Claude route's BRIEF.md, and the factory
-// route's ask (src/dispatch/factory.js), from one implementation.
+// route's ask (src/dispatch/factory.ts), from one implementation.
 async function briefFor(target, { modeName, run, task = null, factory = null, delivery = null }) {
   return buildBrief({
     delivery,
@@ -176,7 +176,7 @@ async function briefFor(target, { modeName, run, task = null, factory = null, de
 /**
  * Starts a run. `via` picks the route (src/dispatch/routeCore.ts): `claude`
  * (a Claude Code session, the default unless PA_DISPATCH_VIA says otherwise),
- * `factory` (a software-factory job, src/dispatch/factory.js), or `auto` (the
+ * `factory` (a software-factory job, src/dispatch/factory.ts), or `auto` (the
  * routing rule chooses, and says why). `pipeline`, `models`, `done`, `app`,
  * `brief` and `register` only mean something to the factory.
  *
@@ -229,7 +229,7 @@ async function start({
         : await chooser.decide({ target, mode: modeName, done });
     if (choice.route === 'factory') {
       if (machine) throw new Error('--machine picks where a Claude session runs; the factory runs on PA_FACTORY_MACHINE');
-      return require('./factory').start({
+      return require('./factory.ts').start({
         target, app: choice.app, slug: choice.slug, task, mode: modeName, pipeline, models, modelsExact: frozen, done: choice.done,
         routeReason: givenReason || choice.reason, delivery, deliverySource, deliveryPhrase, brief, briefBy, confirmedUnattended, again,
         jobKind: kind, runtime, title, branch: onBranch, pr: onPr,
@@ -603,16 +603,16 @@ async function review(runId) {
       // A submit whose answer was lost: ask the factory now rather than wait for the worker.
       if (['starting', 'waiting'].includes(run.status) && !readOnly()) {
         const ageMs = Date.now() - new Date(run.started_at || Date.now()).getTime();
-        await require('./factory').settle(run, { ageMs, extra: { by: run.brief_by } });
+        await require('./factory.ts').settle(run, { ageMs, extra: { by: run.brief_by } });
         const now = await get(runId);
         if (now.factory_job_id) return review(runId);
         return { run: now, factory: null };
       }
       return { run, factory: null };
     }
-    const job = await require('./factory').status(run);
+    const job = await require('./factory.ts').status(run);
     if (readOnly()) return { run, factory: job };
-    await require('./factory').apply(run, job);
+    await require('./factory.ts').apply(run, job);
     return { run: await get(runId), factory: job };
   }
   localOnly(run, 'review');
@@ -797,7 +797,7 @@ async function drop(runId, { force = false } = {}) {
     // dropping, or the job runs on with nobody watching it.
     if (!run.factory_job_id && ['starting', 'waiting'].includes(run.status)) {
       const ageMs = Date.now() - new Date(run.started_at || Date.now()).getTime();
-      const settled = await require('./factory').settle(run, { ageMs, extra: { by: run.brief_by } });
+      const settled = await require('./factory.ts').settle(run, { ageMs, extra: { by: run.brief_by } });
       if (settled.verdict === 'adopt') Object.assign(run, { factory_job_id: settled.job.job_id, status: 'running' });
       else if (settled.verdict === 'unknown') {
         // Not asked, or asked too soon to believe "no job": a drop now could orphan one.
@@ -809,7 +809,7 @@ async function drop(runId, { force = false } = {}) {
       }
     }
     if (run.factory_job_id && ['starting', 'running', 'waiting'].includes(run.status)) {
-      const c = await require('./factory').cancel(run);
+      const c = await require('./factory.ts').cancel(run);
       cancelled = true;
       storiesParked = Array.isArray(c?.stories_parked) ? c.stories_parked.length : Number.isFinite(c?.stories_parked) ? c.stories_parked : null;
     }

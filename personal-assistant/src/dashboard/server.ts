@@ -312,13 +312,13 @@ const ROUTES: Route[] = [
         defaultMode: require('../dispatch/modes.ts').mode().name,
         // Where the work goes: a Claude session, the software factory, or let
         // the routing rule pick (src/dispatch/routeCore.ts). Factory only when configured.
-        routes: require('../dispatch/factory').enabled() ? ['claude', 'factory', 'auto'] : ['claude'],
-        defaultRoute: require('../dispatch/factory').enabled() ? config.factory.via : 'claude',
+        routes: require('../dispatch/factory.ts').enabled() ? ['claude', 'factory', 'auto'] : ['claude'],
+        defaultRoute: require('../dispatch/factory.ts').enabled() ? config.factory.via : 'claude',
         // The end states the operator may pick on Do (src/dispatch/deliveryCore.ts);
         // none picked: the repo's default, else PA_DELIVERY_DEFAULT.
         deliveries: require('../dispatch/deliveryCore.ts').DELIVERIES.map((d: string) => ({ value: d, plain: require('../dispatch/deliveryCore.ts').describe(d) })),
         // On the factory route: the job's kind and runtime (JOBS-API v1.2).
-        ...(require('../dispatch/factory').enabled() ? require('./factory.ts').pickers() : {}),
+        ...(require('../dispatch/factory.ts').enabled() ? require('./factory.ts').pickers() : {}),
       }),
   },
   // One commitment with what it came from, so it can be judged before it is

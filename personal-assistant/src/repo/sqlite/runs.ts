@@ -239,7 +239,7 @@ function create(db: Db) {
       await db.query('update run set status = $2 where id = $1', [id, status]);
     },
 
-    // --- for src/dispatch/factory.js
+    // --- for src/dispatch/factory.ts
 
     /** A factory submit failed before it went out: failed, with the note and the brief's path and author. */
     async markSubmitRefused(id: number | string, note: string, briefPath: unknown, by: unknown) {

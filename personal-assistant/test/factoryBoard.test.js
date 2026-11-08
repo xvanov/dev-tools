@@ -244,7 +244,7 @@ stub('dispatch/termhub.ts', {
   }),
 });
 
-const factory = require('../src/dispatch/factory');
+const factory = require('../src/dispatch/factory.ts');
 assert.deepStrictEqual(factory.withoutV12(global.__argvPair.code), global.__argvPair.plain, 'the v1 resend is the same argv minus kind/runtime');
 let calls = [];
 let answer = null;

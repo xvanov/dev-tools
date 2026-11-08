@@ -1,6 +1,6 @@
 'use strict';
 
-// The pure half of the factory route (src/dispatch/factory.js): how a PA run
+// The pure half of the factory route (src/dispatch/factory.ts): how a PA run
 // becomes a `factory job submit` command line, and what a job's status means
 // for the run row and its commitment. No database, no processes, so every rule
 // here is a test away (test/factoryDispatch.test.js).
@@ -144,7 +144,7 @@ function researchAsk({ kind, title, ask = null, done = [], repo = null }: { kind
  */
 //
 // `kind` and `runtime` (v1.2) are sent when given; a v1 factory refuses the
-// unknown flags (`unsupported_option`) and factory.js resends a plain code/api
+// unknown flags (`unsupported_option`) and factory.ts resends a plain code/api
 // job without them. A research/report job needs no app and delivers `none`.
 //
 // `branch` / `pr` continue existing work: the job starts on that branch or

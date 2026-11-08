@@ -681,7 +681,7 @@ const commands: Json = {
   },
 
   async factory(args: any, flags: any, lists: any = {}) {
-    const factory = require('../dispatch/factory');
+    const factory = require('../dispatch/factory.ts');
     const F = require('../dispatch/factoryCore.ts');
     const [sub, repo] = args;
     const jobArg = () => {
@@ -1539,7 +1539,7 @@ const commands: Json = {
     // The software factory as a dispatch target: configured, its machine
     // known to termhub, and answering `factory app list`.
     {
-      const factory = require('../dispatch/factory');
+      const factory = require('../dispatch/factory.ts');
       if (!factory.enabled()) {
         mark(false, 'factory', 'off — set PA_FACTORY_PATH (and PA_FACTORY_MACHINE) to dispatch to the software factory');
       } else {

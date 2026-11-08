@@ -153,7 +153,7 @@ async function main() {
     }
     assert.throws(() => F.resumeArgv('widget:0042;rm'), /not a factory job id/);
 
-    const factory = require('../src/dispatch/factory');
+    const factory = require('../src/dispatch/factory.ts');
     const sent = [];
     // A factory without --branch: refused in its parser. Never resent without the flag.
     factory._setRunner(async (machine, argv) => {

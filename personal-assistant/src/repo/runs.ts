@@ -299,7 +299,7 @@ function create(db: Db) {
     async activeForReconcile() {
       return db.rows(
         // A factory run's session only follows its job; the job's status is the
-        // factory pass's to read (src/dispatch/factory.js poll), not termhub's.
+        // factory pass's to read (src/dispatch/factory.ts poll), not termhub's.
         `select id, task, status, termhub_session_id, machine from run
       where status in ('starting','running','waiting') and route <> 'factory'`
       );
@@ -310,7 +310,7 @@ function create(db: Db) {
       await db.query('update run set status = $2 where id = $1', [id, status]);
     },
 
-    // --- for src/dispatch/factory.js
+    // --- for src/dispatch/factory.ts
 
     /** A factory submit failed before it went out: failed, with the note and the brief's path and author. */
     async markSubmitRefused(id: number | string, note: string, briefPath: unknown, by: unknown) {

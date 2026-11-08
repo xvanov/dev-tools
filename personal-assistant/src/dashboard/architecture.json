@@ -912,7 +912,7 @@
         "Factory spans": "the Python factory posts its own to POST /api/telemetry (X-PA guarded) when PA_TELEMETRY_URL is set (the dashboard, e.g. http://127.0.0.1:7300; unset = off): hops factory.sm, factory.dev, factory.review, factory.tech_writer, deploy and factory.claude_session (software-factory/factory/telemetry.py).",
         "Meter page": "termhub/web/meterModel.js on the Meter page: latency per hop (p50/p95 over the last 14 days), spend per day, model and purpose from llm_spend, and the credit pool. GET /api/meter?days=N (src/dashboard/meter.ts, src/telemetry/meter.ts); `pa spend` prints the pool too.",
         "Credit pool": "headless Claude Code (the PA's `claude -p`, backend cli, and the factory's claude_session runs) draws from a credit pool apart from the interactive allowance (since 15 Jun 2026). Each run's stream-json result carries total_cost_usd and usage; the PA's calls are recorded in llm_spend (backend cli) and the factory posts its runs there (backend claude_session). Usage since the pool's reset day against PA_CLAUDE_POOL_USD gives the credit left (src/claudePool.ts). Unset PA_CLAUDE_POOL_USD = not tracked.",
-        "API fallback": "PA_CLAUDE_POOL_FALLBACK_API=1 (default off): once the pool is spent, a claude_session job is dispatched on the api runtime instead (src/dispatch/factory.js asks claudePool.route); fails open to claude_session when the pool cannot be read. Off, a spent pool is shown on Meter and runs carry on."
+        "API fallback": "PA_CLAUDE_POOL_FALLBACK_API=1 (default off): once the pool is spent, a claude_session job is dispatched on the api runtime instead (src/dispatch/factory.ts asks claudePool.route); fails open to claude_session when the pool cannot be read. Off, a spent pool is shown on Meter and runs carry on."
       },
       "env": [
         {
@@ -1014,7 +1014,7 @@
       ],
       "code": [
         "personal-assistant/src/dispatch/index.js",
-        "personal-assistant/src/dispatch/factory.js",
+        "personal-assistant/src/dispatch/factory.ts",
         "personal-assistant/src/dispatch/factoryCore.ts",
         "personal-assistant/src/dispatch/exec.ts",
         "personal-assistant/src/dispatch/termhub.ts",

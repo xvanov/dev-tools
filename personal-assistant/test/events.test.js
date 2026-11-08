@@ -545,7 +545,7 @@ function sse(port, pathAndQuery, headers = {}) {
     assert.strictEqual(runs, 10, 'stopped');
 
     // A factory's pushed statuses (POST /api/factory/events): cleaned, whitelisted.
-    const { pushedPatches } = require('../src/dispatch/factory');
+    const { pushedPatches } = require('../src/dispatch/factory.ts');
     assert.deepStrictEqual(pushedPatches({ job_id: 'app:t-1', state: 'needs_human', why: 'pick a direction', title: 'ignored', stories: [] }),
       [{ jobId: 'app:t-1', patch: { state: 'needs_human', why: 'pick a direction' } }]);
     assert.deepStrictEqual(pushedPatches({ jobs: [

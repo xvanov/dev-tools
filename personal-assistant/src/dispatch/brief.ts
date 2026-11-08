@@ -47,7 +47,7 @@ function fence(text: unknown): string {
 // requester and the project, and distilled facts recalled for the ask.
 //
 // `factory` ({app, delivery}) makes it the ask of a software-factory job
-// (src/dispatch/factory.js) rather than a Claude session's BRIEF.md: the stop
+// (src/dispatch/factory.ts) rather than a Claude session's BRIEF.md: the stop
 // condition is the job's delivery level, which the factory enforces, and the
 // lines about this tool's worktree and its `pa` MCP server — which a factory
 // persona does not have — are left out.

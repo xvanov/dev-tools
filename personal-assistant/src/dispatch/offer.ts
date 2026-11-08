@@ -135,7 +135,7 @@ async function prepare({
 
   if (viaFactory) {
     const pipe = F.pipeline(pipeline || config.factory.pipeline);
-    const overrides = require('./factory').modelsFor(models);
+    const overrides = require('./factory.ts').modelsFor(models);
     payload.jobKind = 'code';
     payload.runtime = rt || F.runtime(config.factory.runtime);
     const c = await require('./compose.ts').compose({

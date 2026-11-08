@@ -93,7 +93,7 @@ require('../src/dispatch/compose.ts')._setModel(async () => {
   return JSON.stringify({ goal: 'Retry the export on transient storage errors.', done: ['ignored: criteria were given'], constraints: ['keep the CSV format'], facts: [], decisions: [], reuse: [], questions: [] });
 });
 
-const factory = require('../src/dispatch/factory');
+const factory = require('../src/dispatch/factory.ts');
 const calls = [];
 let apps = [{ app: 'widget', repo: 'acme/widget' }];
 const extra = {};

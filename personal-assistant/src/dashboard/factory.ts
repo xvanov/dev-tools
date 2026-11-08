@@ -116,7 +116,7 @@ function termhubUrl(r: Row) {
 
 /** The page's data: the stored list as a board, with the PA's runs and spend. */
 async function boardData() {
-  const factory = require('../dispatch/factory');
+  const factory = require('../dispatch/factory.ts');
   if (!factory.enabled()) return { enabled: false };
   const snap = await factory.snapshot();
   const ids = snap.jobs.map((j: Row) => j.job_id).filter((id: unknown) => F.JOB_ID.test(String(id || '')));
@@ -165,7 +165,7 @@ async function route(req: Req, res: Res, url: URL, { send, readJson, issuePageTo
       send(res, 400, { error: 'not a factory job id' });
       return true;
     }
-    const r = await require('../dispatch/factory').report(jobId);
+    const r = await require('../dispatch/factory.ts').report(jobId);
     send(res, 200, { jobId: r.jobId, title: r.title, path: r.path, none: Boolean(r.none), blocks: require('./markdown.ts').parseMarkdown(r.markdown || '') });
     return true;
   }
@@ -175,7 +175,7 @@ async function route(req: Req, res: Res, url: URL, { send, readJson, issuePageTo
     return true;
   }
   const body = await readJson(req);
-  const factory = require('../dispatch/factory');
+  const factory = require('../dispatch/factory.ts');
 
   if (url.pathname === '/api/factory/jobs') {
     const o: ReturnType<typeof newJob> & { confirmedUnattended?: boolean } = newJob(body);

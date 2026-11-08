@@ -464,7 +464,7 @@ const config = {
     composeFallbackModel: env('PA_COMPOSE_FALLBACK_MODEL'),
   },
 
-  // The software factory as a second dispatch target (src/dispatch/factory.js,
+  // The software factory as a second dispatch target (src/dispatch/factory.ts,
   // contract: software-factory docs/JOBS-API.md). Off until PA_FACTORY_PATH
   // names the factory's checkout on its machine. Its commands run there
   // through src/dispatch/exec.ts; the walk-in session opens in that

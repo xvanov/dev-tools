@@ -8,7 +8,7 @@ const http = require('http');
 
 process.env.PA_FACTORY_PATH = process.env.PA_FACTORY_PATH || '/srv/factory-checkout';
 process.env.PA_FACTORY_MACHINE = '';
-const factory = require('../src/dispatch/factory');
+const factory = require('../src/dispatch/factory.ts');
 
 function serve(handler) {
   return new Promise((resolve) => {

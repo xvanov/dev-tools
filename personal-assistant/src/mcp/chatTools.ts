@@ -19,7 +19,7 @@
 //            NOT on any allow list: Claude Code asks the user on every call
 //            (AGENT.md, "The PA chat acts only behind permission prompts").
 //            Each is the existing dispatch path (src/dispatch/index.js start,
-//            factory.js cancelJob/approve/resume), the same as `pa do` behind
+//            factory.ts cancelJob/approve/resume), the same as `pa do` behind
 //            a shell prompt — so the same rules hold: an end state that merges
 //            or pushes to main with no human step is never started from here,
 //            it becomes a card ("suggested by the chat") the user accepts.
@@ -540,7 +540,7 @@ async function cardTool({ id }: { id?: number | string | null }) {
   if (holds.length) out.blocks_task = holds.map((b: Json) => b.task_id);
   if (runs.length) {
     // Plan E1: each run's steps (with their sessions) and every PR with its CI.
-    const stored = await require('../dispatch/factory').chains(runs.map((r: Json) => r.id)).catch(() => new Map());
+    const stored = await require('../dispatch/factory.ts').chains(runs.map((r: Json) => r.id)).catch(() => new Map());
     out.runs = runs.map((r: Json) => {
       const o: Json = { run: Number(r.id), status: r.status, route: r.route || 'claude', mode: r.mode };
       if (r.factory_job_id) o.job = r.factory_job_id;
@@ -562,7 +562,7 @@ async function cardTool({ id }: { id?: number | string | null }) {
 }
 
 async function factoryJobsTool({ group = 'active', limit = 15 }: { group?: string; limit?: number } = {}) {
-  const factory = require('../dispatch/factory');
+  const factory = require('../dispatch/factory.ts');
   const F = require('../dispatch/factoryCore.ts');
   if (!factory.enabled()) return { enabled: false, note: 'the factory is not configured (PA_FACTORY_PATH)' };
   const snap = await factory.snapshot();
@@ -588,7 +588,7 @@ function checkJob(job: unknown) {
 
 async function factoryJobTool({ job, fresh = false }: { job?: Json | null; fresh?: boolean }) {
   const id = checkJob(job);
-  const factory = require('../dispatch/factory');
+  const factory = require('../dispatch/factory.ts');
   const F = require('../dispatch/factoryCore.ts');
   let raw = fresh ? null : await factory.snapshotJob(id);
   let source = 'stored list';
@@ -701,7 +701,7 @@ async function sessionStartTool(args: Json) {
 }
 
 async function handle(name: string, args: Json = {}) {
-  const factory = () => require('../dispatch/factory');
+  const factory = () => require('../dispatch/factory.ts');
   switch (name) {
     case 'board': return boardTool(args);
     case 'card': return cardTool(args);

@@ -39,7 +39,7 @@ const path = require('path');
 const { config } = require('../config.ts');
 const { mode: resolveMode } = require('./modes.ts');
 const R = require('./routeCore.ts');
-const factory = require('./factory');
+const factory = require('./factory.ts');
 const { logger } = require('../log.ts');
 
 const log = logger('route');

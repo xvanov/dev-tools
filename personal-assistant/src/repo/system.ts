@@ -117,7 +117,7 @@ function create(db: Db) {
       );
     },
 
-    // --- for src/dispatch/factory.js
+    // --- for src/dispatch/factory.ts
 
     /** Makes `id` the install id when the store has none (a no-op otherwise). */
     async insertInstallIfNone(id: number | string) {

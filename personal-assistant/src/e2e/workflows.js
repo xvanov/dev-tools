@@ -27,7 +27,7 @@ const DEFAULT_API_MODEL = 'azure/deepseek-v4-pro';
 
 function deps0() {
   const d = G.defaultDeps();
-  const factory = require('../dispatch/factory');
+  const factory = require('../dispatch/factory.ts');
   return {
     ...d,
     arch: () => require('../dashboard/architecture.json'),

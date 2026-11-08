@@ -230,7 +230,7 @@ async function withJobDelivery(request: PolicyRequest, lookup: ((jobId: string) 
   if (!['voice', 'dashboard'].includes(String(request.channel)) || !JOB_TOOLS.includes(request.tool)) return request;
   const args: Args = { ...(request.args || {}) };
   try {
-    const find = lookup || ((id: string) => require('../dispatch/factory').snapshotJob(id));
+    const find = lookup || ((id: string) => require('../dispatch/factory.ts').snapshotJob(id));
     const job = args.job ? await find(String(args.job)) : null;
     if (!job) throw new Error('job not found');
     args.delivery = job.delivery || 'none';

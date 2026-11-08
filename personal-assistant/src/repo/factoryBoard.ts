@@ -2,7 +2,7 @@
 
 // Aggregate: factoryBoard. Tables: factory_board (one row: the last `job list`
 // the worker took from the factory, and the last error doing so).
-// Callers: src/dispatch/factory.js.
+// Callers: src/dispatch/factory.ts.
 //
 // Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
 

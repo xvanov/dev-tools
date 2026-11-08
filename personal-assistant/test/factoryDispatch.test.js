@@ -333,7 +333,7 @@ require('../src/dispatch/compose.ts')._setModel(async ({ prompt }) => {
   return JSON.stringify({ goal: 'Retry the export on transient errors.', done: ['model criterion'], constraints: ['keep the CSV format'], decisions: [], facts: [], reuse: [], questions: [] });
 });
 
-const factory = require('../src/dispatch/factory');
+const factory = require('../src/dispatch/factory.ts');
 const calls = [];
 let answers = {};
 factory._setRunner(async (machine, argv, opts) => {
@@ -803,7 +803,7 @@ async function liveRunGuard() {
   assert.strictEqual((await runs.insertClaude(v, { commitmentId: 31 })).id, store.nextId);
   store.queries.length = 0;
   // Every run insert goes through the guarded repository methods.
-  for (const f of ['index.js', 'factory.js']) {
+  for (const f of ['index.js', 'factory.ts']) {
     const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'dispatch', f), 'utf8');
     assert.ok(!/insert into run\b/.test(src), `${f}: no run insert outside src/repo/runs.js`);
     assert.ok(/runs\.insert(Claude|Factory)\(/.test(src), `${f}: inserts through the runs repository`);

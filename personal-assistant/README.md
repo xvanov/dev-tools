@@ -1661,7 +1661,7 @@ Implemented once in `theme.css` (`.jside`, `.jpanel-nav`, `.jx-frames`) and `nav
   termhub chrome), stays as a link target into it — a card's session, a factory run's live session —
   and there the switcher shrinks to a small tab in the corner that opens on hover or a tap.
 
-**The Factory page** (`/factory`, `src/dashboard/factory.js`, `factory.html`,
+**The Factory page** (`/factory`, `src/dashboard/factory.ts`, `factory.html`,
 `factory.client.js`) shows every factory job — the PA's and anyone else's — grouped **Needs you**
 (needs_human, blocked, or a live job whose PR's CI is red) / **Running** / **Delivered** / **Failed
 or cancelled**: title, kind, runtime, app, state and the factory's `why`, each story with its PR
@@ -1722,7 +1722,7 @@ src/agentCli.js      claude | opencode command lines for the chat (src/chat/agen
 src/budget.js        model spend: one llm_spend row per call, the daily cap on discretionary work
 src/backup.js        nightly pg_dump, restore, re-ingest
 src/dispatch/        worktrees, briefs, termhub sessions, modes, landing; the factory route
-                     (factory.js, pure half factoryCore.ts), the routing rule (route.ts, routeCore.ts),
+                     (factory.ts, pure half factoryCore.ts), the routing rule (route.ts, routeCore.ts),
                      `pa runs stats` (stats.ts)
 src/draft/           reply drafting, auto-drafts, and delivery links (never sends)
 src/mcp/server.js    the recall server: read-only, plus remember and request_secret, which only ask

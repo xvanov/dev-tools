@@ -145,7 +145,7 @@ stub('dispatch/termhub.ts', {
     async sessionUrl(id) { return `https://hub.example/#session=${id}`; },
   }),
 });
-const factory = require('../src/dispatch/factory');
+const factory = require('../src/dispatch/factory.ts');
 
 (async () => {
   // recordChain: one upsert per PR and per step, with the contract's values.

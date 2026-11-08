@@ -438,7 +438,7 @@ const memoryPass = (file: string, opts?: unknown) => () => (MEMORY_PASSES[file] 
     await dispatch.reconcile();
   });
 
-  // Factory jobs (src/dispatch/factory.js): their status onto the run rows,
+  // Factory jobs (src/dispatch/factory.ts): their status onto the run rows,
   // and a finished or failed one moves its commitment through the ledger.
   // A no-op, without a command, while no factory run is live.
   // Then the whole job list for the /factory page (factory_board), and a
@@ -448,8 +448,8 @@ const memoryPass = (file: string, opts?: unknown) => () => (MEMORY_PASSES[file] 
   // PA_FACTORY_POLL_SECONDS. Its writes reach the pages through the live feed.
   // A service on the scheduler: its timer, watcher and subscription run only
   // while this generation holds the lease, and stop on drain.
-  if (require('./dispatch/factory').enabled()) sched.service('factory-pacer', () => {
-    const factory = require('./dispatch/factory');
+  if (require('./dispatch/factory.ts').enabled()) sched.service('factory-pacer', () => {
+    const factory = require('./dispatch/factory.ts');
     const pace = require('./dispatch/factoryPace');
     const pacer = pace.createPacer({
       run: () =>

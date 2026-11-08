@@ -2,7 +2,7 @@
 
 // Which route a piece of work takes: a Claude Code session (the dispatcher's
 // own worktree + termhub session) or the software factory (a job: PM → SM →
-// dev → reviewer → gates, src/dispatch/factory.js). Pure, like plannerCore:
+// dev → reviewer → gates, src/dispatch/factory.ts). Pure, like plannerCore:
 // the impure half (src/dispatch/route.ts) gathers the facts and calls this.
 //
 // The rule, v1 — deterministic on purpose, so it can be tested and so the
