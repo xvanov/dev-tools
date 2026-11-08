@@ -320,7 +320,15 @@ run mid-step; a job continued on an existing branch (`--branch`).
   exports `create(db)` with named, JSDoc-typed methods; `repo.withTx(fn)` gives `fn` the set bound
   to one transaction; the default set resolves `src/db` at call time, so tests that stub `src/db`
   keep working. SQL text moves verbatim. `test/repoBoundary.test.js` lists the modules not yet
-  converted (it may only shrink) and fails on SQL anywhere else.
+  converted (it may only shrink) and fails on SQL anywhere else; `test/repoCalls.test.js` fails on
+  a `repo.<agg>.<method>(` call whose method does not exist (a575804).
+  Done: chunks A meetings (0e6f2c7), B memory/search (4dd952a), C commitments (ca2d764), D ledger,
+  proposals, drafts, secrets (d251fa7, a15c566, 8a4d936), F ingest/repos/routines (3e590f5),
+  G cli/dashboard/fastLane (a562a4b), eval and backup (d557ad6), and the lead's notify, lease,
+  budget, worker (cbafe98). **Left: chunk E, 13 modules** (dispatch/{index,factory,delivery,stats},
+  durable/{index,spawners,tasks/chase,tasks/runReview}, e2e/{goldenPath,deployTest}, mcp/{chatTools,
+  server}, dashboard/factory). Close-out when PENDING is empty: tick 1.2 and 1.3, mark the
+  repository layer live in architecture.json, delete PENDING.
 - [ ] **1.3 Contract tests** for every repository method, runnable against any backend. This is
   the oracle for phase 3.
   `test/repoContract.test.js` runs `test/contract/<aggregate>.contract.js` against each backend in
