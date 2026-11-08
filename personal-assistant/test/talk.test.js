@@ -580,10 +580,10 @@ const C = require('../src/dashboard/talk.core');
 
   let seenPath = null;
   let seenBytes = 0;
-  const whisper = net.createServer((sock) => {
-    let data = '';
-    sock.on('data', (d) => (data += d));
-    sock.on('end', () => {
+  const whisper = net.createServer({ allowHalfOpen: true }, (sock) => {
+    // Like the real server: one read (the path), no wait for EOF.
+    sock.once('data', (d) => {
+      const data = String(d).trim();
       seenPath = data;
       seenBytes = fs.existsSync(data) ? fs.statSync(data).size : -1;
       sock.end(seenBytes > 44 ? 'what is on me today' : 'ERROR: empty file');

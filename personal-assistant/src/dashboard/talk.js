@@ -8,8 +8,8 @@
 // /api/chat like anything typed (src/dashboard/talk.html, talk.page.js).
 //
 // The transcriber's protocol (voice-dictation/transcribe_server.py) is a raw
-// TCP exchange: send an absolute path to an audio file, half-close, read the
-// transcript (or "ERROR: …") until EOF. So the uploaded WAV is written to a
+// TCP exchange: send an absolute path to an audio file, read the transcript
+// (or "ERROR: …") until the server closes (one request, one answer; see askWhisper). So the uploaded WAV is written to a
 // temp file first and removed afterwards, whatever happens.
 
 const fs = require('fs');
@@ -84,12 +84,23 @@ function readBody(req, limit = MAX_AUDIO_BYTES) {
 }
 
 // One request to the faster-whisper server: path in, text out.
-function askWhisper(file, { host = config.audio.transcribeHost, port = config.audio.transcribePort, timeoutMs = TIMEOUT_MS } = {}) {
+//
+// The path is written and the socket is NOT half-closed. The server reads one
+// request (`conn.recv`), answers, and closes, so the FIN adds nothing; and
+// under Bun `socket.end()` does not half-close, it closes the connection
+// outright: the client saw "closed, no data" within milliseconds and returned
+// empty text, the WAV was deleted, and the transcriber then failed to open it
+// (WinError 10054, "No such file"). A close with no reply bytes after almost no
+// time is a failed exchange, never "the user said nothing": whisper takes
+// tens of milliseconds even on silence. askWhisper retries such a failure once.
+const MIN_REPLY_MS = 40;
+function askWhisperOnce(file, { host, port, timeoutMs, minReplyMs = MIN_REPLY_MS }) {
   return new Promise((resolve, reject) => {
     const chunks = [];
+    const started = Date.now();
     const sock = net.createConnection({ host, port });
     sock.setTimeout(timeoutMs, () => sock.destroy(Object.assign(new Error('transcriber timed out'), { status: 504 })));
-    sock.on('connect', () => sock.end(file, 'utf8'));
+    sock.on('connect', () => sock.write(file + '\n', 'utf8'));
     sock.on('data', (d) => chunks.push(d));
     sock.on('error', (err) => {
       if (!err.status) {
@@ -102,11 +113,23 @@ function askWhisper(file, { host = config.audio.transcribeHost, port = config.au
       if (hadError) return;
       const text = Buffer.concat(chunks).toString('utf8');
       if (text.startsWith('ERROR:')) return reject(Object.assign(new Error(text.slice(6).trim() || 'transcriber error'), { status: 502 }));
+      if (!text && Date.now() - started < minReplyMs) {
+        return reject(Object.assign(new Error('transcriber closed the connection without a reply'), { status: 502, retry: true }));
+      }
       resolve(text.trim());
     });
   });
 }
 
+async function askWhisper(file, { host = config.audio.transcribeHost, port = config.audio.transcribePort, timeoutMs = TIMEOUT_MS, minReplyMs } = {}) {
+  const o = { host, port, timeoutMs, minReplyMs };
+  try {
+    return await askWhisperOnce(file, o);
+  } catch (err) {
+    if (!err.retry) throw err;
+    return askWhisperOnce(file, o); // once; a second failure is an error too
+  }
+}
 let whisperUsedAt = 0;
 async function transcribe(audio, opts) {
   const file = path.join(os.tmpdir(), `pa-talk-${process.pid}-${crypto.randomBytes(6).toString('hex')}.wav`);

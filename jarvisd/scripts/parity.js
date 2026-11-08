@@ -30,6 +30,8 @@ const FILES = [
   'migrations.test.js',
   'architecture.test.js',
   'lease.test.js',
+  // askWhisper's socket exchange: Bun's socket.end() closes instead of half-closing (plan 8.2.1).
+  'talkWhisper.test.js',
 ];
 
 const cfg = require(path.join(PA, 'test', 'runner.config.js'));
