@@ -86,6 +86,33 @@ function msg(over = {}) {
   assert.strictEqual(local.toItem(msg({ messageType: 'Text', content: 'plain & simple' }), { me }).bodyText, 'plain & simple');
 }
 
+// the client's local copy of a message being sent (id -1) and its drafts,
+// mentions and notifications views are not messages (8.4.34, 8.4.35)
+{
+  assert.strictEqual(local.toItem(msg({ id: '-1', version: '-1' }), { me }), null, 'the pending copy: the real id follows');
+  for (const view of ['48:drafts', '48:mentions', '48:notifications', '48:threads', '48:calllogs']) {
+    assert.strictEqual(local.toItem(msg({ conversationId: view }), { me }), null, view);
+  }
+  assert.strictEqual(local.toItem(msg({ conversationId: '48:drafts', id: `-4.${DM}`, mine: true }), { me }), null, 'a draft');
+  // the self chat is a conversation: kept, typed self, and rushed to distill even though it is mine
+  const note = local.toItem(msg({ conversationId: '48:notes', mine: true, creator: `8:orgid:${ME_OID}` }), { me });
+  assert.strictEqual(note.raw.chatType, 'self');
+  assert.strictEqual(note.authorIdentity, 'brannoc@example.com');
+  assert.ok(local.isFresh({ ...note, mine: true }));
+  assert.strictEqual(local.toItem(msg({ conversationId: '48:notes', id: '-1' }), { me }), null, 'its pending copy is not');
+}
+
+// the same rule on a stored row, for the source policy
+{
+  const T = require('../src/ingest/teamsThreads.ts');
+  assert.strictEqual(T.junkOf({ thread_external_id: DM, external_id: `${DM}/1761140000000`, raw: { messageId: '1761140000000' } }), null);
+  assert.match(T.junkOf({ thread_external_id: DM, external_id: `${DM}/-1`, raw: { messageId: '-1' } }), /local copy/);
+  assert.match(T.junkOf({ external_id: `${DM}/-1` }), /local copy/, 'from the external id alone');
+  assert.match(T.junkOf({ thread_external_id: '48:notifications', raw: { messageId: '1761140000000' } }), /system thread \(48:notifications\)/);
+  assert.strictEqual(T.junkOf({ thread_external_id: '48:notes', raw: { messageId: '1761140000000' } }), null, 'the self chat');
+  assert.strictEqual(T.junkOf(null), null);
+}
+
 // channel posts follow PA_TEAMS_CHANNELS exactly as the connector does
 {
   const post = msg({ conversationId: CHANNEL, id: '1761140000500', parentMessageId: '1761140000100' });

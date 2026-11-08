@@ -19,8 +19,9 @@ const HELP = `
                                          --due: friday, tomorrow 3pm, 2d, 2026-11-20
                                          --for: who it is for (or, with --owed-to-me, who owes it to you)
     pa policy                            which sources may create tasks (PA_COMMITMENT_SOURCES)
-    pa policy close [--apply]            close open cards the policy would not have created
-                                         (dry run without --apply; cards you acted on are kept)
+    pa policy close [--teams] [--apply]  close open cards the policy would not have created
+                                         (dry run without --apply; cards you acted on are kept;
+                                         --teams: only the Teams cache's system threads and local copies)
 `;
 
 /**
@@ -62,11 +63,12 @@ function make(out: any, fail: any) {
         out('  Within those, only a person asking counts: no bots or automated mail, not your own GitHub activity.');
         return;
       }
-      if (sub !== 'close') return fail('usage: pa policy [close [--apply]]');
+      if (sub !== 'close') return fail('usage: pa policy [close [--teams] [--apply]]');
       const apply = flagBool(flags, 'apply');
+      const teams = flagBool(flags, 'teams');
       const pc = require('../commitments/policyClose.ts');
-      const r = await pc.run({ apply });
-      out(pc.report(r, { apply }));
+      const r = await pc.run({ apply, teams });
+      out(pc.report(r, { apply, teams }));
     },
   };
 }

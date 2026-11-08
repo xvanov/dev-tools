@@ -23,8 +23,10 @@
 //            GitHub and Jira only when a person other than you is asking you
 //            (a review requested by name, a mention, a comment on your PR, an
 //            issue assigned to you) — never a bot (`[bot]` logins, CodeRabbit,
-//            Snyk, dependabot, CI) and never your own activity. Checked per
-//            item before the model call (judge()).
+//            Snyk, dependabot, CI) and never your own activity; Teams rows
+//            only from a real chat, not the client's drafts or notifications
+//            views nor its local copy of a message. Checked per item before
+//            the model call (judge()).
 //
 // Pure, apart from reading config: the tests feed it items.
 //
@@ -196,7 +198,11 @@ function judge(item: any, { sources = allowedSources(), login = null, me = {}, i
     case 'graph_event': {
       // Chat ingest already drops bots and cards; an author recorded only by
       // display name or AAD id is a person. An address that reads as a
-      // mailer is not.
+      // mailer is not. Rows the Teams cache stored from the client's own
+      // views (drafts, notifications) or its local copy of a message are
+      // nobody's message (ingest/teamsThreads.ts).
+      const junk = item.source === 'graph_chat' ? require('../ingest/teamsThreads.ts').junkOf(item) : null;
+      if (junk) return { ok: false, why: junk };
       const a = String(item.author_identity || '');
       if (a.includes('@') && automated(a)) return { ok: false, why: 'automated sender' };
       return { ok: true, why: item.source === 'graph_chat' ? 'Teams message from a person' : 'invite from a person' };

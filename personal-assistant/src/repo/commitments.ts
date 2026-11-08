@@ -24,15 +24,15 @@ const DUPLICATE_SET_SQL = `
    where d.id <> $1 and c.status in ('open', 'dispatched')`;
 
 // Open unfolded cards with what acted on them (src/commitments/policyClose.js).
-const POLICY_CANDIDATES = `
+const POLICY_CANDIDATES = (folded: boolean) => `
   select c.id, c.summary, c.direction, c.status, c.touched_at, c.closed_at, c.closed_reason,
-         si.id as item_id, si.source, si.author_identity, si.raw,
+         c.superseded_by, si.id as item_id, si.source, si.author_identity, si.raw, si.thread_external_id, si.external_id,
          c.touched_at is not null as touched,
          exists (select 1 from run r where r.commitment_id = c.id) as has_run,
          exists (select 1 from draft d where d.commitment_id = c.id) as has_draft,
          exists (select 1 from ledger_transition t where t.commitment_id = c.id and t.actor = 'you') as you_moved
     from commitment c join source_item si on si.id = c.source_item_id
-   where c.status = 'open' and c.superseded_by is null
+   where c.status = 'open'${folded ? '' : ' and c.superseded_by is null'}
    order by c.id`;
 
 // Who wrote an item, as a name: the connector's display name, the person the
@@ -416,11 +416,11 @@ function create(db: Db) {
 
     /**
      * Open, unfolded commitments with their source item and what acted on
-     * them (a run, a draft, a move of yours).
+     * them (a run, a draft, a move of yours). `folded`: folded copies too.
      * @returns {Promise<object[]>}
      */
-    async policyCandidates() {
-      return db.rows(POLICY_CANDIDATES);
+    async policyCandidates({ folded = false }: { folded?: boolean } = {}) {
+      return db.rows(POLICY_CANDIDATES(folded));
     },
 
     /**
@@ -443,6 +443,15 @@ function create(db: Db) {
      */
     async unfold(id: number | string, supersededBy: unknown) {
       const r = await db.query('update commitment set superseded_by = null where id = $1 and superseded_by = $2', [id, supersededBy]);
+      return Boolean(r.rowCount);
+    },
+
+    /**
+     * Moves a commitment still folded under `from` to fold under `to`.
+     * @returns {Promise<boolean>} whether a row changed
+     */
+    async refold(id: number | string, from: unknown, to: unknown) {
+      const r = await db.query('update commitment set superseded_by = $3 where id = $1 and superseded_by = $2 and id <> $3', [id, from, to]);
       return Boolean(r.rowCount);
     },
 

@@ -57,6 +57,7 @@ const { logger } = require('../log.ts');
 const platform = require('../platform');
 const trigger = require('./teamsTrigger.ts');
 const readers = require('./teamsReader.ts');
+const teamsThreads = require('./teamsThreads.ts');
 
 const log = logger('teams-cache');
 
@@ -85,13 +86,18 @@ function isSystem(msg: any) {
   if (!msg || !msg.id || !msg.conversationId) return true;
   if (msg.deleted) return true;
   if (!PERSON_TYPES.has(msg.messageType)) return true;
+  // The client's drafts, mentions and notifications views, and its local
+  // copy of a message still being sent (teamsThreads.ts).
+  if (teamsThreads.junk(msg.conversationId, msg.id)) return true;
   // 8: is a person; 28: a bot or app; 19: the thread itself.
   return !String(msg.creator || '').startsWith('8:');
 }
 
-// The connector's chatType vocabulary: oneOnOne, group, meeting, channel.
+// The connector's chatType vocabulary: oneOnOne, group, meeting, channel;
+// and `self` for the self chat, which the connector never lists.
 function chatTypeOf(conversationId: any, conv: any, known: any) {
   const id = String(conversationId || '');
+  if (teamsThreads.isSelfChat(id)) return 'self';
   if (/@thread\.tacv2$/i.test(id)) return 'channel';
   if (known) return known;
   if (/@unq\.gbl\.spaces$/i.test(id)) return 'oneOnOne';
@@ -213,9 +219,12 @@ function planWrite(item: any, existing: any) {
 }
 
 // A new message worth distilling now rather than at the next tick: someone
-// else's, in a chat, or naming you in a channel.
+// else's, in a chat, or naming you in a channel; or what you wrote to
+// yourself in the self chat, which is only ever a note for you.
 function isFresh(item: any) {
-  return Boolean(item) && item.raw.via === 'teams-cache' && !item.mine && (item.raw.chatType !== 'channel' || item.raw.mentionsMe);
+  if (!item || item.raw.via !== 'teams-cache') return false;
+  if (item.raw.chatType === 'self') return true;
+  return !item.mine && (item.raw.chatType !== 'channel' || item.raw.mentionsMe);
 }
 
 function parseOutput(stdout: any) {

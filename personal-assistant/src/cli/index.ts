@@ -58,7 +58,7 @@ const HELP = `pa — your context layer
                      [--agent claude|opencode] [--model m]  which agent CLI and model (local runs)
     pa done <id> [--dismiss|--reopen] close a commitment yourself
     pa task add "<what>" [--due when] [--for person] [--owed-to-me]  a task because you asked for it
-    pa policy [close [--apply]]      which sources create tasks; close cards the policy would not have made
+    pa policy [close [--teams] [--apply]]  which sources create tasks; close cards the policy would not have made
     pa ledger <id>                   every status change of a commitment, and why
     pa ledger reconcile [--dry-run] [--id N,..] [--limit N]
                                      judge open commitments against newer items now

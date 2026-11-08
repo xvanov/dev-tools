@@ -46,6 +46,10 @@ ok({ source: 'graph_chat', author_identity: 'bryn.oakes@example.test', raw: {} }
 ok({ source: 'graph_chat', author_identity: 'aad:0b1c', raw: {} }, 'a person known only by AAD id');
 ok({ source: 'graph_chat', author_identity: null, raw: {} }, 'chat with no author recorded is still chat ingest kept');
 no({ source: 'graph_chat', author_identity: 'noreply@example.test', raw: {} }, 'a mailer in chat');
+no({ source: 'graph_chat', author_identity: 'quill@example.test', thread_external_id: '48:drafts', raw: { messageId: '-4.19:x@thread.v2' } }, 'a Teams draft');
+no({ source: 'graph_chat', author_identity: 'bryn.oakes@example.test', thread_external_id: '48:notifications', raw: { messageId: '1761140000000' } }, 'the notifications view');
+no({ source: 'graph_chat', author_identity: 'bryn.oakes@example.test', thread_external_id: '19:a@thread.v2', raw: { messageId: '-1' } }, 'the local copy of a message being sent');
+ok({ source: 'graph_chat', author_identity: 'quill@example.test', thread_external_id: '48:notes', raw: { messageId: '1761140000000' } }, 'the self chat');
 ok({ source: 'graph_mail', author_identity: 'bryn.oakes@example.test', raw: {} }, 'mail from a person');
 ok({ source: 'graph_mail', author_identity: 'quill@example.test', raw: {} }, 'your own sent mail is a person (you)');
 no({ source: 'graph_mail', author_identity: 'notifications@github.com', raw: {} }, 'GitHub mail');
@@ -169,6 +173,35 @@ assert.deepStrictEqual(mcp.TASK_TOOL.inputSchema.required, ['text']);
   assert.match(rep, /Would close 2/);
   assert.match(rep, /claude_session \(1\)/);
   assert.match(rep, /Dry run/);
+
+  // --teams: only the Teams cache's junk, counted by reason (8.4.34, 8.4.35)
+  const junk = [
+    ...rows,
+    { id: 8, source: 'graph_chat', author_identity: 'bryn.oakes@example.test', thread_external_id: '19:a@thread.v2', external_id: '19:a@thread.v2/-1', summary: 'Send it', direction: 'owed_by_me', raw: { messageId: '-1' } },
+    { id: 9, source: 'graph_chat', author_identity: 'bryn.oakes@example.test', thread_external_id: '48:notifications', summary: 'Look', direction: 'owed_by_me', raw: { messageId: '1' } },
+    { id: 10, source: 'graph_chat', author_identity: 'bryn.oakes@example.test', thread_external_id: '48:mentions', summary: 'Look too', direction: 'owed_by_me', raw: { messageId: '2' }, superseded_by: 3 },
+    { id: 11, source: 'graph_chat', author_identity: 'quill@example.test', thread_external_id: '48:drafts', summary: 'Mine', direction: 'owed_by_me', raw: { messageId: '-4.x' }, has_draft: true },
+  ];
+  const tj = PC.teamsOnly(PC.split(junk, ctx));
+  assert.deepStrictEqual(tj.close.map((c) => c.id), [8, 9, 10], 'session notes and bot asks are left to a plain close');
+  assert.deepStrictEqual(tj.keep.map((c) => c.id), [11], 'one you acted on is kept');
+  assert.deepStrictEqual(Object.values(PC.byWhy(tj.close)), [1, 1, 1]);
+  const trep = PC.report({ ...tj, unfold: [] }, { teams: true });
+  assert.match(trep, /Would close 3 .*\(Teams cache only\)/);
+  assert.match(trep, /1 {2}Teams local copy/);
+  assert.match(trep, /\(1 of them folded under another card/);
+  assert.match(trep, /pa policy close --teams --apply/);
+
+  // regroup: copies folded under a closing card stay one group
+  const closing = [{ id: 100, superseded_by: null }, { id: 101, superseded_by: 50 }, { id: 102, superseded_by: 101 }];
+  const moves = PC.regroup([
+    { id: 7, superseded_by: 100 }, { id: 5, superseded_by: 100 }, { id: 9, superseded_by: 100 },
+    { id: 11, superseded_by: 101 }, { id: 12, superseded_by: 102 },
+  ], closing);
+  assert.deepStrictEqual(moves.map((m) => [m.id, m.to]), [[5, null], [7, 5], [9, 5], [11, 50], [12, 50]],
+    'under a closing root: the oldest unfolds, the rest fold under it; under a folded one: up to the open survivor');
+  assert.deepStrictEqual(PC.regroup([], closing), []);
+  assert.match(PC.report({ close: [], keep: [], unfold: moves }), /Regrouped .*\(5: 1 back on the board, 4 folded under another\)/);
 
   console.log('sourcePolicy.test.js ok');
 })().catch((err) => {

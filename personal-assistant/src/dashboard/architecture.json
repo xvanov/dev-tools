@@ -810,7 +810,7 @@
       },
       "details": {
         "Microsoft 365": "a headless `claude -p` relays the claude.ai connector calls; items are built from the tool_result blocks, never from model text",
-        "Teams cache": "reads the new Teams client's IndexedDB on disk, read-only, triggered by a change notification and served by one resident reader process (seconds behind, vs minutes for the connector)",
+        "Teams cache": "reads the new Teams client's IndexedDB on disk, read-only, triggered by a change notification and served by one resident reader process (seconds behind, vs minutes for the connector). Skips the client's own `48:` views (drafts, mentions, notifications, threads, call logs; the self chat 48:notes is kept, chatType self) and its local copy of a message being sent (id -1): src/ingest/teamsThreads.ts",
         "GitHub": "the gh CLI (PA_GH_BIN), every 300 s",
         "Jira": "API token, falling back to its connector, every 900 s",
         "Sessions": "local Claude Code and Cursor transcripts; other machines' Claude sessions through their termhub (GET /api/claude/transcripts)",

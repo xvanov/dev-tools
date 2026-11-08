@@ -55,15 +55,15 @@ const DUPLICATE_SET_SQL = `
   select d.id from down d join commitment c on c.id = d.id
    where d.id <> $1 and c.status in ('open', 'dispatched')`;
 
-const POLICY_CANDIDATES = `
+const POLICY_CANDIDATES = (folded: boolean) => `
   select c.id, c.summary, c.direction, c.status, c.touched_at, c.closed_at, c.closed_reason,
-         si.id as item_id, si.source, si.author_identity, si.raw,
+         c.superseded_by, si.id as item_id, si.source, si.author_identity, si.raw, si.thread_external_id, si.external_id,
          c.touched_at is not null as touched,
          exists (select 1 from run r where r.commitment_id = c.id) as has_run,
          exists (select 1 from draft d where d.commitment_id = c.id) as has_draft,
          exists (select 1 from ledger_transition t where t.commitment_id = c.id and t.actor = 'you') as you_moved
     from commitment c join source_item si on si.id = c.source_item_id
-   where c.status = 'open' and c.superseded_by is null
+   where c.status = 'open'${folded ? '' : ' and c.superseded_by is null'}
    order by c.id`;
 
 // Who wrote an item, as a name (see src/repo/commitments.js AUTHOR).
@@ -373,9 +373,9 @@ function create(db: Db) {
 
     // --- src/commitments/policyClose.js
 
-    /** Open, unfolded commitments with their source item and what acted on them. */
-    async policyCandidates() {
-      const rows = await db.rows(POLICY_CANDIDATES);
+    /** Open, unfolded commitments (folded copies too with `folded`) with their source item and what acted on them. */
+    async policyCandidates({ folded = false }: { folded?: boolean } = {}) {
+      const rows = await db.rows(POLICY_CANDIDATES(folded));
       for (const r of rows) bools(r, 'touched', 'has_run', 'has_draft', 'you_moved');
       return rows;
     },
@@ -393,6 +393,12 @@ function create(db: Db) {
     /** Unfolds a commitment still folded under `supersededBy`. Resolves whether a row changed. */
     async unfold(id: number | string, supersededBy: unknown) {
       const r = await db.query('update commitment set superseded_by = null where id = $1 and superseded_by = $2', [id, supersededBy]);
+      return Boolean(r.rowCount);
+    },
+
+    /** Moves a commitment still folded under `from` to fold under `to`. Resolves whether a row changed. */
+    async refold(id: number | string, from: unknown, to: unknown) {
+      const r = await db.query('update commitment set superseded_by = $3 where id = $1 and superseded_by = $2 and id <> $3', [id, from, to]);
       return Boolean(r.rowCount);
     },
 

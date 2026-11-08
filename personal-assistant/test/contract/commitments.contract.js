@@ -380,7 +380,13 @@ module.exports = {
     assert.strictEqual(by(moved).you_moved, true);
     assert.strictEqual(by(touched).touched, true);
     assert.strictEqual(by(plain).source, 'graph_mail');
+    assert.ok('thread_external_id' in by(plain) && 'external_id' in by(plain), 'the item ids the Teams rule reads');
     assert.ok(!by(folded), 'a folded copy is not a candidate');
+    const all = await repos.commitments.policyCandidates({ folded: true });
+    const f = all.find((r) => Number(r.id) === folded);
+    assert.ok(f, 'unless asked for');
+    assert.strictEqual(Number(f.superseded_by), plain);
+    assert.strictEqual(f.has_run, false);
   },
 
   'foldedUnder: open commitments folded under the given ones': async ({ repos, seed, assert }) => {
@@ -403,6 +409,19 @@ module.exports = {
     assert.strictEqual(await repos.commitments.unfold(c, keep), true);
     assert.strictEqual((await repos.commitments.byId(c)).superseded_by, null);
     assert.strictEqual(await repos.commitments.unfold(c, keep), false, 'already unfolded');
+  },
+
+  'refold: only while still folded under that commitment, never under itself': async ({ repos, seed, assert }) => {
+    const was = await seed.commitment();
+    const lead = await seed.commitment();
+    const other = await seed.commitment();
+    const c = await seed.commitment();
+    await seed.setCommitment(c, { superseded_by: was });
+    assert.strictEqual(await repos.commitments.refold(c, other, lead), false, 'folded under another');
+    assert.strictEqual(await repos.commitments.refold(c, was, c), false, 'not under itself');
+    assert.strictEqual(await repos.commitments.refold(c, was, lead), true);
+    assert.strictEqual(Number((await repos.commitments.byId(c)).superseded_by), lead);
+    assert.strictEqual(await repos.commitments.refold(c, was, lead), false, 'already moved');
   },
 
   // --- src/commitments/selfNotes.js

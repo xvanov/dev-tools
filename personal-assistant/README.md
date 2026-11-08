@@ -385,8 +385,13 @@ sessions — and most of the distill spend). `PA_COMMITMENT_SOURCES` sets the so
 pairs only commitments from allowed sources. `pa policy close` lists the open cards the policy would not
 have created, grouped by source; `--apply` drops them through the ledger (actor `reconciler`, reason
 "not from a person — source policy: …", so they are under **Closed recently** with **Reopen**), keeps
-and lists any you acted on (a run, a draft, your edit or status change), unfolds an allowed-source ask
-that was folded under one, and writes undo SQL to `<dataDir>/fixes/`.
+and lists any you acted on (a run, a draft, your edit or status change), moves allowed-source asks that
+were folded under one (up to its survivor, or the oldest unfolds and the rest fold under it), and writes
+undo SQL to `<dataDir>/fixes/`. Teams rows from the client's own views (the `48:` drafts, mentions,
+notifications, threads and call-log threads; `48:notes`, your self chat, is a chat) and its local copy of
+a message being sent (message id `-1`, a draft's `-4.…`) are nobody's message: the cache reader no longer
+stores them (`src/ingest/teamsThreads.ts`), and `pa policy close --teams [--apply]` drops the open cards
+the earlier ones made, folded copies included, and nothing else.
 
 **A task because you said so.** `pa task add "<what>" [--due friday|tomorrow 3pm|2d|2026-11-20]
 [--for <person>] [--owed-to-me] [--project <name>]` puts it on the board at once (`src/commitments/request.ts`;

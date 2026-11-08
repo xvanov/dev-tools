@@ -12,8 +12,10 @@
 // instead: that is your decision, not the policy's to undo.
 //
 // A folded copy (superseded_by) of a closed card that comes from an allowed
-// source is unfolded, so a person's ask is never left hidden behind a closed
-// session note. Both changes are written to an undo SQL file.
+// source is moved, so a person's ask is never left hidden behind a closed
+// session note: up to the closed card's survivor, or the oldest copy unfolds
+// and the others fold under it (regroup). Both changes are written to an
+// undo SQL file.
 //
 // Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
 
@@ -27,6 +29,7 @@ const repo = require('../repo');
 const ledger = require('../ledger');
 const policy = require('./sourcePolicy.ts');
 const identity = require('../distill/identity.ts');
+const teamsThreads = require('../ingest/teamsThreads.ts');
 
 const ACTOR = 'reconciler';
 
@@ -79,21 +82,85 @@ async function context() {
 }
 
 /**
+ * Pure. Where each allowed copy folded under a closing card goes: `to` a card
+ * id, or null to unfold. The dedupe pass folded them as one piece of work, so
+ * they stay together: under the closing card's own survivor when it is
+ * folded and that survivor stays open; otherwise the oldest of them unfolds
+ * and the rest fold under it.
+ * @param children rows of foldedUnder (id, superseded_by, …), none of them closing
+ * @param closing  the cards about to close (id, superseded_by)
+ */
+function regroup(children: any[], closing: any[]) {
+  const parentOf = new Map(closing.map((c) => [Number(c.id), c.superseded_by == null ? null : Number(c.superseded_by)]));
+  // The first open ancestor above a closing card, or the closing root itself.
+  const anchor = (id: number) => {
+    const seen = new Set<number>();
+    let cur = id;
+    while (parentOf.has(cur) && !seen.has(cur)) {
+      seen.add(cur);
+      const up = parentOf.get(cur);
+      if (up == null) return { root: cur };
+      cur = up;
+    }
+    return { open: cur };
+  };
+  const groups = new Map<string, any[]>();
+  for (const c of children) {
+    const a = anchor(Number(c.superseded_by));
+    const key = a.open != null ? `open:${a.open}` : `root:${a.root}`;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key)!.push(c);
+  }
+  const out: any[] = [];
+  for (const [key, list] of groups) {
+    const sorted = [...list].sort((a, b) => Number(a.id) - Number(b.id));
+    if (key.startsWith('open:')) {
+      const to = Number(key.slice(5));
+      for (const c of sorted) out.push({ ...c, to });
+    } else {
+      const lead = Number(sorted[0].id);
+      sorted.forEach((c, i) => out.push({ ...c, to: i === 0 ? null : lead }));
+    }
+  }
+  return out.sort((a, b) => Number(a.id) - Number(b.id));
+}
+
+/** Pure. Only the cards the Teams rule closes (`--teams`): the cache's system threads and local copies. */
+function teamsOnly(plan: { close: any[]; keep: any[] }) {
+  const teams = (c: any) => Boolean(teamsThreads.junkOf(c)) && c.source === 'graph_chat';
+  return { close: plan.close.filter(teams), keep: plan.keep.filter(teams) };
+}
+
+/** Pure. {why: count} for a list, most first: the counts a cleanup reports. */
+function byWhy(list: any[]) {
+  const out: Record<string, number> = {};
+  for (const c of list) out[c.why] = (out[c.why] || 0) + 1;
+  return Object.fromEntries(Object.entries(out).sort((a, b) => b[1] - a[1]));
+}
+
+/**
+ * Idempotent: it reads open cards only, so a second run finds nothing to do.
+ * `teams`: only the cards the Teams rule closes (8.4.34, 8.4.35), folded
+ * copies included: a local copy is usually folded under the real message's
+ * card, and is still an open row.
  * @returns {{close, keep, unfold, applied?: {closed, transitions, undoFile}}}
  */
-async function run({ apply = false, now = new Date() }: { apply?: boolean; now?: any } = {}) {
+async function run({ apply = false, teams = false, now = new Date() }: { apply?: boolean; teams?: boolean; now?: any } = {}) {
   const ctx = await context();
-  const plan = split(await repo.commitments.policyCandidates(), ctx);
+  const all = split(await repo.commitments.policyCandidates({ folded: teams }), ctx);
+  const plan = teams ? teamsOnly(all) : all;
   const closeIds = plan.close.map((c) => Number(c.id));
-  // Allowed-source copies folded under a card about to close: they come back.
-  const unfold = closeIds.length
-    ? (await repo.commitments.foldedUnder(closeIds)).filter((c: any) => policy.judge(c, ctx).ok)
+  // Allowed-source copies folded under a card about to close come back,
+  // still grouped (regroup).
+  const children = closeIds.length
+    ? (await repo.commitments.foldedUnder(closeIds)).filter((c: any) => policy.judge(c, ctx).ok && !closeIds.includes(Number(c.id)))
     : [];
+  const unfold = regroup(children, plan.close);
   const out: any = { ...plan, unfold, before: null, after: null };
   if (!apply) return out;
 
   const undo = [
-    `-- pa policy close, ${now.toISOString()}: ${plan.close.length} dropped, ${unfold.length} unfolded.`,
+    `-- pa policy close, ${now.toISOString()}: ${plan.close.length} dropped, ${unfold.length} regrouped.`,
     '-- Run in one transaction. Each statement only changes a row still as this pass left it.',
     'begin;',
   ];
@@ -109,8 +176,8 @@ async function run({ apply = false, now = new Date() }: { apply?: boolean; now?:
     );
   }
   for (const u of unfold) {
-    const unfolded = await repo.commitments.unfold(u.id, u.superseded_by);
-    if (unfolded) undo.push(`update commitment set superseded_by = ${Number(u.superseded_by)} where id = ${Number(u.id)} and superseded_by is null;`);
+    const moved = u.to == null ? await repo.commitments.unfold(u.id, u.superseded_by) : await repo.commitments.refold(u.id, u.superseded_by, u.to);
+    if (moved) undo.push(`update commitment set superseded_by = ${Number(u.superseded_by)} where id = ${Number(u.id)} and superseded_by ${u.to == null ? 'is null' : `= ${Number(u.to)}`};`);
   }
   undo.push('commit;', '');
   const dir = path.join(config.dataDir, 'fixes');
@@ -124,7 +191,7 @@ async function run({ apply = false, now = new Date() }: { apply?: boolean; now?:
         at: now.toISOString(),
         closed: plan.close.map((c) => ({ id: Number(c.id), source: c.source, summary: c.summary, why: c.why })),
         kept: plan.keep.map((c) => ({ id: Number(c.id), source: c.source, summary: c.summary, why: c.why, acted: c.acted })),
-        unfolded: unfold.map((u: any) => ({ id: Number(u.id), was: Number(u.superseded_by), source: u.source, summary: u.summary })),
+        unfolded: unfold.map((u: any) => ({ id: Number(u.id), was: Number(u.superseded_by), now: u.to == null ? null : Number(u.to), source: u.source, summary: u.summary })),
       },
       null,
       2
@@ -136,10 +203,13 @@ async function run({ apply = false, now = new Date() }: { apply?: boolean; now?:
 }
 
 /** Pure. The report `pa policy close` prints. */
-function report(r: any, { apply = false }: { apply?: boolean } = {}) {
+function report(r: any, { apply = false, teams = false }: { apply?: boolean; teams?: boolean } = {}) {
   const lines = [];
   const line = (c: any, extra: string = '') => `  #${c.id} ${c.direction === 'owed_to_me' ? '←' : '→'} ${String(c.summary).slice(0, 110)}${extra}`;
-  lines.push(`${apply ? 'Closed' : 'Would close'} ${r.close.length} open card(s) the source policy would not have created:`);
+  lines.push(`${apply ? 'Closed' : 'Would close'} ${r.close.length} open card(s) the source policy would not have created${teams ? ' (Teams cache only)' : ''}:`);
+  for (const [why, n] of Object.entries(byWhy(r.close))) lines.push(`  ${n}  ${why}`);
+  const hidden = r.close.filter((c: any) => c.superseded_by != null).length;
+  if (hidden) lines.push(`  (${hidden} of them folded under another card, so not on the board)`);
   const groups: Record<string, any[]> = {};
   for (const c of r.close) (groups[c.source] = groups[c.source] || []).push(c);
   for (const [source, list] of Object.entries(groups).sort((a, b) => b[1].length - a[1].length)) {
@@ -149,12 +219,13 @@ function report(r: any, { apply = false }: { apply?: boolean } = {}) {
   lines.push('', `Kept because you acted on them (${r.keep.length}):`);
   for (const c of r.keep) lines.push(line(c, `  [${c.source}; ${c.acted}]`));
   if (r.unfold.length) {
-    lines.push('', `Unfolded — a person's ask that was folded under a closed card (${r.unfold.length}):`);
-    for (const u of r.unfold) lines.push(`  #${u.id} (was under #${u.superseded_by}) ${String(u.summary).slice(0, 110)}`);
+    const up = r.unfold.filter((u: any) => u.to == null).length;
+    lines.push('', `Regrouped — a person's ask that was folded under a closed card (${r.unfold.length}: ${up} back on the board, ${r.unfold.length - up} folded under another):`);
+    for (const u of r.unfold) lines.push(`  #${u.id} (was under #${u.superseded_by}) ${u.to == null ? 'unfolded' : `under #${u.to}`} ${String(u.summary).slice(0, 110)}`);
   }
   if (apply && r.applied) lines.push('', `${r.applied.closed} dropped through the ledger (actor ${ACTOR}); Reopen or \`pa ledger undo\` takes one back.`, `undo SQL: ${r.applied.undoFile}`);
-  else lines.push('', 'Dry run — nothing changed. `pa policy close --apply` closes them.');
+  else lines.push('', `Dry run — nothing changed. \`pa policy close${teams ? ' --teams' : ''} --apply\` closes them.`);
   return lines.join('\n');
 }
 
-module.exports = { run, split, actedBy, bySource, report, ACTOR };
+module.exports = { run, split, actedBy, bySource, byWhy, teamsOnly, regroup, report, ACTOR };
