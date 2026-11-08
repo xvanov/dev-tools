@@ -824,6 +824,37 @@ not in the Map is not done, and a new one gets added there first.
   workflow.
 - [ ] **8.4 Fix loop.** Every failed criterion becomes an item here; fixed by an implementing
   session; the reviewer re-runs. The Map shows each workflow's latest verdict and date.
+  - [ ] **8.4.1 whats-on: tomorrow's meetings are spoken as "today".** `calendarToday()` is a
+    rolling now−2 h..now+24 h window. The fast-lane snapshot lists it as "Meetings (next 24h)" with a
+    bare HH:MM, so on Sunday afternoon Monday's 10:00 and 11:00 come out as "today" (and `pa brief`
+    prints the same rows under TODAY). Put the local day on each meeting, or split them into Today
+    and Tomorrow, in both the snapshot and the brief. Add a router-eval case for an evening "what's on
+    today?" ([acceptance/whats-on.md](acceptance/whats-on.md)).
+  - [ ] **8.4.2 whats-on: the answer turns meeting titles into attendees and drops a meeting.** "a
+    meeting at 10:00 with <title>", "a standup at 11:00 with <team>": the snapshot has titles, not
+    attendees, and the 11:30 meeting is left out. 13 of 13 turns gave this same answer. Tell the
+    answerer to quote titles as titles and to give every meeting (or the count). Add eval cases.
+  - [ ] **8.4.3 whats-on: the fast lane takes 728 ms to the first sentence (target 200).** Median
+    of 10 turns, range 626-843 ms. Router 75 ms, first token 219 ms. The answer is one 20-word
+    sentence, so sentence-by-sentence TTS cannot start until it ends. Lead with a short clause (for
+    example "Nothing left today."), let TTS start at a clause boundary, and get the first token
+    under 200 ms.
+  - [ ] **8.4.4 whats-on: whisper takes 259 ms (target 250).** Median of 13, range 190-526 ms (the
+    request adds about 15 ms). Calls after an idle gap take 400-530 ms. Keep the model warm, and
+    check its size, beam and compute type against the target.
+  - [ ] **8.4.5 whats-on: smart-turn alone is over the talk-page budget.** POST /api/talk/endpoint
+    takes 221 ms (median of 10, 96-459 ms). Even after the 96 ms VAD shortcut, end of speech to the
+    transcription request is at least ~317 ms (target 150). Make the endpoint faster, or start the
+    transcription while smart-turn decides.
+  - [ ] **8.4.6 whats-on: first audio takes 1.6-1.8 s (target 700).** In the e2e: 1792 ms median
+    of 3 (1330-2619 ms), without the talk-page hop. Summing the probe medians gives ~1.6 s. Kokoro's
+    first byte alone is 312 ms (median of 13, 247-734 ms). The hop targets already add up to 600 ms
+    before TTS starts, so the budget only fits if TTS's first byte is about 100 ms.
+  - [ ] **8.4.7 whats-on: the e2e understates or misses hops.** The fast-lane hop is timed to the
+    first token, not the first sentence. The voice hop starts TTS only after the whole turn and leaves
+    out the talk-page hop. The talk-page hop is not measured at all (/api/talk/endpoint could be).
+    The Ask screenshot shows the idle Talk page, not the turn. Time the first sentence, add the
+    smart-turn call, and capture the page after a driven turn.
 - [ ] **8.5 Architecture map review.** A full pass over `architecture.json` (the `/architecture`
   page) against the finished system: every component, process, port, table, tool, workflow and
   storage location as it now runs on both stacks (jarvisd, ptyd, native factory, SQLite,
