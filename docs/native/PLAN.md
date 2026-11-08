@@ -123,7 +123,7 @@ request); voice never approves high-risk actions alone; work and personal stacks
   cargo/sccache caches land with phases 1 and 5 (T7). Raw job logs are not downloadable from the work laptop
   (blob host blocked), so test steps run through .github/scripts/run.sh, which republishes failing lines as
   an annotation (`gh api repos/xvanov/dev-tools/check-runs/<job id>/annotations`). Follow-ups:
-  - **T6a** software-factory CI leg is informational (continue-on-error) on both OS: on Linux 38 tests fail
+  - [x] **T6a** (done, fec5637) software-factory CI leg was informational (continue-on-error) on both OS: on Linux 38 tests fail
     because this public repo does not track apps/sacrifice or bench/swebench (plus the gitignore test
     assumes a repo-root layout), and the suite takes ~10 min on a 2-core runner. T3 skips-when-absent, then
     flip the leg to blocking on Linux; Windows stays informational until phase 2.3.
