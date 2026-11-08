@@ -39,7 +39,8 @@ module.exports = {
     const name = uniq('proj');
     const alias = uniq('alias');
     const id = await seed.memProject({ name, alias });
-    assert.deepStrictEqual(await repos.memory.projectByNameOrAlias(name.toUpperCase()), { id: String(id), name });
+    const got = await repos.memory.projectByNameOrAlias(name.toUpperCase());
+    assert.deepStrictEqual({ ...got, id: String(got.id) }, { id: String(id), name }); // pg: bigint as a string; SQLite: a number
     assert.strictEqual(Number((await repos.memory.projectByNameOrAlias(alias.toUpperCase())).id), id);
     assert.strictEqual(await repos.memory.projectByNameOrAlias(uniq('nobody')), null);
   },
@@ -805,7 +806,7 @@ module.exports = {
     const { id, itemId } = await extracted(repos, seed, { occurredAt: occurred, validUntil: until, vector: vec(9), confidence: 0.4, status: 'pending_review', label: 'lbl', kind: 'blocker' });
     const r = await repos.memory.claimById(id);
     assert.deepStrictEqual(
-      [r.subject_kind, r.subject_label, r.kind, r.source_item_id, r.source_kind, r.confidence, r.status, r.origin, r.extracted_by, r.valid_at.getTime(), r.invalid_at.getTime()],
+      [r.subject_kind, r.subject_label, r.kind, String(r.source_item_id), r.source_kind, r.confidence, r.status, r.origin, r.extracted_by, r.valid_at.getTime(), r.invalid_at.getTime()],
       ['topic', 'lbl', 'blocker', String(itemId), 'graph_mail', 0.4, 'pending_review', 'distill', 'contract-v1', occurred.getTime(), until.getTime()]
     );
     assert.ok(!ids(await repos.memory.claimsMissingEmbedding(100000)).includes(id), 'the vector was stored');
