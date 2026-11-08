@@ -102,6 +102,10 @@ jobs:
           cache: npm
           cache-dependency-path: termhub/package-lock.json
       - run: npm ci
+      # node-pty's prebuilt spawn-helper loses its exec bit through the npm tarball on
+      # macOS (posix_spawnp failed); restore it.
+      - if: runner.os == 'macOS'
+        run: chmod +x node_modules/node-pty/prebuilds/*/spawn-helper
       - run: bash $GITHUB_WORKSPACE/.github/scripts/run.sh npm test
         shell: bash
 
