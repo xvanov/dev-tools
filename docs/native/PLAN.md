@@ -38,6 +38,7 @@ Design rationale: the plan page (proposal, 7 Nov 2026) and the research summary 
 | D11 | 2026-11-07 | **Implementation runs on the work laptop (Windows).** Two GitHub identities: `xvanov` (personal; this repo) and `kalinivanov-innergy` (work) | Git uses the SSH host aliases `github-xvanov` / `github-innergy`. `gh` picks the account by repo owner, never by whichever is active (P1). |
 | D12 | 2026-11-07 | **Desktop only; no week-long shadow run** | Phone app and the `phone` workflow are out of scope: 7.6 is the Tauri desktop shell only, Phase 8 skips `phone`. 3.4 is a one-shot comparison over a recorded query set instead of a week of shadowing. |
 | D13 | 2026-11-07 | **Each stack runs its own factory**; this repo gets a factory app and GitHub Actions CI | The work laptop's PA stops dispatching to the personal machine's factory (it crossed stacks); it uses a local factory running natively on Windows: item 2.3 is pulled forward into phase 0, with no WSL interim step. A factory app for `xvanov/dev-tools` is registered on both stacks so the golden path has a target; T6 adds the CI the "CI done" hop waits on. |
+| D14 | 2026-11-07 | **No macOS**: Windows and Linux only | No macOS CI jobs, no macOS sandbox, no macOS install in Exit 7. Both stacks run on Windows or Linux. |
 
 ## Prerequisites (before phase 0)
 
@@ -93,7 +94,7 @@ request); voice never approves high-risk actions alone; work and personal stacks
   keep the full suite for CI. Target < 5 s.
 - [ ] **T5 Timing budget in CI.** Fail CI if any single test file takes > 5 s or the suite
   exceeds its target; print the 10 slowest.
-- [ ] **T6 CI matrix.** GitHub Actions: Windows, macOS, Linux jobs in parallel, dependency
+- [ ] **T6 CI matrix.** GitHub Actions: Windows and Linux jobs in parallel (D14), dependency
   caches (Bun, cargo with sccache, uv). Required green before an item is ticked.
 - [ ] **T7 Build pipeline (from phase 4).** `bun build --compile` per OS in parallel;
   `cargo build` with sccache and incremental; one command builds everything; incremental
@@ -262,11 +263,11 @@ run mid-step; a job continued on an existing branch (`--branch`).
 
 - [ ] **5.1** `ptyd` in Rust (`portable-pty`), same WebSocket protocol, so the UI keeps working;
   terminals survive jarvisd restarts.
-- [ ] **5.2** Agent sandbox per run: sandbox-runtime on macOS/Linux, restricted account on
+- [ ] **5.2** Agent sandbox per run: sandbox-runtime on Linux, restricted account on
   Windows, egress allowlist proxy.
 - [ ] **5.3** Credential broker: keys never enter the sandbox; pushes and PRs go through the
   broker, checked against the run's delivery ceiling.
-- [ ] **Exit 5:** agents run sandboxed on all three OSes; termhub's node-pty host retired.
+- [ ] **Exit 5:** agents run sandboxed on Windows and Linux; termhub's node-pty host retired.
 
 ## Phase 6: factory into TypeScript
 
@@ -283,7 +284,7 @@ run mid-step; a job continued on an existing branch (`--branch`).
 - [ ] **7.5** OpenTelemetry into Meter, including the separate Claude subscription credit pool
   (since 15 Jun 2026) with API fallback when it runs out.
 - [ ] **7.6** Tauri desktop shell (phone app out of scope, D12).
-- [ ] **Exit 7:** install on a fresh Windows, macOS and Linux machine from one artifact.
+- [ ] **Exit 7:** install on a fresh Windows and a fresh Linux machine from one artifact each.
 
 ## Phase 8: workflow acceptance review (the last phase; D10)
 
@@ -321,7 +322,7 @@ not in the Map is not done, and a new one gets added there first.
 
 - Claude subscription billing changed 15 Jun 2026: headless use draws from a separate credit
   pool. Meter must track it.
-- Windows sandboxing is the least mature of the three OSes.
+- Windows sandboxing is the least mature of the two OSes.
 - SQLite move: dialect bugs, FTS ranking drift, rerank thresholds need recalibrating (3.4).
 - Still moving: MCP auth spec, Tauri mobile, sqlite-vec's nearest-neighbour index (not needed below ~1M
   vectors; exact scan is 10–30 ms).
