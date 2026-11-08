@@ -7,8 +7,14 @@
 //   GET  /api/meetings/upcoming      the next 24h: kind, skip reason, brief
 //   GET  /api/meetings/brief/:id     one brief, with its cited evidence
 //   POST /api/meetings/brief {eventId, force}   write a brief now (no toast)
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
 
-async function route(method, url, body) {
+type Row = import('../repo/types.ts').Row;
+type Req = import('http').IncomingMessage;
+type Res = import('http').ServerResponse;
+
+async function route(method: string, url: URL, body: Row) {
   const meetings = require('../meetings');
   if (method === 'GET' && url.pathname === '/api/meetings/overview') {
     const days = Math.max(1, Math.min(Number(url.searchParams.get('days')) || 1, 90));

@@ -343,7 +343,7 @@ async function handle(req, res) {
 
   // Workflow cost ceilings (dashboard/workflowLimits.js): GET, and a POST behind X-PA there.
   if (url.pathname === '/api/workflow-limits') {
-    if (await require('./workflowLimits').route(req, res, url, { send, readJson })) return;
+    if (await require('./workflowLimits.ts').route(req, res, url, { send, readJson })) return;
   }
 
   // The Memory tab (dashboard/memory.js). Same guards: a POST needs X-PA.
@@ -358,7 +358,7 @@ async function handle(req, res) {
   if (url.pathname.startsWith('/api/meetings/')) {
     if (req.method === 'POST' && req.headers['x-pa'] !== '1') return send(res, 403, { error: 'missing X-PA header' });
     const body = req.method === 'POST' ? await readJson(req) : {};
-    const out = await require('./meetings').route(req.method, url, body);
+    const out = await require('./meetings.ts').route(req.method, url, body);
     return out === undefined ? send(res, 404, { error: 'not found' }) : send(res, 200, out ?? null);
   }
 
@@ -366,7 +366,7 @@ async function handle(req, res) {
   if (url.pathname === '/api/debriefs' || url.pathname.startsWith('/api/debriefs/')) {
     if (req.method === 'POST' && req.headers['x-pa'] !== '1') return send(res, 403, { error: 'missing X-PA header' });
     const body = req.method === 'POST' ? await readJson(req) : {};
-    const out = await require('./debriefs').route(req.method, url, body);
+    const out = await require('./debriefs.ts').route(req.method, url, body);
     return out === undefined ? send(res, 404, { error: 'not found' }) : send(res, 200, out ?? null);
   }
 
@@ -378,7 +378,7 @@ async function handle(req, res) {
   if (url.pathname === '/api/routines' || url.pathname.startsWith('/api/routines/')) {
     if (req.method === 'POST' && req.headers['x-pa'] !== '1') return send(res, 403, { error: 'missing X-PA header' });
     const body = req.method === 'POST' ? await readJson(req) : {};
-    const out = await require('./routines').route(req.method, url, body);
+    const out = await require('./routines.ts').route(req.method, url, body);
     return out === undefined ? send(res, 404, { error: 'not found' }) : send(res, 200, out ?? null);
   }
 
@@ -388,7 +388,7 @@ async function handle(req, res) {
   }
   if (url.pathname === '/api/repos' || url.pathname.startsWith('/api/repos/')) {
     if (req.method === 'POST' && req.headers['x-pa'] !== '1') return send(res, 403, { error: 'missing X-PA header' });
-    const out = await require('./repos').route(req.method, url);
+    const out = await require('./repos.ts').route(req.method, url);
     if (out && out.error === 'not found') return send(res, 404, out);
     return out === undefined ? send(res, 404, { error: 'not found' }) : send(res, 200, out);
   }

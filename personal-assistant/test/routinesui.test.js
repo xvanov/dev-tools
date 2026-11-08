@@ -8,7 +8,7 @@ const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
-const { route } = require('../src/dashboard/routines');
+const { route } = require('../src/dashboard/routines.ts');
 
 (async () => {
   const client = fs.readFileSync(path.join(__dirname, '../src/dashboard/routines.client.js'), 'utf8');

@@ -85,7 +85,7 @@ async function report({ days = 7, now = new Date() } = {}) {
     section(async () => summariseSpend(await repo.spend.dailyBreakdown(since, tz))),
     section(() => require('../claudePool').status({ now })),
     // Each workflow's cost ceiling per run, as the user set it (dashboard/workflowLimits.js: the one source).
-    section(async () => require('../dashboard/workflowLimits').effective(require('../dashboard/architecture').load(), await repo.workflowLimits.all())),
+    section(async () => require('../dashboard/workflowLimits.ts').effective(require('../dashboard/architecture').load(), await repo.workflowLimits.all())),
   ]);
   return { days: n, since: since.toISOString(), latency, spend, pool, limits };
 }
