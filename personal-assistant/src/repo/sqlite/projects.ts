@@ -2,28 +2,33 @@
 
 // SQLite twin of src/repo/projects.js (project, project_alias). lower() is
 // ASCII-only here; counts come back as numbers (pg gives bigint strings).
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+type Db = import('../types.ts').Db;
+type Row = import('../types.ts').Row;
 
 const { NOW } = require('./_sql');
 
-function create(db) {
+function create(db: Db) {
   return {
     /** A project by its forge path. */
-    async byGitlabPath(gitlabPath) {
+    async byGitlabPath(gitlabPath: string) {
       return db.one('select * from project where gitlab_path = $1', [gitlabPath]);
     },
 
     /** A project by its clone path. */
-    async byRepoPath(repoPath) {
+    async byRepoPath(repoPath: string) {
       return db.one('select * from project where repo_path = $1', [repoPath]);
     },
 
     /** A project by name, case-insensitive. */
-    async byNameCaseless(name) {
+    async byNameCaseless(name: string) {
       return db.one('select * from project where lower(name) = lower($1)', [name]);
     },
 
     /** Refreshes a project seen again: renamed to `name` when free, paths filled in, reactivated. */
-    async refresh(id, gitlabPath, repoPath, name) {
+    async refresh(id: number | string, gitlabPath: string, repoPath: string, name: string) {
       await db.query(
         `update project set
          name        = case when $4 is not null and lower(name) <> lower($4)
@@ -40,12 +45,12 @@ function create(db) {
     },
 
     /** Inserts a project and returns its id. */
-    async insert(name, gitlabPath, repoPath) {
+    async insert(name: string, gitlabPath: string, repoPath: string) {
       return db.one('insert into project (name, gitlab_path, repo_path) values ($1,$2,$3) returning id', [name, gitlabPath, repoPath]);
     },
 
     /** Files an alias for a project (a corrected alias outranks a seeded one). Whether a row was written. */
-    async upsertAlias(projectId, alias, origin, weight, learnedFrom) {
+    async upsertAlias(projectId: number | string, alias: string, origin: string, weight: number, learnedFrom: unknown) {
       const res = await db.query(
         `insert into project_alias (project_id, alias, origin, weight, learned_from)
      values ($1,$2,$3,$4,$5)
@@ -68,7 +73,7 @@ function create(db) {
     },
 
     /** Retires an active project. */
-    async retire(id, reason) {
+    async retire(id: number | string, reason: string) {
       await db.query(`update project set active = 0, retired_at = ${NOW}, retired_reason = $2 where id = $1 and active`, [id, reason]);
     },
 
@@ -87,7 +92,7 @@ function create(db) {
     },
 
     /** An active project by name, forge path or alias, the exact name match first. */
-    async byNameOrAlias(name) {
+    async byNameOrAlias(name: string) {
       return db.one(
         `select * from project
       where active
@@ -114,7 +119,7 @@ function create(db) {
       return db.rows('select name, repo_path from project where active');
     },
     /** The active project whose folder or forge path is repoPath (forge path caseless), or null. */
-    async activeByRepo(repoPath) {
+    async activeByRepo(repoPath: string) {
       return db.one(
         `select id, repo_path, gitlab_path from project
       where active and (repo_path = $1 or lower(gitlab_path) = lower($1)) limit 1`,
@@ -123,12 +128,12 @@ function create(db) {
     },
 
     /** One project row by id, or null. */
-    async rowById(id) {
+    async rowById(id: number | string) {
       return db.one('select * from project where id = $1', [id]);
     },
 
     /** A project by name or forge path (caseless), or by an alias; null when none. */
-    async findLoose(name) {
+    async findLoose(name: string) {
       return db.one(
         `select * from project
           where lower(name) = lower($1) or lower(gitlab_path) = lower($1)

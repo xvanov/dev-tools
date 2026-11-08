@@ -5,6 +5,11 @@
 // close was judged on); it also owns the commitment's status columns, since
 // the ledger is the one way they change (DURABLE.md 2.1). Callers:
 // src/ledger (index.js, reconcile.js).
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+type Db = import('./types.ts').Db;
+type Row = import('./types.ts').Row;
 
 // The commitment columns a transition (and its undo) may write: the keys of
 // ledger/core.js plan()'s `set` and `before`.
@@ -16,7 +21,7 @@ const WINDOW_DAYS = 30;
 const SESSION_SETTLE_MINUTES = 10;
 
 // Author forms of a person's identities, in SQL, for `person_id = <expr>`.
-const FORMS_OF = (personExpr) => `(select case pi.kind when 'smtp' then lower(pi.value)
+const FORMS_OF = (personExpr: unknown) => `(select case pi.kind when 'smtp' then lower(pi.value)
                        when 'aad_oid' then 'aad:' || lower(pi.value)
                        when 'github_username' then 'github:' || lower(pi.value) end
          from person_identity pi where pi.person_id = ${personExpr})`;
@@ -89,20 +94,20 @@ const DIRTY = `
             max(r.fetched_at) desc
    limit $2`;
 
-function setClause(cols) {
+function setClause(cols: string[]) {
   for (const k of cols) if (!STATUS_COLUMNS.includes(k)) throw new Error(`a transition does not write commitment.${k}`);
   return cols.map((k, i) => `${k} = $${i + 2}`).join(', ');
 }
 
-function create(db) {
+function create(db: Db) {
   return {
     /** A commitment's status columns, locked for update (inside withTx), or null. */
-    async lockCommitment(commitmentId) {
+    async lockCommitment(commitmentId: number | string) {
       return db.one('select id, status, closed_at, closed_reason, touched_at from commitment where id = $1 for update', [commitmentId]);
     },
 
     /** Writes a commitment's status columns (`set`: STATUS_COLUMNS only). */
-    async setCommitment(commitmentId, set) {
+    async setCommitment(commitmentId: number | string, set: Row) {
       const cols = Object.keys(set);
       await db.query(`update commitment set ${setClause(cols)} where id = $1`, [commitmentId, ...cols.map((k) => set[k])]);
     },
@@ -111,27 +116,27 @@ function create(db) {
      * Records one change. `before` is what it overwrote (plan()'s before).
      * @returns {Promise<number>} the transition id
      */
-    async insertTransition({ commitmentId, from, to, actor, reason, evidenceId, before, at }) {
+    async insertTransition({ commitmentId, from, to, actor, reason, evidenceId, before, at }: { commitmentId?: number | string | null; from?: Date | string | number | null; to?: string | null; actor?: string | null; reason?: string | null; evidenceId?: number | string | null; before?: Row | null; at?: Date | string | number | null }) {
       const t = await db.one(
         `insert into ledger_transition (commitment_id, from_status, to_status, actor, reason, evidence_id, before, at)
          values ($1,$2,$3,$4,$5,$6,$7,$8) returning id`,
         [commitmentId, from, to, actor, reason, evidenceId, before, at]
       );
-      return Number(t.id);
+      return Number(t?.id);
     },
 
     /** One transition, locked for update (inside withTx), or null. */
-    async lockTransition(transitionId) {
+    async lockTransition(transitionId: number | string) {
       return db.one('select * from ledger_transition where id = $1 for update', [transitionId]);
     },
 
     /** Marks a transition undone, with what the undo did (`result`). */
-    async markUndone(transitionId, result) {
+    async markUndone(transitionId: number | string, result: string) {
       await db.query('update ledger_transition set undone_at = now(), undo = $2 where id = $1', [transitionId, result]);
     },
 
     /** The newest change of a commitment that is not undone, or null. */
-    async latest(commitmentId) {
+    async latest(commitmentId: number | string) {
       const list = await db.rows(
         `select * from ledger_transition where commitment_id = $1 and undone_at is null order by at desc, id desc limit 1`,
         [commitmentId]
@@ -140,7 +145,7 @@ function create(db) {
     },
 
     /** Every change of a commitment, newest first, with its evidence's quote, item and confidence. */
-    async history(commitmentId) {
+    async history(commitmentId: number | string) {
       return db.rows(
         `select t.*, e.quote, e.source_item_id, e.confidence
        from ledger_transition t left join ledger_evidence e on e.id = t.evidence_id
@@ -156,7 +161,7 @@ function create(db) {
      * @param {Array<number|string>} commitmentIds
      * @returns {Promise<{commitment_id: number|string, quote: string}[]>}
      */
-    async progressQuotes(commitmentIds) {
+    async progressQuotes(commitmentIds: unknown[]) {
       return db.rows(
         `select commitment_id, quote from ledger_evidence
         where commitment_id = any($1::bigint[]) and effect = 'progresses' and quote is not null
@@ -175,12 +180,12 @@ function create(db) {
      * waiting.
      * @param {{myForms: string[], limit: number, perCommitment: number, ids?: number[]|null}} o
      */
-    async dirty({ myForms, limit, perCommitment, ids = null }) {
+    async dirty({ myForms, limit, perCommitment, ids = null }: { myForms?: unknown[] | null; limit?: number | null; perCommitment?: number | null; ids?: unknown[] | null }) {
       return db.rows(DIRTY, [myForms, limit, perCommitment, ids && ids.length ? ids : null]);
     },
 
     /** Which of these commitments you reopened yourself (and did not undo): their ids, as strings. */
-    async reopenedByYou(ids) {
+    async reopenedByYou(ids: unknown[]) {
       const list = await db.rows(
         `select distinct commitment_id from ledger_transition
       where commitment_id = any($1::bigint[]) and actor = 'you' and to_status = 'open' and undone_at is null`,
@@ -193,7 +198,7 @@ function create(db) {
      * The judge's evidence for one (commitment, item, judge version): inserted,
      * or updated in place when judged again. Not applied. Resolves its id.
      */
-    async upsertEvidence({ commitmentId, sourceItemId, effect, quote, confidence, extractedBy }) {
+    async upsertEvidence({ commitmentId, sourceItemId, effect, quote, confidence, extractedBy }: { commitmentId?: number | string | null; sourceItemId?: number | string | null; effect?: string | null; quote?: string | null; confidence?: number | null; extractedBy?: string | null }) {
       const ev = (
         await db.query(
           `insert into ledger_evidence (commitment_id, source_item_id, effect, quote, confidence, method, extracted_by, applied)
@@ -204,11 +209,11 @@ function create(db) {
           [commitmentId, sourceItemId, effect, quote, confidence, extractedBy]
         )
       ).rows[0];
-      return Number(ev.id);
+      return Number(ev?.id);
     },
 
     /** Marks evidence as applied (its close went through). */
-    async markEvidenceApplied(evidenceId) {
+    async markEvidenceApplied(evidenceId: number | string) {
       await db.query('update ledger_evidence set applied = true where id = $1', [evidenceId]);
     },
 
@@ -217,7 +222,7 @@ function create(db) {
      * moves to the newest of their fetched_at (computed in SQL, keeping
      * microseconds), never backwards.
      */
-    async markChecked(commitmentId, itemIds) {
+    async markChecked(commitmentId: number | string, itemIds: unknown[]) {
       await db.query(
         `update commitment set ledger_checked_at = greatest(coalesce(ledger_checked_at, t.through), t.through)
              from (select max(fetched_at) as through from source_item where id = any($2::bigint[])) t
@@ -231,7 +236,7 @@ function create(db) {
      * least `minConfidence`), newest per open commitment, shown on the survivor
      * of a duplicate group.
      */
-    async proposals({ limit, minConfidence }) {
+    async proposals({ limit, minConfidence }: { limit?: number | null; minConfidence?: number | null }) {
       return db.rows(
         // Evidence found for a copy that was later folded into a survivor
         // (superseded_by) is shown on the survivor: the copy is not on the board,
@@ -250,12 +255,12 @@ function create(db) {
     },
 
     /** One evidence row, or null. */
-    async evidenceById(evidenceId) {
+    async evidenceById(evidenceId: number | string) {
       return db.one('select * from ledger_evidence where id = $1', [evidenceId]);
     },
 
     /** Your answer to a proposal: `decision` accepted | rejected, and whether its close applied. */
-    async decideEvidence(evidenceId, decision, applied) {
+    async decideEvidence(evidenceId: number | string, decision: string, applied: boolean) {
       await db.query('update ledger_evidence set decision = $2, decided_at = now(), applied = $3 where id = $1', [evidenceId, decision, applied]);
     },
 
@@ -277,7 +282,7 @@ function create(db) {
      * The pending (unapplied, undecided) evidence that a commitment is done or moot, newest first, at most two.
      * @returns {Promise<Array<{effect, quote, confidence}>>}
      */
-    async pendingEvidenceFor(commitmentId) {
+    async pendingEvidenceFor(commitmentId: number | string) {
       return db.rows(
         `select effect, quote, confidence from ledger_evidence
       where commitment_id = $1 and effect in ('closes','moot') and not applied and decision is null
@@ -290,7 +295,7 @@ function create(db) {
      * The id of the newest not yet undone transition the reply-close pass made on a commitment.
      * @returns {Promise<{id}|null>}
      */
-    async latestReplyCloseTransition(commitmentId) {
+    async latestReplyCloseTransition(commitmentId: number | string) {
       return db.one(
         `select id from ledger_transition where commitment_id = $1 and actor = 'reply-close' and undone_at is null
       order by at desc, id desc limit 1`,
@@ -304,7 +309,7 @@ function create(db) {
      * The source items evidence rows point at, for a "looks done" card.
      * @param {Array<number|string>} evidenceIds
      */
-    async evidenceItems(evidenceIds) {
+    async evidenceItems(evidenceIds: unknown[]) {
       return db.rows(
         `select e.id as evidence_id, si.id, si.source, si.external_id, si.thread_external_id, si.subject, si.occurred_at,
                   si.raw - 'members' - 'memberEmails' - 'audioPaths' as raw

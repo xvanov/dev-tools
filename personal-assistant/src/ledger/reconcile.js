@@ -41,7 +41,7 @@ const MAX_FAILURES = 3;
 const failures = new Map();
 
 // The dirty set's SQL lives in src/repo/ledger.js (plan 1.2); kept on this module's exports.
-const { DIRTY } = require('../repo/ledger');
+const { DIRTY } = require('../repo/ledger.ts');
 
 async function myForms() {
   const ids = await repo.people.myIdentities();

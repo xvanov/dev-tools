@@ -5,12 +5,17 @@
 // manual corrections) and project_alias, as src/repos (the repo sync, the
 // Repos tab and `pa repos`) reads and writes them. repo_delivery is for the
 // dispatch chunk. Callers: src/repos.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+type Db = import('./types.ts').Db;
+type Row = import('./types.ts').Row;
 
 const ROW_COLUMNS = `id, name, gitlab_path, repo_path, active, forge, remote_urls, local_paths, default_branch, description,
   profile, profile_source, profile_hash, profiled_at, manual, hidden, origin, branches, last_pr_at, last_commit_at,
   last_session_at, pr_count, session_count, synced_at, retired_at, retired_reason`;
 
-function create(db) {
+function create(db: Db) {
   return {
     // ---- projects as repos -------------------------------------------------------
 
@@ -25,7 +30,7 @@ function create(db) {
     },
 
     /** One project row (ROW_COLUMNS), or null. */
-    async rowById(id) {
+    async rowById(id: number | string) {
       return db.one(`select ${ROW_COLUMNS} from project where id = $1`, [id]);
     },
 
@@ -35,23 +40,23 @@ function create(db) {
     },
 
     /** A project's aliases with where each came from, by origin then alias. */
-    async aliasesOf(id) {
+    async aliasesOf(id: number | string) {
       return db.rows('select alias, origin from project_alias where project_id = $1 order by origin, alias', [id]);
     },
 
     /** Adds an active project (or touches the one with that name); resolves its id. */
-    async insert({ name, gitlabPath, forge, origin }) {
+    async insert({ name, gitlabPath, forge, origin }: { name?: string | null; gitlabPath?: string | null; forge?: string | null; origin?: string | null }) {
       const r = await db.one(
         `insert into project (name, gitlab_path, forge, origin, active) values ($1, $2, $3, $4, true)
      on conflict (name) do update set name = excluded.name
      returning id`,
         [name, gitlabPath, forge, origin]
       );
-      return r.id;
+      return r?.id;
     },
 
     /** A repo that moved forge: the new path and forge, active again, its folder kept or cleared. */
-    async takeOver(id, fullName, forge, repoPath) {
+    async takeOver(id: number | string, fullName: string, forge: string, repoPath: string) {
       await db.query(
         `update project set gitlab_path = $2, forge = $3, active = true, retired_at = null, retired_reason = null, repo_path = $4
       where id = $1`,
@@ -64,7 +69,7 @@ function create(db) {
      * `branches` are JSON text; `profileAdd` is JSON merged into the profile.
      * Dates and the session count only replace what is there when given.
      */
-    async saveSynced(id, { forge, remoteUrls, localPaths, defaultBranch, branches, lastCommitAt, lastSessionAt, sessionCount, profileAdd }) {
+    async saveSynced(id: number | string, { forge, remoteUrls, localPaths, defaultBranch, branches, lastCommitAt, lastSessionAt, sessionCount, profileAdd }: { forge?: string | null; remoteUrls?: unknown; localPaths?: unknown; defaultBranch?: unknown; branches?: unknown; lastCommitAt?: unknown; lastSessionAt?: unknown; sessionCount?: unknown; profileAdd?: unknown }) {
       await db.query(
         `update project set forge = $2, remote_urls = $3, local_paths = $4, default_branch = $5, branches = $6,
               last_commit_at = coalesce($7, last_commit_at), last_session_at = coalesce($8, last_session_at),
@@ -91,7 +96,7 @@ function create(db) {
     },
 
     /** Saves a profile: description, profile (JSON text), where it came from, the material's hash. */
-    async saveProfile(id, description, profile, source, hash) {
+    async saveProfile(id: number | string, description: string, profile: string, source: string, hash: string) {
       await db.query(
         `update project set description = $2, profile = $3, profile_source = $4, profile_hash = $5, profiled_at = now() where id = $1`,
         [id, description, profile, source, hash]
@@ -109,7 +114,7 @@ function create(db) {
     },
 
     /** A repo's id by name, forge path, alias or folder (any case), active first; null when none. */
-    async findId(ref) {
+    async findId(ref: unknown) {
       const r = await db.one(
         `select id from project
       where lower(name) = lower($1) or lower(gitlab_path) = lower($1)
@@ -122,37 +127,37 @@ function create(db) {
     },
 
     /** A project's name ({name}), or null. */
-    async nameOf(id) {
+    async nameOf(id: number | string) {
       return db.one('select name from project where id = $1', [id]);
     },
 
     /** Sets a project's folder. */
-    async setRepoPath(id, repoPath) {
+    async setRepoPath(id: number | string, repoPath: string) {
       await db.query('update project set repo_path = $2 where id = $1', [id, repoPath]);
     },
 
     /** Brings a project back: active, shown, not retired. */
-    async revive(id) {
+    async revive(id: number | string) {
       await db.query('update project set active = true, hidden = false, retired_at = null, retired_reason = null where id = $1', [id]);
     },
 
     /** A project's manual corrections ({manual}), or null. */
-    async manualOf(id) {
+    async manualOf(id: number | string) {
       return db.one('select manual from project where id = $1', [id]);
     },
 
     /** Replaces a project's manual corrections (JSON text). */
-    async setManual(id, manual) {
+    async setManual(id: number | string, manual: string) {
       await db.query('update project set manual = $2 where id = $1', [id, manual]);
     },
 
     /** Hides a project from the Repos tab, or shows it again. */
-    async setHidden(id, hidden) {
+    async setHidden(id: number | string, hidden: boolean) {
       await db.query('update project set hidden = $2 where id = $1', [id, hidden]);
     },
 
     /** A project's open, unfolded commitments, newest first, at most 20: {id, summary, status}. */
-    async openCommitments(id) {
+    async openCommitments(id: number | string) {
       return db.rows(
         `select id, summary, status from commitment where project_id = $1 and status in ('open','dispatched') and superseded_by is null order by id desc limit 20`,
         [id]
@@ -167,7 +172,7 @@ function create(db) {
     },
 
     /** Inserts or refreshes a GitHub PR. `p`: {repo, number, title, state, draft, headRef, baseRef, url, author, createdAt, updatedAt, mergedAt, closedAt, summary, body}. */
-    async upsertPr(projectId, p) {
+    async upsertPr(projectId: number | string, p: Row) {
       await db.query(
         `insert into repo_pr (project_id, forge, repo, number, title, state, draft, head_ref, base_ref, url, author,
                             created_at, updated_at, merged_at, closed_at, summary, body, synced_at)
@@ -183,7 +188,7 @@ function create(db) {
     },
 
     /** A project's open PRs with a head branch: {number, head_ref, updated_at}. */
-    async openPrBranches(projectId) {
+    async openPrBranches(projectId: number | string) {
       return db.rows(
         `select number, head_ref, updated_at from repo_pr where project_id = $1 and state = 'open' and head_ref is not null`,
         [projectId]
@@ -191,7 +196,7 @@ function create(db) {
     },
 
     /** Each project's newest `perProject` PRs, newest first overall. */
-    async recentPrs(projectIds, perProject) {
+    async recentPrs(projectIds: unknown[], perProject: number) {
       return db.rows(
         `select * from (
            select project_id, repo, number, title, state, draft, head_ref, url, summary, created_at, updated_at, merged_at, closed_at,
@@ -203,7 +208,7 @@ function create(db) {
     },
 
     /** A project's PRs, newest first, at most 200. */
-    async prsOf(projectId) {
+    async prsOf(projectId: number | string) {
       return db.rows(
         `select project_id, repo, number, title, state, draft, head_ref, url, summary, created_at, updated_at, merged_at, closed_at
        from repo_pr where project_id = $1 order by updated_at desc nulls last limit 200`,
@@ -214,12 +219,12 @@ function create(db) {
     // --- for src/dispatch/delivery.js (chunk E)
 
     /** A repo's default delivery level: {delivery}, or null. */
-    async deliveryOf(repo) {
+    async deliveryOf(repo: unknown) {
       return db.one('select delivery from repo_delivery where repo = $1', [repo]);
     },
 
     /** Sets a repo's default delivery level. */
-    async setDelivery(repo, delivery) {
+    async setDelivery(repo: unknown, delivery: string) {
       await db.query(
         `insert into repo_delivery (repo, delivery) values ($1, $2)
      on conflict (repo) do update set delivery = excluded.delivery, updated_at = now()`,
@@ -228,7 +233,7 @@ function create(db) {
     },
 
     /** Clears a repo's default. @returns {Promise<boolean>} whether it had one */
-    async clearDelivery(repo) {
+    async clearDelivery(repo: unknown) {
       const r = await db.query('delete from repo_delivery where repo = $1', [repo]);
       return (r.rowCount || 0) > 0;
     },

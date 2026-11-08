@@ -4,27 +4,32 @@
 // the commitment's status columns). The reconciler's dirty set uses a window
 // function where Postgres uses a lateral join; the repo-folder match on
 // another machine's cwd compares path segments with LIKE instead of arrays.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
 
-const { STATUS_COLUMNS, WINDOW_DAYS } = require('../ledger');
+type Db = import('../types.ts').Db;
+type Row = import('../types.ts').Row;
+
+const { STATUS_COLUMNS, WINDOW_DAYS } = require('../ledger.ts');
 const { NOW, sinceMs } = require('./_sql');
 
 const SESSION_SETTLE_MINUTES = 10;
 
 /** Text instants an expression column returned (no declared type to decode by) as Dates. */
-function dates(row, ...cols) {
-  if (row) for (const c of cols) if (typeof row[c] === 'string') row[c] = new Date(row[c]);
+function dates(row: Row | null, ...cols: string[]) {
+  if (row) for (const c of cols) { const v = row[c]; if (typeof v === 'string') row[c] = new Date(v); }
   return row;
 }
 
 // Author forms of a person's identities, for `person_id = <expr>` (as Postgres).
-const FORMS_OF = (personExpr) => `(select case pi.kind when 'smtp' then lower(pi.value)
+const FORMS_OF = (personExpr: unknown) => `(select case pi.kind when 'smtp' then lower(pi.value)
                        when 'aad_oid' then 'aad:' || lower(pi.value)
                        when 'github_username' then 'github:' || lower(pi.value) end
          from person_identity pi where pi.person_id = ${personExpr})`;
 
 // A path with backslashes as slashes, lower-cased; and its last segment.
-const SLASHED = (x) => `lower(replace(${x}, char(92), '/'))`;
-const BASENAME = (x) => `substr(${SLASHED(x)}, length(rtrim(${SLASHED(x)}, replace(${SLASHED(x)}, '/', ''))) + 1)`;
+const SLASHED = (x: unknown) => `lower(replace(${x}, char(92), '/'))`;
+const BASENAME = (x: unknown) => `substr(${SLASHED(x)}, length(rtrim(${SLASHED(x)}, replace(${SLASHED(x)}, '/', ''))) + 1)`;
 
 // $1 = my author forms, $2 = max commitments, $3 = max items per commitment,
 // $4 = only these commitment ids (null: all), $5 = sessions settled before,
@@ -80,46 +85,46 @@ const DIRTY = `
             max(cand.fetched_at) desc
    limit $2`;
 
-function setClause(cols) {
+function setClause(cols: string[]) {
   for (const k of cols) if (!STATUS_COLUMNS.includes(k)) throw new Error(`a transition does not write commitment.${k}`);
   return cols.map((k, i) => `${k} = $${i + 2}`).join(', ');
 }
 
-function create(db) {
+function create(db: Db) {
   return {
     /** A commitment's status columns (inside withTx the transaction holds the write lock), or null. */
-    async lockCommitment(commitmentId) {
+    async lockCommitment(commitmentId: number | string) {
       return db.one('select id, status, closed_at, closed_reason, touched_at from commitment where id = $1', [commitmentId]);
     },
 
     /** Writes a commitment's status columns (`set`: STATUS_COLUMNS only). */
-    async setCommitment(commitmentId, set) {
+    async setCommitment(commitmentId: number | string, set: Row) {
       const cols = Object.keys(set);
       await db.query(`update commitment set ${setClause(cols)} where id = $1`, [commitmentId, ...cols.map((k) => set[k])]);
     },
 
     /** Records one change. Resolves the transition id. */
-    async insertTransition({ commitmentId, from, to, actor, reason, evidenceId, before, at }) {
+    async insertTransition({ commitmentId, from, to, actor, reason, evidenceId, before, at }: { commitmentId?: number | string | null; from?: Date | string | number | null; to?: string | null; actor?: string | null; reason?: string | null; evidenceId?: number | string | null; before?: Row | null; at?: Date | string | number | null }) {
       const t = await db.one(
         `insert into ledger_transition (commitment_id, from_status, to_status, actor, reason, evidence_id, before, at)
          values ($1,$2,$3,$4,$5,$6,$7,$8) returning id`,
         [commitmentId, from, to, actor, reason, evidenceId, before, at]
       );
-      return Number(t.id);
+      return Number(t?.id);
     },
 
     /** One transition (inside withTx), or null. */
-    async lockTransition(transitionId) {
+    async lockTransition(transitionId: number | string) {
       return db.one('select * from ledger_transition where id = $1', [transitionId]);
     },
 
     /** Marks a transition undone, with what the undo did (`result`). */
-    async markUndone(transitionId, result) {
+    async markUndone(transitionId: number | string, result: string) {
       await db.query(`update ledger_transition set undone_at = ${NOW}, undo = $2 where id = $1`, [transitionId, result]);
     },
 
     /** The newest change of a commitment that is not undone, or null. */
-    async latest(commitmentId) {
+    async latest(commitmentId: number | string) {
       const list = await db.rows(
         'select * from ledger_transition where commitment_id = $1 and undone_at is null order by at desc, id desc limit 1',
         [commitmentId]
@@ -128,7 +133,7 @@ function create(db) {
     },
 
     /** Every change of a commitment, newest first, with its evidence's quote, item and confidence. */
-    async history(commitmentId) {
+    async history(commitmentId: number | string) {
       return db.rows(
         `select t.*, e.quote, e.source_item_id, e.confidence
        from ledger_transition t left join ledger_evidence e on e.id = t.evidence_id
@@ -138,7 +143,7 @@ function create(db) {
     },
 
     /** The reconciler's "progresses" quotes for commitments, newest first. */
-    async progressQuotes(commitmentIds) {
+    async progressQuotes(commitmentIds: unknown[]) {
       return db.rows(
         `select commitment_id, quote from ledger_evidence
         where commitment_id in (select value from json_each($1)) and effect = 'progresses' and quote is not null
@@ -148,7 +153,7 @@ function create(db) {
     },
 
     /** Open asks with items the judge has not seen (see src/repo/ledger.js). */
-    async dirty({ myForms, limit, perCommitment, ids = null }) {
+    async dirty({ myForms, limit, perCommitment, ids = null }: { myForms?: unknown[] | null; limit?: number | null; perCommitment?: number | null; ids?: unknown[] | null }) {
       const rows = await db.rows(DIRTY, [
         myForms || [],
         limit,
@@ -158,14 +163,14 @@ function create(db) {
         sinceMs(15 * 60_000),
       ]);
       for (const r of rows) {
-        r.item_ids = JSON.parse(r.item_ids);
+        r.item_ids = JSON.parse(String(r.item_ids));
         dates(r, 'through', 'asked_at');
       }
       return rows;
     },
 
     /** Which of these commitments you reopened yourself (and did not undo): their ids, as strings. */
-    async reopenedByYou(ids) {
+    async reopenedByYou(ids: unknown[]) {
       const list = await db.rows(
         `select distinct commitment_id from ledger_transition
       where commitment_id in (select value from json_each($1)) and actor = 'you' and to_status = 'open' and undone_at is null`,
@@ -175,7 +180,7 @@ function create(db) {
     },
 
     /** The judge's evidence for one (commitment, item, judge version): inserted or updated in place. Resolves its id. */
-    async upsertEvidence({ commitmentId, sourceItemId, effect, quote, confidence, extractedBy }) {
+    async upsertEvidence({ commitmentId, sourceItemId, effect, quote, confidence, extractedBy }: { commitmentId?: number | string | null; sourceItemId?: number | string | null; effect?: string | null; quote?: string | null; confidence?: number | null; extractedBy?: string | null }) {
       const ev = await db.one(
         `insert into ledger_evidence (commitment_id, source_item_id, effect, quote, confidence, method, extracted_by, applied)
          values ($1,$2,$3,$4,$5,'llm',$6,0)
@@ -184,16 +189,16 @@ function create(db) {
          returning id`,
         [commitmentId, sourceItemId, effect, quote, confidence, extractedBy]
       );
-      return Number(ev.id);
+      return Number(ev?.id);
     },
 
     /** Marks evidence as applied (its close went through). */
-    async markEvidenceApplied(evidenceId) {
+    async markEvidenceApplied(evidenceId: number | string) {
       await db.query('update ledger_evidence set applied = 1 where id = $1', [evidenceId]);
     },
 
     /** The judge saw these items: ledger_checked_at moves to the newest of their fetched_at, never backwards. */
-    async markChecked(commitmentId, itemIds) {
+    async markChecked(commitmentId: number | string, itemIds: unknown[]) {
       await db.query(
         `update commitment set ledger_checked_at = max(coalesce(ledger_checked_at, t.through), t.through)
              from (select max(fetched_at) as through from source_item where id in (select value from json_each($2))) t
@@ -203,7 +208,7 @@ function create(db) {
     },
 
     /** Closes the judge proposed, newest per open commitment, shown on the survivor of a duplicate group. */
-    async proposals({ limit, minConfidence }) {
+    async proposals({ limit, minConfidence }: { limit?: number | null; minConfidence?: number | null }) {
       return db.rows(
         `select id, commitment_id, effect, quote, confidence, created_at, summary, direction, source, author_identity, url
        from (
@@ -223,12 +228,12 @@ function create(db) {
     },
 
     /** One evidence row, or null. */
-    async evidenceById(evidenceId) {
+    async evidenceById(evidenceId: number | string) {
       return db.one('select * from ledger_evidence where id = $1', [evidenceId]);
     },
 
     /** Your answer to a proposal: `decision` accepted | rejected, and whether its close applied. */
-    async decideEvidence(evidenceId, decision, applied) {
+    async decideEvidence(evidenceId: number | string, decision: string, applied: boolean) {
       await db.query(`update ledger_evidence set decision = $2, decided_at = ${NOW}, applied = $3 where id = $1`, [evidenceId, decision, Boolean(applied)]);
     },
 
@@ -248,7 +253,7 @@ function create(db) {
     },
 
     /** Pending (unapplied, undecided) evidence that a commitment is done or moot, newest first, at most two. */
-    async pendingEvidenceFor(commitmentId) {
+    async pendingEvidenceFor(commitmentId: number | string) {
       return db.rows(
         `select effect, quote, confidence from ledger_evidence
       where commitment_id = $1 and effect in ('closes','moot') and not applied and decision is null
@@ -258,7 +263,7 @@ function create(db) {
     },
 
     /** The id of the newest not yet undone transition the reply-close pass made on a commitment. */
-    async latestReplyCloseTransition(commitmentId) {
+    async latestReplyCloseTransition(commitmentId: number | string) {
       return db.one(
         `select id from ledger_transition where commitment_id = $1 and actor = 'reply-close' and undone_at is null
       order by at desc, id desc limit 1`,
@@ -267,7 +272,7 @@ function create(db) {
     },
 
     /** The source items evidence rows point at, for a "looks done" card. */
-    async evidenceItems(evidenceIds) {
+    async evidenceItems(evidenceIds: unknown[]) {
       const rows = await db.rows(
         `select e.id as evidence_id, si.id, si.source, si.external_id, si.thread_external_id, si.subject, si.occurred_at,
                   json_remove(si.raw, '$.members', '$.memberEmails', '$.audioPaths') as raw
