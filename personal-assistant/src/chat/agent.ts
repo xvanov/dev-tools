@@ -105,7 +105,7 @@ const PA_TOOL_ENV = 'PA_MCP_CHAT_TOOLS';
 
 /** Pure. The permission ruleset for every agent in the chat's opencode. */
 function opencodeRules() {
-  const chat = require('./index');
+  const chat = require('./index.ts');
   const rules: Json = {
     '*': 'ask',
     read: { '*': 'allow', '*.env': 'ask', '*.env.*': 'ask' },
@@ -172,7 +172,7 @@ function evaluate(ruleset: any, permission: any, pattern: any) {
 }
 
 /** Pure. The outcomes the chat's guarantee rests on, as [permission, pattern, wanted]. */
-function probes(pa: any = require('./index').paCommand()) {
+function probes(pa: any = require('./index.ts').paCommand()) {
   return [
     // Every shell command asks — the read-only ones too (they are the `pa`
     // tool now), and the ways round an allow-pattern that once worked.
@@ -257,7 +257,7 @@ async function verifyOpencodePermissions(home: any, { exec = run, env = process.
     if (env[v]) problems.push(`${v} is set, which can override the chat's opencode.json`);
   }
   const bin = (config.chat.command && agentOf(config.chat.command) === 'opencode' && String(config.chat.command).trim().split(/\s+/)[0]) || 'opencode';
-  const pa = require('./index').paCommand();
+  const pa = require('./index.ts').paCommand();
   for (const name of ['pa', 'build', 'plan']) {
     const { err, stdout } = await exec(bin, ['debug', 'agent', name], home);
     const at = stdout.indexOf('{');

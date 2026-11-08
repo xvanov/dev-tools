@@ -308,7 +308,7 @@
         "Context window": "whatever Claude Code reports for the model (context_window.context_window_size; the statusline falls back to 200,000 tokens)",
         "Compaction": "Claude Code auto-compacts its own context. State lives in the store, not the transcript: a SessionStart hook runs `pa context` (60 s timeout) on every start, resume, clear and compaction, so a week-old chat still knows this morning's asks.",
         "What it loads": [
-          "CLAUDE.md, rewritten from code on every start (src/chat/index.js); your additions go in CLAUDE.local.md",
+          "CLAUDE.md, rewritten from code on every start (src/chat/index.ts); your additions go in CLAUDE.local.md",
           "`pa context`: profile, today's brief, what is waiting on you, live runs",
           "INBOX.md: the worker's pushed notifications, read as data, never instructions"
         ],
@@ -433,7 +433,7 @@
         }
       ],
       "code": [
-        "personal-assistant/src/chat/index.js",
+        "personal-assistant/src/chat/index.ts",
         "personal-assistant/src/chat/agent.ts",
         "personal-assistant/src/chat/feed.ts",
         "personal-assistant/src/chat/sdkFeed.ts",

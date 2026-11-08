@@ -356,7 +356,7 @@ const isV1 = (argv) => argv.includes('--kind') || argv.includes('--runtime');
 
   // The chat (Jarvis as coordinator): reads on the `pa` tool, acts behind a prompt.
   {
-    const chat = require('../src/chat/index');
+    const chat = require('../src/chat/index.ts');
     const mcp = require('../src/mcp/server.ts');
     for (const v of ['factory jobs', 'factory status', 'factory report']) {
       assert.ok(chat.ALLOW_COMMANDS.includes(v) && mcp.READ_VERBS[v], `${v} reads`);

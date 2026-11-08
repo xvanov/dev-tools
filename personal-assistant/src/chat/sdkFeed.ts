@@ -184,7 +184,7 @@ function createInputQueue() {
 
 // The chat's home as the terminal chat has it, read back the same way.
 function defaultPrepare() {
-  const chat = require('./index');
+  const chat = require('./index.ts');
   const home = chat.ensureHome();
   const read = (f: any) => { try { return JSON.parse(fs.readFileSync(path.join(home, '.claude', f), 'utf8')); } catch { return null; } };
   // permissionMode 'default' is passed below; verifyClaudeHome checks the rest.
@@ -204,7 +204,7 @@ function createSdkFeed({
   prepare = defaultPrepare,
   policy = () => require('../policy'),
   root = () => path.join(os.homedir(), '.claude', 'projects'),
-  stateDir = () => require('./index').homeDir(),
+  stateDir = () => require('./index.ts').homeDir(),
   model = () => require('../config.ts').config.chat.model,
   approvalTimeoutMs = () => require('../config.ts').config.chat.approvalTimeoutMs,
   jobLookup = null,

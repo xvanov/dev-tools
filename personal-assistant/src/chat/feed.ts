@@ -100,10 +100,10 @@ function httpError(status: any, message: any) {
  * `ensureSession()` src/chat's, `jobLookup(jobId)` the factory job a voice approval is judged by.
  */
 function createFeed({
-  home = () => require('./index').homeDir(),
+  home = () => require('./index.ts').homeDir(),
   root = projectsRoot,
   hub = () => require('../dispatch/termhub'),
-  ensureSession = () => require('./index').ensureSession(),
+  ensureSession = () => require('./index.ts').ensureSession(),
   jobLookup = null, // (jobId) => {delivery} | null; default: the factory's snapshot (src/policy withJobDelivery)
   pollMs = 1000,
   fastPollMs = 200,
@@ -414,7 +414,7 @@ function stopChat() {
 
 /** POST /api/chat/open and `pa chat`: the terminal session, or the SDK session started. */
 function openChat() {
-  return engine() === 'sdk' ? feed().open() : require('./index').ensureSession();
+  return engine() === 'sdk' ? feed().open() : require('./index.ts').ensureSession();
 }
 
 module.exports = { waitingText, createFeed, feed, engine, openChat, drainChat, undrainChat, stopChat, newestTranscript, SOURCES };
