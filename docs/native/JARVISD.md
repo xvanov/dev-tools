@@ -56,10 +56,22 @@ surfaces move only once everything under them is typed.
 7. **termhub front last**: its HTTP/WebSocket server and the `/pa/` proxy move into jarvisd's
    gateway once `ptyd` (5.1) owns the PTYs; termhub's `server.js` then retires.
 
-How a module moves: rename `x.js` to `x.ts`, type its exports (strict, no `any` at the boundary),
-keep `module.exports` shape via `export =` or named exports plus a CJS-compatible default while
-any `.js` caller remains, run its tests under Bun and Node until Node is retired. One module (or
-one aggregate with its contract file) per commit.
+How a module moves (the pattern is `personal-assistant/src/events/bus.ts`, the first one):
+
+- `git mv x.js x.ts`; callers `require('./x.ts')` (Node resolves no extension to `.ts`).
+- **Erasable syntax only** (no enums, namespaces, parameter properties): Node runs `.ts` by
+  stripping types (default since Node 22.18), Bun natively. Both run the file unchanged.
+- **Stay CommonJS while any `.js` caller remains**: keep `module.exports`; no `import`/`export`
+  statements, not even `import type` or `export interface` (either makes Bun load the file as
+  ESM, where `module` is undefined). Contract types come in by type query:
+  `type BusEvent = import('../../../schemas/types.d.ts').Event;`. Without import/export the file
+  is a script to `tsc`, so local type names must not collide with globals (`Event` becomes
+  `BusEvent`).
+- Strict types on every export; `jarvisd/tsconfig.json` includes `personal-assistant/src/**/*.ts`,
+  so jarvisd's typecheck covers each converted module.
+- Its tests run under Node (the PA suite) and Bun (`jarvisd/scripts/parity.js`). One module, or
+  one aggregate with its contract file, per commit. When a module's last `.js` caller is gone it
+  switches to ES `export`s.
 
 ## Node and Bun side by side
 
@@ -100,4 +112,5 @@ setup; T7's cargo and Bun caches apply.
 - [x] Stage 1: host, Bun parity, compiled build, CI on Windows and Linux.
 - [x] Supervisor runs jarvisd generations (`PA_RUNTIME=bun`), tested with the fixture worker.
 - [ ] A live run of the work stack with `PA_RUNTIME=bun`.
+- [x] First module in strict TS: `src/events/bus.ts` (the pattern above).
 - [ ] Stage 2 onward, as above.

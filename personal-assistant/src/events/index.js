@@ -23,7 +23,7 @@
 // (backfill) and what GET /api/events replays a `g<n>` Last-Event-ID from
 // after a restart or a roll (fromOutbox). Its SQL is src/repo/events.js.
 
-const { createBus, TOPIC } = require('./bus');
+const { createBus, TOPIC } = require('./bus.ts');
 const { logger } = require('../log');
 
 const log = logger('events');

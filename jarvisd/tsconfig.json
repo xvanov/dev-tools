@@ -15,5 +15,5 @@
     "skipLibCheck": true,
     "noEmit": true
   },
-  "include": ["src", "test", "../schemas/types.d.ts"]
+  "include": ["src", "test", "../schemas/types.d.ts", "../personal-assistant/src/**/*.ts"]
 }

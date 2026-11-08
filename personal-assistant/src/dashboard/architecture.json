@@ -667,7 +667,7 @@
         "personal-assistant/src/dashboard/events.js",
         "personal-assistant/src/dashboard/events.client.js",
         "personal-assistant/src/events/index.js",
-        "personal-assistant/src/events/bus.js",
+        "personal-assistant/src/events/bus.ts",
         "personal-assistant/sql/034_events_notify.sql",
         "personal-assistant/src/auth/settings.js",
         "personal-assistant/src/auth/ceremony.js",

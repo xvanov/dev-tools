@@ -21,7 +21,7 @@
 const fs = require('fs');
 const path = require('path');
 const events = require('../events');
-const { TOPIC } = require('../events/bus');
+const { TOPIC } = require('../events/bus.ts');
 
 const CLIENT = path.join(__dirname, 'events.client.js');
 const PING_MS = 20_000;

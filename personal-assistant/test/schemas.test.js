@@ -29,7 +29,7 @@ const S = require('../../schemas');
 const { generate, OUT } = require('../../schemas/gen-types');
 const F = require('../src/dispatch/factoryCore');
 const T = require('../src/mcp/chatTools');
-const { createBus } = require('../src/events/bus');
+const { createBus } = require('../src/events/bus.ts');
 
 const ok = (name, v) => assert.deepStrictEqual(S.validate(name, JSON.parse(JSON.stringify(v))), [], `${name} should validate`);
 const bad = (name, v, re) => {

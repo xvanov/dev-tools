@@ -19,7 +19,7 @@
 // process keeps reading could block the writer for ~10 s.)
 
 const http = require('http');
-const { createBus } = require('../../src/events/bus');
+const { createBus } = require('../../src/events/bus.ts');
 const { stream } = require('../../src/dashboard/events');
 
 const GEN = process.env.PA_SUPERVISOR_GENERATION || '0';
