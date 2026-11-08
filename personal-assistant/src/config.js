@@ -473,6 +473,9 @@ const config = {
     // /api/exec runs without a login shell, so ~/.local/bin is often not on
     // its PATH: give the full path there (e.g. /home/me/.local/bin/uv).
     uv: env('PA_FACTORY_UV', 'uv'),
+    // `factory serve`'s localhost API (plan 2.1), tried first when the factory
+    // is on this machine; empty disables it (every call spawns the CLI).
+    serveUrl: env('PA_FACTORY_SERVE_URL', 'http://127.0.0.1:7330'),
     // `pa do`'s route when --via is not given: claude | factory | auto.
     // Unset: the factory once it is configured (it dispatches and tracks all
     // work: code, research, reports), else a Claude session.

@@ -106,11 +106,53 @@ async function call(sub, { timeoutMs = config.factory.timeoutMs, maxOutputBytes 
   const opts = { cwd: config.factory.path, timeoutMs };
   if (maxOutputBytes) opts.maxOutputBytes = maxOutputBytes;
   const where = machine();
+  // A factory on this machine with `factory serve` running answers in-process
+  // over localhost (plan 2.1): ~50-200 ms instead of 5-10 s of `uv run`.
+  if (!where && !runnerOverride) {
+    const served = await viaServe(sub, timeoutMs);
+    if (served) return F.parseResult(served);
+  }
   // A factory on this Windows machine runs in Python's UTF-8 mode, as on
   // Linux: without it every un-annotated read_text() decodes as cp1252.
   if (!where && process.platform === 'win32') opts.env = { PYTHONUTF8: '1' };
   const res = await runCommand(where, F.factoryArgv(sub, config.factory.uv), opts);
   return F.parseResult(res);
+}
+
+const READ_ONLY = new Set(['job status', 'job list', 'job report', 'app list']);
+
+/**
+ * `factory serve`'s POST /api/cli: the same CLI command, run in its warm
+ * process, answering {code, stdout, stderr} like runCommand. Returns null —
+ * the caller then spawns the CLI — only when the command did not run: nothing
+ * listens (serve restarting or not installed), or serve does not serve that
+ * verb. A request that was sent and then timed out is NOT retried by spawning
+ * (it may have run; a second submit would be a second job): it answers like a
+ * timed-out command. Other connection errors fall back for read-only verbs only.
+ */
+async function viaServe(sub, timeoutMs, url = config.factory.serveUrl) {
+  if (!url) return null;
+  let res;
+  try {
+    res = await fetch(`${url.replace(/\/$/, '')}/api/cli`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Factory': '1' },
+      body: JSON.stringify({ argv: sub }),
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+  } catch (err) {
+    const code = err?.cause?.code || err?.code;
+    if (code === 'ECONNREFUSED') return null; // nothing listening: nothing ran
+    if (err?.name === 'TimeoutError' || err?.name === 'AbortError') {
+      return { code: 124, timedOut: true, stdout: '', stderr: `factory serve did not answer within ${timeoutMs} ms` };
+    }
+    if (READ_ONLY.has(sub.slice(0, 2).join(' '))) return null;
+    return { code: 1, stdout: '', stderr: `factory serve connection failed (${code || err?.message}); not retried: the command may have run` };
+  }
+  if (res.status !== 200) return null; // verb not served (400) or a guard mismatch (403): use the CLI
+  const body = await res.json().catch(() => null);
+  if (!body || typeof body.code !== 'number') return null;
+  return { code: body.code, stdout: String(body.stdout || ''), stderr: String(body.stderr || '') };
 }
 
 let appsCache = null;
@@ -968,5 +1010,5 @@ async function sweepUnsettled() {
 module.exports = {
   enabled, machine, factoryMachine, call, apps, addApp, installId, start, settle, sweepUnsettled, status, cancel, apply, poll, runCommand, modelsFor, _setRunner,
   submit, withoutV12, openFollow, refreshBoard, snapshot, snapshotJob, report, cancelJob, approve, resume, recordChain, chains,
-  pushed, pushedPatches,
+  pushed, pushedPatches, viaServe,
 };
