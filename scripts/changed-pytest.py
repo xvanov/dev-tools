@@ -222,6 +222,8 @@ def main(argv: list[str]) -> int:
         cmd = [sys.executable, "-m", "pytest"]
     if len(tests) > 8 and "-n" not in extra:
         cmd += ["-n", "auto", "--dist", "load"]
+    if "-m" not in extra:  # load-sensitive tests run in CI, not in the local hook
+        cmd += ["-m", "not slow and not flaky_under_load"]
     return subprocess.run([*cmd, "-q", *extra, *rel], cwd=FACTORY).returncode
 
 
