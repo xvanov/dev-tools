@@ -55,7 +55,9 @@ async function migrate() {
   }
 
   for (const file of pending) {
-    const sql = expandIncludes(fs.readFileSync(path.join(SQL_DIR, file), 'utf8'));
+    // A byte-order mark (an editor's, on Windows) is a syntax error to Postgres:
+    // 032 shipped with one and stopped every worker that had not applied it yet.
+    const sql = expandIncludes(fs.readFileSync(path.join(SQL_DIR, file), 'utf8').replace(/^﻿/, ''));
     await withTx(async (client) => {
       await client.query(sql);
       await client.query('insert into schema_migration (version) values ($1)', [file]);
