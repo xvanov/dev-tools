@@ -49,7 +49,7 @@ async function run({ commitmentId }, ctx) {
   const first = await ctx.step('read', async () => {
     // Judged first: an answer may already be in, and asking "when should I
     // chase?" about something already answered is the noise this exists to end.
-    await require('../../ledger/reconcile').pass({ ids: [commitmentId] }).catch(() => null);
+    await require('../../ledger/reconcile.ts').pass({ ids: [commitmentId] }).catch(() => null);
     const c = await read(commitmentId);
     if (!c || !C.worthChasing(c)) return null;
     const usual = await usualCadence(c.counterparty_person_id);

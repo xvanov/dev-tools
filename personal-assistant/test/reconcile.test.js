@@ -5,7 +5,7 @@
 // what is applied on its own. Names are invented.
 
 const assert = require('assert');
-const R = require('../src/ledger/reconcileCore');
+const R = require('../src/ledger/reconcileCore.ts');
 
 {
   // A person's identities in the forms source items carry.

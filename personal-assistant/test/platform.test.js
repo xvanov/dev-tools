@@ -96,7 +96,7 @@ const darwin = platform.select('darwin');
   assert.strictEqual(linux.clipboardCommand({ env: { DISPLAY: ':0' }, which: none }), null);
 
   // No msteams: handler → the draft opens in Teams on the web, still unsent.
-  const deliver = require('../src/draft/deliver');
+  const deliver = require('../src/draft/deliver.ts');
   const dm = { body: 'on it', target: { channel: 'teams', kind: 'dm', users: ['ana@example.com'] } };
   const web = deliver.links(dm, { desktopTeams: false });
   assert.ok(web.open.startsWith('https://teams.microsoft.com/l/chat/0/0?users=ana%40example.com&message=on%20it'), web.open);

@@ -4,7 +4,7 @@
 // what it must leave alone, and when an undo may put it back.
 
 const assert = require('assert');
-const L = require('../src/ledger/core');
+const L = require('../src/ledger/core.ts');
 
 const now = new Date('2026-10-25T10:00:00Z');
 const open = { status: 'open', closed_at: null, closed_reason: null, touched_at: null };

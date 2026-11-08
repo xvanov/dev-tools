@@ -5,7 +5,7 @@
 // can ride in the link versus the clipboard.
 
 const assert = require('assert');
-const { targetFor, links, MAX_PREFILL } = require('../src/draft/deliver');
+const { targetFor, links, MAX_PREFILL } = require('../src/draft/deliver.ts');
 
 const me = 'me@example.com';
 

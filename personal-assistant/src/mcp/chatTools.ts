@@ -483,7 +483,7 @@ async function boardTool({ limit = 25 }: { limit?: number } = {}) {
   const { gather } = require('../brief');
   const data = await gather({ horizonDays: 7 });
   const s = { ...data };
-  s.looksDone = await require('../ledger/reconcile').proposals().catch(() => []);
+  s.looksDone = await require('../ledger/reconcile.ts').proposals().catch(() => []);
   s.needsYou = await require('../proposals').pending().catch(() => []);
   await require('../dashboard/cards.ts').enrich(s).catch(() => {});
   s.blocks = await require('../commitments/blocks.ts').forBoard().catch(() => []);

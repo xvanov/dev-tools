@@ -124,7 +124,7 @@ function renderDigest({ slot, closed = [], proposals = [], waiting = [], held = 
 
 async function gather({ since, now = new Date() }: { since?: Date | string | number | null; now?: Date }) {
   const closed = await repo.notifications.closedForYouSince(since);
-  const proposals = await require('../ledger/reconcile').proposals().catch(() => []);
+  const proposals = await require('../ledger/reconcile.ts').proposals().catch(() => []);
   const waiting = await repo.notifications.waitingOnOthers(now, WAITING_DAYS);
   const held = await repo.notifications.heldForDigest();
   return { closed, proposals, waiting, held };

@@ -146,7 +146,7 @@ async function pass({ limit = BATCH } = {}) {
   if (!todos.length) return { planned: 0 };
   if (!(await require('../budget.ts').allow('planner').catch(() => false))) return { planned: 0, skipped: 'budget' };
   // Judged first: an ask already answered or delivered gets no plan at all.
-  await require('../ledger/reconcile').pass({ ids: todos.map((t) => Number(t.id)) }).catch(() => null);
+  await require('../ledger/reconcile.ts').pass({ ids: todos.map((t) => Number(t.id)) }).catch(() => null);
   todos = await due(limit);
   if (!todos.length) return { planned: 0 };
   todos = await background(todos);

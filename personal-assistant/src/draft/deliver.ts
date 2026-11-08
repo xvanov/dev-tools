@@ -16,6 +16,11 @@
 //
 // Pure functions: target from a source item, links from a draft. Tested
 // without a database.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+type Row = Record<string, any>;
+type Db = import('../repo/types.ts').Db;
 
 // Desktop Teams takes `msteams:`; the https form is the fallback that also
 // works in a browser — and the only form on a machine with no msteams:
@@ -28,12 +33,12 @@ const OUTLOOK_COMPOSE = 'https://outlook.office.com/mail/deeplink/compose';
 // truncate silently, so a long draft goes by clipboard instead.
 const MAX_PREFILL = 1800;
 
-function lower(list) {
+function lower(list: any[]) {
   return [...new Set((list || []).map((a) => String(a || '').toLowerCase()).filter((a) => a.includes('@')))];
 }
 
 // What a reply to this item needs to know. `me` is the operator's address.
-function targetFor(item, { me = null, counterpartyEmail = null } = {}) {
+function targetFor(item: any, { me = null, counterpartyEmail = null }: { me?: any; counterpartyEmail?: any } = {}) {
   const raw = item?.raw || {};
   const author = String(item?.author_identity || '').toLowerCase();
   const authorEmail = author.includes('@') ? author : counterpartyEmail;
@@ -90,9 +95,9 @@ function targetFor(item, { me = null, counterpartyEmail = null } = {}) {
 
 // The links the dashboard and `pa send` open. `prefilled` says whether the
 // text rides in the link, or has to be pasted from the clipboard.
-function links(draft, { desktopTeams = true } = {}) {
+function links(draft: any, { desktopTeams = true }: { desktopTeams?: boolean } = {}) {
   const t = draft.target || {};
-  const app = (url, web) => (desktopTeams ? url : web);
+  const app = (url: any, web: any) => (desktopTeams ? url : web);
   const body = String(draft.body || '');
   const fits = body.length <= MAX_PREFILL;
 

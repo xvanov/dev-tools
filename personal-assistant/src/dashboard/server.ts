@@ -70,7 +70,7 @@ async function state() {
   const review = await repo.memory.pendingReviewCount().catch(() => 0);
   const closed = await require('../commitments.ts').recentlyClosed().catch(() => []);
   // Closes the reconciler was not sure enough to make on its own (src/ledger/reconcile.js).
-  const looksDone = await require('../ledger/reconcile').proposals().catch(() => []);
+  const looksDone = await require('../ledger/reconcile.ts').proposals().catch(() => []);
   // Prepared actions and questions waiting on you (src/proposals).
   const needsYou = await require('../proposals').pending().catch(() => []);
   // Secret and login requests: names and guidance only — the table holds no values.
@@ -484,7 +484,7 @@ async function handle(req: Req, res: Res) {
     }
     // A "Looks done?" card answered: accepting closes it as your decision.
     m = url.pathname.match(/^\/api\/ledger\/evidence\/(\d+)\/(accept|reject)$/);
-    if (m) return send(res, 200, await require('../ledger/reconcile').decide(Number(m[1]), m[2] === 'accept'));
+    if (m) return send(res, 200, await require('../ledger/reconcile.ts').decide(Number(m[1]), m[2] === 'accept'));
     m = url.pathname.match(/^\/api\/commitments\/(\d+)\/reply$/);
     if (m) {
       const draft = await require('../draft').composeReply(Number(m[1]));

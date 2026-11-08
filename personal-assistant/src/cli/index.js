@@ -821,7 +821,7 @@ const commands = {
   // The ledger (src/ledger): history, the reconciler by hand, undo, proposals.
   async ledger(args, flags) {
     const ledger = require('../ledger');
-    const reconcile = require('../ledger/reconcile');
+    const reconcile = require('../ledger/reconcile.ts');
     const [sub, arg] = args;
     if (sub === 'reconcile') {
       const ids = flags.id && flags.id !== true ? String(flags.id).split(',').map(Number).filter(Boolean) : null;
@@ -1718,7 +1718,7 @@ const commands = {
 
     // The reconciler (src/ledger/reconcile.js).
     try {
-      const r = await require('../ledger/reconcile').stats();
+      const r = await require('../ledger/reconcile.ts').stats();
       lines.push(
         `  reconcile ${config.reconcile.enabled ? (config.reconcile.auto ? 'on' : 'on, proposals only (PA_RECONCILE_AUTO=0)') : 'off (PA_RECONCILE=0)'}` +
           ` · ${r.closed} closed on evidence · ${r.reopened} of them reopened by you · ${r.proposed} waiting as "looks done?"` +

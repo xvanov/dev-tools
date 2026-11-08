@@ -1825,7 +1825,7 @@
       },
       "code": [
         "personal-assistant/src/ingest/m365.ts",
-        "personal-assistant/src/draft/deliver.js"
+        "personal-assistant/src/draft/deliver.ts"
       ]
     }
   ],

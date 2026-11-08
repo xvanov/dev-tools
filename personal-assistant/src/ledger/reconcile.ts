@@ -27,13 +27,18 @@
 // ledger (src/ledger) when the judge is sure and you have not taken back a
 // close on that commitment before; otherwise it is a proposal. Either way the
 // quote is checked verbatim against the item it names first.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+type Row = Record<string, any>;
+type Db = import('../repo/types.ts').Db;
 
 const llm = require('../llm.ts');
 const { config } = require('../config.ts');
 const repo = require('../repo');
 const { logger } = require('../log.ts');
 const ledger = require('./index');
-const R = require('./reconcileCore');
+const R = require('./reconcileCore.ts');
 
 const log = logger('reconcile');
 
@@ -48,18 +53,18 @@ async function myForms() {
   return ['me', ...R.authorForms(ids)];
 }
 
-async function itemsById(ids, me) {
+async function itemsById(ids: any[], me: any) {
   const list = await repo.sources.itemsByIds(ids);
   const mine = new Set(me);
   return new Map(
-    list.map((r) => [
+    list.map((r: any) => [
       String(r.id),
       { ...r, author: r.author_identity, mine: mine.has(String(r.author_identity || '').toLowerCase()) },
     ])
   );
 }
 
-async function judge(batch) {
+async function judge(batch: any) {
   const { prompt, cRefs, eRefs } = R.buildPrompt(batch.commitments, batch.items);
   const reply = await llm.complete({
     system: R.SYSTEM,
@@ -73,13 +78,13 @@ async function judge(batch) {
   return R.parseVerdicts(llm.extractJson(reply), cRefs, eRefs);
 }
 
-async function reopenedByYou(ids) {
+async function reopenedByYou(ids: any[]) {
   return repo.ledger.reopenedByYou(ids);
 }
 
 // Evidence and, for an applied close, the transition — in one transaction.
-async function write(v, decision) {
-  return repo.withTx(async (r) => {
+async function write(v: any, decision: string) {
+  return repo.withTx(async (r: any) => {
     const evId = await r.ledger.upsertEvidence({
       commitmentId: v.commitment.id, sourceItemId: v.item.id, effect: v.effect, quote: v.quote, confidence: v.confidence, extractedBy: R.VERSION,
     });
@@ -106,31 +111,31 @@ async function write(v, decision) {
  * @param {boolean} [o.dryRun]  judge and report; write nothing, not even the checked mark
  * @param {number[]} [o.ids]   only these commitments
  */
-async function pass({ limit = 24, dryRun = false, ids = null } = {}) {
+async function pass({ limit = 24, dryRun = false, ids = null }: { limit?: number; dryRun?: boolean; ids?: any[] | null } = {}) {
   const me = await myForms();
-  const dirty = (await repo.ledger.dirty({ myForms: me, limit, perCommitment: 10, ids })).filter((d) => (failures.get(String(d.id)) || 0) < MAX_FAILURES);
-  const out = { dirty: dirty.length, judged: 0, closed: 0, proposed: 0, progressed: 0, errors: 0, results: [] };
+  const dirty = (await repo.ledger.dirty({ myForms: me, limit, perCommitment: 10, ids })).filter((d: any) => (failures.get(String(d.id)) || 0) < MAX_FAILURES);
+  const out = { dirty: dirty.length, judged: 0, closed: 0, proposed: 0, progressed: 0, errors: 0, results: [] as any[] };
   if (!dirty.length) return out;
 
-  const items = await itemsById([...new Set(dirty.flatMap((d) => d.item_ids.map(String)))], me);
-  const withItems = dirty.map((d) => ({ ...d, items: d.item_ids.map((id) => items.get(String(id))).filter(Boolean) }));
-  const reopened = await reopenedByYou(dirty.map((d) => d.id));
+  const items = await itemsById([...new Set(dirty.flatMap((d: any) => d.item_ids.map(String)))], me);
+  const withItems = dirty.map((d: any) => ({ ...d, items: d.item_ids.map((id: any) => items.get(String(id))).filter(Boolean) }));
+  const reopened = await reopenedByYou(dirty.map((d: any) => d.id));
 
   for (const batch of R.batches(withItems)) {
     let verdicts;
     try {
       verdicts = await judge(batch);
-    } catch (err) {
+    } catch (err: any) {
       out.errors++;
       for (const c of batch.commitments) failures.set(String(c.id), (failures.get(String(c.id)) || 0) + 1);
-      log.warn('judgement failed', { commitments: batch.commitments.map((c) => Number(c.id)), message: String(err.message).slice(0, 160) });
+      log.warn('judgement failed', { commitments: batch.commitments.map((c: any) => Number(c.id)), message: String(err.message).slice(0, 160) });
       continue;
     }
     out.judged += batch.commitments.length;
     for (const v of verdicts) {
       let decision = R.decide(v, { reopenedByYou: reopened.has(String(v.commitment.id)) });
       if (decision === 'apply' && !config.reconcile.auto) decision = 'propose';
-      const result = {
+      const result: any = {
         commitmentId: Number(v.commitment.id),
         summary: v.commitment.summary,
         effect: v.effect,
@@ -170,16 +175,16 @@ async function pass({ limit = 24, dryRun = false, ids = null } = {}) {
 }
 
 /** Closes the judge was not sure enough to apply, newest per commitment, still open. */
-async function proposals({ limit = 40 } = {}) {
+async function proposals({ limit = 40 }: { limit?: number } = {}) {
   return repo.ledger.proposals({ limit, minConfidence: R.PROPOSE_CONFIDENCE });
 }
 
 /** Your answer to a "Looks done?" card. Accepting closes it as your own decision. */
-async function decide(evidenceId, accept) {
+async function decide(evidenceId: any, accept: boolean) {
   const e = await repo.ledger.evidenceById(evidenceId);
   if (!e) throw new Error(`no evidence #${evidenceId}`);
   if (e.decision) return { ok: false, result: `already ${e.decision}` };
-  const out = await repo.withTx(async (r) => {
+  const out = await repo.withTx(async (r: any) => {
     let changed = false;
     if (accept) {
       const t = await ledger.transition(

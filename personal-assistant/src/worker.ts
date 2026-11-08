@@ -234,7 +234,7 @@ async function main() {
           sched
             .soon('distill', () => distill.run({ limit: 5 }))
             .then((ran: unknown) => ran && sched.soon('drafts', () => require('./draft').autoDraft({ limit: 3 })))
-            .then(() => config.reconcile.enabled && exclusive('reconcile', () => require('./ledger/reconcile').pass()))
+            .then(() => config.reconcile.enabled && exclusive('reconcile', () => require('./ledger/reconcile.ts').pass()))
             .catch(() => {});
         },
       })
@@ -354,7 +354,7 @@ async function main() {
   // the Teams fast path above also starts it.
   if (config.reconcile.enabled) {
     every(60, 'reconcile', async () => {
-      await require('./ledger/reconcile').pass();
+      await require('./ledger/reconcile.ts').pass();
     });
   }
 
