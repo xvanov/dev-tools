@@ -78,11 +78,11 @@ request); voice never approves high-risk actions alone; work and personal stacks
 
 ## Track T: fast tests and builds (cross-cutting, starts in phase 0)
 
-- [ ] **T1 Parallel test runner for PA and termhub.** Replace the `&&` chains in `package.json`
+- [x] **T1 Parallel test runner for PA and termhub.** Replace the `&&` chains in `package.json`
   with one runner that runs every test file in a worker pool (cores − 1), never stops early,
   prints a per-file pass/fail/time table and exits non-zero on any failure. Keep the file list
   in one place (glob `test/*.test.js`, with an explicit skip list for the known
-  environment-bound files, each with a reason). `parallel-ok`
+  environment-bound files, each with a reason). `parallel-ok` (5bc7a6d)
 - [ ] **T2 Make tests parallel-safe.** Each test gets its own temp dir, port 0 (OS-assigned),
   and its own DB schema or SQLite file; no shared fixed ports or files. Fix the known slow
   timeouts (`termhub` exec and csrf) so they fail fast or pass. `parallel-ok`
