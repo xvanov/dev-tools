@@ -4,7 +4,7 @@
 // lands in the right repo.
 
 const assert = require('assert');
-const { scoreCandidates, corroborates, explicitTokens, containsPhrase, tokenNamesRepo, directMatch, workdirProject } = require('../src/projects/resolve');
+const { scoreCandidates, corroborates, explicitTokens, containsPhrase, tokenNamesRepo, directMatch, workdirProject } = require('../src/projects/resolve.ts');
 const { pathFromRemote, groupRepos, staleProjects } = require('../src/projects');
 
 const CANDIDATES = [
@@ -218,7 +218,7 @@ const ORG = [
   // rescore: a link the text does not back is listed for clearing; one set by
   // hand, from the item's own repo, from the session's folder, or named in the
   // text stays.
-  const { judge } = require('../src/projects/rescore');
+  const { judge } = require('../src/projects/rescore.ts');
   const C = [
     { id: 11, name: 'INNERGY_Engineering_Training_Matrix', gitlabPath: 'innergy-dev/INNERGY_Engineering_Training_Matrix', repoPath: 'C:\\repos\\tm', aliases: [] },
     { id: 4, name: 'design', gitlabPath: 'innergy-dev/design', repoPath: 'C:\\repos\\design', aliases: [] },

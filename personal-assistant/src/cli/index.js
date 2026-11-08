@@ -446,7 +446,7 @@ const commands = {
       return;
     }
     if (args[0] === 'rescore') {
-      const { rescore } = require('../projects/rescore');
+      const { rescore } = require('../projects/rescore.ts');
       const apply = Boolean(flags.apply);
       const project = flags.project && flags.project !== true ? String(flags.project) : null;
       const ids = flags.ids && flags.ids !== true ? String(flags.ids).split(',').map(Number).filter(Number.isInteger) : null;
@@ -477,7 +477,7 @@ const commands = {
     const printRepo = (r, { prs = 3 } = {}) => {
       const where = r.fullName || r.repoPath || Object.values(r.localPaths || {}).flat()[0] || '';
       out(`${r.name.padEnd(30)} ${where}${r.hidden ? '  (hidden)' : ''}`);
-      if (r.description) out(`    ${require('../repos/merge').shortText(r.description, 200)}`);
+      if (r.description) out(`    ${require('../repos/merge.ts').shortText(r.description, 200)}`);
       out(`    last ${day(r.lastActivity)} · ${r.prCount} PRs · ${r.sessionCount} sessions${r.lastCommitAt ? ` · commit ${day(r.lastCommitAt)}` : ''}`);
       for (const p of (r.prs || []).slice(0, prs)) out(`      #${p.number} ${p.state.padEnd(6)} ${day(p.mergedAt || p.updatedAt)} ${p.title}`);
     };

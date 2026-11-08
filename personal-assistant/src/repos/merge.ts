@@ -3,11 +3,16 @@
 // The pure half of the repo registry: how the sources' facts become one row
 // per repo, and how your manual edits sit on top. No I/O here, so every rule
 // is tested directly (test/repos.test.js).
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+type Row = Record<string, any>;
+type Db = import('../repo/types.ts').Db;
 
 const path = require('path');
 
 /** github | gitlab | null, from a remote URL or an `https://host/...` link. */
-function forgeOf(remote) {
+function forgeOf(remote: any) {
   const s = String(remote || '').toLowerCase();
   if (!s) return null;
   if (/github\.com[:/]/.test(s) || /^github[-\w]*:/.test(s)) return 'github';
@@ -16,13 +21,13 @@ function forgeOf(remote) {
 }
 
 /** https link to a repo on its forge, or null. */
-function forgeUrl(forge, fullName) {
+function forgeUrl(forge: any, fullName: any) {
   if (!fullName) return null;
   if (forge === 'github') return `https://github.com/${fullName}`;
   return null;
 }
 
-function cleanDir(p) {
+function cleanDir(p: any) {
   return String(p || '').replace(/\\/g, '/').replace(/\/+$/, '');
 }
 
@@ -35,7 +40,7 @@ function cleanDir(p) {
  * @param {string[]} roots
  * @returns {{dir: string, path: string}|null}
  */
-function sessionDir(cwd, roots) {
+function sessionDir(cwd: any, roots: any) {
   const c = cleanDir(cwd);
   if (!c) return null;
   const lc = c.toLowerCase();
@@ -59,15 +64,15 @@ function sessionDir(cwd, roots) {
  * @param {string} dir
  * @param {Array}  repos [{id, name, gitlab_path, aliases?:string[], paths?:string[]}]
  */
-function matchDir(dir, repos) {
+function matchDir(dir: any, repos: any) {
   const d = String(dir || '').toLowerCase();
   if (!d) return null;
-  const names = (r) =>
-    [r.name, r.gitlab_path ? r.gitlab_path.split('/').pop() : null, ...(r.aliases || []), ...(r.paths || []).map((p) => cleanDir(p).split('/').pop())]
+  const names = (r: any) =>
+    [r.name, r.gitlab_path ? r.gitlab_path.split('/').pop() : null, ...(r.aliases || []), ...(r.paths || []).map((p: any) => cleanDir(p).split('/').pop())]
       .filter(Boolean)
       .map((n) => String(n).toLowerCase());
   // A row's own name beats someone else's alias of the same spelling.
-  return repos.find((r) => String(r.name).toLowerCase() === d) || repos.find((r) => names(r).includes(d)) || null;
+  return repos.find((r: any) => String(r.name).toLowerCase() === d) || repos.find((r: any) => names(r).includes(d)) || null;
 }
 
 /**
@@ -79,18 +84,18 @@ function matchDir(dir, repos) {
  *    already a different live repo's
  * @returns {{action:'use'|'takeover'|'insert', id?, name}}
  */
-function placeForgeRepo(fullName, rows) {
+function placeForgeRepo(fullName: any, rows: any) {
   const full = String(fullName).toLowerCase();
   const [owner, name] = String(fullName).split('/');
   const byPath = rows.find(
-    (r) => (r.gitlab_path && r.gitlab_path.toLowerCase() === full) || (r.remote_paths || []).some((p) => String(p).toLowerCase() === full)
+    (r: any) => (r.gitlab_path && r.gitlab_path.toLowerCase() === full) || (r.remote_paths || []).some((p: any) => String(p).toLowerCase() === full)
   );
   if (byPath) return { action: 'use', id: byPath.id, name: byPath.name };
-  const sameName = rows.find((r) => String(r.name).toLowerCase() === String(name).toLowerCase());
+  const sameName = rows.find((r: any) => String(r.name).toLowerCase() === String(name).toLowerCase());
   if (sameName && (!sameName.gitlab_path || !sameName.active)) return { action: 'takeover', id: sameName.id, name: sameName.name };
   if (!sameName) return { action: 'insert', name };
   const alt = `${name} (${owner})`;
-  const altTaken = rows.find((r) => String(r.name).toLowerCase() === alt.toLowerCase());
+  const altTaken = rows.find((r: any) => String(r.name).toLowerCase() === alt.toLowerCase());
   return altTaken ? { action: 'use', id: altTaken.id, name: altTaken.name } : { action: 'insert', name: alt };
 }
 
@@ -107,11 +112,11 @@ const SKIP_LINE = /^(#{1,6}\s|[-*]\s*\[[ x]\]|(closes|fixes|resolves|refs?|relat
  * @param {string} body
  * @param {number} [max]
  */
-function prSummary(body, max = 220) {
+function prSummary(body: Row, max: number = 220) {
   const text = String(body || '')
     .replace(/<!--[\s\S]*?-->/g, '')
     .replace(/```[\s\S]*?```/g, '');
-  const clean = (line) =>
+  const clean = (line: any) =>
     line
       .replace(/^[-*>]\s+/, '')
       .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
@@ -119,8 +124,8 @@ function prSummary(body, max = 220) {
       .replace(/\s+/g, ' ')
       .trim();
   // A paragraph ends at a blank line, and a list item starts a paragraph of its own.
-  const paragraphs = [];
-  let cur = [];
+  const paragraphs: any[] = [];
+  let cur: any[] = [];
   for (const raw of text.split(/\r?\n/)) {
     const line = raw.trim();
     if (!line || SKIP_LINE.test(line) || /^[-*]\s/.test(line)) {
@@ -141,7 +146,7 @@ function prSummary(body, max = 220) {
   return null;
 }
 
-function prState(pr) {
+function prState(pr: any) {
   if (pr.mergedAt || String(pr.state).toUpperCase() === 'MERGED') return 'merged';
   return String(pr.state).toUpperCase() === 'OPEN' ? 'open' : 'closed';
 }
@@ -153,10 +158,10 @@ function prState(pr) {
  * description.
  * @returns {Map<string, string>} lower(owner/repo) → description
  */
-function parseRavenRepos(markdown) {
-  const out = new Map();
+function parseRavenRepos(markdown: any) {
+  const out = new Map<any, any>();
   for (const line of String(markdown || '').split(/\r?\n/)) {
-    const m = line.match(/^\|\s*`([\w.-]+\/[\w.-]+)`[^|]*\|\s*(.+?)\s*\|\s*$/);
+    const m = line.match(/^\|\s*`([\w.-]+\/[\w.-]+)`[^|]*\|\s*(.+?)\s*\|\s*$/) as any;
     if (!m) continue;
     const text = m[2]
       .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
@@ -169,7 +174,7 @@ function parseRavenRepos(markdown) {
 }
 
 /** The first sentence or two of a long description, for a card. */
-function shortText(text, max = 280) {
+function shortText(text: any, max: number = 280) {
   const t = String(text || '').replace(/\s+/g, ' ').trim();
   if (t.length <= max) return t;
   const cut = t.slice(0, max);
@@ -183,10 +188,10 @@ const MANUAL_KEYS = ['description', 'owner', 'stack', 'related', 'kind', 'pinned
  * A registry row as every reader sees it: the synced profile with your manual
  * edits laid over it. Manual wins, field by field; sync never writes `manual`.
  */
-function effective(row) {
+function effective(row: any) {
   const manual = row.manual || {};
   const profile = row.profile || {};
-  const pick = (k, synced) => (manual[k] !== undefined && manual[k] !== null && manual[k] !== '' ? manual[k] : synced);
+  const pick = (k: any, synced: any) => (manual[k] !== undefined && manual[k] !== null && manual[k] !== '' ? manual[k] : synced);
   const lastActivity = latest([row.last_pr_at, row.last_commit_at, row.last_session_at]);
   return {
     ...row,
@@ -202,7 +207,7 @@ function effective(row) {
 }
 
 /** Merge a manual edit into the stored `manual` object. Empty string clears. */
-function applyManual(manual, edits) {
+function applyManual(manual: any, edits: any) {
   const out = { ...(manual || {}) };
   for (const [k, v] of Object.entries(edits || {})) {
     if (!MANUAL_KEYS.includes(k)) throw new Error(`cannot set "${k}" — one of ${MANUAL_KEYS.join(', ')}`);
@@ -213,7 +218,7 @@ function applyManual(manual, edits) {
   return out;
 }
 
-function latest(dates) {
+function latest(dates: any) {
   let best = null;
   for (const d of dates) {
     if (!d) continue;
@@ -224,7 +229,7 @@ function latest(dates) {
 }
 
 /** Whether a row belongs on the Repos tab: you worked in it, or pinned it. */
-function contributed(row) {
+function contributed(row: any) {
   const e = row.lastActivity !== undefined ? row : effective(row);
   return !row.hidden && (e.pinned || Number(row.pr_count) > 0 || !!row.last_commit_at || Number(row.session_count) > 0);
 }
@@ -233,8 +238,8 @@ function contributed(row) {
  * Branches from several sources (a clone's refs, open PRs, sessions) as one
  * list: newest first, one entry per (name, machine), the default branch out.
  */
-function mergeBranches(lists, { defaultBranch = null, max = 12 } = {}) {
-  const seen = new Map();
+function mergeBranches(lists: any, { defaultBranch = null, max = 12 }: { defaultBranch?: any | null; max?: number } = {}) {
+  const seen = new Map<any, any>();
   for (const b of lists.flat()) {
     if (!b || !b.name || b.name === 'HEAD' || b.name === defaultBranch) continue;
     const key = `${b.name}\u0000${b.machine || ''}`;
@@ -256,7 +261,7 @@ function mergeBranches(lists, { defaultBranch = null, max = 12 } = {}) {
 }
 
 /** Last path segment, either separator. */
-function baseName(p) {
+function baseName(p: any) {
   return path.basename(cleanDir(p));
 }
 

@@ -9,6 +9,11 @@
 // raven's text, when present, is the description shown — it is reviewed
 // and authoritative. The model then only fills kind, stack, owner and related
 // repos around it.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+type Row = Record<string, any>;
+type Db = import('../repo/types.ts').Db;
 
 const { config } = require('../config.ts');
 const llm = require('../llm');
@@ -26,7 +31,7 @@ const SYSTEM =
   '"related": [names of other repos it names as depending on or feeding, up to 5]}. ' +
   'Use only what the material says; never guess an owner. No prose outside the JSON.';
 
-function block(r) {
+function block(r: any) {
   const m = r.material || {};
   return [
     `key: ${r.key}`,
@@ -45,8 +50,8 @@ function block(r) {
  * @param {Array} batch [{key, name, fullName, raven, forgeDescription, material}]
  * @returns {Promise<Map<string, object>>} key → {description, kind, stack, owner, related}
  */
-async function profileBatch(batch) {
-  const prompt = batch.map((r, i) => `--- repo ${i + 1} ---\n${block(r)}`).join('\n\n');
+async function profileBatch(batch: any) {
+  const prompt = batch.map((r: any, i: any) => `--- repo ${i + 1} ---\n${block(r)}`).join('\n\n');
   const text = await llm.complete({
     system: SYSTEM,
     prompt,
@@ -56,11 +61,11 @@ async function profileBatch(batch) {
     maxTokens: 300 * batch.length + 200,
     timeoutMs: 120_000,
   });
-  const out = new Map();
+  const out = new Map<any, any>();
   let parsed;
   try {
     parsed = llm.extractJson(text);
-  } catch (err) {
+  } catch (err: any) {
     log.warn('repo profile reply unreadable', { message: err.message });
     return out;
   }
@@ -78,14 +83,14 @@ async function profileBatch(batch) {
 }
 
 /** Runs the batches; a failed batch is logged and skipped, not fatal. */
-async function profileAll(list, { batchSize = 6 } = {}) {
-  const out = new Map();
+async function profileAll(list: any, { batchSize = 6 }: { batchSize?: number } = {}) {
+  const out = new Map<any, any>();
   for (let i = 0; i < list.length; i += batchSize) {
     const batch = list.slice(i, i + batchSize);
     try {
       for (const [k, v] of await profileBatch(batch)) out.set(k, v);
-    } catch (err) {
-      log.warn('repo profile batch failed', { message: String(err.message).slice(0, 200), repos: batch.map((b) => b.name) });
+    } catch (err: any) {
+      log.warn('repo profile batch failed', { message: String(err.message).slice(0, 200), repos: batch.map((b: any) => b.name) });
     }
   }
   return out;

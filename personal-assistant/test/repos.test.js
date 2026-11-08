@@ -7,8 +7,8 @@ const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
-const m = require('../src/repos/merge');
-const resolve = require('../src/projects/resolve');
+const m = require('../src/repos/merge.ts');
+const resolve = require('../src/projects/resolve.ts');
 
 // --- forges
 assert.strictEqual(m.forgeOf('git@github.com:innergy-dev/erp.git'), 'github');

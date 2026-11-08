@@ -12,12 +12,17 @@
 // name it" is not the same as "wrong" — a thread about the PBCF app may never
 // say PBCF. It is never moved to another project: a guess replacing a guess
 // is how this started. A link you set by hand is never touched.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+type Row = Record<string, any>;
+type Db = import('../repo/types.ts').Db;
 
 const fs = require('fs');
 const path = require('path');
 const repo = require('../repo');
-const resolve = require('./resolve');
-const { candidates: loadCandidates } = require('./index');
+const resolve = require('./resolve.ts');
+const { candidates: loadCandidates } = require('./index.ts');
 const { evidenceText } = require('../distill');
 
 /**
@@ -26,9 +31,9 @@ const { evidenceText } = require('../distill');
  * @param {Array}  candidates projects.candidates()
  * @returns {{action:'keep'|'clear', reason}}
  */
-function judge(c, candidates) {
+function judge(c: any, candidates: any) {
   if (/^corrected by hand/.test(c.project_rationale || '')) return { action: 'keep', reason: 'set by hand' };
-  const current = candidates.find((p) => p.id === c.project_id);
+  const current = candidates.find((p: any) => p.id === c.project_id);
   // A retired project's repo is gone; it is not this pass's business.
   if (!current) return { action: 'keep', reason: 'project retired or unknown' };
   const item = { source: c.source, subject: c.subject, body_text: c.body_text, raw: c.raw || {} };
@@ -46,10 +51,10 @@ function judge(c, candidates) {
  * @param {string}   [o.logDir]   where the applied rows' old values and undo SQL go
  * @returns {{checked, keep, clear: Array, applied?, logFile}}
  */
-async function rescore({ apply = false, project = null, ids = null, logDir = null } = {}) {
+async function rescore({ apply = false, project = null, ids = null, logDir = null }: { apply?: boolean; project?: any | null; ids?: any | null; logDir?: any | null } = {}) {
   const candidates = await loadCandidates();
   const list = await repo.commitments.projectLinks(project, ids && ids.length ? ids : null);
-  const out = { checked: list.length, keep: 0, clear: [], logFile: null };
+  const out: Record<string, any> = { checked: list.length, keep: 0, clear: [] as any[], logFile: null };
   for (const c of list) {
     const v = judge(c, candidates);
     if (v.action === 'keep') {
@@ -66,7 +71,7 @@ async function rescore({ apply = false, project = null, ids = null, logDir = nul
   }
   if (!apply) return out;
 
-  const changed = [];
+  const changed: any[] = [];
   for (const r of out.clear) {
     // Guarded on the old value: a row the worker changed meanwhile is left alone.
     const cleared = await repo.commitments.clearProject(
@@ -92,7 +97,7 @@ async function rescore({ apply = false, project = null, ids = null, logDir = nul
   return out;
 }
 
-function sqlText(v) {
+function sqlText(v: any) {
   return v == null ? 'null' : `'${String(v).replace(/'/g, "''")}'`;
 }
 

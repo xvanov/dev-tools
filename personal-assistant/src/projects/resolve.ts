@@ -29,6 +29,11 @@
 //
 // A candidate with no evidence at all is dropped — "unknown" that asks you
 // once beats a wrong repo that a session then works in.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+type Row = Record<string, any>;
+type Db = import('../repo/types.ts').Db;
 
 const EXPLICIT_TOKEN = 5;
 const ALIAS_HIT = 3;
@@ -47,7 +52,7 @@ const STOPWORDS = new Set([
 // "estimating_api" and "estimating api" are the same phrase to a human and have
 // to be the same phrase here, or half the aliases never match the way people
 // actually type them.
-function normalise(s) {
+function normalise(s: any) {
   return String(s || '')
     .toLowerCase()
     .replace(/[_/\\.-]+/g, ' ')
@@ -59,7 +64,7 @@ function normalise(s) {
 // Word-boundary containment on the normalised forms. Substring matching would
 // make "pa" match "compare"; token matching alone would miss "estimating-api"
 // inside "the estimating-api rewrite".
-function containsPhrase(haystack, needle) {
+function containsPhrase(haystack: any, needle: any) {
   const n = normalise(needle);
   if (!n || n.length < 3) return false;
   const h = ` ${normalise(haystack)} `;
@@ -69,8 +74,8 @@ function containsPhrase(haystack, needle) {
 // Things that only appear when someone is talking about a specific codebase:
 // a path, a branch, a namespace. Extracted separately because they score
 // highest and their absence is informative.
-function explicitTokens(text) {
-  const out = new Set();
+function explicitTokens(text: any) {
+  const out = new Set<any>();
   const source = String(text || '');
   for (const m of source.matchAll(/[A-Za-z0-9_.-]+\/[A-Za-z0-9_./-]+/g)) out.add(m[0].toLowerCase());
   for (const m of source.matchAll(/\b(?:feature|fix|bugfix|hotfix|chore)\/[A-Za-z0-9_.-]+/gi)) {
@@ -90,7 +95,7 @@ function explicitTokens(text) {
 //
 // The repo registry's other forge paths and per-machine folders
 // (c.remotePaths, c.paths) name the repo just as its main path and clone do.
-function tokenNamesRepo(token, c) {
+function tokenNamesRepo(token: any, c: any) {
   const t = ` ${normalise(token)} `;
   for (const full of [c.gitlabPath, ...(c.remotePaths || [])]) {
     const whole = normalise(full);
@@ -101,7 +106,7 @@ function tokenNamesRepo(token, c) {
       c.name,
       c.repoPath ? c.repoPath.split(/[\\/]/).pop() : null,
       c.gitlabPath ? c.gitlabPath.split('/').pop() : null,
-      ...(c.paths || []).map((p) => String(p).split(/[\\/]/).filter(Boolean).pop()),
+      ...(c.paths || []).map((p: any) => String(p).split(/[\\/]/).filter(Boolean).pop()),
     ]
       .map(normalise)
       .filter((n) => n.length >= 3 && !STOPWORDS.has(n))
@@ -111,7 +116,7 @@ function tokenNamesRepo(token, c) {
     .some((seg) => names.has(normalise(seg)));
 }
 
-function cleanPath(p) {
+function cleanPath(p: any) {
   return String(p || '').replace(/\//g, '\\').replace(/\\+$/, '').toLowerCase();
 }
 
@@ -125,7 +130,7 @@ function cleanPath(p) {
  *   repoPath null — dispatch then asks for a folder instead of guessing one.
  *   null when the item names no repo at all.
  */
-function directMatch(item, candidates) {
+function directMatch(item: any, candidates: any) {
   const raw = item?.raw || {};
   const repo =
     String(item?.source || '').startsWith('github') && typeof raw.project === 'string' && /^[^/\s]+\/[^/\s]+$/.test(raw.project)
@@ -134,8 +139,8 @@ function directMatch(item, candidates) {
   if (!repo) return null;
   const want = repo.toLowerCase();
   const hit =
-    (candidates || []).find((c) => c.gitlabPath && c.gitlabPath.toLowerCase() === want) ||
-    (candidates || []).find((c) => (c.remotePaths || []).some((p) => String(p).toLowerCase() === want));
+    (candidates || []).find((c: any) => c.gitlabPath && c.gitlabPath.toLowerCase() === want) ||
+    (candidates || []).find((c: any) => (c.remotePaths || []).some((p: any) => String(p).toLowerCase() === want));
   if (hit) return { projectId: hit.id, name: hit.name, repoPath: hit.repoPath, confidence: 0.99, rationale: `the item is from ${repo}` };
   return { projectId: null, name: null, repoPath: null, confidence: null, rationale: `${repo} is not in the repo registry (pa repos add ${repo})` };
 }
@@ -144,7 +149,7 @@ function directMatch(item, candidates) {
  * The project whose folder a Claude session ran in, or null. Evidence for the
  * scorer, not a verdict: a session in one repo often talks about another.
  */
-function workdirProject(cwd, candidates) {
+function workdirProject(cwd: any, candidates: any) {
   const dir = cleanPath(cwd);
   if (!dir) return null;
   let best = null;
@@ -170,15 +175,15 @@ function workdirProject(cwd, candidates) {
  * @param {object} context         {recentProjectIds, authorProjectIds, threadProjectId, workdirProjectId, now}
  * @returns {Array} ranked [{projectId, name, score, confidence, rationale}]
  */
-function scoreCandidates(text, candidates, context = {}) {
+function scoreCandidates(text: any, candidates: any, context: any = {}) {
   const now = context.now ? new Date(context.now) : new Date();
   const tokens = explicitTokens(text);
   const recent = new Set(context.recentProjectIds || []);
   const authored = new Set(context.authorProjectIds || []);
 
-  const scored = candidates.map((c) => {
+  const scored = candidates.map((c: any) => {
     let score = 0;
-    const why = [];
+    const why: any[] = [];
     // Evidence from the text or the session's folder; the hints below only
     // count for a candidate that has some.
     let evidence = false;
@@ -231,14 +236,14 @@ function scoreCandidates(text, candidates, context = {}) {
     }
 
     if (c.lastTouchedAt) {
-      const days = (now - new Date(c.lastTouchedAt)) / 86400_000;
+      const days = ((now as any) - (new Date(c.lastTouchedAt) as any)) / 86400_000;
       if (days <= 14) score += 0.5;
     }
 
     return { projectId: c.id, name: c.name, repoPath: c.repoPath, score, why, evidence };
   });
 
-  const ranked = scored.filter((s) => s.evidence && s.score > 0).sort((a, b) => b.score - a.score);
+  const ranked = scored.filter((s: any) => s.evidence && s.score > 0).sort((a: any, b: any) => b.score - a.score);
   if (!ranked.length) return [];
 
   // Confidence is about *separation*, not absolute score: a strong match with
@@ -253,7 +258,7 @@ function scoreCandidates(text, candidates, context = {}) {
     r.confidence = Math.min(0.4, r.score / (top.score * 2.5));
   }
 
-  return ranked.map(({ evidence, ...r }) => ({ ...r, rationale: r.why.join('; ') }));
+  return ranked.map(({ evidence, ...r }: any) => ({ ...r, rationale: r.why.join('; ') }));
 }
 
 // Words that say nothing about which repo: English filler, the company and
@@ -268,7 +273,7 @@ const GENERIC_WORDS = new Set([
   'main', 'analytics', 'server', 'service', 'integration', 'setup', 'template',
 ]);
 
-function distinctiveWords(phrase) {
+function distinctiveWords(phrase: any) {
   return [...new Set(normalise(phrase).split(' ').filter((w) => w.length >= 4 && !/^\d+$/.test(w) && !GENERIC_WORDS.has(w)))];
 }
 
@@ -282,11 +287,11 @@ function distinctiveWords(phrase) {
  * engagement" with "PeAk (Docebo) ↔ HubSpot Video Engagement Analytics", but
  * not "training" alone with "INNERGY Engineering Training Matrix".
  */
-function corroborates(text, candidate) {
+function corroborates(text: any, candidate: any) {
   if (!candidate) return false;
   if (scoreCandidates(text, [candidate]).length) return true;
   const words = new Set(normalise(text).split(' '));
-  const names = [candidate.name, candidate.gitlabPath, ...(candidate.aliases || []).map((a) => a.alias)];
+  const names = [candidate.name, candidate.gitlabPath, ...(candidate.aliases || []).map((a: any) => a.alias)];
   return names.some((n) => {
     const distinct = distinctiveWords(n);
     return distinct.length >= 2 && distinct.filter((w) => words.has(w) || words.has(`${w}s`)).length >= 2;

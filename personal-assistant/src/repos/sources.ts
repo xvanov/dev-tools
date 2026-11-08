@@ -12,6 +12,11 @@
 //            which folders you worked in, on which machine, on which branch
 //   raven    INNERGY's knowledge base: the authoritative repo map
 //   readme   a clone's README and manifests, the material for a profile
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+type Row = Record<string, any>;
+type Db = import('../repo/types.ts').Db;
 
 const fs = require('fs');
 const os = require('os');
@@ -21,11 +26,11 @@ const { execFile } = require('child_process');
 const { config } = require('../config.ts');
 const repo = require('../repo');
 const { gh } = require('../ingest/github');
-const merge = require('./merge');
+const merge = require('./merge.ts');
 
-function git(dir, args, timeoutMs = 20_000) {
-  return new Promise((resolve) => {
-    execFile('git', ['-C', dir, ...args], { timeout: timeoutMs, windowsHide: true, maxBuffer: 8 * 1024 * 1024 }, (err, stdout) =>
+function git(dir: any, args: any, timeoutMs: number = 20_000) {
+  return new Promise<any>((resolve) => {
+    execFile('git', ['-C', dir, ...args], { timeout: timeoutMs, windowsHide: true, maxBuffer: 8 * 1024 * 1024 }, (err: any, stdout: any) =>
       resolve(err ? null : String(stdout).trim())
     );
   });
@@ -54,9 +59,9 @@ async function githubLogin() {
  * Your PRs, newest-updated first. `since` limits it to PRs updated since then
  * (the hourly pass); without it, everything the search API will return (1000).
  */
-async function githubPrs({ login, since = null, maxPages = 10 } = {}) {
+async function githubPrs({ login, since = null, maxPages = 10 }: { login?: any | null; since?: any | null; maxPages?: number } = {}) {
   const q = `is:pr author:${login} sort:updated-desc${since ? ` updated:>=${new Date(since).toISOString().slice(0, 10)}` : ''}`;
-  const out = [];
+  const out: any[] = [];
   let after = null;
   for (let page = 0; page < maxPages; page++) {
     const args = ['api', 'graphql', '-f', `query=${PR_SEARCH}`, '-f', `q=${q}`];
@@ -90,12 +95,12 @@ async function githubPrs({ login, since = null, maxPages = 10 } = {}) {
 }
 
 /** Last commit you authored per repo, from GitHub's commit search. */
-async function githubCommits({ login, limit = 300 } = {}) {
+async function githubCommits({ login, limit = 300 }: { login?: any | null; limit?: number } = {}) {
   const raw = await gh(
     ['search', 'commits', '--author', login, '--sort', 'committer-date', '--order', 'desc', '--limit', String(limit), '--json', 'repository,commit'],
     { timeoutMs: 90_000 }
   );
-  const byRepo = new Map();
+  const byRepo = new Map<any, any>();
   for (const c of JSON.parse(raw)) {
     const repo = c.repository?.fullName;
     const at = c.commit?.committer?.date || c.commit?.author?.date;
@@ -108,7 +113,7 @@ async function githubCommits({ login, limit = 300 } = {}) {
 }
 
 /** A GitHub repo's metadata, for a repo with no clone here. */
-async function githubRepoInfo(fullName) {
+async function githubRepoInfo(fullName: any) {
   try {
     const r = JSON.parse(await gh(['api', `repos/${fullName}`]));
     return { description: r.description || null, defaultBranch: r.default_branch || null, language: r.language || null, archived: !!r.archived };
@@ -117,7 +122,7 @@ async function githubRepoInfo(fullName) {
   }
 }
 
-async function githubReadme(fullName) {
+async function githubReadme(fullName: any) {
   try {
     return String(await gh(['api', `repos/${fullName}/readme`, '-H', 'Accept: application/vnd.github.raw'])).slice(0, 6000);
   } catch {
@@ -127,11 +132,11 @@ async function githubReadme(fullName) {
 
 // ---------------------------------------------------------------- git ----
 
-let emailCache = null;
-async function myEmails(dir) {
+let emailCache: Set<string> | null = null;
+async function myEmails(dir: any) {
   if (!emailCache) {
-    const global = await new Promise((resolve) =>
-      execFile('git', ['config', '--global', 'user.email'], { windowsHide: true }, (err, out) => resolve(err ? '' : String(out).trim()))
+    const global = await new Promise<string>((resolve) =>
+      execFile('git', ['config', '--global', 'user.email'], { windowsHide: true }, (err: any, out: any) => resolve(err ? '' : String(out).trim()))
     );
     emailCache = new Set([global].filter(Boolean).map((e) => e.toLowerCase()));
   }
@@ -146,7 +151,7 @@ async function myEmails(dir) {
  * and your last commit. `git log --author` is bounded to a year, so a large
  * history (the ERP) is not walked end to end every hour.
  */
-async function cloneFacts(dir, { machine = os.hostname() } = {}) {
+async function cloneFacts(dir: any, { machine = os.hostname() }: { machine?: any } = {}) {
   const emails = await myEmails(dir);
   const head = await git(dir, ['symbolic-ref', '--short', 'refs/remotes/origin/HEAD']);
   const defaultBranch = head ? head.replace(/^origin\//, '') : null;
@@ -155,7 +160,7 @@ async function cloneFacts(dir, { machine = os.hostname() } = {}) {
   const branches = (refs || '')
     .split(/\r?\n/)
     .filter(Boolean)
-    .map((l) => {
+    .map((l: any) => {
       const [name, at, email] = l.split('\t');
       return { name, at, mine: emails.has(String(email || '').replace(/[<>]/g, '').toLowerCase()), current: name === current, machine, source: 'local' };
     });
@@ -176,20 +181,20 @@ async function cloneFacts(dir, { machine = os.hostname() } = {}) {
  * evidence of any repo and is skipped.
  * @returns {Array<{machine, dir, path, count, lastAt, branches:[{name, at}]}>}
  */
-async function sessionDirs({ machines = config.termhub.machines, reposRoot = config.reposRoot, hostname = os.hostname() } = {}) {
+async function sessionDirs({ machines = config.termhub.machines, reposRoot = config.reposRoot, hostname = os.hostname() }: { machines?: any; reposRoot?: any; hostname?: any } = {}) {
   const list = await repo.sources.claudeSessionFolders();
-  const rootsFor = (m) => {
+  const rootsFor = (m: any) => {
     if (!m || m === hostname) return [reposRoot];
     const conf = machines?.[m];
     return conf?.reposRoot ? [conf.reposRoot] : [];
   };
-  const groups = new Map();
+  const groups = new Map<any, any>();
   for (const s of list) {
     const machine = s.machine || hostname;
     const hit = merge.sessionDir(s.cwd, rootsFor(s.machine));
     if (!hit) continue;
     const key = `${machine}\u0000${hit.dir.toLowerCase()}`;
-    if (!groups.has(key)) groups.set(key, { machine, dir: hit.dir, path: hit.path, count: 0, lastAt: null, branches: new Map() });
+    if (!groups.has(key)) groups.set(key, { machine, dir: hit.dir, path: hit.path, count: 0, lastAt: null, branches: new Map<any, any>() });
     const g = groups.get(key);
     g.count++;
     const at = s.occurred_at ? new Date(s.occurred_at).toISOString() : null;
@@ -211,17 +216,17 @@ const RAVEN_REPOS = 'knowledge/systems/repositories.md';
  * reads), else a local clone's copy.
  * @returns {{map: Map, from: string}|{map: Map, error: string}}
  */
-async function ravenRepos(localClone = null) {
+async function ravenRepos(localClone: any | null = null) {
   try {
     const md = await gh(['api', `repos/innergy-dev/raven/contents/${RAVEN_REPOS}`, '-H', 'Accept: application/vnd.github.raw']);
     return { map: merge.parseRavenRepos(md), from: 'github', systems: await ravenSystems() };
-  } catch (err) {
+  } catch (err: any) {
     if (localClone) {
       try {
         const md = fs.readFileSync(path.join(localClone, RAVEN_REPOS), 'utf8');
-        let systems = [];
+        let systems: any[] = [];
         try {
-          systems = fs.readdirSync(path.join(localClone, 'knowledge', 'systems'), { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name);
+          systems = fs.readdirSync(path.join(localClone, 'knowledge', 'systems'), { withFileTypes: true }).filter((e: any) => e.isDirectory()).map((e: any) => e.name);
         } catch {
           /* no systems dir */
         }
@@ -230,7 +235,7 @@ async function ravenRepos(localClone = null) {
         /* fall through */
       }
     }
-    return { map: new Map(), error: String(err.message).split('\n')[0] };
+    return { map: new Map<any, any>(), error: String(err.message).split('\n')[0] };
   }
 }
 
@@ -239,7 +244,7 @@ async function ravenRepos(localClone = null) {
 async function ravenSystems() {
   try {
     const list = JSON.parse(await gh(['api', 'repos/innergy-dev/raven/contents/knowledge/systems']));
-    return list.filter((e) => e.type === 'dir').map((e) => e.name);
+    return list.filter((e: any) => e.type === 'dir').map((e: any) => e.name);
   } catch {
     return [];
   }
@@ -249,7 +254,7 @@ async function ravenSystems() {
 
 const MANIFESTS = ['package.json', 'pyproject.toml', 'go.mod', 'Cargo.toml', 'requirements.txt', 'Directory.Build.props', 'global.json'];
 
-function readSafe(p, max) {
+function readSafe(p: any, max: any) {
   try {
     return fs.readFileSync(p, 'utf8').slice(0, max);
   } catch {
@@ -262,13 +267,13 @@ function readSafe(p, max) {
  * manifests' identifying parts. Plus a hash of exactly that, so a profile is
  * made again only when the material changes.
  */
-function cloneMaterial(dir) {
+function cloneMaterial(dir: any) {
   let readme = null;
   for (const name of ['README.md', 'readme.md', 'README.MD', 'Readme.md', 'README']) {
     readme = readSafe(path.join(dir, name), 5000);
     if (readme) break;
   }
-  const manifests = [];
+  const manifests: any[] = [];
   for (const m of MANIFESTS) {
     const text = readSafe(path.join(dir, m), 4000);
     if (!text) continue;
@@ -282,9 +287,9 @@ function cloneMaterial(dir) {
       }
     } else manifests.push(`${m}: ${text.slice(0, 600)}`);
   }
-  let top = [];
+  let top: any[] = [];
   try {
-    top = fs.readdirSync(dir).filter((n) => !n.startsWith('.')).slice(0, 40);
+    top = fs.readdirSync(dir).filter((n: any) => !n.startsWith('.')).slice(0, 40);
     if (top.some((n) => /\.sln$/i.test(n))) manifests.push(`solution: ${top.filter((n) => /\.sln$/i.test(n)).join(', ')}`);
   } catch {
     /* unreadable dir */
@@ -292,7 +297,7 @@ function cloneMaterial(dir) {
   return { readme, manifests, top };
 }
 
-function materialHash(m) {
+function materialHash(m: any) {
   return crypto.createHash('sha1').update(JSON.stringify(m)).digest('hex').slice(0, 16);
 }
 
