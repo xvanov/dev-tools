@@ -373,6 +373,51 @@
   }
 
   // ------------------------------------------------------------- examples ----
+  // What "done" means for a walk-through (PLAN.md 8.1), plus the latest verdict
+  // that the Phase 8 reviewers fill (null until then). textContent only.
+  function verdictText(v) {
+    if (!v || !v.result) return 'not yet reviewed';
+    return v.result + (v.date ? ' on ' + v.date : '');
+  }
+  function acceptanceBlock(a) {
+    var box = el('div', 'acc');
+    if (!a) return box;
+    if (a.outOfScope) {
+      box.appendChild(el('div', 'acc-head', 'Acceptance: out of scope'));
+      box.appendChild(el('div', 'acc-note', a.outOfScope));
+      return box;
+    }
+    var head = el('div', 'acc-head');
+    head.appendChild(document.createTextNode('Acceptance '));
+    head.appendChild(el('span', 'verdict ' + (a.verdict && a.verdict.result || 'none'), verdictText(a.verdict)));
+    box.appendChild(head);
+    var rows = [['Outcome', a.outcome]];
+    rows.push(['Cost ceiling', '$' + a.cost.max_usd + ' (' + a.cost.basis + ')']);
+    rows.push(['Shows in', a.views.map(function (v) { return v.charAt(0).toUpperCase() + v.slice(1); }).join(', ')]);
+    rows.push(['Approvals', a.approvals.length ? a.approvals.join(', ') : 'none']);
+    rows.forEach(function (r) {
+      var d = el('div', 'acc-row');
+      d.appendChild(el('b', null, r[0] + ': '));
+      d.appendChild(document.createTextNode(r[1]));
+      box.appendChild(d);
+    });
+    var hops = el('ol', 'acc-list');
+    a.hops.forEach(function (h) {
+      var c = comp(h.c);
+      var item = el('li');
+      item.appendChild(el('b', null, c ? c.name : h.c));
+      item.appendChild(document.createTextNode(': ' + h.what + ' — ' + (h.max_ms != null ? 'under ' + h.max_ms + ' ms' : h.unbounded)));
+      hops.appendChild(item);
+    });
+    box.appendChild(el('div', 'acc-sub', 'Hops'));
+    box.appendChild(hops);
+    var rub = el('ul', 'acc-list');
+    a.rubric.forEach(function (r) { rub.appendChild(el('li', null, r.check)); });
+    box.appendChild(el('div', 'acc-sub', 'Quality rubric'));
+    box.appendChild(rub);
+    return box;
+  }
+
   function renderExamples() {
     var ul = $('examples');
     clear(ul);
@@ -381,6 +426,12 @@
       li.tabIndex = 0;
       li.appendChild(el('div', null, x.title)).style.fontWeight = '600';
       li.appendChild(el('div', 'say', x.say));
+      // The latest acceptance verdict, visible without opening the walk-through.
+      var a = x.acceptance;
+      var st = el('div', 'acc-status');
+      if (a && a.outOfScope) st.appendChild(el('span', 'verdict', 'out of scope'));
+      else st.appendChild(el('span', 'verdict ' + ((a && a.verdict && a.verdict.result) || 'none'), 'Verdict: ' + verdictText(a && a.verdict)));
+      li.appendChild(st);
       var ol = el('ol');
       x.steps.forEach(function (s) {
         var c = comp(s.c);
@@ -390,6 +441,7 @@
         ol.appendChild(item);
       });
       li.appendChild(ol);
+      li.appendChild(acceptanceBlock(x.acceptance));
       li.addEventListener('mouseenter', function () { hoverEx = x.id; drawEdges(); });
       li.addEventListener('mouseleave', function () { hoverEx = null; drawEdges(); });
       var toggle = function () { example = example === x.id ? null : x.id; renderExamples(); drawEdges(); };

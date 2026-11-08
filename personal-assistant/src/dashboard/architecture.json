@@ -1707,7 +1707,59 @@
           "c": "voice",
           "t": "/api/talk/tts: Kokoro speaks it as bf_isabella, sentence by sentence. Nothing reaches Claude."
         }
-      ]
+      ],
+      "acceptance": {
+        "outcome": "The question is answered aloud from the cached day snapshot, on the local stack, with nothing sent to Claude.",
+        "hops": [
+          {
+            "c": "talk-page",
+            "what": "end of speech to transcription request",
+            "max_ms": 150
+          },
+          {
+            "c": "whisper",
+            "what": "transcribe the utterance",
+            "max_ms": 250
+          },
+          {
+            "c": "fast-lane",
+            "what": "route and stream the first sentence",
+            "max_ms": 200
+          },
+          {
+            "c": "voice",
+            "what": "first audio out (end of speech to first audio, whole path)",
+            "max_ms": 700
+          }
+        ],
+        "cost": {
+          "max_usd": 0,
+          "basis": "local models only (Ollama, Kokoro, faster-whisper)"
+        },
+        "views": [
+          "ask"
+        ],
+        "approvals": [],
+        "rubric": [
+          {
+            "id": "local",
+            "check": "Answered by the fast lane; no Claude call and no metered spend."
+          },
+          {
+            "id": "speed",
+            "check": "First audio under 0.7 s from the end of speech (Targets table)."
+          },
+          {
+            "id": "facts",
+            "check": "Every event, time and name spoken matches the day snapshot; nothing invented."
+          }
+        ],
+        "verdict": {
+          "result": null,
+          "date": null,
+          "report": null
+        }
+      }
     },
     {
       "id": "deepseek-pr",
@@ -1762,7 +1814,73 @@
           "c": "worker",
           "t": "The factory pass (every 5 s while the job moves) stores `job list` in factory_board; its trigger puts the change on the live feed, so the Factory page redraws at once; it and the chat's factory_job show state, PR and cost; a notification tells you."
         }
-      ]
+      ],
+      "acceptance": {
+        "outcome": "A ready PR is opened on the repo through the metered DeepSeek API runtime, never merged.",
+        "hops": [
+          {
+            "c": "jarvis",
+            "what": "tool call (card, factory_start) excluding model time",
+            "max_ms": 1000
+          },
+          {
+            "c": "dispatcher",
+            "what": "approval to \"started\"",
+            "max_ms": 1000
+          },
+          {
+            "c": "factory-chain",
+            "what": "dev step, gates and PR",
+            "unbounded": "bound by the model and the repo gates; no latency target"
+          },
+          {
+            "c": "github",
+            "what": "CI watch to green",
+            "unbounded": "bound by CI; at most 3 CI-fix cycles"
+          },
+          {
+            "c": "worker",
+            "what": "state change to the board redraw",
+            "max_ms": 200
+          }
+        ],
+        "cost": {
+          "max_usd": 2,
+          "basis": "job cost_usd on deepseek/deepseek-coder"
+        },
+        "views": [
+          "plan",
+          "build",
+          "run",
+          "ask"
+        ],
+        "approvals": [
+          "factory_start"
+        ],
+        "rubric": [
+          {
+            "id": "pr",
+            "check": "The PR is open and ready for review."
+          },
+          {
+            "id": "ci",
+            "check": "CI is green on the PR head."
+          },
+          {
+            "id": "review",
+            "check": "An independent code review finds no blocker."
+          },
+          {
+            "id": "scope",
+            "check": "The diff stays inside what the card asked for."
+          }
+        ],
+        "verdict": {
+          "result": null,
+          "date": null,
+          "report": null
+        }
+      }
     },
     {
       "id": "review-fix",
@@ -1797,7 +1915,72 @@
           "c": "github",
           "t": "The fix is pushed fast-forward to the same PR; the CI watch restarts on the new head."
         }
-      ]
+      ],
+      "acceptance": {
+        "outcome": "The existing PR is updated in place (fast-forward push) so its review comments are resolved, on the subscription.",
+        "hops": [
+          {
+            "c": "jarvis",
+            "what": "tool call (factory_continue) excluding model time",
+            "max_ms": 1000
+          },
+          {
+            "c": "dispatcher",
+            "what": "approval to \"started\"",
+            "max_ms": 1000
+          },
+          {
+            "c": "runtime-claude",
+            "what": "session fixes the comments",
+            "unbounded": "bound by the model; no latency target"
+          },
+          {
+            "c": "github",
+            "what": "CI watch on the new head to green",
+            "unbounded": "bound by CI; at most 3 CI-fix cycles"
+          },
+          {
+            "c": "worker",
+            "what": "state change to the board redraw",
+            "max_ms": 200
+          }
+        ],
+        "cost": {
+          "max_usd": 0,
+          "basis": "claude.ai subscription: cost_usd stays 0 (subscription_equiv_usd is recorded, not billed)"
+        },
+        "views": [
+          "build",
+          "run",
+          "ask"
+        ],
+        "approvals": [
+          "factory_continue"
+        ],
+        "rubric": [
+          {
+            "id": "updated",
+            "check": "The same PR is updated; no new PR is opened and nothing is merged."
+          },
+          {
+            "id": "ci",
+            "check": "CI is green on the new head."
+          },
+          {
+            "id": "review",
+            "check": "A code review finds no blocker and each comment is addressed or answered."
+          },
+          {
+            "id": "scope",
+            "check": "The diff stays inside the review comments."
+          }
+        ],
+        "verdict": {
+          "result": null,
+          "date": null,
+          "report": null
+        }
+      }
     },
     {
       "id": "teams-ask",
@@ -1828,7 +2011,60 @@
           "c": "notify",
           "t": "Within the interrupt budget: a toast (or ntfy), and INBOX.md for the PA chat with a content-free doorbell when it is idle."
         }
-      ]
+      ],
+      "acceptance": {
+        "outcome": "A Teams message that asks something of you becomes a card on the board, with the right person, due date and source link.",
+        "hops": [
+          {
+            "c": "ingest",
+            "what": "cache change to a stored source_item",
+            "max_ms": 5000
+          },
+          {
+            "c": "commitments",
+            "what": "distill to an owed_by_me commitment",
+            "unbounded": "bound by the distill model; no latency target"
+          },
+          {
+            "c": "dashboard",
+            "what": "commitment to the card on the board",
+            "max_ms": 200
+          },
+          {
+            "c": "notify",
+            "what": "card to toast, inside the interrupt budget",
+            "max_ms": 5000
+          }
+        ],
+        "cost": {
+          "max_usd": 0.05,
+          "basis": "distill model call for one message"
+        },
+        "views": [
+          "run",
+          "ask"
+        ],
+        "approvals": [],
+        "rubric": [
+          {
+            "id": "person",
+            "check": "The card names the person who asked."
+          },
+          {
+            "id": "due",
+            "check": "The due date is the absolute date the message implies."
+          },
+          {
+            "id": "link",
+            "check": "The card links to the source message."
+          }
+        ],
+        "verdict": {
+          "result": null,
+          "date": null,
+          "report": null
+        }
+      }
     },
     {
       "id": "research",
@@ -1863,7 +2099,63 @@
           "c": "worker",
           "t": "The poll sees it done; factory_job returns the report excerpt and the Factory page renders the report as a parsed tree (no HTML sink)."
         }
-      ]
+      ],
+      "acceptance": {
+        "outcome": "A report.md answers the question you asked, with its sources cited, delivered by a research job that opens no PR.",
+        "hops": [
+          {
+            "c": "jarvis",
+            "what": "tool call (factory_start) excluding model time",
+            "max_ms": 1000
+          },
+          {
+            "c": "dispatcher",
+            "what": "approval to \"started\"",
+            "max_ms": 1000
+          },
+          {
+            "c": "runtime-claude",
+            "what": "the research conversation writes report.md",
+            "unbounded": "bound by the model; 5400 s cap"
+          },
+          {
+            "c": "worker",
+            "what": "state change to the board redraw",
+            "max_ms": 200
+          }
+        ],
+        "cost": {
+          "max_usd": 0,
+          "basis": "claude.ai subscription: cost_usd stays 0 (subscription_equiv_usd is recorded, not billed)"
+        },
+        "views": [
+          "plan",
+          "run",
+          "ask"
+        ],
+        "approvals": [
+          "factory_start"
+        ],
+        "rubric": [
+          {
+            "id": "cited",
+            "check": "Every claim carries a source, and each source was opened and checked."
+          },
+          {
+            "id": "supported",
+            "check": "No claim is unsupported by its source."
+          },
+          {
+            "id": "answers",
+            "check": "The report answers the question asked, not an adjacent one."
+          }
+        ],
+        "verdict": {
+          "result": null,
+          "date": null,
+          "report": null
+        }
+      }
     },
     {
       "id": "phone",
@@ -1886,7 +2178,10 @@
           "c": "jarvis",
           "t": "The same PA chat session: typing on the phone, speaking, and typing in termhub are one conversation."
         }
-      ]
+      ],
+      "acceptance": {
+        "outOfScope": "Phone app and the phone workflow are out of scope (PLAN.md D12); 7.6 is the Tauri desktop shell only."
+      }
     }
   ],
   "health": {

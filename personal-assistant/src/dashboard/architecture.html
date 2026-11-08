@@ -109,6 +109,16 @@
   .ex.on ol { display: block; }
   .ex li { font-size: var(--text-sm); margin: 3px 0; }
   .ex li b { font-weight: 600; }
+  .ex .acc { display: none; margin-top: 8px; padding-top: 6px; border-top: 1px dashed var(--line); font-size: var(--text-sm); }
+  .ex.on .acc { display: block; }
+  .acc-head { font-weight: 600; }
+  .acc-sub { font-weight: 600; margin-top: 6px; }
+  .acc-note, .acc-row { margin: 3px 0; color: var(--ink-2); }
+  .ex .acc-list { margin: 2px 0; padding-left: 20px; display: block; }
+  .ex .acc-status { font-size: var(--text-sm); }
+  .verdict { font-weight: 400; font-style: italic; color: var(--ink-2); }
+  .verdict.pass { color: var(--ok, var(--signal)); font-style: normal; }
+  .verdict.fail { color: var(--down, #c0392b); font-style: normal; }
 
   #tip { position: fixed; z-index: 10; max-width: 300px; pointer-events: none; display: none; background: var(--surface-2); border: 1px solid var(--line-strong);
     border-radius: var(--radius); padding: 8px 10px; box-shadow: var(--shadow-2); font-size: var(--text-xs); }

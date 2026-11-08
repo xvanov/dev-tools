@@ -406,7 +406,7 @@ meet its quality and speed metrics. The registry is `architecture.json`'s `examp
 `whats-on`, `deepseek-pr`, `review-fix`, `teams-ask`, `research`; `phone` is out of scope, D12); a workflow that is
 not in the Map is not done, and a new one gets added there first.
 
-- [ ] **8.1 Acceptance criteria per workflow** in `architecture.json` (an `acceptance` block on
+- [x] **8.1 Acceptance criteria per workflow** in `architecture.json` (an `acceptance` block on
   each example): the outcome that must happen, the hops and their latency targets, a cost
   ceiling, the views it must show in (Plan, Build, Run, Ask), the approvals policy requires,
   and a quality rubric. Examples: `deepseek-pr` and `review-fix`: PR opened or updated, CI green,

@@ -76,6 +76,49 @@ for (const x of A.examples) {
     assert.ok(s.t, `example ${x.id}: step text`);
   }
 }
+// Acceptance criteria (PLAN.md 8.1): every walk-through says what "done" means,
+// or is explicitly out of scope. The Phase 8 reviewers score against this block.
+{
+  const VIEWS = ['plan', 'build', 'run', 'ask'];
+  const askTools = byId.jarvis.tools.ask;
+  const nonEmpty = (s) => typeof s === 'string' && s.trim().length > 0;
+  for (const x of A.examples) {
+    const a = x.acceptance;
+    assert.ok(a && typeof a === 'object', `example ${x.id}: has an acceptance block`);
+    if (a.outOfScope !== undefined) {
+      assert.ok(nonEmpty(a.outOfScope), `example ${x.id}: outOfScope gives a reason`);
+      assert.deepStrictEqual(Object.keys(a), ['outOfScope'], `example ${x.id}: an out-of-scope workflow has only the reason`);
+      continue;
+    }
+    assert.deepStrictEqual(sorted(Object.keys(a)), sorted(['outcome', 'hops', 'cost', 'views', 'approvals', 'rubric', 'verdict']), `example ${x.id}: acceptance keys`);
+    assert.ok(nonEmpty(a.outcome), `example ${x.id}: acceptance.outcome`);
+    assert.ok(Array.isArray(a.hops) && a.hops.length >= 2, `example ${x.id}: acceptance.hops`);
+    for (const h of a.hops) {
+      assert.ok(byId[h.c], `example ${x.id}: acceptance hop on unknown component ${h.c}`);
+      assert.ok(nonEmpty(h.what), `example ${x.id}: hop ${h.c} says what it does`);
+      // A hop has a latency ceiling, or says why it has none (model- or CI-bound).
+      assert.ok((Number.isFinite(h.max_ms) && h.max_ms > 0) !== nonEmpty(h.unbounded), `example ${x.id}: hop ${h.c} has exactly one of max_ms, unbounded`);
+    }
+    assert.ok(a.hops.some((h) => Number.isFinite(h.max_ms)), `example ${x.id}: at least one hop has a latency target`);
+    assert.ok(a.cost && Number.isFinite(a.cost.max_usd) && a.cost.max_usd >= 0 && nonEmpty(a.cost.basis), `example ${x.id}: cost ceiling and its basis`);
+    assert.ok(Array.isArray(a.views) && a.views.length >= 1 && a.views.every((v) => VIEWS.includes(v)) && new Set(a.views).size === a.views.length, `example ${x.id}: views are from ${VIEWS.join(', ')}`);
+    assert.ok(Array.isArray(a.approvals), `example ${x.id}: approvals is a list (empty when none)`);
+    for (const t of a.approvals) assert.ok(askTools.includes(t), `example ${x.id}: approval ${t} is not a tool that asks`);
+    assert.ok(Array.isArray(a.rubric) && a.rubric.length >= 3, `example ${x.id}: a rubric of at least three criteria`);
+    const rids = a.rubric.map((r) => r.id);
+    assert.strictEqual(new Set(rids).size, rids.length, `example ${x.id}: rubric ids are unique`);
+    for (const r of a.rubric) assert.ok(/^[a-z0-9-]+$/.test(r.id) && nonEmpty(r.check), `example ${x.id}: rubric item ${r.id}`);
+    // The verdict is filled by Phase 8 (8.4): null until a reviewer has scored it.
+    const v = a.verdict;
+    assert.deepStrictEqual(sorted(Object.keys(v)), ['date', 'report', 'result'], `example ${x.id}: verdict keys`);
+    assert.ok([null, 'pass', 'fail'].includes(v.result), `example ${x.id}: verdict.result`);
+    if (v.result === null) assert.ok(v.date === null && v.report === null, `example ${x.id}: an unreviewed verdict is empty`);
+    else {
+      assert.match(String(v.date), /^\d{4}-\d{2}-\d{2}$/, `example ${x.id}: verdict.date`);
+      assert.ok(fs.existsSync(path.join(REPO, v.report || '')), `example ${x.id}: verdict.report ${v.report} does not exist`);
+    }
+  }
+}
 for (const [id, h] of Object.entries(A.health)) {
   assert.ok(['self', 'postgres', 'http', 'tcp', 'machine'].includes(h.kind), `health ${id}: kind`);
   assert.ok(h.label, `health ${id}: label`);
