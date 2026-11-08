@@ -609,7 +609,13 @@ run mid-step; a job continued on an existing branch (`--branch`).
   day/model/purpose; `PA_CLAUDE_POOL_USD` tracks the credit pool, and
   `PA_CLAUDE_POOL_FALLBACK_API=1` (default off) moves `claude_session` jobs to the `api` runtime
   once it is spent.
-- [ ] **7.6** Tauri desktop shell (phone app out of scope, D12).
+- [x] **7.6** Tauri desktop shell (phone app out of scope, D12). (d779847, 7b75f93)
+  `desktop/` (Tauri 2): the stack's browser shell in its own window, tray, OS notifications from
+  /api/events (approval, secret, draft, run waiting/landed/failed), optional start at login, and a
+  work/personal switcher (one stack connected at a time, separate webview data). Installers come
+  from `scripts/build.js` and CI's `build` job: NSIS on Windows, .deb on Linux, both built in run
+  42462406341. Later Windows runs failed only on github.com release downloads (504), so the CI
+  job now caches Tauri's NSIS tools and retries. Not installed on either machine.
 - [ ] **Exit 7:** install on a fresh Windows and a fresh Linux machine with one install script
   each (jarvisd and ptyd binaries, plus the Python factory via `uv`, which fetches its own
   Python; D15).
