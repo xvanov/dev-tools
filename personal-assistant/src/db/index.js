@@ -12,6 +12,15 @@ const { config } = require('../config');
 
 let pool = null;
 
+// PA_DB=sqlite (plan 3.1): the same interface over one SQLite file
+// (src/db/sqlite.js) instead of the pool. Postgres stays the default.
+const SQLITE = config.db === 'sqlite';
+let sqliteBackend = null;
+function sqlite() {
+  if (!sqliteBackend) sqliteBackend = require('./sqlite').createSqliteBackend(config.sqlitePath, { key: config.sqliteKey || null });
+  return sqliteBackend;
+}
+
 // A test process must never reach the operator's real database: a test once wrote its stub's error
 // into the live factory_board row on every run. A process counts as a test when the shared runner
 // set PA_TESTING, or when it was started as `node ...test.js`. It may connect only to a database
@@ -32,6 +41,7 @@ function assertSafeForTests(url) {
 }
 
 function getPool() {
+  if (SQLITE) return sqlite().pool; // {connect, query, end}: connect() is a session
   if (!pool) {
     assertSafeForTests(config.databaseUrl);
     pool = new Pool({
@@ -70,6 +80,7 @@ async function one(text, params) {
 }
 
 async function withTx(fn) {
+  if (SQLITE) return sqlite().withTx(fn);
   return txOn(getPool(), fn);
 }
 
@@ -94,6 +105,11 @@ async function txOn(p, fn) {
 }
 
 async function close() {
+  if (sqliteBackend) {
+    const b = sqliteBackend;
+    sqliteBackend = null;
+    await b.close();
+  }
   if (pool) {
     const p = pool;
     pool = null;
@@ -124,6 +140,7 @@ function createBackend(url, { max = 5 } = {}) {
 
 // Cheap liveness + capability probe for `pa doctor`.
 async function probe() {
+  if (SQLITE) return { db: config.sqlitePath, has_vector: sqlite().vec, dialect: 'sqlite' };
   const r = await query(
     `select current_database() as db,
             (select count(*) from pg_extension where extname = 'vector') > 0 as has_vector`
@@ -131,4 +148,4 @@ async function probe() {
   return r.rows[0];
 }
 
-module.exports = { assertSafeForTests, getPool, query, rows, one, withTx, close, probe, createBackend };
+module.exports = { assertSafeForTests, getPool, query, rows, one, withTx, close, probe, createBackend, dialect: SQLITE ? 'sqlite' : 'postgres', sqliteBackend: sqlite };

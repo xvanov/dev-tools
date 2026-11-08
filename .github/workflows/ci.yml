@@ -91,11 +91,13 @@ jobs:
 
   # The repository contract (plan 1.3) against a real Postgres: the only PA test
   # that needs one. Service containers run on Linux runners only, so it is its own
-  # job; in the matrix job above repoContract.test.js finds no server and skips.
+  # job; in the matrix job above repoContract.test.js finds no server and skips
+  # Postgres. Its SQLite run (plan 3.2) needs no service: it runs in both jobs,
+  # so on Linux and Windows.
   personal-assistant-contract:
     needs: changes
     if: needs.changes.outputs.pa == 'true'
-    name: personal-assistant contract (postgres)
+    name: personal-assistant contract (postgres, sqlite)
     runs-on: ubuntu-latest
     timeout-minutes: 10
     services:

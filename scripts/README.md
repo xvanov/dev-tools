@@ -45,6 +45,9 @@ Per-tool settings live in `<tool>/test/runner.config.js` (every `skip` and `seri
   (done on the work laptop's WSL Postgres, port 5433):
   `alter role pa createdb; create database pa_test_template owner pa;` then, in `pa_test_template`,
   `create extension vector; create extension pg_trgm; alter database pa_test_template is_template true;`.
+  The same cases also run on SQLite (plan 3.2): a throwaway encrypted `pa_test_contract_<pid>.sqlite` in a temp
+  dir, no server, so it runs everywhere the optional `better-sqlite3-multiple-ciphers` is installed.
+  `PA_CONTRACT_BACKENDS=sqlite` (or `postgres`) picks one; `PA_CONTRACT_STRICT=1` fails SQLite `todo` cases.
 - A test that starts a PTY (termhub) must kill it and wait for it before removing its temp dir.
   `Session.kill()` does that on Windows (`taskkill /T /F`, then waits); remove dirs with
   `fs.rmSync(dir, { recursive: true, force: true, maxRetries: 30, retryDelay: 100 })`.

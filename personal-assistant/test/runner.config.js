@@ -11,7 +11,7 @@ module.exports = {
   touches: {
     'syntax.test.js': ['src/', 'bin/'],
     // Reads every test/contract/*.contract.js and migrates from sql/ (plan 1.3).
-    'repoContract.test.js': ['src/repo/', 'src/db/', 'test/contract/', 'sql/'],
+    'repoContract.test.js': ['src/repo/', 'src/db/', 'test/contract/', 'sql/', 'sql-sqlite/'],
   },
   // Slow end-to-end tests that import the whole app: in --changed mode only their own area selects them.
   narrow: {

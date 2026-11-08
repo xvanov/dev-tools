@@ -26,5 +26,9 @@
   },
   "engines": {
     "node": ">=20"
+  },
+  "optionalDependencies": {
+    "better-sqlite3-multiple-ciphers": "^13.0.3",
+    "sqlite-vec": "^0.1.9"
   }
 }

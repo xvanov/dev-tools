@@ -147,6 +147,13 @@ const config = {
   reposRoot: env('PA_REPOS_ROOT', defaultReposRoot()),
 
   databaseUrl: env('PA_DATABASE_URL', 'postgres://pa:pa@127.0.0.1:5433/pa'),
+  // The store (plan 3.1, D2): postgres (the default until the 3.5 cutover) or
+  // sqlite, one file per stack at PA_SQLITE_PATH (src/db/sqlite.js). With
+  // PA_SQLITE_KEY set the file is encrypted (SQLCipher); the key belongs in the
+  // OS vault or the gitignored .env, never in a commit.
+  db: env('PA_DB', 'postgres'),
+  sqlitePath: env('PA_SQLITE_PATH', path.join(dataDir, 'pa.sqlite')),
+  sqliteKey: env('PA_SQLITE_KEY', ''),
 
   // Mail, calendar and Teams through the claude.ai Microsoft 365 connector via
   // `claude -p` — no app registration, no Graph token. Connect it once with

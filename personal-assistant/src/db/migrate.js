@@ -49,6 +49,9 @@ function expandIncludes(sql) {
 }
 
 async function migrate(db = POOL) {
+  // SQLite (PA_DB=sqlite, plan 3.1) has its own schema files: sql-sqlite/.
+  if (db.dialect === 'sqlite') return require('./sqlite').migrate(db);
+  if (db === POOL && require('./index').dialect === 'sqlite') return require('./sqlite').migrate(require('./index').sqliteBackend());
   await ensureRegistry(db);
   const done = await applied(db);
   const pending = migrationFiles().filter((f) => !done.has(f));

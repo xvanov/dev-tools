@@ -63,17 +63,30 @@ function clientBackend(client) {
     withTx: (fn) => fn(client),
     inTx: true,
   };
+  // The SQLite backend's clients say so (and a session carries its identity,
+  // for leases and LISTEN); a pg client says nothing: Postgres.
+  if (client.dialect) b.dialect = client.dialect;
+  if (client.session) b.session = client.session;
   return b;
 }
 
-/** The repository set over `db` (a backend with src/db's interface). */
+/**
+ * The SQLite twin of aggregate `name` (src/repo/sqlite/<name>.js, plan 3.1):
+ * the same methods over SQLite SQL. One not ported yet has no methods.
+ */
+function loadSqlite(name) {
+  const file = require('path').join(__dirname, 'sqlite', `${name}.js`);
+  return require('fs').existsSync(file) ? require(file) : { create: () => ({}) };
+}
+
+/** The repository set over `db` (a backend with src/db's interface; `db.dialect` 'sqlite' picks src/repo/sqlite). */
 function createRepos(db) {
   const repos = {};
   for (const [name, load] of Object.entries(AGGREGATES)) {
     let made = null;
     Object.defineProperty(repos, name, {
       enumerable: true,
-      get: () => (made ||= load().create(db, repos)),
+      get: () => (made ||= (db.dialect === 'sqlite' ? loadSqlite(name) : load()).create(db, repos)),
     });
   }
   /** Runs fn(reposInTx) in one transaction (joins an open one). */
@@ -88,6 +101,9 @@ const poolBackend = {
   rows: (text, params) => require('../db').rows(text, params),
   one: (text, params) => require('../db').one(text, params),
   withTx: (fn) => require('../db').withTx(fn),
+  get dialect() {
+    return require('../db').dialect;
+  },
 };
 
 /**
