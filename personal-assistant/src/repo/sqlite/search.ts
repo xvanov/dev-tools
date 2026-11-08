@@ -155,11 +155,21 @@ function create(db: Db) {
   return {
     /** Chunks whose context header predates `contextVersion`, with their item. */
     async staleChunks(contextVersion: unknown, limit: number) {
+      // `<>` uses no index, and a scan reads every chunk's vector to reach
+      // context_v (0.6 s on the work stack when none is stale): two ranges on
+      // chunk_stale_idx (sql-sqlite/008) instead, and raw for the rows kept.
       return db.rows(
-        `select c.id, si.source, si.subject, si.occurred_at, si.author_identity, si.raw
-       from chunk c join source_item si on si.id = c.source_item_id
-      where c.context_v <> $1
-      order by c.id desc limit $2`,
+        `with k as materialized (
+         select id, source_item_id from chunk where context_v < $1
+         union all
+         select id, source_item_id from chunk where context_v > $1
+       ), top as (
+         select k.id, k.source_item_id from k join source_item si on si.id = k.source_item_id
+          order by k.id desc limit $2
+       )
+     select t.id, si.source, si.subject, si.occurred_at, si.author_identity, si.raw
+       from top t join source_item si on si.id = t.source_item_id
+      order by t.id desc`,
         [contextVersion, limit]
       );
     },
@@ -169,7 +179,7 @@ function create(db: Db) {
       await db.query('update chunk set context = $2, context_v = $3, embedding = null where id = $1', [id, context, contextVersion]);
     },
 
-    /** Chunks with no embedding, newest first. */
+    /** Chunks with no embedding, newest first (chunk_unembedded_idx). */
     async chunksMissingEmbedding(limit: number) {
       return db.rows('select id, context, content from chunk where embedding is null order by id desc limit $1', [limit]);
     },

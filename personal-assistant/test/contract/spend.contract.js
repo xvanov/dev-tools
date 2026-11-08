@@ -49,6 +49,22 @@ module.exports = {
     assert.deepStrictEqual(by, { m1: [1.5, 2], m2: [2, 1], null: [0, 1] });
   },
 
+  'dailyBreakdown: the day is the zone\'s, to the minute (a +05:45 zone)': async ({ repos, seed, db, assert, uniq }) => {
+    const p = uniq('zone');
+    await repos.spend.record(call(p, { model: 'm1', costUsd: 1 }));
+    await repos.spend.record(call(p, { model: 'm1', costUsd: 2 }));
+    const [x, y] = (await db.rows('select id from llm_spend where purpose = $1 order by id', [p])).map((r) => r.id);
+    const d = new Date(Date.now() - 86400_000).toISOString().slice(0, 10);
+    // Kathmandu's midnight is 18:15 UTC the day before.
+    await seed.backdate('llm_spend', 'at', x, new Date(`${d}T18:14:59.999Z`));
+    await seed.backdate('llm_spend', 'at', y, new Date(`${d}T18:15:00.000Z`));
+    const since = new Date(Date.now() - 3 * 86400_000);
+    const next = new Date(Date.parse(`${d}T12:00:00Z`) + 86400_000).toISOString().slice(0, 10);
+    const days = async (tz) => (await repos.spend.dailyBreakdown(since, tz)).filter((r) => r.purpose === p).map((r) => [r.day, r.usd]).sort();
+    assert.deepStrictEqual(await days('Asia/Kathmandu'), [[d, 1], [next, 2]]);
+    assert.deepStrictEqual(await days('UTC'), [[d, 3]]);
+  },
+
   'claudePoolSince: only the cli and claude_session backends, at or after the start': async ({ repos, assert, uniq }) => {
     const start = new Date(Date.now() - 1000);
     const before = await repos.spend.claudePoolSince(start);

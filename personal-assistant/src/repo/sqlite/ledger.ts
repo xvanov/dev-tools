@@ -11,7 +11,7 @@ type Db = import('../types.ts').Db;
 type Row = import('../types.ts').Row;
 
 const { STATUS_COLUMNS, WINDOW_DAYS } = require('../ledger.ts');
-const { NOW, sinceMs } = require('./_sql.ts');
+const { NOW, sinceMs, atLeastChars } = require('./_sql.ts');
 
 const SESSION_SETTLE_MINUTES = 10;
 
@@ -34,6 +34,11 @@ const BASENAME = (x: unknown) => `substr(${SLASHED(x)}, length(rtrim(${SLASHED(x
 // $1 = my author forms, $2 = max commitments, $3 = max items per commitment,
 // $4 = only these commitment ids (null: all), $5 = sessions settled before,
 // $6 = "fresh" evidence after. See src/repo/ledger.js DIRTY for the why of each rule.
+// `r.id in (...)` only narrows: the window and fetched_at terms below still
+// hold, but tested first on source_item_window_idx (sql-sqlite/008), so an
+// item is read (its fetched_at sits behind the body, on overflow pages) only
+// when it is new since the last check. Reading every item in each ask's
+// window took 0.7-2.8 s a pass on the work stack.
 const DIRTY = `
   with o as (
     select c.id, c.direction, c.summary, c.detail, c.counterparty_person_id, c.ledger_checked_at,
@@ -51,16 +56,21 @@ const DIRTY = `
     select o.id as cid, r.id, r.fetched_at,
            row_number() over (
              partition by o.id
-             order by (o.thread_external_id is not null and r.source = o.source and r.thread_external_id = o.thread_external_id) desc, r.fetched_at
+             order by (o.thread_external_id is not null and r.source = o.source and r.thread_external_id = o.thread_external_id) desc, r.fetched_at, r.id
            ) as n
       from o join source_item r
-        on (r.id <> o.item_id or r.raw->>'repaired' is not null)
+        on r.id in (select w.id from source_item w indexed by source_item_window_idx
+                     where w.occurred_at > o.asked_at
+                       and w.occurred_at < strftime('%Y-%m-%dT%H:%M:%fZ', o.asked_at, '+${WINDOW_DAYS} days')
+                       and w.fetched_at > coalesce(o.ledger_checked_at, '')
+                    union all select o.item_id)
+       and (r.id <> o.item_id or r.raw->>'repaired' is not null)
        and (r.occurred_at > o.asked_at or r.id = o.item_id)
        and r.occurred_at < strftime('%Y-%m-%dT%H:%M:%fZ', o.asked_at, '+${WINDOW_DAYS} days')
        and r.fetched_at > coalesce(o.ledger_checked_at, '')
        and r.source <> 'graph_event'
        and (r.source <> 'claude_session' or r.fetched_at < $5)
-       and length(r.body_text) >= 8
+       and ${atLeastChars('r.body_text', 8)}
        and (
          r.id = o.item_id
          or (o.thread_external_id is not null and r.source = o.source and r.thread_external_id = o.thread_external_id)
@@ -77,7 +87,7 @@ const DIRTY = `
        )
   )
   select o.id, o.direction, o.summary, o.detail, o.counterparty, o.asked_at, o.ask_text, o.source,
-         json_group_array(cand.id order by cand.fetched_at) as item_ids, max(cand.fetched_at) as through
+         json_group_array(cand.id order by cand.fetched_at, cand.id) as item_ids, max(cand.fetched_at) as through
     from o join cand on cand.cid = o.id and cand.n <= $3
    group by o.id
    order by (max(cand.fetched_at) > $6) desc,

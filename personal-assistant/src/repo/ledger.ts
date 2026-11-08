@@ -30,7 +30,7 @@ const FORMS_OF = (personExpr: unknown) => `(select case pi.kind when 'smtp' then
 // $4 = only these commitment ids (null: all).
 const DIRTY = `
   select o.id, o.direction, o.summary, o.detail, o.counterparty, o.asked_at, o.ask_text, o.source,
-         array_agg(r.id order by r.fetched_at) as item_ids, max(r.fetched_at) as through
+         array_agg(r.id order by r.fetched_at, r.id) as item_ids, max(r.fetched_at) as through
     from (
       select c.id, c.direction, c.summary, c.detail, c.counterparty_person_id, c.ledger_checked_at,
              si.id as item_id, si.source, si.thread_external_id, si.occurred_at as asked_at,
@@ -80,8 +80,9 @@ const DIRTY = `
                               and string_to_array(translate(lower(r.raw->>'cwd'), chr(92), '/'), '/')
                                   @> array[regexp_replace(translate(lower(o.repo_path), chr(92), '/'), '^.*/', '')])))))
          )
-       -- The same thread first: that is where an answer usually is.
-       order by same_thread desc, r.fetched_at
+       -- The same thread first: that is where an answer usually is. Items
+       -- fetched in one batch share fetched_at: the lower id first.
+       order by same_thread desc, r.fetched_at, r.id
        limit $3
     ) r
    group by o.id, o.direction, o.summary, o.detail, o.counterparty, o.asked_at, o.ask_text, o.source, o.ledger_checked_at

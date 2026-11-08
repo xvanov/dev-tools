@@ -18,6 +18,17 @@ module.exports = {
     assert.ok((await repos.search.staleChunks(98, 1)).length <= 1);
   },
 
+  'staleChunks: versions below and above both count, newest first, the limit on the newest': async ({ repos, seed, assert }) => {
+    const item = await seed.sourceItem();
+    const low = await seed.memChunk(item, { contextV: 1, ord: 0 });
+    const current = await seed.memChunk(item, { contextV: 3, ord: 1 });
+    const high = await seed.memChunk(item, { contextV: 5, ord: 2 });
+    const got = (await repos.search.staleChunks(3, 100000)).map((r) => Number(r.id));
+    assert.ok(got.includes(low) && got.includes(high) && !got.includes(current));
+    for (let i = 1; i < got.length; i++) assert.ok(got[i - 1] > got[i], 'newest first');
+    assert.deepStrictEqual((await repos.search.staleChunks(3, 2)).map((r) => Number(r.id)), got.slice(0, 2));
+  },
+
   'reheadChunk: new header and version, embedding cleared for the next backfill': async ({ repos, seed, assert }) => {
     const item = await seed.sourceItem();
     const chunk = await seed.memChunk(item, { contextV: 0, embedding: vec(40) });

@@ -188,6 +188,12 @@ changes a result a user would rely on.
   generation during a roll) reach the dashboard within 0.5 s (an outbox poll), not at commit.
 - Integers come back as numbers where Postgres gave bigints as strings; every caller already
   converts.
+- A statement runs on the event loop, so it holds the loop for as long as it takes (anything over
+  `PA_SQLITE_SLOW_MS`, 250 ms, is logged as `slow statement`). A pass's run of statements gives
+  the loop a turn once they have held it for 50 ms, but not inside a transaction.
+- Text length tests (`length(x) >= n`) read the length from the record header where they can
+  (`atLeastChars`, src/repo/sqlite/_sql.ts). Reading the column itself would load the text,
+  which sits on overflow pages. The result is the same, in characters.
 
 ## The cutover on 2026-11-08
 
@@ -206,3 +212,17 @@ changes a result a user would rely on.
   `NativeCommandError` text and the script took that for an error. Redirect through
   `cmd /c "... > file 2>&1"` when scripting these steps in PowerShell. Nothing was lost: the
   stack started on Postgres again and the second export was fresh.
+- **Found afterwards: deploys rolled back.** On the work store (31k chunks, 10k claims, 7k items)
+  a new generation's first passes blocked the event loop for up to 20 s, and it failed its health
+  checks. The serving generation also blocked for 4-10 s every few minutes. The cause was scans
+  that tested one narrow column but read every wide row to reach it: a chunk or claim carries a
+  6 KB vector, and an item carries its body and raw JSON. Each scan took 0.2-0.9 s, and 12-60 s
+  while the hourly snapshot was reading the file. Several of them ran back to back as one chain
+  of microtasks.
+  - The fix: the indexes in sql-sqlite/008, id-first reads, and the turn every 50 ms (above).
+  - The result on a scratch copy of the work store: the pass reads take 0-170 ms. The
+    dashboard's memory stats still take about 350 ms. A worker
+    rehearsal answered every `/healthz` within 0.6 s for its first 2 minutes (before: 24 probes
+    over 1 s, up to 5.7 s).
+  - The first start on 008 builds its indexes in one migration, holding the write lock for about
+    5 s. Writes from the serving generation wait for it (up to `busy_timeout`, 10 s).

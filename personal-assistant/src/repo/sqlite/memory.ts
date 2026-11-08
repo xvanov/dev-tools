@@ -24,7 +24,7 @@ type Db = import('../types.ts').Db;
 type Row = import('../types.ts').Row;
 type Subject = { kind?: unknown; id?: unknown; label?: unknown };
 
-const { NOW, DAY, sinceMs } = require('./_sql.ts');
+const { NOW, DAY, sinceMs, atLeastChars } = require('./_sql.ts');
 const { hammingSql } = require('../../db/sqlite.ts');
 
 const HANDLE_SQL = `case pi.kind when 'github_username' then 'github:' || pi.value
@@ -58,16 +58,20 @@ const INVITE_REPLY = ['accepted', 'declined', 'tentative', 'canceled', 'cancelle
   .map((w) => `lower(si.subject) like '${w} %' or lower(si.subject) like '${w}:%'`)
   .join(' or ');
 
+// Items not yet extracted at version $1. The terms run in this order, cheapest
+// first: the extraction lookup, then the body's length from the record header,
+// the thread lookups (indexes only), and raw last, which sits behind the body
+// on overflow pages (5k notifications made reading it 0.2 s a pass).
 const pendingWhere = (minBodyChars: unknown) => `
-  ce.source_item_id is null
-  and length(si.body_text) >= ${Number(minBodyChars)}
+  not exists (select 1 from claim_extraction ce where ce.source_item_id = si.id and ce.extracted_by = $1)
+  and ${atLeastChars('si.body_text', Number(minBodyChars))}
   and not (si.source = 'github_notification' and (
-        coalesce(json_extract(si.raw, '$.action'), '') in ('ci_activity','approval_requested')
-     or exists (select 1 from source_item p
+        exists (select 1 from source_item p
                  where p.source = 'github_pr' and p.thread_external_id = si.thread_external_id)
      or exists (select 1 from source_item n
                  where n.source = 'github_notification' and n.thread_external_id = si.thread_external_id
-                   and n.occurred_at > si.occurred_at)))
+                   and n.occurred_at > si.occurred_at)
+     or coalesce(json_extract(si.raw, '$.action'), '') in ('ci_activity','approval_requested')))
   and not (si.source = 'graph_mail' and (${INVITE_REPLY}))`;
 
 // Postgres's 'english' stop words (snowball): dropped from a full-text query,
@@ -454,13 +458,23 @@ function create(db: Db) {
     },
 
     async personItems(handles: unknown, emails: unknown[]) {
+      // The ids from the author index and the member-listing items
+      // (source_item_members_idx, sql-sqlite/008) first: as one `or` the
+      // planner walked the items newest first, reading each one's raw to test
+      // it (0.2-0.5 s a person, ~20 people a pages pass).
       return db.rows(
-        `select id, source, subject, occurred_at, json_extract(raw, '$.webUrl') as url
-       from source_item si
-      where si.author_identity in (select value from json_each($1))
-         or (json_type(si.raw, '$.memberEmails') is not null
-             and exists (select 1 from json_each(si.raw, '$.memberEmails') m where m.value in (select value from json_each($2))))
-      order by occurred_at desc limit 14`,
+        `with k as materialized (
+         select a.id from source_item a where a.author_identity in (select value from json_each($1))
+         union
+         select m.id from source_item m indexed by source_item_members_idx
+          where json_type(m.raw, '$.memberEmails') is not null
+            and exists (select 1 from json_each(m.raw, '$.memberEmails') e where e.value in (select value from json_each($2)))
+       ), top as (
+         select k.id from k join source_item s on s.id = k.id order by s.occurred_at desc limit 14
+       )
+     select si.id, si.source, si.subject, si.occurred_at, json_extract(si.raw, '$.webUrl') as url
+       from top t join source_item si on si.id = t.id
+      order by si.occurred_at desc`,
         [handles || [], emails || []]
       );
     },
@@ -608,8 +622,10 @@ function create(db: Db) {
     // ------------------------------------------- consolidation (memory/consolidate)
 
     async claimsMissingEmbedding(limit: number) {
+      // Named (sql-sqlite/008), as the planner otherwise starts from the status
+      // and reads every active claim's vector to test it (0.3 s).
       return db.rows(
-        `select id, subject_label, text from claim where embedding is null
+        `select id, subject_label, text from claim indexed by claim_unembedded_idx where embedding is null
         and status in ('active','pending_review') order by id limit $1`,
         [limit]
       );
@@ -703,10 +719,15 @@ function create(db: Db) {
     },
 
     async unconsolidatedOldest(limit: number) {
+      // Ids from the active claims' index first, then the rows: in id order the
+      // planner scans the table, reading every claim's vector (0.4 s).
       return pgRows(
         await db.rows(
-          `select c.* from claim c left join consolidation k on k.claim_id = c.id
-          where k.claim_id is null and c.status = 'active' order by c.id limit $1`,
+          `select c.* from (
+             select a.id from claim a indexed by claim_subject_active_idx left join consolidation k on k.claim_id = a.id
+              where k.claim_id is null and a.status = 'active' order by a.id limit $1
+           ) t join claim c on c.id = t.id
+          order by c.id`,
           [limit]
         )
       );
@@ -771,7 +792,6 @@ function create(db: Db) {
     async pendingExtraction(version: string, limit: number, minBodyChars: unknown) {
       return db.rows(
         `select si.* from source_item si
-       left join claim_extraction ce on ce.source_item_id = si.id and ce.extracted_by = $1
       where ${pendingWhere(minBodyChars)}
       order by si.occurred_at desc
       limit $2`,
@@ -782,7 +802,6 @@ function create(db: Db) {
     async pendingExtractionCount(version: string, minBodyChars: unknown) {
       const r = await db.one(
         `select count(*) as n from source_item si
-       left join claim_extraction ce on ce.source_item_id = si.id and ce.extracted_by = $1
       where ${pendingWhere(minBodyChars)}`,
         [version]
       );

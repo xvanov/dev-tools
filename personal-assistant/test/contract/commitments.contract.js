@@ -715,6 +715,16 @@ module.exports = {
     assert.deepStrictEqual(idsOf(await repos.commitments.pendingDistill('v1', 40, 1000, 'true', ALL)), [], 'the skip predicate leaves everything out');
   },
 
+  'pendingDistill: the minimum counts characters, not bytes': async ({ repos, seed, assert }) => {
+    const v = `chars-${Date.now()}`;
+    const accents = await seed.sourceItem({ body: 'é'.repeat(40) }); // 80 bytes
+    const emoji39 = await seed.sourceItem({ body: '😀'.repeat(39) }); // 156 bytes
+    const emoji40 = await seed.sourceItem({ body: '😀'.repeat(40) });
+    const got = idsOf(await repos.commitments.pendingDistill(v, 40, 100000, 'false', ALL));
+    assert.deepStrictEqual([accents, emoji39, emoji40].map((x) => got.includes(x)), [true, false, true]);
+    assert.strictEqual(Number((await repos.commitments.pendingDistillCount(v, 40, 'false', ALL)).n), got.length);
+  },
+
   'pendingDistillCount: how many pendingDistill would return': async ({ repos, seed, assert }) => {
     const body = 'y'.repeat(60);
     const before = (await repos.commitments.pendingDistillCount('vc', 40, 'false', ALL)).n;

@@ -403,6 +403,27 @@ module.exports = {
     assert.deepStrictEqual(ids(await repos.memory.personItems([], ['-'])).includes(unrelated), false);
   },
 
+  'personItems: the newest 14 of both kinds, once each, newest first, with the url': async ({ repos, seed, uniq, assert }) => {
+    const w = uniq('pi14');
+    const base = Date.parse('2026-03-01T09:00:00Z');
+    const made = [];
+    for (let i = 0; i < 16; i++) {
+      const member = i % 2 === 1 || i === 14;
+      made.push(
+        await seed.sourceItem({
+          occurredAt: new Date(base + i * 60_000).toISOString(),
+          author: i % 2 === 0 ? `github:${w}` : null,
+          raw: member ? { memberEmails: ['someone@example.test', `${w}@example.test`], webUrl: `https://example.test/${w}/${i}` } : null,
+        })
+      );
+    }
+    const got = await repos.memory.personItems([`github:${w}`, `slack:${w}`], [`${w}@example.test`]);
+    assert.deepStrictEqual(ids(got), made.slice(2).reverse());
+    assert.strictEqual(got[0].url, `https://example.test/${w}/15`);
+    assert.strictEqual(got.find((r) => Number(r.id) === made[14]).url, `https://example.test/${w}/14`);
+    assert.strictEqual(got.find((r) => Number(r.id) === made[12]).url ?? null, null);
+  },
+
   'projectById: the project row, or null': async ({ repos, seed, uniq, assert }) => {
     const name = uniq('pbyid');
     const id = await seed.memProject({ name });
@@ -764,6 +785,24 @@ module.exports = {
     assert.ok(!ids(await repos.memory.pendingExtraction('contract-v1', 100000, 40)).includes(ok));
     assert.ok(ids(await repos.memory.pendingExtraction('contract-v2', 100000, 40)).includes(ok), 'a new version re-opens it');
     assert.strictEqual((await repos.memory.pendingExtraction('contract-v2', 1, 40)).length, 1);
+  },
+
+  'pendingExtraction: the minimum counts characters, not bytes; GitHub noise stays out': async ({ repos, seed, assert }) => {
+    const v = `chars-${Date.now()}`;
+    const long = 'x'.repeat(60);
+    const accents = await seed.sourceItem({ body: 'é'.repeat(40) }); // 80 bytes
+    const fewAccents = await seed.sourceItem({ body: 'é'.repeat(39) });
+    const emoji39 = await seed.sourceItem({ body: '😀'.repeat(39) }); // 156 bytes
+    const emoji40 = await seed.sourceItem({ body: '😀'.repeat(40) }); // 160 bytes
+    const ci = await seed.sourceItem({ source: 'github_notification', body: long, thread: `ci-${v}`, raw: { action: 'ci_activity' } });
+    const onPr = await seed.sourceItem({ source: 'github_notification', body: long, thread: `pr-${v}` });
+    await seed.sourceItem({ source: 'github_pr', body: long, thread: `pr-${v}` });
+    const older = await seed.sourceItem({ source: 'github_notification', body: long, thread: `n-${v}`, occurredAt: new Date(Date.now() - 7200_000) });
+    const newer = await seed.sourceItem({ source: 'github_notification', body: long, thread: `n-${v}`, occurredAt: new Date(Date.now() - 3600_000), raw: { action: 'comment' } });
+    const got = ids(await repos.memory.pendingExtraction(v, 100000, 40));
+    assert.deepStrictEqual([accents, emoji40, newer].map((x) => got.includes(x)), [true, true, true]);
+    assert.deepStrictEqual([fewAccents, emoji39, ci, onPr, older].map((x) => got.includes(x)), [false, false, false, false, false]);
+    assert.strictEqual(await repos.memory.pendingExtractionCount(v, 40), got.length);
   },
 
   'pendingExtractionCount: how many items await extraction at the version': async ({ repos, seed, assert }) => {

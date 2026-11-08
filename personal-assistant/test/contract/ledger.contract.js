@@ -75,6 +75,20 @@ module.exports = {
     assert.deepStrictEqual(await repos.ledger.dirty({ myForms: ['me'], limit: 50, perCommitment: 10, ids: [c] }), []);
   },
 
+  'dirty: items fetched together are cut by id; the ask counts once its text was repaired': async ({ repos, seed, db, assert }) => {
+    const thread = `thr-tie-${Date.now()}`;
+    const ask = await seed.sourceItem({ thread, body: 'can you review the plan?', occurredAt: new Date(Date.now() - 3600_000) });
+    const c = await seed.commitment({ sourceItemId: ask });
+    const b = await seed.sourceItem({ thread, body: 'second reply of the batch', occurredAt: new Date(Date.now() - 60_000) });
+    const a = await seed.sourceItem({ thread, body: 'first reply of the batch', occurredAt: new Date(Date.now() - 120_000) });
+    await db.query('update source_item set fetched_at = $1 where id in ($2, $3, $4)', [new Date(Date.now() - 30_000), ask, a, b]);
+    const items = async (perCommitment) => (await repos.ledger.dirty({ myForms: ['me'], limit: 50, perCommitment, ids: [c] }))[0].item_ids.map(Number);
+    assert.deepStrictEqual(await items(10), [b, a], 'not the ask itself; same fetched_at, lower id first');
+    assert.deepStrictEqual(await items(1), [b]);
+    await db.query(`update source_item set raw = '{"repaired": true}' where id = $1`, [ask]);
+    assert.deepStrictEqual(await items(10), [ask, b, a]);
+  },
+
   'markChecked: never moves back, and ignores items it cannot find': async ({ repos, seed, db, assert }) => {
     const c = await seed.commitment();
     const late = await seed.sourceItem();

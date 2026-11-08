@@ -263,10 +263,30 @@ function hammingSql(a: string, b: string) {
 }
 
 const dayFormats = new Map<string, Intl.DateTimeFormat>();
+// The day of a stored instant, by zone and UTC minute: a zone's offset has been
+// whole minutes since 1972, so every instant in a minute falls on one local
+// day. A week of llm_spend is ~56k rows, and formatting each one was most of
+// the Meter's query.
+const UTC_TEXT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?Z$/;
+const daysByMinute = new Map<string, string>();
 
 /** The calendar day ('YYYY-MM-DD') of an instant in an IANA zone: pg's (at at time zone tz)::date. */
 function localDay(ts: string | number | Date | null, tz: string) {
   if (ts == null) return null;
+  const key = typeof ts === 'string' && ts >= '1972' && UTC_TEXT.test(ts) ? `${tz}|${ts.slice(0, 16)}` : null;
+  if (key) {
+    const hit = daysByMinute.get(key);
+    if (hit) return hit;
+  }
+  const day = formatDay(ts, tz);
+  if (key) {
+    if (daysByMinute.size > 100_000) daysByMinute.clear();
+    daysByMinute.set(key, day);
+  }
+  return day;
+}
+
+function formatDay(ts: string | number | Date, tz: string) {
   let f = dayFormats.get(tz);
   if (!f) {
     f = new Intl.DateTimeFormat('en-CA', { timeZone: tz || 'UTC', year: 'numeric', month: '2-digit', day: '2-digit' });
@@ -493,15 +513,45 @@ function createSqliteBackend(file: string, { key = null }: { key?: number | stri
     return cachedStatement(writer, translate(sql).sql).readonly;
   }
 
+  // A pass that awaits one statement after another resumes each time as a
+  // microtask, so however fast each one is, the loop never lets a timer or a
+  // request in until the pass is done (the pages pass's ~30 person reads held
+  // it for 9.7 s). Once statements have held the loop for YIELD_MS since it
+  // last had a turn, the next one waits for a turn first. Not inside a
+  // transaction: that would hold the store's write lock longer.
+  const YIELD_MS = 50;
+  let heldMs = 0;
+  let turnQueued = false;
+  function held(ms: number) {
+    heldMs += ms;
+    if (!turnQueued) {
+      turnQueued = true;
+      setImmediate(() => {
+        heldMs = 0;
+        turnQueued = false;
+      });
+    }
+  }
+  function timed(conn: Conn, text: string, params?: unknown[]) {
+    const t0 = performance.now();
+    try {
+      return runOn(conn, text, params);
+    } finally {
+      held(performance.now() - t0);
+    }
+  }
+
   async function query(text: string, params?: unknown[]): Promise<Result> {
     if (closed) throw new Error('the SQLite backend is closed');
-    if (isRead(text)) return runOn(readConn(), text, params);
+    if (heldMs >= YIELD_MS && txContext.getStore() !== backend) await new Promise((resolve) => setImmediate(resolve));
+    if (closed) throw new Error('the SQLite backend is closed');
+    if (isRead(text)) return timed(readConn(), text, params);
     if (txContext.getStore() === backend) {
       throw new Error('a write through the pool from inside an open SQLite transaction would wait on that transaction forever: use the repository set withTx handed you');
     }
     const release = await lock.acquire();
     try {
-      const r = runOn(writer, text, params);
+      const r = timed(writer, text, params);
       flushEvents();
       return r;
     } finally {

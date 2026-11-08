@@ -28,4 +28,15 @@ function sinceMs(ms: number, from: Date | string | number = Date.now()) {
   return new Date(new Date(from).getTime() - ms).toISOString();
 }
 
-module.exports = { NOW, HOUR, DAY, sinceMs };
+/**
+ * SQL for `length(col) >= n` that reads a long text column's length from the
+ * record header: length() counts characters, so it loads the whole value (a
+ * source_item body spills onto overflow pages, each decrypted), while
+ * octet_length() does not. UTF-8 is at most 4 bytes a character, so 4n bytes
+ * are always n characters; only a value shorter than that is counted.
+ */
+function atLeastChars(col: string, n: number | string) {
+  return `(octet_length(${col}) >= 4 * (${n}) or length(${col}) >= (${n}))`;
+}
+
+module.exports = { NOW, HOUR, DAY, sinceMs, atLeastChars };

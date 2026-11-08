@@ -13,7 +13,7 @@
 type Db = import('../types.ts').Db;
 type Row = import('../types.ts').Row;
 
-const { NOW, DAY, sinceMs } = require('./_sql.ts');
+const { NOW, DAY, sinceMs, atLeastChars } = require('./_sql.ts');
 
 const LIVE = `c.status in ('open','dispatched') and c.superseded_by is null`;
 
@@ -719,7 +719,7 @@ function create(db: Db) {
        left join distillation d
          on d.source_item_id = si.id and d.extracted_by = $1
       where d.source_item_id is null and not ${skipSql} and ${allowedSql}
-        and length(si.body_text) >= $2
+        and ${atLeastChars('si.body_text', '$2')}
       order by si.occurred_at desc
       limit $3`,
         [version, minChars, limit]
@@ -732,7 +732,7 @@ function create(db: Db) {
         `select count(*) as n from source_item si
        left join distillation d
          on d.source_item_id = si.id and d.extracted_by = $1
-      where d.source_item_id is null and not ${skipSql} and ${allowedSql} and length(si.body_text) >= $2`,
+      where d.source_item_id is null and not ${skipSql} and ${allowedSql} and ${atLeastChars('si.body_text', '$2')}`,
         [version, minChars]
       );
     },
