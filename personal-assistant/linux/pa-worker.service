@@ -1,14 +1,20 @@
 # personal-assistant worker (ingest, distillation, dispatch reconciliation,
 # the dashboard on 127.0.0.1:7300). A systemd *user* unit, written by
 # linux/install.sh (through linux/units.js, which quotes and escapes them)
-# with __DIR__ and __NODE__ filled in.
+# with __DIR__ and __NODE__ filled in. linux/redeploy.sh re-renders it on
+# every deploy, so a change here reaches installed machines.
+#
+# It runs the supervisor (src/supervisor), which owns the dashboard port and
+# runs the worker as generations it replaces without a gap on a deploy
+# (docs/native/PLAN.md Z1/Z4). The unit itself restarts only when the
+# supervisor's own code changes.
 #
 # Restart=always with no start limit: the worker already waits for the store
 # rather than exit (src/worker.js), and a worker that gave up after five quick
 # failures is how it once stayed dead for a week on Windows.
 
 [Unit]
-Description=personal-assistant worker
+Description=personal-assistant worker (under its zero-downtime supervisor)
 After=network-online.target
 Wants=network-online.target
 StartLimitIntervalSec=0
@@ -16,11 +22,12 @@ StartLimitIntervalSec=0
 [Service]
 Type=simple
 WorkingDirectory=__DIR__
-ExecStart="__NODE__" "__DIR__/src/worker.js"
+ExecStart="__NODE__" "__DIR__/src/supervisor"
 Restart=always
 RestartSec=30
-# A second worker waits on a database lock (src/worker.js); stopping must end
-# node itself, which systemd does by killing the unit's whole cgroup.
+# Stopping must end the supervisor and every worker generation it forked,
+# which systemd does by killing the unit's whole cgroup. The supervisor stops
+# its generations itself on SIGTERM (10 s grace each); 20 s covers that.
 KillMode=control-group
 TimeoutStopSec=20
 

@@ -35,6 +35,7 @@ async function main() {
     env: { DUMMY_DIR: dir },
     drainTimeoutMs: 5000,
     stopGraceMs: 3000,
+    holdMs: 0, // no standby here: the rollback section below keeps one
     silent: true,
   });
 
@@ -197,6 +198,75 @@ async function main() {
     await sup.close();
     for (const p of last) assert.ok(!alive(p), `pid ${p} outlived the supervisor`);
     fs.rmSync(dir, { recursive: true, force: true });
+  }
+
+  // ---- rollback (Z4): the replaced generation is kept, drained, and comes back ----
+  {
+    const dir2 = fs.mkdtempSync(path.join(os.tmpdir(), 'pa-supervisor-rb-'));
+    const cp2 = process.platform === 'win32'
+      ? `\\\\.\\pipe\\pa-supervisor-test-rb-${process.pid}-${Date.now()}`
+      : path.join(dir2, 'control.sock');
+    const sup2 = createSupervisor({
+      worker: path.join(__dirname, 'fixtures', 'supervisorWorker.js'),
+      port: 0,
+      controlPath: cp2,
+      env: { DUMMY_DIR: dir2 },
+      drainTimeoutMs: 2000,
+      stopGraceMs: 3000,
+      holdMs: 4000,
+      silent: true,
+    });
+    const version = (port) =>
+      new Promise((resolve, reject) =>
+        http.get({ host: '127.0.0.1', port, path: '/api/version' }, (res) => {
+          let b = '';
+          res.on('data', (c) => (b += c));
+          res.on('end', () => resolve(JSON.parse(b).commit));
+        }).on('error', reject)
+      );
+    try {
+      const s1 = await sup2.start();
+      const g1pid = s1.pid;
+      const nothing = await request(cp2, { cmd: 'rollback' });
+      assert.strictEqual(nothing.ok, false, 'no standby before the first roll');
+      const r2 = await request(cp2, { cmd: 'roll' });
+      assert.strictEqual(r2.generation, 2);
+      assert.deepStrictEqual(r2.standby, { generation: 1, pid: g1pid });
+      assert.ok(alive(g1pid), 'generation 1 is kept for a rollback');
+      assert.strictEqual(await version(s1.port), 'gen-2');
+      const g2pid = r2.pid;
+
+      const back = await request(cp2, { cmd: 'rollback' });
+      assert.strictEqual(back.ok, true, JSON.stringify(back));
+      assert.strictEqual(back.generation, 1);
+      assert.strictEqual(back.pid, g1pid, 'the same process serves again');
+      assert.strictEqual(back.standby, null);
+      assert.strictEqual(await version(s1.port), 'gen-1');
+      for (let i = 0; i < 50 && alive(g2pid); i++) await sleep(100);
+      assert.ok(!alive(g2pid), 'the rolled-back generation is stopped');
+
+      // The serving generation dies with a standby kept: the standby serves.
+      const r3 = await request(cp2, { cmd: 'roll' });
+      assert.strictEqual(r3.standby.pid, g1pid);
+      process.kill(r3.pid);
+      for (let i = 0; i < 50 && sup2.status().pid !== g1pid; i++) await sleep(100);
+      assert.strictEqual(sup2.status().pid, g1pid, 'a crash falls back to the standby');
+      assert.strictEqual(await version(s1.port), 'gen-1');
+
+      // The hold expires: the standby is stopped.
+      const r4 = await request(cp2, { cmd: 'roll' });
+      assert.ok(r4.standby);
+      await sleep(4500);
+      assert.ok(!alive(r4.standby.pid), 'the standby is stopped once its hold expires');
+      assert.strictEqual(sup2.status().standby, null);
+      assert.strictEqual((await request(cp2, { cmd: 'rollback' })).ok, false);
+      assert.match(sup2.status().source, /^[0-9a-f]{12}$/);
+    } finally {
+      const last = sup2.status().generations.map((g) => g.pid);
+      await sup2.close();
+      for (const p of last) assert.ok(!alive(p), `pid ${p} outlived the supervisor`);
+      fs.rmSync(dir2, { recursive: true, force: true });
+    }
   }
 
   // ---- the real dashboard's /healthz: ready only once marked ----

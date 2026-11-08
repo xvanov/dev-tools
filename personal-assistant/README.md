@@ -265,23 +265,32 @@ the new Teams, the pass is a no-op.
 
 ## Zero-downtime restarts (the supervisor)
 
-Today the `pa-worker` task / unit runs `node src/worker.js`, which serves the dashboard on
-`127.0.0.1:7300` itself, so a restart leaves a gap. `node src/supervisor` (`npm run supervisor`)
-is the replacement being rolled out (`docs/native/PLAN.md`, Z1; the deploy command that uses it
-is Z4): it holds `127.0.0.1:PA_DISPATCH_PORT` and proxies it (HTTP, SSE, WebSocket) to a worker
-it starts with `PA_SUPERVISED=1` on a port the OS picks. To pick up new code without a gap:
+The `pa-worker` task / unit runs `node src/supervisor` (`docs/native/PLAN.md`, Z1/Z4): it holds
+`127.0.0.1:PA_DISPATCH_PORT` for its whole life and proxies it (HTTP, SSE, WebSocket) to a worker
+it starts with `PA_SUPERVISED=1` on a port the OS picks, so new code is picked up without a gap.
+
+**Deploying** is `windows/redeploy.ps1` / `linux/redeploy.sh` (termhub's ⟳ Update runs them after
+its pull; by hand add `-Pull` / `--pull`, and `-DryRun` / `--dry-run` to see the plan). They run
+`node src/supervisor/deploy.js`: `npm install` if the package files changed, `npm run build` once
+there is one, a roll, then 60 s of watching `/healthz` and `/api/version` — three failed probes in
+a row, or not serving the new commit at the end, rolls back to the previous generation. The
+service restarts (with the old gap) only to bootstrap: when no supervisor answers (an install
+whose task or unit still ran `src/worker.js`, which the scripts rewrite), or when the supervisor's
+own code changed. By hand:
 
 ```
-node src/supervisor roll      # start a new worker beside the old, switch once its /healthz is ready, drain and stop the old
-node src/supervisor status    # which generation serves, on which private port, what is in flight
+node src/supervisor roll       # start a new worker beside the old, switch once its /healthz is ready, drain the old
+node src/supervisor rollback   # back to the previous generation (kept, drained, for 90 s after a roll)
+node src/supervisor status     # which generation serves, the standby, what is in flight
 ```
 
 A roll waits up to 180 s for the new worker to be ready and up to 30 s for the old one's
 requests to finish; open event streams and WebSockets are closed and reconnect to the new one.
 A new worker that crashes or never gets ready is killed and the old one keeps serving (the roll
-exits non-zero). A supervised worker serves the dashboard before taking the worker lock, so
-background passes run only in the old one until it exits. The supervisor loads no worker code,
-so it never needs restarting for a deploy.
+exits non-zero); a serving one that dies while a standby is kept is replaced by the standby.
+Background passes move with a lease (Z2, `src/util/lease.js`): the old generation hands them
+over on drain, the new one takes them within a second. The supervisor loads no worker code, so
+a deploy restarts it only when `src/supervisor/index.js` itself changed.
 
 ## Using it
 

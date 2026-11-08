@@ -53,7 +53,10 @@ function unitDir() {
 function main(argv) {
   const want = { worker: argv.includes('--worker'), capture: argv.includes('--capture'), voice: argv.includes('--voice') };
   const v = values();
-  const dir = unitDir();
+  // --dir <path>: write there instead (linux/redeploy.sh renders to a temp dir
+  // and compares, so a dry run changes nothing).
+  const at = argv.indexOf('--dir');
+  const dir = at >= 0 && argv[at + 1] ? path.resolve(argv[at + 1]) : unitDir();
   fs.mkdirSync(dir, { recursive: true });
   const write = (name) => {
     const out = path.join(dir, name);

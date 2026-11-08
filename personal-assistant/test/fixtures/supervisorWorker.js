@@ -53,6 +53,7 @@ server.on('upgrade', (req, socket, head) => {
 
 process.on('message', (m) => {
   if (m && m.type === 'drain') draining = true;
+  if (m && m.type === 'undrain') draining = false;
   if (m && m.type === 'stop') process.exit(0);
 });
 process.on('disconnect', () => process.exit(0));

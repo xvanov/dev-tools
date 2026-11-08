@@ -300,8 +300,9 @@ Write-Host ""
 Confirm-WatchdogTask
 
 # 5d) The rest of the stack. One pull updated the whole repo, so the assistant is
-# redeployed to the same commit here (npm install if its deps changed, restart
-# pa-worker, wait until it serves the new commit). Non-fatal, like 5c: termhub is
+# redeployed to the same commit here (npm install if its deps changed, a
+# zero-downtime roll through its supervisor, rolled back if unhealthy within
+# 60 s; the old restart only to bootstrap the supervisor). Non-fatal, like 5c: termhub is
 # already serving the new front. Open pages reload themselves (nav.js api/version).
 $paRedeploy = Join-Path (Split-Path $ProjectDir -Parent) 'personal-assistant\windows\redeploy.ps1'
 if (Test-Path $paRedeploy) {

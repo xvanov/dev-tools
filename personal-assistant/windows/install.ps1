@@ -86,7 +86,10 @@ Pop-Location
 
 if (-not $NoWorker) {
   Write-Host "==> registering the worker task"
-  $workerAction = New-HeadlessAction -Exe $node -Arguments 'src\worker.js' -WorkingDirectory $root
+  # The supervisor owns the dashboard port and runs the worker as generations it
+  # can replace without a gap (src\supervisor, docs/native/PLAN.md Z1/Z4);
+  # windows\redeploy.ps1 rewrites an older task that still names src\worker.js.
+  $workerAction = New-HeadlessAction -Exe $node -Arguments 'src\supervisor' -WorkingDirectory $root
   $workerTrigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
   $workerSettings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
     -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 5 -RestartInterval (New-TimeSpan -Minutes 2)

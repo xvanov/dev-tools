@@ -353,7 +353,7 @@ print(json.dumps({"active": d.active_sources(data["o"], data["s"]), "monitor": d
   assert.ok(!/__[A-Z_]+__/.test(out), 'every placeholder filled');
   assert.throws(() => units.render('X=__NOPE__', {}), /no value/);
   const worker = units.render(fs.readFileSync(path.join(__dirname, '..', 'linux', 'pa-worker.service'), 'utf8'), { DIR: '/pa', NODE: '/n' });
-  assert.ok(worker.includes('ExecStart="/n" "/pa/src/worker.js"'));
+  assert.ok(worker.includes('ExecStart="/n" "/pa/src/supervisor"'), 'the unit runs the supervisor (Z4)');
   const voice = units.render(fs.readFileSync(path.join(__dirname, '..', 'linux', 'pa-voice.service'), 'utf8'), {
     DIR: '/pa', VOICE_PY: '/d/voice-venv/bin/python', VOICE_MODELS: '/d/voice models',
   });

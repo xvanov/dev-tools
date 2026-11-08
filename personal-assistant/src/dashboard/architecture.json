@@ -483,14 +483,14 @@
       "id": "supervisor",
       "layer": "dashboard",
       "name": "Supervisor (zero-downtime)",
-      "role": "Owns the dashboard's public port and proxies it (HTTP, SSE, WebSocket) to the current worker generation, so a deploy starts the new worker beside the old one and switches without a gap (plan item Z1).",
+      "role": "Owns the dashboard port and proxies it (HTTP, SSE, WebSocket) to the current worker generation, so a deploy starts the new worker beside the old one, switches without a gap and can switch back (plan items Z1, Z4).",
       "stacks": {
-        "work": "landing",
+        "work": "live",
         "personal": "landing"
       },
       "where": {
-        "work": "Not yet run: the pa-worker task still starts node src/worker.js directly. Once wired (Z4): node src/supervisor on 127.0.0.1:7300, generations on 127.0.0.1:<OS-assigned>",
-        "personal": "Not yet run: the pa-worker unit still starts node src/worker.js directly. Once wired (Z4): node src/supervisor on 127.0.0.1:7300"
+        "work": "pa-worker scheduled task: conhost --headless node src\\supervisor on 127.0.0.1:7300, generations on 127.0.0.1:<OS-assigned>",
+        "personal": "Code on main; the next linux/redeploy.sh rewrites the pa-worker unit to node src/supervisor and restarts it once to bootstrap"
       },
       "health": "dashboard",
       "details": {
@@ -498,20 +498,28 @@
           "public: 127.0.0.1:PA_DISPATCH_PORT (7300), held by the supervisor for its whole life",
           "each worker generation: 127.0.0.1 on a port the OS assigns (port 0), reported over IPC ({type: 'listening', port})"
         ],
-        "Roll": "spawn generation N+1 (PA_SUPERVISED=1) → wait for GET /healthz ready (180 s at most) → route new requests to it → send N drain → end N's SSE and WebSocket streams (clients reconnect, with Last-Event-ID, to N+1) → wait for N's in-flight requests (30 s at most) → send N stop → kill after 10 s",
+        "Roll": "spawn generation N+1 (PA_SUPERVISED=1) → wait for GET /healthz ready (180 s at most) → route new requests to it → send N drain (N hands its passes over, Z2) → end N's SSE and WebSocket streams (clients reconnect, with Last-Event-ID, to N+1) → wait for N's in-flight requests (30 s at most) → keep N drained as the standby for 90 s, then stop it",
         "Failed roll": "a generation that exits or is not ready in time is killed; N keeps serving and the roll answers ok: false",
-        "Crash": "the serving generation exiting on its own is replaced by a new one, backing off 1 s to 60 s",
-        "Control": "one JSON line on a local socket: \\\\.\\pipe\\pa-supervisor-<port> on Windows, $XDG_RUNTIME_DIR/pa-supervisor-<port>.sock elsewhere; {\"cmd\":\"roll\"} or {\"cmd\":\"status\"}; `node src/supervisor roll|status`; SIGHUP rolls on Linux",
+        "Crash": "the serving generation exiting on its own is replaced by the standby if one is held, else by a new one, backing off 1 s to 60 s",
+        "Control": "one JSON line on a local socket: \\\\.\\pipe\\pa-supervisor-<port> on Windows, $XDG_RUNTIME_DIR/pa-supervisor-<port>.sock elsewhere; {\"cmd\":\"roll\"}, {\"cmd\":\"rollback\"} or {\"cmd\":\"status\"} (status carries source, a hash of the running supervisor file); `node src/supervisor roll|rollback|status`; SIGHUP rolls on Linux",
         "Background passes": "single owner (Z2, src/util/lease.js): every timer, watcher and the durable worker is declared on the scheduler (src/util/scheduler.js) and runs only while its generation holds the lease, pg_advisory_lock(7300) on a dedicated connection. On drain the old generation stops its schedulers and releases the lease at once; the new one polls every 500 ms and takes over within a second. Each pass run also holds pg_advisory_lock(7301, hashtext(name)), so a pass the old generation is still finishing is skipped by the new one until it ends; every other pass moves over at once. Undrain (rollback) takes the lease and the passes back",
-        "Rule": "node builtins only; never loads worker code, so a deploy never needs to restart it"
+        "Rule": "node builtins only; never loads worker code, so a deploy never needs to restart it",
+        "Rollback": "{\"cmd\":\"rollback\"}: drain the serving generation, undrain the standby, wait for its /healthz (30 s), flip back, stop the other. Only while a standby is held (90 s after a roll)",
+        "Deploy (Z4)": "windows/redeploy.ps1, linux/redeploy.sh (run by termhub's Update after its pull, or by hand with -Pull/--pull and -DryRun/--dry-run) → node src/supervisor/deploy.js: npm install when the package files changed, npm run build when one exists (none yet), roll, then /healthz + /api/version every 2 s for 60 s; 3 failed probes in a row, or not the new commit at the end → rollback, exit 1",
+        "Restart fallback": "the scripts restart the task/unit (stop, kill node src/supervisor and src/worker.js, start, wait up to 120 s for the new commit) only when deploy.js exits 3 (no supervisor answers: the bootstrap) or 4 (src/supervisor/index.js changed), or when they just rewrote a task/unit that still named src/worker.js"
       },
       "code": [
         "personal-assistant/src/supervisor/index.js",
+        "personal-assistant/src/supervisor/deploy.js",
         "personal-assistant/src/worker.js",
         "personal-assistant/src/util/lease.js",
         "personal-assistant/src/util/scheduler.js",
+        "personal-assistant/windows/redeploy.ps1",
+        "personal-assistant/linux/redeploy.sh",
+        "personal-assistant/linux/pa-worker.service",
         "personal-assistant/test/supervisor.test.js",
-        "personal-assistant/test/lease.test.js"
+        "personal-assistant/test/lease.test.js",
+        "personal-assistant/test/deploy.test.js"
       ]
     },
     {
@@ -575,8 +583,8 @@
         "personal": "live"
       },
       "where": {
-        "work": "node src/worker.js on the laptop (also hosts the dashboard)",
-        "personal": "systemd user unit pa-worker on k-911-x17 (also hosts the dashboard)"
+        "work": "a generation of the supervisor (pa-worker task → node src/supervisor → src/worker.js); also hosts the dashboard",
+        "personal": "systemd user unit pa-worker (node src/supervisor once redeployed) on k-911-x17 (also hosts the dashboard)"
       },
       "health": "dashboard",
       "details": {

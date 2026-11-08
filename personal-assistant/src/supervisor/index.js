@@ -22,23 +22,47 @@
 //
 // Worker protocol (src/worker.js, PA_SUPERVISED=1):
 //   child → supervisor  {type: 'listening', port}   its private port
-//   supervisor → child  {type: 'drain'}              routing has moved away
+//   supervisor → child  {type: 'drain'}              routing has moved away:
+//                                                    hand the passes over (Z2)
+//   supervisor → child  {type: 'undrain'}            routing is back (rollback)
 //   supervisor → child  {type: 'stop'}               exit now (in-flight done)
 //   GET /healthz        200 {ready: true} once startup has completed
 //
+// Rollback (Z4): the generation a roll replaced is kept, drained, for
+// holdMs (90 s) after the flip — the standby. `rollback` undrains it and
+// flips back; the deploy command (deploy.js) asks for that when the new
+// generation's health fails within 60 s. A serving generation that dies
+// while a standby exists is replaced by the standby rather than a fresh one.
+//
 // Control (a deploy script, Z4): a local socket — a named pipe on Windows, a
-// unix socket elsewhere — taking one JSON line, `{"cmd":"roll"}` or
-// `{"cmd":"status"}`, and answering one JSON line. `node src/supervisor roll`.
+// unix socket elsewhere — taking one JSON line, `{"cmd":"roll"}`,
+// `{"cmd":"rollback"}` or `{"cmd":"status"}`, and answering one JSON line.
+// `node src/supervisor roll|rollback|status`. status carries `source`, a hash
+// of this file as the running supervisor loaded it: deploy.js compares it
+// with the file on disk to know when the supervisor itself must restart.
 
 const fs = require('fs');
 const os = require('os');
 const net = require('net');
 const path = require('path');
 const http = require('http');
+const crypto = require('crypto');
 const { fork } = require('child_process');
 
 const DEFAULT_PORT = 7300;
 const DRAIN_TIMEOUT_MS = 30_000;
+const HOLD_MS = 90_000;
+const UNDRAIN_TIMEOUT_MS = 30_000;
+
+// What this process is running, for deploy.js to compare with the disk.
+function sourceHash(file = __filename) {
+  try {
+    return crypto.createHash('sha1').update(fs.readFileSync(file)).digest('hex').slice(0, 12);
+  } catch {
+    return null;
+  }
+}
+const SOURCE = sourceHash();
 const READY_TIMEOUT_MS = 180_000;
 const STOP_GRACE_MS = 10_000;
 const HOP = new Set(['connection', 'keep-alive', 'proxy-connection', 'transfer-encoding', 'upgrade', 'te', 'trailer']);
@@ -102,13 +126,16 @@ function createSupervisor({
   readyTimeoutMs = READY_TIMEOUT_MS,
   drainTimeoutMs = DRAIN_TIMEOUT_MS,
   stopGraceMs = STOP_GRACE_MS,
+  holdMs = HOLD_MS,
+  undrainTimeoutMs = UNDRAIN_TIMEOUT_MS,
   respawn = true,
   silent = false,
 } = {}) {
   const say = silent ? () => {} : log;
   let seq = 0;
   let current = null; // the generation routing points at
-  let rolling = null; // the roll in progress, a promise
+  let standby = null; // the one a roll replaced, drained, kept for a rollback
+  let rolling = null; // the roll or rollback in progress, a promise
   let closing = false;
   let crashes = 0;
   const gens = new Set();
@@ -140,10 +167,20 @@ function createSupervisor({
       gen.agent.destroy();
       gens.delete(gen);
       resolve({ code, signal });
+      if (gen === standby) {
+        clearTimeout(gen.holdTimer);
+        standby = null;
+      }
       if (gen === current && !closing) {
         current = null;
         say('warn', 'serving generation exited', { generation: n, code, signal });
-        if (respawn) setTimeout(() => roll().catch(() => {}), Math.min(60_000, 1000 * 2 ** Math.min(crashes++, 6)));
+        // The one it replaced is still here: go back to it, at once.
+        if (standby && !standby.exited) {
+          rollback().catch((err) => {
+            say('warn', 'fallback to the standby failed', { message: err.message });
+            if (respawn) roll().catch(() => {});
+          });
+        } else if (respawn) setTimeout(() => roll().catch(() => {}), Math.min(60_000, 1000 * 2 ** Math.min(crashes++, 6)));
       }
     }));
     child.on('message', (m) => {
@@ -155,8 +192,8 @@ function createSupervisor({
     return gen;
   }
 
-  async function waitReady(gen) {
-    const deadline = Date.now() + readyTimeoutMs;
+  async function waitReady(gen, timeoutMs = readyTimeoutMs) {
+    const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline && !gen.exited) {
       if (gen.port && (await probe(gen.port))) return true;
       await sleep(gen.port ? 200 : 100);
@@ -181,26 +218,52 @@ function createSupervisor({
   }
 
   // Routing has moved off `gen`: end its streams (their clients reconnect and
-  // land on the new one), wait for the rest of its requests, then stop it.
-  async function retire(gen) {
+  // land on the new one), wait for the rest of its requests, then stop it —
+  // or, with `hold`, keep it drained as the standby until holdMs after the
+  // flip, for a rollback.
+  async function retire(gen, { hold = false } = {}) {
     send(gen, { type: 'drain' });
+    if (hold && holdMs > 0) {
+      standby = gen;
+      gen.holdTimer = setTimeout(() => {
+        if (standby !== gen) return;
+        standby = null;
+        say('info', 'standby released', { generation: gen.n });
+        stopGeneration(gen);
+      }, holdMs);
+    }
     for (const end of gen.streams) end();
     if (gen.inflight > 0) {
       await Promise.race([new Promise((r) => (gen.onIdle = r)), sleep(drainTimeoutMs)]);
       if (gen.inflight > 0) say('warn', 'drain timed out', { generation: gen.n, inflight: gen.inflight });
     }
+    if (current === gen) return; // rolled back to while it drained
     // A request in flight at the flip may have turned into a stream since.
     for (const end of gen.streams) end();
+    if (standby === gen) {
+      say('info', 'generation drained, kept for a rollback', { generation: gen.n, holdMs });
+      return;
+    }
     await stopGeneration(gen);
     say('info', 'retired generation', { generation: gen.n });
   }
 
-  // Start N+1, flip to it once ready, retire N. One roll at a time; a roll
-  // asked for during one shares its result.
+  function dropStandby() {
+    const s = standby;
+    if (!s) return;
+    standby = null;
+    clearTimeout(s.holdTimer);
+    stopGeneration(s);
+  }
+
+  // Start N+1, flip to it once ready, retire N (kept as the standby). One
+  // roll at a time; a roll asked for during one shares its result.
   function roll() {
     if (closing) return Promise.reject(new Error('supervisor is closing'));
     if (rolling) return rolling;
     rolling = (async () => {
+      // A newer deploy supersedes the rollback target of the last one.
+      dropStandby();
       const next = spawnGeneration();
       const ready = await waitReady(next);
       if (!ready) {
@@ -212,7 +275,37 @@ function createSupervisor({
       current = next;
       crashes = 0;
       say('info', 'routing to generation', { generation: next.n, port: next.port, previous: prev ? prev.n : null });
-      if (prev) await retire(prev);
+      if (prev) await retire(prev, { hold: true });
+    })()
+      .finally(() => {
+        rolling = null;
+      })
+      .then(() => status());
+    return rolling;
+  }
+
+  // Back to the standby: the serving generation (if any) drains first, so it
+  // lets go of the passes' lease (Z2) before the standby asks for it again;
+  // the standby is undrained, waited for, flipped to; the other is stopped.
+  function rollback() {
+    if (closing) return Promise.reject(new Error('supervisor is closing'));
+    if (rolling) return Promise.reject(new Error('a roll is in progress; roll back once it has finished'));
+    const back = standby;
+    if (!back || back.exited) return Promise.reject(new Error('no previous generation to roll back to (none kept, or its hold expired)'));
+    rolling = (async () => {
+      standby = null;
+      clearTimeout(back.holdTimer);
+      const bad = current;
+      if (bad) send(bad, { type: 'drain' });
+      send(back, { type: 'undrain' });
+      if (!(await waitReady(back, undrainTimeoutMs))) {
+        if (bad && !bad.exited) send(bad, { type: 'undrain' });
+        await stopGeneration(back);
+        throw new Error(`generation ${back.n} did not become ready again`);
+      }
+      current = back;
+      say('warn', 'rolled back to generation', { generation: back.n, from: bad ? bad.n : null });
+      if (bad && !bad.exited) await retire(bad);
     })()
       .finally(() => {
         rolling = null;
@@ -225,9 +318,11 @@ function createSupervisor({
     return {
       ok: true,
       port: publicPort(),
+      source: SOURCE,
       generation: current ? current.n : null,
       pid: current ? current.pid : null,
       workerPort: current ? current.port : null,
+      standby: standby && !standby.exited ? { generation: standby.n, pid: standby.pid } : null,
       rolling: !!rolling,
       generations: [...gens].map((g) => ({ n: g.n, pid: g.pid, port: g.port, inflight: g.inflight, streams: g.streams.size })),
     };
@@ -358,6 +453,7 @@ function createSupervisor({
           let reply;
           try {
             if (cmd === 'roll') reply = await roll();
+            else if (cmd === 'rollback') reply = await rollback();
             else if (cmd === 'status') reply = status();
             else reply = { ok: false, error: `unknown command ${cmd}` };
           } catch (err) {
@@ -391,6 +487,7 @@ function createSupervisor({
 
   async function close() {
     closing = true;
+    if (standby) clearTimeout(standby.holdTimer);
     await new Promise((r) => {
       server.close(r);
       server.closeAllConnections();
@@ -400,7 +497,7 @@ function createSupervisor({
     await Promise.all([...gens].map((g) => stopGeneration(g)));
   }
 
-  return { start, roll, status, close, server, controlPath: () => (control ? control.address() : null) };
+  return { start, roll, rollback, status, close, server, controlPath: () => (control ? control.address() : null) };
 }
 
 // One JSON line to a supervisor's control socket; resolves with its answer.
@@ -433,13 +530,13 @@ function request(where, msg, timeoutMs = READY_TIMEOUT_MS + DRAIN_TIMEOUT_MS + S
 async function cli(argv) {
   const cmd = argv[0] || 'run';
   const port = Number(envSetting('PA_DISPATCH_PORT', DEFAULT_PORT));
-  if (cmd === 'roll' || cmd === 'status') {
+  if (cmd === 'roll' || cmd === 'rollback' || cmd === 'status') {
     const r = await request(defaultControlPath(port), { cmd });
     process.stdout.write(JSON.stringify(r, null, 2) + '\n');
     process.exit(r.ok ? 0 : 1);
   }
   if (cmd !== 'run') {
-    process.stderr.write('usage: node src/supervisor [run | roll | status]\n');
+    process.stderr.write('usage: node src/supervisor [run | roll | rollback | status]\n');
     process.exit(2);
   }
   const sup = createSupervisor();
@@ -461,4 +558,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { createSupervisor, request, defaultControlPath, probe };
+module.exports = { createSupervisor, request, defaultControlPath, probe, envSetting, sourceHash, DEFAULT_PORT };

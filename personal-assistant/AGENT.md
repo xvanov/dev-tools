@@ -463,14 +463,20 @@ Postgres and nowhere else. Tests use invented names; fixtures never hold a real 
 - **No job queue.** "Work to do" is a query — items with no distillation row at the current
   prompt version. A queue table can get stuck, leak, or need draining after a crash; a query
   cannot. The worker is a scheduler of periodic passes, and passes never overlap themselves.
-- **How the worker runs.** Today the `pa-worker` task / unit runs `node src/worker.js`, which
-  binds the dashboard port itself. `src/supervisor` (Z1, being rolled out by Z4's deploy
-  command) owns that port instead and proxies to worker generations it forks with
+- **How the worker runs.** The `pa-worker` task / unit runs `node src/supervisor` (Z1), which
+  owns the dashboard port and proxies to worker generations it forks with
   `PA_SUPERVISED=1`; a supervised worker binds port 0, reports it over IPC, and answers
   `/healthz` ready only after migrations and its dashboard are up. Keep the supervisor on node
   builtins and never `require` worker code from it — it is the process a deploy must not
   restart. Anything long-lived a worker serves (SSE, WebSocket) must survive being closed and
   reconnected, because a roll closes it.
+- **Deploying (Z4).** `windows/redeploy.ps1` / `linux/redeploy.sh` (called by termhub's
+  updater) → `src/supervisor/deploy.js`: install, build, roll, watch health 60 s, `rollback`
+  if it fails. Its decisions are pure (`plan`, `verdict`, `test/deploy.test.js`); keep them
+  so, and keep it on node builtins (it must run when `node_modules` is what broke). The
+  scripts keep the old stop/kill/start path for exit codes 3 (no supervisor: bootstrap) and 4
+  (the supervisor's own code changed), and rewrite a task/unit still naming `src/worker.js`.
+  A change to `src/supervisor/index.js` therefore costs one restart gap; keep it rare.
 - **Single-owner background work (Z2).** Two generations overlap during a roll, so every
   timer, watcher and in-process worker in `src/worker.js` is declared on the scheduler
   (`src/util/scheduler.js`: `every(...)` for passes, `sched.service(name, start)` for anything
