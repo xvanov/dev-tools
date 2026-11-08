@@ -81,6 +81,42 @@ sessiond (`termhub/lib/ptydClient.js`) then creates every PTY in the ptyd on
 `<dataDir>/logs/ptyd.out.log`. On start, sessiond adopts the sessions ptyd still has.
 `/api/ping` on sessiond reports `ptyHost: "ptyd"` or `"node-pty"`.
 
-The deploy scripts don't do this yet: a ptyd is not restarted by them, and an update that
-changes ptyd needs a deliberate restart of it (which, like restarting sessiond today, ends its
-terminals).
+## Cutover (Exit 5): switching a stack, and rolling back
+
+Production starts (`node sessiond.js` on Windows, `node server.js` in the Linux unit) pick the
+PTY host from a persistent setting, `ptyHost` in `<dataDir>/settings.json`
+(`termhub/lib/ptyHost.js`). An explicit `TERMHUB_PTYD=1|0` in the environment wins.
+
+| `ptyHost` | next sessiond start uses |
+|---|---|
+| `auto` (default) | ptyd **if a release binary is on the machine** (`TERMHUB_PTYD_BIN`, `dist/<os>-<arch>/`, `ptyd/target/release/`), else node-pty |
+| `ptyd` | ptyd, always |
+| `node-pty` | node-pty, always: the rollback |
+
+So nothing changes on a machine until ptyd is built there. `node lib/ptyHost.js` (in
+`termhub/`) prints the setting, what the next start resolves to, and what the running sessiond
+uses (`ptyHost` in its `/api/ping`); `update.ps1` and `restart-sessiond.ps1` print the same.
+
+**Switch a stack** (not done on either stack yet; Exit 5 also needs 5.2):
+
+1. Build ptyd in the deployed checkout: `node scripts/build.js --only ptyd --release`
+   (puts it in `dist/<os>-<arch>/`; `cargo` via rustup, MSVC build tools on Windows).
+2. `node termhub/lib/ptyHost.js` should say `next start: ptyd`.
+3. Restart sessiond once. This ends the live terminals one last time; they come back as
+   Restorable.
+   - Windows: `.\windows\restart-sessiond.ps1` from a non-termhub window. sessiond starts ptyd
+     detached on `127.0.0.1:7020` (log: `<dataDir>\logs\ptyd.out.log`).
+   - Linux: `bash linux/ptyd-unit.sh --ensure` (installs and starts `termhub-ptyd.service`, its
+     own user unit, so `systemctl --user restart termhub` no longer kills it; `update.sh` and
+     `install.sh` run this too), then `systemctl --user restart termhub`.
+4. Check: `node termhub/lib/ptyHost.js` shows `running: ptyd`. Open a terminal, run something
+   long, restart sessiond again (or on Linux, run an update): the terminal is still there,
+   with its output.
+
+**Roll back:** `node termhub/lib/ptyHost.js node-pty`, then restart sessiond as in step 3. On
+Linux also run `bash linux/ptyd-unit.sh --remove`. On Windows stop the ptyd process when its
+terminals are no longer needed. Restarting or stopping ptyd ends the terminals in it, so do it
+only on purpose; an update never does.
+
+**Updating ptyd itself:** a new build doesn't replace the running ptyd. The running ptyd keeps
+running the old binary until it is deliberately restarted, which ends its terminals.

@@ -375,6 +375,12 @@ say "confirming the watchdog installation"
 bash "$PROJECT_DIR/watchdog/install-watchdog.sh" --ensure 2>&1 || \
   say "the watchdog could not be installed - termhub will still update; it just won't be watched."
 
+# 4b) ptyd (plan 5.1 / Exit 5). When lib/ptyHost.js resolves to ptyd here, make
+# sure its own unit runs, so the restart below no longer ends the terminals. It
+# never restarts a running ptyd. Prints what the PTY host will be after restart.
+bash "$PROJECT_DIR/linux/ptyd-unit.sh" --ensure 2>&1 || \
+  say "ptyd could not be set up - the restart below may fall back to node-pty (node lib/ptyHost.js to see why)."
+
 # 5) Restart, detached, so the verify/rollback logic outlives this PTY.
 say ""
 say "restarting '$SERVICE' now. THIS TERMINAL WILL DIE - that is expected: on Linux"

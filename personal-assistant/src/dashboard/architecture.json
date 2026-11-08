@@ -1624,7 +1624,8 @@
         "Conformance": "termhub/test/ptydConformance.test.js runs one black-box suite against sessiond, ptyd and sessiond on ptyd; CI's ptyd job runs it on Windows and Linux",
         "Restart survival": "termhub/test/ptydBackend.test.js: sessiond is killed mid-command and restarted; the new one adopts the session from ptyd under the same id and loses no output",
         "Not in ptyd": "voice, idle episodes, uploads, the archive and restore stay in sessiond; replay is raw bytes (sessiond keeps its own screen mirror on top)",
-        "Build": "cargo build --release in ptyd/ (rustup, MSVC build tools on Windows)"
+        "Build": "node scripts/build.js --only ptyd --release (rustup, MSVC build tools on Windows)",
+        "Cutover (Exit 5)": "production starts read ptyHost (<dataDir>/settings.json, termhub/lib/ptyHost.js): auto (default) = ptyd once a release binary is on the machine, ptyd, or node-pty (rollback). On Linux ptyd runs as its own user unit (termhub-ptyd.service, linux/ptyd-unit.sh) so termhub's restart does not kill it. Neither stack has switched: no release binary is built on them"
       },
       "code": [
         "ptyd/src/main.rs",

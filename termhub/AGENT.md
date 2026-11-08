@@ -292,7 +292,14 @@ sessiond restart no longer ends terminals. `/api/ping` reports `ptyHost: 'ptyd' 
 `debug`) say where; with nothing answering, sessiond starts one detached, logging to
 `logs/ptyd.out.log`. Build it first: `cd ptyd && cargo build --release`.
 
-Off by default and not wired into the start/update scripts yet. Proofs:
+Production starts (`node sessiond.js`, `node server.js`) resolve it from the persistent
+`ptyHost` setting (`lib/ptyHost.js`, `<dataDir>/settings.json`): `auto` (default) uses ptyd only
+when a release ptyd binary is on the machine, `ptyd` forces it, `node-pty` is the rollback.
+`node lib/ptyHost.js [auto|ptyd|node-pty]` shows or changes it; `update.ps1` and
+`restart-sessiond.ps1` print it. On Linux ptyd runs as its own user unit
+(`linux/ptyd-unit.sh`, `termhub-ptyd.service`), so the restart every update does no longer
+kills it. Neither stack has switched yet: the steps and the rollback are in
+[`../ptyd/README.md`](../ptyd/README.md) (*Cutover*). Proofs:
 `test/ptydConformance.test.js` runs one black-box protocol suite against sessiond, ptyd and
 sessiond-on-ptyd (the ptyd legs SKIP without a built binary, fail with `PTYD_REQUIRED=1`, as in
 CI's ptyd job); `test/ptydBackend.test.js` kills sessiond mid-command and checks the next one

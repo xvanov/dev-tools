@@ -37,6 +37,9 @@ function refuse(lines) {
 }
 
 async function main() {
+  // Where the PTYs live (lib/ptyHost.js): with ptyd, a restart of this process
+  // (the Linux unit, an update) no longer ends the terminals.
+  require('./lib/ptyHost').applyToEnv(process.env);
   const liveSessiond = await probeSessiond(SESSIOND_PORT);
   if (liveSessiond) {
     return refuse([

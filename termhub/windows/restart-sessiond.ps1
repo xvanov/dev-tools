@@ -29,6 +29,8 @@ $live  = if ($ident -and $ident.sessions) { [int]$ident.sessions } else { 0 }
 
 Write-Host "termhub restart-sessiond: port $sessiondPort, running $(Format-Commit $ident.commit $ident.dirty), $live live session(s)."
 Write-Host "This ENDS those $live terminal(s). They stay restorable from the sidebar." -ForegroundColor Yellow
+# Where the new sessiond will keep its PTYs (lib/ptyHost.js; rollback: node lib\ptyHost.js node-pty).
+& node (Join-Path $PSScriptRoot '..\lib\ptyHost.js') status 2>$null | ForEach-Object { Write-Host "  pty host $_" }
 
 # Running inside a termhub PTY means this script is about to kill itself. The
 # restart would still happen, but the caller never sees whether it worked.

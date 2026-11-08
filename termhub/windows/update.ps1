@@ -284,6 +284,10 @@ if ($sessiondCommit -and (($sessiondCommit -ne $newHead) -or ($sessiondDirty -eq
   }
 }
 
+# The PTY host (plan 5.1 / Exit 5): the setting, what the next sessiond start
+# picks, what runs now. Informational; switching is a deliberate sessiond restart.
+& node (Join-Path $PSScriptRoot '..\lib\ptyHost.js') status 2>$null | ForEach-Object { Write-Host "termhub update: pty host $_" }
+
 # 5c) Make sure the watchdog is installed and pointed at this checkout.
 #
 # The watchdog itself needs NO restart to pick up a pull: its scheduled task runs

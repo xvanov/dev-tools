@@ -840,6 +840,8 @@ module.exports = { createSessiond, startSessiond };
 // launch is nearly always a stale `node server.js` holding both tiers' ports, and
 // naming it is the difference between a two-second fix and an afternoon.
 if (require.main === module) {
+  // Production start: ptyd or node-pty per the persistent setting (lib/ptyHost.js).
+  require('./lib/ptyHost').applyToEnv(process.env, (m) => console.log(`[sessiond] ${m.replace(/^\[termhub\] /, '')}`));
   const port = DEFAULT_SESSIOND_PORT;
   probeSessiond(port).then((live) => {
     if (live) {

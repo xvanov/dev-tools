@@ -46,6 +46,8 @@ sed -e "s#__DIR__#$DIR#g" -e "s#__NODE__#$NODE#g" \
 echo "termhub: wrote $UNIT_DIR/termhub.service"
 
 systemctl --user daemon-reload
+# ptyd first (only where termhub will use it: lib/ptyHost.js), so termhub finds it.
+bash "$SCRIPT_DIR/ptyd-unit.sh" --ensure || echo "NOTE: ptyd unit not installed; termhub falls back to what lib/ptyHost.js resolves."
 systemctl --user enable --now termhub.service
 echo "termhub: service enabled and started."
 
