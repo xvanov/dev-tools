@@ -36,6 +36,7 @@ try {
     assert.strictEqual(archive.FILE_MODE, 0o600);
     archive.upsert({ id: 'a', cwd: '/', history: [] });
     archive.addHistory('a', 'export TOKEN=hunter2');
+    archive.flushSync(); // writes are deferred off the event loop (lib/archive.js)
     assert.strictEqual(mode(f), 0o600, `new sessions.json is 0600, got ${mode(f).toString(8)}`);
     assert.deepStrictEqual(archive.get('a').history, ['export TOKEN=hunter2']);
     assert.deepStrictEqual(fs.readdirSync(dir), ['sessions.json'], 'no temp file left behind');
@@ -57,9 +58,11 @@ try {
     fs.writeFileSync(f, '[]');
     fs.chmodSync(f, 0o666);
     archive.upsert({ id: 'b', cwd: '/' });
+    archive.flushSync();
     assert.strictEqual(mode(f), 0o600, 'rewritten 0600');
     fs.chmodSync(f, 0o644); // something widened it mid-run
     archive.remove('b');
+    archive.flushSync();
     assert.strictEqual(mode(f), 0o600, 'every write re-creates it 0600');
   }
   console.log('archive.test.js ok');

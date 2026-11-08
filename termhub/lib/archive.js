@@ -11,7 +11,8 @@
 // so the user can rebuild state by hand. PTYs themselves can't be resurrected;
 // this is the next best thing.
 //
-// sessiond is the only writer, so the trivial read-modify-write below is safe.
+// sessiond is the only writer, so it can keep the list in memory and only write
+// it out (see "The archive lives in memory" below).
 //
 // The file is PRIVATE (mode 0600): a shell session's history is every command
 // line typed in it, which routinely includes tokens and passwords pasted on a
@@ -40,9 +41,31 @@ function file() {
   return f;
 }
 
-function load() {
+// The archive lives in memory and is written to disk in the background.
+//
+// It used to be a synchronous read-modify-write of sessions.json on every
+// create, exit and typed command line. On Windows each writeFileSync+renameSync
+// measured 250-1350 ms (the file is rescanned on every rename), and it ran on
+// sessiond's event loop, so every request queued behind it: a session create
+// that lands behind a few of them took seconds (2026-11-08, a factory follow
+// session ~8.8 s). Now the file is read once, every change is made in memory,
+// and the write happens off the loop: coalesced (one write per WRITE_DELAY_MS
+// burst) and never two at once. flushSync() writes immediately; it runs on
+// process exit, so an orderly stop (SIGINT/SIGTERM, which sessiond turns into
+// process.exit) loses nothing. A hard kill (TerminateProcess on Windows,
+// SIGKILL) loses what changed in the last ~100 ms plus the write in flight: a
+// rename or a typed line made in the same instant as the kill.
+const WRITE_DELAY_MS = 100;
+
+let cache = null;        // { file, entries }
+let timer = null;
+let writing = null;      // the in-flight async write
+let dirtyAgain = false;  // changed while a write was in flight
+let exitHooked = false;
+
+function readDisk(f) {
   try {
-    const data = JSON.parse(fs.readFileSync(file(), 'utf8'));
+    const data = JSON.parse(fs.readFileSync(f, 'utf8'));
     if (Array.isArray(data)) return data.filter((e) => e && typeof e === 'object' && e.id);
   } catch {
     // missing or corrupt — start fresh
@@ -50,11 +73,20 @@ function load() {
   return [];
 }
 
-function save(list) {
+function entries() {
   const f = file();
+  if (!cache || cache.file !== f) cache = { file: f, entries: readDisk(f) };
+  return cache.entries;
+}
+
+function serialize() {
+  return JSON.stringify(cache.entries, null, 2);
+}
+
+function writeSync(f, data) {
   const tmp = `${f}.${process.pid}.tmp`;
   try {
-    fs.writeFileSync(tmp, JSON.stringify(list, null, 2), { mode: FILE_MODE });
+    fs.writeFileSync(tmp, data, { mode: FILE_MODE });
     fs.chmodSync(tmp, FILE_MODE); // `mode` only applies on create; a stale tmp keeps its own
     fs.renameSync(tmp, f);
   } catch {
@@ -63,49 +95,103 @@ function save(list) {
   }
 }
 
+async function writeAsync(f, data) {
+  const tmp = `${f}.${process.pid}.tmp`;
+  try {
+    await fs.promises.writeFile(tmp, data, { mode: FILE_MODE });
+    await fs.promises.chmod(tmp, FILE_MODE);
+    await fs.promises.rename(tmp, f);
+  } catch {
+    try { await fs.promises.unlink(tmp); } catch { /* nothing to clean */ }
+  }
+}
+
+function startWrite() {
+  timer = null;
+  if (!cache) return;
+  if (writing) { dirtyAgain = true; return; }
+  const { file: f } = cache;
+  writing = writeAsync(f, serialize()).finally(() => {
+    writing = null;
+    if (dirtyAgain) { dirtyAgain = false; schedule(); }
+  });
+}
+
+function schedule() {
+  if (!exitHooked) {
+    exitHooked = true;
+    process.once('exit', flushSync);
+  }
+  if (!timer) {
+    timer = setTimeout(startWrite, WRITE_DELAY_MS);
+    if (timer.unref) timer.unref();
+  }
+}
+
+/** Write the archive now, synchronously (process exit, tests). */
+function flushSync() {
+  if (timer) { clearTimeout(timer); timer = null; }
+  dirtyAgain = false;
+  if (cache) writeSync(cache.file, serialize());
+}
+
+/** Resolves once everything changed so far is on disk. */
+async function flush() {
+  for (;;) {
+    if (timer) { clearTimeout(timer); startWrite(); }
+    if (!writing) return;
+    await writing; // a change made meanwhile schedules another write; loop for it
+  }
+}
+
+const copy = (e) => JSON.parse(JSON.stringify(e));
+
 function list() {
-  return load();
+  return entries().map(copy);
 }
 
 function get(id) {
-  return load().find((e) => e.id === id) || null;
+  const e = entries().find((x) => x.id === id);
+  return e ? copy(e) : null;
 }
 
 // Insert or replace an entry, newest first, capped at MAX_ENTRIES.
 function upsert(entry) {
   if (!entry || !entry.id) return;
-  const rest = load().filter((e) => e.id !== entry.id);
-  rest.unshift(entry);
-  save(rest.slice(0, MAX_ENTRIES));
+  const rest = entries().filter((e) => e.id !== entry.id);
+  rest.unshift(copy(entry));
+  cache.entries = rest.slice(0, MAX_ENTRIES);
+  schedule();
 }
 
 // Merge fields into an existing entry (no-op if it's gone).
 function patch(id, fields) {
-  const all = load();
-  const e = all.find((x) => x.id === id);
+  const e = entries().find((x) => x.id === id);
   if (!e) return;
-  Object.assign(e, fields);
-  save(all);
+  Object.assign(e, copy(fields));
+  schedule();
 }
 
 function remove(id) {
-  save(load().filter((e) => e.id !== id));
+  const all = entries();
+  const rest = all.filter((e) => e.id !== id);
+  if (rest.length === all.length) return;
+  cache.entries = rest;
+  schedule();
 }
 
 // Append a typed command line to a shell session's history, deduping immediate
-// repeats and capping length. Lines arrive infrequently (one per Enter), so the
-// per-line read-modify-write is cheap enough.
+// repeats and capping length.
 function addHistory(id, line) {
   const clean = String(line || '').trim();
   if (!clean) return;
-  const all = load();
-  const e = all.find((x) => x.id === id);
+  const e = entries().find((x) => x.id === id);
   if (!e) return;
   if (!Array.isArray(e.history)) e.history = [];
   if (e.history[e.history.length - 1] === clean) return; // skip an immediate repeat
   e.history.push(clean);
   if (e.history.length > MAX_HISTORY) e.history = e.history.slice(-MAX_HISTORY);
-  save(all);
+  schedule();
 }
 
-module.exports = { list, get, upsert, patch, remove, addHistory, MAX_HISTORY, FILE_MODE };
+module.exports = { list, get, upsert, patch, remove, addHistory, flush, flushSync, MAX_HISTORY, FILE_MODE, WRITE_DELAY_MS };

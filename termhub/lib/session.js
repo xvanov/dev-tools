@@ -5,7 +5,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const pty = require('node-pty');
-const { spawnSync } = require('child_process');
+const { execFile } = require('child_process');
 const { defaultShell, shellArgs } = require('./shell');
 const { resolveTranscript, readLastModel, formatModelName } = require('./claudeModel');
 const cursorModel = require('./cursorModel');
@@ -839,19 +839,30 @@ class Session {
     // Returns a promise that settles once ptyd has (sessiond's DELETE awaits it,
     // as callers rely on the tree being gone, e.g. to remove the cwd next).
     if (this.pty && this.pty.remote) return this.pty.kill();
-    if (this.alive) {
-      // Windows: pty.kill() closes the pseudoconsole but leaves the shell's children running, still
-      // holding the cwd. Take the whole tree down first and wait for it, so a caller that removes the
-      // directory next can. pty.kill() still runs afterwards: it releases node-pty's native handles
-      // (without it the process cannot exit). On Node 26 + node-pty 1.1.0 its console-list agent then
-      // prints "AttachConsole failed" to stderr for a shell that is already gone; that is harmless.
-      if (process.platform === 'win32' && this.pty.pid && killTreeWin(this.pty.pid)) this._handleExit(null);
+    if (!this.alive) return undefined;
+    const release = () => {
       try {
         this.pty.kill();
       } catch {
         // already gone
       }
+    };
+    // Windows: pty.kill() closes the pseudoconsole but leaves the shell's children running, still
+    // holding the cwd. Take the whole tree down first and wait for it, so a caller that removes the
+    // directory next can (sessiond's DELETE awaits this). pty.kill() still runs afterwards: it
+    // releases node-pty's native handles (without it the process cannot exit). On Node 26 +
+    // node-pty 1.1.0 its console-list agent then prints "AttachConsole failed" to stderr for a
+    // shell that is already gone; that is harmless.
+    // Asynchronous on purpose: it used to be spawnSync('taskkill') plus a busy-wait, which held
+    // sessiond's event loop for 0.7-2.3 s per kill, so every other request (a create) waited.
+    if (process.platform === 'win32' && this.pty.pid) {
+      return killTreeWin(this.pty.pid).then((gone) => {
+        if (gone) this._handleExit(null);
+        release();
+      });
     }
+    release();
+    return undefined;
   }
   info() {
     return {
@@ -895,15 +906,20 @@ function baseName(p) {
   return String(p).split(/[\\/]/).pop() || p;
 }
 
-// Kills pid and every descendant (taskkill /T /F) and returns once it is gone, or after ~3 s.
+// Kills pid and every descendant (taskkill /T /F). Resolves true once it is gone, false after
+// ~3 s. Never blocks the event loop.
 function killTreeWin(pid) {
-  spawnSync('taskkill', ['/pid', String(pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore', timeout: 5000 });
-  const until = Date.now() + 3000;
-  while (Date.now() < until) {
-    try { process.kill(pid, 0); } catch { return true; }
-    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25);
-  }
-  return false;
+  return new Promise((resolve) => {
+    execFile('taskkill', ['/pid', String(pid), '/T', '/F'], { windowsHide: true, timeout: 5000 }, () => {
+      const until = Date.now() + 3000;
+      const poll = () => {
+        try { process.kill(pid, 0); } catch { return resolve(true); }
+        if (Date.now() >= until) return resolve(false);
+        setTimeout(poll, 25);
+      };
+      poll();
+    });
+  });
 }
 
 module.exports = { Session, resolveCwd };

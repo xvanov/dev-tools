@@ -56,6 +56,12 @@ const TICKS = 60;
     await waitFor(() => ticksIn(t1.text).length >= 10, 40_000, 'ten ticks through the first sessiond');
     const renamed = await getJson(sd.port, `/api/sessions/${id}`, { method: 'PATCH', body: { title: 'after rename' } });
     assert.strictEqual(renamed.status, 200);
+    // The archive is written off the event loop, coalesced (lib/archive.js), and
+    // stop() is a hard kill (TerminateProcess on Windows: no exit hook). A restart
+    // in real use comes seconds after a rename; wait for the write as it would.
+    await waitFor(() => {
+      try { return fs.readFileSync(path.join(dir, 'sessions.json'), 'utf8').includes('after rename'); } catch { return false; }
+    }, 10_000, 'the rename to reach sessions.json');
 
     // The restart: sessiond goes away mid-command.
     await sd.stop();

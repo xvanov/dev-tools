@@ -153,7 +153,10 @@ the data dir (`%LOCALAPPDATA%\termhub` on Windows, `~/.local/termhub` on Linux):
   process. They are *bookkeeping*, never authority — see "One process per port" below.
 - `sessions.json` — the session archive (`lib/archive.js`). Mirrors each session's metadata
   (cwd, command, `kind`, and — for shell sessions — the command lines typed in it) so it
-  survives a reboot. Written by `sessiond` on create / rename / exit / input. **Mode 0600**
+  survives a reboot. Written by `sessiond` on create / rename / exit / input, from memory and off
+the event loop (coalesced, ~100 ms; flushed on an orderly exit): synchronous writes here took
+0.25-1.3 s each on Windows and made every request wait, a session create included
+(`test/archiveWrite.test.js`). **Mode 0600**
   (POSIX): typed command lines hold pasted tokens. Each write goes to a 0600 temp file renamed over
   it, and a file left wider by an older termhub is chmod'ed on first touch (`test/archive.test.js`).
 - `logs\<tier>.out.log` / `.err.log` — each tier's stdout and stderr, one `.prev.log`
