@@ -132,6 +132,10 @@ request); voice never approves high-risk actions alone; work and personal stacks
     gating `software-factory (windows-latest, 2.x gate)` job runs the native-Windows and JOBS-API files
     (oscompat, serve + API, claude_session rounds, text-step watch, test_jobs_*, test_delivery_*, gh auth,
     power), green on its first run (bf4c2cf).
+    The factory's CI watch (draft_pr/pr), `factory job status` ci and the push_to_main main-green
+    hold ignore informational checks (factory/ci_scope.py): GitHub required checks when set, else
+    `ci_required_checks` in the app config, else everything but `ci_informational_checks` and
+    continue-on-error jobs (dev-tools: the full Windows leg, read from ci.yml).
   - **T6b** personal-assistant remoteExec.test.js SKIPs on Windows (it stands the local host in for a
     Linux machine); split its host-bound half from the pure unit assertions so Windows keeps the latter.
   - Found by CI and fixed: termhub updateHeal.test.js asserted a stale source shape (invisible on Windows,
