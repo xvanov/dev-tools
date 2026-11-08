@@ -13,8 +13,13 @@
 // transcript entries** — thinking, then text, then each tool_use — all sharing
 // one `requestId` and one `stop_reason`. Reading only the last entry gets the
 // turn wrong in exactly the case that matters most (see readLastTurn).
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
 
-const { scanTail } = require('./claudeModel');
+/** JSON read or built key by key (lib/types.ts): loose until its producer is TypeScript. */
+type Json = import('./types.ts').Json;
+
+const { scanTail } = require('./claudeModel.ts');
 
 // Entry types that carry a conversational turn. Everything else in the file is
 // Claude Code's own bookkeeping (`system`, `mode`, `permission-mode`,
@@ -43,7 +48,7 @@ const MAX_PROMPT_CHARS = 400;
 // Assistant text is the concatenation of `text` blocks only. `thinking` blocks
 // are explicitly excluded: they're the model's scratchpad, often much longer
 // than the answer, and reading them aloud would be both wrong and interminable.
-function blocksToText(content) {
+function blocksToText(content: any) {
   if (typeof content === 'string') return content;
   if (!Array.isArray(content)) return '';
   const out = [];
@@ -53,7 +58,7 @@ function blocksToText(content) {
   return out.join('\n').trim();
 }
 
-function toolUsesIn(content) {
+function toolUsesIn(content: any) {
   if (!Array.isArray(content)) return [];
   return content.filter((b) => b && b.type === 'tool_use' && b.name);
 }
@@ -68,25 +73,25 @@ function toolUsesIn(content) {
 // would read as "waiting", so **do not make that readdir recursive**, and keep
 // this flag check as the belt to that braces. `isMeta` entries are injected
 // context, not something anyone said.
-function isSpeakableEntry(entry) {
+function isSpeakableEntry(entry: any) {
   return !!entry && TURN_TYPES.has(entry.type) && !entry.isSidechain && !entry.isMeta && !!entry.message;
 }
 
 // Turn an asking tool's input into the sentence the user needs to hear. This is
 // the whole point of announcing these: the question IS the message.
-function promptFromTool(tool) {
+function promptFromTool(tool: any) {
   const input = (tool && tool.input) || {};
   if (tool.name === 'ExitPlanMode') {
     return 'Do you want me to go ahead with this plan?';
   }
   // AskUserQuestion: {questions: [{question, header, options: [{label, …}]}]}
   const questions = (Array.isArray(input.questions) ? input.questions : [])
-    .filter((q) => q && typeof q.question === 'string');
+    .filter((q: any) => q && typeof q.question === 'string');
   const parts = [];
   for (const q of questions.slice(0, MAX_SPOKEN_QUESTIONS)) {
     let line = q.question.trim();
     const labels = (Array.isArray(q.options) ? q.options : [])
-      .map((o) => (o && typeof o.label === 'string' ? o.label.trim() : ''))
+      .map((o: any) => (o && typeof o.label === 'string' ? o.label.trim() : ''))
       .filter(Boolean)
       .slice(0, MAX_SPOKEN_OPTIONS);
     if (labels.length) line += ` Options are: ${labels.join(', ')}.`;
@@ -110,12 +115,12 @@ function promptFromTool(tool) {
 // LAST entry's — it's the newest, and it's what announcement dedupe keys on.
 //
 // Never throws.
-function readLastTurn(file) {
+function readLastTurn(file: any) {
   if (!file) return null;
-  return scanTail(file, (lines) => {
+  return scanTail(file, (lines: any) => {
     // Parse lazily from the end: a window can hold megabytes and the answer is
     // almost always within the last few lines.
-    const parse = (i) => {
+    const parse = (i: any) => {
       const line = lines[i].trim();
       if (!line) return null;
       try { return JSON.parse(line); } catch { return null; }
@@ -178,11 +183,11 @@ function readLastTurn(file) {
 // itself a tool_result mid-call. A `tool_use` stop is mid-work and must NOT be
 // announced — except for the tools whose whole purpose is to ask (see
 // ASKING_TOOLS), which is exactly the moment the user most wants to be told.
-function isWaitingForInput(turn) {
+function isWaitingForInput(turn: any) {
   if (!turn || turn.role !== 'assistant') return false;
   const reason = turn.stopReason;
   if (reason === null || reason === 'end_turn' || reason === 'stop_sequence') return true;
-  if (reason === 'tool_use') return turn.toolNames.some((n) => ASKING_TOOLS.has(n));
+  if (reason === 'tool_use') return turn.toolNames.some((n: any) => ASKING_TOOLS.has(n));
   return false;
 }
 
@@ -203,7 +208,7 @@ function isWaitingForInput(turn) {
 // The other common synthetic entry — "[Request interrupted by user]" — carries
 // no "limit", which is exactly why the text test is narrow rather than "any
 // synthetic entry".
-function isLimitNotice(turn) {
+function isLimitNotice(turn: any) {
   if (!turn || turn.role !== 'assistant') return false;
   if (!turn.model || !/^<.*>$/.test(turn.model)) return false;
   return /\blimit(s|ed)?\b|out of credits/i.test(turn.text || '');
@@ -213,7 +218,7 @@ function isLimitNotice(turn) {
 // prose nor a question is a mid-stream fragment (Claude writes a thinking-only
 // entry with `stop_reason: null` before the text lands), and announcing it
 // would both say nothing and burn the turn's uuid.
-function hasSpeakableContent(turn) {
+function hasSpeakableContent(turn: any) {
   return !!turn && (!!turn.text || !!turn.prompt);
 }
 

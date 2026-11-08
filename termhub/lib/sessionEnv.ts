@@ -13,6 +13,11 @@
 //
 // The spec survives a restore (it is in the archive entry): a no-push run
 // restored after a reboot must not come back with the credentials.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+/** JSON read or built key by key (lib/types.ts): loose until its producer is TypeScript. */
+type Json = import('./types.ts').Json;
 
 const NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const MAX_VARS = 64;
@@ -22,11 +27,11 @@ const MAX_VALUE = 4096;
  * Pure. Validates the request's `env`/`unsetEnv`. Returns { spec } (spec is
  * null when neither was given) or { error }.
  */
-function parseEnvSpec(body) {
+function parseEnvSpec(body: any) {
   const env = body ? body.env : undefined;
   const unset = body ? body.unsetEnv : undefined;
   if (env == null && unset == null) return { spec: null };
-  const spec = { env: {}, unset: [] };
+  const spec: { env: Record<string, string>; unset: string[] } = { env: {}, unset: [] };
   if (env != null) {
     if (typeof env !== 'object' || Array.isArray(env)) return { error: 'env must be an object of strings' };
     const keys = Object.keys(env);
@@ -51,7 +56,7 @@ function parseEnvSpec(body) {
  * Pure. `base` with `spec` applied: removals first (case-insensitively on
  * Windows, where GH_TOKEN and gh_token are one variable), then sets.
  */
-function applyEnvSpec(base, spec, platform = process.platform) {
+function applyEnvSpec(base: any, spec: any, platform: any = process.platform) {
   const out = { ...base };
   if (!spec) return out;
   const fold = platform === 'win32';

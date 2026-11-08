@@ -1,5 +1,11 @@
 'use strict';
 
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+/** JSON read or built key by key (lib/types.ts): loose until its producer is TypeScript. */
+type Json = import('./types.ts').Json;
+
 const os = require('os');
 const path = require('path');
 const fs = require('fs');

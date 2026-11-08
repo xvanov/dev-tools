@@ -4,17 +4,22 @@
 // lib/claudeTranscript.js. Cursor lines use `role` (user|assistant) rather than
 // `type`, and usually omit stop_reason; waiting is inferred from the last
 // assistant entry plus the same PTY heuristics in lib/idleState.js.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+/** JSON read or built key by key (lib/types.ts): loose until its producer is TypeScript. */
+type Json = import('./types.ts').Json;
 
 const path = require('path');
-const { scanTail } = require('./cursorModel');
+const { scanTail } = require('./cursorModel.ts');
 const {
   isWaitingForInput: claudeWaiting,
   hasSpeakableContent,
   isLimitNotice,
   ASKING_TOOLS,
-} = require('./claudeTranscript');
+} = require('./claudeTranscript.ts');
 
-function blocksToText(content) {
+function blocksToText(content: any) {
   if (typeof content === 'string') return content;
   if (!Array.isArray(content)) return '';
   const out = [];
@@ -24,19 +29,19 @@ function blocksToText(content) {
   return out.join('\n').trim();
 }
 
-function toolUsesIn(content) {
+function toolUsesIn(content: any) {
   if (!Array.isArray(content)) return [];
   return content.filter((b) => b && b.type === 'tool_use' && b.name);
 }
 
-function isSpeakableEntry(entry) {
+function isSpeakableEntry(entry: any) {
   return !!entry && (entry.role === 'user' || entry.role === 'assistant') && !!entry.message;
 }
 
-function readLastTurn(file) {
+function readLastTurn(file: any) {
   if (!file) return null;
-  return scanTail(file, (lines) => {
-    const parse = (i) => {
+  return scanTail(file, (lines: any) => {
+    const parse = (i: any) => {
       const line = lines[i].trim();
       if (!line) return null;
       try { return JSON.parse(line); } catch { return null; }
@@ -67,10 +72,10 @@ function readLastTurn(file) {
   });
 }
 
-function isWaitingForInput(turn) {
+function isWaitingForInput(turn: any) {
   if (!turn || turn.role !== 'assistant') return false;
   if (turn.stopReason === 'tool_use') {
-    return turn.toolNames.some((n) => ASKING_TOOLS.has(n));
+    return turn.toolNames.some((n: any) => ASKING_TOOLS.has(n));
   }
   // Cursor often omits stop_reason; an assistant line with prose means the turn ended.
   if (turn.stopReason == null) {

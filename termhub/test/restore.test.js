@@ -17,7 +17,7 @@
 const {
   restoreClaudeCommand, restoreOpencodeCommand, stripClaudeSessionFlags,
   stripOpencodeServerFlags, injectAfterOpencodeExe,
-} = require('../lib/restore');
+} = require('../lib/restore.ts');
 
 let pass = 0;
 const failures = [];

@@ -6,6 +6,11 @@
 // the CLI itself). Claude Code writes one JSONL file per conversation at
 // ~/.claude/projects/<encoded-cwd>/<session-uuid>.jsonl, one line per turn,
 // each assistant line carrying the model that produced it.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+/** JSON read or built key by key (lib/types.ts): loose until its producer is TypeScript. */
+type Json = import('./types.ts').Json;
 
 const fs = require('fs');
 const os = require('os');
@@ -33,14 +38,14 @@ const TAIL_STEPS_BYTES = [65536, 524288, 4194304];
 // spoken announcements, for every session started from the picker. Cost a real
 // debugging session — measured against a live one whose cwd was
 // `/home/k/software-factory/`.
-function projectDirFor(cwd) {
+function projectDirFor(cwd: any) {
   // Keep the last separator when it's all there is (`/`, or `C:\`), since
   // that path really is the directory rather than a stray suffix.
   const trimmed = String(cwd).replace(/(?<=.)[\\/]+$/, '');
   return trimmed.replace(/[^a-zA-Z0-9]/g, '-');
 }
 
-function transcriptPath(cwd, claudeSessionId) {
+function transcriptPath(cwd: any, claudeSessionId: any) {
   return path.join(os.homedir(), '.claude', 'projects', projectDirFor(cwd), `${claudeSessionId}.jsonl`);
 }
 
@@ -54,7 +59,7 @@ function transcriptPath(cwd, claudeSessionId) {
 // that predate this terminal — those belong to some earlier/other session, not
 // this one — which is what keeps a bare shell from wearing a stale badge.
 // Returns { file, mtimeMs } or null.
-function findActiveTranscript(cwd, minMtimeMs) {
+function findActiveTranscript(cwd: any, minMtimeMs: any) {
   const dir = path.join(os.homedir(), '.claude', 'projects', projectDirFor(cwd));
   let entries;
   try { entries = fs.readdirSync(dir); } catch { return null; }
@@ -80,7 +85,7 @@ function findActiveTranscript(cwd, minMtimeMs) {
 // hold megabytes of JSON and the answer is almost always in the last few lines.
 // Shared with lib/claudeTranscript.js, which needs the same "find the newest
 // entry of some shape" walk over the same files.
-function scanTail(filePath, scan) {
+function scanTail(filePath: any, scan: any) {
   let fd;
   try {
     fd = fs.openSync(filePath, 'r');
@@ -115,12 +120,12 @@ function scanTail(filePath, scan) {
 // literal `<synthetic>` (formatModelName doesn't match it, so it passed
 // straight through) until the next real turn overwrote it. Anything in angle
 // brackets is a placeholder, never a model name.
-function isRealModel(model) {
+function isRealModel(model: any) {
   return typeof model === 'string' && model !== '' && !/^<.*>$/.test(model);
 }
 
-function readLastModel(filePath) {
-  return scanTail(filePath, (lines) => {
+function readLastModel(filePath: any) {
+  return scanTail(filePath, (lines: any) => {
     for (let i = lines.length - 1; i >= 0; i--) {
       const line = lines[i].trim();
       if (!line) continue;
@@ -141,7 +146,7 @@ function readLastModel(filePath) {
 // every sidebar poll and an abandoned stub's mtime never changes again, so the
 // answer is computed once and then free.
 const realTurnCache = new Map();
-function hasRealTurn(filePath, mtimeMs) {
+function hasRealTurn(filePath: any, mtimeMs: any) {
   const hit = realTurnCache.get(filePath);
   if (hit && hit.mtimeMs === mtimeMs) return hit.value;
   const value = readLastModel(filePath) !== null;
@@ -155,7 +160,7 @@ function hasRealTurn(filePath, mtimeMs) {
 // this cwd (a hand-launched or --resume'd claude). Returns a path or null.
 // Shared so the model badge and the voice watcher never disagree about which
 // conversation a session is.
-function resolveTranscript(cwd, agentSessionId, minMtimeMs) {
+function resolveTranscript(cwd: any, agentSessionId: any, minMtimeMs: any) {
   if (agentSessionId) {
     const f = transcriptPath(cwd, agentSessionId);
     let pinnedMtimeMs = null;
@@ -183,12 +188,12 @@ function resolveTranscript(cwd, agentSessionId, minMtimeMs) {
 
 // "claude-sonnet-5" -> "Sonnet 5"; "claude-opus-4-8" -> "Opus 4.8";
 // "claude-haiku-4-5-20251001" -> "Haiku 4.5" (drops the snapshot-date segment).
-function formatModelName(raw) {
+function formatModelName(raw: any) {
   if (!raw) return null;
   const m = /^claude-([a-z]+)-([\d.-]+)/i.exec(raw);
   if (!m) return raw;
-  const family = m[1][0].toUpperCase() + m[1].slice(1);
-  const parts = m[2].split('-').filter((p) => p && !/^\d{8}$/.test(p));
+  const family = m[1]![0]!.toUpperCase() + m[1]!.slice(1);
+  const parts = m[2]!.split('-').filter((p) => p && !/^\d{8}$/.test(p));
   return parts.length ? `${family} ${parts.join('.')}` : family;
 }
 

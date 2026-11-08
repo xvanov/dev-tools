@@ -32,7 +32,7 @@ const https = require('https');
 const http = require('http');
 const dns = require('dns');
 const { execFile } = require('child_process');
-const { dataDir } = require('./paths');
+const { dataDir } = require('./paths.ts');
 
 // Where a termhub front actually answers, in the order worth trying. All three
 // forms are real deployments in this fleet, and the list is what a scan across

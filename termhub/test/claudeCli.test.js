@@ -8,7 +8,7 @@
 // them to ignore the warning, a false "fine" hides the exact mismatch that broke
 // session restore in the first place (see lib/claudeCli.js).
 
-const claudeCli = require('../lib/claudeCli');
+const claudeCli = require('../lib/claudeCli.ts');
 
 let pass = 0;
 const failures = [];

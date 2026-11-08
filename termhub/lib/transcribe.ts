@@ -62,7 +62,7 @@ const https = require('https');
 const path = require('path');
 const crypto = require('crypto');
 const { execFile } = require('child_process');
-const { createLimiter } = require('./limit');
+const { createLimiter } = require('./limit.ts');
 
 const DEFAULT_HOST = '127.0.0.1';
 const DEFAULT_PORT = 47821;            // voice-dictation/transcribe_server.py

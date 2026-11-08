@@ -24,13 +24,18 @@
 //     TERMHUB_KOKORO_PYTHON  kokoro: interpreter with kokoro_onnx + soundfile
 //     TERMHUB_KOKORO_DIR     kokoro: directory of kokoro-v1.0.onnx + voices-v1.0.bin
 //     TERMHUB_TTS_IDLE_MS    how long the kokoro worker stays resident unused
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+/** JSON read or built key by key (lib/types.ts): loose until its producer is TypeScript. */
+type Json = import('./types.ts').Json;
 
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
 const { spawn } = require('child_process');
-const { createLimiter } = require('./limit');
+const { createLimiter } = require('./limit.ts');
 
 const DEFAULT_PIPER_VOICE = 'en_US-lessac-medium';
 const DEFAULT_KOKORO_VOICE = 'af_heart';
@@ -72,7 +77,7 @@ const limit = createLimiter({ max: MAX_CONCURRENT_SYNTH, queue: MAX_QUEUED_SYNTH
 
 let binCache = { checkedAt: 0, bin: null };
 
-function isExecutable(file) {
+function isExecutable(file: any) {
   try {
     fs.accessSync(file, fs.constants.X_OK);
     return fs.statSync(file).isFile();
@@ -81,7 +86,7 @@ function isExecutable(file) {
   }
 }
 
-function fileAtLeast(file, bytes) {
+function fileAtLeast(file: any, bytes: any) {
   try { return fs.statSync(file).size >= bytes; } catch { return false; }
 }
 
@@ -112,23 +117,23 @@ function voiceDir() {
 // reach through the front's generic /api/* proxy — an unvalidated id would hand
 // an arbitrary filesystem path to a subprocess. Callers only ever have ids from
 // voices() anyway.
-function piperModelPath(voice) {
+function piperModelPath(voice: any) {
   const id = String(voice || '').trim();
   if (!id || id.includes('/') || id.includes('\\') || id.includes('\0') || id.startsWith('.')) return null;
   return path.join(voiceDir(), `${id}.onnx`);
 }
 
-function piperModelUsable(file) {
+function piperModelUsable(file: any) {
   if (!file) return false;
   return fileAtLeast(file, MIN_MODEL_BYTES) && fileAtLeast(`${file}.json`, 64);
 }
 
 // "en_US-lessac-medium" -> "Lessac — medium (en_US)". Falls back to the raw id
 // for anything that doesn't follow piper's locale-name-quality convention.
-function piperLabel(id) {
+function piperLabel(id: any) {
   const m = /^([a-z]{2}_[A-Z]{2})-(.+)-([a-z_]+)$/.exec(id);
   if (!m) return id;
-  const name = m[2].replace(/_/g, ' ').replace(/\b[a-z]/g, (c) => c.toUpperCase());
+  const name = m[2]!.replace(/_/g, ' ').replace(/\b[a-z]/g, (c) => c.toUpperCase());
   return `${name} — ${m[3]} (${m[1]})`;
 }
 
@@ -200,22 +205,22 @@ const KOKORO_EN_VOICES = [
 
 // "af_heart" -> "Heart — American female". The first letter is the accent, the
 // second the gender; that's the whole convention.
-const KOKORO_ACCENT = { a: 'American', b: 'British' };
-function kokoroLabel(id) {
+const KOKORO_ACCENT: Record<string, string> = { a: 'American', b: 'British' };
+function kokoroLabel(id: any) {
   const m = /^([ab])([fm])_(.+)$/.exec(id);
   if (!m) return id;
-  const name = m[3].charAt(0).toUpperCase() + m[3].slice(1);
-  return `${name} — ${KOKORO_ACCENT[m[1]]} ${m[2] === 'f' ? 'female' : 'male'}`;
+  const name = m[3]!.charAt(0).toUpperCase() + m[3]!.slice(1);
+  return `${name} — ${KOKORO_ACCENT[m[1]!]} ${m[2] === 'f' ? 'female' : 'male'}`;
 }
 
 // A kokoro voice id is a bare identifier and nothing else — same reasoning as
 // piperModelPath: it arrives from a POST body and ends up inside a subprocess.
-function validKokoroVoiceId(id) {
+function validKokoroVoiceId(id: any) {
   return /^[a-z]{2}_[a-z]+$/.test(String(id || ''));
 }
 
 // Worker state lives out here so a lazily-spawned helper survives across calls.
-const kokoro = {
+const kokoro: Json = {
   child: null,
   starting: null,     // Promise resolved when the worker reports `ready`
   voices: null,       // the worker's real voice list, once it has told us
@@ -251,8 +256,8 @@ function kokoroInstalled() {
 }
 
 function kokoroVoiceList() {
-  const ids = kokoro.voices ? kokoro.voices.filter((id) => /^[ab][fm]_/.test(id)) : KOKORO_EN_VOICES;
-  return ids.map((id) => ({ id, label: kokoroLabel(id) })).sort((a, b) => a.id.localeCompare(b.id));
+  const ids = kokoro.voices ? kokoro.voices.filter((id: any) => /^[ab][fm]_/.test(id)) : KOKORO_EN_VOICES;
+  return ids.map((id: any) => ({ id, label: kokoroLabel(id) })).sort((a: any, b: any) => a.id.localeCompare(b.id));
 }
 
 function kokoroDefaultVoice() {
@@ -310,7 +315,7 @@ function status() {
 const cache = new Map(); // sha1(engine + voice + text) -> Buffer, in insertion order
 let cacheBytes = 0;
 
-function cacheGet(key) {
+function cacheGet(key: any) {
   const hit = cache.get(key);
   if (!hit) return null;
   cache.delete(key); // reinsert to make this the most-recently-used entry
@@ -318,7 +323,7 @@ function cacheGet(key) {
   return hit;
 }
 
-function cachePut(key, buf) {
+function cachePut(key: any, buf: any) {
   if (buf.length > CACHE_MAX_BYTES) return; // one clip that would evict everything
   // Re-inserting an existing key replaces its buffer, so drop the old size
   // first — otherwise cacheBytes drifts upward and starts evicting early.
@@ -341,7 +346,7 @@ function cachePut(key, buf) {
 //
 // Validation and the cache lookup happen OUTSIDE the limiter, so a bad voice
 // fails fast and a repeated clip never queues behind a real synthesis.
-function synthesize(text, { voice } = {}) {
+function synthesize(text: any, { voice }: { voice?: any } = {}) {
   const body = String(text == null ? '' : text).trim().slice(0, MAX_TEXT_CHARS);
   if (!body) return Promise.reject(new Error('no text to speak'));
 
@@ -359,7 +364,7 @@ function synthesize(text, { voice } = {}) {
       // A kokoro that can't start at all has already demoted itself (see
       // markKokoroBroken); finish this request on piper rather than making the
       // user's first announcement the one that fails.
-      .catch((err) => {
+      .catch((err: any) => {
         if (!err || !err.engineDown || !piperInstalled()) throw err;
         return limit(() => runPiper(body, piperDefaultVoice(), cacheKeyFor('piper', piperDefaultVoice(), body)));
       });
@@ -370,7 +375,7 @@ function synthesize(text, { voice } = {}) {
   return limit(() => runPiper(body, id, key));
 }
 
-function cacheKeyFor(e, id, body) {
+function cacheKeyFor(e: any, id: any, body: any) {
   return crypto.createHash('sha1').update(`${e}\n${id}\n${body}`).digest('hex');
 }
 
@@ -378,8 +383,8 @@ function cacheKeyFor(e, id, body) {
 
 // stderr is drained and discarded: piper spams onnxruntime GPU-discovery
 // warnings on every run, and an unread pipe would eventually block the child.
-function runPiper(body, id, key) {
-  return new Promise((resolve, reject) => {
+function runPiper(body: any, id: any, key: any) {
+  return new Promise<any>((resolve, reject) => {
     // Someone else may have synthesised the same clip while we were queued.
     const queued = cacheGet(key);
     if (queued) return resolve(queued);
@@ -399,13 +404,13 @@ function runPiper(body, id, key) {
         stdio: ['pipe', 'pipe', 'pipe'],
         windowsHide: true,
       });
-    } catch (e) {
+    } catch (e: any) {
       return reject(e);
     }
 
-    const chunks = [];
+    const chunks: any[] = [];
     let done = false;
-    const finish = (err, buf) => {
+    const finish = (err?: any, buf?: any) => {
       if (done) return;
       done = true;
       clearTimeout(timer);
@@ -416,13 +421,13 @@ function runPiper(body, id, key) {
       finish(new Error('piper timed out'));
     }, SYNTH_TIMEOUT_MS);
 
-    child.stdout.on('data', (c) => chunks.push(c));
+    child.stdout.on('data', (c: any) => chunks.push(c));
     child.stderr.on('data', () => {});
     child.stdout.on('error', () => {});
     child.stderr.on('error', () => {});
     child.stdin.on('error', () => {}); // piper died before reading our text
-    child.on('error', (e) => finish(e));
-    child.on('close', (code) => {
+    child.on('error', (e: any) => finish(e));
+    child.on('close', (code: any) => {
       const buf = Buffer.concat(chunks);
       if (code !== 0) return finish(new Error(`piper exited ${code}`));
       if (buf.length < 44) return finish(new Error('piper produced no audio'));
@@ -443,14 +448,14 @@ function runPiper(body, id, key) {
 // a liability — it is killed on idle, on timeout, and when sessiond exits, and
 // a worker that dies for any other reason is simply respawned on the next call.
 
-function markKokoroBroken(why) {
+function markKokoroBroken(why: any) {
   kokoro.brokenUntil = Date.now() + 5 * 60 * 1000;
-  const err = new Error(`kokoro unavailable: ${why}`);
+  const err: any = new Error(`kokoro unavailable: ${why}`);
   err.engineDown = true;   // synthesize() reads this to fall through to piper
   return err;
 }
 
-function killKokoro(reason) {
+function killKokoro(reason: any) {
   const child = kokoro.child;
   kokoro.child = null;
   kokoro.starting = null;
@@ -491,7 +496,7 @@ function touchKokoroIdle() {
 // exactly `bytes` raw bytes of WAV. Written as a loop over one growing buffer
 // because a 600 KB clip arrives in dozens of chunks and any of them can split a
 // header mid-line.
-function consumeKokoroStdout(chunk) {
+function consumeKokoroStdout(chunk: any) {
   kokoro.buf = kokoro.buf.length ? Buffer.concat([kokoro.buf, chunk]) : chunk;
   for (;;) {
     if (!kokoro.frame) {
@@ -512,7 +517,7 @@ function consumeKokoroStdout(chunk) {
   }
 }
 
-function handleKokoroFrame(header, payload) {
+function handleKokoroFrame(header: any, payload: any) {
   if (header.type === 'ready') {
     if (Array.isArray(header.voices) && header.voices.length) kokoro.voices = header.voices;
     clearTimeout(kokoro.startTimer);
@@ -559,7 +564,7 @@ function startKokoro() {
         PYTHONUNBUFFERED: '1',
       },
     });
-  } catch (e) {
+  } catch (e: any) {
     return Promise.reject(markKokoroBroken(e.message));
   }
   kokoro.child = child;
@@ -570,16 +575,16 @@ function startKokoro() {
   // server owns the event loop anyway; the idle timer releases the worker after
   // ten quiet minutes, the exit hook kills it on the way out, and a short-lived
   // script that requires this module calls shutdown().
-  child.stdout.on('data', (c) => { try { consumeKokoroStdout(c); } catch { /* never let a torn frame throw */ } });
+  child.stdout.on('data', (c: any) => { try { consumeKokoroStdout(c); } catch { /* never let a torn frame throw */ } });
   child.stderr.on('data', () => {});   // onnxruntime GPU-discovery spam, every start
   child.stdout.on('error', () => {});
   child.stderr.on('error', () => {});
   child.stdin.on('error', () => {});
-  child.on('error', (e) => { if (kokoro.child === child) killKokoro(`kokoro worker: ${e.message}`); });
+  child.on('error', (e: any) => { if (kokoro.child === child) killKokoro(`kokoro worker: ${e.message}`); });
   child.on('close', () => { if (kokoro.child === child) killKokoro('kokoro worker exited'); });
 
-  kokoro.starting = new Promise((resolve, reject) => {
-    kokoro.onReady = (err) => (err ? reject(err) : resolve());
+  kokoro.starting = new Promise<any>((resolve, reject) => {
+    kokoro.onReady = (err: any) => (err ? reject(err) : resolve(undefined));
   });
   kokoro.startTimer = setTimeout(() => {
     if (kokoro.child === child) killKokoro('kokoro worker never became ready');
@@ -591,13 +596,13 @@ function startKokoro() {
   return kokoro.starting;
 }
 
-async function runKokoro(body, voice, key, retried) {
+async function runKokoro(body: any, voice: any, key: any, retried?: any): Promise<any> {
   const queued = cacheGet(key);
   if (queued) return queued;
 
   try {
     await startKokoro();
-  } catch (e) {
+  } catch (e: any) {
     throw e.engineDown ? e : markKokoroBroken(e.message);
   }
   const child = kokoro.child;
@@ -612,7 +617,7 @@ async function runKokoro(body, voice, key, retried) {
   kokoro.idleTimer = null;
   const id = ++kokoro.seq;
 
-  const wav = await new Promise((resolve, reject) => {
+  const wav: any = await new Promise<any>((resolve, reject) => {
     const timer = setTimeout(() => {
       // An ONNX run in progress can't be cancelled, so the only way to stop
       // paying for it is to take the worker with it. The next call respawns.
@@ -623,12 +628,12 @@ async function runKokoro(body, voice, key, retried) {
     kokoro.pending.set(id, { resolve, reject, timer });
     try {
       child.stdin.write(`${JSON.stringify({ id, text: body, voice, speed: 1.0, lang: 'en-us' })}\n`);
-    } catch (e) {
+    } catch (e: any) {
       kokoro.pending.delete(id);
       clearTimeout(timer);
       reject(e);
     }
-  }).catch(async (err) => {
+  }).catch(async (err: any): Promise<any> => {
     // "the worker exited" is the one failure worth a second attempt — it's what
     // an OOM kill or an external `pkill python` looks like, and respawning is
     // cheap next to telling the user we couldn't speak.

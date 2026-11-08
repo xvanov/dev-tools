@@ -32,7 +32,7 @@ type Json = import('./types.ts').Json;
 
 const fs = require('fs');
 const path = require('path');
-const { dataDir } = require('./paths');
+const { dataDir } = require('./paths.ts');
 
 const FILE_NAME = 'client-log.jsonl';
 const MAX_BODY_BYTES = 8 * 1024;

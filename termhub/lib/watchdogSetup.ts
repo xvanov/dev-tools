@@ -26,6 +26,11 @@
 // non-elevated front could only create an Interactive task, quietly settling for less
 // than the S4U principal an elevated install would have given. None of that applies to
 // a systemd --user timer, which needs no privileges and is reconciled by content.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+/** JSON read or built key by key (lib/types.ts): loose until its producer is TypeScript. */
+type Json = import('./types.ts').Json;
 
 const { execFile } = require('child_process');
 const fs = require('fs');
@@ -54,7 +59,7 @@ function ensureWatchdog() {
   const timer = setTimeout(() => {
     // --ensure is idempotent and silent unless it changed something, so the common
     // case adds one no-op subprocess per start and no output.
-    execFile('bash', [script, '--ensure'], { timeout: 60000, windowsHide: true }, (err, stdout, stderr) => {
+    execFile('bash', [script, '--ensure'], { timeout: 60000, windowsHide: true }, (err: any, stdout: any, stderr: any) => {
       const out = `${stdout || ''}${stderr || ''}`.trim();
       if (err) {
         // Never fatal, never loud: termhub serving is what matters, and a machine

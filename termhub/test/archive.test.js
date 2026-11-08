@@ -22,8 +22,8 @@ const mode = (f) => fs.statSync(f).mode & 0o777;
 const fresh = () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'termhub-archive-'));
   process.env.TERMHUB_DATA_DIR = dir;
-  delete require.cache[require.resolve('../lib/archive')];
-  return { dir, archive: require('../lib/archive'), f: path.join(dir, 'sessions.json') };
+  delete require.cache[require.resolve('../lib/archive.ts')];
+  return { dir, archive: require('../lib/archive.ts'), f: path.join(dir, 'sessions.json') };
 };
 
 const dirs = [];

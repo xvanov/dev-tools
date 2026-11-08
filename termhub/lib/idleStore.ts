@@ -24,10 +24,15 @@
 // readDay() also scans the previous day and clips (see `clip`). Filing by start
 // keeps the writer a pure append — splitting at midnight would mean the writer
 // owning a timezone-aware clock it has no other use for.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+/** JSON read or built key by key (lib/types.ts): loose until its producer is TypeScript. */
+type Json = import('./types.ts').Json;
 
 const fs = require('fs');
 const path = require('path');
-const { ensureDataDir } = require('./paths');
+const { ensureDataDir } = require('./paths.ts');
 
 function idleDir() {
   const dir = path.join(ensureDataDir(), 'idle');
@@ -37,32 +42,32 @@ function idleDir() {
 
 // Local (not UTC) day key. The user's question is "what did I do on Tuesday",
 // and Tuesday is a wall-clock fact where they are sitting.
-function dayKey(ts) {
+function dayKey(ts: any) {
   const d = new Date(ts);
-  const p = (n) => String(n).padStart(2, '0');
+  const p = (n: any) => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
 }
 
-function dayBounds(key) {
-  const [y, m, d] = String(key).split('-').map(Number);
+function dayBounds(key: any) {
+  const [y = 0, m, d] = String(key).split('-').map(Number);
   const start = new Date(y, (m || 1) - 1, d || 1).getTime();
   const end = new Date(y, (m || 1) - 1, (d || 1) + 1).getTime();
   return { start, end };
 }
 
-function prevDayKey(key) {
+function prevDayKey(key: any) {
   const { start } = dayBounds(key);
   return dayKey(start - 1);
 }
 
-function dayFile(key) {
+function dayFile(key: any) {
   return path.join(idleDir(), `${key}.jsonl`);
 }
 
 // Append one finished episode. Never throws: the tracker calls this from a
 // 1 s tick inside the process that owns every terminal on the machine, and a
 // full disk must not be able to take that down.
-function append(episode) {
+function append(episode: any) {
   if (!episode || !episode.start || !episode.end) return false;
   try {
     fs.appendFileSync(dayFile(dayKey(episode.start)), `${JSON.stringify(episode)}\n`);
@@ -72,7 +77,7 @@ function append(episode) {
   }
 }
 
-function readFileLines(key) {
+function readFileLines(key: any) {
   let raw;
   try { raw = fs.readFileSync(dayFile(key), 'utf8'); } catch { return []; }
   const out = [];
@@ -90,7 +95,7 @@ function readFileLines(key) {
 }
 
 // Clip an episode to [from, to), or null if it doesn't overlap at all.
-function clip(ep, from, to) {
+function clip(ep: any, from: any, to: any) {
   const start = Math.max(ep.start, from);
   const end = Math.min(ep.end, to);
   if (end <= start) return null;
@@ -99,7 +104,7 @@ function clip(ep, from, to) {
 
 // Every episode overlapping one local day, clipped to it. Reads the previous
 // day too, for the episode that started before midnight.
-function readDay(key) {
+function readDay(key: any) {
   const { start, end } = dayBounds(key);
   const raw = [...readFileLines(prevDayKey(key)), ...readFileLines(key)];
   const out = [];
@@ -114,7 +119,7 @@ function readDay(key) {
 // Peak parallelism: the most sessions ever *working* at the same instant.
 // A sweep over episode edges, not a sample — sampling would miss the burst
 // that is exactly what this number is for.
-function peakParallel(episodes) {
+function peakParallel(episodes: any) {
   const edges = [];
   for (const ep of episodes) {
     if (ep.state !== 'working') continue;
@@ -136,9 +141,9 @@ function peakParallel(episodes) {
 // ball back in your court. It is the denominator of the whole game — idle
 // minutes per handoff is "how fast do I turn work around", which is the thing
 // being minimised, whereas raw idle minutes just punishes a long day.
-function rollup(key, extra = []) {
+function rollup(key: any, extra: any = []) {
   const episodes = [...readDay(key), ...extra];
-  const totals = { working: 0, waiting: 0, limited: 0 };
+  const totals: Json = { working: 0, waiting: 0, limited: 0 };
   const sessions = new Map();
   let handoffs = 0;
   for (const ep of episodes) {
@@ -186,7 +191,7 @@ function rollup(key, extra = []) {
 // on the same repo are one project's problem, and "which repo am I slowest to
 // answer?" is a question you can act on in a way that a per-session list isn't —
 // it survives the sessions themselves.
-function byProject(sessions) {
+function byProject(sessions: any) {
   const out = new Map();
   for (const s of sessions) {
     const key = s.cwd || '(unknown)';
@@ -205,7 +210,7 @@ function byProject(sessions) {
 // re-reading months of JSONL on each poll would grow without bound.
 const dayCache = new Map();   // key -> { sig, summary }
 
-function fileSig(key) {
+function fileSig(key: any) {
   try {
     const st = fs.statSync(dayFile(key));
     return `${st.mtimeMs}:${st.size}`;
@@ -214,12 +219,12 @@ function fileSig(key) {
   }
 }
 
-function summarize(r) {
+function summarize(r: any) {
   return { day: r.day, working: r.working, waiting: r.waiting, limited: r.limited,
     handoffs: r.handoffs, peakParallel: r.peakParallel, sessions: r.sessions.length };
 }
 
-function daySummary(key) {
+function daySummary(key: any) {
   const sig = `${fileSig(prevDayKey(key))}|${fileSig(key)}`;
   const hit = dayCache.get(key);
   if (hit && hit.sig === sig) return hit.summary;
@@ -235,9 +240,9 @@ function history() {
 // The all-time accumulation: every recorded day's totals, with today's taken
 // from `today` (a rollup that already includes the open in-memory episodes)
 // rather than the file, so the number moves while agents work.
-function allTime(today) {
+function allTime(today: any) {
   const out = { working: 0, waiting: 0, limited: 0, handoffs: 0, days: 0, since: null };
-  const add = (d) => {
+  const add = (d: any) => {
     if (!d) return;
     out.working += d.working || 0;
     out.waiting += d.waiting || 0;
@@ -264,11 +269,11 @@ function allTime(today) {
 // Bounded to `maxDays` files rather than the whole directory — the answer is
 // almost always in the day you clicked, and an unbounded scan would grow
 // without limit as the log accumulates.
-function findSession(id, maxDays = 120) {
+function findSession(id: any, maxDays: number = 120) {
   if (!id) return null;
   const all = days().reverse().slice(0, maxDays);
   for (const day of all) {
-    let found = null;
+    let found: any = null;
     for (const ep of readFileLines(day)) {
       if (ep.id !== id) continue;
       // Keep scanning the day: later episodes carry the better metadata (a
@@ -291,8 +296,8 @@ function findSession(id, maxDays = 120) {
 function days() {
   try {
     return fs.readdirSync(idleDir())
-      .filter((f) => /^\d{4}-\d{2}-\d{2}\.jsonl$/.test(f))
-      .map((f) => f.slice(0, -6))
+      .filter((f: any) => /^\d{4}-\d{2}-\d{2}\.jsonl$/.test(f))
+      .map((f: any) => f.slice(0, -6))
       .sort();
   } catch {
     return [];

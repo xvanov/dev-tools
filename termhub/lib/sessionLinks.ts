@@ -23,12 +23,17 @@
 //   story     the factory story id
 //   external  the job's external id (`<pa install>-<run id>`)
 //   pr        a PR number, or its http(s) URL
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+/** JSON read or built key by key (lib/types.ts): loose until its producer is TypeScript. */
+type Json = import('./types.ts').Json;
 
 const KEYS = ['card', 'run', 'job', 'step', 'story', 'external', 'pr'];
 const ID = /^[A-Za-z0-9_.:@-]{1,128}$/;
 const URL_RE = /^https?:\/\/[^\s"'<>]{1,400}$/;
 
-function cleanValue(key, v) {
+function cleanValue(key: any, v: any) {
   if (typeof v === 'number' && Number.isFinite(v)) v = String(v);
   if (typeof v !== 'string') return null;
   const s = v.trim();
@@ -42,9 +47,9 @@ function cleanValue(key, v) {
  * @param {unknown} raw
  * @returns {Record<string,string>|null}
  */
-function parseLinks(raw) {
+function parseLinks(raw: any) {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
-  const out = {};
+  const out: Json = {};
   for (const k of KEYS) {
     if (!Object.prototype.hasOwnProperty.call(raw, k)) continue;
     const v = cleanValue(k, raw[k]);
@@ -57,7 +62,7 @@ function parseLinks(raw) {
  * Pure. `next` laid over `prev` (a PATCH adds or replaces keys; a key sent as
  * null removes it). `null` when nothing is left.
  */
-function mergeLinks(prev, raw) {
+function mergeLinks(prev: any, raw: any) {
   const out = { ...(prev || {}) };
   if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
     for (const k of KEYS) {

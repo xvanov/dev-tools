@@ -17,7 +17,7 @@ type Json = import('./types.ts').Json;
 
 const fs = require('fs');
 const path = require('path');
-const { ensureDataDir } = require('./paths');
+const { ensureDataDir } = require('./paths.ts');
 
 const DEFAULT_SESSIOND_PORT = Number(process.env.TERMHUB_SESSIOND_PORT) || 7010;
 const DEFAULT_FRONT_PORT = Number(process.env.TERMHUB_FRONT_PORT) || 7001;

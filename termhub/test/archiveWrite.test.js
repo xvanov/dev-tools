@@ -18,8 +18,8 @@ const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'termhub-archive-write-'));
 process.env.TERMHUB_DATA_DIR = dir;
 const f = path.join(dir, 'sessions.json');
 const load = () => {
-  delete require.cache[require.resolve('../lib/archive')];
-  return require('../lib/archive');
+  delete require.cache[require.resolve('../lib/archive.ts')];
+  return require('../lib/archive.ts');
 };
 
 (async () => {
@@ -79,7 +79,7 @@ const load = () => {
     archive = load();
     assert.strictEqual(archive.get('s1').endedAt, 123);
     // recents.json: same pattern (lib/recents.js). In memory at once, on disk after flush.
-    const recents = require('../lib/recents');
+    const recents = require('../lib/recents.ts');
     let rSync = 0;
     fs.writeFileSync = function (...a) { if (String(a[0]).startsWith(dir)) rSync++; return origWrite.apply(this, a); };
     for (let i = 0; i < 60; i++) recents.add(`/dir/${i % 7}`);

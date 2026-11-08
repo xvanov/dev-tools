@@ -5,15 +5,20 @@
 // runs on every session create, and a synchronous read+write of this file
 // measured over a second on a loaded Windows laptop, stalling every request
 // behind it (see lib/archive.js, same fix). A deliberate stop flushes.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+/** JSON read or built key by key (lib/types.ts): loose until its producer is TypeScript. */
+type Json = import('./types.ts').Json;
 
 const fs = require('fs');
 const path = require('path');
-const { ensureDataDir } = require('./paths');
+const { ensureDataDir } = require('./paths.ts');
 
 const MAX_RECENTS = 50;
 
-let cache = null;     // { file, list }
-let writing = null;
+let cache: any = null;     // { file, list }
+let writing: any = null;
 let again = false;
 let exitHooked = false;
 
@@ -24,7 +29,7 @@ function file() {
 function load() {
   const f = file();
   if (cache && cache.file === f) return cache.list;
-  let list = [];
+  let list: any[] = [];
   try {
     const data = JSON.parse(fs.readFileSync(f, 'utf8'));
     if (Array.isArray(data)) list = data.filter((d) => typeof d === 'string');
@@ -68,11 +73,11 @@ function list() {
   return [...load()];
 }
 
-function add(dir) {
+function add(dir: any) {
   if (!dir || typeof dir !== 'string') return list();
   const normalized = dir.trim();
   if (!normalized) return list();
-  const current = load().filter((d) => d !== normalized);
+  const current = load().filter((d: any) => d !== normalized);
   current.unshift(normalized);
   cache.list = current.slice(0, MAX_RECENTS);
   save();

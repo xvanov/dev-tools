@@ -28,15 +28,20 @@
 //    memory, so an unexpected sessiond death would otherwise lose the whole
 //    stretch. Checkpointing bounds that loss; continuations carry `cont: true`
 //    so the split can't be miscounted as a second handoff.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+/** JSON read or built key by key (lib/types.ts): loose until its producer is TypeScript. */
+type Json = import('./types.ts').Json;
 
 const { EventEmitter } = require('events');
 
-const store = require('./idleStore');
-const notify = require('./notify');
-const { forKind: transcriptFor } = require('./transcriptRead');
+const store = require('./idleStore.ts');
+const notify = require('./notify.ts');
+const { forKind: transcriptFor } = require('./transcriptRead.ts');
 const {
   classifyClaude, classifyOpencode, isTracked, shouldAnnounceExit, WAITING, LIMITED, WORKING,
-} = require('./idleState');
+} = require('./idleState.ts');
 const { readState } = require('./state.ts');
 const { secureUrlForPort } = require('./serveUrl.ts');
 
@@ -83,7 +88,7 @@ const URL_TTL_MS = 5 * 60 * 1000;
 // forty characters of hex in a notification with room for about sixty. Falls
 // back to the kind plus the directory, which is what you actually recognise it
 // by. The browser solves the same problem in speakableTitle().
-function label(session) {
+function label(session: any) {
   const title = session.title || '';
   const auto = !title || title === session.command;
   if (!auto) return title;
@@ -93,7 +98,7 @@ function label(session) {
   return dir ? `${session.kind} in ${dir}` : (title || session.id);
 }
 
-const fmt = (ms) => {
+const fmt = (ms: any) => {
   const s = Math.round(ms / 1000);
   const m = Math.floor(s / 60);
   if (m < 60) return `${m}m ${String(s % 60).padStart(2, '0')}s`;
@@ -102,7 +107,7 @@ const fmt = (ms) => {
 
 class IdleHub extends EventEmitter {
   // `sessions` is sessiond's live Map<id, Session>; the hub only ever reads it.
-  constructor(sessions) {
+  constructor(sessions: any) {
     super();
     this.sessions = sessions;
     this._state = new Map();   // sessionId -> episode + notification bookkeeping
@@ -132,11 +137,11 @@ class IdleHub extends EventEmitter {
 
   // "This tab is visible and showing this session." Suppresses the push for it,
   // not the accounting. See the note at the top.
-  noteFocus(sessionId) {
+  noteFocus(sessionId: any) {
     this._focus = { id: sessionId || null, at: Date.now() };
   }
 
-  _focused(id) {
+  _focused(id: any) {
     return this._focus.id === id && (Date.now() - this._focus.at) < FOCUS_TTL_MS;
   }
 
@@ -181,7 +186,7 @@ class IdleHub extends EventEmitter {
     }
   }
 
-  _classify(session, now) {
+  _classify(session: any, now: any) {
     const ptyIdleMs = now - (session.lastActivity || now);
     if (session.kind === 'opencode') {
       return classifyOpencode({ idleAt: session._opencodeIdleAt, ask: session._opencodeAsk, busy: session._opencodeBusy });
@@ -196,7 +201,7 @@ class IdleHub extends EventEmitter {
     return classifyClaude({ turn, ptyIdleMs });
   }
 
-  _stateFor(session) {
+  _stateFor(session: any) {
     let st = this._state.get(session.id);
     if (!st) {
       st = {
@@ -224,7 +229,7 @@ class IdleHub extends EventEmitter {
     return st;
   }
 
-  _advance(session, verdict, now) {
+  _advance(session: any, verdict: any, now: any) {
     const st = this._stateFor(session);
 
     if (st.state !== verdict.state) {
@@ -255,7 +260,7 @@ class IdleHub extends EventEmitter {
 
   // ---- episodes --------------------------------------------------------------
 
-  _write(id, st, start, end, { cont = false } = {}) {
+  _write(id: any, st: any, start: any, end: any, { cont = false }: { cont?: boolean | undefined } = {}) {
     if (!st.state || end <= start) return;
     store.append({
       id, start, end, ms: end - start,
@@ -267,19 +272,19 @@ class IdleHub extends EventEmitter {
   }
 
   // Close the part of the current episode that hasn't been checkpointed yet.
-  _flush(id, st, now) {
+  _flush(id: any, st: any, now: any) {
     if (!st.state) return;
     this._write(id, st, st.writtenTo, now, { cont: st.writtenTo !== st.since });
     st.writtenTo = now;
   }
 
   // Leaving a working stretch: add it to the session's banked agent time.
-  _bankWork(id, st, now) {
+  _bankWork(id: any, st: any, now: any) {
     if (st.state !== WORKING || now <= st.since) return;
     this._worked.set(id, (this._worked.get(id) || 0) + (now - st.since));
   }
 
-  _close(id, now) {
+  _close(id: any, now: any) {
     const st = this._state.get(id);
     if (!st) return;
     this._flush(id, st, now);
@@ -287,7 +292,7 @@ class IdleHub extends EventEmitter {
     this._state.delete(id);
   }
 
-  _closeAll(now) {
+  _closeAll(now: any) {
     for (const id of [...this._state.keys()]) this._close(id, now);
   }
 
@@ -298,7 +303,7 @@ class IdleHub extends EventEmitter {
   // waiting rather than on the session list. `null` when Tailscale Serve
   // publishes no address for this front — the push still goes, without a Click
   // header, because a buzz you have to act on manually beats no buzz.
-  _deepLink(sessionId) {
+  _deepLink(sessionId: any) {
     const now = Date.now();
     // Refreshed in the background, never awaited: this is a `tailscale`
     // subprocess and the caller is on a 1 s tick. `warm()` at startup is what
@@ -307,7 +312,7 @@ class IdleHub extends EventEmitter {
     if (now - this._url.at > URL_TTL_MS && !this._url.pending) {
       const port = readState().publishPort || readState().activeFrontPort;
       this._url.pending = secureUrlForPort(port)
-        .then((u) => { this._url.value = u || null; })
+        .then((u: any) => { this._url.value = u || null; })
         .catch(() => { this._url.value = null; })
         .finally(() => { this._url.at = Date.now(); this._url.pending = null; });
     }
@@ -315,11 +320,11 @@ class IdleHub extends EventEmitter {
     return `${this._url.value.replace(/\/+$/, '')}/#session=${encodeURIComponent(sessionId)}`;
   }
 
-  _nextDelay(count) {
-    return REPEAT_MS[Math.min(count - 1, REPEAT_MS.length - 1)];
+  _nextDelay(count: any) {
+    return REPEAT_MS[Math.min(count - 1, REPEAT_MS.length - 1)] as number;
   }
 
-  _maybePush(session, st, now) {
+  _maybePush(session: any, st: any, now: any) {
     if (!notify.enabled()) return;
     const idleMs = now - st.since;
     const due = st.notifyCount === 0
@@ -351,7 +356,7 @@ class IdleHub extends EventEmitter {
   // rather than on the dead session: there is nothing to attach to, and the
   // useful next action is the dashboard's **reopen**, which brings the
   // conversation back where it left off.
-  _maybePushExit(session, st, now) {
+  _maybePushExit(session: any, st: any, now: any) {
     if (!st || !st.state) return;
     const killed = !this.sessions.has(session.id);
     const sinceInputMs = session.lastInputAt ? now - session.lastInputAt : Infinity;
@@ -373,7 +378,7 @@ class IdleHub extends EventEmitter {
     }).catch(() => { /* best-effort by contract */ });
   }
 
-  _pushLimit(session, st) {
+  _pushLimit(session: any, st: any) {
     if (!notify.enabled()) return;
     st.notifiedAt = Date.now();
     st.notifyCount++;
@@ -396,7 +401,7 @@ class IdleHub extends EventEmitter {
   // finished stretches, plus the stretch in progress when `activeSince` is set.
   // Split that way so the browser can tick the clock locally without the
   // number it shows drifting from the one the tracker logs.
-  decorate(id) {
+  decorate(id: any) {
     const st = this._state.get(id);
     const activeBase = this._worked.get(id) || 0;
     if (!st || !st.state) return { idleState: null, idleSince: null, idleMs: 0, activeBase, activeSince: null };
@@ -412,7 +417,7 @@ class IdleHub extends EventEmitter {
   }
 
   // A session's agent time right now, in ms.
-  activeMs(id, now = Date.now()) {
+  activeMs(id: any, now: number = Date.now()) {
     const st = this._state.get(id);
     const live = st && st.state === WORKING ? now - st.since : 0;
     return (this._worked.get(id) || 0) + live;
@@ -422,7 +427,7 @@ class IdleHub extends EventEmitter {
   // include the stretch currently in progress. Without this the header would
   // freeze whenever nothing changed state — which, on a genuinely idle day, is
   // the entire day.
-  openEpisodes(at) {
+  openEpisodes(at: any) {
     const now = at || Date.now();
     const out = [];
     for (const [id, st] of this._state) {
@@ -473,9 +478,9 @@ class IdleHub extends EventEmitter {
 // Every state change and exit, as a `session-state` message on the voice hub's
 // page-wide feed (/ws/voice): the page redraws its sidebar on it rather than
 // on its next poll (plan item E3). Payload: ids and states only.
-function forwardSessionStates(idle, voice) {
-  idle.on('state', (e) => voice.broadcast({ type: 'session-state', sessionId: e.sessionId, state: e.state, reason: e.reason || null }));
-  idle.on('exited', (e) => voice.broadcast({ type: 'session-state', sessionId: e.sessionId, state: 'exited', reason: null }));
+function forwardSessionStates(idle: any, voice: any) {
+  idle.on('state', (e: any) => voice.broadcast({ type: 'session-state', sessionId: e.sessionId, state: e.state, reason: e.reason || null }));
+  idle.on('exited', (e: any) => voice.broadcast({ type: 'session-state', sessionId: e.sessionId, state: 'exited', reason: null }));
 }
 
 module.exports = { IdleHub, forwardSessionStates, FIRST_NOTIFY_MS, REPEAT_MS, URGENT_AFTER_MS, fmt };

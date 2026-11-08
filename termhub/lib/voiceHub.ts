@@ -17,13 +17,18 @@
 //   3. Never break anything by failing. Every step here — stat, parse,
 //      summarize, broadcast — is wrapped, because none of it is load-bearing for
 //      the terminals themselves.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+/** JSON read or built key by key (lib/types.ts): loose until its producer is TypeScript. */
+type Json = import('./types.ts').Json;
 
 const fs = require('fs');
 const { EventEmitter } = require('events');
 
-const tts = require('./tts');
-const { summarize } = require('./summarize');
-const { forKind: transcriptFor } = require('./transcriptRead');
+const tts = require('./tts.ts');
+const { summarize } = require('./summarize.ts');
+const { forKind: transcriptFor } = require('./transcriptRead.ts');
 
 const POLL_MS = 1000;
 
@@ -62,7 +67,7 @@ class VoiceHub extends EventEmitter {
   // `sessions` is sessiond's live Map<id, Session>; the hub only reads it. The
   // armed flag lives on the sessions themselves (session.voiceArmed) so it can
   // never drift out of sync with the map — a killed session is simply gone.
-  constructor(sessions) {
+  constructor(sessions: any) {
     super();
     this.sessions = sessions;
     this.clients = new Set(); // each is a function(msgObject)
@@ -85,12 +90,12 @@ class VoiceHub extends EventEmitter {
 
   // ---- clients ---------------------------------------------------------------
 
-  addClient(send) {
+  addClient(send: any) {
     this.clients.add(send);
     return () => this.clients.delete(send);
   }
 
-  broadcast(msg) {
+  broadcast(msg: any) {
     for (const send of this.clients) {
       try {
         send(msg);
@@ -111,13 +116,13 @@ class VoiceHub extends EventEmitter {
   //    termhub launched it with `--port` (see lib/opencodeApi.js). An opencode
   //    started by an older build has no port and genuinely cannot be armed, so
   //    the toggle stays inert for it rather than lying.
-  static canArm(session) {
+  static canArm(session: any) {
     return !!session && typeof session.canSpeak === 'function' && session.canSpeak();
   }
 
   // Returns the new armed state, or null when there's no such session. Callers
   // must check canArm() first; this asserts nothing.
-  setArmed(id, armed) {
+  setArmed(id: any, armed: any) {
     const session = this.sessions.get(id);
     if (!session) return null;
     session.voiceArmed = !!armed;
@@ -148,7 +153,7 @@ class VoiceHub extends EventEmitter {
 
   // ---- watching --------------------------------------------------------------
 
-  _stateFor(id) {
+  _stateFor(id: any) {
     let st = this._state.get(id);
     if (!st) {
       // announcedUuid persists for the life of the session: it is the entire
@@ -181,7 +186,7 @@ class VoiceHub extends EventEmitter {
     }
   }
 
-  _pollSession(session) {
+  _pollSession(session: any) {
     const st = this._stateFor(session.id);
     if (!session.alive) return;
     if (session.kind === 'opencode') return this._pollOpencode(session, st);
@@ -204,7 +209,7 @@ class VoiceHub extends EventEmitter {
     this._maybeAnnounceBlocked(session, st, idleMs, tx);
   }
 
-  _readTranscript(session, st, tx) {
+  _readTranscript(session: any, st: any, tx: any) {
     if (!tx) tx = transcriptFor(session.kind);
     if (st.inFlight) return; // one summarize per session at a time
 
@@ -257,7 +262,7 @@ class VoiceHub extends EventEmitter {
   //
   // The event-driven flag also means the HTTP read happens once per turn rather
   // than once per tick: an armed but idle opencode session costs nothing.
-  _pollOpencode(session, st) {
+  _pollOpencode(session: any, st: any) {
     if (!session._opencodeIdleAt) { this._markBusy(session, st); return; }
     if (st.inFlight) return;             // one summarize per session at a time
 
@@ -267,7 +272,7 @@ class VoiceHub extends EventEmitter {
 
     st.inFlight = true;
     session.opencodeTurn()
-      .then((turn) => {
+      .then((turn: any) => {
         if (!turn || !turn.id || turn.id === st.announcedUuid) return;
         if (!turn.text) return;          // a turn that was only a tool call
         return this._announce(session, st, {
@@ -297,7 +302,7 @@ class VoiceHub extends EventEmitter {
   // conversation's last recorded turn also isn't a finished assistant turn,
   // Claude is parked on something interactive. We can't say what it's asking —
   // that text exists only on screen — so we say that it's asking.
-  _maybeAnnounceBlocked(session, st, idleMs, tx) {
+  _maybeAnnounceBlocked(session: any, st: any, idleMs: any, tx: any) {
     if (!tx) tx = transcriptFor(session.kind);
     if (idleMs < BLOCKED_MS) return;
     const turn = st.lastTurn;
@@ -323,7 +328,7 @@ class VoiceHub extends EventEmitter {
   // Tell the browser an announced session is working again — once per
   // transition, never for a session we hadn't announced, or every poll of a
   // busy terminal would emit.
-  _markBusy(session, st) {
+  _markBusy(session: any, st: any) {
     if (!st.waiting) return;
     st.waiting = false;
     this.broadcast({ type: 'busy', sessionId: session.id });
@@ -337,7 +342,7 @@ class VoiceHub extends EventEmitter {
   // retry loop on /voice/summary spawns a child per request — measured at 6
   // concurrent haiku processes from 6 GETs — inside the process holding the
   // user's terminals.
-  _summaryForTurn(session, turn) {
+  _summaryForTurn(session: any, turn: any) {
     const st = this._stateFor(session.id);
     if (st.summaryUuid && st.summaryUuid === turn.uuid) return Promise.resolve(st.summary);
     if (st.pending && st.pendingUuid === turn.uuid) return st.pending;
@@ -354,7 +359,7 @@ class VoiceHub extends EventEmitter {
     }
 
     const pending = summarize(turn.text)
-      .then((summary) => {
+      .then((summary: any) => {
         const spoken = [summary, turn.prompt].filter(Boolean).join(' ').trim();
         st.summary = spoken;
         st.summaryUuid = turn.uuid;
@@ -368,7 +373,7 @@ class VoiceHub extends EventEmitter {
     return pending;
   }
 
-  async _announce(session, st, turn) {
+  async _announce(session: any, st: any, turn: any) {
     const summary = await this._summaryForTurn(session, turn);
     // Claim the uuid regardless of what happens next: if we bail below, the
     // moment has passed and re-announcing it later would be worse than silence.
@@ -417,7 +422,7 @@ class VoiceHub extends EventEmitter {
   // transcriptFile() would happily hand back the transcript of a claude the
   // user started by hand inside a shell session, and answering for a session
   // that can never produce a `waiting` event is just a lie.
-  async summaryFor(session) {
+  async summaryFor(session: any) {
     const empty = { summary: '', turnUuid: null, waiting: false };
     if (session.kind === 'opencode') {
       const turn = await session.opencodeTurn().catch(() => null);
@@ -459,7 +464,7 @@ class VoiceHub extends EventEmitter {
   // silently cutting mid-sentence — being told there's more is the useful part.
   // Async because opencode's turn comes over HTTP. The Claude path still
   // resolves without awaiting anything real, so the shape is the same.
-  async fullTurnFor(session, maxChars) {
+  async fullTurnFor(session: any, maxChars: any) {
     const empty = { text: '', turnUuid: null, truncated: false };
     let whole;
     let uuid;

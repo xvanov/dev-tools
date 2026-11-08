@@ -13,7 +13,7 @@ const assert = require('assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { resolve, readMode, writeMode, releaseBinary, DEFAULT_MODE } = require('../lib/ptyHost');
+const { resolve, readMode, writeMode, releaseBinary, DEFAULT_MODE } = require('../lib/ptyHost.ts');
 
 const BIN = '/x/ptyd';
 

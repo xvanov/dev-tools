@@ -9,11 +9,16 @@
 // periodically `opencode export <id>` to read its current model. Both are real
 // subprocess spawns of a bun-compiled binary (~1.4s each, measured) — too slow
 // to call on every UI poll, so callers must throttle (see lib/session.js).
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+/** JSON read or built key by key (lib/types.ts): loose until its producer is TypeScript. */
+type Json = import('./types.ts').Json;
 
 const path = require('path');
 const { execFile } = require('child_process');
 const { promisify } = require('util');
-const { findOnPath } = require('./shell');
+const { findOnPath } = require('./shell.ts');
 
 const execFileP = promisify(execFile);
 
@@ -22,11 +27,11 @@ const execFileP = promisify(execFile);
 // confirmed live: a cwd passed with forward slashes still came back
 // backslash-separated, so a strict string compare silently matched nothing.
 // path.normalize() also converts separators on Windows, so this closes both.
-function normPath(p) {
+function normPath(p: any) {
   return path.normalize(String(p)).replace(/[\\/]+$/, '');
 }
 
-let binPath; // resolved once and cached — null means "not found on PATH"
+let binPath: any; // resolved once and cached — null means "not found on PATH"
 function resolveBin() {
   if (binPath === undefined) binPath = findOnPath(['opencode']);
   return binPath;
@@ -35,13 +40,13 @@ function resolveBin() {
 // The Windows install is a `.cmd` shim; CreateProcess can't launch that
 // directly (confirmed: throws EINVAL without a shell), so route through a
 // shell only where that's actually necessary.
-function run(args, cwd) {
+function run(args: any, cwd: any) {
   const bin = resolveBin();
   if (!bin) return Promise.reject(new Error('opencode not found on PATH'));
   return execFileP(bin, args, { cwd, shell: process.platform === 'win32', timeout: 10000, windowsHide: true });
 }
 
-async function listSessions(cwd) {
+async function listSessions(cwd: any) {
   const { stdout } = await run(['session', 'list', '--format', 'json'], cwd);
   const parsed = JSON.parse(stdout);
   return Array.isArray(parsed) ? parsed : [];
@@ -65,12 +70,12 @@ const DISCOVERY_BURST_MS = [2000, 3000, 5000, 8000, 12000, 20000];
 const DISCOVERY_IDLE_INTERVAL_MS = 30000;
 const CREATED_SKEW_MS = 5000; // opencode's own timestamp can lag our spawn call slightly
 
-async function discoverSessionId(cwd, spawnedAtMs, isAborted) {
+async function discoverSessionId(cwd: any, spawnedAtMs: any, isAborted: any) {
   const targetDir = normPath(cwd);
   const delays = DISCOVERY_BURST_MS[Symbol.iterator]();
   while (!isAborted()) {
     const next = delays.next();
-    await new Promise((r) => setTimeout(r, next.done ? DISCOVERY_IDLE_INTERVAL_MS : next.value));
+    await new Promise<any>((r) => setTimeout(r, next.done ? DISCOVERY_IDLE_INTERVAL_MS : next.value));
     if (isAborted()) return null;
     try {
       const sessions = await listSessions(cwd);
@@ -88,7 +93,7 @@ async function discoverSessionId(cwd, spawnedAtMs, isAborted) {
 
 // `export` prints the JSON on stdout; slicing from the first `{` is a cheap
 // guard against any incidental preamble text without needing to special-case it.
-async function getModel(cwd, sessionId) {
+async function getModel(cwd: any, sessionId: any) {
   try {
     const { stdout } = await run(['export', sessionId], cwd);
     const json = JSON.parse(stdout.slice(stdout.indexOf('{')));
@@ -103,9 +108,9 @@ async function getModel(cwd, sessionId) {
 // naming convention (unlike Claude's predictable claude-<family>-<version>), so
 // this is deliberately generic rather than trying to parse a family/version out
 // of it — matches the humanized name opencode's own TUI footer shows.
-function formatModelLabel(id) {
+function formatModelLabel(id: any) {
   if (!id) return null;
-  return id.split(/[-_]+/).filter(Boolean).map((w) => w[0].toUpperCase() + w.slice(1)).join(' ');
+  return id.split(/[-_]+/).filter(Boolean).map((w: any) => w[0].toUpperCase() + w.slice(1)).join(' ');
 }
 
 module.exports = { discoverSessionId, getModel, formatModelLabel };

@@ -35,6 +35,11 @@
 // clipboard back** with the reader's own predicate before telling anyone it
 // worked. `clipboardHasImage()` is that read-back, and it is what turns a silent
 // wrong answer into a fallback that works.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+/** JSON read or built key by key (lib/types.ts): loose until its producer is TypeScript. */
+type Json = import('./types.ts').Json;
 
 const fs = require('fs');
 const os = require('os');
@@ -42,8 +47,8 @@ const path = require('path');
 const crypto = require('crypto');
 const { spawn, execFile } = require('child_process');
 const { promisify } = require('util');
-const { findOnPath } = require('./shell');
-const { extForImageMime } = require('./uploads');
+const { findOnPath } = require('./shell.ts');
+const { extForImageMime } = require('./uploads.ts');
 
 const execFileP = promisify(execFile);
 
@@ -54,12 +59,12 @@ const execFileP = promisify(execFile);
 // keeps the rule the caller has to reason about down to one sentence.
 const CLIPBOARD_IMAGE_MIME = 'image/png';
 
-function tempImagePath(mimeType) {
+function tempImagePath(mimeType: any) {
   const name = `termhub-clip-${Date.now().toString(36)}-${crypto.randomBytes(4).toString('hex')}${extForImageMime(mimeType)}`;
   return path.join(os.tmpdir(), name);
 }
 
-async function withTempFile(buffer, mimeType, fn) {
+async function withTempFile(buffer: any, mimeType: any, fn: any) {
   const file = tempImagePath(mimeType);
   await fs.promises.writeFile(file, buffer);
   try {
@@ -78,19 +83,19 @@ async function withTempFile(buffer, mimeType, fn) {
 // pipe — so 'close' (all stdio drained *and* the process gone) doesn't fire
 // until something else takes the clipboard, minutes or hours later. Waiting for
 // it hangs the upload request that is waiting on us.
-function runPiped(cmd, args, buffer) {
-  return new Promise((resolve, reject) => {
+function runPiped(cmd: any, args: any, buffer: any) {
+  return new Promise<any>((resolve, reject) => {
     let child;
     try {
       child = spawn(cmd, args, { stdio: ['pipe', 'ignore', 'pipe'], windowsHide: true });
-    } catch (e) {
+    } catch (e: any) {
       return reject(e);
     }
     let stderr = '';
-    child.stderr.on('data', (d) => { stderr += d; });
+    child.stderr.on('data', (d: any) => { stderr += d; });
     child.on('error', reject);
-    child.on('exit', (code) => {
-      if (code === 0) resolve();
+    child.on('exit', (code: any) => {
+      if (code === 0) resolve(undefined);
       else reject(new Error(`${cmd} exited ${code}${stderr ? `: ${stderr.trim()}` : ''}`));
     });
     child.stdin.on('error', () => {}); // the tool may close stdin early on failure
@@ -125,8 +130,8 @@ function windowsPowerShell() {
 // PowerShell exiting a few milliseconds later. Confirming `ContainsImage()`
 // before exiting closes the rest: a non-zero exit here is worth far more than a
 // zero that means nothing, because the caller has a working fallback.
-async function setClipboardImageWindows(buffer, mimeType) {
-  await withTempFile(buffer, mimeType, async (file) => {
+async function setClipboardImageWindows(buffer: any, mimeType: any) {
+  await withTempFile(buffer, mimeType, async (file: any) => {
     const psPath = file.replace(/'/g, "''");
     const script =
       'Add-Type -AssemblyName System.Drawing; Add-Type -AssemblyName System.Windows.Forms; ' +
@@ -152,7 +157,7 @@ async function clipboardHasImageWindows() {
     'if (-not [System.Windows.Forms.Clipboard]::ContainsImage()) { exit 1 }';
   try {
     await execFileP(windowsPowerShell(), ['-NoProfile', '-NonInteractive', '-Sta', '-Command', script], { windowsHide: true });
-  } catch (e) {
+  } catch (e: any) {
     if (e && e.code === 1) throw new Error('the clipboard held no image when read back');
     throw new Error(`could not read the clipboard back: ${(e && e.message ? e.message : String(e)).split('\n')[0]}`);
   }
@@ -162,8 +167,8 @@ async function clipboardHasImageWindows() {
 
 // osascript's PNGf coercion is PNG-specific, which is why clipboardTarget()
 // refuses any other format here rather than staging something unreadable.
-async function setClipboardImageMacOS(buffer) {
-  await withTempFile(buffer, CLIPBOARD_IMAGE_MIME, async (file) => {
+async function setClipboardImageMacOS(buffer: any) {
+  await withTempFile(buffer, CLIPBOARD_IMAGE_MIME, async (file: any) => {
     const asPath = file.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
     const script = `set the clipboard to (read (POSIX file "${asPath}") as \xABclass PNGf\xBB)`;
     await execFileP('osascript', ['-e', script]);
@@ -207,7 +212,7 @@ function linuxClipboardTool() {
   return { reason: 'no clipboard tool found — install xclip (or wl-clipboard under Wayland)' };
 }
 
-async function setClipboardImageLinux(buffer) {
+async function setClipboardImageLinux(buffer: any) {
   const tool = linuxClipboardTool();
   if (!tool.cmd) throw new Error(tool.reason);
   return runPiped(tool.cmd, tool.args, buffer);
@@ -222,7 +227,7 @@ async function clipboardHasImageLinux() {
   let stdout = '';
   try {
     ({ stdout } = await execFileP(tool.verify.cmd, tool.verify.args));
-  } catch (e) {
+  } catch (e: any) {
     // `wl-paste -l` exits non-zero on an empty clipboard, and so does xclip with
     // no selection owner — both mean "nothing there", not "the check broke".
     throw new Error(`${tool.verify.cmd} found nothing on the clipboard (${(e && e.message ? e.message : String(e)).split('\n')[0]})`);
@@ -239,7 +244,7 @@ async function clipboardHasImageLinux() {
 // Windows decodes whatever we hand it, so any format goes there; Linux and macOS
 // both ask for PNG by name, so anything else is refused here and takes the
 // save-to-a-file route instead — which every agent reads regardless of format.
-function clipboardTarget(mimeType) {
+function clipboardTarget(mimeType: any) {
   const mime = String(mimeType || CLIPBOARD_IMAGE_MIME).toLowerCase();
   if (process.platform === 'win32') return { available: true, tool: 'powershell' };
   if (mime !== CLIPBOARD_IMAGE_MIME) {
@@ -251,7 +256,7 @@ function clipboardTarget(mimeType) {
   return { available: false, reason: tool.reason };
 }
 
-async function setClipboardImage(buffer, mimeType) {
+async function setClipboardImage(buffer: any, mimeType: any) {
   const mime = mimeType || CLIPBOARD_IMAGE_MIME;
   if (process.platform === 'win32') return setClipboardImageWindows(buffer, mime);
   if (process.platform === 'darwin') return setClipboardImageMacOS(buffer);
@@ -268,7 +273,7 @@ async function clipboardHasImage() {
     else if (process.platform === 'darwin') await clipboardHasImageMacOS();
     else await clipboardHasImageLinux();
     return null;
-  } catch (e) {
+  } catch (e: any) {
     const msg = (e && e.message) ? e.message : String(e);
     return msg || 'clipboard read-back failed';
   }
@@ -286,12 +291,12 @@ async function clipboardHasImage() {
 // and infuriating in use, and a second attempt costs a few hundred milliseconds
 // only on the attempt that already went wrong.
 const STAGE_ATTEMPTS = 3;
-async function stageClipboardImage(buffer, mimeType) {
+async function stageClipboardImage(buffer: any, mimeType: any) {
   let last = null;
   for (let attempt = 0; attempt < STAGE_ATTEMPTS; attempt++) {
     try {
       await setClipboardImage(buffer, mimeType);
-    } catch (e) {
+    } catch (e: any) {
       last = (e && e.message) ? e.message.split('\n')[0] : String(e);
       continue;
     }
@@ -317,12 +322,12 @@ const PROBE_PNG = Buffer.from(
 // on the clipboard), hence a POST.
 async function probeClipboard() {
   const target = clipboardTarget(CLIPBOARD_IMAGE_MIME);
-  const out = { platform: process.platform, target, staged: false, verified: false, error: null };
+  const out: any = { platform: process.platform, target, staged: false, verified: false, error: null };
   if (!target.available) { out.error = target.reason || 'no clipboard on this host'; return out; }
   try {
     await setClipboardImage(PROBE_PNG, CLIPBOARD_IMAGE_MIME);
     out.staged = true;
-  } catch (e) {
+  } catch (e: any) {
     out.error = `write failed: ${(e && e.message) ? e.message : String(e)}`;
     return out;
   }

@@ -8,15 +8,20 @@
 // clipboard go to the data dir instead (see saveImageAttachment below). Either
 // way the caller (sessiond.js) has the client insert the resulting path as
 // terminal input, same as a real drag-drop would.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+/** JSON read or built key by key (lib/types.ts): loose until its producer is TypeScript. */
+type Json = import('./types.ts').Json;
 
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const { dataDir } = require('./paths');
+const { dataDir } = require('./paths.ts');
 
 // Extension per image MIME type, shared with lib/clipboard.js (which needs the
 // same mapping for the temp file it hands to the OS clipboard tools).
-const EXT_BY_IMAGE_MIME = {
+const EXT_BY_IMAGE_MIME: Json = {
   'image/png': '.png',
   'image/jpeg': '.jpg',
   'image/jpg': '.jpg',
@@ -25,7 +30,7 @@ const EXT_BY_IMAGE_MIME = {
   'image/bmp': '.bmp',
 };
 
-function extForImageMime(mimeType) {
+function extForImageMime(mimeType: any) {
   return EXT_BY_IMAGE_MIME[mimeType] || '.png';
 }
 
@@ -38,7 +43,7 @@ function extForImageMime(mimeType) {
 // "succeeds" but silently writes into a hidden stream on a file called `name`
 // (verified: no error, and the named file never appears in a directory
 // listing) instead of creating the file the caller asked for.
-function sanitizeFileName(name) {
+function sanitizeFileName(name: any) {
   const base = path.basename(String(name || 'upload').replace(/[\\/]/g, '_'));
   const cleaned = base.replace(/[\x00-\x1f<>:"|?*]/g, '').trim();
   return cleaned || 'upload';
@@ -55,7 +60,7 @@ function sanitizeFileName(name) {
 // interleaving here: a multi-file pick uploads everything at once, and iOS
 // hands back the same "image.jpg" for every photo in a selection.
 const MAX_NAME_ATTEMPTS = 1000;
-async function writeUnique(dir, fileName, buffer) {
+async function writeUnique(dir: any, fileName: any, buffer: any) {
   const ext = path.extname(fileName);
   const stem = fileName.slice(0, fileName.length - ext.length);
   for (let n = 0; n < MAX_NAME_ATTEMPTS; n++) {
@@ -63,7 +68,7 @@ async function writeUnique(dir, fileName, buffer) {
     try {
       await fs.promises.writeFile(candidate, buffer, { flag: 'wx' }); // O_CREAT|O_EXCL
       return { path: candidate, name: path.basename(candidate) };
-    } catch (e) {
+    } catch (e: any) {
       if (e.code !== 'EEXIST') throw e;    // a real failure (EACCES, ENOSPC, …)
     }
   }
@@ -73,7 +78,7 @@ async function writeUnique(dir, fileName, buffer) {
   return { path: candidate, name: path.basename(candidate) };
 }
 
-async function saveUploadedFile(dir, rawName, buffer) {
+async function saveUploadedFile(dir: any, rawName: any, buffer: any) {
   return writeUnique(dir, sanitizeFileName(rawName), buffer);
 }
 
@@ -100,7 +105,7 @@ const ATTACHMENT_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const PRUNE_INTERVAL_MS = 60 * 60 * 1000;
 let lastPruneAt = 0;
 
-async function pruneOldAttachments(dir) {
+async function pruneOldAttachments(dir: any) {
   const cutoff = Date.now() - ATTACHMENT_TTL_MS;
   let names;
   try { names = await fs.promises.readdir(dir); } catch { return; }
@@ -115,7 +120,7 @@ async function pruneOldAttachments(dir) {
   }
 }
 
-function maybePrune(dir) {
+function maybePrune(dir: any) {
   if (Date.now() - lastPruneAt < PRUNE_INTERVAL_MS) return;
   lastPruneAt = Date.now();
   pruneOldAttachments(dir).catch(() => {});   // deliberately not awaited
@@ -125,14 +130,14 @@ function maybePrune(dir) {
 // time it was pasted: sortable, and obvious in a listing. Only second
 // resolution, so two images pasted in the same second DO collide by name —
 // writeUnique is what keeps that from costing anyone their data.
-function defaultImageName(mimeType) {
+function defaultImageName(mimeType: any) {
   const d = new Date();
-  const p = (n) => String(n).padStart(2, '0');
+  const p = (n: any) => String(n).padStart(2, '0');
   const stamp = `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
   return `pasted-image-${stamp}${extForImageMime(mimeType)}`;
 }
 
-async function saveImageAttachment(rawName, mimeType, buffer) {
+async function saveImageAttachment(rawName: any, mimeType: any, buffer: any) {
   const dir = attachmentsDir();
   await fs.promises.mkdir(dir, { recursive: true });
   maybePrune(dir);

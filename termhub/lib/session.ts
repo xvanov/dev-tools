@@ -1,20 +1,26 @@
 'use strict';
 
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+/** JSON read or built key by key (lib/types.ts): loose until its producer is TypeScript. */
+type Json = import('./types.ts').Json;
+
 const os = require('os');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const pty = require('node-pty');
 const { execFile } = require('child_process');
-const { defaultShell, shellArgs } = require('./shell');
-const { resolveTranscript, readLastModel, formatModelName } = require('./claudeModel');
-const cursorModel = require('./cursorModel');
-const opencodeModel = require('./opencodeModel');
-const opencodeApi = require('./opencodeApi');
-const { injectAfterClaudeExe, injectAfterOpencodeExe, injectAfterCursorExe } = require('./restore');
-const { ScreenMirror } = require('./screenMirror');
-const { applyEnvSpec } = require('./sessionEnv');
-const ptydClient = require('./ptydClient');
+const { defaultShell, shellArgs } = require('./shell.ts');
+const { resolveTranscript, readLastModel, formatModelName } = require('./claudeModel.ts');
+const cursorModel = require('./cursorModel.ts');
+const opencodeModel = require('./opencodeModel.ts');
+const opencodeApi = require('./opencodeApi.ts');
+const { injectAfterClaudeExe, injectAfterOpencodeExe, injectAfterCursorExe } = require('./restore.ts');
+const { ScreenMirror } = require('./screenMirror.ts');
+const { applyEnvSpec } = require('./sessionEnv.ts');
+const ptydClient = require('./ptydClient.ts');
 const { RemotePty } = ptydClient;
 
 // How often to actually shell out to `opencode export` to refresh a session's
@@ -36,7 +42,7 @@ const OPENCODE_MODEL_REFRESH_MS = 10000;
 // the raw one (`-repos-dev-tools-`). Nothing then finds the transcript: no model
 // badge, no voice, and the idle tracker loses turn-end detection and falls back
 // to PTY silence, so every repaint of an idle claude logged ~12 s of "working".
-function resolveCwd(input) {
+function resolveCwd(input: any) {
   const home = os.homedir();
   let dir = input && String(input).trim();
   if (!dir) return { cwd: home, notice: null };
@@ -64,7 +70,7 @@ const PARENT_AGENT_ENV = [
 
 // The command's first token — the program actually being run — unquoted so a
 // path can be matched against without the wrapping ' or ".
-function firstToken(command) {
+function firstToken(command: any) {
   const s = String(command).trim();
   if (s[0] === '"' || s[0] === "'") {
     const end = s.indexOf(s[0], 1);
@@ -84,7 +90,7 @@ function firstToken(command) {
 // string spliced --resume/--session-id into an unrelated updater command (see
 // test/restore.test.js history). Matches the bare command, `<exe>.exe`/`.cmd`,
 // or a path ending in it — but not `claude-foo` or `myclaude`.
-function isCursorAgentToken(tok) {
+function isCursorAgentToken(tok: any) {
   if (/(^|[\\/])cursor-agent(\.exe|\.cmd|\.ps1)?$/i.test(tok)) return true;
   if (/(^|[\\/])agent(\.exe|\.cmd|\.ps1)?$/i.test(tok)) {
     if (/cursor-agent/i.test(tok)) return true;
@@ -94,7 +100,7 @@ function isCursorAgentToken(tok) {
   return false;
 }
 
-function classifyCommand(command) {
+function classifyCommand(command: any) {
   if (!command) return 'shell';
   const tok = firstToken(command);
   if (/(^|[\\/])claude(\.exe|\.cmd)?$/i.test(tok)) return 'claude';
@@ -106,18 +112,18 @@ function classifyCommand(command) {
 // True if the command already pins down its own Claude session identity —
 // termhub shouldn't guess a --session-id on top of a --resume/--continue/-c/-r,
 // since the resulting conversation id isn't ours to predict.
-function hasOwnSessionIdentity(command) {
+function hasOwnSessionIdentity(command: any) {
   return /(^|\s)(--session-id|--resume|-r|--continue|-c)(\s|=|$)/.test(command);
 }
 
 // Insert `--session-id <uuid>` right after the claude executable token — see
 // injectAfterClaudeExe in lib/restore.js, which restore shares for --resume.
-function injectSessionId(command, uuid) {
+function injectSessionId(command: any, uuid: any) {
   return injectAfterClaudeExe(command, `--session-id ${uuid}`);
 }
 
 // True when terminal output holds a printable character outside escape sequences.
-function hasVisibleText(data) {
+function hasVisibleText(data: any) {
   const plain = String(data)
     .replace(/\x1b\][^\x07\x1b]*(\x07|\x1b\\)/g, '')
     .replace(/\x1b\[[0-9;?<>=!]*[ -\/]*[@-~]/g, '')
@@ -126,14 +132,14 @@ function hasVisibleText(data) {
 }
 
 // Strip leftover control bytes from an assembled input line.
-function stripControl(s) {
+function stripControl(s: any) {
   return s.replace(/[\x00-\x1f\x7f]/g, '');
 }
 
 // Given `data` with an ESC at index i, return the index of the last byte of the
 // escape sequence (so the caller's i++ resumes just after it). Handles CSI
 // (ESC [ … final) and SS3 (ESC O x); treats a lone trailing ESC gracefully.
-function skipEscape(data, i) {
+function skipEscape(data: any, i: any) {
   if (i + 1 >= data.length) return i;
   const next = data[i + 1];
   if (next === '[' || next === 'O') {
@@ -155,11 +161,57 @@ function genId() {
 }
 
 class Session {
+  declare _opencodeApi: any;
+  declare _opencodeModelCache: any;
+  declare id: any;
+  declare links: any;
+  declare noRc: any;
+  declare rcSkipped: any;
+  declare envSpec: any;
+  declare shell: any;
+  declare cwd: any;
+  declare _cwdNotice: any;
+  declare cwdFallback: any;
+  declare command: any;
+  declare kind: any;
+  declare agentSessionId: any;
+  declare _discoveryAborted: any;
+  declare opencodePort: any;
+  declare _opencodeAsk: any;
+  declare _opencodeIdleAt: any;
+  declare _opencodeBusy: any;
+  declare _opencodePortPromise: any;
+  declare _modelCache: any;
+  declare cols: any;
+  declare rows: any;
+  declare title: any;
+  declare created: any;
+  declare lastActivity: any;
+  declare lastInputAt: any;
+  declare alive: any;
+  declare exitCode: any;
+  declare voiceArmed: any;
+  declare paused: any;
+  declare onExit: any;
+  declare onInputLine: any;
+  declare _inputLine: any;
+  declare _screen: any;
+  declare _clients: any;
+  declare _clientSeq: any;
+  declare sizeOwner: any;
+  declare pty: any;
+  declare _pendingCommand: any;
+  declare _cmdFallback: any;
+  declare _handleExit: any;
+  declare _exited: any;
+  declare onIdentity: any;
+  declare onAgentIdle: any;
+  declare _opencodeRefreshing: any;
   // `adopt` (ptyd mode only): an existing ptyd session to take over after a
   // sessiond restart — `{info, entry}`, ptyd's session info and this session's
   // archive entry (or null). Nothing is spawned and no command is run: the
   // terminal is already there, still running whatever it was running.
-  constructor({ cwd, command, title, cols, rows, maxBytes, onExit, onInputLine, agentSessionId, envSpec, noRc, links, adopt } = {}) {
+  constructor({ cwd, command, title, cols, rows, maxBytes, onExit, onInputLine, agentSessionId, envSpec, noRc, links, adopt }: { cwd?: any; command?: any; title?: any; cols?: any; rows?: any; maxBytes?: any; onExit?: any; onInputLine?: any; agentSessionId?: any; envSpec?: any; noRc?: any; links?: any; adopt?: any } = {}) {
     if (adopt) {
       const { info, entry } = adopt;
       const e = entry || {};
@@ -231,7 +283,7 @@ class Session {
       } else {
         const spawnedAtMs = Date.now(); // this.created isn't assigned yet at this point in the constructor
         opencodeModel.discoverSessionId(this.cwd, spawnedAtMs, () => this._discoveryAborted)
-          .then((id) => { if (id && !this._discoveryAborted) this.agentSessionId = id; })
+          .then((id: any) => { if (id && !this._discoveryAborted) this.agentSessionId = id; })
           .catch(() => {});
       }
     }
@@ -315,7 +367,7 @@ class Session {
 
   // ptyd mode: take over a terminal ptyd already hosts. Its replay seeds the
   // screen mirror (as raw output, at the size ptyd reports).
-  _adopt(info) {
+  _adopt(info: any) {
     this.pty = new RemotePty({ id: this.id });
     this.alive = info.alive !== false;
     this.exitCode = info.exitCode ?? null;
@@ -329,7 +381,7 @@ class Session {
     // windows/restart-sessiond.ps1 refuses to kill the supervisor from one of
     // its own terminals on the strength of it. Always assigned, never inherited:
     // a nested termhub must not hand its parent's session id to its children.
-    const env = {
+    const env: Json = {
       ...process.env,
       TERM: 'xterm-256color',
       COLORTERM: 'truecolor',
@@ -396,7 +448,7 @@ class Session {
   }
 
   _wirePty() {
-    this.pty.onData((data) => {
+    this.pty.onData((data: any) => {
       // Run the initial command once the shell has actually produced its prompt,
       // rather than after a fixed delay — a guessed timeout races the shell's
       // startup (rc files, etc.) and the keystrokes get dropped. On ptyd, ConPTY's
@@ -408,8 +460,8 @@ class Session {
       this._broadcast({ type: 'output', data });
     });
 
-    this.pty.onExit(({ exitCode }) => this._handleExit(exitCode));
-    this._handleExit = (exitCode) => {
+    this.pty.onExit(({ exitCode }: any) => this._handleExit(exitCode));
+    this._handleExit = (exitCode: any) => {
       if (this._exited) return;
       this._exited = true;
       this.alive = false;
@@ -434,13 +486,13 @@ class Session {
     // finished long before. Await it anyway rather than racing it, and fall
     // through to the un-ported command if it failed: an opencode with no API is
     // the old behaviour, which still works.
-    const run = (final) => {
+    const run = (final: any) => {
       // A short settle lets the prompt finish drawing before we type into it.
       setTimeout(() => { if (this.alive) this.pty.write(final + '\r'); }, 120);
     };
     if (!this._opencodePortPromise) return run(cmd);
     this._opencodePortPromise
-      .then((port) => {
+      .then((port: any) => {
         if (!port) return run(cmd);
         this.opencodePort = port;
         const final = injectAfterOpencodeExe(cmd, `--port ${port} --hostname 127.0.0.1`);
@@ -451,11 +503,11 @@ class Session {
       .catch(() => run(cmd));
   }
 
-  _buffer(data) {
+  _buffer(data: any) {
     this._screen.write(data);
   }
 
-  _broadcast(msg) {
+  _broadcast(msg: any) {
     for (const [send, c] of this._clients) {
       if (!c.ready) { c.queue.push(msg); continue; }
       try {
@@ -470,12 +522,12 @@ class Session {
   // current size — see lib/screenMirror.js), then everything live after it.
   // Returns { id, detach }: `id` is how this client's resizes are told apart
   // from everyone else's (see resize()).
-  attach(send) {
+  attach(send: any) {
     const c = { id: `c${++this._clientSeq}`, ready: false, queue: [] };
     this._clients.set(send, c);
     // The snapshot covers every byte written before this call; anything the PTY
     // produces from here on is queued on `c` and flushed right after it.
-    this._screen.snapshot(({ data, cols, rows }) => {
+    this._screen.snapshot(({ data, cols, rows }: any) => {
       if (!this._clients.has(send)) return;
       try {
         send({
@@ -502,7 +554,7 @@ class Session {
     };
   }
 
-  write(data) {
+  write(data: any) {
     if (!this.alive) return;
     // When the HUMAN last typed, as distinct from lastActivity (when the PTY
     // last produced output). The idle layer needs both: output tells it whether
@@ -523,7 +575,7 @@ class Session {
   // best-effort: lines recalled with the Up-arrow come back as terminal *output*
   // (not input), so a re-run history entry won't be re-captured — good enough to
   // jog the user's memory when rebuilding state by hand.
-  _recordInput(data) {
+  _recordInput(data: any) {
     for (let i = 0; i < data.length; i++) {
       const ch = data[i];
       const code = data.charCodeAt(i);
@@ -545,7 +597,7 @@ class Session {
 
   // Print an informational line into the terminal (buffered so it also appears in
   // replay) without sending it to the shell as input.
-  notice(text) {
+  notice(text: any) {
     const msg = text.endsWith('\r\n') ? text : text + '\r\n';
     // In ptyd mode the line goes into ptyd's replay too (so it survives a
     // sessiond restart) and comes back here as output, like everything else.
@@ -645,7 +697,7 @@ class Session {
     // rather than one we inferred. This is the part the old discovery loop could
     // never do: it guessed by directory and timestamp and had no way to know it
     // had guessed wrong.
-    const adopt = (id) => {
+    const adopt = (id: any) => {
       if (!id || id === this.agentSessionId) return false;
       this.agentSessionId = id;
       this._discoveryAborted = true;     // the guess is superseded; stop guessing
@@ -653,7 +705,7 @@ class Session {
       return true;
     };
 
-    const refreshSession = async (knownId) => {
+    const refreshSession = async (knownId?: any) => {
       if (api.closed) return;
       let s = null;
       if (knownId) s = await opencodeApi.session(port, knownId);
@@ -674,7 +726,7 @@ class Session {
       }
     };
 
-    opencodeApi.waitReady(port, 30000, () => api.closed || !this.alive).then((h) => {
+    opencodeApi.waitReady(port, 30000, () => api.closed || !this.alive).then((h: any) => {
       if (!h || api.closed) return;
       api.ready = true;
       refreshSession().then(() => {
@@ -687,12 +739,12 @@ class Session {
         // always reads); here it has to be asked for.
         if (api.closed || this._opencodeIdleAt) return;
         return opencodeApi.lastAssistantTurn(port, this.agentSessionId)
-          .then((turn) => { if (turn && turn.finished && !api.closed) this._opencodeIdleAt = Date.now(); })
+          .then((turn: any) => { if (turn && turn.finished && !api.closed) this._opencodeIdleAt = Date.now(); })
           .catch(() => {});
       }).catch(() => {});
       // The event stream is the whole point: it turns "poll a subprocess every
       // 10s and hope" into "know the moment it happens".
-      api.events = opencodeApi.subscribe(port, (ev) => {
+      api.events = opencodeApi.subscribe(port, (ev: any) => {
         const type = ev && ev.type;
         const props = (ev && ev.properties) || {};
         // Any session-scoped event names the conversation this TUI is on, which
@@ -722,7 +774,7 @@ class Session {
                 || type === 'permission.asked' || type === 'permission.v2.asked') {
           // What Claude cannot tell us. Read it back off the API rather than
           // trusting the event body, so the question shape lives in one place.
-          opencodeApi.pendingAsk(port, this.agentSessionId).then((ask) => {
+          opencodeApi.pendingAsk(port, this.agentSessionId).then((ask: any) => {
             if (api.closed || !ask) return;
             this._opencodeAsk = ask;
             this._opencodeIdleAt = Date.now();
@@ -779,7 +831,7 @@ class Session {
     if (!this._opencodeRefreshing && Date.now() - cache.checkedAt > OPENCODE_MODEL_REFRESH_MS) {
       this._opencodeRefreshing = true;
       opencodeModel.getModel(this.cwd, this.agentSessionId)
-        .then((info) => {
+        .then((info: any) => {
           this._opencodeModelCache = {
             checkedAt: Date.now(),
             model: info ? info.id : null,
@@ -796,7 +848,7 @@ class Session {
   // a resize from anywhere else. Every client — including the claimant, which
   // learns its claim landed — is told the size and who owns it, so the others
   // can stop rendering at their own size and render at this one instead.
-  resize(cols, rows, by = null) {
+  resize(cols: any, rows: any, by: any | null = null) {
     cols = Math.max(2, Math.min(1000, Math.floor(Number(cols)) || this.cols));
     rows = Math.max(1, Math.min(500, Math.floor(Number(rows)) || this.rows));
     const changed = cols !== this.cols || rows !== this.rows;
@@ -819,13 +871,13 @@ class Session {
     this._broadcast({ type: 'size', cols, rows, owner: this.sizeOwner });
   }
 
-  rename(title) {
+  rename(title: any) {
     const t = title && String(title).trim();
     if (t) this.title = t;
     return this.title;
   }
 
-  setPaused(paused) {
+  setPaused(paused: any) {
     this.paused = !!paused;
     return this.paused;
   }
@@ -902,14 +954,14 @@ class Session {
   }
 }
 
-function baseName(p) {
+function baseName(p: any) {
   return String(p).split(/[\\/]/).pop() || p;
 }
 
 // Kills pid and every descendant (taskkill /T /F). Resolves true once it is gone, false after
 // ~3 s. Never blocks the event loop.
-function killTreeWin(pid) {
-  return new Promise((resolve) => {
+function killTreeWin(pid: any) {
+  return new Promise<any>((resolve) => {
     execFile('taskkill', ['/pid', String(pid), '/T', '/F'], { windowsHide: true, timeout: 5000 }, () => {
       const until = Date.now() + 3000;
       const poll = () => {

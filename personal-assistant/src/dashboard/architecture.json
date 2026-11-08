@@ -1525,7 +1525,7 @@
         "termhub/lib/exec.ts",
         "termhub/lib/paProxy.ts",
         "termhub/lib/peers.ts",
-        "termhub/lib/idleStore.js",
+        "termhub/lib/idleStore.ts",
         "termhub/AGENT.md",
         "termhub/lib/passkeyGate.ts",
         "termhub/test/passkeyGate.test.js"
@@ -1557,9 +1557,9 @@
       },
       "code": [
         "termhub/sessiond.js",
-        "termhub/lib/session.js",
-        "termhub/lib/restore.js",
-        "termhub/lib/idleHub.js"
+        "termhub/lib/session.ts",
+        "termhub/lib/restore.ts",
+        "termhub/lib/idleHub.ts"
       ]
     },
     {
@@ -1627,13 +1627,13 @@
         "Restart survival": "termhub/test/ptydBackend.test.js: sessiond is killed mid-command and restarted; the new one adopts the session from ptyd under the same id and loses no output",
         "Not in ptyd": "voice, idle episodes, uploads, the archive and restore stay in sessiond; replay is raw bytes (sessiond keeps its own screen mirror on top)",
         "Build": "node scripts/build.js --only ptyd --release (rustup, MSVC build tools on Windows)",
-        "Cutover (Exit 5)": "production starts read ptyHost (<dataDir>/settings.json, termhub/lib/ptyHost.js): node-pty (default, and the rollback), ptyd (the cutover, always explicit), or opt-in auto (ptyd when a release binary is on the machine). On Linux ptyd runs as its own user unit (termhub-ptyd.service, linux/ptyd-unit.sh) so termhub's restart does not kill it. Neither stack has switched: both are on the node-pty default"
+        "Cutover (Exit 5)": "production starts read ptyHost (<dataDir>/settings.json, termhub/lib/ptyHost.ts): node-pty (default, and the rollback), ptyd (the cutover, always explicit), or opt-in auto (ptyd when a release binary is on the machine). On Linux ptyd runs as its own user unit (termhub-ptyd.service, linux/ptyd-unit.sh) so termhub's restart does not kill it. Neither stack has switched: both are on the node-pty default"
       },
       "code": [
         "ptyd/src/main.rs",
         "ptyd/src/session.rs",
         "ptyd/README.md",
-        "termhub/lib/ptydClient.js",
+        "termhub/lib/ptydClient.ts",
         "termhub/test/ptydConformance.test.js"
       ]
     },
@@ -1678,7 +1678,7 @@
       "code": [
         "termhub/watchdog/watchdog.ps1",
         "termhub/watchdog/watchdog.sh",
-        "termhub/lib/watchdogSetup.js"
+        "termhub/lib/watchdogSetup.ts"
       ]
     },
     {
@@ -1702,7 +1702,7 @@
       },
       "code": [
         "personal-assistant/src/llm.ts",
-        "termhub/lib/claudeCli.js"
+        "termhub/lib/claudeCli.ts"
       ]
     },
     {

@@ -11,13 +11,18 @@
 // Split out of `sessiond.js` so the contract can be tested without a PTY: what
 // matters here is *what gets written*, and node-pty has nothing to say about
 // that.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+/** JSON read or built key by key (lib/types.ts): loose until its producer is TypeScript. */
+type Json = import('./types.ts').Json;
 
 /**
  * @param {{write: (data: string) => void} | undefined} session
  * @param {{data?: unknown, submit?: unknown}} body
  * @returns {{status: number, payload: object}}
  */
-function applyInput(session, body) {
+function applyInput(session: any, body: any) {
   if (!session) return { status: 404, payload: { error: 'no such session' } };
 
   // Not coerced. `String(undefined)` types the literal word "undefined" at an

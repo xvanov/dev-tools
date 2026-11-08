@@ -26,8 +26,8 @@ process.env.TERMHUB_DATA_DIR = DATA;
 
 const {
   classifyClaude, classifyOpencode, isTracked, shouldAnnounceExit, QUIET_MS, BLOCKED_MS,
-} = require('../lib/idleState');
-const store = require('../lib/idleStore');
+} = require('../lib/idleState.ts');
+const store = require('../lib/idleStore.ts');
 
 let passed = 0;
 function ok(name, fn) {
@@ -304,7 +304,7 @@ ok('the cached day summary notices a new line in the file', () => {
 console.log('idleHub — a session\'s own agent time');
 
 ok('working stretches bank into activeMs, and a pause does not reset it', () => {
-  const { IdleHub } = require('../lib/idleHub');
+  const { IdleHub } = require('../lib/idleHub.ts');
   const session = { id: 's1', kind: 'claude', alive: true, cwd: 'C:/x', title: 't', command: 'claude' };
   const hub = new IdleHub(new Map([['s1', session]]));
   const t0 = Date.now();
@@ -323,7 +323,7 @@ ok('working stretches bank into activeMs, and a pause does not reset it', () => 
 console.log('idleHub — live session state on /ws/voice (E3)');
 
 ok('each state change and exit is broadcast as session-state, once', () => {
-  const { IdleHub, forwardSessionStates } = require('../lib/idleHub');
+  const { IdleHub, forwardSessionStates } = require('../lib/idleHub.ts');
   const session = { id: 's2', kind: 'claude', alive: true, cwd: 'C:/x', title: 't', command: 'claude' };
   const hub = new IdleHub(new Map([['s2', session]]));
   const sent = [];

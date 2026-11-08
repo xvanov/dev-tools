@@ -19,28 +19,28 @@ const os = require('os');
 const { URL } = require('url');
 const { WebSocketServer } = require('ws');
 
-const { Session } = require('./lib/session');
-const recents = require('./lib/recents');
-const archive = require('./lib/archive');
-const { restoreClaudeCommand, restoreOpencodeCommand, restoreCursorCommand } = require('./lib/restore');
-const claudeCli = require('./lib/claudeCli');
+const { Session } = require('./lib/session.ts');
+const recents = require('./lib/recents.ts');
+const archive = require('./lib/archive.ts');
+const { restoreClaudeCommand, restoreOpencodeCommand, restoreCursorCommand } = require('./lib/restore.ts');
+const claudeCli = require('./lib/claudeCli.ts');
 const { DEFAULT_SESSIOND_PORT, claimPidFile } = require('./lib/state.ts');
 const { probeSessiond } = require('./lib/probe.ts');
 const build = require('./lib/build.ts');
-const { suggestDirs } = require('./lib/dirs');
-const { stageClipboardImage, clipboardTarget, probeClipboard } = require('./lib/clipboard');
-const { saveUploadedFile, saveImageAttachment } = require('./lib/uploads');
-const { applyInput } = require('./lib/sessionInput');
-const { parseLinks, mergeLinks } = require('./lib/sessionLinks');
-const tts = require('./lib/tts');
-const summarizer = require('./lib/summarize');
-const { VoiceHub, wakeWord: voiceWakeWord } = require('./lib/voiceHub');
-const { IdleHub, forwardSessionStates } = require('./lib/idleHub');
-const idleStore = require('./lib/idleStore');
+const { suggestDirs } = require('./lib/dirs.ts');
+const { stageClipboardImage, clipboardTarget, probeClipboard } = require('./lib/clipboard.ts');
+const { saveUploadedFile, saveImageAttachment } = require('./lib/uploads.ts');
+const { applyInput } = require('./lib/sessionInput.ts');
+const { parseLinks, mergeLinks } = require('./lib/sessionLinks.ts');
+const tts = require('./lib/tts.ts');
+const summarizer = require('./lib/summarize.ts');
+const { VoiceHub, wakeWord: voiceWakeWord } = require('./lib/voiceHub.ts');
+const { IdleHub, forwardSessionStates } = require('./lib/idleHub.ts');
+const idleStore = require('./lib/idleStore.ts');
 const { checkRequest, checkUpgrade, refuseUpgrade, learnSelfNamesAndWarn } = require('./lib/requestGuard.ts');
-const { parseEnvSpec } = require('./lib/sessionEnv');
-const { parseNoRc } = require('./lib/shell');
-const ptydClient = require('./lib/ptydClient');
+const { parseEnvSpec } = require('./lib/sessionEnv.ts');
+const { parseNoRc } = require('./lib/shell.ts');
+const ptydClient = require('./lib/ptydClient.ts');
 
 // A pasted/dropped image, base64-inflated in transit — cap comfortably above a
 // full-screen screenshot (a few MB as PNG) while still bounding memory use.
@@ -841,7 +841,7 @@ module.exports = { createSessiond, startSessiond };
 // naming it is the difference between a two-second fix and an afternoon.
 if (require.main === module) {
   // Production start: ptyd or node-pty per the persistent setting (lib/ptyHost.js).
-  require('./lib/ptyHost').applyToEnv(process.env, (m) => console.log(`[sessiond] ${m.replace(/^\[termhub\] /, '')}`));
+  require('./lib/ptyHost.ts').applyToEnv(process.env, (m) => console.log(`[sessiond] ${m.replace(/^\[termhub\] /, '')}`));
   const port = DEFAULT_SESSIOND_PORT;
   probeSessiond(port).then((live) => {
     if (live) {

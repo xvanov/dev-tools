@@ -26,7 +26,7 @@ const { startSessiond } = require('./sessiond');
 const { startFront } = require('./front.ts');
 const { DEFAULT_SESSIOND_PORT } = require('./lib/state.ts');
 const { probeSessiond, probeFront } = require('./lib/probe.ts');
-const { ensureWatchdog } = require('./lib/watchdogSetup');
+const { ensureWatchdog } = require('./lib/watchdogSetup.ts');
 
 const FRONT_PORT = Number(process.env.TERMHUB_PORT) || 7000;
 const SESSIOND_PORT = DEFAULT_SESSIOND_PORT;
@@ -39,7 +39,7 @@ function refuse(lines) {
 async function main() {
   // Where the PTYs live (lib/ptyHost.js): with ptyd, a restart of this process
   // (the Linux unit, an update) no longer ends the terminals.
-  require('./lib/ptyHost').applyToEnv(process.env);
+  require('./lib/ptyHost.ts').applyToEnv(process.env);
   const liveSessiond = await probeSessiond(SESSIOND_PORT);
   if (liveSessiond) {
     return refuse([

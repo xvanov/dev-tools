@@ -19,17 +19,22 @@
 // the process holding every terminal on the machine — a DNS failure, a captive
 // portal or a 500 from ntfy must cost a missed buzz and nothing else, so
 // every path here resolves `false` instead of throwing or retrying.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+/** JSON read or built key by key (lib/types.ts): loose until its producer is TypeScript. */
+type Json = import('./types.ts').Json;
 
 const fs = require('fs');
 const path = require('path');
 const http = require('http');
 const https = require('https');
-const { dataDir } = require('./paths');
+const { dataDir } = require('./paths.ts');
 
 const DEFAULT_SERVER = 'https://ntfy.sh';
 const TIMEOUT_MS = 10000;
 
-let cached = null;
+let cached: any = null;
 let cachedAt = 0;
 const CONFIG_TTL_MS = 30000;
 
@@ -70,7 +75,7 @@ function enabled() {
 // HTTP headers are latin-1; a title with an emoji or an em-dash in it makes
 // Node throw on setHeader, which would take out the caller. Tags carry the
 // emoji instead — ntfy renders those itself, from ASCII names.
-function headerSafe(value, max = 200) {
+function headerSafe(value: any, max: number = 200) {
   const clean = String(value == null ? '' : value)
     .replace(/[^\x20-\x7e]/g, ' ')
     .replace(/\s+/g, ' ')
@@ -85,7 +90,7 @@ function headerSafe(value, max = 200) {
 // key there silently REPLACED the emoji tags with a raw session id in the
 // notification. ntfy has no replace-this-notification header; the escalating
 // series is kept tolerable by widening the gaps instead (see idleHub).
-function send({ title, message, priority, tags, click } = {}) {
+function send({ title, message, priority, tags, click }: { title?: any; message?: any; priority?: any; tags?: any; click?: any } = {}) {
   const { topic, server } = config();
   if (!topic) return Promise.resolve(false);
   const body = Buffer.from(String(message == null ? '' : message), 'utf8');
@@ -94,7 +99,7 @@ function send({ title, message, priority, tags, click } = {}) {
   try { url = new URL(`${server}/${encodeURIComponent(topic)}`); } catch { return Promise.resolve(false); }
   const lib = url.protocol === 'http:' ? http : https;
 
-  const headers = { 'Content-Type': 'text/plain; charset=utf-8', 'Content-Length': body.length };
+  const headers: Json = { 'Content-Type': 'text/plain; charset=utf-8', 'Content-Length': body.length };
   if (title) headers.Title = headerSafe(title);
   if (priority) headers.Priority = String(priority);
   if (tags) headers.Tags = headerSafe(Array.isArray(tags) ? tags.join(',') : tags);
@@ -103,12 +108,12 @@ function send({ title, message, priority, tags, click } = {}) {
   // waiting — see idleHub's deep link.
   if (click) headers.Click = headerSafe(click, 500);
 
-  return new Promise((resolve) => {
+  return new Promise<any>((resolve) => {
     let settled = false;
-    const done = (ok) => { if (!settled) { settled = true; resolve(ok); } };
+    const done = (ok: any) => { if (!settled) { settled = true; resolve(ok); } };
     const req = lib.request(
       { method: 'POST', hostname: url.hostname, port: url.port || undefined, path: url.pathname, headers },
-      (res) => {
+      (res: any) => {
         res.resume(); // drain, we don't care about the body
         done(res.statusCode >= 200 && res.statusCode < 300);
       },

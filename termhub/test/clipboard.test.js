@@ -44,7 +44,7 @@ function asPlatform(platform, env, fn) {
 
 // The module reads process.platform per call, not at load time — that is what
 // makes this testable at all, and it is worth a test of its own by implication.
-const { clipboardTarget, CLIPBOARD_IMAGE_MIME } = require('../lib/clipboard');
+const { clipboardTarget, CLIPBOARD_IMAGE_MIME } = require('../lib/clipboard.ts');
 
 let pass = 0;
 const failures = [];

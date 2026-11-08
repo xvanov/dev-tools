@@ -6,6 +6,11 @@
 //
 // The slug encodes the workspace cwd (`C:\repos\dev-tools` → `C-repos-dev-tools`).
 // Verified against this machine's ~/.cursor/projects layout (Oct 2026).
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+/** JSON read or built key by key (lib/types.ts): loose until its producer is TypeScript. */
+type Json = import('./types.ts').Json;
 
 const fs = require('fs');
 const os = require('os');
@@ -14,12 +19,12 @@ const { execFileSync } = require('child_process');
 
 const TAIL_STEPS_BYTES = [65536, 524288, 4194304];
 
-function projectDirFor(cwd) {
+function projectDirFor(cwd: any) {
   const trimmed = String(cwd).replace(/[\\/]+$/, '');
   return trimmed.replace(/[:\\\/]/g, '-');
 }
 
-function transcriptPath(cwd, sessionId) {
+function transcriptPath(cwd: any, sessionId: any) {
   return path.join(
     os.homedir(),
     '.cursor',
@@ -35,7 +40,7 @@ function projectsRoot() {
   return path.join(os.homedir(), '.cursor', 'projects');
 }
 
-function findActiveTranscript(cwd, minMtimeMs) {
+function findActiveTranscript(cwd: any, minMtimeMs: any) {
   const dir = path.join(projectsRoot(), projectDirFor(cwd), 'agent-transcripts');
   let entries;
   try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return null; }
@@ -52,7 +57,7 @@ function findActiveTranscript(cwd, minMtimeMs) {
   return best;
 }
 
-function scanTail(filePath, scan) {
+function scanTail(filePath: any, scan: any) {
   let fd;
   try {
     fd = fs.openSync(filePath, 'r');
@@ -79,8 +84,8 @@ function scanTail(filePath, scan) {
   }
 }
 
-function readLastModel(filePath) {
-  return scanTail(filePath, (lines) => {
+function readLastModel(filePath: any) {
+  return scanTail(filePath, (lines: any) => {
     for (let i = lines.length - 1; i >= 0; i--) {
       const line = lines[i].trim();
       if (!line) continue;
@@ -96,10 +101,10 @@ function readLastModel(filePath) {
 }
 
 const realTurnCache = new Map();
-function hasRealTurn(filePath, mtimeMs) {
+function hasRealTurn(filePath: any, mtimeMs: any) {
   const hit = realTurnCache.get(filePath);
   if (hit && hit.mtimeMs === mtimeMs) return hit.value;
-  const value = readLastModel(filePath) !== null || scanTail(filePath, (lines) => {
+  const value = readLastModel(filePath) !== null || scanTail(filePath, (lines: any) => {
     for (let i = lines.length - 1; i >= 0; i--) {
       const line = lines[i].trim();
       if (!line) continue;
@@ -114,7 +119,7 @@ function hasRealTurn(filePath, mtimeMs) {
   return value;
 }
 
-function resolveTranscript(cwd, agentSessionId, minMtimeMs) {
+function resolveTranscript(cwd: any, agentSessionId: any, minMtimeMs: any) {
   if (agentSessionId) {
     const f = transcriptPath(cwd, agentSessionId);
     let pinnedMtimeMs = null;
@@ -130,14 +135,14 @@ function resolveTranscript(cwd, agentSessionId, minMtimeMs) {
   return active ? active.file : null;
 }
 
-function formatModelName(raw) {
+function formatModelName(raw: any) {
   if (!raw) return null;
   const s = String(raw).trim();
   if (!s) return null;
-  return s.replace(/^gpt-/i, 'GPT ').replace(/^claude-/i, (m) => m[0].toUpperCase() + m.slice(1));
+  return s.replace(/^gpt-/i, 'GPT ').replace(/^claude-/i, (m) => m[0]!.toUpperCase() + m.slice(1));
 }
 
-function agentBinFromCommand(command) {
+function agentBinFromCommand(command: any) {
   const s = String(command || '').trim();
   if (!s) return 'agent';
   const q = s[0];
@@ -150,7 +155,7 @@ function agentBinFromCommand(command) {
 }
 
 /** Sync spawn: `agent create-chat` → session uuid (stdout). */
-function createChat(command) {
+function createChat(command: any) {
   const bin = agentBinFromCommand(command);
   const out = execFileSync(bin, ['create-chat'], {
     encoding: 'utf8',

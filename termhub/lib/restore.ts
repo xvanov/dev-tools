@@ -7,6 +7,11 @@
 // exits, and the user is left staring at a bare shell where their conversation
 // should be. That exact failure shipped — see stripClaudeSessionFlags below —
 // so these builders are unit-tested (test/restore.test.js) rather than trusted.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+/** JSON read or built key by key (lib/types.ts): loose until its producer is TypeScript. */
+type Json = import('./types.ts').Json;
 
 // Nothing here touches a PTY — it is all string surgery on command lines, kept
 // free of the node-pty require chain so the tests are a plain `node` run.
@@ -15,7 +20,7 @@
 // classifyCommand's own regex matches), so they land before any trailing prompt
 // argument rather than tacked onto the end of the string. Used both at launch
 // (--session-id) and on restore (--resume).
-function injectAfterClaudeExe(command, flags) {
+function injectAfterClaudeExe(command: any, flags: any) {
   return String(command).replace(
     /(^|[\\/\s"'])(claude(?:\.exe|\.cmd)?)(?=$|[\s"'])/i,
     (m, pre, exe) => `${pre}${exe} ${flags}`
@@ -48,7 +53,7 @@ const FORK_FLAG = /\s--fork-session(?=\s|$)/gi;
 // id is right: `claude --resume <id>` (unforked) continues that same id and
 // keeps writing to the same `<id>.jsonl`, so the model badge and the voice
 // watcher keep resolving the session (verified against CLI 2.1.220).
-function stripClaudeSessionFlags(command) {
+function stripClaudeSessionFlags(command: any) {
   const s = String(command);
   const { start, end } = claudeArgRange(s);
   const stripped = s.slice(start, end)
@@ -65,7 +70,7 @@ function stripClaudeSessionFlags(command) {
 // else to other programs — `claude … && grep -c foo` must keep its `-c`, and a
 // blanket regex over the whole string silently ate it. Falls back to the whole
 // string when there's no claude token (a caller that already knows better).
-function claudeArgRange(s) {
+function claudeArgRange(s: any) {
   const exe = /(^|[\\/\s"'])claude(?:\.exe|\.cmd)?(?=$|[\s"'])/i.exec(s);
   if (!exe) return { start: 0, end: s.length };
   const start = exe.index + exe[0].length;
@@ -78,7 +83,7 @@ function claudeArgRange(s) {
 // original conversation's real UUID (see lib/session.js), resume that exact one;
 // otherwise fall back to a bare `--resume`, which makes Claude show its resume
 // picker scoped to the cwd — the most we can target without knowing the id.
-function restoreClaudeCommand(command, agentSessionId) {
+function restoreClaudeCommand(command: any, agentSessionId: any) {
   let cmd = (command && String(command).trim()) || 'claude';
   if (agentSessionId) {
     // Strip first, then inject after the executable rather than appending: a
@@ -96,7 +101,7 @@ function restoreClaudeCommand(command, agentSessionId) {
 // <id>` when we discovered it (see lib/opencodeModel.js); otherwise fall back
 // to `--continue` (opencode's closest equivalent — there's no interactive
 // picker like Claude's bare `--resume` to fall back to).
-function restoreOpencodeCommand(command, agentSessionId) {
+function restoreOpencodeCommand(command: any, agentSessionId: any) {
   let cmd = (command && String(command).trim()) || 'opencode';
   // A restored session gets a fresh --port (the old one belonged to a TUI that
   // is gone, and re-using it would either fail to bind or, worse, adopt whatever
@@ -115,7 +120,7 @@ function restoreOpencodeCommand(command, agentSessionId) {
 // command line. Confined to the opencode segment for the same reason
 // stripClaudeSessionFlags is: a `--port` belonging to some other command in a
 // compound line is none of our business.
-function stripOpencodeServerFlags(command) {
+function stripOpencodeServerFlags(command: any) {
   const s = String(command || '');
   const cut = s.search(/\s*(\|\||&&|;|\|)/);
   const head = cut === -1 ? s : s.slice(0, cut);
@@ -131,7 +136,7 @@ function stripOpencodeServerFlags(command) {
 // Splice flags in right after the `opencode` executable token — the twin of
 // injectAfterClaudeExe above. Appending them instead would land them after a
 // `&&` in a compound command, i.e. on the wrong program entirely.
-function injectAfterOpencodeExe(command, flags) {
+function injectAfterOpencodeExe(command: any, flags: any) {
   return String(command).replace(
     /(^|[\\/\s"'])(opencode(?:\.exe|\.cmd)?)(?=$|[\s"'])/i,
     (m, pre, exe) => `${pre}${exe} ${flags}`
@@ -141,11 +146,11 @@ function injectAfterOpencodeExe(command, flags) {
 const CURSOR_EXE = /(^|[\\/\s"'])((?:cursor-)?agent(?:\.exe|\.cmd|\.ps1)?)(?=$|[\s"'])/i;
 const CURSOR_RESUME = /\s(?:--resume|--continue)(?:[=\s]+[^\s]+)?(?=\s|$)/gi;
 
-function injectAfterCursorExe(command, flags) {
+function injectAfterCursorExe(command: any, flags: any) {
   return String(command).replace(CURSOR_EXE, (m, pre, exe) => `${pre}${exe} ${flags}`);
 }
 
-function stripCursorSessionFlags(command) {
+function stripCursorSessionFlags(command: any) {
   const s = String(command);
   const cut = s.search(/\s*(\|\||&&|;|\|)/);
   const head = cut === -1 ? s : s.slice(0, cut);
@@ -154,7 +159,7 @@ function stripCursorSessionFlags(command) {
   return stripped + tail;
 }
 
-function restoreCursorCommand(command, agentSessionId) {
+function restoreCursorCommand(command: any, agentSessionId: any) {
   let cmd = (command && String(command).trim()) || 'agent';
   if (agentSessionId) {
     cmd = injectAfterCursorExe(stripCursorSessionFlags(cmd), `--resume ${agentSessionId}`);

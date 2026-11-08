@@ -21,16 +21,21 @@
 // existing file from before this rule is chmod'ed to 0600 the first time it is
 // touched. On Windows the mode is a no-op; the data dir under %LOCALAPPDATA% is
 // already per-user.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+/** JSON read or built key by key (lib/types.ts): loose until its producer is TypeScript. */
+type Json = import('./types.ts').Json;
 
 const fs = require('fs');
 const path = require('path');
-const { ensureDataDir } = require('./paths');
+const { ensureDataDir } = require('./paths.ts');
 
 const MAX_ENTRIES = 40;   // cap the restorable list so it can't grow without bound
 const MAX_HISTORY = 200;  // command lines kept per shell session
 
 const FILE_MODE = 0o600;
-let tightened = null; // the path already chmod'ed this process
+let tightened: any = null; // the path already chmod'ed this process
 
 function file() {
   const f = path.join(ensureDataDir(), 'sessions.json');
@@ -57,13 +62,13 @@ function file() {
 // rename or a typed line made in the same instant as the kill.
 const WRITE_DELAY_MS = 100;
 
-let cache = null;        // { file, entries }
-let timer = null;
-let writing = null;      // the in-flight async write
+let cache: any = null;        // { file, entries }
+let timer: any = null;
+let writing: any = null;      // the in-flight async write
 let dirtyAgain = false;  // changed while a write was in flight
 let exitHooked = false;
 
-function readDisk(f) {
+function readDisk(f: any) {
   try {
     const data = JSON.parse(fs.readFileSync(f, 'utf8'));
     if (Array.isArray(data)) return data.filter((e) => e && typeof e === 'object' && e.id);
@@ -83,7 +88,7 @@ function serialize() {
   return JSON.stringify(cache.entries, null, 2);
 }
 
-function writeSync(f, data) {
+function writeSync(f: any, data: any) {
   const tmp = `${f}.${process.pid}.tmp`;
   try {
     fs.writeFileSync(tmp, data, { mode: FILE_MODE });
@@ -95,7 +100,7 @@ function writeSync(f, data) {
   }
 }
 
-async function writeAsync(f, data) {
+async function writeAsync(f: any, data: any) {
   const tmp = `${f}.${process.pid}.tmp`;
   try {
     await fs.promises.writeFile(tmp, data, { mode: FILE_MODE });
@@ -144,37 +149,37 @@ async function flush() {
   }
 }
 
-const copy = (e) => JSON.parse(JSON.stringify(e));
+const copy = (e: any) => JSON.parse(JSON.stringify(e));
 
 function list() {
   return entries().map(copy);
 }
 
-function get(id) {
-  const e = entries().find((x) => x.id === id);
+function get(id: any) {
+  const e = entries().find((x: any) => x.id === id);
   return e ? copy(e) : null;
 }
 
 // Insert or replace an entry, newest first, capped at MAX_ENTRIES.
-function upsert(entry) {
+function upsert(entry: any) {
   if (!entry || !entry.id) return;
-  const rest = entries().filter((e) => e.id !== entry.id);
+  const rest = entries().filter((e: any) => e.id !== entry.id);
   rest.unshift(copy(entry));
   cache.entries = rest.slice(0, MAX_ENTRIES);
   schedule();
 }
 
 // Merge fields into an existing entry (no-op if it's gone).
-function patch(id, fields) {
-  const e = entries().find((x) => x.id === id);
+function patch(id: any, fields: any) {
+  const e = entries().find((x: any) => x.id === id);
   if (!e) return;
   Object.assign(e, copy(fields));
   schedule();
 }
 
-function remove(id) {
+function remove(id: any) {
   const all = entries();
-  const rest = all.filter((e) => e.id !== id);
+  const rest = all.filter((e: any) => e.id !== id);
   if (rest.length === all.length) return;
   cache.entries = rest;
   schedule();
@@ -182,10 +187,10 @@ function remove(id) {
 
 // Append a typed command line to a shell session's history, deduping immediate
 // repeats and capping length.
-function addHistory(id, line) {
+function addHistory(id: any, line: any) {
   const clean = String(line || '').trim();
   if (!clean) return;
-  const e = entries().find((x) => x.id === id);
+  const e = entries().find((x: any) => x.id === id);
   if (!e) return;
   if (!Array.isArray(e.history)) e.history = [];
   if (e.history[e.history.length - 1] === clean) return; // skip an immediate repeat

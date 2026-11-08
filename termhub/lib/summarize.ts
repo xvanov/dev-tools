@@ -11,12 +11,17 @@
 //
 // Never throws and never blocks: the child is spawned with piped stdio, killed
 // on timeout, and run in the temp dir so it can't touch a user's project.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+/** JSON read or built key by key (lib/types.ts): loose until its producer is TypeScript. */
+type Json = import('./types.ts').Json;
 
 const os = require('os');
 const path = require('path');
 const fs = require('fs');
 const { execFile } = require('child_process');
-const { createLimiter } = require('./limit');
+const { createLimiter } = require('./limit.ts');
 
 const INSTRUCTION = "Summarize the assistant's message in 2-3 short spoken sentences for text-to-speech. "
   + 'Plain prose, no markdown, no code, no lists. '
@@ -102,7 +107,7 @@ function pruneTranscripts() {
   }
 }
 
-function isExecutable(file) {
+function isExecutable(file: any) {
   try {
     fs.accessSync(file, fs.constants.X_OK);
     return fs.statSync(file).isFile();
@@ -133,13 +138,13 @@ function available() {
 
 // CSI/OSC escapes: a summary is spoken, so any stray terminal colour codes that
 // rode along in the transcript would be read out as gibberish.
-function stripAnsi(s) {
+function stripAnsi(s: any) {
   return s.replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, '').replace(/\x1b\][^\x07\x1b]*(\x07|\x1b\\)/g, '');
 }
 
 // Flatten the markdown a spoken sentence can't carry. Order matters: fenced
 // blocks go first so their contents don't get treated as headings or bullets.
-function stripMarkdown(s) {
+function stripMarkdown(s: any) {
   return s
     .replace(/```[\s\S]*?```/g, ' ')            // fenced code
     .replace(/`([^`]*)`/g, '$1')                // inline code, keep the word
@@ -153,11 +158,11 @@ function stripMarkdown(s) {
     .replace(/^\s*[-*_]{3,}\s*$/gm, ' ');       // rules
 }
 
-function tidy(s) {
+function tidy(s: any) {
   return stripMarkdown(stripAnsi(String(s || '')))
     .replace(/[ \t]+/g, ' ')
     .replace(/\n{2,}/g, '\n')
-    .split('\n').map((l) => l.trim()).filter(Boolean)
+    .split('\n').map((l: any) => l.trim()).filter(Boolean)
     .join(' ')
     .trim();
 }
@@ -166,11 +171,11 @@ function tidy(s) {
 // first few sentences, and — because "what do you want me to do?" is the part
 // the user actually needs — append the message's final question if it had one
 // and it didn't already survive the trim.
-function ruleBasedSummary(text) {
+function ruleBasedSummary(text: any) {
   const flat = tidy(text);
   if (!flat) return '';
   const sentences = flat.match(/[^.!?]+[.!?]+|\S[^.!?]*$/g) || [flat];
-  let out = sentences.slice(0, 3).map((s) => s.trim()).join(' ');
+  let out = sentences.slice(0, 3).map((s: any) => s.trim()).join(' ');
   const question = [...flat.matchAll(/([^.!?]*\?)/g)].pop();
   if (question) {
     const q = question[1].trim();
@@ -181,8 +186,8 @@ function ruleBasedSummary(text) {
 
 // ---- the model call ---------------------------------------------------------
 
-function runClaude(bin, text) {
-  return new Promise((resolve, reject) => {
+function runClaude(bin: any, text: any) {
+  return new Promise<any>((resolve, reject) => {
     const env = { ...process.env };
     for (const key of INHERITED_AGENT_VARS) delete env[key];
 
@@ -196,7 +201,7 @@ function runClaude(bin, text) {
       windowsHide: true,
       detached: process.platform !== 'win32',
       env,
-    }, (err, stdout) => {
+    }, (err: any, stdout: any) => {
       if (err) return reject(err);
       resolve(String(stdout || ''));
     });
@@ -209,7 +214,7 @@ function runClaude(bin, text) {
 // a reply that is only a fenced code block flattens to the empty string, and
 // broadcasting an empty summary means the browser has nothing to play and the
 // user never learns the turn ended. Naming what happened is the useful answer.
-function describeUnspeakable(raw) {
+function describeUnspeakable(raw: any) {
   if (/```/.test(raw)) return 'The reply is code, with nothing to read out.';
   return 'Finished, with nothing to read out.';
 }
@@ -217,7 +222,7 @@ function describeUnspeakable(raw) {
 // Always resolves to a string — the model's summary, the rule-based fallback,
 // or a description of why there's nothing to read. Only ever '' when the input
 // was itself empty, which callers treat as "not a turn worth announcing".
-async function summarize(text) {
+async function summarize(text: any) {
   const input = (typeof text === 'string' ? text : '').trim().slice(0, MAX_INPUT_CHARS);
   if (!input) return '';
   const flat = tidy(input);

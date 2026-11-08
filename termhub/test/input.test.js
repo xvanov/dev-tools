@@ -10,7 +10,7 @@
 // unknown session is a 404 rather than a silent success.
 
 const assert = require('assert');
-const { applyInput } = require('../lib/sessionInput');
+const { applyInput } = require('../lib/sessionInput.ts');
 
 function fakeSession() {
   const written = [];

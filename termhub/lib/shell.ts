@@ -1,10 +1,16 @@
 'use strict';
 
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+/** JSON read or built key by key (lib/types.ts): loose until its producer is TypeScript. */
+type Json = import('./types.ts').Json;
+
 const fs = require('fs');
 const path = require('path');
 
 // Find an executable on PATH (used to prefer pwsh over Windows PowerShell).
-function findOnPath(names) {
+function findOnPath(names: any) {
   const PATH = process.env.PATH || '';
   const dirs = PATH.split(path.delimiter).filter(Boolean);
   const exts = process.platform === 'win32'
@@ -65,7 +71,7 @@ function defaultShell() {
 // rcSkipped: false, so the caller can decide.
 //
 // Pure: shellPath → { args, unsetEnv, rcSkipped }.
-function shellArgs(shellPath, { noRc = false } = {}) {
+function shellArgs(shellPath: any, { noRc = false }: { noRc?: boolean | undefined } = {}) {
   if (!noRc) return { args: [], unsetEnv: [], rcSkipped: false };
   const name = path.basename(String(shellPath || '').replace(/\\/g, '/')).toLowerCase().replace(/\.exe$/, '');
   switch (name) {
@@ -82,7 +88,7 @@ function shellArgs(shellPath, { noRc = false } = {}) {
 }
 
 /** Pure. `noRc` from a request body: absent → false; anything but a boolean → {error}. */
-function parseNoRc(body) {
+function parseNoRc(body: any) {
   const v = body ? body.noRc : undefined;
   if (v === undefined || v === null) return { noRc: false, given: false };
   if (typeof v !== 'boolean') return { error: 'noRc must be a boolean' };

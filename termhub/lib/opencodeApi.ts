@@ -24,6 +24,11 @@
 // subprocess, ~1.4s a call, behind a 10s cache, plus a polling loop to *discover*
 // which session the TUI had created. That module stays for sessions launched
 // before this build, and as the fallback when a TUI won't give up a port.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+/** JSON read or built key by key (lib/types.ts): loose until its producer is TypeScript. */
+type Json = import('./types.ts').Json;
 
 const http = require('http');
 const net = require('net');
@@ -38,7 +43,7 @@ const HOST = '127.0.0.1';
 // failure is loud and recoverable: the TUI exits, the PTY shows why, and the
 // session degrades to the subprocess path rather than breaking.
 function freePort() {
-  return new Promise((resolve, reject) => {
+  return new Promise<any>((resolve, reject) => {
     const srv = net.createServer();
     srv.on('error', reject);
     srv.listen(0, HOST, () => {
@@ -51,12 +56,12 @@ function freePort() {
 // Minimal JSON GET. Deliberately not `fetch`: this runs inside sessiond, which
 // owns every live PTY, and an undici connection pool holding sockets open to a
 // dozen short-lived TUI servers is a worse neighbour than one socket per ask.
-function getJson(port, path, timeoutMs = 4000) {
-  return new Promise((resolve, reject) => {
-    const req = http.get({ host: HOST, port, path, timeout: timeoutMs }, (res) => {
+function getJson(port: any, path: any, timeoutMs: number = 4000) {
+  return new Promise<any>((resolve, reject) => {
+    const req = http.get({ host: HOST, port, path, timeout: timeoutMs }, (res: any) => {
       let body = '';
       res.setEncoding('utf8');
-      res.on('data', (c) => { body += c; });
+      res.on('data', (c: any) => { body += c; });
       res.on('end', () => {
         if (res.statusCode >= 400) return reject(new Error(`HTTP ${res.statusCode} for ${path}`));
         try { resolve(JSON.parse(body)); } catch (e) { reject(e); }
@@ -70,7 +75,7 @@ function getJson(port, path, timeoutMs = 4000) {
 // Is the server on this port up *and* an opencode? Checked by shape, not just by
 // "something answered": ports get reused, and a stranger returning 200 to
 // /global/health would otherwise be adopted as this session's agent.
-async function health(port) {
+async function health(port: any) {
   try {
     const j = await getJson(port, '/global/health', 1500);
     return j && j.healthy === true ? { ok: true, version: j.version || null } : { ok: false };
@@ -82,14 +87,14 @@ async function health(port) {
 // opencode's server is listening within ~1s of launch (measured), but the TUI
 // still has to boot behind it. Polling beats a fixed sleep because the cost of
 // being wrong is asymmetric: too short and the session never gets its API.
-async function waitReady(port, timeoutMs = 20000, isAborted = () => false) {
+async function waitReady(port: any, timeoutMs: number = 20000, isAborted: any = () => false) {
   const deadline = Date.now() + timeoutMs;
   for (;;) {
     if (isAborted()) return null;
     const h = await health(port);
     if (h.ok) return h;
     if (Date.now() > deadline) return null;
-    await new Promise((r) => setTimeout(r, 250));
+    await new Promise<any>((r) => setTimeout(r, 250));
   }
 }
 
@@ -113,7 +118,7 @@ async function waitReady(port, timeoutMs = 20000, isAborted = () => false) {
 // error: opencode creates a session lazily, on the first message, not at launch.
 const CREATED_SKEW_MS = 5000; // opencode's own timestamp can lag our spawn call
 
-async function activeSession(port, { cwd, since } = {}) {
+async function activeSession(port: any, { cwd, since }: { cwd?: any; since?: any } = {}) {
   try {
     const j = await getJson(port, '/api/session/active');
     if (j && j.data && j.data.id) return j.data;
@@ -134,7 +139,7 @@ async function activeSession(port, { cwd, since } = {}) {
   return candidates[0];
 }
 
-async function session(port, sessionId) {
+async function session(port: any, sessionId: any) {
   try { return await getJson(port, `/session/${encodeURIComponent(sessionId)}`); } catch { return null; }
 }
 
@@ -145,7 +150,7 @@ async function session(port, sessionId) {
 // a `synthetic` text part is opencode talking to itself rather than to you.
 // `finish` being set is what makes the turn *finished* — mid-stream it is absent,
 // and announcing then would read half a sentence aloud.
-async function lastAssistantTurn(port, sessionId) {
+async function lastAssistantTurn(port: any, sessionId: any) {
   let msgs;
   try { msgs = await getJson(port, `/session/${encodeURIComponent(sessionId)}/message`); } catch { return null; }
   if (!Array.isArray(msgs)) return null;
@@ -154,8 +159,8 @@ async function lastAssistantTurn(port, sessionId) {
     const info = m && m.info;
     if (!info || info.role !== 'assistant') continue;
     const text = (m.parts || [])
-      .filter((p) => p && p.type === 'text' && !p.synthetic && !p.ignored && p.text)
-      .map((p) => p.text)
+      .filter((p: any) => p && p.type === 'text' && !p.synthetic && !p.ignored && p.text)
+      .map((p: any) => p.text)
       .join('\n')
       .trim();
     return {
@@ -173,12 +178,12 @@ async function lastAssistantTurn(port, sessionId) {
 // Anything the session is currently blocked on and can't proceed without. Both
 // endpoints answer a bare array, and both are session-agnostic (one TUI, one
 // conversation), so they're filtered by sessionID rather than trusted wholesale.
-async function pendingAsk(port, sessionId) {
+async function pendingAsk(port: any, sessionId: any) {
   const [questions, permissions] = await Promise.all([
     getJson(port, '/question').catch(() => []),
     getJson(port, '/permission').catch(() => []),
   ]);
-  const mine = (arr) => (Array.isArray(arr) ? arr : []).filter((x) => !sessionId || !x.sessionID || x.sessionID === sessionId);
+  const mine = (arr: any) => (Array.isArray(arr) ? arr : []).filter((x) => !sessionId || !x.sessionID || x.sessionID === sessionId);
   const q = mine(questions)[0];
   if (q) {
     const first = (q.questions || [])[0] || {};
@@ -188,7 +193,7 @@ async function pendingAsk(port, sessionId) {
       // The whole point of having an API instead of a heuristic: we can say what
       // is being asked, not merely that something is.
       text: first.question || first.header || 'a question',
-      options: (first.options || []).map((o) => o.label || o.value || '').filter(Boolean),
+      options: (first.options || []).map((o: any) => o.label || o.value || '').filter(Boolean),
     };
   }
   const p = mine(permissions)[0];
@@ -209,20 +214,20 @@ async function pendingAsk(port, sessionId) {
 // for the same reason: the TUI can be restarted under us, and a feed that gave
 // up once would leave that session permanently silent with no sign of why.
 // `onEvent` is called with `{type, properties}`; it must never throw.
-function subscribe(port, onEvent, onError) {
-  let req = null;
+function subscribe(port: any, onEvent: any, onError: any) {
+  let req: any = null;
   let closed = false;
   let attempts = 0;
-  let timer = null;
+  let timer: any = null;
 
   const connect = () => {
     if (closed) return;
-    req = http.get({ host: HOST, port, path: '/event', headers: { accept: 'text/event-stream' } }, (res) => {
+    req = http.get({ host: HOST, port, path: '/event', headers: { accept: 'text/event-stream' } }, (res: any) => {
       if (res.statusCode !== 200) { res.resume(); return retry(); }
       attempts = 0;
       res.setEncoding('utf8');
       let buf = '';
-      res.on('data', (chunk) => {
+      res.on('data', (chunk: any) => {
         buf += chunk;
         // SSE frames are separated by a blank line; a frame can carry several
         // `data:` lines, and a chunk can split one mid-way — hence the buffer.
@@ -240,7 +245,7 @@ function subscribe(port, onEvent, onError) {
       res.on('end', retry);
       res.on('error', retry);
     });
-    req.on('error', (e) => { if (onError) { try { onError(e); } catch {} } retry(); });
+    req.on('error', (e: any) => { if (onError) { try { onError(e); } catch {} } retry(); });
   };
 
   const retry = () => {
@@ -264,9 +269,9 @@ function subscribe(port, onEvent, onError) {
 // convention, so this is the same deliberately-shallow treatment
 // lib/opencodeModel.js gives it — title-case the last path segment, which is
 // what opencode's own TUI footer shows.
-function formatModelLabel(id) {
+function formatModelLabel(id: any) {
   if (!id) return null;
-  const tail = String(id).split('/').pop();
+  const tail = String(id).split('/').pop() ?? '';
   return tail
     .split(/[-_.]/)
     .filter(Boolean)

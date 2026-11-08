@@ -22,7 +22,7 @@ process.env.USERPROFILE = HOME;
 
 const {
   transcriptPath, findActiveTranscript, resolveTranscript, readLastModel, formatModelName,
-} = require('../lib/claudeModel');
+} = require('../lib/claudeModel.ts');
 
 let passed = 0;
 function ok(name, fn) {
@@ -74,7 +74,7 @@ ok('keeps the separator when it is the whole path', () => {
 ok('a session cwd is made absolute, so it encodes like claude encodes it', () => {
   // A drive-less Windows path is a valid cwd, but claude files the transcript
   // under the resolved path — so the session must carry the resolved one.
-  const { resolveCwd } = require('../lib/session');
+  const { resolveCwd } = require('../lib/session.ts');
   const here = process.cwd();
   const rel = path.sep + path.relative(path.parse(here).root, here);
   const r = resolveCwd(rel + path.sep);

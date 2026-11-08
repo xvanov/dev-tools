@@ -11,7 +11,7 @@
 // ids; and a PATCH adds, replaces and (with null) removes keys.
 
 const assert = require('assert');
-const { KEYS, parseLinks, mergeLinks } = require('../lib/sessionLinks');
+const { KEYS, parseLinks, mergeLinks } = require('../lib/sessionLinks.ts');
 
 assert.deepStrictEqual(KEYS, ['card', 'run', 'job', 'step', 'story', 'external', 'pr']);
 

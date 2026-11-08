@@ -1,5 +1,11 @@
 'use strict';
 
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+/** JSON read or built key by key (lib/types.ts): loose until its producer is TypeScript. */
+type Json = import('./types.ts').Json;
+
 const os = require('os');
 const fs = require('fs');
 const path = require('path');
@@ -8,7 +14,7 @@ const path = require('path');
 // return matching subdirectories so the UI can suggest them as the user types.
 // Suggestions preserve the input's style (keep ~ if the user typed ~) so native
 // <datalist> filtering keeps matching.
-function suggestDirs(input) {
+function suggestDirs(input: any) {
   const home = os.homedir();
   const raw = String(input || '');
   const usedTilde = raw === '~' || raw.startsWith('~/') || raw.startsWith('~\\');

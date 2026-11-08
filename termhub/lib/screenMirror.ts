@@ -18,9 +18,14 @@
 // Fallback: if @xterm/headless or @xterm/addon-serialize is missing (a machine
 // whose `npm install` didn't run, or failed), this degrades to the old raw byte
 // ring buffer rather than taking sessiond down. `kind` says which one is live.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
 
-let Headless = null;
-let Serialize = null;
+/** JSON read or built key by key (lib/types.ts): loose until its producer is TypeScript. */
+type Json = import('./types.ts').Json;
+
+let Headless: any = null;
+let Serialize: any = null;
 try {
   Headless = require('@xterm/headless').Terminal;
   Serialize = require('@xterm/addon-serialize').SerializeAddon;
@@ -37,7 +42,16 @@ const DEFAULT_SCROLLBACK_LINES = Number(process.env.TERMHUB_SCROLLBACK_LINES) ||
 const DEFAULT_SCROLLBACK_BYTES = Number(process.env.TERMHUB_SCROLLBACK_BYTES) || 2 * 1024 * 1024;
 
 class ScreenMirror {
-  constructor({ cols = 80, rows = 24, scrollback, maxBytes, forceRaw = false } = {}) {
+  declare _disposed: any;
+  declare cols: any;
+  declare rows: any;
+  declare _term: any;
+  declare _ser: any;
+  declare kind: any;
+  declare _maxBytes: any;
+  declare _chunks: any;
+  declare _bytes: any;
+  constructor({ cols = 80, rows = 24, scrollback, maxBytes, forceRaw = false }: { cols?: number | undefined; rows?: number | undefined; scrollback?: any; maxBytes?: any; forceRaw?: boolean | undefined } = {}) {
     this.cols = cols;
     this.rows = rows;
     this._disposed = false;
@@ -62,7 +76,7 @@ class ScreenMirror {
     this._bytes = 0;
   }
 
-  write(data) {
+  write(data: any) {
     if (this._disposed || !data) return;
     if (this._term) { this._term.write(data); return; }
     const bytes = Buffer.byteLength(data, 'utf8');
@@ -77,7 +91,7 @@ class ScreenMirror {
   // parsed at the old size, everything after at the new one. xterm's write
   // queue runs a callback between chunks, so resizing from inside one lands at
   // exactly this point in the stream.
-  resize(cols, rows) {
+  resize(cols: any, rows: any) {
     this.cols = cols;
     this.rows = rows;
     if (this._disposed || !this._term) return;
@@ -93,9 +107,9 @@ class ScreenMirror {
   // everything written before this call has been parsed. Anything written
   // *after* the call is not in the snapshot — the caller forwards that as live
   // output (see Session.attach).
-  snapshot(cb) {
+  snapshot(cb: any) {
     if (!this._term) {
-      cb({ data: this._chunks.map((c) => c.data).join(''), cols: this.cols, rows: this.rows });
+      cb({ data: this._chunks.map((c: any) => c.data).join(''), cols: this.cols, rows: this.rows });
       return;
     }
     this._term.write('', () => {

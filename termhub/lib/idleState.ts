@@ -18,8 +18,13 @@
 //              you, but the clock does NOT run: you cannot un-idle a session
 //              that has nothing left to spend, and counting it would punish the
 //              user for the one pause they can't fix.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
 
-const { isWaitingForInput, isLimitNotice } = require('./claudeTranscript');
+/** JSON read or built key by key (lib/types.ts): loose until its producer is TypeScript. */
+type Json = import('./types.ts').Json;
+
+const { isWaitingForInput, isLimitNotice } = require('./claudeTranscript.ts');
 
 const WORKING = 'working';
 const WAITING = 'waiting';
@@ -66,7 +71,7 @@ const LOCAL_COMMAND_RE = /^\s*<(command-name|command-message|command-args|local-
 //
 // Order matters: the limit check is first because a limit notice passes
 // isWaitingForInput().
-function classifyClaude({ turn, ptyIdleMs }) {
+function classifyClaude({ turn, ptyIdleMs }: { turn?: any; ptyIdleMs?: any }) {
   if (isLimitNotice(turn)) return { state: LIMITED, reason: 'limit' };
   // No transcript yet: nothing has been asked of this agent. A new session sits
   // here until the first prompt lands, whatever its PTY is printing.
@@ -93,7 +98,7 @@ function classifyClaude({ turn, ptyIdleMs }) {
 // opened opencode (no turn yet, so no session.idle ever) count as working for
 // as long as it sat there, and an opencode whose API never connected count as
 // working forever.
-function classifyOpencode({ idleAt, ask, busy }) {
+function classifyOpencode({ idleAt, ask, busy }: { idleAt?: any; ask?: any; busy?: any }) {
   if (ask) return { state: WAITING, reason: 'question' };
   if (busy) return { state: WORKING, reason: 'mid-turn' };
   return { state: WAITING, reason: idleAt ? 'turn-end' : 'prompt' };
@@ -126,7 +131,7 @@ function classifyOpencode({ idleAt, ask, busy }) {
 //                     up after finishing its cleanup both return 0.
 const RECENT_INPUT_MS = 10000;
 
-function shouldAnnounceExit({ exitCode, lastState, killed, sinceInputMs }) {
+function shouldAnnounceExit({ exitCode, lastState, killed, sinceInputMs }: { exitCode?: any; lastState?: any; killed?: any; sinceInputMs?: any }) {
   if (killed) return false;
   // You were at the keyboard when it ended. Whatever happened, you saw it.
   if (Number.isFinite(sinceInputMs) && sinceInputMs < RECENT_INPUT_MS) return false;
@@ -140,7 +145,7 @@ function shouldAnnounceExit({ exitCode, lastState, killed, sinceInputMs }) {
 // A `paused` session (the sidebar's ⏸ toggle) is out too, and for the user's
 // own opposite reason: it's a session THEY chose to stop monitoring, not one
 // that was never worth monitoring.
-function isTracked(session) {
+function isTracked(session: any) {
   return !!session && (session.kind === 'claude' || session.kind === 'cursor' || session.kind === 'opencode') && !session.paused;
 }
 

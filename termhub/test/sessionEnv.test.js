@@ -19,8 +19,8 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'termhub-env-'));
 process.env.TERMHUB_DATA_DIR = tmp;
 delete process.env.TERMHUB_NTFY_TOPIC;
 
-const { parseEnvSpec, applyEnvSpec } = require('../lib/sessionEnv');
-const { shellArgs, parseNoRc, findOnPath } = require('../lib/shell');
+const { parseEnvSpec, applyEnvSpec } = require('../lib/sessionEnv.ts');
+const { shellArgs, parseNoRc, findOnPath } = require('../lib/shell.ts');
 
 // ---- the rules (pure) -------------------------------------------------------
 
@@ -203,7 +203,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
         // And a restore reads it: an archived no-push entry from "before the
         // reboot" comes back with GH_TOKEN gone AND the rc file unread.
         process.env.TERMHUB_SHELL = bash;
-        require('../lib/archive').upsert({ id: 'pre-reboot', kind: 'shell', cwd: tmp, title: 'old', command: null,
+        require('../lib/archive.ts').upsert({ id: 'pre-reboot', kind: 'shell', cwd: tmp, title: 'old', command: null,
           envSpec: { env: { HOME: home }, unset: ['GH_TOKEN'] }, noRc: true, history: [] });
         const restored = await request(fPort, { method: 'POST', path: '/api/sessions/pre-reboot/restore', headers: ui,
           body: JSON.stringify({ cols: 80, rows: 24 }) });

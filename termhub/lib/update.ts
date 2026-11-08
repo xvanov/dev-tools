@@ -18,7 +18,7 @@ const { execFile } = require('child_process');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const claudeCli = require('./claudeCli');
+const claudeCli = require('./claudeCli.ts');
 
 const PROJECT_DIR = path.join(__dirname, '..'); // .../termhub
 // The parts of the repo one update deploys.

@@ -17,6 +17,11 @@
 // `termhub.claudeCli`), reports what is actually installed, and can update it —
 // the same "check, then apply in a visible terminal" flow the tool already uses
 // for its own git updates.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+/** JSON read or built key by key (lib/types.ts): loose until its producer is TypeScript. */
+type Json = import('./types.ts').Json;
 
 const { execFile } = require('child_process');
 const fs = require('fs');
@@ -32,7 +37,7 @@ const MIN_VERSION = PIN.minVersion || null;
 const VERIFIED_VERSION = PIN.verifiedVersion || MIN_VERSION;
 
 const CACHE_TTL_MS = 5 * 60 * 1000; // `claude --version` costs ~200ms; don't pay it per poll
-let cache = { at: 0, data: null };
+let cache: { at: number; data: any } = { at: 0, data: null };
 
 // Where to find the CLI. `claude` on PATH is the normal answer, but termhub's
 // front can run from a systemd --user service whose PATH is the systemd default
@@ -57,21 +62,21 @@ function candidates() {
   return out;
 }
 
-function run(bin, args, timeoutMs = 8000) {
+function run(bin: any, args: any, timeoutMs: number = 8000) {
   // A .cmd/.bat shim (e.g. the npm-global install's claude.cmd on Windows) can't
   // be exec'd directly on Windows: Node refuses since the CVE-2024-27980 fix and
   // throws `spawn EINVAL` *synchronously*, rejecting this promise before the
   // callback ever runs. Route those through a shell instead.
   const needsShell = process.platform === 'win32' && /\.(cmd|bat)$/i.test(bin);
-  return new Promise((resolve) => {
-    execFile(bin, args, { timeout: timeoutMs, windowsHide: true, shell: needsShell }, (err, stdout, stderr) => {
+  return new Promise<any>((resolve) => {
+    execFile(bin, args, { timeout: timeoutMs, windowsHide: true, shell: needsShell }, (err: any, stdout: any, stderr: any) => {
       resolve({ ok: !err, out: String(stdout || '').trim(), err: String(stderr || '').trim() });
     });
   });
 }
 
 // `claude --version` prints e.g. "2.1.220 (Claude Code)".
-function parseVersion(out) {
+function parseVersion(out: any) {
   const m = /\b(\d+\.\d+\.\d+(?:[-+][\w.]+)?)\b/.exec(out || '');
   return m ? m[1] : null;
 }
@@ -79,8 +84,8 @@ function parseVersion(out) {
 // Numeric-segment compare: -1 / 0 / 1, with a missing segment treated as 0 so
 // "2.1" < "2.1.220". A pre-release suffix ("2.2.0-beta.1") compares on its
 // numeric part only — close enough for a >= floor, and it never throws.
-function compareVersions(a, b) {
-  const seg = (v) => String(v).split(/[-+]/)[0].split('.').map((n) => parseInt(n, 10) || 0);
+function compareVersions(a: any, b: any) {
+  const seg = (v: any) => String(v).split(/[-+]/)[0]!.split('.').map((n) => parseInt(n, 10) || 0);
   const x = seg(a);
   const y = seg(b);
   for (let i = 0; i < Math.max(x.length, y.length); i++) {
@@ -109,7 +114,7 @@ async function probe() {
 // whether the pin is met. `satisfied` is deliberately true when the version is
 // unknown — termhub must not nag about a CLI it merely failed to locate (a
 // service PATH quirk is not a broken install), and `error` says so instead.
-async function status({ force = false } = {}) {
+async function status({ force = false }: { force?: boolean | undefined } = {}) {
   if (!force && cache.data && Date.now() - cache.at < CACHE_TTL_MS) return cache.data;
   const found = await probe();
   const installed = found.version || null;
@@ -138,7 +143,7 @@ function updateCommand() {
 }
 
 // One line for a terminal or a log: "Claude CLI 2.1.220 (pinned >=2.1.220)".
-function describe(s) {
+function describe(s: any) {
   if (!s || !s.installed) return `Claude CLI not found${MIN_VERSION ? ` (termhub expects >=${MIN_VERSION})` : ''}`;
   const pin = s.minVersion ? ` (pinned >=${s.minVersion})` : '';
   return `Claude CLI ${s.installed}${pin}${s.satisfied ? '' : ' — TOO OLD'}`;

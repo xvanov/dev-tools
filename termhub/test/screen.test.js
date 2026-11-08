@@ -21,7 +21,7 @@
 
 const assert = require('assert');
 const os = require('os');
-const { ScreenMirror, mirrorAvailable } = require('../lib/screenMirror');
+const { ScreenMirror, mirrorAvailable } = require('../lib/screenMirror.ts');
 
 const { Terminal } = require('@xterm/headless');
 
@@ -97,7 +97,7 @@ const render = (snap) => new Promise((resolve) => {
 
   // ---- the session ---------------------------------------------------------
   let Session;
-  try { ({ Session } = require('../lib/session')); } catch (e) {
+  try { ({ Session } = require('../lib/session.ts')); } catch (e) {
     console.log('screen.test.js: session cases skipped (node-pty unavailable: ' + e.message + ')');
     console.log('screen.test.js: ok');
   process.exit(0); // node-pty's native handles can keep the loop alive after the PTY is killed

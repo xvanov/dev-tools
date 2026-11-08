@@ -13,10 +13,15 @@
 // Queue overflow rejects rather than waits — a caller that's been queued behind
 // a dozen others has almost certainly given up, and a spoken announcement is
 // worthless late.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
 
-function createLimiter({ max, queue, name }) {
+/** JSON read or built key by key (lib/types.ts): loose until its producer is TypeScript. */
+type Json = import('./types.ts').Json;
+
+function createLimiter({ max, queue, name }: { max?: any; queue?: any; name?: any }) {
   let active = 0;
-  const waiting = [];
+  const waiting: any[] = [];
 
   const next = () => {
     if (active >= max || !waiting.length) return;
@@ -31,9 +36,9 @@ function createLimiter({ max, queue, name }) {
 
   // run(task) -> Promise of task's result. Rejects immediately when the queue
   // is full; the error is shaped so callers can map it to a 503.
-  const run = (task) => new Promise((resolve, reject) => {
+  const run = (task: any) => new Promise<any>((resolve, reject) => {
     if (waiting.length >= queue) {
-      const err = new Error(`${name} is busy`);
+      const err: any = new Error(`${name} is busy`);
       err.busy = true;
       return reject(err);
     }
