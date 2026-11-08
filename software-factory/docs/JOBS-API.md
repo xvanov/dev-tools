@@ -603,8 +603,9 @@ parked for a human, or `stalled`.
   `auto`, `factory/chain/resume.py`). It keeps the story's branch, worktree state, PR, issue,
   story file, dev/review history and spend, and resets only the counters that would re-park it.
   A story with a PR goes back to the merge gates / CI watch (`pr_open`, no persona re-runs); one
-  whose dev or SM ran goes back to dev (`dev_retry`) on its existing branch; only a story that
-  never started goes back to `story_created`. Each writes a `story_resumed` event (actor
+  whose dev or SM ran goes back to dev (`dev_retry`) on its existing branch; a docs-chain story
+  whose SM ran goes back to the docs onboarder (`docs_sm_done`, point `docs`), never to dev; only a
+  story that never started goes back to `story_created`. Each writes a `story_resumed` event (actor
   `factory job resume`) that also resets the merge-gate block and CI-fix windows.
 - A cancelled job is un-cancelled first: its `job_cancellations` row is deleted and
   `state.yaml::job_cancelled` moves to `previous_cancel` (plus a `job_resumed` audit entry). Its

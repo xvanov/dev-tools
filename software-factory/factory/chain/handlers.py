@@ -28,6 +28,7 @@ from sqlmodel import Session, SQLModel, create_engine, select
 
 from factory import diff_paths as _diff_paths
 from factory.app_config import AppConfig
+from factory.chain.branch import COMMIT_TIMEOUT_S
 from factory.chain.delivery_gate import EVENT_DELIVERED as DELIVERY_EVENT_DELIVERED
 from factory.chain.delivery_gate import commit_local_work
 from factory.chain.delivery_gate import story_level as delivery_story_level
@@ -5344,6 +5345,46 @@ def _dry_run_docs_onboarder(story: StoryRecord, context_dir: str | None = None) 
     }
 
 
+_ONBOARDER_COMMIT_FAILED = "docs_onboarder commit failed"
+
+
+def _pending_onboarder_output(
+    story: StoryRecord, repo: Path, app_config: AppConfig, software_factory_root: Path
+) -> list[str]:
+    """The uncommitted files of an onboarder pass whose commit failed, or [].
+
+    Only when the story's last ``docs_onboarder`` step ended in a commit failure
+    (its sandbox had finished) and every uncommitted path is under the context
+    root. Anything else (a sandbox killed mid-write, foreign changes) runs the
+    onboarder again.
+    """
+    from factory.chain.branch import _run_git
+    from factory.chain.event_log import read_story_events
+
+    if story.id is None:
+        return []
+    events = read_story_events(story.id, software_factory_root=software_factory_root, slug_hint=story.slug)
+    last = next(
+        (
+            e
+            for e in reversed(events)
+            if e.get("event") == "handler_end" and e.get("handler") == "docs_onboarder"
+        ),
+        None,
+    )
+    if last is None or not str(last.get("error") or "").startswith(_ONBOARDER_COMMIT_FAILED):
+        return []
+    try:
+        porcelain = _run_git(repo, "status", "--porcelain", "--untracked-files=all").stdout
+    except Exception:  # noqa: BLE001 - unreadable tree: re-run the onboarder
+        return []
+    paths = [line[3:].strip().strip('"') for line in porcelain.splitlines() if line.strip()]
+    root = context_path(app_config.context_dir).rstrip("/") + "/"
+    if not paths or any(not p.startswith(root) for p in paths):
+        return []
+    return paths
+
+
 def handle_docs_onboarder(
     story: StoryRecord,
     app_config: AppConfig,
@@ -5362,7 +5403,9 @@ def handle_docs_onboarder(
     Uses ``resolve_app_repo_path`` for the sandbox working directory (Bug A
     fix) and ``ensure_feature_branch`` for the per-story branch (Fix 1).
     Commits produced by the sandbox land on the feature branch in the real
-    app repo.
+    app repo. When the last pass's commit failed (a pre-commit hook), its
+    output is still in the worktree: that output is committed, the sandbox
+    is not run again (``_pending_onboarder_output``).
     """
     db = db_path or (state_dir(software_factory_root) / "factory.db")
     story.state = advance(story, EVENT_DOCS_ONBOARDER_STARTED).value
@@ -5383,36 +5426,55 @@ def handle_docs_onboarder(
         return HandlerResult(next_state=StoryState(story.state), payload=payload)
 
     from factory.chain.pickup import story_branch as _story_branch
-    from factory.runner import LLMConfig, sandbox_run
+    from factory.runner import LLMConfig, RunResult, sandbox_run
 
     target_repo = _writing_worktree(app_config, software_factory_root, story)
     branch = _story_branch(story)
     story.github_branch = branch
     persist_story(story, db)
 
-    story_file_path_obj = software_factory_root / "apps" / story.app / story.story_file_path
-    llm = LLMConfig(model=_route_for(story, "onboarder"))
-    import asyncio
+    from factory.chain.branch import _run_git
 
-    run_res = asyncio.run(
-        sandbox_run(
-            persona="onboarder",
-            story_path=story_file_path_obj,
-            repo_path=target_repo,
-            llm_config=llm,
-            dry_run=False,
-            context_dir=app_config.context_dir,
-            story_id=story.id,
-            app=story.app,
-            direction_id=story.direction_id,
+    pending = _pending_onboarder_output(story, target_repo, app_config, software_factory_root)
+    if pending:
+        log_story_event(
+            story.id,
+            "docs_onboarder_output_reused",
+            {"files": pending[:50], "count": len(pending)},
+            software_factory_root=software_factory_root,
+            slug_hint=story.slug,
         )
-    )
+        run_res = RunResult(
+            success=True,
+            files_changed=pending,
+            test_run_passed=None,
+            tokens_in=0,
+            tokens_out=0,
+            cost_usd=0.0,
+            summary=f"committed the {len(pending)} file(s) an earlier onboarder pass left uncommitted",
+        )
+    else:
+        story_file_path_obj = software_factory_root / "apps" / story.app / story.story_file_path
+        llm = LLMConfig(model=_route_for(story, "onboarder"))
+        import asyncio
+
+        run_res = asyncio.run(
+            sandbox_run(
+                persona="onboarder",
+                story_path=story_file_path_obj,
+                repo_path=target_repo,
+                llm_config=llm,
+                dry_run=False,
+                context_dir=app_config.context_dir,
+                story_id=story.id,
+                app=story.app,
+                direction_id=story.direction_id,
+            )
+        )
 
     # Onboarder writes files via SDK tool calls. The factory then explicitly
     # commits whatever's left untracked on the feature branch — the SDK
     # doesn't always commit cleanly across the full set.
-    from factory.chain.branch import _run_git
-
     try:
         _run_git(target_repo, "add", "-A")
         # Only commit if there's anything to commit; an empty commit would be
@@ -5438,7 +5500,7 @@ def handle_docs_onboarder(
             )
     except Exception as exc:
         story.state = advance(story, EVENT_DOCS_ONBOARDER_FAILED).value
-        story.error = f"docs_onboarder commit failed: {exc}"
+        story.error = f"{_ONBOARDER_COMMIT_FAILED}: {exc}"
         persist_story(story, db)
         return HandlerResult(
             next_state=StoryState(story.state),
@@ -6626,7 +6688,7 @@ def _autoformat_changed_py_before_pr(
                 cwd=str(target_repo),
                 check=False,
                 capture_output=True,
-                timeout=60,
+                timeout=COMMIT_TIMEOUT_S,
             )
     except (subprocess.TimeoutExpired, OSError):
         return

@@ -2846,7 +2846,8 @@ def resume_story_cmd(
         "--at",
         help=(
             "Re-entry point: auto (infer from banked artifacts) | gates (re-grade the "
-            "existing PR — no persona runs) | tech_writer | review | dev | sm (full rebuild)"
+            "existing PR — no persona runs) | tech_writer | review | dev | docs (a docs-chain "
+            "story's onboarder) | sm (full rebuild)"
         ),
     ),
     reason: str = typer.Option(

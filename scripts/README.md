@@ -104,7 +104,7 @@ most tests, so a leaf edit takes seconds and a core edit takes a normal suite ru
 
 Software-factory has the same thing for pytest: `python scripts/changed-pytest.py [--list] [--since REF] [--all] [-- pytest args]`
 When a change selects more than 40 test files (or a shared file such as `conftest.py` changed), it
-runs only the 20 smallest selected files as a smoke subset and leaves the full suite to CI; `--all`
+runs only the 10 smallest selected files as a smoke subset and leaves the full suite to CI; `--all`
 runs the whole selection.
 (import graph by regex, `conftest.py` and fixture-file-name edges, no plugins).
 
@@ -120,7 +120,12 @@ skipping it, and a tool that cannot run fails the gate.
 
 `scripts/hooks/pre-commit` runs the public-repo guard (`guard: N files clean`, ios-messages), then
 `scripts/pre-commit-tests.js`: changed-files mode for every tool that uses this runner plus
-software-factory, in parallel. Install (or update) it into the shared `.git/hooks` with:
+software-factory, in parallel. A Node tool without `node_modules` is skipped with a note. The
+software-factory leg runs in `software-factory/.venv`; in a worktree whose venv is missing or lacks
+pytest/pytest-xdist (a factory story worktree, an agent's) it first runs `uv sync --all-extras`
+there (~10 s), runs serially if xdist is still missing, and blocks the commit, saying why, when
+there is no pytest at all. The factory gives its commits 15 minutes for this
+(`factory/chain/branch.py::COMMIT_TIMEOUT_S`). Install (or update) it into the shared `.git/hooks` with:
 
 ```
 node scripts/install-hooks.js
