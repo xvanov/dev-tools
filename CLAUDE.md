@@ -11,9 +11,9 @@ read that before changing the tool.
 
 **A unit of work is not done until it is committed to `main` and pushed to the remote.** Don't leave
 finished work sitting in the working tree: these tools deploy by `git pull` on the machines that run
-them (`termhub/windows/update.ps1` does `git pull --ff-only` and *fails on a dirty tree*), so
-uncommitted work is not merely unsaved — it blocks the next update and makes the running version
-untraceable.
+them (`termhub/windows/update.ps1` stashes a dirty tree around its `git pull --ff-only` and *stops
+the update* when the changes will not go back on top), so uncommitted work is not merely unsaved —
+it can stop the next update and makes the running version untraceable.
 
 So, at the end of each unit of work:
 
