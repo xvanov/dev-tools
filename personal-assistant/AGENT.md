@@ -95,6 +95,22 @@ reach termhub — who can open a shell, which is more than the dashboard can do 
 capability; it is how the dashboard works from a phone. For that the page's own URLs are relative
 (`api/...`, `routines.js`), never `/api/...`. Do not expose the dashboard any other way.
 
+**Passkey sessions (plan 7.1) are off by default and add to these guards, never replace them.**
+`PA_PASSKEYS=on` makes the dashboard (`src/dashboard/auth.js`, `src/auth/`) require a WebAuthn
+passkey session cookie (`pa_session`: HttpOnly, SameSite=Strict, opaque, only its hash stored; idle
+30 min and sliding, 12 h hard ceiling) on everything but `/api/auth/*`, `/login`, `/healthz` and
+the theme; termhub's front applies the same session to its remote `/api/*` and `/ws/*` by asking
+the dashboard (`termhub/lib/passkeyGate.js`). Set `PA_PASSKEY_RP_ID` and `PA_PASSKEY_ORIGINS` to
+the name the browser uses (default `localhost:7300`; a passkey is bound to its RP id, so register on
+the origin you will use). High-risk approvals (merge, push to main, secret reveal) need a fresh
+assertion bound to that exact approval id (`/api/auth/stepup/*`, `paAuth.stepUp(id)` in
+`login.client.js`); the grant is one-use, two minutes, and only that endpoint writes one, so voice,
+MCP and agents cannot. The policy engine asks `src/auth/stepup.js` `hasStepUp(id, {consume: true})`.
+**Recovery, never a lockout:** the gate stays open while no passkey is registered (the first visit to
+`/login` registers one); `pa passkeys reset` at an interactive local terminal (type `RESET`)
+forgets every passkey and session; `PA_PASSKEYS=off` plus a restart is the last exit. The reset is
+not a chat verb and no HTTP route does it. Like the rest of this section the boundary against a
+dispatched agent is the OS user, not this cookie.
 **The PA chat acts only behind permission prompts.** `pa chat` starts one Claude Code session in
 termhub, homed in `<dataDir>/pa-home` (`src/chat/`), which reads other people's messages all day.
 It is started *without* `--dangerously-skip-permissions` and *with* `--permission-mode default`; its

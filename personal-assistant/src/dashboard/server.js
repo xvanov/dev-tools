@@ -213,6 +213,14 @@ async function handle(req, res) {
   if (!hostAllowed(req.headers.host)) return send(res, 403, { error: 'host not allowed' });
   const url = new URL(req.url, 'http://localhost');
 
+  // ---- Passkey sessions (plan 7.1, dashboard/auth.js): inert unless PA_PASSKEYS=on.
+  // The sign-in routes first, then the gate that demands a session of everything else. ----
+  {
+    const passkeys = require('./auth');
+    if (await passkeys.route(req, res, url, { send, readJson })) return;
+    if (await passkeys.gate(req, res, url, { send })) return;
+  }
+
   if (req.method === 'GET' && url.pathname === '/') {
     return send(res, 200, pageHtml(issuePageToken()), 'text/html; charset=utf-8');
   }

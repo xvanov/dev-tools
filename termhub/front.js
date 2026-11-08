@@ -37,6 +37,7 @@ const execRoute = require('./lib/exec');
 const { checkRequest, checkUpgrade, refuseUpgrade, learnSelfNamesAndWarn } = require('./lib/requestGuard');
 const cursorTranscripts = require('./lib/cursorTranscripts');
 const { createClientLog } = require('./lib/clientLog');
+const { createPasskeyGate } = require('./lib/passkeyGate');
 const { createTranscriber } = require('./lib/transcribe');
 
 const WEB_DIR = path.join(__dirname, 'web');
@@ -124,7 +125,9 @@ function createFront({ sessiondPort, port: serverPort = DEFAULT_FRONT_PORT, paUr
   const handlePa = createPaProxy(paUrl === undefined ? resolvePaUrl() : resolvePaUrl({ TERMHUB_PA_URL: paUrl }));
   const clientLog = createClientLog(clientLogDir ? { dir: clientLogDir } : {});
   const transcriber = createTranscriber(transcribe || {});
-  const server = http.createServer((req, res) => {
+  // Passkey sessions (plan 7.1): off unless PA_PASSKEYS=on; see lib/passkeyGate.js.
+  const gate = createPasskeyGate({ paUrl: resolvePaUrl(process.env) });
+  const handleRequest = (req, res) => {
     const url = new URL(req.url, 'http://localhost');
     const { pathname } = url;
 
@@ -292,6 +295,15 @@ function createFront({ sessiondPort, port: serverPort = DEFAULT_FRONT_PORT, paUr
     }
 
     return serveStatic(res, pathname);
+  };
+  const server = http.createServer((req, res) => {
+    if (!gate.enabled) return handleRequest(req, res);
+    const at = req.url.indexOf('?');
+    return gate.verdict(req, at === -1 ? req.url : req.url.slice(0, at)).then((v) => {
+      if (v.ok) return handleRequest(req, res);
+      sendJson(res, v.status, { error: v.error });
+      return req.resume();
+    });
   });
 
   // ---- WebSocket upgrade proxy ----------------------------------------------
@@ -306,6 +318,8 @@ function createFront({ sessiondPort, port: serverPort = DEFAULT_FRONT_PORT, paUr
     const refused = checkUpgrade(req);
     if (refused) return refuseUpgrade(clientSocket, refused);
 
+    // Passkey sessions (plan 7.1): a remote upgrade needs a live session too.
+    const proxy = () => {
     const upstream = net.connect(sessiondPort, '127.0.0.1', () => {
       // Replay the request line + headers verbatim so sessiond's WebSocketServer
       // sees an ordinary upgrade request.
@@ -320,6 +334,9 @@ function createFront({ sessiondPort, port: serverPort = DEFAULT_FRONT_PORT, paUr
     });
     upstream.on('error', () => clientSocket.destroy());
     clientSocket.on('error', () => upstream.destroy());
+    };
+    if (!gate.enabled) return proxy();
+    return gate.verdict(req, url.pathname).then((v) => (v.ok ? proxy() : refuseUpgrade(clientSocket, v)));
   });
 
   return server;

@@ -97,6 +97,7 @@ const HELP = `pa — your context layer
     pa secret set <NAME>            hidden prompt → the OS keyring (Credential Manager / Secret Service)
     pa secret request <NAME> --purpose "…"  ask for it in the dashboard instead
     pa help secret                  every secret verb
+    pa passkeys status|reset        passkey sign-in (PA_PASSKEYS=on); reset is the local-console recovery
 
   Routines
     pa routine add "<words>"        a recurring action, e.g. "every weekday at 8 pull main on all repos"
@@ -1764,6 +1765,7 @@ const commands = {
 
 Object.assign(commands, require('./memory').make(out, fail));
 Object.assign(commands, require('./secret').make(out, fail));
+Object.assign(commands, require('./passkeys').make(out, fail));
 Object.assign(commands, require('./meeting').make(out, fail));
 Object.assign(commands, require('./routine').make(out, fail));
 Object.assign(commands, require('./task').make(out, fail));
@@ -1775,7 +1777,7 @@ async function main(argv) {
   const name = command || 'help';
 
   if (flags.help || name === 'help' || name === '--help') {
-    const topics = { memory: './memory', secret: './secret', routine: './routine', routines: './routine', task: './task', policy: './task', e2e: './e2e', audit: './audit' };
+    const topics = { memory: './memory', secret: './secret', passkeys: './passkeys', routine: './routine', routines: './routine', task: './task', policy: './task', e2e: './e2e', audit: './audit' };
     out(topics[args[0]] ? require(topics[args[0]]).HELP : HELP);
     return;
   }

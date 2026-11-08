@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jarvis · Sign in</title>
+<link rel="stylesheet" href="theme.css">
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--surface-0); color: var(--ink);
+    font: var(--text-base)/var(--leading) var(--font-sans); }
+  main { max-width: 420px; margin: 12vh auto 0; padding: 0 16px; display: grid; gap: 12px; }
+  h1 { font-size: var(--text-md); margin: 0; }
+  button { font: inherit; padding: 8px 14px; cursor: pointer; }
+  input { font: inherit; padding: 6px 8px; width: 100%; }
+  #msg { color: var(--ink-2); font-size: var(--text-sm); min-height: 1.4em; }
+  #msg.bad { color: var(--bad); }
+</style>
+</head>
+<body>
+<main id="pa-login">
+  <h1>Sign in with your passkey</h1>
+  <button id="signin" hidden>Use my passkey</button>
+  <label id="firstWrap">
+    <input id="label" placeholder="Name this device (optional)" maxlength="60">
+  </label>
+  <button id="first" hidden>Register a passkey</button>
+  <div id="msg" role="status"></div>
+</main>
+<script src="login.js"></script>
+</body>
+</html>

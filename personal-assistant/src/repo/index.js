@@ -1,4 +1,4 @@
-'use strict';
+﻿'use strict';
 
 // The repository layer (native plan 1.2): every SQL statement the PA runs
 // lives in one of the aggregate modules in this directory, behind a named,
@@ -39,6 +39,7 @@ const AGGREGATES = {
   meetings: () => require('./meetings'),
   memory: () => require('./memory'),
   notifications: () => require('./notifications'),
+  passkeys: () => require('./passkeys'),
   people: () => require('./people'),
   projects: () => require('./projects'),
   proposals: () => require('./proposals'),
