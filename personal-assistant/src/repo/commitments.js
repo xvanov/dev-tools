@@ -1017,6 +1017,13 @@ function create(db) {
       );
       return Boolean(res.rowCount);
     },
+
+    // --- for proposals/index.js
+
+    /** Clears a commitment's plan time, so the planner plans it again. */
+    async replan(id) {
+      await db.query('update commitment set planned_at = null where id = $1', [id]);
+    },
   };
 }
 

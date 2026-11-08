@@ -25,7 +25,7 @@ const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
 const cfg = require('../config');
-const db = require('../db');
+const repo = require('../repo');
 const vault = require('./vault');
 const { logger } = require('../log');
 
@@ -125,20 +125,10 @@ function storeValue(name, value, { target = 'credential-manager' } = {}) {
 }
 
 async function markFulfilled(name, target, requestedBy) {
-  const done = await db.rows(
-    `update secret_request set status = 'fulfilled', fulfilled_at = now(), stored_in = $2
-      where name = $1 and status = 'pending' returning id`,
-    [name, target]
-  );
+  const done = await repo.secrets.fulfilPendingByName(name, target);
   // A value set with no request open still gets a row, so `pa secret list`
   // can say when it was set.
-  if (!done.length) {
-    await db.query(
-      `insert into secret_request (kind, name, purpose, requested_by, target, status, fulfilled_at, stored_in)
-       values ('secret', $1, 'set directly', $2, $3, 'fulfilled', now(), $3)`,
-      [name, requestedBy, target]
-    );
-  }
+  if (!done.length) await repo.secrets.recordSetDirectly(name, requestedBy, target);
 }
 
 // `pa secret set`: no request needed.
@@ -150,7 +140,7 @@ async function store(name, value, { target = 'credential-manager', by = 'cli' } 
 
 // The dashboard's Save: answers request `id` with a value.
 async function fulfil(id, value, { target } = {}) {
-  const req = await db.one('select * from secret_request where id = $1', [id]);
+  const req = await repo.secrets.byId(id);
   if (!req) throw Object.assign(new Error(`no request #${id}`), { status: 404 });
   if (req.kind !== 'secret') throw Object.assign(new Error(`request #${id} is a login, not a value`), { status: 400 });
   if (req.status !== 'pending') throw Object.assign(new Error(`request #${id} is already ${req.status}`), { status: 409 });
@@ -162,11 +152,7 @@ async function fulfil(id, value, { target } = {}) {
 
 async function setStatus(id, status) {
   if (!['declined', 'fulfilled'].includes(status)) throw Object.assign(new Error('bad status'), { status: 400 });
-  const row = await db.one(
-    `update secret_request set status = $2, fulfilled_at = case when $2 = 'fulfilled' then now() end
-      where id = $1 and status = 'pending' returning id, name, status`,
-    [id, status]
-  );
+  const row = await repo.secrets.settle(id, status);
   if (!row) throw Object.assign(new Error(`request #${id} is not pending`), { status: 409 });
   return row;
 }
@@ -174,7 +160,7 @@ async function setStatus(id, status) {
 // Declining a secret; a login is marked done with the same call.
 const decline = (id) => setStatus(id, 'declined');
 async function loginDone(id) {
-  const req = await db.one('select kind from secret_request where id = $1', [id]);
+  const req = await repo.secrets.kindOf(id);
   if (!req || req.kind !== 'login') throw Object.assign(new Error(`request #${id} is not a login`), { status: 400 });
   return setStatus(id, 'fulfilled');
 }
@@ -214,10 +200,7 @@ async function requestLogin({ key, purpose, hint = null, url = null, command = n
 
 // A check that passes again closes its login request.
 async function resolveLogin(key) {
-  await db.query(
-    `update secret_request set status = 'fulfilled', fulfilled_at = now() where name = $1 and status = 'pending'`,
-    [key]
-  );
+  await repo.secrets.fulfilPendingLogin(key);
 }
 
 function safeUrl(url) {
@@ -225,18 +208,14 @@ function safeUrl(url) {
 }
 
 async function openRequest({ kind, name, purpose, hint, url, command = null, requestedBy, target }) {
-  const existing = await db.one(`select * from secret_request where name = $1 and status = 'pending'`, [name]);
+  const existing = await repo.secrets.pendingByName(name);
   if (existing) return { id: Number(existing.id), name, status: 'pending', existing: true };
-  const row = await db.one(
-    `insert into secret_request (kind, name, purpose, hint, url, command, requested_by, target)
-     values ($1,$2,$3,$4,$5,$6,$7,$8)
-     on conflict (name) where status = 'pending' do nothing
-     returning *`,
-    [kind, name, String(purpose).slice(0, 500), hint ? String(hint).slice(0, 500) : null, safeUrl(url),
-      command ? String(command).slice(0, 300) : null, String(requestedBy || 'agent').slice(0, 60), target]
-  );
+  const row = await repo.secrets.open({
+    kind, name, purpose: String(purpose).slice(0, 500), hint: hint ? String(hint).slice(0, 500) : null, url: safeUrl(url),
+    command: command ? String(command).slice(0, 300) : null, requestedBy: String(requestedBy || 'agent').slice(0, 60), target,
+  });
   if (!row) {
-    const again = await db.one(`select id from secret_request where name = $1 and status = 'pending'`, [name]);
+    const again = await repo.secrets.pendingIdByName(name);
     return { id: again ? Number(again.id) : null, name, status: 'pending', existing: true };
   }
   log.info('requested', { id: row.id, kind, name });
@@ -261,11 +240,11 @@ async function openRequest({ kind, name, purpose, hint, url, command = null, req
 // Pending requests, for the dashboard. A secret that became configured some
 // other way (exported, set in another shell) stops being asked for.
 async function pending() {
-  const list = await db.rows(`select * from secret_request where status = 'pending' order by created_at`);
+  const list = await repo.secrets.pending();
   const open = [];
   for (const r of list) {
     if (r.kind === 'secret' && cfg.secretSource(r.name)) {
-      await db.query(`update secret_request set status = 'expired', fulfilled_at = now() where id = $1`, [r.id]);
+      await repo.secrets.expire(r.id);
       continue;
     }
     open.push(publicRow(r));
@@ -308,13 +287,7 @@ async function list() {
       vaultError = err.message;
     }
   }
-  const history = await db
-    .rows(
-      `select distinct on (name) name, fulfilled_at, stored_in from secret_request
-        where kind = 'secret' and fulfilled_at is not null and stored_in is not null
-        order by name, fulfilled_at desc`
-    )
-    .catch(() => []);
+  const history = await repo.secrets.lastSet().catch(() => []);
   const setAt = new Map(history.map((h) => [h.name, h.fulfilled_at]));
   const names = [...new Set([...KNOWN, ...vaultNames, ...history.map((h) => h.name)])].sort();
   const secrets = names.map((name) => ({

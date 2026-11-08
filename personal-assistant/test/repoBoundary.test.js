@@ -25,7 +25,6 @@ const PENDING = new Set([
   'src/dispatch/factory.js',
   'src/dispatch/index.js',
   'src/dispatch/stats.js',
-  'src/draft/index.js',
   'src/durable/index.js',
   'src/durable/spawners.js',
   'src/durable/tasks/chase.js',
@@ -42,13 +41,11 @@ const PENDING = new Set([
   'src/ingest/teamsLocal.js',
   'src/mcp/chatTools.js',
   'src/mcp/server.js',
-  'src/proposals/index.js',
   'src/repos/index.js',
   'src/repos/sources.js',
   'src/routines/actions/repoSync.js',
   'src/routines/index.js',
   'src/routines/suggest.js',
-  'src/secrets/index.js',
 ]);
 
 // May require src/db for the pool's lifecycle (a dedicated connection, close

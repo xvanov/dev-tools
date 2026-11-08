@@ -884,4 +884,12 @@ module.exports = {
     assert.deepStrictEqual([row.project_id, row.repo_path, row.project_confidence, row.project_rationale], [null, null, null, 'cleared: why']);
     assert.strictEqual(await repos.commitments.clearProject(c, 'again', p1), false, 'already cleared');
   },
+
+  // --- for proposals/index.js
+  'replan: clears planned_at': async ({ repos, seed, db, assert }) => {
+    const c = await seed.commitment();
+    await db.query('update commitment set planned_at = now() where id = $1', [c]);
+    await repos.commitments.replan(c);
+    assert.strictEqual((await db.one('select planned_at from commitment where id = $1', [c])).planned_at, null);
+  },
 };

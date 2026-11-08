@@ -17,7 +17,7 @@
 
 const llm = require('../llm');
 const { config } = require('../config');
-const { one, rows, query } = require('../db');
+const repo = require('../repo');
 const { truncate } = require('../util/text');
 const deliver = require('./deliver');
 const { logger } = require('../log');
@@ -66,20 +66,13 @@ ${VOICE}
 // ------------------------------------------------------------- context --
 
 async function myEmail() {
-  const me = await one('select primary_email from person where is_me limit 1');
+  const me = await repo.drafts.myEmail();
   return me?.primary_email ? me.primary_email.toLowerCase() : null;
 }
 
 async function thread(item, limit = 8) {
   if (!item?.thread_external_id) return [];
-  return rows(
-    `select occurred_at, author_identity, subject, body_text, raw->>'fromName' as from_name
-       from source_item
-      where source = $1 and thread_external_id = $2 and id <> $3
-        and occurred_at <= $4
-      order by occurred_at desc limit $5`,
-    [item.source, item.thread_external_id, item.id, item.occurred_at, limit]
-  );
+  return repo.drafts.threadBefore(item, limit);
 }
 
 // Background for a reply: recall's evidence (items and the facts distilled
@@ -109,23 +102,14 @@ async function pages(personId) {
 // ---------------------------------------------------------------- reply --
 
 async function composeReply(commitmentId, { origin = 'manual' } = {}) {
-  const c = await one(
-    `select c.*, per.display_name as who, per.primary_email as who_email
-       from commitment c left join person per on per.id = c.counterparty_person_id
-      where c.id = $1`,
-    [commitmentId]
-  );
+  const c = await repo.drafts.askWithCounterparty(commitmentId);
   if (!c) throw new Error(`no commitment #${commitmentId}`);
-  const item = await one('select * from source_item where id = $1', [c.source_item_id]);
+  const item = await repo.drafts.sourceItem(c.source_item_id);
   const target = deliver.targetFor(item, { me: await myEmail(), counterpartyEmail: c.who_email });
 
   const earlier = await thread(item);
   // The other asks read from the same message: one reply answers all of them.
-  const siblings = await rows(
-    `select summary, detail from commitment
-      where source_item_id = $1 and id <> $2 and direction = 'owed_by_me' and status in ('open','dispatched')`,
-    [c.source_item_id, commitmentId]
-  );
+  const siblings = await repo.drafts.siblingAsks(c.source_item_id, commitmentId);
   const [background, memo] = await Promise.all([
     related(`${c.summary} ${item?.subject || ''}`, item?.id),
     pages(c.counterparty_person_id),
@@ -174,14 +158,9 @@ async function composeReply(commitmentId, { origin = 'manual' } = {}) {
 }
 
 async function composeNudge(commitmentId) {
-  const c = await one(
-    `select c.*, per.display_name as who, per.primary_email as who_email
-       from commitment c left join person per on per.id = c.counterparty_person_id
-      where c.id = $1`,
-    [commitmentId]
-  );
+  const c = await repo.drafts.askWithCounterparty(commitmentId);
   if (!c) throw new Error(`no commitment #${commitmentId}`);
-  const item = await one('select * from source_item where id = $1', [c.source_item_id]);
+  const item = await repo.drafts.sourceItem(c.source_item_id);
   const target = deliver.targetFor(item, { me: await myEmail(), counterpartyEmail: c.who_email });
   const earlier = await thread(item);
   const prompt = [
@@ -216,13 +195,13 @@ async function compose(runId, { channel = null } = {}) {
   const run = await dispatch.get(runId);
   if (!run) throw new Error(`no run #${runId}`);
   const commitment = run.commitment_id
-    ? await one('select * from commitment where id = $1', [run.commitment_id])
+    ? await repo.drafts.commitment(run.commitment_id)
     : null;
   const item = commitment
-    ? await one('select * from source_item where id = $1', [commitment.source_item_id])
+    ? await repo.drafts.sourceItem(commitment.source_item_id)
     : null;
   const person = commitment?.counterparty_person_id
-    ? await one('select * from person where id = $1', [commitment.counterparty_person_id])
+    ? await repo.drafts.person(commitment.counterparty_person_id)
     : null;
   const review = await dispatch.review(runId).catch(() => ({ stat: '', commits: '' }));
 
@@ -263,11 +242,7 @@ async function compose(runId, { channel = null } = {}) {
 }
 
 async function save({ commitmentId, runId, sourceItemId, target, subject, body, origin }) {
-  const draft = await one(
-    `insert into draft (commitment_id, run_id, source_item_id, channel, to_identity, subject, body, target, origin, status)
-     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,'pending') returning *`,
-    [commitmentId, runId, sourceItemId, target.channel, target.label || null, subject, body, target, origin]
-  );
+  const draft = await repo.drafts.insert({ commitmentId, runId, sourceItemId, target, subject, body, origin });
   log.info('drafted', { draft: draft.id, commitment: commitmentId, run: runId, channel: target.channel, origin });
   return draft;
 }
@@ -281,9 +256,7 @@ async function save({ commitmentId, runId, sourceItemId, target, subject, body, 
 // How "I" appear as an item's author: my email, and my AAD object id in the
 // `aad:<oid>` form Teams items carry.
 async function myAuthorForms() {
-  const ids = await rows(
-    `select pi.kind, pi.value from person_identity pi join person p on p.id = pi.person_id where p.is_me`
-  );
+  const ids = await repo.people.myIdentities();
   const out = new Set(['me']);
   for (const { kind, value } of ids) {
     if (kind === 'smtp') out.add(String(value).toLowerCase());
@@ -294,83 +267,33 @@ async function myAuthorForms() {
   return [...out];
 }
 
-// "I already answered": a message from me in the same thread, after the ask.
-// Same source only — a Teams ask is answered in that chat, a mail in that
-// conversation. SQL fragment over `si` (the ask's item); $1 = my author forms.
-const ANSWERED = `exists (
-  select 1 from source_item mine
-   where mine.source = si.source and mine.thread_external_id = si.thread_external_id
-     and si.thread_external_id is not null
-     and mine.occurred_at > si.occurred_at
-     and lower(coalesce(mine.author_identity, '')) = any($1::text[]))`;
+// "I already answered" (a message from me in the same thread, after the ask)
+// is repo.drafts' ANSWERED fragment.
 
 // Retires pending drafts whose ask I have since answered myself, recording why.
 // Runs before autoDraft every pass, so the "Replies to send" list only holds
 // replies that are still owed.
 async function retireAnswered() {
   const me = await myAuthorForms();
-  const stale = await rows(
-    `select d.id, (select min(mine.occurred_at) from source_item mine
-                    where mine.source = si.source and mine.thread_external_id = si.thread_external_id
-                      and mine.occurred_at > si.occurred_at
-                      and lower(coalesce(mine.author_identity, '')) = any($1::text[])) as answered_at
-       from draft d join source_item si on si.id = d.source_item_id
-      where d.status in ('pending', 'edited') and d.origin <> 'nudge' and ${ANSWERED}`,
-    [me]
-  );
+  const stale = await repo.drafts.answeredOpen(me);
   for (const d of stale) {
-    await query(
-      `update draft set status = 'discarded', closed_at = now(),
-              closed_reason = $2 where id = $1 and status in ('pending','edited')`,
-      [d.id, `you already replied in the thread (${new Date(d.answered_at).toISOString().slice(0, 16).replace('T', ' ')} UTC)`]
-    );
+    await repo.drafts.discardWithReason(d.id, `you already replied in the thread (${new Date(d.answered_at).toISOString().slice(0, 16).replace('T', ' ')} UTC)`);
   }
   // A reply to my own message is no reply at all: a promise I made ("I'm
   // creating a fix PR now") became a commitment, and drafting for it wrote me
   // a message addressed to myself.
-  const own = await query(
-    `update draft d set status = 'discarded', closed_at = now(), closed_reason = 'the ask was your own message'
-       from source_item si
-      where si.id = d.source_item_id and d.status in ('pending','edited') and d.origin = 'auto'
-        and lower(coalesce(si.author_identity, '')) = any($1::text[])`,
-    [me]
-  );
+  const own = await repo.drafts.discardOwnAsks(me);
   // A follow-up on something owed to me is moot once that is settled.
-  const settled = await query(
-    `update draft d set status = 'discarded', closed_at = now(), closed_reason = 'what you were chasing is settled'
-       from commitment c
-      where c.id = d.commitment_id and d.origin = 'nudge' and d.status in ('pending','edited') and c.status <> 'open'`
-  );
-  if (stale.length || own.rowCount || settled.rowCount) log.info('retired answered drafts', { count: stale.length, own: own.rowCount, settled: settled.rowCount });
-  return stale.length + (own.rowCount || 0) + (settled.rowCount || 0);
+  const settled = await repo.drafts.discardSettledNudges();
+  if (stale.length || own || settled) log.info('retired answered drafts', { count: stale.length, own, settled });
+  return stale.length + own + settled;
 }
 
 async function autoDraft({ limit = 3 } = {}) {
   await retireAnswered().catch((err) => log.warn('retire answered failed', { message: err.message }));
   if (!config.drafts.auto) return 0;
   const me = await myAuthorForms();
-  const candidates = await rows(
-    `select c.id
-       from commitment c
-       join source_item si on si.id = c.source_item_id
-       left join person per on per.id = c.counterparty_person_id
-      where c.status = 'open' and c.direction = 'owed_by_me' and c.superseded_by is null
-        and si.source in ('graph_chat', 'graph_mail')
-        and coalesce(c.confidence, 1) >= $2
-        and si.occurred_at > now() - interval '2 days'
-        and coalesce(per.is_me, false) = false
-        and lower(coalesce(si.author_identity, '')) <> all($1::text[])
-        and not exists (select 1 from draft d where d.commitment_id = c.id)
-        -- One reply per message: an ask that holds two requests became two
-        -- commitments, and drafting each wrote the same person two replies.
-        and not exists (
-          select 1 from draft d join commitment sib on sib.id = d.commitment_id
-           where sib.source_item_id = c.source_item_id and sib.id <> c.id)
-        and not ${ANSWERED}
-      order by si.occurred_at desc
-      limit $3`,
-    [me, config.drafts.minConfidence, limit]
-  );
+  const candidates = await repo.drafts.autoCandidates(me, config.drafts.minConfidence, limit);
   let made = 0;
   for (const { id } of candidates) {
     try {
@@ -386,29 +309,23 @@ async function autoDraft({ limit = 3 } = {}) {
 // ------------------------------------------------------------ the rest --
 
 async function get(draftId) {
-  return one('select * from draft where id = $1', [draftId]);
+  return repo.drafts.byId(draftId);
 }
 
 async function pending(runId = null) {
   return runId
-    ? rows(`select * from draft where run_id = $1 order by created_at desc`, [runId])
-    : rows(`select * from draft where status in ('pending','edited') order by created_at desc limit 30`);
+    ? repo.drafts.forRun(runId)
+    : repo.drafts.open();
 }
 
 async function edit(draftId, body) {
-  const row = await one(
-    `update draft set body = $2, status = 'edited' where id = $1 and status in ('pending','edited') returning *`,
-    [draftId, String(body)]
-  );
+  const row = await repo.drafts.edit(draftId, String(body));
   if (!row) throw new Error(`draft #${draftId} is not open`);
   return row;
 }
 
 async function discard(draftId) {
-  const row = await one(
-    `update draft set status = 'discarded' where id = $1 and status in ('pending','edited') returning id`,
-    [draftId]
-  );
+  const row = await repo.drafts.discard(draftId);
   if (!row) throw new Error(`draft #${draftId} is not open`);
   return row;
 }
@@ -427,10 +344,7 @@ async function delivery(draftId) {
 // says you will look into it — so closing the commitment is the caller's
 // explicit choice, not an inference.
 async function markSent(draftId, { closeCommitment = false } = {}) {
-  const row = await one(
-    `update draft set status = 'sent', sent_at = now() where id = $1 and status in ('pending','edited') returning *`,
-    [draftId]
-  );
+  const row = await repo.drafts.markSent(draftId);
   if (!row) throw new Error(`draft #${draftId} is not open`);
   if (closeCommitment && row.commitment_id) {
     await require('../ledger').transition({
