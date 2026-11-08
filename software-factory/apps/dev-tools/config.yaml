@@ -1,0 +1,48 @@
+﻿# Software-factory app config for the xvanov/dev-tools monorepo (generic; nothing
+# machine- or company-specific). Tracked in the public repo like apps/factory.
+#
+# MONOREPO NOTES
+#   * The factory lives IN this repo (software-factory/), so `app_repo_path: ".."`
+#     resolves (against the factory root) to the dev-tools checkout root. It is
+#     the same checkout the factory runs from; stories build in per-story git
+#     worktrees of it, never in the live tree.
+#   * Gate commands run with cwd = the story worktree ROOT (the monorepo root),
+#     not software-factory/. Every tool has its own toolchain, so the default
+#     gate is the factory's own suite via `cd software-factory`. Widen it per
+#     direction (e.g. `cd termhub && npm test`) once a tool's tests are stable.
+#   * GitHub access is per repo owner: xvanov -> `gh auth token --user xvanov`
+#     (factory/gh_auth.py). Never `gh auth switch`.
+#   * Known limit (docs/native/PLAN.md 2.3): FACTORY_REPO in app_config.py is
+#     still xvanov/software-factory, so edits under software-factory/ in this
+#     app are not recognised as factory self-edits and skip the staging gate.
+#     Keep self-improvement of the factory on apps/factory (paused) until that
+#     is fixed.
+
+name: dev-tools
+repo: xvanov/dev-tools
+default_branch: main
+context_dir: apps/dev-tools/context
+app_repo_path: ".."
+
+# This app never self-ticks; directions are filed by an operator or the PA.
+self_tick_enabled: false
+
+# Tools deploy by `git pull` on the machines that run them; the factory
+# deploys nothing for this repo.
+deploy:
+  enabled: false
+
+gates:
+  lint_command: "cd software-factory && uv run ruff check ."
+  format_check_command: ""
+  type_check_command: ""
+  test_command: "cd software-factory && uv run pytest -q"
+  coverage_command: ""
+  e2e_command: ""
+  e2e_harness_ready: false
+  mutation_testing: false
+  flake_quarantine: true
+  smoke_command: ""
+  smoke_harness_ready: false
+
+models: {}  # use default routing

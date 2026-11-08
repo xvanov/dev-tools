@@ -167,6 +167,7 @@ bench/swebench/benchmarks.db
 apps/*
 !apps/factory/
 !apps/template-probe/
+!apps/dev-tools/
 
 # JOBS-API v1.2 runtime: research/report jobs (job.yaml, report.md, workspaces)
 # and Claude Code run dirs (round scripts, stream-json). Runtime-only; read via
@@ -177,3 +178,4 @@ state/claude_runs/
 # (direction 018): already-tracked ones stay tracked, new ones are never added.
 apps/factory/directions/
 apps/template-probe/directions/
+apps/dev-tools/directions/

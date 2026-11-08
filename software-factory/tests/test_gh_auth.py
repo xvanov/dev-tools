@@ -155,6 +155,7 @@ def test_repo_from_cwd(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> None:
     assert gh_auth.repo_from_cwd(tmp_path) == "xvanov/dev-tools"
 
 
+@pytest.mark.skipif(__import__("sys").platform == "win32", reason="Windows uses the Popen hook")
 def test_install_shim_on_path_idempotent_and_optout(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("PATH", "/usr/bin")
     monkeypatch.setenv("FACTORY_GH_SHIM", "0")
@@ -196,5 +197,27 @@ def _load_shim() -> Any:
     ],
 )
 def test_shim_repo_extraction(args: list[str], repo: str | None) -> None:
-    shim = _load_shim()
-    assert shim._repo_from_args(args, gh_auth) == repo
+    assert gh_auth.repo_from_gh_args(args) == repo
+    _load_shim()  # the shim script must at least import cleanly
+
+
+def test_popen_hook_injects_token_only_for_pinned_gh(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: list[dict[str, Any]] = []
+
+    def rec(self: Any, args: Any, *a: Any, **kw: Any) -> None:
+        seen.append({"args": args, "env": kw.get("env")})
+
+    monkeypatch.setattr(subprocess.Popen, "__init__", rec)
+    monkeypatch.setattr(gh_auth, "_hook_installed", False)
+    monkeypatch.setattr(gh_auth, "token_for_repo", lambda repo, gh_bin="gh": "tok-" + repo)
+    monkeypatch.setattr(gh_auth, "repo_from_cwd", lambda cwd=None: None)
+    gh_auth.install_popen_hook()
+
+    subprocess.Popen(["gh", "pr", "view", "--repo", "xvanov/dev-tools"])
+    subprocess.Popen(["gh.exe", "api", "repos/xvanov/x/pulls"], env={"A": "1"})
+    subprocess.Popen(["gh", "pr", "view", "--repo", "other/app"])
+    subprocess.Popen(["gh", "auth", "token", "--user", "xvanov"])
+    subprocess.Popen(["git", "push"])
+    assert seen[0]["env"]["GH_TOKEN"] == "tok-xvanov/dev-tools"
+    assert seen[1]["env"]["GH_TOKEN"] == "tok-xvanov/x" and seen[1]["env"]["A"] == "1"
+    assert [s["env"] for s in seen[2:]] == [None, None, None]

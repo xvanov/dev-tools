@@ -34,6 +34,7 @@ from __future__ import annotations
 import os
 import re
 import subprocess
+import sys
 from pathlib import Path
 
 DEFAULT_OWNER_MAP = {"xvanov": "xvanov"}
@@ -150,6 +151,79 @@ def gh_env(repo: str | None, base: dict[str, str] | None = None) -> dict[str, st
     return env
 
 
+SKIP_VERBS = {"auth", "config", "extension", "alias", "completion", "version", "help"}
+
+
+def repo_from_gh_args(args: list[str]) -> str | None:
+    """Best-effort ``owner/name`` from ``gh`` args (after the ``gh`` word)."""
+    for i, a in enumerate(args):
+        if a in ("--repo", "-R") and i + 1 < len(args):
+            return args[i + 1]
+        if a.startswith("--repo="):
+            return a.split("=", 1)[1]
+    if args and args[0] == "api":
+        for a in args[1:]:
+            m = re.match(r"^/?repos/([^/]+/[^/?]+)", a)
+            if m:
+                return m.group(1)
+    if args and args[0] == "repo":
+        for a in args[2:]:
+            if not a.startswith("-") and repo_owner(a):
+                return a
+    return None
+
+
+def pinned_token_for_gh_args(
+    args: list[str], cwd: str | os.PathLike[str] | None = None, gh_bin: str = "gh"
+) -> str | None:
+    """Token to inject for a ``gh`` invocation, or None to leave auth alone."""
+    if not args or args[0].startswith("-") or args[0] in SKIP_VERBS:
+        return None
+    repo = repo_from_gh_args(args) or repo_from_cwd(cwd)
+    if repo and is_pinned(repo):
+        return token_for_repo(repo, gh_bin=gh_bin)
+    return None
+
+
+_hook_installed = False
+
+
+def install_popen_hook() -> None:
+    """Inject the per-owner ``GH_TOKEN`` into ``gh`` children, in-process.
+
+    On Windows ``CreateProcess`` never resolves the extension-less ``bin/gh``
+    shim, so the factory's own ``subprocess`` calls to ``gh`` are covered by
+    wrapping ``subprocess.Popen.__init__`` instead. Only list-style commands
+    whose first element is ``gh`` / ``gh.exe`` are touched; other callers and
+    non-pinned owners are unaffected. Idempotent.
+    """
+    global _hook_installed
+    if _hook_installed:
+        return
+    _hook_installed = True
+    orig = subprocess.Popen.__init__
+
+    def init(self, args, *a, **kw):  # type: ignore[no-untyped-def]
+        try:
+            if (
+                isinstance(args, (list, tuple))
+                and args
+                and os.path.basename(str(args[0])).lower() in ("gh", "gh.exe")
+                and not kw.get("shell")
+            ):
+                tok = pinned_token_for_gh_args([str(x) for x in args[1:]], kw.get("cwd"))
+                if tok:
+                    env = dict(kw["env"] if kw.get("env") is not None else os.environ)
+                    env["GH_TOKEN"] = tok
+                    env.pop("GITHUB_TOKEN", None)
+                    kw["env"] = env
+        except Exception:  # noqa: BLE001 - never break a gh call over the hook
+            pass
+        orig(self, args, *a, **kw)
+
+    subprocess.Popen.__init__ = init  # type: ignore[method-assign]
+
+
 def shim_dir() -> Path:
     """Directory holding the ``gh`` shim (``software-factory/bin``)."""
     return Path(__file__).resolve().parent.parent / "bin"
@@ -163,6 +237,9 @@ def install_shim_on_path() -> None:
     ``FACTORY_GH_SHIM=0`` to disable.
     """
     if os.environ.get("FACTORY_GH_SHIM", "1") == "0":
+        return
+    if sys.platform == "win32":
+        install_popen_hook()
         return
     d = shim_dir()
     if not (d / "gh").is_file():

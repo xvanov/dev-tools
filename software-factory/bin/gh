@@ -37,24 +37,6 @@ def _real_gh() -> str | None:
     return shutil.which("gh", path=clean)
 
 
-def _repo_from_args(args: list[str], auth) -> str | None:
-    for i, a in enumerate(args):
-        if a in ("--repo", "-R") and i + 1 < len(args):
-            return args[i + 1]
-        if a.startswith("--repo="):
-            return a.split("=", 1)[1]
-    if args and args[0] == "api":
-        for a in args[1:]:
-            m = re.match(r"^/?repos/([^/]+/[^/?]+)", a)
-            if m:
-                return m.group(1)
-    if args and args[0] == "repo":
-        for a in args[2:]:
-            if not a.startswith("-") and auth.repo_owner(a):
-                return a
-    return None
-
-
 def main() -> int:
     real = _real_gh()
     if real is None:
@@ -65,7 +47,7 @@ def main() -> int:
     if args and args[0] not in SKIP and not args[0].startswith("-"):
         try:
             auth = _load_auth()
-            repo = _repo_from_args(args, auth) or auth.repo_from_cwd()
+            repo = auth.repo_from_gh_args(args) or auth.repo_from_cwd()
             if repo and auth.is_pinned(repo):
                 tok = auth.token_for_repo(repo, gh_bin=real)
                 if tok:
