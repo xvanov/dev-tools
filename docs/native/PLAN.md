@@ -155,9 +155,10 @@ Variants, each run at least once per phase exit: all steps on `claude_session` (
 **one step on an API model (DeepSeek)**; a resumed job (`factory job resume`) after killing the
 run mid-step; a job continued on an existing branch (`--branch`).
 
-- [ ] **E1 One id chain.** Card id ↔ job id ↔ run/step id ↔ session id ↔ PR number are stored
+- [x] **E1 One id chain.** Card id ↔ job id ↔ run/step id ↔ session id ↔ PR number are stored
   as links in the data (not inferred from titles), returned by the board, JOBS-API and session
   APIs, and rendered as links in Plan, Build and Run. Jarvis's MCP tools return them too.
+  (7e9bbb8 termhub session links, f6c4480 JOBS-API v1.4, 1ce66ce PA run_pr/run_step + views)
 - [ ] **E2 Every run is watchable (D9).** API-runtime steps emit the same turn-level stream as
   `claude_session` (model turn, tool call, file diff summary, gate result, tokens and cost), to
   the run's event log. Run opens it as a read-only live session rendered by the same pretty
