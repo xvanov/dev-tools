@@ -483,22 +483,25 @@ run mid-step; a job continued on an existing branch (`--branch`).
   into the live tree; the 10 stray files were deleted. Guard landed (e2bcf93,
   `factory/live_tree_guard.py`): files an agent writes into the live checkout are moved into its
   worktree and reported, and every sandbox prompt pins writes to the working directory.
-- [ ] **2.5 State outside the repo (open, priority).** Story worktrees, agent run dirs and job
-  workspaces live under `software-factory/state/`, so for dev-tools every agent cwd is inside the
-  live checkout the PA, termhub and the factory run from. Design, started on branch
-  `wip/state-dir` (5151f14, not on main; 9 new tests pass, the broad suite was not run):
-  `factory/state_dir.py` `state_dir(root)` = `FACTORY_STATE_DIR` (installed root only, so test and
-  bench roots never resolve into live state) > `<root>/.state-dir` pointer (gitignored) >
-  `<root>/state`; the 120 `<root> / "state"` call sites rewritten, plus `runtime_state` and
-  `flake`; `factory state migrate [--to] [--dry-run]` moves `state/*` except the tracked
-  `.gitignore` to `%LOCALAPPDATA%\software-factory\state` (`~/.local/share/...` on Linux),
-  refuses while a `state/locks` lock or the DB is held, or when the target is in the repo or
-  non-empty, rolls back a failed move, writes the pointer and runs `git worktree repair` on the
-  moved worktrees; `factory state where`; the PA reads the same pointer (`resolveStateDir` in
-  `factoryPace.js`, used by `backup.ts`); a relative `serve --log-file` is under the state dir
-  (install-serve.ps1 migrates once unless `-KeepStateInRepo`; the systemd unit uses
-  `logs/serve.log`). Left: run the full suite, review the rewrite, then migrate both machines
-  with serve stopped and restart serve plus the PA worker.
+- [x] **2.5 State outside the repo.** (d4e8416) Story worktrees, agent run dirs and job
+  workspaces lived under `software-factory/state/`, so for dev-tools every agent cwd was inside
+  the live checkout the PA, termhub and the factory run from. `factory/state_dir.py`
+  `state_dir(root)` = the gitignored `<root>/.state-dir` pointer > `<root>/state`; no
+  environment override (serve's children would carry it into a story worktree or staging clone
+  of dev-tools, a second factory copy, and point it at the live state). The ~120
+  `<root> / "state"` sites go through it, the `db.parent.parent` root inferences through
+  `root_for_db`, stored acceptance refs (`state/acceptance/...`) resolve into the state dir.
+  `factory state migrate [--to] [--dry-run]` (operator only: install-serve.ps1 just warns)
+  renames `state/*` except the tracked `.gitignore` to `%LOCALAPPDATA%\software-factory\state`
+  (`~/.local/share/...` on Linux), refuses while a lock or the DB is held, or for a target in
+  the repo, non-empty or on another filesystem, undoes a failed rename, writes the pointer and
+  re-links the worktrees (`git worktree repair`); `factory state where`; serve refuses a pointer
+  to a missing dir. The PA reads the same pointer (`resolveStateDir`, `factoryPace.js`; the
+  backup bundle keeps the dir's own name). Full suite on Windows: 4157 passed, 202 skipped, 4
+  failed (three pass alone; `test_no_first_write_watchdog_pauses_and_still_grades` fails the
+  same on main, a wall-clock budget). Left, on each machine with the factory off: `factory
+  state migrate`, re-run install-serve.ps1 (or copy the new systemd unit: the old one passes an
+  absolute `--log-file` under the repo), restart serve and the PA worker (docs/WINDOWS.md).
 - [ ] **2.5b Real dev-tools context through a docs job (open).** After 2.5, file a docs job so
   the onboarder writes `software-factory/apps/dev-tools/context/` in a worktree and delivers it
   as a PR (context is tracked by design; do not gitignore it).
