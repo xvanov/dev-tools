@@ -28,6 +28,8 @@ type Req = import('http').IncomingMessage;
 type Res = import('http').ServerResponse;
 type Ctx = import('./types.ts').Ctx;
 type HttpError = import('./types.ts').HttpError;
+type Route = import('./types.ts').Route;
+type RouteCtx = import('./types.ts').RouteCtx;
 
 const fs = require('fs');
 const path = require('path');
@@ -182,329 +184,373 @@ function chatStream(req: Req, res: Res) {
   res.on('error', done);
 }
 
-async function handle(req: Req, res: Res) {
-  if (!hostAllowed(req.headers.host)) return send(res, 403, { error: 'host not allowed' });
-  const url = new URL(req.url as string, 'http://localhost');
+// Answers a module route's JSON (memory, meetings, debriefs, routines): its
+// value, or 404 when it does not know the path. A POST needs X-PA.
+async function jsonModule(c: RouteCtx, mod: string) {
+  const { req, res, url, send } = c;
+  if (req.method === 'POST' && req.headers['x-pa'] !== '1') return send(res, 403, { error: 'missing X-PA header' });
+  const body: Row = req.method === 'POST' ? await c.body() : {};
+  const out = await require(mod).route(req.method, url, body);
+  return out === undefined ? send(res, 404, { error: 'not found' }) : send(res, 200, out ?? null);
+}
 
-  // ---- Passkey sessions (plan 7.1, dashboard/auth.js): inert unless PA_PASSKEYS=on.
+// A 400 an action threw (a bad argument), as the reply; anything else goes up.
+async function badRequestAs400<T>(c: RouteCtx, fn: () => Promise<T>) {
+  try {
+    return await fn();
+  } catch (e) {
+    const err = e as HttpError;
+    if (err.status === 400) return c.send(c.res, 400, { error: err.message });
+    throw err;
+  }
+}
+
+const startsWith = (...prefixes: string[]) => (url: URL) => prefixes.some((p) => url.pathname.startsWith(p));
+const oneOf = (...paths: string[]) => (url: URL) => paths.includes(url.pathname);
+const file = (name: string, type: string) => (c: RouteCtx) => c.send(c.res, 200, fs.readFileSync(path.join(__dirname, name), 'utf8'), type);
+const JS = 'text/javascript; charset=utf-8';
+
+// The destinations' names (nav.js DESTS) as URLs. A relative Location, so it
+// lands right under termhub's /pa/ too.
+const ALIAS: Record<string, string> = { '/ask': 'talk', '/plan': './', '/build': 'factory', '/map': 'architecture' };
+
+/**
+ * Every route, in the order the old if-chain tried them (router.ts). A handler
+ * that returns false passes the request on.
+ */
+const ROUTES: Route[] = [
+  // ---- Passkey sessions (plan 7.1, dashboard/auth.ts): inert unless PA_PASSKEYS=on.
   // The sign-in routes first, then the gate that demands a session of everything else. ----
-  {
-    const passkeys = require('./auth.ts');
-    if (await passkeys.route(req, res, url, { send, readJson })) return;
-    if (await passkeys.gate(req, res, url, { send })) return;
-  }
+  { path: () => true, handle: (c) => require('./auth.ts').route(c.req, c.res, c.url, c) },
+  { path: () => true, handle: (c) => require('./auth.ts').gate(c.req, c.res, c.url, c) },
 
-  if (req.method === 'GET' && url.pathname === '/') {
-    return send(res, 200, pageHtml(issuePageToken()), 'text/html; charset=utf-8');
-  }
-  // The destinations' names (nav.js DESTS) as URLs. A relative Location, so it
-  // lands right under termhub's /pa/ too.
-  const ALIAS: Record<string, string> = { '/ask': 'talk', '/plan': './', '/build': 'factory', '/map': 'architecture' };
-  if (req.method === 'GET' && ALIAS[url.pathname]) {
-    res.writeHead(302, { Location: ALIAS[url.pathname] + url.search, 'Cache-Control': 'no-store' });
-    return res.end();
-  }
+  { method: 'GET', path: '/', handle: (c) => c.send(c.res, 200, pageHtml(issuePageToken()), 'text/html; charset=utf-8') },
+  {
+    method: 'GET',
+    path: (url) => Boolean(ALIAS[url.pathname]),
+    handle: ({ res, url }) => {
+      res.writeHead(302, { Location: ALIAS[url.pathname] + url.search, 'Cache-Control': 'no-store' });
+      res.end();
+    },
+  },
   // The design system shared by every layer (theme.css) and the layer switcher
   // (nav.js). termhub serves byte copies of both; see the header of theme.css.
-  if (req.method === 'GET' && (url.pathname === '/theme.css' || url.pathname === '/nav.js')) {
-    const css = url.pathname === '/theme.css';
-    return send(res, 200, fs.readFileSync(path.join(__dirname, css ? 'theme.css' : 'nav.js'), 'utf8'), css ? 'text/css; charset=utf-8' : 'text/javascript; charset=utf-8');
-  }
+  { method: 'GET', path: '/theme.css', handle: file('theme.css', 'text/css; charset=utf-8') },
+  { method: 'GET', path: '/nav.js', handle: file('nav.js', JS) },
 
-  // ---- The voice page (dashboard/talk.js): /talk, its scripts, and
-  // its models (/talk/models/), the local voice service's proxy, and
-  // POST /api/talk/transcribe (X-PA guarded there). ----
-  if (url.pathname === '/talk' || url.pathname.startsWith('/talk.') || url.pathname.startsWith('/talk/') || url.pathname.startsWith('/api/talk/')) {
-    if (await require('./talk.ts').route(req, res, url, { send, issuePageToken })) return;
-  }
-  // ---- end voice page ----
-
-  // ---- The Factory layer (dashboard/factory.js, factory.html): every factory
-  // job from the worker's stored list, and its actions (X-PA guarded there). ----
-  if (url.pathname === '/factory' || url.pathname === '/factory.js' || url.pathname === '/api/factory' || url.pathname.startsWith('/api/factory/')) {
-    if (await require('./factory.ts').route(req, res, url, { send, readJson, issuePageToken, pageTokenOk })) return;
-  }
-  // ---- end Factory layer ----
-
-  // ---- The live feed (dashboard/events.js): GET /api/events, an SSE stream of
-  // board, run and factory changes with Last-Event-ID replay, and /events.js,
-  // the pages' side of it. ----
-  if (url.pathname === '/api/events' || url.pathname === '/events.js') {
-    if (await require('./events.ts').route(req, res, url, { send })) return;
-  }
-
-  // ---- The architecture map (dashboard/architecture.js, architecture.json):
-  // read-only page + GET /api/architecture[?health=1]. ----
-  if (url.pathname === '/architecture' || url.pathname === '/architecture.client.js' || url.pathname === '/api/architecture') {
-    if (await require('./architecture.ts').route(req, res, url, { send })) return;
-  }
-
-  // ---- Meter's data (dashboard/meter.js): GET /api/meter (latency per hop, spend,
-  // the Claude credit pool) and POST /api/telemetry (the factory's spans and usage). ----
-  if (url.pathname === '/api/meter' || url.pathname === '/api/telemetry') {
-    if (await require('./meter.ts').route(req, res, url, { send, readJson })) return;
-  }
+  // The voice page (dashboard/talk.ts): /talk, its scripts, its models
+  // (/talk/models/), the local voice service's proxy, and POST
+  // /api/talk/transcribe (X-PA guarded there).
+  {
+    path: (url) => url.pathname === '/talk' || startsWith('/talk.', '/talk/', '/api/talk/')(url),
+    handle: (c) => require('./talk.ts').route(c.req, c.res, c.url, c),
+  },
+  // The Factory layer (dashboard/factory.ts, factory.html): every factory job
+  // from the worker's stored list, and its actions (X-PA guarded there).
+  {
+    path: (url) => oneOf('/factory', '/factory.js', '/api/factory')(url) || url.pathname.startsWith('/api/factory/'),
+    handle: (c) => require('./factory.ts').route(c.req, c.res, c.url, c),
+  },
+  // The live feed (dashboard/events.ts): GET /api/events, an SSE stream of
+  // board, run and factory changes with Last-Event-ID replay, and /events.js.
+  { path: oneOf('/api/events', '/events.js'), handle: (c) => require('./events.ts').route(c.req, c.res, c.url, c) },
+  // The architecture map (dashboard/architecture.ts, architecture.json).
+  {
+    path: oneOf('/architecture', '/architecture.client.js', '/api/architecture'),
+    handle: (c) => require('./architecture.ts').route(c.req, c.res, c.url, c),
+  },
+  // Meter's data (dashboard/meter.ts): GET /api/meter, POST /api/telemetry.
+  { path: oneOf('/api/meter', '/api/telemetry'), handle: (c) => require('./meter.ts').route(c.req, c.res, c.url, c) },
 
   // The end state a Do would get, before it is pressed: the page shows it,
   // and must send it back as `confirmedLevel` to start an unattended one.
-  let pm = req.method === 'GET' && url.pathname.match(/^\/api\/commitments\/(\d+)\/delivery$/);
-  if (pm) {
-    const D = require('../dispatch/deliveryCore');
-    const q = url.searchParams;
-    const delivery = q.get('delivery') || null;
-    if (delivery && !D.isDelivery(delivery)) return send(res, 400, { error: 'unknown delivery' });
-    const r = await require('../dispatch').previewDelivery({ commitmentId: Number(pm[1]), mode: q.get('mode') || undefined, delivery });
-    return send(res, 200, { ...r, plain: r.delivery ? D.describe(r.delivery) : null, unattended: D.unattended(r.delivery) });
-  }
-  // What a typed follow-up time means, before it is set: the card previews it
-  // with the same parser the chase uses (src/util/when.ts via chaseCore).
+  {
+    method: 'GET',
+    path: /^\/api\/commitments\/(\d+)\/delivery$/,
+    handle: async ({ res, url, m, send }) => {
+      const D = require('../dispatch/deliveryCore');
+      const q = url.searchParams;
+      const delivery = q.get('delivery') || null;
+      if (delivery && !D.isDelivery(delivery)) return send(res, 400, { error: 'unknown delivery' });
+      const r = await require('../dispatch').previewDelivery({ commitmentId: Number(m?.[1]), mode: q.get('mode') || undefined, delivery });
+      return send(res, 200, { ...r, plain: r.delivery ? D.describe(r.delivery) : null, unattended: D.unattended(r.delivery) });
+    },
+  },
   // Which code this worker serves. Open pages poll it (nav.js) and reload
   // themselves once it changes, so an update reaches every open tab.
-  if (req.method === 'GET' && url.pathname === '/healthz') {
-    const ok = readiness.ready && !readiness.draining;
-    return send(res, ok ? 200 : 503, { ready: ok, draining: readiness.draining, commit: servedCommit(), pid: process.pid });
-  }
-  if (req.method === 'GET' && url.pathname === '/api/version') {
-    return send(res, 200, { commit: servedCommit() });
-  }
-  if (req.method === 'GET' && url.pathname === '/api/when') {
-    const C = require('../durable/tasks/chaseCore');
-    const canonical = C.cadenceAnswer(url.searchParams.get('text') || '');
-    const when = canonical ? C.chaseAtFor(canonical, new Date()) : undefined;
-    return send(res, 200, canonical && when ? { ok: true, canonical, at: when.toISOString() } : { ok: false });
-  }
-  if (req.method === 'GET' && url.pathname === '/api/state') {
-    return send(res, 200, await state());
-  }
+  {
+    method: 'GET',
+    path: '/healthz',
+    handle: ({ res, send }) => {
+      const ok = readiness.ready && !readiness.draining;
+      return send(res, ok ? 200 : 503, { ready: ok, draining: readiness.draining, commit: servedCommit(), pid: process.pid });
+    },
+  },
+  { method: 'GET', path: '/api/version', handle: ({ res, send }) => send(res, 200, { commit: servedCommit() }) },
+  // What a typed follow-up time means, before it is set: the card previews it
+  // with the same parser the chase uses (src/util/when.ts via chaseCore).
+  {
+    method: 'GET',
+    path: '/api/when',
+    handle: ({ res, url, send }) => {
+      const C = require('../durable/tasks/chaseCore');
+      const canonical = C.cadenceAnswer(url.searchParams.get('text') || '');
+      const when = canonical ? C.chaseAtFor(canonical, new Date()) : undefined;
+      return send(res, 200, canonical && when ? { ok: true, canonical, at: when.toISOString() } : { ok: false });
+    },
+  },
+  { method: 'GET', path: '/api/state', handle: async ({ res, send }) => send(res, 200, await state()) },
   // Where a run can go: this machine, and each one in PA_MACHINES.
-  if (req.method === 'GET' && url.pathname === '/api/machines') {
-    return send(res, 200, {
-      machines: [{ name: '', label: 'this machine' }, ...Object.keys(config.termhub.machines).map((name) => ({ name, label: name }))],
-      modes: Object.keys(require('../dispatch/modes').MODES),
-      defaultMode: require('../dispatch/modes').mode().name,
-      // Where the work goes: a Claude session, the software factory, or let
-      // the routing rule pick (src/dispatch/routeCore.js). Factory only when configured.
-      routes: require('../dispatch/factory').enabled() ? ['claude', 'factory', 'auto'] : ['claude'],
-      defaultRoute: require('../dispatch/factory').enabled() ? config.factory.via : 'claude',
-      // The end states the operator may pick on Do (src/dispatch/deliveryCore.js);
-      // none picked: the repo's default, else PA_DELIVERY_DEFAULT.
-      deliveries: require('../dispatch/deliveryCore').DELIVERIES.map((d: string) => ({ value: d, plain: require('../dispatch/deliveryCore').describe(d) })),
-      // On the factory route: the job's kind and runtime (JOBS-API v1.2).
-      ...(require('../dispatch/factory').enabled() ? require('./factory.ts').pickers() : {}),
-    });
-  }
+  {
+    method: 'GET',
+    path: '/api/machines',
+    handle: ({ res, send }) =>
+      send(res, 200, {
+        machines: [{ name: '', label: 'this machine' }, ...Object.keys(config.termhub.machines).map((name) => ({ name, label: name }))],
+        modes: Object.keys(require('../dispatch/modes').MODES),
+        defaultMode: require('../dispatch/modes').mode().name,
+        // Where the work goes: a Claude session, the software factory, or let
+        // the routing rule pick (src/dispatch/routeCore.js). Factory only when configured.
+        routes: require('../dispatch/factory').enabled() ? ['claude', 'factory', 'auto'] : ['claude'],
+        defaultRoute: require('../dispatch/factory').enabled() ? config.factory.via : 'claude',
+        // The end states the operator may pick on Do (src/dispatch/deliveryCore.js);
+        // none picked: the repo's default, else PA_DELIVERY_DEFAULT.
+        deliveries: require('../dispatch/deliveryCore').DELIVERIES.map((d: string) => ({ value: d, plain: require('../dispatch/deliveryCore').describe(d) })),
+        // On the factory route: the job's kind and runtime (JOBS-API v1.2).
+        ...(require('../dispatch/factory').enabled() ? require('./factory.ts').pickers() : {}),
+      }),
+  },
   // One commitment with what it came from, so it can be judged before it is
   // dispatched: the ask itself, the thread around it, and any runs so far.
-  let cm = req.method === 'GET' && url.pathname.match(/^\/api\/commitments\/(\d+)$/);
-  if (cm) return send(res, 200, await commitmentContext(Number(cm[1])));
+  { method: 'GET', path: /^\/api\/commitments\/(\d+)$/, handle: async ({ res, m, send }) => send(res, 200, await commitmentContext(Number(m?.[1]))) },
   // The PA chat (src/chat): termhub's "PA chat" button asks for the session
   // and attaches to it. Starting a Claude Code session is an action, so it
   // takes the same X-PA guard as every other POST.
-  if (req.method === 'POST' && url.pathname === '/api/chat/open') {
-    if (req.headers['x-pa'] !== '1') return send(res, 403, { error: 'missing X-PA header' });
-    return send(res, 200, await require('../chat/feed.ts').openChat());
-  }
+  {
+    method: 'POST',
+    path: '/api/chat/open',
+    handle: async ({ req, res, send }) => {
+      if (req.headers['x-pa'] !== '1') return send(res, 403, { error: 'missing X-PA header' });
+      return send(res, 200, await require('../chat/feed.ts').openChat());
+    },
+  },
   // The chat box and the voice page talk to that same session
-  // (src/chat/feed.js; contract in the README, "Talking to it").
-  if (req.method === 'POST' && url.pathname === '/api/chat') {
-    if (req.headers['x-pa'] !== '1') return send(res, 403, { error: 'missing X-PA header' });
-    const body: Row = await readJson(req);
-    return send(res, 200, await require('../chat/feed.ts').feed().send({ text: body.text, source: body.source || 'typed' }));
-  }
+  // (src/chat/feed.ts; contract in the README, "Talking to it").
+  {
+    method: 'POST',
+    path: '/api/chat',
+    handle: async (c) => {
+      const { req, res, send } = c;
+      if (req.headers['x-pa'] !== '1') return send(res, 403, { error: 'missing X-PA header' });
+      const body = await c.body();
+      return send(res, 200, await require('../chat/feed.ts').feed().send({ text: body.text, source: body.source || 'typed' }));
+    },
+  },
   // Approve / Deny on the chat's permission prompt, from the Talk page. It
   // answers a prompt that may start work, so it needs the page's token as well
-  // as X-PA, and src/chat/permission.js checks the screen before one keystroke.
-  if (req.method === 'POST' && url.pathname === '/api/chat/permission') {
-    if (req.headers['x-pa'] !== '1') return send(res, 403, { error: 'missing X-PA header' });
-    if (!pageTokenOk(req)) return send(res, 403, { error: 'answering a permission prompt needs the page token — reload the page' });
-    const body: Row = await readJson(req);
-    return send(res, 200, await require('../chat/feed.ts').feed().answerPermission({ answer: body.answer, toolUseId: body.toolUseId, via: body.via === 'voice' ? 'voice' : 'dashboard' }));
-  }
-  // The worker's INBOX doorbell for the SDK chat (src/notify/chat.js): a
+  // as X-PA, and src/chat/permission.ts checks the screen before one keystroke.
+  {
+    method: 'POST',
+    path: '/api/chat/permission',
+    handle: async (c) => {
+      const { req, res, send } = c;
+      if (req.headers['x-pa'] !== '1') return send(res, 403, { error: 'missing X-PA header' });
+      if (!pageTokenOk(req)) return send(res, 403, { error: 'answering a permission prompt needs the page token — reload the page' });
+      const body = await c.body();
+      return send(res, 200, await require('../chat/feed.ts').feed().answerPermission({ answer: body.answer, toolUseId: body.toolUseId, via: body.via === 'voice' ? 'voice' : 'dashboard' }));
+    },
+  },
+  // The worker's INBOX doorbell for the SDK chat (src/notify/chat): a
   // notification id only; the line typed is fixed (nudgeText), never content.
-  if (req.method === 'POST' && url.pathname === '/api/chat/doorbell') {
-    if (req.headers['x-pa'] !== '1') return send(res, 403, { error: 'missing X-PA header' });
-    const f = require('../chat/feed.ts');
-    if (f.engine() !== 'sdk') return send(res, 409, { error: 'the doorbell endpoint is for the SDK engine' });
-    const body: Row = await readJson(req);
-    return send(res, 200, f.feed().doorbell(body.id, { minIdleMs: Number(body.minIdleMs) >= 0 ? Number(body.minIdleMs) : undefined }));
-  }
-  if (req.method === 'GET' && url.pathname === '/api/chat/history') {
-    return send(res, 200, { messages: require('../chat/feed.ts').feed().history(url.searchParams.get('limit') || 50) });
-  }
-  if (req.method === 'GET' && url.pathname === '/api/chat/session') {
-    return send(res, 200, await require('../chat/feed.ts').feed().session());
-  }
-  if (req.method === 'GET' && url.pathname === '/api/chat/stream') return chatStream(req, res);
+  {
+    method: 'POST',
+    path: '/api/chat/doorbell',
+    handle: async (c) => {
+      const { req, res, send } = c;
+      if (req.headers['x-pa'] !== '1') return send(res, 403, { error: 'missing X-PA header' });
+      const f = require('../chat/feed.ts');
+      if (f.engine() !== 'sdk') return send(res, 409, { error: 'the doorbell endpoint is for the SDK engine' });
+      const body = await c.body();
+      return send(res, 200, f.feed().doorbell(body.id, { minIdleMs: Number(body.minIdleMs) >= 0 ? Number(body.minIdleMs) : undefined }));
+    },
+  },
+  {
+    method: 'GET',
+    path: '/api/chat/history',
+    handle: ({ res, url, send }) => send(res, 200, { messages: require('../chat/feed.ts').feed().history(url.searchParams.get('limit') || 50) }),
+  },
+  { method: 'GET', path: '/api/chat/session', handle: async ({ res, send }) => send(res, 200, await require('../chat/feed.ts').feed().session()) },
+  { method: 'GET', path: '/api/chat/stream', handle: ({ req, res }) => chatStream(req, res) },
   // The board's "Waiting for your yes" card (permission.client.js): the click
   // path for the chat's permission prompt; Talk answers it by voice.
-  if (req.method === 'GET' && url.pathname === '/permission.js') {
-    return send(res, 200, fs.readFileSync(path.join(__dirname, 'permission.client.js'), 'utf8'), 'text/javascript; charset=utf-8');
-  }
-  if (req.method === 'GET' && url.pathname === '/chat.js') {
-    return send(res, 200, fs.readFileSync(path.join(__dirname, 'chat.client.js'), 'utf8'), 'text/javascript; charset=utf-8');
-  }
-  if (req.method === 'GET' && url.pathname === '/api/secrets') {
-    const r = await require('../secrets').list();
-    return send(res, 200, { secrets: r.secrets, pending: r.pending, vaultError: r.vaultError });
-  }
+  { method: 'GET', path: '/permission.js', handle: file('permission.client.js', JS) },
+  { method: 'GET', path: '/chat.js', handle: file('chat.client.js', JS) },
+  {
+    method: 'GET',
+    path: '/api/secrets',
+    handle: async ({ res, send }) => {
+      const r = await require('../secrets').list();
+      return send(res, 200, { secrets: r.secrets, pending: r.pending, vaultError: r.vaultError });
+    },
+  },
 
-  // Workflow cost ceilings (dashboard/workflowLimits.js): GET, and a POST behind X-PA there.
-  if (url.pathname === '/api/workflow-limits') {
-    if (await require('./workflowLimits.ts').route(req, res, url, { send, readJson })) return;
-  }
-
-  // The Memory tab (dashboard/memory.js). Same guards: a POST needs X-PA.
-  if (url.pathname.startsWith('/api/memory/')) {
-    if (req.method === 'POST' && req.headers['x-pa'] !== '1') return send(res, 403, { error: 'missing X-PA header' });
-    const body: Row = req.method === 'POST' ? await readJson(req) : {};
-    const out = await require('./memory.ts').route(req.method, url, body);
-    return out === undefined ? send(res, 404, { error: 'not found' }) : send(res, 200, out ?? null);
-  }
-
-  // Pre-meeting briefs (dashboard/meetings.js). Same guards.
-  if (url.pathname.startsWith('/api/meetings/')) {
-    if (req.method === 'POST' && req.headers['x-pa'] !== '1') return send(res, 403, { error: 'missing X-PA header' });
-    const body: Row = req.method === 'POST' ? await readJson(req) : {};
-    const out = await require('./meetings.ts').route(req.method, url, body);
-    return out === undefined ? send(res, 404, { error: 'not found' }) : send(res, 200, out ?? null);
-  }
-
-  // Post-meeting debriefs (dashboard/debriefs.js). Undo is a write: same guards.
-  if (url.pathname === '/api/debriefs' || url.pathname.startsWith('/api/debriefs/')) {
-    if (req.method === 'POST' && req.headers['x-pa'] !== '1') return send(res, 403, { error: 'missing X-PA header' });
-    const body: Row = req.method === 'POST' ? await readJson(req) : {};
-    const out = await require('./debriefs.ts').route(req.method, url, body);
-    return out === undefined ? send(res, 404, { error: 'not found' }) : send(res, 200, out ?? null);
-  }
-
-  // The Routines tab (dashboard/routines.js, routines.client.js). Its writes
+  // Workflow cost ceilings (dashboard/workflowLimits.ts): GET, and a POST behind X-PA there.
+  { path: '/api/workflow-limits', handle: (c) => require('./workflowLimits.ts').route(c.req, c.res, c.url, c) },
+  // The Memory tab, pre-meeting briefs and post-meeting debriefs. A POST needs X-PA.
+  { path: startsWith('/api/memory/'), handle: (c) => jsonModule(c, './memory.ts') },
+  { path: startsWith('/api/meetings/'), handle: (c) => jsonModule(c, './meetings.ts') },
+  { path: (url) => url.pathname === '/api/debriefs' || url.pathname.startsWith('/api/debriefs/'), handle: (c) => jsonModule(c, './debriefs.ts') },
+  // The Routines tab (dashboard/routines.ts, routines.client.js). Its writes
   // run actions on this machine, so the same guards apply.
-  if (req.method === 'GET' && url.pathname === '/routines.js') {
-    return send(res, 200, fs.readFileSync(path.join(__dirname, 'routines.client.js'), 'utf8'), 'text/javascript; charset=utf-8');
-  }
-  if (url.pathname === '/api/routines' || url.pathname.startsWith('/api/routines/')) {
-    if (req.method === 'POST' && req.headers['x-pa'] !== '1') return send(res, 403, { error: 'missing X-PA header' });
-    const body: Row = req.method === 'POST' ? await readJson(req) : {};
-    const out = await require('./routines.ts').route(req.method, url, body);
-    return out === undefined ? send(res, 404, { error: 'not found' }) : send(res, 200, out ?? null);
-  }
+  { method: 'GET', path: '/routines.js', handle: file('routines.client.js', JS) },
+  { path: (url) => url.pathname === '/api/routines' || url.pathname.startsWith('/api/routines/'), handle: (c) => jsonModule(c, './routines.ts') },
+  // The Repos tab (dashboard/repos.ts, repos.client.js): the repo registry.
+  { method: 'GET', path: '/repos.js', handle: file('repos.client.js', JS) },
+  {
+    path: (url) => url.pathname === '/api/repos' || url.pathname.startsWith('/api/repos/'),
+    handle: async ({ req, res, url, send }) => {
+      if (req.method === 'POST' && req.headers['x-pa'] !== '1') return send(res, 403, { error: 'missing X-PA header' });
+      const out = await require('./repos.ts').route(req.method, url);
+      if (out && out.error === 'not found') return send(res, 404, out);
+      return out === undefined ? send(res, 404, { error: 'not found' }) : send(res, 200, out);
+    },
+  },
 
-  // ---- The Repos tab (dashboard/repos.js, repos.client.js): the repo registry. ----
-  if (req.method === 'GET' && url.pathname === '/repos.js') {
-    return send(res, 200, fs.readFileSync(path.join(__dirname, 'repos.client.js'), 'utf8'), 'text/javascript; charset=utf-8');
-  }
-  if (url.pathname === '/api/repos' || url.pathname.startsWith('/api/repos/')) {
-    if (req.method === 'POST' && req.headers['x-pa'] !== '1') return send(res, 403, { error: 'missing X-PA header' });
-    const out = await require('./repos.ts').route(req.method, url);
-    if (out && out.error === 'not found') return send(res, 404, out);
-    return out === undefined ? send(res, 404, { error: 'not found' }) : send(res, 200, out);
-  }
-  // ---- end Repos tab ----
-
-  if (req.method === 'POST') {
-    if (req.headers['x-pa'] !== '1') return send(res, 403, { error: 'missing X-PA header' });
-    const body: Row = await readJson(req);
-
-    // A pasted secret goes from this body straight into the store. The reply
-    // says where it went and never carries the value (AGENT.md, Secrets).
-    let m = url.pathname.match(/^\/api\/secrets\/(\d+)\/(fulfil|decline|done)$/);
-    if (m) {
+  // Every other POST: X-PA, and a JSON body, before its route is looked for.
+  {
+    method: 'POST',
+    path: () => true,
+    handle: async (c) => {
+      if (c.req.headers['x-pa'] !== '1') return c.send(c.res, 403, { error: 'missing X-PA header' });
+      await c.body();
+      return false;
+    },
+  },
+  // A pasted secret goes from this body straight into the store. The reply
+  // says where it went and never carries the value (AGENT.md, Secrets).
+  {
+    method: 'POST',
+    path: /^\/api\/secrets\/(\d+)\/(fulfil|decline|done)$/,
+    handle: async (c) => {
+      const { res, m, send } = c;
       const secrets = require('../secrets');
-      const id = Number(m[1]);
-      if (m[2] === 'decline') return send(res, 200, { ok: true, ...(await secrets.decline(id)) });
-      if (m[2] === 'done') return send(res, 200, { ok: true, ...(await secrets.loginDone(id)) });
+      const id = Number(m?.[1]);
+      if (m?.[2] === 'decline') return send(res, 200, { ok: true, ...(await secrets.decline(id)) });
+      if (m?.[2] === 'done') return send(res, 200, { ok: true, ...(await secrets.loginDone(id)) });
+      const body = await c.body();
       const target = body.target === 'env-file' ? 'env-file' : body.target ? 'credential-manager' : undefined;
       const r = await secrets.fulfil(id, typeof body.value === 'string' ? body.value : '', { target });
       return send(res, 200, { ok: r.ok, stored: r.stored, name: r.name });
-    }
-
-    // A thumb on a notification: moves how often its kind interrupts you.
-    m = url.pathname.match(/^\/api\/notifications\/(\d+)\/feedback$/);
-    if (m) {
+    },
+  },
+  // A thumb on a notification: moves how often its kind interrupts you.
+  {
+    method: 'POST',
+    path: /^\/api\/notifications\/(\d+)\/feedback$/,
+    handle: async (c) => {
+      const body = await c.body();
       const value = body.value === 'up' || body.value === 'down' ? body.value : null;
-      return send(res, 200, await require('../notify').feedback(Number(m[1]), value));
-    }
-
-    // A card's Claude session, opened in termhub on the machine it ran on:
-    // the live session, or `claude --resume <id>` in its folder.
-    m = url.pathname.match(/^\/api\/sessions\/(\d+)\/open$/);
-    if (m) return send(res, 200, await require('./cards.ts').openSession(Number(m[1])));
-
-    // The board's "+ task" box: a task because you typed it (src/commitments/request.js).
-    if (url.pathname === '/api/tasks') {
-      const request = require('../commitments/request.ts');
-      const str = (v: unknown) => (typeof v === 'string' ? v : null);
-      try {
+      return c.send(c.res, 200, await require('../notify').feedback(Number(c.m?.[1]), value));
+    },
+  },
+  // A card's Claude session, opened in termhub on the machine it ran on:
+  // the live session, or `claude --resume <id>` in its folder.
+  { method: 'POST', path: /^\/api\/sessions\/(\d+)\/open$/, handle: async ({ res, m, send }) => send(res, 200, await require('./cards.ts').openSession(Number(m?.[1]))) },
+  // The board's "+ task" box: a task because you typed it (src/commitments/request.ts).
+  {
+    method: 'POST',
+    path: '/api/tasks',
+    handle: (c) =>
+      badRequestAs400(c, async () => {
+        const body = await c.body();
+        const request = require('../commitments/request.ts');
+        const str = (v: unknown) => (typeof v === 'string' ? v : null);
         const r = await request.add({ text: str(body.text), due: str(body.due), for: str(body.for), owedToMe: body.owedToMe === true, via: 'board' });
-        return send(res, 200, { ok: true, id: r.id, text: request.describe(r) });
-      } catch (e) {
-        const err = e as HttpError;
-        if (err.status === 400) return send(res, 400, { error: err.message });
-        throw err;
-      }
-    }
-
-    // Your call on what someone owes you: it blocks a task of yours, or not.
-    m = url.pathname.match(/^\/api\/commitments\/(\d+)\/block$/);
-    if (m) {
-      try {
-        return send(res, 200, await require('../commitments/blocks.ts').set(Number(m[1]), {
+        return c.send(c.res, 200, { ok: true, id: r.id, text: request.describe(r) });
+      }),
+  },
+  // Your call on what someone owes you: it blocks a task of yours, or not.
+  {
+    method: 'POST',
+    path: /^\/api\/commitments\/(\d+)\/block$/,
+    handle: (c) =>
+      badRequestAs400(c, async () => {
+        const body = await c.body();
+        return c.send(c.res, 200, await require('../commitments/blocks.ts').set(Number(c.m?.[1]), {
           verdict: String(body.verdict), taskId: body.taskId == null ? null : Number(body.taskId),
         }));
-      } catch (e) {
-        const err = e as HttpError;
-        if (err.status === 400) return send(res, 400, { error: err.message });
-        throw err;
-      }
-    }
-
-    m = url.pathname.match(/^\/api\/commitments\/(\d+)\/status$/);
-    if (m) {
+      }),
+  },
+  {
+    method: 'POST',
+    path: /^\/api\/commitments\/(\d+)\/status$/,
+    handle: async (c) => {
+      const body = await c.body();
       const { setStatus } = require('../commitments.ts');
-      return send(res, 200, await setStatus(Number(m[1]), String(body.status)));
-    }
-    // A proposal answered: yes/no, or the option picked for a question.
-    m = url.pathname.match(/^\/api\/proposals\/(\d+)\/(accept|reject)$/);
-    if (m) {
+      return c.send(c.res, 200, await setStatus(Number(c.m?.[1]), String(body.status)));
+    },
+  },
+  // A proposal answered: yes/no, or the option picked for a question.
+  {
+    method: 'POST',
+    path: /^\/api\/proposals\/(\d+)\/(accept|reject)$/,
+    handle: async (c) => {
+      const { req, res, m, send } = c;
+      const body = await c.body();
       const answer = typeof body.answer === 'string' ? body.answer.slice(0, 200) : null;
       // A dispatch card's end state, picked when accepting: one of the six
       // levels or nothing (the card's own); anything else is refused.
       const D = require('../dispatch/deliveryCore');
       const delivery = typeof body.delivery === 'string' && body.delivery ? body.delivery : null;
       if (delivery && !D.isDelivery(delivery)) return send(res, 400, { error: `unknown delivery "${delivery.slice(0, 40)}"` });
-      if (m[2] === 'accept') {
+      if (m?.[2] === 'accept') {
         const p = await repo.proposals.kindAndPayload(Number(m[1]));
         const final = delivery || p?.payload?.delivery || null;
         if (p?.kind === 'dispatch' && D.unattended(final) && !pageTokenOk(req)) {
           return send(res, 403, { error: `accepting a card that ${final === 'push_to_main' ? 'pushes to main' : 'merges'} needs this page's token — reload the dashboard` });
         }
       }
-      return send(res, 200, await require('../proposals').decide(Number(m[1]), { accept: m[2] === 'accept', answer, delivery }));
-    }
-    // A "Looks done?" card answered: accepting closes it as your decision.
-    m = url.pathname.match(/^\/api\/ledger\/evidence\/(\d+)\/(accept|reject)$/);
-    if (m) return send(res, 200, await require('../ledger/reconcile.ts').decide(Number(m[1]), m[2] === 'accept'));
-    m = url.pathname.match(/^\/api\/commitments\/(\d+)\/reply$/);
-    if (m) {
-      const draft = await require('../draft').composeReply(Number(m[1]));
+      return send(res, 200, await require('../proposals').decide(Number(m?.[1]), { accept: m?.[2] === 'accept', answer, delivery }));
+    },
+  },
+  // A "Looks done?" card answered: accepting closes it as your decision.
+  {
+    method: 'POST',
+    path: /^\/api\/ledger\/evidence\/(\d+)\/(accept|reject)$/,
+    handle: async ({ res, m, send }) => send(res, 200, await require('../ledger/reconcile.ts').decide(Number(m?.[1]), m?.[2] === 'accept')),
+  },
+  {
+    method: 'POST',
+    path: /^\/api\/commitments\/(\d+)\/reply$/,
+    handle: async ({ res, m, send }) => {
+      const draft = await require('../draft').composeReply(Number(m?.[1]));
       return send(res, 200, { id: draft.id });
-    }
-    m = url.pathname.match(/^\/api\/drafts\/(\d+)\/(edit|deliver|sent|discard)$/);
-    if (m) {
+    },
+  },
+  {
+    method: 'POST',
+    path: /^\/api\/drafts\/(\d+)\/(edit|deliver|sent|discard)$/,
+    handle: async (c) => {
+      const { res, m, send } = c;
+      const body = await c.body();
       const drafts = require('../draft');
-      const id = Number(m[1]);
-      if (m[2] === 'edit') return send(res, 200, { id: (await drafts.edit(id, String(body.body || ''))).id });
-      if (m[2] === 'discard') return send(res, 200, await drafts.discard(id));
-      if (m[2] === 'sent') {
+      const id = Number(m?.[1]);
+      if (m?.[2] === 'edit') return send(res, 200, { id: (await drafts.edit(id, String(body.body || ''))).id });
+      if (m?.[2] === 'discard') return send(res, 200, await drafts.discard(id));
+      if (m?.[2] === 'sent') {
         const row = await drafts.markSent(id, { closeCommitment: body.close === true });
         return send(res, 200, { id: row.id, status: row.status });
       }
       const d = await drafts.delivery(id);
       return send(res, 200, { open: d.open, web: d.web, original: d.original || null, prefilled: d.prefilled, how: d.how, body: d.draft.body });
-    }
-    m = url.pathname.match(/^\/api\/commitments\/(\d+)\/dispatch$/);
-    if (m) {
+    },
+  },
+  {
+    method: 'POST',
+    path: /^\/api\/commitments\/(\d+)\/dispatch$/,
+    handle: async (c) => {
+      const { req, res, m, send } = c;
+      const body = await c.body();
       const dispatch = require('../dispatch');
       const D = require('../dispatch/deliveryCore');
       const delivery = typeof body.delivery === 'string' && body.delivery ? body.delivery : null;
@@ -517,15 +563,14 @@ async function handle(req: Req, res: Res) {
         jobKind = typeof body.kind === 'string' && body.kind ? F.jobKind(body.kind) : null;
         runtime = typeof body.runtime === 'string' && body.runtime ? F.runtime(body.runtime) : null;
       } catch (e) {
-        const err = e as HttpError;
-        return send(res, 400, { error: err.message });
+        return send(res, 400, { error: (e as HttpError).message });
       }
       // A research/report job delivers its report only: nothing to confirm.
       const resolved = jobKind && jobKind !== 'code'
         ? { delivery: 'none' }
         // What the start will resolve to — a repo default included. Confirmed only
         // when the page showed exactly that level and sent it back, with its token.
-        : await dispatch.previewDelivery({ commitmentId: Number(m[1]), mode: body.mode || undefined, delivery });
+        : await dispatch.previewDelivery({ commitmentId: Number(m?.[1]), mode: body.mode || undefined, delivery });
       const confirmed = D.unattended(resolved.delivery) && body.confirmedLevel === resolved.delivery && pageTokenOk(req);
       if (D.unattended(resolved.delivery) && !confirmed) {
         return send(res, 409, {
@@ -535,7 +580,7 @@ async function handle(req: Req, res: Res) {
         });
       }
       const run = await dispatch.start({
-        commitmentId: Number(m[1]),
+        commitmentId: Number(m?.[1]),
         mode: body.mode || undefined,
         machine: body.machine ? String(body.machine) : null,
         via: body.via ? String(body.via) : null,
@@ -552,8 +597,14 @@ async function handle(req: Req, res: Res) {
         jobKind: run.jobKind || null, runtime: run.runtime || null,
         warnings: run.warnings || [],
       });
-    }
-  }
+    },
+  },
+];
+
+async function handle(req: Req, res: Res) {
+  if (!hostAllowed(req.headers.host)) return send(res, 403, { error: 'host not allowed' });
+  const url = new URL(req.url as string, 'http://localhost');
+  if (await require('./router.ts').dispatch(ROUTES, { req, res, url, send, readJson, issuePageToken, pageTokenOk })) return;
   return send(res, 404, { error: 'not found' });
 }
 

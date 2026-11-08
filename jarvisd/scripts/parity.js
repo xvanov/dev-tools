@@ -22,6 +22,7 @@ const FILES = [
   'schemas.test.js',
   'events.test.js',
   'dashboard.test.js',
+  'router.test.js',
   'repoBoundary.test.js',
   'repoCalls.test.js',
   // Postgres only: the SQLite backend's native driver (better-sqlite3-multiple-ciphers) crashes

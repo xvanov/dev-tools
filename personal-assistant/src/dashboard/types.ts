@@ -27,3 +27,26 @@ export type Module = Record<string, any>;
 
 /** An Error a route throws with the HTTP status to answer. */
 export type HttpError = Error & { status?: number; code?: string };
+
+/** What a route handler gets (router.ts): the request, its URL, the path's match, the helpers. */
+export type RouteCtx = Ctx & {
+  req: Req;
+  res: Res;
+  url: URL;
+  /** The path RegExp's match (groups as m[1], ...), or null for an exact or predicate path. */
+  m: RegExpMatchArray | null;
+  /** The JSON body, read once however many routes ask for it. */
+  body(): Promise<Row>;
+};
+
+/** A route's path: exact, a RegExp (groups in c.m), or a predicate. */
+export type Path = string | RegExp | ((url: URL, req: Req) => boolean);
+
+/** One entry of the dashboard's route table (server.ts ROUTES). */
+export interface Route {
+  /** 'GET', 'POST', ...; omitted: any method. */
+  method?: string;
+  path: Path;
+  /** Answers the request; `false` passes it on to the next route. */
+  handle(c: RouteCtx): unknown;
+}

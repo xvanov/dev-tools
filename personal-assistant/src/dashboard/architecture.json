@@ -666,6 +666,7 @@
         }
       ],
       "code": [
+        "personal-assistant/src/dashboard/router.ts",
         "personal-assistant/src/dashboard/server.ts",
         "personal-assistant/src/dashboard/board.ts",
         "personal-assistant/src/dashboard/factory.ts",
