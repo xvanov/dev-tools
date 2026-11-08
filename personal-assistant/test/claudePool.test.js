@@ -136,7 +136,7 @@ const POOL = { monthlyUsd: 100, usedUsd: 40, since: new Date(2026, 10, 1), reset
   });
 
   await t('POST /api/telemetry: a usage row is recorded as a claude_session spend row', async () => {
-    const meter = require('../src/dashboard/meter');
+    const meter = require('../src/dashboard/meter.ts');
     const sent = [];
     const send = (res, status, body) => sent.push([status, body]);
     const req = (headers) => ({ method: 'POST', headers });

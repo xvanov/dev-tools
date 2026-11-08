@@ -17,6 +17,26 @@
 // through its own API, under its own rules.
 //
 // GET /events.js is the page side (events.client.js).
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+type Row = import('../repo/types.ts').Row;
+type Req = import('http').IncomingMessage;
+type Res = import('http').ServerResponse;
+type Ctx = import('./types.ts').Ctx;
+
+/** The in-process bus (src/events/bus.ts) as this stream uses it. */
+type BusEvent = { id: string; topic: string; at: string; payload?: unknown };
+type Topics = string[] | null;
+type Replay = { gap?: boolean; events: BusEvent[] };
+interface Bus {
+  epoch: unknown;
+  lastId(): string;
+  holds(id: string): boolean;
+  since(id: string, o: { topics: Topics }): Replay;
+  subscribe(fn: (e: BusEvent) => void, o: { topics: Topics }): () => void;
+}
+type Outbox = (n: number | string, o: { topics: Topics }) => Promise<Replay>;
 
 const fs = require('fs');
 const path = require('path');
@@ -27,17 +47,17 @@ const CLIENT = path.join(__dirname, 'events.client.js');
 const PING_MS = 20_000;
 
 /** Pure. `?topics=` as a list, or null for all; unknown shapes are dropped. */
-function topicsParam(raw) {
+function topicsParam(raw: unknown) {
   if (raw == null || raw === '') return null;
   const list = String(raw).split(',').map((t) => t.trim()).filter((t) => TOPIC.test(t)).slice(0, 20);
   return list.length ? [...new Set([...list, 'resync'])] : null;
 }
 
-function frame(e) {
+function frame(e: Row) {
   return `id: ${e.id}\ndata: ${JSON.stringify(e)}\n\n`;
 }
 
-const resyncFrame = (bus) => frame({ id: bus.lastId(), topic: 'resync', at: new Date().toISOString(), payload: { reason: 'cannot replay from that id' } });
+const resyncFrame = (bus: Bus) => frame({ id: bus.lastId(), topic: 'resync', at: new Date().toISOString(), payload: { reason: 'cannot replay from that id' } });
 
 /**
  * A `g<n>` the ring does not hold (a restart, another generation, older than
@@ -45,17 +65,17 @@ const resyncFrame = (bus) => frame({ id: bus.lastId(), topic: 'resync', at: new 
  * held while the outbox is read and sent after it, each id once. When the
  * outbox cannot be read, falls back to what the ring can say.
  */
-function replayFromOutbox(res, n, lastId, { bus, topics, outbox }) {
-  const held = [];
+function replayFromOutbox(res: Res, n: number | string, lastId: string, { bus, topics, outbox }: { bus: Bus; topics: Topics; outbox: Outbox }) {
+  const held: BusEvent[] = [];
   let replaying = true;
   const sent = new Set();
-  const write = (e) => {
+  const write = (e: BusEvent) => {
     if (sent.has(e.id)) return;
     sent.add(e.id);
     res.write(frame(e));
   };
   const unsubscribe = bus.subscribe((e) => (replaying ? held.push(e) : write(e)), { topics });
-  const finish = (r) => {
+  const finish = (r: Replay) => {
     if (r.gap) res.write(resyncFrame(bus));
     else for (const e of r.events) write(e);
     replaying = false;
@@ -68,14 +88,14 @@ function replayFromOutbox(res, n, lastId, { bus, topics, outbox }) {
   return unsubscribe;
 }
 
-function stream(req, res, url, { bus = events.bus(), listen = events.listen, pingMs = PING_MS, outbox = events.fromOutbox } = {}) {
+function stream(req: Req, res: Res, url: URL, { bus = events.bus(), listen = events.listen, pingMs = PING_MS, outbox = events.fromOutbox }: { bus?: Bus; listen?: () => void; pingMs?: number; outbox?: Outbox | null } = {}) {
   try {
     listen();
   } catch {
     // No feed from Postgres: the stream still carries this process's events.
   }
   const topics = topicsParam(url.searchParams.get('topics'));
-  const lastId = req.headers['last-event-id'] || url.searchParams.get('lastEventId') || null;
+  const lastId = (req.headers['last-event-id'] as string | undefined) || url.searchParams.get('lastEventId') || null;
   res.writeHead(200, {
     'Content-Type': 'text/event-stream; charset=utf-8',
     'Cache-Control': 'no-store',
@@ -86,9 +106,9 @@ function stream(req, res, url, { bus = events.bus(), listen = events.listen, pin
   // since() and subscribe() are synchronous: nothing can be published between
   // the replay and the subscription. The outbox path holds live events instead.
   const g = lastId ? /^g(\d+)$/.exec(String(lastId)) : null;
-  let unsubscribe;
-  if (g && outbox && !bus.holds(lastId)) {
-    unsubscribe = replayFromOutbox(res, g[1], lastId, { bus, topics, outbox });
+  let unsubscribe: () => void;
+  if (g && lastId && outbox && !bus.holds(lastId)) {
+    unsubscribe = replayFromOutbox(res, g[1] ?? '', lastId, { bus, topics, outbox });
   } else {
     if (lastId) {
       const r = bus.since(lastId, { topics });
@@ -109,7 +129,7 @@ function stream(req, res, url, { bus = events.bus(), listen = events.listen, pin
   res.on('error', done);
 }
 
-async function route(req, res, url, { send }) {
+async function route(req: Req, res: Res, url: URL, { send }: { send: Ctx['send'] }) {
   if (req.method === 'GET' && url.pathname === '/api/events') {
     stream(req, res, url);
     return true;

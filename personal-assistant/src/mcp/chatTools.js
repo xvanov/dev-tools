@@ -473,7 +473,7 @@ async function boardTool({ limit = 25 } = {}) {
   s.needsYou = await require('../proposals').pending().catch(() => []);
   await require('../dashboard/cards').enrich(s).catch(() => {});
   s.blocks = await require('../commitments/blocks').forBoard().catch(() => []);
-  const board = require('../dashboard/board').build(s);
+  const board = require('../dashboard/board.ts').build(s);
   const ids = board.onMe.filter((c) => !c.standalone).map((c) => Number(c.id)).filter(Number.isFinite);
   const extras = new Map();
   if (ids.length) {

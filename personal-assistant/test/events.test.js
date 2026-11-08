@@ -12,7 +12,7 @@ const vm = require('vm');
 const { EventEmitter } = require('events');
 const { createBus } = require('../src/events/bus.ts');
 const events = require('../src/events');
-const endpoint = require('../src/dashboard/events');
+const endpoint = require('../src/dashboard/events.ts');
 const pace = require('../src/dispatch/factoryPace');
 
 const tick = (ms = 0) => new Promise((r) => setTimeout(r, ms));

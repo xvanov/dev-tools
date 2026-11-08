@@ -84,7 +84,7 @@ async function state() {
   // Which of what people owe you blocks one of your tasks (commitments/blocks.js).
   out.blocks = await require('../commitments/blocks').forBoard().catch(() => []);
   // The Today board's columns, one card per commitment (dashboard/board.js).
-  out.board = require('./board').build(out);
+  out.board = require('./board.ts').build(out);
   // Inputs the page no longer draws: a note from your own work reaches it only
   // through the board (when it needs you), and the open GitHub/Jira items are
   // on the Repos view (GET api/repos, dashboard/repos.js).
@@ -222,7 +222,7 @@ async function handle(req, res) {
   // board, run and factory changes with Last-Event-ID replay, and /events.js,
   // the pages' side of it. ----
   if (url.pathname === '/api/events' || url.pathname === '/events.js') {
-    if (await require('./events').route(req, res, url, { send })) return;
+    if (await require('./events.ts').route(req, res, url, { send })) return;
   }
 
   // ---- The architecture map (dashboard/architecture.js, architecture.json):
@@ -234,7 +234,7 @@ async function handle(req, res) {
   // ---- Meter's data (dashboard/meter.js): GET /api/meter (latency per hop, spend,
   // the Claude credit pool) and POST /api/telemetry (the factory's spans and usage). ----
   if (url.pathname === '/api/meter' || url.pathname === '/api/telemetry') {
-    if (await require('./meter').route(req, res, url, { send, readJson })) return;
+    if (await require('./meter.ts').route(req, res, url, { send, readJson })) return;
   }
 
   // The end state a Do would get, before it is pressed: the page shows it,

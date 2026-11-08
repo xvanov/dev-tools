@@ -12,10 +12,17 @@
 //                            durationMs, ok}, a claude_session run's
 //                            `total_cost_usd` and `usage`, recorded in llm_spend
 //                            with backend claude_session (the credit pool's feed).
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+type Row = import('../repo/types.ts').Row;
+type Req = import('http').IncomingMessage;
+type Res = import('http').ServerResponse;
+type Ctx = import('./types.ts').Ctx;
 
 const MAX_USAGE_ROWS = 100;
 
-async function route(req, res, url, { send, readJson }) {
+async function route(req: Req, res: Res, url: URL, { send, readJson }: { send: Ctx['send']; readJson: Ctx['readJson'] }) {
   if (req.method === 'GET' && url.pathname === '/api/meter') {
     const days = Number(url.searchParams.get('days')) || 7;
     send(res, 200, await require('../telemetry/meter').report({ days }));

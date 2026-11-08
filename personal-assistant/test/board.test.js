@@ -4,7 +4,7 @@
 // commitment, everything about it attached to that card, nothing twice.
 
 const assert = require('assert');
-const { build } = require('../src/dashboard/board');
+const { build } = require('../src/dashboard/board.ts');
 
 const now = new Date(2026, 10, 5, 12).getTime();
 const c = (id, o = {}) => ({ id: String(id), summary: `ask ${id}`, direction: 'owed_by_me', status: 'open', item_id: 1000 + id, occurred_at: '2026-11-04T10:00:00Z', ...o });

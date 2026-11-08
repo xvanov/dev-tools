@@ -32,20 +32,47 @@
 // note from your own work (s.selfNotes) is on the board only when something on
 // it needs you; the rest is not drawn (Plan no longer lists them). A proposal with no commitment (a run to land) is its own card on On me.
 // Two cards from the same source item with the same words are one card.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
 
-const at = (x) => new Date(x || 0).getTime();
+type Row = import('../repo/types.ts').Row;
 
-function norm(s) {
+/** The dashboard state build() reads (server.js's /api/state). */
+type State = { commitments?: Row[]; selfNotes?: { items?: Row[] }[]; needsYou?: Row[]; looksDone?: Row[]; blocks?: Row[] };
+/** A board card: a commitment row plus what the board hangs on it. */
+type Card = Row & {
+  asks: Row[];
+  chase: Row | null;
+  settled: Row | null;
+  blockers: Card[];
+  unblocked: Row[];
+  pos: number;
+  selfNote?: boolean;
+  standalone?: boolean;
+  also?: unknown[];
+  alsoIn?: unknown[];
+  block?: Row;
+  column?: string;
+  group?: string;
+  blocked?: boolean;
+  waitingOn?: boolean;
+};
+/** A card before build() has placed it (blockers, unblocked, pos come later). */
+const asCard = (o: Row) => o as Card;
+
+const at = (x: unknown) => new Date((x || 0) as string | number).getTime();
+
+function norm(s: unknown) {
   return String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
 }
 
-function isChase(p) {
-  return p?.payload?.on === 'cadence';
+function isChase(p: Row) {
+  return (p?.payload as Row | undefined)?.on === 'cadence';
 }
 
 // A card for a commitment the board's own query did not return (past its
 // limit, or a self-note): built from what the proposal row carries.
-function synth(p, from) {
+function synth(p: Row, from: string) {
   return {
     id: p.commitment_id,
     summary: from === 'settled' ? p.summary : p.commitment_summary || p.title,
@@ -64,9 +91,9 @@ function synth(p, from) {
   };
 }
 
-function dueRank(c, now) {
+function dueRank(c: Row, now: Date | string | number) {
   if (!c.due_at) return 2;
-  const d = new Date(c.due_at);
+  const d = new Date(c.due_at as string);
   const today = new Date(now);
   today.setHours(23, 59, 59, 999);
   return d <= today ? 0 : 1;
@@ -76,31 +103,31 @@ function dueRank(c, now) {
  * @param {object} s the dashboard state: commitments, selfNotes, needsYou, looksDone
  * @param {{now?: number}} [o]
  */
-function build(s, { now = Date.now() } = {}) {
-  const cards = new Map(); // id → card
-  const order = new Map(); // id → position in the board query (its sort)
+function build(s: State, { now = Date.now() }: { now?: Date | string | number } = {}) {
+  const cards = new Map<string, Card>(); // id → card
+  const order = new Map<string, number>(); // id → position in the board query (its sort)
   for (const c of s.commitments || []) {
     const id = String(c.id);
     if (cards.has(id)) continue;
     order.set(id, order.size);
-    cards.set(id, { ...c, asks: [], chase: null, settled: null });
+    cards.set(id, asCard({ ...c, asks: [], chase: null, settled: null }));
   }
-  const groups = (s.selfNotes || []).map((g) => ({ ...g, items: [...(g.items || [])] }));
+  const groups = (s.selfNotes || []).map((g: { items?: Row[] }) => ({ ...g, items: [...(g.items || [])] }));
   for (const g of groups) {
     for (const c of g.items) {
       const id = String(c.id);
       if (cards.has(id)) continue;
-      cards.set(id, { ...c, asks: [], chase: null, settled: null, selfNote: true });
+      cards.set(id, asCard({ ...c, asks: [], chase: null, settled: null, selfNote: true }));
     }
   }
-  const cardFor = (p, from) => {
+  const cardFor = (p: Row, from: string): Card => {
     const id = String(p.commitment_id);
-    if (!cards.has(id)) cards.set(id, { ...synth(p, from), asks: [], chase: null, settled: null });
-    return cards.get(id);
+    if (!cards.has(id)) cards.set(id, asCard({ ...synth(p, from), asks: [], chase: null, settled: null }));
+    return cards.get(id) as Card;
   };
 
-  const standalone = [];
-  const seenAsk = new Set();
+  const standalone: Row[] = [];
+  const seenAsk = new Set<string>();
   for (const p of s.needsYou || []) {
     if (seenAsk.has(String(p.id))) continue;
     seenAsk.add(String(p.id));
@@ -122,7 +149,7 @@ function build(s, { now = Date.now() } = {}) {
   // Same source item, same words: one card. The first one seen is kept (the
   // board's own order, so an ask before a note) and takes the other's
   // proposals; `also` lists the ids folded into it.
-  const byText = new Map();
+  const byText = new Map<string, Card>();
   for (const [id, c] of [...cards]) {
     if (c.item_id == null) continue;
     const k = `${c.item_id}|${c.direction}|${norm(c.summary)}`;
@@ -139,21 +166,21 @@ function build(s, { now = Date.now() } = {}) {
     cards.delete(id);
   }
 
-  const needsMe = (c) => Boolean(c.settled) || c.asks.length > 0;
+  const needsMe = (c: Card) => Boolean(c.settled) || c.asks.length > 0;
   // What people owe you, read as "does it block me?" (commitments/blocks.js).
   // Not judged yet counts as blocking with no task: shown, not lost.
   const blockOf = new Map((s.blocks || []).map((b) => [String(b.blocker_id), b]));
-  const onMe = [];
-  const waiting = [];
+  const onMe: Card[] = [];
+  const waiting: Card[] = [];
   for (const c of cards.values()) Object.assign(c, { blockers: [], unblocked: [] });
   for (const [id, c] of cards) {
     if (c.selfNote && !needsMe(c)) continue; // not on the board unless it needs you
-    c.pos = order.has(id) ? order.get(id) : order.size + 1;
+    c.pos = order.get(id) ?? order.size + 1;
     if (c.direction !== 'owed_to_me') {
       onMe.push(c);
       continue;
     }
-    const b = blockOf.get(id) || { verdict: 'blocks', task_id: null, why: null, pending: true };
+    const b: Row = blockOf.get(id) || { verdict: 'blocks', task_id: null, why: null, pending: true };
     c.block = b;
     // No counterparty on the commitment: the name the blocks pass read from the message.
     if (!c.who && b.who) c.who = b.who;
@@ -182,14 +209,14 @@ function build(s, { now = Date.now() } = {}) {
     c.blocked = c.blockers.length > 0;
     c.group = c.settled && !c.asks.length ? 'settled' : c.blocked || c.waitingOn ? 'blocked' : 'todo';
   }
-  onMe.push(...standalone.map((c) => ({ ...c, blockers: [], unblocked: [], column: 'onMe', group: 'todo', pos: -1 })));
+  onMe.push(...standalone.map((c) => asCard({ ...c, blockers: [], unblocked: [], column: 'onMe', group: 'todo', pos: -1 })));
 
   // Real to-dos first — due, then ready to start (an offer waiting), then the
   // rest in the board's order — and the ones that look done last.
   // Blocked ones after the rest of the to-dos; one just unblocked goes up.
-  const rank = (c) => (c.group === 'settled' ? 10 : c.group === 'blocked' ? 5 : 0) +
+  const rank = (c: Card) => (c.group === 'settled' ? 10 : c.group === 'blocked' ? 5 : 0) +
     (c.standalone ? 0 : dueRank(c, now) === 0 || c.unblocked?.length ? 0 : c.asks.length ? 1 : 2);
-  onMe.sort((a, b) => rank(a) - rank(b) || (a.group === 'settled' ? (b.settled.confidence || 0) - (a.settled.confidence || 0) : 0) || a.pos - b.pos);
+  onMe.sort((a, b) => rank(a) - rank(b) || (a.group === 'settled' ? (Number(b.settled?.confidence) || 0) - (Number(a.settled?.confidence) || 0) : 0) || a.pos - b.pos);
   waiting.sort((a, b) => a.pos - b.pos);
 
   const todo = onMe.filter((c) => c.group === 'todo').length;

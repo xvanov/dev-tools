@@ -20,7 +20,7 @@
 
 const http = require('http');
 const { createBus } = require('../../src/events/bus.ts');
-const { stream } = require('../../src/dashboard/events');
+const { stream } = require('../../src/dashboard/events.ts');
 
 const GEN = process.env.PA_SUPERVISOR_GENERATION || '0';
 const bus = createBus({ epoch: `gen${GEN}x${Date.now().toString(36)}` });
