@@ -101,8 +101,21 @@ request); voice never approves high-risk actions alone; work and personal stacks
   keep the full suite for CI. Target < 5 s.
 - [ ] **T5 Timing budget in CI.** Fail CI if any single test file takes > 5 s or the suite
   exceeds its target; print the 10 slowest.
-- [ ] **T6 CI matrix.** GitHub Actions: Windows and Linux jobs in parallel (D14), dependency
-  caches (Bun, cargo with sccache, uv). Required green before an item is ticked.
+- [x] **T6 CI matrix.** GitHub Actions: Windows and Linux jobs in parallel (D14), dependency
+  caches (Bun, cargo with sccache, uv). Required green before an item is ticked. (7a080d9)
+  .github/workflows/ci.yml: path-filtered per tool (PA, termhub, ios-messages, software-factory), npm/uv/pip
+  caches, workflow_dispatch runs all, no secrets, no Postgres service needed (tests skip or fake it). Bun and
+  cargo/sccache caches land with phases 1 and 5 (T7). Raw job logs are not downloadable from the work laptop
+  (blob host blocked), so test steps run through .github/scripts/run.sh, which republishes failing lines as
+  an annotation (`gh api repos/xvanov/dev-tools/check-runs/<job id>/annotations`). Follow-ups:
+  - **T6a** software-factory CI leg is informational (continue-on-error) on both OS: on Linux 38 tests fail
+    because this public repo does not track apps/sacrifice or bench/swebench (plus the gitignore test
+    assumes a repo-root layout), and the suite takes ~10 min on a 2-core runner. T3 skips-when-absent, then
+    flip the leg to blocking on Linux; Windows stays informational until phase 2.3.
+  - **T6b** personal-assistant remoteExec.test.js SKIPs on Windows (it stands the local host in for a
+    Linux machine); split its host-bound half from the pure unit assertions so Windows keeps the latter.
+  - Found by CI and fixed: termhub updateHeal.test.js asserted a stale source shape (invisible on Windows,
+    where it skips); PA deploy.test.js needs etch-depth: 2 for HEAD~1.
 - [ ] **T7 Build pipeline (from phase 4).** `bun build --compile` per OS in parallel;
   `cargo build` with sccache and incremental; one command builds everything; incremental
   < 30 s. Release artifacts are signed (phase 7).
