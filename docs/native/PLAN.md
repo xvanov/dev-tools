@@ -89,16 +89,27 @@ request); voice never approves high-risk actions alone; work and personal stacks
   prints a per-file pass/fail/time table and exits non-zero on any failure. Keep the file list
   in one place (glob `test/*.test.js`, with an explicit skip list for the known
   environment-bound files, each with a reason). `parallel-ok` (5bc7a6d)
-- [ ] **T2 Make tests parallel-safe.** Each test gets its own temp dir, port 0 (OS-assigned),
+- [x] **T2 Make tests parallel-safe.** Each test gets its own temp dir, port 0 (OS-assigned),
   and its own DB schema or SQLite file; no shared fixed ports or files. Fix the known slow
-  timeouts (`termhub` exec and csrf) so they fail fast or pass. `parallel-ok`
+  timeouts (`termhub` exec and csrf) so they fail fast or pass. `parallel-ok` (d3f7a19)
+  Zero skips and no platform-gated entries left in either tool's `runner.config.js`; the runner gained
+  `platform`, `env`, `shards`, `touches`/`narrow` (scripts/README.md). Spawn-bound files are sharded
+  (`dispatchStart` x5, `remoteExec` x4). Known gap found on Windows: `gh auth token` still prints
+  the operator's keyring token inside a no-push session even with an empty `GH_CONFIG_DIR` (API calls
+  fail); the live check asserts `gh api` fails there. Needs a product fix (for example a sentinel
+  `GH_TOKEN` in `noPushEnv`) before the work stack's no-push guarantee is whole on Windows.
+  `supervisor`, `deploy` (a ~9 s PowerShell cold start) and `lease` (80-200 ms sleeps; failed in
+  two loaded full runs, alone it always passes) are the remaining slow or load-sensitive files.
 - [ ] **T3 Factory tests in parallel.** `pytest -n auto` (xdist is installed) must pass with
   the same results as serial. Fix the parallel-unsafe ones (`test_benchmark_record_store.py`
   errors under `-n 16`: shared runs dir). Mark true integration tests `@slow` and keep them out
   of the default run. `parallel-ok`
-- [ ] **T4 Changed-files mode.** `npm test -- --changed` (and the factory equivalent) runs only
+- [x] **T4 Changed-files mode.** `npm test -- --changed` (and the factory equivalent) runs only
   tests that import a changed module (static import graph). Wire it into the pre-commit hook,
-  keep the full suite for CI. Target < 5 s.
+  keep the full suite for CI. Target < 5 s. (4253252, 2736d74)
+  `scripts/hooks/pre-commit` (guard, then `scripts/pre-commit-tests.js`), installed by
+  `node scripts/install-hooks.js`; skip for humans: `DEVTOOLS_SKIP_TESTS=1`. A leaf edit runs in about
+  3 s; a change to a module the whole app imports runs most of the suite.
 - [ ] **T5 Timing budget in CI.** Fail CI if any single test file takes > 5 s or the suite
   exceeds its target; print the 10 slowest.
 - [x] **T6 CI matrix.** GitHub Actions: Windows and Linux jobs in parallel (D14), dependency
