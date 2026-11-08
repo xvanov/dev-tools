@@ -46,6 +46,8 @@ Design rationale: the plan page (proposal, 7 Nov 2026) and the research summary 
 | D18 | 2026-11-08 | **All independent items start now, in parallel** | Extends D16: any item whose inputs exist may start (5.1 ptyd, 5.2/5.3 sandbox and broker, 3.1 SQLite on converted aggregates, 4.3 policy engine, 7.3–7.5, 8.1, ...). Phase Exit boxes are unchanged: each still needs its items done and a green e2e on both stacks. |
 | D17 | 2026-11-08 | **Prune test work** | Delete the factory tests for `apps/sacrifice` and `bench/swebench` (not in this repo; they only fail or skip). Drop T5 (timing budget in CI). The load-sensitive `supervisor` and `lease` tests were de-flaked instead (80f48d5, 20 loaded runs green) and keep running locally (CI-only was tried and reverted, f402f3f). Suite time targets are unchanged. |
 | D19 | 2026-11-08 | **Durable tasks on SQLite run on a small queue we own; Postgres keeps Absurd until 3.5** | Part of 3.1. Absurd is a Postgres schema with no SQLite port. `src/durable/sqliteQueue.js` gives the slice of its interface the PA uses (spawn once per key, `step` checkpoints, `sleepFor`, `awaitEvent` with timeout and Absurd's `TimeoutError`, retries with backoff, scheduled runs) over `sql-sqlite/006` (task, checkpoint and event tables), with leases from the `lease` table, so the spawners and tasks (chase, runReview) do not change. `src/durable/index.js` picks the engine by store. |
+| D20 | 2026-11-08 | **Cut over to the new system now**: SQLite (3.5), ptyd (Exit 5's switch), jarvisd (runtime and front), WSL off (3.6) | The owner's go-ahead. Passkeys (7.1) and the Windows sandbox's ACL and egress steps (5.2) stay off for now. WSL is shut down and kept registered (not unregistered) so the Postgres rollback stays possible until both stacks have run on SQLite for a while. |
+| D21 | 2026-11-08 | **The factory's planning steps run on DeepSeek-V4-Flash** | PM triage took ~146 s on deepseek-v4-pro (a reasoning model); the owner accepts Flash's quality risk for speed. Applies to the planning personas only; dev stays on v4-pro. |
 
 ## Prerequisites (before phase 0)
 
@@ -568,9 +570,9 @@ run mid-step; a job continued on an existing branch (`--branch`).
     pairs), Postgres's English stop words, and the stemmed index only for the loose pass.
     The eval rose with it: hit@10 0.771, MRR 0.519 (Postgres 0.625, 0.413). Chunk vector:
     42-54 ms p50 (Postgres's approximate HNSW 16-21 ms); an index can come past ~1M vectors.
-- [ ] **3.5** Cutover on the personal stack, then the work stack; Litestream backup + restore
-  drill.
-  Prepared, not done (the cutover is the user's call): the runbook is
+- [x] **3.5** Cutover on the personal stack, then the work stack; Litestream backup + restore
+  drill. Done 2026-11-08 on both stacks (personal 14:53Z, work 15:01Z), drill PASS on both
+  (CUTOVER-SQLITE.md, "The cutover on 2026-11-08"). The runbook is
   [CUTOVER-SQLITE.md](CUTOVER-SQLITE.md): rehearse, stop writers, export, compare, set
   `PA_DB=sqlite`, start, verify, rollback by unsetting it. Backups for SQLite are in place instead
   of Litestream, which cannot read a SQLCipher file and has no supported Windows build:
@@ -692,9 +694,9 @@ run mid-step; a job continued on an existing branch (`--branch`).
   ACLs already separate the stacks.
 - [x] **7.3** Secrets in the OS keychain, labelled by stack. (0b6faff) Pending user: the live
   `pa secrets migrate --from-env --apply` on each stack (dry run first).
-- [x] **7.4** Encrypted backups with a restore drill; signed self-update. (0b6faff) Pending user: the
-  first `pa backup restore --to <scratch>` drill on each stack (role needs CREATEDB plus the
-  extensions: `--admin-url` superuser or `--template`); signing is warn-only until a trusted-signers
+- [x] **7.4** Encrypted backups with a restore drill; signed self-update. (0b6faff) The first
+  drill ran on each stack on 2026-11-08, on SQLite after 3.5 (PASS on both; neither stack had a
+  backup key before, so both got one); signing is warn-only until a trusted-signers
   file exists (docs/native/SIGNED-UPDATES.md). The SQLite-file backup/drill lands with 3.x.
 - [x] **7.5** OpenTelemetry into Meter, including the separate Claude subscription credit pool
   (since 15 Jun 2026) with API fallback when it runs out. Spans (voice turn, tool call, factory

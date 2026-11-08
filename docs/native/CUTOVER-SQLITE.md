@@ -1,8 +1,10 @@
 # Cutover runbook: Postgres to SQLite (plan 3.5)
 
-The store of one stack moves from Postgres to one SQLite file (D2). Everything the move needs
-is on `main` and switched off: `PA_DB` is unset, so both stacks run on Postgres until this
-runbook flips it. Do the personal stack first, then the work stack (3.5).
+The store of one stack moves from Postgres to one SQLite file (D2). Do the personal stack
+first, then the work stack (3.5).
+
+**Done on both stacks, 2026-11-08** (see "The cutover on 2026-11-08" at the end). Both run with
+`PA_DB=sqlite`; their Postgres databases are as they were at the cutover, for the rollback.
 
 What is ready, and where it was proven:
 
@@ -186,3 +188,21 @@ changes a result a user would rely on.
   generation during a roll) reach the dashboard within 0.5 s (an outbox poll), not at commit.
 - Integers come back as numbers where Postgres gave bigints as strings; every caller already
   converts.
+
+## The cutover on 2026-11-08
+
+- **Personal stack** (14:53Z). The keyring (Secret Service) is locked for headless processes
+  there, so `pa secret set PA_SQLITE_KEY --env-file` and `PA_BACKUP_KEY` likewise (there was
+  no backup key before: backups were plain). The store was near empty (one chunk), so the export
+  and the comparison took seconds; the six board reads were the same order. Doctor:
+  `sqlite ... encrypted`, `sqlite-vec loaded`; the worker holds no Postgres socket. Drill PASS
+  (79 tables).
+- **Work stack** (15:01Z). `pa backup key init` and `PA_SQLITE_KEY` into Windows Credential
+  Manager first (no backup key there either). Export 90 s, comparison 3.5 min (its 171 queries
+  run on Postgres too), board reads same order (the inbox same rows, other order); about 5 min
+  down in all. Drill PASS: 79 tables in 18 s, bundle 462 MB.
+- Found on the way: a first attempt was rolled back by the operator's own script, because
+  PowerShell wraps a native command's stderr (the `slow statement` warnings) as
+  `NativeCommandError` text and the script took that for an error. Redirect through
+  `cmd /c "... > file 2>&1"` when scripting these steps in PowerShell. Nothing was lost: the
+  stack started on Postgres again and the second export was fresh.
