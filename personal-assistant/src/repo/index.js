@@ -112,6 +112,8 @@ const poolBackend = {
   notify: (channel, payload) => require('../db').notify(channel, payload),
   /** Closes the pool (a SQLite restore swaps the file under it). */
   close: () => require('../db').close(),
+  /** One dedicated connection (a pg pool client, or a SQLite session) for LISTEN and locks. */
+  connect: () => require('../db').getPool().connect(),
   get dialect() {
     return require('../db').dialect;
   },

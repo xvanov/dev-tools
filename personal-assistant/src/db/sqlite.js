@@ -545,6 +545,11 @@ function createSqliteBackend(file, { key = null } = {}) {
         events.off(event, fn);
         return client;
       },
+      /** pg's Client.end(), for code that owns its connection (the live-feed listener). */
+      end() {
+        client.release();
+        return Promise.resolve();
+      },
       release() {
         if (released) return;
         released = true;

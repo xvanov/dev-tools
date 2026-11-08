@@ -205,9 +205,12 @@ async function feedProducer() {
 
 async function pgProducer() {
   const { config } = require('../config');
-  const { Client } = require('pg');
-  const c = new Client({ connectionString: config.databaseUrl, connectionTimeoutMillis: 10_000 });
-  await c.connect();
+  // PA_DB=sqlite: a session of the SQLite store, not PA_DATABASE_URL.
+  const sqlite = require('../repo').backend.dialect === 'sqlite';
+  const c = sqlite
+    ? await require('../repo').backend.connect()
+    : new (require('pg').Client)({ connectionString: config.databaseUrl, connectionTimeoutMillis: 10_000 });
+  if (!sqlite) await c.connect();
   // The statement is repo.events.publishProbe (sql/036: number the event, write the
   // outbox, NOTIFY, in one transaction); this connection is only its own session.
   const events = require('../repo').createRepos(require('../repo').clientBackend(c)).events;

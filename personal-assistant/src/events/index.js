@@ -143,6 +143,11 @@ function ensureListening() {
   const { config } = require('../config');
   listening = createListener({
     connect: async () => {
+      // PA_DB=sqlite: a session of the store's own backend (LISTEN is in-process
+      // there, and other processes' events arrive by its outbox poll), never a
+      // connection to PA_DATABASE_URL, which may be a live Postgres.
+      const repo = require('../repo');
+      if (repo.backend.dialect === 'sqlite') return repo.backend.connect();
       const { Client } = require('pg');
       const c = new Client({ connectionString: config.databaseUrl, connectionTimeoutMillis: 10_000 });
       await c.connect();
