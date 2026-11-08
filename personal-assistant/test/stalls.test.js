@@ -40,6 +40,49 @@ const path = require('path');
   vault.useBackend(null);
 }
 
+// ---- the five-minute re-list does not wait for the process ----
+async function relist() {
+  const vault = require('../src/secrets/vault.ts');
+  const cfg = require('../src/config.ts');
+  vault.useBackend('windows');
+  const ops = [];
+  const store = new Map([['PA_TEST_RELIST_A', 'a']]);
+  const reply = (inv) => {
+    const req = JSON.parse(Buffer.from(inv.input.trim(), 'base64').toString('utf8'));
+    return req.op === 'get'
+      ? (store.has(req.name) ? { ok: true, found: true, value: store.get(req.name) } : { ok: true, found: false })
+      : { ok: true, names: [...store.keys()] };
+  };
+  let release;
+  const gate = new Promise((r) => (release = r));
+  vault.setRunner(
+    (inv) => (ops.push('sync'), { stdout: JSON.stringify(reply(inv)) + '\n', status: 0 }),
+    async (inv) => (ops.push('async'), await gate, { stdout: JSON.stringify(reply(inv)) + '\n', status: 0 })
+  );
+  cfg.forgetSecret();
+  assert.strictEqual(cfg.secret('PA_TEST_RELIST_B'), null);
+  assert.deepStrictEqual(ops, ['sync'], 'the first listing is read at once');
+  store.set('PA_TEST_RELIST_B', 'b');
+  const realNow = Date.now;
+  try {
+    Date.now = () => realNow() + 6 * 60_000; // past the list's and the miss's TTL
+    assert.strictEqual(cfg.secret('PA_TEST_RELIST_B'), null, 'the stale list answers');
+    assert.deepStrictEqual(ops, ['sync', 'async'], 'and a fresh one is read in the background');
+    assert.strictEqual(cfg.secret('PA_TEST_RELIST_C'), null);
+    assert.deepStrictEqual(ops, ['sync', 'async'], 'one re-list at a time');
+    release();
+    await new Promise((r) => setImmediate(r));
+    Date.now = () => realNow() + 7 * 60_000; // the miss expired, the new list did not
+    assert.strictEqual(cfg.secret('PA_TEST_RELIST_B'), 'b', 'the fresh list is used once it is in');
+    assert.deepStrictEqual(ops, ['sync', 'async', 'sync'], 'then only the get');
+  } finally {
+    Date.now = realNow;
+    vault.setRunner(null);
+    vault.useBackend(null);
+    cfg.forgetSecret();
+  }
+}
+
 // ---- a repo's origin without a git process (projects sync ran ~66 of them) ----
 {
   const { gitRemote } = require('../src/projects');
@@ -131,7 +174,8 @@ async function logFile() {
   }
 }
 
-priority()
+relist()
+  .then(priority)
   .then(lag)
   .then(() => {
     return logFile();

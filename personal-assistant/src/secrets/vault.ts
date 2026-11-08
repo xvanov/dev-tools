@@ -31,8 +31,9 @@ type Request = Record<string, any>;
 type Invocation = { command: string; args: string[]; input?: string };
 type RunnerResult = { stdout?: string; stderr?: string; status?: number | null; error?: string; timedOut?: boolean };
 type Runner = (inv: Invocation) => RunnerResult;
+type AsyncRunner = (inv: Invocation) => Promise<RunnerResult>;
 
-const { spawnSync } = require('child_process');
+const { spawnSync, execFile } = require('child_process');
 const platform = require('../platform');
 
 const RESOURCE = 'personal-assistant';
@@ -48,6 +49,22 @@ function defaultRunner({ command, args, input }: Invocation): RunnerResult {
 
 let runner: Runner = defaultRunner;
 
+function defaultAsyncRunner({ command, args, input }: Invocation): Promise<RunnerResult> {
+  return new Promise((resolve) => {
+    const child = execFile(command, args, { windowsHide: true, timeout: 15_000, encoding: 'utf8' }, (err: any, stdout: string, stderr: string) => {
+      if (err && err.killed) return resolve({ error: 'timed out', timedOut: true });
+      if (err && typeof err.code !== 'number') return resolve({ error: err.message });
+      resolve({ stdout: stdout || '', stderr: stderr || '', status: err ? err.code : 0 });
+    });
+    child.stdin?.on('error', () => {});
+    child.stdin?.end(input ?? '');
+  });
+}
+
+// Tests that fake the process get their fake here too, unless they give an async one.
+let asyncRunner: AsyncRunner | null = null;
+const runAsync = (inv: Invocation) => (asyncRunner ? asyncRunner(inv) : runner === defaultRunner ? defaultAsyncRunner(inv) : Promise.resolve(runner(inv)));
+
 // A store that hangs (a locked keyring with no one to unlock it, on a headless
 // box) would block every secret lookup for the timeout, and a locked desktop
 // keyring answers a lookup with an unlock prompt — once a minute per missing
@@ -59,8 +76,9 @@ const BREAK_MS = 10 * 60_000;
 let brokenUntil = 0;
 
 // Tests swap the process for a fake; nothing else should.
-function setRunner(fn?: Runner | null) {
+function setRunner(fn?: Runner | null, asyncFn?: AsyncRunner | null) {
   runner = fn || defaultRunner;
+  asyncRunner = asyncFn || null;
   brokenUntil = 0;
 }
 
@@ -108,11 +126,47 @@ function call(request: Request) {
     if (r && r.timedOut) timedOut = true;
     return r;
   };
-  const parsed = backend.run(request, watched);
+  return settle(request, backend.run(request, watched), timedOut);
+}
+
+function settle(request: Request, parsed: any, timedOut: boolean) {
   const failedRead = (!parsed || !parsed.ok) && (request.op === 'get' || request.op === 'list');
   if ((timedOut || failedRead) && runner === defaultRunner) brokenUntil = Date.now() + BREAK_MS;
   if (!parsed || !parsed.ok) throw new Error(`${backend.label}: ${scrub(parsed && parsed.error, request.value)}`);
   return parsed;
+}
+
+// call(), with each process the backend asks for run asynchronously. A
+// backend's run() is synchronous, so it is replayed: each pass answers the
+// processes already run and stops at the first one that is not, which is then
+// run off the event loop's back. A read only (no value is ever sent here).
+async function callAsync(request: Request) {
+  if (!available()) throw new Error(`${backend.label} is not available on this machine — store it in .env instead`);
+  const done = new Map<string, RunnerResult>();
+  const NEED = Symbol('need');
+  for (;;) {
+    let need = null as Invocation | null;
+    let timedOut = false;
+    let parsed: any;
+    try {
+      parsed = backend.run(request, (inv: Invocation) => {
+        const r = done.get(JSON.stringify(inv));
+        if (!r) {
+          need = inv;
+          throw NEED;
+        }
+        if (r.timedOut) timedOut = true;
+        return r;
+      });
+    } catch (err) {
+      if (err !== NEED) throw err;
+    }
+    if (need) {
+      done.set(JSON.stringify(need), await runAsync(need));
+      continue;
+    }
+    return settle(request, parsed, timedOut);
+  }
 }
 
 function set(name: string, value: string) {
@@ -135,4 +189,10 @@ function list() {
   return [].concat(r.names || []).map(String).sort();
 }
 
-module.exports = { RESOURCE, NAME_RE, invocation, setRunner, useBackend, available, label, where, scrub, set, get, remove, list };
+/** list(), without holding the event loop for the process (~0.7-1 s of PowerShell on Windows). */
+async function listAsync() {
+  const r = await callAsync({ op: 'list' });
+  return [].concat(r.names || []).map(String).sort();
+}
+
+module.exports = { RESOURCE, NAME_RE, invocation, setRunner, useBackend, available, label, where, scrub, set, get, remove, list, listAsync };

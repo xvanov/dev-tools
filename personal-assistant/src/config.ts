@@ -739,16 +739,36 @@ const MISS_TTL_MS = 60_000;
 // NAMES are listed once (one process) and kept for five minutes; a name not
 // in the list is a miss without asking. A secret stored from another process
 // is picked up within five minutes (forgetSecret() at once).
+// Only the first listing (and one after forgetSecret) waits for the process.
+// A stale list answers while a fresh one is read in the background: the
+// five-minute re-list held a serving worker's loop for 0.7-1 s each time.
 const VAULT_LIST_TTL_MS = 5 * 60_000;
 let vaultNames: { names: Set<string> | null; at: number } | null = null; // { names: Set | null, at }
+let vaultRelist: Promise<void> | null = null;
 
-function inVault(vault: { list(): string[] }, name: string) {
-  if (!vaultNames || Date.now() - vaultNames.at > VAULT_LIST_TTL_MS) {
+function inVault(vault: { list(): string[]; listAsync(): Promise<string[]> }, name: string) {
+  if (!vaultNames) {
     try {
       vaultNames = { names: new Set(vault.list()), at: Date.now() };
     } catch {
       vaultNames = { names: null, at: Date.now() }; // cannot list: ask per name, as before
     }
+  } else if (Date.now() - vaultNames.at > VAULT_LIST_TTL_MS && !vaultRelist) {
+    const asked = vaultNames;
+    vaultRelist = vault
+      .listAsync()
+      .then(
+        (names) => {
+          if (vaultNames === asked) vaultNames = { names: new Set(names), at: Date.now() };
+        },
+        () => {
+          // Keep what we had; try again after another TTL.
+          if (vaultNames === asked) vaultNames = { names: asked.names, at: Date.now() };
+        }
+      )
+      .finally(() => {
+        vaultRelist = null;
+      });
   }
   return vaultNames.names ? vaultNames.names.has(name) : true;
 }

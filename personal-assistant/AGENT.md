@@ -561,9 +561,11 @@ Postgres and nowhere else. Tests use invented names; fixtures never hold a real 
   `$XDG_DATA_HOME/personal-assistant` (`~/.local/share/...`) on Linux; `PA_SUPERVISOR_LOG`
   overrides the file. Look there first when a roll fails. A worker logs
   `event loop blocked {ms, running}` for any stall over 1 s (`src/util/lagWatch.js`): a
-  blocked loop fails `/healthz`, and the deploy rolls back. Never call a synchronous process
-  (`spawnSync`, `execFileSync`) on a path the worker takes repeatedly; the vault's names are
-  listed once per 5 minutes for exactly this reason (`src/config.js`, `inVault`).
+  blocked loop fails `/healthz`, and the deploy rolls back. Its `running` list is read when
+  the loop is free again, so a pass that ended inside the block is not in it. Never call a
+  synchronous process (`spawnSync`, `execFileSync`) on a path the worker takes repeatedly: the
+  vault's names are listed once, then re-listed every 5 minutes in the background
+  (`vault.listAsync`) while the old list answers (`src/config.js`, `inVault`).
 - **Deploying (Z4).** `windows/redeploy.ps1` / `linux/redeploy.sh` (called by termhub's
   updater) → `src/supervisor/deploy.js`: verify the pulled commits' SSH signatures
   (`src/supervisor/signing.js`; it only warns until a trusted-signers file exists, and refuses
