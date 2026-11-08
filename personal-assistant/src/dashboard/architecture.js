@@ -106,7 +106,7 @@ function probeTcp(host, port, timeoutMs) {
 async function probePostgres(timeoutMs) {
   const timer = new Promise((resolve) => setTimeout(() => resolve({ state: 'down', detail: 'timed out' }), timeoutMs).unref());
   const q = Promise.resolve()
-    .then(() => require('../db').one('select 1 as ok'))
+    .then(() => require('../repo').system.ping())
     .then(() => ({ state: 'ok', detail: 'select 1' }))
     .catch((err) => ({ state: 'down', detail: err.code || err.message }));
   return Promise.race([q, timer]);

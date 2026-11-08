@@ -69,6 +69,13 @@ function create(db) {
       );
       return r.rows || [];
     },
+
+    // --- for cli/index.js, dashboard/server.js
+
+    /** One proposal's kind and payload ({kind, payload}), or null. */
+    async kindAndPayload(id) {
+      return db.one('select kind, payload from proposal where id = $1', [id]);
+    },
   };
 }
 

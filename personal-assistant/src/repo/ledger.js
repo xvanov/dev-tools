@@ -297,6 +297,22 @@ function create(db) {
         [commitmentId]
       );
     },
+
+    // --- for dashboard/cards.js
+
+    /**
+     * The source items evidence rows point at, for a "looks done" card.
+     * @param {Array<number|string>} evidenceIds
+     */
+    async evidenceItems(evidenceIds) {
+      return db.rows(
+        `select e.id as evidence_id, si.id, si.source, si.external_id, si.thread_external_id, si.subject, si.occurred_at,
+                  si.raw - 'members' - 'memberEmails' - 'audioPaths' as raw
+             from ledger_evidence e join source_item si on si.id = e.source_item_id
+            where e.id = any($1::bigint[])`,
+        [evidenceIds]
+      );
+    },
   };
 }
 

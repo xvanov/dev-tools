@@ -99,4 +99,68 @@ module.exports = {
     assert.ok(!got.some((r) => String(r.id) === String(made[0].id)) || got.every((r) => r.started_at <= got[0].started_at), 'newest first');
     assert.deepStrictEqual(await repos.runs.recentForCommitment(await seed.commitment()), []);
   },
+  // --- for cli, dashboard (chunk G)
+
+  'factoryJobs: factory runs that have a job id': async ({ repos, seed, db, assert, uniq }) => {
+    const withJob = await seed.run({ status: 'running' });
+    const job = uniq('job');
+    await db.query(`update run set route = 'factory', factory_job_id = $2 where id = $1`, [withJob, job]);
+    const noJob = await seed.run({ status: 'running' });
+    await db.query(`update run set route = 'factory' where id = $1`, [noJob]);
+    const claude = await seed.run({ status: 'running' });
+    await db.query(`update run set factory_job_id = $2 where id = $1`, [claude, uniq('stray')]);
+    const got = await repos.runs.factoryJobs();
+    assert.ok(got.some((r) => Number(r.id) === withJob && r.factory_job_id === job));
+    assert.ok(!got.some((r) => [noJob, claude].includes(Number(r.id))));
+  },
+
+  'mrLinksFor: runs of the commitments with an MR link, newest first': async ({ repos, seed, db, assert }) => {
+    const c = await seed.commitment();
+    const old = await seed.run({ commitmentId: c, status: 'done' });
+    const recent = await seed.run({ commitmentId: c, status: 'done' });
+    const bare = await seed.run({ commitmentId: c, status: 'done' });
+    await db.query(`update run set mr_url = 'https://pr/1', started_at = now() - interval '2 hours' where id = $1`, [old]);
+    await db.query(`update run set mr_url = 'https://pr/2', started_at = now() - interval '1 hour' where id = $1`, [recent]);
+    const got = await repos.runs.mrLinksFor([c]);
+    assert.deepStrictEqual(got.map((r) => Number(r.id)), [recent, old]);
+    assert.ok(!got.some((r) => Number(r.id) === bare));
+    assert.deepStrictEqual(await repos.runs.mrLinksFor([]), []);
+  },
+
+  'newestPerCommitment: the newest runs of each commitment, numbered': async ({ repos, seed, db, assert }) => {
+    const c1 = await seed.commitment();
+    const c2 = await seed.commitment();
+    const ids = [];
+    for (let i = 0; i < 4; i++) {
+      const id = await seed.run({ commitmentId: c1, status: 'done' });
+      await db.query(`update run set started_at = now() - ($2 || ' hours')::interval where id = $1`, [id, String(10 - i)]);
+      ids.push(id);
+    }
+    const other = await seed.run({ commitmentId: c2, status: 'running' });
+    const got = await repos.runs.newestPerCommitment([c1, c2], 2);
+    assert.deepStrictEqual(got.filter((r) => Number(r.commitment_id) === c1).map((r) => [Number(r.id), Number(r.n)]), [[ids[3], 1], [ids[2], 2]]);
+    assert.deepStrictEqual(got.filter((r) => Number(r.commitment_id) === c2).map((r) => Number(r.id)), [other]);
+    assert.ok(['status', 'route', 'machine', 'termhub_session_id', 'factory_job_id', 'factory_state', 'mr_url'].every((k) => k in got[0]));
+  },
+
+  'modeByWorktree: the mode of the newest run in a worktree; null for none': async ({ repos, seed, db, assert, uniq }) => {
+    const wt = `/w/${uniq('wt')}`;
+    const a = await seed.run({ status: 'done' });
+    const b = await seed.run({ status: 'done' });
+    await db.query(`update run set worktree_path = $2, mode = 'plan', started_at = now() - interval '2 hours' where id = $1`, [a, wt]);
+    await db.query(`update run set worktree_path = $2, mode = 'branch', started_at = now() - interval '1 hour' where id = $1`, [b, wt]);
+    assert.strictEqual((await repos.runs.modeByWorktree(wt)).mode, 'branch');
+    assert.strictEqual(await repos.runs.modeByWorktree(`/w/${uniq('none')}`), null);
+  },
+
+  'detailsForCommitment: a commitment\'s runs for the dashboard, newest first': async ({ repos, seed, db, assert }) => {
+    const c = await seed.commitment();
+    const a = await seed.run({ commitmentId: c, status: 'done' });
+    const b = await seed.run({ commitmentId: c, status: 'running' });
+    await db.query(`update run set started_at = now() - interval '3 hours' where id = $1`, [a]);
+    await seed.run({ status: 'running' });
+    const got = await repos.runs.detailsForCommitment(c);
+    assert.deepStrictEqual(got.map((r) => Number(r.id)), [b, a]);
+    assert.ok(['status', 'mode', 'machine', 'branch', 'termhub_session_id', 'route', 'route_reason', 'factory_job_id', 'factory_state', 'factory_warnings', 'delivery', 'cost_usd', 'mr_url'].every((k) => k in got[0]));
+  },
 };

@@ -892,4 +892,98 @@ module.exports = {
     await repos.commitments.replan(c);
     assert.strictEqual((await db.one('select planned_at from commitment where id = $1', [c])).planned_at, null);
   },
+  // --- for cli, dashboard (chunk G)
+
+  'inboxList: open asks newest extracted first, optionally one source, limited': async (t) => {
+    const { repos, seed, assert } = t;
+    const tag = `inbox-${Math.random()}`;
+    const mk = async (source, summary, extra = {}) => {
+      const item = await seed.item({ source });
+      const id = await seed.commitment({ sourceItemId: item, summary: `${tag} ${summary}` });
+      await seed.commitmentSet(id, { extracted_at: new Date(Date.now() - (extra.ageMs || 0)), ...(extra.set || {}) });
+      return id;
+    };
+    const newer = await mk('graph_chat', 'newer', { ageMs: 1000 });
+    const older = await mk('graph_mail', 'older', { ageMs: 60_000 });
+    await mk('graph_mail', 'closed', { set: { status: 'done' } });
+    const mine = (rows) => rows.filter((r) => String(r.summary).startsWith(tag)).map((r) => Number(r.id));
+    assert.deepStrictEqual(mine(await repos.commitments.inboxList(null, 500)), [newer, older]);
+    assert.deepStrictEqual(mine(await repos.commitments.inboxList('graph_mail', 500)), [older]);
+    assert.strictEqual((await repos.commitments.inboxList(null, 1)).length, 1);
+    const row = (await repos.commitments.inboxList(null, 500)).find((r) => Number(r.id) === newer);
+    assert.ok(['summary', 'direction', 'due_at', 'confidence', 'project_confidence', 'project', 'who', 'source', 'occurred_at'].every((k) => k in row));
+  },
+
+  'detailForCli: the commitment with project, person and source item; null when gone': async ({ repos, seed, assert }) => {
+    const who = await seed.personWith({ name: 'Cli Person', email: 'cli@x.test' });
+    const project = await seed.project({ name: `cli-proj-${Math.random()}` });
+    const item = await seed.item({ source: 'graph_mail', subject: 'The ask', body: 'full body', thread: 'thr-cli' });
+    const id = await seed.commitment({ sourceItemId: item, summary: 'show me' });
+    await seed.commitmentSet(id, { counterparty_person_id: who, project_id: project });
+    const c = await repos.commitments.detailForCli(id);
+    assert.deepStrictEqual([c.summary, c.who, c.who_email, c.source, c.subject, c.body_text, c.thread_external_id], ['show me', 'Cli Person', 'cli@x.test', 'graph_mail', 'The ask', 'full body', 'thr-cli']);
+    assert.ok(c.project.startsWith('cli-proj-') && 'status' in c && 'direction' in c);
+    assert.strictEqual(await repos.commitments.detailForCli(999999999), null);
+  },
+
+  'cardContextCounts: open asks (not notes to myself) and those with a context paragraph': async ({ repos, seed, assert }) => {
+    const before = await repos.commitments.cardContextCounts();
+    const item = await seed.item({ source: 'graph_mail' });
+    const withCtx = await seed.commitment({ sourceItemId: item });
+    await seed.commitmentSet(withCtx, { context: 'because...' });
+    await seed.commitment({ sourceItemId: item });
+    const note = await seed.commitment({ sourceItemId: await seed.item({ source: 'claude_session' }) });
+    const closed = await seed.commitment({ sourceItemId: item, status: 'done' });
+    const after = await repos.commitments.cardContextCounts();
+    assert.deepStrictEqual([after.n, after.with_context], [before.n + 2, before.with_context + 1]);
+    assert.ok(note && closed);
+  },
+
+  'cardDetails: links input for commitments, with the thread that follows and, on request, the context': async ({ repos, seed, assert, uniq }) => {
+    const email = `${uniq('card')}@x.test`;
+    const who = await seed.personWith({ name: 'Card Person', email: null });
+    await seed.identity(who, 'smtp', email);
+    await seed.identity(who, 'github_username', 'cardperson');
+    const project = await seed.project({ name: uniq('cardp'), gitlabPath: 'grp/card' });
+    const thread = uniq('thr');
+    const at = Date.now() - 3600_000;
+    const ask = await seed.item({ source: 'graph_chat', thread, occurredAt: new Date(at), body: 'the ask', raw: { members: ['x'], webUrl: 'https://w/1' } });
+    await seed.item({ source: 'graph_chat', thread, occurredAt: new Date(at + 1000), body: 'later message' });
+    const id = await seed.commitment({ sourceItemId: ask, summary: 'card' });
+    await seed.commitmentSet(id, { counterparty_person_id: who, project_id: project, context: 'why it matters' });
+    const [d] = await repos.commitments.cardDetails([id], true);
+    assert.deepStrictEqual([d.who, d.who_email, d.who_github, d.gitlab_path, d.project_name, d.body, d.later, d.context], ['Card Person', email, 'cardperson', 'grp/card', d.project_name, 'the ask', 'later message', 'why it matters']);
+    assert.deepStrictEqual(d.raw, { webUrl: 'https://w/1' }, 'members are stripped');
+    const [plain] = await repos.commitments.cardDetails([id], false);
+    assert.ok(!('context' in plain) && plain.summary === 'card');
+    assert.deepStrictEqual(await repos.commitments.cardDetails([], true), []);
+    const session = await seed.item({ source: 'claude_session', body: 'secret prompt' });
+    const [s] = await repos.commitments.cardDetails([await seed.commitment({ sourceItemId: session })], false);
+    assert.strictEqual(s.body, '', 'a session\'s body is not sent');
+  },
+
+  'foldedSourceItems: open duplicates folded into a commitment, at any depth, with their items': async ({ repos, seed, assert }) => {
+    const root = await seed.commitment({ summary: 'root' });
+    const itemA = await seed.item({ source: 'graph_mail', subject: 'dup A', raw: { members: ['m'], keep: 1 } });
+    const a = await seed.commitment({ sourceItemId: itemA, summary: 'dup a' });
+    const itemB = await seed.item({ source: 'graph_chat', subject: 'dup B' });
+    const b = await seed.commitment({ sourceItemId: itemB, summary: 'dup b' });
+    await seed.commitmentSet(a, { superseded_by: root });
+    await seed.commitmentSet(b, { superseded_by: a });
+    const got = await repos.commitments.foldedSourceItems([root]);
+    assert.deepStrictEqual(got.map((r) => Number(r.id)).sort(), [a, b].sort());
+    assert.ok(got.every((r) => Number(r.root) === root));
+    assert.deepStrictEqual(got.find((r) => Number(r.id) === a).raw, { keep: 1 });
+    assert.deepStrictEqual(await repos.commitments.foldedSourceItems([]), []);
+  },
+
+  'contextForDashboard: one commitment with person, project and item; null when gone': async ({ repos, seed, assert }) => {
+    const who = await seed.personWith({ name: 'Dash Person' });
+    const item = await seed.item({ source: 'graph_mail', subject: 'Dash', body: 'b'.repeat(5000), thread: 'thr-d', raw: { webUrl: 'https://u', webLink: 'https://l' } });
+    const id = await seed.commitment({ sourceItemId: item, summary: 'dash' });
+    await seed.commitmentSet(id, { counterparty_person_id: who });
+    const c = await repos.commitments.contextForDashboard(id);
+    assert.deepStrictEqual([c.summary, c.who, c.source, c.subject, c.thread_external_id, c.body.length, c.web_url, c.web_link], ['dash', 'Dash Person', 'graph_mail', 'Dash', 'thr-d', 4000, 'https://u', 'https://l']);
+    assert.strictEqual(await repos.commitments.contextForDashboard(999999999), null);
+  },
 };

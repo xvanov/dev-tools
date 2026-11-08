@@ -216,4 +216,16 @@ module.exports = {
     assert.strictEqual(Number((await repos.ledger.latestReplyCloseTransition(c)).id), newer);
     assert.notStrictEqual(newer, older);
   },
+  // --- for dashboard (chunk G)
+
+  'evidenceItems: the source items evidence rows point at, members stripped': async ({ repos, seed, assert }) => {
+    const c = await seed.commitment();
+    const item = await seed.item({ source: 'graph_chat', subject: 'it is done', raw: { members: ['m'], keep: 1 } });
+    const ev = await seed.evidence(c, { sourceItemId: item });
+    const bare = await seed.evidence(c, { sourceItemId: null });
+    const got = await repos.ledger.evidenceItems([ev, bare]);
+    assert.strictEqual(got.length, 1, 'an evidence row with no item has nothing to show');
+    assert.deepStrictEqual([Number(got[0].evidence_id), Number(got[0].id), got[0].subject, got[0].raw], [ev, item, 'it is done', { keep: 1 }]);
+    assert.deepStrictEqual(await repos.ledger.evidenceItems([]), []);
+  },
 };

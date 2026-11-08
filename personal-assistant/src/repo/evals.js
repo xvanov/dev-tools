@@ -193,6 +193,13 @@ function create(db) {
       );
     },
 
+    // --- for src/cli (pa doctor)
+
+    /** Active cases and the time of the newest run: {cases, last}. */
+    async state() {
+      return db.one(`select (select count(*) from eval_case where active)::int as cases, (select max(ran_at) from eval_run) as last`);
+    },
+
     /** Up to 400 distinct subjects of a reasonable length, randomly picked: [{subject}]. */
     async sampleSubjects() {
       return db.rows(

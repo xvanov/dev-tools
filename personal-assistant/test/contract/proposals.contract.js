@@ -73,4 +73,12 @@ module.exports = {
     assert.strictEqual((await repos.proposals.statusOf(late.id)).status, 'expired');
     assert.ok(!(await repos.proposals.expireDue()).some((p) => String(p.id) === String(late.id)), 'once');
   },
+  // --- for cli, dashboard (chunk G)
+
+  'kindAndPayload: a proposal\'s kind and payload; null when gone': async ({ repos, assert }) => {
+    const row = await repos.proposals.insert(P({ kind: 'dispatch', payload: { delivery: 'pr' } }));
+    const got = await repos.proposals.kindAndPayload(row.id);
+    assert.deepStrictEqual([got.kind, got.payload], ['dispatch', { delivery: 'pr' }]);
+    assert.strictEqual(await repos.proposals.kindAndPayload(999999999), null);
+  },
 };

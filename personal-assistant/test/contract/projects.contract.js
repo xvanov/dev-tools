@@ -112,4 +112,17 @@ module.exports = {
     assert.deepStrictEqual([Number(row.aliases), Number(row.commitments)], [2, 1]);
     assert.ok(!got.some((r) => Number(r.id) === off));
   },
+  // --- for cli (chunk G)
+
+  'activeNamePaths: name and folder of the active projects': async ({ repos, seed, db, assert, uniq }) => {
+    const live = uniq('live');
+    const dead = uniq('dead');
+    const a = await seed.projectNamed(live, {});
+    const b = await seed.projectNamed(dead, {});
+    await db.query(`update project set repo_path = '/r/live' where id = $1`, [a]);
+    await db.query(`update project set active = false where id = $1`, [b]);
+    const got = await repos.projects.activeNamePaths();
+    assert.deepStrictEqual(got.find((r) => r.name === live), { name: live, repo_path: '/r/live' });
+    assert.ok(!got.some((r) => r.name === dead));
+  },
 };

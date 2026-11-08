@@ -1064,6 +1064,14 @@ function create(db) {
     async deletePersonPage(personId) {
       await db.query(`delete from memory_page where kind = 'person' and subject_id = $1`, [personId]);
     },
+
+    // --- for dashboard/server.js
+
+    /** How many claims wait for a human to vouch for them. */
+    async pendingReviewCount() {
+      const r = await db.one(`select count(*)::int as n from claim where status = 'pending_review'`);
+      return r.n;
+    },
   };
 }
 

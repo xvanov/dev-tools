@@ -514,12 +514,7 @@ async function buildSnapshot() {
       .then(() => require('../brief').gather({ horizonDays: 7 }))
       .catch(quiet('brief')),
     Promise.resolve()
-      .then(() =>
-        require('../db').one(
-          `select (select count(*) from draft where status in ('pending','edited'))::int as drafts,
-                  (select count(*) from claim where status = 'pending_review')::int as review`
-        )
-      )
+      .then(() => require('../repo').system.pendingCounts())
       .catch(quiet('counts')),
     Promise.resolve()
       .then(() => require('../memory').getPage('me'))

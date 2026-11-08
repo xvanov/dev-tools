@@ -14,12 +14,7 @@ const path = require('path');
 const ROOT = path.join(__dirname, '..');
 
 const PENDING = new Set([
-  'src/chat/fastLane.js',
-  'src/cli/index.js',
-  'src/dashboard/architecture.js',
-  'src/dashboard/cards.js',
   'src/dashboard/factory.js',
-  'src/dashboard/server.js',
   'src/dispatch/delivery.js',
   'src/dispatch/factory.js',
   'src/dispatch/index.js',
@@ -49,6 +44,7 @@ const PENDING = new Set([
 // on exit), never to run a statement; a SQL call in them still fails.
 const POOL_ONLY = new Map([
   ['src/worker.js', 'the lease connection (getPool().connect) and close on exit'],
+  ['src/cli/index.js', 'the pool lifecycle (db.probe for pa doctor, db.close on exit); its statements are repository methods'],
   ['src/events/index.js', 'the dedicated LISTEN connection (pg Client); its statements are repo.events'],
 ]);
 

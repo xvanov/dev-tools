@@ -176,6 +176,13 @@ function create(db) {
         [now, String(days)]
       );
     },
+
+    // --- for cli/index.js
+
+    /** Marks every unread notification read (`pa inbox ack all`). */
+    async markAllRead() {
+      await db.query('update notification set read_at = now() where read_at is null');
+    },
   };
 }
 

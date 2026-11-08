@@ -240,6 +240,33 @@ function create(db) {
         [id, ['items', String(index)], result]
       );
     },
+
+    // --- for cli/index.js
+
+    /**
+     * For `pa doctor`: briefs written and failed, the last delivered, and series learned from transcripts.
+     * @returns {Promise<{ok: number, failed: number, last: Date|null, learned: number}>}
+     */
+    async briefStats() {
+      return db.one(
+        `select (select count(*) from meeting_brief where error is null)::int as ok,
+                (select count(*) from meeting_brief where error is not null)::int as failed,
+                (select max(created_at) from meeting_brief where notification_id is not null) as last,
+                (select count(*) from meeting_series where profile ? 'learnedFrom')::int as learned`
+      );
+    },
+
+    /**
+     * For `pa doctor`: debriefs written, those that failed three times, and the last written.
+     * @returns {Promise<{ok: number, failed: number, last: Date|null}>}
+     */
+    async debriefStats() {
+      return db.one(
+        `select (select count(*) from meeting_debrief where error is null)::int as ok,
+                (select count(*) from meeting_debrief where error is not null and attempts >= 3)::int as failed,
+                (select max(created_at) from meeting_debrief where error is null) as last`
+      );
+    },
   };
 }
 

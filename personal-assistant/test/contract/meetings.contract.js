@@ -215,4 +215,31 @@ module.exports = {
     assert.strictEqual(after.applied.items[1].type, 'decision', 'the rest of the item is kept');
     assert.ok(after.updated_at >= row.updated_at);
   },
+  // --- for cli (chunk G)
+
+  'briefStats: briefs written and failed, the last delivered, series learned': async ({ repos, assert, uniq }) => {
+    const before = await repos.meetings.briefStats();
+    const mk = (over = {}) => ({ key: uniq('b'), eventId: 'e', itemId: null, startsAt: '2096-01-01T09:00:00Z', seriesKey: 's', kind: 'standup', title: 't', headline: 'h', body: 'b', points: {}, refs: {}, joinUrl: null, ...over });
+    await repos.meetings.upsertBrief(mk());
+    await repos.meetings.recordBriefError({ ...mk(), error: 'x' });
+    const key = uniq('learned');
+    await repos.meetings.saveSeries({ seriesKey: key, label: 'L', kind: null, kindSource: null, profile: { learnedFrom: ['x'] } });
+    const after = await repos.meetings.briefStats();
+    assert.deepStrictEqual([after.ok, after.failed, after.learned], [before.ok + 1, before.failed + 1, before.learned + 1]);
+    assert.ok(after.last === null || after.last instanceof Date);
+  },
+
+  'debriefStats: debriefs written, failed three times, the last written': async ({ repos, seed, db, assert }) => {
+    const before = await repos.meetings.debriefStats();
+    const ep = async () => seed.episode({ itemId: await seed.item({ source: 'audio', body: 'x' }) });
+    const v = (episodeId, over = {}) => ({ episodeId, eventExternalId: null, sourceItemId: null, title: 'T', startedAt: '2096-01-01T09:00:00Z', endedAt: '2096-01-01T09:30:00Z', contentHash: 'h', transcriptChars: 1, applied: { items: [] }, dropped: 0, extractedBy: 'c', ...over });
+    await repos.meetings.upsertDebrief(v(await ep()));
+    const failing = await ep();
+    for (let i = 0; i < 3; i++) await repos.meetings.recordDebriefError({ ...v(failing), error: 'x' });
+    await repos.meetings.recordDebriefError({ ...v(await ep()), error: 'once' });
+    const after = await repos.meetings.debriefStats();
+    assert.deepStrictEqual([after.ok, after.failed], [before.ok + 1, before.failed + 1]);
+    assert.ok(after.last instanceof Date);
+    assert.ok(db);
+  },
 };

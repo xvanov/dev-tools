@@ -48,10 +48,9 @@ console.log('backup.test.js ok');
 (async () => {
   const { rotateInstallId } = require('../src/backup');
   const seen = [];
-  const id = await rotateInstallId(async (sql, params) => { seen.push([sql, params]); return { rows: [] }; });
+  const id = await rotateInstallId(async (newId) => { seen.push(newId); });
   require('assert').match(id, /^[0-9a-f-]{36}$/);
-  require('assert').deepStrictEqual(seen.map((x) => x[0]), ['delete from pa_install', 'insert into pa_install (id) values ($1)']);
-  require('assert').strictEqual(seen[1][1][0], id);
+  require('assert').deepStrictEqual(seen, [id]);
   const src = require('fs').readFileSync(require('path').join(__dirname, '..', 'src', 'backup.js'), 'utf8');
   const body = src.slice(src.indexOf('async function restore('), src.indexOf('async function rotateInstallId'));
   require('assert').ok(/await rotateInstallId\(\)/.test(body), 'restore calls it');

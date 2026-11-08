@@ -164,4 +164,12 @@ module.exports = {
     assert.ok(!list.includes('short'));
     assert.strictEqual(new Set(list).size, list.length);
   },
-};
+
+  // --- for src/cli (pa doctor)
+
+  'state: active cases and the time of the newest run': async ({ repos, assert, uniq }) => {
+    await repos.evals.insertCase({ question: uniq('q'), qtype: 'abstention', gold: [], answer: null, origin: 'miss', notes: null });
+    await repos.evals.insertRun({ retriever: uniq('st'), config: {}, metrics: {}, perCase: [] });
+    const s = await repos.evals.state();
+    assert.ok(s.cases >= 1 && s.last instanceof Date);
+  },};

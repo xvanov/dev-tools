@@ -210,4 +210,17 @@ module.exports = {
     }), /boom/);
     assert.strictEqual(await repos.notifications.weight(k), null);
   },
+  // --- for cli (chunk G)
+
+  'markAllRead: every unread notification, and only those': async ({ repos, assert }) => {
+    const a = await repos.notifications.insert({ kind: 'info', title: 'a', body: '', url: null, dedupeKey: null, priority: 'normal', delivery: 'feed' });
+    const b = await repos.notifications.insert({ kind: 'info', title: 'b', body: '', url: null, dedupeKey: null, priority: 'normal', delivery: 'feed' });
+    await repos.notifications.markRead(a.id);
+    const readAt = (await repos.notifications.feed({ limit: 500 })).find((r) => String(r.id) === String(a.id)).read_at;
+    await repos.notifications.markAllRead();
+    const feed = await repos.notifications.feed({ limit: 500 });
+    assert.ok(feed.every((r) => r.read_at instanceof Date));
+    assert.strictEqual(feed.find((r) => String(r.id) === String(a.id)).read_at.getTime(), readAt.getTime(), 'the first read time is kept');
+    assert.ok(feed.some((r) => String(r.id) === String(b.id)));
+  },
 };

@@ -11,7 +11,7 @@
 //                   start `claude --resume`, so it takes the X-PA guard)
 
 const { config } = require('../config');
-const { rows } = require('../db');
+const repo = require('../repo');
 const L = require('./links');
 
 function hubs() {
@@ -20,36 +20,13 @@ function hubs() {
   return { local: config.termhub.url, machines };
 }
 
-const DETAIL_COLS = `c.id, c.summary, c.detail, p.gitlab_path, p.name as project_name,
-       per.display_name as who, coalesce(per.is_me, false) as who_is_me,
-       coalesce((select pi.value from person_identity pi where pi.person_id = per.id and pi.kind = 'smtp' order by pi.id limit 1),
-                per.primary_email) as who_email,
-       (select pi.value from person_identity pi where pi.person_id = per.id and pi.kind in ('github_username','github') order by pi.id limit 1) as who_github,
-       si.id as item_id, si.source, si.external_id, si.thread_external_id, si.subject, si.occurred_at,
-       si.raw - 'members' - 'memberEmails' - 'audioPaths' as raw,
-       case when si.source = 'claude_session' then '' else left(si.body_text, 20000) end as body,
-       -- The next few messages in the thread: the PR someone posted after the
-       -- ask is the link the card most needs. A session's thread is its
-       -- folder (other sessions), so not for those.
-       case when si.source = 'claude_session' or si.thread_external_id is null then '' else
-         (select string_agg(left(t.body_text, 4000), E'\\n' order by t.occurred_at)
-            from (select t.body_text, t.occurred_at from source_item t
-                   where t.source = si.source and t.thread_external_id = si.thread_external_id
-                     and t.occurred_at > si.occurred_at
-                   order by t.occurred_at limit 8) t) end as later`;
-
 async function details(ids) {
-  const from = `from commitment c
-       left join project p on p.id = c.project_id
-       left join person per on per.id = c.counterparty_person_id
-       join source_item si on si.id = c.source_item_id
-      where c.id = any($1::bigint[])`;
   try {
-    return await rows(`select ${DETAIL_COLS}, c.context, c.context_at ${from}`, [ids]);
+    return await repo.commitments.cardDetails(ids, true);
   } catch (err) {
     // Before `pa migrate` has added sql/023: links still work.
     if (!/column .*context/.test(err.message)) throw err;
-    return rows(`select ${DETAIL_COLS} ${from}`, [ids]);
+    return repo.commitments.cardDetails(ids, false);
   }
 }
 
@@ -67,16 +44,8 @@ async function forCommitments(ids, { evidenceIds = [] } = {}) {
   if (!want.length) return { byId: out, evidence: new Map() };
   const [found, runs, ev] = await Promise.all([
     details(want),
-    rows(`select id, commitment_id, mr_url from run where commitment_id = any($1::bigint[]) and mr_url is not null order by started_at desc`, [want]).catch(() => []),
-    evidenceIds.length
-      ? rows(
-          `select e.id as evidence_id, si.id, si.source, si.external_id, si.thread_external_id, si.subject, si.occurred_at,
-                  si.raw - 'members' - 'memberEmails' - 'audioPaths' as raw
-             from ledger_evidence e join source_item si on si.id = e.source_item_id
-            where e.id = any($1::bigint[])`,
-          [evidenceIds.map(Number)]
-        ).catch(() => [])
-      : [],
+    repo.runs.mrLinksFor(want).catch(() => []),
+    evidenceIds.length ? repo.ledger.evidenceItems(evidenceIds.map(Number)).catch(() => []) : [],
   ]);
   const h = hubs();
   const chains = await chainsFor(want).catch(() => new Map());
@@ -116,14 +85,7 @@ async function chainsFor(commitmentIds, { perCard = 3 } = {}) {
   const want = [...new Set((commitmentIds || []).filter((x) => x != null).map(Number))];
   const out = new Map();
   if (!want.length) return out;
-  const runs = await rows(
-    `select * from (
-       select id, commitment_id, status, route, machine, termhub_session_id, factory_job_id, factory_state, mr_url,
-              row_number() over (partition by commitment_id order by started_at desc) as n
-         from run where commitment_id = any($1::bigint[])) r
-      where n <= $2 order by commitment_id, n`,
-    [want, perCard]
-  );
+  const runs = await repo.runs.newestPerCommitment(want, perCard);
   if (!runs.length) return out;
   const F = require('../dispatch/factoryCore');
   const stored = await require('../dispatch/factory').chains(runs.map((r) => r.id));
@@ -165,17 +127,7 @@ function attach(card, info) {
 async function foldedInto(ids) {
   const want = [...new Set(ids.filter((x) => x != null).map(Number))];
   if (!want.length) return new Map();
-  const found = await rows(
-    `with recursive down as (
-       select c.id, c.superseded_by as root, 1 as depth from commitment c where c.superseded_by = any($1::bigint[])
-       union all
-       select c.id, down.root, down.depth + 1 from commitment c join down on c.superseded_by = down.id where down.depth < 10)
-     select d.id, d.root, si.id as item_id, si.source, si.external_id, si.thread_external_id, si.subject, si.occurred_at,
-            si.raw - 'members' - 'memberEmails' - 'audioPaths' as raw
-       from down d join commitment c on c.id = d.id join source_item si on si.id = c.source_item_id
-      order by si.occurred_at desc`,
-    [want]
-  );
+  const found = await repo.commitments.foldedSourceItems(want);
   const out = new Map();
   for (const f of found) {
     const k = String(f.root);
@@ -226,11 +178,7 @@ async function enrich(s) {
  * and the id must be a UUID: nothing from the item's text reaches a shell.
  */
 async function openSession(itemId) {
-  const { one } = require('../db');
-  const item = await one(
-    `select id, source, external_id, subject, occurred_at, raw from source_item where id = $1 and source = 'claude_session'`,
-    [itemId]
-  );
+  const item = await repo.sources.claudeSessionItem(itemId);
   if (!item) return { ok: false, error: `no Claude session item #${itemId}` };
   const info = L.sessionInfo(item, hubs());
   if (!info.id || !info.cwd) return { ok: false, error: 'this session has no id or folder to resume' };
@@ -251,7 +199,7 @@ async function openSession(itemId) {
   };
   // A dispatched run that may not push is resumed as it was started: without
   // push credentials (src/dispatch/remote.js), or not at all.
-  const run = await one(`select mode from run where worktree_path = $1 order by started_at desc limit 1`, [info.cwd]).catch(() => null);
+  const run = await repo.runs.modeByWorktree(info.cwd).catch(() => null);
   const mayPush = !run || require('../dispatch/modes').mode(run.mode).mayPush;
   const created = mayPush ? await hub.createSession(spec) : await require('../dispatch/remote').createNoPushSession(hub, spec, machine);
   return { ok: true, url: `${hub.base}/#session=${encodeURIComponent(created.id)}`, resumed: true };

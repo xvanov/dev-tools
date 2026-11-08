@@ -15,7 +15,9 @@ const readline = require('readline');
 const { config } = require('../config');
 const platform = require('../platform');
 const { parseArgs, flagInt, flagBool } = require('./parseArgs');
+// The pool, for its lifecycle only (probe, close): every statement is a repository method.
 const db = require('../db');
+const repository = require('../repo');
 
 const HELP = `pa — your context layer
 
@@ -292,11 +294,7 @@ const commands = {
     if (me?.body) parts.push('## About the user\n\n' + me.body.slice(0, 5000));
     const { brief } = require('../brief');
     parts.push('## Today (pa brief)\n\n' + String(await brief()).slice(0, 6000));
-    const waiting = await db.one(
-      `select (select count(*) from draft where status in ('pending','edited'))::int as drafts,
-              (select count(*) from claim where status = 'pending_review')::int as review,
-              (select count(*) from run where status in ('starting','running','waiting'))::int as runs`
-    ).catch(() => null);
+    const waiting = await repository.system.waitingCounts().catch(() => null);
     if (waiting) {
       parts.push(`## Waiting on the user\n\n${waiting.drafts} reply drafts to send · ${waiting.review} memory items to review · ${waiting.runs} live agent runs (\`pa runs\`).`);
     }
@@ -320,18 +318,7 @@ const commands = {
 
   async inbox(args, flags) {
     const limit = flagInt(flags, 'n', 20);
-    const list = await db.rows(
-      `select c.id, c.summary, c.direction, c.due_at, c.confidence, c.project_confidence,
-              p.name as project, per.display_name as who, si.source, si.occurred_at
-         from commitment c
-         left join project p on p.id = c.project_id
-         left join person per on per.id = c.counterparty_person_id
-         join source_item si on si.id = c.source_item_id
-        where c.status in ('open','dispatched') and c.superseded_by is null
-          and ($1::text is null or si.source = $1)
-        order by c.extracted_at desc limit $2`,
-      [flags.source ? String(flags.source) : null, limit]
-    );
+    const list = await repository.commitments.inboxList(flags.source ? String(flags.source) : null, limit);
     if (!list.length) return out('nothing pending');
     for (const c of list) {
       const marks = [];
@@ -365,16 +352,7 @@ const commands = {
       return;
     }
 
-    const c = await db.one(
-      `select c.*, p.name as project, per.display_name as who, per.primary_email as who_email,
-              si.source, si.subject, si.body_text, si.occurred_at, si.thread_external_id
-         from commitment c
-         left join project p on p.id = c.project_id
-         left join person per on per.id = c.counterparty_person_id
-         join source_item si on si.id = c.source_item_id
-        where c.id = $1`,
-      [id]
-    );
+    const c = await repository.commitments.detailForCli(id);
     if (!c) return fail(`no commitment #${id}`);
 
     out(`#${c.id}  ${c.summary}`);
@@ -672,7 +650,7 @@ const commands = {
     if (sub === 'jobs') {
       const snap = await factory.snapshot();
       if (!snap.polledAt) return out(`no job list stored yet${snap.error ? ` (last error: ${snap.error})` : ''} — the worker stores one every ${config.factory.pollSeconds}s`);
-      const runs = await require('../db').rows(`select id, factory_job_id from run where route = 'factory' and factory_job_id is not null`).catch(() => []);
+      const runs = await repository.runs.factoryJobs().catch(() => []);
       const b = F.board(snap.jobs, { paRuns: new Map(runs.map((r) => [r.factory_job_id, { id: r.id, url: null }])) });
       const LABEL = { needs_you: 'Needs you', running: 'Running', delivered: 'Delivered', ended: 'Failed / cancelled' };
       out(`as of ${relative(snap.polledAt)}${snap.error ? ` (the last list failed: ${snap.error.slice(0, 120)})` : ''} · factory today $${b.spend.factoryToday.metered.toFixed(2)} metered, $${b.spend.factoryToday.subscriptionEquiv.toFixed(2)} subscription-equivalent`);
@@ -794,7 +772,7 @@ const commands = {
       // Accepting a card that merges or pushes to main is the operator's own
       // act: from a terminal or the dashboard, never from the chat.
       const D = require('../dispatch/deliveryCore');
-      const p = await require('../db').one('select kind, payload from proposal where id = $1', [Number(id)]);
+      const p = await repository.proposals.kindAndPayload(Number(id));
       const final = delivery ? D.delivery(delivery) : p?.payload?.delivery;
       if (p?.kind === 'dispatch' && D.unattended(final) && (!interactive() || process.env.PA_DISPATCHED_RUN)) {
         return fail(`proposal ${id} would ${final === 'push_to_main' ? 'push to main' : 'merge'} with no human step — accept it in the dashboard or from a terminal`);
@@ -880,7 +858,7 @@ const commands = {
     }
     if (sub === 'ack') {
       if (a === 'all') {
-        await db.query('update notification set read_at = now() where read_at is null');
+        await repository.notifications.markAllRead();
         await require('../notify/chat').writeInbox().catch(() => {});
         return out('All read.');
       }
@@ -1257,12 +1235,10 @@ const commands = {
       const probe = await db.probe();
       mark(true, 'postgres', `${maskUrl(config.databaseUrl)} · ${probe.db}`);
       mark(probe.has_vector, 'pgvector', probe.has_vector ? 'installed' : 'MISSING — run `pa migrate`');
-      const migrations = await db
-        .rows('select version from schema_migration order by version')
-        .catch(() => []);
+      const migrations = await repository.system.appliedMigrations().catch(() => []);
       mark(migrations.length > 0, 'migrations', migrations.length ? `${migrations.length} applied` : 'none — run `pa migrate`');
       // An active project whose folder is gone attracts asks a run cannot work on.
-      const active = await db.rows('select name, repo_path from project where active').catch(() => []);
+      const active = await repository.projects.activeNamePaths().catch(() => []);
       const gone = require('../projects').staleProjects(
         active.map((p) => ({ ...p, active: true })),
         (p) => require('fs').existsSync(p)
@@ -1343,7 +1319,7 @@ const commands = {
     // the last pass's outcome is the only honest signal.
     if (config.jira.enabled) {
       const jira = require('../ingest/jira');
-      const jc = await db.one("select last_run_at, last_error, state from sync_cursor where source = 'jira'").catch(() => null);
+      const jc = await repository.sources.cursorRow('jira').catch(() => null);
       const rest = await jira.restAuth(jc).catch(() => ({ ok: false, missing: [] }));
       const ok = Boolean(jc && !jc.last_error && (jc.state?.cloudId || jc.state?.site));
       mark(
@@ -1434,13 +1410,7 @@ const commands = {
     }
     // The cause-and-effect paragraphs on dashboard cards (src/commitments/context.js).
     try {
-      const { SELF_NOTE } = require('../commitments/selfNotes');
-      const r = await db.one(
-        `select count(*)::int as n, count(c.context)::int as with_context
-           from commitment c join source_item si on si.id = c.source_item_id
-           left join person per on per.id = c.counterparty_person_id
-          where c.status in ('open','dispatched') and c.superseded_by is null and not ${SELF_NOTE}`
-      );
+      const r = await repository.commitments.cardContextCounts();
       mark(
         config.cardContext.enabled,
         'card context',
@@ -1567,13 +1537,7 @@ const commands = {
       );
     }
 
-    const counts = await db.one(
-      `select (select count(*) from source_item) as items,
-              (select count(*) from commitment where status = 'open') as open_commitments,
-              (select count(*) from run where status in ('running','waiting')) as live_runs,
-              (select count(*) from draft where status = 'pending') as pending_drafts,
-              (select count(*) from distillation where error is not null) as failed_items`
-    );
+    const counts = await repository.system.counts();
     const distill = require('../distill');
     lines.push('');
     lines.push(`  ${counts.items} items · ${counts.open_commitments} open commitments · ${await distill.pendingCount()} awaiting distillation`);
@@ -1583,9 +1547,7 @@ const commands = {
         `${d.unknown.length ? ` · PA_COMMITMENT_SOURCES has unknown ${d.unknown.join(', ')}` : ''}`);
     }
     lines.push(`  ${counts.live_runs} live runs · ${counts.pending_drafts} pending drafts · ${counts.failed_items} items failed distillation`);
-    const evalState = await db
-      .one(`select (select count(*) from eval_case where active)::int as cases, (select max(ran_at) from eval_run) as last`)
-      .catch(() => null);
+    const evalState = await repository.evals.state().catch(() => null);
     lines.push(
       evalState
         ? `  eval: ${evalState.cases} active cases · last run ${relative(evalState.last)}${evalState.cases ? '' : ' — `pa eval seed`'}`
@@ -1630,12 +1592,7 @@ const commands = {
         times = null;
         quiet += ` · BAD ${err.message} — no digests`;
       }
-      const a = await db.one(
-        `select (select count(*) from notification where delivery = 'push' and kind <> 'digest' and created_at >= $1)::int as pushed,
-                (select count(*) from notification where delivery = 'digest' and digest_id is null)::int as held,
-                (select max(created_at) from digest) as last_digest`,
-        [budget.startOfLocalDay(new Date())]
-      );
+      const a = await repository.system.attention(budget.startOfLocalDay(new Date()));
       const inbox = require('../notify/chat').inboxPath();
       lines.push(
         `  attention: ${a.pushed}/${config.notify.pushBudget} pushes today · ${quiet} · ${a.held} held for the digest` +
@@ -1649,12 +1606,7 @@ const commands = {
 
     // Pre-meeting briefs
     try {
-      const b = await db.one(
-        `select (select count(*) from meeting_brief where error is null)::int as ok,
-                (select count(*) from meeting_brief where error is not null)::int as failed,
-                (select max(created_at) from meeting_brief where notification_id is not null) as last,
-                (select count(*) from meeting_series where profile ? 'learnedFrom')::int as learned`
-      );
+      const b = await repository.meetings.briefStats();
       lines.push(
         `  briefs ${config.meetings.enabled ? `on · ${config.meetings.leadMinutes} min ahead` : 'off (PA_BRIEFS=0)'} · ${b.ok} written` +
           `${b.failed ? ` · ${b.failed} FAILED (pa meeting list)` : ''} · last delivered ${b.last ? relative(b.last) : 'never'}` +
@@ -1666,11 +1618,7 @@ const commands = {
 
     // Post-meeting debriefs, and whether capture has ever honoured an early roll.
     try {
-      const d = await db.one(
-        `select (select count(*) from meeting_debrief where error is null)::int as ok,
-                (select count(*) from meeting_debrief where error is not null and attempts >= 3)::int as failed,
-                (select max(created_at) from meeting_debrief where error is null) as last`
-      );
+      const d = await repository.meetings.debriefStats();
       const rolled = require('../audio/spool').lastRoll(config.audio.rollFile);
       lines.push(
         `  debriefs ${config.meetings.debrief ? 'on' : 'off (PA_DEBRIEF=0)'} · ${d.ok} written` +

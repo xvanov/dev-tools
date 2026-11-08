@@ -25,7 +25,7 @@ const fs = require('fs');
 const path = require('path');
 const http = require('http');
 const { config } = require('../config');
-const { rows } = require('../db');
+const repo = require('../repo');
 const { logger } = require('../log');
 
 const log = logger('dashboard');
@@ -37,36 +37,11 @@ function hostAllowed(host) {
 }
 
 async function commitmentContext(id) {
-  const { one } = require('../db');
-  const c = await one(
-    `select c.id, c.direction, c.status, c.summary, c.detail, c.due_at, c.repo_path, c.project_rationale,
-            p.name as project, per.display_name as who,
-            si.source, si.subject, si.occurred_at, si.thread_external_id, si.author_identity,
-            left(si.body_text, 4000) as body, si.raw->>'webUrl' as web_url, si.raw->>'webLink' as web_link
-       from commitment c
-       left join project p on p.id = c.project_id
-       left join person per on per.id = c.counterparty_person_id
-       join source_item si on si.id = c.source_item_id
-      where c.id = $1`,
-    [id]
-  );
+  const c = await repo.commitments.contextForDashboard(id);
   if (!c) return { error: `no commitment #${id}` };
-  const thread = c.thread_external_id
-    ? await rows(
-        `select id, author_identity, occurred_at, left(body_text, 600) as body from source_item
-          where thread_external_id = $1 order by occurred_at desc limit 12`,
-        [c.thread_external_id]
-      )
-    : [];
+  const thread = c.thread_external_id ? await repo.sources.threadItems(c.thread_external_id) : [];
   const termhub = require('../dispatch/termhub');
-  const runs = (
-    await rows(
-      `select id, status, mode, machine, branch, started_at, termhub_session_id, route, route_reason,
-              factory_job_id, factory_state, factory_warnings, delivery, cost_usd, mr_url from run
-        where commitment_id = $1 order by started_at desc`,
-      [id]
-    )
-  ).map((r) => ({
+  const runs = (await repo.runs.detailsForCommitment(id)).map((r) => ({
     ...r,
     url: r.termhub_session_id ? `${termhub.forMachine(r.machine).base}/#session=${encodeURIComponent(r.termhub_session_id)}` : null,
   }));
@@ -78,23 +53,13 @@ async function commitmentContext(id) {
 async function state() {
   const { gather } = require('../brief');
   const data = await gather({ horizonDays: 7 });
-  const drafts = await rows(
-    `select d.id, d.run_id, d.commitment_id, d.channel, d.to_identity, d.subject, d.body, d.status,
-            d.origin, d.created_at, r.task, c.summary as ask, si.raw->>'webUrl' as ask_url,
-            si.raw->>'webLink' as ask_link, si.body_text as ask_text
-       from draft d
-       left join run r on r.id = d.run_id
-       left join commitment c on c.id = d.commitment_id
-       left join source_item si on si.id = d.source_item_id
-      where d.status in ('pending','edited')
-      order by d.created_at desc limit 30`
-  );
+  const drafts = await repo.drafts.pendingForBoard();
   const health = require('../ingest/health');
   const sources = await health.sources();
   // Sources that keep failing: the board cannot see what was settled there.
   const blind = health.blind(sources);
   // The Memory tab's badge: claims waiting for a human to vouch for them.
-  const review = await rows(`select count(*)::int as n from claim where status = 'pending_review'`).catch(() => [{ n: 0 }]);
+  const review = await repo.memory.pendingReviewCount().catch(() => 0);
   const closed = await require('../commitments').recentlyClosed().catch(() => []);
   // Closes the reconciler was not sure enough to make on its own (src/ledger/reconcile.js).
   const looksDone = await require('../ledger/reconcile').proposals().catch(() => []);
@@ -109,7 +74,7 @@ async function state() {
     .status()
     .then((s) => ({ today: s.today, cap: s.cap }))
     .catch(() => null);
-  const out = { ...data, drafts, sources, blind, closed, looksDone, needsYou, memoryPending: review[0].n, secretRequests, spend, notifications, now: new Date().toISOString() };
+  const out = { ...data, drafts, sources, blind, closed, looksDone, needsYou, memoryPending: review, secretRequests, spend, notifications, now: new Date().toISOString() };
   // Every card's links (the message, the person, the repo, the PRs it names,
   // the Claude session) and its stored cause-and-effect paragraph
   // (dashboard/cards.js). A failure here costs the links, not the page.
@@ -493,7 +458,7 @@ async function handle(req, res) {
       const delivery = typeof body.delivery === 'string' && body.delivery ? body.delivery : null;
       if (delivery && !D.isDelivery(delivery)) return send(res, 400, { error: `unknown delivery "${delivery.slice(0, 40)}"` });
       if (m[2] === 'accept') {
-        const p = await require('../db').one('select kind, payload from proposal where id = $1', [Number(m[1])]);
+        const p = await repo.proposals.kindAndPayload(Number(m[1]));
         const final = delivery || p?.payload?.delivery || null;
         if (p?.kind === 'dispatch' && D.unattended(final) && !pageTokenOk(req)) {
           return send(res, 403, { error: `accepting a card that ${final === 'push_to_main' ? 'pushes to main' : 'merges'} needs this page's token — reload the dashboard` });

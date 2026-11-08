@@ -245,10 +245,9 @@ async function restore(file) {
  * id would hand each other's runs the same factory idempotency keys. Runs
  * already submitted keep the key on their row (run.external_id).
  */
-async function rotateInstallId(q = query) {
+async function rotateInstallId(replace = (id) => repo.system.replaceInstallId(id)) {
   const id = require('crypto').randomUUID();
-  await q('delete from pa_install');
-  await q('insert into pa_install (id) values ($1)', [id]);
+  await replace(id);
   log.info('new install id after restore');
   return id;
 }

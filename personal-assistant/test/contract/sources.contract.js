@@ -276,4 +276,32 @@ module.exports = {
     assert.deepStrictEqual({ ...(await repos.sources.subjectAndBody(id)) }, { subject: 'Hello', body_text: 'World' });
     assert.strictEqual(await repos.sources.subjectAndBody(0), null);
   },
+  // --- for cli, dashboard (chunk G)
+
+  'cursorRow: last run, last error and state of a connector; null for none': async ({ repos, seed, db, assert, uniq }) => {
+    const source = uniq('conn');
+    assert.strictEqual(await repos.sources.cursorRow(source), null);
+    await seed.cursor(source, { site: 's' });
+    await db.query(`update sync_cursor set last_error = 'boom', last_run_at = '2026-01-01T00:00:00Z' where source = $1`, [source]);
+    const r = await repos.sources.cursorRow(source);
+    assert.deepStrictEqual([r.last_error, r.last_run_at.toISOString(), r.state], ['boom', '2026-01-01T00:00:00.000Z', { site: 's' }]);
+  },
+
+  'claudeSessionItem: a Claude session item by id, not another source': async ({ repos, seed, assert }) => {
+    const s = await seed.item({ source: 'claude_session', subject: 'a session', raw: { id: 'abc' } });
+    const mail = await seed.item({ source: 'graph_mail' });
+    const r = await repos.sources.claudeSessionItem(s);
+    assert.deepStrictEqual([r.subject, r.raw, r.source], ['a session', { id: 'abc' }, 'claude_session']);
+    assert.strictEqual(await repos.sources.claudeSessionItem(mail), null);
+  },
+
+  'threadItems: the newest twelve items of a thread, newest first, body cut to 600': async ({ repos, seed, assert, uniq }) => {
+    const thr = uniq('thr');
+    const ids = [];
+    for (let i = 0; i < 14; i++) ids.push(await seed.item({ source: 'graph_chat', thread: thr, occurredAt: new Date(Date.now() - (20 - i) * 60_000), body: 'x'.repeat(700), author: 'a@x.test' }));
+    await seed.item({ source: 'graph_chat', thread: uniq('other') });
+    const got = await repos.sources.threadItems(thr);
+    assert.deepStrictEqual(got.map((r) => Number(r.id)), ids.slice(2).reverse());
+    assert.deepStrictEqual([got[0].body.length, got[0].author_identity], [600, 'a@x.test']);
+  },
 };

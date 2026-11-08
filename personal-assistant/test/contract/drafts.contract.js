@@ -195,4 +195,19 @@ module.exports = {
     for (const x of [old, fromMe, unsure, meeting, drafted, answered]) assert.ok(!ids.includes(x.c));
     assert.strictEqual((await repos.drafts.autoCandidates([me], 0.6, 1)).length, 1);
   },
+  // --- for dashboard (chunk G)
+
+  'pendingForBoard: pending and edited drafts newest first, with the ask they answer': async ({ repos, seed, db, assert }) => {
+    const c = await seed.commitment({ summary: 'the board ask' });
+    const c2 = await seed.commitment({ summary: 'an older ask' });
+    const mk = async (commitment, status, createdAt) => Number((await db.one(`insert into draft (commitment_id, channel, to_identity, body, status, created_at) values ($1, 'email', 'a@x.test', 'b', $2, coalesce($3, now())) returning id`, [commitment, status, createdAt])).id);
+    const old = await mk(c2, 'pending', new Date(Date.now() - 3600_000));
+    const edited = await mk(c, 'edited', null);
+    await mk(await seed.commitment(), 'sent', null);
+    const got = (await repos.drafts.pendingForBoard()).filter((r) => [old, edited].includes(Number(r.id)));
+    assert.deepStrictEqual(got.map((r) => Number(r.id)), [edited, old]);
+    assert.strictEqual(got[0].ask, 'the board ask');
+    assert.ok(['run_id', 'task', 'ask_url', 'ask_link', 'ask_text', 'origin', 'to_identity'].every((k) => k in got[0]));
+    assert.ok((await repos.drafts.pendingForBoard()).length <= 30);
+  },
 };

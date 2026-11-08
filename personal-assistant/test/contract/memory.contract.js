@@ -1038,4 +1038,12 @@ module.exports = {
     const left = (await db.rows('select id from memory_page where id = any($1::bigint[])', [[pa, pb]])).map((r) => Number(r.id));
     assert.deepStrictEqual(left, [pb]);
   },
+  // --- for dashboard (chunk G)
+
+  'pendingReviewCount: claims waiting for a human': async ({ repos, seed, assert }) => {
+    const before = await repos.memory.pendingReviewCount();
+    await seed.claim({ status: 'pending_review' });
+    await seed.claim({ status: 'active' });
+    assert.strictEqual(await repos.memory.pendingReviewCount(), before + 1);
+  },
 };

@@ -123,6 +123,56 @@ function create(db) {
         [commitmentId]
       );
     },
+
+    // --- for cli/index.js, dashboard/cards.js, dashboard/server.js
+
+    /** The factory runs that have a job: {id, factory_job_id}. */
+    async factoryJobs() {
+      return db.rows(`select id, factory_job_id from run where route = 'factory' and factory_job_id is not null`);
+    },
+
+    /**
+     * Runs of these commitments that have a PR or MR link, newest first.
+     * @param {Array<number|string>} commitmentIds
+     * @returns {Promise<Array<{id, commitment_id, mr_url}>>}
+     */
+    async mrLinksFor(commitmentIds) {
+      return db.rows(
+        `select id, commitment_id, mr_url from run where commitment_id = any($1::bigint[]) and mr_url is not null order by started_at desc`,
+        [commitmentIds]
+      );
+    },
+
+    /**
+     * The newest `perCard` runs of each commitment, newest first, numbered (`n`).
+     * @param {Array<number|string>} commitmentIds
+     * @param {number} perCard
+     */
+    async newestPerCommitment(commitmentIds, perCard) {
+      return db.rows(
+        `select * from (
+       select id, commitment_id, status, route, machine, termhub_session_id, factory_job_id, factory_state, mr_url,
+              row_number() over (partition by commitment_id order by started_at desc) as n
+         from run where commitment_id = any($1::bigint[])) r
+      where n <= $2 order by commitment_id, n`,
+        [commitmentIds, perCard]
+      );
+    },
+
+    /** The mode of the newest run that used a worktree, or null. @returns {Promise<{mode: string}|null>} */
+    async modeByWorktree(worktreePath) {
+      return db.one(`select mode from run where worktree_path = $1 order by started_at desc limit 1`, [worktreePath]);
+    },
+
+    /** A commitment's runs for the dashboard's detail view, newest first. */
+    async detailsForCommitment(commitmentId) {
+      return db.rows(
+        `select id, status, mode, machine, branch, started_at, termhub_session_id, route, route_reason,
+              factory_job_id, factory_state, factory_warnings, delivery, cost_usd, mr_url from run
+        where commitment_id = $1 order by started_at desc`,
+        [commitmentId]
+      );
+    },
   };
 }
 

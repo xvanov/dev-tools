@@ -1024,9 +1024,136 @@ function create(db) {
     async replan(id) {
       await db.query('update commitment set planned_at = null where id = $1', [id]);
     },
+
+    // --- for cli/index.js
+
+    /**
+     * Open commitments for `pa inbox`, newest extracted first.
+     * @param {string|null} source  only items from this source
+     * @param {number} limit
+     */
+    async inboxList(source, limit) {
+      return db.rows(
+        `select c.id, c.summary, c.direction, c.due_at, c.confidence, c.project_confidence,
+              p.name as project, per.display_name as who, si.source, si.occurred_at
+         from commitment c
+         left join project p on p.id = c.project_id
+         left join person per on per.id = c.counterparty_person_id
+         join source_item si on si.id = c.source_item_id
+        where c.status in ('open','dispatched') and c.superseded_by is null
+          and ($1::text is null or si.source = $1)
+        order by c.extracted_at desc limit $2`,
+        [source, limit]
+      );
+    },
+
+    /** One commitment with its project, person and source item, for `pa show`. Null when gone. */
+    async detailForCli(id) {
+      return db.one(
+        `select c.*, p.name as project, per.display_name as who, per.primary_email as who_email,
+              si.source, si.subject, si.body_text, si.occurred_at, si.thread_external_id
+         from commitment c
+         left join project p on p.id = c.project_id
+         left join person per on per.id = c.counterparty_person_id
+         join source_item si on si.id = c.source_item_id
+        where c.id = $1`,
+        [id]
+      );
+    },
+
+    /**
+     * For `pa doctor`: open commitments (not notes to myself) and how many have a context paragraph.
+     * @returns {Promise<{n: number, with_context: number}>}
+     */
+    async cardContextCounts() {
+      const { SELF_NOTE } = require('../commitments/selfNotes');
+      return db.one(
+        `select count(*)::int as n, count(c.context)::int as with_context
+           from commitment c join source_item si on si.id = c.source_item_id
+           left join person per on per.id = c.counterparty_person_id
+          where c.status in ('open','dispatched') and c.superseded_by is null and not ${SELF_NOTE}`
+      );
+    },
+
+    // --- for dashboard/cards.js
+
+    /**
+     * What a card's links are built from: the commitment, its person (with
+     * address and github name), project and source item (body, and the next
+     * messages of its thread). With `context`, also the stored context
+     * paragraph (needs sql/023).
+     * @param {Array<number|string>} ids
+     * @param {boolean} context
+     */
+    async cardDetails(ids, context) {
+      return db.rows(
+        `select ${DETAIL_COLS}${context ? ', c.context, c.context_at' : ''} from commitment c
+       left join project p on p.id = c.project_id
+       left join person per on per.id = c.counterparty_person_id
+       join source_item si on si.id = c.source_item_id
+      where c.id = any($1::bigint[])`,
+        [ids]
+      );
+    },
+
+    /**
+     * Every open commitment folded into one of `ids` (superseded_by chains,
+     * up to ten deep), with its source item.
+     * @returns {Promise<Array<{id, root, item_id, source, external_id, thread_external_id, subject, occurred_at, raw}>>}
+     */
+    async foldedSourceItems(ids) {
+      return db.rows(
+        `with recursive down as (
+       select c.id, c.superseded_by as root, 1 as depth from commitment c where c.superseded_by = any($1::bigint[])
+       union all
+       select c.id, down.root, down.depth + 1 from commitment c join down on c.superseded_by = down.id where down.depth < 10)
+     select d.id, d.root, si.id as item_id, si.source, si.external_id, si.thread_external_id, si.subject, si.occurred_at,
+            si.raw - 'members' - 'memberEmails' - 'audioPaths' as raw
+       from down d join commitment c on c.id = d.id join source_item si on si.id = c.source_item_id
+      order by si.occurred_at desc`,
+        [ids]
+      );
+    },
+
+    // --- for dashboard/server.js
+
+    /** One commitment with its person, project and source item, for the dashboard's detail view. Null when gone. */
+    async contextForDashboard(id) {
+      return db.one(
+        `select c.id, c.direction, c.status, c.summary, c.detail, c.due_at, c.repo_path, c.project_rationale,
+            p.name as project, per.display_name as who,
+            si.source, si.subject, si.occurred_at, si.thread_external_id, si.author_identity,
+            left(si.body_text, 4000) as body, si.raw->>'webUrl' as web_url, si.raw->>'webLink' as web_link
+       from commitment c
+       left join project p on p.id = c.project_id
+       left join person per on per.id = c.counterparty_person_id
+       join source_item si on si.id = c.source_item_id
+      where c.id = $1`,
+        [id]
+      );
+    },
   };
 }
 
 const SETTABLE = new Set(['status', 'closed_at', 'closed_reason', 'due_at', 'detail']);
+
+// What a dashboard card's links are built from (cardDetails).
+const DETAIL_COLS = `c.id, c.summary, c.detail, p.gitlab_path, p.name as project_name,
+       per.display_name as who, coalesce(per.is_me, false) as who_is_me,
+       coalesce((select pi.value from person_identity pi where pi.person_id = per.id and pi.kind = 'smtp' order by pi.id limit 1),
+                per.primary_email) as who_email,
+       (select pi.value from person_identity pi where pi.person_id = per.id and pi.kind in ('github_username','github') order by pi.id limit 1) as who_github,
+       si.id as item_id, si.source, si.external_id, si.thread_external_id, si.subject, si.occurred_at,
+       si.raw - 'members' - 'memberEmails' - 'audioPaths' as raw,
+       case when si.source = 'claude_session' then '' else left(si.body_text, 20000) end as body,
+       -- The next few messages in the thread: the PR someone posted after the
+       -- ask is the link the card most needs. A session's thread is its
+       -- folder (other sessions), so not for those.
+       case when si.source = 'claude_session' or si.thread_external_id is null then '' else
+         (select string_agg(left(t.body_text, 4000), E'\\n' order by t.occurred_at)
+            from (select t.body_text, t.occurred_at from source_item t
+                   where t.source = si.source and t.thread_external_id = si.thread_external_id
+                     and t.occurred_at > si.occurred_at
+                   order by t.occurred_at limit 8) t) end as later`;
 
 module.exports = { create };
