@@ -62,7 +62,7 @@ async function commitmentContext(id: number | string) {
 
 async function state() {
   const { gather } = require('../brief');
-  const data = await gather({ horizonDays: 7 });
+  const data = await gather({ horizonDays: 7, reviews: false });
   const drafts = await repo.drafts.pendingForBoard();
   const health = require('../ingest/health.ts');
   const sources = await health.sources();

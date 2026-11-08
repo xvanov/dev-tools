@@ -185,7 +185,7 @@ changes a result a user would rely on.
 - `lower()` and `like` fold ASCII letters only. A regex that Postgres ran in SQL is run in JS.
   Timestamps keep milliseconds, not microseconds, so ties are broken by id.
 - Live-feed events written by another process (the `pa` CLI, the MCP server, the other worker
-  generation during a roll) reach the dashboard within 0.5 s (an outbox poll), not at commit.
+  generation during a roll) reach the dashboard within 0.1 s (an outbox poll), not at commit.
 - Integers come back as numbers where Postgres gave bigints as strings; every caller already
   converts.
 - A statement runs on the event loop, so it holds the loop for as long as it takes (anything over

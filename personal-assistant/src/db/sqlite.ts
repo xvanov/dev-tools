@@ -37,7 +37,7 @@
 //     writer's transaction, as sql/036 does; after a commit this process reads
 //     the new rows and hands them to sessions that LISTENed, as
 //     {channel, payload}. Events another process commits are picked up by a
-//     500 ms poll of the outbox counter while anyone listens.
+//     100 ms poll of the outbox counter while anyone listens.
 //
 // Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
 
@@ -484,8 +484,10 @@ function createSqliteBackend(file: string, { key = null }: { key?: number | stri
   // Events another process wrote (the `pa` CLI, the MCP server, the other
   // worker generation) reach this process's listeners within POLL_MS: while
   // anyone listens, the outbox counter is read every POLL_MS (one indexed
-  // read of a one-row table), as LISTEN would have woken them on Postgres.
-  const POLL_MS = 500;
+  // read of a one-row table, ~11 µs), as LISTEN would have woken them on
+  // Postgres. 100, not 500: a card the worker wrote waited 250 ms on average
+  // here, more than the board's whole 200 ms budget (plan 8.4.33).
+  const POLL_MS = 100;
   let poller: ReturnType<typeof setInterval> | null = null;
   let polling = 0;
   function startPolling() {

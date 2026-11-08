@@ -1232,13 +1232,22 @@ not in the Map is not done, and a new one gets added there first.
     live cache, the same log tail: 35 KB in 12 ms (was 2.4 MB in 903 ms on this run); rotated
     and log first, 57 ms with 13 tables left for the next pass. `lagSeconds` runs from the
     message's time to the write, with `passMs`, `tables` and `tablesLater` beside it, and a
-    row the reader stored first keeps `raw.storedAt`. (this commit: `fix(personal-assistant):
-    read Teams cache tables only after a log rotation`)
-  - [ ] **8.4.33 teams-ask: commitment to the board takes ~1.1 s (target 200 ms).** Probe card
+    row the reader stored first keeps `raw.storedAt`. (de6ed26)
+  - [x] **8.4.33 teams-ask: commitment to the board takes ~1.1 s (target 200 ms).** Probe card
     #6775: outbox row 22:01:34.886Z, board event on the bus 22:01:35.297Z (411 ms, written from
     another process), on the page 4 ms later, then `GET /api/state` with a median of 716 ms over
     8 fetches (430-1249). Profile `/api/state`, or let the event carry enough for the page to draw the card
     without the full refetch.
+    Done by making both halves fast. Profiled on a copy of the store, each part timed after a
+    write from another connection (as the worker's insert empties the dashboard's page cache):
+    the Memory badge's count scanned all 84 MB of `claim` (300 ms; fixed by sql-sqlite/008,
+    deployed since the probe), `recentReviews` read every GitHub/Jira row for a list the page
+    never draws (120-160 ms; `/api/state` now skips it), and each source's newest `fetched_at`
+    read every row of the source (50-90 ms; sql-sqlite/010 indexes it). State builds in a median
+    of 43 ms (40-46, 86 KB) against 172 ms with neither change. Another process's event is read
+    from the outbox every 100 ms instead of 500 (one 11 µs read). Expected hop: ~50 ms to the bus,
+    then ~45 ms plus the HTTP round trip; not re-measured live (no deploy from here). (this
+    commit: `fix(personal-assistant): make the board's refresh after a new card fast`)
   - [x] **8.4.34 teams-ask: the Teams cache's pending copy is stored as its own message.** The
     client writes a local copy with message id `-1` before the server's id, and the reader keeps
     it: 39 items, 16 distilled into 37 commitments (6 open). All link to message `-1`, which

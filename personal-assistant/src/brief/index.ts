@@ -25,7 +25,9 @@ function recentReviews() {
   return repo.sources.recentReviews();
 }
 
-async function gather({ horizonDays = 7 }: { horizonDays?: number } = {}) {
+// `reviews: false` leaves the reviews out: the dashboard's /api/state does
+// not draw them, and on SQLite they cost 120-160 ms of every board refresh.
+async function gather({ horizonDays = 7, reviews: withReviews = true }: { horizonDays?: number; reviews?: boolean } = {}) {
   // What people ask of me, and notes from my own work, kept apart
   // (src/commitments/selfNotes.js): the second is grouped and expires.
   const { group } = require('../commitments/selfNotes.ts');
@@ -38,7 +40,7 @@ async function gather({ horizonDays = 7 }: { horizonDays?: number } = {}) {
   endOfTomorrow.setHours(48, 0, 0, 0);
   const meetings = await repo.sources.calendarToday(endOfTomorrow);
 
-  const reviews = await recentReviews();
+  const reviews = withReviews ? await recentReviews() : [];
 
   const runsActive = await repo.runs.activeForBrief();
 
