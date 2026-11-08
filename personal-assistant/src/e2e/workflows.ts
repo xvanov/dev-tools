@@ -96,6 +96,25 @@ function check(view: string, name: string, ok: unknown, detail?: unknown): Check
   return { view, check: name, ok: Boolean(ok), ...(detail ? { detail: String(detail).slice(0, 300) } : {}) };
 }
 
+/**
+ * The views' screenshots, always back by `deps.shotMs` a page (8.4.40): a
+ * capture that throws or stalls comes back as shot errors (failed checks in
+ * the summary), so the run still writes its summary and cleans up.
+ */
+async function screenshots(deps: Deps, dir: string, pages: Page[]): Promise<{ shots: Json[]; note: string | null }> {
+  if (!pages.length) return { shots: [], note: null };
+  const ms = pages.length * (deps.shotMs || 150_000);
+  const failed = (why: string) => ({ shots: pages.map((p) => ({ view: p.name, url: p.url, file: null, error: why })), note: null });
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<{ shots: Json[]; note: string | null }>((r) => { timer = setTimeout(() => r(failed(`no screenshots after ${Math.round(ms / 1000)} s`)), ms); });
+  try {
+    return await Promise.race([Promise.resolve().then(() => deps.capture(dir, pages)), deadline])
+      .catch((err: Error) => failed(`screenshots failed: ${(err?.message || String(err)).slice(0, 200)}`));
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 // ---------------------------------------------------------- dry checks ----
 
 async function commonDry(id: string, acc: Acceptance, deps: Deps): Promise<{ checks: Check[]; limits: Json | null }> {
@@ -344,7 +363,7 @@ async function research(acc: Acceptance, o: Options, deps: Deps, folder: string)
       ...steps.slice(0, 2).map((s) => ({ name: `run-${s.session.id}`, url: `${deps.hubBase(s.session.machine)}/#session=${encodeURIComponent(s.session.id)}` })),
     ];
     // Screenshots now, while the card and the sessions still exist.
-    const shots = await deps.capture(path.join(folder, 'screenshots'), pages);
+    const shots = await screenshots(deps, path.join(folder, 'screenshots'), pages);
     return {
       measured, checks, transcripts, notes, cleanup, usd: cost, shots, pages: [],
       links: { card: cardId, run: runId, job, sessions: steps.map((s) => s.session.id), report: `${deps.paBase}/api/factory/report?job=${encodeURIComponent(jobId)}` },
@@ -470,7 +489,7 @@ async function reviewFix(acc: Acceptance, o: Options, deps: Deps, folder: string
       ...steps.slice(0, 2).map((s) => ({ name: `run-${s.session.id}`, url: `${deps.hubBase(s.session.machine)}/#session=${encodeURIComponent(s.session.id)}` })),
       ...(before.url ? [{ name: 'github-pr', url: before.url }] : []),
     ];
-    const shots = await deps.capture(path.join(folder, 'screenshots'), pages);
+    const shots = await screenshots(deps, path.join(folder, 'screenshots'), pages);
     return {
       measured, checks, transcripts, notes, cleanup, usd: Number(lastJob.cost_usd || 0), shots, pages: [],
       links: { run: start.run, job, pr: before.url, head: { before: before.head, after: after?.head || null }, sessions: steps.map((s) => s.session.id), follow },
@@ -521,7 +540,7 @@ async function deepseekPr(acc: Acceptance, o: Options, deps: Deps, folder: strin
         ],
       };
       // Screenshots now, while the PR and sessions still exist.
-      collected.shots = await deps.capture(path.join(folder, 'screenshots'), collected.pages);
+      collected.shots = await screenshots(deps, path.join(folder, 'screenshots'), collected.pages);
     },
   };
   const report: Json = await G.golden(go, deps);
@@ -590,21 +609,43 @@ async function main(id: string, flags: Flags = {}, lists: Lists = {}, deps: Deps
     return s;
   }
 
+  // A run held on a promise nothing will settle ends when Node runs out of
+  // work: exit 0, no summary, and `--on` waits out its timeout (8.4.40).
+  // Write the summary and the report then, and exit non-zero.
+  const at = { stage: 'the run' };
+  const stalled = () => {
+    process.exitCode = 1;
+    const s = W.summary({ workflow: id, kind: 'run', folder, startedAt, errors: [`the run stopped in ${at.stage} with nothing left to run (a step never settled): no summary was reached and its cleanup did not run; look for its job and sessions`] });
+    deps.write(path.join(folder, 'summary.json'), JSON.stringify(s, null, 2));
+    if (typeof flags.report === 'string') G.writeReport(flags.report, s);
+  };
+  process.once('beforeExit', stalled);
+  try {
+    return await realRun(id, acc, o, deps, runner, folder, startedAt, at);
+  } finally {
+    process.removeListener('beforeExit', stalled);
+  }
+}
+
+async function realRun(id: string, acc: Acceptance, o: Options, deps: Deps, runner: Runner, folder: string, startedAt: string, at: { stage: string }): Promise<Json> {
   const limits = await G.safely(() => deps.getJson(`${deps.paBase}/api/workflow-limits`));
   let r: RunOut = { measured: {}, checks: [], transcripts: [], links: {}, notes: [], cleanup: [], errors: [], usd: null, pages: [] };
+  at.stage = `the ${id} runner`;
   try {
     r = { ...r, ...(await runner(acc, o, deps, folder)) } as RunOut;
   } catch (err) {
     r.errors = [...(r.errors || []), (err as Error)?.message || String(err)];
   }
+  at.stage = 'the screenshots';
   let shots = r.shots || { shots: [], note: null };
-  if (r.pages.length) shots = await deps.capture(path.join(folder, 'screenshots'), r.pages);
+  if (r.pages.length) shots = await screenshots(deps, path.join(folder, 'screenshots'), r.pages);
   // Every view the acceptance block names gets a shot: Ask is the chat's page.
   const missing = W.missingViews(acc.views, (shots.shots || []).map((x: Json) => x.view), r.pages.map((p) => p.name)).filter((v: string) => v === 'ask');
   if (missing.length) {
-    const more = await deps.capture(path.join(folder, 'screenshots'), [{ name: 'ask', url: `${deps.paBase}/talk` }]);
+    const more = await screenshots(deps, path.join(folder, 'screenshots'), [{ name: 'ask', url: `${deps.paBase}/talk` }]);
     shots = { shots: [...shots.shots, ...(more.shots || [])], note: shots.note || more.note };
   }
+  at.stage = 'the summary';
   const notes = [...(r.notes || []), ...(shots.note ? [shots.note] : [])];
   const rel = (f: string) => path.relative(folder, f).replace(/\\/g, '/');
   const s: Json = W.summary({
@@ -617,11 +658,11 @@ async function main(id: string, flags: Flags = {}, lists: Lists = {}, deps: Deps
       ...(x.text ? { text: rel(x.text) } : {}), ...(x.ready != null ? { ready: x.ready, waitedMs: x.waitedMs } : {}), ...(x.how ? { how: x.how } : {}), ...(x.error ? { error: x.error } : {}),
     }])),
     transcripts: r.transcripts, screenshots: (shots.shots || []).filter((x: Json) => x.file).map((x: Json) => rel(x.file)),
-    checks: r.checks, rubric: acc.rubric, errors: r.errors || [], cleanup: r.cleanup || [], notes,
+    checks: [...r.checks, ...W.shotChecks(shots.shots)], rubric: acc.rubric, errors: r.errors || [], cleanup: r.cleanup || [], notes,
   });
   if (r.golden) s.golden = { hops: r.golden.hops, ids: r.golden.ids, feed: r.golden.feed };
   deps.write(path.join(folder, 'summary.json'), JSON.stringify(s, null, 2));
   return s;
 }
 
-module.exports = { main, dry, parse, RUNNERS, DEFAULT_API_MODEL, deps0 };
+module.exports = { main, dry, parse, screenshots, RUNNERS, DEFAULT_API_MODEL, deps0 };

@@ -10,6 +10,7 @@
 //   scoreHops(hops, measured)            the block's hops with what was measured, ok per hop
 //   scoreCost(usd, limits, id, basis)    cost against GET /api/workflow-limits' effective ceiling
 //   missingViews(views, ...names)        the block's views no screenshot covers yet
+//   shotChecks(shots)                    a failed check per view the browser could not shoot
 //   folderName(id, at, dry)              the run folder's name
 //   summary({...})                       the JSON summary written next to the evidence
 //   wav(pcm, rate)                       raw 16-bit mono PCM -> a WAV file (TTS output -> transcribe input)
@@ -189,6 +190,11 @@ function missingViews(views: unknown, ...names: string[][]): string[] {
   return (Array.isArray(views) ? views.map(String) : []).filter((v) => !have.has(v));
 }
 
+/** Pure. A failed check for each view a browser could not shoot (8.4.40); none when no browser was found (the run's note says so). */
+function shotChecks(shots: Json[] | null | undefined): Check[] {
+  return (Array.isArray(shots) ? shots : []).filter((x) => x && !x.file).map((x) => ({ view: 'evidence', check: `screenshot of ${x.view}`, ok: false, detail: String(x.error || 'no file').slice(0, 300) }));
+}
+
 function folderName(id: string, at: Date | number | string = new Date(), dry = false): string {
   const stamp = new Date(at).toISOString().replace(/[-:]/g, '').replace(/\.\d+Z$/, 'Z');
   return `${stamp}-${id}${dry ? '-dry' : ''}`;
@@ -282,4 +288,4 @@ function ndjson(text: unknown): Json[] {
   }).filter(Boolean) as Json[];
 }
 
-module.exports = { REAL_RUN, PR_QUERY, CI_PENDING, prFacts, prReady, reviewFixChecks, workflows, acceptance, scoreHops, toolCallMs, scoreCost, missingViews, folderName, summary, table, wav, ndjson };
+module.exports = { REAL_RUN, PR_QUERY, CI_PENDING, prFacts, prReady, reviewFixChecks, workflows, acceptance, scoreHops, toolCallMs, scoreCost, missingViews, shotChecks, folderName, summary, table, wav, ndjson };

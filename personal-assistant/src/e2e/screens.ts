@@ -14,14 +14,19 @@
 // Where the DevTools protocol cannot be reached, the shell's plain
 // --screenshot is the fallback (at load, ready: false).
 //
+// Every shot settles (8.4.40): each DevTools call has its own deadline and a
+// call on a closed socket fails at once (a WebSocket drops it silently, and
+// the promise would never settle), and the browser is killed, with its
+// children, at the shot's deadline or settles the shot when it exits.
+//
 // Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
 
-type Shot = { ok: true; file: string; text: string | null; ready: boolean; waitedMs: number; how: string } | { ok: false; error: string };
+type Shot = { ok: true; file: string; text: string | null; ready: boolean; waitedMs: number; how: string } | { ok: false; error: string; timedOut?: boolean };
 type ShotOptions = { width?: number; height?: number; budgetMs?: number; settleMs?: number; quietMs?: number; timeoutMs?: number };
 type Page = { name: string; url: string; ready?: string | null; settleMs?: number };
 type Captured = { view: string; url: string; file: string | null; text?: string | null; ready?: boolean; waitedMs?: number; how?: string; error?: string };
 /** The few DevTools calls this module makes; tests hand over a fake. */
-type Cdp = { send(method: string, params?: Record<string, unknown>): Promise<Record<string, unknown>>; on(fn: (method: string, params: Record<string, unknown>) => void): void; close(): void };
+type Cdp = { send(method: string, params?: Record<string, unknown>, timeoutMs?: number): Promise<Record<string, unknown>>; on(fn: (method: string, params: Record<string, unknown>) => void): void; close(): void };
 type Clock = { now(): number; sleep(ms: number): Promise<void> };
 
 const fs = require('fs');
@@ -129,7 +134,7 @@ async function drive(cdp: Cdp, url: string, { ready = null, width = 1440, height
   // A streamed response (a live fetch) stays in flight: after the budget's
   // first half, a quiet network is enough without it.
   while (clock.now() - t0 < budgetMs) {
-    const r = await cdp.send('Runtime.evaluate', { expression: check, returnByValue: true }).catch(() => null);
+    const r = await cdp.send('Runtime.evaluate', { expression: check, returnByValue: true }, Math.max(1000, Math.min(5000, budgetMs - (clock.now() - t0)))).catch(() => null);
     const quiet = clock.now() - lastNet >= quietMs && (inflight.size === 0 || clock.now() - t0 > budgetMs / 2);
     if ((r?.result as { value?: unknown } | undefined)?.value === true && quiet) { ok = true; break; }
     await clock.sleep(200);
@@ -142,8 +147,8 @@ async function drive(cdp: Cdp, url: string, { ready = null, width = 1440, height
   return { png: Buffer.from(String(shot.data || ''), 'base64'), text: typeof text === 'string' ? text : null, ready: ok, waitedMs };
 }
 
-/** A DevTools client on one target's WebSocket. */
-function connect(wsUrl: string, timeoutMs = 10_000): Promise<Cdp> {
+/** A DevTools client on one target's WebSocket. Each call rejects after `callMs` (or its own `timeoutMs`), and at once when the socket is not open. */
+function connect(wsUrl: string, timeoutMs = 10_000, { callMs = 15_000 }: { callMs?: number } = {}): Promise<Cdp> {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(wsUrl);
     let n = 0;
@@ -153,10 +158,14 @@ function connect(wsUrl: string, timeoutMs = 10_000): Promise<Cdp> {
     ws.addEventListener('open', () => {
       clearTimeout(timer);
       resolve({
-        send(method, params = {}) {
+        send(method, params = {}, ms = callMs) {
+          if (ws.readyState !== WebSocket.OPEN) return Promise.reject(new Error(`DevTools WebSocket closed before ${method}`));
           const id = ++n;
-          ws.send(JSON.stringify({ id, method, params }));
-          return new Promise((res, rej) => pending.set(id, { resolve: res, reject: rej }));
+          return new Promise((res, rej) => {
+            const t = setTimeout(() => { pending.delete(id); rej(new Error(`DevTools ${method}: no answer in ${ms} ms`)); }, ms);
+            pending.set(id, { resolve: (v) => { clearTimeout(t); res(v); }, reject: (e) => { clearTimeout(t); rej(e); } });
+            ws.send(JSON.stringify({ id, method, params }));
+          });
         },
         on(fn) { listeners.push(fn); },
         close() { try { ws.close(); } catch { /* already closed */ } },
@@ -179,7 +188,27 @@ function connect(wsUrl: string, timeoutMs = 10_000): Promise<Cdp> {
   });
 }
 
-/** One page over the DevTools protocol. Resolves {ok, file, text, ready} or {ok:false, error}; never rejects. */
+/** Kills a browser; on Windows its renderers too (`taskkill /T`); elsewhere they exit with it. */
+function killTree(child: { pid?: number; kill(signal?: string): boolean }, platform: string = process.platform): void {
+  if (platform === 'win32' && child.pid) {
+    try { spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' }).on('error', () => {}); } catch { /* gone */ }
+  }
+  try { child.kill('SIGKILL'); } catch { /* gone */ }
+}
+
+/**
+ * Settles with `work`, or with {ok:false} at `timeoutMs` or when `exited` does
+ * (the browser died under it), whichever is first. The deadline's timer keeps
+ * the process alive, so this settles even when `work` never does.
+ */
+function within(work: Promise<Shot>, timeoutMs: number, exited: Promise<string>): Promise<Shot> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<Shot>((r) => { timer = setTimeout(() => r({ ok: false, timedOut: true, error: `no screenshot within ${Math.round(timeoutMs / 1000)} s; the browser was killed` }), timeoutMs); });
+  const died = exited.then((why): Shot => ({ ok: false, error: `the browser exited mid-shot (${why})` }));
+  return Promise.race([work, deadline, died]).finally(() => clearTimeout(timer));
+}
+
+/** One page over the DevTools protocol. Resolves {ok, file, text, ready} or {ok:false, error} by `timeoutMs`; never rejects. */
 async function shootCdp(exe: string, url: string, file: string, { ready = null, width = 1440, height = 1000, budgetMs = 20_000, settleMs = 800, timeoutMs = 60_000 }: ShotOptions & { ready?: string | null } = {}): Promise<Shot> {
   if (typeof WebSocket !== 'function') return { ok: false, error: 'no WebSocket in this runtime' };
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'pa-e2e-shot-'));
@@ -187,12 +216,16 @@ async function shootCdp(exe: string, url: string, file: string, { ready = null, 
     '--headless', '--disable-gpu', '--hide-scrollbars', '--no-first-run', '--no-default-browser-check',
     `--user-data-dir=${profile}`, `--window-size=${width},${height}`, '--remote-debugging-port=0', 'about:blank',
   ], { windowsHide: true, stdio: 'ignore' });
+  const exited = new Promise<string>((r) => {
+    child.once('exit', (code: number | null, signal: string | null) => r(signal ? `signal ${signal}` : `code ${code}`));
+    child.once('error', (err: Error) => r(err.message));
+  });
   let cdp: Cdp | null = null;
   let browserWs: string | null = null;
-  const kill = setTimeout(() => { try { child.kill(); } catch { /* gone */ } }, timeoutMs);
-  try {
+  let over = false;
+  const work = (async (): Promise<Shot> => {
     let port: { port: number; path: string } | null = null;
-    for (let i = 0; i < 75 && !port; i++) {
+    for (let i = 0; i < 75 && !port && !over; i++) {
       await new Promise((r) => setTimeout(r, 200));
       try { port = activePort(fs.readFileSync(path.join(profile, 'DevToolsActivePort'), 'utf8')); } catch { /* not yet */ }
       if (child.exitCode != null) break;
@@ -205,22 +238,29 @@ async function shootCdp(exe: string, url: string, file: string, { ready = null, 
     cdp = await connect(page.webSocketDebuggerUrl as string);
     const r = await drive(cdp, url, { ready, width, height, budgetMs, settleMs });
     if (!r.png.length) return { ok: false, error: 'the screenshot came back empty' };
+    if (over) return { ok: false, error: 'past the deadline' };
     fs.writeFileSync(file, r.png);
     return { ok: true, file, text: r.text, ready: r.ready, waitedMs: r.waitedMs, how: 'devtools' };
-  } catch (err) {
-    return { ok: false, error: ((err as Error)?.message || String(err)).slice(0, 200) };
+  })().catch((err): Shot => ({ ok: false, error: ((err as Error)?.message || String(err)).slice(0, 200) }));
+  let out: Shot | null = null;
+  try {
+    out = await within(work, timeoutMs, exited);
+    return out;
   } finally {
-    if (cdp) cdp.close();
-    if (browserWs) {
-      const b = await connect(browserWs, 3000).catch(() => null);
+    over = true;
+    if (cdp) (cdp as Cdp).close();
+    if (out && !out.ok && out.timedOut) killTree(child);
+    else if (browserWs && child.exitCode == null) {
+      const b = await connect(browserWs, 3000, { callMs: 2000 }).catch(() => null);
       if (b) {
-        await Promise.race([b.send('Browser.close').catch(() => null), new Promise((r) => setTimeout(r, 2000))]);
+        await b.send('Browser.close').catch(() => null);
         b.close();
       }
     }
-    await Promise.race([new Promise((r) => child.once('exit', r)), new Promise((r) => setTimeout(r, 5000))]);
-    if (child.exitCode == null) { try { child.kill(); } catch { /* gone */ } }
-    clearTimeout(kill);
+    if (child.exitCode == null && child.signalCode == null) {
+      await Promise.race([exited, new Promise((r) => setTimeout(r, 5000))]);
+      if (child.exitCode == null && child.signalCode == null) killTree(child);
+    }
     try { fs.rmSync(profile, { recursive: true, force: true }); } catch { /* a locked profile is left in tmp */ }
   }
 }
@@ -236,7 +276,7 @@ function shoot(exe: string, url: string, file: string, { width = 1440, height = 
       `--user-data-dir=${profile}`, `--window-size=${width},${height}`, `--timeout=${budgetMs}`,
       `--screenshot=${file}`, url,
     ];
-    execFile(exe, args, { timeout: timeoutMs, windowsHide: true }, (err: Error | null) => {
+    execFile(exe, args, { timeout: timeoutMs, killSignal: 'SIGKILL', windowsHide: true }, (err: Error | null) => {
       try { fs.rmSync(profile, { recursive: true, force: true }); } catch { /* a locked profile is left in tmp */ }
       const ok = fs.existsSync(file) && fs.statSync(file).size > 0;
       resolve(ok ? { ok: true, file, text: null, ready: false, waitedMs: 0, how: 'screenshot flag (at load)' } : { ok: false, error: err ? err.message.slice(0, 200) : 'no file written' });
@@ -244,18 +284,20 @@ function shoot(exe: string, url: string, file: string, { width = 1440, height = 
   });
 }
 
-/** Each {name, url, ready?} to `<dir>/<name>.png` (and its text to `<name>.txt`). `ready` defaults to the view's own signal. */
-async function capture(dir: string, pages: Page[]): Promise<{ shots: Captured[]; note: string | null }> {
-  const exe = browser();
+/**
+ * Each {name, url, ready?} to `<dir>/<name>.png` (and its text to `<name>.txt`). `ready` defaults to the view's own signal.
+ * A page that times out over DevTools is not shot again at load: the same page would hold the fallback too.
+ */
+async function capture(dir: string, pages: Page[], { exe = browser(), timeoutMs = 60_000 }: { exe?: string | null; timeoutMs?: number } = {}): Promise<{ shots: Captured[]; note: string | null }> {
   if (!exe) return { shots: [], note: 'screenshots skipped: no headless Chromium found (set PA_E2E_BROWSER or `npx playwright install chromium`)' };
   fs.mkdirSync(dir, { recursive: true });
   const shots: Captured[] = [];
   for (const p of pages) {
     const file = path.join(dir, `${p.name}.png`);
     const settleMs = p.settleMs ?? SETTLE[kindOf(p.name) || ''] ?? 800;
-    let r = await shootCdp(exe, p.url, file, { ready: p.ready !== undefined ? p.ready : readyFor(p.name), settleMs });
+    let r = await shootCdp(exe, p.url, file, { ready: p.ready !== undefined ? p.ready : readyFor(p.name), settleMs, timeoutMs });
     const devtools = r.ok ? null : r.error;
-    if (!r.ok) r = await shoot(exe, p.url, file);
+    if (!r.ok && !r.timedOut) r = await shoot(exe, p.url, file, { timeoutMs });
     if (r.ok) {
       let text: string | null = null;
       if (r.text != null) {
@@ -264,9 +306,9 @@ async function capture(dir: string, pages: Page[]): Promise<{ shots: Captured[];
         text = tf;
       }
       shots.push({ view: p.name, url: p.url, file: r.file, text, ready: r.ready, waitedMs: r.waitedMs, how: devtools ? `${r.how}; DevTools failed: ${devtools}` : r.how });
-    } else shots.push({ view: p.name, url: p.url, file: null, error: devtools ? `${r.error}; DevTools: ${devtools}` : r.error });
+    } else shots.push({ view: p.name, url: p.url, file: null, error: devtools && devtools !== r.error ? `${r.error}; DevTools: ${devtools}` : r.error });
   }
   return { shots, note: null };
 }
 
-module.exports = { READY, kindOf, readyFor, activePort, drive, connect, candidates, browser, shoot, shootCdp, capture };
+module.exports = { READY, kindOf, readyFor, activePort, drive, connect, within, candidates, browser, shoot, shootCdp, capture };

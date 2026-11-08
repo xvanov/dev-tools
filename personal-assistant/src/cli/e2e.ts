@@ -71,7 +71,10 @@ function make(out: any, fail: any) {
     if (typeof flags.report === 'string') require('../e2e/goldenPath.ts').writeReport(flags.report, result);
     if (flags.json === true) out(JSON.stringify(result, null, 2));
     else out(`\nsummary: ${all.map((s) => `${s.folder}${require('path').sep}summary.json`).join('\n         ')}`);
-    if (!result.ok) process.exitCode = 1;
+    // A run here that wrote no summary failed, whatever it returned (8.4.40). `--on`'s folders are on that machine.
+    const unwritten = flags.on ? [] : all.filter((s) => !s?.folder || !require('fs').existsSync(require('path').join(s.folder, 'summary.json')));
+    if (unwritten.length) out(`no summary.json written for ${unwritten.map((s) => s?.workflow || '?').join(', ')}`);
+    if (!result.ok || unwritten.length) process.exitCode = 1;
   }
 }
 

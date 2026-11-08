@@ -1314,7 +1314,7 @@ not in the Map is not done, and a new one gets added there first.
     meetings. Jarvis says "One moment." and Claude answers. So the meeting-naming rules from
     8.4.2 never run by voice for tomorrow. Add router-eval cases for tomorrow and other named
     days, and re-fit if needed.
-  - [ ] **8.4.40 review-fix: the e2e real run dies silently at the screenshots.** On the personal
+  - [x] **8.4.40 review-fix: the e2e real run dies silently at the screenshots.** On the personal
     machine, `screens.capture` for Build (`/factory`) never settles. When the 60 s kill timer ends
     the browser, nothing is left on the event loop, and Node exits 0 with the promise pending. So
     `pa e2e review-fix` wrote its transcripts and then stopped: no `summary.json`, no `--report`
@@ -1323,6 +1323,19 @@ not in the Map is not done, and a new one gets added there first.
     exited 0 after 63 s, unsettled. Make `shootCdp` settle on the child's exit and on its own
     deadline, and give the runner a top-level guard that writes the summary on any exit
     ([acceptance/review-fix.md](acceptance/review-fix.md), re-review).
+    Done. Reproduced on the laptop against a page whose renderer never yields: `capture` exited
+    0 after 61 s, unsettled. The first `Runtime.evaluate` got no answer; the kill timer closed the
+    DevTools socket; then `Page.captureScreenshot` went out on the closed socket, which a
+    WebSocket drops silently, so nothing was left to settle it. Now each DevTools call rejects
+    on a closed socket and after its own deadline. `shootCdp` settles at the browser's exit, or
+    at 60 s, when it kills the browser (`taskkill /T` on Windows) and skips the plain fallback.
+    The runners take their shots through `screenshots()`, which turns a throw or a stall into
+    shot errors. A view not shot is a failed `evidence` check, and the summary and cleanup
+    still happen. A run held on a promise nothing settles writes `summary.json` and its
+    `--report` at exit, and exits 1, so `--on` reads a report instead of waiting out its
+    timeout. The CLI also exits 1 when a run's `summary.json` is missing. The same page now
+    settles in 41 s with the fallback's shot and leaves no browser behind. (this commit:
+    `fix(personal-assistant): never let a screenshot stall an e2e run`)
   - [ ] **8.4.41 review-fix: a `claude_session` job is not free.** `dev-tools:007` cost $0.0271
     metered. pm ($0.0016) and sm ($0.0020) ran on azure/DeepSeek-V4-Flash, and tech_writer
     ($0.0236) on azure/Kimi-K2.7-Code. Only dev ran on the subscription ($0, $0.0131

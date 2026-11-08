@@ -72,6 +72,50 @@ test('drive: a page that never gets ready is shot at the budget and says so; a l
   assert.ok(r3.ready && r3.waitedMs > 2000, String(r3.waitedMs));
 });
 
+// 8.4.40: a page whose renderer never yields left `capture` pending forever,
+// and Node exited 0 under it: the kill timer closed the DevTools socket, and
+// the next call went out on it unanswered.
+test('connect: a call that gets no answer, or goes out on a closed socket, rejects', async () => {
+  const { WebSocketServer } = require('ws');
+  const wss = new WebSocketServer({ port: 0, host: '127.0.0.1' });
+  await new Promise((r) => wss.once('listening', r));
+  const conns = [];
+  wss.on('connection', (c) => conns.push(c));
+  try {
+    const cdp = await S.connect(`ws://127.0.0.1:${wss.address().port}/`, 2000, { callMs: 200 });
+    await assert.rejects(cdp.send('Runtime.evaluate'), /no answer in 200 ms/);
+    const held = cdp.send('Page.captureScreenshot', {}, 5000);
+    for (const c of conns) c.terminate();
+    await assert.rejects(held, /closed/);
+    await assert.rejects(cdp.send('Page.captureScreenshot'), /closed before Page.captureScreenshot/);
+  } finally {
+    await new Promise((r) => wss.close(r));
+  }
+});
+
+test('within: a shot that never settles is cut at its deadline, and one whose browser exits ends then', async () => {
+  const never = new Promise(() => {});
+  const t0 = Date.now();
+  const cut = await S.within(never, 100, never);
+  assert.strictEqual(cut.ok, false);
+  assert.strictEqual(cut.timedOut, true);
+  assert.ok(Date.now() - t0 < 2000);
+  const died = await S.within(never, 60_000, Promise.resolve('code 9'));
+  assert.deepStrictEqual(died, { ok: false, error: 'the browser exited mid-shot (code 9)' });
+  const done = await S.within(Promise.resolve({ ok: true, file: 'x' }), 60_000, never);
+  assert.strictEqual(done.ok, true);
+});
+
+test('shootCdp: a "browser" that exits at once settles the shot at its exit, not the deadline', async () => {
+  const file = require('path').join(require('os').tmpdir(), `pa-e2e-shot-test-${process.pid}.png`);
+  const t0 = Date.now();
+  // node refuses chrome's flags and exits: no DevTools port ever appears.
+  const r = await S.shootCdp(process.execPath, 'http://127.0.0.1:9/', file, { timeoutMs: 30_000 });
+  assert.strictEqual(r.ok, false);
+  assert.ok(/exited|no DevTools port/.test(r.error), r.error);
+  assert.ok(Date.now() - t0 < 10_000, `${Date.now() - t0} ms`);
+});
+
 (async () => {
   let failed = 0;
   for (const t of tests) {

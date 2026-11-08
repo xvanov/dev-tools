@@ -450,6 +450,55 @@ test('--on runs the workflow on that machine (8.4.25): the dry run by exec, a re
   assert.match(sessions[0].title, /^pa e2e review-fix/);
 });
 
+// --- 8.4.40: a screenshot step never skips the summary or the cleanup ------------------------
+
+test('review-fix: a capture that throws or never settles is a failed check; the summary and cleanup still happen', async () => {
+  for (const capture of [async () => { throw new Error('browser gone'); }, () => new Promise(() => {})]) {
+    const { deps, log } = reviewFixDeps();
+    deps.capture = capture;
+    deps.shotMs = 50;
+    const s = await R.main('review-fix', { pr: '12' }, {}, deps);
+    assert.strictEqual(s.ok, false);
+    assert.ok(fs.existsSync(path.join(s.folder, 'summary.json')));
+    const shot = s.checks.find((c) => c.check === 'screenshot of build');
+    assert.ok(shot && shot.view === 'evidence' && !shot.ok, JSON.stringify(s.checks.filter((c) => !c.ok)));
+    assert.match(shot.detail, /browser gone|no screenshots after/);
+    assert.deepStrictEqual(log.killed.sort(), ['follow8', 'rf5'], 'the sessions are still killed');
+    assert.ok(s.checks.some((c) => c.check === 'CI green on the new head' && c.ok), 'the outcome checks are kept');
+  }
+});
+
+test('a run left on a promise nothing settles writes its summary and report at exit, non-zero', async () => {
+  const report = path.join(os.tmpdir(), `pa-e2e-report-${process.pid}.json`);
+  const { deps } = reviewFixDeps();
+  let held = false;
+  deps.answerPrompt = () => { held = true; return new Promise(() => {}); };
+  const before = process.listenerCount('beforeExit');
+  R.main('review-fix', { pr: '12', report }, {}, deps);
+  for (let i = 0; i < 200 && !held; i++) await new Promise((r) => setImmediate(r));
+  assert.ok(held, 'the run reached the call that never settles');
+  assert.strictEqual(process.listenerCount('beforeExit'), before + 1, 'the guard is armed while the run is out');
+  process.emit('beforeExit', 0);
+  try {
+    assert.strictEqual(process.exitCode, 1);
+    const s = JSON.parse(fs.readFileSync(report, 'utf8'));
+    assert.strictEqual(s.ok, false);
+    assert.match(s.errors[0], /stopped in the review-fix runner with nothing left to run/);
+    assert.ok(fs.existsSync(path.join(s.folder, 'summary.json')));
+  } finally {
+    process.exitCode = 0;
+    fs.rmSync(report, { force: true });
+  }
+  const done = reviewFixDeps();
+  await R.main('review-fix', { pr: '12' }, {}, done.deps);
+  assert.strictEqual(process.listenerCount('beforeExit'), before, 'a run that ends disarms it');
+});
+
+test('shotChecks: a view with no file fails; a shot fails nothing', () => {
+  assert.deepStrictEqual(W.shotChecks([{ view: 'build', file: 'b.png' }, { view: 'run-x', file: null, error: 'no screenshot within 60 s' }]), [{ view: 'evidence', check: 'screenshot of run-x', ok: false, detail: 'no screenshot within 60 s' }]);
+  assert.deepStrictEqual(W.shotChecks(null), []);
+});
+
 test('deepseek-pr defaults to the Azure DeepSeek deployment on the API runtime', () => {
   const o = R.parse('deepseek-pr', {}, {});
   assert.strictEqual(o.runtime, 'api');
