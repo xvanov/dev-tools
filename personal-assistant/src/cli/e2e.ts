@@ -1,8 +1,8 @@
 'use strict';
 
 // `pa e2e`: the golden path, headless, against the live stack (plan E4;
-// src/e2e/goldenPath.js), and `pa e2e <workflow>` for each workflow in the
-// Map (plan 8.2; src/e2e/workflows.js), with evidence in a run folder.
+// src/e2e/goldenPath.ts), and `pa e2e <workflow>` for each workflow in the
+// Map (plan 8.2; src/e2e/workflows.ts), with evidence in a run folder.
 // Prints a table and the JSON report (`--json`: the JSON alone), and exits
 // non-zero on any missed hop, failed check or cost over the ceiling.
 //
@@ -30,7 +30,7 @@ function make(out: any, fail: any) {
       if (which && which !== 'golden') return workflow(which, flags, lists);
       let report;
       try {
-        report = await require('../e2e/goldenPath').main(flags, lists);
+        report = await require('../e2e/goldenPath.ts').main(flags, lists);
       } catch (err: any) {
         if (err.usage) return fail(`${err.message}\n${HELP}`);
         throw err;
@@ -38,7 +38,7 @@ function make(out: any, fail: any) {
       const opts = (() => {
         try { return C.parseOptions(flags, lists); } catch { return {}; }
       })();
-      if (opts.report) require('../e2e/goldenPath').writeReport(opts.report, report);
+      if (opts.report) require('../e2e/goldenPath.ts').writeReport(opts.report, report);
       if (opts.json) out(JSON.stringify(report, null, 2));
       else {
         out(C.table(report));
@@ -50,7 +50,7 @@ function make(out: any, fail: any) {
 
   async function workflow(which: any, flags: any, lists: any) {
     const W = require('../e2e/workflowsCore.ts');
-    const runner = require('../e2e/workflows');
+    const runner = require('../e2e/workflows.ts');
     const ids = which === 'all' ? W.workflows(require('../dashboard/architecture.json')) : [which];
     if (which === 'all' && flags['dry-run'] !== true) return fail('pa e2e all runs dry runs only: add --dry-run');
     const all = [];

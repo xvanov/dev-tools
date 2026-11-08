@@ -1,6 +1,6 @@
 'use strict';
 
-// A worker generation for the deploy test's spare mode (src/e2e/deployTest.js,
+// A worker generation for the deploy test's spare mode (src/e2e/deployTest.ts,
 // plan Z6), without Postgres. It speaks the supervisor's protocol like
 // src/worker.js and serves the parts a deploy must not break, with the real
 // code where it matters:

@@ -1249,7 +1249,7 @@ function create(db: Db) {
       );
     },
 
-    // --- for src/e2e/goldenPath.js
+    // --- for src/e2e/goldenPath.ts
 
     /** The e2e test's own cards (summary `e2e-<uuid>`, made by the request path): {id, status}. */
     async e2eCards() {

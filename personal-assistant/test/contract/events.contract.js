@@ -82,7 +82,7 @@ module.exports = {
       client.release();
     }
   },
-  // --- for e2e/deployTest.js (chunk E)
+  // --- for e2e/deployTest.ts (chunk E)
 
   'publishProbe: publishes without throwing, outbox or not': async ({ repos, db, assert }) => {
     await repos.events.publishProbe(1);

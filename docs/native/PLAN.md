@@ -200,7 +200,7 @@ with the app. Clients reconnect to the event stream with `Last-Event-ID` and mis
   half is in Z6's terminal check. (44b86fc)
 - [x] **Z6 Deploy test.** A test hammers the dashboard, an SSE stream and a terminal during a
   deploy and asserts zero failed requests, no lost events, no dropped terminal.
-  `personal-assistant/src/e2e/deployTest.js` (spare mode in `test/deployTest.test.js`; `--live
+  `personal-assistant/src/e2e/deployTest.ts` (spare mode in `test/deployTest.test.js`; `--live
   [--deploy]` on a stack). Events now survive a roll: `pa_event_seq` ids (sql/035). (2793e9b)
 - [x] **Exit Z:** a deploy on each stack with the Z6 test passing. Work stack 2026-11-08:
   PASS with `--live --deploy` (5186 requests, 0 failed; 1251/1251 events, 0 resyncs; terminal

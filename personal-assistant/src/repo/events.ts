@@ -70,7 +70,7 @@ function create(db: Db) {
       return r && r.seq != null ? r.seq : null;
     },
 
-    // --- for src/e2e/deployTest.js
+    // --- for src/e2e/deployTest.ts
 
     /**
      * Publishes a `deploytest` event numbered `n`: sequence, outbox row and

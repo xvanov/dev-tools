@@ -1,7 +1,7 @@
 'use strict';
 
 // `pa e2e <workflow>` (plan 8.2): the pure scoring (src/e2e/workflowsCore.ts)
-// and the runners (src/e2e/workflows.js) with fakes for the dashboard, the
+// and the runners (src/e2e/workflows.ts) with fakes for the dashboard, the
 // voice path, the factory and termhub. No network, no database, no browser.
 
 const assert = require('assert');
@@ -9,7 +9,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const W = require('../src/e2e/workflowsCore.ts');
-const R = require('../src/e2e/workflows');
+const R = require('../src/e2e/workflows.ts');
 const ARCH = require('../src/dashboard/architecture.json');
 
 const tests = [];

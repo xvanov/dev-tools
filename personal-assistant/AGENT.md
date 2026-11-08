@@ -579,7 +579,7 @@ Postgres and nowhere else. Tests use invented names; fixtures never hold a real 
   health watch. A second deploy, or a `roll`/`rollback` from anyone else, is refused with who
   holds it (`deploy.js` exits 5, the scripts say "refused"), and a second roll while one runs is
   refused rather than merged. Two overlapping deploys once dropped each other's rollback target.
-- **The deploy test (Z6).** `node src/e2e/deployTest.js` rolls a supervisor while it hammers
+- **The deploy test (Z6).** `node src/e2e/deployTest.ts` rolls a supervisor while it hammers
   `/api/version`, holds an `/api/events` stream (reconnecting with `Last-Event-ID`) and a termhub
   terminal, and fails on any failed request, lost/duplicated/out-of-order event, `resync`, or
   dropped terminal. Without flags it runs on a spare port with `test/fixtures/deployWorker.js`

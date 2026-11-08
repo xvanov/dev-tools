@@ -150,7 +150,7 @@ src/supervisor`), and the compiled jarvisd carries it:
 - Tests with the compiled binary (`PA_JARVISD_EXE`, CI's jarvisd job on Windows and Linux):
   `test/supervisorBinary.test.js` (start, roll, rollback, deploy lock, roll to `current`, no
   generation outlives its supervisor) and `test/deployTest.test.js` (the Z6 spare-port deploy
-  test with jarvisd as the supervisor, `deployTest.js --binary`).
+  test with jarvisd as the supervisor, `deployTest.ts --binary`).
 - **The launcher.** The pa-worker task runs `windows\pa-launch.ps1` and the unit runs
   `linux/pa-launch.sh` (`exec`s, so systemd supervises the supervisor itself). On every start
   each reads `PA_RUNTIME` (environment, else `personal-assistant/.env`, else the repo's `.env`):
@@ -191,7 +191,7 @@ Windows (work stack):
    `"exe"` under `jarvisd\dist\`; `Get-CimInstance Win32_Process -Filter "Name LIKE 'jarvisd%'"`
    lists the supervisor and one generation; `http://127.0.0.1:7300/healthz` is ready and
    `/api/version` reports HEAD. Then a normal deploy rolls to a new binary, and the Z6 test
-   (`node src\e2e\deployTest.js --live --deploy -- --from HEAD~1`) passes.
+   (`node src\e2e\deployTest.ts --live --deploy -- --from HEAD~1`) passes.
 5. Roll back: set `PA_RUNTIME=node` (or delete the line) and run `redeploy.ps1 -From (git rev-parse HEAD)`:
    the runtime differs, so it restarts the task and the launcher starts `node src\supervisor`.
 

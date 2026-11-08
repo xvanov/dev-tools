@@ -11,10 +11,10 @@
 //   terminal   a termhub session printing `tick N`, one WebSocket on it — the
 //              socket never drops and no tick goes missing
 //
-//   node src/e2e/deployTest.js                  spare: a supervisor on a free port with
+//   node src/e2e/deployTest.ts                  spare: a supervisor on a free port with
 //                                               test/fixtures/deployWorker.js (no
 //                                               Postgres), a throwaway termhub; CI-safe
-//   node src/e2e/deployTest.js --live           the running stack: PA on
+//   node src/e2e/deployTest.ts --live           the running stack: PA on
 //        [--pa http://127.0.0.1:7300]           PA_DISPATCH_PORT, termhub on :7000; events
 //        [--termhub http://127.0.0.1:7000]      via pg_notify with pa_event_seq (sql/035);
 //        [--deploy [-- <deploy.js args>]]       the roll is the control socket's, or with
@@ -23,6 +23,25 @@
 //   --rolls N (spare, default 2)  --json  --no-terminal
 //
 // Exit 0 when every assertion holds; 1 otherwise, with the report.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+type Json = import('../types.ts').Json;
+type Options = {
+  live: boolean; deploy: boolean; deployArgs: string[]; pa: string | null; termhub: string | null; rolls: number;
+  json: boolean; terminal: boolean; hammers: number; verbose?: boolean; binary?: string;
+};
+type Failure = { at: string; error: string };
+type Hammered = { ok: number; failures: Failure[]; latencies: number[]; slow: Array<{ at: string; ms: number }>; stuck: Array<{ at: string; seen: unknown }> };
+type Streamed = {
+  received: number[]; ids: unknown[]; resyncs: number; hellos: number; connects: number; failures: Failure[]; lastId: string | null;
+  ready?: Promise<void>;
+};
+type TermReport = { closed: boolean; error: string | null; first: number; last: number; missing: number[]; missingCount: number };
+type Producer = { emit: () => Promise<number>; close: () => Promise<unknown>; url?: string };
+type Roll = { ok: boolean; detail: string };
+type IncomingMessage = import('http').IncomingMessage;
+type ServerResponse = import('http').ServerResponse;
 
 const fs = require('fs');
 const os = require('os');
@@ -33,11 +52,11 @@ const { spawn } = require('child_process');
 const PA_DIR = path.join(__dirname, '..', '..');
 const TERMHUB_DIR = path.join(PA_DIR, '..', 'termhub');
 
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const stamp = () => new Date().toISOString().slice(11, 23);
 
-function parseArgs(argv) {
-  const o = { live: false, deploy: false, deployArgs: [], pa: null, termhub: null, rolls: 2, json: false, terminal: true, hammers: 4 };
+function parseArgs(argv: string[]): Options {
+  const o: Options = { live: false, deploy: false, deployArgs: [], pa: null, termhub: null, rolls: 2, json: false, terminal: true, hammers: 4 };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--') {
@@ -46,13 +65,13 @@ function parseArgs(argv) {
     }
     if (a === '--live') o.live = true;
     else if (a === '--deploy') o.deploy = true;
-    else if (a === '--pa') o.pa = argv[++i];
-    else if (a === '--termhub') o.termhub = argv[++i];
+    else if (a === '--pa') o.pa = argv[++i] as string;
+    else if (a === '--termhub') o.termhub = argv[++i] as string;
     else if (a === '--rolls') o.rolls = Math.max(1, Number(argv[++i]) || 1);
     else if (a === '--json') o.json = true;
     else if (a === '--no-terminal') o.terminal = false;
     else if (a === '--verbose') o.verbose = true;
-    else if (a === '--binary') o.binary = argv[++i];
+    else if (a === '--binary') o.binary = argv[++i] as string;
     else throw new Error(`unknown argument ${a}`);
   }
   return o;
@@ -60,21 +79,21 @@ function parseArgs(argv) {
 
 // ---- the three clients ----
 
-function hammer(base, { loops = 4, timeoutMs = 10_000, onStuck = null } = {}) {
+function hammer(base: string, { loops = 4, timeoutMs = 10_000, onStuck = null }: { loops?: number; timeoutMs?: number; onStuck?: (() => unknown) | null } = {}) {
   const u = new URL(base);
   const agent = new http.Agent({ keepAlive: true, maxSockets: loops });
-  const r = { ok: 0, failures: [], latencies: [], slow: [], stuck: [] };
+  const r: Hammered = { ok: 0, failures: [], latencies: [], slow: [], stuck: [] };
   let running = true;
   const one = () =>
-    new Promise((resolve) => {
+    new Promise<void>((resolve) => {
       const t0 = Date.now();
       const at = stamp();
       // A request still waiting after 3 s: what the supervisor holds then.
       const stuck = onStuck && setTimeout(() => r.stuck.push({ at, seen: onStuck() }), 3000);
-      const req = http.get({ host: u.hostname, port: u.port, path: '/api/version', agent, timeout: timeoutMs }, (res) => {
+      const req = http.get({ host: u.hostname, port: u.port, path: '/api/version', agent, timeout: timeoutMs }, (res: IncomingMessage) => {
         res.resume();
         res.on('end', () => {
-          clearTimeout(stuck);
+          clearTimeout(stuck || undefined);
           const ms = Date.now() - t0;
           r.latencies.push(ms);
           if (ms > 2000) r.slow.push({ at, ms });
@@ -84,8 +103,8 @@ function hammer(base, { loops = 4, timeoutMs = 10_000, onStuck = null } = {}) {
         });
       });
       req.on('timeout', () => req.destroy(new Error(`timed out after ${timeoutMs} ms`)));
-      req.on('error', (e) => {
-        clearTimeout(stuck);
+      req.on('error', (e: Error) => {
+        clearTimeout(stuck || undefined);
         r.failures.push({ at, error: e.message });
         resolve();
       });
@@ -106,41 +125,42 @@ function hammer(base, { loops = 4, timeoutMs = 10_000, onStuck = null } = {}) {
   };
 }
 
-function sseClient(base, topic) {
+function sseClient(base: string, topic: string) {
   const u = new URL(base);
-  const s = { received: [], ids: [], resyncs: 0, hellos: 0, connects: 0, failures: [], lastId: null };
-  let helloed;
-  s.ready = new Promise((r) => (helloed = r));
+  const s: Streamed = { received: [], ids: [], resyncs: 0, hellos: 0, connects: 0, failures: [], lastId: null };
+  let helloed: () => void = () => {};
+  s.ready = new Promise<void>((r) => (helloed = r));
   let running = true;
-  let req = null;
-  const open = () => {
+  let req: import('http').ClientRequest | null = null;
+  const open = (): void => {
     if (!running) return;
     s.connects++;
-    const headers = s.lastId ? { 'Last-Event-ID': s.lastId } : {};
-    req = http.get({ host: u.hostname, port: u.port, path: `/api/events?topics=${topic}`, headers }, (res) => {
+    const headers: Record<string, string> = s.lastId ? { 'Last-Event-ID': s.lastId } : {};
+    req = http.get({ host: u.hostname, port: u.port, path: `/api/events?topics=${topic}`, headers }, (res: IncomingMessage) => {
       if (res.statusCode !== 200) {
         s.failures.push({ at: stamp(), error: `HTTP ${res.statusCode}` });
         res.resume();
-        return setTimeout(open, 200);
+        setTimeout(open, 200);
+        return;
       }
       let buf = '';
       res.setEncoding('utf8');
-      res.on('data', (c) => {
+      res.on('data', (c: string) => {
         buf += c.replace(/\r\n/g, '\n');
-        let i;
+        let i: number;
         while ((i = buf.indexOf('\n\n')) >= 0) {
           const block = buf.slice(0, i);
           buf = buf.slice(i + 2);
           const id = /^id: (.*)$/m.exec(block);
           const data = /^data: (.*)$/m.exec(block);
           if (!data) continue;
-          let e;
+          let e: Json;
           try {
-            e = JSON.parse(data[1]);
+            e = JSON.parse(data[1] as string);
           } catch {
             continue;
           }
-          if (id) s.lastId = id[1];
+          if (id) s.lastId = id[1] as string;
           if (e.topic === 'resync') s.resyncs++;
           else if (e.topic === 'hello') {
             s.hellos++;
@@ -156,7 +176,7 @@ function sseClient(base, topic) {
       res.on('end', () => setTimeout(open, 200));
       res.on('error', () => {});
     });
-    req.on('error', (e) => {
+    (req as import('http').ClientRequest).on('error', (e: Error) => {
       if (!running) return;
       s.failures.push({ at: stamp(), error: e.message });
       setTimeout(open, 500);
@@ -167,7 +187,7 @@ function sseClient(base, topic) {
     result: s,
     stop: () => {
       running = false;
-      if (req) req.destroy();
+      if (req) (req as import('http').ClientRequest).destroy();
     },
   };
 }
@@ -178,10 +198,10 @@ function sseClient(base, topic) {
 // test/fixtures/deployWorker.js listens to. A listener first gets
 // {baseline: <last seq>}, then every event, in order — as each worker
 // generation's LISTEN connection does.
-async function feedProducer() {
-  const listeners = new Set();
+async function feedProducer(): Promise<Producer & { url: string }> {
+  const listeners = new Set<ServerResponse>();
   let n = 0;
-  const server = http.createServer((req, res) => {
+  const server = http.createServer((req: IncomingMessage, res: ServerResponse) => {
     res.writeHead(200, { 'Content-Type': 'application/x-ndjson' });
     res.write(JSON.stringify({ baseline: n }) + '\n');
     listeners.add(res);
@@ -189,7 +209,7 @@ async function feedProducer() {
   });
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
   return {
-    url: `http://127.0.0.1:${server.address().port}/listen`,
+    url: `http://127.0.0.1:${(server.address() as import('net').AddressInfo).port}/listen`,
     emit: async () => {
       n++;
       const line = JSON.stringify({ seq: n, topic: 'deploytest', n }) + '\n';
@@ -203,7 +223,7 @@ async function feedProducer() {
   };
 }
 
-async function pgProducer() {
+async function pgProducer(): Promise<Producer> {
   const { config } = require('../config.ts');
   // PA_DB=sqlite: a session of the SQLite store, not PA_DATABASE_URL.
   const sqlite = require('../repo').backend.dialect === 'sqlite';
@@ -229,22 +249,22 @@ async function pgProducer() {
 
 /** Pure: where --termhub points. https gets TLS (and wss), with normal
  * certificate checks; a private CA goes in NODE_EXTRA_CA_CERTS. */
-function termhubEndpoint(url) {
+function termhubEndpoint(url: string): { tls: boolean; host: string; port: number } {
   const u = new URL(url);
   if (u.protocol !== 'http:' && u.protocol !== 'https:') throw new Error(`--termhub must be http:// or https://, got ${u.protocol}`);
   const tls = u.protocol === 'https:';
   return { tls, host: u.hostname, port: Number(u.port) || (tls ? 443 : 80) };
 }
 
-async function terminal({ spare, termhubBase, durationTicks }) {
+async function terminal({ spare, termhubBase, durationTicks }: { spare: boolean; termhubBase: string; durationTicks: number }) {
   const th = require(path.join(TERMHUB_DIR, 'test', 'spareTermhub.js'));
   const WebSocket = require('ws');
-  let port;
+  let port: number;
   let host = '127.0.0.1';
   let tls = false;
-  let command;
-  let cwd;
-  let cleanup = async () => {};
+  let command: string;
+  let cwd: string;
+  let cleanup: () => Promise<unknown> = async () => {};
   if (spare) {
     const s = await th.startSpareTermhub();
     const front = await s.startFront();
@@ -262,17 +282,17 @@ async function terminal({ spare, termhubBase, durationTicks }) {
   }
   const created = await th.getJson(port, '/api/sessions', { host, tls, method: 'POST', timeoutMs: 20_000, body: { command, cwd, title: 'deploy test (Z6)', cols: 100, rows: 40 } });
   if (created.status !== 201) throw new Error(`termhub would not start a session: ${created.status} ${created.text}`);
-  const id = created.body.id;
+  const id: string = created.body.id;
   const t = th.watchTerminal(WebSocket, `${tls ? 'wss' : 'ws'}://${host}:${port}/ws/term/${encodeURIComponent(id)}`);
   await t.opened;
   await th.waitFor(() => t.ticks().length >= 3, 30_000, 'the first ticks');
   return {
     t,
-    report: () => {
-      const ticks = t.ticks();
+    report: (): TermReport => {
+      const ticks: number[] = t.ticks();
       const lo = Math.min(...ticks);
       const hi = Math.max(...ticks);
-      const missing = [];
+      const missing: number[] = [];
       const have = new Set(ticks);
       for (let i = lo; i <= hi; i++) if (!have.has(i)) missing.push(i);
       return { closed: t.closed, error: t.error, first: lo, last: hi, missing: missing.slice(0, 20), missingCount: missing.length };
@@ -287,34 +307,39 @@ async function terminal({ spare, termhubBase, durationTicks }) {
 
 // ---- rolls ----
 
-function runDeploy(args) {
+function runDeploy(args: string[]): Promise<{ code: number | null; out: string }> {
   return new Promise((resolve) => {
     const child = spawn(process.execPath, [path.join(PA_DIR, 'src', 'supervisor', 'deploy.js'), ...args], { cwd: PA_DIR, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
     let out = '';
-    child.stdout.on('data', (c) => (out += c));
-    child.stderr.on('data', (c) => (out += c));
-    child.on('exit', (code) => resolve({ code, out: out.trim() }));
+    child.stdout.on('data', (c: Buffer) => (out += c));
+    child.stderr.on('data', (c: Buffer) => (out += c));
+    child.on('exit', (code: number | null) => resolve({ code, out: out.trim() }));
   });
 }
 
 // ---- the run ----
 
-function percentile(sorted, p) {
+function percentile(sorted: number[], p: number): number | null {
   if (!sorted.length) return null;
-  return sorted[Math.min(sorted.length - 1, Math.floor((p / 100) * sorted.length))];
+  return sorted[Math.min(sorted.length - 1, Math.floor((p / 100) * sorted.length))] as number;
 }
 
 /** Pure: the verdict over what the clients saw. */
-function judge({ requests, events, produced, terminal: term }) {
-  const problems = [];
+function judge({ requests, events, produced, terminal: term }: {
+  requests: Pick<Hammered, 'ok' | 'failures'>;
+  events: Pick<Streamed, 'received' | 'resyncs' | 'failures'>;
+  produced: number;
+  terminal?: Pick<TermReport, 'closed' | 'error' | 'missing' | 'missingCount'> | null;
+}): string[] {
+  const problems: string[] = [];
   if (requests.failures.length) problems.push(`${requests.failures.length} failed request(s): ${requests.failures.slice(0, 5).map((f) => `${f.at} ${f.error}`).join('; ')}`);
   if (requests.ok < 50) problems.push(`only ${requests.ok} requests made`);
-  const got = new Map();
+  const got = new Map<number, number>();
   for (const n of events.received) got.set(n, (got.get(n) || 0) + 1);
-  const missing = [];
+  const missing: number[] = [];
   for (let n = 1; n <= produced; n++) if (!got.has(n)) missing.push(n);
   const dup = [...got].filter(([, c]) => c > 1).map(([n]) => n);
-  const order = events.received.every((n, i) => i === 0 || n > events.received[i - 1]);
+  const order = events.received.every((n, i) => i === 0 || n > (events.received[i - 1] as number));
   if (missing.length) problems.push(`${missing.length} event(s) never arrived: ${missing.slice(0, 10).join(', ')}`);
   if (dup.length) problems.push(`${dup.length} event(s) arrived twice: ${dup.slice(0, 10).join(', ')}`);
   if (!order) problems.push('events arrived out of order');
@@ -327,14 +352,14 @@ function judge({ requests, events, produced, terminal: term }) {
   return problems;
 }
 
-async function run(argv, { log = (m) => process.stderr.write(`[deploy-test ${stamp()}] ${m}\n`) } = {}) {
+async function run(argv: string[], { log = (m: string) => process.stderr.write(`[deploy-test ${stamp()}] ${m}\n`) }: { log?: (m: string) => unknown } = {}): Promise<Json> {
   const o = parseArgs(argv);
   const sup = require('../supervisor');
-  let base;
-  let producer;
-  let roll;
-  let teardown = async () => {};
-  let statusFn = null;
+  let base: string;
+  let producer: Producer;
+  let roll: () => Promise<Roll>;
+  let teardown: () => Promise<unknown> = async () => {};
+  let statusFn: (() => unknown) | null = null;
 
   if (o.live) {
     const port = Number(sup.envSetting('PA_DISPATCH_PORT', sup.DEFAULT_PORT));
@@ -354,27 +379,28 @@ async function run(argv, { log = (m) => process.stderr.write(`[deploy-test ${sta
     // own process on a free port, generations of the same executable running
     // the fixture worker.
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pa-deploytest-'));
-    producer = await feedProducer();
+    const feed = await feedProducer();
+    producer = feed;
     const controlPath = process.platform === 'win32' ? `\\\\.\\pipe\\pa-deploytest-${process.pid}-${Date.now()}` : path.join(dir, 'control.sock');
-    const port = await new Promise((resolve) => {
+    const port = await new Promise<number>((resolve) => {
       const srv = require('net').createServer().listen(0, '127.0.0.1', () => {
-        const p = srv.address().port;
+        const p: number = srv.address().port;
         srv.close(() => resolve(p));
       });
     });
-    const env = {
+    const env: NodeJS.ProcessEnv = {
       ...process.env,
       PA_DISPATCH_PORT: String(port),
       PA_SUPERVISOR_CONTROL: controlPath,
       PA_SUPERVISOR_LOG: path.join(dir, 'supervisor.log'),
       PA_GENERATION_MODULE: path.join(PA_DIR, 'test', 'fixtures', 'deployWorker.js'),
-      DEPLOY_FEED: producer.url,
+      DEPLOY_FEED: feed.url,
     };
     delete env.PA_RUNTIME;
     delete env.PA_JARVISD_EXE;
     const child = spawn(path.resolve(o.binary), ['supervise'], { env, stdio: o.verbose ? 'inherit' : 'ignore', windowsHide: true });
     const exited = new Promise((r) => child.once('exit', r));
-    let st = null;
+    let st: Json | null = null;
     for (let i = 0; i < 150 && !(st && st.generation); i++) {
       st = await sup.request(controlPath, { cmd: 'status' }, 1000).catch(() => null);
       if (!(st && st.generation)) await sleep(200);
@@ -383,7 +409,7 @@ async function run(argv, { log = (m) => process.stderr.write(`[deploy-test ${sta
     log(`compiled supervisor: ${path.basename(o.binary)}, runtime ${st.runtime}`);
     base = `http://127.0.0.1:${port}`;
     roll = async () => {
-      const r = await sup.request(controlPath, { cmd: 'roll' }).catch((err) => ({ ok: false, error: err.message }));
+      const r = await sup.request(controlPath, { cmd: 'roll' }).catch((err: Error) => ({ ok: false, error: err.message }));
       return { ok: r.ok, detail: r.ok ? `generation ${r.generation}` : r.error };
     };
     teardown = async () => {
@@ -394,13 +420,14 @@ async function run(argv, { log = (m) => process.stderr.write(`[deploy-test ${sta
     };
   } else {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pa-deploytest-'));
-    producer = await feedProducer();
+    const feed = await feedProducer();
+    producer = feed;
     const controlPath = process.platform === 'win32' ? `\\\\.\\pipe\\pa-deploytest-${process.pid}-${Date.now()}` : path.join(dir, 'control.sock');
     const s = sup.createSupervisor({
       worker: path.join(PA_DIR, 'test', 'fixtures', 'deployWorker.js'),
       port: 0,
       controlPath,
-      env: { DEPLOY_FEED: producer.url },
+      env: { DEPLOY_FEED: feed.url },
       drainTimeoutMs: 5000,
       holdMs: 3000,
       stopGraceMs: 3000,
@@ -410,7 +437,7 @@ async function run(argv, { log = (m) => process.stderr.write(`[deploy-test ${sta
     statusFn = () => s.status();
     base = `http://127.0.0.1:${st.port}`;
     roll = async () => {
-      const r = await s.roll().catch((err) => ({ ok: false, error: err.message }));
+      const r = await s.roll().catch((err: Error) => ({ ok: false, error: err.message }));
       return { ok: r.ok, detail: r.ok ? `generation ${r.generation}` : r.error };
     };
     teardown = async () => {
@@ -421,18 +448,18 @@ async function run(argv, { log = (m) => process.stderr.write(`[deploy-test ${sta
 
   // This process's own stalls: a client that gets no CPU times requests out
   // that the server answered. Recorded so the report can tell them apart.
-  const clientStalls = [];
-  const lag = require('../util/lagWatch.ts').watchLag({ log: { warn: (m, f) => clientStalls.push({ at: stamp(), ms: f.ms }) }, thresholdMs: 1000 });
+  const clientStalls: Array<{ at: string; ms: number }> = [];
+  const lag = require('../util/lagWatch.ts').watchLag({ log: { warn: (_m: string, f: { ms: number }) => clientStalls.push({ at: stamp(), ms: f.ms }) }, thresholdMs: 1000 });
   log(`${o.live ? 'live' : 'spare'} stack at ${base}`);
   const rollsPlanned = o.live ? 1 : o.rolls;
-  let term = null;
+  let term: Awaited<ReturnType<typeof terminal>> | null = null;
   if (o.terminal) {
     try {
       term = await terminal({ spare: !o.live, termhubBase: o.termhub || 'http://127.0.0.1:7000', durationTicks: 6000 });
       log('terminal attached');
     } catch (err) {
       if (o.live) throw err;
-      log(`terminal skipped: ${err.message}`);
+      log(`terminal skipped: ${(err as Error).message}`);
     }
   }
 
@@ -449,7 +476,7 @@ async function run(argv, { log = (m) => process.stderr.write(`[deploy-test ${sta
     }
   })();
 
-  const rolls = [];
+  const rolls: Array<Roll & { ms: number }> = [];
   try {
     await sleep(3000);
     for (let i = 0; i < rollsPlanned; i++) {
@@ -475,7 +502,7 @@ async function run(argv, { log = (m) => process.stderr.write(`[deploy-test ${sta
 
     lag.stop();
     const lat = [...h.result.latencies].sort((a, b) => a - b);
-    const report = {
+    const report: Json = {
       mode: o.live ? 'live' : 'spare',
       rolls,
       requests: { ok: h.result.ok, failed: h.result.failures.length, p50: percentile(lat, 50), p99: percentile(lat, 99), max: lat[lat.length - 1] ?? null, slow: h.result.slow.slice(0, 10), stuck: h.result.stuck.slice(0, 4), failures: h.result.failures.slice(0, 10) },
@@ -495,28 +522,30 @@ async function run(argv, { log = (m) => process.stderr.write(`[deploy-test ${sta
   }
   return run.last;
 }
+/** The last run's report (read back once the finally above has written it). */
+run.last = null as Json | null;
 
 if (require.main === module) {
   const argv = process.argv.slice(2);
   run(argv).then(
-    (report) => {
+    (report: Json) => {
       if (argv.includes('--json')) process.stdout.write(JSON.stringify(report, null, 2) + '\n');
       else {
         const r = report;
         process.stdout.write(
           [
             `deploy test (${r.mode}): ${r.ok ? 'PASS' : 'FAIL'}`,
-            `  rolls      ${r.rolls.map((x) => `${x.ok ? 'ok' : 'failed'} ${x.ms} ms`).join(', ')}`,
-            `  requests   ${r.requests.ok} ok, ${r.requests.failed} failed; p50 ${r.requests.p50} ms, p99 ${r.requests.p99} ms, max ${r.requests.max} ms${r.requests.slow.length ? `; slow: ${r.requests.slow.map((s) => `${s.at} ${s.ms} ms`).join(', ')}` : ''}`,
+            `  rolls      ${r.rolls.map((x: Json) => `${x.ok ? 'ok' : 'failed'} ${x.ms} ms`).join(', ')}`,
+            `  requests   ${r.requests.ok} ok, ${r.requests.failed} failed; p50 ${r.requests.p50} ms, p99 ${r.requests.p99} ms, max ${r.requests.max} ms${r.requests.slow.length ? `; slow: ${r.requests.slow.map((s: Json) => `${s.at} ${s.ms} ms`).join(', ')}` : ''}`,
             `  events     ${r.events.received}/${r.events.produced} received over ${r.events.connects} connection(s), ${r.events.resyncs} resync(s)`,
             `  terminal   ${r.terminal ? `ticks ${r.terminal.first}..${r.terminal.last}, ${r.terminal.missingCount} missing, socket ${r.terminal.closed ? 'DROPPED' : 'held'}` : 'not run'}`,
-            ...r.problems.map((p) => `  PROBLEM    ${p}`),
+            ...r.problems.map((p: string) => `  PROBLEM    ${p}`),
           ].join('\n') + '\n'
         );
       }
       process.exit(report.ok ? 0 : 1);
     },
-    (err) => {
+    (err: Error) => {
       process.stderr.write(`deploy test failed to run: ${err.stack || err.message}\n`);
       process.exit(1);
     }

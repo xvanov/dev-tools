@@ -4,7 +4,7 @@
 // process (as in production, where the updater swaps the front and leaves
 // sessiond and its PTYs alone), on free loopback ports, with a temp data dir.
 // Used by test/frontSwap.test.js (plan Z5) and by the PA's deploy test
-// (personal-assistant/src/e2e/deployTest.js, Z6). Not a test file itself.
+// (personal-assistant/src/e2e/deployTest.ts, Z6). Not a test file itself.
 
 const fs = require('fs');
 const os = require('os');

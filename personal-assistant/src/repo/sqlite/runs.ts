@@ -486,7 +486,7 @@ function create(db: Db) {
       );
     },
 
-    // --- for src/e2e/goldenPath.js
+    // --- for src/e2e/goldenPath.ts
 
     /** Runs of these commitments: {id, factory_job_id, factory_state}. */
     async jobsOfCommitments(commitmentIds: unknown[]) {

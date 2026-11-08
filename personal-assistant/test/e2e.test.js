@@ -1,13 +1,13 @@
 'use strict';
 
 // `pa e2e` (plan E4): the golden path's pure rules (src/e2e/goldenPathCore.ts)
-// and the runner (src/e2e/goldenPath.js) driven end to end with fakes for the
+// and the runner (src/e2e/goldenPath.ts) driven end to end with fakes for the
 // card store, the chat's tools, the factory, termhub, the dashboard and gh.
 // No network, no database.
 
 const assert = require('assert');
 const C = require('../src/e2e/goldenPathCore.ts');
-const G = require('../src/e2e/goldenPath');
+const G = require('../src/e2e/goldenPath.ts');
 
 const tests = [];
 const test = (name, fn) => tests.push({ name, fn });

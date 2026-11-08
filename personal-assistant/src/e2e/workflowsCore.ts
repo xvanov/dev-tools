@@ -3,7 +3,7 @@
 // `pa e2e <workflow>` (plan 8.2): the pure part. The workflows are the Map's
 // examples (architecture.json `examples`, each with an 8.1 `acceptance`
 // block); this module reads them, scores what a run measured against them,
-// and shapes the evidence summary. The runners are in workflows.js.
+// and shapes the evidence summary. The runners are in workflows.ts.
 //
 //   workflows(arch)                      ids that have an acceptance block (not out of scope)
 //   acceptance(arch, id)                 one workflow's block, or throws

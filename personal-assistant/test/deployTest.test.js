@@ -1,13 +1,13 @@
 'use strict';
 
-// The deploy test (src/e2e/deployTest.js, plan Z6) in spare mode: a real
+// The deploy test (src/e2e/deployTest.ts, plan Z6) in spare mode: a real
 // supervisor rolls twice on a free port while requests, an event stream and a
 // terminal run through it; nothing may fail, be lost or drop. Plus its
 // verdict on made-up observations. No Postgres; the terminal needs termhub's
 // node_modules and is skipped (said so) without them.
 
 const assert = require('assert');
-const { run, judge, parseArgs } = require('../src/e2e/deployTest');
+const { run, judge, parseArgs } = require('../src/e2e/deployTest.ts');
 
 // ---- the verdict ----
 {
@@ -31,7 +31,7 @@ const { run, judge, parseArgs } = require('../src/e2e/deployTest');
 
 // ---- an https termhub (Linux serves TLS on its tailnet port) ----
 {
-  const { termhubEndpoint } = require('../src/e2e/deployTest');
+  const { termhubEndpoint } = require('../src/e2e/deployTest.ts');
   assert.deepStrictEqual(termhubEndpoint('https://box.example.ts.net:7000'), { tls: true, host: 'box.example.ts.net', port: 7000 });
   assert.deepStrictEqual(termhubEndpoint('https://box.example.ts.net'), { tls: true, host: 'box.example.ts.net', port: 443 });
   assert.deepStrictEqual(termhubEndpoint('http://127.0.0.1:7000'), { tls: false, host: '127.0.0.1', port: 7000 });

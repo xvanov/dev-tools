@@ -4,7 +4,7 @@
 // without a stack: which hops there are and when each counts as reached, what
 // every view's API must say about one run's id chain (E1), whether an API step
 // was watchable (E2), and the report and timing table. The runner
-// (goldenPath.js) does the I/O and asks this module what it saw.
+// (goldenPath.ts) does the I/O and asks this module what it saw.
 //
 //   parseOptions(flags, lists)            `pa e2e` flags → options (throws on nonsense)
 //   observe(timeline, job, {at, output})  one factory status poll → hops newly reached
