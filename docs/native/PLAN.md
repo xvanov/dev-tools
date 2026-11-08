@@ -112,7 +112,7 @@ the card was created:
 | --branch (continue an existing branch) | personal | 23.8 | | 275.3 | 430.8 |
 | --resume | work | 18.3 | 101.7 / 108.7 | 580.6 | 693.5 |
 | --branch | work | 19.9 | | 521.3 | 701.7 |
-| api | work | 23.5 | | not reached (see E6) | |
+| api | work | 18.4 | | 1707.0 | 1865.1 |
 
 ---
 
@@ -337,8 +337,10 @@ run mid-step; a job continued on an existing branch (`--branch`).
   PR #25 with its branch, killed the sessions and dropped the card. E5.5, E5.6 and E5.7 are fixed
   (6e96a0d, 0df2bb1); factory_start (a) and (b) above are resolved by the warm triage lane (e013834)
   and the 16 s measured start.
-- [ ] **E6 Gate.** Each phase's Exit box below requires a green E4 run (all variants) on both
-  stacks, with the timings recorded in the targets table.
+- [x] **E6 Gate.** Each phase's Exit box below requires a green E4 run (all variants) on both
+  stacks, with the timings recorded in the targets table. Green on both stacks, all four
+  variants, 2026-11-08 (the work api variant at 73e824d, dev-tools:017, PR #60). The gate
+  itself stays: each Exit box still needs its own green run.
   First gate run, 2026-11-08, claude_session variant only: personal stack green (`pa e2e --on <personal
   machine>`, card #1, job dev-tools:001, PR #28, CI passing, every link resolved, cleanup ran). Work
   stack: every hop reached; links green except E5.8.
@@ -347,13 +349,17 @@ run mid-step; a job continued on an existing branch (`--branch`).
   --branch. Fixed on the way: --resume first killed the PM step's read-only viewer (3dbeff5), then
   killed the dev session, which the factory replaces by itself within ~30 s; it now stops the run
   with the factory's own `job cancel` and resumes it (305665a); worktree names overran MAX_PATH
-  under the moved state dir (c6f2c44). Left: the api variant on the work stack. Its first run
+  under the moved state dir (c6f2c44). The work stack's api variant took two runs. The first
   (dev-tools:013) ran the API dev step inside serve's tick, which serve killed at 3600 s, and every
-  retry then failed on the dead attempt's worktree (fixed: 0772cec, a1b1cab, 5e2228f); the API dev
-  agent also hung PowerShell on multi-line `-m` arguments and committed with --no-verify and
-  opened a PR itself (#43, closed): the prompt says not to (73e824d), and a second run
-  (dev-tools:017) did both again, so this needs a guard in the runtime, not the prompt. That run
-  also met an Azure content-filter refusal on deepseek-v4-pro, which the factory retried.
+  retry then failed on the dead attempt's worktree (fixed: 0772cec, a1b1cab, 5e2228f). The second
+  (dev-tools:017) was green, slowly: PR at 1707 s, CI done at 1865 s, after an Azure
+  content-filter refusal on deepseek-v4-pro (retried by the factory) and a hung commit.
+  - [ ] **E6.1 The API dev agent breaks the shell and hook rules on Windows.** It hangs
+    PowerShell at a `>>` prompt with multi-line `-m` arguments (minutes of Ctrl-C each), commits
+    with --no-verify, and once pushed and opened a PR itself (#43, closed). The prompt says not
+    to (73e824d) and dev-tools:017 did it again, so this needs a guard in the runtime: detect a
+    continuation prompt and answer the agent at once, and refuse `--no-verify`, `git push` and
+    `gh pr` in the API terminal (delivery is the factory's).
 - [ ] **Exit E:** the user runs the golden path by voice ("start a factory job for …"), watches
   it in Plan, Build and Run, drills down from the card to the live session and the PR, and
   each hop meets its timing target.
@@ -651,9 +657,10 @@ run mid-step; a job continued on an existing branch (`--branch`).
   files and entry shims stay JS; chunk D, dispatch, durable, e2e and audio, finished with
   1659567), the dashboard has one typed router, and `jarvisd front` runs
   termhub's front under Bun 1.4.4 with its tests (and the front swap) in the parity set
-  ([JARVISD.md](JARVISD.md) Status). termhub's front and lib are TS too. Left: the stacks'
-  switch to `jarvisd front`, the in-process front (Exit 4), ES exports and `pa` as a thin
-  client. The `supervisor.test.js` flake under load is fixed (92a25c8).
+  ([JARVISD.md](JARVISD.md) Status). termhub's front and lib are TS too. Both stacks run the
+  PA as the compiled jarvisd and termhub's front as `jarvisd front` since 2026-11-08 (D20).
+  Left: the in-process front (Exit 4), ES exports and `pa` as a thin client. The
+  `supervisor.test.js` flake under load is fixed (92a25c8).
   Design and order: [JARVISD.md](JARVISD.md). Stage 1 (host) landed: `jarvisd/` (strict tsconfig,
   Bun pinned in its package.json) boots the PA worker unchanged under Bun; the PA's own tests run
   under Bun (`jarvisd/scripts/parity.js`; the contract on SQLite and Postgres, since Bun 1.4.4
@@ -696,9 +703,10 @@ run mid-step; a job continued on an existing branch (`--branch`).
   `ptyd/` speaks sessiond's session protocol; `termhub/test/ptydConformance.test.js` runs one
   black-box suite against sessiond, ptyd and sessiond-on-ptyd, green on Windows and Linux CI
   (job `ptyd`, PTYD_REQUIRED=1). Opt-in `TERMHUB_PTYD=1`: sessiond keeps its PTYs in ptyd and
-  adopts them after its own restart (`ptydBackend.test.js`). Left for Exit 5: turn the flag on in
-  the start/update scripts (and restart ptyd only on purpose), then retire node-pty; replay is
-  raw bytes (sessiond's mirror covers the UI).
+  adopts them after its own restart (`ptydBackend.test.js`). On for both stacks since
+  2026-11-08 (`TERMHUB_PTYD=1`, adbe9ff; JARVISD.md runbook): ptyd runs as the termhub-ptyd
+  task / unit, and a work-stack terminal outlived a sessiond restart. Left for Exit 5: retire
+  node-pty; replay is raw bytes (sessiond's mirror covers the UI).
 - [ ] **5.2** Agent sandbox per run: sandbox-runtime on Linux, restricted account on
   Windows, egress allowlist proxy. Landed behind `FACTORY_SANDBOX` / `PA_SANDBOX` (default
   off): the proxy (cb46b10) and the OS sandbox (421e621): bubblewrap on Linux (used directly,

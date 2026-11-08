@@ -532,12 +532,12 @@
       "name": "jarvisd (TypeScript/Bun core)",
       "role": "Plan 4.1: the core moving to strict TypeScript on Bun. Today it boots the PA worker's CommonJS unchanged under Bun, as one compiled executable per OS; modules become .ts one at a time, leaves first (docs/native/JARVISD.md).",
       "stacks": {
-        "work": "landing",
-        "personal": "planned"
+        "work": "live",
+        "personal": "live"
       },
       "where": {
-        "work": "Built and tested in CI (Windows and Linux); the worker still runs under Node until the supervisor forks a jarvisd generation",
-        "personal": "Not deployed"
+        "work": "Since 2026-11-08 (D20): PA_RUNTIME=jarvisd in personal-assistant\\.env; the pa-worker task's launcher (windows\\pa-launch.ps1) starts jarvisd\\dist\\jarvisd-<commit>.exe supervise, and its generations are the same executable; a deploy builds the next jarvisd-<commit>.exe and rolls to it. termhub's front runs as `jarvisd front` on Bun 1.4.4 (TERMHUB_FRONT=jarvisd in termhub\\.env)",
+        "personal": "Since 2026-11-08 (D20): PA_RUNTIME=jarvisd; the pa-worker unit runs linux/pa-launch.sh, which execs jarvisd/dist/jarvisd-<commit> supervise; termhub's front runs as `jarvisd front` on Bun 1.4.4, a child of server.js (TERMHUB_FRONT=jarvisd in termhub/.env)"
       },
       "details": {
         "Stage": "1 of 7: host. jarvisd/src/main.ts requires personal-assistant/src/worker.ts statically, so bun build --compile bundles the whole worker graph",
@@ -558,11 +558,11 @@
       "role": "Owns the dashboard port and proxies it (HTTP, SSE, WebSocket) to the current worker generation, so a deploy starts the new worker beside the old one, switches without a gap and can switch back (plan items Z1, Z4).",
       "stacks": {
         "work": "live",
-        "personal": "landing"
+        "personal": "live"
       },
       "where": {
-        "work": "pa-worker scheduled task: conhost --headless node src\\worker.js, which becomes the supervisor (the task was registered elevated, so the deploy could not rewrite it to src\\supervisor), on 127.0.0.1:7300; generations on 127.0.0.1:<OS-assigned>",
-        "personal": "Code on main; the next linux/redeploy.sh rewrites the pa-worker unit to node src/supervisor and restarts it once to bootstrap"
+        "work": "the compiled jarvisd's supervise role (4.4), started by windows\\pa-launch.ps1 from the pa-worker task (non-elevated since 2026-11-08), on 127.0.0.1:7300; generations on 127.0.0.1:<OS-assigned>",
+        "personal": "the compiled jarvisd's supervise role, exec'd by linux/pa-launch.sh from the pa-worker unit, on 127.0.0.1:7300; generations on 127.0.0.1:<OS-assigned>"
       },
       "health": "dashboard",
       "details": {
@@ -1609,12 +1609,12 @@
       "name": "ptyd",
       "role": "Rust terminal host (plan 5.1, portable-pty: ConPTY on Windows, a PTY on Linux) speaking sessiond's session protocol. Opt-in: with TERMHUB_PTYD=1 sessiond keeps its PTYs in ptyd, so a sessiond restart no longer ends the terminals. Not deployed on either stack yet.",
       "stacks": {
-        "work": "landing",
-        "personal": "landing"
+        "work": "live",
+        "personal": "live"
       },
       "where": {
-        "work": "127.0.0.1:7020 when enabled (TERMHUB_PTYD_PORT): the termhub-ptyd logon task (termhub/windows/ptyd.ps1); sessiond starts one detached if none answers",
-        "personal": "127.0.0.1:7020 when enabled (TERMHUB_PTYD_PORT): termhub-ptyd.service (termhub/linux/ptyd-unit.sh); sessiond starts one detached if none answers"
+        "work": "127.0.0.1:7020 (TERMHUB_PTYD_PORT), on since 2026-11-08 (TERMHUB_PTYD=1 in termhub\\.env): the termhub-ptyd logon task (termhub/windows/ptyd.ps1) runs the installed copy %LOCALAPPDATA%\\termhub\\bin\\ptyd-<hash>.exe; sessiond's terminals live there and survive its restarts",
+        "personal": "127.0.0.1:7020 (TERMHUB_PTYD_PORT), on since 2026-11-08 (TERMHUB_PTYD=1 in termhub/.env): termhub-ptyd.service (termhub/linux/ptyd-unit.sh) runs ~/.local/termhub/bin/ptyd-<hash>; sessiond's terminals live there and survive its restarts and termhub updates"
       },
       "env": [
         {

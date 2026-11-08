@@ -373,9 +373,12 @@ setup; T7's cargo and Bun caches apply.
 
 - [x] Stage 1: host, Bun parity, compiled build, CI on Windows and Linux.
 - [x] Supervisor runs jarvisd generations (`PA_RUNTIME=bun`), tested with the fixture worker.
-- [ ] The work stack on Bun. Switched 2026-11-08 and rolled back to Node the same day: on Bun,
-  Talk's transcription came back empty (Bun reset the half-closed socket to whisper; fixed in
-  2aad672, now covered by the Bun parity set). Next try after that fix is deployed.
+- [x] Both stacks on the compiled jarvisd (`PA_RUNTIME=jarvisd`), 2026-11-08, from the runbook
+  above: personal at 73e824d, work at c0c2a3e (an earlier Bun try on the work stack was rolled
+  back for Talk's empty transcriptions, fixed in 2aad672). Checked on each: `supervise` plus one
+  `generation`, no Node in the PA's process tree, `store ready { has_vector: true, dialect:
+  'sqlite' }`, `/healthz` ready on the commit; on the work stack Talk transcribes a spoken
+  "What's on today?" (240-610 ms in whisper, warm).
 - [x] The PA on SQLite (encrypted, sqlite-vec) under jarvisd, proven 2026-11-08 on a scratch
   store: a generation from source on Bun 1.4.4 and from the compiled executable, and `jarvisd
   supervise` (compiled and source) through a roll, each with `/healthz`, `/api/version`,
@@ -407,10 +410,21 @@ setup; T7's cargo and Bun caches apply.
 - [x] The switch to `jarvisd front` and ptyd prepared for both stacks: `TERMHUB_FRONT` and
   `TERMHUB_PTYD` in `termhub/.env`, read by the update scripts (`-DryRun` / `--dry-run`), ptyd
   as a logon task / user unit from an installed copy (runbook above).
-- [ ] Left: switch the stacks (the lead does it, from the runbook above); then the in-process
-  front (one jarvisd process owns 7000 and 7300, Exit 4; designed above, *Design: the in-process
-  front*; settle `/api/exec`'s privilege first); modules to ES exports (then `Repos`,
-  `Config` and `Json` get real types); `pa` as a thin client of jarvisd's API.
+- [x] Both stacks' termhub on `jarvisd front` and ptyd, 2026-11-08, from the runbook above. On
+  the work stack a terminal opened in ptyd stayed alive across a sessiond restart. Found on the
+  way (for the next machine):
+  - The switch from a termhub older than adbe9ff, run through that termhub (its `/api/exec` or
+    the Update button), inherits the old process's `TERMHUB_PTYD=0` without the
+    `TERMHUB_PTYD_RESOLVED` marker, so the update skips ptyd. Run it once with those unset
+    (`env -u TERMHUB_PTYD -u TERMHUB_PTYD_RESOLVED -u TERMHUB_PTYD_BIN bash linux/update.sh`);
+    a newer termhub exports the marker.
+  - `windows\update.ps1` finds cargo only on PATH; add `%USERPROFILE%\.cargo\bin` first.
+  - `restart-sessiond.ps1` starts sessiond with the first `node` on PATH. From a shell whose
+    PATH starts with another Node (an editor's bundled one) sessiond runs on that; run it from
+    a plain PowerShell, or put `C:\Program Files\nodejs` first.
+- [ ] Left: the in-process front (one jarvisd process owns 7000 and 7300, Exit 4; designed above,
+  *Design: the in-process front*; settle `/api/exec`'s privilege first); modules to ES exports
+  (then `Repos`, `Config` and `Json` get real types); `pa` as a thin client of jarvisd's API.
 - [x] `test/supervisor.test.js` under load (92a25c8): it slept a fixed 300 to 600 ms before
   asserting the clients had followed a roll, and a failed assert then hung in `close()` behind
   the open WebSocket until the 150 s watchdog. It now waits for each generation and stops its
