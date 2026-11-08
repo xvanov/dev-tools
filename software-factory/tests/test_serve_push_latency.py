@@ -186,6 +186,140 @@ def test_a_poke_runs_a_full_check_and_includes_terminal_jobs(tmp_path: Path) -> 
     assert [j["job_id"] for b in sent for j in b["jobs"]] == ["a:001"]
 
 
+def _github(monkeypatch: pytest.MonkeyPatch, *, pr_state: str = "OPEN", delay_s: float = 0.0) -> list[list[str]]:
+    """``gh`` answering for acme/demo's PR #5 (green CI), each call after ``delay_s``."""
+    calls: list[list[str]] = []
+
+    def gh(args: list[str]) -> subprocess.CompletedProcess[str]:
+        calls.append(args)
+        time.sleep(delay_s)
+        out = ""
+        if args[:2] == ["pr", "list"]:
+            out = json.dumps([{"number": 5, "state": pr_state, "url": "https://github.com/acme/demo/pull/5", "headRefName": "factory/s-5"}])
+        elif args[:3] == ["pr", "view", "5"] and "statusCheckRollup" in args:
+            out = json.dumps({"statusCheckRollup": [{"__typename": "CheckRun", "name": "ci", "status": "COMPLETED", "conclusion": "SUCCESS"}]})
+        return subprocess.CompletedProcess(["gh", *args], 0 if out else 1, out, "" if out else "not faked")
+
+    monkeypatch.setattr(gh_mod, "_run_gh", gh)
+    return calls
+
+
+def test_a_jobs_end_reaches_the_pa_within_a_second(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """8.4.44: the last story's delivery was pushed as ``in_progress`` (the
+    local view cannot confirm a PR) and the PA learned ``done`` 27 s later."""
+    calls = _github(monkeypatch, delay_s=0.4)  # GitHub's answer takes a while
+    job = _submit("Fix the review comments")
+    rec = persist_story(
+        StoryRecord(direction_id=job.split(":")[1], app="demo", title="t", slug="s-5", scope="backend",
+                    state=StoryState.DEV_IN_PROGRESS.value),
+        state_db_path(root),
+    )
+    pa = FakePA()
+    watch = _watch(root, pa.url)
+    try:
+        rec.state = StoryState.DELIVERED_PR.value
+        rec.github_pr_number = 5
+        rec.github_branch = "factory/s-5"
+        rec.delivery_level = "draft_pr"
+        t0 = time.perf_counter()
+        persist_story(rec, state_db_path(root))
+        t1 = pa.wait_for(job, "done")
+        assert t1 is not None, f"{job}=done never reached the PA; got {pa.received}"
+        assert t1 - t0 < 1.0, t1 - t0
+        deadline = time.monotonic() + 10
+        while not any(a[:2] == ["pr", "list"] for a in calls) and time.monotonic() < deadline:
+            time.sleep(0.05)
+        time.sleep(1.5)  # GitHub's answer is in
+    finally:
+        watch.stop()
+        pa.close()
+    assert any(a[:2] == ["pr", "list"] for a in calls), "the end was confirmed on GitHub"
+    assert [j["state"] for _t, j in pa.received if j["job_id"] == job] == ["done"]  # GitHub agreed: nothing more
+
+
+def _ending(states: dict[str, Any], said: dict[str, Any]) -> tuple[api.JobStatePusher, list[dict[str, Any]], list[str]]:
+    sent: list[dict[str, Any]] = []
+    asked: list[str] = []
+
+    def confirm(_root: Path, jid: str) -> dict[str, Any]:
+        asked.append(jid)
+        if isinstance(said.get(jid), Exception):
+            raise said[jid]
+        return said[jid]
+
+    p = api.JobStatePusher(
+        Path("."), "u", confirm_fn=confirm, post=lambda url, body, t: sent.extend(body["jobs"]) or 200,
+        list_fn=lambda r, skip: [{"job_id": k, **v} for k, v in states.items() if k not in skip],
+    )
+    return p, sent, asked
+
+
+_LOCAL_END = {
+    "state": "in_progress",
+    "why": "story 7 looks delivered locally (delivered_pr) but GitHub could not confirm it",
+    "stories": [{"id": 7, "state": "delivered_pr"}],
+}
+
+
+def test_the_end_is_pushed_done_then_what_github_says(tmp_path: Path) -> None:
+    states: dict[str, Any] = {"a:001": {"state": "in_progress", "why": "story 7 is dev_in_progress", "stories": [{"id": 7, "state": "dev_in_progress"}]}}
+    said: dict[str, Any] = {"a:001": {"state": "done", "why": None}}
+    p, sent, asked = _ending(states, said)
+    p.check()
+    states["a:001"] = dict(_LOCAL_END)
+    p.check(full=False)
+    assert [(j["state"], j["why"]) for j in sent] == [("done", "")] and asked == ["a:001"]
+    for full in (False, True, True):  # the local view still reads in_progress: nothing more
+        assert p.check(full=full) == []
+    assert asked == ["a:001"], "a confirmed end is not asked again"
+    # GitHub disagrees: its word is pushed, and stands.
+    states["a:002"] = {"state": "queued", "why": "", "stories": []}
+    p.check()
+    said["a:002"] = {"state": "failed", "why": "PR #9 was closed without merging"}
+    states["a:002"] = {**_LOCAL_END, "stories": [{"id": 9, "state": "delivered_pr"}]}
+    sent.clear()
+    p.check(full=False)
+    assert [(j["job_id"], j["state"]) for j in sent] == [("a:002", "done"), ("a:002", "failed")]
+    assert p.check() == []
+
+
+def test_an_end_github_cannot_confirm_stays_as_pushed_and_one_still_waiting_is_asked_again(tmp_path: Path) -> None:
+    states: dict[str, Any] = {"a:001": {"state": "in_progress", "why": "dev", "stories": [{"id": 1, "state": "dev_in_progress"}]}}
+    said: dict[str, Any] = {"a:001": OSError("gh: no network")}
+    p, sent, asked = _ending(states, said)
+    p.check()
+    states["a:001"] = {**_LOCAL_END, "stories": [{"id": 1, "state": "delivered_pr"}]}
+    now = [0.0]
+    p.clock = lambda: now[0]
+    p.check(full=False)
+    assert [j["state"] for j in sent] == ["done"]
+    assert p.check() == [] and asked == ["a:001"], "GitHub down: the end stays as pushed"
+    # CI still running on GitHub: its in_progress is pushed, and asked again on a full check after recheck_s.
+    states["a:002"] = {"state": "in_progress", "why": "dev", "stories": [{"id": 2, "state": "dev_in_progress"}]}
+    p.check()
+    said["a:002"] = {"state": "in_progress", "why": "PR #3 is open; waiting for its CI (ci)"}
+    states["a:002"] = {**_LOCAL_END, "stories": [{"id": 2, "state": "delivered_pr"}]}
+    sent.clear()
+    p.check(full=False)
+    assert [(j["state"], j["why"][:9]) for j in sent] == [("done", ""), ("in_progress", "PR #3 is ")]
+    now[0] = 10.0
+    assert p.check() == []
+    now[0] = 31.0
+    assert p.check(full=False) == [], "only a full check asks again"
+    said["a:002"] = {"state": "done", "why": None}
+    assert [(j["job_id"], j["state"]) for j in p.check()] == [("a:002", "done")]
+    assert asked == ["a:001", "a:002", "a:002"]
+
+
+def test_jobs_that_ended_before_serve_started_are_not_announced(tmp_path: Path) -> None:
+    states: dict[str, Any] = {f"a:{i:03}": dict(_LOCAL_END) for i in range(20)}
+    p, sent, asked = _ending(states, {})
+    p.check()
+    for full in (False, True):
+        assert p.check(full=full) == []
+    assert sent == [] and asked == [], "no burst of pushes or GitHub reads after a restart"
+
+
 def test_a_why_change_is_a_change(tmp_path: Path) -> None:
     rows = {"a:001": ("in_progress", "story 1: sm")}
     p = api.JobStatePusher(

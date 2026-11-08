@@ -1395,10 +1395,22 @@ not in the Map is not done, and a new one gets added there first.
     laptop with `~/.local/bin` taken off PATH: bare `claude` gave `spawn claude ENOENT`, the
     resolved path answered with a claude.ai login. (this commit:
     `fix(personal-assistant): find claude off PATH in the e2e dry run`)
-  - [ ] **8.4.44 review-fix: the job's end is not pushed.** At the job's end serve pushed
+  - [x] **8.4.44 review-fix: the job's end is not pushed.** At the job's end serve pushed
     `dev-tools:007=in_progress` (22:45:23.099). PA's run row ended, and "Factory run #8: done"
     was raised, only at its next poll (22:45:50.209): 27.3 s after the job's `done`, against
     200 ms for the worker hop. Push the terminal state.
+    Done. The pusher reads `list_jobs(github=False)`, where a story at `delivered_pr`, a branch
+    or a local merge is "unverified" and the job `in_progress` ("looks delivered locally … but
+    GitHub could not confirm it"): the local view can never read a PR delivery as done, so no
+    watch speed would have pushed it. Serve now pushes `done` with the last delivery's
+    transition and then asks `job status` on GitHub (about 3 s of `gh`), pushing its answer if
+    it differs (CI still running: `in_progress`, re-asked every 30 s; GitHub down: the push
+    stands). `tests/test_serve_push_latency.py`: a real factory.db story moved to
+    `delivered_pr` reaches a fake PA as `done` within 1 s and nothing else (the old pusher
+    fails it with the line above). Left: the PA ends the run row and raises "Factory run #N:
+    done" from its own poll, which the push hurries to `PA_FACTORY_ACTIVE_POLL_SECONDS` (5 s),
+    not from the push. (this commit: `fix(software-factory): push a job's end with its last
+    delivery`)
 - [ ] **8.5 Architecture map review.** A full pass over `architecture.json` (the `/architecture`
   page) against the finished system: every component, process, port, table, tool, workflow and
   storage location as it now runs on both stacks (jarvisd, ptyd, native factory, SQLite,

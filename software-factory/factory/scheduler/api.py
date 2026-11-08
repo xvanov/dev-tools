@@ -32,6 +32,9 @@ that changed to the personal assistant's ``/api/factory/events`` (best effort,
 2 s timeout). :class:`JobStateWatch` runs it in its own thread within ~0.1 s of
 a commit to ``factory.db`` (where the ticks record every story transition), so
 a job's stage reaches Build in well under a second, and never in a tick's way.
+A job's end is pushed as ``done`` at its last delivery, then corrected if
+GitHub says otherwise: the local view reads a PR, branch or merge delivery as
+``in_progress`` until GitHub confirms it (8.4.44).
 """
 
 from __future__ import annotations
@@ -219,12 +222,34 @@ def _post_json(url: str, body: dict[str, Any], timeout: float) -> int:
 _TERMINAL = frozenset({"done", "failed", "cancelled"})
 
 
+def _delivered_locally(job: dict[str, Any]) -> bool:
+    """Every story is in a delivered end state the chain recorded, and only
+    GitHub's confirmation keeps the local view at ``in_progress``."""
+    from factory.chain.state_machine import DELIVERED_UNMERGED_STATES
+    from factory.jobs.status import IGNORED_STATES, LOCAL_MERGED_STATES
+
+    if job.get("state") != "in_progress":
+        return False
+    stories = [s for s in job.get("stories") or [] if s.get("state") not in IGNORED_STATES]
+    ends = DELIVERED_UNMERGED_STATES | LOCAL_MERGED_STATES
+    return bool(stories) and all(s.get("state") in ends for s in stories)
+
+
 class JobStatePusher:
     """Diff job states and POST the changes. Thread-safe; never raises.
 
     A change is a new ``state`` or a new ``why``: Build shows both, and a job
     moving from one story step to the next stays ``in_progress`` while its
     ``why`` names the new step.
+
+    **A job's end (8.4.44).** The local view cannot see GitHub, so a job whose
+    last story the chain just delivered reads ``in_progress`` there ("looks
+    delivered locally but GitHub could not confirm it") and never ``done``. At
+    that change the pusher sends ``done`` (the chain's own record), then reads
+    that job once with GitHub (``confirm_fn``, a few seconds) and sends what
+    GitHub says if it differs. The answer stands while the local view is
+    unchanged; a non-terminal answer (CI still running) is read again every
+    ``recheck_s`` on a full check.
     """
 
     def __init__(
@@ -233,17 +258,25 @@ class JobStatePusher:
         url: str,
         *,
         list_fn: Callable[[Path, frozenset[str]], list[dict[str, Any]]] | None = None,
+        confirm_fn: Callable[[Path, str], dict[str, Any]] | None = None,
         post: Callable[[str, dict[str, Any], float], int] = _post_json,
         timeout: float = 2.0,
+        recheck_s: float = 30.0,
+        clock: Callable[[], float] = time.monotonic,
         log: Callable[[str], None] = lambda msg: None,
     ) -> None:
         self.root = Path(root)
         self.url = url
         self._list = list_fn or _list_jobs_local
+        self._confirm = confirm_fn or _job_status_github
         self._post = post
         self.timeout = timeout
+        self.recheck_s = recheck_s
+        self.clock = clock
         self.log = log
         self._seen: dict[str, tuple[str, str]] | None = None
+        # job id -> (its local reading, what is pushed for it, when GitHub was last asked)
+        self._ends: dict[str, tuple[tuple[str, str], tuple[str, str], float | None]] = {}
         self._lock = threading.Lock()
         self.pushed = 0
 
@@ -267,36 +300,72 @@ class JobStatePusher:
             except Exception as exc:  # noqa: BLE001
                 self.log(f"push: job list failed: {exc!r}")
                 return []
-            listed = {
-                str(j.get("job_id")): (str(j.get("state")), str(j.get("why") or ""))
-                for j in jobs
-                if j.get("job_id")
-            }
+            by_id = {str(j["job_id"]): j for j in jobs if j.get("job_id")}
+            listed = {jid: (str(j.get("state")), str(j.get("why") or "")) for jid, j in by_id.items()}
+            now = self.clock()
+            shown: dict[str, tuple[str, str]] = {}
+            confirm: list[str] = []
+            for jid, local in listed.items():
+                end = self._ends.get(jid)
+                if end is not None and end[0] == local:
+                    shown[jid] = end[1]
+                    asked = end[2]
+                    if end[1][0] not in _TERMINAL and full and (asked is None or now - asked >= self.recheck_s):
+                        confirm.append(jid)
+                elif _delivered_locally(by_id[jid]):
+                    shown[jid] = ("done", "")
+                    self._ends[jid] = (local, shown[jid], None)
+                    confirm.append(jid)
+                else:
+                    self._ends.pop(jid, None)
+                    shown[jid] = local
             if self._seen is None:
-                self._seen = listed
+                # Jobs that ended before serve started are taken as ended,
+                # unannounced and unconfirmed: the PA's own list has them.
+                self._seen = shown
                 return []
-            changed = [
-                {
-                    "job_id": j["job_id"],
-                    "state": j["state"],
-                    "why": j.get("why") or "",
-                    "updated_at": j.get("updated_at")
-                    or datetime.now(UTC).isoformat(timespec="seconds"),
-                }
-                for j in jobs
-                if j.get("job_id") and self._seen.get(str(j["job_id"])) != listed[str(j["job_id"])]
-            ]
-            self._seen = {**{k: v for k, v in self._seen.items() if k in skip}, **listed}
-        for i in range(0, len(changed), 50):
-            batch = changed[i : i + 50]
+            changed = [self._row(by_id[jid], shown[jid]) for jid in by_id if self._seen.get(jid) != shown[jid]]
+            self._seen = {**{k: v for k, v in self._seen.items() if k in skip}, **shown}
+        self._send(changed)
+        # GitHub's word on the ends just pushed (seconds each), outside the lock.
+        corrected: list[dict[str, Any]] = []
+        for jid in confirm:
+            try:
+                st = self._confirm(self.root, jid)
+                said = (str(st["state"]), str(st.get("why") or ""))
+            except Exception as exc:  # noqa: BLE001 - the PA's poll still reads GitHub
+                self.log(f"push: {jid} not confirmed on GitHub ({exc!r}); pushed as the chain recorded it")
+                continue
+            with self._lock:
+                end = self._ends.get(jid)
+                if end is None or self._seen is None:
+                    continue
+                self._ends[jid] = (end[0], said, self.clock())
+                if self._seen.get(jid) != said:
+                    self._seen[jid] = said
+                    corrected.append(self._row({**by_id[jid], **st}, said))
+        self._send(corrected)
+        return changed + corrected
+
+    @staticmethod
+    def _row(job: dict[str, Any], shown: tuple[str, str]) -> dict[str, Any]:
+        return {
+            "job_id": job["job_id"],
+            "state": shown[0],
+            "why": shown[1],
+            "updated_at": job.get("updated_at") or datetime.now(UTC).isoformat(timespec="seconds"),
+        }
+
+    def _send(self, rows: list[dict[str, Any]]) -> None:
+        for i in range(0, len(rows), 50):
+            batch = rows[i : i + 50]
             try:
                 self._post(self.url, {"jobs": batch}, self.timeout)
                 self.pushed += len(batch)
             except (urllib.error.URLError, OSError, ValueError) as exc:
                 self.log(f"push: {len(batch)} change(s) not delivered ({exc!r}); the PA's poll will catch up")
-        if changed:
-            self.log("push: " + ", ".join(f"{c['job_id']}={c['state']}" for c in changed)[:300])
-        return changed
+        if rows:
+            self.log("push: " + ", ".join(f"{c['job_id']}={c['state']}" for c in rows)[:300])
 
 
 def _list_jobs_local(root: Path, skip: frozenset[str] = frozenset()) -> list[dict[str, Any]]:
@@ -307,6 +376,14 @@ def _list_jobs_local(root: Path, skip: frozenset[str] = frozenset()) -> list[dic
         res = list_jobs(root, github=False, skip=skip)
     jobs = res.get("jobs") if isinstance(res, dict) else None
     return list(jobs or [])
+
+
+def _job_status_github(root: Path, job_id: str) -> dict[str, Any]:
+    from factory.capture import capture
+    from factory.jobs.status import job_status
+
+    with capture():
+        return job_status(root, job_id, github=True)
 
 
 def _signature(paths: list[Path]) -> tuple[tuple[int, int] | None, ...]:
