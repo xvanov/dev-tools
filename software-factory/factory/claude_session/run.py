@@ -63,6 +63,48 @@ def job_cancel_probe(
     return _probe
 
 
+def session_links(
+    *,
+    app: str | None,
+    direction_id: str | None,
+    story_id: int | None,
+    row_id: int | None,
+    extra: dict[str, Any] | None = None,
+) -> dict[str, str] | None:
+    """What a run's termhub session belongs to, as termhub's ``links``
+    (``termhub/lib/sessionLinks.js``): the job, this step (the ``runs`` row),
+    the story and the job's external id (the PA's ``<install>-<run>``, which is
+    how the PA gets from a session back to its run and card). Ids only; empty
+    values are left out. ``None`` when there is nothing to say."""
+    from factory.jobs.common import format_job_id
+
+    out: dict[str, str] = {}
+    if app and direction_id:
+        out["job"] = format_job_id(str(app), str(direction_id))
+    if row_id is not None:
+        out["step"] = str(row_id)
+    if story_id is not None:
+        out["story"] = str(story_id)
+    for key, value in (extra or {}).items():
+        if value not in (None, "") and key not in out:
+            out[str(key)] = str(value)
+    return out or None
+
+
+def job_external_id(root: Path, app: str | None, direction_id: str | None) -> str | None:
+    """The job's ``external_id`` (from its meta), or None. Best-effort: a
+    link is never worth failing a run over."""
+    if not app or not direction_id:
+        return None
+    try:
+        from factory.jobs.common import find_job, format_job_id
+
+        value = find_job(Path(root), format_job_id(app, str(direction_id))).meta.get("external_id")
+    except Exception:  # noqa: BLE001 - nice-to-have
+        return None
+    return str(value) if value else None
+
+
 def run_claude(
     *,
     db_path: Path,
@@ -83,6 +125,7 @@ def run_claude(
     cancelled: Callable[[], bool] | None = None,
     add_dirs: list[str] | None = None,
     success: Callable[[ConversationResult], bool] | None = None,
+    links: dict[str, Any] | None = None,
 ) -> ClaudeRunOutcome:
     from factory.claude_session.cli import claude_binary
 
@@ -115,6 +158,12 @@ def run_claude(
         )
         return ClaudeRunOutcome(conv, row_id, None)
     launcher, warning = launcher_factory()
+    # E1: the session carries its job/step/story ids (and the caller's extras,
+    # e.g. the external id), so Run links back to Build without reading titles.
+    if hasattr(launcher, "links"):
+        launcher.links = session_links(
+            app=app, direction_id=direction_id, story_id=story_id, row_id=row_id, extra=links
+        )
 
     def _on_session(info: Any) -> None:
         ledger.set_session(db_path, row_id, info.as_json())
@@ -264,6 +313,7 @@ def claude_dev_run(
         no_progress_abort_s=no_progress_abort_s,
         cancelled=job_cancel_probe(db_path, app, direction_id),
         success=None,
+        links={"external": job_external_id(software_factory_root, app, direction_id)},
     )
     conv = outcome.conversation
     if gate_check is not None:
@@ -310,6 +360,8 @@ __all__ = [
     "ClaudeRunOutcome",
     "claude_dev_run",
     "job_cancel_probe",
+    "job_external_id",
     "launcher_factory",
     "run_claude",
+    "session_links",
 ]

@@ -398,6 +398,7 @@ def test_auto_merge_done_only_when_github_says_merged(
     st = job_status(root, job["job_id"])
     assert st["state"] == "in_progress" and st["merged"] is False
     assert st["stories"][0]["pr_state"] == "open" and st["pr_urls"] == [url]
+    assert st["stories"][0]["pr_number"] == 7  # v1.4 (E1)
 
     merged = _fake_gh([{"number": 7, "state": "MERGED", "url": url, "headRefName": "b"}])
     monkeypatch.setattr(gh_mod, "_run_gh", merged)

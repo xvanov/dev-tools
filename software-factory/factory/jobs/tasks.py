@@ -514,6 +514,7 @@ def _default_claude_runner(
         gate_check=_report_gate(cwd),
         max_gate_rounds=TASK_MAX_GATE_ROUNDS,
         cancelled=lambda: _cancel_requested(ref.dir_path),
+        links={"external": ref.meta.get("external_id")},
     )
     conv = outcome.conversation
     return {"error": conv.error, "warning": outcome.warning, "stop": conv.stop_reason}

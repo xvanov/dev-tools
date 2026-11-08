@@ -298,8 +298,10 @@ def _run_started(row: dict[str, Any]) -> str | None:
         return str(ts)
 
 
-def runs_view(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """``runs[]`` of the v1.2 status object (newest first)."""
+def runs_view(rows: list[dict[str, Any]], job_id: str | None = None) -> list[dict[str, Any]]:
+    """``runs[]`` of the v1.2 status object (newest first). v1.4: each run names
+    its ``job_id`` (one id chain: job -> step -> session), and its ``session``
+    carries the ``links`` termhub was given (``claude_session.run.session_links``)."""
     import json as _json
 
     from factory.jobs.kinds import billing_for
@@ -318,6 +320,7 @@ def runs_view(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         out.append(
             {
                 "id": r.get("id"),
+                "job_id": job_id,  # v1.4
                 "story_id": r.get("story_id"),
                 "persona": r.get("persona"),
                 "runtime": runtime,
@@ -709,6 +712,7 @@ def _status_for(ctx: _Ctx, ref: JobRef) -> dict[str, Any]:
             "id": v.row.get("id"),
             "state": v.row.get("state"),
             "pr_url": v.pr_url,
+            "pr_number": v.pr_number,  # v1.4
             "pr_state": v.pr_state,
             "branch": v.row.get("github_branch"),
             "delivery_level": v.level,
@@ -748,7 +752,7 @@ def _status_for(ctx: _Ctx, ref: JobRef) -> dict[str, Any]:
         "kind": "code",
         "runtime": str(meta.get("runtime") or "api"),
         "report": None,
-        "runs": runs_view(run_rows),
+        "runs": runs_view(run_rows, ref.job_id),
         "subscription_equiv_usd": subscription_equiv(run_rows),
         # v1.3 (additive)
         "base": base_view(meta),
@@ -786,7 +790,7 @@ def _task_status_for(ctx: _Ctx, ref: Any) -> dict[str, Any]:
         "kind": str(meta.get("kind")),
         "runtime": str(meta.get("runtime") or "api"),
         "report": report_info(ref),
-        "runs": runs_view(rows),
+        "runs": runs_view(rows, ref.job_id),
         "subscription_equiv_usd": subscription_equiv(rows),
         "base": None,
         "stalled": False,

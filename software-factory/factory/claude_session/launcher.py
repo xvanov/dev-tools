@@ -135,15 +135,22 @@ class SessionInfo:
     termhub_session_id: str | None = None
     url: str | None = None
     extra: dict[str, Any] = field(default_factory=dict)
+    #: What the session belongs to (job, step, story, external id), as sent to
+    #: termhub (``run.session_links``). Stored with the run's session so
+    #: ``job status`` returns it.
+    links: dict[str, str] | None = None
 
     def as_json(self) -> dict[str, Any] | None:
         if not self.termhub_session_id:
             return None
-        return {
+        out: dict[str, Any] = {
             "machine": self.machine,
             "termhub_session_id": self.termhub_session_id,
             "url": self.url,
         }
+        if self.links:
+            out["links"] = dict(self.links)
+        return out
 
 
 class Launcher(Protocol):
@@ -177,17 +184,23 @@ class TermhubLauncher:
     def __init__(self, client: Any, machine: str) -> None:
         self.client = client
         self.machine = machine
+        #: Set by ``run.run_claude`` before ``start``: the session's links
+        #: (termhub ``POST /api/sessions {links}``; an older termhub ignores them).
+        self.links: dict[str, str] | None = None
 
     def start(self, plan: RoundPlan, *, cwd: Path, title: str) -> SessionInfo:
+        extra: dict[str, Any] = {"links": self.links} if self.links else {}
         sid = self.client.create_session(
-            cwd=str(cwd), command=f"bash {shlex.quote(str(plan.script_path))}", title=title
+            cwd=str(cwd), command=f"bash {shlex.quote(str(plan.script_path))}", title=title, **extra
         )
         url = None
         try:
             url = self.client.session_url(sid)
         except Exception:  # noqa: BLE001 - a link is nice-to-have
             url = None
-        return SessionInfo(machine=self.machine, termhub_session_id=sid, url=url)
+        return SessionInfo(
+            machine=self.machine, termhub_session_id=sid, url=url, links=self.links or None
+        )
 
     def next_round(self, session: SessionInfo, plan: RoundPlan, *, cwd: Path) -> None:
         assert session.termhub_session_id

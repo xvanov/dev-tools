@@ -4,7 +4,7 @@ termhub (``termhub/`` in dev-tools) owns PTYs a human can open from a browser
 or phone. The factory starts each Claude Code run as a termhub session so the
 run can be watched live; see ``termhub/AGENT.md`` for the API:
 
-* ``POST /api/sessions`` ``{cwd, command, title, cols, rows}`` → ``{id}`` (or
+* ``POST /api/sessions`` ``{cwd, command, title, cols, rows, links?}`` → ``{id}`` (or
   ``{session: {id}}`` on some versions) — the command is typed into a shell.
 * ``POST /api/sessions/:id/input`` ``{data, submit}`` — type into it.
 * ``DELETE /api/sessions/:id`` — kill it.
@@ -80,12 +80,22 @@ class TermhubClient:
         except TermhubError:
             return False
 
-    def create_session(self, *, cwd: str, command: str, title: str) -> str:
-        payload = self._call(
-            "/api/sessions",
-            method="POST",
-            body={"cwd": cwd, "command": command, "title": title, "cols": 140, "rows": 40},
-        )
+    def create_session(
+        self, *, cwd: str, command: str, title: str, links: dict[str, str] | None = None
+    ) -> str:
+        body: dict[str, Any] = {
+            "cwd": cwd,
+            "command": command,
+            "title": title,
+            "cols": 140,
+            "rows": 40,
+        }
+        if links:
+            # What the session belongs to (job, step, story, external id): termhub
+            # keeps and returns it (``termhub/lib/sessionLinks.js``); an older
+            # termhub ignores the field.
+            body["links"] = dict(links)
+        payload = self._call("/api/sessions", method="POST", body=body)
         sid = None
         if isinstance(payload, dict):
             sid = payload.get("id") or (payload.get("session") or {}).get("id")

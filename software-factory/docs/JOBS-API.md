@@ -1,4 +1,4 @@
-# Factory ⇄ Personal Assistant job contract (v1, 2026-11-02; v1.2 additions 2026-11-06 and v1.3 additions 2026-11-07 at the end)
+# Factory ⇄ Personal Assistant job contract (v1, 2026-11-02; v1.2 additions 2026-11-06, v1.3 and v1.4 additions 2026-11-07 at the end)
 
 The one interface between the personal assistant (PA, dev-tools/personal-assistant) and the
 software factory (software-factory). The PA never imports factory code or reads its sqlite; it
@@ -604,3 +604,28 @@ read, a dependency in a dead sink), plus `not_found` / `invalid_job_id` / `missi
   fed to the dev at submit (a snapshot). Comments posted later are not read, and threads are
   never replied to or resolved.
 - Merge: only at `auto_merge` (gates + required CI). A draft PR is never merged or marked ready.
+
+## v1.4 additions (2026-11-07): one id chain
+
+Additive: every v1–v1.3 call keeps working and means what it meant. The point is that a caller
+can get from a job to each agent step, its live session and its PR (and back) from stored ids,
+never by reading titles.
+
+### Status / list: new fields
+
+```
+"stories": [{..., "pr_number": n | null}],
+"runs": [{..., "job_id": "<app>:<direction_id>",
+          "session": {"machine", "termhub_session_id", "url",
+                      "links": {"job", "step", "story"?, "external"?}?} | null}]
+```
+
+- `stories[].pr_number`: the PR the story opened, the same PR as `pr_url` (null without one).
+- `runs[].job_id`: the job the run (step) belongs to; `runs[].id` is the step id.
+- `runs[].session.links`: what the factory told termhub the session belongs to when it started
+  it (`POST /api/sessions {links}`, termhub `lib/sessionLinks.js`): the job, the step (`runs.id`),
+  the story and the job's `external_id`. termhub returns the same object in `GET /api/sessions`,
+  so a terminal leads back to its job; a caller that submitted the job maps `external` to its own
+  records. A termhub without links ignores them, and a session started before v1.4 has none. An
+  API-runtime step's `session` is null until it has a session of its own (plan E2); the shape is
+  the same when it does.

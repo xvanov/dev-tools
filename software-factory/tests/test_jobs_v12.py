@@ -300,9 +300,15 @@ def test_task_runs_and_subscription_equivalent_in_status(root: Path) -> None:
         db, persona="researcher", model=None, story_id=None, app="scratch",
         direction_id="r0001", repo_path="/w",
     )  # fmt: skip
-    ledger.set_session(db, rid, {"machine": "box", "termhub_session_id": "th", "url": "https://u"})
+    links = {"job": job["job_id"], "step": str(rid)}
+    ledger.set_session(
+        db, rid, {"machine": "box", "termhub_session_id": "th", "url": "https://u", "links": links}
+    )
     st = job_status(root, job["job_id"])
     assert st["runs"][0]["state"] == "running" and st["runs"][0]["session"]["url"] == "https://u"
+    # v1.4 (E1): the step names its job, and its session keeps its links.
+    assert st["runs"][0]["job_id"] == job["job_id"] and st["runs"][0]["id"] == rid
+    assert st["runs"][0]["session"]["links"] == links
     assert st["runs"][0]["billing"] == "subscription" and st["runs"][0]["ended_at"] is None
     ledger.close_run(
         db, rid, success=True, error=None, tokens_in=1, tokens_out=1, cached_input_tokens=0,
