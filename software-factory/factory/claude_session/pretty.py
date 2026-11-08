@@ -44,6 +44,15 @@ def _render_line(raw: str) -> tuple[str | None, bool]:
         return None, False
 
 
+def render_line(raw: str) -> str | None:
+    """The rendering of one line (``None`` = print nothing). Never raises.
+
+    Used by ``factory.claude_session.round``, the Windows round runner, which
+    does the ``tee | pretty`` pipeline itself (no shell pipeline there).
+    """
+    return _render_line(raw)[0] or None
+
+
 def render_lines(lines: Iterable[str], emit: Callable[[str], None]) -> bool:
     """Render every line; True once a ``result`` record was seen."""
     ended = False

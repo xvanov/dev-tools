@@ -186,8 +186,8 @@ def test_argv_and_script_unset_api_keys_and_resume(tmp_path: Path) -> None:
     argv2 = build_claude_argv("/c", model=None, session_uuid="u", resume="s1")
     assert "--resume" in argv2 and "--session-id" not in argv2 and "--model" not in argv2
 
-    plan = round_plan(tmp_path, 2)
-    script = build_round_script(plan, cwd=tmp_path, claude_argv=argv2, title="job x")
+    plan = round_plan(tmp_path, 2, windows=False)
+    script = build_round_script(plan, cwd=tmp_path, claude_argv=argv2, title="job x", windows=False)
     assert "unset ANTHROPIC_API_KEY" in script
     assert str(plan.stream_path) in script and "PIPESTATUS[0]" in script
     assert "factory.claude_session.pretty" in script
@@ -263,8 +263,9 @@ def test_gate_feedback_resumes_the_same_session_until_green(tmp_path: Path) -> N
     res = _conv(tmp_path, launcher, gate_check=gate, max_gate_rounds=3)
     assert res.stop_reason == "green" and launcher.started == [1, 2]
     assert [r["passed"] for r in res.gate_rounds] == [False, True]
-    script2 = (tmp_path / "run" / "round-2.sh").read_text()
-    assert "--resume sess-1" in script2.replace("'", "")
+    script2 = round_plan(tmp_path / "run", 2).script_path.read_text()
+    flat = script2.replace("'", "").replace('"', "").replace(",", "").replace("\n", " ")
+    assert "--resume sess-1" in " ".join(flat.split())
     assert "GATE RESULT" in (tmp_path / "run" / "prompt-2.md").read_text()
     assert res.subscription_equiv_usd == 0.5
 
