@@ -130,9 +130,14 @@ request); voice never approves high-risk actions alone; work and personal stacks
     Linux machine); split its host-bound half from the pure unit assertions so Windows keeps the latter.
   - Found by CI and fixed: termhub updateHeal.test.js asserted a stale source shape (invisible on Windows,
     where it skips); PA deploy.test.js needs etch-depth: 2 for HEAD~1.
-- [ ] **T7 Build pipeline (from phase 4).** `bun build --compile` per OS in parallel;
+- [x] **T7 Build pipeline (from phase 4).** `bun build --compile` per OS in parallel;
   `cargo build` with sccache and incremental; one command builds everything; incremental
-  < 30 s. Release artifacts are signed (phase 7).
+  < 30 s. Release artifacts are signed (phase 7). (545f743)
+  `node scripts/build.js` (scripts/README.md): targets in parallel into `dist/<os>-<arch>/` plus a
+  sha256 manifest; CI job `build` runs it on Windows and Linux (release, sccache) and uploads
+  `dist-Windows` / `dist-Linux` (run 42449358629). ptyd one-file incremental: 9 s, no-op 0.4 s on
+  the `local` cargo profile (release with thin LTO took 95 s). jarvisd's `bun build --compile` is
+  a listed, skipped target until 4.1 gives it an entrypoint. Signing hook: `DEVTOOLS_SIGN_CMD` (7.4).
 - [ ] **Exit T:** all suites meet the targets table on Windows and Linux.
 
 ## Track Z: zero-downtime deploys (cross-cutting, starts in phase 0)
