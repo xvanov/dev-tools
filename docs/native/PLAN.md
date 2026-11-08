@@ -336,6 +336,11 @@ not in the Map is not done, and a new one gets added there first.
   workflow.
 - [ ] **8.4 Fix loop.** Every failed criterion becomes an item here; fixed by an implementing
   session; the reviewer re-runs. The Map shows each workflow's latest verdict and date.
+- [ ] **8.5 Architecture map review.** A full pass over `architecture.json` (the `/architecture`
+  page) against the finished system: every component, process, port, table, tool, workflow and
+  storage location as it now runs on both stacks (jarvisd, ptyd, native factory, SQLite,
+  supervisor, no WSL); nothing left `planned`/`landing` that has shipped, nothing describing
+  removed parts. Checked on the live page of both stacks.
 - [ ] **Exit 8 (the plan's finish line):** every workflow in the Map passes its review on its
   stack (work or personal, or both), and the user has watched at least `deepseek-pr`,
   `research` and `whats-on` run live.
