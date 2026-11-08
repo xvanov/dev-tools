@@ -15,7 +15,8 @@
 // Store, open, clipboard, toasts and disk space are native.
 
 const os = require('os');
-const path = require('path');
+// posix: this file models that OS's paths, whichever OS evaluates it (tests run it on Windows).
+const path = require('path').posix;
 
 const common = require('./common');
 const linux = require('./linux');

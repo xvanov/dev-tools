@@ -12,13 +12,7 @@
 // sibling termhub checkout is installed, the same setup runs through a real
 // termhub front's /api/exec.
 
-// The setup/boundary half stands the local host in for a Linux/macOS machine
-// (POSIX repo roots, git worktrees via argv); a Windows host cannot play that part.
-// Windows CI skips it; plan item records the split (unit assertions vs host-bound).
-if (process.platform === 'win32') {
-  console.log('remoteExec: SKIP on win32 (stands the local host in for a Linux/macOS machine)');
-  process.exit(0);
-}
+// On a Windows host the machine it stands up is a Windows one (PowerShell argv); elsewhere a POSIX one.
 
 const assert = require('assert');
 const fs = require('fs');
@@ -26,6 +20,11 @@ const os = require('os');
 const path = require('path');
 const http = require('http');
 const { execFileSync } = require('child_process');
+// Sharded by scripts/run-tests.js (test/runner.config.js): the four slow git blocks below run in one shard each.
+const { owns } = require('../../scripts/shard');
+
+// The exec paths run real POSIX argv (sh, cat, wc): on Windows, borrow Git for Windows' tools.
+if (!require('./_portable').ensurePosixTools()) throw new Error('sh is not available (install Git for Windows)');
 
 process.env.PA_MACHINES = 'lab=http://127.0.0.1:1|/srv/repos|linux, winbox=http://127.0.0.1:1|C:\\source';
 
@@ -35,9 +34,13 @@ const remote = require('../src/dispatch/remote');
 const { config } = require('../src/config');
 
 const node = process.execPath;
+// The machine these tests stand up on this box is of the host's own OS family: a POSIX one runs sh,
+// a Windows one runs PowerShell, and each is the code path real machines of that kind take.
+const LOCAL_OS = process.platform === 'win32' ? 'windows' : 'linux';
 const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pa-remote-exec-')));
 config.dataDir = path.join(tmp, 'data');
-const BLOCKED = 'https://pa-push-blocked.invalid/this-run-may-not-push.git';
+// A dead URL that fails at once: a .invalid host costs a slow DNS lookup (11 s here) per push attempt.
+const BLOCKED = 'http://127.0.0.1:9/pa-push-blocked/this-run-may-not-push.git';
 
 // ---- PA_MACHINES with an OS -------------------------------------------------
 
@@ -193,7 +196,7 @@ assert.strictEqual(remote.shq("it's"), `'it'\\''s'`);
   async function provesBoundary(run, label) {
     const { repo, origin } = makeRepo(`widget-${label}`);
     const worktree = path.join(tmp, 'repos', '.pa-worktrees', `run-${label}`);
-    await remote.setupViaExec({ machine, os: 'linux', repo, worktree, branch: `pa/${label}`, mayPush: false, brief, blockedPushUrl: BLOCKED, run });
+    await remote.setupViaExec({ machine, os: LOCAL_OS, repo, worktree, branch: `pa/${label}`, mayPush: false, brief, blockedPushUrl: BLOCKED, run });
     assert.strictEqual(fs.readFileSync(path.join(worktree, 'BRIEF.md'), 'utf8'), brief, `${label}: brief intact`);
     for (const name of ['origin', 'upstream']) {
       assert.strictEqual(git(worktree, 'remote', 'get-url', '--push', name).trim(), BLOCKED, `${label}: ${name} blocked in the run`);
@@ -204,21 +207,21 @@ assert.strictEqual(remote.shq("it's"), `'it'\\''s'`);
     git(repo, 'push', '-q', 'origin', 'main'); // the main checkout still can
     // A run that may push is left alone.
     const wt2 = `${worktree}-push`;
-    await remote.setupViaExec({ machine, os: 'linux', repo, worktree: wt2, branch: `pa/${label}-push`, mayPush: true, brief, blockedPushUrl: BLOCKED, run });
+    await remote.setupViaExec({ machine, os: LOCAL_OS, repo, worktree: wt2, branch: `pa/${label}-push`, mayPush: true, brief, blockedPushUrl: BLOCKED, run });
     assert.strictEqual(git(wt2, 'remote', 'get-url', '--push', 'origin').trim(), origin);
     // A worktree add that fails is an error, not a silently missing worktree.
     await assert.rejects(
-      remote.setupViaExec({ machine, os: 'linux', repo, worktree, branch: `pa/${label}`, mayPush: false, brief, blockedPushUrl: BLOCKED, run }),
+      remote.setupViaExec({ machine, os: LOCAL_OS, repo, worktree, branch: `pa/${label}`, mayPush: false, brief, blockedPushUrl: BLOCKED, run }),
       /git worktree add failed/
     );
   }
 
-  await provesBoundary((argv, opts = {}) => runCommand(null, argv, { timeoutMs: 60_000, ...opts }), 'local');
+  if (owns()) await provesBoundary((argv, opts = {}) => runCommand(null, argv, { timeoutMs: 60_000, ...opts }), 'local');
 
   // A remote no-push run: the old shared push block is cleared first (MH4), the
   // session starts without push credentials (M5), and a termhub that cannot do
   // that is refused — with the worktree taken back down.
-  {
+  if (owns()) {
     const { repo, origin } = makeRepo('widget-session');
     git(repo, 'config', '--local', 'remote.origin.pushurl', BLOCKED); // the old shared block
     const reposRoot = path.join(tmp, 'repos');
@@ -226,14 +229,14 @@ assert.strictEqual(remote.shq("it's"), `'it'\\''s'`);
     const killed = [];
     let applied = true;
     const fakeHub = {
-      api: async () => ({ platform: 'linux' }),
+      api: async () => ({ platform: process.platform === 'win32' ? 'win32' : 'linux' }),
       dirs: async (p) => fs.readdirSync(p, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => path.join(p, d.name)),
-      createSession: async (spec) => { created.push(spec); return { id: `s${created.length}`, envApplied: Boolean(spec.env && applied) }; },
+      createSession: async (spec) => { created.push(spec); return { id: `s${created.length}`, envApplied: Boolean(spec.env && applied), rcSkipped: spec.noRc === true }; },
       killSession: async (id) => { killed.push(id); return true; },
       say: async () => {},
       sessionUrl: async (id) => `http://x/#session=${id}`,
     };
-    const m = { name: 'here', reposRoot, os: 'linux' };
+    const m = { name: 'here', reposRoot, os: LOCAL_OS };
     const exec = (argv, opts = {}) => runCommand(null, argv, { timeoutMs: 60_000, ...opts });
     const ok = await remote.startOnMachine({ machine: m, hub: fakeHub, run: { id: 501 }, repo, branch: 'pa/501-x', mode: { name: 'local', mayPush: false }, brief: 'b', title: 't', blockedPushUrl: BLOCKED, exec });
     assert.strictEqual(git(repo, 'remote', 'get-url', '--push', 'origin').trim(), origin, 'old shared block cleared');
@@ -258,13 +261,15 @@ assert.strictEqual(remote.shq("it's"), `'it'\\''s'`);
   }
 
   // The typed POSIX fallback, run by a real sh, makes the same worktree and brief.
-  {
+  if (owns()) {
     const { repo } = makeRepo('widget-typed');
     const worktree = path.join(tmp, 'repos', '.pa-worktrees', 'run-typed');
-    const lines = remote.setupLines({ os: 'linux', repo, worktree, branch: 'pa/typed', mayPush: false, brief, blockedPushUrl: BLOCKED });
+    const lines = remote.setupLines({ os: LOCAL_OS, repo, worktree, branch: 'pa/typed', mayPush: false, brief, blockedPushUrl: BLOCKED });
     assert.ok(!lines.some((l) => l.includes('Sam said')), 'nothing from the brief appears raw on a command line');
     assert.ok(lines.every((l) => l.length < 2200), 'no line is too long to type');
-    execFileSync('sh', [], { input: lines.join('\n') + '\n', cwd: tmp, stdio: ['pipe', 'ignore', 'ignore'] });
+    // The lines are what gets typed into the machine's shell; feed them to a real one.
+    const shell = LOCAL_OS === 'windows' ? ['powershell', ['-NoProfile', '-NonInteractive', '-Command', '-']] : ['sh', []];
+    execFileSync(shell[0], shell[1], { input: lines.join('\n') + '\n', cwd: tmp, stdio: ['pipe', 'ignore', 'ignore'] });
     assert.strictEqual(fs.readFileSync(path.join(worktree, 'BRIEF.md'), 'utf8'), brief);
     assert.strictEqual(git(worktree, 'remote', 'get-url', '--push', 'origin').trim(), BLOCKED);
     assert.notStrictEqual(git(repo, 'remote', 'get-url', '--push', 'origin').trim(), BLOCKED);
@@ -272,9 +277,14 @@ assert.strictEqual(remote.shq("it's"), `'it'\\''s'`);
 
   // Through a real termhub front, when the sibling checkout is installed.
   const termhubDir = path.join(__dirname, '..', '..', 'termhub');
-  if (fs.existsSync(path.join(termhubDir, 'lib', 'exec.js')) && fs.existsSync(path.join(termhubDir, 'node_modules'))) {
+  if (!owns()) {
+    // another shard runs the through-termhub leg
+  } else if (fs.existsSync(path.join(termhubDir, 'lib', 'exec.js')) && fs.existsSync(path.join(termhubDir, 'node_modules'))) {
     const { createFront } = require(path.join(termhubDir, 'front.js'));
     const front = createFront({ sessiondPort: 1, port: 0, paUrl: '' });
+    // The test's synchronous git calls block this process's loop (client and front share it) past
+    // the front's 5 s keep-alive; a socket the front then closes under undici reads as "unreachable".
+    front.keepAliveTimeout = 120_000;
     await new Promise((ok) => front.listen(0, '127.0.0.1', ok));
     const realLog = console.log;
     console.log = () => {}; // the front logs one line per run

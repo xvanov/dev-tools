@@ -162,9 +162,9 @@ const listen = (server) => new Promise((ok) => server.listen(0, '127.0.0.1', () 
     assert.strictEqual((await request(sPort, { path: '/api/sessions', headers: { Host: 'evil.example:7010' } })).status, 403);
 
     // A peer termhub reading this one (lib/peers.js: plain GETs, no Origin).
-    const ping = await peers.fetchJson(`http://127.0.0.1:${fPort}/api/ping`);
+    const ping = await peers.fetchJson(`http://127.0.0.1:${fPort}/api/ping`, { timeoutMs: 20_000 }) /* 2.5 s default starves under a loaded box */;
     assert.ok(ping && ping.entry === 'test', 'a peer can identify this machine');
-    assert.ok(await peers.fetchJson(`http://127.0.0.1:${fPort}/api/idle`), 'and read its idle data');
+    assert.ok(await peers.fetchJson(`http://127.0.0.1:${fPort}/api/idle`, { timeoutMs: 20_000 }), 'and read its idle data');
 
     // Rename and kill, the UI's way.
     const idPath = `/api/sessions/${encodeURIComponent(created)}`;
@@ -181,7 +181,7 @@ const listen = (server) => new Promise((ok) => server.listen(0, '127.0.0.1', () 
     if (created) await request(fPort, { method: 'DELETE', path: `/api/sessions/${encodeURIComponent(created)}`, headers: { 'X-Termhub': '1' } }).catch(() => {});
     front.close();
     sessiond.close();
-    fs.rmSync(tmp, { recursive: true, force: true });
+    fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 30, retryDelay: 100 }); // a just-killed PTY can hold the dir a moment
   }
   process.exit(0); // sessiond's idle/voice hubs keep timers alive
 })().catch((e) => {

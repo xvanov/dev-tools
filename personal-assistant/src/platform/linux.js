@@ -21,7 +21,8 @@
 
 const fs = require('fs');
 const os = require('os');
-const path = require('path');
+// posix: this file models that OS's paths, whichever OS evaluates it (tests run it on Windows).
+const path = require('path').posix;
 
 const common = require('./common');
 

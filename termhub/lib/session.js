@@ -5,6 +5,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const pty = require('node-pty');
+const { spawnSync } = require('child_process');
 const { defaultShell, shellArgs } = require('./shell');
 const { resolveTranscript, readLastModel, formatModelName } = require('./claudeModel');
 const cursorModel = require('./cursorModel');
@@ -339,7 +340,10 @@ class Session {
       this._broadcast({ type: 'output', data });
     });
 
-    this.pty.onExit(({ exitCode }) => {
+    this.pty.onExit(({ exitCode }) => this._handleExit(exitCode));
+    this._handleExit = (exitCode) => {
+      if (this._exited) return;
+      this._exited = true;
       this.alive = false;
       this.exitCode = exitCode;
       // The opencode server dies with its TUI, so the SSE reconnect loop would
@@ -347,7 +351,7 @@ class Session {
       this._stopOpencodeApi();
       this._broadcast({ type: 'exit', code: exitCode });
       if (this.onExit) { try { this.onExit(exitCode); } catch { /* hook must not break exit */ } }
-    });
+    };
 
     // If an initial command was requested (e.g. `claude …`), run it *inside* the
     // shell (not as the PTY process) so the user still has a shell after it exits.
@@ -768,6 +772,12 @@ class Session {
     this._discoveryAborted = true; // stop an in-flight opencode session-id discovery loop
     this._stopOpencodeApi();       // and its event-stream reconnect loop, which would retry forever
     if (this.alive) {
+      // Windows: pty.kill() closes the pseudoconsole but leaves the shell's children running, still
+      // holding the cwd. Take the whole tree down first and wait for it, so a caller that removes the
+      // directory next can. pty.kill() still runs afterwards: it releases node-pty's native handles
+      // (without it the process cannot exit). On Node 26 + node-pty 1.1.0 its console-list agent then
+      // prints "AttachConsole failed" to stderr for a shell that is already gone; that is harmless.
+      if (process.platform === 'win32' && this.pty.pid && killTreeWin(this.pty.pid)) this._handleExit(null);
       try {
         this.pty.kill();
       } catch {
@@ -775,7 +785,6 @@ class Session {
       }
     }
   }
-
   info() {
     return {
       id: this.id,
@@ -816,6 +825,17 @@ class Session {
 
 function baseName(p) {
   return String(p).split(/[\\/]/).pop() || p;
+}
+
+// Kills pid and every descendant (taskkill /T /F) and returns once it is gone, or after ~3 s.
+function killTreeWin(pid) {
+  spawnSync('taskkill', ['/pid', String(pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore', timeout: 5000 });
+  const until = Date.now() + 3000;
+  while (Date.now() < until) {
+    try { process.kill(pid, 0); } catch { return true; }
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25);
+  }
+  return false;
 }
 
 module.exports = { Session, resolveCwd };

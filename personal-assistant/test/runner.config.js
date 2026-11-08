@@ -1,13 +1,17 @@
-// Config for ../scripts/run-tests.js. Every entry needs a reason.
+// Config for ../scripts/run-tests.js (see its header). Every skip/serial entry needs a reason.
 module.exports = {
-  "skip": [
-    { "file": "agents.test.js", "reason": "spawns a generated shell script (pa-say); needs a POSIX shell, ENOENT on Windows" },
-    { "file": "dispatchStart.test.js", "reason": "needs a termhub with noRc support on the target; fails on this Windows box" },
-    { "file": "factoryDispatch.test.js", "reason": "shells out to python3, which is not on PATH on Windows" },
-    { "file": "platform.test.js", "reason": "asserts POSIX path separators; fails on Windows" },
-    { "file": "remoteExec.test.js", "reason": "spawns sh for the remote BRIEF.md write; needs a POSIX shell, ENOENT on Windows" }
-  ],
-  "serial": [
-    { "file": "talk.test.js", "reason": "T2: fails only under parallel load (shared port or file); passes alone" }
-  ]
-}
+  skip: [],
+  serial: [],
+  // Git-heavy files made of independent blocks (Windows spawns are ~0.1 s each): run each as parallel shards.
+  shards: { 'dispatchStart.test.js': 5, 'remoteExec.test.js': 4 },
+  // No test may reach a real Postgres (the work stack's PA database lives on 5433): point the pool
+  // at a closed port so a stray query fails at once instead of touching, or waiting on, real data.
+  env: { PA_DATABASE_URL: 'postgres://pa:pa@127.0.0.1:1/pa_tests_must_not_use_a_database' },
+  // Tests that walk a directory rather than name files: changed-files mode cannot see the edge.
+  touches: { 'syntax.test.js': ['src/', 'bin/'] },
+  // Slow end-to-end tests that import the whole app: in --changed mode only their own area selects them.
+  narrow: {
+    'supervisor.test.js': ['src/supervisor/', 'test/fixtures/supervisorWorker.js'],
+    'deploy.test.js': ['src/supervisor/', 'windows/redeploy.ps1', 'linux/redeploy.sh'],
+  },
+};

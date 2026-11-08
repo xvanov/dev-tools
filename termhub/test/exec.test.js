@@ -230,11 +230,14 @@ function post(port, body, headers = {}, { host } = {}) {
       const huge = await new Promise((resolve) => {
         const req = http.request({ host: '127.0.0.1', port: sPort, path: '/api/exec', method: 'POST',
           headers: { 'Content-Type': 'application/json', 'X-Termhub': '1' } }, (res) => { res.resume(); resolve(res.statusCode); });
-        req.on('error', () => {});
+        // The front cuts the connection while the client is still writing: on Windows that is a TCP reset
+        // that can eat the 413 on its way, so a reset counts as refused. Never hang on it.
+        req.on('error', (e) => resolve(e.code || 'error'));
+        setTimeout(() => resolve('no answer in 5 s'), 5000).unref();
         req.write('{"argv":["x"],"stdin":"');
         req.write('x'.repeat(5 * 1024 * 1024));
       });
-      assert.strictEqual(huge, 413);
+      assert.ok(huge === 413 || huge === 'ECONNRESET' || huge === 'EPIPE', `a body over the cap is refused, got ${huge}`);
 
       // The slot limit itself still holds for real runs: MAX_CONCURRENT
       // sleepers in flight, the next one is refused.
@@ -252,7 +255,7 @@ function post(port, body, headers = {}, { host } = {}) {
     console.log('exec.test.js ok');
   } finally {
     server.close();
-    fs.rmSync(tmp, { recursive: true, force: true });
+    fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 30, retryDelay: 100 }); // a just-exited child can still hold its cwd
   }
 })().catch((e) => {
   console.error(e);

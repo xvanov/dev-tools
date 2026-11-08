@@ -100,6 +100,7 @@ const render = (snap) => new Promise((resolve) => {
   try { ({ Session } = require('../lib/session')); } catch (e) {
     console.log('screen.test.js: session cases skipped (node-pty unavailable: ' + e.message + ')');
     console.log('screen.test.js: ok');
+  process.exit(0); // node-pty's native handles can keep the loop alive after the PTY is killed
     return;
   }
   const s = new Session({ cwd: os.tmpdir(), cols: 80, rows: 24 });
@@ -149,4 +150,5 @@ const render = (snap) => new Promise((resolve) => {
     s.kill();
   }
   console.log('screen.test.js: ok');
+  process.exit(0); // node-pty's native handles can keep the loop alive after the PTY is killed
 })().catch((e) => { console.error(e); process.exit(1); });

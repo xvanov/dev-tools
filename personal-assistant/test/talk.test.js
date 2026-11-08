@@ -600,7 +600,7 @@ const C = require('../src/dashboard/talk.core');
   assert.strictEqual(res.status, 200);
   assert.strictEqual((await res.json()).text, 'what is on me today');
   assert.strictEqual(seenBytes, wav.length, 'whisper got a path to the uploaded WAV');
-  await new Promise((r) => setTimeout(r, 50));
+  for (let i = 0; i < 100 && fs.existsSync(seenPath); i++) await new Promise((r) => setTimeout(r, 20));
   assert.ok(!fs.existsSync(seenPath), 'the temp file is removed');
 
   // Guarded like every POST.
@@ -693,14 +693,21 @@ const C = require('../src/dashboard/talk.core');
   // The service down: a clear 503 for the page to fall back on.
   voice.close();
   config.voice.url = 'http://127.0.0.1:9';
-  await new Promise((r) => setTimeout(r, 3100)); // past the health cache
+  // past the health cache: move the clock instead of sleeping through it
+  const realNow = Date.now;
+  Date.now = () => realNow() + 3100;
   res = await fetch(`${base}/api/talk/tts`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-PA': '1' }, body: '{"text":"Hi."}' });
   assert.strictEqual(res.status, 503);
   info = await (await fetch(`${base}/api/talk/voice`)).json();
   assert.strictEqual(info.tts.ok, false);
+  Date.now = realNow;
   fs.rmSync(modelsDir, { recursive: true, force: true });
 
   server.close();
+  whisper.close();
+  voice.close();
+  // The dashboard handler lazily opens the pg pool; its 30 s idle timers would hold the process open.
+  await require('../src/db').close();
   console.log('talk ok');
 })().catch((err) => {
   console.error(err);

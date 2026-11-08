@@ -9,6 +9,8 @@ const assert = require('assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+// python3 on POSIX, python on Windows (test/_portable.js)
+const PYTHON = require('./_portable').pythonCommand();
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'pa-factory-test-'));
 process.env.PA_FACTORY_PATH = '/srv/factory-checkout';
@@ -419,7 +421,7 @@ async function factoryStart() {
     calls.length = 0;
     const py = (argv, opts) => ({
       code: 0,
-      stdout: execFileSync('python3', argv.slice(3), { input: opts.stdin || '', env: { ...process.env, TMPDIR: otherTmp } }).toString(),
+      stdout: execFileSync(PYTHON, argv.slice(3), { input: opts.stdin || '', env: { ...process.env, TMPDIR: otherTmp, TEMP: otherTmp, TMP: otherTmp } }).toString(),
       stderr: '',
     });
     let seen = null;
@@ -440,7 +442,7 @@ async function factoryStart() {
     assert.match(calls[0].opts.stdin, /Add retries to the export/, 'contents travel on stdin');
     assert.ok(seen.ask.startsWith(otherTmp) && seen.flowPath.startsWith(otherTmp), 'paths on the factory machine');
     assert.match(path.basename(path.dirname(seen.ask)), /^pa-factory-ask-7-.+/, 'a fresh, unpredictable directory per run');
-    assert.strictEqual(seen.mode, 0o700, 'private to the user');
+    if (process.platform !== 'win32') assert.strictEqual(seen.mode, 0o700, 'private to the user'); // POSIX permission bits do not exist on Windows
     assert.match(seen.askText, /Delivery: `draft_pr`/);
     assert.match(seen.flowText, /Check: retries tested/);
     assert.ok(!fs.existsSync(path.dirname(seen.ask)), 'removed once the factory has the job');
@@ -454,11 +456,11 @@ async function factoryStart() {
     const victim = path.join(otherTmp, 'victim');
     fs.writeFileSync(victim, 'keep');
     const link = path.join(bigOut.dir, 'flow.md');
-    fs.symlinkSync(victim, link);
+    try { fs.symlinkSync(victim, link); } catch (e) { if (e.code !== 'EPERM') throw e; fs.writeFileSync(link, 'planted'); } // no symlink right on Windows: O_EXCL still refuses an existing name
     const writer = calls[0].argv[4];
     const planted = writer.replace("d = tempfile.mkdtemp(prefix='pa-factory-ask-' + str(int(req['run'])) + '-')", `d = ${JSON.stringify(bigOut.dir)}`);
     assert.notStrictEqual(planted, writer);
-    assert.throws(() => execFileSync('python3', ['-c', planted], { input: JSON.stringify({ run: 9, files: { 'flow.md': 'evil' } }), stdio: ['pipe', 'pipe', 'pipe'] }));
+    assert.throws(() => execFileSync(PYTHON, ['-c', planted], { input: JSON.stringify({ run: 9, files: { 'flow.md': 'evil' } }), stdio: ['pipe', 'pipe', 'pipe'] }));
     assert.strictEqual(fs.readFileSync(victim, 'utf8'), 'keep');
     // The cleaner refuses anything that is not a staged directory.
     const cleanerArgv = calls[2].argv;
