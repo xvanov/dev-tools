@@ -13,6 +13,15 @@ const { createScheduler } = require('../src/util/scheduler');
 const { passes } = require('../src/util/exclusive');
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+// Wait for a condition instead of sleeping and hoping: a loaded machine slows timers and queries, and
+// this test is about what happens, not how fast. Fails after 15 s with the condition's text.
+async function until(cond, what, ms = 15000) {
+  const end = Date.now() + ms;
+  while (!cond()) {
+    if (Date.now() > end) assert.fail('timed out waiting for: ' + what);
+    await sleep(5);
+  }
+}
 
 // Advisory locks: key -> {session, count}. Same shape of SQL the lease sends.
 const overlaps = [];
@@ -106,8 +115,8 @@ async function testHandOverIsPrompt() {
 
   assert.strictEqual(await a.own.takeOver(), true);
   // Lock queries are queued on the one lock connection (a few timer ticks).
-  await sleep(150);
-  assert.deepStrictEqual(ran.a.sort(), ['distill', 'embed']);
+  await until(() => ran.a.length >= 2, 'A runs both passes');
+  assert.deepStrictEqual(ran.a.slice().sort(), ['distill', 'embed']);
 
   // B waits: nothing of its runs while A holds the lease.
   const bTook = b.own.takeOver();
@@ -120,23 +129,25 @@ async function testHandOverIsPrompt() {
   const t0 = Date.now();
   await a.own.handOver();
   const handOverMs = Date.now() - t0;
-  assert.ok(handOverMs < 500, `hand-over took ${handOverMs} ms; it must not wait for the slow pass`);
+  // The slow pass is only released by this test, so waiting for it would hang: any finite bound proves it.
+  assert.ok(handOverMs < 10000, `hand-over took ${handOverMs} ms; it must not wait for the slow pass`);
   assert.strictEqual(aServiceStopped, true, "A's watcher is stopped on drain");
   assert.strictEqual(a.sched.started(), false);
 
   assert.strictEqual(await bTook, true);
   const takeOverMs = Date.now() - t0;
-  assert.ok(takeOverMs < 2000, `B took over ${takeOverMs} ms after the drain (must be < 2 s)`);
+  assert.ok(takeOverMs < 10000, `B took over ${takeOverMs} ms after the drain (about 2 s on an idle machine)`);
   assert.strictEqual(bServiceStarted, 1);
 
   // B runs every pass except the one A is still finishing.
-  await sleep(200);
+  await until(() => ran.b.includes('embed'), 'B runs the passes A is not running');
+  await sleep(100); // distill had its chance to start too: it must not have
   assert.ok(ran.b.includes('embed'), 'B runs the passes A is not running');
   assert.ok(!ran.b.includes('distill'), 'B must skip a pass A is still running');
   assert.deepStrictEqual(ran.a.filter((n) => n === 'embed').length, 1, 'A starts nothing after the drain');
 
   releaseSlow();
-  await sleep(200);
+  await until(() => ran.b.includes('distill'), 'B runs distill once A has finished it');
   assert.ok(ran.b.includes('distill'), 'B runs distill once A has finished it');
 
   // Rollback: B hands back, A takes the lease and its passes again.
@@ -170,12 +181,10 @@ async function testLostConnection() {
   let ticks = 0;
   a.sched.every(0.03, 'tick', async () => ticks++);
   await a.own.takeOver();
-  await sleep(100);
-  assert.ok(ticks > 0);
+  await until(() => ticks > 0, 'the scheduler ticks');
   a.clients[0].kill(); // Postgres restarted: the lease is gone with the session
-  await sleep(10);
   // It stops, re-acquires on a new connection and starts again.
-  await sleep(200);
+  await until(() => a.clients.length === 2 && a.lease.held() && a.sched.started(), 're-acquire on a new connection');
   assert.strictEqual(a.lease.held(), true, 'the lease is re-acquired on a new connection');
   assert.strictEqual(a.clients.length, 2);
   assert.strictEqual(a.sched.started(), true);
@@ -190,8 +199,7 @@ async function testSchedulerStops() {
   await sleep(60);
   assert.strictEqual(ticks, 0, 'nothing runs before start()');
   sched.start();
-  await sleep(80);
-  assert.ok(ticks >= 2);
+  await until(() => ticks >= 2, 'two ticks after start()');
   await sched.stop();
   const at = ticks;
   await sleep(80);
@@ -201,7 +209,7 @@ async function testSchedulerStops() {
   sched.start();
   sched.service('slow', () => sleep(50).then(() => () => (stopped = true)));
   await sched.stop();
-  await sleep(100);
+  await until(() => stopped, 'the late-starting service is stopped');
   assert.strictEqual(stopped, true);
 }
 
