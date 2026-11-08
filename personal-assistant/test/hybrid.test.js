@@ -5,7 +5,7 @@
 // them ranked first, because agreement is the signal.
 
 const assert = require('assert');
-const { fuse } = require('../src/search/fuse');
+const { fuse } = require('../src/search/fuse.ts');
 
 {
   const lexical = [{ id: 1 }, { id: 2 }, { id: 3 }];

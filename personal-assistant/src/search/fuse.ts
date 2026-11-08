@@ -11,6 +11,11 @@
 //
 // The constant K damps the top of each list: without it, rank 1 in a list of
 // three noise results outweighs rank 3 in a list of fifty good ones.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+type Item = { id: number | string; [k: string]: any };
+type Fused = { id: number | string; score: number; sources: number[]; row: Item };
 
 const K = 60;
 
@@ -19,12 +24,12 @@ const K = 60;
  * @param {Array<number>} weights            per-list multiplier, defaults to 1
  * @returns {Array<{id:number, score:number, sources:number[]}>}
  */
-function fuse(lists, weights = []) {
-  const scores = new Map();
+function fuse(lists: Item[][], weights: number[] = []): Fused[] {
+  const scores = new Map<number | string, Fused>();
 
-  lists.forEach((list, listIndex) => {
+  lists.forEach((list: Item[], listIndex: number) => {
     const weight = weights[listIndex] ?? 1;
-    list.forEach((row, rank) => {
+    list.forEach((row: Item, rank: number) => {
       const key = row.id;
       const contribution = weight / (K + rank + 1);
       const existing = scores.get(key) || { id: key, score: 0, sources: [], row };

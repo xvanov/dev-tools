@@ -11,8 +11,12 @@
 // Matching is deliberately strict, mirroring identity resolution: a full
 // display name, or a first name that only one known person has. A common first
 // name shared by three colleagues pulls nobody rather than the wrong one.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
 
-function words(text) {
+type Person = { id: number | string; display_name: string; is_me?: boolean };
+
+function words(text: string) {
   return String(text || '')
     .toLowerCase()
     .split(/[^\p{L}\p{N}]+/u)
@@ -20,23 +24,23 @@ function words(text) {
 }
 
 // people: [{id, display_name, is_me}] → ids named in the query.
-function mentionedPeople(query, people) {
+function mentionedPeople(query: string, people: Person[]) {
   const q = ` ${words(query).join(' ')} `;
   if (q.trim() === '') return [];
 
-  const firstCounts = new Map();
+  const firstCounts = new Map<string, number>();
   for (const p of people) {
     const first = words(p.display_name)[0];
     if (first) firstCounts.set(first, (firstCounts.get(first) || 0) + 1);
   }
 
-  const hits = [];
+  const hits: Array<number | string> = [];
   for (const p of people) {
     if (p.is_me) continue;
     const name = words(p.display_name);
     if (!name.length) continue;
     const full = ` ${name.join(' ')} `;
-    const first = name[0];
+    const first = name[0] as string;
     const fullMatch = name.length > 1 && q.includes(full);
     const firstMatch = first.length >= 3 && firstCounts.get(first) === 1 && q.includes(` ${first} `);
     if (fullMatch || firstMatch) hits.push(p.id);

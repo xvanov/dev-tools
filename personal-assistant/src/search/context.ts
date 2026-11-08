@@ -11,8 +11,12 @@
 //
 // Kept in its own column, not glued onto `content`: snippets shown to people
 // and models stay the message's own words.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
 
-const LABELS = {
+type Row = Record<string, any>;
+
+const LABELS: Record<string, string> = {
   graph_mail: 'Email',
   graph_chat: 'Teams chat',
   graph_event: 'Calendar',
@@ -29,12 +33,12 @@ const LABELS = {
 // re-headed and re-embedded by the backfill.
 const CONTEXT_VERSION = 1;
 
-function day(value) {
-  const d = value instanceof Date ? value : new Date(value);
+function day(value: unknown) {
+  const d = value instanceof Date ? value : new Date(value as string);
   return Number.isNaN(d.getTime()) ? null : d.toISOString().slice(0, 10);
 }
 
-function chunkContext(item) {
+function chunkContext(item: Row) {
   const raw = item.raw || {};
   const parts = [LABELS[item.source] || item.source];
   const topic = raw.chatTopic || raw.board || null;

@@ -15,7 +15,7 @@ type Db = import('../repo/types.ts').Db;
 
 const repo = require('../repo');
 const { contentHash, chunkText } = require('../util/text.ts');
-const { chunkContext, CONTEXT_VERSION } = require('../search/context');
+const { chunkContext, CONTEXT_VERSION } = require('../search/context.ts');
 const { logger } = require('../log.ts');
 
 const log = logger('ingest');

@@ -1511,7 +1511,7 @@ const commands = {
       );
     }
 
-    const { rerank, rerankConfigured, lastRerankError } = require('../search/rerank');
+    const { rerank, rerankConfigured, lastRerankError } = require('../search/rerank.ts');
     if (!rerankConfigured()) {
       mark(false, 'rerank', 'off — results keep their fused order (PA_RERANK)');
     } else {

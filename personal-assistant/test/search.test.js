@@ -4,8 +4,8 @@
 // under, who a query names, and the filter fragment each leg shares.
 
 const assert = require('assert');
-const { chunkContext } = require('../src/search/context');
-const { mentionedPeople } = require('../src/search/entities');
+const { chunkContext } = require('../src/search/context.ts');
+const { mentionedPeople } = require('../src/search/entities.ts');
 const { filterSql, embeddingInput } = require('../src/search');
 
 {

@@ -11,20 +11,23 @@
 //
 // Optional, like embeddings: unconfigured or failing, search keeps its fused
 // order and says so.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
 
 const { config } = require('../config.ts');
 const { logger } = require('../log.ts');
 
 const log = logger('rerank');
 
-let lastRerankError = null;
+let lastRerankError: string | null = null;
 
 function rerankConfigured() {
   return Boolean(config.rerank.enabled && config.embeddings.endpoint && config.embeddings.apiKey);
 }
 
 // documents: strings. Returns [{index, score}] best first, or null.
-async function rerank(query, documents, { topN = documents.length } = {}) {
+async function rerank(query: string, documents: string[], { topN = documents.length }: { topN?: number } = {}) {
   if (!rerankConfigured()) {
     lastRerankError = 'not configured';
     return null;
@@ -48,12 +51,12 @@ async function rerank(query, documents, { topN = documents.length } = {}) {
       log.warn('rerank failed', { status: res.status });
       return null;
     }
-    const payload = await res.json();
+    const payload = (await res.json()) as { results: Array<{ index: number; relevance_score: number }> };
     lastRerankError = null;
-    return payload.results.map((r) => ({ index: r.index, score: r.relevance_score }));
+    return payload.results.map((r: { index: number; relevance_score: number }) => ({ index: r.index, score: r.relevance_score }));
   } catch (err) {
-    lastRerankError = err.message;
-    log.warn('rerank failed', { message: err.message });
+    lastRerankError = (err as Error).message;
+    log.warn('rerank failed', { message: (err as Error).message });
     return null;
   }
 }

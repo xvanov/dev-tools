@@ -31,10 +31,10 @@ type Json = Record<string, any>;
 type Timed = { v?: Json[]; err?: string; ms: number };
 
 const { createRepos } = require('../repo');
-const { fuse } = require('../search/fuse');
-const { mentionedPeople } = require('../search/entities');
+const { fuse } = require('../search/fuse.ts');
+const { mentionedPeople } = require('../search/entities.ts');
 
-const { normalizeQuery } = require('../search/embedCache');
+const { normalizeQuery } = require('../search/embedCache.ts');
 
 const K = 10;
 

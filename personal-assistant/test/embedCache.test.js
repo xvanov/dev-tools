@@ -5,7 +5,7 @@
 // is a Map behind a fake `query`, so this never touches a live store.
 
 const assert = require('assert');
-const { normalizeQuery, Lru, createQueryEmbedder, tableStore, parseVector, toVectorLiteral } = require('../src/search/embedCache');
+const { normalizeQuery, Lru, createQueryEmbedder, tableStore, parseVector, toVectorLiteral } = require('../src/search/embedCache.ts');
 
 (async () => {
   // Normalization: trim, collapse whitespace, lower-case.
