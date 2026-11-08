@@ -615,6 +615,17 @@ function notTicked(job: Job | null | undefined): boolean {
   return job?.ticked === false && !job?.terminal && !['done', 'failed', 'cancelled', 'needs_human'].includes(job?.state);
 }
 
+/** Pure. The PR or branch a continuation works on (JOBS-API v1.3 `base`), else null. */
+function baseView(base: Job | null | undefined) {
+  if (!base || typeof base !== 'object' || !base.branch) return null;
+  const pr = Number(base.pr);
+  return {
+    branch: clip(String(base.branch), 120),
+    pr: Number.isInteger(pr) && pr > 0 ? pr : null,
+    into: base.into ? clip(String(base.into), 120) : null,
+  };
+}
+
 /**
  * Pure. One job as the factory page shows it, from a `job list --json` row.
  * Every field v1.2 added is optional: a v1 factory's job is a code job on the
@@ -657,6 +668,7 @@ function jobView(job: Job | null | undefined, pa: { id: number; url?: string | n
     why: job?.why ? clip(job.why, 400) : null,
     ticked: typeof job?.ticked === 'boolean' ? (job.ticked as boolean) : null,
     waiting: notTicked(job) ? 'app not ticked' : null,
+    base: baseView(job?.base),
     terminal: Boolean(job?.terminal) || ['done', 'failed', 'cancelled'].includes(job?.state),
     delivery: job?.delivery || null,
     pipeline: job?.pipeline || null,

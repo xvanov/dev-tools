@@ -2318,7 +2318,7 @@
         },
         {
           "c": "termhub",
-          "t": "The session lives in the factory machine's termhub (on the work stack, the Windows termhub); its URL is in runs[].session, so you can open it live from the Factory page."
+          "t": "The session lives in the factory machine's termhub (on the work stack, the Windows termhub); its URL is in runs[].session, so you can open it live from the Factory page, where the job's card says \"continues PR #12\" (the job's `base`)."
         },
         {
           "c": "claude-sub",

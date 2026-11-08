@@ -223,6 +223,8 @@
         chip(KIND[j.kind] || j.kind, 'k-' + j.kind),
         chip(RUNTIME[j.runtime] || j.runtime, 'r-' + j.runtime),
         j.app ? chip(j.app) : null,
+        j.base ? chip(j.base.pr ? 'continues PR #' + j.base.pr : 'continues ' + j.base.branch, 'mono base',
+          'Adds commits to ' + j.base.branch + (j.base.into ? ' (into ' + j.base.into + ')' : '') + '; opens no new PR') : null,
         j.waiting
           ? chip('waiting: ' + j.waiting, 's-needs_human', 'Nothing ticks this app, so the job stays ' + j.state.replace('_', ' ') + ' until it does')
           : chip(j.state.replace('_', ' '), 's-' + j.state),

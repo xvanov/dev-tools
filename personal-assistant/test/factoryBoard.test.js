@@ -146,7 +146,7 @@ const V1_JOB = {
   assert.strictEqual(F.groupOf({ state: 'queued' }), 'running');
 }
 
-// --- 8.4.24: a job nothing ticks -------------------------------------------------------------
+// --- 8.4.24 / 8.4.28: a job nothing ticks, and the PR a continuation works on ----------------
 
 {
   const idle = F.jobView({ job_id: 'gadget:004', app: 'gadget', state: 'queued', ticked: false, why: 'waiting: app gadget is not ticked: factory serve ticks widget; ...' });
@@ -156,6 +156,12 @@ const V1_JOB = {
   assert.strictEqual(F.groupOf({ state: 'done', ticked: false }), 'delivered');
   assert.strictEqual(F.jobView({ job_id: 'gadget:005', state: 'failed', terminal: true, ticked: false }).waiting, null);
   assert.deepStrictEqual([F.jobView({ job_id: 'widget:009', state: 'queued', ticked: true }).waiting, F.jobView({ job_id: 'widget:010' }).ticked], [null, null]);
+
+  const cont = F.jobView({ job_id: 'widget:011', state: 'in_progress', base: { branch: 'fix/retry-backoff', pr: 42, into: 'main' } });
+  assert.deepStrictEqual(cont.base, { branch: 'fix/retry-backoff', pr: 42, into: 'main' });
+  assert.deepStrictEqual(F.jobView({ job_id: 'widget:012', base: { branch: 'spike', pr: null, into: 'main' } }).base, { branch: 'spike', pr: null, into: 'main' }, 'a branch with no PR yet');
+  assert.strictEqual(F.jobView({ job_id: 'widget:013', base: null }).base, null, 'a new job opens its own PR');
+  assert.strictEqual(F.jobView({ job_id: 'widget:014', base: { pr: 'x' } }).base, null, 'no branch: nothing to show');
 }
 
 // --- 8.4.17: a step's session link opens termhub's front, not sessiond -----------------------
