@@ -223,7 +223,9 @@
         chip(KIND[j.kind] || j.kind, 'k-' + j.kind),
         chip(RUNTIME[j.runtime] || j.runtime, 'r-' + j.runtime),
         j.app ? chip(j.app) : null,
-        chip(j.state.replace('_', ' '), 's-' + j.state),
+        j.waiting
+          ? chip('waiting: ' + j.waiting, 's-needs_human', 'Nothing ticks this app, so the job stays ' + j.state.replace('_', ' ') + ' until it does')
+          : chip(j.state.replace('_', ' '), 's-' + j.state),
         j.canApprove ? chip('waiting for your approval', 's-needs_human', 'Approve below, on Plan, or ask Jarvis') : null,
         j.ciFailing ? chip('CI failing', 'ci-failing') : null,
         j.delivery && j.kind === 'code' ? chip(j.delivery) : null,

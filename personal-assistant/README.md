@@ -1673,8 +1673,10 @@ Implemented once in `theme.css` (`.jside`, `.jpanel-nav`, `.jx-frames`) and `nav
 
 **The Factory page** (`/factory`, `src/dashboard/factory.ts`, `factory.html`,
 `factory.client.js`) shows every factory job — the PA's and anyone else's — grouped **Needs you**
-(needs_human, blocked, or a live job whose PR's CI is red) / **Running** / **Delivered** / **Failed
-or cancelled**: title, kind, runtime, app, state and the factory's `why`, each story with its PR
+(needs_human, blocked, a live job whose PR's CI is red, or a live job whose app nothing ticks —
+JOBS-API v1.6 `ticked: false`, shown as **waiting: app not ticked** in place of its state) /
+**Running** / **Delivered** / **Failed or cancelled**: title, kind, runtime, app, state and the
+factory's `why`, each story with its PR
 link and CI state, cost metered and subscription-equivalent, a research/report job's excerpt with
 **Read report** (`factory job report`, rendered from a parsed tree, never HTML), and its runs with
 links to their live termhub sessions. The data is the worker's stored `job list` (sql/031): a page

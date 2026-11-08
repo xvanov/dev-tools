@@ -596,7 +596,8 @@ const GROUPS = ['needs_you', 'running', 'delivered', 'ended'];
 
 /**
  * Pure. Which column of the factory page a job goes in:
- *   needs_you  needs_human or blocked, or still going with a PR whose CI fails
+ *   needs_you  needs_human or blocked, still going with a PR whose CI fails,
+ *              or waiting on an app nothing ticks (JOBS-API v1.6 `ticked: false`)
  *   running    queued, triaging, in_progress
  *   delivered  done
  *   ended      failed or cancelled
@@ -605,8 +606,13 @@ function groupOf(job: Job | null | undefined): string {
   const s = job?.state;
   if (s === 'done') return 'delivered';
   if (s === 'failed' || s === 'cancelled') return 'ended';
-  if (s === 'needs_human' || s === 'blocked' || ciFailing(job).length) return 'needs_you';
+  if (s === 'needs_human' || s === 'blocked' || ciFailing(job).length || notTicked(job)) return 'needs_you';
   return 'running';
+}
+
+/** A live job whose app no `factory serve` or timer ticks: it never moves on its own. */
+function notTicked(job: Job | null | undefined): boolean {
+  return job?.ticked === false && !job?.terminal && !['done', 'failed', 'cancelled', 'needs_human'].includes(job?.state);
 }
 
 /**
@@ -649,6 +655,8 @@ function jobView(job: Job | null | undefined, pa: { id: number; url?: string | n
     state: STATES.includes(job?.state) ? (job?.state as string) : String(job?.state || 'unknown').slice(0, 30),
     group: groupOf(job),
     why: job?.why ? clip(job.why, 400) : null,
+    ticked: typeof job?.ticked === 'boolean' ? (job.ticked as boolean) : null,
+    waiting: notTicked(job) ? 'app not ticked' : null,
     terminal: Boolean(job?.terminal) || ['done', 'failed', 'cancelled'].includes(job?.state),
     delivery: job?.delivery || null,
     pipeline: job?.pipeline || null,

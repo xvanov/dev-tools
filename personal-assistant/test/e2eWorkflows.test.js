@@ -282,6 +282,18 @@ test('dry runs create nothing and cover every workflow', async () => {
   }
 });
 
+test('dry run: an app nothing ticks fails the run before it submits (8.4.24)', async () => {
+  const { deps } = fakeDeps({ factoryApps: async () => [{ app: 'dev-tools', repo: 'xvanov/dev-tools', ticked: false }] });
+  const s = await R.main('research', { 'dry-run': true }, {}, deps);
+  const c = s.checks.find((x) => x.check === 'factory ticks app dev-tools');
+  assert.ok(c && !c.ok, JSON.stringify(s.checks));
+  assert.match(c.detail, /serve_tick: true.*factory tick --app dev-tools/);
+  assert.strictEqual(s.ok, false);
+  const unknown = await R.main('research', { 'dry-run': true }, {}, fakeDeps().deps);
+  const u = unknown.checks.find((x) => x.check === 'factory ticks app dev-tools');
+  assert.ok(u.ok && /unknown/.test(u.detail), 'an older factory says nothing: passes with a note');
+});
+
 test('a real teams-ask or review-fix run is refused, never improvised', async () => {
   for (const id of ['teams-ask', 'review-fix']) {
     const { deps, log } = fakeDeps();

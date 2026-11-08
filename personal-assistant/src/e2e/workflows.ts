@@ -113,6 +113,7 @@ async function factoryDry(deps: Deps, repo: string): Promise<Check[]> {
   const apps = await G.safely(() => deps.factoryApps());
   const app = apps.ok ? (apps.value as Json[]).find((a) => String(a.repo || '').toLowerCase() === repo.toLowerCase()) : null;
   out.push(check('build', `factory app for ${repo}`, app, apps.ok ? (app ? `app ${app.app}` : 'not registered') : apps.error));
+  if (app) out.push(G.tickedCheck(app));
   const fac = await G.safely(() => deps.getJson(`${deps.paBase}/api/factory`));
   out.push(check('build', 'GET /api/factory', fac.ok && fac.value?.groups, fac.error));
   return out;

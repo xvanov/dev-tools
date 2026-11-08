@@ -87,6 +87,16 @@ async function main() {
     const st = T.jobRow(v, { ...job, stalled: true, base: { branch: 'feat/retry', pr: 12, into: 'main' } });
     assert.strictEqual(st.stalled, true);
     assert.deepStrictEqual(st.continues, { branch: 'feat/retry', pr: 12 });
+    assert.strictEqual(T.jobRow(F.jobView({ ...job, stories: [], state: 'queued', ticked: false })).waiting, 'app not ticked', '8.4.24');
+    assert.strictEqual(row.waiting, undefined);
+
+    // 8.4.24: an accepted job nothing ticks says so first, in the factory's words.
+    const started = { route: 'factory', id: 9, jobId: 'gadget:0003', app: 'gadget', delivery: 'pr', deliveryRequested: 'pr', ticked: false,
+      warnings: ['ticker: app gadget is not ticked: factory serve ticks widget; set `serve_tick: true` ...; until then this job stays queued'] };
+    assert.match(T.startedView(started).waiting, /^app gadget is not ticked: factory serve ticks widget/);
+    assert.match(T.startedView({ ...started, warnings: [] }).waiting, /app gadget is not ticked/);
+    assert.strictEqual(T.startedView({ ...started, ticked: null }).waiting, undefined, 'unknown coverage: nothing to say');
+    assert.deepStrictEqual(T.startedView({ ...started, ticked: true, base: { branch: 'feat/retry', pr: 12, into: 'main' } }).continues, { branch: 'feat/retry', pr: 12, into: 'main' });
     const d = T.jobDetail(v, { followUrl: 'http://hub.example/#session=f1' });
     assert.strictEqual(d.stories[0].ci, 'failing: lint');
     assert.strictEqual(d.runs[0].session, 'http://hub.example/#session=s1');

@@ -237,6 +237,19 @@ async function approvalChecks(deps: Deps, tool: string, prompt: Json | null, sub
 
 // --------------------------------------------------------------- dry run ----
 
+/**
+ * Pure. Whether anything ticks a factory app (`app list --json` row, JOBS-API
+ * v1.6 `ticked`): a job for an app nothing ticks sits queued for ever.
+ * null (an older factory, or no serve status on its machine) passes with a note.
+ */
+function tickedCheck(app: Json): Check {
+  const name = `factory ticks app ${app.app}`;
+  if (app.ticked === false) {
+    return { view: 'build', check: name, ok: false, detail: `nothing ticks ${app.app}: set \`serve_tick: true\` in apps/${app.app}/config.yaml and restart factory serve, or run \`factory tick --app ${app.app}\`` };
+  }
+  return { view: 'build', check: name, ok: true, ...(app.ticked == null ? { detail: 'unknown: the factory reports no serve status (older than JOBS-API v1.6, or no serve.json yet)' } : {}) };
+}
+
 /** Config and reachability of everything a run touches; creates nothing. */
 async function dryRun(o: Options, deps: Deps): Promise<Check[]> {
   const checks: Check[] = [];
@@ -255,6 +268,7 @@ async function dryRun(o: Options, deps: Deps): Promise<Check[]> {
     const app = apps.ok ? (apps.value as Json[]).find((a) => String(a.repo || '').toLowerCase() === o.repo.toLowerCase()) : null;
     add('build', `factory answers (app list)`, apps.ok, apps.error);
     if (apps.ok) add('build', `factory app for ${o.repo}`, app, app ? `app ${app.app}` : `no app for ${o.repo}: factory app add --repo ${o.repo}`);
+    if (app) checks.push(tickedCheck(app));
   }
 
   const health = await safely(() => deps.getJson(`${deps.paBase}/healthz`, { timeoutMs: 5000 }));
@@ -651,4 +665,4 @@ function writeReport(file: string, report: Json): void {
   fs.writeFileSync(file, JSON.stringify(report, null, 2) + os.EOL);
 }
 
-module.exports = { main, dryRun, golden, sweep, remote, clean, ownSessions, killSessions, answerPrompt, chatCall, approvalChecks, policyDry, E2E_ACTOR, viewChecksFor, writeReport, defaultDeps, safely, scrollbacks, sessionLists, linkPages, owner };
+module.exports = { main, dryRun, tickedCheck, golden, sweep, remote, clean, ownSessions, killSessions, answerPrompt, chatCall, approvalChecks, policyDry, E2E_ACTOR, viewChecksFor, writeReport, defaultDeps, safely, scrollbacks, sessionLists, linkPages, owner };

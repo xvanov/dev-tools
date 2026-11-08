@@ -135,7 +135,7 @@ const ACTION_TOOLS = [
   {
     name: 'factory_start',
     description:
-      "Start software-factory work — the user approves each call. From a board card (`card`: its full context becomes the brief, composed server-side) and/or the user's words (`ask`). kind code (default) changes a repo; research/report write a report. Default runtime claude_session; api only when the user asks. `delivery` from their words (\"ready to merge\" → pr). Put requirements like CI green / review passed in `done`. auto_merge and push_to_main become a card instead. Returns the run and job ids and the follow link.",
+      "Start software-factory work — the user approves each call. From a board card (`card`: its full context becomes the brief, composed server-side) and/or the user's words (`ask`). kind code (default) changes a repo; research/report write a report. Default runtime claude_session; api only when the user asks. `delivery` from their words (\"ready to merge\" → pr). Put requirements like CI green / review passed in `done`. auto_merge and push_to_main become a card instead. Returns the run and job ids and the follow link; a `waiting` field means nothing ticks that app, so the job sits queued — tell the user.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -157,7 +157,7 @@ const ACTION_TOOLS = [
   {
     name: 'factory_continue',
     description:
-      'Continue existing work in the factory: a new job on an existing `branch` or `pr` of a repo (fix review comments, make CI green, finish it) — the user approves each call. Same options as factory_start. Fails clearly if the factory does not support continuing yet.',
+      'Continue existing work in the factory: a new job on an existing `branch` or `pr` of a repo (fix review comments, make CI green, finish it) — the user approves each call. Same options and answer as factory_start (`continues` names the PR it adds commits to). Fails clearly if the factory does not support continuing yet.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -306,6 +306,7 @@ function jobRow(v: Json, raw: Json | null = null) {
   // v1.3: no progress for hours (factory_resume can pick it up), and the branch/PR it continues.
   if (raw?.stalled === true) out.stalled = true;
   if (raw?.base && typeof raw.base === 'object' && raw.base.branch) out.continues = { branch: String(raw.base.branch), pr: raw.base.pr ?? null };
+  if (v.waiting) out.waiting = v.waiting;
   if (v.app) out.app = v.app;
   if (v.why) out.why = clip(v.why, 200);
   const prs = v.stories.map((s: Json) => s.prUrl).filter(Boolean);
@@ -666,6 +667,11 @@ function startedView(r: Json) {
     if (r.created === false) out.already_submitted = true;
     if (r.delivery !== r.deliveryRequested) out.warning = `asked for ${r.deliveryRequested}; the factory reports ${r.delivery}`;
     if (r.warnings?.length) out.warnings = r.warnings.slice(0, 5);
+    if (r.ticked === false) {
+      // Said first and plainly: the job was accepted but nothing will pick it up.
+      const why = (r.warnings || []).find((w: string) => /^ticker:/.test(w));
+      out.waiting = why ? why.replace(/^ticker:\s*/, '') : `app ${r.app || '?'} is not ticked; this job stays queued until something ticks it`;
+    }
     if (r.base) out.continues = { branch: r.base.branch || null, pr: r.base.pr ?? null, into: r.base.into || null };
     out.follow = r.url || null;
     if (r.timings) out.timings_ms = r.timings;

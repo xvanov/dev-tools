@@ -653,6 +653,8 @@ async function start({
     warnings,
     // v1.3: what a --branch/--pr job continues ({branch, pr, into}); null otherwise.
     base: job.base && typeof job.base === 'object' ? job.base : null,
+    // v1.6: false = nothing ticks the app, so the job stays queued until a human acts.
+    ticked: typeof job.ticked === 'boolean' ? job.ticked : null,
     timings: ms,
   };
 }

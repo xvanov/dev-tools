@@ -146,6 +146,18 @@ const V1_JOB = {
   assert.strictEqual(F.groupOf({ state: 'queued' }), 'running');
 }
 
+// --- 8.4.24: a job nothing ticks -------------------------------------------------------------
+
+{
+  const idle = F.jobView({ job_id: 'gadget:004', app: 'gadget', state: 'queued', ticked: false, why: 'waiting: app gadget is not ticked: factory serve ticks widget; ...' });
+  assert.deepStrictEqual([idle.group, idle.waiting, idle.ticked], ['needs_you', 'app not ticked', false], 'it never moves on its own: not running');
+  assert.strictEqual(F.groupOf({ state: 'in_progress', ticked: false }), 'needs_you');
+  assert.strictEqual(F.groupOf({ state: 'queued', ticked: null }), 'running', 'unknown coverage (a v1.5 factory, a test root) is not an alarm');
+  assert.strictEqual(F.groupOf({ state: 'done', ticked: false }), 'delivered');
+  assert.strictEqual(F.jobView({ job_id: 'gadget:005', state: 'failed', terminal: true, ticked: false }).waiting, null);
+  assert.deepStrictEqual([F.jobView({ job_id: 'widget:009', state: 'queued', ticked: true }).waiting, F.jobView({ job_id: 'widget:010' }).ticked], [null, null]);
+}
+
 // --- 8.4.17: a step's session link opens termhub's front, not sessiond -----------------------
 
 {
