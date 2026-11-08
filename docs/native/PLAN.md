@@ -265,6 +265,23 @@ run mid-step; a job continued on an existing branch (`--branch`).
     `factory bad_output: exit 0, no JSON object on stdout`. Serve's POST /api/cli returns empty stdout for
     `app list --json` (and the submit path), while job list and status are fine. No job was created; the
     card was dropped.
+    Run 4 retry (f92a06a, serve with 6e96a0d, 09:17Z; card #6763, run 19, job dev-tools:009): factory_start
+    13.5 s (about 7 s card context, 3.7 s compose model call on azure/pa, 2.7 s submit through serve and the
+    follow session). So the earlier 2-3 min starts came from factory calls before the serve fixes, not
+    from compose. PM and SM steps ran with sessions (E5.2 fixed). The dev step (claude_session, story 7)
+    was still dev_in_progress after 50 min, with no job update since 09:20, so I cancelled it at 10:10Z. Defects:
+  - [ ] **E5.6 A headless dev step waits on a notification that never comes.** The `claude -p` dev session
+    started the gate suite with run_in_background, said "waiting for completion notification" and ended
+    its turn (result success, twice). In -p mode a background task's notification never reaches the
+    session, so the step sits in dev_in_progress. Headless runs need foreground gate commands (or a
+    setting that forbids background tasks).
+  - [ ] **E5.7 The dev-tools app's gate is the whole software-factory pytest suite.** For a
+    personal-assistant change, the dev session ran in `<worktree>/software-factory`, installed its dev
+    extra and ran the full suite, which took over 10 min and hung at 98%. A monorepo app needs a gate
+    per changed tool (personal-assistant: `npm test`).
+  - [ ] **E5.8 Step sessions carry no E1 links in termhub.** GET :7000/api/sessions shows `links` empty
+    on every factory step session (pm, sm, dev of dev-tools:009), so Run cannot lead back to the job
+    or step.
   - [ ] **E5.5 factory serve returns empty stdout for some CLI commands** (`app list --json`, the submit
     path), so nothing can be dispatched through serve (sent to factory-native).
     factory-native: yes, serialized. One tick per app at a time, and a tick runs agent steps
