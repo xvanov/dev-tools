@@ -80,7 +80,7 @@ function scan(file, cache) {
     }
     FILE_LITERAL.lastIndex = 0;
     let m;
-    while ((m = FILE_LITERAL.exec(src))) names.add(path.basename(m[1]).toLowerCase());
+    while ((m = FILE_LITERAL.exec(src))) names.add(m[1].replace(/\\\\/g, '/').replace(/^(\.{1,2}\/)+/, '').toLowerCase());
   }
   const out = { found: [...found], ghost: [...ghost], names: [...names] };
   cache.set(file, out);
@@ -90,12 +90,13 @@ function scan(file, cache) {
 function affected({ cwd, testFiles, touches = {}, narrow = {}, since = 'HEAD' }) {
   const { top, files } = changedFiles(cwd, since);
   const changed = new Set(files.map(norm));
-  const byBase = new Map();
-  for (const f of files) {
-    const b = path.basename(f).toLowerCase();
-    if (!byBase.has(b)) byBase.set(b, []);
-    byBase.get(b).push(norm(f));
-  }
+  // A quoted file name in a reached file selects the test when a changed file matches it: by trailing
+  // path ("windows/common.ps1"), or, for a bare name ("talk.html"), by base name inside this tool's
+  // own directory. (Matching bare names repo-wide made every README.md edit select half the suite.)
+  const changedRel = files.map((f) => ({ rel: path.relative(top, f).replace(/\\\\/g, '/').toLowerCase(), inTool: norm(f).startsWith(norm(cwd) + path.sep) }));
+  const literalHits = (lit) => (lit.includes('/')
+    ? changedRel.some((c) => c.rel === lit || c.rel.endsWith('/' + lit))
+    : changedRel.some((c) => c.inTool && c.rel.split('/').pop() === lit));
   const rel = (f) => path.relative(top, f).replace(/\\/g, '/');
 
   const everything = [
@@ -132,10 +133,7 @@ function affected({ cwd, testFiles, touches = {}, narrow = {}, since = 'HEAD' })
       if (changed.has(key)) { hit = true; break; }
       const { found, ghost, names } = scan(f, cache);
       if (ghost.some((g) => changed.has(norm(g)))) { hit = true; break; }
-      for (const n of names) {
-        const same = byBase.get(n);
-        if (same && same.some((c) => c.startsWith(norm(top) + path.sep))) { hit = true; break; }
-      }
+      if (names.some(literalHits)) { hit = true; break; }
       stack.push(...found);
     }
     if (hit) selected.push(t);
