@@ -71,7 +71,7 @@ async function prepare({
   app = null, repoPath = null, kind = undefined, register = false, useModel = true, why = null, suggestedBy = null,
   jobKind = null, runtime = null, title = null,
 }: PrepareOptions): Promise<Offer> {
-  const dispatch = require('./index');
+  const dispatch = require('./index.ts');
   const route = require('./route.ts');
   // A research or report job is a factory job (JOBS-API v1.2).
   const jk = F.jobKind(jobKind);

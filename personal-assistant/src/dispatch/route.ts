@@ -152,7 +152,7 @@ async function forced({
 }
 
 async function decideFor({ commitmentId, kind, mode }: { commitmentId: number | string; kind?: string | null; mode?: string | undefined }): Promise<Decision> {
-  const target = await require('./index').resolveTarget({ commitmentId });
+  const target = await require('./index.ts').resolveTarget({ commitmentId });
   return decide({ target, mode, kind });
 }
 

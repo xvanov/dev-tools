@@ -195,7 +195,7 @@ async function keywordHits(repo: string, kws: string[]): Promise<Record<string, 
  * pick the facts the task needs; composeCore keeps it from leaving wholesale.
  */
 async function gather({ target, task = null, done = [], app = null, slug = null, appPath = null }: GatherOptions): Promise<Json> {
-  const dispatch = require('./index');
+  const dispatch = require('./index.ts');
   const operatorAsk = task || null;
   const title = task || target.commitment?.summary || '';
   const repo = localRepo([target.repoPath, target.project?.repo_path, appPath]);

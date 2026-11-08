@@ -1013,7 +1013,7 @@
         }
       ],
       "code": [
-        "personal-assistant/src/dispatch/index.js",
+        "personal-assistant/src/dispatch/index.ts",
         "personal-assistant/src/dispatch/factory.ts",
         "personal-assistant/src/dispatch/factoryCore.ts",
         "personal-assistant/src/dispatch/exec.ts",

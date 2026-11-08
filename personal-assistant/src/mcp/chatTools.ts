@@ -18,7 +18,7 @@
 //            factory_approve, session_start
 //            NOT on any allow list: Claude Code asks the user on every call
 //            (AGENT.md, "The PA chat acts only behind permission prompts").
-//            Each is the existing dispatch path (src/dispatch/index.js start,
+//            Each is the existing dispatch path (src/dispatch/index.ts start,
 //            factory.ts cancelJob/approve/resume), the same as `pa do` behind
 //            a shell prompt — so the same rules hold: an end state that merges
 //            or pushes to main with no human step is never started from here,

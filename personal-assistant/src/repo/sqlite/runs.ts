@@ -135,7 +135,7 @@ function create(db: Db) {
       return db.rows(`select id, repo_path, worktree_path from run where status in ${LIVE}`);
     },
 
-    // --- for src/dispatch/index.js
+    // --- for src/dispatch/index.ts
 
     /** The newest live run of a commitment: {id, machine}, or null. */
     async liveForCommitment(commitmentId: number | string) {

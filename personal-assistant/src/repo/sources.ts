@@ -544,7 +544,7 @@ function create(db: Db) {
       );
     },
 
-    // --- for src/dispatch/index.js, src/mcp/server.js
+    // --- for src/dispatch/index.ts, src/mcp/server.js
 
     /** One item row by id, or null. */
     async rowById(id: number | string) {

@@ -133,7 +133,7 @@ function create(db: Db) {
       return db.rows('select name, repo_path from project where active');
     },
 
-    // --- for src/dispatch/index.js, src/mcp/server.js
+    // --- for src/dispatch/index.ts, src/mcp/server.js
 
     /** The active project whose folder or forge path is `repoPath` (forge path caseless), or null. */
     async activeByRepo(repoPath: string) {

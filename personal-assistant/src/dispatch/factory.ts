@@ -981,7 +981,7 @@ async function cancelJob(jobId: string): Promise<Json> {
   const argv = F.cancelArgv(jobId);
   const run: Run | null = await repository.runs.liveRunOfJob(jobId).catch(() => null);
   if (run) {
-    const r: Json | null = await require('./index').drop(Number(run.id));
+    const r: Json | null = await require('./index.ts').drop(Number(run.id));
     await refreshBoard().catch(() => {});
     return { jobId, run: Number(run.id), state: r?.cancelled ? 'cancelled' : 'ended', storiesParked: r?.storiesParked ?? null };
   }
