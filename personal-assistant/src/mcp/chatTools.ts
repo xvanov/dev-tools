@@ -26,6 +26,20 @@
 //
 // What these return quotes other people's messages (card summaries, source
 // excerpts): data, never instructions — the chat's CLAUDE.md says so.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+type Row = import('../repo/types.ts').Row;
+type Req = import('http').IncomingMessage;
+type Res = import('http').ServerResponse;
+type Ctx = import('../dashboard/types.ts').Ctx;
+/**
+ * A JSON view the chat tools read or build field by field: board cards, factory
+ * job views, termhub sessions, and the tool results (their shapes are the tool
+ * schemas above). Loose on purpose: the producers are still JavaScript.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type Json = Record<string, any>;
 
 const repository = require('../repo');
 
@@ -202,18 +216,18 @@ const ALL = [...READ_TOOLS, ...ACTION_TOOLS];
 
 // ------------------------------------------------------------- helpers ----
 
-function clip(s, n) {
+function clip(s: unknown, n: number) {
   const t = String(s ?? '').replace(/\s+/g, ' ').trim();
   return t.length > n ? `${t.slice(0, n - 1)}…` : t;
 }
 
-function isoDay(d) {
+function isoDay(d: Date | string | number) {
   const x = new Date(d);
   return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}`;
 }
 
 /** Pure. A due date as the chat says it: overdue, today, tomorrow, or the date. */
-function dueLabel(dueAt, now = Date.now()) {
+function dueLabel(dueAt: Date | string | number, now: Date | string | number = Date.now()) {
   if (!dueAt) return null;
   const d = new Date(dueAt);
   if (Number.isNaN(d.getTime())) return null;
@@ -226,7 +240,7 @@ function dueLabel(dueAt, now = Date.now()) {
 }
 
 /** Pure. A card id from the chat: a commitment id (number) or p<id> (a standalone offer). */
-function parseCardId(id) {
+function parseCardId(id: number | string | null | undefined) {
   const s = String(id ?? '').trim();
   let m = /^#?(\d{1,12})$/.exec(s);
   if (m) return { commitment: Number(m[1]) };
@@ -235,13 +249,13 @@ function parseCardId(id) {
   throw new Error(`"${s}" is not a card id — a number from board (or p<id> for an offer)`);
 }
 
-function repoOf(c, extra) {
+function repoOf(c: Json, extra: Json) {
   return extra?.slug || (c.repo_path ? String(c.repo_path).split(/[\\/]/).filter(Boolean).pop() : null) || null;
 }
 
 /** Pure. One board card as the chat reads it. `extra`: {slug, run} by card id. */
-function compactCard(c, extra = {}, now = Date.now()) {
-  const out = { id: String(c.id) };
+function compactCard(c: Json, extra: Json = {}, now: Date | string | number = Date.now()) {
+  const out: Json = { id: String(c.id) };
   out.summary = clip(c.summary, 160);
   if (c.who) out.who = clip(c.who, 60);
   const due = dueLabel(c.due_at, now);
@@ -252,31 +266,31 @@ function compactCard(c, extra = {}, now = Date.now()) {
   if (c.direction === 'owed_to_me') out.owed_by = out.who || 'someone';
   if (c.status === 'dispatched') out.dispatched = true;
   if (extra.run) out.run = extra.run;
-  if (c.blockers?.length) out.blockers = c.blockers.map((b) => ({ id: String(b.id), who: b.who ? clip(b.who, 50) : null, summary: clip(b.summary, 100) }));
-  if (c.unblocked?.length) out.unblocked = c.unblocked.map((b) => ({ id: String(b.blocker_id), who: b.who ? clip(b.who, 50) : null, summary: clip(b.summary, 100) }));
+  if (c.blockers?.length) out.blockers = c.blockers.map((b: Json) => ({ id: String(b.id), who: b.who ? clip(b.who, 50) : null, summary: clip(b.summary, 100) }));
+  if (c.unblocked?.length) out.unblocked = c.unblocked.map((b: Json) => ({ id: String(b.blocker_id), who: b.who ? clip(b.who, 50) : null, summary: clip(b.summary, 100) }));
   if (c.waitingOn) out.waiting_on = true;
-  const offers = (c.asks || []).filter((p) => p && p.kind === 'dispatch');
+  const offers = (c.asks || []).filter((p: Json) => p && p.kind === 'dispatch');
   if (offers.length) out.offer = { proposal: Number(offers[0].id), title: clip(offers[0].title, 100), delivery: offers[0].payload?.delivery || null };
-  const other = (c.asks || []).filter((p) => p && p.kind !== 'dispatch');
-  if (other.length) out.asks = other.map((p) => ({ proposal: Number(p.id), kind: p.kind, title: clip(p.title, 100) }));
+  const other = (c.asks || []).filter((p: Json) => p && p.kind !== 'dispatch');
+  if (other.length) out.asks = other.map((p: Json) => ({ proposal: Number(p.id), kind: p.kind, title: clip(p.title, 100) }));
   if (c.settled) out.looks_done = { proposal: Number(c.settled.id), confidence: c.settled.confidence ?? null };
   if (c.standalone) out.standalone = true;
   return out;
 }
 
 /** Pure. The board (dashboard/board.js build()) as the chat's grouped list. */
-function boardView(board, { extras = new Map(), limit = 25, now = Date.now() } = {}) {
+function boardView(board: Json | null | undefined, { extras = new Map(), limit = 25, now = Date.now() }: { extras?: Map<string, Json>; limit?: number; now?: Date | string | number } = {}) {
   const onMe = board?.onMe || [];
-  const card = (c) => compactCard(c, extras.get(String(c.id)) || {}, now);
-  const unblocked = onMe.filter((c) => c.group === 'todo' && c.unblocked?.length);
-  const todo = onMe.filter((c) => c.group === 'todo' && !c.unblocked?.length);
+  const card = (c: Json) => compactCard(c, extras.get(String(c.id)) || {}, now);
+  const unblocked = onMe.filter((c: Json) => c.group === 'todo' && c.unblocked?.length);
+  const todo = onMe.filter((c: Json) => c.group === 'todo' && !c.unblocked?.length);
   const groups = {
     todo: todo.map(card),
-    blocked: onMe.filter((c) => c.group === 'blocked').map(card),
+    blocked: onMe.filter((c: Json) => c.group === 'blocked').map(card),
     unblocked: unblocked.map(card),
-    looks_done: onMe.filter((c) => c.group === 'settled').map(card),
+    looks_done: onMe.filter((c: Json) => c.group === 'settled').map(card),
   };
-  const out = { as_of: new Date(now).toISOString(), counts: {} };
+  const out: Json = { as_of: new Date(now).toISOString(), counts: {} };
   for (const [g, list] of Object.entries(groups)) {
     out.counts[g] = list.length;
     out[g] = list.slice(0, limit);
@@ -287,14 +301,14 @@ function boardView(board, { extras = new Map(), limit = 25, now = Date.now() } =
 }
 
 /** Pure. One factory job (factoryCore.jobView) for the list. */
-function jobRow(v, raw = null) {
-  const out = { job: v.jobId, state: v.state, group: v.group, kind: v.kind, runtime: v.runtime, title: clip(v.title, 120) };
+function jobRow(v: Json, raw: Json | null = null) {
+  const out: Json = { job: v.jobId, state: v.state, group: v.group, kind: v.kind, runtime: v.runtime, title: clip(v.title, 120) };
   // v1.3: no progress for hours (factory_resume can pick it up), and the branch/PR it continues.
   if (raw?.stalled === true) out.stalled = true;
   if (raw?.base && typeof raw.base === 'object' && raw.base.branch) out.continues = { branch: String(raw.base.branch), pr: raw.base.pr ?? null };
   if (v.app) out.app = v.app;
   if (v.why) out.why = clip(v.why, 200);
-  const prs = v.stories.map((s) => s.prUrl).filter(Boolean);
+  const prs = v.stories.map((s: Json) => s.prUrl).filter(Boolean);
   if (prs.length) out.prs = prs.slice(0, 5);
   if (v.ciFailing) out.ci_failing = true;
   if (v.costUsd) out.cost_usd = Math.round(v.costUsd * 100) / 100;
@@ -306,15 +320,15 @@ function jobRow(v, raw = null) {
 }
 
 /** Pure. One factory job in detail. */
-function jobDetail(v, { followUrl = null, raw = null } = {}) {
+function jobDetail(v: Json, { followUrl = null, raw = null }: { followUrl?: unknown; raw?: Json | null } = {}) {
   const out = jobRow(v, raw);
   out.delivery = v.delivery;
   out.pipeline = v.pipeline;
   out.terminal = v.terminal;
   out.cost_usd = Math.round(v.costUsd * 100) / 100;
   out.subscription_equiv_usd = Math.round(v.subscriptionEquivUsd * 100) / 100;
-  out.stories = v.stories.map((s) => {
-    const o = { id: s.id, state: s.state };
+  out.stories = v.stories.map((s: Json) => {
+    const o: Json = { id: s.id, state: s.state };
     if (s.prUrl) o.pr = s.prUrl;
     if (s.prNumber) o.pr_number = s.prNumber;
     if (s.prState) o.pr_state = s.prState;
@@ -322,8 +336,8 @@ function jobDetail(v, { followUrl = null, raw = null } = {}) {
     return o;
   });
   // Each step (the factory's run id) with its story and live session (plan E1).
-  out.runs = v.runs.slice(0, 10).map((r) => {
-    const o = { id: r.id, persona: r.persona, state: r.state, runtime: r.runtime, model: r.model, cost_usd: r.costUsd, billing: r.billing };
+  out.runs = v.runs.slice(0, 10).map((r: Json) => {
+    const o: Json = { id: r.id, persona: r.persona, state: r.state, runtime: r.runtime, model: r.model, cost_usd: r.costUsd, billing: r.billing };
     if (r.storyId != null) o.story = r.storyId;
     if (r.session?.url) o.session = r.session.url;
     if (r.session?.id) o.session_id = r.session.id;
@@ -342,10 +356,10 @@ function jobDetail(v, { followUrl = null, raw = null } = {}) {
  * `steps` [{step, story?, persona?, state?, session?, session_id?}] and `prs`
  * [{number?, url, state?, ci?}]; empty lists left out.
  */
-function chainFields(chain) {
-  const out = {};
-  const steps = (chain?.steps || []).slice(0, 10).map((s) => {
-    const o = { step: s.step };
+function chainFields(chain: Json | null | undefined) {
+  const out: Json = {};
+  const steps = (chain?.steps || []).slice(0, 10).map((s: Json) => {
+    const o: Json = { step: s.step };
     if (s.story != null) o.story = s.story;
     if (s.persona) o.persona = s.persona;
     if (s.runtime) o.runtime = s.runtime;
@@ -355,8 +369,8 @@ function chainFields(chain) {
     return o;
   });
   if (steps.length) out.steps = steps;
-  const prs = (chain?.prs || []).slice(0, 10).map((p) => {
-    const o = { url: p.url };
+  const prs = (chain?.prs || []).slice(0, 10).map((p: Json) => {
+    const o: Json = { url: p.url };
     if (p.number) o.number = p.number;
     if (p.state) o.state = p.state;
     if (p.ci) o.ci = p.ciFailing?.length ? `${p.ci}: ${p.ciFailing.join(', ')}` : p.ci;
@@ -367,8 +381,8 @@ function chainFields(chain) {
 }
 
 /** Pure. A termhub session as the chat reads it. */
-function sessionRow(s, { runs = new Map(), base = null } = {}) {
-  const out = { id: String(s.id), title: clip(s.title || '', 80) };
+function sessionRow(s: Json, { runs = new Map(), base = null }: { runs?: Map<string, unknown>; base?: unknown } = {}) {
+  const out: Json = { id: String(s.id), title: clip(s.title || '', 80) };
   if (s.cwd) out.cwd = String(s.cwd);
   if (s.kind) out.kind = s.kind;
   const state = s.alive === false ? 'ended' : s.idleState === 'working' ? 'working'
@@ -390,7 +404,7 @@ function sessionRow(s, { runs = new Map(), base = null } = {}) {
  * provider/model id for the persona that does the work (`dev`, or
  * `researcher` for research/report). Validated by factoryCore.parseModels.
  */
-function modelOverrides({ runtime, kind = 'code', model = null }) {
+function modelOverrides({ runtime, kind = 'code', model = null }: { runtime?: string | null; kind?: string; model?: string | null }) {
   if (!model) return null;
   const m = String(model).trim();
   const F = require('../dispatch/factoryCore');
@@ -409,7 +423,7 @@ function modelOverrides({ runtime, kind = 'code', model = null }) {
 }
 
 /** Pure. A branch name the factory may be told to continue: a plain git ref. */
-function branchName(b) {
+function branchName(b: unknown) {
   const s = String(b || '').trim();
   if (!require('../dispatch/factoryCore').BRANCH.test(s)) throw new Error(`"${s}" is not a branch name`);
   return s;
@@ -419,16 +433,16 @@ function branchName(b) {
  * Pure. A factory_start / factory_continue call → dispatch.start's options.
  * Throws on what cannot be a job.
  */
-function factoryPlan(args = {}, { card = null } = {}) {
+function factoryPlan(args: Json = {}, { card = null }: { card?: Json | null } = {}) {
   const F = require('../dispatch/factoryCore');
   const kind = F.jobKind(args.kind || 'code');
   const runtime = F.runtime(args.runtime || DEFAULT_RUNTIME);
   const commitmentId = card ? card.commitment : null;
   const ask = args.ask ? String(args.ask).trim() : null;
   if (!commitmentId && !ask) throw new Error('give a card id or the ask in the user\'s words');
-  const done = (Array.isArray(args.done) ? args.done : []).map((d) => String(d).trim()).filter(Boolean).slice(0, 12);
+  const done = (Array.isArray(args.done) ? args.done : []).map((d: unknown) => String(d).trim()).filter(Boolean).slice(0, 12);
   if (args.branch != null && args.pr != null) throw new Error('give a branch or a PR, not both');
-  const o = {
+  const o: Json = {
     commitmentId,
     task: ask,
     title: args.title ? String(args.title).trim() : null,
@@ -455,7 +469,7 @@ function factoryPlan(args = {}, { card = null } = {}) {
 
 // --------------------------------------------------------------- reads ----
 
-function hubBase(machine = null) {
+function hubBase(machine: string | null = null) {
   try {
     return require('../dispatch/termhub').forMachine(machine).base;
   } catch {
@@ -463,7 +477,7 @@ function hubBase(machine = null) {
   }
 }
 
-async function boardTool({ limit = 25 } = {}) {
+async function boardTool({ limit = 25 }: { limit?: number } = {}) {
   // The parts of the dashboard's state() (src/dashboard/server.js) the board
   // is built from — not drafts, sources, notifications or spend.
   const { gather } = require('../brief');
@@ -474,7 +488,7 @@ async function boardTool({ limit = 25 } = {}) {
   await require('../dashboard/cards.ts').enrich(s).catch(() => {});
   s.blocks = await require('../commitments/blocks').forBoard().catch(() => []);
   const board = require('../dashboard/board.ts').build(s);
-  const ids = board.onMe.filter((c) => !c.standalone).map((c) => Number(c.id)).filter(Number.isFinite);
+  const ids = board.onMe.filter((c: Json) => !c.standalone).map((c: Json) => Number(c.id)).filter(Number.isFinite);
   const extras = new Map();
   if (ids.length) {
     const found = await repository.commitments.boardExtras(ids).catch(() => []);
@@ -483,7 +497,7 @@ async function boardTool({ limit = 25 } = {}) {
   return boardView(board, { extras, limit });
 }
 
-async function cardTool({ id }) {
+async function cardTool({ id }: { id?: number | string | null }) {
   const ref = parseCardId(id);
   const { sourceLabel } = require('../dispatch/brief');
   if (ref.proposal) {
@@ -497,12 +511,12 @@ async function cardTool({ id }) {
   const c = await repository.commitments.cardForChat(ref.commitment);
   if (!c) throw new Error(`no card ${ref.commitment}`);
   const [info, runs, offers, blocks] = await Promise.all([
-    require('../dashboard/cards.ts').forCommitments([c.id]).then((r) => r.byId.get(String(c.id)) || null).catch(() => null),
+    require('../dashboard/cards.ts').forCommitments([c.id]).then((r: Json) => r.byId.get(String(c.id)) || null).catch(() => null),
     repository.runs.cardRuns(c.id).catch(() => []),
     repository.proposals.pendingOfCommitment(c.id).catch(() => []),
     repository.commitments.blocksOf(c.id).catch(() => []),
   ]);
-  const out = {
+  const out: Json = {
     id: String(c.id),
     summary: clip(c.summary, 300),
     direction: c.direction,
@@ -516,19 +530,19 @@ async function cardTool({ id }) {
   if (c.project) out.project = c.project;
   out.source = { item: Number(c.item_id), kind: sourceLabel(c.source), subject: c.subject ? clip(c.subject, 200) : null, at: c.occurred_at, excerpt: clip(c.body, 1500) };
   if (info?.context) out.context = clip(info.context, 800);
-  const links = (info?.links || []).slice(0, 12).map((l) => ({ kind: l.kind, label: clip(l.label || '', 80), url: l.url }));
+  const links = (info?.links || []).slice(0, 12).map((l: Json) => ({ kind: l.kind, label: clip(l.label || '', 80), url: l.url }));
   if (links.length) out.links = links;
-  const sessions = (info?.sessions || []).slice(0, 4).map((x) => ({ role: x.role || null, label: clip(x.label || x.title || '', 80), url: x.url || null }));
+  const sessions = (info?.sessions || []).slice(0, 4).map((x: Json) => ({ role: x.role || null, label: clip(x.label || x.title || '', 80), url: x.url || null }));
   if (sessions.length) out.sessions = sessions;
-  const blockers = blocks.filter((b) => b.task_id === String(c.id) && b.verdict === 'blocks');
-  if (blockers.length) out.blockers = blockers.map((b) => ({ id: b.blocker_id, who: b.who || null, summary: clip(b.summary, 120), status: b.status }));
-  const holds = blocks.filter((b) => b.blocker_id === String(c.id) && b.verdict === 'blocks' && b.task_id);
-  if (holds.length) out.blocks_task = holds.map((b) => b.task_id);
+  const blockers = blocks.filter((b: Json) => b.task_id === String(c.id) && b.verdict === 'blocks');
+  if (blockers.length) out.blockers = blockers.map((b: Json) => ({ id: b.blocker_id, who: b.who || null, summary: clip(b.summary, 120), status: b.status }));
+  const holds = blocks.filter((b: Json) => b.blocker_id === String(c.id) && b.verdict === 'blocks' && b.task_id);
+  if (holds.length) out.blocks_task = holds.map((b: Json) => b.task_id);
   if (runs.length) {
     // Plan E1: each run's steps (with their sessions) and every PR with its CI.
-    const stored = await require('../dispatch/factory').chains(runs.map((r) => r.id)).catch(() => new Map());
-    out.runs = runs.map((r) => {
-      const o = { run: Number(r.id), status: r.status, route: r.route || 'claude', mode: r.mode };
+    const stored = await require('../dispatch/factory').chains(runs.map((r: Json) => r.id)).catch(() => new Map());
+    out.runs = runs.map((r: Json) => {
+      const o: Json = { run: Number(r.id), status: r.status, route: r.route || 'claude', mode: r.mode };
       if (r.factory_job_id) o.job = r.factory_job_id;
       if (r.factory_state) o.job_state = r.factory_state;
       if (r.delivery) o.delivery = r.delivery;
@@ -543,36 +557,36 @@ async function cardTool({ id }) {
       return o;
     });
   }
-  if (offers.length) out.offers = offers.map((p) => ({ proposal: Number(p.id), kind: p.kind, title: clip(p.title, 120), delivery: p.payload?.delivery || null }));
+  if (offers.length) out.offers = offers.map((p: Json) => ({ proposal: Number(p.id), kind: p.kind, title: clip(p.title, 120), delivery: p.payload?.delivery || null }));
   return out;
 }
 
-async function factoryJobsTool({ group = 'active', limit = 15 } = {}) {
+async function factoryJobsTool({ group = 'active', limit = 15 }: { group?: string; limit?: number } = {}) {
   const factory = require('../dispatch/factory');
   const F = require('../dispatch/factoryCore');
   if (!factory.enabled()) return { enabled: false, note: 'the factory is not configured (PA_FACTORY_PATH)' };
   const snap = await factory.snapshot();
   const runs = await repository.runs.factoryJobs().catch(() => []);
-  const b = F.board(snap.jobs, { paRuns: new Map(runs.map((r) => [r.factory_job_id, { id: Number(r.id), url: null }])) });
+  const b = F.board(snap.jobs, { paRuns: new Map(runs.map((r: Json) => [r.factory_job_id, { id: Number(r.id), url: null }])) });
   const want = group === 'all' ? F.GROUPS : group === 'active' ? ['needs_you', 'running'] : [group];
-  const out = { as_of: snap.polledAt, counts: Object.fromEntries(F.GROUPS.map((g) => [g, b.groups[g].length])) };
+  const out: Json = { as_of: snap.polledAt, counts: Object.fromEntries(F.GROUPS.map((g: string) => [g, b.groups[g].length])) };
   if (snap.error) out.last_error = clip(snap.error, 200);
   if (b.spend?.factoryToday) out.spend_today = { metered_usd: b.spend.factoryToday.metered, subscription_equiv_usd: b.spend.factoryToday.subscriptionEquiv };
   for (const g of want) {
-    const byId = new Map(snap.jobs.map((j) => [j.job_id, j]));
-    out[g] = b.groups[g].slice(0, limit).map((v) => jobRow(v, byId.get(v.jobId)));
+    const byId = new Map<unknown, Json>(snap.jobs.map((j: Json) => [j.job_id, j]));
+    out[g] = b.groups[g].slice(0, limit).map((v: Json) => jobRow(v, byId.get(v.jobId)));
     if (b.groups[g].length > limit) out[`${g}_more`] = b.groups[g].length - limit;
   }
   return out;
 }
 
-function checkJob(job) {
+function checkJob(job: unknown) {
   const F = require('../dispatch/factoryCore');
   if (!F.JOB_ID.test(String(job || ''))) throw new Error(`"${job}" is not a factory job id (app:direction) — factory_jobs lists them`);
   return String(job);
 }
 
-async function factoryJobTool({ job, fresh = false }) {
+async function factoryJobTool({ job, fresh = false }: { job?: Json | null; fresh?: boolean }) {
   const id = checkJob(job);
   const factory = require('../dispatch/factory');
   const F = require('../dispatch/factoryCore');
@@ -592,25 +606,25 @@ async function factoryJobTool({ job, fresh = false }) {
   return { ...jobDetail(v, { followUrl, raw }), from: source };
 }
 
-async function sessionsTool({ machine = null, all = false } = {}) {
+async function sessionsTool({ machine = null, all = false }: { machine?: string | null; all?: boolean } = {}) {
   const termhub = require('../dispatch/termhub');
   const { config } = require('../config');
   if (machine && !config.termhub.machines[machine]) throw new Error(`"${machine}" is not in PA_MACHINES`);
   const hub = termhub.forMachine(machine);
   const list = await hub.listSessions();
   const runs = await repository.runs.withSessions().catch(() => []);
-  const byId = new Map(runs.map((r) => [String(r.termhub_session_id), {
+  const byId = new Map<string, unknown>(runs.map((r: Json) => [String(r.termhub_session_id), {
     run: Number(r.id), status: r.status, ...(r.factory_job_id ? { job: r.factory_job_id } : {}), ...(r.commitment_id ? { card: String(r.commitment_id) } : {}),
   }]));
   // A factory step's own session (plan E1, sql/033 run_step): its run, job and step.
-  const ids = list.map((s) => String(s.id)).filter((x) => !byId.has(x));
+  const ids = list.map((s: Json) => String(s.id)).filter((x: string) => !byId.has(x));
   const steps = ids.length
     ? await repository.runs.stepsBySessions(ids).catch(() => [])
     : [];
   for (const s of steps) {
     byId.set(String(s.termhub_session_id), { run: Number(s.run_id), status: s.status, job: s.job_id, step: s.step_id, ...(s.commitment_id ? { card: String(s.commitment_id) } : {}) });
   }
-  const shown = list.filter((s) => all || s.alive !== false).map((s) => sessionRow(s, { runs: byId, base: hub.base }));
+  const shown = list.filter((s: Json) => all || s.alive !== false).map((s: Json) => sessionRow(s, { runs: byId, base: hub.base }));
   return { machine: machine || 'this machine', count: shown.length, sessions: shown.slice(0, 60) };
 }
 
@@ -619,7 +633,7 @@ async function sessionsTool({ machine = null, all = false } = {}) {
 // An end state with no human step after the yes never starts from the chat
 // (AGENT.md; D.requireConfirmed): it goes on a card the user accepts in the
 // dashboard or a terminal, exactly as `pa do` does for a non-interactive caller.
-async function startOrCard(o) {
+async function startOrCard(o: Json) {
   const dispatch = require('../dispatch');
   const D = require('../dispatch/deliveryCore');
   const kind = require('../dispatch/factoryCore').jobKind(o.jobKind);
@@ -644,10 +658,10 @@ async function startOrCard(o) {
 }
 
 /** Pure. dispatch.start's result as the chat reports it. */
-function startedView(r) {
+function startedView(r: Json) {
   if (r.route === 'factory') {
     if (r.submitUnknown) return { started: 'unconfirmed', run: r.id, note: r.note };
-    const out = { started: true, run: r.id, job: r.jobId, kind: r.jobKind || 'code', runtime: r.runtime, delivery: r.delivery, pipeline: r.pipeline };
+    const out: Json = { started: true, run: r.id, job: r.jobId, kind: r.jobKind || 'code', runtime: r.runtime, delivery: r.delivery, pipeline: r.pipeline };
     if (r.app) out.app = r.app;
     if (r.created === false) out.already_submitted = true;
     if (r.delivery !== r.deliveryRequested) out.warning = `asked for ${r.deliveryRequested}; the factory reports ${r.delivery}`;
@@ -659,7 +673,7 @@ function startedView(r) {
   return { started: true, run: r.id, route: 'claude', mode: r.mode, delivery: r.delivery || null, branch: r.branch || null, session: r.url || null, repo: r.repoPath || null };
 }
 
-async function factoryStartTool(args, { requireBranchOrPr = false } = {}) {
+async function factoryStartTool(args: Json, { requireBranchOrPr = false }: { requireBranchOrPr?: boolean } = {}) {
   const card = args.card != null ? parseCardId(args.card) : null;
   if (card?.proposal) throw new Error(`p${card.proposal} is an offer, not a card — accept it in the dashboard, or start from its card`);
   if (requireBranchOrPr && args.branch == null && args.pr == null) throw new Error('name the branch or the PR to continue');
@@ -668,12 +682,12 @@ async function factoryStartTool(args, { requireBranchOrPr = false } = {}) {
   return startOrCard(o);
 }
 
-async function sessionStartTool(args) {
+async function sessionStartTool(args: Json) {
   const card = args.card != null ? parseCardId(args.card) : null;
   if (card?.proposal) throw new Error(`p${card.proposal} is an offer, not a card`);
   const prompt = String(args.prompt || '').trim();
   if (!prompt) throw new Error('a session needs a prompt');
-  const o = {
+  const o: Json = {
     commitmentId: card ? card.commitment : null,
     task: prompt,
     via: 'claude',
@@ -686,7 +700,7 @@ async function sessionStartTool(args) {
   return startOrCard(o);
 }
 
-async function handle(name, args = {}) {
+async function handle(name: string, args: Json = {}) {
   const factory = () => require('../dispatch/factory');
   switch (name) {
     case 'board': return boardTool(args);
@@ -699,7 +713,7 @@ async function handle(name, args = {}) {
     case 'factory_resume': {
       const r = await factory().resume(checkJob(args.job));
       const raw = r.raw || {};
-      const n = (x) => (Array.isArray(x) ? x.length : 0);
+      const n = (x: unknown) => (Array.isArray(x) ? x.length : 0);
       return { job: r.jobId, resumed: true, state: r.state || null, was: raw.was || null, stories_resumed: n(raw.resumed), stories_kept: n(raw.kept), stories_left: n(raw.stories_left), ...(r.why ? { why: r.why } : {}) };
     }
     case 'factory_cancel': {

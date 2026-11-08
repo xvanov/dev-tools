@@ -28,7 +28,7 @@
 // The endpoint (POST /api/chat/permission, src/dashboard/server.js) needs X-PA
 // and the page token, like every dashboard action that starts work.
 
-const { CHAT_ACTION_TOOL_NAMES } = require('../mcp/chatTools');
+const { CHAT_ACTION_TOOL_NAMES } = require('../mcp/chatTools.ts');
 
 const SERVER = 'pa-chat';
 const ANSWERS = ['yes', 'no'];

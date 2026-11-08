@@ -256,7 +256,7 @@ const TASK_TOOL = 'task_add';
 // the actions (factory_start, session_start, …) are on no allow list, so
 // Claude Code asks the user on every call — verifyClaudeHome refuses a home
 // that would let one through.
-const { CHAT_READ_TOOL_NAMES: CHAT_READ_TOOLS, CHAT_ACTION_TOOL_NAMES: CHAT_ACTION_TOOLS } = require('../mcp/chatTools');
+const { CHAT_READ_TOOL_NAMES: CHAT_READ_TOOLS, CHAT_ACTION_TOOL_NAMES: CHAT_ACTION_TOOLS } = require('../mcp/chatTools.ts');
 
 // The Claude chat's MCP server: the same server.js as everyone's, under its
 // own name and with PA_MCP_CHAT_TOOLS=1, so the read-only `pa` tool is listed

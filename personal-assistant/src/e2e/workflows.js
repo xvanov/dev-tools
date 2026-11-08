@@ -111,14 +111,14 @@ async function dry(id, acc, o, deps) {
   } else if (id === 'research' || id === 'review-fix') {
     checks.push(...(await factoryDry(deps, o.repo)));
     checks.push(await claudeDry(deps));
-    const tools = require('../mcp/chatTools');
+    const tools = require('../mcp/chatTools.ts');
     const tool = id === 'research' ? 'factory_start' : 'factory_continue';
     checks.push(check('ask', `chat tool ${tool}`, tools.CHAT_ACTION_TOOL_NAMES.includes(tool)));
     if (id === 'review-fix') notes.push('a real run needs --pr <n>: one of your own PRs with review comments (left open; only the fix is pushed)');
   } else if (id === 'deepseek-pr') {
     const base = await G.dryRun({ ...o, runtime: 'api', model: o.model }, deps);
     checks.push(...base);
-    const m = await G.safely(() => require('../mcp/chatTools').modelOverrides({ runtime: 'api', kind: 'code', model: o.model }));
+    const m = await G.safely(() => require('../mcp/chatTools.ts').modelOverrides({ runtime: 'api', kind: 'code', model: o.model }));
     checks.push(check('build', `model ${o.model} accepted for the dev step`, m.ok, m.ok ? m.value.join(' ') : m.error));
   } else if (id === 'teams-ask') {
     const st = await G.safely(() => deps.getJson(`${deps.paBase}/api/state`));

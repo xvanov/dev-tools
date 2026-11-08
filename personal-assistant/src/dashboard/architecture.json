@@ -495,7 +495,7 @@
       },
       "code": [
         "personal-assistant/src/mcp/server.js",
-        "personal-assistant/src/mcp/chatTools.js",
+        "personal-assistant/src/mcp/chatTools.ts",
         "personal-assistant/integrations/claude-code/README.md"
       ]
     },

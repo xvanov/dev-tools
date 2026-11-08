@@ -24,7 +24,7 @@ process.env.PA_FACTORY_UV = '/home/tester/.local/bin/uv';
 
 const F = require('../src/dispatch/factoryCore');
 const T = require('../src/dispatch/termhub');
-const C = require('../src/mcp/chatTools');
+const C = require('../src/mcp/chatTools.ts');
 
 // --- PR numbers -----------------------------------------------------------------------
 assert.strictEqual(F.prNumber(12, 'https://github.com/o/r/pull/99'), 12, 'the factory\'s pr_number wins');

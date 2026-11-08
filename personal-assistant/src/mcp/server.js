@@ -499,7 +499,7 @@ async function dispatchTool(name, args = {}) {
 
     default: {
       // The chat's structured tools (src/mcp/chatTools.js): chat-only, like `pa`.
-      const chat = require('./chatTools');
+      const chat = require('./chatTools.ts');
       if (chatToolsOn() && chat.ALL.some((t) => t.name === name)) return json(await chat.handle(name, args));
       throw new Error(`unknown tool ${name}`);
     }
@@ -546,7 +546,7 @@ function formatRecall(r) {
 
 /** The tools this server lists: the shared read surface, plus the chat's own. */
 function listedTools(env = process.env) {
-  return chatToolsOn(env) ? [...TOOLS, PA_TOOL, TASK_TOOL, ...require('./chatTools').ALL] : TOOLS;
+  return chatToolsOn(env) ? [...TOOLS, PA_TOOL, TASK_TOOL, ...require('./chatTools.ts').ALL] : TOOLS;
 }
 
 async function main() {

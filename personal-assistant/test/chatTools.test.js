@@ -18,7 +18,7 @@ process.env.PA_FACTORY_PATH = '/srv/factory-checkout';
 process.env.PA_FACTORY_MACHINE = '';
 process.env.PA_WORKTREES_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), 'pa-chattools-test-'));
 
-const T = require('../src/mcp/chatTools');
+const T = require('../src/mcp/chatTools.ts');
 const F = require('../src/dispatch/factoryCore');
 
 const NOW = new Date(2026, 10, 7, 10, 0, 0).getTime();

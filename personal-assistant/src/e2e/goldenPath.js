@@ -43,7 +43,7 @@ function defaultDeps() {
     },
     addCard: (text) => require('../commitments/request').add({ text, via: 'cli' }),
     closeCard: (id) => require('../commitments').setStatus(Number(id), 'dropped'),
-    chat: (name, args) => require('../mcp/chatTools').handle(name, args),
+    chat: (name, args) => require('../mcp/chatTools.ts').handle(name, args),
     factoryEnabled: () => factory.enabled(),
     factoryMachine: () => factory.machine(),
     factoryApps: () => factory.apps({ fresh: true }),
@@ -192,7 +192,7 @@ async function dryRun(o, deps) {
   }
 
   for (const t of ['factory_start', 'factory_resume', 'factory_cancel', 'card', 'factory_job', 'sessions']) {
-    const tools = require('../mcp/chatTools');
+    const tools = require('../mcp/chatTools.ts');
     add('mcp', `chat tool ${t}`, [...tools.CHAT_READ_TOOL_NAMES, ...tools.CHAT_ACTION_TOOL_NAMES].includes(t));
   }
   const sessions = await safely(() => deps.chat('sessions', {}));
