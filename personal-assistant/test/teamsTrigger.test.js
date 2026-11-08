@@ -11,7 +11,7 @@ const { EventEmitter } = require('events');
 const { PassThrough } = require('stream');
 
 const t = require('../src/ingest/teamsTrigger');
-const { passes } = require('../src/util/exclusive');
+const { passes } = require('../src/util/exclusive.ts');
 const readers = require('../src/ingest/teamsReader');
 const { config } = require('../src/config');
 const local = require('../src/ingest/teamsLocal');

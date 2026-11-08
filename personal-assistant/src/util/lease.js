@@ -167,7 +167,7 @@ function createLease({ connect, pollMs = 500, log = null, key = WORKER_KEY, pass
 /**
  * The worker's side of a roll: take over (acquire the lease, start the
  * schedulers), hand over (stop the schedulers, release the lease), and recover
- * a lost lease. `scheduler` is src/util/scheduler.js.
+ * a lost lease. `scheduler` is src/util/scheduler.ts.
  */
 function createOwnership({ lease, scheduler, log = null, onOwned = () => {} }) {
   let want = false;

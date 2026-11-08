@@ -69,9 +69,9 @@ const log = logger('worker');
 
 // Every caller — the timers and the Teams fast path alike — goes through
 // these, so a pass never overlaps itself however it was started
-// (src/util/exclusive.js). `exclusive` skips a busy pass and resolves to
+// (src/util/exclusive.ts). `exclusive` skips a busy pass and resolves to
 // whether it ran; `soon` runs right after a busy one instead.
-const passes = require('./util/exclusive').passes({
+const passes = require('./util/exclusive.ts').passes({
   onError: (name, err) => log.warn('pass failed', { name, message: err.message }),
 });
 
@@ -94,7 +94,7 @@ const lease = require('./util/lease').createLease({
 // First ticks spread over 2–20 s, not 2–5: a generation taking over starts
 // two dozen passes at once, and their cold start is CPU it shares with
 // serving the dashboard.
-const sched = require('./util/scheduler').createScheduler({ passes, lease, log, firstTickMs: () => 2000 + Math.random() * 18_000 });
+const sched = require('./util/scheduler.ts').createScheduler({ passes, lease, log, firstTickMs: () => 2000 + Math.random() * 18_000 });
 const every = (seconds, name, fn) => sched.every(seconds, name, fn);
 const exclusive = (name, fn) => sched.run(name, fn);
 

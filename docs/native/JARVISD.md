@@ -64,9 +64,10 @@ How a module moves (the pattern is `personal-assistant/src/events/bus.ts`, the f
 - **Stay CommonJS while any `.js` caller remains**: keep `module.exports`; no `import`/`export`
   statements, not even `import type` or `export interface` (either makes Bun load the file as
   ESM, where `module` is undefined). Contract types come in by type query:
-  `type BusEvent = import('../../../schemas/types.d.ts').Event;`. Without import/export the file
-  is a script to `tsc`, so local type names must not collide with globals (`Event` becomes
-  `BusEvent`).
+  `type BusEvent = import('../../../schemas/types.d.ts').Event;`. `tsc` still treats each file as
+  a module (`moduleDetection: "force"` in `jarvisd/tsconfig.json`), so two files' local types
+  (`PassFn` in exclusive.ts and scheduler.ts) never collide, nor a local with a global
+  (`crypto`, `Event`).
 - Strict types on every export; `jarvisd/tsconfig.json` includes `personal-assistant/src/**/*.ts`,
   so jarvisd's typecheck covers each converted module.
 - Its tests run under Node (the PA suite) and Bun (`jarvisd/scripts/parity.js`). One module, or

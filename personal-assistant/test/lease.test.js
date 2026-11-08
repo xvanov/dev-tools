@@ -1,6 +1,6 @@
 'use strict';
 
-// Single-owner background work (src/util/lease.js, src/util/scheduler.js;
+// Single-owner background work (src/util/lease.js, src/util/scheduler.ts;
 // docs/native/PLAN.md Z2). Two worker generations share one fake Postgres
 // whose advisory locks behave like the real ones (per session, re-entrant,
 // gone when the session ends), so this needs no database.
@@ -9,8 +9,8 @@ const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
 const { createLease, createOwnership } = require('../src/util/lease');
-const { createScheduler } = require('../src/util/scheduler');
-const { passes } = require('../src/util/exclusive');
+const { createScheduler } = require('../src/util/scheduler.ts');
+const { passes } = require('../src/util/exclusive.ts');
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // Wait for a condition instead of sleeping and hoping: a loaded machine slows timers and queries, and

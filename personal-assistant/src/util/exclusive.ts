@@ -14,12 +14,22 @@
 // distill — that pass had already chosen its items. Several `soon` calls
 // during one busy pass collapse into one follow-up (the newest fn), and every
 // caller's promise resolves when that follow-up has run.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
 
-function passes({ onError = () => {} } = {}) {
-  const running = new Set();
-  const queued = new Map(); // name -> { fn, waiters }
+type PassFn = () => unknown;
 
-  async function run(name, fn) {
+interface Passes {
+  run(name: string, fn: PassFn): Promise<boolean>;
+  soon(name: string, fn: PassFn): Promise<boolean>;
+  isRunning(name: string): boolean;
+}
+
+function passes({ onError = () => {} }: { onError?: (name: string, err: unknown) => void } = {}): Passes {
+  const running = new Set<string>();
+  const queued = new Map<string, { fn: PassFn; waiters: Array<(ran: boolean) => void> }>();
+
+  async function run(name: string, fn: PassFn): Promise<boolean> {
     if (running.has(name)) return false;
     running.add(name);
     try {
@@ -37,17 +47,17 @@ function passes({ onError = () => {} } = {}) {
     return true;
   }
 
-  function soon(name, fn) {
+  function soon(name: string, fn: PassFn): Promise<boolean> {
     if (!running.has(name)) return run(name, fn);
     return new Promise((resolve) => {
-      const q = queued.get(name) || { fn, waiters: [] };
+      const q = queued.get(name) || { fn, waiters: [] as Array<(ran: boolean) => void> };
       q.fn = fn;
       q.waiters.push(resolve);
       queued.set(name, q);
     });
   }
 
-  return { run, soon, isRunning: (name) => running.has(name) };
+  return { run, soon, isRunning: (name: string): boolean => running.has(name) };
 }
 
 module.exports = { passes };

@@ -590,7 +590,7 @@ Postgres and nowhere else. Tests use invented names; fixtures never hold a real 
   core, and then its `/healthz` does not answer.
 - **Single-owner background work (Z2).** Two generations overlap during a roll, so every
   timer, watcher and in-process worker in `src/worker.js` is declared on the scheduler
-  (`src/util/scheduler.js`: `every(...)` for passes, `sched.service(name, start)` for anything
+  (`src/util/scheduler.ts`: `every(...)` for passes, `sched.service(name, start)` for anything
   that returns a stop handle) and runs only while the generation holds the lease
   (`src/util/lease.js`: advisory lock 7300 on a dedicated connection). On `drain` the old
   generation stops its schedulers and releases the lease at once, without waiting for passes
