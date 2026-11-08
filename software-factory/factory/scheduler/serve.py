@@ -331,6 +331,9 @@ class ServeConfig:
     poll_s: float = DEFAULT_POLL_S
     tick_timeout_s: float = DEFAULT_TICK_TIMEOUT_S
     dispatch: bool = True
+    #: Consecutive wake-started ticks of one app before wakes are ignored until
+    #: the next interval tick (a story moving step to step re-wakes its app).
+    max_wake_burst: int = 30
 
 
 Spawn = Callable[[list[str], Path, IO[bytes], dict[str, str]], "subprocess.Popen[bytes]"]
@@ -363,6 +366,7 @@ class Scheduler:
     pending: dict[str, str] = field(default_factory=dict)
     next_dispatch: float = 0.0
     ticks_started: int = 0
+    burst: dict[str, int] = field(default_factory=dict)
 
     def log(self, msg: str) -> None:
         self.out(f"{_now_iso()} serve: {msg}")
@@ -388,6 +392,7 @@ class Scheduler:
         self.running[app] = _Running(proc=proc, started=now, log=log, reason=reason)
         self.next_due[app] = now + self.cfg.interval_s
         self.ticks_started += 1
+        self.burst[app] = self.burst.get(app, 0) + 1 if reason == "wake" else 0
         self.log(f"tick {app} started pid={proc.pid} ({reason})")
 
     def _reap(self) -> None:
@@ -432,6 +437,8 @@ class Scheduler:
             self.next_dispatch = now + self.cfg.interval_s
             targets = self.cfg.apps if ALL_APPS in woken else [a for a in woken if a in self.cfg.apps]
             for app in targets:
+                if self.burst.get(app, 0) >= self.cfg.max_wake_burst:
+                    continue  # runaway re-waking: the interval tick takes over
                 self.pending[app] = "wake"
         elif now >= self.next_dispatch:
             self._dispatch("interval")

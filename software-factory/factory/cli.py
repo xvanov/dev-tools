@@ -1279,6 +1279,16 @@ def tick_cmd(
 
     summary = tick(_FACTORY_ROOT, app_name, dry_run=dry_run)
 
+    # Plan 2.2: a tick that moved a story asks `factory serve` to tick this app
+    # again as soon as it exits, so a chain walks step to step without waiting
+    # for the 300 s interval (which stays the backstop). A tick that moved
+    # nothing (waiting on CI, a human, a dependency) does not, and serve caps
+    # consecutive progress re-ticks. Harmless without serve (systemd timers).
+    if not dry_run and (summary.handler_runs or summary.merges):
+        from factory.scheduler.serve import request_wake
+
+        request_wake(_FACTORY_ROOT, app_name, reason="progress")
+
     # After the story chain advances, drain any pending deploy queue
     # entries for this app. The deploy worker honors deploy-frozen mode
     # via the settings enforcer.

@@ -115,6 +115,25 @@ def test_wake_during_a_running_tick_reticks_when_it_ends(tmp_path: Path) -> None
     assert h.apps_started() == ["a", "a"]
 
 
+def test_progress_rewakes_are_capped_until_an_interval_tick(tmp_path: Path) -> None:
+    h = Harness(tmp_path, ["a"], interval=300)
+    h.sched.cfg.max_wake_burst = 2
+    h.sched.step()  # interval tick
+    for t in (1, 2, 3, 4):
+        h.spawned[-1][1].rc = 0
+        h.now = t
+        h.sched.step(["a"])  # each finished tick made progress and re-woke its app
+    # interval, wake, wake, then wakes ignored (burst cap 2)
+    assert len(h.spawned) == 3
+    h.spawned[-1][1].rc = 0
+    h.now = 400  # interval due: resets the burst
+    h.sched.step()
+    h.spawned[-1][1].rc = 0
+    h.now = 401
+    h.sched.step(["a"])
+    assert len(h.spawned) == 5
+
+
 def test_wake_for_an_unserved_app_only_dispatches(tmp_path: Path) -> None:
     h = Harness(tmp_path, ["a"])
     h.sched.step()
