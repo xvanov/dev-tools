@@ -26,6 +26,7 @@ from pathlib import Path
 from sqlmodel import Session, select
 
 from factory.runner import Run, _engine
+from factory.state_dir import state_dir
 
 # Personas the D003 direction requires to stamp story_id/direction_id/app.
 # ``docs_enforcer`` is deliberately excluded — see module docstring.
@@ -117,7 +118,7 @@ def _window_runs(
     db_path: Path | None = None,
     days: int,
 ) -> list[Run]:
-    db = db_path or (Path(software_factory_root) / "state" / "factory.db")
+    db = db_path or (state_dir(Path(software_factory_root)) / "factory.db")
     eng = _engine(db)
     cutoff = datetime.now(UTC) - timedelta(days=days)
     out: list[Run] = []

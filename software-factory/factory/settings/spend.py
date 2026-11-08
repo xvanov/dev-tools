@@ -14,11 +14,12 @@ from typing import Any
 from sqlmodel import Session, select
 
 from factory.runner import Run, _engine, _record_run
+from factory.state_dir import state_dir
 
 
 def today_spend_usd(software_factory_root: Path, *, db_path: Path | None = None) -> float:
     """Sum of ``runs.cost_usd`` for runs whose ts is in today's UTC date."""
-    db = db_path or (Path(software_factory_root) / "state" / "factory.db")
+    db = db_path or (state_dir(Path(software_factory_root)) / "factory.db")
     eng = _engine(db)
     today = datetime.now(UTC).date().isoformat()
     total = 0.0
@@ -46,7 +47,7 @@ def persona_runs_today(
     so this counter only counts ``scheduled_runs`` rows where
     ``dry_run=False`` plus all ``runs`` rows.
     """
-    db = db_path or (Path(software_factory_root) / "state" / "factory.db")
+    db = db_path or (state_dir(Path(software_factory_root)) / "factory.db")
     eng = _engine(db)
     today = datetime.now(UTC).date().isoformat()
     count = 0
@@ -76,7 +77,7 @@ def unpriced_model_runs_today(
     a $0.00 total can otherwise hide: these runs are real spend the ledger
     could not read, not free calls.
     """
-    db = db_path or (Path(software_factory_root) / "state" / "factory.db")
+    db = db_path or (state_dir(Path(software_factory_root)) / "factory.db")
     eng = _engine(db)
     today = datetime.now(UTC).date().isoformat()
     out: list[Run] = []
@@ -96,7 +97,7 @@ def unpriced_model_runs_today(
 
 def hour_spend_usd(software_factory_root: Path, *, db_path: Path | None = None) -> float:
     """Sum of ``runs.cost_usd`` for runs in the past 60 minutes (UTC)."""
-    db = db_path or (Path(software_factory_root) / "state" / "factory.db")
+    db = db_path or (state_dir(Path(software_factory_root)) / "factory.db")
     eng = _engine(db)
     cutoff = datetime.now(UTC) - timedelta(hours=1)
     total = 0.0
@@ -132,7 +133,7 @@ def recent_runs(
     limit: int = 5,
 ) -> list[Run]:
     """Return the last ``limit`` Run rows sorted by ts descending."""
-    db = db_path or (Path(software_factory_root) / "state" / "factory.db")
+    db = db_path or (state_dir(Path(software_factory_root)) / "factory.db")
     eng = _engine(db)
     with Session(eng) as session:
         rows = list(session.exec(select(Run)).all())
@@ -147,7 +148,7 @@ def spend_by_day(
     days: int = 7,
 ) -> list[tuple[str, float]]:
     """Return a list of ``(YYYY-MM-DD, total_usd)`` for the past ``days`` days."""
-    db = db_path or (Path(software_factory_root) / "state" / "factory.db")
+    db = db_path or (state_dir(Path(software_factory_root)) / "factory.db")
     eng = _engine(db)
     out: dict[str, float] = {}
     with Session(eng) as session:
@@ -182,7 +183,7 @@ def record_cost(
     if db_path is not None:
         db = db_path
     elif software_factory_root is not None:
-        db = Path(software_factory_root) / "state" / "factory.db"
+        db = state_dir(Path(software_factory_root)) / "factory.db"
     else:
         db = None
     _record_run(

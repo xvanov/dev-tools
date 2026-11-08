@@ -14,6 +14,8 @@ import statistics
 from datetime import UTC, datetime
 from pathlib import Path
 
+from factory.state_dir import state_dir
+
 
 def _parse_ts(ts: str) -> datetime | None:
     """Parse an ISO-8601 timestamp string, returning None on failure."""
@@ -66,7 +68,7 @@ def tick_duration_outliers(
         * ``still_running_max_age_s`` — age in seconds of the oldest
           unmatched ``tick_start``, or 0.0 when none.
     """
-    stream = root / "state" / "events" / "ticks.ndjson"
+    stream = state_dir(root) / "events" / "ticks.ndjson"
     if not stream.exists():
         return {
             "completed_ticks": [],

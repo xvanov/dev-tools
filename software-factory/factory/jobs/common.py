@@ -10,6 +10,7 @@ import frontmatter
 import yaml
 
 from factory.directions.parser import _ID_PREFIX_RE, list_direction_dirs
+from factory.state_dir import state_dir
 
 #: Separator between app and direction id in a job id (``sacrifice:021``).
 JOB_ID_SEP = ":"
@@ -32,7 +33,7 @@ class JobError(Exception):
 
 
 def state_db_path(root: Path) -> Path:
-    return Path(root) / "state" / "factory.db"
+    return state_dir(Path(root)) / "factory.db"
 
 
 def format_job_id(app: str, direction_id: str) -> str:

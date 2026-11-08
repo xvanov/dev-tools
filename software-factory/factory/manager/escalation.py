@@ -49,6 +49,7 @@ from pathlib import Path
 from typing import Any
 
 from factory.manager.signals import write_alert_event, write_event
+from factory.state_dir import state_dir
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -112,7 +113,7 @@ def _issue_marker(marker_id: str) -> str:
 
 
 def _history_path(root: Path) -> Path:
-    return Path(root) / "state" / _ESCALATION_HISTORY
+    return state_dir(Path(root)) / _ESCALATION_HISTORY
 
 
 def _load_history(root: Path) -> list[dict[str, Any]]:

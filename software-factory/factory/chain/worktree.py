@@ -76,6 +76,7 @@ from factory.chain.branch import (
     _run_git,
     feature_branch_name,
 )
+from factory.state_dir import state_dir
 
 _logger = logging.getLogger(__name__)
 
@@ -100,7 +101,7 @@ def worktree_path(
     """
     sid = int(story_id) if story_id is not None else 0
     safe_slug = re.sub(r"[^A-Za-z0-9._-]+", "-", slug).strip("-")[:60] or "story"
-    return Path(software_factory_root) / "state" / "worktrees" / f"{app}-{sid}-{safe_slug}"
+    return state_dir(Path(software_factory_root)) / "worktrees" / f"{app}-{sid}-{safe_slug}"
 
 
 def _sweep_acceptance_oracles(worktree: Path, *, story_id: int | None) -> None:
@@ -388,7 +389,7 @@ def prune_stale_worktrees(
     Resilient: filesystem errors are swallowed so a tick can't be
     taken down by a stuck worktree.
     """
-    base = Path(software_factory_root) / "state" / "worktrees"
+    base = state_dir(Path(software_factory_root)) / "worktrees"
     if not base.exists():
         return []
     removed: list[Path] = []

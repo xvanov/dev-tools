@@ -13,6 +13,8 @@ import json
 from datetime import datetime
 from pathlib import Path
 
+from factory.state_dir import state_dir
+
 
 def state_distribution_skew(
     *,
@@ -62,7 +64,7 @@ def state_distribution_skew(
         Returns ``{"app_snapshots": {}}`` when no qualifying snapshots
         exist.
     """
-    stream = root / "state" / "events" / "queue.ndjson"
+    stream = state_dir(root) / "events" / "queue.ndjson"
     if not stream.exists():
         return {"app_snapshots": {}}
 

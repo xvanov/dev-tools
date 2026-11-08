@@ -80,6 +80,24 @@ const crypt = require('../src/backupCrypto.ts');
     assert.throws(() => backup.unpack(damaged, { key }), /authentication/);
     assert.strictEqual(fs.readdirSync(os.tmpdir()).filter((n) => n.startsWith('pa-unpack-')).length, before, 'no unpack folder left behind');
 
+    // A state dir moved out of the repo under another name (`factory state migrate --to`).
+    const moved = path.join(dir, 'sf-state');
+    fs.mkdirSync(path.join(moved, 'jobs'), { recursive: true });
+    fs.mkdirSync(path.join(moved, 'logs'), { recursive: true });
+    fs.writeFileSync(path.join(moved, 'jobs', 'c.json'), '{"id":"c"}');
+    fs.writeFileSync(path.join(moved, 'logs', 'serve.log'), 'x');
+    fs.writeFileSync(dumpFile, 'abc');
+    const out3 = path.join(dir, 'pa-20260104-000000.pabak');
+    await backup.bundle({ dumpFile, out: out3, key, state: moved, counts: null });
+    const u3 = backup.unpack(out3, { key });
+    try {
+      assert.ok(fs.existsSync(path.join(u3.stateDir, 'jobs', 'c.json')), 'a state dir not named state is restored');
+      assert.ok(!fs.existsSync(path.join(u3.stateDir, 'logs')), 'and its logs left out');
+    } finally {
+      fs.rmSync(u3.dir, { recursive: true, force: true });
+    }
+    fs.rmSync(out3, { force: true });
+
     // No factory: a bundle without state.
     fs.writeFileSync(dumpFile, 'abc');
     const out2 = path.join(dir, 'pa-20260102-000000.pabak');

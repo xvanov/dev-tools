@@ -12,6 +12,8 @@ import json
 from datetime import datetime
 from pathlib import Path
 
+from factory.state_dir import state_dir
+
 
 def retry_storm(
     *,
@@ -52,7 +54,7 @@ def retry_storm(
 
         Empty list when no matching failures exist or the file is missing.
     """
-    stream = root / "state" / "events" / "runs.ndjson"
+    stream = state_dir(root) / "events" / "runs.ndjson"
     if not stream.exists():
         return []
 

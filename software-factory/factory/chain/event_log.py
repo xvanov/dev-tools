@@ -27,10 +27,12 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from factory.state_dir import state_dir
+
 
 def _logs_dir(software_factory_root: Path | None) -> Path:
     root = Path(software_factory_root) if software_factory_root else Path.cwd()
-    return root / "state" / "logs"
+    return state_dir(root) / "logs"
 
 
 def _story_log_path(

@@ -118,12 +118,27 @@ function createPacer({ run, nextMs, minGapMs = 500, onError = () => {}, timers =
  * The factory's state directory when the factory runs on this machine and
  * the directory is there, else null (a remote factory is paced by polling).
  */
-function localStateDir(factoryConfig, { hostname = os.hostname(), exists = fs.existsSync } = {}) {
+function localStateDir(factoryConfig, { hostname = os.hostname(), exists = fs.existsSync, readFile } = {}) {
   const machine = String(factoryConfig?.machine || '').trim();
   if (machine && machine.toLowerCase() !== hostname.toLowerCase()) return null;
   if (!factoryConfig?.path) return null;
-  const dir = path.join(factoryConfig.path, 'state');
+  const dir = resolveStateDir(factoryConfig.path, { readFile });
   return exists(dir) ? dir : null;
+}
+
+/**
+ * A factory root's state directory: the absolute path in its `.state-dir`
+ * pointer (written by `factory state migrate`, which moves state out of the
+ * repo), else `<root>/state`. Mirrors software-factory/factory/state_dir.py.
+ */
+function resolveStateDir(factoryPath, { readFile = (p) => fs.readFileSync(p, 'utf8') } = {}) {
+  try {
+    const text = String(readFile(path.join(factoryPath, '.state-dir')) || '').trim();
+    if (text && path.isAbsolute(text)) return text;
+  } catch {
+    // no pointer: an unmigrated root
+  }
+  return path.join(factoryPath, 'state');
 }
 
 /**
@@ -146,4 +161,4 @@ function watchState(dir, { onChange, ignore = () => false, watch = fs.watch }) {
   return () => w.close();
 }
 
-module.exports = { moving, nextDelayMs, createPacer, localStateDir, watchState, MOVING };
+module.exports = { moving, nextDelayMs, createPacer, localStateDir, resolveStateDir, watchState, MOVING };

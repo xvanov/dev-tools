@@ -36,6 +36,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from factory.state_dir import state_dir
+
 # Lazy-imported helpers — at module level so tests can monkeypatch them.
 
 
@@ -156,7 +158,7 @@ _MODULE_OUTPUT_CAP = 16 * 1024  # 16 KB
 
 
 def _context_refresh_event_path(root: Path) -> Path:
-    return root / "state" / "events" / "context_refresh.ndjson"
+    return state_dir(root) / "events" / "context_refresh.ndjson"
 
 
 def _log_event(root: Path, event: str, payload: dict[str, Any]) -> None:

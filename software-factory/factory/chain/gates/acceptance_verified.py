@@ -254,6 +254,7 @@ from factory.chain.acceptance import (
     ORACLE_COPY_PREFIX,
     acceptance_dir,
     acceptance_expected_for_story,
+    acceptance_ref_path,
     author_exhausted,
     author_passes,
     clear_gate_block,
@@ -633,8 +634,7 @@ def _evaluate(pr: PRContext, app_config: AppConfig) -> GateResult:  # noqa: PLR0
         )
 
     repo_root = Path(pr.repo_root)
-    p = Path(ref)
-    stored = p if p.is_absolute() else Path(root) / p
+    stored = acceptance_ref_path(Path(root), ref)
     oracle_src = stored.read_text(encoding="utf-8", errors="replace")
     oracle_sha = oracle_sha256(oracle_src)
     details["oracle_sha256"] = oracle_sha[:16]

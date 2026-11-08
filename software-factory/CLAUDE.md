@@ -218,6 +218,9 @@ live in `.env` (`.env.example` documents every one).
 | machine config | `state/runtime/<app>.json` overlay | one writer per fact |
 
 `state/**` is runtime and gitignored. Never `git add -A` in the live tree.
+`state/` above means the state dir, `uv run factory state where`: outside the repo
+once `factory state migrate` ran (`.state-dir` pointer; docs/WINDOWS.md), in code
+always `factory.state_dir.state_dir(root)`, never `root / "state"`.
 
 ## Operator command surface
 

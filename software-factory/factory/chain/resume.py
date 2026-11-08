@@ -91,6 +91,7 @@ from typing import Any
 from sqlmodel import Session, create_engine, select
 
 from factory.chain.state_machine import StoryRecord, StoryState
+from factory.state_dir import state_dir
 
 # Re-entry points an operator may name. Each maps to the state the story is put
 # back into; the chain's own dispatch/poller tables take it from there.
@@ -516,7 +517,7 @@ def apply_resume(
     if not any(e.get("event") == "story_resumed" for e in tail):
         raise RuntimeError(
             f"the `story_resumed` event for story {plan.story_id} could not be written to "
-            f"{root}/state/logs — that event IS the merge-gate block reset, so resuming "
+            f"{state_dir(root) / 'logs'} — that event IS the merge-gate block reset, so resuming "
             "without it would re-park the story on the next evaluation. Nothing was "
             "changed; fix the log path/permissions and retry."
         )

@@ -38,6 +38,8 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
+from factory.state_dir import state_dir
+
 # A runner is called with an optional list of test node-ids to scope the run to
 # (``None`` = the whole suite) and returns a TestRunResult.
 TestRunner = Callable[[list[str] | None], "TestRunResult"]
@@ -223,7 +225,7 @@ def detect_flakes(
 
 
 def _registry_path(software_factory_root: Path) -> Path:
-    return Path(software_factory_root) / _QUARANTINE_REGISTRY_REL
+    return state_dir(Path(software_factory_root)) / _QUARANTINE_REGISTRY_REL.name
 
 
 def load_quarantine_registry(software_factory_root: Path) -> dict[str, object]:

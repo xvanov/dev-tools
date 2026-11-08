@@ -15,6 +15,8 @@ import json
 from datetime import datetime
 from pathlib import Path
 
+from factory.state_dir import state_dir
+
 
 def runs_failed_since(*, root: Path, since: datetime) -> list[dict]:
     """Return all failed run events from ``state/events/runs.ndjson`` since *since*.
@@ -36,7 +38,7 @@ def runs_failed_since(*, root: Path, since: datetime) -> list[dict]:
         file is missing, empty, or no failure rows match the time
         window.
     """
-    stream = root / "state" / "events" / "runs.ndjson"
+    stream = state_dir(root) / "events" / "runs.ndjson"
     if not stream.exists():
         return []
 

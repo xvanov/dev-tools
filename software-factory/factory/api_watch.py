@@ -42,6 +42,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from factory.state_dir import state_dir
+
 _log = logging.getLogger(__name__)
 
 #: Caps so one huge observation cannot bloat the stream (the full trajectory
@@ -431,8 +433,7 @@ def stream_dir(
 ) -> Path:
     stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
     return (
-        Path(software_factory_root)
-        / "state"
+        state_dir(Path(software_factory_root))
         / "api_runs"
         / f"{app or 'app'}-{story_id or 0}-{persona}-{stamp}"
     )

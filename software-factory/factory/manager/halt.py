@@ -19,6 +19,8 @@ import time
 from datetime import UTC, datetime
 from pathlib import Path  # noqa: E402
 
+from factory.state_dir import state_dir
+
 # Schema version for the halt state file.
 _SCHEMA_VERSION = 1
 
@@ -46,11 +48,11 @@ _RESUME_GRACE_MINUTES = 30
 
 
 def _halt_path(root: Path) -> Path:
-    return root / "state" / _HALT_FILE
+    return state_dir(root) / _HALT_FILE
 
 
 def _history_path(root: Path) -> Path:
-    return root / "state" / _HALT_HISTORY_FILE
+    return state_dir(root) / _HALT_HISTORY_FILE
 
 
 def request_halt(

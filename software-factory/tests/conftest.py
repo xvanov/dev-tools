@@ -30,6 +30,7 @@ from collections.abc import Iterator
 import pytest
 
 import factory.runner as _runner
+import factory.state_dir as _state_dir
 
 # Windows: run like Linux, in Python's UTF-8 mode (the factory does: the
 # factory-serve task, serve's children and the PA set it). Set before xdist
@@ -46,7 +47,6 @@ if sys.platform == "win32":
 for _var in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR",
              "GIT_PREFIX", "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES"):
     os.environ.pop(_var, None)
-
 _FACTORY_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 # --------------------------------------------------------------------------- #
@@ -178,7 +178,12 @@ def _isolate_factory_state(
     monkeypatch.setattr(
         _runner, "_DEFAULT_DB_PATH", state_root / "state" / "factory.db", raising=True
     )
+    # The package root's own state dir: in a migrated checkout its .state-dir
+    # pointer names the LIVE state, so code handed the real root lands in tmp.
+    _state_dir.clear_cache()
+    _state_dir._cache[os.path.abspath(_state_dir.PACKAGE_ROOT)] = state_root / "state"
     yield
+    _state_dir.clear_cache()
 
 
 @pytest.fixture(autouse=True)

@@ -37,6 +37,7 @@ from typing import TYPE_CHECKING, Any
 
 from factory.app_config import AcceptanceBootConfig, AppConfig
 from factory.chain.state_machine import StoryRecord, StoryState, is_terminal
+from factory.state_dir import state_dir
 
 if TYPE_CHECKING:
     from factory.directions.parser import Direction
@@ -105,7 +106,22 @@ _NO_ORACLE_STATES = frozenset(
 def acceptance_dir(software_factory_root: Path, app: str, story_id: int | None) -> Path:
     """The per-story directory holding the stored acceptance test."""
     sid = int(story_id) if story_id is not None else 0
-    return Path(software_factory_root) / "state" / "acceptance" / app / str(sid)
+    return state_dir(Path(software_factory_root)) / "acceptance" / app / str(sid)
+
+
+def acceptance_ref_path(software_factory_root: Path, ref: str) -> Path:
+    """The file a stored ``acceptance_test_ref`` names.
+
+    Refs are stored as ``state/acceptance/...``; the ``state/`` prefix means the
+    root's state dir, which may live outside the root (``factory state migrate``),
+    so refs written before a migration still resolve after it.
+    """
+    p = Path(ref)
+    if p.is_absolute():
+        return p
+    if p.parts and p.parts[0] == "state":
+        return state_dir(Path(software_factory_root)).joinpath(*p.parts[1:])
+    return Path(software_factory_root) / p
 
 
 def sweep_leaked_oracles(tree: Path) -> list[str]:
@@ -907,7 +923,7 @@ def pending_acceptance_attention(
       whose provenance could not be established).
     """
     out: list[dict[str, Any]] = []
-    base = Path(software_factory_root) / "state" / "acceptance" / app
+    base = state_dir(Path(software_factory_root)) / "acceptance" / app
     try:
         story_dirs = sorted(
             (d for d in base.iterdir() if d.is_dir()),
@@ -957,7 +973,7 @@ def _persist(story: StoryRecord, software_factory_root: Path, db_path: Path | No
     try:
         from factory.chain.handlers import persist_story
 
-        persist_story(story, db_path or (Path(software_factory_root) / "state" / "factory.db"))
+        persist_story(story, db_path or (state_dir(Path(software_factory_root)) / "factory.db"))
         return True
     except Exception as exc:  # noqa: BLE001 - flags are set in-memory regardless
         _log.error(
@@ -1089,7 +1105,7 @@ def author_acceptance_test(
     test_path = out_dir / "test_acceptance.py"
     test_path.write_text(content, encoding="utf-8")
 
-    rel = test_path.relative_to(Path(software_factory_root))
+    rel = Path("state") / test_path.relative_to(state_dir(Path(software_factory_root)))
     story.acceptance_test_ref = rel.as_posix()  # stored: same on every OS
     _persist(story, software_factory_root, db_path)
     _emit(software_factory_root, "authored", story, ref=rel.as_posix())
@@ -1122,8 +1138,7 @@ def ref_is_readable(story: StoryRecord | None, software_factory_root: Path | Non
     ref = story.acceptance_test_ref
     if not ref:
         return False
-    p = Path(ref)
-    stored = p if p.is_absolute() else Path(software_factory_root) / p
+    stored = acceptance_ref_path(Path(software_factory_root), ref)
     try:
         return stored.is_file() and stored.stat().st_size > 0
     except OSError:
@@ -1168,7 +1183,7 @@ def reauthor_missing_oracles(
     if dry_run:
         return 0
     root = Path(software_factory_root)
-    db = db_path or (root / "state" / "factory.db")
+    db = db_path or (state_dir(root) / "factory.db")
     try:
         from sqlmodel import Session, select
 
@@ -1222,8 +1237,7 @@ def reauthor_missing_oracles(
             if app_config.gates.acceptance_boot is None:
                 continue
             try:
-                p = Path(story.acceptance_test_ref or "")
-                stored_path = p if p.is_absolute() else root / p
+                stored_path = acceptance_ref_path(root, story.acceptance_test_ref or "")
                 stored_src = stored_path.read_text(encoding="utf-8")
             except OSError:
                 continue

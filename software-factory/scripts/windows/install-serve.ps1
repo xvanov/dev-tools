@@ -58,13 +58,20 @@ if (-not $SkipSync) {
 $py = Join-Path $root '.venv\Scripts\python.exe'
 if (-not (Test-Path $py)) { throw "no venv at $py; run without -SkipSync" }
 
-$log = Join-Path $root 'state\logs\serve.log'
-New-Item -ItemType Directory -Force (Split-Path -Parent $log) | Out-Null
+# Runtime state (story worktrees, agent run dirs, the DB) belongs OUTSIDE the
+# repo: an agent working in a worktree under the checkout could reach the live
+# code the stacks run from. Moving it is the operator's step, never this
+# script's: stop serve, run `factory state migrate` (docs/WINDOWS.md), re-run this.
+if (-not (Test-Path (Join-Path $root '.state-dir'))) {
+  Write-Warning ("the factory state is still in the repo ($root\state). With serve stopped, run " +
+    "'uv run factory state migrate' there, then re-run this script (docs/WINDOWS.md).")
+}
 
 # -X utf8: UTF-8 mode, as on Linux (serve also passes PYTHONUTF8=1 to its children).
 # --supervise: Task Scheduler does not restart a program that exits non-zero, and
 # serve exits 75 when the checkout moves (new code); the supervisor restarts it.
-$serveArgs = @('-X', 'utf8', '-m', 'factory', 'serve', '--supervise', '--interval', "$IntervalSeconds", '--log-file', "`"$log`"")
+# A relative --log-file is under the state dir (wherever .state-dir points).
+$serveArgs = @('-X', 'utf8', '-m', 'factory', 'serve', '--supervise', '--interval', "$IntervalSeconds", '--log-file', 'logs\serve.log')
 foreach ($a in $Apps) { $serveArgs += @('--app', $a) }
 
 # A console program from an Interactive logon task gets a visible console

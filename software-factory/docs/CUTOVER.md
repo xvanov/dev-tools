@@ -114,3 +114,9 @@ stay there; they are inert while nothing runs from it. Point `PA_FACTORY_PATH`
 back at `/home/k/software-factory`.
 
 The rollback can also be previewed with `--dry-run`.
+
+It moves the new tree's `state/`, so it predates `factory state migrate`
+(docs/WINDOWS.md, "State lives outside the repo"). Once the new tree's state is
+outside the repo (`software-factory/.state-dir` exists), that `state/` holds only
+its `.gitignore`: move the state back first (the directory `factory state where`
+prints, into `state/`, then delete `.state-dir`) or the rollback carries nothing.

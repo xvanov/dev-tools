@@ -35,6 +35,7 @@ from typing import Any
 from factory.app_config import AppConfig
 from factory.directions.parser import list_direction_dirs, parse_direction_dir
 from factory.directions.tracker_issue import resolve_tracker_issue
+from factory.state_dir import state_dir
 
 
 def _direction_marker(direction_id: str, slug: str) -> str:
@@ -87,7 +88,7 @@ def backfill_tracker_issues(
     """
     result = TrackerBackfillResult()
     root = Path(software_factory_root)
-    db = Path(db_path) if db_path is not None else root / "state" / "factory.db"
+    db = Path(db_path) if db_path is not None else state_dir(root) / "factory.db"
 
     try:
         repo = github_client.get_repo(app_config.repo)

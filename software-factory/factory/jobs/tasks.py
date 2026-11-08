@@ -65,6 +65,7 @@ from factory.oscompat import (
     unlock_file,
 )
 from factory.oscompat import pid_alive as _os_pid_alive
+from factory.state_dir import state_dir
 
 SCRATCH_APP = "scratch"
 TASK_ID_RE = re.compile(r"^r\d{4,}$")
@@ -86,7 +87,7 @@ TERMINAL = frozenset({DONE, FAILED, CANCELLED})
 
 
 def tasks_root(root: Path) -> Path:
-    return Path(root) / "state" / "jobs"
+    return state_dir(Path(root)) / "jobs"
 
 
 def is_task_job_id(job_id: str) -> bool:
@@ -539,7 +540,7 @@ def run_task(root: Path, job_id: str) -> dict[str, Any]:
     if meta.get("cancel"):
         return update_meta(d, state=CANCELLED, ended_at=_now(), why="cancelled before it started")
     update_meta(d, state=RUNNING, worker_pid=os.getpid(), started_at=_now(), why=None)
-    db = root / "state" / "factory.db"
+    db = state_dir(root) / "factory.db"
     try:
         cwd, sha = prepare_workspace(root, ref)
         ref.meta = update_meta(d, workspace=str(cwd), base_sha=sha)
@@ -703,7 +704,7 @@ def _factory_blocked(root: Path) -> str | None:
             return "factory is halted"
     except Exception:  # noqa: BLE001
         pass
-    db = root / "state" / "factory.db"
+    db = state_dir(root) / "factory.db"
     if db.exists():
         import sqlite3
 

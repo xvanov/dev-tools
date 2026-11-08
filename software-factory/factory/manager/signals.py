@@ -36,6 +36,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from factory.state_dir import state_dir
+
 SCHEMA_VERSION: int = 1
 
 # Name of the append-only stream that records control-plane anomalies and
@@ -78,7 +80,7 @@ def _events_dir(software_factory_root: Path | None) -> Path:
     else:
         env_root = os.environ.get("FACTORY_STATE_ROOT")
         root = Path(env_root) if env_root else Path.cwd()
-    return root / "state" / "events"
+    return state_dir(root) / "events"
 
 
 def write_event(

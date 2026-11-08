@@ -60,6 +60,7 @@ from factory.delivery import (
     effective_level,
     parse_level,
 )
+from factory.state_dir import state_dir
 
 _logger = logging.getLogger(__name__)
 
@@ -574,7 +575,7 @@ STORY_LOCK_TIMEOUT_S = 120.0
 
 
 def _story_lock_path(root: Path, story_id: int) -> Path:
-    return Path(root) / "state" / "locks" / f"story-{int(story_id)}.lock"
+    return state_dir(Path(root)) / "locks" / f"story-{int(story_id)}.lock"
 
 
 @contextlib.contextmanager

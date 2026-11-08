@@ -59,6 +59,7 @@ from typing import Any
 from factory.app_config import AppConfig, load_app_config, resolve_app_repo_path
 from factory.chain.event_log import log_story_event
 from factory.context.canonical_paths import context_path
+from factory.state_dir import state_dir
 
 # Canonical context paths the refresh is allowed to touch. Anything outside
 # this set means the run is misconfigured — we refuse to open a PR so the
@@ -202,7 +203,7 @@ def handle_context_refresh(
     refresh_branch = f"factory/context-refresh-{ts}"
     base_branch = cfg.default_branch or "main"
 
-    worktree_root = root / "state" / "context-refresh"
+    worktree_root = state_dir(root) / "context-refresh"
     worktree_root.mkdir(parents=True, exist_ok=True)
     worktree = worktree_root / f"{app}-{ts}"
 

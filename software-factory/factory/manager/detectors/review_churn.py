@@ -33,6 +33,8 @@ import json
 from datetime import datetime
 from pathlib import Path
 
+from factory.state_dir import state_dir
+
 # Personas whose run cadence reflects a review-convergence loop.
 _REVIEWER = "reviewer"
 _DEV = "dev"
@@ -95,7 +97,7 @@ def review_churn(
 
         Empty list when no story reaches *min_cycles* or the file is missing.
     """
-    stream = root / "state" / "events" / "runs.ndjson"
+    stream = state_dir(root) / "events" / "runs.ndjson"
     if not stream.exists():
         return []
 
