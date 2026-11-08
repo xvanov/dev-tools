@@ -59,5 +59,12 @@ class Options(unittest.TestCase):
         self.assertEqual(ts._options(short)["beam_size"], 1)
 
 
+class NoThrottle(unittest.TestCase):
+    def test_answers_whether_it_took(self):
+        self.assertIsInstance(ts._no_throttle(), bool)
+        if os.name != "nt":
+            self.assertFalse(ts._no_throttle())
+
+
 if __name__ == "__main__":
     unittest.main()

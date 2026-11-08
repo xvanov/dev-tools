@@ -172,6 +172,35 @@ def _transcribe(audio_path: str) -> str:
                 raise
 
 
+def _no_throttle() -> bool:
+    """Opt out of Windows power throttling (EcoQoS) and raise the priority a step.
+    The server runs windowless, so Windows parks it on efficiency cores; its CPU
+    half (features, decoding loop) then loses to whatever else runs, as the PA's
+    smart-turn check does at the same moment. As personal-assistant/voice/server.py."""
+    if os.name != "nt":
+        return False
+    try:
+        import ctypes
+        import ctypes.wintypes as w
+
+        class PPT(ctypes.Structure):
+            _fields_ = [("Version", w.ULONG), ("ControlMask", w.ULONG), ("StateMask", w.ULONG)]
+
+        k = ctypes.WinDLL("kernel32", use_last_error=True)
+        k.GetCurrentProcess.restype = w.HANDLE
+        k.SetProcessInformation.argtypes = [w.HANDLE, ctypes.c_int, ctypes.c_void_p, w.DWORD]
+        k.SetProcessInformation.restype = w.BOOL
+        k.SetPriorityClass.argtypes = [w.HANDLE, w.DWORD]
+        me = k.GetCurrentProcess()
+        # ProcessPowerThrottling (4): EXECUTION_SPEED | IGNORE_TIMER_RESOLUTION, state 0 = never throttled.
+        s = PPT(1, 0x1 | 0x4, 0)
+        ok = k.SetProcessInformation(me, 4, ctypes.byref(s), ctypes.sizeof(s))
+        k.SetPriorityClass(me, 0x8000)  # ABOVE_NORMAL_PRIORITY_CLASS
+        return bool(ok)
+    except Exception:
+        return False
+
+
 def _write_info_file() -> None:
     import json
     path = os.path.join(tempfile.gettempdir(), "vd-server-info.json")
@@ -190,8 +219,9 @@ def main() -> int:
 
     _write_info_file()
     threading.Thread(target=_idle_watcher, daemon=True).start()
+    throttle = "off" if _no_throttle() else "as Windows decides"
 
-    log(f"Listening on {HOST}:{PORT}  model={MODEL_NAME}/{DEVICE}. Idle unload after {IDLE_TIMEOUT}s.")
+    log(f"Listening on {HOST}:{PORT}  model={MODEL_NAME}/{DEVICE}. Idle unload after {IDLE_TIMEOUT}s. Power throttling {throttle}.")
     while True:
         conn, _addr = server.accept()
         try:
