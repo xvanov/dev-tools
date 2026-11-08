@@ -8,7 +8,7 @@
 const assert = require('assert');
 const local = require('../src/ingest/teamsLocal');
 const chat = require('../src/ingest/graphChat');
-const { contentHash } = require('../src/util/text');
+const { contentHash } = require('../src/util/text.ts');
 
 const ME_OID = '11111111-2222-4333-8444-555555555555';
 const QUILL_OID = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';

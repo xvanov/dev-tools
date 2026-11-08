@@ -22,7 +22,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { saveItems } = require('./store');
-const { headTail } = require('../util/text');
+const { headTail } = require('../util/text.ts');
 const { logger } = require('../log');
 const { config } = require('../config');
 

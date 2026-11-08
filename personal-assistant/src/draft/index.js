@@ -18,7 +18,7 @@
 const llm = require('../llm');
 const { config } = require('../config');
 const repo = require('../repo');
-const { truncate } = require('../util/text');
+const { truncate } = require('../util/text.ts');
 const deliver = require('./deliver');
 const { logger } = require('../log');
 

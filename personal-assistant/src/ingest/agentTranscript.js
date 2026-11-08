@@ -101,7 +101,7 @@ function parseCursorTranscript(text) {
 }
 
 function toItem(parsed, file, { machine = null, source = 'claude_session' } = {}) {
-  const { headTail } = require('../util/text');
+  const { headTail } = require('../util/text.ts');
   const MAX_BODY = 60_000;
   const body = parsed.turns
     .map((t) => `${t.role === 'me' ? '>>' : '<<'} ${t.text}`)

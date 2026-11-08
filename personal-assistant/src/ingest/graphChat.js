@@ -22,7 +22,7 @@ const m365 = require('./m365');
 const { saveItems, getCursor } = require('./store');
 const repo = require('../repo');
 const identity = require('../distill/identity');
-const { htmlToText, contentHash } = require('../util/text');
+const { htmlToText, contentHash } = require('../util/text.ts');
 const { logger } = require('../log');
 
 const log = logger('teams');

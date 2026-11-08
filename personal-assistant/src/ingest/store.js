@@ -9,7 +9,7 @@
 // re-fetched page next pass, which the unique constraint makes harmless.
 
 const repo = require('../repo');
-const { contentHash, chunkText } = require('../util/text');
+const { contentHash, chunkText } = require('../util/text.ts');
 const { chunkContext, CONTEXT_VERSION } = require('../search/context');
 const { logger } = require('../log');
 

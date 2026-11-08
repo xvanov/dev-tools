@@ -9,11 +9,12 @@
 // paragraph to the start of the next, and quoted-reply detection downstream
 // depends on lines.
 
-const crypto = require('crypto');
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+const nodeCrypto: typeof import('node:crypto') = require('crypto');
 
 const BLOCK = /<\/(p|div|tr|li|h[1-6]|blockquote|table|section|article)\s*>/gi;
 
-function htmlToText(html) {
+function htmlToText(html: string | null | undefined): string {
   if (!html) return '';
   return String(html)
     .replace(/<style[\s\S]*?<\/style>/gi, ' ')
@@ -27,7 +28,7 @@ function htmlToText(html) {
     .replace(/&gt;/gi, '>')
     .replace(/&quot;/gi, '"')
     .replace(/&#39;/gi, "'")
-    .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)))
+    .replace(/&#(\d+);/g, (_: string, n: string) => String.fromCharCode(Number(n)))
     .replace(/[ \t ]+/g, ' ')
     .replace(/\n{3,}/g, '\n\n')
     .split('\n')
@@ -46,7 +47,7 @@ const QUOTE_MARKERS = [
   /^\s*_{10,}\s*$/m,
 ];
 
-function stripQuoted(text) {
+function stripQuoted(text: string | null | undefined): string {
   if (!text) return '';
   let cut = text.length;
   for (const marker of QUOTE_MARKERS) {
@@ -57,20 +58,20 @@ function stripQuoted(text) {
   return head.length >= 40 ? head : text.trim();
 }
 
-function contentHash(...parts) {
-  const h = crypto.createHash('sha256');
+function contentHash(...parts: unknown[]): string {
+  const h = nodeCrypto.createHash('sha256');
   for (const p of parts) h.update(String(p ?? ''), 'utf8');
   return h.digest('hex').slice(0, 32);
 }
 
 // Chunks for retrieval. Paragraph-aware, with a small overlap so a sentence
 // spanning a boundary is still findable from either side.
-function chunkText(text, { size = 1200, overlap = 150 } = {}) {
+function chunkText(text: string | null | undefined, { size = 1200, overlap = 150 }: { size?: number; overlap?: number } = {}): string[] {
   const clean = (text || '').trim();
   if (!clean) return [];
   if (clean.length <= size) return [clean];
 
-  const chunks = [];
+  const chunks: string[] = [];
   const paragraphs = clean.split(/\n{2,}/);
   let current = '';
 
@@ -89,7 +90,7 @@ function chunkText(text, { size = 1200, overlap = 150 } = {}) {
   return chunks.filter(Boolean);
 }
 
-function truncate(text, max) {
+function truncate(text: unknown, max: number): string {
   const s = String(text ?? '');
   return s.length <= max ? s : s.slice(0, max - 1) + '…';
 }
@@ -98,7 +99,7 @@ function truncate(text, max) {
 // For a body that grows at the end (a Claude session), where truncate() froze
 // it at the first `max` characters: the stored body then never changed again,
 // so nothing after the cut was ever distilled or seen as new evidence.
-function headTail(text, max, headShare = 0.25) {
+function headTail(text: unknown, max: number, headShare = 0.25): string {
   const s = String(text ?? '');
   if (s.length <= max) return s;
   const marker = '\n\n[… middle of the session left out …]\n\n';
