@@ -490,7 +490,9 @@ function createSdkFeed({
       const pol = policy();
       let req = { tool, action: answer === 'yes' ? 'approve' : 'deny', channel: via, actor: 'pa-chat', subject: p.toolUseId, args: p.input };
       if (typeof pol.withJobDelivery === 'function') req = await pol.withJobDelivery(req, jobLookup);
-      await pol.enforce(req);
+      const verdict = await pol.enforce(req);
+      // A passkey tap (7.1) is spent on this one approval, before it is released.
+      if (typeof pol.consumeStepUp === 'function') await pol.consumeStepUp(req, verdict);
     } catch (err) {
       if (err.code === 'POLICY_DENIED' || err.code === 'STEPUP_REQUIRED') throw Object.assign(httpError(403, err.message), err.needsStepUp ? { needsStepUp: true, approvalId: err.approvalId } : {});
       throw err;

@@ -351,6 +351,40 @@ const sdkMsg = {
       await feed.answerPermission({ answer: 'yes', toolUseId: 'tu3', via: 'dashboard' });
       assert.strictEqual((await d3).behavior, 'allow');
 
+      // Passkeys on (PA_PASSKEYS=on): a merge approval without a tap is a 403 that says so, the prompt
+      // keeps waiting; after the tap, enforce passes and the one-use grant is spent before the release.
+      {
+        const prev = process.env.PA_PASSKEYS;
+        process.env.PA_PASSKEYS = 'on';
+        let tapped = false;
+        const consumed = [];
+        const enforceBefore = policy.enforce;
+        policy.enforce = async (req) => {
+          policy.calls.enforce.push(req);
+          if (req.action === 'approve' && req.args?.delivery === 'auto_merge' && !tapped) {
+            throw Object.assign(new Error('needs a passkey: merges automatically'), { code: 'STEPUP_REQUIRED', status: 403, needsStepUp: true, approvalId: req.subject });
+          }
+          return { decision: 'allow', rule: 'test', tags: req.args?.delivery === 'auto_merge' ? ['merge'] : [] };
+        };
+        policy.consumeStepUp = async (req, verdict) => {
+          consumed.push([req.subject, verdict.tags]);
+          return true;
+        };
+        const ps = run.options.canUseTool('mcp__pa-chat__factory_start', { card: '9', delivery: 'auto_merge' }, { signal: ac.signal, toolUseID: 'tuS' });
+        await tick();
+        await assert.rejects(feed.answerPermission({ answer: 'yes', toolUseId: 'tuS', via: 'dashboard' }), (e) => e.status === 403 && e.needsStepUp === true && e.approvalId === 'tuS' && /passkey/.test(e.message));
+        assert.strictEqual((await feed.session()).permission.toolUseId, 'tuS', 'still waiting for the tap');
+        assert.deepStrictEqual(consumed, [], 'nothing spent on a refusal');
+        tapped = true;
+        await feed.answerPermission({ answer: 'yes', toolUseId: 'tuS', via: 'dashboard' });
+        assert.strictEqual((await ps).behavior, 'allow');
+        assert.deepStrictEqual(consumed, [['tuS', ['merge']]], 'the grant is spent on this one approval');
+        delete policy.consumeStepUp;
+        policy.enforce = enforceBefore;
+        if (prev === undefined) delete process.env.PA_PASSKEYS;
+        else process.env.PA_PASSKEYS = prev;
+      }
+
       // Two prompts at once (parallel calls): one card at a time, the next offered when the first is answered.
       const p4 = run.options.canUseTool('mcp__pa-chat__factory_resume', { job: 'a:1' }, { signal: ac.signal, toolUseID: 'tu4' });
       const p5 = run.options.canUseTool('mcp__pa-chat__factory_resume', { job: 'a:2' }, { signal: ac.signal, toolUseID: 'tu5' });

@@ -216,7 +216,9 @@ streaming `query()` inside the worker, in the same pa-home with the same setting
 with `permissionMode: 'default'`. A PreToolUse hook puts every call through `src/policy` (a deny refuses;
 the six action tools always ask, whatever a rule or settings file says). `canUseTool` then waits for the
 same two surfaces through the same endpoint: an answer must name the pending call's `tool_use` id, goes
-through `policy.enforce` with its channel, and allows that one call only (no `updatedPermissions`, i.e.
+through `policy.enforce` with its channel (a `STEPUP_REQUIRED` is a 403 carrying `needsStepUp` and
+`approvalId`, and the prompt keeps waiting; after enforce passes, `policy.consumeStepUp` spends the
+passkey grant before the call is released), and allows that one call only (no `updatedPermissions`, i.e.
 never "don't ask again"). No answer within `PA_CHAT_APPROVAL_TIMEOUT_MS` is a deny, audited on channel
 `timeout`. A prompt for anything else (a `pa` shell verb, an edit, `remember`) gets a generic "allow
 once" card on the same surfaces, showing the call's whole input (`genericDetail`: the exact command or
