@@ -12,7 +12,7 @@ type Row = import('../repo/types.ts').Row;
 /** JSON read or built key by key (src/types.ts): loose until its producer is TypeScript. */
 type Json = import('../types.ts').Json;
 
-const { USAGE } = require('../e2e/goldenPathCore');
+const { USAGE } = require('../e2e/goldenPathCore.ts');
 
 const HELP = `${USAGE}
 
@@ -24,7 +24,7 @@ const HELP = `${USAGE}
 function make(out: any, fail: any) {
   return {
     async e2e(args: any, flags: any, lists: any) {
-      const C = require('../e2e/goldenPathCore');
+      const C = require('../e2e/goldenPathCore.ts');
       const which = args[0] ? String(args[0]) : null;
       if (args.length > 1) return fail(`pa e2e takes one workflow (got "${args.join(' ')}")\n${HELP}`);
       if (which && which !== 'golden') return workflow(which, flags, lists);
@@ -49,7 +49,7 @@ function make(out: any, fail: any) {
   };
 
   async function workflow(which: any, flags: any, lists: any) {
-    const W = require('../e2e/workflowsCore');
+    const W = require('../e2e/workflowsCore.ts');
     const runner = require('../e2e/workflows');
     const ids = which === 'all' ? W.workflows(require('../dashboard/architecture.json')) : [which];
     if (which === 'all' && flags['dry-run'] !== true) return fail('pa e2e all runs dry runs only: add --dry-run');

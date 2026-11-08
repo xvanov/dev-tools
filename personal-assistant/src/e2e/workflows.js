@@ -19,8 +19,8 @@
 
 const fs = require('fs');
 const path = require('path');
-const W = require('./workflowsCore');
-const C = require('./goldenPathCore');
+const W = require('./workflowsCore.ts');
+const C = require('./goldenPathCore.ts');
 const G = require('./goldenPath');
 
 const DEFAULT_API_MODEL = 'azure/deepseek-v4-pro';
@@ -58,8 +58,8 @@ function deps0() {
     claudeAuth: () => d.runCommand(factory.machine(), ['claude', 'auth', 'status'], { timeoutMs: 30_000 }),
     fastLaneOn: () => Boolean(d.config.fastLane?.enabled),
     hubBase: (machine) => require('../dispatch/termhub.ts').forMachine(machine || null).base,
-    capture: (dir, pages) => require('./screens').capture(dir, pages),
-    browser: () => require('./screens').browser(),
+    capture: (dir, pages) => require('./screens.ts').capture(dir, pages),
+    browser: () => require('./screens.ts').browser(),
     write(file, text) {
       fs.mkdirSync(path.dirname(file), { recursive: true });
       fs.writeFileSync(file, text);

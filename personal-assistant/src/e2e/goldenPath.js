@@ -13,14 +13,14 @@
 // step sessions killed. `--sweep` cleans what an interrupted run left, by the
 // `e2e-<uuid>` marker on its card.
 //
-// The rules (hops, assertions, the report) are pure, in goldenPathCore.js.
+// The rules (hops, assertions, the report) are pure, in goldenPathCore.ts.
 // Every outside call goes through `deps`, so tests can swap them.
 
 const crypto = require('crypto');
 const fs = require('fs');
 const os = require('os');
 const { execFile } = require('child_process');
-const C = require('./goldenPathCore');
+const C = require('./goldenPathCore.ts');
 
 function defaultDeps() {
   const { config } = require('../config.ts');

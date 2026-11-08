@@ -1054,10 +1054,10 @@
       ],
       "code": [
         "personal-assistant/src/e2e/goldenPath.js",
-        "personal-assistant/src/e2e/goldenPathCore.js",
+        "personal-assistant/src/e2e/goldenPathCore.ts",
         "personal-assistant/src/e2e/workflows.js",
-        "personal-assistant/src/e2e/workflowsCore.js",
-        "personal-assistant/src/e2e/screens.js",
+        "personal-assistant/src/e2e/workflowsCore.ts",
+        "personal-assistant/src/e2e/screens.ts",
         "personal-assistant/src/cli/e2e.ts",
         "personal-assistant/test/e2e.test.js",
         "personal-assistant/test/e2eWorkflows.test.js"

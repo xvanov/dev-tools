@@ -5,20 +5,26 @@
 // The browser is the first one found among: PA_E2E_BROWSER, the Chromium
 // headless shell Playwright installed (ms-playwright), Edge, Chrome. None
 // found: screenshots are skipped and the run says so; nothing fails.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+type Shot = { ok: true; file: string } | { ok: false; error: string };
+type ShotOptions = { width?: number; height?: number; budgetMs?: number; timeoutMs?: number };
+type Captured = { view: string; url: string; file: string | null; error?: string };
 
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { execFile } = require('child_process');
 
-function candidates(env = process.env, platform = process.platform) {
-  const out = [];
+function candidates(env: NodeJS.ProcessEnv = process.env, platform: string = process.platform): string[] {
+  const out: string[] = [];
   if (env.PA_E2E_BROWSER) out.push(env.PA_E2E_BROWSER);
   const pw = platform === 'win32'
     ? path.join(env.LOCALAPPDATA || '', 'ms-playwright')
     : path.join(os.homedir(), '.cache', 'ms-playwright');
-  let dirs = [];
-  try { dirs = fs.readdirSync(pw).filter((d) => /^chromium(_headless_shell)?-\d+$/.test(d)).sort().reverse(); } catch { /* none installed */ }
+  let dirs: string[] = [];
+  try { dirs = fs.readdirSync(pw).filter((d: string) => /^chromium(_headless_shell)?-\d+$/.test(d)).sort().reverse(); } catch { /* none installed */ }
   for (const d of dirs) {
     if (platform === 'win32') {
       out.push(path.join(pw, d, 'chrome-headless-shell-win64', 'chrome-headless-shell.exe'));
@@ -38,7 +44,7 @@ function candidates(env = process.env, platform = process.platform) {
   return out;
 }
 
-function browser() {
+function browser(): string | null {
   return candidates().find((p) => {
     try { return fs.statSync(p).isFile(); } catch { return false; }
   }) || null;
@@ -47,7 +53,7 @@ function browser() {
 /** One page to a PNG. Resolves {ok, file} or {ok:false, error}; never rejects. */
 // `--timeout` (not --virtual-time-budget): pages that hold a live feed or a
 // voice model open never let virtual time settle, and the shell then hangs.
-function shoot(exe, url, file, { width = 1440, height = 1000, budgetMs = 8000, timeoutMs = 60_000 } = {}) {
+function shoot(exe: string, url: string, file: string, { width = 1440, height = 1000, budgetMs = 8000, timeoutMs = 60_000 }: ShotOptions = {}): Promise<Shot> {
   return new Promise((resolve) => {
     const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'pa-e2e-shot-'));
     const args = [
@@ -55,7 +61,7 @@ function shoot(exe, url, file, { width = 1440, height = 1000, budgetMs = 8000, t
       `--user-data-dir=${profile}`, `--window-size=${width},${height}`, `--timeout=${budgetMs}`,
       `--screenshot=${file}`, url,
     ];
-    execFile(exe, args, { timeout: timeoutMs, windowsHide: true }, (err) => {
+    execFile(exe, args, { timeout: timeoutMs, windowsHide: true }, (err: Error | null) => {
       try { fs.rmSync(profile, { recursive: true, force: true }); } catch { /* a locked profile is left in tmp */ }
       const ok = fs.existsSync(file) && fs.statSync(file).size > 0;
       resolve(ok ? { ok: true, file } : { ok: false, error: err ? err.message.slice(0, 200) : 'no file written' });
@@ -63,15 +69,12 @@ function shoot(exe, url, file, { width = 1440, height = 1000, budgetMs = 8000, t
   });
 }
 
-/**
- * Each {name, url} to `<dir>/<name>.png`.
- * @returns {Promise<{shots: object[], note: string|null}>}
- */
-async function capture(dir, pages) {
+/** Each {name, url} to `<dir>/<name>.png`. */
+async function capture(dir: string, pages: Array<{ name: string; url: string }>): Promise<{ shots: Captured[]; note: string | null }> {
   const exe = browser();
   if (!exe) return { shots: [], note: 'screenshots skipped: no headless Chromium found (set PA_E2E_BROWSER or `npx playwright install chromium`)' };
   fs.mkdirSync(dir, { recursive: true });
-  const shots = [];
+  const shots: Captured[] = [];
   for (const p of pages) {
     const file = path.join(dir, `${p.name}.png`);
     const r = await shoot(exe, p.url, file);
