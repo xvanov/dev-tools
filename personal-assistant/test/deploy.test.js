@@ -119,6 +119,19 @@ assert.throws(() => parseArgs(['--frob']), /unknown argument/);
     assert.strictEqual(out2.action, 'restart', 'no supervisor on port 1: the bootstrap path');
     assert.strictEqual(r2.status, 3);
 
+    // A previous commit this clone lacks (CI's shallow checkout has no HEAD~1):
+    // everything counts as changed, never a failed deploy.
+    const r3 = spawnSync(process.execPath, ['src/supervisor/deploy.js', '--from', '0123456789abcdef0123', '--dry-run', '--json'], {
+      cwd: PA,
+      encoding: 'utf8',
+      windowsHide: true,
+      env: { ...process.env, PA_DISPATCH_PORT: '1' },
+    });
+    const out3 = JSON.parse(r3.stdout.trim().split('\n').pop());
+    assert.strictEqual(out3.from, null);
+    assert.strictEqual(out3.install, true);
+    assert.match(r3.stderr, /not in this clone/);
+
     // The platform wrapper's dry run: says what it would do, changes nothing.
     const env = { ...process.env, PA_DISPATCH_PORT: '1' };
     const w = process.platform === 'win32'

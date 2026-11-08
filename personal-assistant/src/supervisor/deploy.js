@@ -95,6 +95,15 @@ function git(args, opts = {}) {
   return execFileSync('git', ['-C', PA_DIR, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, ...opts }).trim();
 }
 
+function resolves(rev) {
+  try {
+    git(['rev-parse', '--verify', '--quiet', `${rev}^{commit}`]);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function getJson(port, p, timeoutMs = 3000) {
   return new Promise((resolve) => {
     const req = http.get({ host: '127.0.0.1', port, path: p, timeout: timeoutMs }, (res) => {
@@ -158,6 +167,13 @@ async function deploy(argv, { say } = {}) {
   }
   const head = git(['rev-parse', 'HEAD']);
   let changed = null;
+  // A previous commit this clone does not have (a shallow clone, as CI checks
+  // out, or a typo): everything counts as changed. Deploying too much is safe;
+  // failing the whole deploy, or skipping the install, is not.
+  if (from && !resolves(from)) {
+    say(`previous commit ${from} is not in this clone (shallow?) - treating everything as changed`);
+    from = null;
+  }
   if (from) {
     const repo = git(['rev-parse', '--show-toplevel']);
     changed = execFileSync('git', ['-C', repo, 'diff', '--name-only', from, head], { encoding: 'utf8', windowsHide: true }).split('\n').filter(Boolean);
