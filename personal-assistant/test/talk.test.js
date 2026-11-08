@@ -352,7 +352,7 @@ const C = require('../src/dashboard/talk.core');
 
 // ---- the per-turn latency report ----------------------------------------------------------
 {
-  const { sanitizeLatency } = require('../src/dashboard/talk');
+  const { sanitizeLatency } = require('../src/dashboard/talk.ts');
   assert.deepStrictEqual(sanitizeLatency({ total: 812.4, silence: 150, transcribe: 200, route: 'answer', turnBy: 'smart-turn', tts: 'kokoro', text: 'secret words' }), { speechToAudioMs: 812, silenceMs: 150, sttMs: 200, route: 'answer', endBy: 'smart-turn', tts: 'kokoro' });
   assert.strictEqual(sanitizeLatency({ silence: 5 }), null, 'no total: nothing to log');
   assert.strictEqual(sanitizeLatency({ total: -1 }), null);
@@ -575,7 +575,7 @@ const C = require('../src/dashboard/talk.core');
 // ---- the transcribe proxy, against a fake faster-whisper server --------------------
 (async () => {
   const { config } = require('../src/config');
-  const talk = require('../src/dashboard/talk');
+  const talk = require('../src/dashboard/talk.ts');
   const { handle } = require('../src/dashboard/server');
 
   let seenPath = null;

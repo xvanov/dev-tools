@@ -11,6 +11,17 @@
 // TCP exchange: send an absolute path to an audio file, read the transcript
 // (or "ERROR: …") until the server closes (one request, one answer; see askWhisper). So the uploaded WAV is written to a
 // temp file first and removed afterwards, whatever happens.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+type Row = import('../repo/types.ts').Row;
+type Req = import('http').IncomingMessage;
+type Res = import('http').ServerResponse;
+type Ctx = import('./types.ts').Ctx;
+type IncomingMessage = import('http').IncomingMessage;
+type HttpErr = Error & { status?: number; code?: string; retry?: boolean };
+type WhisperOpts = { host?: unknown; port?: unknown; timeoutMs?: number | undefined; minReplyMs?: number | undefined };
+type Span = { setAttribute(k: string, v: unknown): void };
 
 const fs = require('fs');
 const os = require('os');
@@ -24,18 +35,19 @@ const log = logger('talk');
 
 // Pure: a page's latency report -> the fields worth logging, or null. Numbers
 // only (ms, bounded), short strings only: nothing the user said is in it.
-function sanitizeLatency(b) {
+function sanitizeLatency(b: unknown) {
   if (!b || typeof b !== 'object') return null;
-  const num = (v) => (typeof v === 'number' && isFinite(v) && v >= 0 && v < 600_000 ? Math.round(v) : undefined);
-  const str = (v) => (typeof v === 'string' && /^[\w .:()-]{1,24}$/.test(v) ? v : undefined);
-  const out = { speechToAudioMs: num(b.total), silenceMs: num(b.silence), sttMs: num(b.transcribe), sendMs: num(b.send), replyMs: num(b.reply), voiceMs: num(b.voice), route: str(b.route), endBy: str(b.turnBy), tts: str(b.tts) };
+  const o = b as Row;
+  const num = (v: unknown) => (typeof v === 'number' && isFinite(v) && v >= 0 && v < 600_000 ? Math.round(v) : undefined);
+  const str = (v: unknown) => (typeof v === 'string' && /^[\w .:()-]{1,24}$/.test(v) ? v : undefined);
+  const out: Record<string, number | string | undefined> = { speechToAudioMs: num(o.total), silenceMs: num(o.silence), sttMs: num(o.transcribe), sendMs: num(o.send), replyMs: num(o.reply), voiceMs: num(o.voice), route: str(o.route), endBy: str(o.turnBy), tts: str(o.tts) };
   if (out.speechToAudioMs === undefined) return null;
   for (const k of Object.keys(out)) if (out[k] === undefined) delete out[k];
   return out;
 }
 
 const DIR = __dirname;
-const ASSETS = {
+const ASSETS: Record<string, string> = {
   '/talk.core.js': 'talk.core.js',
   '/talk.page.js': 'talk.page.js',
   '/talk.voice.js': 'talk.voice.js',
@@ -45,7 +57,7 @@ const ASSETS = {
   '/talk.worklet.js': 'micWorklet.js',
 };
 // The page's models, by name: nothing else under PA_VOICE_MODELS is served.
-const MODEL_FILES = {
+const MODEL_FILES: Record<string, string> = {
   'silero_vad.onnx': 'application/octet-stream',
   'melspectrogram.onnx': 'application/octet-stream',
   'embedding_model.onnx': 'application/octet-stream',
@@ -54,7 +66,7 @@ const MODEL_FILES = {
   'ort/ort-wasm-simd-threaded.mjs': 'text/javascript; charset=utf-8',
   'ort/ort-wasm-simd-threaded.wasm': 'application/wasm',
 };
-const MODEL_GROUPS = {
+const MODEL_GROUPS: Record<string, string[]> = {
   vad: ['silero_vad.onnx'],
   wake: ['melspectrogram.onnx', 'embedding_model.onnx', 'hey_jarvis_v0.1.onnx'],
   ort: ['ort/ort.wasm.min.js', 'ort/ort-wasm-simd-threaded.mjs', 'ort/ort-wasm-simd-threaded.wasm'],
@@ -63,14 +75,14 @@ const MODEL_GROUPS = {
 const MAX_AUDIO_BYTES = 8 * 1024 * 1024;
 const TIMEOUT_MS = 120_000;
 
-function readBody(req, limit = MAX_AUDIO_BYTES) {
-  return new Promise((resolve, reject) => {
-    const chunks = [];
+function readBody(req: Req, limit: number = MAX_AUDIO_BYTES) {
+  return new Promise<Buffer>((resolve, reject) => {
+    const chunks: Buffer[] = [];
     let size = 0;
-    req.on('data', (d) => {
+    req.on('data', (d: Buffer) => {
       size += d.length;
       if (size > limit) {
-        const err = new Error('audio too large');
+        const err: HttpErr = new Error('audio too large');
         err.status = 413;
         reject(err);
         req.destroy();
@@ -94,22 +106,22 @@ function readBody(req, limit = MAX_AUDIO_BYTES) {
 // time is a failed exchange, never "the user said nothing": whisper takes
 // tens of milliseconds even on silence. askWhisper retries such a failure once.
 const MIN_REPLY_MS = 40;
-function askWhisperOnce(file, { host, port, timeoutMs, minReplyMs = MIN_REPLY_MS }) {
-  return new Promise((resolve, reject) => {
-    const chunks = [];
+function askWhisperOnce(file: string, { host, port, timeoutMs, minReplyMs = MIN_REPLY_MS }: WhisperOpts) {
+  return new Promise<string>((resolve, reject) => {
+    const chunks: Buffer[] = [];
     const started = Date.now();
     const sock = net.createConnection({ host, port });
     sock.setTimeout(timeoutMs, () => sock.destroy(Object.assign(new Error('transcriber timed out'), { status: 504 })));
     sock.on('connect', () => sock.write(file + '\n', 'utf8'));
-    sock.on('data', (d) => chunks.push(d));
-    sock.on('error', (err) => {
+    sock.on('data', (d: Buffer) => chunks.push(d));
+    sock.on('error', (err: HttpErr) => {
       if (!err.status) {
         err.status = 503;
         err.message = `transcriber not reachable on ${host}:${port} (${err.code || err.message})`;
       }
       reject(err);
     });
-    sock.on('close', (hadError) => {
+    sock.on('close', (hadError: boolean) => {
       if (hadError) return;
       const text = Buffer.concat(chunks).toString('utf8');
       if (text.startsWith('ERROR:')) return reject(Object.assign(new Error(text.slice(6).trim() || 'transcriber error'), { status: 502 }));
@@ -121,17 +133,17 @@ function askWhisperOnce(file, { host, port, timeoutMs, minReplyMs = MIN_REPLY_MS
   });
 }
 
-async function askWhisper(file, { host = config.audio.transcribeHost, port = config.audio.transcribePort, timeoutMs = TIMEOUT_MS, minReplyMs } = {}) {
+async function askWhisper(file: string, { host = config.audio.transcribeHost, port = config.audio.transcribePort, timeoutMs = TIMEOUT_MS, minReplyMs }: WhisperOpts = {}) {
   const o = { host, port, timeoutMs, minReplyMs };
   try {
     return await askWhisperOnce(file, o);
   } catch (err) {
-    if (!err.retry) throw err;
+    if (!(err as HttpErr).retry) throw err;
     return askWhisperOnce(file, o); // once; a second failure is an error too
   }
 }
 let whisperUsedAt = 0;
-async function transcribe(audio, opts) {
+async function transcribe(audio: Buffer, opts?: WhisperOpts) {
   const file = path.join(os.tmpdir(), `pa-talk-${process.pid}-${crypto.randomBytes(6).toString('hex')}.wav`);
   await fs.promises.writeFile(file, audio);
   try {
@@ -148,9 +160,9 @@ async function transcribe(audio, opts) {
 // its model after half an hour idle and takes ~6 s to load it again, is
 // handed a quarter second of silence. Fire and forget.
 const SILENCE_WAV = Buffer.from(require('./talk.core').encodeWav(new Float32Array(4000), 16000));
-function warmVoicePath(now = Date.now()) {
+function warmVoicePath(now: number = Date.now()) {
   voiceRequest('POST', 'warm', { body: Buffer.from('{}'), headers: { 'Content-Type': 'application/json' }, timeoutMs: 5000 })
-    .then((r) => r.resume())
+    .then((r: IncomingMessage) => r.resume())
     .catch(() => {});
   if (now - whisperUsedAt > 5 * 60_000) {
     whisperUsedAt = now;
@@ -162,10 +174,10 @@ function warmVoicePath(now = Date.now()) {
 
 // One request to the service. Resolves with the response (unread), rejects
 // with status 503 when it is not there or not configured.
-function voiceRequest(method, p, { body = null, headers = {}, timeoutMs = 15_000, base = config.voice.url } = {}) {
-  return new Promise((resolve, reject) => {
+function voiceRequest(method: string, p: string, { body = null, headers = {}, timeoutMs = 15_000, base = config.voice.url }: { body?: Buffer | null; headers?: Record<string, unknown>; timeoutMs?: number; base?: unknown } = {}) {
+  return new Promise<IncomingMessage>((resolve, reject) => {
     if (!base) return reject(Object.assign(new Error('the voice service is off (PA_VOICE_URL=off)'), { status: 503 }));
-    let u;
+    let u: URL;
     try {
       u = new URL(p, base + '/');
     } catch {
@@ -176,7 +188,7 @@ function voiceRequest(method, p, { body = null, headers = {}, timeoutMs = 15_000
       resolve
     );
     req.setTimeout(timeoutMs, () => req.destroy(Object.assign(new Error('the voice service timed out'), { status: 504 })));
-    req.on('error', (err) => {
+    req.on('error', (err: HttpErr) => {
       if (!err.status) {
         err.status = 503;
         err.message = `the voice service is not reachable at ${base} (${err.code || err.message})`;
@@ -187,11 +199,11 @@ function voiceRequest(method, p, { body = null, headers = {}, timeoutMs = 15_000
   });
 }
 
-async function voiceJson(method, p, opts) {
+async function voiceJson(method: string, p: string, opts?: Parameters<typeof voiceRequest>[2]) {
   const res = await voiceRequest(method, p, opts);
-  const chunks = [];
+  const chunks: Buffer[] = [];
   for await (const c of res) chunks.push(c);
-  let data = {};
+  let data: Row = {};
   try {
     data = JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}');
   } catch {
@@ -200,15 +212,15 @@ async function voiceJson(method, p, opts) {
   return { status: res.statusCode, data };
 }
 
-function modelsPresent(dir = config.voice.models) {
-  const has = (f) => {
+function modelsPresent(dir: string = config.voice.models) {
+  const has = (f: string) => {
     try {
       return fs.statSync(path.join(dir, f)).size > 0;
     } catch {
       return false;
     }
   };
-  const out = {};
+  const out: Record<string, boolean> = {};
   for (const [k, files] of Object.entries(MODEL_GROUPS)) out[k] = files.every(has);
   return out;
 }
@@ -216,13 +228,13 @@ function modelsPresent(dir = config.voice.models) {
 // What the page needs to choose its engines: GET /api/talk/voice. The health
 // answer is cached briefly (the page asks on load and on each wake), the
 // voice list once it has been read.
-const voiceCache = { at: 0, health: null, voices: null };
-async function voiceInfo(now = Date.now()) {
+const voiceCache: { at: number; health: Row | null; voices: unknown } = { at: 0, health: null, voices: null };
+async function voiceInfo(now: number = Date.now()) {
   if (now - voiceCache.at > 3000) {
     voiceCache.at = now;
     voiceCache.health = await voiceJson('GET', 'health', { timeoutMs: 1500 })
       .then((r) => r.data)
-      .catch((err) => ({ ok: false, error: err.message }));
+      .catch((err: Error) => ({ ok: false, error: err.message }));
     if (voiceCache.health.ok && !voiceCache.voices) {
       voiceCache.voices = await voiceJson('GET', 'voices', { timeoutMs: 1500 })
         .then((r) => r.data.voices || null)
@@ -240,20 +252,20 @@ async function voiceInfo(now = Date.now()) {
 }
 
 // Streams the service's answer through, status and audio headers included.
-async function proxyVoice(req, res, p, { send, limit, contentType }) {
+async function proxyVoice(req: Req, res: Res, p: string, { send, limit, contentType }: { send: Ctx['send']; limit?: number | undefined; contentType?: string | null | undefined }) {
   const body = await readBody(req, limit);
-  let up;
+  let up: IncomingMessage;
   try {
     up = await voiceRequest('POST', p, { body, headers: { 'Content-Type': contentType || req.headers['content-type'] || 'application/octet-stream' }, timeoutMs: 30_000 });
   } catch (err) {
-    send(res, err.status || 503, { error: err.message });
+    send(res, (err as HttpErr).status || 503, { error: (err as HttpErr).message });
     return;
   }
-  const headers = { 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', 'X-Accel-Buffering': 'no' };
+  const headers: import('http').OutgoingHttpHeaders = { 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', 'X-Accel-Buffering': 'no' };
   for (const [k, v] of Object.entries(up.headers)) {
     if (k === 'content-type' || k.startsWith('x-')) headers[k] = v;
   }
-  res.writeHead(up.statusCode, headers);
+  res.writeHead(up.statusCode as number, headers);
   // The page went away (barge-in): stop reading, and the service stops writing.
   res.on('close', () => {
     if (!res.writableFinished) up.destroy();
@@ -262,11 +274,11 @@ async function proxyVoice(req, res, p, { send, limit, contentType }) {
   up.pipe(res);
 }
 
-function serveModel(res, name, { send }) {
+function serveModel(res: Res, name: string, { send }: { send: Ctx['send'] }) {
   const type = MODEL_FILES[name];
   if (!type) return send(res, 404, { error: 'unknown model file' });
   const file = path.join(config.voice.models, name);
-  fs.stat(file, (err, st) => {
+  fs.stat(file, (err: Error | null, st: import('fs').Stats) => {
     if (err || !st.isFile()) return send(res, 404, { error: `${name} is not installed: run windows/install-voice.ps1` });
     res.writeHead(200, {
       'Content-Type': type,
@@ -279,7 +291,7 @@ function serveModel(res, name, { send }) {
   });
 }
 
-function pageHtml(token = null) {
+function pageHtml(token: string | null = null) {
   // Where the "session" link goes: the dashboard's termhub (PA_TERMHUB_URL).
   // Opened through termhub's /pa/ proxy, the page uses its own origin instead.
   const termhub = String(config.termhub.url || '').replace(/"/g, '&quot;');
@@ -290,7 +302,7 @@ function pageHtml(token = null) {
 }
 
 // Returns true when it answered the request.
-async function route(req, res, url, { send, issuePageToken = null }) {
+async function route(req: Req, res: Res, url: URL, { send, issuePageToken = null }: { send: Ctx['send']; issuePageToken?: Ctx['issuePageToken'] | null }) {
   if (req.method === 'GET' && url.pathname === '/talk') {
     // The fast lane's snapshot of the day is built now, not on the first turn.
     // So is the local fast model loaded (Ollama), and the GPU voice clocked up.
@@ -304,7 +316,7 @@ async function route(req, res, url, { send, issuePageToken = null }) {
     return true;
   }
   if (req.method === 'GET' && ASSETS[url.pathname]) {
-    send(res, 200, fs.readFileSync(path.join(DIR, ASSETS[url.pathname]), 'utf8'), 'text/javascript; charset=utf-8');
+    send(res, 200, fs.readFileSync(path.join(DIR, ASSETS[url.pathname] as string), 'utf8'), 'text/javascript; charset=utf-8');
     return true;
   }
   if (req.method === 'POST' && url.pathname === '/api/talk/transcribe') {
@@ -349,7 +361,7 @@ async function route(req, res, url, { send, issuePageToken = null }) {
       send(res, 403, { error: 'missing X-PA header' });
       return true;
     }
-    let body = {};
+    let body: unknown = {};
     try {
       body = JSON.parse((await readBody(req, 4096)).toString('utf8') || '{}');
     } catch {
@@ -360,13 +372,14 @@ async function route(req, res, url, { send, issuePageToken = null }) {
     send(res, 202, { ok: !!fields });
     return true;
   }
-  const VOICE_POSTS = { '/api/talk/tts': ['tts', 64 * 1024, 'application/json'], '/api/talk/endpoint': ['endpoint', MAX_AUDIO_BYTES, null] };
-  if (req.method === 'POST' && VOICE_POSTS[url.pathname]) {
+  const VOICE_POSTS: Record<string, [string, number, string | null]> = { '/api/talk/tts': ['tts', 64 * 1024, 'application/json'], '/api/talk/endpoint': ['endpoint', MAX_AUDIO_BYTES, null] };
+  const voicePost = VOICE_POSTS[url.pathname];
+  if (req.method === 'POST' && voicePost) {
     if (req.headers['x-pa'] !== '1') {
       send(res, 403, { error: 'missing X-PA header' });
       return true;
     }
-    const [p, limit, type] = VOICE_POSTS[url.pathname];
+    const [p, limit, type] = voicePost;
     await proxyVoice(req, res, p, { send, limit, contentType: type });
     return true;
   }
@@ -385,7 +398,7 @@ async function route(req, res, url, { send, issuePageToken = null }) {
 // per line (decision, delta…, handoff, done; src/chat/fastLane.js runTurn).
 // Off (PA_FAST_LANE=0): 404 { disabled: true }, and the page sends to
 // /api/chat itself, as before.
-async function turn(req, res, { send }) {
+async function turn(req: Req, res: Res, { send }: { send: Ctx['send'] }) {
   if (!config.fastLane.enabled) {
     send(res, 404, { error: 'the fast lane is off (PA_FAST_LANE=0)', disabled: true });
     return;
@@ -418,14 +431,14 @@ async function turn(req, res, { send }) {
   res.on('close', () => {
     if (!res.writableFinished) ac.abort();
   });
-  const emit = (e) => {
+  const emit = (e: Row) => {
     if (!res.writableEnded && !res.destroyed) res.write(JSON.stringify(e) + '\n');
   };
   try {
     // Meter's voice-turn hop (plan 7.5): the whole fast-lane turn, with the route and the model's first-token time.
     const telemetry = require('../telemetry');
-    await telemetry.span('voice.turn', 'voice turn', {}, async (s) => {
-      const seen = (e) => {
+    await telemetry.span('voice.turn', 'voice turn', {}, async (s: Span | null) => {
+      const seen = (e: Row) => {
         if (e?.type === 'done' && s) {
           if (e.route) s.setAttribute('route', String(e.route));
           if (Number.isFinite(e.firstTokenMs)) s.setAttribute('first_token_ms', e.firstTokenMs);
@@ -435,7 +448,7 @@ async function turn(req, res, { send }) {
       await require('../chat/fastLane').runTurn({ text, emit: seen, signal: ac.signal });
     });
   } catch (err) {
-    if (!ac.signal.aborted) emit({ type: 'error', error: err.message });
+    if (!ac.signal.aborted) emit({ type: 'error', error: (err as Error).message });
   }
   if (!res.writableEnded) res.end();
 }

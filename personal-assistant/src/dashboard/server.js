@@ -207,7 +207,7 @@ async function handle(req, res) {
   // its models (/talk/models/), the local voice service's proxy, and
   // POST /api/talk/transcribe (X-PA guarded there). ----
   if (url.pathname === '/talk' || url.pathname.startsWith('/talk.') || url.pathname.startsWith('/talk/') || url.pathname.startsWith('/api/talk/')) {
-    if (await require('./talk').route(req, res, url, { send, issuePageToken })) return;
+    if (await require('./talk.ts').route(req, res, url, { send, issuePageToken })) return;
   }
   // ---- end voice page ----
 

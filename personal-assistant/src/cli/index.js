@@ -1767,7 +1767,7 @@ const commands = {
 
     // The local voice stack (voice/server.py, windows/install-voice.ps1).
     {
-      const v = await require('../dashboard/talk').voiceInfo();
+      const v = await require('../dashboard/talk.ts').voiceInfo();
       const missing = Object.entries(v.models).filter(([, ok]) => !ok).map(([k]) => k);
       lines.push(
         `  voice ${!config.voice.url ? 'off (PA_VOICE_URL=off): browser voices' : v.tts.ok ? `Kokoro on ${v.tts.device}, ${v.defaultVoice}${v.turn ? ' · smart-turn' : ' · NO smart-turn'}` : `DOWN at ${config.voice.url} (${v.tts.error || 'not ready'}) — Start-ScheduledTask pa-voice, or run windows\\install-voice.ps1`}` +

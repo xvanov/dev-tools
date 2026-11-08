@@ -7,7 +7,7 @@
 
 const assert = require('assert');
 const net = require('net');
-const { askWhisper } = require('../src/dashboard/talk');
+const { askWhisper } = require('../src/dashboard/talk.ts');
 
 // A transcriber like voice-dictation/transcribe_server.py: it reads ONE
 // request (the path) without waiting for EOF, answers after `delayMs`, closes.

@@ -131,7 +131,7 @@
         "personal-assistant/src/dashboard/talk.html",
         "personal-assistant/src/dashboard/talk.voice.js",
         "personal-assistant/src/dashboard/talk.page.js",
-        "personal-assistant/src/dashboard/talk.js",
+        "personal-assistant/src/dashboard/talk.ts",
         "personal-assistant/src/dashboard/chat.client.js",
         "personal-assistant/src/dashboard/permission.client.js"
       ]
@@ -209,7 +209,7 @@
         "personal-assistant/src/chat/fastRouter.js",
         "personal-assistant/src/eval/router.js",
         "personal-assistant/src/eval/router-cases.json",
-        "personal-assistant/src/dashboard/talk.js",
+        "personal-assistant/src/dashboard/talk.ts",
         "personal-assistant/src/llm.js"
       ]
     },
@@ -251,7 +251,7 @@
       ],
       "code": [
         "personal-assistant/voice/server.py",
-        "personal-assistant/src/dashboard/talk.js",
+        "personal-assistant/src/dashboard/talk.ts",
         "personal-assistant/linux/install-voice.sh",
         "personal-assistant/linux/pa-voice.service"
       ]
@@ -286,7 +286,7 @@
       ],
       "code": [
         "voice-dictation/transcribe_server.py",
-        "personal-assistant/src/dashboard/talk.js"
+        "personal-assistant/src/dashboard/talk.ts"
       ]
     },
     {
