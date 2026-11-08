@@ -1,7 +1,7 @@
 'use strict';
 
 // Aggregate: people. Tables: person, person_identity.
-// Owner while plan 1.2 is converting: chunk C (commitments). Not converted yet.
+// Owner while plan 1.2 is converting: chunk C (commitments).
 
 function create(db) {
   return {
@@ -51,6 +51,13 @@ function create(db) {
       where lower(p.primary_email) = any($1::text[]) or pi.value = any($1::text[])`,
         [emails]
       );
+    },
+
+    // --- for ledger/reconcile.js
+
+    /** My identities (the person marked is_me): [{kind, value}]. */
+    async myIdentities() {
+      return db.rows(`select pi.kind, pi.value from person_identity pi join person p on p.id = pi.person_id where p.is_me`);
     },
   };
 }

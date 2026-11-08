@@ -30,102 +30,26 @@
 
 const llm = require('../llm');
 const { config } = require('../config');
-const { rows, one, query, withTx } = require('../db');
+const repo = require('../repo');
 const { logger } = require('../log');
 const ledger = require('./index');
 const R = require('./reconcileCore');
 
 const log = logger('reconcile');
 
-const WINDOW_DAYS = 30;
-const SESSION_SETTLE_MINUTES = 10;
 const MAX_FAILURES = 3;
 const failures = new Map();
 
-// Author forms of a person's identities, in SQL, for `person_id = <expr>`.
-const FORMS_OF = (personExpr) => `(select case pi.kind when 'smtp' then lower(pi.value)
-                       when 'aad_oid' then 'aad:' || lower(pi.value)
-                       when 'github_username' then 'github:' || lower(pi.value) end
-         from person_identity pi where pi.person_id = ${personExpr})`;
-
-// $1 = my author forms, $2 = max commitments, $3 = max items per commitment,
-// $4 = only these commitment ids (null: all).
-const DIRTY = `
-  select o.id, o.direction, o.summary, o.detail, o.counterparty, o.asked_at, o.ask_text, o.source,
-         array_agg(r.id order by r.fetched_at) as item_ids, max(r.fetched_at) as through
-    from (
-      select c.id, c.direction, c.summary, c.detail, c.counterparty_person_id, c.ledger_checked_at,
-             si.id as item_id, si.source, si.thread_external_id, si.occurred_at as asked_at,
-             si.body_text as ask_text, per.display_name as counterparty,
-             pr.gitlab_path, pr.repo_path
-        from commitment c
-        join source_item si on si.id = c.source_item_id
-        left join person per on per.id = c.counterparty_person_id
-        left join project pr on pr.id = c.project_id and pr.active
-       where c.status = 'open' and c.superseded_by is null
-         and ($4::bigint[] is null or c.id = any($4::bigint[]))
-    ) o
-    cross join lateral (
-      select r.id, r.fetched_at,
-             (o.thread_external_id is not null and r.source = o.source and r.thread_external_id = o.thread_external_id) as same_thread
-        from source_item r
-       -- Not the message the ask came from — unless its text arrived only
-       -- later (graphChat.repairEmpty): then it may hold the answer itself, as
-       -- a reply quoting the question did once.
-       where (r.id <> o.item_id or r.raw->>'repaired' is not null)
-         and (r.occurred_at > o.asked_at or r.id = o.item_id)
-         and r.occurred_at < o.asked_at + interval '${WINDOW_DAYS} days'
-         and r.fetched_at > coalesce(o.ledger_checked_at, '-infinity'::timestamptz)
-         and r.source <> 'graph_event'
-         -- A live Claude session is re-saved every few minutes while it runs;
-         -- judging it each time re-judged every ask in its repo every minute.
-         -- It counts once it has been quiet for a while.
-         and (r.source <> 'claude_session' or r.fetched_at < now() - interval '${SESSION_SETTLE_MINUTES} minutes')
-         and length(r.body_text) >= 8
-         and (
-           r.id = o.item_id
-           or (o.thread_external_id is not null and r.source = o.source and r.thread_external_id = o.thread_external_id)
-           -- What they wrote elsewhere: in chat or mail, or on GitHub in this
-           -- ask's repo. Their PRs in other repos are not an answer, and ten of
-           -- them once filled every slot ahead of the reply in the same thread.
-           or (o.direction = 'owed_to_me' and o.counterparty_person_id is not null
-               and lower(coalesce(r.author_identity, '')) in ${FORMS_OF('o.counterparty_person_id')}
-               and (r.source in ('graph_chat', 'graph_mail')
-                    or (o.gitlab_path is not null and r.source like 'github%' and lower(r.raw->>'project') = lower(o.gitlab_path))))
-           or (lower(coalesce(r.author_identity, '')) = any($1::text[]) and (
-                 (o.gitlab_path is not null and r.source like 'github%' and lower(r.raw->>'project') = lower(o.gitlab_path))
-                 or (o.repo_path is not null and r.source = 'claude_session'
-                     and (lower(r.raw->>'cwd') like lower(o.repo_path) || '%'
-                          -- A session on another machine (raw.machine) has that machine's
-                          -- path: the repo's folder name anywhere in it is the match.
-                          or (r.raw->>'machine' is not null
-                              and string_to_array(translate(lower(r.raw->>'cwd'), chr(92), '/'), '/')
-                                  @> array[regexp_replace(translate(lower(o.repo_path), chr(92), '/'), '^.*/', '')])))))
-         )
-       -- The same thread first: that is where an answer usually is.
-       order by same_thread desc, r.fetched_at
-       limit $3
-    ) r
-   group by o.id, o.direction, o.summary, o.detail, o.counterparty, o.asked_at, o.ask_text, o.source, o.ledger_checked_at
-   -- Fresh evidence first (an answer that just arrived closes its ask within
-   -- the minute); then the asks waiting longest. Newest-first alone starved
-   -- the backlog: live sessions kept winning, and an answer from two days ago
-   -- was never judged at all.
-   order by (max(r.fetched_at) > now() - interval '15 minutes') desc,
-            coalesce(o.ledger_checked_at, '-infinity'::timestamptz),
-            max(r.fetched_at) desc
-   limit $2`;
+// The dirty set's SQL lives in src/repo/ledger.js (plan 1.2); kept on this module's exports.
+const { DIRTY } = require('../repo/ledger');
 
 async function myForms() {
-  const ids = await rows(`select pi.kind, pi.value from person_identity pi join person p on p.id = pi.person_id where p.is_me`);
+  const ids = await repo.people.myIdentities();
   return ['me', ...R.authorForms(ids)];
 }
 
 async function itemsById(ids, me) {
-  const list = await rows(
-    `select id, source, author_identity, occurred_at, subject, body_text, raw from source_item where id = any($1::bigint[])`,
-    [ids]
-  );
+  const list = await repo.sources.itemsByIds(ids);
   const mine = new Set(me);
   return new Map(
     list.map((r) => [
@@ -150,41 +74,29 @@ async function judge(batch) {
 }
 
 async function reopenedByYou(ids) {
-  const list = await rows(
-    `select distinct commitment_id from ledger_transition
-      where commitment_id = any($1::bigint[]) and actor = 'you' and to_status = 'open' and undone_at is null`,
-    [ids]
-  );
-  return new Set(list.map((r) => String(r.commitment_id)));
+  return repo.ledger.reopenedByYou(ids);
 }
 
 // Evidence and, for an applied close, the transition — in one transaction.
 async function write(v, decision) {
-  return withTx(async (client) => {
-    const ev = (
-      await client.query(
-        `insert into ledger_evidence (commitment_id, source_item_id, effect, quote, confidence, method, extracted_by, applied)
-         values ($1,$2,$3,$4,$5,'llm',$6,false)
-         on conflict (commitment_id, source_item_id, extracted_by) do update
-            set effect = excluded.effect, quote = excluded.quote, confidence = excluded.confidence, created_at = now()
-         returning id`,
-        [v.commitment.id, v.item.id, v.effect, v.quote, v.confidence, R.VERSION]
-      )
-    ).rows[0];
-    if (decision !== 'apply') return { evidenceId: Number(ev.id), applied: false };
+  return repo.withTx(async (r) => {
+    const evId = await r.ledger.upsertEvidence({
+      commitmentId: v.commitment.id, sourceItemId: v.item.id, effect: v.effect, quote: v.quote, confidence: v.confidence, extractedBy: R.VERSION,
+    });
+    if (decision !== 'apply') return { evidenceId: evId, applied: false };
     const t = await ledger.transition(
       {
         commitmentId: v.commitment.id,
         to: v.effect === 'moot' ? 'dropped' : 'done',
         actor: 'reconciler',
         reason: R.reasonFor(v),
-        evidenceId: ev.id,
+        evidenceId: evId,
         from: ['open'],
       },
-      client
+      r
     );
-    if (t.changed) await client.query('update ledger_evidence set applied = true where id = $1', [ev.id]);
-    return { evidenceId: Number(ev.id), applied: t.changed };
+    if (t.changed) await r.ledger.markEvidenceApplied(evId);
+    return { evidenceId: evId, applied: t.changed };
   });
 }
 
@@ -196,7 +108,7 @@ async function write(v, decision) {
  */
 async function pass({ limit = 24, dryRun = false, ids = null } = {}) {
   const me = await myForms();
-  const dirty = (await rows(DIRTY, [me, limit, 10, ids && ids.length ? ids : null])).filter((d) => (failures.get(String(d.id)) || 0) < MAX_FAILURES);
+  const dirty = (await repo.ledger.dirty({ myForms: me, limit, perCommitment: 10, ids })).filter((d) => (failures.get(String(d.id)) || 0) < MAX_FAILURES);
   const out = { dirty: dirty.length, judged: 0, closed: 0, proposed: 0, progressed: 0, errors: 0, results: [] };
   if (!dirty.length) return out;
 
@@ -249,12 +161,7 @@ async function pass({ limit = 24, dryRun = false, ids = null } = {}) {
       // "longest waiting", and the same batch was re-judged every minute.
       for (const c of batch.commitments) {
         failures.delete(String(c.id));
-        await query(
-          `update commitment set ledger_checked_at = greatest(coalesce(ledger_checked_at, t.through), t.through)
-             from (select max(fetched_at) as through from source_item where id = any($2::bigint[])) t
-            where commitment.id = $1 and t.through is not null`,
-          [c.id, c.item_ids]
-        );
+        await repo.ledger.markChecked(c.id, c.item_ids);
       }
     }
   }
@@ -264,29 +171,15 @@ async function pass({ limit = 24, dryRun = false, ids = null } = {}) {
 
 /** Closes the judge was not sure enough to apply, newest per commitment, still open. */
 async function proposals({ limit = 40 } = {}) {
-  return rows(
-    // Evidence found for a copy that was later folded into a survivor
-    // (superseded_by) is shown on the survivor: the copy is not on the board,
-    // and showing it put a twin of a live card under "Looks done".
-    `select distinct on (c.id) e.id, c.id as commitment_id, e.effect, e.quote, e.confidence, e.created_at,
-            c.summary, c.direction, si.source, si.author_identity, coalesce(si.raw->>'webUrl', si.raw->>'url') as url
-       from ledger_evidence e
-       join commitment o on o.id = e.commitment_id
-       join commitment c on c.id = coalesce(o.superseded_by, o.id) and c.status = 'open' and c.superseded_by is null
-       left join source_item si on si.id = e.source_item_id
-      where e.effect in ('closes','moot') and not e.applied and e.decision is null and e.confidence >= $2
-      order by c.id, e.created_at desc
-      limit $1`,
-    [limit, R.PROPOSE_CONFIDENCE]
-  );
+  return repo.ledger.proposals({ limit, minConfidence: R.PROPOSE_CONFIDENCE });
 }
 
 /** Your answer to a "Looks done?" card. Accepting closes it as your own decision. */
 async function decide(evidenceId, accept) {
-  const e = await one('select * from ledger_evidence where id = $1', [evidenceId]);
+  const e = await repo.ledger.evidenceById(evidenceId);
   if (!e) throw new Error(`no evidence #${evidenceId}`);
   if (e.decision) return { ok: false, result: `already ${e.decision}` };
-  const out = await withTx(async (client) => {
+  const out = await repo.withTx(async (r) => {
     let changed = false;
     if (accept) {
       const t = await ledger.transition(
@@ -297,15 +190,11 @@ async function decide(evidenceId, accept) {
           reason: `you confirmed: "${R.clip(e.quote, 160)}"`,
           evidenceId: e.id,
         },
-        client
+        r
       );
       changed = t.changed;
     }
-    await client.query('update ledger_evidence set decision = $2, decided_at = now(), applied = $3 where id = $1', [
-      e.id,
-      accept ? 'accepted' : 'rejected',
-      changed,
-    ]);
+    await r.ledger.decideEvidence(e.id, accept ? 'accepted' : 'rejected', changed);
     return { ok: true, result: accept ? (changed ? 'closed' : 'already closed') : 'kept open', commitmentId: Number(e.commitment_id) };
   });
   // The evidence may sit on a copy folded into a survivor (proposals() shows
@@ -319,14 +208,7 @@ async function decide(evidenceId, accept) {
 }
 
 async function stats() {
-  return one(
-    `select (select count(*) from ledger_transition where actor = 'reconciler' and undone_at is null)::int as closed,
-            (select count(*) from ledger_transition t where actor = 'reconciler'
-               and exists (select 1 from ledger_transition u where u.commitment_id = t.commitment_id
-                            and u.actor = 'you' and u.to_status = 'open' and u.at > t.at))::int as reopened,
-            (select count(*) from ledger_evidence where effect in ('closes','moot') and not applied and decision is null)::int as proposed,
-            (select max(created_at) from ledger_evidence) as last`
-  );
+  return repo.ledger.reconcileStats();
 }
 
 module.exports = { pass, proposals, decide, stats, DIRTY };

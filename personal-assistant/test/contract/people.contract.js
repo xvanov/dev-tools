@@ -49,4 +49,14 @@ module.exports = {
     assert.deepStrictEqual(got.map((r) => [r.email, r.display_name]).sort(), [[e1, 'One'], [e2, 'Two']].sort());
     assert.deepStrictEqual(await repos.people.namesForEmails([]), []);
   },
+
+  'myIdentities: the identities of the person marked me, only': async ({ repos, seed, db, assert }) => {
+    const me = (await db.one(`select id from person where is_me`)) || { id: await seed.person('Me Example') };
+    await db.query('update person set is_me = true where id = $1', [me.id]);
+    const other = await seed.person('Someone Else');
+    await db.query(`insert into person_identity (person_id, kind, value) values ($1, 'smtp', 'me@example.com'), ($2, 'smtp', 'else@example.com')`, [me.id, other]);
+    const ids = await repos.people.myIdentities();
+    assert.ok(ids.some((i) => i.kind === 'smtp' && i.value === 'me@example.com'));
+    assert.ok(!ids.some((i) => i.value === 'else@example.com'));
+  },
 };

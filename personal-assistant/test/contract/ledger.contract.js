@@ -54,6 +54,114 @@ module.exports = {
     assert.strictEqual(Number((await repos.ledger.latest(c)).id), a);
   },
 
+  'dirty: an open ask with a new item in its thread, until it is marked checked': async ({ repos, seed, db, assert }) => {
+    const ask = await seed.sourceItem({ thread: 'thr-dirty', body: 'can you send the deck?', occurredAt: new Date(Date.now() - 3600_000) });
+    const c = await seed.commitment({ sourceItemId: ask });
+    const reply = await seed.sourceItem({ thread: 'thr-dirty', body: 'sent it this morning', occurredAt: new Date(Date.now() - 60_000) });
+    const elsewhere = await seed.sourceItem({ thread: 'thr-other', body: 'unrelated message text' });
+    const list = await repos.ledger.dirty({ myForms: ['me'], limit: 50, perCommitment: 10, ids: [c] });
+    assert.strictEqual(list.length, 1);
+    const d = list[0];
+    assert.deepStrictEqual([Number(d.id), d.summary, d.ask_text], [c, 'a seeded ask', 'can you send the deck?']);
+    assert.ok(d.item_ids.map(Number).includes(reply) && !d.item_ids.map(Number).includes(elsewhere));
+    assert.ok(d.through instanceof Date);
+    // Only these ids; and a closed ask is never dirty.
+    const other = await seed.commitment();
+    assert.ok(!(await repos.ledger.dirty({ myForms: ['me'], limit: 50, perCommitment: 10, ids: [other] })).some((x) => Number(x.id) === c));
+    await repos.ledger.markChecked(c, d.item_ids);
+    assert.deepStrictEqual(await repos.ledger.dirty({ myForms: ['me'], limit: 50, perCommitment: 10, ids: [c] }), [], 'judged through its newest item');
+    await db.query(`update commitment set status = 'done' where id = $1`, [c]);
+    await seed.sourceItem({ thread: 'thr-dirty', body: 'one more reply here' });
+    assert.deepStrictEqual(await repos.ledger.dirty({ myForms: ['me'], limit: 50, perCommitment: 10, ids: [c] }), []);
+  },
+
+  'markChecked: never moves back, and ignores items it cannot find': async ({ repos, seed, db, assert }) => {
+    const c = await seed.commitment();
+    const late = await seed.sourceItem();
+    await repos.ledger.markChecked(c, [late]);
+    const at = (await db.one('select ledger_checked_at from commitment where id = $1', [c])).ledger_checked_at;
+    assert.ok(at instanceof Date);
+    await db.query(`update source_item set fetched_at = now() - interval '1 day' where id = $1`, [late]);
+    const early = await seed.sourceItem();
+    await db.query(`update source_item set fetched_at = now() - interval '2 days' where id = $1`, [early]);
+    await repos.ledger.markChecked(c, [early]);
+    await repos.ledger.markChecked(c, [-1]);
+    assert.strictEqual((await db.one('select ledger_checked_at from commitment where id = $1', [c])).ledger_checked_at.getTime(), at.getTime());
+  },
+
+  'reopenedByYou: commitments you reopened, not undone': async ({ repos, seed, assert }) => {
+    const [a, b, c] = [await seed.commitment(), await seed.commitment(), await seed.commitment()];
+    await seed.transition(a, { actor: 'you', from: 'done', to: 'open' });
+    await seed.transition(b, { actor: 'you', from: 'done', to: 'open', undoneAt: new Date() });
+    await seed.transition(c, { actor: 'reconciler', from: 'done', to: 'open' });
+    const s = await repos.ledger.reopenedByYou([a, b, c]);
+    assert.deepStrictEqual([...s], [String(a)]);
+  },
+
+  'upsertEvidence: one row per (commitment, item, judge version), updated in place': async ({ repos, seed, assert }) => {
+    const c = await seed.commitment();
+    const item = await seed.sourceItem();
+    const e = { commitmentId: c, sourceItemId: item, effect: 'progresses', quote: 'working on it', confidence: 0.5, extractedBy: 'judge-v1' };
+    const id = await repos.ledger.upsertEvidence(e);
+    const again = await repos.ledger.upsertEvidence({ ...e, effect: 'closes', quote: 'done now', confidence: 0.95 });
+    assert.strictEqual(again, id);
+    const row = await repos.ledger.evidenceById(id);
+    assert.deepStrictEqual([row.effect, row.quote, Number(row.confidence), row.method, row.applied], ['closes', 'done now', 0.95, 'llm', false]);
+    assert.notStrictEqual(await repos.ledger.upsertEvidence({ ...e, extractedBy: 'judge-v2' }), id, 'a new judge version is a new row');
+  },
+
+  'markEvidenceApplied: applied': async ({ repos, seed, assert }) => {
+    const c = await seed.commitment();
+    const id = await seed.evidence(c, { quote: 'q' });
+    await repos.ledger.markEvidenceApplied(id);
+    assert.strictEqual((await repos.ledger.evidenceById(id)).applied, true);
+  },
+
+  'proposals: confident closes not applied or decided, newest per open commitment, on the survivor': async ({ repos, seed, db, assert }) => {
+    const survivor = await seed.commitment({ summary: 'survivor' });
+    const copy = await seed.commitment({ summary: 'copy' });
+    await db.query('update commitment set superseded_by = $2 where id = $1', [copy, survivor]);
+    const item = await seed.sourceItem();
+    await seed.evidence(survivor, { effect: 'closes', quote: 'older', confidence: 0.9, sourceItemId: item });
+    await new Promise((r) => setTimeout(r, 5));
+    const onCopy = await seed.evidence(copy, { effect: 'moot', quote: 'newer on the copy', confidence: 0.9 });
+    const weak = await seed.commitment();
+    await seed.evidence(weak, { effect: 'closes', quote: 'maybe', confidence: 0.1 });
+    const decided = await seed.commitment();
+    const d = await seed.evidence(decided, { effect: 'closes', quote: 'no', confidence: 0.9 });
+    await repos.ledger.decideEvidence(d, 'rejected', false);
+    const list = await repos.ledger.proposals({ limit: 1000, minConfidence: 0.6 });
+    const mine = list.filter((p) => [survivor, copy, weak, decided].includes(Number(p.commitment_id)));
+    assert.deepStrictEqual(mine.map((p) => [Number(p.commitment_id), Number(p.id), p.summary]), [[survivor, onCopy, 'survivor']]);
+  },
+
+  'evidenceById: the row, or null': async ({ repos, seed, assert }) => {
+    const c = await seed.commitment();
+    const id = await seed.evidence(c, { quote: 'x' });
+    assert.strictEqual(Number((await repos.ledger.evidenceById(id)).commitment_id), c);
+    assert.strictEqual(await repos.ledger.evidenceById(-1), null);
+  },
+
+  'decideEvidence: decision, time and applied': async ({ repos, seed, assert }) => {
+    const c = await seed.commitment();
+    const id = await seed.evidence(c, { quote: 'x' });
+    await repos.ledger.decideEvidence(id, 'accepted', true);
+    const row = await repos.ledger.evidenceById(id);
+    assert.deepStrictEqual([row.decision, row.applied], ['accepted', true]);
+    assert.ok(row.decided_at instanceof Date);
+  },
+
+  'reconcileStats: closes, closes you reopened, open proposals, newest evidence': async ({ repos, seed, assert }) => {
+    const before = await repos.ledger.reconcileStats();
+    const c = await seed.commitment();
+    await seed.transition(c, { actor: 'reconciler', to: 'done', at: new Date(Date.now() - 60_000) });
+    await seed.transition(c, { actor: 'you', from: 'done', to: 'open' });
+    await seed.evidence(c, { effect: 'closes', quote: 'p', confidence: 0.9 });
+    const after = await repos.ledger.reconcileStats();
+    assert.deepStrictEqual([after.closed - before.closed, after.reopened - before.reopened, after.proposed - before.proposed], [1, 1, 1]);
+    assert.ok(after.last instanceof Date);
+  },
+
   'history: every change newest first, with its evidence': async ({ repos, seed, assert }) => {
     const c = await seed.commitment();
     const item = await seed.sourceItem();

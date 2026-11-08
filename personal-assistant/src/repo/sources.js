@@ -303,6 +303,16 @@ function create(db) {
         [now]
       );
     },
+
+    // --- for ledger/reconcile.js
+
+    /** These items' {id, source, author_identity, occurred_at, subject, body_text, raw}, in no order. */
+    async itemsByIds(ids) {
+      return db.rows(
+        `select id, source, author_identity, occurred_at, subject, body_text, raw from source_item where id = any($1::bigint[])`,
+        [ids]
+      );
+    },
   };
 }
 

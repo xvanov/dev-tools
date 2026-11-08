@@ -242,4 +242,14 @@ module.exports = {
     assert.strictEqual(got.length, 1);
     assert.ok(got[0].external_id && got[0].raw);
   },
+
+  'itemsByIds: the asked-for items with their raw payload': async ({ repos, seed, assert }) => {
+    const a = await seed.sourceItem({ subject: 'A', author: 'ada@example.com', raw: { webUrl: 'https://x.example/a' } });
+    const b = await seed.sourceItem({ subject: 'B' });
+    const list = await repos.sources.itemsByIds([a, b, -1]);
+    assert.deepStrictEqual(list.map((r) => Number(r.id)).sort(), [a, b].sort());
+    const ra = list.find((r) => Number(r.id) === a);
+    assert.deepStrictEqual([ra.subject, ra.author_identity, ra.raw.webUrl], ['A', 'ada@example.com', 'https://x.example/a']);
+    assert.ok(ra.occurred_at instanceof Date && 'body_text' in ra && 'source' in ra);
+  },
 };

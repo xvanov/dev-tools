@@ -13,9 +13,10 @@ function postgres(db) {
     async sourceItem(o = {}) {
       n++;
       const r = await db.one(
-        `insert into source_item (source, external_id, occurred_at, raw, body_text, subject, content_hash)
-         values ($1, $2, coalesce($3, now()), '{}'::jsonb, $4, $5, md5($2)) returning id`,
-        [o.source || 'graph_mail', o.externalId || `seed-${process.pid}-${Date.now()}-${n}`, o.occurredAt || null, o.body || 'body', o.subject || 'subject']
+        `insert into source_item (source, external_id, occurred_at, raw, body_text, subject, content_hash, thread_external_id, author_identity)
+         values ($1, $2, coalesce($3, now()), coalesce($6, '{}')::jsonb, $4, $5, md5($2), $7, $8) returning id`,
+        [o.source || 'graph_mail', o.externalId || `seed-${process.pid}-${Date.now()}-${n}`, o.occurredAt || null, o.body || 'body', o.subject || 'subject',
+          o.raw ? JSON.stringify(o.raw) : null, o.thread || null, o.author || null]
       );
       return Number(r.id);
     },
