@@ -44,12 +44,29 @@ function rmFile(f) {
   for (const x of ['', '-wal', '-shm']) fs.rmSync(`${f}${x}`, { force: true });
 }
 
+/**
+ * VACUUM INTO on a worker thread: better-sqlite3 is synchronous, and copying
+ * the work stack's 450 MB takes ~6 s, which on the worker's own thread is 6 s
+ * of a dashboard that does not answer (found by the 3.5 rehearsal).
+ */
+function snapshotOffThread(src, dest, key) {
+  const { Worker } = require('worker_threads');
+  return new Promise((resolve, reject) => {
+    const w = new Worker(
+      "const { workerData: d } = require('worker_threads'); require(d.mod).snapshotFile(d.src, d.dest, { key: d.key });",
+      { eval: true, workerData: { mod: require.resolve('./db/sqlite'), src, dest, key } }
+    );
+    w.once('error', reject);
+    w.once('exit', (code) => (code === 0 ? resolve() : reject(new Error(`the snapshot thread exited with ${code}`))));
+  });
+}
+
 /** A consistent copy of the store at `dest` (a new file), encrypted as the store is. */
 async function snapshot(dest, { src = config.sqlitePath, key = config.sqliteKey || null } = {}) {
   const partial = `${dest}.partial`;
   rmFile(partial);
   const started = Date.now();
-  sqlite().snapshotFile(src, partial, { key });
+  await snapshotOffThread(src, partial, key);
   fs.renameSync(partial, dest);
   return { file: dest, bytes: fs.statSync(dest).size, seconds: (Date.now() - started) / 1000 };
 }
