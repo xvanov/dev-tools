@@ -116,6 +116,92 @@ module.exports = {
     assert.ok(all[i].updated_at instanceof Date);
   },
 
+  'unreadPushes: unread pushes in the window, newest first, at most limit': async ({ repos, seed, assert }) => {
+    const ins = (title, delivery = 'push') => repos.notifications.insert({ kind: 'info', title, body: 'b', url: null, dedupeKey: null, priority: 'normal', delivery });
+    const old = await ins('old push');
+    await seed.backdate('notification', 'created_at', old.id, new Date(Date.now() - 49 * 3600_000));
+    const read = await ins('read push');
+    await repos.notifications.markRead(read.id);
+    const feedOnly = await ins('feed only', 'feed');
+    const a = await ins('push a');
+    await new Promise((r) => setTimeout(r, 5));
+    const b = await ins('push b');
+    const ids = (await repos.notifications.unreadPushes(48, 500)).map((n) => String(n.id));
+    assert.ok(ids.indexOf(String(b.id)) >= 0 && ids.indexOf(String(b.id)) < ids.indexOf(String(a.id)), 'newest first');
+    for (const x of [old, read, feedOnly]) assert.ok(!ids.includes(String(x.id)), x.title);
+    assert.strictEqual((await repos.notifications.unreadPushes(48, 1)).length, 1);
+  },
+
+  'lastDigest: the newest slot': async ({ repos, assert }) => {
+    await repos.notifications.insertDigest('2099-01-01 08:00', 'early', { closed: [], proposals: [], waiting: [], held: [] });
+    await repos.notifications.insertDigest('2099-01-01 17:00', 'late', { closed: [], proposals: [], waiting: [], held: [] });
+    const last = await repos.notifications.lastDigest();
+    assert.strictEqual(last.slot, '2099-01-01 17:00');
+    assert.ok(last.created_at instanceof Date);
+  },
+
+  'insertDigest: once per slot; items kept': async ({ repos, assert, uniq }) => {
+    const slot = uniq('slot');
+    const row = await repos.notifications.insertDigest(slot, 'body', { closed: [1], proposals: [], waiting: [2], held: [] });
+    assert.deepStrictEqual([row.slot, row.body, row.items], [slot, 'body', { closed: [1], proposals: [], waiting: [2], held: [] }]);
+    assert.strictEqual(await repos.notifications.insertDigest(slot, 'again', {}), null, 'another process wrote this slot');
+  },
+
+  'heldForDigest: digest-delivery rows not yet in a digest, oldest first': async ({ repos, assert }) => {
+    const ins = (title) => repos.notifications.insert({ kind: 'info', title, body: '', url: null, dedupeKey: null, priority: 'digest', delivery: 'digest' });
+    const a = await ins('held a');
+    await new Promise((r) => setTimeout(r, 5));
+    const b = await ins('held b');
+    const ids = (await repos.notifications.heldForDigest()).map((n) => String(n.id));
+    assert.ok(ids.indexOf(String(a.id)) >= 0 && ids.indexOf(String(a.id)) < ids.indexOf(String(b.id)));
+  },
+
+  'attachToDigest: held rows leave the queue, once': async ({ repos, assert, uniq }) => {
+    const n = await repos.notifications.insert({ kind: 'info', title: 'h', body: '', url: null, dedupeKey: null, priority: 'digest', delivery: 'digest' });
+    const d1 = await repos.notifications.insertDigest(uniq('s'), '', {});
+    const d2 = await repos.notifications.insertDigest(uniq('s'), '', {});
+    await repos.notifications.attachToDigest(d1.id, [n.id]);
+    await repos.notifications.attachToDigest(d2.id, [n.id]);
+    assert.ok(!(await repos.notifications.heldForDigest()).some((x) => String(x.id) === String(n.id)));
+    const row = (await repos.notifications.feed({ limit: 1000 })).find((x) => String(x.id) === String(n.id));
+    assert.strictEqual(String(row.digest_id), String(d1.id), 'the first digest keeps it');
+  },
+
+  'closedForYouSince: closed by the assistant, not by you, not undone, newest first': async ({ repos, seed, assert }) => {
+    const since = new Date(Date.now() - 1000);
+    const c = await seed.commitment({ summary: 'closed for you' });
+    const mine = await seed.transition(c, { actor: 'you' });
+    const undone = await seed.transition(c, { actor: 'reconcile', undoneAt: new Date() });
+    const reopened = await seed.transition(c, { actor: 'reconcile', to: 'open' });
+    const a = await seed.transition(c, { actor: 'reconcile', reason: 'merged', to: 'done' });
+    await new Promise((r) => setTimeout(r, 5));
+    const b = await seed.transition(c, { actor: 'policy', to: 'dropped' });
+    const list = (await repos.notifications.closedForYouSince(since)).filter((t) => Number(t.commitment_id) === c);
+    assert.deepStrictEqual(list.map((t) => Number(t.id)), [b, a]);
+    assert.deepStrictEqual([list[1].summary, list[1].actor, list[1].reason, list[1].to_status], ['closed for you', 'reconcile', 'merged', 'done']);
+    for (const x of [mine, undone, reopened]) assert.ok(!list.some((t) => Number(t.id) === x));
+  },
+
+  'waitingOnOthers: open asks owed to you, overdue or older than the window': async ({ repos, seed, assert }) => {
+    const now = new Date();
+    const who = await seed.person('Bo Example');
+    const overdue = await seed.commitment({ direction: 'owed_to_me', summary: 'overdue' });
+    await seed.updateCommitment(overdue, { due_at: new Date(now - 86400_000), counterparty_person_id: who });
+    const stale = await seed.commitment({ direction: 'owed_to_me', summary: 'stale' });
+    await seed.updateCommitment(stale, { extracted_at: new Date(now - 10 * 86400_000) });
+    const fresh = await seed.commitment({ direction: 'owed_to_me', summary: 'fresh' });
+    const mine = await seed.commitment({ direction: 'owed_by_me', summary: 'mine' });
+    await seed.updateCommitment(mine, { due_at: new Date(now - 86400_000) });
+    const closed = await seed.commitment({ direction: 'owed_to_me', summary: 'closed', status: 'done' });
+    await seed.updateCommitment(closed, { due_at: new Date(now - 86400_000) });
+    const list = await repos.notifications.waitingOnOthers(now, 7);
+    const ids = list.map((w) => Number(w.id));
+    assert.ok(ids.includes(overdue) && ids.includes(stale));
+    for (const x of [fresh, mine, closed]) assert.ok(!ids.includes(x));
+    assert.strictEqual(list.find((w) => Number(w.id) === overdue).who, 'Bo Example');
+    assert.ok(ids.indexOf(stale) < ids.indexOf(overdue), 'by due date, else age: the stale one is older');
+  },
+
   'withTx: a throw rolls every write back': async ({ repos, assert, uniq }) => {
     const k = uniq('tx');
     await assert.rejects(repos.withTx(async (r) => {

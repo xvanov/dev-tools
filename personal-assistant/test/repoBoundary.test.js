@@ -18,7 +18,6 @@ const PENDING = new Set([
   'src/audio/gate.js',
   'src/backup.js',
   'src/brief/index.js',
-  'src/budget.js',
   'src/chat/fastLane.js',
   'src/cli/index.js',
   'src/commitments.js',
@@ -66,8 +65,6 @@ const PENDING = new Set([
   'src/memory/extract.js',
   'src/memory/index.js',
   'src/memory/pages.js',
-  'src/notify/chat.js',
-  'src/notify/digest.js',
   'src/projects/index.js',
   'src/projects/rescore.js',
   'src/proposals/index.js',
@@ -80,11 +77,15 @@ const PENDING = new Set([
   'src/search/embedCache.js',
   'src/search/index.js',
   'src/secrets/index.js',
-  'src/util/lease.js',
-  'src/worker.js',
 ]);
 
-const REQUIRES_DB = /\brequire\(\s*['"](?:\.\.?\/)+db['"]\s*\)/;
+// May require src/db for the pool's lifecycle (a dedicated connection, close
+// on exit), never to run a statement; a SQL call in them still fails.
+const POOL_ONLY = new Map([
+  ['src/worker.js', 'the lease connection (getPool().connect) and close on exit'],
+]);
+
+const REQUIRES_DB =/\brequire\(\s*['"](?:\.\.?\/)+db['"]\s*\)/;
 const SQL_CALL = /\.(?:query|rows|one)\(\s*[`'"]\s*(?:select|insert|update|delete|with|create|alter|drop|lock|listen|notify|truncate)\b/i;
 const BARE_SQL_CALL = /(?<![\w.])(?:query|rows|one)\(\s*[`'"]\s*(?:select|insert|update|delete|with)\b/i;
 
@@ -103,7 +104,7 @@ const files = [...walk(path.join(ROOT, 'src')), ...walk(path.join(ROOT, 'bin'))]
 
 const hasSql = (f) => {
   const t = fs.readFileSync(path.join(ROOT, f), 'utf8');
-  return REQUIRES_DB.test(t) || SQL_CALL.test(t) || BARE_SQL_CALL.test(t);
+  return (!POOL_ONLY.has(f) && REQUIRES_DB.test(t)) || SQL_CALL.test(t) || BARE_SQL_CALL.test(t);
 };
 
 const unconverted = files.filter(hasSql);

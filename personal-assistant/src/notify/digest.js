@@ -24,7 +24,7 @@
 // backlog, and two processes cannot both write the same one.
 
 const { config } = require('../config');
-const { one, rows, query } = require('../db');
+const repo = require('../repo');
 const { logger } = require('../log');
 
 const log = logger('digest');
@@ -118,32 +118,16 @@ function renderDigest({ slot, closed = [], proposals = [], waiting = [], held = 
 // ------------------------------------------------------------------ store ----
 
 async function gather({ since, now = new Date() }) {
-  const closed = await rows(
-    `select t.id, t.commitment_id, t.actor, t.reason, t.to_status, t.at, c.summary
-       from ledger_transition t join commitment c on c.id = t.commitment_id
-      where t.actor <> 'you' and t.undone_at is null and t.to_status in ('done','dropped') and t.at > $1
-      order by t.at desc`,
-    [since]
-  );
+  const closed = await repo.notifications.closedForYouSince(since);
   const proposals = await require('../ledger/reconcile').proposals().catch(() => []);
-  const waiting = await rows(
-    `select c.id, c.summary, c.due_at, c.extracted_at, per.display_name as who
-       from commitment c left join person per on per.id = c.counterparty_person_id
-      where c.direction = 'owed_to_me' and c.status = 'open'
-        and (c.due_at < $1 or c.extracted_at < $1::timestamptz - ($2 || ' days')::interval)
-      order by coalesce(c.due_at, c.extracted_at)`,
-    [now, String(WAITING_DAYS)]
-  );
-  const held = await rows(
-    `select id, kind, title, url, created_at from notification
-      where delivery = 'digest' and digest_id is null order by created_at`
-  );
+  const waiting = await repo.notifications.waitingOnOthers(now, WAITING_DAYS);
+  const held = await repo.notifications.heldForDigest();
   return { closed, proposals, waiting, held };
 }
 
 /** What the digest would say right now, without writing anything. */
 async function preview({ now = new Date() } = {}) {
-  const last = await one('select slot, created_at from digest order by slot desc limit 1');
+  const last = await repo.notifications.lastDigest();
   const since = last ? last.created_at : new Date(now - 86_400_000);
   const lists = await gather({ since, now });
   return { ...renderDigest({ slot: slotLabel(now), ...lists, now }), since, lists };
@@ -152,7 +136,7 @@ async function preview({ now = new Date() } = {}) {
 /** The worker's minute tick: writes the due digest, if any. */
 async function runDue({ now = new Date() } = {}) {
   const times = parseDigestTimes(config.notify.digestTimes);
-  const last = await one('select slot, created_at from digest order by slot desc limit 1');
+  const last = await repo.notifications.lastDigest();
   const slot = dueSlot({ times, now, lastSlot: last?.slot });
   if (!slot) return null;
   const since = last ? last.created_at : new Date(now - 86_400_000);
@@ -164,15 +148,9 @@ async function runDue({ now = new Date() } = {}) {
     waiting: lists.waiting.map((w) => Number(w.id)),
     held: lists.held.map((n) => Number(n.id)),
   };
-  const row = await one(
-    `insert into digest (slot, body, items) values ($1, $2, $3)
-     on conflict (slot) do nothing returning *`,
-    [slot, text.count ? `${text.title}\n\n${text.body}` : '', JSON.stringify(items)]
-  );
+  const row = await repo.notifications.insertDigest(slot, text.count ? `${text.title}\n\n${text.body}` : '', items);
   if (!row) return null; // another process wrote this slot
-  if (items.held.length) {
-    await query('update notification set digest_id = $1 where id = any($2::bigint[]) and digest_id is null', [row.id, items.held]);
-  }
+  if (items.held.length) await repo.notifications.attachToDigest(row.id, items.held);
   if (text.count) {
     const { notify, dashboardUrl } = require('./index');
     await notify({

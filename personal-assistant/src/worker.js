@@ -517,13 +517,8 @@ async function main() {
   });
 
   every(3600, 'retention', async () => {
-    const result = await db.query(
-      `delete from source_item
-        where source in ('graph_mail','graph_chat')
-          and occurred_at < now() - ($1 || ' days')::interval`,
-      [String(config.retention.rawItemDays)]
-    );
-    if (result.rowCount) log.info('retention', { deleted: result.rowCount });
+    const deleted = await require('./repo').sources.deleteOldMessages(config.retention.rawItemDays);
+    if (deleted) log.info('retention', { deleted });
   });
 
   // A stray rejection in one pass must not end every other pass with it.

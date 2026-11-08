@@ -32,8 +32,9 @@ const { logger } = require('./log');
 
 const log = logger('budget');
 
-function db() {
-  return require('./db');
+// Lazy: llm.js requires this module, and the store is only needed per call.
+function spend() {
+  return require('./repo').spend;
 }
 
 // ------------------------------------------------------------- the rule ----
@@ -120,20 +121,16 @@ function usd(n) {
 let recordWarned = false;
 async function record({ purpose, model, backend, costUsd = null, inputTokens = null, outputTokens = null, durationMs = null, ok }) {
   try {
-    await db().query(
-      `insert into llm_spend (purpose, model, backend, cost_usd, input_tokens, output_tokens, duration_ms, ok)
-       values ($1, $2, $3, $4, $5, $6, $7, $8)`,
-      [
-        String(purpose || 'unknown').slice(0, 64),
-        model || null,
-        backend,
-        Number.isFinite(costUsd) ? costUsd : null,
-        Number.isFinite(inputTokens) ? Math.round(inputTokens) : null,
-        Number.isFinite(outputTokens) ? Math.round(outputTokens) : null,
-        Number.isFinite(durationMs) ? Math.round(durationMs) : null,
-        Boolean(ok),
-      ]
-    );
+    await spend().record({
+      purpose: String(purpose || 'unknown').slice(0, 64),
+      model: model || null,
+      backend,
+      costUsd: Number.isFinite(costUsd) ? costUsd : null,
+      inputTokens: Number.isFinite(inputTokens) ? Math.round(inputTokens) : null,
+      outputTokens: Number.isFinite(outputTokens) ? Math.round(outputTokens) : null,
+      durationMs: Number.isFinite(durationMs) ? Math.round(durationMs) : null,
+      ok: Boolean(ok),
+    });
     spentCache = null;
   } catch (err) {
     if (!recordWarned) {
@@ -149,36 +146,21 @@ let spentCache = null;
 async function spentToday() {
   const start = dayStart();
   if (spentCache && spentCache.day === start.getTime() && Date.now() - spentCache.at < 15_000) return spentCache.usd;
-  const r = await db().one(`select coalesce(sum(cost_usd), 0)::float8 as usd from llm_spend where at >= $1`, [start]);
-  const value = Number(r?.usd) || 0;
+  const value = await spend().totalSince(start);
   spentCache = { day: start.getTime(), at: Date.now(), usd: value };
   return value;
 }
 
 // Today's spend by purpose, most expensive first.
 async function todayByPurpose() {
-  return db().rows(
-    `select purpose, coalesce(sum(cost_usd), 0)::float8 as usd, count(*)::int as calls
-       from llm_spend where at >= $1
-      group by purpose order by usd desc, calls desc`,
-    [dayStart()]
-  );
+  return spend().byPurposeSince(dayStart());
 }
 
 // The last `days` local days, per day and purpose (`pa spend`).
 async function daily({ days = 7 } = {}) {
   const n = Math.max(1, Math.min(366, Number(days) || 7));
   const since = dayStart(new Date(Date.now() - (n - 1) * 86400_000));
-  const rows = await db().rows(
-    `select to_char((at at time zone $2)::date, 'YYYY-MM-DD') as day, purpose,
-            coalesce(sum(cost_usd), 0)::float8 as usd, count(*)::int as calls,
-            count(*) filter (where not ok)::int as failed,
-            count(*) filter (where cost_usd is null)::int as unknown
-       from llm_spend where at >= $1
-      group by 1, 2`,
-    [since, timeZone()]
-  );
-  return summarise(rows);
+  return summarise(await spend().dailyByPurpose(since, timeZone()));
 }
 
 // For `pa doctor` and the dashboard.

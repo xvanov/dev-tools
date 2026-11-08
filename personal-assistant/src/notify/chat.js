@@ -47,7 +47,7 @@
 const fs = require('fs');
 const path = require('path');
 const { config } = require('../config');
-const { rows } = require('../db');
+const repo = require('../repo');
 const { logger } = require('../log');
 
 const log = logger('notify-chat');
@@ -101,12 +101,7 @@ async function writeInbox() {
   const file = inboxPath();
   // No home, no chat: `pa chat` creates it, and writes CLAUDE.md beside it.
   if (!fs.existsSync(path.dirname(file))) return false;
-  const list = await rows(
-    `select id, kind, priority, title, body, url, created_at from notification
-      where delivery = 'push' and read_at is null and created_at > now() - ($1 || ' hours')::interval
-      order by created_at desc limit $2`,
-    [String(INBOX_HOURS), INBOX_MAX]
-  );
+  const list = await repo.notifications.unreadPushes(INBOX_HOURS, INBOX_MAX);
   const tmp = `${file}.${process.pid}.tmp`;
   fs.writeFileSync(tmp, renderInbox(list.reverse()), 'utf8');
   fs.renameSync(tmp, file);

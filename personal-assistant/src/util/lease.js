@@ -31,6 +31,12 @@ const PASS_SPACE = 7301;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+/** The lock statements, on the lock connection (src/repo/leases.js). */
+function locksOn(client) {
+  const { createRepos, clientBackend } = require('../repo');
+  return createRepos(clientBackend(client)).leases;
+}
+
 /**
  * connect(): resolves to a pg client ({query, release, on}) used only for locks.
  * onLost(err): the lock connection died while the lease was held (the locks
@@ -84,11 +90,10 @@ function createLease({ connect, pollMs = 500, log = null, key = WORKER_KEY, pass
     while (wanted && mine === attempt) {
       try {
         const c = await lockClient();
-        const { rows } = await c.query('select pg_try_advisory_lock($1) as ok', [key]);
-        if (rows[0] && rows[0].ok) {
+        if (await locksOn(c).tryLock(key)) {
           if (mine !== attempt || !wanted) {
             // Called off while the query was in flight: give it straight back.
-            await c.query('select pg_advisory_unlock($1)', [key]).catch(() => {});
+            await locksOn(c).unlock(key).catch(() => {});
             return false;
           }
           held = true;
@@ -111,7 +116,7 @@ function createLease({ connect, pollMs = 500, log = null, key = WORKER_KEY, pass
     attempt++;
     if (!held) return;
     held = false;
-    if (client) await client.query('select pg_advisory_unlock($1)', [key]).catch(() => {});
+    if (client) await locksOn(client).unlock(key).catch(() => {});
   }
 
   /**
@@ -123,8 +128,7 @@ function createLease({ connect, pollMs = 500, log = null, key = WORKER_KEY, pass
     const c = client;
     let got;
     try {
-      const { rows } = await c.query('select pg_try_advisory_lock($1, hashtext($2)) as ok', [passSpace, name]);
-      got = rows[0] && rows[0].ok;
+      got = await locksOn(c).tryPassLock(passSpace, name);
     } catch (err) {
       if (log) log.warn('pass lock failed — skipping this tick', { name, message: err.message });
       return false;
@@ -136,7 +140,7 @@ function createLease({ connect, pollMs = 500, log = null, key = WORKER_KEY, pass
     try {
       await fn();
     } finally {
-      await c.query('select pg_advisory_unlock($1, hashtext($2))', [passSpace, name]).catch(() => {});
+      await locksOn(c).passUnlock(passSpace, name).catch(() => {});
     }
     return true;
   }

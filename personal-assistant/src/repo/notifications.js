@@ -1,8 +1,10 @@
 'use strict';
 
 // Aggregate: notifications. Tables: notification (the feed every proactive
-// message lands in) and attention_weight (your thumbs, per attention kind).
-// Callers: src/notify (index.js, digest.js, chat.js).
+// message lands in), attention_weight (your thumbs, per attention kind) and
+// digest (one row per digest slot). The digest's lists read the ledger and
+// commitments too: they are this aggregate's read model, kept here so the
+// digest is one place. Callers: src/notify (index.js, digest.js, chat.js).
 
 /**
  * @typedef {object} NotificationRow
@@ -108,6 +110,71 @@ function create(db) {
     /** Every attention weight, lowest first. */
     async weights() {
       return db.rows('select kind, weight, updated_at from attention_weight order by weight, kind');
+    },
+
+    /** Unread pushes from the last `hours` hours, newest first, at most `limit` (the chat's INBOX.md). */
+    async unreadPushes(hours, limit) {
+      return db.rows(
+        `select id, kind, priority, title, body, url, created_at from notification
+      where delivery = 'push' and read_at is null and created_at > now() - ($1 || ' hours')::interval
+      order by created_at desc limit $2`,
+        [String(hours), limit]
+      );
+    },
+
+    // ---- the digest (src/notify/digest.js) -------------------------------------
+
+    /** The newest digest's {slot, created_at}, or null. */
+    async lastDigest() {
+      return db.one('select slot, created_at from digest order by slot desc limit 1');
+    },
+
+    /**
+     * Writes the digest for `slot`; null when that slot already has one
+     * (another process wrote it). `items`: {closed, proposals, waiting, held} ids.
+     */
+    async insertDigest(slot, body, items) {
+      return db.one(
+        `insert into digest (slot, body, items) values ($1, $2, $3)
+     on conflict (slot) do nothing returning *`,
+        [slot, body, JSON.stringify(items)]
+      );
+    },
+
+    /** Marks held notifications as delivered by digest `digestId` (ones not in a digest yet). */
+    async attachToDigest(digestId, notificationIds) {
+      await db.query('update notification set digest_id = $1 where id = any($2::bigint[]) and digest_id is null', [digestId, notificationIds]);
+    },
+
+    /** Notifications held back for the next digest, oldest first. */
+    async heldForDigest() {
+      return db.rows(
+        `select id, kind, title, url, created_at from notification
+      where delivery = 'digest' and digest_id is null order by created_at`
+      );
+    },
+
+    /** Cards the assistant (not you) closed after `since`, newest first, not undone. */
+    async closedForYouSince(since) {
+      return db.rows(
+        `select t.id, t.commitment_id, t.actor, t.reason, t.to_status, t.at, c.summary
+       from ledger_transition t join commitment c on c.id = t.commitment_id
+      where t.actor <> 'you' and t.undone_at is null and t.to_status in ('done','dropped') and t.at > $1
+      order by t.at desc`,
+        [since]
+      );
+    },
+
+    /** Open asks owed to you that are overdue at `now` or older than `days` days. */
+    async waitingOnOthers(now, days) {
+      return db.rows(
+        `select c.id, c.summary, c.due_at, c.extracted_at, per.display_name as who
+       from commitment c left join person per on per.id = c.counterparty_person_id
+      where c.direction = 'owed_to_me' and c.status = 'open'
+        and (c.due_at < $1 or c.extracted_at < $1::timestamptz - ($2 || ' days')::interval)
+      order by coalesce(c.due_at, c.extracted_at)`,
+        [now, String(days)]
+      );
     },
   };
 }

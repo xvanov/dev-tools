@@ -29,6 +29,31 @@ function postgres(db) {
       );
       return Number(r.id);
     },
+    /** A person; returns the id. */
+    async person(name = 'Ada Example') {
+      return Number((await db.one(`insert into person (display_name) values ($1) returning id`, [name])).id);
+    },
+    /** Sets columns on a commitment (seed only: due_at, extracted_at, counterparty_person_id, status). */
+    async updateCommitment(id, cols) {
+      const allowed = ['due_at', 'extracted_at', 'counterparty_person_id', 'status'];
+      const keys = Object.keys(cols).filter((k) => allowed.includes(k));
+      await db.query(`update commitment set ${keys.map((k, i) => `${k} = $${i + 2}`).join(', ')} where id = $1`, [id, ...keys.map((k) => cols[k])]);
+    },
+    /** A ledger transition on a commitment; returns its id. */
+    async transition(commitmentId, o = {}) {
+      const r = await db.one(
+        `insert into ledger_transition (commitment_id, from_status, to_status, actor, reason, before, at, undone_at)
+         values ($1, $2, $3, $4, $5, '{}'::jsonb, coalesce($6, now()), $7) returning id`,
+        [commitmentId, o.from || 'open', o.to || 'done', o.actor || 'reconcile', o.reason || null, o.at || null, o.undoneAt || null]
+      );
+      return Number(r.id);
+    },
+    /** Moves a row's timestamp column (seed only; tables and columns are fixed here). */
+    async backdate(table, column, id, when) {
+      const ok = { notification: ['created_at'], llm_spend: ['at'], source_item: ['occurred_at'] };
+      if (!(ok[table] || []).includes(column)) throw new Error(`backdate ${table}.${column} is not a seed`);
+      await db.query(`update ${table} set ${column} = $2 where id = $1`, [id, when]);
+    },
   };
   return seed;
 }
