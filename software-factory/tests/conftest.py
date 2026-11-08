@@ -38,6 +38,15 @@ import factory.runner as _runner
 if sys.platform == "win32":
     os.environ.setdefault("PYTHONUTF8", "1")
 
+# Run from a git hook (pre-commit), the suite inherits GIT_DIR/GIT_INDEX_FILE/...
+# pointing at the REAL repository. Many tests run `git init --bare <tmp>`; with
+# GIT_DIR set, git re-initialises the real repo instead and writes core.bare=true
+# into its shared config (seen 2026-11-08: it broke the live checkout's deploys).
+# Tests must only ever see their own temp repos.
+for _var in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR",
+             "GIT_PREFIX", "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES"):
+    os.environ.pop(_var, None)
+
 _FACTORY_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 # --------------------------------------------------------------------------- #
