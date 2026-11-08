@@ -171,10 +171,12 @@ const sharedPushurls = (repo) => {
         execFileSync('git', ['credential', 'fill'], { cwd: repo, input: 'protocol=https\nhost=example.com\n\n', env, stdio: ['pipe', 'pipe', 'pipe'] });
       } catch { /* no credential: expected without the helper */ }
     };
-    fill({ ...process.env, GIT_TERMINAL_PROMPT: '0' });
+    // A system-wide Git Credential Manager is asked before the repo's helper, and would wait on a
+    // login window for example.com: GCM_INTERACTIVE=never makes it answer nothing at once.
+    fill({ ...process.env, GIT_TERMINAL_PROMPT: '0', GCM_INTERACTIVE: 'never' });
     assert.ok(fs.existsSync(marker), 'control: the helper is called without the env');
     fs.rmSync(marker);
-    fill({ ...process.env, ...noPushEnv().env, GIT_TERMINAL_PROMPT: '0' }); // no prompt: the question is only what helpers answer
+    fill({ ...process.env, ...noPushEnv().env, GIT_TERMINAL_PROMPT: '0', GCM_INTERACTIVE: 'never' }); // no prompt: the question is only what helpers answer
     assert.ok(!fs.existsSync(marker), 'credential.helper reset: the helper is not called');
     git(repo, 'config', '--local', '--unset', 'credential.helper');
     // ...and neither does Git Credential Manager / gh's helper hand out a token for github.com (the empty
