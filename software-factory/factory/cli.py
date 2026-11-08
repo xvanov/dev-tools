@@ -1062,6 +1062,22 @@ def tick_cmd(
     load_dotenv()
     load_dotenv(_FACTORY_ROOT / ".env", override=False)
 
+    # A tick started by ``factory serve`` holds a per-app lock for its whole
+    # life, so a tick orphaned by a killed serve is never doubled by the next
+    # one. systemd ticks (Linux) don't set the variable: unchanged.
+    if os.environ.get("FACTORY_TICK_LOCK") == "1":
+        from factory.oscompat import lock_file
+        from factory.scheduler.serve import tick_lock_path
+
+        lp = tick_lock_path(_FACTORY_ROOT, app_name)
+        lp.parent.mkdir(parents=True, exist_ok=True)
+        _tick_lock_fh = lp.open("a+")  # held until this process exits
+        try:
+            lock_file(_tick_lock_fh, blocking=False)
+        except BlockingIOError:
+            console.print(f"tick for {app_name} already running (lock held); skipped")
+            raise typer.Exit(code=0) from None
+
     from factory.chain.orchestrator import tick
 
     if not dry_run:
@@ -1420,6 +1436,109 @@ def tick_cmd(
         for slug, msg in summary.errors:
             console.print(f"[red]  - {slug}: {msg}[/red]")
         raise typer.Exit(code=1)
+
+
+@app.command("serve")
+def serve_cmd(
+    apps: list[str] = typer.Option(
+        None, "--app",
+        help="App to tick (repeatable). Default: $FACTORY_SERVE_APPS (comma list), else every registered app.",
+    ),
+    interval: float = typer.Option(
+        None, "--interval", help="Seconds between ticks of one app (default $FACTORY_SERVE_INTERVAL_S or 300)."
+    ),
+    tick_timeout: float = typer.Option(3600.0, "--tick-timeout", help="Kill a tick running longer than this."),
+    status: bool = typer.Option(False, "--status", help="Print the running serve's status as JSON and exit."),
+    allow_systemd: bool = typer.Option(
+        False, "--allow-with-systemd", help="Run even though factory-tick systemd timers are active (Linux)."
+    ),
+    log_file: Path = typer.Option(
+        None, "--log-file", help="Append serve's own log lines here (ticks log to state/logs/serve/)."
+    ),
+) -> None:
+    """Tick the registered apps on an interval, in one long-lived process.
+
+    The Windows replacement for the ``factory-tick@<app>.timer`` systemd units
+    (Linux keeps those). Wakes within a second of ``factory job submit``. Only
+    one serve runs per factory root (lease). See ``factory/scheduler/serve.py``.
+    """
+    import signal as _signal
+
+    from factory.jobs.common import registered_apps
+    from factory.scheduler import serve as _serve
+
+    load_dotenv()
+    load_dotenv(_FACTORY_ROOT / ".env", override=False)
+
+    if status:
+        import json as _json
+
+        typer.echo(_json.dumps(_serve.read_status(_FACTORY_ROOT), indent=2))
+        raise typer.Exit(code=0)
+
+    if not allow_systemd:
+        active = _serve.systemd_timers_active()
+        if active:
+            console.print(
+                "[red]error:[/red] systemd tick timers are active ("
+                + ", ".join(active)
+                + "); serve would double-tick. `factory off` first, or --allow-with-systemd."
+            )
+            raise typer.Exit(code=2)
+
+    chosen = [a for a in (apps or []) if a]
+    if not chosen:
+        env_apps = os.environ.get("FACTORY_SERVE_APPS") or ""
+        chosen = [a.strip() for a in env_apps.split(",") if a.strip()]
+    if not chosen:
+        chosen = registered_apps(_FACTORY_ROOT)
+    if interval is None:
+        try:
+            interval = float(os.environ.get("FACTORY_SERVE_INTERVAL_S") or _serve.DEFAULT_INTERVAL_S)
+        except ValueError:
+            interval = _serve.DEFAULT_INTERVAL_S
+
+    stopping = {"flag": False}
+
+    def _stop(*_a: object) -> None:
+        stopping["flag"] = True
+
+    for name in ("SIGINT", "SIGTERM", "SIGBREAK"):
+        sig = getattr(_signal, name, None)
+        if sig is not None:
+            try:
+                _signal.signal(sig, _stop)
+            except (ValueError, OSError):
+                pass
+
+    lease = _serve.Lease(_serve.lease_path(_FACTORY_ROOT))
+    try:
+        lease.acquire()
+    except _serve.LeaseHeld as exc:
+        console.print(f"factory serve: {exc}; exiting")
+        raise typer.Exit(code=3) from None
+    def _out(line: str) -> None:
+        print(line, flush=True)
+        if log_file is not None:
+            try:
+                Path(log_file).parent.mkdir(parents=True, exist_ok=True)
+                with open(log_file, "a", encoding="utf-8") as fh:
+                    fh.write(line + "\n")
+            except OSError:
+                pass
+
+    try:
+        sched = _serve.Scheduler(
+            _serve.ServeConfig(
+                root=_FACTORY_ROOT, apps=chosen, interval_s=float(interval),
+                tick_timeout_s=float(tick_timeout),
+            ),
+            out=_out,
+        )
+        sched.log(f"lease held; apps={chosen} interval={interval:.0f}s root={_FACTORY_ROOT}")
+        _serve.serve_forever(sched, stop=lambda: stopping["flag"])
+    finally:
+        lease.release()
 
 
 @app.command("story")

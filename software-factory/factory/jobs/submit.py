@@ -227,17 +227,14 @@ def _submit_lock(root: Path) -> Iterator[None]:
     with the write, or two concurrent resubmits create two jobs."""
     lock_path = state_db_path(root).parent / "jobs-submit.lock"
     lock_path.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        import fcntl
-    except ImportError:  # pragma: no cover - non-POSIX
-        yield
-        return
+    from factory.oscompat import lock_file, unlock_file
+
     with lock_path.open("a+") as handle:
-        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        lock_file(handle)
         try:
             yield
         finally:
-            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+            unlock_file(handle)
 
 
 def claude_available() -> tuple[bool, str]:
@@ -466,6 +463,10 @@ def submit_job(root: Path, req: SubmitRequest) -> dict[str, Any]:
         + (list(pickup.warnings) if pickup is not None else [])
         + result["warnings"]
     )
+    # Tell a running `factory serve` to tick this app now, not in <= 5 min.
+    from factory.scheduler.serve import request_wake
+
+    request_wake(root, app, reason=f"submit {result.get('job_id')}")
     return result
 
 
@@ -669,6 +670,10 @@ def _submit_task(
     out = _task_result(ref, created=created)
     if created:
         out["warnings"] = warnings
+        # A running `factory serve` dispatches it within a second.
+        from factory.scheduler.serve import request_wake
+
+        request_wake(root, ref.app, reason=f"submit {ref.job_id}")
     return out
 
 

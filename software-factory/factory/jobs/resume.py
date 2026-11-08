@@ -223,6 +223,9 @@ def resume_job(root: Path, job_id: str, *, github: bool = True) -> dict[str, Any
         new_status = "pm-validated" if rows else "created"
         mark_direction_status(direction, new_status, by=RESUMED_BY, details={"job_resumed": now})
 
+    from factory.scheduler.serve import request_wake
+
+    request_wake(root, ref.app, reason=f"resume {ref.job_id}")
     after = job_status(root, job_id, github=False)
     return {
         "job_id": ref.job_id,
@@ -258,6 +261,9 @@ def _resume_task(root: Path, job_id: str) -> dict[str, Any]:
         why=f"resumed at {now}; waiting for the next factory tick",
         resumed=history,
     )
+    from factory.scheduler.serve import request_wake
+
+    request_wake(root, ref.app, reason=f"resume {ref.job_id}")
     return {
         "job_id": ref.job_id,
         "state": "queued",
