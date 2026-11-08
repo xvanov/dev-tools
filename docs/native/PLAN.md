@@ -51,6 +51,7 @@ Design rationale: the plan page (proposal, 7 Nov 2026) and the research summary 
 | D22 | 2026-11-08 | **No agent sandbox**: agents keep full access to the machine they run on | The owner's call. 5.2 is dropped and Exit 5 is node-pty's retirement alone. The code behind `FACTORY_SANDBOX` / `PA_SANDBOX` (off) and the credential broker (5.3) stay as they are. |
 | D23 | 2026-11-08 | **Exit 7 becomes a one-command install on the work laptop** | No fresh machines: the owner installs Linux later. 7.7 is one command that installs (or reinstalls) the whole stack on this Windows machine, proven by reinstalling here. |
 | D24 | 2026-11-08 | **Retire Postgres and WSL now** | After a static copy of each: Postgres's last state as an encrypted `.pabak` per stack, the WSL distro as an encrypted export. Then the work laptop's Ubuntu distro is unregistered and the personal stack's `pa_personal` database dropped (its Postgres server stays: other software uses it). Supersedes D20's "kept registered". |
+| D25 | 2026-11-08 | **Exit 4's in-process front is deferred** until after the owner's testing (Exit E, Exit 8) | Each stack keeps `jarvisd front` as its own process. The design stays in JARVISD.md ("Design: the in-process front"); its privilege risk is gone since the work stack's pa-worker task runs with limited rights. Exit 8 does not wait on it. |
 
 ## Prerequisites (before phase 0)
 
@@ -382,7 +383,8 @@ run mid-step; a job continued on an existing branch (`--branch`).
     refused (fail safe). (e2b0323)
 - [ ] **Exit E:** the user runs the golden path by voice ("start a factory job for …"), watches
   it in Plan, Build and Run, drills down from the card to the live session and the PR, and
-  each hop meets its timing target.
+  each hop meets its timing target. The owner's checklist for this and Exit 8:
+  [OWNER-TEST.md](OWNER-TEST.md).
 
 ## Embeddings policy (D5, applies to every phase)
 
@@ -726,7 +728,8 @@ run mid-step; a job continued on an existing branch (`--branch`).
   generations of itself; supervisor, deploy lock and the Z6 spare-port deploy test pass with the
   compiled binary in CI's jarvisd job on Windows and Linux (run 42466776763). Live stacks still
   run `node src/supervisor` until switched. (276a21c)
-- [ ] **Exit 4:** one process per machine, typed approvals, Z6 deploy test green.
+- [ ] **Exit 4:** one process per machine, typed approvals, Z6 deploy test green. — deferred:
+  D25 (typed approvals and Z6 are done; the in-process front is what is left).
 
 ## Phase 5: ptyd and the sandbox (Rust, D1)
 
