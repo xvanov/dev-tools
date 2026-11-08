@@ -439,8 +439,11 @@ def test_solo_story_goes_through_the_same_watch(
     assert row.state == StoryState.REVIEWER_REQUESTED_CHANGES.value
     assert _dispatch_for_story(row) == "dev"  # the solo dev gets reviewer_findings
     assert "env() at module load" in (row.reviewer_result_json or "")
-    # Solo dev green → TESTS_GREEN → tech_writer (not review) → docs_enforcer.
+    # Solo dev green → TESTS_GREEN → the reviewer on the api runtime (8.4.19),
+    # straight to tech_writer on claude_session → docs_enforcer.
     row.state = StoryState.TESTS_GREEN.value
+    assert _dispatch_for_story(row) == "review"
+    row.runtime = "claude_session"
     assert _dispatch_for_story(row) == "tech_writer"
 
 
