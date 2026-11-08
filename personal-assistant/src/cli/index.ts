@@ -126,6 +126,7 @@ const HELP = `pa — your context layer
     pa restore [file] [--yes]       replace the store with a dump (newest by default)
     pa reingest --days N [--source s]  rewind sources so history is fetched again
     pa doctor                       what is configured, what is stale, what is broken
+    pa version                      the commit the running worker serves (dashboard), else this checkout's (git fallback)
     pa spend [--days N]             model spend per day and per pass (default 7 days)
     pa eval seed|list|add|drop|run  retrieval eval harness (pa eval for details)
     pa eval router [--fit]          voice fast lane router: accuracy and latency on its eval set
@@ -1803,6 +1804,7 @@ Object.assign(commands, require('./routine.ts').make(out, fail));
 Object.assign(commands, require('./task.ts').make(out, fail));
 Object.assign(commands, require('./e2e.ts').make(out, fail));
 Object.assign(commands, require('./audit.ts').make(out, fail));
+Object.assign(commands, require('./version.ts').make(out, fail));
 
 // `pa help <topic>`: each module exports its own HELP. Required by a computed
 // path, so test/cliHelp.test.js loads every one (requiresResolve.test.js sees
