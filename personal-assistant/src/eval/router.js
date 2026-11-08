@@ -7,7 +7,7 @@
 // the constants to paste into fastRouter.js.
 
 const path = require('path');
-const R = require('../chat/fastRouter');
+const R = require('../chat/fastRouter.ts');
 
 const RAW = { T: 1, b: { answer_here: 0, hand_off: 0, action: 0 } };
 

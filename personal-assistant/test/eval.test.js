@@ -183,7 +183,7 @@ assert.ok(P.gradePrompt([{ i: 0, question: 'q', reference: null, answer: 'UNKNOW
   const fake = async ({ text, cal }) => {
     const c = set.cases.find((x) => x.text === text) || { expect: 'answer' };
     const lp = c.expect === 'answer' ? { answer_here: -0.1, hand_off: -3, action: -4 } : c.expect === 'handoff' ? { answer_here: -1, hand_off: -0.5, action: -3 } : { answer_here: -1, hand_off: -3, action: -0.5 };
-    return { p: require('../src/chat/fastRouter').calibrate(lp, cal || E.RAW), lp, ms: 100, model: 'm' };
+    return { p: require('../src/chat/fastRouter.ts').calibrate(lp, cal || E.RAW), lp, ms: 100, model: 'm' };
   };
   const scored = await E.scoreCases({ model: 'local/m', repeat: 2, score: fake });
   assert.strictEqual(scored.rows.length, set.cases.length);

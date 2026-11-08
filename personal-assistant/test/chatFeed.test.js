@@ -9,7 +9,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const vm = require('vm');
-const T = require('../src/chat/transcript');
+const T = require('../src/chat/transcript.ts');
 const { createFeed } = require('../src/chat/feed');
 
 const at = '2026-11-06T10:00:00.000Z';

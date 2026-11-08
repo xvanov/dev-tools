@@ -243,7 +243,7 @@ async function main() {
     assert.match(chat.verifyClaudeHome({ settings: s, local: { permissions: { allow: ['mcp__pa-chat__*'] } }, command: cmd }).join(), /action tool/);
     assert.match(chat.verifyClaudeHome({ settings: s, local: { permissions: { allow: ['mcp__pa-chat'] } }, command: cmd }).join(), /action tool/);
 
-    const agent = require('../src/chat/agent');
+    const agent = require('../src/chat/agent.ts');
     const rules = agent.opencodeRules();
     for (const t of T.CHAT_READ_TOOL_NAMES) assert.strictEqual(rules[`personal-assistant_${t}`], 'allow');
     for (const t of T.CHAT_ACTION_TOOL_NAMES) assert.strictEqual(rules[`personal-assistant_${t}`], undefined, `${t} falls to "*": ask`);
@@ -257,7 +257,7 @@ async function main() {
 
   // --- what Talk shows while a prompt waits -------------------------------------------
   {
-    const { describeTool } = require('../src/chat/transcript');
+    const { describeTool } = require('../src/chat/transcript.ts');
     const { waitingText } = require('../src/chat/feed');
     assert.strictEqual(describeTool('mcp__pa-chat__factory_start', { card: '412', delivery: 'pr' }), 'starting a factory job: card 412 (claude_session, pr)…');
     assert.strictEqual(describeTool('mcp__pa-chat__factory_continue', { repo: 'acme/widget', pr: 12, ask: 'fix review', runtime: 'api' }), 'starting a factory job on PR #12: fix review (api)…');

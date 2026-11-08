@@ -25,7 +25,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
-const T = require('./transcript');
+const T = require('./transcript.ts');
 const { logger } = require('../log.ts');
 
 const log = logger('chat-feed');
@@ -126,7 +126,7 @@ function createFeed({
   // to show the buttons.
   function permissionPending(st = { waitingOn }) {
     if (!st.waitingOn || !lastTool?.toolUseId) return null;
-    const P = require('./permission');
+    const P = require('./permission.ts');
     const approvable = Boolean(P.chatAction(lastTool.name));
     return { toolUseId: lastTool.toolUseId, text: lastTool.text, approvable, ask: approvable ? lastTool.ask || null : null };
   }
@@ -143,7 +143,7 @@ function createFeed({
     const session = sessionId ? (await h.listSessions()).find((s) => s.id === sessionId) || null : null;
     const screen = session ? await h.screen(session.id) : '';
     const pending = waitingOn && lastTool?.toolUseId ? { toolUseId: lastTool.toolUseId, name: lastTool.name } : null;
-    const d = require('./permission').decide({ answer, toolUseId, pending, session, screen });
+    const d = require('./permission.ts').decide({ answer, toolUseId, pending, session, screen });
     if (!d.ok) throw httpError(409, d.reason);
     // Policy (plan 4.3): the approval is audited with where it came from, and a
     // channel the policy bars from it (voice and a merge, a push to main, a

@@ -473,7 +473,7 @@ function splitAll(pieces) {
 
   // ---- the logprob router (src/chat/fastRouter.js) --------------------------------------
   {
-    const R = require('../src/chat/fastRouter');
+    const R = require('../src/chat/fastRouter.ts');
     // Letters from top_logprobs: variants summed, a missing one floored, none -> null.
     const lp = R.letterLogprobs([{ token: 'A', logprob: Math.log(0.5) }, { token: ' A', logprob: Math.log(0.2) }, { token: 'B', logprob: Math.log(0.25) }, { token: 'The', logprob: -3 }]);
     assert.ok(Math.abs(lp.answer_here - Math.log(0.7)) < 1e-9);
@@ -584,7 +584,7 @@ function splitAll(pieces) {
     b = base({ route: lp(0.7, 0.25, 0.05), prime: async () => {}, stream: script(['Hi.']) });
     t = await turn('hello', b.deps, { ...popts, answerThreshold: '0.6' });
     assert.strictEqual(t.events[0].route, 'answer');
-    assert.strictEqual(F.answerThreshold({ answerThreshold: 'x' }), require('../src/chat/fastRouter').THRESHOLD);
+    assert.strictEqual(F.answerThreshold({ answerThreshold: 'x' }), require('../src/chat/fastRouter.ts').THRESHOLD);
 
     // Router down: the fallback model's one-call path, unharmed.
     calls = [];

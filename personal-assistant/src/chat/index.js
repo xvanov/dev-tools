@@ -325,7 +325,7 @@ function ensureHome() {
   fs.writeFileSync(path.join(home, '.claude', 'settings.json'), JSON.stringify(settingsJson(), null, 2), 'utf8');
   fs.writeFileSync(path.join(home, 'pa-chat.mcp.json'), JSON.stringify(mcpJson(), null, 2), 'utf8');
   fs.writeFileSync(path.join(home, 'AGENTS.md'), claudeMd({ agent: 'opencode' }), 'utf8');
-  fs.writeFileSync(path.join(home, 'opencode.json'), JSON.stringify(require('./agent').opencodeConfig(), null, 2), 'utf8');
+  fs.writeFileSync(path.join(home, 'opencode.json'), JSON.stringify(require('./agent.ts').opencodeConfig(), null, 2), 'utf8');
   writeLaunchers(home);
   return home;
 }
@@ -369,7 +369,7 @@ function sameDir(a, b) {
 // command that would skip them, and an opencode chat starts only once
 // opencode itself confirms it resolved those rules.
 async function ensureSession() {
-  const agent = require('./agent');
+  const agent = require('./agent.ts');
   const home = ensureHome();
   const sessions = await termhub.listSessions();
   const live = sessions.find((s) => s.alive !== false && sameDir(s.cwd, home));

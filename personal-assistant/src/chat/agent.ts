@@ -31,6 +31,12 @@
 //    nothing after the bash catch-all may allow a shell command — as well as
 //    the outcomes that matter. `pa chat` will not start an opencode chat that
 //    fails it, and `pa doctor` reports it.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+type Row = import('../repo/types.ts').Row;
+/** JSON read or built key by key (src/types.ts): loose until its producer is TypeScript. */
+type Json = import('../types.ts').Json;
 
 const path = require('path');
 const { execFile } = require('child_process');
@@ -47,7 +53,7 @@ const SAFE_PERMISSION_MODES = ['default', 'plan'];
  * Pure. The chat's command line: { agent, model, command }. Throws when the
  * configuration cannot give the chat its permission guarantee.
  */
-function chatCommand({ agent = config.chat.agent, model = config.chat.model, command = config.chat.command, mcpConfig = null } = {}) {
+function chatCommand({ agent = config.chat.agent, model = config.chat.model, command = config.chat.command, mcpConfig = null }: { agent?: any; model?: string; command?: any; mcpConfig?: any | null } = {}) {
   let kind;
   let line;
   if (command) {
@@ -100,7 +106,7 @@ const PA_TOOL_ENV = 'PA_MCP_CHAT_TOOLS';
 /** Pure. The permission ruleset for every agent in the chat's opencode. */
 function opencodeRules() {
   const chat = require('./index');
-  const rules = {
+  const rules: Json = {
     '*': 'ask',
     read: { '*': 'allow', '*.env': 'ask', '*.env.*': 'ask' },
     glob: 'allow',
@@ -150,14 +156,14 @@ function opencodeConfig() {
 
 // opencode's wildcard: `*` any run of characters, `?` one; a trailing " *"
 // also matches the bare command.
-function wildcard(pattern, text) {
+function wildcard(pattern: any, text: string) {
   let re = String(pattern).replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*').replace(/\?/g, '.');
   if (re.endsWith(' .*')) re = `${re.slice(0, -3)}( .*)?`;
   return new RegExp(`^${re}$`, 's').test(String(text));
 }
 
 /** Pure. What a resolved ruleset does with one request: last match wins. */
-function evaluate(ruleset, permission, pattern) {
+function evaluate(ruleset: any, permission: any, pattern: any) {
   let action = 'ask';
   for (const r of ruleset || []) {
     if (wildcard(r.permission, permission) && wildcard(r.pattern, pattern)) action = r.action;
@@ -166,7 +172,7 @@ function evaluate(ruleset, permission, pattern) {
 }
 
 /** Pure. The outcomes the chat's guarantee rests on, as [permission, pattern, wanted]. */
-function probes(pa = require('./index').paCommand()) {
+function probes(pa: any = require('./index').paCommand()) {
   return [
     // Every shell command asks — the read-only ones too (they are the `pa`
     // tool now), and the ways round an allow-pattern that once worked.
@@ -206,7 +212,7 @@ function probes(pa = require('./index').paCommand()) {
  * independent of how opencode splits a command line — no pattern of ours is
  * ever matched against it. Problems as strings; [] when it holds.
  */
-function checkBashShape(name, ruleset) {
+function checkBashShape(name: string, ruleset: any) {
   const list = Array.isArray(ruleset) ? ruleset : [];
   let last = -1;
   list.forEach((r, i) => {
@@ -221,7 +227,7 @@ function checkBashShape(name, ruleset) {
 }
 
 /** Pure. Problems with one agent's resolved ruleset; [] when it holds. */
-function checkRuleset(name, ruleset, pa) {
+function checkRuleset(name: string, ruleset: any, pa: any) {
   const out = checkBashShape(name, ruleset);
   for (const [perm, pattern, wanted] of probes(pa)) {
     const got = evaluate(ruleset, perm, pattern);
@@ -232,9 +238,9 @@ function checkRuleset(name, ruleset, pa) {
   return out;
 }
 
-function run(bin, args, cwd) {
+function run(bin: any, args: unknown[], cwd: any) {
   return new Promise((resolve) => {
-    execFile(bin, args, { cwd, timeout: 60_000, windowsHide: true, maxBuffer: 16 * 1024 * 1024 }, (err, stdout, stderr) =>
+    execFile(bin, args, { cwd, timeout: 60_000, windowsHide: true, maxBuffer: 16 * 1024 * 1024 }, (err: any, stdout: any, stderr: any) =>
       resolve({ err, stdout: String(stdout || ''), stderr: String(stderr || '') })
     );
   });
@@ -245,7 +251,7 @@ function run(bin, args, cwd) {
  * chat's home, for every primary agent the user can switch to, and checks it.
  * { ok, problems }. Fails closed: an opencode that cannot be asked is refused.
  */
-async function verifyOpencodePermissions(home, { exec = run, env = process.env } = {}) {
+async function verifyOpencodePermissions(home: any, { exec = run, env = process.env }: { exec?: any; env?: Record<string, string | undefined> } = {}) {
   const problems = [];
   for (const v of ['OPENCODE_DISABLE_PROJECT_CONFIG', 'OPENCODE_CONFIG_CONTENT', 'OPENCODE_PERMISSION']) {
     if (env[v]) problems.push(`${v} is set, which can override the chat's opencode.json`);

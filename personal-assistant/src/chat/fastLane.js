@@ -623,14 +623,14 @@ function routerKind(o) {
 /** The answer threshold: PA_FAST_ANSWER_THRESHOLD, else the fitted default. */
 function answerThreshold(o = config.fastLane) {
   const t = Number(o.answerThreshold);
-  return Number.isFinite(t) && t > 0 && t <= 1 ? t : require('./fastRouter').THRESHOLD;
+  return Number.isFinite(t) && t > 0 && t <= 1 ? t : require('./fastRouter.ts').THRESHOLD;
 }
 
 // Warms the router's prompt cache for the next turn (a new snapshot, or the
 // conversation as it now stands). Never throws, never waits.
 function primeRouter({ context, history, o = config.fastLane, deps = {} } = {}) {
   if (!o.enabled || routerKind(o) !== 'logprob') return null;
-  const prime = deps.prime || depOverrides.prime || require('./fastRouter').prime;
+  const prime = deps.prime || depOverrides.prime || require('./fastRouter.ts').prime;
   return Promise.resolve()
     .then(async () => ({
       context: context ?? (await (deps.snapshot || depOverrides.snapshot || (() => snapshotCache().get()))()),
@@ -645,8 +645,8 @@ function defaultDeps() {
   return {
     stream: llm.stream,
     complete: llm.complete,
-    route: (a) => require('./fastRouter').score(a),
-    prime: (a) => require('./fastRouter').prime(a),
+    route: (a) => require('./fastRouter.ts').score(a),
+    prime: (a) => require('./fastRouter.ts').prime(a),
     snapshot: () => snapshotCache().get(),
     history: liveHistory,
     handoff: (text) => require('./feed').feed().send({ text, source: 'voice' }),
@@ -788,7 +788,7 @@ async function runTurn({ text, emit, signal = null, deps = {}, opts = {} }) {
       return false;
     }
     const threshold = answerThreshold(o);
-    const choice = require('./fastRouter').decide(s.p, threshold);
+    const choice = require('./fastRouter.ts').decide(s.p, threshold);
     const p = Object.fromEntries(Object.entries(s.p).map(([k, v]) => [k, Math.round(v * 1000) / 1000]));
     const reason = `router: ${choice} (p answer ${p.answer_here}, hand off ${p.hand_off}, action ${p.action}; threshold ${threshold})`;
     const decided = decide(choice === 'answer' ? { route: 'answer', reason } : { route: 'handoff', task: clip(text, MAX_TASK), reason }, true, { p, routerMs: s.ms });

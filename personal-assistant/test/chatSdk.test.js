@@ -10,7 +10,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const S = require('../src/chat/sdkFeed');
-const T = require('../src/chat/transcript');
+const T = require('../src/chat/transcript.ts');
 const { engine } = require('../src/chat/feed');
 
 const tick = () => new Promise((r) => setImmediate(r));
@@ -507,7 +507,7 @@ const sdkMsg = {
       await until(() => /"idle"/.test(fs.readFileSync(path.join(viewDir, 'chat.jsonl'), 'utf8')), 'idle logged');
       const logged = fs.readFileSync(path.join(viewDir, 'chat.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
       assert.deepStrictEqual(logged.map((e) => e.type), ['user', 'assistant', 'status'], 'kept events and idle; never the partials');
-      const V = require('../src/chat/sdkView');
+      const V = require('../src/chat/sdkView.ts');
       const shown = V.renderChunk('', fs.readFileSync(path.join(viewDir, 'chat.jsonl'), 'utf8'), { color: false }).out.join('\n');
       assert.match(shown, /you\nhello/);
       assert.match(shown, /Jarvis\nHi\[2J there\./, 'escape sequences from the model never reach the terminal');

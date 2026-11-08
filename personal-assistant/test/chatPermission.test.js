@@ -14,8 +14,8 @@ const os = require('os');
 const path = require('path');
 const vm = require('vm');
 
-const P = require('../src/chat/permission');
-const T = require('../src/chat/transcript');
+const P = require('../src/chat/permission.ts');
+const T = require('../src/chat/transcript.ts');
 const { createFeed } = require('../src/chat/feed');
 
 // A Claude Code permission prompt for an MCP tool, as termhub's replay gives it.

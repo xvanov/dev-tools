@@ -1197,7 +1197,7 @@ const commands = {
     // (anonymized logged turns), no database. Needs Ollama.
     if (action === 'router') {
       const E = require('../eval/router');
-      const R = require('../chat/fastRouter');
+      const R = require('../chat/fastRouter.ts');
       const F = require('../chat/fastLane');
       const model = flags.model && flags.model !== true ? String(flags.model) : config.fastLane.model;
       if (!/^local\//.test(model)) return fail(`the router scores log-probabilities from a local/ model; ${model} is not one (--model local/llama3.2:3b)`);
@@ -1439,7 +1439,7 @@ const commands = {
     // The PA chat and dispatched runs: which agent CLI, which model, and
     // whether its permission guarantees hold (src/chat/agent.js).
     try {
-      const agent = require('../chat/agent');
+      const agent = require('../chat/agent.ts');
       const chat = agent.chatCommand();
       let detail = `${chat.command}`;
       if (chat.agent === 'opencode') {

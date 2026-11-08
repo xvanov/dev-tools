@@ -27,6 +27,12 @@
 //
 // The endpoint (POST /api/chat/permission, src/dashboard/server.js) needs X-PA
 // and the page token, like every dashboard action that starts work.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+type Row = import('../repo/types.ts').Row;
+/** JSON read or built key by key (src/types.ts): loose until its producer is TypeScript. */
+type Json = import('../types.ts').Json;
 
 const { CHAT_ACTION_TOOL_NAMES } = require('../mcp/chatTools.ts');
 
@@ -35,20 +41,20 @@ const ANSWERS = ['yes', 'no'];
 const ENTER = '';
 const ESC = '\x1b';
 
-const squash = (text) => String(text || '').replace(/\s+/g, '');
+const squash = (text: string) => String(text || '').replace(/\s+/g, '');
 const QUESTION = 'Doyouwanttoproceed?';
 // Claude Code's input box (src/dispatch/termhub.js READY): seen after the
 // question, the prompt was already answered.
 const READY = /\?forshortcuts|shift\+tabtocycle|bypasspermissions/gi;
 
 /** Pure. The chat action a tool_use name is, or null: `mcp__pa-chat__factory_start` → factory_start. */
-function chatAction(name) {
+function chatAction(name: string) {
   const m = /^mcp__([A-Za-z0-9_-]+)__([A-Za-z0-9_]+)$/.exec(String(name || ''));
   if (!m || m[1] !== SERVER) return null;
   return CHAT_ACTION_TOOL_NAMES.includes(m[2]) ? m[2] : null;
 }
 
-function lastIndex(re, text) {
+function lastIndex(re: any, text: string) {
   let at = -1;
   for (const m of text.matchAll(re)) at = m.index;
   return at;
@@ -59,7 +65,7 @@ function lastIndex(re, text) {
  * Code's permission prompt for `tool` on the chat's MCP server.
  * @returns {{ok: boolean, reason?: string, cursorOnYes?: boolean, escOffered?: boolean}}
  */
-function readPrompt(text, tool) {
+function readPrompt(text: string, tool: any) {
   const s = squash(text);
   const q = s.lastIndexOf(QUESTION);
   if (q < 0) return { ok: false, reason: 'the screen shows no permission prompt' };
@@ -92,8 +98,8 @@ function readPrompt(text, tool) {
  * @param {string} o.screen        its screen, read just now
  * @returns {{ok: true, keys: string[], tool: string} | {ok: false, reason: string}}
  */
-function decide({ answer, toolUseId, pending, session, screen }) {
-  if (!ANSWERS.includes(answer)) return { ok: false, reason: 'answer must be yes or no' };
+function decide({ answer, toolUseId, pending, session, screen }: { answer?: string | null | undefined; toolUseId?: number | string | null | undefined; pending?: any; session?: Json | null | undefined; screen?: any }) {
+  if (!ANSWERS.includes(answer as string)) return { ok: false, reason: 'answer must be yes or no' };
   if (!pending || !pending.toolUseId) return { ok: false, reason: 'the PA chat is not waiting on a permission prompt' };
   if (!toolUseId || String(toolUseId) !== String(pending.toolUseId)) return { ok: false, reason: 'that prompt is no longer the one waiting — reload' };
   const tool = chatAction(pending.name);

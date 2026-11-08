@@ -29,8 +29,8 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
-const T = require('./transcript');
-const P = require('./permission');
+const T = require('./transcript.ts');
+const P = require('./permission.ts');
 const { logger } = require('../log.ts');
 
 const log = logger('chat-sdk');

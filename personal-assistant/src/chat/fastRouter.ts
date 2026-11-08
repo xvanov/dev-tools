@@ -21,9 +21,15 @@
 // (src/eval/router-cases.json) by `pa eval router --fit`. The answerer only
 // speaks when p.answer_here clears the threshold (PA_FAST_ANSWER_THRESHOLD);
 // otherwise the user's words go to Jarvis verbatim.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+type Row = import('../repo/types.ts').Row;
+/** JSON read or built key by key (src/types.ts): loose until its producer is TypeScript. */
+type Json = import('../types.ts').Json;
 
 const CLASSES = ['answer_here', 'hand_off', 'action'];
-const LETTERS = { A: 'answer_here', B: 'hand_off', C: 'action' };
+const LETTERS: Record<string, string> = { A: 'answer_here', B: 'hand_off', C: 'action' };
 const FLOOR = -20; // log-probability of a letter missing from top_logprobs
 
 // Fitted by `pa eval router --fit` on src/eval/router-cases.json (llama3.2:3b,
@@ -54,13 +60,13 @@ Examples:
 "have the factory open a PR for it" -> C
 "I want the meeting pushed to Thursday" -> C`;
 
-const clip = (s, n) => (typeof s === 'string' ? s.replace(/\s+/g, ' ').trim().slice(0, n) : '');
+const clip = (s: any, n: number) => (typeof s === 'string' ? s.replace(/\s+/g, ' ').trim().slice(0, n) : '');
 
 /** Pure. The router's user message: snapshot first (cached longest), words last. */
-function routerPrompt({ text, context, history }) {
+function routerPrompt({ text, context, history }: { text?: string | null | undefined; context?: any; history?: any }) {
   const conv = (history || [])
     .slice(-2)
-    .map((e) => `${e.type === 'user' ? 'user' : 'assistant'}: ${clip(e.text, 200)}`)
+    .map((e: any) => `${e.type === 'user' ? 'user' : 'assistant'}: ${clip(e.text, 200)}`)
     .join('\n');
   return `<snapshot>
 ${context || '(no snapshot available)'}
@@ -76,8 +82,8 @@ A, B or C?`;
 }
 
 /** Pure. The native Ollama request: one token, its top log-probabilities. */
-function routerRequest({ model, text, context, history, keepAlive = null, baseUrl, key = null, topLogprobs = 5 }) {
-  const body = {
+function routerRequest({ model, text, context, history, keepAlive = null, baseUrl, key = null, topLogprobs = 5 }: { model?: string | null | undefined; text?: string | null | undefined; context?: any; history?: any; keepAlive?: any | null | undefined; baseUrl?: any; key?: number | string | null | undefined; topLogprobs?: number | undefined }) {
+  const body: Json = {
     model,
     stream: false,
     think: false,
@@ -90,14 +96,14 @@ function routerRequest({ model, text, context, history, keepAlive = null, baseUr
     ],
   };
   if (keepAlive != null) body.keep_alive = keepAlive;
-  const headers = { 'content-type': 'application/json' };
+  const headers: Json = { 'content-type': 'application/json' };
   if (key) headers.authorization = `Bearer ${key}`;
   return { url: `${String(baseUrl || '').replace(/\/+$/, '').replace(/\/v1$/, '')}/api/chat`, headers, body };
 }
 
-const logsumexp = (xs) => {
+const logsumexp = (xs: any) => {
   const m = Math.max(...xs);
-  return m === -Infinity ? -Infinity : m + Math.log(xs.reduce((s, x) => s + Math.exp(x - m), 0));
+  return m === -Infinity ? -Infinity : m + Math.log(xs.reduce((s: any, x: any) => s + Math.exp(x - m), 0));
 };
 
 /**
@@ -106,34 +112,34 @@ const logsumexp = (xs) => {
  * summed; a letter not in the list gets FLOOR. null when no letter is there
  * (the model wrote something else: not a decision).
  */
-function letterLogprobs(top) {
-  const acc = { answer_here: [], hand_off: [], action: [] };
+function letterLogprobs(top: any) {
+  const acc: Json = { answer_here: [], hand_off: [], action: [] };
   let any = false;
   for (const t of top || []) {
     const m = /^\s*([ABC])\W*$/i.exec(String(t.token || ''));
     if (!m || !Number.isFinite(t.logprob)) continue;
-    acc[LETTERS[m[1].toUpperCase()]].push(t.logprob);
+    acc[LETTERS[m[1]!.toUpperCase()] as string].push(t.logprob);
     any = true;
   }
   if (!any) return null;
-  const out = {};
+  const out: Json = {};
   for (const k of CLASSES) out[k] = acc[k].length ? logsumexp(acc[k]) : FLOOR;
   return out;
 }
 
 /** Pure. Calibrated probabilities from letter log-probabilities. */
-function calibrate(lp, cal = CALIBRATION) {
+function calibrate(lp: any, cal: any = CALIBRATION) {
   const z = CLASSES.map((k) => lp[k] / cal.T + (cal.b[k] || 0));
   const m = Math.max(...z);
   const e = z.map((x) => Math.exp(x - m));
   const s = e.reduce((a, b) => a + b, 0);
-  const p = {};
-  CLASSES.forEach((k, i) => (p[k] = e[i] / s));
+  const p: Json = {};
+  CLASSES.forEach((k, i) => (p[k] = e[i]! / s));
   return p;
 }
 
 /** Pure. p -> what happens: answer here only above the threshold. */
-function decide(p, threshold = THRESHOLD) {
+function decide(p: Json, threshold: any = THRESHOLD) {
   if (p.answer_here >= threshold) return 'answer';
   return p.action > p.hand_off ? 'action' : 'handoff';
 }
@@ -142,7 +148,7 @@ function decide(p, threshold = THRESHOLD) {
  * Scores one turn. -> { p, lp, ms, model } or throws (Ollama down, model
  * missing, no letter in the reply). `post(url, init)` is fetch.
  */
-async function score({ text, context = '', history = [], model, keepAlive = null, timeoutMs = 2500, signal = null, cal = CALIBRATION, post = (...a) => fetch(...a), baseUrl = null, key = null }) {
+async function score({ text, context = '', history = [], model, keepAlive = null, timeoutMs = 2500, signal = null, cal = CALIBRATION, post = (...a: Parameters<typeof fetch>) => fetch(...a), baseUrl = null, key = null }: { text?: string | null | undefined; context?: string | undefined; history?: any; model?: string | null | undefined; keepAlive?: any | null | undefined; timeoutMs?: number | undefined; signal?: AbortSignal | null | undefined; cal?: any; post?: any; baseUrl?: any | null | undefined; key?: number | string | null | undefined }) {
   const bare = String(model || '').replace(/^local\//, '');
   if (baseUrl == null) baseUrl = require('../config.ts').config.providers.local.baseUrl;
   if (key == null) key = require('../models.ts').providerKey('local');
@@ -153,7 +159,7 @@ async function score({ text, context = '', history = [], model, keepAlive = null
   try {
     res = await post(req.url, { method: 'POST', headers: req.headers, body: JSON.stringify(req.body), signal: sig });
   } catch (err) {
-    throw new Error(`router: ${err.name === 'TimeoutError' ? `timed out after ${timeoutMs} ms` : err.cause?.code || err.message}`);
+    throw new Error(`router: ${(err as any).name === 'TimeoutError' ? `timed out after ${timeoutMs} ms` : (err as any).cause?.code || (err as any).message}`);
   }
   const raw = await res.text();
   let json = null;
@@ -164,7 +170,7 @@ async function score({ text, context = '', history = [], model, keepAlive = null
   const top = json.logprobs?.[0]?.top_logprobs;
   if (!top) throw new Error('router: no logprobs in the reply (Ollama too old for `logprobs`?)');
   const lp = letterLogprobs(top);
-  if (!lp) throw new Error(`router: no A/B/C in the top tokens (${top.slice(0, 3).map((t) => JSON.stringify(t.token)).join(' ')})`);
+  if (!lp) throw new Error(`router: no A/B/C in the top tokens (${top.slice(0, 3).map((t: any) => JSON.stringify(t.token)).join(' ')})`);
   return { p: calibrate(lp, cal), lp, ms: Date.now() - t0, model: bare };
 }
 
@@ -173,7 +179,7 @@ async function score({ text, context = '', history = [], model, keepAlive = null
  * start with (system, snapshot, the last two turns, up to the user's words),
  * so that call only pays for the words. Fire and forget: never throws.
  */
-function prime(args) {
+function prime(args: unknown[]) {
   return score({ ...args, text: '' }).then(
     (s) => s.ms,
     () => null
@@ -187,32 +193,32 @@ function prime(args) {
  * descent on the mean negative log-likelihood (b.action is pinned at 0).
  * `rows` is [{ lp, expect: 'answer' | 'handoff' | 'action' }].
  */
-function fitCalibration(rows, { iters = 4000, lr = 0.05, l2 = 0.01 } = {}) {
-  const idx = { answer: 0, handoff: 1, action: 2 };
-  const X = rows.map((r) => CLASSES.map((k) => r.lp[k]));
-  const Y = rows.map((r) => idx[r.expect]);
+function fitCalibration(rows: any, { iters = 4000, lr = 0.05, l2 = 0.01 }: { iters?: number; lr?: number; l2?: number } = {}) {
+  const idx: Json = { answer: 0, handoff: 1, action: 2 };
+  const X = rows.map((r: any) => CLASSES.map((k) => r.lp[k]));
+  const Y = rows.map((r: any) => idx[r.expect]);
   let invT = 1;
   const b = [0, 0, 0];
   for (let it = 0; it < iters; it++) {
     let gInv = 0;
     const gb = [0, 0, 0];
     for (let i = 0; i < X.length; i++) {
-      const z = X[i].map((x, k) => x * invT + b[k]);
+      const z = X[i].map((x: any, k: any) => x * invT + b[k]!);
       const m = Math.max(...z);
-      const e = z.map((v) => Math.exp(v - m));
-      const s = e.reduce((a, c) => a + c, 0);
+      const e = z.map((v: any) => Math.exp(v - m));
+      const s = e.reduce((a: any, c: any) => a + c, 0);
       for (let k = 0; k < 3; k++) {
         const d = e[k] / s - (k === Y[i] ? 1 : 0);
         gInv += d * X[i][k];
-        gb[k] += d;
+        gb[k]! += d;
       }
     }
     const n = X.length || 1;
     invT -= lr * (gInv / n + l2 * (invT - 1));
     if (invT < 0.01) invT = 0.01;
-    for (let k = 0; k < 2; k++) b[k] -= lr * (gb[k] / n + l2 * b[k]);
+    for (let k = 0; k < 2; k++) b[k]! -= lr * (gb[k]! / n + l2 * b[k]!);
   }
-  const r3 = (x) => Math.round(x * 1000) / 1000;
+  const r3 = (x: any) => Math.round(x * 1000) / 1000;
   return { T: r3(1 / invT), b: { answer_here: r3(b[0]), hand_off: r3(b[1]), action: 0 } };
 }
 
@@ -222,8 +228,8 @@ function fitCalibration(rows, { iters = 4000, lr = 0.05, l2 = 0.01 } = {}) {
  * eval set's "no action-like turn answered locally" by construction, with
  * `margin` to spare. Never below `min`.
  */
-function pickThreshold(rows, { margin = 0.05, min = 0.5 } = {}) {
-  const worst = Math.max(0, ...rows.filter((r) => r.expect !== 'answer').map((r) => r.p.answer_here));
+function pickThreshold(rows: any, { margin = 0.05, min = 0.5 }: { margin?: number; min?: number } = {}) {
+  const worst = Math.max(0, ...rows.filter((r: any) => r.expect !== 'answer').map((r: any) => r.p.answer_here));
   return Math.min(0.99, Math.max(min, Math.round((worst + margin) * 100) / 100));
 }
 
