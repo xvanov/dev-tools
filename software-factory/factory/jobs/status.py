@@ -201,6 +201,15 @@ class _Ctx:
     conn: sqlite3.Connection | None
     github: GitHubCache
     factory_block: str | None
+    coverage: Any = None
+
+    def tick_coverage(self) -> Any:
+        """What ticks which app (v1.6), read once per status/list call."""
+        if self.coverage is None:
+            from factory.scheduler.coverage import read_coverage
+
+            self.coverage = read_coverage(self.root)
+        return self.coverage
 
 
 def _factory_block_reason(root: Path, conn: sqlite3.Connection | None) -> str | None:
@@ -670,6 +679,13 @@ def _status_for(ctx: _Ctx, ref: JobRef) -> dict[str, Any]:
             f": {v.note}" if v.note else _story_reason(v.row)
         )
 
+    # v1.6: a job whose app nothing ticks never moves; say so instead of
+    # "the next factory tick", which will not come.
+    ticked = ctx.tick_coverage().ticked(ref.app)
+    if ticked is False and state in ("queued", "triaging", "in_progress", "blocked"):
+        not_ticked = ctx.tick_coverage().why_not(ref.app)
+        why = f"waiting: {not_ticked}" if state == "queued" else f"{why}; {not_ticked}" if why else not_ticked
+
     # CI of every still-open PR: "delivered" means the PR exists, not that its
     # checks pass — say so, so the caller never reports a red PR as done-and-good.
     # Informational checks (factory/ci_scope.py) are left out, as the chain's
@@ -771,6 +787,8 @@ def _status_for(ctx: _Ctx, ref: JobRef) -> dict[str, Any]:
         # v1.3 (additive)
         "base": base_view(meta),
         "stalled": is_stalled(state, updated_at, ctx.factory_block),
+        # v1.6 (additive)
+        "ticked": ticked,
     }
 
 
@@ -810,6 +828,7 @@ def _task_status_for(ctx: _Ctx, ref: Any) -> dict[str, Any]:
         "subscription_equiv_usd": subscription_equiv(rows),
         "base": None,
         "stalled": False,
+        "ticked": None,
     }
 
 

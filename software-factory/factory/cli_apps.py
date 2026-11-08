@@ -489,6 +489,9 @@ def add_app(
 
 
 def list_registered_apps(root: Path) -> list[dict[str, Any]]:
+    from factory.scheduler.coverage import read_coverage
+
+    coverage = read_coverage(root)
     rows: list[dict[str, Any]] = []
     for cfg_path in sorted((root / "apps").glob("*/config.yaml")):
         app = cfg_path.parent.name
@@ -504,6 +507,7 @@ def list_registered_apps(root: Path) -> list[dict[str, Any]]:
                 "path": str(resolve_app_repo_path(cfg, root)),
                 "delivery": {"default": cfg.delivery.default.value},
                 "pipeline_default": cfg.pipeline_default,
+                "ticked": coverage.ticked(app),  # v1.6
             }
         )
     return rows

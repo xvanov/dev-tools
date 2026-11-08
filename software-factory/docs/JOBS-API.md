@@ -1,4 +1,4 @@
-# Factory ⇄ Personal Assistant job contract (v1, 2026-11-02; v1.2 additions 2026-11-06, v1.3 and v1.4 additions 2026-11-07 at the end)
+# Factory ⇄ Personal Assistant job contract (v1, 2026-11-02; v1.2 additions 2026-11-06, v1.3 and v1.4 additions 2026-11-07, v1.5 and v1.6 2026-11-08, at the end)
 
 The one interface between the personal assistant (PA, dev-tools/personal-assistant) and the
 software factory (software-factory). The PA never imports factory code or reads its sqlite; it
@@ -676,3 +676,28 @@ Additive. A research/report job's status carries `"started_at": ISO-8601 UTC | n
 its worker began the job (`job.yaml` `started_at`, before the checkout and the brief), null while
 it is queued. A caller times "approval to started" from it instead of from its own poll. A code
 job has no such key; its first `runs[].started_at` is the nearest stamp.
+
+## v1.6 additions (2026-11-08): is the job's app ticked?
+
+Additive. A code job moves only when its app is ticked (`factory tick --app <app>`: pm-sync, every
+chain step, the CI watch). `factory serve` ticks only the apps it was started with (`serve_tick:
+true`, `--app`, `FACTORY_SERVE_APPS`) and lists them in `state/scheduler/serve.json`; a Linux host
+not yet on serve ticks from `factory-tick@<app>.timer`. A job for an app neither covers used to
+be accepted and then sat `queued` forever ("waiting for pm-sync on the next factory tick").
+
+`"ticked": true | false | null` on submit, status/list (code jobs) and every `app list` row:
+`true` when a running serve lists the app or its timer is active; `false` when neither does;
+`null` when this host cannot tell (no serve has ever run here and no timer is active), never
+reported as `false`. A serve whose status is under 60 s old counts as running, so a restart does
+not flip it. Research/report jobs report `null`: serve dispatches them whatever their app.
+
+The factory **warns, it does not refuse**: the operator may tick an app by hand, and refusing
+would strand a PA run that cannot know the host's ticker. With `ticked: false`:
+
+- submit adds a warning `ticker: app <app> is not ticked: … ; until then this job stays queued`,
+  naming what serve does tick and the fix (`serve_tick: true` in `apps/<app>/config.yaml` and a
+  serve restart, or `factory tick --app <app>`);
+- status sets `why` to `waiting: app <app> is not ticked: …` for a queued job, and appends the same
+  reason to `why` for a triaging, in-progress or blocked one. The state is unchanged.
+
+A caller should treat `ticked: false` on a live job as waiting on a human, not as running.

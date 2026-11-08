@@ -35,6 +35,8 @@ export type Job = {
   base?: JobBase | null;
   /** v1.3 */
   stalled?: boolean;
+  /** v1.6: something ticks the job's app (null: cannot tell; research/report) */
+  ticked?: boolean | null;
   [key: string]: unknown;
 };
 

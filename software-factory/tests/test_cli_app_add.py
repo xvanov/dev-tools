@@ -572,7 +572,7 @@ def test_cli_list_json_shape(cli, factory_root: Path, tmp_path: Path) -> None:
     apps = {a["app"]: a for a in json.loads(r.stdout)["apps"]}
     assert set(apps) == {"w", "legacy"}
     for row in apps.values():
-        assert set(row) == {"app", "repo", "path", "delivery", "pipeline_default"}
+        assert set(row) == {"app", "repo", "path", "delivery", "pipeline_default", "ticked"}
     assert apps["w"]["delivery"] == {"default": "draft_pr"}
     assert apps["legacy"]["delivery"] == {"default": "auto_merge"}
     assert apps["legacy"]["path"] == str((factory_root.parent / "legacy").resolve())

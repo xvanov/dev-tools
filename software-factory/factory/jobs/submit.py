@@ -583,6 +583,14 @@ def _result(
         )
     if validation is not None:
         warnings += [f"backpressure: {issue}" for issue in validation.issues]
+    # v1.6: a job for an app nothing ticks is accepted and then never starts.
+    from factory.scheduler.coverage import read_coverage
+
+    coverage = read_coverage(root)
+    out["ticked"] = coverage.ticked(app)
+    not_ticked = coverage.why_not(app)
+    if not_ticked:
+        warnings.append(f"ticker: {not_ticked}; until then this job stays queued")
     approval = read_state_yaml(dir_path).get(APPROVAL_KEY)
     if not (isinstance(approval, dict) and approval.get("approved")):
         try:
@@ -691,5 +699,6 @@ def _task_result(ref: TaskRef, *, created: bool) -> dict[str, Any]:
         "kind": str(meta.get("kind")),
         "runtime": str(meta.get("runtime") or "api"),
         "base": None,
+        "ticked": None,
         "warnings": [],
     }

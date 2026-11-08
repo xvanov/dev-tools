@@ -27,7 +27,8 @@
     "runs": { "type": "array", "items": { "$ref": "#/$defs/step" }, "description": "v1.2: every agent/LLM run of the job, newest first" },
     "subscription_equiv_usd": { "type": "number", "minimum": 0, "description": "v1.2" },
     "base": { "anyOf": [{ "$ref": "#/$defs/base" }, { "type": "null" }], "description": "v1.3" },
-    "stalled": { "type": "boolean", "description": "v1.3" }
+    "stalled": { "type": "boolean", "description": "v1.3" },
+    "ticked": { "type": ["boolean", "null"], "description": "v1.6: something ticks the job's app (null: cannot tell; research/report)" }
   },
   "additionalProperties": true,
   "$defs": {
