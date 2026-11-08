@@ -1090,6 +1090,41 @@ not in the Map is not done, and a new one gets added there first.
     paragraph is never rewritten once the card closes, so it is cleared (`clearContext`) when a
     run lands or is dropped; an open card gets a new one on the next context pass. Unit- and
     contract-tested; not run live. (5c9defa)
+  - [ ] **8.4.24 review-fix: the personal factory never ticks `sacrifice`, and nothing says so.**
+    `sacrifice:131` (PR #418) was accepted and sat `queued` ("waiting for pm-sync on the next
+    factory tick") for 340 s until cancelled. Serve's interval ticks ran dev-tools, factory and
+    template-probe only: `apps/sacrifice/config.yaml` has no `serve_tick: true`, and no timer or
+    cron ticks it. The e2e dry run passes on "factory app registered", the submit warns of nothing,
+    and Build groups the job under running. The owner decides whether to opt sacrifice in
+    (local config). Then have submit refuse or warn for an app no ticker serves, say so in `why`,
+    and check it in the dry run ([acceptance/review-fix.md](acceptance/review-fix.md)).
+  - [ ] **8.4.25 review-fix: no real-run driver, and `--on` is ignored for workflows.** `pa e2e
+    review-fix --pr <n>` exits with "not automated yet". `pa e2e <workflow> --on <machine>` runs on
+    the local stack, because `workflows.main` never reads `o.on` and only the golden path calls
+    `remote()`; `remoteArgv` also drops the workflow name. The dry run doesn't check the PR (open,
+    from the app's repo, unresolved review threads). Add the runner: `factory_continue` through
+    the approval path, the head before and after (fast-forward, same PR, no new PR), the threads
+    resolved by the diff, and CI on the new head. Match the call's audit row by its own subject when
+    there is no card (`approvalChecks` with `callSubject` null finds no row today).
+  - [ ] **8.4.26 review-fix: the tool call takes 8.3 s without the model (target 1 s).**
+    `factory_continue` took 14166 ms: gather 1072, compose_model 5887, **submit 7056**. A
+    continuation's submit asks GitHub for the PR and its review threads (`gh`, GraphQL) inside the
+    call. Profile it, and cache or parallelise the PR lookup.
+  - [ ] **8.4.27 review-fix: the composed brief contradicts the continuation.** Its stop condition
+    reads "Push and open a DRAFT pull request", while the factory's appended section says it
+    "updates that PR (it opens no new one)". Its facts say the request "gives no detail about what
+    the comments say", because compose runs before the factory reads the threads. Tell compose
+    it is a continuation (branch or PR) and word the stop by delivery onto the existing PR, as
+    8.4.21 did for the dummy card.
+  - [ ] **8.4.28 review-fix: Build hides which PR a continuation works on.** `/api/factory` gives
+    `base: null` and `prs: null` for `sacrifice:131`, while `job status` and `factory_job` have
+    `base {branch, pr: 418}`. A job no ticker serves is grouped under running. Show the continued
+    PR on the Build card, and a job that cannot start as stuck, not running.
+  - [ ] **8.4.29 review-fix: sacrifice's `main` is red today.** On the PR's base, pytest fails 3 of
+    1597 in `tests/test_chat_criteria_coercion.py` (expects `2026-08-15T18:00:00-04:00`, gets
+    today's date). `main`'s head was green on 15 August. No sacrifice PR can pass `ci`, and a CI-fix
+    cycle would chase tests outside the review comments. Pin the clock in those tests (in
+    sacrifice), or re-run review-fix on an app with a green base.
 - [ ] **8.5 Architecture map review.** A full pass over `architecture.json` (the `/architecture`
   page) against the finished system: every component, process, port, table, tool, workflow and
   storage location as it now runs on both stacks (jarvisd, ptyd, native factory, SQLite,
