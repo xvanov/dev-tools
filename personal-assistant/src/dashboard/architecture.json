@@ -489,7 +489,7 @@
         "personal": "landing"
       },
       "where": {
-        "work": "pa-worker scheduled task: conhost --headless node src\\supervisor on 127.0.0.1:7300, generations on 127.0.0.1:<OS-assigned>",
+        "work": "pa-worker scheduled task: conhost --headless node src\\worker.js, which becomes the supervisor (the task was registered elevated, so the deploy could not rewrite it to src\\supervisor), on 127.0.0.1:7300; generations on 127.0.0.1:<OS-assigned>",
         "personal": "Code on main; the next linux/redeploy.sh rewrites the pa-worker unit to node src/supervisor and restarts it once to bootstrap"
       },
       "health": "dashboard",
@@ -506,7 +506,8 @@
         "Rule": "node builtins only; never loads worker code, so a deploy never needs to restart it",
         "Rollback": "{\"cmd\":\"rollback\"}: drain the serving generation, undrain the standby, wait for its /healthz (30 s), flip back, stop the other. Only while a standby is held (90 s after a roll)",
         "Deploy (Z4)": "windows/redeploy.ps1, linux/redeploy.sh (run by termhub's Update after its pull, or by hand with -Pull/--pull and -DryRun/--dry-run) → node src/supervisor/deploy.js: npm install when the package files changed, npm run build when one exists (none yet), roll, then /healthz + /api/version every 2 s for 60 s; 3 failed probes in a row, or not the new commit at the end → rollback, exit 1",
-        "Restart fallback": "the scripts restart the task/unit (stop, kill node src/supervisor and src/worker.js, start, wait up to 120 s for the new commit) only when deploy.js exits 3 (no supervisor answers: the bootstrap) or 4 (src/supervisor/index.js changed), or when they just rewrote a task/unit that still named src/worker.js"
+        "Restart fallback": "the scripts restart the task/unit (stop, kill node src/supervisor and src/worker.js, start, wait up to 120 s for the new commit) only when deploy.js exits 3 (no supervisor answers: the bootstrap) or 4 (src/supervisor/index.js changed), or when they just rewrote a task/unit that still named src/worker.js",
+        "Bootstrap": "node src/worker.js not started by the supervisor (an older task or unit, which a non-elevated deploy cannot rewrite) becomes the supervisor before loading any worker code; PA_NO_SUPERVISOR=1 runs the bare worker"
       },
       "code": [
         "personal-assistant/src/supervisor/index.js",

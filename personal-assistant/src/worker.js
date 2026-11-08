@@ -11,6 +11,21 @@
 // behind a slower one; skipping a tick is always the right answer, because the
 // next one will see the same delta.
 
+// `node src/worker.js` started by anything but the supervisor — an install
+// whose pa-worker task or unit predates it, which a non-elevated deploy cannot
+// rewrite — becomes the supervisor (src/supervisor), which then runs this
+// file as its generations (PA_SUPERVISED=1). Nothing below is loaded in the
+// supervisor process. PA_NO_SUPERVISOR=1 runs the bare worker.
+if (require.main === module && process.env.PA_SUPERVISED !== '1' && process.env.PA_NO_SUPERVISOR !== '1') {
+  require('./supervisor')
+    .cli(['run'])
+    .catch((err) => {
+      process.stderr.write(`supervisor failed: ${err.message}\n`);
+      process.exit(1);
+    });
+  return;
+}
+
 const path = require('path');
 const fs = require('fs');
 const { execFile } = require('child_process');

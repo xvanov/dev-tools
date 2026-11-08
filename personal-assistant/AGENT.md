@@ -475,7 +475,10 @@ Postgres and nowhere else. Tests use invented names; fixtures never hold a real 
   if it fails. Its decisions are pure (`plan`, `verdict`, `test/deploy.test.js`); keep them
   so, and keep it on node builtins (it must run when `node_modules` is what broke). The
   scripts keep the old stop/kill/start path for exit codes 3 (no supervisor: bootstrap) and 4
-  (the supervisor's own code changed), and rewrite a task/unit still naming `src/worker.js`.
+  (the supervisor's own code changed), and rewrite a task/unit still naming `src/worker.js`
+  where they may (a task registered elevated refuses). They need not: `node src/worker.js`
+  not started by the supervisor becomes the supervisor before loading any worker code
+  (`PA_NO_SUPERVISOR=1` runs the bare worker, for debugging).
   A change to `src/supervisor/index.js` therefore costs one restart gap; keep it rare.
 - **Single-owner background work (Z2).** Two generations overlap during a roll, so every
   timer, watcher and in-process worker in `src/worker.js` is declared on the scheduler

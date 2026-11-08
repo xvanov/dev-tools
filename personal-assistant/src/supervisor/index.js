@@ -558,4 +558,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { createSupervisor, request, defaultControlPath, probe, envSetting, sourceHash, DEFAULT_PORT };
+module.exports = { createSupervisor, request, defaultControlPath, probe, envSetting, sourceHash, cli, DEFAULT_PORT };

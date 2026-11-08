@@ -10,7 +10,9 @@
 #
 #   1. The pa-worker task runs the supervisor (`node src\supervisor`), not the worker.
 #      An older install has `src\worker.js` there; the action is rewritten in place
-#      (triggers and settings kept), once - idempotent after that.
+#      (triggers and settings kept), once - idempotent after that. Not required: a task
+#      registered from an elevated shell refuses the rewrite, and `node src\worker.js`
+#      not started by the supervisor becomes the supervisor anyway.
 #   2. The restart path, kept as the fallback: when no supervisor answers (the first
 #      deploy after step 1 - the bootstrap), or the supervisor's own code changed (it
 #      cannot roll itself), the task is stopped, its node processes killed, and started
@@ -49,7 +51,14 @@ function Confirm-SupervisorTask {
   # Same shape as windows/install.ps1's New-HeadlessAction.
   $new = New-ScheduledTaskAction -Execute "$env:SystemRoot\System32\conhost.exe" `
     -Argument "--headless `"$node`" src\supervisor" -WorkingDirectory $PaDir
-  Set-ScheduledTask -TaskName 'pa-worker' -Action $new | Out-Null
+  try {
+    Set-ScheduledTask -TaskName 'pa-worker' -Action $new -ErrorAction Stop | Out-Null
+  } catch {
+    # A task registered from an elevated shell can only be changed from one. Harmless:
+    # `node src\worker.js` started by the task becomes the supervisor itself.
+    Say "pa-worker task left as it is ($($_.Exception.Message.Trim())); src\worker.js starts the supervisor anyway."
+    return $false
+  }
   Say "pa-worker task now runs the supervisor (node src\supervisor)."
   return $true
 }

@@ -69,6 +69,17 @@ const live = { ok: true, generation: 3, pid: 10, source: 'aaaaaaaaaaaa' };
   assert.strictEqual(verdict([], { head, done: true }).state, 'unhealthy');
 }
 
+// ---- `node src/worker.js` from a task or unit is the supervisor ----
+// The bootstrap must not depend on rewriting the task (a non-elevated deploy
+// cannot): worker.js hands over to the supervisor before loading anything.
+{
+  const src = require('fs').readFileSync(path.join(PA, 'src', 'worker.js'), 'utf8');
+  const hand = src.indexOf("require('./supervisor')");
+  assert.ok(hand > 0, 'worker.js starts the supervisor when not supervised');
+  assert.ok(hand < src.indexOf("require('./config')"), 'before any worker code is loaded');
+  assert.match(src, /PA_SUPERVISED !== '1' && process\.env\.PA_NO_SUPERVISOR !== '1'/);
+}
+
 // ---- args ----
 assert.deepStrictEqual(parseArgs(['--from', 'abc', '--dry-run', '--watch-seconds', '5']), { pull: false, from: 'abc', dryRun: true, json: false, watchSeconds: 5 });
 assert.throws(() => parseArgs(['--frob']), /unknown argument/);
