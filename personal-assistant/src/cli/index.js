@@ -125,6 +125,7 @@ const HELP = `pa — your context layer
     pa eval router [--fit]          voice fast lane router: accuracy and latency on its eval set
     pa e2e [--dry-run|--sweep]      the golden path end to end on the live stack, timed per hop (pa help e2e)
     pa audit verify|tail|check      the policy audit log: verify its hash chain, show the newest rows, or dry-run a decision (pa help audit)
+    pa version                      the commit the running worker serves, from the dashboard or the local checkout
 `;
 
 function out(text) {
@@ -1797,13 +1798,14 @@ Object.assign(commands, require('./routine').make(out, fail));
 Object.assign(commands, require('./task').make(out, fail));
 Object.assign(commands, require('./e2e').make(out, fail));
 Object.assign(commands, require('./audit').make(out, fail));
+Object.assign(commands, require('./version').make(out, fail));
 
 async function main(argv) {
   const { command, args, flags, lists } = parseArgs(argv);
   const name = command || 'help';
 
   if (flags.help || name === 'help' || name === '--help') {
-    const topics = { memory: './memory', secret: './secret', secrets: './secret', passkeys: './passkeys', routine: './routine', routines: './routine', task: './task', policy: './task', e2e: './e2e', audit: './audit' };
+    const topics = { memory: './memory', secret: './secret', secrets: './secret', passkeys: './passkeys', routine: './routine', routines: './routine', task: './task', policy: './task', e2e: './e2e', audit: './audit', version: './version' };
     out(topics[args[0]] ? require(topics[args[0]]).HELP : HELP);
     return;
   }

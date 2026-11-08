@@ -65,4 +65,17 @@ const { parseArgs, flagInt, flagBool } = require('../src/cli/parseArgs');
   assert.strictEqual(r.flags.since, true);
 }
 
+// Help text must list the `version` verb (AC5.1).
+{
+  const HELP = (() => {
+    // Load the module's HELP string without triggering the full module graph.
+    const idx = require('fs').readFileSync(
+      require('path').join(__dirname, '..', 'src', 'cli', 'index.js'), 'utf8'
+    );
+    const m = idx.match(/const HELP = `([\s\S]*?)`;/);
+    return m ? m[1] : '';
+  })();
+  assert.ok(HELP.includes('pa version'), 'HELP must list `version` verb');
+}
+
 console.log('parseArgs.test.js ok');
