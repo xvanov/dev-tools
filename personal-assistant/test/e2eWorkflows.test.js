@@ -149,6 +149,34 @@ test('research: a research job to report.md, no PR, linked in Plan, Run and the 
   assert.ok(s.cleanup.some((c) => /session follow7 killed/.test(c)));
 });
 
+test('research: approval to started is timed from the job\'s own started_at, polled fast until it starts (8.4.9)', async () => {
+  const { deps } = fakeDeps();
+  const slept = [];
+  const sleep = deps.sleep;
+  deps.sleep = async (ms) => { slept.push(ms); return sleep(ms); };
+  let polls = 0;
+  let returnedAt = null;
+  const chat = deps.chat;
+  deps.chat = async (name, args) => {
+    const r = await chat(name, args);
+    if (name === 'factory_start') returnedAt = deps.now();
+    return r;
+  };
+  deps.jobStatus = async () => {
+    polls++;
+    if (polls < 3) return { job_id: 'dev-tools:r001', state: 'queued', runs: [], stories: [] };
+    const started_at = new Date(returnedAt + 2100).toISOString();
+    const done = polls >= 4;
+    return { job_id: 'dev-tools:r001', state: done ? 'done' : 'in_progress', started_at, updated_at: new Date(returnedAt + 11_500).toISOString(), cost_usd: 0, stories: [], runs: [{ id: 3, runtime: 'claude_session', state: 'ok', started_at: new Date(returnedAt + 12_300).toISOString(), session: { termhub_session_id: 'rs1', links: { job: 'dev-tools:r001', step: '3' } } }] };
+  };
+  const s = await R.main('research', {}, {}, deps);
+  const by = Object.fromEntries(s.hops.map((h) => [h.c, h]));
+  assert.strictEqual(by.dispatcher.ms, 2100, JSON.stringify(by.dispatcher));
+  assert.ok(/factory started_at/.test(by.dispatcher.note));
+  assert.strictEqual(by['runtime-claude'].ms, 11_500 - 2100, 'started_at to the done job\'s updated_at');
+  assert.deepStrictEqual(slept.slice(0, 2), [1000, 1000]);
+});
+
 test('research: screenshots are taken before cleanup; --keep leaves the sessions and names its sweep', async () => {
   const { deps, log } = fakeDeps();
   const capture = deps.capture;

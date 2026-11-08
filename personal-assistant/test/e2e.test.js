@@ -102,6 +102,40 @@ test('overdue: counted from the last hop reached; deadEnd when a job ends withou
   assert.ok(!C.deadEnd({ state: 'in_progress', stories: [] }));
 });
 
+test('startedAt: the factory\'s own stamp over the poll; endedAt likewise; poll fast only while a start is due', () => {
+  const t = (s) => Date.parse(`2026-11-08T19:52:${s}Z`);
+  // Research (8.4.9): in_progress from dispatch at :12, the worker's started_at :13.40, seen at :21.
+  assert.deepStrictEqual(C.startedAt({ state: 'in_progress', started_at: '2026-11-08T19:52:13.400Z', runs: [{ started_at: '2026-11-08T19:52:23.620Z' }] }, t('21')), { at: t('13.400'), clock: 'factory started_at' });
+  // Seen early at the starting state: the worker's stamp still wins.
+  assert.strictEqual(C.startedAt({ started_at: '2026-11-08T19:52:13.400Z' }, t('12.500')).at, t('13.400'));
+  // A code job: its first run, when no later than the poll.
+  assert.deepStrictEqual(C.startedAt({ runs: [{ started_at: '2026-11-08T19:52:30Z' }, { started_at: '2026-11-08T19:52:15Z' }] }, t('20')), { at: t('15'), clock: 'factory runs[].started_at' });
+  // An older factory with only the researcher's run (after checkout and brief): the poll is nearer.
+  assert.deepStrictEqual(C.startedAt({ runs: [{ started_at: '2026-11-08T19:52:23Z' }] }, t('15')), { at: t('15'), clock: 'poll' });
+  assert.deepStrictEqual(C.startedAt(null, null), { at: null, clock: null });
+  assert.deepStrictEqual(C.endedAt({ state: 'done', updated_at: '2026-11-08T19:53:35.250Z' }, Date.parse('2026-11-08T19:53:41Z')), { at: Date.parse('2026-11-08T19:53:35.250Z'), clock: 'factory updated_at' });
+  assert.strictEqual(C.endedAt({ state: 'in_progress', updated_at: '2026-11-08T19:53:35Z' }, 5).clock, 'poll');
+  assert.strictEqual(C.pollMs(10, true, 2000), 1000);
+  assert.strictEqual(C.pollMs(10, true, 200_000), 10_000, 'not fast forever');
+  assert.strictEqual(C.pollMs(10, false, 2000), 10_000);
+});
+
+test('runner: job started is the factory\'s first run stamp, and the start is polled fast', async () => {
+  const stamp = (msAfter) => new Date(msAfter).toISOString();
+  const queued = { job_id: 'dev-tools:0007', state: 'queued', runs: [], stories: [] };
+  const withStamp = (j) => ({ ...j, runs: j.runs.map((r) => ({ ...r, started_at: stamp(1500) })) });
+  const { deps, log } = fakes({ jobs: [queued, queued, withStamp(JOB_RUNNING), withStamp(JOB_PR), withStamp(JOB_CI)] });
+  const slept = [];
+  const sleep = deps.sleep;
+  deps.sleep = async (ms) => { slept.push(ms); return sleep(ms); };
+  const r = await G.main({}, {}, deps);
+  assert.strictEqual(r.ok, true, JSON.stringify(r.failed.concat(r.errors)));
+  assert.deepStrictEqual(slept.slice(0, 2), [1000, 1000], 'fast while the start is due');
+  assert.strictEqual(slept[2], 10_000, 'back to --poll once started');
+  assert.strictEqual(r.hops.find((h) => h.hop === 'job_started').sinceStartS, 1.5);
+  assert.ok(log.sleeps >= 3);
+});
+
 test('chainIds: steps, sessions and PRs from the factory status', () => {
   const ids = C.chainIds(JOB_PR, { card: 77, run: 5, job: 'dev-tools:0007' });
   assert.strictEqual(ids.card, '77');

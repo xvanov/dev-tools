@@ -664,3 +664,10 @@ never by reading titles.
   records. A termhub without links ignores them, and a session started before v1.4 has none. An
   API-runtime step's `session` is null until it has a session of its own (plan E2); the shape is
   the same when it does.
+
+## v1.5 additions (2026-11-08): when a research/report job started
+
+Additive. A research/report job's status carries `"started_at": ISO-8601 UTC | null`: the moment
+its worker began the job (`job.yaml` `started_at`, before the checkout and the brief), null while
+it is queued. A caller times "approval to started" from it instead of from its own poll. A code
+job has no such key; its first `runs[].started_at` is the nearest stamp.

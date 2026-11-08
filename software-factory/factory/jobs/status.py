@@ -801,6 +801,8 @@ def _task_status_for(ctx: _Ctx, ref: Any) -> dict[str, Any]:
             + [r.get("ts") for r in rows]
         ),
         "why": why,
+        # v1.5 (additive): when the worker began the job; null while queued.
+        "started_at": meta.get("started_at") or None,
         "kind": str(meta.get("kind")),
         "runtime": str(meta.get("runtime") or "api"),
         "report": report_info(ref),

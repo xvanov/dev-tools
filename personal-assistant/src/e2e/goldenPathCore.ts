@@ -357,6 +357,40 @@ function overdue(hops: Hop[], timeline: Timeline, timeouts: Timeouts, now: numbe
   return now - since > limit ? { hop: h.id, waitedS: Math.round((now - since) / 1000), limitS: timeouts[h.id] } : null;
 }
 
+/**
+ * Pure. When the job started, by the factory's own clock where it says (the
+ * factory runs on this machine, D13, so its clock is ours): a research/report
+ * job's `started_at` (JOBS-API v1.5, its worker's start), else the earliest
+ * `runs[].started_at` when that is no later than `seenAt`, else `seenAt` (the
+ * poll that first saw it started). A research job reads in_progress from its
+ * dispatch, before its worker starts, so the poll alone can be early or late.
+ */
+function startedAt(job: Job | null | undefined, seenAt: number | null | undefined): { at: number | null; clock: string | null } {
+  const own = ms(job?.started_at);
+  if (own != null) return { at: own, clock: 'factory started_at' };
+  const runs = runsOf(job).map((r) => ms(r.started_at)).filter((x): x is number => x != null);
+  const first = runs.length ? Math.min(...runs) : null;
+  if (first != null && (seenAt == null || first <= seenAt)) return { at: first, clock: 'factory runs[].started_at' };
+  return { at: seenAt ?? null, clock: seenAt != null ? 'poll' : null };
+}
+
+/** Pure. When a terminal job ended: its `updated_at` when no later than `seenAt`, else `seenAt`. */
+function endedAt(job: Job | null | undefined, seenAt: number): { at: number; clock: string } {
+  const own = TERMINAL.has(job?.state) ? ms(job?.updated_at) : null;
+  return own != null && own <= seenAt ? { at: own, clock: 'factory updated_at' } : { at: seenAt, clock: 'poll' };
+}
+
+// While a start is due (the factory dispatches a submitted job within seconds),
+// poll every FAST_POLL_MS for up to FAST_POLL_FOR_MS after the start call; the
+// rest of a run is timed by the factory's stamps, so --poll is enough there.
+const FAST_POLL_MS = 1000;
+const FAST_POLL_FOR_MS = 120_000;
+
+/** Pure. Milliseconds to the next status poll. */
+function pollMs(pollS: number, awaitingStart: boolean, sinceStartMs: number): number {
+  return awaitingStart && sinceStartMs < FAST_POLL_FOR_MS ? Math.min(FAST_POLL_MS, pollS * 1000) : pollS * 1000;
+}
+
 /** Pure. The job ended without a PR: nothing more will come. */
 function deadEnd(job: Job | null | undefined): boolean {
   return TERMINAL.has(job?.state) && !storiesOf(job).some((s) => s.pr_url);
@@ -647,7 +681,7 @@ function remoteArgv(flags: Flags = {}, lists: Lists = {}): string[] {
 
 module.exports = {
   MARKER_RE, HOPS, RESUME_HOPS, DEFAULT_TIMEOUTS, DEFAULT_REPO, TERMINAL, USAGE, RESEARCH_TIMEOUT_S, SWEEP_LIVE_S, SWEEP_GRACE_S,
-  parseOptions, sweepVerdict, variant, hopsFor, dummyCard, chainIds, observe, nextHop, overdue, deadEnd,
+  parseOptions, sweepVerdict, variant, hopsFor, dummyCard, chainIds, observe, nextHop, overdue, deadEnd, startedAt, endedAt, pollMs,
   findCard, checkPlanBoard, checkCardDetail, checkBuild, checkRun, checkMcpCard, checkMcpJob, checkGithub, checkWatchable,
   stripAnsi, nonEmpty, summarize, table, remoteArgv, prNumberOf,
 };

@@ -335,8 +335,11 @@ async function golden(o: Options, deps: Deps): Promise<Json> {
         errors.push(`job ${started.job} ended ${job.state} without a PR${job.why ? `: ${String(job.why).slice(0, 200)}` : ''}`);
         break;
       }
-      await nap(o.poll * 1000);
+      await nap(C.pollMs(o.poll, timeline.job_started == null, deps.now() - called));
     }
+    // The job's start by the factory's own stamp, not the poll that saw it.
+    const began = C.startedAt(lastJob, timeline.job_started);
+    if (began.at != null && timeline.job_started != null) timeline = { ...timeline, job_started: began.at };
 
     // 4. Every view's API links the same chain. The worker records it on its
     // factory poll, so give the views until `timeouts.views` to catch up.

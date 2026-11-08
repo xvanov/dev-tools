@@ -238,11 +238,12 @@ async function research(acc: Acceptance, o: Options, deps: Deps, folder: string)
       if (tRunning == null && lastJob && lastJob.state !== 'queued') tRunning = deps.now();
       if (lastJob && C.TERMINAL.has(lastJob.state)) break;
       if (deps.now() > until) throw new Error(`research job ${job} not done after ${o.timeouts.research || 5400} s (state ${lastJob?.state})`);
-      await deps.sleep(o.poll * 1000);
+      await deps.sleep(C.pollMs(o.poll, tRunning == null, deps.now() - tStarted));
     }
-    const tDone = deps.now();
-    measured.dispatcher = tRunning != null ? { ms: tRunning - tStarted, note: 'factory_start return to the job leaving queued' } : { ms: null, note: 'never left queued' };
-    measured['runtime-claude'] = { ms: tDone - (tRunning || tStarted), note: `job ${lastJob.state}` };
+    const began = C.startedAt(lastJob, tRunning);
+    const ended = C.endedAt(lastJob, deps.now());
+    measured.dispatcher = began.at != null ? { ms: began.at - tStarted, note: `factory_start return to the job started (${began.clock})` } : { ms: null, note: 'never left queued' };
+    measured['runtime-claude'] = { ms: ended.at - (began.at ?? tStarted), note: `job ${lastJob.state} (${began.clock || 'start call'} to ${ended.clock})` };
     checks.push(check('build', 'research job done', lastJob.state === 'done', `${job} ${lastJob.state}${lastJob.why ? `: ${lastJob.why}` : ''}`));
     checks.push(check('build', 'no PR opened', !(lastJob.stories || []).some((s: Json) => s.pr_url)));
     const rep = await G.safely(() => deps.jobReport(job));
@@ -298,7 +299,7 @@ async function deepseekPr(acc: Acceptance, o: Options, deps: Deps, folder: strin
       for (const [sid, text] of Object.entries(sb)) transcripts.push(deps.writeEvidence(folder, `transcripts/session-${sid}.txt`, C.stripAnsi(text)));
       const measured: Measured = {};
       if (startCall) measured.jarvis = { ms: startCall.ms, note: 'factory_start round trip, including the brief composing model' };
-      if (startCall && timeline.job_started != null) measured.dispatcher = { ms: timeline.job_started - (startCall.at + startCall.ms), note: 'factory_start return to job started' };
+      if (startCall && timeline.job_started != null) measured.dispatcher = { ms: timeline.job_started - (startCall.at + startCall.ms), note: `factory_start return to job started (${C.startedAt(lastJob, timeline.job_started).clock})` };
       if (timeline.pr_opened != null && timeline.job_started != null) measured['factory-chain'] = { ms: timeline.pr_opened - timeline.job_started };
       if (timeline.ci_done != null && timeline.pr_opened != null) measured.github = { ms: timeline.ci_done - timeline.pr_opened, note: `CI ${(ids?.prs[0] || {}).ci || '?'}` };
       measured.worker = { ms: null, note: 'state change to board redraw: measured by E3/0.4, not by this run' };

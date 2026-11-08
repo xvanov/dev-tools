@@ -910,6 +910,11 @@ not in the Map is not done, and a new one gets added there first.
     job's `started_at` is 19:52:13.40. The e2e polls `job status` every 10 s (`--poll 10`), so it
     timed 11472 ms. Time the hop from the job's `started_at`, and cut the wake-to-worker start.
     (The model's first turn is another 10.2 s later, at 19:52:23.6: checkout and brief.)
+    Measurement fixed (partly met): a research job's status now carries `started_at` (JOBS-API
+    v1.5), and the e2e times approval to started from it. A code job uses its first
+    `runs[].started_at`, and the poll only when the factory has no stamp. The research runtime hop
+    now ends at the job's `updated_at`. Status is polled every 1 s while a start is due. Still
+    open: the hop itself (~2.1 s against 1 s; cut the wake-to-worker start).
   - [ ] **8.4.10 research: the worker hop is not measured, and PA learns state changes 6-7 s late.**
     The job ended at 19:53:35.25, serve pushed `done` at 19:53:41, and PA recorded it at 19:53:41.14
     (its event loop was blocked 1230 ms then). `in_progress` was pushed at 19:52:12 and recorded at

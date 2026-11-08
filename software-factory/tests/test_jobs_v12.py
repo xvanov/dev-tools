@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -186,6 +187,7 @@ def test_queued_task_status_shape(root: Path) -> None:
     for key in ("kind", "runtime", "report", "runs", "subscription_equiv_usd", "cost_usd"):
         assert key in st
     assert st["report"] is None and st["runs"] == [] and st["stories"] == []
+    assert st["started_at"] is None
     listed = list_jobs(root, source="pa", github=False)["jobs"]
     assert [j["job_id"] for j in listed] == [job["job_id"]]
     assert list_jobs(root, app="demo", github=False)["jobs"] == []
@@ -256,6 +258,8 @@ def test_run_task_api_writes_the_report(root: Path, monkeypatch: pytest.MonkeyPa
     st = job_status(root, job["job_id"])
     assert st["state"] == "done" and st["terminal"]
     assert st["report"]["title"] == "Slow build" and st["report"]["words"] == 8
+    started = datetime.fromisoformat(st["started_at"])
+    assert started.tzinfo is not None and started <= datetime.fromisoformat(st["updated_at"])
     code, obj = _cli("report", job["job_id"], "--json")
     assert code == 0 and obj["markdown"].startswith("# Slow build")
     code, text = _cli("report", job["job_id"])
