@@ -42,16 +42,27 @@ class _Router(io.TextIOBase):
         self._target().flush()
 
     def isatty(self) -> bool:
-        return False if getattr(_local, self._name, None) else self._real.isatty()
+        # Always False: click (typer.echo) resolves a console/binary wrapper for
+        # a tty and CACHES it per stream object; for this long-lived router that
+        # wrapper would write to the real console forever, bypassing capture.
+        return False
 
     @property
     def encoding(self) -> str:  # type: ignore[override]
         return getattr(self._real, "encoding", "utf-8") or "utf-8"
 
     def fileno(self) -> int:
-        return self._real.fileno()
+        # No file descriptor: on Windows click (typer.echo) detects a console
+        # by fileno() + GetConsoleMode and then writes to the console handle
+        # directly, around the router (seen live under serve: `app list --json`
+        # came back with an empty stdout).
+        raise io.UnsupportedOperation("fileno")
 
     def __getattr__(self, name: str) -> Any:
+        # No binary buffer: click would wrap the REAL stream's buffer and write
+        # around the router. (A property raising AttributeError would land here.)
+        if name == "buffer":
+            raise AttributeError(name)
         return getattr(self._real, name)
 
 

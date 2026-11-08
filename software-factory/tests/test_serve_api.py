@@ -96,6 +96,53 @@ def test_capture_is_per_thread_and_never_leaks(tmp_path: Path) -> None:
     assert sys.stdout is not None
 
 
+def test_router_exposes_nothing_click_could_write_around() -> None:
+    """click finds a console via fileno() (Windows) or isatty(), and a binary
+    writer via .buffer; any of them lets typer.echo bypass the capture."""
+    import io as _io
+    import sys
+
+    import click
+
+    from factory import capture
+
+    capture.install()
+    assert sys.stdout.isatty() is False
+    with pytest.raises(_io.UnsupportedOperation):
+        sys.stdout.fileno()
+    assert not hasattr(sys.stdout, "buffer")
+    with capture.capture() as (out, _err):
+        click.echo("through click")
+    assert out.getvalue() == "through click\n"
+
+
+def test_click_echo_is_captured_even_when_the_real_stdout_is_a_tty(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Live bug: under serve (a console) `app list --json` (typer.echo) returned an
+    empty stdout: click cached a wrapper of the real tty stream on the router."""
+    import io
+    import sys
+
+    from factory import capture
+
+    class _TTY(io.TextIOWrapper):
+        def isatty(self) -> bool:
+            return True
+
+    real = _TTY(io.BytesIO(), encoding="utf-8")
+    monkeypatch.setattr(sys, "stdout", real)
+    capture.install()
+    try:
+        import typer
+
+        typer.echo("warm-up outside a capture")  # click resolves and caches here
+        for i in range(2):
+            with capture.capture() as (out, _err):
+                typer.echo(f'{{"n": {i}}}')
+            assert out.getvalue() == f'{{"n": {i}}}\n'
+    finally:
+        monkeypatch.setattr(sys, "stdout", real)
+
+
 def test_read_only_calls_run_concurrently_and_stay_separate() -> None:
     import threading
 
