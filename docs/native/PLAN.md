@@ -1037,7 +1037,7 @@ not in the Map is not done, and a new one gets added there first.
     or `PA_MACHINES`) where factory JSON enters (`factory.call`) and where stored step links are
     read, so old rows open too. The golden path GETs each step link (`link opens`). Unit-tested;
     not run live. (eb7be37)
-    Follow-up: the research workflow's Run view GETs each step link too (`link opens`).
+    Follow-up: the research workflow's Run view GETs each step link too (`link opens`). (f29aff0)
   - [ ] **8.4.18 deepseek-pr: the API dev still hangs PowerShell on a multi-line `git commit -m`.**
     It did so twice in dev-tools:018 (20:05-20:12, 7.6 min, 18 turns, $0.16 of the $1.11 step),
     with 73e824d's prompt rule in place, and it considered `--no-verify` before using `-F`. The
@@ -1060,7 +1060,7 @@ not in the Map is not done, and a new one gets added there first.
     `solo_checks` event and the ETA follow the runtime. (8b00685)
     Follow-up: the blocked-story recovery pass skips a solo story parked in
     `blocked_review_nonconvergent`; it could otherwise restart it twice more, each a fresh dev
-    conversation. A human resumes it (`factory job resume`).
+    conversation. A human resumes it (`factory job resume`). (151e570)
   - [ ] **8.4.20 deepseek-pr: the dev prompt says "NO CONTEXT AVAILABLE … You are likely the
     Onboarder persona".** The work factory has no `apps/dev-tools/context/project.md` or
     `navigation.md`, so a dev step is told to write the context set and spends its first ~25 of 76
@@ -1096,7 +1096,7 @@ not in the Map is not done, and a new one gets added there first.
     contract-tested; not run live. (5c9defa)
     Follow-up: a Claude-session run (the PA's `claude` route) had the same stale paragraph: `pa
     land`, `push_to_main`, a drop and a session that ended moved the card or the run and kept it.
-    Each now clears it too (`dispatch.forgetContext`); no SQL changed.
+    Each now clears it too (`dispatch.forgetContext`); no SQL changed. (bd7b768)
   - [ ] **8.4.24 review-fix: the personal factory never ticks `sacrifice`, and nothing says so.**
     `sacrifice:131` (PR #418) was accepted and sat `queued` ("waiting for pm-sync on the next
     factory tick") for 340 s until cancelled. Serve's interval ticks ran dev-tools, factory and
