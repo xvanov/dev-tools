@@ -24,7 +24,7 @@ type Db = import('../repo/types.ts').Db;
 const path = require('path');
 const { config, secret, secretSource, parseEnvFile } = require('../config.ts');
 const repo = require('../repo');
-const llm = require('../llm');
+const llm = require('../llm.ts');
 const { saveItems, getCursor } = require('./store.ts');
 const { logger } = require('../log.ts');
 

@@ -16,7 +16,7 @@ require.cache[require.resolve('../src/budget.ts')] = {
 
 const { config } = require('../src/config.ts');
 const models = require('../src/models.ts');
-const llm = require('../src/llm');
+const llm = require('../src/llm.ts');
 
 // ------------------------------------------------------------ parsing ----
 

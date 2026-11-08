@@ -24,7 +24,7 @@
 type Row = Record<string, any>;
 type Db = import('../repo/types.ts').Db;
 
-const llm = require('../llm');
+const llm = require('../llm.ts');
 const identity = require('../distill/identity.ts');
 const { getCursor, saveItems } = require('./store.ts');
 const { logger } = require('../log.ts');

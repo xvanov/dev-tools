@@ -11,7 +11,7 @@
 // message tricked a suggestion into) has nothing to act with.
 
 const { register } = require('./index');
-const { complete } = require('../../llm');
+const { complete } = require('../../llm.ts');
 const { config } = require('../../config.ts');
 const { logger } = require('../../log.ts');
 

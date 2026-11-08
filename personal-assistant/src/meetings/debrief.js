@@ -21,7 +21,7 @@
 // transcript for the series profile; this does not repeat it. The generic
 // distiller skips these items (distill DEBRIEF_OWNED).
 
-const llm = require('../llm');
+const llm = require('../llm.ts');
 const { config } = require('../config.ts');
 const repo = require('../repo');
 const { logger } = require('../log.ts');

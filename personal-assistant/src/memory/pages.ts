@@ -14,7 +14,7 @@
 type Row = Record<string, any>;
 type Db = import('../repo/types.ts').Db;
 
-const llm = require('../llm');
+const llm = require('../llm.ts');
 const { config } = require('../config.ts');
 const repo = require('../repo');
 const { embed } = require('../search');

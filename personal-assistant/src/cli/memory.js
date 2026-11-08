@@ -87,7 +87,7 @@ function make(out, fail) {
       if (sub === 'run') {
         const which = (args[1] || 'all').toLowerCase();
         const limit = flagInt(flags, 'limit', null);
-        const llm = require('../llm');
+        const llm = require('../llm.ts');
         const t0 = Date.now();
         if (which === 'extract' || which === 'all') {
           const extract = require('../memory/extract.ts');

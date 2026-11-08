@@ -19,7 +19,7 @@
 // never judged twice at one prompt version — which is also why a commitment
 // reopened with `pa done --reopen` stays open until I write again.
 
-const llm = require('../llm');
+const llm = require('../llm.ts');
 const { config } = require('../config.ts');
 const repo = require('../repo');
 const { logger } = require('../log.ts');

@@ -28,7 +28,7 @@
 // close on that commitment before; otherwise it is a proposal. Either way the
 // quote is checked verbatim against the item it names first.
 
-const llm = require('../llm');
+const llm = require('../llm.ts');
 const { config } = require('../config.ts');
 const repo = require('../repo');
 const { logger } = require('../log.ts');

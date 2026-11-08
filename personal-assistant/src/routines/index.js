@@ -88,7 +88,7 @@ Only include params the request actually specifies; defaults fill the rest.`;
 async function parseWords(words, { now = new Date() } = {}) {
   const text = String(words || '').trim();
   if (!text) throw new Error('say what the routine should do and when');
-  const { complete, extractJson } = require('../llm');
+  const { complete, extractJson } = require('../llm.ts');
   const prompt = [
     `Now (local): ${now.toString()}`,
     `Catalog:\n${JSON.stringify(actions.catalog(), null, 2)}`,

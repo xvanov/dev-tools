@@ -1414,7 +1414,7 @@ const commands = {
       if (!ok && !rest.ok) await jira.requestCredentials(rest, 'doctor').catch(() => {});
     }
     // No key is fine: model calls fall back to `claude -p` on your own login.
-    const llm = require('../llm');
+    const llm = require('../llm.ts');
     let cliVersion = null;
     try {
       cliVersion = require('child_process')

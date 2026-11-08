@@ -30,7 +30,7 @@ const repo = require('../repo');
 const { search, embedQuery } = require('../search');
 const { rerank } = require('../search/rerank');
 const memory = require('../memory');
-const llm = require('../llm');
+const llm = require('../llm.ts');
 const { logger } = require('../log.ts');
 
 const log = logger('recall');

@@ -22,7 +22,7 @@
 // `topic:<series>`. The next brief checks last time's promises against the
 // evidence.
 
-const llm = require('../llm');
+const llm = require('../llm.ts');
 const { config } = require('../config.ts');
 const repo = require('../repo');
 const { logger } = require('../log.ts');

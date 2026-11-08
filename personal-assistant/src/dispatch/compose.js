@@ -69,7 +69,7 @@ let lastModel = null;
 
 async function callModel({ system, prompt }) {
   if (modelOverride) return modelOverride({ system, prompt });
-  const llm = require('../llm');
+  const llm = require('../llm.ts');
   const model = pickModel();
   lastModel = model;
   const started = Date.now();
@@ -84,7 +84,7 @@ async function callModel({ system, prompt }) {
 }
 
 function extractJson(text) {
-  return require('../llm').extractJson(String(text || ''));
+  return require('../llm.ts').extractJson(String(text || ''));
 }
 
 // --- the repo: what exists that the change should reuse ---------------------------------

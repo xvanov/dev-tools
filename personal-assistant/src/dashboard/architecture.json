@@ -210,7 +210,7 @@
         "personal-assistant/src/eval/router.js",
         "personal-assistant/src/eval/router-cases.json",
         "personal-assistant/src/dashboard/talk.ts",
-        "personal-assistant/src/llm.js"
+        "personal-assistant/src/llm.ts"
       ]
     },
     {
@@ -789,7 +789,7 @@
       "code": [
         "personal-assistant/src/worker.js",
         "personal-assistant/src/models.ts",
-        "personal-assistant/src/llm.js",
+        "personal-assistant/src/llm.ts",
         "personal-assistant/src/budget.ts"
       ]
     },
@@ -1700,7 +1700,7 @@
         "Billing": "subscription; usage limits apply and are not visible in advance"
       },
       "code": [
-        "personal-assistant/src/llm.js",
+        "personal-assistant/src/llm.ts",
         "termhub/lib/claudeCli.js"
       ]
     },
@@ -1783,7 +1783,7 @@
         }
       ],
       "code": [
-        "personal-assistant/src/llm.js"
+        "personal-assistant/src/llm.ts"
       ]
     },
     {

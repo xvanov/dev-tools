@@ -61,8 +61,9 @@ How a module moves (the pattern is `personal-assistant/src/events/bus.ts`, the f
 - `git mv x.js x.ts`; callers `require('./x.ts')` (Node resolves no extension to `.ts`).
   A directory module (`require('../policy')`, many callers) keeps a one-line `index.js`:
   `module.exports = require('./policy.ts');`, so its callers do not change.
-- **Erasable syntax only** (no enums, namespaces, parameter properties): Node runs `.ts` by
-  stripping types (default since Node 22.18), Bun natively. Both run the file unchanged.
+- **Erasable syntax only** (no enums, namespaces, parameter properties, `<T>expr` assertions):
+  Node runs `.ts` by stripping types (default since Node 22.18), Bun natively. Both run the file
+  unchanged. `erasableSyntaxOnly` in `jarvisd/tsconfig.json` makes tsc refuse the rest.
 - **Stay CommonJS while any `.js` caller remains**: keep `module.exports`; no `import`/`export`
   statements, not even `import type` or `export interface` (either makes Bun load the file as
   ESM, where `module` is undefined). Contract types come in by type query:

@@ -32,7 +32,7 @@ require.cache[dbPath] = {
 };
 
 const budget = require('../src/budget.ts');
-const { cliUsage, apiUsage, priceOf } = require('../src/llm');
+const { cliUsage, apiUsage, priceOf } = require('../src/llm.ts');
 
 const ESSENTIAL = ['distill', 'reconcile', 'connector', 'reply-close'];
 const DISCRETIONARY = ['eager', 'research', 'digest', 'planner'];

@@ -641,7 +641,7 @@ function primeRouter({ context, history, o = config.fastLane, deps = {} } = {}) 
 }
 
 function defaultDeps() {
-  const llm = require('../llm');
+  const llm = require('../llm.ts');
   return {
     stream: llm.stream,
     complete: llm.complete,
@@ -931,7 +931,7 @@ function warm({ now = Date.now(), deps = {} } = {}) {
   const o = config.fastLane;
   if (!o.enabled || !usesJson(o.model, o) || now - lastWarm < 60_000) return null;
   lastWarm = now;
-  const warmLocal = deps.warmLocal || require('../llm').warmLocal;
+  const warmLocal = deps.warmLocal || require('../llm.ts').warmLocal;
   return Promise.resolve()
     .then(() => {
       // Re-primed every few minutes: another model or a long idle can drop

@@ -8,7 +8,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { config } = require('../src/config.ts');
-const { cliArgs, parseCliOutput, extractJson, childEnv, cliAccount } = require('../src/llm');
+const { cliArgs, parseCliOutput, extractJson, childEnv, cliAccount } = require('../src/llm.ts');
 
 {
   const args = cliArgs({ system: 'S', effort: 'low', tools: null });
@@ -88,7 +88,7 @@ const { cliArgs, parseCliOutput, extractJson, childEnv, cliAccount } = require('
 
 // ---- streaming (llm.stream): SSE parsing, chunks, and a fake compatible server ----
 {
-  const { sseData, compatChunk, cliStreamLine, compatRequest } = require('../src/llm');
+  const { sseData, compatChunk, cliStreamLine, compatRequest } = require('../src/llm.ts');
   const a = sseData('data: {"a":1}\n\ndata: {"b"');
   assert.deepStrictEqual(a.data, ['{"a":1}']);
   assert.strictEqual(a.rest, 'data: {"b"');
@@ -106,7 +106,7 @@ const { cliArgs, parseCliOutput, extractJson, childEnv, cliAccount } = require('
   assert.ok(!('stream' in compatRequest({ provider: 'local', model: 'm', prompt: 'p', maxTokens: 1, providers: { local: { baseUrl: 'http://l' } } }).body));
 
   // Ollama's own /api/chat: what the OpenAI-compatible endpoint cannot carry.
-  const { ollamaBase, ollamaRequest, ollamaLine } = require('../src/llm');
+  const { ollamaBase, ollamaRequest, ollamaLine } = require('../src/llm.ts');
   assert.strictEqual(ollamaBase('http://127.0.0.1:11434/v1/'), 'http://127.0.0.1:11434');
   assert.strictEqual(ollamaBase('http://box:11434'), 'http://box:11434');
   const schema = { type: 'object', properties: { route: { type: 'string' } } };
@@ -130,7 +130,7 @@ const { cliArgs, parseCliOutput, extractJson, childEnv, cliAccount } = require('
 
 (async () => {
   const http = require('http');
-  const llm = require('../src/llm');
+  const llm = require('../src/llm.ts');
   const budget = require('../src/budget.ts');
   const recorded = [];
   budget.record = async (row) => recorded.push(row); // never the real store

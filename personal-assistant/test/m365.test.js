@@ -9,7 +9,7 @@ const assert = require('assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { parseToolStream } = require('../src/llm');
+const { parseToolStream } = require('../src/llm.ts');
 const { searchResults, isAutomated, PREFIX } = require('../src/ingest/m365.ts');
 const mail = require('../src/ingest/graphMail.ts');
 const chat = require('../src/ingest/graphChat.ts');
@@ -44,7 +44,7 @@ const result = (id, content, isError = false) =>
   assert.throws(() => parseToolStream('not json'), /claude -p exited/);
 
   // The newer spelling of the same spill.
-  const { spilledBlocks } = require('../src/llm');
+  const { spilledBlocks } = require('../src/llm.ts');
   const spill2 = path.join(os.tmpdir(), `pa-spill2-${process.pid}.json`);
   fs.writeFileSync(spill2, JSON.stringify([{ type: 'text', text: '{"id":"c"}' }]));
   const blocks = spilledBlocks(`<persisted-output>\nOutput too large (73.6KB). Full output saved to: ${spill2}\n\nPreview (first 2KB): ...`);

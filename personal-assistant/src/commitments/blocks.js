@@ -16,7 +16,7 @@
 // delivered", or the reconciler (src/ledger/reconcile.js) sees it done in a
 // later message — and the board shows the task as unblocked.
 
-const llm = require('../llm');
+const llm = require('../llm.ts');
 const budget = require('../budget.ts');
 const { config } = require('../config.ts');
 const repo = require('../repo');

@@ -17,7 +17,7 @@
 //                 (dry run unless {apply: true}; {confirmed} applies a dry
 //                 run's folds without asking the model again)
 
-const llm = require('../llm');
+const llm = require('../llm.ts');
 const budget = require('../budget.ts');
 const { config } = require('../config.ts');
 const repo = require('../repo');

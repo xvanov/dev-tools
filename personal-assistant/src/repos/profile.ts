@@ -16,7 +16,7 @@ type Row = Record<string, any>;
 type Db = import('../repo/types.ts').Db;
 
 const { config } = require('../config.ts');
-const llm = require('../llm');
+const llm = require('../llm.ts');
 const { logger } = require('../log.ts');
 
 const log = logger('repos');

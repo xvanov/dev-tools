@@ -9,7 +9,7 @@
 
 const repo = require('../repo');
 const { config } = require('../config.ts');
-const llm = require('../llm');
+const llm = require('../llm.ts');
 const { logger } = require('../log.ts');
 const retrievers = require('./retrievers');
 const M = require('./metrics');

@@ -17,7 +17,7 @@
 type Row = Record<string, any>;
 type Db = import('../repo/types.ts').Db;
 
-const llm = require('../llm');
+const llm = require('../llm.ts');
 const repo = require('../repo');
 const { PROMPT_VERSION, SYSTEM, buildUserMessage, parseResponse } = require('./prompt.ts');
 const identity = require('./identity.ts');

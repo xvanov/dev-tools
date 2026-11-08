@@ -12,7 +12,7 @@
 
 const repo = require('../repo');
 const { config } = require('../config.ts');
-const llm = require('../llm');
+const llm = require('../llm.ts');
 const { logger } = require('../log.ts');
 const P = require('./prompts');
 

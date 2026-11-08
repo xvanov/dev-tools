@@ -15,7 +15,7 @@
 //    what the run actually changed. Not from the agent's own summary of
 //    itself, which is reliably more confident than the diff justifies.
 
-const llm = require('../llm');
+const llm = require('../llm.ts');
 const { config } = require('../config.ts');
 const repo = require('../repo');
 const { truncate } = require('../util/text.ts');

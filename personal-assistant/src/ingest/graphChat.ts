@@ -155,7 +155,7 @@ function toItem(hit: any, full: any, chats: any, me: any) {
 // chats. Used for subjects and for addressing a reply; a chat outside the 25
 // just goes without a topic.
 async function recentChats() {
-  const calls = await require('../llm').toolCalls({
+  const calls = await require('../llm.ts').toolCalls({
     prompt: 'Call teams_list_chats once with {"limit": 25}. Then reply with the single word: done',
     tools: [m365.tool('teams_list_chats')],
     timeoutMs: 120_000,

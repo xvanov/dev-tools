@@ -16,7 +16,7 @@
 // instructions (the system prompt says so); the only thing this pass writes is
 // the paragraph.
 
-const llm = require('../llm');
+const llm = require('../llm.ts');
 const { config } = require('../config.ts');
 const repo = require('../repo');
 const { logger } = require('../log.ts');
