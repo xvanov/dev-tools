@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/xvanov/dev-tools/schemas/approval.schema.json",
+  "title": "Approval",
+  "description": "A permission prompt the PA chat is parked on (personal-assistant/src/chat/feed.js permissionPending): the dashboard's \"Waiting for your yes\" card and Talk's spoken question. Bound to one exact tool call by its tool_use id. The answer is $defs/decision (POST /api/chat/permission).",
+  "type": "object",
+  "required": ["toolUseId", "text", "approvable", "ask"],
+  "properties": {
+    "toolUseId": { "type": "string", "minLength": 1 },
+    "text": { "type": ["string", "null"], "description": "What the call does, one line (transcript.describeTool)" },
+    "approvable": { "type": "boolean", "description": "true only for the chat's own actions (CHAT_ACTION_TOOLS); anything else is answered in termhub" },
+    "ask": { "type": ["string", "null"], "description": "The question spoken before the action runs (transcript.askTool); null unless approvable" }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "decision": {
+      "type": "object",
+      "required": ["answer", "toolUseId"],
+      "properties": {
+        "answer": { "type": "string", "enum": ["yes", "no"] },
+        "toolUseId": { "type": "string", "minLength": 1 },
+        "via": { "type": "string", "enum": ["dashboard", "voice"] }
+      },
+      "additionalProperties": false
+    }
+  }
+}

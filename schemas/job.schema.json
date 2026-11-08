@@ -1,0 +1,126 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/xvanov/dev-tools/schemas/job.schema.json",
+  "title": "Job",
+  "description": "A factory job as `factory job status --json` prints it (software-factory/docs/JOBS-API.md, v1 to v1.4). The contract is additive, so unknown keys are allowed.",
+  "type": "object",
+  "required": ["job_id", "app", "title", "source", "external_id", "state", "terminal", "pipeline", "delivery", "stories", "pr_urls", "merged", "cost_usd", "updated_at", "why"],
+  "properties": {
+    "job_id": { "type": "string", "pattern": "^[A-Za-z0-9_.-]+:r?[0-9]+$", "description": "<app>:<direction_id>, or <app|scratch>:r<NNNN> for research/report" },
+    "app": { "type": ["string", "null"] },
+    "title": { "type": "string" },
+    "source": { "type": ["string", "null"] },
+    "external_id": { "type": ["string", "null"] },
+    "state": { "$ref": "#/$defs/state" },
+    "terminal": { "type": "boolean" },
+    "pipeline": { "type": ["string", "null"], "enum": ["chain", "solo", "auto", null] },
+    "delivery": { "$ref": "#/$defs/deliveryLevel" },
+    "stories": { "type": "array", "items": { "$ref": "#/$defs/story" } },
+    "pr_urls": { "type": "array", "items": { "type": "string" } },
+    "merged": { "type": "boolean" },
+    "cost_usd": { "type": "number", "minimum": 0, "description": "Metered spend only (API keys)" },
+    "updated_at": { "type": ["string", "null"], "description": "ISO-8601 UTC" },
+    "why": { "type": ["string", "null"] },
+    "kind": { "type": "string", "enum": ["code", "research", "report"], "description": "v1.2" },
+    "runtime": { "type": "string", "enum": ["api", "claude_session"], "description": "v1.2" },
+    "report": { "anyOf": [{ "$ref": "#/$defs/report" }, { "type": "null" }], "description": "v1.2" },
+    "runs": { "type": "array", "items": { "$ref": "#/$defs/step" }, "description": "v1.2: every agent/LLM run of the job, newest first" },
+    "subscription_equiv_usd": { "type": "number", "minimum": 0, "description": "v1.2" },
+    "base": { "anyOf": [{ "$ref": "#/$defs/base" }, { "type": "null" }], "description": "v1.3" },
+    "stalled": { "type": "boolean", "description": "v1.3" }
+  },
+  "additionalProperties": true,
+  "$defs": {
+    "state": { "type": "string", "enum": ["queued", "triaging", "in_progress", "blocked", "needs_human", "done", "failed", "cancelled"] },
+    "deliveryLevel": { "type": "string", "enum": ["none", "branch", "draft_pr", "pr", "auto_merge", "push_to_main"] },
+    "story": {
+      "type": "object",
+      "required": ["id", "state", "pr_url", "pr_state", "branch", "delivery_level", "delivery_note", "ci"],
+      "properties": {
+        "id": { "type": ["integer", "string"] },
+        "state": { "type": ["string", "null"] },
+        "pr_url": { "type": ["string", "null"] },
+        "pr_number": { "type": ["integer", "null"], "description": "v1.4" },
+        "pr_state": { "type": ["string", "null"], "enum": ["open", "merged", "closed", null] },
+        "branch": { "type": ["string", "null"] },
+        "delivery_level": { "type": ["string", "null"] },
+        "delivery_note": { "type": ["string", "null"] },
+        "ci": { "anyOf": [{ "$ref": "#/$defs/ci" }, { "type": "null" }] }
+      },
+      "additionalProperties": true
+    },
+    "ci": {
+      "type": "object",
+      "required": ["state"],
+      "properties": {
+        "state": { "type": "string", "enum": ["passing", "failing", "pending", "none"] },
+        "failing": { "type": "array" },
+        "pending": { "type": "array" }
+      },
+      "additionalProperties": true
+    },
+    "step": {
+      "type": "object",
+      "description": "One agent step (runs[] in JOBS-API v1.2; job_id and session.links are v1.4). `id` is the step id.",
+      "required": ["id", "persona", "runtime", "model", "state", "cost_usd", "billing", "started_at", "ended_at", "session"],
+      "properties": {
+        "id": { "type": ["integer", "string"] },
+        "job_id": { "type": ["string", "null"] },
+        "story_id": { "type": ["integer", "null"] },
+        "persona": { "type": ["string", "null"] },
+        "runtime": { "type": "string", "enum": ["api", "claude_session"] },
+        "model": { "type": ["string", "null"] },
+        "state": { "type": "string", "enum": ["running", "ok", "failed"] },
+        "cost_usd": { "type": "number", "minimum": 0 },
+        "billing": { "type": "string", "enum": ["metered", "subscription"] },
+        "started_at": { "type": ["string", "null"] },
+        "ended_at": { "type": ["string", "null"] },
+        "session": { "anyOf": [{ "$ref": "#/$defs/session" }, { "type": "null" }] }
+      },
+      "additionalProperties": true
+    },
+    "session": {
+      "type": "object",
+      "properties": {
+        "machine": { "type": ["string", "null"] },
+        "termhub_session_id": { "type": ["string", "null"] },
+        "url": { "type": ["string", "null"] },
+        "stream": { "type": ["string", "null"] },
+        "links": { "$ref": "#/$defs/sessionLinks" }
+      },
+      "additionalProperties": true
+    },
+    "sessionLinks": {
+      "type": "object",
+      "description": "What termhub was told a session belongs to (termhub lib/sessionLinks.js)",
+      "properties": {
+        "job": { "type": ["string", "integer"] },
+        "step": { "type": ["string", "integer"] },
+        "story": { "type": ["string", "integer"] },
+        "external": { "type": ["string", "integer"] }
+      },
+      "additionalProperties": true
+    },
+    "report": {
+      "type": "object",
+      "required": ["title", "path", "excerpt", "words"],
+      "properties": {
+        "title": { "type": "string" },
+        "path": { "type": "string" },
+        "excerpt": { "type": "string" },
+        "words": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": true
+    },
+    "base": {
+      "type": "object",
+      "required": ["branch", "pr", "into"],
+      "properties": {
+        "branch": { "type": "string" },
+        "pr": { "type": ["integer", "null"] },
+        "into": { "type": ["string", "null"] }
+      },
+      "additionalProperties": true
+    }
+  }
+}

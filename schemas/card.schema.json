@@ -1,0 +1,200 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/xvanov/dev-tools/schemas/card.schema.json",
+  "title": "Card",
+  "description": "A board card in detail, as the PA chat's MCP tool `card` returns it (personal-assistant/src/mcp/chatTools.js cardTool): a commitment, or a standalone offer (`p<id>`). The board's compact form is $defs/compact.",
+  "anyOf": [{ "$ref": "#/$defs/commitment" }, { "$ref": "#/$defs/offer" }],
+  "$defs": {
+    "commitment": {
+      "type": "object",
+      "required": ["id", "summary", "direction", "status", "source"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[0-9]+$" },
+        "summary": { "type": "string" },
+        "direction": { "type": "string", "enum": ["owed_by_me", "owed_to_me"] },
+        "status": { "type": "string" },
+        "detail": { "type": "string" },
+        "who": { "type": "string" },
+        "due": { "type": "string" },
+        "repo": { "type": "string" },
+        "project": { "type": "string" },
+        "source": {
+          "type": "object",
+          "required": ["item", "kind", "subject", "at", "excerpt"],
+          "properties": {
+            "item": { "type": "integer" },
+            "kind": { "type": "string" },
+            "subject": { "type": ["string", "null"] },
+            "at": { "type": ["string", "null"] },
+            "excerpt": { "type": "string" }
+          },
+          "additionalProperties": false
+        },
+        "context": { "type": "string" },
+        "links": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["kind", "label", "url"],
+            "properties": { "kind": { "type": ["string", "null"] }, "label": { "type": "string" }, "url": { "type": ["string", "null"] } },
+            "additionalProperties": false
+          }
+        },
+        "sessions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["role", "label", "url"],
+            "properties": { "role": { "type": ["string", "null"] }, "label": { "type": "string" }, "url": { "type": ["string", "null"] } },
+            "additionalProperties": false
+          }
+        },
+        "blockers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "who", "summary", "status"],
+            "properties": { "id": { "type": "string" }, "who": { "type": ["string", "null"] }, "summary": { "type": "string" }, "status": { "type": ["string", "null"] } },
+            "additionalProperties": false
+          }
+        },
+        "blocks_task": { "type": "array", "items": { "type": "string" } },
+        "runs": { "type": "array", "items": { "$ref": "#/$defs/run" } },
+        "offers": { "type": "array", "items": { "$ref": "#/$defs/offerRef" } }
+      },
+      "additionalProperties": false
+    },
+    "offer": {
+      "type": "object",
+      "required": ["id", "offer", "card"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^p[0-9]+$" },
+        "offer": {
+          "type": "object",
+          "required": ["proposal", "kind", "status", "title", "body", "delivery", "repo"],
+          "properties": {
+            "proposal": { "type": "integer" },
+            "kind": { "type": "string" },
+            "status": { "type": "string" },
+            "title": { "type": "string" },
+            "body": { "type": "string" },
+            "delivery": { "type": ["string", "null"] },
+            "repo": { "type": ["string", "null"] }
+          },
+          "additionalProperties": false
+        },
+        "card": { "type": ["string", "null"] }
+      },
+      "additionalProperties": false
+    },
+    "run": {
+      "type": "object",
+      "description": "One run of a card with its id chain flattened for the chat (chatTools chainFields over Run).",
+      "required": ["run", "status", "route", "mode"],
+      "properties": {
+        "run": { "type": "integer" },
+        "status": { "type": "string" },
+        "route": { "type": "string" },
+        "mode": { "type": ["string", "null"] },
+        "job": { "type": "string" },
+        "job_state": { "type": "string" },
+        "delivery": { "type": "string" },
+        "pr": { "type": "string" },
+        "cost_usd": { "type": "number" },
+        "session_id": { "type": "string" },
+        "session": { "type": "string" },
+        "steps": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["step"],
+            "properties": {
+              "step": { "type": "string" },
+              "story": { "type": "integer" },
+              "persona": { "type": "string" },
+              "runtime": { "type": "string" },
+              "state": { "type": "string" },
+              "session": { "type": "string" },
+              "session_id": { "type": "string" }
+            },
+            "additionalProperties": false
+          }
+        },
+        "prs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["url"],
+            "properties": { "url": { "type": "string" }, "number": { "type": "integer" }, "state": { "type": "string" }, "ci": { "type": "string" } },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "offerRef": {
+      "type": "object",
+      "required": ["proposal", "kind", "title", "delivery"],
+      "properties": { "proposal": { "type": "integer" }, "kind": { "type": "string" }, "title": { "type": "string" }, "delivery": { "type": ["string", "null"] } },
+      "additionalProperties": false
+    },
+    "person": {
+      "type": "object",
+      "required": ["id", "who", "summary"],
+      "properties": { "id": { "type": "string" }, "who": { "type": ["string", "null"] }, "summary": { "type": "string" } },
+      "additionalProperties": false
+    },
+    "compact": {
+      "type": "object",
+      "description": "One card on the chat's board (chatTools compactCard).",
+      "required": ["id", "summary"],
+      "properties": {
+        "id": { "type": "string" },
+        "summary": { "type": "string" },
+        "who": { "type": "string" },
+        "due": { "type": "string" },
+        "repo": { "type": "string" },
+        "project": { "type": "string" },
+        "owed_by": { "type": "string" },
+        "dispatched": { "const": true },
+        "run": {
+          "type": "object",
+          "properties": {
+            "id": { "type": "integer" },
+            "status": { "type": "string" },
+            "route": { "type": ["string", "null"] },
+            "job": { "type": ["string", "null"] },
+            "state": { "type": ["string", "null"] }
+          },
+          "additionalProperties": false
+        },
+        "blockers": { "type": "array", "items": { "$ref": "#/$defs/person" } },
+        "unblocked": { "type": "array", "items": { "$ref": "#/$defs/person" } },
+        "waiting_on": { "const": true },
+        "offer": {
+          "type": "object",
+          "required": ["proposal", "title", "delivery"],
+          "properties": { "proposal": { "type": "integer" }, "title": { "type": "string" }, "delivery": { "type": ["string", "null"] } },
+          "additionalProperties": false
+        },
+        "asks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["proposal", "kind", "title"],
+            "properties": { "proposal": { "type": "integer" }, "kind": { "type": "string" }, "title": { "type": "string" } },
+            "additionalProperties": false
+          }
+        },
+        "looks_done": {
+          "type": "object",
+          "required": ["proposal", "confidence"],
+          "properties": { "proposal": { "type": "integer" }, "confidence": { "type": ["number", "null"] } },
+          "additionalProperties": false
+        },
+        "standalone": { "const": true }
+      },
+      "additionalProperties": false
+    }
+  }
+}

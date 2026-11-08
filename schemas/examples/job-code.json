@@ -1,0 +1,81 @@
+{
+  "job_id": "widget:031",
+  "app": "widget",
+  "title": "Add a version verb",
+  "source": "pa",
+  "external_id": "45",
+  "state": "in_progress",
+  "terminal": false,
+  "pipeline": "solo",
+  "delivery": "draft_pr",
+  "stories": [
+    {
+      "id": 5,
+      "state": "pr_open",
+      "pr_url": "https://github.com/acme/widget/pull/7",
+      "pr_number": 7,
+      "pr_state": "open",
+      "branch": "story/5-version-verb",
+      "delivery_level": "draft_pr",
+      "delivery_note": null,
+      "ci": { "state": "failing", "failing": ["test (ubuntu)"], "pending": [] }
+    },
+    {
+      "id": 6,
+      "state": "story_created",
+      "pr_url": null,
+      "pr_number": null,
+      "pr_state": null,
+      "branch": null,
+      "delivery_level": "draft_pr",
+      "delivery_note": null,
+      "ci": null
+    }
+  ],
+  "pr_urls": ["https://github.com/acme/widget/pull/7"],
+  "merged": false,
+  "cost_usd": 0.4321,
+  "updated_at": "2026-11-07T10:05:00+00:00",
+  "why": "story 5 is pr_open (watching CI on PR #7 before delivery); PR #7 CI failing: test (ubuntu)",
+  "kind": "code",
+  "runtime": "claude_session",
+  "report": null,
+  "runs": [
+    {
+      "id": 9001,
+      "job_id": "widget:031",
+      "story_id": 5,
+      "persona": "dev",
+      "runtime": "claude_session",
+      "model": "claude_session/default",
+      "state": "running",
+      "cost_usd": 0,
+      "billing": "subscription",
+      "started_at": "2026-11-07T10:00:00+00:00",
+      "ended_at": null,
+      "session": {
+        "machine": "forge",
+        "termhub_session_id": "sab12",
+        "url": "https://forge.example/#session=sab12",
+        "links": { "job": "widget:031", "step": "9001", "story": "5", "external": "45" }
+      }
+    },
+    {
+      "id": 9000,
+      "job_id": "widget:031",
+      "story_id": 5,
+      "persona": "sm",
+      "runtime": "api",
+      "model": "deepseek/deepseek-chat",
+      "state": "ok",
+      "cost_usd": 0.4321,
+      "billing": "metered",
+      "started_at": "2026-11-07T09:58:00+00:00",
+      "ended_at": "2026-11-07T09:59:00+00:00",
+      "session": null
+    }
+  ],
+  "subscription_equiv_usd": 1.25,
+  "base": null,
+  "stalled": false
+}

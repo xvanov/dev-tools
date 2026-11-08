@@ -1,0 +1,111 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/xvanov/dev-tools/schemas/run.schema.json",
+  "title": "Run",
+  "description": "One PA run's id chain as pages and tools show it (plan E1): card -> run -> job -> steps (each with its session) -> PRs with CI. Built by personal-assistant/src/dispatch/factoryCore.js runChain().",
+  "type": "object",
+  "required": ["card", "run", "status", "route", "job", "jobState", "session", "steps", "prs"],
+  "properties": {
+    "card": { "type": ["string", "null"], "description": "The commitment id the run works on" },
+    "run": { "type": "integer", "description": "The PA run id" },
+    "status": { "type": ["string", "null"] },
+    "route": { "type": "string", "enum": ["claude", "factory"] },
+    "job": { "type": ["string", "null"], "description": "The factory job id (Job.job_id)" },
+    "jobState": { "anyOf": [{ "$ref": "job.schema.json#/$defs/state" }, { "type": "null" }] },
+    "session": {
+      "anyOf": [
+        {
+          "type": "object",
+          "required": ["id", "url"],
+          "properties": { "id": { "type": "string" }, "url": { "type": ["string", "null"] } },
+          "additionalProperties": false
+        },
+        { "type": "null" }
+      ]
+    },
+    "steps": { "type": "array", "items": { "$ref": "#/$defs/step" } },
+    "prs": { "type": "array", "items": { "$ref": "#/$defs/pr" } }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "step": {
+      "type": "object",
+      "required": ["step", "story", "persona", "runtime", "model", "state", "session"],
+      "properties": {
+        "step": { "type": "string" },
+        "story": { "type": ["integer", "null"] },
+        "persona": { "type": ["string", "null"] },
+        "runtime": { "type": ["string", "null"] },
+        "model": { "type": ["string", "null"] },
+        "state": { "type": ["string", "null"] },
+        "session": {
+          "anyOf": [
+            {
+              "type": "object",
+              "required": ["id", "machine", "url"],
+              "properties": { "id": { "type": ["string", "null"] }, "machine": { "type": ["string", "null"] }, "url": { "type": ["string", "null"] } },
+              "additionalProperties": false
+            },
+            { "type": "null" }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "pr": {
+      "type": "object",
+      "required": ["number", "url", "state", "ci", "ciFailing", "story"],
+      "properties": {
+        "number": { "type": ["integer", "null"] },
+        "url": { "type": "string", "pattern": "^https?://" },
+        "state": { "type": ["string", "null"] },
+        "ci": { "type": ["string", "null"] },
+        "ciFailing": { "type": "array", "items": { "type": "string" } },
+        "story": { "type": ["integer", "null"] }
+      },
+      "additionalProperties": false
+    },
+    "chain": {
+      "type": "object",
+      "description": "A job status reduced to the rows the PA stores (run_pr / run_step, sql/033): factoryCore.chainOf().",
+      "required": ["prs", "steps"],
+      "properties": {
+        "prs": { "type": "array", "items": { "$ref": "#/$defs/storedPr" } },
+        "steps": { "type": "array", "items": { "$ref": "#/$defs/storedStep" } }
+      },
+      "additionalProperties": false
+    },
+    "storedPr": {
+      "type": "object",
+      "required": ["url", "number", "story_id", "state", "ci_state", "ci_failing"],
+      "properties": {
+        "url": { "type": "string", "pattern": "^https?://" },
+        "number": { "type": ["integer", "null"] },
+        "story_id": { "type": ["integer", "null"] },
+        "state": { "type": ["string", "null"], "enum": ["open", "merged", "closed", null] },
+        "ci_state": { "type": ["string", "null"] },
+        "ci_failing": { "type": ["array", "null"], "items": { "type": "string" } }
+      },
+      "additionalProperties": false
+    },
+    "storedStep": {
+      "type": "object",
+      "required": ["step_id", "job_id", "story_id", "persona", "runtime", "model", "state", "started_at", "ended_at", "machine", "termhub_session_id", "url"],
+      "properties": {
+        "step_id": { "type": "string" },
+        "job_id": { "type": ["string", "null"] },
+        "story_id": { "type": ["integer", "null"] },
+        "persona": { "type": ["string", "null"] },
+        "runtime": { "type": ["string", "null"], "enum": ["api", "claude_session", null] },
+        "model": { "type": ["string", "null"] },
+        "state": { "type": ["string", "null"], "enum": ["running", "ok", "failed", null] },
+        "started_at": { "type": ["string", "null"] },
+        "ended_at": { "type": ["string", "null"] },
+        "machine": { "type": ["string", "null"] },
+        "termhub_session_id": { "type": ["string", "null"] },
+        "url": { "type": ["string", "null"], "pattern": "^https?://" }
+      },
+      "additionalProperties": false
+    }
+  }
+}

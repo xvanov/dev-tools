@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/xvanov/dev-tools/schemas/event.schema.json",
+  "title": "Event",
+  "description": "One frame of GET /api/events (personal-assistant/src/dashboard/events.js): the `data:` JSON of a Server-Sent Event, whose `id:` is the same id. Payloads carry ids and states, never content. Ids are opaque to clients; send the last one back as Last-Event-ID.",
+  "type": "object",
+  "required": ["id", "topic", "at", "payload"],
+  "properties": {
+    "id": { "type": "string", "pattern": "^(g[0-9]+|[a-z0-9]+-[0-9]+)$", "description": "g<seq> for a change the database numbered (the same in every process; replayable from the outbox), <epoch>-<n> for one published in one process" },
+    "topic": { "type": "string", "pattern": "^[a-z][a-z0-9_.-]{0,39}$", "description": "board, run, factory, routine, ...; hello and resync are control frames" },
+    "at": { "type": "string", "description": "ISO-8601" },
+    "payload": { "$ref": "#/$defs/payload" }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "payload": {
+      "type": "object",
+      "description": "From a table change: {table, op, id, <the columns the trigger names>}. hello: {epoch}. resync: {reason}.",
+      "properties": {
+        "table": { "type": "string" },
+        "op": { "type": "string", "enum": ["insert", "update", "delete"] },
+        "id": { "type": ["integer", "string", "null"] },
+        "epoch": { "type": "string" },
+        "reason": { "type": "string" }
+      },
+      "additionalProperties": true
+    }
+  }
+}
