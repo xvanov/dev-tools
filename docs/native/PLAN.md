@@ -101,6 +101,19 @@ Golden path (E4/E5, claude_session, draft_pr), 2026-11-08 at e013834:
 factory_start on the work stack is about 16 s: ≈ 11 s card context, 3.3 s compose (azure/pa), ≈ 1.3 s
 submit through serve.
 
+E6 variants, 2026-11-08, both stacks on SQLite (3.5), the factory's state outside the repo (2.5),
+planning on DeepSeek-V4-Flash (D21: PM triage 9.7 s, SM 10.6 s, was ~146 s for PM). Seconds since
+the card was created:
+
+| Variant | Stack | job started | stopped / resumed | PR opened | CI done |
+|---|---|---|---|---|---|
+| api (deepseek-v4-pro dev) | personal | 16.3 | | 776.4 | 908.1 |
+| --resume (cancel mid-step, `job resume`) | personal | 18.0 | 45.4 / 55.8 | 295.6 | 451.3 |
+| --branch (continue an existing branch) | personal | 23.8 | | 275.3 | 430.8 |
+| --resume | work | 18.3 | 101.7 / 108.7 | 580.6 | 693.5 |
+| --branch | work | 19.9 | | 521.3 | 701.7 |
+| api | work | 23.5 | | not reached (see E6) | |
+
 ---
 
 ## Track T: fast tests and builds (cross-cutting, starts in phase 0)
@@ -328,8 +341,19 @@ run mid-step; a job continued on an existing branch (`--branch`).
   stacks, with the timings recorded in the targets table.
   First gate run, 2026-11-08, claude_session variant only: personal stack green (`pa e2e --on <personal
   machine>`, card #1, job dev-tools:001, PR #28, CI passing, every link resolved, cleanup ran). Work
-  stack: every hop reached; links green except E5.8. Still to run on both: the api, --resume and
-  --branch variants.
+  stack: every hop reached; links green except E5.8.
+  Variants, same day (timings in the Targets section): the personal stack is green on all four
+  (claude_session, api, --resume, --branch); the work stack on claude_session, --resume and
+  --branch. Fixed on the way: --resume first killed the PM step's read-only viewer (3dbeff5), then
+  killed the dev session, which the factory replaces by itself within ~30 s; it now stops the run
+  with the factory's own `job cancel` and resumes it (305665a); worktree names overran MAX_PATH
+  under the moved state dir (c6f2c44). Left: the api variant on the work stack. Its first run
+  (dev-tools:013) ran the API dev step inside serve's tick, which serve killed at 3600 s, and every
+  retry then failed on the dead attempt's worktree (fixed: 0772cec, a1b1cab, 5e2228f); the API dev
+  agent also hung PowerShell on multi-line `-m` arguments and committed with --no-verify and
+  opened a PR itself (#43, closed): the prompt says not to (73e824d), and a second run
+  (dev-tools:017) did both again, so this needs a guard in the runtime, not the prompt. That run
+  also met an Azure content-filter refusal on deepseek-v4-pro, which the factory retried.
 - [ ] **Exit E:** the user runs the golden path by voice ("start a factory job for …"), watches
   it in Plan, Build and Run, drills down from the card to the live session and the PR, and
   each hop meets its timing target.
