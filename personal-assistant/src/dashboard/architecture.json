@@ -847,7 +847,8 @@
       },
       "health": "postgres",
       "details": {
-        "Migrations": "plain numbered SQL in personal-assistant/sql, applied by src/db/migrate.js",
+        "Migrations": "plain numbered SQL in personal-assistant/sql, applied by src/db/migrate.js at worker start",
+        "Expand/contract (Z3)": "a roll runs the previous generation on the new schema, so after 032 every migration is additive; drops, renames, retypes and tightened constraints ship later as a contract migration marked `-- contract: <expand file>`. test/migrations.test.js (src/db/migrationRules.js) enforces it, refuses edits to applied migrations and checks the previous commit's INSERTs against the new schema without Postgres",
         "Durable tasks": "Absurd (vendored schema) for work that waits: chases, run reviews",
         "Embeddings (audit 2026-11-07)": "text-embedding-3-small, 1536 dims, embed once and never re-embed (plan D5). Embedded: message and document chunks (chunk), memory claims (claim), memory pages (memory_page), commitment text for semantic dedupe (commitment_vector). Never embedded: identifiers, statuses, board state, numbers, dates; PR and ticket refs dedupe by key (commitment anchors), not by vector. No call site embeds changing data or exact keys; stored vectors are 41.5k (31.1k chunks, 10.0k claims, 105 pages, 242 commitments) and re-embed only when their own text changes (a changed item body, a regenerated page) or when CONTEXT_VERSION is bumped, which is a decision, not a cleanup",
         "Query embeddings": "a search embeds its query once: normalized text (trimmed, whitespace collapsed, lower-cased) plus model and dimensions -> vector, in an in-memory LRU (PA_EMBED_CACHE_ENTRIES, 500) backed by query_embedding_cache (PA_EMBED_CACHE_ROWS, 5000 by last use); query time only, never ingest",
@@ -909,6 +910,8 @@
         "personal-assistant/sql",
         "personal-assistant/src/db/index.js",
         "personal-assistant/src/db/migrate.js",
+        "personal-assistant/src/db/migrationRules.js",
+        "personal-assistant/test/migrations.test.js",
         "personal-assistant/src/durable/index.js"
       ]
     },

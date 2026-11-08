@@ -448,6 +448,18 @@ Postgres and nowhere else. Tests use invented names; fixtures never hold a real 
   the better for it: no build step means `git pull` is the whole deployment. Tests are
   `assert`-based files run directly by `node`, as termhub's are.
 - **Migrations:** plain numbered SQL, applied by a script. No ORM migrations framework.
+- **Expand/contract (Z3).** A deploy rolls (`src/supervisor`): the new generation migrates
+  while the previous one is still serving, and a rollback runs the previous code again on the
+  migrated schema. So every migration is **additive** — new tables, new nullable or defaulted
+  columns, new indexes, relaxed constraints — and ships with the code that uses it. The
+  cleanup (drop, rename, retype, `set not null`, a new constraint or unique index on an
+  existing table, truncate) is a separate **contract** migration that ships at least one
+  release after the code stopped needing the old shape, and says so on its own line:
+  `-- contract: <expand file>.sql (<commit that shipped the expand>)`. Never edit or delete
+  an applied migration; add a new one. `test/migrations.test.js` enforces all of it
+  (`src/db/migrationRules.js`; files up to `032` predate the rule) and checks the previous
+  release's INSERTs (HEAD with a dirty tree, else HEAD~1; `PA_COMPAT_BASE` overrides)
+  against the schema the new migrations produce.
 - **No job queue.** "Work to do" is a query — items with no distillation row at the current
   prompt version. A queue table can get stuck, leak, or need draining after a crash; a query
   cannot. The worker is a scheduler of periodic passes, and passes never overlap themselves.
