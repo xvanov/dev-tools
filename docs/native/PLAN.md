@@ -893,12 +893,16 @@ not in the Map is not done, and a new one gets added there first.
     TODAY and TOMORROW. On the live work stack's Sunday data the turn now says "There are no
     meetings today." Router eval: two evening cases added, both answered; 0 actions answered here.
     (1679fbd)
+    Re-review (bd7b768): verified live. 9 of 9 turns say "There are no meetings today." on a
+    Sunday evening with all four rows on Monday, and the brief prints TOMORROW.
   - [x] **8.4.2 whats-on: the answer turns meeting titles into attendees and drops a meeting.** "a
     meeting at 10:00 with <title>", "a standup at 11:00 with <team>": the snapshot has titles, not
     attendees, and the 11:30 meeting is left out. 13 of 13 turns gave this same answer. Tell the
     answerer to quote titles as titles and to give every meeting (or the count). Add eval cases.
     `ANSWER_RULES` in fastLane.ts, and `pa eval answerer` (6 placeholder day snapshots built by the
     real formatter): 2 of 6 pass on the old prompt and snapshot, 6 of 6 now. (1679fbd)
+    Re-review (bd7b768): verified by eval only (`pa eval answerer` 12 of 12). No live answer named
+    a meeting: nothing was left today, and "what's on tomorrow?" hands off (8.4.39).
   - [ ] **8.4.3 whats-on: the fast lane takes 728 ms to the first sentence (target 200).** Median
     of 10 turns, range 626-843 ms. Router 75 ms, first token 219 ms. The answer is one 20-word
     sentence, so sentence-by-sentence TTS cannot start until it ends. Lead with a short clause (for
@@ -911,6 +915,9 @@ not in the Map is not done, and a new one gets added there first.
     cache and evict each other's prefix (the answerer alone starts in ~100 ms). Left: a common
     prefix for both prompts (needs a router re-fit) or OLLAMA_NUM_PARALLEL=2 (a config change).
     (1679fbd)
+    Re-review (bd7b768, OLLAMA_NUM_PARALLEL=2): still open. First piece 669 ms (418-2363, median
+    of 9 e2e runs), first token 544 (325-2250), router 150 (76-333; 75 in the first review).
+    The answerer alone starts in 57 ms (eval p50).
   - [ ] **8.4.4 whats-on: whisper takes 259 ms (target 250).** Median of 13, range 190-526 ms (the
     request adds about 15 ms). Calls after an idle gap take 400-530 ms. Keep the model warm, and
     check its size, beam and compute type against the target.
@@ -921,6 +928,9 @@ not in the Map is not done, and a new one gets added there first.
     (it shares the CPU with smart-turn, 708 ms without the pings), and that is still over 250. The
     model is already small, float16, beam 1; `without_timestamps` or a VAD filter in
     voice-dictation's server are untried (they need a transcriber restart). (4b7b73e)
+    Re-review (bd7b768): still open. In the page's order, 565 ms per request (471-1912; 499 in
+    whisper), median of 9. Back to back after one warm: 267 ms per request (255 in whisper), but
+    772 ms for the first call. The slow part is where the call sits on the path, not the model.
   - [x] **8.4.5 whats-on: smart-turn alone is over the talk-page budget.** POST /api/talk/endpoint
     takes 221 ms (median of 10, 96-459 ms). Even after the 96 ms VAD shortcut, end of speech to the
     transcription request is at least ~317 ms (target 150). Make the endpoint faster, or start the
@@ -930,6 +940,9 @@ not in the Map is not done, and a new one gets added there first.
     the check to the text ready went from 636 to 481 ms (medians of 9, interleaved). Smart-turn
     itself: the model takes 50-100 ms, but the live voice service adds ~150 ms around it on POSTs
     (a fresh process of the same server.py adds 14 ms); a restart of pa-voice is the lead. (4b7b73e)
+    Re-review (bd7b768, pa-voice restarted): verified live. The talk-page hop takes 108 ms
+    (102-120, median of 9). Smart-turn's model takes 49-197 ms and the endpoint 144-319 ms,
+    alongside whisper and always done before it.
   - [ ] **8.4.6 whats-on: first audio takes 1.6-1.8 s (target 700).** In the e2e: 1792 ms median
     of 3 (1330-2619 ms), without the talk-page hop. Summing the probe medians gives ~1.6 s. Kokoro's
     first byte alone is 312 ms (median of 13, 247-734 ms). The hop targets already add up to 600 ms
@@ -940,6 +953,9 @@ not in the Map is not done, and a new one gets added there first.
     228 -> 215 (a five-word piece takes 140-220 ms, a 17-word one 215-530). Still over 700: whisper
     (~520 ms) and the fast lane's first token (~290 ms) are the two big hops left. (4b7b73e,
     c422e41)
+    Re-review (bd7b768): still open. 1807 ms over the whole path (1264-3608, median of 9), 1107 ms
+    over. Kokoro's first byte is 487 ms (244-763) during the turn, against 121 ms back to back
+    for the same five-word piece.
   - [ ] **8.4.7 whats-on: the e2e understates or misses hops.** The fast-lane hop is timed to the
     first token, not the first sentence. The voice hop starts TTS only after the whole turn and leaves
     out the talk-page hop. The talk-page hop is not measured at all (/api/talk/endpoint could be).
@@ -953,6 +969,8 @@ not in the Map is not done, and a new one gets added there first.
     turn. The turn is driven outside the browser, so the shot of /talk never shows it; driving it in
     the page needs audio fed to its mic (Text mode goes to the PA chat, not the fast lane), and a
     URL that drives a turn would let a link hand words to the PA chat. (c422e41)
+    Re-review (bd7b768): verified live except the screenshot. The e2e times all four hops in the
+    page's order; `ask.png` still shows the idle Talk page.
   - [ ] **8.4.8 research: the tool call takes 2.3 s (target 1 s).** `factory_start` returned
     2312 ms after the call: run row 19:52:09.56, factory job created 19:52:10.96, PA "dispatched"
     19:52:11.30, so about 1.4 s is the `job submit` round trip. Down from 13.5 s on 8.2's run
@@ -1177,6 +1195,19 @@ not in the Map is not done, and a new one gets added there first.
     calls, max $0.038). On the code default `PA_DISTILL_MODEL=claude-opus-5`, the mean was
     $0.058-0.074 (730 of 1022 over, 5-6 Nov). Make the served model the default, then cut the
     long prompts (the over-ceiling calls), or the owner raises the ceiling.
+  - [ ] **8.4.38 whats-on: the serving generation still blocks its event loop 1-3 s a minute.**
+    At bd7b768, after 118352f and 0baaaf2, `supervisor.log` shows 15 "event loop blocked" lines
+    of 1054-3163 ms from 21:51Z to 22:10Z. Running then: github, remote-sessions, meeting-gate,
+    capture-watchdog and distill. Two of 11 voice turns waited behind one before routing. One
+    decision took 1937 ms (router 239 ms) during a 1840 ms block; another took 1388 ms (router
+    259 ms) during a 3163 ms block. Find which statement or pass holds the loop (the blocks log
+    the passes running, not the statement), or keep passes off the serving generation's loop
+    ([acceptance/whats-on.md](acceptance/whats-on.md), re-review).
+  - [ ] **8.4.39 whats-on: "what's on tomorrow?" is handed off.** 2 of 2 turns went to the main
+    session (p(answer_here) 0.775-0.78, threshold 0.85), although the snapshot lists tomorrow's
+    meetings. Jarvis says "One moment." and Claude answers. So the meeting-naming rules from
+    8.4.2 never run by voice for tomorrow. Add router-eval cases for tomorrow and other named
+    days, and re-fit if needed.
 - [ ] **8.5 Architecture map review.** A full pass over `architecture.json` (the `/architecture`
   page) against the finished system: every component, process, port, table, tool, workflow and
   storage location as it now runs on both stacks (jarvisd, ptyd, native factory, SQLite,
