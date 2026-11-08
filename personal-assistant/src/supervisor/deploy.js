@@ -323,6 +323,14 @@ async function deployUnlocked(argv, { say } = {}) {
     }
   }
   if (p.build) npm(['run', 'build'], say);
+  // jarvisd (plan 4.1): a stack on PA_RUNTIME=bun runs its generations with the
+  // Bun pinned in jarvisd/package.json; keep that install current.
+  const jarvisdDir = path.join(PA_DIR, '..', 'jarvisd');
+  if (fs.existsSync(path.join(jarvisdDir, 'node_modules')) && (changed === null || changed.some((f) => /^jarvisd\/package(-lock)?\.json$/.test(f)))) {
+    say('npm ci in jarvisd/ (its package files changed)');
+    const r = spawnSync(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['ci', '--no-audit', '--no-fund'], { cwd: jarvisdDir, stdio: 'inherit', shell: process.platform === 'win32', windowsHide: true });
+    if (r.status !== 0) throw new Error(`npm ci in jarvisd exited ${r.status}`);
+  }
 
   if (p.action === 'none') return { code: 0, result };
   if (p.action === 'restart') return { code: supervisor ? 4 : 3, result };

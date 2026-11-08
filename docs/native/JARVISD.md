@@ -99,6 +99,27 @@ jarvisd's pinned npm install), and every generation then runs `jarvisd/src/main.
 supervisor starts, so switching a stack is a supervisor restart (the bootstrap path), and so is
 switching back. Phase 4.4 later folds the supervisor into jarvisd itself.
 
+### Switching a stack to Bun (and back)
+
+The runtime is read when the supervisor starts, so a switch is one supervisor restart (the same
+short gap as the bootstrap), not a roll. On the work laptop (the pa-worker task runs
+`node src\supervisor` in `personal-assistant/`):
+
+1. `git -C C:\repos\dev-tools pull --ff-only`, then `npm ci` in `C:\repos\dev-tools\jarvisd`
+   (installs the pinned Bun; `jarvisd\node_modules\bun\bin\bun.exe --version` says 1.3.13).
+2. Check the graph loads: `C:\repos\dev-tools\jarvisd\node_modules\bun\bin\bun.exe
+   C:\repos\dev-tools\jarvisd\src\main.ts --check` prints `jarvisd ok`.
+3. Add `PA_RUNTIME=bun` to `personal-assistant\.env` (the supervisor reads it there; `PA_BUN`
+   names another Bun if wanted).
+4. `Stop-ScheduledTask pa-worker; Start-ScheduledTask pa-worker`.
+5. Verify: `node src\supervisor status` (in `personal-assistant/`) shows `"runtime": "bun"` and a
+   generation; the supervisor log says `spawned generation ... runtime: bun`; the dashboard,
+   `/api/events` and a factory job behave as before. `pa doctor` should be unchanged.
+
+Rollback: delete the `PA_RUNTIME=bun` line (or set `node`) and restart the task again (step 4).
+Deploys (`windows\redeploy.ps1`) keep working either way; `deploy.js` also re-runs `npm ci` in
+`jarvisd/` when its package files change.
+
 ## Build
 
 `node scripts/build.js --only jarvisd` runs `bun build --compile jarvisd/src/main.ts`: one

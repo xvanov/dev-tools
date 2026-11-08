@@ -54,6 +54,7 @@ async function main() {
     const first = await sup.start();
     const v1 = await get(first.port, '/api/version');
     assert.strictEqual(v1.commit, 'gen-1');
+    assert.strictEqual(sup.status().runtime, 'bun', 'status says what runs the generations');
     await sup.roll();
     const v2 = await get(first.port, '/api/version');
     assert.strictEqual(v2.commit, 'gen-2', 'rolled to the next Bun generation');

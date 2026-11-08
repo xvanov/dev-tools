@@ -280,6 +280,8 @@ function createSupervisor({
   silent = false,
 } = {}) {
   const say = silent ? () => {} : log;
+  // node or bun (plan 4.1): what runs the generations, for status and the log.
+  const runtimeName = runtime ? runtime.runtime : execPath === process.execPath ? 'node' : 'bun';
   let seq = 0;
   let current = null; // the generation routing points at
   let standby = null; // the one a roll replaced, drained, kept for a rollback
@@ -350,7 +352,7 @@ function createSupervisor({
     });
     child.on('error', (err) => say('warn', 'generation error', { generation: n, message: err.message }));
     gens.add(gen);
-    say('info', 'spawned generation', { generation: n, pid: child.pid });
+    say('info', 'spawned generation', { generation: n, pid: child.pid, runtime: runtimeName });
     return gen;
   }
 
@@ -539,6 +541,7 @@ function createSupervisor({
       ok: true,
       port: publicPort(),
       source: SOURCE,
+      runtime: runtimeName,
       generation: current ? current.n : null,
       pid: current ? current.pid : null,
       workerPort: current ? current.port : null,
