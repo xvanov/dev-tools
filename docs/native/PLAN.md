@@ -118,8 +118,10 @@ with the app. Clients reconnect to the event stream with `Last-Event-ID` and mis
   in-flight requests finish (timeout 30 s). Works on Windows and Linux. `parallel-ok`
   Built as a reverse proxy (`personal-assistant/src/supervisor`), not fd passing, which
   Windows cannot do; control socket `node src/supervisor roll|status` for Z4. (262f4ab)
-- [ ] **Z2 Single-owner background work.** Schedulers and passes take a DB lease, so during the
+- [x] **Z2 Single-owner background work.** Schedulers and passes take a DB lease, so during the
   overlap only one generation runs them; the new one takes over when the old releases.
+  Lease = advisory lock 7300, released on `drain`; per-pass lock (7301, name) so a pass still
+  finishing in the old generation is skipped, not doubled. (c73f192)
 - [ ] **Z3 Expand/contract migrations.** Every schema change is additive first; old and new
   code both run on the new schema; the cleanup migration ships one release later. A test
   runs the previous release's code against the new schema.
