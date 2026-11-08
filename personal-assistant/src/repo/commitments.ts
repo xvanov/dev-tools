@@ -98,7 +98,7 @@ function create(db: Db) {
       );
     },
 
-    // --- for agent/planner.js
+    // --- for agent/planner.ts
 
     /**
      * Open asks of mine that have no plan yet, are under a week old, are not

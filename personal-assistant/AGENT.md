@@ -403,7 +403,7 @@ recorded before end states (delivery null) keeps the old rule: a draft PR, merge
 `PA_MERGE_REPOS` — do not widen that list. The push block is lifted from the worktree's own config
 (`liftPushBlock`), the same place `blockPush` put it.
 
-**The planner starts only read-only runs on its own, and few.** `src/agent/planner.js` may start
+**The planner starts only read-only runs on its own, and few.** `src/agent/planner.ts` may start
 a `plan`-mode run (it reads and writes findings; it can neither commit nor push) for an ask it
 judged "investigate" with a known repo, at most `PA_EAGER_RUNS_PER_DAY` a day and only while
 `budget.allow('eager')` says yes, and tells you it did. Anything that changes code is offered as a

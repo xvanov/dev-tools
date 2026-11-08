@@ -236,7 +236,7 @@ assert.throws(() => R.via('carrier-pigeon'), /unknown route/);
 // --- the planner never starts a factory job on its own -------------------------------
 
 {
-  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'agent', 'planner.js'), 'utf8');
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'agent', 'planner.ts'), 'utf8');
   const research = src.slice(src.indexOf("mode: 'plan'") - 200, src.indexOf("mode: 'plan'") + 200);
   assert.match(research, /via: 'claude'/, "the planner's own runs are plan-mode Claude sessions");
   assert.strictEqual((src.match(/dispatch'\)\.start\(/g) || []).length, 1, 'one start call, the research one');

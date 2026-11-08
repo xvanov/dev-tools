@@ -504,7 +504,7 @@ to `trace_span` (kept `PA_TELEMETRY_RETENTION_DAYS`, default 30; `PA_TELEMETRY=0
 collector or cloud service; the factory's own hops arrive through the same endpoint. Spans carry ids, names and counts,
 never prompt or argument text.
 
-**The planner works ahead of you** (`src/agent/planner.js`, every five minutes, `PA_PLANNER=0`
+**The planner works ahead of you** (`src/agent/planner.ts`, every five minutes, `PA_PLANNER=0`
 turns it off). Each new ask on you from the last week is given a kind (reply, review, coding,
 investigate, meeting, decision, admin) once. An *investigate* ask with a known repo gets a
 read-only research run started on its own — `plan` mode, so it can neither commit nor push — at

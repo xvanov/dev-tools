@@ -1,10 +1,10 @@
 'use strict';
 
-// The planner's pure half (src/agent/plannerCore.js): what an answer may mean
+// The planner's pure half (src/agent/plannerCore.ts): what an answer may mean
 // and when research may start on its own. Names are invented.
 
 const assert = require('assert');
-const P = require('../src/agent/plannerCore');
+const P = require('../src/agent/plannerCore.ts');
 
 const repos = ['ledger-portal', 'export-svc', 'docs-site'];
 const todos = [

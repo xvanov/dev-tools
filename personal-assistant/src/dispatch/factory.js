@@ -33,7 +33,7 @@
 // (`pa do --delivery`, the card's pick), else their own words, else the repo's
 // default (`pa delivery set`), else PA_DELIVERY_DEFAULT (src/dispatch/
 // deliveryCore.js). A factory job changes code, so the planner never starts one
-// on its own: it is always a proposal you say yes to (src/agent/planner.js).
+// on its own: it is always a proposal you say yes to (src/agent/planner.ts).
 //
 // The ask is a COMPOSED brief (src/dispatch/compose.js): the goal, done
 // criteria, constraints, decisions and pointers to existing code the task

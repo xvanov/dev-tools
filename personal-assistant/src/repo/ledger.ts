@@ -154,7 +154,7 @@ function create(db: Db) {
       );
     },
 
-    // --- for agent/planner.js
+    // --- for agent/planner.ts
 
     /**
      * The reconciler's "progresses" quotes for commitments, newest first.

@@ -21,18 +21,24 @@
 // that the reconciler thinks is already done, or that already has a run. One
 // model call per batch, and only while the daily budget allows discretionary
 // work (src/budget.js).
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+type Row = Record<string, any>;
+/** JSON read or built key by key (src/types.ts): loose until its producer is TypeScript. */
+type Json = import('../types.ts').Json;
 
 const llm = require('../llm.ts');
 const { config } = require('../config.ts');
 const repo = require('../repo');
 const { logger } = require('../log.ts');
-const P = require('./plannerCore');
+const P = require('./plannerCore.ts');
 
 const log = logger('planner');
 
 const BATCH = 6;
 
-async function due(limit) {
+async function due(limit: number) {
   return repo.commitments.toPlan(limit);
 }
 
@@ -40,9 +46,9 @@ async function researchToday() {
   return repo.commitments.researchStartedToday();
 }
 
-async function act(p) {
+async function act(p: Json) {
   const c = p.todo;
-  const plan = { kind: p.kind, action: p.action, brief: p.brief, at: new Date().toISOString() };
+  const plan: Json = { kind: p.kind, action: p.action, brief: p.brief, at: new Date().toISOString() };
   if (p.action === 'research') {
     const budget = require('../budget.ts');
     const ok = P.mayResearch({
@@ -65,7 +71,7 @@ async function act(p) {
           url: run.url || null,
           dedupeKey: `research:${c.id}`,
         });
-      } catch (err) {
+      } catch (err: any) {
         plan.error = String(err.message).slice(0, 200);
         log.warn('research run not started', { commitment: Number(c.id), message: plan.error });
       }
@@ -95,7 +101,7 @@ async function act(p) {
       dedupeKey: `offer-run:${c.id}`,
       expiresAt: new Date(Date.now() + 5 * 86400_000),
     };
-    const row = await offer.propose(o).catch(async (err) => {
+    const row = await offer.propose(o).catch(async (err: any) => {
       // A route or composition failure still leaves an offer: a Claude session.
       log.warn('offer not prepared; offering a Claude session', { commitment: Number(c.id), message: String(err.message).slice(0, 160) });
       return offer.propose({ ...o, via: 'claude' }).catch(() => null);
@@ -110,7 +116,7 @@ async function act(p) {
       kind: 'question',
       commitmentId: c.id,
       title: `Which repo is this in? ${c.summary}`.slice(0, 280),
-      options: [...p.repos.map((r) => ({ value: r, label: r })), { value: 'none', label: 'None of these' }],
+      options: [...p.repos.map((r: any) => ({ value: r, label: r })), { value: 'none', label: 'None of these' }],
       payload: { on: 'project' },
       dedupeKey: `ask-repo:${c.id}`,
       expiresAt: new Date(Date.now() + 5 * 86400_000),
@@ -123,11 +129,11 @@ async function act(p) {
 // What is already known to have happened: the reconciler's "progresses"
 // quotes, and my PRs in the ask's repo since it was made. The planner once
 // offered a run to build a button that had merged four days earlier.
-async function background(todos) {
-  const ids = todos.map((t) => t.id);
+async function background(todos: any) {
+  const ids = todos.map((t: any) => t.id);
   const progress = await repo.ledger.progressQuotes(ids);
   const shipped = await repo.commitments.shippedSinceAsk(ids);
-  const by = (list, field) => {
+  const by = (list: any[], field: any) => {
     const m = new Map();
     for (const r of list) {
       const k = String(r.commitment_id);
@@ -138,20 +144,20 @@ async function background(todos) {
   };
   const p = by(progress, 'quote');
   const s = by(shipped, 'subject');
-  return todos.map((t) => ({ ...t, progress: p.get(String(t.id)) || [], recentPrs: s.get(String(t.id)) || [] }));
+  return todos.map((t: any) => ({ ...t, progress: p.get(String(t.id)) || [], recentPrs: s.get(String(t.id)) || [] }));
 }
 
-async function pass({ limit = BATCH } = {}) {
+async function pass({ limit = BATCH }: { limit?: number } = {}) {
   let todos = await due(limit);
   if (!todos.length) return { planned: 0 };
   if (!(await require('../budget.ts').allow('planner').catch(() => false))) return { planned: 0, skipped: 'budget' };
   // Judged first: an ask already answered or delivered gets no plan at all.
-  await require('../ledger/reconcile.ts').pass({ ids: todos.map((t) => Number(t.id)) }).catch(() => null);
+  await require('../ledger/reconcile.ts').pass({ ids: todos.map((t: any) => Number(t.id)) }).catch(() => null);
   todos = await due(limit);
   if (!todos.length) return { planned: 0 };
   todos = await background(todos);
 
-  const repos = (await require('../projects').candidates()).map((p) => p.name);
+  const repos = (await require('../projects').candidates()).map((p: any) => p.name);
   const { prompt, refs } = P.buildPrompt(todos, repos);
   const reply = await llm.complete({
     system: P.SYSTEM,
@@ -163,7 +169,7 @@ async function pass({ limit = BATCH } = {}) {
   });
   const plans = P.parsePlans(llm.extractJson(reply), refs, repos);
   const done = new Set();
-  const counts = {};
+  const counts: Record<string, number> = {};
   for (const p of plans) {
     await act(p);
     done.add(String(p.todo.id));

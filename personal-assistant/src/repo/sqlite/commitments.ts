@@ -121,7 +121,7 @@ function create(db: Db) {
       );
     },
 
-    // --- for agent/planner.js
+    // --- for agent/planner.ts
 
     /** Open asks of mine with no plan, under a week old, not notes, no pending evidence or run. */
     async toPlan(limit: number) {

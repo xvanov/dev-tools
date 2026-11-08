@@ -16,7 +16,7 @@ pushes me**. It extends `PLAN.md`; where the two disagree, this file is newer an
   its cadence first (4h / 1d / 2d / 1w / never, my last answer for that person marked usual, the
   old rule as the default) after judging the ask first, and `run_review` opens the draft PR without
   asking and merges it in my own repos (`PA_MERGE_REPOS`) once checks pass.
-- Phase 3, the eager agent: the planner (`src/agent/planner.js`: kinds, read-only research runs
+- Phase 3, the eager agent: the planner (`src/agent/planner.ts`: kinds, read-only research runs
   within a daily allowance, run offers, "which repo?"); spend recorded per call and capped per day
   (`src/budget.js`, `llm_spend`); the interrupt budget with quiet hours, 09:00/14:00 digests,
   thumbs that move per-kind weights, and the PA chat as a channel (`src/notify`).

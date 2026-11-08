@@ -629,7 +629,7 @@ const config = {
     profilesPerSync: envInt('PA_REPO_PROFILES_PER_SYNC', 60),
   },
 
-  // The planner (src/agent/planner.js): each new ask gets a kind, and some an
+  // The planner (src/agent/planner.ts): each new ask gets a kind, and some an
   // action ahead of me — a read-only research run (at most researchPerDay a
   // day), a "start a run?" card, or a "which repo?" question. PA_PLANNER=0
   // turns it off.

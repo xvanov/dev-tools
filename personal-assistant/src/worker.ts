@@ -373,10 +373,10 @@ async function main() {
   }
 
   // The planner: each new ask on me gets a kind and, where it can, work done
-  // ahead of me — within the daily budget (src/agent/planner.js).
+  // ahead of me — within the daily budget (src/agent/planner.ts).
   if (config.planner.enabled) {
     every(300, 'planner', async () => {
-      await require('./agent/planner').pass();
+      await require('./agent/planner.ts').pass();
     });
   }
 
