@@ -30,6 +30,11 @@ const FILES = [
   'migrations.test.js',
   'architecture.test.js',
   'lease.test.js',
+  // Voice: the transcribe proxy's round trip to a whisper socket server (on Bun 1.3 a half-closed
+  // socket was reset and Talk transcribed nothing, 2aad672), the fast lane, the spoken approvals.
+  'talk.test.js',
+  'fastLane.test.js',
+  'chatPermission.test.js',
   // askWhisper's socket exchange: Bun's socket.end() closes instead of half-closing (plan 8.2.1).
   'talkWhisper.test.js',
 ];
