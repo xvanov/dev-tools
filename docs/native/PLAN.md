@@ -48,6 +48,9 @@ Design rationale: the plan page (proposal, 7 Nov 2026) and the research summary 
 | D19 | 2026-11-08 | **Durable tasks on SQLite run on a small queue we own; Postgres keeps Absurd until 3.5** | Part of 3.1. Absurd is a Postgres schema with no SQLite port. `src/durable/sqliteQueue.ts` gives the slice of its interface the PA uses (spawn once per key, `step` checkpoints, `sleepFor`, `awaitEvent` with timeout and Absurd's `TimeoutError`, retries with backoff, scheduled runs) over `sql-sqlite/006` (task, checkpoint and event tables), with leases from the `lease` table, so the spawners and tasks (chase, runReview) do not change. `src/durable/durable.ts` picks the engine by store. |
 | D20 | 2026-11-08 | **Cut over to the new system now**: SQLite (3.5), ptyd (Exit 5's switch), jarvisd (runtime and front), WSL off (3.6) | The owner's go-ahead. Passkeys (7.1) and the Windows sandbox's ACL and egress steps (5.2) stay off for now. WSL is shut down and kept registered (not unregistered) so the Postgres rollback stays possible until both stacks have run on SQLite for a while. |
 | D21 | 2026-11-08 | **The factory's planning steps run on DeepSeek-V4-Flash** | PM triage took ~146 s on deepseek-v4-pro (a reasoning model); the owner accepts Flash's quality risk for speed. Applies to the planning personas only; dev stays on v4-pro. |
+| D22 | 2026-11-08 | **No agent sandbox**: agents keep full access to the machine they run on | The owner's call. 5.2 is dropped and Exit 5 is node-pty's retirement alone. The code behind `FACTORY_SANDBOX` / `PA_SANDBOX` (off) and the credential broker (5.3) stay as they are. |
+| D23 | 2026-11-08 | **Exit 7 becomes a one-command install on the work laptop** | No fresh machines: the owner installs Linux later. 7.7 is one command that installs (or reinstalls) the whole stack on this Windows machine, proven by reinstalling here. |
+| D24 | 2026-11-08 | **Retire Postgres and WSL now** | After a static copy of each: Postgres's last state as an encrypted `.pabak` per stack, the WSL distro as an encrypted export. Then the work laptop's Ubuntu distro is unregistered and the personal stack's `pa_personal` database dropped (its Postgres server stays: other software uses it). Supersedes D20's "kept registered". |
 
 ## Prerequisites (before phase 0)
 
@@ -712,8 +715,8 @@ run mid-step; a job continued on an existing branch (`--branch`).
   2026-11-08 (`TERMHUB_PTYD=1`, adbe9ff; JARVISD.md runbook): ptyd runs as the termhub-ptyd
   task / unit, and a work-stack terminal outlived a sessiond restart. Left for Exit 5: retire
   node-pty; replay is raw bytes (sessiond's mirror covers the UI).
-- [ ] **5.2** Agent sandbox per run: sandbox-runtime on Linux, restricted account on
-  Windows, egress allowlist proxy. Landed behind `FACTORY_SANDBOX` / `PA_SANDBOX` (default
+- [~] **5.2** Agent sandbox per run: sandbox-runtime on Linux, restricted account on
+  Windows, egress allowlist proxy. — dropped: D22 (the code stays, off). Landed behind `FACTORY_SANDBOX` / `PA_SANDBOX` (default
   off): the proxy (cb46b10) and the OS sandbox (421e621): bubblewrap on Linux (used directly,
   not sandbox-runtime: the proxy and broker need our own unix-socket relays), a restricted
   Low-integrity token in a job object on Windows instead of an account (no account created).
@@ -734,7 +737,7 @@ run mid-step; a job continued on an existing branch (`--branch`).
   broker, checked against the run's delivery ceiling. (2031b73, 421e621) Ceilings `none` /
   `push_branch` / `draft_pr` from the delivery level or PA mode; per-owner token via
   `gh_auth`; never runs git in the agent's checkout.
-- [ ] **Exit 5:** agents run sandboxed on Windows and Linux; termhub's node-pty host retired.
+- [ ] **Exit 5:** termhub's node-pty host retired (the sandbox half dropped: D22).
 
 ## Phase 6: factory into TypeScript
 
@@ -767,9 +770,13 @@ run mid-step; a job continued on an existing branch (`--branch`).
   from `scripts/build.js` and CI's `build` job: NSIS on Windows, .deb on Linux, both built in run
   42462406341. Later Windows runs failed only on github.com release downloads (504), so the CI
   job now caches Tauri's NSIS tools and retries. Not installed on either machine.
-- [ ] **Exit 7:** install on a fresh Windows and a fresh Linux machine with one install script
+- [ ] **7.7 One-command install (D23).** One command installs or reinstalls the whole stack on
+  a Windows machine: PA (jarvisd), termhub (jarvisd front, ptyd), the factory (`uv`, which
+  fetches its own Python; D15) and their tasks, idempotent, keeping data, `.env` and the vault.
+  Proven by reinstalling on the work laptop. A Linux twin comes later.
+- [~] **Exit 7:** install on a fresh Windows and a fresh Linux machine with one install script
   each (jarvisd and ptyd binaries, plus the Python factory via `uv`, which fetches its own
-  Python; D15).
+  Python; D15). — dropped: D23, replaced by 7.7.
 
 ## Phase 8: workflow acceptance review (the last phase; D10)
 
