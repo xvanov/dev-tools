@@ -223,6 +223,7 @@ async function terminal({ spare, termhubBase, durationTicks }) {
   const th = require(path.join(TERMHUB_DIR, 'test', 'spareTermhub.js'));
   const WebSocket = require('ws');
   let port;
+  let host = '127.0.0.1';
   let command;
   let cwd;
   let cleanup = async () => {};
@@ -234,17 +235,19 @@ async function terminal({ spare, termhubBase, durationTicks }) {
     cwd = s.dir;
     cleanup = () => s.close();
   } else {
-    port = Number(new URL(termhubBase).port);
+    const tu = new URL(termhubBase);
+    port = Number(tu.port) || 80;
+    host = tu.hostname;
     cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'pa-deploytest-'));
     const script = path.join(cwd, 'counter.js');
     fs.writeFileSync(script, `let i = 0; const t = setInterval(() => { console.log('tick ' + (++i)); if (i >= ${durationTicks}) { clearInterval(t); console.log('counter done'); } }, 100);\n`);
     command = `node "${script}"`;
     cleanup = async () => fs.rmSync(cwd, { recursive: true, force: true });
   }
-  const created = await th.getJson(port, '/api/sessions', { method: 'POST', body: { command, cwd, title: 'deploy test (Z6)', cols: 100, rows: 40 } });
+  const created = await th.getJson(port, '/api/sessions', { host, method: 'POST', body: { command, cwd, title: 'deploy test (Z6)', cols: 100, rows: 40 } });
   if (created.status !== 201) throw new Error(`termhub would not start a session: ${created.status} ${created.text}`);
   const id = created.body.id;
-  const t = th.watchTerminal(WebSocket, `ws://127.0.0.1:${port}/ws/term/${encodeURIComponent(id)}`);
+  const t = th.watchTerminal(WebSocket, `ws://${host}:${port}/ws/term/${encodeURIComponent(id)}`);
   await t.opened;
   await th.waitFor(() => t.ticks().length >= 3, 30_000, 'the first ticks');
   return {
@@ -260,7 +263,7 @@ async function terminal({ spare, termhubBase, durationTicks }) {
     },
     stop: async () => {
       await t.close();
-      await th.getJson(port, `/api/sessions/${encodeURIComponent(id)}`, { method: 'DELETE' }).catch(() => {});
+      await th.getJson(port, `/api/sessions/${encodeURIComponent(id)}`, { host, method: 'DELETE' }).catch(() => {});
       await cleanup();
     },
   };

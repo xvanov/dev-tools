@@ -26,11 +26,11 @@ function freePort() {
   });
 }
 
-function getJson(port, p, { method = 'GET', body, timeoutMs = 3000 } = {}) {
+function getJson(port, p, { method = 'GET', body, timeoutMs = 3000, host = '127.0.0.1' } = {}) {
   return new Promise((resolve, reject) => {
     const data = body === undefined ? null : JSON.stringify(body);
     const req = http.request({
-      host: '127.0.0.1', port, path: p, method, timeout: timeoutMs,
+      host, port, path: p, method, timeout: timeoutMs,
       headers: { 'X-Termhub': '1', ...(data ? { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(data) } : {}) },
     }, (res) => {
       let b = '';
