@@ -79,6 +79,12 @@ from factory.chain.branch import (
 
 _logger = logging.getLogger(__name__)
 
+#: ``git worktree add/remove/prune`` check out or delete a whole tree. The
+#: default 30 s git timeout killed a dev-tools checkout mid-way on Windows (real-
+#: time AV scanning, loaded machine) and failed the tick; a killed checkout also
+#: leaves a half-made worktree for the next tick to clear.
+WORKTREE_GIT_TIMEOUT_S = 600.0
+
 
 def worktree_path(
     software_factory_root: Path,
@@ -250,9 +256,9 @@ def ensure_worktree_for_story(
     _wt_error: str | None = None
     try:
         if branch_check.returncode == 0:
-            _run_git(repo, "worktree", "add", str(wt), branch)
+            _run_git(repo, "worktree", "add", str(wt), branch, timeout=WORKTREE_GIT_TIMEOUT_S)
         else:
-            _run_git(repo, "worktree", "add", "-b", branch, str(wt), base_ref)
+            _run_git(repo, "worktree", "add", "-b", branch, str(wt), base_ref, timeout=WORKTREE_GIT_TIMEOUT_S)
     except Exception as _wt_exc:
         _wt_error = repr(_wt_exc)
         raise
@@ -339,7 +345,7 @@ def remove_worktree_for_story(
         return False
     repo = Path(source_repo)
     if (repo / ".git").exists():
-        _run_git(repo, "worktree", "remove", "--force", str(wt), check=False)
+        _run_git(repo, "worktree", "remove", "--force", str(wt), check=False, timeout=WORKTREE_GIT_TIMEOUT_S)
     # Some git versions / older Linux filesystems leave the dir behind
     # after ``worktree remove``; rm what's left so a re-create succeeds.
     if wt.exists():
@@ -347,7 +353,7 @@ def remove_worktree_for_story(
     # ``git worktree prune`` cleans the parent's internal worktree registry
     # so future ``add``s don't see the removed entry.
     if (repo / ".git").exists():
-        _run_git(repo, "worktree", "prune", check=False)
+        _run_git(repo, "worktree", "prune", check=False, timeout=WORKTREE_GIT_TIMEOUT_S)
 
     # Emit git signal — best-effort, never raises.
     try:
@@ -403,7 +409,7 @@ def prune_stale_worktrees(
             continue
         repo = Path(source_repo)
         if (repo / ".git").exists():
-            _run_git(repo, "worktree", "remove", "--force", str(entry), check=False)
+            _run_git(repo, "worktree", "remove", "--force", str(entry), check=False, timeout=WORKTREE_GIT_TIMEOUT_S)
         try:
             if entry.exists():
                 shutil.rmtree(entry, ignore_errors=True)
@@ -412,7 +418,7 @@ def prune_stale_worktrees(
             pass
     repo = Path(source_repo)
     if (repo / ".git").exists():
-        _run_git(repo, "worktree", "prune", check=False)
+        _run_git(repo, "worktree", "prune", check=False, timeout=WORKTREE_GIT_TIMEOUT_S)
     return removed
 
 

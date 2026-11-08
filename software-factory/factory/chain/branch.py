@@ -48,15 +48,22 @@ def feature_branch_name(story_id: int | None, slug: str) -> str:
     return f"{_BRANCH_PREFIX}-{sid}-{safe_slug}"
 
 
-def _run_git(repo_path: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
-    """Run ``git <args>`` in ``repo_path``. Surface stderr on failure."""
+def _run_git(
+    repo_path: Path, *args: str, check: bool = True, timeout: float = 30
+) -> subprocess.CompletedProcess[str]:
+    """Run ``git <args>`` in ``repo_path``. Surface stderr on failure.
+
+    ``timeout`` defaults to 30 s; checkout-sized operations (``worktree add``
+    of a large repo) pass more — on Windows with real-time AV scanning, a
+    ~1000-file checkout of the dev-tools monorepo measured well over 30 s.
+    """
     proc = subprocess.run(
         ["git", *args],
         cwd=str(repo_path),
         capture_output=True,
         text=True,
         check=False,
-        timeout=30,
+        timeout=timeout,
     )
     if check and proc.returncode != 0:
         raise RuntimeError(
