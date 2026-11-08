@@ -476,6 +476,30 @@ run mid-step; a job continued on an existing branch (`--branch`).
   `apps/dev-tools` sets `software-factory/apps/dev-tools/context` (tracked, like
   `apps/factory`). `tests/test_context_root.py` pins default-identical paths and fails on a
   new hard-coded `context/` literal. `prd.md` and `stories/` stay at the app repo root.
+  2026-11-08: a dev-tools onboarder (story 8, API runtime) climbed from its worktree
+  (`software-factory/state/worktrees/...`, inside the live checkout) and wrote its context set
+  into the live tree; the 10 stray files were deleted. Guard landed (e2bcf93,
+  `factory/live_tree_guard.py`): files an agent writes into the live checkout are moved into its
+  worktree and reported, and every sandbox prompt pins writes to the working directory.
+- [ ] **2.5 State outside the repo (open, priority).** Story worktrees, agent run dirs and job
+  workspaces live under `software-factory/state/`, so for dev-tools every agent cwd is inside the
+  live checkout the PA, termhub and the factory run from. Design, started on branch
+  `wip/state-dir` (5151f14, not on main; 9 new tests pass, the broad suite was not run):
+  `factory/state_dir.py` `state_dir(root)` = `FACTORY_STATE_DIR` (installed root only, so test and
+  bench roots never resolve into live state) > `<root>/.state-dir` pointer (gitignored) >
+  `<root>/state`; the 120 `<root> / "state"` call sites rewritten, plus `runtime_state` and
+  `flake`; `factory state migrate [--to] [--dry-run]` moves `state/*` except the tracked
+  `.gitignore` to `%LOCALAPPDATA%\software-factory\state` (`~/.local/share/...` on Linux),
+  refuses while a `state/locks` lock or the DB is held, or when the target is in the repo or
+  non-empty, rolls back a failed move, writes the pointer and runs `git worktree repair` on the
+  moved worktrees; `factory state where`; the PA reads the same pointer (`resolveStateDir` in
+  `factoryPace.js`, used by `backup.ts`); a relative `serve --log-file` is under the state dir
+  (install-serve.ps1 migrates once unless `-KeepStateInRepo`; the systemd unit uses
+  `logs/serve.log`). Left: run the full suite, review the rewrite, then migrate both machines
+  with serve stopped and restart serve plus the PA worker.
+- [ ] **2.5b Real dev-tools context through a docs job (open).** After 2.5, file a docs job so
+  the onboarder writes `software-factory/apps/dev-tools/context/` in a worktree and delivers it
+  as a PR (context is tracked by design; do not gitignore it).
 - [ ] **Exit 2:** factory calls take milliseconds; JOBS-API v1.3 tests green on Windows and Linux.
 
 ## Phase 3: storage to SQLite (D2)
