@@ -19,7 +19,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { config } = require('../config');
-const { query, rows, one } = require('../db');
+const repo = require('../repo');
 const projects = require('../projects');
 const sources = require('./sources');
 const merge = require('./merge');
@@ -27,13 +27,9 @@ const { logger } = require('../log');
 
 const log = logger('repos');
 
-const ROW_COLUMNS = `id, name, gitlab_path, repo_path, active, forge, remote_urls, local_paths, default_branch, description,
-  profile, profile_source, profile_hash, profiled_at, manual, hidden, origin, branches, last_pr_at, last_commit_at,
-  last_session_at, pr_count, session_count, synced_at, retired_at, retired_reason`;
-
 async function loadRows() {
-  const list = await rows(`select ${ROW_COLUMNS} from project order by id`);
-  const aliases = await rows('select project_id, alias from project_alias');
+  const list = await repo.repos.allRows();
+  const aliases = await repo.repos.allAliases();
   const byProject = new Map();
   for (const a of aliases) {
     if (!byProject.has(a.project_id)) byProject.set(a.project_id, []);
@@ -73,18 +69,13 @@ function addPath(d, machine, p) {
 }
 
 async function insertRow({ name, gitlabPath, forge, origin }) {
-  const r = await one(
-    `insert into project (name, gitlab_path, forge, origin, active) values ($1, $2, $3, $4, true)
-     on conflict (name) do update set name = excluded.name
-     returning id`,
-    [name, gitlabPath, forge, origin]
-  );
+  const id = await repo.repos.insert({ name, gitlabPath, forge, origin });
   if (gitlabPath) {
-    await projects.addAlias(r.id, gitlabPath);
-    await projects.addAlias(r.id, gitlabPath.split('/').pop());
+    await projects.addAlias(id, gitlabPath);
+    await projects.addAlias(id, gitlabPath.split('/').pop());
   }
-  await projects.addAlias(r.id, name);
-  return r.id;
+  await projects.addAlias(id, name);
+  return id;
 }
 
 /**
@@ -95,18 +86,14 @@ async function insertRow({ name, gitlabPath, forge, origin }) {
  */
 async function takeOver(row, fullName, forge) {
   const keepPath = row.repo_path && fs.existsSync(row.repo_path) ? row.repo_path : null;
-  await query(
-    `update project set gitlab_path = $2, forge = $3, active = true, retired_at = null, retired_reason = null, repo_path = $4
-      where id = $1`,
-    [row.id, fullName, forge, keepPath]
-  );
+  await repo.repos.takeOver(row.id, fullName, forge, keepPath);
   if (row.gitlab_path) await projects.addAlias(row.id, row.gitlab_path);
   await projects.addAlias(row.id, fullName);
 }
 
 async function prSince(full) {
   if (full) return null;
-  const r = await one('select max(updated_at) as at from repo_pr');
+  const r = await repo.repos.lastPrUpdate();
   if (!r?.at) return null;
   return new Date(new Date(r.at).getTime() - 3 * 86400_000);
 }
@@ -114,18 +101,7 @@ async function prSince(full) {
 async function upsertPrs(prs, projectIdFor) {
   let n = 0;
   for (const p of prs) {
-    await query(
-      `insert into repo_pr (project_id, forge, repo, number, title, state, draft, head_ref, base_ref, url, author,
-                            created_at, updated_at, merged_at, closed_at, summary, body, synced_at)
-       values ($1,'github',$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16, now())
-       on conflict (forge, repo, number) do update set
-         project_id = excluded.project_id, title = excluded.title, state = excluded.state, draft = excluded.draft,
-         head_ref = excluded.head_ref, base_ref = excluded.base_ref, url = excluded.url,
-         updated_at = excluded.updated_at, merged_at = excluded.merged_at, closed_at = excluded.closed_at,
-         summary = excluded.summary, body = excluded.body, synced_at = now()`,
-      [projectIdFor(p.repo), p.repo, p.number, p.title, p.state, p.draft, p.headRef, p.baseRef, p.url, p.author,
-        p.createdAt, p.updatedAt, p.mergedAt, p.closedAt, p.summary, p.body]
-    );
+    await repo.repos.upsertPr(projectIdFor(p.repo), p);
     n++;
   }
   return n;
@@ -288,32 +264,20 @@ async function sync({ full = false, profile = config.repos.profile } = {}) {
     const r = d.row;
     const touched = Object.keys(d.localPaths).length || d.sessionCount || d.lastCommitAt || d.raven || d.branches.length || d.forge !== r.forge;
     if (!touched) continue;
-    const openPrs = await rows(
-      `select number, head_ref, updated_at from repo_pr where project_id = $1 and state = 'open' and head_ref is not null`,
-      [r.id]
-    );
+    const openPrs = await repo.repos.openPrBranches(r.id);
     const prBranches = openPrs.map((p) => ({ name: p.head_ref, at: p.updated_at ? new Date(p.updated_at).toISOString() : null, mine: true, pr: p.number, machine: null, source: 'pr' }));
     const branches = merge.mergeBranches([d.branches, prBranches], { defaultBranch: d.defaultBranch });
     // Paths found this pass replace the old ones per machine; a machine not
     // seen this pass keeps what it had.
     const localPaths = { ...(r.local_paths || {}), ...d.localPaths };
-    await query(
-      `update project set forge = $2, remote_urls = $3, local_paths = $4, default_branch = $5, branches = $6,
-              last_commit_at = coalesce($7, last_commit_at), last_session_at = coalesce($8, last_session_at),
-              session_count = case when $9 > 0 then $9 else session_count end,
-              profile = profile || $10::jsonb, synced_at = now()
-        where id = $1`,
-      [r.id, d.forge || null, [...d.remoteUrls], JSON.stringify(localPaths), d.defaultBranch || null, JSON.stringify(branches),
-        d.lastCommitAt, d.lastSessionAt, d.sessionCount, JSON.stringify(d.ravenDoc ? { ravenDoc: d.ravenDoc } : {})]
-    );
+    await repo.repos.saveSynced(r.id, {
+      forge: d.forge || null, remoteUrls: [...d.remoteUrls], localPaths: JSON.stringify(localPaths), defaultBranch: d.defaultBranch || null,
+      branches: JSON.stringify(branches), lastCommitAt: d.lastCommitAt, lastSessionAt: d.lastSessionAt, sessionCount: d.sessionCount,
+      profileAdd: JSON.stringify(d.ravenDoc ? { ravenDoc: d.ravenDoc } : {}),
+    });
   }
-  await query(`update project set origin = 'local' where origin is null and repo_path is not null`);
-  await query(
-    `update project p set pr_count = s.n, last_pr_at = s.last
-       from (select project_id, count(*)::int as n, max(coalesce(merged_at, updated_at)) as last
-               from repo_pr where project_id is not null group by project_id) s
-      where s.project_id = p.id`
-  );
+  await repo.repos.markLocalOrigins();
+  await repo.repos.refreshPrStats();
 
   // 7. Profiles: raven's text where raven has one; the model for the rest,
   // only when the material behind the last profile changed.
@@ -362,12 +326,7 @@ async function sync({ full = false, profile = config.repos.profile } = {}) {
     fail('profiles', err);
   }
 
-  const counts = await one(
-    `select count(*) filter (where active) as active,
-            count(*) filter (where active and (pr_count > 0 or last_commit_at is not null or session_count > 0 or (manual->>'pinned')::boolean)) as worked,
-            (select count(*) from repo_pr) as prs
-       from project`
-  );
+  const counts = await repo.repos.syncCounts();
   report.counts = { active: Number(counts.active), worked: Number(counts.worked), prs: Number(counts.prs) };
   log.info('repos synced', { ...report.counts, created: report.created.length, profiled: report.profiled });
   return report;
@@ -376,10 +335,7 @@ async function sync({ full = false, profile = config.repos.profile } = {}) {
 async function saveProfile(row, p, source, hash) {
   const profile = { ...(row.profile || {}) };
   for (const k of ['kind', 'stack', 'owner', 'related']) if (p[k] !== undefined) profile[k] = p[k];
-  await query(
-    `update project set description = $2, profile = $3, profile_source = $4, profile_hash = $5, profiled_at = now() where id = $1`,
-    [row.id, p.description || row.description || null, JSON.stringify(profile), source, hash]
-  );
+  await repo.repos.saveProfile(row.id, p.description || row.description || null, JSON.stringify(profile), source, hash);
 }
 
 // ------------------------------------------------------------- reading ----
@@ -388,15 +344,7 @@ async function saveProfile(row, p, source, hash) {
 async function find(ref) {
   const s = String(ref || '').trim();
   if (!s) return null;
-  const r = await one(
-    `select id from project
-      where lower(name) = lower($1) or lower(gitlab_path) = lower($1)
-         or id = (select project_id from project_alias where lower(alias) = lower($1) limit 1)
-         or lower(repo_path) = lower($1)
-      order by active desc, (lower(name) = lower($1)) desc limit 1`,
-    [s]
-  );
-  return r ? r.id : null;
+  return repo.repos.findId(s);
 }
 
 /**
@@ -407,19 +355,12 @@ async function find(ref) {
  * @param {number}  [o.prs]   PRs per repo
  */
 async function list({ all = false, prs = 5 } = {}) {
-  const base = (await rows(`select ${ROW_COLUMNS} from project where active order by name`)).map(merge.effective);
+  const base = (await repo.repos.activeRows()).map(merge.effective);
   const shown = all ? base : base.filter((r) => merge.contributed(r));
   shown.sort((a, b) => String(b.lastActivity || '').localeCompare(String(a.lastActivity || '')) || a.name.localeCompare(b.name));
   const ids = shown.map((r) => r.id);
   const recent = ids.length
-    ? await rows(
-        `select * from (
-           select project_id, repo, number, title, state, draft, head_ref, url, summary, created_at, updated_at, merged_at, closed_at,
-                  row_number() over (partition by project_id order by updated_at desc nulls last) as rn
-             from repo_pr where project_id = any($1::bigint[])) x
-          where rn <= $2 order by updated_at desc`,
-        [ids, prs]
-      )
+    ? await repo.repos.recentPrs(ids, prs)
     : [];
   return shown.map((r) => ({ ...publicRow(r), prs: recent.filter((p) => String(p.project_id) === String(r.id)).map(publicPr) }));
 }
@@ -428,17 +369,10 @@ async function list({ all = false, prs = 5 } = {}) {
 async function show(ref) {
   const id = await find(ref);
   if (!id) return null;
-  const r = merge.effective(await one(`select ${ROW_COLUMNS} from project where id = $1`, [id]));
-  const aliases = await rows('select alias, origin from project_alias where project_id = $1 order by origin, alias', [id]);
-  const prs = await rows(
-    `select project_id, repo, number, title, state, draft, head_ref, url, summary, created_at, updated_at, merged_at, closed_at
-       from repo_pr where project_id = $1 order by updated_at desc nulls last limit 200`,
-    [id]
-  );
-  const commitments = await rows(
-    `select id, summary, status from commitment where project_id = $1 and status in ('open','dispatched') and superseded_by is null order by id desc limit 20`,
-    [id]
-  );
+  const r = merge.effective(await repo.repos.rowById(id));
+  const aliases = await repo.repos.aliasesOf(id);
+  const prs = await repo.repos.prsOf(id);
+  const commitments = await repo.repos.openCommitments(id);
   return { ...publicRow(r), aliases, prs: prs.map(publicPr), commitments };
 }
 
@@ -506,17 +440,17 @@ async function add(ref, { name = null } = {}) {
     const place = fullName ? merge.placeForgeRepo(fullName, await loadRows()) : { action: 'insert', name: repoName };
     if (place.action === 'insert') id = await insertRow({ name: name || place.name, gitlabPath: fullName, forge: fullName ? 'github' : null, origin: 'manual' });
     else id = place.id;
-    if (isPath) await query('update project set repo_path = $2 where id = $1', [id, s]);
+    if (isPath) await repo.repos.setRepoPath(id, s);
   }
   await setManual(id, { pinned: true });
-  await query('update project set active = true, hidden = false, retired_at = null, retired_reason = null where id = $1', [id]);
-  return show(id ? (await one('select name from project where id = $1', [id])).name : s);
+  await repo.repos.revive(id);
+  return show(id ? (await repo.repos.nameOf(id)).name : s);
 }
 
 async function setManual(id, edits) {
-  const r = await one('select manual from project where id = $1', [id]);
+  const r = await repo.repos.manualOf(id);
   const manual = merge.applyManual(r.manual, edits);
-  await query('update project set manual = $2 where id = $1', [id, JSON.stringify(manual)]);
+  await repo.repos.setManual(id, JSON.stringify(manual));
   return manual;
 }
 
@@ -530,7 +464,7 @@ async function mustFind(ref) {
 async function set(ref, edits) {
   const id = await mustFind(ref);
   await setManual(id, edits);
-  return show((await one('select name from project where id = $1', [id])).name);
+  return show((await repo.repos.nameOf(id)).name);
 }
 
 /** `pa repos alias <repo> <alias>`: a name you call it. Human-confirmed, so it outranks seeded aliases. */
@@ -538,13 +472,13 @@ async function alias(ref, name) {
   const id = await mustFind(ref);
   const okAdded = await projects.addAlias(id, name, 'corrected');
   if (!okAdded) throw new Error('an alias needs at least 3 characters');
-  return show((await one('select name from project where id = $1', [id])).name);
+  return show((await repo.repos.nameOf(id)).name);
 }
 
 /** `pa repos hide <repo> [--undo]`: off the Repos tab (the resolver still knows it). */
 async function hide(ref, hidden = true) {
   const id = await mustFind(ref);
-  await query('update project set hidden = $2 where id = $1', [id, hidden]);
+  await repo.repos.setHidden(id, hidden);
   return { id, hidden };
 }
 

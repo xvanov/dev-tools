@@ -78,4 +78,16 @@ module.exports = {
     assert.deepStrictEqual([after.pushed, after.held], [before.pushed + 1, before.held + 1]);
     assert.ok(after.last_digest === null || after.last_digest instanceof Date);
   },
+
+  // --- for chunk F (routines)
+  'setting: null when unset': async ({ repos, assert, uniq }) => {
+    assert.strictEqual(await repos.system.setting(uniq('key')), null);
+  },
+
+  'setSetting: inserts, then replaces': async ({ repos, assert, uniq }) => {
+    const key = uniq('key');
+    await repos.system.setSetting(key, { day: '2026-11-07' });
+    await repos.system.setSetting(key, { day: '2026-11-08' });
+    assert.deepStrictEqual((await repos.system.setting(key)).value, { day: '2026-11-08' });
+  },
 };

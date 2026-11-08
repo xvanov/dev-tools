@@ -362,8 +362,214 @@ function create(db) {
         [threadExternalId]
       );
     },
+
+    // --- for src/ingest/store.js (chunk F): the ingest write path. Items and
+    // their cursor advance in one transaction: call these inside repo.withTx.
+
+    /**
+     * Inserts an item, or updates it when its content hash changed (an edited
+     * message). Resolves {id, content_hash} when new or changed, null when
+     * unchanged. `it`: a normalised item (ingest/store.js normalise()).
+     */
+    async upsertItem(it) {
+      const res = await db.query(UPSERT_ITEM, [
+        it.source, it.externalId, it.threadExternalId, it.occurredAt, it.authorIdentity, it.subject, it.bodyText, it.raw, it.hash,
+      ]);
+      return res.rows[0] || null;
+    },
+
+    /** Drops an item's chunks (derived state: a changed body makes them wrong). */
+    async deleteChunks(itemId) {
+      await db.query('delete from chunk where source_item_id = $1', [itemId]);
+    },
+
+    /** Writes chunk `ord` of an item; a rewrite clears its embedding. */
+    async upsertChunk(itemId, ord, content, context, contextV) {
+      await db.query(
+        'insert into chunk (source_item_id, ord, content, context, context_v) values ($1,$2,$3,$4,$5) ' +
+          'on conflict (source_item_id, ord) do update set content = excluded.content, ' +
+          'context = excluded.context, context_v = excluded.context_v, embedding = null',
+        [itemId, ord, content, context, contextV]
+      );
+    },
+
+    /** Drops an item's distillation (its body changed, so it is distilled again). */
+    async deleteDistillation(itemId) {
+      await db.query('delete from distillation where source_item_id = $1', [itemId]);
+    },
+
+    /** Advances a connector's cursor: delta token and state, run now, error cleared. */
+    async saveCursor({ source, deltaToken = null, state = {} }) {
+      await db.query(CURSOR_UPSERT, [source, deltaToken, state]);
+    },
+
+    /** A connector's whole cursor row, or null. */
+    async getCursor(source) {
+      return db.one('select * from sync_cursor where source = $1', [source]);
+    },
+
+    /** Records a failed run of a connector (its cursor otherwise unchanged). */
+    async recordCursorError(source, message) {
+      await db.query(
+        `insert into sync_cursor (source, last_run_at, last_error)
+       values ($1, now(), $2)
+       on conflict (source) do update set last_run_at = now(), last_error = excluded.last_error`,
+        [source, message]
+      );
+    },
+
+    /** Every cursor: {source, last_run_at, last_error, has_token}, by source. */
+    async cursorList() {
+      return db.rows('select source, last_run_at, last_error, delta_token is not null as has_token from sync_cursor order by source');
+    },
+
+    // --- for src/ingest/health.js
+
+    /** Every cursor with the newest item it brought: {source, last_run_at, last_error, last_item_at}. */
+    async cursorHealth() {
+      return db.rows(
+        `select sc.source, sc.last_run_at, sc.last_error,
+            (select max(si.fetched_at) from source_item si where si.source = sc.source) as last_item_at
+       from sync_cursor sc order by sc.source`
+      );
+    },
+
+    // --- for src/ingest/jira.js
+
+    /** The signed-in Microsoft 365 address the m365 cursor remembers ({mail}), or null. */
+    async m365Mail() {
+      return db.one(`select state->'me'->>'mail' as mail from sync_cursor where source = 'm365'`);
+    },
+
+    // --- for src/ingest/graphChat.js
+
+    /**
+     * Teams chat messages of the last 14 days that arrived empty and may be
+     * fetched again (fewer than `maxTries` repairs), newest first.
+     */
+    async emptyChatMessages(limit, maxTries) {
+      return db.rows(
+        `select id, external_id, thread_external_id, subject, author_identity, raw from source_item
+      where source = 'graph_chat' and body_text = '' and occurred_at > now() - interval '14 days'
+        and coalesce((raw->>'repairTries')::int, 0) < $2
+        and thread_external_id like '19:%' and split_part(external_id, '/', 2) ~ '^[0-9]+$'
+      order by occurred_at desc limit $1`,
+        [limit, maxTries]
+      );
+    },
+
+    /** Fills a repaired message's body (marked repaired, so the reconciler may judge it again). */
+    async repairBody(id, text, hash) {
+      await db.query(
+        `update source_item set body_text = $2, content_hash = $3, fetched_at = now(),
+                raw = raw || '{"repaired": true}'::jsonb where id = $1`,
+        [id, text, hash]
+      );
+    },
+
+    /** Counts one more failed repair of a message. */
+    async countRepairTry(id) {
+      await db.query(`update source_item set raw = jsonb_set(raw, '{repairTries}', to_jsonb(coalesce((raw->>'repairTries')::int, 0) + 1)) where id = $1`, [id]);
+    },
+
+    /** Chat messages stored from the Teams cache, by external id. */
+    async cachedChatMessages(externalIds) {
+      return db.rows(
+        `select external_id, occurred_at, author_identity, subject, body_text, raw
+       from source_item
+      where source = 'graph_chat' and external_id = any($1) and raw->>'via' = 'teams-cache'`,
+        [externalIds]
+      );
+    },
+
+    // --- for src/ingest/teamsLocal.js
+
+    /** Per chat and display name, the newest address it was seen with: {chat, name, email}. */
+    async chatSenderEmails(threads) {
+      return db.rows(
+        `select distinct on (thread_external_id, raw->>'fromName') thread_external_id as chat, raw->>'fromName' as name,
+            lower(author_identity) as email
+       from source_item
+      where source = 'graph_chat' and thread_external_id = any($1)
+        and author_identity like '%@%' and raw->>'fromName' is not null
+      order by thread_external_id, raw->>'fromName', occurred_at desc`,
+        [threads]
+      );
+    },
+
+    /** Per chat, its newest message's subject and raw, preferring ones from the connector: {chat, subject, raw}. */
+    async chatHeads(conversationIds) {
+      return db.rows(
+        `select distinct on (thread_external_id) thread_external_id as chat, subject, raw
+       from source_item
+      where source = 'graph_chat' and thread_external_id = any($1)
+      order by thread_external_id, (raw->>'via' is null) desc, occurred_at desc`,
+        [conversationIds]
+      );
+    },
+
+    /** Chat messages by external id: {external_id, occurred_at, author_identity, subject, raw, fetched_at}. */
+    async chatMessagesByExternalId(externalIds) {
+      return db.rows(
+        `select external_id, occurred_at, author_identity, subject, raw, fetched_at
+       from source_item where source = 'graph_chat' and external_id = any($1)`,
+        [externalIds]
+      );
+    },
+
+    // --- for src/repos/sources.js
+
+    /** Every Claude session's folder, machine, branch and time. */
+    async claudeSessionFolders() {
+      return db.rows(
+        `select raw->>'cwd' as cwd, raw->>'machine' as machine, raw->>'gitBranch' as branch, occurred_at
+       from source_item where source = 'claude_session' and raw->>'cwd' is not null`
+      );
+    },
+
+    // --- for src/routines/suggest.js
+
+    /** Claude session items of the last `days` days, newest first, at most 400: {id, occurred_at, body_text}. */
+    async recentClaudeSessions(days) {
+      return db.rows(
+        `select id, occurred_at, body_text from source_item
+      where source = 'claude_session' and occurred_at > now() - ($1 || ' days')::interval
+      order by occurred_at desc limit 400`,
+        [String(days)]
+      );
+    },
   };
 }
+
+// `on conflict do update` rather than `do nothing`: an edited Teams message or
+// a mail that gained a category comes back through delta with the same id, and
+// the newer body is the one worth keeping. The content hash changing is also
+// what re-opens it for distillation.
+const UPSERT_ITEM = `
+  insert into source_item
+    (source, external_id, thread_external_id, occurred_at, author_identity,
+     subject, body_text, raw, content_hash)
+  values ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+  on conflict (source, external_id) do update set
+    thread_external_id = excluded.thread_external_id,
+    occurred_at        = excluded.occurred_at,
+    author_identity    = excluded.author_identity,
+    subject            = excluded.subject,
+    body_text          = excluded.body_text,
+    raw                = excluded.raw,
+    content_hash       = excluded.content_hash,
+    fetched_at         = now()
+  where source_item.content_hash is distinct from excluded.content_hash
+  returning id, content_hash
+`;
+
+const CURSOR_UPSERT = `insert into sync_cursor (source, delta_token, last_run_at, last_error, state)
+         values ($1,$2,now(),null,$3)
+         on conflict (source) do update set
+           delta_token = excluded.delta_token,
+           last_run_at = excluded.last_run_at,
+           last_error  = null,
+           state       = excluded.state`;
 
 const EVENT_COLS = 'id, external_id, subject, body_text, occurred_at, author_identity, raw';
 

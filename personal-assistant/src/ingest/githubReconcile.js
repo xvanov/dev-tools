@@ -24,7 +24,7 @@
 // ones are marked `superseded_by` the newest, as consolidation does for any
 // restatement; nothing is deleted.
 
-const { rows, query } = require('../db');
+const repo = require('../repo');
 const ledger = require('../ledger');
 const { logger } = require('../log');
 
@@ -173,18 +173,7 @@ function duplicatePlan(list) {
 }
 
 async function openWithRefs() {
-  const list = await rows(
-    `select c.id, c.summary, c.detail, c.direction, c.status, c.superseded_by, si.raw->>'action' as action,
-            si.occurred_at as asked_at,
-            case when si.source like 'github%' then coalesce(si.raw->>'webUrl', si.thread_external_id, '') else '' end as url,
-            p.gitlab_path as project_path, p.name as project_name
-       from commitment c
-       join source_item si on si.id = c.source_item_id
-       left join project p on p.id = c.project_id and p.active
-      where c.status in ('open','dispatched')
-        and (si.source like 'github%' or c.summary ~* '(github\\.com/|\\mPRs?\\M|pull request)' or c.detail ~* 'github\\.com/[^/]+/[^/]+/pull/'
-             or (p.name is not null and c.summary ~* ('\\m' || p.name || '\\M\\s+#?\\d')))`
-  );
+  const list = await repo.commitments.withPrRefs();
   const out = [];
   for (const c of list) {
     const r = refsFor({ summary: c.summary, detail: c.detail, url: c.url, projectPath: c.project_path, projectName: c.project_name });
@@ -269,12 +258,7 @@ async function reconcile({ api, login }) {
   }
   let folded = 0;
   for (const d of duplicates) {
-    const r = await query(
-      `update commitment set superseded_by = $2
-        where id = $1 and superseded_by is null and status = 'open'`,
-      [d.id, d.supersededBy]
-    );
-    folded += r.rowCount || 0;
+    folded += await repo.commitments.foldOpen(d.id, d.supersededBy);
   }
   if (closed || folded) log.info('reconciled commitments', { closed, folded, prs: checked });
   return { checked, closed, folded };

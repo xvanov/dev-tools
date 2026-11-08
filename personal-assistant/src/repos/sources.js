@@ -19,7 +19,7 @@ const path = require('path');
 const crypto = require('crypto');
 const { execFile } = require('child_process');
 const { config } = require('../config');
-const { rows } = require('../db');
+const repo = require('../repo');
 const { gh } = require('../ingest/github');
 const merge = require('./merge');
 
@@ -177,10 +177,7 @@ async function cloneFacts(dir, { machine = os.hostname() } = {}) {
  * @returns {Array<{machine, dir, path, count, lastAt, branches:[{name, at}]}>}
  */
 async function sessionDirs({ machines = config.termhub.machines, reposRoot = config.reposRoot, hostname = os.hostname() } = {}) {
-  const list = await rows(
-    `select raw->>'cwd' as cwd, raw->>'machine' as machine, raw->>'gitBranch' as branch, occurred_at
-       from source_item where source = 'claude_session' and raw->>'cwd' is not null`
-  );
+  const list = await repo.sources.claudeSessionFolders();
   const rootsFor = (m) => {
     if (!m || m === hostname) return [reposRoot];
     const conf = machines?.[m];

@@ -20,7 +20,7 @@
 const { config } = require('../config');
 const m365 = require('./m365');
 const { saveItems, getCursor } = require('./store');
-const { rows, query } = require('../db');
+const repo = require('../repo');
 const identity = require('../distill/identity');
 const { htmlToText, contentHash } = require('../util/text');
 const { logger } = require('../log');
@@ -92,14 +92,7 @@ const REPAIR_TRIES = 3;
 // Only a person's message in a real chat (not the `48:` system threads, not an
 // id the cache could not read): the relay balks at a batch of junk URIs.
 async function repairEmpty({ limit = 5 } = {}) {
-  const empty = await rows(
-    `select id, external_id, thread_external_id, subject, author_identity, raw from source_item
-      where source = 'graph_chat' and body_text = '' and occurred_at > now() - interval '14 days'
-        and coalesce((raw->>'repairTries')::int, 0) < ${REPAIR_TRIES}
-        and thread_external_id like '19:%' and split_part(external_id, '/', 2) ~ '^[0-9]+$'
-      order by occurred_at desc limit $1`,
-    [limit]
-  );
+  const empty = await repo.sources.emptyChatMessages(limit, REPAIR_TRIES);
   if (!empty.length) return 0;
   const uriOf = (r) => {
     const id = r.raw?.messageId || String(r.external_id).split('/').pop();
@@ -112,14 +105,10 @@ async function repairEmpty({ limit = 5 } = {}) {
   for (const r of empty) {
     const text = bodyOf({}, full.get(uriOf(r))).trim();
     if (text) {
-      await query(
-        `update source_item set body_text = $2, content_hash = $3, fetched_at = now(),
-                raw = raw || '{"repaired": true}'::jsonb where id = $1`,
-        [r.id, text, contentHash(r.subject, text, r.author_identity)]
-      );
+      await repo.sources.repairBody(r.id, text, contentHash(r.subject, text, r.author_identity));
       fixed++;
     } else {
-      await query(`update source_item set raw = jsonb_set(raw, '{repairTries}', to_jsonb(coalesce((raw->>'repairTries')::int, 0) + 1)) where id = $1`, [r.id]);
+      await repo.sources.countRepairTry(r.id);
     }
   }
   log.info('repaired empty messages', { tried: empty.length, fixed });
@@ -215,12 +204,7 @@ function mergeCached(item, cached) {
 
 async function cachedRows(externalIds) {
   if (!externalIds.length) return new Map();
-  const found = await rows(
-    `select external_id, occurred_at, author_identity, subject, body_text, raw
-       from source_item
-      where source = 'graph_chat' and external_id = any($1) and raw->>'via' = 'teams-cache'`,
-    [externalIds]
-  );
+  const found = await repo.sources.cachedChatMessages(externalIds);
   return new Map(found.map((r) => [r.external_id, r]));
 }
 

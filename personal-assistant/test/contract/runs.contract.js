@@ -163,4 +163,15 @@ module.exports = {
     assert.deepStrictEqual(got.map((r) => Number(r.id)), [b, a]);
     assert.ok(['status', 'mode', 'machine', 'branch', 'termhub_session_id', 'route', 'route_reason', 'factory_job_id', 'factory_state', 'factory_warnings', 'delivery', 'cost_usd', 'mr_url'].every((k) => k in got[0]));
   },
+
+  // --- for chunk F (routines/actions/repoSync.js)
+  'livePaths: live runs\' repo and worktree paths': async ({ repos, seed, db, assert }) => {
+    const live = await seed.run({ status: 'running' });
+    const done = await seed.run({ status: 'done' });
+    await db.query(`update run set repo_path = '/w/r', worktree_path = '/wt/1' where id = any($1::bigint[])`, [[live, done]]);
+    const rows = await repos.runs.livePaths();
+    const r = rows.find((x) => Number(x.id) === live);
+    assert.deepStrictEqual([r.repo_path, r.worktree_path], ['/w/r', '/wt/1']);
+    assert.ok(!rows.some((x) => Number(x.id) === done));
+  },
 };

@@ -25,24 +25,14 @@ const PENDING = new Set([
   'src/durable/tasks/runReview.js',
   'src/e2e/deployTest.js',
   'src/e2e/goldenPath.js',
-  'src/ingest/githubReconcile.js',
-  'src/ingest/graphChat.js',
-  'src/ingest/health.js',
-  'src/ingest/jira.js',
-  'src/ingest/store.js',
-  'src/ingest/teamsLocal.js',
   'src/mcp/chatTools.js',
   'src/mcp/server.js',
-  'src/repos/index.js',
-  'src/repos/sources.js',
-  'src/routines/actions/repoSync.js',
-  'src/routines/index.js',
-  'src/routines/suggest.js',
 ]);
 
 // May require src/db for the pool's lifecycle (a dedicated connection, close
 // on exit), never to run a statement; a SQL call in them still fails.
 const POOL_ONLY = new Map([
+  ['src/routines/index.js', "the routine lock's own connection (getPool().connect); its statements are repo.leases / repo.routines"],
   ['src/worker.js', 'the lease connection (getPool().connect) and close on exit'],
   ['src/cli/index.js', 'the pool lifecycle (db.probe for pa doctor, db.close on exit); its statements are repository methods'],
   ['src/events/index.js', 'the dedicated LISTEN connection (pg Client); its statements are repo.events'],

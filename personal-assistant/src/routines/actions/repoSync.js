@@ -143,10 +143,7 @@ async function busyPaths() {
     log.warn('termhub not reachable', { message: err.message });
   }
   try {
-    const { rows } = require('../../db');
-    const runs = await rows(
-      `select id, repo_path, worktree_path from run where status in ('starting','running','waiting')`
-    );
+    const runs = await require('../../repo').runs.livePaths();
     for (const r of runs) {
       for (const p of [r.repo_path, r.worktree_path]) if (p) busy.push({ path: p, label: `pa run #${r.id}` });
     }

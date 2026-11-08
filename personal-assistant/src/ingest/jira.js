@@ -18,7 +18,7 @@
 
 const path = require('path');
 const { config, secret, secretSource, parseEnvFile } = require('../config');
-const db = require('../db');
+const repo = require('../repo');
 const llm = require('../llm');
 const { saveItems, getCursor } = require('./store');
 const { logger } = require('../log');
@@ -207,9 +207,9 @@ function freshEnv(name) {
 async function accountEmail() {
   const set = config.jira.email || freshEnv('PA_JIRA_EMAIL');
   if (set) return set;
-  const m365 = await db.one(`select state->'me'->>'mail' as mail from sync_cursor where source = 'm365'`).catch(() => null);
+  const m365 = await repo.sources.m365Mail().catch(() => null);
   if (m365?.mail) return m365.mail;
-  const me = await db.one('select primary_email from person where is_me and primary_email is not null limit 1').catch(() => null);
+  const me = await repo.people.myPrimaryEmail().catch(() => null);
   return me?.primary_email || null;
 }
 

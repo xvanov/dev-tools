@@ -95,6 +95,22 @@ function create(db) {
         [start]
       );
     },
+
+    // --- for src/routines (chunk F)
+
+    /** A setting's row ({value}), or null. */
+    async setting(key) {
+      return db.one('select value from setting where key = $1', [key]);
+    },
+
+    /** Sets a setting (value stored as jsonb). */
+    async setSetting(key, value) {
+      await db.query(
+        `insert into setting (key, value, updated_at) values ($1,$2,now())
+     on conflict (key) do update set value = excluded.value, updated_at = now()`,
+        [key, value]
+      );
+    },
   };
 }
 

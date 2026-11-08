@@ -12,7 +12,7 @@
 //   blind(sources, now)   pure: the failing sources worth telling you about
 //   pass()                the worker's check: notify once per outage
 
-const { rows } = require('../db');
+const repo = require('../repo');
 const { logger } = require('../log');
 
 const log = logger('health');
@@ -53,11 +53,7 @@ function blind(sources, now = new Date()) {
 }
 
 async function sources() {
-  return rows(
-    `select sc.source, sc.last_run_at, sc.last_error,
-            (select max(si.fetched_at) from source_item si where si.source = sc.source) as last_item_at
-       from sync_cursor sc order by sc.source`
-  );
+  return repo.sources.cursorHealth();
 }
 
 /** One toast per source per outage: the dedupe key is the newest item it brought. */

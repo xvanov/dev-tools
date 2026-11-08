@@ -13,7 +13,7 @@
 // row is kept, and anything resembling one — same action and params, or a
 // prompt with mostly the same words — is never proposed again.
 
-const db = require('../db');
+const repo = require('../repo');
 const { config } = require('../config');
 const { logger } = require('../log');
 const routines = require('./index');
@@ -111,12 +111,7 @@ async function gatherEvidence({ days = 30 } = {}) {
   } catch (err) {
     log.debug('no claims about me', { message: err.message });
   }
-  const items = await db.rows(
-    `select id, occurred_at, body_text from source_item
-      where source = 'claude_session' and occurred_at > now() - ($1 || ' days')::interval
-      order by occurred_at desc limit 400`,
-    [String(days)]
-  );
+  const items = await repo.sources.recentClaudeSessions(days);
   const asks = repeatedAsks(items).slice(0, 25);
   for (const g of asks) {
     evidence.push({ id: g.items[0], also: g.items.slice(1), kind: 'repeated ask', text: `asked on ${g.days} different days (${g.count}×): "${g.example}"` });
@@ -150,7 +145,7 @@ async function suggest({ ask = null, now = new Date(), notifyUser = true } = {})
     log.info('no evidence for suggestions', { sessions });
     return [];
   }
-  const existing = await db.rows('select id, title, schedule, action, params, status from routine');
+  const existing = await repo.routines.summaries();
   const prompt = [
     `Now (local): ${now.toString()}`,
     `Catalog:\n${JSON.stringify(routines.actions.catalog(), null, 2)}`,
@@ -212,14 +207,10 @@ async function suggest({ ask = null, now = new Date(), notifyUser = true } = {})
 async function nightly({ now = new Date() } = {}) {
   if (now.getHours() < config.routines.suggestHour) return null;
   const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-  const last = await db.one('select value from setting where key = $1', [SETTING]);
+  const last = await repo.system.setting(SETTING);
   if (last?.value?.day === today) return null;
   // Marked before the call: a failing model costs one attempt a day, not one an hour.
-  await db.query(
-    `insert into setting (key, value, updated_at) values ($1,$2,now())
-     on conflict (key) do update set value = excluded.value, updated_at = now()`,
-    [SETTING, { day: today }]
-  );
+  await repo.system.setSetting(SETTING, { day: today });
   return suggest({ now });
 }
 

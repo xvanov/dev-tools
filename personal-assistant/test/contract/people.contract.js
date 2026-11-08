@@ -205,4 +205,22 @@ module.exports = {
     row = (await repos.people.pair(a.id, a.id))[0];
     assert.deepStrictEqual([row.display_name, row.primary_email], ['A3', emailA], 'an existing email is kept');
   },
+
+  // --- for chunk F (ingest)
+  'myPrimaryEmail: the primary email of a person marked me': async ({ repos, seed, db, assert, uniq }) => {
+    if (!(await db.one('select id from person where is_me and primary_email is not null'))) await seed.personWith({ name: 'Me', email: `${uniq('me')}@x.test`, isMe: true });
+    const got = (await repos.people.myPrimaryEmail()).primary_email;
+    const mine = (await db.rows('select primary_email from person where is_me')).map((r) => r.primary_email);
+    assert.ok(got && mine.includes(got), got);
+  },
+  'emailsByAadOid: primary email, else an smtp identity': async ({ repos, seed, assert, uniq }) => {
+    const [o1, o2] = [uniq('oid'), uniq('oid')];
+    const a = await seed.personWith({ name: 'A', email: 'a-primary@x.test' });
+    await seed.identity(a, 'aad_oid', o1);
+    const b = await seed.personWith({ name: 'B', email: null });
+    await seed.identity(b, 'aad_oid', o2);
+    await seed.identity(b, 'smtp', 'b-smtp@x.test');
+    const got = new Map((await repos.people.emailsByAadOid([o1, o2])).map((r) => [r.oid, r.email]));
+    assert.deepStrictEqual([got.get(o1), got.get(o2)], ['a-primary@x.test', 'b-smtp@x.test']);
+  },
 };

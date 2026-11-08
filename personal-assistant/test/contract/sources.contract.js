@@ -304,4 +304,152 @@ module.exports = {
     assert.deepStrictEqual(got.map((r) => Number(r.id)), ids.slice(2).reverse());
     assert.deepStrictEqual([got[0].body.length, got[0].author_identity], [600, 'a@x.test']);
   },
+
+  // --- for chunk F (ingest, repos, routines)
+  'upsertItem: new, then unchanged (null), then changed': async ({ repos, assert, uniq }) => {
+    const it = { source: 'graph_mail', externalId: uniq('ext'), threadExternalId: null, occurredAt: new Date(), authorIdentity: 'a@x.test', subject: 's', bodyText: 'one', raw: {}, hash: 'h1' };
+    const a = await repos.sources.upsertItem(it);
+    assert.ok(a && a.id && a.content_hash === 'h1');
+    assert.strictEqual(await repos.sources.upsertItem(it), null, 'same hash: unchanged');
+    const b = await repos.sources.upsertItem({ ...it, bodyText: 'two', hash: 'h2' });
+    assert.deepStrictEqual([String(b.id), b.content_hash], [String(a.id), 'h2']);
+  },
+
+  'upsertChunk: writes and rewrites a chunk, clearing its embedding': async ({ repos, seed, db, assert }) => {
+    const item = await seed.item({ source: 'graph_mail' });
+    await repos.sources.upsertChunk(item, 0, 'first', 'ctx', 1);
+    await repos.sources.upsertChunk(item, 0, 'second', 'ctx2', 2);
+    const rows = await db.rows('select content, context, context_v, embedding from chunk where source_item_id = $1', [item]);
+    assert.deepStrictEqual(rows.map((r) => [r.content, r.context, r.context_v, r.embedding]), [['second', 'ctx2', 2, null]]);
+  },
+
+  'deleteChunks: an item\'s chunks only': async ({ repos, seed, db, assert }) => {
+    const [a, b] = [await seed.item({ source: 'graph_mail' }), await seed.item({ source: 'graph_mail' })];
+    await repos.sources.upsertChunk(a, 0, 'x', '', 1);
+    await repos.sources.upsertChunk(b, 0, 'y', '', 1);
+    await repos.sources.deleteChunks(a);
+    const left = await db.rows('select source_item_id from chunk where source_item_id = any($1::bigint[])', [[a, b]]);
+    assert.deepStrictEqual(left.map((r) => Number(r.source_item_id)), [b]);
+  },
+
+  'deleteDistillation: an item distills again': async ({ repos, seed, db, assert }) => {
+    const item = await seed.item({ source: 'graph_mail' });
+    await repos.commitments.markDistillSkipped(item, 'v-test');
+    await repos.sources.deleteDistillation(item);
+    assert.deepStrictEqual(await db.rows('select 1 from distillation where source_item_id = $1', [item]), []);
+  },
+
+  'saveCursor: token and state saved, error cleared': async ({ repos, assert, uniq }) => {
+    const source = uniq('conn');
+    await repos.sources.recordCursorError(source, 'boom');
+    await repos.sources.saveCursor({ source, deltaToken: 'tok', state: { since: 'x' } });
+    const c = await repos.sources.getCursor(source);
+    assert.deepStrictEqual([c.delta_token, c.state, c.last_error], ['tok', { since: 'x' }, null]);
+    assert.ok(c.last_run_at instanceof Date);
+  },
+
+  'getCursor: null for an unknown source': async ({ repos, assert, uniq }) => {
+    assert.strictEqual(await repos.sources.getCursor(uniq('none')), null);
+  },
+
+  'recordCursorError: the error and the run time, the state kept': async ({ repos, assert, uniq }) => {
+    const source = uniq('conn');
+    await repos.sources.saveCursor({ source, deltaToken: 't', state: { a: 1 } });
+    await repos.sources.recordCursorError(source, 'it failed');
+    const c = await repos.sources.getCursor(source);
+    assert.deepStrictEqual([c.last_error, c.delta_token, c.state], ['it failed', 't', { a: 1 }]);
+  },
+
+  'cursorList: every cursor with whether it has a token, by source': async ({ repos, assert, uniq }) => {
+    const source = uniq('conn');
+    await repos.sources.saveCursor({ source, deltaToken: 't', state: {} });
+    const list = await repos.sources.cursorList();
+    assert.strictEqual(list.find((c) => c.source === source).has_token, true);
+    assert.deepStrictEqual(list.map((c) => c.source), [...list.map((c) => c.source)].sort());
+  },
+
+  'cursorHealth: each cursor with the newest item it brought': async ({ repos, seed, assert, uniq }) => {
+    const source = uniq('src');
+    await repos.sources.saveCursor({ source, deltaToken: null, state: {} });
+    await seed.item({ source });
+    const row = (await repos.sources.cursorHealth()).find((c) => c.source === source);
+    assert.ok(row.last_item_at instanceof Date && row.last_run_at instanceof Date);
+  },
+
+  'm365Mail: the address the m365 cursor remembers': async ({ repos, seed, assert }) => {
+    await seed.cursor('m365', { me: { mail: 'me@m365.test' } });
+    assert.strictEqual((await repos.sources.m365Mail()).mail, 'me@m365.test');
+  },
+
+  'emptyChatMessages: recent empty Teams messages worth another try': async ({ repos, seed, db, assert, uniq }) => {
+    const thr = `19:${uniq('chat')}`;
+    const mk = (n, o = {}) => seed.item({ source: 'graph_chat', thread: thr, externalId: `${thr}/${n}`, body: '', ...o });
+    const empty = await mk(1001);
+    const full = await mk(1002, { body: 'has text' });
+    const tried = await mk(1003, { raw: { repairTries: 3 } });
+    const old = await mk(1004, { occurredAt: new Date(Date.now() - 20 * 86400_000) });
+    const ids = (await repos.sources.emptyChatMessages(1000, 3)).map((r) => Number(r.id));
+    assert.ok(ids.includes(empty));
+    for (const x of [full, tried, old]) assert.ok(!ids.includes(x));
+    assert.ok(db);
+  },
+
+  'repairBody: the text, a new hash, marked repaired': async ({ repos, seed, db, assert }) => {
+    const id = await seed.item({ source: 'graph_chat', body: '', raw: { a: 1 } });
+    await repos.sources.repairBody(id, 'found it', 'h9');
+    const r = await db.one('select body_text, content_hash, raw from source_item where id = $1', [id]);
+    assert.deepStrictEqual([r.body_text, r.content_hash, r.raw], ['found it', 'h9', { a: 1, repaired: true }]);
+  },
+
+  'countRepairTry: one more try each time': async ({ repos, seed, db, assert }) => {
+    const id = await seed.item({ source: 'graph_chat', body: '' });
+    await repos.sources.countRepairTry(id);
+    await repos.sources.countRepairTry(id);
+    assert.strictEqual((await db.one('select raw from source_item where id = $1', [id])).raw.repairTries, 2);
+  },
+
+  'cachedChatMessages: only those that came from the Teams cache': async ({ repos, seed, assert, uniq }) => {
+    const [a, b] = [uniq('m'), uniq('m')];
+    await seed.item({ source: 'graph_chat', externalId: a, raw: { via: 'teams-cache' } });
+    await seed.item({ source: 'graph_chat', externalId: b });
+    assert.deepStrictEqual((await repos.sources.cachedChatMessages([a, b])).map((r) => r.external_id), [a]);
+  },
+
+  'chatSenderEmails: per chat and name, the newest address': async ({ repos, seed, assert, uniq }) => {
+    const thr = uniq('chat');
+    await seed.item({ source: 'graph_chat', thread: thr, author: 'Old@X.test', raw: { fromName: 'Ada' }, occurredAt: new Date(Date.now() - 60_000) });
+    await seed.item({ source: 'graph_chat', thread: thr, author: 'New@X.test', raw: { fromName: 'Ada' } });
+    await seed.item({ source: 'graph_chat', thread: thr, author: 'aad:123', raw: { fromName: 'Bo' } });
+    assert.deepStrictEqual((await repos.sources.chatSenderEmails([thr])).map((r) => [r.chat, r.name, r.email]), [[thr, 'Ada', 'new@x.test']]);
+  },
+
+  'chatHeads: per chat, the newest connector message first': async ({ repos, seed, assert, uniq }) => {
+    const thr = uniq('chat');
+    await seed.item({ source: 'graph_chat', thread: thr, subject: 'from cache', raw: { via: 'teams-cache' } });
+    await seed.item({ source: 'graph_chat', thread: thr, subject: 'from graph', occurredAt: new Date(Date.now() - 60_000) });
+    assert.deepStrictEqual((await repos.sources.chatHeads([thr])).map((r) => r.subject), ['from graph']);
+  },
+
+  'chatMessagesByExternalId: chat messages by id, with fetched_at': async ({ repos, seed, assert, uniq }) => {
+    const ext = uniq('m');
+    await seed.item({ source: 'graph_chat', externalId: ext });
+    const [r] = await repos.sources.chatMessagesByExternalId([ext]);
+    assert.ok(r.external_id === ext && r.fetched_at instanceof Date);
+  },
+
+  'claudeSessionFolders: sessions with a folder': async ({ repos, seed, assert, uniq }) => {
+    const cwd = uniq('/w/s');
+    await seed.item({ source: 'claude_session', raw: { cwd, machine: 'box', gitBranch: 'b' } });
+    await seed.item({ source: 'claude_session', raw: {} });
+    const row = (await repos.sources.claudeSessionFolders()).find((r) => r.cwd === cwd);
+    assert.deepStrictEqual([row.machine, row.branch], ['box', 'b']);
+  },
+
+  'recentClaudeSessions: sessions of the last days, newest first': async ({ repos, seed, assert }) => {
+    const a = await seed.item({ source: 'claude_session', body: 'older', occurredAt: new Date(Date.now() - 2 * 86400_000) });
+    const b = await seed.item({ source: 'claude_session', body: 'newer', occurredAt: new Date(Date.now() - 3600_000) });
+    const c = await seed.item({ source: 'claude_session', body: 'old', occurredAt: new Date(Date.now() - 30 * 86400_000) });
+    const ids = (await repos.sources.recentClaudeSessions(7)).map((r) => Number(r.id));
+    assert.ok(ids.indexOf(b) >= 0 && ids.indexOf(b) < ids.indexOf(a) && !ids.includes(c));
+  },
 };

@@ -14,7 +14,8 @@
 // One routine at a time across every process (the worker, the dashboard, a
 // `pa routine run` in a terminal): a Postgres advisory lock held for the run.
 
-const db = require('../db');
+const db = require('../db'); // the routine lock's own connection only
+const repo = require('../repo');
 const { config } = require('../config');
 const { logger } = require('../log');
 const cron = require('./cron');
@@ -104,41 +105,24 @@ async function parseWords(words, { now = new Date() } = {}) {
 async function create(input, { origin = 'user', status = 'active', why = null, evidence = [], now = new Date() } = {}) {
   const p = preview(input, { now });
   const active = status === 'active';
-  return db.one(
-    `insert into routine (title, description, schedule, action, params, enabled, origin, status, why, evidence, next_run_at)
-     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) returning *`,
-    [p.title, p.description, p.schedule, p.action, p.params, active, origin, status, why, JSON.stringify(evidence),
-      active ? cron.next(p.schedule, now) : null]
-  );
+  return repo.routines.insert({
+    title: p.title, description: p.description, schedule: p.schedule, action: p.action, params: p.params, enabled: active,
+    origin, status, why, evidence, nextRunAt: active ? cron.next(p.schedule, now) : null,
+  });
 }
 
 async function getRoutine(id) {
-  const r = await db.one('select * from routine where id = $1', [Number(id)]);
+  const r = await repo.routines.byId(Number(id));
   if (!r) throw new Error(`no routine #${id}`);
   return r;
 }
 
 async function list({ statuses = null } = {}) {
-  const where = statuses ? 'where r.status = any($1)' : '';
-  return db.rows(
-    `select r.*, lr.id as last_run_id, lr.ok as last_ok, lr.summary as last_summary, lr.ended_at as last_ended_at,
-            lr.dry_run as last_dry_run, (lr.id is not null and lr.ended_at is null) as running
-       from routine r
-       left join lateral (select * from routine_run x where x.routine_id = r.id
-                           order by x.started_at desc limit 1) lr on true
-       ${where}
-      order by case r.status when 'proposed' then 0 when 'active' then 1 when 'paused' then 2 else 3 end, r.id`,
-    statuses ? [statuses] : []
-  );
+  return repo.routines.list({ statuses });
 }
 
 async function history({ routineId = null, limit = 30 } = {}) {
-  return db.rows(
-    `select x.*, r.title, r.action from routine_run x join routine r on r.id = x.routine_id
-      ${routineId ? 'where x.routine_id = $2' : ''}
-      order by x.started_at desc limit $1`,
-    routineId ? [limit, Number(routineId)] : [limit]
-  );
+  return repo.routines.runs({ limit, routineId });
 }
 
 const TRANSITIONS = {
@@ -155,10 +139,7 @@ async function setStatus(id, verb, { now = new Date() } = {}) {
   const r = await getRoutine(id);
   if (!t.from.includes(r.status)) throw new Error(`routine #${r.id} is ${r.status}; cannot ${verb} it`);
   const active = t.to === 'active';
-  return db.one(
-    `update routine set status = $2, enabled = $3, next_run_at = $4 where id = $1 returning *`,
-    [r.id, t.to, active, active ? cron.next(r.schedule, now) : null]
-  );
+  return repo.routines.setStatus(r.id, t.to, active, active ? cron.next(r.schedule, now) : null);
 }
 
 // Deleting a suggestion marks it rejected instead, so the nightly pass never
@@ -166,10 +147,10 @@ async function setStatus(id, verb, { now = new Date() } = {}) {
 async function remove(id) {
   const r = await getRoutine(id);
   if (r.origin === 'suggested') {
-    await db.query(`update routine set status = 'rejected', enabled = false, next_run_at = null where id = $1`, [r.id]);
+    await repo.routines.reject(r.id);
     return { id: r.id, deleted: false, status: 'rejected' };
   }
-  await db.query('delete from routine where id = $1', [r.id]);
+  await repo.routines.remove(r.id);
   return { id: r.id, deleted: true };
 }
 
@@ -178,8 +159,8 @@ async function remove(id) {
 async function withLock(fn) {
   const client = await db.getPool().connect();
   try {
-    const { rows } = await client.query('select pg_try_advisory_lock($1) as ok', [LOCK_KEY]);
-    if (!rows[0].ok) {
+    const on = repo.createRepos(repo.clientBackend(client));
+    if (!(await on.leases.tryLock(LOCK_KEY))) {
       const err = new Error('another routine is running — try again when it finishes');
       err.status = 409;
       throw err;
@@ -187,13 +168,10 @@ async function withLock(fn) {
     try {
       // Holding the lock means nothing else is running: an open run row is
       // one a crash left behind.
-      await client.query(
-        `update routine_run set ended_at = now(), ok = false, summary = 'interrupted (the process running it stopped)'
-          where ended_at is null`
-      );
+      await on.routines.closeInterrupted();
       return await fn();
     } finally {
-      await client.query('select pg_advisory_unlock($1)', [LOCK_KEY]).catch(() => {});
+      await on.leases.unlock(LOCK_KEY).catch(() => {});
     }
   } finally {
     client.release();
@@ -216,10 +194,7 @@ async function runRoutine(id, { dryRun = false, fetch = true, onStarted = null, 
   const r = await getRoutine(id);
   if (!scheduled && r.status === 'rejected') throw new Error(`routine #${r.id} was rejected; accept it first`);
   return withLock(async () => {
-    const run = await db.one(
-      `insert into routine_run (routine_id, dry_run) values ($1, $2) returning *`,
-      [r.id, dryRun]
-    );
+    const run = await repo.routines.startRun(r.id, dryRun);
     if (onStarted) onStarted(run);
     const t0 = Date.now();
     let result;
@@ -232,12 +207,9 @@ async function runRoutine(id, { dryRun = false, fetch = true, onStarted = null, 
       result = { ok: false, summary: `failed: ${err.message}`, lines: [], notable: true, detail: { error: err.message } };
     }
     const summary = `${dryRun ? 'dry run: ' : ''}${result.summary}`;
-    const done = await db.one(
-      `update routine_run set ended_at = now(), ok = $2, summary = $3, detail = $4 where id = $1 returning *`,
-      [run.id, result.ok !== false, summary.slice(0, 1000), { ...(result.detail || {}), lines: result.lines || [], ms: Date.now() - t0 }]
-    );
+    const done = await repo.routines.endRun(run.id, result.ok !== false, summary.slice(0, 1000), { ...(result.detail || {}), lines: result.lines || [], ms: Date.now() - t0 });
     if (!dryRun) {
-      await db.query('update routine set last_run_at = now() where id = $1', [r.id]);
+      await repo.routines.touchLastRun(r.id);
       try {
         const { notify, dashboardUrl } = require('../notify');
         await notify({
@@ -264,11 +236,7 @@ async function runRoutine(id, { dryRun = false, fetch = true, onStarted = null, 
  * it. Downtime therefore costs at most one catch-up run per routine.
  */
 async function runDue({ now = () => new Date() } = {}) {
-  const due = await db.rows(
-    `select id, schedule, next_run_at from routine
-      where status = 'active' and enabled and next_run_at is not null and next_run_at <= now()
-      order by next_run_at`
-  );
+  const due = await repo.routines.due();
   let ran = 0;
   for (const r of due) {
     let next = null;
@@ -278,21 +246,18 @@ async function runDue({ now = () => new Date() } = {}) {
       log.warn('bad schedule', { id: r.id, message: err.message });
     }
     if (!next) {
-      await db.query(`update routine set status = 'paused', enabled = false, next_run_at = null where id = $1`, [r.id]);
+      await repo.routines.pauseForever(r.id);
       log.warn('routine paused: its schedule never runs again', { id: r.id });
       continue;
     }
-    const claimed = await db.one(
-      `update routine set next_run_at = $2 where id = $1 and next_run_at = $3 returning id`,
-      [r.id, next, r.next_run_at]
-    );
+    const claimed = await repo.routines.claimNext(r.id, next, r.next_run_at);
     if (!claimed) continue;
     try {
       await runRoutine(r.id, { scheduled: true });
       ran++;
     } catch (err) {
       // Lock busy (a manual run): put it back so the next pass takes it.
-      if (err.status === 409) await db.query('update routine set next_run_at = $2 where id = $1', [r.id, r.next_run_at]);
+      if (err.status === 409) await repo.routines.setNextRun(r.id, r.next_run_at);
       log.warn('scheduled run did not happen', { id: r.id, message: err.message });
     }
   }

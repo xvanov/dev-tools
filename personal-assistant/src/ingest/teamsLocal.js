@@ -44,7 +44,7 @@ const fs = require('fs');
 const path = require('path');
 
 const { config } = require('../config');
-const { rows } = require('../db');
+const repo = require('../repo');
 const { saveItems, saveCursor, getCursor, recordError } = require('./store');
 const { htmlToText } = require('../util/text');
 const { namesMe } = require('./graphChat');
@@ -273,28 +273,13 @@ async function knownAuthors(messages) {
   const oids = [...new Set(messages.map((m) => oidOf(m.creator)).filter(Boolean))];
   const byOid = new Map();
   if (oids.length) {
-    for (const r of await rows(
-      `select pi.value as oid,
-              coalesce(p.primary_email,
-                       (select value from person_identity s where s.person_id = p.id and s.kind = 'smtp' limit 1)) as email
-         from person_identity pi join person p on p.id = pi.person_id
-        where pi.kind = 'aad_oid' and pi.value = any($1)`,
-      [oids]
-    )) {
+    for (const r of await repo.people.emailsByAadOid(oids)) {
       if (r.email) byOid.set(r.oid, r.email.toLowerCase());
     }
   }
   const threads = [...new Set(messages.map((m) => m.conversationId))];
   const byName = new Map();
-  for (const r of await rows(
-    `select distinct on (thread_external_id, raw->>'fromName') thread_external_id as chat, raw->>'fromName' as name,
-            lower(author_identity) as email
-       from source_item
-      where source = 'graph_chat' and thread_external_id = any($1)
-        and author_identity like '%@%' and raw->>'fromName' is not null
-      order by thread_external_id, raw->>'fromName', occurred_at desc`,
-    [threads]
-  )) {
+  for (const r of await repo.sources.chatSenderEmails(threads)) {
     byName.set(`${r.chat}\n${r.name}`, r.email);
   }
   return (m) => byOid.get(oidOf(m.creator)) || byName.get(`${m.conversationId}\n${m.fromName}`) || null;
@@ -304,13 +289,7 @@ async function knownAuthors(messages) {
 // the cache does not carry.
 async function threadInfo(conversationIds) {
   const map = new Map();
-  for (const r of await rows(
-    `select distinct on (thread_external_id) thread_external_id as chat, subject, raw
-       from source_item
-      where source = 'graph_chat' and thread_external_id = any($1)
-      order by thread_external_id, (raw->>'via' is null) desc, occurred_at desc`,
-    [conversationIds]
-  )) {
+  for (const r of await repo.sources.chatHeads(conversationIds)) {
     map.set(r.chat, { subject: r.subject, raw: r.raw || {} });
   }
   return map;
@@ -318,11 +297,7 @@ async function threadInfo(conversationIds) {
 
 async function existingRows(externalIds) {
   const map = new Map();
-  for (const r of await rows(
-    `select external_id, occurred_at, author_identity, subject, raw, fetched_at
-       from source_item where source = 'graph_chat' and external_id = any($1)`,
-    [externalIds]
-  )) {
+  for (const r of await repo.sources.chatMessagesByExternalId(externalIds)) {
     map.set(r.external_id, r);
   }
   return map;

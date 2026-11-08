@@ -986,4 +986,24 @@ module.exports = {
     assert.deepStrictEqual([c.summary, c.who, c.source, c.subject, c.thread_external_id, c.body.length, c.web_url, c.web_link], ['dash', 'Dash Person', 'graph_mail', 'Dash', 'thr-d', 4000, 'https://u', 'https://l']);
     assert.strictEqual(await repos.commitments.contextForDashboard(999999999), null);
   },
+
+  // --- for chunk F (ingest/githubReconcile.js)
+  'withPrRefs: open asks from GitHub or that name a PR': async ({ repos, seed, assert }) => {
+    const gh = await seed.commitment({ sourceItemId: await seed.item({ source: 'github_pr', raw: { webUrl: 'https://github.com/o/r/pull/3' } }) });
+    const text = await seed.commitment({ summary: 'review the pull request for the widget' });
+    const plain = await seed.commitment({ summary: 'buy milk' });
+    const closed = await seed.commitment({ summary: 'review the pull request', status: 'done' });
+    const rows = await repos.commitments.withPrRefs();
+    const ids = rows.map((r) => Number(r.id));
+    assert.ok(ids.includes(gh) && ids.includes(text));
+    assert.ok(!ids.includes(plain) && !ids.includes(closed));
+    assert.strictEqual(rows.find((r) => Number(r.id) === gh).url, 'https://github.com/o/r/pull/3');
+  },
+
+  'foldOpen: folds an open, unfolded ask, once': async ({ repos, seed, db, assert }) => {
+    const [a, b] = [await seed.commitment(), await seed.commitment()];
+    assert.strictEqual(await repos.commitments.foldOpen(a, b), 1);
+    assert.strictEqual(await repos.commitments.foldOpen(a, b), 0);
+    assert.strictEqual(Number((await db.one('select superseded_by from commitment where id = $1', [a])).superseded_by), b);
+  },
 };

@@ -1132,6 +1132,38 @@ function create(db) {
         [id]
       );
     },
+
+    // --- for src/ingest/githubReconcile.js (chunk F)
+
+    /**
+     * Open or dispatched asks that may name a PR: from GitHub, or whose text
+     * mentions github.com, a PR or pull request, or "<project> #N". With the
+     * ask's action, time, URL and project.
+     */
+    async withPrRefs() {
+      return db.rows(
+        `select c.id, c.summary, c.detail, c.direction, c.status, c.superseded_by, si.raw->>'action' as action,
+            si.occurred_at as asked_at,
+            case when si.source like 'github%' then coalesce(si.raw->>'webUrl', si.thread_external_id, '') else '' end as url,
+            p.gitlab_path as project_path, p.name as project_name
+       from commitment c
+       join source_item si on si.id = c.source_item_id
+       left join project p on p.id = c.project_id and p.active
+      where c.status in ('open','dispatched')
+        and (si.source like 'github%' or c.summary ~* '(github\\.com/|\\mPRs?\\M|pull request)' or c.detail ~* 'github\\.com/[^/]+/[^/]+/pull/'
+             or (p.name is not null and c.summary ~* ('\\m' || p.name || '\\M\\s+#?\\d')))`
+      );
+    },
+
+    /** Folds an open, unfolded ask into `survivorId`. Resolves whether it did. */
+    async foldOpen(id, survivorId) {
+      const r = await db.query(
+        `update commitment set superseded_by = $2
+        where id = $1 and superseded_by is null and status = 'open'`,
+        [id, survivorId]
+      );
+      return r.rowCount || 0;
+    },
   };
 }
 
