@@ -26,11 +26,12 @@ checkout's git HEAD every 30 s and exits with :data:`EXIT_CODE_UPDATED` when it
 moved, so its supervisor (the ``factory-serve`` task, systemd) starts the new
 code. While it is down, callers fall back to spawning the CLI.
 
-**Push (E3).** :class:`JobStatePusher` keeps the last-seen ``state`` of every
-job (``list_jobs(github=False)``, local and cheap) and POSTs the ones that
-changed to the personal assistant's ``/api/factory/events`` (best effort,
-2 s timeout, never blocking a tick), so Build updates in about a second instead
-of after the PA's next ``job list``.
+**Push (E3).** :class:`JobStatePusher` keeps the last-seen ``state`` and
+``why`` of every job (``list_jobs(github=False)``, local) and POSTs the ones
+that changed to the personal assistant's ``/api/factory/events`` (best effort,
+2 s timeout). :class:`JobStateWatch` runs it in its own thread within ~0.1 s of
+a commit to ``factory.db`` (where the ticks record every story transition), so
+a job's stage reaches Build in well under a second, and never in a tick's way.
 """
 
 from __future__ import annotations
@@ -215,15 +216,23 @@ def _post_json(url: str, body: dict[str, Any], timeout: float) -> int:
         return int(resp.status)
 
 
+_TERMINAL = frozenset({"done", "failed", "cancelled"})
+
+
 class JobStatePusher:
-    """Diff job states and POST the changes. Thread-safe; never raises."""
+    """Diff job states and POST the changes. Thread-safe; never raises.
+
+    A change is a new ``state`` or a new ``why``: Build shows both, and a job
+    moving from one story step to the next stays ``in_progress`` while its
+    ``why`` names the new step.
+    """
 
     def __init__(
         self,
         root: Path,
         url: str,
         *,
-        list_fn: Callable[[Path], list[dict[str, Any]]] | None = None,
+        list_fn: Callable[[Path, frozenset[str]], list[dict[str, Any]]] | None = None,
         post: Callable[[str, dict[str, Any], float], int] = _post_json,
         timeout: float = 2.0,
         log: Callable[[str], None] = lambda msg: None,
@@ -234,27 +243,37 @@ class JobStatePusher:
         self._post = post
         self.timeout = timeout
         self.log = log
-        self._seen: dict[str, str] | None = None
+        self._seen: dict[str, tuple[str, str]] | None = None
         self._lock = threading.Lock()
         self.pushed = 0
 
-    def check(self) -> list[dict[str, Any]]:
+    def check(self, *, full: bool = True) -> list[dict[str, Any]]:
         """Read states, push what changed since the last check. Returns the pushed rows.
 
         The first check only records the baseline (the PA's own ``job list``
         already has it), so a restart does not re-announce every job.
+        ``full=False`` leaves out jobs last seen terminal (most of them, and
+        each costs ~15 ms to read); a full check still reads them, so a job
+        resumed outside serve's API is caught by the next one.
         """
         if not self.url:
             return []
         with self._lock:
+            skip = frozenset() if full or self._seen is None else frozenset(
+                jid for jid, (state, _why) in self._seen.items() if state in _TERMINAL
+            )
             try:
-                jobs = self._list(self.root)
+                jobs = self._list(self.root, skip)
             except Exception as exc:  # noqa: BLE001
                 self.log(f"push: job list failed: {exc!r}")
                 return []
-            now = {str(j.get("job_id")): str(j.get("state")) for j in jobs if j.get("job_id")}
+            listed = {
+                str(j.get("job_id")): (str(j.get("state")), str(j.get("why") or ""))
+                for j in jobs
+                if j.get("job_id")
+            }
             if self._seen is None:
-                self._seen = now
+                self._seen = listed
                 return []
             changed = [
                 {
@@ -265,9 +284,9 @@ class JobStatePusher:
                     or datetime.now(UTC).isoformat(timespec="seconds"),
                 }
                 for j in jobs
-                if j.get("job_id") and self._seen.get(str(j["job_id"])) != str(j.get("state"))
+                if j.get("job_id") and self._seen.get(str(j["job_id"])) != listed[str(j["job_id"])]
             ]
-            self._seen = now
+            self._seen = {**{k: v for k, v in self._seen.items() if k in skip}, **listed}
         for i in range(0, len(changed), 50):
             batch = changed[i : i + 50]
             try:
@@ -280,14 +299,107 @@ class JobStatePusher:
         return changed
 
 
-def _list_jobs_local(root: Path) -> list[dict[str, Any]]:
+def _list_jobs_local(root: Path, skip: frozenset[str] = frozenset()) -> list[dict[str, Any]]:
     from factory.capture import capture
     from factory.jobs.status import list_jobs
 
     with capture():  # anything it prints stays out of other threads' output
-        res = list_jobs(root, github=False)
+        res = list_jobs(root, github=False, skip=skip)
     jobs = res.get("jobs") if isinstance(res, dict) else None
     return list(jobs or [])
+
+
+def _signature(paths: list[Path]) -> tuple[tuple[int, int] | None, ...]:
+    out: list[tuple[int, int] | None] = []
+    for p in paths:
+        try:
+            st = p.stat()
+            out.append((st.st_mtime_ns, st.st_size))
+        except OSError:
+            out.append(None)
+    return tuple(out)
+
+
+class JobStateWatch:
+    """Run :class:`JobStatePusher` as job states change, in its own thread (E3).
+
+    Job states move in tick subprocesses, which commit to ``factory.db``; this
+    thread stats the DB every ``poll_s`` and, once a write has been quiet for
+    ``settle_s`` (a transition is a few commits in a row), checks the jobs
+    that can still move (``full=False``) and pushes what changed. A full
+    check runs every ``full_every_s`` and after :meth:`poke` with ``full``
+    (submit, cancel, resume through the API). Nothing here runs in a tick or
+    in serve's loop, so a slow or absent PA never delays a transition.
+    """
+
+    def __init__(
+        self,
+        pusher: JobStatePusher,
+        paths: list[Path],
+        *,
+        poll_s: float = 0.1,
+        settle_s: float = 0.1,
+        full_every_s: float = 5.0,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
+        self.pusher = pusher
+        self.paths = [Path(p) for p in paths]
+        self.poll_s = poll_s
+        self.settle_s = settle_s
+        self.full_every_s = full_every_s
+        self.clock = clock
+        self._wake = threading.Event()
+        self._stop = threading.Event()
+        self._want_full = False
+        self._thread: threading.Thread | None = None
+
+    def start(self) -> JobStateWatch:
+        self._thread = threading.Thread(target=self._run, name="factory-push", daemon=True)
+        self._thread.start()
+        return self
+
+    def stop(self, timeout: float = 5.0) -> None:
+        self._stop.set()
+        self._wake.set()
+        if self._thread is not None:
+            self._thread.join(timeout)
+
+    def poke(self, *, full: bool = False) -> None:
+        """Check now (from any thread; never blocks)."""
+        if full:
+            self._want_full = True
+        self._wake.set()
+
+    def _run(self) -> None:
+        self.pusher.check()  # baseline, so the first real change is announced
+        sig = _signature(self.paths)
+        last_full = self.clock()
+        while not self._stop.is_set():
+            poked = self._wake.wait(self.poll_s)
+            self._wake.clear()
+            if self._stop.is_set():
+                return
+            written = False
+            now_sig = _signature(self.paths)
+            if now_sig != sig:
+                written = True
+                # Let the transition's commits land, then read once.
+                while not self._stop.wait(self.settle_s):
+                    settled = _signature(self.paths)
+                    if settled == now_sig:
+                        break
+                    now_sig = settled
+                sig = now_sig
+            full = self._want_full or self.clock() - last_full >= self.full_every_s
+            if not (written or poked or full):
+                continue
+            self._want_full = False
+            if full:
+                last_full = self.clock()
+            try:
+                self.pusher.check(full=full)
+            except Exception as exc:  # noqa: BLE001 - check() never raises; belt and braces
+                self.pusher.log(f"push: check failed: {exc!r}")
 
 
 __all__ = [
@@ -296,6 +408,7 @@ __all__ = [
     "EXIT_CODE_UPDATED",
     "GUARD_HEADER",
     "JobStatePusher",
+    "JobStateWatch",
     "allowed",
     "git_head",
     "run_cli",

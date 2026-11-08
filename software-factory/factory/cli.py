@@ -1533,7 +1533,10 @@ def serve_cmd(
         None, "--pa-events-url",
         help="Where job state changes are POSTed (default $FACTORY_PA_EVENTS_URL or the local PA); 'off' to disable.",
     ),
-    push_every: float = typer.Option(5.0, "--push-every", help="Seconds between job-state checks."),
+    push_every: float = typer.Option(
+        5.0, "--push-every",
+        help="Seconds between full job-state checks; a change to factory.db is pushed within ~1 s regardless.",
+    ),
     restart_on_update: bool = typer.Option(
         True, "--restart-on-update/--no-restart-on-update",
         help="Exit 75 when the checkout's HEAD moves, so the supervisor restarts serve on new code.",
@@ -1712,12 +1715,17 @@ def serve_cmd(
         url = pa_events_url if pa_events_url is not None else (
             os.environ.get("FACTORY_PA_EVENTS_URL", _api.DEFAULT_PA_EVENTS_URL)
         )
-        pusher: Any = None
+        watch: Any = None
         if url and url.lower() != "off":
-            pusher = _api.JobStatePusher(_FACTORY_ROOT, url, log=sched.log)
-            pusher.check()  # baseline, so the first real change is announced
-            periodic.append((push_every, lambda: bool(pusher.check()) and False))
-            sched.log(f"pushing job state changes to {url} every {push_every:.0f}s")
+            from factory.jobs.common import state_db_path
+
+            db = state_db_path(_FACTORY_ROOT)
+            watch = _api.JobStateWatch(
+                _api.JobStatePusher(_FACTORY_ROOT, url, log=sched.log),
+                [db, db.with_name(db.name + "-wal")],
+                full_every_s=push_every,
+            ).start()
+            sched.log(f"pushing job state changes to {url} as factory.db changes (full check every {push_every:.0f}s)")
 
         def _after_call(argv: list[str], res: dict[str, Any]) -> None:
             if res.get("code") != 0 or argv[:1] != ["job"] or len(argv) < 2:
@@ -1733,11 +1741,9 @@ def serve_cmd(
                     app_name = None
                 if app_name and app_name in chosen:
                     sched.start_triage(app_name)
-            # A submit/cancel/resume: announce it now, not in <= push_every.
-            if pusher is not None and argv[1] in ("submit", "cancel", "resume"):
-                import threading as _threading
-
-                _threading.Thread(target=pusher.check, daemon=True).start()
+            # A submit/cancel/resume: announce it now, terminal jobs included.
+            if watch is not None and argv[1] in ("submit", "cancel", "resume"):
+                watch.poke(full=True)
 
         # 2.1: the JOBS-API verbs over localhost HTTP.
         if api_port:

@@ -249,7 +249,7 @@ def test_pusher_sends_only_changes_after_a_baseline(tmp_path: Path) -> None:
     states = {"a:001": "queued", "a:r0001": "in_progress"}
     sent: list[dict[str, Any]] = []
 
-    def list_fn(_root: Path) -> list[dict[str, Any]]:
+    def list_fn(_root: Path, _skip: frozenset[str] = frozenset()) -> list[dict[str, Any]]:
         return [{"job_id": k, "state": v, "why": f"w-{v}"} for k, v in states.items()]
 
     p = api.JobStatePusher(tmp_path, "http://pa/x", list_fn=list_fn,
@@ -271,14 +271,14 @@ def test_pusher_never_raises_when_the_pa_is_down(tmp_path: Path) -> None:
         raise urllib.error.URLError("refused")
 
     p = api.JobStatePusher(tmp_path, "http://127.0.0.1:9/x",
-                           list_fn=lambda r: [{"job_id": "a:1", "state": state["s"]}], post=down)
+                           list_fn=lambda r, s: [{"job_id": "a:1", "state": state["s"]}], post=down)
     p.check()
     state["s"] = "done"
     assert len(p.check()) == 1 and p.pushed == 0
 
 
 def test_pusher_off_without_url(tmp_path: Path) -> None:
-    p = api.JobStatePusher(tmp_path, "", list_fn=lambda r: (_ for _ in ()).throw(AssertionError()))
+    p = api.JobStatePusher(tmp_path, "", list_fn=lambda r, s: (_ for _ in ()).throw(AssertionError()))
     assert p.check() == []
 
 
@@ -286,7 +286,7 @@ def test_pusher_payload_is_what_the_pa_accepts(tmp_path: Path) -> None:
     """The PA's pushedPatches(): {jobs: [...]} with job_id + JOBS-API state; ≤ 50 per post."""
     rows = {f"a:{i:03d}": "queued" for i in range(120)}
     bodies: list[dict[str, Any]] = []
-    p = api.JobStatePusher(tmp_path, "u", list_fn=lambda r: [{"job_id": k, "state": v} for k, v in rows.items()],
+    p = api.JobStatePusher(tmp_path, "u", list_fn=lambda r, s: [{"job_id": k, "state": v} for k, v in rows.items()],
                            post=lambda url, body, t: bodies.append(body) or 200)
     p.check()
     for k in rows:

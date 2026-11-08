@@ -137,9 +137,14 @@ process. Use `factory.oscompat.pid_alive`.
 - **Restart on update**: every 30 s serve compares the checkout's git HEAD with the
   one it started on and exits 75 when it moved (the `factory-serve` task restarts
   it within a minute; running ticks are left alone). `--no-restart-on-update`.
-- **Push (E3)**: every 5 s (and right after an API submit/cancel/resume) serve
-  POSTs job state changes to the personal assistant's
-  `/api/factory/events` (`--pa-events-url`, `$FACTORY_PA_EVENTS_URL`, `off`).
+- **Push (E3)**: serve POSTs job state changes (a new `state` or `why`) to the
+  personal assistant's `/api/factory/events` (`--pa-events-url`,
+  `$FACTORY_PA_EVENTS_URL`, `off`). A thread stats `factory.db` every 0.1 s, where
+  the ticks commit every story transition, and pushes 0.2-0.4 s after one (measured,
+  `tests/test_serve_push_latency.py`). Jobs already done, failed or cancelled are
+  read only by the full check, every `--push-every` seconds (5) and right after an
+  API submit, cancel or resume. A PA that is down costs a log line; ticks never wait
+  on it.
 
 ## git exits 0xC0000142
 

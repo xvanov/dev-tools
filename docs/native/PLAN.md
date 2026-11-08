@@ -257,13 +257,19 @@ run mid-step; a job continued on an existing branch (`--branch`).
   renderer `claude_session` uses (`factory/claude_session/pretty.py`), started automatically
   when the step starts, so API and Claude steps look the same in Run. Ends when the step ends;
   stays reviewable afterwards (scrollback/transcript). (d735579, 30e782f)
-- [ ] **E3 Live status in all three views.** Card state, job stage and session state update
+- [x] **E3 Live status in all three views.** Card state, job stage and session state update
   within 1 s of a change (SSE from 0.4 / 1.4), including "waiting for your approval" with the
   approve action reachable from Plan, Build and voice.
   Landed in e36357f except one hop: card state (~0.5 s) and Run's session state (≤ 1 s, idle-hub
   tick) meet it, and Approve is on Plan, Build and voice; job stage in Build is 5-6 s for a local
   factory (each `uv run factory` costs ~5 s of Python start-up) until the native factory (2.3)
   calls the PA's `POST /api/factory/events` on each job transition (measured 26 ms to Build).
+  Last hop: `factory serve` pushes from its own thread once a tick commits a transition to
+  factory.db (statted every 0.1 s; a new `state` or `why` is a change; terminal jobs are skipped
+  between 5 s full checks). Measured in `tests/test_serve_push_latency.py` (real story write, real
+  `list_jobs`, fake PA over HTTP): 182-404 ms from the write to the PA over 9 transitions, so job
+  stage reaches Build in about 0.2-0.45 s. A PA that is down costs a log line, never a transition.
+  Measured locally. The live stacks pick it up when serve restarts on the new HEAD.
 - [x] **E4 `e2e` command.** One command runs the golden path headless against the live stack,
   creates the dummy card, waits for the PR, asserts every link in E1 resolves in every view's
   API, asserts the API-runtime step produced a watchable session (E2), prints a timing per
@@ -488,7 +494,7 @@ run mid-step; a job continued on an existing branch (`--branch`).
   new code (exit 75; `--supervise` on Windows, since Task Scheduler does not restart a non-zero
   exit); a tick that moved a story re-wakes its app, so a chain advances step to step at once
   (capped at 30 consecutive; the 300 s tick is the backstop). E3's push to the PA
-  (`/api/factory/events`, every 5 s and after API submit/cancel/resume) rides in serve. Serve
+  (`/api/factory/events`, < 0.5 s after a transition is committed to factory.db) rides in serve. Serve
   ticks only apps with `serve_tick: true` (166964e); `factory on/off` manage it. Linux runs
   `factory-serve.service` instead of the tick timers (personal stack, 2026-11-08). Measured on the
   work stack, the same docs job (dev-tools, claude_session, draft_pr) from submit to draft PR

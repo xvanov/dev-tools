@@ -36,6 +36,7 @@ interpretations is meant to ship.
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Collection
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -842,12 +843,16 @@ def list_jobs(
     active: bool = False,
     app: str | None = None,
     github: bool = True,
+    skip: Collection[str] = (),
 ) -> dict[str, Any]:
+    """Every job's status. ``skip``: job ids left out unread (serve's push skips terminal ones)."""
     ctx = _ctx(root, github)
     jobs: list[dict[str, Any]] = []
     try:
         for ref in iter_jobs(root, app=app):
             if source and str(ref.meta.get("source") or "") != source:
+                continue
+            if ref.job_id in skip:
                 continue
             status = _status_for(ctx, ref)
             if active and status["terminal"]:
@@ -857,6 +862,8 @@ def list_jobs(
 
         for task in iter_tasks(root, app=app):
             if source and str(task.meta.get("source") or "") != source:
+                continue
+            if task.job_id in skip:
                 continue
             status = _task_status_for(ctx, task)
             if active and status["terminal"]:
