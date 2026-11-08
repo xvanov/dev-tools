@@ -1158,6 +1158,9 @@ not in the Map is not done, and a new one gets added there first.
     unresolved threads. `--on` hands the workflow to `goldenPath.remote` with its name, and
     `pa e2e <workflow>` writes `--report`. Unit-tested with fakes. The live dry run against PR #63
     (closed) failed the open and threads checks, as it should. No real run. (744bc37)
+    Re-review (b674e67): `--on` runs the dry and the real run on the personal machine. The dry
+    run's four PR checks pass on #66. The real run drove the job to the end, then died at the
+    screenshots without a summary (8.4.40).
   - [ ] **8.4.26 review-fix: the tool call takes 8.3 s without the model (target 1 s).**
     `factory_continue` took 14166 ms: gather 1072, compose_model 5887, **submit 7056**. A
     continuation's submit asks GitHub for the PR and its review threads (`gh`, GraphQL) inside the
@@ -1172,6 +1175,8 @@ not in the Map is not done, and a new one gets added there first.
     round trip is about 1 s from here, so submit alone sits at the target. Gather (1.1 s) is
     untouched. Meeting 1 s needs the PR read moved after submit (into the job) or gather overlapped
     with it. (0e6b5a0)
+    Re-review (b674e67), on the personal machine: submit 3483 ms (was 7056), and the tool call
+    4540 ms without compose's 5604 ms model time. Still open.
   - [x] **8.4.27 review-fix: the composed brief contradicts the continuation.** Its stop condition
     reads "Push and open a DRAFT pull request", while the factory's appended section says it
     "updates that PR (it opens no new one)". Its facts say the request "gives no detail about what
@@ -1186,6 +1191,8 @@ not in the Map is not done, and a new one gets added there first.
     request, never merge it". The deterministic fallback and the flow file match. Compose does not
     fetch the threads itself: that would add a GitHub round trip to the call 8.4.26 sped up.
     (3883b97)
+    Re-review (b674e67): verified live. `dev-tools:007`'s brief says "Continues PR #66", and its
+    stop condition is to commit onto the PR's branch, open no new PR and never merge.
   - [x] **8.4.28 review-fix: Build hides which PR a continuation works on.** `/api/factory` gives
     `base: null` and `prs: null` for `sacrifice:131`, while `job status` and `factory_job` have
     `base {branch, pr: 418}`. A job no ticker serves is grouped under running. Show the continued
@@ -1193,6 +1200,8 @@ not in the Map is not done, and a new one gets added there first.
     Done. jobView carries `base`, and the card shows "continues PR #n" (or "continues <branch>"),
     with the branch and its base in the title (7f7baa9). The job no ticker serves is under Needs
     you as "waiting: app not ticked" (8.4.24, 5f19b68).
+    Re-review (b674e67): verified live. `/api/factory` gives `dev-tools:007` `base {pr: 66}` and
+    `ticked: true`.
   - [ ] **8.4.29 review-fix: sacrifice's `main` is red today.** On the PR's base, pytest fails 3 of
     1597 in `tests/test_chat_criteria_coercion.py` (expects `2026-08-15T18:00:00-04:00`, gets
     today's date). `main`'s head was green on 15 August. No sacrifice PR can pass `ci`, and a CI-fix
@@ -1305,6 +1314,37 @@ not in the Map is not done, and a new one gets added there first.
     meetings. Jarvis says "One moment." and Claude answers. So the meeting-naming rules from
     8.4.2 never run by voice for tomorrow. Add router-eval cases for tomorrow and other named
     days, and re-fit if needed.
+  - [ ] **8.4.40 review-fix: the e2e real run dies silently at the screenshots.** On the personal
+    machine, `screens.capture` for Build (`/factory`) never settles. When the 60 s kill timer ends
+    the browser, nothing is left on the event loop, and Node exits 0 with the promise pending. So
+    `pa e2e review-fix` wrote its transcripts and then stopped: no `summary.json`, no `--report`
+    file, no cleanup (six sessions left alive). The `--on` side polls for the whole timeout (the
+    timeouts' sum plus 15 min). Reproduced alone: `capture('/tmp/x', [{name: 'build', …}])`
+    exited 0 after 63 s, unsettled. Make `shootCdp` settle on the child's exit and on its own
+    deadline, and give the runner a top-level guard that writes the summary on any exit
+    ([acceptance/review-fix.md](acceptance/review-fix.md), re-review).
+  - [ ] **8.4.41 review-fix: a `claude_session` job is not free.** `dev-tools:007` cost $0.0271
+    metered. pm ($0.0016) and sm ($0.0020) ran on azure/DeepSeek-V4-Flash, and tech_writer
+    ($0.0236) on azure/Kimi-K2.7-Code. Only dev ran on the subscription ($0, $0.0131
+    API-equivalent). That is what JOBS-API v1.2 specifies (only the dev step is Claude Code). But
+    the Map's review-fix says "Billed to the subscription: cost_usd 0" with a $0 ceiling, so the
+    cost criterion cannot pass. Run a `claude_session` solo job's other steps on the subscription
+    too (or skip them: tech_writer's spec landed nowhere in the PR), or change the Map's cost.
+  - [ ] **8.4.42 review-fix: the "no new PR" check counts anyone's PR.** `reviewFixChecks`
+    compares the repo's newest PR number before and after. During the run, the work stack's
+    factory opened #69 in xvanov/dev-tools (22:45:13Z, a story-65 branch), so the check would have
+    failed although this job's only PR is #66. Check the job's own PRs (`pr_urls`, its stories'
+    PRs) or PRs from branches the job pushed.
+  - [ ] **8.4.43 review-fix: the dry run's claude check fails over `--on`.** `claudeAuth` runs
+    bare `claude auth status` through the factory machine's termhub exec, whose PATH lacks
+    `~/.local/bin`, so it fails with `spawn claude ENOENT`. claude is installed there and logged in
+    (`claude.ai`), and factory serve finds it (its unit has `~/.local/bin` on PATH; the factory's
+    own check also looks there). Resolve claude the way the factory does, or ask the factory's
+    runtime check.
+  - [ ] **8.4.44 review-fix: the job's end is not pushed.** At the job's end serve pushed
+    `dev-tools:007=in_progress` (22:45:23.099). PA's run row ended, and "Factory run #8: done"
+    was raised, only at its next poll (22:45:50.209): 27.3 s after the job's `done`, against
+    200 ms for the worker hop. Push the terminal state.
 - [ ] **8.5 Architecture map review.** A full pass over `architecture.json` (the `/architecture`
   page) against the finished system: every component, process, port, table, tool, workflow and
   storage location as it now runs on both stacks (jarvisd, ptyd, native factory, SQLite,
