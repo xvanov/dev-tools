@@ -11,7 +11,8 @@ Teardown is by PROCESS GROUP, never ``pkill -f``: a boot command like
 uvicorn; uvicorn with a reloader forks a worker), and killing only the direct
 child leaves the grandchild running and the port held. ``start_new_session``
 makes the child its own process-group leader, so ``os.killpg`` reaches the
-whole tree with one signal — SIGTERM first, a grace period, then SIGKILL. A
+whole tree with one signal — SIGTERM first, a grace period, then SIGKILL (on
+Windows ``taskkill /T``, then ``/T /F``; see :mod:`factory.oscompat`). A
 module-level registry plus an ``atexit`` reaper is the belt-and-braces: if the
 gate process itself is killed before a ``finally`` runs, nothing here can
 clean up, but the registry at least documents what was live so the next
@@ -41,7 +42,6 @@ import logging
 import os
 import secrets
 import shutil
-import signal
 import socket
 import subprocess
 import tempfile
@@ -52,6 +52,14 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
+
+from factory.oscompat import (
+    detached_popen_kwargs,
+    essential_env,
+    group_alive,
+    kill_tree,
+    process_group_of,
+)
 
 if TYPE_CHECKING:
     from factory.app_config import AcceptanceBootConfig
@@ -69,10 +77,7 @@ def _atexit_reap() -> None:
     with _LOCK:
         items = list(_LIVE_PGIDS.items())
     for pgid, _proc in items:
-        try:
-            os.killpg(pgid, signal.SIGKILL)
-        except OSError:
-            pass
+        kill_tree(pgid, force=True)
 
 
 atexit.register(_atexit_reap)
@@ -169,7 +174,7 @@ def _ensure_run_dir_subdirs(env: dict[str, str], run_dir: str) -> None:
 def _build_env(
     cfg: AcceptanceBootConfig, *, port: int, base_url: str, run_id: str, run_dir: str
 ) -> dict[str, str]:
-    env: dict[str, str] = {}
+    env: dict[str, str] = essential_env()
     for name in cfg.env_passthrough:
         val = os.environ.get(name)
         if val is not None:
@@ -258,10 +263,7 @@ def _poll_health(
 
 def _teardown(pgid: int, proc: subprocess.Popen[bytes] | None, grace: float) -> None:
     """SIGTERM the whole process group, wait ``grace``, then SIGKILL. Never raises."""
-    try:
-        os.killpg(pgid, signal.SIGTERM)
-    except (ProcessLookupError, OSError):
-        pass
+    kill_tree(pgid)
     exited = False
     if proc is not None:
         try:
@@ -272,10 +274,7 @@ def _teardown(pgid: int, proc: subprocess.Popen[bytes] | None, grace: float) -> 
         except Exception:  # noqa: BLE001 - teardown must never raise
             exited = True
     if not exited:
-        try:
-            os.killpg(pgid, signal.SIGKILL)
-        except (ProcessLookupError, OSError):
-            pass
+        kill_tree(pgid, force=True)
         if proc is not None:
             try:
                 proc.wait(timeout=5)
@@ -310,11 +309,7 @@ def is_alive(app: BootedApp) -> bool:
         proc = _LIVE_PGIDS.get(app.pgid)
     if proc is not None:
         return proc.poll() is None
-    try:
-        os.killpg(app.pgid, 0)
-        return True
-    except OSError:
-        return False
+    return group_alive(app.pgid)
 
 
 def probe_health(app: BootedApp, cfg: AcceptanceBootConfig, *, timeout: float = 3.0, retries: int = 3) -> bool:
@@ -467,7 +462,7 @@ def boot_app(
                 proc = subprocess.Popen(  # noqa: S602 - operator-owned boot command
                     cmd, shell=True, cwd=str(run_cwd), env=env,
                     stdout=log_f, stderr=subprocess.STDOUT,
-                    start_new_session=True,
+                    **detached_popen_kwargs(),
                 )
             except OSError as exc:
                 log_f.close()
@@ -475,11 +470,7 @@ def boot_app(
                 continue
             finally:
                 log_f.close()
-            pgid = proc.pid
-            try:
-                pgid = os.getpgid(proc.pid)
-            except OSError:
-                pass
+            pgid = process_group_of(proc.pid)
             with _LOCK:
                 _LIVE_PGIDS[pgid] = proc
             active_proc, active_pgid = proc, pgid

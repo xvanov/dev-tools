@@ -209,14 +209,11 @@ def append_chained(
     it must do nothing but append.
 
     Returns ``True`` when the record was written chained, ``False`` when the
-    chain could not be used (no ``fcntl``, unwritable head file) — in which case
+    chain could not be used (no file lock, unwritable head file) — in which case
     NOTHING has been written and the caller must fall back to an unchained
     append. Losing an event is never acceptable; losing its link is.
     """
-    try:
-        import fcntl
-    except ImportError:  # pragma: no cover - POSIX-only factory
-        return False
+    from factory.oscompat import lock_file, unlock_file
 
     try:
         events_dir.mkdir(parents=True, exist_ok=True)
@@ -230,7 +227,7 @@ def append_chained(
         # with. In append mode all writes land at EOF, so the truncate() inside
         # the lock below is what makes the rewrite work.
         with open(heads_path, "a+", encoding="utf-8") as handle:
-            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+            lock_file(handle)
             try:
                 # Resolve the chain id INSIDE the lock. Outside it, two writers
                 # racing on a fresh events dir could each mint a different id:
@@ -283,7 +280,7 @@ def append_chained(
                 handle.flush()
                 return True
             finally:
-                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+                unlock_file(handle)
     except Exception as exc:  # noqa: BLE001 - telemetry path; degrade to unchained
         print(
             f"[audit_chain] could not chain stream={stream!r} ({exc}); writing unchained",

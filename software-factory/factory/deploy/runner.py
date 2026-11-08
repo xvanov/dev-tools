@@ -81,7 +81,9 @@ def _build_env(env_var_passthrough: list[str] | None) -> dict[str, str]:
     ``npx``, ``curl``, etc.) resolve. Everything else is opt-in via
     ``env_var_passthrough``.
     """
-    env: dict[str, str] = {}
+    from factory.oscompat import essential_env
+
+    env: dict[str, str] = essential_env()
     if "PATH" in os.environ:
         env["PATH"] = os.environ["PATH"]
     for key in env_var_passthrough or []:

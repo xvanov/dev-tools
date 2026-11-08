@@ -637,7 +637,12 @@ def _uv_shim_dir(tree_dir: Path, uv_path: Path) -> Path | None:
     try:
         shim.mkdir(parents=True, exist_ok=True)
         if not link.exists():
-            link.symlink_to(uv_path)
+            try:
+                link.symlink_to(uv_path)
+            except OSError:
+                # Windows without Developer Mode cannot symlink; uv is one
+                # self-contained executable, so a copy behaves the same.
+                shutil.copy2(uv_path, link)
     except OSError:
         return None
     return shim

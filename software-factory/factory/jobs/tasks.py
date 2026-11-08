@@ -57,6 +57,14 @@ import yaml
 
 from factory.jobs.common import JobError, format_job_id, parse_job_id
 from factory.jobs.kinds import KIND_REPORT, RUNTIME_CLAUDE
+from factory.oscompat import (
+    IS_WINDOWS,
+    detached_popen_kwargs,
+    kill_tree,
+    lock_file,
+    unlock_file,
+)
+from factory.oscompat import pid_alive as _os_pid_alive
 
 SCRATCH_APP = "scratch"
 TASK_ID_RE = re.compile(r"^r\d{4,}$")
@@ -197,17 +205,12 @@ def next_task_id(root: Path) -> str:
 def _lock(root: Path, name: str) -> Iterator[None]:
     path = tasks_root(root) / f".{name}.lock"
     path.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        import fcntl
-    except ImportError:  # pragma: no cover - non-POSIX (tests on Windows)
-        yield
-        return
     with path.open("a+") as handle:
-        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        lock_file(handle)
         try:
             yield
         finally:
-            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+            unlock_file(handle)
 
 
 def create_task(
@@ -588,15 +591,7 @@ def run_task(root: Path, job_id: str) -> dict[str, Any]:
 
 
 def _pid_alive(pid: int) -> bool:
-    if os.name != "posix":
-        return True
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
-    return True
+    return _os_pid_alive(pid)
 
 
 def _spawn_worker(root: Path, ref: TaskRef) -> int:
@@ -612,7 +607,7 @@ def _spawn_worker(root: Path, ref: TaskRef) -> int:
         stderr=subprocess.STDOUT,
         stdin=subprocess.DEVNULL,
         env=env,
-        start_new_session=True,
+        **detached_popen_kwargs(),
     )
     log.close()
     return proc.pid
@@ -815,14 +810,12 @@ def cancel_task(root: Path, job_id: str, *, by: str = "factory job cancel") -> d
 
 
 def _kill_worker(pid: Any) -> None:
-    if not pid or os.name != "posix":
+    if not pid:
         return
-    import signal
-
-    try:
-        os.killpg(int(pid), signal.SIGTERM)  # type: ignore[attr-defined]
-    except (OSError, ValueError):
-        pass
+    # The worker leads its own process group (POSIX) / tree (Windows). A
+    # console tree ignores taskkill's polite close, so Windows forces it (the
+    # same effect SIGTERM has on a worker without a handler).
+    kill_tree(pid, force=IS_WINDOWS)
 
 
 def _kill_claude_run(ref: TaskRef) -> None:

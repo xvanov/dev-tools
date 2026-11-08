@@ -3,7 +3,7 @@
 A ``live_handlers`` row is inserted when a runner enters and deleted when
 it exits, so the TUI can show what's *currently* executing. Stale rows
 (from crashed processes) are reaped on every read by checking the
-recorded pid against ``os.kill(pid, 0)``.
+recorded pid with :func:`factory.oscompat.pid_alive`.
 """
 
 from __future__ import annotations
@@ -17,6 +17,7 @@ from pathlib import Path
 from sqlmodel import Session, create_engine, select
 
 from factory.observability.schema import LiveHandler, migrate
+from factory.oscompat import pid_alive
 
 
 def _engine(db_path: Path):
@@ -65,17 +66,8 @@ def end_heartbeat(db_path: Path, hb_id: int) -> None:
 
 
 def _pid_alive(pid: int) -> bool:
-    if pid <= 0:
-        return False
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False  # pid does not exist
-    except PermissionError:
-        return True  # exists, owned by a different uid — still alive
-    except OSError:
-        return False
-    return True
+    # Never ``os.kill(pid, 0)`` directly: on Windows that TERMINATES the pid.
+    return pid_alive(pid)
 
 
 def reap_stale_heartbeats(db_path: Path) -> int:

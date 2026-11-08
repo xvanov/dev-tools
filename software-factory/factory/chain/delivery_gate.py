@@ -545,11 +545,13 @@ def story_lock(root: Path, story_id: int, *, timeout: float | None = None) -> It
     of them always sees the other's result.
 
     Yields ``True`` when held, ``False`` on timeout (the caller must then NOT
-    act — fail safe). ``flock`` on a per-story file under ``state/locks/``;
+    act — fail safe). An exclusive file lock (``flock`` / ``LockFileEx``,
+    :mod:`factory.oscompat`) on a per-story file under ``state/locks/``;
     released when the block exits (or the process dies).
     """
-    import fcntl
     import time
+
+    from factory.oscompat import lock_file, unlock_file
 
     path = _story_lock_path(root, story_id)
     try:
@@ -565,7 +567,7 @@ def story_lock(root: Path, story_id: int, *, timeout: float | None = None) -> It
         deadline = time.monotonic() + max(0.0, wait)
         while True:
             try:
-                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                lock_file(handle, blocking=False)
                 held = True
                 break
             except BlockingIOError:
@@ -575,8 +577,7 @@ def story_lock(root: Path, story_id: int, *, timeout: float | None = None) -> It
         yield held
     finally:
         if held:
-            with contextlib.suppress(OSError):
-                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+            unlock_file(handle)
         handle.close()
 
 
