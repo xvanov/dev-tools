@@ -26,6 +26,15 @@
 //   POST /api/auth/logout
 //   POST /api/auth/stepup/options     {approvalId}; needs a session
 //   POST /api/auth/stepup/verify      {ceremonyId, approvalId, response}; records the grant
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+type Row = import('../repo/types.ts').Row;
+type Req = import('http').IncomingMessage;
+type Res = import('http').ServerResponse;
+type Ctx = import('./types.ts').Ctx;
+type Repos = import('./types.ts').Repos;
+type Module = import('./types.ts').Module;
 
 const fs = require('fs');
 const path = require('path');
@@ -38,9 +47,9 @@ const PUBLIC = new Set(['/login', '/login.js', '/theme.css', '/nav.js', '/health
 const FAIL_WINDOW_MS = 60_000;
 const FAIL_MAX = 10;
 
-let ceremonies = null; // one per process: challenges live in memory
-let injected = null; // tests: a stand-in repository set
-const fails = [];
+let ceremonies: Module | null = null; // one per process: challenges live in memory
+let injected: Repos | null | undefined = null; // tests: a stand-in repository set
+const fails: number[] = [];
 
 function repos() {
   return injected || require('../repo');
@@ -51,31 +60,31 @@ function ceremony() {
 }
 
 /** Test hook: a fresh ceremony store (and an injected repo). */
-function reset(deps) {
+function reset(deps: { repos?: Repos } | null | undefined) {
   injected = deps ? deps.repos : null;
   ceremonies = deps ? createCeremonies(deps) : null;
   fails.length = 0;
 }
 
-const isSecure = (req) => /^https:/i.test(String(req.headers.origin || '')) || String(req.headers['x-forwarded-proto'] || '').toLowerCase() === 'https';
+const isSecure = (req: Req) => /^https:/i.test(String(req.headers.origin || '')) || String(req.headers['x-forwarded-proto'] || '').toLowerCase() === 'https';
 
-function tooMany(now = Date.now()) {
-  while (fails.length && now - fails[0] > FAIL_WINDOW_MS) fails.shift();
+function tooMany(now: number = Date.now()) {
+  while (fails.length && now - (fails[0] as number) > FAIL_WINDOW_MS) fails.shift();
   return fails.length >= FAIL_MAX;
 }
 
 /** Runs the check, and counts a failure against the sign-in rate limit. */
-async function guarded(fn) {
+async function guarded<T>(fn: () => T): Promise<Awaited<T>> {
   if (tooMany()) throw new AuthError('too many failed attempts; wait a minute', 429);
   try {
     return await fn();
   } catch (err) {
-    if (err instanceof AuthError && err.status !== 409) fails.push(Date.now());
+    if (err instanceof AuthError && (err as { status: number; message: string }).status !== 409) fails.push(Date.now());
     throw err;
   }
 }
 
-async function sessionOf(req, res) {
+async function sessionOf(req: Req, res: Res) {
   const s = await session.validate(repos(), req, { secure: isSecure(req) });
   if (s && s.setCookie) res.setHeader('Set-Cookie', s.setCookie);
   return s;
@@ -85,7 +94,7 @@ async function sessionOf(req, res) {
  * The gate for every request when passkeys are on. Resolves true when it
  * answered the request (refused it), false to let it through.
  */
-async function gate(req, res, url, { send }) {
+async function gate(req: Req, res: Res, url: URL, { send }: { send: Ctx['send'] }) {
   if (!enabled()) return false;
   if (url.pathname.startsWith('/api/auth/') || PUBLIC.has(url.pathname)) return false;
   let count;
@@ -107,14 +116,14 @@ async function gate(req, res, url, { send }) {
   return true;
 }
 
-function bad(res, send, err) {
-  if (err instanceof AuthError) return send(res, err.status, { error: err.message });
-  if (err && err.message === 'bad json') return send(res, 400, { error: 'bad json' });
+function bad(res: Res, send: Ctx['send'], err: unknown) {
+  if (err instanceof AuthError) return send(res, (err as { status: number; message: string }).status, { error: (err as { status: number; message: string }).message });
+  if (err && (err as Error).message === 'bad json') return send(res, 400, { error: 'bad json' });
   throw err;
 }
 
 /** The /api/auth/* routes and the sign-in page. Resolves true when it took the request. */
-async function route(req, res, url, { send, readJson }) {
+async function route(req: Req, res: Res, url: URL, { send, readJson }: { send: Ctx['send']; readJson: Ctx['readJson'] }) {
   const p = url.pathname;
   if (p !== '/login' && p !== '/login.js' && !p.startsWith('/api/auth/')) return false;
   if (req.method === 'GET' && p === '/login.js') {

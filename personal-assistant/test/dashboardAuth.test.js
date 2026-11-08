@@ -15,7 +15,7 @@ process.env.PA_PASSKEY_ORIGINS = wa.ORIGIN;
 process.env.PA_PASSKEY_RP_ID = wa.RP_ID;
 
 const server = require('../src/dashboard/server');
-const auth = require('../src/dashboard/auth');
+const auth = require('../src/dashboard/auth.ts');
 const { fakeRepos } = require('./_fakePasskeyRepos');
 
 let repos;

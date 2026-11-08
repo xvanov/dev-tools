@@ -378,7 +378,7 @@ const isV1 = (argv) => argv.includes('--kind') || argv.includes('--runtime');
 
   // The Factory page (dashboard/factory.js): its pure checks, then its routes.
   {
-    const P = require('../src/dashboard/factory');
+    const P = require('../src/dashboard/factory.ts');
     assert.deepStrictEqual(P.jobAction('/api/factory/jobs/widget%3A015/cancel'), { jobId: 'widget:015', verb: 'cancel' });
     assert.deepStrictEqual(P.jobAction('/api/factory/jobs/widget:015/open'), { jobId: 'widget:015', verb: 'open' });
     assert.strictEqual(P.jobAction('/api/factory/jobs/widget%3A015%3Bls/cancel'), null, 'a job id is checked before anything');

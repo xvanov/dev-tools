@@ -17,6 +17,13 @@
 // Same guards as every dashboard write: loopback, X-PA on every POST; a new
 // job that would merge or push to main with no human step also needs the
 // page's token and the level confirmed on the page (server.js).
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+type Row = import('../repo/types.ts').Row;
+type Req = import('http').IncomingMessage;
+type Res = import('http').ServerResponse;
+type Ctx = import('./types.ts').Ctx;
 
 const fs = require('fs');
 const path = require('path');
@@ -26,25 +33,25 @@ const F = require('../dispatch/factoryCore');
 const PAGE = path.join(__dirname, 'factory.html');
 const CLIENT = path.join(__dirname, 'factory.client.js');
 
-const KIND_LABEL = { code: 'code — change a repo', research: 'research — answer a question, write a report', report: 'report — write a document' };
-const RUNTIME_LABEL = { api: 'API models (metered)', claude_session: 'Claude session (subscription)' };
+const KIND_LABEL: Record<string, string> = { code: 'code — change a repo', research: 'research — answer a question, write a report', report: 'report — write a document' };
+const RUNTIME_LABEL: Record<string, string> = { api: 'API models (metered)', claude_session: 'Claude session (subscription)' };
 
 /** The kind and runtime pickers, for the card's Do and the New job form. */
 function pickers() {
   return {
-    kinds: F.KINDS.map((k) => ({ value: k, label: KIND_LABEL[k] })),
-    runtimes: F.RUNTIMES.map((r) => ({ value: r, label: RUNTIME_LABEL[r] })),
+    kinds: F.KINDS.map((k: string) => ({ value: k, label: KIND_LABEL[k] })),
+    runtimes: F.RUNTIMES.map((r: string) => ({ value: r, label: RUNTIME_LABEL[r] })),
     defaultRuntime: F.runtime(config.factory.runtime),
   };
 }
 
 /** Pure. `/api/factory/jobs/<id>/<verb>` → {jobId, verb}, or null. */
-function jobAction(pathname) {
-  const m = /^\/api\/factory\/jobs\/([^/]+)\/(cancel|approve|open)$/.exec(pathname);
+function jobAction(pathname: unknown) {
+  const m = /^\/api\/factory\/jobs\/([^/]+)\/(cancel|approve|open)$/.exec(pathname as string);
   if (!m) return null;
   let id;
   try {
-    id = decodeURIComponent(m[1]);
+    id = decodeURIComponent(m[1] ?? '');
   } catch {
     return null;
   }
@@ -58,9 +65,9 @@ const SLUG = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
  * 400. Code needs a repo (owner/name or a known project's path); research and
  * report need none and deliver `none`.
  */
-function newJob(body) {
-  const bad = (msg) => Object.assign(new Error(msg), { status: 400 });
-  const str = (v, n) => (typeof v === 'string' ? v.trim().slice(0, n) : '');
+function newJob(body: Row) {
+  const bad = (msg: string) => Object.assign(new Error(msg), { status: 400 });
+  const str = (v: unknown, n: number) => (typeof v === 'string' ? v.trim().slice(0, n) : '');
   const title = str(body?.title, 200);
   const ask = str(body?.ask, 20_000);
   if (!title) throw bad('a job needs a title');
@@ -70,7 +77,7 @@ function newJob(body) {
     kind = F.jobKind(body?.kind || 'code');
     runtime = F.runtime(body?.runtime || config.factory.runtime);
   } catch (err) {
-    throw bad(err.message);
+    throw bad((err as Error).message);
   }
   const repo = str(body?.repo, 300) || null;
   if (repo && /[\r\n]/.test(repo)) throw bad('one repo');
@@ -98,10 +105,10 @@ function newJob(body) {
   };
 }
 
-function termhubUrl(r) {
+function termhubUrl(r: Row) {
   if (!r.termhub_session_id) return null;
   try {
-    return `${require('../dispatch/termhub').forMachine(r.machine).base}/#session=${encodeURIComponent(r.termhub_session_id)}`;
+    return `${require('../dispatch/termhub').forMachine(r.machine).base}/#session=${encodeURIComponent(r.termhub_session_id as string)}`;
   } catch {
     return null;
   }
@@ -112,12 +119,12 @@ async function boardData() {
   const factory = require('../dispatch/factory');
   if (!factory.enabled()) return { enabled: false };
   const snap = await factory.snapshot();
-  const ids = snap.jobs.map((j) => j.job_id).filter((id) => F.JOB_ID.test(String(id || '')));
+  const ids = snap.jobs.map((j: Row) => j.job_id).filter((id: unknown) => F.JOB_ID.test(String(id || '')));
   const runs = ids.length
     ? await require('../repo').runs.latestRunPerJob(ids).catch(() => [])
     : [];
   // Plan E1: the run that submitted a job, and its card, so Build links back to Plan.
-  const paRuns = new Map(runs.map((r) => [r.factory_job_id, { id: Number(r.id), url: termhubUrl(r), card: r.commitment_id }]));
+  const paRuns = new Map(runs.map((r: Row) => [r.factory_job_id, { id: Number(r.id), url: termhubUrl(r), card: r.commitment_id }]));
   const spend = await require('../budget').status().catch(() => null);
   return {
     enabled: true,
@@ -129,15 +136,15 @@ async function boardData() {
     ...F.board(snap.jobs, { paRuns, paSpendToday: spend ? spend.today : null }),
     spendCap: spend ? spend.cap : null,
     ...pickers(),
-    deliveries: require('../dispatch/deliveryCore').DELIVERIES.map((d) => ({ value: d, plain: require('../dispatch/deliveryCore').describe(d) })),
+    deliveries: require('../dispatch/deliveryCore').DELIVERIES.map((d: string) => ({ value: d, plain: require('../dispatch/deliveryCore').describe(d) })),
   };
 }
 
-function pageHtml(token) {
+function pageHtml(token: string) {
   return fs.readFileSync(PAGE, 'utf8').replace('</head>', `<meta name="pa-page" content="${token}">\n</head>`);
 }
 
-async function route(req, res, url, { send, readJson, issuePageToken, pageTokenOk }) {
+async function route(req: Req, res: Res, url: URL, { send, readJson, issuePageToken, pageTokenOk }: { send: Ctx['send']; readJson: Ctx['readJson']; issuePageToken: Ctx['issuePageToken']; pageTokenOk: Ctx['pageTokenOk'] }) {
   if (req.method === 'GET' && url.pathname === '/factory') {
     send(res, 200, pageHtml(issuePageToken()), 'text/html; charset=utf-8');
     return true;
@@ -171,7 +178,7 @@ async function route(req, res, url, { send, readJson, issuePageToken, pageTokenO
   const factory = require('../dispatch/factory');
 
   if (url.pathname === '/api/factory/jobs') {
-    const o = newJob(body);
+    const o: ReturnType<typeof newJob> & { confirmedUnattended?: boolean } = newJob(body);
     const D = require('../dispatch/deliveryCore');
     // A code job's end state, as the start will resolve it, confirmed on the
     // page when nothing human follows it — the same rule as a card's Do.

@@ -181,7 +181,7 @@ async function handle(req, res) {
   // ---- Passkey sessions (plan 7.1, dashboard/auth.js): inert unless PA_PASSKEYS=on.
   // The sign-in routes first, then the gate that demands a session of everything else. ----
   {
-    const passkeys = require('./auth');
+    const passkeys = require('./auth.ts');
     if (await passkeys.route(req, res, url, { send, readJson })) return;
     if (await passkeys.gate(req, res, url, { send })) return;
   }
@@ -214,7 +214,7 @@ async function handle(req, res) {
   // ---- The Factory layer (dashboard/factory.js, factory.html): every factory
   // job from the worker's stored list, and its actions (X-PA guarded there). ----
   if (url.pathname === '/factory' || url.pathname === '/factory.js' || url.pathname === '/api/factory' || url.pathname.startsWith('/api/factory/')) {
-    if (await require('./factory').route(req, res, url, { send, readJson, issuePageToken, pageTokenOk })) return;
+    if (await require('./factory.ts').route(req, res, url, { send, readJson, issuePageToken, pageTokenOk })) return;
   }
   // ---- end Factory layer ----
 
@@ -282,7 +282,7 @@ async function handle(req, res) {
       // none picked: the repo's default, else PA_DELIVERY_DEFAULT.
       deliveries: require('../dispatch/deliveryCore').DELIVERIES.map((d) => ({ value: d, plain: require('../dispatch/deliveryCore').describe(d) })),
       // On the factory route: the job's kind and runtime (JOBS-API v1.2).
-      ...(require('../dispatch/factory').enabled() ? require('./factory').pickers() : {}),
+      ...(require('../dispatch/factory').enabled() ? require('./factory.ts').pickers() : {}),
     });
   }
   // One commitment with what it came from, so it can be judged before it is

@@ -668,7 +668,7 @@
       "code": [
         "personal-assistant/src/dashboard/server.js",
         "personal-assistant/src/dashboard/board.ts",
-        "personal-assistant/src/dashboard/factory.js",
+        "personal-assistant/src/dashboard/factory.ts",
         "personal-assistant/src/dashboard/architecture.ts",
         "personal-assistant/src/dashboard/permission.client.js",
         "personal-assistant/src/dashboard/events.ts",
@@ -680,7 +680,7 @@
         "personal-assistant/src/auth/ceremony.js",
         "personal-assistant/src/auth/session.js",
         "personal-assistant/src/auth/stepup.js",
-        "personal-assistant/src/dashboard/auth.js",
+        "personal-assistant/src/dashboard/auth.ts",
         "personal-assistant/src/dashboard/login.client.js",
         "personal-assistant/src/cli/passkeys.js",
         "personal-assistant/test/passkeys.test.js",
