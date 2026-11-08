@@ -46,7 +46,7 @@ const EXE = process.platform === 'win32' ? 'ptyd.exe' : 'ptyd';
 
 function findPtyd() {
   if (process.env.PTYD_BIN) return fs.existsSync(process.env.PTYD_BIN) ? process.env.PTYD_BIN : null;
-  for (const profile of ['release', 'debug']) {
+  for (const profile of ['release', 'local', 'debug']) {
     const p = path.join(ROOT, '..', 'ptyd', 'target', profile, EXE);
     if (fs.existsSync(p)) return p;
   }

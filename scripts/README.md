@@ -1,6 +1,34 @@
 # scripts
 
-Repo-wide developer tooling. Nothing here ships to a machine; it is how the tools get tested.
+Repo-wide developer tooling. Nothing here ships to a machine; it is how the tools get tested
+and built.
+
+## Build (`build.js`, plan T7)
+
+One command builds everything this repo compiles, targets in parallel, into
+`dist/<os>-<arch>/` with a `manifest.json` (file, bytes, sha256, commit, profile, seconds):
+
+```bash
+node scripts/build.js            # all targets; --local profile off CI, --release in CI
+node scripts/build.js --list     # targets and why one would be skipped
+node scripts/build.js --only ptyd --release
+```
+
+| target | how | status |
+|---|---|---|
+| `ptyd` | `cargo build --locked --profile <p>` in `ptyd/` | live |
+| `jarvisd` | `bun build --compile` per OS | skipped with a note until plan 4.1 adds its entrypoint |
+
+Profiles: `--release` (thin LTO; what CI publishes), `--local` (release-speed code, no LTO,
+incremental: a one-file ptyd change rebuilds in ~9 s, a no-op in under a second; the default
+off CI), `--debug`. CI sets `CARGO_INCREMENTAL=0` and compiles through sccache (GitHub cache
+backend); locally `RUSTC_WRAPPER=sccache` is set only with `CARGO_INCREMENTAL=0` and sccache on
+PATH, since sccache cannot cache incremental units. CI's `build` job runs it on Windows and
+Linux and uploads `dist/` as the `dist-<OS>` artifact (14 days).
+
+Signing (plan 7.4) has its hook already: with `DEVTOOLS_SIGN_CMD` set, each artifact is passed
+to it (`<cmd> "<file>"`, through the shell) after it is copied to `dist/`, and the manifest
+records `signed: true`; a failing sign command fails the build. Unset, `signed: false`.
 
 ## Test runner (`run-tests.js`)
 

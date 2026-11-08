@@ -1,0 +1,186 @@
+#!/usr/bin/env node
+'use strict';
+
+// One command that builds everything this repo compiles (plan T7):
+//
+//   node scripts/build.js [--release|--local|--debug] [--only <target>[,<target>]] [--out <dir>] [--list]
+//
+// Profiles: --release (LTO; the default in CI, what artifacts are made from),
+// --local (the default elsewhere: release-speed code without LTO, incremental,
+// so a one-file change rebuilds in seconds: ptyd measured 9 s, a no-op 0.4 s),
+// --debug.
+//
+// Targets build in parallel, each into dist/<os>-<arch>/, with a manifest.json
+// (name, file, bytes, sha256, commit, profile, seconds) beside them. CI runs it
+// per OS and publishes dist/ as a build artifact.
+//
+// Targets today:
+//   ptyd     cargo build. Locally incremental; in CI (CARGO_INCREMENTAL=0) through
+//            sccache when it is on PATH (RUSTC_WRAPPER is set only if unset).
+//   jarvisd  planned: `bun build --compile` per OS lands with plan 4.1 (the
+//            TypeScript/Bun core). Listed so the shape is fixed; skipped with a
+//            note until its entrypoint exists.
+//
+// Signing is plan 7.4. The hook is here already: with DEVTOOLS_SIGN_CMD set,
+// every artifact is passed to it (`<cmd> <file>`, run through the shell) after
+// it is built, and the manifest records `signed: true`. Unset, nothing is
+// signed and the manifest says `signed: false`.
+//
+// Exit code: non-zero if any target that was not skipped failed.
+
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+const crypto = require('crypto');
+const { spawn, spawnSync } = require('child_process');
+
+const REPO = path.join(__dirname, '..');
+const EXE = process.platform === 'win32' ? '.exe' : '';
+const PLATFORM = `${process.platform === 'win32' ? 'windows' : process.platform}-${process.arch}`;
+
+function onPath(cmd) {
+  const r = spawnSync(process.platform === 'win32' ? 'where' : 'which', [cmd], { encoding: 'utf8', windowsHide: true });
+  return r.status === 0 ? r.stdout.split(/\r?\n/)[0].trim() : null;
+}
+
+function cargoBin() {
+  if (onPath('cargo')) return 'cargo';
+  const home = path.join(os.homedir(), '.cargo', 'bin', `cargo${EXE}`);
+  return fs.existsSync(home) ? home : null;
+}
+
+const TARGETS = {
+  ptyd: {
+    describe: 'Rust terminal host (ptyd/), cargo + sccache',
+    available() {
+      return cargoBin() ? null : 'no cargo (install rustup: https://rustup.rs)';
+    },
+    command({ profile }) {
+      const env = { ...process.env };
+      // CI sets CARGO_INCREMENTAL=0: sccache cannot cache incremental units.
+      if (!env.RUSTC_WRAPPER && env.CARGO_INCREMENTAL === '0' && onPath('sccache')) env.RUSTC_WRAPPER = 'sccache';
+      return {
+        cmd: cargoBin(),
+        args: ['build', '--locked', '--profile', profile === 'debug' ? 'dev' : profile],
+        cwd: path.join(REPO, 'ptyd'),
+        env,
+        artifacts: [path.join(REPO, 'ptyd', 'target', profile, `ptyd${EXE}`)],
+      };
+    },
+  },
+  jarvisd: {
+    describe: 'TypeScript/Bun core, `bun build --compile` (plan 4.1)',
+    available() {
+      return 'planned: lands with plan 4.1 (no jarvisd entrypoint yet)';
+    },
+  },
+};
+
+function parseArgs(argv) {
+  const o = { profile: process.env.CI ? 'release' : 'local', only: null, out: path.join(REPO, 'dist'), list: false };
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === '--debug') o.profile = 'debug';
+    else if (a === '--release') o.profile = 'release';
+    else if (a === '--local') o.profile = 'local';
+    else if (a === '--list') o.list = true;
+    else if (a === '--only') o.only = argv[++i].split(',');
+    else if (a.startsWith('--only=')) o.only = a.slice(7).split(',');
+    else if (a === '--out') o.out = path.resolve(argv[++i]);
+    else if (a.startsWith('--out=')) o.out = path.resolve(a.slice(6));
+    else throw new Error(`unknown argument ${a}`);
+  }
+  if (o.only) for (const t of o.only) if (!TARGETS[t]) throw new Error(`unknown target ${t} (have: ${Object.keys(TARGETS).join(', ')})`);
+  return o;
+}
+
+function run({ cmd, args, cwd, env }, name) {
+  return new Promise((resolve) => {
+    const child = spawn(cmd, args, { cwd, env, windowsHide: true });
+    let log = '';
+    const tee = (c) => {
+      log += c;
+      for (const line of String(c).split(/\r?\n/)) if (line.trim()) process.stdout.write(`[${name}] ${line}\n`);
+    };
+    child.stdout.on('data', tee);
+    child.stderr.on('data', tee);
+    child.on('error', (e) => resolve({ code: -1, log: log + String(e) }));
+    child.on('exit', (code) => resolve({ code, log }));
+  });
+}
+
+function sha256(file) {
+  return crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
+}
+
+function commit() {
+  const r = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: REPO, encoding: 'utf8', windowsHide: true });
+  return r.status === 0 ? r.stdout.trim() : null;
+}
+
+/** Plan 7.4 hook: sign one artifact in place. Returns true when it was signed. */
+function sign(file) {
+  const cmd = process.env.DEVTOOLS_SIGN_CMD;
+  if (!cmd) return false;
+  const r = spawnSync(`${cmd} "${file}"`, { shell: true, stdio: 'inherit', windowsHide: true });
+  if (r.status !== 0) throw new Error(`DEVTOOLS_SIGN_CMD failed for ${file} (${r.status})`);
+  return true;
+}
+
+async function buildOne(name, opts, outDir) {
+  const t = TARGETS[name];
+  const why = t.available();
+  if (why) return { name, status: 'skipped', note: why, seconds: 0 };
+  const spec = t.command(opts);
+  const t0 = Date.now();
+  const { code } = await run(spec, name);
+  const seconds = (Date.now() - t0) / 1000;
+  if (code !== 0) return { name, status: 'failed', note: `exit ${code}`, seconds };
+  const artifacts = [];
+  for (const src of spec.artifacts) {
+    if (!fs.existsSync(src)) return { name, status: 'failed', note: `no artifact at ${src}`, seconds };
+    const dest = path.join(outDir, path.basename(src));
+    fs.copyFileSync(src, dest);
+    const signed = sign(dest);
+    artifacts.push({ file: path.basename(dest), bytes: fs.statSync(dest).size, sha256: sha256(dest), signed });
+  }
+  return { name, status: 'ok', seconds, artifacts };
+}
+
+async function main() {
+  const opts = parseArgs(process.argv.slice(2));
+  if (opts.list) {
+    for (const [n, t] of Object.entries(TARGETS)) console.log(`${n.padEnd(10)} ${t.describe}${t.available() ? `  [${t.available()}]` : ''}`);
+    return 0;
+  }
+  const names = opts.only || Object.keys(TARGETS);
+  const outDir = path.join(opts.out, PLATFORM);
+  fs.mkdirSync(outDir, { recursive: true });
+  const t0 = Date.now();
+  const results = await Promise.all(names.map((n) => buildOne(n, opts, outDir)));
+  const manifest = {
+    platform: PLATFORM,
+    profile: opts.profile,
+    commit: commit(),
+    builtAt: new Date().toISOString(),
+    targets: results,
+  };
+  fs.writeFileSync(path.join(outDir, 'manifest.json'), JSON.stringify(manifest, null, 2) + '\n');
+
+  console.log('\ntarget     result   time     artifacts');
+  for (const r of results) {
+    const arts = (r.artifacts || []).map((a) => `${a.file} (${(a.bytes / 1048576).toFixed(1)} MB)`).join(', ');
+    console.log(`${r.name.padEnd(10)} ${r.status.padEnd(8)} ${(r.seconds.toFixed(1) + 's').padEnd(8)} ${arts || r.note || ''}`);
+  }
+  console.log(`\n${PLATFORM} ${manifest.profile} in ${((Date.now() - t0) / 1000).toFixed(1)}s -> ${path.relative(REPO, outDir) || outDir}`);
+  return results.some((r) => r.status === 'failed') ? 1 : 0;
+}
+
+if (require.main === module) {
+  main().then((code) => process.exit(code), (err) => {
+    console.error(err && err.message ? err.message : err);
+    process.exit(2);
+  });
+}
+
+module.exports = { TARGETS, parseArgs, PLATFORM };

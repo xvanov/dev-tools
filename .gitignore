@@ -58,3 +58,6 @@ termhub/web/voice-probe*.html
 # are a diagnosis you look at once, not source; the numbers that matter get
 # written into a commit message or AGENT.md instead.
 termhub/test/mobile/out/
+
+# scripts/build.js output (plan T7)
+/dist/

@@ -218,6 +218,46 @@ jobs:
           PTYD_REQUIRED: '1'
         run: bash $GITHUB_WORKSPACE/.github/scripts/run.sh node test/ptydBackend.test.js
 
+  # Build pipeline (plan T7): `node scripts/build.js` builds every compiled target
+  # (ptyd today; jarvisd's `bun build --compile` joins with plan 4.1) per OS in
+  # parallel, release profile, and dist/<os>-<arch>/ (binaries + manifest.json
+  # with sha256) is published as a build artifact. Signing hook: DEVTOOLS_SIGN_CMD
+  # (plan 7.4), unset here.
+  build:
+    needs: changes
+    if: needs.changes.outputs.ptyd == 'true'
+    name: build (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    env:
+      CARGO_TERM_COLOR: never
+      CARGO_INCREMENTAL: '0'
+      SCCACHE_GHA_ENABLED: 'true'
+      RUSTC_WRAPPER: sccache
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: mozilla-actions/sccache-action@v0.0.9
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ptyd
+          cache-targets: 'false'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: bash $GITHUB_WORKSPACE/.github/scripts/run.sh node scripts/build.js --release
+        shell: bash
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ runner.os }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 14
+
   software-factory:
     needs: changes
     if: needs.changes.outputs.factory == 'true'

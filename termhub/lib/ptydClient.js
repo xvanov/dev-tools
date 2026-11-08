@@ -72,7 +72,7 @@ async function ping() {
 
 function findBinary(env = process.env) {
   if (env.TERMHUB_PTYD_BIN) return env.TERMHUB_PTYD_BIN;
-  for (const profile of ['release', 'debug']) {
+  for (const profile of ['release', 'local', 'debug']) {
     const p = path.join(__dirname, '..', '..', 'ptyd', 'target', profile, EXE);
     if (fs.existsSync(p)) return p;
   }
