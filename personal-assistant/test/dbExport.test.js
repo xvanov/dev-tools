@@ -46,6 +46,7 @@ async function main() {
       const ch = await lite.one('select embedding from chunk where id = $1', [chunk]);
       assert.deepStrictEqual(Array.from(ch.embedding), Array.from(Float32Array.from(vec)), 'the vector, float32 for float32');
       assert.ok(await lite.one(`select rowid from chunk_fts where chunk_fts match 'quarterly' and rowid = $1`, [chunk]), 'FTS filled');
+      assert.ok(await lite.one('select 1 from chunk_bits where id = $1', [chunk]), 'the sign-bit index (sql-sqlite/007) filled');
       assert.deepStrictEqual((await lite.one('select plan from commitment where id = $1', [c])).plan, { steps: ['a', 'b'], n: 2 });
       const nn = await lite.one('select channel_sent, toasted_at from notification where id = $1', [n.id]);
       assert.deepStrictEqual(nn.channel_sent, ['toast', 'chat']);

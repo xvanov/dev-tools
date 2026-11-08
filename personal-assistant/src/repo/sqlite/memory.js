@@ -19,6 +19,7 @@
 //     coalesced first.
 
 const { NOW, DAY, sinceMs } = require('./_sql');
+const { hammingSql } = require('../../db/sqlite');
 
 const HANDLE_SQL = `case pi.kind when 'github_username' then 'github:' || pi.value
                                  when 'gitlab_username' then 'gitlab:' || pi.value
@@ -317,12 +318,19 @@ function create(db) {
     async searchClaimsVector(vector, { subject = null, asOf = null, limit }) {
       const w = subject ? subjectWhere(subject, 3, 'c') : null;
       const statusSql = asOf ? '' : "and c.status = 'active'";
+      // Hamming on the sign bits first (sql-sqlite/007), then exact cosine on the best few hundred.
+      const params = [vector, limit * 3, ...(w ? w.params : [])];
+      params.push(vector, Math.max(400, limit * 30));
+      const at = params.length - 1;
       return pgRows(
         await db.rows(
-          `select c.*, 1 - vec_distance_cosine(c.embedding, pa_vector($1)) as rank from claim c
-        where c.embedding is not null ${statusSql} ${w ? `and ${w.sql}` : ''}
+          `select c.*, 1 - vec_distance_cosine(c.embedding, pa_vector($1)) as rank
+         from (select b.id from claim_bits b join claim c on c.id = b.id
+                where 1 = 1 ${statusSql} ${w ? `and ${w.sql}` : ''}
+                order by ${hammingSql('b.bits', `pa_bits(pa_vector($${at}))`)} limit $${at + 1}) k
+         join claim c on c.id = k.id
         order by vec_distance_cosine(c.embedding, pa_vector($1)) limit $2`,
-          [vector, limit * 3, ...(w ? w.params : [])]
+          params
         )
       );
     },

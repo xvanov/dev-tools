@@ -112,6 +112,7 @@ const HELP = `pa — your context layer
     pa distill [--limit n]          force a distillation pass
     pa migrate                      apply database migrations
     pa db export --to sqlite <file>  copy the Postgres store into a new SQLite file, counts checked (plan 3.3)
+    pa db compare --sqlite <file>   the same recorded queries on Postgres (read only) and that file (plan 3.4)
     pa mic status|pause <mins>|on   always-on capture control
     pa backup [list] [--dir d]      dump the whole store now, encrypted (the worker does it nightly)
     pa backup restore --to <db> [file]  restore drill: into a throwaway database, row counts checked
@@ -248,8 +249,21 @@ const commands = {
   // Plan 3.3: the Postgres store copied into a new SQLite file (src/db/export.js).
   // Postgres is only read; nothing switches stores (PA_DB stays as it is).
   async db(args, flags) {
+    if (args[0] === 'compare' && typeof flags.sqlite === 'string') {
+      // Plan 3.4: the same recorded queries on Postgres (read only) and an exported file.
+      const r = await require('../db/shadow').compare({ pgUrl: config.databaseUrl, file: flags.sqlite, key: config.sqliteKey || null, log: flags.json ? () => {} : (m) => out(`  ${m}`) });
+      if (flags.json) return out(JSON.stringify(r, null, 2));
+      const s = r.summary;
+      out(`${s.queries} queries (${s.eval} eval cases with gold items, ${s.recorded} recorded with vectors)`);
+      for (const [leg, v] of Object.entries(s.legs)) out(`  top-${leg === 'pages' || leg === 'pagesVec' ? 4 : 10} overlap ${leg.padEnd(10)} mean ${v.mean.toFixed(3)}  identical ${v.identical}/${v.n}`);
+      for (const [leg, v] of Object.entries(s.latency)) out(`  latency ${leg.padEnd(8)} postgres p50 ${v.postgres.p50?.toFixed(1)} p95 ${v.postgres.p95?.toFixed(1)} ms   sqlite p50 ${v.sqlite.p50?.toFixed(1)} p95 ${v.sqlite.p95?.toFixed(1)} ms`);
+      for (const [w, v] of Object.entries(s.eval_scores)) out(`  eval ${w.padEnd(8)} hit@10 ${v.hit10.toFixed(3)}  MRR ${v.mrr.toFixed(3)}  (${v.cases} cases)`);
+      for (const b of r.board) out(`  board ${b.name.padEnd(22)} rows ${b.rows.p}/${b.rows.s}  ${b.same ? 'same order' : b.sameSet ? 'same rows, other order' : 'DIFFER'}  ${b.ms.p.toFixed(1)} / ${b.ms.s.toFixed(1)} ms`);
+      if (s.errors.length) out(`  errors: ${s.errors.slice(0, 5).join('; ')}`);
+      return;
+    }
     if (args[0] !== 'export' || flags.to !== 'sqlite' || !args[1]) {
-      return fail('usage: pa db export --to sqlite <file>   (a new file; PA_SQLITE_KEY set encrypts it)');
+      return fail('usage: pa db export --to sqlite <file>   (a new file; PA_SQLITE_KEY set encrypts it)\n       pa db compare --sqlite <file> [--json]   (plan 3.4: the same queries on both stores)');
     }
     const { exportToSqlite } = require('../db/export');
     const r = await exportToSqlite({ pgUrl: config.databaseUrl, file: args[1], key: config.sqliteKey || null, log: (m) => out(`  ${m}`) });

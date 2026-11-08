@@ -18,7 +18,11 @@
 // Vector leg: exact scan over float32 BLOBs, vec_distance_cosine = pgvector's
 // <=>. Vectors arrive as the '[0.1,...]' literal callers format (or arrays).
 
-const { vectorBlob } = require('../../db/sqlite');
+const { vectorBlob, signBits, hammingSql } = require('../../db/sqlite');
+
+// How many chunks the Hamming pass hands to the exact cosine re-rank: on the
+// work stack 300 gave the exact scan's top 30 for every test query (plan 3.4).
+const CANDIDATES = 400;
 const { NOW } = require('./_sql');
 
 const ITEM = `si.id, si.source, si.subject, si.occurred_at, si.author_identity,
@@ -185,16 +189,24 @@ function create(db) {
 
     /** Vector leg: the nearest chunk per item (cosine), always an exact scan. */
     async vectorPass(vector, limit, filters) {
-      const params = [blob(vector), limit, limit * 4];
+      // Two stages (sql-sqlite/007): every chunk ranked by Hamming distance on
+      // its sign bits, then the best CANDIDATES re-ranked by exact cosine.
+      const q = blob(vector);
+      const params = [q, limit, limit * 4];
       const where = filterSql(filters, params);
+      params.push(signBits(q), Math.max(CANDIDATES, limit * 10));
+      const bitsAt = params.length - 1;
       const rows = await db.rows(
         `select * from (
          select ${ITEM}, c.id as chunk_id, c.context,
                 substr(c.content, 1, 2000) as content, substr(c.content, 1, 240) as snippet, 1 - c.dist as rank,
                 row_number() over (partition by c.source_item_id order by c.dist) as rn
            from (select c.id, c.source_item_id, c.context, c.content, vec_distance_cosine(c.embedding, $1) as dist
-                   from chunk c join source_item si on si.id = c.source_item_id
-                  where c.embedding is not null ${where}
+                   from (select b.id from chunk_bits b
+                           join chunk c on c.id = b.id join source_item si on si.id = c.source_item_id
+                          where 1 = 1 ${where}
+                          order by ${hammingSql('b.bits', `$${bitsAt}`)} limit $${bitsAt + 1}) k
+                   join chunk c on c.id = k.id
                   order by dist limit $3) c
            join source_item si on si.id = c.source_item_id
        ) x where rn = 1

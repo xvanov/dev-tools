@@ -1179,7 +1179,9 @@
         "Encryption": "PA_SQLITE_KEY set: SQLCipher v4 (PRAGMA cipher=sqlcipher, legacy=4, key); the key lives in the OS vault or the gitignored .env",
         "Vectors": "1536 float32 per BLOB, copied from Postgres (D5: never re-embedded); exact scan with vec_distance_cosine (sqlite-vec, optional dependency; a JS fallback otherwise)",
         "LISTEN/NOTIFY": "no NOTIFY: after a commit the backend reads the new event_outbox rows and hands them to sessions (pool.connect()) that LISTENed, in-process only; other processes read event_outbox",
-        "Export (plan 3.3)": "pa db export --to sqlite <file> (src/db/export.js): a read-only snapshot of Postgres into a new SQLite file, ids kept, vectors float for float (D5), Absurd's tasks into the SQLite queue, row counts and sampled vectors verified",
+        "Shadow comparison (plan 3.4)": "pa db compare --sqlite <file> (src/db/shadow.js): eval questions and recorded searches through the same repository methods on Postgres (read only) and an export. Work stack 2026-11-08: board reads identical; vectors 0.98-1.0 overlap; SQLite hit@10 0.729 vs 0.625 on the eval gold items; nothing to recalibrate (rank fusion, reranker-scale abstain)",
+        "Vector search": "two stages (sql-sqlite/007): sign bits per vector in chunk_bits / claim_bits ranked by Hamming distance, the best 400 re-ranked by exact cosine; ~80 ms p50 over 31k chunks (an exact scan was ~530 ms)",
+        "Export (plan 3.3)":"pa db export --to sqlite <file> (src/db/export.js): a read-only snapshot of Postgres into a new SQLite file, ids kept, vectors float for float (D5), Absurd's tasks into the SQLite queue, row counts and sampled vectors verified",
         "Durable tasks (D19)":"Absurd is Postgres-only, so on SQLite the same tasks run on src/durable/sqliteQueue.js: spawn once per key, step checkpoints, sleepFor, awaitEvent with timeout, retries with backoff, over sql-sqlite/006 (durable_task, durable_checkpoint, durable_event); a worker's claim on a task is a lease row. src/durable/index.js picks the engine by store"
       },
       "env": [
@@ -1201,6 +1203,7 @@
         "personal-assistant/src/repo/sqlite",
         "personal-assistant/src/durable/sqliteQueue.js",
         "personal-assistant/src/db/export.js",
+        "personal-assistant/src/db/shadow.js",
         "personal-assistant/test/contract/_backends.js",
         "personal-assistant/test/repoContract.test.js"
       ]

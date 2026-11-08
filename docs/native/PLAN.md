@@ -455,8 +455,35 @@ run mid-step; a job continued on an existing branch (`--branch`).
   51 tables match (chunk 31,229, llm_spend 103,251, claim 10,148, fact 11,364, ...), 216 vectors
   sampled with 0 differing, 93 durable tasks, 399 checkpoints, 1,166 events, 0 FK violations;
   105 s, 427 MB (Postgres: 908 MB). `test/dbExport.test.js` runs in CI's contract job.
-- [ ] **3.4 Shadow comparison (D12):** both backends answer the same recorded query set once;
+- [x] **3.4 Shadow comparison (D12):** both backends answer the same recorded query set once;
   compare results and latency; recalibrate rerank thresholds.
+  `pa db compare --sqlite <file> [--json]` (`src/db/shadow.js`): Postgres read-only (every
+  statement under `default_transaction_read_only`) against a fresh `pa db export`, through the
+  repository methods search, recall and the board use. Query set: the 58 active `eval_case`
+  questions (48 with gold items) plus the 23 recorded searches in `query_embedding_cache` (with
+  their vectors, so no embedding call). Work stack, 2026-11-08, export then compare at once:
+  - Board reads (open asks both ways, inbox, notification feed, recent runs, pending proposals):
+    identical rows in identical order, 6 of 6.
+  - Overlap of top results: people 1.000, memory claims and pages (lexical) 1.000, claim and page
+    vectors 1.000, chunk vectors 0.981 (Postgres is an approximate HNSW index; SQLite's two-stage
+    scan returns 0.988 of its own exact top results). Chunk lexical 0.385 and fused 0.409:
+    FTS5 porter + bm25 ranks differently from `english` + ts_rank.
+  - Quality, on the eval cases' gold items (fused text + meaning + people, top 10): SQLite
+    hit@10 0.729, MRR 0.476; Postgres hit@10 0.625, MRR 0.413. The difference in lexical ranking
+    is a gain, not a loss.
+  - Latency p50 / p95 (ms), Postgres vs SQLite: chunk lexical 1340 / 3449 vs 892 / 1634; chunk
+    vector 20 / 30 vs 81 / 96; claim vector 15 / 27 vs 36 / 48; claim lexical 4.5 / 12 vs 1.3 / 4.2;
+    page lexical 3.1 / 5.7 vs 0.9 / 2.8; page vector 6.3 / 12 vs 2.9 / 4.7; board reads 2-7 vs
+    0.4-3.6. The first run had chunk vector at 528 ms p50 (an exact cosine scan over 31k vectors),
+    so this item adds `sql-sqlite/007_vector_bits.sql`: each vector's sign bits in a narrow table
+    (derived locally, D5), ranked by Hamming distance (sqlite-vec), the best 400 re-ranked by
+    exact cosine. That brought it to 81 ms with the exact scan's top results kept (above).
+  - Thresholds: none to recalibrate. Fusion is reciprocal-rank (positions, not scores), and
+    recall's abstain threshold (`PA_RECALL_ABSTAIN`, 0.6) is on the reranker's own scores, so
+    ts_rank and bm25 scales never meet a threshold. Nothing outside `src/repo` reads `rank`.
+  - Left for later, not blocking 3.5: chunk lexical takes ~0.9 s p50 on SQLite (1.3 s on
+    Postgres), and chunk vector is ~4x Postgres's HNSW; an index or vector cache can come with
+    jarvisd (phase 4) if either shows in latency targets.
 - [ ] **3.5** Cutover on the personal stack, then the work stack; Litestream backup + restore
   drill.
 - [ ] **3.6** WSL off on the work laptop (D6); Postgres removed. Also retire the other WSL

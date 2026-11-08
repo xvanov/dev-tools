@@ -179,6 +179,35 @@ function jsCosineDistance(a, b) {
   return 1 - dot / Math.sqrt(nx * ny);
 }
 
+let vecLoaded = false;
+
+/** A float32 vector BLOB -> its sign bits (bit i set when element i > 0), as sqlite-vec's vec_quantize_binary. */
+function signBits(b) {
+  if (b == null) return null;
+  const f = new Float32Array(b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength));
+  const out = Buffer.alloc(Math.ceil(f.length / 8));
+  for (let i = 0; i < f.length; i++) if (f[i] > 0) out[i >> 3] |= 1 << (i & 7);
+  return out;
+}
+
+const POPCOUNT = new Uint8Array(256).map((_, i) => {
+  let c = 0;
+  for (let x = i; x; x >>= 1) c += x & 1;
+  return c;
+});
+
+function jsHamming(a, b) {
+  if (a == null || b == null) return null;
+  let d = 0;
+  for (let i = 0; i < a.length; i++) d += POPCOUNT[a[i] ^ b[i]];
+  return d;
+}
+
+/** SQL for the Hamming distance of two bit BLOBs: sqlite-vec's when loaded (~3x faster), else pa_hamming. */
+function hammingSql(a, b) {
+  return vecLoaded ? `vec_distance_hamming(vec_bit(${a}), vec_bit(${b}))` : `pa_hamming(${a}, ${b})`;
+}
+
 const dayFormats = new Map();
 
 /** The calendar day ('YYYY-MM-DD') of an instant in an IANA zone: pg's (at at time zone tz)::date. */
@@ -211,9 +240,14 @@ function open(file, { key = null, readonly = false } = {}) {
   try {
     require('sqlite-vec').load(conn);
     vec = true;
+    vecLoaded = true;
   } catch {
     conn.function('vec_distance_cosine', { deterministic: true }, jsCosineDistance);
   }
+  // A vector's sign bits (sql-sqlite/007), and their Hamming distance when
+  // sqlite-vec is not there to do it (hammingSql picks).
+  conn.function('pa_bits', { deterministic: true }, signBits);
+  conn.function('pa_hamming', { deterministic: true }, jsHamming);
   conn.function('pa_local_day', { deterministic: true }, localDay);
   // pg's md5(text), and pgvector's '[0.1, ...]' text literal as a vector BLOB.
   conn.function('md5', { deterministic: true }, (s) => (s == null ? null : crypto.createHash('md5').update(String(s)).digest('hex')));
@@ -542,6 +576,8 @@ module.exports = {
   translate,
   encode,
   vectorBlob,
+  signBits,
+  hammingSql,
   holderGone,
   localDay,
   SCHEMA_DIR,
