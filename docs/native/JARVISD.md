@@ -124,9 +124,60 @@ src/supervisor`), and the compiled jarvisd carries it:
   `test/supervisorBinary.test.js` (start, roll, rollback, deploy lock, roll to `current`, no
   generation outlives its supervisor) and `test/deployTest.test.js` (the Z6 spare-port deploy
   test with jarvisd as the supervisor, `deployTest.js --binary`).
-- Not done here: switching a live stack's task/unit to `jarvisd supervise` (the lead's live
-  switch), and a launcher that restarts the service onto a new binary when the supervisor
-  itself changed.
+- **The launcher.** The pa-worker task runs `windows\pa-launch.ps1` and the unit runs
+  `linux/pa-launch.sh` (`exec`s, so systemd supervises the supervisor itself). On every start
+  each reads `PA_RUNTIME` (environment, else `personal-assistant/.env`, else the repo's `.env`):
+  `node` (default) or `bun` start `node src/supervisor`; `jarvisd` starts the executable
+  `jarvisd/dist/current` names (else `jarvisd/dist/jarvisd[.exe]`) as `supervise`, with no
+  Node in the process tree. A `jarvisd` setting with nothing built falls back to Node, saying
+  so. `-DryRun` / `--dry-run` print the command (`test/launcher.test.js`).
+- **Deploys.** `deploy.js` compares `PA_RUNTIME` with the running supervisor's `runtime`: a
+  difference is a switch, so it asks for a restart (exit 4) and the launcher starts the other
+  one. For `jarvisd` every roll *and* every restart (no supervisor, its own code changed, a
+  switch to it) first builds `jarvisd-<commit>` and points `current` at it; the scripts' restart
+  then starts the new binary. `windows/redeploy.ps1` also ends the launcher and this repo's
+  `jarvisd\dist\` processes when it restarts the task.
+
+### Runbook: switching a stack to jarvisd (and back)
+
+Prerequisites: the checkout is clean on main at a commit with this section, `npm ci` has run in
+`jarvisd/` and `personal-assistant/`, and `node scripts/build.js --only jarvisd` builds.
+
+Windows (work stack):
+
+1. Once, from an **elevated** PowerShell, point the task at the launcher (a normal shell cannot
+   change a task registered elevated; nothing else changes, Node keeps running):
+   `powershell -NoProfile -ExecutionPolicy Bypass -File C:\repos\dev-tools\personal-assistant\windows\redeploy.ps1 -From (git -C C:\repos\dev-tools rev-parse HEAD)`
+   It prints "pa-worker task now runs windows\pa-launch.ps1" and restarts the task (still Node).
+   Check: `Get-ScheduledTask pa-worker | % { $_.Actions.Arguments }` names `pa-launch.ps1`.
+2. Dry run the switch: set `PA_RUNTIME=jarvisd` in `personal-assistant\.env`, then
+   `powershell -File personal-assistant\windows\pa-launch.ps1 -DryRun` (expect the Node
+   fallback until a binary exists) and `... redeploy.ps1 -DryRun` (expect "PA_RUNTIME is
+   jarvisd but the supervisor runs node: restart" and "build a new jarvisd executable").
+3. Switch: `powershell -File personal-assistant\windows\redeploy.ps1 -From (git rev-parse HEAD)`.
+   It builds `jarvisd\dist\jarvisd-<commit>.exe`, points `current` at it, restarts the task; the
+   launcher starts `jarvisd supervise`.
+4. Verify: `node personal-assistant\src\supervisor status` shows `"runtime": "jarvisd"` and
+   `"exe"` under `jarvisd\dist\`; `Get-CimInstance Win32_Process -Filter "Name LIKE 'jarvisd%'"`
+   lists the supervisor and one generation; `http://127.0.0.1:7300/healthz` is ready and
+   `/api/version` reports HEAD. Then a normal deploy rolls to a new binary, and the Z6 test
+   (`node src\e2e\deployTest.js --live --deploy -- --from HEAD~1`) passes.
+5. Roll back: set `PA_RUNTIME=node` (or delete the line) and run `redeploy.ps1 -From (git rev-parse HEAD)`:
+   the runtime differs, so it restarts the task and the launcher starts `node src\supervisor`.
+
+Linux (personal stack): the same, without step 1's elevation:
+1. `bash personal-assistant/linux/redeploy.sh "$(git rev-parse HEAD)"` re-renders the unit
+   (`ExecStart=/bin/sh .../linux/pa-launch.sh`, `Environment=PA_NODE=...`), daemon-reloads and
+   restarts it (still Node). Check: `systemctl --user cat pa-worker | grep pa-launch`.
+2. `PA_RUNTIME=jarvisd` in `personal-assistant/.env`; `sh personal-assistant/linux/pa-launch.sh --dry-run`;
+   `bash personal-assistant/linux/redeploy.sh HEAD --dry-run`.
+3. `bash personal-assistant/linux/redeploy.sh "$(git rev-parse HEAD)"`: builds
+   `jarvisd/dist/jarvisd-<commit>`, restarts the unit onto it.
+4. Verify as on Windows (`pgrep -af 'jarvisd.* (supervise|generation)'`).
+5. Roll back: `PA_RUNTIME=node`, then `redeploy.sh "$(git rev-parse HEAD)"`.
+
+A compiled jarvisd reads files beside its source path at run time (`sql/`, pages, scripts):
+it must run on the machine and checkout that built it, which a deploy always does.
 
 ### Switching a stack to Bun (and back)
 

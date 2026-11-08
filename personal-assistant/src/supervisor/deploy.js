@@ -53,16 +53,24 @@ const FAILS_IN_A_ROW = 3;
  * rolls to a newly built executable: jarvisd/ and schemas/ changes count too,
  * and the plan says `binary` (deploy.js builds it beside the running one).
  */
-function plan({ from, changed, supervisor, sourceOnDisk, hasBuild = false, prefix = 'personal-assistant/' }) {
+function plan({ from, changed, supervisor, sourceOnDisk, hasBuild = false, prefix = 'personal-assistant/', want = null }) {
   const reasons = [];
-  const binary = !!(supervisor && supervisor.runtime === 'jarvisd');
+  // want: the runtime the stack is set to (PA_RUNTIME: node, bun or jarvisd).
+  // A running supervisor of another runtime means a switch (or a rollback of
+  // one): restart the service, whose launcher starts the runtime asked for.
+  const running = supervisor ? supervisor.runtime || 'node' : null;
+  const switching = !!(supervisor && want && want !== running);
+  const binary = want === 'jarvisd' || (!want && running === 'jarvisd');
   const pa = changed === null ? null : changed.filter((f) => f.startsWith(prefix) || (binary && (f.startsWith('jarvisd/') || f.startsWith('schemas/'))));
   const touched = pa === null || pa.length > 0;
   const deps = pa === null || pa.some((f) => /(^|\/)package(-lock)?\.json$/.test(f.slice(prefix.length)) && !f.slice(prefix.length).includes('/'));
   const install = deps;
   const build = hasBuild && touched;
   let action;
-  if (!touched) {
+  if (switching) {
+    action = 'restart';
+    reasons.push(`PA_RUNTIME is ${want} but the supervisor runs ${running}: restart the service (its launcher starts ${want})`);
+  } else if (!touched) {
     action = 'none';
     reasons.push(`nothing under ${prefix} changed since ${from}`);
   } else if (!supervisor) {
@@ -77,8 +85,11 @@ function plan({ from, changed, supervisor, sourceOnDisk, hasBuild = false, prefi
   }
   if (install) reasons.push(pa === null ? 'npm install (no previous commit to compare)' : 'npm install (package files changed)');
   if (build) reasons.push('npm run build');
-  if (binary && action === 'roll') reasons.push('build a new jarvisd executable and roll to it');
-  return { action, install, build, binary: binary && action === 'roll', reasons };
+  // A jarvisd stack runs a newly built executable after a roll or a restart
+  // (the launcher starts the one jarvisd/dist/current names).
+  const buildBinary = binary && (action === 'roll' || action === 'restart');
+  if (buildBinary) reasons.push(`build a new jarvisd executable and ${action} to it`);
+  return { action, install, build, binary: buildBinary, reasons };
 }
 
 /**
@@ -286,6 +297,12 @@ async function deploy(argv, opts = {}) {
   }
 }
 
+/** PA_RUNTIME as the stack is set (env, else .env): node (default), bun or jarvisd. */
+function wantRuntime() {
+  const v = String(sup.envSetting('PA_RUNTIME', 'node')).trim();
+  return v === 'bun' || v === 'jarvisd' ? v : 'node';
+}
+
 async function deployUnlocked(argv, { say } = {}) {
   const o = parseArgs(argv);
   // With --json, stdout carries only the JSON.
@@ -347,6 +364,7 @@ async function deployUnlocked(argv, { say } = {}) {
     supervisor: supervisor && supervisor.ok ? supervisor : null,
     sourceOnDisk: sup.sourceHash(path.join(__dirname, 'index.ts')),
     hasBuild: !!(pkg.scripts && pkg.scripts.build),
+    want: wantRuntime(),
   });
   const result = { head, from: from || null, port, ...p, signing: signing ? { state: signing.state, mode: signing.mode, total: signing.total } : null, supervisor: supervisor ? { generation: supervisor.generation, pid: supervisor.pid, source: supervisor.source || null } : null };
   for (const r of p.reasons) say(r);
@@ -379,7 +397,19 @@ async function deployUnlocked(argv, { say } = {}) {
   }
 
   if (p.action === 'none') return { code: 0, result };
-  if (p.action === 'restart') return { code: supervisor ? 4 : 3, result };
+  if (p.action === 'restart') {
+    // A jarvisd stack restarts onto a new executable: build it and point
+    // jarvisd/dist/current at it first (the launcher runs what it names).
+    if (p.binary) {
+      try {
+        buildJarvisd(head, say);
+      } catch (err) {
+        say(`jarvisd build failed: ${err.message} - not restarting`);
+        return { code: 1, result: { ...result, build: err.message } };
+      }
+    }
+    return { code: supervisor ? 4 : 3, result };
+  }
 
   // The supervisor's deploy lock, for the roll and the whole health watch:
   // a roll or rollback from anyone else meanwhile is refused (index.js). A
@@ -496,4 +526,4 @@ if (require.main === module) {
   );
 }
 
-module.exports = { plan, verdict, deploy, parseArgs, acquireDeployLock, bunInstallPlan, bunDir, pinnedBun };
+module.exports = { plan, wantRuntime, verdict, deploy, parseArgs, acquireDeployLock, bunInstallPlan, bunDir, pinnedBun };

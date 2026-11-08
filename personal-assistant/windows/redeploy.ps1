@@ -41,30 +41,31 @@ function Get-PaPort {
   return $port
 }
 
-# Step 1. True when the task's action was rewritten (the running process is the old one).
+# Step 1. The task runs windows\pa-launch.ps1, which starts the supervisor PA_RUNTIME asks for
+# (node src\supervisor, or the compiled jarvisd: plan 4.4). True when the task's action was
+# rewritten (the running process is the old one). A task registered from an elevated shell
+# refuses the rewrite from a normal one: harmless, `node src\worker.js` started by the task
+# becomes the Node supervisor (which runs jarvisd generations when PA_RUNTIME=jarvisd), but only
+# the launcher runs the jarvisd supervisor itself - run this once from an elevated shell.
 function Confirm-SupervisorTask {
   $task = Get-ScheduledTask -TaskName 'pa-worker' -ErrorAction SilentlyContinue
   if (-not $task) { return $false }
   $action = $task.Actions | Select-Object -First 1
-  if ("$($action.Arguments)" -match 'src[\\/]supervisor') { return $false }
-  $node = (Get-Command node -ErrorAction SilentlyContinue).Source
-  if (-not $node) { Say "node not on PATH - cannot rewrite the pa-worker task."; return $false }
-  if ($DryRun) { Say "would rewrite the pa-worker task to run the supervisor (now: $($action.Arguments))"; return $true }
+  if ("$($action.Arguments)" -match 'pa-launch\.ps1') { return $false }
+  if ($DryRun) { Say "would rewrite the pa-worker task to run windows\pa-launch.ps1 (now: $($action.Arguments))"; return $true }
+  $launcher = Join-Path $PaDir 'windows\pa-launch.ps1'
   # Same shape as windows/install.ps1's New-HeadlessAction.
   $new = New-ScheduledTaskAction -Execute "$env:SystemRoot\System32\conhost.exe" `
-    -Argument "--headless `"$node`" src\supervisor" -WorkingDirectory $PaDir
+    -Argument "--headless powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$launcher`"" -WorkingDirectory $PaDir
   try {
     Set-ScheduledTask -TaskName 'pa-worker' -Action $new -ErrorAction Stop | Out-Null
   } catch {
-    # A task registered from an elevated shell can only be changed from one. Harmless:
-    # `node src\worker.js` started by the task becomes the supervisor itself.
-    Say "pa-worker task left as it is ($($_.Exception.Message.Trim())); src\worker.js starts the supervisor anyway."
+    Say "pa-worker task left as it is ($($_.Exception.Message.Trim())); run this once from an elevated shell to switch it to windows\pa-launch.ps1."
     return $false
   }
-  Say "pa-worker task now runs the supervisor (node src\supervisor)."
+  Say "pa-worker task now runs windows\pa-launch.ps1."
   return $true
 }
-
 # Step 2. The old stop/kill/start, for a supervisor or a worker.
 function Restart-PaTask([string]$Head) {
   if ($DryRun) { Say "would restart the pa-worker task and wait for $($Head.Substring(0, 7))"; return }
@@ -72,9 +73,10 @@ function Restart-PaTask([string]$Head) {
   Stop-ScheduledTask -TaskName 'pa-worker' -ErrorAction SilentlyContinue
   # Stop-ScheduledTask ends conhost, not node: the supervisor (`src\supervisor`), its
   # generations and a pre-supervisor worker (`src\worker.js`) are ended here. Not deploy.js.
-  # Bun generations (PA_RUNTIME=bun) run jarvisd\src\main.ts in bun.exe: ended too.
-  Get-CimInstance Win32_Process -Filter "Name='node.exe' OR Name='bun.exe'" |
-    Where-Object { $_.CommandLine -match 'src[\\/](worker\.js|supervisor)("|\s|$)|jarvisd[\\/]src[\\/]main\.ts' } |
+  # Bun generations (PA_RUNTIME=bun) run jarvisd\src\main.ts in bun.exe: ended too; so are the
+  # launcher (powershell running pa-launch.ps1) and a compiled jarvisd (supervise / generation).
+  Get-CimInstance Win32_Process -Filter "Name='node.exe' OR Name='bun.exe' OR Name='powershell.exe' OR Name LIKE 'jarvisd%'" |
+    Where-Object { $_.CommandLine -match 'src[\\/](worker\.js|supervisor)("|\s|$)|jarvisd[\\/]src[\\/]main\.ts|pa-launch\.ps1' -or ($_.Name -like 'jarvisd*' -and "$($_.ExecutablePath)" -like (Join-Path (Split-Path $PaDir -Parent) 'jarvisd\dist\*')) } |
     ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
   Start-Sleep -Milliseconds 500
   Start-ScheduledTask -TaskName 'pa-worker'

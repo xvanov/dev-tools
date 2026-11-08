@@ -543,7 +543,7 @@ Postgres and nowhere else. Tests use invented names; fixtures never hold a real 
 - **No job queue.** "Work to do" is a query — items with no distillation row at the current
   prompt version. A queue table can get stuck, leak, or need draining after a crash; a query
   cannot. The worker is a scheduler of periodic passes, and passes never overlap themselves.
-- **How the worker runs.** The `pa-worker` task / unit runs `node src/supervisor` (Z1), which
+- **How the worker runs.** The `pa-worker` task / unit runs the launcher (`windows/pa-launch.ps1`,`n  `linux/pa-launch.sh`), which starts the supervisor `PA_RUNTIME` names: `node src/supervisor` (Z1,`n  the default) or the compiled `jarvisd supervise` (4.4; JARVISD.md has the switch runbook). It
   owns the dashboard port and proxies to worker generations it forks with
   `PA_SUPERVISED=1`. The supervisor is `src/supervisor/index.ts` (strict TS, plan 4.4; `index.js`
   is a shim), and the compiled jarvisd runs it too: `jarvisd supervise`, whose generations are

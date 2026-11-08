@@ -4,10 +4,12 @@
 # with __DIR__ and __NODE__ filled in. linux/redeploy.sh re-renders it on
 # every deploy, so a change here reaches installed machines.
 #
-# It runs the supervisor (src/supervisor), which owns the dashboard port and
-# runs the worker as generations it replaces without a gap on a deploy
-# (docs/native/PLAN.md Z1/Z4). The unit itself restarts only when the
-# supervisor's own code changes.
+# It runs linux/pa-launch.sh, which execs the supervisor PA_RUNTIME asks for:
+# node src/supervisor (default) or the compiled jarvisd ("jarvisd supervise",
+# plan 4.4). The supervisor owns the dashboard port and runs the worker as
+# generations it replaces without a gap on a deploy (docs/native/PLAN.md
+# Z1/Z4). The unit itself restarts only when the supervisor's own code, or
+# PA_RUNTIME, changes.
 #
 # Restart=always with no start limit: the worker already waits for the store
 # rather than exit (src/worker.js), and a worker that gave up after five quick
@@ -22,7 +24,8 @@ StartLimitIntervalSec=0
 [Service]
 Type=simple
 WorkingDirectory=__DIR__
-ExecStart="__NODE__" "__DIR__/src/supervisor"
+Environment="PA_NODE=__NODE__"
+ExecStart=/bin/sh "__DIR__/linux/pa-launch.sh"
 Restart=always
 RestartSec=30
 # Stopping must end the supervisor and every worker generation it forked,

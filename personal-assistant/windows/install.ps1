@@ -1,4 +1,4 @@
-# personal-assistant — Windows install.
+﻿# personal-assistant — Windows install.
 #
 # Registers two logon tasks and applies the schema. It does not ask for anything
 # secret: credentials go in .env, and `pa doctor` tells you which are missing.
@@ -88,8 +88,11 @@ if (-not $NoWorker) {
   Write-Host "==> registering the worker task"
   # The supervisor owns the dashboard port and runs the worker as generations it
   # can replace without a gap (src\supervisor, docs/native/PLAN.md Z1/Z4);
-  # windows\redeploy.ps1 rewrites an older task that still names src\worker.js.
-  $workerAction = New-HeadlessAction -Exe $node -Arguments 'src\supervisor' -WorkingDirectory $root
+  # the task runs windows\pa-launch.ps1, which starts the one PA_RUNTIME asks for: node
+  # src\supervisor (default) or the compiled jarvisd (plan 4.4). windows\redeploy.ps1 rewrites
+  # an older task (src\worker.js, src\supervisor) to it.
+  $launcher = Join-Path $root 'windows\pa-launch.ps1'
+  $workerAction = New-HeadlessAction -Exe 'powershell.exe' -Arguments "-NoProfile -ExecutionPolicy Bypass -File `"$launcher`"" -WorkingDirectory $root
   $workerTrigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
   $workerSettings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
     -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 5 -RestartInterval (New-TimeSpan -Minutes 2)

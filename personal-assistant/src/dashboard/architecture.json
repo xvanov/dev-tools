@@ -586,7 +586,8 @@
         "Priority": "the worker runs at Normal; everything it starts is lowered to Below Normal as it spawns (src/util/childPriority.js). A below-normal worker got no CPU while other work filled every core and stalled up to 173 s",
         "Keep-alive": "the worker dashboard keeps idle sockets 65 s; the supervisor resends a GET that meets ECONNRESET on a reused socket. status and a timed-out drain list what is in flight (method, path, age)",
         "Deploy lock": "one deploy at a time: deploy.js holds <state dir>/deploy.lock (owner pid) and the supervisor's lock ({\"cmd\":\"lock\",\"owner\",\"ttlMs\"}, 15 min, released by {\"cmd\":\"unlock\"}) through the roll and the health watch; meanwhile any other roll, rollback or lock is refused naming the holder (deploy.js exit 5), and a roll during a roll is refused, not merged. The supervisor's crash respawn is not a deploy and ignores it",
-        "jarvisd (4.4)": "strict TypeScript (src/supervisor/index.ts; index.js a shim). The compiled jarvisd runs it: `jarvisd supervise` owns the port, its generations are `jarvisd generation`; the executable for each new generation is PA_JARVISD_EXE, else `current` beside the binary (written by a deploy that built jarvisd-<commit> next to it), else itself. status.runtime says node, bun or jarvisd; status.source is embedded at build. Tested with the compiled binary on Windows and Linux CI (test/supervisorBinary.test.js, deployTest --binary). Live stacks still run node src/supervisor until switched"
+        "jarvisd (4.4)": "strict TypeScript (src/supervisor/index.ts; index.js a shim). The compiled jarvisd runs it: `jarvisd supervise` owns the port, its generations are `jarvisd generation`; the executable for each new generation is PA_JARVISD_EXE, else `current` beside the binary (written by a deploy that built jarvisd-<commit> next to it), else itself. status.runtime says node, bun or jarvisd; status.source is embedded at build. Tested with the compiled binary on Windows and Linux CI (test/supervisorBinary.test.js, deployTest --binary). Live stacks still run node src/supervisor until switched",
+        "Launcher (4.4)": "the pa-worker task runs windows/pa-launch.ps1 and the unit linux/pa-launch.sh; on every start they read PA_RUNTIME: node (default) or bun start node src/supervisor, jarvisd starts the executable jarvisd/dist/current names as `supervise` (no Node), falling back to Node when none is built. deploy.js treats PA_RUNTIME differing from the running supervisor as a switch (restart); for jarvisd every roll and restart builds jarvisd-<commit> first. Switch or roll back: one setting, then redeploy (JARVISD.md runbook)"
       },
       "code": [
         "personal-assistant/src/supervisor/index.ts",
@@ -608,7 +609,10 @@
         "personal-assistant/src/util/childPriority.js",
         "termhub/test/frontSwap.test.js",
         "jarvisd/src/main.ts",
-        "personal-assistant/test/supervisorBinary.test.js"
+        "personal-assistant/test/supervisorBinary.test.js",
+        "personal-assistant/windows/pa-launch.ps1",
+        "personal-assistant/linux/pa-launch.sh",
+        "personal-assistant/test/launcher.test.js"
       ]
     },
     {
@@ -1181,8 +1185,8 @@
         "LISTEN/NOTIFY": "no NOTIFY: after a commit the backend reads the new event_outbox rows and hands them to sessions (pool.connect()) that LISTENed, in-process only; other processes read event_outbox",
         "Shadow comparison (plan 3.4)": "pa db compare --sqlite <file> (src/db/shadow.js): eval questions and recorded searches through the same repository methods on Postgres (read only) and an export. Work stack 2026-11-08: board reads identical; vectors 0.98-1.0 overlap; SQLite hit@10 0.729 vs 0.625 on the eval gold items; nothing to recalibrate (rank fusion, reranker-scale abstain)",
         "Vector search": "two stages (sql-sqlite/007): sign bits per vector in chunk_bits / claim_bits ranked by Hamming distance, the best 400 re-ranked by exact cosine; ~80 ms p50 over 31k chunks (an exact scan was ~530 ms)",
-        "Export (plan 3.3)":"pa db export --to sqlite <file> (src/db/export.js): a read-only snapshot of Postgres into a new SQLite file, ids kept, vectors float for float (D5), Absurd's tasks into the SQLite queue, row counts and sampled vectors verified",
-        "Durable tasks (D19)":"Absurd is Postgres-only, so on SQLite the same tasks run on src/durable/sqliteQueue.js: spawn once per key, step checkpoints, sleepFor, awaitEvent with timeout, retries with backoff, over sql-sqlite/006 (durable_task, durable_checkpoint, durable_event); a worker's claim on a task is a lease row. src/durable/index.js picks the engine by store"
+        "Export (plan 3.3)": "pa db export --to sqlite <file> (src/db/export.js): a read-only snapshot of Postgres into a new SQLite file, ids kept, vectors float for float (D5), Absurd's tasks into the SQLite queue, row counts and sampled vectors verified",
+        "Durable tasks (D19)": "Absurd is Postgres-only, so on SQLite the same tasks run on src/durable/sqliteQueue.js: spawn once per key, step checkpoints, sleepFor, awaitEvent with timeout, retries with backoff, over sql-sqlite/006 (durable_task, durable_checkpoint, durable_event); a worker's claim on a task is a lease row. src/durable/index.js picks the engine by store"
       },
       "env": [
         {

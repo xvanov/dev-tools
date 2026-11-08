@@ -88,6 +88,21 @@ const live = { ok: true, generation: 3, pid: 10, source: 'aaaaaaaaaaaa' };
   // A supervisor too old to report its source is rolled (it cannot tell).
   assert.strictEqual(p({ changed: ['personal-assistant/src/x.js'], supervisor: { ok: true } }).action, 'roll');
 
+  // PA_RUNTIME (want) against what runs: a switch, either way, is a restart
+  // (the launcher starts what the setting says); to jarvisd it builds first.
+  r = p({ changed: [], supervisor: live, want: 'jarvisd' });
+  assert.deepStrictEqual([r.action, r.binary], ['restart', true], 'node -> jarvisd, even with nothing changed');
+  assert.match(r.reasons[0], /PA_RUNTIME is jarvisd but the supervisor runs node/);
+  r = p({ changed: [], supervisor: { ...live, runtime: 'jarvisd' }, want: 'node' });
+  assert.deepStrictEqual([r.action, r.binary], ['restart', false], 'rolling the switch back: one setting, a restart');
+  assert.strictEqual(p({ changed: [], supervisor: { ...live, runtime: 'node' }, want: 'node' }).action, 'none');
+  assert.strictEqual(p({ changed: ['personal-assistant/src/x.js'], supervisor: { ok: true, source: 'aaaaaaaaaaaa' }, sourceOnDisk: 'aaaaaaaaaaaa', want: 'node' }).action, 'roll', 'a supervisor too old to say its runtime is Node');
+  // jarvisd: its own supervisor changed, or none answers: build, then restart onto it.
+  r = p({ changed: ['personal-assistant/src/supervisor/index.ts'], supervisor: { ...live, runtime: 'jarvisd' }, sourceOnDisk: 'bbbbbbbbbbbb', want: 'jarvisd' });
+  assert.deepStrictEqual([r.action, r.binary], ['restart', true]);
+  r = p({ changed: ['personal-assistant/src/x.js'], supervisor: null, want: 'jarvisd' });
+  assert.deepStrictEqual([r.action, r.binary], ['restart', true]);
+
   // A compiled jarvisd supervising (plan 4.4): a roll builds a new executable
   // first, and changes to jarvisd/ or schemas/ count, as they are in it.
   const bin = { ...live, runtime: 'jarvisd' };
@@ -98,7 +113,7 @@ const live = { ok: true, generation: 3, pid: 10, source: 'aaaaaaaaaaaa' };
   assert.strictEqual(p({ changed: ['jarvisd/src/main.ts'], supervisor: live }).action, 'none', 'a Node supervisor runs no jarvisd code');
   assert.strictEqual(p({ changed: ['personal-assistant/src/x.js'], supervisor: live }).binary, false);
   r = p({ changed: ['personal-assistant/src/supervisor/index.ts'], supervisor: bin, sourceOnDisk: 'bbbbbbbbbbbb' });
-  assert.deepStrictEqual([r.action, r.binary], ['restart', false], 'its own supervisor changed: restart, no roll');
+  assert.deepStrictEqual([r.action, r.binary], ['restart', true], 'its own supervisor changed: build, then restart onto it');
 }
 
 // ---- verdict ----

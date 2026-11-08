@@ -399,6 +399,11 @@
       }
     }
     if (self) return process.execPath;
+    // What scripts/build.js builds when no deploy has pointed current anywhere.
+    if (dir) {
+      const built = path.join(dir, 'dist', process.platform === 'win32' ? 'jarvisd.exe' : 'jarvisd');
+      if (fs.existsSync(built)) return built;
+    }
     throw new Error('PA_RUNTIME=jarvisd but no jarvisd executable (set PA_JARVISD_EXE, or build one: node scripts/build.js --only jarvisd)');
   }
 
@@ -414,7 +419,17 @@
     // "jarvisd supervise" run from source under Bun: its generations run the
     // same source (the bun runtime), unless an executable is named.
     if (runtime === 'jarvisd' && process.env.PA_JARVISD_SELF === 'bun' && !envSetting('PA_JARVISD_EXE', '')) return runtimeSpec('bun', { bun: bun || process.execPath });
-    if (runtime === 'jarvisd') return { runtime: 'jarvisd', worker: 'generation', execPath: jarvisdExe() };
+    if (runtime === 'jarvisd') {
+      try {
+        return { runtime: 'jarvisd', worker: 'generation', execPath: jarvisdExe() };
+      } catch (err) {
+        // The Node supervisor (a task that still starts node) with no binary
+        // built: run Node generations rather than none, and say so.
+        if (process.env.PA_JARVISD_SELF === 'exe') throw err;
+        log('warn', 'PA_RUNTIME=jarvisd but no jarvisd executable: running Node generations', { message: message(err) });
+        return { runtime: 'node', worker: path.join(__dirname, '..', 'worker.js'), execPath: process.execPath };
+      }
+    }
     if (runtime !== 'bun') return { runtime: 'node', worker: path.join(__dirname, '..', 'worker.js'), execPath: process.execPath };
     const dir = jarvisdDir() || path.join(__dirname, '..', '..', '..', 'jarvisd');
     // PA_BUN, else the pinned version's own directory (deploy.js bunInstallPlan
