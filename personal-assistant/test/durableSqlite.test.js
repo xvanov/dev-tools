@@ -12,7 +12,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-const { available, createSqliteBackend } = require('../src/db/sqlite');
+const { available, createSqliteBackend } = require('../src/db/sqlite.ts');
 
 if (!available()) {
   if (process.env.CI) throw new Error('the SQLite driver is not installed in CI');

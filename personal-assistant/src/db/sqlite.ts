@@ -38,6 +38,38 @@
 //     the new rows and hands them to sessions that LISTENed, as
 //     {channel, payload}. Events another process commits are picked up by a
 //     500 ms poll of the outbox counter while anyone listens.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+type Row = import('../repo/types.ts').Row;
+/** A prepared statement of the driver (better-sqlite3), as used here. */
+type Stmt = {
+  reader: boolean;
+  readonly: boolean;
+  all(...args: unknown[]): Row[];
+  get(...args: unknown[]): Row | undefined;
+  run(...args: unknown[]): { changes: number };
+  columns(): { name: string; type: string | null }[];
+};
+/** One driver connection, plus the statement cache and sqlite-vec flag kept on it. */
+type Conn = {
+  prepare(sql: string): Stmt;
+  exec(sql: string): void;
+  pragma(text: string): unknown;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  function(name: string, opts: { deterministic: boolean }, fn: (...args: any[]) => unknown): void;
+  close(): void;
+  inTransaction: boolean;
+  vec?: boolean;
+  stmts?: Map<string, Stmt>;
+};
+type Result = { rows: Row[]; rowCount: number };
+type TxClient = { dialect: string; query(text: string, params?: unknown[]): Promise<Result>; notify(channel: string, payload: unknown): Promise<void> };
+type Notification = { channel: string; payload: string; processId: number };
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type Listener = (...args: any[]) => void;
+/** What migrate() needs of a backend. */
+type MigrateTarget = { exec(sql: string): Promise<void>; rows(text: string, params?: unknown[]): Promise<Row[]> };
 
 const crypto = require('crypto');
 const fs = require('fs');
@@ -52,7 +84,7 @@ function driver() {
   try {
     return require(DRIVER);
   } catch (err) {
-    throw new Error(`the SQLite backend needs ${DRIVER} (an optional dependency of personal-assistant; npm install there): ${err.message}`);
+    throw new Error(`the SQLite backend needs ${DRIVER} (an optional dependency of personal-assistant; npm install there): ${(err as Error).message}`);
   }
 }
 
@@ -68,14 +100,14 @@ function available() {
 
 // ---- SQL text: $n -> ? ----------------------------------------------------
 
-const translated = new Map();
+const translated = new Map<string, { sql: string; order: number[] }>();
 
 /** Rewrites pg's $n placeholders to `?`, outside quotes and comments. Returns {sql, order}. */
-function translate(text) {
+function translate(text: string) {
   let hit = translated.get(text);
   if (hit) return hit;
   let sql = '';
-  const order = [];
+  const order: number[] = [];
   for (let i = 0; i < text.length; i++) {
     const ch = text[i];
     if (ch === "'" || ch === '"') {
@@ -109,7 +141,7 @@ function translate(text) {
 const ISO_INSTANT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})$/;
 
 /** A JS value as SQLite stores it (see the header). */
-function encode(v) {
+function encode(v: unknown) {
   if (v === undefined || v === null) return null;
   if (v instanceof Date) return v.toISOString();
   if (typeof v === 'boolean') return v ? 1 : 0;
@@ -127,17 +159,17 @@ function encode(v) {
 }
 
 /** A vector (array or Float32Array) as the BLOB a vector column holds. */
-function vectorBlob(v) {
+function vectorBlob(v: Float32Array | ArrayLike<number>) {
   const f = v instanceof Float32Array ? v : Float32Array.from(v);
   return Buffer.from(f.buffer, f.byteOffset, f.byteLength);
 }
 
-const toDate = (v) => (typeof v === 'string' || typeof v === 'number' ? new Date(v) : v);
-const toJson = (v) => (typeof v === 'string' ? JSON.parse(v) : v);
-const toBool = (v) => (typeof v === 'number' || typeof v === 'bigint' ? Boolean(Number(v)) : v);
-const toVector = (v) => (Buffer.isBuffer(v) ? new Float32Array(v.buffer.slice(v.byteOffset, v.byteOffset + v.byteLength)) : v);
+const toDate = (v: unknown) => (typeof v === 'string' || typeof v === 'number' ? new Date(v) : v);
+const toJson = (v: unknown) => (typeof v === 'string' ? JSON.parse(v) : v);
+const toBool = (v: unknown) => (typeof v === 'number' || typeof v === 'bigint' ? Boolean(Number(v)) : v);
+const toVector = (v: unknown) => (Buffer.isBuffer(v) ? new Float32Array(v.buffer.slice(v.byteOffset, v.byteOffset + v.byteLength)) : v);
 
-function decoderFor(type) {
+function decoderFor(type: unknown) {
   const t = String(type || '').toLowerCase();
   if (t === 'timestamptz') return toDate;
   if (t === 'jsonb' || t.endsWith('[]')) return toJson;
@@ -146,14 +178,18 @@ function decoderFor(type) {
   return null;
 }
 
-const decoders = new WeakMap();
+type Decode = (v: unknown) => unknown;
+const decoders = new WeakMap<Stmt, ((row: Row) => Row) | null>();
 
 /** A function decoding one result row of `stmt` in place, or null when no column needs it. */
-function rowDecoder(stmt) {
-  if (decoders.has(stmt)) return decoders.get(stmt);
-  const cols = stmt.columns().map((c) => [c.name, decoderFor(c.type)]).filter(([, fn]) => fn);
+function rowDecoder(stmt: Stmt) {
+  if (decoders.has(stmt)) return decoders.get(stmt) ?? null;
+  const cols = stmt
+    .columns()
+    .map((c) => [c.name, decoderFor(c.type)] as [string, Decode | null])
+    .filter((x): x is [string, Decode] => Boolean(x[1]));
   const fn = cols.length
-    ? (row) => {
+    ? (row: Row) => {
         for (const [name, dec] of cols) if (row[name] != null) row[name] = dec(row[name]);
         return row;
       }
@@ -164,7 +200,7 @@ function rowDecoder(stmt) {
 
 // ---- connections ------------------------------------------------------------
 
-function jsCosineDistance(a, b) {
+function jsCosineDistance(a: Buffer | null, b: Buffer | null) {
   if (a == null || b == null) return null;
   const x = new Float32Array(a.buffer, a.byteOffset, a.byteLength / 4);
   const y = new Float32Array(b.buffer, b.byteOffset, b.byteLength / 4);
@@ -172,9 +208,11 @@ function jsCosineDistance(a, b) {
   let nx = 0;
   let ny = 0;
   for (let i = 0; i < x.length; i++) {
-    dot += x[i] * y[i];
-    nx += x[i] * x[i];
-    ny += y[i] * y[i];
+    const xi = x[i] as number;
+    const yi = y[i] as number;
+    dot += xi * yi;
+    nx += xi * xi;
+    ny += yi * yi;
   }
   return 1 - dot / Math.sqrt(nx * ny);
 }
@@ -182,11 +220,11 @@ function jsCosineDistance(a, b) {
 let vecLoaded = false;
 
 /** A float32 vector BLOB -> its sign bits (bit i set when element i > 0), as sqlite-vec's vec_quantize_binary. */
-function signBits(b) {
+function signBits(b: Buffer | null) {
   if (b == null) return null;
   const f = new Float32Array(b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength));
   const out = Buffer.alloc(Math.ceil(f.length / 8));
-  for (let i = 0; i < f.length; i++) if (f[i] > 0) out[i >> 3] |= 1 << (i & 7);
+  for (let i = 0; i < f.length; i++) if ((f[i] as number) > 0) out[i >> 3] = (out[i >> 3] as number) | (1 << (i & 7));
   return out;
 }
 
@@ -196,22 +234,22 @@ const POPCOUNT = new Uint8Array(256).map((_, i) => {
   return c;
 });
 
-function jsHamming(a, b) {
+function jsHamming(a: Uint8Array | null, b: Uint8Array | null) {
   if (a == null || b == null) return null;
   let d = 0;
-  for (let i = 0; i < a.length; i++) d += POPCOUNT[a[i] ^ b[i]];
+  for (let i = 0; i < a.length; i++) d += POPCOUNT[(a[i] as number) ^ (b[i] as number)] as number;
   return d;
 }
 
 /** SQL for the Hamming distance of two bit BLOBs: sqlite-vec's when loaded (~3x faster), else pa_hamming. */
-function hammingSql(a, b) {
+function hammingSql(a: string, b: string) {
   return vecLoaded ? `vec_distance_hamming(vec_bit(${a}), vec_bit(${b}))` : `pa_hamming(${a}, ${b})`;
 }
 
-const dayFormats = new Map();
+const dayFormats = new Map<string, Intl.DateTimeFormat>();
 
 /** The calendar day ('YYYY-MM-DD') of an instant in an IANA zone: pg's (at at time zone tz)::date. */
-function localDay(ts, tz) {
+function localDay(ts: string | number | Date | null, tz: string) {
   if (ts == null) return null;
   let f = dayFormats.get(tz);
   if (!f) {
@@ -221,9 +259,9 @@ function localDay(ts, tz) {
   return f.format(new Date(ts));
 }
 
-function open(file, { key = null, readonly = false } = {}) {
+function open(file: string, { key = null, readonly = false }: { key?: number | string | null; readonly?: boolean } = {}) {
   const Database = driver();
-  const conn = new Database(file, readonly ? { readonly: true, fileMustExist: true } : {});
+  const conn: Conn = new Database(file, readonly ? { readonly: true, fileMustExist: true } : {});
   if (key) {
     // SQLCipher v4 format, so the file opens with stock sqlcipher tools too.
     conn.pragma("cipher = 'sqlcipher'");
@@ -250,19 +288,19 @@ function open(file, { key = null, readonly = false } = {}) {
   conn.function('pa_hamming', { deterministic: true }, jsHamming);
   conn.function('pa_local_day', { deterministic: true }, localDay);
   // pg's md5(text), and pgvector's '[0.1, ...]' text literal as a vector BLOB.
-  conn.function('md5', { deterministic: true }, (s) => (s == null ? null : crypto.createHash('md5').update(String(s)).digest('hex')));
-  conn.function('pa_vector', { deterministic: true }, (s) => (s == null ? null : vectorBlob(typeof s === 'string' ? JSON.parse(s) : s)));
+  conn.function('md5', { deterministic: true }, (s: unknown) => (s == null ? null : crypto.createHash('md5').update(String(s)).digest('hex')));
+  conn.function('pa_vector', { deterministic: true }, (s: unknown) => (s == null ? null : vectorBlob(typeof s === 'string' ? JSON.parse(s) : (s as ArrayLike<number>))));
   conn.vec = vec;
   return conn;
 }
 
-function cachedStatement(conn, sql) {
-  conn.stmts ||= new Map();
-  let s = conn.stmts.get(sql);
+function cachedStatement(conn: Conn, sql: string) {
+  const stmts = (conn.stmts ||= new Map());
+  let s = stmts.get(sql);
   if (!s) {
     s = conn.prepare(sql);
-    if (conn.stmts.size > 1000) conn.stmts.clear();
-    conn.stmts.set(sql, s);
+    if (stmts.size > 1000) stmts.clear();
+    stmts.set(sql, s);
   }
   return s;
 }
@@ -270,14 +308,14 @@ function cachedStatement(conn, sql) {
 // A statement runs on the event loop (better-sqlite3 is synchronous), so a
 // slow one stalls the whole process, the dashboard included: say which one.
 const SLOW_MS = Number(process.env.PA_SQLITE_SLOW_MS) || 250;
-let slowLog = null;
-function noteSlow(ms, sql) {
-  slowLog ||= require('../log').logger('sqlite');
-  slowLog.warn('slow statement', { ms: Math.round(ms), sql: sql.replace(/\s+/g, ' ').trim().slice(0, 300) });
+let slowLog: { warn(message: string, fields: object): void } | null = null;
+function noteSlow(ms: number, sql: string) {
+  const log = (slowLog ||= require('../log').logger('sqlite') as NonNullable<typeof slowLog>);
+  log.warn('slow statement', { ms: Math.round(ms), sql: sql.replace(/\s+/g, ' ').trim().slice(0, 300) });
 }
 
 /** Runs one statement on `conn`: pg's {rows, rowCount}. */
-function runOn(conn, text, params) {
+function runOn(conn: Conn, text: string, params?: unknown[] | null): Result {
   const { sql, order } = translate(text);
   const stmt = cachedStatement(conn, sql);
   const args = order.map((i) => encode(params ? params[i] : undefined));
@@ -298,15 +336,15 @@ function runOn(conn, text, params) {
 }
 
 function mutex() {
-  let tail = Promise.resolve();
+  let tail: Promise<unknown> = Promise.resolve();
   let held = false;
   return {
     get held() {
       return held;
     },
-    acquire() {
-      let release;
-      const next = new Promise((r) => (release = r));
+    acquire(): Promise<() => void> {
+      let release: () => void = () => {};
+      const next = new Promise<void>((r) => (release = r));
       const ready = tail.then(() => {
         held = true;
         return () => {
@@ -322,20 +360,20 @@ function mutex() {
 
 // Sessions open in this process (any backend): a lease row whose holder is
 // from this process but not in here was left by a session that is gone.
-const LIVE_SESSIONS = new Set();
+const LIVE_SESSIONS = new Set<string>();
 
-function pidAlive(pid) {
+function pidAlive(pid: number) {
   if (pid === process.pid) return true;
   try {
     process.kill(pid, 0);
     return true;
   } catch (err) {
-    return err.code === 'EPERM';
+    return (err as { code?: string }).code === 'EPERM';
   }
 }
 
 /** Whether lease holder `holder` (pid:nonce) is gone: its session closed, or its process died. */
-function holderGone(holder) {
+function holderGone(holder: string) {
   const pid = Number(String(holder).split(':')[0]);
   if (pid === process.pid) return !LIVE_SESSIONS.has(holder);
   return !pidAlive(pid);
@@ -349,7 +387,7 @@ function holderGone(holder) {
  * {query, rows, one, withTx, close}, plus dialect, pool (connect() -> a
  * session), exec (several statements, migrations) and migrate().
  */
-function createSqliteBackend(file, { key = null } = {}) {
+function createSqliteBackend(file: string, { key = null }: { key?: number | string | null } = {}) {
   // As src/db's guard for Postgres: a test process only opens a throwaway file.
   const testing = Boolean(process.env.PA_TESTING) || /\.test\.js$/i.test(process.argv[1] || '');
   if (testing && file !== ':memory:' && !/^pa_test_/i.test(path.basename(file))) {
@@ -358,12 +396,12 @@ function createSqliteBackend(file, { key = null } = {}) {
   if (file !== ':memory:') fs.mkdirSync(path.dirname(path.resolve(file)), { recursive: true });
   const writer = open(file, { key });
   const memory = file === ':memory:';
-  let reader = null; // opened on the first read: the file must exist and be in WAL mode
+  let reader: Conn | null = null; // opened on the first read: the file must exist and be in WAL mode
   const lock = mutex();
   const txContext = new AsyncLocalStorage();
   const bus = new EventEmitter();
   bus.setMaxListeners(0);
-  let lastSeq = null; // the newest event_outbox seq handed to listeners
+  let lastSeq: number | null = null; // the newest event_outbox seq handed to listeners
   let closed = false;
 
   function readConn() {
@@ -392,13 +430,13 @@ function createSqliteBackend(file, { key = null } = {}) {
     const list = writer.prepare('select seq, topic, payload from event_outbox where seq > ? order by seq').all(lastSeq);
     lastSeq = head;
     for (const r of list) {
-      const payload = JSON.stringify({ topic: r.topic, ...JSON.parse(r.payload) });
+      const payload = JSON.stringify({ topic: r.topic, ...JSON.parse(String(r.payload)) });
       setImmediate(() => bus.emit('notify', { channel: 'pa_events', payload, processId: process.pid }));
     }
   }
 
   /** pg_notify without an outbox row: to this process's listeners on `channel`. */
-  function notify(channel, payload) {
+  function notify(channel: string, payload: unknown) {
     const body = typeof payload === 'string' ? payload : JSON.stringify(payload);
     setImmediate(() => bus.emit('notify', { channel, payload: body, processId: process.pid }));
   }
@@ -408,7 +446,7 @@ function createSqliteBackend(file, { key = null } = {}) {
   // anyone listens, the outbox counter is read every POLL_MS (one indexed
   // read of a one-row table), as LISTEN would have woken them on Postgres.
   const POLL_MS = 500;
-  let poller = null;
+  let poller: ReturnType<typeof setInterval> | null = null;
   let polling = 0;
   function startPolling() {
     polling++;
@@ -431,11 +469,11 @@ function createSqliteBackend(file, { key = null } = {}) {
     }
   }
 
-  function isRead(sql) {
+  function isRead(sql: string) {
     return cachedStatement(writer, translate(sql).sql).readonly;
   }
 
-  async function query(text, params) {
+  async function query(text: string, params?: unknown[]): Promise<Result> {
     if (closed) throw new Error('the SQLite backend is closed');
     if (isRead(text)) return runOn(readConn(), text, params);
     if (txContext.getStore() === backend) {
@@ -451,7 +489,7 @@ function createSqliteBackend(file, { key = null } = {}) {
     }
   }
 
-  async function withTx(fn) {
+  async function withTx<T>(fn: (client: TxClient) => Promise<T>): Promise<T> {
     if (txContext.getStore() === backend) {
       throw new Error('a second transaction through the pool from inside an open SQLite transaction would wait on the first forever: use the repository set withTx handed you');
     }
@@ -459,9 +497,9 @@ function createSqliteBackend(file, { key = null } = {}) {
     try {
       writer.exec('BEGIN IMMEDIATE');
       // A NOTIFY inside a transaction goes out at commit, and not at all on rollback (as pg).
-      const held = [];
-      const client = { dialect: 'sqlite', query: async (text, params) => runOn(writer, text, params), notify: async (channel, payload) => void held.push([channel, payload]) };
-      let result;
+      const held: [string, unknown][] = [];
+      const client: TxClient = { dialect: 'sqlite', query: async (text, params) => runOn(writer, text, params), notify: async (channel, payload) => void held.push([channel, payload]) };
+      let result: T;
       try {
         result = await txContext.run(backend, () => fn(client));
         writer.exec('COMMIT');
@@ -478,7 +516,7 @@ function createSqliteBackend(file, { key = null } = {}) {
   }
 
   /** Several statements at once, outside the repositories (migrations, seeds). */
-  async function exec(sql) {
+  async function exec(sql: string) {
     const release = await lock.acquire();
     try {
       writer.exec(sql);
@@ -496,13 +534,13 @@ function createSqliteBackend(file, { key = null } = {}) {
     const id = `${process.pid}:${crypto.randomBytes(6).toString('hex')}`;
     LIVE_SESSIONS.add(id);
     const events = new EventEmitter();
-    const channels = new Set();
-    const relay = (n) => {
+    const channels = new Set<string>();
+    const relay = (n: Notification) => {
       if (channels.has(n.channel)) events.emit('notification', n);
     };
     const session = {
       id,
-      listen(channel) {
+      listen(channel: string) {
         if (!channels.size) {
           if (!bus.listenerCount('notify')) lastSeq = seqNow();
           bus.on('notify', relay);
@@ -510,7 +548,7 @@ function createSqliteBackend(file, { key = null } = {}) {
         }
         channels.add(channel);
       },
-      unlisten(channel) {
+      unlisten(channel: string) {
         const had = channels.size > 0;
         if (channel === '*') channels.clear();
         else channels.delete(channel);
@@ -524,33 +562,33 @@ function createSqliteBackend(file, { key = null } = {}) {
     const client = {
       dialect: 'sqlite',
       session,
-      query(text, params) {
+      query(text: string, params?: unknown[]): Promise<Result> {
         const m = /^\s*(listen|unlisten)\s+(\*|[a-z_][a-z0-9_]*)\s*;?\s*$/i.exec(text);
         if (m) {
-          session[m[1].toLowerCase()](m[2]);
+          session[m[1]!.toLowerCase() as 'listen' | 'unlisten'](m[2]!);
           return Promise.resolve({ rows: [], rowCount: 0 });
         }
         return query(text, params);
       },
-      notify: async (channel, payload) => notify(channel, payload),
-      on(event, fn) {
+      notify: async (channel: string, payload: unknown) => notify(channel, payload),
+      on(event: string, fn: Listener): unknown {
         events.on(event, fn);
         return client;
       },
-      off(event, fn) {
+      off(event: string, fn: Listener): unknown {
         events.off(event, fn);
         return client;
       },
-      removeListener(event, fn) {
+      removeListener(event: string, fn: Listener): unknown {
         events.off(event, fn);
         return client;
       },
       /** pg's Client.end(), for code that owns its connection (the live-feed listener). */
-      end() {
+      end(): Promise<void> {
         client.release();
         return Promise.resolve();
       },
-      release() {
+      release(): void {
         if (released) return;
         released = true;
         session.unlisten('*');
@@ -579,13 +617,13 @@ function createSqliteBackend(file, { key = null } = {}) {
     dialect: 'sqlite',
     file,
     query,
-    rows: async (text, params) => (await query(text, params)).rows,
-    one: async (text, params) => (await query(text, params)).rows[0] ?? null,
+    rows: async (text: string, params?: unknown[]) => (await query(text, params)).rows,
+    one: async (text: string, params?: unknown[]) => (await query(text, params)).rows[0] ?? null,
     withTx,
     exec,
-    notify: async (channel, payload) => notify(channel, payload),
+    notify: async (channel: string, payload: unknown) => notify(channel, payload),
     close,
-    migrate: () => migrate(backend),
+    migrate: (): Promise<{ applied: string[] }> => migrate(backend),
     pool: { connect, query, end: close },
     connect,
     get vec() {
@@ -600,7 +638,7 @@ function createSqliteBackend(file, { key = null } = {}) {
  * VACUUM INTO on its own read-only connection, so the writer keeps writing.
  * The copy is compacted and keeps the store's encryption (same key).
  */
-function snapshotFile(src, dest, { key = null } = {}) {
+function snapshotFile(src: string, dest: string, { key = null }: { key?: number | string | null } = {}) {
   if (fs.existsSync(dest)) throw new Error(`${dest} exists`);
   const conn = open(src, { key, readonly: true });
   try {
@@ -615,21 +653,21 @@ function snapshotFile(src, dest, { key = null } = {}) {
 function migrationFiles() {
   return fs
     .readdirSync(SCHEMA_DIR)
-    .filter((f) => f.endsWith('.sql'))
+    .filter((f: string) => f.endsWith('.sql'))
     .sort();
 }
 
 /** Applies the sql-sqlite files `backend` has not applied, each in one transaction. */
-async function migrate(backend) {
+async function migrate(backend: MigrateTarget) {
   await backend.exec(`create table if not exists schema_migration (
     version    text primary key,
     applied_at timestamptz not null default (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
   )`);
   const done = new Set((await backend.rows('select version from schema_migration')).map((r) => r.version));
-  const pending = migrationFiles().filter((f) => !done.has(f));
+  const pending: string[] = migrationFiles().filter((f: string) => !done.has(f));
   for (const file of pending) {
     const sql = fs.readFileSync(path.join(SCHEMA_DIR, file), 'utf8').replace(/^﻿/, '');
-    await backend.exec(`BEGIN IMMEDIATE;\n${sql}\n;insert into schema_migration (version) values ('${file}');\nCOMMIT;`).catch(async (err) => {
+    await backend.exec(`BEGIN IMMEDIATE;\n${sql}\n;insert into schema_migration (version) values ('${file}');\nCOMMIT;`).catch(async (err: Error) => {
       await backend.exec('ROLLBACK').catch(() => {});
       throw new Error(`sql-sqlite/${file}: ${err.message}`);
     });

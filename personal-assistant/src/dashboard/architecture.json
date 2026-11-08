@@ -1176,8 +1176,8 @@
         "personal": "Not in use yet: PA_DB=sqlite selects it; Postgres stays the default until the 3.5 cutover"
       },
       "details": {
-        "Backend (plan 3.1)": "src/db/sqlite.js: better-sqlite3-multiple-ciphers (optional dependency; N-API prebuilds for Windows and Linux) with src/db's interface. $n placeholders, Date/JSON/boolean encoding, and rows decoded by declared column type (timestamptz -> Date, jsonb and arrays -> JSON, boolean, vector -> Float32Array), so the SQLite repositories return what pg does. Writes and transactions take an in-process lock and BEGIN IMMEDIATE; plain reads use a second, read-only connection",
-        "Schema": "sql-sqlite/*.sql, applied by src/db/sqlite.js migrate() (src/db/migrate.ts hands over when PA_DB=sqlite): the same tables and columns as sql/001-038, tsvector columns as FTS5 tables (chunk_fts, chunk_fts_exact, claim_fts, memory_page_fts), the event triggers writing event_outbox under pa_event_seq, and `lease` for what were advisory locks",
+        "Backend (plan 3.1)": "src/db/sqlite.ts: better-sqlite3-multiple-ciphers (optional dependency; N-API prebuilds for Windows and Linux) with src/db's interface. $n placeholders, Date/JSON/boolean encoding, and rows decoded by declared column type (timestamptz -> Date, jsonb and arrays -> JSON, boolean, vector -> Float32Array), so the SQLite repositories return what pg does. Writes and transactions take an in-process lock and BEGIN IMMEDIATE; plain reads use a second, read-only connection",
+        "Schema": "sql-sqlite/*.sql, applied by src/db/sqlite.ts migrate() (src/db/migrate.ts hands over when PA_DB=sqlite): the same tables and columns as sql/001-038, tsvector columns as FTS5 tables (chunk_fts, chunk_fts_exact, claim_fts, memory_page_fts), the event triggers writing event_outbox under pa_event_seq, and `lease` for what were advisory locks",
         "Repositories": "src/repo/sqlite/<aggregate>.js, the twin of each src/repo/<aggregate>.js; createRepos() loads them when the backend says dialect sqlite. Every aggregate phase 1.2 has converted has its twin; each states where SQLite cannot say what Postgres says (FTS5 bm25 ranks, ASCII-only lower()/like, regexes tested in JS, millisecond timestamps), for the 3.4 shadow comparison",
         "Contract (plan 3.2)": "test/repoContract.test.js runs every case on postgres and sqlite (a throwaway encrypted pa_test_* file, no server; CI runs it on Linux and Windows and fails if SQLite is skipped). Strict: a repository method without its SQLite twin fails (PA_CONTRACT_STRICT=0 reports todo for work in progress). Green on every aggregate of 1.2",
         "Encryption": "PA_SQLITE_KEY set: SQLCipher v4 (PRAGMA cipher=sqlcipher, legacy=4, key); the key lives in the OS vault or the gitignored .env",
@@ -1210,7 +1210,7 @@
       ],
       "code": [
         "personal-assistant/sql-sqlite",
-        "personal-assistant/src/db/sqlite.js",
+        "personal-assistant/src/db/sqlite.ts",
         "personal-assistant/src/repo/sqlite",
         "personal-assistant/src/durable/sqliteQueue.js",
         "personal-assistant/src/db/export.ts",

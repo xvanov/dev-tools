@@ -38,7 +38,7 @@ const log = logger('backup');
 const LATEST = 'pa-latest.sqlite';
 
 const backup = () => require('./backup');
-const sqlite = () => require('./db/sqlite');
+const sqlite = () => require('./db/sqlite.ts');
 
 function rmFile(f) {
   for (const x of ['', '-wal', '-shm']) fs.rmSync(`${f}${x}`, { force: true });
@@ -54,7 +54,7 @@ function snapshotOffThread(src, dest, key) {
   return new Promise((resolve, reject) => {
     const w = new Worker(
       "const { workerData: d } = require('worker_threads'); require(d.mod).snapshotFile(d.src, d.dest, { key: d.key });",
-      { eval: true, workerData: { mod: require.resolve('./db/sqlite'), src, dest, key } }
+      { eval: true, workerData: { mod: require.resolve('./db/sqlite.ts'), src, dest, key } }
     );
     w.once('error', reject);
     w.once('exit', (code) => (code === 0 ? resolve() : reject(new Error(`the snapshot thread exited with ${code}`))));

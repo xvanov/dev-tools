@@ -92,7 +92,7 @@ async function exportToSqlite({ pgUrl, file, key = null, log = () => {} }: { pgU
   const target = path.resolve(file);
   if (fs.existsSync(target)) throw new Error(`${target} exists: export writes a new file only`);
   const { Client } = require('pg');
-  const { createSqliteBackend } = require('./sqlite');
+  const { createSqliteBackend } = require('./sqlite.ts');
 
   const pg: PgClient = new Client({ connectionString: pgUrl, options: '-c default_transaction_read_only=on' });
   await pg.connect();

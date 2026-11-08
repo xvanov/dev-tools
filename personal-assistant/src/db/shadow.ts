@@ -146,7 +146,7 @@ function goldScore(fused: Json[], gold: string[] | null) {
  * board reads' agreement.
  */
 async function compare({ pgUrl, file, key = null, log = () => {} }: { pgUrl: string; file: string; key?: string | null; log?: (line: string) => void }) {
-  const { createSqliteBackend } = require('./sqlite');
+  const { createSqliteBackend } = require('./sqlite.ts');
   const pgdb = pgReadOnly(pgUrl);
   const lite = createSqliteBackend(file, { key });
   const P = createRepos(pgdb);

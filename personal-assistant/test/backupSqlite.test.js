@@ -20,7 +20,7 @@ process.env.PA_BACKUP_DIR = path.join(dir, 'backups');
 process.env.PA_BACKUP_KEY = crypto.randomBytes(32).toString('base64');
 process.env.PA_FACTORY_MACHINE = 'none'; // no factory state to bundle
 
-const { available } = require('../src/db/sqlite');
+const { available } = require('../src/db/sqlite.ts');
 
 async function main() {
   if (!available()) {

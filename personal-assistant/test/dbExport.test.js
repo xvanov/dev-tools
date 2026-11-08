@@ -14,7 +14,7 @@ const os = require('os');
 const path = require('path');
 
 async function main() {
-  const { available } = require('../src/db/sqlite');
+  const { available } = require('../src/db/sqlite.ts');
   if (!available()) {
     if (process.env.CI) throw new Error('the SQLite driver is not installed in CI');
     return console.log('SKIP dbExport: no SQLite driver');
@@ -40,7 +40,7 @@ async function main() {
     assert.ok(r.ok, `export not ok: ${JSON.stringify({ bad: r.tables.filter((t) => !t.ok), vectors: r.vectors, missing: r.missing, fk: r.fk, fts: r.fts })}`);
     await assert.rejects(exportToSqlite({ pgUrl: url, file }), /exists/, 'never over an existing file');
 
-    const { createSqliteBackend } = require('../src/db/sqlite');
+    const { createSqliteBackend } = require('../src/db/sqlite.ts');
     const lite = createSqliteBackend(file, { key: 'export-test-key' });
     try {
       const ch = await lite.one('select embedding from chunk where id = $1', [chunk]);

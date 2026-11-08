@@ -10,7 +10,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-const { available, createSqliteBackend } = require('../src/db/sqlite');
+const { available, createSqliteBackend } = require('../src/db/sqlite.ts');
 
 async function main() {
   if (!available()) {

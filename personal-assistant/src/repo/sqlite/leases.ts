@@ -10,7 +10,7 @@
 
 type Db = import('../types.ts').Db;
 
-const { holderGone } = require('../../db/sqlite');
+const { holderGone } = require('../../db/sqlite.ts');
 
 function create(db: Db) {
   const holder = () => {

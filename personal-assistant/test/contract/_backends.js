@@ -69,7 +69,7 @@ async function sqlite() {
   const fs = require('fs');
   const os = require('os');
   const path = require('path');
-  const { available, createSqliteBackend } = require('../../src/db/sqlite');
+  const { available, createSqliteBackend } = require('../../src/db/sqlite.ts');
   if (!available()) return { skip: 'better-sqlite3-multiple-ciphers is not installed (an optional dependency; npm install)' };
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pa-contract-'));
   const db = createSqliteBackend(path.join(dir, `pa_test_contract_${process.pid}.sqlite`), { key: 'contract-test-key' });

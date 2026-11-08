@@ -17,7 +17,7 @@ let pool = null;
 const SQLITE = config.db === 'sqlite';
 let sqliteBackend = null;
 function sqlite() {
-  if (!sqliteBackend) sqliteBackend = require('./sqlite').createSqliteBackend(config.sqlitePath, { key: config.sqliteKey || null });
+  if (!sqliteBackend) sqliteBackend = require('./sqlite.ts').createSqliteBackend(config.sqlitePath, { key: config.sqliteKey || null });
   return sqliteBackend;
 }
 

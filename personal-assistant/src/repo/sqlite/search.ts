@@ -24,7 +24,7 @@ type Db = import('../types.ts').Db;
 type Row = import('../types.ts').Row;
 type Filters = { sources?: unknown[] | null; since?: Date | string | number | null; until?: Date | string | number | null };
 
-const { vectorBlob, signBits, hammingSql } = require('../../db/sqlite');
+const { vectorBlob, signBits, hammingSql } = require('../../db/sqlite.ts');
 
 // How many chunks the Hamming pass hands to the exact cosine re-rank: on the
 // work stack 300 gave the exact scan's top 30 for every test query (plan 3.4).
