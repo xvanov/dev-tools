@@ -256,6 +256,12 @@ run mid-step; a job continued on an existing branch (`--branch`).
     factory_start took 2 min 19 s, and the job again stayed `queued` past the 300 s job_started limit.
     A concurrent smoke job (dev-tools:006) on the same app was live the whole time, so the job may have been
     serialized behind it (asked factory-native). The live feed delivered 17 run/factory events.
+    Run 4 (2d7fdbf, with the E5.2/E5.4 fixes, 09:11Z; card #6761): failed at factory_start with
+    `factory bad_output: exit 0, no JSON object on stdout`. Serve's POST /api/cli returns empty stdout for
+    `app list --json` (and the submit path), while job list and status are fine. No job was created; the
+    card was dropped.
+  - [ ] **E5.5 factory serve returns empty stdout for some CLI commands** (`app list --json`, the submit
+    path), so nothing can be dispatched through serve (sent to factory-native).
     factory-native: yes, serialized. One tick per app at a time, and a tick runs agent steps
     synchronously: 006's tick (with its onboarder inside) held dev-tools for 339 s, so 007's triage
     waited. Measured on serve after 2.2 (dev-tools:008, alone on the app): submit 1.3 s, wake tick
@@ -587,7 +593,9 @@ not in the Map is not done, and a new one gets added there first.
     `No such file or directory: C:\Temp\pa-talk-<pid>-….wav`. The generation's socket closes early,
     askWhisper resolves that as empty text, and the WAV is deleted before whisper opens it. The same file
     sent to :47821 directly is transcribed in 300-600 ms. askWhisper also turns a transcriber
-    error into a silent empty answer.
+    error into a silent empty answer. Bun only: after the rollback to Node (PA_RUNTIME=node, 2d7fdbf)
+    the same WAVs come back "What's on today?" (whisper 740-1014 ms). The Bun runtime's socket
+    half-close is the suspect.
   - research, deepseek-pr, review-fix: dry runs fail on `factory app list --json`. Through factory
     serve's /api/cli it returns code 0 with empty stdout; job list and status are fine (sent to
     factory-native).
