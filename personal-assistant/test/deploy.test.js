@@ -80,6 +80,40 @@ const live = { ok: true, generation: 3, pid: 10, source: 'aaaaaaaaaaaa' };
   assert.match(src, /PA_SUPERVISED !== '1' && process\.env\.PA_NO_SUPERVISOR !== '1'/);
 }
 
+// ---- one deploy at a time ----
+async function lockCases() {
+  const { acquireDeployLock } = require('../src/supervisor/deploy');
+  const fs = require('fs');
+  const os = require('os');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pa-deploylock-'));
+  const file = path.join(dir, 'deploy.lock');
+  try {
+    const a = await acquireDeployLock({ file });
+    // A second deploy waits while the first holds it, and gets it once released.
+    let got = false;
+    const b = acquireDeployLock({ file, pollMs: 20, waitMs: 5000 }).then((l) => ((got = true), l));
+    await new Promise((r) => setTimeout(r, 100));
+    assert.strictEqual(got, false, 'a second deploy ran while the first held the lock');
+    a.release();
+    const lb = await b;
+    assert.strictEqual(got, true);
+    lb.release();
+    assert.ok(!fs.existsSync(file));
+    // A lock left by a dead process is taken over.
+    fs.writeFileSync(file, JSON.stringify({ pid: 999999, at: 'then' }));
+    const said = [];
+    const lc = await acquireDeployLock({ file, pollMs: 20, waitMs: 1000, say: (m) => said.push(m) });
+    assert.match(said.join('\n'), /not running/);
+    lc.release();
+    // A live holder that never lets go: the waiter gives up, saying who.
+    const ld = await acquireDeployLock({ file });
+    await assert.rejects(acquireDeployLock({ file, pollMs: 20, waitMs: 100 }), /another deploy \(pid \d+\)/);
+    ld.release();
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 // ---- args ----
 assert.deepStrictEqual(parseArgs(['--from', 'abc', '--dry-run', '--watch-seconds', '5']), { pull: false, from: 'abc', dryRun: true, json: false, watchSeconds: 5 });
 assert.throws(() => parseArgs(['--frob']), /unknown argument/);
@@ -146,4 +180,10 @@ assert.throws(() => parseArgs(['--frob']), /unknown argument/);
   }
 }
 
-console.log('deploy ok');
+lockCases().then(
+  () => console.log('deploy ok'),
+  (err) => {
+    console.error(err);
+    process.exit(1);
+  }
+);

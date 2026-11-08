@@ -149,7 +149,75 @@ function parseArgs(argv) {
   return o;
 }
 
-async function deploy(argv, { say } = {}) {
+// One deploy at a time per machine. Two agents once deployed the same stack
+// within a minute: the second rolled while the first watched, the first saw a
+// commit it did not deploy, called that unhealthy and rolled the second one
+// back. A lock file beside the supervisor's log, holding the owner's pid; a
+// dead owner's lock is taken over. A second deploy waits for the first.
+function lockPath() {
+  return path.join(path.dirname(path.dirname(sup.defaultLogFile())), 'deploy.lock');
+}
+
+function alive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return err.code === 'EPERM';
+  }
+}
+
+async function acquireDeployLock({ file = lockPath(), waitMs = 15 * 60_000, pollMs = 2000, say = () => {} } = {}) {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const deadline = Date.now() + waitMs;
+  let told = false;
+  for (;;) {
+    try {
+      fs.writeFileSync(file, JSON.stringify({ pid: process.pid, at: new Date().toISOString() }), { flag: 'wx' });
+      return {
+        file,
+        release: () => {
+          try {
+            const held = JSON.parse(fs.readFileSync(file, 'utf8'));
+            if (held.pid === process.pid) fs.rmSync(file, { force: true });
+          } catch {
+            /* gone already */
+          }
+        },
+      };
+    } catch (err) {
+      if (err.code !== 'EEXIST') throw err;
+    }
+    let held = null;
+    try {
+      held = JSON.parse(fs.readFileSync(file, 'utf8'));
+    } catch {
+      /* half-written or just removed: try again */
+    }
+    if (held && !alive(held.pid)) {
+      say(`a deploy lock from pid ${held.pid} (not running) - taking it over`);
+      fs.rmSync(file, { force: true });
+      continue;
+    }
+    if (Date.now() > deadline) throw new Error(`another deploy (pid ${held && held.pid}) has held ${file} too long`);
+    if (!told && held) say(`another deploy is running (pid ${held.pid}, since ${held.at}) - waiting for it`);
+    told = true;
+    await new Promise((r) => setTimeout(r, pollMs));
+  }
+}
+
+async function deploy(argv, opts = {}) {
+  const o = parseArgs(argv);
+  if (o.dryRun) return deployUnlocked(argv, opts);
+  const lock = await acquireDeployLock({ say: (m) => (o.json ? process.stderr : process.stdout).write(`deploy: ${m}\n`) });
+  try {
+    return await deployUnlocked(argv, opts);
+  } finally {
+    lock.release();
+  }
+}
+
+async function deployUnlocked(argv, { say } = {}) {
   const o = parseArgs(argv);
   // With --json, stdout carries only the JSON.
   if (!say) say = (m) => (o.json ? process.stderr : process.stdout).write(`deploy: ${m}\n`);
@@ -255,4 +323,4 @@ if (require.main === module) {
   );
 }
 
-module.exports = { plan, verdict, deploy, parseArgs };
+module.exports = { plan, verdict, deploy, parseArgs, acquireDeployLock };
