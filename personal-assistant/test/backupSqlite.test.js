@@ -29,8 +29,8 @@ async function main() {
   }
   const db = require('../src/db');
   const repo = require('../src/repo');
-  const backup = require('../src/backup');
-  const bs = require('../src/backupSqlite');
+  const backup = require('../src/backup.ts');
+  const bs = require('../src/backupSqlite.ts');
   const { config } = require('../src/config.ts');
   try {
     assert.strictEqual(db.dialect, 'sqlite');

@@ -4,7 +4,7 @@
 // and names must sort by time so "newest" is just the first in the list.
 
 const assert = require('assert');
-const { stamp, toPrune } = require('../src/backup');
+const { stamp, toPrune } = require('../src/backup.ts');
 
 {
   assert.strictEqual(stamp(new Date('2026-03-04T05:06:07Z')), '20260304-050607');
@@ -22,14 +22,14 @@ const { stamp, toPrune } = require('../src/backup');
 }
 
 {
-  const { wslPath } = require('../src/backup');
+  const { wslPath } = require('../src/backup.ts');
   assert.strictEqual(wslPath('C:\\Users\\Quill\\App Data\\pa.dump'), '/mnt/c/Users/Quill/App Data/pa.dump');
   assert.strictEqual(wslPath('D:/backups/pa.dump'), '/mnt/d/backups/pa.dump');
 }
 
 {
   // Extensions are commented out of the restore list; tables are not.
-  const { restoreList } = require('../src/backup');
+  const { restoreList } = require('../src/backup.ts');
   const listing = [
     '2; 3079 16386 EXTENSION - vector ',
     '3830; 0 0 COMMENT - EXTENSION vector',
@@ -46,12 +46,12 @@ console.log('backup.test.js ok');
 
 // #13: a restore rotates the install id (factory idempotency keys never collide with a live twin).
 (async () => {
-  const { rotateInstallId } = require('../src/backup');
+  const { rotateInstallId } = require('../src/backup.ts');
   const seen = [];
   const id = await rotateInstallId(async (newId) => { seen.push(newId); });
   require('assert').match(id, /^[0-9a-f-]{36}$/);
   require('assert').deepStrictEqual(seen, [id]);
-  const src = require('fs').readFileSync(require('path').join(__dirname, '..', 'src', 'backup.js'), 'utf8');
+  const src = require('fs').readFileSync(require('path').join(__dirname, '..', 'src', 'backup.ts'), 'utf8');
   const body = src.slice(src.indexOf('async function restore('), src.indexOf('async function rotateInstallId'));
   require('assert').ok(/await rotateInstallId\(\)/.test(body), 'restore calls it');
   console.log('backup install-id rotation ok');

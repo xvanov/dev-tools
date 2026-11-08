@@ -24,6 +24,15 @@
 //
 // A dump is written to a temporary name and renamed when pg_dump succeeds:
 // a half-written file never looks like the newest good backup.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+type Row = import('./repo/types.ts').Row;
+type Json = import('./types.ts').Json;
+/** Where pg_dump/pg_restore run: here, in a WSL distro, or in a container. */
+type Tools = { mode: string; distro?: string | undefined; container?: string | undefined };
+type Command = { cmd: string; args: string[]; stdoutFile?: string; env?: Record<string, string> };
+type Backup = { file: string; name: string; bytes: number; at: Date; encrypted: boolean };
 
 const fs = require('fs');
 const os = require('os');
@@ -48,12 +57,12 @@ const sqliteStore = () => repo.backend.dialect === 'sqlite';
 const PATTERN = /^pa-(\d{8}-\d{6})\.(dump|pabak)$/;
 const KEY_NAME = 'PA_BACKUP_KEY';
 
-function stamp(date = new Date()) {
+function stamp(date: Date = new Date()) {
   return date.toISOString().replace(/[-:]/g, '').replace('T', '-').slice(0, 15);
 }
 
-function list(dir = config.backup.dir) {
-  let names;
+function list(dir: string = config.backup.dir): Backup[] {
+  let names: string[];
   try {
     names = fs.readdirSync(dir);
   } catch {
@@ -71,13 +80,13 @@ function list(dir = config.backup.dir) {
 }
 
 // Which files a rotation deletes: everything past the newest `keep`.
-function toPrune(backups, keep) {
+function toPrune(backups: Backup[], keep: number) {
   return backups.slice(Math.max(1, keep));
 }
 
 // C:\Users\x\f.dump → /mnt/c/Users/x/f.dump: the distro's view of a Windows
 // path, so pg_dump writes the file directly.
-function wslPath(winPath) {
+function wslPath(winPath: string) {
   const abs = path.win32.resolve(winPath);
   const m = abs.match(/^([A-Za-z]):[\\/](.*)$/);
   if (!m) throw new Error(`not a drive path: ${winPath}`);
@@ -85,7 +94,7 @@ function wslPath(winPath) {
 }
 
 // 'wsl:Ubuntu' | 'native' | 'docker:pa-postgres' → what it means.
-function parseTools(spec) {
+function parseTools(spec: unknown): Tools {
   const m = /^(wsl|docker):(.+)$/.exec(String(spec || '').trim());
   if (m) return m[1] === 'wsl' ? { mode: 'wsl', distro: m[2] } : { mode: 'docker', container: m[2] };
   if (String(spec || '').trim() === 'native') return { mode: 'native' };
@@ -94,7 +103,7 @@ function parseTools(spec) {
 
 // Inside the container the server is on its own loopback at 5432, whatever
 // port the host maps it to.
-function containerUrl(url) {
+function containerUrl(url: string) {
   const u = new URL(url);
   u.hostname = '127.0.0.1';
   u.port = '5432';
@@ -104,7 +113,7 @@ function containerUrl(url) {
 // Pure: the store's URL without its password, and the password. The password
 // travels as PGPASSWORD in the tool's environment, never on its command line
 // (which `ps` shows to every user on the machine).
-function splitPassword(url) {
+function splitPassword(url: string) {
   const u = new URL(url);
   const password = u.password ? decodeURIComponent(u.password) : null;
   u.password = '';
@@ -117,25 +126,25 @@ function splitPassword(url) {
 // `password`, it reaches the program as PGPASSWORD: in this process's env for
 // a native tool, named (no value) with `docker exec -e` so the docker CLI
 // passes its own copy, and through WSLENV into the distro.
-function toolCommand(tools, program, args, { password = null } = {}) {
+function toolCommand(tools: Tools, program: string, args: string[], { password = null }: { password?: string | null } = {}): Command {
   const env = password ? { PGPASSWORD: password } : null;
   if (tools.mode === 'wsl') {
     const wslenv = env ? { ...env, WSLENV: [process.env.WSLENV, 'PGPASSWORD/u'].filter(Boolean).join(':') } : null;
-    return withEnv({ cmd: 'wsl.exe', args: ['-d', tools.distro, '--exec', program, ...args] }, wslenv);
+    return withEnv({ cmd: 'wsl.exe', args: ['-d', tools.distro as string, '--exec', program, ...args] }, wslenv);
   }
   if (tools.mode === 'docker') {
-    return withEnv({ cmd: 'docker', args: ['exec', ...(env ? ['-e', 'PGPASSWORD'] : []), tools.container, program, ...args] }, env);
+    return withEnv({ cmd: 'docker', args: ['exec', ...(env ? ['-e', 'PGPASSWORD'] : []), tools.container as string, program, ...args] }, env);
   }
   return withEnv({ cmd: program, args }, env);
 }
 
-function withEnv(command, env) {
+function withEnv(command: Command, env: Record<string, string> | null | undefined): Command {
   return env ? { ...command, env } : command;
 }
 
 // Pure: the dump step. The docker one prints the archive on stdout, which is
 // streamed to `file`; the others write `file` themselves.
-function dumpCommand(tools, { url, file }) {
+function dumpCommand(tools: Tools, { url, file }: { url: string; file: string }) {
   const base = ['--format=custom', '--compress=6'];
   if (tools.mode === 'docker') {
     const c = splitPassword(containerUrl(url));
@@ -147,7 +156,7 @@ function dumpCommand(tools, { url, file }) {
 }
 
 // Runs one command; with `stdoutFile`, its stdout goes to that file.
-function runTool({ cmd, args, stdoutFile, env }, { timeoutMs = 30 * 60_000 } = {}) {
+function runTool({ cmd, args, stdoutFile, env }: Command, { timeoutMs = 30 * 60_000 }: { timeoutMs?: number } = {}) {
   const childEnv = env ? { ...process.env, ...env } : process.env;
   if (!stdoutFile) {
     return exec(cmd, args, { timeout: timeoutMs, maxBuffer: 16 * 1024 * 1024, windowsHide: true, env: childEnv });
@@ -158,13 +167,13 @@ function runTool({ cmd, args, stdoutFile, env }, { timeoutMs = 30 * 60_000 } = {
     let stderr = '';
     const timer = setTimeout(() => child.kill('SIGKILL'), timeoutMs);
     child.stdout.pipe(outFile);
-    child.stderr.on('data', (d) => { stderr += d; });
-    child.on('error', (err) => {
+    child.stderr.on('data', (d: Buffer) => { stderr += d; });
+    child.on('error', (err: Error) => {
       clearTimeout(timer);
       outFile.destroy();
       reject(err);
     });
-    child.on('close', (code) => {
+    child.on('close', (code: number | null) => {
       clearTimeout(timer);
       outFile.close(() => (code === 0 ? resolve({ stdout: '', stderr }) : reject(Object.assign(new Error(`exit ${code}`), { stderr }))));
     });
@@ -178,7 +187,7 @@ function runTool({ cmd, args, stdoutFile, env }, { timeoutMs = 30 * 60_000 } = {
 // missing key is generated into the keychain. Never into .env: a key beside
 // the backups protects nothing. Returns null when there is none and none can
 // be stored, and the caller decides (a dump then stays plain and says so).
-function backupKey({ create = false } = {}) {
+function backupKey({ create = false }: { create?: boolean } = {}) {
   const cfg = require('./config.ts');
   const have = cfg.secret(KEY_NAME);
   if (have) return { key: crypt.parseKey(have), created: false };
@@ -203,10 +212,10 @@ function factoryStateDir() {
 // locks are meaningless on another machine.
 const STATE_EXCLUDE = ['logs', 'locks'];
 
-function stateStats(dir) {
+function stateStats(dir: string) {
   let files = 0;
   let bytes = 0;
-  const walk = (d, top) => {
+  const walk = (d: string, top: boolean) => {
     for (const e of fs.readdirSync(d, { withFileTypes: true })) {
       if (top && STATE_EXCLUDE.includes(e.name)) continue;
       const p = path.join(d, e.name);
@@ -233,7 +242,7 @@ function tarBin() {
  * backup time, which the restore drill checks), in a tar, encrypted with
  * AES-256-GCM (src/backupCrypto.js). Consumes `dumpFile`.
  */
-async function bundle({ dumpFile, out, key, state = factoryStateDir(), counts, entry = 'pa.dump' }) {
+async function bundle({ dumpFile, out, key, state = factoryStateDir(), counts, entry = 'pa.dump' }: { dumpFile: string; out: string; key?: Buffer | null; state?: string; counts?: unknown; entry?: string }) {
   const stage = fs.mkdtempSync(path.join(path.dirname(out), '.stage-'));
   try {
     // entry: pa.dump (pg_dump), or pa.sqlite (a SQLite store's snapshot, src/backupSqlite.js).
@@ -264,7 +273,7 @@ async function bundle({ dumpFile, out, key, state = factoryStateDir(), counts, e
  * removes `dir`). Throws, leaving nothing behind, on a wrong key or a damaged
  * file: nothing is extracted from a bundle that failed authentication.
  */
-function unpack(file, { key = null } = {}) {
+function unpack(file: string, { key = null }: { key?: Buffer | null } = {}) {
   const k = key || (backupKey() || {}).key;
   if (!k) throw new Error(`${file} is encrypted and there is no ${KEY_NAME} on this machine (keychain, env or .env)`);
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pa-unpack-'));
@@ -290,8 +299,8 @@ function unpack(file, { key = null } = {}) {
   }
 }
 
-async function dump({ dir = config.backup.dir, keep = config.backup.keep, plain = false } = {}) {
-  if (sqliteStore()) return require('./backupSqlite').dump({ dir, keep, plain });
+async function dump({ dir = config.backup.dir, keep = config.backup.keep, plain = false }: { dir?: string; keep?: number; plain?: boolean } = {}) {
+  if (sqliteStore()) return require('./backupSqlite.ts').dump({ dir, keep, plain });
   fs.mkdirSync(dir, { recursive: true });
   const id = stamp();
   const plainFinal = path.join(dir, `pa-${id}.dump`);
@@ -301,7 +310,7 @@ async function dump({ dir = config.backup.dir, keep = config.backup.keep, plain 
     await runTool(dumpCommand(parseTools(config.backup.pgTools), { url: config.databaseUrl, file: partial }));
   } catch (err) {
     fs.rmSync(partial, { force: true });
-    throw new Error(`pg_dump failed: ${(err.stderr || err.message).trim().slice(0, 300)}`);
+    throw new Error(`pg_dump failed: ${((err as Json).stderr || (err as Error).message).trim().slice(0, 300)}`);
   }
   let final = plainFinal;
   const k = plain ? null : backupKey({ create: true });
@@ -311,7 +320,7 @@ async function dump({ dir = config.backup.dir, keep = config.backup.keep, plain 
       await bundle({ dumpFile: partial, out: final, key: k.key });
     } catch (err) {
       fs.rmSync(final, { force: true });
-      throw new Error(`encrypting the backup failed: ${String(err.stderr || err.message).trim().slice(0, 300)}`);
+      throw new Error(`encrypting the backup failed: ${String((err as Json).stderr || (err as Error).message).trim().slice(0, 300)}`);
     } finally {
       fs.rmSync(partial, { force: true });
     }
@@ -332,7 +341,7 @@ async function dump({ dir = config.backup.dir, keep = config.backup.keep, plain 
 // The worker's nightly pass. It also runs once at worker start, so it skips
 // when a recent dump exists rather than writing one per restart.
 async function dumpIfDue() {
-  if (sqliteStore()) return require('./backupSqlite').dumpIfDue();
+  if (sqliteStore()) return require('./backupSqlite.ts').dumpIfDue();
   const newest = list()[0];
   if (newest && Date.now() - newest.at.getTime() < config.backup.everyHours * 3600_000) return null;
   return dump();
@@ -353,8 +362,8 @@ async function dumpIfDue() {
 // private temp folder first, and the folder is removed after. With `url` set
 // the restore goes there instead (the drill's scratch database): then the
 // extensions are the caller's job and the install id is left alone.
-async function restore(file, { url = null } = {}) {
-  if (sqliteStore()) return require('./backupSqlite').restore(file);
+async function restore(file: string, { url = null }: { url?: string | null } = {}) {
+  if (sqliteStore()) return require('./backupSqlite.ts').restore(file);
   if (!fs.existsSync(file)) throw new Error(`no such file: ${file}`);
   if (crypt.isEncrypted(file)) {
     const unpacked = unpack(file);
@@ -377,7 +386,7 @@ async function restore(file, { url = null } = {}) {
   // The docker tools see the container's filesystem: the dump and the list go
   // in through `docker cp` and are removed after.
   const inside = tools.mode === 'docker' ? `/tmp/pa-restore-${process.pid}-${Date.now()}` : null;
-  const view = (p) => (tools.mode === 'wsl' ? wslPath(p) : inside ? `${inside}${p === listFile ? '.list' : '.dump'}` : p);
+  const view = (p: string) => (tools.mode === 'wsl' ? wslPath(p) : inside ? `${inside}${p === listFile ? '.list' : '.dump'}` : p);
   try {
     if (inside) await runTool({ cmd: 'docker', args: ['cp', file, `${tools.container}:${view(file)}`] });
     const { stdout } = await runTool(toolCommand(tools, 'pg_restore', ['--list', view(file)]));
@@ -396,10 +405,10 @@ async function restore(file, { url = null } = {}) {
       ], db)
     );
   } catch (err) {
-    throw new Error(`pg_restore failed: ${(err.stderr || err.message).trim().slice(0, 500)}`);
+    throw new Error(`pg_restore failed: ${((err as Json).stderr || (err as Error).message).trim().slice(0, 500)}`);
   } finally {
     fs.rmSync(listFile, { force: true });
-    if (inside) await runTool({ cmd: 'docker', args: ['exec', tools.container, 'rm', '-f', view(file), view(listFile)] }).catch(() => {});
+    if (inside) await runTool({ cmd: 'docker', args: ['exec', tools.container as string, 'rm', '-f', view(file), view(listFile)] }).catch(() => {});
   }
   if (live) await rotateInstallId();
   log.info('restored', { file, scratch: !live });
@@ -411,7 +420,7 @@ async function restore(file, { url = null } = {}) {
  * id would hand each other's runs the same factory idempotency keys. Runs
  * already submitted keep the key on their row (run.external_id).
  */
-async function rotateInstallId(replace = (id) => repo.system.replaceInstallId(id)) {
+async function rotateInstallId(replace: (id: string) => Promise<unknown> = (id) => repo.system.replaceInstallId(id)) {
   const id = require('crypto').randomUUID();
   await replace(id);
   log.info('new install id after restore');
@@ -420,10 +429,10 @@ async function rotateInstallId(replace = (id) => repo.system.replaceInstallId(id
 
 // A `pg_restore --list` with the extension entries (and their comments)
 // commented out.
-function restoreList(listing) {
+function restoreList(listing: string) {
   return listing
     .split(/\r?\n/)
-    .map((line) => (/^\d+;.*\b(EXTENSION|COMMENT - EXTENSION)\b/.test(line) ? `;${line}` : line))
+    .map((line: string) => (/^\d+;.*\b(EXTENSION|COMMENT - EXTENSION)\b/.test(line) ? `;${line}` : line))
     .join('\n');
 }
 
@@ -432,7 +441,7 @@ function restoreList(listing) {
 // github, jira. The calendar re-reads a fixed window every pass, and Claude
 // sessions and audio come from local files that are re-scanned on their own.
 // How far back a source can actually go is the source's limit, not ours.
-async function reingest({ days, sources = [] }) {
+async function reingest({ days, sources = [] }: { days: number; sources?: unknown[] }) {
   const since = new Date(Date.now() - days * 86400_000).toISOString();
   return { since, sources: await repo.sources.rewindCursors(since, sources) };
 }
@@ -442,7 +451,7 @@ async function reingest({ days, sources = [] }) {
 async function toolsCheck() {
   const tools = parseTools(config.backup.pgTools);
   if (tools.mode !== 'native') return { ok: true, detail: '' };
-  const r = await exec('pg_dump', ['--version'], { timeout: 10_000, windowsHide: true }).catch((err) => ({ error: err }));
+  const r = await exec('pg_dump', ['--version'], { timeout: 10_000, windowsHide: true }).catch((err: Error) => ({ error: err }));
   if (r.error) return { ok: false, detail: 'pg_dump not found — install postgresql-client, or set PA_PG_TOOLS=docker:<container>' };
   const client = Number((/(\d+)(?:\.\d+)?/.exec(r.stdout) || [])[1]);
   const server = await repo.system.serverMajor().catch(() => null);
@@ -459,11 +468,11 @@ async function toolsCheck() {
  * restore lacks always fails.
  * @returns {{ok: boolean|null, checked: number, problems: {table: string, expected: number, got: number|null}[]}}
  */
-function compareCounts(expected, got) {
+function compareCounts(expected: Record<string, number> | null | undefined, got: Record<string, number>) {
   if (!expected) return { ok: null, checked: 0, problems: [] };
-  const problems = [];
+  const problems: { table: string; expected: number; got: number | null }[] = [];
   for (const [table, want] of Object.entries(expected)) {
-    const have = Object.prototype.hasOwnProperty.call(got, table) ? got[table] : null;
+    const have = Object.prototype.hasOwnProperty.call(got, table) ? (got[table] ?? null) : null;
     const tol = Math.max(10, Math.ceil(want * 0.02));
     if (have === null || Math.abs(have - want) > tol) problems.push({ table, expected: want, got: have });
   }
@@ -481,16 +490,16 @@ function compareCounts(expected, got) {
  * overrides the connection used for everything, default the store's own URL),
  * or a `template` database that already holds them.
  */
-async function drill({ file = (list()[0] || {}).file, to, keep = false, adminUrl = null, template = null, say = () => {} } = {}) {
-  if (sqliteStore()) return require('./backupSqlite').drill({ file, to, keep, say });
+async function drill({ file = (list()[0] || {}).file, to, keep = false, adminUrl = null, template = null, say = (_line: string) => {} }: { file?: string; to?: string | null; keep?: boolean; adminUrl?: string | null; template?: string | null; say?: (line: string) => void } = {}) {
+  if (sqliteStore()) return require('./backupSqlite.ts').drill({ file, to, keep, say });
   if (!file) throw new Error(`no backups in ${config.backup.dir}`);
   if (!require('./repo/backupDrill.ts').NAME_RE.test(String(to || ''))) {
     throw new Error('--to wants a lowercase database name (letters, digits, underscore), e.g. pa_drill');
   }
   const base = new URL(adminUrl || config.databaseUrl);
   const liveName = decodeURIComponent(new URL(config.databaseUrl).pathname.replace(/^\//, ''));
-  if (to === liveName || to === 'postgres' || to.startsWith('template')) throw new Error(`refusing to restore into "${to}": give the drill its own scratch database name`);
-  const withDb = (name) => {
+  if (to === liveName || to === 'postgres' || (to as string).startsWith('template')) throw new Error(`refusing to restore into "${to}": give the drill its own scratch database name`);
+  const withDb = (name: string) => {
     const u = new URL(base);
     u.pathname = `/${name}`;
     return u.toString();
@@ -508,20 +517,20 @@ async function drill({ file = (list()[0] || {}).file, to, keep = false, adminUrl
     say(`creating ${to}`);
     await drillAdmin.createDatabase(to, { template });
     created = true;
-    scratch = repo.openAt(withDb(to), { max: 2 });
+    scratch = repo.openAt(withDb(to as string), { max: 2 });
     const scratchRepo = scratch.backupDrill;
     try {
       await scratchRepo.ensureExtensions();
     } catch (err) {
-      throw new Error(`the scratch database cannot get the vector/pg_trgm extensions (${err.message}). Give the drill a role that may create them (--admin-url postgres://<superuser>@host:port/postgres), or a --template database that already has them`);
+      throw new Error(`the scratch database cannot get the vector/pg_trgm extensions (${(err as Error).message}). Give the drill a role that may create them (--admin-url postgres://<superuser>@host:port/postgres), or a --template database that already has them`);
     }
     say('restoring');
-    await restore(unpacked.dumpFile, { url: withDb(to) });
+    await restore(unpacked.dumpFile, { url: withDb(to as string) });
     const got = await scratchRepo.tableCounts();
     const rows = compareCounts(unpacked.manifest && unpacked.manifest.counts, got);
     const want = unpacked.manifest && unpacked.manifest.state;
     const have = unpacked.stateDir ? stateStats(unpacked.stateDir) : null;
-    const stateOk = !want || !want.files ? null : Boolean(have) && Math.abs(have.files - want.files) <= Math.max(10, Math.ceil(want.files * 0.1));
+    const stateOk = !want || !want.files ? null : have !== null && Math.abs(have.files - want.files) <= Math.max(10, Math.ceil(want.files * 0.1));
     const restored = Object.keys(got).length;
     const ok = restored > 0 && rows.ok !== false && stateOk !== false;
     return {
@@ -537,7 +546,7 @@ async function drill({ file = (list()[0] || {}).file, to, keep = false, adminUrl
     };
   } finally {
     if (scratch) await scratch.close().catch(() => {});
-    if (created && !keep) await admin.backupDrill.dropDatabase(to).catch((err) => log.warn('could not drop the drill database', { to, error: err.message }));
+    if (created && !keep) await admin.backupDrill.dropDatabase(to).catch((err: Error) => log.warn('could not drop the drill database', { to, error: err.message }));
     await admin.close().catch(() => {});
     if (unpacked && unpacked.dir) fs.rmSync(unpacked.dir, { recursive: true, force: true });
   }
@@ -555,7 +564,7 @@ function keyInit() {
  * refuses to overwrite) so it can be kept off this machine: without it a
  * backup is unreadable after the keychain is lost. The key is not printed.
  */
-function keyExport(to) {
+function keyExport(to: string) {
   const k = backupKey();
   if (!k) throw new Error(`no ${KEY_NAME} on this machine yet: run \`pa backup key init\``);
   fs.writeFileSync(to, `${k.key.toString('base64')}\n`, { flag: 'wx', mode: 0o600 });

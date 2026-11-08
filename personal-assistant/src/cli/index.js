@@ -1105,7 +1105,7 @@ const commands = {
   },
 
   async backup(args, flags) {
-    const backup = require('../backup');
+    const backup = require('../backup.ts');
     if (args[0] === 'list') {
       const all = backup.list();
       if (!all.length) return out(`no backups in ${config.backup.dir}`);
@@ -1142,7 +1142,7 @@ const commands = {
   },
 
   async restore(args, flags) {
-    const backup = require('../backup');
+    const backup = require('../backup.ts');
     const file = args[0] || backup.list()[0]?.file;
     if (!file) return fail(`usage: pa restore [file] — and no backups found in ${config.backup.dir}`);
     out(`This replaces the whole database with ${file}.`);
@@ -1156,7 +1156,7 @@ const commands = {
     const days = flagInt(flags, 'days', 0);
     if (!days) return fail('usage: pa reingest --days N [--source graph_mail,graph_chat,github,jira]');
     const sources = flags.source ? String(flags.source).split(',') : [];
-    const r = await require('../backup').reingest({ days, sources });
+    const r = await require('../backup.ts').reingest({ days, sources });
     if (!r.sources.length) return out('no matching sources to rewind');
     out(`rewound ${r.sources.join(', ')} to ${r.since.slice(0, 10)} — the worker fetches it over its next passes`);
     out('(or now: pa sync --source <name>). Existing items are upserted, not duplicated.');
@@ -1775,9 +1775,9 @@ const commands = {
       );
     }
 
-    const newest = require('../backup').list()[0];
+    const newest = require('../backup.ts').list()[0];
     const stale = !newest || Date.now() - newest.at.getTime() > (config.backup.everyHours + 6) * 3600_000;
-    const tools = await require('../backup').toolsCheck().catch((err) => ({ ok: false, detail: err.message }));
+    const tools = await require('../backup.ts').toolsCheck().catch((err) => ({ ok: false, detail: err.message }));
     lines.push(
       `  backup ${newest ? `${relative(newest.at)} · ${(newest.bytes / 1e6).toFixed(1)} MB${newest.encrypted ? ' · encrypted' : ' · PLAIN (pa backup key init)'}` : 'NONE'}` +
         `${stale ? ' — `pa backup`' : ''} · ${config.backup.dir} · via ${config.backup.pgTools}` +

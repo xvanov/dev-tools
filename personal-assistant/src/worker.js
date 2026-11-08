@@ -522,7 +522,7 @@ const memoryPass = (file, opts) => () => MEMORY_PASSES[file]().run(opts);
   // Checked hourly, dumps when the newest backup is older than a day; a
   // restart therefore does not produce a dump of its own.
   every(3600, 'backup', async () => {
-    await require('./backup').dumpIfDue();
+    await require('./backup.ts').dumpIfDue();
   });
 
   // Notes from my own sessions and PRs nobody touched for a week are closed

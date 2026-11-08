@@ -26,6 +26,10 @@
 //    manifest (or the live store, for a snapshot), a keyword search.
 //  - **restore** (`pa restore`): the worker stopped, the current file is moved
 //    aside (`<file>.before-restore-<stamp>`), the backup put in its place.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+type Json = import('./types.ts').Json;
 
 const fs = require('fs');
 const path = require('path');
@@ -37,10 +41,10 @@ const crypt = require('./backupCrypto.ts');
 const log = logger('backup');
 const LATEST = 'pa-latest.sqlite';
 
-const backup = () => require('./backup');
+const backup = () => require('./backup.ts');
 const sqlite = () => require('./db/sqlite.ts');
 
-function rmFile(f) {
+function rmFile(f: string) {
   for (const x of ['', '-wal', '-shm']) fs.rmSync(`${f}${x}`, { force: true });
 }
 
@@ -49,20 +53,20 @@ function rmFile(f) {
  * the work stack's 450 MB takes ~6 s, which on the worker's own thread is 6 s
  * of a dashboard that does not answer (found by the 3.5 rehearsal).
  */
-function snapshotOffThread(src, dest, key) {
+function snapshotOffThread(src: string, dest: string, key: string | null) {
   const { Worker } = require('worker_threads');
-  return new Promise((resolve, reject) => {
+  return new Promise<void>((resolve, reject) => {
     const w = new Worker(
       "const { workerData: d } = require('worker_threads'); require(d.mod).snapshotFile(d.src, d.dest, { key: d.key });",
       { eval: true, workerData: { mod: require.resolve('./db/sqlite.ts'), src, dest, key } }
     );
     w.once('error', reject);
-    w.once('exit', (code) => (code === 0 ? resolve() : reject(new Error(`the snapshot thread exited with ${code}`))));
+    w.once('exit', (code: number) => (code === 0 ? resolve() : reject(new Error(`the snapshot thread exited with ${code}`))));
   });
 }
 
 /** A consistent copy of the store at `dest` (a new file), encrypted as the store is. */
-async function snapshot(dest, { src = config.sqlitePath, key = config.sqliteKey || null } = {}) {
+async function snapshot(dest: string, { src = config.sqlitePath, key = config.sqliteKey || null }: { src?: string; key?: string | null } = {}) {
   const partial = `${dest}.partial`;
   rmFile(partial);
   const started = Date.now();
@@ -72,7 +76,7 @@ async function snapshot(dest, { src = config.sqlitePath, key = config.sqliteKey 
 }
 
 /** The rolling snapshot, refreshed when older than `minutes`. Resolves it, or null when fresh enough. */
-async function refreshLatest({ dir = config.backup.dir, minutes = config.backup.snapshotMinutes } = {}) {
+async function refreshLatest({ dir = config.backup.dir, minutes = config.backup.snapshotMinutes }: { dir?: string; minutes?: number } = {}) {
   fs.mkdirSync(dir, { recursive: true });
   const file = path.join(dir, LATEST);
   if (fs.existsSync(file) && Date.now() - fs.statSync(file).mtimeMs < minutes * 60_000) return null;
@@ -82,7 +86,7 @@ async function refreshLatest({ dir = config.backup.dir, minutes = config.backup.
 }
 
 /** The nightly bundle (as src/backup.js dump(), with the SQLite snapshot inside). */
-async function dump({ dir = config.backup.dir, keep = config.backup.keep, plain = false } = {}) {
+async function dump({ dir = config.backup.dir, keep = config.backup.keep, plain = false }: { dir?: string; keep?: number; plain?: boolean } = {}) {
   const b = backup();
   fs.mkdirSync(dir, { recursive: true });
   const id = b.stamp();
@@ -97,7 +101,7 @@ async function dump({ dir = config.backup.dir, keep = config.backup.keep, plain 
       await b.bundle({ dumpFile: snap, out: final, key: k.key, entry: 'pa.sqlite' });
     } catch (err) {
       fs.rmSync(final, { force: true });
-      throw new Error(`encrypting the backup failed: ${String(err.stderr || err.message).trim().slice(0, 300)}`);
+      throw new Error(`encrypting the backup failed: ${String((err as Json).stderr || (err as Error).message).trim().slice(0, 300)}`);
     } finally {
       rmFile(snap);
     }
@@ -117,14 +121,14 @@ async function dump({ dir = config.backup.dir, keep = config.backup.keep, plain 
 
 /** The worker's hourly pass: the rolling snapshot, and the bundle when one is due. */
 async function dumpIfDue() {
-  await refreshLatest().catch((err) => log.warn('snapshot failed', { message: err.message }));
+  await refreshLatest().catch((err: Error) => log.warn('snapshot failed', { message: err.message }));
   const newest = backup().list()[0];
   if (newest && Date.now() - newest.at.getTime() < config.backup.everyHours * 3600_000) return null;
   return dump();
 }
 
 /** A backup file as a SQLite file to copy: a bundle is unpacked first. {file, manifest, cleanup()}. */
-function open(file) {
+function open(file: string) {
   if (!fs.existsSync(file)) throw new Error(`no such file: ${file}`);
   if (!crypt.isEncrypted(file)) return { file, manifest: null, cleanup: () => {} };
   const u = backup().unpack(file);
@@ -136,7 +140,7 @@ function open(file) {
 }
 
 /** Checks a SQLite store file can be trusted. {ok, problems: [...], counts}. */
-async function verify(file, { key = config.sqliteKey || null } = {}) {
+async function verify(file: string, { key = config.sqliteKey || null }: { key?: string | null } = {}) {
   const db = sqlite().createSqliteBackend(file, { key });
   try {
     const { createRepos } = require('./repo');
@@ -144,7 +148,7 @@ async function verify(file, { key = config.sqliteKey || null } = {}) {
     const problems = await repos.backupDrill.integrityProblems();
     const counts = await repos.backupDrill.tableCounts();
     // A keyword search, through the repository, as the app would run one.
-    await repos.search.lexicalPass('the', 5, {}, false).catch((err) => problems.push(`search: ${err.message}`));
+    await repos.search.lexicalPass('the', 5, {}, false).catch((err: Error) => problems.push(`search: ${err.message}`));
     return { ok: problems.length === 0, problems, counts };
   } finally {
     await db.close();
@@ -155,7 +159,7 @@ async function verify(file, { key = config.sqliteKey || null } = {}) {
  * The drill: `file` (a bundle, a snapshot, default the newest bundle) restored
  * into `to`, a new file, and checked; removed after unless `keep`.
  */
-async function drill({ file = null, to, keep = false, say = () => {} } = {}) {
+async function drill({ file = null, to, keep = false, say = () => {} }: { file?: string | null; to?: string | null; keep?: boolean; say?: (line: string) => void } = {}) {
   const b = backup();
   file = file || (b.list()[0] || {}).file || (fs.existsSync(path.join(config.backup.dir, LATEST)) ? path.join(config.backup.dir, LATEST) : null);
   if (!file) throw new Error(`no backups in ${config.backup.dir}`);
@@ -187,7 +191,7 @@ async function drill({ file = null, to, keep = false, say = () => {} } = {}) {
       tables: Object.keys(v.counts).length,
       compared: rows.ok !== null,
       against,
-      problems: [...rows.problems, ...v.problems.map((p) => ({ table: 'check', expected: 'ok', got: p }))],
+      problems: [...rows.problems, ...v.problems.map((p: string) => ({ table: 'check', expected: 'ok', got: p }))],
       seconds: Math.round((Date.now() - started) / 1000),
     };
   } finally {
@@ -196,7 +200,7 @@ async function drill({ file = null, to, keep = false, say = () => {} } = {}) {
   }
 }
 
-async function countsOf(file) {
+async function countsOf(file: string) {
   const db = sqlite().createSqliteBackend(file, { key: config.sqliteKey || null });
   try {
     return await require('./repo').createRepos(db).backupDrill.tableCounts();
@@ -206,7 +210,7 @@ async function countsOf(file) {
 }
 
 /** `pa restore` on a SQLite store: the worker must be stopped. Moves the current file aside first. */
-async function restore(file) {
+async function restore(file: string) {
   const src = open(file);
   const live = path.resolve(config.sqlitePath);
   const incoming = `${live}.restoring`;

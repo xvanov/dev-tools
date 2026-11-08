@@ -14,7 +14,7 @@ const path = require('path');
 const key = crypto.randomBytes(32);
 process.env.PA_BACKUP_KEY = key.toString('base64'); // config.secret: the real environment wins
 
-const backup = require('../src/backup');
+const backup = require('../src/backup.ts');
 const crypt = require('../src/backupCrypto.ts');
 
 (async () => {

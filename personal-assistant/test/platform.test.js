@@ -325,7 +325,7 @@ print(json.dumps({"active": d.active_sources(data["o"], data["s"]), "monitor": d
 
 // --------------------------------------------------------------- backup --
 {
-  const backup = require('../src/backup');
+  const backup = require('../src/backup.ts');
   assert.deepStrictEqual(backup.parseTools('native'), { mode: 'native' });
   assert.deepStrictEqual(backup.parseTools('docker:pa-postgres'), { mode: 'docker', container: 'pa-postgres' });
   assert.deepStrictEqual(backup.parseTools('wsl:Ubuntu'), { mode: 'wsl', distro: 'Ubuntu' });
