@@ -58,15 +58,32 @@
   }
 
   function add(e) {
-    if (!e || !e.id || chat.ids.has(e.id)) return;
+    if (!e || !e.id) return;
     if (e.type !== 'user' && e.type !== 'assistant') return;
+    // A streamed answer (the SDK engine): partial events carry the text so far
+    // under the id the final one will have; the same line is updated in place.
+    const shown = chat.lines && chat.lines.get(e.id);
+    if (shown) {
+      if (shown.partial) {
+        shown.node.textContent = String(e.text || '');
+        shown.partial = Boolean(e.partial);
+      }
+      return;
+    }
+    if (chat.ids.has(e.id)) return;
     chat.ids.add(e.id);
+    if (e.partial || e.type === 'assistant') {
+      chat.lines = chat.lines || new Map();
+      if (chat.lines.size > 200) chat.lines.delete(chat.lines.keys().next().value);
+    }
     const log = $('chat-log');
     const empty = log.querySelector('.empty');
     if (empty) empty.remove();
     const nearBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 80;
     const meta = [e.type === 'user' ? 'you' : 'Jarvis', chatTime(e.at), e.source === 'voice' ? 'spoken' : null].filter(Boolean).join(' · ');
-    log.append(el('div', { class: `chat-msg ${e.type}` }, el('span', { class: 'chat-meta' }, meta), el('div', { class: 'chat-text' }, String(e.text || ''))));
+    const body = el('div', { class: 'chat-text' }, String(e.text || ''));
+    log.append(el('div', { class: `chat-msg ${e.type}` }, el('span', { class: 'chat-meta' }, meta), body));
+    if (chat.lines && e.type === 'assistant') chat.lines.set(e.id, { node: body, partial: Boolean(e.partial) });
     if (nearBottom || e.type === 'user') log.scrollTop = log.scrollHeight;
   }
 

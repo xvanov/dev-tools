@@ -1563,9 +1563,11 @@ An event is `{ "id", "type", "text", "at" (ISO), "source"? }`:
   and its `source`; its echo in the transcript is dropped, so it is seen once. One typed in
   termhub (or the inbox doorbell line) has no `source`.
 - `assistant` — a complete block of the reply. A turn can be several (text, a tool, more text),
-  each with its own id. No `partial` events: the transcript has none to give. `final` is `false`
-  on text written before a tool call (the turn goes on) and `true` on the answer; absent when the
-  transcript line has no `stop_reason`.
+  each with its own id. On the terminal engine there are no `partial` events: the transcript has
+  none to give. On the SDK engine (`PA_CHAT_ENGINE=sdk`) a block streams first as `partial: true`
+  events carrying the text so far under the id its complete event will have; partials are not kept
+  in history. `final` is `false` on text written before a tool call (the turn goes on) and `true`
+  on the answer; absent when the transcript line has no `stop_reason`.
 - `activity` — a short line about a tool call ("reading INBOX.md…", "running pa search …"),
   never the tool's whole input.
 - `status` — `thinking`, `idle` (the turn is over: speak now) or `offline` (no session; sending

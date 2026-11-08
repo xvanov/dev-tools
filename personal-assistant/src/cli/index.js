@@ -304,6 +304,12 @@ const commands = {
   },
 
   async chat() {
+    // On the SDK engine the chat lives inside the PA worker, not in termhub:
+    // starting one from here would be a second conversation.
+    if (require('../chat/feed').engine() === 'sdk') {
+      out('the PA chat runs inside the PA worker (PA_CHAT_ENGINE=sdk): talk to it on Ask (/talk) or the dashboard\'s chat box');
+      return;
+    }
     const chat = require('../chat');
     const { sessionId, created } = await chat.ensureSession();
     const url = `${config.termhub.url.replace(/\/+$/, '')}/#session=${sessionId}`;

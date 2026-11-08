@@ -1101,7 +1101,8 @@
       $('activity').textContent = ev.text || '';
       // The session is parked on a permission prompt or question: it can only
       // be answered in termhub, so say so instead of looking busy.
-      if (/termhub/i.test(ev.text || '')) {
+      // (The SDK engine has no termhub: its line is "waiting for your yes: …".)
+      if (/termhub|^waiting for your yes/i.test(ev.text || '')) {
         st.thinking = false;
         sayWaiting(ev.text);
       } else st.thinking = true;

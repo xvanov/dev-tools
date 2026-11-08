@@ -371,10 +371,27 @@ function createFeed({
   return { send, history, subscribe, session, answerPermission, readTranscript, pollStatus, stop };
 }
 
+/**
+ * Which engine runs the chat (PA_CHAT_ENGINE): 'terminal' (this file: the
+ * termhub session) or 'sdk' (src/chat/sdkFeed.js). Anything else is
+ * 'terminal', with a warning.
+ */
+function engine(value = require('../config').config.chat.engine) {
+  const v = String(value || 'terminal').trim().toLowerCase();
+  if (v === 'sdk' || v === 'terminal') return v;
+  log.warn('PA_CHAT_ENGINE is neither terminal nor sdk; using terminal', { value });
+  return 'terminal';
+}
+
 let shared = null;
 function feed() {
-  if (!shared) shared = createFeed();
+  if (!shared) shared = engine() === 'sdk' ? require('./sdkFeed').createSdkFeed() : createFeed();
   return shared;
 }
 
-module.exports = { waitingText, createFeed, feed, newestTranscript, SOURCES };
+/** POST /api/chat/open and `pa chat`: the terminal session, or the SDK session started. */
+function openChat() {
+  return engine() === 'sdk' ? feed().open() : require('./index').ensureSession();
+}
+
+module.exports = { waitingText, createFeed, feed, engine, openChat, newestTranscript, SOURCES };

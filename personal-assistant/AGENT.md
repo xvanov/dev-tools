@@ -182,6 +182,19 @@ blocked`, and the screen read at that moment is Claude Code's "Do you want to pr
 with no input box after it. Approve is one Enter with the cursor on "Yes" — never "Yes, and don't ask
 again", which would make every later call of the tool unasked; Deny is Esc. Anything else is a 409.
 
+**On the Agent SDK engine the prompt is a callback, under the same rules** (`PA_CHAT_ENGINE=sdk`,
+`src/chat/sdkFeed.js`, plan 4.2; the default stays `terminal` until it is proven). The chat is one
+streaming `query()` inside the worker, in the same pa-home with the same settings and MCP server, started
+with `permissionMode: 'default'`. A PreToolUse hook puts every call through `src/policy` (a deny refuses;
+the six action tools always ask, whatever a rule or settings file says). `canUseTool` then waits for the
+same two surfaces through the same endpoint: an answer must name the pending call's `tool_use` id, goes
+through `policy.enforce` with its channel, and allows that one call only (no `updatedPermissions`, i.e.
+never "don't ask again"). No answer within `PA_CHAT_APPROVAL_TIMEOUT_MS` is a deny, audited on channel
+`timeout`. A prompt for anything but the chat's action tools is refused at once: there is no terminal to
+answer it in, and the page would not show what it approves. The SDK's environment drops
+`ANTHROPIC_API_KEY`/`ANTHROPIC_AUTH_TOKEN`, so it runs on the machine's Claude login, never the API.
+Tests use a mocked SDK (`test/chatSdk.test.js`); never a real model call in a test.
+
 **Every tool call goes through one policy function** (`src/policy`, plan 4.3): `evaluate` answers
 allow | deny | ask from `src/policy/default.policy.json` plus an untracked per-stack override
 (`PA_POLICY_FILE`, default `<data dir>/policy.json`; its rules are tried first, its `locked` ignored).

@@ -364,10 +364,16 @@ const config = {
   // PA_CHAT_AGENT picks the CLI (claude | opencode), PA_CHAT_MODEL its model;
   // PA_CHAT_COMMAND, when set, is the whole command line instead. Either way
   // src/chat/agent.js refuses a command that skips permissions.
+  // PA_CHAT_ENGINE: `terminal` (that termhub session, its prompts answered by
+  // reading the screen) or `sdk` (the Claude Agent SDK in this process,
+  // prompts as typed callbacks: src/chat/sdkFeed.js, plan 4.2). An SDK
+  // approval nobody answers is a deny after PA_CHAT_APPROVAL_TIMEOUT_MS.
   chat: {
     agent: env('PA_CHAT_AGENT'),
     model: env('PA_CHAT_MODEL'),
     command: env('PA_CHAT_COMMAND'),
+    engine: env('PA_CHAT_ENGINE', 'terminal'),
+    approvalTimeoutMs: envInt('PA_CHAT_APPROVAL_TIMEOUT_MS', 300_000),
   },
 
   // The voice page's fast lane ("System 1", src/chat/fastLane.js): a quick

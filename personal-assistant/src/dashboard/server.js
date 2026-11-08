@@ -315,7 +315,7 @@ async function handle(req, res) {
   // takes the same X-PA guard as every other POST.
   if (req.method === 'POST' && url.pathname === '/api/chat/open') {
     if (req.headers['x-pa'] !== '1') return send(res, 403, { error: 'missing X-PA header' });
-    return send(res, 200, await require('../chat').ensureSession());
+    return send(res, 200, await require('../chat/feed').openChat());
   }
   // The chat box and the voice page talk to that same session
   // (src/chat/feed.js; contract in the README, "Talking to it").
