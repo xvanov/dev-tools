@@ -436,8 +436,19 @@ run mid-step; a job continued on an existing branch (`--branch`).
   server, so CI runs it on Linux and Windows, and a SQLite skip in CI fails). 2026-11-08: 1182
   cases green on both. Strict is now the default: a repository method without its SQLite twin
   fails (`PA_CONTRACT_STRICT=0` brings back `todo` for local work in progress).
-- [ ] **3.3 Export from Postgres, copying existing vectors (no re-embedding, D5).** Optional
+- [x] **3.3 Export from Postgres, copying existing vectors (no re-embedding, D5).** Optional
   int8 quantization is local arithmetic on the copied vectors, not an API call.
+  `pa db export --to sqlite <file>` (`src/db/export.js`): one read-only REPEATABLE READ snapshot
+  of Postgres into a new SQLite file (encrypted when `PA_SQLITE_KEY` is set). Every table,
+  ids kept; vectors parsed from pgvector text to the same float32 values; FTS5 filled by its
+  triggers; event triggers off during the copy and `pa_event_seq` continued; Absurd's queue
+  copied into the SQLite queue (D19: tasks with keys, states, results, committed checkpoints,
+  pending waits with deadlines, emitted events). Verified after: row count per table, 50 sampled
+  vectors per vector column compared value for value, chunk_fts = chunks, foreign keys checked.
+  Int8 quantization not done (not needed: 427 MB). Work stack, 2026-11-08, into a scratch file:
+  51 tables match (chunk 31,229, llm_spend 103,251, claim 10,148, fact 11,364, ...), 216 vectors
+  sampled with 0 differing, 93 durable tasks, 399 checkpoints, 1,166 events, 0 FK violations;
+  105 s, 427 MB (Postgres: 908 MB). `test/dbExport.test.js` runs in CI's contract job.
 - [ ] **3.4 Shadow comparison (D12):** both backends answer the same recorded query set once;
   compare results and latency; recalibrate rerank thresholds.
 - [ ] **3.5** Cutover on the personal stack, then the work stack; Litestream backup + restore

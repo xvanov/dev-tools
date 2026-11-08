@@ -111,6 +111,7 @@ const HELP = `pa — your context layer
     pa sync [--source s]            force an ingest pass
     pa distill [--limit n]          force a distillation pass
     pa migrate                      apply database migrations
+    pa db export --to sqlite <file>  copy the Postgres store into a new SQLite file, counts checked (plan 3.3)
     pa mic status|pause <mins>|on   always-on capture control
     pa backup [list] [--dir d]      dump the whole store now, encrypted (the worker does it nightly)
     pa backup restore --to <db> [file]  restore drill: into a throwaway database, row counts checked
@@ -242,6 +243,25 @@ const commands = {
     const { migrate } = require('../db/migrate');
     const result = await migrate();
     out(result.applied.length ? `applied: ${result.applied.join(', ')}` : 'schema already up to date');
+  },
+
+  // Plan 3.3: the Postgres store copied into a new SQLite file (src/db/export.js).
+  // Postgres is only read; nothing switches stores (PA_DB stays as it is).
+  async db(args, flags) {
+    if (args[0] !== 'export' || flags.to !== 'sqlite' || !args[1]) {
+      return fail('usage: pa db export --to sqlite <file>   (a new file; PA_SQLITE_KEY set encrypts it)');
+    }
+    const { exportToSqlite } = require('../db/export');
+    const r = await exportToSqlite({ pgUrl: config.databaseUrl, file: args[1], key: config.sqliteKey || null, log: (m) => out(`  ${m}`) });
+    out('');
+    for (const t of r.tables) if (t.pg != null) out(`${t.ok ? 'ok ' : 'BAD'} ${t.table.padEnd(24)} postgres ${String(t.pg).padStart(7)}  sqlite ${String(t.sqlite).padStart(7)}`);
+    for (const v of r.vectors) out(`${v.ok ? 'ok ' : 'BAD'} vectors ${v.table}.${v.column}: ${v.checked} sampled, ${v.bad} differ`);
+    if (r.durable) out(`${r.durable.ok ? 'ok ' : 'BAD'} durable tasks ${r.durable.tasks}, checkpoints ${r.durable.checkpoints}, events ${r.durable.events}`);
+    out(`${r.fts.ok ? 'ok ' : 'BAD'} chunk_fts ${r.fts.chunk_fts} of ${r.fts.chunk} chunks`);
+    if (r.missing.length) out(`BAD tables with no SQLite twin, not copied: ${r.missing.join(', ')}`);
+    if (r.fk.length) out(`BAD ${r.fk.length} foreign key violation(s), e.g. ${JSON.stringify(r.fk[0])}`);
+    out(r.ok ? `\nexported to ${r.file}` : `\nexport incomplete: ${r.file} (see BAD lines)`);
+    if (!r.ok) process.exitCode = 1;
   },
 
   // There is nothing to sign in to here: mail, calendar and Teams go through

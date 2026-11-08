@@ -136,6 +136,13 @@ jobs:
           PA_TESTING: '1'
           PA_DATABASE_URL: postgres://pa:pa@127.0.0.1:1/blocked_in_tests
           PA_TEST_PG_URL: postgres://pa:pa@127.0.0.1:5432/postgres
+      # pa db export --to sqlite (plan 3.3): Postgres into a new SQLite file.
+      - run: bash $GITHUB_WORKSPACE/.github/scripts/run.sh node test/dbExport.test.js
+        shell: bash
+        env:
+          PA_TESTING: '1'
+          PA_DATABASE_URL: postgres://pa:pa@127.0.0.1:1/blocked_in_tests
+          PA_TEST_PG_URL: postgres://pa:pa@127.0.0.1:5432/postgres
       # The same contract on Postgres under Bun (plan 4.1): jarvisd runs this code.
       - run: npm ci
         working-directory: jarvisd
