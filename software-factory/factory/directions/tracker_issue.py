@@ -27,6 +27,7 @@ from factory.app_config import AppConfig
 from factory.directions.parser import Direction, MissingDirection, resolve_direction_chain
 from factory.directions.schema import RESOLVED_DIRECTION_STATUSES
 from factory.directions.watcher import _root_from_direction, merge_state
+from factory.state_dir import state_dir
 
 _TRACKER_LABEL = "direction-tracker"
 _NEEDS_DIRECTION_LABEL = "needs-direction"
@@ -182,7 +183,7 @@ def _db_for_direction(direction: Direction) -> Path | None:
     caller treats ``None`` as "no DB, use the projection".
     """
     try:
-        return _root_from_direction(direction) / "state" / "factory.db"
+        return state_dir(_root_from_direction(direction)) / "factory.db"
     except Exception:  # noqa: BLE001 - an unusual dir_path must not raise
         return None
 
@@ -478,7 +479,7 @@ def close_direction_issues(
                 if software_factory_root is not None
                 else _root_from_direction(direction)
             )
-            db = root / "state" / "factory.db"
+            db = state_dir(root) / "factory.db"
     except Exception as exc:  # noqa: BLE001 - an underivable root must not raise
         report["errors"].append(("db", str(db_path or ""), str(exc)))
         db = None
@@ -647,7 +648,7 @@ def maybe_close_tracker_issue(
         if not dirs:
             return False
         direction = parse_direction_dir(app_config.name, dirs[0], software_factory_root=root)
-        db = db_path or (root / "state" / "factory.db")
+        db = db_path or (state_dir(root) / "factory.db")
         # DB row first, gitignored ``state.yaml`` projection second — see
         # ``resolve_tracker_issue``.
         tracker = resolve_tracker_issue(direction, db)
@@ -742,7 +743,7 @@ def reconcile_completed_issues(
         from factory.runner import _engine
 
         root = Path(software_factory_root)
-        db = db_path or (root / "state" / "factory.db")
+        db = db_path or (state_dir(root) / "factory.db")
         with Session(_engine(db)) as session:
             story_rows = list(
                 session.exec(select(StoryRecord).where(StoryRecord.app == app_config.name)).all()

@@ -34,6 +34,7 @@ from factory.cli_apps import apps_app
 from factory.keychain import load_dotenv
 from factory.model_router import route
 from factory.runner import LLMConfig, sandbox_run
+from factory.state_dir import state_dir
 
 app = typer.Typer(help="Factory CLI — orchestrate the software factory.")
 test_persona_app = typer.Typer(help="Run a single persona end-to-end for testing.")
@@ -46,6 +47,59 @@ app.add_typer(job_app, name="job")
 console = Console()
 
 _FACTORY_ROOT = Path(__file__).resolve().parent.parent
+
+state_app = typer.Typer(help="Where this factory keeps its runtime state (factory/state_dir.py).")
+app.add_typer(state_app, name="state")
+
+
+@state_app.command("where")
+def state_where_cmd() -> None:
+    """Print the state directory this root uses."""
+    from factory.state_dir import is_external
+
+    where = state_dir(_FACTORY_ROOT)
+    typer.echo(str(where))
+    if not where.is_dir():
+        typer.echo(f"warning: {where} does not exist", err=True)
+    left = _FACTORY_ROOT / "state"
+    if is_external(_FACTORY_ROOT) and left.is_dir():
+        stray = sorted(p.name for p in left.iterdir() if p.name != ".gitignore")
+        if stray:
+            typer.echo(
+                f"warning: {left} still holds {', '.join(stray[:10])}: something wrote there "
+                "after the migration (an old serve task's --log-file?)",
+                err=True,
+            )
+
+
+@state_app.command("migrate")
+def state_migrate_cmd(
+    to: str = typer.Option(
+        None,
+        "--to",
+        help="Target directory (default: %LOCALAPPDATA%\\software-factory\\state on Windows, "
+        "~/.local/share/software-factory/state elsewhere).",
+    ),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Show what would move; change nothing."),
+) -> None:
+    """Move state/ out of the repo (stop factory serve first). See docs/WINDOWS.md."""
+    from factory.state_migrate import MigrateError, migrate
+
+    try:
+        rep = migrate(_FACTORY_ROOT, to, dry_run=dry_run)
+    except MigrateError as exc:
+        typer.echo(f"refused: {exc}", err=True)
+        raise typer.Exit(2) from exc
+    verb = "would move" if rep.dry_run else "moved"
+    typer.echo(f"{verb} {len(rep.entries)} entries: {rep.source} -> {rep.target}")
+    for name in rep.entries:
+        typer.echo(f"  {name}")
+    if not rep.dry_run:
+        typer.echo(f"pointer: {_FACTORY_ROOT / '.state-dir'}")
+        typer.echo(f"worktrees re-linked: {len(rep.repaired)}")
+        for wt in rep.repair_failed:
+            typer.echo(f"  repair failed (run 'git worktree repair {wt}' in its repo): {wt}")
+        typer.echo("restart factory serve and the personal assistant worker to pick it up")
 
 
 def _version_callback(value: bool) -> None:
@@ -343,7 +397,7 @@ def _awaiting_approval_rows(apps: list[str]) -> list[tuple[str, str, str, str, s
     from factory.directions.route_premise import check_direction_route_premises
     from factory.directions.watcher import _engine, hydrate_direction_source
 
-    state_db = _FACTORY_ROOT / "state" / "factory.db"
+    state_db = state_dir(_FACTORY_ROOT) / "factory.db"
     # One engine for the whole listing: ``_engine`` runs ``migrate`` every call,
     # so building one per direction would be O(directions) redundant migrations.
     engine = _engine(state_db) if state_db.exists() else None
@@ -450,7 +504,7 @@ def approve_direction_cmd(
     # never disagrees with the gate about whether approval is even needed.
     from factory.directions.watcher import hydrate_direction_source
 
-    hydrate_direction_source(direction, _FACTORY_ROOT / "state" / "factory.db")
+    hydrate_direction_source(direction, state_dir(_FACTORY_ROOT) / "factory.db")
 
     if reject:
         from factory.directions.watcher import mark_direction_status
@@ -625,7 +679,7 @@ def acceptance_waive_cmd(
         console.print("[red]error:[/red] --reason is required (a waiver is a recorded decision)")
         raise typer.Exit(code=2)
 
-    story = get_story(story_id, _FACTORY_ROOT / "state" / "factory.db")
+    story = get_story(story_id, state_dir(_FACTORY_ROOT) / "factory.db")
     if story is None or story.app != app_name:
         console.print(f"[red]error:[/red] no story {story_id} in app {app_name!r}")
         raise typer.Exit(code=2)
@@ -670,7 +724,7 @@ def directions_backfill_cmd(
 
     from factory.directions.backfill import directions_backfill
 
-    state_db = _FACTORY_ROOT / "state" / "factory.db"
+    state_db = state_dir(_FACTORY_ROOT) / "factory.db"
     result = directions_backfill(
         app_name,
         _FACTORY_ROOT,
@@ -756,7 +810,7 @@ def write_contract_cmd(
         model_id=model_id,
         app=app_name,
         max_tokens=max_output_tokens_for(model_id),
-        db_path=_FACTORY_ROOT / "state" / "factory.db",
+        db_path=state_dir(_FACTORY_ROOT) / "factory.db",
     )
 
     if dry_run:
@@ -808,7 +862,7 @@ def directions_regenerate_state_cmd(
 
     from factory.directions.backfill import regenerate_state_files
 
-    state_db = _FACTORY_ROOT / "state" / "factory.db"
+    state_db = state_dir(_FACTORY_ROOT) / "factory.db"
     result = regenerate_state_files(
         app_name,
         _FACTORY_ROOT,
@@ -1463,7 +1517,10 @@ def serve_cmd(
         False, "--allow-with-systemd", help="Run even though factory-tick systemd timers are active (Linux)."
     ),
     log_file: Path = typer.Option(
-        None, "--log-file", help="Append serve's own log lines here (ticks log to state/logs/serve/)."
+        None,
+        "--log-file",
+        help="Append serve's own log lines here; a relative path is under the state dir "
+        "(ticks log to <state>/logs/serve/).",
     ),
     api_port: int = typer.Option(
         int(os.environ.get("FACTORY_SERVE_PORT") or 7330), "--port",
@@ -1525,6 +1582,16 @@ def serve_cmd(
             )
             raise typer.Exit(code=2)
 
+    from factory.state_dir import is_external
+
+    if is_external(_FACTORY_ROOT) and not state_dir(_FACTORY_ROOT).is_dir():
+        # A pointer to nothing would start a fresh, empty factory DB.
+        console.print(
+            f"[red]error:[/red] the state dir {state_dir(_FACTORY_ROOT)} (from "
+            f"{_FACTORY_ROOT / '.state-dir'}) does not exist"
+        )
+        raise typer.Exit(code=2)
+
     chosen = _serve.choose_apps(
         _FACTORY_ROOT, list(apps or []), os.environ.get("FACTORY_SERVE_APPS"),
         log=lambda m: console.print(f"factory serve: {m}"),
@@ -1560,12 +1627,22 @@ def serve_cmd(
         console.print(f"factory serve: the DB lease is held ({db_lease.current()}); exiting")
         raise typer.Exit(code=3)
 
+    # A relative --log-file is under the state dir (which may live outside the
+    # repo: factory state migrate), so install scripts need not know where.
+    log_path = (
+        None
+        if log_file is None
+        else Path(log_file)
+        if Path(log_file).is_absolute()
+        else state_dir(_FACTORY_ROOT) / log_file
+    )
+
     def _out(line: str) -> None:
         print(line, flush=True)
-        if log_file is not None:
+        if log_path is not None:
             try:
-                Path(log_file).parent.mkdir(parents=True, exist_ok=True)
-                with open(log_file, "a", encoding="utf-8") as fh:
+                log_path.parent.mkdir(parents=True, exist_ok=True)
+                with open(log_path, "a", encoding="utf-8") as fh:
                     fh.write(line + "\n")
             except OSError:
                 pass
@@ -1713,7 +1790,7 @@ def story_cmd(
 
     from factory.chain.state_machine import StoryRecord
 
-    db = _FACTORY_ROOT / "state" / "factory.db"
+    db = state_dir(_FACTORY_ROOT) / "factory.db"
     if not db.exists():
         console.print("[red]error:[/red] no state db; run pm-sync first")
         raise typer.Exit(code=2)
@@ -1787,7 +1864,7 @@ def inbox_cmd(
     from factory.settings.spend import today_spend_usd
 
     settings = load_settings(_FACTORY_ROOT)
-    db = _FACTORY_ROOT / "state" / "factory.db"
+    db = state_dir(_FACTORY_ROOT) / "factory.db"
     _engine(db)
     # Ensure deploy_actions table exists for the failed-deploys section
     # below; on a fresh checkout no deploys have run yet so SQLModel
@@ -2312,7 +2389,7 @@ def queue_cmd(
     from factory.chain.handlers import _engine
     from factory.chain.state_machine import StoryRecord, StoryState
 
-    db = _FACTORY_ROOT / "state" / "factory.db"
+    db = state_dir(_FACTORY_ROOT) / "factory.db"
     _engine(db)
     terminal = {
         StoryState.PR_OPEN.value,
@@ -2698,7 +2775,7 @@ def budget_cmd() -> None:
     )
 
     settings = load_settings(_FACTORY_ROOT)
-    db = _FACTORY_ROOT / "state" / "factory.db"
+    db = state_dir(_FACTORY_ROOT) / "factory.db"
     today = today_spend_usd(_FACTORY_ROOT, db_path=db)
     hour = hour_spend_usd(_FACTORY_ROOT, db_path=db)
     proj = projected_end_of_day(_FACTORY_ROOT, db_path=db)
@@ -2808,7 +2885,7 @@ def resume_story_cmd(
         resumable_stories,
     )
 
-    db = _FACTORY_ROOT / "state" / "factory.db"
+    db = state_dir(_FACTORY_ROOT) / "factory.db"
     _engine(db)
 
     if list_only:
@@ -2923,7 +3000,7 @@ def why_cmd(
     from factory.settings.enforcer import can_dispatch
     from factory.settings.loader import load_settings
 
-    db = _FACTORY_ROOT / "state" / "factory.db"
+    db = state_dir(_FACTORY_ROOT) / "factory.db"
     _engine(db)
     eng = create_engine(f"sqlite:///{db}", echo=False)
     with Session(eng) as session:
@@ -3136,7 +3213,7 @@ def trace_cmd(
     from factory.chain.event_log import read_story_events
     from factory.chain.state_machine import StoryRecord
 
-    db = _FACTORY_ROOT / "state" / "factory.db"
+    db = state_dir(_FACTORY_ROOT) / "factory.db"
     eng = create_engine(f"sqlite:///{db}", echo=False)
     with Session(eng) as session:
         try:
@@ -3209,7 +3286,7 @@ def tui_cmd(
     from factory.settings.loader import load_settings
     from factory.tui import run_tui
 
-    db = _FACTORY_ROOT / "state" / "factory.db"
+    db = state_dir(_FACTORY_ROOT) / "factory.db"
     if recompute_baselines:
         from factory.observability.estimator import recompute_baselines as _rb
 
@@ -3250,7 +3327,7 @@ def _story_progress_rows(app_name: str | None) -> list[dict[str, Any]]:
     from factory.chain.event_log import read_story_events
     from factory.observability.queries import live_handlers
 
-    db = _FACTORY_ROOT / "state" / "factory.db"
+    db = state_dir(_FACTORY_ROOT) / "factory.db"
     live = {lh.story_id: lh for lh in live_handlers(db) if lh.story_id is not None}
 
     conn = sqlite3.connect(str(db))
@@ -3325,7 +3402,7 @@ def _story_progress_rows(app_name: str | None) -> list[dict[str, Any]]:
 def _render_status(app_name: str | None) -> Table:
     from factory.observability.queries import get_factory_mode, spend_window
 
-    db = _FACTORY_ROOT / "state" / "factory.db"
+    db = state_dir(_FACTORY_ROOT) / "factory.db"
     rows = _story_progress_rows(app_name)
     working = [r for r in rows if r["working"]]
     try:
@@ -3399,7 +3476,7 @@ def baselines_cmd() -> None:
     """
     from factory.observability.estimator import recompute_baselines
 
-    db = _FACTORY_ROOT / "state" / "factory.db"
+    db = state_dir(_FACTORY_ROOT) / "factory.db"
     n = recompute_baselines(db)
     console.print(f"recomputed [bold]{n}[/bold] (persona, points) baselines")
 
@@ -3793,7 +3870,7 @@ def deploys_cmd(
     from factory.deploy.models import DeployActionRecord
     from factory.deploy.orchestrator import _engine as _deploy_engine
 
-    db = _FACTORY_ROOT / "state" / "factory.db"
+    db = state_dir(_FACTORY_ROOT) / "factory.db"
     # ``_deploy_engine`` runs ``SQLModel.metadata.create_all`` so the
     # ``deploy_actions`` table exists even on a fresh checkout that has
     # never run a deploy yet.
@@ -3856,7 +3933,7 @@ def deploy_status_cmd(
     from factory.deploy.models import DeployActionRecord
     from factory.deploy.orchestrator import _engine as _deploy_engine
 
-    db = _FACTORY_ROOT / "state" / "factory.db"
+    db = state_dir(_FACTORY_ROOT) / "factory.db"
     eng = _deploy_engine(db)
     with Session(eng) as session:
         row = session.exec(
@@ -4035,7 +4112,7 @@ def schedules_cmd() -> None:
     )
 
     schedules = load_schedules(_FACTORY_ROOT)
-    db = _FACTORY_ROOT / "state" / "factory.db"
+    db = state_dir(_FACTORY_ROOT) / "factory.db"
     table = Table(title="schedules")
     table.add_column("name")
     table.add_column("persona")
@@ -4677,7 +4754,7 @@ def audit_chain_cmd(
         verify_stream,
     )
 
-    events_dir = _FACTORY_ROOT / "state" / "events"
+    events_dir = state_dir(_FACTORY_ROOT) / "events"
     if not events_dir.exists():
         console.print(f"[yellow]no event streams at {events_dir}[/yellow]")
         raise typer.Exit(code=0)

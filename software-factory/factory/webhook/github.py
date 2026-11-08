@@ -30,6 +30,8 @@ import os
 from pathlib import Path
 from typing import Any
 
+from factory.state_dir import state_dir
+
 _FACTORY_ROOT = Path(__file__).resolve().parent.parent.parent
 
 
@@ -142,7 +144,7 @@ def _handle_pull_request(payload: dict[str, Any]) -> dict[str, Any]:
         )
         from factory.deploy.orchestrator import enqueue_deploy
 
-        db = _FACTORY_ROOT / "state" / "factory.db"
+        db = state_dir(_FACTORY_ROOT) / "factory.db"
         _engine(db)  # idempotent migration
         eng = create_engine(f"sqlite:///{db}", echo=False)
         story_slug: str | None = None
@@ -192,7 +194,7 @@ def _handle_pull_request(payload: dict[str, Any]) -> dict[str, Any]:
 
     from factory.chain.state_machine import StoryRecord
 
-    db = _FACTORY_ROOT / "state" / "factory.db"
+    db = state_dir(_FACTORY_ROOT) / "factory.db"
     if not db.exists():
         return {"acted": False, "reason": "no state db"}
     eng = create_engine(f"sqlite:///{db}", echo=False)
@@ -264,7 +266,7 @@ def _handle_pull_request_review(payload: dict[str, Any]) -> dict[str, Any]:
         advance,
     )
 
-    db = _FACTORY_ROOT / "state" / "factory.db"
+    db = state_dir(_FACTORY_ROOT) / "factory.db"
     _engine(db)  # idempotent migration
     eng = create_engine(f"sqlite:///{db}", echo=False)
     with Session(eng) as session:

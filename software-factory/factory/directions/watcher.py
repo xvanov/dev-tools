@@ -21,6 +21,7 @@ from sqlmodel import Field, Session, SQLModel, create_engine, select
 
 from factory.directions.parser import Direction, list_direction_dirs, parse_direction_dir
 from factory.directions.schema import RESOLVED_DIRECTION_STATUSES, get_direction
+from factory.state_dir import state_dir
 
 
 class DirectionCursor(SQLModel, table=True):
@@ -166,7 +167,7 @@ def mark_direction_status(
     """
     # ---- authoritative database write -----------------------------------
     root = _root_from_direction(direction)
-    db_path = root / "state" / "factory.db"
+    db_path = state_dir(root) / "factory.db"
     engine = _engine(db_path)
 
     # ``UNSET`` (not ``None``) when the projection cannot tell us: ``state.yaml``

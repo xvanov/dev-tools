@@ -50,6 +50,7 @@ from factory.chain.gates.evaluator import (  # noqa: F401 - ALL_GATE_LABELS re-e
 )
 from factory.chain.state_machine import StoryRecord, StoryState
 from factory.delivery import DeliveryLevel
+from factory.state_dir import state_dir
 
 # Labels that, when present, BLOCK merge regardless of gate status.
 BLOCKING_LABELS: frozenset[str] = frozenset(
@@ -4384,7 +4385,7 @@ def auto_merge_tick(
     full integration tests need a live GH; out of scope for Phase 4.)
     """
     root = Path(software_factory_root)
-    db = db_path or (root / "state" / "factory.db")
+    db = db_path or (state_dir(root) / "factory.db")
     cfg = load_app_config(app, root)
 
     fixtures: list[FixturePR] = list(fixture_prs or [])

@@ -56,6 +56,7 @@ from factory.oscompat import (
     pid_alive,
     unlock_file,
 )
+from factory.state_dir import state_dir
 
 DEFAULT_INTERVAL_S = 300.0
 DEFAULT_POLL_S = 1.0
@@ -66,7 +67,7 @@ ALL_APPS = "*"
 
 
 def scheduler_dir(root: Path) -> Path:
-    return Path(root) / "state" / "scheduler"
+    return state_dir(Path(root)) / "scheduler"
 
 
 def wake_dir(root: Path) -> Path:
@@ -78,11 +79,11 @@ def status_path(root: Path) -> Path:
 
 
 def lease_path(root: Path) -> Path:
-    return Path(root) / "state" / "locks" / "serve.lock"
+    return state_dir(Path(root)) / "locks" / "serve.lock"
 
 
 def tick_lock_path(root: Path, app: str) -> Path:
-    return Path(root) / "state" / "locks" / f"tick-{app}.lock"
+    return state_dir(Path(root)) / "locks" / f"tick-{app}.lock"
 
 
 def _now_iso() -> str:
@@ -434,7 +435,7 @@ class Scheduler:
     # -- ticks ---------------------------------------------------------------- #
 
     def _start_tick(self, app: str, reason: str) -> None:
-        log_dir = Path(self.cfg.root) / "state" / "logs" / "serve"
+        log_dir = state_dir(Path(self.cfg.root)) / "logs" / "serve"
         log_dir.mkdir(parents=True, exist_ok=True)
         log = (log_dir / f"tick-{app}.log").open("ab")
         log.write(f"\n=== {_now_iso()} tick --app {app} ({reason}) ===\n".encode())

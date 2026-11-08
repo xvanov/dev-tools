@@ -120,6 +120,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
 
+from factory.state_dir import state_dir
+
 
 @dataclass
 class IdlePingResult:
@@ -133,7 +135,7 @@ class IdlePingResult:
 
 
 def _ping_state_dir(software_factory_root: Path) -> Path:
-    return Path(software_factory_root) / "state" / "idle_ping"
+    return state_dir(Path(software_factory_root)) / "idle_ping"
 
 
 def _ping_state_path(software_factory_root: Path, app: str) -> Path:

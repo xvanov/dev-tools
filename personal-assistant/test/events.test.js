@@ -457,6 +457,11 @@ function sse(port, pathAndQuery, headers = {}) {
     assert.strictEqual(pace.localStateDir({ path: '/f', machine: 'linux-box' }, { hostname: 'me', exists: yes }), null, 'a remote factory is polled');
     assert.strictEqual(pace.localStateDir({ path: '', machine: '' }, { hostname: 'me', exists: yes }), null);
     assert.strictEqual(pace.localStateDir({ path: '/f', machine: '' }, { hostname: 'me', exists: () => false }), null);
+    // A migrated factory (`factory state migrate`): its .state-dir pointer wins.
+    const out = path.resolve('/elsewhere/sf-state');
+    const pointer = (p) => (p === path.join('/f', '.state-dir') ? `${out}\n` : (() => { throw new Error('ENOENT'); })());
+    assert.strictEqual(pace.localStateDir({ path: '/f', machine: '' }, { hostname: 'me', exists: yes, readFile: pointer }), out);
+    assert.strictEqual(pace.resolveStateDir('/f', { readFile: () => 'relative/dir' }), path.join('/f', 'state'), 'a relative pointer is ignored');
 
     // The pacer, on fake time.
     let now = 0;

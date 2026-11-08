@@ -61,6 +61,8 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from factory.state_dir import state_dir
+
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
@@ -85,15 +87,15 @@ _TEST_OUTPUT_CAP = 2 * 1024  # 2 KB
 
 
 def _cb_path(root: Path) -> Path:
-    return root / "state" / _CB_FILE
+    return state_dir(root) / _CB_FILE
 
 
 def _history_path(root: Path) -> Path:
-    return root / "state" / _CB_HISTORY_FILE
+    return state_dir(root) / _CB_HISTORY_FILE
 
 
 def _commits_path(root: Path) -> Path:
-    return root / "state" / _MANAGER_COMMITS_FILE
+    return state_dir(root) / _MANAGER_COMMITS_FILE
 
 
 # ---------------------------------------------------------------------------

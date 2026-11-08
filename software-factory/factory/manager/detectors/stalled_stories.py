@@ -34,6 +34,8 @@ import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
 
+from factory.state_dir import state_dir
+
 # States the chain never advances out of — aging in these is expected and fine.
 _TERMINAL_STATES = frozenset(
     {
@@ -94,7 +96,7 @@ def _last_tick_ts(root: Path) -> datetime | None:
     record with a ``ts`` wins. Unlike the windowed detectors this does NOT
     take a ``since`` — the whole point is to detect that ticks STOPPED.
     """
-    stream = root / "state" / "events" / "ticks.ndjson"
+    stream = state_dir(root) / "events" / "ticks.ndjson"
     if not stream.exists():
         return None
     last: datetime | None = None
@@ -125,7 +127,7 @@ def _last_idle_ts(root: Path) -> datetime | None:
     A recent ``app_idle`` means the tick loop is alive and has affirmatively
     judged the app idle — i.e. the backlog is draining by design, not stuck.
     """
-    stream = root / "state" / "events" / "idle.ndjson"
+    stream = state_dir(root) / "events" / "idle.ndjson"
     if not stream.exists():
         return None
     last: datetime | None = None
@@ -156,7 +158,7 @@ def _tick_in_flight(root: Path) -> bool:
     during that time the event stream is silent and tick "silence" is
     expected, not a liveness failure.
     """
-    stream = root / "state" / "events" / "ticks.ndjson"
+    stream = state_dir(root) / "events" / "ticks.ndjson"
     if not stream.exists():
         return False
     last_event: str | None = None
@@ -209,7 +211,7 @@ def _live_handler_count(root: Path) -> int:
     the event window looks like "only control-plane activity" — this is the
     signal that real work is happening anyway.
     """
-    db_path = root / "state" / "factory.db"
+    db_path = state_dir(root) / "factory.db"
     if not db_path.exists():
         return 0
     try:
@@ -267,7 +269,7 @@ def stalled_stories(
         "age_minutes"}``.
     """
     now = now or datetime.now(UTC)
-    db_path = root / "state" / "factory.db"
+    db_path = state_dir(root) / "factory.db"
 
     stuck_in_progress: list[dict] = []
     stalled: list[dict] = []

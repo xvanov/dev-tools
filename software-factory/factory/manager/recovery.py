@@ -95,6 +95,7 @@ from factory.manager.signals import write_event
 from factory.runtime_state import effective_deploy_enabled, set_deploy_enabled_override
 from factory.settings.loader import FactorySettings
 from factory.settings.modes import get_mode, set_mode
+from factory.state_dir import state_dir
 
 # --------------------------------------------------------------------------- #
 # Constants
@@ -175,7 +176,7 @@ class RecoveryOutcome:
 
 
 def _db_path(root: Path, db_path: Path | None) -> Path:
-    return Path(db_path) if db_path is not None else (Path(root) / "state" / "factory.db")
+    return Path(db_path) if db_path is not None else (state_dir(Path(root)) / "factory.db")
 
 
 def _engine(db_path: Path) -> Any:
@@ -974,7 +975,7 @@ def execute_quarantine_invalid_enum_story(
 
 
 def _read_recovery_log(root: Path) -> list[dict[str, Any]]:
-    path = Path(root) / "state" / "events" / f"{RECOVERY_STREAM}.ndjson"
+    path = state_dir(Path(root)) / "events" / f"{RECOVERY_STREAM}.ndjson"
     if not path.exists():
         return []
     out: list[dict[str, Any]] = []

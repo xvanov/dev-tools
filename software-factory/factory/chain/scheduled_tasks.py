@@ -34,6 +34,7 @@ from sqlmodel import Field, Session, SQLModel, create_engine
 from factory.directions.creator import create_direction
 from factory.directions.parser import Direction
 from factory.model_router import route
+from factory.state_dir import root_for_db, state_dir
 
 # --------------------------------------------------------------------------- #
 # DB
@@ -375,7 +376,7 @@ def _file_finding_as_direction(
     if dry_run:
         # Route every write under state/dry_run_scratch/ so apps/<app>/
         # directions/ remains untouched on dry-run paths.
-        scratch = Path(software_factory_root) / "state" / "dry_run_scratch"
+        scratch = state_dir(Path(software_factory_root)) / "dry_run_scratch"
         scratch.mkdir(parents=True, exist_ok=True)
         target_root = scratch
         # next_direction_id scans target_root/apps/<app>/directions/, so
@@ -466,7 +467,7 @@ def run_scheduled_persona(
     ``rejected_reason`` and returns immediately (no LLM, no directions).
     """
     root = Path(software_factory_root)
-    db = db_path or (root / "state" / "factory.db")
+    db = db_path or (state_dir(root) / "factory.db")
     started = datetime.now(UTC)
     findings_key = _PERSONA_FINDINGS_KEY.get(persona)
     if findings_key is None:
@@ -643,7 +644,7 @@ def _record_and_return(
         try:
             from factory.scheduler.cron import load_schedules, upsert_schedule_row
 
-            for sched in load_schedules(Path(db_path).parent.parent):
+            for sched in load_schedules(root_for_db(db_path)):
                 if sched.persona == persona:
                     upsert_schedule_row(
                         name=sched.name,

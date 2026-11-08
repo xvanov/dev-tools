@@ -10,7 +10,7 @@ Type=simple
 WorkingDirectory=%h/dev-tools/software-factory
 # uv lives in ~/.local/bin, which a user unit's PATH does not always carry.
 Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
-ExecStart=%h/dev-tools/software-factory/.venv/bin/python -m factory serve --log-file %h/dev-tools/software-factory/state/logs/serve.log
+ExecStart=%h/dev-tools/software-factory/.venv/bin/python -m factory serve --log-file logs/serve.log
 # Exit 75 = "the checkout moved, start me on the new code"; any exit restarts.
 Restart=always
 RestartSec=5

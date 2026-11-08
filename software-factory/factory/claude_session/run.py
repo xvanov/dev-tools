@@ -21,6 +21,7 @@ from factory import telemetry
 from factory.claude_session import ledger
 from factory.claude_session.conversation import ConversationResult, run_conversation
 from factory.claude_session.launcher import Launcher, select_launcher
+from factory.state_dir import state_dir
 
 #: Seam: tests replace this to inject a fake launcher.
 launcher_factory: Callable[[], tuple[Launcher, str | None]] = select_launcher
@@ -372,8 +373,7 @@ def claude_dev_run(
 
     stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     run_dir = (
-        Path(software_factory_root)
-        / "state"
+        state_dir(Path(software_factory_root))
         / "claude_runs"
         / f"{app or 'app'}-{story_id or 0}-{stamp}"
     )

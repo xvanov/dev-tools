@@ -55,6 +55,7 @@ from factory.directions.watcher import (
     pending_directions,
 )
 from factory.model_router import route
+from factory.state_dir import state_dir
 
 _PM_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -515,7 +516,7 @@ def pm_sync(
     should leave this at the default ``True``.
     """
     root = Path(software_factory_root)
-    db_path = state_db_path or (root / "state" / "factory.db")
+    db_path = state_db_path or (state_dir(root) / "factory.db")
 
     app_config: AppConfig | None = None
     try:
@@ -839,7 +840,7 @@ def maybe_auto_pm_sync(
     # direction twice. Whoever holds the lock triages; the other says "busy".
     from factory.oscompat import lock_file, unlock_file
 
-    lock_path = Path(software_factory_root) / "state" / "locks" / f"pmsync-{app}.lock"
+    lock_path = state_dir(Path(software_factory_root)) / "locks" / f"pmsync-{app}.lock"
     try:
         lock_path.parent.mkdir(parents=True, exist_ok=True)
         lock_fh = lock_path.open("a+")
@@ -876,7 +877,7 @@ def _maybe_auto_pm_sync_locked(
     from factory.settings.loader import load_settings
 
     root = Path(software_factory_root)
-    db_path = state_db_path or (root / "state" / "factory.db")
+    db_path = state_db_path or (state_dir(root) / "factory.db")
 
     settings = load_settings(root)
     if not settings.auto_pm_sync.enabled:

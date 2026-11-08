@@ -30,6 +30,8 @@ import json
 from datetime import datetime
 from pathlib import Path
 
+from factory.state_dir import state_dir
+
 
 def placeholder_prompts(*, root: Path, since: datetime) -> list[dict]:
     """Return prompt-log records with non-empty ``placeholder_markers_found``.
@@ -53,7 +55,7 @@ def placeholder_prompts(*, root: Path, since: datetime) -> list[dict]:
         added key (``severity``). Empty list when the file is missing,
         empty, or no leaked-placeholder rows fall inside the window.
     """
-    stream = root / "state" / "events" / "prompts.ndjson"
+    stream = state_dir(root) / "events" / "prompts.ndjson"
     if not stream.exists():
         return []
 

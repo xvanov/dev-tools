@@ -45,6 +45,7 @@ from factory.settings.enforcer import can_dispatch
 from factory.settings.loader import load_settings
 from factory.settings.modes import get_mode, set_mode
 from factory.settings.spend import hour_spend_usd, today_spend_usd
+from factory.state_dir import state_dir
 
 # Phases in order (originally mirrored the orphan ``release_manager``
 # persona's deploy_plan; that persona had no dispatch path and was deleted
@@ -187,7 +188,7 @@ def enqueue_deploy(
     triggers ``closed[merged=true]`` twice (we still record both attempts).
     """
     root = Path(software_factory_root)
-    db = db_path or (root / "state" / "factory.db")
+    db = db_path or (state_dir(root) / "factory.db")
     eng = _engine(db)
     entry = DeployQueueEntry(app=app, sha=sha, merged_pr_number=merged_pr_number)
     with Session(eng) as session:
@@ -213,7 +214,7 @@ def drain_deploy_queue(
     while the actual deploy runs on the next orchestrator tick.
     """
     root = Path(software_factory_root)
-    db = db_path or (root / "state" / "factory.db")
+    db = db_path or (state_dir(root) / "factory.db")
     eng = _engine(db)
     out: list[DeployAction] = []
     with Session(eng) as session:
@@ -473,7 +474,7 @@ def deploy_post_merge(  # noqa: C901 - top-level orchestration; refactor when ph
     tests can run health-check retries without wall-clock waits.
     """
     root = Path(software_factory_root)
-    db = db_path or (root / "state" / "factory.db")
+    db = db_path or (state_dir(root) / "factory.db")
     started_at = datetime.now(UTC).isoformat()
 
     action = DeployAction(
@@ -731,7 +732,7 @@ def deploy_tick(
     number.
     """
     root = Path(software_factory_root)
-    db = db_path or (root / "state" / "factory.db")
+    db = db_path or (state_dir(root) / "factory.db")
     candidate_sha = sha
     pr_number: int | None = None
     if candidate_sha is None:

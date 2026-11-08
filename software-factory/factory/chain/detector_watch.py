@@ -148,6 +148,8 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from factory.state_dir import state_dir
+
 # ---------------------------------------------------------------------------
 # Result types
 # ---------------------------------------------------------------------------
@@ -252,7 +254,7 @@ def _story_row(root: Path, story_id: int | None) -> tuple[str, str] | None:
     """
     if story_id is None:
         return None
-    db_path = root / "state" / "factory.db"
+    db_path = state_dir(root) / "factory.db"
     if not db_path.exists():
         return None
     try:
@@ -602,7 +604,7 @@ _FMS_YIELD_MIN_SPEND_USD = 5.0
 def _adapter_fms_yield(ctx: _AdapterCtx) -> list[Firing]:
     if ctx.app != _GLOBAL_DETECTOR_APP:
         return []
-    hist_path = ctx.root / "state" / ".manager_apply_history.json"
+    hist_path = state_dir(ctx.root) / ".manager_apply_history.json"
     if not hist_path.is_file():
         return []
     try:
@@ -700,7 +702,7 @@ _DEFAULT_LOOKBACK = timedelta(hours=1)
 
 
 def _marker_path(root: Path, app: str) -> Path:
-    return root / "state" / _MARKER_DIRNAME / f"{app}.last"
+    return state_dir(root) / _MARKER_DIRNAME / f"{app}.last"
 
 
 def _last_since(root: Path, app: str, *, now: datetime) -> datetime:

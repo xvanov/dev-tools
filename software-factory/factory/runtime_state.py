@@ -36,6 +36,7 @@ from pathlib import Path
 from typing import Any
 
 from factory.app_config import AppConfig
+from factory.state_dir import state_dir
 
 # Per-app runtime-state files live here, gitignored (see root .gitignore).
 RUNTIME_SUBDIR = ("state", "runtime")
@@ -47,7 +48,7 @@ KEY_DEPLOY_ENABLED = "deploy_enabled"
 
 def runtime_state_path(software_factory_root: Path, app: str) -> Path:
     """Absolute path to ``state/runtime/<app>.json`` under the factory root."""
-    return Path(software_factory_root, *RUNTIME_SUBDIR, f"{app}.json")
+    return state_dir(Path(software_factory_root)).joinpath(*RUNTIME_SUBDIR[1:], f"{app}.json")
 
 
 def read_runtime_state(software_factory_root: Path, app: str) -> dict[str, Any]:

@@ -14,6 +14,8 @@ import re
 import sqlite3
 from pathlib import Path
 
+from factory.state_dir import state_dir
+
 # Expected pattern: <app>-<story_id>-<slug>
 _WORKTREE_PATTERN = re.compile(r"^(?P<app>.+?)-(?P<story_id>\d+)-(?P<slug>.+)$")
 
@@ -52,11 +54,11 @@ def worktree_orphans(*, root: Path) -> list[dict]:
         Returns an empty list when ``state/worktrees/`` does not exist
         or contains no directories matching the naming pattern.
     """
-    worktrees_dir = root / "state" / "worktrees"
+    worktrees_dir = state_dir(root) / "worktrees"
     if not worktrees_dir.exists():
         return []
 
-    db_path = root / "state" / "factory.db"
+    db_path = state_dir(root) / "factory.db"
     conn: sqlite3.Connection | None = None
     if db_path.exists():
         try:

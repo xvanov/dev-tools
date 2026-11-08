@@ -27,6 +27,8 @@ from collections import Counter
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+from factory.state_dir import state_dir
+
 # Statuses that mean "this proposal reached a reviewable artifact". Anything else
 # is a proposal that died somewhere between L3 emitting it and a human seeing it.
 _SHIPPED_STATUSES = frozenset({"opened_pr", "applied", "queued_for_review"})
@@ -54,7 +56,7 @@ def _parse_ts(raw: object) -> datetime | None:
 
 
 def _history_path(root: Path) -> Path:
-    return root / "state" / ".manager_apply_history.json"
+    return state_dir(root) / ".manager_apply_history.json"
 
 
 def _load_history(root: Path) -> list[dict]:
@@ -71,7 +73,7 @@ def _load_history(root: Path) -> list[dict]:
 
 def _manager_spend_since(root: Path, after: datetime) -> float:
     """Sum ``cost_usd`` for manager_* personas in the runs stream since ``after``."""
-    stream = root / "state" / "events" / "runs.ndjson"
+    stream = state_dir(root) / "events" / "runs.ndjson"
     if not stream.exists():
         return 0.0
     after_iso = after.isoformat()

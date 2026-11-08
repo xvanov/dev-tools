@@ -12,6 +12,8 @@ import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+from factory.state_dir import state_dir
+
 
 def _now_utc() -> datetime:
     return datetime.now(UTC)
@@ -80,8 +82,8 @@ def cost_spike(
     recent_start = now - window
     baseline_start = recent_start - baseline_window
 
-    spend_stream = root / "state" / "events" / "spend.ndjson"
-    runs_stream = root / "state" / "events" / "runs.ndjson"
+    spend_stream = state_dir(root) / "events" / "spend.ndjson"
+    runs_stream = state_dir(root) / "events" / "runs.ndjson"
 
     # Prefer spend.ndjson; fall back to runs.ndjson
     use_stream: Path | None = None

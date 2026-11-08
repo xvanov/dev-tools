@@ -44,6 +44,7 @@ const { config } = require('./config.ts');
 const repo = require('./repo');
 const { logger } = require('./log.ts');
 const crypt = require('./backupCrypto.ts');
+const { resolveStateDir } = require('./dispatch/factoryPace.js');
 
 const exec = promisify(execFile);
 const log = logger('backup');
@@ -204,7 +205,8 @@ function backupKey({ create = false }: { create?: boolean } = {}) {
 function factoryStateDir() {
   const f = config.factory;
   if (!f.path || f.machine) return null;
-  const dir = path.join(f.path, 'state');
+  // Out of the repo once `factory state migrate` ran (its .state-dir pointer).
+  const dir = resolveStateDir(f.path);
   return fs.existsSync(dir) ? dir : null;
 }
 
@@ -248,19 +250,23 @@ async function bundle({ dumpFile, out, key, state = factoryStateDir(), counts, e
     // entry: pa.dump (pg_dump), or pa.sqlite (a SQLite store's snapshot, src/backupSqlite.js).
     fs.renameSync(dumpFile, path.join(stage, entry));
     if (counts === undefined) counts = await require('./repo').backupDrill.tableCounts().catch(() => null);
+    // The state dir goes in under its own name (`factory state migrate --to` may
+    // pick one that is not `state`); the manifest says which.
+    const stateEntry = state ? path.basename(state) : null;
     const manifest = {
       format: 1,
       createdAt: new Date().toISOString(),
       stack: require('./platform/common.ts').stack(),
       counts,
       state: state ? stateStats(state) : null,
+      stateEntry,
     };
     fs.writeFileSync(path.join(stage, 'manifest.json'), JSON.stringify(manifest, null, 2));
     const tarFile = path.join(stage, 'bundle.tar');
     const args = ['-cf', tarFile];
-    if (state) args.push(...STATE_EXCLUDE.map((n) => `--exclude=state/${n}`));
+    if (state) args.push(...STATE_EXCLUDE.map((n) => `--exclude=${stateEntry}/${n}`));
     args.push('-C', stage, 'manifest.json', entry);
-    if (state) args.push('-C', path.dirname(state), path.basename(state));
+    if (state) args.push('-C', path.dirname(state), stateEntry as string);
     await runTool({ cmd: tarBin(), args });
     return { bytes: crypt.encryptFile(tarFile, out, key), manifest };
   } finally {
@@ -290,7 +296,7 @@ function unpack(file: string, { key = null }: { key?: Buffer | null } = {}) {
     } catch {
       /* a bundle without one still restores; the drill says it could not compare */
     }
-    const stateDir = path.join(dir, 'state');
+    const stateDir = path.join(dir, path.basename(String(manifest?.stateEntry || 'state')));
     const store = fs.existsSync(path.join(dir, 'pa.sqlite')) ? 'pa.sqlite' : 'pa.dump';
     return { dir, dumpFile: path.join(dir, store), manifest, stateDir: fs.existsSync(stateDir) ? stateDir : null };
   } catch (err) {

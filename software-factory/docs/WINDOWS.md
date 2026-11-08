@@ -14,7 +14,7 @@ The script is idempotent. It runs `uv sync --all-extras` and registers one logon
 task, `factory-serve`, as the current user, that runs:
 
 ```
-<checkout>\software-factory\.venv\Scripts\python.exe -m factory serve --interval 300 --log-file state\logs\serve.log
+<checkout>\software-factory\.venv\Scripts\python.exe -m factory serve --interval 300 --log-file logs\serve.log
 ```
 
 Options: `-Apps a,b` (default: the apps whose config sets `serve_tick: true`), `-IntervalSeconds`,
@@ -23,7 +23,55 @@ the new chain code; restart the task after a change to `factory serve` itself:
 `Stop-ScheduledTask factory-serve; Start-ScheduledTask factory-serve`).
 
 Check it: `uv run factory serve --status` (lease holder, apps, running ticks),
-`state\logs\serve.log`, and one log per app in `state\logs\serve\tick-<app>.log`.
+`<state>\logs\serve.log`, and one log per app in `<state>\logs\serve\tick-<app>.log`.
+
+### State lives outside the repo
+
+`<state>` is the runtime state: the database, story worktrees, agent run dirs,
+job workspaces, logs, locks. It used to be `software-factory\state`, inside the
+repo the factory runs from. For dev-tools that put every story worktree, and
+every agent's working directory, inside the live checkout that the personal
+assistant, termhub and the factory run from: an agent climbed from its worktree
+and wrote into the live tree (2026-11-08).
+
+`factory state migrate` moves everything in `state\` except its tracked `.gitignore` to
+`%LOCALAPPDATA%\software-factory\state` (Linux: `~/.local/share/software-factory/state`;
+`--to DIR` to choose), writes the gitignored pointer
+`software-factory\.state-dir`, and re-links the moved git worktrees (`git worktree
+repair`). It is an operator command: nothing runs it by itself, and install-serve.ps1
+only warns while the state is still in the repo. It refuses, changing nothing, while a
+factory lock is held or the database is open, when the target is inside the repo, not
+empty, or on another disk (entries are renamed, never copied), or when the root is
+already migrated. A rename that fails part-way (a termhub session, editor or the
+personal assistant worker with a file open or its working directory in a worktree) is
+undone. `--dry-run` lists what would move. `factory state where` prints the directory
+in use and warns if anything was written into `software-factory\state` since.
+
+On this machine, with nothing else of the factory running:
+
+```powershell
+cd <dev-tools checkout>\software-factory
+uv run factory off                      # stops the factory-serve task; stop the PA worker too
+uv run factory state migrate --dry-run
+uv run factory state migrate
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\windows\install-serve.ps1 -SkipSync -Start
+uv run factory state where
+```
+
+Re-running the install script matters: a task registered before this change passes
+the absolute `--log-file <checkout>\software-factory\state\logs\serve.log`; the
+current one passes `logs\serve.log`, which serve puts under `<state>`.
+
+Every process finds the state through the pointer (`factory/state_dir.py`; the
+personal assistant's `resolveStateDir` reads the same file). There is no
+environment override on purpose: serve's children inherit its environment, and in a
+story worktree or staging clone of dev-tools (whose `software-factory` is a copy
+with no pointer) a variable would point that copy at the live state. Serve refuses to start when the pointer names a directory that does
+not exist (it would start on an empty database). Restart serve and the personal
+assistant worker after migrating. Records written before the move keep their old
+absolute paths (termhub links to old `api_runs` streams, finished jobs'
+workspaces); stored acceptance-test refs (`state/acceptance/...`) resolve into
+`<state>`.
 
 ## What differs from Linux
 
@@ -89,7 +137,21 @@ process. Use `factory.oscompat.pid_alive`.
 Serve runs there too: `scripts/systemd/factory-serve.service` (a user unit;
 `Restart=always` covers the exit-75 restart). It replaces the
 `factory-tick@<app>.timer` units, so stop and disable those first; serve refuses
-to start while any is active.
+to start while any is active. Migrate the state the same way, with everything
+stopped (`factory off` stops the tick timers or the serve unit):
+
+```bash
+cd ~/dev-tools/software-factory
+uv run factory off && uv run factory power      # nothing active
+uv run factory state migrate --dry-run
+uv run factory state migrate
+cp scripts/systemd/factory-serve.service ~/.config/systemd/user/ && systemctl --user daemon-reload  # if serve is installed
+uv run factory on && uv run factory state where
+```
+
+The unit from before this change passed an absolute `--log-file` under the repo's
+`state/`; the current one passes `logs/serve.log` (under `<state>`). Restart the
+personal assistant worker afterwards.
 
 ## Config on Windows
 

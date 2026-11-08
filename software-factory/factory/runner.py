@@ -48,13 +48,15 @@ from typing import Any, cast
 
 from sqlmodel import Field, Session, SQLModel, create_engine
 
+from factory.state_dir import root_for_db, state_dir
+
 # Heavy SDK imports are deferred to inside sandbox_run() so the CLI can import
 # this module without paying the OpenHands SDK import cost (and so tests that
 # don't touch sandbox_run never need OpenHands installed).
 
 _log = logging.getLogger(__name__)
 
-_DEFAULT_DB_PATH = Path(__file__).parent.parent / "state" / "factory.db"
+_DEFAULT_DB_PATH = state_dir(Path(__file__).parent.parent) / "factory.db"
 _PERSONAS_DIR = Path(__file__).parent / "personas"
 
 # Wall-clock ceiling for a single sandbox conversation run. The SDK's
@@ -832,7 +834,7 @@ def _record_run(
         from factory.manager.signals import write_run_event
 
         _root = software_factory_root or (
-            Path(db_path).parent.parent if db_path is not None else None
+            root_for_db(db_path) if db_path is not None else None
         )
         write_run_event(
             started_at=started_at or ended_at,
@@ -2856,7 +2858,7 @@ async def _sandbox_run_impl(
     try:
         from factory.api_watch import start_watch
 
-        _watch_root = software_factory_root or Path(db_path or _DEFAULT_DB_PATH).parent.parent
+        _watch_root = software_factory_root or root_for_db(db_path or _DEFAULT_DB_PATH)
 
         def _upsert_step(row_id: int | None, session_json: str | None = None) -> int | None:
             return _upsert_provisional_run(
@@ -3476,7 +3478,7 @@ def _open_text_watch(
     try:
         from factory.api_watch import start_watch
 
-        root = software_factory_root or Path(db_path or _DEFAULT_DB_PATH).parent.parent
+        root = software_factory_root or root_for_db(db_path or _DEFAULT_DB_PATH)
         box: dict[str, int | None] = {"row": None}
 
         def _open_step() -> tuple[int | None, dict[str, str] | None]:

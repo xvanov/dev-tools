@@ -50,6 +50,7 @@ from typing import Any
 from factory.app_config import FACTORY_REPO
 from factory.manager.recovery import detect_invalid_enum_stories
 from factory.manager.signals import write_event
+from factory.state_dir import state_dir
 
 # Stream this module appends its escalation decisions to (the cooldown source).
 POISON_ESCALATION_STREAM = "poison_escalations"
@@ -77,7 +78,7 @@ Runner = Callable[..., "subprocess.CompletedProcess[str]"]
 
 
 def _events_path(root: Path, stream: str) -> Path:
-    return Path(root) / "state" / "events" / f"{stream}.ndjson"
+    return state_dir(Path(root)) / "events" / f"{stream}.ndjson"
 
 
 def _iter_tail(path: Path, tail_lines: int) -> list[dict[str, Any]]:

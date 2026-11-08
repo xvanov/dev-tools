@@ -73,6 +73,7 @@ from factory.delivery import DeliveryLevel
 from factory.directions.parser import Direction, list_direction_dirs, parse_direction_dir
 from factory.model_router import max_output_tokens_for, route
 from factory.runtime_state import effective_deploy_enabled
+from factory.state_dir import state_dir
 from factory.telemetry import traced
 
 _logger = logging.getLogger(__name__)
@@ -126,7 +127,7 @@ def _writing_worktree(
     parent = (
         None
         if pickup
-        else stack_parent(story, Path(software_factory_root) / "state" / "factory.db")
+        else stack_parent(story, state_dir(Path(software_factory_root)) / "factory.db")
     )
     wt = ensure_worktree_for_story(
         source_repo,
@@ -384,8 +385,9 @@ def persist_story(story: StoryRecord, db_path: Path, *, allow_reopen: bool = Fal
 
 def _root_for_db(db_path: Path) -> Path:
     """``<root>/state/factory.db`` → ``<root>`` (the event log lives there)."""
-    p = Path(db_path)
-    return p.parent.parent if p.parent.name == "state" else p.parent
+    from factory.state_dir import root_for_db
+
+    return root_for_db(db_path)
 
 
 def get_story(story_id: int, db_path: Path) -> StoryRecord | None:
@@ -604,7 +606,7 @@ def handle_stories_spawned(
         should_spawn_dual_draft,
     )
 
-    db = db_path or (software_factory_root / "state" / "factory.db")
+    db = db_path or (state_dir(software_factory_root) / "factory.db")
     out: list[StoryRecord] = []
 
     # Per-job routing (operator decision 2026-11-02): resolve the direction's
@@ -1279,7 +1281,7 @@ def handle_sm(
     prompt + context prelude + PM result + Direction. The chain writes the
     file content from the SM result.
     """
-    db = db_path or (software_factory_root / "state" / "factory.db")
+    db = db_path or (state_dir(software_factory_root) / "factory.db")
     story.state = advance(story, EVENT_SM_STARTED).value
     persist_story(story, db)
 
@@ -2447,7 +2449,7 @@ def _try_resume_dev_from_checkpoint(
     cp_raw = story.dev_step_checkpoint
     if not cp_raw:
         return None
-    db = db_path or (software_factory_root / "state" / "factory.db")
+    db = db_path or (state_dir(software_factory_root) / "factory.db")
     try:
         cp = json.loads(cp_raw)
     except (json.JSONDecodeError, TypeError):
@@ -2556,7 +2558,7 @@ def handle_dev(
         # retry path, capped by ``solo.SOLO_MAX_DEV_ATTEMPTS``.
         return result
 
-    db = db_path or (software_factory_root / "state" / "factory.db")
+    db = db_path or (state_dir(software_factory_root) / "factory.db")
     loop_started_mono = _time.monotonic()
     loop_started_ts = datetime.now(UTC).isoformat()
     inner_attempts = 1
@@ -2689,7 +2691,7 @@ def _handle_dev_once(
     """Single dev attempt: dispatch sandbox, check tests, do retry/escalation
     bookkeeping. See ``handle_dev`` for the convergence-loop wrapper.
     """
-    db = db_path or (software_factory_root / "state" / "factory.db")
+    db = db_path or (state_dir(software_factory_root) / "factory.db")
     story.state = advance(story, EVENT_DEV_STARTED).value
     persist_story(story, db)
 
@@ -4393,7 +4395,7 @@ def handle_review(
     ``fixture`` lets tests inject a specific reviewer JSON (e.g. a
     low-test-quality-score scenario).
     """
-    db = db_path or (software_factory_root / "state" / "factory.db")
+    db = db_path or (state_dir(software_factory_root) / "factory.db")
     story.state = advance(story, EVENT_REVIEWER_STARTED).value
     persist_story(story, db)
 
@@ -4958,7 +4960,7 @@ def handle_tech_writer(
     Entered from ``REVIEWER_DONE`` (chain) or, for a SOLO story only, directly
     from ``TESTS_GREEN`` (no reviewer round-trip; see factory/chain/solo.py).
     """
-    db = db_path or (software_factory_root / "state" / "factory.db")
+    db = db_path or (state_dir(software_factory_root) / "factory.db")
     if StoryState(story.state) is StoryState.TESTS_GREEN:
         from factory.chain.solo import is_solo
 
@@ -5185,7 +5187,7 @@ def handle_docs_sm(
     happens BEFORE advancing state so a crash mid-write leaves the chain
     recoverable.
     """
-    db = db_path or (software_factory_root / "state" / "factory.db")
+    db = db_path or (state_dir(software_factory_root) / "factory.db")
     story.state = advance(story, EVENT_DOCS_SM_STARTED).value
     persist_story(story, db)
 
@@ -5291,7 +5293,7 @@ def handle_docs_onboarder(
     Commits produced by the sandbox land on the feature branch in the real
     app repo.
     """
-    db = db_path or (software_factory_root / "state" / "factory.db")
+    db = db_path or (state_dir(software_factory_root) / "factory.db")
     story.state = advance(story, EVENT_DOCS_ONBOARDER_STARTED).value
     persist_story(story, db)
 
@@ -5795,7 +5797,7 @@ def handle_docs_enforcer(
     same paths the tech_writer claimed to write). Docs chain populates the
     same JSON field with its diff file list.
     """
-    db = db_path or (software_factory_root / "state" / "factory.db")
+    db = db_path or (state_dir(software_factory_root) / "factory.db")
     story.state = advance(story, EVENT_DOCS_ENFORCER_CHECK).value
     persist_story(story, db)
 
@@ -6975,7 +6977,7 @@ def _open_pr_for_story(
             )
     from factory.chain.delivery_gate import stack_parent
 
-    parent = stack_parent(story, Path(software_factory_root) / "state" / "factory.db")
+    parent = stack_parent(story, state_dir(Path(software_factory_root)) / "factory.db")
     stack_note = (
         f"**Stacked on** `{parent.github_branch}`"
         + (f" (PR #{parent.github_pr_number})" if parent.github_pr_number else "")
@@ -7327,7 +7329,7 @@ def handle_deploy(
     )
     from factory.deploy.orchestrator import deploy_post_merge
 
-    db = db_path or (software_factory_root / "state" / "factory.db")
+    db = db_path or (state_dir(software_factory_root) / "factory.db")
     if story.state != StoryState.DEPLOY_PENDING.value:
         return HandlerResult(
             next_state=StoryState(story.state),

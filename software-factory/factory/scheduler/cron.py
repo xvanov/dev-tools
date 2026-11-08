@@ -38,6 +38,8 @@ import yaml
 from croniter import croniter
 from sqlmodel import Field, Session, SQLModel, create_engine, select
 
+from factory.state_dir import state_dir
+
 # --------------------------------------------------------------------------- #
 # DB
 # --------------------------------------------------------------------------- #
@@ -279,7 +281,7 @@ def due_schedules(
     from factory.settings.loader import load_settings
 
     root = Path(software_factory_root)
-    db = db_path or (root / "state" / "factory.db")
+    db = db_path or (state_dir(root) / "factory.db")
     moment = now or datetime.now(UTC)
     out: list[DueSchedule] = []
     schedules = load_schedules(root)

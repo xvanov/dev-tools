@@ -19,6 +19,8 @@ from typing import Any
 
 from sqlmodel import Field, Session, SQLModel, create_engine, select
 
+from factory.state_dir import state_dir
+
 _STATUS_LABEL = "factory-status"
 
 
@@ -158,7 +160,7 @@ def compose_status_body(app: str, software_factory_root: Path) -> str:
     from factory.settings.spend import today_spend_usd
 
     software_factory_root = Path(software_factory_root)
-    db = software_factory_root / "state" / "factory.db"
+    db = state_dir(software_factory_root) / "factory.db"
 
     settings = load_settings(software_factory_root)
     mode = get_mode(software_factory_root, db_path=db)
@@ -271,7 +273,7 @@ def update_status_issue(
         raise ValueError("github_client is required for real-run update_status_issue")
 
     software_factory_root = Path(software_factory_root)
-    db = db_path or (software_factory_root / "state" / "factory.db")
+    db = db_path or (state_dir(software_factory_root) / "factory.db")
 
     if app_config is None:
         from factory.app_config import load_app_config

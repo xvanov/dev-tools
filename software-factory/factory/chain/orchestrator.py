@@ -51,6 +51,7 @@ from factory.settings.enforcer import can_dispatch
 from factory.settings.loader import load_settings
 from factory.settings.modes import get_mode
 from factory.settings.spend import hour_spend_usd, today_spend_usd
+from factory.state_dir import state_dir
 
 # Handler kinds that have a "bug-fix variant" recognized by the enforcer's
 # ``fix-only`` mode. Kept in sync with
@@ -2596,7 +2597,7 @@ _ISSUE_HYGIENE_INTERVAL_S = 3600  # autonomous issue-reconcile: at most once/hou
 
 
 def _issue_hygiene_marker(root: Path, app: str) -> Path:
-    return root / "state" / "issue_hygiene" / f"{app}.last"
+    return state_dir(root) / "issue_hygiene" / f"{app}.last"
 
 
 def _should_run_issue_hygiene(root: Path, app: str, *, now: float | None = None) -> bool:
@@ -2662,7 +2663,7 @@ def tick(
     orchestrator moves on to the next story.
     """
     root = Path(software_factory_root)
-    db = db_path or (root / "state" / "factory.db")
+    db = db_path or (state_dir(root) / "factory.db")
     # The budget is the PROCESS's (systemd TimeoutStartSec counts from process
     # start), not this call's.
     _tick_started_mono = _process_started_mono()

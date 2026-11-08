@@ -17,6 +17,7 @@ from typing import Any
 from sqlmodel import Field, Session, SQLModel, create_engine, select
 
 from factory.settings.loader import FactorySettings, is_valid_mode, load_settings
+from factory.state_dir import state_dir
 
 
 class FactoryState(SQLModel, table=True):
@@ -42,7 +43,7 @@ def _engine(db_path: Path) -> Any:
 def get_mode(software_factory_root: Path, *, db_path: Path | None = None) -> str:
     """Return the current factory mode (default from YAML on first read)."""
     settings = load_settings(software_factory_root)
-    db = db_path or (Path(software_factory_root) / "state" / "factory.db")
+    db = db_path or (state_dir(Path(software_factory_root)) / "factory.db")
     eng = _engine(db)
     with Session(eng) as session:
         row = session.exec(select(FactoryState).where(FactoryState.id == 1)).first()
@@ -65,7 +66,7 @@ def set_mode(
     settings = settings or load_settings(software_factory_root)
     if not is_valid_mode(new_mode, settings):
         raise ValueError(f"mode={new_mode!r} not allowed; available={settings.modes.available!r}")
-    db = db_path or (Path(software_factory_root) / "state" / "factory.db")
+    db = db_path or (state_dir(Path(software_factory_root)) / "factory.db")
     eng = _engine(db)
     with Session(eng) as session:
         row = session.exec(select(FactoryState).where(FactoryState.id == 1)).first()
