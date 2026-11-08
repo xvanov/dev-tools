@@ -127,6 +127,11 @@ request); voice never approves high-risk actions alone; work and personal stacks
     because this public repo does not track apps/sacrifice or bench/swebench (plus the gitignore test
     assumes a repo-root layout), and the suite takes ~10 min on a 2-core runner. T3 skips-when-absent, then
     flip the leg to blocking on Linux; Windows stays informational until phase 2.3.
+    Done (fec5637): the tests needing untracked data skip when it is absent (tests/conftest.py), so the
+    Linux leg gates; the full Windows suite stays informational (60 min: it never finished in 25); a
+    gating `software-factory (windows-latest, 2.x gate)` job runs the native-Windows and JOBS-API files
+    (oscompat, serve + API, claude_session rounds, text-step watch, test_jobs_*, test_delivery_*, gh auth,
+    power), green on its first run (bf4c2cf).
   - **T6b** personal-assistant remoteExec.test.js SKIPs on Windows (it stands the local host in for a
     Linux machine); split its host-bound half from the pure unit assertions so Windows keeps the latter.
   - Found by CI and fixed: termhub updateHeal.test.js asserted a stale source shape (invisible on Windows,
