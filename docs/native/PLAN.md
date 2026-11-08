@@ -123,9 +123,10 @@ with the app. Clients reconnect to the event stream with `Last-Event-ID` and mis
   overlap only one generation runs them; the new one takes over when the old releases.
   Lease = advisory lock 7300, released on `drain`; per-pass lock (7301, name) so a pass still
   finishing in the old generation is skipped, not doubled. (c73f192)
-- [ ] **Z3 Expand/contract migrations.** Every schema change is additive first; old and new
+- [x] **Z3 Expand/contract migrations.** Every schema change is additive first; old and new
   code both run on the new schema; the cleanup migration ships one release later. A test
-  runs the previous release's code against the new schema.
+  runs the previous release's code against the new schema. Without Postgres: the previous
+  commit's INSERTs are checked against a schema modelled from `sql/`. (f25ea8e)
 - [ ] **Z4 Deploy command.** `deploy` = `git pull --ff-only` + install + build + Z1 handoff +
   rollback by flipping back if health fails within 60 s. Replaces the stop/kill/start
   restart. Same on both stacks.
