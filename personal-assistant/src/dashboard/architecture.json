@@ -854,7 +854,8 @@
         "Query embeddings": "a search embeds its query once: normalized text (trimmed, whitespace collapsed, lower-cased) plus model and dimensions -> vector, in an in-memory LRU (PA_EMBED_CACHE_ENTRIES, 500) backed by query_embedding_cache (PA_EMBED_CACHE_ROWS, 5000 by last use); query time only, never ingest",
         "Secrets": "never here: OS vault or the gitignored .env",
         "Backups": "pg_dump every 24 h, 14 kept (PA_BACKUP_DIR)",
-        "WSL caveat": "WSL stops the distro when the last client exits; the pa-wsl-keepalive logon task holds it open"
+        "WSL caveat": "WSL stops the distro when the last client exits; the pa-wsl-keepalive logon task holds it open",
+        "Id chain": "plan E1: card -> run -> job -> step -> session -> PR as stored ids. run (commitment_id, factory_job_id, termhub_session_id, mr_url, external_id) plus run_pr (every PR of a run: number, state, CI) and run_step (every factory step: job, story, persona, termhub session id, machine, URL), written by the worker factory pass from job status (sql/033); read by the board (card.chain), the card detail, Build and the card / factory_job / sessions MCP tools"
       },
       "tables": [
         "attention_weight",
@@ -895,6 +896,8 @@
         "routine",
         "routine_run",
         "run",
+        "run_pr",
+        "run_step",
         "secret_request",
         "setting",
         "source_item",
@@ -1509,7 +1512,7 @@
     {
       "from": "dispatcher",
       "to": "termhub",
-      "label": "POST /api/sessions"
+      "label": "POST /api/sessions {links: card, run, job}"
     },
     {
       "from": "dispatcher",
@@ -1527,7 +1530,7 @@
     {
       "from": "worker",
       "to": "factory-api",
-      "label": "job list poll (120 s) to factory_board"
+      "label": "job list poll (120 s) to factory_board; job status to run_pr / run_step (id chain)"
     },
     {
       "from": "factory-api",
@@ -1567,7 +1570,7 @@
     {
       "from": "runtime-claude",
       "to": "termhub-wsl",
-      "label": "create session (sessiond :7110)",
+      "label": "create session {links: job, step, story} (sessiond :7110)",
       "stacks": [
         "work"
       ]

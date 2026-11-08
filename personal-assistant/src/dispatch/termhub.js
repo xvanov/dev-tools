@@ -24,6 +24,25 @@ const log = logger('termhub');
 
 const GUARD = { 'X-Termhub': '1' };
 
+const LINK_KEYS = ['card', 'run', 'job', 'step', 'story', 'external', 'pr'];
+const LINK_VALUE = /^[A-Za-z0-9_.:@-]{1,128}$/;
+
+/**
+ * Pure. A session's `links` for termhub (plan E1): the card, run, job, … it
+ * belongs to, as id strings; null and malformed values left out (termhub drops
+ * them too). null when there is nothing to send.
+ */
+function sessionLinks(o) {
+  if (!o || typeof o !== 'object') return null;
+  const out = {};
+  for (const k of LINK_KEYS) {
+    if (o[k] == null) continue;
+    const v = String(o[k]);
+    if (LINK_VALUE.test(v)) out[k] = v;
+  }
+  return Object.keys(out).length ? out : null;
+}
+
 /**
  * Pure. A doctor line for a termhub reached by its tailnet (MagicDNS) name:
  * null when the URL is not a tailnet name; otherwise ok, or — on the 403 a
@@ -87,10 +106,14 @@ function client(baseUrl) {
   // (a no-push run starts without push credentials, src/dispatch/remote.js).
   // `envApplied` is true only when termhub says it applied them: an older
   // termhub ignores the fields, and the caller must not take that on trust.
-  async function createSession({ cwd, command, title, cols = 120, rows = 34, env = null, unsetEnv = null }) {
+  async function createSession({ cwd, command, title, cols = 120, rows = 34, env = null, unsetEnv = null, links = null }) {
     const body = { cwd, command, title, cols, rows };
     if (env) body.env = env;
     if (unsetEnv) body.unsetEnv = unsetEnv;
+    // What the session belongs to (card, run, job; termhub lib/sessionLinks.js).
+    // An older termhub ignores it; Run then falls back to the title.
+    const l = sessionLinks(links);
+    if (l) body.links = l;
     const payload = await api('/api/sessions', { method: 'POST', body });
     // termhub has answered with both shapes across versions; accept either rather
     // than pin a version we would then have to keep in step.
@@ -322,4 +345,4 @@ function forMachine(name) {
   return isLocal(name) ? local : client(config.termhub.machines[name].url);
 }
 
-module.exports = { ...local, client, tailnetCheck, forMachine, isLocal, briefClaude, claudeScreenState, trustKeys };
+module.exports = { ...local, client, tailnetCheck, forMachine, isLocal, briefClaude, claudeScreenState, trustKeys, sessionLinks };

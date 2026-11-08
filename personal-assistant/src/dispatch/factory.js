@@ -435,7 +435,7 @@ async function start({
   let sessionId = null;
   let url = null;
   try {
-    ({ sessionId, url } = await openFollow(job.job_id, `pa#${run.id} factory · ${label.slice(0, 40)}`));
+    ({ sessionId, url } = await openFollow(job.job_id, `pa#${run.id} factory · ${label.slice(0, 40)}`, { card: commitmentId, run: run.id, job: job.job_id }));
     await query('update run set termhub_session_id = $2 where id = $1', [run.id, sessionId]);
   } catch (err) {
     log.warn('factory job started, but its follow session did not open', { run: run.id, job: job.job_id, message: err.message });
@@ -475,10 +475,14 @@ async function start({
  * "Open in termhub" (any job, not only the PA's).
  * @returns {Promise<{sessionId: string, url: string|null}>}
  */
-async function openFollow(jobId, title = null) {
+async function openFollow(jobId, title = null, links = null) {
   const command = F.followCommand(jobId, config.factory.uv);
   const hub = termhub.forMachine(machine());
-  const session = await hub.createSession({ cwd: config.factory.path, command, title: String(title || `factory · ${jobId}`).slice(0, 80) });
+  const session = await hub.createSession({
+    cwd: config.factory.path, command, title: String(title || `factory · ${jobId}`).slice(0, 80),
+    // Plan E1: the session names its job (and the card and run, when a PA run started it).
+    links: { ...(links || {}), job: jobId },
+  });
   const url = await hub.sessionUrl(session.id).catch(() => null);
   return { sessionId: session.id, url };
 }
@@ -596,6 +600,9 @@ async function apply(run, job) {
       await query('update run set subscription_equiv_usd = $2 where id = $1', [run.id, u.subscription_equiv_usd]).catch(() => {});
     }
   }
+  // Plan E1: every PR (number, state, CI) and every step with its session, on
+  // every pass — a step's session or a PR's CI can change while nothing above does.
+  await recordChain(run.id, job).catch((err) => log.debug('run links not recorded', { run: run.id, message: err.message }));
   const ended = u.terminal && wasLive;
   if (ended) {
     const move = F.commitmentMove(job);
@@ -625,6 +632,70 @@ async function apply(run, job) {
       .catch(() => {});
   }
   return { changed: Boolean(changed), ended };
+}
+
+/**
+ * Plan E1: a job's PRs and steps (factoryCore.chainOf) onto run_pr / run_step
+ * (sql/033), upserted, only rows that changed rewritten. Rows are never deleted:
+ * a step or PR the factory stops listing keeps its last known state.
+ */
+async function recordChain(runId, job) {
+  const { prs, steps } = F.chainOf(job);
+  for (const p of prs) {
+    await query(
+      `insert into run_pr (run_id, url, number, story_id, state, ci_state, ci_failing, updated_at)
+       values ($1, $2, $3, $4, $5, $6, $7::jsonb, now())
+       on conflict (run_id, url) do update set
+         number = coalesce(excluded.number, run_pr.number), story_id = coalesce(excluded.story_id, run_pr.story_id),
+         state = coalesce(excluded.state, run_pr.state), ci_state = coalesce(excluded.ci_state, run_pr.ci_state),
+         ci_failing = coalesce(excluded.ci_failing, run_pr.ci_failing), updated_at = now()
+       where (run_pr.number, run_pr.story_id, run_pr.state, run_pr.ci_state, run_pr.ci_failing)
+             is distinct from (coalesce(excluded.number, run_pr.number), coalesce(excluded.story_id, run_pr.story_id),
+                               coalesce(excluded.state, run_pr.state), coalesce(excluded.ci_state, run_pr.ci_state),
+                               coalesce(excluded.ci_failing, run_pr.ci_failing))`,
+      [runId, p.url, p.number, p.story_id, p.state, p.ci_state, p.ci_failing ? JSON.stringify(p.ci_failing) : null]
+    );
+  }
+  for (const s of steps) {
+    await query(
+      `insert into run_step (run_id, step_id, job_id, story_id, persona, runtime, model, state, started_at, ended_at, machine, termhub_session_id, url, updated_at)
+       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, now())
+       on conflict (run_id, step_id) do update set
+         job_id = excluded.job_id, story_id = excluded.story_id, persona = excluded.persona, runtime = excluded.runtime,
+         model = excluded.model, state = excluded.state, started_at = excluded.started_at, ended_at = excluded.ended_at,
+         machine = coalesce(excluded.machine, run_step.machine),
+         termhub_session_id = coalesce(excluded.termhub_session_id, run_step.termhub_session_id),
+         url = coalesce(excluded.url, run_step.url), updated_at = now()
+       where (run_step.state, run_step.ended_at, run_step.termhub_session_id, run_step.url, run_step.model)
+             is distinct from (excluded.state, excluded.ended_at::timestamptz,
+                               coalesce(excluded.termhub_session_id, run_step.termhub_session_id),
+                               coalesce(excluded.url, run_step.url), excluded.model)`,
+      [runId, s.step_id, s.job_id, s.story_id, s.persona, s.runtime, s.model, s.state, s.started_at, s.ended_at, s.machine, s.termhub_session_id, s.url]
+    );
+  }
+  return { prs: prs.length, steps: steps.length };
+}
+
+/**
+ * Plan E1: the stored chain of some runs, keyed by run id — their PRs and their
+ * steps with sessions. Empty before sql/033 is applied.
+ * @returns {Promise<Map<string, {prs: object[], steps: object[]}>>}
+ */
+async function chains(runIds) {
+  const ids = [...new Set((runIds || []).map(Number).filter(Number.isFinite))];
+  const out = new Map(ids.map((id) => [String(id), { prs: [], steps: [] }]));
+  if (!ids.length) return out;
+  const [prs, steps] = await Promise.all([
+    rows(`select run_id, url, number, story_id, state, ci_state, ci_failing from run_pr where run_id = any($1::bigint[]) order by run_id, number nulls last, url`, [ids]).catch(() => []),
+    rows(
+      `select run_id, step_id, job_id, story_id, persona, runtime, model, state, started_at, ended_at, machine, termhub_session_id, url
+         from run_step where run_id = any($1::bigint[]) order by run_id, started_at desc nulls last, step_id desc`,
+      [ids]
+    ).catch(() => []),
+  ]);
+  for (const p of prs) out.get(String(p.run_id))?.prs.push(p);
+  for (const s of steps) out.get(String(s.run_id))?.steps.push(s);
+  return out;
 }
 
 /**
@@ -833,5 +904,5 @@ async function sweepUnsettled() {
 
 module.exports = {
   enabled, machine, call, apps, addApp, installId, start, settle, sweepUnsettled, status, cancel, apply, poll, runCommand, modelsFor, _setRunner,
-  submit, withoutV12, openFollow, refreshBoard, snapshot, snapshotJob, report, cancelJob, approve, resume,
+  submit, withoutV12, openFollow, refreshBoard, snapshot, snapshotJob, report, cancelJob, approve, resume, recordChain, chains,
 };

@@ -378,7 +378,9 @@ async function factoryStart() {
   assert.ok(store.queries.some((q) => /factory_job_id = \$2/.test(q.sql) && q.params[1] === 'widget:017'));
   assert.deepStrictEqual(transitions, [{ commitmentId: 31, to: 'dispatched', actor: 'dispatch', reason: 'run #7: factory job widget:017', from: ['open'] }]);
   // Walk-in: a session following the job, in the factory checkout, stored on the run.
-  assert.deepStrictEqual(sessions[0], { cwd: '/srv/factory-checkout', command: 'uv run factory job follow widget:017', title: 'pa#7 factory · Add retries to the export' });
+  // It names its card, run and job (plan E1), so Run links back to them.
+  assert.deepStrictEqual(sessions[0], { cwd: '/srv/factory-checkout', command: 'uv run factory job follow widget:017', title: 'pa#7 factory · Add retries to the export',
+    links: { card: 31, run: 7, job: 'widget:017' } });
   assert.ok(store.queries.some((q) => /termhub_session_id = \$2/.test(q.sql) && q.params[1] === 'sess-1'));
 
   // Plan mode never reaches the factory or the store.

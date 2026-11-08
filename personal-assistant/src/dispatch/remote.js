@@ -490,8 +490,8 @@ async function startOnMachine({ machine, hub, run, repo, branch, mode, brief, ti
   if (!session) {
     try {
       session = mode.mayPush
-        ? await hub.createSession({ cwd: worktree, command: '', title, env: { PA_DISPATCHED_RUN: String(run.id) } })
-        : await createNoPushSession(hub, { cwd: worktree, command: '', title, env: { PA_DISPATCHED_RUN: String(run.id) } }, machine.name, { ghConfigDir: `${worktree}.no-gh`, fam });
+        ? await hub.createSession({ cwd: worktree, command: '', title, env: { PA_DISPATCHED_RUN: String(run.id) }, links: { card: run.commitment_id, run: run.id } })
+        : await createNoPushSession(hub, { cwd: worktree, command: '', title, env: { PA_DISPATCHED_RUN: String(run.id) }, links: { card: run.commitment_id, run: run.id } }, machine.name, { ghConfigDir: `${worktree}.no-gh`, fam });
     } catch (err) {
       // Nothing runs in it: take the worktree back down, as a failed setup does.
       const undo = exec || ((argv) => runCommand(machine.name, argv, { timeoutMs: 120_000, env: GIT_ENV }));

@@ -70,7 +70,9 @@ async function commitmentContext(id) {
     ...r,
     url: r.termhub_session_id ? `${termhub.forMachine(r.machine).base}/#session=${encodeURIComponent(r.termhub_session_id)}` : null,
   }));
-  return { ...c, thread: thread.reverse(), runs };
+  // Plan E1: each run's job, steps (with their sessions) and PRs, from stored ids.
+  const chain = (await require('./cards').chainsFor([id], { perCard: 10 }).catch(() => new Map())).get(String(id)) || [];
+  return { ...c, thread: thread.reverse(), runs, chain };
 }
 
 async function state() {

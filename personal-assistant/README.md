@@ -914,6 +914,13 @@ each command prints — the contract is the factory's `docs/JOBS-API.md`.
   **Factory** page and `pa factory jobs`, and notifies you when any job — yours from the PA or
   not — is done, needs you, failed, or has a PR whose CI turned red (a job a PA run submitted
   has its end and waits announced by the run, and only its CI here).
+- **One id chain** (plan E1): every poll also stores each PR the job opened (number, state, CI;
+  sql/033 `run_pr`) and each agent step with its live session (`run_step`: the factory's step id,
+  story, termhub session id and URL), and every session the PA or the factory starts in termhub
+  carries `links` (card, run, job, step). So a card shows run → job → steps → PRs as links (Plan),
+  a job links back to its card and to each step's session (Build, `factory#job=<id>`), a terminal
+  links to its card and job (Run, `#card-<id>`), and the `card`, `factory_job` and `sessions` chat
+  tools return the same ids, none of it read off a title.
 - `pa review <run>` shows the job, its stories and PRs; `pa drop <run>` cancels the job (the factory
   keeps its evidence) and reopens the ask; `pa land`, `pa diff` and `pa say` refuse — the factory
   delivers and is steered on its own side.

@@ -47,6 +47,11 @@
   function link(url, text) {
     return url && /^https?:\/\//.test(url) ? el('a', { href: url, target: '_blank', rel: 'noopener noreferrer' }, text) : null;
   }
+  // A link inside Jarvis (a card in Plan, a session in Run): no new tab, so nav.js
+  // switches destination and carries the #card-/#session= anchor along (plan E1).
+  function inLink(url, text, title) {
+    return url && (/^https?:\/\//.test(url) || /^\.\/#[A-Za-z0-9_.:=&%-]+$/.test(url)) ? el('a', { href: url, title: title || null }, text) : null;
+  }
   function money(n) { return '$' + Number(n || 0).toFixed(2); }
   function ago(iso) {
     if (!iso) return '';
@@ -148,16 +153,19 @@
       ? chip('CI ' + s.ci.state + (s.ci.failing && s.ci.failing.length ? ': ' + s.ci.failing.join(', ') : ''), 'ci-' + s.ci.state)
       : null;
     return el('li', {}, el('span', { class: 'mono', text: 'story ' + s.id }), chip(s.state || '?'),
-      s.prUrl ? link(s.prUrl, /\/pull\/(\d+)/.test(s.prUrl) ? 'PR #' + s.prUrl.match(/\/pull\/(\d+)/)[1] : 'PR') : null,
+      s.prUrl ? link(s.prUrl, s.prNumber ? 'PR #' + s.prNumber : 'PR') : null,
       s.prState ? chip(s.prState) : null, ci);
   }
 
+  // One agent step: its id (the factory's run id), story, and its live session in Run.
   function runLine(r) {
-    return el('li', {},
+    return el('li', { 'data-step': r.id == null ? null : String(r.id) },
       chip(r.state, r.state === 'failed' ? 's-failed' : r.state === 'ok' ? 's-done' : ''),
+      r.id != null ? el('span', { class: 'mono', text: 'step ' + r.id }) : null,
+      r.storyId != null ? el('span', { class: 'mono', text: 'story ' + r.storyId }) : null,
       el('span', { text: [r.persona, RUNTIME[r.runtime] || r.runtime, r.model].filter(Boolean).join(' · ') }),
       el('span', { class: 'cost', text: money(r.costUsd) + (r.billing === 'subscription' ? ' sub-equiv' : '') }),
-      r.session ? link(r.session.url, r.state === 'running' ? 'watch live' : 'session') : null);
+      r.session ? inLink(r.session.url, r.state === 'running' ? 'watch live' : 'session', 'This step\'s session in Run' + (r.session.machine ? ' on ' + r.session.machine : '')) : null);
   }
 
   function jobCard(j) {
@@ -182,11 +190,13 @@
         return post('api/factory/jobs/' + encodeURIComponent(j.jobId) + '/cancel').then(function (r) { toast(j.jobId + ': ' + (r.state || 'cancel sent')); });
       }));
     }
-    if (j.paRun) actions.append(j.paRun.url ? link(j.paRun.url, 'run #' + j.paRun.id) : chip('run #' + j.paRun.id, 'mono'));
+    // Back up the chain (plan E1): the card in Plan, and the PA run's own session in Run.
+    if (j.paRun && j.paRun.card) actions.append(inLink('./#card-' + j.paRun.card, 'card #' + j.paRun.card, 'The card in Plan'));
+    if (j.paRun) actions.append(j.paRun.url ? inLink(j.paRun.url, 'run #' + j.paRun.id, 'The run\'s follow session in Run') : chip('run #' + j.paRun.id, 'mono'));
 
     var running = j.runs.filter(function (r) { return r.state === 'running'; });
     var others = j.runs.filter(function (r) { return r.state !== 'running'; });
-    return el('div', { class: 'job ' + j.group },
+    return el('div', { class: 'job ' + j.group, 'data-job': j.jobId },
       el('div', { class: 't', text: j.title }),
       el('div', { class: 'chips' },
         chip(j.jobId, 'mono'),
@@ -237,7 +247,33 @@
         .concat(list.length ? list.map(jobCard) : [el('div', { class: 'empty', text: g[0] === 'needs_you' ? 'Nothing waits on you.' : 'None.' })]));
     }));
     fillForm();
+    focusFromHash();
   }
+
+  // #job=<id>[&step=<n>] (plan E1: Plan and Run link to a job, or one step of it):
+  // that job brought into view and marked, its finished runs unfolded for the step.
+  var focused = null;
+  function focusFromHash(force) {
+    var m = /^#job=([^&]+)(?:&step=([A-Za-z0-9_.-]+))?$/.exec(location.hash || '');
+    if (!m || (!force && focused === location.hash)) return;
+    var id;
+    try { id = decodeURIComponent(m[1]); } catch (e) { return; }
+    var card = null;
+    document.querySelectorAll('.job[data-job]').forEach(function (n) { if (n.getAttribute('data-job') === id) card = n; });
+    if (!card) return;
+    focused = location.hash;
+    document.querySelectorAll('.job.target, .runs li.target').forEach(function (n) { n.classList.remove('target'); });
+    card.classList.add('target');
+    var step = null;
+    if (m[2]) card.querySelectorAll('.runs li[data-step]').forEach(function (n) { if (n.getAttribute('data-step') === m[2]) step = n; });
+    if (step) {
+      var fold = step.closest('details');
+      if (fold) fold.open = true;
+      step.classList.add('target');
+    }
+    (step || card).scrollIntoView({ block: 'center' });
+  }
+  window.addEventListener('hashchange', function () { focusFromHash(true); });
 
   // ---- New job ----------------------------------------------------------------------
   var form = document.getElementById('newform');

@@ -375,6 +375,8 @@ async function start({
       // Marks everything the agent runs: `pa do` / `pa answer` refuse an
       // unattended end state from inside a dispatched run.
       env: { PA_DISPATCHED_RUN: String(run.id) },
+      // Plan E1: the session names its card and run, so Run links back to them.
+      links: { card: commitmentId, run: run.id },
     };
     // A run that may not push also starts without push credentials
     // (src/dispatch/remote.js noPushEnv); refused if termhub cannot do that.

@@ -127,7 +127,11 @@ const V1_JOB = {
   assert.deepStrictEqual([v12.kind, v12.runtime, v12.group, v12.canCancel], ['research', 'claude_session', 'running', true]);
   assert.strictEqual(v12.runs[0].session.url, 'https://forge.example:7443/#session=s9', 'a live run links to its termhub session');
   assert.strictEqual(v12.runs[1].session, null, 'only http(s) links reach the page');
-  assert.deepStrictEqual(v12.paRun, { id: 42, url: 'https://hub.example/#session=x' });
+  assert.deepStrictEqual(v12.paRun, { id: 42, url: 'https://hub.example/#session=x', card: null });
+  // Plan E1: the step's session id, and the PA run's card, so Build links back to Plan.
+  assert.strictEqual(v12.runs[0].session.id, 's9');
+  assert.deepStrictEqual(F.jobView({ job_id: 'a:1' }, { id: 7, url: null, card: 412 }).paRun, { id: 7, url: null, card: '412' });
+  assert.strictEqual(F.jobView({ job_id: 'a:1' }, { id: 7, url: null, card: 'x<y' }).paRun.card, null, 'a card id is a number');
   const red = F.jobView({ job_id: 'widget:007', state: 'in_progress', stories: [{ id: 1, pr_url: 'https://github.com/acme/widget/pull/3', ci: { state: 'failing', failing: ['test (ubuntu)'] } }] });
   assert.strictEqual(red.group, 'needs_you', 'red CI on a live job needs you');
   assert.deepStrictEqual(red.stories[0].ci, { state: 'failing', failing: ['test (ubuntu)'] });

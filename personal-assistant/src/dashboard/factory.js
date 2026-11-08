@@ -114,12 +114,13 @@ async function boardData() {
   const ids = snap.jobs.map((j) => j.job_id).filter((id) => F.JOB_ID.test(String(id || '')));
   const runs = ids.length
     ? await require('../db').rows(
-      `select distinct on (factory_job_id) id, factory_job_id, termhub_session_id, machine from run
+      `select distinct on (factory_job_id) id, commitment_id, factory_job_id, termhub_session_id, machine from run
         where route = 'factory' and factory_job_id = any($1::text[]) order by factory_job_id, id desc`,
       [ids]
     ).catch(() => [])
     : [];
-  const paRuns = new Map(runs.map((r) => [r.factory_job_id, { id: Number(r.id), url: termhubUrl(r) }]));
+  // Plan E1: the run that submitted a job, and its card, so Build links back to Plan.
+  const paRuns = new Map(runs.map((r) => [r.factory_job_id, { id: Number(r.id), url: termhubUrl(r), card: r.commitment_id }]));
   const spend = await require('../budget').status().catch(() => null);
   return {
     enabled: true,
@@ -203,7 +204,7 @@ async function route(req, res, url, { send, readJson, issuePageToken, pageTokenO
   }
   if (a.verb === 'cancel') send(res, 200, await factory.cancelJob(a.jobId));
   else if (a.verb === 'approve') send(res, 200, await factory.approve(a.jobId));
-  else send(res, 200, await factory.openFollow(a.jobId, `factory · ${a.jobId} (follow)`));
+  else send(res, 200, await factory.openFollow(a.jobId, `factory · ${a.jobId} (follow)`, { job: a.jobId }));
   return true;
 }
 

@@ -396,6 +396,124 @@ function num(v) {
   return Number.isFinite(n) ? n : 0;
 }
 
+/** Pure. A PR's number: JOBS-API v1.4 `pr_number`, else read off its URL. */
+function prNumber(n, url) {
+  const v = Number(n);
+  if (Number.isInteger(v) && v > 0) return v;
+  const m = /\/pull\/(\d+)(?:[/?#]|$)/.exec(String(url || ''));
+  return m ? Number(m[1]) : null;
+}
+
+const SESSION_ID = /^[A-Za-z0-9_.:-]{1,128}$/;
+
+function isoOrNull(v) {
+  if (!v) return null;
+  const t = Date.parse(String(v));
+  return Number.isFinite(t) ? new Date(t).toISOString() : null;
+}
+
+/**
+ * Pure. One id chain (plan E1): what a job's status says about its PRs and its
+ * agent steps, as the rows of run_pr and run_step (sql/033). Every field the
+ * factory may omit is null; nothing is invented from a title.
+ * @returns {{prs: Array<{url, number, story_id, state, ci_state, ci_failing}>,
+ *            steps: Array<{step_id, job_id, story_id, persona, runtime, model, state, started_at, ended_at, machine, termhub_session_id, url}>}}
+ */
+function chainOf(job) {
+  const jobId = JOB_ID.test(String(job?.job_id || '')) ? String(job.job_id) : null;
+  const intOrNull = (v) => (Number.isInteger(Number(v)) && v !== null && v !== '' ? Number(v) : null);
+  const prs = [];
+  const seen = new Set();
+  for (const s of Array.isArray(job?.stories) ? job.stories : []) {
+    const url = safeUrl(s?.pr_url);
+    if (!url || seen.has(url)) continue;
+    seen.add(url);
+    const ci = s?.ci && typeof s.ci === 'object' ? s.ci : null;
+    prs.push({
+      url,
+      number: prNumber(s?.pr_number, url),
+      story_id: intOrNull(s?.id),
+      state: ['open', 'merged', 'closed'].includes(s?.pr_state) ? s.pr_state : null,
+      ci_state: ci ? String(ci.state || 'none').slice(0, 20) : null,
+      ci_failing: ci && Array.isArray(ci.failing) ? ci.failing.slice(0, 8).map((f) => clip(typeof f === 'string' ? f : f?.name || '?', 80)) : null,
+    });
+  }
+  for (const u of Array.isArray(job?.pr_urls) ? job.pr_urls : []) {
+    const url = safeUrl(u);
+    if (url && !seen.has(url)) {
+      seen.add(url);
+      prs.push({ url, number: prNumber(null, url), story_id: null, state: null, ci_state: null, ci_failing: null });
+    }
+  }
+  const steps = [];
+  for (const r of (Array.isArray(job?.runs) ? job.runs : []).slice(0, 50)) {
+    if (r?.id == null || !SESSION_ID.test(String(r.id))) continue;
+    const s = r.session && typeof r.session === 'object' ? r.session : null;
+    const sid = s && SESSION_ID.test(String(s.termhub_session_id || '')) ? String(s.termhub_session_id) : null;
+    steps.push({
+      step_id: String(r.id),
+      job_id: JOB_ID.test(String(r.job_id || '')) ? String(r.job_id) : jobId,
+      story_id: intOrNull(r.story_id),
+      persona: r.persona ? clip(r.persona, 40) : null,
+      runtime: RUNTIMES.includes(r.runtime) ? r.runtime : null,
+      model: r.model ? clip(r.model, 80) : null,
+      state: ['running', 'ok', 'failed'].includes(r.state) ? r.state : null,
+      started_at: isoOrNull(r.started_at),
+      ended_at: isoOrNull(r.ended_at),
+      machine: s?.machine ? clip(s.machine, 60) : null,
+      termhub_session_id: sid,
+      url: s ? safeUrl(s.url) : null,
+    });
+  }
+  return { prs, steps };
+}
+
+/**
+ * Pure. One PA run's id chain as pages and tools show it (plan E1):
+ * card → run → job → steps, each with its session → PRs with CI. `stored` is
+ * what factory.chains() read from run_step / run_pr; `sessionUrl` the run's own
+ * termhub session (a Claude run's terminal, or a factory run's follow session).
+ * A run with no stored PR still shows the one on run.mr_url (a Claude run's PR).
+ */
+function runChain(run, stored = null, { sessionUrl = null } = {}) {
+  const st = stored || {};
+  const prs = (Array.isArray(st.prs) ? st.prs : [])
+    .map((p) => ({
+      number: prNumber(p.number, p.url),
+      url: safeUrl(p.url),
+      state: p.state || null,
+      ci: p.ci_state || null,
+      ciFailing: Array.isArray(p.ci_failing) ? p.ci_failing.slice(0, 8).map((f) => clip(f, 80)) : [],
+      story: p.story_id != null ? Number(p.story_id) : null,
+    }))
+    .filter((p) => p.url);
+  const mr = safeUrl(run?.mr_url);
+  if (mr && !prs.some((p) => p.url === mr)) prs.unshift({ number: prNumber(null, mr), url: mr, state: null, ci: null, ciFailing: [], story: null });
+  const steps = (Array.isArray(st.steps) ? st.steps : []).slice(0, 20).map((s) => ({
+    step: String(s.step_id),
+    story: s.story_id != null ? Number(s.story_id) : null,
+    persona: s.persona || null,
+    runtime: s.runtime || null,
+    model: s.model || null,
+    state: s.state || null,
+    session: s.termhub_session_id || safeUrl(s.url)
+      ? { id: s.termhub_session_id || null, machine: s.machine || null, url: safeUrl(s.url) }
+      : null,
+  }));
+  const job = JOB_ID.test(String(run?.factory_job_id || '')) ? String(run.factory_job_id) : null;
+  return {
+    card: run?.commitment_id != null ? String(run.commitment_id) : null,
+    run: Number(run?.id),
+    status: run?.status || null,
+    route: run?.route || 'claude',
+    job,
+    jobState: job ? run.factory_state || null : null,
+    session: run?.termhub_session_id ? { id: String(run.termhub_session_id), url: safeUrl(sessionUrl) } : null,
+    steps,
+    prs,
+  };
+}
+
 /** A job's open PRs with CI failing (JOBS-API: `stories[].ci`, open PRs only). */
 function ciFailing(job) {
   return (Array.isArray(job?.stories) ? job.stories : []).filter((s) => s?.ci?.state === 'failing');
@@ -441,7 +559,13 @@ function jobView(job, pa = null) {
     billing: r?.billing === 'subscription' ? 'subscription' : 'metered',
     startedAt: r?.started_at || null,
     endedAt: r?.ended_at || null,
-    session: r?.session && safeUrl(r.session.url) ? { machine: r.session.machine ? clip(r.session.machine, 60) : null, url: safeUrl(r.session.url) } : null,
+    session: r?.session && safeUrl(r.session.url)
+      ? {
+        machine: r.session.machine ? clip(r.session.machine, 60) : null,
+        url: safeUrl(r.session.url),
+        id: SESSION_ID.test(String(r.session.termhub_session_id || '')) ? String(r.session.termhub_session_id) : null,
+      }
+      : null,
   }));
   return {
     jobId: String(job?.job_id || ''),
@@ -460,6 +584,7 @@ function jobView(job, pa = null) {
       id: s?.id ?? null,
       state: String(s?.state || '').slice(0, 40),
       prUrl: safeUrl(s?.pr_url),
+      prNumber: safeUrl(s?.pr_url) ? prNumber(s?.pr_number, s.pr_url) : null,
       prState: s?.pr_state || null,
       ci: s?.ci && typeof s.ci === 'object'
         ? { state: String(s.ci.state || 'none'), failing: (Array.isArray(s.ci.failing) ? s.ci.failing : []).slice(0, 8).map((f) => clip(typeof f === 'string' ? f : f?.name || JSON.stringify(f), 80)) }
@@ -474,7 +599,8 @@ function jobView(job, pa = null) {
     updatedAt: job?.updated_at || null,
     canApprove: Boolean(approveArgv(job)),
     canCancel: !(Boolean(job?.terminal) || ['done', 'failed', 'cancelled'].includes(job?.state)),
-    paRun: pa ? { id: pa.id, url: safeUrl(pa.url) } : null,
+    // The PA run that submitted it, and that run's card (plan E1: Build links back to Plan).
+    paRun: pa ? { id: pa.id, url: safeUrl(pa.url), card: pa.card != null && /^\d+$/.test(String(pa.card)) ? String(pa.card) : null } : null,
   };
 }
 
@@ -641,6 +767,9 @@ module.exports = {
   BRANCH,
   approveArgv,
   safeUrl,
+  prNumber,
+  chainOf,
+  runChain,
   GROUPS,
   groupOf,
   jobView,

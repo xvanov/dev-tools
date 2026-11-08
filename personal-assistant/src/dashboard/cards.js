@@ -79,6 +79,7 @@ async function forCommitments(ids, { evidenceIds = [] } = {}) {
       : [],
   ]);
   const h = hubs();
+  const chains = await chainsFor(want).catch(() => new Map());
   for (const d of found) {
     const text = [d.summary, d.detail, d.body, d.later].filter(Boolean).join('\n');
     const built = L.cardLinks({
@@ -98,15 +99,55 @@ async function forCommitments(ids, { evidenceIds = [] } = {}) {
       source: d.source,
       occurred_at: d.occurred_at,
       item: itemOf(d),
+      chain: chains.get(String(d.id)) || [],
     });
   }
   const evidence = new Map(ev.map((e) => [String(e.evidence_id), e]));
   return { byId: out, evidence, hubs: h };
 }
 
+/**
+ * Plan E1: each commitment's id chain — its latest runs, each with its job,
+ * steps (and their sessions) and PRs (factoryCore.runChain), from stored ids
+ * (run, run_step, run_pr), never from titles. Keyed by commitment id.
+ * @returns {Promise<Map<string, object[]>>}
+ */
+async function chainsFor(commitmentIds, { perCard = 3 } = {}) {
+  const want = [...new Set((commitmentIds || []).filter((x) => x != null).map(Number))];
+  const out = new Map();
+  if (!want.length) return out;
+  const runs = await rows(
+    `select * from (
+       select id, commitment_id, status, route, machine, termhub_session_id, factory_job_id, factory_state, mr_url,
+              row_number() over (partition by commitment_id order by started_at desc) as n
+         from run where commitment_id = any($1::bigint[])) r
+      where n <= $2 order by commitment_id, n`,
+    [want, perCard]
+  );
+  if (!runs.length) return out;
+  const F = require('../dispatch/factoryCore');
+  const stored = await require('../dispatch/factory').chains(runs.map((r) => r.id));
+  const termhub = require('../dispatch/termhub');
+  for (const r of runs) {
+    let sessionUrl = null;
+    if (r.termhub_session_id) {
+      try {
+        sessionUrl = `${termhub.forMachine(r.machine).base}/#session=${encodeURIComponent(r.termhub_session_id)}`;
+      } catch {
+        sessionUrl = null;
+      }
+    }
+    const key = String(r.commitment_id);
+    if (!out.has(key)) out.set(key, []);
+    out.get(key).push(F.runChain(r, stored.get(String(r.id)), { sessionUrl }));
+  }
+  return out;
+}
+
 function attach(card, info) {
   if (!info) return card;
   card.links = info.links;
+  card.chain = info.chain || [];
   card.sessions = info.sessions;
   card.context = info.context;
   card.context_at = info.context_at;
@@ -226,4 +267,4 @@ function dedupe(links) {
   });
 }
 
-module.exports = { enrich, forCommitments, hubs, openSession };
+module.exports = { enrich, forCommitments, chainsFor, hubs, openSession };

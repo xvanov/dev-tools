@@ -70,7 +70,7 @@ const READ_TOOLS = [
   {
     name: 'card',
     description:
-      "One board card's full context — what the dashboard shows: summary, detail, who, due, repo, the source message (excerpt), links (message, PRs, tickets), the stored context paragraph, blockers, runs and factory jobs on it, and pending offers. `id` is a card id from board (a number, or p<id> for a standalone offer). Call before starting work on a card.",
+      "One board card's full context — what the dashboard shows: summary, detail, who, due, repo, the source message (excerpt), links (message, PRs, tickets), the stored context paragraph, blockers, runs and factory jobs on it (each run with its job, steps and their live sessions, and every PR number with its CI), and pending offers. `id` is a card id from board (a number, or p<id> for a standalone offer). Call before starting work on a card.",
     inputSchema: {
       type: 'object',
       properties: { id: { type: 'string', maxLength: 20, description: 'Card id from board, e.g. "412" or "p37".' } },
@@ -94,7 +94,7 @@ const READ_TOOLS = [
   {
     name: 'factory_job',
     description:
-      'One factory job in detail: state and why, stories with PR/CI, runs (persona, model, cost, live termhub link), metered cost and subscription-equivalent, the report excerpt (research/report), whether it waits on an approval, and the termhub link to follow it. `fresh: true` asks the factory now instead of the stored list.',
+      'One factory job in detail: state and why, stories with PR number/CI, runs (each a step: id, story, persona, model, cost, live termhub link and session id), the card it came from, metered cost and subscription-equivalent, the report excerpt (research/report), whether it waits on an approval, and the termhub link to follow it. `fresh: true` asks the factory now instead of the stored list.',
     inputSchema: {
       type: 'object',
       properties: { job: JOB, fresh: { type: 'boolean', default: false } },
@@ -105,7 +105,7 @@ const READ_TOOLS = [
   {
     name: 'sessions',
     description:
-      'Live termhub sessions (this machine, or `machine`): id, title, folder, whether it is working / waiting / on a prompt, the dispatched run it belongs to, and its link.',
+      'Live termhub sessions (this machine, or `machine`): id, title, folder, whether it is working / waiting / on a prompt, what it belongs to (card, run, job, step: from stored ids), and its link.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -316,19 +316,53 @@ function jobDetail(v, { followUrl = null, raw = null } = {}) {
   out.stories = v.stories.map((s) => {
     const o = { id: s.id, state: s.state };
     if (s.prUrl) o.pr = s.prUrl;
+    if (s.prNumber) o.pr_number = s.prNumber;
     if (s.prState) o.pr_state = s.prState;
     if (s.ci) o.ci = s.ci.failing.length ? `${s.ci.state}: ${s.ci.failing.join(', ')}` : s.ci.state;
     return o;
   });
+  // Each step (the factory's run id) with its story and live session (plan E1).
   out.runs = v.runs.slice(0, 10).map((r) => {
     const o = { id: r.id, persona: r.persona, state: r.state, runtime: r.runtime, model: r.model, cost_usd: r.costUsd, billing: r.billing };
+    if (r.storyId != null) o.story = r.storyId;
     if (r.session?.url) o.session = r.session.url;
+    if (r.session?.id) o.session_id = r.session.id;
     return o;
   });
+  if (v.paRun?.card) out.card = v.paRun.card;
   if (v.report) out.report = { title: v.report.title, words: v.report.words, excerpt: clip(v.report.excerpt, 600) };
   if (v.merged) out.merged = true;
   out.can_cancel = v.canCancel;
   if (followUrl) out.follow = followUrl;
+  return out;
+}
+
+/**
+ * Pure. A run's steps and PRs (factoryCore.runChain) as the chat reads them:
+ * `steps` [{step, story?, persona?, state?, session?, session_id?}] and `prs`
+ * [{number?, url, state?, ci?}]; empty lists left out.
+ */
+function chainFields(chain) {
+  const out = {};
+  const steps = (chain?.steps || []).slice(0, 10).map((s) => {
+    const o = { step: s.step };
+    if (s.story != null) o.story = s.story;
+    if (s.persona) o.persona = s.persona;
+    if (s.runtime) o.runtime = s.runtime;
+    if (s.state) o.state = s.state;
+    if (s.session?.url) o.session = s.session.url;
+    if (s.session?.id) o.session_id = s.session.id;
+    return o;
+  });
+  if (steps.length) out.steps = steps;
+  const prs = (chain?.prs || []).slice(0, 10).map((p) => {
+    const o = { url: p.url };
+    if (p.number) o.number = p.number;
+    if (p.state) o.state = p.state;
+    if (p.ci) o.ci = p.ciFailing?.length ? `${p.ci}: ${p.ciFailing.join(', ')}` : p.ci;
+    return o;
+  });
+  if (prs.length) out.prs = prs;
   return out;
 }
 
@@ -343,6 +377,9 @@ function sessionRow(s, { runs = new Map(), base = null } = {}) {
   out.state = state;
   const run = runs.get(String(s.id));
   if (run) out.run = run;
+  // What termhub says the session belongs to (plan E1: stored ids, not the title).
+  const links = require('../dispatch/termhub').sessionLinks(s.links);
+  if (links) out.links = links;
   if (base) out.url = `${base}/#session=${encodeURIComponent(s.id)}`;
   return out;
 }
@@ -514,6 +551,8 @@ async function cardTool({ id }) {
   const holds = blocks.filter((b) => b.blocker_id === String(c.id) && b.verdict === 'blocks' && b.task_id);
   if (holds.length) out.blocks_task = holds.map((b) => b.task_id);
   if (runs.length) {
+    // Plan E1: each run's steps (with their sessions) and every PR with its CI.
+    const stored = await require('../dispatch/factory').chains(runs.map((r) => r.id)).catch(() => new Map());
     out.runs = runs.map((r) => {
       const o = { run: Number(r.id), status: r.status, route: r.route || 'claude', mode: r.mode };
       if (r.factory_job_id) o.job = r.factory_job_id;
@@ -522,9 +561,11 @@ async function cardTool({ id }) {
       if (r.mr_url) o.pr = r.mr_url;
       if (r.cost_usd != null) o.cost_usd = Number(r.cost_usd);
       if (r.termhub_session_id) {
+        o.session_id = String(r.termhub_session_id);
         const base = hubBase(r.machine);
         if (base) o.session = `${base}/#session=${encodeURIComponent(r.termhub_session_id)}`;
       }
+      Object.assign(o, chainFields(require('../dispatch/factoryCore').runChain(r, stored.get(String(r.id)))));
       return o;
     });
   }
@@ -568,10 +609,10 @@ async function factoryJobTool({ job, fresh = false }) {
     source = 'factory';
   }
   const run = await one(
-    `select id, termhub_session_id, machine from run where route = 'factory' and factory_job_id = $1 order by id desc limit 1`,
+    `select id, commitment_id, termhub_session_id, machine from run where route = 'factory' and factory_job_id = $1 order by id desc limit 1`,
     [id]
   ).catch(() => null);
-  const v = F.jobView(raw, run ? { id: Number(run.id), url: null } : null);
+  const v = F.jobView(raw, run ? { id: Number(run.id), url: null, card: run.commitment_id } : null);
   let followUrl = null;
   if (run?.termhub_session_id) {
     const base = hubBase(run.machine);
@@ -587,9 +628,23 @@ async function sessionsTool({ machine = null, all = false } = {}) {
   const hub = termhub.forMachine(machine);
   const list = await hub.listSessions();
   const runs = await rows(
-    `select id, termhub_session_id, status, route, factory_job_id from run where termhub_session_id is not null and started_at > now() - interval '30 days'`
+    `select id, termhub_session_id, status, route, factory_job_id, commitment_id from run where termhub_session_id is not null and started_at > now() - interval '30 days'`
   ).catch(() => []);
-  const byId = new Map(runs.map((r) => [String(r.termhub_session_id), { run: Number(r.id), status: r.status, ...(r.factory_job_id ? { job: r.factory_job_id } : {}) }]));
+  const byId = new Map(runs.map((r) => [String(r.termhub_session_id), {
+    run: Number(r.id), status: r.status, ...(r.factory_job_id ? { job: r.factory_job_id } : {}), ...(r.commitment_id ? { card: String(r.commitment_id) } : {}),
+  }]));
+  // A factory step's own session (plan E1, sql/033 run_step): its run, job and step.
+  const ids = list.map((s) => String(s.id)).filter((x) => !byId.has(x));
+  const steps = ids.length
+    ? await rows(
+      `select s.termhub_session_id, s.step_id, s.job_id, r.id as run_id, r.status, r.commitment_id
+         from run_step s join run r on r.id = s.run_id where s.termhub_session_id = any($1::text[])`,
+      [ids]
+    ).catch(() => [])
+    : [];
+  for (const s of steps) {
+    byId.set(String(s.termhub_session_id), { run: Number(s.run_id), status: s.status, job: s.job_id, step: s.step_id, ...(s.commitment_id ? { card: String(s.commitment_id) } : {}) });
+  }
   const shown = list.filter((s) => all || s.alive !== false).map((s) => sessionRow(s, { runs: byId, base: hub.base }));
   return { machine: machine || 'this machine', count: shown.length, sessions: shown.slice(0, 60) };
 }
@@ -697,5 +752,5 @@ async function handle(name, args = {}) {
 
 module.exports = {
   READ_TOOLS, ACTION_TOOLS, ALL, CHAT_READ_TOOL_NAMES, CHAT_ACTION_TOOL_NAMES, DEFAULT_RUNTIME,
-  handle, dueLabel, parseCardId, compactCard, boardView, jobRow, jobDetail, sessionRow, modelOverrides, branchName, factoryPlan, startedView,
+  handle, dueLabel, parseCardId, compactCard, boardView, jobRow, jobDetail, sessionRow, chainFields, modelOverrides, branchName, factoryPlan, startedView,
 };

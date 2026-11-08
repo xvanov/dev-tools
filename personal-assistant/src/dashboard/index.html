@@ -91,6 +91,11 @@
   .links a + a::before { content: "·"; color: var(--ink-3); margin-right: 4px; }
   .links a:hover { color: var(--ink); text-decoration: underline; }
   .links.also-in { align-items: center; }
+.links.chain { align-items: center; }
+.links.chain > span { font-size: 12px; color: var(--muted); }
+.links.chain > * + *::before { content: "›"; color: var(--ink-3); margin-right: 4px; }
+.links.chain a + a::before { content: "›"; }
+.links a.k-ci-red { color: var(--bad); }
   .links.also-in > span { font-size: 11px; color: var(--muted); }
   .sess { display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: center; margin-top: 6px; font-size: 12px; color: var(--muted); }
   .sess strong { color: var(--ink); font-weight: 600; overflow-wrap: anywhere; }
@@ -542,6 +547,8 @@ function contextPanel(x) {
       r.url && ['starting', 'running', 'waiting', 'done'].includes(r.status) ? link(r.url, r.route === 'factory' ? 'follow job' : 'open session') : null,
       r.mr_url ? link(r.mr_url, 'PR') : null));
   }
+  // Every run's full chain: job, steps and their sessions, every PR with CI (plan E1).
+  lines.push(...chainLines(x));
   return el('div', { class: 'ctx' }, ...lines);
 }
 
@@ -555,6 +562,32 @@ function alsoInChips(x) {
   if (!links.length) return null;
   return el('div', { class: 'links also-in' }, el('span', {}, 'also mentioned in:'), ...links.map((l) =>
     el('a', { href: l.url, target: '_blank', rel: 'noopener', class: 'k-also', title: `#${l.id}: ${l.url}` }, l.label)));
+}
+
+// Plan E1: the card's id chain, one line per run — run → job (Build) → each
+// step's live session (Run) → PRs with CI — built from stored ids
+// (dashboard/cards.js chainsFor), never from titles. Job links are relative
+// (`factory#job=…`): nav.js switches to Build and carries the anchor along.
+function chainLines(x) {
+  const http = (u) => /^https?:\/\//.test(u || '');
+  return (x.chain || []).filter((r) => r.job || r.session?.url || (r.prs || []).length || (r.steps || []).length).map((r) => {
+    const parts = [el('span', {}, `run #${r.run}${r.status ? ` (${r.status})` : ''}`)];
+    if (r.session?.url && http(r.session.url)) parts.push(el('a', { href: r.session.url, title: 'The run\'s session in Run' }, r.job ? 'follow' : 'session'));
+    if (r.job) parts.push(el('a', { href: `factory#job=${encodeURIComponent(r.job)}`, title: 'The job in Build' }, `job ${r.job}${r.jobState ? ` · ${r.jobState}` : ''}`));
+    for (const s of (r.steps || []).slice(0, 6)) {
+      const label = `step ${s.step}${s.persona ? ` ${s.persona}` : ''}${s.state ? ` · ${s.state}` : ''}`;
+      parts.push(s.session?.url && http(s.session.url)
+        ? el('a', { href: s.session.url, title: `This step's session${s.session.machine ? ` on ${s.session.machine}` : ''} in Run` }, label)
+        : el('span', { title: 'No live session for this step' }, label));
+    }
+    for (const p of (r.prs || []).slice(0, 6)) {
+      if (!http(p.url)) continue;
+      const ci = p.ci && p.ci !== 'none' ? ` · CI ${p.ci}` : '';
+      parts.push(el('a', { href: p.url, target: '_blank', rel: 'noopener', class: p.ci === 'failing' ? 'k-ci-red' : '', title: p.ciFailing?.length ? `failing: ${p.ciFailing.join(', ')}` : p.url },
+        `${p.number ? `PR #${p.number}` : 'PR'}${p.state ? ` ${p.state}` : ''}${ci}`));
+    }
+    return el('div', { class: 'links chain' }, ...parts);
+  });
 }
 
 function linkChips(x) {
@@ -773,11 +806,12 @@ function commitmentCard(c) {
       : `You need this from ${c.who || 'them'}${c.block?.why ? `: ${c.block.why}` : ''}` }, `waiting on ${c.who || 'them'}`) : null,
     (c.unblocked || []).length ? el('span', { class: 'flag unblocked', title: 'What blocked this was delivered' }, 'unblocked') : null,
   ];
-  return el('div', { class: settledOnly ? 'item settled' : 'item' },
+  return el('div', { class: settledOnly ? 'item settled' : 'item', id: `card-${c.id}` },
     el('div', { class: 'sum' }, ...flags, c.summary),
     el('div', { class: 'sub' }, ...sub),
     ...cardSource(c, c.onBoard),
     alsoInChips(c),
+    ...chainLines(c),
     c.settled ? settledBlock(c) : null,
     ...asks.map((p) => askBlock(p, false)),
     c.waitingOn && c.block?.why ? el('div', { class: 'sub need' }, `You need: ${c.block.why}`) : null,
@@ -1140,6 +1174,12 @@ function render(s) {
       target.scrollIntoView({ block: 'center' });
       render.jumped = location.hash;
     }
+  }
+  // A link from Build or Run lands on #card-<id>: once, after the board exists.
+  render.done = true;
+  if (location.hash.startsWith('#card-') && render.cardJumped !== location.hash) {
+    render.cardJumped = location.hash;
+    focusCard();
   }
 }
 
@@ -1976,7 +2016,27 @@ async function focusDebrief() {
   } catch (err) { toast(err.message); }
 }
 
-// #today, #meetings, #memory, #memory/person/12, #memory/topic/<label>, #memory/me, #brief-<id>, #debrief-<id>
+// #card-<id> (plan E1: Build and Run link back to a card): that card on the
+// board, or — not on it (closed, someone else's) — its context in a dialog.
+async function focusCard() {
+  const m = /^#card-(\d+)$/.exec(location.hash);
+  if (!m || !render.done) return; // render() calls this again once the board is there
+  const card = document.getElementById(`card-${m[1]}`);
+  if (card) {
+    card.classList.add('target');
+    card.scrollIntoView({ block: 'center' });
+    return;
+  }
+  if (focusCard.shown === m[1]) return;
+  focusCard.shown = m[1];
+  try {
+    const x = await getJson(`api/commitments/${m[1]}`);
+    if (x && !x.error) modal(`#${m[1]} · ${x.summary || ''}`, contextPanel(x));
+    else toast(x?.error || `no card #${m[1]}`);
+  } catch (err) { toast(err.message); }
+}
+
+// #today, #meetings, #memory, #memory/person/12, #memory/topic/<label>, #memory/me, #brief-<id>, #debrief-<id>, #card-<id>
 function route() {
   // The Chat view moved to Ask (its Text mode): an old #chat link goes there.
   if ((location.hash || '').startsWith('#chat') && window.JarvisNav) {
@@ -2000,6 +2060,7 @@ function route() {
   if (meetings) loadMeetings();
   if (h.startsWith('#brief-')) focusBrief();
   if (h.startsWith('#debrief-')) focusDebrief();
+  if (h.startsWith('#card-')) focusCard();
   if (!memory) return;
   const [, kind, rest] = h.split('/');
   let target = null;
