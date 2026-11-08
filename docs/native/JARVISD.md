@@ -61,6 +61,10 @@ surfaces move only once everything under them is typed.
    `node:http` server's `upgrade` socket took no writes, so every WebSocket through the front
    hung (terminals, the voice feed). The parity set runs termhub's front tests under Bun and
    `frontSwap.test.js` with every front in jarvisd (`TERMHUB_FRONT_JARVISD=1`).
+   The role is a stepping stone. The target (Exit 4, one process per machine plus ptyd and agent
+   runs as children) is the front **in-process**: the jarvisd supervisor process owns both public
+   ports (termhub's 7000 and the dashboard's 7300) and routes front traffic itself, with no
+   separate front process; sessiond stays separate until ptyd replaces it.
 
 How a module moves (the pattern is `personal-assistant/src/events/bus.ts`, the first one):
 
