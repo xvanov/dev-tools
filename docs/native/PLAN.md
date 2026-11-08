@@ -563,7 +563,7 @@ run mid-step; a job continued on an existing branch (`--branch`).
   its processes running, so stop the task (`Stop-ScheduledTask factory-serve`) and its
   `factory serve` processes before migrating. Six personal `context-refresh` worktrees of an
   untracked app failed to re-link; their git metadata had been pruned long before.
-- [ ] **2.5b Real dev-tools context through a docs job (open).** After 2.5, file a docs job so
+- [x] **2.5b Real dev-tools context through a docs job.** (bec30c1, PR #69 merged) After 2.5, file a docs job so
   the onboarder writes `software-factory/apps/dev-tools/context/` in a worktree and delivers it
   as a PR (context is tracked by design; do not gitignore it).
   2026-11-08: docs job dev-tools:019 (draft_pr) delivered PR #69, open and ready for review,
