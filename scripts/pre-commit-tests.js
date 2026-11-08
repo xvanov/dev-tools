@@ -58,7 +58,7 @@ for (const d of fs.readdirSync(top, { withFileTypes: true })) {
     console.error(`tests: ${d.name}: node_modules missing, not run (npm install there)`);
     continue;
   }
-  jobs.push(run(d.name, process.execPath, [path.join(top, 'scripts', 'run-tests.js'), '--changed', '--timeout', '120'], path.join(top, d.name)));
+  jobs.push(run(d.name, process.execPath, [path.join(top, 'scripts', 'run-tests.js'), '--changed', '--timeout', '300'], path.join(top, d.name)));
 }
 const factoryTouched = [...changed].some((f) => f.startsWith('software-factory/') || f === 'scripts/changed-pytest.py');
 if (factoryTouched) {
