@@ -30,4 +30,28 @@ module.exports = {
     for (const x of [toMe, jira, old, nobody, closed]) assert.ok(!ids.includes(x), `commitment ${x} is not due a chase`);
     assert.ok(ids.length <= 50);
   },
+
+  // SQLite runs durable tasks on its own queue (D19); its spawnTask is how a
+  // chase exists there. On Postgres the same holds through Absurd, which these
+  // cases do not drive.
+  'commitmentsWithoutChase: an ask that has a chase task is left out (SQLite queue)': async ({ repos, seed, assert }) => {
+    if (repos.backend.dialect !== 'sqlite') return;
+    const who = await seed.personWith();
+    const item = await seed.item({ source: 'graph_chat' });
+    const id = await seed.commitment({ sourceItemId: item, direction: 'owed_to_me' });
+    await seed.commitmentSet(id, { counterparty_person_id: who });
+    assert.ok((await repos.durable.commitmentsWithoutChase(30)).some((r) => Number(r.id) === id));
+    await repos.durable.spawnTask({ queue: 'pa', name: 'chase', params: { commitmentId: id }, key: `chase2:${id}` });
+    assert.ok(!(await repos.durable.commitmentsWithoutChase(30)).some((r) => Number(r.id) === id));
+  },
+
+  'stats: a spawned task counts under its name and state (SQLite queue)': async ({ repos, assert, uniq }) => {
+    if (repos.backend.dialect !== 'sqlite') return;
+    const name = uniq('task').replace(/-/g, '_');
+    const a = await repos.durable.spawnTask({ queue: 'pa', name, params: {}, key: uniq('k') });
+    const again = await repos.durable.spawnTask({ queue: 'pa', name, params: {}, key: uniq('k') });
+    assert.ok(a.created && again.created && a.id !== again.id);
+    const row = (await repos.durable.stats('pa')).find((r) => r.task_name === name);
+    assert.deepStrictEqual([row.state, row.n], ['pending', 2]);
+  },
 };

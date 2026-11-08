@@ -125,6 +125,12 @@ pinned commit into `sql/`, the SDK pinned in `package.json`. This reverses PLAN.
 none" decision, for a reason that decision did not face: an anti-join can find unprocessed rows,
 but it cannot *wait* — "nudge in two days unless he replies" needs a durable timer and an event.
 
+On SQLite (`PA_DB=sqlite`, plan 3.1 and D19) the same tasks run on `src/durable/sqliteQueue.js`:
+our own queue with the slice of Absurd's interface used here (spawn per key, `step`, `sleepFor`,
+`awaitEvent` with its `TimeoutError`, retries with backoff), over `sql-sqlite/006_durable.sql`,
+with a worker's claim on a task held as a `lease` row. `src/durable/index.js` picks the engine;
+tasks and spawners do not know which one runs them.
+
 The periodic passes stay as they are; durable tasks are for things with a future.
 
 ### 2.4 Proactivity: the agent pushes me

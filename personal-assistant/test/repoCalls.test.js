@@ -32,6 +32,12 @@ function walk(dir, out = []) {
   return out;
 }
 
+// Code that only runs on SQLite (PA_DB=sqlite) checks against the SQLite set:
+// the durable queue (D19) calls methods Postgres does not have, since there
+// Absurd runs the tasks.
+const SQLITE_ONLY = new Set(['src/durable/sqliteQueue.js']);
+const sqliteRepos = createRepos({ ...fakeDb, dialect: 'sqlite' });
+
 const missing = [];
 let checked = 0;
 for (const file of [...walk(path.join(ROOT, 'src')), ...walk(path.join(ROOT, 'bin'))]) {
@@ -43,7 +49,8 @@ for (const file of [...walk(path.join(ROOT, 'src')), ...walk(path.join(ROOT, 'bi
       // A local array or string that shares an aggregate's name (r.sources.join).
       if (!aggs.has(agg) || method in Array.prototype || method in String.prototype) continue;
       checked++;
-      if (typeof repos[agg][method] !== 'function') {
+      const set = SQLITE_ONLY.has(rel) ? sqliteRepos : repos;
+      if (typeof set[agg][method] !== 'function') {
         const line = text.slice(0, m.index).split('\n').length;
         missing.push(`${rel}:${line} repo.${agg}.${method} does not exist`);
       }

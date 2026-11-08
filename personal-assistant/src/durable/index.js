@@ -6,7 +6,9 @@
 //   emit(event, payload)         wake whatever task waits on that event
 //   startWorker()                run tasks inside the worker process
 //
-// Runs on Absurd (sql/019_durable.sql, absurd-sdk pinned to the same 0.5.0):
+// On SQLite (PA_DB=sqlite) the engine is ./sqliteQueue.js, the same interface
+// over sql-sqlite/006 (D19). On Postgres it
+// runs on Absurd (sql/019_durable.sql, absurd-sdk pinned to the same 0.5.0):
 // a task is a function of checkpointed steps that can sleep for days or wait
 // for an event across restarts, all in our own Postgres. Two rules every task
 // here follows:
@@ -39,11 +41,12 @@ let app = null;
 
 function client() {
   if (app) return app;
-  app = new Absurd({
-    db: db.getPool(),
-    queueName: QUEUE,
-    log: { log: () => {}, info: (...a) => log.debug(String(a[0])), warn: (...a) => log.warn(String(a[0])), error: (...a) => log.warn(String(a[0])) },
-  });
+  const quiet = { log: () => {}, info: (...a) => log.debug(String(a[0])), warn: (...a) => log.warn(String(a[0])), error: (...a) => log.warn(String(a[0])), debug: () => {} };
+  // PA_DB=sqlite: our own queue with Absurd's interface (D19, ./sqliteQueue.js); Postgres keeps Absurd.
+  app =
+    db.dialect === 'sqlite'
+      ? new (require('./sqliteQueue').SqliteQueue)({ queueName: QUEUE, log: quiet, connect: () => db.getPool().connect() })
+      : new Absurd({ db: db.getPool(), queueName: QUEUE, log: quiet });
   for (const t of TASKS) {
     app.registerTask({ name: t.name, queue: QUEUE, defaultMaxAttempts: t.maxAttempts || 5 }, (params, ctx) => t.run(params, ctx));
   }

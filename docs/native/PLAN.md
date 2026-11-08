@@ -45,6 +45,7 @@ Design rationale: the plan page (proposal, 7 Nov 2026) and the research summary 
 | D16 | 2026-11-08 | **Phase 1 (and 2.1/2.2) start in parallel with the end of phase 0** | They are refactors with no behaviour change and don't depend on the golden path; waiting on Exit 0 left most agents idle. Exit gates are unchanged: Exit 1 and Exit 2 still need a green e2e run on both stacks. |
 | D18 | 2026-11-08 | **All independent items start now, in parallel** | Extends D16: any item whose inputs exist may start (5.1 ptyd, 5.2/5.3 sandbox and broker, 3.1 SQLite on converted aggregates, 4.3 policy engine, 7.3–7.5, 8.1, ...). Phase Exit boxes are unchanged: each still needs its items done and a green e2e on both stacks. |
 | D17 | 2026-11-08 | **Prune test work** | Delete the factory tests for `apps/sacrifice` and `bench/swebench` (not in this repo; they only fail or skip). Drop T5 (timing budget in CI). The load-sensitive `supervisor` and `lease` tests were de-flaked instead (80f48d5, 20 loaded runs green) and keep running locally (CI-only was tried and reverted, f402f3f). Suite time targets are unchanged. |
+| D19 | 2026-11-08 | **Durable tasks on SQLite run on a small queue we own; Postgres keeps Absurd until 3.5** | Part of 3.1. Absurd is a Postgres schema with no SQLite port. `src/durable/sqliteQueue.js` gives the slice of its interface the PA uses (spawn once per key, `step` checkpoints, `sleepFor`, `awaitEvent` with timeout and Absurd's `TimeoutError`, retries with backoff, scheduled runs) over `sql-sqlite/006` (task, checkpoint and event tables), with leases from the `lease` table, so the spawners and tasks (chase, runReview) do not change. `src/durable/index.js` picks the engine by store. |
 
 ## Prerequisites (before phase 0)
 
@@ -405,9 +406,9 @@ run mid-step; a job continued on an existing branch (`--branch`).
   aggregate of 1.2 has its twin (2026-11-08, through chunk E: audio, audit, commitments,
   drafts, durable, evals, events, factoryBoard, leases, ledger, meetings, memory, notifications,
   passkeys, people, projects, proposals, repos, routines, runs, search, secrets, sources, spend,
-  system, workflowLimits). Open: durable tasks (Absurd) have no SQLite queue, so
-  `durable.stats` returns [] and `durable.commitmentsWithoutChase` cannot exclude asks already
-  chased there; the queue needs a SQLite design before 3.5. Differences SQLite cannot avoid are stated in each twin (FTS5
+  system, workflowLimits). Durable tasks run on SQLite's own queue (D19, `sql-sqlite/006`,
+  `src/durable/sqliteQueue.js`, `test/durableSqlite.test.js`), so `durable.stats` and
+  `commitmentsWithoutChase` work there too, with contract cases. Differences SQLite cannot avoid are stated in each twin (FTS5
   bm25 ranks vs ts_rank, ASCII-only `lower()`/`like`, regexes tested in JS, ms timestamps) for 3.4.
 - [x] **3.2** Contract tests from 1.3 green on SQLite. (d0fd5d9, 9193e5d, 1adf02f, b590afa)
   `repoContract.test.js` runs every case on both backends (SQLite: a throwaway encrypted file, no
