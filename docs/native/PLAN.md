@@ -443,7 +443,7 @@ run mid-step; a job continued on an existing branch (`--branch`).
   cases green on both. Strict is now the default: a repository method without its SQLite twin
   fails (`PA_CONTRACT_STRICT=0` brings back `todo` for local work in progress).
 - [x] **3.3 Export from Postgres, copying existing vectors (no re-embedding, D5).** Optional
-  int8 quantization is local arithmetic on the copied vectors, not an API call.
+  int8 quantization is local arithmetic on the copied vectors, not an API call. (22c70ef)
   `pa db export --to sqlite <file>` (`src/db/export.js`): one read-only REPEATABLE READ snapshot
   of Postgres into a new SQLite file (encrypted when `PA_SQLITE_KEY` is set). Every table,
   ids kept; vectors parsed from pgvector text to the same float32 values; FTS5 filled by its
@@ -456,7 +456,7 @@ run mid-step; a job continued on an existing branch (`--branch`).
   sampled with 0 differing, 93 durable tasks, 399 checkpoints, 1,166 events, 0 FK violations;
   105 s, 427 MB (Postgres: 908 MB). `test/dbExport.test.js` runs in CI's contract job.
 - [x] **3.4 Shadow comparison (D12):** both backends answer the same recorded query set once;
-  compare results and latency; recalibrate rerank thresholds.
+  compare results and latency; recalibrate rerank thresholds. (7b63313)
   `pa db compare --sqlite <file> [--json]` (`src/db/shadow.js`): Postgres read-only (every
   statement under `default_transaction_read_only`) against a fresh `pa db export`, through the
   repository methods search, recall and the board use. Query set: the 58 active `eval_case`
