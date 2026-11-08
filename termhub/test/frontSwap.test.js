@@ -29,11 +29,11 @@ const TICKS = 60;
 
     const t1 = watchTerminal(WebSocket, `ws://127.0.0.1:${a.port}/ws/term/${encodeURIComponent(id)}`);
     await t1.opened;
-    await waitFor(() => t1.ticks().length >= 10, 30_000, 'ten ticks through the first front');
+    await waitFor(() => t1.ticks().length >= 10, 90_000, 'ten ticks through the first front');
 
     // The deploy: the front goes away mid-command; its clients are cut.
     await th.stopFront(a);
-    await waitFor(() => t1.closed, 5000, 'the first front to drop its socket');
+    await waitFor(() => t1.closed, 30_000, 'the first front to drop its socket');
     const cutAt = Math.max(...t1.ticks());
     await new Promise((r) => setTimeout(r, 700)); // the command keeps printing with no front up
     const b = await th.startFront();
@@ -48,7 +48,7 @@ const TICKS = 60;
     // Reconnect through the new front: replay plus live output is the whole run.
     const t2 = watchTerminal(WebSocket, `ws://127.0.0.1:${b.port}/ws/term/${encodeURIComponent(id)}`);
     await t2.opened;
-    await waitFor(() => /counter done/.test(t2.text), 30_000, 'the command to finish');
+    await waitFor(() => /counter done/.test(t2.text), 90_000, 'the command to finish');
     assert.ok(t2.replays >= 1, 'no replay on reconnect');
     assert.deepStrictEqual(missingTicks(t2.ticks(), TICKS), [], 'output lost across the front swap');
     assert.ok(t2.ticks().length === TICKS && cutAt < TICKS, `cut at tick ${cutAt}, saw ${t2.ticks().length} after`);

@@ -39,4 +39,19 @@ function lowerChildren({ priority = os.constants.priority.PRIORITY_BELOW_NORMAL,
   return true;
 }
 
-module.exports = { lowerChildren };
+// The serving processes — the supervisor and each worker generation — run
+// above normal. This machine also runs agents' test pools, (cores - 1)
+// processes at Normal: at Normal the dashboard got a 1-in-20 share of a busy
+// CPU, stalled for seconds, and live deploys failed their health watch and
+// rolled back. Their own work is light (the heavy work is in children, which
+// lowerChildren keeps below normal), so this costs the machine nothing.
+function serveAboveNormal({ setPriority = os.setPriority } = {}) {
+  try {
+    setPriority(os.constants.priority.PRIORITY_ABOVE_NORMAL);
+    return true;
+  } catch {
+    return false; // not permitted here: run at the default
+  }
+}
+
+module.exports = { lowerChildren, serveAboveNormal };

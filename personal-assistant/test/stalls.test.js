@@ -79,6 +79,7 @@ async function priority() {
   const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'worker.js'), 'utf8');
   assert.ok(!/os'\)\.setPriority\(/.test(src), 'the worker must not lower itself: it serves the dashboard');
   assert.ok(/childPriority'\)\.lowerChildren\(\)/.test(src));
+  assert.ok(/childPriority'\)\.serveAboveNormal\(\)/.test(src), 'the worker serves above normal');
 }
 
 // ---- the stall detector names a blocked loop ----

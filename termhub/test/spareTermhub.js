@@ -26,7 +26,7 @@ function freePort() {
   });
 }
 
-function getJson(port, p, { method = 'GET', body, timeoutMs = 3000, host = '127.0.0.1' } = {}) {
+function getJson(port, p, { method = 'GET', body, timeoutMs = 10_000, host = '127.0.0.1' } = {}) {
   return new Promise((resolve, reject) => {
     const data = body === undefined ? null : JSON.stringify(body);
     const req = http.request({
@@ -75,14 +75,14 @@ async function startSpareTermhub() {
   delete env.TERMHUB_BIND;
   const sessiondPort = await freePort();
   const sessiond = proc(`require('./sessiond').startSessiond({ port: ${sessiondPort}, entry: 'sessiond' })`, env);
-  await waitFor(async () => (await getJson(sessiondPort, '/api/ping')).status === 200, 20_000, 'sessiond');
+  await waitFor(async () => (await getJson(sessiondPort, '/api/ping')).status === 200, 60_000, 'sessiond');
 
   const fronts = [];
   async function startFront() {
     const port = await freePort();
     const front = proc(`require('./front').startFront({ port: ${port}, sessiondPort: ${sessiondPort}, host: '127.0.0.1' })`, env);
     front.port = port;
-    await waitFor(async () => (await getJson(port, '/api/health')).status === 200, 20_000, 'front');
+    await waitFor(async () => (await getJson(port, '/api/health')).status === 200, 60_000, 'front');
     fronts.push(front);
     return front;
   }

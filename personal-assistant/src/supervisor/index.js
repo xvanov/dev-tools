@@ -702,6 +702,14 @@ async function cli(argv) {
     process.stderr.write('usage: node src/supervisor [run | roll | rollback | status]\n');
     process.exit(2);
   }
+  // Above normal, like each worker generation (src/util/childPriority.js,
+  // not required here): a machine full of Normal test processes must not
+  // starve the process every dashboard request goes through.
+  try {
+    os.setPriority(os.constants.priority.PRIORITY_ABOVE_NORMAL);
+  } catch {
+    /* not permitted (Linux without CAP_SYS_NICE): run at the default */
+  }
   logFile = createLogFile(process.env.PA_SUPERVISOR_LOG || defaultLogFile());
   log('info', 'supervisor starting', { pid: process.pid, source: SOURCE, log: logFile.file });
   const sup = createSupervisor();

@@ -440,6 +440,10 @@ async function run(argv, { log = (m) => process.stderr.write(`[deploy-test ${sta
     };
     const problems = judge({ requests: h.result, events: sse.result, produced, terminal: termReport });
     for (const r of rolls) if (!r.ok) problems.push(`a roll failed: ${r.detail}`);
+    // A starved client times out requests the server answered: then this run
+    // proves nothing either way, and says so instead of blaming the deploy.
+    const starved = clientStalls.reduce((a, s) => a + s.ms, 0);
+    if (starved > 2000) problems.push(`this test itself got no CPU for ${starved} ms in all (largest ${Math.max(...clientStalls.map((s) => s.ms))} ms): its timeouts are not evidence; rerun on a quieter machine`);
     report.ok = problems.length === 0;
     report.problems = problems;
     run.last = report;

@@ -116,6 +116,7 @@ async function main() {
   // serves the dashboard, and a below-normal process gets no CPU at all
   // while other work fills every core (src/util/childPriority.js).
   require('./util/childPriority').lowerChildren();
+  require('./util/childPriority').serveAboveNormal();
 
   // The supervisor's messages (src/supervisor): `drain` once routing has moved
   // to the next generation — stop the schedulers and release the lease now,
