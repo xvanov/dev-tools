@@ -1326,7 +1326,7 @@
         "personal": "k-911-x17"
       },
       "details": {
-        "Default routes": "routes.yaml default_provider azure: azure_routes (dev deepseek-v4-pro, reviewer Kimi-K2.7-Code, ...); direct routes: dev deepseek/deepseek-coder (hard: azure/gpt-5.3-codex), reviewer azure/gpt-5.4",
+        "Default routes": "routes.yaml default_provider azure: azure_routes (dev deepseek-v4-pro; planning personas pm / analyst / sm DeepSeek-V4-Flash since D21; contract deepseek-v4-pro; reviewer Kimi-K2.7-Code, ...); direct routes: dev deepseek/deepseek-coder (hard: azure/gpt-5.3-codex), reviewer azure/gpt-5.4",
         "Overrides": "--model <persona>=<provider>/<model>; providers azure, azure_ai, deepseek, anthropic, openrouter, openai, openai_compat",
         "Missing key": "degrades to the routes.yaml fallback with a warning",
         "Rate limit": "one shared Azure deployment: model-driven sweeps run 4 wide",
@@ -1344,7 +1344,8 @@
         "deepseek/deepseek-chat",
         "azure/gpt-5.4",
         "azure/gpt-5.3-codex",
-        "azure/deepseek-v4-pro"
+        "azure/deepseek-v4-pro",
+        "azure/DeepSeek-V4-Flash"
       ],
       "code": [
         "software-factory/factory/routes.yaml",

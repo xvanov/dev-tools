@@ -350,16 +350,16 @@ fallback in parentheses. No entry in either `routes.yaml` block → resolves
 via `defaults.azure_fallback` / `defaults.fallback`.
 
 - **`pm`** — Direction+context → type/priority/backpressure/`child_stories[]`;
-  `azure/gpt-5.4` (`deepseek/deepseek-chat`); breaks on oversized/horizontal
+  `azure/DeepSeek-V4-Flash` (`deepseek/deepseek-chat`); breaks on oversized/horizontal
   child stories or fabricated ACs.
-- **`analyst`** — Direction+PM JSON → phases/metrics/risks; `azure/gpt-5.4`
+- **`analyst`** — Direction+PM JSON → phases/metrics/risks; `azure/DeepSeek-V4-Flash`
   (`deepseek/deepseek-chat`); breaks by inventing requirements or replacing
   PM's stories silently.
 - **`architect`** — PM result+context → full-file `context_updates[]`;
   `azure/gpt-5.4` both blocks; breaks on forbidden paths or speculative
   future-state diagrams.
 - **`sm`** — direction+PM JSON+context → one story's JSON (`target_path`
-  issue placeholder `0`); `azure/gpt-5.4` both blocks; 20k-token ceiling
+  issue placeholder `0`); `azure/DeepSeek-V4-Flash` (direct: `azure/gpt-5.4`); 20k-token ceiling
   (self-truncates past 16k); breaks on invented ACs or budget overflow.
 - **`ux_designer`** — story+flow.md+context → `flow_additions`/`ui_notes`;
   `azure/gpt-5.4` both blocks; breaks by inventing gaps or proposing backend

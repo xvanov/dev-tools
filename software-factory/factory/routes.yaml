@@ -126,22 +126,39 @@ azure_routes:
   #     ablation measured no significant quality delta from removing the
   #     reviewer entirely (9/18 vs 7/19, p=0.688), so reviewer capability is
   #     not measurably load-bearing and paying a premium for it is poor value.
-  pm: azure/deepseek-v4-pro
-  analyst: azure/deepseek-v4-pro
+  #
+  # Planning personas (pm, analyst, sm) run on Flash — D21, 2026-11-08
+  # (docs/native/PLAN.md). PM triage is a job's FIRST step and the job start
+  # took ~146 s with it on deepseek-v4-pro; the owner accepted Flash's quality
+  # risk for speed. BUT the model call is not where those seconds go: on one
+  # real PM prompt (4.1k in, ~0.8k out) the call measured 5.9-19.7 s on Flash
+  # (median 9.3, n=5) vs 8.7-10.7 s on v4-pro (median 9.7, n=4), and live
+  # v4-pro PM rows span 7-66 s. Flash is ~15x cheaper per call; look elsewhere
+  # for the rest of the 146 s. These are single text calls (no sandbox), so
+  # Flash's 250 TPM is not the limit it is for dev. Text runs send no
+  # reasoning_effort (``llm_params`` is sandbox-only), so Flash answers with
+  # its deployment defaults.
+  pm: azure/DeepSeek-V4-Flash
+  analyst: azure/DeepSeek-V4-Flash
   # Interface-contract author (see the routes: block above). One call per
   # DIRECTION, not per story, and its output is the substrate every later
   # persona reads — so it gets the most capable open-weight model rather than
   # the cheapest. It is not the grader, so it shares no independence
   # constraint with dev; the grader (acceptance_author) still differs from dev.
+  # Stays on v4-pro under D21: only the operator CLI (``factory contract``)
+  # calls it, so it is not on a job's start path.
   contract: azure/deepseek-v4-pro
-  # SM emits a structured JSON plan. KNOWN RISK: gpt-5.4 held this route
-  # because ``deepseek-chat`` once intermittently returned a tiny malformed
-  # body falsely flagged finish_reason=length (2026-05-29). deepseek-v4-pro is
-  # a different, much stronger model and parsed ``json_object`` cleanly on a
-  # live check 2026-08-08 — but that failure was INTERMITTENT, so one green
-  # call does not disprove it. Watch ``sm`` for JSONDecodeError; the runner
-  # already retries output problems (``_MAX_OUTPUT_RETRIES``).
-  sm: azure/deepseek-v4-pro
+  # SM emits a structured JSON plan (``response_format: json_object``).
+  # KNOWN RISK: ``deepseek-chat`` once intermittently returned a tiny
+  # malformed body falsely flagged finish_reason=length (2026-05-29), which
+  # is why gpt-5.4 and then deepseek-v4-pro held this route. Flash is the
+  # weakest model on the resource and that failure was INTERMITTENT, so a
+  # green live check does not disprove it. Watch ``sm`` for "JSON-mode
+  # response was not valid JSON": the runner retries a parse failure with a
+  # doubled cap (``_MAX_OUTPUT_RETRIES``) but stops at once on a fake
+  # truncation (finish_reason=length well under the cap), so a malformed
+  # body fails the step rather than looping. Revert to v4-pro if it shows.
+  sm: azure/DeepSeek-V4-Flash
   # tech_writer emits the largest JSON of any text persona (context_updates
   # for several files at once) and its output becomes the context docs every
   # LATER story reads, so it gets Kimi (idx 43, verified 16k output cap) rather
@@ -242,8 +259,9 @@ model_limits:
   # azure/deepseek-v4-pro — same 8k native ceiling as direct DeepSeek.
   azure/deepseek-v4-pro: { max_output_tokens: 8192 }
   # azure/DeepSeek-V4-Flash — explicit, NOT the 8192 default: this model now
-  # serves reviewer/onboarder/factory_self_context, which used to get 16384 on
-  # gpt-5.4, and halving an output budget is how JSON truncates mid-object.
+  # serves sm/onboarder/factory_self_context (and pm/analyst), which used to
+  # get 16384 on gpt-5.4, and halving an output budget is how JSON truncates
+  # mid-object. (PM triage pins its own 2048 cap in pm_sync.)
   # 16384 verified accepted live 2026-08-08; the provider bills only what is
   # used, so a generous cap costs nothing.
   azure/DeepSeek-V4-Flash: { max_output_tokens: 16384 }

@@ -402,6 +402,18 @@ def test_route_dev_uses_deepseek_v4_pro(monkeypatch: pytest.MonkeyPatch) -> None
     assert model_router.route("test_implementer") == "azure/DeepSeek-V4-Flash"
 
 
+def test_route_planning_personas_use_flash(monkeypatch: pytest.MonkeyPatch) -> None:
+    """D21 (2026-11-08): the planning personas run on DeepSeek-V4-Flash.
+
+    ``contract`` deliberately stays on deepseek-v4-pro: only the operator CLI
+    calls it, so it is not on a job's start path.
+    """
+    monkeypatch.delenv("FACTORY_PROVIDER", raising=False)
+    for persona in ("pm", "analyst", "sm"):
+        assert model_router.route(persona) == "azure/DeepSeek-V4-Flash", persona
+    assert model_router.route("contract") == "azure/deepseek-v4-pro"
+
+
 def test_route_text_personas_are_open_weight(monkeypatch: pytest.MonkeyPatch) -> None:
     """No persona resolves to a closed-weight model (operator decision 2026-08-08).
 
@@ -445,7 +457,7 @@ def test_factory_provider_env_override_takes_precedence(
     monkeypatch.setenv("FACTORY_PROVIDER", "direct")
     assert model_router.route("pm") == "deepseek/deepseek-chat"
     monkeypatch.setenv("FACTORY_PROVIDER", "azure")
-    assert model_router.route("pm") == "azure/deepseek-v4-pro"
+    assert model_router.route("pm") == "azure/DeepSeek-V4-Flash"
 
 
 def test_route_uses_azure_fallback_when_persona_missing(tmp_path: Path) -> None:
