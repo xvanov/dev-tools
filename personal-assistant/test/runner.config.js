@@ -10,6 +10,8 @@ module.exports = {
   // Tests that walk a directory rather than name files: changed-files mode cannot see the edge.
   touches: {
     'syntax.test.js': ['src/', 'bin/'],
+    // Scans every repo.<agg>.<method>( call in src and bin (plan 1.2).
+    'repoCalls.test.js': ['src/', 'bin/'],
     // Reads every test/contract/*.contract.js and migrates from sql/ (plan 1.3).
     'repoContract.test.js': ['src/repo/', 'src/db/', 'test/contract/', 'sql/', 'sql-sqlite/'],
   },
