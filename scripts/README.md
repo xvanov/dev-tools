@@ -63,7 +63,10 @@ Changes to `scripts/run-tests.js`, the tool's `package.json`/lockfile or `runner
 everything. Nothing changed, nothing runs. A change to a module most of the app imports selects
 most tests, so a leaf edit takes seconds and a core edit takes a normal suite run.
 
-Software-factory has the same thing for pytest: `python scripts/changed-pytest.py [--list] [--since REF] [-- pytest args]`
+Software-factory has the same thing for pytest: `python scripts/changed-pytest.py [--list] [--since REF] [--all] [-- pytest args]`
+When a change selects more than 40 test files (or a shared file such as `conftest.py` changed), it
+runs only the 20 smallest selected files as a smoke subset and leaves the full suite to CI; `--all`
+runs the whole selection.
 (import graph by regex, `conftest.py` and fixture-file-name edges, no plugins).
 
 ## Pre-commit hook

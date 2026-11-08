@@ -148,6 +148,10 @@ def conftests_for(test: Path) -> list[Path]:
     return out
 
 
+SMOKE_CAP = 40      # selected test files above this count → smoke subset
+SMOKE_FILES = 20    # files in the smoke subset
+
+
 def select(since: str) -> tuple[bool, str, list[Path], list[Path]]:
     changed = {p for p in changed_files(since) if FACTORY in p.parents or p == FACTORY}
     all_tests = sorted(p for p in project_files() if is_test(p))
@@ -201,6 +205,13 @@ def main(argv: list[str]) -> int:
         print(f"changed mode (software-factory): nothing to run ({reason or 'no test reaches a changed file'})", file=sys.stderr)
         return 0
     why = f"{reason}: running everything" if run_all else f"{len(changed)} changed file(s)"
+    # Cap: a shared file (conftest, pyproject, cli) can select the whole suite, which took
+    # over 2 h in the hook on a loaded laptop. Run a smoke subset (the smallest selected
+    # files) and leave the rest to CI, which runs the full suite on every push.
+    if not list_only and (run_all or len(tests) > SMOKE_CAP) and "--all" not in argv:
+        tests = sorted(tests, key=lambda t: t.stat().st_size)[:SMOKE_FILES]
+        rel = [str(t.relative_to(FACTORY)).replace("\\", "/") for t in tests]
+        why += f"; capped to a {len(tests)}-file smoke subset, full suite left to CI (--all to override)"
     print(f"changed mode (software-factory): {why}; {len(tests)} test file(s) selected", file=sys.stderr)
     venv_py = FACTORY / ".venv" / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
     if venv_py.exists():
@@ -210,7 +221,7 @@ def main(argv: list[str]) -> int:
     else:
         cmd = [sys.executable, "-m", "pytest"]
     if len(tests) > 8 and "-n" not in extra:
-        cmd += ["-n", "auto", "--dist", "loadfile"]
+        cmd += ["-n", "auto", "--dist", "load"]
     return subprocess.run([*cmd, "-q", *extra, *rel], cwd=FACTORY).returncode
 
 
