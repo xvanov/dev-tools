@@ -85,7 +85,7 @@ const C = require('../src/dispatch/composeCore');
   const c = C.clip('x'.repeat(598) + '\u{1F600}\u{1F600}', 600);
   assert.ok(c.isWellFormed(), 'well-formed after clipping');
   // Doctor shows the database URL with its password hidden, however it is spelled.
-  const { maskUrl } = require('../src/cli/index');
+  const { maskUrl } = require('../src/cli/index.ts');
   assert.strictEqual(maskUrl('postgres://pa:s3cret@127.0.0.1:5433/pa'), 'postgres://pa:***@127.0.0.1:5433/pa');
   assert.ok(!maskUrl('postgres://pa:p@ss:w/rd@h/db').includes('ss:w'));
 }

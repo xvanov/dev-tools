@@ -133,7 +133,7 @@ async function exercise(base, seen, label) {
   assert.strictEqual(refused.ok, false);
   assert.match(refused.detail, /TERMHUB_ALLOWED_HOSTS/);
   assert.match(tailnetCheck('https://box.tail1.ts.net', { ok: false, error: 'ECONNREFUSED' }).detail, /unreachable by its tailnet name/);
-  const doctor = require('fs').readFileSync(require('path').join(__dirname, '..', 'src', 'cli', 'index.js'), 'utf8');
+  const doctor = require('fs').readFileSync(require('path').join(__dirname, '..', 'src', 'cli', 'index.ts'), 'utf8');
   assert.match(doctor, /'run isolation'/, 'doctor states the real isolation boundary');
   console.log('termhubClient tailnet check ok');
 }

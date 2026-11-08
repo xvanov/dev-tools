@@ -240,7 +240,7 @@ const proposals = require('../src/proposals');
 
   // PA_DISPATCHED_RUN: inside a run, `pa do` refuses an unattended level outright (no card either).
   {
-    const { commands } = require('../src/cli/index');
+    const { commands } = require('../src/cli/index.ts');
     process.env.PA_DISPATCHED_RUN = '55';
     const errs = [];
     const ew = process.stderr.write.bind(process.stderr);
@@ -328,7 +328,7 @@ const proposals = require('../src/proposals');
 
   // MUST-FIX 1: from the chat (no terminal), an unattended end state is a card, never a start.
   {
-    const { commands } = require('../src/cli/index');
+    const { commands } = require('../src/cli/index.ts');
     const outs = [];
     const write = process.stdout.write.bind(process.stdout);
     process.stdout.write = (t) => { outs.push(String(t)); return true; };
@@ -366,7 +366,7 @@ const proposals = require('../src/proposals');
 
   // `pa propose` / `--preview` compose before anyone said yes: under the daily budget.
   assert.ok(require('../src/config.ts').config.budget.discretionary.includes('propose'));
-  const cli = fs.readFileSync(path.join(__dirname, '..', 'src', 'cli', 'index.js'), 'utf8');
+  const cli = fs.readFileSync(path.join(__dirname, '..', 'src', 'cli', 'index.ts'), 'utf8');
   const prop = cli.slice(cli.indexOf('async propose('), cli.indexOf('async delivery('));
   assert.ok(prop.indexOf("allow('propose')") > 0 && prop.indexOf("allow('propose')") < prop.indexOf('.propose(o)'), 'budget asked before the card is composed');
   const noModel = await offer.prepare({ commitmentId: 31, via: 'factory', useModel: false });
