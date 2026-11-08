@@ -1132,6 +1132,51 @@ not in the Map is not done, and a new one gets added there first.
     today's date). `main`'s head was green on 15 August. No sacrifice PR can pass `ci`, and a CI-fix
     cycle would chase tests outside the review comments. Pin the clock in those tests (in
     sacrifice), or re-run review-fix on an app with a green base.
+  - [ ] **8.4.30 teams-ask: no real-run driver, and `--test-chat` is ignored.** `pa e2e teams-ask
+    --test-chat <id>` exits "not automated yet" (`RUNNERS` has no teams-ask; `o.testChat` is read
+    and never used). The dry run doesn't look at the chat either. Nothing in the PA or the e2e can
+    send a Teams message, so the input has to be the owner's own. Add a runner that checks the
+    chat (it exists, you are its only member), prints a marker phrase to type into the self
+    chat, waits for that message, and times each hop from its arrival
+    ([acceptance/teams-ask.md](acceptance/teams-ask.md)).
+  - [ ] **8.4.31 teams-ask: a new ask never toasts.** Nothing calls `notify()` when distill
+    inserts a commitment (`distill/index.ts`, `worker.ts`), and the interrupt budget has no kind
+    for one. No notification kind in the table is for a new commitment, and INBOX.md is built
+    from notifications only, so the chat is not told either. The Map's notify step and its 5 s
+    hop describe something not built. Notify on a new `owed_by_me` card from a person (through
+    the budget), or mark the step `planned`.
+  - [ ] **8.4.32 teams-ask: cache change to source_item takes 9.1 s (target 5 s), and the log
+    hides it.** Today's only sample is the owner's self-chat message (19:28:30.045Z, stored
+    19:28:39.100Z). Its pass read 6.5 MB of LevelDB tables in 8725 ms, 49 s after the watcher
+    was re-armed. It logged `lagSeconds` 0.3-0.5, because lag is taken from the pass's start.
+    Log lag at the write, keep the first-stored time on the row (`fetched_at` moves on a
+    connector upgrade), and bound a pass's table read so one message is not held behind it.
+  - [ ] **8.4.33 teams-ask: commitment to the board takes ~1.1 s (target 200 ms).** Probe card
+    #6775: outbox row 22:01:34.886Z, board event on the bus 22:01:35.297Z (411 ms, written from
+    another process), on the page 4 ms later, then `GET /api/state` with a median of 716 ms over
+    8 fetches (430-1249). Profile `/api/state`, or let the event carry enough for the page to draw the card
+    without the full refetch.
+  - [ ] **8.4.34 teams-ask: the Teams cache's pending copy is stored as its own message.** The
+    client writes a local copy with message id `-1` before the server's id, and the reader keeps
+    it: 39 items, 16 distilled into 37 commitments (6 open). All link to message `-1`, which
+    opens nothing, and 12 of the 39 have a twin under the real id (duplicate cards). Skip id
+    `-1` in `teamsLocal.toItem`, or fold it into the real id when that arrives.
+  - [ ] **8.4.35 teams-ask: Teams' system threads are distilled as group chats.** The cache
+    reader stores the `48:` threads (drafts, mentions, notifications, threads, call logs) as
+    `chatType: group`: 149 items, 57 commitments (10 open). Drafts are the owner's unsent or
+    sent text: 55 of 62 are also stored from the real chat. Their cards name the owner and link
+    to the drafts thread instead of the chat. Keep only the self chat (the notes thread) and drop the
+    rest, as `graphChat.repairEmpty` already does.
+  - [ ] **8.4.36 teams-ask: distill skips any message under 40 characters.** `MIN_BODY_CHARS`
+    is 40, and the Map's own example ("can you send me the numbers by Friday?") is 38. A short
+    Teams ask from a person is never read: since 1 Nov, 36 short items from others were skipped,
+    and by a keyword count 1 of them was an ask.
+    Let a chat message from a person through regardless of length, or lower the bar for chat.
+  - [ ] **8.4.37 teams-ask: a distill call often costs more than the $0.05 ceiling.** On the
+    served `claude-sonnet-5-5` (since 6 Nov), 49 of 206 calls are over (max $0.082; today 17
+    calls, max $0.038). On the code default `PA_DISTILL_MODEL=claude-opus-5`, the mean was
+    $0.058-0.074 (730 of 1022 over, 5-6 Nov). Make the served model the default, then cut the
+    long prompts (the over-ceiling calls), or the owner raises the ceiling.
 - [ ] **8.5 Architecture map review.** A full pass over `architecture.json` (the `/architecture`
   page) against the finished system: every component, process, port, table, tool, workflow and
   storage location as it now runs on both stacks (jarvisd, ptyd, native factory, SQLite,
