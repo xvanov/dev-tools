@@ -31,8 +31,10 @@ gets no push credential in its environment: its termhub session starts with GH/G
 `GIT_CONFIG_*`, and ssh run with no user config, agent or default key (`remote.noPushEnv`, applied by
 termhub's session env and confirmed back as `envApplied`; a termhub that cannot confirm it refuses the
 run). `gh` is logged out there too: `GH_CONFIG_DIR` points at an empty private directory of ours (so
-the `hosts.yml` in `~/.config/gh` is never read), `GH_HOST`/`GH_TOKEN`/`GITHUB_TOKEN`/enterprise tokens
-are unset; the shell starts without rc files (termhub `noRc`, confirmed as `rcSkipped`; required on
+the `hosts.yml` in `~/.config/gh` is never read), `GH_HOST`/`GITHUB_TOKEN` and the other tokens
+are unset, and `GH_TOKEN`/`GH_ENTERPRISE_TOKEN` are set to a worthless sentinel (`gh` otherwise falls back to the OS
+credential store, and `gh auth token --hostname github.com` would print the operator's login; an env token wins for
+every host, so `gh auth token` prints the sentinel and `gh api` gets a 401); the shell starts without rc files (termhub `noRc`, confirmed as `rcSkipped`; required on
 Windows) and on POSIX the agent's command line re-applies the env after them (`remote.noPushCommand`),
 so a `~/.bashrc` that exports a token cannot undo it. `test/dispatchStart.test.js` checks `gh auth
 token` fails inside that env. **Residual risk:** that strips what the environment hands the agent, not

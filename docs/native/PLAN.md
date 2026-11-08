@@ -94,10 +94,10 @@ request); voice never approves high-risk actions alone; work and personal stacks
   timeouts (`termhub` exec and csrf) so they fail fast or pass. `parallel-ok` (d3f7a19)
   Zero skips and no platform-gated entries left in either tool's `runner.config.js`; the runner gained
   `platform`, `env`, `shards`, `touches`/`narrow` (scripts/README.md). Spawn-bound files are sharded
-  (`dispatchStart` x5, `remoteExec` x4). Known gap found on Windows: `gh auth token` still prints
-  the operator's keyring token inside a no-push session even with an empty `GH_CONFIG_DIR` (API calls
-  fail); the live check asserts `gh api` fails there. Needs a product fix (for example a sentinel
-  `GH_TOKEN` in `noPushEnv`) before the work stack's no-push guarantee is whole on Windows.
+  (`dispatchStart` x5, `remoteExec` x4). Found on Windows and fixed: `gh auth token` printed the
+  operator's keyring token inside a no-push session even with an empty `GH_CONFIG_DIR`; `noPushEnv` now
+  sets `GH_TOKEN`/`GH_ENTERPRISE_TOKEN` to a worthless sentinel (the test asserts `gh auth token`,
+  `--hostname`, `gh api` and `git credential fill` give no real token).
   `supervisor`, `deploy` (a ~9 s PowerShell cold start) and `lease` (80-200 ms sleeps; failed in
   two loaded full runs, alone it always passes) are the remaining slow or load-sensitive files.
 - [ ] **T3 Factory tests in parallel.** `pytest -n auto` (xdist is installed) must pass with

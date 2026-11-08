@@ -265,6 +265,8 @@ async function clearLegacyBlock({ machine, repo, blockedPushUrl, run }) {
 // not what the disk holds. An agent that reads ~/.ssh/id_* or gh's hosts.yml
 // itself and passes it explicitly can still push. The real boundary for a run
 // that must not push is a machine (or user) without those credentials.
+/** A token that authenticates nothing (see noPushEnv). */
+const NO_PUSH_SENTINEL = 'pa-no-push-sentinel';
 const NO_PUSH_UNSET = [
   'GH_TOKEN', 'GITHUB_TOKEN', 'GH_ENTERPRISE_TOKEN', 'GITHUB_ENTERPRISE_TOKEN', 'GH_HOST', 'GITHUB_PAT', 'GH_PAT',
   'HUB_TOKEN', 'GITLAB_TOKEN', 'GL_TOKEN', 'GLAB_TOKEN', 'CI_JOB_TOKEN',
@@ -327,6 +329,12 @@ function noPushEnv({ ghConfigDir = null, runId = null } = {}) {
       GIT_SSH_COMMAND: 'ssh -F none -o IdentityAgent=none -o IdentitiesOnly=yes -o IdentityFile=none -o BatchMode=yes',
       GH_CONFIG_DIR: ghConfigDir || noGhDir(runId),
       GH_PROMPT_DISABLED: '1',
+      // gh falls back to the OS credential store (Windows Credential Manager, keychain, Secret Service) when its
+      // config dir is empty, and `gh auth token [--hostname H]` prints what it finds there. A token in the environment
+      // wins over the store for every host, so give it one that is worthless: `gh auth token` prints the sentinel,
+      // `gh api` gets a 401. Unsetting alone (NO_PUSH_UNSET) is not enough.
+      GH_TOKEN: NO_PUSH_SENTINEL,
+      GH_ENTERPRISE_TOKEN: NO_PUSH_SENTINEL,
     },
     unsetEnv: [...NO_PUSH_UNSET],
   };

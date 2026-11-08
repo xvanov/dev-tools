@@ -158,6 +158,10 @@ const sharedPushurls = (repo) => {
     fill({ ...process.env, ...noPushEnv().env });
     assert.ok(!fs.existsSync(marker), 'credential.helper reset: the helper is not called');
     git(repo, 'config', '--local', '--unset', 'credential.helper');
+    // ...and neither does Git Credential Manager / gh's helper hand out a token for github.com (the empty
+    // credential.helper resets every helper configured before it, URL-scoped ones included).
+    const ghCred = (() => { try { return execFileSync('git', ['credential', 'fill'], { cwd: repo, input: 'protocol=https\nhost=github.com\n\n', env: { ...process.env, ...noPushEnv().env }, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }); } catch { return ''; } })();
+    assert.ok(!/^password=/m.test(ghCred), 'git credential fill for github.com returns no password in a no-push session');
   }
 
   // A run that may push keeps termhub's environment.
@@ -236,15 +240,18 @@ const sharedPushurls = (repo) => {
     if (ghOk) {
       assert.ok(token(base), 'control: gh is logged in with the operator\'s env');
       // assert.ok, not strictEqual: a failure message must never print a real token.
-      // KNOWN GAP (Windows): gh falls back to the OS credential store when its config dir is empty, so
-      // `gh auth token` still prints the operator's keyring token there (API calls do fail: gh has no host
-      // configured). Everywhere else the empty config dir is a full stop. Tracked in docs/native/PLAN.md.
-      if (process.platform === 'win32') {
-        const api = (() => { try { execFileSync('gh', ['api', 'user'], { env: sessionEnv(base), stdio: 'ignore' }); return 0; } catch (e) { return e.status; } })();
-        assert.notStrictEqual(api, 0, 'gh api fails inside a no-push session');
-      } else {
-        assert.ok(token(sessionEnv(base)) === null, 'gh auth token fails inside a no-push session');
+      // gh falls back to the OS credential store (Windows Credential Manager, keychain) when its config dir
+      // is empty, and `gh auth token --hostname H` prints what it finds: the operator's real login. The
+      // session's GH_TOKEN is therefore a worthless sentinel, which wins over the store for every host.
+      const NOPUSH = sessionEnv(base);
+      const SENTINEL = NOPUSH.GH_TOKEN;
+      assert.strictEqual(SENTINEL, 'pa-no-push-sentinel');
+      for (const args of [['auth', 'token'], ['auth', 'token', '--hostname', 'github.com'], ['auth', 'token', '--hostname', 'ghe.example.com']]) {
+        const got = (() => { try { return execFileSync('gh', args, { env: NOPUSH, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim(); } catch { return null; } })();
+        assert.ok(got === null || got === SENTINEL, `gh ${args.join(' ')} prints no real token in a no-push session`);
       }
+      const api = (() => { try { execFileSync('gh', ['api', 'user'], { env: NOPUSH, stdio: 'ignore', timeout: 30000 }); return 0; } catch (e) { return e.status || 1; } })();
+      assert.notStrictEqual(api, 0, 'gh api fails inside a no-push session');
       const status = (() => { try { execFileSync('gh', ['auth', 'status'], { env: sessionEnv(base), stdio: 'ignore' }); return 0; } catch (e) { return e.status; } })();
       assert.notStrictEqual(status, 0, 'gh auth status fails inside a no-push session');
     } else {
@@ -259,7 +266,7 @@ const sharedPushurls = (repo) => {
     fs.writeFileSync(rc, 'export GH_TOKEN=ghp_FROMRCFROMRCFROMRCFROMRCFROMRCFROMRC12\n');
     const cmd = require('../src/dispatch/remote').noPushCommand('sh -c \'echo "token=${GH_TOKEN:-none} cfg=$GH_CONFIG_DIR"\'', ne);
     const outp = execFileSync('sh', ['-c', `. '${rc}'; ${cmd}`], { encoding: 'utf8' }).trim();
-    assert.strictEqual(outp, `token=none cfg=${ne.env.GH_CONFIG_DIR}`);
+    assert.strictEqual(outp, `token=pa-no-push-sentinel cfg=${ne.env.GH_CONFIG_DIR}`, "the rc GH_TOKEN is overridden");
     // A local no-push start asks termhub to skip rc files and wraps the command.
     hub.created.length = 0;
     const { repo } = makeRepo('norc');
