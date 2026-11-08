@@ -421,8 +421,14 @@ run mid-step; a job continued on an existing branch (`--branch`).
 
 ## Phase 5: ptyd and the sandbox (Rust, D1)
 
-- [ ] **5.1** `ptyd` in Rust (`portable-pty`), same WebSocket protocol, so the UI keeps working;
-  terminals survive jarvisd restarts.
+- [x] **5.1** `ptyd` in Rust (`portable-pty`), same WebSocket protocol, so the UI keeps working;
+  terminals survive jarvisd restarts. (956ce58)
+  `ptyd/` speaks sessiond's session protocol; `termhub/test/ptydConformance.test.js` runs one
+  black-box suite against sessiond, ptyd and sessiond-on-ptyd, green on Windows and Linux CI
+  (job `ptyd`, PTYD_REQUIRED=1). Opt-in `TERMHUB_PTYD=1`: sessiond keeps its PTYs in ptyd and
+  adopts them after its own restart (`ptydBackend.test.js`). Left for Exit 5: turn the flag on in
+  the start/update scripts (and restart ptyd only on purpose), then retire node-pty; replay is
+  raw bytes (sessiond's mirror covers the UI).
 - [ ] **5.2** Agent sandbox per run: sandbox-runtime on Linux, restricted account on
   Windows, egress allowlist proxy.
 - [ ] **5.3** Credential broker: keys never enter the sandbox; pushes and PRs go through the
