@@ -348,6 +348,12 @@ function createSqliteBackend(file, { key = null } = {}) {
     }
   }
 
+  /** pg_notify without an outbox row: to this process's listeners on `channel`. */
+  function notify(channel, payload) {
+    const body = typeof payload === 'string' ? payload : JSON.stringify(payload);
+    setImmediate(() => bus.emit('notify', { channel, payload: body, processId: process.pid }));
+  }
+
   function isRead(sql) {
     return cachedStatement(writer, translate(sql).sql).readonly;
   }
@@ -375,7 +381,9 @@ function createSqliteBackend(file, { key = null } = {}) {
     const release = await lock.acquire();
     try {
       writer.exec('BEGIN IMMEDIATE');
-      const client = { dialect: 'sqlite', query: async (text, params) => runOn(writer, text, params) };
+      // A NOTIFY inside a transaction goes out at commit, and not at all on rollback (as pg).
+      const held = [];
+      const client = { dialect: 'sqlite', query: async (text, params) => runOn(writer, text, params), notify: async (channel, payload) => void held.push([channel, payload]) };
       let result;
       try {
         result = await txContext.run(backend, () => fn(client));
@@ -385,6 +393,7 @@ function createSqliteBackend(file, { key = null } = {}) {
         throw err;
       }
       flushEvents();
+      for (const [channel, payload] of held) notify(channel, payload);
       return result;
     } finally {
       release();
@@ -441,6 +450,7 @@ function createSqliteBackend(file, { key = null } = {}) {
         }
         return query(text, params);
       },
+      notify: async (channel, payload) => notify(channel, payload),
       on(event, fn) {
         events.on(event, fn);
         return client;
@@ -485,6 +495,7 @@ function createSqliteBackend(file, { key = null } = {}) {
     one: async (text, params) => (await query(text, params)).rows[0] ?? null,
     withTx,
     exec,
+    notify: async (channel, payload) => notify(channel, payload),
     close,
     migrate: () => migrate(backend),
     pool: { connect, query, end: close },

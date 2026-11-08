@@ -221,6 +221,30 @@ function create(db) {
         [projectId]
       );
     },
+    /** A repo's default delivery level: {delivery}, or null. */
+    async deliveryOf(repo) {
+      return db.one('select delivery from repo_delivery where repo = $1', [repo]);
+    },
+
+    /** Sets a repo's default delivery level. */
+    async setDelivery(repo, delivery) {
+      await db.query(
+        `insert into repo_delivery (repo, delivery) values ($1, $2)
+     on conflict (repo) do update set delivery = excluded.delivery, updated_at = ${NOW}`,
+        [repo, delivery]
+      );
+    },
+
+    /** Clears a repo's default. Resolves whether it had one. */
+    async clearDelivery(repo) {
+      const r = await db.query('delete from repo_delivery where repo = $1', [repo]);
+      return (r.rowCount || 0) > 0;
+    },
+
+    /** Every repo's default: {repo, delivery, updated_at}, by repo. */
+    async deliveries() {
+      return db.rows('select repo, delivery, updated_at from repo_delivery order by repo');
+    },
   };
 }
 

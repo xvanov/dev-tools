@@ -33,6 +33,24 @@ function create(db) {
       db.session.listen(channel);
     },
 
+    /**
+     * The deploy test's probe event n: numbered from pa_event_seq and written
+     * to the outbox in one transaction (topic deploytest, payload {n, seq}),
+     * as the Postgres twin does. The backend hands outbox rows to LISTENing
+     * sessions after the commit, so the probe is also the wake-up (in-process).
+     */
+    async publishProbe(n) {
+      const write = async (q) => {
+        await q.query('update pa_event_seq set last_value = last_value + 1 where id = 1');
+        await q.query(
+          `insert into event_outbox (seq, topic, payload)
+           select last_value, 'deploytest', json_object('n', $1, 'seq', last_value) from pa_event_seq where id = 1`,
+          [Number(n) | 0]
+        );
+      };
+      await (db.inTx ? write(db) : db.withTx(write));
+    },
+
     /** The oldest seq still kept, or null when the outbox is empty. */
     async oldest() {
       const r = await db.one('select cast(min(seq) as text) as seq from event_outbox');

@@ -148,4 +148,10 @@ async function probe() {
   return r.rows[0];
 }
 
-module.exports = { assertSafeForTests, getPool, query, rows, one, withTx, close, probe, createBackend, dialect: SQLITE ? 'sqlite' : 'postgres', sqliteBackend: sqlite };
+/** pg_notify, or on SQLite the backend's in-process equivalent (src/db/sqlite.js). */
+async function notify(channel, payload) {
+  if (SQLITE) return sqlite().notify(channel, payload);
+  await query('select pg_notify($1, $2)', [channel, typeof payload === 'string' ? payload : JSON.stringify(payload)]);
+}
+
+module.exports = { notify, assertSafeForTests, getPool, query, rows, one, withTx, close, probe, createBackend, dialect: SQLITE ? 'sqlite' : 'postgres', sqliteBackend: sqlite };

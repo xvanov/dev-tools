@@ -68,6 +68,7 @@ function clientBackend(client) {
   // for leases and LISTEN); a pg client says nothing: Postgres.
   if (client.dialect) b.dialect = client.dialect;
   if (client.session) b.session = client.session;
+  if (typeof client.notify === 'function') b.notify = client.notify;
   return b;
 }
 
@@ -102,6 +103,7 @@ const poolBackend = {
   rows: (text, params) => require('../db').rows(text, params),
   one: (text, params) => require('../db').one(text, params),
   withTx: (fn) => require('../db').withTx(fn),
+  notify: (channel, payload) => require('../db').notify(channel, payload),
   get dialect() {
     return require('../db').dialect;
   },

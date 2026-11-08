@@ -110,6 +110,15 @@ function create(db) {
         [key, typeof value === 'string' ? value : JSON.stringify(value)]
       );
     },
+    /** Makes id the install id when the store has none (a no-op otherwise). */
+    async insertInstallIfNone(id) {
+      await db.query('insert into pa_install (id) select $1 where not exists (select 1 from pa_install)', [id]);
+    },
+
+    /** The first install's id: {id}, or null. */
+    async firstInstall() {
+      return db.one('select id from pa_install order by created_at, rowid limit 1');
+    },
   };
 }
 

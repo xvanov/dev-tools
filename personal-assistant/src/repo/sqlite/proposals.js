@@ -69,6 +69,25 @@ function create(db) {
     async kindAndPayload(id) {
       return db.one('select kind, payload from proposal where id = $1', [id]);
     },
+    /** One proposal's fields for the chat's offer view, or null. */
+    async rowForChat(id) {
+      return db.one('select id, kind, title, body, payload, status, created_at, commitment_id from proposal where id = $1', [id]);
+    },
+
+    /** A commitment's pending proposals (five, newest first). */
+    async pendingOfCommitment(commitmentId) {
+      return db.rows(`select id, kind, title, payload from proposal where commitment_id = $1 and status = 'pending' order by created_at desc, id desc limit 5`, [commitmentId]);
+    },
+
+    /** The ten newest accepted cadence answers about a person's asks: {answer}. */
+    async cadenceAnswers(personId) {
+      return db.rows(
+        `select p.answer from proposal p join commitment c on c.id = p.commitment_id
+      where json_extract(p.payload, '$.on') = 'cadence' and p.status = 'accepted' and c.counterparty_person_id = $1
+      order by p.decided_at desc, p.id desc limit 10`,
+        [personId]
+      );
+    },
   };
 }
 

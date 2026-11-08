@@ -197,6 +197,13 @@ function create(db) {
       order by d.created_at desc, d.id desc limit 30`
       );
     },
+    /** How many nudges were drafted today (local midnight on this machine, as pg's date_trunc in the session zone). */
+    async nudgesToday() {
+      const start = new Date();
+      start.setHours(0, 0, 0, 0);
+      const r = await db.one(`select count(*) as n from draft where origin = 'nudge' and created_at >= $1`, [start]);
+      return r.n;
+    },
   };
 }
 
