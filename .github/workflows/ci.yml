@@ -355,13 +355,13 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
-    # Informational for now on every OS (a red leg is visible but does not fail the
-    # run): 38 factory tests need content this public repo does not track
-    # (apps/sacrifice, bench/swebench) and the factory is POSIX-only until phase 2.3.
-    # Flip to `matrix.os != 'ubuntu-latest'` once T3 skips those tests, and to false
-    # after 2.3. See PLAN.md T6 follow-ups.
-    continue-on-error: true
-    timeout-minutes: 25
+    # Linux gates. The FULL Windows suite stays informational: on a hosted Windows
+    # runner it takes far longer than on Linux (it was killed at 25 min mid-pytest
+    # on every run), so it gets 60 min and never fails the run. The Windows gate is
+    # `software-factory-windows-2x` below: the files that cover the native-Windows
+    # factory (plan 2.x) and the JOBS-API (Exit 2).
+    continue-on-error: ${{ matrix.os != 'ubuntu-latest' }}
+    timeout-minutes: ${{ matrix.os == 'windows-latest' && 60 || 25 }}
     defaults:
       run:
         working-directory: software-factory
@@ -381,6 +381,34 @@ jobs:
       - run: uv sync --all-extras
       - run: bash $GITHUB_WORKSPACE/.github/scripts/run.sh uv run pytest -q --tb=short -n auto --dist loadfile
         shell: bash
+
+  software-factory-windows-2x:
+    # Gating on Windows (plan 2.x / Exit 2): the native-Windows factory and the
+    # JOBS-API. The full Windows suite runs above, informational.
+    needs: changes
+    if: needs.changes.outputs.factory == 'true'
+    name: software-factory (windows-latest, 2.x gate)
+    runs-on: windows-latest
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: software-factory
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: software-factory/uv.lock
+          python-version: "3.12"
+      - run: uv sync --all-extras
+      - name: 2.x tests (oscompat, serve + API, claude_session rounds, JOBS-API, delivery, gh auth, power)
+        shell: bash
+        run: >-
+          bash $GITHUB_WORKSPACE/.github/scripts/run.sh uv run pytest -q --tb=short -n auto --dist load
+          -m "not slow and not flaky_under_load"
+          tests/test_oscompat.py tests/test_serve.py tests/test_serve_api.py
+          tests/test_claude_session.py tests/test_claude_session_round.py tests/test_text_run_watch.py
+          tests/test_jobs_*.py tests/test_delivery_*.py tests/test_gh_auth.py tests/test_power.py
 
   ios-messages:
     needs: changes
