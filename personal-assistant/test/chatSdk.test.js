@@ -85,7 +85,29 @@ function fakePolicy(rules = {}) {
   };
 }
 
-function makeFeed({ dir, sdk, policy, timeoutMs = 60_000, root = path.join(dir, 'projects') }) {
+// A stand-in for termhub: the Run view's session is created here, never in a real termhub.
+function fakeHub() {
+  const sessions = [];
+  const created = [];
+  return {
+    created,
+    sessions,
+    async listSessions() {
+      return sessions;
+    },
+    async createSession(o) {
+      const s = { id: `view-${created.length + 1}`, cwd: o.cwd, alive: true };
+      created.push(o);
+      sessions.push(s);
+      return { id: s.id };
+    },
+    async sessionUrl(id) {
+      return `http://127.0.0.1:7000/#session=${id}`;
+    },
+  };
+}
+
+function makeFeed({ dir, sdk, policy, timeoutMs = 60_000, root = path.join(dir, 'projects'), hub = fakeHub() }) {
   const home = path.join(dir, 'pa-home');
   fs.mkdirSync(home, { recursive: true });
   return S.createSdkFeed({
@@ -97,6 +119,8 @@ function makeFeed({ dir, sdk, policy, timeoutMs = 60_000, root = path.join(dir, 
     model: () => null,
     approvalTimeoutMs: () => timeoutMs,
     env: () => S.subscriptionEnv({ PATH: 'x', ANTHROPIC_API_KEY: 'sk-test', ANTHROPIC_AUTH_TOKEN: 't' }),
+    hub: () => hub,
+    viewCommand: (file) => `node sdkView.js --follow "${file}"`,
   });
 }
 
@@ -199,7 +223,7 @@ const sdkMsg = {
       assert.ok(partials.every((p) => p.id === finals[0].id), 'partials and the final share one id (Ask speaks them as one utterance)');
       assert.deepStrictEqual(feed.history().map((e) => [e.type, e.text]), [['user', 'what is on today?'], ['assistant', 'Two meetings.']], 'history keeps finals only');
       assert.strictEqual(JSON.parse(fs.readFileSync(path.join(dir, 'pa-home', S.SESSION_FILE), 'utf8')).sessionId, 'sess-1', 'the session id is kept for a resume');
-      assert.strictEqual((await feed.session()).sessionId, 'sess-1');
+      assert.strictEqual((await feed.session()).conversationId, 'sess-1');
 
       // Text before a tool call is a step (final false); the tool call is activity.
       await feed.send({ text: 'check my mail' });
@@ -293,7 +317,7 @@ const sdkMsg = {
       const s = await feed.session();
       assert.strictEqual(s.waitingOn, 'dashboard');
       assert.strictEqual(s.permission.toolUseId, 'tu1');
-      assert.strictEqual(s.url, null);
+      assert.strictEqual(s.url, `http://127.0.0.1:7000/#session=${s.sessionId}`, 'the session links to its Run view');
 
       await assert.rejects(feed.send({ text: 'hello?' }), (e) => e.status === 409, 'typing while a yes is pending is refused, as before');
       await assert.rejects(feed.answerPermission({ answer: 'yes', toolUseId: 'stale' }), (e) => e.status === 409);
@@ -416,11 +440,65 @@ const sdkMsg = {
       const feed = makeFeed({ dir: d, sdk, policy: fakePolicy() });
       assert.deepStrictEqual(feed.history().map((e) => e.text), ['earlier question', 'earlier answer'], 'a worker restart keeps the conversation on screen');
       const opened = await feed.open();
-      assert.deepStrictEqual([opened.engine, opened.sessionId, opened.created, opened.url], ['sdk', 'sess-old', true, null]);
+      assert.deepStrictEqual([opened.engine, opened.conversationId, opened.created, opened.sessionId, opened.url], ['sdk', 'sess-old', true, 'view-1', 'http://127.0.0.1:7000/#session=view-1']);
       assert.strictEqual(sdk.runs[0].options.resume, 'sess-old');
       assert.strictEqual((await feed.open()).created, false, 'one session');
       feed.stop();
       await until(() => sdk.runs[0].closed, 'closed');
+    }
+
+    // ------------------------------------------------- the Run view (gap 3) --
+    {
+      const d = fs.mkdtempSync(path.join(dir, 'v-'));
+      const hub = fakeHub();
+      const sdk = fakeSdk();
+      const feed = makeFeed({ dir: d, sdk, policy: fakePolicy(), hub });
+      await feed.send({ text: 'hello', source: 'typed' });
+      const run = sdk.runs[0];
+      await run.next();
+      run.emit(sdkMsg.init('sess-v'));
+      run.emit(sdkMsg.stream({ type: 'message_start', message: { id: 'mv' } }));
+      run.emit(sdkMsg.stream({ type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } }));
+      run.emit(sdkMsg.stream({ type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'Hi\x1b[2J there.' } }));
+      run.emit(sdkMsg.assistant('mv', [{ type: 'text', text: 'Hi\x1b[2J there.' }], 'end_turn'));
+      run.emit(sdkMsg.result());
+      await until(() => hub.created.length === 1, 'view created');
+      const viewDir = path.join(d, 'pa-home', 'sdk-view');
+      assert.strictEqual(path.resolve(hub.created[0].cwd), path.resolve(viewDir), 'its own folder, never pa-home (the terminal engine finds its chat by cwd)');
+      assert.match(hub.created[0].command, /--follow ".*chat\.jsonl"$/);
+      const s = await feed.session();
+      assert.deepStrictEqual([s.sessionId, s.url], ['view-1', 'http://127.0.0.1:7000/#session=view-1']);
+      await until(() => /"idle"/.test(fs.readFileSync(path.join(viewDir, 'chat.jsonl'), 'utf8')), 'idle logged');
+      const logged = fs.readFileSync(path.join(viewDir, 'chat.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+      assert.deepStrictEqual(logged.map((e) => e.type), ['user', 'assistant', 'status'], 'kept events and idle; never the partials');
+      const V = require('../src/chat/sdkView');
+      const shown = V.renderChunk('', fs.readFileSync(path.join(viewDir, 'chat.jsonl'), 'utf8'), { color: false }).out.join('\n');
+      assert.match(shown, /you\nhello/);
+      assert.match(shown, /Jarvis\nHi\[2J there\./, 'escape sequences from the model never reach the terminal');
+      assert.ok(!shown.includes('\x1b'));
+      assert.match(shown, /─ idle/);
+      // A worker restart finds the live view instead of opening a second one.
+      feed.stop();
+      const again = makeFeed({ dir: d, sdk: fakeSdk(), policy: fakePolicy(), hub });
+      const o = await again.open();
+      assert.strictEqual(o.sessionId, 'view-1');
+      assert.strictEqual(hub.created.length, 1);
+      again.stop();
+      // termhub down: no url, and the chat still works.
+      const down = { listSessions: async () => { throw new Error('ECONNREFUSED'); } };
+      const sdk2 = fakeSdk();
+      const f2 = makeFeed({ dir: fs.mkdtempSync(path.join(dir, 'v2-')), sdk: sdk2, policy: fakePolicy(), hub: down });
+      await f2.send({ text: 'hi' });
+      assert.ok(sdk2.runs[0]);
+      assert.strictEqual((await f2.session()).url, null);
+      f2.stop();
+      // The renderer: permission lines with the detail, answers, and partials skipped.
+      const r = (e) => V.renderEvent({ at: '2026-11-08T10:00:00Z', ...e }, { color: false });
+      assert.match(r({ type: 'permission', ask: 'Claude wants to run a command. Allow once?', detail: 'ls -la' }), /\? waiting for your yes: Claude wants to run a command\. Allow once\?\n {5}ls -la$/);
+      assert.match(r({ type: 'permission', cleared: true, answered: 'yes' }), /✓ approved/);
+      assert.strictEqual(r({ type: 'assistant', text: 'x', partial: true }), null);
+      assert.match(r({ type: 'user', text: 'PA inbox: notification 3 is waiting. Read INBOX.md.' }), /you \(doorbell\)/);
+      assert.strictEqual(V.renderChunk('', '{"type":"user","text":"a"}\n{"type":"us', { color: false }).rest, '{"type":"us', 'a line still being written waits');
     }
 
     // ------------------------------------------------- a Z1 roll (drain) --
@@ -489,6 +567,7 @@ const sdkMsg = {
         model: () => 'claude-opus-5',
         approvalTimeoutMs: () => 1000,
         env: () => ({}),
+        hub: () => null,
       });
       await assert.rejects(feed.send({ text: 'hi' }), (e) => e.status === 503 && /module not installed/.test(e.message));
       fail = false;

@@ -42,6 +42,7 @@ const SEED_BYTES = 4 * 1024 * 1024;
 const SOURCES = ['typed', 'voice'];
 const ANSWERS = ['yes', 'no'];
 const SESSION_FILE = '.pa-chat-sdk-session.json';
+const VIEW_MAX_BYTES = 8 * 1024 * 1024;
 
 function httpError(status, message) {
   return Object.assign(new Error(message), { status });
@@ -138,6 +139,12 @@ function genericVoiceOk(name, input = {}) {
   return d.length <= VOICE_MAX && !d.includes('\n');
 }
 
+/** `p`, or null once `ms` have passed (a slow termhub must not hold a page's request). */
+function withTimeout(p, ms) {
+  let t;
+  return Promise.race([Promise.resolve(p), new Promise((r) => (t = setTimeout(() => r(null), ms)))]).finally(() => clearTimeout(t));
+}
+
 /** An async iterable the SDK reads user messages from; push() to send, close() to end. */
 function createInputQueue() {
   const items = [];
@@ -190,6 +197,11 @@ function createSdkFeed({
   approvalTimeoutMs = () => require('../config').config.chat.approvalTimeoutMs,
   jobLookup = null,
   env = () => subscriptionEnv(),
+  hub = () => require('../dispatch/termhub'),
+  viewCommand = (file) => {
+    const js = path.join(require('../config').config.toolDir, 'src', 'chat', 'sdkView.js').replace(/\\/g, '/');
+    return `node "${js}" --follow "${file.replace(/\\/g, '/')}"`;
+  },
 } = {}) {
   const events = [];
   const seen = new Set();
@@ -203,6 +215,7 @@ function createSdkFeed({
   let starting = null;
   let sessionId = readSessionId();
   let seeded = false;
+  let seeding = false;
   let home = null;
   // Streaming state: the API message being streamed, and text blocks of the
   // current message whose `final` is not known yet.
@@ -229,13 +242,75 @@ function createSdkFeed({
     }
   }
 
+  // ------------------------------------------------------------ the Run view --
+  // Every kept event goes to pa-home/sdk-view/chat.jsonl, which a read-only
+  // termhub session renders (src/chat/sdkView.js): the SDK engine's answer to
+  // the terminal chat's termhub tab, and what session().url points at. The
+  // view's cwd is its own folder, never pa-home: the terminal engine finds its
+  // chat by cwd and must not mistake the view for it.
+  const viewDir = () => path.join(stateDir(), 'sdk-view');
+  const viewFile = () => path.join(viewDir(), 'chat.jsonl');
+  let view = null; // {id, url}
+  let viewChecked = 0;
+  let viewing = null;
+
+  function logView(e) {
+    try {
+      fs.mkdirSync(viewDir(), { recursive: true });
+      fs.appendFileSync(viewFile(), `${JSON.stringify(e)}\n`, 'utf8');
+    } catch {
+      /* the view is a convenience */
+    }
+  }
+
+  function rotateView() {
+    try {
+      if (fs.statSync(viewFile()).size > VIEW_MAX_BYTES) fs.renameSync(viewFile(), path.join(viewDir(), 'chat.old.jsonl'));
+    } catch {
+      /* none yet */
+    }
+  }
+
+  async function findOrStartView() {
+    const h = hub();
+    if (!h) return null;
+    const dir = viewDir();
+    fs.mkdirSync(dir, { recursive: true });
+    if (!fs.existsSync(viewFile())) fs.writeFileSync(viewFile(), '', 'utf8');
+    const same = (a, b) => path.resolve(String(a || '')).toLowerCase() === path.resolve(String(b || '')).toLowerCase();
+    const live = (await h.listSessions()).find((s) => s.alive !== false && same(s.cwd, dir));
+    const id = live ? live.id : (await h.createSession({ cwd: dir, command: viewCommand(viewFile()), title: 'PA chat (SDK)' })).id;
+    const url = await h.sessionUrl(id).catch(() => null);
+    return { id, url };
+  }
+
+  // The view, found or started; checked at most every 30 s, never throws.
+  async function ensureView({ force = false } = {}) {
+    if (!force && Date.now() - viewChecked < 30_000) return view;
+    if (!viewing) {
+      viewing = findOrStartView()
+        .then((v) => (view = v))
+        .catch((err) => {
+          log.debug('no Run view for the SDK chat', { message: err.message });
+          view = null;
+          return null;
+        })
+        .finally(() => {
+          viewChecked = Date.now();
+          viewing = null;
+        });
+    }
+    return viewing;
+  }
+
   function publish(e, { keep = true } = {}) {
     if (keep && e.type !== 'status') {
       if (seen.has(e.id)) return;
       seen.add(e.id);
       events.push(e);
       while (events.length > MAX_EVENTS) seen.delete(events.shift().id);
-    }
+      if (!seeding) logView(e);
+    } else if (e.type === 'status' && (e.text === 'idle' || e.text === 'offline')) logView(e);
     for (const fn of subs) {
       try {
         fn(e);
@@ -277,8 +352,14 @@ function createSdkFeed({
     } catch {
       return;
     }
-    for (const entry of T.parseLines('', `${text}\n`).entries) {
-      for (const e of T.entryEvents(entry)) if (e.type === 'user' || e.type === 'assistant') publish(e, { keep: true });
+    // Seeded history is already in the view's file (written when it happened).
+    seeding = true;
+    try {
+      for (const entry of T.parseLines('', `${text}\n`).entries) {
+        for (const e of T.entryEvents(entry)) if (e.type === 'user' || e.type === 'assistant') publish(e, { keep: true });
+      }
+    } finally {
+      seeding = false;
     }
   }
 
@@ -522,6 +603,8 @@ function createSdkFeed({
     if (typeof queryFn !== 'function') throw new Error(`${SDK_MODULE} has no query()`);
     const resume = sessionId;
     seedHistory();
+    rotateView();
+    ensureView({ force: true }); // not awaited: termhub being down never blocks the chat
     input = createInputQueue();
     const m = model();
     const options = {
@@ -602,8 +685,13 @@ function createSdkFeed({
     return events.filter((e) => e.type === 'user' || e.type === 'assistant').slice(-n);
   }
 
+  /**
+   * sessionId and url are the Run view's termhub session (what the pages
+   * link to, as with the terminal engine); conversationId is the SDK's.
+   */
   async function session() {
-    return { engine: 'sdk', sessionId, status, waitingOn: approvals.size ? 'dashboard' : null, url: null, permission: permissionPending() };
+    const v = q ? await withTimeout(ensureView(), 3000) : view;
+    return { engine: 'sdk', sessionId: v?.id || null, conversationId: sessionId, status, waitingOn: approvals.size ? 'dashboard' : null, url: v?.url || null, permission: permissionPending() };
   }
 
   /**
@@ -629,7 +717,8 @@ function createSdkFeed({
   /** POST /api/chat/open: start (or resume) the session without a message. */
   async function open() {
     const { created } = await ensureStarted();
-    return { engine: 'sdk', sessionId, created, url: null };
+    const v = await withTimeout(ensureView({ force: !view }), 5000);
+    return { engine: 'sdk', sessionId: v?.id || null, conversationId: sessionId, created, url: v?.url || null };
   }
 
   /**

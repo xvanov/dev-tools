@@ -331,7 +331,8 @@
           "SDK billing: the bundled Claude Code signs in with the machine's Claude login (measured: apiKeySource none, a Team subscription); ANTHROPIC_API_KEY and ANTHROPIC_AUTH_TOKEN are removed from its environment so it never bills the API. Headless use draws on the subscription's separate credit pool (since 15 Jun 2026)",
           "SDK doorbell: the worker's fixed INBOX line reaches it as a user turn through POST /api/chat/doorbell (the id only), under the terminal doorbell's conditions: a running session, idle long enough, nothing waiting on a yes",
           "SDK on a Z1 roll: drain denies the prompts still waiting (with a reason the model repeats), gives the turn in flight up to 20 s, closes the query; the new generation resumes the session by its id on its first message; undrain (rollback) restarts it here the same way",
-          "SDK limits for now: no termhub tab to open (session url is null), and `pa chat` only points at Ask"
+          "SDK Run view: every kept chat event is appended to pa-home/sdk-view/chat.jsonl and a read-only termhub session (cwd pa-home/sdk-view, never pa-home) runs `node src/chat/sdkView.js --follow` on it; /api/chat/session's sessionId and url are that session (conversationId is the SDK's), so the drill-down links work as on the terminal engine",
+          "SDK limits for now: `pa chat` only points at Ask"
         ]
       },
       "tools": {
@@ -436,6 +437,7 @@
         "personal-assistant/src/chat/agent.js",
         "personal-assistant/src/chat/feed.js",
         "personal-assistant/src/chat/sdkFeed.js",
+        "personal-assistant/src/chat/sdkView.js",
         "personal-assistant/src/chat/transcript.js",
         "personal-assistant/src/notify/chat.js",
         "personal-assistant/src/chat/permission.js"

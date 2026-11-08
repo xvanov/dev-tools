@@ -204,6 +204,10 @@ The SDK chat lives in the worker, so a Z1 roll moves it: on `drain` (`feed.drain
 generation denies the prompts still waiting (nobody can answer them there any more), gives the turn in
 flight up to 20 s, then closes its query, and refuses new messages with a 503; the new generation
 resumes the session by the id in `pa-home/.pa-chat-sdk-session.json` on its first message.
+Its Run view is a read-only termhub session following `pa-home/sdk-view/chat.jsonl`
+(`src/chat/sdkView.js`). Its cwd is `pa-home/sdk-view`, never pa-home itself: the terminal engine and the
+doorbell find the chat by cwd, and must never mistake the view for it. The view strips control
+characters from what it prints (the text is the model's and other people's).
 
 **Every tool call goes through one policy function** (`src/policy`, plan 4.3): `evaluate` answers
 allow | deny | ask from `src/policy/default.policy.json` plus an untracked per-stack override
