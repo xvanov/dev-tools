@@ -100,16 +100,29 @@ async function lag() {
 }
 
 // ---- the supervisor's log file ----
-function logFile() {
+async function logFile() {
   const { createLogFile, defaultLogFile } = require('../src/supervisor');
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pa-suplog-'));
+  const logs = path.join(dir, 'logs');
   try {
-    const f = createLogFile(path.join(dir, 'logs', 'supervisor.log'), { maxBytes: 100, keep: 2 });
-    for (let i = 0; i < 12; i++) f.write(`line ${String(i).padStart(2, '0')} ${'x'.repeat(20)}\n`);
-    const files = fs.readdirSync(path.join(dir, 'logs')).sort();
-    assert.deepStrictEqual(files, ['supervisor.log', 'supervisor.log.1', 'supervisor.log.2']);
-    assert.ok(fs.statSync(path.join(dir, 'logs', 'supervisor.log')).size <= 100);
-    assert.match(fs.readFileSync(path.join(dir, 'logs', 'supervisor.log'), 'utf8'), /line 11/);
+    const f = createLogFile(path.join(logs, 'supervisor.log'), { maxBytes: 100, keep: 2 });
+    // Asynchronous now (a blocked write froze every generation): flush per line.
+    for (let i = 0; i < 12; i++) {
+      f.write(`line ${String(i).padStart(2, '0')} ${'x'.repeat(20)}\n`);
+      await f.flush();
+    }
+    assert.deepStrictEqual(fs.readdirSync(logs).sort(), ['supervisor.log', 'supervisor.log.1', 'supervisor.log.2']);
+    assert.ok(fs.statSync(path.join(logs, 'supervisor.log')).size <= 100);
+    assert.match(fs.readFileSync(path.join(logs, 'supervisor.log'), 'utf8'), /line 11/);
+    // write() returns at once whatever the disk does: 2000 lines, no waiting.
+    const big = createLogFile(path.join(logs, 'burst.log'));
+    const t0 = Date.now();
+    for (let i = 0; i < 2000; i++) big.write(`burst ${i}\n`);
+    assert.ok(Date.now() - t0 < 500, 'write() must not wait for the disk');
+    await big.flush();
+    await big.close();
+    await f.close();
+    assert.match(fs.readFileSync(path.join(logs, 'burst.log'), 'utf8'), /burst 1999\n$/);
     assert.match(defaultLogFile(), /personal-assistant[\\/]logs[\\/]supervisor\.log$/);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
@@ -119,7 +132,9 @@ function logFile() {
 priority()
   .then(lag)
   .then(() => {
-    logFile();
+    return logFile();
+  })
+  .then(() => {
     console.log('stalls ok');
     process.exit(0); // config's modules may hold handles open; nothing is left to run
   })

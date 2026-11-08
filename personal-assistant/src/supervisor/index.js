@@ -71,40 +71,91 @@ const HOP = new Set(['connection', 'keep-alive', 'proxy-connection', 'transfer-e
 // so stdout goes nowhere, and a generation that never got ready left no trace.
 // The supervisor's own lines and every generation's stdout/stderr (prefixed
 // `[gen N]`) go to <state dir>/logs/supervisor.log, rotated at `maxBytes`
-// into .1 … .<keep>. Synchronous appends: a few lines a second at most, and a
-// line written just before a crash must not sit in a buffer.
-function createLogFile(file, { maxBytes = 5 * 1024 * 1024, keep = 3 } = {}) {
+// into .1 … .<keep>.
+//
+// Never synchronous. It was appendFileSync (open, write, close per line), and
+// on Windows a close can wait seconds for the virus scanner to read the file
+// again: the supervisor's loop stopped, so it stopped proxying and stopped
+// reading its generations' output pipes, and every generation — whose stdout
+// writes to a pipe are synchronous on Windows — froze with it, at the same
+// moment, for ~10 s. That failed deploys' health watches. Now one stream, kept
+// open; a disk that stalls costs memory (capped: past `maxBacklog` lines are
+// dropped and counted), never the loop.
+function createLogFile(file, { maxBytes = 5 * 1024 * 1024, keep = 3, maxBacklog = 8 * 1024 * 1024 } = {}) {
   let size = 0;
   let broken = false;
+  let out = null;
+  let dropped = 0;
   try {
     fs.mkdirSync(path.dirname(file), { recursive: true });
     size = fs.existsSync(file) ? fs.statSync(file).size : 0;
   } catch {
     broken = true;
   }
-  function rotate() {
-    for (let i = keep; i >= 1; i--) {
-      const from = i === 1 ? file : `${file}.${i - 1}`;
-      try {
-        if (fs.existsSync(from)) fs.renameSync(from, `${file}.${i}`);
-      } catch {
-        /* a reader holds it open: keep appending */
-      }
-    }
-    size = fs.existsSync(file) ? fs.statSync(file).size : 0;
+  function open() {
+    out = fs.createWriteStream(file, { flags: 'a' });
+    out.on('error', () => {
+      broken = true; // a full or vanished disk must not take the supervisor down
+    });
   }
+  // Rotation: lines written meanwhile wait in `pending`; the old stream ends,
+  // the files shift up one (asynchronously, oldest first), a new stream opens.
+  let pending = null;
+  function rotate() {
+    const old = out;
+    out = null;
+    pending = [];
+    size = 0;
+    old.end(() => {
+      const shift = (i) => {
+        if (i < 1) {
+          open();
+          const lines = pending;
+          pending = null;
+          for (const l of lines) out.write(l);
+          return;
+        }
+        const from = i === 1 ? file : `${file}.${i - 1}`;
+        fs.rename(from, `${file}.${i}`, () => shift(i - 1)); // a missing or held file: skip it
+      };
+      shift(keep);
+    });
+  }
+  if (!broken) open();
   return {
     file,
     write(text) {
       if (broken || !text) return;
-      try {
-        if (size + text.length > maxBytes) rotate();
-        fs.appendFileSync(file, text);
+      if (pending) {
+        if (pending.length < 10_000) pending.push(text);
+        else dropped++;
         size += Buffer.byteLength(text);
-      } catch {
-        /* a full disk must not take the supervisor down */
+        return;
       }
+      if (!out) return;
+      if (out.writableLength > maxBacklog) {
+        dropped++;
+        return;
+      }
+      if (dropped) {
+        const note = `${new Date().toISOString()} WARN  [supervisor] log backlog: ${dropped} line(s) dropped\n`;
+        dropped = 0;
+        out.write(note);
+      }
+      if (size + text.length > maxBytes) {
+        rotate();
+        pending.push(text);
+        size += Buffer.byteLength(text);
+        return;
+      }
+      out.write(text);
+      size += Buffer.byteLength(text);
     },
+    /** Resolves once everything written so far is on disk (tests, shutdown). */
+    flush: async () => {
+      while (pending || (out && out.writableLength)) await new Promise((r) => setTimeout(r, 10));
+    },
+    close: () => new Promise((resolve) => (out ? out.end(resolve) : resolve())),
   };
 }
 
