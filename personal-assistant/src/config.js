@@ -431,6 +431,11 @@ const config = {
     // The model that writes a factory job's brief from the ask and what the
     // assistant gathered (src/dispatch/compose.js). Any text-capable model.
     composeModel: modelEnv('PA_COMPOSE_MODEL', 'claude-sonnet-5-5'),
+    // Used instead of a bare Claude composeModel when there is no
+    // ANTHROPIC_API_KEY, so compose skips `claude -p` (~4 s startup): a keyed
+    // provider model string, e.g. azure/<deployment>. Unset, or its key
+    // missing: `claude -p`.
+    composeFallbackModel: env('PA_COMPOSE_FALLBACK_MODEL'),
   },
 
   // The software factory as a second dispatch target (src/dispatch/factory.js,

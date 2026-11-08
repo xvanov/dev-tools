@@ -374,7 +374,9 @@ instruction to search before writing, extend rather than duplicate, follow conve
 tests. Memory pages and message bodies go to the composing model to select from and never into
 the brief wholesale (`copiesPrivate`: 12 verbatim words is a dump and is dropped); secrets are
 redacted before the model sees anything and again after; reuse paths must be files the repo has.
-The model is a mockable seam (`compose._setModel`); when it fails, the brief is the deterministic
+The model is a mockable seam (`compose._setModel`) and is chosen by `compose.pickModel`: a keyed
+path (Anthropic API, else `PA_COMPOSE_FALLBACK_MODEL` with its key present) beats `claude -p`, which
+is only the last resort. When it fails, the brief is the deterministic
 one, which holds nothing private. What a dispatch card shows is frozen in the proposal
 (`src/dispatch/offer.js`) and is exactly what runs at accept — app, criteria, brief, pipeline,
 models, end state (re-rendered, never recomposed, if I change it on the card). Nothing outward

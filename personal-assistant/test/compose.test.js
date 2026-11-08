@@ -247,6 +247,28 @@ async function composeModule() {
   fs.rmSync(repo, { recursive: true, force: true });
 }
 
+// --- model choice: a keyed path beats `claude -p` ---------------------------------------------
+
+{
+  const { pickModel } = require('../src/dispatch/compose');
+  const cfg = (composeModel, fallback = null, endpoint = 'https://example.invalid') => ({
+    anthropic: { apiKey: '' },
+    providers: { azure: { endpoint } },
+    dispatch: { composeModel, composeFallbackModel: fallback },
+  });
+  const keys = (names) => (n) => (names.includes(n) ? 'k' : null);
+  const bare = 'claude-sonnet-5-5';
+
+  assert.strictEqual(pickModel({ c: cfg(bare), read: keys([]), hasAnthropicKey: true }), bare, 'Anthropic key: the API, as configured');
+  assert.strictEqual(pickModel({ c: cfg(bare, 'azure/x'), read: keys(['AZURE_OPENAI_API_KEY']) }), 'azure/x', 'no Anthropic key: the keyed fallback');
+  assert.strictEqual(pickModel({ c: cfg(bare, 'azure/x', ''), read: keys(['AZURE_OPENAI_API_KEY']) }), bare, 'azure without an endpoint cannot be called');
+  assert.strictEqual(pickModel({ c: cfg(bare, 'openrouter/x'), read: keys([]) }), bare, 'fallback has no key: claude -p');
+  assert.strictEqual(pickModel({ c: cfg(bare), read: keys(['AZURE_OPENAI_API_KEY']) }), bare, 'nothing configured: claude -p');
+  assert.strictEqual(pickModel({ c: cfg(bare, 'cli/claude-sonnet-5-5'), read: keys([]) }), bare, 'a cli fallback is no gain');
+  assert.strictEqual(pickModel({ c: cfg(bare, 'bogus/x'), read: keys([]) }), bare, 'a bad fallback string is ignored');
+  assert.strictEqual(pickModel({ c: cfg('openai/gpt-x', 'azure/x'), read: keys(['OPENAI_API_KEY', 'AZURE_OPENAI_API_KEY']) }), 'openai/gpt-x', 'an explicit keyed model stays');
+}
+
 composeModule()
   .then(() => console.log('compose ok'))
   .catch((err) => {

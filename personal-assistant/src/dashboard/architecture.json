@@ -641,6 +641,10 @@
           "default": "claude-sonnet-5-5"
         },
         {
+          "name": "PA_COMPOSE_FALLBACK_MODEL",
+          "default": null
+        },
+        {
           "name": "PA_DAILY_BUDGET_USD",
           "default": "15"
         }
@@ -768,7 +772,7 @@
         "Routes": "the factory is the default once PA_FACTORY_PATH is set (PA_DISPATCH_VIA); plan mode and --machine still mean a Claude session",
         "Claude session": "POST /api/sessions on termhub with PA_CLAUDE_COMMAND (claude --dangerously-skip-permissions) in its own worktree; a no-push run gets no credentials in its env and a verified push block",
         "Factory job": "`uv run factory job submit --json ...` run on PA_FACTORY_MACHINE through termhub's POST /api/exec (argv, no shell), content on stdin; idempotent on --source pa --external-id",
-        "Brief": "composed by PA_COMPOSE_MODEL (default claude-sonnet-5-5) from the card; private material is selected from, never copied in; deterministic fallback",
+        "Brief": "composed by PA_COMPOSE_MODEL (default claude-sonnet-5-5; with no Anthropic key it takes a keyed PA_COMPOSE_FALLBACK_MODEL such as azure/<deployment> instead of `claude -p`) from the card; private material is selected from, never copied in; deterministic fallback",
         "Delivery levels": "none < branch < draft_pr < pr < auto_merge < push_to_main, set only from your side; the last two need a confirmed start",
         "Factory defaults": "PA_FACTORY_RUNTIME api, PA_FACTORY_PIPELINE solo; the chat's factory_start defaults to claude_session unless you ask for the API",
         "Which factory": "PA_FACTORY_MACHINE + PA_FACTORY_PATH in each stack's .env (the live values are shown at the top of this page)"

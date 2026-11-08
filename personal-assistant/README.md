@@ -868,7 +868,9 @@ each command prints — the contract is the factory's `docs/JOBS-API.md`.
   OS user, not set up yet — `pa doctor` says so) and run review does the rest. `plan` is never
   a factory job.
 - **The ask is a composed brief** (`src/dispatch/compose.js`, rules in `composeCore.js`): a model
-  (`PA_COMPOSE_MODEL`, any text-capable provider) writes the goal, done-criteria, constraints,
+  (`PA_COMPOSE_MODEL`, any text-capable provider; a bare Claude model with no `ANTHROPIC_API_KEY`
+  would cost ~4 s of `claude -p` startup, so set `PA_COMPOSE_FALLBACK_MODEL=azure/<deployment>` — used
+  instead whenever its key is present; the log line `compose model call` shows the path and latency) writes the goal, done-criteria, constraints,
   decisions and facts the task needs, and points at **existing files to reuse or extend** — found by
   searching the repo's local checkout (`git ls-files`, `git grep -F`) for the ask's keywords. Every
   brief says: "Search the repo for existing implementations before writing new code; extend rather

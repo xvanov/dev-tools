@@ -34,10 +34,53 @@ function _setModel(fn) {
   modelOverride = fn;
 }
 
+/**
+ * The model string compose calls. A bare Claude model with no Anthropic key
+ * would go through `claude -p` (~4 s of startup per brief), so when a keyed
+ * path exists it is preferred: the Anthropic API (key set), else
+ * PA_COMPOSE_FALLBACK_MODEL, when it routes off the CLI and its key is
+ * present. An explicit provider-prefixed PA_COMPOSE_MODEL is
+ * respected as is. Nothing keyed: the configured model, i.e. `claude -p`.
+ * Pure: `c`, `read` and `hasAnthropicKey` are injectable for tests.
+ */
+function pickModel({ c = config, read, hasAnthropicKey = Boolean(c.anthropic.apiKey) } = {}) {
+  const models = require('../models');
+  const configured = c.dispatch.composeModel;
+  const keyed = (value) => {
+    if (!value) return false;
+    try {
+      const r = models.route(value, { hasAnthropicKey });
+      if (r.backend === 'cli') return false;
+      // Azure also needs its endpoint; a keyed call that cannot be sent would
+      // end in the deterministic brief, which is worse than `claude -p`.
+      if (r.provider === 'azure' && !c.providers?.azure?.endpoint) return false;
+      return r.backend === 'api' || r.provider === 'local' || Boolean(models.providerKey(r.provider, read));
+    } catch {
+      return false;
+    }
+  };
+  if (keyed(configured)) return configured;
+  // PA_MODEL, when set, already is `configured` (config.js modelEnv).
+  if (keyed(c.dispatch.composeFallbackModel)) return c.dispatch.composeFallbackModel;
+  return configured;
+}
+
+let lastModel = null;
+
 async function callModel({ system, prompt }) {
   if (modelOverride) return modelOverride({ system, prompt });
   const llm = require('../llm');
-  return llm.complete({ system, prompt, model: config.dispatch.composeModel, effort: 'low', maxTokens: 2500, purpose: 'compose' });
+  const model = pickModel();
+  lastModel = model;
+  const started = Date.now();
+  try {
+    const reply = await llm.complete({ system, prompt, model, effort: 'low', maxTokens: 2500, purpose: 'compose' });
+    log.info('compose model call', { model, ms: Date.now() - started });
+    return reply;
+  } catch (err) {
+    log.warn('compose model call failed', { model, ms: Date.now() - started, message: err.message });
+    throw err;
+  }
 }
 
 function extractJson(text) {
@@ -132,7 +175,7 @@ async function composeFrom(inputs, { useModel = true } = {}) {
     if (!raw || typeof raw !== 'object') throw new Error('no JSON in the answer');
     const { composed, dropped } = C.checkComposed(raw, inputs);
     if (dropped.length) log.info('brief: dropped items that broke the rules', { dropped: dropped.map((d) => `${d.field}: ${d.why}`).slice(0, 10) });
-    return { composed, by: `compose:${modelOverride ? 'test' : config.dispatch.composeModel}`, dropped };
+    return { composed, by: `compose:${modelOverride ? 'test' : lastModel || config.dispatch.composeModel}`, dropped };
   } catch (err) {
     log.warn('brief composition fell back to the deterministic brief', { message: String(err.message).slice(0, 200) });
     return { composed: C.fallbackComposed(inputs), by: 'compose:fallback', dropped: [] };
@@ -158,4 +201,4 @@ async function compose({ target, task = null, done = [], app = null, slug = null
   return { brief, composed, by, done: composed.done, goal: composed.goal, hints: composed.reuse.length };
 }
 
-module.exports = { compose, composeFrom, gather, codeHints, localRepo, _setModel };
+module.exports = { compose, composeFrom, gather, codeHints, localRepo, pickModel, _setModel };
