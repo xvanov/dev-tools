@@ -13,3 +13,6 @@
 *.timer   text eol=lf
 
 # The PowerShell side is Windows-only; leave it to git's normal handling.
+
+# The git hook is run by sh on every OS.
+scripts/hooks/* text eol=lf

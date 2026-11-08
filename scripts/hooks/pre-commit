@@ -1,0 +1,19 @@
+#!/bin/sh
+# dev-tools pre-commit. Installed into .git/hooks by `node scripts/install-hooks.js`.
+#   1. public-repo guard (ios-messages): refuse commits that contain real data from the private work dir.
+#   2. changed-files tests: only the tests a change can reach (scripts/pre-commit-tests.js); CI runs the full suites.
+# Emergency skip for humans (agents never skip, and never use --no-verify):  DEVTOOLS_SKIP_TESTS=1 git commit ...
+top=$(git rev-parse --show-toplevel)
+
+(
+  cd "$top/ios-messages" 2>/dev/null || exit 0
+  PY=.venv/Scripts/python; [ -x "$PY" ] || PY=.venv/bin/python
+  [ -x "$PY" ] || exit 0
+  "$PY" ios-messages.py guard --staged
+) || exit 1
+
+# A worktree that has not pulled the test hook yet simply skips it.
+if [ -f "$top/scripts/pre-commit-tests.js" ]; then
+  node "$top/scripts/pre-commit-tests.js" || exit 1
+fi
+exit 0

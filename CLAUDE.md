@@ -27,6 +27,9 @@ git push origin main
   be several commits; several unrelated fixes are never one commit.
 - **`main` is the branch.** These are single-author tools deployed straight from `main`; no branch or
   PR ceremony unless a change is genuinely risky enough to want review.
+- **Tests while you work:** `npm test -- --changed` runs only the tests your change can reach, and the
+  pre-commit hook (after the ios-messages guard) does the same for every commit; CI runs everything.
+  Details, the config keys and the emergency skip: [scripts/README.md](scripts/README.md).
 - **Never commit a red tree.** Run the tool's tests first (`cd <tool> && npm test` where one exists)
   and say so in the report if anything fails.
 - **Verify the push.** `git status -sb` should show `## main...origin/main` with no ahead/behind and
