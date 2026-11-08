@@ -3615,9 +3615,34 @@ def text_run(
         )
         raise RuntimeError(msg)
 
+    # The watched step (and its runs row, which is when the job reads as
+    # started) opens BEFORE the litellm import: a cold import takes ~25 s on
+    # Windows, and that is the factory starting the work, not waiting for it.
+    _tw["watch"], _tw["row"] = _open_text_watch(
+        persona=persona,
+        model_id=model_id,
+        prompt=prompt,
+        app=app,
+        story_id=story_id,
+        direction_id=direction_id,
+        model_tier=model_tier,
+        db_path=db_path,
+        software_factory_root=software_factory_root,
+        started_at=_started_at,
+    )
+
     try:
         import litellm
     except Exception as exc:
+        if _tw["watch"] is not None or _tw["row"] is not None:
+            with contextlib.suppress(Exception):
+                _record(
+                    persona=persona, model=model_id, mode="text", tokens_in=0, tokens_out=0,
+                    cost_usd=0.0, success=False, story_path=None, repo_path=None,
+                    error=f"litellm not installed: {exc}", db_path=db_path,
+                    duration_s=_elapsed(), story_id=story_id, model_tier=model_tier,
+                    direction_id=direction_id, app=app, premodel_infra=True,
+                )
         raise RuntimeError(f"litellm not installed: {exc}") from exc
 
     # Azure (either surface): ensure base_url is present so LiteLLM hits the
@@ -3705,18 +3730,6 @@ def text_run(
             direction_id=direction_id,
         )
 
-    _tw["watch"], _tw["row"] = _open_text_watch(
-        persona=persona,
-        model_id=model_id,
-        prompt=prompt,
-        app=app,
-        story_id=story_id,
-        direction_id=direction_id,
-        model_tier=model_tier,
-        db_path=db_path,
-        software_factory_root=software_factory_root,
-        started_at=_started_at,
-    )
     def _completion(**call_kwargs: Any) -> Any:
         """``litellm.completion``; a raise closes the watched step first."""
         try:

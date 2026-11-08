@@ -1640,10 +1640,21 @@ def serve_cmd(
             sched.log(f"pushing job state changes to {url} every {push_every:.0f}s")
 
         def _after_call(argv: list[str], res: dict[str, Any]) -> None:
-            # A submit/cancel/resume through the API: announce it now, not in <= push_every.
-            if pusher is not None and res.get("code") == 0 and argv[:1] == ["job"] and (
-                len(argv) > 1 and argv[1] in ("submit", "cancel", "resume")
-            ):
+            if res.get("code") != 0 or argv[:1] != ["job"] or len(argv) < 2:
+                return
+            # A submit/resume through the API: triage its app NOW, from this
+            # request, not at the next 1 s poll of the wake files (E5.4).
+            if argv[1] in ("submit", "resume"):
+                import json as _json
+
+                try:
+                    app_name = _json.loads(res.get("stdout") or "{}").get("app")
+                except ValueError:
+                    app_name = None
+                if app_name and app_name in chosen:
+                    sched.start_triage(app_name)
+            # A submit/cancel/resume: announce it now, not in <= push_every.
+            if pusher is not None and argv[1] in ("submit", "cancel", "resume"):
                 import threading as _threading
 
                 _threading.Thread(target=pusher.check, daemon=True).start()
@@ -1662,10 +1673,15 @@ def serve_cmd(
                 sched.log(f"api on http://127.0.0.1:{api_port} (POST /api/cli, GET /api/health)")
                 import threading as _threading
 
-                # Pay the CLI's import cost (seconds) now, not on the first caller.
-                _threading.Thread(
-                    target=lambda: _api.run_cli(["app", "list", "--json"]), daemon=True
-                ).start()
+                # Pay the import cost (seconds; litellm alone ~25 s cold on
+                # Windows) now, not on the first caller or the first triage.
+                def _warm() -> None:
+                    _api.run_cli(["app", "list", "--json"])
+                    import litellm  # noqa: F401
+
+                    import factory.runner  # noqa: F401
+
+                _threading.Thread(target=_warm, daemon=True).start()
             except OSError as exc:
                 sched.log(f"api NOT started on port {api_port}: {exc}; callers fall back to the CLI")
 

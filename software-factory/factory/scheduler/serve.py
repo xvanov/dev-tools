@@ -399,26 +399,34 @@ class Scheduler:
     #: in about a second and never waits behind another job's long tick.
     triage: Callable[[str], None] | None = None
     triaging: dict[str, Any] = field(default_factory=dict)
+    _triage_lock: Any = field(default_factory=lambda: __import__("threading").Lock())
 
-    def _start_triage(self, app: str) -> None:
+    def start_triage(self, app: str) -> None:
+        """Start the app's triage lane unless it is already running.
+
+        Called from the loop (a wake) and from API threads (a submit), hence
+        the lock. The lock inside pm-sync is the cross-process backstop."""
         if self.triage is None:
             return
-        t = self.triaging.get(app)
-        if t is not None and t.is_alive():
-            return  # one lane per app; the lock inside pm-sync is the backstop
         import threading
 
-        fn = self.triage
+        with self._triage_lock:
+            t = self.triaging.get(app)
+            if t is not None and t.is_alive():
+                return
+            fn = self.triage
 
-        def run() -> None:
-            try:
-                fn(app)
-            except Exception as exc:  # noqa: BLE001 - the lane never kills serve
-                self.log(f"triage {app} failed: {exc!r}")
+            def run() -> None:
+                try:
+                    fn(app)
+                except Exception as exc:  # noqa: BLE001 - the lane never kills serve
+                    self.log(f"triage {app} failed: {exc!r}")
 
-        t = threading.Thread(target=run, name=f"triage-{app}", daemon=True)
-        self.triaging[app] = t
-        t.start()
+            t = threading.Thread(target=run, name=f"triage-{app}", daemon=True)
+            self.triaging[app] = t
+            t.start()
+
+    _start_triage = start_triage
 
     def log(self, msg: str) -> None:
         self.out(f"{_now_iso()} serve: {msg}")
