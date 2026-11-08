@@ -588,14 +588,14 @@ not in the Map is not done, and a new one gets added there first.
   `<PA data dir>/e2e/<stamp>-<workflow>/summary.json`. Status on the work stack, 2026-11-08:
   - whats-on: dry run OK. Real run (09:09Z): answered locally (route answer, $0), fast lane first
     words 669 ms (target 200), first audio 1682 ms (target 700). Both are lower bounds, because:
-  - [ ] **8.2.1 Talk transcription is always empty on the work stack.** POST /api/talk/transcribe
+  - [x] **8.2.1 Talk transcription is always empty on the work stack.** POST /api/talk/transcribe
     returns `{"text":""}` in about 4 ms for any WAV. The transcriber's log shows WinError 10054 and
     `No such file or directory: C:\Temp\pa-talk-<pid>-….wav`. The generation's socket closes early,
     askWhisper resolves that as empty text, and the WAV is deleted before whisper opens it. The same file
     sent to :47821 directly is transcribed in 300-600 ms. askWhisper also turns a transcriber
     error into a silent empty answer. Bun only: after the rollback to Node (PA_RUNTIME=node, 2d7fdbf)
-    the same WAVs come back "What's on today?" (whisper 740-1014 ms). The Bun runtime's socket
-    half-close is the suspect.
+    the same WAVs come back "What's on today?" (whisper 740-1014 ms). Root cause confirmed: Bun's
+    socket.end() closes instead of half-closing; fixed on both runtimes, test in Bun parity. (2aad672)
   - research, deepseek-pr, review-fix: dry runs fail on `factory app list --json`. Through factory
     serve's /api/cli it returns code 0 with empty stdout; job list and status are fine (sent to
     factory-native).
