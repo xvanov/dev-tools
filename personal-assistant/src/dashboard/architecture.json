@@ -50,7 +50,7 @@
         "PA worker + dashboard on 127.0.0.1:7300, Jarvis (/talk, PA chat), voice services",
         "Postgres 16 + pgvector inside WSL Ubuntu on :5433 (kept alive by the pa-wsl-keepalive logon task)",
         "termhub on Windows (front :7000, sessiond :7010)",
-        "a work factory in WSL Ubuntu: its own termhub on 127.0.0.1:7100 (sessiond :7110) and software-factory under the WSL user's ~/dev-tools/software-factory"
+        "the work factory natively on Windows (no WSL, plan 2.3): software-factory in the dev-tools checkout, ticked by the factory-serve logon task (`factory serve`); its claude_session runs open in the Windows termhub (sessiond :7010); the PA runs its commands locally once its .env says PA_FACTORY_MACHINE=local (switch pending; until then it still calls the WSL factory)"
       ],
       "ingests": "work mail, Teams (connector + local cache), calendar, work GitHub, Jira, recorded meetings"
     },
@@ -814,7 +814,7 @@
       "details": {
         "Routes": "the factory is the default once PA_FACTORY_PATH is set (PA_DISPATCH_VIA); plan mode and --machine still mean a Claude session",
         "Claude session": "POST /api/sessions on termhub with PA_CLAUDE_COMMAND (claude --dangerously-skip-permissions) in its own worktree; a no-push run gets no credentials in its env and a verified push block",
-        "Factory job": "`uv run factory job submit --json ...` run on PA_FACTORY_MACHINE through termhub's POST /api/exec (argv, no shell), content on stdin; idempotent on --source pa --external-id",
+        "Factory job": "`uv run factory job submit --json ...` run on PA_FACTORY_MACHINE through termhub's POST /api/exec (argv, no shell), content on stdin, or here through child_process when PA_FACTORY_MACHINE is empty, `local` or this host (the work stack, with PYTHONUTF8=1 on Windows); idempotent on --source pa --external-id",
         "Brief": "composed by PA_COMPOSE_MODEL (default claude-sonnet-5-5; with no Anthropic key it takes a keyed PA_COMPOSE_FALLBACK_MODEL such as azure/<deployment> instead of `claude -p`) from the card; private material is selected from, never copied in; deterministic fallback",
         "Delivery levels": "none < branch < draft_pr < pr < auto_merge < push_to_main, set only from your side; the last two need a confirmed start",
         "Factory defaults": "PA_FACTORY_RUNTIME api, PA_FACTORY_PIPELINE solo; the chat's factory_start defaults to claude_session unless you ask for the API",
@@ -994,7 +994,7 @@
         "personal": "live"
       },
       "where": {
-        "work": "The work factory in WSL Ubuntu (~/dev-tools/software-factory)",
+        "work": "The work factory, natively on Windows: software-factory in the dev-tools checkout (the PA reaches it with PA_FACTORY_MACHINE=local; switch pending)",
         "personal": "k-911-x17, /home/k/dev-tools/software-factory"
       },
       "health": "factory-machine",
@@ -1036,10 +1036,11 @@
         "personal": "live"
       },
       "where": {
-        "work": "Work factory (WSL)",
+        "work": "Native Windows factory; the factory-serve logon task (`factory serve`) drives it",
         "personal": "k-911-x17; factory-tick@<app> systemd timers drive it"
       },
       "details": {
+        "Scheduler": "Linux: factory-tick@<app> systemd user timers (5 min). Windows: `factory serve` (scripts/windows/install-serve.ps1 registers the factory-serve logon task): ticks each registered app every 300 s as a fresh subprocess, never two of one app at once; job submit/resume drop a file in state/scheduler/wake.d and it dispatches research/report jobs and ticks the app within 1 s; one serve per factory root (state/locks/serve.lock); `factory serve --status`",
         "Personas": "prompts in factory/personas/*.md; the model per persona is factory/routes.yaml (job > app > routes.yaml)",
         "Gates": "full test suite + live runtime smoke; reviewer must use a different model than any dev tier",
         "CI watch": "draft_pr / pr watch every check on the PR; a red run goes back to the dev, at most 3 CI-fix cycles; never merged below auto_merge",
@@ -1083,7 +1084,7 @@
         "personal": "live"
       },
       "where": {
-        "work": "Work factory (WSL)",
+        "work": "Native Windows factory",
         "personal": "k-911-x17"
       },
       "details": {
@@ -1124,7 +1125,7 @@
         "personal": "live"
       },
       "where": {
-        "work": "Work factory (WSL), sessions in the WSL termhub",
+        "work": "Native Windows factory, sessions in the Windows termhub (sessiond :7010); a round is `python -I -X utf8 -m factory.claude_session.round <spec>` typed into its PowerShell (no bash)",
         "personal": "k-911-x17, sessions in its termhub"
       },
       "details": {
@@ -1167,13 +1168,13 @@
         "personal": "live"
       },
       "where": {
-        "work": "Work factory checkout (WSL)",
+        "work": "software-factory/state in the Windows dev-tools checkout",
         "personal": "/home/k/dev-tools/software-factory/state"
       },
       "details": {
         "Database": "state/factory.db (sqlite): stories, runs, events, modes, job_cancellations",
         "Research/report jobs": "state/jobs/<task_id>-<slug>/ (job.yaml, ask.md, brief.md, report.md, workspace, Claude run dir, worker.log)",
-        "Locks": "state/locks/story-<id>.lock around merge and cancel",
+        "Locks": "state/locks/story-<id>.lock around merge and cancel; serve.lock and tick-<app>.lock under factory serve (flock on Linux, LockFileEx on Windows: factory/oscompat.py)",
         "Apps": "apps/<app>/config.yaml; only apps/factory and apps/template-probe are tracked in this public repo",
         "PA side": "the worker stores the last `job list` in factory_board; it never reads this store"
       },
@@ -1255,7 +1256,7 @@
       "id": "termhub-wsl",
       "layer": "sessions",
       "name": "WSL termhub (work factory)",
-      "role": "A second termhub inside WSL Ubuntu for the work factory: its claude_session runs and the PA's /api/exec calls land here.",
+      "role": "A second termhub inside WSL Ubuntu that serves the old WSL work factory. Leaves the factory path when the PA switches to the native Windows factory (plan 2.3); goes with WSL in 3.6.",
       "stacks": {
         "work": "live"
       },
@@ -1264,8 +1265,8 @@
       },
       "health": "termhub-wsl",
       "details": {
-        "Why a second one": "the factory runs on Linux; WSL gives the work stack a Linux factory without crossing into the personal box",
-        "Factory points at it": "FACTORY_TERMHUB_URL should name its sessiond (:7110), since the default is :7010"
+        "Why a second one": "the factory used to need Linux; WSL gave the work stack a Linux factory without crossing into the personal box",
+        "After the switch": "nothing dispatches here: the native factory uses the Windows termhub (FACTORY_TERMHUB_URL default :7010) and the PA runs factory commands locally"
       },
       "code": [
         "termhub/server.js",
@@ -1598,7 +1599,7 @@
     {
       "from": "dispatcher",
       "to": "termhub-wsl",
-      "label": "/api/exec: uv run factory job ...",
+      "label": "/api/exec: uv run factory job ... (until PA_FACTORY_MACHINE=local)",
       "stacks": [
         "work"
       ]
@@ -1660,19 +1661,8 @@
     },
     {
       "from": "runtime-claude",
-      "to": "termhub-wsl",
-      "label": "create session {links: job, step, story} (sessiond :7110)",
-      "stacks": [
-        "work"
-      ]
-    },
-    {
-      "from": "runtime-claude",
       "to": "sessiond",
-      "label": "create session (FACTORY_TERMHUB_URL)",
-      "stacks": [
-        "personal"
-      ]
+      "label": "create session {links: job, step, story} (FACTORY_TERMHUB_URL, default sessiond :7010)"
     },
     {
       "from": "runtime-claude",
@@ -1744,8 +1734,8 @@
           "t": "dispatch.start composes the brief from the card (PA_COMPOSE_MODEL), writes a flow file, and runs `uv run factory job submit --json --runtime api --model dev=deepseek/deepseek-coder --delivery pr` on the factory machine."
         },
         {
-          "c": "termhub-wsl",
-          "t": "On the work stack the command runs through the WSL termhub's POST /api/exec (argv, no shell; content on stdin)."
+          "c": "factory-api",
+          "t": "On the work stack the factory is on the same Windows machine: the command runs locally through child_process (argv, no shell; content on stdin)."
         },
         {
           "c": "factory-api",
@@ -1795,8 +1785,8 @@
           "t": "The factory checks `claude auth status` is a claude.ai login, then starts `claude -p --output-format stream-json` in a termhub session with API-key variables removed."
         },
         {
-          "c": "termhub-wsl",
-          "t": "The session lives in the WSL termhub; its URL is in runs[].session, so you can open it live from the Factory page."
+          "c": "termhub",
+          "t": "The session lives in the factory machine's termhub (on the work stack, the Windows termhub); its URL is in runs[].session, so you can open it live from the Factory page."
         },
         {
           "c": "claude-sub",
