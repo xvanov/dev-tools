@@ -1229,8 +1229,7 @@ not in the Map is not done, and a new one gets added there first.
     in your own chat), the due day and the link to that message id, screenshots the board, and
     drops the card. Waits: `--timeout teams=600` for the message, `ask=600` for the card; each
     ends with what to look at. On a scratch copy of today's store the self chat passes all four
-    checks, the drafts thread and a shared chat fail them (2-5 ms each). Not run live. (this
-    commit: `fix(personal-assistant): drive a real teams-ask run`)
+    checks, the drafts thread and a shared chat fail them (2-5 ms each). Not run live. (188c8d9)
   - [x] **8.4.31 teams-ask: a new ask never toasts.** Nothing calls `notify()` when distill
     inserts a commitment (`distill/index.ts`, `worker.ts`), and the interrupt budget has no kind
     for one. No notification kind in the table is for a new commitment, and INBOX.md is built
