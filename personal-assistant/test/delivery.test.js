@@ -2,7 +2,7 @@
 
 // The end state of a piece of work (src/dispatch/deliveryCore.js,
 // delivery.js, index.sessionDelivery) and what the PA does with it when a
-// Claude session ends (src/durable/tasks/runReview.js). Store, git and gh are
+// Claude session ends (src/durable/tasks/runReview.ts). Store, git and gh are
 // stubbed; names are invented.
 
 const assert = require('assert');
@@ -260,7 +260,7 @@ async function runReview() {
   dispatch.pushToMain = async (id, o) => { did.push(['main', o.sha]); return { pushed: true, base: 'main' }; };
   const blockedRuns = [];
   dispatch.blockRun = async (id, reason) => { blockedRuns.push(reason); };
-  const task = require('../src/durable/tasks/runReview');
+  const task = require('../src/durable/tasks/runReview.ts');
   let slept = 0;
   const ctx = {
     awaitEvent: async () => ({ note: null }),

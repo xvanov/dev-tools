@@ -294,7 +294,7 @@ const ROUTES: Route[] = [
     method: 'GET',
     path: '/api/when',
     handle: ({ res, url, send }) => {
-      const C = require('../durable/tasks/chaseCore');
+      const C = require('../durable/tasks/chaseCore.ts');
       const canonical = C.cadenceAnswer(url.searchParams.get('text') || '');
       const when = canonical ? C.chaseAtFor(canonical, new Date()) : undefined;
       return send(res, 200, canonical && when ? { ok: true, canonical, at: when.toISOString() } : { ok: false });

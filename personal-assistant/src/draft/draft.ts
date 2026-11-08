@@ -56,7 +56,7 @@ ${VOICE}
 - Never invent facts, numbers, links, decisions or people. If you do not know, say you will check.
 - Under 120 words. Output only the message text — no subject line, no quotes, no commentary.`;
 
-// A follow-up on something I am owed (src/durable/tasks/chase.js): short,
+// A follow-up on something I am owed (src/durable/tasks/chase.ts): short,
 // friendly, in the same thread, asking where it stands.
 const NUDGE_SYSTEM = `You draft a short follow-up on behalf of a software engineer, to someone who promised them something and has not delivered it yet.
 The engineer reads every draft and sends it themselves.

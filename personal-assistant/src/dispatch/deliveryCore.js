@@ -12,7 +12,7 @@
 // The operator chooses it (operator decision 2026-11-02: no ceiling). The PA
 // sets it on every factory job (`--delivery`, always sent) and, for a Claude
 // Code session, carries it out itself when the session ends
-// (src/durable/tasks/runReview.js). Where it comes from, in order:
+// (src/durable/tasks/runReview.ts). Where it comes from, in order:
 //
 //   1. explicit   `pa do --delivery …`, or the level picked on the card at accept
 //   2. mode       an explicit legacy `--mode` (local→none, branch→branch, mr/full→draft_pr)
@@ -205,7 +205,7 @@ function sourceLine(source, phrase = null, slug = null) {
 
 /**
  * What the assistant does when a Claude session ends, per delivery level
- * (src/durable/tasks/runReview.js). `null` — a run from before delivery levels
+ * (src/durable/tasks/runReview.ts). `null` — a run from before delivery levels
  * — keeps the old behaviour (draft PR; merge only on PA_MERGE_REPOS).
  */
 function finishPlan(d) {

@@ -222,7 +222,7 @@ function create(db: Db) {
       );
     },
 
-    // --- for src/durable/tasks/chase.js
+    // --- for src/durable/tasks/chase.ts
 
     /** How many nudges were drafted today. */
     async nudgesToday() {

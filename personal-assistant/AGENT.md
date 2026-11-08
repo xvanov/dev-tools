@@ -390,7 +390,7 @@ accept such a card without a terminal. There is no ceiling (operator decision 20
 and `pa do` say what these two do in plain words. A Claude session runs in the mode its level maps to (`D.modeFor`;
 `push_to_main` runs as `local`: no push credentials in its environment and its worktree's push blocked
 — which stops an accident, not a determined agent, see the residual risk above) and `run_review`
-(src/durable/tasks/runReview.js) does the rest when it ends: merging only on `auto_merge`, pushing
+(src/durable/tasks/runReview.ts) does the rest when it ends: merging only on `auto_merge`, pushing
 to main only on `push_to_main` (branch first, then a fast-forward to exactly the checked commit), and
 either only after `merge.ciGate` passed CI on that commit — polled at most `CI_LIMIT_MS` (30 min),
 never before `CI_SETTLE_MS`, every required check present and green (required checks unreadable →

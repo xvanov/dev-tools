@@ -82,7 +82,7 @@ function create(db: Db) {
       return db.one('select kind, payload from proposal where id = $1', [id]);
     },
 
-    // --- for src/mcp/chatTools.js, src/durable/tasks/chase.js
+    // --- for src/mcp/chatTools.js, src/durable/tasks/chase.ts
 
     /** One proposal's fields for the chat's offer view, or null. */
     async rowForChat(id: number | string) {

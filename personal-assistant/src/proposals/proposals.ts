@@ -136,7 +136,7 @@ async function decide(id: any, { accept, answer = null, delivery = null }: { acc
   if (accept && answer) {
     const q = await repo.proposals.payloadOf(id);
     if (q?.payload?.on === 'cadence') {
-      const canonical = require('../durable/tasks/chaseCore').cadenceAnswer(answer);
+      const canonical = require('../durable/tasks/chaseCore.ts').cadenceAnswer(answer);
       if (!canonical) {
         throw Object.assign(new Error(`"${String(answer).slice(0, 40)}" is not a time I can read — try 5m, 2h, 2d, tomorrow 3pm, mon, or 2026-11-10 14:00`), { status: 400 });
       }

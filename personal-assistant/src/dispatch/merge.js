@@ -1,7 +1,7 @@
 'use strict';
 
 // Merging a finished run's PR, in my own repos only (run_review,
-// src/durable/tasks/runReview.js).
+// src/durable/tasks/runReview.ts).
 //
 // Where other people work, a run's PR stays a draft: when it is marked ready
 // and whether it merges is mine to decide. In the repos I own and listed in

@@ -25,13 +25,21 @@
 // two worker generations, or two processes, never run one task at once, and a
 // worker that dies frees its tasks for the next poll. Tables:
 // sql-sqlite/006_durable.sql; statements: src/repo/sqlite/durable.js.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+type Row = import('../repo/types.ts').Row;
+/** JSON read or built key by key (src/types.ts): loose until its producer is TypeScript. */
+type Json = import('../types.ts').Json;
 
 const crypto = require('crypto');
 const { TimeoutError } = require('absurd-sdk');
 
 /** Thrown inside a handler to park the task; never seen by task code. */
 class Suspend {
-  constructor(runAt, event = null) {
+  runAt: any;
+  event: any;
+  constructor(runAt: any, event: any | null = null) {
     this.runAt = runAt;
     this.event = event;
   }
@@ -40,17 +48,22 @@ class Suspend {
 const BACKOFF_MS = 5000;
 const BACKOFF_MAX_MS = 3600_000;
 
-function iso(ms) {
+function iso(ms: any) {
   return new Date(ms).toISOString();
 }
 
 class SqliteQueue {
+  queue: any;
+  repos: any;
+  connect: any;
+  log: any;
+  handlers: Map<any, any>;
   /**
    * @param {{queueName: string, connect: () => Promise<object>, repos?: object, log?: object}} o
-   *   connect: a session for the worker's leases (src/durable/index.js hands
+   *   connect: a session for the worker's leases (src/durable/durable.ts hands
    *   it the pool's connect); repos: the repository set (default: src/repo).
    */
-  constructor({ queueName, connect, repos = null, log = null }) {
+  constructor({ queueName, connect, repos = null, log = null }: { queueName?: any; connect?: any; repos?: any | null | undefined; log?: any | null | undefined }) {
     this.queue = queueName;
     this.repos = repos || require('../repo');
     this.connect = connect;
@@ -58,18 +71,18 @@ class SqliteQueue {
     this.handlers = new Map();
   }
 
-  registerTask({ name, defaultMaxAttempts = 5 }, handler) {
+  registerTask({ name, defaultMaxAttempts = 5 }: { name?: any; defaultMaxAttempts?: number | undefined }, handler: any) {
     this.handlers.set(name, { handler, maxAttempts: defaultMaxAttempts });
   }
 
-  async spawn(name, params, { idempotencyKey, runAt = null } = {}) {
+  async spawn(name: any, params: any, { idempotencyKey, runAt = null }: { idempotencyKey?: any; runAt?: any | null | undefined } = {}) {
     const t = this.handlers.get(name);
     const key = idempotencyKey || `${name}:${crypto.randomUUID()}`;
     const r = await this.repos.durable.spawnTask({ queue: this.queue, name, params, key, maxAttempts: t ? t.maxAttempts : 5, runAt: runAt ? iso(new Date(runAt).getTime()) : null });
     return { taskID: r.id, created: r.created };
   }
 
-  async emitEvent(name, payload = {}) {
+  async emitEvent(name: any, payload: any = {}) {
     return this.repos.durable.emitEvent(this.queue, name, payload);
   }
 
@@ -80,18 +93,18 @@ class SqliteQueue {
   // sleep's is its wake time (ISO text); an event wait's is the payload. The
   // wait's deadline and a timeout that fired are kept beside it (`@deadline`,
   // `@timeout`), which Absurd holds in its own tables.
-  context(task) {
+  context(task: any) {
     const d = this.repos.durable;
     const id = task.id;
     const used = new Map();
-    const cpName = (name) => {
+    const cpName = (name: any) => {
       const n = (used.get(name) || 0) + 1;
       used.set(name, n);
       return n === 1 ? name : `${name}#${n}`;
     };
     return {
       taskID: id,
-      async step(name, fn) {
+      async step(name: any, fn: any) {
         const cp = cpName(name);
         const had = await d.checkpoint(id, cp);
         if (had) return had.value;
@@ -101,7 +114,7 @@ class SqliteQueue {
         await d.saveCheckpoint(id, cp, saved);
         return saved;
       },
-      async sleepFor(name, seconds) {
+      async sleepFor(name: any, seconds: any) {
         const cp = cpName(name);
         const had = await d.checkpoint(id, cp);
         const until = had && typeof had.value === 'string' ? Date.parse(had.value) : Date.now() + Math.max(0, Number(seconds) || 0) * 1000;
@@ -109,7 +122,7 @@ class SqliteQueue {
         if (Date.now() >= until) return;
         throw new Suspend(iso(until));
       },
-      awaitEvent: async (event, { stepName = null, timeout = null } = {}) => {
+      awaitEvent: async (event: any, { stepName = null, timeout = null }: { stepName?: any | null | undefined; timeout?: any | null | undefined } = {}) => {
         const cp = cpName(stepName || `$awaitEvent:${event}`);
         const had = await d.checkpoint(id, cp);
         if (had) return had.value;
@@ -135,7 +148,7 @@ class SqliteQueue {
   }
 
   /** Runs one claimed task to its next stop: done, parked, retried or failed. */
-  async runTask(task) {
+  async runTask(task: any) {
     const d = this.repos.durable;
     const t = this.handlers.get(task.task_name);
     if (!t) {
@@ -147,7 +160,7 @@ class SqliteQueue {
       const result = await t.handler(task.params || {}, this.context(task));
       await d.complete(task.id, result);
       return 'completed';
-    } catch (err) {
+    } catch (err: any) {
       if (err instanceof Suspend) {
         await d.suspend(task.id, err.runAt, err.event);
         return 'sleeping';
@@ -166,17 +179,17 @@ class SqliteQueue {
    * lease on this worker's session. Resolves {close()}; close() stops polling,
    * waits for the tasks in flight and lets go of the session.
    */
-  async startWorker({ concurrency = 2, pollInterval = 2 } = {}) {
+  async startWorker({ concurrency = 2, pollInterval = 2 }: { concurrency?: number | undefined; pollInterval?: number | undefined } = {}) {
     const session = await this.connect();
     const { createRepos, clientBackend } = require('../repo');
     const leases = createRepos(clientBackend(session)).leases;
     const space = `durable:${this.queue}`;
     const mine = new Map(); // task id -> its run
     let stopped = false;
-    let timer = null;
+    let timer: any = null;
     // One poll at a time: the lease is re-entrant for its holder, so two
     // overlapping polls of this worker could otherwise both start one task.
-    let polling = null;
+    let polling: any = null;
     let again = false;
 
     const poll = async () => {
@@ -213,7 +226,7 @@ class SqliteQueue {
               continue;
             }
             const run = this.runTask(fresh)
-              .catch((err) => this.log.warn(`durable worker: task #${task.id}: ${err.message}`))
+              .catch((err: Error) => this.log.warn(`durable worker: task #${task.id}: ${err.message}`))
               .finally(async () => {
                 mine.delete(task.id);
                 await leases.passUnlock(space, String(task.id)).catch(() => {});
@@ -222,7 +235,7 @@ class SqliteQueue {
             mine.set(task.id, run);
           }
         }
-      } catch (err) {
+      } catch (err: any) {
         this.log.warn(`durable worker poll: ${err.message}`);
       }
       if (!stopped) {

@@ -402,7 +402,7 @@ function create(db: Db) {
       );
     },
 
-    // --- for src/durable/tasks/runReview.js
+    // --- for src/durable/tasks/runReview.ts
 
     /** What a run review needs. */
     async forReview(id: number | string) {

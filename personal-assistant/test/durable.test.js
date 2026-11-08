@@ -1,10 +1,10 @@
 'use strict';
 
-// Durable tasks' pure parts (src/durable/tasks/chaseCore.js): when a chase
+// Durable tasks' pure parts (src/durable/tasks/chaseCore.ts): when a chase
 // looks again, and which commitments are worth chasing.
 
 const assert = require('assert');
-const C = require('../src/durable/tasks/chaseCore');
+const C = require('../src/durable/tasks/chaseCore.ts');
 
 const local = (y, m, d, h = 0, min = 0) => new Date(y, m - 1, d, h, min);
 

@@ -17,7 +17,7 @@ const POOL_ONLY = new Map([
   ['src/routines/index.js', "the routine lock's own connection (getPool().connect); its statements are repo.leases / repo.routines"],
   ['src/worker.js', 'the lease connection (getPool().connect) and close on exit'],
   ['src/cli/index.js', 'the pool lifecycle (db.probe for pa doctor, db.close on exit); its statements are repository methods'],
-  ['src/durable/index.js', 'the pool, handed to absurd-sdk (the queue driver); its statements are repository methods'],
+  ['src/durable/durable.ts','the pool, handed to absurd-sdk (the queue driver); its statements are repository methods'],
   ['src/e2e/deployTest.js', 'its own pg Client to the target store, the producer session; the statement is repo.events.publishProbe'],
   ['src/mcp/server.ts', 'closes the pool on exit; its statements are repository methods'],
   ['src/events/index.js', 'the dedicated LISTEN connection (pg Client); its statements are repo.events'],

@@ -497,7 +497,7 @@ function create(db: Db) {
       );
     },
 
-    // --- for src/durable/tasks/runReview.js
+    // --- for src/durable/tasks/runReview.ts
 
     /** What a run review needs: {id, status, mode, task, commitment_id, machine, mr_url, delivery}. */
     async forReview(id: number | string) {

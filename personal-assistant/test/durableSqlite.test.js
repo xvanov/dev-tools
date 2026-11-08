@@ -1,6 +1,6 @@
 'use strict';
 
-// The SQLite durable queue (src/durable/sqliteQueue.js, D19) behaves as the
+// The SQLite durable queue (src/durable/sqliteQueue.ts, D19) behaves as the
 // tasks expect Absurd to: one task per idempotency key, steps run once across
 // suspensions and retries, sleeps and event waits park the task and resume
 // it, a timeout throws absurd-sdk's TimeoutError, failures retry with backoff
@@ -22,7 +22,7 @@ if (!available()) {
 
 const { TimeoutError } = require('absurd-sdk');
 const { createRepos } = require('../src/repo');
-const { SqliteQueue } = require('../src/durable/sqliteQueue');
+const { SqliteQueue } = require('../src/durable/sqliteQueue.ts');
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 

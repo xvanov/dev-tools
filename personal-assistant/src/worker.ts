@@ -369,7 +369,7 @@ async function main() {
       return () => w.close();
     });
     every(600, 'durable', async () => {
-      await require('./durable/spawners').pass();
+      await require('./durable/spawners.ts').pass();
     });
   }
 

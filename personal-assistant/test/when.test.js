@@ -1,11 +1,11 @@
 'use strict';
 
 // The follow-up box's words (src/util/when.ts) and how a chase uses them
-// (src/durable/tasks/chaseCore.js): pure, local time, a fixed `now`.
+// (src/durable/tasks/chaseCore.ts): pure, local time, a fixed `now`.
 
 const assert = require('assert');
 const { parseWhen } = require('../src/util/when.ts');
-const C = require('../src/durable/tasks/chaseCore');
+const C = require('../src/durable/tasks/chaseCore.ts');
 
 const local = (y, m, d, h = 0, min = 0) => new Date(y, m - 1, d, h, min);
 const thu = local(2026, 11, 5, 14, 10); // a Thursday afternoon

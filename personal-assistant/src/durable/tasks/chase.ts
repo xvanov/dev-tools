@@ -15,23 +15,29 @@
 // still open: one reminder, and the task ends. It never chases twice in a day
 // more than MAX_NUDGES_PER_DAY times across all commitments — an overflow
 // waits for the next morning.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+type Row = import('../../repo/types.ts').Row;
+/** JSON read or built key by key (src/types.ts): loose until its producer is TypeScript. */
+type Json = import('../../types.ts').Json;
 
 const { TimeoutError } = require('absurd-sdk');
 const repo = require('../../repo');
-const C = require('./chaseCore');
+const C = require('./chaseCore.ts');
 
 const name = 'chase';
 
-async function read(commitmentId) {
+async function read(commitmentId: any) {
   return repo.commitments.chaseRead(commitmentId);
 }
 
 // Waits for the close event until `at`. True: it closed.
-async function closedBy(ctx, stepName, commitmentId, at) {
+async function closedBy(ctx: any, stepName: any, commitmentId: any, at: any) {
   try {
     await ctx.awaitEvent(`closed:${commitmentId}`, { stepName, timeout: C.secondsUntil(at) });
     return true;
-  } catch (err) {
+  } catch (err: any) {
     if (err instanceof TimeoutError) return false;
     throw err;
   }
@@ -40,12 +46,12 @@ async function closedBy(ctx, stepName, commitmentId, at) {
 // The cadence I last picked for this person, if any: a span of an hour or
 // more (chaseCore.usualWorthy). "Don't remind me about this one" or "Friday
 // 3pm" was about that ask, so it is not carried to the next.
-async function usualCadence(personId) {
+async function usualCadence(personId: any) {
   const list = await repo.proposals.cadenceAnswers(personId);
-  return list.map((r) => r.answer).find(C.usualWorthy) || null;
+  return list.map((r: any) => r.answer).find(C.usualWorthy) || null;
 }
 
-async function run({ commitmentId }, ctx) {
+async function run({ commitmentId }: { commitmentId?: any }, ctx: any) {
   const first = await ctx.step('read', async () => {
     // Judged first: an answer may already be in, and asking "when should I
     // chase?" about something already answered is the noise this exists to end.
@@ -83,7 +89,7 @@ async function run({ commitmentId }, ctx) {
         stepName: 'wait-cadence',
         timeout: C.secondsUntil(first.never ? new Date(Date.now() + 2 * 86400_000) : first.at),
       });
-    } catch (err) {
+    } catch (err: any) {
       if (!(err instanceof TimeoutError)) throw err;
     }
   }

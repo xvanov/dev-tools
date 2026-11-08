@@ -8,10 +8,16 @@
 // with an idempotency key — so running it twice, or after a crash, starts
 // nothing twice. The key carries a version: `chase2:` since a chase first asks
 // me for its cadence; the `chase:` tasks before it were cancelled.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+type Row = import('../repo/types.ts').Row;
+/** JSON read or built key by key (src/types.ts): loose until its producer is TypeScript. */
+type Json = import('../types.ts').Json;
 
 const repo = require('../repo');
 const { logger } = require('../log.ts');
-const C = require('./tasks/chaseCore');
+const C = require('./tasks/chaseCore.ts');
 
 const log = logger('durable');
 

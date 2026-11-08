@@ -1170,7 +1170,7 @@ function create(db: Db) {
       return r.rowCount || 0;
     },
 
-    // --- for src/mcp, src/durable/tasks/chase.js
+    // --- for src/mcp, src/durable/tasks/chase.ts
 
     /** Open asks for the chat's task list, soonest due first. @param {string} direction owed_by_me | owed_to_me | both */
     async listForTool(direction: unknown, project: unknown, limit: number) {

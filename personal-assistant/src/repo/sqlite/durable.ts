@@ -4,7 +4,7 @@
 // tasks on (D19; sql-sqlite/006_durable.sql). Postgres keeps Absurd until the
 // 3.5 cutover; there the engine is absurd-sdk and only stats() and
 // commitmentsWithoutChase() are repository methods. Here the engine is
-// src/durable/sqliteQueue.js, and every statement it runs is below.
+// src/durable/sqliteQueue.ts, and every statement it runs is below.
 //
 // Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
 
@@ -43,7 +43,7 @@ function create(db: Db) {
       );
     },
 
-    // ---- the queue (src/durable/sqliteQueue.js) ------------------------------
+    // ---- the queue (src/durable/sqliteQueue.ts) ------------------------------
 
     /**
      * Starts task `name` once per `key` in `queue`; a second spawn with the key

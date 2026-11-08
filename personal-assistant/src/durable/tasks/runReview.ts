@@ -25,6 +25,12 @@
 // A run from before delivery levels (delivery null) keeps the old rule: a
 // draft PR, opened without asking, and in my own repos (PA_MERGE_REPOS,
 // src/dispatch/merge.js) marked ready and merged once its checks pass.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+type Row = import('../../repo/types.ts').Row;
+/** JSON read or built key by key (src/types.ts): loose until its producer is TypeScript. */
+type Json = import('../../types.ts').Json;
 
 const { TimeoutError } = require('absurd-sdk');
 const repo = require('../../repo');
@@ -35,16 +41,16 @@ const D = require('../../dispatch/deliveryCore');
 const name = 'run_review';
 const WAIT_RUN_DAYS = 14;
 
-async function awaitOr(ctx, event, stepName, days) {
+async function awaitOr(ctx: any, event: any, stepName: any, days: any) {
   try {
     return await ctx.awaitEvent(event, { stepName, timeout: days * 86400 });
-  } catch (err) {
+  } catch (err: any) {
     if (err instanceof TimeoutError) return null;
     throw err;
   }
 }
 
-async function run({ runId }, ctx) {
+async function run({ runId }: { runId?: any }, ctx: any) {
   const ended = await awaitOr(ctx, `run-ended:${runId}`, 'wait-run', WAIT_RUN_DAYS);
   if (!ended) return { result: 'run never ended' };
 
@@ -107,7 +113,7 @@ async function run({ runId }, ctx) {
         const r = await require('../../dispatch').pushBranch(runId);
         const rr = await repo.runs.repoPathOf(runId);
         return { ok: true, sha: r.sha, base: r.base, branch: r.branch, slug: await merger.slugOf(rr.repo_path).catch(() => null) };
-      } catch (err) {
+      } catch (err: any) {
         return { ok: false, why: String(err.stderr || err.message).trim().slice(0, 200) };
       }
     });
@@ -118,7 +124,7 @@ async function run({ runId }, ctx) {
       try {
         const r = await require('../../dispatch').pushToMain(runId, { sha: pushed.sha, note: gate.note || null });
         return { ok: true, base: r.base };
-      } catch (err) {
+      } catch (err: any) {
         return { ok: false, why: String(err.stderr || err.message).trim().slice(0, 200) };
       }
     });
@@ -156,7 +162,7 @@ async function run({ runId }, ctx) {
 
   // pr: ready for review, never merged.
   if (plan && plan.ready && !plan.merge) {
-    const ready = await ctx.step('ready', () => merger.ready(landed.mrUrl).then(() => ({ ok: true }), (err) => ({ ok: false, why: String(err.stderr || err.message).trim().slice(0, 200) })));
+    const ready = await ctx.step('ready', () => merger.ready(landed.mrUrl).then(() => ({ ok: true }), (err: any) => ({ ok: false, why: String(err.stderr || err.message).trim().slice(0, 200) })));
     await ctx.step('say-ready', () =>
       require('../../notify').notify({
         kind: 'info',
@@ -203,7 +209,7 @@ async function run({ runId }, ctx) {
       // The measured outcome (sql/024, `pa runs stats`).
       await repo.runs.markMergedOutcome(runId, gate.note || null).catch(() => {});
       return { ok: true };
-    } catch (err) {
+    } catch (err: any) {
       return { ok: false, why: String(err.stderr || err.message).trim().slice(0, 200) };
     }
   });
@@ -225,7 +231,7 @@ async function run({ runId }, ctx) {
  * merge.CI_LIMIT_MS (merge.ciGate decides). Elapsed time is counted in polls,
  * not read from the clock, so a replayed task decides the same way.
  */
-async function ciWait(ctx, { slug, sha, base }) {
+async function ciWait(ctx: any, { slug, sha, base }: { slug?: any; sha?: any; base?: any }) {
   const required = await ctx.step('ci-required', () => merger.requiredChecks(slug, base).catch(() => ({ known: false, contexts: [] })));
   const rounds = Math.ceil(merger.CI_LIMIT_MS / merger.CI_POLL_MS) + 1;
   let previous = null;
@@ -239,7 +245,7 @@ async function ciWait(ctx, { slug, sha, base }) {
   return { action: 'block', reason: `CI still running after ${Math.round(merger.CI_LIMIT_MS / 60_000)} min` };
 }
 
-async function blocked(ctx, runId, found, reason, url) {
+async function blocked(ctx: any, runId: any, found: any, reason: any, url: any) {
   await ctx.step('blocked', () => require('../../dispatch').blockRun(runId, reason).then(() => true));
   await ctx.step('say-blocked', () =>
     require('../../notify').notify({

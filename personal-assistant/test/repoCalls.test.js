@@ -35,7 +35,7 @@ function walk(dir, out = []) {
 // Code that only runs on SQLite (PA_DB=sqlite) checks against the SQLite set:
 // the durable queue (D19) calls methods Postgres does not have, since there
 // Absurd runs the tasks.
-const SQLITE_ONLY = new Set(['src/durable/sqliteQueue.js', 'src/durable/sqliteQueue.ts', 'src/backupSqlite.js', 'src/backupSqlite.ts']);
+const SQLITE_ONLY = new Set(['src/durable/sqliteQueue.ts', 'src/backupSqlite.js', 'src/backupSqlite.ts']);
 const sqliteRepos = createRepos({ ...fakeDb, dialect: 'sqlite' });
 
 const missing = [];

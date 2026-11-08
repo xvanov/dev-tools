@@ -1,7 +1,7 @@
 'use strict';
 
 // Aggregate: durable. Tables: the vendored Absurd queue (schema absurd). The
-// queue itself is driven by absurd-sdk on the pool (src/durable/index.js);
+// queue itself is driven by absurd-sdk on the pool (src/durable/durable.ts);
 // these are the reads around it. Callers: src/durable.
 //
 // Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).

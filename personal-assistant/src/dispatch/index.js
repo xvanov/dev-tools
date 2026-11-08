@@ -239,7 +239,7 @@ async function start({
   }
   if (onBranch != null || onPr != null) throw new Error('continuing an existing branch or PR is a factory job — send it --via factory');
   // The end state, for a Claude session: what the PA does when it ends
-  // (src/durable/tasks/runReview.js), and the session's own mode, enforced in
+  // (src/durable/tasks/runReview.ts), and the session's own mode, enforced in
   // its worktree. Plan mode delivers nothing.
   const chosen = await sessionDelivery({ modeName, delivery, deliverySource, deliveryPhrase, task, commitmentId, repoPath });
   requireConfirmed(chosen.delivery, confirmedUnattended);
@@ -399,7 +399,7 @@ async function start({
   if (commitmentId) {
     await ledger.transition({ commitmentId, to: 'dispatched', actor: 'dispatch', reason: `run #${run.id}`, from: ['open'] });
   }
-  // When the session ends, a durable task offers to land it (src/durable/tasks/runReview.js).
+  // When the session ends, a durable task offers to land it (src/durable/tasks/runReview.ts).
   await require('../durable')
     .spawn('run_review', { runId: Number(run.id) }, { key: `run:${run.id}` })
     .catch((err) => log.warn('run review not scheduled', { run: run.id, message: err.message }));
@@ -878,7 +878,7 @@ async function drop(runId, { force = false } = {}) {
 async function markDone(runId, note) {
   require('./remote').removeNoGhDirs(runId);
   await repository.runs.markDone(runId, note || null);
-  // Wakes its run_review task (src/durable/tasks/runReview.js).
+  // Wakes its run_review task (src/durable/tasks/runReview.ts).
   await require('../durable').emit(`run-ended:${runId}`, { note: note || null }).catch(() => {});
 }
 

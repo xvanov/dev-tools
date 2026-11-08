@@ -1190,7 +1190,7 @@
         "Cutover (3.5)": "docs/native/CUTOVER-SQLITE.md: rehearse (export + compare while running), stop writers, export, compare, PA_DB=sqlite in .env, start, verify (doctor, live feed, e2e, backup drill); rollback is unsetting PA_DB (Postgres is never written). Done on both stacks 2026-11-08: personal (a near-empty store, seconds), then work (export 90 s, board reads identical, about 5 min down, restore drill PASS: 79 tables in 18 s)",
         "Backups (3.5 prep)":"src/backupSqlite.ts, behind the same pa backup / pa backup restore --to / pa restore: VACUUM INTO snapshots on a read-only connection (consistent, compacted, still encrypted with PA_SQLITE_KEY): pa-latest.sqlite refreshed by the hourly backup pass when older than PA_SQLITE_SNAPSHOT_MINUTES (RPO), the nightly encrypted .pabak bundle with pa.sqlite and a manifest; the drill restores into a new scratch file and runs integrity_check, the FTS integrity checks, foreign_key_check, row counts and a search. Not Litestream: it cannot open a SQLCipher file and has no supported Windows build. Work stack size: 453 MB snapshot in 6 s, bundle 10 s, drill 10-12 s",
         "Export (plan 3.3)": "pa db export --to sqlite <file> (src/db/export.ts): a read-only snapshot of Postgres into a new SQLite file, ids kept, vectors float for float (D5), Absurd's tasks into the SQLite queue, row counts and sampled vectors verified",
-        "Durable tasks (D19)": "Absurd is Postgres-only, so on SQLite the same tasks run on src/durable/sqliteQueue.js: spawn once per key, step checkpoints, sleepFor, awaitEvent with timeout, retries with backoff, over sql-sqlite/006 (durable_task, durable_checkpoint, durable_event); a worker's claim on a task is a lease row. src/durable/index.js picks the engine by store"
+        "Durable tasks (D19)": "Absurd is Postgres-only, so on SQLite the same tasks run on src/durable/sqliteQueue.ts: spawn once per key, step checkpoints, sleepFor, awaitEvent with timeout, retries with backoff, over sql-sqlite/006 (durable_task, durable_checkpoint, durable_event); a worker's claim on a task is a lease row. src/durable/index.js picks the engine by store"
       },
       "env": [
         {
@@ -1213,7 +1213,7 @@
         "personal-assistant/sql-sqlite",
         "personal-assistant/src/db/sqlite.ts",
         "personal-assistant/src/repo/sqlite",
-        "personal-assistant/src/durable/sqliteQueue.js",
+        "personal-assistant/src/durable/sqliteQueue.ts",
         "personal-assistant/src/db/export.ts",
         "personal-assistant/src/db/shadow.ts",
         "personal-assistant/test/contract/_backends.js",
