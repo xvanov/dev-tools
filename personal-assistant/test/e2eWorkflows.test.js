@@ -447,7 +447,7 @@ test('teams-ask dry run: --test-chat is checked against the store', async () => 
 
 const P = require('../src/policy');
 
-function prJson({ head = 'a'.repeat(40), state = 'OPEN', merged = false, unresolved = 2, ci = 'SUCCESS', newest = 12, fork = false } = {}) {
+function prJson({ head = 'a'.repeat(40), state = 'OPEN', merged = false, unresolved = 2, ci = 'SUCCESS', newest = 12, fork = false, opened = [] } = {}) {
   return {
     data: {
       repository: {
@@ -457,7 +457,8 @@ function prJson({ head = 'a'.repeat(40), state = 'OPEN', merged = false, unresol
           reviewThreads: { nodes: [...Array(unresolved).fill({ isResolved: false }), { isResolved: true }] },
           commits: { nodes: [{ commit: { oid: head, statusCheckRollup: ci ? { state: ci } : null } }] },
         },
-        pullRequests: { nodes: [{ number: newest }] },
+        // `opened`: PRs newer than #12, newest first, as [number, branch]
+        pullRequests: { nodes: [...opened.map(([number, headRefName]) => ({ number, headRefName })), { number: newest, headRefName: 'fix/retry' }] },
       },
     },
   };
@@ -520,7 +521,9 @@ test('review-fix: factory_continue on the PR through the approval; fast-forward,
 test('review-fix: a force push, a new PR, a merge or red CI fails the run', async () => {
   const cases = [
     [{ compare: 'diverged' }, 'pushed fast-forward (no force push)'],
-    [{ after: { newest: 13 } }, 'same branch, no new PR opened'],
+    [{ after: { opened: [[13, 'fix/retry']] } }, 'same branch, no new PR opened'],
+    [{ after: { opened: [[13, 'factory/story-7']] }, job: { stories: [{ id: 7, branch: 'factory/story-7' }] } }, 'same branch, no new PR opened'],
+    [{ job: { pr_urls: ['https://github.com/xvanov/dev-tools/pull/12', 'https://github.com/xvanov/dev-tools/pull/14'] } }, 'same branch, no new PR opened'],
     [{ after: { state: 'MERGED', merged: true } }, 'nothing merged; the PR is still open'],
     [{ after: { ci: 'FAILURE' } }, 'CI green on the new head'],
     [{ after: { head: 'a'.repeat(40) } }, 'PR #12 got new commits'],
@@ -531,6 +534,16 @@ test('review-fix: a force push, a new PR, a merge or red CI fails the run', asyn
     assert.strictEqual(s.ok, false, name);
     assert.ok(s.checks.some((c) => c.check === name && !c.ok), `${name}: ${JSON.stringify(s.checks.filter((c) => !c.ok))}`);
   }
+});
+
+test('review-fix: a PR someone else opens in the repo meanwhile is not the job\'s new PR (8.4.42)', async () => {
+  const { deps } = reviewFixDeps({ after: { opened: [[69, 'factory/65-other-story']] }, job: { pr_urls: ['https://github.com/xvanov/dev-tools/pull/12'], stories: [{ id: 201, branch: 'fix/retry', pr_url: 'https://github.com/xvanov/dev-tools/pull/12', pr_number: 12 }] } });
+  const s = await R.main('review-fix', { pr: '12' }, {}, deps);
+  const c = s.checks.find((x) => x.check === 'same branch, no new PR opened');
+  assert.ok(c && c.ok, JSON.stringify(c));
+  assert.strictEqual(c.detail, "the job's only PR is #12; #69 opened meanwhile from other branches, not counted");
+  assert.strictEqual(s.ok, true, JSON.stringify(s.failed.concat(s.errors)));
+  assert.deepStrictEqual(W.jobPrs({ pr_urls: ['https://github.com/o/r/pull/12'], stories: [{ pr_number: 14, branch: 'b1' }, { pr_url: 'https://github.com/o/r/pull/15' }], base: { branch: 'fix/retry' } }), { prs: [12, 14, 15], branches: ['b1', 'fix/retry'] });
 });
 
 test('review-fix: a job for an app nothing ticks, or a PR with nothing to fix, starts no wait', async () => {

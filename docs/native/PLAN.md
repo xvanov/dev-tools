@@ -1354,11 +1354,18 @@ not in the Map is not done, and a new one gets added there first.
     the Map's review-fix says "Billed to the subscription: cost_usd 0" with a $0 ceiling, so the
     cost criterion cannot pass. Run a `claude_session` solo job's other steps on the subscription
     too (or skip them: tech_writer's spec landed nowhere in the PR), or change the Map's cost.
-  - [ ] **8.4.42 review-fix: the "no new PR" check counts anyone's PR.** `reviewFixChecks`
+  - [x] **8.4.42 review-fix: the "no new PR" check counts anyone's PR.** `reviewFixChecks`
     compares the repo's newest PR number before and after. During the run, the work stack's
     factory opened #69 in xvanov/dev-tools (22:45:13Z, a story-65 branch), so the check would have
     failed although this job's only PR is #66. Check the job's own PRs (`pr_urls`, its stories'
     PRs) or PRs from branches the job pushed.
+    Done. The PR read now lists the repo's 20 newest PRs with their head branches. A new PR
+    counts against the job when the job links it (`pr_urls`, its stories' PRs, other than the
+    input PR) or when it was opened during the run from one of the job's branches (the PR's own,
+    `base.branch`, its stories' branches). Others opened meanwhile are named in the check's
+    detail, not counted. On #66's live answer the check passes with "the job's only PR is #66;
+    #69 opened meanwhile from other branches, not counted". (this commit:
+    `fix(personal-assistant): count only the job's own PRs in review-fix`)
   - [ ] **8.4.43 review-fix: the dry run's claude check fails over `--on`.** `claudeAuth` runs
     bare `claude auth status` through the factory machine's termhub exec, whose PATH lacks
     `~/.local/bin`, so it fails with `spawn claude ENOENT`. claude is installed there and logged in

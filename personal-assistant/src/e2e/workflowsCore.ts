@@ -15,6 +15,7 @@
 //   summary({...})                       the JSON summary written next to the evidence
 //   wav(pcm, rate)                       raw 16-bit mono PCM -> a WAV file (TTS output -> transcribe input)
 //   prFacts / prReady / reviewFixChecks  review-fix: its PR before and after the job, held to the outcome
+//   jobPrs(job)                          review-fix: the PRs and branches a job status calls its own
 //   teamsMarker / teamsPhrase            teams-ask: what you type into the test chat (the run sends nothing)
 //   ownerIds / testChatChecks            teams-ask: the test chat is stored and only you are in it
 //   teamsHops / teamsCardChecks          teams-ask: the hops on the rows' own clocks; person, due, link
@@ -156,7 +157,7 @@ function teamsCardChecks(card: Json, { item, due, meName }: { item: Json; due: s
 
 // --- review-fix: one PR read, before and after the job ----------------------------------------
 
-/** One GraphQL read: the PR (head, state, threads, CI on its head) and the repo's newest PR. */
+/** One GraphQL read: the PR (head, state, threads, CI on its head) and the repo's newest PRs with their branches. */
 const PR_QUERY = `query($owner: String!, $name: String!, $number: Int!) {
   repository(owner: $owner, name: $name) {
     pullRequest(number: $number) {
@@ -164,7 +165,7 @@ const PR_QUERY = `query($owner: String!, $name: String!, $number: Int!) {
       reviewThreads(first: 100) { nodes { isResolved } }
       commits(last: 1) { nodes { commit { oid statusCheckRollup { state } } } }
     }
-    pullRequests(first: 1, orderBy: { field: CREATED_AT, direction: DESC }) { nodes { number } }
+    pullRequests(first: 20, orderBy: { field: CREATED_AT, direction: DESC }) { nodes { number headRefName } }
   }
 }`;
 
@@ -172,8 +173,10 @@ const PR_QUERY = `query($owner: String!, $name: String!, $number: Int!) {
 type PrFacts = {
   number: number; state: string; merged: boolean; draft: boolean; fork: boolean; url: string | null;
   branch: string | null; head: string | null; base: string | null; unresolved: number; threads: number;
-  ci: string | null; newestPr: number | null;
+  ci: string | null; newestPr: number | null; recent: Array<{ number: number; branch: string | null }>;
 };
+/** What the job says is its own (job status): its PRs' numbers and the branches it pushed. */
+type JobPrs = { prs: number[]; branches: string[] };
 
 /** Pure. PR_QUERY's answer as PrFacts; null when the PR is not there. */
 function prFacts(raw: Json | null | undefined): PrFacts | null {
@@ -182,14 +185,31 @@ function prFacts(raw: Json | null | undefined): PrFacts | null {
   if (!pr || typeof pr !== 'object') return null;
   const threads: Json[] = Array.isArray(pr.reviewThreads?.nodes) ? pr.reviewThreads.nodes : [];
   const last = Array.isArray(pr.commits?.nodes) ? pr.commits.nodes[0]?.commit : null;
-  const newest = Number(repo?.pullRequests?.nodes?.[0]?.number);
+  const nodes: Json[] = Array.isArray(repo?.pullRequests?.nodes) ? repo.pullRequests.nodes : [];
+  const newest = Number(nodes[0]?.number);
   return {
     number: Number(pr.number), state: String(pr.state || ''), merged: Boolean(pr.merged), draft: Boolean(pr.isDraft), fork: Boolean(pr.isCrossRepository),
     url: pr.url || null, branch: pr.headRefName || null, head: pr.headRefOid || null, base: pr.baseRefName || null,
     unresolved: threads.filter((t) => t && !t.isResolved).length, threads: threads.length,
     ci: last && (!pr.headRefOid || last.oid === pr.headRefOid) ? (last.statusCheckRollup?.state || 'NONE') : null,
     newestPr: Number.isInteger(newest) ? newest : null,
+    recent: nodes.filter((p) => Number.isInteger(Number(p?.number))).map((p) => ({ number: Number(p.number), branch: p.headRefName || null })),
   };
+}
+
+/** Pure. The job's own PRs and branches from its status (`pr_urls`, its stories' PRs and branches, its base). */
+function jobPrs(job: Json | null | undefined): JobPrs {
+  const prs = new Set<number>();
+  const branches = new Set<string>();
+  const num = (url: unknown) => Number((/\/pull\/(\d+)/.exec(String(url || '')) || [])[1]);
+  for (const u of Array.isArray(job?.pr_urls) ? job.pr_urls : []) if (num(u) > 0) prs.add(num(u));
+  for (const s of Array.isArray(job?.stories) ? job.stories : []) {
+    const n = Number(s?.pr_number) || num(s?.pr_url);
+    if (n > 0) prs.add(n);
+    if (s?.branch) branches.add(String(s.branch));
+  }
+  if (job?.base?.branch) branches.add(String(job.base.branch));
+  return { prs: [...prs], branches: [...branches] };
 }
 
 /** Pure. Whether a PR can be review-fixed: there, open, ours, with something to fix. */
@@ -211,17 +231,27 @@ const CI_PENDING = new Set(['PENDING', 'EXPECTED']);
  * Pure. The review-fix outcome (8.4.25): the same PR got new commits by
  * fast-forward (`compare` = GitHub's compare of the old head to the new:
  * status `ahead` means the old head is an ancestor, so nothing was force-pushed),
- * no new PR was opened, nothing was merged, CI is green on the new head.
+ * the job opened no new PR, nothing was merged, CI is green on the new head.
+ * A new PR is the job's when the job links it (`job`: jobPrs) or its head is
+ * one of the job's branches; others' PRs opened meanwhile do not count (8.4.42:
+ * a second factory works the same repo).
  */
-function reviewFixChecks(before: PrFacts, after: PrFacts | null, compare: Json | null): Check[] {
+function reviewFixChecks(before: PrFacts, after: PrFacts | null, compare: Json | null, job: JobPrs = { prs: [], branches: [] }): Check[] {
   const view = 'github';
   if (!after) return [{ view, check: `PR #${before.number} still there after the job`, ok: false, detail: 'not found' }];
   const moved = Boolean(after.head && after.head !== before.head);
   const ff = moved && compare?.status === 'ahead';
+  const branches = new Set([before.branch, ...job.branches].filter(Boolean));
+  const opened = after.recent.filter((p) => p.number > (before.newestPr ?? before.number) && p.number !== before.number);
+  const ours = [...new Set([...job.prs.filter((n) => n !== before.number), ...opened.filter((p) => p.branch && branches.has(p.branch)).map((p) => p.number)])].sort((a, b) => a - b);
+  const others = opened.filter((p) => !ours.includes(p.number)).map((p) => p.number);
+  const prDetail = ours.length
+    ? `new PR${ours.length > 1 ? 's' : ''} ${ours.map((n) => `#${n}`).join(', ')} from the job`
+    : `the job's only PR is #${before.number}${others.length ? `; ${others.map((n) => `#${n}`).join(', ')} opened meanwhile from other branches, not counted` : ''}`;
   return [
     { view, check: `PR #${before.number} got new commits`, ok: moved, detail: moved ? `${String(before.head).slice(0, 10)} → ${String(after.head).slice(0, 10)}${compare?.ahead_by != null ? ` (+${compare.ahead_by})` : ''}` : 'head unchanged' },
     { view, check: 'pushed fast-forward (no force push)', ok: ff, detail: !moved ? 'nothing pushed' : compare ? `compare ${compare.status}${compare.behind_by ? `, ${compare.behind_by} behind` : ''}` : 'compare not readable' },
-    { view, check: 'same branch, no new PR opened', ok: after.branch === before.branch && after.newestPr === before.newestPr, detail: `newest PR #${after.newestPr} (was #${before.newestPr})` },
+    { view, check: 'same branch, no new PR opened', ok: after.branch === before.branch && !ours.length, detail: after.branch === before.branch ? prDetail : `branch ${after.branch} (was ${before.branch}); ${prDetail}` },
     { view, check: 'nothing merged; the PR is still open', ok: after.state === 'OPEN' && !after.merged, detail: after.merged ? 'merged' : after.state.toLowerCase() },
     { view, check: 'CI green on the new head', ok: moved && after.ci === 'SUCCESS', detail: `CI ${after.ci || 'unknown'}${after.ci && CI_PENDING.has(after.ci) ? ' (still running at the deadline)' : ''}` },
   ];
@@ -398,4 +428,4 @@ function ndjson(text: unknown): Json[] {
   }).filter(Boolean) as Json[];
 }
 
-module.exports = { REAL_RUN, TEAMS_MARKER_MIN, teamsMarker, teamsPhrase, ownerIds, testChatChecks, teamsHops, teamsCardChecks, PR_QUERY, CI_PENDING, prFacts, prReady, reviewFixChecks, workflows, acceptance, scoreHops, toolCallMs, scoreCost, missingViews, shotChecks, folderName, summary, table, wav, ndjson };
+module.exports = { REAL_RUN, TEAMS_MARKER_MIN, teamsMarker, teamsPhrase, ownerIds, testChatChecks, teamsHops, teamsCardChecks, PR_QUERY, CI_PENDING, prFacts, prReady, jobPrs, reviewFixChecks, workflows, acceptance, scoreHops, toolCallMs, scoreCost, missingViews, shotChecks, folderName, summary, table, wav, ndjson };

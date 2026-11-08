@@ -490,7 +490,7 @@ async function reviewFix(acc: Acceptance, o: Options, deps: Deps, folder: string
       after = await prRead(deps, o.repo, o.pr);
     }
     const compare = after?.head && after.head !== before.head ? await G.safely(() => compareHeads(deps, o.repo, before.head, after.head)) : null;
-    checks.push(...W.reviewFixChecks(before, after, compare?.ok ? compare.value : null));
+    checks.push(...W.reviewFixChecks(before, after, compare?.ok ? compare.value : null, W.jobPrs(lastJob)));
     measured.github = after?.ci && !W.CI_PENDING.has(after.ci) ? { ms: deps.now() - tCi, note: `CI ${after.ci} on ${String(after.head).slice(0, 10)}; counted from the job's end (the watch ran inside the job)` } : { ms: null, note: `CI ${after?.ci || 'unknown'} at the deadline` };
     measured.worker = { ms: null, note: 'state change to board redraw: measured by E3/0.4, not by this run' };
     if (after) notes.push(`review threads: ${before.unresolved} unresolved before, ${after.unresolved} after (the factory pushes fixes; resolving a thread is the reviewer's)`);
