@@ -357,12 +357,22 @@ run mid-step; a job continued on an existing branch (`--branch`).
   retry then failed on the dead attempt's worktree (fixed: 0772cec, a1b1cab, 5e2228f). The second
   (dev-tools:017) was green, slowly: PR at 1707 s, CI done at 1865 s, after an Azure
   content-filter refusal on deepseek-v4-pro (retried by the factory) and a hung commit.
-  - [ ] **E6.1 The API dev agent breaks the shell and hook rules on Windows.** It hangs
+  - [x] **E6.1 The API dev agent breaks the shell and hook rules on Windows.** It hangs
     PowerShell at a `>>` prompt with multi-line `-m` arguments (minutes of Ctrl-C each), commits
     with --no-verify, and once pushed and opened a PR itself (#43, closed). The prompt says not
     to (73e824d) and dev-tools:017 did it again, so this needs a guard in the runtime: detect a
     continuation prompt and answer the agent at once, and refuse `--no-verify`, `git push` and
     `gh pr` in the API terminal (delivery is the factory's).
+    Done: `factory/terminal_guard.py` replaces the API agent's `terminal` tool (same name and
+    params, after the sandbox rewrite; on Windows and Linux, not claude_session). Before the shell
+    sees a command it refuses, with an immediate tool error that says what to do instead: a newline
+    inside a quoted argument (PowerShell: any newline, an unterminated quote or bracket, a trailing
+    pipe); `--no-verify`, `git commit -n`, `core.hooksPath`, `DEVTOOLS_SKIP_TESTS`; `git push`;
+    `gh pr` other than view/list/status/checks/diff/checkout; `gh api` other than GET (also inside
+    `bash -c`, `pwsh -Command`, `python -c`). Ctrl-C did not clear the `>>` prompt in dev-tools:017
+    (only a reset did), so an observation stuck at `>>` on PowerShell resets the terminal and
+    returns the error; tested against a real PowerShell. If the guard cannot install, the run is
+    refused (fail safe).
 - [ ] **Exit E:** the user runs the golden path by voice ("start a factory job for …"), watches
   it in Plan, Build and Run, drills down from the card to the live session and the PR, and
   each hop meets its timing target.
