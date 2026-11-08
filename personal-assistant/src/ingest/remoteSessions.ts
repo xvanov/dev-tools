@@ -32,7 +32,7 @@ type Db = import('../repo/types.ts').Db;
 const os = require('os');
 const { config } = require('../config.ts');
 const { saveItems, saveCursor, getCursor, recordError } = require('./store.ts');
-const { parseTranscript, toItem } = require('./claudeSessions.ts');
+const { parseTranscriptAsync, toItem } = require('./claudeSessions.ts');
 const { logger } = require('../log.ts');
 
 const log = logger('remote-sessions');
@@ -120,7 +120,7 @@ async function runMachine(machine: any, termhub: any) {
       continue;
     }
     keep[t.id] = { mtimeMs: t.mtimeMs, size: t.size };
-    const parsed = parseTranscript(text);
+    const parsed = await parseTranscriptAsync(text);
     if (parsed.turns.length) items.push(toItem(parsed, t.id, { machine: machine.name }));
   }
 

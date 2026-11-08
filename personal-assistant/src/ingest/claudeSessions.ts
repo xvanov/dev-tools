@@ -55,43 +55,76 @@ function isHumanPrompt(entry: any) {
   return Boolean(entry.promptSource);
 }
 
+// A transcript is append-only JSONL, so the parse is a fold over lines: a
+// parser fed the lines appended since the last pass ends in the same state as
+// one fed the whole file again.
+function createParser() {
+  const s = { sessionId: null as any, title: null as any, cwd: null as any, gitBranch: null as any, firstAt: null as any, lastAt: null as any, turns: [] as any[] };
+  return {
+    /** Folds one line in; false when it is not JSON (a half-written last line while a session is live). */
+    line(line: string) {
+      if (!line.trim()) return true;
+      let entry: any;
+      try {
+        entry = JSON.parse(line);
+      } catch {
+        return false;
+      }
+      if (entry.sessionId) s.sessionId = entry.sessionId;
+      if (entry.type === 'ai-title' && entry.aiTitle) s.title = entry.aiTitle;
+      if (entry.cwd) s.cwd = entry.cwd;
+      if (entry.gitBranch) s.gitBranch = entry.gitBranch;
+      if (entry.timestamp) {
+        s.firstAt = s.firstAt || entry.timestamp;
+        s.lastAt = entry.timestamp;
+      }
+      if (isHumanPrompt(entry)) {
+        const body = textOf(entry.message.content).trim();
+        if (body) s.turns.push({ role: 'me', at: entry.timestamp, text: body });
+      } else if (entry.type === 'assistant') {
+        const body = textOf(entry.message?.content).trim();
+        if (body) s.turns.push({ role: 'claude', at: entry.timestamp, text: body });
+      }
+      return true;
+    },
+    result() {
+      return { ...s, turns: s.turns.slice() };
+    },
+  };
+}
+
 function parseTranscript(text: any) {
-  const turns: any[] = [];
-  let sessionId: any = null;
-  let title: any = null;
-  let cwd: any = null;
-  let gitBranch: any = null;
-  let firstAt: any = null;
-  let lastAt: any = null;
+  const p = createParser();
+  for (const line of String(text).split('\n')) p.line(line);
+  return p.result();
+}
 
-  for (const line of text.split('\n')) {
-    if (!line.trim()) continue;
-    let entry: any;
-    try {
-      entry = JSON.parse(line);
-    } catch {
-      continue; // a half-written last line while a session is live
-    }
+// The worker's event loop serves the voice path: a 30 MB transcript parsed in
+// one go held it for half a second or more.
+const YIELD_MS = 10;
+const nextTurn = () => new Promise<void>((resolve) => setImmediate(resolve));
 
-    if (entry.sessionId) sessionId = entry.sessionId;
-    if (entry.type === 'ai-title' && entry.aiTitle) title = entry.aiTitle;
-    if (entry.cwd) cwd = entry.cwd;
-    if (entry.gitBranch) gitBranch = entry.gitBranch;
-    if (entry.timestamp) {
-      firstAt = firstAt || entry.timestamp;
-      lastAt = entry.timestamp;
-    }
-
-    if (isHumanPrompt(entry)) {
-      const body = textOf(entry.message.content).trim();
-      if (body) turns.push({ role: 'me', at: entry.timestamp, text: body });
-    } else if (entry.type === 'assistant') {
-      const body = textOf(entry.message?.content).trim();
-      if (body) turns.push({ role: 'claude', at: entry.timestamp, text: body });
+/** Feeds `text`'s lines to `parser`, letting the event loop run every YIELD_MS. */
+async function feedLines(parser: { line(l: string): boolean }, text: string) {
+  let start = 0;
+  let since = Date.now();
+  while (start < text.length) {
+    let end = text.indexOf('\n', start);
+    if (end < 0) end = text.length;
+    parser.line(text.slice(start, end));
+    start = end + 1;
+    if (Date.now() - since >= YIELD_MS) {
+      await nextTurn();
+      since = Date.now();
     }
   }
+}
 
-  return { sessionId, title, cwd, gitBranch, firstAt, lastAt, turns };
+/** parseTranscript, yielding the event loop as it goes. */
+async function parseTranscriptAsync(text: any) {
+  const p = createParser();
+  await feedLines(p, String(text));
+  return p.result();
 }
 
 // `machine` is set for a session read from another machine's termhub
@@ -148,13 +181,57 @@ function transcriptFiles() {
       if (!file.endsWith('.jsonl')) continue;
       const p = path.join(full, file);
       try {
-        out.push({ path: p, mtime: fs.statSync(p).mtimeMs });
+        const st = fs.statSync(p);
+        out.push({ path: p, mtime: st.mtimeMs, size: st.size });
       } catch {
         /* vanished mid-scan */
       }
     }
   }
   return out.sort((a, b) => b.mtime - a.mtime).slice(0, MAX_SESSIONS_PER_PASS);
+}
+
+// What each transcript held at the last pass: {mtime, size, offset (the bytes
+// folded in, up to a line end), parser, item}. Every pass used to read and
+// parse the 40 newest whole (100 MB on the work laptop) to find one changed.
+type Seen = { mtime: number; size: number; offset: number; parser: ReturnType<typeof createParser>; item: any };
+const seen = new Map<string, Seen>();
+
+/** The item for transcript `f` ({path, mtime, size}), reading only what was appended since last time. Null when it has no turns. */
+async function readTranscript(f: { path: string; mtime: number; size: number }, cache: Map<string, Seen> = seen) {
+  const prior = cache.get(f.path);
+  if (prior && prior.mtime === f.mtime && prior.size === f.size) return prior.item;
+  // Grown: carry on from the last line end. Anything else (shrunk, rewritten
+  // in place) is read again from the start.
+  const c: Seen = prior && f.size > prior.size ? prior : { mtime: 0, size: 0, offset: 0, parser: createParser(), item: null };
+  // One byte before the offset must still be the line end it was cut at.
+  const from = c.offset > 0 ? c.offset - 1 : 0;
+  const buf = Buffer.alloc(Math.max(0, f.size - from));
+  const fh = await fs.promises.open(f.path, 'r');
+  let bytesRead = 0;
+  try {
+    ({ bytesRead } = await fh.read(buf, 0, buf.length, from));
+  } finally {
+    await fh.close().catch(() => {});
+  }
+  if (c.offset > 0 && buf[0] !== 0x0a) {
+    cache.delete(f.path);
+    return readTranscript(f, cache);
+  }
+  const head = c.offset > 0 ? 1 : 0;
+  const nl = bytesRead > 0 ? buf.lastIndexOf(0x0a, bytesRead - 1) : -1;
+  const whole = nl < head ? head : nl + 1;
+  await feedLines(c.parser, buf.toString('utf8', head, whole));
+  c.offset = from + whole;
+  // A last line with no line end yet: kept only once it is whole JSON.
+  const tail = buf.toString('utf8', whole, bytesRead);
+  if (tail.trim() && c.parser.line(tail)) c.offset = from + bytesRead;
+  c.mtime = f.mtime;
+  c.size = f.size;
+  const parsed = c.parser.result();
+  c.item = parsed.turns.length ? toItem(parsed, f.path) : null;
+  cache.set(f.path, c);
+  return c.item;
 }
 
 async function run() {
@@ -166,16 +243,17 @@ async function run() {
   }
 
   const items: any[] = [];
+  const listed = new Set(files.map((f: any) => f.path));
+  for (const p of seen.keys()) if (!listed.has(p)) seen.delete(p);
   for (const f of files) {
-    let text: any;
+    let item: any;
     try {
-      text = fs.readFileSync(f.path, 'utf8');
+      item = await readTranscript(f);
     } catch {
+      seen.delete(f.path);
       continue;
     }
-    const parsed = parseTranscript(text);
-    if (!parsed.turns.length) continue;
-    items.push(toItem(parsed, f.path));
+    if (item) items.push(item);
   }
 
   return saveItems('claude_session', items, {
@@ -185,4 +263,4 @@ async function run() {
   });
 }
 
-module.exports = { run, id: 'claude_session', parseTranscript, toItem, transcriptFiles };
+module.exports = { run, id: 'claude_session', parseTranscript, parseTranscriptAsync, readTranscript, toItem, transcriptFiles };

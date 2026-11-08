@@ -677,8 +677,9 @@ is why sessions survive updates and why the API you want is on `sessiond`.
 
 Claude sessions on other machines are read the same way: termhub serves `~/.claude/projects/`
 read-only (`GET /api/claude/transcripts`, `GET /api/claude/transcript?id=`), and
-`src/ingest/remoteSessions.js` stores them through the local pass's own `parseTranscript`/`toItem`
-— one parser for both. Their ids and threads are prefixed `<machine>:` so a remote row can never
+`src/ingest/remoteSessions.js` stores them through the local pass's own parser
+(`parseTranscriptAsync`, which yields the event loop) and `toItem` — one parser for both. The
+local pass reads only the bytes a transcript gained since its last pass. Their ids and threads are prefixed `<machine>:` so a remote row can never
 overwrite a local one. Do not add a second way to fetch them (an SSH copy, a share): termhub is the
 one boundary that is already safe to expose.
 
