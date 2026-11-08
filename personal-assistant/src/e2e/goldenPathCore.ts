@@ -244,7 +244,12 @@ function hopsFor(o: { resume?: boolean } = {}): Hop[] {
   return out;
 }
 
-/** Pure. The dummy card: small, real, harmless (PLAN.md Track E), tagged with the run's marker. */
+/**
+ * Pure. The dummy card: small, real, harmless (PLAN.md Track E), tagged with
+ * the run's marker. The ask is the change only: delivery (draft or ready PR,
+ * never merged) is the factory's, and its agent is forbidden to push or open a
+ * PR, so the card must not ask for one (8.4.21).
+ */
 function dummyCard(marker: string): { text: string; ask: string; title: string } {
   return {
     text: `Add a \`pa version\` verb that prints the served commit (${marker})`,
@@ -252,7 +257,7 @@ function dummyCard(marker: string): { text: string; ask: string; title: string }
       'In personal-assistant, add a `pa version` CLI verb that prints the commit the running worker serves ' +
       '(GET /api/version on the dashboard; when the dashboard does not answer, `git rev-parse --short HEAD` of the checkout, ' +
       'saying which it was). Add it to the HELP text and a unit test for the pure part. Keep it small. ' +
-      `This is an automated golden-path run (${marker}): open a draft PR and do not merge it.`,
+      `(Automated golden-path run ${marker}.)`,
     title: `e2e: pa version verb (${marker})`,
   };
 }

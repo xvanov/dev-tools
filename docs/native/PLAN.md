@@ -1013,9 +1013,11 @@ not in the Map is not done, and a new one gets added there first.
     `navigation.md`, so a dev step is told to write the context set and spends its first ~25 of 76
     turns exploring. Generate the context on the work factory (local, untracked), and keep the
     Onboarder text out of other personas' prompts.
-  - [ ] **8.4.21 deepseek-pr: the dummy card asks the agent to "open a draft PR".** The workflow
+  - [x] **8.4.21 deepseek-pr: the dummy card asks the agent to "open a draft PR".** The workflow
     delivers a ready PR, and the factory forbids the agent from opening one.
     `goldenPathCore.dummyCard` should word the ask by delivery and say the factory delivers.
+    Done: the ask describes only the change and carries the marker; delivery is factory_start's
+    `delivery`, never the card's. A test refuses an ask that mentions a PR, a push or a merge.
   - [ ] **8.4.22 deepseek-pr: Map and e2e drift.** The Map's steps and `cost.basis` name
     `deepseek/deepseek-coder`, but `pa e2e deepseek-pr` runs `azure/deepseek-v4-pro`. The e2e also
     times the jarvis hop including compose's model call, which the target excludes: subtract

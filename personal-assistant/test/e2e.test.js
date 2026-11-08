@@ -52,6 +52,7 @@ test('dummy card carries the marker in its text, ask and title', () => {
   for (const k of ['text', 'ask', 'title']) assert.ok(d[k].includes(m), k);
   assert.ok(C.MARKER_RE.test(d.text));
   assert.ok(d.text.length <= 200, 'one line on the board');
+  assert.ok(!/\b(PR|pull request|push|merge)\b/i.test(d.ask), 'the ask is the change; delivery is the factory\'s (8.4.21)');
 });
 
 // ------------------------------------------------------------- observe ----
