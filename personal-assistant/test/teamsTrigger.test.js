@@ -208,6 +208,41 @@ const OPTS = { quietMs: 300, maxWaitMs: 1500 };
     Object.assign(config.teamsCache, saved);
   }
 
+  // ------------------------- watch: tables left for the next pass (8.4.32) --
+  {
+    const saved = { ...config.teamsCache };
+    Object.assign(config.teamsCache, { enabled: true, watch: true, resident: false, debounceMs: 300, maxWaitMs: 1500, fallbackSeconds: 60, pollSeconds: 5 });
+    const c = clock();
+    const watchers = [];
+    const fsWatch = (dir, opts, cb) => {
+      const w = new EventEmitter();
+      w.cb = cb;
+      w.close = () => w.emit('close');
+      watchers.push(w);
+      return w;
+    };
+    const answers = [{ changed: 0, fresh: 0 }, { changed: 1, fresh: 1, more: true }, { changed: 0, fresh: 0 }];
+    const calls = [];
+    const passFn = async (o) => {
+      calls.push(o);
+      return answers[calls.length - 1] || { changed: 0, fresh: 0 };
+    };
+    const results = [];
+    const h = local.watch({ onResult: (r) => results.push(r), fsWatch, timers: c.timers, now: c.now, passFn });
+    await c.advance(300);
+    assert.strictEqual(calls.length, 1, 'the start-up read');
+    watchers[0].cb('change', '007892.log');
+    await c.advance(300);
+    assert.strictEqual(calls.length, 2);
+    assert.strictEqual(results[1].fresh, 1, 'the log\'s message is reported before the tables are read');
+    await c.advance(300);
+    assert.strictEqual(calls.length, 3, 'a pass that left tables is followed by one that reads them');
+    await c.advance(5000);
+    assert.strictEqual(calls.length, 3, 'and then nothing until something changes');
+    h.stop();
+    Object.assign(config.teamsCache, saved);
+  }
+
   // ------------------------------------------------- resident reader --
   {
     const children = [];

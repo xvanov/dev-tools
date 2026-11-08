@@ -1219,12 +1219,21 @@ not in the Map is not done, and a new one gets added there first.
     commitment from someone else's message under 3 h old or from the self chat; a Teams DM,
     the self chat or a mention is `normal` (a push within the budget), anything else
     `digest`. (ca1492f)
-  - [ ] **8.4.32 teams-ask: cache change to source_item takes 9.1 s (target 5 s), and the log
+  - [x] **8.4.32 teams-ask: cache change to source_item takes 9.1 s (target 5 s), and the log
     hides it.** Today's only sample is the owner's self-chat message (19:28:30.045Z, stored
     19:28:39.100Z). Its pass read 6.5 MB of LevelDB tables in 8725 ms, 49 s after the watcher
     was re-armed. It logged `lagSeconds` 0.3-0.5, because lag is taken from the pass's start.
     Log lag at the write, keep the first-stored time on the row (`fetched_at` moves on a
     connector upgrade), and bound a pass's table read so one message is not held behind it.
+    Done. The 6.5 MB were compactions: the live cache had 14 new 2 MB tables numbered above a
+    log that was still there, and every pass read 3 of them. The reader now reads new tables
+    only once the log it read last is gone; after such a rotation the pass reads the logs
+    first (`--log-first`), stores their messages, and the next pass reads the tables. On the
+    live cache, the same log tail: 35 KB in 12 ms (was 2.4 MB in 903 ms on this run); rotated
+    and log first, 57 ms with 13 tables left for the next pass. `lagSeconds` runs from the
+    message's time to the write, with `passMs`, `tables` and `tablesLater` beside it, and a
+    row the reader stored first keeps `raw.storedAt`. (this commit: `fix(personal-assistant):
+    read Teams cache tables only after a log rotation`)
   - [ ] **8.4.33 teams-ask: commitment to the board takes ~1.1 s (target 200 ms).** Probe card
     #6775: outbox row 22:01:34.886Z, board event on the bus 22:01:35.297Z (411 ms, written from
     another process), on the page 4 ms later, then `GET /api/state` with a median of 716 ms over
@@ -1258,8 +1267,7 @@ not in the Map is not done, and a new one gets added there first.
     last 7 days; a pure courtesy is marked done without a model call (`distill/short.ts`, 38
     eval cases). On a scratch copy of today's store: 40 short items become pending, 26 of them
     reach the model (about $0.86 once, then about 4 a day); on two short asks the served model
-    found an owed_by_me commitment at confidence 0.6. (this commit: `fix(personal-assistant):
-    read short Teams asks addressed to you`)
+    found an owed_by_me commitment at confidence 0.6. (997cdea)
   - [ ] **8.4.37 teams-ask: a distill call often costs more than the $0.05 ceiling.** On the
     served `claude-sonnet-5-5` (since 6 Nov), 49 of 206 calls are over (max $0.082; today 17
     calls, max $0.038). On the code default `PA_DISTILL_MODEL=claude-opus-5`, the mean was

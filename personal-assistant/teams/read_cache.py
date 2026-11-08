@@ -13,8 +13,9 @@ its append-only write-ahead `.log` first, and only later compacts it into
 `.ldb` tables. So a pass reads the log from where the last pass stopped
 (--log NAME:OFFSET; a few KB) plus any `.ldb` table numbered above --after-ldb
 (what a flush or compaction wrote since), oldest first and capped by
---max-ldb. On the first pass only the log is read: history is the
-connector's job.
+--max-ldb, and only once the log read last time is gone: until then the
+tables hold nothing the logs do not. On the first pass only the log is
+read: history is the connector's job.
 
 Records are recognised by shape, not by database name, so there is no
 metadata scan: a reply chain has a `messageMap`, a conversation has
@@ -32,7 +33,7 @@ where the read itself is ~20 ms; a resident reader makes a trigger one pipe
 message. EOF on stdin (the worker exited, however it died) ends it.
 
 Usage: read_cache.py --src DIR [--blobs DIR] --work DIR [--since-ms N]
-                     [--after-ldb N] [--max-ldb N] [--log NAME:OFFSET]
+                     [--after-ldb N] [--max-ldb N] [--log NAME:OFFSET] [--log-first]
        read_cache.py --serve
 """
 
@@ -267,7 +268,10 @@ def log_records(batches, path):
 
 def ldb_records(path):
     out = []
-    reader = ccl_leveldb.LdbFile(pathlib.Path(path))
+    try:
+        reader = ccl_leveldb.LdbFile(pathlib.Path(path))
+    except Exception:  # torn or not a table: what it held is read again later or lost alike
+        return out
     try:
         for rec in reader:
             out.append(rec)
@@ -306,6 +310,7 @@ def parser():
     ap.add_argument("--after-ldb", type=int)
     ap.add_argument("--max-ldb", type=int, default=3)
     ap.add_argument("--log", default="", help="NAME:OFFSET already read of the active log")
+    ap.add_argument("--log-first", action="store_true", help="leave new tables to the next pass")
     ap.add_argument("--serve", action="store_true")
     return ap
 
@@ -321,10 +326,23 @@ def read(a, out):
     # the log that just rotated, whose last seconds may not have been read;
     # the rest are compactions rewriting old data. So oldest first, capped.
     fresh = [p for p in ldbs if a.after_ldb is not None and file_no(p) > a.after_ldb]
-    skipped = max(0, len(fresh) - a.max_ldb)
-    fresh = fresh[:a.max_ldb] if a.max_ldb > 0 else []
     seen_name, _, seen_off = a.log.partition(":")
     seen_off = int(seen_off or 0)
+    # While the log read last time is still there, every write since then is
+    # in a log this pass reads, and the new tables are compactions of what
+    # was read already: a burst of them (2 MB each) cost 3-9 s a pass.
+    covered = 0
+    if seen_name and any(os.path.basename(p) == seen_name for p in logs):
+        covered, fresh = len(fresh), []
+    skipped = max(0, len(fresh) - a.max_ldb)
+    fresh = fresh[:a.max_ldb] if a.max_ldb > 0 else []
+    # --log-first: read only the logs now and say how many tables wait, so a
+    # message in the log is not held behind parsing them; the next pass
+    # (without the flag) reads them, from the same --after-ldb.
+    pending = 0
+    if a.log_first and fresh:
+        pending, fresh, skipped = len(fresh) + skipped, [], 0
+        max_ldb = a.after_ldb
 
     # The work directory exists only while a table or blob is being parsed:
     # a log-only pass (nearly every pass) creates no file at all, so it gives
@@ -403,6 +421,8 @@ def read(a, out):
         "log": log_state[-1] if log_state else None,
         "ldbRead": len(fresh),
         "ldbSkipped": skipped,
+        "ldbCovered": covered,
+        "ldbPending": pending,
         "maxLdb": max_ldb,
         "records": len(records),
         "messages": len(msgs),

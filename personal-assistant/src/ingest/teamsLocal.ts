@@ -320,11 +320,16 @@ async function existingRows(externalIds: any) {
 let lastSignature: any = null;
 let lastPersist = 0;
 let memo: any = null; // cursor state between persists
+let tablesDue = false; // the last pass read the logs only and left tables for this one
 
-// One pass. Returns { changed, fresh, skipped? }. Never throws for a missing
-// Teams or venv — those are states, reported by `pa doctor`. `force` reads
-// without comparing the directory's signature first: a change notification
-// already says something moved, so the readdir and stats would be waste.
+// One pass. Returns { changed, fresh, more?, skipped? }. Never throws for a
+// missing Teams or venv — those are states, reported by `pa doctor`. `force`
+// reads without comparing the directory's signature first: a change
+// notification already says something moved, so the readdir and stats would
+// be waste. A pass reads the logs first; when the reader says tables are
+// waiting too (a log rotated), it returns `more` and the next pass reads
+// them, so a new message in the log is stored without waiting on seconds of
+// table parsing.
 async function pass({ force = false }: { force?: boolean } = {}) {
   if (!config.teamsCache.enabled) return { changed: 0, fresh: 0, skipped: 'off' };
   const { leveldb, blobs } = paths();
@@ -332,8 +337,8 @@ async function pass({ force = false }: { force?: boolean } = {}) {
   if (!fs.existsSync(config.teamsCache.python) || !fs.existsSync(SCRIPT)) {
     return { changed: 0, fresh: 0, skipped: 'no venv' };
   }
-  const sig = force ? null : signature(leveldb);
-  if (!force && sig === lastSignature) return { changed: 0, fresh: 0, skipped: 'unchanged' };
+  const sig = force || tablesDue ? null : signature(leveldb);
+  if (!force && !tablesDue && sig === lastSignature) return { changed: 0, fresh: 0, skipped: 'unchanged' };
 
   if (!memo) memo = (await getCursor(CURSOR))?.state || {};
   const first = !memo.log;
@@ -346,10 +351,12 @@ async function pass({ force = false }: { force?: boolean } = {}) {
   ];
   if (memo.log) args.push('--log', `${memo.log.name}:${memo.log.offset}`);
   if (memo.maxLdb != null) args.push('--after-ldb', String(memo.maxLdb));
+  if (!tablesDue) args.push('--log-first');
 
   const { messages, convs, status } = parseOutput(await runReader(args));
   if (sig) lastSignature = sig;
   if (!status) throw new Error('reader printed no status');
+  tablesDue = Number(status.ldbPending) > 0;
 
   const newest = Math.max(Number(memo.newestArrival) || 0, ...messages.map((m) => Number(m.arrival) || 0));
   const state = {
@@ -382,14 +389,26 @@ async function pass({ force = false }: { force?: boolean } = {}) {
       .filter(Boolean);
     const existing = await existingRows(items.map((i) => i.externalId));
     const writes = items.map((i) => planWrite(i, existing.get(i.externalId) || null)).filter(Boolean);
-    fresh = writes.filter((w) => !existing.has(w.externalId) && isFresh(w)).length;
+    const added = writes.filter((w) => !existing.has(w.externalId));
+    fresh = added.filter(isFresh).length;
     kept = writes.length;
+    // When the row was first stored: fetched_at moves on every rewrite (an
+    // edit, the connector's upgrade), and planWrite and graphChat.mergeCached
+    // both keep raw keys they do not set.
+    const storedAt = new Date().toISOString();
+    for (const w of added) w.raw.storedAt = storedAt;
     if (writes.length) {
       changed = await saveItems('graph_chat', writes.map(({ mine, ...w }) => w), { source: CURSOR, deltaToken: null as any, state });
       lastPersist = now;
     }
-    const lags = writes.filter((w) => !existing.has(w.externalId)).map((w) => Math.round((now - Date.parse(w.occurredAt)) / 100) / 10);
-    log.info('read', { messages: messages.length, kept, changed, fresh, lagSeconds: lags, ms: status.ms, bytes: status.bytes });
+    // Lag is the message's time (when the client got it) to the write, so it
+    // includes the wait for the change notification and the read.
+    const written = Date.now();
+    const lagSeconds = added.map((w) => Math.round((written - Date.parse(w.occurredAt)) / 100) / 10);
+    log.info('read', {
+      messages: messages.length, kept, changed, fresh, lagSeconds, passMs: written - now,
+      ms: status.ms, bytes: status.bytes, tables: status.ldbRead, tablesLater: status.ldbPending || 0,
+    });
   }
   if (!kept && (now - lastPersist > CURSOR_PERSIST_MS || first)) {
     await saveCursor({ source: CURSOR, deltaToken: null as any, state });
@@ -398,7 +417,7 @@ async function pass({ force = false }: { force?: boolean } = {}) {
   if (status.ldbSkipped) log.debug('tables skipped after a compaction', { skipped: status.ldbSkipped });
   if (status.decodeErrors) log.debug('records not decoded', { count: status.decodeErrors });
   memo = state;
-  return { changed, fresh };
+  return tablesDue ? { changed, fresh, more: true } : { changed, fresh };
 }
 
 // The worker's entry point. A failure is recorded on the cursor for `pa
@@ -419,8 +438,8 @@ async function tick(opts: any) {
 
 // The worker's driver: change notifications, debounced, plus the fallback
 // poll (see the top of this file). `onResult` gets every pass's result.
-// Returns { stop, stats }. Injectable fs.watch and timers for tests.
-function watch({ onResult = () => {}, fsWatch = fs.watch, timers = { setTimeout, clearTimeout }, now = Date.now }: { onResult?: any; fsWatch?: any; timers?: any; now?: any } = {}) {
+// Returns { stop, stats }. Injectable fs.watch, timers and pass for tests.
+function watch({ onResult = () => {}, fsWatch = fs.watch, timers = { setTimeout, clearTimeout }, now = Date.now, passFn = tick }: { onResult?: any; fsWatch?: any; timers?: any; now?: any; passFn?: any } = {}) {
   const tc = config.teamsCache;
   if (tc.resident) {
     if (reader) reader.close();
@@ -447,7 +466,7 @@ function watch({ onResult = () => {}, fsWatch = fs.watch, timers = { setTimeout,
       const wasSilent = silent;
       silent = false;
       stats.passes++;
-      const r = await tick({ force });
+      const r = await passFn({ force });
       // The fallback saw the directory change, but no notification arrived
       // since the previous check: the watcher is alive but deaf (the
       // directory was replaced under it). Open a new one.
@@ -457,6 +476,7 @@ function watch({ onResult = () => {}, fsWatch = fs.watch, timers = { setTimeout,
         arm();
       }
       onResult(r);
+      if (r.more) sched.poke(); // the tables this pass left for the next
     },
   });
 
@@ -536,9 +556,14 @@ function watch({ onResult = () => {}, fsWatch = fs.watch, timers = { setTimeout,
 
 // For the ingest registry (`pa sync --source teams_cache`): always reads.
 async function run() {
-  const r = await pass({ force: true });
+  let r: any = await pass({ force: true });
+  let changed = r.changed;
+  while (r.more) {
+    r = await pass({ force: true });
+    changed += r.changed;
+  }
   if (r.skipped) log.info('skipped', { reason: r.skipped });
-  return r.changed;
+  return changed;
 }
 
 // `pa doctor`: where the cache is and how fresh the newest message read was.

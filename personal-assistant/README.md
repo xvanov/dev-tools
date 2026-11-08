@@ -213,8 +213,13 @@ Nothing polls for it. `src/ingest/teamsLocal.js` asks Windows to report changes 
 directory (`fs.watch`, i.e. ReadDirectoryChangesW: no file is opened or stat'ed to find out),
 waits until a write burst has been quiet for 300 ms (never more than 1.5 s after it began;
 `src/ingest/teamsTrigger.js`), and then asks `teams/read_cache.py` to read the LevelDB
-write-ahead log *from where the last pass stopped* — a few KB, about 20 ms — plus any table a
-compaction wrote since. The reader stays resident and takes requests on a pipe, so a pass is a
+write-ahead log *from where the last pass stopped* — a few KB, about 20 ms. LevelDB's new tables
+are read only once the log the last pass read is gone (it rotated): until then they are
+compactions of what was read already, and a burst of them (2 MB each) used to cost 3–9 s a pass.
+After a rotation the pass reads the logs and stores what they hold first, and the next pass,
+straight after, reads the tables. `lagSeconds` in the `read` log line runs from the message's
+own time to the write, and a row the reader stored first keeps that moment in `raw.storedAt`
+(`fetched_at` moves whenever the row is rewritten). The reader stays resident and takes requests on a pipe, so a pass is a
 line of JSON rather than a Python start (350–500 ms and a process creation each, which is what
 an on-access scanner such as ESET woke up for). A message is in the store about half a second
 after Teams writes it; a quiet Teams costs nothing at all. A full parse of the ~100 MB store
