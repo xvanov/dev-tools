@@ -350,7 +350,7 @@ async function handle(req, res) {
   if (url.pathname.startsWith('/api/memory/')) {
     if (req.method === 'POST' && req.headers['x-pa'] !== '1') return send(res, 403, { error: 'missing X-PA header' });
     const body = req.method === 'POST' ? await readJson(req) : {};
-    const out = await require('./memory').route(req.method, url, body);
+    const out = await require('./memory.ts').route(req.method, url, body);
     return out === undefined ? send(res, 404, { error: 'not found' }) : send(res, 200, out ?? null);
   }
 

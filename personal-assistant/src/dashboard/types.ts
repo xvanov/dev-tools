@@ -22,5 +22,9 @@ export interface Ctx {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export type Repos = Record<string, any>;
 
+/** A JS module's exports, loosely typed until that module is TypeScript. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export type Module = Record<string, any>;
+
 /** An Error a route throws with the HTTP status to answer. */
 export type HttpError = Error & { status?: number; code?: string };

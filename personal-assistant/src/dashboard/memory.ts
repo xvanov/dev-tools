@@ -6,6 +6,18 @@
 // Reads are GETs; every write is a POST, which server.js only lets through
 // with the X-PA header. Nothing here renders HTML: pages go out as the tree
 // markdown.js parses, and the browser builds them with textContent.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+type Row = import('../repo/types.ts').Row;
+type Module = import('./types.ts').Module;
+/** A person row as memory.people() returns it. */
+type PersonRow = {
+  id?: unknown; display_name?: unknown; page_title?: unknown; primary_email?: unknown; is_me?: unknown;
+  identities?: { kind: string; value: unknown }[] | null; claims?: number | null; commitments?: number | null;
+};
+type Profile = { names: string[][]; handles: Set<string>; forms: Set<string>; firsts: Set<string>; loneFirst: string | null; handleOnly: boolean };
+type Subject = { kind: string; id: number | null; label: string };
 
 const { parseMarkdown, pageSummary } = require('./markdown.ts');
 
@@ -16,36 +28,36 @@ const { parseMarkdown, pageSummary } = require('./markdown.ts');
 // identifiers (by design — see distill/identity.js). This only *suggests*
 // pairs; merging stays a click you confirm.
 
-function fold(s) {
+function fold(s: unknown) {
   return String(s ?? '').normalize('NFKD').replace(/\p{M}/gu, '').toLowerCase();
 }
 
-function nameTokens(s) {
+function nameTokens(s: unknown) {
   return fold(s).split(/[^\p{L}\p{N}]+/u).filter((t) => t.length >= 2);
 }
 
-function compact(s) {
+function compact(s: unknown) {
   return fold(s).replace(/[^\p{L}\p{N}]/gu, '');
 }
 
-function humanName(s) {
+function humanName(s: unknown) {
   const v = String(s ?? '').trim();
   return /\s/.test(v) && !/@|^(github|gitlab|aad):/i.test(v);
 }
 
 // The bare handle in "github:qbrannoc", "qbrannoc@example.test", "qbrannoc".
-function handleOf(s) {
+function handleOf(s: unknown) {
   return compact(String(s ?? '').trim().replace(/^(github|gitlab|aad):/i, '').replace(/@.*$/, ''));
 }
 
-function profile(p) {
+function profile(p: PersonRow): Profile {
   const labels = [p.display_name, p.page_title].filter(Boolean);
-  const names = [];
+  const names: string[][] = [];
   for (const l of labels.filter(humanName)) {
     const t = nameTokens(l);
     if (t.length >= 2 && !names.some((n) => n.join(' ') === t.join(' '))) names.push(t);
   }
-  const handles = new Set();
+  const handles = new Set<string>();
   for (const i of p.identities || []) {
     if (['github_username', 'gitlab_username', 'smtp'].includes(i.kind)) handles.add(handleOf(i.value));
   }
@@ -55,33 +67,33 @@ function profile(p) {
 
   // How people turn a name into a handle: brannocquill, quillbrannoc,
   // bquill, brannocq, quillb.
-  const forms = new Set();
+  const forms = new Set<string>();
   for (const t of names) {
-    const f = t[0];
-    const l = t[t.length - 1];
-    for (const v of [f + l, l + f, f[0] + l, f + l[0], l + f[0], t.join('')]) if (v.length >= 4) forms.add(v);
+    const f = t[0] ?? '';
+    const l = t[t.length - 1] ?? '';
+    for (const v of [f + l, l + f, f.charAt(0) + l, f + l.charAt(0), l + f.charAt(0), t.join('')]) if (v.length >= 4) forms.add(v);
   }
   // A one-word label that is a plain word ("Brannoc") is probably a first name.
-  const firsts = new Set(names.map((t) => t[0]));
+  const firsts = new Set(names.map((t) => t[0] ?? ''));
   const single = labels.find((l) => /^\p{L}{3,}$/u.test(String(l).trim()));
   const loneFirst = single ? fold(single) : null;
   return { names, handles, forms, firsts, loneFirst, handleOnly: !names.length };
 }
 
-function rank(p) {
+function rank(p: PersonRow) {
   return [p.is_me ? 1 : 0, humanName(p.display_name) || humanName(p.page_title) ? 1 : 0, (p.claims || 0) + (p.commitments || 0), -Number(p.id)];
 }
 
-function better(a, b) {
+function better(a: PersonRow, b: PersonRow) {
   const ra = rank(a);
   const rb = rank(b);
-  for (let i = 0; i < ra.length; i++) if (ra[i] !== rb[i]) return ra[i] > rb[i];
+  for (let i = 0; i < ra.length; i++) if (ra[i] !== rb[i]) return (ra[i] ?? 0) > (rb[i] ?? 0);
   return true;
 }
 
 // A handle built from a name, possibly with an org or number stuck on either
 // end ("qbrannoc-acme", "AcmeBrannocQuill"). Short forms must match exactly.
-function fitsName(handles, forms) {
+function fitsName(handles: Set<string>, forms: Set<string>) {
   for (const h of handles) {
     for (const f of forms) {
       if (h === f || (f.length >= 6 && (h.startsWith(f) || h.endsWith(f)))) return h;
@@ -90,8 +102,8 @@ function fitsName(handles, forms) {
   return null;
 }
 
-function comparePair(a, b, pa, pb) {
-  const reasons = [];
+function comparePair(a: PersonRow, b: PersonRow, pa: Profile, pb: Profile) {
+  const reasons: string[] = [];
   let score = 0;
   if (pa.names.some((x) => pb.names.some((y) => [...x].sort().join(' ') === [...y].sort().join(' ')))) {
     score += 3;
@@ -110,8 +122,8 @@ function comparePair(a, b, pa, pb) {
   if (!score) {
     const similar = pa.names.some((x) =>
       pb.names.some((y) => {
-        const [fx, lx] = [x[0], x[x.length - 1]];
-        const [fy, ly] = [y[0], y[y.length - 1]];
+        const [fx, lx] = [x[0] ?? '', x[x.length - 1] ?? ''];
+        const [fy, ly] = [y[0] ?? '', y[y.length - 1] ?? ''];
         return lx === ly && fx !== fy && Math.min(fx.length, fy.length) >= 3 && (fx.startsWith(fy) || fy.startsWith(fx));
       })
     );
@@ -121,7 +133,10 @@ function comparePair(a, b, pa, pb) {
     }
   }
   if (!score) {
-    const lone = (p, q) => p.loneFirst && (q.firsts.has(p.loneFirst) || [...q.handles].some((h) => h.startsWith(p.loneFirst)));
+    const lone = (p: Profile, q: Profile) => {
+      const first = p.loneFirst;
+      return first && (q.firsts.has(first) || [...q.handles].some((h) => h.startsWith(first)));
+    };
     if (lone(pa, pb) || lone(pb, pa)) {
       score += 1;
       reasons.push('first name only — check');
@@ -137,26 +152,27 @@ function comparePair(a, b, pa, pb) {
 // people: [{id, display_name, primary_email, is_me, page_title, identities:[{kind,value}], claims, commitments}]
 // → [{into, from, score, reasons}], best first. `into` is the row worth keeping:
 // you, then the one with a real name, then the one with more history.
-function duplicatePairs(people, { min = 2, limit = 40 } = {}) {
+function duplicatePairs(people: PersonRow[] | null | undefined, { min = 2, limit = 40 }: { min?: number; limit?: number } = {}) {
   const list = (people || []).filter((p) => p && p.id != null);
   const profiles = new Map(list.map((p) => [p.id, profile(p)]));
-  const out = [];
+  const out: { into: Brief; from: Brief; score: number; reasons: string[] }[] = [];
   for (let i = 0; i < list.length; i++) {
     for (let j = i + 1; j < list.length; j++) {
-      const a = list[i];
-      const b = list[j];
+      const a = list[i] as PersonRow;
+      const b = list[j] as PersonRow;
       if (a.is_me && b.is_me) continue;
-      const { score, reasons } = comparePair(a, b, profiles.get(a.id), profiles.get(b.id));
+      const { score, reasons } = comparePair(a, b, profiles.get(a.id) as Profile, profiles.get(b.id) as Profile);
       if (score < min) continue;
       const [into, from] = better(a, b) ? [a, b] : [b, a];
       out.push({ into: brief(into), from: brief(from), score, reasons });
     }
   }
-  out.sort((x, y) => y.score - x.score || x.into.id - y.into.id);
+  out.sort((x, y) => y.score - x.score || Number(x.into.id) - Number(y.into.id));
   return out.slice(0, limit);
 }
 
-function brief(p) {
+type Brief = ReturnType<typeof brief>;
+function brief(p: PersonRow) {
   return {
     id: p.id,
     name: p.page_title || p.display_name,
@@ -174,28 +190,28 @@ const SUBJECT_KINDS = ['person', 'project', 'me', 'index', 'topic'];
 
 // Claim rows without the columns a browser has no use for (a 1536-float
 // vector per row would dwarf the rest).
-function clean(c) {
+function clean(c: Row | null | undefined) {
   if (!c) return c;
   const { embedding, tsv, ...rest } = c;
   return rest;
 }
 
-function httpError(status, message) {
+function httpError(status: number, message: string) {
   return Object.assign(new Error(message), { status });
 }
 
-function idParam(v) {
+function idParam(v: unknown) {
   const n = Number(v);
   if (!Number.isSafeInteger(n) || n <= 0) throw httpError(400, 'bad id');
   return n;
 }
 
-async function page(memory, q) {
+async function page(memory: Module, q: URLSearchParams) {
   const kind = String(q.get('kind') || '');
   if (!SUBJECT_KINDS.includes(kind)) throw httpError(400, 'bad kind');
   const all = q.get('history') === '1';
-  let subject = null;
-  let row = null;
+  let subject: Subject | string | null = null;
+  let row: Row | null = null;
   if (kind === 'me' || kind === 'index') {
     row = await memory.getPage(kind);
     subject = kind === 'me' ? 'me' : null;
@@ -220,17 +236,17 @@ async function page(memory, q) {
 
 // Returns the JSON for a /api/memory/... request, or undefined for a path it
 // does not know. `memory` is src/memory (injectable for tests).
-async function route(method, url, body = {}, memory = require('../memory')) {
+async function route(method: string, url: URL, body: Row = {}, memory: Module = require('../memory')) {
   const p = url.pathname.replace(/^\/api\/memory/, '');
   const q = url.searchParams;
-  let m;
+  let m: RegExpMatchArray | null;
 
   if (method === 'GET') {
     if (p === '/overview') {
       const [stats, subjects] = await Promise.all([memory.stats(), memory.subjects()]);
       return {
         stats,
-        subjects: subjects.map((s) => ({
+        subjects: subjects.map((s: Row) => ({
           kind: s.kind,
           id: s.id,
           title: s.title,
