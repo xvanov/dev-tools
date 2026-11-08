@@ -2370,8 +2370,8 @@
           }
         ],
         "cost": {
-          "max_usd": 0,
-          "basis": "claude.ai subscription: cost_usd stays 0 (subscription_equiv_usd is recorded, not billed)"
+          "max_usd": 0.05,
+          "basis": "the agent runs on the claude.ai subscription (subscription_equiv_usd recorded, not billed); the factory's planning and docs steps (pm, sm, tech_writer) run metered on DeepSeek-V4-Flash, about $0.01-0.03 a job (D26)"
         },
         "views": [
           "build",
@@ -2549,8 +2549,8 @@
           }
         ],
         "cost": {
-          "max_usd": 0,
-          "basis": "claude.ai subscription: cost_usd stays 0 (subscription_equiv_usd is recorded, not billed)"
+          "max_usd": 0.05,
+          "basis": "the agent runs on the claude.ai subscription (subscription_equiv_usd recorded, not billed); the factory's planning and docs steps (pm, sm, tech_writer) run metered on DeepSeek-V4-Flash, about $0.01-0.03 a job (D26)"
         },
         "views": [
           "plan",
