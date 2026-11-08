@@ -2,8 +2,13 @@
 
 // Aggregate: sources. Tables: source_item, sync_cursor (and ingest health).
 // Owner while plan 1.2 is converting: chunk F (repos, ingest, routines).
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
 
-function create(db) {
+type Db = import('./types.ts').Db;
+type Row = import('./types.ts').Row;
+
+function create(db: Db) {
   return {
     // --- for src/worker.js (the retention pass)
 
@@ -11,7 +16,7 @@ function create(db) {
      * Retention: deletes mail and chat items older than `days` days (their
      * derived rows keep what they need). Resolves the number deleted.
      */
-    async deleteOldMessages(days) {
+    async deleteOldMessages(days: number) {
       const r = await db.query(
         `delete from source_item
         where source in ('graph_mail','graph_chat')
@@ -28,7 +33,7 @@ function create(db) {
      * @param {number} now  epoch ms
      * @returns {Promise<{subject: string, occurred_at: Date, raw: object}[]>}
      */
-    async calendarAroundNow(now) {
+    async calendarAroundNow(now: Date | string | number) {
       return db.rows(
         `select subject, occurred_at, raw from source_item
       where source = 'graph_event'
@@ -43,7 +48,7 @@ function create(db) {
      * Calendar events within two hours of [fromIso, toIso], oldest first.
      * @returns {Promise<{external_id: string, subject: string, occurred_at: Date, raw: object}[]>}
      */
-    async calendarWindow(fromIso, toIso) {
+    async calendarWindow(fromIso: unknown, toIso: unknown) {
       return db.rows(
         `select external_id, subject, occurred_at, raw from source_item
       where source = 'graph_event'
@@ -57,7 +62,7 @@ function create(db) {
      * The id of a stored item by source and external id.
      * @returns {Promise<{id: number|string}|null>}
      */
-    async idByExternal(source, externalId) {
+    async idByExternal(source: string, externalId: number | string) {
       return db.one('select id from source_item where source = $1 and external_id = $2', [source, externalId]);
     },
 
@@ -102,7 +107,7 @@ function create(db) {
      * @param {Date} to
      * @returns {Promise<object[]>}  id, external_id, subject, body_text, occurred_at, author_identity, raw
      */
-    async eventsBetween(from, to) {
+    async eventsBetween(from: Date | string | number, to: string) {
       return db.rows(
         `select ${EVENT_COLS} from source_item
       where source = 'graph_event' and occurred_at between $1 and $2
@@ -116,7 +121,7 @@ function create(db) {
      * @param {string} like
      * @returns {Promise<object[]>}  as eventsBetween
      */
-    async eventsBySubject(like) {
+    async eventsBySubject(like: unknown) {
       return db.rows(
         `select ${EVENT_COLS} from source_item
       where source = 'graph_event' and subject ilike $1
@@ -129,7 +134,7 @@ function create(db) {
      * One calendar event by its item id.
      * @returns {Promise<object|null>}  as eventsBetween
      */
-    async eventById(id) {
+    async eventById(id: number | string) {
       return db.one(`select ${EVENT_COLS} from source_item where source = 'graph_event' and id = $1`, [id]);
     },
 
@@ -137,7 +142,7 @@ function create(db) {
      * One calendar event by its external (Graph) id.
      * @returns {Promise<object|null>}  as eventsBetween
      */
-    async eventByExternalId(externalId) {
+    async eventByExternalId(externalId: number | string) {
       return db.one(`select ${EVENT_COLS} from source_item where source = 'graph_event' and external_id = $1`, [externalId]);
     },
 
@@ -146,7 +151,7 @@ function create(db) {
      * @param {string} source  e.g. 'm365', 'github'
      * @returns {Promise<{state: object}|null>}
      */
-    async cursorState(source) {
+    async cursorState(source: string) {
       return db.one(`select state from sync_cursor where source = $1`, [source]);
     },
 
@@ -158,7 +163,7 @@ function create(db) {
      * @param {Date} to
      * @param {string} agentPattern  a Postgres regex
      */
-    async prsByAuthorBetween(author, from, to, agentPattern) {
+    async prsByAuthorBetween(author: unknown, from: Date | string | number, to: string, agentPattern: unknown) {
       return db.rows(
         `select id, subject, occurred_at, raw, left(body_text, 600) as body,
               body_text ~* $4 as agent from source_item
@@ -172,7 +177,7 @@ function create(db) {
      * Jira issues assigned to any of `assignees` (lowercased names or emails)
      * that changed in a window (6, newest first).
      */
-    async jiraAssignedBetween(from, to, assignees) {
+    async jiraAssignedBetween(from: Date | string | number, to: string, assignees: unknown) {
       return db.rows(
         `select id, subject, occurred_at, raw from source_item
       where source = 'jira_issue' and occurred_at between $1 and $2
@@ -186,7 +191,7 @@ function create(db) {
      * Claude Code sessions in a window, longest first (8), with the first 600
      * chars of the opening prompt.
      */
-    async claudeSessionsBetween(from, to) {
+    async claudeSessionsBetween(from: Date | string | number, to: string) {
       return db.rows(
         `select id, subject, occurred_at, raw, left(body_text, 600) as body from source_item
       where source = 'claude_session' and occurred_at between $1 and $2
@@ -200,7 +205,7 @@ function create(db) {
      * @param {string[]} assignees  lowercased names or emails
      * @param {number} limit
      */
-    async openJiraAssigned(assignees, limit) {
+    async openJiraAssigned(assignees: unknown, limit: number) {
       return db.rows(
         `select id, subject, raw from source_item
       where source = 'jira_issue' and raw->>'state' = 'opened' and lower(raw->>'assignee') = any($1::text[])
@@ -213,7 +218,7 @@ function create(db) {
      * A GitHub author's open PRs of the last 14 days before `now` (5), with
      * whether `agentPattern` matches the body.
      */
-    async openPrsRecent(author, now, agentPattern) {
+    async openPrsRecent(author: unknown, now: Date | string | number, agentPattern: unknown) {
       return db.rows(
         `select id, subject, raw, body_text ~* $3 as agent from source_item
         where source = 'github_pr' and author_identity = $1 and raw->>'state' = 'opened'
@@ -224,7 +229,7 @@ function create(db) {
     },
 
     /** A GitHub author's open PRs that carry a label matching %block% (3). */
-    async blockedPrs(author) {
+    async blockedPrs(author: unknown) {
       return db.rows(
         `select id, subject, raw from source_item
         where source = 'github_pr' and author_identity = $1 and raw->>'state' = 'opened'
@@ -238,7 +243,7 @@ function create(db) {
      * Chat and mail from one address in the 21 days before `now` (6, newest first).
      * @param {string} email  lowercased
      */
-    async threadsFromAddress(email, now) {
+    async threadsFromAddress(email: string, now: Date | string | number) {
       return db.rows(
         `select id, source, subject, occurred_at, left(body_text, 220) as snippet from source_item
             where source in ('graph_chat','graph_mail') and lower(author_identity) = $1
@@ -252,7 +257,7 @@ function create(db) {
      * Chat and mail from any of `identities` in the 21 days before `now` (6, newest first).
      * @param {string[]} identities
      */
-    async threadsFromIdentities(identities, now) {
+    async threadsFromIdentities(identities: unknown, now: Date | string | number) {
       return db.rows(
         `select id, source, subject, occurred_at, left(body_text, 220) as snippet from source_item
       where source in ('graph_chat','graph_mail') and author_identity = any($1::text[])
@@ -268,7 +273,7 @@ function create(db) {
      * Teams chats (not channels) from 5 minutes before `startIso` to 2 minutes
      * after `endIso`, oldest first (16).
      */
-    async chatsAround(startIso, endIso) {
+    async chatsAround(startIso: unknown, endIso: unknown) {
       return db.rows(
         `select subject, author_identity, occurred_at, left(body_text, 240) as body, raw
        from source_item
@@ -281,7 +286,7 @@ function create(db) {
     },
 
     /** A GitHub author's open PRs of the last 60 days (15, newest first). */
-    async openPrsByAuthor(author) {
+    async openPrsByAuthor(author: unknown) {
       return db.rows(
         `select id, subject, raw from source_item
         where source = 'github_pr' and author_identity = $1 and raw->>'state' = 'opened'
@@ -296,7 +301,7 @@ function create(db) {
      * @param {Date} now
      * @returns {Promise<{external_id: string, subject: string, occurred_at: Date, raw: object}[]>}
      */
-    async calendarBefore(now) {
+    async calendarBefore(now: Date | string | number) {
       return db.rows(
         `select external_id, subject, occurred_at, raw from source_item
       where source = 'graph_event' and occurred_at between $1::timestamptz - interval '12 hours' and $1::timestamptz`,
@@ -307,7 +312,7 @@ function create(db) {
     // --- for ledger/reconcile.js
 
     /** These items' {id, source, author_identity, occurred_at, subject, body_text, raw}, in no order. */
-    async itemsByIds(ids) {
+    async itemsByIds(ids: unknown[]) {
       return db.rows(
         `select id, source, author_identity, occurred_at, subject, body_text, raw from source_item where id = any($1::bigint[])`,
         [ids]
@@ -317,7 +322,7 @@ function create(db) {
     // --- for src/commitments/request.js, src/projects/index.js
 
     /** An item's subject and body, or null. @returns {Promise<{subject, body_text}|null>} */
-    async subjectAndBody(id) {
+    async subjectAndBody(id: number | string) {
       return db.one('select subject, body_text from source_item where id = $1', [id]);
     },
 
@@ -328,7 +333,7 @@ function create(db) {
      * (all when empty) to `since`, dropping their delta tokens, so the next
      * pass fetches again from there. Resolves the sources rewound.
      */
-    async rewindCursors(since, sources) {
+    async rewindCursors(since: Date | string | number, sources: unknown[]) {
       const r = await db.query(
         `update sync_cursor
         set state = jsonb_set(state, '{since}', to_jsonb($1::text)), delta_token = null
@@ -342,12 +347,12 @@ function create(db) {
     // --- for cli/index.js, dashboard/cards.js, dashboard/server.js
 
     /** A connector's cursor: {last_run_at, last_error, state}, or null. */
-    async cursorRow(source) {
+    async cursorRow(source: string) {
       return db.one('select last_run_at, last_error, state from sync_cursor where source = $1', [source]);
     },
 
     /** One Claude session item by id, or null (another source's id is null too). */
-    async claudeSessionItem(id) {
+    async claudeSessionItem(id: number | string) {
       return db.one(
         `select id, source, external_id, subject, occurred_at, raw from source_item where id = $1 and source = 'claude_session'`,
         [id]
@@ -355,7 +360,7 @@ function create(db) {
     },
 
     /** The newest twelve items of a thread, newest first (body cut to 600 chars). */
-    async threadItems(threadExternalId) {
+    async threadItems(threadExternalId: number | string) {
       return db.rows(
         `select id, author_identity, occurred_at, left(body_text, 600) as body from source_item
           where thread_external_id = $1 order by occurred_at desc limit 12`,
@@ -371,7 +376,7 @@ function create(db) {
      * message). Resolves {id, content_hash} when new or changed, null when
      * unchanged. `it`: a normalised item (ingest/store.js normalise()).
      */
-    async upsertItem(it) {
+    async upsertItem(it: Row) {
       const res = await db.query(UPSERT_ITEM, [
         it.source, it.externalId, it.threadExternalId, it.occurredAt, it.authorIdentity, it.subject, it.bodyText, it.raw, it.hash,
       ]);
@@ -379,12 +384,12 @@ function create(db) {
     },
 
     /** Drops an item's chunks (derived state: a changed body makes them wrong). */
-    async deleteChunks(itemId) {
+    async deleteChunks(itemId: number | string) {
       await db.query('delete from chunk where source_item_id = $1', [itemId]);
     },
 
     /** Writes chunk `ord` of an item; a rewrite clears its embedding. */
-    async upsertChunk(itemId, ord, content, context, contextV) {
+    async upsertChunk(itemId: number | string, ord: number, content: unknown, context: unknown, contextV: number) {
       await db.query(
         'insert into chunk (source_item_id, ord, content, context, context_v) values ($1,$2,$3,$4,$5) ' +
           'on conflict (source_item_id, ord) do update set content = excluded.content, ' +
@@ -394,22 +399,22 @@ function create(db) {
     },
 
     /** Drops an item's distillation (its body changed, so it is distilled again). */
-    async deleteDistillation(itemId) {
+    async deleteDistillation(itemId: number | string) {
       await db.query('delete from distillation where source_item_id = $1', [itemId]);
     },
 
     /** Advances a connector's cursor: delta token and state, run now, error cleared. */
-    async saveCursor({ source, deltaToken = null, state = {} }) {
+    async saveCursor({ source, deltaToken = null, state = {} }: { source?: string | null; deltaToken?: unknown; state?: unknown }) {
       await db.query(CURSOR_UPSERT, [source, deltaToken, state]);
     },
 
     /** A connector's whole cursor row, or null. */
-    async getCursor(source) {
+    async getCursor(source: string) {
       return db.one('select * from sync_cursor where source = $1', [source]);
     },
 
     /** Records a failed run of a connector (its cursor otherwise unchanged). */
-    async recordCursorError(source, message) {
+    async recordCursorError(source: string, message: string) {
       await db.query(
         `insert into sync_cursor (source, last_run_at, last_error)
        values ($1, now(), $2)
@@ -447,7 +452,7 @@ function create(db) {
      * Teams chat messages of the last 14 days that arrived empty and may be
      * fetched again (fewer than `maxTries` repairs), newest first.
      */
-    async emptyChatMessages(limit, maxTries) {
+    async emptyChatMessages(limit: number, maxTries: number) {
       return db.rows(
         `select id, external_id, thread_external_id, subject, author_identity, raw from source_item
       where source = 'graph_chat' and body_text = '' and occurred_at > now() - interval '14 days'
@@ -459,7 +464,7 @@ function create(db) {
     },
 
     /** Fills a repaired message's body (marked repaired, so the reconciler may judge it again). */
-    async repairBody(id, text, hash) {
+    async repairBody(id: number | string, text: string, hash: string) {
       await db.query(
         `update source_item set body_text = $2, content_hash = $3, fetched_at = now(),
                 raw = raw || '{"repaired": true}'::jsonb where id = $1`,
@@ -468,12 +473,12 @@ function create(db) {
     },
 
     /** Counts one more failed repair of a message. */
-    async countRepairTry(id) {
+    async countRepairTry(id: number | string) {
       await db.query(`update source_item set raw = jsonb_set(raw, '{repairTries}', to_jsonb(coalesce((raw->>'repairTries')::int, 0) + 1)) where id = $1`, [id]);
     },
 
     /** Chat messages stored from the Teams cache, by external id. */
-    async cachedChatMessages(externalIds) {
+    async cachedChatMessages(externalIds: unknown[]) {
       return db.rows(
         `select external_id, occurred_at, author_identity, subject, body_text, raw
        from source_item
@@ -485,7 +490,7 @@ function create(db) {
     // --- for src/ingest/teamsLocal.js
 
     /** Per chat and display name, the newest address it was seen with: {chat, name, email}. */
-    async chatSenderEmails(threads) {
+    async chatSenderEmails(threads: unknown[]) {
       return db.rows(
         `select distinct on (thread_external_id, raw->>'fromName') thread_external_id as chat, raw->>'fromName' as name,
             lower(author_identity) as email
@@ -498,7 +503,7 @@ function create(db) {
     },
 
     /** Per chat, its newest message's subject and raw, preferring ones from the connector: {chat, subject, raw}. */
-    async chatHeads(conversationIds) {
+    async chatHeads(conversationIds: unknown[]) {
       return db.rows(
         `select distinct on (thread_external_id) thread_external_id as chat, subject, raw
        from source_item
@@ -509,7 +514,7 @@ function create(db) {
     },
 
     /** Chat messages by external id: {external_id, occurred_at, author_identity, subject, raw, fetched_at}. */
-    async chatMessagesByExternalId(externalIds) {
+    async chatMessagesByExternalId(externalIds: unknown[]) {
       return db.rows(
         `select external_id, occurred_at, author_identity, subject, raw, fetched_at
        from source_item where source = 'graph_chat' and external_id = any($1)`,
@@ -530,7 +535,7 @@ function create(db) {
     // --- for src/routines/suggest.js
 
     /** Claude session items of the last `days` days, newest first, at most 400: {id, occurred_at, body_text}. */
-    async recentClaudeSessions(days) {
+    async recentClaudeSessions(days: number) {
       return db.rows(
         `select id, occurred_at, body_text from source_item
       where source = 'claude_session' and occurred_at > now() - ($1 || ' days')::interval
@@ -542,12 +547,12 @@ function create(db) {
     // --- for src/dispatch/index.js, src/mcp/server.js
 
     /** One item row by id, or null. */
-    async rowById(id) {
+    async rowById(id: number | string) {
       return db.one('select * from source_item where id = $1', [id]);
     },
 
     /** The six newest other items of a thread: {id, source, subject, occurred_at}. */
-    async relatedInThread(threadExternalId, exceptId) {
+    async relatedInThread(threadExternalId: number | string, exceptId: number | string) {
       return db.rows(
         `select id, source, subject, occurred_at from source_item
       where thread_external_id = $1 and id <> $2
@@ -557,12 +562,12 @@ function create(db) {
     },
 
     /** Every item of a thread in one source, oldest first (whole rows). */
-    async threadRows(source, threadExternalId) {
+    async threadRows(source: string, threadExternalId: number | string) {
       return db.rows('select * from source_item where source = $1 and thread_external_id = $2 order by occurred_at', [source, threadExternalId]);
     },
 
     /** The twenty newest code items (PRs, issues, notifications, project items) of a forge project. */
-    async codeItemsOf(gitlabPath) {
+    async codeItemsOf(gitlabPath: string) {
       return db.rows(
         `select source, subject, raw, occurred_at from source_item
           where source in ('github_pr','github_issue','github_notification','github_project_item')
@@ -573,7 +578,7 @@ function create(db) {
     },
 
     /** The ten newest items written by a person (by identity or `email`). */
-    async recentByPerson(personId, email) {
+    async recentByPerson(personId: number | string, email: string) {
       return db.rows(
         `select si.id, si.source, si.subject, si.occurred_at from source_item si
           where si.author_identity in (select value from person_identity where person_id = $1)

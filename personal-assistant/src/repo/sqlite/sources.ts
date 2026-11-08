@@ -4,6 +4,11 @@
 // Differences from Postgres: the "agent" flag (pg `body_text ~* pattern`) is
 // computed in JS with a case-insensitive JS RegExp of the same pattern; ilike
 // is LIKE (ASCII case-insensitive here); window bounds are computed in JS.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+type Db = import('../types.ts').Db;
+type Row = import('../types.ts').Row;
 
 const { NOW, HOUR, DAY, sinceMs } = require('./_sql');
 
@@ -11,22 +16,22 @@ const EVENT_COLS = 'id, external_id, subject, body_text, occurred_at, author_ide
 const MIN = 60_000;
 
 /** The instant `ms` after `t` (Date, ISO or epoch ms), as stored. */
-const shift = (t, ms) => new Date(new Date(t).getTime() + ms).toISOString();
+const shift = (t: unknown, ms: number) => new Date(new Date(t as string | number | Date).getTime() + ms).toISOString();
 
 /** Sets row.agent from the full body (row._body) by `pattern`, case-insensitive; drops _body. */
-function flagAgent(rows, pattern) {
-  const re = pattern == null ? null : new RegExp(pattern, 'i');
+function flagAgent(rows: Row[], pattern: unknown) {
+  const re = pattern == null ? null : new RegExp(String(pattern), 'i');
   for (const r of rows) {
-    r.agent = re && r._body != null ? re.test(r._body) : null;
+    r.agent = re && r._body != null ? re.test(String(r._body)) : null;
     delete r._body;
   }
   return rows;
 }
 
-function create(db) {
+function create(db: Db) {
   return {
     /** Retention: deletes mail and chat items older than `days` days. Resolves the number deleted. */
-    async deleteOldMessages(days) {
+    async deleteOldMessages(days: number) {
       const r = await db.query(
         `delete from source_item
         where source in ('graph_mail','graph_chat')
@@ -37,7 +42,7 @@ function create(db) {
     },
 
     /** Calendar events from 12 hours before `now` (epoch ms) to 1 hour after. */
-    async calendarAroundNow(now) {
+    async calendarAroundNow(now: Date | string | number) {
       return db.rows(
         `select subject, occurred_at, raw from source_item
       where source = 'graph_event' and occurred_at between $1 and $2`,
@@ -46,7 +51,7 @@ function create(db) {
     },
 
     /** Calendar events within two hours of [fromIso, toIso], oldest first. */
-    async calendarWindow(fromIso, toIso) {
+    async calendarWindow(fromIso: unknown, toIso: unknown) {
       return db.rows(
         `select external_id, subject, occurred_at, raw from source_item
       where source = 'graph_event' and occurred_at between $1 and $2
@@ -56,7 +61,7 @@ function create(db) {
     },
 
     /** The id of a stored item by source and external id. */
-    async idByExternal(source, externalId) {
+    async idByExternal(source: string, externalId: number | string) {
       return db.one('select id from source_item where source = $1 and external_id = $2', [source, externalId]);
     },
 
@@ -87,7 +92,7 @@ function create(db) {
     },
 
     /** Calendar events between two instants, oldest first. */
-    async eventsBetween(from, to) {
+    async eventsBetween(from: Date | string | number, to: string) {
       return db.rows(
         `select ${EVENT_COLS} from source_item
       where source = 'graph_event' and occurred_at between $1 and $2
@@ -97,7 +102,7 @@ function create(db) {
     },
 
     /** Calendar events whose subject matches an ilike pattern, oldest first. */
-    async eventsBySubject(like) {
+    async eventsBySubject(like: unknown) {
       return db.rows(
         `select ${EVENT_COLS} from source_item
       where source = 'graph_event' and subject like $1 escape '\\'
@@ -107,22 +112,22 @@ function create(db) {
     },
 
     /** One calendar event by its item id. */
-    async eventById(id) {
+    async eventById(id: number | string) {
       return db.one(`select ${EVENT_COLS} from source_item where source = 'graph_event' and id = $1`, [id]);
     },
 
     /** One calendar event by its external (Graph) id. */
-    async eventByExternalId(externalId) {
+    async eventByExternalId(externalId: number | string) {
       return db.one(`select ${EVENT_COLS} from source_item where source = 'graph_event' and external_id = $1`, [externalId]);
     },
 
     /** The `sync_cursor.state` of a connector, or null. */
-    async cursorState(source) {
+    async cursorState(source: string) {
       return db.one('select state from sync_cursor where source = $1', [source]);
     },
 
     /** A GitHub author's PRs active in a window (6, newest first), body head and the agent flag. */
-    async prsByAuthorBetween(author, from, to, agentPattern) {
+    async prsByAuthorBetween(author: unknown, from: Date | string | number, to: string, agentPattern: unknown) {
       const rows = await db.rows(
         `select id, subject, occurred_at, raw, substr(body_text, 1, 600) as body, body_text as _body from source_item
         where source = 'github_pr' and author_identity = $1 and occurred_at between $2 and $3
@@ -133,7 +138,7 @@ function create(db) {
     },
 
     /** Jira issues assigned to any of `assignees` that changed in a window (6, newest first). */
-    async jiraAssignedBetween(from, to, assignees) {
+    async jiraAssignedBetween(from: Date | string | number, to: string, assignees: unknown) {
       return db.rows(
         `select id, subject, occurred_at, raw from source_item
       where source = 'jira_issue' and occurred_at between $1 and $2
@@ -144,7 +149,7 @@ function create(db) {
     },
 
     /** Claude Code sessions in a window, longest first (8), with the opening prompt's head. */
-    async claudeSessionsBetween(from, to) {
+    async claudeSessionsBetween(from: Date | string | number, to: string) {
       return db.rows(
         `select id, subject, occurred_at, raw, substr(body_text, 1, 600) as body from source_item
       where source = 'claude_session' and occurred_at between $1 and $2
@@ -154,7 +159,7 @@ function create(db) {
     },
 
     /** Open Jira issues assigned to any of `assignees`, newest first. */
-    async openJiraAssigned(assignees, limit) {
+    async openJiraAssigned(assignees: unknown, limit: number) {
       return db.rows(
         `select id, subject, raw from source_item
       where source = 'jira_issue' and json_extract(raw, '$.state') = 'opened'
@@ -165,7 +170,7 @@ function create(db) {
     },
 
     /** A GitHub author's open PRs of the last 14 days before `now` (5), with the agent flag. */
-    async openPrsRecent(author, now, agentPattern) {
+    async openPrsRecent(author: unknown, now: Date | string | number, agentPattern: unknown) {
       const rows = await db.rows(
         `select id, subject, raw, body_text as _body from source_item
         where source = 'github_pr' and author_identity = $1 and json_extract(raw, '$.state') = 'opened'
@@ -177,7 +182,7 @@ function create(db) {
     },
 
     /** A GitHub author's open PRs that carry a label matching %block% (3). */
-    async blockedPrs(author) {
+    async blockedPrs(author: unknown) {
       return db.rows(
         `select id, subject, raw from source_item
         where source = 'github_pr' and author_identity = $1 and json_extract(raw, '$.state') = 'opened'
@@ -188,7 +193,7 @@ function create(db) {
     },
 
     /** Chat and mail from one address in the 21 days before `now` (6, newest first). */
-    async threadsFromAddress(email, now) {
+    async threadsFromAddress(email: string, now: Date | string | number) {
       return db.rows(
         `select id, source, subject, occurred_at, substr(body_text, 1, 220) as snippet from source_item
             where source in ('graph_chat','graph_mail') and lower(author_identity) = $1
@@ -199,7 +204,7 @@ function create(db) {
     },
 
     /** Chat and mail from any of `identities` in the 21 days before `now` (6, newest first). */
-    async threadsFromIdentities(identities, now) {
+    async threadsFromIdentities(identities: unknown, now: Date | string | number) {
       return db.rows(
         `select id, source, subject, occurred_at, substr(body_text, 1, 220) as snippet from source_item
       where source in ('graph_chat','graph_mail') and author_identity in (select value from json_each($1))
@@ -210,7 +215,7 @@ function create(db) {
     },
 
     /** Teams chats (not channels) from 5 minutes before `startIso` to 2 minutes after `endIso`, oldest first (16). */
-    async chatsAround(startIso, endIso) {
+    async chatsAround(startIso: unknown, endIso: unknown) {
       return db.rows(
         `select subject, author_identity, occurred_at, substr(body_text, 1, 240) as body, raw
        from source_item
@@ -223,7 +228,7 @@ function create(db) {
     },
 
     /** A GitHub author's open PRs of the last 60 days (15, newest first). */
-    async openPrsByAuthor(author) {
+    async openPrsByAuthor(author: unknown) {
       return db.rows(
         `select id, subject, raw from source_item
         where source = 'github_pr' and author_identity = $1 and json_extract(raw, '$.state') = 'opened'
@@ -234,7 +239,7 @@ function create(db) {
     },
 
     /** Calendar events of the 12 hours up to `now`. */
-    async calendarBefore(now) {
+    async calendarBefore(now: Date | string | number) {
       return db.rows(
         `select external_id, subject, occurred_at, raw from source_item
       where source = 'graph_event' and occurred_at between $1 and $2`,
@@ -243,7 +248,7 @@ function create(db) {
     },
 
     /** These items' {id, source, author_identity, occurred_at, subject, body_text, raw}, in no order. */
-    async itemsByIds(ids) {
+    async itemsByIds(ids: unknown[]) {
       return db.rows(
         'select id, source, author_identity, occurred_at, subject, body_text, raw from source_item where id in (select value from json_each($1))',
         [(ids || []).map(Number)]
@@ -251,7 +256,7 @@ function create(db) {
     },
 
     /** An item's subject and body, or null. */
-    async subjectAndBody(id) {
+    async subjectAndBody(id: number | string) {
       return db.one('select subject, body_text from source_item where id = $1', [id]);
     },
 
@@ -259,7 +264,7 @@ function create(db) {
      * Rewinds the date cursors (state.since) of `sources` (all when empty) to
      * `since`, dropping delta tokens. Resolves the sources rewound.
      */
-    async rewindCursors(since, sources) {
+    async rewindCursors(since: Date | string | number, sources: unknown[]) {
       const at = since instanceof Date ? since.toISOString() : String(since);
       const r = await db.rows(
         `update sync_cursor
@@ -273,7 +278,7 @@ function create(db) {
     },
 
     /** One Claude session item by id, or null (another source's id is null too). */
-    async claudeSessionItem(id) {
+    async claudeSessionItem(id: number | string) {
       return db.one(
         `select id, source, external_id, subject, occurred_at, raw from source_item where id = $1 and source = 'claude_session'`,
         [id]
@@ -281,12 +286,12 @@ function create(db) {
     },
 
     /** A connector's cursor: {last_run_at, last_error, state}, or null. */
-    async cursorRow(source) {
+    async cursorRow(source: string) {
       return db.one('select last_run_at, last_error, state from sync_cursor where source = $1', [source]);
     },
 
     /** The newest twelve items of a thread, newest first (body cut to 600 chars). */
-    async threadItems(threadExternalId) {
+    async threadItems(threadExternalId: number | string) {
       return db.rows(
         `select id, author_identity, occurred_at, substr(body_text, 1, 600) as body from source_item
           where thread_external_id = $1 order by occurred_at desc, id desc limit 12`,
@@ -297,7 +302,7 @@ function create(db) {
     // --- for src/ingest (chunk F)
 
     /** Inserts an item, or updates it when its content hash changed. {id, content_hash} when new or changed, null when unchanged. */
-    async upsertItem(it) {
+    async upsertItem(it: Row) {
       return db.one(
         `insert into source_item
     (source, external_id, thread_external_id, occurred_at, author_identity, subject, body_text, raw, content_hash)
@@ -318,12 +323,12 @@ function create(db) {
     },
 
     /** Drops an item's chunks (derived state: a changed body makes them wrong). */
-    async deleteChunks(itemId) {
+    async deleteChunks(itemId: number | string) {
       await db.query('delete from chunk where source_item_id = $1', [itemId]);
     },
 
     /** Writes chunk `ord` of an item; a rewrite clears its embedding (the FTS tables follow by trigger). */
-    async upsertChunk(itemId, ord, content, context, contextV) {
+    async upsertChunk(itemId: number | string, ord: number, content: unknown, context: unknown, contextV: number) {
       await db.query(
         `insert into chunk (source_item_id, ord, content, context, context_v) values ($1,$2,$3,$4,$5)
          on conflict (source_item_id, ord) do update set content = excluded.content,
@@ -333,12 +338,12 @@ function create(db) {
     },
 
     /** Drops an item's distillation (its body changed, so it is distilled again). */
-    async deleteDistillation(itemId) {
+    async deleteDistillation(itemId: number | string) {
       await db.query('delete from distillation where source_item_id = $1', [itemId]);
     },
 
     /** Advances a connector's cursor: delta token and state, run now, error cleared. */
-    async saveCursor({ source, deltaToken = null, state = {} }) {
+    async saveCursor({ source, deltaToken = null, state = {} }: { source?: string | null; deltaToken?: unknown; state?: unknown }) {
       await db.query(
         `insert into sync_cursor (source, delta_token, last_run_at, last_error, state)
          values ($1,$2,${NOW},null,$3)
@@ -352,12 +357,12 @@ function create(db) {
     },
 
     /** A connector's whole cursor row, or null. */
-    async getCursor(source) {
+    async getCursor(source: string) {
       return db.one('select * from sync_cursor where source = $1', [source]);
     },
 
     /** Records a failed run of a connector (its cursor otherwise unchanged). */
-    async recordCursorError(source, message) {
+    async recordCursorError(source: string, message: string) {
       await db.query(
         `insert into sync_cursor (source, last_run_at, last_error)
        values ($1, ${NOW}, $2)
@@ -380,7 +385,7 @@ function create(db) {
             (select max(si.fetched_at) from source_item si where si.source = sc.source) as last_item_at
        from sync_cursor sc order by sc.source`
       );
-      for (const r of rows) if (r.last_item_at != null) r.last_item_at = new Date(r.last_item_at);
+      for (const r of rows) if (r.last_item_at != null) r.last_item_at = new Date(r.last_item_at as string);
       return rows;
     },
 
@@ -394,7 +399,7 @@ function create(db) {
      * fetched again (fewer than `maxTries` repairs), newest first. pg's
      * split_part(external_id, '/', 2) ~ '^[0-9]+$' is spelled with instr/substr/glob.
      */
-    async emptyChatMessages(limit, maxTries) {
+    async emptyChatMessages(limit: number, maxTries: number) {
       return db.rows(
         `select id, external_id, thread_external_id, subject, author_identity, raw from (
            select *, case when instr(substr(external_id, instr(external_id, '/') + 1), '/') > 0
@@ -411,7 +416,7 @@ function create(db) {
     },
 
     /** Fills a repaired message's body (marked repaired, so the reconciler may judge it again). */
-    async repairBody(id, text, hash) {
+    async repairBody(id: number | string, text: string, hash: string) {
       await db.query(
         `update source_item set body_text = $2, content_hash = $3, fetched_at = ${NOW},
                 raw = json_set(raw, '$.repaired', json('true')) where id = $1`,
@@ -420,7 +425,7 @@ function create(db) {
     },
 
     /** Counts one more failed repair of a message. */
-    async countRepairTry(id) {
+    async countRepairTry(id: number | string) {
       await db.query(
         `update source_item set raw = json_set(raw, '$.repairTries', coalesce(cast(json_extract(raw, '$.repairTries') as integer), 0) + 1) where id = $1`,
         [id]
@@ -428,7 +433,7 @@ function create(db) {
     },
 
     /** Chat messages stored from the Teams cache, by external id. */
-    async cachedChatMessages(externalIds) {
+    async cachedChatMessages(externalIds: unknown[]) {
       return db.rows(
         `select external_id, occurred_at, author_identity, subject, body_text, raw
        from source_item
@@ -438,7 +443,7 @@ function create(db) {
     },
 
     /** Per chat and display name, the newest address it was seen with: {chat, name, email}. */
-    async chatSenderEmails(threads) {
+    async chatSenderEmails(threads: unknown[]) {
       return db.rows(
         `select chat, name, email from (
            select thread_external_id as chat, json_extract(raw, '$.fromName') as name, lower(author_identity) as email,
@@ -452,7 +457,7 @@ function create(db) {
     },
 
     /** Per chat, its newest message's subject and raw, preferring ones from the connector: {chat, subject, raw}. */
-    async chatHeads(conversationIds) {
+    async chatHeads(conversationIds: unknown[]) {
       const rows = await db.rows(
         `select chat, subject, raw from (
            select thread_external_id as chat, subject, raw,
@@ -468,7 +473,7 @@ function create(db) {
     },
 
     /** Chat messages by external id: {external_id, occurred_at, author_identity, subject, raw, fetched_at}. */
-    async chatMessagesByExternalId(externalIds) {
+    async chatMessagesByExternalId(externalIds: unknown[]) {
       return db.rows(
         `select external_id, occurred_at, author_identity, subject, raw, fetched_at
        from source_item where source = 'graph_chat' and external_id in (select value from json_each($1))`,
@@ -485,7 +490,7 @@ function create(db) {
     },
 
     /** Claude session items of the last `days` days, newest first, at most 400: {id, occurred_at, body_text}. */
-    async recentClaudeSessions(days) {
+    async recentClaudeSessions(days: number) {
       return db.rows(
         `select id, occurred_at, body_text from source_item
       where source = 'claude_session' and occurred_at > $1
@@ -496,12 +501,12 @@ function create(db) {
     // --- chunk E
 
     /** One item row by id, or null. */
-    async rowById(id) {
+    async rowById(id: number | string) {
       return db.one('select * from source_item where id = $1', [id]);
     },
 
     /** The six newest other items of a thread: {id, source, subject, occurred_at}. */
-    async relatedInThread(threadExternalId, exceptId) {
+    async relatedInThread(threadExternalId: number | string, exceptId: number | string) {
       return db.rows(
         `select id, source, subject, occurred_at from source_item
       where thread_external_id = $1 and id <> $2
@@ -511,12 +516,12 @@ function create(db) {
     },
 
     /** Every item of a thread in one source, oldest first (whole rows). */
-    async threadRows(source, threadExternalId) {
+    async threadRows(source: string, threadExternalId: number | string) {
       return db.rows('select * from source_item where source = $1 and thread_external_id = $2 order by occurred_at, id', [source, threadExternalId]);
     },
 
     /** The twenty newest code items (PRs, issues, notifications, project items) of a forge project. */
-    async codeItemsOf(gitlabPath) {
+    async codeItemsOf(gitlabPath: string) {
       return db.rows(
         `select source, subject, raw, occurred_at from source_item
           where source in ('github_pr','github_issue','github_notification','github_project_item')
@@ -527,7 +532,7 @@ function create(db) {
     },
 
     /** The ten newest items written by a person (by identity or email). */
-    async recentByPerson(personId, email) {
+    async recentByPerson(personId: number | string, email: string) {
       return db.rows(
         `select si.id, si.source, si.subject, si.occurred_at from source_item si
           where si.author_identity in (select value from person_identity where person_id = $1)

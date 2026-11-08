@@ -2,6 +2,11 @@
 
 // Aggregate: commitments. Tables: commitment, commitment_block, commitment_review, commitment_vector, reply_close, distillation.
 // Owner while plan 1.2 is converting: chunk C (commitments). Not converted yet.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+type Db = import('./types.ts').Db;
+type Row = import('./types.ts').Row;
 
 const LIVE = `c.status in ('open','dispatched') and c.superseded_by is null`;
 
@@ -32,7 +37,7 @@ const POLICY_CANDIDATES = `
 
 // Who wrote an item, as a name: the connector's display name, the person the
 // identity resolves to, or the raw identity.
-const AUTHOR = (t) => `coalesce(${t}.raw->>'fromName',
+const AUTHOR = (t: string) => `coalesce(${t}.raw->>'fromName',
   (select p.display_name from person_identity pi join person p on p.id = pi.person_id
     where lower(pi.value) = lower(regexp_replace(coalesce(${t}.author_identity, ''), '^github:', '')) limit 1),
   ${t}.author_identity)`;
@@ -45,7 +50,7 @@ const AUTHOR = (t) => `coalesce(${t}.raw->>'fromName',
 // protected exactly the per-item copies the dedupe pass exists to fold. (A
 // pending "looks done?" proposal on a folded copy is shown on its survivor:
 // ledger/reconcile.js.)
-const ACTED = (a) => `(${a}.status = 'dispatched' or ${a}.touched_at is not null
+const ACTED = (a: unknown) => `(${a}.status = 'dispatched' or ${a}.touched_at is not null
    or exists (select 1 from draft d where d.commitment_id = ${a}.id)
    or exists (select 1 from run r where r.commitment_id = ${a}.id)
    or exists (select 1 from ledger_transition t where t.commitment_id = ${a}.id)
@@ -63,7 +68,7 @@ const EXISTING = `
     from commitment c
    where c.source_item_id = $1 and c.superseded_by is null`;
 
-function create(db) {
+function create(db: Db) {
   return {
     // --- for brief/index.js
 
@@ -75,7 +80,7 @@ function create(db) {
      * @param {number} limit
      * @returns {Promise<object[]>}
      */
-    async openForBrief(selfNote, limit) {
+    async openForBrief(selfNote: unknown, limit: number) {
       const { SELF_NOTE } = require('../commitments/selfNotes');
       return db.rows(
         `select c.id, c.summary, c.detail, c.direction, c.due_at, c.status, c.confidence,
@@ -101,7 +106,7 @@ function create(db) {
      * @param {number} limit
      * @returns {Promise<object[]>}
      */
-    async toPlan(limit) {
+    async toPlan(limit: number) {
       const { SELF_NOTE } = require('../commitments/selfNotes');
       return db.rows(
         `select c.id, c.summary, c.detail, c.repo_path, c.project_id, pr.name as project,
@@ -130,16 +135,16 @@ function create(db) {
         `select count(*)::int as n from commitment
         where plan->>'researchRunId' is not null and planned_at >= date_trunc('day', now())`
       );
-      return r.n;
+      return r?.n;
     },
 
     /** Records the planner's decision on a commitment. */
-    async setPlan(id, kind, plan) {
+    async setPlan(id: number | string, kind: string, plan: unknown) {
       await db.query('update commitment set kind = $2, plan = $3, planned_at = now() where id = $1', [id, kind, plan]);
     },
 
     /** Marks a commitment planned with kind 'other' (no plan made). */
-    async markPlannedOther(id) {
+    async markPlannedOther(id: number | string) {
       await db.query(`update commitment set kind = 'other', planned_at = now() where id = $1`, [id]);
     },
 
@@ -148,7 +153,7 @@ function create(db) {
      * @param {Array<number|string>} ids
      * @returns {Promise<{commitment_id: number|string, subject: string}[]>}
      */
-    async shippedSinceAsk(ids) {
+    async shippedSinceAsk(ids: unknown[]) {
       return db.rows(
         `select c.id as commitment_id, si.subject
          from commitment c
@@ -169,7 +174,7 @@ function create(db) {
      * Things I did and closed in a window (6, newest first): marked done or
      * reviewed by me, not someone else's PR landing.
      */
-    async closedByMeBetween(from, to) {
+    async closedByMeBetween(from: Date | string | number, to: string) {
       return db.rows(
         `select id, summary, closed_reason, closed_at from commitment
       where direction = 'owed_by_me' and status = 'done' and closed_at between $1 and $2
@@ -182,7 +187,7 @@ function create(db) {
     },
 
     /** My open asks due within two days of `now` (or up to 14 days overdue), soonest first (6). */
-    async dueSoonOwedByMe(now) {
+    async dueSoonOwedByMe(now: Date | string | number) {
       return db.rows(
         `select id, summary, due_at from commitment
       where direction = 'owed_by_me' and status in ('open','dispatched') and superseded_by is null
@@ -194,7 +199,7 @@ function create(db) {
     },
 
     /** My undated asks extracted in the last day with confidence >= 0.6 (4, newest first). */
-    async freshAsksOwedByMe(now) {
+    async freshAsksOwedByMe(now: Date | string | number) {
       return db.rows(
         `select id, summary from commitment
       where direction = 'owed_by_me' and status = 'open' and superseded_by is null and due_at is null
@@ -205,7 +210,7 @@ function create(db) {
     },
 
     /** Open and dispatched commitments with a person, soonest due first (12). */
-    async openWithPerson(personId) {
+    async openWithPerson(personId: number | string) {
       return db.rows(
         `select id, direction, summary, due_at from commitment
       where counterparty_person_id = $1 and status in ('open','dispatched') and superseded_by is null
@@ -221,7 +226,7 @@ function create(db) {
      * those with a person in `attendeeEmails` first.
      * @param {string[]} attendeeEmails  lowercased
      */
-    async openForDebrief(attendeeEmails) {
+    async openForDebrief(attendeeEmails: unknown) {
       return db.rows(
         `select c.id, c.direction, c.summary, c.detail, c.due_at, c.status, c.closed_at, c.closed_reason,
             p.display_name as counterparty, lower(p.primary_email) as counterparty_email
@@ -240,13 +245,13 @@ function create(db) {
      *   extractedBy: string}} c
      * @returns {Promise<number|string>} its id
      */
-    async insertFromDebrief({ sourceItemId, direction, summary, detail, counterpartyPersonId, dueAt, confidence, extractedBy }) {
+    async insertFromDebrief({ sourceItemId, direction, summary, detail, counterpartyPersonId, dueAt, confidence, extractedBy }: { sourceItemId?: number | string | null; direction?: unknown; summary?: string | null; detail?: string | null; counterpartyPersonId?: number | string | null; dueAt?: Date | string | number | null; confidence?: number; extractedBy?: string | null }) {
       const r = await db.one(
         `insert into commitment (source_item_id, direction, summary, detail, counterparty_person_id, due_at, confidence, extracted_by)
            values ($1,$2,$3,$4,$5,$6,$7,$8) returning id`,
         [sourceItemId, direction, summary, detail, counterpartyPersonId, dueAt, confidence, extractedBy]
       );
-      return r.id;
+      return r?.id;
     },
 
     /**
@@ -255,7 +260,7 @@ function create(db) {
      * @param {number|string} id
      * @param {object} set  column -> value
      */
-    async setDebriefColumns(id, set) {
+    async setDebriefColumns(id: number | string, set: Row) {
       const cols = Object.keys(set).filter((k) => SETTABLE.has(k));
       if (!cols.length) return;
       await db.query(
@@ -265,12 +270,12 @@ function create(db) {
     },
 
     /** Deletes a commitment a debrief created (only while still extracted by `extractedBy`). */
-    async deleteExtractedBy(id, extractedBy) {
+    async deleteExtractedBy(id: number | string, extractedBy: string) {
       await db.query(`delete from commitment where id = $1 and extracted_by = $2`, [id, extractedBy]);
     },
 
     /** One commitment row, or null (the debrief's undo reads it before restoring columns). */
-    async rowForUndo(id) {
+    async rowForUndo(id: number | string) {
       return db.one('select * from commitment where id = $1', [id]);
     },
 
@@ -281,7 +286,7 @@ function create(db) {
      * @param {number|string} id
      * @returns {Promise<{id, status: string, summary: string}|null>}
      */
-    async summaryRow(id) {
+    async summaryRow(id: number | string) {
       return db.one('select id, status, summary from commitment where id = $1', [id]);
     },
 
@@ -291,7 +296,7 @@ function create(db) {
      * @param {number|string} id
      * @returns {Promise<Array<{id}>>}
      */
-    async openDuplicatesOf(id) {
+    async openDuplicatesOf(id: number | string) {
       return db.rows(DUPLICATE_SET_SQL, [id]);
     },
 
@@ -302,7 +307,7 @@ function create(db) {
      * @param {number} limit
      * @returns {Promise<object[]>} id, summary, status, closed_reason, closed_at, source, url, actor
      */
-    async recentlyClosed(days, limit) {
+    async recentlyClosed(days: number, limit: number) {
       return db.rows(
         `select c.id, c.summary, c.status, c.closed_reason, c.closed_at, si.source,
             coalesce(si.raw->>'webUrl', si.thread_external_id) as url,
@@ -322,7 +327,7 @@ function create(db) {
      * @param {string} srcSql  sourcePolicy.sourceSql('si.source')
      * @returns {Promise<Array<{id, summary, detail, extracted_at}>>}
      */
-    async blockTasks(srcSql) {
+    async blockTasks(srcSql: unknown) {
       return db.rows(
         `select c.id, c.summary, c.detail, c.extracted_at from commitment c join source_item si on si.id = c.source_item_id
       where ${LIVE} and c.direction = 'owed_by_me' and ${srcSql} order by c.id`
@@ -334,7 +339,7 @@ function create(db) {
      * @param {string} srcSql  sourcePolicy.sourceSql('si.source')
      * @returns {Promise<object[]>}
      */
-    async blockCandidates(srcSql) {
+    async blockCandidates(srcSql: unknown) {
       return db.rows(
         `select c.id, c.summary, c.detail, coalesce(p.display_name, '') as who,
             coalesce(si.raw->>'chatTopic', si.subject, '') as place, si.body_text as body,
@@ -355,7 +360,7 @@ function create(db) {
      * @param {Array<number|string>} taskIds  parallel to blockerIds
      * @returns {Promise<Array<{b: string, cos: number|string}>>}
      */
-    async blockLinkCosines(blockerIds, taskIds) {
+    async blockLinkCosines(blockerIds: unknown[], taskIds: unknown[]) {
       return db.rows(
         `select x.b::text as b, 1 - (vb.embedding <=> vt.embedding) as cos
        from unnest($1::bigint[], $2::bigint[]) as x(b, t)
@@ -366,7 +371,7 @@ function create(db) {
     },
 
     /** Writes the model's verdict on a blocker; a row you set by hand (manual) is never changed. */
-    async upsertBlockJudged(blockerId, taskId, verdict, why, who) {
+    async upsertBlockJudged(blockerId: number | string, taskId: number | string, verdict: unknown, why: unknown, who: unknown) {
       await db.query(
         `insert into commitment_block (blocker_id, task_id, verdict, why, who, judged_at) values ($1, $2, $3, $4, $5, now())
          on conflict (blocker_id) do update set task_id = excluded.task_id, verdict = excluded.verdict, why = excluded.why,
@@ -377,7 +382,7 @@ function create(db) {
     },
 
     /** Your call on a card: writes the verdict and marks it manual. */
-    async upsertBlockManual(blockerId, taskId, verdict, why) {
+    async upsertBlockManual(blockerId: number | string, taskId: number | string, verdict: unknown, why: unknown) {
       await db.query(
         `insert into commitment_block (blocker_id, task_id, verdict, why, manual, judged_at) values ($1, $2, $3, $4, true, now())
      on conflict (blocker_id) do update set task_id = coalesce(excluded.task_id, case when excluded.verdict = 'blocks' then commitment_block.task_id end),
@@ -392,7 +397,7 @@ function create(db) {
      * @param {number} days
      * @returns {Promise<object[]>}
      */
-    async blocksForBoard(days) {
+    async blocksForBoard(days: number) {
       return db.rows(
         `select b.blocker_id::text, b.task_id::text, b.verdict, b.why, b.manual,
             c.status, c.closed_at, c.closed_reason, c.summary, coalesce(p.display_name, b.who, '') as who
@@ -423,7 +428,7 @@ function create(db) {
      * @param {Array<number>} ids
      * @returns {Promise<Array<{id, superseded_by, summary, source, author_identity, raw}>>}
      */
-    async foldedUnder(ids) {
+    async foldedUnder(ids: unknown[]) {
       return db.rows(
         `select c.id, c.superseded_by, c.summary, si.source, si.author_identity, si.raw
            from commitment c join source_item si on si.id = c.source_item_id
@@ -436,7 +441,7 @@ function create(db) {
      * Unfolds a commitment still folded under `supersededBy`.
      * @returns {Promise<boolean>} whether a row changed
      */
-    async unfold(id, supersededBy) {
+    async unfold(id: number | string, supersededBy: unknown) {
       const r = await db.query('update commitment set superseded_by = null where id = $1 and superseded_by = $2', [id, supersededBy]);
       return Boolean(r.rowCount);
     },
@@ -449,7 +454,7 @@ function create(db) {
      * @param {string} selfNoteSql  selfNotes.SELF_NOTE (needs `si` and `per` in scope)
      * @returns {Promise<Array<{id}>>}
      */
-    async expiredSelfNotes(days, selfNoteSql) {
+    async expiredSelfNotes(days: number, selfNoteSql: unknown) {
       return db.rows(
         `select c.id from commitment c
        join source_item si on si.id = c.source_item_id
@@ -471,7 +476,7 @@ function create(db) {
      * @param {string} selfNoteSql  selfNotes.SELF_NOTE
      * @returns {Promise<Array<{id, prio}>>}
      */
-    async dueForContext(limit, version, refreshMinutes, selfNoteSql) {
+    async dueForContext(limit: number, version: string, refreshMinutes: unknown, selfNoteSql: unknown) {
       return db.rows(
         `with card as (
        select p.commitment_id as id, 0 as prio from proposal p
@@ -509,7 +514,7 @@ function create(db) {
      * @param {number|string} id
      * @returns {Promise<object|null>}
      */
-    async contextCard(id) {
+    async contextCard(id: number | string) {
       return db.one(
         `select c.id, c.summary, c.detail, c.direction, c.status, c.due_at, c.kind,
             coalesce(p.gitlab_path, p.name) as project, per.display_name as who,
@@ -534,7 +539,7 @@ function create(db) {
      * @param {number|string} itemId  of the source item
      * @returns {Promise<Array<{id, occurred_at, body: string, author}>>}
      */
-    async contextThread(source, threadExternalId, occurredAt, itemId) {
+    async contextThread(source: string, threadExternalId: number | string, occurredAt: Date | string | number, itemId: number | string) {
       const cols = `t.id, t.occurred_at, left(t.body_text, 900) as body, ${AUTHOR('t')} as author`;
       return db.rows(
         `(select ${cols} from source_item t
@@ -552,12 +557,12 @@ function create(db) {
      * Stores a card's context paragraph (kept when `text` is null) and stamps
      * when and by what it was written.
      */
-    async setContext(id, text, by) {
+    async setContext(id: number | string, text: string, by: unknown) {
       await db.query(`update commitment set context = coalesce($2, context), context_at = now(), context_by = $3 where id = $1`, [id, text, by]);
     },
 
     /** Stamps context_at, so a failed card is retried after the refresh interval. */
-    async stampContextAt(id) {
+    async stampContextAt(id: number | string) {
       await db.query('update commitment set context_at = now() where id = $1', [id]);
     },
 
@@ -570,7 +575,7 @@ function create(db) {
      * @param {string} policySql  sourcePolicy.sourceSql('si.source')
      * @returns {Promise<Array<{id, summary, detail, thread_external_id}>>}
      */
-    async unvectored(limit, windowDays, policySql) {
+    async unvectored(limit: number, windowDays: unknown, policySql: unknown) {
       return db.rows(
         `select c.id, c.summary, c.detail, si.thread_external_id
        from commitment c join source_item si on si.id = c.source_item_id
@@ -583,7 +588,7 @@ function create(db) {
     },
 
     /** Stores a commitment's embedding (`vector` as '[..]' text) and anchors; a second is a no-op. */
-    async insertVector(commitmentId, vector, anchors) {
+    async insertVector(commitmentId: number | string, vector: unknown, anchors: unknown) {
       await db.query(
         `insert into commitment_vector (commitment_id, embedding, anchors) values ($1, $2::vector, $3)
          on conflict (commitment_id) do nothing`,
@@ -598,7 +603,7 @@ function create(db) {
      * @param {string} policySql  sourcePolicy.sourceSql('si.source')
      * @returns {Promise<object[]>}
      */
-    async dedupePool(windowDays, policySql) {
+    async dedupePool(windowDays: unknown, policySql: unknown) {
       return db.rows(
         `select c.id, c.summary, c.detail, c.direction, c.status, c.due_at, c.extracted_at, c.source_item_id,
             (c.counterparty_person_id is not null and not coalesce(p.is_me, false)) as has_party,
@@ -622,7 +627,7 @@ function create(db) {
      * has none.
      * @returns {Promise<Array<{id}>>} zero or one row
      */
-    async survivorOf(id) {
+    async survivorOf(id: number | string) {
       return db.rows(
         `with recursive up as (select id, superseded_by, 0 as n from commitment where id = $1
         union all select c.id, c.superseded_by, up.n + 1 from commitment c join up on c.id = up.superseded_by where up.n < 20)
@@ -636,7 +641,7 @@ function create(db) {
      * folded meanwhile.
      * @returns {Promise<boolean>} whether the fold was made
      */
-    async fold(drop, keep) {
+    async fold(drop: unknown, keep: unknown) {
       const r = await db.query(
         `update commitment set superseded_by = $2
       where id = $1 and superseded_by is null and status in ('open','dispatched')`,
@@ -655,7 +660,7 @@ function create(db) {
     },
 
     /** Marks one vector checked, with the fold note (or null) as its verdict. */
-    async markVectorChecked(commitmentId, verdict) {
+    async markVectorChecked(commitmentId: number | string, verdict: unknown) {
       await db.query(`update commitment_vector set checked_at = now(), verdict = $2 where commitment_id = $1`, [commitmentId, verdict]);
     },
 
@@ -675,7 +680,7 @@ function create(db) {
      * @param {{windowDays: number, sources: string[], maxAttempts: number}} o
      * @returns {Promise<object[]>}
      */
-    async replyCloseCandidates(me, version, limit, { windowDays, sources, maxAttempts }) {
+    async replyCloseCandidates(me: unknown, version: string, limit: number, { windowDays, sources, maxAttempts }: { windowDays?: unknown; sources?: unknown[] | null; maxAttempts?: unknown }) {
       return db.rows(
         `
   select c.id, c.summary, c.detail, c.due_at, c.status, c.closed_at, c.closed_reason,
@@ -694,7 +699,7 @@ function create(db) {
          and lower(coalesce(mine.author_identity, '')) = any($1::text[])
        order by mine.occurred_at desc, mine.id desc limit 1) last
    where c.status = 'open' and c.direction = 'owed_by_me' and c.superseded_by is null
-     and si.source = any('{${sources.join(',')}}'::text[]) and si.thread_external_id is not null
+     and si.source = any('{${(sources ?? []).join(',')}}'::text[]) and si.thread_external_id is not null
      and not exists (
        select 1 from reply_close r
         where r.commitment_id = c.id and r.extracted_by = $2 and r.last_message_id = last.id
@@ -715,7 +720,7 @@ function create(db) {
      * @param {{windowDays: number, limit: number}} o
      * @returns {Promise<Array<{id, occurred_at, body_text}>>}
      */
-    async replyCloseReplies(me, source, threadExternalId, itemId, occurredAt, { windowDays, limit }) {
+    async replyCloseReplies(me: unknown, source: string, threadExternalId: number | string, itemId: number | string, occurredAt: Date | string | number, { windowDays, limit }: { windowDays?: unknown; limit?: number }) {
       return db.rows(
         `select mine.id, mine.occurred_at, mine.body_text from source_item mine
       where mine.source = $2 and mine.thread_external_id = $3 and mine.id <> $4
@@ -734,7 +739,7 @@ function create(db) {
      * @param {{verdict, quote, message?: {id}, confidence?: number}} j
      * @param {object|null} applied  what was changed, for undo
      */
-    async recordReplyClose(c, version, j, applied = null) {
+    async recordReplyClose(c: Row, version: string, j: { verdict?: unknown; quote?: unknown; message?: { id?: unknown } | null; confidence?: unknown }, applied: boolean | null = null) {
       await db.query(
         `insert into reply_close (commitment_id, extracted_by, last_message_id, verdict, quote, message_id, confidence, applied, attempts, error)
      values ($1, $2, $3, $4, $5, $6, $7, $8, 1, null)
@@ -747,7 +752,7 @@ function create(db) {
     },
 
     /** Records a failed judgement (`message` is clipped by the caller). */
-    async recordReplyCloseError(c, version, message) {
+    async recordReplyCloseError(c: Row, version: string, message: string) {
       await db.query(
         `insert into reply_close (commitment_id, extracted_by, last_message_id, error, attempts)
      values ($1, $2, $3, $4, 1)
@@ -762,7 +767,7 @@ function create(db) {
      * The commitment's status columns, row-locked (use inside withTx).
      * @returns {Promise<{id, status, closed_at, closed_reason}|null>}
      */
-    async lockStatus(id) {
+    async lockStatus(id: number | string) {
       return db.one('select id, status, closed_at, closed_reason from commitment where id = $1 for update', [id]);
     },
 
@@ -770,7 +775,7 @@ function create(db) {
      * The newest applied, not yet undone reply-close judgement on a commitment.
      * @returns {Promise<object|null>} the reply_close row
      */
-    async latestAppliedReplyClose(commitmentId) {
+    async latestAppliedReplyClose(commitmentId: number | string) {
       return db.one(
         `select * from reply_close where commitment_id = $1 and applied is not null and undone_at is null
       order by judged_at desc limit 1`,
@@ -779,12 +784,12 @@ function create(db) {
     },
 
     /** Marks a reply_close row undone, with what the undo said. */
-    async markReplyCloseUndone(id, result) {
+    async markReplyCloseUndone(id: number | string, result: string) {
       await db.query('update reply_close set undone_at = now(), undo = $2 where id = $1', [id, result]);
     },
 
     /** Puts back the columns a close overwrote. */
-    async restoreClosedState(id, status, closedAt, closedReason) {
+    async restoreClosedState(id: number | string, status: string, closedAt: unknown, closedReason: unknown) {
       await db.query('update commitment set status = $2, closed_at = $3, closed_reason = $4 where id = $1', [id, status, closedAt, closedReason]);
     },
 
@@ -794,7 +799,7 @@ function create(db) {
      * @param {number} maxAttempts
      * @returns {Promise<{closed: number, judged: number, failed: number, last: Date|null}>}
      */
-    async replyCloseStats(maxAttempts) {
+    async replyCloseStats(maxAttempts: unknown) {
       return db.one(
         `select count(*) filter (where r.applied is not null and r.undone_at is null
                               and c.closed_reason = r.applied->'set'->>'closed_reason')::int as closed,
@@ -812,7 +817,7 @@ function create(db) {
      * @param {{itemId, direction, summary, detail, personId, dueAt, projectId, repoPath, projectConfidence, projectRationale, extractedBy}} v
      * @returns {Promise<{id}>}
      */
-    async insertRequested(v) {
+    async insertRequested(v: Row) {
       return db.one(
         `insert into commitment
            (source_item_id, direction, summary, detail, counterparty_person_id, due_at, project_id, repo_path,
@@ -833,7 +838,7 @@ function create(db) {
      * @param {string} allowedSql  sources that may create tasks, a SQL predicate on `si`
      * @returns {Promise<object[]>} source_item rows
      */
-    async pendingDistill(version, minChars, limit, skipSql, allowedSql) {
+    async pendingDistill(version: string, minChars: unknown, limit: number, skipSql: unknown, allowedSql: unknown) {
       return db.rows(
         `select si.* from source_item si
        left join distillation d
@@ -850,7 +855,7 @@ function create(db) {
      * How many items {@link pendingDistill} would return (without a limit).
      * @returns {Promise<{n: number}|null>}
      */
-    async pendingDistillCount(version, minChars, skipSql, allowedSql) {
+    async pendingDistillCount(version: string, minChars: unknown, skipSql: unknown, allowedSql: unknown) {
       return db.one(
         `select count(*)::int as n from source_item si
        left join distillation d
@@ -864,12 +869,12 @@ function create(db) {
      * An item's live commitments with whether anything has acted on them.
      * @returns {Promise<Array<{id, status, summary, touched: boolean, refs: boolean}>>}
      */
-    async liveForItem(itemId) {
+    async liveForItem(itemId: number | string) {
       return db.rows(EXISTING, [itemId]);
     },
 
     /** Deletes commitments by id (re-distillation replacing what nothing acted on). */
-    async deleteByIds(ids) {
+    async deleteByIds(ids: unknown[]) {
       await db.query('delete from commitment where id = any($1::bigint[])', [ids]);
     },
 
@@ -877,7 +882,7 @@ function create(db) {
      * Inserts one distilled commitment.
      * @param {{itemId, direction, summary, detail, personId, dueAt, projectId, repoPath, projectConfidence, projectRationale, confidence, extractedBy}} v
      */
-    async insertDistilled(v) {
+    async insertDistilled(v: Row) {
       await db.query(
         `insert into commitment
            (source_item_id, direction, summary, detail, counterparty_person_id, due_at,
@@ -888,7 +893,7 @@ function create(db) {
     },
 
     /** Marks an item distilled with its counts; clears any earlier error. */
-    async upsertDistillation(itemId, version, commitments, facts) {
+    async upsertDistillation(itemId: number | string, version: string, commitments: unknown, facts: unknown) {
       await db.query(
         `insert into distillation (source_item_id, extracted_by, commitments, facts, error)
        values ($1,$2,$3,$4,null)
@@ -903,7 +908,7 @@ function create(db) {
     },
 
     /** Marks an item failed, with the (clipped) error, so the pass moves on. */
-    async markDistillFailed(itemId, version, error) {
+    async markDistillFailed(itemId: number | string, version: string, error: string) {
       await db.query(
         `insert into distillation (source_item_id, extracted_by, error)
        values ($1,$2,$3)
@@ -914,7 +919,7 @@ function create(db) {
     },
 
     /** Marks an item the source policy keeps off the board as distilled with nothing found. */
-    async markDistillSkipped(itemId, version) {
+    async markDistillSkipped(itemId: number | string, version: string) {
       await db.query(
         `insert into distillation (source_item_id, extracted_by, commitments, facts) values ($1, $2, 0, 0)
      on conflict (source_item_id) do update set extracted_by = excluded.extracted_by, extracted_at = now(), error = null`,
@@ -923,19 +928,19 @@ function create(db) {
     },
 
     /** Marks an item the debrief owns as distilled (a no-op when it already is). */
-    async markDistillOwnedByDebrief(itemId, version) {
+    async markDistillOwnedByDebrief(itemId: number | string, version: string) {
       await db.query(`insert into distillation (source_item_id, extracted_by) values ($1, $2) on conflict (source_item_id) do nothing`, [itemId, version]);
     },
 
     // --- src/distill/identity.js, src/projects/index.js
 
     /** Re-points every commitment's counterparty from one person to another (a person merge). */
-    async reassignCounterparty(intoId, fromId) {
+    async reassignCounterparty(intoId: number | string, fromId: number | string) {
       await db.query('update commitment set counterparty_person_id = $1 where counterparty_person_id = $2', [intoId, fromId]);
     },
 
     /** One commitment row by id (null when gone). */
-    async byId(id) {
+    async byId(id: number | string) {
       return db.one('select * from commitment where id = $1', [id]);
     },
 
@@ -949,7 +954,7 @@ function create(db) {
     },
 
     /** The (at most 5) projects a person's commitments most often sit in. @returns {Promise<Array<{project_id, n}>>} */
-    async projectsOfPerson(personId) {
+    async projectsOfPerson(personId: number | string) {
       return db.rows(
         `select project_id, count(*) as n from commitment
           where counterparty_person_id = $1 and project_id is not null
@@ -959,7 +964,7 @@ function create(db) {
     },
 
     /** The project of the newest commitment from a thread, or null. @returns {Promise<{project_id}|null>} */
-    async projectOfThread(threadExternalId) {
+    async projectOfThread(threadExternalId: number | string) {
       return db.one(
         `select c.project_id from commitment c
            join source_item si on si.id = c.source_item_id
@@ -973,7 +978,7 @@ function create(db) {
      * Points a commitment at a project (or clears it); a by-hand correction
      * also stamps touched_at.
      */
-    async setProject(id, projectId, repoPath, confidence, rationale) {
+    async setProject(id: number | string, projectId: number | string, repoPath: string, confidence: number, rationale: unknown) {
       await db.query(
         `update commitment set project_id = $2, repo_path = $3, project_confidence = $4,
                            project_rationale = $5,
@@ -989,7 +994,7 @@ function create(db) {
      * @param {number[]|null} ids  only these commitments
      * @returns {Promise<object[]>}
      */
-    async projectLinks(project, ids) {
+    async projectLinks(project: unknown, ids: unknown[]) {
       return db.rows(
         `select c.id, c.project_id, c.repo_path, c.project_confidence, c.project_rationale, c.summary, c.detail,
             si.source, si.subject, si.body_text, si.raw, p.name as project
@@ -1009,7 +1014,7 @@ function create(db) {
      * changed meanwhile is left alone.
      * @returns {Promise<boolean>} whether a row changed
      */
-    async clearProject(id, rationale, oldProjectId) {
+    async clearProject(id: number | string, rationale: unknown, oldProjectId: number | string) {
       const res = await db.query(
         `update commitment set project_id = null, repo_path = null, project_confidence = null, project_rationale = $2
         where id = $1 and project_id = $3 and superseded_by is null`,
@@ -1021,7 +1026,7 @@ function create(db) {
     // --- for proposals/index.js
 
     /** Clears a commitment's plan time, so the planner plans it again. */
-    async replan(id) {
+    async replan(id: number | string) {
       await db.query('update commitment set planned_at = null where id = $1', [id]);
     },
 
@@ -1032,7 +1037,7 @@ function create(db) {
      * @param {string|null} source  only items from this source
      * @param {number} limit
      */
-    async inboxList(source, limit) {
+    async inboxList(source: string, limit: number) {
       return db.rows(
         `select c.id, c.summary, c.direction, c.due_at, c.confidence, c.project_confidence,
               p.name as project, per.display_name as who, si.source, si.occurred_at
@@ -1048,7 +1053,7 @@ function create(db) {
     },
 
     /** One commitment with its project, person and source item, for `pa show`. Null when gone. */
-    async detailForCli(id) {
+    async detailForCli(id: number | string) {
       return db.one(
         `select c.*, p.name as project, per.display_name as who, per.primary_email as who_email,
               si.source, si.subject, si.body_text, si.occurred_at, si.thread_external_id
@@ -1085,7 +1090,7 @@ function create(db) {
      * @param {Array<number|string>} ids
      * @param {boolean} context
      */
-    async cardDetails(ids, context) {
+    async cardDetails(ids: unknown[], context: unknown) {
       return db.rows(
         `select ${DETAIL_COLS}${context ? ', c.context, c.context_at' : ''} from commitment c
        left join project p on p.id = c.project_id
@@ -1101,7 +1106,7 @@ function create(db) {
      * up to ten deep), with its source item.
      * @returns {Promise<Array<{id, root, item_id, source, external_id, thread_external_id, subject, occurred_at, raw}>>}
      */
-    async foldedSourceItems(ids) {
+    async foldedSourceItems(ids: unknown[]) {
       return db.rows(
         `with recursive down as (
        select c.id, c.superseded_by as root, 1 as depth from commitment c where c.superseded_by = any($1::bigint[])
@@ -1118,7 +1123,7 @@ function create(db) {
     // --- for dashboard/server.js
 
     /** One commitment with its person, project and source item, for the dashboard's detail view. Null when gone. */
-    async contextForDashboard(id) {
+    async contextForDashboard(id: number | string) {
       return db.one(
         `select c.id, c.direction, c.status, c.summary, c.detail, c.due_at, c.repo_path, c.project_rationale,
             p.name as project, per.display_name as who,
@@ -1156,7 +1161,7 @@ function create(db) {
     },
 
     /** Folds an open, unfolded ask into `survivorId`. Resolves whether it did. */
-    async foldOpen(id, survivorId) {
+    async foldOpen(id: number | string, survivorId: number | string) {
       const r = await db.query(
         `update commitment set superseded_by = $2
         where id = $1 and superseded_by is null and status = 'open'`,
@@ -1168,7 +1173,7 @@ function create(db) {
     // --- for src/mcp, src/durable/tasks/chase.js
 
     /** Open asks for the chat's task list, soonest due first. @param {string} direction owed_by_me | owed_to_me | both */
-    async listForTool(direction, project, limit) {
+    async listForTool(direction: unknown, project: unknown, limit: number) {
       return db.rows(
         `select c.id, c.summary, c.detail, c.direction, c.due_at, c.confidence,
                 p.name as project, c.repo_path, per.display_name as who
@@ -1185,7 +1190,7 @@ function create(db) {
     },
 
     /** A person's open asks (twenty, soonest due first). */
-    async openOfPerson(personId) {
+    async openOfPerson(personId: number | string) {
       return db.rows(
         `select id, direction, summary, due_at from commitment
           where counterparty_person_id = $1 and status in ('open','dispatched')
@@ -1195,7 +1200,7 @@ function create(db) {
     },
 
     /** For each commitment, its project's forge path and its newest live run. */
-    async boardExtras(ids) {
+    async boardExtras(ids: unknown[]) {
       return db.rows(
         `select c.id::text as id, p.gitlab_path as slug,
               (select json_build_object('id', r.id, 'status', r.status, 'route', r.route, 'job', r.factory_job_id, 'state', r.factory_state)
@@ -1208,7 +1213,7 @@ function create(db) {
     },
 
     /** One commitment with project, person and its item (body cut to 1500), for the chat's card view. */
-    async cardForChat(id) {
+    async cardForChat(id: number | string) {
       return db.one(
         `select c.id, c.direction, c.status, c.summary, c.detail, c.due_at, c.repo_path, p.name as project, p.gitlab_path as slug,
             per.display_name as who, si.id as item_id, si.source, si.subject, si.occurred_at, left(si.body_text, 1500) as body
@@ -1222,7 +1227,7 @@ function create(db) {
     },
 
     /** The blocks a commitment is part of (as task or blocker), with the other side. */
-    async blocksOf(id) {
+    async blocksOf(id: number | string) {
       return db.rows(
         `select b.blocker_id::text, b.task_id::text, b.verdict, c.summary, c.status, coalesce(p.display_name, b.who, '') as who
          from commitment_block b join commitment c on c.id = b.blocker_id left join person p on p.id = c.counterparty_person_id
@@ -1232,7 +1237,7 @@ function create(db) {
     },
 
     /** What the chase task reads about an ask. */
-    async chaseRead(id) {
+    async chaseRead(id: number | string) {
       return db.one(
         `select c.id, c.status, c.direction, c.summary, c.due_at, c.counterparty_person_id,
             coalesce(per.is_me, false) as counterparty_is_me, per.display_name as who,
