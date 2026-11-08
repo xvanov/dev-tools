@@ -452,7 +452,9 @@ run mid-step; a job continued on an existing branch (`--branch`).
   LISTEN that reconnects backfills from it. Kept 3 days (pruned by the trigger); a client more than
   1000 events or 3 days behind resyncs. Delivery is at least once in commit order: two
   transactions committing out of sequence order can replay one event twice (ids dedupe it).
-- [ ] **Exit 1:** all SQL behind repositories; contract tests green on Postgres.
+- [x] **Exit 1:** all SQL behind repositories; contract tests green on Postgres. 1.1-1.4 done,
+  the contract green on Postgres and SQLite in CI (main at c0c2a3e), and the E6 gate green on
+  both stacks on 2026-11-08.
 
 ## Phase 2: factory as a daemon
 
@@ -648,7 +650,10 @@ run mid-step; a job continued on an existing branch (`--branch`).
   rollback to Postgres stays possible (`wsl --unregister Ubuntu` is the last step, later).
   The only code that still reaches WSL is the Postgres backup path (`PA_PG_TOOLS`), unused
   on SQLite. The architecture map drops the WSL termhub.
-- [ ] **Exit 3:** one SQLite file per stack, search quality ≥ Postgres on the recorded query set.
+- [x] **Exit 3:** one SQLite file per stack, search quality ≥ Postgres on the recorded query set.
+  Both stacks on one encrypted SQLite file since 3.5 (2026-11-08); on the recorded set SQLite
+  scores hit@10 0.771 and MRR 0.519 against Postgres's 0.625 and 0.413 (3.4); WSL off (3.6);
+  the E6 gate green on both stacks on SQLite the same day.
 
 ## Phase 4: jarvisd
 
