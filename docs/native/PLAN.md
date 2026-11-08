@@ -42,6 +42,7 @@ Design rationale: the plan page (proposal, 7 Nov 2026) and the research summary 
 | D13 | 2026-11-07 | **Each stack runs its own factory**; this repo gets a factory app and GitHub Actions CI | The work laptop's PA stops dispatching to the personal machine's factory (it crossed stacks); it uses a local factory running natively on Windows: item 2.3 is pulled forward into phase 0, with no WSL interim step. A factory app for `xvanov/dev-tools` is registered on both stacks so the golden path has a target; T6 adds the CI the "CI done" hop waits on. |
 | D14 | 2026-11-07 | **No macOS**: Windows and Linux only | No macOS CI jobs, no macOS sandbox, no macOS install in Exit 7. Both stacks run on Windows or Linux. |
 | D15 | 2026-11-07 | **Cut the factory port to TS, protobuf and mTLS** | Phase 6 dropped: once the factory is a native daemon (phase 2) the port gains little beyond one language, so Python stays. 1.1 uses JSON Schema instead of protobuf/ConnectRPC: one schema source, TS types generated, Python/Rust validate against it; transport is JSON over HTTP + SSE. 7.2 dropped: the stacks never connect and Tailscale ACLs already separate them. |
+| D16 | 2026-11-08 | **Phase 1 (and 2.1/2.2) start in parallel with the end of phase 0** | They are refactors with no behaviour change and don't depend on the golden path; waiting on Exit 0 left most agents idle. Exit gates are unchanged: Exit 1 and Exit 2 still need a green e2e run on both stacks. |
 
 ## Prerequisites (before phase 0)
 
