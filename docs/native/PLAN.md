@@ -926,11 +926,20 @@ not in the Map is not done, and a new one gets added there first.
     (its event loop was blocked 1230 ms then). `in_progress` was pushed at 19:52:12 and recorded at
     19:52:19.4. The board can't redraw within 200 ms of a change PA hears about 6 s later. Measure
     the hop (factory `updated_at` → the board's change), then find where serve's push waits.
-  - [ ] **8.4.11 research: the e2e's screenshots show no data.** `chrome-headless-shell
+  - [x] **8.4.11 research: the e2e's screenshots show no data.** `chrome-headless-shell
     --screenshot` shoots at page load, before /api/state and termhub answer. Plan shows an empty
     "On me", Build shows "No jobs to show", and Run shows "No terminal open". Shot over CDP 12 s after
     load, the same pages show card #6773 and the researcher's terminal with its links. Capture after
     the data loads (CDP, or a ready marker the pages set), and add the Ask view.
+    Done: the shell is now driven over CDP (its own `--remote-debugging-port` and the runtime's
+    WebSocket, no new dependency). Each page is shot once its own loaded signal holds and the
+    network has been quiet for 500 ms, or after 20 s, when the shot is marked `ready: false`. The
+    signals: Plan and Build `#updated` past "loading…", Ask `#chat-log`, Run termhub's open session.
+    Research's Plan and Build shots also wait for the card and the job to appear. Each PNG has the
+    page's text beside it, and `summary.json` views carry `ready` and `waitedMs`. A workflow whose
+    acceptance block lists `ask` gets `/talk` shot. Checked with the real headless shell against a
+    local page whose data arrives 2 s after load: shot at 3.0 s with the data in, and no browser
+    left running. Not yet on a real run.
   - [ ] **8.4.12 research: the approval is not exercised.** The e2e calls `chatTools.handle
     ('factory_start')` directly, so the policy audit log has no row for the run. Live policy does
     say `ask` (`pa audit check factory_start`). Drive the call through the permission path, or at

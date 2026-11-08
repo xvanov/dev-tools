@@ -9,6 +9,7 @@
 //   acceptance(arch, id)                 one workflow's block, or throws
 //   scoreHops(hops, measured)            the block's hops with what was measured, ok per hop
 //   scoreCost(usd, limits, id, basis)    cost against GET /api/workflow-limits' effective ceiling
+//   missingViews(views, ...names)        the block's views no screenshot covers yet
 //   folderName(id, at, dry)              the run folder's name
 //   summary({...})                       the JSON summary written next to the evidence
 //   wav(pcm, rate)                       raw 16-bit mono PCM -> a WAV file (TTS output -> transcribe input)
@@ -94,6 +95,12 @@ function scoreCost(usd: number | string | null | undefined, limits: Json | null 
     basis,
     ok: spent == null || max == null ? null : spent <= max + 1e-9,
   };
+}
+
+/** Pure. The acceptance block's views that no shot or page name covers (`run-<session>` covers run). */
+function missingViews(views: unknown, ...names: string[][]): string[] {
+  const have = new Set(names.flat().map((n) => String(n).split('-')[0]));
+  return (Array.isArray(views) ? views.map(String) : []).filter((v) => !have.has(v));
 }
 
 function folderName(id: string, at: Date | number | string = new Date(), dry = false): string {
@@ -189,4 +196,4 @@ function ndjson(text: unknown): Json[] {
   }).filter(Boolean) as Json[];
 }
 
-module.exports = { REAL_RUN, workflows, acceptance, scoreHops, scoreCost, folderName, summary, table, wav, ndjson };
+module.exports = { REAL_RUN, workflows, acceptance, scoreHops, scoreCost, missingViews, folderName, summary, table, wav, ndjson };

@@ -145,6 +145,7 @@ test('research: a research job to report.md, no PR, linked in Plan, Run and the 
   assert.deepStrictEqual(log.closed, ['90']);
   assert.ok(!log.chat.some(([n]) => n === 'factory_cancel'), 'a done job is not cancelled');
   assert.ok(log.shots.includes('plan') && log.shots.includes('run-rs1'));
+  assert.ok(log.shots.includes('ask') && s.views.ask.url === 'http://pa/talk', 'the acceptance block lists ask: the chat page is shot');
   assert.deepStrictEqual(log.killed.sort(), ['follow7', 'rs1'], 'the step and follow sessions are killed');
   assert.ok(s.cleanup.some((c) => /session follow7 killed/.test(c)));
 });

@@ -30,7 +30,8 @@ type Flags = Record<string, string | boolean | undefined>;
 type Lists = { timeout?: string[] };
 type Check = { view: string; check: string; ok: boolean; detail?: string };
 type Measured = Record<string, number | { ms: number | null; note?: string } | null>;
-type Page = { name: string; url: string };
+/** `ready`: a JS expression the page must satisfy before its shot (screens.ts; default: the view's own signal). */
+type Page = { name: string; url: string; ready?: string | null | undefined };
 /** What one runner hands back to main(). */
 type RunOut = {
   measured: Measured; checks: Check[]; transcripts: string[]; links: Json; notes: string[]; cleanup: string[]; errors: string[];
@@ -43,6 +44,7 @@ const path = require('path');
 const W = require('./workflowsCore.ts');
 const C = require('./goldenPathCore.ts');
 const G = require('./goldenPath.ts');
+const S = require('./screens.ts');
 
 const DEFAULT_API_MODEL = 'azure/deepseek-v4-pro';
 
@@ -79,8 +81,8 @@ function deps0(): Deps {
     claudeAuth: () => d.runCommand(factory.machine(), ['claude', 'auth', 'status'], { timeoutMs: 30_000 }),
     fastLaneOn: () => Boolean(d.config.fastLane?.enabled),
     hubBase: (machine: string | null | undefined) => require('../dispatch/termhub.ts').forMachine(machine || null).base,
-    capture: (dir: string, pages: Page[]) => require('./screens.ts').capture(dir, pages),
-    browser: () => require('./screens.ts').browser(),
+    capture: (dir: string, pages: Page[]) => S.capture(dir, pages),
+    browser: () => S.browser(),
     write(file: string, text: string | Buffer) {
       fs.mkdirSync(path.dirname(file), { recursive: true });
       fs.writeFileSync(file, text);
@@ -263,8 +265,8 @@ async function research(acc: Acceptance, o: Options, deps: Deps, folder: string)
     const cost = Number(lastJob.cost_usd || 0);
     const steps: Json[] = ids.steps.filter((s: Json) => s.session);
     const pages: Page[] = [
-      { name: 'plan', url: `${deps.paBase}/` },
-      { name: 'build', url: `${deps.paBase}/factory` },
+      { name: 'plan', url: `${deps.paBase}/`, ready: S.readyFor('plan', `#${cardId}`) },
+      { name: 'build', url: `${deps.paBase}/factory`, ready: S.readyFor('build', jobId.split(':').pop()) },
       ...steps.slice(0, 2).map((s) => ({ name: `run-${s.session.id}`, url: `${deps.hubBase(s.session.machine)}/#session=${encodeURIComponent(s.session.id)}` })),
     ];
     // Screenshots now, while the card and the sessions still exist.
@@ -311,7 +313,7 @@ async function deepseekPr(acc: Acceptance, o: Options, deps: Deps, folder: strin
         links: { card: ids?.card, run: ids?.run, job: ids?.job, steps: (ids?.steps || []).map((s: Json) => ({ step: s.step, runtime: s.runtime, session: s.session?.id || null })), prs: (ids?.prs || []).map((p: Json) => p.url) },
         pages: [
           { name: 'plan', url: `${deps.paBase}/` },
-          { name: 'build', url: `${deps.paBase}/factory` },
+          { name: 'build', url: `${deps.paBase}/factory`, ready: ids?.job ? S.readyFor('build', String(ids.job).split(':').pop()) : undefined },
           ...steps.slice(0, 2).map((s) => ({ name: `run-${s.session.id}`, url: `${deps.hubBase(s.session.machine)}/#session=${encodeURIComponent(s.session.id)}` })),
           ...(ids?.prs || []).slice(0, 1).map((p: Json) => ({ name: 'github-pr', url: p.url })),
         ],
@@ -389,13 +391,24 @@ async function main(id: string, flags: Flags = {}, lists: Lists = {}, deps: Deps
   }
   let shots = r.shots || { shots: [], note: null };
   if (r.pages.length) shots = await deps.capture(path.join(folder, 'screenshots'), r.pages);
+  // Every view the acceptance block names gets a shot: Ask is the chat's page.
+  const missing = W.missingViews(acc.views, (shots.shots || []).map((x: Json) => x.view), r.pages.map((p) => p.name)).filter((v: string) => v === 'ask');
+  if (missing.length) {
+    const more = await deps.capture(path.join(folder, 'screenshots'), [{ name: 'ask', url: `${deps.paBase}/talk` }]);
+    shots = { shots: [...shots.shots, ...(more.shots || [])], note: shots.note || more.note };
+  }
   const notes = [...(r.notes || []), ...(shots.note ? [shots.note] : [])];
+  const rel = (f: string) => path.relative(folder, f).replace(/\\/g, '/');
   const s: Json = W.summary({
     workflow: id, kind: 'run', folder, startedAt,
     hops: W.scoreHops(acc.hops, r.measured),
     cost: W.scoreCost(r.usd, limits.ok ? limits.value : null, id, acc.cost?.basis),
-    links: r.links, views: Object.fromEntries((shots.shots || []).map((x: Json) => [x.view, { url: x.url, screenshot: x.file ? path.relative(folder, x.file).replace(/\\/g, '/') : null, ...(x.error ? { error: x.error } : {}) }])),
-    transcripts: r.transcripts, screenshots: (shots.shots || []).filter((x: Json) => x.file).map((x: Json) => path.relative(folder, x.file).replace(/\\/g, '/')),
+    links: r.links,
+    views: Object.fromEntries((shots.shots || []).map((x: Json) => [x.view, {
+      url: x.url, screenshot: x.file ? rel(x.file) : null,
+      ...(x.text ? { text: rel(x.text) } : {}), ...(x.ready != null ? { ready: x.ready, waitedMs: x.waitedMs } : {}), ...(x.how ? { how: x.how } : {}), ...(x.error ? { error: x.error } : {}),
+    }])),
+    transcripts: r.transcripts, screenshots: (shots.shots || []).filter((x: Json) => x.file).map((x: Json) => rel(x.file)),
     checks: r.checks, rubric: acc.rubric, errors: r.errors || [], cleanup: r.cleanup || [], notes,
   });
   if (r.golden) s.golden = { hops: r.golden.hops, ids: r.golden.ids, feed: r.golden.feed };
