@@ -11,7 +11,7 @@
 // a test chat with only you in it, review-fix one of your own PRs. Nothing
 // here ever messages anyone.
 //
-//   whats-on     TTS'd question -> /api/talk/transcribe -> /api/talk/turn -> /api/talk/tts
+//   whats-on     TTS'd question, replayed as the talk page: warm, smart-turn + transcribe, turn, TTS at the first piece
 //   research     a research card -> factory_start {kind: research} -> report.md
 //   deepseek-pr  the E4 golden path on the API runtime (Azure DeepSeek by default), delivery pr
 //   review-fix   dry run; a real run needs --pr <n> (one of yours with review comments)
@@ -159,51 +159,116 @@ async function dry(id: string, acc: Acceptance, o: Options, deps: Deps): Promise
 
 // --------------------------------------------------------------- runs ----
 
+// The talk page's turn (talk.page.js), replayed headless in real time:
+//   speech starts  POST /api/talk/warm (the page's warmVoice), then the question's own length
+//   end of speech  t0. Smart-turn is asked after TURN_DEFAULTS.sureCheckMs of silence (the
+//                  VAD's shortcut: a wait here, not a measurement)
+//   the check      POST /api/talk/endpoint and POST /api/talk/transcribe together: the page
+//                  transcribes early and keeps that text when smart-turn says done; not done,
+//                  it waits out endMs of silence and transcribes again
+//   the turn       POST /api/talk/turn, its deltas through createUtteranceStream({ firstClause: true })
+//   first piece    POST /api/talk/tts at once, while the turn still streams; first audio is
+//                  its first PCM byte
+// Not measurable headless: Silero's own frame, and the browser starting playback.
 async function whatsOn(acc: Acceptance, o: Options, deps: Deps, folder: string): Promise<Partial<RunOut>> {
+  const T = require('../dashboard/talk.core');
+  const { StringDecoder } = require('string_decoder');
   const measured: Measured = {};
   const transcripts: string[] = [];
   const checks: Check[] = [];
-  const notes = ['talk-page hop (VAD + smart-turn in the browser) is not measurable headless: the run starts at the transcription request'];
+  const notes = ['not measured headless: Silero\'s VAD frame (32 ms) before the silence wait starts, and the browser starting playback after the first audio byte'];
   const spentBefore = await G.safely(() => deps.spendToday());
   const question = o.question || "What's on today?";
-  const pcm = await deps.post(`${deps.paBase}/api/talk/tts`, { text: question }, { raw: true, timeoutMs: 30_000 });
-  const audio = W.wav(pcm, 24000);
+  const pcm: Buffer = await deps.post(`${deps.paBase}/api/talk/tts`, { text: question }, { raw: true, timeoutMs: 30_000 });
+  // What the page holds at the check: the question at 16 kHz, then the silence it waited.
+  const samples = new Float32Array(Math.floor(pcm.length / 2));
+  for (let i = 0; i < samples.length; i++) samples[i] = pcm.readInt16LE(i * 2) / 32768;
+  const sure: number = T.TURN_DEFAULTS.sureCheckMs;
+  const voiced: Float32Array = T.downsample(samples, 24000, 16000);
+  const utter = new Float32Array(voiced.length + Math.round((sure * 16000) / 1000));
+  utter.set(voiced);
+  const wav = Buffer.from(T.encodeWav(utter, 16000));
+  const tail = Buffer.from(T.floatToPcm16(utter.subarray(Math.max(0, utter.length - 8 * 16000))));
+  const stamp = (p: Promise<Json>): Promise<{ v: Json; at: number }> => p.then((v) => ({ v, at: deps.now() as number }));
+  const transcribe = () => stamp(G.safely(() => deps.post(`${deps.paBase}/api/talk/transcribe`, wav, { timeoutMs: 30_000 })));
 
-  // End of speech = now: transcription, the fast lane's first words, first audio.
+  await G.safely(() => deps.post(`${deps.paBase}/api/talk/warm`, {}, { timeoutMs: 5000 }));
+  await deps.sleep(Math.round(samples.length / 24));
   const t0: number = deps.now();
-  const tr: Json = JSON.parse(await deps.post(`${deps.paBase}/api/talk/transcribe`, audio, { timeoutMs: 30_000 }));
-  const tTranscribed: number = deps.now();
-  const heard = String(tr.text || '').trim();
+  await deps.sleep(sure);
+  const tCheck: number = deps.now();
+  const smartP = stamp(G.safely(() => deps.post(`${deps.paBase}/api/talk/endpoint`, tail, { timeoutMs: 10_000 })));
+  const earlyP = transcribe();
+  const smart = await smartP;
+  const verdict: Json = smart.v.ok ? JSON.parse(smart.v.value) : null;
+  const smartNote = verdict ? `smart-turn ${smart.at - tCheck} ms (model ${verdict.ms} ms), p ${verdict.probability}` : `smart-turn failed: ${smart.v.error}`;
+  let tReq = tCheck;
+  let tr = await earlyP;
+  if (!verdict?.complete) {
+    // Not done (or no answer): the turn ends at endMs of silence, transcribed then.
+    await deps.sleep(Math.max(0, t0 + T.TURN_DEFAULTS.endMs - deps.now()));
+    tReq = deps.now();
+    tr = await transcribe();
+  }
+  if (!tr.v.ok) throw new Error(`transcription failed: ${tr.v.error}`);
+  const said0: Json = JSON.parse(tr.v.value);
+  const heard = String(said0.text || '').trim();
+  // The turn starts once the text is back and smart-turn has said done.
+  const tTurn = verdict?.complete ? Math.max(tr.at, smart.at) : tr.at;
+  measured['talk-page'] = {
+    ms: tReq - t0,
+    note: verdict?.complete
+      ? `${sure} ms VAD wait (TURN_DEFAULTS.sureCheckMs, not measured); ${smartNote}, alongside the transcription`
+      : `${smartNote}: not done, so the turn ended at endMs (${T.TURN_DEFAULTS.endMs} ms) of silence`,
+  };
   measured.whisper = heard
-    ? { ms: tr.ms ?? tTranscribed - t0, note: `request ${tTranscribed - t0} ms, whisper ${tr.ms} ms` }
-    : { ms: null, note: `transcription came back empty in ${tTranscribed - t0} ms` };
+    ? { ms: tr.at - tReq, note: `request ${tr.at - tReq} ms, whisper ${said0.ms} ms` }
+    : { ms: null, note: `transcription came back empty in ${tr.at - tReq} ms` };
   if (!heard) notes.push('transcription was empty: the rest of the turn was timed with the question text itself, so the hops after it are a lower bound');
-  let firstDelta: number | null = null;
-  let buf = '';
+
+  const lines = T.createLineReader();
+  const words = T.createUtteranceStream({ firstClause: true });
+  const utf8 = new StringDecoder('utf8');
+  let full = '';
+  const mark: { token: number | null; piece: { text: string; at: number } | null; audio: number | null; speaking: Promise<unknown> | null } = { token: null, piece: null, audio: null, speaking: null };
+  const speak = (text: string) => {
+    mark.piece = { text, at: deps.now() };
+    mark.speaking = G.safely(() => deps.post(`${deps.paBase}/api/talk/tts`, { text }, { raw: true, timeoutMs: 30_000, onChunk: () => { if (mark.audio == null) mark.audio = deps.now(); } }));
+  };
   const turnText: string = await deps.post(`${deps.paBase}/api/talk/turn`, { text: heard || question }, {
     timeoutMs: 60_000,
     onChunk: (c: Buffer) => {
-      buf += c.toString('utf8');
-      if (firstDelta == null && /"type":"delta"/.test(buf)) firstDelta = deps.now();
+      for (const ev of lines.push(utf8.write(c))) {
+        if (ev.type !== 'delta') continue;
+        if (mark.token == null) mark.token = deps.now();
+        full += ev.text || '';
+        const got: string[] = words.push(full);
+        if (got.length && !mark.piece) speak(got[0] as string);
+      }
     },
   });
+  if (!mark.piece) {
+    const rest: string[] = words.finish(full);
+    if (rest.length) speak(rest[0] as string);
+  }
+  if (mark.speaking) await mark.speaking;
   const events: Json[] = W.ndjson(turnText);
   const decision: Json = events.find((e) => e.type === 'decision') || {};
   const done: Json = events.find((e) => e.type === 'done') || {};
   const said = events.filter((e) => e.type === 'delta').map((e) => e.text).join('');
-  const first = ((said.match(/^[^.!?]+[.!?]?/) || [said])[0] as string).trim();
-  if (firstDelta != null) measured['fast-lane'] = { ms: firstDelta - tTranscribed, note: `route ${decision.route || done.route || '?'}` };
-  else measured['fast-lane'] = { ms: null, note: `no spoken answer (route ${decision.route || '?'})` };
-  let tFirstAudio: number | null = null;
-  if (first) {
-    const tSpeak: number = deps.now();
-    await deps.post(`${deps.paBase}/api/talk/tts`, { text: first }, { raw: true, timeoutMs: 30_000, onChunk: () => { if (tFirstAudio == null) tFirstAudio = deps.now(); } });
-    if (tFirstAudio != null) measured.voice = { ms: tFirstAudio - t0, note: `whole path; TTS first byte ${tFirstAudio - tSpeak} ms` };
+  const { piece, audio } = mark;
+  const route = decision.route || done.route || '?';
+  measured['fast-lane'] = piece
+    ? { ms: piece.at - tTurn, note: `route ${route}; first token ${mark.token == null ? '?' : mark.token - tTurn} ms; first piece "${piece.text}" (${piece.text.split(/\s+/).length} words)` }
+    : { ms: null, note: `no spoken answer (route ${route})` };
+  if (piece && audio != null) {
+    measured.voice = { ms: audio - t0, note: `end of speech to first audio byte; TTS first byte ${audio - piece.at} ms after the first piece; the turn waited ${tTurn - tCheck} ms after the check` };
   }
   checks.push(check('ask', 'transcribed the question', /what/i.test(heard), heard || 'empty transcription'));
+  checks.push(check('ask', 'smart-turn said the question was done', verdict?.complete, smartNote));
   checks.push(check('ask', 'answered locally (route answer)', (decision.route || done.route) === 'answer', `route ${decision.route || done.route || 'none'}`));
   checks.push(check('ask', 'spoke an answer', said.trim().length > 0));
-  transcripts.push(deps.writeEvidence(folder, 'transcripts/turn.txt', [`question (TTS): ${question}`, `transcribed: ${tr.text}`, `route: ${decision.route || done.route}`, `answer: ${said}`].join('\n')));
+  transcripts.push(deps.writeEvidence(folder, 'transcripts/turn.txt', [`question (TTS): ${question}`, `transcribed: ${said0.text}`, `route: ${decision.route || done.route}`, `first piece spoken: ${piece ? piece.text : ''}`, `answer: ${said}`].join('\n')));
   transcripts.push(deps.writeEvidence(folder, 'transcripts/turn.ndjson', turnText));
   const spentAfter = await G.safely(() => deps.spendToday());
   const usd = spentBefore.ok && spentAfter.ok ? Math.max(0, spentAfter.value - spentBefore.value) : null;

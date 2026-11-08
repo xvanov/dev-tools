@@ -102,6 +102,8 @@ function fakeDeps(over = {}) {
       clock += 40;
       if (url.endsWith('/api/talk/tts')) { if (onChunk) onChunk(Buffer.alloc(10)); return Buffer.alloc(4800); }
       if (url.endsWith('/api/talk/transcribe')) return JSON.stringify({ text: "What's on today?", ms: 120 });
+      if (url.endsWith('/api/talk/warm')) return '{"ok":true}';
+      if (url.endsWith('/api/talk/endpoint')) return JSON.stringify({ complete: true, probability: 0.93, ms: 60 });
       if (url.endsWith('/api/talk/turn')) {
         const t = '{"type":"decision","route":"answer"}\n{"type":"delta","text":"You have standup at ten. "}\n{"type":"done","route":"answer"}\n';
         if (onChunk) onChunk(Buffer.from(t));
@@ -146,19 +148,54 @@ function fakeDeps(over = {}) {
   return { deps, log, dir };
 }
 
-test('whats-on: times transcription, first words and first audio; local route; evidence written', async () => {
+test('whats-on: replays the talk page: warm, smart-turn with the transcription, TTS at the first piece; evidence written', async () => {
   const { deps, log } = fakeDeps();
   const s = await R.main('whats-on', {}, {}, deps);
   assert.strictEqual(s.ok, true, JSON.stringify(s.failed.concat(s.errors)));
   const by = Object.fromEntries(s.hops.map((h) => [h.c, h]));
-  assert.strictEqual(by.whisper.ms, 120);
+  assert.strictEqual(by['talk-page'].ms, 96, 'the VAD shortcut, then the transcription goes with the check');
+  assert.match(by['talk-page'].note, /smart-turn \d+ ms \(model 60 ms\), p 0\.93, alongside the transcription/);
+  assert.strictEqual(by.whisper.ms, 80, 'the request as the page sees it');
   assert.ok(by['fast-lane'].ms != null && by.voice.ms != null);
-  assert.strictEqual(by['talk-page'].ms, null);
+  assert.match(by['fast-lane'].note, /first piece "You have standup at ten\." \(5 words\)/);
   assert.strictEqual(s.cost.usd, 0);
   assert.ok(fs.existsSync(path.join(s.folder, 'summary.json')));
   assert.ok(fs.readFileSync(path.join(s.folder, 'transcripts', 'turn.txt'), 'utf8').includes('standup'));
   assert.deepStrictEqual(log.shots, ['ask']);
-  assert.ok(log.posts.filter((u) => u.endsWith('/tts')).length === 2);
+  const talk = log.posts.filter((u) => u.includes('/api/talk/')).map((u) => u.replace(/^.*\/api\/talk\//, ''));
+  assert.deepStrictEqual(talk, ['tts', 'warm', 'endpoint', 'transcribe', 'turn', 'tts']);
+});
+
+test('whats-on: TTS starts at the first clause while the turn still streams (8.4.7)', async () => {
+  let ttsInTurn = null;
+  const { deps, log } = fakeDeps();
+  const post = deps.post;
+  deps.post = async (url, body, opts = {}) => {
+    if (!url.endsWith('/api/talk/turn')) return post(url, body, opts);
+    log.posts.push(url);
+    const lines = ['{"type":"decision","route":"answer"}\n', '{"type":"delta","text":"Nothing is left on your calendar, and "}\n', '{"type":"delta","text":"tomorrow starts at 10:00. "}\n', '{"type":"done","route":"answer"}\n'];
+    for (const l of lines.slice(0, 2)) opts.onChunk(Buffer.from(l));
+    ttsInTurn = log.posts.filter((u) => u.endsWith('/tts')).length;
+    for (const l of lines.slice(2)) opts.onChunk(Buffer.from(l));
+    return lines.join('');
+  };
+  const s = await R.main('whats-on', {}, {}, deps);
+  assert.strictEqual(ttsInTurn, 2, 'the first clause went to TTS before the turn ended');
+  const fl = s.hops.find((h) => h.c === 'fast-lane');
+  assert.match(fl.note, /first piece "Nothing is left on your calendar,"/);
+});
+
+test('whats-on: smart-turn says not done: the turn ends at endMs of silence and is transcribed again', async () => {
+  const { deps, log } = fakeDeps();
+  const post = deps.post;
+  deps.post = async (url, body, opts) => (url.endsWith('/api/talk/endpoint') ? (log.posts.push(url), JSON.stringify({ complete: false, probability: 0.2, ms: 60 })) : post(url, body, opts));
+  const s = await R.main('whats-on', {}, {}, deps);
+  const tp = s.hops.find((h) => h.c === 'talk-page');
+  assert.strictEqual(tp.ms, 650);
+  assert.strictEqual(tp.ok, false);
+  assert.match(tp.note, /not done, so the turn ended at endMs \(650 ms\)/);
+  assert.strictEqual(log.posts.filter((u) => u.endsWith('/transcribe')).length, 2);
+  assert.ok(s.failed.some((f) => /smart-turn said the question was done/.test(f)));
 });
 
 test('research: a research job to report.md, no PR, linked in Plan, Run and the job tool; card dropped', async () => {

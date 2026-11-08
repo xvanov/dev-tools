@@ -897,6 +897,12 @@ not in the Map is not done, and a new one gets added there first.
     sentence, so sentence-by-sentence TTS cannot start until it ends. Lead with a short clause (for
     example "Nothing left today."), let TTS start at a clause boundary, and get the first token
     under 200 ms.
+    Partly: the answerer opens with at most six words (`ANSWER_RULES`, 1679fbd; the page already
+    speaks a first clause or sentence as soon as it is complete). Whole turn on the live day data,
+    interleaved, medians of 8: first piece 945 -> 561 ms (9 -> 5 words; first token 462 vs 426).
+    The first token is still ~290-430 ms: the router and the answerer share Ollama's one prompt
+    cache and evict each other's prefix (the answerer alone starts in ~100 ms). Left: a common
+    prefix for both prompts (needs a router re-fit) or OLLAMA_NUM_PARALLEL=2 (a config change).
   - [ ] **8.4.4 whats-on: whisper takes 259 ms (target 250).** Median of 13, range 190-526 ms (the
     request adds about 15 ms). Calls after an idle gap take 400-530 ms. Keep the model warm, and
     check its size, beam and compute type against the target.
@@ -920,11 +926,24 @@ not in the Map is not done, and a new one gets added there first.
     of 3 (1330-2619 ms), without the talk-page hop. Summing the probe medians gives ~1.6 s. Kokoro's
     first byte alone is 312 ms (median of 13, 247-734 ms). The hop targets already add up to 600 ms
     before TTS starts, so the budget only fits if TTS's first byte is about 100 ms.
+    Partly: the old and new page and talk path replayed side by side (worktree e2e order, live
+    Ollama, Kokoro and whisper, idle CPU), medians of 8: end of speech to first audio byte 1437 ->
+    1214 ms; check to the turn's start 757 -> 525; first piece 383 -> 366; Kokoro's first byte
+    228 -> 215 (a five-word piece takes 140-220 ms, a 17-word one 215-530). Still over 700: whisper
+    (~520 ms) and the fast lane's first token (~290 ms) are the two big hops left.
   - [ ] **8.4.7 whats-on: the e2e understates or misses hops.** The fast-lane hop is timed to the
     first token, not the first sentence. The voice hop starts TTS only after the whole turn and leaves
     out the talk-page hop. The talk-page hop is not measured at all (/api/talk/endpoint could be).
     The Ask screenshot shows the idle Talk page, not the turn. Time the first sentence, add the
     smart-turn call, and capture the page after a driven turn.
+    Partly: the e2e replays the page in real time (warm at speech start, the question's length, the
+    96 ms VAD wait, smart-turn with the transcription, the turn through the page's own
+    `createUtteranceStream({ firstClause: true })`, TTS at the first piece while the turn streams)
+    and times the talk-page hop, the first piece and the first audio byte. It says what it cannot
+    measure: Silero's frame and the browser starting playback. Left: the screenshot of a driven
+    turn. The turn is driven outside the browser, so the shot of /talk never shows it; driving it in
+    the page needs audio fed to its mic (Text mode goes to the PA chat, not the fast lane), and a
+    URL that drives a turn would let a link hand words to the PA chat.
   - [ ] **8.4.8 research: the tool call takes 2.3 s (target 1 s).** `factory_start` returned
     2312 ms after the call: run row 19:52:09.56, factory job created 19:52:10.96, PA "dispatched"
     19:52:11.30, so about 1.4 s is the `job submit` round trip. Down from 13.5 s on 8.2's run
