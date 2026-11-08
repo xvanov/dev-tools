@@ -1804,12 +1804,20 @@ Object.assign(commands, require('./task.ts').make(out, fail));
 Object.assign(commands, require('./e2e.ts').make(out, fail));
 Object.assign(commands, require('./audit.ts').make(out, fail));
 
+// `pa help <topic>`: each module exports its own HELP. Required by a computed
+// path, so test/cliHelp.test.js loads every one (requiresResolve.test.js sees
+// only literal requires, and Node never adds `.ts`).
+const HELP_TOPICS: Record<string, string> = {
+  memory: './memory.ts', secret: './secret.ts', secrets: './secret.ts', passkeys: './passkeys.ts',
+  routine: './routine.ts', routines: './routine.ts', task: './task.ts', policy: './task.ts', e2e: './e2e.ts', audit: './audit.ts',
+};
+
 async function main(argv: string[]) {
   const { command, args, flags, lists } = parseArgs(argv);
   const name = command || 'help';
 
   if (flags.help || name === 'help' || name === '--help') {
-    const topics: Json = { memory: './memory', secret: './secret', secrets: './secret', passkeys: './passkeys', routine: './routine', routines: './routine', task: './task', policy: './task', e2e: './e2e', audit: './audit' };
+    const topics: Json = HELP_TOPICS;
     out(topics[args[0]] ? require(topics[args[0]]).HELP : HELP);
     return;
   }
@@ -1831,4 +1839,4 @@ async function main(argv: string[]) {
   }
 }
 
-module.exports = { main, commands, HELP, maskUrl };
+module.exports = { main, commands, HELP, HELP_TOPICS, maskUrl };
