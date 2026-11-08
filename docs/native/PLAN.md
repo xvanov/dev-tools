@@ -377,6 +377,9 @@ run mid-step; a job continued on an existing branch (`--branch`).
 - [x] **0.7** T1, T2, T3 and Z1 landed (from the tracks above). (T1 5bc7a6d, T2 d3f7a19, T3 32587f8, Z1 262f4ab)
 - [ ] **0.8** E1, E4 and E5 landed: the golden path runs on today's system and its broken hops
   are fixed. E2 (watchable API runs) lands here too if the baseline shows it missing.
+  2026-11-08: E1, E4 and E5 have landed, and the golden path is green on the personal stack. On the work
+  stack only E5.8 is left (termhub step sessions carry no links: the old sessiond). It waits on the
+  user's sessiond restart; tick this once a work run shows the links.
 - [ ] **Exit 0:** measured again; targets table updated with new numbers.
 
 ## Phase 1: contracts and the repository layer
