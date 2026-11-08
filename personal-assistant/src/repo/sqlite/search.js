@@ -23,14 +23,25 @@ const { vectorBlob, signBits, hammingSql } = require('../../db/sqlite');
 // How many chunks the Hamming pass hands to the exact cosine re-rank: on the
 // work stack 300 gave the exact scan's top 30 for every test query (plan 3.4).
 const CANDIDATES = 400;
+
+// How many chunks per FTS index an unfiltered keyword search ranks into items
+// (plan 3.4: the same top 30 items as ranking every match, on the eval set).
+const TOP_CHUNKS = 2000;
 const { NOW } = require('./_sql');
 
 const ITEM = `si.id, si.source, si.subject, si.occurred_at, si.author_identity,
               si.thread_external_id`;
 
+// The Snowball English stop words Postgres's `english` config drops (its
+// english.stop): to_tsvector and websearch_to_tsquery never match on them,
+// so neither does this (plan 3.4: also what kept loose queries slow).
 const STOP = new Set(
-  ('a an and are as at be but by for from has have he her his i if in into is it its me my no not of on or our she so ' +
-    'that the their them then there these they this to too us was we were what when which who will with you your').split(' ')
+  ('i me my myself we our ours ourselves you your yours yourself yourselves he him his himself she her hers herself ' +
+    'it its itself they them their theirs themselves what which who whom this that these those am is are was were be ' +
+    'been being have has had having do does did doing a an the and but if or because as until while of at by for with ' +
+    'about against between into through during before after above below to from up down in out on off over under again ' +
+    'further then once here there when where why how all any both each few more most other some such no nor not only own ' +
+    'same so than too very s t can will just don should now').split(' ')
 );
 
 /** Source and date filters as SQL starting with `and` (or empty); pushes its parameters. */
@@ -79,7 +90,8 @@ function ftsQuery(q, strict) {
       if (groups[groups.length - 1].length) groups.push([]);
       continue;
     }
-    const ws = words(raw);
+    // A lone stop word is dropped, as websearch_to_tsquery drops it; a quoted phrase keeps all its words.
+    const ws = m[2] !== undefined ? words(raw) : words(raw).filter((w) => !STOP.has(w));
     if (!ws.length) continue;
     const expr = ws.length > 1 ? quote(ws.join(' ')) : quote(ws[0]);
     if (neg) not.push(expr);
@@ -167,24 +179,44 @@ function create(db) {
       if (!fq) return [];
       const params = [fq.match, limit];
       const where = filterSql(filters, params);
+      // Ranks on narrow columns only (chunk id, item, ord), keeps the top
+      // `limit` items, and reads text for those rows alone: a common word
+      // matches ~20k chunks, and reading each one's content made this ~400 ms
+      // (plan 3.4). An item ranks by its best chunk; it shows its first
+      // matching chunk (lowest ord), as before.
+      // Without source/date filters, only each index's best TOP_CHUNKS chunks
+      // can make the top items (FTS5 orders by bm25 itself); with filters every
+      // match is ranked, since a filter could leave the top ones out.
+      const cap = where ? '' : ` order by rank limit ${TOP_CHUNKS}`;
+      // The loose pass (any term) asks the stemmed index only: its stems already
+      // match every word the exact index would, and ranking ~25k matches a second
+      // time was most of a loose query's time (plan 3.4).
+      const exact = strict ? `union all
+         select * from (select rowid as cid, -rank as r from chunk_fts_exact where chunk_fts_exact match $1${cap})` : '';
       const rows = await db.rows(
         `with m as (
-         select rowid as cid, -bm25(chunk_fts) as r from chunk_fts where chunk_fts match $1
-         union all
-         select rowid as cid, -bm25(chunk_fts_exact) as r from chunk_fts_exact where chunk_fts_exact match $1
-       ), best as (select cid, max(r) as rank from m group by cid)
-     select * from (
-       select ${ITEM}, c.id as chunk_id, c.context, substr(c.content, 1, 2000) as content,
-              max(b.rank) over (partition by si.id) as rank,
-              row_number() over (partition by si.id order by c.ord, c.id) as rn
-         from best b join chunk c on c.id = b.cid join source_item si on si.id = c.source_item_id
-        where 1 = 1 ${where}
-     ) x where rn = 1
-     order by x.rank desc, x.occurred_at desc
-     limit $2`,
+         select * from (select rowid as cid, -rank as r from chunk_fts where chunk_fts match $1${cap})
+         ${exact}
+       ), hits as materialized (
+         select c.source_item_id as sid, b.cid, c.ord, b.rank
+           from (select cid, max(r) as rank from m group by cid) b join chunk c on c.id = b.cid
+       ), items as (
+         select sid, max(rank) as rank from hits group by sid
+       ), top as (
+         select i.sid, i.rank, si.occurred_at from items i join source_item si on si.id = i.sid
+          where 1 = 1 ${where}
+          order by i.rank desc, si.occurred_at desc limit $2
+       ), first as (
+         select h.sid, (select h2.cid from hits h2 where h2.sid = h.sid order by h2.ord, h2.cid limit 1) as cid
+           from top h
+       )
+     select ${ITEM}, c.id as chunk_id, c.context, substr(c.content, 1, 2000) as content, t.rank
+       from top t join first f on f.sid = t.sid
+       join source_item si on si.id = t.sid join chunk c on c.id = f.cid
+      order by t.rank desc, t.occurred_at desc`,
         params
       );
-      return rows.map(({ rn, ...r }) => ({ ...r, snippet: snippet(r.content, fq.terms) }));
+      return rows.map((r) => ({ ...r, snippet: snippet(r.content, fq.terms) }));
     },
 
     /** Vector leg: the nearest chunk per item (cosine), always an exact scan. */

@@ -486,9 +486,12 @@ run mid-step; a job continued on an existing branch (`--branch`).
   - Thresholds: none to recalibrate. Fusion is reciprocal-rank (positions, not scores), and
     recall's abstain threshold (`PA_RECALL_ABSTAIN`, 0.6) is on the reranker's own scores, so
     ts_rank and bm25 scales never meet a threshold. Nothing outside `src/repo` reads `rank`.
-  - Left for later, not blocking 3.5: chunk lexical takes ~0.9 s p50 on SQLite (1.3 s on
-    Postgres), and chunk vector is ~4x Postgres's HNSW; an index or vector cache can come with
-    jarvisd (phase 4) if either shows in latency targets.
+  - Follow-up (same day): chunk lexical on SQLite went from ~0.9 s to 61 ms p50 (Postgres: 0.9 s)
+    by ranking narrow columns before reading text, taking each FTS index's best 2,000 chunks
+    when no filter applies (identical results to ranking every match on all 162 query/mode
+    pairs), Postgres's English stop words, and the stemmed index only for the loose pass.
+    The eval rose with it: hit@10 0.771, MRR 0.519 (Postgres 0.625, 0.413). Chunk vector:
+    42-54 ms p50 (Postgres's approximate HNSW 16-21 ms); an index can come past ~1M vectors.
 - [ ] **3.5** Cutover on the personal stack, then the work stack; Litestream backup + restore
   drill.
 - [ ] **3.6** WSL off on the work laptop (D6); Postgres removed. Also retire the other WSL
