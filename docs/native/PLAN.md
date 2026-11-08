@@ -670,6 +670,13 @@ run mid-step; a job continued on an existing branch (`--branch`).
   rollback to Postgres stays possible (`wsl --unregister Ubuntu` is the last step, later).
   The only code that still reaches WSL is the Postgres backup path (`PA_PG_TOOLS`), unused
   on SQLite. The architecture map drops the WSL termhub.
+  Retired for good the same day (D24): a final encrypted `.pabak` of each stack's Postgres
+  (work: restore drill PASS, 52 tables, from a template database since the role cannot create
+  the vector extension; personal: decrypted and all 58 tables listed by `pg_restore`), the
+  Ubuntu distro exported (28 GB) and sealed with the backup key (decrypt round trip, same
+  sha256), then `wsl --unregister Ubuntu`, the `pa-wsl-keepalive` task removed, and
+  `pa_personal` dropped. The copies are in the PA data dir's `retired/` on each machine.
+  Rancher Desktop's own two distros are left alone: they belong to that app.
 - [x] **Exit 3:** one SQLite file per stack, search quality ≥ Postgres on the recorded query set.
   Both stacks on one encrypted SQLite file since 3.5 (2026-11-08); on the recorded set SQLite
   scores hit@10 0.771 and MRR 0.519 against Postgres's 0.625 and 0.413 (3.4); WSL off (3.6);
@@ -1005,7 +1012,9 @@ not in the Map is not done, and a new one gets added there first.
   page) against the finished system: every component, process, port, table, tool, workflow and
   storage location as it now runs on both stacks (jarvisd, ptyd, native factory, SQLite,
   supervisor, no WSL); nothing left `planned`/`landing` that has shipped, nothing describing
-  removed parts. Checked on the live page of both stacks.
+  removed parts. Checked on the live page of both stacks. Known so far: the `postgres`
+  component is retired (D24) but still the end of many edges and workflow hops, which should
+  point at `sqlite-store`.
 - [ ] **Exit 8 (the plan's finish line):** every workflow in the Map passes its review on its
   stack (work or personal, or both), and the user has watched at least `deepseek-pr`,
   `research` and `whats-on` run live.

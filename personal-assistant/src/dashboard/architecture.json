@@ -1074,8 +1074,8 @@
         "personal": "live"
       },
       "where": {
-        "work": "Inside WSL Ubuntu on :5433. Not the PA's store since the 3.5 cutover (2026-11-08); WSL is shut down since 3.6 (same day), the distro and its data kept registered for the rollback (`wsl -d Ubuntu` starts it, then unset PA_DB)",
-        "personal": "System Postgres 16 main cluster on :5432, role pa, database pa_personal (5433 is another app’s there). Not the PA's store since the 3.5 cutover (2026-11-08): kept as it was for rollback"
+        "work": "Retired 2026-11-08 (D24): it lived in WSL Ubuntu on :5433, which is unregistered. Its last state is an encrypted .pabak and the whole distro an encrypted export in %LOCALAPPDATA%\\personal-assistant\\retired (README.txt there says how to read them). The code still runs on Postgres (PA_DB=postgres; CI's contract job), so a stack could move back",
+        "personal": "Retired 2026-11-08 (D24): the pa_personal database is dropped after an encrypted .pabak of it in ~/.local/share/personal-assistant/retired; the system Postgres 16 server stays for other software"
       },
       "health": "postgres",
       "details": {
