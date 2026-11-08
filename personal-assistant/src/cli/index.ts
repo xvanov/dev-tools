@@ -46,6 +46,7 @@ const HELP = `pa — your context layer
     pa projects rescore             list open asks whose repo their text doesn't back
                      [--apply --project name | --ids 1,2]  …and clear those links (undo SQL logged)
     pa dashboard                    the web page (the worker serves it too) at http://127.0.0.1:7300/
+    pa version                      the commit the running worker serves, or the local checkout
 
   Doing
     pa do <id> [--mode m] [--repo p] dispatch a commitment: the software factory once configured, else a Claude Code session
@@ -1803,6 +1804,7 @@ Object.assign(commands, require('./routine.ts').make(out, fail));
 Object.assign(commands, require('./task.ts').make(out, fail));
 Object.assign(commands, require('./e2e.ts').make(out, fail));
 Object.assign(commands, require('./audit.ts').make(out, fail));
+Object.assign(commands, require('./version.ts').make(out, fail));
 
 // `pa help <topic>`: each module exports its own HELP. Required by a computed
 // path, so test/cliHelp.test.js loads every one (requiresResolve.test.js sees
@@ -1810,6 +1812,7 @@ Object.assign(commands, require('./audit.ts').make(out, fail));
 const HELP_TOPICS: Record<string, string> = {
   memory: './memory.ts', secret: './secret.ts', secrets: './secret.ts', passkeys: './passkeys.ts',
   routine: './routine.ts', routines: './routine.ts', task: './task.ts', policy: './task.ts', e2e: './e2e.ts', audit: './audit.ts',
+  version: './version.ts',
 };
 
 async function main(argv: string[]) {
