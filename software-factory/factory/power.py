@@ -35,6 +35,7 @@ Clean shutdown, in order, because the order is the whole point:
 from __future__ import annotations
 
 import subprocess
+import sys
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -56,7 +57,14 @@ _DRAIN_POLL_S = 2.0
 # STATUS.md and the Exteroception v1 direction, P0). The tuple stays so a
 # future long-running service has a slot to register in without touching the
 # power_on/power_off iteration logic below.
-_SERVICE_UNITS: tuple[str, ...] = ()
+_SERVICE_UNITS: tuple[str, ...] = ("factory-serve.service",)
+
+#: ``factory serve`` (docs/WINDOWS.md) replaces the per-app tick timers. When its
+#: unit is installed, ``factory on`` never enables ``factory-tick@*.timer`` next
+#: to it (double ticks); ``factory off`` still stops any that are running.
+SERVE_UNIT = "factory-serve.service"
+#: The Windows scheduled task that runs ``factory serve --supervise``.
+SERVE_TASK = "factory-serve"
 
 # Timer units that are not per-app.
 _GLOBAL_TIMER_UNITS: tuple[str, ...] = ("factory-self-deploy.timer",)
@@ -148,7 +156,7 @@ def discover_units(
     for t in _GLOBAL_TIMER_UNITS:
         candidates.append(Unit(t, "timer", "factory self-deploy"))
     for s in _SERVICE_UNITS:
-        candidates.append(Unit(s, "service", "FMS L1 manager daemon"))
+        candidates.append(Unit(s, "service", "factory serve (ticks, JOBS-API, push)"))
 
     return [u for u in candidates if _known(u.name)]
 
@@ -162,6 +170,8 @@ def unit_state(name: str, *, runner: Runner | None = None) -> UnitState:
 
 
 def power_status(*, root: Path, runner: Runner | None = None) -> list[UnitState]:
+    if runner is None and sys.platform == "win32":
+        return [_task_state()]
     runner = runner or _run
     return [unit_state(u.name, runner=runner) for u in discover_units(root=root, runner=runner)]
 
@@ -196,6 +206,8 @@ def power_off(
     Returns a report dict: ``{"stopped": [...], "drained": [...], "drain_timed_out":
     bool, "already_off": bool, "units": [UnitState, ...]}``.
     """
+    if runner is None and sys.platform == "win32":
+        return _task_power("off")
     runner = runner or _run
     units = discover_units(root=root, runner=runner)
     before = [unit_state(u.name, runner=runner) for u in units]
@@ -261,8 +273,13 @@ def power_on(*, root: Path, runner: Runner | None = None) -> dict[str, object]:
     can refuse to start cleanly, which is exactly the "it won't come back up"
     case this command exists to make impossible.
     """
+    if runner is None and sys.platform == "win32":
+        return _task_power("on")
     runner = runner or _run
     units = discover_units(root=root, runner=runner)
+    if any(u.name == SERVE_UNIT for u in units):
+        # serve replaces the per-app timers: never start them next to it.
+        units = [u for u in units if not u.name.startswith("factory-tick@")]
     before = [unit_state(u.name, runner=runner) for u in units]
     already_on = bool(before) and all(s.running for s in before if s.installed)
 
@@ -293,8 +310,67 @@ def power_on(*, root: Path, runner: Runner | None = None) -> dict[str, object]:
     }
 
 
+# --------------------------------------------------------------------------- #
+# Windows: the factory-serve scheduled task (no systemd)
+# --------------------------------------------------------------------------- #
+
+
+def _ps(command: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["powershell", "-NoProfile", "-NonInteractive", "-Command", command],
+        capture_output=True, text=True, timeout=60, check=False,
+    )
+
+
+def _task_state() -> UnitState:
+    """The task as a UnitState: active = running/ready/disabled, enabled = enabled/disabled."""
+    proc = _ps(
+        f"$t = Get-ScheduledTask -TaskName '{SERVE_TASK}' -ErrorAction SilentlyContinue; "
+        "if ($t) { [string]$t.State } else { 'not-found' }"
+    )
+    state = (proc.stdout or "").strip() or "unknown"
+    if state == "not-found":
+        return UnitState(name=SERVE_TASK, active="inactive", enabled="not-found")
+    active = "active" if state == "Running" else "inactive"
+    enabled = "disabled" if state == "Disabled" else "enabled"
+    return UnitState(name=SERVE_TASK, active=active, enabled=enabled)
+
+
+def _task_power(action: str) -> dict[str, object]:
+    """``factory on`` / ``off`` on Windows: enable+start / stop+disable the task.
+
+    Stopping the task ends the ``--supervise`` parent; the serve child notices
+    within 5 s and drains its running ticks before it exits (docs/WINDOWS.md).
+    """
+    before = _task_state()
+    if before.enabled == "not-found":
+        msg = f"scheduled task {SERVE_TASK!r} is not installed (scripts/windows/install-serve.ps1)"
+        key = "failed"
+        return {key: [(SERVE_TASK, msg)], "started": [], "stopped": [], "units": [before],
+                "already_on": False, "already_off": True, "drained": [], "drain_timed_out": False}
+    if action == "on":
+        proc = _ps(f"Enable-ScheduledTask -TaskName '{SERVE_TASK}' | Out-Null; Start-ScheduledTask -TaskName '{SERVE_TASK}'")
+        ok = proc.returncode == 0
+        return {
+            "started": [SERVE_TASK] if ok else [],
+            "failed": [] if ok else [(SERVE_TASK, (proc.stderr or proc.stdout or "").strip()[:200])],
+            "already_on": before.running,
+            "units": [_task_state()],
+        }
+    _ps(f"Stop-ScheduledTask -TaskName '{SERVE_TASK}'; Disable-ScheduledTask -TaskName '{SERVE_TASK}' | Out-Null")
+    return {
+        "stopped": [SERVE_TASK],
+        "drained": [],
+        "drain_timed_out": False,
+        "already_off": not before.running and before.enabled != "enabled",
+        "units": [_task_state()],
+    }
+
+
 __all__ = [
     "DEFAULT_DRAIN_TIMEOUT_S",
+    "SERVE_TASK",
+    "SERVE_UNIT",
     "Unit",
     "UnitState",
     "discover_units",

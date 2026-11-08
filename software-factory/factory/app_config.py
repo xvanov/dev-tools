@@ -331,6 +331,13 @@ class AppConfig(BaseModel):
     # still must pass staging before it can touch the live factory.
     self_tick_enabled: bool = False
 
+    # ``factory serve`` ticks this app (docs/WINDOWS.md). OFF by default: a
+    # registered app is not necessarily a live one (a stale local config must
+    # not start ticking, and spending, because serve came up). The systemd
+    # timers had the same opt-in: an app ticked only if its timer was enabled.
+    # ``factory serve --app`` / FACTORY_SERVE_APPS override it.
+    serve_tick: bool = False
+
     @property
     def repo_owner(self) -> str:
         return self.repo.split("/", 1)[0]

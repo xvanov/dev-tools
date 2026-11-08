@@ -311,6 +311,33 @@ def read_status(root: Path) -> dict[str, Any]:
 # --------------------------------------------------------------------------- #
 
 
+def choose_apps(
+    root: Path, explicit: list[str] | None = None, env: str | None = None,
+    *, log: Callable[[str], None] = lambda msg: None,
+) -> list[str]:
+    """Which apps serve ticks: ``--app`` values, else ``$FACTORY_SERVE_APPS``
+    (comma list), else every registered app whose config sets
+    ``serve_tick: true``. Never "every registered app": a registered but idle
+    app (a stale local config) must not start ticking because serve came up.
+    """
+    chosen = [a for a in (explicit or []) if a]
+    if not chosen and env:
+        chosen = [a.strip() for a in env.split(",") if a.strip()]
+    if chosen:
+        return chosen
+    from factory.app_config import load_app_config
+    from factory.jobs.common import registered_apps
+
+    out: list[str] = []
+    for app in registered_apps(root):
+        try:
+            if load_app_config(app, root).serve_tick:
+                out.append(app)
+        except Exception as exc:  # noqa: BLE001 - a broken config is not ticked
+            log(f"app {app}: config does not load ({exc!r}); not ticked")
+    return out
+
+
 def tick_argv(app: str) -> list[str]:
     return [sys.executable, "-m", "factory", "tick", "--app", app]
 

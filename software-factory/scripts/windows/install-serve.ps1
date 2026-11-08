@@ -1,7 +1,7 @@
 # software-factory: run the factory natively on Windows (no WSL).
 #
 # Registers one logon task, `factory-serve`, that runs `factory serve`: the
-# in-process scheduler that ticks every registered app on an interval and wakes
+# in-process scheduler that ticks the opted-in apps (serve_tick: true) on an interval and wakes
 # within a second of `factory job submit`. It replaces the systemd
 # `factory-tick@<app>.timer` units the Linux factory uses (docs/WINDOWS.md).
 #
@@ -79,7 +79,7 @@ $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoi
   -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) `
   -MultipleInstances IgnoreNew
 Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Settings $settings `
-  -Description 'software-factory: factory serve (ticks the registered apps; replaces the systemd timers)' `
+  -Description 'software-factory: factory serve (ticks the serve_tick apps; replaces the systemd timers)' `
   -Force | Out-Null
 Write-Host "==> registered task $TaskName"
 

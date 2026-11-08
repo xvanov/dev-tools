@@ -331,3 +331,21 @@ def test_unit_state_never_raises_on_unknown_unit(root: Path) -> None:
     st = unit_state("does-not-exist.service", runner=fake)
     assert st.installed is False
     assert st.running is False
+
+
+def test_power_on_never_starts_tick_timers_next_to_factory_serve(root: Path) -> None:
+    """serve replaces the per-app timers: with its unit installed, ``factory on``
+    starts serve and leaves every factory-tick@ timer alone (double ticks)."""
+    sc = FakeSystemctl(unit_files=_INSTALLED + power_module.SERVE_UNIT + "\n")
+    res = power_on(root=root, runner=sc)
+    assert power_module.SERVE_UNIT in res["started"]
+    assert not any(n.startswith("factory-tick@") for n in res["started"])
+    enabled = [c[3] for c in sc.calls if c[2:3] == ["enable"]]
+    assert not any(n.startswith("factory-tick@") for n in enabled)
+
+
+def test_power_off_stops_factory_serve_too(root: Path) -> None:
+    sc = FakeSystemctl(unit_files=_INSTALLED + power_module.SERVE_UNIT + "\n",
+                       active={power_module.SERVE_UNIT: "active"})
+    res = power_off(root=root, runner=sc, wait=False)
+    assert power_module.SERVE_UNIT in res["stopped"]

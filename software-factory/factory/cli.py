@@ -1492,7 +1492,6 @@ def serve_cmd(
     """
     import signal as _signal
 
-    from factory.jobs.common import registered_apps
     from factory.scheduler import serve as _serve
 
     load_dotenv()
@@ -1526,12 +1525,10 @@ def serve_cmd(
             )
             raise typer.Exit(code=2)
 
-    chosen = [a for a in (apps or []) if a]
-    if not chosen:
-        env_apps = os.environ.get("FACTORY_SERVE_APPS") or ""
-        chosen = [a.strip() for a in env_apps.split(",") if a.strip()]
-    if not chosen:
-        chosen = registered_apps(_FACTORY_ROOT)
+    chosen = _serve.choose_apps(
+        _FACTORY_ROOT, list(apps or []), os.environ.get("FACTORY_SERVE_APPS"),
+        log=lambda m: console.print(f"factory serve: {m}"),
+    )
     if interval is None:
         try:
             interval = float(os.environ.get("FACTORY_SERVE_INTERVAL_S") or _serve.DEFAULT_INTERVAL_S)

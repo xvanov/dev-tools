@@ -235,6 +235,22 @@ def test_serve_forever_drains_and_writes_status(tmp_path: Path) -> None:
     assert h.apps_started()[0] == "a"
 
 
+def test_choose_apps_is_opt_in(tmp_path: Path) -> None:
+    # (Not "on"/"off": YAML reads those bare words as booleans.)
+    for name, extra in (("ticked", "serve_tick: true\n"), ("idle", ""), ("broken", None)):
+        d = tmp_path / "apps" / name
+        d.mkdir(parents=True)
+        body = "::not yaml::\n" if extra is None else (
+            f"name: {name}\nrepo: o/{name}\ndefault_branch: main\n" + extra
+        )
+        (d / "config.yaml").write_text(body, encoding="utf-8")
+    logs: list[str] = []
+    assert serve.choose_apps(tmp_path, log=logs.append) == ["ticked"]  # never "every registered app"
+    assert any("broken" in m for m in logs)
+    assert serve.choose_apps(tmp_path, ["idle"]) == ["idle"]  # --app wins
+    assert serve.choose_apps(tmp_path, None, "idle, ticked") == ["idle", "ticked"]  # then FACTORY_SERVE_APPS
+
+
 def test_tick_argv_runs_the_factory_module() -> None:
     assert serve.tick_argv("x")[1:] == ["-m", "factory", "tick", "--app", "x"]
 

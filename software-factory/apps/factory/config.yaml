@@ -25,6 +25,9 @@ app_repo_path: "."  # factory IS the app; resolves to the factory root itself
 # commands that run from that subdirectory, and a self-deploy that pulls
 # dev-tools main. Until then: false.
 self_tick_enabled: false
+# `factory serve` ticks this app (opt-in; docs/WINDOWS.md). Self-edit stays off
+# (self_tick_enabled); its ticks still start queued research/report jobs.
+serve_tick: true
 
 # The factory deploys nothing of itself through the app deploy path. Self-deploy
 # is handled by the staging + surgical-checkout flow (factory.manager.staging +

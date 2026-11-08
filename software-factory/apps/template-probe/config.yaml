@@ -19,6 +19,8 @@
 name: template-probe
 repo: xvanov/template-probe
 default_branch: main
+# `factory serve` ticks this app (opt-in; docs/WINDOWS.md).
+serve_tick: true
 
 # Absolute path to the checkout the factory builds in.
 app_repo_path: /home/k/template-probe

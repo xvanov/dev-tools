@@ -17,7 +17,7 @@ task, `factory-serve`, as the current user, that runs:
 <checkout>\software-factory\.venv\Scripts\python.exe -m factory serve --interval 300 --log-file state\logs\serve.log
 ```
 
-Options: `-Apps a,b` (default: every registered app), `-IntervalSeconds`,
+Options: `-Apps a,b` (default: the apps whose config sets `serve_tick: true`), `-IntervalSeconds`,
 `-SkipSync`, `-Uninstall`. Updating is `git pull --ff-only` (the next tick runs
 the new chain code; restart the task after a change to `factory serve` itself:
 `Stop-ScheduledTask factory-serve; Start-ScheduledTask factory-serve`).
@@ -47,8 +47,17 @@ process. Use `factory.oscompat.pid_alive`.
 
 ## factory serve
 
+- Ticks only the apps that opt in: `serve_tick: true` in `apps/<app>/config.yaml`
+  (tracked: dev-tools, factory, template-probe), unless `--app` or
+  `$FACTORY_SERVE_APPS` names them. Never "every registered app": a stale local
+  config must not start ticking (and spending) because serve came up, just as an
+  app without an enabled timer never ticked under systemd.
 - Ticks each app as a fresh subprocess (`python -m factory tick --app <app>`),
   every `--interval` seconds (default 300), never two ticks of one app at once.
+  A tick that moved a story re-wakes its app at once (capped at 30 in a row).
+- `factory on` / `off` / `power` manage serve: the `factory-serve` task on
+  Windows, `factory-serve.service` on Linux (where `factory on` then never
+  enables the old `factory-tick@` timers).
 - Wakes within a second when `factory job submit` or `factory job resume` drops a
   file in `state\scheduler\wake.d\`: it dispatches queued research/report jobs at
   once (no LLM) and ticks the job's app.

@@ -1,5 +1,5 @@
 [Unit]
-Description=Factory serve: ticks every registered app, JOBS-API on 127.0.0.1:7330, pushes job states to the PA
+Description=Factory serve: ticks the opted-in apps (serve_tick: true), JOBS-API on 127.0.0.1:7330, pushes job states to the PA
 # Replaces the factory-tick@<app>.timer units (plan 2.2). Serve refuses to run
 # while any of them is active: `factory off` (or disable the timers) first.
 After=network-online.target
