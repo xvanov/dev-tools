@@ -212,12 +212,12 @@ function rewriteUpstream(fx, extraFile) {
   check('windows/common.ps1 has the twin', /function Repair-DivergedHistory/.test(ps));
   check('windows/common.ps1 asks the same patch-id question', question.test(ps));
   check('windows/update.ps1 calls it on a refused pull', /Repair-DivergedHistory -RepoDir/.test(caller));
-  check('both refuse to reset a dirty tree', /status --porcelain/.test(sh) && /status --porcelain/.test(ps));
+  check('both refuse to reset a dirty tree', /status --porcelain/.test(sh) && /'status',\s*'--porcelain'/.test(ps));
   // The Windows caller must not trust the function's return value: a PowerShell
   // function returns everything that reached the pipeline, so it re-asks git where
   // HEAD is before continuing the update.
   check('windows/update.ps1 verifies HEAD against upstream rather than the return value',
-    /rev-parse '@\{u\}'/.test(caller));
+    /'rev-parse',\s*'@\{u\}'/.test(caller));
   check('there is a PowerShell test for the twin',
     fs.existsSync(path.join(PROJECT_DIR, 'test', 'repairHistory.test.ps1')));
 }

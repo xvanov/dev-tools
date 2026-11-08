@@ -12,6 +12,14 @@
 // sibling termhub checkout is installed, the same setup runs through a real
 // termhub front's /api/exec.
 
+// The setup/boundary half stands the local host in for a Linux/macOS machine
+// (POSIX repo roots, git worktrees via argv); a Windows host cannot play that part.
+// Windows CI skips it; plan item records the split (unit assertions vs host-bound).
+if (process.platform === 'win32') {
+  console.log('remoteExec: SKIP on win32 (stands the local host in for a Linux/macOS machine)');
+  process.exit(0);
+}
+
 const assert = require('assert');
 const fs = require('fs');
 const os = require('os');
