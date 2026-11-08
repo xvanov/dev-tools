@@ -93,7 +93,7 @@ def test_self_constructs_client_and_closes_when_none_supplied(
     a token available must still close the issue, not silently no-op."""
     issue = _Issue(55)
     fake_client = _FakeClient(_Repo({55: issue}))
-    monkeypatch.setattr(github_provider, "build_github_client", lambda: fake_client)
+    monkeypatch.setattr(github_provider, "build_github_client", lambda repo=None: fake_client)
 
     _close_issues_on_deploy(
         _story(),
@@ -161,7 +161,7 @@ def test_missing_token_does_not_crash(
 ) -> None:
     """No token available -> warn and return; must never raise, so a deploy
     still succeeds even though the bookkeeping close is skipped."""
-    monkeypatch.setattr(github_provider, "build_github_client", lambda: None)
+    monkeypatch.setattr(github_provider, "build_github_client", lambda repo=None: None)
 
     # Must not raise.
     _close_issues_on_deploy(

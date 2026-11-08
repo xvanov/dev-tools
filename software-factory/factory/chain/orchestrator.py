@@ -2091,7 +2091,11 @@ def _close_dual_draft_sibling_on_reconcile(
         if factory is None:
             from factory.providers.github import build_github_client
 
-            factory = build_github_client
+            _repo = getattr(cfg, "repo", None)
+
+            def factory() -> Any:
+                return build_github_client(_repo)
+
         gh = factory()
         if gh is None:
             # No token / client available — cleanup is best-effort; the Part 2
@@ -2523,7 +2527,8 @@ def reconcile_dual_draft_winners(
     if factory is None:
         from factory.providers.github import build_github_client
 
-        factory = build_github_client
+        def factory() -> Any:
+            return build_github_client(getattr(cfg, "repo", None))
 
     superseded: list[tuple[str, str, str]] = []
     for members in groups.values():
@@ -3719,7 +3724,7 @@ def tick(
                     from factory.directions.tracker_issue import reconcile_completed_issues
                     from factory.providers.github import build_github_client
 
-                    _gh = build_github_client()
+                    _gh = build_github_client(getattr(cfg, "repo", None))
                     if _gh is not None:
                         _rep = reconcile_completed_issues(
                             cfg, _gh, software_factory_root=root, db_path=db

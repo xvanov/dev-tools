@@ -7264,7 +7264,7 @@ def _close_issues_on_deploy(
     if client is None:
         from factory.providers.github import build_github_client
 
-        client = build_github_client()
+        client = build_github_client(getattr(app_config, "repo", None))
         if client is None:
             _logger.warning(
                 "deploy: no GitHub token available (GITHUB_TOKEN/GH_TOKEN/"

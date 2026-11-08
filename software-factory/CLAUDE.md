@@ -1,4 +1,4 @@
-# CLAUDE.md — orientation for an agent working in `software-factory`
+﻿# CLAUDE.md — orientation for an agent working in `software-factory`
 
 Short by design. Everything else is on-demand — see **Deeper reading**. Do not
 go spelunking through `factory/` for answers this file already gives.
@@ -335,3 +335,16 @@ Keep prose for rationale. Optimize for clear, easy-to-diff docs.
 | convergence harness on the app's own gates (not evidence about correctness) | `bench/README.md` |
 
 New app template (web + mobile boilerplate): `../template` — see its `CLAUDE.md`.
+
+## GitHub identity (per repo owner)
+
+`factory/gh_auth.py` picks the GitHub token by the **repo owner**, never by the active `gh`
+account (never run `gh auth switch`). Owner `xvanov` -> `gh auth token --user xvanov`; any other owner ->
+ambient `GITHUB_TOKEN`/`GH_TOKEN`, else the active account. Configure more owners with
+`FACTORY_GH_OWNER_MAP=owner=gh-user,...` (env / `.env`; company owners never go in the repo).
+`FACTORY_GITHUB_TOKEN` is the only unambiguous override (wins for every repo); a stray `GH_TOKEN`
+does NOT beat the owner map for a mapped owner. `import factory` prepends `bin/` to PATH so every
+`gh` subprocess (ours and agent sessions') goes through the `bin/gh` shim; `FACTORY_GH_SHIM=0` opts out.
+Use `factory.gh_auth.token_for_repo` / `gh_env(repo)` for new code. `git push` is per-owner via the
+SSH host aliases in the remote URL, not via tokens. Known gap: the PyGithub client built without a
+repo (`_ensure_github_client`, inbox) uses the default chain.

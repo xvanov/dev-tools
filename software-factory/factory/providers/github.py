@@ -27,7 +27,21 @@ import subprocess
 from typing import Any
 
 
-def resolve_github_token() -> str | None:
+def resolve_github_token(repo: str | None = None) -> str | None:
+    """Return a token; per-owner (``factory.gh_auth``) when ``repo`` is given.
+
+    With ``repo="owner/name"`` the owner map decides the identity (see
+    ``factory/gh_auth.py``; ``FACTORY_GITHUB_TOKEN`` overrides everything).
+    Without ``repo`` the legacy chain below applies (the active account).
+    """
+    if repo:
+        from factory.gh_auth import token_for_repo
+
+        return token_for_repo(repo)
+    return _resolve_default_token()
+
+
+def _resolve_default_token() -> str | None:
     """Return a GitHub API token following the documented precedence chain.
 
     Precedence:
@@ -40,7 +54,7 @@ def resolve_github_token() -> str | None:
     from the subprocess silently falls through to ``None`` — the caller is
     responsible for producing a human-readable error message.
     """
-    for env_name in ("GITHUB_TOKEN", "GH_TOKEN"):
+    for env_name in ("FACTORY_GITHUB_TOKEN", "GITHUB_TOKEN", "GH_TOKEN"):
         val = os.environ.get(env_name)
         if val:
             return val.strip() or None
@@ -61,7 +75,7 @@ def resolve_github_token() -> str | None:
     return token or None
 
 
-def build_github_client() -> Any | None:
+def build_github_client(repo: str | None = None) -> Any | None:
     """Construct a ``pygithub.Github`` client, best-effort.
 
     Returns ``None`` when no token is available (see ``resolve_github_token``)
@@ -73,7 +87,7 @@ def build_github_client() -> Any | None:
     surfaces a clear error instead of silently returning ``None``; see
     ``factory.cli._ensure_github_client``.
     """
-    token = resolve_github_token()
+    token = resolve_github_token(repo)
     if not token:
         return None
     from github import Github
