@@ -708,7 +708,7 @@
       "details": {
         "Rule": "Passes never overlap themselves; a crash costs one tick, the next sees the same delta.",
         "Model passes": [
-          "distill (PA_DISTILL_MODEL, default claude-opus-5)",
+          "distill (PA_DISTILL_MODEL, default claude-sonnet-5-5 since 8.4.37, was claude-opus-5; the work stack had served sonnet-5-5 through the variable since 6 Nov; drafts and eval follow it unless PA_DRAFT_MODEL / PA_EVAL_MODEL are set; the candidate projects ride in the cached system prompt)",
           "reconcile, card context, repo profiles (PA_RECONCILE_MODEL, default claude-sonnet-5-5)",
           "memory extract / decide / pages (default claude-sonnet-5-5 each)",
           "blocks and dedupe (default azure/pa)",
@@ -759,7 +759,7 @@
       "env": [
         {
           "name": "PA_DISTILL_MODEL",
-          "default": "claude-opus-5"
+          "default": "claude-sonnet-5-5"
         },
         {
           "name": "PA_RECONCILE_MODEL",
@@ -2462,7 +2462,7 @@
         ],
         "cost": {
           "max_usd": 0.05,
-          "basis": "distill model call for one message"
+          "basis": "distill model call for one message (claude-sonnet-5-5 by default since 8.4.37: $0.02-0.03 a call before the candidates moved into the cached system prompt; in a warm pass a short chat message read about $0.005)"
         },
         "views": [
           "run",

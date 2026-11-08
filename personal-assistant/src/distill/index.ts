@@ -7,10 +7,13 @@
 // leak, needs no cleanup after a crash, and re-running the whole corpus after a
 // prompt change is one `delete from distillation`.
 //
-// Cost control is effort, not a smaller model: extraction quality is the thing
-// this tool is entirely made of, and a cheap wrong commitment costs more
-// attention than it saves in tokens. What *is* skipped is work that cannot pay
-// off — items under a length threshold, and bodies that are pure machine noise.
+// Cost control is effort and the prompt cache, not the smallest model:
+// extraction quality is the thing this tool is entirely made of, and a cheap
+// wrong commitment costs more attention than it saves in tokens. The default
+// is sonnet-5-5 (config.ts, plan 8.4.37), and the candidate projects sit in the
+// system prompt so a pass reads them from cache (prompt.ts systemFor). What
+// *is* skipped is work that cannot pay off — items under a length threshold,
+// short courtesies, and bodies that are pure machine noise.
 //
 // Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
 
@@ -19,7 +22,7 @@ type Db = import('../repo/types.ts').Db;
 
 const llm = require('../llm.ts');
 const repo = require('../repo');
-const { PROMPT_VERSION, SYSTEM, buildUserMessage, parseResponse } = require('./prompt.ts');
+const { PROMPT_VERSION, systemFor, buildUserMessage, parseResponse } = require('./prompt.ts');
 const identity = require('./identity.ts');
 const projects = require('../projects');
 const resolve = require('../projects/resolve.ts');
@@ -63,7 +66,7 @@ async function callModel(item: any, context: any) {
   const body = (item.body_text || '').slice(0, MAX_BODY_CHARS);
   const message = buildUserMessage({ ...item, body_text: body }, context);
 
-  const text = await llm.complete({ system: SYSTEM, prompt: message, maxTokens: 8000, purpose: 'distill' });
+  const text = await llm.complete({ system: systemFor(context.candidates), prompt: message, maxTokens: 8000, purpose: 'distill' });
   return parseResponse(text, { referenceIso: new Date(item.occurred_at).toISOString() });
 }
 

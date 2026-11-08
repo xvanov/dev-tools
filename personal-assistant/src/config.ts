@@ -137,7 +137,10 @@ const dataDir = env('PA_DATA_DIR', defaultDataDir());
 function modelEnv(name: string, fallback: unknown) {
   return env(name) || env('PA_MODEL') || fallback;
 }
-const distillModel = modelEnv('PA_DISTILL_MODEL', 'claude-opus-5');
+// sonnet-5-5 since plan 8.4.37 (was opus-5): what the work stack had served
+// through PA_DISTILL_MODEL since 6 Nov, at $0.02-0.03 a call against
+// opus-5's $0.06-0.07. Drafts and eval follow it.
+const distillModel = modelEnv('PA_DISTILL_MODEL', 'claude-sonnet-5-5');
 const reconcileModel = modelEnv('PA_RECONCILE_MODEL', 'claude-sonnet-5-5');
 
 const config = {

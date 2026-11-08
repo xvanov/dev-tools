@@ -111,7 +111,9 @@ change: it prints one line per pass and refuses a pass whose backend cannot do i
 
 ### Cost
 
-Every captured item over 40 characters gets one model call. `PA_DISTILL_EFFORT=low` is the
+Every captured item over 40 characters (a Teams DM, self-chat note or mention from 6) that may
+create tasks gets one model call, on `claude-sonnet-5-5` by default: about $0.02 a call, less
+within a pass, which reads the project list from the prompt cache. `PA_DISTILL_EFFORT=low` is the
 default and is the right lever; leave `PA_DISTILL_MODEL` alone. Watch it for the first few days
 with `pa doctor` — the "awaiting distillation" number tells you how much is queued.
 

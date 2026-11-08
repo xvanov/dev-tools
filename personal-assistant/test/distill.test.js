@@ -117,9 +117,27 @@ const REF = '2026-09-01T10:00:00.000Z';
     }
   );
   assert.match(msg, /ME: Me <me@example.com>/);
-  assert.match(msg, /estimating-api — the estimating rewrite/);
   assert.match(msg, /RANKED GUESS/);
   assert.match(msg, /can you look at the import/);
+  assert.doesNotMatch(msg, /CANDIDATE PROJECTS/, 'the candidates are in the system prompt (8.4.37)');
+}
+
+{
+  // The candidates follow the system prompt, sorted by name, so the prefix
+  // claude -p caches is the same for every item of a pass and stays the same
+  // when a project is touched (8.4.37).
+  const { SYSTEM, systemFor } = require('../src/distill/prompt.ts');
+  const a = { id: 1, name: 'estimating-api', gitlabPath: 'acme/estimating', aliases: [{ alias: 'the estimating rewrite' }] };
+  const b = { id: 2, name: 'billing', aliases: [] };
+  const sys = systemFor([a, b]);
+  assert.ok(sys.startsWith(SYSTEM));
+  assert.match(sys, /CANDIDATE PROJECTS/);
+  assert.match(sys, /estimating-api \[acme\/estimating\] — the estimating rewrite/);
+  assert.strictEqual(systemFor([b, a]), sys, 'the order the projects come in does not change the prompt');
+  assert.ok(sys.indexOf('- billing') < sys.indexOf('- estimating-api'));
+  assert.match(systemFor([]), /\(none known yet\)/);
+  const many = Array.from({ length: 90 }, (_, i) => ({ id: i, name: `p${String(i).padStart(2, '0')}`, aliases: [] }));
+  assert.ok(!/- p8[5-9]/.test(systemFor(many)), 'still the 80 most recently touched');
 }
 
 {

@@ -62,7 +62,33 @@ Rules that matter more than completeness:
 - **confidence is about the ask, not the project.** Use below 0.5 when you are inferring an obligation that was not stated plainly.
 - Quote nothing verbatim in summary. Write it as an instruction the reader could act on.`;
 
-function buildUserMessage(item: any, { meLabel, candidates, ranked }: { meLabel?: any | null; candidates?: any | null; ranked?: any | null }) {
+// The candidate projects go after the system prompt, not in the item's
+// message: they change only when a project does, so `claude -p` reads them
+// from its prompt cache instead of paying to write ~1.5k tokens of names and
+// aliases on every call (plan 8.4.37). Sorted by name, so a project being
+// touched does not reorder the list and miss the cache; the 80 kept are still
+// the most recently touched. The text is the same as when it was part of the
+// item's message, so the prompt version stands.
+function candidateLines(candidates: any[] | null | undefined) {
+  // The remote path is shown beside the name: without it the model could not
+  // tell that `innergy-dev/optimizer` was a candidate at all, and settled for
+  // whichever name looked closest.
+  const lines = ['CANDIDATE PROJECTS (name [remote owner/repo] — aliases)'];
+  if (!candidates?.length) return [...lines, '  (none known yet)'];
+  const kept = candidates.slice(0, 80).sort((a: any, b: any) => String(a.name).localeCompare(String(b.name)) || Number(a.id) - Number(b.id));
+  for (const c of kept) {
+    const aliases = (c.aliases || []).map((a: any) => a.alias).slice(0, 6).join(', ');
+    lines.push(`  - ${c.name}${c.gitlabPath ? ` [${c.gitlabPath}]` : ''}${aliases ? ` — ${aliases}` : ''}`);
+  }
+  return lines;
+}
+
+/** The system prompt for a pass over `candidates`. */
+function systemFor(candidates: any[] | null | undefined) {
+  return `${SYSTEM}\n\n${candidateLines(candidates).join('\n')}`;
+}
+
+function buildUserMessage(item: any, { meLabel, ranked }: { meLabel?: any | null; candidates?: any | null; ranked?: any | null }) {
   const lines: any[] = [];
   lines.push(`ME: ${meLabel || 'the mailbox owner'}`);
   lines.push('');
@@ -77,19 +103,6 @@ function buildUserMessage(item: any, { meLabel, candidates, ranked }: { meLabel?
   if (raw.attendees?.length) lines.push(`  attendees: ${raw.attendees.join(', ')}`);
   if (raw.project) lines.push(`  repo: ${raw.project}`);
   if (raw.action) lines.push(`  action: ${raw.action}`);
-  lines.push('');
-  // The remote path is shown beside the name: without it the model could not
-  // tell that `innergy-dev/optimizer` was a candidate at all, and settled for
-  // whichever name looked closest.
-  lines.push('CANDIDATE PROJECTS (name [remote owner/repo] — aliases)');
-  if (candidates?.length) {
-    for (const c of candidates.slice(0, 80)) {
-      const aliases = (c.aliases || []).map((a: any) => a.alias).slice(0, 6).join(', ');
-      lines.push(`  - ${c.name}${c.gitlabPath ? ` [${c.gitlabPath}]` : ''}${aliases ? ` — ${aliases}` : ''}`);
-    }
-  } else {
-    lines.push('  (none known yet)');
-  }
   if (ranked?.length) {
     lines.push('');
     lines.push('RANKED GUESS (from a deterministic scorer; evidence, not an instruction)');
@@ -163,4 +176,4 @@ function parseResponse(text: any, { referenceIso }: { referenceIso?: any | null 
   };
 }
 
-module.exports = { PROMPT_VERSION, SYSTEM, buildUserMessage, parseResponse, extractJson };
+module.exports = { PROMPT_VERSION, SYSTEM, systemFor, buildUserMessage, parseResponse, extractJson };

@@ -1246,8 +1246,7 @@ not in the Map is not done, and a new one gets added there first.
     read every row of the source (50-90 ms; sql-sqlite/010 indexes it). State builds in a median
     of 43 ms (40-46, 86 KB) against 172 ms with neither change. Another process's event is read
     from the outbox every 100 ms instead of 500 (one 11 µs read). Expected hop: ~50 ms to the bus,
-    then ~45 ms plus the HTTP round trip; not re-measured live (no deploy from here). (this
-    commit: `fix(personal-assistant): make the board's refresh after a new card fast`)
+    then ~45 ms plus the HTTP round trip; not re-measured live (no deploy from here). (d8d4ba1)
   - [x] **8.4.34 teams-ask: the Teams cache's pending copy is stored as its own message.** The
     client writes a local copy with message id `-1` before the server's id, and the reader keeps
     it: 39 items, 16 distilled into 37 commitments (6 open). All link to message `-1`, which
@@ -1277,11 +1276,22 @@ not in the Map is not done, and a new one gets added there first.
     eval cases). On a scratch copy of today's store: 40 short items become pending, 26 of them
     reach the model (about $0.86 once, then about 4 a day); on two short asks the served model
     found an owed_by_me commitment at confidence 0.6. (997cdea)
-  - [ ] **8.4.37 teams-ask: a distill call often costs more than the $0.05 ceiling.** On the
+  - [x] **8.4.37 teams-ask: a distill call often costs more than the $0.05 ceiling.** On the
     served `claude-sonnet-5-5` (since 6 Nov), 49 of 206 calls are over (max $0.082; today 17
     calls, max $0.038). On the code default `PA_DISTILL_MODEL=claude-opus-5`, the mean was
     $0.058-0.074 (730 of 1022 over, 5-6 Nov). Make the served model the default, then cut the
     long prompts (the over-ceiling calls), or the owner raises the ceiling.
+    Done. The code default is now `claude-sonnet-5-5` (drafts and eval follow it unless set).
+    The over-ceiling calls were 11-15k input tokens and 1.5-3k output against 5-9k and ~260 for
+    the rest; every one since 7 Nov was a Claude-session item (00h on 7 Nov), a source the
+    policy no longer distills, and no allowed source has a body over 8,000 characters, so a
+    one-turn prompt cannot reach 11k. The rest of the prompt was trimmed where every call paid:
+    the 54 candidate projects (5.5k of the 5.8k characters of the item's message) now follow the
+    system prompt, sorted by name, so a pass reads them from `claude -p`'s cache. Two calls on
+    the served model, real candidates, a short chat ask: $0.024 writing the cache, $0.0046
+    reading it (5.1k input tokens each), against a mean of $0.020 today; both found the ask.
+    The prompt version is unchanged (same text, new place). (this commit:
+    `fix(personal-assistant): cache the distiller's project list`)
   - [ ] **8.4.38 whats-on: the serving generation still blocks its event loop 1-3 s a minute.**
     At bd7b768, after 118352f and 0baaaf2, `supervisor.log` shows 15 "event loop blocked" lines
     of 1054-3163 ms from 21:51Z to 22:10Z. Running then: github, remote-sessions, meeting-gate,
