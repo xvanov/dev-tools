@@ -486,6 +486,12 @@ Postgres and nowhere else. Tests use invented names; fixtures never hold a real 
   in flight; each pass run holds its own lock (7301, hashtext(name)), so the new generation
   skips just that pass until the old run ends. Never start a `setInterval`, `fs.watch` or
   worker loop in `worker.js` outside the scheduler — `test/lease.test.js` checks.
+- **Views are live, not polled.** A page learns of a change from `GET /api/events` (src/events,
+  plan 0.4): row triggers (`sql/034_events_notify.sql`) NOTIFY `pa_events`, and the dashboard's one
+  LISTEN connection (opened by the first stream: it serves the dashboard, so a generation opens
+  it before it holds the lease) feeds the bus. A new table a view shows gets a trigger there, not a page timer; a payload
+  carries ids and states, never content. Item 1.4 swaps NOTIFY for an outbox table behind the
+  same (topic, id, payload) shape.
 - **Secrets:** never in the repo, never in Postgres at all. There are few: GitHub and Microsoft
   365 ride on logins that already exist (`gh`, the claude.ai connectors); Jira prefers an API
   token (`PA_JIRA_API_TOKEN`) and falls back to its connector. A secret resolves real env →

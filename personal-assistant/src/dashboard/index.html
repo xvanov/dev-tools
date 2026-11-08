@@ -6,6 +6,7 @@
 <title>Jarvis · Plan</title>
 <link rel="stylesheet" href="theme.css">
 <script src="nav.js" data-layer="dashboard"></script>
+<script src="events.js"></script>
 <style>
   /* This page's names for the shared tokens in theme.css (the Jarvis design
      system). Colours are defined there, once, for light and dark. */
@@ -1149,13 +1150,26 @@ function render(s) {
   // A run routed to the factory is a job on Build, with its state, PR and cost:
   // here only when it is blocked (it waits on you), else one line pointing there.
   const allRuns = [...s.runsActive.map((r) => ({ ...r, live: true })), ...s.runsReview];
-  const onBuild = allRuns.filter((r) => r.route === 'factory' && r.status !== 'blocked');
+  // A factory job parked on your approval (needs_human) is shown here too, with
+  // the same Approve as Build's (POST api/factory/jobs/<id>/approve; the server
+  // runs only the approval the factory itself named).
+  const needsApproval = (r) => r.route === 'factory' && r.factory_state === 'needs_human' && r.factory_job_id;
+  const onBuild = allRuns.filter((r) => r.route === 'factory' && r.status !== 'blocked' && !needsApproval(r));
   const runs = allRuns.filter((r) => !onBuild.includes(r));
+  const approveJob = (r) => {
+    const b = el('button', { class: 'primary', title: 'Run the approve-direction the factory named for this job' }, 'Approve');
+    b.addEventListener('click', act(b, async () => {
+      await post(`api/factory/jobs/${encodeURIComponent(r.factory_job_id)}/approve`, {});
+      toast(`${r.factory_job_id} approved`);
+    }));
+    return b;
+  };
   fill('runs', runs, (r) => el('div', { class: 'item' },
     el('div', { class: 'sum' }, r.task),
-    el('div', { class: 'sub' }, ...joinParts([`run #${r.id}`, r.live ? r.status : r.status === 'blocked' ? `blocked — ${r.exit_note || 'see pa review'}` : 'done — review', r.mode,
+    el('div', { class: 'sub' }, ...joinParts([`run #${r.id}`, needsApproval(r) ? el('span', { class: 'flag blocked' }, 'waiting for your approval') : r.live ? r.status : r.status === 'blocked' ? `blocked — ${r.exit_note || 'see pa review'}` : 'done — review', r.mode,
       r.route === 'factory' ? `factory ${r.factory_job_id || ''}${r.factory_state ? ` · ${r.factory_state}` : ''}` : null,
-      r.repo_path, link(r.mr_url, 'MR')]))), 'No agent runs.');
+      r.repo_path, link(r.mr_url, 'MR')])),
+    needsApproval(r) ? el('div', { class: 'actions' }, approveJob(r)) : null), 'No agent runs.');
   if (onBuild.length) {
     const more = el('div', { class: 'item sub' }, `${onBuild.length} factory run${onBuild.length === 1 ? '' : 's'} in progress or done: `, el('a', { href: 'factory' }, 'see Build'));
     if (runs.length) document.querySelector('#runs .list').append(more);
@@ -2085,7 +2099,19 @@ document.querySelector('nav.tabs').addEventListener('click', () => {
 });
 route();
 refresh();
-setInterval(refresh, 30000);
+// Live (dashboard/events.js): a card, run, proposal or draft that changes, in
+// any process, refetches the board within a second; the feed polls every
+// 5 min as a fallback. A change while you edit or confirm waits until you are done.
+let liveWait = null;
+function liveRefresh() {
+  if (editing || document.querySelector('.confirm:not([hidden])')) {
+    if (!liveWait) liveWait = setTimeout(() => { liveWait = null; liveRefresh(); }, 3000);
+    return;
+  }
+  refresh();
+}
+if (window.PAEvents) window.PAEvents.subscribe({ topics: ['board', 'run'], onChange: liveRefresh });
+else setInterval(refresh, 30000);
 loadMeetings();
 setInterval(loadMeetings, 60000);
 </script>

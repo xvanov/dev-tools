@@ -1,7 +1,8 @@
 /* The Factory layer's page (served as /factory.js; server side in factory.js).
  *
  * Reads GET api/factory — the worker's stored `factory job list`, never a
- * factory call — every 30 s, and renders the jobs by group. Everything an
+ * factory call — whenever the live feed (events.client.js) says it changed,
+ * and renders the jobs by group. Everything an
  * agent or another person wrote (titles, whys, reports) is set with
  * textContent; a report arrives as a parsed tree (dashboard/markdown.js).
  * URLs are relative so the page works under termhub's /pa/ proxy too.
@@ -125,7 +126,10 @@
     })));
   }
   var sheet = document.getElementById('sheet');
-  function closeSheet() { sheet.hidden = true; }
+  function closeSheet() {
+    sheet.hidden = true;
+    if (held) { held = false; load(); }
+  }
   document.getElementById('sheet-close').addEventListener('click', closeSheet);
   sheet.addEventListener('click', function (e) { if (e.target === sheet) closeSheet(); });
   document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && !sheet.hidden) closeSheet(); });
@@ -204,6 +208,7 @@
         chip(RUNTIME[j.runtime] || j.runtime, 'r-' + j.runtime),
         j.app ? chip(j.app) : null,
         chip(j.state.replace('_', ' '), 's-' + j.state),
+        j.canApprove ? chip('waiting for your approval', 's-needs_human', 'Approve below, on Plan, or ask Jarvis') : null,
         j.ciFailing ? chip('CI failing', 'ci-failing') : null,
         j.delivery && j.kind === 'code' ? chip(j.delivery) : null,
         j.updatedAt ? chip(ago(j.updatedAt)) : null),
@@ -240,12 +245,16 @@
       stat(money(s.factoryToday.metered), 'factory metered, ' + s.factoryToday.jobs + ' job(s) touched today'),
       stat(money(s.factoryToday.subscriptionEquiv), 'subscription-equivalent today'),
       stat(money(s.factoryListed.metered), 'metered, all ' + s.factoryListed.jobs + ' listed jobs'));
+    // Jarvis's "Waiting for your yes" card (permission.js) lives first in this
+    // main; a re-render keeps it.
+    var yes = document.getElementById('chatyes');
     board.replaceChildren.apply(board, GROUPS.map(function (g) {
       var list = data.groups[g[0]] || [];
       return el.apply(null, ['section', { class: g[0] },
         el('h2', {}, g[1], el('span', { class: 'n', text: String(list.length) }))]
         .concat(list.length ? list.map(jobCard) : [el('div', { class: 'empty', text: g[0] === 'needs_you' ? 'Nothing waits on you.' : 'None.' })]));
     }));
+    if (yes) board.prepend(yes);
     fillForm();
     focusFromHash();
   }
@@ -348,6 +357,15 @@
       });
   }
   load();
-  setInterval(function () { if (document.visibilityState === 'visible' && sheet.hidden) load(); }, 30000);
+  // Live (dashboard/events.js): the worker's stored job list or a PA run
+  // changing refetches the board; the feed polls every 5 min as a fallback.
+  // An open report sheet holds the refetch until it is closed.
+  var held = false;
+  function live() {
+    if (!sheet.hidden) { held = true; return; }
+    load();
+  }
+  if (window.PAEvents) window.PAEvents.subscribe({ topics: ['factory', 'run'], onChange: live });
+  else setInterval(function () { if (document.visibilityState === 'visible' && sheet.hidden) load(); }, 30000);
   document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'visible') load(); });
 })();

@@ -1,0 +1,455 @@
+'use strict';
+
+// The live feed (plan items 0.4 and E3): the bus and its replay, the Postgres
+// bridge, GET /api/events end to end on port 0, the pages' client, and the
+// factory pass's pacing. No database: the bridge runs against a fake client.
+
+const assert = require('assert');
+const http = require('http');
+const fs = require('fs');
+const path = require('path');
+const vm = require('vm');
+const { EventEmitter } = require('events');
+const { createBus } = require('../src/events/bus');
+const events = require('../src/events');
+const endpoint = require('../src/dashboard/events');
+const pace = require('../src/dispatch/factoryPace');
+
+const tick = (ms = 0) => new Promise((r) => setTimeout(r, ms));
+
+// ---- the bus -------------------------------------------------------------------
+{
+  const bus = createBus({ capacity: 3, epoch: 'e1' });
+  assert.strictEqual(bus.lastId(), 'e1-0');
+  const seen = [];
+  const boardOnly = [];
+  const off = bus.subscribe((e) => seen.push(e));
+  bus.subscribe((e) => boardOnly.push(e.topic), { topics: ['board'] });
+  bus.subscribe(() => { throw new Error('a broken subscriber'); });
+  const a = bus.publish('board', { id: 1 });
+  assert.deepStrictEqual([a.id, a.topic, a.payload], ['e1-1', 'board', { id: 1 }]);
+  assert.ok(!Number.isNaN(Date.parse(a.at)));
+  bus.publish('run', { id: 2 });
+  assert.deepStrictEqual(seen.map((e) => e.id), ['e1-1', 'e1-2'], 'every subscriber, even after a broken one');
+  assert.deepStrictEqual(boardOnly, ['board'], 'topic filter');
+  off();
+  bus.publish('run', {});
+  assert.strictEqual(seen.length, 2, 'unsubscribed');
+  assert.throws(() => bus.publish('Bad Topic', {}), /bad event topic/);
+
+  // Replay: everything after an id still in the ring.
+  assert.deepStrictEqual(bus.since('e1-1').events.map((e) => e.id), ['e1-2', 'e1-3']);
+  assert.deepStrictEqual(bus.since('e1-1', { topics: ['run'] }).events.map((e) => e.id), ['e1-2', 'e1-3']);
+  assert.deepStrictEqual(bus.since('e1-3'), { gap: false, events: [] }, 'up to date');
+  // A gap: another epoch (a restart or the next worker generation), the future,
+  // garbage, or older than the ring.
+  assert.strictEqual(bus.since('zz-1').gap, true);
+  assert.strictEqual(bus.since('e1-9').gap, true);
+  assert.strictEqual(bus.since('nonsense').gap, true);
+  bus.publish('board', {});
+  bus.publish('board', {}); // ring now holds 3..5
+  assert.strictEqual(bus.since('e1-1').gap, true, 'e1-2 was evicted');
+  assert.strictEqual(bus.since('e1-2').gap, false, 'e1-3 onwards is all there');
+  // A fresh bus: its own zero id replays nothing and is no gap.
+  const fresh = createBus({ epoch: 'f' });
+  assert.deepStrictEqual(fresh.since(fresh.lastId()), { gap: false, events: [] });
+}
+
+// ---- NOTIFY payloads ---------------------------------------------------------------
+assert.deepStrictEqual(events.fromNotify('{"topic":"run","table":"run","op":"update","id":7,"status":"running"}'),
+  { topic: 'run', payload: { table: 'run', op: 'update', id: 7, status: 'running' } });
+assert.strictEqual(events.fromNotify('not json'), null);
+assert.strictEqual(events.fromNotify('{"topic":"BAD TOPIC"}'), null);
+assert.strictEqual(events.fromNotify('{"id":1}'), null);
+
+// ---- endpoint helpers ------------------------------------------------------------
+assert.strictEqual(endpoint.topicsParam(null), null);
+assert.strictEqual(endpoint.topicsParam(''), null);
+assert.deepStrictEqual(endpoint.topicsParam('board, run,board,<x>'), ['board', 'run', 'resync']);
+
+/** An SSE reader: GET path, collects parsed frames. */
+function sse(port, pathAndQuery, headers = {}) {
+  const frames = [];
+  const waiters = [];
+  let buf = '';
+  const req = http.get({ host: '127.0.0.1', port, path: pathAndQuery, headers: { Host: `127.0.0.1:${port}`, ...headers } }, (res) => {
+    res.setEncoding('utf8');
+    res.on('data', (d) => {
+      buf += d;
+      let i;
+      while ((i = buf.indexOf('\n\n')) >= 0) {
+        const block = buf.slice(0, i);
+        buf = buf.slice(i + 2);
+        const data = block.split('\n').filter((l) => l.startsWith('data: ')).map((l) => l.slice(6)).join('\n');
+        const id = (block.split('\n').find((l) => l.startsWith('id: ')) || '').slice(4);
+        if (!data) continue;
+        frames.push({ id, ...JSON.parse(data), receivedAt: process.hrtime.bigint() });
+        for (const w of waiters.splice(0)) w();
+      }
+    });
+  });
+  return {
+    frames,
+    req,
+    async waitFor(n, ms = 2000) {
+      const until = Date.now() + ms;
+      while (frames.length < n) {
+        if (Date.now() > until) throw new Error(`waited for ${n} frames, got ${frames.length}: ${JSON.stringify(frames)}`);
+        await new Promise((r) => { waiters.push(r); setTimeout(r, 50); });
+      }
+      return frames;
+    },
+    close: () => req.destroy(),
+  };
+}
+
+(async () => {
+  // ---- GET /api/events end to end, on its own server --------------------------
+  {
+    const bus = createBus({ epoch: 'g1' });
+    let listens = 0;
+    const server = http.createServer((req, res) => {
+      const url = new URL(req.url, 'http://localhost');
+      endpoint.stream(req, res, url, { bus, listen: () => listens++ });
+    });
+    await new Promise((r) => server.listen(0, '127.0.0.1', r));
+    const { port } = server.address();
+
+    // First connect: a hello carrying the newest id, then live events.
+    const a = sse(port, '/api/events?topics=board');
+    await a.waitFor(1);
+    assert.deepStrictEqual([a.frames[0].topic, a.frames[0].id], ['hello', 'g1-0']);
+    assert.strictEqual(listens, 1, 'the stream starts the Postgres feed');
+    // Latency: publish -> frame parsed by the client, over loopback.
+    const lat = [];
+    for (let i = 0; i < 20; i++) {
+      bus.publish('run', { i }); // filtered out
+      const t0 = process.hrtime.bigint();
+      bus.publish('board', { i });
+      await a.waitFor(2 + i);
+      lat.push(Number(a.frames[1 + i].receivedAt - t0) / 1e6);
+    }
+    assert.ok(a.frames.slice(1).every((f) => f.topic === 'board'), 'only the topics asked for');
+    lat.sort((x, y) => x - y);
+    console.log(`  bus -> SSE client latency over loopback: p50 ${lat[10].toFixed(2)} ms, max ${lat[19].toFixed(2)} ms`);
+    assert.ok(lat[19] < 200, `an event reaches the client well inside a second (max ${lat[19]} ms)`);
+    const lastSeen = a.frames[a.frames.length - 1].id;
+    a.close();
+
+    // Missed while away: a reconnect with Last-Event-ID gets exactly those.
+    bus.publish('board', { missed: 1 });
+    bus.publish('board', { missed: 2 });
+    const b = sse(port, '/api/events?topics=board', { 'Last-Event-ID': lastSeen });
+    await b.waitFor(2);
+    assert.deepStrictEqual(b.frames.map((f) => f.payload.missed), [1, 2], 'replayed, no hello');
+    b.close();
+    // ?lastEventId= works the same (a page that had to open a new EventSource).
+    const c = sse(port, `/api/events?topics=board&lastEventId=${encodeURIComponent(lastSeen)}`);
+    await c.waitFor(2);
+    assert.deepStrictEqual(c.frames.map((f) => f.payload.missed), [1, 2]);
+    c.close();
+    // An id from another generation: one resync frame, carrying an id to resume from.
+    const d = sse(port, '/api/events', { 'Last-Event-ID': 'oldgen-41' });
+    await d.waitFor(1);
+    assert.strictEqual(d.frames[0].topic, 'resync');
+    assert.strictEqual(d.frames[0].id, bus.lastId());
+    bus.publish('factory', { id: 1 });
+    await d.waitFor(2);
+    assert.strictEqual(d.frames[1].topic, 'factory', 'no topics: everything');
+    d.close();
+    await tick(20);
+    assert.strictEqual(bus.subscribers(), 0, 'closed streams unsubscribe');
+    server.close();
+  }
+
+  // ---- through the dashboard server ----------------------------------------------
+  {
+    events._setListen(() => {});
+    const dash = require('../src/dashboard/server');
+    const server = await dash.start({ port: 0, host: '127.0.0.1' });
+    const { port } = server.address();
+    const js = await new Promise((resolve, reject) => {
+      http.get({ host: '127.0.0.1', port, path: '/events.js', headers: { Host: `127.0.0.1:${port}` } }, (res) => {
+        let body = '';
+        res.on('data', (d) => (body += d));
+        res.on('end', () => resolve({ status: res.statusCode, type: res.headers['content-type'], body }));
+      }).on('error', reject);
+    });
+    assert.strictEqual(js.status, 200);
+    assert.match(js.type, /javascript/);
+    assert.match(js.body, /PAEvents/);
+    const s = sse(port, '/api/events?topics=board');
+    await s.waitFor(1);
+    assert.strictEqual(s.frames[0].topic, 'hello');
+    events.publish('board', { via: 'server' });
+    await s.waitFor(2);
+    assert.strictEqual(s.frames[1].payload.via, 'server');
+    // The loopback guard holds for the stream too.
+    const refused = await new Promise((resolve) => {
+      http.get({ host: '127.0.0.1', port, path: '/api/events', headers: { Host: 'evil.example' } }, (res) => { res.resume(); resolve(res.statusCode); });
+    });
+    assert.strictEqual(refused, 403);
+    s.close();
+    server.close();
+    events._setListen(null);
+  }
+
+  // ---- the Postgres bridge, against a fake client -------------------------------------
+  {
+    const clients = [];
+    const got = [];
+    let reconnects = 0;
+    const l = events.createListener({
+      connect: async () => {
+        const c = Object.assign(new EventEmitter(), {
+          queries: [],
+          ended: false,
+          query: async (q) => c.queries.push(q),
+          end: async () => { c.ended = true; },
+        });
+        clients.push(c);
+        if (clients.length === 2) throw new Error('database restarting');
+        return c;
+      },
+      onEvent: (e) => got.push(e),
+      onReconnect: () => reconnects++,
+      retryMs: [5],
+    });
+    await tick(5);
+    assert.deepStrictEqual(clients[0].queries, ['listen pa_events']);
+    assert.ok(l.connected());
+    clients[0].emit('notification', { channel: 'pa_events', payload: '{"topic":"run","id":3,"status":"waiting"}' });
+    clients[0].emit('notification', { channel: 'other', payload: '{"topic":"run"}' });
+    clients[0].emit('notification', { channel: 'pa_events', payload: 'garbage' });
+    assert.deepStrictEqual(got, [{ topic: 'run', payload: { id: 3, status: 'waiting' } }]);
+    assert.strictEqual(reconnects, 0, 'the first connect is not a reconnect');
+    // The connection drops; the next attempt fails; the one after holds.
+    clients[0].emit('error', new Error('terminated'));
+    assert.ok(clients[0].ended);
+    await tick(60);
+    assert.strictEqual(clients.length, 3);
+    assert.ok(l.connected());
+    assert.strictEqual(reconnects, 1, 'a reconnect asks the pages to refetch (notifications were lost)');
+    await l.stop();
+    assert.ok(clients[2].ended);
+  }
+
+  // ---- the pages' client (events.client.js) in a sandbox ---------------------------------
+  {
+    const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'dashboard', 'events.client.js'), 'utf8');
+    const sources = [];
+    class FakeEventSource {
+      constructor(url) {
+        this.url = url;
+        this.readyState = 1;
+        sources.push(this);
+      }
+      close() { this.readyState = 2; }
+      emit(e, id) { this.onmessage({ data: JSON.stringify(e), lastEventId: id || '' }); }
+    }
+    const window = { EventSource: FakeEventSource };
+    const ctx = vm.createContext({ window, document: { visibilityState: 'visible' }, setTimeout, clearTimeout, setInterval, clearInterval, Date, JSON, Math });
+    vm.runInContext(src, ctx, { filename: 'events.client.js' });
+    let board = 0;
+    let fact = 0;
+    const seen = [];
+    const s1 = window.PAEvents.subscribe({ topics: ['board', 'run'], onChange: () => board++, onEvent: (e) => seen.push(e.topic), debounceMs: 5, minGapMs: 0 });
+    const s2 = window.PAEvents.subscribe({ topics: ['factory'], onChange: () => fact++, debounceMs: 5, minGapMs: 0 });
+    assert.strictEqual(sources.length, 1, 'one EventSource per page, however many subscribers');
+    assert.strictEqual(sources[0].url, 'api/events', 'relative: works under /pa/');
+    const es = sources[0];
+    es.emit({ topic: 'hello', id: 'x-0' }, 'x-0');
+    es.emit({ topic: 'board', id: 'x-1' }, 'x-1');
+    es.emit({ topic: 'run', id: 'x-2' }, 'x-2');
+    es.emit({ topic: 'board', id: 'x-3' }, 'x-3');
+    await tick(30);
+    assert.strictEqual(board, 1, 'a burst is one refetch');
+    assert.strictEqual(fact, 0, 'other topics do not wake it');
+    assert.deepStrictEqual(seen, ['board', 'run', 'board']);
+    es.emit({ topic: 'resync', id: 'y-9' }, 'y-9');
+    await tick(30);
+    assert.deepStrictEqual([board, fact], [2, 1], 'resync refetches everything');
+    // The browser gave up (a 502 during a roll): reopened with the last id.
+    es.readyState = 2;
+    es.onerror();
+    await tick(1100);
+    assert.strictEqual(sources.length, 2);
+    assert.strictEqual(sources[1].url, 'api/events?lastEventId=y-9');
+    s1.close();
+    s2.close();
+    assert.strictEqual(sources[1].readyState, 2, 'the last subscriber closes the stream');
+  }
+
+  // ---- Plan, Build and Routines use the feed, not the 30 s polls --------------------
+  {
+    const dir = path.join(__dirname, '..', 'src', 'dashboard');
+    const index = fs.readFileSync(path.join(dir, 'index.html'), 'utf8');
+    const build = fs.readFileSync(path.join(dir, 'factory.html'), 'utf8');
+    const buildJs = fs.readFileSync(path.join(dir, 'factory.client.js'), 'utf8');
+    const routines = fs.readFileSync(path.join(dir, 'routines.client.js'), 'utf8');
+    assert.ok(index.indexOf('<script src="events.js"></script>') < index.search(/<script>\r?\n/), 'Plan loads events.js before its own script');
+    assert.match(index, /PAEvents\.subscribe\(\{ topics: \['board', 'run'\]/);
+    assert.match(build, /<script src="events\.js"><\/script>[\s\S]*<script src="permission\.js"><\/script>[\s\S]*<script src="factory\.js"><\/script>/, 'Build: the feed, then Jarvis\'s permission card, then its script');
+    assert.match(build, /data-permission-card/);
+    assert.match(buildJs, /PAEvents\.subscribe\(\{ topics: \['factory', 'run'\]/);
+    assert.match(buildJs, /waiting for your approval/);
+    assert.match(index, /waiting for your approval/);
+    assert.match(index, /api\/factory\/jobs\/\$\{encodeURIComponent\(r\.factory_job_id\)\}\/approve/, 'Plan can approve a factory job');
+    assert.match(routines, /PAEvents\.subscribe\(\{ topics: \['routine'\]/);
+    for (const [name, s] of [['index.html', index], ['factory.client.js', buildJs], ['routines.client.js', routines]]) {
+      assert.ok(!/setInterval\([^)]*,\s*30000\)\s*;\s*$/m.test(s.replace(/else setInterval[^\n]*/g, '')), `${name}: no unconditional 30 s poll left`);
+    }
+  }
+
+  // ---- the migration: every table it hangs a trigger on exists -----------------------
+  {
+    const sqlDir = path.join(__dirname, '..', 'sql');
+    const all = fs.readdirSync(sqlDir).filter((f) => f.endsWith('.sql')).map((f) => fs.readFileSync(path.join(sqlDir, f), 'utf8')).join('\n');
+    const mig = fs.readFileSync(path.join(sqlDir, '034_events_notify.sql'), 'utf8');
+    const tables = [...mig.matchAll(/create or replace trigger \w+ after [\w ]+ on (\w+)/g)].map((m) => m[1]);
+    assert.ok(tables.length >= 10, tables.join());
+    for (const t of tables) assert.match(all, new RegExp(`create table if not exists ${t} \\(`), `${t} exists`);
+    for (const t of ['commitment', 'run', 'proposal', 'draft', 'factory_board']) assert.ok(tables.includes(t), `${t} is on the feed`);
+    assert.match(mig, /pg_notify\('pa_events'/);
+    assert.strictEqual(events.CHANNEL, 'pa_events');
+  }
+
+  // ---- the factory pass's pacing (factoryPace.js) ---------------------------------------
+  {
+    assert.strictEqual(pace.moving([{ state: 'done' }, { state: 'needs_human' }]), false, 'parked on a human is not moving');
+    assert.strictEqual(pace.moving([{ state: 'done' }, { state: 'in_progress' }]), true);
+    assert.strictEqual(pace.moving(null), false);
+    assert.strictEqual(pace.nextDelayMs({ jobs: [{ state: 'queued' }], slowSeconds: 120, fastSeconds: 5 }), 5000);
+    assert.strictEqual(pace.nextDelayMs({ jobs: [{ state: 'done' }], slowSeconds: 120, fastSeconds: 5 }), 120000);
+    assert.strictEqual(pace.nextDelayMs({ jobs: [{ state: 'triaging' }], slowSeconds: 3, fastSeconds: 5 }), 3000, 'never slower than the slow poll');
+
+    const yes = () => true;
+    assert.strictEqual(pace.localStateDir({ path: '/f', machine: '' }, { hostname: 'me', exists: yes }), path.join('/f', 'state'));
+    assert.strictEqual(pace.localStateDir({ path: '/f', machine: 'ME' }, { hostname: 'me', exists: yes }), path.join('/f', 'state'), 'this machine by name');
+    assert.strictEqual(pace.localStateDir({ path: '/f', machine: 'linux-box' }, { hostname: 'me', exists: yes }), null, 'a remote factory is polled');
+    assert.strictEqual(pace.localStateDir({ path: '', machine: '' }, { hostname: 'me', exists: yes }), null);
+    assert.strictEqual(pace.localStateDir({ path: '/f', machine: '' }, { hostname: 'me', exists: () => false }), null);
+
+    // The pacer, on fake time.
+    let now = 0;
+    const timers = [];
+    const fake = {
+      setTimeout: (fn, ms) => { const t = { fn, at: now + ms, live: true }; timers.push(t); return t; },
+      clearTimeout: (t) => { if (t) t.live = false; },
+    };
+    const advance = async (ms) => {
+      const end = now + ms;
+      for (;;) {
+        const due = timers.filter((t) => t.live && t.at <= end).sort((x, y) => x.at - y.at)[0];
+        if (!due) break;
+        now = due.at;
+        due.live = false;
+        due.fn();
+        await tick();
+        await tick();
+      }
+      now = end;
+    };
+    let runs = 0;
+    let release = null;
+    let jobs = [{ state: 'done' }];
+    const pacer = pace.createPacer({
+      run: async () => { runs++; if (release === 'hold') await new Promise((r) => (release = r)); },
+      nextMs: async () => pace.nextDelayMs({ jobs, slowSeconds: 120, fastSeconds: 5 }),
+      minGapMs: 500,
+      timers: fake,
+      clock: () => now,
+    });
+    pacer.start(1000);
+    await advance(1000);
+    assert.strictEqual(runs, 1);
+    await advance(119_000);
+    assert.strictEqual(runs, 1, 'idle: the slow cadence');
+    await advance(1000);
+    assert.strictEqual(runs, 2);
+    // A local factory wrote its state: the pass runs at once (after the min gap).
+    now += 10_000;
+    pacer.kick();
+    await advance(0);
+    assert.strictEqual(runs, 3, 'kick runs now');
+    pacer.kick();
+    await advance(499);
+    assert.strictEqual(runs, 3, 'kicks keep a min gap after a pass');
+    await advance(1);
+    assert.strictEqual(runs, 4);
+    // A kick during a pass: one more right after it, not two at once.
+    jobs = [{ state: 'in_progress' }];
+    release = 'hold';
+    pacer.kick();
+    await advance(500);
+    assert.strictEqual(runs, 5);
+    assert.ok(pacer.busy(), 'busy during a pass (the watcher ignores our own writes)');
+    pacer.kick();
+    pacer.kick();
+    const r = release;
+    release = null;
+    r();
+    await tick();
+    await tick();
+    await advance(500);
+    assert.strictEqual(runs, 6, 'the kicks during it collapse into one');
+    // A job is moving: the fast cadence.
+    await advance(5000);
+    assert.strictEqual(runs, 7);
+    // hurry() only ever pulls a slow wait in.
+    jobs = [{ state: 'done' }];
+    await advance(5000);
+    assert.strictEqual(runs, 8, 'the pass that sees it stop');
+    pacer.hurry(5000);
+    await advance(5000);
+    assert.strictEqual(runs, 9, 'a job just submitted: polled within the fast interval');
+    pacer.hurry(5000);
+    pacer.hurry(5000);
+    await advance(5000);
+    assert.strictEqual(runs, 10, 'hurry never makes it faster than the interval it names');
+    pacer.stop();
+    await advance(300_000);
+    assert.strictEqual(runs, 10, 'stopped');
+
+    // A factory's pushed statuses (POST /api/factory/events): cleaned, whitelisted.
+    const { pushedPatches } = require('../src/dispatch/factory');
+    assert.deepStrictEqual(pushedPatches({ job_id: 'app:t-1', state: 'needs_human', why: 'pick a direction', title: 'ignored', stories: [] }),
+      [{ jobId: 'app:t-1', patch: { state: 'needs_human', why: 'pick a direction' } }]);
+    assert.deepStrictEqual(pushedPatches({ jobs: [
+      { job_id: 'app:t-2', state: 'in_progress', updated_at: '2026-11-07T10:00:00Z' },
+      { job_id: 'not a job id', state: 'done' },
+      { job_id: 'app:t-3', state: 'exploded' },
+      { job_id: 'app:t-4', state: 'done', updated_at: 'yesterday' },
+    ] }), [
+      { jobId: 'app:t-2', patch: { state: 'in_progress', updated_at: '2026-11-07T10:00:00Z' } },
+      { jobId: 'app:t-4', patch: { state: 'done' } },
+    ]);
+    assert.deepStrictEqual(pushedPatches(null), []);
+    assert.strictEqual(pushedPatches({ jobs: Array.from({ length: 80 }, (_, i) => ({ job_id: `a:t-${i}`, state: 'done' })) }).length, 50);
+
+    // The watcher: only factory.db* writes, and not while ignore() says they are ours.
+    let cb = null;
+    let closed = false;
+    let ours = false;
+    let changes = 0;
+    const stop = pace.watchState('/f/state', {
+      onChange: () => changes++,
+      ignore: () => ours,
+      watch: (dir, opts, fn) => { assert.strictEqual(opts.persistent, false); cb = fn; return { on() {}, close: () => (closed = true) }; },
+    });
+    cb('change', 'factory.db-wal');
+    cb('change', 'locks');
+    cb('rename', 'factory.db');
+    ours = true;
+    cb('change', 'factory.db-wal');
+    assert.strictEqual(changes, 2);
+    stop();
+    assert.ok(closed);
+    assert.strictEqual(pace.watchState('/missing', { onChange() {}, watch: () => { throw new Error('ENOENT'); } }), null);
+  }
+
+  console.log('events: ok');
+})().catch((err) => {
+  console.error(err);
+  process.exit(1);
+});

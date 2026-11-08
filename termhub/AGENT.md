@@ -1201,8 +1201,11 @@ layouts.
 
 `WS /ws/voice` is a page-wide feed (not per session). Server → client:
 `{type:'hello', tts:{available,engine,voice,voices}, wakeWord, sessions:[{id,title,armed}]}` on connect, then
-`{type:'waiting', sessionId, title, turnUuid, summary}`, `{type:'busy', sessionId}` and
-`{type:'armed', sessionId, armed}`. Client → server: `{type:'ping'}` → `{type:'pong'}`.
+`{type:'waiting', sessionId, title, turnUuid, summary}`, `{type:'busy', sessionId}`,
+`{type:'armed', sessionId, armed}` and `{type:'session-state', sessionId, state, reason}` (every idle-hub
+state change, `working` / `waiting` / `limited`, and `exited`, for any agent session, armed or not:
+the page redraws its sidebar on it instead of waiting for its 2 s poll; `lib/idleHub.js`
+`forwardSessionStates`). Client → server: `{type:'ping'}` → `{type:'pong'}`.
 Arming goes over REST, not the socket, so it survives a dropped connection.
 
 **When it stays silent.** No speech engine at all, no `claude` CLI, no transcript, a session whose

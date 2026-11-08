@@ -553,7 +553,9 @@
         "Repos": "/api/repos: the repo registry with your latest PRs, and the GitHub/Jira review requests and board items still open (Plan's former Code & boards section)",
         "Send": "never sends: a draft opens, already written, in Teams or Outlook and you press Send",
         "Health": "GET /healthz: 200 {ready: true} once its process has finished starting, 503 while starting or draining (what the supervisor switches on)",
-        "Waiting for your yes": "a card at the top of the board and in Ask's Text mode (permission.client.js) for the PA chat's pending action prompt, with Approve / Deny through POST /api/chat/permission; src/chat/permission.js reads the session's screen before one keystroke (Enter on Yes, or Esc)"
+        "Waiting for your yes": "a card at the top of the board, on Build and in Ask's Text mode (permission.client.js) for the PA chat's pending action prompt, with Approve / Deny through POST /api/chat/permission; src/chat/permission.js reads the session's screen before one keystroke (Enter on Yes, or Esc). A factory job parked on an approval (needs_human) says \"waiting for your approval\" on Build and in Plan's Agent runs, each with Approve (POST /api/factory/jobs/<id>/approve); by voice, Jarvis's factory_approve",
+        "Live feed (plan 0.4, E3)": "GET /api/events: one SSE stream per page (events.client.js) of {id, topic, at, payload} with topics board, run, factory, routine and resync. Postgres triggers (sql/034_events_notify.sql) NOTIFY pa_events on every change to commitment, proposal, draft, ledger_evidence, commitment_block, secret_request, notification, run, factory_board (only when its jobs change), routine and routine_run, from any process; one LISTEN connection per worker generation (src/events) feeds an in-memory bus with a 1000-event ring for Last-Event-ID replay. Another generation's id (the supervisor ends streams on drain), a restart or a dropped LISTEN gives a resync and the page refetches once; replay across generations waits for the outbox (1.4). Plan, Build and Routines refetch on it (the 30 s polls are gone; a 5 min fallback poll stays). Measured on the work laptop: row commit to SSE frame 2 ms p50, 11 ms max; Plan sees a change in about 0.5 s (its /api/state takes 0.4 to 0.6 s), Build in about 0.1 s",
+        "Factory push": "POST /api/factory/events (X-PA): a factory on this machine pushes {job_id, state, why?, updated_at?} or {jobs: [...]}; merged into factory_board at once (Build shows it in about 25 ms) and the full `job list` follows within PA_FACTORY_ACTIVE_POLL_SECONDS. The factory side of it is not wired yet (planned with the native factory, plan 2.3)"
       },
       "env": [
         {
@@ -570,7 +572,12 @@
         "personal-assistant/src/dashboard/board.js",
         "personal-assistant/src/dashboard/factory.js",
         "personal-assistant/src/dashboard/architecture.js",
-        "personal-assistant/src/dashboard/permission.client.js"
+        "personal-assistant/src/dashboard/permission.client.js",
+        "personal-assistant/src/dashboard/events.js",
+        "personal-assistant/src/dashboard/events.client.js",
+        "personal-assistant/src/events/index.js",
+        "personal-assistant/src/events/bus.js",
+        "personal-assistant/sql/034_events_notify.sql"
       ]
     },
     {
@@ -798,7 +805,8 @@
         "Brief": "composed by PA_COMPOSE_MODEL (default claude-sonnet-5-5; with no Anthropic key it takes a keyed PA_COMPOSE_FALLBACK_MODEL such as azure/<deployment> instead of `claude -p`) from the card; private material is selected from, never copied in; deterministic fallback",
         "Delivery levels": "none < branch < draft_pr < pr < auto_merge < push_to_main, set only from your side; the last two need a confirmed start",
         "Factory defaults": "PA_FACTORY_RUNTIME api, PA_FACTORY_PIPELINE solo; the chat's factory_start defaults to claude_session unless you ask for the API",
-        "Which factory": "PA_FACTORY_MACHINE + PA_FACTORY_PATH in each stack's .env (the live values are shown at the top of this page)"
+        "Which factory": "PA_FACTORY_MACHINE + PA_FACTORY_PATH in each stack's .env (the live values are shown at the top of this page)",
+        "Factory pacing": "the worker's factory pass (src/dispatch/factoryPace.js) runs every PA_FACTORY_ACTIVE_POLL_SECONDS (5) while a job is queued, triaging or in progress, at once when a factory on this machine writes state/factory.db (watched, never read), and every PA_FACTORY_POLL_SECONDS (120) otherwise. Each pass is a `uv run factory` call: about 5 s of Python start-up on the work laptop, which is why the sub-second path is the factory's push (POST /api/factory/events)"
       },
       "env": [
         {
@@ -812,6 +820,10 @@
         {
           "name": "PA_FACTORY_POLL_SECONDS",
           "default": "120"
+        },
+        {
+          "name": "PA_FACTORY_ACTIVE_POLL_SECONDS",
+          "default": "5"
         },
         {
           "name": "PA_DELIVERY_DEFAULT",
@@ -837,7 +849,8 @@
         "personal-assistant/src/dispatch/exec.js",
         "personal-assistant/src/dispatch/termhub.js",
         "personal-assistant/src/dispatch/compose.js",
-        "personal-assistant/src/dispatch/deliveryCore.js"
+        "personal-assistant/src/dispatch/deliveryCore.js",
+        "personal-assistant/src/dispatch/factoryPace.js"
       ]
     },
     {
@@ -1170,12 +1183,14 @@
           "on the factory machine: claude_session runs"
         ],
         "Restore": "a claude session re-opens as `claude --resume <uuid>` in its old cwd (the id termhub pinned with --session-id)",
-        "Restart": "restarting sessiond kills every live terminal: only on purpose"
+        "Restart": "restarting sessiond kills every live terminal: only on purpose",
+        "Live state (plan E3)": "the idle hub classifies every agent session once a second (working, waiting on you, limited); each change and each exit goes out as a `session-state` message on the page-wide /ws/voice feed, and Run redraws its sidebar on it instead of waiting for its 2 s poll"
       },
       "code": [
         "termhub/sessiond.js",
         "termhub/lib/session.js",
-        "termhub/lib/restore.js"
+        "termhub/lib/restore.js",
+        "termhub/lib/idleHub.js"
       ]
     },
     {
@@ -1538,7 +1553,17 @@
     {
       "from": "worker",
       "to": "factory-api",
-      "label": "job list poll (120 s) to factory_board; job status to run_pr / run_step (id chain)"
+      "label": "job list to factory_board (every 5 s while a job moves, at once on a local factory's state write, else every 120 s); job status to run_pr / run_step (id chain)"
+    },
+    {
+      "from": "postgres",
+      "to": "dashboard",
+      "label": "NOTIFY pa_events (row triggers) to GET /api/events (SSE)"
+    },
+    {
+      "from": "factory-api",
+      "to": "dashboard",
+      "label": "POST /api/factory/events (job status push; factory side planned)"
     },
     {
       "from": "factory-api",
@@ -1686,7 +1711,7 @@
         },
         {
           "c": "worker",
-          "t": "The factory poll (every 120 s) stores `job list` in factory_board; the Factory page and the chat's factory_job show state, PR and cost; a notification tells you."
+          "t": "The factory pass (every 5 s while the job moves) stores `job list` in factory_board; its trigger puts the change on the live feed, so the Factory page redraws at once; it and the chat's factory_job show state, PR and cost; a notification tells you."
         }
       ]
     },

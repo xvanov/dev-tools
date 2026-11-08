@@ -19,6 +19,8 @@
 //   refreshBoard() the worker pass behind the /factory page: the whole
 //                  `job list` into factory_board, and notices on what changed
 //   report/cancelJob/approve/openFollow  the factory page's and `pa factory`'s actions
+//   pushed()       a factory's pushed job statuses (POST /api/factory/events)
+//                  merged into factory_board at once, for the live feed
 //
 // Every job carries a kind (code | research | report) and a runtime (api |
 // claude_session), JOBS-API v1.2. A research/report job needs no repo and
@@ -783,6 +785,53 @@ async function refreshBoard() {
   return { jobs: jobs.length, notices: said.length };
 }
 
+// What a pushed status may change on a stored job (POST /api/factory/events).
+const PUSHED_FIELDS = ['state', 'why', 'updated_at'];
+
+/**
+ * Pure. A factory's pushed job statuses (one, or {jobs: [...]}) as clean
+ * patches: a valid job id, a known state, and only PUSHED_FIELDS. At most 50.
+ */
+function pushedPatches(body) {
+  const list = Array.isArray(body?.jobs) ? body.jobs : body && typeof body === 'object' ? [body] : [];
+  const out = [];
+  for (const j of list.slice(0, 50)) {
+    const id = String(j?.job_id || '');
+    if (!F.JOB_ID.test(id) || !F.STATES.includes(j?.state)) continue;
+    const patch = { state: j.state };
+    if (typeof j.why === 'string') patch.why = j.why.slice(0, 1000);
+    if (typeof j.updated_at === 'string' && !Number.isNaN(Date.parse(j.updated_at))) patch.updated_at = j.updated_at;
+    out.push({ jobId: id, patch: Object.fromEntries(Object.entries(patch).filter(([k]) => PUSHED_FIELDS.includes(k))) });
+  }
+  return out;
+}
+
+/**
+ * A factory pushed job status changes (plan item 0.4). Each one is merged
+ * into the stored job list at once, so Build shows the new stage within a
+ * second instead of after the next `job list` (seconds of Python start-up
+ * per call); the factory_board trigger puts it on the live feed, and the
+ * worker's pacer takes the full list soon after, which overwrites the patch
+ * with the truth. A job the list does not hold yet waits for that pass.
+ */
+async function pushed(body) {
+  const patches = pushedPatches(body);
+  let patched = 0;
+  for (const p of patches) {
+    const r = await query(
+      `update factory_board set jobs = (
+         select coalesce(jsonb_agg(case when j->>'job_id' = $1 then j || $2::jsonb else j end order by n), '[]'::jsonb)
+           from jsonb_array_elements(jobs) with ordinality as e(j, n))
+        where id = 1 and exists (select 1 from jsonb_array_elements(jobs) j where j->>'job_id' = $1 and j->>'state' is distinct from $3)`,
+      [p.jobId, JSON.stringify(p.patch), p.patch.state]
+    );
+    patched += r.rowCount || 0;
+  }
+  // Wake the pacer even when nothing was patched (a new job, or only its why).
+  if (patches.length) await query(`select pg_notify('pa_events', $1)`, [JSON.stringify({ topic: 'factory', table: 'push', op: 'push', jobs: patches.map((p) => p.jobId) })]);
+  return { ok: true, received: patches.length, patched };
+}
+
 /** The last stored `job list` and when it was taken (never calls the factory). */
 async function snapshot() {
   const r = await one('select jobs, polled_at, error, error_at from factory_board where id = 1').catch(() => null);
@@ -905,4 +954,5 @@ async function sweepUnsettled() {
 module.exports = {
   enabled, machine, call, apps, addApp, installId, start, settle, sweepUnsettled, status, cancel, apply, poll, runCommand, modelsFor, _setRunner,
   submit, withoutV12, openFollow, refreshBoard, snapshot, snapshotJob, report, cancelJob, approve, resume, recordChain, chains,
+  pushed, pushedPatches,
 };

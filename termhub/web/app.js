@@ -3618,6 +3618,11 @@ function connectVoice() {
       syncSidebar();
       renderVoice();
       catchUpArmed([...voice.armed]);
+    } else if (msg.type === 'session-state') {
+      // A session went working / waiting on you / limited / exited (sessiond's
+      // idle hub): redraw the sidebar now, not on the next 2 s poll.
+      refresh();
+      refreshIdle();
     } else if (msg.type === 'waiting') onWaiting(msg);
     else if (msg.type === 'busy') onBusy(msg.sessionId);
     else if (msg.type === 'armed') {

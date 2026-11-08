@@ -474,7 +474,12 @@ const config = {
     models: env('PA_FACTORY_MODELS', ''),
     // How `auto` picks: `rule` (src/dispatch/routeCore.js). The seam for others.
     chooser: env('PA_ROUTE_CHOOSER', 'rule'),
+    // The worker's factory pass (src/dispatch/factoryPace.js): every
+    // pollSeconds when nothing moves, every activePollSeconds while a job is
+    // queued, triaging or in progress, and at once when a local factory writes
+    // its state.
     pollSeconds: envInt('PA_FACTORY_POLL_SECONDS', 120),
+    activePollSeconds: envInt('PA_FACTORY_ACTIVE_POLL_SECONDS', 5),
     timeoutMs: envInt('PA_FACTORY_TIMEOUT_MS', 120_000),
   },
 

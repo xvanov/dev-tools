@@ -101,10 +101,11 @@ for (const id of Object.keys(A.health)) assert.ok(A.components.some((c) => c.hea
   same(byId.mcp.tools.chat_only, listed.filter((n) => !shared.includes(n)), 'mcp.tools.chat_only');
 }
 
-// The worker's passes (every(<s>, '<name>', ...) in src/worker.js).
+// The worker's passes (every(<s>, '<name>', ...) in src/worker.js, and the
+// self-paced ones it runs through exclusive('<name>', ...), e.g. factory).
 {
   const src = fs.readFileSync(path.join(PA, 'src', 'worker.js'), 'utf8');
-  const passes = [...new Set([...src.matchAll(/every\([^,]+,\s*'([^']+)'/g)].map((m) => m[1]))];
+  const passes = [...new Set([...src.matchAll(/(?:every\([^,]+,\s*|exclusive\()'([^']+)'/g)].map((m) => m[1]))];
   assert.ok(passes.length > 10);
   same(byId.worker.passes, passes, 'worker.passes');
 }

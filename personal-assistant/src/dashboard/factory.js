@@ -9,6 +9,7 @@
 //   GET  /api/factory/report?job=     a research/report job's markdown, parsed
 //   POST /api/factory/jobs            a new job: title, ask, kind, runtime, repo, delivery
 //   POST /api/factory/jobs/<id>/cancel|approve|open
+//   POST /api/factory/events          a factory pushes job status changes (live feed)
 //
 // The page never makes the factory work per request: the board is the
 // `factory job list` the worker stored (factory.refreshBoard, sql/031). Only a
@@ -195,6 +196,13 @@ async function route(req, res, url, { send, readJson, issuePageToken, pageTokenO
       id: run.id, jobId: run.jobId || null, jobKind: run.jobKind || o.jobKind, runtime: run.runtime || o.runtime, delivery: run.delivery || null,
       url: run.url || null, submitUnknown: Boolean(run.submitUnknown), warnings: run.warnings || [],
     });
+    return true;
+  }
+  // A factory on this machine pushing its job status changes (plan item 0.4):
+  // {job_id, state, why?, updated_at?} or {jobs: [...]}. Merged into the stored
+  // list for the live feed; the next `job list` overwrites it with the truth.
+  if (url.pathname === '/api/factory/events') {
+    send(res, 200, await factory.pushed(body));
     return true;
   }
   const a = jobAction(url.pathname);

@@ -46,11 +46,14 @@
   }
 
   // Plan's script reads the token once and removes its meta tag (PAGE_TOKEN in
-  // index.html), so look there first; Ask keeps the tag.
+  // index.html), so look there first; Ask keeps the tag. Build's script removes
+  // it too, privately, so Build loads this file first and it is read here.
+  const metaAtLoad = document.querySelector('meta[name="pa-page"]');
+  const tokenAtLoad = metaAtLoad ? metaAtLoad.content : '';
   function token() {
     if (typeof PAGE_TOKEN === 'string' && PAGE_TOKEN) return PAGE_TOKEN; // eslint-disable-line no-undef
     const m = document.querySelector('meta[name="pa-page"]');
-    return m ? m.content : '';
+    return m ? m.content : tokenAtLoad;
   }
 
   function render() {

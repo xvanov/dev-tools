@@ -244,6 +244,9 @@ window.addEventListener('hashchange', () => {
   if (location.hash.startsWith('#routines')) loadRoutines();
   else stopPolling();
 });
-// Also keeps the tab's badge (suggestions waiting) current from any tab.
+// Also keeps the tab's badge (suggestions waiting) current from any tab: on
+// the live feed (events.client.js) when a routine or one of its runs changes,
+// with its 5 min fallback poll.
 loadRoutines();
-setInterval(loadRoutines, 30000);
+if (window.PAEvents) window.PAEvents.subscribe({ topics: ['routine'], onChange: loadRoutines });
+else setInterval(loadRoutines, 30000);

@@ -35,7 +35,7 @@ const { parseLinks, mergeLinks } = require('./lib/sessionLinks');
 const tts = require('./lib/tts');
 const summarizer = require('./lib/summarize');
 const { VoiceHub, wakeWord: voiceWakeWord } = require('./lib/voiceHub');
-const { IdleHub } = require('./lib/idleHub');
+const { IdleHub, forwardSessionStates } = require('./lib/idleHub');
 const idleStore = require('./lib/idleStore');
 const { checkRequest, checkUpgrade, refuseUpgrade, learnSelfNamesAndWarn } = require('./lib/requestGuard');
 const { parseEnvSpec } = require('./lib/sessionEnv');
@@ -225,6 +225,11 @@ function createSessiond({ entry = 'sessiond', port: serverPort = DEFAULT_SESSION
   // announced this turn" bookkeeping survives browser reloads and front swaps.
   const voice = new VoiceHub(sessions);
   voice.start();
+  // Live session state for the sidebar (plan item E3): every idle-state change
+  // (working / waiting on you / limited) and every exit goes out on the same
+  // page-wide feed, so the page refreshes its list now instead of on its next
+  // poll. The idle hub ticks once a second, which bounds the delay.
+  forwardSessionStates(idle, voice);
 
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, 'http://localhost');

@@ -245,6 +245,13 @@ async function handle(req, res) {
   }
   // ---- end Factory layer ----
 
+  // ---- The live feed (dashboard/events.js): GET /api/events, an SSE stream of
+  // board, run and factory changes with Last-Event-ID replay, and /events.js,
+  // the pages' side of it. ----
+  if (url.pathname === '/api/events' || url.pathname === '/events.js') {
+    if (await require('./events').route(req, res, url, { send })) return;
+  }
+
   // ---- The architecture map (dashboard/architecture.js, architecture.json):
   // read-only page + GET /api/architecture[?health=1]. ----
   if (url.pathname === '/architecture' || url.pathname === '/architecture.client.js' || url.pathname === '/api/architecture') {

@@ -320,4 +320,28 @@ ok('working stretches bank into activeMs, and a pause does not reset it', () => 
   assert.strictEqual(hub.activeMs('s1'), 7000);
 });
 
+console.log('idleHub — live session state on /ws/voice (E3)');
+
+ok('each state change and exit is broadcast as session-state, once', () => {
+  const { IdleHub, forwardSessionStates } = require('../lib/idleHub');
+  const session = { id: 's2', kind: 'claude', alive: true, cwd: 'C:/x', title: 't', command: 'claude' };
+  const hub = new IdleHub(new Map([['s2', session]]));
+  const sent = [];
+  forwardSessionStates(hub, { broadcast: (m) => sent.push(m) });
+  const t0 = Date.now();
+  hub._advance(session, { state: 'working', reason: 'mid-turn' }, t0);
+  hub._advance(session, { state: 'working', reason: 'mid-turn' }, t0 + 1000);
+  hub._advance(session, { state: 'waiting', reason: 'permission' }, t0 + 2000);
+  hub.emit('exited', { sessionId: 's2', exitCode: 0, lastState: 'waiting' });
+  hub._close('s2', t0 + 3000);
+  assert.deepStrictEqual(sent, [
+    { type: 'session-state', sessionId: 's2', state: 'working', reason: 'mid-turn' },
+    { type: 'session-state', sessionId: 's2', state: 'waiting', reason: 'permission' },
+    { type: 'session-state', sessionId: 's2', state: 'exited', reason: null },
+  ]);
+  const app = fs.readFileSync(path.join(__dirname, '..', 'web', 'app.js'), 'utf8');
+  assert.match(app, /msg\.type === 'session-state'\) \{\s*(\/\/[^\n]*\s*)*refresh\(\);/, 'the page redraws on it');
+  assert.match(fs.readFileSync(path.join(__dirname, '..', 'sessiond.js'), 'utf8'), /forwardSessionStates\(idle, voice\)/, 'sessiond wires it');
+});
+
 console.log(`\n${passed} assertions passed`);

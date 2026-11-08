@@ -470,4 +470,12 @@ class IdleHub extends EventEmitter {
   }
 }
 
-module.exports = { IdleHub, FIRST_NOTIFY_MS, REPEAT_MS, URGENT_AFTER_MS, fmt };
+// Every state change and exit, as a `session-state` message on the voice hub's
+// page-wide feed (/ws/voice): the page redraws its sidebar on it rather than
+// on its next poll (plan item E3). Payload: ids and states only.
+function forwardSessionStates(idle, voice) {
+  idle.on('state', (e) => voice.broadcast({ type: 'session-state', sessionId: e.sessionId, state: e.state, reason: e.reason || null }));
+  idle.on('exited', (e) => voice.broadcast({ type: 'session-state', sessionId: e.sessionId, state: 'exited', reason: null }));
+}
+
+module.exports = { IdleHub, forwardSessionStates, FIRST_NOTIFY_MS, REPEAT_MS, URGENT_AFTER_MS, fmt };
