@@ -30,6 +30,7 @@ type SessionSpec = {
   env?: Record<string, string> | null;
   unsetEnv?: string[] | null;
   links?: Json | null;
+  noRc?: boolean;
 };
 type SayOptions = { submit?: boolean; timeoutMs?: number };
 /** A termhub client: the module itself (this machine's), or forMachine(name)'s. */
@@ -128,10 +129,13 @@ function client(baseUrl: string) {
   // (a no-push run starts without push credentials, src/dispatch/remote.ts).
   // `envApplied` is true only when termhub says it applied them: an older
   // termhub ignores the fields, and the caller must not take that on trust.
-  async function createSession({ cwd, command, title, cols = 120, rows = 34, env = null, unsetEnv = null, links = null }: SessionSpec): Promise<{ id: string; raw: Json | null; envApplied: boolean }> {
+  // `noRc` starts the shell without its rc files (which could re-export what
+  // `unsetEnv` removed); `rcSkipped` is true only when termhub says it did.
+  async function createSession({ cwd, command, title, cols = 120, rows = 34, env = null, unsetEnv = null, links = null, noRc = false }: SessionSpec): Promise<{ id: string; raw: Json | null; envApplied: boolean; rcSkipped: boolean }> {
     const body: Json = { cwd, command, title, cols, rows };
     if (env) body.env = env;
     if (unsetEnv) body.unsetEnv = unsetEnv;
+    if (noRc) body.noRc = true;
     // What the session belongs to (card, run, job; termhub lib/sessionLinks.js).
     // An older termhub ignores it; Run then falls back to the title.
     const l = sessionLinks(links);
@@ -142,7 +146,8 @@ function client(baseUrl: string) {
     const id = payload?.id || payload?.session?.id;
     if (!id) throw new Error('termhub did not return a session id');
     const applied = payload?.envApplied || payload?.session?.envApplied;
-    return { id, raw: payload, envApplied: Boolean((env || unsetEnv) && applied === true) };
+    const skipped = payload?.rcSkipped ?? payload?.session?.rcSkipped;
+    return { id, raw: payload, envApplied: Boolean((env || unsetEnv) && applied === true), rcSkipped: noRc && skipped === true };
   }
 
   async function killSession(id: string): Promise<boolean> {

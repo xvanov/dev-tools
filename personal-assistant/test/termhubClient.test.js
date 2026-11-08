@@ -34,11 +34,13 @@ function fakeSessiond() {
     req.on('data', (c) => { raw += c; });
     req.on('end', () => {
       const pathname = new URL(req.url, 'http://x').pathname;
-      seen.push({ method: req.method, pathname, headers: req.headers });
+      const body = raw ? JSON.parse(raw) : null;
+      seen.push({ method: req.method, pathname, headers: req.headers, body });
       const refused = guard && guard.checkRequest(req, pathname);
-      const send = (status, body) => { res.writeHead(status, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(body)); };
+      const send = (status, b) => { res.writeHead(status, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(b)); };
       if (refused) return send(refused.status, { error: refused.error });
-      if (req.method === 'POST' && pathname === '/api/sessions') return send(200, { id: 's1', title: 't' });
+      // termhub answers rcSkipped only when noRc was sent (sessiond.ts).
+      if (req.method === 'POST' && pathname === '/api/sessions') return send(200, { id: 's1', title: 't', ...(body && body.noRc !== undefined ? { rcSkipped: true } : {}) });
       if (req.method === 'GET' && pathname === '/api/sessions') return send(200, { sessions: [{ id: 's1' }] });
       if (req.method === 'POST' && pathname === '/api/sessions/s1/input') return send(200, { ok: true });
       if (req.method === 'DELETE' && pathname === '/api/sessions/s1') return send(200, { ok: true });
@@ -63,7 +65,13 @@ async function exercise(base, seen, label) {
   // field) is reported as not applied, so a no-push run is refused, not started.
   const withEnv = await hub.createSession({ cwd: '/tmp', command: '', title: 't', env: { GIT_TERMINAL_PROMPT: '0' }, unsetEnv: ['GH_TOKEN'] });
   assert.strictEqual(withEnv.envApplied, false, `${label}: unconfirmed env is not applied`);
-  seen.splice(seen.findIndex((r) => r.method === 'POST' && r.pathname === '/api/sessions'), 1);
+  assert.strictEqual(withEnv.rcSkipped, false, `${label}: rc files are not skipped unless asked`);
+  // A no-push session asks termhub to skip the shell's rc files, and is told whether it did.
+  const noRc = await hub.createSession({ cwd: '/tmp', command: '', title: 't', noRc: true });
+  assert.strictEqual(noRc.rcSkipped, true, `${label}: termhub's rcSkipped reaches the caller`);
+  const posts = seen.filter((r) => r.method === 'POST' && r.pathname === '/api/sessions');
+  assert.deepStrictEqual(posts.map((r) => r.body.noRc), [undefined, undefined, true], `${label}: noRc is sent only when asked`);
+  for (let i = 0; i < 2; i++) seen.splice(seen.findIndex((r) => r.method === 'POST' && r.pathname === '/api/sessions'), 1);
   assert.strictEqual(await hub.say(id, 'hello', { submit: false }), true, `${label}: typed`);
   assert.deepStrictEqual((await hub.listSessions()).map((s) => s.id), ['s1']);
   assert.strictEqual(await hub.killSession(id), true, `${label}: killed`);
