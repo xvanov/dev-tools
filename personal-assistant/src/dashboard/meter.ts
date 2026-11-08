@@ -25,7 +25,7 @@ const MAX_USAGE_ROWS = 100;
 async function route(req: Req, res: Res, url: URL, { send, readJson }: { send: Ctx['send']; readJson: Ctx['readJson'] }) {
   if (req.method === 'GET' && url.pathname === '/api/meter') {
     const days = Number(url.searchParams.get('days')) || 7;
-    send(res, 200, await require('../telemetry/meter').report({ days }));
+    send(res, 200, await require('../telemetry/meter.ts').report({ days }));
     return true;
   }
   if (req.method === 'POST' && url.pathname === '/api/telemetry') {

@@ -8,29 +8,34 @@
 // Meter page reads it through /pa/api/meter. The maths is pure and tested
 // (test/telemetry.test.js); report() is the only part that touches the store, and
 // each section fails alone, so a table that is not migrated yet blanks one panel.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+type Row = import('../repo/types.ts').Row;
+type Group = { usd: number; calls: number; [label: string]: unknown };
 
 /** Nearest-rank percentile of an ascending-sorted array; null when empty. */
-function percentile(sorted, p) {
+function percentile(sorted: number[], p: number): number | null {
   if (!sorted.length) return null;
   const rank = Math.ceil((p / 100) * sorted.length);
-  return sorted[Math.min(sorted.length - 1, Math.max(0, rank - 1))];
+  return sorted[Math.min(sorted.length - 1, Math.max(0, rank - 1))] ?? null;
 }
 
 /** Rows of {hop, durationMs, ok} -> per hop {hop, calls, failed, p50, p95, max} (ms), slowest p95 first. */
-function summariseHops(rows) {
-  const by = new Map();
+function summariseHops(rows: Row[]) {
+  const by = new Map<unknown, { ms: number[]; failed: number }>();
   for (const r of rows) {
     if (!by.has(r.hop)) by.set(r.hop, { ms: [], failed: 0 });
-    const h = by.get(r.hop);
+    const h = by.get(r.hop)!;
     h.ms.push(Number(r.durationMs) || 0);
     if (!r.ok) h.failed++;
   }
-  const out = [];
+  const out: { hop: unknown; calls: number; failed: number; p50: number | null; p95: number | null; max: number | undefined }[] = [];
   for (const [hop, h] of by) {
     h.ms.sort((a, b) => a - b);
     out.push({ hop, calls: h.ms.length, failed: h.failed, p50: percentile(h.ms, 50), p95: percentile(h.ms, 95), max: h.ms[h.ms.length - 1] });
   }
-  return out.sort((a, b) => b.p95 - a.p95 || (a.hop < b.hop ? -1 : 1));
+  return out.sort((a, b) => (b.p95 ?? 0) - (a.p95 ?? 0) || (String(a.hop) < String(b.hop) ? -1 : 1));
 }
 
 /**
@@ -38,9 +43,9 @@ function summariseHops(rows) {
  * `days` is newest first; models and purposes are most expensive first. A null
  * model is "unknown".
  */
-function summariseSpend(rows) {
-  const group = (keyOf, label) => {
-    const m = new Map();
+function summariseSpend(rows: Row[]) {
+  const group = (keyOf: (r: Row) => string, label: string) => {
+    const m = new Map<string, Group>();
     for (const r of rows) {
       const k = keyOf(r);
       const g = m.get(k) || { [label]: k, usd: 0, calls: 0 };
@@ -50,25 +55,25 @@ function summariseSpend(rows) {
     }
     return [...m.values()];
   };
-  const byCost = (a, b) => b.usd - a.usd || b.calls - a.calls;
+  const byCost = (a: Group, b: Group) => b.usd - a.usd || b.calls - a.calls;
   return {
-    days: group((r) => String(r.day).slice(0, 10), 'day').sort((a, b) => (a.day < b.day ? 1 : -1)),
-    models: group((r) => r.model || 'unknown', 'model').sort(byCost),
-    purposes: group((r) => r.purpose || 'unknown', 'purpose').sort(byCost),
-    totalUsd: rows.reduce((s, r) => s + (Number(r.usd) || 0), 0),
+    days: group((r: Row) => String(r.day).slice(0, 10), 'day').sort((a, b) => ((a.day as string) < (b.day as string) ? 1 : -1)),
+    models: group((r: Row) => String(r.model || 'unknown'), 'model').sort(byCost),
+    purposes: group((r: Row) => String(r.purpose || 'unknown'), 'purpose').sort(byCost),
+    totalUsd: rows.reduce((s: number, r: Row) => s + (Number(r.usd) || 0), 0),
   };
 }
 
-async function section(fn) {
+async function section(fn: () => unknown) {
   try {
     return await fn();
   } catch (err) {
-    return { error: String(err.message || err).slice(0, 160) };
+    return { error: String((err as Error).message || err).slice(0, 160) };
   }
 }
 
 /** The whole Meter payload for the last `days` local days. */
-async function report({ days = 7, now = new Date() } = {}) {
+async function report({ days = 7, now = new Date() }: { days?: number; now?: Date } = {}) {
   const n = Math.max(1, Math.min(90, Number(days) || 7));
   const budget = require('../budget');
   const repo = require('../repo');

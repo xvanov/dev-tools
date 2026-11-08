@@ -18,8 +18,8 @@ require.cache[repoPath] = {
 };
 
 const telemetry = require('../src/telemetry');
-const { LocalSpanExporter, toRow } = require('../src/telemetry/exporter');
-const meter = require('../src/telemetry/meter');
+const { LocalSpanExporter, toRow } = require('../src/telemetry/exporter.ts');
+const meter = require('../src/telemetry/meter.ts');
 
 let failed = 0;
 async function t(name, fn) {
