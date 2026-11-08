@@ -3,14 +3,19 @@
 // Aggregate: secrets. Table: secret_request (a value or a sign-in the PA asked
 // a human for, and when each was set). Never a secret value: those live in the
 // OS vault or the gitignored .env (src/secrets). Callers: src/secrets.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
 
-function create(db) {
+type Db = import('./types.ts').Db;
+type Row = import('./types.ts').Row;
+
+function create(db: Db) {
   return {
     /**
      * Fulfils every pending request for `name`, stored in `target`. Resolves
      * the ids fulfilled ([] when none was open).
      */
-    async fulfilPendingByName(name, target) {
+    async fulfilPendingByName(name: string, target: unknown) {
       return db.rows(
         `update secret_request set status = 'fulfilled', fulfilled_at = now(), stored_in = $2
       where name = $1 and status = 'pending' returning id`,
@@ -19,7 +24,7 @@ function create(db) {
     },
 
     /** Records a value set with no request open (so `pa secret list` can say when). */
-    async recordSetDirectly(name, requestedBy, target) {
+    async recordSetDirectly(name: string, requestedBy: unknown, target: unknown) {
       await db.query(
         `insert into secret_request (kind, name, purpose, requested_by, target, status, fulfilled_at, stored_in)
        values ('secret', $1, 'set directly', $2, $3, 'fulfilled', now(), $3)`,
@@ -28,12 +33,12 @@ function create(db) {
     },
 
     /** One request, or null. */
-    async byId(id) {
+    async byId(id: number | string) {
       return db.one('select * from secret_request where id = $1', [id]);
     },
 
     /** One request's kind ({kind}), or null. */
-    async kindOf(id) {
+    async kindOf(id: number | string) {
       return db.one('select kind from secret_request where id = $1', [id]);
     },
 
@@ -42,7 +47,7 @@ function create(db) {
      * stamps fulfilled_at). Resolves {id, name, status}, or null when it was
      * not pending.
      */
-    async settle(id, status) {
+    async settle(id: number | string, status: string) {
       return db.one(
         `update secret_request set status = $2, fulfilled_at = case when $2 = 'fulfilled' then now() end
       where id = $1 and status = 'pending' returning id, name, status`,
@@ -51,7 +56,7 @@ function create(db) {
     },
 
     /** Fulfils a pending login request by its key (no value is stored). */
-    async fulfilPendingLogin(key) {
+    async fulfilPendingLogin(key: number | string) {
       await db.query(
         `update secret_request set status = 'fulfilled', fulfilled_at = now() where name = $1 and status = 'pending'`,
         [key]
@@ -59,12 +64,12 @@ function create(db) {
     },
 
     /** The pending request for `name`, or null. */
-    async pendingByName(name) {
+    async pendingByName(name: string) {
       return db.one(`select * from secret_request where name = $1 and status = 'pending'`, [name]);
     },
 
     /** The pending request's id for `name` ({id}), or null. */
-    async pendingIdByName(name) {
+    async pendingIdByName(name: string) {
       return db.one(`select id from secret_request where name = $1 and status = 'pending'`, [name]);
     },
 
@@ -72,7 +77,7 @@ function create(db) {
      * Opens a request; null when one for that name is already pending (a
      * race lost to another process). Values are stored as given.
      */
-    async open({ kind, name, purpose, hint, url, command, requestedBy, target }) {
+    async open({ kind, name, purpose, hint, url, command, requestedBy, target }: { kind?: string | null; name?: string | null; purpose?: string | null; hint?: unknown; url?: string | null; command?: unknown; requestedBy?: unknown; target?: unknown }) {
       return db.one(
         `insert into secret_request (kind, name, purpose, hint, url, command, requested_by, target)
      values ($1,$2,$3,$4,$5,$6,$7,$8)
@@ -88,7 +93,7 @@ function create(db) {
     },
 
     /** Expires one request (its value turned up without it). */
-    async expire(id) {
+    async expire(id: number | string) {
       await db.query(`update secret_request set status = 'expired', fulfilled_at = now() where id = $1`, [id]);
     },
 

@@ -3,15 +3,20 @@
 // Aggregate: durable. Tables: the vendored Absurd queue (schema absurd). The
 // queue itself is driven by absurd-sdk on the pool (src/durable/index.js);
 // these are the reads around it. Callers: src/durable.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
 
-function create(db) {
+type Db = import('./types.ts').Db;
+type Row = import('./types.ts').Row;
+
+function create(db: Db) {
   return {
     /**
      * Counts per task and state, for `pa doctor`.
      * @param {string} queue  the queue's name (a table suffix: letters, digits, underscore)
      * @returns {Promise<Array<{task_name: string, state: string, n: number}>>}
      */
-    async stats(queue) {
+    async stats(queue: string) {
       if (!/^[a-z0-9_]+$/i.test(queue)) throw new Error(`bad queue name "${queue}"`);
       return db.rows(`select task_name, state, count(*)::int as n from absurd.t_${queue} group by 1, 2 order by 1, 2`);
     },
@@ -22,7 +27,7 @@ function create(db) {
      * @param {number} maxAgeDays
      * @returns {Promise<Array<{id: number|string}>>}
      */
-    async commitmentsWithoutChase(maxAgeDays) {
+    async commitmentsWithoutChase(maxAgeDays: unknown) {
       return db.rows(
         `select c.id from commitment c
        join source_item si on si.id = c.source_item_id

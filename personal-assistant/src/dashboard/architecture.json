@@ -1158,7 +1158,7 @@
         "personal-assistant/test/repoContract.test.js",
         "personal-assistant/test/repoBoundary.test.js",
         "personal-assistant/src/durable/index.js",
-        "personal-assistant/src/repo/passkeys.js",
+        "personal-assistant/src/repo/passkeys.ts",
         "personal-assistant/sql/038_passkeys.sql"
       ]
     },

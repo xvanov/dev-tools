@@ -2,6 +2,11 @@
 
 // SQLite twin of src/repo/audio.js (audio_episode, read with its transcript
 // item and the calendar event it matched).
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+type Db = import('../types.ts').Db;
+type Row = import('../types.ts').Row;
 
 const { HOUR, sinceMs } = require('./_sql');
 
@@ -19,15 +24,15 @@ const OWNED = `e.kind in ('meeting','call') and e.state <> 'superseded'
    and e.stream like '%mic%' and length(si.body_text) >= ${MIN_CHARS}`;
 
 /** SQLite's unique-key failure carries pg's code too, so callers that check 23505 keep working. */
-function asPgUnique(err) {
-  if (err && /^SQLITE_CONSTRAINT_(UNIQUE|PRIMARYKEY)$/.test(err.code)) {
+function asPgUnique(err: Error & { code?: string | undefined; sqliteCode?: string | undefined }) {
+  if (err && /^SQLITE_CONSTRAINT_(UNIQUE|PRIMARYKEY)$/.test(String(err.code))) {
     err.sqliteCode = err.code;
     err.code = '23505';
   }
   return err;
 }
 
-function create(db) {
+function create(db: Db) {
   return {
     /** The newest episode a debrief owns, with its transcript item and calendar event. */
     async lastOwned() {
@@ -35,12 +40,12 @@ function create(db) {
     },
 
     /** One episode by id (owned or not), with its transcript item and event. */
-    async withEventById(id) {
+    async withEventById(id: number | string) {
       return db.one(`${EPISODE_SQL} where e.id = $1`, [id]);
     },
 
     /** Owned episodes that ended in the last 48 hours of `now` with no debrief of their current transcript. */
-    async awaitingDebrief(now) {
+    async awaitingDebrief(now: Date | string | number) {
       return db.rows(
         `${EPISODE_SQL}
       where ${OWNED} and e.ended_at > $1
@@ -52,7 +57,7 @@ function create(db) {
     },
 
     /** Owned episodes of the last 45 minutes with no debrief row at all. */
-    async waitingForQuiet(now) {
+    async waitingForQuiet(now: Date | string | number) {
       return db.rows(
         `${EPISODE_SQL}
         where ${OWNED} and e.ended_at > $1
@@ -62,7 +67,7 @@ function create(db) {
     },
 
     /** The Meetings tab's recorded meetings and calls since `since`, newest first (at most 60). */
-    async overviewSince(since) {
+    async overviewSince(since: Date | string | number) {
       return db.rows(
         `select e.id, e.started_at, e.ended_at, e.stream, e.speech_seconds, e.kind, e.calendar_event_id,
             e.source_item_id, si.subject as item_subject, substr(si.body_text, 1, 24000) as transcript,
@@ -81,7 +86,7 @@ function create(db) {
     },
 
     /** Transcripts that belong to a meeting: linked to its event, or overlapping its slot. */
-    async transcriptsFor(eventId, start, end) {
+    async transcriptsFor(eventId: number | string, start: Date | string | number, end: unknown) {
       return db.rows(
         `select si.id, si.body_text, si.occurred_at from source_item si
       where si.source = 'audio' and length(si.body_text) > 40
@@ -91,12 +96,12 @@ function create(db) {
          or si.id in (select source_item_id from audio_episode where calendar_event_id = $1 and source_item_id is not null)
          or si.occurred_at between $2 and $3)
       order by si.occurred_at`,
-        [eventId, sinceMs(10 * 60_000, start), new Date(end).toISOString()]
+        [eventId, sinceMs(10 * 60_000, start), new Date(end as string | number | Date).toISOString()]
       );
     },
 
     /** The stored episode a freshly computed one continues (see src/repo/audio.js). */
-    async continuing({ startedAt, endedAt, claimed, stream }) {
+    async continuing({ startedAt, endedAt, claimed, stream }: { startedAt?: unknown; endedAt?: unknown; claimed?: Iterable<unknown>; stream?: unknown }) {
       return db.one(
         `select e.*, si.external_id as item_external_id from audio_episode e
        left join source_item si on si.id = e.source_item_id
@@ -105,23 +110,23 @@ function create(db) {
         and e.id not in (select value from json_each($3))
       order by (e.started_at = $1 and e.stream = $4) desc, (e.started_at = $1) desc, e.speech_seconds desc
       limit 1`,
-        [startedAt, endedAt, [...claimed].map(Number), stream]
+        [startedAt, endedAt, [...(claimed ?? [])].map(Number), stream]
       );
     },
 
     /** Marks unclaimed rows starting inside [startedAt, endedAt] superseded; resolves the count. */
-    async supersedeWithin(startedAt, endedAt, claimed) {
+    async supersedeWithin(startedAt: unknown, endedAt: unknown, claimed: Iterable<unknown>) {
       const r = await db.query(
         `update audio_episode set state = 'superseded'
         where started_at >= $1 and started_at <= $2 and state <> 'superseded'
           and id not in (select value from json_each($3))`,
-        [startedAt, endedAt, [...claimed].map(Number)]
+        [startedAt, endedAt, [...(claimed ?? [])].map(Number)]
       );
       return r.rowCount;
     },
 
     /** Inserts an episode; a conflict on (stream, started_at) revives that row. */
-    async upsert(values) {
+    async upsert(values: unknown[]) {
       return db.one(
         `insert into audio_episode
            (started_at, ended_at, stream, speech_seconds, kind, calendar_event_id,
@@ -137,7 +142,7 @@ function create(db) {
     },
 
     /** Rewrites an episode in place. Throws code 23505 when another row holds the new (stream, started_at). */
-    async update(values) {
+    async update(values: unknown[]) {
       try {
         await db.query(
           `update audio_episode set started_at = $1, ended_at = $2, stream = $3, speech_seconds = $4, kind = $5,
@@ -146,12 +151,12 @@ function create(db) {
           values
         );
       } catch (err) {
-        throw asPgUnique(err);
+        throw asPgUnique(err as Error);
       }
     },
 
     /** update()'s fallback on a key conflict: everything but the key and paths. */
-    async updateKeepingKey({ endedAt, speechSeconds, kind, calendarEventId, state, sourceItemId, id }) {
+    async updateKeepingKey({ endedAt, speechSeconds, kind, calendarEventId, state, sourceItemId, id }: { endedAt?: unknown; speechSeconds?: unknown; kind?: string | null; calendarEventId?: number | string | null; state?: string | null; sourceItemId?: number | string | null; id?: number | string | null }) {
       await db.query(
         `update audio_episode set ended_at = $1, speech_seconds = $2, kind = $3, calendar_event_id = $4,
                 state = $5, source_item_id = $6 where id = $7`,
