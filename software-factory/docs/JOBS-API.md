@@ -443,9 +443,23 @@ runs (`claude_session/default` until the run reports which model the CLI chose).
 `running` while the run row is still provisional. `started_at` is recorded for new runs; for older
 rows it is derived as `ended_at - duration`. A Claude Code run's `cost_usd` is always `0` (nothing
 is metered, so the spend caps never count it); its API-price equivalent is summed into
-`subscription_equiv_usd`. `session` is `null` for api runs, and for a Claude Code run that had to
-start without termhub (termhub unreachable → the run starts as a local process, output in the run
-dir, and the run cannot be watched live).
+`subscription_equiv_usd`. `session` is `null` for a Claude Code run that had to start without
+termhub (termhub unreachable → the run starts as a local process, output in the run dir, and the
+run cannot be watched live).
+
+**Watchable api runs (native plan E2).** An api sandbox run (OpenHands) streams its turns —
+model text, tool calls and results, diff summaries, gate results, tokens and cost — to
+`state/api_runs/<app>-<story>-<persona>-<stamp>/stream.jsonl`, in Claude Code's stream-json
+shape plus `{"type": "factory", "subtype": "usage|diff|gate|prompt|error"}` records, ending with
+one `result` record. When termhub is reachable, the step's start opens a read-only termhub
+session running `python -m factory.claude_session.pretty --follow <stream.jsonl>` (built per
+platform by `factory.api_watch.follow_command`: bash on POSIX; PowerShell, or cmd with
+`FACTORY_TERMHUB_SHELL=cmd`, on Windows); it exits after the `result` record and the session
+stays open for review. The run's row is opened at once
+(`state: running`) with `session` = `{"machine", "termhub_session_id", "url", "stream"}`, and the
+finished row keeps it. Without termhub the file is still written and `session` is `null`.
+`FACTORY_API_WATCH=auto|termhub|file|off` (default `auto`). Re-running `pretty --follow` on a
+finished file replays the run.
 
 **Models.** `--model claude_session=<name>` requires `--runtime claude_session` (else
 `bad_model_flag`); it is stored as `claude_model` in the frontmatter / `job.yaml`, never in

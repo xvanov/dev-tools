@@ -37,6 +37,9 @@ def _isolate_factory_state(
     state_root = tmp_path_factory.mktemp("factory_state")
     # Event streams (runs.ndjson, ticks.ndjson, …) resolved by signals._events_dir.
     monkeypatch.setenv("FACTORY_STATE_ROOT", str(state_root))
+    # Watchable API runs (E2): never open a real termhub session from a test.
+    # The stream file still lands under the (tmp) factory root.
+    monkeypatch.setenv("FACTORY_API_WATCH", "file")
     # Default DB used by runner._engine when no db_path is supplied.
     monkeypatch.setattr(
         _runner, "_DEFAULT_DB_PATH", state_root / "state" / "factory.db", raising=True

@@ -1070,8 +1070,15 @@
         "Overrides": "--model <persona>=<provider>/<model>; providers azure, azure_ai, deepseek, anthropic, openrouter, openai, openai_compat",
         "Missing key": "degrades to the routes.yaml fallback with a warning",
         "Rate limit": "one shared Azure deployment: model-driven sweeps run 4 wide",
-        "Billing": "metered: runs[].billing = metered, summed in cost_usd"
+        "Billing": "metered: runs[].billing = metered, summed in cost_usd",
+        "Live view": "every sandbox run streams its turns (model text, tool calls and results, diff summaries, gate results, tokens and cost) in Claude Code's stream-json shape to state/api_runs/<run>/stream.jsonl. When termhub is reachable a read-only session runs `pretty --follow` on it from the step's start, exits at the step's end and stays open for review; runs[].session links it. Without termhub, only the file."
       },
+      "env": [
+        {
+          "name": "FACTORY_API_WATCH",
+          "default": "auto"
+        }
+      ],
       "models": [
         "deepseek/deepseek-coder",
         "deepseek/deepseek-chat",
@@ -1082,7 +1089,8 @@
       "code": [
         "software-factory/factory/routes.yaml",
         "software-factory/factory/model_router.py",
-        "software-factory/factory/runner.py"
+        "software-factory/factory/runner.py",
+        "software-factory/factory/api_watch.py"
       ]
     },
     {

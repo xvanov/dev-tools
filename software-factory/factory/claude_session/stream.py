@@ -126,6 +126,11 @@ def render_event(event: dict[str, Any]) -> str | None:
     """One human-readable line (or block) for the live terminal, or ``None``."""
     etype = event.get("type")
     if etype == "system" and event.get("subtype") == "init":
+        if event.get("runtime") == "api":
+            return (
+                f"── API run {event.get('session_id', '?')} — {event.get('title', '')}\n"
+                f"   (model {event.get('model', '?')}, cwd {event.get('cwd', '?')}; read-only view)"
+            )
         return (
             f"── Claude Code session {event.get('session_id', '?')} "
             f"(model {event.get('model', '?')}, cwd {event.get('cwd', '?')})"
@@ -156,11 +161,67 @@ def render_event(event: dict[str, Any]) -> str | None:
                 return f"    {mark} {text[:160]}"
         return None
     if etype == "result":
+        if event.get("runtime") == "api":
+            usage = event.get("usage") or {}
+            t_in = _int(usage.get("input_tokens")) + _int(usage.get("cache_read_input_tokens"))
+            stop = f" stop={event['stop_reason']}" if event.get("stop_reason") else ""
+            why = " ".join(str(event.get("result") or "").split())[:200]
+            return (
+                f"── result: {event.get('subtype', '?')}{stop} "
+                f"turns={event.get('num_turns', '?')} tokens {t_in} in / "
+                f"{_int(usage.get('output_tokens'))} out, "
+                f"cost ${_float(event.get('total_cost_usd')):.4f} (metered)"
+                + (f"\n   {why}" if why and event.get("is_error") else "")
+            )
         return (
             f"── result: {event.get('subtype', '?')} "
             f"error={bool(event.get('is_error'))} turns={event.get('num_turns', '?')} "
             f"api-equivalent ${_float(event.get('total_cost_usd')):.4f}"
         )
+    if etype == "factory":
+        return _render_factory(event)
+    return None
+
+
+def _render_factory(event: dict[str, Any]) -> str | None:
+    """The factory's own records in an API-runtime stream (``factory.api_watch``)."""
+    sub = event.get("subtype")
+    if sub == "usage":
+        return (
+            f"    · tokens {_int(event.get('tokens_in'))} in "
+            f"({_int(event.get('cached_input_tokens'))} cached) / "
+            f"{_int(event.get('tokens_out'))} out · ${_float(event.get('cost_usd')):.4f}"
+        )
+    if sub == "diff":
+        files = [f for f in event.get("files") or [] if isinstance(f, dict)]
+        new = [str(p) for p in event.get("untracked") or []]
+        if not files and not new:
+            return "    ± no changes vs HEAD"
+        names = [
+            f"{f.get('path')} +{_int(f.get('added'))}/-{_int(f.get('deleted'))}" for f in files
+        ]
+        names += [f"{p} (new)" for p in new]
+        shown = ", ".join(names[:6]) + (f", … {len(names) - 6} more" if len(names) > 6 else "")
+        return (
+            f"    ± {len(files)} changed, {len(new)} new, "
+            f"+{_int(event.get('insertions'))}/-{_int(event.get('deletions'))}: {shown}"
+        )
+    if sub == "gate":
+        mark = "PASS" if event.get("passed") else "FAIL"
+        checks = ", ".join(str(c) for c in event.get("checks") or [])
+        reason = " ".join(str(event.get("reason") or "").split())[:200]
+        return (
+            f"── gate round {event.get('round', '?')}: {mark}"
+            + (f" [{checks}]" if checks else "")
+            + (f" — {reason}" if reason else "")
+        )
+    if sub == "prompt":
+        text = " ".join(str(event.get("text") or "").split())
+        return f"── {event.get('source') or 'user'}: {text[:200]}"
+    if sub == "error":
+        return f"  ✗ error {event.get('code', '')}: {str(event.get('detail') or '')[:300]}"
+    if sub == "note":
+        return f"── {event.get('text', '')}"
     return None
 
 

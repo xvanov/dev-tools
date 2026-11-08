@@ -801,6 +801,10 @@ def _record_run(
             cached_input_tokens=cached_input_tokens,
             premodel_infra=premodel_infra,
             usage_reliable=usage_reliable,
+            # The provisional row's live-session link (plan E2) outlives the
+            # run: the session stays reviewable, so the final row keeps it.
+            session_json=existing.session_json if existing is not None else None,
+            started_at=(existing.started_at if existing is not None else None) or started_at,
         )
         session.add(row)
         session.commit()
@@ -871,8 +875,14 @@ def _upsert_provisional_run(
     model_tier: str | None,
     direction_id: str | None,
     app: str | None,
+    session_json: str | None = None,
+    started_at: str | None = None,
 ) -> int | None:
     """Insert (``row_id`` None) or update the in-flight ``runs`` row.
+
+    ``session_json`` / ``started_at`` (plan E2): a watchable API run opens its
+    row at start with the termhub session on it, so ``job status`` can link
+    the live view before anything is spent.
 
     The row is a normal ``runs`` row (``success=False``, ``premodel_infra=False``,
     ``error`` = :data:`_PROVISIONAL_RUN_ERROR`), so every reader that sums
@@ -904,8 +914,12 @@ def _upsert_provisional_run(
                 cached_input_tokens=cached_input_tokens,
                 premodel_infra=False,
                 usage_reliable=None,
+                session_json=session_json,
+                started_at=started_at,
             )
         else:
+            if session_json is not None:
+                row.session_json = session_json
             row.tokens_in = max(int(row.tokens_in or 0), tokens_in)
             row.tokens_out = max(int(row.tokens_out or 0), tokens_out)
             row.cached_input_tokens = max(int(row.cached_input_tokens or 0), cached_input_tokens)
@@ -2679,6 +2693,74 @@ async def sandbox_run(
         except Exception:  # noqa: BLE001 - a checkpoint must never break a run
             _log.warning("provisional ledger checkpoint failed", exc_info=True)
 
+    # WATCHABLE RUN (native plan E2 / D9). The conversation's events stream,
+    # turn by turn, to ``state/api_runs/<run>/stream.jsonl`` in Claude Code's
+    # stream-json shape; when termhub is reachable a read-only session renders
+    # it live with the same pretty renderer ``claude_session`` uses, and the
+    # session is written onto a provisional ``runs`` row opened NOW, so ``job
+    # status`` links it from the first second. Best-effort throughout.
+    _watch: Any = None
+    try:
+        from factory.api_watch import start_watch
+
+        _watch_root = software_factory_root or Path(db_path or _DEFAULT_DB_PATH).parent.parent
+        _watch = start_watch(
+            software_factory_root=Path(_watch_root),
+            repo_path=Path(repo_path),
+            persona=persona,
+            model=llm_config.model,
+            app=app,
+            story_id=story_id,
+            direction_id=direction_id,
+            usage_fn=lambda: _live_cost(),
+        )
+        if _watch is not None and _watch.warning:
+            _log.info("api watch: %s", _watch.warning)
+        if _watch is not None and _watch.session:
+            with _ledger_lock:
+                _ledger["id"] = _upsert_provisional_run(
+                    None,
+                    db_path=db_path,
+                    persona=persona,
+                    model=llm_config.model,
+                    tokens_in=0,
+                    tokens_out=0,
+                    cached_input_tokens=0,
+                    cost_usd=0.0,
+                    duration_s=_elapsed(),
+                    story_path=str(story_path),
+                    repo_path=str(repo_path),
+                    story_id=story_id,
+                    model_tier=difficulty,
+                    direction_id=direction_id,
+                    app=app,
+                    session_json=json.dumps(_watch.session, sort_keys=True),
+                    started_at=_started_at,
+                )
+    except Exception:  # noqa: BLE001 - a watch must never break a run
+        _log.warning("api watch: start failed", exc_info=True)
+
+    def _watch_end(
+        success: bool,
+        error: str | None,
+        usage: dict[str, Any],
+        stop_reason: str = "",
+    ) -> None:
+        if _watch is None:
+            return
+        try:
+            _watch.stream.end(
+                success=success,
+                error=error,
+                tokens_in=int(usage.get("tokens_in", 0) or 0),
+                tokens_out=int(usage.get("tokens_out", 0) or 0),
+                cached_input_tokens=int(usage.get("cached", 0) or 0),
+                cost_usd=float(usage.get("cost", 0.0) or 0.0),
+                stop_reason=stop_reason,
+            )
+        except Exception:  # noqa: BLE001
+            _log.debug("api watch: end failed", exc_info=True)
+
     # Starting fingerprint for the no-first-write abort. Taken BEFORE the
     # conversation exists so a write in the first second still counts.
     _start_fp: dict[str, str | None] = {
@@ -2696,6 +2778,9 @@ async def sandbox_run(
             # through close() for the post-run copy-out.
             conv_kwargs["persistence_dir"] = _traj_persist_dir
             conv_kwargs["conversation_id"] = _traj_conv_id
+        if _watch is not None:
+            # Called by the SDK for every event as it happens (E2 live view).
+            conv_kwargs["callbacks"] = [_watch.stream.on_event]
         conversation: Any = Conversation(
             agent=agent,
             workspace=workspace,
@@ -2821,6 +2906,13 @@ async def sandbox_run(
                     "elapsed_s": _elapsed(),
                 }
             )
+            if _watch is not None:
+                _watch.stream.gate(
+                    round_no=rnd,
+                    passed=bool(verdict.passed),
+                    reason=verdict.reason,
+                    checks=list(verdict.checks),
+                )
             _checkpoint_spend()
             if verdict.passed:
                 _gate_state["stop"] = "green"
@@ -2965,6 +3057,7 @@ async def sandbox_run(
         _t_out = int(_partial_usage.get("tokens_out", 0) or 0)
         _cost = float(_partial_usage.get("cost", 0.0) or 0.0)
         model_did_work = _t_out > 0 or _cost > 0.0
+        _watch_end(False, err, _partial_usage, "hard_timeout")
         _record(
             persona=persona,
             model=llm_config.model,
@@ -3032,6 +3125,7 @@ async def sandbox_run(
         _t_out = int(_partial_usage.get("tokens_out", 0) or 0)
         _cost = float(_partial_usage.get("cost", 0.0) or 0.0)
         model_did_work = _t_out > 0 or _cost > 0.0
+        _watch_end(False, err, _partial_usage, "crashed")
         _record(
             persona=persona,
             model=llm_config.model,
@@ -3105,6 +3199,24 @@ async def sandbox_run(
     else:
         test_passed, test_out = _run_pytest(Path(repo_path), test_command=test_command)
         run_error = None if test_passed else "tests not green after run"
+        if _watch is not None:
+            _watch.stream.gate(
+                round_no=1,
+                passed=test_passed,
+                reason="" if test_passed else test_out[-300:],
+                checks=["tests"],
+            )
+    _watch_end(
+        test_passed,
+        run_error,
+        {
+            "tokens_in": tokens_in,
+            "tokens_out": tokens_out,
+            "cached": cached_input_tokens,
+            "cost": cost_usd,
+        },
+        str(_gate_state.get("stop") or ""),
+    )
     self_summary = _extract_self_summary(last_assistant_message, finish_message)
 
     _record(
