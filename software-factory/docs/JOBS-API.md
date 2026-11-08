@@ -187,6 +187,22 @@ Sharpened 2026-11-02 (`factory/job_routing.py`):
   request anyway is set to `needs-direction` with `state.yaml::job_routing_error: {code,
   message}` before any PM call is spent.
 
+## Transport (plan 2.1)
+
+Every command below is the `factory` CLI. A caller on the factory's machine may
+instead send it to a running `factory serve`:
+
+    POST http://127.0.0.1:7330/api/cli      (header X-Factory: 1)
+    {"argv": ["job", "status", "<job_id>", "--json"]}
+    -> {"code": <exit code>, "stdout": "<exactly the CLI's stdout>", "stderr": "...", "ms": n}
+
+Same command, same validation, same JSON (it runs in serve's warm process: ~0.1 s
+instead of 5–10 s of `uv run`). Allowed: every `job` verb except `follow`, and every
+`app` verb; anything else is HTTP 400. Nothing listening (serve not running or
+restarting) means the command did not run: use the CLI. `factory serve` also POSTs
+job state changes to the personal assistant (`/api/factory/events`). See
+`docs/WINDOWS.md`.
+
 ## Commands
 
 ### `factory job submit --json`

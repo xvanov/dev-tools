@@ -279,6 +279,11 @@ def test_cli_threads_app_repo_into_the_client(monkeypatch: pytest.MonkeyPatch) -
     from factory.providers import github as gh_provider
 
     seen: list[str | None] = []
+    # Pin the root: many CLI tests reassign cli._FACTORY_ROOT, and under
+    # --dist load one that does not restore it can run first in this worker.
+    from pathlib import Path
+
+    monkeypatch.setattr(cli, "_FACTORY_ROOT", Path(__file__).resolve().parents[1])
     monkeypatch.setattr(gh_provider, "build_github_client", lambda repo=None: seen.append(repo) or object())
     cli._ensure_github_client("xvanov/dev-tools")
     cli._ensure_github_client()

@@ -59,6 +59,28 @@ process. Use `factory.oscompat.pid_alive`.
   if serve dies). Each tick it starts holds `state\locks\tick-<app>.lock`.
 - On Linux it refuses while `factory-tick@*.timer` units are active
   (`--allow-with-systemd` overrides).
+- Also holds a SQLite lease (`state/scheduler/leases.db`, 30 s TTL, renewed every
+  10 s; taken over at once from a dead pid on the same host). `--status` shows it.
+- **HTTP API (plan 2.1)** on `127.0.0.1:7330` (`--port`, `$FACTORY_SERVE_PORT`; `0`
+  = off): `POST /api/cli {"argv": ["job", "status", "<id>", "--json"]}` runs that
+  CLI command in-process and answers `{code, stdout, stderr, ms}`, byte-identical
+  to the spawned CLI; `GET /api/health`. Every request needs `X-Factory: 1`. Only
+  `job` verbs (not `follow`) and `app` verbs. Warm calls take 40–200 ms instead of
+  5–10 s for `uv run factory …`; the personal assistant uses it first
+  (`PA_FACTORY_SERVE_URL`) and spawns the CLI only when nothing ran.
+- **Restart on update**: every 30 s serve compares the checkout's git HEAD with the
+  one it started on and exits 75 when it moved (the `factory-serve` task restarts
+  it within a minute; running ticks are left alone). `--no-restart-on-update`.
+- **Push (E3)**: every 5 s (and right after an API submit/cancel/resume) serve
+  POSTs job state changes to the personal assistant's
+  `/api/factory/events` (`--pa-events-url`, `$FACTORY_PA_EVENTS_URL`, `off`).
+
+## Linux
+
+Serve runs there too: `scripts/systemd/factory-serve.service` (a user unit;
+`Restart=always` covers the exit-75 restart). It replaces the
+`factory-tick@<app>.timer` units, so stop and disable those first; serve refuses
+to start while any is active.
 
 ## Config on Windows
 

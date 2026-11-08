@@ -1455,6 +1455,24 @@ def serve_cmd(
     log_file: Path = typer.Option(
         None, "--log-file", help="Append serve's own log lines here (ticks log to state/logs/serve/)."
     ),
+    api_port: int = typer.Option(
+        int(os.environ.get("FACTORY_SERVE_PORT") or 7330), "--port",
+        help="Localhost HTTP API port (POST /api/cli); 0 = no API. Default $FACTORY_SERVE_PORT or 7330.",
+    ),
+    pa_events_url: str = typer.Option(
+        None, "--pa-events-url",
+        help="Where job state changes are POSTed (default $FACTORY_PA_EVENTS_URL or the local PA); 'off' to disable.",
+    ),
+    push_every: float = typer.Option(5.0, "--push-every", help="Seconds between job-state checks."),
+    restart_on_update: bool = typer.Option(
+        True, "--restart-on-update/--no-restart-on-update",
+        help="Exit 75 when the checkout's HEAD moves, so the supervisor restarts serve on new code.",
+    ),
+    supervise: bool = typer.Option(
+        False, "--supervise",
+        help="Run serve as a child and restart it when it exits (Windows task: Task Scheduler does not).",
+    ),
+    parent_pid: int = typer.Option(0, "--parent-pid", hidden=True),
 ) -> None:
     """Tick the registered apps on an interval, in one long-lived process.
 
@@ -1481,6 +1499,12 @@ def serve_cmd(
 
         typer.echo(_json.dumps(_serve.read_status(_FACTORY_ROOT), indent=2))
         raise typer.Exit(code=0)
+
+    if supervise:
+        # The parent only spawns and waits: it never imports chain code, so a
+        # restart always runs the checkout's current code.
+        child_args = [a for a in _sys.argv[1:] if a != "--supervise"]
+        raise typer.Exit(code=_serve.supervise(_FACTORY_ROOT, child_args))
 
     if not allow_systemd:
         active = _serve.systemd_timers_active()
@@ -1523,6 +1547,12 @@ def serve_cmd(
     except _serve.LeaseHeld as exc:
         console.print(f"factory serve: {exc}; exiting")
         raise typer.Exit(code=3) from None
+    db_lease = _serve.DbLease(_serve.leases_db(_FACTORY_ROOT))
+    if not db_lease.acquire():
+        lease.release()
+        console.print(f"factory serve: the DB lease is held ({db_lease.current()}); exiting")
+        raise typer.Exit(code=3)
+
     def _out(line: str) -> None:
         print(line, flush=True)
         if log_file is not None:
@@ -1542,9 +1572,92 @@ def serve_cmd(
             out=_out,
         )
         sched.log(f"lease held; apps={chosen} interval={interval:.0f}s root={_FACTORY_ROOT}")
-        _serve.serve_forever(sched, stop=lambda: stopping["flag"])
+        from factory.scheduler import api as _api
+
+        head0 = _api.git_head(_FACTORY_ROOT)
+        periodic: list[tuple[float, Any]] = []
+
+        # 2.2: keep the DB lease; lost (someone took it) -> stop.
+        def _renew() -> bool:
+            if db_lease.renew():
+                return False
+            sched.log("DB lease lost; stopping")
+            stopping["flag"] = True
+            return False
+
+        periodic.append((db_lease.ttl_s / 3, _renew))
+
+        if parent_pid:
+            # Run by `--supervise`: stop (draining ticks) once the supervisor
+            # is gone, e.g. the factory-serve task was stopped.
+            from factory.oscompat import pid_alive as _pid_alive
+
+            def _orphaned() -> bool:
+                if not _pid_alive(parent_pid):
+                    sched.log(f"supervisor pid {parent_pid} is gone; stopping")
+                    stopping["flag"] = True
+                return False
+
+            periodic.append((5.0, _orphaned))
+
+        # E3: push job state changes to the personal assistant.
+        url = pa_events_url if pa_events_url is not None else (
+            os.environ.get("FACTORY_PA_EVENTS_URL", _api.DEFAULT_PA_EVENTS_URL)
+        )
+        pusher: Any = None
+        if url and url.lower() != "off":
+            pusher = _api.JobStatePusher(_FACTORY_ROOT, url, log=sched.log)
+            pusher.check()  # baseline, so the first real change is announced
+            periodic.append((push_every, lambda: bool(pusher.check()) and False))
+            sched.log(f"pushing job state changes to {url} every {push_every:.0f}s")
+
+        def _after_call(argv: list[str], res: dict[str, Any]) -> None:
+            # A submit/cancel/resume through the API: announce it now, not in <= push_every.
+            if pusher is not None and res.get("code") == 0 and argv[:1] == ["job"] and (
+                len(argv) > 1 and argv[1] in ("submit", "cancel", "resume")
+            ):
+                import threading as _threading
+
+                _threading.Thread(target=pusher.check, daemon=True).start()
+
+        # 2.1: the JOBS-API verbs over localhost HTTP.
+        if api_port:
+            try:
+                _api.start_api(
+                    api_port,
+                    health=lambda: {
+                        "ok": True, "pid": os.getpid(), "head": head0, "apps": chosen,
+                        "running": sorted(sched.running), "ticks_started": sched.ticks_started,
+                    },
+                    after_call=_after_call,
+                )
+                sched.log(f"api on http://127.0.0.1:{api_port} (POST /api/cli, GET /api/health)")
+                import threading as _threading
+
+                # Pay the CLI's import cost (seconds) now, not on the first caller.
+                _threading.Thread(
+                    target=lambda: _api.run_cli(["app", "list", "--json"]), daemon=True
+                ).start()
+            except OSError as exc:
+                sched.log(f"api NOT started on port {api_port}: {exc}; callers fall back to the CLI")
+
+        # New code on disk -> exit for a restart (ticks already run fresh code).
+        def _moved() -> bool:
+            head = _api.git_head(_FACTORY_ROOT)
+            if head and head0 and head != head0:
+                sched.log(f"checkout moved {head0[:8]} -> {head[:8]}; exiting for a restart")
+                return True
+            return False
+
+        if head0 and restart_on_update:
+            periodic.append((30.0, _moved))
+
+        why = _serve.serve_forever(sched, stop=lambda: stopping["flag"], periodic=periodic)
     finally:
+        db_lease.release()
         lease.release()
+    if why:
+        raise typer.Exit(code=_serve.EXIT_UPDATED)
 
 
 @app.command("story")

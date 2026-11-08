@@ -35,6 +35,7 @@ What it does, every ``poll_s`` (1 s):
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import subprocess
@@ -175,6 +176,109 @@ class Lease:
         self.release()
 
 
+def leases_db(root: Path) -> Path:
+    return scheduler_dir(root) / "leases.db"
+
+
+class DbLease:
+    """A named lease row in ``state/scheduler/leases.db`` (plan 2.2).
+
+    ``acquire`` takes the row when it is free, expired, already ours, or held
+    by a pid on THIS host that is no longer alive (a crashed serve need not wait
+    out the TTL). ``renew`` must run well inside ``ttl_s`` and returns False
+    once the lease is no longer ours (then the holder must stop). ``release``
+    deletes our row. Every write is one ``BEGIN IMMEDIATE`` transaction, so two
+    contenders serialise on SQLite's own lock.
+    """
+
+    def __init__(self, path: Path, name: str = "factory-serve", ttl_s: float = 30.0,
+                 *, clock: Callable[[], float] = time.time) -> None:
+        import socket
+
+        self.path = Path(path)
+        self.name = name
+        self.ttl_s = ttl_s
+        self.clock = clock
+        self.host = socket.gethostname()
+        self.pid = os.getpid()
+        self.holder = f"{self.host}:{self.pid}:{uuid.uuid4().hex[:8]}"
+
+    def _conn(self) -> Any:
+        import sqlite3
+
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        conn = sqlite3.connect(str(self.path), timeout=10, isolation_level=None)
+        conn.execute(
+            "create table if not exists leases (name text primary key, holder text not null,"
+            " host text, pid integer, acquired_at real, expires_at real not null)"
+        )
+        return conn
+
+    def acquire(self) -> bool:
+        now = self.clock()
+        conn = self._conn()
+        try:
+            conn.execute("begin immediate")
+            row = conn.execute(
+                "select holder, host, pid, expires_at from leases where name = ?", (self.name,)
+            ).fetchone()
+            free = (
+                row is None
+                or row[0] == self.holder
+                or row[3] < now
+                or (row[1] == self.host and row[2] and not pid_alive(int(row[2])))
+            )
+            if free:
+                conn.execute(
+                    "insert into leases (name, holder, host, pid, acquired_at, expires_at)"
+                    " values (?, ?, ?, ?, ?, ?) on conflict(name) do update set holder=excluded.holder,"
+                    " host=excluded.host, pid=excluded.pid, acquired_at=excluded.acquired_at,"
+                    " expires_at=excluded.expires_at",
+                    (self.name, self.holder, self.host, self.pid, now, now + self.ttl_s),
+                )
+            conn.execute("commit")
+            return bool(free)
+        except Exception:
+            with contextlib.suppress(Exception):
+                conn.execute("rollback")
+            raise
+        finally:
+            conn.close()
+
+    def renew(self) -> bool:
+        conn = self._conn()
+        try:
+            cur = conn.execute(
+                "update leases set expires_at = ? where name = ? and holder = ?",
+                (self.clock() + self.ttl_s, self.name, self.holder),
+            )
+            return bool(cur.rowcount == 1)
+        finally:
+            conn.close()
+
+    def release(self) -> None:
+        with contextlib.suppress(Exception):
+            conn = self._conn()
+            try:
+                conn.execute("delete from leases where name = ? and holder = ?", (self.name, self.holder))
+            finally:
+                conn.close()
+
+    def current(self) -> dict[str, Any] | None:
+        conn = self._conn()
+        try:
+            row = conn.execute(
+                "select holder, host, pid, acquired_at, expires_at from leases where name = ?",
+                (self.name,),
+            ).fetchone()
+        finally:
+            conn.close()
+        if row is None:
+            return None
+        return {"holder": row[0], "host": row[1], "pid": row[2], "acquired_at": row[3],
+                "expires_at": row[4], "expired": row[4] < self.clock()}
+
+
 def read_status(root: Path) -> dict[str, Any]:
     """The last status serve wrote, plus whether its lease is held right now."""
     try:
@@ -196,6 +300,9 @@ def read_status(root: Path) -> dict[str, Any]:
     data["lease_held"] = held
     pid = data.get("pid")
     data["running"] = bool(held and pid and pid_alive(int(pid)))
+    if leases_db(root).exists():
+        with contextlib.suppress(Exception):
+            data["db_lease"] = DbLease(leases_db(root)).current()
     return data
 
 
@@ -372,6 +479,62 @@ def _write_status(root: Path, data: dict[str, Any]) -> None:
         pass
 
 
+#: Child exit codes ``supervise`` treats specially.
+EXIT_UPDATED = 75  # the checkout moved: restart now on the new code
+EXIT_LEASE_HELD = 3  # another serve runs: retry slowly
+
+
+def supervise(
+    root: Path,
+    child_args: list[str],
+    *,
+    spawn: Callable[[list[str]], Any] | None = None,
+    sleep: Callable[[float], None] = time.sleep,
+    max_restarts: int | None = None,
+    out: Callable[[str], None] = lambda line: print(line, flush=True),
+) -> int:
+    """Keep a ``factory serve`` child running; restart it whenever it exits.
+
+    Windows' Task Scheduler does not restart a task whose program merely exits
+    non-zero (measured), so the ``factory-serve`` task runs this loop. The
+    child gets ``--parent-pid`` and stops itself when this process dies (the
+    task was stopped), so it is never left running unsupervised. systemd has
+    ``Restart=always`` instead and runs serve directly.
+    """
+    import signal as _signal
+
+    stop = {"flag": False}
+
+    def _stop(*_a: object) -> None:
+        stop["flag"] = True
+
+    for name in ("SIGINT", "SIGTERM", "SIGBREAK"):
+        sig = getattr(_signal, name, None)
+        if sig is not None:
+            with contextlib.suppress(ValueError, OSError):
+                _signal.signal(sig, _stop)
+
+    argv = [sys.executable, "-X", "utf8", "-m", "factory", *child_args, "--parent-pid", str(os.getpid())]
+
+    def _default_spawn(a: list[str]) -> Any:
+        return subprocess.Popen(a, cwd=str(root))  # noqa: S603 - our own interpreter and module
+
+    run = spawn or _default_spawn
+    restarts = 0
+    while not stop["flag"]:
+        child = run(argv)
+        rc = child.wait()
+        if stop["flag"]:
+            break
+        restarts += 1
+        if max_restarts is not None and restarts > max_restarts:
+            return int(rc or 0)
+        delay = 0.0 if rc == EXIT_UPDATED else 30.0 if rc == EXIT_LEASE_HELD else 5.0
+        out(f"{_now_iso()} serve supervisor: child exited {rc}; restarting in {delay:.0f}s")
+        sleep(delay)
+    return 0
+
+
 def systemd_timers_active() -> list[str]:
     """Active ``factory-tick@*.timer`` units (POSIX). ``[]`` when none or no systemd."""
     if IS_WINDOWS:
@@ -394,9 +557,15 @@ def serve_forever(
     sleep: Callable[[float], None] = time.sleep,
     drain_timeout_s: float = 300.0,
     status_every_s: float = 10.0,
-) -> None:
+    periodic: list[tuple[float, Callable[[], bool | None]]] | None = None,
+) -> str | None:
+    """Run until ``stop()``. ``periodic`` is ``[(every_s, fn), …]``; a ``fn``
+    that returns ``True`` ends the loop (e.g. "the checkout moved: restart").
+    Returns why it stopped early (``"periodic"``) or ``None``."""
     root = Path(sched.cfg.root)
     last_status = -1e18
+    jobs = [(float(every), fn, [-1e18]) for every, fn in (periodic or [])]
+    why: str | None = None
     try:
         while not stop():
             sched.step(consume_wakes(root))
@@ -404,19 +573,37 @@ def serve_forever(
             if now - last_status >= status_every_s:
                 _write_status(root, sched.snapshot())
                 last_status = now
+            for every, fn, last in jobs:
+                if now - last[0] >= every:
+                    last[0] = now
+                    try:
+                        if fn():
+                            why = "periodic"
+                    except Exception as exc:  # noqa: BLE001 - a side job never kills serve
+                        sched.log(f"periodic {getattr(fn, '__name__', fn)} failed: {exc!r}")
+            if why:
+                break
             sleep(sched.cfg.poll_s)
     finally:
-        sched.log("stopping: no new ticks; draining running ones")
-        sched.drain(drain_timeout_s, sleep=sleep)
+        if why:
+            # Restarting for new code: leave running ticks alone. They are
+            # detached and hold tick-<app>.lock, so the next serve skips them.
+            sched.log(f"stopping ({why}); running ticks keep running")
+        else:
+            sched.log("stopping: no new ticks; draining running ones")
+            sched.drain(drain_timeout_s, sleep=sleep)
         snap = sched.snapshot()
         snap["stopped_at"] = _now_iso()
         _write_status(root, snap)
+    return why
 
 
 __all__ = [
     "ALL_APPS",
     "DEFAULT_INTERVAL_S",
+    "DbLease",
     "Lease",
+    "leases_db",
     "LeaseHeld",
     "Scheduler",
     "ServeConfig",

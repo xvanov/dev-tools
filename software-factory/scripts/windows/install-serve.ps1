@@ -62,7 +62,9 @@ $log = Join-Path $root 'state\logs\serve.log'
 New-Item -ItemType Directory -Force (Split-Path -Parent $log) | Out-Null
 
 # -X utf8: UTF-8 mode, as on Linux (serve also passes PYTHONUTF8=1 to its children).
-$serveArgs = @('-X', 'utf8', '-m', 'factory', 'serve', '--interval', "$IntervalSeconds", '--log-file', "`"$log`"")
+# --supervise: Task Scheduler does not restart a program that exits non-zero, and
+# serve exits 75 when the checkout moves (new code); the supervisor restarts it.
+$serveArgs = @('-X', 'utf8', '-m', 'factory', 'serve', '--supervise', '--interval', "$IntervalSeconds", '--log-file', "`"$log`"")
 foreach ($a in $Apps) { $serveArgs += @('--app', $a) }
 
 # A console program from an Interactive logon task gets a visible console
