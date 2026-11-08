@@ -328,7 +328,7 @@ async function research(acc: Acceptance, o: Options, deps: Deps, folder: string)
     const st = await G.safely(() => deps.getJson(`${deps.paBase}/api/commitments/${cardId}`));
     const chain = st.ok ? (st.value?.chain || []).find((c: Json) => Number(c.run) === Number(runId)) : null;
     checks.push(check('plan', 'card → run → job', chain && chain.job === job, chain ? `job ${chain.job}` : st.error || 'no chain entry'));
-    checks.push(...C.checkRun(await G.sessionLists(deps, ids.steps), ids, { scrollback: sb }).map((c: Check) => ({ ...c, view: 'run' })));
+    checks.push(...C.checkRun(await G.sessionLists(deps, ids.steps), ids, { scrollback: sb, pages: await G.linkPages(deps, ids.steps) }).map((c: Check) => ({ ...c, view: 'run' })));
     const mj = await G.safely(() => deps.chat('factory_job', { job, fresh: true }));
     checks.push(check('ask', 'factory_job tool → card and report', mj.ok && String(mj.value.card) === cardId && mj.value.report, mj.ok ? null : mj.error));
     const cost = Number(lastJob.cost_usd || 0);

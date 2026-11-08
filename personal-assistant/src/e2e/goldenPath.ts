@@ -651,4 +651,4 @@ function writeReport(file: string, report: Json): void {
   fs.writeFileSync(file, JSON.stringify(report, null, 2) + os.EOL);
 }
 
-module.exports = { main, dryRun, golden, sweep, remote, clean, ownSessions, killSessions, answerPrompt, chatCall, approvalChecks, policyDry, E2E_ACTOR, viewChecksFor, writeReport, defaultDeps, safely, scrollbacks, sessionLists, owner };
+module.exports = { main, dryRun, golden, sweep, remote, clean, ownSessions, killSessions, answerPrompt, chatCall, approvalChecks, policyDry, E2E_ACTOR, viewChecksFor, writeReport, defaultDeps, safely, scrollbacks, sessionLists, linkPages, owner };

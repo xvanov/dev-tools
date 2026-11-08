@@ -74,7 +74,7 @@ test('wav wraps PCM with a valid header; ndjson skips bad lines', () => {
 function fakeDeps(over = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pa-e2e-wf-'));
   let clock = 1_000_000;
-  const log = { chat: [], closed: [], posts: [], shots: [], killed: [], audit: [] };
+  const log = { chat: [], closed: [], posts: [], shots: [], killed: [], audit: [], pages: [] };
   const deps = {
     config: { termhub: { machines: {} } },
     now: () => clock,
@@ -88,6 +88,7 @@ function fakeDeps(over = {}) {
     browser: () => null,
     capture: async (d, pages) => { log.shots.push(...pages.map((p) => p.name)); return { shots: pages.map((p) => ({ view: p.name, url: p.url, file: path.join(d, `${p.name}.png`) })), note: null }; },
     hubBase: () => 'http://hub',
+    pageStatus: async (url) => { log.pages.push(url); return 200; },
     async getJson(url) {
       if (url.endsWith('/api/workflow-limits')) return { limits: Object.fromEntries(W.workflows(ARCH).map((id) => [id, { effective: id === 'deepseek-pr' ? 2 : 0, custom: false }])) };
       if (url.endsWith('/api/talk/voice')) return { tts: { ok: true, device: 'cuda' } };
@@ -122,7 +123,7 @@ function fakeDeps(over = {}) {
       if (name === 'factory_cancel') return {};
       throw new Error(name);
     },
-    jobStatus: async () => ({ job_id: 'dev-tools:r001', state: clock > 1_030_000 ? 'done' : 'in_progress', cost_usd: 0, stories: [], runs: [{ id: 3, runtime: 'claude_session', state: 'ok', session: { termhub_session_id: 'rs1', links: { job: 'dev-tools:r001', step: '3' } } }] }),
+    jobStatus: async () => ({ job_id: 'dev-tools:r001', state: clock > 1_030_000 ? 'done' : 'in_progress', cost_usd: 0, stories: [], runs: [{ id: 3, runtime: 'claude_session', state: 'ok', session: { termhub_session_id: 'rs1', url: 'http://hub:7000/#session=rs1', links: { job: 'dev-tools:r001', step: '3' } } }] }),
     jobReport: async () => ({ markdown: `# Dirty tree\n\n${'termhub/windows/update.ps1:42 refuses a dirty tree. '.repeat(10)}` }),
     hub: () => ({ screen: async () => 'reading update.ps1', listSessions: async () => [{ id: 'rs1', alive: false, links: { job: 'dev-tools:r001', step: '3' } }], killSession: async (id) => { log.killed.push(id); return true; } }),
     jobsOfCommitments: async () => [{ id: 7, commitment_id: 90, factory_job_id: 'dev-tools:r001', factory_state: 'done', termhub_session_id: 'follow7', machine: null }],
@@ -214,6 +215,17 @@ test('research: a research job to report.md, no PR, linked in Plan, Run and the 
   assert.ok(log.shots.includes('ask') && s.views.ask.url === 'http://pa/talk', 'the acceptance block lists ask: the chat page is shot');
   assert.deepStrictEqual(log.killed.sort(), ['follow7', 'rs1'], 'the step and follow sessions are killed');
   assert.ok(s.cleanup.some((c) => /session follow7 killed/.test(c)));
+  assert.deepStrictEqual(log.pages, ['http://hub:7000/'], 'the step\'s session link is opened (8.4.17)');
+  assert.ok(s.checks.some((c) => c.view === 'run' && c.check === 'session rs1 link opens' && c.ok));
+});
+
+test('research: a step session link that 404s fails the Run view (8.4.17)', async () => {
+  const { deps } = fakeDeps({ pageStatus: async () => 404 });
+  const s = await R.main('research', {}, {}, deps);
+  assert.strictEqual(s.ok, false);
+  const c = s.checks.find((x) => x.check === 'session rs1 link opens');
+  assert.ok(c && c.view === 'run' && !c.ok, JSON.stringify(c));
+  assert.match(c.detail, /→ 404/);
 });
 
 test('research: approval to started is timed from the job\'s own started_at, polled fast until it starts (8.4.9)', async () => {
