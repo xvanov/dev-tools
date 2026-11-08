@@ -454,7 +454,9 @@ function splitAll(pieces) {
     Object.assign(config.fastLane, { enabled: true, model: 'local/llama3.2:3b', json: 'auto', keepAlive: '24h' });
     const w = await F.warm({ now: 1e12, deps: { warmLocal: async (a) => (seen.push(a), 42) } });
     assert.strictEqual(w, 42);
-    assert.deepStrictEqual(seen, [{ model: 'local/llama3.2:3b', keepAlive: '24h' }]);
+    assert.deepStrictEqual(seen.map((a) => [a.model, a.keepAlive, typeof a.system]), [['local/llama3.2:3b', '24h', 'string']]);
+    assert.ok(seen[0].system.length > 200, 'the warm ping carries the fixed system prompt (the KV prefix)');
+    assert.strictEqual(seen[0].system, F.jsonSystem(), 'the very prompt a turn sends');
     assert.strictEqual(F.warm({ now: 1e12 + 1000, deps: { warmLocal: async () => 1 } }), null, 'not again within a minute');
     Object.assign(config.fastLane, save);
   }

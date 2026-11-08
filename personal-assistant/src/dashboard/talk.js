@@ -19,6 +19,20 @@ const http = require('http');
 const path = require('path');
 const crypto = require('crypto');
 const { config } = require('../config');
+const { logger } = require('../log');
+const log = logger('talk');
+
+// Pure: a page's latency report -> the fields worth logging, or null. Numbers
+// only (ms, bounded), short strings only: nothing the user said is in it.
+function sanitizeLatency(b) {
+  if (!b || typeof b !== 'object') return null;
+  const num = (v) => (typeof v === 'number' && isFinite(v) && v >= 0 && v < 600_000 ? Math.round(v) : undefined);
+  const str = (v) => (typeof v === 'string' && /^[\w .:()-]{1,24}$/.test(v) ? v : undefined);
+  const out = { speechToAudioMs: num(b.total), silenceMs: num(b.silence), sttMs: num(b.transcribe), sendMs: num(b.send), replyMs: num(b.reply), voiceMs: num(b.voice), route: str(b.route), endBy: str(b.turnBy), tts: str(b.tts) };
+  if (out.speechToAudioMs === undefined) return null;
+  for (const k of Object.keys(out)) if (out[k] === undefined) delete out[k];
+  return out;
+}
 
 const DIR = __dirname;
 const ASSETS = {
@@ -304,6 +318,25 @@ async function route(req, res, url, { send, issuePageToken = null }) {
     send(res, 202, { ok: true });
     return true;
   }
+  // One line per spoken turn: end of speech -> first audio, and its slices.
+  // The page measures it (talk.core.js latencySlices); this puts it in the PA's
+  // log so latency can be followed without opening devtools.
+  if (req.method === 'POST' && url.pathname === '/api/talk/latency') {
+    if (req.headers['x-pa'] !== '1') {
+      send(res, 403, { error: 'missing X-PA header' });
+      return true;
+    }
+    let body = {};
+    try {
+      body = JSON.parse((await readBody(req, 4096)).toString('utf8') || '{}');
+    } catch {
+      /* a malformed report is dropped */
+    }
+    const fields = sanitizeLatency(body);
+    if (fields) log.info('voice turn latency', fields);
+    send(res, 202, { ok: !!fields });
+    return true;
+  }
   const VOICE_POSTS = { '/api/talk/tts': ['tts', 64 * 1024, 'application/json'], '/api/talk/endpoint': ['endpoint', MAX_AUDIO_BYTES, null] };
   if (req.method === 'POST' && VOICE_POSTS[url.pathname]) {
     if (req.headers['x-pa'] !== '1') {
@@ -373,4 +406,4 @@ async function turn(req, res, { send }) {
   if (!res.writableEnded) res.end();
 }
 
-module.exports = { route, transcribe, askWhisper, voiceInfo, modelsPresent, MODEL_FILES, MAX_AUDIO_BYTES };
+module.exports = { route, sanitizeLatency, transcribe, askWhisper, voiceInfo, modelsPresent, MODEL_FILES, MAX_AUDIO_BYTES };

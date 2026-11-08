@@ -832,13 +832,24 @@ async function runTurn({ text, emit, signal = null, deps = {}, opts = {} }) {
 // load, which the first turn would otherwise spend on the fallback. At most
 // once a minute; never throws.
 let lastWarm = 0;
+let keepWarmTimer = null;
+const KEEP_WARM_MS = 4 * 60_000;
 function warm({ now = Date.now(), deps = {} } = {}) {
   const o = config.fastLane;
   if (!o.enabled || !usesJson(o.model, o) || now - lastWarm < 60_000) return null;
   lastWarm = now;
   const warmLocal = deps.warmLocal || require('../llm').warmLocal;
   return Promise.resolve()
-    .then(() => warmLocal({ model: o.model, keepAlive: o.keepAlive }))
+    .then(() => {
+      // Re-primed every few minutes: another model or a long idle can drop
+      // the prefix from Ollama's cache while keep_alive holds the weights.
+      if (!deps.warmLocal && !keepWarmTimer) {
+        keepWarmTimer = setInterval(() => warm(), KEEP_WARM_MS);
+        keepWarmTimer.unref?.();
+      }
+      // The fixed system prompt, so the KV cache holds its prefix.
+      return warmLocal({ model: o.model, keepAlive: o.keepAlive, system: jsonSystem() });
+    })
     .then((ms) => {
       log.debug('local fast model warm', { model: o.model, ms });
       return ms;
@@ -851,6 +862,7 @@ function warm({ now = Date.now(), deps = {} } = {}) {
 
 module.exports = {
   ROUTES,
+  jsonSystem,
   validateDecision,
   parseDecision,
   createReplySplitter,

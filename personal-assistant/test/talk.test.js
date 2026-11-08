@@ -321,6 +321,43 @@ const C = require('../src/dashboard/talk.core');
   assert.deepStrictEqual(plain.push('There is one overdue item on your list, due'), [], 'off by default (the chat stream)');
 }
 
+// ---- clause boundaries: , ; : and dashes, with a minimum length ------------------------
+{
+  const f = C.firstClauseOf;
+  assert.strictEqual(f('Your next meeting is the sync, at half past two'), 'Your next meeting is the sync,');
+  assert.strictEqual(f('You have two overdue items; the first is due today'), 'You have two overdue items;');
+  assert.strictEqual(f('Here is what I found: three unread emails'), 'Here is what I found:');
+  assert.strictEqual(f('The nightly build finished — and everything passed'), 'The nightly build finished', 'an em dash ends a clause and is not spoken');
+  assert.strictEqual(f('The nightly build finished – and everything passed'), 'The nightly build finished', 'en dash');
+  assert.strictEqual(f('The nightly build finished -- and everything passed'), 'The nightly build finished', 'double hyphen');
+  assert.strictEqual(f('Yes, that is right and good'), null, 'one word is too short');
+  assert.strictEqual(f('OK so, I am on it, checking now'), 'OK so, I am on it,', 'the first boundary that is long enough');
+  assert.strictEqual(f('I am on it, and checking now now now'), null, 'under four words: skipped, no later boundary');
+  assert.strictEqual(f('a b c d,  and more'), null, 'under the minimum length');
+  assert.strictEqual(f('You spent about 1,200 dollars on this today'), null, 'no whitespace after a thousands comma');
+  assert.strictEqual(f('Your meeting is at 10, then lunch with Jon'), null, 'a number before the comma is not a clause');
+  assert.strictEqual(f('Your next meeting is the sync,'), null, 'nothing after the boundary yet');
+  assert.strictEqual(f('well-known well-meant well-kept well-run'), null, 'a hyphen is not a dash');
+  assert.strictEqual(f('Tunable', { minWords: 1, minChars: 1 }), null);
+  assert.strictEqual(f('A, b', { minWords: 1, minChars: 1 }), 'A,');
+
+  // The stream: the dash is not repeated in the rest.
+  const s = C.createUtteranceStream({ firstClause: true });
+  assert.deepStrictEqual(s.push('The nightly build finished —'), []);
+  assert.deepStrictEqual(s.push('The nightly build finished — and everything'), ['The nightly build finished']);
+  assert.deepStrictEqual(s.finish('The nightly build finished — and everything passed, nice. Done.'), ['and everything passed, nice.', 'Done.']);
+}
+
+// ---- the per-turn latency report ----------------------------------------------------------
+{
+  const { sanitizeLatency } = require('../src/dashboard/talk');
+  assert.deepStrictEqual(sanitizeLatency({ total: 812.4, silence: 150, transcribe: 200, route: 'answer', turnBy: 'smart-turn', tts: 'kokoro', text: 'secret words' }), { speechToAudioMs: 812, silenceMs: 150, sttMs: 200, route: 'answer', endBy: 'smart-turn', tts: 'kokoro' });
+  assert.strictEqual(sanitizeLatency({ silence: 5 }), null, 'no total: nothing to log');
+  assert.strictEqual(sanitizeLatency({ total: -1 }), null);
+  assert.strictEqual(sanitizeLatency({ total: 5, route: 'x'.repeat(100) }).route, undefined, 'free text is not logged');
+  assert.strictEqual(sanitizeLatency(null), null);
+}
+
 // ---- which voice speaks --------------------------------------------------------
 {
   const both = { kokoro: true, browser: true };
@@ -392,9 +429,24 @@ const C = require('../src/dashboard/talk.core');
   assert.deepStrictEqual(evs.map((e) => e[0]), ['start', 'check']);
   const checkAt = evs[1][1];
   const quiet = checkAt - det.lastVoice;
-  assert.ok(quiet >= 200 && quiet < 240, `asked after ~200 ms of quiet, got ${quiet}`);
+  assert.ok(quiet >= 96 && quiet < 140, `VAD shortcut: a sure-silent pause is asked about after ~96 ms, got ${quiet}`);
+
   assert.strictEqual(det.verdict(evs[1][2], true), 'end');
   assert.strictEqual(det.state, 'silence');
+
+  // Hesitant frames (0.2: a breath, a fading syllable) keep the full 200 ms wait.
+  let slow = C.createTurnDetector();
+  evs = run(slow, [[0.9, 1000], [0.2, 224]]);
+  assert.deepStrictEqual(evs.map((e) => e[0]), ['start', 'check']);
+  assert.ok(evs[1][1] - slow.lastVoice >= 200, 'not sure it stopped: wait the full checkMs');
+  // One unsure frame inside the pause is enough to lose the shortcut.
+  slow = C.createTurnDetector();
+  evs = run(slow, [[0.9, 1000], [0.02, 64], [0.2, 32], [0.02, 160]]);
+  assert.ok(evs[1][1] - slow.lastVoice >= 200, 'a 0.2 frame in the pause cancels the shortcut');
+  // And the shortcut never fires on a cough-length utterance, nor sooner than sureCheckMs.
+  slow = C.createTurnDetector({ sureCheckMs: 300 });
+  evs = run(slow, [[0.9, 1000], [0.02, 224]]);
+  assert.ok(evs[1][1] - slow.lastVoice >= 200 && evs[1][1] - slow.lastVoice < 240, 'sureCheckMs above checkMs changes nothing');
 
   // Not done: the silence timer still ends it, at endMs.
   det = C.createTurnDetector({ endMs: 650 });

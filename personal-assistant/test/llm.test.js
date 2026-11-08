@@ -122,6 +122,9 @@ const { cliArgs, parseCliOutput, extractJson, childEnv, cliAccount } = require('
   assert.deepStrictEqual(warmReq.body.messages, [], 'a load-only call has no messages');
   assert.deepStrictEqual(ollamaLine({ message: { content: '{"ro' }, done: false }), { text: '{"ro', done: false, usage: null });
   assert.deepStrictEqual(ollamaLine({ message: { content: '' }, done: true, prompt_eval_count: 300, eval_count: 20 }).usage, { costUsd: 0, inputTokens: 300, outputTokens: 20 });
+  const primeReq = ollamaRequest({ model: 'm', system: 'SYS', prompt: '', maxTokens: 1, keepAlive: '24h', providers: { local: { baseUrl: 'http://l/v1' } } });
+  assert.deepStrictEqual(primeReq.body.messages, [{ role: 'system', content: 'SYS' }, { role: 'user', content: '' }], 'a priming call carries the fixed system prompt');
+  assert.strictEqual(primeReq.body.options.num_predict, 1, 'and generates one token');
   assert.match(ollamaLine({ error: 'model not found' }).error, /not found/);
 }
 

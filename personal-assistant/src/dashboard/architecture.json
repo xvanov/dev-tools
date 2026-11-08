@@ -119,6 +119,7 @@
           "POST /api/talk/turn (fast lane)",
           "POST /api/talk/tts (speech out)",
           "POST /api/talk/warm when an utterance starts",
+          "POST /api/talk/latency after each turn (end of speech to first audio, logged by the PA)",
           "POST /api/chat/permission (a spoken yes or no to the chat's action prompt)"
         ],
         "Privacy": "Nothing leaves the browser until a request is made; the wake word stays client-side.",
@@ -161,7 +162,7 @@
         "Snapshot refresh": "Cached in memory, rebuilt in the background when older than 60 s (PA_FAST_CONTEXT_SECONDS)",
         "Context window": "unknown: Ollama's default for the model (the PA does not set num_ctx)",
         "Compaction": "none needed: every turn is a fresh prompt",
-        "Kept warm": "keep_alive 24h (PA_FAST_KEEP_ALIVE); warmed when /talk opens",
+        "Kept warm": "keep_alive 24h (PA_FAST_KEEP_ALIVE); when /talk opens, and every 4 minutes after, a one-token request carrying the fixed system prompt primes the KV cache prefix (llm.warmLocal with system)",
         "Guards": [
           "never answers an action-like request (guardDecision / looksLikeAction turn it into a hand-off)",
           "a hand-off types your verbatim words into the PA chat; the model's task is only a labelled hint",

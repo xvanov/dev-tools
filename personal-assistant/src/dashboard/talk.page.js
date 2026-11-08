@@ -402,6 +402,15 @@
       this.all.push(m);
       window.__talkLatency = this.all; // for scripted measurement
       this.row(C.formatLatency(m), m);
+      this.report(m);
+    },
+    // Every turn, debug or not: end of speech -> first audio goes to the PA's
+    // log (POST api/talk/latency), so it can be followed without devtools.
+    report(m) {
+      const s = C.latencySlices(m);
+      if (s.total == null) return;
+      const body = JSON.stringify({ ...s, route: m.route, turnBy: m.turnBy, tts: m.tts });
+      fetch('api/talk/latency', { method: 'POST', headers: { 'X-PA': '1', 'Content-Type': 'application/json' }, body }).catch(() => {});
     },
     // A fast-lane hand-off: the PA chat's first block, timed from the transcript.
     slow() {

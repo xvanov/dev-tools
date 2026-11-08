@@ -1327,7 +1327,7 @@ same through termhub's `/pa/` proxy from a phone.
   laptop, about 10% of one core, and only while asleep. With the wake word off the page is
   hands-free as before (every utterance is a request), or push-to-talk.
 - **End of turn.** Silero VAD (0.9 ms per 32 ms frame in the page) says where speech is. At the first
-  200 ms pause the page asks smart-turn (`POST /api/talk/endpoint`, the last 8 s of the utterance)
+  200 ms pause (96 ms when every frame of it is confidently silent, Silero under 0.1) the page asks smart-turn (`POST /api/talk/endpoint`, the last 8 s of the utterance)
   whether you sound finished; yes ends the turn there, ~450 ms after you stopped; no keeps waiting up
   to **Pause before sending** (650 ms default, 400–1500 in **settings**). Untick **Smart end of
   turn** to use the timer alone. Without the models (not installed) the energy VAD does the job, as
@@ -1397,7 +1397,7 @@ same through termhub's `/pa/` proxy from a phone.
   Each sentence is fetched from `POST /api/talk/tts` as it is complete and played through Web Audio
   as the audio streams in, and the next sentence is synthesised while this one plays, so sentences
   follow each other without a gap. First audio 200–400 ms after a sentence is handed over, so the
-  fast lane's first piece may end at a clause ("There is one overdue item," then the rest). When the
+  fast lane's first piece may end at a clause (a comma, semicolon, colon or dash after four words and 18 characters: "There is one overdue item," then the rest). When the
   service is not running (or fails mid-answer) the page speaks with the browser's best natural
   voice instead (**Speech engine** in **settings**: automatic, Kokoro, or the browser). Code blocks,
   tables and URLs are not read out: it says "the link" or "I put the details on the dashboard"
@@ -1518,6 +1518,7 @@ The contract (the voice page depends on it):
 | `POST /api/talk/tts` | `{ "text", "voice"? , "speed"? }`, header `X-PA: 1` | Kokoro speech, streamed: raw 16-bit little-endian PCM, 24 kHz mono (`audio/L16`), `X-First-Ms`. 503 when the voice service is down |
 | `POST /api/talk/endpoint` | 16 kHz mono 16-bit PCM (`audio/L16`) or a WAV, header `X-PA: 1` | smart-turn: `{ complete, probability, ms }` |
 | `POST /api/talk/warm` | header `X-PA: 1` | 202 at once; clocks the GPU voice up and loads an idle transcriber |
+| `POST /api/talk/latency` | `{ total, silence, transcribe, … }` (ms), header `X-PA: 1` | 202; logs one `voice turn latency` line per spoken turn: end of speech to first audio and its slices, no words |
 | `GET /talk/models/<name>` | — | The page's models (Silero, openWakeWord, onnxruntime-web) from `PA_VOICE_MODELS`, by fixed name only |
 
 An event is `{ "id", "type", "text", "at" (ISO), "source"? }`:

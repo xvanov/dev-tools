@@ -104,7 +104,24 @@
   // whole sentence. A neural voice synthesises a piece before any of it is
   // heard, so a long first sentence ("There is one overdue item, due on the
   // 29th, asked by …") is heard sooner as clause + rest.
-  const CLAUSE_RE = /^((?:\S+\s+){3,}?\S*[^\s\d][,;:])\s+\S/;
+  //
+  // firstClauseOf (pure): a clause ends at , ; : or a spaced dash (em, en or
+  // --), has at least `minWords` words and `minChars` characters (shorter
+  // sounds choppy), has more text after it (a boundary still being typed is
+  // not one), and does not end in a digit (1,200 and 10:30 are not clauses).
+  // The dash is not part of the clause.
+  function firstClauseOf(text, { minWords = 4, minChars = 18 } = {}) {
+    const s = String(text || '');
+    const re = /([,;:])\s+(?=\S)|\s+(?:[—–]|--)\s+(?=\S)/g;
+    let m;
+    while ((m = re.exec(s))) {
+      const clause = s.slice(0, m.index + (m[1] ? 1 : 0));
+      if (/\d[,;:]$/.test(clause)) continue;
+      if (clause.trim().split(/\s+/).length < minWords || clause.length < minChars) continue;
+      return clause;
+    }
+    return null;
+  }
 
   function createUtteranceStream(opts) {
     const o = Object.assign({ firstClause: false }, opts || {});
@@ -121,7 +138,7 @@
     // The first sentence minus the clause already spoken.
     function trimClause(list) {
       if (!clause || emitted > 0 || !list.length || !list[0].startsWith(clause)) return list;
-      const rest = list[0].slice(clause.length).trim();
+      const rest = list[0].slice(clause.length).replace(/^\s*(?:[—–]|--)?\s*/, '');
       return rest ? [rest, ...list.slice(1)] : list.slice(1);
     }
 
@@ -134,9 +151,9 @@
         const sp = speakable(full).text;
         const { sentences } = splitSentences(sp + (/\s$/.test(full) ? ' ' : ''));
         if (!sentences.length && o.firstClause && !clause) {
-          const m = CLAUSE_RE.exec(sp);
-          if (m) {
-            clause = m[1];
+          const c = firstClauseOf(sp);
+          if (c) {
+            clause = c;
             return [clause];
           }
           return [];
@@ -679,7 +696,8 @@
   // finance team" has a pause in the middle, and a 650 ms wait cuts it there,
   // while waiting longer makes every answer slow. So each frame comes with a
   // speech probability (Silero VAD; the energy VAD's verdict where Silero is
-  // not loaded), and once the speaker has been quiet for `checkMs` (200) the
+  // not loaded), and once the speaker has been quiet for `checkMs` (200; only
+  // `sureCheckMs`, 96, when the VAD is certain it is not speech) the
   // caller asks smart-turn ("does this sound finished?") about the audio so
   // far. Finished: the turn ends there, ~450 ms sooner than the timer.
   // Not finished, or no answer: it ends at `endMs` of silence as before (the
@@ -697,6 +715,14 @@
     startMs: 150,
     bargeInMs: 350,
     checkMs: 200,
+    // The VAD shortcut: when every frame since the last voiced one is
+    // confidently not speech (under `sureOffProb`), it has already decided the
+    // speaker stopped, and the fixed `checkMs` wait adds nothing: ask
+    // smart-turn after `sureCheckMs` (three frames) instead. Hesitant frames
+    // (a breath, a fading syllable) keep the full wait; smart-turn still has
+    // the last word either way.
+    sureOffProb: 0.1,
+    sureCheckMs: 96,
     endMs: 650,
     minUtteranceMs: 350,
     maxUtteranceMs: 30000,
@@ -712,6 +738,7 @@
     let startedAt = 0;
     let token = 0; // the check in flight, if any
     let checked = false; // this pause has been asked about
+    let quietMax = 0; // loudest frame since the last voiced one
 
     return {
       get state() {
@@ -761,6 +788,7 @@
         // speech
         if (prob >= o.offProb) {
           lastVoice = now;
+          quietMax = 0;
           if (checked || token) {
             // Talking again: whatever the check says is about a pause that ended.
             checked = false;
@@ -778,7 +806,9 @@
           token = 0;
           return lastVoice - startedAt >= o.minUtteranceMs ? 'end' : 'cancel';
         }
-        if (!checked && quiet >= o.checkMs && lastVoice - startedAt >= o.minUtteranceMs) {
+        if (prob < o.offProb && prob > quietMax) quietMax = prob;
+        const wait = quietMax < o.sureOffProb ? Math.min(o.checkMs, o.sureCheckMs) : o.checkMs;
+        if (!checked && quiet >= wait && lastVoice - startedAt >= o.minUtteranceMs) {
           checked = true;
           token = now;
           return 'check';
@@ -797,6 +827,7 @@
         state = 'silence';
         token = 0;
         checked = false;
+        quietMax = 0;
       },
     };
   }
@@ -1044,6 +1075,7 @@
     DETAILS,
     speakable,
     splitSentences,
+  firstClauseOf,
     createUtteranceStream,
     VAD_DEFAULTS,
     END_MS_MIN,
