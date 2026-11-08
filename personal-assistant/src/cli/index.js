@@ -116,6 +116,7 @@ const HELP = `pa — your context layer
     pa spend [--days N]             model spend per day and per pass (default 7 days)
     pa eval seed|list|add|drop|run  retrieval eval harness (pa eval for details)
     pa eval router [--fit]          voice fast lane router: accuracy and latency on its eval set
+    pa e2e [--dry-run|--sweep]      the golden path end to end on the live stack, timed per hop (pa help e2e)
 `;
 
 function out(text) {
@@ -1759,13 +1760,14 @@ Object.assign(commands, require('./secret').make(out, fail));
 Object.assign(commands, require('./meeting').make(out, fail));
 Object.assign(commands, require('./routine').make(out, fail));
 Object.assign(commands, require('./task').make(out, fail));
+Object.assign(commands, require('./e2e').make(out, fail));
 
 async function main(argv) {
   const { command, args, flags, lists } = parseArgs(argv);
   const name = command || 'help';
 
   if (flags.help || name === 'help' || name === '--help') {
-    const topics = { memory: './memory', secret: './secret', routine: './routine', routines: './routine', task: './task', policy: './task' };
+    const topics = { memory: './memory', secret: './secret', routine: './routine', routines: './routine', task: './task', policy: './task', e2e: './e2e' };
     out(topics[args[0]] ? require(topics[args[0]]).HELP : HELP);
     return;
   }

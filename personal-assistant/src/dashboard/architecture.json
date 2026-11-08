@@ -855,6 +855,34 @@
       ]
     },
     {
+      "id": "e2e",
+      "layer": "dashboard",
+      "name": "Golden-path check (pa e2e)",
+      "role": "Plan E4: one command runs the golden path headless against the live stack (a dummy card to a draft PR on xvanov/dev-tools), times each hop, checks that every view links the same card, run, job, steps, sessions and PR, and cleans up.",
+      "stacks": {
+        "work": "landing",
+        "personal": "landing"
+      },
+      "where": {
+        "work": "`pa e2e` in-process on the machine it runs on; `--on <machine>` runs it on another PA_MACHINES machine through its termhub (exec for --dry-run/--sweep, a session for a real run)",
+        "personal": "the same command, run on the personal machine"
+      },
+      "details": {
+        "Path": "card by commitments/request.js (as typed on the board), then the chat's factory_start tool (factory_continue with --branch), runtime claude_session by default or --runtime api --model m; delivery draft_pr",
+        "Hops": "card -> job started -> first session output -> PR opened -> CI done (+ step killed, job resumed with --resume), timed off `factory job status` polls (--poll, 10 s), woken early by run/factory events on the dashboard's GET /api/events (0.4); each hop has a timeout (--timeout hop=seconds)",
+        "Checks": "Plan GET /api/state and /api/commitments/:id (card.chain), Build GET /api/factory (paRun, stories, runs), Run termhub GET /api/sessions (links, alive or scrollback), MCP card and factory_job tools, GitHub `gh pr view` (head = story branch, draft) as the repo owner via GH_TOKEN from `gh auth token --user`; E2: an API step has a session whose scrollback shows a model turn",
+        "Cleanup": "unless --keep: PR closed with --delete-branch, job cancelled if live, card dropped through the ledger, step sessions killed; `pa e2e --sweep` finds leftovers by the e2e-<uuid> marker on the card and the stored run, run_step and run_pr links",
+        "Dry run": "`pa e2e --dry-run`: database, factory configured and on this machine (D13), factory app for the repo, dashboard /healthz, /api/state, /api/factory, termhub /api/sessions, the chat tools, gh write access; creates nothing",
+        "Output": "hop/timing table and a JSON report (--json alone; --report file); exit 1 on any missed hop or failed link"
+      },
+      "code": [
+        "personal-assistant/src/e2e/goldenPath.js",
+        "personal-assistant/src/e2e/goldenPathCore.js",
+        "personal-assistant/src/cli/e2e.js",
+        "personal-assistant/test/e2e.test.js"
+      ]
+    },
+    {
       "id": "postgres",
       "layer": "dashboard",
       "name": "Postgres store",
