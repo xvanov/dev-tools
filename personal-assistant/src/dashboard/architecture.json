@@ -1034,13 +1034,25 @@
         "Checks": "Plan GET /api/state and /api/commitments/:id (card.chain), Build GET /api/factory (paRun, stories, runs), Run termhub GET /api/sessions (links, alive or scrollback), MCP card and factory_job tools, GitHub `gh pr view` (head = story branch, draft) as the repo owner via GH_TOKEN from `gh auth token --user`; E2: an API step has a session whose scrollback shows a model turn",
         "Cleanup": "unless --keep: PR closed with --delete-branch, job cancelled if live, card dropped through the ledger, step sessions killed; `pa e2e --sweep` finds leftovers by the e2e-<uuid> marker on the card and the stored run, run_step and run_pr links",
         "Dry run": "`pa e2e --dry-run`: database, factory configured and on this machine (D13), factory app for the repo, dashboard /healthz, /api/state, /api/factory, termhub /api/sessions, the chat tools, gh write access; creates nothing",
-        "Output": "hop/timing table and a JSON report (--json alone; --report file); exit 1 on any missed hop or failed link"
+        "Output": "hop/timing table and a JSON report (--json alone; --report file); exit 1 on any missed hop or failed link",
+        "Workflows (8.2)": "`pa e2e <workflow> [--dry-run]` for each example below with an acceptance block (`pa e2e all --dry-run` for every dry run): whats-on (TTS'd question -> /api/talk/transcribe -> /api/talk/turn -> /api/talk/tts, end of speech to first audio), research (a research card -> factory_start kind research -> report.md, no PR), deepseek-pr (the golden path on the API runtime, Azure azure/deepseek-v4-pro by default, delivery pr). review-fix and teams-ask have dry runs only: a real run needs one of your own PRs (--pr) or a test chat with only you in it, never a colleague",
+        "Evidence": "<PA data dir>/e2e/<stamp>-<workflow>[-dry]/: summary.json (hops scored against the 8.1 acceptance block, cost against GET /api/workflow-limits' effective ceiling, links, checks, the rubric left for the 8.3 reviewer), transcripts/ (session scrollback, the fast-lane turn), report.md, screenshots/ of each view by a headless Chromium's --screenshot (PA_E2E_BROWSER, else Playwright's installed Chromium, Edge or Chrome; skipped with a note when none)"
       },
+      "env": [
+        {
+          "name": "PA_E2E_BROWSER",
+          "default": ""
+        }
+      ],
       "code": [
         "personal-assistant/src/e2e/goldenPath.js",
         "personal-assistant/src/e2e/goldenPathCore.js",
+        "personal-assistant/src/e2e/workflows.js",
+        "personal-assistant/src/e2e/workflowsCore.js",
+        "personal-assistant/src/e2e/screens.js",
         "personal-assistant/src/cli/e2e.js",
-        "personal-assistant/test/e2e.test.js"
+        "personal-assistant/test/e2e.test.js",
+        "personal-assistant/test/e2eWorkflows.test.js"
       ]
     },
     {

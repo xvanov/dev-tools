@@ -221,6 +221,7 @@ async function golden(o, deps) {
   let ids = null;
   let cardId = null;
   let start = null;
+  let startCall = null;
   let lastJob = null;
   // The live feed (0.4) wakes the poll early when a run or the factory board
   // changes; the factory's own status stays the clock for every hop.
@@ -244,10 +245,12 @@ async function golden(o, deps) {
     deps.log(`card #${cardId} (${marker})`);
 
     // 2. Build: the chat's own tool, as Jarvis calls it.
-    const args = { card: cardId, ask: card.ask, title: card.title, runtime: o.runtime, delivery: 'draft_pr', repo: o.repo };
+    const args = { card: cardId, ask: card.ask, title: card.title, runtime: o.runtime, delivery: o.delivery || 'draft_pr', repo: o.repo };
     if (o.model) args.model = o.model;
     if (o.branch) args.branch = o.branch;
+    const called = deps.now();
     start = await deps.chat(o.branch ? 'factory_continue' : 'factory_start', args);
+    startCall = { at: called, ms: deps.now() - called };
     if (start?.started !== true || !start.job) throw new Error(`factory_start did not start a job: ${JSON.stringify(start).slice(0, 300)}`);
     deps.log(`run ${start.run} job ${start.job}`);
 
@@ -316,6 +319,12 @@ async function golden(o, deps) {
     errors.push(err.message || String(err));
   } finally {
     if (unsubscribe) unsubscribe();
+    // `pa e2e <workflow>` (8.2) collects its evidence here, while the PR,
+    // sessions and job still exist.
+    if (o.collect) {
+      const got = await safely(() => o.collect({ ids, lastJob, start, startCall, cardId, timeline, t0 }));
+      if (!got.ok) errors.push(`collecting evidence: ${got.error}`);
+    }
     if (o.keep) {
       cleanup.push(`kept (--keep): card #${cardId ?? '-'}, job ${start?.job ?? '-'}, PR ${ids?.prs?.map((p) => `#${p.number}`).join(' ') || '-'}; \`pa e2e --sweep\` removes them`);
     } else {
@@ -345,7 +354,7 @@ async function viewChecksFor(o, deps, ids) {
     const r = await deps.gh(['pr', 'view', String(p.number), '--repo', o.repo, '--json', 'number,headRefName,isDraft,state'], owner(o.repo));
     let pr = null;
     try { pr = r.code === 0 ? JSON.parse(r.stdout) : { error: r.stderr.trim().slice(0, 200) }; } catch { pr = { error: 'gh answered with something that is not JSON' }; }
-    out.push(...C.checkGithub(pr, p));
+    out.push(...C.checkGithub(pr, p, { draft: (o.delivery || 'draft_pr') === 'draft_pr' }));
   }
   if (!ids.prs.length) out.push({ view: 'github', check: 'a PR to check', ok: false, detail: 'the job opened no PR' });
   out.push(...C.checkWatchable(ids, { runtime: o.runtime, scrollback: sb }));
@@ -476,4 +485,4 @@ function writeReport(file, report) {
   fs.writeFileSync(file, JSON.stringify(report, null, 2) + os.EOL);
 }
 
-module.exports = { main, dryRun, golden, sweep, remote, clean, viewChecksFor, writeReport, defaultDeps };
+module.exports = { main, dryRun, golden, sweep, remote, clean, viewChecksFor, writeReport, defaultDeps, safely, scrollbacks, sessionLists, owner };

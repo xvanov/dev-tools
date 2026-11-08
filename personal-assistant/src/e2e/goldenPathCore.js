@@ -389,11 +389,14 @@ function checkMcpJob(job, ids) {
 }
 
 /** Pure. GitHub: `gh pr view --json number,headRefName,isDraft,state` — the story's branch, a draft, still open. */
-function checkGithub(pr, want) {
+function checkGithub(pr, want, { draft = true } = {}) {
   if (!pr || pr.error) return [result('github', `PR #${want.number}`, false, pr?.error || 'not found')];
   const out = [result('github', `PR #${want.number} exists`, Number(pr.number) === want.number)];
   if (want.branch) out.push(result('github', `PR #${want.number} head = story branch`, pr.headRefName === want.branch, `head ${pr.headRefName}, story ${want.branch}`));
-  out.push(result('github', `PR #${want.number} is a draft`, pr.isDraft === true));
+  out.push(draft
+    ? result('github', `PR #${want.number} is a draft`, pr.isDraft === true)
+    : result('github', `PR #${want.number} is ready for review`, pr.isDraft === false));
+  out.push(result('github', `PR #${want.number} not merged`, pr.state !== 'MERGED', `state ${pr.state}`));
   return out;
 }
 
