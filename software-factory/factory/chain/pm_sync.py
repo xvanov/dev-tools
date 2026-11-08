@@ -437,6 +437,12 @@ def _call_pm_persona(
             model_id=model_id,
             schema=_PM_SCHEMA,
             max_tokens=2048,
+            # The job's first step (plan E5.2/E5.4): its runs row and watchable
+            # session are linked to the job, and the row opens when the call
+            # starts, so the job reads as started the moment triage begins.
+            app=direction.app,
+            direction_id=direction.id,
+            software_factory_root=software_factory_root,
         )
         if not isinstance(result, dict):
             # text_run only returns str when schema is None; treat anything
