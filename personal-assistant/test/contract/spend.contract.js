@@ -65,6 +65,20 @@ module.exports = {
     assert.deepStrictEqual(await days('UTC'), [[d, 3]]);
   },
 
+  'dailyByPurpose: the day is the zone\'s, to the millisecond (a +05:30 zone)': async ({ repos, seed, db, assert, uniq }) => {
+    const p = uniq('zone530');
+    for (const o of [{ costUsd: 1 }, { costUsd: 2, ok: false }, { costUsd: null }, { costUsd: 4 }]) await repos.spend.record(call(p, o));
+    const ids = (await db.rows('select id from llm_spend where purpose = $1 order by id', [p])).map((r) => r.id);
+    const d = new Date(Date.now() - 86400_000).toISOString().slice(0, 10);
+    // Kolkata's midnight is 18:30 UTC the day before.
+    const at = [`${d}T18:15:00.000Z`, `${d}T18:29:59.999Z`, `${d}T18:30:00.000Z`, `${d}T18:44:59.000Z`];
+    for (let i = 0; i < ids.length; i++) await seed.backdate('llm_spend', 'at', ids[i], new Date(at[i]));
+    const next = new Date(Date.parse(`${d}T12:00:00Z`) + 86400_000).toISOString().slice(0, 10);
+    const rows = (await repos.spend.dailyByPurpose(new Date(Date.now() - 3 * 86400_000), 'Asia/Kolkata')).filter((r) => r.purpose === p);
+    const by = Object.fromEntries(rows.map((r) => [r.day, [r.usd, r.calls, r.failed, r.unknown]]));
+    assert.deepStrictEqual(by, { [d]: [3, 2, 1, 0], [next]: [4, 2, 0, 1] });
+  },
+
   'claudePoolSince: only the cli and claude_session backends, at or after the start': async ({ repos, assert, uniq }) => {
     const start = new Date(Date.now() - 1000);
     const before = await repos.spend.claudePoolSince(start);

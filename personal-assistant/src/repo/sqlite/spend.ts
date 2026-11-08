@@ -6,6 +6,14 @@
 
 type Db = import('../types.ts').Db;
 
+// The UTC quarter hour an `at` falls in: 'YYYY-MM-DDTHH:' and 0-3 (QUARTER),
+// then as an instant (QUARTER_AT). Every zone's offset is a whole number of
+// quarter hours, so a quarter hour never straddles a local midnight:
+// pa_local_day (a JS call) runs once per quarter hour that had calls, not once
+// per row (60k rows a week on the work stack).
+const QUARTER = 'substr(at, 1, 14) || (cast(substr(at, 15, 2) as integer) / 15)';
+const QUARTER_AT = "substr(q, 1, 14) || printf('%02d', cast(substr(q, 15) as integer) * 15) || ':00Z'";
+
 function create(db: Db) {
   return {
     /** Records one model call (values as given; null where unknown). */
@@ -36,11 +44,14 @@ function create(db: Db) {
     /** Spend at or after `since` per local day (IANA zone `timeZone`) and purpose. */
     async dailyByPurpose(since: Date | string | number, timeZone: string) {
       return db.rows(
-        `select pa_local_day(at, $2) as day, purpose,
-            total(cost_usd) as usd, count(*) as calls,
-            count(*) filter (where not ok) as failed,
-            count(*) filter (where cost_usd is null) as unknown
-       from llm_spend where at >= $1
+        `select pa_local_day(${QUARTER_AT}, $2) as day, purpose,
+            total(usd) as usd, total(calls) as calls, total(failed) as failed, total(unknown) as unknown
+       from (select ${QUARTER} as q, purpose,
+                    total(cost_usd) as usd, count(*) as calls,
+                    count(*) filter (where not ok) as failed,
+                    count(*) filter (where cost_usd is null) as unknown
+               from llm_spend where at >= $1
+              group by 1, 2)
       group by 1, 2`,
         [since, timeZone]
       );
@@ -49,9 +60,10 @@ function create(db: Db) {
     /** Spend at or after `since` per local day, model and purpose. */
     async dailyBreakdown(since: Date | string | number, timeZone: string) {
       return db.rows(
-        `select pa_local_day(at, $2) as day, model, purpose,
-            total(cost_usd) as usd, count(*) as calls
-       from llm_spend where at >= $1
+        `select pa_local_day(${QUARTER_AT}, $2) as day, model, purpose, total(usd) as usd, total(calls) as calls
+       from (select ${QUARTER} as q, model, purpose, total(cost_usd) as usd, count(*) as calls
+               from llm_spend where at >= $1
+              group by 1, 2, 3)
       group by 1, 2, 3`,
         [since, timeZone]
       );
