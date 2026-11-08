@@ -917,8 +917,10 @@ async function cancelJob(jobId) {
  * snapshot, never an id from the request. `approve-direction` prints text,
  * not JSON: exit 0 is the answer.
  */
-async function approve(jobId) {
+async function approve(jobId, { channel = 'cli' } = {}) {
   if (!F.JOB_ID.test(String(jobId || ''))) throw Object.assign(new Error(`not a factory job id: "${jobId}"`), { status: 400 });
+  // Policy (plan 4.3): audited, and refused for a channel the policy bars (voice never approves a merge).
+  await require('../policy').enforce({ tool: 'factory_approve', action: 'approve', channel, subject: jobId, args: { job: jobId } });
   const job = await snapshotJob(jobId);
   const argv = job ? F.approveArgv(job) : null;
   if (!argv) throw Object.assign(new Error(`job ${jobId} is not waiting on an approval the factory named`), { status: 409 });

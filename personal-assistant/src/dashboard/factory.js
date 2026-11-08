@@ -211,7 +211,7 @@ async function route(req, res, url, { send, readJson, issuePageToken, pageTokenO
     return true;
   }
   if (a.verb === 'cancel') send(res, 200, await factory.cancelJob(a.jobId));
-  else if (a.verb === 'approve') send(res, 200, await factory.approve(a.jobId));
+  else if (a.verb === 'approve') send(res, 200, await factory.approve(a.jobId, { channel: 'dashboard' }));
   else send(res, 200, await factory.openFollow(a.jobId, `factory · ${a.jobId} (follow)`, { job: a.jobId }));
   return true;
 }

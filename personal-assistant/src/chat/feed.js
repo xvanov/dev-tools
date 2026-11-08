@@ -144,6 +144,15 @@ function createFeed({
     const pending = waitingOn && lastTool?.toolUseId ? { toolUseId: lastTool.toolUseId, name: lastTool.name } : null;
     const d = require('./permission').decide({ answer, toolUseId, pending, session, screen });
     if (!d.ok) throw httpError(409, d.reason);
+    // Policy (plan 4.3): the approval is audited with where it came from, and a
+    // channel the policy bars from it (voice and a merge, a push to main, a
+    // secret reveal) is refused before any key is pressed.
+    try {
+      await require('../policy').enforce({ tool: d.tool, action: answer === 'yes' ? 'approve' : 'deny', channel: via, subject: toolUseId });
+    } catch (err) {
+      if (err.code === 'POLICY_DENIED') throw httpError(403, err.message);
+      throw err;
+    }
     for (const key of d.keys) await h.say(session.id, key, { submit: key === '' });
     log.info('answered the chat permission prompt from the page', { tool: d.tool, answer, via });
     publish({ id: `perm-answered-${Date.now()}`, type: 'permission', cleared: true, answered: answer, at: new Date().toISOString() });

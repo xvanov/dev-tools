@@ -480,6 +480,33 @@
       ]
     },
     {
+      "id": "policy",
+      "layer": "talk",
+      "name": "Policy engine and audit log",
+      "role": "Plan 4.3: one function answers allow, deny or ask for every tool call, chat approval and factory approval, from a declarative policy file, and writes each answer to a hash-chained audit log.",
+      "stacks": {
+        "work": "landing",
+        "personal": "landing"
+      },
+      "where": {
+        "work": "In-process wherever the call is made: the MCP server (every tool), the dashboard (chat permission answers, factory approve), the CLI; the log is the audit_log table",
+        "personal": "The same code and table, on the personal stack"
+      },
+      "details": {
+        "Policy": "src/policy/default.policy.json (tracked) plus an untracked per-stack override (PA_POLICY_FILE, default <data dir>/policy.json): override rules first, then the defaults, first match wins, else `default` (ask). The defaults are the old allow/ask split with no behaviour change: the chat's read tools and the shared MCP surface allow, its six action tools ask (Claude Code still owns that prompt), answering the prompt is allowed from the dashboard, termhub, voice and the CLI",
+        "Voice": "a locked rule (nothing in an override loosens it) denies the voice channel any call or approval tagged merge, push_main or secret_reveal; tags come from the tool name and its delivery level or pa verb. Passkey taps for these arrive with 7.1",
+        "Audit": "every decision is a row of audit_log with the hash of the row before it (prev_hash) and its own hash; arguments are stored only as a digest. `pa audit verify` recomputes the chain and names the first edited or removed row and prints the head hash; `pa audit tail` lists rows; `pa audit check <tool>` shows what the policy would say. An unreachable database is logged, not an error: a deny is still a deny",
+        "Not yet": "the policy runs where calls are made, not yet in a single jarvisd process (4.1); the approval a factory job's delivery implies is not looked up, only what the request names"
+      },
+      "code": [
+        "personal-assistant/src/policy/index.js",
+        "personal-assistant/src/policy/default.policy.json",
+        "personal-assistant/src/repo/audit.js",
+        "personal-assistant/src/cli/audit.js",
+        "personal-assistant/test/policy.test.js"
+      ]
+    },
+    {
       "id": "supervisor",
       "layer": "dashboard",
       "name": "Supervisor (zero-downtime)",
@@ -935,6 +962,7 @@
         "distillation",
         "draft",
         "eval_case",
+        "audit_log",
         "event_outbox",
         "eval_run",
         "fact",

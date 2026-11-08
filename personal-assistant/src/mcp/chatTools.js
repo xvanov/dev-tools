@@ -742,7 +742,7 @@ async function handle(name, args = {}) {
       return { job: r.jobId, state: r.state || 'cancel sent', ...(r.run ? { run_dropped: r.run } : {}), ...(r.storiesParked != null ? { stories_parked: r.storiesParked } : {}) };
     }
     case 'factory_approve': {
-      const r = await factory().approve(checkJob(args.job));
+      const r = await factory().approve(checkJob(args.job), { channel: 'chat' });
       return { job: r.jobId, approved: true, output: r.output || null };
     }
     case 'session_start': return sessionStartTool(args);

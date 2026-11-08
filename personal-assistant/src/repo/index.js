@@ -27,6 +27,7 @@
 
 const AGGREGATES = {
   audio: () => require('./audio'),
+  audit: () => require('./audit'),
   commitments: () => require('./commitments'),
   drafts: () => require('./drafts'),
   durable: () => require('./durable'),

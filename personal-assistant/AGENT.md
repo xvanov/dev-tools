@@ -182,6 +182,19 @@ blocked`, and the screen read at that moment is Claude Code's "Do you want to pr
 with no input box after it. Approve is one Enter with the cursor on "Yes" — never "Yes, and don't ask
 again", which would make every later call of the tool unasked; Deny is Esc. Anything else is a 409.
 
+**Every tool call goes through one policy function** (`src/policy`, plan 4.3): `evaluate` answers
+allow | deny | ask from `src/policy/default.policy.json` plus an untracked per-stack override
+(`PA_POLICY_FILE`, default `<data dir>/policy.json`; its rules are tried first, its `locked` ignored).
+The defaults are the allow/ask split above, unchanged (`test/policy.test.js` pins them to
+`CHAT_READ_TOOLS` / `CHAT_ACTION_TOOLS`): `ask` means the host owns the prompt (Claude Code), the MCP
+server still runs the call. It is applied in the MCP server's `handle` (every tool), in `answerPermission`
+(a chat approval, with the channel it came from: dashboard or voice) and in `factory.approve`. A locked
+rule denies the voice channel anything tagged `merge`, `push_main` or `secret_reveal` and no override
+can loosen it; do not add a path that approves those from voice (passkeys, 7.1, are the later way).
+Each decision is a row of `audit_log` (`src/repo/audit.js`), hash-chained; arguments are stored as a
+digest only. `pa audit verify` recomputes the chain, `pa audit tail` lists it, `pa audit check <tool>`
+dry-runs the policy. Adding a tool: add it to the default policy (an unlisted tool asks).
+
 **Talk is audio in, audio out, and a spoken yes counts only while awake.** No buttons on `/talk`: the
 click path is the dashboard. Jarvis speaks the question the server wrote from the call's structured
 input (`transcript.askTool`: "Start a factory job for card 412 on your subscription, opening a PR for

@@ -334,7 +334,18 @@ function day(value) {
   return value ? new Date(value).toISOString().slice(0, 10) : '?';
 }
 
+/**
+ * Every tool call goes through the policy engine first (src/policy, plan 4.3):
+ * deny refuses; allow and ask both run — `ask` is the chat's action tools,
+ * which Claude Code prompts for before the call ever reaches this server — and
+ * the decision is audited either way.
+ */
 async function handle(name, args = {}) {
+  await require('../policy').enforce({ tool: name, action: 'call', channel: chatToolsOn() ? 'chat' : 'mcp', args });
+  return dispatchTool(name, args);
+}
+
+async function dispatchTool(name, args = {}) {
   switch (name) {
     case 'recall': {
       const r = await require('../recall').recall(args.question, {
