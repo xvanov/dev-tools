@@ -137,13 +137,13 @@ async function main() {
     process.on('message', (m) => {
       if (m && m.type === 'drain') {
         log.info('draining: routing moved to the next generation — handing the passes over');
-        require('./dashboard/server').markDraining();
+        require('./dashboard/server.ts').markDraining();
         if (ownership) ownership.handOver().catch((err) => log.warn('hand-over failed', { message: err.message }));
         // The SDK chat (PA_CHAT_ENGINE=sdk) lives here: close it so the next generation resumes it.
         require('./chat/feed').drainChat().catch((err) => log.warn('chat drain failed', { message: err.message }));
       } else if (m && m.type === 'undrain') {
         log.info('undrained: routing moved back here (rollback) — taking the passes back');
-        require('./dashboard/server').markDraining(false);
+        require('./dashboard/server.ts').markDraining(false);
         require('./chat/feed').undrainChat();
         if (ownership) ownership.takeOver().catch((err) => log.warn('take-over failed', { message: err.message }));
       } else if (m && m.type === 'stop') shutdown('supervisor stop');
@@ -190,7 +190,7 @@ async function main() {
   // holds the lease and runs the passes. The passes are declared below and
   // start only once the previous generation has released the lease on
   // `drain` (src/util/lease.js) — so a roll never runs two of a pass.
-  const dashboard = require('./dashboard/server');
+  const dashboard = require('./dashboard/server.ts');
   if (supervised) {
     const server = await dashboard.start({ port: 0 });
     process.send({ type: 'listening', port: server.address().port });

@@ -3,7 +3,7 @@
 // The dashboard can start agents, so its guards are tested, not assumed.
 
 const assert = require('assert');
-const { hostAllowed } = require('../src/dashboard/server');
+const { hostAllowed } = require('../src/dashboard/server.ts');
 
 assert.ok(hostAllowed('127.0.0.1:7300'));
 assert.ok(hostAllowed('localhost:7300'));
@@ -48,7 +48,7 @@ assert.ok(!hostAllowed(undefined));
     assert.match(html, /data-jside/, `${page} has a panel for nav.js's navigation`);
     assert.ok(!/#[0-9a-fA-F]{6}\b/.test(html.slice(0, html.indexOf('</style>'))), `${page}: colours come from theme.css, not the page`);
   }
-  const { handle } = require('../src/dashboard/server');
+  const { handle } = require('../src/dashboard/server.ts');
   for (const [p, type] of [['/theme.css', /text\/css/], ['/nav.js', /javascript/]]) {
     const res = { writeHead(s, h) { this.status = s; this.headers = h; }, end(b) { this.body = b; } };
     await handle({ method: 'GET', url: p, headers: { host: '127.0.0.1:7300' } }, res);

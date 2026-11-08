@@ -576,7 +576,7 @@ const C = require('../src/dashboard/talk.core');
 (async () => {
   const { config } = require('../src/config');
   const talk = require('../src/dashboard/talk.ts');
-  const { handle } = require('../src/dashboard/server');
+  const { handle } = require('../src/dashboard/server.ts');
 
   let seenPath = null;
   let seenBytes = 0;

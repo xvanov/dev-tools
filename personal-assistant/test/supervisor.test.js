@@ -321,7 +321,7 @@ async function main() {
 
   // ---- the real dashboard's /healthz: ready only once marked ----
   {
-    const dash = require('../src/dashboard/server');
+    const dash = require('../src/dashboard/server.ts');
     const server = await dash.start({ port: 0 });
     const p = server.address().port;
     const get = () =>

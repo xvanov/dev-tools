@@ -35,7 +35,7 @@ const { route } = require('../src/dashboard/routines.ts');
   assert.strictEqual(await route('PUT', u('/api/routines'), {}), undefined);
 
   // The guard, end to end on a throwaway port.
-  const server = await require('../src/dashboard/server').start({ port: 0 });
+  const server = await require('../src/dashboard/server.ts').start({ port: 0 });
   const { port } = server.address();
   try {
     const res = await fetch(`http://127.0.0.1:${port}/api/routines/1/run`, { method: 'POST', body: '{}' });

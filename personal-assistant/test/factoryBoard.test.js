@@ -398,7 +398,7 @@ const isV1 = (argv) => argv.includes('--kind') || argv.includes('--runtime');
     assert.deepStrictEqual(P.pickers().kinds.map((k) => k.value), ['code', 'research', 'report']);
 
     stub('budget', { async status() { return { today: 0.42, cap: 5 }; } });
-    const server = require('../src/dashboard/server');
+    const server = require('../src/dashboard/server.ts');
     const call = (method, url, { headers = {}, body = null } = {}) => new Promise((resolve, reject) => {
       const { Readable } = require('stream');
       const req = Readable.from(body ? [JSON.stringify(body)] : []);

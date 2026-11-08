@@ -205,7 +205,7 @@ function sse(port, pathAndQuery, headers = {}) {
   // ---- through the dashboard server ----------------------------------------------
   {
     events._setListen(() => {});
-    const dash = require('../src/dashboard/server');
+    const dash = require('../src/dashboard/server.ts');
     const server = await dash.start({ port: 0, host: '127.0.0.1' });
     const { port } = server.address();
     const js = await new Promise((resolve, reject) => {

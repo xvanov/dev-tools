@@ -86,7 +86,7 @@ function fakeRepo() {
   assert.strictEqual(repo.rows.size, 0);
 
   // the dashboard server routes it, and its guard holds before any store is touched
-  const { handle } = require('../src/dashboard/server');
+  const { handle } = require('../src/dashboard/server.ts');
   const res = { writeHead(s) { this.status = s; }, end(b) { this.body = b; } };
   await handle({ method: 'POST', url: '/api/workflow-limits', headers: { host: '127.0.0.1:7300' }, on() {} }, res);
   assert.strictEqual(res.status, 403, 'server.js: POST without X-PA is refused');

@@ -608,7 +608,7 @@ function splitAll(pieces) {
   // ---- POST /api/talk/turn ---------------------------------------------------------------
   {
     const { config } = require('../src/config');
-    const { handle } = require('../src/dashboard/server');
+    const { handle } = require('../src/dashboard/server.ts');
     // The text format; the local JSON path is covered above.
     config.fastLane.model = 'azure/pa';
     const b = base({ stream: script(['{"route":"answer","reason":"x"}\nHi', ' there.']) });

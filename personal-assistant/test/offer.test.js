@@ -197,7 +197,7 @@ const proposals = require('../src/proposals');
   // #1 + page token: the dashboard confirms only the level the page showed, with its token.
   {
     const { Readable } = require('stream');
-    const server = require('../src/dashboard/server');
+    const server = require('../src/dashboard/server.ts');
     const call = async (method, url, body = null, headers = {}) => {
       const req = Readable.from(body ? [Buffer.from(JSON.stringify(body))] : []);
       Object.assign(req, { method, url, headers: { host: '127.0.0.1:7300', 'content-type': 'application/json', ...headers } });

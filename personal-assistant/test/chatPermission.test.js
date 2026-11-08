@@ -274,7 +274,7 @@ assert.strictEqual(P.chatAction('mcp__pa-chat__remember'), null);
   fs.rmSync(root, { recursive: true, force: true });
 
   // The route: X-PA and this page's token, before anything else.
-  const dash = require('../src/dashboard/server');
+  const dash = require('../src/dashboard/server.ts');
   const server = await dash.start({ port: 0 });
   const { port } = server.address();
   try {

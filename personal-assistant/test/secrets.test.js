@@ -94,7 +94,7 @@ vault.setRunner((inv) => {
 
 const secrets = require('../src/secrets');
 const cfg = require('../src/config');
-const server = require('../src/dashboard/server');
+const server = require('../src/dashboard/server.ts');
 
 function request(port, { method = 'GET', path: p, host = `127.0.0.1:${port}`, headers = {}, body }) {
   return new Promise((resolve, reject) => {

@@ -20,6 +20,14 @@
 // Its credential panel ("Needs a credential or sign-in") answers secret requests (src/secrets). A pasted value
 // arrives in one POST, goes straight to the OS keyring (src/secrets/vault.js) or `.env`, and the
 // reply is `{ok, stored, name}`. No route here returns a value.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+type Row = import('../repo/types.ts').Row;
+type Req = import('http').IncomingMessage;
+type Res = import('http').ServerResponse;
+type Ctx = import('./types.ts').Ctx;
+type HttpError = import('./types.ts').HttpError;
 
 const fs = require('fs');
 const path = require('path');
@@ -31,19 +39,19 @@ const { logger } = require('../log');
 const log = logger('dashboard');
 const PAGE = path.join(__dirname, 'index.html');
 
-function hostAllowed(host) {
+function hostAllowed(host: unknown) {
   const name = String(host || '').replace(/:\d+$/, '').replace(/^\[|\]$/g, '');
   return name === '127.0.0.1' || name === 'localhost' || name === '::1';
 }
 
-async function commitmentContext(id) {
+async function commitmentContext(id: number | string) {
   const c = await repo.commitments.contextForDashboard(id);
   if (!c) return { error: `no commitment #${id}` };
   const thread = c.thread_external_id ? await repo.sources.threadItems(c.thread_external_id) : [];
   const termhub = require('../dispatch/termhub');
-  const runs = (await repo.runs.detailsForCommitment(id)).map((r) => ({
+  const runs = (await repo.runs.detailsForCommitment(id)).map((r: Row) => ({
     ...r,
-    url: r.termhub_session_id ? `${termhub.forMachine(r.machine).base}/#session=${encodeURIComponent(r.termhub_session_id)}` : null,
+    url: r.termhub_session_id ? `${termhub.forMachine(r.machine).base}/#session=${encodeURIComponent(r.termhub_session_id as string)}` : null,
   }));
   // Plan E1: each run's job, steps (with their sessions) and PRs, from stored ids.
   const chain = (await require('./cards.ts').chainsFor([id], { perCard: 10 }).catch(() => new Map())).get(String(id)) || [];
@@ -72,7 +80,7 @@ async function state() {
   // Today's model spend against the daily cap (src/budget.js); null until migrated.
   const spend = await require('../budget')
     .status()
-    .then((s) => ({ today: s.today, cap: s.cap }))
+    .then((s: Row) => ({ today: s.today, cap: s.cap }))
     .catch(() => null);
   const out = { ...data, drafts, sources, blind, closed, looksDone, needsYou, memoryPending: review, secretRequests, spend, notifications, now: new Date().toISOString() };
   // Every card's links (the message, the person, the repo, the PRs it names,
@@ -80,7 +88,7 @@ async function state() {
   // (dashboard/cards.js). A failure here costs the links, not the page.
   await require('./cards.ts')
     .enrich(out)
-    .catch((err) => log.warn('card links failed', { message: err.message }));
+    .catch((err: Error) => log.warn('card links failed', { message: err.message }));
   // Which of what people owe you blocks one of your tasks (commitments/blocks.js).
   out.blocks = await require('../commitments/blocks').forBoard().catch(() => []);
   // The Today board's columns, one card per commitment (dashboard/board.js).
@@ -93,7 +101,7 @@ async function state() {
   return out;
 }
 
-function send(res, status, body, type = 'application/json') {
+function send(res: Res, status: number, body: unknown, type: string = 'application/json') {
   res.writeHead(status, {
     'Content-Type': type,
     'Cache-Control': 'no-store',
@@ -103,13 +111,13 @@ function send(res, status, body, type = 'application/json') {
     // termhub's, so its Sessions page can host these too). Nothing else can.
     ...(/^text\/html/.test(type) ? { 'Content-Security-Policy': "frame-ancestors 'self'" } : {}),
   });
-  res.end(type === 'application/json' ? JSON.stringify(body) : body);
+  res.end(type === 'application/json' ? JSON.stringify(body) : (body as string | Buffer));
 }
 
-function readJson(req) {
-  return new Promise((resolve, reject) => {
+function readJson(req: Req) {
+  return new Promise<Row>((resolve, reject) => {
     let raw = '';
-    req.on('data', (d) => {
+    req.on('data', (d: Buffer) => {
       raw += d;
       if (raw.length > 64 * 1024) req.destroy();
     });
@@ -132,29 +140,29 @@ function readJson(req) {
 // too. Defence in depth, not a boundary: the boundary is a separate OS user.
 const PAGE_TOKEN_TTL_MS = 12 * 3600_000;
 const PAGE_TOKENS_MAX = 20;
-const pageTokens = new Map();
+const pageTokens = new Map<string, number>();
 
-function issuePageToken(now = Date.now()) {
+function issuePageToken(now: number = Date.now()) {
   for (const [t, at] of pageTokens) if (now - at > PAGE_TOKEN_TTL_MS) pageTokens.delete(t);
-  while (pageTokens.size >= PAGE_TOKENS_MAX) pageTokens.delete(pageTokens.keys().next().value);
+  while (pageTokens.size >= PAGE_TOKENS_MAX) pageTokens.delete(pageTokens.keys().next().value as string);
   const t = require('crypto').randomBytes(24).toString('base64url');
   pageTokens.set(t, now);
   return t;
 }
 
-function pageTokenOk(req, now = Date.now()) {
+function pageTokenOk(req: Req, now: number = Date.now()) {
   const t = String(req.headers['x-pa-page'] || '');
   const at = t ? pageTokens.get(t) : undefined;
   return at !== undefined && now - at <= PAGE_TOKEN_TTL_MS;
 }
 
-function pageHtml(token) {
+function pageHtml(token: string) {
   return fs.readFileSync(PAGE, 'utf8').replace('</head>', `<meta name="pa-page" content="${token}">\n</head>`);
 }
 
 // Server-Sent Events: one `data:` JSON chat event per message. A comment line
 // every 20 s keeps proxies (termhub's /pa/) and the browser from timing out.
-function chatStream(req, res) {
+function chatStream(req: Req, res: Res) {
   res.writeHead(200, {
     'Content-Type': 'text/event-stream; charset=utf-8',
     'Cache-Control': 'no-store',
@@ -162,7 +170,7 @@ function chatStream(req, res) {
     'X-Content-Type-Options': 'nosniff',
   });
   res.write('retry: 3000\n\n');
-  const unsubscribe = require('../chat/feed').feed().subscribe((e) => {
+  const unsubscribe = require('../chat/feed').feed().subscribe((e: Row) => {
     res.write(`id: ${e.id}\ndata: ${JSON.stringify(e)}\n\n`);
   });
   const ping = setInterval(() => res.write(': ping\n\n'), 20_000);
@@ -174,9 +182,9 @@ function chatStream(req, res) {
   res.on('error', done);
 }
 
-async function handle(req, res) {
+async function handle(req: Req, res: Res) {
   if (!hostAllowed(req.headers.host)) return send(res, 403, { error: 'host not allowed' });
-  const url = new URL(req.url, 'http://localhost');
+  const url = new URL(req.url as string, 'http://localhost');
 
   // ---- Passkey sessions (plan 7.1, dashboard/auth.js): inert unless PA_PASSKEYS=on.
   // The sign-in routes first, then the gate that demands a session of everything else. ----
@@ -191,7 +199,7 @@ async function handle(req, res) {
   }
   // The destinations' names (nav.js DESTS) as URLs. A relative Location, so it
   // lands right under termhub's /pa/ too.
-  const ALIAS = { '/ask': 'talk', '/plan': './', '/build': 'factory', '/map': 'architecture' };
+  const ALIAS: Record<string, string> = { '/ask': 'talk', '/plan': './', '/build': 'factory', '/map': 'architecture' };
   if (req.method === 'GET' && ALIAS[url.pathname]) {
     res.writeHead(302, { Location: ALIAS[url.pathname] + url.search, 'Cache-Control': 'no-store' });
     return res.end();
@@ -280,7 +288,7 @@ async function handle(req, res) {
       defaultRoute: require('../dispatch/factory').enabled() ? config.factory.via : 'claude',
       // The end states the operator may pick on Do (src/dispatch/deliveryCore.js);
       // none picked: the repo's default, else PA_DELIVERY_DEFAULT.
-      deliveries: require('../dispatch/deliveryCore').DELIVERIES.map((d) => ({ value: d, plain: require('../dispatch/deliveryCore').describe(d) })),
+      deliveries: require('../dispatch/deliveryCore').DELIVERIES.map((d: string) => ({ value: d, plain: require('../dispatch/deliveryCore').describe(d) })),
       // On the factory route: the job's kind and runtime (JOBS-API v1.2).
       ...(require('../dispatch/factory').enabled() ? require('./factory.ts').pickers() : {}),
     });
@@ -300,7 +308,7 @@ async function handle(req, res) {
   // (src/chat/feed.js; contract in the README, "Talking to it").
   if (req.method === 'POST' && url.pathname === '/api/chat') {
     if (req.headers['x-pa'] !== '1') return send(res, 403, { error: 'missing X-PA header' });
-    const body = await readJson(req);
+    const body: Row = await readJson(req);
     return send(res, 200, await require('../chat/feed').feed().send({ text: body.text, source: body.source || 'typed' }));
   }
   // Approve / Deny on the chat's permission prompt, from the Talk page. It
@@ -309,7 +317,7 @@ async function handle(req, res) {
   if (req.method === 'POST' && url.pathname === '/api/chat/permission') {
     if (req.headers['x-pa'] !== '1') return send(res, 403, { error: 'missing X-PA header' });
     if (!pageTokenOk(req)) return send(res, 403, { error: 'answering a permission prompt needs the page token — reload the page' });
-    const body = await readJson(req);
+    const body: Row = await readJson(req);
     return send(res, 200, await require('../chat/feed').feed().answerPermission({ answer: body.answer, toolUseId: body.toolUseId, via: body.via === 'voice' ? 'voice' : 'dashboard' }));
   }
   // The worker's INBOX doorbell for the SDK chat (src/notify/chat.js): a
@@ -318,7 +326,7 @@ async function handle(req, res) {
     if (req.headers['x-pa'] !== '1') return send(res, 403, { error: 'missing X-PA header' });
     const f = require('../chat/feed');
     if (f.engine() !== 'sdk') return send(res, 409, { error: 'the doorbell endpoint is for the SDK engine' });
-    const body = await readJson(req);
+    const body: Row = await readJson(req);
     return send(res, 200, f.feed().doorbell(body.id, { minIdleMs: Number(body.minIdleMs) >= 0 ? Number(body.minIdleMs) : undefined }));
   }
   if (req.method === 'GET' && url.pathname === '/api/chat/history') {
@@ -349,7 +357,7 @@ async function handle(req, res) {
   // The Memory tab (dashboard/memory.js). Same guards: a POST needs X-PA.
   if (url.pathname.startsWith('/api/memory/')) {
     if (req.method === 'POST' && req.headers['x-pa'] !== '1') return send(res, 403, { error: 'missing X-PA header' });
-    const body = req.method === 'POST' ? await readJson(req) : {};
+    const body: Row = req.method === 'POST' ? await readJson(req) : {};
     const out = await require('./memory.ts').route(req.method, url, body);
     return out === undefined ? send(res, 404, { error: 'not found' }) : send(res, 200, out ?? null);
   }
@@ -357,7 +365,7 @@ async function handle(req, res) {
   // Pre-meeting briefs (dashboard/meetings.js). Same guards.
   if (url.pathname.startsWith('/api/meetings/')) {
     if (req.method === 'POST' && req.headers['x-pa'] !== '1') return send(res, 403, { error: 'missing X-PA header' });
-    const body = req.method === 'POST' ? await readJson(req) : {};
+    const body: Row = req.method === 'POST' ? await readJson(req) : {};
     const out = await require('./meetings.ts').route(req.method, url, body);
     return out === undefined ? send(res, 404, { error: 'not found' }) : send(res, 200, out ?? null);
   }
@@ -365,7 +373,7 @@ async function handle(req, res) {
   // Post-meeting debriefs (dashboard/debriefs.js). Undo is a write: same guards.
   if (url.pathname === '/api/debriefs' || url.pathname.startsWith('/api/debriefs/')) {
     if (req.method === 'POST' && req.headers['x-pa'] !== '1') return send(res, 403, { error: 'missing X-PA header' });
-    const body = req.method === 'POST' ? await readJson(req) : {};
+    const body: Row = req.method === 'POST' ? await readJson(req) : {};
     const out = await require('./debriefs.ts').route(req.method, url, body);
     return out === undefined ? send(res, 404, { error: 'not found' }) : send(res, 200, out ?? null);
   }
@@ -377,7 +385,7 @@ async function handle(req, res) {
   }
   if (url.pathname === '/api/routines' || url.pathname.startsWith('/api/routines/')) {
     if (req.method === 'POST' && req.headers['x-pa'] !== '1') return send(res, 403, { error: 'missing X-PA header' });
-    const body = req.method === 'POST' ? await readJson(req) : {};
+    const body: Row = req.method === 'POST' ? await readJson(req) : {};
     const out = await require('./routines.ts').route(req.method, url, body);
     return out === undefined ? send(res, 404, { error: 'not found' }) : send(res, 200, out ?? null);
   }
@@ -396,7 +404,7 @@ async function handle(req, res) {
 
   if (req.method === 'POST') {
     if (req.headers['x-pa'] !== '1') return send(res, 403, { error: 'missing X-PA header' });
-    const body = await readJson(req);
+    const body: Row = await readJson(req);
 
     // A pasted secret goes from this body straight into the store. The reply
     // says where it went and never carries the value (AGENT.md, Secrets).
@@ -426,11 +434,12 @@ async function handle(req, res) {
     // The board's "+ task" box: a task because you typed it (src/commitments/request.js).
     if (url.pathname === '/api/tasks') {
       const request = require('../commitments/request');
-      const str = (v) => (typeof v === 'string' ? v : null);
+      const str = (v: unknown) => (typeof v === 'string' ? v : null);
       try {
         const r = await request.add({ text: str(body.text), due: str(body.due), for: str(body.for), owedToMe: body.owedToMe === true, via: 'board' });
         return send(res, 200, { ok: true, id: r.id, text: request.describe(r) });
-      } catch (err) {
+      } catch (e) {
+        const err = e as HttpError;
         if (err.status === 400) return send(res, 400, { error: err.message });
         throw err;
       }
@@ -443,7 +452,8 @@ async function handle(req, res) {
         return send(res, 200, await require('../commitments/blocks').set(Number(m[1]), {
           verdict: String(body.verdict), taskId: body.taskId == null ? null : Number(body.taskId),
         }));
-      } catch (err) {
+      } catch (e) {
+        const err = e as HttpError;
         if (err.status === 400) return send(res, 400, { error: err.message });
         throw err;
       }
@@ -506,7 +516,8 @@ async function handle(req, res) {
       try {
         jobKind = typeof body.kind === 'string' && body.kind ? F.jobKind(body.kind) : null;
         runtime = typeof body.runtime === 'string' && body.runtime ? F.runtime(body.runtime) : null;
-      } catch (err) {
+      } catch (e) {
+        const err = e as HttpError;
         return send(res, 400, { error: err.message });
       }
       // A research/report job delivers its report only: nothing to confirm.
@@ -548,7 +559,7 @@ async function handle(req, res) {
 
 // The commit this process started from; read once, at start() (a pull without
 // a restart does not change what is served). Falls back to the start time.
-let commitCache;
+let commitCache: string | undefined;
 function servedCommit() {
   if (commitCache !== undefined) return commitCache;
   try {
@@ -570,17 +581,17 @@ const markReady = () => {
   readiness.ready = true;
 };
 // Undone (markDraining(false)) when a rollback moves routing back here.
-const markDraining = (on = true) => {
+const markDraining = (on: boolean = true) => {
   readiness.draining = on;
 };
 
-function start({ port = config.dispatch.port, host = config.dispatch.host } = {}) {
+function start({ port = config.dispatch.port, host = config.dispatch.host }: { port?: unknown; host?: unknown } = {}) {
   if (!hostAllowed(host)) throw new Error(`refusing to bind the dashboard to ${host}: loopback only`);
   // Now, not at the first request: a generation kept for a rollback is first
   // asked after the pull, and must still name the commit it started from.
   servedCommit();
-  const server = http.createServer((req, res) => {
-    handle(req, res).catch((err) => {
+  const server = http.createServer((req: Req, res: Res) => {
+    handle(req, res).catch((err: HttpError) => {
       log.warn('request failed', { path: String(req.url).split('?')[0], message: err.message });
       if (!res.headersSent) send(res, err.status || 500, require('../auth/stepup').errorBody(err));
     });

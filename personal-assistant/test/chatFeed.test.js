@@ -174,7 +174,7 @@ assert.match(client, /new EventSource\('api\/chat\/stream'\)/);
   fs.rmSync(root, { recursive: true, force: true });
 
   // --- the routes, on a throwaway port: POST needs X-PA, GETs answer ---
-  const server = await require('../src/dashboard/server').start({ port: 0 });
+  const server = await require('../src/dashboard/server.ts').start({ port: 0 });
   const { port } = server.address();
   try {
     const res = await fetch(`http://127.0.0.1:${port}/api/chat`, { method: 'POST', body: '{"text":"x"}' });
