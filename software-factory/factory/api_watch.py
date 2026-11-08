@@ -521,6 +521,7 @@ def start_watch(
     direction_id: str | None,
     usage_fn: UsageFn | None = None,
     open_step: Callable[[], tuple[int | None, dict[str, str] | None]] | None = None,
+    diff: bool = True,
 ) -> ApiWatch | None:
     """Open the stream file (and, when termhub is reachable, the live session).
 
@@ -540,7 +541,9 @@ def start_watch(
         _log.warning("api watch: cannot create the stream dir", exc_info=True)
         return None
     stream = ApiStream(
-        d / "stream.jsonl", usage_fn=usage_fn, diff_fn=lambda: git_diff_summary(Path(repo_path))
+        d / "stream.jsonl", usage_fn=usage_fn,
+        # A text-only step (PM triage, SM, ...) has no worktree to diff.
+        diff_fn=(lambda: git_diff_summary(Path(repo_path))) if diff else None,
     )
     title = f"factory {persona} · {app}:{direction_id} story {story_id} · {model}"
     stream.init(run_id=d.name, model=model, cwd=str(repo_path), persona=persona, title=title)

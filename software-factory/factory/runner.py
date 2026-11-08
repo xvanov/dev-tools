@@ -3372,6 +3372,110 @@ async def sandbox_run(
 # --------------------------------------------------------------------------- #
 
 
+#: Shown in a watched text step's stream: the start of the prompt (the full
+#: prompt body is logged separately by ``_log_prompt_body``).
+_TEXT_WATCH_PROMPT_CAP = 1500
+
+
+def _open_text_watch(
+    *,
+    persona: str,
+    model_id: str,
+    prompt: str,
+    app: str | None,
+    story_id: int | None,
+    direction_id: str | None,
+    model_tier: str | None,
+    db_path: Path | None,
+    software_factory_root: Path | None,
+    started_at: str,
+) -> tuple[Any, int | None]:
+    """Make a job's text step (PM triage, SM, reviewer, ...) watchable (plan E5.2).
+
+    The same path ``sandbox_run`` uses (``factory.api_watch``, E2): a
+    ``stream.jsonl`` and, when termhub is reachable, a read-only live session
+    whose links (E1) name the step's provisional ``runs`` row, opened first.
+    Only for a call that belongs to a job (``app`` plus a direction or story).
+    Returns ``(watch, row_id)``; ``(None, None)`` when not watched. Never raises.
+    """
+    if not app or (direction_id is None and story_id is None):
+        return None, None
+    try:
+        from factory.api_watch import start_watch
+
+        root = software_factory_root or Path(db_path or _DEFAULT_DB_PATH).parent.parent
+        box: dict[str, int | None] = {"row": None}
+
+        def _open_step() -> tuple[int | None, dict[str, str] | None]:
+            from factory.claude_session.run import job_external_id, session_links
+
+            box["row"] = _upsert_provisional_run(
+                None, db_path=db_path, persona=persona, model=model_id,
+                tokens_in=0, tokens_out=0, cached_input_tokens=0, cost_usd=0.0,
+                duration_s=0.0, story_path=None, repo_path=None, story_id=story_id,
+                model_tier=model_tier, direction_id=direction_id, app=app,
+                started_at=started_at,
+            )
+            links = session_links(
+                app=app, direction_id=direction_id, story_id=story_id, row_id=box["row"],
+                extra={"external": job_external_id(Path(root), app, direction_id)},
+            )
+            return box["row"], links
+
+        watch = start_watch(
+            software_factory_root=Path(root), repo_path=Path(root), persona=persona,
+            model=model_id, app=app, story_id=story_id, direction_id=direction_id,
+            open_step=_open_step, diff=False,
+        )
+        if watch is None:
+            return None, box["row"]
+        if watch.session and box["row"] is not None:
+            _upsert_provisional_run(
+                box["row"], db_path=db_path, persona=persona, model=model_id,
+                tokens_in=0, tokens_out=0, cached_input_tokens=0, cost_usd=0.0,
+                duration_s=0.0, story_path=None, repo_path=None, story_id=story_id,
+                model_tier=model_tier, direction_id=direction_id, app=app,
+                session_json=json.dumps(watch.session, sort_keys=True),
+            )
+        shown = prompt if len(prompt) <= _TEXT_WATCH_PROMPT_CAP else (
+            prompt[:_TEXT_WATCH_PROMPT_CAP] + f"\n… ({len(prompt)} chars)"
+        )
+        watch.stream.write(
+            {"type": "user", "message": {"content": [{"type": "text", "text": shown}]}}
+        )
+        return watch, box["row"]
+    except Exception:  # noqa: BLE001 - a watch must never break a run
+        _log.warning("api watch (text step): start failed", exc_info=True)
+        return None, None
+
+
+def _note_text_reply(watch: Any, text: Any, attempt: int) -> None:
+    if watch is None:
+        return
+    with contextlib.suppress(Exception):
+        body = str(text or "")
+        if len(body) > 4000:
+            body = body[:4000] + f"\n… ({len(body)} chars)"
+        if attempt > 1:
+            watch.stream.note(f"retry {attempt} (larger max_tokens)")
+        watch.stream.write(
+            {"type": "assistant", "message": {"content": [{"type": "text", "text": body}]}}
+        )
+
+
+def _end_text_watch(
+    watch: Any, *, success: bool, error: Any, tokens_in: int, tokens_out: int,
+    cached: int, cost: float,
+) -> None:
+    if watch is None:
+        return
+    with contextlib.suppress(Exception):
+        watch.stream.end(
+            success=success, error=str(error) if error else None, tokens_in=tokens_in,
+            tokens_out=tokens_out, cached_input_tokens=cached, cost_usd=cost,
+        )
+
+
 def text_run(
     persona: str,
     prompt: str,
@@ -3438,13 +3542,32 @@ def text_run(
     def _elapsed() -> float:
         return round(time.monotonic() - _t0, 3)
 
+    # Watchable step (native plan E5.2 / E2): set once the call is about to go
+    # out, for a call that belongs to a job (app + direction or story).
+    _tw: dict[str, Any] = {"watch": None, "row": None}
+
     def _record(**kw: Any) -> None:
-        """Inject started_at + software_factory_root into every _record_run call."""
+        """Inject started_at + software_factory_root into every _record_run call.
+
+        With a watch open, the final write UPDATES the step's provisional row
+        (which carries the session link) and the stream gets its ``result``.
+        """
         _record_run(
             **kw,
             started_at=_started_at,
             software_factory_root=software_factory_root,
+            update_row_id=_tw["row"],
         )
+        _end_text_watch(
+            _tw["watch"],
+            success=bool(kw.get("success")),
+            error=kw.get("error"),
+            tokens_in=int(kw.get("tokens_in") or 0),
+            tokens_out=int(kw.get("tokens_out") or 0),
+            cached=int(kw.get("cached_input_tokens") or 0),
+            cost=float(kw.get("cost_usd") or 0.0),
+        )
+        _tw["watch"] = None
 
     if dry_run:
         _record(
@@ -3582,6 +3705,37 @@ def text_run(
             direction_id=direction_id,
         )
 
+    _tw["watch"], _tw["row"] = _open_text_watch(
+        persona=persona,
+        model_id=model_id,
+        prompt=prompt,
+        app=app,
+        story_id=story_id,
+        direction_id=direction_id,
+        model_tier=model_tier,
+        db_path=db_path,
+        software_factory_root=software_factory_root,
+        started_at=_started_at,
+    )
+    def _completion(**call_kwargs: Any) -> Any:
+        """``litellm.completion``; a raise closes the watched step first."""
+        try:
+            return litellm.completion(**call_kwargs)
+        except BaseException as exc:
+            if _tw["watch"] is not None or _tw["row"] is not None:
+                with contextlib.suppress(Exception):
+                    _record(
+                        persona=persona, model=model_id, mode="text",
+                        tokens_in=tokens_in, tokens_out=tokens_out, cost_usd=cost_usd,
+                        success=False, story_path=None, repo_path=None,
+                        error=f"{type(exc).__name__}: {exc}"[:500], db_path=db_path,
+                        duration_s=_elapsed(), story_id=story_id, model_tier=model_tier,
+                        direction_id=direction_id, app=app,
+                        cached_input_tokens=cached_input_tokens, premodel_infra=False,
+                        usage_reliable=usage_reliable,
+                    )
+            raise
+
     for attempt in range(1, _MAX_OUTPUT_RETRIES + 1):
         kwargs: dict[str, Any] = {
             "model": wire_model_id(model_id),
@@ -3596,8 +3750,9 @@ def text_run(
         if schema is not None:
             kwargs["response_format"] = {"type": "json_object"}
 
-        response = litellm.completion(**kwargs)
+        response = _completion(**kwargs)
         text = response["choices"][0]["message"]["content"]
+        _note_text_reply(_tw["watch"], text, attempt)
         usage = response.get("usage", {}) or {}
         tokens_in += int(usage.get("prompt_tokens", 0) or 0)
         attempt_out = int(usage.get("completion_tokens", 0) or 0)
