@@ -231,6 +231,12 @@ async function handle(req, res) {
     if (await require('./architecture').route(req, res, url, { send })) return;
   }
 
+  // ---- Meter's data (dashboard/meter.js): GET /api/meter (latency per hop, spend,
+  // the Claude credit pool) and POST /api/telemetry (the factory's spans and usage). ----
+  if (url.pathname === '/api/meter' || url.pathname === '/api/telemetry') {
+    if (await require('./meter').route(req, res, url, { send, readJson })) return;
+  }
+
   // The end state a Do would get, before it is pressed: the page shows it,
   // and must send it back as `confirmedLevel` to start an unattended one.
   let pm = req.method === 'GET' && url.pathname.match(/^\/api\/commitments\/(\d+)\/delivery$/);

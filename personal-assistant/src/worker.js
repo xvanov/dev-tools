@@ -530,6 +530,9 @@ const memoryPass = (file, opts) => () => MEMORY_PASSES[file]().run(opts);
   every(3600, 'retention', async () => {
     const deleted = await require('./repo').sources.deleteOldMessages(config.retention.rawItemDays);
     if (deleted) log.info('retention', { deleted });
+    // Trace spans (plan 7.5) keep PA_TELEMETRY_RETENTION_DAYS; Meter's percentiles need no more.
+    const spans = await require('./repo').telemetry.pruneSpans(new Date(Date.now() - config.telemetry.retentionDays * 86400_000));
+    if (spans) log.info('retention', { spans });
   });
 
   // A stray rejection in one pass must not end every other pass with it.

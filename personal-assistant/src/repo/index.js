@@ -51,6 +51,7 @@ const AGGREGATES = {
   sources: () => require('./sources'),
   spend: () => require('./spend'),
   system: () => require('./system'),
+  telemetry: () => require('./telemetry'),
   workflowLimits: () => require('./workflowLimits'),
 };
 

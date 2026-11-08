@@ -38,6 +38,29 @@ module.exports = {
     assert.deepStrictEqual(list.map((r) => r.calls), [1, 2, 1]);
   },
 
+  'dailyBreakdown: per local day, model and purpose; a null model is its own group': async ({ repos, assert, uniq }) => {
+    const p = uniq('brk');
+    await repos.spend.record(call(p, { model: 'm1', costUsd: 1 }));
+    await repos.spend.record(call(p, { model: 'm1', costUsd: 0.5 }));
+    await repos.spend.record(call(p, { model: 'm2', costUsd: 2 }));
+    await repos.spend.record(call(p, { model: null, costUsd: null }));
+    const rows = (await repos.spend.dailyBreakdown(new Date(Date.now() - 3 * 86400_000), 'UTC')).filter((r) => r.purpose === p);
+    const by = Object.fromEntries(rows.map((r) => [String(r.model), [r.usd, r.calls]]));
+    assert.deepStrictEqual(by, { m1: [1.5, 2], m2: [2, 1], null: [0, 1] });
+  },
+
+  'claudePoolSince: only the cli and claude_session backends, at or after the start': async ({ repos, assert, uniq }) => {
+    const start = new Date(Date.now() - 1000);
+    const before = await repos.spend.claudePoolSince(start);
+    await repos.spend.record(call(uniq('pool'), { backend: 'cli', costUsd: 0.25 }));
+    await repos.spend.record(call(uniq('pool'), { backend: 'claude_session', costUsd: 0.5 }));
+    await repos.spend.record(call(uniq('pool'), { backend: 'api', costUsd: 9 }));
+    const after = await repos.spend.claudePoolSince(start);
+    assert.ok(Math.abs(after.usd - before.usd - 0.75) < 1e-9, `${after.usd} - ${before.usd}`);
+    assert.strictEqual(after.calls - before.calls, 2);
+    assert.deepStrictEqual(await repos.spend.claudePoolSince(new Date(Date.now() + 3600_000)), { usd: 0, calls: 0 });
+  },
+
   'dailyByPurpose: per local day and purpose, with failed and unknown counts': async ({ repos, seed, db, assert, uniq }) => {
     const p = uniq('day');
     await repos.spend.record(call(p, { costUsd: 1 }));

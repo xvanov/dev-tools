@@ -559,7 +559,13 @@ async function main() {
 
   server.setRequestHandler(CallToolRequestSchema, async (req) => {
     try {
-      return await handle(req.params.name, req.params.arguments || {});
+      // Meter's tool-call latency (plan 7.5): one span per call, named by the tool; no arguments recorded.
+      const name = req.params.name;
+      return await require('../telemetry').span('tool.call', name, { tool: name }, async (s) => {
+        const out = await handle(name, req.params.arguments || {});
+        if (out?.isError) require('../telemetry').fail(s, 'tool reported an error');
+        return out;
+      });
     } catch (err) {
       // A tool error is data, not a transport failure: the model can read it
       // and try something else, which it cannot do with a dropped connection.

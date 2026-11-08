@@ -651,6 +651,31 @@ const config = {
     discretionary: env('PA_BUDGET_DISCRETIONARY', 'eager,research,digest,planner,card,propose,dedupe').split(',').map((s) => s.trim()).filter(Boolean),
   },
 
+  // OpenTelemetry into Meter (plan 7.5; src/telemetry). Spans of the main hops
+  // (voice turn, tool call, factory hop, deploy) go to the `trace_span` table
+  // through a local exporter, never to a cloud collector; Meter shows p50/p95
+  // per hop. PA_TELEMETRY=0 turns the instruments into no-ops.
+  telemetry: {
+    enabled: env('PA_TELEMETRY', '1') !== '0',
+    retentionDays: envInt('PA_TELEMETRY_RETENTION_DAYS', 30),
+  },
+
+  // The Claude subscription credit pool (since 15 Jun 2026 headless Claude Code,
+  // `claude -p` and claude_session runs, draws from a pool apart from the
+  // interactive allowance; src/claudePool.js). monthlyUsd is the pool in
+  // API-equivalent dollars (PA_CLAUDE_POOL_USD); unset or 0 = not tracked, no
+  // fallback. The pool resets on resetDay of each month (local time).
+  // fallbackApi (PA_CLAUDE_POOL_FALLBACK_API=1, default off): once the pool is
+  // spent, a claude_session job is dispatched on the api runtime instead.
+  claudePool: {
+    monthlyUsd: (() => {
+      const n = Number.parseFloat(env('PA_CLAUDE_POOL_USD', ''));
+      return Number.isFinite(n) && n > 0 ? n : null;
+    })(),
+    resetDay: Math.min(28, Math.max(1, envInt('PA_CLAUDE_POOL_RESET_DAY', 1))),
+    fallbackApi: env('PA_CLAUDE_POOL_FALLBACK_API', '0') === '1',
+  },
+
   // Recurring typed actions (src/routines). PA_ROUTINES=0 stops the worker
   // running them; `pa routine run` still works by hand.
   routines: {

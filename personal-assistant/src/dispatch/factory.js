@@ -115,8 +115,12 @@ async function call(sub, { timeoutMs = config.factory.timeoutMs, maxOutputBytes 
   // A factory on this Windows machine runs in Python's UTF-8 mode, as on
   // Linux: without it every un-annotated read_text() decodes as cp1252.
   if (!where && process.platform === 'win32') opts.env = { PYTHONUTF8: '1' };
-  const res = await runCommand(where, F.factoryArgv(sub, config.factory.uv), opts);
-  return F.parseResult(res);
+  // Meter's factory hop (plan 7.5): every factory CLI call (submit, status, cancel, ...), named by its verb.
+  const verb = String(sub[0] || 'call');
+  return require('../telemetry').span('factory.cli', `factory ${verb}`, { verb, sub: String(sub[1] || '').slice(0, 24) }, async () => {
+    const res = await runCommand(where, F.factoryArgv(sub, config.factory.uv), opts);
+    return F.parseResult(res);
+  });
 }
 
 const READ_ONLY = new Set(['job status', 'job list', 'job report', 'app list']);
@@ -338,7 +342,11 @@ async function start({
 }) {
   const kind = F.jobKind(jobKind);
   if ((branch != null || pr != null) && kind !== 'code') throw new Error('only a code job continues a branch or PR');
-  const rt = F.runtime(runtime || config.factory.runtime);
+  // The credit pool (src/claudePool.js): with PA_CLAUDE_POOL_FALLBACK_API on and the pool spent,
+  // a claude_session job runs on the api runtime instead. Off by default.
+  const picked = await require('../claudePool').route(F.runtime(runtime || config.factory.runtime));
+  const rt = picked.runtime;
+  if (picked.fellBack) log.warn('dispatching on the api runtime', { reason: picked.reason });
   if (kind === 'code' && modeName && resolveMode(modeName).name === 'plan') {
     throw new Error('plan mode is read-only and is not a factory job — send it to a Claude session (--via claude), or make it a research job (--kind research)');
   }

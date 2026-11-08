@@ -1,7 +1,8 @@
 'use strict';
 
 // Aggregate: spend. Table: llm_spend (one row per model call: purpose, model,
-// backend, cost, tokens, duration, ok). Callers: src/budget.js.
+// backend (api | cli | claude_session), cost, tokens, duration, ok).
+// Callers: src/budget.js, src/claudePool.js, src/telemetry.
 
 /**
  * @typedef {object} SpendByPurpose
@@ -54,6 +55,34 @@ function create(db) {
       group by 1, 2`,
         [since, timeZone]
       );
+    },
+
+    /**
+     * Spend at or after `since` per local day (zone `timeZone`), model and
+     * purpose: {day 'YYYY-MM-DD', model (null when unknown), purpose, usd, calls}.
+     */
+    async dailyBreakdown(since, timeZone) {
+      return db.rows(
+        `select to_char((at at time zone $2)::date, 'YYYY-MM-DD') as day, model, purpose,
+            coalesce(sum(cost_usd), 0)::float8 as usd, count(*)::int as calls
+       from llm_spend where at >= $1
+      group by 1, 2, 3`,
+        [since, timeZone]
+      );
+    },
+
+    /**
+     * What headless Claude Code drew from the subscription credit pool at or
+     * after `start`: the `cli` backend (claude -p) and `claude_session` runs, at
+     * the API-equivalent cost they reported. @returns {Promise<{usd: number, calls: number}>}
+     */
+    async claudePoolSince(start) {
+      const r = await db.one(
+        `select coalesce(sum(cost_usd), 0)::float8 as usd, count(*)::int as calls
+       from llm_spend where at >= $1 and backend in ('cli', 'claude_session')`,
+        [start]
+      );
+      return { usd: Number(r?.usd) || 0, calls: Number(r?.calls) || 0 };
     },
   };
 }

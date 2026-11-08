@@ -132,6 +132,7 @@ async function record({ purpose, model, backend, costUsd = null, inputTokens = n
       ok: Boolean(ok),
     });
     spentCache = null;
+    if (backend === 'cli' || backend === 'claude_session') require('./claudePool').invalidate();
   } catch (err) {
     if (!recordWarned) {
       recordWarned = true;

@@ -510,8 +510,13 @@ run mid-step; a job continued on an existing branch (`--branch`).
   ACLs already separate the stacks.
 - [ ] **7.3** Secrets in the OS keychain, labelled by stack.
 - [ ] **7.4** Encrypted backups with a restore drill; signed self-update.
-- [ ] **7.5** OpenTelemetry into Meter, including the separate Claude subscription credit pool
-  (since 15 Jun 2026) with API fallback when it runs out.
+- [x] **7.5** OpenTelemetry into Meter, including the separate Claude subscription credit pool
+  (since 15 Jun 2026) with API fallback when it runs out. Spans (voice turn, tool call, factory
+  CLI call, deploy; the Python factory's hops posted to `POST /api/telemetry`) land in
+  `trace_span` through a local exporter; Meter shows p50/p95 per hop and spend per
+  day/model/purpose; `PA_CLAUDE_POOL_USD` tracks the credit pool, and
+  `PA_CLAUDE_POOL_FALLBACK_API=1` (default off) moves `claude_session` jobs to the `api` runtime
+  once it is spent.
 - [ ] **7.6** Tauri desktop shell (phone app out of scope, D12).
 - [ ] **Exit 7:** install on a fresh Windows and a fresh Linux machine with one install script
   each (jarvisd and ptyd binaries, plus the Python factory via `uv`, which fetches its own

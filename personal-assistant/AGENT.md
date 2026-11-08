@@ -619,6 +619,18 @@ Postgres and nowhere else. Tests use invented names; fixtures never hold a real 
   that says "Friday" is a bug.
 - **Logs:** message bodies are not log material. Log ids, counts, and durations.
 
+## Telemetry and the credit pool (plan 7.5)
+
+Wrap a main hop in `telemetry.span(hop, name, attrs, fn)` (`src/telemetry`), never in a hand-timed log line: it is an
+`@opentelemetry/api` span that a local exporter writes to `trace_span`, and it is a no-op in a test process or with
+`PA_TELEMETRY=0`, so `fn` must cope with `span === null`. Attributes are ids, names and counts: no prompt, reply or tool
+arguments. New hops use the `hop` vocabulary Meter groups by (`voice.turn`, `tool.call`, `factory.cli`, `deploy`, the
+factory's `factory.*`). Percentiles are computed in JS over `repo.telemetry.hopDurations`, not in SQL, so SQLite serves them
+too. Headless Claude usage is `llm_spend` with backend `cli` (PA) or `claude_session` (the factory, via `POST /api/telemetry`);
+`src/claudePool.js` sums both against `PA_CLAUDE_POOL_USD`. The API fallback (`PA_CLAUDE_POOL_FALLBACK_API`, default off)
+lives in one place, `claudePool.route`, called by `dispatch/factory.start`; it fails open. Anything new that runs headless
+Claude must record its `total_cost_usd` with one of those two backends, or the pool under-counts.
+
 ## Where the store lives
 
 **Linux:** Postgres 16 + pgvector on port 5433, either a dedicated native cluster

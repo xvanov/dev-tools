@@ -831,6 +831,16 @@ const commands = {
     const budget = require('../budget');
     const days = await budget.daily({ days: flagInt(flags, 'days', 7) });
     out(`model spend · cap ${budget.usd(config.budget.dailyUsd)}/day on discretionary work (PA_DAILY_BUDGET_USD)`);
+    // The Claude credit pool (src/claudePool.js): headless Claude Code's own allowance.
+    const pool = await require('../claudePool').status({ fresh: true }).catch(() => null);
+    if (pool?.tracked) {
+      out(
+        `claude credit pool · ${budget.usd(pool.usedUsd)} of ${budget.usd(pool.monthlyUsd)} used since ${pool.since.slice(0, 10)}, ${budget.usd(pool.remainingUsd)} left` +
+          `${pool.exhausted ? ` · SPENT${pool.fallbackApi ? ': claude_session jobs run on the api runtime' : ' (PA_CLAUDE_POOL_FALLBACK_API is off)'}` : ''}`
+      );
+    } else if (pool) {
+      out('claude credit pool · not tracked (set PA_CLAUDE_POOL_USD)');
+    }
     if (!days.length) return out('  nothing recorded yet');
     for (const d of days) {
       out(

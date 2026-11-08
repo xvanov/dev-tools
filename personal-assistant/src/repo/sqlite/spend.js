@@ -41,6 +41,27 @@ function create(db) {
         [since, timeZone]
       );
     },
+
+    /** Spend at or after `since` per local day, model and purpose. */
+    async dailyBreakdown(since, timeZone) {
+      return db.rows(
+        `select pa_local_day(at, $2) as day, model, purpose,
+            total(cost_usd) as usd, count(*) as calls
+       from llm_spend where at >= $1
+      group by 1, 2, 3`,
+        [since, timeZone]
+      );
+    },
+
+    /** What headless Claude Code drew from the credit pool at or after `start` (cli and claude_session backends). */
+    async claudePoolSince(start) {
+      const r = await db.one(
+        `select total(cost_usd) as usd, count(*) as calls
+       from llm_spend where at >= $1 and backend in ('cli', 'claude_session')`,
+        [start]
+      );
+      return { usd: Number(r?.usd) || 0, calls: Number(r?.calls) || 0 };
+    },
   };
 }
 

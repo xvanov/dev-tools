@@ -399,7 +399,18 @@ async function turn(req, res, { send }) {
     if (!res.writableEnded && !res.destroyed) res.write(JSON.stringify(e) + '\n');
   };
   try {
-    await require('../chat/fastLane').runTurn({ text, emit, signal: ac.signal });
+    // Meter's voice-turn hop (plan 7.5): the whole fast-lane turn, with the route and the model's first-token time.
+    const telemetry = require('../telemetry');
+    await telemetry.span('voice.turn', 'voice turn', {}, async (s) => {
+      const seen = (e) => {
+        if (e?.type === 'done' && s) {
+          if (e.route) s.setAttribute('route', String(e.route));
+          if (Number.isFinite(e.firstTokenMs)) s.setAttribute('first_token_ms', e.firstTokenMs);
+        } else if (e?.type === 'error') telemetry.fail(s, 'turn error');
+        emit(e);
+      };
+      await require('../chat/fastLane').runTurn({ text, emit: seen, signal: ac.signal });
+    });
   } catch (err) {
     if (!ac.signal.aborted) emit({ type: 'error', error: err.message });
   }

@@ -489,6 +489,21 @@ and are never refused. Speculative work asks `budget.allow(purpose)` before it s
 [--days N]` prints per-day, per-pass totals, `pa doctor` shows today against the cap with the top
 three passes, and the dashboard shows a spend chip beside the source chips.
 
+**Meter: telemetry and the Claude credit pool** (plan 7.5). Since 15 Jun 2026 headless Claude Code (the PA's `claude -p`
+and the factory's `claude_session` runs) draws from a credit pool apart from the interactive allowance.
+`PA_CLAUDE_POOL_USD` is that pool per month in API-equivalent dollars (unset: not tracked); it resets on
+`PA_CLAUDE_POOL_RESET_DAY` (default 1). Usage is the `total_cost_usd` each run's stream-json result reports: the PA's own
+calls are `llm_spend` rows with backend `cli`, and the factory posts its runs to `POST /api/telemetry` (backend
+`claude_session`; set `PA_TELEMETRY_URL=http://127.0.0.1:7300` in the factory's environment, unset = off). `pa spend` and the
+Meter page (termhub `/meter`, from `GET /api/meter`) show what is left. **API fallback** is
+`PA_CLAUDE_POOL_FALLBACK_API=1`, off by default: once the pool is spent, `claude_session` jobs are dispatched on the `api`
+runtime (metered, `PA_FACTORY_MODELS` routing) instead; off, they keep running and the page says the pool is spent. If the
+ledger cannot be read the requested runtime stands. The same page shows latency per hop, p50 and p95: OpenTelemetry spans
+(`@opentelemetry/api`) for a voice turn, an MCP tool call, a factory CLI call and a deploy are written by a local exporter
+to `trace_span` (kept `PA_TELEMETRY_RETENTION_DAYS`, default 30; `PA_TELEMETRY=0` turns the instruments off), with no
+collector or cloud service; the factory's own hops arrive through the same endpoint. Spans carry ids, names and counts,
+never prompt or argument text.
+
 **The planner works ahead of you** (`src/agent/planner.js`, every five minutes, `PA_PLANNER=0`
 turns it off). Each new ask on you from the last week is given a kind (reply, review, coding,
 investigate, meeting, decision, admin) once. An *investigate* ask with a known repo gets a

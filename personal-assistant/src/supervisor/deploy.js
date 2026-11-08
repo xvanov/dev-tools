@@ -225,7 +225,13 @@ async function deploy(argv, opts = {}) {
     return { code: 5, result: { refused: err.message } };
   }
   try {
-    return await deployUnlocked(argv, opts);
+    // Meter's deploy hop (plan 7.5): timed from the lock to the verdict; flushed before a short-lived process exits.
+    const t = require('../telemetry');
+    try {
+      return await t.span('deploy', 'deploy', {}, () => deployUnlocked(argv, opts));
+    } finally {
+      await t.flush();
+    }
   } finally {
     lock.release();
   }
