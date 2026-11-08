@@ -172,7 +172,10 @@ with the app. Clients reconnect to the event stream with `Last-Event-ID` and mis
   [--deploy]` on a stack). Events now survive a roll: `pa_event_seq` ids (sql/035). (2793e9b)
 - [ ] **Exit Z:** a deploy on each stack with the Z6 test passing. Work stack 2026-11-08:
   PASS with `--live --deploy` (5186 requests, 0 failed; 1251/1251 events, 0 resyncs; terminal
-  598 ticks, socket held). Personal stack: pending.
+  598 ticks, socket held), then three failed runs whose causes were fixed (overlapping deploys:
+  deploy lock; synchronous supervisor log; a CPU starved by test pools: serving processes above
+  normal), then two passes in a row at d9e0545 (4614 requests, 0 failed; 1137/1137 events;
+  497 ticks). Personal stack: pending.
 
 ## Track E: the full stack works end to end (D8, D9; gate for every phase exit)
 
