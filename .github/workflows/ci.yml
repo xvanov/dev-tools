@@ -128,7 +128,8 @@ jobs:
           cache-dependency-glob: software-factory/uv.lock
           python-version: "3.12"
       - run: uv sync --all-extras
-      - run: uv run pytest -q --tb=short -n auto --dist loadfile
+      - run: bash $GITHUB_WORKSPACE/.github/scripts/run.sh uv run pytest -q --tb=short -n auto --dist loadfile
+        shell: bash
 
   ios-messages:
     needs: changes
