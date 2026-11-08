@@ -744,6 +744,26 @@ module.exports = {
     assert.strictEqual(Number((await repos.commitments.pendingDistillCount(v, 40, 'false', ALL)).n), got.length);
   },
 
+  'pendingDistill: a short Teams message to you since `since` clears the lower minimum': async ({ repos, seed, assert }) => {
+    const v = `direct-${Date.now()}`;
+    const body = 'can you check?';
+    const chat = (raw, o = {}) => seed.sourceItem({ source: 'graph_chat', body, raw, ...o });
+    const dm = await chat({ chatType: 'oneOnOne' });
+    const self = await chat({ chatType: 'self' });
+    const mention = await chat({ chatType: 'group', mentionsMe: true });
+    const group = await chat({ chatType: 'group', mentionsMe: false });
+    const mail = await seed.sourceItem({ source: 'graph_mail', body });
+    const old = await chat({ chatType: 'oneOnOne' }, { occurredAt: dAgo(30) });
+    const tiny = await chat({ chatType: 'oneOnOne' }, { body: 'ok' });
+    const all = [dm, self, mention, group, mail, old, tiny];
+    const direct = { minChars: 8, since: dAgo(7).toISOString() };
+    const got = idsOf(await repos.commitments.pendingDistill(v, 40, 100000, 'false', ALL, direct));
+    assert.deepStrictEqual(all.map((x) => got.includes(x)), [true, true, true, false, false, false, false]);
+    assert.strictEqual(Number((await repos.commitments.pendingDistillCount(v, 40, 'false', ALL, direct)).n), got.length);
+    const plain = idsOf(await repos.commitments.pendingDistill(v, 40, 100000, 'false', ALL));
+    assert.ok(all.every((x) => !plain.includes(x)), 'without the option every item needs the usual minimum');
+  },
+
   'pendingDistillCount: how many pendingDistill would return': async ({ repos, seed, assert }) => {
     const body = 'y'.repeat(60);
     const before = (await repos.commitments.pendingDistillCount('vc', 40, 'false', ALL)).n;

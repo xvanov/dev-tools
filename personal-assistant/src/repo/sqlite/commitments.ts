@@ -98,6 +98,21 @@ function startOfToday() {
   return d;
 }
 
+// A message addressed to you on Teams (pg: the same; a JSON true reads back as 1).
+type DirectMin = { minChars: number; since: string };
+const DIRECT_TO_ME = `(si.source = 'graph_chat'
+   and (si.raw->>'chatType' in ('oneOnOne','self') or si.raw->>'mentionsMe' = 1))`;
+
+function longEnough(direct: DirectMin | undefined, at: number) {
+  if (!direct) return atLeastChars('si.body_text', '$2');
+  return `(${atLeastChars('si.body_text', '$2')}
+        or (${DIRECT_TO_ME} and length(si.body_text) >= $${at} and si.occurred_at >= $${at + 1}))`;
+}
+
+function directParams(direct: DirectMin | undefined) {
+  return direct ? [direct.minChars, new Date(direct.since).toISOString()] : [];
+}
+
 function create(db: Db) {
   return {
     // --- for brief/index.js
@@ -719,27 +734,27 @@ function create(db: Db) {
     // --- src/distill/index.js
 
     /** Source items with no distillation at this prompt version, newest first. */
-    async pendingDistill(version: string, minChars: unknown, limit: number, skipSql: unknown, allowedSql: unknown) {
+    async pendingDistill(version: string, minChars: unknown, limit: number, skipSql: unknown, allowedSql: unknown, direct?: DirectMin) {
       return db.rows(
         `select si.* from source_item si
        left join distillation d
          on d.source_item_id = si.id and d.extracted_by = $1
       where d.source_item_id is null and not ${skipSql} and ${allowedSql}
-        and ${atLeastChars('si.body_text', '$2')}
+        and ${longEnough(direct, 4)}
       order by si.occurred_at desc
       limit $3`,
-        [version, minChars, limit]
+        [version, minChars, limit, ...directParams(direct)]
       );
     },
 
     /** How many items pendingDistill would return (without a limit). */
-    async pendingDistillCount(version: string, minChars: unknown, skipSql: unknown, allowedSql: unknown) {
+    async pendingDistillCount(version: string, minChars: unknown, skipSql: unknown, allowedSql: unknown, direct?: DirectMin) {
       return db.one(
         `select count(*) as n from source_item si
        left join distillation d
          on d.source_item_id = si.id and d.extracted_by = $1
-      where d.source_item_id is null and not ${skipSql} and ${allowedSql} and ${atLeastChars('si.body_text', '$2')}`,
-        [version, minChars]
+      where d.source_item_id is null and not ${skipSql} and ${allowedSql} and ${longEnough(direct, 3)}`,
+        [version, minChars, ...directParams(direct)]
       );
     },
 

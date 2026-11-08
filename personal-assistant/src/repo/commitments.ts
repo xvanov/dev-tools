@@ -68,6 +68,23 @@ const EXISTING = `
     from commitment c
    where c.source_item_id = $1 and c.superseded_by is null`;
 
+// A message addressed to you on Teams: a 1:1 chat, your self chat, or one that
+// mentions you. pendingDistill reads these below the usual minimum length.
+type DirectMin = { minChars: number; since: string };
+const DIRECT_TO_ME = `(si.source = 'graph_chat'
+   and (si.raw->>'chatType' in ('oneOnOne','self') or si.raw->>'mentionsMe' = 'true'))`;
+
+/** The length test of pendingDistill; `at` is the first of direct's two placeholders. */
+function longEnough(direct: DirectMin | undefined, at: number) {
+  if (!direct) return 'length(si.body_text) >= $2';
+  return `(length(si.body_text) >= $2
+        or (${DIRECT_TO_ME} and length(si.body_text) >= $${at} and si.occurred_at >= $${at + 1}))`;
+}
+
+function directParams(direct: DirectMin | undefined) {
+  return direct ? [direct.minChars, direct.since] : [];
+}
+
 function create(db: Db) {
   return {
     // --- for brief/index.js
@@ -850,18 +867,20 @@ function create(db: Db) {
      * @param {number} limit
      * @param {string} skipSql  the items to leave out (`not ...`), a SQL predicate on `si`
      * @param {string} allowedSql  sources that may create tasks, a SQL predicate on `si`
+     * @param {{minChars: number, since: string}} [direct]  a lower minimum for a Teams DM, the
+     *   self chat or a message that mentions you, at or after `since`
      * @returns {Promise<object[]>} source_item rows
      */
-    async pendingDistill(version: string, minChars: unknown, limit: number, skipSql: unknown, allowedSql: unknown) {
+    async pendingDistill(version: string, minChars: unknown, limit: number, skipSql: unknown, allowedSql: unknown, direct?: DirectMin) {
       return db.rows(
         `select si.* from source_item si
        left join distillation d
          on d.source_item_id = si.id and d.extracted_by = $1
       where d.source_item_id is null and not ${skipSql} and ${allowedSql}
-        and length(si.body_text) >= $2
+        and ${longEnough(direct, 4)}
       order by si.occurred_at desc
       limit $3`,
-        [version, minChars, limit]
+        [version, minChars, limit, ...directParams(direct)]
       );
     },
 
@@ -869,13 +888,13 @@ function create(db: Db) {
      * How many items {@link pendingDistill} would return (without a limit).
      * @returns {Promise<{n: number}|null>}
      */
-    async pendingDistillCount(version: string, minChars: unknown, skipSql: unknown, allowedSql: unknown) {
+    async pendingDistillCount(version: string, minChars: unknown, skipSql: unknown, allowedSql: unknown, direct?: DirectMin) {
       return db.one(
         `select count(*)::int as n from source_item si
        left join distillation d
          on d.source_item_id = si.id and d.extracted_by = $1
-      where d.source_item_id is null and not ${skipSql} and ${allowedSql} and length(si.body_text) >= $2`,
-        [version, minChars]
+      where d.source_item_id is null and not ${skipSql} and ${allowedSql} and ${longEnough(direct, 3)}`,
+        [version, minChars, ...directParams(direct)]
       );
     },
 

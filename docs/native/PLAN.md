@@ -1209,12 +1209,16 @@ not in the Map is not done, and a new one gets added there first.
     chat (it exists, you are its only member), prints a marker phrase to type into the self
     chat, waits for that message, and times each hop from its arrival
     ([acceptance/teams-ask.md](acceptance/teams-ask.md)).
-  - [ ] **8.4.31 teams-ask: a new ask never toasts.** Nothing calls `notify()` when distill
+  - [x] **8.4.31 teams-ask: a new ask never toasts.** Nothing calls `notify()` when distill
     inserts a commitment (`distill/index.ts`, `worker.ts`), and the interrupt budget has no kind
     for one. No notification kind in the table is for a new commitment, and INBOX.md is built
     from notifications only, so the chat is not told either. The Map's notify step and its 5 s
     hop describe something not built. Notify on a new `owed_by_me` card from a person (through
     the budget), or mark the step `planned`.
+    Done: kind `new_ask` (`notify/newAsk.ts`), raised by distill for an `owed_by_me`
+    commitment from someone else's message under 3 h old or from the self chat; a Teams DM,
+    the self chat or a mention is `normal` (a push within the budget), anything else
+    `digest`. (ca1492f)
   - [ ] **8.4.32 teams-ask: cache change to source_item takes 9.1 s (target 5 s), and the log
     hides it.** Today's only sample is the owner's self-chat message (19:28:30.045Z, stored
     19:28:39.100Z). Its pass read 6.5 MB of LevelDB tables in 8725 ms, 49 s after the watcher
@@ -1245,11 +1249,17 @@ not in the Map is not done, and a new one gets added there first.
     rest, as `graphChat.repairEmpty` already does.
     Done: the reader drops every `48:` thread but `48:notes`, which it keeps as `chatType: self`
     and distills at once even though it is yours (see 8.4.34 for the cleanup). (fb34f2f)
-  - [ ] **8.4.36 teams-ask: distill skips any message under 40 characters.** `MIN_BODY_CHARS`
+  - [x] **8.4.36 teams-ask: distill skips any message under 40 characters.** `MIN_BODY_CHARS`
     is 40, and the Map's own example ("can you send me the numbers by Friday?") is 38. A short
     Teams ask from a person is never read: since 1 Nov, 36 short items from others were skipped,
     and by a keyword count 1 of them was an ask.
     Let a chat message from a person through regardless of length, or lower the bar for chat.
+    Done: a Teams DM, the self chat or a mention is read from 6 characters if it arrived in the
+    last 7 days; a pure courtesy is marked done without a model call (`distill/short.ts`, 38
+    eval cases). On a scratch copy of today's store: 40 short items become pending, 26 of them
+    reach the model (about $0.86 once, then about 4 a day); on two short asks the served model
+    found an owed_by_me commitment at confidence 0.6. (this commit: `fix(personal-assistant):
+    read short Teams asks addressed to you`)
   - [ ] **8.4.37 teams-ask: a distill call often costs more than the $0.05 ceiling.** On the
     served `claude-sonnet-5-5` (since 6 Nov), 49 of 206 calls are over (max $0.082; today 17
     calls, max $0.038). On the code default `PA_DISTILL_MODEL=claude-opus-5`, the mean was

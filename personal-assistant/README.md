@@ -243,7 +243,11 @@ pair in both), so the two sources share one row:
   at the next 90-second tick, through the worker's no-overlap guard. If a scheduled distill is
   already running, the fresh one runs the moment it ends rather than waiting a tick (that pass
   chose its items before the message existed). What remains is the model call itself, and that
-  wait for a pass already in flight.
+  wait for a pass already in flight;
+- the distiller reads nothing under 40 characters, except a DM, a self-chat note or a mention,
+  which it reads from 6 if it arrived in the last week ("can you check?", "review pls"). One that
+  is only a courtesy ("thanks!", "sounds good", your name and a `^`) is marked done without a model
+  call (`src/distill/short.ts`; eval set `src/eval/short-asks-cases.json`).
 
 **Windows only.** There is no new Teams desktop client on Linux (Microsoft retired the old one
 in 2022), so on Linux the reader is off by default and no watcher or poll is started; Teams

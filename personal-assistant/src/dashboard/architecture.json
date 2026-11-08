@@ -847,6 +847,7 @@
       },
       "details": {
         "Only people create tasks": "sourcePolicy decides in code before any model call; bots, CI and the assistant's own sessions are evidence only",
+        "Short messages": "distill reads an item from 40 characters, but a Teams DM, the self chat or a mention from 6 (8.4.36) if it arrived in the last 7 days; one that is only a courtesy ('thanks!', 'sounds good', your name and a ^) is marked done without a model call (src/distill/short.ts, eval set src/eval/short-asks-cases.json)",
         "Blocks pass": "links what someone owes you to the task it holds up (commitment_block)",
         "Ledger": "ledger.transition is the one writer of commitment.status; each change leaves a reversible ledger_transition row",
         "Board": "One card per commitment: On me (with blockers and 'Looks done?'), Waiting, Notes (src/dashboard/board.ts)",
@@ -854,6 +855,7 @@
       },
       "code": [
         "personal-assistant/src/distill/index.ts",
+        "personal-assistant/src/distill/short.ts",
         "personal-assistant/src/commitments/blocks.ts",
         "personal-assistant/src/commitments/sourcePolicy.ts",
         "personal-assistant/src/ledger",

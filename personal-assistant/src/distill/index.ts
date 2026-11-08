@@ -29,6 +29,7 @@ const githubGate = require('./githubGate.ts');
 const lists = require('./lists.ts');
 const policy = require('../commitments/sourcePolicy.ts');
 const newAsk = require('../notify/newAsk.ts');
+const short = require('./short.ts');
 
 const log = logger('distill');
 
@@ -48,12 +49,13 @@ function sourceAllowed() {
   return policy.sourceSql('si.source', policy.distillSources());
 }
 
+// A short Teams message to you is read from short.DIRECT_MIN_CHARS (distill/short.ts).
 async function pending(limit: number = 25) {
-  return repo.commitments.pendingDistill(PROMPT_VERSION, MIN_BODY_CHARS, limit, DEBRIEF_OWNED, sourceAllowed());
+  return repo.commitments.pendingDistill(PROMPT_VERSION, MIN_BODY_CHARS, limit, DEBRIEF_OWNED, sourceAllowed(), short.direct());
 }
 
 async function pendingCount() {
-  const r = await repo.commitments.pendingDistillCount(PROMPT_VERSION, MIN_BODY_CHARS, DEBRIEF_OWNED, sourceAllowed());
+  const r = await repo.commitments.pendingDistillCount(PROMPT_VERSION, MIN_BODY_CHARS, DEBRIEF_OWNED, sourceAllowed(), short.direct());
   return r?.n ?? 0;
 }
 
@@ -203,6 +205,12 @@ async function distillOne(item: any, cached: any) {
     await markSkipped(item.id);
     log.debug('not from a person — skipped', { id: item.id, source: item.source, why: verdict.why });
     return { id: item.id, commitments: 0, facts: 0, skipped: verdict.why };
+  }
+  const courtesy = short.skip(item, [meRow?.display_name], MIN_BODY_CHARS);
+  if (courtesy) {
+    await markSkipped(item.id);
+    log.debug('short courtesy — skipped', { id: item.id, source: item.source });
+    return { id: item.id, commitments: 0, facts: 0, skipped: courtesy };
   }
   const candidates = cached?.candidates || (await projects.candidates());
   const meLabel = meRow ? `${meRow.display_name} <${meRow.primary_email || 'unknown'}>` : null;
