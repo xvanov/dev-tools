@@ -396,7 +396,8 @@ setup; T7's cargo and Bun caches apply.
   itself: `worker.js` is the entry shim), chat, cli and the supervisor's deploy; chunks A to D
   (util, events, telemetry, platform, auth, secrets, notify, search, recall; ingest, distill,
   memory, projects, repos, brief; commitments, ledger, proposals, draft, meetings, routines,
-  eval; dispatch, durable, e2e, audio, still converting) by parallel agents. Values a JS producer hands over are
+  eval; dispatch, durable, e2e, audio: `dispatch/index.js` and `durable/index.js` are the
+  directory shims) by parallel agents. Values a JS producer hands over are
   `any`/`Json` until it switches to ES exports. `test/requiresResolve.test.js` fails on a
   relative require that resolves to no file (Node never adds `.ts`).
 - [x] The one typed router (`dashboard/router.ts`, the `ROUTES` table in `server.ts`).
@@ -409,6 +410,9 @@ setup; T7's cargo and Bun caches apply.
 - [ ] Left: switch the stacks (the lead does it, from the runbook above); then the in-process
   front (one jarvisd process owns 7000 and 7300, Exit 4; designed above, *Design: the in-process
   front*; settle `/api/exec`'s privilege first); modules to ES exports (then `Repos`,
-  `Config` and `Json` get real types); `pa` as a thin client of jarvisd's API; chunk D (dispatch,
-  e2e) finishing; `test/supervisor.test.js` fails ~1 in 3 under the full parallel suite (~150 s,
-  passes alone): a load-dependent timeout to fix.
+  `Config` and `Json` get real types); `pa` as a thin client of jarvisd's API.
+- [x] `test/supervisor.test.js` under load (92a25c8): it slept a fixed 300 to 600 ms before
+  asserting the clients had followed a roll, and a failed assert then hung in `close()` behind
+  the open WebSocket until the 150 s watchdog. It now waits for each generation and stops its
+  clients before closing; 15 loaded runs passed. The supervisor's `close()` still waits on an
+  open upgraded socket (a stop would too).

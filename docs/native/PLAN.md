@@ -624,11 +624,12 @@ run mid-step; a job continued on an existing branch (`--branch`).
 
 - [x] **4.1** TypeScript/Bun core absorbs the PA worker, dashboard, MCP server and termhub
   front; strict TS, module by module. Done: the PA's server-side modules are strict TS (browser
-  files and entry shims stay JS; dispatch, durable, e2e and audio are converting as chunk D), the dashboard has one typed router, and `jarvisd front` runs
+  files and entry shims stay JS; chunk D, dispatch, durable, e2e and audio, finished with
+  1659567), the dashboard has one typed router, and `jarvisd front` runs
   termhub's front under Bun 1.4.4 with its tests (and the front swap) in the parity set
   ([JARVISD.md](JARVISD.md) Status). termhub's front and lib are TS too. Left: the stacks'
-  switch to `jarvisd front`, the in-process front (Exit 4), ES exports, `pa` as a thin client,
-  and the `supervisor.test.js` flake under load.
+  switch to `jarvisd front`, the in-process front (Exit 4), ES exports and `pa` as a thin
+  client. The `supervisor.test.js` flake under load is fixed (92a25c8).
   Design and order: [JARVISD.md](JARVISD.md). Stage 1 (host) landed: `jarvisd/` (strict tsconfig,
   Bun pinned in its package.json) boots the PA worker unchanged under Bun; the PA's own tests run
   under Bun (`jarvisd/scripts/parity.js`; the contract on SQLite and Postgres, since Bun 1.4.4
