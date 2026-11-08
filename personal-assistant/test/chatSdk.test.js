@@ -67,6 +67,9 @@ function fakePolicy(rules = {}) {
   const calls = { authorize: [], enforce: [] };
   return {
     calls,
+    evaluate(req) {
+      return rules[req.tool] || { decision: 'ask', rule: 'default', reason: 'no rule matches', tags: [] };
+    },
     async authorize(req, opts = {}) {
       calls.authorize.push({ req, opts });
       const r = rules[req.tool];
@@ -122,6 +125,22 @@ const sdkMsg = {
   assert.strictEqual(S.hookDecision('mcp__pa-chat__board', { decision: 'allow', rule: 'chat-reads' }).decision, 'allow');
   assert.strictEqual(S.hookDecision('Read', { decision: 'ask', rule: 'default' }), null, 'no matching rule: Claude Code\'s settings decide');
   assert.strictEqual(S.hookDecision('Bash', null), null);
+
+  // Reads are allowed by policy only inside pa-home.
+  const H = path.resolve('/pa/home');
+  assert.ok(S.insideHome(H, { file_path: path.join(H, 'INBOX.md') }));
+  assert.ok(S.insideHome(H, { file_path: 'INBOX.md' }), 'relative to the chat\'s cwd');
+  assert.ok(S.insideHome(H, {}), 'no path: the cwd');
+  assert.ok(!S.insideHome(H, { file_path: path.resolve('/pa/home-other/x') }), 'a sibling with the same prefix is outside');
+  assert.ok(!S.insideHome(H, { path: '..' }));
+  // Generic prompts: the detail is the exact input, cut only with a count; voice only when it can be heard whole.
+  assert.strictEqual(S.genericDetail('Bash', { command: 'ls' }), 'ls');
+  assert.match(S.genericDetail('Bash', { command: 'x'.repeat(2100) }), /… \(100 more characters\)$/);
+  assert.strictEqual(S.genericDetail('mcp__personal-assistant__remember', { text: 'a' }), '{\n "text": "a"\n}');
+  assert.strictEqual(S.genericAsk('mcp__personal-assistant__request_secret', {}), 'Claude wants to use request secret (personal-assistant). Allow once?');
+  assert.strictEqual(S.genericVoiceOk('Bash', { command: 'pa propose --task x' }), true);
+  assert.strictEqual(S.genericVoiceOk('Bash', { command: 'x'.repeat(200) }), false);
+  assert.strictEqual(S.genericVoiceOk('Write', { file_path: 'a', content: 'b' }), false);
 
   // The engine flag: terminal by default, sdk when asked, anything else terminal.
   assert.strictEqual(engine('sdk'), 'sdk');
@@ -217,7 +236,7 @@ const sdkMsg = {
     // ---------------------------------------- approval round trip (dashboard) --
     {
       const sdk = fakeSdk();
-      const policy = fakePolicy({ board: { decision: 'allow', rule: 'chat-reads' } });
+      const policy = fakePolicy({ board: { decision: 'allow', rule: 'chat-reads' }, Read: { decision: 'allow', rule: 'chat-builtin-reads-allow' } });
       const feed = makeFeed({ dir: fs.mkdtempSync(path.join(dir, 'a-')), sdk, policy });
       const got = [];
       feed.subscribe((e) => got.push(e));
@@ -235,8 +254,12 @@ const sdkMsg = {
       const r = await hook({ tool_name: 'mcp__pa-chat__board', tool_input: {}, tool_use_id: 'tu0' });
       assert.strictEqual(r.hookSpecificOutput.permissionDecision, 'allow');
       const rd = await hook({ tool_name: 'Read', tool_input: { file_path: 'INBOX.md' }, tool_use_id: 'tuR' });
-      assert.deepStrictEqual(rd, { continue: true }, 'no rule: Claude Code\'s own settings decide');
+      assert.strictEqual(rd.hookSpecificOutput.permissionDecision, 'allow', 'a read in pa-home: the policy\'s allow');
       assert.strictEqual(policy.calls.authorize.at(-1).opts.audit, true, 'a built-in tool call is audited here');
+      const ro = await hook({ tool_name: 'Read', tool_input: { file_path: path.join(os.homedir(), '.ssh', 'id_rsa') }, tool_use_id: 'tuR2' });
+      assert.deepStrictEqual(ro, { continue: true }, 'a read outside pa-home is not the policy\'s allow: Claude Code asks');
+      const bh = await hook({ tool_name: 'Bash', tool_input: { command: 'ls' }, tool_use_id: 'tuB' });
+      assert.deepStrictEqual(bh, { continue: true }, 'no rule: Claude Code\'s own settings decide');
 
       run.emit(sdkMsg.assistant('msg_a', [{ type: 'tool_use', id: 'tu1', name: 'mcp__pa-chat__factory_start', input }], 'tool_use'));
       await until(() => got.some((e) => e.type === 'activity' && e.toolUseId === 'tu1'), 'tool activity');
@@ -293,10 +316,36 @@ const sdkMsg = {
       await feed.answerPermission({ answer: 'yes', toolUseId: 'tu5' });
       assert.deepStrictEqual([(await p4).behavior, (await p5).behavior], ['deny', 'allow']);
 
-      // Anything that is not one of the chat's actions cannot be approved here: refused at once.
-      const bash = await run.options.canUseTool('Bash', { command: 'node pa.js do --task x' }, { signal: ac.signal, toolUseID: 'tu6' });
-      assert.strictEqual(bash.behavior, 'deny');
-      assert.match(bash.message, /no terminal/);
+      // Any other prompt gets the generic card: the whole input shown, allow once, through the policy.
+      const bashInput = { command: 'node pa.js remember "the renewal is in May"', description: 'remember it' };
+      const bashP = run.options.canUseTool('Bash', bashInput, { signal: ac.signal, toolUseID: 'tu6' });
+      await tick();
+      const gen = (await feed.session()).permission;
+      assert.deepStrictEqual([gen.toolUseId, gen.generic, gen.approvable, gen.voice], ['tu6', true, true, true]);
+      assert.strictEqual(gen.detail, bashInput.command, 'the card shows the exact command, not the model\'s description');
+      assert.strictEqual(gen.ask, `Claude wants to run a command: remember it — ${bashInput.command}. Allow once?`);
+      await feed.answerPermission({ answer: 'yes', toolUseId: 'tu6', via: 'voice' });
+      assert.deepStrictEqual(await bashP, { behavior: 'allow', updatedInput: bashInput }, 'once: no updatedPermissions');
+      assert.deepStrictEqual([policy.calls.enforce.at(-1).tool, policy.calls.enforce.at(-1).action, policy.calls.enforce.at(-1).channel], ['Bash', 'approve', 'voice']);
+
+      // An edit is never answered by voice: 403 there, the dashboard answers it.
+      const editInput = { file_path: path.join(dir, 'x.md'), old_string: 'a', new_string: 'b' };
+      const editP = run.options.canUseTool('Edit', editInput, { signal: ac.signal, toolUseID: 'tu6e', title: 'Claude wants to edit x.md' });
+      await tick();
+      const ed = (await feed.session()).permission;
+      assert.strictEqual(ed.voice, false);
+      assert.strictEqual(ed.ask, 'Claude wants to edit x.md. Allow once?');
+      assert.match(ed.detail, /- a\n\+ b$/);
+      assert.ok(got.some((e) => e.type === 'permission' && e.toolUseId === 'tu6e' && e.generic), 'offered on the stream too');
+      await assert.rejects(feed.answerPermission({ answer: 'yes', toolUseId: 'tu6e', via: 'voice' }), (e) => e.status === 403);
+      await feed.answerPermission({ answer: 'no', toolUseId: 'tu6e', via: 'dashboard' });
+      assert.strictEqual((await editP).behavior, 'deny');
+      // Another MCP tool that asks (remember): generic, its bare name to the policy.
+      const remP = run.options.canUseTool('mcp__personal-assistant__remember', { text: 'x' }, { signal: ac.signal, toolUseID: 'tu6r' });
+      await tick();
+      await feed.answerPermission({ answer: 'yes', toolUseId: 'tu6r' });
+      assert.strictEqual((await remP).behavior, 'allow');
+      assert.strictEqual(policy.calls.enforce.at(-1).tool, 'remember');
       assert.strictEqual((await feed.session()).permission, null, 'nothing left waiting');
 
       // The SDK cancelling the call (an interrupt) settles it as a deny.

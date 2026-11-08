@@ -190,8 +190,11 @@ the six action tools always ask, whatever a rule or settings file says). `canUse
 same two surfaces through the same endpoint: an answer must name the pending call's `tool_use` id, goes
 through `policy.enforce` with its channel, and allows that one call only (no `updatedPermissions`, i.e.
 never "don't ask again"). No answer within `PA_CHAT_APPROVAL_TIMEOUT_MS` is a deny, audited on channel
-`timeout`. A prompt for anything but the chat's action tools is refused at once: there is no terminal to
-answer it in, and the page would not show what it approves. The SDK's environment drops
+`timeout`. A prompt for anything else (a `pa` shell verb, an edit, `remember`) gets a generic "allow
+once" card on the same surfaces, showing the call's whole input (`genericDetail`: the exact command or
+diff, never the model's description; a cut says how much is left out). Voice may answer one only when
+that input can be heard whole and the policy does not bar voice (never an edit); otherwise a spoken yes
+is a 403. A policy allow for Read/Grep/Glob holds inside pa-home only (`insideHome`). The SDK's environment drops
 `ANTHROPIC_API_KEY`/`ANTHROPIC_AUTH_TOKEN`, so it runs on the machine's Claude login, never the API.
 Tests use a mocked SDK (`test/chatSdk.test.js`); never a real model call in a test.
 

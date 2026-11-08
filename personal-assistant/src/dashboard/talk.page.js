@@ -1034,6 +1034,11 @@
   function offerPermission(p) {
     if (!p || p.cleared) return voiceAsk.clear();
     if (!p.approvable) return;
+    // A generic prompt too long to hear whole (or one the policy bars from voice) is the dashboard's.
+    if (p.voice === false) {
+      concerned('Waiting for your yes on the dashboard.', 8000);
+      return;
+    }
     const q = voiceAsk.offer(p);
     if (q) speakAsk(q);
   }

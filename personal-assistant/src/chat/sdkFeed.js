@@ -81,6 +81,63 @@ function hookDecision(toolName, res) {
   return null;
 }
 
+const READ_TOOLS = ['Read', 'Grep', 'Glob'];
+const DETAIL_MAX = 2000;
+const VOICE_MAX = 160;
+
+/** Pure. Whether a Read/Grep/Glob call stays inside `home` (no path: its cwd, home). */
+function insideHome(home, input = {}) {
+  const i = input && typeof input === 'object' ? input : {};
+  const target = i.file_path || i.path || '';
+  if (!target) return true;
+  const abs = path.resolve(home, String(target)).toLowerCase();
+  const root = path.resolve(home).toLowerCase();
+  return abs === root || abs.startsWith(root + path.sep);
+}
+
+const clip = (s, n) => {
+  const t = String(s ?? '');
+  return t.length > n ? `${t.slice(0, n)}… (${t.length - n} more characters)` : t;
+};
+
+/**
+ * Pure. Everything a generic prompt approves, for the card: the command, the
+ * file and its change, or the tool's whole input. Never shortened silently:
+ * a cut says how much is left out.
+ */
+function genericDetail(name, input = {}) {
+  const i = input && typeof input === 'object' ? input : {};
+  switch (name) {
+    case 'Bash':
+    case 'PowerShell': return clip(i.command, DETAIL_MAX);
+    case 'Edit': return clip(`${i.file_path}\n- ${i.old_string ?? ''}\n+ ${i.new_string ?? ''}`, DETAIL_MAX);
+    case 'Write': return clip(`${i.file_path}\n${i.content ?? ''}`, DETAIL_MAX);
+    default: return clip(JSON.stringify(i, null, 1), DETAIL_MAX);
+  }
+}
+
+/** Pure. The card's headline and Talk's question for a generic prompt. */
+function genericAsk(name, input = {}, title = null) {
+  const i = input && typeof input === 'object' ? input : {};
+  const { server, tool } = splitTool(name);
+  let what;
+  if (title) what = String(title).replace(/[.?!\s]+$/, '');
+  else if (name === 'Bash' || name === 'PowerShell') what = `Claude wants to run a command${i.description ? `: ${String(i.description).trim()}` : ''}`;
+  else if (name === 'Edit' || name === 'Write') what = `Claude wants to change ${path.basename(String(i.file_path || 'a file'))}`;
+  else what = `Claude wants to use ${tool.replace(/_/g, ' ')}${server ? ` (${server})` : ''}`;
+  return `${what.replace(/\s+/g, ' ').trim()}. Allow once?`;
+}
+
+/**
+ * Pure. Whether a generic prompt may be answered by voice: only when what it
+ * approves can be heard whole (a short command or input), never an edit.
+ */
+function genericVoiceOk(name, input = {}) {
+  if (name === 'Edit' || name === 'Write' || name === 'NotebookEdit') return false;
+  const d = genericDetail(name, input);
+  return d.length <= VOICE_MAX && !d.includes('\n');
+}
+
 /** An async iterable the SDK reads user messages from; push() to send, close() to end. */
 function createInputQueue() {
   const items = [];
@@ -225,7 +282,9 @@ function createSdkFeed({
   // ------------------------------------------------------------ approvals --
 
   function pendingView(p) {
-    return { toolUseId: p.toolUseId, text: p.text, approvable: true, ask: p.ask || null };
+    const v = { toolUseId: p.toolUseId, text: p.text, approvable: true, ask: p.ask || null };
+    if (p.generic) Object.assign(v, { generic: true, detail: p.detail, voice: p.voice });
+    return v;
   }
 
   function permissionPending() {
@@ -259,13 +318,19 @@ function createSdkFeed({
   // canUseTool: Claude Code's permission prompt, as a callback.
   function canUseTool(toolName, toolInput, opts = {}) {
     const toolUseId = String(opts.toolUseID || '');
-    if (!P.chatAction(toolName) || !toolUseId) {
-      const what = T.describeTool(toolName, toolInput).replace(/…$/, '');
-      publish({ id: `refused-${toolUseId || Date.now()}`, type: 'activity', text: `not run (needs a yes nothing here can give): ${what}`, at: now() });
-      return Promise.resolve({
-        behavior: 'deny',
-        message: 'This chat has no terminal (PA_CHAT_ENGINE=sdk): only its own action tools (factory_start, session_start, …) can be approved, from the dashboard or by voice. Do not retry this call; tell the user what you would have run.',
-      });
+    if (!toolUseId) return Promise.resolve({ behavior: 'deny', message: 'a permission request without a tool_use id cannot be answered' });
+    // The chat's own actions keep their spoken question; anything else (a shell
+    // command, an edit, another MCP tool) gets the generic card, which shows
+    // the call's whole input so the yes is to exactly what runs.
+    const generic = !P.chatAction(toolName);
+    let voice = true;
+    if (generic) {
+      voice = genericVoiceOk(toolName, toolInput);
+      try {
+        if (voice && policy().evaluate({ tool: splitTool(toolName).tool, action: 'approve', channel: 'voice', args: toolInput || {} }).decision === 'deny') voice = false;
+      } catch {
+        voice = false;
+      }
     }
     return new Promise((resolve) => {
       const p = {
@@ -273,7 +338,11 @@ function createSdkFeed({
         name: toolName,
         input: toolInput || {},
         text: T.describeTool(toolName, toolInput),
-        ask: T.askTool(toolName, toolInput),
+        // Heard by voice, the question carries the exact input (a description is the model's words).
+        ask: generic ? genericAsk(toolName, toolInput, opts.title).replace(/\. Allow once\?$/, voice ? ` — ${genericDetail(toolName, toolInput)}. Allow once?` : '. Allow once?') : T.askTool(toolName, toolInput),
+        generic,
+        detail: generic ? genericDetail(toolName, toolInput) : null,
+        voice,
         resolve,
         timer: null,
       };
@@ -308,7 +377,9 @@ function createSdkFeed({
     } catch (err) {
       log.warn('policy unavailable for a chat tool call; Claude Code\'s settings decide', { message: err.message, tool: name });
     }
-    const d = hookDecision(name, res);
+    let d = hookDecision(name, res);
+    // A policy allow for a built-in read holds inside pa-home only (rules cannot match paths).
+    if (d && d.decision === 'allow' && READ_TOOLS.includes(name) && !insideHome(home || stateDir(), hookInput?.tool_input)) d = null;
     if (!d) return { continue: true };
     return { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: d.decision, permissionDecisionReason: d.reason } };
   }
@@ -323,7 +394,8 @@ function createSdkFeed({
     if (!approvals.size) throw httpError(409, 'the PA chat is not waiting on a permission prompt');
     const p = approvals.get(String(toolUseId || ''));
     if (!p) throw httpError(409, 'that prompt is no longer the one waiting — reload');
-    const tool = P.chatAction(p.name);
+    if (via === 'voice' && p.voice === false) throw httpError(403, 'this one cannot be answered by voice — answer it on the dashboard');
+    const tool = P.chatAction(p.name) || splitTool(p.name).tool;
     try {
       const pol = policy();
       let req = { tool, action: answer === 'yes' ? 'approve' : 'deny', channel: via, actor: 'pa-chat', subject: p.toolUseId, args: p.input };
@@ -548,4 +620,4 @@ function createSdkFeed({
   return { send, history, subscribe, session, open, answerPermission, stop, canUseTool, preToolUse, onMessage };
 }
 
-module.exports = { createSdkFeed, subscriptionEnv, splitTool, hookDecision, createInputQueue, SDK_MODULE, SESSION_FILE };
+module.exports = { createSdkFeed, subscriptionEnv, splitTool, hookDecision, insideHome, genericDetail, genericAsk, genericVoiceOk, createInputQueue, SDK_MODULE, SESSION_FILE };
