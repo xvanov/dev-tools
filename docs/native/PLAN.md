@@ -1174,17 +1174,25 @@ not in the Map is not done, and a new one gets added there first.
     another process), on the page 4 ms later, then `GET /api/state` with a median of 716 ms over
     8 fetches (430-1249). Profile `/api/state`, or let the event carry enough for the page to draw the card
     without the full refetch.
-  - [ ] **8.4.34 teams-ask: the Teams cache's pending copy is stored as its own message.** The
+  - [x] **8.4.34 teams-ask: the Teams cache's pending copy is stored as its own message.** The
     client writes a local copy with message id `-1` before the server's id, and the reader keeps
     it: 39 items, 16 distilled into 37 commitments (6 open). All link to message `-1`, which
     opens nothing, and 12 of the 39 have a twin under the real id (duplicate cards). Skip id
     `-1` in `teamsLocal.toItem`, or fold it into the real id when that arrives.
-  - [ ] **8.4.35 teams-ask: Teams' system threads are distilled as group chats.** The cache
+    Done with 8.4.35: the reader skips any message id starting with `-` (`-1`, a draft's
+    `-4.…`), and the source policy keeps the rows already stored off the board
+    (`ingest/teamsThreads.ts`). `pa policy close --teams [--apply]` is the one-off cleanup (dry
+    run by default, idempotent, through the ledger with undo SQL, folded copies included); on a
+    scratch copy of today's store it would drop 15 open cards (5 local copies, 10 system
+    threads; 14 of them folded) and regroup 7 asks folded under them. Not applied live. (fb34f2f)
+  - [x] **8.4.35 teams-ask: Teams' system threads are distilled as group chats.** The cache
     reader stores the `48:` threads (drafts, mentions, notifications, threads, call logs) as
     `chatType: group`: 149 items, 57 commitments (10 open). Drafts are the owner's unsent or
     sent text: 55 of 62 are also stored from the real chat. Their cards name the owner and link
     to the drafts thread instead of the chat. Keep only the self chat (the notes thread) and drop the
     rest, as `graphChat.repairEmpty` already does.
+    Done: the reader drops every `48:` thread but `48:notes`, which it keeps as `chatType: self`
+    and distills at once even though it is yours (see 8.4.34 for the cleanup). (fb34f2f)
   - [ ] **8.4.36 teams-ask: distill skips any message under 40 characters.** `MIN_BODY_CHARS`
     is 40, and the Map's own example ("can you send me the numbers by Friday?") is 38. A short
     Teams ask from a person is never read: since 1 Nov, 36 short items from others were skipped,

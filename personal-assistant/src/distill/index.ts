@@ -28,6 +28,7 @@ const keep = require('./keep.ts');
 const githubGate = require('./githubGate.ts');
 const lists = require('./lists.ts');
 const policy = require('../commitments/sourcePolicy.ts');
+const newAsk = require('../notify/newAsk.ts');
 
 const log = logger('distill');
 
@@ -68,8 +69,10 @@ async function callModel(item: any, context: any) {
 // transaction as the rows it explains, so a crash mid-write cannot leave an
 // item marked done with half its commitments missing. A commitment anything
 // has acted on survives a re-distillation untouched (keep.js).
+// Resolves the commitments it inserted, with their ids.
 async function persist(item: any, result: any, resolved: any) {
   return repo.withTx(async (r: any) => {
+    const inserted: any[] = [];
     // The item's live commitments, with whether anything has acted on them
     // (src/distill/keep.js decides what a re-distillation may replace).
     const existing = await r.commitments.liveForItem(item.id);
@@ -79,7 +82,7 @@ async function persist(item: any, result: any, resolved: any) {
 
     for (const c of p.insert) {
       const match = resolved.byCommitment.get(c);
-      await r.commitments.insertDistilled({
+      const id = await r.commitments.insertDistilled({
         itemId: item.id,
         direction: c.direction,
         summary: c.summary,
@@ -93,6 +96,7 @@ async function persist(item: any, result: any, resolved: any) {
         confidence: c.confidence,
         extractedBy: PROMPT_VERSION,
       });
+      inserted.push({ id, direction: c.direction, summary: c.summary, dueAt: c.dueAt, confidence: c.confidence });
     }
 
     for (const f of result.facts) {
@@ -100,6 +104,7 @@ async function persist(item: any, result: any, resolved: any) {
     }
 
     await r.commitments.upsertDistillation(item.id, PROMPT_VERSION, result.commitments.length, result.facts.length);
+    return inserted;
   });
 }
 
@@ -230,7 +235,9 @@ async function distillOne(item: any, cached: any) {
     if (l.collapsed) log.info('list collapsed', { id: item.id, folded: l.collapsed });
     result.commitments = l.commitments;
     const resolved = await resolveReferences(item, result, candidates);
-    await persist(item, result, resolved);
+    const inserted = await persist(item, result, resolved);
+    // A new ask of you: a toast within the interrupt budget (notify/newAsk.ts).
+    await newAsk.tell(item, inserted, meRow);
     return { id: item.id, commitments: result.commitments.length, facts: result.facts.length };
   } catch (err: any) {
     // A failed item is marked with its error so the pass moves on, and so the

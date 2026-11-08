@@ -784,11 +784,12 @@ module.exports = {
     const item = await seed.sourceItem();
     const person = await seed.person();
     const project = await seed.projectNamed(`dist-${Date.now()}`);
-    await repos.commitments.insertDistilled({
+    const id = await repos.commitments.insertDistilled({
       itemId: item, direction: 'owed_to_me', summary: 's', detail: null, personId: person, dueAt: null,
       projectId: project, repoPath: '/r', projectConfidence: 0.9, projectRationale: 'named', confidence: 0.8, extractedBy: 'distill-vx',
     });
     const [c] = await repos.commitments.liveForItem(item);
+    assert.strictEqual(id, Number(c.id), 'resolves the new id');
     const row = await repos.commitments.byId(c.id);
     assert.deepStrictEqual(
       [row.direction, row.summary, Number(row.counterparty_person_id), Number(row.project_id), row.repo_path, row.project_confidence, row.confidence, row.extracted_by],

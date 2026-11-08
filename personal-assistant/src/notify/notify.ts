@@ -36,7 +36,7 @@ const platform = require('../platform');
 
 const log = logger('notify');
 
-const KINDS = ['meeting_brief', 'meeting_debrief', 'routine', 'suggestion', 'secret_request', 'info', 'digest'];
+const KINDS = ['meeting_brief', 'meeting_debrief', 'routine', 'suggestion', 'secret_request', 'info', 'digest', 'new_ask'];
 
 function dashboardUrl(anchor: string = '') {
   return `http://${config.dispatch.host}:${config.dispatch.port}/${anchor ? `#${anchor}` : ''}`;

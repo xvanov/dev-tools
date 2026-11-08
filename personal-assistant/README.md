@@ -1094,6 +1094,12 @@ Quiet hours are `PA_QUIET_HOURS` (default `19-08`, local; `off` for none). Every
 against the budget, urgent ones included. A notification with the same dedupe key as an earlier one
 is never sent again, so nothing is announced twice without something new behind it.
 
+**A new ask** (kind `new_ask`, `src/notify/newAsk.ts`): when the distiller writes something you owe
+(confidence 0.5 or more) from someone else's message under three hours old, or from a note you wrote
+in your Teams self chat, you hear of it once per message. A Teams DM, the self chat or a message that
+names you is `normal`; anything else (a group chat, mail, GitHub, Jira) is `digest`, so a day of
+review requests does not spend the budget.
+
 **Digests** come at `PA_DIGEST_TIMES` (default `09:00,14:00`): one toast and one feed row with what
 the assistant closed for you since the last one (`pa ledger undo` takes any of them back), the
 "Looks done?" proposals waiting, people you are waiting on who are overdue or have had it more than

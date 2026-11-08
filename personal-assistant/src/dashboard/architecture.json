@@ -876,7 +876,8 @@
       "details": {
         "Budget": "PA_PUSH_BUDGET pushes (default 4), quiet hours 19-08, digests at 09:00 and 14:00",
         "PA chat": "pushes go to pa-home/INBOX.md; the only text ever typed into the chat is a content-free doorbell, and only when nudgeDecision proves the session is idle at an empty prompt",
-        "ntfy": "fallback mode by default; bodies off unless PA_NTFY_BODY=1"
+        "ntfy": "fallback mode by default; bodies off unless PA_NTFY_BODY=1",
+        "New asks": "kind new_ask (8.4.31): when distill writes an owed_by_me commitment (confidence 0.5 or more) from someone else's message under 3 h old, or from your self chat; a Teams DM, the self chat or a mention is priority normal (a push within the budget), any other source digest; one per item (dedupe new-ask:<item id>); src/notify/newAsk.ts"
       },
       "env": [
         {
@@ -891,7 +892,8 @@
       "code": [
         "personal-assistant/src/notify/notify.ts",
         "personal-assistant/src/notify/chat.ts",
-        "personal-assistant/src/notify/ntfy.ts"
+        "personal-assistant/src/notify/ntfy.ts",
+        "personal-assistant/src/notify/newAsk.ts"
       ]
     },
     {
@@ -1984,6 +1986,11 @@
       "label": "interrupt budget"
     },
     {
+      "from": "commitments",
+      "to": "notify",
+      "label": "new ask (distill)"
+    },
+    {
       "from": "worker",
       "to": "claude-sub",
       "label": "claude -p passes"
@@ -2422,7 +2429,7 @@
         },
         {
           "c": "notify",
-          "t": "Within the interrupt budget: a toast (or ntfy), and INBOX.md for the PA chat with a content-free doorbell when it is idle."
+          "t": "Distill notifies the new ask (kind new_ask, src/notify/newAsk.ts). Within the interrupt budget: a toast (or ntfy), and INBOX.md for the PA chat with a content-free doorbell when it is idle."
         }
       ],
       "acceptance": {

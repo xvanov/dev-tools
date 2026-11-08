@@ -895,15 +895,17 @@ function create(db: Db) {
     /**
      * Inserts one distilled commitment.
      * @param {{itemId, direction, summary, detail, personId, dueAt, projectId, repoPath, projectConfidence, projectRationale, confidence, extractedBy}} v
+     * @returns {Promise<number|null>} its id
      */
     async insertDistilled(v: Row) {
-      await db.query(
+      const r = await db.one(
         `insert into commitment
            (source_item_id, direction, summary, detail, counterparty_person_id, due_at,
             project_id, repo_path, project_confidence, project_rationale, confidence, extracted_by)
-         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) returning id`,
         [v.itemId, v.direction, v.summary, v.detail, v.personId, v.dueAt, v.projectId, v.repoPath, v.projectConfidence, v.projectRationale, v.confidence, v.extractedBy]
       );
+      return r ? Number(r.id) : null;
     },
 
     /** Marks an item distilled with its counts; clears any earlier error. */
