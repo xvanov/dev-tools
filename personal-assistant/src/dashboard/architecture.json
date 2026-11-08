@@ -2186,15 +2186,15 @@
         },
         {
           "c": "jarvis",
-          "t": "Your words are typed into the PA chat through termhub. Claude Code calls card 412 (allowed) and then factory_start {card: 412, runtime: api, model: deepseek/deepseek-coder, delivery: pr}."
+          "t": "Your words are typed into the PA chat through termhub. Claude Code calls card 412 (allowed) and then factory_start {card: 412, runtime: api, model: azure/deepseek-v4-pro, delivery: pr}."
         },
         {
           "c": "mcp",
-          "t": "factory_start is on no allow list: Claude Code shows a permission prompt. Jarvis asks \"Start a factory job for card 412 on the API with deepseek/deepseek-coder, opening a PR for review. Shall I?\" and you say yes (or press Approve on the dashboard)."
+          "t": "factory_start is on no allow list: Claude Code shows a permission prompt. Jarvis asks \"Start a factory job for card 412 on the API with azure/deepseek-v4-pro, opening a PR for review. Shall I?\" and you say yes (or press Approve on the dashboard)."
         },
         {
           "c": "dispatcher",
-          "t": "dispatch.start composes the brief from the card (PA_COMPOSE_MODEL), writes a flow file, and runs `uv run factory job submit --json --runtime api --model dev=deepseek/deepseek-coder --delivery pr` on the factory machine."
+          "t": "dispatch.start composes the brief from the card (PA_COMPOSE_MODEL), writes a flow file, and runs `uv run factory job submit --json --runtime api --model dev=azure/deepseek-v4-pro --delivery pr` on the factory machine."
         },
         {
           "c": "factory-api",
@@ -2210,7 +2210,7 @@
         },
         {
           "c": "runtime-api",
-          "t": "OpenHands runs the dev step; LiteLLM calls DeepSeek."
+          "t": "OpenHands runs the dev step; LiteLLM calls the DeepSeek-V4-Pro deployment on Azure."
         },
         {
           "c": "deepseek",
@@ -2256,7 +2256,7 @@
         ],
         "cost": {
           "max_usd": 2,
-          "basis": "job cost_usd on deepseek/deepseek-coder"
+          "basis": "job cost_usd: dev on azure/deepseek-v4-pro, the other steps on the azure routes (pm and sm DeepSeek-V4-Flash, tech_writer Kimi-K2.7-Code); the PA's compose call is outside it"
         },
         "views": [
           "plan",

@@ -1018,10 +1018,14 @@ not in the Map is not done, and a new one gets added there first.
     `goldenPathCore.dummyCard` should word the ask by delivery and say the factory delivers.
     Done: the ask describes only the change and carries the marker; delivery is factory_start's
     `delivery`, never the card's. A test refuses an ask that mentions a PR, a push or a merge.
-  - [ ] **8.4.22 deepseek-pr: Map and e2e drift.** The Map's steps and `cost.basis` name
+  - [x] **8.4.22 deepseek-pr: Map and e2e drift.** The Map's steps and `cost.basis` name
     `deepseek/deepseek-coder`, but `pa e2e deepseek-pr` runs `azure/deepseek-v4-pro`. The e2e also
     times the jarvis hop including compose's model call, which the target excludes: subtract
     `timings_ms.compose_model`.
+    Done: the example's steps and cost basis name `azure/deepseek-v4-pro` (and the azure routes of
+    the other steps), and a test keeps them so. The jarvis hop is the round trip less
+    `timings_ms.compose_model` (`workflowsCore.toolCallMs`); a PA without it is timed whole and
+    the note says so. The verdict is unchanged.
   - [ ] **8.4.23 deepseek-pr: PA keeps stale state after a job ends.** Run rows kept a live
     `factory_state` for dev-tools:004-015, hours after the factory ended them, so `--sweep`
     reported "cancelled" for each. The `card` tool's narrative said run #29 "is still running"

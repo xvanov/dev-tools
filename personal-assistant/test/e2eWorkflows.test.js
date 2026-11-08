@@ -30,6 +30,23 @@ test('scoreHops: bounded hops pass or fail on max_ms; unbounded never fail; unme
   assert.strictEqual(s[2].note, 'not measured');
 });
 
+test('toolCallMs: the jarvis hop excludes the composing model (8.4.22)', () => {
+  const t = W.toolCallMs({ at: 0, ms: 6701 }, { started: true, timings_ms: { route: 40, compose_model: 2954, submit: 1000 } });
+  assert.strictEqual(t.ms, 3747);
+  assert.match(t.note, /less the composing model's 2954 ms/);
+  const old = W.toolCallMs({ at: 0, ms: 6701 }, { started: true });
+  assert.deepStrictEqual([old.ms, /including the brief composing model/.test(old.note)], [6701, true], 'a PA without timings_ms is timed whole and says so');
+  assert.strictEqual(W.toolCallMs(null, null).ms, null);
+});
+
+test('deepseek-pr: the Map names the model the e2e runs (8.4.22)', () => {
+  const ex = ARCH.examples.find((e) => e.id === 'deepseek-pr');
+  const text = JSON.stringify(ex);
+  assert.ok(!/deepseek\/deepseek-coder/.test(text), 'no direct-route model in the example');
+  assert.match(text, /azure\/deepseek-v4-pro/);
+  assert.match(ex.acceptance.cost.basis, /azure\/deepseek-v4-pro/);
+});
+
 test('scoreCost uses the effective ceiling', () => {
   const limits = { limits: { 'deepseek-pr': { default: 2, override: 0.5, effective: 0.5, custom: true } } };
   assert.deepStrictEqual(W.scoreCost(0.7, limits, 'deepseek-pr', 'b'), { usd: 0.7, max_usd: 0.5, custom: true, basis: 'b', ok: false });

@@ -299,12 +299,12 @@ async function deepseekPr(acc: Acceptance, o: Options, deps: Deps, folder: strin
     ...o,
     runtime: 'api',
     delivery: 'pr',
-    collect: async ({ ids, lastJob, startCall, timeline }: { ids: Json | null; lastJob: Json | null; startCall: { at: number; ms: number } | null; timeline: Json }) => {
+    collect: async ({ ids, lastJob, start, startCall, timeline }: { ids: Json | null; lastJob: Json | null; start: Json | null; startCall: { at: number; ms: number } | null; timeline: Json }) => {
       const transcripts: string[] = [];
       const sb: Record<string, string> = await G.scrollbacks(deps, ids?.steps || []);
       for (const [sid, text] of Object.entries(sb)) transcripts.push(deps.writeEvidence(folder, `transcripts/session-${sid}.txt`, C.stripAnsi(text)));
       const measured: Measured = {};
-      if (startCall) measured.jarvis = { ms: startCall.ms, note: 'factory_start round trip, including the brief composing model' };
+      if (startCall) measured.jarvis = W.toolCallMs(startCall, start);
       if (startCall && timeline.job_started != null) measured.dispatcher = { ms: timeline.job_started - (startCall.at + startCall.ms), note: `factory_start return to job started (${C.startedAt(lastJob, timeline.job_started).clock})` };
       if (timeline.pr_opened != null && timeline.job_started != null) measured['factory-chain'] = { ms: timeline.pr_opened - timeline.job_started };
       if (timeline.ci_done != null && timeline.pr_opened != null) measured.github = { ms: timeline.ci_done - timeline.pr_opened, note: `CI ${(ids?.prs[0] || {}).ci || '?'}` };

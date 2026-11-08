@@ -83,6 +83,18 @@ function scoreHops(hops: Hop[] = [], measured: Measured = {}): HopRow[] {
   });
 }
 
+/**
+ * Pure. The jarvis hop (8.4.22): factory_start's round trip less the brief's
+ * composing model call, which the hop's target excludes. factory_start reports
+ * it in `timings_ms.compose_model`; a PA that does not is timed whole and says so.
+ */
+function toolCallMs(call: { ms: number } | null | undefined, started: Json | null | undefined): { ms: number | null; note: string } {
+  if (!call) return { ms: null, note: 'factory_start was not called' };
+  const model = Number(started?.timings_ms?.compose_model);
+  if (!Number.isFinite(model) || model < 0) return { ms: call.ms, note: 'factory_start round trip, including the brief composing model (no timings_ms.compose_model)' };
+  return { ms: Math.max(0, call.ms - model), note: `factory_start round trip ${Math.round(call.ms)} ms less the composing model's ${Math.round(model)} ms` };
+}
+
 /** Pure. Cost against the effective ceiling (the user's override, else the Map's default). */
 function scoreCost(usd: number | string | null | undefined, limits: Json | null | undefined, id: string, basis: string | null = null): Cost {
   const lim = limits?.limits?.[id] || null;
@@ -196,4 +208,4 @@ function ndjson(text: unknown): Json[] {
   }).filter(Boolean) as Json[];
 }
 
-module.exports = { REAL_RUN, workflows, acceptance, scoreHops, scoreCost, missingViews, folderName, summary, table, wav, ndjson };
+module.exports = { REAL_RUN, workflows, acceptance, scoreHops, toolCallMs, scoreCost, missingViews, folderName, summary, table, wav, ndjson };
