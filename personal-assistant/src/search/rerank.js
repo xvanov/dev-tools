@@ -12,8 +12,8 @@
 // Optional, like embeddings: unconfigured or failing, search keeps its fused
 // order and says so.
 
-const { config } = require('../config');
-const { logger } = require('../log');
+const { config } = require('../config.ts');
+const { logger } = require('../log.ts');
 
 const log = logger('rerank');
 

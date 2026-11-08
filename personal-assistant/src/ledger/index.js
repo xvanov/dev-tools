@@ -17,7 +17,7 @@
 // in its own transaction. The row is locked, so a hand edit in between wins.
 
 const repo = require('../repo');
-const { logger } = require('../log');
+const { logger } = require('../log.ts');
 const L = require('./core');
 
 const log = logger('ledger');

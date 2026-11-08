@@ -23,7 +23,7 @@ const { execFile } = require('child_process');
 const C = require('./goldenPathCore');
 
 function defaultDeps() {
-  const { config } = require('../config');
+  const { config } = require('../config.ts');
   const termhub = require('../dispatch/termhub');
   const factory = require('../dispatch/factory');
   const repo = require('../repo');

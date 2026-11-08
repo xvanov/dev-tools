@@ -16,11 +16,11 @@
 const fs = require('fs');
 const path = require('path');
 
-const { config } = require('../config');
+const { config } = require('../config.ts');
 const { mode: resolveMode } = require('./modes');
 const R = require('./routeCore');
 const factory = require('./factory');
-const { logger } = require('../log');
+const { logger } = require('../log.ts');
 
 const log = logger('route');
 

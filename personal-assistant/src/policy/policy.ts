@@ -105,7 +105,7 @@ function readJson(file: string): PolicyFile {
 
 function overrideFile(env: NodeJS.ProcessEnv = process.env): string {
   if (env.PA_POLICY_FILE) return env.PA_POLICY_FILE;
-  const { config } = require('../config');
+  const { config } = require('../config.ts');
   return path.join(config.dataDir, 'policy.json');
 }
 
@@ -299,7 +299,7 @@ async function authorize(request: PolicyRequest, { audit = true, repo = null, st
         argsHash: argsHash(request.args),
       });
     } catch (err) {
-      require('../log').logger('policy').warn('audit write failed', { message: (err as Error).message, tool: request.tool });
+      require('../log.ts').logger('policy').warn('audit write failed', { message: (err as Error).message, tool: request.tool });
     }
   }
   return res;

@@ -14,8 +14,8 @@
 // prompt with mostly the same words — is never proposed again.
 
 const repo = require('../repo');
-const { config } = require('../config');
-const { logger } = require('../log');
+const { config } = require('../config.ts');
+const { logger } = require('../log.ts');
 const routines = require('./index');
 
 const log = logger('routine-suggest');

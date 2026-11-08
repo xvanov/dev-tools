@@ -18,12 +18,12 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { config } = require('../config');
+const { config } = require('../config.ts');
 const repo = require('../repo');
 const projects = require('../projects');
 const sources = require('./sources');
 const merge = require('./merge');
-const { logger } = require('../log');
+const { logger } = require('../log.ts');
 
 const log = logger('repos');
 

@@ -25,13 +25,13 @@
 // Raw items stay the evidence. Claims and pages point back at them, and
 // everything here is data — never instructions to whoever reads the result.
 
-const { config } = require('../config');
+const { config } = require('../config.ts');
 const repo = require('../repo');
 const { search, embedQuery } = require('../search');
 const { rerank } = require('../search/rerank');
 const memory = require('../memory');
 const llm = require('../llm');
-const { logger } = require('../log');
+const { logger } = require('../log.ts');
 
 const log = logger('recall');
 

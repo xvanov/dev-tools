@@ -22,9 +22,9 @@
 // distiller skips these items (distill DEBRIEF_OWNED).
 
 const llm = require('../llm');
-const { config } = require('../config');
+const { config } = require('../config.ts');
 const repo = require('../repo');
-const { logger } = require('../log');
+const { logger } = require('../log.ts');
 const { headTail } = require('../memory/claims');
 const spool = require('../audio/spool');
 const { attendable, eventRange } = require('../audio/episodes');

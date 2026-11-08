@@ -15,14 +15,14 @@ const path = require('path');
 const { execFile } = require('child_process');
 const { promisify } = require('util');
 
-const { config } = require('../config');
+const { config } = require('../config.ts');
 const repository = require('../repo');
 const { mode: resolveMode } = require('./modes');
 const { buildBrief, openingPrompt } = require('./brief');
 const D = require('./deliveryCore');
 const termhub = require('./termhub');
 const ledger = require('../ledger');
-const { logger } = require('../log');
+const { logger } = require('../log.ts');
 
 const exec = promisify(execFile);
 const log = logger('dispatch');

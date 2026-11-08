@@ -30,7 +30,7 @@
 
 const { spawn } = require('child_process');
 const os = require('os');
-const { config } = require('../config');
+const { config } = require('../config.ts');
 
 const DEFAULT_TIMEOUT_MS = 60_000;
 const DEFAULT_OUTPUT_BYTES = 1024 * 1024;

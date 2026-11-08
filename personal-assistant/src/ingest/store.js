@@ -11,7 +11,7 @@
 const repo = require('../repo');
 const { contentHash, chunkText } = require('../util/text.ts');
 const { chunkContext, CONTEXT_VERSION } = require('../search/context');
-const { logger } = require('../log');
+const { logger } = require('../log.ts');
 
 const log = logger('ingest');
 

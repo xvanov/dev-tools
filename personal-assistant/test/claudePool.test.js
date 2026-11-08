@@ -30,7 +30,7 @@ require.cache[repoPath] = {
   },
 };
 
-const { config } = require('../src/config');
+const { config } = require('../src/config.ts');
 const pool = require('../src/claudePool');
 
 let failed = 0;

@@ -26,7 +26,7 @@
 
 const repo = require('../repo');
 const ledger = require('../ledger');
-const { logger } = require('../log');
+const { logger } = require('../log.ts');
 
 const log = logger('github');
 

@@ -17,9 +17,9 @@
 // the paragraph.
 
 const llm = require('../llm');
-const { config } = require('../config');
+const { config } = require('../config.ts');
 const repo = require('../repo');
-const { logger } = require('../log');
+const { logger } = require('../log.ts');
 const K = require('./contextCore');
 
 const log = logger('card-context');

@@ -23,8 +23,8 @@ const os = require('os');
 const path = require('path');
 const { saveItems } = require('./store');
 const { headTail } = require('../util/text.ts');
-const { logger } = require('../log');
-const { config } = require('../config');
+const { logger } = require('../log.ts');
+const { config } = require('../config.ts');
 
 const log = logger('claude-sessions');
 

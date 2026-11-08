@@ -22,8 +22,8 @@
 // text goes in an attribute; callers pass ids, names, counts.
 
 const { trace, context, SpanStatusCode } = require('@opentelemetry/api');
-const { config } = require('../config');
-const { logger } = require('../log');
+const { config } = require('../config.ts');
+const { logger } = require('../log.ts');
 const { HOP_ATTR, SOURCE_ATTR } = require('./exporter');
 
 const log = logger('telemetry');

@@ -28,10 +28,10 @@ if (!require('./_portable').ensurePosixTools()) throw new Error('sh is not avail
 
 process.env.PA_MACHINES = 'lab=http://127.0.0.1:1|/srv/repos|linux, winbox=http://127.0.0.1:1|C:\\source';
 
-const { parseMachines } = require('../src/config');
+const { parseMachines } = require('../src/config.ts');
 const { runCommand, normalise } = require('../src/dispatch/exec');
 const remote = require('../src/dispatch/remote');
-const { config } = require('../src/config');
+const { config } = require('../src/config.ts');
 
 const node = process.execPath;
 // The machine these tests stand up on this box is of the host's own OS family: a POSIX one runs sh,

@@ -14,11 +14,11 @@
 
 const fs = require('fs');
 const path = require('path');
-const { config } = require('../config');
+const { config } = require('../config.ts');
 const repo = require('../repo');
 const { saveItems } = require('./store');
 const { toEpisodes, splitAtEvents, classify, episodeChanged, renderTranscript, isSubstantial } = require('../audio/episodes');
-const { logger } = require('../log');
+const { logger } = require('../log.ts');
 
 const log = logger('audio');
 

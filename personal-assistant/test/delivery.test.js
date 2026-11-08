@@ -323,7 +323,7 @@ async function runReview() {
   // A run on this machine records its hostname; only another machine's is skipped.
   did.length = 0;
   store.run = { id: 1, status: 'done', mode: 'mr', task: 't', machine: 'some-other-box', delivery: 'pr' };
-  const { config } = require('../src/config');
+  const { config } = require('../src/config.ts');
   config.termhub.machines['some-other-box'] = { name: 'some-other-box', url: 'http://x' };
   assert.deepStrictEqual((await task.run({ runId: 1 }, ctx)).result, 'nothing to land');
 }

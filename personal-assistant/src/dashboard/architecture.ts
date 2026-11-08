@@ -36,7 +36,7 @@ const net = require('net');
 const http = require('http');
 const https = require('https');
 const path = require('path');
-const { config } = require('../config');
+const { config } = require('../config.ts');
 const platform = require('../platform');
 
 const PAGE = path.join(__dirname, 'architecture.html');

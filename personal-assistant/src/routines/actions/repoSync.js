@@ -15,8 +15,8 @@
 const fs = require('fs');
 const path = require('path');
 const { execFile } = require('child_process');
-const { config } = require('../../config');
-const { logger } = require('../../log');
+const { config } = require('../../config.ts');
+const { logger } = require('../../log.ts');
 const { register } = require('./index');
 
 const log = logger('repo-sync');

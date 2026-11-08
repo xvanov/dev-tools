@@ -150,8 +150,8 @@ const proposals = require('../src/proposals');
   world.commitment = { ...world.commitment, detail: '- something else entirely' };
   apps = [{ app: 'widget', repo: 'acme/widget' }, { app: 'widget-v2', repo: 'acme/widget' }];
   process.env.PA_FACTORY_MODELS = 'dev=changed/model';
-  require('../src/config').config.factory.models = 'dev=changed/model';
-  require('../src/config').config.factory.pipeline = 'chain';
+  require('../src/config.ts').config.factory.models = 'dev=changed/model';
+  require('../src/config.ts').config.factory.pipeline = 'chain';
 
   const composedBeforeAccept = composeCalls;
   // Accept, unchanged: exactly the card.
@@ -365,7 +365,7 @@ const proposals = require('../src/proposals');
   }
 
   // `pa propose` / `--preview` compose before anyone said yes: under the daily budget.
-  assert.ok(require('../src/config').config.budget.discretionary.includes('propose'));
+  assert.ok(require('../src/config.ts').config.budget.discretionary.includes('propose'));
   const cli = fs.readFileSync(path.join(__dirname, '..', 'src', 'cli', 'index.js'), 'utf8');
   const prop = cli.slice(cli.indexOf('async propose('), cli.indexOf('async delivery('));
   assert.ok(prop.indexOf("allow('propose')") > 0 && prop.indexOf("allow('propose')") < prop.indexOf('.propose(o)'), 'budget asked before the card is composed');

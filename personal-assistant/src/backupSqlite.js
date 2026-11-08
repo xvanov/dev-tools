@@ -30,8 +30,8 @@
 const fs = require('fs');
 const path = require('path');
 
-const { config } = require('./config');
-const { logger } = require('./log');
+const { config } = require('./config.ts');
+const { logger } = require('./log.ts');
 const crypt = require('./backupCrypto');
 
 const log = logger('backup');

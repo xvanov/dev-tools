@@ -19,10 +19,10 @@
 
 const llm = require('../llm');
 const budget = require('../budget');
-const { config } = require('../config');
+const { config } = require('../config.ts');
 const repo = require('../repo');
 const { embed } = require('../search');
-const { logger } = require('../log');
+const { logger } = require('../log.ts');
 const S = require('./semantic');
 const policy = require('./sourcePolicy');
 

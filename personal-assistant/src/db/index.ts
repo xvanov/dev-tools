@@ -20,7 +20,7 @@ type Pool = { query(text: string, params?: unknown[]): Promise<QueryResult>; con
 type SqliteBackend = Record<string, any>;
 
 const { Pool } = require('pg');
-const { config } = require('../config');
+const { config } = require('../config.ts');
 
 let pool: Pool | null = null;
 

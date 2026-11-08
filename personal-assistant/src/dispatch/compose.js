@@ -19,10 +19,10 @@ const path = require('path');
 const { execFile } = require('child_process');
 const { promisify } = require('util');
 
-const { config } = require('../config');
+const { config } = require('../config.ts');
 const C = require('./composeCore');
 const { describe: describeDelivery } = require('./deliveryCore');
-const { logger } = require('../log');
+const { logger } = require('../log.ts');
 
 const exec = promisify(execFile);
 const log = logger('compose');

@@ -31,8 +31,8 @@ const fs = require('fs');
 const { execFile } = require('child_process');
 const { promisify } = require('util');
 
-const { config } = require('./config');
-const { logger } = require('./log');
+const { config } = require('./config.ts');
+const { logger } = require('./log.ts');
 const db = require('./db');
 
 const exec = promisify(execFile);

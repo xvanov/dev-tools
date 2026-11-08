@@ -8,14 +8,19 @@
 // different permissions from the database. So the helpers here take ids,
 // counts and durations, and `redact()` exists for the cases where a body has to
 // be mentioned at all.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+type Level = 'error' | 'warn' | 'info' | 'debug';
+type Fields = Record<string, unknown> | null | undefined;
 
 const util = require('util');
 
-const LEVELS = { error: 0, warn: 1, info: 2, debug: 3 };
-const threshold = LEVELS[process.env.PA_LOG_LEVEL] ?? LEVELS.info;
+const LEVELS: Record<string, number> = { error: 0, warn: 1, info: 2, debug: 3 };
+const threshold = LEVELS[process.env.PA_LOG_LEVEL ?? ''] ?? 2;
 
-function emit(level, scope, message, fields) {
-  if (LEVELS[level] > threshold) return;
+function emit(level: Level, scope: string, message: string, fields: Fields) {
+  if ((LEVELS[level] as number) > threshold) return;
   const parts = [new Date().toISOString(), level.toUpperCase().padEnd(5), `[${scope}]`, message];
   if (fields && Object.keys(fields).length) {
     parts.push(util.inspect(fields, { depth: 3, breakLength: Infinity, colors: false }));
@@ -27,18 +32,18 @@ function emit(level, scope, message, fields) {
 
 // For the rare log line that must reference content: length and a hash, never
 // the text. Enough to correlate two records, useless as a copy.
-function redact(text) {
+function redact(text: unknown) {
   if (text == null) return null;
   const s = String(text);
   return `<${s.length} chars>`;
 }
 
-function logger(scope) {
+function logger(scope: string) {
   return {
-    error: (m, f) => emit('error', scope, m, f),
-    warn: (m, f) => emit('warn', scope, m, f),
-    info: (m, f) => emit('info', scope, m, f),
-    debug: (m, f) => emit('debug', scope, m, f),
+    error: (m: string, f?: Fields) => emit('error', scope, m, f),
+    warn: (m: string, f?: Fields) => emit('warn', scope, m, f),
+    info: (m: string, f?: Fields) => emit('info', scope, m, f),
+    debug: (m: string, f?: Fields) => emit('debug', scope, m, f),
   };
 }
 

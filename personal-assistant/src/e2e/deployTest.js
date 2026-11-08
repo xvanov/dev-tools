@@ -204,7 +204,7 @@ async function feedProducer() {
 }
 
 async function pgProducer() {
-  const { config } = require('../config');
+  const { config } = require('../config.ts');
   // PA_DB=sqlite: a session of the SQLite store, not PA_DATABASE_URL.
   const sqlite = require('../repo').backend.dialect === 'sqlite';
   const c = sqlite

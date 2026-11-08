@@ -15,7 +15,7 @@
 // HANDLERS, reviewed like any other code (AGENT.md, routines).
 
 const repo = require('../repo');
-const { logger } = require('../log');
+const { logger } = require('../log.ts');
 
 const log = logger('proposals');
 

@@ -20,7 +20,7 @@ delete process.env.PA_FACTORY_PIPELINE;
 
 const F = require('../src/dispatch/factoryCore');
 const R = require('../src/dispatch/routeCore');
-const { config } = require('../src/config');
+const { config } = require('../src/config.ts');
 
 // --- config: the factory is the default route once configured; solo pipeline ----
 

@@ -29,8 +29,8 @@ const net = require('net');
 const http = require('http');
 const path = require('path');
 const crypto = require('crypto');
-const { config } = require('../config');
-const { logger } = require('../log');
+const { config } = require('../config.ts');
+const { logger } = require('../log.ts');
 const log = logger('talk');
 
 // Pure: a page's latency report -> the fields worth logging, or null. Numbers

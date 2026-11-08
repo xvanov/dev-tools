@@ -25,10 +25,10 @@
 //   run()                       the worker's pass
 
 const os = require('os');
-const { config } = require('../config');
+const { config } = require('../config.ts');
 const { saveItems, saveCursor, getCursor, recordError } = require('./store');
 const { parseTranscript, toItem } = require('./claudeSessions');
-const { logger } = require('../log');
+const { logger } = require('../log.ts');
 
 const log = logger('remote-sessions');
 

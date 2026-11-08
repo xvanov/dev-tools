@@ -13,7 +13,7 @@
 //   pass()                the worker's check: notify once per outage
 
 const repo = require('../repo');
-const { logger } = require('../log');
+const { logger } = require('../log.ts');
 
 const log = logger('health');
 

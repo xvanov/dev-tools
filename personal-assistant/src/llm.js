@@ -25,7 +25,7 @@
 const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
-const { config } = require('./config');
+const { config } = require('./config.ts');
 const models = require('./models');
 
 const CLI_CWD = path.join(config.dataDir, 'llm-cwd');

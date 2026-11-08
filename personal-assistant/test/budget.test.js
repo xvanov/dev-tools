@@ -153,7 +153,7 @@ const d = (o) => budget.decide({ essential: ESSENTIAL, discretionary: DISCRETION
   fake.fail = false;
 
   // With the store up, the cap decides (default cap: PA_DAILY_BUDGET_USD).
-  const { config } = require('../src/config');
+  const { config } = require('../src/config.ts');
   fake.spent = config.budget.dailyUsd + 1;
   assert.strictEqual(await budget.allow('research'), false);
   assert.strictEqual(await budget.allow('distill'), true);

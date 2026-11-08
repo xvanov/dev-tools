@@ -34,7 +34,7 @@
 
 const path = require('path');
 const { execFile } = require('child_process');
-const { config } = require('../config');
+const { config } = require('../config.ts');
 const { agentOf, hasFlag, modelArg, AGENTS } = require('../agentCli');
 
 // Flags that would take the chat out from behind its prompts.

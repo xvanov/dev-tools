@@ -24,10 +24,10 @@
 const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
-const cfg = require('../config');
+const cfg = require('../config.ts');
 const repo = require('../repo');
 const vault = require('./vault');
-const { logger } = require('../log');
+const { logger } = require('../log.ts');
 
 const log = logger('secrets');
 

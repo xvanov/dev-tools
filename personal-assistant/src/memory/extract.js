@@ -17,12 +17,12 @@
 // work at all.
 
 const llm = require('../llm');
-const { config } = require('../config');
+const { config } = require('../config.ts');
 const repo = require('../repo');
 const identity = require('../distill/identity');
 const projects = require('../projects');
 const { embed } = require('../search');
-const { logger } = require('../log');
+const { logger } = require('../log.ts');
 const { parseClaimsResponse, verifyQuote, headTail } = require('./claims');
 
 const log = logger('memory.extract');

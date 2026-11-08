@@ -30,12 +30,12 @@
 // lexical-only, fused order, and says so.
 
 const repo = require('../repo');
-const { config } = require('../config');
+const { config } = require('../config.ts');
 const { fuse } = require('./fuse');
 const { chunkContext, CONTEXT_VERSION } = require('./context');
 const { mentionedPeople } = require('./entities');
 const { rerank, rerankConfigured, lastRerankError } = require('./rerank');
-const { logger } = require('../log');
+const { logger } = require('../log.ts');
 const budget = require('../budget');
 const { createQueryEmbedder, tableStore } = require('./embedCache');
 

@@ -14,7 +14,7 @@
 // Claude's, so it gets the same fixed prompt as `--prompt` on its command line
 // and nothing is typed.
 
-const { config } = require('../config');
+const { config } = require('../config.ts');
 const { agentOf, hasFlag, modelArg, AGENTS } = require('../agentCli');
 
 // The opening prompt rides a command line typed into a shell: a fixed text,

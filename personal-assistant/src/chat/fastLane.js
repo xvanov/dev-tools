@@ -43,8 +43,8 @@
 // { text, context, history } -> the decision JSON; an external classifier).
 
 const crypto = require('crypto');
-const { config } = require('../config');
-const { logger } = require('../log');
+const { config } = require('../config.ts');
+const { logger } = require('../log.ts');
 
 const log = logger('fast-lane');
 

@@ -43,12 +43,12 @@
 const fs = require('fs');
 const path = require('path');
 
-const { config } = require('../config');
+const { config } = require('../config.ts');
 const repo = require('../repo');
 const { saveItems, saveCursor, getCursor, recordError } = require('./store');
 const { htmlToText } = require('../util/text.ts');
 const { namesMe } = require('./graphChat');
-const { logger } = require('../log');
+const { logger } = require('../log.ts');
 const platform = require('../platform');
 const trigger = require('./teamsTrigger');
 const readers = require('./teamsReader');

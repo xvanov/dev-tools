@@ -25,10 +25,10 @@
 // when the older one has already been acted on (commitments/dupes.js).
 
 const llm = require('../llm');
-const { config } = require('../config');
+const { config } = require('../config.ts');
 const repo = require('../repo');
 const { embed } = require('../search');
-const { logger } = require('../log');
+const { logger } = require('../log.ts');
 const { parseDecisions, extractJson } = require('./claims');
 const dupes = require('../commitments/dupes');
 

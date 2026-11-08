@@ -7,7 +7,7 @@
 const fs = require('fs');
 const path = require('path');
 const { spawnSync } = require('child_process');
-const { config } = require('../src/config');
+const { config } = require('../src/config.ts');
 
 const script = path.join(__dirname, 'naming_check.py');
 const candidates = [config.audio.python, 'python', 'python3', 'py'].filter((p) => p && (!path.isAbsolute(p) || fs.existsSync(p)));

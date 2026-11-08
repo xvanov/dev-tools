@@ -18,8 +18,8 @@
 // The arithmetic is pure and tested (test/claudePool.test.js). The rest is one
 // query, cached briefly: dispatch may ask for every job.
 
-const { config } = require('./config');
-const { logger } = require('./log');
+const { config } = require('./config.ts');
+const { logger } = require('./log.ts');
 
 const log = logger('claude-pool');
 

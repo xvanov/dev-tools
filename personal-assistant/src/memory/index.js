@@ -17,7 +17,7 @@
 // the slow path that everything else goes through.
 
 const llm = require('../llm');
-const { config } = require('../config');
+const { config } = require('../config.ts');
 const repo = require('../repo');
 const { embed, embedQuery } = require('../search');
 const { currentAsOf, believedAsOf, extractJson, CLAIM_KINDS } = require('./claims');
@@ -149,7 +149,7 @@ async function forget(target) {
   // Rewriting pages is a model call per page; the retraction itself is done,
   // so the caller does not wait for it (see approve).
   pages.refreshSubjects(subjects).catch((err) =>
-    require('../log').logger('memory').warn('forget: page refresh failed', { message: err.message })
+    require('../log.ts').logger('memory').warn('forget: page refresh failed', { message: err.message })
   );
   return { retracted: ids.length, restored, ids };
 }
@@ -170,7 +170,7 @@ async function approve(claimId, { wait = false } = {}) {
     return decided;
   };
   if (!wait) {
-    settle().catch((err) => require('../log').logger('memory').warn('approve: background settle failed', { id: claim.id, message: err.message }));
+    settle().catch((err) => require('../log.ts').logger('memory').warn('approve: background settle failed', { id: claim.id, message: err.message }));
     return { claim: { id: claim.id, status: claim.status, subject_kind: claim.subject_kind, subject_id: claim.subject_id }, consolidation: null, pending: true };
   }
   const decided = await settle();

@@ -31,7 +31,7 @@ const path = require('path');
 const crypto = require('crypto');
 const T = require('./transcript');
 const P = require('./permission');
-const { logger } = require('../log');
+const { logger } = require('../log.ts');
 
 const log = logger('chat-sdk');
 
@@ -199,13 +199,13 @@ function createSdkFeed({
   policy = () => require('../policy'),
   root = () => path.join(os.homedir(), '.claude', 'projects'),
   stateDir = () => require('./index').homeDir(),
-  model = () => require('../config').config.chat.model,
-  approvalTimeoutMs = () => require('../config').config.chat.approvalTimeoutMs,
+  model = () => require('../config.ts').config.chat.model,
+  approvalTimeoutMs = () => require('../config.ts').config.chat.approvalTimeoutMs,
   jobLookup = null,
   env = () => subscriptionEnv(),
   hub = () => require('../dispatch/termhub'),
   viewCommand = (file) => {
-    const js = path.join(require('../config').config.toolDir, 'src', 'chat', 'sdkView.js').replace(/\\/g, '/');
+    const js = path.join(require('../config.ts').config.toolDir, 'src', 'chat', 'sdkView.js').replace(/\\/g, '/');
     return `node "${js}" --follow "${file.replace(/\\/g, '/')}"`;
   },
 } = {}) {

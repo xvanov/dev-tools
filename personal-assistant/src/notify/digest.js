@@ -23,9 +23,9 @@
 // down over two slots writes one digest when it comes back, never a
 // backlog, and two processes cannot both write the same one.
 
-const { config } = require('../config');
+const { config } = require('../config.ts');
 const repo = require('../repo');
-const { logger } = require('../log');
+const { logger } = require('../log.ts');
 
 const log = logger('digest');
 

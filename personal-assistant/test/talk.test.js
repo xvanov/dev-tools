@@ -574,7 +574,7 @@ const C = require('../src/dashboard/talk.core');
 
 // ---- the transcribe proxy, against a fake faster-whisper server --------------------
 (async () => {
-  const { config } = require('../src/config');
+  const { config } = require('../src/config.ts');
   const talk = require('../src/dashboard/talk.ts');
   const { handle } = require('../src/dashboard/server.ts');
 

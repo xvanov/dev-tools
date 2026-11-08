@@ -23,7 +23,7 @@ type Info = {
 /** The dashboard state enrich() adds to (server.js's /api/state). */
 type State = { commitments?: Row[]; selfNotes?: { items?: Row[] }[]; needsYou?: Row[]; looksDone?: Row[] };
 
-const { config } = require('../config');
+const { config } = require('../config.ts');
 const repo = require('../repo');
 const L = require('./links.ts');
 

@@ -49,14 +49,14 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-const { config } = require('../config');
+const { config } = require('../config.ts');
 const repository = require('../repo');
 const { mode: resolveMode } = require('./modes');
 const F = require('./factoryCore');
 const D = require('./deliveryCore');
 const termhub = require('./termhub');
 const ledger = require('../ledger');
-const { logger } = require('../log');
+const { logger } = require('../log.ts');
 
 const log = logger('factory');
 

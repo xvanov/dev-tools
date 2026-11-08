@@ -15,6 +15,11 @@
 // order, because `summarize-recording` already documents a repo-root `.env` and
 // the Azure keys are shared with it. Real environment variables always win over
 // both — a file on disk must never shadow what the operator exported.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+type Row = import('./repo/types.ts').Row;
+type Db = import('./repo/types.ts').Db;
 
 const fs = require('fs');
 const os = require('os');
@@ -28,9 +33,9 @@ const platform = require('./platform');
 const TOOL_DIR = path.resolve(__dirname, '..');
 const REPO_ROOT = path.resolve(TOOL_DIR, '..');
 
-function parseEnvFile(file) {
-  const out = {};
-  let text;
+function parseEnvFile(file: unknown) {
+  const out: Record<string, string> = {};
+  let text: string;
   try {
     text = fs.readFileSync(file, 'utf8');
   } catch {
@@ -56,13 +61,13 @@ function parseEnvFile(file) {
 
 // Loaded once at require time. Later files do not override earlier ones, and
 // neither overrides process.env.
-const fileEnv = {
+const fileEnv: Record<string, string> = {
   ...parseEnvFile(path.join(REPO_ROOT, '.env')),
   ...parseEnvFile(path.join(TOOL_DIR, '.env')),
 };
 
 // `~` and %VAR% so the same `.env` line works typed by hand.
-function expandHome(p) {
+function expandHome(p: unknown) {
   if (!p) return '';
   return path.resolve(
     String(p)
@@ -71,13 +76,13 @@ function expandHome(p) {
   );
 }
 
-function env(name, fallback = null) {
+function env<T = null>(name: string, fallback: T = null as T): string | T {
   const v = process.env[name] ?? fileEnv[name];
   if (v === undefined || v === null || v === '') return fallback;
   return v;
 }
 
-function envInt(name, fallback) {
+function envInt<T extends number | null>(name: string, fallback: T): number | T {
   const v = env(name);
   if (v === null) return fallback;
   const n = Number.parseInt(v, 10);
@@ -96,14 +101,14 @@ function defaultDataDir() {
 // Comma-separated for more than one. A machine not listed here is unknown.
 // The OS (windows | linux | macos) is optional: without it, it is what that
 // termhub reports (`/api/info` platform), else read off the repos root's shape.
-const MACHINE_OS = { windows: 'windows', win32: 'windows', win: 'windows', linux: 'linux', macos: 'macos', darwin: 'macos', mac: 'macos' };
+const MACHINE_OS: Record<string, string> = { windows: 'windows', win32: 'windows', win: 'windows', linux: 'linux', macos: 'macos', darwin: 'macos', mac: 'macos' };
 
-function parseMachines(text) {
-  const machines = {};
+function parseMachines(text: string) {
+  const machines: Record<string, { name: string; url: string; reposRoot: string; os?: string }> = {};
   for (const entry of String(text || '').split(',').map((s) => s.trim()).filter(Boolean)) {
     const m = /^([^=]+)=([^|]+)\|([^|]+?)(?:\|([^|]*))?$/.exec(entry);
     if (!m) throw new Error(`PA_MACHINES: cannot read "${entry}" — want name=termhubUrl|reposRoot[|os]`);
-    const machine = { name: m[1].trim(), url: m[2].trim().replace(/\/+$/, ''), reposRoot: m[3].trim() };
+    const machine: { name: string; url: string; reposRoot: string; os?: string } = { name: m[1]!.trim(), url: m[2]!.trim().replace(/\/+$/, ''), reposRoot: m[3]!.trim() };
     if (m[4] != null && m[4].trim()) {
       const os = MACHINE_OS[m[4].trim().toLowerCase()];
       if (!os) throw new Error(`PA_MACHINES: "${m[4].trim()}" is not an OS — one of windows, linux, macos`);
@@ -129,7 +134,7 @@ const dataDir = env('PA_DATA_DIR', defaultDataDir());
 // text/JSON pass), else the pass's built-in default. A value is a model
 // string, `provider/model` or a bare Claude name (src/models.js parses it).
 // The connector relay does not read PA_MODEL: it must stay on Claude Code.
-function modelEnv(name, fallback) {
+function modelEnv(name: string, fallback: unknown) {
   return env(name) || env('PA_MODEL') || fallback;
 }
 const distillModel = modelEnv('PA_DISTILL_MODEL', 'claude-opus-5');
@@ -731,9 +736,9 @@ const MISS_TTL_MS = 60_000;
 // in the list is a miss without asking. A secret stored from another process
 // is picked up within five minutes (forgetSecret() at once).
 const VAULT_LIST_TTL_MS = 5 * 60_000;
-let vaultNames = null; // { names: Set | null, at }
+let vaultNames: { names: Set<string> | null; at: number } | null = null; // { names: Set | null, at }
 
-function inVault(vault, name) {
+function inVault(vault: { list(): string[] }, name: string) {
   if (!vaultNames || Date.now() - vaultNames.at > VAULT_LIST_TTL_MS) {
     try {
       vaultNames = { names: new Set(vault.list()), at: Date.now() };
@@ -744,14 +749,14 @@ function inVault(vault, name) {
   return vaultNames.names ? vaultNames.names.has(name) : true;
 }
 
-function envFileSecret(name) {
+function envFileSecret(name: string) {
   const tool = parseEnvFile(path.join(TOOL_DIR, '.env'))[name];
   if (tool) return { value: tool, source: '.env' };
   const root = parseEnvFile(path.join(REPO_ROOT, '.env'))[name];
   return root ? { value: root, source: 'repo .env' } : null;
 }
 
-function resolveSecret(name) {
+function resolveSecret(name: string) {
   const hit = secretCache.get(name);
   if (hit && (hit.value !== null || Date.now() - hit.at < MISS_TTL_MS)) return hit;
   let found = null;
@@ -774,13 +779,13 @@ function resolveSecret(name) {
   return entry;
 }
 
-function secret(name) {
+function secret(name: string) {
   return resolveSecret(name).value;
 }
 
 // Where a secret comes from ('env' | 'credential-manager' | '.env' | 'repo .env'),
 // or null — for `pa doctor` and the dashboard, which must never see the value.
-function secretSource(name) {
+function secretSource(name: string) {
   return resolveSecret(name).source;
 }
 
@@ -789,19 +794,19 @@ function secretSource(name) {
 // Windows), which no pa verb that never calls a model should pay, and a key
 // stored after startup is picked up. Assignable, because tests and callers
 // that hold a key of their own set one.
-function lazySecret(obj, prop, ...names) {
-  let override;
+function lazySecret(obj: object, prop: string, ...names: string[]) {
+  let override: unknown;
   Object.defineProperty(obj, prop, {
     enumerable: true,
     configurable: true,
     get: () => (override !== undefined ? override : names.map((n) => secret(n)).find(Boolean) || null),
-    set: (v) => { override = v; },
+    set: (v: unknown) => { override = v; },
   });
 }
 lazySecret(config.anthropic, 'apiKey', 'ANTHROPIC_API_KEY');
 lazySecret(config.embeddings, 'apiKey', 'AZURE_OPENAI_API_KEY', 'AZURE_FOUNDRY_API_KEY');
 
-function forgetSecret(name) {
+function forgetSecret(name: string) {
   vaultNames = null;
   if (name) secretCache.delete(name);
   else secretCache.clear();

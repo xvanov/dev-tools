@@ -27,7 +27,7 @@ type Ctx = import('./types.ts').Ctx;
 
 const fs = require('fs');
 const path = require('path');
-const { config } = require('../config');
+const { config } = require('../config.ts');
 const F = require('../dispatch/factoryCore');
 
 const PAGE = path.join(__dirname, 'factory.html');

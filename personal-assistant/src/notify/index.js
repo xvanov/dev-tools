@@ -23,9 +23,9 @@
 // is the dashboard's alone. Callers that say nothing are 'normal'. A digest
 // row is the digest itself and always pushes: you chose its times.
 
-const { config } = require('../config');
+const { config } = require('../config.ts');
 const repo = require('../repo');
-const { logger } = require('../log');
+const { logger } = require('../log.ts');
 const budget = require('./budget');
 const ntfy = require('./ntfy');
 const platform = require('../platform');

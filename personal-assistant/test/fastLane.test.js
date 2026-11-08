@@ -450,7 +450,7 @@ function splitAll(pieces) {
     assert.strictEqual(t.say, 'Hi.');
 
     // warm(): loads the local model with the long keep_alive, once a minute.
-    const { config } = require('../src/config');
+    const { config } = require('../src/config.ts');
     const seen = [];
     const save = { ...config.fastLane };
     Object.assign(config.fastLane, { enabled: true, model: 'local/llama3.2:3b', json: 'auto', keepAlive: '24h', router: 'logprob' });
@@ -607,7 +607,7 @@ function splitAll(pieces) {
 
   // ---- POST /api/talk/turn ---------------------------------------------------------------
   {
-    const { config } = require('../src/config');
+    const { config } = require('../src/config.ts');
     const { handle } = require('../src/dashboard/server.ts');
     // The text format; the local JSON path is covered above.
     config.fastLane.model = 'azure/pa';

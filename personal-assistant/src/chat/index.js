@@ -26,9 +26,9 @@
 
 const fs = require('fs');
 const path = require('path');
-const { config } = require('../config');
+const { config } = require('../config.ts');
 const termhub = require('../dispatch/termhub');
-const { logger } = require('../log');
+const { logger } = require('../log.ts');
 
 const log = logger('chat');
 

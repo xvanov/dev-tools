@@ -23,9 +23,9 @@
 // evidence.
 
 const llm = require('../llm');
-const { config } = require('../config');
+const { config } = require('../config.ts');
 const repo = require('../repo');
-const { logger } = require('../log');
+const { logger } = require('../log.ts');
 const core = require('./core');
 const P = require('./prompt');
 

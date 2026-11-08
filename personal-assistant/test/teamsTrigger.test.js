@@ -13,7 +13,7 @@ const { PassThrough } = require('stream');
 const t = require('../src/ingest/teamsTrigger');
 const { passes } = require('../src/util/exclusive.ts');
 const readers = require('../src/ingest/teamsReader');
-const { config } = require('../src/config');
+const { config } = require('../src/config.ts');
 const local = require('../src/ingest/teamsLocal');
 
 // A virtual clock: setTimeout/clearTimeout that only advance on `advance`.

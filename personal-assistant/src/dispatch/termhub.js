@@ -17,8 +17,8 @@
 
 const os = require('os');
 const WebSocket = require('ws');
-const { config } = require('../config');
-const { logger } = require('../log');
+const { config } = require('../config.ts');
+const { logger } = require('../log.ts');
 
 const log = logger('termhub');
 

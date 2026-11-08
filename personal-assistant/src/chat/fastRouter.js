@@ -144,7 +144,7 @@ function decide(p, threshold = THRESHOLD) {
  */
 async function score({ text, context = '', history = [], model, keepAlive = null, timeoutMs = 2500, signal = null, cal = CALIBRATION, post = (...a) => fetch(...a), baseUrl = null, key = null }) {
   const bare = String(model || '').replace(/^local\//, '');
-  if (baseUrl == null) baseUrl = require('../config').config.providers.local.baseUrl;
+  if (baseUrl == null) baseUrl = require('../config.ts').config.providers.local.baseUrl;
   if (key == null) key = require('../models').providerKey('local');
   const req = routerRequest({ model: bare, text, context, history, keepAlive, baseUrl, key });
   const t0 = Date.now();

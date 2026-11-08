@@ -124,7 +124,7 @@ function make(out, fail) {
         if (!flagBool(flags, 'from-env')) return fail('usage: pa secrets migrate --from-env [--file <.env>] [--apply]');
         const migrate = require('../secrets/migrate');
         const vault = require('../secrets/vault');
-        const cfg = require('../config');
+        const cfg = require('../config.ts');
         const toolDir = cfg.config.toolDir;
         const defaults = migrate.defaultSources({ toolDir, repoRoot: path.resolve(toolDir, '..') });
         const only = typeof flags.file === 'string' ? path.resolve(flags.file) : null;

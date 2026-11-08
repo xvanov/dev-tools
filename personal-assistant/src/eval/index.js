@@ -8,9 +8,9 @@
 // occasional check that good retrieval actually yields right answers.
 
 const repo = require('../repo');
-const { config } = require('../config');
+const { config } = require('../config.ts');
 const llm = require('../llm');
-const { logger } = require('../log');
+const { logger } = require('../log.ts');
 const retrievers = require('./retrievers');
 const M = require('./metrics');
 const P = require('./prompts');

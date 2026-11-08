@@ -14,9 +14,9 @@
 // still runs and `pa doctor` says what is missing.
 
 const { execFile } = require('child_process');
-const { config } = require('../config');
+const { config } = require('../config.ts');
 const { saveItems, getCursor } = require('./store');
-const { logger } = require('../log');
+const { logger } = require('../log.ts');
 
 const log = logger('github');
 

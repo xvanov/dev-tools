@@ -11,9 +11,9 @@
 // case that nothing could pass measures the chunker, not retrieval.
 
 const repo = require('../repo');
-const { config } = require('../config');
+const { config } = require('../config.ts');
 const llm = require('../llm');
-const { logger } = require('../log');
+const { logger } = require('../log.ts');
 const P = require('./prompts');
 
 const log = logger('eval');

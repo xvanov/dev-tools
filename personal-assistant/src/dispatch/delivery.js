@@ -10,7 +10,7 @@
 //   list()
 //   resolve({explicit, mode, operatorText, slug})  → {delivery, source, phrase}
 
-const { config } = require('../config');
+const { config } = require('../config.ts');
 const repo = require('../repo');
 const D = require('./deliveryCore');
 const { normSlug } = require('./routeCore');

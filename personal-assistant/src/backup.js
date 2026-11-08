@@ -31,9 +31,9 @@ const path = require('path');
 const { execFile, spawn } = require('child_process');
 const { promisify } = require('util');
 
-const { config } = require('./config');
+const { config } = require('./config.ts');
 const repo = require('./repo');
-const { logger } = require('./log');
+const { logger } = require('./log.ts');
 const crypt = require('./backupCrypto');
 
 const exec = promisify(execFile);
@@ -179,7 +179,7 @@ function runTool({ cmd, args, stdoutFile, env }, { timeoutMs = 30 * 60_000 } = {
 // the backups protects nothing. Returns null when there is none and none can
 // be stored, and the caller decides (a dump then stays plain and says so).
 function backupKey({ create = false } = {}) {
-  const cfg = require('./config');
+  const cfg = require('./config.ts');
   const have = cfg.secret(KEY_NAME);
   if (have) return { key: crypt.parseKey(have), created: false };
   if (!create) return null;

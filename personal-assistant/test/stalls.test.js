@@ -26,7 +26,7 @@ const path = require('path');
       : { ok: true, names: [...store.keys()] };
     return { stdout: JSON.stringify(reply) + '\n', status: 0 };
   });
-  const cfg = require('../src/config');
+  const cfg = require('../src/config.ts');
   for (let i = 0; i < 12; i++) assert.strictEqual(cfg.secret(`PA_TEST_STALL_MISSING_${i}`), null);
   assert.deepStrictEqual(ops, ['list'], `twelve unset names cost ${ops.length} vault calls`);
   assert.strictEqual(cfg.secret('PA_TEST_STALL_PRESENT'), 'v1');

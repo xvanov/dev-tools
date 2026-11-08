@@ -413,7 +413,7 @@ async function factoryStart() {
   // on STDIN into a fresh private directory, then submitted by path, then the
   // directory is removed.
   {
-    const { config } = require('../src/config');
+    const { config } = require('../src/config.ts');
     const { execFileSync } = require('child_process');
     const otherTmp = fs.mkdtempSync(path.join(os.tmpdir(), 'pa-factory-remote-'));
     config.termhub.machines.forge = { name: 'forge', url: 'http://forge:7000', reposRoot: '/home/k' };
@@ -548,7 +548,7 @@ async function factoryPoll() {
 
 async function routeDecide() {
   const route = require('../src/dispatch/route');
-  const { config } = require('../src/config');
+  const { config } = require('../src/config.ts');
   answers = { 'app list': json({ apps: [{ app: 'widget', repo: 'acme/widget', path: '/srv/repos/widget' }] }) };
   const target = { commitment: { id: 40, kind: 'coding', detail: '- retries tested' }, project: { gitlab_path: 'acme/widget' }, repoPath: null };
   const auto = await route.decide({ target, mode: 'branch' });

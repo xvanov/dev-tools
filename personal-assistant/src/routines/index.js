@@ -16,8 +16,8 @@
 
 const db = require('../db'); // the routine lock's own connection only
 const repo = require('../repo');
-const { config } = require('../config');
-const { logger } = require('../log');
+const { config } = require('../config.ts');
+const { logger } = require('../log.ts');
 const cron = require('./cron');
 const actions = require('./actions');
 

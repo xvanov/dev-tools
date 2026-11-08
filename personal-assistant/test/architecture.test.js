@@ -176,7 +176,7 @@ for (const id of Object.keys(A.health)) assert.ok(A.components.some((c) => c.hea
 // Env defaults: a PA_ variable's default must be what config.js says; any
 // other variable must appear in one of the component's code files.
 {
-  const cfg = fs.readFileSync(path.join(PA, 'src', 'config.js'), 'utf8');
+  const cfg = fs.readFileSync(path.join(PA, 'src', 'config.ts'), 'utf8');
   const literal = (name) => {
     const m = new RegExp(`(?:env|envInt|modelEnv)\\('${name}'(?:,\\s*('([^']*)'|[0-9_]+|null))?\\)`).exec(cfg);
     if (!m) return undefined;
@@ -188,8 +188,8 @@ for (const id of Object.keys(A.health)) assert.ok(A.components.some((c) => c.hea
       const inConfig = cfg.includes(`'${e.name}'`);
       if (inConfig) {
         const d = literal(e.name);
-        if (d !== undefined) assert.strictEqual(e.default == null ? null : String(e.default), d, `${c.id}: ${e.name} default is ${JSON.stringify(d)} in config.js`);
-        else assert.ok(e.default == null || cfg.includes(String(e.default)), `${c.id}: ${e.name} default ${e.default} is not in config.js`);
+        if (d !== undefined) assert.strictEqual(e.default == null ? null : String(e.default), d, `${c.id}: ${e.name} default is ${JSON.stringify(d)} in config.ts`);
+        else assert.ok(e.default == null || cfg.includes(String(e.default)), `${c.id}: ${e.name} default ${e.default} is not in config.ts`);
       } else {
         const files = c.code.map((p) => path.join(REPO, p)).filter((p) => fs.existsSync(p) && fs.statSync(p).isFile());
         assert.ok(files.some((f) => fs.readFileSync(f, 'utf8').includes(e.name)), `${c.id}: ${e.name} appears in none of its code files`);

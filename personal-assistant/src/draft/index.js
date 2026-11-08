@@ -16,11 +16,11 @@
 //    itself, which is reliably more confident than the diff justifies.
 
 const llm = require('../llm');
-const { config } = require('../config');
+const { config } = require('../config.ts');
 const repo = require('../repo');
 const { truncate } = require('../util/text.ts');
 const deliver = require('./deliver');
-const { logger } = require('../log');
+const { logger } = require('../log.ts');
 
 const log = logger('draft');
 

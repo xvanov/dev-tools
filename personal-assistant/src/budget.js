@@ -27,8 +27,8 @@
 // The rule itself is `decide`, pure and tested (test/budget.test.js). The rest
 // is a query and a best-effort insert: recording never throws into a caller.
 
-const { config } = require('./config');
-const { logger } = require('./log');
+const { config } = require('./config.ts');
+const { logger } = require('./log.ts');
 
 const log = logger('budget');
 

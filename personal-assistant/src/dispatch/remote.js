@@ -34,7 +34,7 @@
 // What does not cross the wire: `pa review/diff/land` run git on this
 // machine's disk, so for a remote run they say so and point at the session.
 
-const { config, MACHINE_OS } = require('../config');
+const { config, MACHINE_OS } = require('../config.ts');
 const { runCommand } = require('./exec');
 
 const CHUNK = 1800;

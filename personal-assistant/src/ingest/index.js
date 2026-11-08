@@ -15,7 +15,7 @@ const claudeSessions = require('./claudeSessions');
 const remoteSessions = require('./remoteSessions');
 const audio = require('./audio');
 const { recordError } = require('./store');
-const { logger } = require('../log');
+const { logger } = require('../log.ts');
 
 const log = logger('ingest');
 

@@ -18,7 +18,7 @@
 //
 // Best effort: a network failure costs a missed push, never a failed pass.
 
-const { config, secret } = require('../config');
+const { config, secret } = require('../config.ts');
 
 const TIMEOUT_MS = 10_000;
 

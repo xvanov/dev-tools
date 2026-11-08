@@ -19,7 +19,7 @@
 
 const m365 = require('./m365');
 const { saveItems } = require('./store');
-const { logger } = require('../log');
+const { logger } = require('../log.ts');
 
 const log = logger('calendar');
 

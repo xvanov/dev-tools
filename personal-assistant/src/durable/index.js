@@ -30,7 +30,7 @@ const { Absurd } = require('absurd-sdk');
 // The pool, only to hand absurd-sdk its connection: every statement is a repository method.
 const db = require('../db');
 const repository = require('../repo');
-const { logger } = require('../log');
+const { logger } = require('../log.ts');
 
 const log = logger('durable');
 

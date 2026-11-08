@@ -10,10 +10,10 @@
 const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
-const { config } = require('../config');
+const { config } = require('../config.ts');
 const repo = require('../repo');
 const { scoreCandidates } = require('./resolve');
-const { logger } = require('../log');
+const { logger } = require('../log.ts');
 
 const log = logger('projects');
 

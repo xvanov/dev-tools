@@ -12,8 +12,8 @@
 
 const { register } = require('./index');
 const { complete } = require('../../llm');
-const { config } = require('../../config');
-const { logger } = require('../../log');
+const { config } = require('../../config.ts');
+const { logger } = require('../../log.ts');
 
 const log = logger('prompt-report');
 const MODEL = config.routines.model;

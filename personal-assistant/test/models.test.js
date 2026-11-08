@@ -14,7 +14,7 @@ require.cache[require.resolve('../src/budget')] = {
   exports: { record: async (row) => recorded.push(row) },
 };
 
-const { config } = require('../src/config');
+const { config } = require('../src/config.ts');
 const models = require('../src/models');
 const llm = require('../src/llm');
 
@@ -205,7 +205,7 @@ const llm = require('../src/llm');
 
   // No key: a clear refusal naming the variable.
   // (Skipped on a machine that has one configured.)
-  if (!require('../src/config').secret('DEEPSEEK_API_KEY')) {
+  if (!require('../src/config.ts').secret('DEEPSEEK_API_KEY')) {
     await assert.rejects(llm.complete({ prompt: 'P', model: 'deepseek/deepseek-chat' }), /DEEPSEEK_API_KEY/);
   }
 

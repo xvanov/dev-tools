@@ -32,9 +32,9 @@ type HttpError = import('./types.ts').HttpError;
 const fs = require('fs');
 const path = require('path');
 const http = require('http');
-const { config } = require('../config');
+const { config } = require('../config.ts');
 const repo = require('../repo');
-const { logger } = require('../log');
+const { logger } = require('../log.ts');
 
 const log = logger('dashboard');
 const PAGE = path.join(__dirname, 'index.html');

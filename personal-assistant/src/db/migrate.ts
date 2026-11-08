@@ -17,7 +17,7 @@ type Target = Pick<Db, 'query' | 'withTx'> & { dialect?: string };
 const fs = require('fs');
 const path = require('path');
 const { withTx, query, close } = require('./index');
-const { logger } = require('../log');
+const { logger } = require('../log.ts');
 
 const log = logger('migrate');
 const SQL_DIR = path.resolve(__dirname, '..', '..', 'sql');

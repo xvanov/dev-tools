@@ -9,9 +9,9 @@
 // Like everything in memory, it closes claims and never deletes them.
 
 const llm = require('../llm');
-const { config } = require('../config');
+const { config } = require('../config.ts');
 const repo = require('../repo');
-const { logger } = require('../log');
+const { logger } = require('../log.ts');
 const { parseMerges, isStale, dreamDue } = require('./claims');
 const pages = require('./pages');
 

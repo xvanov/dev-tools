@@ -28,7 +28,7 @@
 //
 // Pure, apart from reading config: the tests feed it items.
 
-const { config } = require('../config');
+const { config } = require('../config.ts');
 
 // Groups the setting may name, and what each stands for.
 const GROUPS = {

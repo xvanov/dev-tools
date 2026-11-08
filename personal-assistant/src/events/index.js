@@ -24,7 +24,7 @@
 // after a restart or a roll (fromOutbox). Its SQL is src/repo/events.js.
 
 const { createBus, TOPIC } = require('./bus.ts');
-const { logger } = require('../log');
+const { logger } = require('../log.ts');
 
 const log = logger('events');
 const CHANNEL = 'pa_events';
@@ -140,7 +140,7 @@ let listening = null;
 /** Starts the Postgres feed for this process's bus, once. */
 function ensureListening() {
   if (listening) return listening;
-  const { config } = require('../config');
+  const { config } = require('../config.ts');
   listening = createListener({
     connect: async () => {
       // PA_DB=sqlite: a session of the store's own backend (LISTEN is in-process

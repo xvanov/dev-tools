@@ -17,13 +17,13 @@
 // read in full through the chat URI form, which works for channel posts too;
 // the channel URI form returns NOT_FOUND for the same message.
 
-const { config } = require('../config');
+const { config } = require('../config.ts');
 const m365 = require('./m365');
 const { saveItems, getCursor } = require('./store');
 const repo = require('../repo');
 const identity = require('../distill/identity');
 const { htmlToText, contentHash } = require('../util/text.ts');
-const { logger } = require('../log');
+const { logger } = require('../log.ts');
 
 const log = logger('teams');
 

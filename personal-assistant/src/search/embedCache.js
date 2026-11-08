@@ -88,7 +88,7 @@ function createQueryEmbedder({ embedFn, model, dims, max = 500, store = null }) 
     if (!warned) {
       warned = true;
       try {
-        require('../log').logger('embedCache').warn('query-embedding store unavailable — is the store migrated?', { message: err.message });
+        require('../log.ts').logger('embedCache').warn('query-embedding store unavailable — is the store migrated?', { message: err.message });
       } catch {}
     }
   };

@@ -12,7 +12,7 @@ const fs = require('fs');
 const path = require('path');
 const readline = require('readline');
 
-const { config } = require('../config');
+const { config } = require('../config.ts');
 const platform = require('../platform');
 const { parseArgs, flagInt, flagBool } = require('./parseArgs');
 // The pool, for its lifecycle only (probe, close): every statement is a repository method.

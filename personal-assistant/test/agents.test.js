@@ -7,7 +7,7 @@
 const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
-const { config } = require('../src/config');
+const { config } = require('../src/config.ts');
 const { agentOf, modelArg } = require('../src/agentCli');
 const agent = require('../src/chat/agent');
 const { dispatchCommand } = require('../src/dispatch/agent');

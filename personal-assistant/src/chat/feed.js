@@ -26,7 +26,7 @@ const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
 const T = require('./transcript');
-const { logger } = require('../log');
+const { logger } = require('../log.ts');
 
 const log = logger('chat-feed');
 
@@ -377,7 +377,7 @@ function createFeed({
  * termhub session) or 'sdk' (src/chat/sdkFeed.js). Anything else is
  * 'terminal', with a warning.
  */
-function engine(value = require('../config').config.chat.engine) {
+function engine(value = require('../config.ts').config.chat.engine) {
   const v = String(value || 'terminal').trim().toLowerCase();
   if (v === 'sdk' || v === 'terminal') return v;
   log.warn('PA_CHAT_ENGINE is neither terminal nor sdk; using terminal', { value });

@@ -27,7 +27,7 @@
 //   toolCalls  calls to the claude.ai connectors (Microsoft 365, Atlassian) —
 //              only Claude Code holds those logins, so only `claude -p` can
 
-const { config, secret } = require('./config');
+const { config, secret } = require('./config.ts');
 
 const COMPAT = ['openai', 'azure', 'openrouter', 'deepseek', 'local'];
 const PROVIDERS = ['anthropic', 'cli', ...COMPAT];

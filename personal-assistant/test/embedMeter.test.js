@@ -25,7 +25,7 @@ require.cache[dbPath] = {
   },
 };
 
-const { config } = require('../src/config');
+const { config } = require('../src/config.ts');
 config.embeddings.endpoint = 'https://example.invalid';
 config.embeddings.apiKey = 'test-key';
 config.embeddings.dimensions = 3;

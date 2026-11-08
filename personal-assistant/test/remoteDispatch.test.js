@@ -5,7 +5,7 @@
 // for modes that may not push, and a brief that survives quotes and length.
 
 const assert = require('assert');
-const { parseMachines } = require('../src/config');
+const { parseMachines } = require('../src/config.ts');
 const { setupLines, remoteRepoPath, remoteWorktreePath, psq } = require('../src/dispatch/remote');
 
 // --- PA_MACHINES ------------------------------------------------------------

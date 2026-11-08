@@ -22,7 +22,7 @@
 const llm = require('../llm');
 const identity = require('../distill/identity');
 const { getCursor, saveItems } = require('./store');
-const { logger } = require('../log');
+const { logger } = require('../log.ts');
 
 const log = logger('m365');
 

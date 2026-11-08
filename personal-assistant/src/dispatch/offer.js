@@ -17,11 +17,11 @@
 // may change at accept is the delivery, and the brief is re-rendered
 // (deterministically, from the same composed content) for the level picked.
 
-const { config } = require('../config');
+const { config } = require('../config.ts');
 const D = require('./deliveryCore');
 const F = require('./factoryCore');
 const C = require('./composeCore');
-const { logger } = require('../log');
+const { logger } = require('../log.ts');
 
 const log = logger('offer');
 

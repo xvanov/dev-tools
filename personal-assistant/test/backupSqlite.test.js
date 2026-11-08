@@ -31,7 +31,7 @@ async function main() {
   const repo = require('../src/repo');
   const backup = require('../src/backup');
   const bs = require('../src/backupSqlite');
-  const { config } = require('../src/config');
+  const { config } = require('../src/config.ts');
   try {
     assert.strictEqual(db.dialect, 'sqlite');
     await require('../src/db/migrate.ts').migrate();

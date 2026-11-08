@@ -5,7 +5,7 @@ const os = require('os');
 const path = require('path');
 const { saveItems } = require('./store');
 const { parseCursorTranscript, toItem } = require('./agentTranscript');
-const { logger } = require('../log');
+const { logger } = require('../log.ts');
 
 const log = logger('cursor-sessions');
 const PROJECTS_DIR = path.join(os.homedir(), '.cursor', 'projects');

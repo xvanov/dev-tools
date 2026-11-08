@@ -210,7 +210,7 @@ const darwin = platform.select('darwin');
   }
 
   // And through config.secret: real env → vault → .env, source reported, never the value.
-  const cfg = require('../src/config');
+  const cfg = require('../src/config.ts');
   store.set('dev-tools/PA_TEST_FROM_KEYRING', 'kr-value');
   cfg.forgetSecret();
   delete process.env.PA_TEST_FROM_KEYRING;

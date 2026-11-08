@@ -17,11 +17,11 @@
 // request for one (requestCredentials) — the dashboard asks the human.
 
 const path = require('path');
-const { config, secret, secretSource, parseEnvFile } = require('../config');
+const { config, secret, secretSource, parseEnvFile } = require('../config.ts');
 const repo = require('../repo');
 const llm = require('../llm');
 const { saveItems, getCursor } = require('./store');
-const { logger } = require('../log');
+const { logger } = require('../log.ts');
 
 const TOKEN = 'PA_JIRA_API_TOKEN';
 const TOKEN_URL = 'https://id.atlassian.com/manage-profile/security/api-tokens';

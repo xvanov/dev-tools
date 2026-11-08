@@ -608,7 +608,7 @@ async function factoryJobTool({ job, fresh = false }: { job?: Json | null; fresh
 
 async function sessionsTool({ machine = null, all = false }: { machine?: string | null; all?: boolean } = {}) {
   const termhub = require('../dispatch/termhub');
-  const { config } = require('../config');
+  const { config } = require('../config.ts');
   if (machine && !config.termhub.machines[machine]) throw new Error(`"${machine}" is not in PA_MACHINES`);
   const hub = termhub.forMachine(machine);
   const list = await hub.listSessions();

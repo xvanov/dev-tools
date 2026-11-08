@@ -310,7 +310,7 @@ function cachedStatement(conn: Conn, sql: string) {
 const SLOW_MS = Number(process.env.PA_SQLITE_SLOW_MS) || 250;
 let slowLog: { warn(message: string, fields: object): void } | null = null;
 function noteSlow(ms: number, sql: string) {
-  const log = (slowLog ||= require('../log').logger('sqlite') as NonNullable<typeof slowLog>);
+  const log = (slowLog ||= require('../log.ts').logger('sqlite') as NonNullable<typeof slowLog>);
   log.warn('slow statement', { ms: Math.round(ms), sql: sql.replace(/\s+/g, ' ').trim().slice(0, 300) });
 }
 

@@ -17,7 +17,7 @@
 const m365 = require('./m365');
 const { saveItems, getCursor } = require('./store');
 const { htmlToText, stripQuoted } = require('../util/text.ts');
-const { logger } = require('../log');
+const { logger } = require('../log.ts');
 
 const log = logger('mail');
 

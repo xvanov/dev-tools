@@ -10,9 +10,9 @@
 // and authoritative. The model then only fills kind, stack, owner and related
 // repos around it.
 
-const { config } = require('../config');
+const { config } = require('../config.ts');
 const llm = require('../llm');
-const { logger } = require('../log');
+const { logger } = require('../log.ts');
 
 const log = logger('repos');
 

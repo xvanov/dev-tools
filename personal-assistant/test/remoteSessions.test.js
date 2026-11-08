@@ -173,7 +173,7 @@ const transcript = [
   // run(): an unreachable machine is recorded on its own cursor, not thrown.
   const termhubModule = require('../src/dispatch/termhub');
   const realClient = termhubModule.client;
-  const { config } = require('../src/config');
+  const { config } = require('../src/config.ts');
   const realMachines = config.termhub.machines;
   config.termhub.machines = { 'old-box': { name: 'old-box', url: 'http://old-box:7000', reposRoot: 'C:\\r' } };
   termhubModule.client = () => ({

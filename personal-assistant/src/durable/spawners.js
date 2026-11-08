@@ -10,7 +10,7 @@
 // me for its cadence; the `chase:` tasks before it were cancelled.
 
 const repo = require('../repo');
-const { logger } = require('../log');
+const { logger } = require('../log.ts');
 const C = require('./tasks/chaseCore');
 
 const log = logger('durable');
