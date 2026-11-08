@@ -88,7 +88,20 @@ const poolBackend = {
   withTx: (fn) => require('../db').withTx(fn),
 };
 
+/**
+ * The repository set for a transaction a caller hands over: a set already
+ * (repo.withTx's `r`), or, while modules are being converted, a raw pg client
+ * from src/db withTx. Nothing given: the pool's set.
+ */
+function on(tx) {
+  if (!tx) return module.exports;
+  if (tx.backend && typeof tx.withTx === 'function') return tx;
+  if (typeof tx.query === 'function') return createRepos(clientBackend(tx));
+  throw new Error('repo.on: expected a repository set or a pg client');
+}
+
 module.exports = createRepos(poolBackend);
 module.exports.createRepos = createRepos;
 module.exports.clientBackend = clientBackend;
+module.exports.on = on;
 module.exports.AGGREGATES = Object.keys(AGGREGATES);

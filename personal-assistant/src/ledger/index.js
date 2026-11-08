@@ -16,14 +16,16 @@
 // reply-close judgement and its close commit together); without one it runs
 // in its own transaction. The row is locked, so a hand edit in between wins.
 
-const { withTx, rows } = require('../db');
+const repo = require('../repo');
 const { logger } = require('../log');
 const L = require('./core');
 
 const log = logger('ledger');
 
+// `client`: a repository set from repo.withTx, or (until every caller is
+// converted) a raw transaction client; none: a transaction of its own.
 async function inTx(client, fn) {
-  return client ? fn(client) : withTx(fn);
+  return client ? fn(repo.on(client)) : repo.withTx(fn);
 }
 
 /**
@@ -31,25 +33,15 @@ async function inTx(client, fn) {
  */
 async function transition({ commitmentId, to, actor, reason = null, evidenceId = null, from = null, now = new Date() }, client = null) {
   if (!actor) throw new Error('a transition needs an actor');
-  return inTx(client, async (c) => {
-    const cur = (
-      await c.query('select id, status, closed_at, closed_reason, touched_at from commitment where id = $1 for update', [commitmentId])
-    ).rows[0];
+  return inTx(client, async (r) => {
+    const cur = await r.ledger.lockCommitment(commitmentId);
     const p = L.plan(cur, { to, actor, reason, now, from });
     if (p.skip) return { changed: false, skip: p.skip };
-    const cols = Object.keys(p.set);
-    await c.query(
-      `update commitment set ${cols.map((k, i) => `${k} = $${i + 2}`).join(', ')} where id = $1`,
-      [commitmentId, ...cols.map((k) => p.set[k])]
-    );
-    const t = (
-      await c.query(
-        `insert into ledger_transition (commitment_id, from_status, to_status, actor, reason, evidence_id, before, at)
-         values ($1,$2,$3,$4,$5,$6,$7,$8) returning id`,
-        [commitmentId, cur.status, to, actor, reason, evidenceId, p.before, p.set.closed_at || L.iso(now)]
-      )
-    ).rows[0];
-    return { changed: true, transitionId: Number(t.id), set: p.set };
+    await r.ledger.setCommitment(commitmentId, p.set);
+    const transitionId = await r.ledger.insertTransition({
+      commitmentId, from: cur.status, to, actor, reason, evidenceId, before: p.before, at: p.set.closed_at || L.iso(now),
+    });
+    return { changed: true, transitionId, set: p.set };
   }).then((r) => {
     // Whatever waits on this commitment closing (a chase, src/durable) wakes.
     // Best effort and after the write: a task re-reads the row before acting,
@@ -69,8 +61,8 @@ async function transition({ commitmentId, to, actor, reason = null, evidenceId =
  */
 async function undo(transitionId) {
   let result = 'undone';
-  const t = await withTx(async (c) => {
-    const row = (await c.query('select * from ledger_transition where id = $1 for update', [transitionId])).rows[0];
+  const t = await repo.withTx(async (r) => {
+    const row = await r.ledger.lockTransition(transitionId);
     if (!row) {
       result = `no transition #${transitionId}`;
       return null;
@@ -79,9 +71,7 @@ async function undo(transitionId) {
       result = 'already undone';
       return row;
     }
-    const cur = (
-      await c.query('select id, status, closed_at, closed_reason from commitment where id = $1 for update', [row.commitment_id])
-    ).rows[0];
+    const cur = await r.ledger.lockCommitment(row.commitment_id);
     const after = {
       status: row.to_status,
       closed_reason: L.CLOSED.has(row.to_status) ? row.reason : null,
@@ -90,13 +80,9 @@ async function undo(transitionId) {
     if (!cur) result = 'the commitment is gone';
     else if (L.changedSince(cur, after)) result = 'changed since; left as it is';
     else {
-      const cols = Object.keys(row.before);
-      await c.query(
-        `update commitment set ${cols.map((k, i) => `${k} = $${i + 2}`).join(', ')} where id = $1`,
-        [row.commitment_id, ...cols.map((k) => row.before[k])]
-      );
+      await r.ledger.setCommitment(row.commitment_id, row.before);
     }
-    await c.query('update ledger_transition set undone_at = now(), undo = $2 where id = $1', [transitionId, result]);
+    await r.ledger.markUndone(transitionId, result);
     return row;
   });
   if (t) log.info('transition undone', { transition: transitionId, commitment: Number(t.commitment_id), result });
@@ -105,21 +91,11 @@ async function undo(transitionId) {
 
 /** The newest change of a commitment that is not undone — what "Reopen" takes back. */
 async function latest(commitmentId) {
-  return (
-    await rows(
-      `select * from ledger_transition where commitment_id = $1 and undone_at is null order by at desc, id desc limit 1`,
-      [commitmentId]
-    )
-  )[0] || null;
+  return repo.ledger.latest(commitmentId);
 }
 
 async function history(commitmentId) {
-  return rows(
-    `select t.*, e.quote, e.source_item_id, e.confidence
-       from ledger_transition t left join ledger_evidence e on e.id = t.evidence_id
-      where t.commitment_id = $1 order by t.at desc, t.id desc`,
-    [commitmentId]
-  );
+  return repo.ledger.history(commitmentId);
 }
 
 module.exports = { transition, undo, latest, history };

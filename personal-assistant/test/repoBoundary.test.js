@@ -54,7 +54,6 @@ const PENDING = new Set([
   'src/ingest/jira.js',
   'src/ingest/store.js',
   'src/ingest/teamsLocal.js',
-  'src/ledger/index.js',
   'src/ledger/reconcile.js',
   'src/mcp/chatTools.js',
   'src/mcp/server.js',

@@ -48,6 +48,15 @@ function postgres(db) {
       );
       return Number(r.id);
     },
+    /** Ledger evidence for a commitment (a reply that says it is done); returns its id. */
+    async evidence(commitmentId, o = {}) {
+      const r = await db.one(
+        `insert into ledger_evidence (commitment_id, source_item_id, effect, method, extracted_by, quote, confidence)
+         values ($1, $2, $3, $4, 'contract-seed', $5, $6) returning id`,
+        [commitmentId, o.sourceItemId || null, o.effect || 'done', o.method || 'reply', o.quote || null, o.confidence ?? null]
+      );
+      return Number(r.id);
+    },
     /** Moves a row's timestamp column (seed only; tables and columns are fixed here). */
     async backdate(table, column, id, when) {
       const ok = { notification: ['created_at'], llm_spend: ['at'], source_item: ['occurred_at'] };
