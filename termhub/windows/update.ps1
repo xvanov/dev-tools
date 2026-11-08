@@ -35,7 +35,14 @@
 #
 # Either way sessiond is never restarted, so PTYs survive all three.
 #
-#     .\windows\update.ps1
+# What the front runs and where the PTYs live are each one line in termhub\.env
+# (lib/launch.ts): TERMHUB_FRONT=jarvisd|node and TERMHUB_PTYD=1|0. Step 2b
+# installs the pinned Bun the jarvisd front needs and keeps ptyd's logon task in
+# place (windows\ptyd.ps1 -Ensure), never restarting a running ptyd.
+#
+#     .\windows\update.ps1 [-DryRun]   -DryRun: the plan, from what is on disk; changes nothing
+
+param([switch]$DryRun)
 
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'common.ps1')
@@ -85,6 +92,23 @@ switch ($mode) {
   'single'    { Write-Host "termhub update: single-port mode  front=publish=$publishPort  sessiond=$sessiondPort" }
   'http'      { Write-Host "termhub update: plain-HTTP mode  front=publish=$publishPort (tailnet IP, no Serve)  sessiond=$sessiondPort" }
   'bluegreen' { Write-Host "termhub update: blue=$bluePort  green=$greenPort  sessiond=$sessiondPort  publish=$publishPort" }
+}
+
+if ($DryRun) {
+  # Read-only: no fetch, no stop, no start. The plan as of the last fetch.
+  $head = (Invoke-Git -RepoDir $ProjectDir -Arguments @('rev-parse', 'HEAD')).Stdout
+  $count = Invoke-Git -RepoDir $ProjectDir -Arguments @('rev-list', '--count', 'HEAD..@{u}')
+  $behind = if ($count.Code -eq 0) { $count.Stdout } else { '?' }
+  Write-Host "termhub update -DryRun: HEAD $(Format-Commit $head), $behind commit(s) behind upstream as of the last fetch"
+  $front = Get-FrontPlan
+  $live = Get-JsonEndpoint "http://127.0.0.1:$bluePort/api/health"
+  $liveRt = if ($live -and $live.self -and $live.self.pid) { if (Test-JarvisdFront ([int]$live.self.pid)) { 'jarvisd' } else { 'node' } } else { 'none' }
+  Write-Host "termhub update -DryRun: front now $liveRt on $bluePort; next: $($front.runtime) ($($front.reason))"
+  (Invoke-Native (Get-NodePath) -Arguments @((Join-Path $ProjectDir 'lib\launch.js'), 'ensure-bun', '--dry-run')).Lines | ForEach-Object { Write-Host "termhub update -DryRun: $_" }
+  (Invoke-Native powershell -Arguments @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', (Join-Path $PSScriptRoot 'ptyd.ps1'), '-Ensure', '-DryRun')).Lines | ForEach-Object { Write-Host "termhub update -DryRun: $_" }
+  (Invoke-Native (Get-NodePath) -Arguments @((Join-Path $ProjectDir 'lib\ptyHost.js'), 'status')).Out | ForEach-Object { Write-Host "termhub update -DryRun: pty host $_" }
+  Write-Host "termhub update -DryRun: would pull, swap the front ($mode), leave sessiond and its terminals alone, then redeploy the assistant."
+  exit 0
 }
 
 # 0a) Reclaim the publish port from anything that isn't a front. In single-port
@@ -160,6 +184,15 @@ if ($changed -match 'package(-lock)?\.json') {
   # node_modules is derived from it, so discard the rewrite. Mirrors linux/update.sh.
   $null = Invoke-Git -RepoDir $ProjectDir -Arguments @('checkout', '--', 'package-lock.json')
 }
+
+# 2b) The front's runtime and the PTY host (termhub\.env). Neither can fail the
+# update: a jarvisd front without its Bun falls back to node (Start-TermhubFront
+# says so), and ptyd only matters at sessiond's next start.
+$bun = Invoke-Native (Get-NodePath) -Arguments @((Join-Path $ProjectDir 'lib\launch.js'), 'ensure-bun')
+$bun.Lines | ForEach-Object { Write-Host "termhub update: $_" }
+$ptyd = Invoke-Native powershell -Arguments @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', (Join-Path $PSScriptRoot 'ptyd.ps1'), '-Ensure')
+$ptyd.Lines | ForEach-Object { Write-Host "termhub update: $_" }
+if ($ptyd.Code -ne 0) { Write-Host "termhub update: ptyd -Ensure failed (above); sessiond keeps its current PTY host." -ForegroundColor Yellow }
 
 if ($mode -eq 'single') {
   # 3-5) SINGLE-PORT: swap the front in place on the published port.

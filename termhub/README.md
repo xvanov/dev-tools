@@ -542,6 +542,8 @@ All optional environment variables:
 | `TERMHUB_PORT` | `7000` | Front port for the single-process dev server (`node server.js`) |
 | `TERMHUB_SESSIOND_PORT` | `7010` | Supervisor (`sessiond`) loopback port |
 | `TERMHUB_FRONT_PORT` | `7001` | Front loopback port. The Windows scripts set it from `state.json`: the publish port in single-port mode (default), else `7001`⇆`7002` for blue/green |
+| `TERMHUB_FRONT` | `node` | The front's runtime: `node` (`node front.js`) or `jarvisd` (the same front under the pinned Bun, `bun ../jarvisd/src/main.ts front`). Also read from `termhub/.env` or the repo's `.env`; the update scripts honour it. `node lib/launch.js` shows the plan |
+| `TERMHUB_PTYD` | unset | `1`: sessiond keeps its PTYs in ptyd (terminals survive a sessiond restart); `0`: node-pty; unset: the `ptyHost` setting (`node lib/ptyHost.js`). Also read from `termhub/.env` or the repo's `.env` |
 | `TERMHUB_BIND` | auto | Front bind address. Auto-detects the Tailscale IP (`tailscale ip -4`, else a 100.64.0.0/10 interface), falling back to `127.0.0.1`. On Windows the installer pins it to `127.0.0.1` (Tailscale Serve does the exposure). `sessiond` always binds loopback regardless. |
 | `TERMHUB_MACHINE` | hostname | Name shown in the UI |
 | `TERMHUB_SHELL` | `$SHELL` / `pwsh`→`powershell` | Shell to spawn |

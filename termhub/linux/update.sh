@@ -253,6 +253,18 @@ if [ "${1:-}" = "--heal" ]; then
   exit 0
 fi
 
+# --dry-run: the plan from what is on disk (no fetch, no pull, no restart).
+# TERMHUB_FRONT=jarvisd|node and TERMHUB_PTYD=1|0 in termhub/.env pick the front's
+# runtime and the PTY host (lib/launch.ts); this shows what the next update does.
+if [ "${1:-}" = "--dry-run" ]; then
+  say "dry run: HEAD $(git -C "$PROJECT_DIR" rev-parse --short HEAD), $(git -C "$PROJECT_DIR" rev-list --count 'HEAD..@{u}' 2>/dev/null || echo '?') commit(s) behind upstream as of the last fetch"
+  (cd "$PROJECT_DIR" && node lib/launch.js plan) | sed 's/^/termhub update: next /'
+  (cd "$PROJECT_DIR" && node lib/launch.js ensure-bun --dry-run) | sed 's/^/termhub update: /'
+  bash "$PROJECT_DIR/linux/ptyd-unit.sh" --ensure --dry-run 2>&1 | sed 's/^/termhub update: /'
+  say "would pull, then restart '$SERVICE' (the front with it; terminals survive only on ptyd)"
+  exit 0
+fi
+
 # ---------------------------------------------------------------------------
 # --finish: the detached half. Runs with no terminal, so everything it says goes
 # to $UPDATE_LOG. This is the only part that can verify the restart, because it is
@@ -381,11 +393,22 @@ bash "$PROJECT_DIR/watchdog/install-watchdog.sh" --ensure 2>&1 || \
 bash "$PROJECT_DIR/linux/ptyd-unit.sh" --ensure 2>&1 || \
   say "ptyd could not be set up - the restart below may fall back to node-pty (node lib/ptyHost.js to see why)."
 
+# 4c) The front's runtime (TERMHUB_FRONT in termhub/.env, lib/launch.ts): the
+# pinned Bun for a jarvisd front. Without it server.js serves the Node front.
+(cd "$PROJECT_DIR" && node lib/launch.js ensure-bun) 2>&1 | sed 's/^/termhub update: /' || true
+(cd "$PROJECT_DIR" && node lib/launch.js plan) 2>&1 | sed 's/^/termhub update: after the restart: /' || true
+
 # 5) Restart, detached, so the verify/rollback logic outlives this PTY.
 say ""
-say "restarting '$SERVICE' now. THIS TERMINAL WILL DIE - that is expected: on Linux"
-say "termhub is one process, so every terminal (including this one) ends with the"
-say "restart. Reopen termhub in a moment; the result is logged to:"
+if (cd "$PROJECT_DIR" && node -e "process.exit(require('./lib/ptyHost').plan().ptyd ? 0 : 1)") 2>/dev/null \
+   && curl -sS -m 2 "http://127.0.0.1:${TERMHUB_PTYD_PORT:-7020}/api/ping" 2>/dev/null | grep -q '"entry":"ptyd"'; then
+  say "restarting '$SERVICE' now. The terminals live in ptyd and survive it; this one"
+  say "reconnects when the new build is up. The result is logged to:"
+else
+  say "restarting '$SERVICE' now. THIS TERMINAL WILL DIE - that is expected: on Linux"
+  say "termhub is one process, so every terminal (including this one) ends with the"
+  say "restart. Reopen termhub in a moment; the result is logged to:"
+fi
 say "  $UPDATE_LOG"
 say ""
 

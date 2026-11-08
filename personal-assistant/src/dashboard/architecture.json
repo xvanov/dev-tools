@@ -1509,7 +1509,14 @@
         "personal": "k-911-x17, front :7000, published by Tailscale Serve on https :7443"
       },
       "health": "termhub",
+      "env": [
+        {
+          "name": "TERMHUB_FRONT",
+          "default": "node"
+        }
+      ],
       "details": {
+        "Runtime": "TERMHUB_FRONT=node|jarvisd (environment, else termhub/.env or the repo's .env; termhub/lib/launch.ts). jarvisd runs the same front as `bun jarvisd/src/main.ts front` on the pinned Bun from jarvisd/.bun/<pin>/ (the update scripts install it): in place of `node front.js` on Windows (Start-TermhubFront), as a respawned child of server.js on Linux. Without its Bun the Node front serves. Both stacks still run node; the switch is a runbook in docs/native/JARVISD.md",
         "APIs": [
           "POST /api/sessions {cwd, command, title} (X-Termhub: 1)",
           "POST /api/sessions/:id/input (type into a session)",
@@ -1532,7 +1539,10 @@
         "termhub/lib/idleStore.ts",
         "termhub/AGENT.md",
         "termhub/lib/passkeyGate.ts",
-        "termhub/test/passkeyGate.test.js"
+        "termhub/test/passkeyGate.test.js",
+        "termhub/lib/launch.ts",
+        "termhub/windows/common.ps1",
+        "termhub/test/launch.test.js"
       ]
     },
     {
@@ -1556,7 +1566,7 @@
           "on the factory machine: claude_session runs"
         ],
         "Restore": "a claude session re-opens as `claude --resume <uuid>` in its old cwd (the id termhub pinned with --session-id)",
-        "Restart": "restarting sessiond kills every live terminal: only on purpose. Opt-in TERMHUB_PTYD=1 (not deployed yet) moves the PTYs into ptyd and a restarted sessiond adopts them",
+        "Restart": "restarting sessiond kills every live terminal: only on purpose. Opt-in TERMHUB_PTYD=1 (termhub/.env; not deployed yet) moves the PTYs into ptyd and a restarted sessiond adopts them",
         "Live state (plan E3)": "the idle hub classifies every agent session once a second (working, waiting on you, limited); each change and each exit goes out as a `session-state` message on the page-wide /ws/voice feed, and Run redraws its sidebar on it instead of waiting for its 2 s poll"
       },
       "code": [
@@ -1603,8 +1613,8 @@
         "personal": "landing"
       },
       "where": {
-        "work": "127.0.0.1:7020 when enabled (TERMHUB_PTYD_PORT); started detached by sessiond if none answers",
-        "personal": "127.0.0.1:7020 when enabled (TERMHUB_PTYD_PORT); started detached by sessiond if none answers"
+        "work": "127.0.0.1:7020 when enabled (TERMHUB_PTYD_PORT): the termhub-ptyd logon task (termhub/windows/ptyd.ps1); sessiond starts one detached if none answers",
+        "personal": "127.0.0.1:7020 when enabled (TERMHUB_PTYD_PORT): termhub-ptyd.service (termhub/linux/ptyd-unit.sh); sessiond starts one detached if none answers"
       },
       "env": [
         {
@@ -1630,14 +1640,18 @@
         "Conformance": "termhub/test/ptydConformance.test.js runs one black-box suite against sessiond, ptyd and sessiond on ptyd; CI's ptyd job runs it on Windows and Linux",
         "Restart survival": "termhub/test/ptydBackend.test.js: sessiond is killed mid-command and restarted; the new one adopts the session from ptyd under the same id and loses no output",
         "Not in ptyd": "voice, idle episodes, uploads, the archive and restore stay in sessiond; replay is raw bytes (sessiond keeps its own screen mirror on top)",
-        "Build": "node scripts/build.js --only ptyd --release (rustup, MSVC build tools on Windows)",
-        "Cutover (Exit 5)": "production starts read ptyHost (<dataDir>/settings.json, termhub/lib/ptyHost.ts): node-pty (default, and the rollback), ptyd (the cutover, always explicit), or opt-in auto (ptyd when a release binary is on the machine). On Linux ptyd runs as its own user unit (termhub-ptyd.service, linux/ptyd-unit.sh) so termhub's restart does not kill it. Neither stack has switched: both are on the node-pty default"
+        "Build": "node scripts/build.js --only ptyd (rustup, MSVC build tools on Windows); the update scripts build it when its sources are newer than the build",
+        "Installed copy": "<dataDir>/bin/ptyd-<hash>, named by <dataDir>/bin/ptyd-current (node termhub/lib/ptyHost.js install): ptyd runs this, so a build never writes over the running binary; a new one is used from ptyd's next start (ptyd.ps1 -Restart, ptyd-unit.sh --restart, both end its terminals)",
+        "Cutover (Exit 5)": "TERMHUB_PTYD=1|0 (environment, else termhub/.env or the repo's .env) wins over ptyHost (<dataDir>/settings.json, termhub/lib/ptyHost.ts): node-pty (default, and the rollback), ptyd (always explicit), or opt-in auto. ptyd runs as its own long-lived process (logon task on Windows, user unit on Linux) that the update scripts keep in place and never restart. Neither stack has switched: both are on the node-pty default; the runbook is in docs/native/JARVISD.md"
       },
       "code": [
         "ptyd/src/main.rs",
         "ptyd/src/session.rs",
         "ptyd/README.md",
         "termhub/lib/ptydClient.ts",
+        "termhub/lib/ptyHost.ts",
+        "termhub/windows/ptyd.ps1",
+        "termhub/linux/ptyd-unit.sh",
         "termhub/test/ptydConformance.test.js"
       ]
     },

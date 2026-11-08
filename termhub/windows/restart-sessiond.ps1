@@ -28,7 +28,11 @@ $ident = Get-SessiondIdentity -Port $sessiondPort
 $live  = if ($ident -and $ident.sessions) { [int]$ident.sessions } else { 0 }
 
 Write-Host "termhub restart-sessiond: port $sessiondPort, running $(Format-Commit $ident.commit $ident.dirty), $live live session(s)."
-Write-Host "This ENDS those $live terminal(s). They stay restorable from the sidebar." -ForegroundColor Yellow
+if ($ident -and "$($ident.ptyHost)" -eq 'ptyd') {
+  Write-Host "Its PTYs live in ptyd: they survive if the next start uses ptyd too (below); a switch to node-pty leaves them behind." -ForegroundColor Yellow
+} else {
+  Write-Host "This ENDS those $live terminal(s). They stay restorable from the sidebar." -ForegroundColor Yellow
+}
 # Where the new sessiond will keep its PTYs (lib/ptyHost.js; rollback: node lib\ptyHost.js node-pty).
 & node (Join-Path $PSScriptRoot '..\lib\ptyHost.js') status 2>$null | ForEach-Object { Write-Host "  pty host $_" }
 
@@ -57,6 +61,11 @@ Remove-PidFile 'sessiond'
 if (-not (Clear-PortSquatter -Port $sessiondPort -Why 'restarting sessiond')) {
   throw "port $sessiondPort is still held; sessiond cannot restart."
 }
+
+# On ptyd, have the termhub-ptyd task's ptyd up first, so the new sessiond adopts
+# it instead of starting one of its own outside the task (where ptyd.ps1
+# -Restart could not bring it back). Nothing to do on node-pty.
+& powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'ptyd.ps1') -Ensure
 
 $sessiondPort = Confirm-Sessiond -Port $sessiondPort -PublishPort $publishPort
 

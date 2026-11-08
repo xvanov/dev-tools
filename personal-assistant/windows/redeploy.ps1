@@ -75,8 +75,9 @@ function Restart-PaTask([string]$Head) {
   # generations and a pre-supervisor worker (`src\worker.js`) are ended here. Not deploy.js.
   # Bun generations (PA_RUNTIME=bun) run jarvisd\src\main.ts in bun.exe: ended too; so are the
   # launcher (powershell running pa-launch.ps1) and a compiled jarvisd (supervise / generation).
+  # Not termhub's front on jarvisd (`bun ...\jarvisd\src\main.ts front`): it is not the PA's.
   Get-CimInstance Win32_Process -Filter "Name='node.exe' OR Name='bun.exe' OR Name='powershell.exe' OR Name LIKE 'jarvisd%'" |
-    Where-Object { $_.CommandLine -match 'src[\\/](worker\.js|supervisor)("|\s|$)|jarvisd[\\/]src[\\/]main\.ts|pa-launch\.ps1' -or ($_.Name -like 'jarvisd*' -and "$($_.ExecutablePath)" -like (Join-Path (Split-Path $PaDir -Parent) 'jarvisd\dist\*')) } |
+    Where-Object { $_.CommandLine -notmatch 'main\.ts"?\s+front\b' -and ($_.CommandLine -match 'src[\\/](worker\.js|supervisor)("|\s|$)|jarvisd[\\/]src[\\/]main\.ts|pa-launch\.ps1' -or ($_.Name -like 'jarvisd*' -and "$($_.ExecutablePath)" -like (Join-Path (Split-Path $PaDir -Parent) 'jarvisd\dist\*'))) } |
     ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
   Start-Sleep -Milliseconds 500
   Start-ScheduledTask -TaskName 'pa-worker'

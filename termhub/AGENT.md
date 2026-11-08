@@ -60,6 +60,13 @@ browser tab ──http+ws──►  front  (UI + proxy, 127.0.0.1:7000)   ◄─
   *Port modes*). `start-http.ps1` is the exception — it binds the tailnet IP directly, no Serve.
 - Local dev without Tailscale: `TERMHUB_BIND=127.0.0.1 node server.js`, then open
   `http://127.0.0.1:7000`.
+- **The front's runtime** is `TERMHUB_FRONT=node|jarvisd` (environment, else `termhub/.env` or
+  the repo's `.env`; `lib/launch.ts`, `node lib/launch.js` prints the plan). `jarvisd` runs the
+  same front as `bun ../jarvisd/src/main.ts front` on the Bun `jarvisd/package.json` pins, from
+  `jarvisd/.bun/<pin>/` (`node lib/launch.js ensure-bun`; the update scripts run it). Windows
+  starts it in place of `node front.js` (`Start-TermhubFront` in `windows/common.ps1`; the pid
+  checks accept a bun.exe running `main.ts front`); on Linux `server.js` runs it as a respawned
+  child. Without its Bun, or after five exits in a minute on Linux, the Node front serves.
 
 ## Manual run / smoke test
 
@@ -301,10 +308,17 @@ rollback), `ptyd` (the cutover, always explicit), or opt-in `auto` (ptyd when a 
 on the machine). `auto` is not the default: building ptyd in a deployed checkout must never
 switch the host by itself, since the next sessiond restart would end every live terminal.
 `node lib/ptyHost.js [node-pty|ptyd|auto]` shows or changes it; `update.ps1` and
-`restart-sessiond.ps1` print it. On Linux ptyd runs as its own user unit
-(`linux/ptyd-unit.sh`, `termhub-ptyd.service`), so the restart every update does no longer
-kills it. Neither stack has switched yet: the steps and the rollback are in
-[`../ptyd/README.md`](../ptyd/README.md) (*Cutover*). Proofs:
+`restart-sessiond.ps1` print it. `TERMHUB_PTYD=1|0` overrides the setting, from the environment
+or `termhub/.env` (`lib/dotenv.ts`); `applyToEnv` marks what it exports
+(`TERMHUB_PTYD_RESOLVED`), and inside a termhub terminal (`TERMHUB_SESSION_ID`) the inherited
+value is skipped, so a script run from one reads the file, not the running sessiond's choice.
+ptyd runs as its own long-lived process from an installed copy (`<dataDir>/bin/ptyd-<hash>`,
+`node lib/ptyHost.js install`): the `termhub-ptyd` logon task on Windows (`windows/ptyd.ps1
+-Ensure|-Restart|-Remove [-DryRun]`, a `-Run` wrapper under `conhost --headless`), its own user
+unit on Linux (`linux/ptyd-unit.sh --ensure|--restart|--remove [--dry-run]`,
+`termhub-ptyd.service`), so the restart every update does no longer kills it. The switch and
+the rollback: [JARVISD.md](../docs/native/JARVISD.md) (*Runbook: switching a stack's termhub
+to jarvisd front and ptyd*). Proofs:
 `test/ptydConformance.test.js` runs one black-box protocol suite against sessiond, ptyd and
 sessiond-on-ptyd (the ptyd legs SKIP without a built binary, fail with `PTYD_REQUIRED=1`, as in
 CI's ptyd job); `test/ptydBackend.test.js` kills sessiond mid-command and checks the next one

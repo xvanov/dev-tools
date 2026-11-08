@@ -327,7 +327,7 @@ function Format-Commit {
 }
 
 # Kill the node process holding $Port and wait for the socket to be released.
-# Refuses to touch a non-node process: an unrecognised listener is far more
+# Refuses to touch anything but node or a jarvisd front: an unrecognised listener is far more
 # likely to be something else on the machine than a termhub tier, and killing
 # it would be a much worse bug than the one being cleaned up.
 function Clear-PortSquatter {
@@ -335,7 +335,7 @@ function Clear-PortSquatter {
   $procId = Get-PortListenerPid -Port $Port
   if (-not $procId) { return $true }
   $name = Get-ProcessNameFor $procId
-  if ($name -ne 'node') {
+  if ($name -ne 'node' -and -not ($name -eq 'bun' -and (Test-JarvisdFront $procId))) {
     Write-Host "termhub: 127.0.0.1:$Port held by '$name' (pid $procId) - not a termhub process, leaving it alone." -ForegroundColor Yellow
     return $false
   }
@@ -439,12 +439,45 @@ function Clear-PublishPort {
   Write-Host ""
 }
 
-# Is a recorded pid still a live node.exe? (guards against pid reuse)
+# Is a recorded pid still a live termhub tier? (guards against pid reuse) A
+# tier is node.exe, or bun.exe for a front on jarvisd (TERMHUB_FRONT=jarvisd).
 function Test-NodeAlive {
   param([int]$ProcId)
   if (-not $ProcId) { return $false }
   $p = Get-Process -Id $ProcId -ErrorAction SilentlyContinue
-  return ($p -and $p.ProcessName -eq 'node')
+  return ($p -and ($p.ProcessName -eq 'node' -or ($p.ProcessName -eq 'bun' -and (Test-JarvisdFront $ProcId))))
+}
+
+# Is this pid bun running jarvisd's front role (`bun ...\jarvisd\src\main.ts front`)?
+# Only that one: the PA's jarvisd generations are bun.exe too, and never ours to stop.
+function Test-JarvisdFront {
+  param([int]$ProcId)
+  $c = Get-CimInstance Win32_Process -Filter "ProcessId = $ProcId" -ErrorAction SilentlyContinue
+  return [bool]($c -and $c.CommandLine -match 'jarvisd[\\/]src[\\/]main\.ts"?\s+front\b')
+}
+
+# What the front tier runs (lib/launch.js: TERMHUB_FRONT in termhub\.env, the
+# repo's .env or the environment). $null exe means node front.js. A jarvisd
+# front without its pinned Bun falls back to node, and the plan says so.
+function Get-FrontPlan {
+  $json = & (Get-NodePath) (Join-Path $ProjectDir 'lib\launch.js') front --json 2>$null
+  if ($LASTEXITCODE -ne 0 -or -not $json) {
+    Write-Host "termhub: lib\launch.js did not answer - starting node front.js." -ForegroundColor Yellow
+    return [pscustomobject]@{ runtime = 'node'; exe = $null; args = @('front.js'); reason = 'lib\launch.js failed' }
+  }
+  return ($json | ConvertFrom-Json)
+}
+
+# Start the front tier the plan names, with Start-TermhubNode's env, logs and
+# return value.
+function Start-TermhubFront {
+  param([hashtable]$EnvVars)
+  $plan = Get-FrontPlan
+  Write-Host "termhub: front runtime $($plan.runtime) ($($plan.reason))"
+  if ($plan.runtime -eq 'jarvisd' -and $plan.exe) {
+    return Start-TermhubNode -Script 'front.js' -EnvVars $EnvVars -Exe $plan.exe -Arguments @($plan.args)
+  }
+  return Start-TermhubNode -Script 'front.js' -EnvVars $EnvVars
 }
 
 # Launch a termhub tier (node <script>) hidden + detached, with the given env.
@@ -458,9 +491,13 @@ function Test-NodeAlive {
 #
 # stdout/stderr go to <data dir>\logs\<tier>.{out,err}.log - see Get-TermhubLogDir
 # for why that is not optional.
+#
+# -Exe/-Arguments run another program as the tier (Start-TermhubFront: bun
+# running jarvisd's front); $Script still names the tier for its log.
 function Start-TermhubNode {
-  param([string]$Script, [hashtable]$EnvVars)
-  $node = Get-NodePath
+  param([string]$Script, [hashtable]$EnvVars, [string]$Exe = '', [string[]]$Arguments = @())
+  $node = if ($Exe) { $Exe } else { Get-NodePath }
+  $argList = if ($Exe) { ($Arguments | ForEach-Object { if ($_ -match '\s') { "`"$_`"" } else { $_ } }) -join ' ' } else { $Script }
   $saved = @{}
   foreach ($k in $EnvVars.Keys) {
     $saved[$k] = [Environment]::GetEnvironmentVariable($k)
@@ -480,7 +517,7 @@ function Start-TermhubNode {
       }
     }
     try {
-      $proc = Start-Process -FilePath $node -ArgumentList $Script -WorkingDirectory $ProjectDir `
+      $proc = Start-Process -FilePath $node -ArgumentList $argList -WorkingDirectory $ProjectDir `
         -WindowStyle Hidden -PassThru -RedirectStandardOutput $outLog -RedirectStandardError $errLog
       # Touching .Handle caches it while the process is still alive, which is what
       # makes .ExitCode readable AFTER it exits. Without this, Start-Process
@@ -494,7 +531,7 @@ function Start-TermhubNode {
       # by a tier that hasn't fully exited, or an unwritable data dir, must not be
       # the reason the machine is left with no front.
       Write-Host "termhub: could not redirect $Script output to $logBase.*.log ($($_.Exception.Message)) - starting without logs." -ForegroundColor Yellow
-      $proc = Start-Process -FilePath $node -ArgumentList $Script -WorkingDirectory $ProjectDir `
+      $proc = Start-Process -FilePath $node -ArgumentList $argList -WorkingDirectory $ProjectDir `
         -WindowStyle Hidden -PassThru
       try { $null = $proc.Handle } catch { }
       return $proc
@@ -544,7 +581,7 @@ function Start-VerifiedFront {
   }
 
   Write-Host "termhub: starting front on ${Bind}:$Port -> sessiond 127.0.0.1:$SessiondPort ..."
-  $proc = Start-TermhubNode -Script 'front.js' -EnvVars @{
+  $proc = Start-TermhubFront -EnvVars @{
     TERMHUB_FRONT_PORT    = $Port
     TERMHUB_SESSIOND_PORT = $SessiondPort
     TERMHUB_BIND          = $Bind
@@ -553,7 +590,7 @@ function Start-VerifiedFront {
 
   $ok = Wait-FrontHealthy -Port $Port -TimeoutSec $TimeoutSec -Address $probe
   if (-not $ok -and $proc -and $proc.HasExited) {
-    Write-Host "termhub: the front exited with code $($proc.ExitCode) (run 'node front.js' to see why)." -ForegroundColor Yellow
+    Write-Host "termhub: the front exited with code $($proc.ExitCode) (see $(Join-Path (Get-TermhubLogDir) "front-$Port.err.log"))." -ForegroundColor Yellow
   }
   if ($ok) {
     foreach ($route in @('/api/sessions', '/')) {

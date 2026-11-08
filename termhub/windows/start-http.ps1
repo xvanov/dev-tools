@@ -50,7 +50,7 @@ if ($boundHere) {
   }
   Stop-Front $frontName
   Write-Host "termhub: starting front on ${ip}:$Port (plain HTTP) -> sessiond 127.0.0.1:$sessiondPort ..."
-  Start-TermhubNode -Script 'front.js' -EnvVars @{
+  Start-TermhubFront -EnvVars @{
     TERMHUB_FRONT_PORT    = $Port
     TERMHUB_SESSIOND_PORT = $sessiondPort
     TERMHUB_BIND          = $ip

@@ -216,7 +216,7 @@ function Get-TermhubDiagnosis {
     }
   }
   elseif (-not $frontResponds) {
-    $squatter = @($onBind | Where-Object { $_.Name -ne 'node' -and $_.Name -ne '' })
+    $squatter = @($onBind | Where-Object { $_.Name -ne 'node' -and $_.Name -ne '' -and -not ($_.Name -eq 'bun' -and (Test-JarvisdFront $_.Pid)) })
     if ($squatter.Count -gt 0) {
       if (@($squatter | Where-Object { $_.Name -match 'tailscale' }).Count -gt 0 -and $t.Mode -eq 'http') {
         $sig = 'serve-holds-http-port'

@@ -62,7 +62,7 @@ if ($mode -eq 'bluegreen') {
   $green = if ($frontPort -eq 7001) { 7002 } else { 7001 }
   Stop-Front "front-$green"
   Write-Host "termhub restart-front (serve): starting green on 127.0.0.1:$green ..."
-  Start-TermhubNode -Script 'front.js' -EnvVars @{
+  Start-TermhubFront -EnvVars @{
     TERMHUB_FRONT_PORT = $green; TERMHUB_SESSIOND_PORT = $sessiondPort; TERMHUB_BIND = '127.0.0.1'
   } | Out-Null
   if (-not (Wait-FrontHealthy -Port $green)) { Stop-Front "front-$green"; throw "green front unhealthy on $green; old front still serving." }
@@ -99,7 +99,7 @@ if ($mode -eq 'bluegreen') {
   if (-not $ip) { throw "could not determine Tailscale IPv4 address (tailscale ip -4)" }
   Stop-Front "front-$frontPort"
   Write-Host "termhub restart-front (http): starting front on ${ip}:$frontPort ..."
-  Start-TermhubNode -Script 'front.js' -EnvVars @{
+  Start-TermhubFront -EnvVars @{
     TERMHUB_FRONT_PORT = $frontPort; TERMHUB_SESSIOND_PORT = $sessiondPort; TERMHUB_BIND = $ip
   } | Out-Null
   $deadline = (Get-Date).AddSeconds(12); $ok = $false

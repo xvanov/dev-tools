@@ -10,6 +10,8 @@
 //                                       next sessiond start; restart-sessiond.ps1 on
 //                                       Windows, `systemctl --user restart termhub`
 //                                       on Linux; either ends live terminals once)
+//   node lib/ptyHost.js install [--dry-run]  copy the newest ptyd build into place
+//                                       for ptyd's next start (below)
 //
 // Stored as `ptyHost` in <dataDir>/settings.json. The modes:
 //
@@ -25,8 +27,15 @@
 //
 // Applied only by the production entrypoints (`node sessiond.js`, `node
 // server.js`: what windows/*.ps1 and the Linux unit run), as TERMHUB_PTYD for
-// lib/ptydClient.js. An explicit TERMHUB_PTYD in the environment wins. Tests
-// call startSessiond() directly and never consult the setting.
+// lib/ptydClient.js. An explicit TERMHUB_PTYD wins: from the environment, else
+// termhub/.env or the repo's .env (lib/dotenv.ts; the one-line switch the
+// update scripts read). Tests call startSessiond() directly and never consult
+// the setting.
+//
+// A long-lived ptyd runs an installed copy, <dataDir>/bin/ptyd-<hash>, named
+// by <dataDir>/bin/ptyd-current (`node lib/ptyHost.js install`): a build then
+// never writes over the running binary (Windows locks it; Linux refuses with
+// ETXTBSY), and the new copy is used from ptyd's next start.
 //
 // Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
 
@@ -36,7 +45,9 @@ type Json = import('./types.ts').Json;
 const fs = require('fs');
 const path = require('path');
 const http = require('http');
+const crypto = require('crypto');
 const { dataDir } = require('./paths.ts');
+const dotenv = require('./dotenv.ts');
 
 const MODES = ['auto', 'ptyd', 'node-pty'];
 const EXE = process.platform === 'win32' ? 'ptyd.exe' : 'ptyd';
@@ -73,24 +84,95 @@ function writeMode(mode: any, dir: any = dataDir()) {
   fs.renameSync(`${f}.tmp`, f);
 }
 
-/** A release-grade ptyd binary on this machine, or null. Debug builds don't count. */
-function releaseBinary(env: Record<string, string | undefined> = process.env, exists: (p: string) => boolean = fs.existsSync) {
+type Env = Record<string, string | undefined>;
+
+/**
+ * TERMHUB_PTYD (and TERMHUB_PTYD_BIN) as chosen for the next start: the
+ * environment, else termhub/.env or the repo's .env. A sessiond exports its own
+ * decision (applyToEnv, marked TERMHUB_PTYD_RESOLVED) and every terminal it
+ * starts inherits it, so in a script run from a termhub terminal those values
+ * describe the running sessiond, not a choice, and are skipped. A terminal
+ * (TERMHUB_SESSION_ID) counts as inherited too: a sessiond older than the
+ * marker exported TERMHUB_PTYD without it.
+ */
+function chosen(env: Env = process.env, files: string[] = dotenv.FILES) {
+  const own = env.TERMHUB_PTYD_RESOLVED !== '1' && !env.TERMHUB_SESSION_ID;
+  const pick = (name: string) => {
+    if (own && env[name]) return { value: env[name], source: 'the environment' };
+    const f = dotenv.lookup(name, files);
+    return f ? { value: f.value, source: path.relative(REPO, f.file) } : { value: undefined, source: '' };
+  };
+  const v = pick('TERMHUB_PTYD');
+  return { value: v.value, source: v.source, bin: pick('TERMHUB_PTYD_BIN').value };
+}
+
+function binDir(dir: string = dataDir()) {
+  return path.join(dir, 'bin');
+}
+
+/** The installed copy `ptyd-current` names, or null. */
+function installedBinary(dir: string = dataDir(), exists: (p: string) => boolean = fs.existsSync) {
+  let name = '';
+  try { name = fs.readFileSync(path.join(binDir(dir), 'ptyd-current'), 'utf8').trim(); } catch { return null; }
+  const p = name && path.join(binDir(dir), path.basename(name));
+  return p && exists(p) ? p : null;
+}
+
+/** The newest build (scripts/build.js's dist/, then cargo's target/release), or null. */
+function buildBinary(exists: (p: string) => boolean = fs.existsSync) {
   const platform = `${process.platform === 'win32' ? 'windows' : process.platform}-${process.arch}`;
-  const candidates = [
-    env.TERMHUB_PTYD_BIN,
-    path.join(REPO, 'dist', platform, EXE),
-    path.join(REPO, 'ptyd', 'target', 'release', EXE),
-  ].filter(Boolean);
-  return candidates.find((p) => exists(p)) || null;
+  return [path.join(REPO, 'dist', platform, EXE), path.join(REPO, 'ptyd', 'target', 'release', EXE)]
+    .find((p) => exists(p)) || null;
+}
+
+/** A release-grade ptyd binary on this machine, or null. Debug builds don't count. */
+function releaseBinary(env: Env = process.env, exists: (p: string) => boolean = fs.existsSync, dir?: string) {
+  if (env.TERMHUB_PTYD_BIN && exists(env.TERMHUB_PTYD_BIN)) return env.TERMHUB_PTYD_BIN;
+  return installedBinary(dir, exists) || buildBinary(exists);
+}
+
+function fileHash(p: string) {
+  return crypto.createHash('sha256').update(fs.readFileSync(p)).digest('hex').slice(0, 12);
+}
+
+/**
+ * Copy the newest build to <dataDir>/bin/ptyd-<hash> and point ptyd-current at
+ * it. Never touches a running ptyd; older copies are pruned (the current and
+ * the previous stay; Windows also keeps any still running, since it locks them).
+ */
+function install(dir: string = dataDir(), { dryRun = false, build = buildBinary() }: { dryRun?: boolean; build?: string | null } = {}) {
+  if (!build) throw new Error('no ptyd build: node scripts/build.js --only ptyd');
+  const name = `ptyd-${fileHash(build)}${process.platform === 'win32' ? '.exe' : ''}`;
+  const bdir = binDir(dir);
+  const dest = path.join(bdir, name);
+  const prev = installedBinary(dir);
+  const changed = prev !== dest;
+  if (dryRun || !changed) return { build, bin: dest, previous: prev, changed };
+  fs.mkdirSync(bdir, { recursive: true });
+  if (!fs.existsSync(dest)) {
+    fs.copyFileSync(build, `${dest}.tmp`);
+    if (process.platform !== 'win32') fs.chmodSync(`${dest}.tmp`, 0o755);
+    fs.renameSync(`${dest}.tmp`, dest);
+  }
+  const cur = path.join(bdir, 'ptyd-current');
+  fs.writeFileSync(`${cur}.tmp`, name + '\n');
+  fs.renameSync(`${cur}.tmp`, cur);
+  const keep = new Set([name, prev && path.basename(prev)]);
+  for (const f of fs.readdirSync(bdir)) {
+    if (!/^ptyd-[0-9a-f]{12}(\.exe)?$/.test(f) || keep.has(f)) continue;
+    try { fs.unlinkSync(path.join(bdir, f)); } catch { /* still running (Windows locks it) */ }
+  }
+  return { build, bin: dest, previous: prev, changed };
 }
 
 /**
  * Pure. What a production start should use.
  * @returns {{ptyd: boolean, mode: string, bin: string|null, reason: string}}
  */
-function resolve({ envValue, mode, bin }: { envValue?: any; mode?: any; bin?: any }) {
-  if (envValue === '1') return { ptyd: true, mode, bin, reason: 'TERMHUB_PTYD=1 in the environment' };
-  if (envValue === '0') return { ptyd: false, mode, bin, reason: 'TERMHUB_PTYD=0 in the environment' };
+function resolve({ envValue, source, mode, bin }: { envValue?: any; source?: string; mode?: any; bin?: any }) {
+  const where = source || 'the environment';
+  if (envValue === '1') return { ptyd: true, mode, bin, reason: `TERMHUB_PTYD=1 in ${where}` };
+  if (envValue === '0') return { ptyd: false, mode, bin, reason: `TERMHUB_PTYD=0 in ${where}` };
   if (mode === 'ptyd') return { ptyd: true, mode, bin, reason: 'setting ptyHost=ptyd' };
   if (mode === 'auto') {
     return bin
@@ -101,11 +183,19 @@ function resolve({ envValue, mode, bin }: { envValue?: any; mode?: any; bin?: an
   return { ptyd: false, mode, bin, reason: `setting ptyHost=${mode || DEFAULT_MODE} (the default; switch with: node lib/ptyHost.js ptyd)` };
 }
 
+/** What the next production start resolves to (status, lib/launch.ts, linux/ptyd-unit.sh). */
+function plan(env: Env = process.env) {
+  const c = chosen(env);
+  return resolve({ envValue: c.value, source: c.source, mode: readMode(), bin: releaseBinary({ TERMHUB_PTYD_BIN: c.bin }) });
+}
+
 /** For the entrypoints: decide, export TERMHUB_PTYD (+ _BIN), say so. */
-function applyToEnv(env: Record<string, string | undefined> = process.env, log: any = (m: any) => console.log(m)) {
-  const bin = releaseBinary(env);
-  const r = resolve({ envValue: env.TERMHUB_PTYD, mode: readMode(), bin });
+function applyToEnv(env: Env = process.env, log: any = (m: any) => console.log(m)) {
+  const r = plan(env);
+  const bin = r.bin;
+  if (env.TERMHUB_PTYD_RESOLVED === '1' || env.TERMHUB_SESSION_ID) delete env.TERMHUB_PTYD_BIN;
   env.TERMHUB_PTYD = r.ptyd ? '1' : '0';
+  env.TERMHUB_PTYD_RESOLVED = '1';
   if (r.ptyd && bin && !env.TERMHUB_PTYD_BIN) env.TERMHUB_PTYD_BIN = bin;
   log(`[termhub] PTY host: ${r.ptyd ? 'ptyd' : 'node-pty'} (${r.reason})`);
   return r;
@@ -125,14 +215,20 @@ function pingSessiond(port: any) {
 
 async function main(argv: string[]) {
   const arg = argv[0];
+  if (arg === 'install') {
+    const r = install(undefined, { dryRun: argv.includes('--dry-run') });
+    const verb = argv.includes('--dry-run') ? 'would install' : 'installed';
+    console.log(r.changed ? `ptyd: ${verb} ${r.build} as ${r.bin} (used from ptyd's next start)` : `ptyd: ${r.bin} is current`);
+    return;
+  }
   if (arg && arg !== 'status') {
     writeMode(arg);
     console.log(`ptyHost set to ${arg} in ${settingsFile()}`);
   }
   const mode = readMode();
-  const bin = releaseBinary();
-  const next = resolve({ envValue: process.env.TERMHUB_PTYD, mode, bin });
-  console.log(`setting:     ${mode}`);
+  const c = chosen();
+  const next = plan();
+  console.log(`setting:     ${mode}${c.value ? ` (TERMHUB_PTYD=${c.value} in ${c.source} overrides it)` : ''}`);
   console.log(`next start:  ${next.ptyd ? 'ptyd' : 'node-pty'} (${next.reason})`);
   const port = Number(process.env.TERMHUB_SESSIOND_PORT) || 7010;
   const ping = await pingSessiond(port);
@@ -143,7 +239,10 @@ async function main(argv: string[]) {
   }
 }
 
-module.exports = { cli, MODES, DEFAULT_MODE, readMode, writeMode, releaseBinary, resolve, applyToEnv, settingsFile };
+module.exports = {
+  cli, MODES, DEFAULT_MODE, readMode, writeMode, releaseBinary, installedBinary, buildBinary, install,
+  chosen, resolve, plan, applyToEnv, settingsFile,
+};
 
 /** `node lib/ptyHost.js [status|...]` (ptyHost.js, the entry the update scripts run). */
 function cli(argv: string[] = process.argv.slice(2)) {

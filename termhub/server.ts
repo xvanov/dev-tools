@@ -11,6 +11,9 @@
 // $TERMHUB_PORT (default 7000), sessiond on loopback $TERMHUB_SESSIOND_PORT
 // (default 7010). Restarting this process loses terminals (one process) — that's
 // fine for dev; use the two-process layout in production for survival.
+// (The Linux unit runs this file; its terminals survive restarts with ptyd.)
+// With TERMHUB_FRONT=jarvisd (lib/launch.ts) the front is a child process on
+// jarvisd instead of in this one (superviseFront).
 //
 // It refuses to start when a two-tier deployment is already live, because the
 // two layouts overlap on the sessiond port and this one wins by accident. Left
@@ -35,6 +38,41 @@ const { ensureWatchdog } = require('./lib/watchdogSetup.ts');
 
 const FRONT_PORT = Number(process.env.TERMHUB_PORT) || 7000;
 const SESSIOND_PORT = DEFAULT_SESSIOND_PORT;
+
+/**
+ * TERMHUB_FRONT=jarvisd (lib/launch.ts): the front is a child, `bun
+ * jarvisd/src/main.ts front`, respawned when it exits. It holds no terminals,
+ * so a respawn costs a reconnect. Five exits within a minute fall back to the
+ * in-process Node front: a broken Bun must not leave the machine without a UI.
+ */
+function superviseFront(plan: { exe: string | null; args: string[] }) {
+  const { spawn } = require('child_process');
+  const args = [...plan.args, '--port', String(FRONT_PORT), '--sessiond-port', String(SESSIOND_PORT)];
+  if (process.env.TERMHUB_BIND) args.push('--host', process.env.TERMHUB_BIND);
+  const exits: number[] = [];
+  let child: any = null;
+  let stopping = false;
+  if (!plan.exe) return startFront({ port: FRONT_PORT, sessiondPort: SESSIOND_PORT });
+  const start = () => {
+    child = spawn(plan.exe, args, { stdio: 'inherit', windowsHide: true });
+    child.on('exit', (code: any, signal: any) => {
+      if (stopping) return;
+      const now = Date.now();
+      exits.push(now);
+      while (exits.length && now - (exits[0] ?? now) > 60_000) exits.shift();
+      if (exits.length >= 5) {
+        console.error(`[termhub] jarvisd front exited ${exits.length} times in a minute (last: ${signal || code}); serving the Node front instead`);
+        startFront({ port: FRONT_PORT, sessiondPort: SESSIOND_PORT });
+        return;
+      }
+      console.error(`[termhub] jarvisd front exited (${signal || code}); restarting it`);
+      setTimeout(start, 1000);
+    });
+  };
+  // sessiond exits on SIGTERM/SIGINT; the unit's cgroup kill reaches the child anyway.
+  process.on('exit', () => { stopping = true; if (child) try { child.kill(); } catch { /* gone */ } });
+  start();
+}
 
 function refuse(lines: any) {
   for (const line of lines) console.error(`[termhub] ${line}`);
@@ -66,7 +104,10 @@ async function main() {
   }
 
   startSessiond({ port: SESSIOND_PORT, entry: 'server' });
-  startFront({ port: FRONT_PORT, sessiondPort: SESSIOND_PORT });
+  const front = require('./lib/launch.ts').frontPlan();
+  console.log(`[termhub] front: ${front.runtime} (${front.reason})`);
+  if (front.runtime === 'jarvisd') superviseFront(front);
+  else startFront({ port: FRONT_PORT, sessiondPort: SESSIOND_PORT });
 
   // server.js is the entrypoint the Linux systemd unit runs, so this is where a
   // Linux machine becomes self-supervising: see lib/watchdogSetup.js for why the
