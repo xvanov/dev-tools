@@ -403,7 +403,7 @@ run mid-step; a job continued on an existing branch (`--branch`).
 ## Phase 3: storage to SQLite (D2)
 
 - [x] **3.1** SQLite schema (WAL, FTS5, vector BLOBs, SQLCipher), implementing every
-  repository from 1.2. (d0fd5d9, 2eac0c0, a727675, 817002c, 9e36796, b590afa)
+  repository from 1.2. (d0fd5d9, 2eac0c0, a727675, 817002c, 9e36796, b590afa, 631337e)
   `PA_DB=sqlite|postgres` (default
   postgres) picks the backend; `src/db/sqlite.js` (better-sqlite3-multiple-ciphers: SQLCipher v4,
   WAL, FTS5; sqlite-vec for `vec_distance_cosine`, JS fallback), `sql-sqlite/` (every table of
