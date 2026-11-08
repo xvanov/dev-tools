@@ -130,7 +130,8 @@ async function memoryContext({ commitment, item, project, person }, task) {
   const memory = require('../memory');
   const question = [task || commitment?.summary, commitment?.detail, item?.subject].filter(Boolean).join(' — ');
   const [recalled, personPage, projectPage] = await Promise.all([
-    question ? require('../recall').recall(question, { limit: 6 }).catch(() => null) : null,
+    // Only the claims are read below, so only the claims are recalled.
+    question ? require('../recall').recallClaims(question).catch(() => null) : null,
     person ? memory.getPage({ kind: 'person', id: person.id }).catch(() => null) : null,
     project ? memory.getPage({ kind: 'project', id: project.id }).catch(() => null) : null,
   ]);

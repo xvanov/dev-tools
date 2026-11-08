@@ -200,4 +200,41 @@ async function recall(question, { limit = 10, deep = false, sources = null, sinc
   };
 }
 
-module.exports = { recall, ABSTAIN_BELOW, PLAN_SYSTEM };
+/**
+ * Only the remembered claims for a question: recall() without the two hops
+ * over source items, the page search and the item rerank. For a caller that
+ * reads nothing but `claims` (a dispatched brief's facts), which then waits
+ * for one claim search and one rerank of at most 12 claims, not 5-9 s of the
+ * whole. Same claim shape, scores and abstention rule as recall().
+ * @returns {Promise<{claims: object[], abstain: boolean, reranked: boolean}>}
+ */
+async function recallClaims(question, { limit = 12 } = {}) {
+  const claimHits = await memory.searchClaims(question, { limit }).catch(() => ({ results: [] }));
+  const claimList = claimHits.results.slice(0, 12);
+  const docs = claimList.map((c) => `${c.subject_label || c.subject_kind}: ${c.text}\n"${(c.quote || '').slice(0, 400)}"`);
+  const order = docs.length ? await rerank(question, docs) : [];
+  const reranked = Boolean(order);
+  const score = new Map();
+  if (order) for (const o of order) score.set(o.index, o.score);
+  const claims = claimList
+    .map((c, j) => ({
+      id: c.id,
+      subject: c.subject_label,
+      subjectKind: c.subject_kind || null,
+      subjectId: c.subject_id ?? null,
+      kind: c.kind,
+      text: c.text,
+      quote: c.quote,
+      validAt: c.valid_at,
+      itemId: c.source_item_id,
+      score: reranked ? score.get(j) ?? 0 : c.score,
+    }))
+    .sort((a, b) => b.score - a.score);
+  return {
+    claims: claims.filter((c) => !reranked || c.score >= ABSTAIN_BELOW * 0.6).slice(0, 8),
+    abstain: reranked && (claims[0]?.score ?? 0) < ABSTAIN_BELOW,
+    reranked,
+  };
+}
+
+module.exports = { recall, recallClaims, ABSTAIN_BELOW, PLAN_SYSTEM };
