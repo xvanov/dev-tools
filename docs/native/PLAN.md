@@ -168,6 +168,10 @@ run mid-step; a job continued on an existing branch (`--branch`).
 - [ ] **E3 Live status in all three views.** Card state, job stage and session state update
   within 1 s of a change (SSE from 0.4 / 1.4), including "waiting for your approval" with the
   approve action reachable from Plan, Build and voice.
+  Landed in e36357f except one hop: card state (~0.5 s) and Run's session state (≤ 1 s, idle-hub
+  tick) meet it, and Approve is on Plan, Build and voice; job stage in Build is 5-6 s for a local
+  factory (each `uv run factory` costs ~5 s of Python start-up) until the native factory (2.3)
+  calls the PA's `POST /api/factory/events` on each job transition (measured 26 ms to Build).
 - [ ] **E4 `e2e` command.** One command runs the golden path headless against the live stack,
   creates the dummy card, waits for the PR, asserts every link in E1 resolves in every view's
   API, asserts the API-runtime step produced a watchable session (E2), prints a timing per
@@ -206,7 +210,7 @@ run mid-step; a job continued on an existing branch (`--branch`).
   `src/recall`, `src/commitments`) against the policy; remove any that embed changing data or
   exact keys; write the result into `architecture.json`'s memory card. Record the measured
   monthly embedding spend in Meter. (60908b9)
-- [ ] **0.4 SSE instead of polling** for the board and Build (replace the 30 s and 120 s polls).
+- [x] **0.4 SSE instead of polling** for the board and Build (replace the 30 s and 120 s polls). (e36357f)
 - [x] **0.5 Voice latency:** keep the fast-lane prompt prefix warm; TTS at the first clause
   instead of the first sentence; cut the fixed 200 ms silence wait where VAD already decided. (ffc2d5a)
 - [x] **0.6 System 1 decide-then-speak (D7).** Split the fast lane into:
