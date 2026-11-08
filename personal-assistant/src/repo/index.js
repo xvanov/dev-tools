@@ -35,7 +35,7 @@ const AGGREGATES = {
   evals: () => require('./evals'),
   events: () => require('./events'),
   factoryBoard: () => require('./factoryBoard'),
-  leases: () => require('./leases'),
+  leases: () => require('./leases.ts'),
   ledger: () => require('./ledger'),
   meetings: () => require('./meetings'),
   memory: () => require('./memory'),
@@ -50,10 +50,10 @@ const AGGREGATES = {
   search: () => require('./search'),
   secrets: () => require('./secrets'),
   sources: () => require('./sources'),
-  spend: () => require('./spend'),
+  spend: () => require('./spend.ts'),
   system: () => require('./system'),
   telemetry: () => require('./telemetry'),
-  workflowLimits: () => require('./workflowLimits'),
+  workflowLimits: () => require('./workflowLimits.ts'),
 };
 
 /** A backend over a transaction's client: its query, and withTx that joins it. */
@@ -79,8 +79,12 @@ function clientBackend(client) {
  * the same methods over SQLite SQL. One not ported yet has no methods.
  */
 function loadSqlite(name) {
-  const file = require('path').join(__dirname, 'sqlite', `${name}.js`);
-  return require('fs').existsSync(file) ? require(file) : { create: () => ({}) };
+  // .ts once the twin is strict TypeScript (plan 4.1), .js until then.
+  for (const ext of ['.ts', '.js']) {
+    const file = require('path').join(__dirname, 'sqlite', `${name}${ext}`);
+    if (require('fs').existsSync(file)) return require(file);
+  }
+  return { create: () => ({}) };
 }
 
 /** The repository set over `db` (a backend with src/db's interface; `db.dialect` 'sqlite' picks src/repo/sqlite). */

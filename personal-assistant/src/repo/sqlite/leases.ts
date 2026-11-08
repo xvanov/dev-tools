@@ -5,17 +5,21 @@
 // as a pg advisory lock belongs to its connection); releasing the session
 // drops its rows, and a row whose session is gone (released, or its process
 // died) is free for the next taker. Re-entrant with a depth, as pg's are.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+type Db = import('../types.ts').Db;
 
 const { holderGone } = require('../../db/sqlite');
 
-function create(db) {
+function create(db: Db) {
   const holder = () => {
     if (!db.session) throw new Error('leases need a session (pool.connect()), not the pool');
     return db.session.id;
   };
 
   /** Takes (space, name) for this session if free, held by it, or held by a holder that is gone. */
-  async function take(space, name) {
+  async function take(space: number | string, name: string) {
     const me = holder();
     for (let attempt = 0; attempt < 2; attempt++) {
       const got = await db.one(
@@ -33,7 +37,7 @@ function create(db) {
     return false;
   }
 
-  async function drop(space, name) {
+  async function drop(space: number | string, name: string) {
     const me = holder();
     await db.query('update lease set depth = depth - 1 where space = $1 and name = $2 and holder = $3', [space, name, me]);
     await db.query('delete from lease where space = $1 and name = $2 and holder = $3 and depth <= 0', [space, name, me]);
@@ -41,16 +45,16 @@ function create(db) {
 
   return {
     /** Takes the one-key lock `key` if free. Resolves whether this session now holds it. */
-    tryLock: (key) => take('lock', String(key)),
+    tryLock: (key: number | string) => take('lock', String(key)),
 
     /** Lets go of the one-key lock `key` (held by this session). */
-    unlock: (key) => drop('lock', String(key)),
+    unlock: (key: number | string) => drop('lock', String(key)),
 
     /** Takes the lock for pass `name` in key space `space` if free. Resolves whether it did. */
-    tryPassLock: (space, name) => take(`pass:${space}`, String(name)),
+    tryPassLock: (space: number | string, name: string) => take(`pass:${space}`, String(name)),
 
     /** Lets go of the lock for pass `name` in `space`. */
-    passUnlock: (space, name) => drop(`pass:${space}`, String(name)),
+    passUnlock: (space: number | string, name: string) => drop(`pass:${space}`, String(name)),
   };
 }
 
