@@ -11,6 +11,7 @@ const os = require('os');
 const net = require('net');
 const path = require('path');
 const http = require('http');
+const https = require('https');
 const { spawn } = require('child_process');
 
 const ROOT = path.join(__dirname, '..');
@@ -26,10 +27,12 @@ function freePort() {
   });
 }
 
-function getJson(port, p, { method = 'GET', body, timeoutMs = 10_000, host = '127.0.0.1' } = {}) {
+// tls: true speaks HTTPS (a Linux termhub serves TLS on its tailnet port); the
+// certificate is verified as usual — NODE_EXTRA_CA_CERTS adds a private CA.
+function getJson(port, p, { method = 'GET', body, timeoutMs = 10_000, host = '127.0.0.1', tls = false } = {}) {
   return new Promise((resolve, reject) => {
     const data = body === undefined ? null : JSON.stringify(body);
-    const req = http.request({
+    const req = (tls ? https : http).request({
       host, port, path: p, method, timeout: timeoutMs,
       headers: { 'X-Termhub': '1', ...(data ? { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(data) } : {}) },
     }, (res) => {

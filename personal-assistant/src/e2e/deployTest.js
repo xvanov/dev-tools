@@ -233,11 +233,21 @@ async function pgProducer() {
 
 // ---- the terminal ----
 
+/** Pure: where --termhub points. https gets TLS (and wss), with normal
+ * certificate checks; a private CA goes in NODE_EXTRA_CA_CERTS. */
+function termhubEndpoint(url) {
+  const u = new URL(url);
+  if (u.protocol !== 'http:' && u.protocol !== 'https:') throw new Error(`--termhub must be http:// or https://, got ${u.protocol}`);
+  const tls = u.protocol === 'https:';
+  return { tls, host: u.hostname, port: Number(u.port) || (tls ? 443 : 80) };
+}
+
 async function terminal({ spare, termhubBase, durationTicks }) {
   const th = require(path.join(TERMHUB_DIR, 'test', 'spareTermhub.js'));
   const WebSocket = require('ws');
   let port;
   let host = '127.0.0.1';
+  let tls = false;
   let command;
   let cwd;
   let cleanup = async () => {};
@@ -249,19 +259,17 @@ async function terminal({ spare, termhubBase, durationTicks }) {
     cwd = s.dir;
     cleanup = () => s.close();
   } else {
-    const tu = new URL(termhubBase);
-    port = Number(tu.port) || 80;
-    host = tu.hostname;
+    ({ port, host, tls } = termhubEndpoint(termhubBase));
     cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'pa-deploytest-'));
     const script = path.join(cwd, 'counter.js');
     fs.writeFileSync(script, `let i = 0; const t = setInterval(() => { console.log('tick ' + (++i)); if (i >= ${durationTicks}) { clearInterval(t); console.log('counter done'); } }, 100);\n`);
     command = `node "${script}"`;
     cleanup = async () => fs.rmSync(cwd, { recursive: true, force: true });
   }
-  const created = await th.getJson(port, '/api/sessions', { host, method: 'POST', timeoutMs: 20_000, body: { command, cwd, title: 'deploy test (Z6)', cols: 100, rows: 40 } });
+  const created = await th.getJson(port, '/api/sessions', { host, tls, method: 'POST', timeoutMs: 20_000, body: { command, cwd, title: 'deploy test (Z6)', cols: 100, rows: 40 } });
   if (created.status !== 201) throw new Error(`termhub would not start a session: ${created.status} ${created.text}`);
   const id = created.body.id;
-  const t = th.watchTerminal(WebSocket, `ws://${host}:${port}/ws/term/${encodeURIComponent(id)}`);
+  const t = th.watchTerminal(WebSocket, `${tls ? 'wss' : 'ws'}://${host}:${port}/ws/term/${encodeURIComponent(id)}`);
   await t.opened;
   await th.waitFor(() => t.ticks().length >= 3, 30_000, 'the first ticks');
   return {
@@ -277,7 +285,7 @@ async function terminal({ spare, termhubBase, durationTicks }) {
     },
     stop: async () => {
       await t.close();
-      await th.getJson(port, `/api/sessions/${encodeURIComponent(id)}`, { host, method: 'DELETE', timeoutMs: 20_000 }).catch(() => {});
+      await th.getJson(port, `/api/sessions/${encodeURIComponent(id)}`, { host, tls, method: 'DELETE', timeoutMs: 20_000 }).catch(() => {});
       await cleanup();
     },
   };
@@ -478,4 +486,4 @@ if (require.main === module) {
   );
 }
 
-module.exports = { run, judge, parseArgs };
+module.exports = { run, judge, parseArgs, termhubEndpoint };

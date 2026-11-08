@@ -29,8 +29,36 @@ const { run, judge, parseArgs } = require('../src/e2e/deployTest');
   assert.deepStrictEqual(parseArgs(['--live', '--deploy', '--', '--from', 'HEAD~1']).deployArgs, ['--from', 'HEAD~1']);
 }
 
+// ---- an https termhub (Linux serves TLS on its tailnet port) ----
+{
+  const { termhubEndpoint } = require('../src/e2e/deployTest');
+  assert.deepStrictEqual(termhubEndpoint('https://box.example.ts.net:7000'), { tls: true, host: 'box.example.ts.net', port: 7000 });
+  assert.deepStrictEqual(termhubEndpoint('https://box.example.ts.net'), { tls: true, host: 'box.example.ts.net', port: 443 });
+  assert.deepStrictEqual(termhubEndpoint('http://127.0.0.1:7000'), { tls: false, host: '127.0.0.1', port: 7000 });
+  assert.throws(() => termhubEndpoint('ws://x:1'), /http:\/\/ or https:\/\//);
+}
+
+async function tlsSpoken() {
+  // With tls: true the client speaks TLS: against a plain HTTP server the
+  // handshake fails, where plain HTTP would have been answered.
+  const http = require('http');
+  const path = require('path');
+  const th = require(path.join(__dirname, '..', '..', 'termhub', 'test', 'spareTermhub.js'));
+  const srv = http.createServer((req, res) => res.end('{"plain":true}'));
+  await new Promise((r) => srv.listen(0, '127.0.0.1', r));
+  const port = srv.address().port;
+  try {
+    assert.strictEqual((await th.getJson(port, '/x')).body.plain, true);
+    await assert.rejects(th.getJson(port, '/x', { tls: true, timeoutMs: 5000 }), (e) => /EPROTO|wrong version|SSL|TLS|socket hang up|ECONNRESET/i.test(`${e.code} ${e.message}`));
+  } finally {
+    srv.close();
+  }
+}
+
 // ---- the real thing, on a spare supervisor ----
-run(['--rolls', '2'], { log: () => {} }).then(
+tlsSpoken()
+  .then(() => run(['--rolls', '2'], { log: () => {} }))
+  .then(
   (r) => {
     // A machine too busy to run the clients proves nothing either way (the
     // report says so); the decisions above still ran.
