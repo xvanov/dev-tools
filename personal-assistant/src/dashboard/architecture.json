@@ -2,7 +2,7 @@
   "version": 1,
   "title": "System architecture",
   "intro": "Four layers on two stacks. You talk to Jarvis (1), which reads and acts on the Dashboard's store (2), sends work to the Factory (3), and every long-running agent lives in a termhub session (4). The work stack and the personal stack run the same dev-tools code with different .env files; no data or credentials cross between them.",
-  "maintenance": "Rendered from personal-assistant/src/dashboard/architecture.json. Add, remove or rename a component, tool, port, model default or table in the same commit as the code (root CLAUDE.md, 'Architecture map'); test/architecture.test.js checks the parts it can.",
+  "maintenance": "Rendered from personal-assistant/src/dashboard/architecture.tson. Add, remove or rename a component, tool, port, model default or table in the same commit as the code (root CLAUDE.md, 'Architecture map'); test/architecture.test.js checks the parts it can.",
   "statuses": {
     "live": "Running today",
     "landing": "Code on main, contract or rollout still landing",
@@ -669,7 +669,7 @@
         "personal-assistant/src/dashboard/server.js",
         "personal-assistant/src/dashboard/board.ts",
         "personal-assistant/src/dashboard/factory.js",
-        "personal-assistant/src/dashboard/architecture.js",
+        "personal-assistant/src/dashboard/architecture.ts",
         "personal-assistant/src/dashboard/permission.client.js",
         "personal-assistant/src/dashboard/events.ts",
         "personal-assistant/src/dashboard/events.client.js",

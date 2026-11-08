@@ -471,7 +471,7 @@ async function boardTool({ limit = 25 } = {}) {
   const s = { ...data };
   s.looksDone = await require('../ledger/reconcile').proposals().catch(() => []);
   s.needsYou = await require('../proposals').pending().catch(() => []);
-  await require('../dashboard/cards').enrich(s).catch(() => {});
+  await require('../dashboard/cards.ts').enrich(s).catch(() => {});
   s.blocks = await require('../commitments/blocks').forBoard().catch(() => []);
   const board = require('../dashboard/board.ts').build(s);
   const ids = board.onMe.filter((c) => !c.standalone).map((c) => Number(c.id)).filter(Number.isFinite);
@@ -497,7 +497,7 @@ async function cardTool({ id }) {
   const c = await repository.commitments.cardForChat(ref.commitment);
   if (!c) throw new Error(`no card ${ref.commitment}`);
   const [info, runs, offers, blocks] = await Promise.all([
-    require('../dashboard/cards').forCommitments([c.id]).then((r) => r.byId.get(String(c.id)) || null).catch(() => null),
+    require('../dashboard/cards.ts').forCommitments([c.id]).then((r) => r.byId.get(String(c.id)) || null).catch(() => null),
     repository.runs.cardRuns(c.id).catch(() => []),
     repository.proposals.pendingOfCommitment(c.id).catch(() => []),
     repository.commitments.blocksOf(c.id).catch(() => []),

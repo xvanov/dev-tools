@@ -62,7 +62,7 @@ async function current({ arch, repo }: { arch: Arch; repo: Repos }) {
 }
 
 /** The route. Returns true when it answered. `repo` and `arch` are injectable for tests. */
-async function route(req: Req, res: Res, url: URL, { send, readJson, repo = require('../repo'), arch = require('./architecture').load() }: Pick<Ctx, 'send' | 'readJson'> & { repo?: Repos; arch?: Arch }) {
+async function route(req: Req, res: Res, url: URL, { send, readJson, repo = require('../repo'), arch = require('./architecture.ts').load() }: Pick<Ctx, 'send' | 'readJson'> & { repo?: Repos; arch?: Arch }) {
   if (url.pathname !== '/api/workflow-limits') return false;
   try {
     if (req.method === 'GET') {

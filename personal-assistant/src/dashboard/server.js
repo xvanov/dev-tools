@@ -46,7 +46,7 @@ async function commitmentContext(id) {
     url: r.termhub_session_id ? `${termhub.forMachine(r.machine).base}/#session=${encodeURIComponent(r.termhub_session_id)}` : null,
   }));
   // Plan E1: each run's job, steps (with their sessions) and PRs, from stored ids.
-  const chain = (await require('./cards').chainsFor([id], { perCard: 10 }).catch(() => new Map())).get(String(id)) || [];
+  const chain = (await require('./cards.ts').chainsFor([id], { perCard: 10 }).catch(() => new Map())).get(String(id)) || [];
   return { ...c, thread: thread.reverse(), runs, chain };
 }
 
@@ -78,7 +78,7 @@ async function state() {
   // Every card's links (the message, the person, the repo, the PRs it names,
   // the Claude session) and its stored cause-and-effect paragraph
   // (dashboard/cards.js). A failure here costs the links, not the page.
-  await require('./cards')
+  await require('./cards.ts')
     .enrich(out)
     .catch((err) => log.warn('card links failed', { message: err.message }));
   // Which of what people owe you blocks one of your tasks (commitments/blocks.js).
@@ -228,7 +228,7 @@ async function handle(req, res) {
   // ---- The architecture map (dashboard/architecture.js, architecture.json):
   // read-only page + GET /api/architecture[?health=1]. ----
   if (url.pathname === '/architecture' || url.pathname === '/architecture.client.js' || url.pathname === '/api/architecture') {
-    if (await require('./architecture').route(req, res, url, { send })) return;
+    if (await require('./architecture.ts').route(req, res, url, { send })) return;
   }
 
   // ---- Meter's data (dashboard/meter.js): GET /api/meter (latency per hop, spend,
@@ -421,7 +421,7 @@ async function handle(req, res) {
     // A card's Claude session, opened in termhub on the machine it ran on:
     // the live session, or `claude --resume <id>` in its folder.
     m = url.pathname.match(/^\/api\/sessions\/(\d+)\/open$/);
-    if (m) return send(res, 200, await require('./cards').openSession(Number(m[1])));
+    if (m) return send(res, 200, await require('./cards.ts').openSession(Number(m[1])));
 
     // The board's "+ task" box: a task because you typed it (src/commitments/request.js).
     if (url.pathname === '/api/tasks') {
