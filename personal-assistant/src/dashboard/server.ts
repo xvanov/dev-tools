@@ -68,7 +68,7 @@ async function state() {
   const blind = health.blind(sources);
   // The Memory tab's badge: claims waiting for a human to vouch for them.
   const review = await repo.memory.pendingReviewCount().catch(() => 0);
-  const closed = await require('../commitments').recentlyClosed().catch(() => []);
+  const closed = await require('../commitments.ts').recentlyClosed().catch(() => []);
   // Closes the reconciler was not sure enough to make on its own (src/ledger/reconcile.js).
   const looksDone = await require('../ledger/reconcile').proposals().catch(() => []);
   // Prepared actions and questions waiting on you (src/proposals).
@@ -78,7 +78,7 @@ async function state() {
   // What the assistant said, pushed or held back, with your thumbs on it (src/notify).
   const notifications = await require('../notify').feed({ limit: 30 }).catch(() => []);
   // Today's model spend against the daily cap (src/budget.js); null until migrated.
-  const spend = await require('../budget')
+  const spend = await require('../budget.ts')
     .status()
     .then((s: Row) => ({ today: s.today, cap: s.cap }))
     .catch(() => null);
@@ -461,7 +461,7 @@ async function handle(req: Req, res: Res) {
 
     m = url.pathname.match(/^\/api\/commitments\/(\d+)\/status$/);
     if (m) {
-      const { setStatus } = require('../commitments');
+      const { setStatus } = require('../commitments.ts');
       return send(res, 200, await setStatus(Number(m[1]), String(body.status)));
     }
     // A proposal answered: yes/no, or the option picked for a question.

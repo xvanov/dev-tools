@@ -53,7 +53,7 @@ function deps0() {
       }
       return raw ? Buffer.from(await res.arrayBuffer()) : res.text();
     },
-    spendToday: () => require('../budget').status().then((s) => s.today),
+    spendToday: () => require('../budget.ts').status().then((s) => s.today),
     jobReport: (id) => factory.report(id),
     claudeAuth: () => d.runCommand(factory.machine(), ['claude', 'auth', 'status'], { timeoutMs: 30_000 }),
     fastLaneOn: () => Boolean(d.config.fastLane?.enabled),

@@ -75,7 +75,7 @@ async function section(fn: () => unknown) {
 /** The whole Meter payload for the last `days` local days. */
 async function report({ days = 7, now = new Date() }: { days?: number; now?: Date } = {}) {
   const n = Math.max(1, Math.min(90, Number(days) || 7));
-  const budget = require('../budget');
+  const budget = require('../budget.ts');
   const repo = require('../repo');
   const since = budget.dayStart(new Date(now.getTime() - (n - 1) * 86400_000));
   const tz = (() => {
@@ -88,7 +88,7 @@ async function report({ days = 7, now = new Date() }: { days?: number; now?: Dat
   const [latency, spend, pool, limits] = await Promise.all([
     section(async () => summariseHops(await repo.telemetry.hopDurations(since))),
     section(async () => summariseSpend(await repo.spend.dailyBreakdown(since, tz))),
-    section(() => require('../claudePool').status({ now })),
+    section(() => require('../claudePool.ts').status({ now })),
     // Each workflow's cost ceiling per run, as the user set it (dashboard/workflowLimits.js: the one source).
     section(async () => require('../dashboard/workflowLimits.ts').effective(require('../dashboard/architecture.ts').load(), await repo.workflowLimits.all())),
   ]);

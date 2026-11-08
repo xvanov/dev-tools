@@ -35,7 +35,7 @@
 const path = require('path');
 const { execFile } = require('child_process');
 const { config } = require('../config.ts');
-const { agentOf, hasFlag, modelArg, AGENTS } = require('../agentCli');
+const { agentOf, hasFlag, modelArg, AGENTS } = require('../agentCli.ts');
 
 // Flags that would take the chat out from behind its prompts.
 const CLAUDE_UNSAFE = ['--dangerously-skip-permissions', '--allow-dangerously-skip-permissions', '--allowedTools', '--allowed-tools'];

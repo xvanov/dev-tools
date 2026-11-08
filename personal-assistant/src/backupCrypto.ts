@@ -24,6 +24,11 @@
 //
 // Decryption writes to a partial file and renames it on success: plaintext
 // that failed authentication is never left looking like a good file.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+type Row = import('./repo/types.ts').Row;
+type Db = import('./repo/types.ts').Db;
 
 const crypto = require('crypto');
 const fs = require('fs');
@@ -37,26 +42,26 @@ function generateKey() {
 }
 
 /** The key as stored (base64). Throws on anything but 32 bytes, naming no value. */
-function parseKey(text) {
+function parseKey(text: string) {
   const key = Buffer.from(String(text || '').trim(), 'base64');
   if (key.length !== 32) throw new Error('the backup key is not 32 bytes of base64');
   return key;
 }
 
-function nonce(base, counter) {
+function nonce(base: Buffer, counter: number) {
   const n = Buffer.from(base);
   n.writeUInt32BE((n.readUInt32BE(8) ^ counter) >>> 0, 8);
   return n;
 }
 
-function aad(counter, final) {
+function aad(counter: number | bigint, final: unknown) {
   const b = Buffer.alloc(9);
   b.writeBigUInt64BE(BigInt(counter), 0);
   b[8] = final ? 1 : 0;
   return b;
 }
 
-function readFull(fd, buf, position) {
+function readFull(fd: number, buf: Buffer, position: number) {
   let got = 0;
   while (got < buf.length) {
     const n = fs.readSync(fd, buf, got, buf.length - got, position + got);
@@ -66,7 +71,7 @@ function readFull(fd, buf, position) {
   return got;
 }
 
-function sealChunk(key, base, counter, plain, final) {
+function sealChunk(key: Buffer, base: Buffer, counter: number, plain: Buffer, final: boolean) {
   const c = crypto.createCipheriv('aes-256-gcm', key, nonce(base, counter));
   c.setAAD(aad(counter, final));
   const body = Buffer.concat([c.update(plain), c.final()]);
@@ -76,7 +81,7 @@ function sealChunk(key, base, counter, plain, final) {
 }
 
 /** Encrypts `src` to `dst` (written whole, then renamed). Returns the bytes written. */
-function encryptFile(src, dst, key) {
+function encryptFile(src: string, dst: string, key: Buffer) {
   const partial = `${dst}.partial`;
   const inFd = fs.openSync(src, 'r');
   const outFd = fs.openSync(partial, 'w', 0o600);
@@ -111,7 +116,7 @@ function encryptFile(src, dst, key) {
  * Decrypts `src` to `dst`. Throws (and leaves no `dst`) on a wrong key, a
  * modified byte, a reordered or truncated file.
  */
-function decryptFile(src, dst, key) {
+function decryptFile(src: string, dst: string, key: Buffer) {
   const partial = `${dst}.partial`;
   const inFd = fs.openSync(src, 'r');
   const total = fs.fstatSync(inFd).size;
@@ -161,7 +166,7 @@ function decryptFile(src, dst, key) {
   fs.renameSync(partial, dst);
 }
 
-function isEncrypted(file) {
+function isEncrypted(file: string) {
   try {
     const fd = fs.openSync(file, 'r');
     try {

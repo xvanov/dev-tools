@@ -34,7 +34,7 @@ const { promisify } = require('util');
 const { config } = require('./config.ts');
 const repo = require('./repo');
 const { logger } = require('./log.ts');
-const crypt = require('./backupCrypto');
+const crypt = require('./backupCrypto.ts');
 
 const exec = promisify(execFile);
 const log = logger('backup');

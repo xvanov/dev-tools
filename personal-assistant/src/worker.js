@@ -164,7 +164,7 @@ async function main() {
   // A pass whose model cannot do its job (a connector relay set to a
   // non-Claude-Code backend, an unknown provider) is said once, loudly, at
   // start — each call refuses too, but this names the variable to fix.
-  for (const r of require('./models').report()) {
+  for (const r of require('./models.ts').report()) {
     if (!r.ok) log[r.capable ? 'warn' : 'error']('model misconfigured', { purpose: r.purpose, env: r.env, model: r.model, problem: r.problem });
   }
 

@@ -42,7 +42,7 @@ function defaultDeps() {
       return text ? JSON.parse(text) : null;
     },
     addCard: (text) => require('../commitments/request').add({ text, via: 'cli' }),
-    closeCard: (id) => require('../commitments').setStatus(Number(id), 'dropped'),
+    closeCard: (id) => require('../commitments.ts').setStatus(Number(id), 'dropped'),
     chat: (name, args) => require('../mcp/chatTools.ts').handle(name, args),
     factoryEnabled: () => factory.enabled(),
     factoryMachine: () => factory.machine(),

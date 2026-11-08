@@ -91,7 +91,7 @@ async function write(id) {
 /** One worker tick: a few cards, while the budget allows. */
 async function pass({ limit = BATCH } = {}) {
   if (!config.cardContext.enabled) return { written: 0 };
-  const budget = require('../budget');
+  const budget = require('../budget.ts');
   const todo = await due(limit);
   let written = 0;
   for (const t of todo) {

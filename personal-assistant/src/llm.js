@@ -26,7 +26,7 @@ const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
 const { config } = require('./config.ts');
-const models = require('./models');
+const models = require('./models.ts');
 
 const CLI_CWD = path.join(config.dataDir, 'llm-cwd');
 
@@ -385,7 +385,7 @@ async function recordCall(meta, started, usage, ok) {
   try {
     let timer;
     await Promise.race([
-      require('./budget').record(row),
+      require('./budget.ts').record(row),
       new Promise((r) => {
         timer = setTimeout(r, 2000);
         timer.unref();

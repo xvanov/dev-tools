@@ -33,7 +33,7 @@ async function route(req: Req, res: Res, url: URL, { send, readJson }: { send: C
     const body = await readJson(req);
     const written = { spans: 0, usage: 0 };
     written.spans = await require('../telemetry').ingest(body?.spans);
-    const budget = require('../budget');
+    const budget = require('../budget.ts');
     for (const u of Array.isArray(body?.usage) ? body.usage.slice(0, MAX_USAGE_ROWS) : []) {
       if (!u || typeof u !== 'object') continue;
       await budget.record({

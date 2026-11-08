@@ -44,7 +44,7 @@ function _setModel(fn) {
  * Pure: `c`, `read` and `hasAnthropicKey` are injectable for tests.
  */
 function pickModel({ c = config, read, hasAnthropicKey = Boolean(c.anthropic.apiKey) } = {}) {
-  const models = require('../models');
+  const models = require('../models.ts');
   const configured = c.dispatch.composeModel;
   const keyed = (value) => {
     if (!value) return false;

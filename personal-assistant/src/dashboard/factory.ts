@@ -125,7 +125,7 @@ async function boardData() {
     : [];
   // Plan E1: the run that submitted a job, and its card, so Build links back to Plan.
   const paRuns = new Map(runs.map((r: Row) => [r.factory_job_id, { id: Number(r.id), url: termhubUrl(r), card: r.commitment_id }]));
-  const spend = await require('../budget').status().catch(() => null);
+  const spend = await require('../budget.ts').status().catch(() => null);
   return {
     enabled: true,
     polledAt: snap.polledAt,

@@ -352,7 +352,7 @@ async function start({
   if ((branch != null || pr != null) && kind !== 'code') throw new Error('only a code job continues a branch or PR');
   // The credit pool (src/claudePool.js): with PA_CLAUDE_POOL_FALLBACK_API on and the pool spent,
   // a claude_session job runs on the api runtime instead. Off by default.
-  const picked = await require('../claudePool').route(F.runtime(runtime || config.factory.runtime));
+  const picked = await require('../claudePool.ts').route(F.runtime(runtime || config.factory.runtime));
   const rt = picked.runtime;
   if (picked.fellBack) log.warn('dispatching on the api runtime', { reason: picked.reason });
   if (kind === 'code' && modeName && resolveMode(modeName).name === 'plan') {

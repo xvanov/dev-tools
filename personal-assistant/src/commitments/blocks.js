@@ -17,7 +17,7 @@
 // later message — and the board shows the task as unblocked.
 
 const llm = require('../llm');
-const budget = require('../budget');
+const budget = require('../budget.ts');
 const { config } = require('../config.ts');
 const repo = require('../repo');
 const { logger } = require('../log.ts');

@@ -10,8 +10,13 @@
 //   opencode  opencode's own `provider/model` (its providers are configured in
 //             opencode — `opencode auth login` — not in pa's .env). Passed
 //             through verbatim; a bare name or `cli/…` is refused.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
 
-const { parseModel } = require('./models');
+type Row = import('./repo/types.ts').Row;
+type Db = import('./repo/types.ts').Db;
+
+const { parseModel } = require('./models.ts');
 
 const AGENTS = ['claude', 'opencode'];
 
@@ -21,20 +26,20 @@ const AGENTS = ['claude', 'opencode'];
 const SAFE_MODEL = /^[A-Za-z0-9._:@/+][A-Za-z0-9._:@/+-]*$/;
 
 /** The agent a command line starts: 'claude' | 'opencode' | null. */
-function agentOf(command) {
+function agentOf(command: unknown) {
   const first = String(command || '').trim().match(/^"([^"]+)"|^'([^']+)'|^(\S+)/);
   if (!first) return null;
-  const tok = first[1] || first[2] || first[3];
-  const base = tok.split(/[\\/]/).pop().toLowerCase().replace(/\.(exe|cmd)$/, '');
+  const tok = first[1] || first[2] || first[3] || '';
+  const base = (tok.split(/[\\/]/).pop() ?? '').toLowerCase().replace(/\.(exe|cmd)$/, '');
   return AGENTS.includes(base) ? base : null;
 }
 
-function hasFlag(command, ...flags) {
+function hasFlag(command: unknown, ...flags: string[]) {
   return flags.some((f) => new RegExp(`(^|\\s)${f.replace(/[-]/g, '\\-')}(\\s|=|$)`).test(String(command)));
 }
 
 /** The value for `--model` on this agent, or throws naming what is wrong. */
-function modelArg(agent, model) {
+function modelArg(agent: unknown, model: string) {
   if (!model) return null;
   const value = String(model).trim();
   if (!SAFE_MODEL.test(value)) throw new Error(`model "${value}" has characters a command line cannot carry`);

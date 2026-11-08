@@ -18,7 +18,7 @@
 //                 run's folds without asking the model again)
 
 const llm = require('../llm');
-const budget = require('../budget');
+const budget = require('../budget.ts');
 const { config } = require('../config.ts');
 const repo = require('../repo');
 const { embed } = require('../search');

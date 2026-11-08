@@ -26,6 +26,11 @@
 //
 // The rule itself is `decide`, pure and tested (test/budget.test.js). The rest
 // is a query and a best-effort insert: recording never throws into a caller.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+type Row = import('./repo/types.ts').Row;
+type Db = import('./repo/types.ts').Db;
 
 const { config } = require('./config.ts');
 const { logger } = require('./log.ts');
@@ -41,7 +46,7 @@ function spend() {
 
 // `entry` covers `purpose` exactly or as a dash prefix: 'eager' covers
 // 'eager-draft', 'memory' would cover 'memory-extract'.
-function matches(list, purpose) {
+function matches(list: unknown[], purpose: string | null | undefined) {
   const p = String(purpose || '');
   return (list || []).some((e) => p === e || p.startsWith(`${e}-`));
 }
@@ -58,7 +63,7 @@ function decide({
   essential = config.budget.essential,
   discretionary = config.budget.discretionary,
   estimateUsd = 0,
-}) {
+}: { spent?: unknown; cap?: unknown; purpose?: string | null; essential?: boolean | string[]; discretionary?: string[]; estimateUsd?: number }) {
   const isEssential = typeof essential === 'boolean' ? essential : matches(essential, purpose);
   if (isEssential) return true;
   if (!matches(discretionary, purpose)) return true;
@@ -70,7 +75,7 @@ function decide({
 
 // Local midnight: "today" is my day, not UTC's — at 01:00 the cap
 // must have reset, not still count yesterday evening.
-function dayStart(now = new Date()) {
+function dayStart(now: Date = new Date()) {
   return new Date(now.getFullYear(), now.getMonth(), now.getDate());
 }
 
@@ -85,12 +90,14 @@ function timeZone() {
 // Rows of {day, purpose, usd, calls, failed, unknown} → one entry per day,
 // newest first, with its purposes by cost. `unknown` counts calls whose cost
 // was not reported: a total with many of them is a floor, and says so.
-function summarise(rows) {
-  const days = new Map();
+type Purpose = { purpose: unknown; usd: number; calls: number };
+type Day = { day: string; usd: number; calls: number; failed: number; unknown: number; purposes: Purpose[] };
+function summarise(rows: Row[]) {
+  const days = new Map<string, Day>();
   for (const r of rows) {
     const day = String(r.day instanceof Date ? isoDay(r.day) : r.day).slice(0, 10);
     if (!days.has(day)) days.set(day, { day, usd: 0, calls: 0, failed: 0, unknown: 0, purposes: [] });
-    const d = days.get(day);
+    const d = days.get(day) as Day;
     const usd = Number(r.usd) || 0;
     d.usd += usd;
     d.calls += Number(r.calls) || 0;
@@ -103,12 +110,12 @@ function summarise(rows) {
   return out;
 }
 
-function isoDay(d) {
-  const p = (n) => String(n).padStart(2, '0');
+function isoDay(d: Date) {
+  const p = (n: number) => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
 }
 
-function usd(n) {
+function usd(n: number) {
   const v = Number(n) || 0;
   return v >= 10 ? `$${v.toFixed(0)}` : `$${v.toFixed(2)}`;
 }
@@ -119,31 +126,31 @@ function usd(n) {
 // dropped connection costs the row, never the caller's result. No prompt or
 // reply text is passed in, so none can reach the table or the log.
 let recordWarned = false;
-async function record({ purpose, model, backend, costUsd = null, inputTokens = null, outputTokens = null, durationMs = null, ok }) {
+async function record({ purpose, model, backend, costUsd = null, inputTokens = null, outputTokens = null, durationMs = null, ok }: { purpose?: string | null; model?: string | null; backend?: string | null; costUsd?: number | null; inputTokens?: number | null; outputTokens?: number | null; durationMs?: number | null; ok?: boolean }) {
   try {
     await spend().record({
       purpose: String(purpose || 'unknown').slice(0, 64),
       model: model || null,
       backend,
       costUsd: Number.isFinite(costUsd) ? costUsd : null,
-      inputTokens: Number.isFinite(inputTokens) ? Math.round(inputTokens) : null,
-      outputTokens: Number.isFinite(outputTokens) ? Math.round(outputTokens) : null,
-      durationMs: Number.isFinite(durationMs) ? Math.round(durationMs) : null,
+      inputTokens: Number.isFinite(inputTokens) ? Math.round(inputTokens as number) : null,
+      outputTokens: Number.isFinite(outputTokens) ? Math.round(outputTokens as number) : null,
+      durationMs: Number.isFinite(durationMs) ? Math.round(durationMs as number) : null,
       ok: Boolean(ok),
     });
     spentCache = null;
-    if (backend === 'cli' || backend === 'claude_session') require('./claudePool').invalidate();
+    if (backend === 'cli' || backend === 'claude_session') require('./claudePool.ts').invalidate();
   } catch (err) {
     if (!recordWarned) {
       recordWarned = true;
-      log.warn('model spend not recorded — is the store migrated?', { message: err.message });
+      log.warn('model spend not recorded — is the store migrated?', { message: (err as Error).message });
     }
   }
 }
 
 // Dollars recorded since local midnight. Cached briefly: an eager pass may ask
 // before every call, and the answer moves by cents.
-let spentCache = null;
+let spentCache: { day: number; at: number; usd: number } | null = null;
 async function spentToday() {
   const start = dayStart();
   if (spentCache && spentCache.day === start.getTime() && Date.now() - spentCache.at < 15_000) return spentCache.usd;
@@ -158,7 +165,7 @@ async function todayByPurpose() {
 }
 
 // The last `days` local days, per day and purpose (`pa spend`).
-async function daily({ days = 7 } = {}) {
+async function daily({ days = 7 }: { days?: number } = {}) {
   const n = Math.max(1, Math.min(366, Number(days) || 7));
   const since = dayStart(new Date(Date.now() - (n - 1) * 86400_000));
   return summarise(await spend().dailyByPurpose(since, timeZone()));
@@ -167,26 +174,26 @@ async function daily({ days = 7 } = {}) {
 // For `pa doctor` and the dashboard.
 async function status() {
   const purposes = await todayByPurpose();
-  const today = purposes.reduce((s, p) => s + (Number(p.usd) || 0), 0);
+  const today = purposes.reduce((s: number, p: Row) => s + (Number(p.usd) || 0), 0);
   return { today, cap: config.budget.dailyUsd, purposes };
 }
 
 // The gate in front of discretionary work. Fails closed for discretionary
 // purposes when the store cannot say what was spent: not knowing is not a
 // licence to spend more.
-let blockedDay = null;
+let blockedDay: number | null = null;
 let unknownWarnedAt = 0;
-async function allow(purpose, { estimateUsd = 0 } = {}) {
+async function allow(purpose: string, { estimateUsd = 0 }: { estimateUsd?: number } = {}) {
   const cap = config.budget.dailyUsd;
   // Only discretionary purposes are gated; everything else skips the query.
   if (matches(config.budget.essential, purpose) || !matches(config.budget.discretionary, purpose)) return true;
-  let spent;
+  let spent: number;
   try {
     spent = await spentToday();
   } catch (err) {
     if (Date.now() - unknownWarnedAt > 600_000) {
       unknownWarnedAt = Date.now();
-      log.warn('spend unknown — refusing discretionary work', { purpose, message: err.message });
+      log.warn('spend unknown — refusing discretionary work', { purpose, message: (err as Error).message });
     }
     return decide({ spent: Infinity, cap, purpose, estimateUsd });
   }

@@ -7,15 +7,15 @@ const assert = require('assert');
 
 // llm_spend rows land in a stub, not Postgres.
 const recorded = [];
-require.cache[require.resolve('../src/budget')] = {
-  id: require.resolve('../src/budget'),
-  filename: require.resolve('../src/budget'),
+require.cache[require.resolve('../src/budget.ts')] = {
+  id: require.resolve('../src/budget.ts'),
+  filename: require.resolve('../src/budget.ts'),
   loaded: true,
   exports: { record: async (row) => recorded.push(row) },
 };
 
 const { config } = require('../src/config.ts');
-const models = require('../src/models');
+const models = require('../src/models.ts');
 const llm = require('../src/llm');
 
 // ------------------------------------------------------------ parsing ----

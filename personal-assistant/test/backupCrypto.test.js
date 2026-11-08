@@ -5,7 +5,7 @@ const crypto = require('crypto');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const c = require('../src/backupCrypto');
+const c = require('../src/backupCrypto.ts');
 
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pa-crypto-'));
 const f = (n) => path.join(dir, n);

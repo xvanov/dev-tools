@@ -32,7 +32,7 @@ const path = require('path');
 
 const { config } = require('./config.ts');
 const { logger } = require('./log.ts');
-const crypt = require('./backupCrypto');
+const crypt = require('./backupCrypto.ts');
 
 const log = logger('backup');
 const LATEST = 'pa-latest.sqlite';

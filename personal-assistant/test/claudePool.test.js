@@ -31,7 +31,7 @@ require.cache[repoPath] = {
 };
 
 const { config } = require('../src/config.ts');
-const pool = require('../src/claudePool');
+const pool = require('../src/claudePool.ts');
 
 let failed = 0;
 async function t(name, fn) {
@@ -128,7 +128,7 @@ const POOL = { monthlyUsd: 100, usedUsd: 40, since: new Date(2026, 10, 1), reset
       assert.deepStrictEqual(store.asked[0], new Date(2026, 10, 1));
       store.poolUsd = 35;
       assert.strictEqual((await pool.status({ now: new Date(2026, 10, 7) })).usedUsd, 30, 'cached');
-      await require('../src/budget').record({ purpose: 'x', backend: 'cli', costUsd: 5, ok: true });
+      await require('../src/budget.ts').record({ purpose: 'x', backend: 'cli', costUsd: 5, ok: true });
       assert.strictEqual((await pool.status({ now: new Date(2026, 10, 7) })).usedUsd, 35, 'a cli row invalidates the cache');
     } finally {
       Object.assign(config.claudePool, { monthlyUsd: null });

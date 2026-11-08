@@ -131,7 +131,7 @@ const { cliArgs, parseCliOutput, extractJson, childEnv, cliAccount } = require('
 (async () => {
   const http = require('http');
   const llm = require('../src/llm');
-  const budget = require('../src/budget');
+  const budget = require('../src/budget.ts');
   const recorded = [];
   budget.record = async (row) => recorded.push(row); // never the real store
   let seen = null;

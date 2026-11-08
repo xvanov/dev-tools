@@ -643,7 +643,7 @@ async function startOrCard(o: Json) {
       throw new Error(`${pre.delivery} on an existing branch or PR is not started from the chat — ask for pr (ready for review) and merge it yourself, or start it from the dashboard`);
     }
     const row = await require('../dispatch/offer').propose({
-      ...o, useModel: await require('../budget').allow('propose').catch(() => false), suggestedBy: 'the chat',
+      ...o, useModel: await require('../budget.ts').allow('propose').catch(() => false), suggestedBy: 'the chat',
     });
     return {
       started: false,

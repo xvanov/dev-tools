@@ -566,7 +566,7 @@ const commands = {
     const o = dispatchFlags(commitmentId, task, flags, lists);
     if (flagBool(flags, 'preview')) {
       // Composing is a model call made ahead of any decision: under the daily budget.
-      o.useModel = await require('../budget').allow('propose').catch(() => false);
+      o.useModel = await require('../budget.ts').allow('propose').catch(() => false);
       return printOffer(await require('../dispatch/offer').prepare(o), { preview: true });
     }
 
@@ -586,7 +586,7 @@ const commands = {
       }
       if (!interactive()) {
         const row = await require('../dispatch/offer').propose({
-          ...o, useModel: await require('../budget').allow('propose').catch(() => false), suggestedBy: suggestedBy(),
+          ...o, useModel: await require('../budget.ts').allow('propose').catch(() => false), suggestedBy: suggestedBy(),
         });
         out(row ? `NOT started: put on a card for you to accept — proposal ${row.id} (dashboard → On me)` : 'NOT started: already on a card');
         return;
@@ -641,7 +641,7 @@ const commands = {
     // The brief's model call happens before anyone said yes: discretionary
     // spend (PA_BUDGET_DISCRETIONARY `propose`). Over the cap the card still
     // comes, with the deterministic brief, and says so.
-    o.useModel = await require('../budget').allow('propose').catch(() => false);
+    o.useModel = await require('../budget.ts').allow('propose').catch(() => false);
     if (!o.useModel) out('daily model budget reached — the card carries the deterministic brief (no model)');
     if (!interactive()) o.suggestedBy = suggestedBy();
     const row = await require('../dispatch/offer').propose(o);
@@ -742,7 +742,7 @@ const commands = {
       const o = { ...dispatchFlags(null, ask || title, flags, lists), via: 'factory', title: title || null };
       const kind = F.jobKind(o.jobKind);
       if (kind === 'code' || flagBool(flags, 'card')) {
-        o.useModel = await require('../budget').allow('propose').catch(() => false);
+        o.useModel = await require('../budget.ts').allow('propose').catch(() => false);
         if (!interactive()) o.suggestedBy = suggestedBy();
         const row = await require('../dispatch/offer').propose(o);
         if (!row) return out('already offered');
@@ -776,7 +776,7 @@ const commands = {
   },
 
   async done(args, flags) {
-    const { setStatus } = require('../commitments');
+    const { setStatus } = require('../commitments.ts');
     const id = Number(args[0]);
     if (!id) return fail('usage: pa done <commitment-id> [--dismiss|--reopen]');
     const status = flagBool(flags, 'dismiss') ? 'dropped' : flagBool(flags, 'reopen') ? 'open' : 'done';
@@ -864,11 +864,11 @@ const commands = {
   // if the worker already has it, this says so rather than fighting for it.
   // Model spend per local day and per pass, from `llm_spend` (src/budget.js).
   async spend(args, flags) {
-    const budget = require('../budget');
+    const budget = require('../budget.ts');
     const days = await budget.daily({ days: flagInt(flags, 'days', 7) });
     out(`model spend · cap ${budget.usd(config.budget.dailyUsd)}/day on discretionary work (PA_DAILY_BUDGET_USD)`);
     // The Claude credit pool (src/claudePool.js): headless Claude Code's own allowance.
-    const pool = await require('../claudePool').status({ fresh: true }).catch(() => null);
+    const pool = await require('../claudePool.ts').status({ fresh: true }).catch(() => null);
     if (pool?.tracked) {
       out(
         `claude credit pool · ${budget.usd(pool.usedUsd)} of ${budget.usd(pool.monthlyUsd)} used since ${pool.since.slice(0, 10)}, ${budget.usd(pool.remainingUsd)} left` +
@@ -1425,7 +1425,7 @@ const commands = {
     // Every pass's model, where it goes, and whether it can do the pass's job
     // (src/models.js). A connector pass on a non-Claude-Code backend is
     // refused here rather than failing on the next sync.
-    const modelRows = require('../models').report({ claudeAvailable: Boolean(cliVersion) });
+    const modelRows = require('../models.ts').report({ claudeAvailable: Boolean(cliVersion) });
     for (const r of modelRows) {
       mark(
         r.ok,
@@ -1473,7 +1473,7 @@ const commands = {
     // Today's model spend against the cap (src/budget.js). Over the cap is not
     // broken — essential passes carry on — but eager work has stopped.
     try {
-      const budget = require('../budget');
+      const budget = require('../budget.ts');
       const s = await budget.status();
       const top = s.purposes.slice(0, 3).map((p) => `${p.purpose} ${budget.usd(p.usd)}`).join(', ');
       mark(

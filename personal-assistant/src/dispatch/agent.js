@@ -15,7 +15,7 @@
 // and nothing is typed.
 
 const { config } = require('../config.ts');
-const { agentOf, hasFlag, modelArg, AGENTS } = require('../agentCli');
+const { agentOf, hasFlag, modelArg, AGENTS } = require('../agentCli.ts');
 
 // The opening prompt rides a command line typed into a shell: a fixed text,
 // so anything a shell would interpret means the text changed and is refused.

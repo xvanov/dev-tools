@@ -201,7 +201,7 @@ async function decide(evidenceId, accept) {
   // it on the survivor): confirming closes the whole duplicate group.
   if (accept) {
     const to = e.effect === 'moot' ? 'dropped' : 'done';
-    const also = await require('../commitments').closeGroup(Number(e.commitment_id), to, 'you confirmed it looks done');
+    const also = await require('../commitments.ts').closeGroup(Number(e.commitment_id), to, 'you confirmed it looks done');
     if (also.length) out.alsoClosed = also;
   }
   return out;

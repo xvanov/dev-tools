@@ -31,7 +31,7 @@ require.cache[dbPath] = {
   },
 };
 
-const budget = require('../src/budget');
+const budget = require('../src/budget.ts');
 const { cliUsage, apiUsage, priceOf } = require('../src/llm');
 
 const ESSENTIAL = ['distill', 'reconcile', 'connector', 'reply-close'];

@@ -36,7 +36,7 @@ const { chunkContext, CONTEXT_VERSION } = require('./context');
 const { mentionedPeople } = require('./entities');
 const { rerank, rerankConfigured, lastRerankError } = require('./rerank');
 const { logger } = require('../log.ts');
-const budget = require('../budget');
+const budget = require('../budget.ts');
 const { createQueryEmbedder, tableStore } = require('./embedCache');
 
 const log = logger('search');

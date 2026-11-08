@@ -15,7 +15,7 @@ const key = crypto.randomBytes(32);
 process.env.PA_BACKUP_KEY = key.toString('base64'); // config.secret: the real environment wins
 
 const backup = require('../src/backup');
-const crypt = require('../src/backupCrypto');
+const crypt = require('../src/backupCrypto.ts');
 
 (async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pa-bundle-'));

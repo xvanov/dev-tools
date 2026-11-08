@@ -44,7 +44,7 @@ async function act(p) {
   const c = p.todo;
   const plan = { kind: p.kind, action: p.action, brief: p.brief, at: new Date().toISOString() };
   if (p.action === 'research') {
-    const budget = require('../budget');
+    const budget = require('../budget.ts');
     const ok = P.mayResearch({
       startedToday: await researchToday(),
       perDay: config.planner.researchPerDay,
@@ -84,7 +84,7 @@ async function act(p) {
     // here. The end state is the repo's default (or PA_DELIVERY_DEFAULT): it
     // is never inferred from the ask's text, which someone else wrote.
     const offer = require('../dispatch/offer');
-    const useModel = await require('../budget').allow('planner').catch(() => false);
+    const useModel = await require('../budget.ts').allow('planner').catch(() => false);
     const o = {
       commitmentId: c.id,
       kind: p.kind,
@@ -144,7 +144,7 @@ async function background(todos) {
 async function pass({ limit = BATCH } = {}) {
   let todos = await due(limit);
   if (!todos.length) return { planned: 0 };
-  if (!(await require('../budget').allow('planner').catch(() => false))) return { planned: 0, skipped: 'budget' };
+  if (!(await require('../budget.ts').allow('planner').catch(() => false))) return { planned: 0, skipped: 'budget' };
   // Judged first: an ask already answered or delivered gets no plan at all.
   await require('../ledger/reconcile').pass({ ids: todos.map((t) => Number(t.id)) }).catch(() => null);
   todos = await due(limit);

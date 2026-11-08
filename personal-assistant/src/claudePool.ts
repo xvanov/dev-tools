@@ -17,6 +17,10 @@
 //
 // The arithmetic is pure and tested (test/claudePool.test.js). The rest is one
 // query, cached briefly: dispatch may ask for every job.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+type Pool = { tracked: boolean; monthlyUsd: number | null; usedUsd: number; remainingUsd: number | null; calls: number; exhausted: boolean; fallbackApi: boolean; since: string | null; resetsAt: string | null };
 
 const { config } = require('./config.ts');
 const { logger } = require('./log.ts');
@@ -28,30 +32,30 @@ function repoSpend() {
 }
 
 /** Start of the pool period containing `now`: local midnight of `resetDay`, this month or last. */
-function periodStart(now = new Date(), resetDay = config.claudePool.resetDay) {
+function periodStart(now: Date = new Date(), resetDay: number = config.claudePool.resetDay) {
   const day = Math.min(28, Math.max(1, Number(resetDay) || 1));
   const thisMonth = new Date(now.getFullYear(), now.getMonth(), day);
   return now >= thisMonth ? thisMonth : new Date(now.getFullYear(), now.getMonth() - 1, day);
 }
 
 /** When the pool next refills: the period after the one containing `now`. */
-function periodEnd(now = new Date(), resetDay = config.claudePool.resetDay) {
+function periodEnd(now: Date = new Date(), resetDay: number = config.claudePool.resetDay) {
   const start = periodStart(now, resetDay);
   return new Date(start.getFullYear(), start.getMonth() + 1, start.getDate());
 }
 
 /** The pool's state from its size and what has been drawn. Pure. */
-function compute({ monthlyUsd, usedUsd, calls = 0, since, resetsAt, fallbackApi = false }) {
-  const tracked = Number.isFinite(monthlyUsd) && monthlyUsd > 0;
+function compute({ monthlyUsd, usedUsd, calls = 0, since, resetsAt, fallbackApi = false }: { monthlyUsd?: number | null; usedUsd?: unknown; calls?: number; since?: Date | string | number | null; resetsAt?: Date | string | number | null; fallbackApi?: boolean }): Pool {
+  const tracked = typeof monthlyUsd === 'number' && Number.isFinite(monthlyUsd) && monthlyUsd > 0;
   const used = Number(usedUsd) || 0;
-  const remainingUsd = tracked ? Math.max(0, monthlyUsd - used) : null;
+  const remainingUsd = tracked ? Math.max(0, (monthlyUsd as number) - used) : null;
   return {
     tracked,
     monthlyUsd: tracked ? monthlyUsd : null,
     usedUsd: used,
     remainingUsd,
     calls: Number(calls) || 0,
-    exhausted: tracked && used >= monthlyUsd,
+    exhausted: tracked && used >= (monthlyUsd as number),
     fallbackApi: Boolean(fallbackApi),
     since: since ? new Date(since).toISOString() : null,
     resetsAt: resetsAt ? new Date(resetsAt).toISOString() : null,
@@ -59,21 +63,21 @@ function compute({ monthlyUsd, usedUsd, calls = 0, since, resetsAt, fallbackApi 
 }
 
 /** Which runtime a job asking for `requested` should get, given the pool. Pure. */
-function decideRuntime(requested, pool) {
+function decideRuntime(requested: string, pool: Pool | null | undefined) {
   if (requested !== 'claude_session' || !pool?.tracked || !pool.exhausted || !pool.fallbackApi) {
     return { runtime: requested, fellBack: false, reason: null };
   }
   return {
     runtime: 'api',
     fellBack: true,
-    reason: `the Claude credit pool is spent ($${pool.usedUsd.toFixed(2)} of $${pool.monthlyUsd.toFixed(2)} since ${pool.since.slice(0, 10)}); using the api runtime (PA_CLAUDE_POOL_FALLBACK_API)`,
+    reason: `the Claude credit pool is spent ($${pool.usedUsd.toFixed(2)} of $${(pool.monthlyUsd ?? 0).toFixed(2)} since ${(pool.since ?? '').slice(0, 10)}); using the api runtime (PA_CLAUDE_POOL_FALLBACK_API)`,
   };
 }
 
-let cache = null;
+let cache: { since: number; at: number; value: Pool } | null = null;
 
 /** Pool usage now. Throws when the store cannot answer. */
-async function status({ now = new Date(), fresh = false } = {}) {
+async function status({ now = new Date(), fresh = false }: { now?: Date; fresh?: boolean } = {}) {
   const cfg = config.claudePool;
   const since = periodStart(now, cfg.resetDay);
   if (!fresh && cache && cache.since === since.getTime() && Date.now() - cache.at < 15_000) return cache.value;
@@ -95,7 +99,7 @@ function invalidate() {
  * requested runtime stands (a broken ledger must not silently move work onto
  * metered billing).
  */
-async function route(requested) {
+async function route(requested: string) {
   if (requested !== 'claude_session' || !config.claudePool.fallbackApi || !config.claudePool.monthlyUsd) {
     return { runtime: requested, fellBack: false, reason: null };
   }
@@ -104,7 +108,7 @@ async function route(requested) {
     if (out.fellBack) log.warn('claude_session job rerouted to the api runtime', { reason: out.reason });
     return out;
   } catch (err) {
-    log.warn('claude pool unknown, keeping the requested runtime', { message: err.message });
+    log.warn('claude pool unknown, keeping the requested runtime', { message: (err as Error).message });
     return { runtime: requested, fellBack: false, reason: null };
   }
 }
