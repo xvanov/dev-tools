@@ -7,7 +7,7 @@
 // The answer judge (`--judge`) puts a model on both ends and is the slow,
 // occasional check that good retrieval actually yields right answers.
 
-const db = require('../db');
+const repo = require('../repo');
 const { config } = require('../config');
 const llm = require('../llm');
 const { logger } = require('../log');
@@ -18,47 +18,31 @@ const P = require('./prompts');
 const log = logger('eval');
 
 async function activeCases() {
-  return db.rows(
-    `select id, question, qtype, gold_item_ids, gold_answer, as_of from eval_case where active order by id`
-  );
+  return repo.evals.activeCases();
 }
 
 async function listCases({ all = false, qtype = null } = {}) {
-  return db.rows(
-    `select id, question, qtype, gold_item_ids, gold_answer, origin, active, notes, created_at
-       from eval_case
-      where ($1 or active) and ($2::text is null or qtype = $2)
-      order by id`,
-    [all, qtype]
-  );
+  return repo.evals.listCases({ all, qtype });
 }
 
 async function addCase({ question, gold = [], answer = null, qtype = null, origin = 'miss', notes = null }) {
   const type = qtype || (gold.length > 1 ? 'multi_session' : gold.length ? 'single_session' : 'abstention');
   if (!M.QTYPES.includes(type)) throw new Error(`unknown qtype "${type}" — one of ${M.QTYPES.join(', ')}`);
   if (gold.length) {
-    const found = await db.rows('select id from source_item where id = any($1::bigint[])', [gold]);
+    const found = await repo.evals.existingItems(gold);
     const missing = gold.filter((g) => !found.some((f) => Number(f.id) === g));
     if (missing.length) throw new Error(`no source_item ${missing.join(', ')}`);
   }
-  return db.one(
-    `insert into eval_case (question, qtype, gold_item_ids, gold_answer, as_of, origin, notes)
-     values ($1, $2, $3::bigint[], $4, now(), $5, $6) returning id, qtype`,
-    [question, type, gold, answer, origin, notes]
-  );
+  return repo.evals.insertCase({ question, qtype: type, gold, answer, origin, notes });
 }
 
 async function setActive(id, active) {
-  const r = await db.query('update eval_case set active = $2 where id = $1', [id, active]);
-  return r.rowCount > 0;
+  return repo.evals.setActive(id, active);
 }
 
 async function itemsFor(ids) {
   if (!ids.length) return [];
-  const list = await db.rows(
-    `select id, source, subject, occurred_at, body_text from source_item where id = any($1::bigint[])`,
-    [ids]
-  );
+  const list = await repo.evals.itemsForJudge(ids);
   const byId = new Map(list.map((r) => [String(r.id), r]));
   return ids.map((id) => byId.get(String(id))).filter(Boolean);
 }
@@ -107,10 +91,7 @@ async function judge(cases, perCase, k) {
 }
 
 async function previousRun(retriever) {
-  return db.one(
-    `select id, ran_at, metrics, config from eval_run where retriever = $1 order by ran_at desc limit 1`,
-    [retriever]
-  );
+  return repo.evals.previousRun(retriever);
 }
 
 async function run({ retriever = 'search', k = 10, judge: withJudge = false, threshold = null } = {}) {
@@ -134,10 +115,7 @@ async function run({ retriever = 'search', k = 10, judge: withJudge = false, thr
   const metrics = M.aggregate(perCase);
   const prev = await previousRun(retriever);
   const config = { k, limit, threshold: th, judge: withJudge, cases: cases.length, degraded, ms: Date.now() - started };
-  const saved = await db.one(
-    `insert into eval_run (retriever, config, metrics, per_case) values ($1, $2, $3, $4) returning id, ran_at`,
-    [retriever, config, metrics, JSON.stringify(perCase)]
-  );
+  const saved = await repo.evals.insertRun({ retriever, config, metrics, perCase });
   log.info('eval run', { id: saved.id, retriever, cases: cases.length, ms: config.ms });
   return { id: saved.id, retriever, config, metrics, perCase, prev, delta: prev ? M.delta(prev.metrics, metrics) : null };
 }
@@ -145,7 +123,7 @@ async function run({ retriever = 'search', k = 10, judge: withJudge = false, thr
 // The worker's pass. A no-op with no cases, and at most one run a day however
 // often the worker restarts — every() fires once at startup.
 async function nightly() {
-  const n = await db.one('select count(*)::int as n from eval_case where active');
+  const n = await repo.evals.activeCount();
   if (!n.n) return null;
   const last = await previousRun('search');
   if (last && Date.now() - new Date(last.ran_at).getTime() < 20 * 3600_000) return null;

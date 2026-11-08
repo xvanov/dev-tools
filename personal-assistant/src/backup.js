@@ -31,7 +31,7 @@ const { execFile, spawn } = require('child_process');
 const { promisify } = require('util');
 
 const { config } = require('./config');
-const { query } = require('./db');
+const repo = require('./repo');
 const { logger } = require('./log');
 
 const exec = promisify(execFile);
@@ -202,8 +202,8 @@ async function dumpIfDue() {
 // leaves an empty database with both extensions, ready for this.
 async function restore(file) {
   if (!fs.existsSync(file)) throw new Error(`no such file: ${file}`);
-  const have = await query(`select extname from pg_extension where extname in ('vector','pg_trgm')`);
-  if (have.rows.length < 2) {
+  const have = await repo.system.installedExtensions(['vector', 'pg_trgm']);
+  if (have.length < 2) {
     throw new Error(`the database lacks the vector/pg_trgm extensions — run ${require('./platform').services.dbProvision} first`);
   }
   const tools = parseTools(config.backup.pgTools);
@@ -269,14 +269,7 @@ function restoreList(listing) {
 // How far back a source can actually go is the source's limit, not ours.
 async function reingest({ days, sources = [] }) {
   const since = new Date(Date.now() - days * 86400_000).toISOString();
-  const r = await query(
-    `update sync_cursor
-        set state = jsonb_set(state, '{since}', to_jsonb($1::text)), delta_token = null
-      where state ? 'since' and (cardinality($2::text[]) = 0 or source = any($2))
-      returning source`,
-    [since, sources]
-  );
-  return { since, sources: r.rows.map((x) => x.source) };
+  return { since, sources: await repo.sources.rewindCursors(since, sources) };
 }
 
 // For `pa doctor`: a native pg_dump older than the server refuses to dump it
@@ -287,8 +280,7 @@ async function toolsCheck() {
   const r = await exec('pg_dump', ['--version'], { timeout: 10_000, windowsHide: true }).catch((err) => ({ error: err }));
   if (r.error) return { ok: false, detail: 'pg_dump not found — install postgresql-client, or set PA_PG_TOOLS=docker:<container>' };
   const client = Number((/(\d+)(?:\.\d+)?/.exec(r.stdout) || [])[1]);
-  const row = await query(`select current_setting('server_version_num')::int / 10000 as major`).catch(() => null);
-  const server = row ? Number(row.rows[0].major) : null;
+  const server = await repo.system.serverMajor().catch(() => null);
   if (server && client && client < server) return { ok: false, detail: `pg_dump ${client} is older than the server (${server}) — dumps will fail` };
   return { ok: true, detail: `pg_dump ${client || '?'}` };
 }

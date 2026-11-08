@@ -320,6 +320,24 @@ function create(db) {
     async subjectAndBody(id) {
       return db.one('select subject, body_text from source_item where id = $1', [id]);
     },
+
+    // --- for src/backup.js
+
+    /**
+     * Rewinds the date-based sync cursors (those with a `since`) of `sources`
+     * (all when empty) to `since`, dropping their delta tokens, so the next
+     * pass fetches again from there. Resolves the sources rewound.
+     */
+    async rewindCursors(since, sources) {
+      const r = await db.query(
+        `update sync_cursor
+        set state = jsonb_set(state, '{since}', to_jsonb($1::text)), delta_token = null
+      where state ? 'since' and (cardinality($2::text[]) = 0 or source = any($2))
+      returning source`,
+        [since, sources]
+      );
+      return r.rows.map((x) => x.source);
+    },
   };
 }
 

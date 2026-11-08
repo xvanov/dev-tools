@@ -11,6 +11,21 @@ const AGENT = 'generated with \\[?claude code|co-authored-by:\\s*claude';
 const ids = (rows) => rows.map((r) => Number(r.id));
 
 module.exports = {
+  // --- for src/backup.js
+  'rewindCursors: date cursors of the named sources (all when none), delta tokens dropped': async ({ repos, seed, db, assert, uniq }) => {
+    const [a, b, c] = [uniq('src'), uniq('src'), uniq('src')];
+    await seed.cursor(a, { since: '2026-01-01T00:00:00Z', x: 1 });
+    await seed.cursor(b, { since: '2026-01-01T00:00:00Z' });
+    await seed.cursor(c, { page: 3 });
+    await db.query(`update sync_cursor set delta_token = 'tok' where source = any($1::text[])`, [[a, b, c]]);
+    const since = '2026-10-01T00:00:00.000Z';
+    assert.deepStrictEqual(await repos.sources.rewindCursors(since, [a, c]), [a], 'no since, no rewind');
+    const ra = await db.one('select state, delta_token from sync_cursor where source = $1', [a]);
+    assert.deepStrictEqual([ra.state, ra.delta_token], [{ since, x: 1 }, null]);
+    assert.strictEqual((await db.one('select delta_token from sync_cursor where source = $1', [b])).delta_token, 'tok');
+    assert.ok((await repos.sources.rewindCursors(since, [])).includes(b), 'all sources when none named');
+  },
+
   'deleteOldMessages: mail and chat older than the window; nothing else': async ({ repos, seed, db, assert }) => {
     const old = new Date(Date.now() - 40 * 86400_000);
     const mail = await seed.sourceItem({ source: 'graph_mail', occurredAt: old });

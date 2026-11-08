@@ -44,7 +44,7 @@ module.exports = {
   },
 
   'sourceItem: the row, or null': async ({ repos, seed, assert }) => {
-    const id = await seed.item({ subject: 'S' });
+    const id = await seed.item({ source: 'graph_mail', subject: 'S' });
     assert.strictEqual((await repos.drafts.sourceItem(id)).subject, 'S');
     assert.strictEqual(await repos.drafts.sourceItem(-1), null);
   },
@@ -184,7 +184,7 @@ module.exports = {
     const old = await mk({ at: new Date(Date.now() - 3 * 86400_000) });
     const fromMe = await mk({ author: me });
     const unsure = await mk({ confidence: 0.1 });
-    const meeting = await mk({ source: 'graph_event' });
+    const meeting = await mk({ source: 'graph_event', at: new Date(Date.now() - 3 * 3600_000) }); // outside calendar windows other cases read
     const drafted = await mk();
     await repos.drafts.insert(D({ commitmentId: drafted.c }));
     const thr = uniq('thr');

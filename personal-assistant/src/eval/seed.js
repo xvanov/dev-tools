@@ -10,7 +10,7 @@
 // Items with no chunks are excluded, because no retriever can find them and a
 // case that nothing could pass measures the chunker, not retrieval.
 
-const db = require('../db');
+const repo = require('../repo');
 const { config } = require('../config');
 const llm = require('../llm');
 const { logger } = require('../log');
@@ -22,85 +22,30 @@ const log = logger('eval');
 const MAX_SUBJECT_OVERLAP = 0.6;
 
 async function usedGold() {
-  const r = await db.rows(`select distinct unnest(gold_item_ids) as id from eval_case where active`);
-  return r.map((x) => Number(x.id));
+  return repo.evals.usedGold();
 }
 
 // Weighted random sample (Efraimidis–Spirakis): order by -ln(u)/w.
-async function candidates({ exclude, limit, boost = '' }) {
-  return db.rows(
-    `with c as (
-       select si.id, si.source, si.occurred_at,
-              (select count(*) from commitment x where x.source_item_id = si.id) as nc,
-              (select count(*) from fact x where x.source_item_id = si.id) as nf,
-              ${boost || 'false'} as boosted
-         from source_item si
-        where exists (select 1 from chunk ch where ch.source_item_id = si.id)
-          and length(si.body_text) > 80
-          and not (si.id = any($1::bigint[]))
-     )
-     select id, source, occurred_at from c
-      order by -ln(greatest(random(), 1e-9)) / (1 + 3 * (nc + nf > 0)::int + 3 * boosted::int)
-      limit $2`,
-    [exclude, limit]
-  );
+// boost: a repo.evals BOOSTS key ('temporal'), never SQL.
+async function candidates({ exclude, limit, boost = 'none' }) {
+  return repo.evals.sample({ exclude, limit, boost });
 }
 
 async function loadItems(ids) {
-  const items = await db.rows(
-    `select si.id, si.source, si.subject, si.occurred_at, si.body_text, si.thread_external_id,
-            coalesce((select array_agg(summary || coalesce(' (due ' || to_char(due_at, 'YYYY-MM-DD') || ')', ''))
-                        from commitment where source_item_id = si.id), '{}') as commitments,
-            coalesce((select array_agg(kind || ': ' || summary) from fact where source_item_id = si.id), '{}') as facts
-       from source_item si where si.id = any($1::bigint[])`,
-    [ids]
-  );
+  const items = await repo.evals.itemsWithFacts(ids);
   const byId = new Map(items.map((i) => [String(i.id), i]));
   return ids.map((id) => byId.get(String(id))).filter(Boolean).sort((a, b) => new Date(a.occurred_at) - new Date(b.occurred_at));
 }
 
 async function threadPairs({ exclude, limit }) {
-  return db.rows(
-    `select a.id as earlier, b.id as later, b.source, b.occurred_at
-       from source_item a
-       join source_item b on b.source = a.source and b.thread_external_id = a.thread_external_id
-                         and b.occurred_at > a.occurred_at
-      where a.thread_external_id is not null
-        and exists (select 1 from chunk where source_item_id = b.id)
-        and exists (select 1 from chunk where source_item_id = a.id)
-        and not (b.id = any($1::bigint[]))
-        and (exists (select 1 from commitment where source_item_id in (a.id, b.id))
-             or exists (select 1 from fact where source_item_id in (a.id, b.id)))
-      order by random()
-      limit $2`,
-    [exclude, limit]
-  );
+  return repo.evals.threadPairs({ exclude, limit });
 }
 
 // Groups of items from different threads that share a counterparty or a project.
 async function sharedGroups({ exclude, limit }) {
-  const groups = await db.rows(
-    `with link as (
-       select 'person:' || c.counterparty_person_id as key, c.source_item_id as id
-         from commitment c join person p on p.id = c.counterparty_person_id
-        where not p.is_me
-       union
-       select 'project:' || c.project_id, c.source_item_id from commitment c where c.project_id is not null
-     )
-     select key, array_agg(distinct l.id) as ids
-       from link l join source_item si on si.id = l.id
-      where exists (select 1 from chunk where source_item_id = l.id)
-        and not (l.id = any($1::bigint[]))
-      group by key
-     having count(distinct coalesce(si.thread_external_id, si.id::text)) >= 2
-      order by random()
-      limit $2`,
-    [exclude, limit]
-  );
+  const groups = await repo.evals.sharedGroups({ exclude, limit });
   const threads = new Map(
-    (await db.rows(`select id, coalesce(thread_external_id, id::text) as t from source_item where id = any($1::bigint[])`, [
-      groups.flatMap((g) => g.ids),
-    ])).map((r) => [String(r.id), r.t])
+    (await repo.evals.threadKeys(groups.flatMap((g) => g.ids))).map((r) => [String(r.id), r.t])
   );
   // 2–3 items, one per thread, chosen at random within the group.
   return groups.map((g) => {
@@ -151,12 +96,7 @@ async function lexicallyAbsent(term) {
   if (t.length < 3) return false;
   // Whole words, via the same English tsquery as the chunks: a substring test
   // on subjects rejected "Mac" because "machine" exists.
-  const r = await db.one(
-    `select exists (select 1 from chunk where tsv @@ plainto_tsquery('english', $1))
-         or exists (select 1 from source_item
-                     where to_tsvector('english', coalesce(subject, '')) @@ plainto_tsquery('english', $1)) as hit`,
-    [t]
-  );
+  const r = await repo.evals.fullTextHit(t);
   return !r.hit;
 }
 
@@ -166,11 +106,7 @@ async function abstentions(count, { rounds = 4 } = {}) {
   const out = [];
   const asked = new Set();
   for (let round = 0; round < rounds && out.length < count; round++) {
-    const subjects = (await db.rows(
-      `select distinct on (subject) subject from source_item
-        where subject is not null and length(subject) between 8 and 140
-        order by subject, random() limit 400`
-    )).map((r) => r.subject).sort(() => Math.random() - 0.5).slice(0, 40);
+    const subjects = (await repo.evals.sampleSubjects()).map((r) => r.subject).sort(() => Math.random() - 0.5).slice(0, 40);
     let qs = [];
     try {
       const reply = await llm.complete({
@@ -240,12 +176,7 @@ async function fill(want, jobs, { concurrency, onCase }) {
 }
 
 async function insertCase(c) {
-  const row = await db.one(
-    `insert into eval_case (question, qtype, gold_item_ids, gold_answer, as_of, origin, notes)
-     values ($1, $2, $3::bigint[], $4, now(), 'generated', $5) returning id`,
-    [c.question, c.qtype, c.gold_item_ids, c.gold_answer, c.notes]
-  );
-  return row.id;
+  return repo.evals.insertGenerated(c);
 }
 
 async function seed({ n = 60, concurrency = 4, only = null, progress = () => {} } = {}) {
@@ -265,8 +196,7 @@ async function seed({ n = 60, concurrency = 4, only = null, progress = () => {} 
   }
   if (plan.temporal) {
     const ex = [...exclude, ...(await usedGold())];
-    const boost = `(si.source = 'graph_event' or exists (select 1 from commitment x where x.source_item_id = si.id and x.due_at is not null))`;
-    const picks = P.spread(await candidates({ exclude: ex, limit: 600, boost }), plan.temporal * 2);
+    const picks = P.spread(await candidates({ exclude: ex, limit: 600, boost: 'temporal' }), plan.temporal * 2);
     await fill(plan.temporal, picks.map((p) => ({ qtype: 'temporal', ids: [p.id] })), { concurrency, onCase });
   }
   if (plan.knowledge_update) {

@@ -14,7 +14,6 @@ const path = require('path');
 const ROOT = path.join(__dirname, '..');
 
 const PENDING = new Set([
-  'src/backup.js',
   'src/chat/fastLane.js',
   'src/cli/index.js',
   'src/dashboard/architecture.js',
@@ -31,8 +30,6 @@ const PENDING = new Set([
   'src/durable/tasks/runReview.js',
   'src/e2e/deployTest.js',
   'src/e2e/goldenPath.js',
-  'src/eval/index.js',
-  'src/eval/seed.js',
   'src/ingest/githubReconcile.js',
   'src/ingest/graphChat.js',
   'src/ingest/health.js',
