@@ -86,6 +86,11 @@ _logger = logging.getLogger(__name__)
 #: leaves a half-made worktree for the next tick to clear.
 WORKTREE_GIT_TIMEOUT_S = 600.0
 
+#: dev-tools' deepest tracked file is 118 characters; under
+#: %LOCALAPPDATA%\software-factory\state\worktrees\ a 60-character slug put
+#: it past 260 and `git worktree add` failed with "Filename too long".
+WORKTREE_SLUG_MAX = 24
+
 
 def worktree_path(
     software_factory_root: Path,
@@ -95,12 +100,15 @@ def worktree_path(
 ) -> Path:
     """Compute the deterministic worktree path for a story.
 
-    Encoded as ``<root>/state/worktrees/<app>-<story_id>-<slug>/`` so
+    Encoded as ``<state>/worktrees/<app>-<story_id>-<slug>/`` so
     ``ls state/worktrees/`` is operator-readable. Slug is sanitized to
-    the same character set as the feature branch.
+    the same character set as the feature branch and cut to
+    ``WORKTREE_SLUG_MAX``: app and story id already make the name unique,
+    and every character of it is taken from the MAX_PATH budget of the
+    checkout's deepest file on Windows.
     """
     sid = int(story_id) if story_id is not None else 0
-    safe_slug = re.sub(r"[^A-Za-z0-9._-]+", "-", slug).strip("-")[:60] or "story"
+    safe_slug = re.sub(r"[^A-Za-z0-9._-]+", "-", slug)[:WORKTREE_SLUG_MAX].strip("-.") or "story"
     return state_dir(Path(software_factory_root)) / "worktrees" / f"{app}-{sid}-{safe_slug}"
 
 

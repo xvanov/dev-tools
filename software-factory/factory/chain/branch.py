@@ -26,6 +26,7 @@ fatal error — we never silently stash or discard the operator's edits.
 
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 from pathlib import Path
@@ -48,6 +49,13 @@ def feature_branch_name(story_id: int | None, slug: str) -> str:
     return f"{_BRANCH_PREFIX}-{sid}-{safe_slug}"
 
 
+#: Story worktrees live under the state dir (plan 2.5), whose Windows default
+#: (%LOCALAPPDATA%) is deep enough that a checkout's longest tracked path can
+#: pass MAX_PATH; git refuses those unless core.longpaths is on. Passed per
+#: command so the operator's git config is never changed.
+_GIT_CONFIG: tuple[str, ...] = ("-c", "core.longpaths=true") if os.name == "nt" else ()
+
+
 def _run_git(
     repo_path: Path, *args: str, check: bool = True, timeout: float = 30
 ) -> subprocess.CompletedProcess[str]:
@@ -58,7 +66,7 @@ def _run_git(
     ~1000-file checkout of the dev-tools monorepo measured well over 30 s.
     """
     proc = subprocess.run(
-        ["git", *args],
+        ["git", *_GIT_CONFIG, *args],
         cwd=str(repo_path),
         capture_output=True,
         text=True,

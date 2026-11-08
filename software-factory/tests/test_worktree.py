@@ -53,6 +53,31 @@ def test_worktree_path_sanitizes_slug(tmp_path: Path) -> None:
     assert "&" not in p.name
 
 
+def test_worktree_path_keeps_long_slugs_short(tmp_path: Path) -> None:
+    # A golden-path story slug; at 60 characters it put dev-tools' deepest file
+    # past MAX_PATH under %LOCALAPPDATA% and `git worktree add` refused it.
+    slug = "e2e-pa-version-verb-e2e-0ac5b429-de0d-4912-a68c-8d2c81035d93"
+    p = worktree_path(tmp_path, "dev-tools", 47, slug)
+    assert p.name == "dev-tools-47-e2e-pa-version-verb-e2e"
+    assert worktree_path(tmp_path, "a", 1, "x" * 23 + "-tail").name == "a-1-" + "x" * 23
+    assert worktree_path(tmp_path, "a", 1, "-" * 40).name == "a-1-story"
+
+
+def test_git_calls_carry_longpaths_on_windows(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    from factory.chain import branch
+
+    seen: list[list[str]] = []
+
+    def fake_run(cmd, **_kw):
+        seen.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    monkeypatch.setattr(branch.subprocess, "run", fake_run)
+    branch._run_git(tmp_path, "status")
+    want = ["git", "-c", "core.longpaths=true", "status"] if branch.os.name == "nt" else ["git", "status"]
+    assert seen == [want]
+
+
 def test_ensure_creates_worktree_and_checks_out_branch(tmp_path: Path) -> None:
     src = tmp_path / "src"
     factory_root = tmp_path / "factory"
