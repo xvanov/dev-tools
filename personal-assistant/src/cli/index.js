@@ -1304,8 +1304,14 @@ const commands = {
     // Database
     try {
       const probe = await db.probe();
-      mark(true, 'postgres', `${maskUrl(config.databaseUrl)} · ${probe.db}`);
-      mark(probe.has_vector, 'pgvector', probe.has_vector ? 'installed' : 'MISSING — run `pa migrate`');
+      if (probe.dialect === 'sqlite') {
+        // PA_DB=sqlite (plan 3.5): one file; sqlite-vec speeds vector search, a JS fallback works without it.
+        mark(true, 'sqlite', `${probe.db}${config.sqliteKey ? ' · encrypted' : ' · NOT encrypted (PA_SQLITE_KEY)'}`);
+        mark(true, 'sqlite-vec', probe.has_vector ? 'loaded' : 'not loaded: vector search uses the slower JS fallback');
+      } else {
+        mark(true, 'postgres', `${maskUrl(config.databaseUrl)} · ${probe.db}`);
+        mark(probe.has_vector, 'pgvector', probe.has_vector ? 'installed' : 'MISSING — run `pa migrate`');
+      }
       const migrations = await repository.system.appliedMigrations().catch(() => []);
       mark(migrations.length > 0, 'migrations', migrations.length ? `${migrations.length} applied` : 'none — run `pa migrate`');
       // An active project whose folder is gone attracts asks a run cannot work on.

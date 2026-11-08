@@ -807,4 +807,8 @@ function forgetSecret(name) {
   else secretCache.clear();
 }
 
+// PA_SQLITE_KEY resolves as any secret does (the environment, the OS vault,
+// then .env), at use: `pa secret set PA_SQLITE_KEY` keeps it out of files.
+Object.defineProperty(config, 'sqliteKey', { enumerable: true, configurable: true, get: () => secret('PA_SQLITE_KEY') || '' });
+
 module.exports = { config, env, envInt, parseEnvFile, parseMachines, MACHINE_OS, secret, secretSource, forgetSecret };

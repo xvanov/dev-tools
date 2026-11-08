@@ -494,6 +494,18 @@ run mid-step; a job continued on an existing branch (`--branch`).
     42-54 ms p50 (Postgres's approximate HNSW 16-21 ms); an index can come past ~1M vectors.
 - [ ] **3.5** Cutover on the personal stack, then the work stack; Litestream backup + restore
   drill.
+  Prepared, not done (the cutover is the user's call): the runbook is
+  [CUTOVER-SQLITE.md](CUTOVER-SQLITE.md): rehearse, stop writers, export, compare, set
+  `PA_DB=sqlite`, start, verify, rollback by unsetting it. Backups for SQLite are in place instead
+  of Litestream, which cannot read a SQLCipher file and has no supported Windows build:
+  - `VACUUM INTO` snapshots; `pa-latest.sqlite` refreshed hourly
+    (`PA_SQLITE_SNAPSHOT_MINUTES`);
+  - the nightly encrypted bundle;
+  - `pa backup restore --to <file>` as the drill.
+
+  Tested at work-stack size: a 453 MB snapshot in 6 s, the bundle in 10 s, the drill PASS in
+  10-12 s. Also ready: live-feed events from other processes arrive through a 500 ms outbox
+  poll, `pa doctor` reports the SQLite store, and `PA_SQLITE_KEY` resolves from the OS vault.
 - [ ] **3.6** WSL off on the work laptop (D6); Postgres removed. Also retire the other WSL
   leftovers: the old termhub `server.js` in WSL (ports 7100/7110) and its watchdog timer, the
   `pa-wsl-keepalive` scheduled task, the unused WSL factory checkout, and any Docker/Rancher
