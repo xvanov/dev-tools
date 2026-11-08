@@ -178,9 +178,9 @@ push, and report. Two constraints in that prompt are worth knowing about:
 - **It must not touch sessiond** unless the signature says sessiond is already down. The
   prompt states this as a hard rule with the reason, because "restart it" is the obvious
   wrong move for a model that has just been told a service is down.
-- **It must commit and push.** Not bookkeeping: termhub deploys by `git pull --ff-only`,
-  which fails on a dirty tree, so a remedy left uncommitted in the working tree would block
-  every future update on every machine. Committing is the *safe* option here, not the bold
+- **It must commit and push.** Not bookkeeping: termhub deploys by `git pull --ff-only`, and
+  the update stops when local changes will not go back on top of what it pulled, so a remedy
+  left uncommitted in the working tree can block future updates on every machine. Committing is the *safe* option here, not the bold
   one.
 
 `--dangerously-skip-permissions` is required — nobody is present to answer a prompt. That is

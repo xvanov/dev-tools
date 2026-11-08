@@ -2627,7 +2627,9 @@ async def _sandbox_run_impl(
     # (the model keys stay here, in the factory process). Fail safe: no
     # sandbox, no run.
     from factory.sandbox import enabled as _sandbox_enabled
+    from factory.terminal_guard import guard_terminal
 
+    agent_err: str | None = None
     if _sandbox_enabled("FACTORY_SANDBOX"):
         try:
             agent = sandbox_terminal(
@@ -2636,27 +2638,36 @@ async def _sandbox_run_impl(
                 state_dir=Path(db_path).parent / "sandbox" / f"{app or 'app'}-{story_id or 0}-{persona}",
             )
         except Exception as exc:  # noqa: BLE001 - reported as an infra failure
-            err = f"FACTORY_SANDBOX=on but the sandbox did not start: {exc}"[:500]
-            _record(
-                persona=persona,
-                model=llm_config.model,
-                mode="sandbox",
-                tokens_in=0,
-                tokens_out=0,
-                cost_usd=0.0,
-                success=False,
-                story_path=str(story_path),
-                repo_path=str(repo_path),
-                error=err,
-                db_path=db_path,
-                duration_s=_elapsed(),
-                story_id=story_id,
-                model_tier=difficulty,
-                direction_id=direction_id,
-                app=app,
-                premodel_infra=True,
-            )
-            return RunResult(success=False, error=err, summary=err, premodel_infra=True)
+            agent_err = f"FACTORY_SANDBOX=on but the sandbox did not start: {exc}"[:500]
+    # E6.1: refuse multi-line quoted arguments, hook skips and delivery before
+    # they reach the shell. After the sandbox, which rewrites the `terminal`
+    # spec this keeps. Fail safe: no guard, no run.
+    if agent_err is None:
+        try:
+            agent = guard_terminal(agent)
+        except Exception as exc:  # noqa: BLE001 - reported as an infra failure
+            agent_err = f"the terminal guard did not install: {exc}"[:500]
+    if agent_err is not None:
+        _record(
+            persona=persona,
+            model=llm_config.model,
+            mode="sandbox",
+            tokens_in=0,
+            tokens_out=0,
+            cost_usd=0.0,
+            success=False,
+            story_path=str(story_path),
+            repo_path=str(repo_path),
+            error=agent_err,
+            db_path=db_path,
+            duration_s=_elapsed(),
+            story_id=story_id,
+            model_tier=difficulty,
+            direction_id=direction_id,
+            app=app,
+            premodel_infra=True,
+        )
+        return RunResult(success=False, error=agent_err, summary=agent_err, premodel_infra=True)
     workspace = LocalWorkspace(working_dir=str(Path(repo_path).resolve()))
 
     # Give the dev/test_impl sandbox a writable MEDIA_DIR so the agent's OWN

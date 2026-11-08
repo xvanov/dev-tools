@@ -48,6 +48,9 @@ Design rationale: the plan page (proposal, 7 Nov 2026) and the research summary 
 | D19 | 2026-11-08 | **Durable tasks on SQLite run on a small queue we own; Postgres keeps Absurd until 3.5** | Part of 3.1. Absurd is a Postgres schema with no SQLite port. `src/durable/sqliteQueue.ts` gives the slice of its interface the PA uses (spawn once per key, `step` checkpoints, `sleepFor`, `awaitEvent` with timeout and Absurd's `TimeoutError`, retries with backoff, scheduled runs) over `sql-sqlite/006` (task, checkpoint and event tables), with leases from the `lease` table, so the spawners and tasks (chase, runReview) do not change. `src/durable/durable.ts` picks the engine by store. |
 | D20 | 2026-11-08 | **Cut over to the new system now**: SQLite (3.5), ptyd (Exit 5's switch), jarvisd (runtime and front), WSL off (3.6) | The owner's go-ahead. Passkeys (7.1) and the Windows sandbox's ACL and egress steps (5.2) stay off for now. WSL is shut down and kept registered (not unregistered) so the Postgres rollback stays possible until both stacks have run on SQLite for a while. |
 | D21 | 2026-11-08 | **The factory's planning steps run on DeepSeek-V4-Flash** | PM triage took ~146 s on deepseek-v4-pro (a reasoning model); the owner accepts Flash's quality risk for speed. Applies to the planning personas only; dev stays on v4-pro. |
+| D22 | 2026-11-08 | **No agent sandbox**: agents keep full access to the machine they run on | The owner's call. 5.2 is dropped and Exit 5 is node-pty's retirement alone. The code behind `FACTORY_SANDBOX` / `PA_SANDBOX` (off) and the credential broker (5.3) stay as they are. |
+| D23 | 2026-11-08 | **Exit 7 becomes a one-command install on the work laptop** | No fresh machines: the owner installs Linux later. 7.7 is one command that installs (or reinstalls) the whole stack on this Windows machine, proven by reinstalling here. |
+| D24 | 2026-11-08 | **Retire Postgres and WSL now** | After a static copy of each: Postgres's last state as an encrypted `.pabak` per stack, the WSL distro as an encrypted export. Then the work laptop's Ubuntu distro is unregistered and the personal stack's `pa_personal` database dropped (its Postgres server stays: other software uses it). Supersedes D20's "kept registered". |
 
 ## Prerequisites (before phase 0)
 
@@ -354,12 +357,22 @@ run mid-step; a job continued on an existing branch (`--branch`).
   retry then failed on the dead attempt's worktree (fixed: 0772cec, a1b1cab, 5e2228f). The second
   (dev-tools:017) was green, slowly: PR at 1707 s, CI done at 1865 s, after an Azure
   content-filter refusal on deepseek-v4-pro (retried by the factory) and a hung commit.
-  - [ ] **E6.1 The API dev agent breaks the shell and hook rules on Windows.** It hangs
+  - [x] **E6.1 The API dev agent breaks the shell and hook rules on Windows.** It hangs
     PowerShell at a `>>` prompt with multi-line `-m` arguments (minutes of Ctrl-C each), commits
     with --no-verify, and once pushed and opened a PR itself (#43, closed). The prompt says not
     to (73e824d) and dev-tools:017 did it again, so this needs a guard in the runtime: detect a
     continuation prompt and answer the agent at once, and refuse `--no-verify`, `git push` and
     `gh pr` in the API terminal (delivery is the factory's).
+    Done: `factory/terminal_guard.py` replaces the API agent's `terminal` tool (same name and
+    params, after the sandbox rewrite; on Windows and Linux, not claude_session). Before the shell
+    sees a command it refuses, with an immediate tool error that says what to do instead: a newline
+    inside a quoted argument (PowerShell: any newline, an unterminated quote or bracket, a trailing
+    pipe); `--no-verify`, `git commit -n`, `core.hooksPath`, `DEVTOOLS_SKIP_TESTS`; `git push`;
+    `gh pr` other than view/list/status/checks/diff/checkout; `gh api` other than GET (also inside
+    `bash -c`, `pwsh -Command`, `python -c`). Ctrl-C did not clear the `>>` prompt in dev-tools:017
+    (only a reset did), so an observation stuck at `>>` on PowerShell resets the terminal and
+    returns the error; tested against a real PowerShell. If the guard cannot install, the run is
+    refused (fail safe). (e2b0323)
 - [ ] **Exit E:** the user runs the golden path by voice ("start a factory job for …"), watches
   it in Plan, Build and Run, drills down from the card to the live session and the PR, and
   each hop meets its timing target.
@@ -712,8 +725,8 @@ run mid-step; a job continued on an existing branch (`--branch`).
   2026-11-08 (`TERMHUB_PTYD=1`, adbe9ff; JARVISD.md runbook): ptyd runs as the termhub-ptyd
   task / unit, and a work-stack terminal outlived a sessiond restart. Left for Exit 5: retire
   node-pty; replay is raw bytes (sessiond's mirror covers the UI).
-- [ ] **5.2** Agent sandbox per run: sandbox-runtime on Linux, restricted account on
-  Windows, egress allowlist proxy. Landed behind `FACTORY_SANDBOX` / `PA_SANDBOX` (default
+- [~] **5.2** Agent sandbox per run: sandbox-runtime on Linux, restricted account on
+  Windows, egress allowlist proxy. — dropped: D22 (the code stays, off). Landed behind `FACTORY_SANDBOX` / `PA_SANDBOX` (default
   off): the proxy (cb46b10) and the OS sandbox (421e621): bubblewrap on Linux (used directly,
   not sandbox-runtime: the proxy and broker need our own unix-socket relays), a restricted
   Low-integrity token in a job object on Windows instead of an account (no account created).
@@ -734,7 +747,7 @@ run mid-step; a job continued on an existing branch (`--branch`).
   broker, checked against the run's delivery ceiling. (2031b73, 421e621) Ceilings `none` /
   `push_branch` / `draft_pr` from the delivery level or PA mode; per-owner token via
   `gh_auth`; never runs git in the agent's checkout.
-- [ ] **Exit 5:** agents run sandboxed on Windows and Linux; termhub's node-pty host retired.
+- [ ] **Exit 5:** termhub's node-pty host retired (the sandbox half dropped: D22).
 
 ## Phase 6: factory into TypeScript
 
@@ -767,9 +780,13 @@ run mid-step; a job continued on an existing branch (`--branch`).
   from `scripts/build.js` and CI's `build` job: NSIS on Windows, .deb on Linux, both built in run
   42462406341. Later Windows runs failed only on github.com release downloads (504), so the CI
   job now caches Tauri's NSIS tools and retries. Not installed on either machine.
-- [ ] **Exit 7:** install on a fresh Windows and a fresh Linux machine with one install script
+- [ ] **7.7 One-command install (D23).** One command installs or reinstalls the whole stack on
+  a Windows machine: PA (jarvisd), termhub (jarvisd front, ptyd), the factory (`uv`, which
+  fetches its own Python; D15) and their tasks, idempotent, keeping data, `.env` and the vault.
+  Proven by reinstalling on the work laptop. A Linux twin comes later.
+- [~] **Exit 7:** install on a fresh Windows and a fresh Linux machine with one install script
   each (jarvisd and ptyd binaries, plus the Python factory via `uv`, which fetches its own
-  Python; D15).
+  Python; D15). — dropped: D23, replaced by 7.7.
 
 ## Phase 8: workflow acceptance review (the last phase; D10)
 
@@ -824,6 +841,66 @@ not in the Map is not done, and a new one gets added there first.
   workflow.
 - [ ] **8.4 Fix loop.** Every failed criterion becomes an item here; fixed by an implementing
   session; the reviewer re-runs. The Map shows each workflow's latest verdict and date.
+  - [ ] **8.4.1 whats-on: tomorrow's meetings are spoken as "today".** `calendarToday()` is a
+    rolling now−2 h..now+24 h window. The fast-lane snapshot lists it as "Meetings (next 24h)" with a
+    bare HH:MM, so on Sunday afternoon Monday's 10:00 and 11:00 come out as "today" (and `pa brief`
+    prints the same rows under TODAY). Put the local day on each meeting, or split them into Today
+    and Tomorrow, in both the snapshot and the brief. Add a router-eval case for an evening "what's on
+    today?" ([acceptance/whats-on.md](acceptance/whats-on.md)).
+  - [ ] **8.4.2 whats-on: the answer turns meeting titles into attendees and drops a meeting.** "a
+    meeting at 10:00 with <title>", "a standup at 11:00 with <team>": the snapshot has titles, not
+    attendees, and the 11:30 meeting is left out. 13 of 13 turns gave this same answer. Tell the
+    answerer to quote titles as titles and to give every meeting (or the count). Add eval cases.
+  - [ ] **8.4.3 whats-on: the fast lane takes 728 ms to the first sentence (target 200).** Median
+    of 10 turns, range 626-843 ms. Router 75 ms, first token 219 ms. The answer is one 20-word
+    sentence, so sentence-by-sentence TTS cannot start until it ends. Lead with a short clause (for
+    example "Nothing left today."), let TTS start at a clause boundary, and get the first token
+    under 200 ms.
+  - [ ] **8.4.4 whats-on: whisper takes 259 ms (target 250).** Median of 13, range 190-526 ms (the
+    request adds about 15 ms). Calls after an idle gap take 400-530 ms. Keep the model warm, and
+    check its size, beam and compute type against the target.
+  - [ ] **8.4.5 whats-on: smart-turn alone is over the talk-page budget.** POST /api/talk/endpoint
+    takes 221 ms (median of 10, 96-459 ms). Even after the 96 ms VAD shortcut, end of speech to the
+    transcription request is at least ~317 ms (target 150). Make the endpoint faster, or start the
+    transcription while smart-turn decides.
+  - [ ] **8.4.6 whats-on: first audio takes 1.6-1.8 s (target 700).** In the e2e: 1792 ms median
+    of 3 (1330-2619 ms), without the talk-page hop. Summing the probe medians gives ~1.6 s. Kokoro's
+    first byte alone is 312 ms (median of 13, 247-734 ms). The hop targets already add up to 600 ms
+    before TTS starts, so the budget only fits if TTS's first byte is about 100 ms.
+  - [ ] **8.4.7 whats-on: the e2e understates or misses hops.** The fast-lane hop is timed to the
+    first token, not the first sentence. The voice hop starts TTS only after the whole turn and leaves
+    out the talk-page hop. The talk-page hop is not measured at all (/api/talk/endpoint could be).
+    The Ask screenshot shows the idle Talk page, not the turn. Time the first sentence, add the
+    smart-turn call, and capture the page after a driven turn.
+  - [ ] **8.4.8 research: the tool call takes 2.3 s (target 1 s).** `factory_start` returned
+    2312 ms after the call: run row 19:52:09.56, factory job created 19:52:10.96, PA "dispatched"
+    19:52:11.30, so about 1.4 s is the `job submit` round trip. Down from 13.5 s on 8.2's run
+    (8.2.2), still over. Profile the submit (uv/python start-up per CLI call through serve's
+    /api/cli) ([acceptance/research.md](acceptance/research.md)).
+  - [ ] **8.4.9 research: approval to "started" takes ~2.1 s (target 1 s), and the e2e reads
+    11.5 s.** `factory_start` returned at 19:52:11.3, serve woke and dispatched at 19:52:12, and the
+    job's `started_at` is 19:52:13.40. The e2e polls `job status` every 10 s (`--poll 10`), so it
+    timed 11472 ms. Time the hop from the job's `started_at`, and cut the wake-to-worker start.
+    (The model's first turn is another 10.2 s later, at 19:52:23.6: checkout and brief.)
+  - [ ] **8.4.10 research: the worker hop is not measured, and PA learns state changes 6-7 s late.**
+    The job ended at 19:53:35.25, serve pushed `done` at 19:53:41, and PA recorded it at 19:53:41.14
+    (its event loop was blocked 1230 ms then). `in_progress` was pushed at 19:52:12 and recorded at
+    19:52:19.4. The board can't redraw within 200 ms of a change PA hears about 6 s later. Measure
+    the hop (factory `updated_at` → the board's change), then find where serve's push waits.
+  - [ ] **8.4.11 research: the e2e's screenshots show no data.** `chrome-headless-shell
+    --screenshot` shoots at page load, before /api/state and termhub answer. Plan shows an empty
+    "On me", Build shows "No jobs to show", and Run shows "No terminal open". Shot over CDP 12 s after
+    load, the same pages show card #6773 and the researcher's terminal with its links. Capture after
+    the data loads (CDP, or a ready marker the pages set), and add the Ask view.
+  - [ ] **8.4.12 research: the approval is not exercised.** The e2e calls `chatTools.handle
+    ('factory_start')` directly, so the policy audit log has no row for the run. Live policy does
+    say `ask` (`pa audit check factory_start`). Drive the call through the permission path, or at
+    least record the policy decision in the evidence.
+  - [ ] **8.4.13 research: e2e cleanup leaves sessions, and `--sweep` is not scoped.** The research
+    runner drops the card but leaves the follow and researcher termhub sessions alive (the golden
+    path kills them). `pa e2e --sweep` acts on every open e2e card, so during parallel reviews it
+    would cancel another reviewer's live job and close its PR. Kill the run's sessions in research
+    cleanup, and let `--sweep` take a marker or skip runs still inside their timeout.
 - [ ] **8.5 Architecture map review.** A full pass over `architecture.json` (the `/architecture`
   page) against the finished system: every component, process, port, table, tool, workflow and
   storage location as it now runs on both stacks (jarvisd, ptyd, native factory, SQLite,

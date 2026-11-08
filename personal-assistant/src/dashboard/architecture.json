@@ -1330,6 +1330,7 @@
         "Overrides": "--model <persona>=<provider>/<model>; providers azure, azure_ai, deepseek, anthropic, openrouter, openai, openai_compat",
         "Missing key": "degrades to the routes.yaml fallback with a warning",
         "Rate limit": "one shared Azure deployment: model-driven sweeps run 4 wide",
+        "Terminal guard": "factory/terminal_guard.py wraps the agent's terminal (Windows and Linux): a newline inside a quoted argument (on PowerShell any newline, an unterminated quote or bracket), --no-verify / git commit -n / core.hooksPath / DEVTOOLS_SKIP_TESTS, git push, gh pr writes and gh api writes are refused with a tool error before the shell sees them; on PowerShell an observation stuck at the >> continuation prompt resets the terminal at once. claude_session runs do not use it.",
         "Billing": "metered: runs[].billing = metered, summed in cost_usd",
         "Live view": "every sandbox run streams its turns (model text, tool calls and results, diff summaries, gate results, tokens and cost) in Claude Code's stream-json shape to state/api_runs/<run>/stream.jsonl. When termhub is reachable a read-only session runs `pretty --follow` on it from the step's start, exits at the step's end and stays open for review; runs[].session links it. Without termhub, only the file."
       },
@@ -2163,9 +2164,9 @@
           }
         ],
         "verdict": {
-          "result": null,
-          "date": null,
-          "report": null
+          "result": "fail",
+          "date": "2026-11-08",
+          "report": "docs/native/acceptance/whats-on.md"
         }
       }
     },
@@ -2559,9 +2560,9 @@
           }
         ],
         "verdict": {
-          "result": null,
-          "date": null,
-          "report": null
+          "result": "fail",
+          "date": "2026-11-08",
+          "report": "docs/native/acceptance/research.md"
         }
       }
     },
