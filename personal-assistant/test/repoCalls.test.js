@@ -27,7 +27,7 @@ function walk(dir, out = []) {
   for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
     const p = path.join(dir, e.name);
     if (e.isDirectory()) walk(p, out);
-    else if (e.name.endsWith('.js') && !e.name.endsWith('.client.js')) out.push(p); // *.client.js runs in the browser
+    else if (/\.(js|ts)$/.test(e.name) && !e.name.endsWith('.client.js') && !e.name.endsWith('.d.ts')) out.push(p); // *.client.js runs in the browser
   }
   return out;
 }
@@ -35,7 +35,7 @@ function walk(dir, out = []) {
 // Code that only runs on SQLite (PA_DB=sqlite) checks against the SQLite set:
 // the durable queue (D19) calls methods Postgres does not have, since there
 // Absurd runs the tasks.
-const SQLITE_ONLY = new Set(['src/durable/sqliteQueue.js', 'src/backupSqlite.js']);
+const SQLITE_ONLY = new Set(['src/durable/sqliteQueue.js', 'src/durable/sqliteQueue.ts', 'src/backupSqlite.js', 'src/backupSqlite.ts']);
 const sqliteRepos = createRepos({ ...fakeDb, dialect: 'sqlite' });
 
 const missing = [];
