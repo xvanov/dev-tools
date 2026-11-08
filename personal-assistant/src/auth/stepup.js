@@ -62,4 +62,20 @@ async function demandForDelivery(level, approvalId, { repos, now } = {}) {
   };
 }
 
-module.exports = { HIGH_RISK, requiresStepUp, hasStepUp, demandForDelivery, enabled };
+/**
+ * The JSON body for an error a dashboard route sends: {error}, and when the
+ * policy engine (or demandForDelivery) refused an approval only for want of a
+ * passkey tap, 
+eedsStepUp and the pprovalId to ask the tap for, which is
+ * what makes the page show "Approve with passkey" instead of a dead end.
+ */
+function errorBody(err) {
+  const body = { error: String(err && err.message || err) };
+  if (err && err.needsStepUp && typeof err.approvalId === 'string') {
+    body.needsStepUp = true;
+    body.approvalId = err.approvalId;
+  }
+  return body;
+}
+
+module.exports = { HIGH_RISK, requiresStepUp, hasStepUp, demandForDelivery, errorBody, enabled };

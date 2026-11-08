@@ -492,7 +492,7 @@ function createSdkFeed({
       if (typeof pol.withJobDelivery === 'function') req = await pol.withJobDelivery(req, jobLookup);
       await pol.enforce(req);
     } catch (err) {
-      if (err.code === 'POLICY_DENIED') throw httpError(403, err.message);
+      if (err.code === 'POLICY_DENIED' || err.code === 'STEPUP_REQUIRED') throw Object.assign(httpError(403, err.message), err.needsStepUp ? { needsStepUp: true, approvalId: err.approvalId } : {});
       throw err;
     }
     log.info('answered a chat approval', { tool, answer, via });

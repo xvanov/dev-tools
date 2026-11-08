@@ -91,7 +91,8 @@
         toast(label + ' failed: ' + err.message);
       }).then(function () {
         button.disabled = false;
-        button.textContent = label;
+        // A button may ask to be relabelled for the next click (Approve -> Approve with passkey).
+        button.textContent = button.getAttribute('data-next-label') || label;
       });
     });
     return button;
@@ -176,8 +177,23 @@
     var actions = el('div', { class: 'actions' });
     if (j.report) actions.append(clicker(el('button', { class: 'primary', type: 'button', text: 'Read report' }), function () { return readReport(j); }));
     if (j.canApprove) {
-      actions.append(clicker(el('button', { class: 'primary', type: 'button', title: 'Run the approve-direction the factory named for this job', text: 'Approve' }), function () {
-        return post('api/factory/jobs/' + encodeURIComponent(j.jobId) + '/approve').then(function () { toast(j.jobId + ' approved'); });
+      // With PA_PASSKEYS=on a merge or push to main needs a passkey tap first: the server then answers
+      // {needsStepUp, approvalId}, this button becomes 'Approve with passkey', and its next click taps, then approves.
+      var approveBtn = el('button', { class: 'primary', type: 'button', title: 'Run the approve-direction the factory named for this job', text: 'Approve' });
+      var stepUpId = null;
+      var approve = function () { return post('api/factory/jobs/' + encodeURIComponent(j.jobId) + '/approve').then(function () { toast(j.jobId + ' approved'); }); };
+      actions.append(clicker(approveBtn, function () {
+        if (stepUpId && window.paAuth) {
+          return window.paAuth.stepUp(stepUpId).then(function () { stepUpId = null; approveBtn.removeAttribute('data-next-label'); return approve(); });
+        }
+        return approve().catch(function (err) {
+          if (err.data && err.data.needsStepUp && window.paAuth) {
+            stepUpId = err.data.approvalId;
+            approveBtn.setAttribute('data-next-label', 'Approve with passkey');
+            throw new Error('this needs your passkey: tap Approve with passkey');
+          }
+          throw err;
+        });
       }));
     }
     actions.append(clicker(el('button', { type: 'button', title: 'Start a termhub session on the factory machine following this job', text: 'Open in termhub' }), function () {

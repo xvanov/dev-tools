@@ -57,6 +57,9 @@ const cases = {
     fresh();
     repos.passkeys.credentialCount = async () => { throw new Error('touched the store'); };
     assert.strictEqual((await call('GET', '/api/auth/status')).status, 404);
+    const js = await call('GET', '/login.js');
+    assert.strictEqual(js.status, 200, 'pages load the script unconditionally; it is inert without the flag');
+    assert.match(js.text, /window\.paAuth/);
     assert.strictEqual((await call('GET', '/healthz')).status !== 401, true);
     const r = await call('GET', '/api/version');
     assert.notStrictEqual(r.status, 401);

@@ -576,7 +576,7 @@ function start({ port = config.dispatch.port, host = config.dispatch.host } = {}
   const server = http.createServer((req, res) => {
     handle(req, res).catch((err) => {
       log.warn('request failed', { path: String(req.url).split('?')[0], message: err.message });
-      if (!res.headersSent) send(res, err.status || 500, { error: err.message });
+      if (!res.headersSent) send(res, err.status || 500, require('../auth/stepup').errorBody(err));
     });
   });
   // Idle keep-alive sockets live 65 s, not Node's 5: the supervisor pools

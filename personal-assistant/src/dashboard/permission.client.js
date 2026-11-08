@@ -74,6 +74,9 @@
       const yes = el('button', { type: 'button', className: 'yes', textContent: current.generic ? 'Allow once' : 'Approve' });
       const no = el('button', { type: 'button', textContent: 'Deny' });
       const msg = el('span', { className: 'err' });
+      // Set when the server says this approval needs a passkey tap (PA_PASSKEYS=on, a merge,
+      // a push to main or a secret reveal): the same button then asks for the tap first.
+      let stepUpId = null;
       const go = async (answer) => {
         yes.disabled = true;
         no.disabled = true;
@@ -85,16 +88,36 @@
             body: JSON.stringify({ answer, toolUseId: current.toolUseId, via: 'dashboard' }),
           });
           const body = await res.json().catch(() => ({}));
-          if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
+          if (!res.ok) throw Object.assign(new Error(body.error || `HTTP ${res.status}`), { stepUp: body.needsStepUp ? body.approvalId : null });
           current = null;
           render();
         } catch (err) {
-          msg.textContent = `Not answered: ${err.message}`;
+          if (err.stepUp && window.paAuth) {
+            stepUpId = err.stepUp;
+            yes.textContent = 'Approve with passkey';
+            msg.textContent = 'This needs your passkey.';
+          } else {
+            msg.textContent = `Not answered: ${err.message}`;
+          }
           yes.disabled = false;
           no.disabled = false;
         }
       };
-      yes.addEventListener('click', () => go('yes'));
+      yes.addEventListener('click', async () => {
+        if (stepUpId) {
+          // A tap bound to exactly this approval, then the same answer again.
+          yes.disabled = true;
+          try {
+            await window.paAuth.stepUp(stepUpId);
+            stepUpId = null;
+          } catch (err) {
+            msg.textContent = `Passkey not accepted: ${err.message}`;
+            yes.disabled = false;
+            return;
+          }
+        }
+        go('yes');
+      });
       no.addEventListener('click', () => go('no'));
       row.append(yes, no, msg);
     } else {

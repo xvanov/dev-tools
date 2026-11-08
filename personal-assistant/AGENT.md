@@ -110,7 +110,8 @@ the name the browser uses (default `localhost:7300`; a passkey is bound to its R
 the origin you will use). High-risk approvals (merge, push to main, secret reveal) need a fresh
 assertion bound to that exact approval id (`/api/auth/stepup/*`, `paAuth.stepUp(id)` in
 `login.client.js`); the grant is one-use, two minutes, and only that endpoint writes one, so voice,
-MCP and agents cannot. The policy engine asks `src/auth/stepup.js` `hasStepUp(id, {consume: true})`.
+MCP and agents cannot. On the Plan card's \"Waiting for your yes\" prompt and Build's Approve, a refusal that carries \
+eedsStepUp\ + \pprovalId\ (the policy engine's, or the two dashboard gates') turns the button into **Approve with passkey**: its next click taps, then repeats the approval; it never appears with the flag off or for an approval that is not high-risk. The policy engine asks `src/auth/stepup.js` `hasStepUp(id, {consume: true})`.
 **Recovery, never a lockout:** the gate stays open while no passkey is registered (the first visit to
 `/login` registers one); `pa passkeys reset` at an interactive local terminal (type `RESET`)
 forgets every passkey and session; `PA_PASSKEYS=off` plus a restart is the last exit. The reset is

@@ -117,6 +117,11 @@ function bad(res, send, err) {
 async function route(req, res, url, { send, readJson }) {
   const p = url.pathname;
   if (p !== '/login' && p !== '/login.js' && !p.startsWith('/api/auth/')) return false;
+  if (req.method === 'GET' && p === '/login.js') {
+    // The script is inert without the flag (paAuth just defines itself); pages load it unconditionally.
+    send(res, 200, fs.readFileSync(path.join(__dirname, 'login.client.js'), 'utf8'), 'text/javascript; charset=utf-8');
+    return true;
+  }
   if (!enabled()) {
     if (p.startsWith('/api/auth/')) { send(res, 404, { error: 'passkeys are off (PA_PASSKEYS)' }); return true; }
     return false;

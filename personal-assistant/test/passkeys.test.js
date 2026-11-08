@@ -253,6 +253,12 @@ const cases = {
     assert.strictEqual(await session.validate(repos, req3, { now: now() }), null, 'logged out');
   },
 
+  async 'errorBody: carries needsStepUp and the approval id only when the error says so'() {
+    assert.deepStrictEqual(stepup.errorBody(new Error('boom')), { error: 'boom' });
+    assert.deepStrictEqual(stepup.errorBody(Object.assign(new Error('needs a tap'), { needsStepUp: true, approvalId: 'appr-7' })), { error: 'needs a tap', needsStepUp: true, approvalId: 'appr-7' });
+    assert.deepStrictEqual(stepup.errorBody(Object.assign(new Error('x'), { needsStepUp: true })), { error: 'x' }, 'no id, no button');
+  },
+
   async 'cookie parsing never trusts a malformed value'() {
     assert.deepStrictEqual(session.parseCookies('a=1; b=2=3; ; c'), { a: '1', b: '2=3' });
     assert.strictEqual(session.cookieValue({ headers: { cookie: 'pa_session=short' } }), null);

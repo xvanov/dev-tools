@@ -488,7 +488,7 @@ run mid-step; a job continued on an existing branch (`--branch`).
 
 ## Phase 7: hardening and reach
 
-- [x] **7.1** Passkey sessions; voice never approves merges, pushes to main or secret reveals. (7998d85) Built and tested behind `PA_PASSKEYS=off|on` (default off); enabling it on the live stacks is pending the owner. Recovery: `pa passkeys reset` at a local terminal. The voice rule itself is 4.3's; its enforce() will call `src/auth/stepup.js` (policy wires it).
+- [x] **7.1** Passkey sessions; voice never approves merges, pushes to main or secret reveals. (7998d85; Approve with passkey button on Plan and Build in the next commit) Built and tested behind `PA_PASSKEYS=off|on` (default off); enabling it on the live stacks is pending the owner. Recovery: `pa passkeys reset` at a local terminal. The voice rule itself is 4.3's; its enforce() will call `src/auth/stepup.js` (policy wires it).
 - [~] **7.2** Per-stack CA and mTLS between machines of one stack. — dropped: D15, Tailscale
   ACLs already separate the stacks.
 - [ ] **7.3** Secrets in the OS keychain, labelled by stack.
