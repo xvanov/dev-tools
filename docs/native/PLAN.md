@@ -988,6 +988,8 @@ not in the Map is not done, and a new one gets added there first.
     19:52:11.30, so about 1.4 s is the `job submit` round trip. Down from 13.5 s on 8.2's run
     (8.2.2), still over. Profile the submit (uv/python start-up per CLI call through serve's
     /api/cli) ([acceptance/research.md](acceptance/research.md)).
+    Research re-review (`dev-tools:r0003`): 002f99e's routing is verified live (route 58,
+    prepare 30, brief 48 ms). The hop is worse, though: 11355 ms, 10864 of it the submit (8.4.45).
   - [ ] **8.4.9 research: approval to "started" takes ~2.1 s (target 1 s), and the e2e reads
     11.5 s.** `factory_start` returned at 19:52:11.3, serve woke and dispatched at 19:52:12, and the
     job's `started_at` is 19:52:13.40. The e2e polls `job status` every 10 s (`--poll 10`), so it
@@ -998,11 +1000,17 @@ not in the Map is not done, and a new one gets added there first.
     `runs[].started_at`, and the poll only when the factory has no stamp. The research runtime hop
     now ends at the job's `updated_at`. Status is polled every 1 s while a start is due. Still
     open: the hop itself (~2.1 s against 1 s; cut the wake-to-worker start).
+    Research re-review (`dev-tools:r0003`): the measurement is verified live. The e2e's 7021 ms
+    is `started_at` less the tool's return. The hop is still open: serve's wake dispatch came
+    ~10.3 s after the job was written (8.4.45), and then 5.7 s passed before `started_at`.
   - [ ] **8.4.10 research: the worker hop is not measured, and PA learns state changes 6-7 s late.**
     The job ended at 19:53:35.25, serve pushed `done` at 19:53:41, and PA recorded it at 19:53:41.14
     (its event loop was blocked 1230 ms then). `in_progress` was pushed at 19:52:12 and recorded at
     19:52:19.4. The board can't redraw within 200 ms of a change PA hears about 6 s later. Measure
     the hop (factory `updated_at` → the board's change), then find where serve's push waits.
+    Research re-review (`dev-tools:r0003`): partly verified live. Serve (e88e204) pushed `done`
+    at most 1.4 s after the job ended (5.7 s before), and Build showed it. The e2e still reports
+    the hop "not measured", and the Plan card lags by 125.5 s (8.4.46).
   - [x] **8.4.11 research: the e2e's screenshots show no data.** `chrome-headless-shell
     --screenshot` shoots at page load, before /api/state and termhub answer. Plan shows an empty
     "On me", Build shows "No jobs to show", and Run shows "No terminal open". Shot over CDP 12 s after
@@ -1017,6 +1025,8 @@ not in the Map is not done, and a new one gets added there first.
     acceptance block lists `ask` gets `/talk` shot. Checked with the real headless shell against a
     local page whose data arrives 2 s after load: shot at 3.0 s with the data in, and no browser
     left running. Not yet on a real run.
+    Research re-review (`dev-tools:r0003`): verified live for Plan, Build and Run, each ready in
+    ~10 s with the run's data in it. The Ask shot never gets ready (8.4.47).
   - [x] **8.4.12 research: the approval is not exercised.** The e2e calls `chatTools.handle
     ('factory_start')` directly, so the policy audit log has no row for the run. Live policy does
     say `ask` (`pa audit check factory_start`). Drive the call through the permission path, or at
@@ -1032,6 +1042,8 @@ not in the Map is not done, and a new one gets added there first.
     prompts for the tool and accepts the e2e answer. Unit-tested against the real policy with a fake
     audit store; not yet on a real run. The answer is the harness's own: it is not the dashboard
     card or Claude Code's prompt UI.
+    Research re-review (`dev-tools:r0003`): verified live. The e2e approve (23:34:11.339) was
+    followed by the chat call (23:34:11.343), and `pa audit verify` passes.
   - [x] **8.4.13 research: e2e cleanup leaves sessions, and `--sweep` is not scoped.** The research
     runner drops the card but leaves the follow and researcher termhub sessions alive (the golden
     path kills them). `pa e2e --sweep` acts on every open e2e card, so during parallel reviews it
@@ -1043,6 +1055,8 @@ not in the Map is not done, and a new one gets added there first.
     updated in the last 90 min (the longest hop timeout), or a finished job or jobless card younger
     than 15 min. It lists what it left. `--sweep --marker e2e-<uuid>` cleans that one run now.
     Unit-tested; not run on the live stack, because reviewers were running there.
+    Research re-review (`dev-tools:r0003`): verified live. `--sweep --marker` killed the follow and
+    researcher sessions and dropped card #6778. Another reviewer's live run was left alone.
   - [ ] **8.4.14 deepseek-pr: the tool call takes 6.7 s (target 1 s excluding model time).** Card at
     19:56:39.0, compose's model call ended 19:56:44.74 (2954 ms), PA "dispatched" 19:56:45.74: about
     2.8 s before compose and 1.0 s of submit, so ≈3.7 s without the model. Measured on `c0c2a3e`,
@@ -1411,6 +1425,28 @@ not in the Map is not done, and a new one gets added there first.
     done" from its own poll, which the push hurries to `PA_FACTORY_ACTIVE_POLL_SECONDS` (5 s),
     not from the push. (this commit: `fix(software-factory): push a job's end with its last
     delivery`)
+  - [ ] **8.4.45 research: the factory submit stalls ~9 s after the job is written.** In the
+    research re-review, `factory_start`'s submit lap was 10864 ms. The factory wrote the job at
+    23:34:13.697 (`created_at`), 2.2 s into the submit. PA logged the factory's answer at
+    23:34:22.388, 8.7 s later. Serve logged `push: dev-tools:r0003=queued` and `dispatch (wake)`
+    only at 23:34:24, about 10 s after the write (about 1 s in the first review). Nothing slow
+    follows `create_task` in `_submit_task` (`request_wake` writes a file). Serve had restarted
+    104 s before, and a tick started with the dispatch. PA's lap also covers its own run-row
+    write and ledger transition, and PA doesn't log the `ms` that serve's `/api/cli` reply
+    carries. Log that `ms` with the lap, then profile whichever side holds the 8.7 s
+    ([acceptance/research.md](acceptance/research.md)).
+  - [ ] **8.4.46 research: the Plan card shows a finished job as running for ~2 min.** The job
+    ended at 23:35:58.56, and serve pushed `done` at 23:35:59. Build's shot at 23:36:27 showed it
+    done. Plan's shot at 23:36:16 still read "job dev-tools:r0003 · in_progress / step 63
+    researcher · running", because the card chain reads the run row. PA ended the row ("factory
+    runs updated … ended: 1") at 23:38:04.02, 125.5 s after the job. The first review measured
+    5.9 s for this, and 8.4.44 says a push hurries PA's next poll to 5 s. Make the card follow the
+    pushed state, or make the push's hurry reach the run-row pass, and time it in the e2e (8.4.10).
+  - [ ] **8.4.47 research: the Ask shot never gets ready.** Headless, `/talk`'s `#chat-log` stays
+    "loading…" (the page shows "Tap once to enable Jarvis"). So the shot always waits its full
+    20 s, is marked `ready: false`, and shows the idle Talk page. Ask is checked only at the tool
+    level (`factory_job`). Either give the Ask shot a signal that the headless page can reach, or
+    drop the shot and say that the tool check is the Ask view.
 - [ ] **8.5 Architecture map review.** A full pass over `architecture.json` (the `/architecture`
   page) against the finished system: every component, process, port, table, tool, workflow and
   storage location as it now runs on both stacks (jarvisd, ptyd, native factory, SQLite,
