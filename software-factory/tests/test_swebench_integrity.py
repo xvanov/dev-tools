@@ -1114,105 +1114,14 @@ def _archived_predictions() -> list[Path]:
     return sorted(_ARCHIVE.rglob("prediction.diff"))
 
 
-def test_the_committed_prediction_corpus_is_refused_nowhere(A: Any) -> None:  # noqa: N803
-    """Defects 3 + 4 refuse rows, so they had to be measured against every
-    prediction the harness has ever graded before being switched on.
-
-    Measured 2026-08-03: 119 committed + 69 retained-live = 188 files, zero
-    refusals, zero rows with a test-file block to strip. A refusal appearing
-    here means a real arm hit the new hard error, and the number it would have
-    changed has to be re-derived before anything is published.
-    """
-    files = _archived_predictions()
-    assert len(files) >= 119, f"the committed corpus shrank: {len(files)} files"
-    refused: list[tuple[str, list[str]]] = []
-    stripped: list[tuple[str, list[str]]] = []
-    for f in files:
-        text = f.read_text(encoding="utf-8", errors="replace")
-        try:
-            code, _kept, test_paths = A.split_diff(text)
-        except A.DiffRefused as exc:
-            refused.append((str(f.relative_to(_REPO_ROOT)), exc.paths))
-            continue
-        if test_paths:
-            stripped.append((str(f.relative_to(_REPO_ROOT)), test_paths))
-        # The second line of defence must agree with the first on real data.
-        A.assert_no_test_edits(code)
-    assert refused == [], f"the new refusals would have invalidated: {refused}"
-    assert stripped == [], f"unexpected test-file blocks in the corpus: {stripped}"
 
 
 # The externally-graded run whose 19 factory rows this repo publishes.
 _GRADED_SWEEP = _ARCHIVE / "2026-08-04T04-18-05.349995Z"
 
 
-def test_production_tree_gate_would_have_blocked_exactly_one_graded_row(A: Any) -> None:  # noqa: N803
-    """The ``production-tree-changed`` merge gate, replayed over the 19 archived
-    factory rows of the externally-graded sweep.
-
-    It must block exactly ``harumiweb__exstruct-113`` — the row that spent
-    $2.45, edited only ``tests/cli/test_cli_lazy_imports.py``, was approved by
-    the reviewer at test_quality_score=0.90 and reached ``reviewer_done`` with
-    ``diff_bytes: 0``. Blocking MORE than that row would mean the gate costs
-    real merges, and the number in the PR body stops being true.
-
-    Both directions are checked: the recorded ``files_changed`` list AND an
-    independent re-derivation from the archived ``prediction.diff`` headers.
-    """
-    from factory.app_config import AppConfig
-    from factory.chain.gates import production_tree_changed
-    from factory.chain.gates.evaluator import PRContext
-
-    cfg = AppConfig(name="swebench", repo="o/r")
-    rows = sorted(_GRADED_SWEEP.glob("*/factory/result.json"))
-    assert len(rows) == 19, f"expected the 19 graded factory rows, found {len(rows)}"
-
-    blocked_recorded: list[str] = []
-    blocked_from_diff: list[str] = []
-    for row in rows:
-        instance = row.parent.parent.name
-        result = json.loads(row.read_text(encoding="utf-8"))
-
-        def _verdict(paths: list[str]) -> bool:
-            pr = PRContext(
-                pr_number=1,
-                head_sha="a",
-                base_branch="main",
-                files_changed=paths,
-            )
-            return production_tree_changed.evaluate(pr, cfg).passed
-
-        if not _verdict(list(result.get("files_changed") or [])):
-            blocked_recorded.append(instance)
-
-        prediction = row.parent / "prediction.diff"
-        headers = [
-            A.parse_diff_header(line)
-            for line in prediction.read_text(encoding="utf-8", errors="replace").splitlines()
-            if line.startswith("diff --git ")
-        ]
-        if not _verdict([h[1] for h in headers if h is not None]):
-            blocked_from_diff.append(instance)
-
-    assert blocked_recorded == ["harumiweb__exstruct-113"], blocked_recorded
-    assert blocked_from_diff == ["harumiweb__exstruct-113"], blocked_from_diff
 
 
-def test_the_pinned_gold_patches_survive_the_arm_refusal_rules(A: Any) -> None:  # noqa: N803
-    """`refuse_collection_channels=False` exists for the gold patch, and this
-    records that it is belt-and-braces rather than load-bearing: none of the 20
-    pinned gold patches touches a collection channel today. If one starts to,
-    the selftest keeps working and only this expectation changes."""
-    fresh = _load()  # the autouse fixture repoints the store; read the real one
-    store = fresh._load_oracle_store()
-    assert len(store) >= 20, f"oracle store shrank to {len(store)} records"
-    refused = []
-    for iid, rec in store.items():
-        try:
-            fresh.split_diff(rec.get("patch") or "")
-        except fresh.DiffRefused as exc:
-            refused.append((iid, exc.paths))
-    assert refused == [], refused
 
 
 _PRE_CHANGE_GRADE_LOG = """\

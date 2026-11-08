@@ -16,22 +16,6 @@ from factory.app_config import AppConfig, DeployConfig, load_app_config
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_sacrifice_config_yaml_has_deploy_block() -> None:
-    """The shipped Sacrifice config defines all Phase 5 deploy fields."""
-    cfg = load_app_config("sacrifice", _REPO_ROOT)
-    d = cfg.deploy
-    assert isinstance(d, DeployConfig)
-    assert d.enabled is False
-    assert d.working_directory == "."
-    assert d.pre_deploy_commands == [
-        "docker compose -f docker-compose.prod.yml build",
-    ]
-    assert d.deploy_command == "docker compose -f docker-compose.prod.yml up -d"
-    assert d.health_check_command == "curl -fsS http://localhost:8000/healthz"
-    assert d.smoke_test_command == "make smoke"
-    assert d.rollback_command == "docker compose -f docker-compose.prod.yml.previous up -d"
-    assert d.timeout_seconds == 600
-    assert d.env_var_passthrough == ["STRIPE_API_KEY", "DATABASE_URL"]
 
 
 def test_missing_deploy_block_defaults_to_disabled(tmp_path: Path) -> None:

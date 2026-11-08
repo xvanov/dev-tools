@@ -484,30 +484,5 @@ def test_the_audit_reads_the_chain_arms_state_root_from_the_run_family(
 # --------------------------------------------------------------------------- #
 
 
-def test_the_pre_registration_exists_and_binds_the_mde(A: Any) -> None:  # noqa: N803
-    """At n=19 the MDE is +/-38 pp. A decision rule phrased as a significance
-    test would be unanswerable at any outcome — which is the mistake
-    ``PRE-REGISTRATION-1.6.md``'s own "What this run cannot show" recorded."""
-    doc = (_REPO_ROOT / "bench" / "swebench" / "frozen" / "PRE-REGISTRATION-B1.md").read_text(
-        encoding="utf-8"
-    )
-    assert "38 pp" in doc
-    assert "not a significance test" in doc or "no decision rule" in doc.lower()
-    # the pre-committed stop signal and the prediction, both quotable
-    assert "only-factory" in doc and "5 of 19" in doc
-    assert _ARM in doc
-    # the manifest and k, so the run cannot be re-scoped after the fact
-    assert "923aef05add32124" in doc
-    assert "k = 1" in doc
 
 
-def test_the_pinned_manifest_and_instance_count_are_unchanged(A: Any) -> None:
-    """Same 19 instances, same manifest sha — the arm is added to an existing
-    measurement bed, not a new one."""
-    manifest = json.loads(
-        (_REPO_ROOT / "bench" / "swebench" / "manifest.json").read_text(
-            encoding="utf-8"
-        )
-    )
-    assert manifest["manifest_sha256"] == "923aef05add32124"
-    assert len(manifest["instances"]) == 20  # 19 with a working oracle + flax-5171

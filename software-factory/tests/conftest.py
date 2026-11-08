@@ -109,50 +109,29 @@ if sys.platform == "win32":
     collect_ignore.append("test_swebench_bare_openhands_arms.py")  # os.geteuid at import; _BENCH
 
 # --------------------------------------------------------------------------- #
-# Data this public snapshot does not ship (any OS). The live factory machine
-# has them; a fresh clone does not (software-factory/.gitignore keeps other
-# apps' configs local, and the bench results stay in xvanov/software-factory).
+# Guard: no default-run test may reach the real `claude` CLI or a paid model.
+# A stub `claude` that only fails goes first on PATH and is FACTORY_CLAUDE_BIN
+# (factory.claude_session.cli.claude_binary honours it before PATH). Set at
+# import so every xdist worker and every subprocess inherits it.
 # --------------------------------------------------------------------------- #
-_SACRIFICE = os.path.join(_FACTORY_ROOT, "apps", "sacrifice", "config.yaml")
-_BENCH_DATA = os.path.join(_FACTORY_ROOT, "bench", "swebench", "manifest.json")
-_D = "tests/test_direction_route_premise_guard.py::"
-_H = "tests/test_sacrifice_acceptance_harness_hint.py::"
-NEEDS_LOCAL_DATA: dict[str, str] = {
-    "tests/test_app_gates_config.py::test_sacrifice_config_yaml_has_gates_section": _SACRIFICE,
-    "tests/test_deploy_app_config.py::test_sacrifice_config_yaml_has_deploy_block": _SACRIFICE,
-    "tests/test_deploy_orchestrator.py::test_real_run_env_var_passthrough_filters_env": _SACRIFICE,
-    "tests/test_deploy_orchestrator.py::test_sacrifice_deploy_config_fields_consumed_by_runner": _SACRIFICE,
-    _D + "test_a_route_that_does_not_exist_is_never_flagged": _SACRIFICE,
-    _D + "test_app_context_docs_do_not_deny_a_route_the_surface_has": _SACRIFICE,
-    _D + "test_direction_126_asks_for_the_password_reset_routes_that_exist": _SACRIFICE,
-    _D + "test_direction_127_is_not_flagged_because_hardening_presupposes_the_route": _SACRIFICE,
-    _D + "test_direction_128_asks_for_the_logout_route_that_exists": _SACRIFICE,
-    _D + "test_directions_129_and_130_are_left_alone": _SACRIFICE,
-    _D + "test_only_title_and_acceptance_count_as_claims": _SACRIFICE,
-    _D + "test_the_denied_routes_really_are_in_the_derived_surface": _SACRIFICE,
-    _D + "test_the_rendered_route_table_carries_the_routes_the_docs_denied": _SACRIFICE,
-    _H + "test_hint_does_not_name_routes_that_do_not_exist": _SACRIFICE,
-    _H + "test_hint_gives_a_known_good_email_domain": _SACRIFICE,
-    _H + "test_hint_gives_a_known_good_password_pattern": _SACRIFICE,
-    _H + "test_hint_names_the_real_auth_routes": _SACRIFICE,
-    _H + "test_hint_required_fields_match_derived_surface": _SACRIFICE,
-    _H + "test_hint_routes_exist_in_derived_surface": _SACRIFICE,
-    "tests/test_webhook_github_signature.py::test_dispatch_issues_direction_label_routes_to_ingester": _SACRIFICE,
-    "tests/test_webhook_github_signature.py::test_dispatch_labeled_with_direction_label_acts": _SACRIFICE,
-    "tests/test_benchmark_record_store.py": _BENCH_DATA,
-    "tests/test_selftest_parallel_and_merge.py::test_pandas_63945_is_ruled_broken_and_out_of_the_denominator": _BENCH_DATA,
-    "tests/test_selftest_parallel_and_merge.py::test_the_working_set_is_eighteen_not_nineteen": _BENCH_DATA,
-    "tests/test_swebench_archive_diagnostics.py::test_check_still_passes_on_the_committed_sweep_2_archive": _BENCH_DATA,
-    "tests/test_swebench_archive_diagnostics.py::test_the_archive_snapshots_the_diagnostic_evidence": _BENCH_DATA,
-    "tests/test_swebench_archive_diagnostics.py::test_the_store_can_be_regenerated_from_an_archive_alone": _BENCH_DATA,
-    "tests/test_swebench_five_arm_report.py::test_the_committed_retracted_archive_carries_its_disclaimer": _BENCH_DATA,
-    "tests/test_swebench_five_arm_report.py::test_the_committed_retracted_archive_now_counts_its_capped_row": _BENCH_DATA,
-    "tests/test_swebench_integrity.py::test_production_tree_gate_would_have_blocked_exactly_one_graded_row": _BENCH_DATA,
-    "tests/test_swebench_integrity.py::test_the_committed_prediction_corpus_is_refused_nowhere": _BENCH_DATA,
-    "tests/test_swebench_integrity.py::test_the_pinned_gold_patches_survive_the_arm_refusal_rules": _BENCH_DATA,
-    "tests/test_swebench_solo_noreview_arm.py::test_the_pinned_manifest_and_instance_count_are_unchanged": _BENCH_DATA,
-    "tests/test_swebench_solo_noreview_arm.py::test_the_pre_registration_exists_and_binds_the_mde": _BENCH_DATA,
-}
+def _install_fake_claude() -> None:
+    import tempfile
+
+    d = tempfile.mkdtemp(prefix="factory-fake-claude-")
+    if sys.platform == "win32":
+        stub = os.path.join(d, "claude.cmd")
+        body = "@echo off\r\necho fake claude: real claude CLI is blocked under pytest 1>&2\r\nexit /b 1\r\n"
+    else:
+        stub = os.path.join(d, "claude")
+        body = "#!/bin/sh\necho 'fake claude: real claude CLI is blocked under pytest' >&2\nexit 1\n"
+    with open(stub, "w", newline="") as fh:
+        fh.write(body)
+    os.chmod(stub, 0o755)
+    os.environ["FACTORY_CLAUDE_BIN"] = stub
+    os.environ["PATH"] = d + os.pathsep + os.environ.get("PATH", "")
+
+
+_install_fake_claude()
 
 
 def _matches(nodeid: str, key: str) -> bool:
@@ -171,11 +150,6 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
                 if _matches(nodeid, key):
                     item.add_marker(pytest.mark.skip(reason=f"POSIX-only on Windows: {why}"))
                     break
-        for key, needed in NEEDS_LOCAL_DATA.items():
-            if _matches(nodeid, key) and not os.path.exists(needed):
-                rel = os.path.relpath(needed, _FACTORY_ROOT).replace("\\", "/")
-                item.add_marker(pytest.mark.skip(reason=f"needs {rel}, which this checkout does not ship"))
-                break
 
 
 @pytest.fixture(autouse=True)
@@ -214,3 +188,17 @@ def _reset_provider_bootstrap_memo() -> None:
     azure_foundry.reset_for_tests()
     yield
     azure_foundry.reset_for_tests()
+
+
+@pytest.fixture(autouse=True)
+def _restore_module_factory_roots() -> Iterator[None]:
+    """Several CLI/webhook test helpers assign ``factory.cli._FACTORY_ROOT`` (or
+    the webhook's) directly. Restore both after every test so a pinned root
+    cannot leak into whatever the same xdist worker runs next."""
+    names = ("factory.cli", "factory.webhook.github")
+    saved = {n: sys.modules[n]._FACTORY_ROOT for n in names if n in sys.modules and hasattr(sys.modules[n], "_FACTORY_ROOT")}
+    yield
+    for n, v in saved.items():
+        mod = sys.modules.get(n)
+        if mod is not None:
+            mod._FACTORY_ROOT = v

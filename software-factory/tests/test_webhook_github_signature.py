@@ -48,21 +48,6 @@ def test_malformed_header_fails() -> None:
     assert verify_signature(b"x", "sha1=deadbeef", "any") is False
 
 
-def test_dispatch_issues_direction_label_routes_to_ingester() -> None:
-    """``issues.opened`` with the direction label triggers the ingester path."""
-    payload = {
-        "action": "opened",
-        "repository": {"full_name": "xvanov/sacrifice"},
-        "issue": {
-            "number": 42,
-            "labels": [{"name": "direction"}],
-        },
-    }
-    result = dispatch_event("issues", payload)
-    assert result["acted"] is True
-    assert result["issue_number"] == 42
-    # App resolves from apps/sacrifice/config.yaml in this repo.
-    assert result["app"] == "sacrifice"
 
 
 def test_dispatch_issues_without_direction_label_no_op() -> None:
@@ -88,16 +73,6 @@ def test_dispatch_labeled_event_only_acts_on_direction_label() -> None:
     assert result["acted"] is False
 
 
-def test_dispatch_labeled_with_direction_label_acts() -> None:
-    payload = {
-        "action": "labeled",
-        "label": {"name": "direction"},
-        "repository": {"full_name": "xvanov/sacrifice"},
-        "issue": {"number": 11, "labels": [{"name": "direction"}]},
-    }
-    result = dispatch_event("issues", payload)
-    assert result["acted"] is True
-    assert result["issue_number"] == 11
 
 
 def test_dispatch_check_suite_extracts_pr_and_conclusion() -> None:

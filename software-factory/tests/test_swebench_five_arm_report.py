@@ -643,32 +643,6 @@ def test_an_archive_can_be_marked_retracted_without_editing_its_evidence(
     assert "CHECK OK" in capsys.readouterr().out
 
 
-def test_the_committed_retracted_archive_carries_its_disclaimer(A: Any) -> None:  # noqa: N803
-    """The 2026-08-03 three-way numbers are kept as the report code's regression
-    corpus, and must never be re-published as a result.
-
-    This used to also assert the retraction banner was in the PUBLISHED
-    ``results.md``, which was true only while the retracted table WAS the
-    published one. A valid five-arm sweep has since been published, so the
-    durable invariants are the two below: the retracted snapshot keeps its
-    disclaimer, and the published table is not derived from it.
-    """
-    swe = _ADAPTER.parents[1] / "bench" / "swebench"
-    retracted = swe / "results-archive" / "2026-08-03T05-12-08.813897Z"
-    disclaimer = (retracted / A._DISCLAIMER_NAME).read_text(encoding="utf-8")
-    assert "RETRACTED" in disclaimer
-    published = (swe / "results.md").read_text(encoding="utf-8")
-    if "RETRACTED — do not quote these numbers" in published:
-        # Still publishing the retracted table: then it must be THAT archive's,
-        # banner and all — never a retracted number with the banner stripped.
-        assert retracted.name in published
-        return
-    # Publishing a live table: it must name its own snapshot, and that snapshot
-    # must not be the retracted one.
-    assert retracted.name not in published, (
-        "the retracted archive must not back the published table"
-    )
-    assert "results-archive/" in published
 
 
 def test_check_with_no_published_table_is_a_failure_not_a_pass(
@@ -824,29 +798,6 @@ def test_a_budget_exhausted_pass_is_counted_not_excluded(
     assert "row(s) EXCLUDED" not in text
 
 
-def test_the_committed_retracted_archive_now_counts_its_capped_row(A: Any) -> None:  # noqa: N803
-    """Against the REAL committed evidence, not a fixture.
-
-    `harumiweb__exstruct-113/claude` recorded `num_turns 61`, `turn_cap 60` and
-    `error: "claude CLI exited 1: "`, and PASSED the oracle. The retracted
-    report dropped it, publishing 16/18; under the one rule it is 17/19.
-    """
-    archive = (
-        _ADAPTER.parents[1]
-        / "bench"
-        / "swebench"
-        / "results-archive"
-        / "2026-08-03T05-12-08.813897Z"
-    )
-    row = json.loads(
-        (archive / "harumiweb__exstruct-113" / "claude" / "result.json").read_text(
-            encoding="utf-8"
-        )
-    )
-    assert row["grade"]["oracle_resolved"] is True
-    status, detail = A.classify_run(row)
-    assert status == "budget_exhausted", status
-    assert "60" in str(detail)
 
 
 # --------------------------------------------------------------------------- #

@@ -345,7 +345,7 @@ def test_add_existing_clone_writes_valid_config(factory_root: Path) -> None:
     assert cfg.pipeline_default == "chain"
     assert (
         "max"
-        not in (yaml.safe_load((factory_root / "apps/widget/config.yaml").read_text()))["delivery"]
+        not in (yaml.safe_load((factory_root / "apps/widget/config.yaml").read_text(encoding="utf-8")))["delivery"]
     )
     assert cfg.gates.test_command == "uv run --extra dev pytest -q"
     assert cfg.deploy.enabled is False
@@ -358,7 +358,7 @@ def test_missing_gates_are_empty_and_commented(factory_root: Path, tmp_path: Pat
     res = add_app(root=factory_root, repo="o/bare", path=repo, runner=_no_systemd)
     assert res["missing_gates"] == list(GATE_KEYS)
     assert all(v == "" for v in res["gates"].values())
-    text = (factory_root / "apps/bare/config.yaml").read_text()
+    text = (factory_root / "apps/bare/config.yaml").read_text(encoding="utf-8")
     assert text.count("NOT DETECTED") == 4
     cfg = load_app_config("bare", factory_root)
     assert not cfg.gates.test_command  # falsy == "not configured"
@@ -369,14 +369,14 @@ def test_refuses_existing_config_without_force(factory_root: Path, tmp_path: Pat
     repo = _git_repo(tmp_path / "w", PY_UV, "https://github.com/o/w.git")
     add_app(root=factory_root, repo="o/w", path=repo, runner=_no_systemd)
     cfg_path = factory_root / "apps/w/config.yaml"
-    cfg_path.write_text(cfg_path.read_text() + "# hand edit\n")
+    cfg_path.write_text(cfg_path.read_text(encoding="utf-8") + "# hand edit\n")
     with pytest.raises(AppAddError) as exc:
         add_app(root=factory_root, repo="o/w", path=repo, runner=_no_systemd)
     assert exc.value.code == "app_exists"
-    assert cfg_path.read_text().endswith("# hand edit\n")  # untouched
+    assert cfg_path.read_text(encoding="utf-8").endswith("# hand edit\n")  # untouched
 
     add_app(root=factory_root, repo="o/w", path=repo, force=True, runner=_no_systemd)
-    assert "# hand edit" not in cfg_path.read_text()
+    assert "# hand edit" not in cfg_path.read_text(encoding="utf-8")
 
 
 def test_refuses_repo_registered_under_another_name(factory_root: Path, tmp_path: Path) -> None:
@@ -629,7 +629,7 @@ def test_set_edits_in_place_and_keeps_comments(factory_root: Path) -> None:
     assert res["pipeline_default"] == "solo"
     assert res["changed"] == ["delivery.default", "pipeline_default"]
     assert res["comments_preserved"] is True
-    text = path.read_text()
+    text = path.read_text(encoding="utf-8")
     assert "# Hand-written header — must survive." in text
     assert "# why draft: new repo" in text
     assert "  default: auto_merge  # keep me" in text
@@ -646,8 +646,8 @@ def test_set_edits_in_place_and_keeps_comments(factory_root: Path) -> None:
 def test_set_replaces_existing_pipeline_line(factory_root: Path) -> None:
     path = _app(factory_root, HAND_WRITTEN + "pipeline_default: chain  # app default\n")
     set_app(root=factory_root, app="w", pipeline_default="auto")
-    assert "pipeline_default: auto  # app default" in path.read_text()
-    assert path.read_text().count("pipeline_default") == 1
+    assert "pipeline_default: auto  # app default" in path.read_text(encoding="utf-8")
+    assert path.read_text(encoding="utf-8").count("pipeline_default") == 1
 
 
 def test_set_adds_delivery_block_to_a_legacy_app(factory_root: Path) -> None:
@@ -655,7 +655,7 @@ def test_set_adds_delivery_block_to_a_legacy_app(factory_root: Path) -> None:
     assert load_app_config("w", factory_root).delivery.default.value == "auto_merge"
     res = set_app(root=factory_root, app="w", delivery_default="pr")
     assert res["comments_preserved"] is True
-    assert "# trailing comment" in path.read_text()
+    assert "# trailing comment" in path.read_text(encoding="utf-8")
     assert load_app_config("w", factory_root).delivery.default.value == "pr"
 
 
@@ -665,7 +665,7 @@ def test_set_inserts_default_into_a_block_without_one(factory_root: Path) -> Non
     res = set_app(root=factory_root, app="w", delivery_default="branch")
     assert res["comments_preserved"] is True
     assert load_app_config("w", factory_root).delivery.default.value == "branch"
-    assert "# tbd" in path.read_text()
+    assert "# tbd" in path.read_text(encoding="utf-8")
 
 
 def test_set_falls_back_to_redump_for_flow_style(factory_root: Path) -> None:
@@ -673,14 +673,14 @@ def test_set_falls_back_to_redump_for_flow_style(factory_root: Path) -> None:
     res = set_app(root=factory_root, app="w", delivery_default="none")
     assert res["comments_preserved"] is False
     assert load_app_config("w", factory_root).delivery.default.value == "none"
-    assert yaml.safe_load(path.read_text())["repo"] == "o/w"
+    assert yaml.safe_load(path.read_text(encoding="utf-8"))["repo"] == "o/w"
 
 
 def test_set_noop_reports_nothing_changed(factory_root: Path) -> None:
     path = _app(factory_root, HAND_WRITTEN)
     res = set_app(root=factory_root, app="w", delivery_default="draft_pr")
     assert res["changed"] == []
-    assert path.read_text() == HAND_WRITTEN
+    assert path.read_text(encoding="utf-8") == HAND_WRITTEN
 
 
 @pytest.mark.parametrize(
@@ -698,7 +698,7 @@ def test_set_refusals_write_nothing(factory_root: Path, kwargs: dict, code: str)
     with pytest.raises(AppAddError) as exc:
         set_app(root=factory_root, **kwargs)
     assert exc.value.code == code
-    assert path.read_text() == HAND_WRITTEN
+    assert path.read_text(encoding="utf-8") == HAND_WRITTEN
 
 
 def test_set_refuses_a_config_that_still_has_delivery_max(factory_root: Path) -> None:
@@ -708,7 +708,7 @@ def test_set_refuses_a_config_that_still_has_delivery_max(factory_root: Path) ->
         set_app(root=factory_root, app="w", delivery_default="branch")
     assert exc.value.code == "invalid_config"
     assert "delivery.max" in exc.value.message
-    assert path.read_text() == text
+    assert path.read_text(encoding="utf-8") == text
 
 
 def test_cli_set_json(cli, factory_root: Path) -> None:

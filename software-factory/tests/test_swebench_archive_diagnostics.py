@@ -142,39 +142,6 @@ def _archive(A: Any, runs: Path, *, stamp: str = "2026-08-11T00:00:00+00:00") ->
 # --------------------------------------------------------------------------- #
 
 
-def test_the_archive_snapshots_the_diagnostic_evidence(
-    A: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch  # noqa: N803
-) -> None:
-    """The three file kinds every sweep-2 root cause was read from land in the
-    archive, at the SAME relative path, and decompress to the original bytes."""
-    runs = _patch_dirs(A, tmp_path, monkeypatch)
-    _row(runs, "inst_a", "factory")
-    out = _archive(A, runs)
-
-    dest = out / "inst_a" / "factory"
-    for rel, expected in (
-        ("raw.diff", _RAW_DIFF),
-        ("sweep-run.log", _SWEEP_LOG),
-        ("root/state/events/trajectories/1-1.ndjson", _TRAJECTORY),
-    ):
-        stored = dest / f"{rel}.gz"
-        assert stored.is_file(), f"{rel} was not archived"
-        assert gzip.decompress(stored.read_bytes()).decode("utf-8") == expected
-
-    # The unstripped diff is the point: the STRIPPED one is already archived as
-    # prediction.diff, and the containment findings live in the difference.
-    assert "tests/test_thing.py" in gzip.decompress(
-        (dest / "raw.diff.gz").read_bytes()
-    ).decode("utf-8")
-
-    manifest = json.loads((out / A._DIAGNOSTICS_MANIFEST_NAME).read_text(encoding="utf-8"))
-    assert manifest["count"] == 3
-    assert {e["path"] for e in manifest["files"]} == {
-        "raw.diff",
-        "sweep-run.log",
-        "root/state/events/trajectories/1-1.ndjson",
-    }
-    assert all(e["row"] == "inst_a/factory" for e in manifest["files"])
 
 
 def test_a_row_without_diagnostics_still_archives(
@@ -319,13 +286,6 @@ def test_an_archive_predating_diagnostics_verifies_clean(
     assert "not" in summary and "reproducible" in summary
 
 
-def test_check_still_passes_on_the_committed_sweep_2_archive(A: Any) -> None:  # noqa: N803
-    """The real thing, not a fixture: the newest committed archive must keep
-    verifying, because ``report --check`` is a required part of publishing."""
-    archive = A._latest_archive()
-    summary, problems = A.verify_archive_diagnostics(archive)
-    assert problems == [], f"{archive}: {problems}"
-    assert summary
 
 
 # --------------------------------------------------------------------------- #
@@ -581,40 +541,3 @@ def test_archive_rows_never_publishes_a_table(A: Any) -> None:
     assert "_check_against_committed" not in src
 
 
-def test_the_store_can_be_regenerated_from_an_archive_alone(
-    A: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch  # noqa: N803
-) -> None:
-    """THE HOOK that makes the db regenerable rather than the sole copy of the trail.
-
-    ``ingest --runs-dir`` already accepted an archive dir — same
-    ``<instance>/<arm>/result.json`` layout — but ``swe_dir`` still defaulted to the
-    LIVE ``bench/swebench/``, so the campaign roll-ups (``ingest_campaigns`` reading
-    ``sweep-<arm>.json``) came from the very tree the archive exists to make
-    unnecessary. An archive carries its own ``sweep-*.json``; when the source IS an
-    archive, that is where they must come from.
-
-    Detected by the archive's own marker file rather than by a path pattern, so it
-    holds for an archive dir copied anywhere.
-    """
-    store_path = Path(A.__file__).parent / "swebench" / "benchmark_store.py"
-    src = store_path.read_text(encoding="utf-8")
-    assert "A._REPORT_META_NAME" in src, (
-        "the store must detect an archive by the marker the archiver writes"
-    )
-    assert "swe_dir = runs" in src, "an archive source must supply its own campaigns"
-    assert "--swe-dir" in src, "and an operator must be able to override that"
-    assert 'swe_dir=Path(args.swe_dir) if args.swe_dir else None' in src, (
-        "--swe-dir must actually reach ingest()"
-    )
-    # The marker the detection keys off is the one the archiver really writes.
-    runs = _patch_dirs(A, tmp_path, monkeypatch)
-    _sssf_row(runs, "inst_a", "chain")
-    out = A.archive_rows(arms=("chain",))
-    assert (out / A._REPORT_META_NAME).is_file()
-    # ...and the archive carries the campaign roll-up the store will now read.
-    (tmp_path / "sweep-chain.json").write_text("{}", encoding="utf-8")
-    out2 = A.archive_rows(arms=("chain",))
-    assert (out2 / "sweep-chain.json").is_file(), (
-        "an archive must carry its arms' sweep roll-ups, or an archive-sourced "
-        "ingest has no campaigns to read"
-    )

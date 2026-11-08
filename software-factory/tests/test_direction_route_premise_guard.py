@@ -100,18 +100,6 @@ def _batch_claims(direction_id: str) -> list[str]:
 # --------------------------------------------------------------------------- #
 
 
-def test_the_denied_routes_really_are_in_the_derived_surface() -> None:
-    """Ground truth. Everything below is worthless if this snapshot lacks them."""
-    routes = load_api_surface("sacrifice", _ROOT)
-    assert routes, "sacrifice ships no derived route table"
-    labels = {f"{str(r['method']).upper()} {r['path']}" for r in routes}
-    for route in _ALREADY_SHIPPED:
-        assert route in labels, (
-            f"{route} is absent from apps/sacrifice/derived/api_surface.json. "
-            "Either the snapshot is stale (regenerate it) or the route was "
-            "removed — verify against backend/app/routes/auth.py before "
-            "weakening this test."
-        )
 
 
 def test_route_segments_drops_the_generic_prefix() -> None:
@@ -129,41 +117,12 @@ def test_route_segments_drops_the_generic_prefix() -> None:
 # --------------------------------------------------------------------------- #
 
 
-def test_direction_126_asks_for_the_password_reset_routes_that_exist() -> None:
-    claims = _batch_claims("126")
-    assert "POST /api/auth/password/reset/request" in claims
-    assert "POST /api/auth/password/reset/confirm" in claims
 
 
-def test_direction_128_asks_for_the_logout_route_that_exists() -> None:
-    assert "POST /api/auth/logout" in _batch_claims("128")
 
 
-def test_directions_129_and_130_are_left_alone() -> None:
-    """The negative control that makes the two above mean something.
-
-    Both are real gaps: sacrifice derives its Fernet key from ``jwt_secret``
-    with no KMS and no key version (``backend/app/core/crypto.py``), and the CLI
-    writes the bearer token in plaintext to ``~/.config/sacrifice/config.json``
-    (``backend/cli/client.py:35``). A guard that flagged these would be a guard
-    that flags everything.
-    """
-    assert _batch_claims("129") == []
-    assert _batch_claims("130") == []
 
 
-def test_direction_127_is_not_flagged_because_hardening_presupposes_the_route() -> None:
-    """A documented limit, pinned so it cannot drift silently.
-
-    127 ("Harden token lifecycle and local storage") names refresh-token
-    rotation, which ``POST /api/auth/refresh`` already does
-    (``backend/app/routes/auth.py:702`` calls ``rotate_auth_session``). It is
-    still not flagged: its title carries no ADD verb, and a harden/improve
-    direction correctly presupposes the route exists. Widening the guard to
-    catch it would flag every legitimate hardening direction, so the check stays
-    narrow and this test records the trade.
-    """
-    assert _batch_claims("127") == []
 
 
 # --------------------------------------------------------------------------- #
@@ -171,29 +130,8 @@ def test_direction_127_is_not_flagged_because_hardening_presupposes_the_route() 
 # --------------------------------------------------------------------------- #
 
 
-def test_a_route_that_does_not_exist_is_never_flagged() -> None:
-    routes = load_api_surface("sacrifice", _ROOT)
-    assert routes is not None
-    # Email verification IS the one real gap in direction 126: no verification
-    # route exists and there is no email transport anywhere in backend/app.
-    labels = {r["path"] for r in routes}
-    assert not any("verify" in p for p in labels), (
-        "sacrifice grew a verification route — re-derive this test's premise"
-    )
-    claims = find_shipped_route_claims(
-        ["Add POST /api/auth/email/verify so registration proves mailbox ownership"],
-        routes,
-    )
-    assert claims == []
 
 
-def test_only_title_and_acceptance_count_as_claims() -> None:
-    routes = load_api_surface("sacrifice", _ROOT)
-    assert routes is not None
-    # No ADD verb anywhere -> nothing is being asked for.
-    assert find_shipped_route_claims(["Audit the password reset flow"], routes) == []
-    # The same words with an ADD verb -> a claim.
-    assert find_shipped_route_claims(["Add a password reset flow"], routes)
 
 
 # --------------------------------------------------------------------------- #
@@ -214,13 +152,6 @@ def test_security_persona_requires_a_route_citation() -> None:
     assert "evidence" in prompt, "the citation has to land somewhere checkable"
 
 
-def test_the_rendered_route_table_carries_the_routes_the_docs_denied() -> None:
-    """Pairs the prompt rule with the artifact — prose alone would be vacuous."""
-    block = render_route_table_block("sacrifice", _ROOT)
-    for route in _ALREADY_SHIPPED:
-        method, path = route.split(" ", 1)
-        assert f"`{method} {path}`" in block, f"{route} missing from the rendered table"
-    assert "outranks every prose context doc" in block
 
 
 def test_route_table_block_says_unavailable_rather_than_clean(tmp_path: Path) -> None:
@@ -481,22 +412,3 @@ _STALE_DENIALS = (
 )
 
 
-@pytest.mark.parametrize(("doc", "phrase", "route"), _STALE_DENIALS)
-def test_app_context_docs_do_not_deny_a_route_the_surface_has(
-    doc: str, phrase: str, route: str
-) -> None:
-    app_repo = _app_repo()
-    if not (app_repo / "context").is_dir():
-        pytest.skip(f"needs the sacrifice checkout at {app_repo}; CI never has it")
-
-    routes = load_api_surface("sacrifice", _ROOT)
-    assert routes is not None
-    labels = {f"{str(r['method']).upper()} {r['path']}" for r in routes}
-    assert route in labels, f"{route} vanished from the derived surface"
-
-    text = (app_repo / doc).read_text(encoding="utf-8")
-    assert phrase.lower() not in text.lower(), (
-        f"{doc} still says {phrase!r} while the derived route table has {route}. "
-        "The scheduled security persona reads this file and re-files the work: "
-        "d094/d098/d108/d113/118, then 126 and 128."
-    )

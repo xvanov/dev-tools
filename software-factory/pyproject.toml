@@ -98,9 +98,14 @@ follow_imports = "silent"
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
-addopts = "-q"
+addopts = "-q -n auto -m \"not slow\""
+markers = [
+  "slow: heavy test, excluded from the default run (run with -m slow)",
+  "flaky_under_load: passes alone, fails under -n auto load; tracked for later",
+]
 
 [tool.coverage.run]
 # Required by python-coverage-comment-action: its container re-reads the
 # .coverage db from a different absolute root, so paths must be relative.
 relative_files = true
+
