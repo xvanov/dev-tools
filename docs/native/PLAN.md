@@ -1447,6 +1447,12 @@ not in the Map is not done, and a new one gets added there first.
     20 s, is marked `ready: false`, and shows the idle Talk page. Ask is checked only at the tool
     level (`factory_job`). Either give the Ask shot a signal that the headless page can reach, or
     drop the shot and say that the tool check is the Ask view.
+- [ ] **8.4.48 factory serve: unresponsive for ~4 min after a restart.** Work stack, 2026-11-08
+  23:51-23:56Z, right after it restarted onto fe23854: the new serve held 7330 and its lease but
+  answered no `/api/cli` call (20-60 s timeouts) and wrote nothing to serve.log until its first
+  interval tick ended. Suspect: fe23854's end-of-job GitHub confirm run for every finished job at
+  start, on the watch thread, holding what the API needs. Serve must answer within its warm budget
+  from start; confirm only jobs that ended since the last push, off the API path.
 - [ ] **8.5 Architecture map review.** A full pass over `architecture.json` (the `/architecture`
   page) against the finished system: every component, process, port, table, tool, workflow and
   storage location as it now runs on both stacks (jarvisd, ptyd, native factory, SQLite,
