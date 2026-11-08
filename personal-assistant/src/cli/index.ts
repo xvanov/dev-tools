@@ -113,6 +113,7 @@ const HELP = `pa — your context layer
     pa help routine                 every routine verb
 
   Plumbing
+    pa version                      the commit the live build serves: the dashboard's, else this checkout's
     pa login                        check the Microsoft 365 connector and record who you are
     pa sync [--source s]            force an ingest pass
     pa distill [--limit n]          force a distillation pass
@@ -1803,6 +1804,7 @@ Object.assign(commands, require('./routine.ts').make(out, fail));
 Object.assign(commands, require('./task.ts').make(out, fail));
 Object.assign(commands, require('./e2e.ts').make(out, fail));
 Object.assign(commands, require('./audit.ts').make(out, fail));
+Object.assign(commands, require('./version.ts').make(out, fail));
 
 // `pa help <topic>`: each module exports its own HELP. Required by a computed
 // path, so test/cliHelp.test.js loads every one (requiresResolve.test.js sees
