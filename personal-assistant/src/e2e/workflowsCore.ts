@@ -15,6 +15,9 @@
 //   summary({...})                       the JSON summary written next to the evidence
 //   wav(pcm, rate)                       raw 16-bit mono PCM -> a WAV file (TTS output -> transcribe input)
 //   prFacts / prReady / reviewFixChecks  review-fix: its PR before and after the job, held to the outcome
+//   teamsMarker / teamsPhrase            teams-ask: what you type into the test chat (the run sends nothing)
+//   ownerIds / testChatChecks            teams-ask: the test chat is stored and only you are in it
+//   teamsHops / teamsCardChecks          teams-ask: the hops on the rows' own clocks; person, due, link
 //
 // Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
 
@@ -41,8 +44,115 @@ const REAL_RUN: Record<string, { self: boolean; needs: string }> = {
   research: { self: true, needs: 'the factory (claude_session research job)' },
   'deepseek-pr': { self: true, needs: 'the factory API runtime with a DeepSeek model (Azure deployment by default)' },
   'review-fix': { self: true, needs: 'an open PR of yours with unresolved review comments: --pr <n> [--repo owner/name] (left open; only the fix is pushed)' },
-  'teams-ask': { self: false, needs: 'a test Teams chat with only you in it: --test-chat <id> (never a colleague)' },
+  'teams-ask': { self: false, needs: 'a test Teams chat with only you in it: --test-chat <id> (your self chat; never a colleague). You type the phrase the run prints; nothing is sent' },
 };
+
+// --- teams-ask: your own message in a test chat ------------------------------------------------
+
+const TEAMS_MARKER_MIN = 40;
+const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+
+/** The run's marker, `e2e-teams-<uuid>`: long enough that no other message in the chat holds it. */
+function teamsMarker(uuid: string): string {
+  const m = `e2e-teams-${uuid}`;
+  if (m.length < TEAMS_MARKER_MIN) throw new Error(`teams-ask marker too short (${m.length} < ${TEAMS_MARKER_MIN})`);
+  return m;
+}
+
+const ymd = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+
+/**
+ * What you type into the test chat: an ask of yourself with an absolute due
+ * date (the next Friday on this machine's calendar, a week out when today is
+ * one) and the marker. `due` is that day, YYYY-MM-DD.
+ */
+function teamsPhrase(marker: string, now: Date | number = Date.now()): { text: string; due: string } {
+  const d = new Date(now);
+  d.setHours(12, 0, 0, 0);
+  d.setDate(d.getDate() + (((5 - d.getDay() + 7) % 7) || 7));
+  const day = `${WEEKDAYS[d.getDay()]} ${d.getDate()} ${MONTHS[d.getMonth()]} ${d.getFullYear()}`;
+  return { text: `Note to self: send the e2e test numbers to the team by ${day}. ${marker}`, due: ymd(d) };
+}
+
+/** Your identities as chat authors are stored: lowercased addresses and `aad:<oid>`. */
+function ownerIds(me: Json | null | undefined, identities: Json[] = []): Set<string> {
+  const out = new Set<string>();
+  if (me?.primary_email) out.add(String(me.primary_email).toLowerCase());
+  for (const i of identities || []) {
+    const v = String(i?.value || '').toLowerCase();
+    if (!v) continue;
+    if (i.kind === 'smtp') out.add(v);
+    else if (i.kind === 'aad_oid') out.add(`aad:${v}`);
+  }
+  return out;
+}
+
+/**
+ * The dry run's word on --test-chat, from the store alone: the chat is there,
+ * it is a chat (not one of Teams' own threads), only you wrote in it, and
+ * only you are in it (your self chat, or a member list of your addresses).
+ * Details carry counts, never who the others are.
+ */
+function testChatChecks(chat: string, { authors = [], head = null, mine, system = false, self = false }: { authors?: Json[]; head?: Json | null; mine: Set<string>; system?: boolean; self?: boolean }): Check[] {
+  const total = authors.reduce((n: number, a: Json) => n + Number(a.n || 0), 0);
+  const others = authors.filter((a: Json) => !a.author || !mine.has(String(a.author)));
+  const otherMsgs = others.reduce((n: number, a: Json) => n + Number(a.n || 0), 0);
+  const emails: string[] = Array.isArray(head?.raw?.memberEmails) ? head.raw.memberEmails.map((e: unknown) => String(e).toLowerCase()) : [];
+  const strangers = emails.filter((e) => !mine.has(e));
+  const isSelf = self || head?.raw?.chatType === 'self';
+  const chk = (name: string, ok: unknown, detail?: string): Check => ({ view: 'run', check: name, ok: Boolean(ok), ...(detail ? { detail } : {}) });
+  return [
+    chk(`test chat ${chat} is in the store`, total > 0, total ? `${total} message(s)` : 'no message from it is stored: write one there first, or check the id'),
+    chk("test chat is a chat, not one of Teams' own threads", !system || isSelf, system && !isSelf ? 'drafts, mentions and notifications threads are skipped by ingest (8.4.35)' : undefined),
+    chk('only you wrote in it', total > 0 && otherMsgs === 0, otherMsgs ? `${otherMsgs} of ${total} message(s) by ${others.length} other author(s)` : total ? `${total} message(s), all yours` : undefined),
+    chk('only you are in it', isSelf || (emails.length > 0 && strangers.length === 0),
+      isSelf ? 'your self chat' : emails.length ? (strangers.length ? `${strangers.length} other member(s)` : `${emails.length} member address(es), all yours`) : 'no member list stored for it'),
+  ];
+}
+
+const ms = (v: unknown) => (v == null ? null : new Date(v as string).getTime());
+
+/**
+ * The hops, each from the rows' own clocks (Teams' arrival stamp, the row's
+ * storedAt, the commitment's extracted_at) to the next, plus what the run saw:
+ * the card in GET /api/state after its board event, the toast's toasted_at.
+ * A hop not reached is {ms: null, note}.
+ */
+function teamsHops(t: { sent?: unknown; stored?: unknown; storedHow?: string; card?: unknown; board?: number | null; boardNote?: string; toast?: unknown; toastNote?: string }): Measured {
+  const [sent, stored, card, toast] = [ms(t.sent), ms(t.stored), ms(t.card), ms(t.toast)];
+  const out: Measured = {};
+  out.ingest = sent != null && stored != null
+    ? { ms: stored - sent, note: `Teams' arrival stamp to the stored row (${t.storedHow || 'raw.storedAt'}); the cache write follows the arrival, so this is an upper bound` }
+    : { ms: null, note: 'the message was not stored' };
+  out.commitments = stored != null && card != null ? { ms: card - stored, note: 'stored row to the commitment (extracted_at)' } : { ms: null, note: 'no owed_by_me commitment' };
+  out.dashboard = card != null && t.board != null
+    ? { ms: t.board - card, note: t.boardNote || 'extracted_at to GET /api/state holding the card, refetched on its board event' }
+    : { ms: null, note: t.boardNote || 'the card never showed on the board' };
+  out.notify = card != null && toast != null ? { ms: toast - card, note: t.toastNote || 'extracted_at to the toast (toasted_at)' } : { ms: null, note: t.toastNote || 'no toast' };
+  return out;
+}
+
+/**
+ * The rubric on the card as the board reads it (GET /api/commitments/<id>):
+ * person (in your own test chat the asker is you), due (the phrase's day, in
+ * this machine's calendar or UTC, as the model may write either), link (the
+ * Teams deep link to this very message, never the local copy's -1).
+ */
+function teamsCardChecks(card: Json, { item, due, meName }: { item: Json; due: string; meName: string | null }): Check[] {
+  const chk = (name: string, ok: unknown, detail?: string): Check => ({ view: 'card', check: name, ok: Boolean(ok), ...(detail ? { detail } : {}) });
+  const dueAt = card?.due_at ? new Date(card.due_at) : null;
+  const days = dueAt && !Number.isNaN(dueAt.getTime()) ? [ymd(dueAt), dueAt.toISOString().slice(0, 10)] : [];
+  const msgId = String(item?.raw?.messageId ?? String(item?.external_id || '').split('/').pop() ?? '');
+  const url = String(card?.web_url || '');
+  const isYou = Boolean(meName) && String(card?.who || '').trim().toLowerCase() === String(meName).trim().toLowerCase();
+  return [
+    chk('owed_by_me', card?.direction === 'owed_by_me', card?.direction || 'no direction'),
+    chk('person: names who asked (you, in your own test chat)', card?.who && isYou, card?.who ? (isYou ? 'you' : 'someone else') : 'no person on the card'),
+    chk(`due: ${due}`, days.includes(due), dueAt ? `due_at ${dueAt.toISOString()}` : 'no due date'),
+    chk('link: opens this message', msgId && msgId !== '-1' && /^https:\/\/teams\.microsoft\.com\/l\/message\//.test(url) && url.includes(`/${msgId}`), url ? `message ${msgId}` : 'no Teams link'),
+  ];
+}
 
 // --- review-fix: one PR read, before and after the job ----------------------------------------
 
@@ -288,4 +398,4 @@ function ndjson(text: unknown): Json[] {
   }).filter(Boolean) as Json[];
 }
 
-module.exports = { REAL_RUN, PR_QUERY, CI_PENDING, prFacts, prReady, reviewFixChecks, workflows, acceptance, scoreHops, toolCallMs, scoreCost, missingViews, shotChecks, folderName, summary, table, wav, ndjson };
+module.exports = { REAL_RUN, TEAMS_MARKER_MIN, teamsMarker, teamsPhrase, ownerIds, testChatChecks, teamsHops, teamsCardChecks, PR_QUERY, CI_PENDING, prFacts, prReady, reviewFixChecks, workflows, acceptance, scoreHops, toolCallMs, scoreCost, missingViews, shotChecks, folderName, summary, table, wav, ndjson };

@@ -21,6 +21,17 @@ module.exports = {
     assert.strictEqual(await repos.notifications.exists(key), true);
   },
 
+  'byKey: the row with that dedupe key, or null': async ({ repos, assert, uniq }) => {
+    const key = uniq('bykey');
+    assert.strictEqual(await repos.notifications.byKey(key), null);
+    const row = await repos.notifications.insert({ kind: 'new_ask', title: 'T', body: '', url: null, dedupeKey: key, priority: 'normal', delivery: 'push' });
+    const got = await repos.notifications.byKey(key);
+    assert.deepStrictEqual([String(got.id), got.kind, got.priority, got.delivery, got.toasted_at], [String(row.id), 'new_ask', 'normal', 'push', null]);
+    assert.ok(got.created_at instanceof Date);
+    await repos.notifications.markSent(row.id, ['toast'], true);
+    assert.ok((await repos.notifications.byKey(key)).toasted_at instanceof Date);
+  },
+
   'markSent: channels, and toasted_at only when toasted': async ({ repos, assert }) => {
     const a = await repos.notifications.insert({ kind: 'info', title: 'A', body: '', url: null, dedupeKey: null, priority: 'normal', delivery: 'push' });
     await repos.notifications.markSent(a.id, ['toast', 'chat'], true);

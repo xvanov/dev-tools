@@ -1211,13 +1211,26 @@ not in the Map is not done, and a new one gets added there first.
     both factories tick. Not on xvanov/sacrifice: serve does not tick it, its delivery default is
     auto_merge, and its `main` is red on date-dependent tests. Fixing sacrifice's tests is out of
     scope for this plan.
-  - [ ] **8.4.30 teams-ask: no real-run driver, and `--test-chat` is ignored.** `pa e2e teams-ask
+  - [x] **8.4.30 teams-ask: no real-run driver, and `--test-chat` is ignored.** `pa e2e teams-ask
     --test-chat <id>` exits "not automated yet" (`RUNNERS` has no teams-ask; `o.testChat` is read
     and never used). The dry run doesn't look at the chat either. Nothing in the PA or the e2e can
     send a Teams message, so the input has to be the owner's own. Add a runner that checks the
     chat (it exists, you are its only member), prints a marker phrase to type into the self
     chat, waits for that message, and times each hop from its arrival
     ([acceptance/teams-ask.md](acceptance/teams-ask.md)).
+    Done. The dry run and the real run check `--test-chat` in the store: it holds messages, it is
+    not one of Teams' `48:` threads, every author is you, and it is your self chat or its member
+    list is all your addresses (counts only, never who). The real run sends nothing: it prints
+    "Note to self: send the e2e test numbers to the team by <next Friday, spelled out>.
+    e2e-teams-<uuid>" (46-character marker) to type into the chat, then follows that one
+    message: stored (Teams' arrival stamp to `raw.storedAt`), distilled (`extracted_at` of the
+    open owed_by_me card), on the board (its board event, then `GET /api/state` holding it, as
+    the page does), toasted (`toasted_at` of its `new_ask` notification). It checks person (you,
+    in your own chat), the due day and the link to that message id, screenshots the board, and
+    drops the card. Waits: `--timeout teams=600` for the message, `ask=600` for the card; each
+    ends with what to look at. On a scratch copy of today's store the self chat passes all four
+    checks, the drafts thread and a shared chat fail them (2-5 ms each). Not run live. (this
+    commit: `fix(personal-assistant): drive a real teams-ask run`)
   - [x] **8.4.31 teams-ask: a new ask never toasts.** Nothing calls `notify()` when distill
     inserts a commitment (`distill/index.ts`, `worker.ts`), and the interrupt budget has no kind
     for one. No notification kind in the table is for a new commitment, and INBOX.md is built
@@ -1299,8 +1312,7 @@ not in the Map is not done, and a new one gets added there first.
     system prompt, sorted by name, so a pass reads them from `claude -p`'s cache. Two calls on
     the served model, real candidates, a short chat ask: $0.024 writing the cache, $0.0046
     reading it (5.1k input tokens each), against a mean of $0.020 today; both found the ask.
-    The prompt version is unchanged (same text, new place). (this commit:
-    `fix(personal-assistant): cache the distiller's project list`)
+    The prompt version is unchanged (same text, new place). (0a26da2)
   - [ ] **8.4.38 whats-on: the serving generation still blocks its event loop 1-3 s a minute.**
     At bd7b768, after 118352f and 0baaaf2, `supervisor.log` shows 15 "event loop blocked" lines
     of 1054-3163 ms from 21:51Z to 22:10Z. Running then: github, remote-sessions, meeting-gate,

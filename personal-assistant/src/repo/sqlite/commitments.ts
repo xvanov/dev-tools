@@ -765,6 +765,11 @@ function create(db: Db) {
       return rows;
     },
 
+    /** Every commitment distilled from one item, folded ones too, oldest first. */
+    async ofItem(itemId: number | string) {
+      return db.rows('select id, direction, status, due_at, extracted_at, superseded_by from commitment where source_item_id = $1 order by id', [itemId]);
+    },
+
     /** Deletes commitments by id. */
     async deleteByIds(list: unknown[]) {
       await db.query('delete from commitment where id in (select value from json_each($1))', [ids(list)]);

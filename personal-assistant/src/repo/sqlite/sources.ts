@@ -472,6 +472,29 @@ function create(db: Db) {
       return rows;
     },
 
+    /** Who wrote in one chat: [{author (lowercased, or null), n}], most messages first. */
+    async chatAuthors(thread: string) {
+      return db.rows(
+        `select lower(author_identity) as author, count(*) as n from source_item
+          where source = 'graph_chat' and thread_external_id = $1
+          group by lower(author_identity) order by n desc, author`,
+        [thread]
+      );
+    },
+
+    /** A chat's first message whose body holds `marker` (never Teams' local copy, id -1), with its distillation, or null. */
+    async chatItemWith(thread: string, marker: string) {
+      return db.one(
+        `select si.id, si.external_id, si.occurred_at, si.fetched_at, si.author_identity, si.raw,
+                d.extracted_at as distilled_at, d.commitments as distilled, d.error as distill_error
+           from source_item si left join distillation d on d.source_item_id = si.id
+          where si.source = 'graph_chat' and si.thread_external_id = $1 and si.external_id not like '%/-1'
+            and instr(si.body_text, $2) > 0
+          order by si.occurred_at, si.id limit 1`,
+        [thread, marker]
+      );
+    },
+
     /** Chat messages by external id: {external_id, occurred_at, author_identity, subject, raw, fetched_at}. */
     async chatMessagesByExternalId(externalIds: unknown[]) {
       return db.rows(

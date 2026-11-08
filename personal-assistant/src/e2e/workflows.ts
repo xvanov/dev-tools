@@ -16,7 +16,8 @@
 //   research     a research card -> factory_start {kind: research} -> report.md
 //   deepseek-pr  the E4 golden path on the API runtime (Azure DeepSeek by default), delivery pr
 //   review-fix   factory_continue {pr} -> the same PR gets fast-forward commits, no new PR, CI green (--pr <n> [--repo])
-//   teams-ask    dry run; a real run needs --test-chat <id> (a chat with only you in it)
+//   teams-ask    --test-chat <id> (a chat with only you in it): you type the phrase it prints; it follows that
+//                message stored -> distilled -> card on the board -> new_ask toast, checks person/due/link, drops the card
 //
 // Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
 
@@ -52,6 +53,7 @@ const DEFAULT_API_MODEL = 'azure/deepseek-v4-pro';
 function deps0(): Deps {
   const d = G.defaultDeps();
   const factory = require('../dispatch/factory.ts');
+  const repo = require('../repo');
   return {
     ...d,
     arch: () => require('../dashboard/architecture.json'),
@@ -89,6 +91,15 @@ function deps0(): Deps {
       fs.writeFileSync(file, text);
     },
     root: () => path.join(d.config.dataDir, 'e2e'),
+    // teams-ask: the store's view of the test chat and of the one message the run follows.
+    chatAuthors: (chat: string) => repo.sources.chatAuthors(chat),
+    chatHead: async (chat: string) => (await repo.sources.chatHeads([chat]))[0] || null,
+    owner: async () => ({ me: await repo.people.meRow(), identities: await repo.people.myIdentities() }),
+    chatItemWith: (chat: string, marker: string) => repo.sources.chatItemWith(chat, marker),
+    itemCommitments: (itemId: number | string) => repo.commitments.ofItem(itemId),
+    notificationByKey: (key: string) => repo.notifications.byKey(key),
+    // What you must do now: stderr, unprefixed, so --json's stdout stays the summary.
+    say: (text: string) => process.stderr.write(`${text}\n`),
   };
 }
 
@@ -174,7 +185,11 @@ async function dry(id: string, acc: Acceptance, o: Options, deps: Deps): Promise
     const teams = sources.filter((s) => /teams|graph_chat/i.test(JSON.stringify([s.source, s.name, s.id])));
     checks.push(check('run', 'a Teams source is ingesting', teams.length && teams.some((s) => !s.error && !s.failing), st.ok ? `${teams.length} Teams source(s)` : st.error));
     checks.push(check('run', 'board answers (GET /api/state)', st.ok && Array.isArray(st.value?.commitments), st.error));
-    notes.push('a real run needs --test-chat <id>: a Teams chat with only you in it. Never a colleague; nothing is sent to anyone.');
+    if (o.testChat) {
+      const tc = await G.safely(() => testChat(deps, o.testChat));
+      checks.push(...(tc.ok ? tc.value.checks : [check('run', `test chat ${o.testChat} read from the store`, false, tc.error)]));
+      notes.push('the real run prints a phrase for you to type into the test chat and follows that message; it sends nothing');
+    } else notes.push('a real run needs --test-chat <id>: a Teams chat with only you in it (your self chat is 48:notes). Never a colleague; nothing is sent to anyone. Add --test-chat to the dry run to check it.');
   }
   const b = deps.browser();
   notes.push(b ? `screenshots by ${path.basename(b)}` : 'screenshots will be skipped: no headless Chromium found');
@@ -509,6 +524,181 @@ async function reviewFix(acc: Acceptance, o: Options, deps: Deps, folder: string
   }
 }
 
+// ------------------------------------------------------------- teams-ask ----
+
+const TEAMS_POLL_MS = 500;
+/** How long a found card may take to show in GET /api/state, and its toast to land. */
+const TEAMS_BOARD_WAIT_MS = 10_000;
+const TEAMS_TOAST_WAIT_MS = 15_000;
+
+/** The test chat as the store has it, held to W.testChatChecks, and you. */
+async function testChat(deps: Deps, chat: string): Promise<{ checks: Check[]; me: Json | null }> {
+  const T = require('../ingest/teamsThreads.ts');
+  const [authors, head, owner] = await Promise.all([deps.chatAuthors(chat), deps.chatHead(chat), deps.owner()]);
+  const mine = W.ownerIds(owner?.me, owner?.identities || []);
+  return { me: owner?.me || null, checks: W.testChatChecks(chat, { authors, head, mine, system: T.isSystemThread(chat), self: T.isSelfChat(chat) }) };
+}
+
+const onBoard = (st: Json, id: number | string) => [...(st?.board?.onMe || []), ...(st?.board?.waiting || [])].some((c: Json) => String(c.id) === String(id));
+
+function payloadOf(e: Json): Json | null {
+  if (typeof e?.payload !== 'string') return e?.payload || null;
+  try { return JSON.parse(e.payload); } catch { return null; }
+}
+
+// The Map's teams-ask, for real, sending nothing: the PA has no Teams send
+// path, and automation typing into the client could land in whichever chat
+// has focus. So the run prints a phrase (an ask of yourself, with a date and
+// a marker no other message holds) for you to type into the test chat, then
+// follows that one message: stored by the cache reader, distilled to an
+// owed_by_me card, the card on the board the way the page gets it (its board
+// event, then GET /api/state), the new_ask toast. Hops are timed on the rows'
+// own clocks. The card is dropped afterwards; your message stays in Teams.
+async function teamsAsk(acc: Acceptance, o: Options, deps: Deps, folder: string): Promise<Partial<RunOut>> {
+  const chat: string | null = o.testChat;
+  if (!chat) throw new Error('a real teams-ask run needs --test-chat <id>: a Teams chat with only you in it (your self chat is 48:notes)');
+  const checks: Check[] = [];
+  const notes: string[] = ['cost is the PA spend delta from the phrase to the end; another pass spending meanwhile shows here too'];
+  const cleanup: string[] = [];
+  const transcripts: string[] = [];
+  const tc = await testChat(deps, chat);
+  checks.push(...tc.checks);
+  const bad = tc.checks.filter((c) => !c.ok);
+  if (bad.length) {
+    throw Object.assign(new Error(`--test-chat ${chat} is not a test chat with only you in it: ${bad.map((c) => `${c.check}${c.detail ? ` (${c.detail})` : ''}`).join('; ')}`), {
+      partial: { checks, cleanup: ['nothing was created'] },
+    });
+  }
+  const marker = W.teamsMarker(deps.uuid());
+  const phrase = W.teamsPhrase(marker, deps.now());
+  const waitS: number = o.timeouts.teams;
+  const askS: number = o.timeouts.ask;
+  transcripts.push(deps.writeEvidence(folder, 'phrase.txt', `${phrase.text}\n`));
+  const spentBefore = await G.safely(() => deps.spendToday());
+
+  // The page's path to a new card: its board event, then GET /api/state.
+  const board = new Map<string, number>();
+  const fetching: Promise<unknown>[] = [];
+  let events = 0;
+  const unsubscribe: () => void = deps.subscribe(`${deps.paBase}/api/events?topics=board`, (e: Json) => {
+    const p = payloadOf(e);
+    if (e?.topic !== 'board' || p?.table !== 'commitment' || p?.op !== 'insert' || p.id == null) return;
+    events++;
+    const id = String(p.id);
+    fetching.push(G.safely(() => deps.getJson(`${deps.paBase}/api/state`)).then((st: Json) => {
+      if (st.ok && !board.has(id) && onBoard(st.value, id)) board.set(id, deps.now());
+    }));
+  });
+  let item: Json | null = null;
+  let rows: Json[] = [];
+  try {
+    deps.say([
+      '',
+      `teams-ask: type this into the test chat (${chat}) in Teams, as one message, exactly as written:`,
+      '',
+      `    ${phrase.text}`,
+      '',
+      `Also in ${path.join(folder, 'phrase.txt')}. This run sends nothing; it waits up to ${waitS} s for the message to be stored.`,
+      '',
+    ].join('\n'));
+    const until = deps.now() + waitS * 1000;
+    while (!(item = await deps.chatItemWith(chat, marker))) {
+      if (deps.now() > until) {
+        throw new Error(`no message with the marker reached the store in ${waitS} s. Type the phrase into the test chat (${chat}) with Teams running and its cache reader resident (pa doctor shows the teams-cache source), or allow longer with --timeout teams=<s>. Nothing was created.`);
+      }
+      await deps.sleep(TEAMS_POLL_MS);
+    }
+    const it: Json = item;
+    deps.log(`stored as item #${it.id}`);
+
+    const askUntil = deps.now() + askS * 1000;
+    let card: Json | null = null;
+    for (;;) {
+      const cur: Json = (await deps.chatItemWith(chat, marker)) || it;
+      if (cur.distill_error) throw new Error(`item #${it.id} failed to distill: ${String(cur.distill_error).slice(0, 200)}`);
+      if (cur.distilled_at) {
+        rows = await deps.itemCommitments(it.id);
+        card = rows.find((r) => r.direction === 'owed_by_me' && r.status === 'open' && r.superseded_by == null) || null;
+        if (card) break;
+        const folded = rows.find((r) => r.direction === 'owed_by_me' && r.superseded_by != null);
+        if (folded) throw new Error(`item #${it.id} was distilled, but its ask was folded into card #${folded.superseded_by} (dedupe): no new card to time`);
+        throw new Error(`item #${it.id} was distilled with ${rows.length} commitment(s) and no open owed_by_me one (the policy or the model read no ask in it)`);
+      }
+      if (deps.now() > askUntil) throw new Error(`item #${it.id} was stored but not distilled in ${askS} s: is the worker's distill pass running (pa doctor)? Allow longer with --timeout ask=<s>`);
+      await deps.sleep(TEAMS_POLL_MS);
+    }
+    const cardId = String(card.id);
+    deps.log(`card #${cardId}`);
+
+    const tCard = deps.now();
+    while (!board.has(cardId) && deps.now() - tCard < TEAMS_BOARD_WAIT_MS) await deps.sleep(100);
+    await Promise.all(fetching);
+    let boardAt: number | null = board.get(cardId) ?? null;
+    let boardNote: string | undefined;
+    if (boardAt == null) {
+      const st = await G.safely(() => deps.getJson(`${deps.paBase}/api/state`));
+      if (st.ok && onBoard(st.value, cardId)) {
+        boardAt = deps.now();
+        boardNote = `no board event for the card reached the run (${events} commitment insert(s) seen): timed by the run's own GET /api/state, an upper bound`;
+      } else boardNote = st.ok ? `GET /api/state does not hold card #${cardId}` : `GET /api/state: ${st.error}`;
+    }
+
+    const key = `new-ask:${it.id}`;
+    let n: Json | null = null;
+    const toastUntil = deps.now() + TEAMS_TOAST_WAIT_MS;
+    for (;;) {
+      n = await deps.notificationByKey(key);
+      if ((n && (n.toasted_at || n.delivery !== 'push')) || deps.now() > toastUntil) break;
+      await deps.sleep(250);
+    }
+    const toastNote = !n
+      ? 'no new_ask notification: the ask was under the confidence floor or not fresh (src/notify/newAsk.ts)'
+      : n.toasted_at ? `extracted_at to toasted_at (delivery ${n.delivery}, priority ${n.priority})`
+        : n.delivery !== 'push' ? `held, delivery ${n.delivery}: quiet hours or the interrupt budget (PA_QUIET_HOURS, PA_PUSH_BUDGET); run it inside working hours`
+          : 'pushed, but no toast channel on this machine';
+    checks.push(check('dashboard', `card #${cardId} on the board`, boardAt != null, boardNote));
+    checks.push(check('notify', 'a new_ask notification for the item', n && n.kind === 'new_ask', n ? `${n.kind}, ${n.delivery}` : 'none'));
+    checks.push(check('notify', 'toasted', n?.toasted_at, toastNote));
+
+    const detail = await G.safely(() => deps.getJson(`${deps.paBase}/api/commitments/${cardId}`));
+    if (detail.ok && detail.value && !detail.value.error) checks.push(...W.teamsCardChecks(detail.value, { item: it, due: phrase.due, meName: tc.me?.display_name || null }));
+    else checks.push(check('card', `GET /api/commitments/${cardId}`, false, detail.ok ? detail.value?.error : detail.error));
+
+    const storedAt = it.raw?.storedAt || null;
+    const measured = W.teamsHops({
+      sent: it.occurred_at, stored: storedAt || it.fetched_at, storedHow: storedAt ? 'raw.storedAt' : 'fetched_at: the row has no storedAt',
+      card: card.extracted_at, board: boardAt, boardNote, toast: n?.toasted_at || null, toastNote,
+    });
+    transcripts.push(deps.writeEvidence(folder, 'transcripts/teams-ask.txt', [
+      `phrase: ${phrase.text}`, `expected due: ${phrase.due}`, `item #${it.id} sent ${new Date(it.occurred_at).toISOString()}, stored ${storedAt || `${new Date(it.fetched_at).toISOString()} (fetched_at)`}`,
+      `card #${cardId} extracted ${new Date(card.extracted_at).toISOString()}; on the board ${boardAt == null ? 'never' : new Date(boardAt).toISOString()}`,
+      `notification: ${n ? `${n.kind} ${n.delivery}, toasted ${n.toasted_at ? new Date(n.toasted_at).toISOString() : 'no'}` : 'none'}`,
+    ].join('\n')));
+    // Screenshots now, while the card still exists.
+    const shots = await deps.capture(path.join(folder, 'screenshots'), [{ name: 'run', url: `${deps.paBase}/`, ready: S.readyFor('plan', `#${cardId}`) }]);
+    const spentAfter = await G.safely(() => deps.spendToday());
+    const usd = spentBefore.ok && spentAfter.ok ? Math.max(0, spentAfter.value - spentBefore.value) : null;
+    return {
+      measured, checks, transcripts, notes, cleanup, usd, shots, pages: [],
+      links: { chat, item: it.id, card: cardId, message: detail.ok ? detail.value?.web_url || null : null, board: `${deps.paBase}/` },
+    };
+  } catch (err) {
+    throw Object.assign(err as Error, { partial: { checks, notes, cleanup, transcripts } });
+  } finally {
+    unsubscribe();
+    if (!item) cleanup.push('nothing was created');
+    else if (o.keep) cleanup.push(`kept (--keep): item #${item.id}'s cards`);
+    else {
+      if (!rows.length) rows = await G.safely(() => deps.itemCommitments(item?.id)).then((r: Json) => (r.ok ? r.value : []));
+      for (const r of rows.filter((x: Json) => x.status === 'open' && x.superseded_by == null)) {
+        const c = await G.safely(() => deps.closeCard(r.id));
+        cleanup.push(c.ok ? `card #${r.id} dropped` : `card #${r.id} NOT dropped: ${c.error}`);
+      }
+      cleanup.push(`your message stays in the test chat (item #${item.id}); delete it in Teams if you like`);
+    }
+  }
+}
+
 async function deepseekPr(acc: Acceptance, o: Options, deps: Deps, folder: string): Promise<Partial<RunOut>> {
   let collected: { transcripts: string[]; links: Json; pages: Page[]; usd: number | null; measured: Measured; shots?: { shots: Json[]; note: string | null } } =
     { transcripts: [], links: {}, pages: [], usd: null, measured: {} };
@@ -559,7 +749,7 @@ async function deepseekPr(acc: Acceptance, o: Options, deps: Deps, folder: strin
   };
 }
 
-const RUNNERS: Record<string, Runner> = { 'whats-on': whatsOn, research, 'deepseek-pr': deepseekPr, 'review-fix': reviewFix };
+const RUNNERS: Record<string, Runner> = { 'whats-on': whatsOn, research, 'deepseek-pr': deepseekPr, 'review-fix': reviewFix, 'teams-ask': teamsAsk };
 
 // ---------------------------------------------------------------- main ----
 
@@ -575,14 +765,17 @@ function parse(id: string, flags: Flags, lists: Lists): Options {
 
 /** `pa e2e <workflow>`: dry run or real run, evidence in a run folder. Returns the summary. */
 async function main(id: string, flags: Flags = {}, lists: Lists = {}, deps: Deps = deps0()): Promise<Json> {
-  // research=<s> and review=<s> cap this module's own jobs; the golden path's parser does not know them.
-  const OWN = /^(research|review)=/;
+  // research=, review=, teams= and ask= (seconds) cap this module's own waits; the golden path's parser does not know them.
+  const OWN = /^(research|review|teams|ask)=/;
   const golden = { ...lists, timeout: (lists.timeout || []).filter((t) => !OWN.test(t)) };
   const acc: Acceptance = W.acceptance(deps.arch(), id);
   const o = parse(id, flags, golden);
-  const own = (k: string) => Number(String((lists.timeout || []).find((t) => t.startsWith(`${k}=`)) || '').split('=')[1]) || 5400;
+  const own = (k: string, dflt = 5400) => Number(String((lists.timeout || []).find((t) => t.startsWith(`${k}=`)) || '').split('=')[1]) || dflt;
   o.timeouts.research = own('research');
   o.timeouts.review = own('review');
+  // teams-ask: for you to type the phrase, then for the stored message to become a card.
+  o.timeouts.teams = own('teams', 600);
+  o.timeouts.ask = own('ask', 600);
   // --on <machine>: the same workflow on that stack (the golden path's remote), its summary back here.
   if (o.on) return G.remote(o, flags, lists, deps, { workflow: id });
   const startedAt = new Date(deps.now()).toISOString();
@@ -634,6 +827,9 @@ async function realRun(id: string, acc: Acceptance, o: Options, deps: Deps, runn
   try {
     r = { ...r, ...(await runner(acc, o, deps, folder)) } as RunOut;
   } catch (err) {
+    // A runner that stopped may say what it checked and cleaned up first.
+    const partial: Partial<RunOut> = (err as { partial?: Partial<RunOut> })?.partial || {};
+    r = { ...r, ...partial } as RunOut;
     r.errors = [...(r.errors || []), (err as Error)?.message || String(err)];
   }
   at.stage = 'the screenshots';

@@ -17,6 +17,11 @@ function create(db: Db) {
       return Boolean(await db.one('select 1 from notification where dedupe_key = $1', [dedupeKey]));
     },
 
+    /** The notification with this dedupe key, or null. */
+    async byKey(dedupeKey: unknown) {
+      return db.one('select id, kind, priority, delivery, created_at, toasted_at from notification where dedupe_key = $1', [dedupeKey]);
+    },
+
     /** Inserts one; null when its dedupe key is taken (a repeat is a no-op). */
     async insert({ kind, title, body, url, dedupeKey, priority, delivery }: { kind?: string | null; title?: string | null; body?: string | null; url?: string | null; dedupeKey?: unknown; priority?: unknown; delivery?: string | null }) {
       return db.one(

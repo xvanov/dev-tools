@@ -792,6 +792,18 @@ module.exports = {
     assert.strictEqual(by(touched).touched, true);
   },
 
+  'ofItem: every commitment of an item, folded ones too, oldest first': async ({ repos, seed, assert }) => {
+    const item = await seed.sourceItem();
+    const a = await seed.commitment({ sourceItemId: item });
+    const b = await seed.commitment({ sourceItemId: item, direction: 'owed_to_me' });
+    await seed.setCommitment(b, { superseded_by: a });
+    await seed.commitment();
+    const got = await repos.commitments.ofItem(item);
+    assert.deepStrictEqual(got.map((r) => [Number(r.id), r.direction, r.status, r.superseded_by == null ? null : Number(r.superseded_by)]), [[a, 'owed_by_me', 'open', null], [b, 'owed_to_me', 'open', a]]);
+    assert.ok(got[0].extracted_at instanceof Date);
+    assert.strictEqual(got[0].due_at, null);
+  },
+
   'deleteByIds: deletes those commitments': async ({ repos, seed, assert }) => {
     const [a, b, keep] = [await seed.commitment(), await seed.commitment(), await seed.commitment()];
     await repos.commitments.deleteByIds([a, b]);

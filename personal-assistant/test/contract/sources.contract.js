@@ -440,6 +440,36 @@ module.exports = {
     assert.deepStrictEqual((await repos.sources.chatHeads([thr])).map((r) => r.subject), ['from graph']);
   },
 
+  'chatAuthors: who wrote in one chat, lowercased, most messages first': async ({ repos, seed, assert, uniq }) => {
+    const thr = uniq('chat');
+    const mine = `${uniq('owner')}@authors.test`;
+    await seed.item({ source: 'graph_chat', thread: thr, author: mine.toUpperCase() });
+    await seed.item({ source: 'graph_chat', thread: thr, author: mine });
+    await seed.item({ source: 'graph_chat', thread: thr, author: 'aad:1' });
+    await seed.item({ source: 'graph_chat', thread: uniq('other'), author: `${uniq('someone')}@authors.test` });
+    assert.deepStrictEqual((await repos.sources.chatAuthors(thr)).map((r) => [r.author, Number(r.n)]), [[mine.toLowerCase(), 2], ['aad:1', 1]]);
+    assert.deepStrictEqual(await repos.sources.chatAuthors(uniq('none')), []);
+  },
+
+  'chatItemWith: the first message holding a marker, never the local copy, with its distillation': async ({ repos, seed, assert, uniq }) => {
+    const thr = uniq('chat');
+    const marker = uniq('e2e-teams');
+    await seed.item({ source: 'graph_chat', thread: thr, externalId: `${thr}/-1`, body: `pending ${marker}`, occurredAt: new Date(Date.now() - 120_000) });
+    const real = await seed.item({ source: 'graph_chat', thread: thr, externalId: `${thr}/42`, body: `do it ${marker}`, raw: { messageId: '42' }, occurredAt: new Date(Date.now() - 60_000) });
+    await seed.item({ source: 'graph_chat', thread: thr, body: `again ${marker}` });
+    await seed.item({ source: 'graph_chat', thread: uniq('other'), body: `elsewhere ${marker}`, occurredAt: new Date(Date.now() - 300_000) });
+    const got = await repos.sources.chatItemWith(thr, marker);
+    assert.strictEqual(Number(got.id), real);
+    assert.ok(got.occurred_at instanceof Date && got.fetched_at instanceof Date);
+    assert.strictEqual(got.raw.messageId, '42');
+    assert.deepStrictEqual([got.distilled_at, got.distilled, got.distill_error], [null, null, null]);
+    await repos.commitments.upsertDistillation(real, 'v-test', 1, 0);
+    const done = await repos.sources.chatItemWith(thr, marker);
+    assert.ok(done.distilled_at instanceof Date);
+    assert.deepStrictEqual([Number(done.distilled), done.distill_error], [1, null]);
+    assert.strictEqual(await repos.sources.chatItemWith(thr, uniq('absent')), null);
+  },
+
   'chatMessagesByExternalId: chat messages by id, with fetched_at': async ({ repos, seed, assert, uniq }) => {
     const ext = uniq('m');
     await seed.item({ source: 'graph_chat', externalId: ext });

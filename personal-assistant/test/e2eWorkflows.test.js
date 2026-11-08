@@ -294,16 +294,153 @@ test('dry run: an app nothing ticks fails the run before it submits (8.4.24)', a
   assert.ok(u.ok && /unknown/.test(u.detail), 'an older factory says nothing: passes with a note');
 });
 
-test('a real teams-ask run is refused, never improvised; review-fix without --pr starts nothing', async () => {
+test('teams-ask without --test-chat and review-fix without --pr start nothing', async () => {
   const { deps, log } = fakeDeps();
   const s = await R.main('teams-ask', {}, {}, deps);
   assert.strictEqual(s.ok, false);
-  assert.ok(/not automated yet/.test(s.errors[0]));
+  assert.match(s.errors[0], /needs --test-chat <id>/);
   const rf = await R.main('review-fix', {}, {}, deps);
   assert.ok(!rf.ok && /needs --pr <n>/.test(rf.errors[0]), JSON.stringify(rf.errors));
   assert.strictEqual(log.chat.length, 0);
   assert.throws(() => R.parse('review-fix', { pr: 'abc' }, {}), /--pr is a PR number/);
   assert.strictEqual(R.parse('review-fix', { pr: '#12' }, {}).pr, 12);
+});
+
+// --- teams-ask (8.4.30) ----------------------------------------------------------------------
+
+const ME = { display_name: 'Alex Doe', primary_email: 'alex@example.test' };
+
+test('teams-ask phrase: a marker of 40+ chars and the next Friday as an absolute date', () => {
+  const m = W.teamsMarker('12345678-1234-1234-1234-123456789abc');
+  assert.ok(m.length >= W.TEAMS_MARKER_MIN && m.startsWith('e2e-teams-'));
+  assert.throws(() => W.teamsMarker('short'), /too short/);
+  const sun = W.teamsPhrase(m, new Date(2026, 10, 8, 21, 0));
+  assert.strictEqual(sun.due, '2026-11-13');
+  assert.match(sun.text, /by Friday 13 November 2026\. e2e-teams-/);
+  assert.ok(sun.text.endsWith(m));
+  assert.strictEqual(W.teamsPhrase(m, new Date(2026, 10, 13, 9, 0)).due, '2026-11-20', 'on a Friday: a week out');
+});
+
+test('teams-ask test chat: stored, a chat, only you wrote in it and only you are in it', () => {
+  const mine = W.ownerIds(ME, [{ kind: 'aad_oid', value: 'ABC' }, { kind: 'github_username', value: 'alex' }]);
+  assert.deepStrictEqual([...mine].sort(), ['aad:abc', 'alex@example.test']);
+  const ok = (cs) => cs.map((c) => c.ok);
+  assert.deepStrictEqual(ok(W.testChatChecks('48:notes', { authors: [{ author: 'alex@example.test', n: 2 }, { author: 'aad:abc', n: 1 }], mine, self: true })), [true, true, true, true]);
+  const shared = W.testChatChecks('19:x@thread.v2', { authors: [{ author: 'alex@example.test', n: 2 }, { author: 'bo@example.test', n: 1 }], head: { raw: { memberEmails: ['alex@example.test', 'bo@example.test'] } }, mine });
+  assert.deepStrictEqual(ok(shared), [true, true, false, false]);
+  assert.strictEqual(shared[2].detail, '1 of 3 message(s) by 1 other author(s)');
+  assert.ok(!JSON.stringify(shared).includes('bo@'), 'never names the others');
+  assert.deepStrictEqual(ok(W.testChatChecks('48:drafts', { authors: [{ author: 'alex@example.test', n: 1 }], mine, system: true })), [true, false, true, false]);
+  assert.deepStrictEqual(ok(W.testChatChecks('19:none', { authors: [], mine })), [false, true, false, false]);
+  assert.deepStrictEqual(ok(W.testChatChecks('19:solo', { authors: [{ author: 'alex@example.test', n: 1 }], head: { raw: { memberEmails: ['Alex@Example.test'] } }, mine })), [true, true, true, true]);
+});
+
+test('teams-ask card checks: direction, you as the person, the due day, the link to this message', () => {
+  const item = { external_id: '48:notes/1700000000000', raw: { messageId: '1700000000000' } };
+  const good = { direction: 'owed_by_me', who: 'alex doe', due_at: '2026-11-13T17:00:00.000Z', web_url: 'https://teams.microsoft.com/l/message/48%3Anotes/1700000000000?context=%7B%7D' };
+  assert.deepStrictEqual(W.teamsCardChecks(good, { item, due: '2026-11-13', meName: ME.display_name }).map((c) => c.ok), [true, true, true, true]);
+  const bad = W.teamsCardChecks({ direction: 'owed_to_me', who: 'Bo', due_at: null, web_url: 'https://teams.microsoft.com/l/message/48%3Anotes/-1' }, { item: { raw: { messageId: '-1' } }, due: '2026-11-13', meName: ME.display_name });
+  assert.deepStrictEqual(bad.map((c) => c.ok), [false, false, false, false]);
+  assert.deepStrictEqual(bad.map((c) => c.detail), ['owed_to_me', 'someone else', 'no due date', 'message -1']);
+});
+
+/** A test chat the store follows: the message lands after `arriveAfter` ms, distilled at once. */
+function teamsDeps({ arriveAfter = 3000, authors = [{ author: ME.primary_email, n: 2 }], toast = true, delivery = 'push' } = {}) {
+  const f = fakeDeps();
+  const { deps, log } = f;
+  log.said = [];
+  let onEvent = null;
+  const t0 = deps.now();
+  let item = null;
+  const at = (ms) => new Date(ms).toISOString();
+  Object.assign(deps, {
+    say: (t) => log.said.push(t),
+    subscribe: (url, cb) => { log.subscribed = url; onEvent = cb; return () => { log.unsubscribed = true; }; },
+    chatAuthors: async () => authors,
+    chatHead: async () => ({ raw: { chatType: 'self' } }),
+    owner: async () => ({ me: ME, identities: [] }),
+    async chatItemWith(chat, marker) {
+      if (deps.now() - t0 < arriveAfter) return null;
+      if (!item) {
+        const now = deps.now();
+        item = { id: 77, external_id: `${chat}/1700000000000`, occurred_at: at(now - 1500), fetched_at: at(now - 300), raw: { messageId: '1700000000000', storedAt: at(now - 400) }, marker, distilled_at: null };
+        return item;
+      }
+      if (!item.distilled_at) {
+        item.distilled_at = at(deps.now());
+        item.extractedAt = deps.now() - 60;
+        onEvent?.({ topic: 'board', payload: { table: 'commitment', op: 'insert', id: 501 } });
+      }
+      return item;
+    },
+    itemCommitments: async () => [{ id: 501, direction: 'owed_by_me', status: 'open', superseded_by: null, extracted_at: at(item.extractedAt) }],
+    notificationByKey: async (key) => (key === 'new-ask:77' ? { kind: 'new_ask', delivery, priority: 'normal', created_at: at(item.extractedAt + 20), toasted_at: toast ? at(item.extractedAt + 900) : null } : null),
+    async getJson(url) {
+      if (url.endsWith('/api/workflow-limits')) return { limits: { 'teams-ask': { effective: 0.05, custom: false } } };
+      if (url.endsWith('/api/state')) return { commitments: [], sources: [{ source: 'teams_cache' }], board: { onMe: item?.distilled_at ? [{ id: 501 }] : [], waiting: [] } };
+      if (url.endsWith('/api/commitments/501')) return { id: 501, direction: 'owed_by_me', who: ME.display_name, due_at: `${W.teamsPhrase('m', t0).due}T12:00:00.000Z`, web_url: 'https://teams.microsoft.com/l/message/48%3Anotes/1700000000000?context=x' };
+      throw new Error(`unexpected ${url}`);
+    },
+  });
+  return f;
+}
+
+test('teams-ask real run: prints the phrase, follows the one message, times each hop, drops the card, sends nothing', async () => {
+  const { deps, log } = teamsDeps();
+  const s = await R.main('teams-ask', { 'test-chat': '48:notes' }, {}, deps);
+  const said = log.said.join('\n');
+  assert.match(said, /type this into the test chat \(48:notes\)/);
+  assert.match(said, /Note to self: .* e2e-teams-12345678-1234-1234-1234-123456789abc/);
+  assert.strictEqual(log.subscribed, 'http://pa/api/events?topics=board');
+  assert.ok(log.unsubscribed);
+  const hop = (c) => s.hops.find((h) => h.c === c);
+  assert.strictEqual(hop('ingest').ms, 1100, 'arrival stamp to storedAt');
+  assert.strictEqual(hop('dashboard').ms, 60, 'extracted_at to /api/state holding the card after its event');
+  assert.strictEqual(hop('notify').ms, 900);
+  assert.ok(hop('commitments').ms != null);
+  assert.deepStrictEqual(s.checks.filter((c) => !c.ok), [], JSON.stringify(s.checks));
+  assert.ok(['owed_by_me', 'person: names who asked (you, in your own test chat)', 'link: opens this message'].every((n) => s.checks.some((c) => c.check === n)));
+  assert.ok(s.checks.some((c) => c.check === `due: ${W.teamsPhrase('m', 1_000_000).due}`), 'the phrase is dated from the run clock');
+  assert.deepStrictEqual(log.closed, ['501']);
+  assert.ok(s.cleanup.some((l) => /card #501 dropped/.test(l)));
+  assert.deepStrictEqual([log.posts, log.chat], [[], []], 'nothing posted, no chat tool called');
+  assert.deepStrictEqual(s.links.card, '501');
+  assert.deepStrictEqual(s.errors, []);
+  assert.ok(Object.keys(s.views).includes('run'));
+});
+
+test('teams-ask real run: a held toast is a missed hop with the reason; the card is still dropped', async () => {
+  const { deps, log } = teamsDeps({ toast: false, delivery: 'digest' });
+  const s = await R.main('teams-ask', { 'test-chat': '48:notes' }, {}, deps);
+  const n = s.hops.find((h) => h.c === 'notify');
+  assert.strictEqual(n.ms, null);
+  assert.match(n.note, /held, delivery digest: quiet hours or the interrupt budget/);
+  assert.strictEqual(s.ok, false);
+  assert.deepStrictEqual(s.failed.filter((f) => /^notify/.test(f)).map((f) => f.split(' (')[0]), ['notify: toasted']);
+  assert.deepStrictEqual(log.closed, ['501']);
+});
+
+test('teams-ask real run: no message in time is a clear error and creates nothing; a shared chat is refused first', async () => {
+  const { deps, log } = teamsDeps({ arriveAfter: Infinity });
+  const s = await R.main('teams-ask', { 'test-chat': '48:notes' }, { timeout: ['teams=5'] }, deps);
+  assert.match(s.errors[0], /no message with the marker reached the store in 5 s\. Type the phrase into the test chat \(48:notes\)/);
+  assert.deepStrictEqual(s.cleanup, ['nothing was created']);
+  assert.deepStrictEqual(log.closed, []);
+  const shared = teamsDeps({ authors: [{ author: ME.primary_email, n: 1 }, { author: 'bo@example.test', n: 4 }] });
+  const r = await R.main('teams-ask', { 'test-chat': '19:x@thread.v2' }, {}, shared.deps);
+  assert.match(r.errors[0], /is not a test chat with only you in it: only you wrote in it/);
+  assert.ok(r.checks.some((c) => c.check === 'only you wrote in it' && !c.ok));
+  assert.deepStrictEqual(shared.log.said, [], 'no phrase for a chat with others in it');
+});
+
+test('teams-ask dry run: --test-chat is checked against the store', async () => {
+  const solo = await R.main('teams-ask', { 'dry-run': true, 'test-chat': '48:notes' }, {}, teamsDeps().deps);
+  assert.ok(solo.checks.some((c) => c.check === 'only you are in it' && c.ok && c.detail === 'your self chat'), JSON.stringify(solo.checks));
+  assert.ok(solo.checks.some((c) => c.check === 'test chat 48:notes is in the store' && c.ok));
+  const shared = await R.main('teams-ask', { 'dry-run': true, 'test-chat': '48:notes' }, {}, teamsDeps({ authors: [{ author: 'bo@example.test', n: 1 }] }).deps);
+  assert.strictEqual(shared.ok, false);
+  const none = await R.main('teams-ask', { 'dry-run': true }, {}, teamsDeps().deps);
+  assert.ok(none.notes.some((n) => /Add --test-chat to the dry run/.test(n)));
 });
 
 // --- review-fix (8.4.25) ---------------------------------------------------------------------
