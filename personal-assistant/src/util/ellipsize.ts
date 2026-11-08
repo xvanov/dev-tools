@@ -6,8 +6,12 @@
 // Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
 
 function ellipsize(text: string, limit: number): string {
+  if (typeof limit !== 'number' || !Number.isInteger(limit) || limit < 1) {
+    throw new RangeError('limit must be an integer ≥ 1');
+  }
   if (text.length <= limit) return text;
-  return text.slice(0, limit) + '…';
+  // The ellipsis takes one of the `limit` characters, so the result is exactly `limit` long.
+  return text.slice(0, limit - 1) + '…';
 }
 
 module.exports = { ellipsize };
