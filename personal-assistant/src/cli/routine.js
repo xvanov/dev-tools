@@ -101,7 +101,7 @@ function make(out, fail) {
 
     if (sub === 'suggest') {
       out('Looking for routines worth proposing…');
-      const rows = await require('../routines/suggest').suggest();
+      const rows = await require('../routines/suggest.ts').suggest();
       if (!rows.length) return out('Nothing convincing to propose.');
       return out(rows.map(line).join('\n') + '\n\nAccept with: pa routine accept <id>');
     }

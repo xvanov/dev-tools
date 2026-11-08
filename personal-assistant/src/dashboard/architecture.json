@@ -207,7 +207,7 @@
       "code": [
         "personal-assistant/src/chat/fastLane.js",
         "personal-assistant/src/chat/fastRouter.ts",
-        "personal-assistant/src/eval/router.js",
+        "personal-assistant/src/eval/router.ts",
         "personal-assistant/src/eval/router-cases.json",
         "personal-assistant/src/dashboard/talk.ts",
         "personal-assistant/src/llm.ts"

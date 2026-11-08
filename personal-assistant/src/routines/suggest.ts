@@ -12,6 +12,11 @@
 // plus a notification each. Nothing here can activate a routine. A rejected
 // row is kept, and anything resembling one — same action and params, or a
 // prompt with mostly the same words — is never proposed again.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+type Row = Record<string, any>;
+type Db = import('../repo/types.ts').Db;
 
 const repo = require('../repo');
 const { config } = require('../config.ts');
@@ -26,7 +31,7 @@ const SETTING = 'routines.suggested_on';
 // ------------------------------------------------------- evidence (pure) ----
 
 /** Your prompts out of a claude_session body (">> " turns; "<< " is Claude). */
-function promptsOf(body) {
+function promptsOf(body: any) {
   return String(body || '')
     .split(/\n\n(?=>> |<< )/)
     .filter((t) => t.startsWith('>> '))
@@ -37,13 +42,13 @@ function promptsOf(body) {
 const STOP = new Set(['the', 'a', 'an', 'and', 'or', 'to', 'of', 'in', 'on', 'for', 'please', 'can', 'you', 'me', 'my',
   'it', 'is', 'this', 'that', 'with', 'all', 'i', 'we', 'let', 'lets', 'now', 'then', 'just', 'also']);
 
-function words(s) {
+function words(s: any) {
   return String(s || '').toLowerCase().replace(/[^\p{L}\p{N}\s]+/gu, ' ').split(/\s+/).filter((w) => w && !STOP.has(w));
 }
 
 // Short prompts are the ones that recur verbatim ("pull main everywhere");
 // long ones are tasks, and a task is not a routine.
-function keyOf(prompt) {
+function keyOf(prompt: any) {
   if (prompt.length > 240) return null;
   const w = words(prompt).slice(0, 8);
   return w.length >= 2 ? w.join(' ') : null;
@@ -54,7 +59,7 @@ function keyOf(prompt) {
  * @param {{id: number, occurred_at: string|Date, body_text: string}[]} items
  * @returns {{key, example, count, days, items: string[]}[]} most frequent first
  */
-function repeatedAsks(items, { minDays = 2 } = {}) {
+function repeatedAsks(items: any[], { minDays = 2 }: { minDays?: number } = {}) {
   const groups = new Map();
   for (const it of items) {
     const day = new Date(it.occurred_at).toISOString().slice(0, 10);
@@ -74,7 +79,7 @@ function repeatedAsks(items, { minDays = 2 } = {}) {
     .map((g) => ({ ...g, days: g.days.size, items: [...g.items].slice(0, 6) }));
 }
 
-function jaccard(a, b) {
+function jaccard(a: any, b: any) {
   const A = new Set(words(a));
   const B = new Set(words(b));
   if (!A.size || !B.size) return 0;
@@ -84,7 +89,7 @@ function jaccard(a, b) {
 }
 
 /** True when `cand` repeats an existing routine (any status, rejected included). */
-function resembles(cand, existing) {
+function resembles(cand: any, existing: any) {
   const sj = routines.stableJson;
   for (const e of existing) {
     // Same action and params is the same routine whatever the hour. An action
@@ -100,15 +105,15 @@ function resembles(cand, existing) {
 
 // ------------------------------------------------------------- the pass ----
 
-async function gatherEvidence({ days = 30 } = {}) {
+async function gatherEvidence({ days = 30 }: { days?: number } = {}) {
   const evidence = [];
   try {
     const memory = require('../memory');
     const { claims } = await memory.claimsFor('me', { limit: 300 });
-    for (const c of claims.filter((x) => ['workflow', 'preference'].includes(x.kind)).slice(0, 60)) {
+    for (const c of claims.filter((x: any) => ['workflow', 'preference'].includes(x.kind)).slice(0, 60)) {
       evidence.push({ id: `claim:${c.id}`, kind: c.kind, text: String(c.text).slice(0, 300) });
     }
-  } catch (err) {
+  } catch (err: any) {
     log.debug('no claims about me', { message: err.message });
   }
   const items = await repo.sources.recentClaudeSessions(days);
@@ -139,7 +144,7 @@ Reply with ONLY JSON: {"suggestions": [{"title": "...", "schedule": "...", "acti
  * @param {object} [o]
  * @param {Function} [o.ask] model call (tests inject one)
  */
-async function suggest({ ask = null, now = new Date(), notifyUser = true } = {}) {
+async function suggest({ ask = null, now = new Date(), notifyUser = true }: { ask?: any; now?: any; notifyUser?: boolean } = {}) {
   const { evidence, sessions } = await gatherEvidence();
   if (!evidence.length) {
     log.info('no evidence for suggestions', { sessions });
@@ -149,11 +154,11 @@ async function suggest({ ask = null, now = new Date(), notifyUser = true } = {})
   const prompt = [
     `Now (local): ${now.toString()}`,
     `Catalog:\n${JSON.stringify(routines.actions.catalog(), null, 2)}`,
-    `Existing routines (do not repeat; "rejected" ones were turned down):\n${JSON.stringify(existing.map((e) => ({ title: e.title, schedule: e.schedule, action: e.action, params: e.params, status: e.status })))}`,
+    `Existing routines (do not repeat; "rejected" ones were turned down):\n${JSON.stringify(existing.map((e: any) => ({ title: e.title, schedule: e.schedule, action: e.action, params: e.params, status: e.status })))}`,
     `Evidence:\n${evidence.map((e) => `- [${e.id}] (${e.kind}) ${e.text}`).join('\n')}`,
   ].join('\n\n');
 
-  const call = ask || (async (p) => {
+  const call = ask || (async (p: any) => {
     const { complete } = require('../llm.ts');
     return complete({ system: SYSTEM, prompt: p, model: MODEL, effort: 'low', timeoutMs: 180_000, purpose: 'routine' });
   });
@@ -165,7 +170,7 @@ async function suggest({ ask = null, now = new Date(), notifyUser = true } = {})
   const stored = [];
   for (const s of list) {
     if (stored.length >= MAX) break;
-    const cites = (Array.isArray(s.evidence) ? s.evidence : []).map(String).filter((id) => known.has(id));
+    const cites = (Array.isArray(s.evidence) ? s.evidence : []).map(String).filter((id: any) => known.has(id));
     if (!cites.length) {
       log.info('suggestion dropped: cites no known evidence', { title: s.title });
       continue;
@@ -173,7 +178,7 @@ async function suggest({ ask = null, now = new Date(), notifyUser = true } = {})
     let p;
     try {
       p = routines.preview({ title: s.title, schedule: s.schedule, action: s.action, params: s.params }, { now });
-    } catch (err) {
+    } catch (err: any) {
       log.info('suggestion dropped: invalid', { message: err.message });
       continue;
     }
@@ -196,7 +201,7 @@ async function suggest({ ask = null, now = new Date(), notifyUser = true } = {})
         body: `${routines.plainWords(row)}\nWhy: ${row.why}\nAccept or reject it in the dashboard.`,
         url: dashboardUrl('routines'),
         dedupeKey: `routine-suggest:${row.id}`,
-      }).catch((err) => log.warn('notify failed', { message: err.message }));
+      }).catch((err: Error) => log.warn('notify failed', { message: err.message }));
     }
   }
   log.info('suggested', { evidence: evidence.length, proposed: list.length, stored: stored.length });
@@ -204,7 +209,7 @@ async function suggest({ ask = null, now = new Date(), notifyUser = true } = {})
 }
 
 /** The worker's nightly gate: once per local day, after the configured hour. */
-async function nightly({ now = new Date() } = {}) {
+async function nightly({ now = new Date() }: { now?: any } = {}) {
   if (now.getHours() < config.routines.suggestHour) return null;
   const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
   const last = await repo.system.setting(SETTING);

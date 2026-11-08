@@ -14,6 +14,11 @@
 //
 // Pure: no clock, no I/O. `next(expr, from)` is the only thing the scheduler
 // needs, and it is a function of its arguments.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+type Row = Record<string, any>;
+type Db = import('../repo/types.ts').Db;
 
 const FIELDS = [
   { name: 'minute', min: 0, max: 59 },
@@ -33,7 +38,7 @@ const ALIASES = {
   '@annually': '0 0 1 1 *',
 };
 
-function value(token, f) {
+function value(token: string, f: any) {
   const t = token.toLowerCase();
   if (f.names) {
     const i = f.names.indexOf(t);
@@ -45,7 +50,7 @@ function value(token, f) {
   return n;
 }
 
-function parseField(text, f) {
+function parseField(text: string, f: any) {
   const out = new Set();
   for (const part of text.split(',')) {
     if (!part) throw new Error(`cron ${f.name}: empty list item in "${text}"`);
@@ -61,14 +66,14 @@ function parseField(text, f) {
     if (range === '*') {
       lo = f.min;
       hi = f.max;
-    } else if (range.includes('-')) {
-      const [a, b, more] = range.split('-');
+    } else if (range!.includes('-')) {
+      const [a, b, more] = range!.split('-');
       if (more !== undefined || !a || !b) throw new Error(`cron ${f.name}: bad range "${range}"`);
       lo = value(a, f);
       hi = value(b, f);
       if (lo > hi) throw new Error(`cron ${f.name}: range ${range} runs backwards`);
     } else {
-      lo = value(range, f);
+      lo = value(range!, f);
       // `5/10` means "from 5, every 10" — to the end of the field.
       hi = stepText !== undefined ? f.max : lo;
     }
@@ -78,12 +83,12 @@ function parseField(text, f) {
 }
 
 /** Parses a cron expression; throws an Error naming the bad field. */
-function parse(expr) {
+function parse(expr: any) {
   const raw = String(expr ?? '').trim().toLowerCase();
-  const text = ALIASES[raw] || raw;
+  const text = (ALIASES as any)[raw] || raw;
   const parts = text.split(/\s+/).filter(Boolean);
   if (parts.length !== 5) throw new Error(`cron needs 5 fields (minute hour day month weekday), got ${parts.length}: "${expr}"`);
-  const [minute, hour, dom, month, dow] = parts.map((p, i) => parseField(p, FIELDS[i]));
+  const [minute, hour, dom, month, dow] = parts.map((p: any, i: any) => parseField(p, FIELDS[i]));
   if (dow.has(7)) {
     dow.delete(7);
     dow.add(0);
@@ -102,7 +107,7 @@ function parse(expr) {
   };
 }
 
-function valid(expr) {
+function valid(expr: any) {
   try {
     parse(expr);
     return true;
@@ -111,7 +116,7 @@ function valid(expr) {
   }
 }
 
-function dayMatches(c, d) {
+function dayMatches(c: any, d: any) {
   const domOk = c.dom.has(d.getDate());
   const dowOk = c.dow.has(d.getDay());
   if (c.domStar || c.dowStar) return domOk && dowOk;
@@ -122,7 +127,7 @@ function dayMatches(c, d) {
  * The first matching minute strictly after `from`, in local time.
  * Returns null when nothing matches within ~5 years (e.g. 31 February).
  */
-function next(expr, from = new Date()) {
+function next(expr: any, from: any = new Date()) {
   const c = typeof expr === 'string' ? parse(expr) : expr;
   const d = new Date(from.getTime());
   d.setSeconds(0, 0);
@@ -156,7 +161,7 @@ function next(expr, from = new Date()) {
 }
 
 /** The next `n` run times after `from`. */
-function upcoming(expr, n = 3, from = new Date()) {
+function upcoming(expr: any, n: number = 3, from: any = new Date()) {
   const c = parse(expr);
   const out = [];
   let t = from;
@@ -174,15 +179,15 @@ const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Frid
 const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September',
   'October', 'November', 'December'];
 
-const pad = (n) => String(n).padStart(2, '0');
-const sorted = (s) => [...s].sort((a, b) => a - b);
+const pad = (n: number) => String(n).padStart(2, '0');
+const sorted = (s: any) => [...s].sort((a, b) => a - b);
 
-function listWords(items) {
+function listWords(items: any[]) {
   if (items.length <= 1) return items.join('');
   return `${items.slice(0, -1).join(', ')} and ${items[items.length - 1]}`;
 }
 
-function daysPhrase(c) {
+function daysPhrase(c: any) {
   const dow = sorted(c.dow);
   const dowText = (() => {
     if (c.dow.size === 7) return null;
@@ -194,12 +199,12 @@ function daysPhrase(c) {
   const domText = c.dom.size === 31 ? null : `on day ${listWords(sorted(c.dom).map(String))} of the month`;
   let text;
   if (dowText && domText) text = c.domStar || c.dowStar ? `${dowText} ${domText}` : `${dowText}, and ${domText}`;
-  else text = dowText || (domText ? domText[0].toUpperCase() + domText.slice(1) : 'Every day');
+  else text = dowText || (domText ? domText[0]!.toUpperCase() + domText.slice(1) : 'Every day');
   if (c.month.size !== 12) text += ` in ${listWords(sorted(c.month).map((m) => MONTH_NAMES[m - 1]))}`;
   return text;
 }
 
-function stepOf(set, min, max) {
+function stepOf(set: any, min: number, max: number) {
   const v = sorted(set);
   if (v.length < 2 || v[0] !== min) return null;
   const step = v[1] - v[0];
@@ -208,7 +213,7 @@ function stepOf(set, min, max) {
 }
 
 /** "Weekdays 08:00", "Every day every 15 minutes", "Mondays 09:30 and 14:30". */
-function describe(expr) {
+function describe(expr: any) {
   let c;
   try {
     c = parse(expr);

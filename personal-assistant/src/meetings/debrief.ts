@@ -20,6 +20,11 @@
 // The meeting-learning step (index.js learnRecent) still reads the same
 // transcript for the series profile; this does not repeat it. The generic
 // distiller skips these items (distill DEBRIEF_OWNED).
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+type Row = Record<string, any>;
+type Db = import('../repo/types.ts').Db;
 
 const llm = require('../llm.ts');
 const { config } = require('../config.ts');
@@ -28,8 +33,8 @@ const { logger } = require('../log.ts');
 const { headTail } = require('../memory/claims.ts');
 const spool = require('../audio/spool');
 const { attendable, eventRange } = require('../audio/episodes');
-const core = require('./core');
-const D = require('./debriefCore');
+const core = require('./core.ts');
+const D = require('./debriefCore.ts');
 
 const log = logger('debrief');
 
@@ -41,7 +46,7 @@ const MAX_TRANSCRIPT = 90_000;
 // ------------------------------------------------------------- loading ----
 
 // The episode queries (src/repo/audio.js) own what makes an episode debriefable.
-async function loadEpisode(target) {
+async function loadEpisode(target: any) {
   const t = String(target ?? 'last').trim();
   if (t === 'last') {
     return repo.audio.lastOwned();
@@ -50,7 +55,7 @@ async function loadEpisode(target) {
   return repo.audio.withEventById(Number(t));
 }
 
-function meetingOf(ep) {
+function meetingOf(ep: any) {
   const ev = ep.event_raw ? core.toMeeting({ id: ep.event_item_id, external_id: ep.event_external_id, subject: ep.event_subject, raw: ep.event_raw, occurred_at: ep.event_occurred_at, author_identity: ep.event_organizer, body_text: ep.event_body }) : null;
   return {
     title: ev?.subject || ep.item_subject || 'Recorded conversation',
@@ -64,7 +69,7 @@ function meetingOf(ep) {
   };
 }
 
-async function recentChatsAround(startIso, endIso) {
+async function recentChatsAround(startIso: any, endIso: any) {
   const list = await repo.sources.chatsAround(startIso, endIso).catch(() => []);
   const emails = new Set();
   let hadCallLog = false;
@@ -92,18 +97,18 @@ async function recentChatsAround(startIso, endIso) {
   return { chats, emails: [...emails], hadCallLog };
 }
 
-async function namesFor(emails) {
+async function namesFor(emails: any[]) {
   if (!emails.length) return [];
   const found = await repo.people.namesForEmails(emails);
-  const byEmail = new Map(found.map((r) => [r.email, r.display_name]));
+  const byEmail = new Map(found.map((r: any) => [r.email, r.display_name]));
   return emails.map((email) => ({ email, name: byEmail.get(email) || null }));
 }
 
-async function openCommitments(attendeeEmails) {
+async function openCommitments(attendeeEmails: any) {
   return repo.commitments.openForDebrief(attendeeEmails);
 }
 
-async function openTasks(ctx) {
+async function openTasks(ctx: any) {
   const tasks = [];
   if (ctx.githubLogin) {
     const prs = await repo.sources.openPrsByAuthor(`github:${ctx.githubLogin}`);
@@ -117,7 +122,7 @@ async function openTasks(ctx) {
 
 // ------------------------------------------------------------ resolving ----
 
-async function personFor(counterparty, attendees) {
+async function personFor(counterparty: any, attendees: any) {
   if (!counterparty) return null;
   const identity = require('../distill/identity.ts');
   const c = String(counterparty).trim();
@@ -125,7 +130,7 @@ async function personFor(counterparty, attendees) {
   // A name: an attendee whose name or address matches it, else a person
   // whose name is unambiguous. Never a new person from a spoken name.
   const lc = c.toLowerCase();
-  const hit = attendees.find((a) => (a.name && a.name.toLowerCase().includes(lc)) || a.email.split('@')[0].replace(/[._-]+/g, ' ').includes(lc));
+  const hit = attendees.find((a: any) => (a.name && a.name.toLowerCase().includes(lc)) || a.email.split('@')[0].replace(/[._-]+/g, ' ').includes(lc));
   if (hit) return identity.resolve(hit.email);
   return identity.resolve(c);
 }
@@ -136,7 +141,7 @@ async function personFor(counterparty, attendees) {
  * Reads the meeting and decides what to write, without writing it.
  * @returns {Promise<{episode, meeting, plan, parsed}>}
  */
-async function prepare(ep, { now = new Date() } = {}) {
+async function prepare(ep: any, { now = new Date() }: { now?: any } = {}) {
   const meetings = require('./index');
   const ctx = await meetings.context();
   const m = meetingOf(ep);
@@ -151,7 +156,7 @@ async function prepare(ep, { now = new Date() } = {}) {
   const { prompt, refs } = D.buildPrompt({
     meeting: { ...m, attendees },
     me: { name: ctx.name, emails: ctx.myEmails },
-    commitments: commitments.map((c) => ({ id: c.id, direction: c.direction, summary: c.summary, due: c.due_at, counterparty: c.counterparty })),
+    commitments: commitments.map((c: any) => ({ id: c.id, direction: c.direction, summary: c.summary, due: c.due_at, counterparty: c.counterparty })),
     tasks,
     recentChats: around.chats,
     transcript: headTail(transcript, MAX_TRANSCRIPT),
@@ -171,8 +176,8 @@ async function prepare(ep, { now = new Date() } = {}) {
   }
 
   const day = new Date(m.start).toISOString().slice(0, 10);
-  const plan = { title: m.title, summary: parsed.summary || null, items: [], skipped: [], dropped: parsed.dropped };
-  const byId = new Map(commitments.map((c) => [`C${c.id}`, c]));
+  const plan = { title: m.title, summary: parsed.summary || null, items: [] as any[] as any[] as any[], skipped: [] as any[] as any[], dropped: parsed.dropped };
+  const byId = new Map(commitments.map((c: any) => [`C${c.id}`, c]));
   const taskById = new Map(tasks.map((t) => [`T${t.id}`, t]));
 
   for (const [list, type, direction] of [[parsed.todos, 'todo', 'owed_by_me'], [parsed.owedToMe, 'owed_to_me', 'owed_to_me']]) {
@@ -187,7 +192,7 @@ async function prepare(ep, { now = new Date() } = {}) {
   }
   for (const u of parsed.updates) {
     const task = taskById.get(u.ref);
-    const target = task ? { task: true, label: `${task.kind === 'pr' ? 'PR' : 'Ticket'} ${task.label}` } : byId.get(u.ref);
+    const target: any = task ? { task: true, label: `${task.kind === 'pr' ? 'PR' : 'Ticket'} ${task.label}` } : byId.get(u.ref);
     const decided = D.planUpdate(u, target, { title: m.title, day, now });
     if (decided.skip) {
       plan.skipped.push({ type: 'update', summary: `${u.ref} ${u.kind}: ${u.note}`, quote: u.quote, reason: decided.skip });
@@ -216,19 +221,19 @@ async function prepare(ep, { now = new Date() } = {}) {
 // ------------------------------------------------------------- applying ----
 
 // A claim a debrief wrote: clipped, and stamped with the debrief's version.
-async function insertClaim(r, { subjectKind, subjectId = null, label, kind, text, quote, itemId, validAt }) {
+async function insertClaim(r: any, { subjectKind, subjectId = null, label, kind, text, quote, itemId, validAt }: { subjectKind?: any; subjectId?: any; label?: any; kind?: any; text?: any; quote?: any; itemId?: any; validAt?: any }) {
   return r.memory.insertDebriefClaim({ subjectKind, subjectId, label, kind, text: D.clip(text, 400), quote, itemId, validAt, extractedBy: D.VERSION });
 }
 
-async function apply(ep, prepared) {
+async function apply(ep: any, prepared: any) {
   const { meeting: m, plan, ctx, attendees } = prepared;
   // People are resolved before the transaction: resolving may create one.
   for (const it of plan.items) {
     if (it.type === 'todo' || it.type === 'owed_to_me') it.counterpartyPersonId = await personFor(it.counterparty, attendees);
   }
   const day = new Date(m.start).toISOString().slice(0, 10);
-  const claimIds = [];
-  const debrief = await repo.withTx(async (r) => {
+  const claimIds: any[] = [];
+  const debrief = await repo.withTx(async (r: any) => {
     for (const it of plan.items) {
       if (it.type === 'todo' || it.type === 'owed_to_me') {
         it.commitmentId = await r.commitments.insertFromDebrief({
@@ -262,7 +267,7 @@ async function apply(ep, prepared) {
     }
     const applied = {
       summary: plan.summary || null,
-      items: plan.items.map(({ counterpartyPersonId, ...rest }) => rest),
+      items: plan.items.map(({ counterpartyPersonId, ...rest }: any) => rest),
       skipped: plan.skipped,
       dropped: plan.dropped,
     };
@@ -281,12 +286,12 @@ async function apply(ep, prepared) {
     });
   });
   if (claimIds.length && config.memory.enabled) {
-    await require('../memory/consolidate.ts').consolidateClaims(claimIds).catch((err) => log.warn('consolidate failed', { message: err.message }));
+    await require('../memory/consolidate.ts').consolidateClaims(claimIds).catch((err: Error) => log.warn('consolidate failed', { message: err.message }));
   }
   return debrief;
 }
 
-async function deliver(row) {
+async function deliver(row: any) {
   const items = row.applied?.items || [];
   if (!items.length || row.notification_id) return row;
   const { notify, dashboardUrl } = require('../notify');
@@ -297,7 +302,7 @@ async function deliver(row) {
   return repo.meetings.markDebriefNotified(row.id, sent.id);
 }
 
-async function recordError(ep, m, err) {
+async function recordError(ep: any, m: any, err: any) {
   await repo.meetings.recordDebriefError({
     episodeId: ep.id,
     eventExternalId: ep.calendar_event_id,
@@ -318,7 +323,7 @@ async function recordError(ep, m, err) {
  * @param {object} [opts] {dryRun, deliver, now}
  * @returns {Promise<{episode, meeting, plan, debrief}>} debrief is null on a dry run
  */
-async function debrief(target, { dryRun = false, deliver: shouldDeliver = false, now = new Date() } = {}) {
+async function debrief(target: any, { dryRun = false, deliver: shouldDeliver = false, now = new Date() }: { dryRun?: boolean; deliver?: boolean; now?: any } = {}) {
   const ep = typeof target === 'object' && target?.id ? target : await loadEpisode(target);
   if (!ep) throw new Error(`no recorded meeting or call "${target}"`);
   if (!ep.body_text) throw new Error(`episode ${ep.id} has no transcript`);
@@ -326,7 +331,7 @@ async function debrief(target, { dryRun = false, deliver: shouldDeliver = false,
   let prepared;
   try {
     prepared = await prepare(ep, { now });
-  } catch (err) {
+  } catch (err: any) {
     if (!dryRun) await recordError(ep, m, err);
     throw err;
   }
@@ -345,7 +350,7 @@ async function debrief(target, { dryRun = false, deliver: shouldDeliver = false,
  * columns an update overwrote (unless they have changed since), retracts a
  * claim. Marks the item undone in `applied`.
  */
-async function undo(debriefId, index) {
+async function undo(debriefId: any, index: any) {
   const row = await repo.meetings.debriefById(debriefId);
   if (!row) throw new Error(`no debrief #${debriefId}`);
   const items = row.applied?.items || [];
@@ -353,7 +358,7 @@ async function undo(debriefId, index) {
   if (!it) throw new Error(`debrief #${debriefId} has no item ${index}`);
   if (it.undone_at) return { ok: true, already: true, item: it };
   let result = 'undone';
-  await repo.withTx(async (r) => {
+  await repo.withTx(async (r: any) => {
     if ((it.type === 'todo' || it.type === 'owed_to_me') && it.commitmentId) {
       await r.commitments.deleteExtractedBy(it.commitmentId, D.VERSION);
     }
@@ -372,8 +377,8 @@ async function undo(debriefId, index) {
 
 // ---------------------------------------------------------------- views ----
 
-function view(row) {
-  const items = (row.applied?.items || []).map((i, index) => ({ ...i, index, line: D.itemLine(i) }));
+function view(row: any) {
+  const items = (row.applied?.items || []).map((i: any, index: any) => ({ ...i, index, line: D.itemLine(i) }));
   return {
     id: row.id,
     episodeId: row.episode_id,
@@ -385,27 +390,27 @@ function view(row) {
     error: row.error,
     notified: !!row.notification_id,
     items,
-    decisions: items.filter((i) => i.type === 'decision'),
-    actions: items.filter((i) => i.type !== 'decision'),
+    decisions: items.filter((i: any) => i.type === 'decision'),
+    actions: items.filter((i: any) => i.type !== 'decision'),
     skipped: row.applied?.skipped || [],
     dropped: row.dropped,
     counts: D.counts(row.applied?.items || []),
   };
 }
 
-async function recent({ days = 7, limit = 20 } = {}) {
+async function recent({ days = 7, limit = 20 }: { days?: number; limit?: number } = {}) {
   const list = await repo.meetings.recentDebriefs(days, limit);
   return list.map(view);
 }
 
-async function get(id) {
+async function get(id: any) {
   const row = await repo.meetings.debriefById(id);
   return row ? view(row) : null;
 }
 
 // ---------------------------------------------------------------- pass ----
 
-async function lastDebrief(episodeId) {
+async function lastDebrief(episodeId: any) {
   return repo.meetings.lastDebrief(episodeId);
 }
 
@@ -413,7 +418,7 @@ async function lastDebrief(episodeId) {
  * Episodes ready for a debrief: owned, recent, with no debrief of their
  * current transcript, and over (debriefCore.debriefDue). A query, not a queue.
  */
-async function due({ now = new Date(), coverage = undefined } = {}) {
+async function due({ now = new Date(), coverage = undefined }: { now?: any; coverage?: any } = {}) {
   const cov = coverage !== undefined ? coverage : spool.coverage(config.audioDir, { rollMinutes: config.audio.rollMinutes, now: now.getTime() });
   const paused = require('../audio/gate').readPause().state !== 'on' && !spool.needsProcessing(config.audioDir);
   const list = await repo.audio.awaitingDebrief(now);
@@ -434,16 +439,16 @@ async function due({ now = new Date(), coverage = undefined } = {}) {
  * calendar (or has none) is still waiting for quiet audio. At most every
  * five minutes, and never more than once per ending.
  */
-async function rollIfUseful({ now = new Date() } = {}) {
+async function rollIfUseful({ now = new Date() }: { now?: any } = {}) {
   const last = spool.lastRoll(config.audio.rollFile);
   const nowMs = now.getTime();
   if (nowMs - last < 60_000) return null;
   const events = await repo.sources.calendarBefore(now);
-  const ended = events.filter(attendable).map(eventRange).find((e) => e.end <= nowMs && e.end > nowMs - 5 * 60_000 && last < e.end);
+  const ended = events.filter(attendable).map(eventRange).find((e: any) => e.end <= nowMs && e.end > nowMs - 5 * 60_000 && last < e.end);
   let reason = ended ? 'meeting ended' : null;
   if (!reason && nowMs - last >= 90_000) {
     const waiting = await repo.audio.waitingForQuiet(now);
-    if (waiting.some((ep) => { const end = meetingOf(ep).eventEnd; return !end || new Date(end).getTime() <= nowMs; })) reason = 'debrief waiting for quiet';
+    if (waiting.some((ep: any) => { const end = meetingOf(ep).eventEnd; return !end || new Date(end).getTime() <= nowMs; })) reason = 'debrief waiting for quiet';
   }
   if (!reason) return null;
   spool.requestRoll(config.audio.rollFile, reason);
@@ -451,14 +456,14 @@ async function rollIfUseful({ now = new Date() } = {}) {
   return reason;
 }
 
-async function pass({ now = new Date() } = {}) {
+async function pass({ now = new Date() }: { now?: any } = {}) {
   if (!config.meetings.debrief) return { debriefed: 0 };
   let debriefed = 0;
   for (const { ep, why } of await due({ now })) {
     try {
       await debrief(ep, { deliver: true, now });
       debriefed++;
-    } catch (err) {
+    } catch (err: any) {
       log.warn('debrief failed', { episode: ep.id, why, message: err.message });
     }
   }

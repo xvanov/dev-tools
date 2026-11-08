@@ -9,12 +9,17 @@
 // (commitments, facts): those are what anyone will actually come looking for.
 // Items with no chunks are excluded, because no retriever can find them and a
 // case that nothing could pass measures the chunker, not retrieval.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+type Row = Record<string, any>;
+type Db = import('../repo/types.ts').Db;
 
 const repo = require('../repo');
 const { config } = require('../config.ts');
 const llm = require('../llm.ts');
 const { logger } = require('../log.ts');
-const P = require('./prompts');
+const P = require('./prompts.ts');
 
 const log = logger('eval');
 
@@ -27,28 +32,28 @@ async function usedGold() {
 
 // Weighted random sample (Efraimidis–Spirakis): order by -ln(u)/w.
 // boost: a repo.evals BOOSTS key ('temporal'), never SQL.
-async function candidates({ exclude, limit, boost = 'none' }) {
+async function candidates({ exclude, limit, boost = 'none' }: { exclude?: any; limit?: number; boost?: string }) {
   return repo.evals.sample({ exclude, limit, boost });
 }
 
-async function loadItems(ids) {
+async function loadItems(ids: any[]) {
   const items = await repo.evals.itemsWithFacts(ids);
-  const byId = new Map(items.map((i) => [String(i.id), i]));
-  return ids.map((id) => byId.get(String(id))).filter(Boolean).sort((a, b) => new Date(a.occurred_at) - new Date(b.occurred_at));
+  const byId = new Map(items.map((i: any) => [String(i.id), i]));
+  return ids.map((id) => byId.get(String(id))).filter(Boolean).sort((a: any, b: any) => +new Date(a.occurred_at) - +new Date(b.occurred_at));
 }
 
-async function threadPairs({ exclude, limit }) {
+async function threadPairs({ exclude, limit }: { exclude?: any; limit?: number }) {
   return repo.evals.threadPairs({ exclude, limit });
 }
 
 // Groups of items from different threads that share a counterparty or a project.
-async function sharedGroups({ exclude, limit }) {
+async function sharedGroups({ exclude, limit }: { exclude?: any; limit?: number }) {
   const groups = await repo.evals.sharedGroups({ exclude, limit });
   const threads = new Map(
-    (await repo.evals.threadKeys(groups.flatMap((g) => g.ids))).map((r) => [String(r.id), r.t])
+    (await repo.evals.threadKeys(groups.flatMap((g: any) => g.ids))).map((r: any) => [String(r.id), r.t])
   );
   // 2–3 items, one per thread, chosen at random within the group.
-  return groups.map((g) => {
+  return groups.map((g: any) => {
     const seen = new Set();
     const ids = [];
     for (const id of g.ids.map(Number).sort(() => Math.random() - 0.5)) {
@@ -62,10 +67,10 @@ async function sharedGroups({ exclude, limit }) {
   });
 }
 
-async function generate(qtype, ids) {
-  const items = await loadItems(ids);
+async function generate(qtype: any, ids: any[]) {
+  const items: any[] = await loadItems(ids);
   if (items.length !== ids.length) return null;
-  const reply = await llm.complete({ system: P.SYSTEM, prompt: P.casePrompt(qtype, items), effort: 'medium', maxTokens: 2000, model: config.eval.model, purpose: 'eval' });
+  const reply: any = await llm.complete({ system: P.SYSTEM, prompt: P.casePrompt(qtype, items), effort: 'medium', maxTokens: 2000, model: config.eval.model, purpose: 'eval' });
   let parsed;
   try {
     parsed = llm.extractJson(reply);
@@ -91,7 +96,7 @@ async function generate(qtype, ids) {
 
 // Lexical absence: a term with any full-text hit means the question might be
 // answerable after all, so it is not an abstention case.
-async function lexicallyAbsent(term) {
+async function lexicallyAbsent(term: any) {
   const t = String(term || '').trim();
   if (t.length < 3) return false;
   // Whole words, via the same English tsquery as the chunks: a substring test
@@ -102,14 +107,14 @@ async function lexicallyAbsent(term) {
 
 // Most proposed terms turn out to be present — this corpus covers a lot — so
 // ask in rounds until enough survive the absence check.
-async function abstentions(count, { rounds = 4 } = {}) {
+async function abstentions(count: number, { rounds = 4 }: { rounds?: number } = {}) {
   const out = [];
   const asked = new Set();
   for (let round = 0; round < rounds && out.length < count; round++) {
-    const subjects = (await repo.evals.sampleSubjects()).map((r) => r.subject).sort(() => Math.random() - 0.5).slice(0, 40);
+    const subjects = (await repo.evals.sampleSubjects()).map((r: any) => r.subject).sort(() => Math.random() - 0.5).slice(0, 40);
     let qs = [];
     try {
-      const reply = await llm.complete({
+      const reply: any = await llm.complete({
         system: P.SYSTEM,
         prompt: P.abstentionPrompt(subjects, Math.max(6, (count - out.length) * 3)),
         effort: 'medium',
@@ -117,8 +122,8 @@ async function abstentions(count, { rounds = 4 } = {}) {
         model: config.eval.model,
         purpose: 'eval',
       });
-      qs = (llm.extractJson(reply).questions || []).filter((q) => q && q.question && q.term);
-    } catch (err) {
+      qs = (llm.extractJson(reply).questions || []).filter((q: any) => q && q.question && q.term);
+    } catch (err: any) {
       log.warn('abstention generation failed', { message: err.message });
     }
     for (const q of qs) {
@@ -139,8 +144,8 @@ async function abstentions(count, { rounds = 4 } = {}) {
   return out;
 }
 
-async function pool(items, size, fn) {
-  const results = [];
+async function pool(items: any[], size: number, fn: any) {
+  const results: any[] = [];
   let next = 0;
   await Promise.all(
     Array.from({ length: Math.min(size, items.length) }, async () => {
@@ -148,7 +153,7 @@ async function pool(items, size, fn) {
         const i = next++;
         try {
           results[i] = await fn(items[i], i);
-        } catch (err) {
+        } catch (err: any) {
           log.warn('generation failed', { message: err.message });
           results[i] = null;
         }
@@ -159,13 +164,13 @@ async function pool(items, size, fn) {
 }
 
 // Tries candidate jobs until `want` cases come back, `concurrency` at a time.
-async function fill(want, jobs, { concurrency, onCase }) {
+async function fill(want: any, jobs: any, { concurrency, onCase }: { concurrency?: any; onCase?: any }) {
   const got = [];
   let i = 0;
   while (got.length < want && i < jobs.length) {
     const batch = jobs.slice(i, i + Math.max(concurrency, want - got.length));
     i += batch.length;
-    const results = await pool(batch, concurrency, (job) => generate(job.qtype, job.ids));
+    const results: any[] = await pool(batch, concurrency, (job: any) => generate(job.qtype, job.ids));
     for (const r of results) {
       if (!r || got.length >= want) continue;
       got.push(r);
@@ -175,43 +180,43 @@ async function fill(want, jobs, { concurrency, onCase }) {
   return got;
 }
 
-async function insertCase(c) {
+async function insertCase(c: any) {
   return repo.evals.insertGenerated(c);
 }
 
-async function seed({ n = 60, concurrency = 4, only = null, progress = () => {} } = {}) {
+async function seed({ n = 60, concurrency = 4, only = null, progress = () => {} }: { n?: number; concurrency?: number; only?: any; progress?: any } = {}) {
   if (only && !(only in P.allocate(0))) throw new Error(`unknown qtype "${only}"`);
   const plan = only ? { [only]: n } : P.allocate(n);
   const exclude = await usedGold();
   const made = {};
-  const onCase = async (c) => {
+  const onCase = async (c: any) => {
     c.id = await insertCase(c);
-    made[c.qtype] = (made[c.qtype] || 0) + 1;
+    (made as any)[c.qtype] = ((made as any)[c.qtype] || 0) + 1;
     progress(c);
   };
 
   if (plan.single_session) {
     const picks = P.spread(await candidates({ exclude, limit: 600 }), plan.single_session * 2);
-    await fill(plan.single_session, picks.map((p) => ({ qtype: 'single_session', ids: [p.id] })), { concurrency, onCase });
+    await fill(plan.single_session, picks.map((p: any) => ({ qtype: 'single_session', ids: [p.id] })), { concurrency, onCase });
   }
   if (plan.temporal) {
     const ex = [...exclude, ...(await usedGold())];
     const picks = P.spread(await candidates({ exclude: ex, limit: 600, boost: 'temporal' }), plan.temporal * 2);
-    await fill(plan.temporal, picks.map((p) => ({ qtype: 'temporal', ids: [p.id] })), { concurrency, onCase });
+    await fill(plan.temporal, picks.map((p: any) => ({ qtype: 'temporal', ids: [p.id] })), { concurrency, onCase });
   }
   if (plan.knowledge_update) {
     const seenLater = new Set();
-    const all = (await threadPairs({ exclude: await usedGold(), limit: 400 })).filter((p) => {
+    const all = (await threadPairs({ exclude: await usedGold(), limit: 400 })).filter((p: any) => {
       if (seenLater.has(String(p.later))) return false;
       seenLater.add(String(p.later));
       return true;
     });
     const pairs = P.spread(all, plan.knowledge_update * 3);
-    await fill(plan.knowledge_update, pairs.map((p) => ({ qtype: 'knowledge_update', ids: [Number(p.earlier), Number(p.later)] })), { concurrency, onCase });
+    await fill(plan.knowledge_update, pairs.map((p: any) => ({ qtype: 'knowledge_update', ids: [Number(p.earlier), Number(p.later)] })), { concurrency, onCase });
   }
   if (plan.multi_session) {
-    const groups = (await sharedGroups({ exclude: await usedGold(), limit: plan.multi_session * 3 })).filter((g) => g.ids.length >= 2);
-    await fill(plan.multi_session, groups.map((g) => ({ qtype: 'multi_session', ids: g.ids })), { concurrency, onCase });
+    const groups = (await sharedGroups({ exclude: await usedGold(), limit: plan.multi_session * 3 })).filter((g: any) => g.ids.length >= 2);
+    await fill(plan.multi_session, groups.map((g: any) => ({ qtype: 'multi_session', ids: g.ids })), { concurrency, onCase });
   }
   if (plan.abstention) {
     for (const c of await abstentions(plan.abstention)) await onCase(c);

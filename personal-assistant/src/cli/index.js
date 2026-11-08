@@ -1196,7 +1196,7 @@ const commands = {
     // The voice fast lane's router (System 1): its own eval set in the repo
     // (anonymized logged turns), no database. Needs Ollama.
     if (action === 'router') {
-      const E = require('../eval/router');
+      const E = require('../eval/router.ts');
       const R = require('../chat/fastRouter.ts');
       const F = require('../chat/fastLane');
       const model = flags.model && flags.model !== true ? String(flags.model) : config.fastLane.model;
@@ -1211,7 +1211,7 @@ const commands = {
     const ev = require('../eval');
 
     if (action === 'seed') {
-      const { seed } = require('../eval/seed');
+      const { seed } = require('../eval/seed.ts');
       const n = flagInt(flags, 'n', 60);
       out(`seeding ~${n} cases — one model call each, this takes a while`);
       const r = await seed({

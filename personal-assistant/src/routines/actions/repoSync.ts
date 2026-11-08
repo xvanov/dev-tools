@@ -11,13 +11,18 @@
 // reset, delete or move a local branch, or touch a repo that is not on its
 // default branch. The only writes are `git fetch --prune` (remote-tracking refs)
 // and `git merge --ff-only` on the branch you are already on.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+type Row = import('../../repo/types.ts').Row;
+type Db = import('../../repo/types.ts').Db;
 
 const fs = require('fs');
 const path = require('path');
 const { execFile } = require('child_process');
 const { config } = require('../../config.ts');
 const { logger } = require('../../log.ts');
-const { register } = require('./index');
+const { register } = require('./actions.ts');
 
 const log = logger('repo-sync');
 
@@ -27,11 +32,11 @@ const PARALLEL = 4;
 
 // ------------------------------------------------------------ the rules ----
 
-function plural(n, word) {
+function plural(n: number, word: any) {
   return `${n} ${word}${n === 1 ? '' : 's'}`;
 }
 
-function minutesAgo(ms) {
+function minutesAgo(ms: number) {
   const m = Math.max(0, Math.round(ms / 60000));
   return m < 1 ? 'just now' : `${m} min ago`;
 }
@@ -40,17 +45,17 @@ function minutesAgo(ms) {
 // path, or the same directory. `git merge --ff-only` already refuses to
 // overwrite an untracked file; this stops it from dropping new files beside
 // one you are halfway through creating, which git would happily do.
-function untrackedInTheWay(untracked = [], incoming = []) {
+function untrackedInTheWay(untracked: any = [], incoming: any = []) {
   if (!untracked.length || !incoming.length) return null;
-  const norm = (p) => String(p).replace(/\\/g, '/').replace(/\/+$/, '');
-  const dirOf = (p) => (p.includes('/') ? p.slice(0, p.lastIndexOf('/')) : '');
-  const dirs = new Set(incoming.map((p) => dirOf(norm(p))));
+  const norm = (p: any) => String(p).replace(/\\/g, '/').replace(/\/+$/, '');
+  const dirOf = (p: any) => (p.includes('/') ? p.slice(0, p.lastIndexOf('/')) : '');
+  const dirs = new Set(incoming.map((p: any) => dirOf(norm(p))));
   const files = new Set(incoming.map(norm));
   for (const raw of untracked) {
     const u = norm(raw);
     const isDir = String(raw).endsWith('/');
     if (files.has(u)) return raw;
-    if (isDir && [...files].some((f) => f === u || f.startsWith(`${u}/`))) return raw;
+    if (isDir && [...files].some((f: any) => f === u || f.startsWith(`${u}/`))) return raw;
     if (!isDir && dirs.has(dirOf(u))) return raw;
   }
   return null;
@@ -65,7 +70,7 @@ function untrackedInTheWay(untracked = [], incoming = []) {
  *   'none' — nothing to do (already current)
  *   'skip' — leave the working tree alone, and say why
  */
-function decide(s) {
+function decide(s: any) {
   if (s.error) return { action: 'skip', reason: s.error };
   if (!s.hasOrigin) return { action: 'skip', reason: 'no origin remote' };
   if (s.fetchError) return { action: 'skip', reason: `fetch failed: ${s.fetchError}` };
@@ -101,11 +106,11 @@ function decide(s) {
 // ------------------------------------------------------ who is in a repo ----
 
 // Case-folded where the filesystem is case-insensitive (src/platform).
-function samePathKey(p) {
+function samePathKey(p: any) {
   return require('../../platform').pathKey(p);
 }
 
-function under(child, parent) {
+function under(child: any, parent: any) {
   const c = samePathKey(child);
   const p = samePathKey(parent);
   return c === p || c.startsWith(p + path.sep);
@@ -116,7 +121,7 @@ function under(child, parent) {
  * one in a directory between the repos root and the repo (a nested repo's
  * parent). A session at the root itself, or above it, is not "in" every repo.
  */
-function sessionsTouching(repo, busy, root) {
+function sessionsTouching(repo: any, busy: any, root: any) {
   const out = [];
   for (const b of busy || []) {
     if (!b?.path) continue;
@@ -138,7 +143,7 @@ async function busyPaths() {
       if (s.alive === false || !s.cwd) continue;
       busy.push({ path: s.cwd, label: `termhub session "${s.title || s.id}"` });
     }
-  } catch (err) {
+  } catch (err: any) {
     known = false;
     log.warn('termhub not reachable', { message: err.message });
   }
@@ -147,7 +152,7 @@ async function busyPaths() {
     for (const r of runs) {
       for (const p of [r.repo_path, r.worktree_path]) if (p) busy.push({ path: p, label: `pa run #${r.id}` });
     }
-  } catch (err) {
+  } catch (err: any) {
     known = false;
     log.warn('runs not readable', { message: err.message });
   }
@@ -156,7 +161,7 @@ async function busyPaths() {
 
 // ------------------------------------------------------------- git I/O ----
 
-function git(cwd, args, { timeout = 30_000 } = {}) {
+function git(cwd: any, args: any[], { timeout = 30_000 }: { timeout?: number } = {}): Promise<any> {
   return new Promise((resolve) => {
     execFile(
       'git',
@@ -169,7 +174,7 @@ function git(cwd, args, { timeout = 30_000 } = {}) {
         // Never wait on a credential prompt nobody will see.
         env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GCM_INTERACTIVE: 'never' },
       },
-      (err, stdout, stderr) => {
+      (err: any, stdout: any, stderr: any) => {
         resolve({
           ok: !err,
           code: err ? (err.killed ? 'timeout' : err.code) : 0,
@@ -183,22 +188,22 @@ function git(cwd, args, { timeout = 30_000 } = {}) {
 
 // The line of git's stderr that says what went wrong: "ssh: connect … timed
 // out" rather than the closing "…and the repository exists."
-function firstLine(s) {
+function firstLine(s: any) {
   const lines = String(s || '').trim().split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
   const best = lines.find((l) => /^ssh:/i.test(l)) || lines.find((l) => /^(fatal|error):/i.test(l)) || lines[lines.length - 1];
   return best ? best.slice(0, 160) : 'unknown error';
 }
 
-function isRepo(dir) {
+function isRepo(dir: any) {
   return fs.existsSync(path.join(dir, '.git'));
 }
 
 /** Repos one level under `root`, plus repos one level inside non-repo folders. */
-function scan(root, { nested = true } = {}) {
-  const skip = (name) => name.startsWith('.') || name === 'node_modules';
-  const children = (dir) => {
+function scan(root: any, { nested = true }: { nested?: boolean } = {}) {
+  const skip = (name: string) => name.startsWith('.') || name === 'node_modules';
+  const children = (dir: any) => {
     try {
-      return fs.readdirSync(dir, { withFileTypes: true }).filter((e) => e.isDirectory() && !skip(e.name));
+      return fs.readdirSync(dir, { withFileTypes: true }).filter((e: any) => e.isDirectory() && !skip(e.name));
     } catch {
       return [];
     }
@@ -212,7 +217,7 @@ function scan(root, { nested = true } = {}) {
   return out.sort((a, b) => a.localeCompare(b));
 }
 
-function mtime(p) {
+function mtime(p: any) {
   try {
     return fs.statSync(p).mtimeMs;
   } catch {
@@ -222,7 +227,7 @@ function mtime(p) {
 
 // `git status --porcelain=v1 -z`: entries are NUL-separated, renames carry a
 // second path. Ignored files are not listed.
-function parseStatus(z) {
+function parseStatus(z: any) {
   const parts = String(z).split('\0');
   let dirty = 0;
   const untracked = [];
@@ -251,7 +256,7 @@ const OPERATIONS = [
   ['BISECT_LOG', 'bisect'],
 ];
 
-async function defaultBranchOf(dir) {
+async function defaultBranchOf(dir: any) {
   const head = await git(dir, ['symbolic-ref', '--quiet', '--short', 'refs/remotes/origin/HEAD']);
   const named = head.ok && head.out.trim().startsWith('origin/') ? head.out.trim().slice('origin/'.length) : null;
   // origin/HEAD can dangle (its branch was pruned); then fall back.
@@ -267,8 +272,8 @@ async function defaultBranchOf(dir) {
  * git command of ours can touch the index; every read uses
  * --no-optional-locks so `status` does not rewrite it either.
  */
-async function inspect(dir, { fetch = true, fetchOnce = null, now = Date.now(), quietMinutes = QUIET_MINUTES } = {}) {
-  const s = { path: dir, name: path.basename(dir), nowMs: now, quietMinutes };
+async function inspect(dir: any, { fetch = true, fetchOnce = null, now = Date.now(), quietMinutes = QUIET_MINUTES }: { fetch?: boolean; fetchOnce?: any; now?: any; quietMinutes?: any } = {}) {
+  const s: any = { path: dir, name: path.basename(dir), nowMs: now, quietMinutes };
   const gd = await git(dir, ['rev-parse', '--absolute-git-dir', '--git-common-dir']);
   if (!gd.ok) return { ...s, error: `not readable: ${firstLine(gd.err)}` };
   const [gitDir, commonRaw] = gd.out.trim().split(/\r?\n/);
@@ -283,7 +288,7 @@ async function inspect(dir, { fetch = true, fetchOnce = null, now = Date.now(), 
   s.indexLocked = fs.existsSync(path.join(gitDir, 'index.lock'));
 
   const remotes = await git(dir, ['remote']);
-  s.hasOrigin = remotes.ok && remotes.out.split(/\r?\n/).map((x) => x.trim()).includes('origin');
+  s.hasOrigin = remotes.ok && remotes.out.split(/\r?\n/).map((x: any) => x.trim()).includes('origin');
   if (!s.hasOrigin) return s;
 
   if (fetch) {
@@ -322,7 +327,7 @@ async function inspect(dir, { fetch = true, fetchOnce = null, now = Date.now(), 
   return s;
 }
 
-async function fastForward(s) {
+async function fastForward(s: any) {
   const target = `refs/remotes/origin/${s.defaultBranch}`;
   // merge.autoStash off: this action never stashes, even if your config would.
   const r = await git(s.path, ['-c', 'merge.autoStash=false', 'merge', '--ff-only', '--quiet', target], { timeout: 120_000 });
@@ -330,7 +335,7 @@ async function fastForward(s) {
   return { ok: true };
 }
 
-async function pool(items, n, fn) {
+async function pool(items: any[], n: number, fn: any) {
   const out = new Array(items.length);
   let i = 0;
   const workers = Array.from({ length: Math.min(n, items.length) }, async () => {
@@ -345,21 +350,21 @@ async function pool(items, n, fn) {
 
 // ---------------------------------------------------------------- run ----
 
-async function run(params, { dryRun = false, fetch = true } = {}) {
+async function run(params: any, { dryRun = false, fetch = true }: { dryRun?: boolean; fetch?: boolean } = {}) {
   const root = params.root || config.reposRoot;
   if (!fs.existsSync(root)) throw new Error(`repos root ${root} does not exist`);
   const repos = scan(root, { nested: params.nested !== false });
   const { busy, known } = await busyPaths();
   const fetches = new Map();
-  const fetchOnce = (key, fn) => {
+  const fetchOnce = (key: any, fn: any) => {
     const k = samePathKey(key);
     if (!fetches.has(k)) fetches.set(k, fn());
     return fetches.get(k);
   };
 
   const t0 = Date.now();
-  const results = await pool(repos, PARALLEL, async (dir) => {
-    const state = await inspect(dir, { fetch, fetchOnce, now: Date.now(), quietMinutes: params.quietMinutes });
+  const results = await pool(repos, PARALLEL, async (dir: any) => {
+    const state: any = await inspect(dir, { fetch, fetchOnce, now: Date.now(), quietMinutes: params.quietMinutes });
     state.sessionsKnown = known;
     state.sessions = sessionsTouching(dir, busy, root);
     const d = decide(state);
@@ -375,7 +380,7 @@ async function run(params, { dryRun = false, fetch = true } = {}) {
     return { ...row, outcome: 'skipped' };
   });
 
-  const by = (o) => results.filter((r) => r.outcome === o);
+  const by = (o: any) => results.filter((r) => r.outcome === o);
   const updated = by(dryRun ? 'would_update' : 'updated');
   const current = by('current');
   const skipped = by('skipped');
@@ -414,7 +419,7 @@ const action = register({
     nested: { type: 'boolean', default: true, doc: 'also look one level inside folders that are not repos' },
     quietMinutes: { type: 'number', default: QUIET_MINUTES, min: 5, max: 1440, doc: 'skip repos touched more recently than this' },
   },
-  describe: (p) =>
+  describe: (p: any) =>
     `Pull main on every repo under ${p.root || config.reposRoot} that is clean, on its default branch, ` +
     `untouched for ${p.quietMinutes ?? QUIET_MINUTES} min and not in use; others are fetched and reported`,
   run,

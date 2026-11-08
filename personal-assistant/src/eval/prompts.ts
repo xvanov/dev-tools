@@ -8,6 +8,11 @@
 // construction and the case measures nothing. A real question is asked weeks
 // later from memory, in your own words, and the eval is only as honest as its
 // questions are like that.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+type Row = Record<string, any>;
+type Db = import('../repo/types.ts').Db;
 
 const SYSTEM = `You write evaluation questions for a personal memory assistant.
 
@@ -59,25 +64,25 @@ than you can see. If they share nothing meaningful, set
 "skip": true. Also return "uses": [ids of the items the answer needs].`,
 };
 
-function clip(text, max) {
+function clip(text: string, max: number) {
   const t = String(text || '').replace(/\s+\n/g, '\n').trim();
   return t.length > max ? `${t.slice(0, max)}\n[...truncated]` : t;
 }
 
-function renderItem(item, { maxChars = 5000 } = {}) {
+function renderItem(item: any, { maxChars = 5000 }: { maxChars?: number } = {}) {
   const when = item.occurred_at ? new Date(item.occurred_at).toISOString().slice(0, 16).replace('T', ' ') + ' UTC' : '?';
   const head = `### item #${item.id} · ${item.source} · ${when}\nsubject: ${item.subject || '(none)'}`;
   const derived = [
-    ...(item.commitments || []).map((c) => `- commitment: ${c}`),
-    ...(item.facts || []).map((f) => `- fact: ${f}`),
+    ...(item.commitments || []).map((c: any) => `- commitment: ${c}`),
+    ...(item.facts || []).map((f: any) => `- fact: ${f}`),
   ];
   return [head, derived.length ? `distilled:\n${derived.join('\n')}` : null, `body:\n${clip(item.body_text, maxChars)}`]
     .filter(Boolean)
     .join('\n');
 }
 
-function casePrompt(qtype, items, { now = new Date() } = {}) {
-  const brief = QTYPE_BRIEF[qtype];
+function casePrompt(qtype: any, items: any[], { now = new Date() }: { now?: any } = {}) {
+  const brief = (QTYPE_BRIEF as any)[qtype];
   if (!brief) throw new Error(`no prompt for qtype ${qtype}`);
   const per = items.length > 1 ? 3000 : 6000;
   return [
@@ -95,10 +100,10 @@ function casePrompt(qtype, items, { now = new Date() } = {}) {
 // model sees subject lines only, to pitch questions at the right domain, and
 // names the one distinctive term an answer would have to contain — that term
 // is what the lexical absence check looks for.
-function abstentionPrompt(subjects, count) {
+function abstentionPrompt(subjects: any, count: number) {
   return [
     `Here are subject lines from the store, to show what this person's work is about:`,
-    subjects.map((s) => `- ${s}`).join('\n'),
+    subjects.map((s: any) => `- ${s}`).join('\n'),
     '',
     `Write ${count} questions this person might plausibly ask that these items would NOT answer:`,
     `same working world, but about a meeting, decision, person, system, incident or request that`,
@@ -112,7 +117,7 @@ function abstentionPrompt(subjects, count) {
 
 // Validates and normalises a generation reply. Returns null for a skip or for
 // anything malformed; never throws, because one bad reply must not end a seed.
-function parseCaseReply(reply, { qtype, itemIds = [] } = {}) {
+function parseCaseReply(reply: any, { qtype, itemIds = [] }: { qtype?: any; itemIds?: any[] } = {}) {
   if (!reply || typeof reply !== 'object' || reply.skip) return null;
   const question = String(reply.question || '').trim();
   const answer = String(reply.answer || '').trim();
@@ -120,7 +125,7 @@ function parseCaseReply(reply, { qtype, itemIds = [] } = {}) {
   let gold = itemIds;
   if (qtype === 'multi_session' && Array.isArray(reply.uses)) {
     const allowed = new Set(itemIds.map(String));
-    const used = reply.uses.map(String).filter((id) => allowed.has(id));
+    const used = reply.uses.map(String).filter((id: any) => allowed.has(id));
     if (used.length < 2) return null;
     gold = used.map(Number);
   }
@@ -130,8 +135,8 @@ function parseCaseReply(reply, { qtype, itemIds = [] } = {}) {
 // The cheap guard against keyword-matchable questions: how much of the
 // question's vocabulary is lifted from the item's subject line. A question that
 // is mostly the subject is a lexical lookup wearing a disguise.
-function subjectOverlap(question, subject) {
-  const words = (s) =>
+function subjectOverlap(question: any, subject: string) {
+  const words = (s: any) =>
     new Set(
       String(s || '')
         .toLowerCase()
@@ -150,28 +155,28 @@ function subjectOverlap(question, subject) {
 // largest share because it is the floor everything else stands on.
 const MIX = { single_session: 0.34, multi_session: 0.16, temporal: 0.16, knowledge_update: 0.17, abstention: 0.17 };
 
-function allocate(n) {
+function allocate(n: number) {
   const out = {};
   let left = n;
   const keys = Object.keys(MIX);
   for (const k of keys.slice(1)) {
-    out[k] = Math.round(n * MIX[k]);
-    left -= out[k];
+    (out as any)[k] = Math.round(n * (MIX as any)[k]);
+    left -= (out as any)[k];
   }
-  out[keys[0]] = Math.max(0, left);
+  (out as any)[keys[0]!] = Math.max(0, left);
   return out;
 }
 
 // Spreads a weighted-random candidate list across sources and weeks: round-
 // robin over sources, and within a source prefer a week not yet used. Without
 // it, sixty cases come out as fifty GitHub notifications from one Tuesday.
-function spread(candidates, n) {
+function spread(candidates: any, n: number) {
   const bySource = new Map();
   for (const c of candidates) {
     if (!bySource.has(c.source)) bySource.set(c.source, []);
     bySource.get(c.source).push(c);
   }
-  const weekOf = (c) => Math.floor(new Date(c.occurred_at).getTime() / (7 * 86400_000));
+  const weekOf = (c: any) => Math.floor(new Date(c.occurred_at).getTime() / (7 * 86400_000));
   const usedWeeks = new Map();
   const picked = [];
   const sources = [...bySource.keys()];
@@ -181,7 +186,7 @@ function spread(candidates, n) {
       const list = bySource.get(s);
       if (!list.length) continue;
       const weeks = usedWeeks.get(s) || new Set();
-      let idx = list.findIndex((c) => !weeks.has(weekOf(c)));
+      let idx = list.findIndex((c: any) => !weeks.has(weekOf(c)));
       if (idx < 0) idx = 0;
       const [c] = list.splice(idx, 1);
       weeks.add(weekOf(c));
@@ -195,7 +200,7 @@ function spread(candidates, n) {
 const ANSWER_SYSTEM = `You answer a question using only the retrieved items you are given. Be brief:
 one or two sentences. If the items do not contain the answer, reply exactly: UNKNOWN`;
 
-function answerPrompt(question, items) {
+function answerPrompt(question: any, items: any[]) {
   return [
     items.length ? items.map((it) => renderItem(it, { maxChars: 1500 })).join('\n\n') : '(no items retrieved)',
     '',
@@ -208,10 +213,10 @@ same essential fact as the reference (wording, extra detail and formatting do no
 date, person or value does). Where the reference is NONE, the question has no answer in the data:
 the answer is correct only if it says it does not know (e.g. UNKNOWN). Reply with JSON only.`;
 
-function gradePrompt(rows) {
+function gradePrompt(rows: any) {
   return [
     'Grade each row.',
-    JSON.stringify(rows.map((r) => ({ i: r.i, question: r.question, reference: r.reference ?? 'NONE', answer: r.answer }))),
+    JSON.stringify(rows.map((r: any) => ({ i: r.i, question: r.question, reference: r.reference ?? 'NONE', answer: r.answer }))),
     '',
     'Reply with JSON: {"grades": [{"i": 0, "correct": true}]}',
   ].join('\n');

@@ -10,7 +10,7 @@ type Row = Record<string, any>;
 type Db = import('../repo/types.ts').Db;
 
 const { verifyQuote } = require('../memory/claims.ts');
-const { changedSince } = require('../meetings/debriefCore');
+const { changedSince } = require('../meetings/debriefCore.ts');
 
 const VERSION = 'reply-close-v1';
 const VERDICTS = ['discharged', 'partial', 'promise', 'unrelated'];

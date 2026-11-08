@@ -71,7 +71,7 @@ function make(out, fail) {
           const m = await meetings.resolveTarget(target, { ctx });
           const { kind } = await meetings.classify(m, ctx);
           const ev = await meetings.gatherEvidence(m, kind, ctx);
-          const { buildBriefPrompt } = require('../meetings/prompt');
+          const { buildBriefPrompt } = require('../meetings/prompt.ts');
           return out(buildBriefPrompt(ev).prompt);
         }
         const r = await meetings.brief(target, { deliver: flagBool(flags, 'notify', false), force: flagBool(flags, 'force', false) });
@@ -90,14 +90,14 @@ function make(out, fail) {
       }
 
       if (sub === 'debrief') {
-        const debrief = require('../meetings/debrief');
+        const debrief = require('../meetings/debrief.ts');
         // `--dry-run last` would read "last" as the flag's value.
         const dry = flags['dry-run'];
         const target = args[1] || (typeof dry === 'string' && dry !== 'true' ? dry : 'last');
         const dryRun = dry !== undefined && dry !== false && dry !== 'false';
         const r = await debrief.debrief(target, { dryRun, deliver: flagBool(flags, 'notify', false) });
         out(`${local(r.meeting.start)} · ${r.meeting.title} · episode ${r.episode.id} (${r.meeting.kind})${dryRun ? ' · DRY RUN, nothing written' : ''}`);
-        const { itemLine } = require('../meetings/debriefCore');
+        const { itemLine } = require('../meetings/debriefCore.ts');
         const items = r.debrief ? r.debrief.applied.items : r.plan.items;
         if (!items.length) out('  nothing for you in this one');
         items.forEach((it, i) => {
@@ -111,7 +111,7 @@ function make(out, fail) {
       }
 
       if (sub === 'debriefs') {
-        const list = await require('../meetings/debrief').recent({ days: flagInt(flags, 'days', 7) });
+        const list = await require('../meetings/debrief.ts').recent({ days: flagInt(flags, 'days', 7) });
         if (!list.length) return out('no debriefs in that window');
         for (const d of list) {
           out(`#${d.id}  ${local(d.startedAt)} · ${d.title} — ${d.counts.todos} to-dos, ${d.counts.updates} updated, ${d.counts.decisions} decisions`);
@@ -122,7 +122,7 @@ function make(out, fail) {
 
       if (sub === 'undo') {
         if (args.length < 3) return fail('usage: pa meeting undo <debrief-id> <item-number>');
-        const r = await require('../meetings/debrief').undo(Number(args[1]), Number(args[2]) - 1);
+        const r = await require('../meetings/debrief.ts').undo(Number(args[1]), Number(args[2]) - 1);
         return out(r.already ? 'already undone' : r.result);
       }
 

@@ -15,7 +15,7 @@ type Req = import('http').IncomingMessage;
 type Res = import('http').ServerResponse;
 
 async function route(method: string, url: URL, body: Row) {
-  const debrief = require('../meetings/debrief');
+  const debrief = require('../meetings/debrief.ts');
   if (method === 'GET' && url.pathname === '/api/debriefs') {
     return debrief.recent({ days: Math.min(Number(url.searchParams.get('days')) || 7, 60) });
   }

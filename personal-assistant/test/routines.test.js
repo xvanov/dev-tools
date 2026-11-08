@@ -7,10 +7,10 @@
 
 const assert = require('assert');
 const path = require('path');
-const cron = require('../src/routines/cron');
+const cron = require('../src/routines/cron.ts');
 const actions = require('../src/routines/actions');
-const { decide, sessionsTouching, untrackedInTheWay, parseStatus } = require('../src/routines/actions/repoSync');
-const { promptsOf, repeatedAsks, resembles, jaccard } = require('../src/routines/suggest');
+const { decide, sessionsTouching, untrackedInTheWay, parseStatus } = require('../src/routines/actions/repoSync.ts');
+const { promptsOf, repeatedAsks, resembles, jaccard } = require('../src/routines/suggest.ts');
 const { preview, plainWords, numbered, stableJson } = require('../src/routines');
 
 const L = (y, mo, d, h = 0, mi = 0) => new Date(y, mo - 1, d, h, mi); // local time

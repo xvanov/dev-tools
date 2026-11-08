@@ -3,8 +3,8 @@
 // Pre-meeting briefs: the pure rules. Invented names and data throughout.
 
 const assert = require('assert');
-const core = require('../src/meetings/core');
-const P = require('../src/meetings/prompt');
+const core = require('../src/meetings/core.ts');
+const P = require('../src/meetings/prompt.ts');
 const { verifyQuote } = require('../src/memory/claims.ts');
 const { toastXml } = require('../src/notify');
 

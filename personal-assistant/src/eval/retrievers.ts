@@ -12,14 +12,19 @@
 // pass when the top score stays below it. Scores are not comparable across
 // retrievers (search's are RRF sums), so each one carries its own default and
 // `pa eval run --threshold` overrides it while calibrating.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+type Row = Record<string, any>;
+type Db = import('../repo/types.ts').Db;
 
 const registry = new Map();
 
-function register(name, fn, { threshold = 0, describe = '' } = {}) {
+function register(name: string, fn: any, { threshold = 0, describe = '' }: { threshold?: number; describe?: string } = {}) {
   registry.set(name, { name, fn, threshold, describe });
 }
 
-function get(name) {
+function get(name: string) {
   const r = registry.get(name);
   if (!r) throw new Error(`no retriever "${name}" — known: ${[...registry.keys()].join(', ')}`);
   return r;
@@ -41,7 +46,7 @@ function names() {
 // search's scoring changes.
 register(
   'search',
-  async (q, { limit }) => {
+  async (q: any, { limit }: any) => {
     const r = await require('../search').search(q, { limit });
     return { results: r.results, degraded: !r.reranked };
   },
@@ -52,7 +57,7 @@ register(
 // are RRF sums, so its abstention numbers are not meaningful.
 register(
   'search-fused',
-  async (q, { limit }) => (await require('../search').search(q, { limit, rerank: false })).results,
+  async (q: any, { limit }: any) => (await require('../search').search(q, { limit, rerank: false })).results,
   { threshold: 0.03, describe: 'hybrid search, no rerank (RRF scores)' }
 );
 
@@ -61,7 +66,7 @@ register(
 // a slightly higher threshold (see ABSTAIN_BELOW in src/recall).
 register(
   'recall',
-  async (q, { limit }) => {
+  async (q: any, { limit }: any) => {
     const r = await require('../recall').recall(q, { limit });
     return { results: r.items, degraded: !r.reranked };
   },
@@ -72,7 +77,7 @@ register(
 // question, so slow — measure whether it earns that.
 register(
   'recall-deep',
-  async (q, { limit }) => {
+  async (q: any, { limit }: any) => {
     const r = await require('../recall').recall(q, { limit, deep: true });
     return { results: r.items, degraded: !r.reranked };
   },

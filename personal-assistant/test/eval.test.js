@@ -5,9 +5,9 @@
 // phase is judged by must be right before any of them run.
 
 const assert = require('assert');
-const M = require('../src/eval/metrics');
-const P = require('../src/eval/prompts');
-const retrievers = require('../src/eval/retrievers');
+const M = require('../src/eval/metrics.ts');
+const P = require('../src/eval/prompts.ts');
+const retrievers = require('../src/eval/retrievers.ts');
 
 const close = (a, b) => assert.ok(Math.abs(a - b) < 1e-9, `${a} != ${b}`);
 
@@ -162,7 +162,7 @@ assert.ok(P.gradePrompt([{ i: 0, question: 'q', reference: null, answer: 'UNKNOW
 // ------------------------------------------------------ the fast-lane router --
 // `pa eval router` (src/eval/router.js) and its eval set. The model is mocked.
 (async () => {
-  const E = require('../src/eval/router');
+  const E = require('../src/eval/router.ts');
   const set = E.loadCases();
   assert.ok(set.snapshot.startsWith('Now:'));
   assert.ok(set.cases.length >= 60);

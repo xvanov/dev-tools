@@ -70,7 +70,7 @@ async function route(method: string, url: URL, body: Row) {
     return { id: row.id, next_run_at: row.next_run_at };
   }
   if (p === '/api/routines/suggest') {
-    const rows = await require('../routines/suggest').suggest();
+    const rows = await require('../routines/suggest.ts').suggest();
     return { proposed: rows.map((x: Row) => ({ id: x.id, title: x.title })) };
   }
   const m = p.match(/^\/api\/routines\/(\d+)\/(run|dry-run|pause|resume|accept|reject|delete)$/);

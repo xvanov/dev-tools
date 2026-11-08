@@ -5,20 +5,25 @@
 // must not be answered here but would be, and the router's latency warm.
 // --fit re-fits the calibration and the threshold on the same set and prints
 // the constants to paste into fastRouter.js.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+type Row = Record<string, any>;
+type Db = import('../repo/types.ts').Db;
 
 const path = require('path');
 const R = require('../chat/fastRouter.ts');
 
 const RAW = { T: 1, b: { answer_here: 0, hand_off: 0, action: 0 } };
 
-function loadCases(file = path.join(__dirname, 'router-cases.json')) {
+function loadCases(file: any = path.join(__dirname, 'router-cases.json')) {
   return require(file);
 }
 
-const pct = (n, d) => (d ? `${((100 * n) / d).toFixed(1)}%` : '-');
-function quantile(xs, q) {
+const pct = (n: number, d: any) => (d ? `${((100 * n) / d).toFixed(1)}%` : '-');
+function quantile(xs: any, q: any) {
   const s = [...xs].sort((a, b) => a - b);
-  return s.length ? s[Math.min(s.length - 1, Math.floor(q * s.length))] : null;
+  return s.length ? s[Math.min(s.length - 1, Math.floor((q as any) * s.length))] : null;
 }
 
 /**
@@ -26,8 +31,8 @@ function quantile(xs, q) {
  * threshold -> metrics. `guard` is the fast lane's looksLikeAction: a turn
  * the router would answer but that reads as an action is handed off.
  */
-function evaluate(rows, { cal, threshold, guard = () => false }) {
-  const out = { n: rows.length, correct: 0, localCorrect: 0, answeredNonAnswer: [], answeredAction: [], answeredActionRouter: [], missedAnswers: 0, perCase: [] };
+function evaluate(rows: any, { cal, threshold, guard = () => false }: { cal?: any; threshold?: any; guard?: any }) {
+  const out: any = { n: rows.length, correct: 0, localCorrect: 0, answeredNonAnswer: [] as any[], answeredAction: [] as any[], answeredActionRouter: [] as any[], missedAnswers: 0, perCase: [] as any[] };
   for (const r of rows) {
     const p = R.calibrate(r.lp, cal);
     let route = R.decide(p, threshold);
@@ -42,20 +47,20 @@ function evaluate(rows, { cal, threshold, guard = () => false }) {
     if (r.expect === 'answer' && route !== 'answer') out.missedAnswers++;
     out.perCase.push({ ...r, p, route, routerRoute, ok });
   }
-  out.answers = rows.filter((r) => r.expect === 'answer').length;
+  out.answers = rows.filter((r: any) => r.expect === 'answer').length;
   return out;
 }
 
 /** Leave-one-out accuracy of fit + threshold: how it does on turns it was not fitted on. */
-function leaveOneOut(rows, guard) {
+function leaveOneOut(rows: any, guard: any) {
   let correct = 0;
   let answeredAction = 0;
   let answeredNonAnswer = 0;
   for (let i = 0; i < rows.length; i++) {
-    const train = rows.filter((_, j) => j !== i);
+    const train = rows.filter((_: any, j: any) => j !== i);
     const cal = R.fitCalibration(train, { iters: 1500 });
-    const threshold = R.pickThreshold(train.map((r) => ({ ...r, p: R.calibrate(r.lp, cal) })));
-    const e = evaluate([rows[i]], { cal, threshold, guard });
+    const threshold = R.pickThreshold(train.map((r: any) => ({ ...r, p: R.calibrate(r.lp, cal) })));
+    const e: any = evaluate([rows[i]], { cal, threshold, guard });
     correct += e.correct;
     answeredAction += e.answeredAction.length;
     answeredNonAnswer += e.answeredNonAnswer.length;
@@ -68,11 +73,11 @@ function leaveOneOut(rows, guard) {
  * model load and the system prompt's cache), then each case `repeat` times;
  * the latency is every call, the log-probabilities the first.
  */
-async function scoreCases({ model, keepAlive = '24h', repeat = 1, progress = () => {}, score = R.score } = {}) {
+async function scoreCases({ model, keepAlive = '24h', repeat = 1, progress = () => {}, score = R.score }: { model?: any; keepAlive?: string; repeat?: number; progress?: any; score?: any } = {}) {
   const set = loadCases();
   await score({ text: 'hello', context: set.snapshot, model, keepAlive, timeoutMs: 60_000 });
   const rows = [];
-  const ms = [];
+  const ms: number[] = [];
   for (const c of set.cases) {
     let first = null;
     for (let k = 0; k < repeat; k++) {
@@ -87,18 +92,18 @@ async function scoreCases({ model, keepAlive = '24h', repeat = 1, progress = () 
   return { rows, ms };
 }
 
-function report({ rows, ms }, { cal, threshold, guard, fit = false, out = console.log, misses = false }) {
-  const lines = [];
-  const say = (s) => lines.push(s);
+function report({ rows, ms }: { rows?: any; ms?: any }, { cal, threshold, guard, fit = false, out = console.log, misses = false }: { cal?: any; threshold?: any; guard?: any; fit?: boolean; out?: any; misses?: boolean }) {
+  const lines: any[] = [];
+  const say = (s: any) => lines.push(s);
   const raw = evaluate(rows, { cal: RAW, threshold: 0.5, guard: () => false });
   let usedCal = cal;
   let usedThreshold = threshold;
   if (fit) {
     usedCal = R.fitCalibration(rows);
-    usedThreshold = R.pickThreshold(rows.map((r) => ({ ...r, p: R.calibrate(r.lp, usedCal) })));
+    usedThreshold = R.pickThreshold(rows.map((r: any) => ({ ...r, p: R.calibrate(r.lp, usedCal) })));
   }
   const e = evaluate(rows, { cal: usedCal, threshold: usedThreshold, guard });
-  const byExpect = (x) => rows.filter((r) => r.expect === x).length;
+  const byExpect = (x: any) => rows.filter((r: any) => r.expect === x).length;
   say(`router eval · ${rows.length} turns (${byExpect('answer')} answer, ${byExpect('handoff')} handoff, ${byExpect('action')} action) · calibration T=${usedCal.T} b=${JSON.stringify(usedCal.b)} · threshold p(answer_here) >= ${usedThreshold}${fit ? ' (fitted on this set)' : ''}`);
   say(`  raw argmax (no calibration, no guard): ${pct(raw.correct, raw.n)} correct, ${raw.answeredAction.length} action and ${raw.answeredNonAnswer.length} non-answer turns answered here`);
   say(`  routed: ${pct(e.correct, e.n)} correct (3-way), ${pct(e.localCorrect, e.n)} on answer-here vs Jarvis`);
@@ -111,7 +116,7 @@ function report({ rows, ms }, { cal, threshold, guard, fit = false, out = consol
   }
   say(`  latency warm (${ms.length} calls): p50 ${quantile(ms, 0.5)} ms · p95 ${quantile(ms, 0.95)} ms · max ${Math.max(...ms)} ms`);
   if (misses) {
-    for (const c of e.perCase.filter((x) => !x.ok)) {
+    for (const c of e.perCase.filter((x: any) => !x.ok)) {
       say(`  miss: expect ${c.expect.padEnd(7)} got ${c.route.padEnd(7)} p=${['answer_here', 'hand_off', 'action'].map((k) => c.p[k].toFixed(2)).join('/')} ${JSON.stringify(c.text.slice(0, 80))}`);
     }
   }

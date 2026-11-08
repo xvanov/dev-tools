@@ -5,7 +5,7 @@
 // would change. Names are invented.
 
 const assert = require('assert');
-const D = require('../src/meetings/debriefCore');
+const D = require('../src/meetings/debriefCore.ts');
 const { splitAtEvents, classify, episodeChanged } = require('../src/audio/episodes');
 
 const transcript = [

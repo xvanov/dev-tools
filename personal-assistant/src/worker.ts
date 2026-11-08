@@ -296,7 +296,7 @@ async function main() {
   every(config.audio.enabled ? 60 : 86400, 'audio', async () => {
     if (!config.audio.enabled) return;
     const spool = require('./audio/spool');
-    const debrief = require('./meetings/debrief');
+    const debrief = require('./meetings/debrief.ts');
     if (config.meetings.debrief) {
       const rolled = await debrief.rollIfUseful().catch((err: Error) => log.warn('roll check failed', { message: err.message }));
       // Capture checks the roll file every second; give it a moment to close.
@@ -497,7 +497,7 @@ const memoryPass = (file: string, opts?: unknown) => () => (MEMORY_PASSES[file] 
       await require('./routines').runDue();
     });
     every(3600, 'routine-suggest', async () => {
-      await require('./routines/suggest').nightly();
+      await require('./routines/suggest.ts').nightly();
     });
   }
 
