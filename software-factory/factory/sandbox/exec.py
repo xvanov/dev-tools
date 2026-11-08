@@ -80,9 +80,14 @@ def bwrap_argv(
         "--proc",
         "/proc",
     ]
-    for hidden in ("/tmp", "/var/tmp", "/run", "/home", "/root"):
+    hidden_dirs = ("/tmp", "/var/tmp", "/run", "/home", "/root")
+    for hidden in hidden_dirs:
         argv += ["--tmpfs", hidden]
     for p in policy.readable:
+        # Never re-bind `/` or a parent of a hidden dir: that would undo the tmpfs.
+        q = posixpath.normpath(p)
+        if q == "/" or any(h == q or h.startswith(q.rstrip("/") + "/") for h in hidden_dirs):
+            continue
         if os.path.exists(p):
             argv += ["--ro-bind", p, p]
     sock_dirs = sorted({posixpath.dirname(t) for t in policy.relays.values()})

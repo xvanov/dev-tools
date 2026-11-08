@@ -201,11 +201,29 @@ def write_sbx_shims(bin_dir: Path, *, python: str | None = None) -> list[Path]:
     return [sh, cmd]
 
 
+def interpreter_prefixes(executable: str | None = None) -> set[str]:
+    """The install prefix at every hop of the interpreter's symlink chain,
+    UNresolved. A uv venv's ``bin/python`` points into a minor-version link
+    (``.../cpython-3.12-linux-x86_64-gnu`` -> ``cpython-3.12.12-...``) that
+    ``sys.base_prefix`` reports resolved; inside the sandbox the link path
+    itself must exist, or ``execvp`` finds nothing (seen in CI)."""
+    out: set[str] = set()
+    p = os.path.abspath(executable or sys.executable)
+    for _ in range(16):
+        out.add(os.path.dirname(os.path.dirname(p)))
+        if not os.path.islink(p):
+            break
+        target = os.readlink(p)
+        p = os.path.normpath(target if os.path.isabs(target) else os.path.join(os.path.dirname(p), target))
+    return out
+
+
 def default_readable() -> list[str]:
     """What every sandboxed run needs to read: this interpreter (venv and its
     base install) and the ``factory`` package source. Not the factory root:
     its ``.env`` and ``state/`` stay out."""
     paths = {sys.prefix, sys.base_prefix, str(Path(__file__).resolve().parents[1])}
+    paths.update(interpreter_prefixes())
     extra = os.environ.get("SANDBOX_READ_PATHS", "")
     paths.update(p for p in extra.split(os.pathsep) if p.strip())
     return sorted(str(Path(p)) for p in paths)

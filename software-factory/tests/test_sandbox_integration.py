@@ -27,7 +27,7 @@ import pytest
 
 from factory.sandbox.exec import bwrap_argv
 from factory.sandbox.host import SandboxRun
-from factory.sandbox.policy import Policy, sandbox_env
+from factory.sandbox.policy import Policy, interpreter_prefixes, sandbox_env
 
 WIN = sys.platform == "win32"
 HOST_TOKEN = "ghp_host_token_must_not_leak_" + secrets.token_hex(4)
@@ -339,6 +339,27 @@ def test_bwrap_argv_hides_home_and_binds_only_the_run(tmp_path):
     assert argv.index("--tmpfs") < argv.index("--bind")  # binds land on top of the tmpfs
     assert argv[-3:] == ["--", "claude", "-p"]
     assert "--relay" in argv and "127.0.0.1:3128=/tmp/sbx-x/proxy.sock" in argv
+
+
+def test_bwrap_argv_never_rebinds_root_or_a_hidden_parent(tmp_path):
+    pol = Policy(run_id="r", workdir=str(tmp_path), home=str(tmp_path), readable=["/", "/home", "/var", "/run"])
+    argv = bwrap_argv(pol, ["true"], python="/usr/bin/python3", bwrap="bwrap")
+    ro = [argv[i + 1] for i, a in enumerate(argv) if a == "--ro-bind"]
+    assert ro == ["/"]  # only the first, read-only root, under the tmpfs mounts
+
+
+@pytest.mark.skipif(WIN, reason="symlinks")
+def test_interpreter_prefixes_follow_the_unresolved_link_chain(tmp_path):
+    real = tmp_path / "uv" / "cpython-3.12.12-x" / "bin"
+    real.mkdir(parents=True)
+    (real / "python3.12").write_text("")
+    link_dir = tmp_path / "uv" / "cpython-3.12-x"
+    link_dir.symlink_to(real.parent)
+    venv = tmp_path / "venv" / "bin"
+    venv.mkdir(parents=True)
+    (venv / "python").symlink_to(link_dir / "bin" / "python3.12")
+    got = interpreter_prefixes(str(venv / "python"))
+    assert str(tmp_path / "venv") in got and str(link_dir) in got
 
 
 def test_sandbox_env_is_an_allowlist(tmp_path):
