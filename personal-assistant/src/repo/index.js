@@ -26,9 +26,29 @@
 // and a contract file in test/contract/ covering every method (1.3).
 
 const AGGREGATES = {
+  audio: () => require('./audio'),
+  commitments: () => require('./commitments'),
+  drafts: () => require('./drafts'),
+  durable: () => require('./durable'),
+  evals: () => require('./evals'),
   events: () => require('./events'),
+  factoryBoard: () => require('./factoryBoard'),
+  leases: () => require('./leases'),
+  ledger: () => require('./ledger'),
+  meetings: () => require('./meetings'),
+  memory: () => require('./memory'),
   notifications: () => require('./notifications'),
+  people: () => require('./people'),
+  projects: () => require('./projects'),
+  proposals: () => require('./proposals'),
+  repos: () => require('./repos'),
+  routines: () => require('./routines'),
   runs: () => require('./runs'),
+  search: () => require('./search'),
+  secrets: () => require('./secrets'),
+  sources: () => require('./sources'),
+  spend: () => require('./spend'),
+  system: () => require('./system'),
 };
 
 /** A backend over a transaction's client: its query, and withTx that joins it. */
