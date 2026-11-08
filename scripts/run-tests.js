@@ -62,6 +62,17 @@ function runFile(cwd, job, timeoutMs, baseEnv) {
     const chunks = [];
     let timedOut = false;
     const child = spawn(process.execPath, [path.join('test', file)], { cwd, env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+    // Below normal: a pool of (cores - 1) test files fills every core, and at
+    // Normal it starved the live stack on the same machine (the PA dashboard
+    // stalled for seconds and deploys rolled back, plan Z6). Tests still get
+    // every idle cycle. DEVTOOLS_TEST_PRIORITY=normal keeps the old behaviour.
+    if (process.env.DEVTOOLS_TEST_PRIORITY !== 'normal') {
+      try {
+        os.setPriority(child.pid, os.constants.priority.PRIORITY_BELOW_NORMAL);
+      } catch {
+        /* exited already, or not permitted */
+      }
+    }
     child.stdout.on('data', (d) => chunks.push(d));
     child.stderr.on('data', (d) => chunks.push(d));
     const timer = setTimeout(() => {
