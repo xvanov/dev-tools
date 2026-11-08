@@ -122,6 +122,11 @@ function create(db) {
         [(commitmentIds || []).map(Number), perCard]
       );
     },
+
+    /** Live runs' repo and worktree paths: {id, repo_path, worktree_path}. */
+    async livePaths() {
+      return db.rows(`select id, repo_path, worktree_path from run where status in ${LIVE}`);
+    },
   };
 }
 

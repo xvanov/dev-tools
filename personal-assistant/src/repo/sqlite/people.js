@@ -122,6 +122,23 @@ function create(db) {
       await db.query('delete from person where id = $1', [id]);
     },
 
+    /** My primary email ({primary_email}) when set, else null. */
+    async myPrimaryEmail() {
+      return db.one('select primary_email from person where is_me and primary_email is not null limit 1');
+    },
+
+    /** The address of each person with one of these AAD object ids: {oid, email}. */
+    async emailsByAadOid(oids) {
+      return db.rows(
+        `select pi.value as oid,
+              coalesce(p.primary_email,
+                       (select value from person_identity s where s.person_id = p.id and s.kind = 'smtp' limit 1)) as email
+         from person_identity pi join person p on p.id = pi.person_id
+        where pi.kind = 'aad_oid' and pi.value in (select value from json_each($1))`,
+        [oids || []]
+      );
+    },
+
     /** Sets the display name and fills primary_email when empty. */
     async renameKeepingEmail(id, displayName, fallbackEmail) {
       await db.query('update person set display_name = $2, primary_email = coalesce(primary_email, $3) where id = $1', [id, displayName, fallbackEmail]);

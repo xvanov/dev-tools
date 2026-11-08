@@ -969,6 +969,44 @@ function create(db) {
         [source, limit]
       );
     },
+
+    // --- for src/ingest (chunk F)
+
+    /**
+     * Open or dispatched asks that may name a PR: from GitHub, or whose text
+     * mentions github.com, a PR or pull request, or "<project> #N". pg tests
+     * the regexes in SQL (~*); here SQL picks the open asks and the same
+     * patterns run in JS (\m, \M -> \b).
+     */
+    async withPrRefs() {
+      const rows = await db.rows(
+        `select c.id, c.summary, c.detail, c.direction, c.status, c.superseded_by, json_extract(si.raw, '$.action') as action,
+            si.occurred_at as asked_at,
+            case when si.source like 'github%' then coalesce(json_extract(si.raw, '$.webUrl'), si.thread_external_id, '') else '' end as url,
+            p.gitlab_path as project_path, p.name as project_name, (si.source like 'github%') as from_github
+       from commitment c
+       join source_item si on si.id = c.source_item_id
+       left join project p on p.id = c.project_id and p.active
+      where c.status in ('open','dispatched')`
+      );
+      const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const mention = /(github\.com\/|\bPRs?\b|pull request)/i;
+      const prUrl = /github\.com\/[^/]+\/[^/]+\/pull\//i;
+      return rows
+        .filter((r) =>
+          r.from_github ||
+          mention.test(r.summary || '') ||
+          prUrl.test(r.detail || '') ||
+          (r.project_name != null && new RegExp(`\\b${esc(r.project_name)}\\b\\s+#?\\d`, 'i').test(r.summary || ''))
+        )
+        .map(({ from_github, ...r }) => ({ ...r, asked_at: r.asked_at == null || r.asked_at instanceof Date ? r.asked_at : new Date(r.asked_at) }));
+    },
+
+    /** Folds an open, unfolded ask into `survivorId`. Resolves whether it did. */
+    async foldOpen(id, survivorId) {
+      const r = await db.query(`update commitment set superseded_by = $2 where id = $1 and superseded_by is null and status = 'open'`, [id, survivorId]);
+      return r.rowCount || 0;
+    },
   };
 }
 

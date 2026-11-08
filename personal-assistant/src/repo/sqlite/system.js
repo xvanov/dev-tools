@@ -96,6 +96,20 @@ function create(db) {
       );
       return { ...r, last_digest: r.last_digest == null ? null : new Date(r.last_digest) };
     },
+
+    /** A setting's row ({value}), or null. */
+    async setting(key) {
+      return db.one('select value from setting where key = $1', [key]);
+    },
+
+    /** Sets a setting (value stored as JSON; a string is taken as JSON text, as pg's jsonb parameter does). */
+    async setSetting(key, value) {
+      await db.query(
+        `insert into setting (key, value, updated_at) values ($1, $2, strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+     on conflict (key) do update set value = excluded.value, updated_at = excluded.updated_at`,
+        [key, typeof value === 'string' ? value : JSON.stringify(value)]
+      );
+    },
   };
 }
 
