@@ -334,6 +334,11 @@ run mid-step; a job continued on an existing branch (`--branch`).
   `test_swebench_bare_openhands_arms.py` (Linux-only harness: docker, bwrap, getuid, signals).
   Open: the work PA's `.env` switch (PA_FACTORY_MACHINE/PATH, and PA_FACTORY_UV, which names a
   path that does not exist on Windows); retiring the WSL factory and its termhub with 3.6.
+- [ ] **2.4 Per-app context root.** The onboarder and other personas write `context/` at the
+  app repo root (hard-coded ~200 times). Route every context path through `canonical_paths`
+  and honour `AppConfig.context_dir`, so a monorepo app (dev-tools) keeps its context under
+  `software-factory/apps/<app>/`. Found in the 2.3 smoke (a docs-typed job wrote `context/`
+  into the dev-tools repo); code jobs don't hit it.
 - [ ] **Exit 2:** factory calls take milliseconds; JOBS-API v1.3 tests green on Windows and Linux.
 
 ## Phase 3: storage to SQLite (D2)
