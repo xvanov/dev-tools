@@ -111,8 +111,11 @@ MCP and agents cannot. The policy engine asks `src/auth/stepup.js` `hasStepUp(id
 forgets every passkey and session; `PA_PASSKEYS=off` plus a restart is the last exit. The reset is
 not a chat verb and no HTTP route does it. Like the rest of this section the boundary against a
 dispatched agent is the OS user, not this cookie.
-**The PA chat acts only behind permission prompts.** `pa chat` starts one Claude Code session in
-termhub, homed in `<dataDir>/pa-home` (`src/chat/`), which reads other people's messages all day.
+
+**The PA chat acts only behind permission prompts.** By default (`PA_CHAT_ENGINE=sdk`) it is a
+Claude Agent SDK session inside the worker (below, "On the Agent SDK engine"); with
+`PA_CHAT_ENGINE=terminal`, `pa chat` starts one Claude Code session in
+termhub. Either way it is homed in `<dataDir>/pa-home` (`src/chat/`), and reads other people's messages all day. The rest of this paragraph is the terminal engine's start-up; the settings and lists apply to both.
 It is started *without* `--dangerously-skip-permissions` and *with* `--permission-mode default`; its
 `settings.json` sets `defaultMode: "default"` and `disableBypassPermissionsMode: "disable"` (a user-level
 `auto` or `acceptEdits` cannot apply), and `verifyClaudeHome` reads the settings back — including a
@@ -202,7 +205,7 @@ with no input box after it. Approve is one Enter with the cursor on "Yes" — ne
 again", which would make every later call of the tool unasked; Deny is Esc. Anything else is a 409.
 
 **On the Agent SDK engine the prompt is a callback, under the same rules** (`PA_CHAT_ENGINE=sdk`,
-`src/chat/sdkFeed.js`, plan 4.2; the default stays `terminal` until it is proven). The chat is one
+`src/chat/sdkFeed.js`, plan 4.2; the default since 4.2, `terminal` still selectable). The chat is one
 streaming `query()` inside the worker, in the same pa-home with the same settings and MCP server, started
 with `permissionMode: 'default'`. A PreToolUse hook puts every call through `src/policy` (a deny refuses;
 the six action tools always ask, whatever a rule or settings file says). `canUseTool` then waits for the

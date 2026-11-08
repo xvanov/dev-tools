@@ -165,6 +165,8 @@ const sdkMsg = {
   assert.strictEqual(S.genericVoiceOk('Bash', { command: 'pa propose --task x' }), true);
   assert.strictEqual(S.genericVoiceOk('Bash', { command: 'x'.repeat(200) }), false);
   assert.strictEqual(S.genericVoiceOk('Write', { file_path: 'a', content: 'b' }), false);
+  assert.strictEqual(S.genericVoiceOk('mcp__personal-assistant__remember', { text: 'the renewal is in May' }), true, 'a short MCP input is heard whole (one line)');
+  assert.strictEqual(S.genericVoiceOk('Bash', { command: 'a\nb' }), false, 'a multi-line command is not');
 
   // The engine flag: terminal by default, sdk when asked, anything else terminal.
   assert.strictEqual(engine('sdk'), 'sdk');

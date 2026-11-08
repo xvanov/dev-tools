@@ -135,8 +135,14 @@ function genericAsk(name, input = {}, title = null) {
  */
 function genericVoiceOk(name, input = {}) {
   if (name === 'Edit' || name === 'Write' || name === 'NotebookEdit') return false;
-  const d = genericDetail(name, input);
+  const d = genericSpoken(name, input);
   return d.length <= VOICE_MAX && !d.includes('\n');
+}
+
+/** Pure. The exact input in one line, for a spoken question: the command, or compact JSON. */
+function genericSpoken(name, input = {}) {
+  const i = input && typeof input === 'object' ? input : {};
+  return name === 'Bash' || name === 'PowerShell' ? String(i.command ?? '') : JSON.stringify(i);
 }
 
 /** `p`, or null once `ms` have passed (a slow termhub must not hold a page's request). */
@@ -423,7 +429,7 @@ function createSdkFeed({
         input: toolInput || {},
         text: T.describeTool(toolName, toolInput),
         // Heard by voice, the question carries the exact input (a description is the model's words).
-        ask: generic ? genericAsk(toolName, toolInput, opts.title).replace(/\. Allow once\?$/, voice ? ` — ${genericDetail(toolName, toolInput)}. Allow once?` : '. Allow once?') : T.askTool(toolName, toolInput),
+        ask: generic ? genericAsk(toolName, toolInput, opts.title).replace(/\. Allow once\?$/, voice ? ` — ${genericSpoken(toolName, toolInput)}. Allow once?` : '. Allow once?') : T.askTool(toolName, toolInput),
         generic,
         detail: generic ? genericDetail(toolName, toolInput) : null,
         voice,

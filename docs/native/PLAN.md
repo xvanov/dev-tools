@@ -396,16 +396,20 @@ run mid-step; a job continued on an existing branch (`--branch`).
 - [ ] **4.1** TypeScript/Bun core absorbs the PA worker, dashboard, MCP server and termhub
   front; strict TS, module by module.
 - [x] **4.2** Chat moves to the Agent SDK: approvals become typed callbacks instead of reading
-  the terminal screen. (cdae3d5) Behind `PA_CHAT_ENGINE=sdk` (`src/chat/sdkFeed.js`); the
-  default stays `terminal` until the SDK path is proven live. Same tools (pa-chat MCP server),
+  the terminal screen. (cdae3d5) `PA_CHAT_ENGINE=sdk` (`src/chat/sdkFeed.js`) is the default
+  since the gaps closed (055ded3, 28fe6b1, 1e13823, b6a072e); `terminal` stays selectable. Same tools (pa-chat MCP server),
   same surfaces (the Waiting for your yes card on Plan/Build/Ask, a spoken yes on Talk), answers
   stream into `/api/chat/stream`. A PreToolUse hook routes every call through 4.3's policy;
   `canUseTool` waits for an answer, which goes through `policy.enforce`; no answer in 5 min is
   an audited deny. Billing: the SDK's bundled Claude Code uses the machine's Claude login (work
   laptop: Team subscription, `apiKeySource: none`, no API key), and the API keys are stripped
-  from its environment. Mock-SDK tests (`test/chatSdk.test.js`) plus one real smoke run.
-  Gaps on the SDK engine: prompts for anything but the six action tools are refused (no
-  terminal to answer them), the INBOX doorbell does not reach it, no termhub tab to drill into.
+  from its environment. Mock-SDK tests (`test/chatSdk.test.js`) plus two real smoke runs (an
+  action tool, and a generic prompt). Closed gaps: any other prompt gets a generic allow-once
+  card showing the call's whole input (voice only when it can be heard whole and the policy
+  allows); the INBOX doorbell rings it (`POST /api/chat/doorbell`, id only); a read-only Run
+  view in termhub follows `pa-home/sdk-view/chat.jsonl`; a Z1 drain denies waiting prompts,
+  lets the turn finish (20 s), closes the query, and the next generation resumes by session id.
+  Not yet seen: a live deploy roll with the SDK chat mid-turn on a stack (needs a deploy).
 - [x] **4.3** Policy engine: every tool call is allow / deny / ask, with an audit log
   (hash-chained). (7621d29) Declarative policy (`src/policy`, tracked defaults plus an untracked
   per-stack override); defaults are the old allow/ask split; a locked rule bars voice from merges,
