@@ -113,6 +113,8 @@ async function main() {
   const bus = createBus({ epoch: 'k1' });
   ok('event', bus.publish('run', { table: 'run', op: 'update', id: 45, status: 'running' }));
   ok('event', bus.publish('board', {}));
+  ok('event', bus.publish('board', { table: 'notification', op: 'insert', id: 9, seq: 41 }, { gid: 41 }));
+  ok('event', require('../src/events').outboxEvent({ seq: '42', topic: 'run', payload: { table: 'run', op: 'update', id: 45, seq: 42, status: 'running' }, at: new Date() }));
   ok('event', { id: bus.lastId(), topic: 'hello', at: new Date().toISOString(), payload: { epoch: bus.epoch } });
   ok('event', { id: bus.lastId(), topic: 'resync', at: new Date().toISOString(), payload: { reason: 'cannot replay from that id' } });
   bad('event', { id: 'x', topic: 'Board!', at: 'now', payload: {} }, /topic|id/);

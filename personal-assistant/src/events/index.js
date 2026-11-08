@@ -17,14 +17,23 @@
 // the dashboard, which a supervised generation brings up before it holds the
 // worker lock, and it is not background work (AGENT.md, "How the worker runs").
 //
-// Item 1.4 replaces NOTIFY with an outbox table the triggers insert into; the
-// bus keeps its (topic, id, payload) shape so nothing above it changes.
+// The same triggers also write each event to the outbox table (sql/036, plan
+// 1.4) under its global number, in the writer's transaction. NOTIFY stays the
+// live wake-up; the outbox is what a reconnecting listener backfills from
+// (backfill) and what GET /api/events replays a `g<n>` Last-Event-ID from
+// after a restart or a roll (fromOutbox). Its SQL is src/repo/events.js.
 
 const { createBus, TOPIC } = require('./bus');
 const { logger } = require('../log');
 
 const log = logger('events');
 const CHANNEL = 'pa_events';
+
+/** The repositories over one connection (the LISTEN one). */
+function reposOn(client) {
+  const { createRepos, clientBackend } = require('../repo');
+  return createRepos(clientBackend(client));
+}
 
 let shared = null;
 function bus() {
@@ -94,7 +103,7 @@ function createListener({ connect, onEvent, onReconnect = () => {}, onListening 
         const e = fromNotify(n.payload);
         if (e) onEvent(e);
       });
-      await client.query(`listen ${CHANNEL}`);
+      await reposOn(client).events.listen(CHANNEL);
       // After LISTEN, not before: see onListening in ensureListening.
       await Promise.resolve(onListening(client)).catch(() => {});
       if (stopped) return Promise.resolve(client.end?.()).catch(() => {});
@@ -144,14 +153,52 @@ function ensureListening() {
     // The sequence's value once LISTEN is in place: any event numbered at or
     // under it that this process never received was committed before it
     // began listening (bus.js, "baseline"). No sequence yet (before 035): none.
+    // Read on the LISTEN connection itself, through the events repository.
     onListening: async (client) => {
-      const { rows } = await client.query('select last_value, is_called from pa_event_seq');
-      const r = rows[0];
-      if (r) bus().setBaseline(String(r.is_called ? r.last_value : BigInt(r.last_value) - 1n));
+      bus().setBaseline(await reposOn(client).events.head());
     },
-    onReconnect: () => bus().publish('resync', { reason: 'the event feed reconnected' }),
+    // What was committed while the feed was down is in the outbox (1.4):
+    // backfill it instead of making every page refetch.
+    onReconnect: () => backfill(),
   });
   return listening;
+}
+
+/** Pure. An outbox row (src/repo/events.js) as a bus event. */
+function outboxEvent(row) {
+  return { id: `g${row.seq}`, topic: row.topic, at: new Date(row.at).toISOString(), payload: row.payload ?? {} };
+}
+
+/**
+ * What came after the global number `n`, from the outbox (sql/036): {gap,
+ * events} as bus.since() answers. A gap when more than `limit` are waiting, or
+ * when events after `n` may have been pruned (n older than the oldest kept,
+ * or an empty outbox behind the sequence): then the client refetches once.
+ * Throws when the outbox cannot be read (no database, schema before 036).
+ */
+async function fromOutbox(n, { topics = null, limit = 1000, store = null } = {}) {
+  const s = store || require('../repo').events;
+  const [page, oldest, head] = await Promise.all([s.after(n, { topics, limit }), s.oldest(), s.head()]);
+  const N = BigInt(n);
+  const pruned = oldest == null ? head != null && BigInt(head) > N : N < BigInt(oldest) - 1n;
+  if (page.more || pruned) return { gap: true, events: [] };
+  return { gap: false, events: page.events.map(outboxEvent) };
+}
+
+/** Publishes what the outbox holds past the bus's highest number; a resync when it cannot. */
+async function backfill({ b = bus(), store = null } = {}) {
+  const from = b.highGid();
+  try {
+    if (from == null) throw new Error('nothing to backfill from');
+    const r = await fromOutbox(from, { store });
+    if (r.gap) throw new Error('too far behind');
+    for (const e of r.events) b.publish(e.topic, e.payload, { gid: e.id.slice(1) });
+    return r.events.length;
+  } catch (err) {
+    log.debug('event feed backfill failed — resync', { message: err.message });
+    b.publish('resync', { reason: 'the event feed reconnected' });
+    return null;
+  }
 }
 
 /** Tests only: a stand-in for ensureListening (the endpoint calls it per stream). */
@@ -163,4 +210,4 @@ function listen() {
   return listenHook ? listenHook() : ensureListening();
 }
 
-module.exports = { bus, publish, fromNotify, createListener, ensureListening, listen, _setListen, CHANNEL };
+module.exports = { bus, publish, fromNotify, createListener, ensureListening, listen, _setListen, CHANNEL, fromOutbox, outboxEvent, backfill };

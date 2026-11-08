@@ -516,8 +516,15 @@ Postgres and nowhere else. Tests use invented names; fixtures never hold a real 
   plan 0.4): row triggers (`sql/034_events_notify.sql`) NOTIFY `pa_events`, and the dashboard's one
   LISTEN connection (opened by the first stream: it serves the dashboard, so a generation opens
   it before it holds the lease) feeds the bus. A new table a view shows gets a trigger there, not a page timer; a payload
-  carries ids and states, never content. Item 1.4 swaps NOTIFY for an outbox table behind the
-  same (topic, id, payload) shape.
+  carries ids and states, never content. The same trigger writes each event to `event_outbox`
+  (`sql/036`, plan 1.4) under its global number in the writer's transaction: a `g<n>`
+  Last-Event-ID the ring no longer holds (a restart, the next generation) is replayed from it, and
+  a LISTEN that reconnects backfills from it, so only a client days or 1000 events behind
+  resyncs.
+- **SQL lives in `src/repo` (plan 1.2).** A module calls `repo.<aggregate>.<method>()` (and
+  `repo.withTx(fn)` for a transaction), never `src/db` with a SQL string; each method has a case
+  in `test/contract/<aggregate>.contract.js`, run against a real throwaway database by
+  `test/repoContract.test.js`. `test/repoBoundary.test.js` lists the modules not converted yet.
 - **Secrets:** never in the repo, never in Postgres at all. There are few: GitHub and Microsoft
   365 ride on logins that already exist (`gh`, the claude.ai connectors); Jira prefers an API
   token (`PA_JIRA_API_TOKEN`) and falls back to its connector. A secret resolves real env →

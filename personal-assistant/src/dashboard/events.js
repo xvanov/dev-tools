@@ -9,10 +9,11 @@
 // Each event is one `id:` + `data:` frame; data is the event's JSON
 // {id, topic, at, payload}. The first frame is a `hello` carrying the newest
 // id, so a reconnect always has a Last-Event-ID to send even when nothing has
-// happened yet. A Last-Event-ID the bus can no longer replay (another worker
-// generation — the supervisor closes streams on drain — a restart, or older
-// than the ring) gets a `resync` frame instead: the page refetches its state
-// once. Payloads are ids and states, never content: a page reads what changed
+// happened yet. A `g<n>` Last-Event-ID (a change the database numbered) that
+// the ring does not hold (a restart, another worker generation, older than the
+// ring) is replayed from the outbox table (sql/036, plan 1.4). Any other id the
+// bus cannot replay, or a client too far behind the outbox, gets a `resync`
+// frame instead: the page refetches its state once. Payloads are ids and states, never content: a page reads what changed
 // through its own API, under its own rules.
 //
 // GET /events.js is the page side (events.client.js).
@@ -36,7 +37,38 @@ function frame(e) {
   return `id: ${e.id}\ndata: ${JSON.stringify(e)}\n\n`;
 }
 
-function stream(req, res, url, { bus = events.bus(), listen = events.listen, pingMs = PING_MS } = {}) {
+const resyncFrame = (bus) => frame({ id: bus.lastId(), topic: 'resync', at: new Date().toISOString(), payload: { reason: 'cannot replay from that id' } });
+
+/**
+ * A `g<n>` the ring does not hold (a restart, another generation, older than
+ * the ring): replay from the outbox (plan 1.4), then go live. Live events are
+ * held while the outbox is read and sent after it, each id once. When the
+ * outbox cannot be read, falls back to what the ring can say.
+ */
+function replayFromOutbox(res, n, lastId, { bus, topics, outbox }) {
+  const held = [];
+  let replaying = true;
+  const sent = new Set();
+  const write = (e) => {
+    if (sent.has(e.id)) return;
+    sent.add(e.id);
+    res.write(frame(e));
+  };
+  const unsubscribe = bus.subscribe((e) => (replaying ? held.push(e) : write(e)), { topics });
+  const finish = (r) => {
+    if (r.gap) res.write(resyncFrame(bus));
+    else for (const e of r.events) write(e);
+    replaying = false;
+    for (const e of held.splice(0)) write(e);
+  };
+  Promise.resolve()
+    .then(() => outbox(n, { topics }))
+    .then(finish, () => finish(bus.since(lastId, { topics })))
+    .catch(() => {});
+  return unsubscribe;
+}
+
+function stream(req, res, url, { bus = events.bus(), listen = events.listen, pingMs = PING_MS, outbox = events.fromOutbox } = {}) {
   try {
     listen();
   } catch {
@@ -52,15 +84,21 @@ function stream(req, res, url, { bus = events.bus(), listen = events.listen, pin
   });
   res.write('retry: 2000\n\n');
   // since() and subscribe() are synchronous: nothing can be published between
-  // the replay and the subscription.
-  if (lastId) {
-    const r = bus.since(lastId, { topics });
-    if (r.gap) res.write(frame({ id: bus.lastId(), topic: 'resync', at: new Date().toISOString(), payload: { reason: 'cannot replay from that id' } }));
-    else for (const e of r.events) res.write(frame(e));
+  // the replay and the subscription. The outbox path holds live events instead.
+  const g = lastId ? /^g(\d+)$/.exec(String(lastId)) : null;
+  let unsubscribe;
+  if (g && outbox && !bus.holds(lastId)) {
+    unsubscribe = replayFromOutbox(res, g[1], lastId, { bus, topics, outbox });
   } else {
-    res.write(frame({ id: bus.lastId(), topic: 'hello', at: new Date().toISOString(), payload: { epoch: bus.epoch } }));
+    if (lastId) {
+      const r = bus.since(lastId, { topics });
+      if (r.gap) res.write(resyncFrame(bus));
+      else for (const e of r.events) res.write(frame(e));
+    } else {
+      res.write(frame({ id: bus.lastId(), topic: 'hello', at: new Date().toISOString(), payload: { epoch: bus.epoch } }));
+    }
+    unsubscribe = bus.subscribe((e) => res.write(frame(e)), { topics });
   }
-  const unsubscribe = bus.subscribe((e) => res.write(frame(e)), { topics });
   const ping = setInterval(() => res.write(': ping\n\n'), pingMs);
   ping.unref?.();
   const done = () => {

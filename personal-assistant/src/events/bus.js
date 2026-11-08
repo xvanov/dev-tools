@@ -4,13 +4,13 @@
 // with a bounded ring of recent events, so a client that reconnects with
 // `Last-Event-ID` gets what it missed instead of refetching everything.
 //
-// An event is {id, topic, at, payload}. Item 1.4 moves the ring to an outbox
-// table; keep this shape (topic, id, payload) so the endpoint and the pages do
-// not change when it does. Ids are opaque to clients: `<epoch>-<seq>`, where
-// the epoch is this bus's start. An id from another epoch (a worker restart, a
-// supervisor roll to the next generation) or one older than the ring cannot be
-// replayed, and `since` says so (`gap: true`): the client refetches its state
-// once. Replay across generations waits for 1.4's outbox.
+// An event is {id, topic, at, payload} (schemas/event.schema.json). Ids are
+// opaque to clients: `g<n>` for a change the database numbered (sql/035), the
+// same in every process, or `<epoch>-<seq>` for one published in this process
+// only, where the epoch is this bus's start. What the ring cannot replay,
+// `since` reports as `gap: true`. For a `g<n>` the endpoint then replays from
+// the outbox table (sql/036, plan 1.4: src/dashboard/events.js), so a restart
+// or a roll loses nothing; anything else makes the client refetch once.
 //
 // Pure: no I/O, no timers. src/events/index.js holds the process's bus and
 // feeds it from Postgres; this file is unit-tested on its own.
@@ -35,12 +35,22 @@ function createBus({ capacity = DEFAULT_CAPACITY, epoch = Date.now().toString(36
   // dropped events since (`overflowed`).
   let baseline = null;
   let overflowed = false;
+  // The highest global number published (or the baseline): where a listener
+  // that reconnects backfills from (src/events, plan 1.4).
+  let high = null;
 
   const idOf = (n) => `${epoch}-${n}`;
 
   function publish(topic, payload = {}, { gid = null } = {}) {
     if (typeof topic !== 'string' || !TOPIC.test(topic)) throw new Error(`bad event topic "${String(topic).slice(0, 40)}"`);
     const g = gid != null && /^\d+$/.test(String(gid)) ? String(gid) : null;
+    if (g) {
+      // Once per global number: a listener's backfill from the outbox (1.4)
+      // and the live NOTIFY can both bring the same event.
+      const held = ring.find((r) => r.gid === g);
+      if (held) return held.event;
+      if (high == null || BigInt(g) > BigInt(high)) high = g;
+    }
     ++seq;
     const event = { id: g ? `g${g}` : idOf(seq), topic, at: now().toISOString(), payload: payload ?? {} };
     ring.push({ seq, gid: g, event });
@@ -106,8 +116,15 @@ function createBus({ capacity = DEFAULT_CAPACITY, epoch = Date.now().toString(36
     },
     /** The feed's sequence value when it began (see `baseline` above); once. */
     setBaseline: (b) => {
-      if (baseline == null && b != null && /^\d+$/.test(String(b))) baseline = String(b);
+      if (baseline == null && b != null && /^\d+$/.test(String(b))) {
+        baseline = String(b);
+        if (high == null || BigInt(baseline) > BigInt(high)) high = baseline;
+      }
     },
+    /** Whether the ring still holds the event with this id. */
+    holds: (id) => ring.some((r) => r.event.id === id),
+    /** The highest global number seen (published or the baseline), or null. */
+    highGid: () => high,
     subscribers: () => subs.size,
   };
 }

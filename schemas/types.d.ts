@@ -323,7 +323,7 @@ export type CardCompact = {
 
 /** One frame of GET /api/events (personal-assistant/src/dashboard/events.js): the `data:` JSON of a Server-Sent Event, whose `id:` is the same id. Payloads carry ids and states, never content. Ids are opaque to clients; send the last one back as Last-Event-ID. */
 export type Event = {
-  /** <epoch>-<seq> */
+  /** g<seq> for a change the database numbered (the same in every process; replayable from the outbox), <epoch>-<n> for one published in one process */
   id: string;
   /** board, run, factory, routine, ...; hello and resync are control frames */
   topic: string;

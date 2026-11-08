@@ -123,7 +123,7 @@ function sse(port, pathAndQuery, headers = {}) {
     async waitFor(n, ms = 2000) {
       const until = Date.now() + ms;
       while (frames.length < n) {
-        if (Date.now() > until) throw new Error(`waited for ${n} frames, got ${frames.length}: ${JSON.stringify(frames)}`);
+        if (Date.now() > until) throw new Error(`waited for ${n} frames, got ${frames.length}: ${JSON.stringify(frames.map(({ receivedAt, ...f }) => f))}`);
         await new Promise((r) => { waiters.push(r); setTimeout(r, 50); });
       }
       return frames;
@@ -261,6 +261,93 @@ function sse(port, pathAndQuery, headers = {}) {
     assert.strictEqual(reconnects, 1, 'a reconnect asks the pages to refetch (notifications were lost)');
     await l.stop();
     assert.ok(clients[2].ended);
+  }
+
+  // ---- the outbox (plan 1.4): replay and backfill past the ring ------------------------
+  {
+    const row = (seq, extra = {}) => ({ seq: String(seq), topic: 'board', payload: { table: 'notification', op: 'insert', id: seq * 10, seq, ...extra }, at: new Date(Date.UTC(2026, 10, 8, 0, 0, seq)) });
+    const store = ({ rows = [], oldest = rows.length ? rows[0].seq : null, head = rows.length ? rows[rows.length - 1].seq : '0', fail = null, delay = 0 } = {}) => ({
+      calls: [],
+      async after(seq, o) {
+        this.calls.push([String(seq), o]);
+        if (delay) await tick(delay);
+        if (fail) throw fail;
+        const list = rows.filter((r) => BigInt(r.seq) > BigInt(seq) && (!o.topics || o.topics.includes(r.topic)));
+        return { events: list.slice(0, o.limit), more: list.length > o.limit };
+      },
+      async oldest() { return oldest; },
+      async head() { return head; },
+    });
+    assert.deepStrictEqual(events.outboxEvent(row(7)), { id: 'g7', topic: 'board', at: '2026-11-08T00:00:07.000Z', payload: row(7).payload });
+
+    // What came after g<n>, from the table.
+    const s = store({ rows: [row(5), row(6), row(8)] });
+    assert.deepStrictEqual((await events.fromOutbox('5', { store: s })).events.map((e) => e.id), ['g6', 'g8'], 'holes (rolled-back numbers) are fine');
+    assert.deepStrictEqual(await events.fromOutbox('8', { store: s }), { gap: false, events: [] }, 'up to date');
+    assert.strictEqual((await events.fromOutbox('4', { store: s })).gap, false, 'the event just before the oldest kept: nothing lost');
+    assert.strictEqual((await events.fromOutbox('3', { store: s })).gap, true, 'older than what is kept: maybe pruned, resync');
+    assert.strictEqual((await events.fromOutbox('5', { store: s, limit: 1 })).gap, true, 'more than the limit waiting: resync');
+    assert.deepStrictEqual(s.calls[0][1].topics, null);
+    assert.strictEqual((await events.fromOutbox('3', { store: store({ rows: [], head: '9' }) })).gap, true, 'an empty outbox behind the sequence (pruned, or before 036)');
+    assert.deepStrictEqual(await events.fromOutbox('9', { store: store({ rows: [], head: '9' }) }), { gap: false, events: [] });
+    await assert.rejects(events.fromOutbox('1', { store: store({ fail: new Error('no db') }) }), /no db/);
+
+    // A listener that reconnects backfills from the bus's highest number.
+    const b = createBus({ epoch: 'bf' });
+    const seen = [];
+    b.subscribe((e) => seen.push(e.id));
+    b.setBaseline('5');
+    b.publish('board', { seq: 6 }, { gid: 6 });
+    assert.strictEqual(b.highGid(), '6');
+    assert.strictEqual(await events.backfill({ b, store: store({ rows: [row(5), row(6), row(7), row(9)] }) }), 2);
+    assert.deepStrictEqual(seen, ['g6', 'g7', 'g9'], 'only what came after, in order');
+    // The live NOTIFY of an event the backfill already published is not sent twice.
+    assert.strictEqual(b.publish('board', { seq: 9 }, { gid: 9 }).id, 'g9');
+    assert.deepStrictEqual(seen, ['g6', 'g7', 'g9']);
+    assert.ok(b.holds('g7') && !b.holds('g8'));
+    // Cannot backfill (no database, nothing to start from, too far behind): resync.
+    assert.strictEqual(await events.backfill({ b, store: store({ fail: new Error('down') }) }), null);
+    assert.strictEqual(seen[seen.length - 1].startsWith('bf-'), true);
+    assert.strictEqual(await events.backfill({ b: createBus({ epoch: 'nb' }), store: store() }), null);
+
+    // GET /api/events: a g<n> the ring does not hold (a restart, another
+    // generation) replays from the outbox; live events that arrive meanwhile
+    // follow it, each id once.
+    const bus = createBus({ epoch: 'ob' });
+    bus.setBaseline('7');
+    let outbox = (n, o) => events.fromOutbox(n, { ...o, store: store({ rows: [row(5), row(6), row(7)], delay: 40 }) });
+    const server = http.createServer((req, res) => endpoint.stream(req, res, new URL(req.url, 'http://localhost'), { bus, listen: () => {}, outbox: (n, o) => outbox(n, o) }));
+    await new Promise((r) => server.listen(0, '127.0.0.1', r));
+    const { port } = server.address();
+    const r1 = sse(port, '/api/events?topics=board', { 'Last-Event-ID': 'g5' });
+    while (bus.subscribers() < 1) await tick(2); // subscribed, the outbox read still running
+    bus.publish('board', { seq: 7 }, { gid: 7 }); // also in the outbox read
+    bus.publish('board', { seq: 8 }, { gid: 8 });
+    await r1.waitFor(3);
+    await tick(20);
+    assert.deepStrictEqual(r1.frames.map((f) => f.id), ['g6', 'g7', 'g8'], 'replayed, then live, no duplicate');
+    r1.close();
+    // A g-id the ring holds is answered from the ring, without the table.
+    let asked = 0;
+    outbox = () => { asked++; return Promise.reject(new Error('unused')); };
+    const r2 = sse(port, '/api/events', { 'Last-Event-ID': 'g7' });
+    await r2.waitFor(1);
+    assert.deepStrictEqual([r2.frames.map((f) => f.id), asked], [['g8'], 0]);
+    r2.close();
+    // The table cannot be read: what the ring can say (Z6's baseline rule).
+    const r3 = sse(port, '/api/events', { 'Last-Event-ID': 'g4' });
+    await r3.waitFor(2);
+    assert.deepStrictEqual(r3.frames.map((f) => f.id), ['g7', 'g8']);
+    r3.close();
+    // Too far behind the table: one resync.
+    outbox = (n, o) => events.fromOutbox(n, { ...o, store: store({ rows: [row(6), row(7)] }) });
+    const r4 = sse(port, '/api/events', { 'Last-Event-ID': 'g2' });
+    await r4.waitFor(1);
+    assert.strictEqual(r4.frames[0].topic, 'resync');
+    r4.close();
+    await tick(20);
+    assert.strictEqual(bus.subscribers(), 0);
+    server.close();
   }
 
   // ---- the pages' client (events.client.js) in a sandbox ---------------------------------
