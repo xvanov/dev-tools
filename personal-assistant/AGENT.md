@@ -604,8 +604,9 @@ Postgres and nowhere else. Tests use invented names; fixtures never hold a real 
 - **Two backends (plan 3.1).** `PA_DB=sqlite` swaps Postgres for one SQLite file
   (`src/db/sqlite.js`, schema in `sql-sqlite/`); `createRepos()` then loads
   `src/repo/sqlite/<aggregate>.js`, the twin of each aggregate (same methods, SQLite SQL). A new
-  Postgres migration gets its `sql-sqlite/` twin; a new repository method gets its SQLite twin, or
-  the contract reports it as `todo` on sqlite (`PA_CONTRACT_STRICT=1` fails it). Contract cases
+  Postgres migration gets its `sql-sqlite/` twin; a new repository method gets its SQLite twin in
+  the same commit, or the contract fails on sqlite (`PA_CONTRACT_STRICT=0` reports it as `todo`
+  while you work). Contract cases
   and seeds may use plain SQL on `t.db`; on SQLite it goes through `test/contract/_pgish.js`,
   which rewrites `now()`, casts, `= any($n)`, `::vector` and `now() - interval`, nothing more.
 - **Secrets:** never in the repo, never in Postgres at all. There are few: GitHub and Microsoft

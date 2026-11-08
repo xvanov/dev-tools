@@ -397,25 +397,25 @@ run mid-step; a job continued on an existing branch (`--branch`).
 
 ## Phase 3: storage to SQLite (D2)
 
-- [ ] **3.1** SQLite schema (WAL, FTS5, vector BLOBs, SQLCipher), implementing every
-  repository from 1.2.
-  In progress (parallel-ok per D18, on converted aggregates): `PA_DB=sqlite|postgres` (default
+- [x] **3.1** SQLite schema (WAL, FTS5, vector BLOBs, SQLCipher), implementing every
+  repository from 1.2. (d0fd5d9, 2eac0c0, a727675, 817002c, 9e36796, b590afa)
+  `PA_DB=sqlite|postgres` (default
   postgres) picks the backend; `src/db/sqlite.js` (better-sqlite3-multiple-ciphers: SQLCipher v4,
   WAL, FTS5; sqlite-vec for `vec_distance_cosine`, JS fallback), `sql-sqlite/` (every table of
   sql/001-038, FTS5 for the tsvectors, event triggers, `lease` for advisory locks),
   `src/repo/sqlite/<aggregate>.js` loaded by `createRepos()` for the sqlite dialect. Every
-  aggregate converted through chunk E has its twin (2026-11-08: audio, audit, commitments,
+  aggregate of 1.2 has its twin (2026-11-08, through chunk E: audio, audit, commitments,
   drafts, durable, evals, events, factoryBoard, leases, ledger, meetings, memory, notifications,
   passkeys, people, projects, proposals, repos, routines, runs, search, secrets, sources, spend,
   system, workflowLimits). Open: durable tasks (Absurd) have no SQLite queue, so
   `durable.stats` returns [] and `durable.commitmentsWithoutChase` cannot exclude asks already
-  chased there; the queue needs a SQLite design before 3.5. Tick with 1.2. Differences SQLite cannot avoid are stated in each twin (FTS5
+  chased there; the queue needs a SQLite design before 3.5. Differences SQLite cannot avoid are stated in each twin (FTS5
   bm25 ranks vs ts_rank, ASCII-only `lower()`/`like`, regexes tested in JS, ms timestamps) for 3.4.
-- [ ] **3.2** Contract tests from 1.3 green on SQLite.
-  In progress: `repoContract.test.js` runs every case on both backends (SQLite: a throwaway
-  encrypted file, no server, so CI's matrix runs it on Linux and Windows); a case needing a method
-  SQLite lacks is `todo` until `PA_CONTRACT_STRICT=1`, which must pass before this is ticked.
-  2026-11-08: strict run green, 1182 cases on both backends (every aggregate through chunk E).
+- [x] **3.2** Contract tests from 1.3 green on SQLite. (d0fd5d9, 9193e5d, 1adf02f, b590afa)
+  `repoContract.test.js` runs every case on both backends (SQLite: a throwaway encrypted file, no
+  server, so CI runs it on Linux and Windows, and a SQLite skip in CI fails). 2026-11-08: 1182
+  cases green on both. Strict is now the default: a repository method without its SQLite twin
+  fails (`PA_CONTRACT_STRICT=0` brings back `todo` for local work in progress).
 - [ ] **3.3 Export from Postgres, copying existing vectors (no re-embedding, D5).** Optional
   int8 quantization is local arithmetic on the copied vectors, not an API call.
 - [ ] **3.4 Shadow comparison (D12):** both backends answer the same recorded query set once;

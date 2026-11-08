@@ -54,13 +54,12 @@ function coverage(list) {
   return missing;
 }
 
-// While phase 1 converts aggregates, the SQLite twins (src/repo/sqlite, plan
-// 3.1) trail the Postgres ones: on a backend other than postgres, a case that
-// reaches a method the Postgres set has and this backend's set lacks is a
-// `todo`, not a failure, so landing a Postgres method never turns CI red.
-// PA_CONTRACT_STRICT=1 makes todo a failure (plan 3.2 is done when it passes).
+// Every repository method has a SQLite twin (src/repo/sqlite, plans 3.1 and
+// 3.2), so a case that reaches a method the Postgres set has and another
+// backend's set lacks fails. PA_CONTRACT_STRICT=0 reports it as `todo`
+// instead, for local work in progress; CI runs strict.
 // PA_CONTRACT_BACKENDS=sqlite (comma list) runs only those backends.
-const STRICT = process.env.PA_CONTRACT_STRICT === '1';
+const STRICT = process.env.PA_CONTRACT_STRICT !== '0';
 
 class Todo extends Error {}
 
@@ -151,7 +150,7 @@ async function main() {
     }
     if (gaps.size) console.log(`${bname}: ${gaps.size} method(s) not ported yet: ${[...gaps].sort().join(', ')}`);
   }
-  console.log(`repoContract: ${ran} passed, ${failed} failed${todo ? `, ${todo} todo (not on every backend yet; PA_CONTRACT_STRICT=1 fails them)` : ''}`);
+  console.log(`repoContract: ${ran} passed, ${failed} failed${todo ? `, ${todo} todo (not on every backend yet; they fail unless PA_CONTRACT_STRICT=0)` : ''}`);
   if (failed) process.exit(1);
 }
 
