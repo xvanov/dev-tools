@@ -18,7 +18,7 @@
 
 const llm = require('../llm');
 const { config } = require('../config');
-const { rows, one, query, withTx } = require('../db');
+const repo = require('../repo');
 const identity = require('../distill/identity');
 const projects = require('../projects');
 const { embed } = require('../search');
@@ -153,37 +153,12 @@ function batches(items) {
   return out;
 }
 
-const PENDING_WHERE = `
-  ce.source_item_id is null
-  and length(si.body_text) >= ${MIN_BODY_CHARS}
-  and not (si.source = 'github_notification' and (
-        coalesce(si.raw->>'action','') in ('ci_activity','approval_requested')
-     or exists (select 1 from source_item p
-                 where p.source = 'github_pr' and p.thread_external_id = si.thread_external_id)
-     or exists (select 1 from source_item n
-                 where n.source = 'github_notification' and n.thread_external_id = si.thread_external_id
-                   and n.occurred_at > si.occurred_at)))
-  and not (si.source = 'graph_mail' and si.subject ~* '^(accepted|declined|tentative|canceled|cancelled)( |:)')`;
-
 async function pending(limit) {
-  return rows(
-    `select si.* from source_item si
-       left join claim_extraction ce on ce.source_item_id = si.id and ce.extracted_by = $1
-      where ${PENDING_WHERE}
-      order by si.occurred_at desc
-      limit $2`,
-    [CLAIMS_VERSION, limit]
-  );
+  return repo.memory.pendingExtraction(CLAIMS_VERSION, limit, MIN_BODY_CHARS);
 }
 
 async function pendingCount() {
-  const r = await one(
-    `select count(*)::int as n from source_item si
-       left join claim_extraction ce on ce.source_item_id = si.id and ce.extracted_by = $1
-      where ${PENDING_WHERE}`,
-    [CLAIMS_VERSION]
-  );
-  return r?.n ?? 0;
+  return repo.memory.pendingExtractionCount(CLAIMS_VERSION, MIN_BODY_CHARS);
 }
 
 // Names a handle-ish display name gets replaced by: a person row created from
@@ -223,9 +198,9 @@ async function resolveSubject(c, item, ctx) {
     return { subjectKind: 'me', subjectId: ctx.me.id, label: 'me' };
   }
   if (personId) {
-    const row = await one('select display_name from person where id = $1', [personId]);
+    const row = await repo.memory.personDisplayName(personId);
     if (row && looksLikeHandle(row.display_name) && name && !looksLikeHandle(name) && /\s/.test(name)) {
-      await query('update person set display_name = $2 where id = $1', [personId, name]);
+      await repo.memory.setPersonDisplayName(personId, name);
       row.display_name = name;
     }
     return { subjectKind: 'person', subjectId: personId, label: row?.display_name || name || c.subjectRef };
@@ -272,46 +247,38 @@ async function persistItem(item, kept, dropped, ctx) {
     ? await embed(resolved.map(({ c, s }) => `${s.label}: ${c.text}`), { purpose: 'embed-claim' }).catch(() => null)
     : null;
 
-  await withTx(async (tx) => {
+  await repo.withTx(async (r) => {
     // Re-running an item at the same version replaces only claims nobody has
     // consolidated yet; consolidated ones are memory and stay.
-    await tx.query(
-      `delete from claim where source_item_id = $1 and extracted_by = $2 and origin = 'distill'
-          and not exists (select 1 from consolidation k where k.claim_id = claim.id)`,
-      [item.id, CLAIMS_VERSION]
-    );
+    await r.memory.deleteUnconsolidatedClaims(item.id, CLAIMS_VERSION);
     for (let i = 0; i < resolved.length; i++) {
       const { c, s } = resolved[i];
-      await tx.query(
-        `insert into claim (subject_kind, subject_id, subject_label, kind, text, quote, source_item_id,
-                            source_kind, confidence, valid_at, invalid_at, status, origin, extracted_by, embedding)
-         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,coalesce($10::timestamptz,$11::timestamptz),$12,$13,'distill',$14,$15::vector)`,
-        [
-          s.subjectKind, s.subjectId, s.label, c.kind, c.text, c.quote, item.id, item.source,
-          c.confidence, c.validFrom, item.occurred_at, c.validUntil, c.status, CLAIMS_VERSION,
-          vectors?.[i] ? toVector(vectors[i]) : null,
-        ]
-      );
+      await r.memory.insertExtractedClaim({
+        subjectKind: s.subjectKind,
+        subjectId: s.subjectId,
+        label: s.label,
+        kind: c.kind,
+        text: c.text,
+        quote: c.quote,
+        itemId: item.id,
+        source: item.source,
+        confidence: c.confidence,
+        validFrom: c.validFrom,
+        occurredAt: item.occurred_at,
+        validUntil: c.validUntil,
+        status: c.status,
+        version: CLAIMS_VERSION,
+        vector: vectors?.[i] ? toVector(vectors[i]) : null,
+      });
     }
-    await tx.query(
-      `insert into claim_extraction (source_item_id, extracted_by, claims, dropped, error)
-       values ($1,$2,$3,$4,null)
-       on conflict (source_item_id) do update set extracted_by = excluded.extracted_by,
-         extracted_at = now(), claims = excluded.claims, dropped = excluded.dropped, error = null`,
-      [item.id, CLAIMS_VERSION, resolved.length, dropped]
-    );
+    await r.memory.recordExtraction(item.id, CLAIMS_VERSION, resolved.length, dropped);
   });
   return resolved.length;
 }
 
 async function markFailed(items, message) {
   for (const item of items) {
-    await query(
-      `insert into claim_extraction (source_item_id, extracted_by, error) values ($1,$2,$3)
-       on conflict (source_item_id) do update set extracted_by = excluded.extracted_by,
-         extracted_at = now(), error = excluded.error`,
-      [item.id, CLAIMS_VERSION, String(message).slice(0, 500)]
-    );
+    await repo.memory.recordExtractionError(item.id, CLAIMS_VERSION, String(message).slice(0, 500));
   }
 }
 

@@ -150,6 +150,50 @@ function postgres(db) {
         [source, JSON.stringify(state)]
       );
     },
+    // --- for memory.contract.js
+    /** A person; `isMe` returns the existing me when there is one. Returns the id. */
+    async memPerson(o = {}) {
+      if (o.isMe) {
+        const me = await db.one('select id from person where is_me limit 1');
+        if (me) return Number(me.id);
+      }
+      n++;
+      const r = await db.one(
+        `insert into person (display_name, primary_email, is_me) values ($1, $2, $3) returning id`,
+        [o.name || `Seed Person ${process.pid}-${Date.now()}-${n}`, o.email || null, Boolean(o.isMe)]
+      );
+      return Number(r.id);
+    },
+    /** An identity (kind, value) for a person. */
+    async memIdentity(personId, kind, value) {
+      await db.query(`insert into person_identity (person_id, kind, value) values ($1, $2, $3)`, [personId, kind, value]);
+    },
+    /** A project (optionally with an alias); returns its id. */
+    async memProject(o = {}) {
+      n++;
+      const r = await db.one(`insert into project (name, last_touched_at) values ($1, $2) returning id`, [o.name || `seed-project-${process.pid}-${Date.now()}-${n}`, o.touchedAt || null]);
+      if (o.alias) await db.query(`insert into project_alias (project_id, alias) values ($1, $2)`, [r.id, o.alias]);
+      return Number(r.id);
+    },
+    /** A commitment on a fresh source item, with optional counterparty, project, direction, status, extractedAt. */
+    async memCommitment(o = {}) {
+      const item = o.sourceItemId || (await seed.sourceItem());
+      const r = await db.one(
+        `insert into commitment (source_item_id, direction, summary, status, counterparty_person_id, project_id, extracted_by, extracted_at)
+         values ($1, $2, $3, $4, $5, $6, 'contract-seed', coalesce($7, now())) returning id`,
+        [item, o.direction || 'owed_by_me', o.summary || 'a seeded ask', o.status || 'open', o.personId || null, o.projectId || null, o.extractedAt || null]
+      );
+      return Number(r.id);
+    },
+    /** A chunk of a source item (ord 0 by default) with an optional embedding literal; returns its id. */
+    async memChunk(itemId, o = {}) {
+      const r = await db.one(
+        `insert into chunk (source_item_id, ord, content, context, context_v, embedding)
+         values ($1, $2, $3, $4, $5, $6::vector) returning id`,
+        [itemId, o.ord ?? 0, o.content || 'chunk words', o.context ?? '', o.contextV ?? 0, o.embedding || null]
+      );
+      return Number(r.id);
+    },
   };
   return seed;
 }

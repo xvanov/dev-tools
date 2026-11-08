@@ -11,7 +11,7 @@
 
 const llm = require('../llm');
 const { config } = require('../config');
-const { rows, one, query } = require('../db');
+const repo = require('../repo');
 const { embed } = require('../search');
 const { logger } = require('../log');
 const { factsHash, truncateToTokens } = require('./claims');
@@ -30,99 +30,32 @@ function toVector(values) {
   return `[${values.map((v) => Number(v).toFixed(6)).join(',')}]`;
 }
 
-// The handle forms source_item.author_identity uses for each identity kind.
-const HANDLE_SQL = `case pi.kind when 'github_username' then 'github:' || pi.value
-                                 when 'gitlab_username' then 'gitlab:' || pi.value
-                                 when 'aad_oid' then 'aad:' || pi.value
-                                 else pi.value end`;
-
 // People worth a page: enough items, commitments and claims tie them to you,
 // they are not you, and they are not a bot.
 async function eligiblePeople(minInteractions = config.memory.minInteractions) {
-  return rows(
-    `with h as (select pi.person_id, ${HANDLE_SQL} as handle, pi.kind, pi.value from person_identity pi),
-          stats as (
-            select p.id, p.display_name,
-                   (select count(*) from source_item si
-                     where si.author_identity in (select handle from h where h.person_id = p.id)) as authored,
-                   (select count(*) from source_item si
-                     where si.raw ? 'memberEmails'
-                       and si.raw->'memberEmails' ?| coalesce((select array_agg(lower(value)) from h
-                                                              where h.person_id = p.id and h.kind = 'smtp'), '{}')) as shared,
-                   (select count(*) from commitment c where c.counterparty_person_id = p.id) as commitments,
-                   (select count(*) from claim c where c.subject_kind = 'person' and c.subject_id = p.id
-                                                   and c.status = 'active') as claims
-              from person p
-             where not p.is_me
-               and p.display_name !~* '\\[bot\\]|^github:dependabot|coderabbit'
-          )
-     select *, authored + shared + commitments + claims as interactions
-       from stats
-      where authored + shared + commitments + claims >= $1
-        and (claims > 0 or commitments > 0)
-      order by interactions desc`,
-    [minInteractions]
-  );
+  return repo.memory.eligiblePeople(minInteractions);
 }
 
 async function personInputs(personId) {
-  const person = await one('select * from person where id = $1', [personId]);
+  const person = await repo.memory.personById(personId);
   if (!person) return null;
-  const identities = await rows(
-    `select ${HANDLE_SQL} as handle, pi.kind, pi.value from person_identity pi where pi.person_id = $1`,
-    [personId]
-  );
+  const identities = await repo.memory.personIdentities(personId);
   const handles = identities.map((i) => i.handle);
   const emails = identities.filter((i) => i.kind === 'smtp').map((i) => i.value.toLowerCase());
 
-  const claims = await rows(
-    `select id, kind, text, quote, source_item_id, source_kind, valid_at, invalid_at, confidence, status
-       from claim where subject_kind = 'person' and subject_id = $1 and status = 'active'
-        and (invalid_at is null or invalid_at > now())
-      order by valid_at desc limit 60`,
-    [personId]
-  );
-  const commitments = await rows(
-    `select id, direction, summary, due_at, status, source_item_id, extracted_at
-       from commitment where counterparty_person_id = $1 and status in ('open','dispatched')
-        and superseded_by is null
-      order by due_at nulls last, extracted_at desc limit 20`,
-    [personId]
-  );
-  const items = await rows(
-    `select id, source, subject, occurred_at, raw->>'webUrl' as url
-       from source_item si
-      where si.author_identity = any($1::text[])
-         or (si.raw ? 'memberEmails' and si.raw->'memberEmails' ?| $2::text[])
-      order by occurred_at desc limit 14`,
-    [handles, emails.length ? emails : ['-']]
-  );
+  const claims = await repo.memory.personClaims(personId);
+  const commitments = await repo.memory.personCommitments(personId);
+  const items = await repo.memory.personItems(handles, emails.length ? emails : ['-']);
   return { person, identities, claims, commitments, items };
 }
 
 async function projectInputs(projectId) {
-  const project = await one('select * from project where id = $1', [projectId]);
+  const project = await repo.memory.projectById(projectId);
   if (!project) return null;
-  const claims = await rows(
-    `select id, kind, text, quote, source_item_id, source_kind, valid_at, confidence, status
-       from claim where subject_kind = 'project' and subject_id = $1 and status = 'active'
-        and (invalid_at is null or invalid_at > now())
-      order by valid_at desc limit 60`,
-    [projectId]
-  );
-  const commitments = await rows(
-    `select c.id, c.direction, c.summary, c.due_at, c.status, c.source_item_id, per.display_name as who
-       from commitment c left join person per on per.id = c.counterparty_person_id
-      where c.project_id = $1 and c.status in ('open','dispatched') and c.superseded_by is null
-      order by c.due_at nulls last, c.extracted_at desc limit 20`,
-    [projectId]
-  );
+  const claims = await repo.memory.projectClaims(projectId);
+  const commitments = await repo.memory.projectCommitments(projectId);
   // People: whoever claims say owns or knows something here, by name.
-  const people = await rows(
-    `select distinct per.display_name from commitment c join person per on per.id = c.counterparty_person_id
-      where c.project_id = $1 limit 12`,
-    [projectId]
-  );
+  const people = await repo.memory.projectPeople(projectId);
   return { project, claims, commitments, people };
 }
 
@@ -188,14 +121,15 @@ Terse fragments. Cite [#id] only where a fact would otherwise be surprising.`;
 
 async function writePage({ kind, subjectId = 0, title, body, hash }) {
   const vectors = await embed([`${title}\n${body}`.slice(0, 8000)], { purpose: 'embed-page' }).catch(() => null);
-  await query(
-    `insert into memory_page (kind, subject_id, title, body, facts_hash, generated_by, embedding)
-     values ($1,$2,$3,$4,$5,$6,$7::vector)
-     on conflict (kind, subject_id) do update set title = excluded.title, body = excluded.body,
-       facts_hash = excluded.facts_hash, generated_at = now(), generated_by = excluded.generated_by,
-       embedding = coalesce(excluded.embedding, memory_page.embedding)`,
-    [kind, subjectId, title, body, hash, PAGE_VERSION, vectors?.[0] ? toVector(vectors[0]) : null]
-  );
+  await repo.memory.upsertPage({
+    kind,
+    subjectId,
+    title,
+    body,
+    hash,
+    generatedBy: PAGE_VERSION,
+    vector: vectors?.[0] ? toVector(vectors[0]) : null,
+  });
 }
 
 // A person known only by a handle ("github:qbrannoc") gets the page's own
@@ -210,19 +144,18 @@ function pageTitle(displayName, body) {
 // Pages written while the embedding endpoint was down or throttled get their
 // vectors on a later pass; the page itself does not need regenerating.
 async function backfillPageEmbeddings(limit = 40) {
-  const missing = await rows('select id, title, body from memory_page where embedding is null limit $1', [limit]);
+  const missing = await repo.memory.pagesMissingEmbedding(limit);
   if (!missing.length) return 0;
   const vectors = await embed(missing.map((p) => `${p.title}\n${p.body}`.slice(0, 8000)), { purpose: 'embed-page' }).catch(() => null);
   if (!vectors) return 0;
   for (let i = 0; i < missing.length; i++) {
-    await query('update memory_page set embedding = $2::vector where id = $1', [missing[i].id, toVector(vectors[i])]);
+    await repo.memory.setPageEmbedding(missing[i].id, toVector(vectors[i]));
   }
   return missing.length;
 }
 
 async function storedHash(kind, subjectId) {
-  const r = await one('select facts_hash from memory_page where kind = $1 and subject_id = $2', [kind, subjectId]);
-  return r?.facts_hash || null;
+  return repo.memory.pageHash(kind, subjectId);
 }
 
 async function generate(system, prompt) {
@@ -292,26 +225,11 @@ async function projectPage(projectId, { force = false } = {}) {
 }
 
 async function mePage({ force = false } = {}) {
-  const me = await one('select * from person where is_me limit 1');
-  const claims = await rows(
-    `select id, kind, text, quote, source_item_id, source_kind, valid_at, invalid_at, confidence, status
-       from claim where subject_kind = 'me' and status = 'active' and (invalid_at is null or invalid_at > now())
-      order by confidence desc, valid_at desc limit 120`
-  );
-  const commitments = await rows(
-    `select c.id, c.direction, c.summary, c.due_at, c.status, c.source_item_id, per.display_name as who
-       from commitment c left join person per on per.id = c.counterparty_person_id
-      where c.status in ('open','dispatched') and c.superseded_by is null and c.direction = 'owed_by_me'
-      order by c.extracted_at desc limit 15`
-  );
-  const projectsActive = await rows(
-    `select p.name, count(*) as n from claim c join project p on p.id = c.subject_id
-      where c.subject_kind = 'project' and c.status = 'active' and c.valid_at > now() - interval '45 days'
-      group by p.name order by n desc limit 8`
-  );
-  const people = await rows(
-    `select title from memory_page where kind = 'person' order by generated_at desc limit 15`
-  );
+  const me = await repo.memory.mePerson();
+  const claims = await repo.memory.meClaims();
+  const commitments = await repo.memory.meCommitments();
+  const projectsActive = await repo.memory.activeProjectNames();
+  const people = await repo.memory.recentPersonPageTitles();
   if (!claims.length && !commitments.length) return { skipped: 'empty' };
   const hash = factsHash({ claims, commitments, extra: projectsActive.map((p) => p.name), version: PAGE_VERSION });
   if (!force && (await storedHash('me', 0)) === hash) return { skipped: 'unchanged' };
@@ -373,36 +291,19 @@ function renderIndex({ people, projects, topics }) {
 }
 
 async function indexPage() {
-  const pagePeople = await rows(`select subject_id, title from memory_page where kind = 'person' order by title`);
+  const pagePeople = await repo.memory.personPages();
   const people = [];
   for (const p of pagePeople) {
-    const claims = await rows(
-      `select kind, text from claim where subject_kind = 'person' and subject_id = $1 and status = 'active'
-          and (invalid_at is null or invalid_at > now()) order by confidence desc, valid_at desc limit 20`,
-      [p.subject_id]
-    );
+    const claims = await repo.memory.personIndexClaims(p.subject_id);
     people.push({ name: p.title, claims });
   }
-  const projRows = await rows(
-    `select p.id, p.name from project p
-      where exists (select 1 from claim c where c.subject_kind = 'project' and c.subject_id = p.id
-                      and c.status = 'active' and c.valid_at > now() - interval '60 days')
-      order by p.last_touched_at desc nulls last, p.name limit 20`
-  );
+  const projRows = await repo.memory.indexProjects();
   const projects = [];
   for (const p of projRows) {
-    const claims = await rows(
-      `select kind, text from claim where subject_kind = 'project' and subject_id = $1 and status = 'active'
-          and (invalid_at is null or invalid_at > now()) order by valid_at desc limit 10`,
-      [p.id]
-    );
+    const claims = await repo.memory.projectIndexClaims(p.id);
     projects.push({ name: p.name, claims });
   }
-  const topics = await rows(
-    `select subject_label as label, count(*) as n from claim
-      where subject_kind = 'topic' and status = 'active' and valid_at > now() - interval '30 days'
-      group by subject_label having count(*) >= 2 order by n desc limit 12`
-  );
+  const topics = await repo.memory.indexTopics();
   const body = renderIndex({ people, projects, topics });
   const hash = factsHash({ extra: [body], version: PAGE_VERSION });
   if ((await storedHash('index', 0)) !== hash) await writePage({ kind: 'index', subjectId: 0, title: 'Index', body, hash });
@@ -431,10 +332,7 @@ async function run({ limit = 40 } = {}) {
       log.warn('person page failed', { id: p.id, message: err.message });
     }
   }
-  const projectIds = await rows(
-    `select subject_id as id from claim where subject_kind = 'project' and status = 'active'
-      group by subject_id having count(*) >= 2`
-  );
+  const projectIds = await repo.memory.projectIdsWithClaims();
   for (const p of projectIds) {
     if (budget <= 0) break;
     try {
@@ -467,10 +365,10 @@ async function refreshSubjects(subjects) {
         : await mePage({ force: true });
       // Nothing left to say about them: the old page would only repeat what
       // was just forgotten.
-      if (r.skipped) await query('delete from memory_page where kind = $1 and subject_id = $2', [kind, subjectId]);
+      if (r.skipped) await repo.memory.deletePage(kind, subjectId);
     } catch (err) {
       log.warn('page refresh failed — removing page', { kind, message: err.message });
-      await query('delete from memory_page where kind = $1 and subject_id = $2', [kind, subjectId]);
+      await repo.memory.deletePage(kind, subjectId);
     }
   }
   await indexPage().catch(() => {});

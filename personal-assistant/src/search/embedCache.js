@@ -1,4 +1,4 @@
-﻿'use strict';
+'use strict';
 
 // Query-embedding cache (docs/native/PLAN.md 0.2, Embeddings policy D5).
 //
@@ -53,33 +53,21 @@ function parseVector(text) {
   return out.every(Number.isFinite) ? out : null;
 }
 
-/** The table-backed store. `db` is injectable; defaults to ../db, loaded lazily. */
+/**
+ * The table-backed store (SQL in src/repo/search.js). `db` is an injectable
+ * backend with a `query`; by default the process's repository set, loaded lazily.
+ */
 function tableStore({ db, maxRows = 5000 } = {}) {
-  const d = () => db || require('../db');
+  const s = () => (db ? require('../repo').createRepos(db) : require('../repo')).search;
   let puts = 0;
   return {
     async get(model, dims, norm) {
-      const r = await d().query(
-        `update query_embedding_cache set hits = hits + 1, last_used_at = now()
-          where model = $1 and dims = $2 and query_norm = $3 returning embedding::text as embedding`,
-        [model, dims, norm]
-      );
-      return r.rows && r.rows[0] ? parseVector(r.rows[0].embedding) : null;
+      return parseVector(await s().cacheGet(model, dims, norm));
     },
     async put(model, dims, norm, vector) {
-      await d().query(
-        `insert into query_embedding_cache (model, dims, query_norm, embedding) values ($1, $2, $3, $4::vector)
-         on conflict (model, dims, query_norm) do update set last_used_at = now()`,
-        [model, dims, norm, toVectorLiteral(vector)]
-      );
+      await s().cachePut(model, dims, norm, toVectorLiteral(vector));
       // Trim to the newest `maxRows` by last use, every so often rather than on every write.
-      if (++puts % 25 === 0) {
-        await d().query(
-          `delete from query_embedding_cache where (model, dims, query_norm) in (
-             select model, dims, query_norm from query_embedding_cache order by last_used_at desc offset $1)`,
-          [maxRows]
-        );
-      }
+      if (++puts % 25 === 0) await s().cacheTrim(maxRows);
     },
   };
 }

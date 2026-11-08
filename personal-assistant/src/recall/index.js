@@ -26,7 +26,7 @@
 // everything here is data — never instructions to whoever reads the result.
 
 const { config } = require('../config');
-const { rows } = require('../db');
+const repo = require('../repo');
 const { search, embedQuery } = require('../search');
 const { rerank } = require('../search/rerank');
 const memory = require('../memory');
@@ -47,35 +47,15 @@ function toVector(values) {
 
 async function pageSearch(q, limit = 4) {
   const qv = await embedQuery(q).catch(() => null);
-  const lexical = await rows(
-    `select id, kind, subject_id, title, left(body, 1500) as body,
-            ts_rank(tsv, websearch_to_tsquery('english', $1)) as rank
-       from memory_page where kind in ('person','project') and tsv @@ websearch_to_tsquery('english', $1)
-      order by rank desc limit $2`,
-    [q, limit]
-  );
-  const semantic = qv
-    ? await rows(
-        `select id, kind, subject_id, title, left(body, 1500) as body
-           from memory_page where kind in ('person','project') and embedding is not null
-          order by embedding <=> $1::vector limit $2`,
-        [toVector(qv), limit]
-      )
-    : [];
+  const lexical = await repo.memory.searchPagesLexical(q, limit);
+  const semantic = qv ? await repo.memory.searchPagesVector(toVector(qv), limit) : [];
   return memory.rrf([lexical, semantic], [1, 1]).slice(0, limit).map((h) => h.row);
 }
 
 // Items behind claims, for the ones search did not already return.
 async function itemsById(ids) {
   if (!ids.length) return [];
-  return rows(
-    `select si.id, si.source, si.subject, si.occurred_at, si.author_identity, si.thread_external_id,
-            c.context, left(coalesce(c.content, si.body_text), 2000) as text,
-            left(coalesce(c.content, si.body_text), 240) as snippet
-       from source_item si left join chunk c on c.source_item_id = si.id and c.ord = 0
-      where si.id = any($1::bigint[])`,
-    [ids]
-  );
+  return repo.search.itemsById(ids);
 }
 
 const PLAN_SYSTEM = `You plan searches over one person's work memory: email, Teams, calendar, GitHub, Jira, meeting transcripts and their own coding-agent sessions.

@@ -4,14 +4,14 @@
 //
 // Three legs, fused, then reranked:
 //
-//  - **lexical** — first-class, not a fallback. The queries this store gets are
+//  - **lexical** â€” first-class, not a fallback. The queries this store gets are
 //    full of what embeddings are worst at: surnames, ticket keys, branch names,
 //    `GridHelpers`, `INNERGY`. Two tsvectors: `english` (stemmed) for prose and
 //    `simple` for exact tokens. `websearch_to_tsquery` first (AND of terms);
-//    when that finds little — a long question from an agent rarely has every
-//    word in one message — an OR of the same terms tops the list up.
-//  - **vector** — rescues a query phrased differently from the message.
-//  - **people** — a query that names a colleague pulls their recent items
+//    when that finds little â€” a long question from an agent rarely has every
+//    word in one message â€” an OR of the same terms tops the list up.
+//  - **vector** â€” rescues a query phrased differently from the message.
+//  - **people** â€” a query that names a colleague pulls their recent items
 //    (see entities.js).
 //
 // Every leg returns one row per *item* (its best chunk) before fusion. Fusing
@@ -29,7 +29,7 @@
 // Embeddings and reranking are optional. Without them this degrades to
 // lexical-only, fused order, and says so.
 
-const { rows, query, withTx } = require('../db');
+const repo = require('../repo');
 const { config } = require('../config');
 const { fuse } = require('./fuse');
 const { chunkContext, CONTEXT_VERSION } = require('./context');
@@ -45,7 +45,7 @@ function embeddingsConfigured() {
   return Boolean(config.embeddings.endpoint && config.embeddings.apiKey);
 }
 
-// Returns null when embeddings are unavailable for any reason — unconfigured,
+// Returns null when embeddings are unavailable for any reason â€” unconfigured,
 // wrong deployment name, endpoint down. `lastEmbedError` carries the why, so
 // the CLI can say "the endpoint 404s" instead of "not configured", which sends
 // you looking in the wrong place.
@@ -134,19 +134,9 @@ function embeddingInput(chunk) {
 // was one) and clears their embedding so the next backfill re-embeds them
 // with the header included.
 async function backfillContext({ limit = 2000 } = {}) {
-  const stale = await rows(
-    `select c.id, si.source, si.subject, si.occurred_at, si.author_identity, si.raw
-       from chunk c join source_item si on si.id = c.source_item_id
-      where c.context_v <> $1
-      order by c.id desc limit $2`,
-    [CONTEXT_VERSION, limit]
-  );
+  const stale = await repo.search.staleChunks(CONTEXT_VERSION, limit);
   for (const c of stale) {
-    await query('update chunk set context = $2, context_v = $3, embedding = null where id = $1', [
-      c.id,
-      chunkContext(c),
-      CONTEXT_VERSION,
-    ]);
+    await repo.search.reheadChunk(c.id, chunkContext(c), CONTEXT_VERSION);
   }
   if (stale.length) log.info('re-headed chunks', { count: stale.length });
   return stale.length;
@@ -158,10 +148,7 @@ async function backfillEmbeddings({ limit = 128 } = {}) {
   await backfillContext();
   if (!embeddingsConfigured()) return { embedded: 0, skipped: true };
 
-  const pending = await rows(
-    'select id, context, content from chunk where embedding is null order by id desc limit $1',
-    [limit]
-  );
+  const pending = await repo.search.chunksMissingEmbedding(limit);
   if (!pending.length) return { embedded: 0, skipped: false };
 
   let embedded = 0;
@@ -172,10 +159,7 @@ async function backfillEmbeddings({ limit = 128 } = {}) {
     const vectors = await embed(batch.map(embeddingInput), { purpose: 'embed-chunk' });
     if (!vectors) break;
     for (let j = 0; j < batch.length; j++) {
-      await query('update chunk set embedding = $2::vector where id = $1', [
-        batch[j].id,
-        toVectorLiteral(vectors[j]),
-      ]);
+      await repo.search.setChunkEmbedding(batch[j].id, toVectorLiteral(vectors[j]));
     }
     embedded += batch.length;
   }
@@ -185,63 +169,11 @@ async function backfillEmbeddings({ limit = 128 } = {}) {
 
 // ------------------------------------------------------------- the legs ---
 
-const ITEM = `si.id, si.source, si.subject, si.occurred_at, si.author_identity,
-              si.thread_external_id`;
-
-// Shared WHERE fragment for source and date filters. Appends its parameters
-// to `params` and returns SQL that starts with `and` (or is empty).
-function filterSql({ sources, since, until }, params) {
-  const parts = [];
-  if (sources?.length) {
-    params.push(sources);
-    parts.push(`si.source = any($${params.length})`);
-  }
-  if (since) {
-    params.push(new Date(since));
-    parts.push(`si.occurred_at >= $${params.length}`);
-  }
-  if (until) {
-    params.push(new Date(until));
-    parts.push(`si.occurred_at <= $${params.length}`);
-  }
-  return parts.length ? `and ${parts.join(' and ')}` : '';
-}
-
-// `strict` is websearch syntax (all terms, quoted phrases, -exclusions);
-// otherwise any of the query's terms. The OR form is built from the lexemes
-// Postgres itself extracts, so stop words drop out and nothing in the user's
-// text is parsed as tsquery syntax.
-function tsqueries(strict) {
-  if (strict) {
-    return `websearch_to_tsquery('english', $1) as e, websearch_to_tsquery('simple', $1) as s`;
-  }
-  const anyOf = (cfg) =>
-    `to_tsquery('simple', array_to_string(array(
-       select quote_literal(l) from unnest(tsvector_to_array(to_tsvector('${cfg}', $1))) l), ' | '))`;
-  return `${anyOf('english')} as e, ${anyOf('simple')} as s`;
-}
+// The SQL of every leg (and filterSql, which builds their source/date filter)
+// lives in src/repo/search.js.
 
 async function lexicalPass(q, limit, filters, strict) {
-  const params = [q, limit];
-  const where = filterSql(filters, params);
-  return rows(
-    `with q as (select ${tsqueries(strict)})
-     select x.*,
-            -- StartSel/StopSel are emptied deliberately: these snippets are
-            -- read in a terminal and fed to a model, and neither wants <b>.
-            ts_headline('english', x.content, (select e from q),
-                        'MaxFragments=1,MaxWords=28,MinWords=8,StartSel=,StopSel=') as snippet
-       from (
-         select distinct on (si.id) ${ITEM}, c.id as chunk_id, c.context, left(c.content, 2000) as content,
-                greatest(ts_rank(c.tsv, q.e), ts_rank(c.tsv_exact, q.s)) as rank
-           from chunk c join source_item si on si.id = c.source_item_id, q
-          where (c.tsv @@ q.e or c.tsv_exact @@ q.s) ${where}
-          order by si.id, rank desc
-       ) x
-      order by x.rank desc, x.occurred_at desc
-      limit $2`,
-    params
-  );
+  return repo.search.lexicalPass(q, limit, filters, strict);
 }
 
 async function lexical(q, limit, filters) {
@@ -255,42 +187,13 @@ async function lexical(q, limit, filters) {
 async function vector(q, limit, filters) {
   const qv = await embedQuery(q);
   if (!qv) return [];
-  const params = [toVectorLiteral(qv), limit, limit * 4];
-  const where = filterSql(filters, params);
-  return withTx(async (client) => {
-    // pgvector 0.6 has no iterative scan: HNSW returns ef_search candidates and
-    // a filter applied to them can leave none — "Teams chats about X" in a
-    // corpus that is mostly GitHub. A filtered query therefore scans exactly;
-    // at this corpus size that is milliseconds, and it is always complete.
-    if (where) await client.query('set local enable_indexscan = off');
-    else await client.query('set local hnsw.ef_search = 200');
-    const r = await client.query(
-      `select x.* from (
-         select distinct on (c.source_item_id) ${ITEM}, c.id as chunk_id, c.context,
-                left(c.content, 2000) as content, left(c.content, 240) as snippet, 1 - c.dist as rank
-           from (select c.id, c.source_item_id, c.context, c.content, c.embedding <=> $1::vector as dist
-                   from chunk c join source_item si on si.id = c.source_item_id
-                  where c.embedding is not null ${where}
-                  order by c.embedding <=> $1::vector limit $3) c
-           join source_item si on si.id = c.source_item_id
-          order by c.source_item_id, c.dist
-       ) x
-       order by x.rank desc limit $2`,
-      params
-    );
-    return r.rows;
-  });
+  return repo.search.vectorPass(toVectorLiteral(qv), limit, filters);
 }
 
 let peopleCache = { at: 0, list: [] };
 async function knownPeople() {
   if (Date.now() - peopleCache.at < 5 * 60_000) return peopleCache.list;
-  const list = await rows(
-    `select p.id, p.display_name, p.is_me,
-            coalesce(array_agg(pi.kind || ':' || pi.value) filter (where pi.id is not null), '{}') as identities
-       from person p left join person_identity pi on pi.person_id = p.id
-      group by p.id`
-  );
+  const list = await repo.search.knownPeople();
   peopleCache = { at: Date.now(), list };
   return list;
 }
@@ -318,20 +221,7 @@ async function people(q, limit, filters) {
     ...named.flatMap((p) => p.identities.filter((i) => i.startsWith('smtp:')).map((i) => `%${i.slice(5)}%`)),
     ...named.filter((p) => /\s/.test(p.display_name)).map((p) => `%${p.display_name}%`),
   ];
-  const params = [authors, patterns, limit];
-  const where = filterSql(filters, params);
-  return rows(
-    `select ${ITEM}, c.id as chunk_id, coalesce(c.context, '') as context,
-            left(coalesce(c.content, si.body_text), 2000) as content,
-            left(coalesce(c.content, si.body_text), 240) as snippet,
-            extract(epoch from si.occurred_at) as rank
-       from source_item si
-       left join chunk c on c.source_item_id = si.id and c.ord = 0
-      where (si.author_identity = any($1) or si.raw::text ilike any($2)) ${where}
-      order by si.occurred_at desc
-      limit $3`,
-    params
-  );
+  return repo.search.peopleItems(authors, patterns, limit, filters);
 }
 
 // ------------------------------------------------------------------ search --
@@ -410,6 +300,6 @@ module.exports = {
   queryEmbedder,
   embeddingInput,
   embeddingsConfigured,
-  filterSql,
+  filterSql: require('../repo/search').filterSql,
   lastEmbedError: () => lastEmbedError,
 };
