@@ -108,7 +108,7 @@ def _patch_common(monkeypatch: pytest.MonkeyPatch) -> None:
     )
     monkeypatch.setattr(h, "find_direction_for_story", lambda *_a, **_k: None)
     monkeypatch.setattr(parser_mod, "get_direction_chain", lambda *_a, **_k: [])
-    monkeypatch.setattr(h, "_read_persona_prompt", lambda _persona: "(persona prompt)")
+    monkeypatch.setattr(h, "_read_persona_prompt", lambda _persona, *_a: "(persona prompt)")
     monkeypatch.setattr(h, "route", lambda _persona: "stub/model")
     monkeypatch.setattr(h, "max_output_tokens_for", lambda _m: 1024)
 

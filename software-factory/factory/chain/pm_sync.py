@@ -308,9 +308,7 @@ def _story_size_violations(child_story: dict[str, Any]) -> list[str]:
     if nf is None:
         violations.append("missing_estimate_new_files")
     elif isinstance(nf, int) and nf > MAX_NEW_FILES_PER_STORY:
-        violations.append(
-            f"estimated_new_files={nf} exceeds max {MAX_NEW_FILES_PER_STORY}"
-        )
+        violations.append(f"estimated_new_files={nf} exceeds max {MAX_NEW_FILES_PER_STORY}")
     if mf is None:
         violations.append("missing_estimate_modified_files")
     elif isinstance(mf, int) and mf > MAX_MODIFIED_FILES_PER_STORY:
@@ -321,8 +319,7 @@ def _story_size_violations(child_story: dict[str, Any]) -> list[str]:
         violations.append("missing_estimate_sandbox_iterations")
     elif isinstance(it, int) and it > MAX_SANDBOX_ITERATIONS_PER_STORY:
         violations.append(
-            f"estimated_sandbox_iterations={it} exceeds max "
-            f"{MAX_SANDBOX_ITERATIONS_PER_STORY}"
+            f"estimated_sandbox_iterations={it} exceeds max {MAX_SANDBOX_ITERATIONS_PER_STORY}"
         )
     return violations
 
@@ -370,9 +367,7 @@ def _format_redecomposition_feedback(violations: dict[int, list[str]]) -> str:
     for idx, vs in sorted(violations.items()):
         lines.append(f"  - story[{idx}]: {'; '.join(vs)}")
     lines.append("")
-    lines.append(
-        "Re-emit the full PM JSON with every child_story now within the limits."
-    )
+    lines.append("Re-emit the full PM JSON with every child_story now within the limits.")
     return "\n".join(lines)
 
 
@@ -381,6 +376,7 @@ def _call_pm_persona(
     app_repo_path: Path,
     software_factory_root: Path,
     model_overrides: dict[str, str] | None = None,
+    context_dir: str | None = None,
 ) -> dict[str, Any]:
     """Real LLM call. Returns the parsed PM JSON result.
 
@@ -392,7 +388,7 @@ def _call_pm_persona(
     from factory.runner import text_run
 
     persona = "pm"
-    persona_prompt = _read_persona_prompt(persona)
+    persona_prompt = _read_persona_prompt(persona, context_dir)
 
     chain = _resolve_chain_for_direction(direction, software_factory_root)
     context_prelude = compose_context_prelude(
@@ -400,6 +396,7 @@ def _call_pm_persona(
         app_repo_path=app_repo_path,
         direction_chain=chain,
         software_factory_root=software_factory_root,
+        context_dir=context_dir,
     )
     direction_block = _build_pm_prompt(direction, context_prelude)
 
@@ -479,10 +476,10 @@ def _resolve_chain_for_direction(
     return resolve_direction_chain(direction, software_factory_root)
 
 
-def _read_persona_prompt(persona: str) -> str:
+def _read_persona_prompt(persona: str, context_dir: str | None = None) -> str:
     from factory.runner import _read_persona_prompt as _rpp
 
-    return _rpp(persona)
+    return _rpp(persona, context_dir)
 
 
 def pm_sync(
@@ -546,9 +543,7 @@ def pm_sync(
         return PMSyncSummary()
 
     summary = PMSyncSummary()
-    candidates = [
-        d for d in pending_directions(app, root, db_path) if d.status in pending_statuses
-    ]
+    candidates = [d for d in pending_directions(app, root, db_path) if d.status in pending_statuses]
 
     # Operator-approval gate (2026-07-30). A direction the FACTORY filed for
     # itself — every ``scheduled-<persona>`` source, any other machine filer,
@@ -672,7 +667,11 @@ def pm_sync(
                 pm_result = _dry_run_pm_result(direction, validation)
             else:
                 pm_result = _call_pm_persona(
-                    direction, app_repo_path, root, job_routing.model_overrides
+                    direction,
+                    app_repo_path,
+                    root,
+                    job_routing.model_overrides,
+                    context_dir=getattr(app_config, "context_dir", None),
                 )
                 merge_state(direction, {"pm_result": pm_result})
                 assert app_config is not None and github_client is not None

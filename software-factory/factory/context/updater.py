@@ -43,7 +43,9 @@ class ContextUpdate:
     content: str
 
 
-def apply_context_updates(updates: list[ContextUpdate], app_repo_path: Path) -> None:
+def apply_context_updates(
+    updates: list[ContextUpdate], app_repo_path: Path, context_dir: str | None = None
+) -> None:
     """Apply ``updates`` under ``app_repo_path``.
 
     For every update, FIRST validate the path; raise
@@ -58,12 +60,12 @@ def apply_context_updates(updates: list[ContextUpdate], app_repo_path: Path) -> 
 
     # Validate all paths first; bail before writing if any fail.
     for upd in updates:
-        if is_forbidden_doc_path(upd.path):
+        if is_forbidden_doc_path(upd.path, context_dir):
             raise ForbiddenContextPathError(
                 upd.path,
                 "path matches FORBIDDEN_DOC_PATTERNS (no ADRs, no changelogs, no history files)",
             )
-        if not is_canonical_doc_path(upd.path):
+        if not is_canonical_doc_path(upd.path, context_dir):
             raise ForbiddenContextPathError(
                 upd.path,
                 "path is not in CANONICAL_CONTEXT_PATHS (docs must live in the canonical layout)",

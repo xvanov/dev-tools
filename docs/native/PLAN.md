@@ -368,11 +368,17 @@ run mid-step; a job continued on an existing branch (`--branch`).
   `test_swebench_bare_openhands_arms.py` (Linux-only harness: docker, bwrap, getuid, signals).
   Open: the work PA's `.env` switch (PA_FACTORY_MACHINE/PATH, and PA_FACTORY_UV, which names a
   path that does not exist on Windows); retiring the WSL factory and its termhub with 3.6.
-- [ ] **2.4 Per-app context root.** The onboarder and other personas write `context/` at the
+- [x] **2.4 Per-app context root.** The onboarder and other personas write `context/` at the
   app repo root (hard-coded ~200 times). Route every context path through `canonical_paths`
   and honour `AppConfig.context_dir`, so a monorepo app (dev-tools) keeps its context under
   `software-factory/apps/<app>/`. Found in the 2.3 smoke (a docs-typed job wrote `context/`
-  into the dev-tools repo); code jobs don't hit it.
+  into the dev-tools repo); code jobs don't hit it. Done: `canonical_paths.context_path` /
+  `context_files` / `canonical_context_paths` / `forbidden_doc_patterns` take the root; the
+  loader, enforcer, updater, context refresh, docs chain, dev/onboarder/PM runs and the
+  persona prompts (`{{context_dir}}` placeholder) all use `AppConfig.context_dir`;
+  `apps/dev-tools` sets `software-factory/apps/dev-tools/context` (tracked, like
+  `apps/factory`). `tests/test_context_root.py` pins default-identical paths and fails on a
+  new hard-coded `context/` literal. `prd.md` and `stories/` stay at the app repo root.
 - [ ] **Exit 2:** factory calls take milliseconds; JOBS-API v1.3 tests green on Windows and Linux.
 
 ## Phase 3: storage to SQLite (D2)

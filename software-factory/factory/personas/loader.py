@@ -195,10 +195,26 @@ def _split_frontmatter(text: str, path: Path) -> tuple[dict[str, Any], str]:
     return metadata, parsed.content
 
 
-def read_persona_prompt(name: str, *, personas_dir: Path | None = None) -> str:
+#: Placeholder for the app's context root inside persona bodies. Rendered at read
+#: time from ``AppConfig.context_dir`` (plan item 2.4); personas never spell the
+#: root themselves, so a monorepo app can keep its context under its own folder.
+CONTEXT_DIR_TOKEN = "{{context_dir}}"
+
+
+def render_context_dir(text: str, context_dir: str | None = None) -> str:
+    """Replace every ``{{context_dir}}`` in ``text`` with the normalized context root."""
+    from factory.context.canonical_paths import normalize_context_dir
+
+    return text.replace(CONTEXT_DIR_TOKEN, normalize_context_dir(context_dir))
+
+
+def read_persona_prompt(
+    name: str, *, personas_dir: Path | None = None, context_dir: str | None = None
+) -> str:
     """Return ONLY the system-prompt body for ``name``.
 
     The single function every dispatch path should use. Frontmatter is stripped
-    here so it can never reach a model.
+    here so it can never reach a model. ``{{context_dir}}`` is always rendered
+    (default root ``context``) so the placeholder can never reach a model either.
     """
-    return load_persona(name, personas_dir=personas_dir).body
+    return render_context_dir(load_persona(name, personas_dir=personas_dir).body, context_dir)

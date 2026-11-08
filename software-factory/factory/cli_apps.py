@@ -36,6 +36,7 @@ from factory.app_config import (
     resolve_app_repo_path,
 )
 from factory.app_detect import GATE_KEYS, Detection, detect
+from factory.context.canonical_paths import DEFAULT_CONTEXT_DIR
 from factory.delivery import NEW_APP_DEFAULT, DeliveryConfig, DeliveryLevel, parse_level
 
 _FACTORY_ROOT = Path(__file__).resolve().parent.parent
@@ -140,8 +141,8 @@ def render_config(
         f"repo: {_q(repo)}",
         f"default_branch: {_q(default_branch)}",
         f"app_repo_path: {_q(app_repo_path)}",
-        "# Read by the context loader at <app_repo_path>/context/.",
-        "context_dir: context",
+        "# Read by the context loader at <app_repo_path>/<context_dir>/.",
+        f"context_dir: {DEFAULT_CONTEXT_DIR}",
         "",
         "# The delivery level a job gets when it requests none (a job's own",
         "# request always wins; there is no per-app ceiling). New apps start at",
@@ -456,8 +457,8 @@ def add_app(
     app_dir.mkdir(parents=True, exist_ok=True)
     cfg_path.write_text(text, encoding="utf-8")
     (app_dir / "directions").mkdir(exist_ok=True)
-    # The context loader reads <repo>/context/; an empty dir is invisible to git.
-    (clone_path / "context").mkdir(exist_ok=True)
+    # The context loader reads <repo>/<context_dir>/; an empty dir is invisible to git.
+    (clone_path / DEFAULT_CONTEXT_DIR).mkdir(exist_ok=True)
 
     result: dict[str, Any] = {
         "app": app,

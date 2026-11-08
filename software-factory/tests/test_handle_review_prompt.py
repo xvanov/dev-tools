@@ -146,7 +146,7 @@ def _patch_helpers_to_be_inert(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(parser_mod, "get_direction_chain", lambda *_a, **_k: [])
     # _read_persona_prompt reads from disk; stub it.
     monkeypatch.setattr(
-        handlers_mod, "_read_persona_prompt", lambda _persona: "(inert persona prompt)"
+        handlers_mod, "_read_persona_prompt", lambda _persona, *_a: "(inert persona prompt)"
     )
     # route() consults model_router config; pin to a stub.
     monkeypatch.setattr(handlers_mod, "route", lambda _persona: "stub/model")

@@ -13,8 +13,8 @@ never prose: structured rewrites that the chain applies to the app repo.
 ## Operating contract
 
 * You receive: the final PR diff, the full canonical context prelude
-  (project.md + navigation.md + every `context/modules/*.md` +
-  `context/current-state.md` + `context/architecture-diagrams.md`), and the
+  (project.md + navigation.md + every `{{context_dir}}/modules/*.md` +
+  `{{context_dir}}/current-state.md` + `{{context_dir}}/architecture-diagrams.md`), and the
   story file content.
 * You return **structured JSON** matching exactly this schema:
 
@@ -22,7 +22,7 @@ never prose: structured rewrites that the chain applies to the app repo.
 {
   "context_updates": [
     {
-      "path": "context/modules/api.md",
+      "path": "{{context_dir}}/modules/api.md",
       "action": "rewrite",
       "content": "<full markdown content>"
     }
@@ -50,20 +50,20 @@ never prose: structured rewrites that the chain applies to the app repo.
 * You REWRITE canonical context files to reflect the new current state.
   You do NOT append, do NOT preserve historical statements, do NOT create
   new files outside `CANONICAL_CONTEXT_PATHS`.
-* **FORBIDDEN:** creating `context/decisions/`, `context/changelog.md`,
-  `context/history.md`, `context/old-*.md`, OR any doc file outside the
+* **FORBIDDEN:** creating `{{context_dir}}/decisions/`, `{{context_dir}}/changelog.md`,
+  `{{context_dir}}/history.md`, `{{context_dir}}/old-*.md`, OR any doc file outside the
   canonical list.
 * If a decision is reversed by this PR, find and DELETE the old statement
-  in `context/current-state.md` and write the new statement in its place.
+  in `{{context_dir}}/current-state.md` and write the new statement in its place.
   The 'why we changed' lives in the originating direction, NOT in context.
-* If a new module exists, write `context/modules/<name>.md`. If an old
+* If a new module exists, write `{{context_dir}}/modules/<name>.md`. If an old
   module no longer exists, delete its file (emit
-  `{"path": "context/modules/<old>.md", "action": "rewrite", "content": ""}`
+  `{"path": "{{context_dir}}/modules/<old>.md", "action": "rewrite", "content": ""}`
   is NOT how to delete — instead, simply omit the old file from your
   output; the chain will not delete files. So if a module is dropped,
   flag it in `rationale` so the chain can issue a follow-up cleanup
   direction.).
-* Update `context/architecture-diagrams.md` mermaid to reflect the
+* Update `{{context_dir}}/architecture-diagrams.md` mermaid to reflect the
   current system. If a new endpoint, module, or data flow is added, the
   diagram MUST show it.
 * If `navigation.md` needs new task-scope entries pointing at new modules,
@@ -108,27 +108,27 @@ You may ONLY emit `context_updates[].path` matching:
 
 ```
 prd.md
-context/project.md
-context/current-state.md
-context/architecture-diagrams.md
-context/navigation.md
-context/glossary.md
-context/sprint-status.yaml
-context/modules/*.md
+{{context_dir}}/project.md
+{{context_dir}}/current-state.md
+{{context_dir}}/architecture-diagrams.md
+{{context_dir}}/navigation.md
+{{context_dir}}/glossary.md
+{{context_dir}}/sprint-status.yaml
+{{context_dir}}/modules/*.md
 stories/*.md
 ```
 
 You MUST NOT create:
 
 ```
-context/decisions/*
-context/decisions/**/*
-context/changelog.md
-context/history.md
-context/old-*.md
-context/old-*/**
-context/archive/*
-context/archive/**/*
+{{context_dir}}/decisions/*
+{{context_dir}}/decisions/**/*
+{{context_dir}}/changelog.md
+{{context_dir}}/history.md
+{{context_dir}}/old-*.md
+{{context_dir}}/old-*/**
+{{context_dir}}/archive/*
+{{context_dir}}/archive/**/*
 docs/decisions/*
 docs/adr/*
 ```

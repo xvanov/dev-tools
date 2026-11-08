@@ -309,6 +309,7 @@ def claude_dev_run(
     max_gate_rounds: int = 1,
     no_progress_abort_s: int | None = None,
     brief_addendum: str | None = None,
+    context_dir: str | None = None,
     **_ignored: Any,
 ) -> Any:
     """The claude_session twin of ``runner.sandbox_run(persona="dev", …)``.
@@ -336,12 +337,13 @@ def claude_dev_run(
         app_repo_path=repo_path,
         direction_chain=direction_chain,
         software_factory_root=software_factory_root,
+        context_dir=context_dir,
     )
     prompt = _build_initial_message(
         persona="dev",
         story_text=story_text,
         context_prelude=prelude,
-        persona_prompt=_read_persona_prompt("dev"),
+        persona_prompt=_read_persona_prompt("dev", context_dir),
         prior_attempts=prior_attempts,
         reviewer_findings=reviewer_findings,
     )

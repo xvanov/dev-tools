@@ -28,6 +28,12 @@ from typing import Any
 
 import pytest
 
+# The bare arm kills process groups (killpg/SIGKILL), shells out to POSIX commands and
+# checks file modes; it has never run on Windows (it did not even import there).
+pytestmark = pytest.mark.skipif(
+    sys.platform == "win32", reason="POSIX-only bench harness (process groups, file modes)"
+)
+
 _REPO_ROOT = Path(__file__).parent.parent
 _ADAPTER = _REPO_ROOT / "bench" / "swebench_adapter.py"
 _RUNNER = _REPO_ROOT / "factory" / "runner.py"
@@ -1093,7 +1099,7 @@ def test_lock_makes_tracked_test_files_read_only_and_leaves_code_writable(
     assert (repo / "widget.py").stat().st_mode & 0o200
 
 
-@pytest.mark.skipif(os.geteuid() == 0, reason="root ignores file modes")
+@pytest.mark.skipif(getattr(os, "geteuid", lambda: 0)() == 0, reason="root ignores file modes")
 def test_the_lock_is_enforced_by_the_os_not_just_recorded(
     A: Any, tmp_path: Path  # noqa: N803
 ) -> None:
@@ -1195,7 +1201,7 @@ def test_report_says_none_when_no_output_was_scanned(
     assert A.readonly_test_report(repo, lock, output_paths=[])["refused"] is None
 
 
-@pytest.mark.skipif(os.geteuid() == 0, reason="root ignores file modes")
+@pytest.mark.skipif(getattr(os, "geteuid", lambda: 0)() == 0, reason="root ignores file modes")
 def test_bare_arm_records_a_refused_test_write_end_to_end(
     bare_run: Any, A: Any  # noqa: N803
 ) -> None:

@@ -1012,7 +1012,7 @@ def truncate_error(text: str, max_length: int = _DEFAULT_ERROR_MAX_LENGTH) -> st
     return (text[:keep_len] + marker)[:max_length]
 
 
-def _read_persona_prompt(persona: str) -> str:
+def _read_persona_prompt(persona: str, context_dir: str | None = None) -> str:
     """Return ONLY the system-prompt body for ``persona``.
 
     Delegates to the persona loader, which strips YAML frontmatter. That
@@ -1026,7 +1026,7 @@ def _read_persona_prompt(persona: str) -> str:
     from factory.personas.loader import PersonaError, read_persona_prompt
 
     try:
-        return read_persona_prompt(persona, personas_dir=_PERSONAS_DIR)
+        return read_persona_prompt(persona, personas_dir=_PERSONAS_DIR, context_dir=context_dir)
     except PersonaError as exc:
         if "missing" in str(exc):
             raise FileNotFoundError(str(exc)) from exc
@@ -2207,6 +2207,7 @@ async def sandbox_run(
     no_progress_abort_s: int | None = None,
     brief_addendum: str | None = None,
     spend_cap_usd: float | None = None,
+    context_dir: str | None = None,
 ) -> RunResult:
     """Run a persona inside an OpenHands SDK sandbox against ``repo_path``.
 
@@ -2237,16 +2238,18 @@ async def sandbox_run(
     returns the assembled prompt as ``RunResult.summary`` so the caller can
     inspect it.
     """
+    from factory.context.canonical_paths import context_path
     from factory.context.loader import compose_context_prelude  # local import keeps CLI light
 
     story_text = Path(story_path).read_text(encoding="utf-8")
-    persona_prompt = _read_persona_prompt(persona)
+    persona_prompt = _read_persona_prompt(persona, context_dir)
     context_prelude = compose_context_prelude(
         persona=persona,
         app_repo_path=repo_path,
         task_scope=task_scope,
         direction_chain=direction_chain,
         software_factory_root=software_factory_root,
+        context_dir=context_dir,
     )
     initial_user_text = _build_initial_message(
         persona=persona,
@@ -2316,9 +2319,9 @@ async def sandbox_run(
         # ``context/project.md`` as a forbidden write path, so a plain substring
         # check would always be a false positive.
         prelude_signals = []
-        if "## context/project.md" in context_prelude:
+        if f"## {context_path(context_dir, 'project.md')}" in context_prelude:
             prelude_signals.append("project.md included")
-        if "## context/navigation.md" in context_prelude:
+        if f"## {context_path(context_dir, 'navigation.md')}" in context_prelude:
             prelude_signals.append("navigation.md included")
         if "NO CONTEXT AVAILABLE" in context_prelude:
             prelude_signals.append("NO_CONTEXT_AVAILABLE notice issued")

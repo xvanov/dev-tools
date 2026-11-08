@@ -20,6 +20,7 @@ from __future__ import annotations
 from typing import NamedTuple
 
 from factory.context.canonical_paths import (
+    context_path,
     is_canonical_doc_path,
     is_forbidden_doc_path,
 )
@@ -28,7 +29,7 @@ from factory.context.canonical_paths import (
 # A path under any of these prefixes (or matching the top-level docs file)
 # must match CANONICAL_CONTEXT_PATHS and must not match
 # FORBIDDEN_DOC_PATTERNS. Anything else is a code change — out of scope.
-_DOC_PREFIXES: tuple[str, ...] = ("context/", "stories/")
+_DOC_PREFIXES: tuple[str, ...] = ("stories/",)  # plus ``<context_dir>/`` (per app)
 _DOC_TOPLEVEL_FILES: tuple[str, ...] = ("prd.md",)
 
 
@@ -46,15 +47,18 @@ def _norm(p: str) -> str:
     return s.lstrip("/")
 
 
-def _is_doc_path(path: str) -> bool:
-    """Is ``path`` under chain doc control? (context/, stories/, prd.md)."""
+def _is_doc_path(path: str, context_dir: str | None = None) -> bool:
+    """Is ``path`` under chain doc control? (``<context_dir>/``, stories/, prd.md)."""
     p = _norm(path)
     if p in _DOC_TOPLEVEL_FILES:
         return True
-    return any(p.startswith(prefix) for prefix in _DOC_PREFIXES)
+    prefixes = (*_DOC_PREFIXES, context_path(context_dir) + "/")
+    return any(p.startswith(prefix) for prefix in prefixes)
 
 
-def scan_pr_diff(diff_files: list[str]) -> list[CanonicalPathViolation]:
+def scan_pr_diff(
+    diff_files: list[str], context_dir: str | None = None
+) -> list[CanonicalPathViolation]:
     """Return a list of violations for the given PR-touched paths.
 
     Empty list = clean PR. Code files (anything not under ``context/``,
@@ -63,12 +67,12 @@ def scan_pr_diff(diff_files: list[str]) -> list[CanonicalPathViolation]:
     violations: list[CanonicalPathViolation] = []
     for raw in diff_files:
         p = _norm(raw)
-        if not _is_doc_path(p):
+        if not _is_doc_path(p, context_dir):
             continue  # not our concern
-        if is_forbidden_doc_path(p):
+        if is_forbidden_doc_path(p, context_dir):
             violations.append(CanonicalPathViolation(path=p, reason="forbidden_path"))
             continue
-        if not is_canonical_doc_path(p):
+        if not is_canonical_doc_path(p, context_dir):
             violations.append(CanonicalPathViolation(path=p, reason="not_canonical"))
     return violations
 

@@ -145,5 +145,5 @@ story's aspirational `api_spec.md` example (those examples are sometimes wrong):
 
 You do not write docs. You write test files (code). Test paths are not
 constrained by the canonical-paths enforcer — those rules apply only to doc
-files under `context/`, `prd.md`, and `stories/`. Your output JSON's
+files under `{{context_dir}}/`, `prd.md`, and `stories/`. Your output JSON's
 `files_written` list is informational.

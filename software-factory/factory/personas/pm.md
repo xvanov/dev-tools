@@ -98,7 +98,7 @@ story with "dev exhausted retries" and the work stalls.
 - "D007 refactor goals.py submit_proof to dispatch via registry"    ~1 modified file, ~1 test
 - "D007 GET /api/goal-types endpoint + Celery includes via registry" ~2 files, ~1 modified
 - "D007 frontend listGoalTypes() API client"                         ~1 file
-- "D007 rewrite context/modules/backend-app.md + backend-workers.md" ~2 files (chain_kind=docs)
+- "D007 rewrite {{context_dir}}/modules/backend-app.md + backend-workers.md" ~2 files (chain_kind=docs)
 ```
 
 Each of these slices is independently dev-completable, lands as its own PR,
@@ -140,8 +140,8 @@ Pick exactly one per child story:
   config change driving runtime behavior). The chain runs the full
   test-design → test-impl → dev → reviewer pipeline.
 * `docs` — the story's deliverable is ONLY documentation under canonical
-  paths (`context/`, `prd.md`, `stories/`, `architecture.md`). Use when:
-  - The story produces ONLY content under `context/` or another canonical
+  paths (`{{context_dir}}/`, `prd.md`, `stories/`, `architecture.md`). Use when:
+  - The story produces ONLY content under `{{context_dir}}/` or another canonical
     doc path (no source code files touched).
   - The direction is a context-bootstrap or onboarder-style task.
   - The acceptance criteria are all of the form "<doc-path> exists" or

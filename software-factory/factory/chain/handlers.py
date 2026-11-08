@@ -66,6 +66,7 @@ from factory.chain.state_machine import (
 )
 from factory.chain.step_events import emit_chain_step
 from factory.chain.worktree import ensure_worktree_for_story
+from factory.context.canonical_paths import context_files, context_path
 from factory.context.enforcer import format_violation_comment, scan_pr_diff
 from factory.context.updater import ContextUpdate, apply_context_updates
 from factory.delivery import DeliveryLevel
@@ -1059,7 +1060,10 @@ def _substitute_issue_number_in_path(
 
 
 def _dry_run_sm(
-    story: StoryRecord, direction: Direction | None, software_factory_root: Path
+    story: StoryRecord,
+    direction: Direction | None,
+    software_factory_root: Path,
+    context_dir: str | None = None,
 ) -> dict[str, Any]:
     """Deterministic Scrum-Master result for dry-run mode.
 
@@ -1067,8 +1071,10 @@ def _dry_run_sm(
       * the direction's flow.md verbatim if present
       * the direction's api_spec.md verbatim if present
       * acceptance criteria verbatim
-      * pointers to context/current-state.md and context/modules/<scope>.md.
+      * pointers to <context_dir>/current-state.md and <context_dir>/modules/<scope>.md.
     """
+    state_md = context_path(context_dir, "current-state.md")
+    module_md = context_path(context_dir, f"modules/{story.scope}.md")
     flow_text = ""
     api_text = ""
     acceptance_lines: list[str] = []
@@ -1093,10 +1099,9 @@ def _dry_run_sm(
 
     dev_notes_parts = [
         "- Story carries verbatim embeds of user-supplied artifacts below.",
-        f"- Read context/current-state.md and context/modules/{story.scope}.md before "
-        "implementing.",
-        "[Source: context/current-state.md]",
-        f"[Source: context/modules/{story.scope}.md]",
+        f"- Read {state_md} and {module_md} before implementing.",
+        f"[Source: {state_md}]",
+        f"[Source: {module_md}]",
     ]
     if flow_text:
         dev_notes_parts.append("\n#### Flow (verbatim from direction)\n\n" + flow_text)
@@ -1118,8 +1123,8 @@ def _dry_run_sm(
         "## Dev Notes\n\n"
         f"{dev_notes}\n\n"
         "### References\n\n"
-        f"- [Source: context/modules/{story.scope}.md]\n"
-        "- [Source: context/current-state.md]\n\n"
+        f"- [Source: {module_md}]\n"
+        f"- [Source: {state_md}]\n\n"
         "## Dev Agent Record\n\n"
         "### Agent Model Used\n\n"
         "(populated by dev)\n\n"
@@ -1281,7 +1286,7 @@ def handle_sm(
     if fixture is not None:
         result = fixture
     elif dry_run:
-        result = _dry_run_sm(story, direction, software_factory_root)
+        result = _dry_run_sm(story, direction, software_factory_root, app_config.context_dir)
     else:
         from factory.app_config import resolve_app_repo_path
         from factory.context.loader import compose_context_prelude
@@ -1289,7 +1294,7 @@ def handle_sm(
         from factory.runner import text_run
 
         persona = "sm"
-        persona_prompt = _read_persona_prompt(persona)
+        persona_prompt = _read_persona_prompt(persona, app_config.context_dir)
         chain = (
             get_direction_chain(direction, software_factory_root) if direction is not None else None
         )
@@ -1297,6 +1302,7 @@ def handle_sm(
             persona=persona,
             app_repo_path=resolve_app_repo_path(app_config, software_factory_root),
             task_scope=story.scope,
+            context_dir=app_config.context_dir,
             direction_chain=chain,
             software_factory_root=software_factory_root,
         )
@@ -1532,11 +1538,15 @@ _TEST_DESIGN_SCHEMA: dict[str, Any] = {
 }
 
 
-def _read_persona_prompt(persona: str) -> str:
-    """Defer to the runner's reader to avoid duplicating the personas dir constant."""
+def _read_persona_prompt(persona: str, context_dir: str | None = None) -> str:
+    """Defer to the runner's reader to avoid duplicating the personas dir constant.
+
+    ``context_dir`` is the app's context root (``AppConfig.context_dir``); it is
+    rendered into the persona's ``{{context_dir}}`` placeholders.
+    """
     from factory.runner import _read_persona_prompt as _rpp
 
-    return _rpp(persona)
+    return _rpp(persona, context_dir)
 
 
 def _finding_location_file(f: dict[str, Any]) -> str:
@@ -2873,6 +2883,7 @@ def _handle_dev_once(
                 app=story.app,
                 direction_id=story.direction_id,
                 wall_clock_timeout_s=_dev_timeout_s,
+                context_dir=app_config.context_dir,
                 **solo_kwargs,
             )
         else:
@@ -2895,6 +2906,7 @@ def _handle_dev_once(
                 direction_id=story.direction_id,
                 wall_clock_timeout_s=_dev_timeout_s,
                 db_path=db,
+                context_dir=app_config.context_dir,
                 **solo_kwargs,
             )
         )
@@ -4614,6 +4626,7 @@ def handle_review(
                 persona=persona,
                 app_repo_path=resolve_app_repo_path(app_config, software_factory_root),
                 task_scope=story.scope,
+                context_dir=app_config.context_dir,
                 direction_chain=chain,
                 software_factory_root=software_factory_root,
             )
@@ -4910,12 +4923,12 @@ def handle_review(
 _MAX_TECH_WRITER_PARSE_RETRIES = 2
 
 
-def _dry_run_tech_writer(story: StoryRecord) -> dict[str, Any]:
+def _dry_run_tech_writer(story: StoryRecord, context_dir: str | None = None) -> dict[str, Any]:
     """Deterministic tech_writer result for dry-run mode."""
     return {
         "context_updates": [
             {
-                "path": f"context/modules/{story.scope}.md",
+                "path": context_path(context_dir, f"modules/{story.scope}.md"),
                 "action": "rewrite",
                 "content": (
                     f"# {story.scope} module\n\nUpdated to reflect story `{story.slug}`.\n"
@@ -4957,7 +4970,7 @@ def handle_tech_writer(
     if fixture is not None:
         result = fixture
     elif dry_run:
-        result = _dry_run_tech_writer(story)
+        result = _dry_run_tech_writer(story, app_config.context_dir)
     else:
         from factory.app_config import resolve_app_repo_path
         from factory.context.loader import compose_context_prelude
@@ -4965,7 +4978,7 @@ def handle_tech_writer(
         from factory.runner import text_run
 
         persona = "tech_writer"
-        persona_prompt = _read_persona_prompt(persona)
+        persona_prompt = _read_persona_prompt(persona, app_config.context_dir)
         direction = find_direction_for_story(story, software_factory_root)
         chain = (
             get_direction_chain(direction, software_factory_root) if direction is not None else None
@@ -4974,6 +4987,7 @@ def handle_tech_writer(
             persona=persona,
             app_repo_path=resolve_app_repo_path(app_config, software_factory_root),
             task_scope=story.scope,
+            context_dir=app_config.context_dir,
             direction_chain=chain,
             software_factory_root=software_factory_root,
         )
@@ -5102,7 +5116,7 @@ def handle_tech_writer(
         # repo so refs and history stay consistent.
         repo_path = _writing_worktree(app_config, software_factory_root, story)
         try:
-            apply_context_updates(updates, repo_path)
+            apply_context_updates(updates, repo_path, app_config.context_dir)
         except Exception as exc:
             # Bounce back through reviewer_requested_changes: tech_writer
             # produced an invalid context update; either the writer is
@@ -5127,7 +5141,7 @@ def handle_tech_writer(
 # --------------------------------------------------------------------------- #
 
 
-def _dry_run_docs_sm(story: StoryRecord) -> dict[str, Any]:
+def _dry_run_docs_sm(story: StoryRecord, context_dir: str | None = None) -> dict[str, Any]:
     """Deterministic docs-SM result for dry-run mode.
 
     Returns the minimum the downstream Onboarder handler needs: a story-file
@@ -5140,22 +5154,10 @@ def _dry_run_docs_sm(story: StoryRecord) -> dict[str, Any]:
             f"# {story.title}\n\n"
             f"## Goal\n\nProduce canonical documentation in the app repo.\n\n"
             f"## Canonical paths\n\n"
-            f"- `context/project.md`\n"
-            f"- `context/current-state.md`\n"
-            f"- `context/navigation.md`\n"
-            f"- `context/glossary.md`\n"
-            f"- `context/architecture-diagrams.md`\n"
-            f"- `context/sprint-status.yaml`\n"
-            f"- `context/modules/<name>.md` per discovered module\n"
+            + "".join(f"- `{p}`\n" for p in context_files(context_dir))
+            + f"- `{context_path(context_dir, 'modules/<name>.md')}` per discovered module\n"
         ),
-        "canonical_paths": [
-            "context/project.md",
-            "context/current-state.md",
-            "context/navigation.md",
-            "context/glossary.md",
-            "context/architecture-diagrams.md",
-            "context/sprint-status.yaml",
-        ],
+        "canonical_paths": context_files(context_dir),
     }
 
 
@@ -5183,7 +5185,7 @@ def handle_docs_sm(
     persist_story(story, db)
 
     if dry_run:
-        result = _dry_run_docs_sm(story)
+        result = _dry_run_docs_sm(story, app_config.context_dir)
     else:
         # Real-run: text_run on a docs-flavored prompt. We re-use the SM
         # persona file but prefix the prompt with a directive to emit a
@@ -5191,20 +5193,21 @@ def handle_docs_sm(
         # already knows about canonical paths from CANONICAL_CONTEXT_PATHS.
         from factory.runner import text_run
 
-        persona_prompt = _read_persona_prompt("sm")
+        persona_prompt = _read_persona_prompt("sm", app_config.context_dir)
         direction = find_direction_for_story(story, software_factory_root)
         direction_title = direction.title if direction else story.title
         direction_why = (direction.why if direction else "") or ""
 
         docs_directive = (
             "You are running in DOCS-CHAIN mode for this story. The story's "
-            "deliverable is canonical documentation under the app's ``context/`` "
+            f"deliverable is canonical documentation under the app's ``{context_path(app_config.context_dir)}/`` "
             "tree — NO executable code, NO test plans, NO dev notes. Produce a "
             "minimal story body listing the canonical paths the Onboarder must "
             "write and the directive's acceptance criteria verbatim. Output "
             "JSON ONLY with this shape:\n"
             '  {"story_file_body": "<markdown body>", '
-            '"canonical_paths": ["context/...", "context/..."]}'
+            f'"canonical_paths": ["{context_path(app_config.context_dir)}/...", '
+            f'"{context_path(app_config.context_dir)}/..."]}}'
         )
         prompt = (
             f"{docs_directive}\n\n---\n\n"
@@ -5230,7 +5233,11 @@ def handle_docs_sm(
             app=story.app,
             direction_id=story.direction_id,
         )
-        result = result_any if isinstance(result_any, dict) else _dry_run_docs_sm(story)
+        result = (
+            result_any
+            if isinstance(result_any, dict)
+            else _dry_run_docs_sm(story, app_config.context_dir)
+        )
 
     # Persist the SM JSON before any filesystem write so a crash leaves the
     # DB consistent with what the next handler will see.
@@ -5251,17 +5258,10 @@ def handle_docs_sm(
 # --------------------------------------------------------------------------- #
 
 
-def _dry_run_docs_onboarder(story: StoryRecord) -> dict[str, Any]:
+def _dry_run_docs_onboarder(story: StoryRecord, context_dir: str | None = None) -> dict[str, Any]:
     """Dry-run fixture: pretend the Onboarder wrote a plausible canonical set."""
     return {
-        "files_changed": [
-            "context/project.md",
-            "context/current-state.md",
-            "context/navigation.md",
-            "context/glossary.md",
-            "context/architecture-diagrams.md",
-            "context/sprint-status.yaml",
-        ],
+        "files_changed": context_files(context_dir),
         "summary": "Dry-run docs_onboarder: canonical files would be produced.",
     }
 
@@ -5291,7 +5291,7 @@ def handle_docs_onboarder(
     persist_story(story, db)
 
     if dry_run:
-        payload = _dry_run_docs_onboarder(story)
+        payload = _dry_run_docs_onboarder(story, app_config.context_dir)
         story.state = advance(story, EVENT_DOCS_ONBOARDER_DONE).value
         story.tech_writer_result_json = json.dumps(
             {
@@ -5323,6 +5323,7 @@ def handle_docs_onboarder(
             repo_path=target_repo,
             llm_config=llm,
             dry_run=False,
+            context_dir=app_config.context_dir,
             story_id=story.id,
             app=story.app,
             direction_id=story.direction_id,
@@ -5826,7 +5827,7 @@ def handle_docs_enforcer(
             except json.JSONDecodeError:
                 pass
 
-    violations = scan_pr_diff(files)
+    violations = scan_pr_diff(files, app_config.context_dir)
     payload: dict[str, Any] = {"violations": [v._asdict() for v in violations], "files": files}
 
     # Vacuous-diff guard. A deliverable with no substantive file — no code, no

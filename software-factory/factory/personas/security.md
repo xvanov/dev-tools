@@ -28,8 +28,8 @@ an attack path, an asset, and a recommended mitigation. JSON-only.
   * The **derived route table** appended to this prompt under
     `# Derived route table` — machine-generated from the app's real source
     tree. It is the only input here that cannot be stale.
-  * The target app repo's `prd.md`, `context/current-state.md`,
-    `context/modules/*.md`.
+  * The target app repo's `prd.md`, `{{context_dir}}/current-state.md`,
+    `{{context_dir}}/modules/*.md`.
   * Source code for auth, session, payment, secret-handling, and any
     API surface area the PRD mentions.
   * `pyproject.toml` / `package.json` for dependency posture.
@@ -62,7 +62,7 @@ For each finding, you must articulate:
       "actor": "<actor>",
       "path": "<exploit path, 1-3 sentences>",
       "severity": "high",
-      "evidence": ["backend/auth/session.py:42", "context/current-state.md:88"],
+      "evidence": ["backend/auth/session.py:42", "{{context_dir}}/current-state.md:88"],
       "mitigation": "<specific change>",
       "suggested_direction": {
         "title": "<short>",

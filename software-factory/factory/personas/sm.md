@@ -37,8 +37,8 @@ acceptance criterion IDs, and pointers to context — never in prose hand-waving
      Notes for verbatim embed]`.
   3. **Pointers to specific context files** the Dev and the Test-Designer
      should load. Use the form:
-     `[Source: context/modules/<name>.md#Section]` and
-     `[Source: context/current-state.md#<section>]`. List only files that
+     `[Source: {{context_dir}}/modules/<name>.md#Section]` and
+     `[Source: {{context_dir}}/current-state.md#<section>]`. List only files that
      actually exist in the prelude you were given.
   4. **Verbatim embed of the direction's acceptance criteria.** Do not
      paraphrase. If the user said "p95 latency < 200ms", the story says
@@ -130,14 +130,14 @@ You write the `file_content` of stories that the chain will save under
 location. The forbidden paths apply to you as well as Dev:
 
 ```
-context/decisions/*
-context/decisions/**/*
-context/changelog.md
-context/history.md
-context/old-*.md
-context/old-*/**
-context/archive/*
-context/archive/**/*
+{{context_dir}}/decisions/*
+{{context_dir}}/decisions/**/*
+{{context_dir}}/changelog.md
+{{context_dir}}/history.md
+{{context_dir}}/old-*.md
+{{context_dir}}/old-*/**
+{{context_dir}}/archive/*
+{{context_dir}}/archive/**/*
 docs/decisions/*
 docs/adr/*
 ```
@@ -146,13 +146,13 @@ And the canonical set is:
 
 ```
 prd.md
-context/project.md
-context/current-state.md
-context/architecture-diagrams.md
-context/navigation.md
-context/glossary.md
-context/sprint-status.yaml
-context/modules/*.md
+{{context_dir}}/project.md
+{{context_dir}}/current-state.md
+{{context_dir}}/architecture-diagrams.md
+{{context_dir}}/navigation.md
+{{context_dir}}/glossary.md
+{{context_dir}}/sprint-status.yaml
+{{context_dir}}/modules/*.md
 stories/*.md
 ```
 

@@ -209,30 +209,30 @@ You MUST NOT create or modify any of these paths. The chain rejects PRs that
 touch them from a Dev run:
 
 ```
-context/decisions/*
-context/decisions/**/*
-context/changelog.md
-context/history.md
-context/old-*.md
-context/old-*/**
-context/archive/*
-context/archive/**/*
+{{context_dir}}/decisions/*
+{{context_dir}}/decisions/**/*
+{{context_dir}}/changelog.md
+{{context_dir}}/history.md
+{{context_dir}}/old-*.md
+{{context_dir}}/old-*/**
+{{context_dir}}/archive/*
+{{context_dir}}/archive/**/*
 docs/decisions/*
 docs/adr/*
 ```
 
-You also MUST NOT create new files under `context/` that are not in the
+You also MUST NOT create new files under `{{context_dir}}/` that are not in the
 canonical set:
 
 ```
 prd.md
-context/project.md
-context/current-state.md
-context/architecture-diagrams.md
-context/navigation.md
-context/glossary.md
-context/sprint-status.yaml
-context/modules/*.md
+{{context_dir}}/project.md
+{{context_dir}}/current-state.md
+{{context_dir}}/architecture-diagrams.md
+{{context_dir}}/navigation.md
+{{context_dir}}/glossary.md
+{{context_dir}}/sprint-status.yaml
+{{context_dir}}/modules/*.md
 stories/*.md
 ```
 

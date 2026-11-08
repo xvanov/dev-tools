@@ -25,20 +25,25 @@ from __future__ import annotations
 from pathlib import Path
 
 from factory.chain.state_machine import StoryRecord, StoryState
+from factory.context.canonical_paths import context_path
 from factory.context.navigator import parse_navigation
 from factory.directions.parser import Direction, MissingDirection
 
-_NO_CONTEXT_NOTICE = (
-    "# Context\n"
-    "\n"
-    "**NO CONTEXT AVAILABLE.**\n"
-    "\n"
-    "This app repo has no `context/project.md` and/or no `context/navigation.md` "
-    "yet. You are likely the Onboarder persona running on a fresh codebase. "
-    "Build context from the code itself; populate `context/project.md`, "
-    "`context/navigation.md`, and the rest of the canonical context set on this "
-    "run. Subsequent personas will rely on what you write here.\n"
-)
+
+def _no_context_notice(context_dir: str | None) -> str:
+    project = context_path(context_dir, "project.md")
+    navigation = context_path(context_dir, "navigation.md")
+    return (
+        "# Context\n"
+        "\n"
+        "**NO CONTEXT AVAILABLE.**\n"
+        "\n"
+        f"This app repo has no `{project}` and/or no `{navigation}` "
+        "yet. You are likely the Onboarder persona running on a fresh codebase. "
+        f"Build context from the code itself; populate `{project}`, "
+        f"`{navigation}`, and the rest of the canonical context set on this "
+        "run. Subsequent personas will rely on what you write here.\n"
+    )
 
 
 def _read_text(p: Path) -> str | None:
@@ -114,6 +119,7 @@ def compose_context_prelude(
     direction_chain: list[Direction | MissingDirection] | None = None,
     software_factory_root: Path | None = None,
     db_path: Path | None = None,
+    context_dir: str | None = None,
 ) -> str:
     """Compose the markdown context prelude for ``persona`` against ``app_repo_path``.
 
@@ -121,11 +127,13 @@ def compose_context_prelude(
     prepend to the persona's system prompt.
     """
     repo = Path(app_repo_path)
-    project_md = _read_text(repo / "context" / "project.md")
-    navigation_md = _read_text(repo / "context" / "navigation.md")
+    project_rel = context_path(context_dir, "project.md")
+    navigation_rel = context_path(context_dir, "navigation.md")
+    project_md = _read_text(repo / project_rel)
+    navigation_md = _read_text(repo / navigation_rel)
 
     if project_md is None or navigation_md is None:
-        return _NO_CONTEXT_NOTICE
+        return _no_context_notice(context_dir)
 
     parts: list[str] = []
     parts.append(f"# Context for persona: {persona}\n")
@@ -133,9 +141,9 @@ def compose_context_prelude(
         "_The factory composed this prelude. It is current-state truth. "
         "If something here contradicts your priors, the context wins._\n"
     )
-    parts.append("\n## context/project.md\n")
+    parts.append(f"\n## {project_rel}\n")
     parts.append(project_md.rstrip() + "\n")
-    parts.append("\n## context/navigation.md\n")
+    parts.append(f"\n## {navigation_rel}\n")
     parts.append(navigation_md.rstrip() + "\n")
 
     if direction_chain and len(direction_chain) > 1:

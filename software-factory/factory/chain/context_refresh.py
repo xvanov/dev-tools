@@ -58,16 +58,17 @@ from typing import Any
 
 from factory.app_config import AppConfig, load_app_config, resolve_app_repo_path
 from factory.chain.event_log import log_story_event
+from factory.context.canonical_paths import context_path
 
 # Canonical context paths the refresh is allowed to touch. Anything outside
 # this set means the run is misconfigured — we refuse to open a PR so the
 # refresh doesn't accidentally land non-context changes that bypass the
 # normal review chain.
-_REFRESHABLE_PATHS = (
-    "context/project.md",
-    "context/navigation.md",
-    "context/current-state.md",
-)
+_REFRESHABLE_FILES = ("project.md", "navigation.md", "current-state.md")
+
+
+def _refreshable_paths(context_dir: str | None) -> tuple[str, ...]:
+    return tuple(context_path(context_dir, f) for f in _REFRESHABLE_FILES)
 
 
 @dataclass
@@ -218,6 +219,7 @@ def handle_context_refresh(
             refresh_branch=refresh_branch,
             merged_scope=merged_scope,
             merged_pr_number=merged_pr_number,
+            context_dir=cfg.context_dir,
         )
     except subprocess.CalledProcessError as exc:
         # git failure — log + return.
@@ -350,6 +352,7 @@ def _refresh_in_worktree(
     refresh_branch: str,
     merged_scope: str | None,
     merged_pr_number: int,
+    context_dir: str | None = None,
 ) -> list[str]:
     """Create the worktree, run the refresh, return the changed file list.
 
@@ -382,9 +385,9 @@ def _refresh_in_worktree(
 
     changed: list[str] = []
     timestamp = datetime.now(UTC).isoformat()
-    scopes_to_touch = list(_REFRESHABLE_PATHS)
+    scopes_to_touch = list(_refreshable_paths(context_dir))
     if merged_scope:
-        scope_path = f"context/modules/{merged_scope}.md"
+        scope_path = context_path(context_dir, f"modules/{merged_scope}.md")
         scopes_to_touch.append(scope_path)
 
     for rel in scopes_to_touch:
@@ -441,9 +444,7 @@ def _stamp_refresh(original: str, timestamp: str, merged_pr_number: int) -> str:
         if _REFRESH_MARKER in line:
             continue
         keep.append(line)
-    stamp = (
-        f"{_REFRESH_MARKER}ts={timestamp} after_pr=#{merged_pr_number} -->"
-    )
+    stamp = f"{_REFRESH_MARKER}ts={timestamp} after_pr=#{merged_pr_number} -->"
     body = "\n".join(keep).rstrip()
     return body + "\n\n" + stamp + "\n"
 
@@ -487,7 +488,7 @@ def _push_and_open_pr(
     body_lines.extend(
         [
             "",
-            "Auto-mergeable when the diff is limited to ``context/`` — the "
+            f"Auto-mergeable when the diff is limited to ``{context_path(cfg.context_dir)}/`` — the "
             "factory's auto-merge worker treats ``context-refresh``-labeled "
             "PRs as safe to merge once CI is green.",
         ]

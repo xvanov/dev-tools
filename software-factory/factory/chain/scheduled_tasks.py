@@ -835,6 +835,7 @@ def _live_run(persona: str, app: str, software_factory_root: Path) -> dict[str, 
         persona,
         app_repo_path=resolve_app_repo_path(cfg, software_factory_root),
         task_scope=None,
+        context_dir=cfg.context_dir,
     )
     # Go through the loader rather than reading the file directly: it strips
     # frontmatter (which must never reach the model) and raises on a missing
@@ -844,7 +845,7 @@ def _live_run(persona: str, app: str, software_factory_root: Path) -> dict[str, 
     # its findings back as if authoritative.
     from factory.personas.loader import read_persona_prompt
 
-    persona_prompt = read_persona_prompt(persona)
+    persona_prompt = read_persona_prompt(persona, context_dir=cfg.context_dir)
 
     # UX auditor: enrich the prompt with flow artifacts, app URL, and runtime context.
     if persona == "ux_auditor":

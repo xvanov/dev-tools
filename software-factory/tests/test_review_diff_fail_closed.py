@@ -385,7 +385,7 @@ def _patch_tech_writer_prep(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr(handlers_mod, "find_direction_for_story", lambda *a, **k: None)
     monkeypatch.setattr(handlers_mod, "_read_story_file_content", lambda *a, **k: "story")
-    monkeypatch.setattr(handlers_mod, "_read_persona_prompt", lambda _p: "persona")
+    monkeypatch.setattr(handlers_mod, "_read_persona_prompt", lambda _p, *_a: "persona")
     monkeypatch.setattr(
         "factory.context.loader.compose_context_prelude", lambda *a, **k: "ctx"
     )
