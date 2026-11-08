@@ -334,12 +334,22 @@ run mid-step; a job continued on an existing branch (`--branch`).
 
 - [ ] **2.1** The current Python factory runs as a long-lived JSON-over-HTTP service (no process
   spawn per call).
+  Code landed (b766d54, a916c69): `factory serve` answers `POST 127.0.0.1:7330/api/cli {argv}`
+  (X-Factory: 1), the same CLI command in-process, so the JSON is byte-identical; 40-200 ms warm
+  vs 5-10 s per `uv run`. The PA's `call()` tries it first (PA_FACTORY_SERVE_URL) and spawns only
+  when nothing ran. Left: reinstall the work stack's factory-serve task (`--supervise`) and roll
+  the PA; install `scripts/systemd/factory-serve.service` on the personal stack; then tick.
 - [ ] **2.2** An in-process scheduler with DB leases replaces systemd timers and `fcntl` locks.
   Landed with 2.3 (d44ffe1, 0a245c7): `factory serve` (fresh tick subprocess per app every 300 s,
   wake within 1 s of job submit/resume via `state/scheduler/wake.d`, in-process research/report
-  dispatch) and portable locks in `factory/oscompat.py` (flock / LockFileEx). Its lease is an OS
-  file lock (`state/locks/serve.lock`, plus `tick-<app>.lock`), not a DB lease; Linux still runs
-  the systemd timers (serve refuses beside them). Left: DB leases, retiring the timers on Linux.
+  dispatch) and portable locks in `factory/oscompat.py` (flock / LockFileEx). Then (b766d54,
+  af171ee): a SQLite lease (`state/scheduler/leases.db`, 30 s TTL, dead-pid takeover); restart on
+  new code (exit 75; `--supervise` on Windows, since Task Scheduler does not restart a non-zero
+  exit); a tick that moved a story re-wakes its app, so a chain advances step to step at once
+  (capped at 30 consecutive; the 300 s tick is the backstop). E3's push to the PA
+  (`/api/factory/events`, every 5 s and after API submit/cancel/resume) rides in serve. Left: the
+  systemd unit replacing the timers on Linux (deploy), and measuring submit -> PR opened after the
+  deploy (before: ~13 min for a docs story on 300 s ticks).
 - [x] **2.3** Runs natively on Windows (no WSL); the work stack's factory moves off WSL.
   (0a245c7, d44ffe1, ec83f20, 6de69f0, 916de23, cb0b6b0) `docs/WINDOWS.md`. The `factory-serve`
   logon task runs `factory serve` from the work laptop's dev-tools checkout. claude_session rounds
