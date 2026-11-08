@@ -345,14 +345,15 @@ run mid-step; a job continued on an existing branch (`--branch`).
 
 ## Phase 2: factory as a daemon
 
-- [ ] **2.1** The current Python factory runs as a long-lived JSON-over-HTTP service (no process
-  spawn per call).
-  Code landed (b766d54, a916c69): `factory serve` answers `POST 127.0.0.1:7330/api/cli {argv}`
-  (X-Factory: 1), the same CLI command in-process, so the JSON is byte-identical; 40-200 ms warm
-  vs 5-10 s per `uv run`. The PA's `call()` tries it first (PA_FACTORY_SERVE_URL) and spawns only
-  when nothing ran. Left: reinstall the work stack's factory-serve task (`--supervise`) and roll
-  the PA; install `scripts/systemd/factory-serve.service` on the personal stack; then tick.
-- [ ] **2.2** An in-process scheduler with DB leases replaces systemd timers and `fcntl` locks.
+- [x] **2.1** The current Python factory runs as a long-lived JSON-over-HTTP service (no process
+  spawn per call). (b766d54, a916c69, aaa8120)
+  `factory serve` answers `POST 127.0.0.1:7330/api/cli {argv}` (X-Factory: 1), the same CLI
+  command in-process, so the JSON is byte-identical; 40-200 ms warm vs 5-10 s per `uv run`
+  (measured live 2026-11-08: job status 0.4-0.6 s under load). Read-only verbs run concurrently
+  (per-thread output capture), state-changing ones one at a time. The PA's `call()` tries it
+  first (PA_FACTORY_SERVE_URL) and spawns only when nothing ran. Live on both stacks (ab9588f).
+- [x] **2.2** An in-process scheduler with DB leases replaces systemd timers and `fcntl` locks.
+  (d44ffe1, 0a245c7, b766d54, af171ee, d2cfef1, 166964e)
   Landed with 2.3 (d44ffe1, 0a245c7): `factory serve` (fresh tick subprocess per app every 300 s,
   wake within 1 s of job submit/resume via `state/scheduler/wake.d`, in-process research/report
   dispatch) and portable locks in `factory/oscompat.py` (flock / LockFileEx). Then (b766d54,
@@ -360,9 +361,14 @@ run mid-step; a job continued on an existing branch (`--branch`).
   new code (exit 75; `--supervise` on Windows, since Task Scheduler does not restart a non-zero
   exit); a tick that moved a story re-wakes its app, so a chain advances step to step at once
   (capped at 30 consecutive; the 300 s tick is the backstop). E3's push to the PA
-  (`/api/factory/events`, every 5 s and after API submit/cancel/resume) rides in serve. Left: the
-  systemd unit replacing the timers on Linux (deploy), and measuring submit -> PR opened after the
-  deploy (before: ~13 min for a docs story on 300 s ticks).
+  (`/api/factory/events`, every 5 s and after API submit/cancel/resume) rides in serve. Serve
+  ticks only apps with `serve_tick: true` (166964e); `factory on/off` manage it. Linux runs
+  `factory-serve.service` instead of the tick timers (personal stack, 2026-11-08). Measured on the
+  work stack, the same docs job (dev-tools, claude_session, draft_pr) from submit to draft PR
+  opened: ~13 min on 300 s ticks (dev-tools:003) -> 7.6 min with wake-on-progress (dev-tools:008:
+  triaged +157 s, onboarder done +325 s, PR #18 at +455 s; closed, branch deleted). The rest is
+  agent and gate time, not waiting. A git worktree timeout (30 s) found on the way is now 600 s
+  (d2cfef1).
 - [x] **2.3** Runs natively on Windows (no WSL); the work stack's factory moves off WSL.
   (0a245c7, d44ffe1, ec83f20, 6de69f0, 916de23, cb0b6b0) `docs/WINDOWS.md`. The `factory-serve`
   logon task runs `factory serve` from the work laptop's dev-tools checkout. claude_session rounds
