@@ -6,6 +6,25 @@ freshly-booted machine to: base packages → Node.js → Tailscale (joined) → 
 SSH key + your git repos → the Claude Code CLI → the dev-tools worth running
 headless → a check that termhub actually ended up reachable over the tailnet.
 
+## Windows: the whole stack
+
+On Windows the bootstrap is the repo's root `install.ps1` (plan 7.7): clone, then run it.
+
+```powershell
+git clone git@github.com:xvanov/dev-tools.git C:\repos\dev-tools
+powershell -NoProfile -ExecutionPolicy Bypass -File C:\repos\dev-tools\install.ps1 -DryRun   # see the plan
+powershell -NoProfile -ExecutionPolicy Bypass -File C:\repos\dev-tools\install.ps1
+```
+
+It installs what it can (npm dependencies, the pinned Bun, `uv sync`, the jarvisd and ptyd
+builds), writes the new-system `.env` defaults only where nothing sets them, creates the SQLite
+store and its vault keys on a fresh machine, registers the tasks through each tool's own
+installer (PA, termhub and its watchdog, ptyd, `factory serve`), starts everything and checks it
+answers at HEAD. It cannot install git, Node 24+, uv, Tailscale or Rust with the MSVC build tools,
+or log in to Claude Code and gh: it names those under "Needs you" and stops before changing
+anything if a required one is missing. Re-running is safe; `-Reinstall` re-registers the tasks
+and restarts the services, keeping the store, `.env` files and vault entries.
+
 ## 0. Flash Ubuntu (once, from another machine)
 
 Use **Raspberry Pi Imager** → *Ubuntu Server (64-bit)*. In the imager's advanced

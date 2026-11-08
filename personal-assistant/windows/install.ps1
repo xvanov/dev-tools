@@ -3,8 +3,8 @@
 # Registers two logon tasks and applies the schema. It does not ask for anything
 # secret: credentials go in .env, and `pa doctor` tells you which are missing.
 #
-# The keep-alive task is not optional and is the least obvious part of this
-# setup. WSL terminates a distro once the last wsl.exe client exits — systemd
+# On the Postgres store, the keep-alive task is not optional and is the least
+# obvious part of this setup (the SQLite store needs neither WSL nor it). WSL terminates a distro once the last wsl.exe client exits — systemd
 # running Postgres inside it is not enough to hold it open — so without a
 # process keeping a handle on the distro, connections from Windows fail with
 # ECONNREFUSED at unpredictable intervals. One `sleep infinity` fixes it.
@@ -49,7 +49,17 @@ if (-not (Test-Path (Join-Path $root 'node_modules'))) {
 
 # --- the store ---------------------------------------------------------------
 
-if (-not $SkipDatabase) {
+# On the SQLite store (PA_DB=sqlite, docs/native/CUTOVER-SQLITE.md) there is no
+# Postgres and no distro to hold open: WSL is retired (PLAN D24).
+$eap = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+Push-Location $root
+$db = (& $node -e "process.stdout.write(String(require('./src/config.ts').config.db))" 2>$null | Out-String).Trim()
+Pop-Location
+$ErrorActionPreference = $eap
+$wsl = $db -ne 'sqlite'
+if (-not $wsl) { Write-Host "==> store: SQLite (PA_DB=sqlite); no WSL Postgres or keep-alive task" }
+
+if ($wsl -and -not $SkipDatabase) {
   Write-Host "==> provisioning Postgres inside WSL ($Distro)"
   # C:\repos\... -> /mnt/c/repos/..., which is how the distro sees this file.
   $drive = $here.Substring(0, 1).ToLower()
@@ -61,19 +71,21 @@ if (-not $SkipDatabase) {
 
 # --- keep the distro alive ---------------------------------------------------
 
-Write-Host "==> registering the WSL keep-alive task"
-$keepAliveArgs = "-d $Distro -u root --exec /bin/sh -c `"exec sleep infinity`""
-$keepAction = New-HeadlessAction -Exe 'wsl.exe' -Arguments $keepAliveArgs
-$keepTrigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
-$keepSettings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
-  -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1)
-Register-ScheduledTask -TaskName 'pa-wsl-keepalive' -Action $keepAction -Trigger $keepTrigger `
-  -Settings $keepSettings -Description 'Holds the WSL distro open so the personal-assistant Postgres stays reachable' `
-  -Force | Out-Null
+if ($wsl) {
+  Write-Host "==> registering the WSL keep-alive task"
+  $keepAliveArgs = "-d $Distro -u root --exec /bin/sh -c `"exec sleep infinity`""
+  $keepAction = New-HeadlessAction -Exe 'wsl.exe' -Arguments $keepAliveArgs
+  $keepTrigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
+  $keepSettings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
+    -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1)
+  Register-ScheduledTask -TaskName 'pa-wsl-keepalive' -Action $keepAction -Trigger $keepTrigger `
+    -Settings $keepSettings -Description 'Holds the WSL distro open so the personal-assistant Postgres stays reachable' `
+    -Force | Out-Null
 
-# Start it now rather than waiting for the next logon.
-Start-ScheduledTask -TaskName 'pa-wsl-keepalive'
-Start-Sleep -Seconds 4
+  # Start it now rather than waiting for the next logon.
+  Start-ScheduledTask -TaskName 'pa-wsl-keepalive'
+  Start-Sleep -Seconds 4
+}
 
 # --- schema ------------------------------------------------------------------
 

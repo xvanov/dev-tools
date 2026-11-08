@@ -14,6 +14,8 @@ module.exports = {
     'repoCalls.test.js': ['src/', 'bin/'],
     // Reads every test/contract/*.contract.js and migrates from sql/ (plan 1.3).
     'repoContract.test.js': ['src/repo/', 'src/db/', 'test/contract/', 'sql/', 'sql-sqlite/'],
+    // Dry-runs the repo root's install.ps1 (plan 7.7), outside this tool's directory.
+    'install.test.js': ['../install.ps1', '../scripts/install-facts.js', 'windows/install.ps1'],
   },
   // Slow end-to-end tests that import the whole app: in --changed mode only their own area selects them.
   narrow: {

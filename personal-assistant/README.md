@@ -65,7 +65,9 @@ cd C:\repos\dev-tools\personal-assistant
 
 That provisions Postgres 16 + pgvector inside your WSL distro, registers the logon tasks
 (keep-alive, worker, and the two capture streams), creates the Teams cache reader's venv (see
-*Teams in seconds*), applies the schema, and writes a `.env` for you to fill in.
+*Teams in seconds*), applies the schema, and writes a `.env` for you to fill in. With
+`PA_DB=sqlite` already set it skips WSL and the keep-alive task (no Postgres to hold open). The
+repo's root `install.ps1` runs it as part of the whole stack's install, on SQLite.
 
 Then:
 

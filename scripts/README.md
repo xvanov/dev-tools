@@ -1,7 +1,7 @@
 # scripts
 
-Repo-wide developer tooling. Nothing here ships to a machine; it is how the tools get tested
-and built.
+Repo-wide developer tooling: how the tools get tested and built. The one exception that runs on
+a machine is `install-facts.js`, the root `install.ps1`'s read-only helper (below).
 
 ## Build (`build.js`, plan T7)
 
@@ -30,6 +30,13 @@ Linux and uploads `dist/` as the `dist-<OS>` artifact (14 days).
 Signing (plan 7.4) has its hook already: with `DEVTOOLS_SIGN_CMD` set, each artifact is passed
 to it (`<cmd> "<file>"`, through the shell) after it is copied to `dist/`, and the manifest
 records `signed: true`; a failing sign command fails the build. Unset, `signed: false`.
+
+## Install facts (`install-facts.js`, plan 7.7)
+
+What the one-command install (`install.ps1` at the repo root) decides from, as one JSON line, and
+nothing it changes: `deps <dir> [--omit-dev]` compares `node_modules` with `package-lock.json`
+(missing, stale, fresh); `pa <repo>` gives the PA's store path, whether it exists and where its
+two keys come from (never a value). Tested by `personal-assistant/test/install.test.js`.
 
 ## Test runner (`run-tests.js`)
 

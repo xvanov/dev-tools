@@ -27,6 +27,27 @@ termhub protocol conformance suite against the built binary), software-factory (
 informational until its tests are repo-portable and it is ported to Windows, plan phase 2.3) and
 ios-messages. No secrets are used.
 
+## Install (the whole stack, Windows)
+
+One command installs or reinstalls the stack on a Windows machine: the personal assistant on
+jarvisd, termhub (jarvisd front, ptyd), the factory (`factory serve`) and their scheduled tasks,
+then starts and verifies them (plan 7.7). It needs git, Node 24+, uv and Tailscale, checks for
+Rust with MSVC and the Claude Code and gh logins, and names anything it cannot install itself.
+
+```powershell
+git clone git@github.com:xvanov/dev-tools.git C:\repos\dev-tools
+powershell -NoProfile -ExecutionPolicy Bypass -File C:\repos\dev-tools\install.ps1
+```
+
+`-DryRun` prints every step and decision and changes nothing; `-Reinstall` also re-registers the
+tasks and restarts the services (run from a normal shell, it keeps a correct task that was
+registered from an elevated one, which only an elevated shell may change, and names a wrong one). It is idempotent and keeps data: the SQLite store, state under
+`%LOCALAPPDATA%`, every `.env` line (it only appends the new-system defaults `PA_RUNTIME=jarvisd`,
+`PA_DB=sqlite`, `TERMHUB_FRONT=jarvisd`, `TERMHUB_PTYD=1` where nothing sets them) and every vault
+entry (on a fresh machine it generates the store and backup keys into Windows Credential Manager,
+never printing them). The tasks come from each tool's own installer. The Linux twin comes later
+(D23); Linux boxes use [bootstrap](./bootstrap/) today.
+
 ## Quick start
 
 Clone:

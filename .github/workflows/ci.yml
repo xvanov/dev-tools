@@ -56,7 +56,8 @@ jobs:
           echo "$CHANGED" | grep -q '^\.github/workflows/ci\.yml$' && all
           hit() { echo "$CHANGED" | grep -qE "$1" && echo true || echo false; }
           # schemas/ is the PA <-> factory contract (plan 1.1): both sides test against it.
-          echo "pa=$(hit '^(personal-assistant|schemas)/')" >> "$GITHUB_OUTPUT"
+          # The root install.ps1 (plan 7.7) is tested by personal-assistant/test/install.test.js.
+          echo "pa=$(hit '^(personal-assistant|schemas)/|^install\.ps1$|^scripts/install-facts\.js$')" >> "$GITHUB_OUTPUT"
           echo "termhub=$(hit '^termhub/')" >> "$GITHUB_OUTPUT"
           echo "factory=$(hit '^(software-factory|schemas)/')" >> "$GITHUB_OUTPUT"
           echo "ios=$(hit '^ios-messages/')" >> "$GITHUB_OUTPUT"

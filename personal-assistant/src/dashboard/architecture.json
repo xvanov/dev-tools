@@ -50,7 +50,8 @@
         "PA worker + dashboard on 127.0.0.1:7300, Jarvis (/talk, PA chat), voice services",
         "the store: one encrypted SQLite file (plan 3.5); the old Postgres in WSL Ubuntu is shut down with the distro, kept registered for the rollback",
         "termhub on Windows (front :7000, sessiond :7010)",
-        "the work factory natively on Windows (no WSL, plan 2.3): software-factory in the dev-tools checkout, ticked by the factory-serve logon task (`factory serve`); its claude_session runs open in the Windows termhub (sessiond :7010); the PA runs its commands locally (PA_FACTORY_MACHINE=local)"
+        "the work factory natively on Windows (no WSL, plan 2.3): software-factory in the dev-tools checkout, ticked by the factory-serve logon task (`factory serve`); its claude_session runs open in the Windows termhub (sessiond :7010); the PA runs its commands locally (PA_FACTORY_MACHINE=local)",
+        "installed and reinstalled by one command, install.ps1 at the repo root (plan 7.7, landing: the reinstall proof on this laptop is pending): prerequisites, npm/Bun/uv dependencies, the new-system .env defaults, the SQLite store and its vault keys on a fresh machine, each tool's own task installer, then start and verify"
       ],
       "ingests": "work mail, Teams (connector + local cache), calendar, work GitHub, Jira, recorded meetings"
     },

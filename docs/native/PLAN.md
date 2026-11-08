@@ -801,6 +801,9 @@ run mid-step; a job continued on an existing branch (`--branch`).
   a Windows machine: PA (jarvisd), termhub (jarvisd front, ptyd), the factory (`uv`, which
   fetches its own Python; D15) and their tasks, idempotent, keeping data, `.env` and the vault.
   Proven by reinstalling on the work laptop. A Linux twin comes later.
+  Built: `powershell -NoProfile -ExecutionPolicy Bypass -File <checkout>\install.ps1 [-DryRun]
+  [-Reinstall]` (root README, Install). Remains: the proof, `install.ps1 -Reinstall` run on the
+  work laptop and verifying green.
 - [~] **Exit 7:** install on a fresh Windows and a fresh Linux machine with one install script
   each (jarvisd and ptyd binaries, plus the Python factory via `uv`, which fetches its own
   Python; D15). — dropped: D23, replaced by 7.7.

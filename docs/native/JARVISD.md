@@ -167,6 +167,10 @@ src/supervisor`), and the compiled jarvisd carries it:
 
 ### Runbook: switching a stack to jarvisd (and back)
 
+On Windows the repo's root `install.ps1` (plan 7.7) does the "to jarvisd" direction of this
+runbook and the termhub one below in one command, only adding settings nothing sets yet. The
+steps here remain the manual route and the way back.
+
 Prerequisites: the checkout is clean on main at a commit with this section, `npm ci` has run in
 `jarvisd/` and `personal-assistant/`, and `node scripts/build.js --only jarvisd` builds. The
 build compiles with the pinned Bun (`JARVISD_BUN`, else `jarvisd/.bun/<pin>/`, which a deploy

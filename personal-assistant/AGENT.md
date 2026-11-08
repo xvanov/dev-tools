@@ -662,8 +662,8 @@ a machine whose Docker runs Linux containers.
 The non-obvious part: **WSL terminates a distro once the last `wsl.exe` client exits**, taking
 Postgres with it, even though systemd is running it as a service. The symptom is
 `ECONNREFUSED 127.0.0.1:5433` at unpredictable intervals, minutes after everything worked. The
-fix is the `pa-wsl-keepalive` logon task that `windows/install.ps1` registers — one
-`sleep infinity` holding the distro open. If connections start failing at random, check that
+fix is the `pa-wsl-keepalive` logon task that `windows/install.ps1` registers (on the Postgres
+store only; with `PA_DB=sqlite` it registers none) — one `sleep infinity` holding the distro open. If connections start failing at random, check that
 task before suspecting anything in this codebase.
 
 ## Reading termhub before writing dispatch
