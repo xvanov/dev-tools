@@ -208,7 +208,7 @@ run mid-step; a job continued on an existing branch (`--branch`).
 - [ ] **0.4 SSE instead of polling** for the board and Build (replace the 30 s and 120 s polls).
 - [x] **0.5 Voice latency:** keep the fast-lane prompt prefix warm; TTS at the first clause
   instead of the first sentence; cut the fixed 200 ms silence wait where VAD already decided. (ffc2d5a)
-- [ ] **0.6 System 1 decide-then-speak (D7).** Split the fast lane into:
+- [x] **0.6 System 1 decide-then-speak (D7).** Split the fast lane into:
   - a **router** that returns calibrated probabilities, not text: `p(answer_here)`,
     `p(hand_off)`, `p(action)`. First version: the local model scores fixed yes/no questions
     via single-token log-probabilities (Ollama `logprobs`), with the context snapshot.
@@ -220,6 +220,11 @@ run mid-step; a job continued on an existing branch (`--branch`).
     reported by `pa eval`.
   - Done when: router decides in < 150 ms warm, no action-like turn is answered locally on
     the eval set, and `architecture.json` describes the new shape.
+  - Landed: one fixed A/B/C question rather than several yes/no ones, because two sequential
+    calls cost ~250 ms (Ollama has ~80 ms of fixed overhead per request here). `pa eval router`
+    on 83 turns, llama3.2:3b: 84–87% 3-way, 0 action and 0 lookup turns answered locally,
+    threshold 0.85. Router p50 98–124 ms, p95 129–175 ms warm. One run under heavy parallel
+    agent load had p50 176 ms. (0163ef0)
 - [ ] **0.7** T1, T2, T3 and Z1 landed (from the tracks above).
 - [ ] **0.8** E1, E4 and E5 landed: the golden path runs on today's system and its broken hops
   are fixed. E2 (watchable API runs) lands here too if the baseline shows it missing.
