@@ -432,7 +432,7 @@ const commands = {
   async who(args) {
     const name = args.join(' ');
     if (!name) return fail('usage: pa who <name>');
-    const { handle } = require('../mcp/server');
+    const { handle } = require('../mcp/server.ts');
     const result = await handle('who_is', { name });
     out(result.content[0].text);
   },

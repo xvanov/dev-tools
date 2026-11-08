@@ -224,7 +224,7 @@ async function main() {
 
   // --- the permission split -------------------------------------------------------------
   {
-    const server = require('../src/mcp/server');
+    const server = require('../src/mcp/server.ts');
     const names = (env) => server.listedTools(env).map((t) => t.name);
     for (const t of [...T.CHAT_READ_TOOL_NAMES, ...T.CHAT_ACTION_TOOL_NAMES]) {
       assert.ok(!names({}).includes(t), `${t}: chat-only — no other session lists it`);

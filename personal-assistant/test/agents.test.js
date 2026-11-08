@@ -106,7 +106,7 @@ const notifyChat = require('../src/notify/chat');
   assert.match(chat.verifyClaudeHome({ settings: s, local: { permissions: { allow: [`Bash(${pa} memory:*)`] } }, command: okCmd }).join(), /allowed without asking/);
   assert.match(chat.verifyClaudeHome({ settings: s, command: 'claude' }).join(), /--permission-mode default/);
   // MUST-FIX 8: the tool refuses what writes, whatever its spelling.
-  const { paToolArgv } = require('../src/mcp/server');
+  const { paToolArgv } = require('../src/mcp/server.ts');
   for (const [c, a] of [['memory', ['RUN', 'dream']], ['memory', ['Run']], ['projects', ['SYNC']], ['review', ['5', '--done']], ['show', ['5', '--project=x']],
     ['meeting', ['brief', 'next', '--notify']], ['meeting', ['brief', '--force']], ['meeting', ['debrief']], ['meeting', ['undo', '3']], ['meeting', ['learn']],
     ['runs', ['reconcile']], ['notify ack', ['all']], ['doctor', []], ['brief', ['--Force']]]) {
@@ -116,7 +116,7 @@ const notifyChat = require('../src/notify/chat');
     assert.doesNotThrow(() => paToolArgv(c, a), `${c} ${a.join(' ')}`);
   }
   // ...and every read-only verb it may run is a verb of the opencode chat's pa tool.
-  const mcp = require('../src/mcp/server');
+  const mcp = require('../src/mcp/server.ts');
   for (const c of chat.ALLOW_COMMANDS) assert.ok(Object.prototype.hasOwnProperty.call(mcp.READ_VERBS, c), `pa tool carries ${c}`);
 
   // Wildcards as opencode reads them.
@@ -253,7 +253,7 @@ const notifyChat = require('../src/notify/chat');
 
   // ------------------------------------------- the chat's pa tool (H1) ----
   {
-    const mcp = require('../src/mcp/server');
+    const mcp = require('../src/mcp/server.ts');
     assert.strictEqual(mcp.chatToolsOn({}), false, 'off for every session but the opencode chat');
     assert.strictEqual(mcp.chatToolsOn({ PA_MCP_CHAT_TOOLS: '1' }), true);
     await assert.rejects(mcp.handle('pa', { command: 'brief' }), /unknown tool pa/, 'refused when not switched on');

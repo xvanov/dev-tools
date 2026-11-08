@@ -6,7 +6,7 @@
 // evidence rather than instruction.
 
 const assert = require('assert');
-const { formatRecall } = require('../src/mcp/server');
+const { formatRecall } = require('../src/mcp/server.ts');
 const { buildBrief } = require('../src/dispatch/brief');
 
 {

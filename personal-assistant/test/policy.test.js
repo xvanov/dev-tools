@@ -19,7 +19,7 @@ const ev = (req, pol = policy) => P.evaluate({ action: 'call', channel: 'chat', 
 
 // ---- the default policy is the chat's existing allow/ask split ----
 {
-  const server = require('../src/mcp/server');
+  const server = require('../src/mcp/server.ts');
   const chat = require('../src/chat');
   const listed = server.listedTools({ PA_MCP_CHAT_TOOLS: '1' }).map((t) => t.name);
   const allow = chat.settingsJson().permissions.allow.filter((r) => r.startsWith('mcp__pa-chat__')).map((r) => r.slice('mcp__pa-chat__'.length));

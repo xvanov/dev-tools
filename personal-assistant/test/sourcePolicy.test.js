@@ -140,7 +140,7 @@ assert.ok(s.permissions.allow.includes(`mcp__${chat.CHAT_MCP}__task_add`), 'the 
 assert.ok(!s.permissions.allow.some((r) => r.startsWith('Bash(')), 'still no shell allow rule');
 assert.match(chat.claudeMd(), /ONLY then: never for your own work/);
 assert.strictEqual(require('../src/chat/agent').opencodeRules()['personal-assistant_task_add'], 'allow');
-const mcp = require('../src/mcp/server');
+const mcp = require('../src/mcp/server.ts');
 assert.strictEqual(mcp.TASK_TOOL.name, 'task_add');
 assert.deepStrictEqual(mcp.TASK_TOOL.inputSchema.required, ['text']);
 

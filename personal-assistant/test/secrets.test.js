@@ -176,7 +176,7 @@ function request(port, { method = 'GET', path: p, host = `127.0.0.1:${port}`, he
   assert.strictEqual(cfg.secretSource(NAME), 'credential-manager');
 
   // MCP: status and request return no value.
-  const mcp = require('../src/mcp/server');
+  const mcp = require('../src/mcp/server.ts');
   const st = await mcp.handle('secret_status', { name: NAME });
   assert.ok(!JSON.stringify(st).includes(FAKE));
   assert.ok(st.content[0].text.includes('"configured": true'));

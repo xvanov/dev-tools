@@ -129,7 +129,7 @@ for (const id of Object.keys(A.health)) assert.ok(A.components.some((c) => c.hea
 // ------------------------------------------------------------------ drift ----
 // The PA chat's MCP tools and which of them ask (src/mcp, src/chat/index.js).
 {
-  const server = require('../src/mcp/server');
+  const server = require('../src/mcp/server.ts');
   const chat = require('../src/chat');
   const listed = server.listedTools({ PA_MCP_CHAT_TOOLS: '1' }).map((t) => t.name);
   const allow = chat.settingsJson().permissions.allow.filter((r) => r.startsWith('mcp__pa-chat__')).map((r) => r.slice('mcp__pa-chat__'.length));
