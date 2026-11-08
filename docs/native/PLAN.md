@@ -161,11 +161,17 @@ with the app. Clients reconnect to the event stream with `Last-Event-ID` and mis
   `linux/redeploy.sh`; the restart stays only to bootstrap or when the supervisor itself
   changes. Live on the work stack 2026-11-07 (roll and rollback under load: 1 request in
   ~880 timed out at 10 s around the flip, left for Z6). (9207f32)
-- [ ] **Z5 termhub sessions survive deploys** (already via sessiond; make it explicit and
-  tested), later replaced by `ptyd` (phase 5).
-- [ ] **Z6 Deploy test.** A test hammers the dashboard, an SSE stream and a terminal during a
+- [x] **Z5 termhub sessions survive deploys** (already via sessiond; make it explicit and
+  tested), later replaced by `ptyd` (phase 5). `termhub/test/frontSwap.test.js`: the front is
+  killed and replaced mid-command; sessiond's pid is kept and every tick replays. The PA roll
+  half is in Z6's terminal check. (44b86fc)
+- [x] **Z6 Deploy test.** A test hammers the dashboard, an SSE stream and a terminal during a
   deploy and asserts zero failed requests, no lost events, no dropped terminal.
-- [ ] **Exit Z:** a deploy on each stack with the Z6 test passing.
+  `personal-assistant/src/e2e/deployTest.js` (spare mode in `test/deployTest.test.js`; `--live
+  [--deploy]` on a stack). Events now survive a roll: `pa_event_seq` ids (sql/035). (2793e9b)
+- [ ] **Exit Z:** a deploy on each stack with the Z6 test passing. Work stack 2026-11-08:
+  PASS with `--live --deploy` (5186 requests, 0 failed; 1251/1251 events, 0 resyncs; terminal
+  598 ticks, socket held). Personal stack: pending.
 
 ## Track E: the full stack works end to end (D8, D9; gate for every phase exit)
 
