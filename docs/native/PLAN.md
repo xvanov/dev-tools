@@ -1115,7 +1115,7 @@ not in the Map is not done, and a new one gets added there first.
     Follow-up: a Claude-session run (the PA's `claude` route) had the same stale paragraph: `pa
     land`, `push_to_main`, a drop and a session that ended moved the card or the run and kept it.
     Each now clears it too (`dispatch.forgetContext`); no SQL changed. (bd7b768)
-  - [ ] **8.4.24 review-fix: the personal factory never ticks `sacrifice`, and nothing says so.**
+  - [x] **8.4.24 review-fix: the personal factory never ticks `sacrifice`, and nothing says so.**
     `sacrifice:131` (PR #418) was accepted and sat `queued` ("waiting for pm-sync on the next
     factory tick") for 340 s until cancelled. Serve's interval ticks ran dev-tools, factory and
     template-probe only: `apps/sacrifice/config.yaml` has no `serve_tick: true`, and no timer or
@@ -1123,7 +1123,16 @@ not in the Map is not done, and a new one gets added there first.
     and Build groups the job under running. The owner decides whether to opt sacrifice in
     (local config). Then have submit refuse or warn for an app no ticker serves, say so in `why`,
     and check it in the dry run ([acceptance/review-fix.md](acceptance/review-fix.md)).
-  - [ ] **8.4.25 review-fix: no real-run driver, and `--on` is ignored for workflows.** `pa e2e
+    Done: warn, not refuse (JOBS-API v1.6). A refusal would also block the human who means to
+    `factory tick --app` by hand, and coverage can change while the job waits. `ticked` is
+    true/false/null on submit, status/list and `app list` (factory/scheduler/coverage.py): a fresh
+    serve.json, under 60 s old, that lists the app, or an active `factory-tick@<app>` timer. A
+    false submit warns `ticker: app X is not ticked: …` with the fix. A live job's `why` reads
+    `waiting: app X is not ticked …`. null (no serve status, a test root) is no alarm. The PA
+    answers `waiting` on factory_start and factory_continue. Build puts the job under Needs you
+    as "waiting: app not ticked". The golden-path and workflow dry runs fail on it. Whether to opt
+    sacrifice in stays the owner's (local config). (23ec085, 5f19b68)
+  - [x] **8.4.25 review-fix: no real-run driver, and `--on` is ignored for workflows.** `pa e2e
     review-fix --pr <n>` exits with "not automated yet". `pa e2e <workflow> --on <machine>` runs on
     the local stack, because `workflows.main` never reads `o.on` and only the golden path calls
     `remote()`; `remoteArgv` also drops the workflow name. The dry run doesn't check the PR (open,
@@ -1131,25 +1140,68 @@ not in the Map is not done, and a new one gets added there first.
     the approval path, the head before and after (fast-forward, same PR, no new PR), the threads
     resolved by the diff, and CI on the new head. Match the call's audit row by its own subject when
     there is no card (`approvalChecks` with `callSubject` null finds no row today).
+    Done. `pa e2e review-fix --pr <n> [--repo owner/name]`:
+    - It reads the PR once, before and after the job (GraphQL: head, state, threads, CI on the
+      head, the repo's newest PR), and refuses before starting anything if the PR is not open,
+      comes from a fork, or has no unresolved threads.
+    - factory_continue goes through the e2e approval, with delivery pr (never merges) and the
+      default runtime. The call is matched by its args hash: policy gives a card-less call no
+      subject.
+    - A `waiting` answer (8.4.24) stops the run. Otherwise it waits for the job, then for CI.
+    - Checks: new head, GitHub compare `ahead` (a fast-forward; a force push reads `diverged`),
+      same branch and no newer PR, still open and unmerged, CI SUCCESS on the new head, the job's
+      base is the PR, and the cost.
+    - Cleanup cancels the job if still live and kills its sessions. It never closes the PR.
+    The threads are counted before and after as a note, not a check. The factory pushes fixes, and
+    resolving a thread is the reviewer's act. Whether each comment is addressed is the rubric's
+    `review` item. The dry run with `--pr` checks the PR exists, is open, is from the repo and has
+    unresolved threads. `--on` hands the workflow to `goldenPath.remote` with its name, and
+    `pa e2e <workflow>` writes `--report`. Unit-tested with fakes. The live dry run against PR #63
+    (closed) failed the open and threads checks, as it should. No real run. (744bc37)
   - [ ] **8.4.26 review-fix: the tool call takes 8.3 s without the model (target 1 s).**
     `factory_continue` took 14166 ms: gather 1072, compose_model 5887, **submit 7056**. A
     continuation's submit asks GitHub for the PR and its review threads (`gh`, GraphQL) inside the
     call. Profile it, and cache or parallelise the PR lookup.
-  - [ ] **8.4.27 review-fix: the composed brief contradicts the continuation.** Its stop condition
+    Partly met: submit is faster, but the target is not reached. Submit made three calls in series: `claude auth status`, `gh pr view`, then a
+    GraphQL read of the threads (`--branch`: two REST calls, then GraphQL). Now one GraphQL read
+    gets the PR or branch with its threads, and on claude_session the runtime check runs
+    alongside it. The gh shim picks the token from the query's owner/name. Measured on the work
+    laptop, PR #63, 7 runs each after a warm-up: serial 2566 ms median (2364-2741) on f29aff0, one
+    query in parallel 1133 ms (1078-1284). The personal machine's 7.1 s was per-call shim
+    overhead, so it shrinks by the same two calls; not re-measured there. Still open: one GitHub
+    round trip is about 1 s from here, so submit alone sits at the target. Gather (1.1 s) is
+    untouched. Meeting 1 s needs the PR read moved after submit (into the job) or gather overlapped
+    with it. (0e6b5a0)
+  - [x] **8.4.27 review-fix: the composed brief contradicts the continuation.** Its stop condition
     reads "Push and open a DRAFT pull request", while the factory's appended section says it
     "updates that PR (it opens no new one)". Its facts say the request "gives no detail about what
     the comments say", because compose runs before the factory reads the threads. Tell compose
     it is a continuation (branch or PR) and word the stop by delivery onto the existing PR, as
     8.4.21 did for the dummy card.
-  - [ ] **8.4.28 review-fix: Build hides which PR a continuation works on.** `/api/factory` gives
+    Done. compose gets `continues {branch, pr}`. The model is told the PR's threads are not in its
+    input (the factory appends them at submit) and to write nothing about opening a PR.
+    checkComposed drops any goal or item that opens a PR, and any question about the comments.
+    render replaces the delivery line with "Continues PR #N", adds a Review comments section saying
+    the factory appends them, and stops with "commit onto PR #N's branch … open no new pull
+    request, never merge it". The deterministic fallback and the flow file match. Compose does not
+    fetch the threads itself: that would add a GitHub round trip to the call 8.4.26 sped up.
+    (3883b97)
+  - [x] **8.4.28 review-fix: Build hides which PR a continuation works on.** `/api/factory` gives
     `base: null` and `prs: null` for `sacrifice:131`, while `job status` and `factory_job` have
     `base {branch, pr: 418}`. A job no ticker serves is grouped under running. Show the continued
     PR on the Build card, and a job that cannot start as stuck, not running.
+    Done. jobView carries `base`, and the card shows "continues PR #n" (or "continues <branch>"),
+    with the branch and its base in the title (7f7baa9). The job no ticker serves is under Needs
+    you as "waiting: app not ticked" (8.4.24, 5f19b68).
   - [ ] **8.4.29 review-fix: sacrifice's `main` is red today.** On the PR's base, pytest fails 3 of
     1597 in `tests/test_chat_criteria_coercion.py` (expects `2026-08-15T18:00:00-04:00`, gets
     today's date). `main`'s head was green on 15 August. No sacrifice PR can pass `ci`, and a CI-fix
     cycle would chase tests outside the review comments. Pin the clock in those tests (in
     sacrifice), or re-run review-fix on an app with a green base.
+    Lead's decision (2026-11-08): review-fix is re-run on a dummy PR in xvanov/dev-tools, an app
+    both factories tick. Not on xvanov/sacrifice: serve does not tick it, its delivery default is
+    auto_merge, and its `main` is red on date-dependent tests. Fixing sacrifice's tests is out of
+    scope for this plan.
   - [ ] **8.4.30 teams-ask: no real-run driver, and `--test-chat` is ignored.** `pa e2e teams-ask
     --test-chat <id>` exits "not automated yet" (`RUNNERS` has no teams-ask; `o.testChat` is read
     and never used). The dry run doesn't look at the chat either. Nothing in the PA or the e2e can
