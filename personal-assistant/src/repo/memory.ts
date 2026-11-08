@@ -9,6 +9,12 @@
 // Vector and full-text queries (pgvector `<=>`, tsvector `@@`, ts_rank) are
 // kept whole, one per method, so phase 3 can reimplement each for SQLite.
 // Embeddings travel as the '[0.1,0.2,...]' literal callers format.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+type Db = import('./types.ts').Db;
+type Row = import('./types.ts').Row;
+type Subject = { kind?: unknown; id?: unknown; label?: unknown };
 
 /**
  * @typedef {object} ClaimRow  a row of `claim` (see sql/*.sql); embedding and
@@ -34,14 +40,14 @@ const HANDLE_SQL = `case pi.kind when 'github_username' then 'github:' || pi.val
 
 // Whether anything has acted on a commitment — the same test re-distillation
 // uses (distill/index.js) to decide what it may replace.
-const ACTED = (a) => `(${a}.status = 'dispatched' or ${a}.touched_at is not null
+const ACTED = (a: unknown) => `(${a}.status = 'dispatched' or ${a}.touched_at is not null
    or exists (select 1 from draft d where d.commitment_id = ${a}.id)
    or exists (select 1 from run r where r.commitment_id = ${a}.id)
    or exists (select 1 from ledger_transition t where t.commitment_id = ${a}.id)
    or exists (select 1 from ledger_evidence e where e.commitment_id = ${a}.id)
    or exists (select 1 from reply_close rc where rc.commitment_id = ${a}.id))`;
 
-function sameSubjectSql(alias = 'o') {
+function sameSubjectSql(alias: string = 'o') {
   return `${alias}.subject_kind = n.subject_kind
       and (case when n.subject_id is not null then ${alias}.subject_id = n.subject_id
                 else ${alias}.subject_id is null and lower(${alias}.subject_label) = lower(n.subject_label) end)`;
@@ -49,7 +55,7 @@ function sameSubjectSql(alias = 'o') {
 
 // Claims for one resolved subject {kind, id, label}: a WHERE fragment and its
 // params, numbered from `startAt`.
-function subjectWhere(s, startAt = 1) {
+function subjectWhere(s: Subject, startAt: number = 1) {
   if (s.kind === 'topic' || s.id == null) {
     return { sql: `subject_kind = $${startAt} and subject_id is null and lower(subject_label) = lower($${startAt + 1})`, params: [s.kind, s.label] };
   }
@@ -59,7 +65,7 @@ function subjectWhere(s, startAt = 1) {
 // Source items the claims pass has not yet read, minus machine noise and items
 // another item already covers (a review-request notification for a PR that is
 // ingested itself).
-const pendingWhere = (minBodyChars) => `
+const pendingWhere = (minBodyChars: unknown) => `
   ce.source_item_id is null
   and length(si.body_text) >= ${Number(minBodyChars)}
   and not (si.source = 'github_notification' and (
@@ -71,7 +77,7 @@ const pendingWhere = (minBodyChars) => `
                    and n.occurred_at > si.occurred_at)))
   and not (si.source = 'graph_mail' and si.subject ~* '^(accepted|declined|tentative|canceled|cancelled)( |:)')`;
 
-function create(db) {
+function create(db: Db) {
   return {
     // ------------------------------------------------ subjects (memory/index)
 
@@ -81,7 +87,7 @@ function create(db) {
     },
 
     /** A project by name or alias (case-insensitive). @returns {Promise<{id, name}|null>} */
-    async projectByNameOrAlias(name) {
+    async projectByNameOrAlias(name: string) {
       return db.one(
         `select id, name from project where lower(name) = lower($1)
           or id = (select project_id from project_alias where lower(alias) = lower($1) limit 1) limit 1`,
@@ -90,7 +96,7 @@ function create(db) {
     },
 
     /** Up to two people (not me) whose name, email or identity equals `name`. */
-    async peopleExact(name) {
+    async peopleExact(name: string) {
       return db.rows(
         `select distinct p.id, p.display_name from person p left join person_identity pi on pi.person_id = p.id
         where not p.is_me and (lower(p.display_name) = lower($1) or lower(p.primary_email) = lower($1)
@@ -101,7 +107,7 @@ function create(db) {
     },
 
     /** Up to two people (not me) whose name or an identity matches the ilike `pattern`. */
-    async peopleFuzzy(pattern) {
+    async peopleFuzzy(pattern: unknown) {
       return db.rows(
         `select distinct p.id, p.display_name from person p left join person_identity pi on pi.person_id = p.id
             where not p.is_me and (p.display_name ilike $1 or pi.value ilike $1) limit 2`,
@@ -116,7 +122,7 @@ function create(db) {
      * @param {object} c  {subjectKind, subjectId, subjectLabel, kind, text, quote, vector (literal|null), confidence, status, origin}
      * @returns {Promise<ClaimRow>}
      */
-    async insertNote({ subjectKind, subjectId, subjectLabel, kind, text, quote, vector, confidence, status, origin }) {
+    async insertNote({ subjectKind, subjectId, subjectLabel, kind, text, quote, vector, confidence, status, origin }: { subjectKind?: unknown; subjectId?: number | string | null; subjectLabel?: unknown; kind?: string | null; text?: string | null; quote?: string | null; vector?: unknown; confidence?: number; status?: string | null; origin?: string | null }) {
       return db.one(
         `insert into claim (subject_kind, subject_id, subject_label, kind, text, quote, source_kind, confidence,
                         status, origin, extracted_by, embedding)
@@ -127,7 +133,7 @@ function create(db) {
     },
 
     /** A claim with its consolidation decision (decision, target_id), or null. */
-    async claimWithDecision(id) {
+    async claimWithDecision(id: number | string) {
       return db.one(
         `select c.*, k.decision, k.target_id from claim c left join consolidation k on k.claim_id = c.id where c.id = $1`,
         [id]
@@ -135,17 +141,17 @@ function create(db) {
     },
 
     /** Every non-retracted claim read from a source item. @returns {Promise<ClaimRow[]>} */
-    async liveClaimsByItem(itemId) {
+    async liveClaimsByItem(itemId: number | string) {
       return db.rows(`select * from claim where source_item_id = $1 and status <> 'retracted'`, [itemId]);
     },
 
     /** The claim with this id unless retracted (a 0/1-row list). @returns {Promise<ClaimRow[]>} */
-    async liveClaimById(id) {
+    async liveClaimById(id: number | string) {
       return db.rows(`select * from claim where id = $1 and status <> 'retracted'`, [id]);
     },
 
     /** Marks claims retracted (and expired now, if not already). */
-    async retractClaims(ids) {
+    async retractClaims(ids: unknown[]) {
       await db.query(
         `update claim set status = 'retracted', expired_at = coalesce(expired_at, now()) where id = any($1::bigint[])`,
         [ids]
@@ -156,7 +162,7 @@ function create(db) {
      * Gives back their belief to superseded claims whose superseding claim is in
      * `ids` (forgetting a correction un-forgets the original). @returns {Promise<number>} rows restored
      */
-    async restoreSuperseded(ids) {
+    async restoreSuperseded(ids: unknown[]) {
       const r = await db.query(
         `update claim o set status = 'active', expired_at = null, invalid_at = null
        from claim n
@@ -167,7 +173,7 @@ function create(db) {
     },
 
     /** Human-confirmed: pending_review -> active at full confidence. @returns {Promise<ClaimRow|null>} null when not pending */
-    async approvePending(claimId) {
+    async approvePending(claimId: number | string) {
       return db.one(
         // Human-confirmed now, so believed as fully as a typed note.
         `update claim set status = 'active', expired_at = null, confidence = 1
@@ -177,7 +183,7 @@ function create(db) {
     },
 
     /** A claim's status and subject with its consolidation decision. */
-    async claimOutcome(claimId) {
+    async claimOutcome(claimId: number | string) {
       return db.one(
         `select c.id, c.status, c.subject_kind, c.subject_id, k.decision, k.target_id
        from claim c left join consolidation k on k.claim_id = c.id where c.id = $1`,
@@ -186,7 +192,7 @@ function create(db) {
     },
 
     /** Bumps use_count and last_used_at on claims a search returned. */
-    async noteUse(ids) {
+    async noteUse(ids: unknown[]) {
       await db.query(
         'update claim set use_count = use_count + 1, last_used_at = now() where id = any($1::bigint[])',
         [ids]
@@ -196,7 +202,7 @@ function create(db) {
     // ----------------------------------------------------- the dashboard reads
 
     /** Claims waiting for a human, newest first. */
-    async reviewQueue(limit) {
+    async reviewQueue(limit: number) {
       return db.rows(
         `select c.id, c.status, c.subject_kind, c.subject_id, c.subject_label, c.kind, c.text, c.quote, c.origin, c.source_kind,
             c.confidence, c.valid_at, c.recorded_at, c.source_item_id, si.source, si.subject as source_subject,
@@ -236,7 +242,7 @@ function create(db) {
     },
 
     /** One source item, for following a [#id] citation. */
-    async sourceItem(id) {
+    async sourceItem(id: number | string) {
       return db.one(
         `select id, source, subject, occurred_at, author_identity, body_text,
             raw->>'webUrl' as url, raw->>'webLink' as link
@@ -260,12 +266,12 @@ function create(db) {
     },
 
     /** The `me` or `index` page (subject_id 0). */
-    async pageByKind(kind) {
+    async pageByKind(kind: string) {
       return db.one('select * from memory_page where kind = $1 and subject_id = 0', [kind]);
     },
 
     /** The page of a person or project. */
-    async pageBySubject(kind, subjectId) {
+    async pageBySubject(kind: string, subjectId: number | string) {
       return db.one('select * from memory_page where kind = $1 and subject_id = $2', [kind, subjectId]);
     },
 
@@ -274,7 +280,7 @@ function create(db) {
      * @param {{kind, id, label}} subject  resolved
      * @param {{all?: boolean, asOf?: any, limit?: number}} o
      */
-    async claimsFor(subject, { all = false, asOf = null, limit = 200 } = {}) {
+    async claimsFor(subject: Subject, { all = false, asOf = null, limit = 200 }: { all?: boolean; asOf?: Date | string | number | null; limit?: number } = {}) {
       const w = subjectWhere(subject);
       return db.rows(
         `select c.*, si.occurred_at as source_occurred_at, si.subject as source_subject
@@ -289,10 +295,10 @@ function create(db) {
      * Full-text leg of claim search. `subject` (resolved, or null) narrows it.
      * @returns {Promise<(ClaimRow & {rank: number})[]>}
      */
-    async searchClaimsLexical(q, { subject = null, asOf = null, limit }) {
+    async searchClaimsLexical(q: string, { subject = null, asOf = null, limit }: { subject?: Subject | null; asOf?: Date | string | number | null; limit?: number }) {
       const w = subject ? subjectWhere(subject, 3) : null;
       const statusSql = asOf ? '' : "and c.status = 'active'";
-      const params = [q, limit * 3, ...(w ? w.params : [])];
+      const params = [q, Number(limit) * 3, ...(w ? w.params : [])];
       return db.rows(
         `select c.*, ts_rank(c.tsv, plainto_tsquery('english', $1)) as rank from claim c
       where c.tsv @@ plainto_tsquery('english', $1) ${statusSql} ${w ? `and ${w.sql}` : ''}
@@ -305,24 +311,24 @@ function create(db) {
      * Vector leg of claim search (pgvector cosine). `vector` is the query's literal.
      * @returns {Promise<(ClaimRow & {rank: number})[]>}
      */
-    async searchClaimsVector(vector, { subject = null, asOf = null, limit }) {
+    async searchClaimsVector(vector: unknown, { subject = null, asOf = null, limit }: { subject?: Subject | null; asOf?: Date | string | number | null; limit?: number }) {
       const w = subject ? subjectWhere(subject, 3) : null;
       const statusSql = asOf ? '' : "and c.status = 'active'";
       return db.rows(
         `select c.*, 1 - (c.embedding <=> $1::vector) as rank from claim c
         where c.embedding is not null ${statusSql} ${w ? `and ${w.sql}` : ''}
         order by c.embedding <=> $1::vector limit $2`,
-        [vector, limit * 3, ...(w ? w.params : [])]
+        [vector, Number(limit) * 3, ...(w ? w.params : [])]
       );
     },
 
     /** A claim by id, every column. @returns {Promise<ClaimRow|null>} */
-    async claimById(id) {
+    async claimById(id: number | string) {
       return db.one('select * from claim where id = $1', [id]);
     },
 
     /** The source item behind a claim, for `explain`. */
-    async sourceItemBrief(id) {
+    async sourceItemBrief(id: number | string) {
       return db.one(
         `select id, source, subject, occurred_at, author_identity, raw->>'webUrl' as url,
                 raw->>'webLink' as link from source_item where id = $1`,
@@ -331,17 +337,17 @@ function create(db) {
     },
 
     /** The claim an older claim was replaced by, for `explain`. */
-    async supersededClaim(id) {
+    async supersededClaim(id: number | string) {
       return db.one('select id, text, status, valid_at, invalid_at from claim where id = $1', [id]);
     },
 
     /** Claims that superseded this one. */
-    async supersededBy(claimId) {
+    async supersededBy(claimId: number | string) {
       return db.rows('select id, text, status, valid_at from claim where supersedes_id = $1 order by id', [claimId]);
     },
 
     /** Claims kept as corroboration (duplicate_of) of this one. */
-    async corroboratedBy(claimId) {
+    async corroboratedBy(claimId: number | string) {
       return db.rows(
         `select c.id, c.quote, c.source_item_id, c.valid_at from claim c where c.duplicate_of = $1 order by c.id`,
         [claimId]
@@ -349,7 +355,7 @@ function create(db) {
     },
 
     /** The consolidation row for a claim, or null. */
-    async consolidationOf(claimId) {
+    async consolidationOf(claimId: number | string) {
       return db.one('select * from consolidation where claim_id = $1', [claimId]);
     },
 
@@ -369,7 +375,7 @@ function create(db) {
     // ----------------------------------------------------- pages (memory/pages)
 
     /** People worth a page: enough items, commitments and claims, not me, not a bot. */
-    async eligiblePeople(minInteractions) {
+    async eligiblePeople(minInteractions: unknown) {
       return db.rows(
         `with h as (select pi.person_id, ${HANDLE_SQL} as handle, pi.kind, pi.value from person_identity pi),
           stats as (
@@ -397,12 +403,12 @@ function create(db) {
     },
 
     /** A person row, every column. */
-    async personById(personId) {
+    async personById(personId: number | string) {
       return db.one('select * from person where id = $1', [personId]);
     },
 
     /** A person's identities with the author_identity handle each one appears as. */
-    async personIdentities(personId) {
+    async personIdentities(personId: number | string) {
       return db.rows(
         `select ${HANDLE_SQL} as handle, pi.kind, pi.value from person_identity pi where pi.person_id = $1`,
         [personId]
@@ -410,7 +416,7 @@ function create(db) {
     },
 
     /** Active, still-valid claims about a person (page input). */
-    async personClaims(personId) {
+    async personClaims(personId: number | string) {
       return db.rows(
         `select id, kind, text, quote, source_item_id, source_kind, valid_at, invalid_at, confidence, status
        from claim where subject_kind = 'person' and subject_id = $1 and status = 'active'
@@ -421,7 +427,7 @@ function create(db) {
     },
 
     /** Open commitments with a person as counterparty (page input). */
-    async personCommitments(personId) {
+    async personCommitments(personId: number | string) {
       return db.rows(
         `select id, direction, summary, due_at, status, source_item_id, extracted_at
        from commitment where counterparty_person_id = $1 and status in ('open','dispatched')
@@ -432,7 +438,7 @@ function create(db) {
     },
 
     /** Recent items a person authored or was a member of. `emails` is never empty (callers pass ['-']). */
-    async personItems(handles, emails) {
+    async personItems(handles: unknown, emails: unknown[]) {
       return db.rows(
         `select id, source, subject, occurred_at, raw->>'webUrl' as url
        from source_item si
@@ -444,12 +450,12 @@ function create(db) {
     },
 
     /** A project row, every column. */
-    async projectById(projectId) {
+    async projectById(projectId: number | string) {
       return db.one('select * from project where id = $1', [projectId]);
     },
 
     /** Active, still-valid claims about a project (page input). */
-    async projectClaims(projectId) {
+    async projectClaims(projectId: number | string) {
       return db.rows(
         `select id, kind, text, quote, source_item_id, source_kind, valid_at, confidence, status
        from claim where subject_kind = 'project' and subject_id = $1 and status = 'active'
@@ -460,7 +466,7 @@ function create(db) {
     },
 
     /** Open commitments on a project, with the counterparty's name as `who`. */
-    async projectCommitments(projectId) {
+    async projectCommitments(projectId: number | string) {
       return db.rows(
         `select c.id, c.direction, c.summary, c.due_at, c.status, c.source_item_id, per.display_name as who
        from commitment c left join person per on per.id = c.counterparty_person_id
@@ -471,7 +477,7 @@ function create(db) {
     },
 
     /** Names of people with commitments on a project. */
-    async projectPeople(projectId) {
+    async projectPeople(projectId: number | string) {
       return db.rows(
         `select distinct per.display_name from commitment c join person per on per.id = c.counterparty_person_id
       where c.project_id = $1 limit 12`,
@@ -480,7 +486,7 @@ function create(db) {
     },
 
     /** Inserts or replaces a page (keeps the old embedding when `vector` is null). */
-    async upsertPage({ kind, subjectId, title, body, hash, generatedBy, vector }) {
+    async upsertPage({ kind, subjectId, title, body, hash, generatedBy, vector }: { kind?: string | null; subjectId?: number | string | null; title?: string | null; body?: string | null; hash?: string | null; generatedBy?: unknown; vector?: unknown }) {
       await db.query(
         `insert into memory_page (kind, subject_id, title, body, facts_hash, generated_by, embedding)
      values ($1,$2,$3,$4,$5,$6,$7::vector)
@@ -492,17 +498,17 @@ function create(db) {
     },
 
     /** Pages with no embedding yet. */
-    async pagesMissingEmbedding(limit) {
+    async pagesMissingEmbedding(limit: number) {
       return db.rows('select id, title, body from memory_page where embedding is null limit $1', [limit]);
     },
 
     /** Sets a page's embedding. */
-    async setPageEmbedding(id, vector) {
+    async setPageEmbedding(id: number | string, vector: unknown) {
       await db.query('update memory_page set embedding = $2::vector where id = $1', [id, vector]);
     },
 
     /** The facts hash a page was last written from, or null. */
-    async pageHash(kind, subjectId) {
+    async pageHash(kind: string, subjectId: number | string) {
       const r = await db.one('select facts_hash from memory_page where kind = $1 and subject_id = $2', [kind, subjectId]);
       return r?.facts_hash || null;
     },
@@ -551,7 +557,7 @@ function create(db) {
     },
 
     /** Active claims about a person, for the index. */
-    async personIndexClaims(personId) {
+    async personIndexClaims(personId: number | string) {
       return db.rows(
         `select kind, text from claim where subject_kind = 'person' and subject_id = $1 and status = 'active'
           and (invalid_at is null or invalid_at > now()) order by confidence desc, valid_at desc limit 20`,
@@ -570,7 +576,7 @@ function create(db) {
     },
 
     /** Active claims about a project, for the index. */
-    async projectIndexClaims(projectId) {
+    async projectIndexClaims(projectId: number | string) {
       return db.rows(
         `select kind, text from claim where subject_kind = 'project' and subject_id = $1 and status = 'active'
           and (invalid_at is null or invalid_at > now()) order by valid_at desc limit 10`,
@@ -596,14 +602,14 @@ function create(db) {
     },
 
     /** Deletes a page (after a forget left nothing to say). */
-    async deletePage(kind, subjectId) {
+    async deletePage(kind: string, subjectId: number | string) {
       await db.query('delete from memory_page where kind = $1 and subject_id = $2', [kind, subjectId]);
     },
 
     // ------------------------------------------- consolidation (memory/consolidate)
 
     /** Active/pending claims with no embedding yet. */
-    async claimsMissingEmbedding(limit) {
+    async claimsMissingEmbedding(limit: number) {
       return db.rows(
         `select id, subject_label, text from claim where embedding is null
         and status in ('active','pending_review') order by id limit $1`,
@@ -612,12 +618,12 @@ function create(db) {
     },
 
     /** Sets a claim's embedding. */
-    async setClaimEmbedding(id, vector) {
+    async setClaimEmbedding(id: number | string, vector: unknown) {
       await db.query('update claim set embedding = $2::vector where id = $1', [id, vector]);
     },
 
     /** Candidates by meaning: earlier active claims about the same subject, nearest first. */
-    async candidatesByVector(claimId, limit) {
+    async candidatesByVector(claimId: number | string, limit: number) {
       return db.rows(
         `select o.id, o.kind, o.text, o.valid_at
        from claim n join claim o on ${sameSubjectSql('o')}
@@ -630,7 +636,7 @@ function create(db) {
     },
 
     /** Candidates by words: earlier active claims about the same subject, best text match first. */
-    async candidatesByText(claimId, limit) {
+    async candidatesByText(claimId: number | string, limit: number) {
       return db.rows(
         `select o.id, o.kind, o.text, o.valid_at
        from claim n join claim o on ${sameSubjectSql('o')}
@@ -643,7 +649,7 @@ function create(db) {
     },
 
     /** The two most recent earlier active claims of the same kind about the same subject. */
-    async candidatesByKind(claimId) {
+    async candidatesByKind(claimId: number | string) {
       return db.rows(
         `select o.id, o.kind, o.text, o.valid_at
        from claim n join claim o on ${sameSubjectSql('o')} and o.kind = n.kind
@@ -655,7 +661,7 @@ function create(db) {
     },
 
     /** SUPERSEDE: closes the target's clocks (only while it is active). */
-    async supersedeTarget(target, validAt) {
+    async supersedeTarget(target: unknown, validAt: unknown) {
       await db.query(
         `update claim set status = 'superseded', expired_at = now(),
                 invalid_at = coalesce(invalid_at, greatest(valid_at, $2::timestamptz))
@@ -665,12 +671,12 @@ function create(db) {
     },
 
     /** Records that a claim supersedes `target`. */
-    async linkSupersedes(claimId, target) {
+    async linkSupersedes(claimId: number | string, target: unknown) {
       await db.query('update claim set supersedes_id = $2 where id = $1', [claimId, target]);
     },
 
     /** DUPLICATE: keeps the claim as corroboration of `target`. */
-    async markDuplicate(claimId, target) {
+    async markDuplicate(claimId: number | string, target: unknown) {
       await db.query(
         `update claim set status = 'superseded', expired_at = now(), duplicate_of = $2 where id = $1`,
         [claimId, target]
@@ -678,7 +684,7 @@ function create(db) {
     },
 
     /** Corroboration raises confidence in what was already believed. */
-    async raiseConfidence(target, confidence) {
+    async raiseConfidence(target: unknown, confidence: number) {
       await db.query(
         `update claim set confidence = least(1, greatest(confidence, $2) + 0.05) where id = $1`,
         [target, confidence]
@@ -686,12 +692,12 @@ function create(db) {
     },
 
     /** NOOP: retires a claim too vague to remember. */
-    async retireNoop(claimId) {
+    async retireNoop(claimId: number | string) {
       await db.query(`update claim set status = 'superseded', expired_at = now() where id = $1`, [claimId]);
     },
 
     /** Records (or re-records) the decision for a claim. */
-    async recordDecision(claimId, decision, targetId, decidedBy, reason) {
+    async recordDecision(claimId: number | string, decision: string, targetId: number | string, decidedBy: unknown, reason: string) {
       await db.query(
         `insert into consolidation (claim_id, decision, target_id, decided_by, error)
        values ($1,$2,$3,$4,$5)
@@ -702,7 +708,7 @@ function create(db) {
     },
 
     /** Active claims among `ids` with no consolidation row. @returns {Promise<ClaimRow[]>} */
-    async unconsolidatedByIds(ids) {
+    async unconsolidatedByIds(ids: unknown[]) {
       return db.rows(
         `select c.* from claim c left join consolidation k on k.claim_id = c.id
           where c.id = any($1::bigint[]) and k.claim_id is null and c.status = 'active' order by c.id`,
@@ -711,7 +717,7 @@ function create(db) {
     },
 
     /** The oldest active claims with no consolidation row. @returns {Promise<ClaimRow[]>} */
-    async unconsolidatedOldest(limit) {
+    async unconsolidatedOldest(limit: number) {
       return db.rows(
         `select c.* from claim c left join consolidation k on k.claim_id = c.id
           where k.claim_id is null and c.status = 'active' order by c.id limit $1`,
@@ -733,7 +739,7 @@ function create(db) {
      * person as `c` (a wide net; commitments/dupes.js narrows it).
      * @param {{counterparty_person_id, direction, id, extracted_at, source_item_id, thread_external_id}} c
      */
-    async olderCommitments(c) {
+    async olderCommitments(c: Row) {
       return db.rows(
         `select o.id, o.summary, o.due_at, ${ACTED('o')} as acted
        from commitment o join source_item si on si.id = o.source_item_id
@@ -749,16 +755,16 @@ function create(db) {
     },
 
     /** Folds a duplicate commitment into its survivor. @returns {Promise<boolean>} whether a row changed */
-    async foldCommitment(dropId, keepId) {
+    async foldCommitment(dropId: number | string, keepId: number | string) {
       const r = await db.query(
         `update commitment set superseded_by = $2 where id = $1 and superseded_by is null and status in ('open','dispatched')`,
         [dropId, keepId]
       );
-      return r.rowCount > 0;
+      return (r.rowCount ?? 0) > 0;
     },
 
     /** Commitments not yet reviewed for restatements, oldest first. */
-    async commitmentsToReview(limit) {
+    async commitmentsToReview(limit: number) {
       return db.rows(
         `select c.id, c.summary, c.detail, c.direction, c.counterparty_person_id, c.due_at, c.extracted_at,
             c.source_item_id, si.thread_external_id, ${ACTED('c')} as acted
@@ -772,7 +778,7 @@ function create(db) {
     },
 
     /** Marks a commitment reviewed (a no-op when it already is). */
-    async markCommitmentReviewed(id, reviewedBy, supersedes) {
+    async markCommitmentReviewed(id: number | string, reviewedBy: unknown, supersedes: unknown) {
       await db.query(
         `insert into commitment_review (commitment_id, reviewed_by, supersedes) values ($1,$2,$3)
      on conflict (commitment_id) do nothing`,
@@ -783,7 +789,7 @@ function create(db) {
     // -------------------------------------------------- extraction (memory/extract)
 
     /** Source items with no claim_extraction at `version`, newest first. */
-    async pendingExtraction(version, limit, minBodyChars) {
+    async pendingExtraction(version: string, limit: number, minBodyChars: unknown) {
       return db.rows(
         `select si.* from source_item si
        left join claim_extraction ce on ce.source_item_id = si.id and ce.extracted_by = $1
@@ -795,7 +801,7 @@ function create(db) {
     },
 
     /** How many source items await claim extraction at `version`. */
-    async pendingExtractionCount(version, minBodyChars) {
+    async pendingExtractionCount(version: string, minBodyChars: unknown) {
       const r = await db.one(
         `select count(*)::int as n from source_item si
        left join claim_extraction ce on ce.source_item_id = si.id and ce.extracted_by = $1
@@ -806,17 +812,17 @@ function create(db) {
     },
 
     /** A person's display name, or null. */
-    async personDisplayName(personId) {
+    async personDisplayName(personId: number | string) {
       return db.one('select display_name from person where id = $1', [personId]);
     },
 
     /** Replaces a handle-ish display name with a real one. */
-    async setPersonDisplayName(personId, name) {
+    async setPersonDisplayName(personId: number | string, name: string) {
       await db.query('update person set display_name = $2 where id = $1', [personId, name]);
     },
 
     /** Re-running an item replaces only claims nobody has consolidated yet. */
-    async deleteUnconsolidatedClaims(itemId, version) {
+    async deleteUnconsolidatedClaims(itemId: number | string, version: string) {
       await db.query(
         `delete from claim where source_item_id = $1 and extracted_by = $2 and origin = 'distill'
           and not exists (select 1 from consolidation k where k.claim_id = claim.id)`,
@@ -828,7 +834,7 @@ function create(db) {
      * Inserts one claim extracted from a source item (origin 'distill').
      * @param {object} c  {subjectKind, subjectId, label, kind, text, quote, itemId, source, confidence, validFrom, occurredAt, validUntil, status, version, vector (literal|null)}
      */
-    async insertExtractedClaim(c) {
+    async insertExtractedClaim(c: Row) {
       await db.query(
         `insert into claim (subject_kind, subject_id, subject_label, kind, text, quote, source_item_id,
                             source_kind, confidence, valid_at, invalid_at, status, origin, extracted_by, embedding)
@@ -841,7 +847,7 @@ function create(db) {
     },
 
     /** Records a successful extraction for an item. */
-    async recordExtraction(itemId, version, claims, dropped) {
+    async recordExtraction(itemId: number | string, version: string, claims: unknown, dropped: unknown) {
       await db.query(
         `insert into claim_extraction (source_item_id, extracted_by, claims, dropped, error)
        values ($1,$2,$3,$4,null)
@@ -852,7 +858,7 @@ function create(db) {
     },
 
     /** Records a failed extraction (retried next pass). */
-    async recordExtractionError(itemId, version, message) {
+    async recordExtractionError(itemId: number | string, version: string, message: string) {
       await db.query(
         `insert into claim_extraction (source_item_id, extracted_by, error) values ($1,$2,$3)
        on conflict (source_item_id) do update set extracted_by = excluded.extracted_by,
@@ -864,12 +870,12 @@ function create(db) {
     // ----------------------------------------------------------- dream (memory/dream)
 
     /** The stored value of a dream marker (a `setting` row), or null. @returns {Promise<{value: any}|null>} */
-    async dreamMarker(key) {
+    async dreamMarker(key: number | string) {
       return db.one('select value from setting where key = $1', [key]);
     },
 
     /** Upserts a dream marker. */
-    async saveDreamMarker(key, value) {
+    async saveDreamMarker(key: number | string, value: string) {
       await db.query(
         `insert into setting (key, value, updated_at) values ($1,$2,now())
      on conflict (key) do update set value = excluded.value, updated_at = now()`,
@@ -878,7 +884,7 @@ function create(db) {
     },
 
     /** Subjects with enough active claims and something new since `since` (null = all). */
-    async dedupeSubjects(minClaims, since) {
+    async dedupeSubjects(minClaims: unknown, since: Date | string | number) {
       return db.rows(
         `select subject_kind, subject_id, lower(subject_label) as label, count(*)::int as n
        from claim where status = 'active'
@@ -890,7 +896,7 @@ function create(db) {
     },
 
     /** Up to 120 active claims of one subject (`label` already lower-cased). */
-    async subjectClaims(subjectKind, subjectId, label) {
+    async subjectClaims(subjectKind: unknown, subjectId: number | string, label: string) {
       return db.rows(
         `select id, kind, text, confidence, valid_at from claim
         where status = 'active' and subject_kind = $1
@@ -901,7 +907,7 @@ function create(db) {
     },
 
     /** Folds duplicates into `keepId`. @returns {Promise<number>} claims closed */
-    async mergeDuplicates(dropIds, keepId) {
+    async mergeDuplicates(dropIds: unknown[], keepId: number | string) {
       const r = await db.query(
         `update claim set status = 'superseded', expired_at = now(), duplicate_of = $2
           where id = any($1::bigint[]) and status = 'active'`,
@@ -919,7 +925,7 @@ function create(db) {
     },
 
     /** Closes claims that outlived what they described. @returns {Promise<number>} claims closed */
-    async expireClaims(ids) {
+    async expireClaims(ids: unknown[]) {
       const r = await db.query(
         `update claim set status = 'superseded', expired_at = now(), invalid_at = coalesce(invalid_at, now())
       where id = any($1::bigint[]) and status = 'active'`,
@@ -931,7 +937,7 @@ function create(db) {
     // ----------------------------------------------------------- recall
 
     /** Full-text page search (person/project pages). */
-    async searchPagesLexical(q, limit) {
+    async searchPagesLexical(q: string, limit: number) {
       return db.rows(
         `select id, kind, subject_id, title, left(body, 1500) as body,
             ts_rank(tsv, websearch_to_tsquery('english', $1)) as rank
@@ -942,7 +948,7 @@ function create(db) {
     },
 
     /** Vector page search (pgvector cosine); `vector` is the query's literal. */
-    async searchPagesVector(vector, limit) {
+    async searchPagesVector(vector: unknown, limit: number) {
       return db.rows(
         `select id, kind, subject_id, title, left(body, 1500) as body
            from memory_page where kind in ('person','project') and embedding is not null
@@ -958,7 +964,7 @@ function create(db) {
      * @param {Date} now
      * @returns {Promise<{id: number|string, text: string, quote: string|null}[]>}
      */
-    async activeBlockers(now) {
+    async activeBlockers(now: Date | string | number) {
       return db.rows(
         `select id, text, quote from claim
       where status = 'active' and kind = 'blocker' and subject_kind = 'me'
@@ -973,7 +979,7 @@ function create(db) {
      * @param {number|string} personId
      * @returns {Promise<{id: number|string, text: string}[]>}
      */
-    async activeForPerson(personId) {
+    async activeForPerson(personId: number | string) {
       return db.rows(
         `select id, text from claim where subject_kind = 'person' and subject_id = $1 and status = 'active'
       order by valid_at desc limit 5`,
@@ -987,7 +993,7 @@ function create(db) {
      *   validAt: string, extractedBy: string}} c
      * @returns {Promise<{id: number|string}>}
      */
-    async insertTopicClaim({ label, kind, text, quote, sourceItemId, validAt, extractedBy }) {
+    async insertTopicClaim({ label, kind, text, quote, sourceItemId, validAt, extractedBy }: { label?: string | null; kind?: string | null; text?: string | null; quote?: string | null; sourceItemId?: number | string | null; validAt?: unknown; extractedBy?: string | null }) {
       return db.one(
         `insert into claim (subject_kind, subject_id, subject_label, kind, text, quote, source_item_id, source_kind,
                           confidence, valid_at, status, origin, extracted_by)
@@ -1002,30 +1008,30 @@ function create(db) {
      *   quote: string, itemId: number|string, validAt: string, extractedBy: string}} c
      * @returns {Promise<number|string>} the claim id
      */
-    async insertDebriefClaim({ subjectKind, subjectId = null, label, kind, text, quote, itemId, validAt, extractedBy }) {
+    async insertDebriefClaim({ subjectKind, subjectId = null, label, kind, text, quote, itemId, validAt, extractedBy }: { subjectKind?: unknown; subjectId?: number | string | null; label?: string | null; kind?: string | null; text?: string | null; quote?: string | null; itemId?: number | string | null; validAt?: unknown; extractedBy?: string | null }) {
       const r = await db.one(
         `insert into claim (subject_kind, subject_id, subject_label, kind, text, quote, source_item_id, source_kind,
                         confidence, valid_at, status, origin, extracted_by)
      values ($1,$2,$3,$4,$5,$6,$7,'audio',0.8,$8,'active','distill',$9) returning id`,
         [subjectKind, subjectId, label, kind, text, quote, itemId, validAt, extractedBy]
       );
-      return r.id;
+      return r?.id;
     },
 
     /** Retracts a claim (once). */
-    async retract(id) {
+    async retract(id: number | string) {
       await db.query(`update claim set status = 'retracted' where id = $1 and status <> 'retracted'`, [id]);
     },
 
     // --- for src/distill/index.js
 
     /** Deletes the facts one item gave at one prompt version (a re-distillation replaces them). */
-    async deleteFactsOf(itemId, version) {
+    async deleteFactsOf(itemId: number | string, version: string) {
       await db.query('delete from fact where source_item_id = $1 and extracted_by = $2', [itemId, version]);
     },
 
     /** Inserts one fact distilled from an item. `payload` is stored as jsonb. */
-    async insertFact(itemId, kind, summary, payload, occurredAt, version) {
+    async insertFact(itemId: number | string, kind: string, summary: string, payload: Row, occurredAt: Date | string | number, version: string) {
       await db.query(
         `insert into fact (source_item_id, kind, summary, payload, occurred_at, extracted_by)
          values ($1,$2,$3,$4,$5,$6)`,
@@ -1039,7 +1045,7 @@ function create(db) {
      * Makes claims about `fromId` claims about you (`me`).
      * @returns {Promise<number>} claims moved
      */
-    async repointClaimsToMe(intoId, fromId) {
+    async repointClaimsToMe(intoId: number | string, fromId: number | string) {
       const r = await db.query(
         `update claim set subject_kind = 'me', subject_id = $1, subject_label = 'me'
             where subject_kind = 'person' and subject_id = $2`,
@@ -1052,7 +1058,7 @@ function create(db) {
      * Makes claims about person `fromId` claims about person `intoId`, labelled `name`.
      * @returns {Promise<number>} claims moved
      */
-    async repointClaims(intoId, fromId, name) {
+    async repointClaims(intoId: number | string, fromId: number | string, name: string) {
       const r = await db.query(
         `update claim set subject_id = $1, subject_label = $3 where subject_kind = 'person' and subject_id = $2`,
         [intoId, fromId, name]
@@ -1061,7 +1067,7 @@ function create(db) {
     },
 
     /** Deletes a person's memory page (derived; the caller regenerates the survivor's). */
-    async deletePersonPage(personId) {
+    async deletePersonPage(personId: number | string) {
       await db.query(`delete from memory_page where kind = 'person' and subject_id = $1`, [personId]);
     },
 
@@ -1070,7 +1076,7 @@ function create(db) {
     /** How many claims wait for a human to vouch for them. */
     async pendingReviewCount() {
       const r = await db.one(`select count(*)::int as n from claim where status = 'pending_review'`);
-      return r.n;
+      return r?.n;
     },
   };
 }

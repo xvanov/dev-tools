@@ -17,6 +17,12 @@
 //   - Regexes (~*, !~*): LIKE on lower(...) with the same alternatives.
 //   - greatest/least skip nulls in pg; max()/min() do not, so nulls are
 //     coalesced first.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+type Db = import('../types.ts').Db;
+type Row = import('../types.ts').Row;
+type Subject = { kind?: unknown; id?: unknown; label?: unknown };
 
 const { NOW, DAY, sinceMs } = require('./_sql');
 const { hammingSql } = require('../../db/sqlite');
@@ -26,20 +32,20 @@ const HANDLE_SQL = `case pi.kind when 'github_username' then 'github:' || pi.val
                                  when 'aad_oid' then 'aad:' || pi.value
                                  else pi.value end`;
 
-const ACTED = (a) => `(${a}.status = 'dispatched' or ${a}.touched_at is not null
+const ACTED = (a: unknown) => `(${a}.status = 'dispatched' or ${a}.touched_at is not null
    or exists (select 1 from draft d where d.commitment_id = ${a}.id)
    or exists (select 1 from run r where r.commitment_id = ${a}.id)
    or exists (select 1 from ledger_transition t where t.commitment_id = ${a}.id)
    or exists (select 1 from ledger_evidence e where e.commitment_id = ${a}.id)
    or exists (select 1 from reply_close rc where rc.commitment_id = ${a}.id))`;
 
-function sameSubjectSql(alias = 'o') {
+function sameSubjectSql(alias: string = 'o') {
   return `${alias}.subject_kind = n.subject_kind
       and (case when n.subject_id is not null then ${alias}.subject_id = n.subject_id
                 else ${alias}.subject_id is null and lower(${alias}.subject_label) = lower(n.subject_label) end)`;
 }
 
-function subjectWhere(s, startAt = 1, alias = '') {
+function subjectWhere(s: Subject, startAt: number = 1, alias: string = '') {
   const p = alias ? `${alias}.` : '';
   if (s.kind === 'topic' || s.id == null) {
     return { sql: `${p}subject_kind = $${startAt} and ${p}subject_id is null and lower(${p}subject_label) = lower($${startAt + 1})`, params: [s.kind, s.label] };
@@ -52,7 +58,7 @@ const INVITE_REPLY = ['accepted', 'declined', 'tentative', 'canceled', 'cancelle
   .map((w) => `lower(si.subject) like '${w} %' or lower(si.subject) like '${w}:%'`)
   .join(' or ');
 
-const pendingWhere = (minBodyChars) => `
+const pendingWhere = (minBodyChars: unknown) => `
   ce.source_item_id is null
   and length(si.body_text) >= ${Number(minBodyChars)}
   and not (si.source = 'github_notification' and (
@@ -74,11 +80,11 @@ const STOP = new Set(
     'both each few more most other some such no nor not only own same so than too very s t can will just don should now').split(' ')
 );
 
-const terms = (s) => (String(s || '').toLowerCase().match(/[\p{L}\p{N}_]+/gu) || []).filter((w) => !STOP.has(w));
-const quote = (w) => `"${w.replace(/"/g, '""')}"`;
+const terms = (s: unknown) => (String(s || '').toLowerCase().match(/[\p{L}\p{N}_]+/gu) || []).filter((w) => !STOP.has(w));
+const quote = (w: string) => `"${w.replace(/"/g, '""')}"`;
 
 /** plainto_tsquery: every non-stop word, ANDed. null when nothing is left. */
-function ftsQuery(text) {
+function ftsQuery(text: string) {
   const t = terms(text);
   return t.length ? t.map(quote).join(' AND ') : null;
 }
@@ -87,22 +93,22 @@ function ftsQuery(text) {
  * websearch_to_tsquery: words ANDed, "quoted phrases", `or` between
  * alternatives, -word excluded. null when nothing positive is left.
  */
-function ftsWebQuery(text) {
-  const groups = [[]]; // OR of ANDs
-  const not = [];
+function ftsWebQuery(text: string) {
+  const groups: string[][] = [[]]; // OR of ANDs
+  const not: string[] = [];
   const re = /(-?)"([^"]*)"|(\S+)/g;
   let m;
   while ((m = re.exec(String(text || '')))) {
     if (m[3] && m[3].toLowerCase() === 'or') {
-      if (groups[groups.length - 1].length) groups.push([]);
+      if (groups[groups.length - 1]?.length) groups.push([]);
       continue;
     }
     const neg = m[1] === '-' || (m[3] && m[3].startsWith('-'));
     const words = terms(m[2] != null ? m[2] : m[3]);
     if (!words.length) continue;
-    const expr = words.length > 1 ? quote(words.join(' ')) : quote(words[0]);
+    const expr = words.length > 1 ? quote(words.join(' ')) : quote(words[0] ?? '');
     if (neg) not.push(expr);
-    else groups[groups.length - 1].push(expr);
+    else groups[groups.length - 1]?.push(expr);
   }
   const ors = groups.filter((g) => g.length).map((g) => (g.length > 1 ? `(${g.join(' AND ')})` : g[0]));
   if (!ors.length) return null;
@@ -112,16 +118,16 @@ function ftsWebQuery(text) {
 }
 
 /** A Float32Array embedding as pgvector's text form, as pg returns it. */
-const vecText = (v) => (v instanceof Float32Array ? `[${Array.from(v).join(',')}]` : v);
-function pgRow(r) {
+const vecText = (v: unknown) => (v instanceof Float32Array ? `[${Array.from(v).join(',')}]` : v);
+function pgRow(r: Row | null) {
   if (r && r.embedding != null) r.embedding = vecText(r.embedding);
   return r;
 }
-const pgRows = (list) => list.map(pgRow);
+const pgRows = (list: Row[]) => list.map(pgRow);
 
-const jsonText = (v) => (v == null ? null : typeof v === 'string' ? v : JSON.stringify(v));
+const jsonText = (v: unknown) => (v == null ? null : typeof v === 'string' ? v : JSON.stringify(v));
 
-function create(db) {
+function create(db: Db) {
   return {
     // ------------------------------------------------ subjects (memory/index)
 
@@ -129,7 +135,7 @@ function create(db) {
       return db.one('select id from person where is_me limit 1');
     },
 
-    async projectByNameOrAlias(name) {
+    async projectByNameOrAlias(name: string) {
       return db.one(
         `select id, name from project where lower(name) = lower($1)
           or id = (select project_id from project_alias where lower(alias) = lower($1) limit 1) limit 1`,
@@ -137,7 +143,7 @@ function create(db) {
       );
     },
 
-    async peopleExact(name) {
+    async peopleExact(name: string) {
       return db.rows(
         `select distinct p.id, p.display_name from person p left join person_identity pi on pi.person_id = p.id
         where not p.is_me and (lower(p.display_name) = lower($1) or lower(p.primary_email) = lower($1)
@@ -148,7 +154,7 @@ function create(db) {
     },
 
     /** ilike: SQLite's LIKE is case-insensitive (ASCII). */
-    async peopleFuzzy(pattern) {
+    async peopleFuzzy(pattern: unknown) {
       return db.rows(
         `select distinct p.id, p.display_name from person p left join person_identity pi on pi.person_id = p.id
             where not p.is_me and (p.display_name like $1 or pi.value like $1) limit 2`,
@@ -158,7 +164,7 @@ function create(db) {
 
     // ---------------------------------------------------------------- writes
 
-    async insertNote({ subjectKind, subjectId, subjectLabel, kind, text, quote: q, vector, confidence, status, origin }) {
+    async insertNote({ subjectKind, subjectId, subjectLabel, kind, text, quote: q, vector, confidence, status, origin }: { subjectKind?: unknown; subjectId?: number | string | null; subjectLabel?: unknown; kind?: string | null; text?: string | null; quote?: string | null; vector?: unknown; confidence?: number; status?: string | null; origin?: string | null }) {
       return pgRow(
         await db.one(
           `insert into claim (subject_kind, subject_id, subject_label, kind, text, quote, source_kind, confidence,
@@ -170,25 +176,25 @@ function create(db) {
       );
     },
 
-    async claimWithDecision(id) {
+    async claimWithDecision(id: number | string) {
       return pgRow(await db.one(`select c.*, k.decision, k.target_id from claim c left join consolidation k on k.claim_id = c.id where c.id = $1`, [id]));
     },
 
-    async liveClaimsByItem(itemId) {
+    async liveClaimsByItem(itemId: number | string) {
       return pgRows(await db.rows(`select * from claim where source_item_id = $1 and status <> 'retracted'`, [itemId]));
     },
 
-    async liveClaimById(id) {
+    async liveClaimById(id: number | string) {
       return pgRows(await db.rows(`select * from claim where id = $1 and status <> 'retracted'`, [id]));
     },
 
-    async retractClaims(ids) {
+    async retractClaims(ids: unknown[]) {
       await db.query(`update claim set status = 'retracted', expired_at = coalesce(expired_at, ${NOW}) where id in (select value from json_each($1))`, [
         (ids || []).map(Number),
       ]);
     },
 
-    async restoreSuperseded(ids) {
+    async restoreSuperseded(ids: unknown[]) {
       const r = await db.query(
         `update claim set status = 'active', expired_at = null, invalid_at = null
       where status = 'superseded'
@@ -198,11 +204,11 @@ function create(db) {
       return r.rowCount;
     },
 
-    async approvePending(claimId) {
+    async approvePending(claimId: number | string) {
       return pgRow(await db.one(`update claim set status = 'active', expired_at = null, confidence = 1 where id = $1 and status = 'pending_review' returning *`, [claimId]));
     },
 
-    async claimOutcome(claimId) {
+    async claimOutcome(claimId: number | string) {
       return db.one(
         `select c.id, c.status, c.subject_kind, c.subject_id, k.decision, k.target_id
        from claim c left join consolidation k on k.claim_id = c.id where c.id = $1`,
@@ -210,13 +216,13 @@ function create(db) {
       );
     },
 
-    async noteUse(ids) {
+    async noteUse(ids: unknown[]) {
       await db.query(`update claim set use_count = use_count + 1, last_used_at = ${NOW} where id in (select value from json_each($1))`, [(ids || []).map(Number)]);
     },
 
     // ----------------------------------------------------- the dashboard reads
 
-    async reviewQueue(limit) {
+    async reviewQueue(limit: number) {
       return db.rows(
         `select c.id, c.status, c.subject_kind, c.subject_id, c.subject_label, c.kind, c.text, c.quote, c.origin, c.source_kind,
             c.confidence, c.valid_at, c.recorded_at, c.source_item_id, si.source, si.subject as source_subject,
@@ -253,10 +259,10 @@ function create(db) {
      order by 1, 3`
       );
       // A union loses the declared types: give back what pg does.
-      return rows.map((r) => ({ ...r, generated_at: r.generated_at == null ? null : new Date(r.generated_at), latest: r.latest == null ? null : new Date(r.latest) }));
+      return rows.map((r) => ({ ...r, generated_at: r.generated_at == null ? null : new Date(r.generated_at as string), latest: r.latest == null ? null : new Date(r.latest as string) }));
     },
 
-    async sourceItem(id) {
+    async sourceItem(id: number | string) {
       return db.one(
         `select id, source, subject, occurred_at, author_identity, body_text,
             json_extract(raw, '$.webUrl') as url, json_extract(raw, '$.webLink') as link
@@ -276,18 +282,18 @@ function create(db) {
        from person p left join memory_page mp on mp.kind = 'person' and mp.subject_id = p.id
       order by p.id`
       );
-      return rows.map((r) => ({ ...r, identities: r.identities ? JSON.parse(r.identities) : [] }));
+      return rows.map((r) => ({ ...r, identities: r.identities ? JSON.parse(String(r.identities)) : [] }));
     },
 
-    async pageByKind(kind) {
+    async pageByKind(kind: string) {
       return pgRow(await db.one('select * from memory_page where kind = $1 and subject_id = 0', [kind]));
     },
 
-    async pageBySubject(kind, subjectId) {
+    async pageBySubject(kind: string, subjectId: number | string) {
       return pgRow(await db.one('select * from memory_page where kind = $1 and subject_id = $2', [kind, subjectId]));
     },
 
-    async claimsFor(subject, { all = false, asOf = null, limit = 200 } = {}) {
+    async claimsFor(subject: Subject, { all = false, asOf = null, limit = 200 }: { all?: boolean; asOf?: Date | string | number | null; limit?: number } = {}) {
       const w = subjectWhere(subject, 1, 'c');
       return pgRows(
         await db.rows(
@@ -300,7 +306,7 @@ function create(db) {
       );
     },
 
-    async searchClaimsLexical(q, { subject = null, asOf = null, limit }) {
+    async searchClaimsLexical(q: string, { subject = null, asOf = null, limit }: { subject?: Subject | null; asOf?: Date | string | number | null; limit?: number }) {
       const match = ftsQuery(q);
       if (!match) return [];
       const w = subject ? subjectWhere(subject, 3, 'c') : null;
@@ -310,17 +316,17 @@ function create(db) {
           `select c.*, -bm25(claim_fts) as rank from claim_fts join claim c on c.id = claim_fts.rowid
       where claim_fts match $1 ${statusSql} ${w ? `and ${w.sql}` : ''}
       order by rank desc limit $2`,
-          [match, limit * 3, ...(w ? w.params : [])]
+          [match, Number(limit) * 3, ...(w ? w.params : [])]
         )
       );
     },
 
-    async searchClaimsVector(vector, { subject = null, asOf = null, limit }) {
+    async searchClaimsVector(vector: unknown, { subject = null, asOf = null, limit }: { subject?: Subject | null; asOf?: Date | string | number | null; limit?: number }) {
       const w = subject ? subjectWhere(subject, 3, 'c') : null;
       const statusSql = asOf ? '' : "and c.status = 'active'";
       // Hamming on the sign bits first (sql-sqlite/007), then exact cosine on the best few hundred.
-      const params = [vector, limit * 3, ...(w ? w.params : [])];
-      params.push(vector, Math.max(400, limit * 30));
+      const params = [vector, Number(limit) * 3, ...(w ? w.params : [])];
+      params.push(vector, Math.max(400, Number(limit) * 30));
       const at = params.length - 1;
       return pgRows(
         await db.rows(
@@ -335,11 +341,11 @@ function create(db) {
       );
     },
 
-    async claimById(id) {
+    async claimById(id: number | string) {
       return pgRow(await db.one('select * from claim where id = $1', [id]));
     },
 
-    async sourceItemBrief(id) {
+    async sourceItemBrief(id: number | string) {
       return db.one(
         `select id, source, subject, occurred_at, author_identity, json_extract(raw, '$.webUrl') as url,
                 json_extract(raw, '$.webLink') as link from source_item where id = $1`,
@@ -347,19 +353,19 @@ function create(db) {
       );
     },
 
-    async supersededClaim(id) {
+    async supersededClaim(id: number | string) {
       return db.one('select id, text, status, valid_at, invalid_at from claim where id = $1', [id]);
     },
 
-    async supersededBy(claimId) {
+    async supersededBy(claimId: number | string) {
       return db.rows('select id, text, status, valid_at from claim where supersedes_id = $1 order by id', [claimId]);
     },
 
-    async corroboratedBy(claimId) {
+    async corroboratedBy(claimId: number | string) {
       return db.rows(`select c.id, c.quote, c.source_item_id, c.valid_at from claim c where c.duplicate_of = $1 order by c.id`, [claimId]);
     },
 
-    async consolidationOf(claimId) {
+    async consolidationOf(claimId: number | string) {
       return db.one('select * from consolidation where claim_id = $1', [claimId]);
     },
 
@@ -373,13 +379,13 @@ function create(db) {
             (select count(*) from memory_page) as pages,
             (select max(generated_at) from memory_page) as last_page`
       );
-      if (r) r.last_page = r.last_page == null ? null : new Date(r.last_page);
+      if (r) r.last_page = r.last_page == null ? null : new Date(r.last_page as string);
       return r;
     },
 
     // ----------------------------------------------------- pages (memory/pages)
 
-    async eligiblePeople(minInteractions) {
+    async eligiblePeople(minInteractions: unknown) {
       return db.rows(
         `with h as (select pi.person_id, ${HANDLE_SQL} as handle, pi.kind, pi.value from person_identity pi),
           stats as (
@@ -407,15 +413,15 @@ function create(db) {
       );
     },
 
-    async personById(personId) {
+    async personById(personId: number | string) {
       return db.one('select * from person where id = $1', [personId]);
     },
 
-    async personIdentities(personId) {
+    async personIdentities(personId: number | string) {
       return db.rows(`select ${HANDLE_SQL} as handle, pi.kind, pi.value from person_identity pi where pi.person_id = $1`, [personId]);
     },
 
-    async personClaims(personId) {
+    async personClaims(personId: number | string) {
       return db.rows(
         `select id, kind, text, quote, source_item_id, source_kind, valid_at, invalid_at, confidence, status
        from claim where subject_kind = 'person' and subject_id = $1 and status = 'active'
@@ -425,7 +431,7 @@ function create(db) {
       );
     },
 
-    async personCommitments(personId) {
+    async personCommitments(personId: number | string) {
       return db.rows(
         `select id, direction, summary, due_at, status, source_item_id, extracted_at
        from commitment where counterparty_person_id = $1 and status in ('open','dispatched')
@@ -435,7 +441,7 @@ function create(db) {
       );
     },
 
-    async personItems(handles, emails) {
+    async personItems(handles: unknown, emails: unknown[]) {
       return db.rows(
         `select id, source, subject, occurred_at, json_extract(raw, '$.webUrl') as url
        from source_item si
@@ -447,11 +453,11 @@ function create(db) {
       );
     },
 
-    async projectById(projectId) {
+    async projectById(projectId: number | string) {
       return db.one('select * from project where id = $1', [projectId]);
     },
 
-    async projectClaims(projectId) {
+    async projectClaims(projectId: number | string) {
       return db.rows(
         `select id, kind, text, quote, source_item_id, source_kind, valid_at, confidence, status
        from claim where subject_kind = 'project' and subject_id = $1 and status = 'active'
@@ -461,7 +467,7 @@ function create(db) {
       );
     },
 
-    async projectCommitments(projectId) {
+    async projectCommitments(projectId: number | string) {
       return db.rows(
         `select c.id, c.direction, c.summary, c.due_at, c.status, c.source_item_id, per.display_name as who
        from commitment c left join person per on per.id = c.counterparty_person_id
@@ -471,7 +477,7 @@ function create(db) {
       );
     },
 
-    async projectPeople(projectId) {
+    async projectPeople(projectId: number | string) {
       return db.rows(
         `select distinct per.display_name from commitment c join person per on per.id = c.counterparty_person_id
       where c.project_id = $1 limit 12`,
@@ -479,7 +485,7 @@ function create(db) {
       );
     },
 
-    async upsertPage({ kind, subjectId, title, body, hash, generatedBy, vector }) {
+    async upsertPage({ kind, subjectId, title, body, hash, generatedBy, vector }: { kind?: string | null; subjectId?: number | string | null; title?: string | null; body?: string | null; hash?: string | null; generatedBy?: unknown; vector?: unknown }) {
       await db.query(
         `insert into memory_page (kind, subject_id, title, body, facts_hash, generated_by, embedding)
      values ($1,$2,$3,$4,$5,$6,pa_vector($7))
@@ -490,15 +496,15 @@ function create(db) {
       );
     },
 
-    async pagesMissingEmbedding(limit) {
+    async pagesMissingEmbedding(limit: number) {
       return db.rows('select id, title, body from memory_page where embedding is null limit $1', [limit]);
     },
 
-    async setPageEmbedding(id, vector) {
+    async setPageEmbedding(id: number | string, vector: unknown) {
       await db.query('update memory_page set embedding = pa_vector($2) where id = $1', [id, vector]);
     },
 
-    async pageHash(kind, subjectId) {
+    async pageHash(kind: string, subjectId: number | string) {
       const r = await db.one('select facts_hash from memory_page where kind = $1 and subject_id = $2', [kind, subjectId]);
       return r?.facts_hash || null;
     },
@@ -541,7 +547,7 @@ function create(db) {
       return db.rows(`select subject_id, title from memory_page where kind = 'person' order by title`);
     },
 
-    async personIndexClaims(personId) {
+    async personIndexClaims(personId: number | string) {
       return db.rows(
         `select kind, text from claim where subject_kind = 'person' and subject_id = $1 and status = 'active'
           and (invalid_at is null or invalid_at > ${NOW}) order by confidence desc, valid_at desc limit 20`,
@@ -559,7 +565,7 @@ function create(db) {
       );
     },
 
-    async projectIndexClaims(projectId) {
+    async projectIndexClaims(projectId: number | string) {
       return db.rows(
         `select kind, text from claim where subject_kind = 'project' and subject_id = $1 and status = 'active'
           and (invalid_at is null or invalid_at > ${NOW}) order by valid_at desc limit 10`,
@@ -583,13 +589,13 @@ function create(db) {
       );
     },
 
-    async deletePage(kind, subjectId) {
+    async deletePage(kind: string, subjectId: number | string) {
       await db.query('delete from memory_page where kind = $1 and subject_id = $2', [kind, subjectId]);
     },
 
     // ------------------------------------------- consolidation (memory/consolidate)
 
-    async claimsMissingEmbedding(limit) {
+    async claimsMissingEmbedding(limit: number) {
       return db.rows(
         `select id, subject_label, text from claim where embedding is null
         and status in ('active','pending_review') order by id limit $1`,
@@ -597,11 +603,11 @@ function create(db) {
       );
     },
 
-    async setClaimEmbedding(id, vector) {
+    async setClaimEmbedding(id: number | string, vector: unknown) {
       await db.query('update claim set embedding = pa_vector($2) where id = $1', [id, vector]);
     },
 
-    async candidatesByVector(claimId, limit) {
+    async candidatesByVector(claimId: number | string, limit: number) {
       return db.rows(
         `select o.id, o.kind, o.text, o.valid_at
        from claim n join claim o on ${sameSubjectSql('o')}
@@ -613,9 +619,9 @@ function create(db) {
       );
     },
 
-    async candidatesByText(claimId, limit) {
+    async candidatesByText(claimId: number | string, limit: number) {
       const n = await db.one('select text from claim where id = $1', [claimId]);
-      const match = n && ftsQuery(n.text);
+      const match = n && ftsQuery(String(n.text));
       if (!match) return [];
       return db.rows(
         `select o.id, o.kind, o.text, o.valid_at
@@ -628,7 +634,7 @@ function create(db) {
       );
     },
 
-    async candidatesByKind(claimId) {
+    async candidatesByKind(claimId: number | string) {
       return db.rows(
         `select o.id, o.kind, o.text, o.valid_at
        from claim n join claim o on ${sameSubjectSql('o')} and o.kind = n.kind
@@ -639,7 +645,7 @@ function create(db) {
       );
     },
 
-    async supersedeTarget(target, validAt) {
+    async supersedeTarget(target: unknown, validAt: unknown) {
       await db.query(
         `update claim set status = 'superseded', expired_at = ${NOW},
                 invalid_at = coalesce(invalid_at, max(valid_at, coalesce($2, valid_at)))
@@ -648,23 +654,23 @@ function create(db) {
       );
     },
 
-    async linkSupersedes(claimId, target) {
+    async linkSupersedes(claimId: number | string, target: unknown) {
       await db.query('update claim set supersedes_id = $2 where id = $1', [claimId, target]);
     },
 
-    async markDuplicate(claimId, target) {
+    async markDuplicate(claimId: number | string, target: unknown) {
       await db.query(`update claim set status = 'superseded', expired_at = ${NOW}, duplicate_of = $2 where id = $1`, [claimId, target]);
     },
 
-    async raiseConfidence(target, confidence) {
+    async raiseConfidence(target: unknown, confidence: number) {
       await db.query(`update claim set confidence = min(1, max(confidence, coalesce($2, confidence)) + 0.05) where id = $1`, [target, confidence]);
     },
 
-    async retireNoop(claimId) {
+    async retireNoop(claimId: number | string) {
       await db.query(`update claim set status = 'superseded', expired_at = ${NOW} where id = $1`, [claimId]);
     },
 
-    async recordDecision(claimId, decision, targetId, decidedBy, reason) {
+    async recordDecision(claimId: number | string, decision: string, targetId: number | string, decidedBy: unknown, reason: string) {
       await db.query(
         `insert into consolidation (claim_id, decision, target_id, decided_by, error)
        values ($1,$2,$3,$4,$5)
@@ -674,7 +680,7 @@ function create(db) {
       );
     },
 
-    async unconsolidatedByIds(ids) {
+    async unconsolidatedByIds(ids: unknown[]) {
       return pgRows(
         await db.rows(
           `select c.* from claim c left join consolidation k on k.claim_id = c.id
@@ -684,7 +690,7 @@ function create(db) {
       );
     },
 
-    async unconsolidatedOldest(limit) {
+    async unconsolidatedOldest(limit: number) {
       return pgRows(
         await db.rows(
           `select c.* from claim c left join consolidation k on k.claim_id = c.id
@@ -702,7 +708,7 @@ function create(db) {
       return r?.n ?? 0;
     },
 
-    async olderCommitments(c) {
+    async olderCommitments(c: Row) {
       const rows = await db.rows(
         `select o.id, o.summary, o.due_at, ${ACTED('o')} as acted
        from commitment o join source_item si on si.id = o.source_item_id
@@ -718,15 +724,15 @@ function create(db) {
       return rows.map((r) => ({ ...r, acted: Boolean(r.acted) }));
     },
 
-    async foldCommitment(dropId, keepId) {
+    async foldCommitment(dropId: number | string, keepId: number | string) {
       const r = await db.query(
         `update commitment set superseded_by = $2 where id = $1 and superseded_by is null and status in ('open','dispatched')`,
         [dropId, keepId]
       );
-      return r.rowCount > 0;
+      return (r.rowCount ?? 0) > 0;
     },
 
-    async commitmentsToReview(limit) {
+    async commitmentsToReview(limit: number) {
       const rows = await db.rows(
         `select c.id, c.summary, c.detail, c.direction, c.counterparty_person_id, c.due_at, c.extracted_at,
             c.source_item_id, si.thread_external_id, ${ACTED('c')} as acted
@@ -740,7 +746,7 @@ function create(db) {
       return rows.map((r) => ({ ...r, acted: Boolean(r.acted) }));
     },
 
-    async markCommitmentReviewed(id, reviewedBy, supersedes) {
+    async markCommitmentReviewed(id: number | string, reviewedBy: unknown, supersedes: unknown) {
       await db.query(
         `insert into commitment_review (commitment_id, reviewed_by, supersedes) values ($1,$2,$3)
      on conflict (commitment_id) do nothing`,
@@ -750,7 +756,7 @@ function create(db) {
 
     // -------------------------------------------------- extraction (memory/extract)
 
-    async pendingExtraction(version, limit, minBodyChars) {
+    async pendingExtraction(version: string, limit: number, minBodyChars: unknown) {
       return db.rows(
         `select si.* from source_item si
        left join claim_extraction ce on ce.source_item_id = si.id and ce.extracted_by = $1
@@ -761,7 +767,7 @@ function create(db) {
       );
     },
 
-    async pendingExtractionCount(version, minBodyChars) {
+    async pendingExtractionCount(version: string, minBodyChars: unknown) {
       const r = await db.one(
         `select count(*) as n from source_item si
        left join claim_extraction ce on ce.source_item_id = si.id and ce.extracted_by = $1
@@ -771,15 +777,15 @@ function create(db) {
       return r?.n ?? 0;
     },
 
-    async personDisplayName(personId) {
+    async personDisplayName(personId: number | string) {
       return db.one('select display_name from person where id = $1', [personId]);
     },
 
-    async setPersonDisplayName(personId, name) {
+    async setPersonDisplayName(personId: number | string, name: string) {
       await db.query('update person set display_name = $2 where id = $1', [personId, name]);
     },
 
-    async deleteUnconsolidatedClaims(itemId, version) {
+    async deleteUnconsolidatedClaims(itemId: number | string, version: string) {
       await db.query(
         `delete from claim where source_item_id = $1 and extracted_by = $2 and origin = 'distill'
           and not exists (select 1 from consolidation k where k.claim_id = claim.id)`,
@@ -787,7 +793,7 @@ function create(db) {
       );
     },
 
-    async insertExtractedClaim(c) {
+    async insertExtractedClaim(c: Row) {
       await db.query(
         `insert into claim (subject_kind, subject_id, subject_label, kind, text, quote, source_item_id,
                             source_kind, confidence, valid_at, invalid_at, status, origin, extracted_by, embedding)
@@ -799,7 +805,7 @@ function create(db) {
       );
     },
 
-    async recordExtraction(itemId, version, claims, dropped) {
+    async recordExtraction(itemId: number | string, version: string, claims: unknown, dropped: unknown) {
       await db.query(
         `insert into claim_extraction (source_item_id, extracted_by, claims, dropped, error)
        values ($1,$2,$3,$4,null)
@@ -809,7 +815,7 @@ function create(db) {
       );
     },
 
-    async recordExtractionError(itemId, version, message) {
+    async recordExtractionError(itemId: number | string, version: string, message: string) {
       await db.query(
         `insert into claim_extraction (source_item_id, extracted_by, error) values ($1,$2,$3)
        on conflict (source_item_id) do update set extracted_by = excluded.extracted_by,
@@ -820,11 +826,11 @@ function create(db) {
 
     // ----------------------------------------------------------- dream (memory/dream)
 
-    async dreamMarker(key) {
+    async dreamMarker(key: number | string) {
       return db.one('select value from setting where key = $1', [key]);
     },
 
-    async saveDreamMarker(key, value) {
+    async saveDreamMarker(key: number | string, value: string) {
       await db.query(
         `insert into setting (key, value, updated_at) values ($1,$2,${NOW})
      on conflict (key) do update set value = excluded.value, updated_at = ${NOW}`,
@@ -832,7 +838,7 @@ function create(db) {
       );
     },
 
-    async dedupeSubjects(minClaims, since) {
+    async dedupeSubjects(minClaims: unknown, since: Date | string | number) {
       return db.rows(
         `select subject_kind, subject_id, lower(subject_label) as label, count(*) as n
        from claim where status = 'active'
@@ -843,7 +849,7 @@ function create(db) {
       );
     },
 
-    async subjectClaims(subjectKind, subjectId, label) {
+    async subjectClaims(subjectKind: unknown, subjectId: number | string, label: string) {
       return db.rows(
         `select id, kind, text, confidence, valid_at from claim
         where status = 'active' and subject_kind = $1
@@ -853,7 +859,7 @@ function create(db) {
       );
     },
 
-    async mergeDuplicates(dropIds, keepId) {
+    async mergeDuplicates(dropIds: unknown[], keepId: number | string) {
       const r = await db.query(
         `update claim set status = 'superseded', expired_at = ${NOW}, duplicate_of = $2
           where id in (select value from json_each($1)) and status = 'active'`,
@@ -869,7 +875,7 @@ function create(db) {
       );
     },
 
-    async expireClaims(ids) {
+    async expireClaims(ids: unknown[]) {
       const r = await db.query(
         `update claim set status = 'superseded', expired_at = ${NOW}, invalid_at = coalesce(invalid_at, ${NOW})
       where id in (select value from json_each($1)) and status = 'active'`,
@@ -880,7 +886,7 @@ function create(db) {
 
     // ----------------------------------------------------------- recall
 
-    async searchPagesLexical(q, limit) {
+    async searchPagesLexical(q: string, limit: number) {
       const match = ftsWebQuery(q);
       if (!match) return [];
       return db.rows(
@@ -892,7 +898,7 @@ function create(db) {
       );
     },
 
-    async searchPagesVector(vector, limit) {
+    async searchPagesVector(vector: unknown, limit: number) {
       return db.rows(
         `select id, kind, subject_id, title, substr(body, 1, 1500) as body
            from memory_page where kind in ('person','project') and embedding is not null
@@ -903,7 +909,7 @@ function create(db) {
 
     // --- for meetings/index.js, meetings/debrief.js
 
-    async activeBlockers(now) {
+    async activeBlockers(now: Date | string | number) {
       return db.rows(
         `select id, text, quote from claim
       where status = 'active' and kind = 'blocker' and subject_kind = 'me'
@@ -913,7 +919,7 @@ function create(db) {
       );
     },
 
-    async activeForPerson(personId) {
+    async activeForPerson(personId: number | string) {
       return db.rows(
         `select id, text from claim where subject_kind = 'person' and subject_id = $1 and status = 'active'
       order by valid_at desc, id desc limit 5`,
@@ -921,7 +927,7 @@ function create(db) {
       );
     },
 
-    async insertTopicClaim({ label, kind, text, quote: q, sourceItemId, validAt, extractedBy }) {
+    async insertTopicClaim({ label, kind, text, quote: q, sourceItemId, validAt, extractedBy }: { label?: string | null; kind?: string | null; text?: string | null; quote?: string | null; sourceItemId?: number | string | null; validAt?: unknown; extractedBy?: string | null }) {
       return db.one(
         `insert into claim (subject_kind, subject_id, subject_label, kind, text, quote, source_item_id, source_kind,
                           confidence, valid_at, status, origin, extracted_by)
@@ -930,27 +936,27 @@ function create(db) {
       );
     },
 
-    async insertDebriefClaim({ subjectKind, subjectId = null, label, kind, text, quote: q, itemId, validAt, extractedBy }) {
+    async insertDebriefClaim({ subjectKind, subjectId = null, label, kind, text, quote: q, itemId, validAt, extractedBy }: { subjectKind?: unknown; subjectId?: number | string | null; label?: string | null; kind?: string | null; text?: string | null; quote?: string | null; itemId?: number | string | null; validAt?: unknown; extractedBy?: string | null }) {
       const r = await db.one(
         `insert into claim (subject_kind, subject_id, subject_label, kind, text, quote, source_item_id, source_kind,
                         confidence, valid_at, status, origin, extracted_by)
      values ($1,$2,$3,$4,$5,$6,$7,'audio',0.8,$8,'active','distill',$9) returning id`,
         [subjectKind, subjectId, label, kind, text, q, itemId, validAt, extractedBy]
       );
-      return r.id;
+      return r?.id;
     },
 
-    async retract(id) {
+    async retract(id: number | string) {
       await db.query(`update claim set status = 'retracted' where id = $1 and status <> 'retracted'`, [id]);
     },
 
     // --- for src/distill/index.js
 
-    async deleteFactsOf(itemId, version) {
+    async deleteFactsOf(itemId: number | string, version: string) {
       await db.query('delete from fact where source_item_id = $1 and extracted_by = $2', [itemId, version]);
     },
 
-    async insertFact(itemId, kind, summary, payload, occurredAt, version) {
+    async insertFact(itemId: number | string, kind: string, summary: string, payload: Row, occurredAt: Date | string | number, version: string) {
       await db.query(
         `insert into fact (source_item_id, kind, summary, payload, occurred_at, extracted_by)
          values ($1,$2,$3,$4,$5,$6)`,
@@ -960,7 +966,7 @@ function create(db) {
 
     // --- for src/distill/identity.js
 
-    async repointClaimsToMe(intoId, fromId) {
+    async repointClaimsToMe(intoId: number | string, fromId: number | string) {
       const r = await db.query(
         `update claim set subject_kind = 'me', subject_id = $1, subject_label = 'me'
             where subject_kind = 'person' and subject_id = $2`,
@@ -969,19 +975,19 @@ function create(db) {
       return r.rowCount;
     },
 
-    async repointClaims(intoId, fromId, name) {
+    async repointClaims(intoId: number | string, fromId: number | string, name: string) {
       const r = await db.query(`update claim set subject_id = $1, subject_label = $3 where subject_kind = 'person' and subject_id = $2`, [intoId, fromId, name]);
       return r.rowCount;
     },
 
-    async deletePersonPage(personId) {
+    async deletePersonPage(personId: number | string) {
       await db.query(`delete from memory_page where kind = 'person' and subject_id = $1`, [personId]);
     },
 
     /** How many claims wait for a human to vouch for them. */
     async pendingReviewCount() {
       const r = await db.one(`select count(*) as n from claim where status = 'pending_review'`);
-      return r.n;
+      return r?.n;
     },
   };
 }
