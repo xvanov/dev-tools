@@ -403,6 +403,15 @@ test('approvals: answerPrompt and the call write the rows checkApproval wants, t
   assert.ok(!C.checkApproval([rows[1], { ...rows[0], seq: 0 }], { tool: 'factory_start', subject, callSubject: '77', actor: G.E2E_ACTOR })[1].ok);
   assert.ok(!C.checkApproval(rows, { tool: 'factory_start', subject, callSubject: '77', actor: 'pa-chat' })[1].ok);
   assert.ok(!C.checkApproval(null, { tool: 'factory_start', subject, callSubject: '77', actor: G.E2E_ACTOR }, 'db down')[0].ok);
+  // A call that names no card or job (factory_continue on a PR) is found by its args' hash (8.4.25).
+  const cont = { repo: 'xvanov/dev-tools', pr: 12, ask: 'fix review', delivery: 'pr' };
+  const crows = [];
+  const crepo = { audit: { append: async (e) => { crows.unshift({ seq: crows.length + 1, ...e, args_hash: e.argsHash }); return e; } } };
+  await G.answerPrompt('factory_continue', cont, `${subject}:c`, { repo: crepo });
+  await P.enforce({ tool: 'factory_continue', action: 'call', channel: 'chat', actor: G.E2E_ACTOR, args: cont }, { repo: crepo });
+  assert.strictEqual(crows[0].subject, '', 'policy gives a card-less call no subject');
+  allOk(C.checkApproval(crows, { tool: 'factory_continue', subject: `${subject}:c`, callSubject: null, actor: G.E2E_ACTOR, argsHash: P.argsHash(cont) }));
+  assert.ok(!C.checkApproval(crows, { tool: 'factory_continue', subject: `${subject}:c`, callSubject: null, actor: G.E2E_ACTOR, argsHash: P.argsHash({ ...cont, pr: 13 }) })[1].ok, 'another call\'s args do not count');
   assert.strictEqual(G.policyDry('factory_start').ok, true);
 });
 

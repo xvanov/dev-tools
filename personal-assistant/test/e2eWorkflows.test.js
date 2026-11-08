@@ -294,14 +294,160 @@ test('dry run: an app nothing ticks fails the run before it submits (8.4.24)', a
   assert.ok(u.ok && /unknown/.test(u.detail), 'an older factory says nothing: passes with a note');
 });
 
-test('a real teams-ask or review-fix run is refused, never improvised', async () => {
-  for (const id of ['teams-ask', 'review-fix']) {
-    const { deps, log } = fakeDeps();
-    const s = await R.main(id, {}, {}, deps);
-    assert.strictEqual(s.ok, false);
-    assert.ok(/not automated yet/.test(s.errors[0]), id);
-    assert.strictEqual(log.chat.length, 0);
+test('a real teams-ask run is refused, never improvised; review-fix without --pr starts nothing', async () => {
+  const { deps, log } = fakeDeps();
+  const s = await R.main('teams-ask', {}, {}, deps);
+  assert.strictEqual(s.ok, false);
+  assert.ok(/not automated yet/.test(s.errors[0]));
+  const rf = await R.main('review-fix', {}, {}, deps);
+  assert.ok(!rf.ok && /needs --pr <n>/.test(rf.errors[0]), JSON.stringify(rf.errors));
+  assert.strictEqual(log.chat.length, 0);
+  assert.throws(() => R.parse('review-fix', { pr: 'abc' }, {}), /--pr is a PR number/);
+  assert.strictEqual(R.parse('review-fix', { pr: '#12' }, {}).pr, 12);
+});
+
+// --- review-fix (8.4.25) ---------------------------------------------------------------------
+
+const P = require('../src/policy');
+
+function prJson({ head = 'a'.repeat(40), state = 'OPEN', merged = false, unresolved = 2, ci = 'SUCCESS', newest = 12, fork = false } = {}) {
+  return {
+    data: {
+      repository: {
+        pullRequest: {
+          number: 12, state, merged, isDraft: false, isCrossRepository: fork, url: 'https://github.com/xvanov/dev-tools/pull/12',
+          headRefName: 'fix/retry', headRefOid: head, baseRefName: 'main',
+          reviewThreads: { nodes: [...Array(unresolved).fill({ isResolved: false }), { isResolved: true }] },
+          commits: { nodes: [{ commit: { oid: head, statusCheckRollup: ci ? { state: ci } : null } }] },
+        },
+        pullRequests: { nodes: [{ number: newest }] },
+      },
+    },
+  };
+}
+
+function reviewFixDeps({ after = {}, compare = 'ahead', start = {}, job = {} } = {}) {
+  let phase = 'before';
+  const gh = [];
+  const { deps, log } = fakeDeps({
+    async gh(args, owner) {
+      gh.push([args, owner]);
+      if (args[0] === 'api' && args[1] === 'graphql') {
+        return { code: 0, stdout: JSON.stringify(phase === 'before' ? prJson() : prJson({ head: 'b'.repeat(40), ...after })), stderr: '' };
+      }
+      if (args[0] === 'api' && /\/compare\//.test(args[1])) return { code: 0, stdout: JSON.stringify({ status: compare, ahead_by: compare === 'ahead' ? 2 : 1, behind_by: compare === 'ahead' ? 0 : 3 }), stderr: '' };
+      return { code: 0, stdout: JSON.stringify({ viewerPermission: 'ADMIN' }), stderr: '' };
+    },
+    async chat(name, args) {
+      log.chat.push([name, args]);
+      if (name === 'factory_continue') return { started: true, run: 8, job: 'dev-tools:042', kind: 'code', runtime: 'claude_session', delivery: args.delivery, continues: { branch: 'fix/retry', pr: 12, into: 'main' }, follow: 'http://hub/#session=follow8', timings_ms: { compose_model: 900 }, ...start };
+      if (name === 'factory_cancel') return {};
+      throw new Error(name);
+    },
+    // the chat's MCP server audits the call with policy's subject ('' for a card-less call) and the args' hash
+    chatCall: async (tool, args) => {
+      log.audit.unshift({ seq: log.audit.length + 1, tool, action: 'call', channel: 'chat', actor: 'pa-e2e', subject: '', args_hash: P.argsHash(args), decision: 'ask', rule: 'chat-actions-ask' });
+      return deps.chat(tool, args);
+    },
+    jobStatus: async () => {
+      phase = 'after';
+      return { job_id: 'dev-tools:042', state: 'done', terminal: true, cost_usd: 0, base: { branch: 'fix/retry', pr: 12, into: 'main' }, stories: [], runs: [{ id: 5, runtime: 'claude_session', state: 'ok', session: { termhub_session_id: 'rf5', url: 'http://hub:7000/#session=rf5' } }], ...job };
+    },
+  });
+  return { deps, log, gh };
+}
+
+test('review-fix: factory_continue on the PR through the approval; fast-forward, same PR, nothing merged, CI green', async () => {
+  const { deps, log, gh } = reviewFixDeps();
+  const s = await R.main('review-fix', { pr: '12' }, {}, deps);
+  assert.strictEqual(s.ok, true, JSON.stringify(s.failed.concat(s.errors)));
+  const call = log.chat.find(([n]) => n === 'factory_continue')[1];
+  assert.deepStrictEqual([call.repo, call.pr, call.delivery, call.runtime], ['xvanov/dev-tools', 12, 'pr', undefined], 'delivery pr (never merges); the default runtime is under test');
+  assert.deepStrictEqual(log.audit.map((a) => [a.action, a.channel]).reverse(), [['approve', 'e2e'], ['call', 'chat']]);
+  assert.ok(s.checks.filter((c) => c.view === 'policy').every((c) => c.ok) && s.checks.some((c) => c.check === 'factory_continue call audited after the approval'), 'found by its args hash');
+  for (const name of ['PR #12 got new commits', 'pushed fast-forward (no force push)', 'same branch, no new PR opened', 'nothing merged; the PR is still open', 'CI green on the new head', 'job base is PR #12', 'continues PR #12']) {
+    assert.ok(s.checks.some((c) => c.check === name && c.ok), name);
   }
+  assert.ok(gh.every(([, owner]) => owner === 'xvanov'), 'gh as the repo owner');
+  assert.ok(gh.some(([a]) => a[1] === `repos/xvanov/dev-tools/compare/${'a'.repeat(40)}...${'b'.repeat(40)}`));
+  const by = Object.fromEntries(s.hops.map((h) => [h.c, h]));
+  assert.match(by.jarvis.note, /less the composing model's 900 ms/);
+  assert.strictEqual(s.cost.usd, 0);
+  assert.deepStrictEqual(s.links.head, { before: 'a'.repeat(40), after: 'b'.repeat(40) });
+  assert.ok(log.shots.includes('build') && log.shots.includes('github-pr') && log.shots.includes('run-rf5'));
+  assert.deepStrictEqual(log.killed.sort(), ['follow8', 'rf5']);
+  assert.ok(!log.chat.some(([n]) => n === 'factory_cancel'), 'a done job is not cancelled');
+  assert.ok(s.cleanup.some((c) => /PR #12 left open/.test(c)));
+});
+
+test('review-fix: a force push, a new PR, a merge or red CI fails the run', async () => {
+  const cases = [
+    [{ compare: 'diverged' }, 'pushed fast-forward (no force push)'],
+    [{ after: { newest: 13 } }, 'same branch, no new PR opened'],
+    [{ after: { state: 'MERGED', merged: true } }, 'nothing merged; the PR is still open'],
+    [{ after: { ci: 'FAILURE' } }, 'CI green on the new head'],
+    [{ after: { head: 'a'.repeat(40) } }, 'PR #12 got new commits'],
+  ];
+  for (const [over, name] of cases) {
+    const { deps } = reviewFixDeps(over);
+    const s = await R.main('review-fix', { pr: '12' }, {}, deps);
+    assert.strictEqual(s.ok, false, name);
+    assert.ok(s.checks.some((c) => c.check === name && !c.ok), `${name}: ${JSON.stringify(s.checks.filter((c) => !c.ok))}`);
+  }
+});
+
+test('review-fix: a job for an app nothing ticks, or a PR with nothing to fix, starts no wait', async () => {
+  const idle = reviewFixDeps({ start: { waiting: 'app dev-tools is not ticked: ...' } });
+  const s = await R.main('review-fix', { pr: '12' }, {}, idle.deps);
+  assert.ok(!s.ok && /would sit queued/.test(s.errors[0]), JSON.stringify(s.errors));
+  assert.ok(idle.log.chat.some(([n]) => n === 'factory_cancel'), 'the queued job is cancelled');
+  const { deps, log } = reviewFixDeps();
+  deps.gh = async () => ({ code: 0, stdout: JSON.stringify(prJson({ unresolved: 0 })), stderr: '' });
+  const none = await R.main('review-fix', { pr: '12' }, {}, deps);
+  assert.ok(!none.ok && /has unresolved review threads \(0 of 1 unresolved\)/.test(none.errors[0]), JSON.stringify(none.errors));
+  assert.ok(!log.chat.some(([n]) => n === 'factory_continue'), 'nothing started');
+});
+
+test('review-fix dry run: the PR exists, is open, ours, and has unresolved threads', async () => {
+  const { deps } = reviewFixDeps();
+  const s = await R.main('review-fix', { 'dry-run': true, pr: '12' }, {}, deps);
+  for (const name of ['PR #12 exists in xvanov/dev-tools', 'PR #12 is open', 'PR #12 is from a branch of xvanov/dev-tools', 'PR #12 has unresolved review threads']) {
+    assert.ok(s.checks.some((c) => c.check === name && c.ok), name);
+  }
+  deps.gh = async () => ({ code: 0, stdout: JSON.stringify(prJson({ state: 'CLOSED', unresolved: 0 })), stderr: '' });
+  const closed = await R.main('review-fix', { 'dry-run': true, pr: '12' }, {}, deps);
+  assert.deepStrictEqual(closed.checks.filter((c) => c.view === 'github' && !c.ok).map((c) => c.check), ['PR #12 is open', 'PR #12 has unresolved review threads']);
+  deps.gh = async () => ({ code: 1, stdout: '', stderr: 'GraphQL: Could not resolve to a PullRequest with the number of 12.' });
+  const gone = await R.main('review-fix', { 'dry-run': true, pr: '12' }, {}, deps);
+  assert.ok(gone.checks.some((c) => c.check === 'PR #12 exists in xvanov/dev-tools' && !c.ok));
+  const bare = await R.main('review-fix', { 'dry-run': true }, {}, reviewFixDeps().deps);
+  assert.ok(!bare.checks.some((c) => c.view === 'github') && bare.notes.some((n) => /--pr <n>/.test(n)));
+});
+
+test('--on runs the workflow on that machine (8.4.25): the dry run by exec, a real run in a termhub session', async () => {
+  const ran = [];
+  const sessions = [];
+  const summary = { ok: true, workflow: 'review-fix', kind: 'dry-run', checks: [] };
+  let reads = 0;
+  const { deps } = fakeDeps({
+    config: { termhub: { machines: { lab: { reposRoot: '/home/tester/src', os: 'linux' } } } },
+    runCommand: async (machine, argv, opts) => {
+      ran.push({ machine, argv, cwd: opts.cwd });
+      if (argv[1] === '-e') return ++reads < 2 ? { code: 1, stdout: '', stderr: 'ENOENT' } : { code: 0, stdout: JSON.stringify({ ...summary, kind: 'run' }), stderr: '' };
+      return { code: 1, stdout: JSON.stringify(summary), stderr: '' };
+    },
+    hub: () => ({ createSession: async (s) => { sessions.push(s); return { id: 'remote1' }; } }),
+  });
+  const s = await R.main('review-fix', { on: 'lab', 'dry-run': true, pr: '12' }, { timeout: ['review=600'] }, deps);
+  assert.deepStrictEqual(s, summary, 'the remote summary, even on a failing exit');
+  assert.deepStrictEqual(ran[0].argv, ['node', 'bin/pa.js', 'e2e', 'review-fix', '--json', '--dry-run', '--pr', '12', '--timeout', 'review=600']);
+  assert.strictEqual(ran[0].cwd, '/home/tester/src/dev-tools/personal-assistant');
+  assert.strictEqual(ran[0].machine, 'lab');
+
+  const real = await R.main('review-fix', { on: 'lab', pr: '12' }, {}, deps);
+  assert.strictEqual(real.kind, 'run');
+  assert.match(sessions[0].command, /^node bin\/pa\.js e2e review-fix --json --pr 12 --report e2e-report-[\w-]+\.json$/);
+  assert.match(sessions[0].title, /^pa e2e review-fix/);
 });
 
 test('deepseek-pr defaults to the Azure DeepSeek deployment on the API runtime', () => {

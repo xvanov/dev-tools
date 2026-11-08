@@ -13,6 +13,7 @@
 //   folderName(id, at, dry)              the run folder's name
 //   summary({...})                       the JSON summary written next to the evidence
 //   wav(pcm, rate)                       raw 16-bit mono PCM -> a WAV file (TTS output -> transcribe input)
+//   prFacts / prReady / reviewFixChecks  review-fix: its PR before and after the job, held to the outcome
 //
 // Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
 
@@ -38,9 +39,82 @@ const REAL_RUN: Record<string, { self: boolean; needs: string }> = {
   'whats-on': { self: true, needs: 'the voice service and the fast lane (local models)' },
   research: { self: true, needs: 'the factory (claude_session research job)' },
   'deepseek-pr': { self: true, needs: 'the factory API runtime with a DeepSeek model (Azure deployment by default)' },
-  'review-fix': { self: true, needs: 'an existing PR of yours with review comments: --pr <n>' },
+  'review-fix': { self: true, needs: 'an open PR of yours with unresolved review comments: --pr <n> [--repo owner/name] (left open; only the fix is pushed)' },
   'teams-ask': { self: false, needs: 'a test Teams chat with only you in it: --test-chat <id> (never a colleague)' },
 };
+
+// --- review-fix: one PR read, before and after the job ----------------------------------------
+
+/** One GraphQL read: the PR (head, state, threads, CI on its head) and the repo's newest PR. */
+const PR_QUERY = `query($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      number state merged isDraft isCrossRepository url headRefName headRefOid baseRefName
+      reviewThreads(first: 100) { nodes { isResolved } }
+      commits(last: 1) { nodes { commit { oid statusCheckRollup { state } } } }
+    }
+    pullRequests(first: 1, orderBy: { field: CREATED_AT, direction: DESC }) { nodes { number } }
+  }
+}`;
+
+/** What review-fix reads about its PR (PR_QUERY), flattened. */
+type PrFacts = {
+  number: number; state: string; merged: boolean; draft: boolean; fork: boolean; url: string | null;
+  branch: string | null; head: string | null; base: string | null; unresolved: number; threads: number;
+  ci: string | null; newestPr: number | null;
+};
+
+/** Pure. PR_QUERY's answer as PrFacts; null when the PR is not there. */
+function prFacts(raw: Json | null | undefined): PrFacts | null {
+  const repo = raw?.data?.repository;
+  const pr = repo?.pullRequest;
+  if (!pr || typeof pr !== 'object') return null;
+  const threads: Json[] = Array.isArray(pr.reviewThreads?.nodes) ? pr.reviewThreads.nodes : [];
+  const last = Array.isArray(pr.commits?.nodes) ? pr.commits.nodes[0]?.commit : null;
+  const newest = Number(repo?.pullRequests?.nodes?.[0]?.number);
+  return {
+    number: Number(pr.number), state: String(pr.state || ''), merged: Boolean(pr.merged), draft: Boolean(pr.isDraft), fork: Boolean(pr.isCrossRepository),
+    url: pr.url || null, branch: pr.headRefName || null, head: pr.headRefOid || null, base: pr.baseRefName || null,
+    unresolved: threads.filter((t) => t && !t.isResolved).length, threads: threads.length,
+    ci: last && (!pr.headRefOid || last.oid === pr.headRefOid) ? (last.statusCheckRollup?.state || 'NONE') : null,
+    newestPr: Number.isInteger(newest) ? newest : null,
+  };
+}
+
+/** Pure. Whether a PR can be review-fixed: there, open, ours, with something to fix. */
+function prReady(pr: PrFacts | null, n: number, repo: string): Check[] {
+  const view = 'github';
+  if (!pr) return [{ view, check: `PR #${n} exists in ${repo}`, ok: false, detail: 'not found' }];
+  return [
+    { view, check: `PR #${n} exists in ${repo}`, ok: true, detail: `${pr.branch} → ${pr.base}, head ${String(pr.head).slice(0, 10)}` },
+    { view, check: `PR #${n} is open`, ok: pr.state === 'OPEN' && !pr.merged, detail: pr.merged ? 'merged' : pr.state.toLowerCase() },
+    { view, check: `PR #${n} is from a branch of ${repo}`, ok: !pr.fork, ...(pr.fork ? { detail: 'from a fork: the factory cannot push to it' } : {}) },
+    { view, check: `PR #${n} has unresolved review threads`, ok: pr.unresolved > 0, detail: `${pr.unresolved} of ${pr.threads} unresolved` },
+  ];
+}
+
+/** CI rollup states that are still running (GitHub StatusState). */
+const CI_PENDING = new Set(['PENDING', 'EXPECTED']);
+
+/**
+ * Pure. The review-fix outcome (8.4.25): the same PR got new commits by
+ * fast-forward (`compare` = GitHub's compare of the old head to the new:
+ * status `ahead` means the old head is an ancestor, so nothing was force-pushed),
+ * no new PR was opened, nothing was merged, CI is green on the new head.
+ */
+function reviewFixChecks(before: PrFacts, after: PrFacts | null, compare: Json | null): Check[] {
+  const view = 'github';
+  if (!after) return [{ view, check: `PR #${before.number} still there after the job`, ok: false, detail: 'not found' }];
+  const moved = Boolean(after.head && after.head !== before.head);
+  const ff = moved && compare?.status === 'ahead';
+  return [
+    { view, check: `PR #${before.number} got new commits`, ok: moved, detail: moved ? `${String(before.head).slice(0, 10)} → ${String(after.head).slice(0, 10)}${compare?.ahead_by != null ? ` (+${compare.ahead_by})` : ''}` : 'head unchanged' },
+    { view, check: 'pushed fast-forward (no force push)', ok: ff, detail: !moved ? 'nothing pushed' : compare ? `compare ${compare.status}${compare.behind_by ? `, ${compare.behind_by} behind` : ''}` : 'compare not readable' },
+    { view, check: 'same branch, no new PR opened', ok: after.branch === before.branch && after.newestPr === before.newestPr, detail: `newest PR #${after.newestPr} (was #${before.newestPr})` },
+    { view, check: 'nothing merged; the PR is still open', ok: after.state === 'OPEN' && !after.merged, detail: after.merged ? 'merged' : after.state.toLowerCase() },
+    { view, check: 'CI green on the new head', ok: moved && after.ci === 'SUCCESS', detail: `CI ${after.ci || 'unknown'}${after.ci && CI_PENDING.has(after.ci) ? ' (still running at the deadline)' : ''}` },
+  ];
+}
 
 function workflows(arch: Arch | null | undefined): string[] {
   return ((arch?.examples || []) as Json[]).filter((x) => x.acceptance && !x.acceptance.outOfScope).map((x) => x.id);
@@ -208,4 +282,4 @@ function ndjson(text: unknown): Json[] {
   }).filter(Boolean) as Json[];
 }
 
-module.exports = { REAL_RUN, workflows, acceptance, scoreHops, toolCallMs, scoreCost, missingViews, folderName, summary, table, wav, ndjson };
+module.exports = { REAL_RUN, PR_QUERY, CI_PENDING, prFacts, prReady, reviewFixChecks, workflows, acceptance, scoreHops, toolCallMs, scoreCost, missingViews, folderName, summary, table, wav, ndjson };

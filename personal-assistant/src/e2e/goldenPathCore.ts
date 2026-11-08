@@ -413,17 +413,21 @@ function result(view: string, check: string, ok: unknown, detail: unknown = null
  * Pure. The approval's audit trail (8.4.12): among one tool's audit rows (newest
  * first), the e2e channel's approval of `subject` was allowed, and after it (a
  * higher seq) the call itself was audited from the chat by `actor` for
- * `callSubject` (the card or job, as policy's subjectOf derives it).
+ * `callSubject` (the card or job, as policy's subjectOf derives it). A call
+ * that names neither (factory_continue on a PR) has no subject: it is found
+ * by `argsHash` (policy.argsHash of its args, the audit row's args_hash).
  */
-function checkApproval(rows: unknown, w: { tool: string; subject: string; callSubject: unknown; actor: string }, error: unknown = null): Check[] {
+function checkApproval(rows: unknown, w: { tool: string; subject: string; callSubject: unknown; actor: string; argsHash?: string | null }, error: unknown = null): Check[] {
   if (!Array.isArray(rows)) return [result('policy', `${w.tool} audit rows`, false, error || 'audit log not readable')];
   const approve = (rows as Json[]).find((r) => r.action === 'approve' && r.channel === 'e2e' && r.subject === w.subject);
+  const same = (r: Json) => (w.callSubject == null && w.argsHash ? r.args_hash === w.argsHash : String(r.subject) === String(w.callSubject));
   const call = (rows as Json[]).find(
-    (r) => r.action === 'call' && r.channel === 'chat' && r.actor === w.actor && String(r.subject) === String(w.callSubject) && (!approve || Number(r.seq) > Number(approve.seq))
+    (r) => r.action === 'call' && r.channel === 'chat' && r.actor === w.actor && same(r) && (!approve || Number(r.seq) > Number(approve.seq))
   );
+  const what = w.callSubject == null && w.argsHash ? `args ${w.argsHash.slice(0, 12)}` : w.callSubject;
   return [
     result('policy', `${w.tool} approved on the e2e channel (audit row)`, approve?.decision === 'allow', approve ? `seq ${approve.seq}: ${approve.decision} (${approve.rule})` : `no approve row for ${w.subject}`),
-    result('policy', `${w.tool} call audited after the approval`, call && call.decision !== 'deny', call ? `seq ${call.seq}: ${call.decision} (${call.rule})` : `no chat call row for ${w.callSubject} after the approval`),
+    result('policy', `${w.tool} call audited after the approval`, call && call.decision !== 'deny', call ? `seq ${call.seq}: ${call.decision} (${call.rule})` : `no chat call row for ${what} after the approval`),
   ];
 }
 
@@ -686,10 +690,14 @@ function table(report: Report): string {
   return lines.join('\n');
 }
 
-/** Pure. A `pa e2e` argv to pass on to another machine: only plain tokens, never --on or --report. */
-function remoteArgv(flags: Flags = {}, lists: Lists = {}): string[] {
-  const argv = ['e2e', '--json'];
+/**
+ * Pure. A `pa e2e [<workflow>]` argv to pass on to another machine: only plain
+ * tokens, never --on or --report.
+ */
+function remoteArgv(flags: Flags = {}, lists: Lists = {}, { workflow = null }: { workflow?: string | null } = {}): string[] {
   const SAFE = /^[\w./:=@-]+$/;
+  if (workflow != null && !/^[a-z][a-z0-9-]*$/.test(workflow)) throw bad(`workflow "${workflow}" cannot be passed to another machine`);
+  const argv = workflow ? ['e2e', workflow, '--json'] : ['e2e', '--json'];
   for (const [k, v] of Object.entries(flags)) {
     if (['on', 'remote-path', 'report', 'json', 'timeout'].includes(k)) continue;
     if (v === true) argv.push(`--${k}`);

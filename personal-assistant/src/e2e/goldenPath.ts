@@ -229,10 +229,11 @@ function policyDry(tool: string): Check {
 }
 
 /** The approval's audit rows for one call (C.checkApproval); a call the policy did not prompt for fails. */
-async function approvalChecks(deps: Deps, tool: string, prompt: Json | null, subject: string, callSubject: string | null): Promise<Check[]> {
+async function approvalChecks(deps: Deps, tool: string, prompt: Json | null, subject: string, callSubject: string | null, { args = null }: { args?: Json | null } = {}): Promise<Check[]> {
   if (!prompt?.prompted) return [{ view: 'policy', check: `${tool} prompted for approval`, ok: false, detail: `the policy answered ${prompt?.rule || '?'} without a prompt: nothing was approved` }];
   const rows = await safely<Json[]>(() => deps.auditRows(tool));
-  return C.checkApproval(rows.ok ? rows.value : null, { tool, subject, callSubject, actor: E2E_ACTOR }, rows.error);
+  const argsHash = callSubject == null && args ? require('../policy').argsHash(args) : null;
+  return C.checkApproval(rows.ok ? rows.value : null, { tool, subject, callSubject, actor: E2E_ACTOR, argsHash }, rows.error);
 }
 
 // --------------------------------------------------------------- dry run ----
@@ -614,12 +615,12 @@ async function sweep(o: Options, deps: Deps): Promise<Json> {
  * outlives that, so it runs in a termhub session there (watchable) writing
  * `--report <file>`, read back through exec when it appears.
  */
-async function remote(o: Options, flags: Flags, lists: Lists, deps: Deps): Promise<Json> {
+async function remote(o: Options, flags: Flags, lists: Lists, deps: Deps, { workflow = null }: { workflow?: string | null } = {}): Promise<Json> {
   const m = deps.config.termhub.machines[o.on];
   if (!m) throw new Error(`--on ${o.on}: not in PA_MACHINES`);
   const sep = m.os === 'windows' || /^[A-Za-z]:\\/.test(m.reposRoot) ? '\\' : '/';
   const cwd = o.remotePath || [m.reposRoot.replace(/[\\/]+$/, ''), 'dev-tools', 'personal-assistant'].join(sep);
-  const argv = C.remoteArgv(flags, lists);
+  const argv = C.remoteArgv(flags, lists, { workflow });
   if (o.dryRun || o.sweep) {
     const r = await deps.runCommand(o.on, ['node', 'bin/pa.js', ...argv], { cwd, timeoutMs: 10 * 60_000 });
     try {
@@ -630,7 +631,7 @@ async function remote(o: Options, flags: Flags, lists: Lists, deps: Deps): Promi
   }
   const file = `e2e-report-${deps.uuid()}.json`;
   const command = ['node', 'bin/pa.js', ...argv, '--report', file].join(' ');
-  const s = await deps.hub(o.on).createSession({ cwd, command, title: `pa e2e (${o.stack || o.on})` });
+  const s = await deps.hub(o.on).createSession({ cwd, command, title: `pa e2e${workflow ? ` ${workflow}` : ''} (${o.stack || o.on})` });
   deps.log(`running on ${o.on} in termhub session ${s.id}`);
   const total = (Object.values(o.timeouts) as number[]).reduce((a, b) => a + b, 0) * 1000 + 15 * 60_000;
   const until = deps.now() + total;

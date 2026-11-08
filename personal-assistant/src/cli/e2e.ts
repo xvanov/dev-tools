@@ -17,8 +17,9 @@ const { USAGE } = require('../e2e/goldenPathCore.ts');
 const HELP = `${USAGE}
 
   pa e2e <workflow> [--dry-run] [--keep] [--json]   one workflow from the Map (plan 8.2):
-        whats-on | research | deepseek-pr [--model azure/deepseek-v4-pro] | review-fix | teams-ask
+        whats-on | research | deepseek-pr [--model azure/deepseek-v4-pro] | review-fix --pr <n> [--repo owner/name] | teams-ask
         evidence (summary.json, transcripts, screenshots) in <PA data dir>/e2e/<stamp>-<workflow>/
+        --on <machine> runs it on that stack (a real run in a termhub session there) and prints its summary here
   pa e2e all --dry-run                              every workflow's dry run`;
 
 function make(out: any, fail: any) {
@@ -66,6 +67,8 @@ function make(out: any, fail: any) {
       if (flags.json !== true) out(W.table(s));
     }
     const result = ids.length === 1 ? all[0] : { ok: all.every((s) => s.ok), runs: all };
+    // --report <file>: what `--on` reads back from the machine that ran it.
+    if (typeof flags.report === 'string') require('../e2e/goldenPath.ts').writeReport(flags.report, result);
     if (flags.json === true) out(JSON.stringify(result, null, 2));
     else out(`\nsummary: ${all.map((s) => `${s.folder}${require('path').sep}summary.json`).join('\n         ')}`);
     if (!result.ok) process.exitCode = 1;

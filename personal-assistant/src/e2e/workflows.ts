@@ -9,12 +9,13 @@
 //
 // Dummy inputs only where a real one would reach other people: teams-ask needs
 // a test chat with only you in it, review-fix one of your own PRs. Nothing
-// here ever messages anyone.
+// here ever messages anyone. `--on <machine>` runs the workflow on that stack
+// (goldenPath.remote) and brings its summary back.
 //
 //   whats-on     TTS'd question, replayed as the talk page: warm, smart-turn + transcribe, turn, TTS at the first piece
 //   research     a research card -> factory_start {kind: research} -> report.md
 //   deepseek-pr  the E4 golden path on the API runtime (Azure DeepSeek by default), delivery pr
-//   review-fix   dry run; a real run needs --pr <n> (one of yours with review comments)
+//   review-fix   factory_continue {pr} -> the same PR gets fast-forward commits, no new PR, CI green (--pr <n> [--repo])
 //   teams-ask    dry run; a real run needs --test-chat <id> (a chat with only you in it)
 //
 // Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
@@ -139,7 +140,10 @@ async function dry(id: string, acc: Acceptance, o: Options, deps: Deps): Promise
     const tool = id === 'research' ? 'factory_start' : 'factory_continue';
     checks.push(check('ask', `chat tool ${tool}`, tools.CHAT_ACTION_TOOL_NAMES.includes(tool)));
     checks.push(G.policyDry(tool));
-    if (id === 'review-fix') notes.push('a real run needs --pr <n>: one of your own PRs with review comments (left open; only the fix is pushed)');
+    if (id === 'review-fix' && o.pr) {
+      const pr = await G.safely(() => prRead(deps, o.repo, o.pr));
+      checks.push(...(pr.ok ? W.prReady(pr.value, o.pr, o.repo) : [check('github', `PR #${o.pr} readable in ${o.repo}`, false, pr.error)]));
+    } else if (id === 'review-fix') notes.push('a real run needs --pr <n> [--repo owner/name]: an open PR of yours with unresolved review comments (left open; only the fix is pushed). Add --pr to the dry run to check it.');
   } else if (id === 'deepseek-pr') {
     const base = await G.dryRun({ ...o, runtime: 'api', model: o.model }, deps);
     checks.push(...base);
@@ -358,6 +362,134 @@ async function research(acc: Acceptance, o: Options, deps: Deps, folder: string)
   }
 }
 
+// ------------------------------------------------------------ review-fix ----
+
+/** The PR as review-fix reads it (W.PR_QUERY: one GraphQL call as the repo's owner); null when not found. */
+async function prRead(deps: Deps, repo: string, n: number): Promise<Json | null> {
+  const [owner, name] = repo.split('/');
+  const r = await deps.gh(['api', 'graphql', '-f', `query=${W.PR_QUERY}`, '-F', `owner=${owner}`, '-F', `name=${name}`, '-F', `number=${n}`], G.owner(repo));
+  if (r.code !== 0) {
+    if (/Could not resolve to a (PullRequest|Repository)/i.test(r.stderr + r.stdout)) return null;
+    throw new Error(`gh api graphql (PR #${n}): ${(r.stderr || r.stdout).trim().slice(0, 200)}`);
+  }
+  return W.prFacts(JSON.parse(r.stdout));
+}
+
+/** GitHub's compare of two commits: {status, ahead_by, behind_by}; `ahead` = a fast-forward. */
+async function compareHeads(deps: Deps, repo: string, base: string, head: string): Promise<Json> {
+  const r = await deps.gh(['api', `repos/${repo}/compare/${base}...${head}`, '--jq', '{status: .status, ahead_by: .ahead_by, behind_by: .behind_by}'], G.owner(repo));
+  if (r.code !== 0) throw new Error(`gh api compare: ${(r.stderr || r.stdout).trim().slice(0, 200)}`);
+  return JSON.parse(r.stdout);
+}
+
+/** A termhub session id from a session link (`…#session=<id>`), or null. */
+function sessionOf(url: unknown): string | null {
+  const m = /#session=([\w-]+)/.exec(String(url || ''));
+  return m ? (m[1] as string) : null;
+}
+
+// The Map's review-fix, for real: factory_continue on one of your PRs through
+// the approval the chat uses, the job to its end, then the PR itself: new
+// commits by fast-forward, no new PR, nothing merged, CI green on the new head.
+// The PR is the user's: it is left open, and nothing but the fix is pushed.
+async function reviewFix(acc: Acceptance, o: Options, deps: Deps, folder: string): Promise<Partial<RunOut>> {
+  if (!o.pr) throw new Error('a real review-fix run needs --pr <n>: an open PR of yours with unresolved review comments');
+  const measured: Measured = {};
+  const checks: Check[] = [];
+  const transcripts: string[] = [];
+  const notes: string[] = [];
+  const cleanup: string[] = [];
+  const read = await prRead(deps, o.repo, o.pr);
+  const ready = W.prReady(read, o.pr, o.repo);
+  checks.push(...ready);
+  const notReady = ready.filter((c: Check) => !c.ok);
+  if (!read || notReady.length) throw new Error(`PR #${o.pr} cannot be review-fixed: ${notReady.map((c: Check) => `${c.check}${c.detail ? ` (${c.detail})` : ''}`).join('; ')}`);
+  const before: Json = read;
+  const marker = `e2e-${deps.uuid()}`;
+  // delivery pr: never auto_merge, so "nothing merged" is the factory's promise, not luck.
+  // No runtime: the tool's default (claude_session) is part of what is under test.
+  const args: Json = { repo: o.repo, pr: o.pr, delivery: 'pr', ask: o.question || `Fix the unresolved review comments on PR #${o.pr}. (automated e2e run ${marker})` };
+  let job: string | null = null;
+  let lastJob: Json | null = null;
+  let follow: string | null = null;
+  try {
+    const subject = `${marker}:factory_continue`;
+    const prompt: Json = await deps.answerPrompt('factory_continue', args, subject);
+    const t0: number = deps.now();
+    const start: Json | null = await deps.chatCall('factory_continue', args);
+    const tStarted: number = deps.now();
+    measured.jarvis = W.toolCallMs({ at: t0, ms: tStarted - t0 }, start);
+    checks.push(...(await G.approvalChecks(deps, 'factory_continue', prompt, subject, null, { args })));
+    if (start?.started !== true || !start.job) throw new Error(`factory_continue did not start a job: ${JSON.stringify(start).slice(0, 300)}`);
+    job = start.job as string;
+    follow = start.follow || null;
+    checks.push(check('ask', `continues PR #${o.pr}`, Number(start.continues?.pr) === o.pr, start.continues ? `${start.continues.branch} → ${start.continues.into}` : 'no continues in the answer'));
+    checks.push(check('ask', 'runtime claude_session by default', start.runtime === 'claude_session', start.runtime));
+    checks.push(check('ask', 'delivery never merges', start.delivery !== 'auto_merge' && start.delivery !== 'push_to_main', start.delivery));
+    checks.push(check('build', 'the app is ticked (not waiting)', !start.waiting, start.waiting || null));
+    if (start.waiting) throw new Error(`job ${job} would sit queued: ${start.waiting}`);
+
+    let tRunning: number | null = null;
+    const limit = o.timeouts.review || 5400;
+    const until = deps.now() + limit * 1000;
+    for (;;) {
+      const st = await G.safely(() => deps.jobStatus(job));
+      if (st.ok) lastJob = st.value;
+      if (tRunning == null && lastJob && lastJob.state !== 'queued') tRunning = deps.now();
+      if (lastJob && C.TERMINAL.has(lastJob.state)) break;
+      if (deps.now() > until) throw new Error(`review-fix job ${job} not done after ${limit} s (state ${lastJob?.state})`);
+      await deps.sleep(C.pollMs(o.poll, tRunning == null, deps.now() - tStarted));
+    }
+    const began = C.startedAt(lastJob, tRunning);
+    const ended = C.endedAt(lastJob, deps.now());
+    measured.dispatcher = began.at != null ? { ms: began.at - tStarted, note: `factory_continue return to the job started (${began.clock})` } : { ms: null, note: 'never left queued' };
+    measured['runtime-claude'] = { ms: ended.at - (began.at ?? tStarted), note: `job ${lastJob.state} (${began.clock || 'start call'} to ${ended.clock})` };
+    checks.push(check('build', 'job done', lastJob.state === 'done', `${job} ${lastJob.state}${lastJob.why ? `: ${lastJob.why}` : ''}`));
+    checks.push(check('build', `job base is PR #${o.pr}`, Number(lastJob.base?.pr) === o.pr, lastJob.base ? `${lastJob.base.branch} → ${lastJob.base.into}` : 'no base'));
+
+    // CI on the new head: the factory's watch usually saw it through; wait out what is left.
+    const tCi = deps.now();
+    const ciUntil = tCi + (o.timeouts.ci_done || 1800) * 1000;
+    let after = await prRead(deps, o.repo, o.pr);
+    while (after && after.head !== before.head && (!after.ci || W.CI_PENDING.has(after.ci)) && deps.now() < ciUntil) {
+      await deps.sleep(30_000);
+      after = await prRead(deps, o.repo, o.pr);
+    }
+    const compare = after?.head && after.head !== before.head ? await G.safely(() => compareHeads(deps, o.repo, before.head, after.head)) : null;
+    checks.push(...W.reviewFixChecks(before, after, compare?.ok ? compare.value : null));
+    measured.github = after?.ci && !W.CI_PENDING.has(after.ci) ? { ms: deps.now() - tCi, note: `CI ${after.ci} on ${String(after.head).slice(0, 10)}; counted from the job's end (the watch ran inside the job)` } : { ms: null, note: `CI ${after?.ci || 'unknown'} at the deadline` };
+    measured.worker = { ms: null, note: 'state change to board redraw: measured by E3/0.4, not by this run' };
+    if (after) notes.push(`review threads: ${before.unresolved} unresolved before, ${after.unresolved} after (the factory pushes fixes; resolving a thread is the reviewer's)`);
+
+    const ids = C.chainIds(lastJob, { card: null, run: start.run, job });
+    const sb = await G.scrollbacks(deps, ids.steps);
+    for (const [sid, text] of Object.entries(sb)) transcripts.push(deps.writeEvidence(folder, `transcripts/session-${sid}.txt`, C.stripAnsi(text)));
+    const steps: Json[] = ids.steps.filter((s: Json) => s.session);
+    const pages: Page[] = [
+      { name: 'build', url: `${deps.paBase}/factory`, ready: S.readyFor('build', String(job).split(':').pop()) },
+      ...steps.slice(0, 2).map((s) => ({ name: `run-${s.session.id}`, url: `${deps.hubBase(s.session.machine)}/#session=${encodeURIComponent(s.session.id)}` })),
+      ...(before.url ? [{ name: 'github-pr', url: before.url }] : []),
+    ];
+    const shots = await deps.capture(path.join(folder, 'screenshots'), pages);
+    return {
+      measured, checks, transcripts, notes, cleanup, usd: Number(lastJob.cost_usd || 0), shots, pages: [],
+      links: { run: start.run, job, pr: before.url, head: { before: before.head, after: after?.head || null }, sessions: steps.map((s) => s.session.id), follow },
+    };
+  } finally {
+    if (job && !(lastJob && C.TERMINAL.has(lastJob.state))) {
+      const r = await G.safely(() => deps.chat('factory_cancel', { job }));
+      cleanup.push(r.ok ? `job ${job} cancelled` : `job ${job} NOT cancelled: ${r.error}`);
+    }
+    if (!o.keep) {
+      const own = await G.ownSessions(deps, null, lastJob ? C.chainIds(lastJob) : null);
+      const followId = sessionOf(follow);
+      if (followId) own.push({ id: followId, machine: null });
+      cleanup.push(...(await G.killSessions(deps, own)));
+    } else cleanup.push(`kept (--keep): job ${job || '(none)'}'s sessions`);
+    cleanup.push(`PR #${o.pr} left open as it was (yours); only the fix commits were pushed to it`);
+  }
+}
+
 async function deepseekPr(acc: Acceptance, o: Options, deps: Deps, folder: string): Promise<Partial<RunOut>> {
   let collected: { transcripts: string[]; links: Json; pages: Page[]; usd: number | null; measured: Measured; shots?: { shots: Json[]; note: string | null } } =
     { transcripts: [], links: {}, pages: [], usd: null, measured: {} };
@@ -408,7 +540,7 @@ async function deepseekPr(acc: Acceptance, o: Options, deps: Deps, folder: strin
   };
 }
 
-const RUNNERS: Record<string, Runner> = { 'whats-on': whatsOn, research, 'deepseek-pr': deepseekPr };
+const RUNNERS: Record<string, Runner> = { 'whats-on': whatsOn, research, 'deepseek-pr': deepseekPr, 'review-fix': reviewFix };
 
 // ---------------------------------------------------------------- main ----
 
@@ -416,18 +548,24 @@ function parse(id: string, flags: Flags, lists: Lists): Options {
   const o: Options = C.parseOptions({ ...flags, ...(id === 'deepseek-pr' ? { runtime: 'api', model: flags.model || DEFAULT_API_MODEL } : {}) }, lists);
   if (id === 'deepseek-pr' && !o.model) o.model = DEFAULT_API_MODEL;
   o.question = typeof flags.question === 'string' ? flags.question : null;
-  o.pr = flags.pr != null && flags.pr !== true ? Number(flags.pr) : null;
+  o.pr = flags.pr != null && flags.pr !== true ? Number(String(flags.pr).replace(/^#/, '')) : null;
+  if (flags.pr != null && !(Number.isInteger(o.pr) && o.pr > 0)) throw Object.assign(new Error(`--pr is a PR number (got "${flags.pr}")`), { usage: true });
   o.testChat = typeof flags['test-chat'] === 'string' ? flags['test-chat'] : null;
   return o;
 }
 
 /** `pa e2e <workflow>`: dry run or real run, evidence in a run folder. Returns the summary. */
 async function main(id: string, flags: Flags = {}, lists: Lists = {}, deps: Deps = deps0()): Promise<Json> {
-  // research=<s> is this module's own timeout; the golden path's parser does not know it.
-  const golden = { ...lists, timeout: (lists.timeout || []).filter((t) => !/^research=/.test(t)) };
+  // research=<s> and review=<s> cap this module's own jobs; the golden path's parser does not know them.
+  const OWN = /^(research|review)=/;
+  const golden = { ...lists, timeout: (lists.timeout || []).filter((t) => !OWN.test(t)) };
   const acc: Acceptance = W.acceptance(deps.arch(), id);
   const o = parse(id, flags, golden);
-  o.timeouts.research = Number(String((lists.timeout || []).find((t) => /^research=/.test(t)) || '').split('=')[1]) || 5400;
+  const own = (k: string) => Number(String((lists.timeout || []).find((t) => t.startsWith(`${k}=`)) || '').split('=')[1]) || 5400;
+  o.timeouts.research = own('research');
+  o.timeouts.review = own('review');
+  // --on <machine>: the same workflow on that stack (the golden path's remote), its summary back here.
+  if (o.on) return G.remote(o, flags, lists, deps, { workflow: id });
   const startedAt = new Date(deps.now()).toISOString();
   const folder: string = path.join(deps.root(), W.folderName(id, deps.now(), o.dryRun));
   deps.writeEvidence = (dir: string, rel: string, text: string | Buffer) => {
