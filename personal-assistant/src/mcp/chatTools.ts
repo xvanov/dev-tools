@@ -668,6 +668,7 @@ function startedView(r: Json) {
     if (r.warnings?.length) out.warnings = r.warnings.slice(0, 5);
     if (r.base) out.continues = { branch: r.base.branch || null, pr: r.base.pr ?? null, into: r.base.into || null };
     out.follow = r.url || null;
+    if (r.timings) out.timings_ms = r.timings;
     return out;
   }
   return { started: true, run: r.id, route: 'claude', mode: r.mode, delivery: r.delivery || null, branch: r.branch || null, session: r.url || null, repo: r.repoPath || null };

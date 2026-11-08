@@ -267,7 +267,7 @@ function stub(rel, exports) {
   require.cache[p] = { id: p, filename: p, loaded: true, exports };
 }
 
-const store = { queries: [], watched: [], nextId: 7 };
+const store = { queries: [], watched: [], nextId: 7, settings: {} };
 const INSTALL = '0f1e2d3c-4b5a-6978-8a9b-acbdcedf0011';
 const KEY = `${INSTALL}-7`;
 
@@ -291,6 +291,7 @@ stub('db', stubTx({
     if (/insert into run/.test(sql)) return { id: store.nextId, status: 'starting' };
     if (/from pa_install/.test(sql)) return { id: INSTALL };
     if (/from repo_delivery/.test(sql)) return store.repoDefault ? { delivery: store.repoDefault } : null;
+    if (/from setting where key/.test(sql)) return params[0] in store.settings ? { value: store.settings[params[0]] } : null;
     return null;
   },
   async rows(sql, params) {
@@ -306,6 +307,7 @@ stub('db', stubTx({
       throw new Error('connection to the store lost');
     }
     if (store.runEnded && /status in \('starting', 'waiting', 'running'\)/.test(sql)) return { rowCount: 0, rows: [] };
+    if (/insert into setting/.test(sql)) store.settings[params[0]] = typeof params[1] === 'string' ? JSON.parse(params[1]) : params[1];
     return { rowCount: 1, rows: [] };
   },
 }));
@@ -787,6 +789,49 @@ async function factoryRegister() {
   store.repoDefault = null;
 }
 
+// --- 8.2.2: a new process starts from the stored app list and repo slugs ---------------
+
+async function storedLists() {
+  const route = require('../src/dispatch/route.ts');
+  const merge = require('../src/dispatch/merge.ts');
+  const widget = { app: 'widget', repo: 'acme/widget' };
+  const gadget = { app: 'gadget', repo: 'acme/gadget' };
+  const target = (slug) => ({ commitment: { id: 60, kind: 'coding' }, project: { gitlab_path: slug }, repoPath: null });
+  const within = (p, ms, what) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error(`${what}: still waiting after ${ms} ms`)), ms))]);
+
+  // A list another process stored days ago picks the app at once; the refresh runs behind it.
+  await factory.forgetApps();
+  store.settings['factory.apps'] = { at: new Date(Date.now() - 3 * 86400_000).toISOString(), apps: [widget] };
+  let release;
+  const slow = new Promise((r) => { release = r; });
+  answers = { 'app list': () => slow.then(() => json({ apps: [widget, gadget] })) };
+  const picked = await within(route.forced({ target: target('acme/widget'), mode: 'mr' }), 2000, 'forced on a stored list');
+  assert.strictEqual(picked.app, 'widget');
+  release();
+  for (let i = 0; i < 100 && store.settings['factory.apps'].apps.length !== 2; i++) await new Promise((r) => setTimeout(r, 10));
+  assert.deepStrictEqual(store.settings['factory.apps'].apps, [widget, gadget], 'the refreshed list is stored for the next process');
+
+  // An app the old list does not hold is asked for again before anything is refused.
+  await factory.forgetApps();
+  store.settings['factory.apps'] = { at: new Date(Date.now() - 3 * 86400_000).toISOString(), apps: [widget] };
+  calls.length = 0;
+  answers = { 'app list': json({ apps: [widget, gadget] }) };
+  assert.strictEqual((await route.forced({ target: target('acme/gadget'), mode: 'mr' })).app, 'gadget');
+  assert.strictEqual(calls.filter((c) => c.argv.includes('list')).length, 1, 'one fresh list');
+  await factory.forgetApps();
+
+  // A checkout's owner/name: `gh repo view` once, then remembered and stored.
+  const repo = fs.mkdtempSync(path.join(tmp, 'checkout-'));
+  fs.mkdirSync(path.join(repo, '.git'));
+  const realSlugOf = merge.slugOf;
+  let asked = 0;
+  merge.slugOf = async () => { asked++; return 'Acme/Widget'; };
+  const t = { commitment: { id: 61 }, project: null, repoPath: repo };
+  assert.deepStrictEqual([await route.slugFor(t), await route.slugFor(t), asked], ['acme/widget', 'acme/widget', 1]);
+  assert.strictEqual(store.settings['dispatch.repo_slugs'][path.resolve(repo)].slug, 'acme/widget');
+  merge.slugOf = realSlugOf;
+}
+
 // --- MUST-FIX 15: one live run per commitment, under a lock --------------------------
 
 async function liveRunGuard() {
@@ -818,6 +863,7 @@ async function liveRunGuard() {
   await routeDecide();
   await factoryReconcile();
   await factoryRegister();
+  await storedLists();
   fs.rmSync(tmp, { recursive: true, force: true });
   console.log('factoryDispatch ok');
 })().catch((err) => {

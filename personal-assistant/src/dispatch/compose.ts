@@ -122,14 +122,16 @@ function localRepo(candidates: unknown[]): string | null {
 async function codeHints(repo: string | null, text: string): Promise<Hints> {
   if (!repo) return { files: [], reuse: [], conventions: [], keywords: [] };
   const kws: string[] = C.keywords(text);
-  let files: string[] = [];
-  try {
-    files = (await git(repo, ['ls-files'])).split(/\r?\n/).filter(Boolean).slice(0, 50_000);
-  } catch (err) {
-    log.debug('git ls-files failed', { message: (err as Error).message });
-    return { files: [], reuse: [], conventions: [], keywords: kws };
-  }
-  const hits = await keywordHits(repo, kws);
+  // ls-files reads only the index, so it does not slow the grep's tree scan.
+  const [listed, hits] = await Promise.all([
+    git(repo, ['ls-files']).catch((err: Error) => {
+      log.debug('git ls-files failed', { message: err.message });
+      return null;
+    }),
+    keywordHits(repo, kws),
+  ]);
+  if (listed == null) return { files: [], reuse: [], conventions: [], keywords: kws };
+  const files: string[] = listed.split(/\r?\n/).filter(Boolean).slice(0, 50_000);
   const { reuse, conventions } = C.rankHints({ files, hits, keywords: kws });
   return { files, reuse, conventions, keywords: kws };
 }
@@ -254,8 +256,10 @@ async function compose({
   pipeline = null,
   route = 'factory',
   useModel = true,
-}: GatherOptions & { delivery: string | null; pipeline?: string | null; route?: string; useModel?: boolean }): Promise<{ brief: string; composed: Composed; by: string; done: string[]; goal: string; hints: number }> {
+}: GatherOptions & { delivery: string | null; pipeline?: string | null; route?: string; useModel?: boolean }): Promise<{ brief: string; composed: Composed; by: string; done: string[]; goal: string; hints: number; ms: { gather: number; model: number } }> {
+  const started = Date.now();
   const inputs = await gather({ target, task, done, app, slug, appPath });
+  const gathered = Date.now();
   const { composed, by } = await composeFrom(inputs, { useModel });
   const brief = C.render(composed, {
     title: inputs.title,
@@ -266,7 +270,7 @@ async function compose({
     pipeline,
     by,
   });
-  return { brief, composed, by, done: composed.done, goal: composed.goal, hints: composed.reuse.length };
+  return { brief, composed, by, done: composed.done, goal: composed.goal, hints: composed.reuse.length, ms: { gather: gathered - started, model: Date.now() - gathered } };
 }
 
 module.exports = { compose, composeFrom, gather, codeHints, localRepo, pickModel, _setModel };

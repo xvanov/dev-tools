@@ -15,7 +15,7 @@
 //                  their commitment through src/ledger (never directly)
 //   cancel(run)    `factory job cancel` (pa drop)
 //   status(run)    one job's status (pa review)
-//   apps()         `factory app list`, cached briefly
+//   apps()         `factory app list`, kept here and in the store
 //   refreshBoard() the worker pass behind the /factory page: the whole
 //                  `job list` into factory_board, and notices on what changed
 //   report/cancelJob/approve/openFollow  the factory page's and `pa factory`'s actions
@@ -98,6 +98,8 @@ type StartOptions = {
   runtime?: string | null;
   branch?: string | null;
   pr?: number | string | null;
+  /** ms the caller spent before this (dispatch.start: `route`), reported with the rest */
+  timings?: Record<string, number> | null;
 };
 type Chain = { prs: Json[]; steps: Json[] };
 type Patch = { jobId: string; patch: Json };
@@ -226,19 +228,37 @@ async function viaServe(sub: string[], timeoutMs: number, url: string | null | u
   return out;
 }
 
+// The last `app list`, in this process and in the store (setting APPS_SETTING),
+// so a process that just started (each chat's MCP server, `pa e2e`, the CLI)
+// does not pay a factory call before its first dispatch: `uv run factory`
+// takes 3-14 s on Windows when serve does not answer the verb.
+const APPS_SETTING = 'factory.apps';
 let appsCache: { at: number; apps: Json[] } | null = null;
-async function apps({ fresh = false }: { fresh?: boolean } = {}): Promise<Json[]> {
-  const cached = appsCache;
+
+/**
+ * The factory's registered apps. A list up to a minute old is answered as is;
+ * up to 15 min old (or of any age with `stale`), at once while a refresh runs
+ * behind it. `stale` is for picking an app, where a miss asks again with
+ * `fresh` (route.forced): a new app is found then, and a removed one is
+ * refused by the submit. `fresh` shares a refresh in flight, or one that
+ * ended in the last few seconds.
+ */
+async function apps({ fresh = false, stale = false }: { fresh?: boolean; stale?: boolean } = {}): Promise<Json[]> {
+  if (fresh) return appsCache && Date.now() - appsCache.at < 5_000 ? appsCache.apps : refreshApps();
+  const cached = appsCache || (appsCache = await storedApps());
   const age = cached ? Date.now() - cached.at : Infinity;
-  if (cached && !fresh && age < 60_000) return cached.apps;
-  // Stale-while-revalidate: the registered apps change rarely, and refreshing
-  // them is a factory CLI call (2.5 s when `serve` is not running), so a list
-  // up to 15 min old is answered at once while a refresh runs behind it.
-  if (cached && !fresh && age < 15 * 60_000) {
+  if (cached && age < 60_000) return cached.apps;
+  if (cached && (stale || age < 15 * 60_000)) {
     refreshApps().catch((err: Error) => log.debug('apps refresh failed', { message: err.message }));
     return cached.apps;
   }
   return refreshApps();
+}
+
+async function storedApps(): Promise<{ at: number; apps: Json[] } | null> {
+  const row: Json | null = await repository.system.setting(APPS_SETTING).catch(() => null);
+  const at = Date.parse(row?.value?.at);
+  return Number.isFinite(at) && Array.isArray(row?.value?.apps) ? { at, apps: row.value.apps } : null;
 }
 
 let appsRefresh: Promise<Json[]> | null = null;
@@ -248,11 +268,19 @@ function refreshApps(): Promise<Json[]> {
       .then((r) => {
         const list: Json[] = Array.isArray(r.apps) ? r.apps : [];
         appsCache = { at: Date.now(), apps: list };
+        repository.system.setSetting(APPS_SETTING, { at: new Date(appsCache.at).toISOString(), apps: list })
+          .catch((err: Error) => log.debug('apps not stored', { message: err.message }));
         return list;
       })
       .finally(() => { appsRefresh = null; });
   }
   return appsRefresh;
+}
+
+/** Forgets the known list, here and in the store (an app was just added). */
+async function forgetApps(): Promise<void> {
+  appsCache = null;
+  await repository.system.setSetting(APPS_SETTING, { at: null, apps: [] }).catch(() => {});
 }
 
 function modelsFor(extra: ModelsInput): Models {
@@ -275,7 +303,7 @@ function modelEntries(m: ModelsInput): string[] | string {
 async function addApp({ repo, deliveryDefault = null, path: clonePath = null }: { repo: string; deliveryDefault?: string | null; path?: string | null }): Promise<Json> {
   const level = deliveryDefault || (await require('./delivery.ts').defaultFor(repo).catch(() => null)) || require('./delivery.ts').fallback();
   const r = await call(F.appAddArgv({ repo, deliveryDefault: D.delivery(level), path: clonePath }));
-  appsCache = null;
+  await forgetApps();
   if (!r.app) throw new F.FactoryError('bad_output', 'app add answered without an app');
   return r;
 }
@@ -413,8 +441,12 @@ async function installId(): Promise<string> {
 async function start({
   target, app, slug = null, task = null, mode: modeName, delivery = null, deliverySource = null, deliveryPhrase = null,
   pipeline = null, models = null, modelsExact = false, done = [], brief = null, briefBy = null, routeReason = null,
-  confirmedUnattended = false, again = false, title = null, jobKind = 'code', runtime = null, branch = null, pr = null,
+  confirmedUnattended = false, again = false, title = null, jobKind = 'code', runtime = null, branch = null, pr = null, timings = null,
 }: StartOptions): Promise<Json> {
+  // Where the call's time went, in ms: logged and answered (factory_start's timings_ms).
+  const ms: Record<string, number> = { ...(timings || {}) };
+  let mark = Date.now();
+  const lap = (name: string) => { const now = Date.now(); ms[name] = (ms[name] || 0) + now - mark; mark = now; };
   const kind = F.jobKind(jobKind);
   if ((branch != null || pr != null) && kind !== 'code') throw new Error('only a code job continues a branch or PR');
   // The credit pool (src/claudePool.js): with PA_CLAUDE_POOL_FALLBACK_API on and the pool spent,
@@ -454,6 +486,7 @@ async function start({
     // The idempotency key, in the insert's own transaction: before anything is sent.
     { commitmentId, again, externalId: (row: Run) => F.externalKey(install, row.id) }
   );
+  lap('prepare');
 
   // The ask: the card's frozen brief, or one composed now from the ask and
   // what the assistant gathered (src/dispatch/compose.ts). Composition never
@@ -475,6 +508,7 @@ async function start({
       by = c.by;
       criteria = c.done;
       goal = c.goal;
+      if (c.ms) Object.assign(ms, { gather: c.ms.gather, compose_model: c.ms.model });
     } catch (err) {
       log.warn('brief composition failed; sending the deterministic brief', { run: run.id, message: String((err as Error).message).slice(0, 200) });
       const C = require('./composeCore.ts');
@@ -492,6 +526,7 @@ async function start({
   const briefPath = path.join(config.worktreesRoot, `run-${run.id}-BRIEF.md`);
   fs.mkdirSync(path.dirname(briefPath), { recursive: true });
   fs.writeFileSync(briefPath, ask, 'utf8');
+  lap('brief');
 
   const argvFor = (staged: Record<string, string>): string[] =>
     F.submitArgv({
@@ -568,6 +603,7 @@ async function start({
       .catch((err: Error) => log.warn('job recorded, but its commitment did not move to dispatched', { run: run.id, message: err.message }));
   }
   const jobId: string = job.job_id;
+  lap('submit');
 
   // Walk-in: a termhub session on the factory's machine following the job,
   // so "Open in termhub" on the card lands on it. Not fatal: the job runs
@@ -588,8 +624,9 @@ async function start({
   clearTimeout(waitTimer);
   if (early) ({ sessionId, url } = early);
   else if (early === undefined) log.info('the follow session is still opening; answering without it', { run: run.id, job: job.job_id, waitedMs: config.factory.followWaitMs });
+  lap('follow');
 
-  log.info('dispatched to the factory', { run: run.id, job: job.job_id, app, kind, runtime: rt, delivery: job.delivery || chosen.delivery, pipeline: job.pipeline || pipe, brief: by });
+  log.info('dispatched to the factory', { run: run.id, job: job.job_id, app, kind, runtime: rt, delivery: job.delivery || chosen.delivery, pipeline: job.pipeline || pipe, brief: by, ms });
   return {
     id: run.id,
     route: 'factory',
@@ -614,6 +651,7 @@ async function start({
     warnings,
     // v1.3: what a --branch/--pr job continues ({branch, pr, into}); null otherwise.
     base: job.base && typeof job.base === 'object' ? job.base : null,
+    timings: ms,
   };
 }
 
@@ -1045,7 +1083,7 @@ async function sweepUnsettled(): Promise<number> {
 }
 
 module.exports = {
-  enabled, machine, factoryMachine, call, apps, addApp, installId, start, settle, sweepUnsettled, status, cancel, apply, poll, runCommand, modelsFor, _setRunner,
+  enabled, machine, factoryMachine, call, apps, forgetApps, addApp, installId, start, settle, sweepUnsettled, status, cancel, apply, poll, runCommand, modelsFor, _setRunner,
   submit, withoutV12, openFollow, refreshBoard, snapshot, snapshotJob, report, cancelJob, approve, resume, recordChain, chains,
   pushed, pushedPatches, viaServe,
 };

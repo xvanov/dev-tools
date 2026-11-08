@@ -102,7 +102,8 @@ Golden path (E4/E5, claude_session, draft_pr), 2026-11-08 at e013834:
 | card → CI done | 1197.5 s (≈ 20 min) | 475.2 s (≈ 8 min) |
 
 factory_start on the work stack is about 16 s: ≈ 11 s card context, 3.3 s compose (azure/pa), ≈ 1.3 s
-submit through serve.
+submit through serve. The "card context" was routing in a cold process. 8.2.2 brings it to under
+0.8 s; compose and submit remain.
 
 E6 variants, 2026-11-08, both stacks on SQLite (3.5), the factory's state outside the repo (2.5),
 planning on DeepSeek-V4-Flash (D21: PM triage 9.7 s, SM 10.6 s, was ~146 s for PM). Seconds since
@@ -829,10 +830,31 @@ not in the Map is not done, and a new one gets added there first.
     citations, no PR, $0. Research conversation 75.7 s; tool call 13.5 s (target 1 s); approval to
     "started" 3.4 s (target 1 s). Run links failed only on E5.8. Evidence:
     `e2e/20261108T115604Z-research/` (report, transcript, 3 screenshots).
-  - [ ] **8.2.2 factory_start spends ~11-13 s before any model call.** Research has no compose step,
+  - [x] **8.2.2 factory_start spends ~11-13 s before any model call.** Research has no compose step,
     yet the tool call took 13.5 s. In golden-path runs, about 11 s of factory_start goes to gathering
     the card's context before compose (3.3 s) and the submit (~1.3 s). Profile the card-context step
-    (dispatch/brief) against the 1 s tool-call target.
+    (dispatch/brief) against the 1 s tool-call target. (HASH)
+    - Cause: there is no card-context model call on this path. The time went to routing, and every
+      chat MCP process and every `pa e2e` run starts cold. `factory app list` through serve answers
+      empty (above), so each new process fell back to a `uv run factory` spawn: 2.8 s warm, 14.2 s
+      cold. For a checkout path, `gh repo view` ran on every call and every run (1.1-1.8 s). A card
+      from a mail, chat, Jira or PR thread also paid `relatedInThread`: a full scan of source_item,
+      3.1-4.2 s on a 634 MB store.
+    - Fix: the app list and each checkout's owner/name (refreshed at most daily) are now kept in the
+      store's setting table (`factory.apps`, `dispatch.repo_slugs`). A stale list answers at once
+      and refreshes in the background; an app the list lacks is asked for again before anything is
+      refused. The app list and gh run in parallel when neither is stored. `relatedInThread` uses
+      the thread index (6 ms). codeHints runs ls-files and grep in parallel. factory_start now
+      answers `timings_ms` (route, prepare, gather, compose_model, submit, follow).
+    - Measured on a scratch store with the model and submit stubbed and app list stubbed at 2.8 s.
+      Before: a new process took 3.7 s (owner/name) or 6.2-6.4 s (checkout); a warm call took
+      0.6 s (owner/name) or 2.5-3.3 s (checkout). After: a new process takes 0.74-0.78 s, a warm
+      call 0.43-0.51 s (gather 0.39-0.45 s, mostly git grep). The first call on an empty store is
+      still about 3.7 s, once per install and after `factory app add`.
+    - Over 1 s and outside this path: compose's model call (about 3.3 s, code jobs only), the
+      submit through serve (about 1.3 s), the follow-session wait (`PA_FACTORY_FOLLOW_WAIT_MS`,
+      800 ms), and recall's Azure embed and rerank (run in parallel with codeHints). The next
+      live e2e run's `timings_ms` gives the real split.
 - [ ] **8.3 Reviewer sessions.** For each workflow, a separate reviewer session (a fresh agent
   that did not implement it, on Claude Code) runs `e2e <workflow>`, inspects the evidence and
   the outputs themselves (reads the PR, the report, the board card), and scores the workflow

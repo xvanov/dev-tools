@@ -470,6 +470,16 @@ module.exports = {
     assert.deepStrictEqual(got.map((r) => Number(r.id)), [ids[6], ids[5], ids[4], ids[3], ids[2], ids[1]]);
   },
 
+  'relatedInThread: a thread in any source, never another thread': async ({ repos, seed, assert, uniq }) => {
+    const thr = uniq('thr');
+    const mail = await seed.item({ source: 'graph_mail', thread: thr, occurredAt: new Date(Date.now() - 3000) });
+    const chat = await seed.item({ source: 'graph_chat', thread: thr, occurredAt: new Date(Date.now() - 2000) });
+    const self = await seed.item({ source: 'github_pr', thread: thr, occurredAt: new Date(Date.now() - 1000) });
+    await seed.item({ source: 'graph_mail', thread: uniq('other') });
+    const got = await repos.sources.relatedInThread(thr, self);
+    assert.deepStrictEqual(got.map((r) => [Number(r.id), r.source]), [[chat, 'graph_chat'], [mail, 'graph_mail']]);
+  },
+
   'threadRows: every item of a thread in one source, oldest first': async ({ repos, seed, assert, uniq }) => {
     const thr = uniq('thr');
     const a = await seed.item({ source: 'graph_chat', thread: thr, occurredAt: new Date(Date.now() - 2000) });

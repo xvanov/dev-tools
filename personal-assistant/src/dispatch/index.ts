@@ -244,6 +244,7 @@ async function start({
   brief = null, briefBy = null, frozen = false, register = false, confirmedUnattended = false, repoVerified = false,
   jobKind = null, runtime = null, title = null, branch: onBranch = null, pr: onPr = null,
 }: StartOptions): Promise<Json> {
+  const calledAt = Date.now();
   // A research or report job exists only on the factory (JOBS-API v1.2).
   const kind: string = require('./factoryCore.ts').jobKind(jobKind);
   if (runtime) require('./factoryCore.ts').runtime(runtime);
@@ -281,7 +282,7 @@ async function start({
       return require('./factory.ts').start({
         target, app: choice.app, slug: choice.slug, task, mode: modeName, pipeline, models, modelsExact: frozen, done: choice.done,
         routeReason: givenReason || choice.reason, delivery, deliverySource, deliveryPhrase, brief, briefBy, confirmedUnattended, again,
-        jobKind: kind, runtime, title, branch: onBranch, pr: onPr,
+        jobKind: kind, runtime, title, branch: onBranch, pr: onPr, timings: { route: Date.now() - calledAt },
       });
     }
     routeReason = givenReason || choice.reason;

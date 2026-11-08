@@ -507,9 +507,11 @@ function create(db: Db) {
 
     /** The six newest other items of a thread: {id, source, subject, occurred_at}. */
     async relatedInThread(threadExternalId: number | string, exceptId: number | string) {
+      // Every source, named: the thread index leads with source, and without it
+      // this read every item (3 s on a 600 MB store; 6 ms with it).
       return db.rows(
         `select id, source, subject, occurred_at from source_item
-      where thread_external_id = $1 and id <> $2
+      where source in (select distinct source from source_item) and thread_external_id = $1 and id <> $2
       order by occurred_at desc, id desc limit 6`,
         [threadExternalId, exceptId]
       );
