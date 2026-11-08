@@ -12,6 +12,42 @@ const { plan, verdict, parseArgs } = require('../src/supervisor/deploy');
 const PA = path.join(__dirname, '..');
 const live = { ok: true, generation: 3, pid: 10, source: 'aaaaaaaaaaaa' };
 
+// ---- Bun for jarvisd (plan 4.1) ----
+// The 2d7fdbf deploy ran `npm ci` in jarvisd/ on a stack running on Bun: npm
+// deletes node_modules first, the running generation's bun.exe is locked on
+// Windows, EPERM. A deploy now installs each pinned version into its own
+// directory, once, and never touches one a generation may be running.
+{
+  const fs = require('fs');
+  const os = require('os');
+  const D = require('../src/supervisor/deploy');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pa-deploy-bun-'));
+  const write = (pin) => fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ devDependencies: { bun: pin } }));
+  try {
+    write('1.3.13');
+    assert.strictEqual(D.pinnedBun(dir), '1.3.13');
+    assert.strictEqual(D.bunInstallPlan({ jarvisdDir: dir }).install, false, 'a stack without jarvisd installed installs nothing');
+    fs.mkdirSync(path.join(dir, 'node_modules'));
+    const p1 = D.bunInstallPlan({ jarvisdDir: dir });
+    assert.strictEqual(p1.install, true);
+    assert.strictEqual(p1.dir, path.join(dir, '.bun', '1.3.13'), 'its own versioned directory, not jarvisd/node_modules');
+    fs.mkdirSync(path.dirname(p1.exe), { recursive: true });
+    fs.writeFileSync(p1.exe, '');
+    assert.strictEqual(D.bunInstallPlan({ jarvisdDir: dir }).install, false, 'installed once');
+    write('1.3.14');
+    const p2 = D.bunInstallPlan({ jarvisdDir: dir });
+    assert.deepStrictEqual([p2.install, p2.version], [true, '1.3.14'], 'a new pin installs beside the running one');
+    assert.notStrictEqual(p2.dir, p1.dir);
+    write('^1.3');
+    assert.strictEqual(D.bunInstallPlan({ jarvisdDir: dir }).install, false, 'only an exact pin installs');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+  // deploy.js never runs npm ci in jarvisd/.
+  const src = fs.readFileSync(path.join(PA, 'src', 'supervisor', 'deploy.js'), 'utf8');
+  assert.ok(!/['"]ci['"]/.test(src), 'no npm ci in deploy.js');
+}
+
 // ---- plan ----
 {
   const p = (o) => plan({ from: 'abc', sourceOnDisk: 'aaaaaaaaaaaa', supervisor: live, ...o });

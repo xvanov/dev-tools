@@ -258,8 +258,19 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 function runtimeSpec(runtime = envSetting('PA_RUNTIME', 'node'), { bun = envSetting('PA_BUN', '') } = {}) {
   if (runtime !== 'bun') return { runtime: 'node', worker: path.join(__dirname, '..', 'worker.js'), execPath: process.execPath };
   const jarvisd = path.join(__dirname, '..', '..', '..', 'jarvisd');
-  const exe = bun || path.join(jarvisd, 'node_modules', 'bun', 'bin', 'bun.exe');
-  if (!fs.existsSync(exe)) throw new Error(`PA_RUNTIME=bun but no Bun at ${exe} (npm ci in jarvisd/, or set PA_BUN)`);
+  // PA_BUN, else the pinned version's own directory (deploy.js bunInstallPlan
+  // installs it there: never over a bun.exe a generation is running), else the
+  // dev install in jarvisd/node_modules.
+  let pinned = null;
+  try {
+    const v = String(JSON.parse(fs.readFileSync(path.join(jarvisd, 'package.json'), 'utf8')).devDependencies.bun || '');
+    if (/^\d+\.\d+\.\d+$/.test(v)) pinned = path.join(jarvisd, '.bun', v, 'node_modules', 'bun', 'bin', 'bun.exe');
+  } catch {
+    /* no jarvisd */
+  }
+  const dev = path.join(jarvisd, 'node_modules', 'bun', 'bin', 'bun.exe');
+  const exe = bun || (pinned && fs.existsSync(pinned) ? pinned : dev);
+  if (!fs.existsSync(exe)) throw new Error(`PA_RUNTIME=bun but no Bun at ${exe} (a deploy installs it under jarvisd/.bun/; or npm ci in jarvisd/, or set PA_BUN)`);
   return { runtime: 'bun', worker: path.join(jarvisd, 'src', 'main.ts'), execPath: exe };
 }
 

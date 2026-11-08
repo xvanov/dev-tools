@@ -98,6 +98,43 @@ function verdict(probes, { head, done = false, failsInARow = FAILS_IN_A_ROW } = 
 
 // ---- effects ----
 
+const JARVISD_DIR = path.join(__dirname, '..', '..', '..', 'jarvisd');
+
+/** The Bun version jarvisd/package.json pins, or null. */
+function pinnedBun(jarvisdDir = JARVISD_DIR) {
+  try {
+    const pkg = JSON.parse(fs.readFileSync(path.join(jarvisdDir, 'package.json'), 'utf8'));
+    const v = String((pkg.devDependencies || {}).bun || (pkg.dependencies || {}).bun || '');
+    return /^\d+\.\d+\.\d+$/.test(v) ? v : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Where a pinned Bun lives: jarvisd/.bun/<version>/ (its own directory per version). */
+function bunDir(version, jarvisdDir = JARVISD_DIR) {
+  const dir = path.join(jarvisdDir, '.bun', version);
+  return { dir, exe: path.join(dir, 'node_modules', 'bun', 'bin', 'bun.exe') };
+}
+
+/**
+ * Whether a deploy installs Bun (plan 4.1). Never `npm ci` in jarvisd/: on
+ * Windows the running generation's bun.exe is locked, and npm ci, which deletes
+ * node_modules first, fails with EPERM (the 2d7fdbf deploy). Instead each
+ * pinned version gets its own directory, installed once; a new pin installs
+ * beside the running one, and the supervisor picks it up at its next start
+ * (supervisor runtimeSpec). Only on a stack that uses jarvisd (it has
+ * jarvisd/node_modules or jarvisd/.bun). Pure but for existsSync.
+ */
+function bunInstallPlan({ jarvisdDir = JARVISD_DIR, exists = fs.existsSync } = {}) {
+  const version = pinnedBun(jarvisdDir);
+  if (!version) return { install: false, reason: 'jarvisd pins no Bun' };
+  const { dir, exe } = bunDir(version, jarvisdDir);
+  if (!exists(path.join(jarvisdDir, 'node_modules')) && !exists(path.join(jarvisdDir, '.bun'))) return { install: false, version, dir, exe, reason: 'this stack does not use jarvisd' };
+  if (exists(exe)) return { install: false, version, dir, exe, reason: `Bun ${version} is installed` };
+  return { install: true, version, dir, exe, reason: `Bun ${version} is pinned and not installed yet` };
+}
+
 function git(args, opts = {}) {
   return execFileSync('git', ['-C', PA_DIR, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, ...opts }).trim();
 }
@@ -323,13 +360,17 @@ async function deployUnlocked(argv, { say } = {}) {
     }
   }
   if (p.build) npm(['run', 'build'], say);
-  // jarvisd (plan 4.1): a stack on PA_RUNTIME=bun runs its generations with the
-  // Bun pinned in jarvisd/package.json; keep that install current.
-  const jarvisdDir = path.join(PA_DIR, '..', 'jarvisd');
-  if (fs.existsSync(path.join(jarvisdDir, 'node_modules')) && (changed === null || changed.some((f) => /^jarvisd\/package(-lock)?\.json$/.test(f)))) {
-    say('npm ci in jarvisd/ (its package files changed)');
-    const r = spawnSync(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['ci', '--no-audit', '--no-fund'], { cwd: jarvisdDir, stdio: 'inherit', shell: process.platform === 'win32', windowsHide: true });
-    if (r.status !== 0) throw new Error(`npm ci in jarvisd exited ${r.status}`);
+  // jarvisd (plan 4.1): a stack that uses jarvisd gets the Bun pinned in
+  // jarvisd/package.json, in its own versioned directory (bunInstallPlan).
+  const bp = bunInstallPlan({ jarvisdDir: JARVISD_DIR });
+  if (bp.install) {
+    say(`installing Bun ${bp.version} into ${path.relative(path.join(PA_DIR, '..'), bp.dir)} (${bp.reason})`);
+    fs.mkdirSync(bp.dir, { recursive: true });
+    const r = spawnSync(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['install', '--no-save', '--no-audit', '--no-fund', '--prefix', bp.dir, `bun@${bp.version}`], { cwd: bp.dir, stdio: 'inherit', shell: process.platform === 'win32', windowsHide: true });
+    if (r.status !== 0 || !fs.existsSync(bp.exe)) {
+      fs.rmSync(bp.dir, { recursive: true, force: true });
+      throw new Error(`installing Bun ${bp.version} failed (npm exited ${r.status})`);
+    }
   }
 
   if (p.action === 'none') return { code: 0, result };
@@ -399,4 +440,4 @@ if (require.main === module) {
   );
 }
 
-module.exports = { plan, verdict, deploy, parseArgs, acquireDeployLock };
+module.exports = { plan, verdict, deploy, parseArgs, acquireDeployLock, bunInstallPlan, bunDir, pinnedBun };

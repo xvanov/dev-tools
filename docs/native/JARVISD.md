@@ -126,8 +126,12 @@ short gap as the bootstrap), not a roll. On the work laptop (the pa-worker task 
    `/api/events` and a factory job behave as before. `pa doctor` should be unchanged.
 
 Rollback: delete the `PA_RUNTIME=bun` line (or set `node`) and run step 4 again.
-Deploys (`windows\redeploy.ps1`) keep working either way; `deploy.js` also re-runs `npm ci` in
-`jarvisd/` when its package files change.
+Deploys (`windows\redeploy.ps1`) keep working either way. On a stack that uses jarvisd,
+`deploy.js` installs the Bun version `jarvisd/package.json` pins into its own directory,
+`jarvisd/.bun/<version>/`, once (`bunInstallPlan`), and the supervisor prefers that Bun (after
+`PA_BUN`) at its next start. It never runs `npm ci` in `jarvisd/`: on Windows the running
+generation's `bun.exe` is locked, and npm ci, which deletes `node_modules` first, failed the
+2d7fdbf deploy with EPERM.
 
 ## Build
 
