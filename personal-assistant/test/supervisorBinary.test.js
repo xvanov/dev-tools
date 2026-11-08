@@ -28,7 +28,9 @@ if (!EXE) {
 }
 
 // Windows paths compare without case (process.execPath may differ from ours).
-const samePath = (p) => (process.platform === 'win32' ? path.resolve(p).toLowerCase() : path.resolve(p));
+// realpath.native expands Windows 8.3 short names (RUNNER~1 vs runneradmin on CI runners).
+const realOrResolved = (p) => { try { return fs.realpathSync.native(p); } catch { return path.resolve(p); } };
+const samePath = (p) => (process.platform === 'win32' ? realOrResolved(p).toLowerCase() : realOrResolved(p));
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const alive = (pid) => {
   try {
