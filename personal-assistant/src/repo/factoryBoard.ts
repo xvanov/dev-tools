@@ -3,8 +3,13 @@
 // Aggregate: factoryBoard. Tables: factory_board (one row: the last `job list`
 // the worker took from the factory, and the last error doing so).
 // Callers: src/dispatch/factory.js.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
 
-function create(db) {
+type Db = import('./types.ts').Db;
+type Row = import('./types.ts').Row;
+
+function create(db: Db) {
   return {
     /**
      * The stored list: {jobs, polled_at, error, error_at}, or null before the first poll.
@@ -14,7 +19,7 @@ function create(db) {
     },
 
     /** Records that taking the list failed (the jobs and their time are kept). */
-    async recordError(message) {
+    async recordError(message: string) {
       await db.query(
         `insert into factory_board (id, error, error_at) values (1, $1, now())
        on conflict (id) do update set error = excluded.error, error_at = now()`,
@@ -23,7 +28,7 @@ function create(db) {
     },
 
     /** Stores a fresh list (an array of jobs) and clears the error. */
-    async store(jobs) {
+    async store(jobs: unknown) {
       await db.query(
         `insert into factory_board (id, jobs, polled_at, error, error_at) values (1, $1::jsonb, now(), null, null)
      on conflict (id) do update set jobs = excluded.jobs, polled_at = now(), error = null, error_at = null`,
@@ -38,7 +43,7 @@ function create(db) {
      * @param {string|undefined} state  patch.state
      * @returns {Promise<number>} rows changed (0 or 1)
      */
-    async patchJob(jobId, patch, state) {
+    async patchJob(jobId: number | string, patch: Row, state: string) {
       const r = await db.query(
         `update factory_board set jobs = (
          select coalesce(jsonb_agg(case when j->>'job_id' = $1 then j || $2::jsonb else j end order by n), '[]'::jsonb)
@@ -50,7 +55,7 @@ function create(db) {
     },
 
     /** Wakes the pacer: a factory push arrived for these jobs. */
-    async notifyPush(jobIds) {
+    async notifyPush(jobIds: unknown[]) {
       await db.query(`select pg_notify('pa_events', $1)`, [JSON.stringify({ topic: 'factory', table: 'push', op: 'push', jobs: jobIds })]);
     },
   };

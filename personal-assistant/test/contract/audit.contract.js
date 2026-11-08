@@ -80,7 +80,7 @@ module.exports = {
   },
 
   'verify: a re-chained edit (hash recomputed, later rows left) is still found': async ({ repos, db, assert, uniq }) => {
-    const { hashEntry } = require('../../src/repo/audit');
+    const { hashEntry } = require('../../src/repo/audit.ts');
     const tool = uniq('rechain');
     const first = await repos.audit.append(entry(tool, 'deny'));
     await repos.audit.append(entry(tool, 'deny'));

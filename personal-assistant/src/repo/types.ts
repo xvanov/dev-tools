@@ -26,5 +26,5 @@ export interface Db {
   notify?(channel: string, payload: string): Promise<unknown>;
   dialect?: string;
   inTx?: boolean;
-  session?: { id: string };
+  session?: { id: string; listen(channel: string): void };
 }

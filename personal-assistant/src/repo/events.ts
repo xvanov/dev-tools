@@ -4,6 +4,11 @@
 // the pa_notify_event trigger in the writer's own transaction; the sequence
 // pa_event_seq numbers it (sql/035). Callers: src/events (the listener's
 // baseline and backfill) and src/dashboard/events.js (Last-Event-ID replay).
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+type Db = import('./types.ts').Db;
+type Row = import('./types.ts').Row;
 
 /**
  * @typedef {object} OutboxEvent
@@ -21,7 +26,7 @@ const PROBE_OUTBOX = `with s as (select nextval('pa_event_seq') as seq),
     select pg_notify('pa_events', json_build_object('topic', 'deploytest', 'n', $1::int, 'seq', (select seq from o))::text)`;
 const PROBE_NOTIFY_ONLY = "select pg_notify('pa_events', json_build_object('topic', 'deploytest', 'n', $1::int, 'seq', nextval('pa_event_seq'))::text)";
 
-function create(db) {
+function create(db: Db) {
   let probeNotifyOnly = false;
   return {
     /**
@@ -32,7 +37,7 @@ function create(db) {
     async head() {
       const r = await db.one('select last_value, is_called from pa_event_seq');
       if (!r) return null;
-      return String(r.is_called ? BigInt(r.last_value) : BigInt(r.last_value) - 1n);
+      return String(r.is_called ? BigInt(r.last_value as string) : BigInt(r.last_value as string) - 1n);
     },
 
     /**
@@ -40,7 +45,7 @@ function create(db) {
      * only when given. `more` says whether more than `limit` were waiting.
      * @returns {Promise<{events: OutboxEvent[], more: boolean}>}
      */
-    async after(seq, { topics = null, limit = 1000 } = {}) {
+    async after(seq: unknown, { topics = null, limit = 1000 }: { topics?: unknown[] | null; limit?: number } = {}) {
       const list = await db.rows(
         `select seq::text as seq, topic, payload, at from event_outbox
           where seq > $1::bigint and ($2::text[] is null or topic = any($2::text[]))
@@ -54,7 +59,7 @@ function create(db) {
      * LISTENs on `channel` (on a backend over one dedicated connection:
      * clientBackend(client)); the connection then emits `notification`.
      */
-    async listen(channel) {
+    async listen(channel: string) {
       if (!/^[a-z_][a-z0-9_]*$/.test(channel)) throw new Error(`bad channel "${channel}"`);
       await db.query(`listen ${channel}`);
     },
@@ -73,13 +78,13 @@ function create(db) {
      * only (and keeps doing so).
      * @param {number} n
      */
-    async publishProbe(n) {
+    async publishProbe(n: number) {
       if (!probeNotifyOnly) {
         try {
           await db.query(PROBE_OUTBOX, [n]);
           return;
         } catch (err) {
-          if (!/event_outbox/.test(err.message)) throw err;
+          if (!/event_outbox/.test((err as Error).message)) throw err;
           probeNotifyOnly = true;
         }
       }

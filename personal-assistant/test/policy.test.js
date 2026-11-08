@@ -11,7 +11,7 @@ const crypto = require('crypto');
 const fs = require('fs');
 
 const P = require('../src/policy');
-const { hashEntry, GENESIS } = require('../src/repo/audit');
+const { hashEntry, GENESIS } = require('../src/repo/audit.ts');
 
 const base = JSON.parse(fs.readFileSync(P.DEFAULT_FILE, 'utf8'));
 const policy = P.merge(base, null);

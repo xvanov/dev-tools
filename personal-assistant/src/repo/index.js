@@ -27,19 +27,19 @@
 
 const AGGREGATES = {
   audio: () => require('./audio'),
-  audit: () => require('./audit'),
-  backupDrill: () => require('./backupDrill'),
+  audit: () => require('./audit.ts'),
+  backupDrill: () => require('./backupDrill.ts'),
   commitments: () => require('./commitments'),
   drafts: () => require('./drafts'),
   durable: () => require('./durable'),
   evals: () => require('./evals'),
-  events: () => require('./events'),
-  factoryBoard: () => require('./factoryBoard'),
+  events: () => require('./events.ts'),
+  factoryBoard: () => require('./factoryBoard.ts'),
   leases: () => require('./leases.ts'),
   ledger: () => require('./ledger'),
   meetings: () => require('./meetings'),
   memory: () => require('./memory'),
-  notifications: () => require('./notifications'),
+  notifications: () => require('./notifications.ts'),
   passkeys: () => require('./passkeys'),
   people: () => require('./people'),
   projects: () => require('./projects'),
@@ -52,7 +52,7 @@ const AGGREGATES = {
   sources: () => require('./sources'),
   spend: () => require('./spend.ts'),
   system: () => require('./system'),
-  telemetry: () => require('./telemetry'),
+  telemetry: () => require('./telemetry.ts'),
   workflowLimits: () => require('./workflowLimits.ts'),
 };
 

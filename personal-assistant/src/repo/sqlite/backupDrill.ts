@@ -5,8 +5,13 @@
 // SQLite store is a file, and its drill restores into a scratch file with no
 // server to ask), so those answer honestly: nothing exists, and creating one
 // is refused. The drill for a SQLite store lands with its file backups (3.x).
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
 
-function create(db) {
+type Db = import('../types.ts').Db;
+type Row = import('../types.ts').Row;
+
+function create(db: Db) {
   const notHere = () => new Error('not applicable to a SQLite store: it has no databases to create (a scratch file is the drill target)');
   return {
     /** Exact row count of every ordinary table, by name (SQLite's own and FTS shadow tables left out). */
@@ -15,10 +20,10 @@ function create(db) {
         `select name from sqlite_master
           where type = 'table' and name not like 'sqlite\\_%' escape '\\' order by name`
       );
-      const out = {};
+      const out: Record<string, number> = {};
       for (const { name } of tables) {
         const r = await db.one(`select count(*) as n from "${String(name).replace(/"/g, '""')}"`);
-        out[name] = Number(r.n);
+        out[String(name)] = Number(r?.n);
       }
       return out;
     },
@@ -31,7 +36,7 @@ function create(db) {
     async integrityProblems() {
       const problems = [];
       const ic = await db.rows('pragma integrity_check');
-      if (!(ic.length === 1 && ic[0].integrity_check === 'ok')) problems.push(`integrity_check: ${ic.slice(0, 3).map((r) => r.integrity_check).join('; ')}`);
+      if (!(ic.length === 1 && ic[0]?.integrity_check === 'ok')) problems.push(`integrity_check: ${ic.slice(0, 3).map((r) => r.integrity_check).join('; ')}`);
       for (const t of ['chunk_fts', 'chunk_fts_exact', 'claim_fts', 'memory_page_fts']) {
         await db.query(`insert into ${t} (${t}) values ('integrity-check')`).catch((err) => problems.push(`${t}: ${err.message}`));
       }

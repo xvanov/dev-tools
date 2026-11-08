@@ -484,7 +484,7 @@ function compareCounts(expected, got) {
 async function drill({ file = (list()[0] || {}).file, to, keep = false, adminUrl = null, template = null, say = () => {} } = {}) {
   if (sqliteStore()) return require('./backupSqlite').drill({ file, to, keep, say });
   if (!file) throw new Error(`no backups in ${config.backup.dir}`);
-  if (!require('./repo/backupDrill').NAME_RE.test(String(to || ''))) {
+  if (!require('./repo/backupDrill.ts').NAME_RE.test(String(to || ''))) {
     throw new Error('--to wants a lowercase database name (letters, digits, underscore), e.g. pa_drill');
   }
   const base = new URL(adminUrl || config.databaseUrl);

@@ -1,15 +1,20 @@
 'use strict';
 
 // SQLite twin of src/repo/telemetry.js (trace_span).
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+type Db = import('../types.ts').Db;
+type Row = import('../types.ts').Row;
 
 const COLS = 10;
 
-function create(db) {
+function create(db: Db) {
   return {
     /** Inserts finished spans in one statement; resolves the number written. */
-    async recordSpans(spans) {
+    async recordSpans(spans: Row[] | null | undefined) {
       if (!spans?.length) return 0;
-      const params = [];
+      const params: unknown[] = [];
       const tuples = spans.map((s, i) => {
         params.push(
           s.traceId,
@@ -19,7 +24,7 @@ function create(db) {
           s.name,
           s.source || 'pa',
           s.startedAt,
-          Math.max(0, Math.round(s.durationMs)),
+          Math.max(0, Math.round(Number(s.durationMs))),
           Boolean(s.ok),
           s.attrs ? JSON.stringify(s.attrs) : null
         );
@@ -35,7 +40,7 @@ function create(db) {
     },
 
     /** Each span at or after `since` as {hop, durationMs, ok}, newest first, at most `limit`. */
-    async hopDurations(since, limit = 20000) {
+    async hopDurations(since: Date | string | number, limit: number = 20000) {
       const rows = await db.rows(
         `select hop, duration_ms, ok from trace_span
         where started_at >= $1 order by started_at desc limit $2`,
@@ -45,7 +50,7 @@ function create(db) {
     },
 
     /** Deletes spans that started before `before`; resolves how many. */
-    async pruneSpans(before) {
+    async pruneSpans(before: Row) {
       const r = await db.query(`delete from trace_span where started_at < $1`, [before]);
       return r.rowCount ?? 0;
     },
