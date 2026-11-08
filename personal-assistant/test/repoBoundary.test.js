@@ -83,9 +83,12 @@ const PENDING = new Set([
 // on exit), never to run a statement; a SQL call in them still fails.
 const POOL_ONLY = new Map([
   ['src/worker.js', 'the lease connection (getPool().connect) and close on exit'],
+  ['src/events/index.js', 'the dedicated LISTEN connection (pg Client); its statements are repo.events'],
 ]);
 
-const REQUIRES_DB =/\brequire\(\s*['"](?:\.\.?\/)+db['"]\s*\)/;
+const REQUIRES_DB = /\brequire\(\s*['"](?:\.\.?\/)+db['"]\s*\)/;
+// The driver itself: a statement built in a variable escapes the call patterns.
+const REQUIRES_PG = /\brequire\(\s*['"]pg['"]\s*\)/;
 const SQL_CALL = /\.(?:query|rows|one)\(\s*[`'"]\s*(?:select|insert|update|delete|with|create|alter|drop|lock|listen|notify|truncate)\b/i;
 const BARE_SQL_CALL = /(?<![\w.])(?:query|rows|one)\(\s*[`'"]\s*(?:select|insert|update|delete|with)\b/i;
 
@@ -104,7 +107,7 @@ const files = [...walk(path.join(ROOT, 'src')), ...walk(path.join(ROOT, 'bin'))]
 
 const hasSql = (f) => {
   const t = fs.readFileSync(path.join(ROOT, f), 'utf8');
-  return (!POOL_ONLY.has(f) && REQUIRES_DB.test(t)) || SQL_CALL.test(t) || BARE_SQL_CALL.test(t);
+  return (!POOL_ONLY.has(f) && (REQUIRES_DB.test(t) || REQUIRES_PG.test(t))) || SQL_CALL.test(t) || BARE_SQL_CALL.test(t);
 };
 
 const unconverted = files.filter(hasSql);
