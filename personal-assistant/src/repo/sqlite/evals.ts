@@ -10,8 +10,13 @@
 //     on subjects). English stop words are dropped as in search.js.
 //   - itemsWithFacts(): the due date is the UTC day (pg's to_char uses the
 //     session time zone).
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
 
-const { BOOSTS } = require('../evals');
+type Db = import('../types.ts').Db;
+type Row = import('../types.ts').Row;
+
+const { BOOSTS } = require('../evals.ts');
 const { NOW } = require('./_sql');
 const { ftsQuery } = require('./search');
 
@@ -21,11 +26,11 @@ const SQLITE_BOOSTS = {
   temporal: `(si.source = 'graph_event' or exists (select 1 from commitment x where x.source_item_id = si.id and x.due_at is not null))`,
 };
 
-const ids = (list) => (list || []).map(Number);
-const parse = (v) => (typeof v === 'string' ? JSON.parse(v) : v);
-const words = (s) => String(s || '').toLowerCase().match(/[\p{L}\p{N}_]+/gu) || [];
+const ids = (list: unknown) => ((list ?? []) as unknown[]).map(Number);
+const parse = (v: unknown) => (typeof v === 'string' ? JSON.parse(v) : v);
+const words = (s: unknown) => String(s || '').toLowerCase().match(/[\p{L}\p{N}_]+/gu) || [];
 
-function create(db) {
+function create(db: Db) {
   return {
     // ---- cases and runs -------------------------------------------------------
 
@@ -35,7 +40,7 @@ function create(db) {
     },
 
     /** Cases (all, or active only), optionally of one qtype, by id. */
-    async listCases({ all = false, qtype = null } = {}) {
+    async listCases({ all = false, qtype = null }: { all?: boolean; qtype?: unknown } = {}) {
       return db.rows(
         `select id, question, qtype, gold_item_ids, gold_answer, origin, active, notes, created_at
        from eval_case
@@ -51,7 +56,7 @@ function create(db) {
     },
 
     /** Adds a case asked as of now ({id, qtype}). */
-    async insertCase({ question, qtype, gold, answer, origin, notes }) {
+    async insertCase({ question, qtype, gold, answer, origin, notes }: { question?: unknown; qtype?: unknown; gold?: unknown; answer?: string | null; origin?: string | null; notes?: unknown }) {
       return db.one(
         `insert into eval_case (question, qtype, gold_item_ids, gold_answer, as_of, origin, notes)
      values ($1, $2, $3, $4, ${NOW}, $5, $6) returning id, qtype`,
@@ -60,19 +65,19 @@ function create(db) {
     },
 
     /** A generated case (the seeder's); resolves its id. */
-    async insertGenerated({ question, qtype, gold_item_ids: gold, gold_answer: answer, notes }) {
+    async insertGenerated({ question, qtype, gold_item_ids: gold, gold_answer: answer, notes }: { question?: unknown; qtype?: unknown; gold_item_ids?: unknown; gold_answer?: unknown; notes?: unknown }) {
       const row = await db.one(
         `insert into eval_case (question, qtype, gold_item_ids, gold_answer, as_of, origin, notes)
      values ($1, $2, $3, $4, ${NOW}, 'generated', $5) returning id`,
         [question, qtype, ids(gold), answer, notes]
       );
-      return row.id;
+      return row?.id;
     },
 
     /** Turns a case on or off. Resolves whether it exists. */
-    async setActive(id, active) {
+    async setActive(id: number | string, active: boolean) {
       const r = await db.query('update eval_case set active = $2 where id = $1', [id, Boolean(active)]);
-      return r.rowCount > 0;
+      return (r.rowCount ?? 0) > 0;
     },
 
     /** Every item id an active case uses as gold. */
@@ -82,12 +87,12 @@ function create(db) {
     },
 
     /** The newest run of a retriever ({id, ran_at, metrics, config}), or null. */
-    async previousRun(retriever) {
+    async previousRun(retriever: unknown) {
       return db.one('select id, ran_at, metrics, config from eval_run where retriever = $1 order by ran_at desc, id desc limit 1', [retriever]);
     },
 
     /** Saves a run ({id, ran_at}); `perCase` is stored as JSON. */
-    async insertRun({ retriever, config, metrics, perCase }) {
+    async insertRun({ retriever, config, metrics, perCase }: { retriever?: unknown; config?: unknown; metrics?: unknown; perCase?: unknown }) {
       return db.one('insert into eval_run (retriever, config, metrics, per_case) values ($1, $2, $3, $4) returning id, ran_at', [
         retriever,
         config,
@@ -99,23 +104,23 @@ function create(db) {
     // ---- the corpus -----------------------------------------------------------
 
     /** Which of these ids are source items ([{id}]). */
-    async existingItems(list) {
+    async existingItems(list: unknown[]) {
       return db.rows('select id from source_item where id in (select value from json_each($1))', [ids(list)]);
     },
 
     /** These items' {id, source, subject, occurred_at, body_text}, in no order. */
-    async itemsForJudge(list) {
+    async itemsForJudge(list: unknown[]) {
       return db.rows('select id, source, subject, occurred_at, body_text from source_item where id in (select value from json_each($1))', [ids(list)]);
     },
 
     /** A weighted random sample of chunked items with some body, not in `exclude` (see the pg twin). */
-    async sample({ exclude, limit, boost = 'none' }) {
+    async sample({ exclude, limit, boost = 'none' }: { exclude?: unknown; limit?: number | null; boost?: string }) {
       if (!(boost in BOOSTS) || !(boost in SQLITE_BOOSTS)) throw new Error(`unknown sample boost "${boost}"`);
       const rows = await db.rows(
         `select si.id, si.source, si.occurred_at,
               (select count(*) from commitment x where x.source_item_id = si.id) as nc,
               (select count(*) from fact x where x.source_item_id = si.id) as nf,
-              ${SQLITE_BOOSTS[boost]} as boosted
+              ${SQLITE_BOOSTS[boost as keyof typeof SQLITE_BOOSTS]} as boosted
          from source_item si
         where exists (select 1 from chunk ch where ch.source_item_id = si.id)
           and length(si.body_text) > 80
@@ -124,16 +129,16 @@ function create(db) {
       );
       return rows
         .map((r) => {
-          const w = 1 + 3 * (r.nc + r.nf > 0 ? 1 : 0) + 3 * (r.boosted ? 1 : 0);
+          const w = 1 + 3 * (Number(r.nc) + Number(r.nf) > 0 ? 1 : 0) + 3 * (r.boosted ? 1 : 0);
           return { r, key: -Math.log(Math.max(Math.random(), 1e-9)) / w };
         })
         .sort((a, b) => a.key - b.key)
-        .slice(0, limit)
+        .slice(0, limit ?? undefined)
         .map(({ r }) => ({ id: r.id, source: r.source, occurred_at: r.occurred_at }));
     },
 
     /** Items with their commitments and facts as text arrays, in no order. */
-    async itemsWithFacts(list) {
+    async itemsWithFacts(list: unknown[]) {
       const rows = await db.rows(
         `select si.id, si.source, si.subject, si.occurred_at, si.body_text, si.thread_external_id,
             (select json_group_array(summary || coalesce(' (due ' || substr(due_at, 1, 10) || ')', ''))
@@ -146,7 +151,7 @@ function create(db) {
     },
 
     /** Random earlier/later pairs in one thread, both chunked, with a commitment or fact. */
-    async threadPairs({ exclude, limit }) {
+    async threadPairs({ exclude, limit }: { exclude?: unknown; limit?: number | null }) {
       return db.rows(
         `select a.id as earlier, b.id as later, b.source, b.occurred_at
        from source_item a
@@ -165,7 +170,7 @@ function create(db) {
     },
 
     /** Random groups of chunked items sharing a counterparty or project across two or more threads: {key, ids}. */
-    async sharedGroups({ exclude, limit }) {
+    async sharedGroups({ exclude, limit }: { exclude?: unknown; limit?: number | null }) {
       const rows = await db.rows(
         `with link as (
        select 'person:' || c.counterparty_person_id as key, c.source_item_id as id
@@ -188,13 +193,13 @@ function create(db) {
     },
 
     /** Each item's thread key (its thread id, else its own id): [{id, t}]. */
-    async threadKeys(list) {
+    async threadKeys(list: unknown[]) {
       return db.rows('select id, coalesce(thread_external_id, cast(id as text)) as t from source_item where id in (select value from json_each($1))', [ids(list)]);
     },
 
     /** Whether any chunk or subject matches every (non stop) word of `term` ({hit}). */
-    async fullTextHit(term) {
-      const q = ftsQuery(term, false);
+    async fullTextHit(term: unknown) {
+      const q: { terms: string[] } = ftsQuery(term, false);
       if (!q) return { hit: false };
       const match = q.terms.map((t) => `"${t.replace(/"/g, '""')}"`).join(' AND ');
       if (await db.one('select 1 from chunk_fts where chunk_fts match $1 limit 1', [match])) return { hit: true };
@@ -210,7 +215,7 @@ function create(db) {
     /** Active cases and the last run's time: {cases, last}. */
     async state() {
       const r = await db.one('select (select count(*) from eval_case where active) as cases, (select max(ran_at) from eval_run) as last');
-      return { ...r, last: r.last == null ? null : new Date(r.last) };
+      return { ...r, last: r?.last == null ? null : new Date(r.last as string) };
     },
 
     /** Up to 400 distinct subjects of a reasonable length: [{subject}]. */

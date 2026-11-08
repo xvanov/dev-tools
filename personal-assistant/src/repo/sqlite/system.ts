@@ -6,9 +6,14 @@
 // loaded), and the "server" version is SQLite's own (3 for 3.53). A pg-only
 // name (vector, pg_trgm) is not reported as present: the caller that asks
 // for them (src/backup.js restore) is Postgres-only.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
 
-function create(db) {
-  async function has(name) {
+type Db = import('../types.ts').Db;
+type Row = import('../types.ts').Row;
+
+function create(db: Db) {
+  async function has(name: string) {
     switch (name) {
       case 'fts5':
       case 'json':
@@ -29,20 +34,20 @@ function create(db) {
 
   return {
     /** Which of these extensions this connection has (names). */
-    async installedExtensions(names) {
+    async installedExtensions(names: unknown[]) {
       const out = [];
-      for (const n of names || []) if (await has(n)) out.push(n);
+      for (const n of names || []) if (await has(String(n))) out.push(n);
       return out;
     },
 
     /** SQLite's major version (3 for 3.53.4). */
     async serverMajor() {
       const r = await db.one('select sqlite_version() as v');
-      return Number(String(r.v).split('.')[0]);
+      return Number(String(r?.v).split('.')[0]);
     },
 
     /** Makes `id` the install id (a restored store is a new install). */
-    async replaceInstallId(id) {
+    async replaceInstallId(id: number | string) {
       await db.query('delete from pa_install');
       await db.query('insert into pa_install (id) values ($1)', [id]);
     },
@@ -83,27 +88,27 @@ function create(db) {
                 (select count(*) from draft where status = 'pending') as pending_drafts,
                 (select count(*) from distillation where error is not null) as failed_items`
       );
-      return Object.fromEntries(Object.entries(r).map(([k, v]) => [k, String(v)]));
+      return Object.fromEntries(Object.entries(r ?? {}).map(([k, v]) => [k, String(v)]));
     },
 
     /** For `pa doctor`: pushes since `start`, notifications held for the digest, the last digest's time. */
-    async attention(start) {
+    async attention(start: Date | string | number) {
       const r = await db.one(
         `select (select count(*) from notification where delivery = 'push' and kind <> 'digest' and created_at >= $1) as pushed,
                 (select count(*) from notification where delivery = 'digest' and digest_id is null) as held,
                 (select max(created_at) from digest) as last_digest`,
         [start]
       );
-      return { ...r, last_digest: r.last_digest == null ? null : new Date(r.last_digest) };
+      return { ...r, last_digest: r?.last_digest == null ? null : new Date(r.last_digest as string) };
     },
 
     /** A setting's row ({value}), or null. */
-    async setting(key) {
+    async setting(key: number | string) {
       return db.one('select value from setting where key = $1', [key]);
     },
 
     /** Sets a setting (value stored as JSON; a string is taken as JSON text, as pg's jsonb parameter does). */
-    async setSetting(key, value) {
+    async setSetting(key: number | string, value: string) {
       await db.query(
         `insert into setting (key, value, updated_at) values ($1, $2, strftime('%Y-%m-%dT%H:%M:%fZ','now'))
      on conflict (key) do update set value = excluded.value, updated_at = excluded.updated_at`,
@@ -111,7 +116,7 @@ function create(db) {
       );
     },
     /** Makes id the install id when the store has none (a no-op otherwise). */
-    async insertInstallIfNone(id) {
+    async insertInstallIfNone(id: number | string) {
       await db.query('insert into pa_install (id) select $1 where not exists (select 1 from pa_install)', [id]);
     },
 

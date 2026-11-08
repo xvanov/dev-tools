@@ -3,6 +3,11 @@
 // Aggregate: evals. Tables: eval_case (a question with its gold items and
 // answer) and eval_run (one scored run of a retriever). Also the corpus
 // samples the seeder draws cases from (src/eval/seed.js). Callers: src/eval.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+type Db = import('./types.ts').Db;
+type Row = import('./types.ts').Row;
 
 // Sampling boosts the seeder may ask for (a SQL fragment over `si`, never text
 // from a caller): `temporal` favours meetings and asks with a due date.
@@ -11,7 +16,7 @@ const BOOSTS = {
   temporal: `(si.source = 'graph_event' or exists (select 1 from commitment x where x.source_item_id = si.id and x.due_at is not null))`,
 };
 
-function create(db) {
+function create(db: Db) {
   return {
     // ---- cases and runs ---------------------------------------------------------
 
@@ -23,7 +28,7 @@ function create(db) {
     },
 
     /** Cases (all, or active only), optionally of one qtype, by id. */
-    async listCases({ all = false, qtype = null } = {}) {
+    async listCases({ all = false, qtype = null }: { all?: boolean; qtype?: unknown } = {}) {
       return db.rows(
         `select id, question, qtype, gold_item_ids, gold_answer, origin, active, notes, created_at
        from eval_case
@@ -39,7 +44,7 @@ function create(db) {
     },
 
     /** Adds a case asked as of now ({id, qtype}). `origin`: miss, generated, ... */
-    async insertCase({ question, qtype, gold, answer, origin, notes }) {
+    async insertCase({ question, qtype, gold, answer, origin, notes }: { question?: unknown; qtype?: unknown; gold?: unknown; answer?: string | null; origin?: string | null; notes?: unknown }) {
       return db.one(
         `insert into eval_case (question, qtype, gold_item_ids, gold_answer, as_of, origin, notes)
      values ($1, $2, $3::bigint[], $4, now(), $5, $6) returning id, qtype`,
@@ -48,19 +53,19 @@ function create(db) {
     },
 
     /** A generated case (the seeder's); resolves its id. */
-    async insertGenerated({ question, qtype, gold_item_ids: gold, gold_answer: answer, notes }) {
+    async insertGenerated({ question, qtype, gold_item_ids: gold, gold_answer: answer, notes }: { question?: unknown; qtype?: unknown; gold_item_ids?: unknown; gold_answer?: unknown; notes?: unknown }) {
       const row = await db.one(
         `insert into eval_case (question, qtype, gold_item_ids, gold_answer, as_of, origin, notes)
      values ($1, $2, $3::bigint[], $4, now(), 'generated', $5) returning id`,
         [question, qtype, gold, answer, notes]
       );
-      return row.id;
+      return row?.id;
     },
 
     /** Turns a case on or off. Resolves whether it exists. */
-    async setActive(id, active) {
+    async setActive(id: number | string, active: boolean) {
       const r = await db.query('update eval_case set active = $2 where id = $1', [id, active]);
-      return r.rowCount > 0;
+      return (r.rowCount ?? 0) > 0;
     },
 
     /** Every item id an active case uses as gold. */
@@ -70,7 +75,7 @@ function create(db) {
     },
 
     /** The newest run of a retriever ({id, ran_at, metrics, config}), or null. */
-    async previousRun(retriever) {
+    async previousRun(retriever: unknown) {
       return db.one(
         `select id, ran_at, metrics, config from eval_run where retriever = $1 order by ran_at desc limit 1`,
         [retriever]
@@ -78,7 +83,7 @@ function create(db) {
     },
 
     /** Saves a run ({id, ran_at}); `perCase` is stored as JSON. */
-    async insertRun({ retriever, config, metrics, perCase }) {
+    async insertRun({ retriever, config, metrics, perCase }: { retriever?: unknown; config?: unknown; metrics?: unknown; perCase?: unknown }) {
       return db.one(
         `insert into eval_run (retriever, config, metrics, per_case) values ($1, $2, $3, $4) returning id, ran_at`,
         [retriever, config, metrics, JSON.stringify(perCase)]
@@ -88,12 +93,12 @@ function create(db) {
     // ---- the corpus, as the judge and the seeder read it ------------------------
 
     /** Which of these ids are source items ([{id}]). */
-    async existingItems(ids) {
+    async existingItems(ids: unknown[]) {
       return db.rows('select id from source_item where id = any($1::bigint[])', [ids]);
     },
 
     /** These items' {id, source, subject, occurred_at, body_text}, in no order. */
-    async itemsForJudge(ids) {
+    async itemsForJudge(ids: unknown[]) {
       return db.rows(
         `select id, source, subject, occurred_at, body_text from source_item where id = any($1::bigint[])`,
         [ids]
@@ -105,14 +110,14 @@ function create(db) {
      * `exclude` (Efraimidis-Spirakis: order by -ln(u)/w). Items with a
      * commitment or fact weigh 4, plus 3 when `boost` (a BOOSTS key) holds.
      */
-    async sample({ exclude, limit, boost = 'none' }) {
+    async sample({ exclude, limit, boost = 'none' }: { exclude?: unknown; limit?: number | null; boost?: string }) {
       if (!(boost in BOOSTS)) throw new Error(`unknown sample boost "${boost}"`);
       return db.rows(
         `with c as (
        select si.id, si.source, si.occurred_at,
               (select count(*) from commitment x where x.source_item_id = si.id) as nc,
               (select count(*) from fact x where x.source_item_id = si.id) as nf,
-              ${BOOSTS[boost]} as boosted
+              ${BOOSTS[boost as keyof typeof BOOSTS]} as boosted
          from source_item si
         where exists (select 1 from chunk ch where ch.source_item_id = si.id)
           and length(si.body_text) > 80
@@ -126,7 +131,7 @@ function create(db) {
     },
 
     /** Items with their commitments and facts as text arrays (a case is written from them), in no order. */
-    async itemsWithFacts(ids) {
+    async itemsWithFacts(ids: unknown[]) {
       return db.rows(
         `select si.id, si.source, si.subject, si.occurred_at, si.body_text, si.thread_external_id,
             coalesce((select array_agg(summary || coalesce(' (due ' || to_char(due_at, 'YYYY-MM-DD') || ')', ''))
@@ -138,7 +143,7 @@ function create(db) {
     },
 
     /** Random earlier/later pairs in one thread, both chunked, with a commitment or fact: {earlier, later, source, occurred_at}. */
-    async threadPairs({ exclude, limit }) {
+    async threadPairs({ exclude, limit }: { exclude?: unknown; limit?: number | null }) {
       return db.rows(
         `select a.id as earlier, b.id as later, b.source, b.occurred_at
        from source_item a
@@ -157,7 +162,7 @@ function create(db) {
     },
 
     /** Random groups of chunked items sharing a counterparty or project across two or more threads: {key, ids}. */
-    async sharedGroups({ exclude, limit }) {
+    async sharedGroups({ exclude, limit }: { exclude?: unknown; limit?: number | null }) {
       return db.rows(
         `with link as (
        select 'person:' || c.counterparty_person_id as key, c.source_item_id as id
@@ -179,12 +184,12 @@ function create(db) {
     },
 
     /** Each item's thread key (its thread id, else its own id): [{id, t}]. */
-    async threadKeys(ids) {
+    async threadKeys(ids: unknown[]) {
       return db.rows(`select id, coalesce(thread_external_id, id::text) as t from source_item where id = any($1::bigint[])`, [ids]);
     },
 
     /** Whether any chunk or subject matches `term` as English full text ({hit}). */
-    async fullTextHit(term) {
+    async fullTextHit(term: unknown) {
       return db.one(
         `select exists (select 1 from chunk where tsv @@ plainto_tsquery('english', $1))
          or exists (select 1 from source_item

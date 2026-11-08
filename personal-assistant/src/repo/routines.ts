@@ -2,14 +2,19 @@
 
 // Aggregate: routines. Tables: routine (a scheduled action: proposed, active,
 // paused, rejected) and routine_run (one run of it). Callers: src/routines.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
 
-function create(db) {
+type Db = import('./types.ts').Db;
+type Row = import('./types.ts').Row;
+
+function create(db: Db) {
   return {
     /**
      * Adds a routine; returns the row. `evidence` is stored as JSON; the
      * caller works out enabled and next_run_at from the status.
      */
-    async insert({ title, description, schedule, action, params, enabled, origin, status, why, evidence, nextRunAt }) {
+    async insert({ title, description, schedule, action, params, enabled, origin, status, why, evidence, nextRunAt }: { title?: string | null; description?: string | null; schedule?: unknown; action?: unknown; params?: unknown[] | null; enabled?: boolean | null; origin?: string | null; status?: string | null; why?: unknown; evidence?: Row | null; nextRunAt?: unknown }) {
       return db.one(
         `insert into routine (title, description, schedule, action, params, enabled, origin, status, why, evidence, next_run_at)
      values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) returning *`,
@@ -18,7 +23,7 @@ function create(db) {
     },
 
     /** One routine, or null. */
-    async byId(id) {
+    async byId(id: number | string) {
       return db.one('select * from routine where id = $1', [id]);
     },
 
@@ -26,7 +31,7 @@ function create(db) {
      * Routines (all, or with these statuses) with their newest run (last_*,
      * running), proposed first, then active, paused, the rest; by id.
      */
-    async list({ statuses = null } = {}) {
+    async list({ statuses = null }: { statuses?: unknown[] | null } = {}) {
       const where = statuses ? 'where r.status = any($1)' : '';
       return db.rows(
         `select r.*, lr.id as last_run_id, lr.ok as last_ok, lr.summary as last_summary, lr.ended_at as last_ended_at,
@@ -41,7 +46,7 @@ function create(db) {
     },
 
     /** Runs, newest first, at most `limit`, of one routine or all, with its title and action. */
-    async runs({ limit, routineId = null }) {
+    async runs({ limit, routineId = null }: { limit?: number | null; routineId?: number | string | null }) {
       return db.rows(
         `select x.*, r.title, r.action from routine_run x join routine r on r.id = x.routine_id
       ${routineId ? 'where x.routine_id = $2' : ''}
@@ -51,7 +56,7 @@ function create(db) {
     },
 
     /** Moves a routine to `status`, enabled or not, with its next run; returns the row. */
-    async setStatus(id, status, enabled, nextRunAt) {
+    async setStatus(id: number | string, status: string, enabled: boolean, nextRunAt: unknown) {
       return db.one(
         `update routine set status = $2, enabled = $3, next_run_at = $4 where id = $1 returning *`,
         [id, status, enabled, nextRunAt]
@@ -59,12 +64,12 @@ function create(db) {
     },
 
     /** Marks a suggestion rejected (so it is never proposed again). */
-    async reject(id) {
+    async reject(id: number | string) {
       await db.query(`update routine set status = 'rejected', enabled = false, next_run_at = null where id = $1`, [id]);
     },
 
     /** Deletes a routine. */
-    async remove(id) {
+    async remove(id: number | string) {
       await db.query('delete from routine where id = $1', [id]);
     },
 
@@ -77,7 +82,7 @@ function create(db) {
     },
 
     /** Opens a run; returns the row. */
-    async startRun(routineId, dryRun) {
+    async startRun(routineId: number | string, dryRun: boolean) {
       return db.one(
         `insert into routine_run (routine_id, dry_run) values ($1, $2) returning *`,
         [routineId, dryRun]
@@ -85,7 +90,7 @@ function create(db) {
     },
 
     /** Ends a run with its verdict, summary and detail; returns the row. */
-    async endRun(runId, ok, summary, detail) {
+    async endRun(runId: number | string, ok: boolean, summary: string, detail: string) {
       return db.one(
         `update routine_run set ended_at = now(), ok = $2, summary = $3, detail = $4 where id = $1 returning *`,
         [runId, ok, summary, detail]
@@ -93,7 +98,7 @@ function create(db) {
     },
 
     /** Stamps a routine's last run time now. */
-    async touchLastRun(id) {
+    async touchLastRun(id: number | string) {
       await db.query('update routine set last_run_at = now() where id = $1', [id]);
     },
 
@@ -107,7 +112,7 @@ function create(db) {
     },
 
     /** Pauses a routine whose schedule never runs again. */
-    async pauseForever(id) {
+    async pauseForever(id: number | string) {
       await db.query(`update routine set status = 'paused', enabled = false, next_run_at = null where id = $1`, [id]);
     },
 
@@ -115,7 +120,7 @@ function create(db) {
      * Claims a due run: moves next_run_at from `expected` to `next` only if
      * nobody else has. Returns {id} when claimed, null otherwise.
      */
-    async claimNext(id, next, expected) {
+    async claimNext(id: number | string, next: unknown, expected: unknown) {
       return db.one(
         `update routine set next_run_at = $2 where id = $1 and next_run_at = $3 returning id`,
         [id, next, expected]
@@ -123,7 +128,7 @@ function create(db) {
     },
 
     /** Puts next_run_at back (a claimed run that did not happen). */
-    async setNextRun(id, nextRunAt) {
+    async setNextRun(id: number | string, nextRunAt: unknown) {
       await db.query('update routine set next_run_at = $2 where id = $1', [id, nextRunAt]);
     },
 

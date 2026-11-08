@@ -3,13 +3,18 @@
 // Aggregate: system. Tables: setting, pa_install, and diagnostics about the
 // store itself (extensions, server version, counts, liveness).
 // Owner while plan 1.2 is converting: chunk G (cli, dashboard, eval).
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
 
-function create(db) {
+type Db = import('./types.ts').Db;
+type Row = import('./types.ts').Row;
+
+function create(db: Db) {
   return {
     // --- for src/backup.js
 
     /** Which of these extensions are installed in this database (names). */
-    async installedExtensions(names) {
+    async installedExtensions(names: unknown[]) {
       const r = await db.query(`select extname from pg_extension where extname = any($1::text[])`, [names]);
       return r.rows.map((x) => x.extname);
     },
@@ -17,7 +22,7 @@ function create(db) {
     /** The server's major version (16 for 16.4). */
     async serverMajor() {
       const r = await db.query(`select current_setting('server_version_num')::int / 10000 as major`);
-      return Number(r.rows[0].major);
+      return Number(r.rows[0]?.major);
     },
 
     /**
@@ -25,7 +30,7 @@ function create(db) {
      * so the factory idempotency keys never collide with a live twin.
      * @param {string} id  a uuid
      */
-    async replaceInstallId(id) {
+    async replaceInstallId(id: number | string) {
       await db.query('delete from pa_install');
       await db.query('insert into pa_install (id) values ($1)', [id]);
     },
@@ -87,7 +92,7 @@ function create(db) {
      * @param {Date} start
      * @returns {Promise<{pushed: number, held: number, last_digest: Date|null}>}
      */
-    async attention(start) {
+    async attention(start: Date | string | number) {
       return db.one(
         `select (select count(*) from notification where delivery = 'push' and kind <> 'digest' and created_at >= $1)::int as pushed,
                 (select count(*) from notification where delivery = 'digest' and digest_id is null)::int as held,
@@ -99,12 +104,12 @@ function create(db) {
     // --- for src/routines (chunk F)
 
     /** A setting's row ({value}), or null. */
-    async setting(key) {
+    async setting(key: number | string) {
       return db.one('select value from setting where key = $1', [key]);
     },
 
     /** Sets a setting (value stored as jsonb). */
-    async setSetting(key, value) {
+    async setSetting(key: number | string, value: string) {
       await db.query(
         `insert into setting (key, value, updated_at) values ($1,$2,now())
      on conflict (key) do update set value = excluded.value, updated_at = now()`,
@@ -115,7 +120,7 @@ function create(db) {
     // --- for src/dispatch/factory.js
 
     /** Makes `id` the install id when the store has none (a no-op otherwise). */
-    async insertInstallIfNone(id) {
+    async insertInstallIfNone(id: number | string) {
       await db.query('insert into pa_install (id) select $1 where not exists (select 1 from pa_install)', [id]);
     },
 
