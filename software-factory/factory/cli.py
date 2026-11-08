@@ -25,13 +25,13 @@ from pathlib import Path
 from typing import Any
 
 import typer
-from factory.keychain import load_dotenv
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
 from factory import __phase__, __version__
 from factory.cli_apps import apps_app
+from factory.keychain import load_dotenv
 from factory.model_router import route
 from factory.runner import LLMConfig, sandbox_run
 
@@ -1224,7 +1224,7 @@ def tick_cmd(
                         0,
                     )
                 )
-        elif sync_reason not in {"disabled", "no_pending"}:
+        elif sync_reason not in {"disabled", "no_pending", "busy"}:
             scheduled_results.append(("auto_pm_sync", sync_reason, 0, 0))
     except Exception as exc:  # noqa: BLE001 - never fail the tick on triage
         scheduled_results.append(("auto_pm_sync", f"errored:{exc!r}"[:60], 0, 0))
@@ -1570,6 +1570,26 @@ def serve_cmd(
             except OSError:
                 pass
 
+    def _triage(app_name: str) -> None:
+        """The triage lane (E5.4): PM-triage the app's new directions now,
+        in this warm process, instead of in a tick started seconds later
+        behind whatever that app's tick is doing. Same gates as a tick's
+        triage: not while halted, not without an LLM key."""
+        from factory.chain.pm_sync import maybe_auto_pm_sync
+        from factory.manager.halt import is_halted
+        from factory.scheduler.serve import request_wake
+
+        if is_halted(root=_FACTORY_ROOT) or not _has_any_llm_provider_key()[0]:
+            return
+        summary, reason = maybe_auto_pm_sync(
+            app_name, _FACTORY_ROOT,
+            github_client_factory=lambda: _ensure_github_client(_app_repo(app_name)),
+        )
+        if summary is not None and (summary.processed or summary.validated):
+            sched.log(f"triage {app_name}: {reason} processed={summary.processed} validated={summary.validated}")
+            # Stories exist now: let the app's tick take the next step at once.
+            request_wake(_FACTORY_ROOT, app_name, reason="triaged")
+
     try:
         sched = _serve.Scheduler(
             _serve.ServeConfig(
@@ -1577,6 +1597,7 @@ def serve_cmd(
                 tick_timeout_s=float(tick_timeout),
             ),
             out=_out,
+            triage=_triage,
         )
         sched.log(f"lease held; apps={chosen} interval={interval:.0f}s root={_FACTORY_ROOT}")
         from factory.scheduler import api as _api

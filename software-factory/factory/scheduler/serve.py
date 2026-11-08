@@ -394,6 +394,31 @@ class Scheduler:
     next_dispatch: float = 0.0
     ticks_started: int = 0
     burst: dict[str, int] = field(default_factory=dict)
+    #: The triage lane (E5.4): ``triage(app)`` runs PM triage in-process, in its
+    #: own thread, as soon as an app is woken, so a new job's first step starts
+    #: in about a second and never waits behind another job's long tick.
+    triage: Callable[[str], None] | None = None
+    triaging: dict[str, Any] = field(default_factory=dict)
+
+    def _start_triage(self, app: str) -> None:
+        if self.triage is None:
+            return
+        t = self.triaging.get(app)
+        if t is not None and t.is_alive():
+            return  # one lane per app; the lock inside pm-sync is the backstop
+        import threading
+
+        fn = self.triage
+
+        def run() -> None:
+            try:
+                fn(app)
+            except Exception as exc:  # noqa: BLE001 - the lane never kills serve
+                self.log(f"triage {app} failed: {exc!r}")
+
+        t = threading.Thread(target=run, name=f"triage-{app}", daemon=True)
+        self.triaging[app] = t
+        t.start()
 
     def log(self, msg: str) -> None:
         self.out(f"{_now_iso()} serve: {msg}")
@@ -464,6 +489,7 @@ class Scheduler:
             self.next_dispatch = now + self.cfg.interval_s
             targets = self.cfg.apps if ALL_APPS in woken else [a for a in woken if a in self.cfg.apps]
             for app in targets:
+                self._start_triage(app)
                 if self.burst.get(app, 0) >= self.cfg.max_wake_burst:
                     continue  # runaway re-waking: the interval tick takes over
                 self.pending[app] = "wake"

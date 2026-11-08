@@ -831,8 +831,45 @@ def maybe_auto_pm_sync(
     ``factory.directions.approval`` and the gate inside ``pm_sync``.
 
     Returns ``(summary_or_None, reason)`` with reason in
-    {"disabled", "no_pending", "awaiting_approval", "rate_limited", "synced"}.
+    {"disabled", "no_pending", "awaiting_approval", "rate_limited", "synced",
+    "busy"} ("busy": another triage of this app holds the lock, e.g. serve's lane).
     """
+    # One triage per app at a time: `factory serve`'s triage lane and the app's
+    # tick both call this, and two concurrent runs could triage the same
+    # direction twice. Whoever holds the lock triages; the other says "busy".
+    from factory.oscompat import lock_file, unlock_file
+
+    lock_path = Path(software_factory_root) / "state" / "locks" / f"pmsync-{app}.lock"
+    try:
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        lock_fh = lock_path.open("a+")
+    except OSError:
+        lock_fh = None
+    if lock_fh is not None:
+        try:
+            lock_file(lock_fh, blocking=False)
+        except BlockingIOError:
+            lock_fh.close()
+            return None, "busy"
+    try:
+        return _maybe_auto_pm_sync_locked(
+            app, software_factory_root, dry_run=dry_run,
+            github_client_factory=github_client_factory, state_db_path=state_db_path,
+        )
+    finally:
+        if lock_fh is not None:
+            unlock_file(lock_fh)
+            lock_fh.close()
+
+
+def _maybe_auto_pm_sync_locked(
+    app: str,
+    software_factory_root: Path,
+    *,
+    dry_run: bool = False,
+    github_client_factory: Any = None,
+    state_db_path: Path | None = None,
+) -> tuple[PMSyncSummary | None, str]:
     from datetime import UTC, datetime
 
     from factory.directions.gc import gc_stale_scheduled_directions, is_gc_eligible

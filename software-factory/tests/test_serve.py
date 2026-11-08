@@ -235,6 +235,44 @@ def test_serve_forever_drains_and_writes_status(tmp_path: Path) -> None:
     assert h.apps_started()[0] == "a"
 
 
+def test_wake_starts_one_triage_lane_per_app_next_to_the_tick(tmp_path: Path) -> None:
+    import threading
+
+    release = threading.Event()
+    seen: list[str] = []
+
+    def triage(app: str) -> None:
+        seen.append(app)
+        release.wait(5)
+
+    h = Harness(tmp_path, ["a", "b"])
+    h.sched.triage = triage
+    h.sched.step()  # interval ticks; no wake, no triage
+    assert seen == []
+    h.now = 1
+    h.sched.step(["a"])
+    h.sched.step(["a"])  # a second wake while a's lane runs: no second lane
+    h.sched.step([serve.ALL_APPS])
+    release.set()
+    for t in h.sched.triaging.values():
+        t.join(5)
+    assert sorted(seen) == ["a", "b"]
+
+
+def test_pm_sync_is_one_at_a_time_per_app(tmp_path: Path) -> None:
+    from factory.chain import pm_sync
+    from factory.oscompat import lock_file, unlock_file
+
+    lock = tmp_path / "state" / "locks" / "pmsync-demo.lock"
+    lock.parent.mkdir(parents=True)
+    with lock.open("a+") as fh:
+        lock_file(fh)
+        try:
+            assert pm_sync.maybe_auto_pm_sync("demo", tmp_path) == (None, "busy")
+        finally:
+            unlock_file(fh)
+
+
 def test_choose_apps_is_opt_in(tmp_path: Path) -> None:
     # (Not "on"/"off": YAML reads those bare words as booleans.)
     for name, extra in (("ticked", "serve_tick: true\n"), ("idle", ""), ("broken", None)):
