@@ -267,7 +267,17 @@ def _real_gitignore_text() -> str:
 
 def _gitignore_without_d018_rules() -> str:
     """This repository's real ``.gitignore`` with direction 018's rules removed."""
-    kept = [line for line in _real_gitignore_text().splitlines() if line.strip() not in _D018_RULES]
+    # Directory-level "never add machine-written directions" rules (apps/<app>/directions/)
+    # hide state.yaml just as well, so the stripped copy must drop them too.
+    def _is_dir_rule(line: str) -> bool:
+        s = line.strip()
+        return s.startswith("apps/") and s.endswith("/directions/")
+
+    kept = [
+        line
+        for line in _real_gitignore_text().splitlines()
+        if line.strip() not in _D018_RULES and not _is_dir_rule(line)
+    ]
     text = "\n".join(kept) + "\n"
     for rule in _D018_RULES:
         assert rule not in text.splitlines(), f"failed to strip {rule!r}"
