@@ -41,11 +41,13 @@ surfaces move only once everything under them is typed.
    (its exported `main()`) under Bun, unchanged. Same process shape, ports, env, logs and
    supervisor protocol as the Node worker. Proven by running the PA's own tests under Bun
    (`jarvisd/scripts/parity.js`: schemas, events, dashboard, the repository boundary and calls,
-   the contract on Postgres, migrations, architecture, lease) on Windows and Linux.
+   the contract on SQLite and Postgres, the SQLite backend's tests, migrations, architecture,
+   lease) on Windows and Linux.
 2. **Contracts and the store.** `schemas` types are imported, not redeclared. `repo` aggregates
-   become `.ts` one per commit (each has its contract cases, the oracle), then `db`. SQLite under
-   jarvisd goes through `bun:sqlite` (the Node driver's native addon crashes Bun 1.3 on load, see
-   below); the twins in `repo/sqlite` move with it.
+   become `.ts` one per commit (each has its contract cases, the oracle), then `db`, with the
+   twins in `repo/sqlite`. SQLite under jarvisd keeps the Node driver
+   (`better-sqlite3-multiple-ciphers`, for SQLCipher) and `sqlite-vec`: both load under Bun
+   1.4.4 (see below).
 3. **Core utils, events, policy.** `config`, `log`, `util`, `events/bus`, `policy` (pure modules
    with unit tests), then `llm`, `budget`.
 4. **Domain and ingest**, aggregate by aggregate, in the order the repository chunks went
@@ -94,11 +96,25 @@ How a module moves (the pattern is `personal-assistant/src/events/bus.ts`, the f
   `.ts` is loaded under Node through Bun's output (`bun build --target=node`) only if a Node-only
   caller still needs it; the default is that `.ts` modules are reached from jarvisd.
 - Bun specifics found so far: `require` of a computed path is invisible to the bundler, so the
-  platform loader and the worker's memory passes use literal requires (`personal-assistant/src/
-  platform/index.js`, `worker.js`); `repo/index.js`'s SQLite twin loader and `db/sqlite.js`'s
-  driver stay dynamic (PA_DB=sqlite under the compiled binary waits for stage 2). The optional
-  `better-sqlite3-multiple-ciphers` addon aborts Bun (NAPI fatal error), so parity runs the
-  contract on Postgres only.
+  platform loader, the worker's memory passes, the SQLite twins (`repo/index.ts`) and the
+  dashboard's module routes use literal requires. In the compiled binary a computed require
+  either fails (the dashboard's `/api/routines`, `/api/memory/*`, `/api/debriefs`, and
+  `/api/meetings/*` answered 500) or loads a second copy of the module from disk: twins loaded
+  that way had their own `db/sqlite.ts`, whose session set called this process's own lease
+  holders gone. `__dirname` in the binary is the source file's path in the checkout, and a file
+  the binary loads from disk resolves no package names. So `db/sqlite.ts` takes the driver's
+  entry file, and the sqlite-vec extension, from `personal-assistant/node_modules` by path when
+  the name does not resolve: the backup's snapshot thread loads `db/sqlite.ts` from disk, and
+  sqlite-vec's lookup of its platform package resolves from the working directory (a
+  generation's is `jarvisd/dist`).
+- **SQLite under Bun.** Bun 1.3.13 aborted on `better-sqlite3-multiple-ciphers` (a NAPI fatal
+  error). Bun 1.4.4, which `jarvisd/package.json` pins, loads it and `sqlite-vec`. The parity set
+  runs the repository contract on SQLite (603 cases) plus `sqliteNotify`, `backupSqlite` and
+  `durableSqlite`. CI's jarvisd job runs `test/jarvisdSqlite.test.js` with the compiled binary:
+  a generation on an encrypted throwaway store, started outside the checkout, must load
+  sqlite-vec, answer the module routes, write the snapshot and the bundle, and deliver an outbox
+  row another process wrote to `/api/events`. The worker logs
+  `store ready { has_vector }` at start, so a binary that fell back to the JS vector scan says so.
 
 ## The supervisor (Z1) and jarvisd generations
 
@@ -152,7 +168,10 @@ src/supervisor`), and the compiled jarvisd carries it:
 ### Runbook: switching a stack to jarvisd (and back)
 
 Prerequisites: the checkout is clean on main at a commit with this section, `npm ci` has run in
-`jarvisd/` and `personal-assistant/`, and `node scripts/build.js --only jarvisd` builds.
+`jarvisd/` and `personal-assistant/`, and `node scripts/build.js --only jarvisd` builds. The
+build compiles with the pinned Bun (`JARVISD_BUN`, else `jarvisd/.bun/<pin>/`, which a deploy
+installs, else `jarvisd/node_modules`) and refuses any other version: an executable built on
+Bun 1.3.13 aborts when the PA opens its SQLite store.
 
 Windows (work stack):
 
@@ -236,6 +255,12 @@ setup; T7's cargo and Bun caches apply.
 - [ ] The work stack on Bun. Switched 2026-11-08 and rolled back to Node the same day: on Bun,
   Talk's transcription came back empty (Bun reset the half-closed socket to whisper; fixed in
   2aad672, now covered by the Bun parity set). Next try after that fix is deployed.
+- [x] The PA on SQLite (encrypted, sqlite-vec) under jarvisd, proven 2026-11-08 on a scratch
+  store: a generation from source on Bun 1.4.4 and from the compiled executable, and `jarvisd
+  supervise` (compiled and source) through a roll, each with `/healthz`, `/api/version`,
+  `/api/events` (an event written by another process), the module routes, the vector index and
+  an encrypted backup that restores. `test/jarvisdSqlite.test.js` repeats the compiled run in
+  CI; the SQLite contract and backend tests are in the parity set.
 - [x] Leaves in strict TS: `events/bus`, `util/{text,exclusive,scheduler,when}`, `policy`.
 - [x] Stage 2, the repository layer: every aggregate in `repo/` and its SQLite twin in
   `repo/sqlite/` is strict TS (`repo/index.js` and `repo/_sql.js` stay JS for now; `db` next).

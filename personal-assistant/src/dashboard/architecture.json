@@ -541,8 +541,8 @@
       },
       "details": {
         "Stage": "1 of 7: host. jarvisd/src/main.ts requires personal-assistant/src/worker.ts statically, so bun build --compile bundles the whole worker graph",
-        "Parity": "jarvisd/scripts/parity.js runs the PA's schemas, events, dashboard, repository boundary/calls/contract (Postgres), migrations, architecture and lease tests under Bun",
-        "Known gap": "the optional SQLite driver (better-sqlite3-multiple-ciphers) aborts Bun 1.3 on load; under jarvisd SQLite moves to bun:sqlite (stage 2)",
+        "Parity": "jarvisd/scripts/parity.js runs the PA's schemas, events, dashboard, repository boundary/calls, the contract on SQLite (and Postgres where reachable), the SQLite backend's notify/backup/durable tests, migrations, architecture and lease tests under Bun",
+        "SQLite": "PA_DB=sqlite runs under Bun 1.4.4 from source and in the compiled binary: better-sqlite3-multiple-ciphers and sqlite-vec load as Node addons (1.3.13 aborted on them). The binary bundles the driver's JS and finds its addon, sqlite-vec's extension and the snapshot thread's copy of src/db/sqlite.ts in the checkout by path (test/jarvisdSqlite.test.js)",
         "Build": "node scripts/build.js --only jarvisd (Bun from jarvisd/package.json); jarvisd --check loads the graph and exits"
       },
       "code": [

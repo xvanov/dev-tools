@@ -58,7 +58,8 @@ function snapshotOffThread(src: string, dest: string, key: string | null) {
   return new Promise<void>((resolve, reject) => {
     const w = new Worker(
       "const { workerData: d } = require('worker_threads'); require(d.mod).snapshotFile(d.src, d.dest, { key: d.key });",
-      { eval: true, workerData: { mod: require.resolve('./db/sqlite.ts'), src, dest, key } }
+      // The file on disk, not require.resolve: the compiled jarvisd cannot resolve its bundled modules.
+      { eval: true, workerData: { mod: path.join(__dirname, 'db', 'sqlite.ts'), src, dest, key } }
     );
     w.once('error', reject);
     w.once('exit', (code: number) => (code === 0 ? resolve() : reject(new Error(`the snapshot thread exited with ${code}`))));

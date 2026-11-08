@@ -177,6 +177,7 @@ async function main() {
       await new Promise((r) => setTimeout(r, wait * 1000));
     }
   }
+  if (config.db === 'sqlite') log.info('store ready', await db.probe());
 
   // Under the supervisor (src/supervisor, PA_SUPERVISED=1) the dashboard
   // comes up before the lease, on a port the OS picks, and /healthz says

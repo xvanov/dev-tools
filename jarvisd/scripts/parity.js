@@ -27,9 +27,15 @@ const FILES = [
   'router.test.js',
   'repoBoundary.test.js',
   'repoCalls.test.js',
-  // Postgres only: the SQLite backend's native driver (better-sqlite3-multiple-ciphers) crashes
-  // Bun 1.3 on load (NAPI fatal error). Under jarvisd SQLite goes through bun:sqlite (JARVISD.md).
-  ['repoContract.test.js', { PA_CONTRACT_BACKENDS: 'postgres' }],
+  // Both backends: SQLite (what both stacks run) through better-sqlite3-multiple-ciphers and
+  // sqlite-vec, whose native addons load under Bun 1.4.4 (1.3.13 aborted on them); Postgres
+  // where one is reachable (CI's PA_TEST_PG_URL), else it skips.
+  'repoContract.test.js',
+  // The SQLite backend's own: LISTEN and the outbox poll, the backup's snapshot thread and
+  // drill, the durable queue on SQLite.
+  'sqliteNotify.test.js',
+  'backupSqlite.test.js',
+  'durableSqlite.test.js',
   'migrations.test.js',
   'architecture.test.js',
   'lease.test.js',

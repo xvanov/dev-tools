@@ -185,12 +185,13 @@ function chatStream(req: Req, res: Res) {
 }
 
 // Answers a module route's JSON (memory, meetings, debriefs, routines): its
-// value, or 404 when it does not know the path. A POST needs X-PA.
-async function jsonModule(c: RouteCtx, mod: string) {
+// value, or 404 when it does not know the path. A POST needs X-PA. `load` is a
+// literal require: the compiled jarvisd cannot resolve a computed one.
+async function jsonModule(c: RouteCtx, load: () => { route(method: string | undefined, url: URL, body: Row): unknown }) {
   const { req, res, url, send } = c;
   if (req.method === 'POST' && req.headers['x-pa'] !== '1') return send(res, 403, { error: 'missing X-PA header' });
   const body: Row = req.method === 'POST' ? await c.body() : {};
-  const out = await require(mod).route(req.method, url, body);
+  const out = await load().route(req.method, url, body);
   return out === undefined ? send(res, 404, { error: 'not found' }) : send(res, 200, out ?? null);
 }
 
@@ -397,13 +398,13 @@ const ROUTES: Route[] = [
   // Workflow cost ceilings (dashboard/workflowLimits.ts): GET, and a POST behind X-PA there.
   { path: '/api/workflow-limits', handle: (c) => require('./workflowLimits.ts').route(c.req, c.res, c.url, c) },
   // The Memory tab, pre-meeting briefs and post-meeting debriefs. A POST needs X-PA.
-  { path: startsWith('/api/memory/'), handle: (c) => jsonModule(c, './memory.ts') },
-  { path: startsWith('/api/meetings/'), handle: (c) => jsonModule(c, './meetings.ts') },
-  { path: (url) => url.pathname === '/api/debriefs' || url.pathname.startsWith('/api/debriefs/'), handle: (c) => jsonModule(c, './debriefs.ts') },
+  { path: startsWith('/api/memory/'), handle: (c) => jsonModule(c, () => require('./memory.ts')) },
+  { path: startsWith('/api/meetings/'), handle: (c) => jsonModule(c, () => require('./meetings.ts')) },
+  { path: (url) => url.pathname === '/api/debriefs' || url.pathname.startsWith('/api/debriefs/'), handle: (c) => jsonModule(c, () => require('./debriefs.ts')) },
   // The Routines tab (dashboard/routines.ts, routines.client.js). Its writes
   // run actions on this machine, so the same guards apply.
   { method: 'GET', path: '/routines.js', handle: file('routines.client.js', JS) },
-  { path: (url) => url.pathname === '/api/routines' || url.pathname.startsWith('/api/routines/'), handle: (c) => jsonModule(c, './routines.ts') },
+  { path: (url) => url.pathname === '/api/routines' || url.pathname.startsWith('/api/routines/'), handle: (c) => jsonModule(c, () => require('./routines.ts')) },
   // The Repos tab (dashboard/repos.ts, repos.client.js): the repo registry.
   { method: 'GET', path: '/repos.js', handle: file('repos.client.js', JS) },
   {

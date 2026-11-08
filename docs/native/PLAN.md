@@ -614,8 +614,8 @@ run mid-step; a job continued on an existing branch (`--branch`).
   and the `supervisor.test.js` flake under load.
   Design and order: [JARVISD.md](JARVISD.md). Stage 1 (host) landed: `jarvisd/` (strict tsconfig,
   Bun pinned in its package.json) boots the PA worker unchanged under Bun; the PA's own tests run
-  under Bun (`jarvisd/scripts/parity.js`; the contract on Postgres, since the SQLite driver's native
-  addon aborts Bun); `node scripts/build.js --only jarvisd` makes one executable (`--check` smoke);
+  under Bun (`jarvisd/scripts/parity.js`; the contract on SQLite and Postgres, since Bun 1.4.4
+  loads the SQLite addons); `node scripts/build.js --only jarvisd` makes one executable (`--check` smoke);
   CI runs it on Windows and Linux. Next: the supervisor forks a jarvisd generation, then modules
   become `.ts` leaves first (repo, events, policy, schemas types; then dashboard, MCP, passes; the
   termhub front last).

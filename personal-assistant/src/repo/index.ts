@@ -84,17 +84,45 @@ function clientBackend(client: Client & Partial<Pick<Db, 'dialect' | 'session' |
   return b;
 }
 
-/**
- * The SQLite twin of aggregate `name` (src/repo/sqlite/<name>.js, plan 3.1):
- * the same methods over SQLite SQL. One not ported yet has no methods.
- */
+// The SQLite twins (src/repo/sqlite/<name>.ts, plan 3.1): the same methods over
+// SQLite SQL. Literal requires, so the compiled jarvisd bundles them: a twin
+// loaded from disk by a computed path brings its own copy of db/sqlite.ts,
+// whose session set then calls this process's live lease holders gone.
+const SQLITE_TWINS: Record<string, () => Aggregate> = {
+  audio: () => require('./sqlite/audio.ts'),
+  audit: () => require('./sqlite/audit.ts'),
+  backupDrill: () => require('./sqlite/backupDrill.ts'),
+  commitments: () => require('./sqlite/commitments.ts'),
+  drafts: () => require('./sqlite/drafts.ts'),
+  durable: () => require('./sqlite/durable.ts'),
+  evals: () => require('./sqlite/evals.ts'),
+  events: () => require('./sqlite/events.ts'),
+  factoryBoard: () => require('./sqlite/factoryBoard.ts'),
+  leases: () => require('./sqlite/leases.ts'),
+  ledger: () => require('./sqlite/ledger.ts'),
+  meetings: () => require('./sqlite/meetings.ts'),
+  memory: () => require('./sqlite/memory.ts'),
+  notifications: () => require('./sqlite/notifications.ts'),
+  passkeys: () => require('./sqlite/passkeys.ts'),
+  people: () => require('./sqlite/people.ts'),
+  projects: () => require('./sqlite/projects.ts'),
+  proposals: () => require('./sqlite/proposals.ts'),
+  repos: () => require('./sqlite/repos.ts'),
+  routines: () => require('./sqlite/routines.ts'),
+  runs: () => require('./sqlite/runs.ts'),
+  search: () => require('./sqlite/search.ts'),
+  secrets: () => require('./sqlite/secrets.ts'),
+  sources: () => require('./sqlite/sources.ts'),
+  spend: () => require('./sqlite/spend.ts'),
+  system: () => require('./sqlite/system.ts'),
+  telemetry: () => require('./sqlite/telemetry.ts'),
+  workflowLimits: () => require('./sqlite/workflowLimits.ts'),
+};
+
+/** The SQLite twin of aggregate `name`. One not ported yet has no methods. */
 function loadSqlite(name: string): Aggregate {
-  // .ts once the twin is strict TypeScript (plan 4.1), .js until then.
-  for (const ext of ['.ts', '.js']) {
-    const file = require('path').join(__dirname, 'sqlite', `${name}${ext}`);
-    if (require('fs').existsSync(file)) return require(file);
-  }
-  return { create: () => ({}) };
+  const load = SQLITE_TWINS[name];
+  return load ? load() : { create: () => ({}) };
 }
 
 /** The repository set over `db` (a backend with src/db's interface; `db.dialect` 'sqlite' picks src/repo/sqlite). */

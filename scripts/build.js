@@ -24,6 +24,8 @@
 //   jarvisd  `bun build --compile` of jarvisd/src/main.ts (plan 4.1): one executable
 //            with the Bun runtime and the PA worker's whole module graph bundled in.
 //            Needs `npm ci` in jarvisd/ (Bun comes from npm) and personal-assistant/.
+//            Compiles with the pinned Bun (jarvisd/.bun/<version>/ first, see
+//            jarvisdBun) and refuses any other version.
 //
 // Signing is plan 7.4. The hook is here already: with DEVTOOLS_SIGN_CMD set,
 // every artifact is passed to it (`<cmd> <file>`, run through the shell) after
@@ -46,6 +48,25 @@ const PLATFORM =`${process.platform === 'win32' ? 'windows' : process.platform}-
 function onPath(cmd) {
   const r = spawnSync(process.platform === 'win32' ? 'where' : 'which', [cmd], { encoding: 'utf8', windowsHide: true });
   return r.status === 0 ? r.stdout.split(/\r?\n/)[0].trim() : null;
+}
+
+/**
+ * The Bun that compiles jarvisd, and so runs inside the executable: the version
+ * jarvisd/package.json pins, from jarvisd/.bun/<version>/ (where a deploy
+ * installs it, never by npm ci: Windows locks the running bun.exe), else from
+ * jarvisd/node_modules. JARVISD_BUN names another. {exe, pinned}.
+ */
+function jarvisdBun() {
+  const dir = path.join(REPO, 'jarvisd');
+  let pinned = null;
+  try {
+    pinned = JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8')).devDependencies.bun || null;
+  } catch {
+    /* no pin */
+  }
+  const own = pinned && path.join(dir, '.bun', pinned, 'node_modules', 'bun', 'bin', 'bun.exe');
+  const exe = process.env.JARVISD_BUN || (own && fs.existsSync(own) ? own : path.join(dir, 'node_modules', 'bun', 'bin', 'bun.exe'));
+  return { exe, pinned };
 }
 
 function cargoBin() {
@@ -111,13 +132,19 @@ const TARGETS = {
   jarvisd: {
     describe: 'TypeScript/Bun core, `bun build --compile` (plan 4.1; jarvisd/, docs/native/JARVISD.md)',
     available() {
-      if (!fs.existsSync(path.join(REPO, 'jarvisd', 'node_modules', 'bun', 'bin', 'bun.exe'))) return 'jarvisd/node_modules missing (npm ci in jarvisd/ and personal-assistant/)';
+      if (!fs.existsSync(jarvisdBun().exe)) return 'jarvisd/node_modules missing (npm ci in jarvisd/ and personal-assistant/)';
       if (!fs.existsSync(path.join(REPO, 'personal-assistant', 'node_modules'))) return 'personal-assistant/node_modules missing (npm ci there: the worker is bundled in)';
       return null;
     },
     command({ profile }) {
       // The npm package's own binary (bin/bun.exe on every OS), not the .cmd shim spawn() cannot run.
-      const bun = path.join(REPO, 'jarvisd', 'node_modules', 'bun', 'bin', 'bun.exe');
+      const { exe: bun, pinned } = jarvisdBun();
+      // Bun 1.3 in the executable aborts on the SQLite driver and hangs the front's WebSockets:
+      // a Bun other than the pinned one does not build.
+      const have = spawnSync(bun, ['--version'], { encoding: 'utf8', windowsHide: true }).stdout?.trim();
+      if (pinned && have !== pinned) {
+        throw new Error(`jarvisd: ${bun} is Bun ${have || '?'}, jarvisd/package.json pins ${pinned} (npm ci in jarvisd/, or a deploy installs it under jarvisd/.bun/${pinned}/)`);
+      }
       const out = path.join(REPO, 'jarvisd', 'dist', 'jarvisd');
       // JARVISD_OUT: another output path (a deploy builds beside the running
       // binary, which Windows will not let it replace; plan 4.4).

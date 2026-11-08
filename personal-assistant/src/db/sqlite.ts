@@ -56,6 +56,7 @@ type Conn = {
   prepare(sql: string): Stmt;
   exec(sql: string): void;
   pragma(text: string): unknown;
+  loadExtension(file: string): void;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   function(name: string, opts: { deterministic: boolean }, fn: (...args: any[]) => unknown): void;
   close(): void;
@@ -80,10 +81,25 @@ const { AsyncLocalStorage } = require('async_hooks');
 const SCHEMA_DIR = path.resolve(__dirname, '..', '..', 'sql-sqlite');
 const DRIVER = 'better-sqlite3-multiple-ciphers';
 
+// The compiled jarvisd bundles the driver's JS (its native addon stays on disk,
+// found by path), but a copy of this file it loads from disk, as the backup's
+// snapshot thread does, resolves no package names: that copy takes the
+// checkout's node_modules by path, to the entry file (a directory does not resolve there).
+const DRIVER_ON_DISK = path.join(__dirname, '..', '..', 'node_modules', DRIVER, 'lib', 'index.js');
+// sqlite-vec finds its platform package by name, which the compiled jarvisd
+// resolves from the working directory (a generation's is jarvisd/dist): the
+// extension in the checkout, by path, when that fails.
+const VEC_ON_DISK = path.join(
+  __dirname, '..', '..', 'node_modules',
+  `sqlite-vec-${process.platform === 'win32' ? 'windows' : process.platform}-${process.arch}`,
+  `vec0.${process.platform === 'win32' ? 'dll' : process.platform === 'darwin' ? 'dylib' : 'so'}`,
+);
+
 function driver() {
   try {
     return require(DRIVER);
   } catch (err) {
+    if (fs.existsSync(DRIVER_ON_DISK)) return require(DRIVER_ON_DISK);
     throw new Error(`the SQLite backend needs ${DRIVER} (an optional dependency of personal-assistant; npm install there): ${(err as Error).message}`);
   }
 }
@@ -94,7 +110,7 @@ function available() {
     require.resolve(DRIVER);
     return true;
   } catch {
-    return false;
+    return fs.existsSync(DRIVER_ON_DISK);
   }
 }
 
@@ -275,13 +291,17 @@ function open(file: string, { key = null, readonly = false }: { key?: number | s
   }
   conn.pragma('foreign_keys = ON');
   let vec = false;
-  try {
-    require('sqlite-vec').load(conn);
-    vec = true;
-    vecLoaded = true;
-  } catch {
-    conn.function('vec_distance_cosine', { deterministic: true }, jsCosineDistance);
+  for (const load of [() => require('sqlite-vec').load(conn), () => conn.loadExtension(VEC_ON_DISK)]) {
+    try {
+      load();
+      vec = true;
+      vecLoaded = true;
+      break;
+    } catch {
+      /* the next way, then the JS fallback */
+    }
   }
+  if (!vec) conn.function('vec_distance_cosine', { deterministic: true }, jsCosineDistance);
   // A vector's sign bits (sql-sqlite/007), and their Hamming distance when
   // sqlite-vec is not there to do it (hammingSql picks).
   conn.function('pa_bits', { deterministic: true }, signBits);
