@@ -91,13 +91,14 @@ function httpError(status, message) {
 /**
  * Everything external is injectable, for tests: `home()` the chat's cwd,
  * `root()` Claude Code's projects directory, `hub()` the termhub client,
- * `ensureSession()` src/chat's.
+ * `ensureSession()` src/chat's, `jobLookup(jobId)` the factory job a voice approval is judged by.
  */
 function createFeed({
   home = () => require('./index').homeDir(),
   root = projectsRoot,
   hub = () => require('../dispatch/termhub'),
   ensureSession = () => require('./index').ensureSession(),
+  jobLookup = null, // (jobId) => {delivery} | null; default: the factory's snapshot (src/policy withJobDelivery)
   pollMs = 1000,
   fastPollMs = 200,
   statusMs = 2000,
@@ -148,7 +149,10 @@ function createFeed({
     // channel the policy bars from it (voice and a merge, a push to main, a
     // secret reveal) is refused before any key is pressed.
     try {
-      await require('../policy').enforce({ tool: d.tool, action: answer === 'yes' ? 'approve' : 'deny', channel: via, subject: toolUseId });
+      const policy = require('../policy');
+      // A voice yes to a factory job's approval is judged by the job's delivery (looked up now; fails closed).
+      const req = await policy.withJobDelivery({ tool: d.tool, action: answer === 'yes' ? 'approve' : 'deny', channel: via, subject: toolUseId, args: lastTool?.args }, jobLookup);
+      await policy.enforce(req);
     } catch (err) {
       if (err.code === 'POLICY_DENIED') throw httpError(403, err.message);
       throw err;
@@ -237,7 +241,7 @@ function createFeed({
         if (turn && e.type === 'assistant' && e.final !== false) turn.answered = true;
         // The last tool call of the turn: a permission prompt is always for
         // the call the transcript showed last, so the wait can name it.
-        if (e.type === 'activity') lastTool = e.toolUseId ? { text: e.text, name: e.tool, toolUseId: e.toolUseId, ask: e.ask || null } : { text: e.text };
+        if (e.type === 'activity') lastTool = e.toolUseId ? { text: e.text, name: e.tool, toolUseId: e.toolUseId, ask: e.ask || null, args: e.policyArgs || {} } : { text: e.text };
         else if (e.type === 'user') lastTool = null;
         publish(e, !quiet);
       }

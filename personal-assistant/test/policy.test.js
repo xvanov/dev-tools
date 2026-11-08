@@ -36,6 +36,11 @@ const ev = (req, pol = policy) => P.evaluate({ action: 'call', channel: 'chat', 
   }
 }
 
+// built-in tools: only the reads, only from the chat; edits and shell commands ask
+for (const t of ['Read', 'Grep', 'Glob']) assert.strictEqual(ev({ tool: t }).decision, 'allow');
+assert.strictEqual(ev({ tool: 'Read', channel: 'mcp' }).decision, 'ask');
+for (const t of ['Bash', 'Edit', 'Write']) assert.strictEqual(ev({ tool: t }).decision, 'ask');
+
 // ---- unknown things ask; first match wins; globs ----
 assert.strictEqual(ev({ tool: 'brand_new_tool' }).decision, 'ask');
 assert.strictEqual(ev({ tool: 'brand_new_tool' }).rule, 'default');
@@ -173,6 +178,35 @@ function memoryRepo() {
   t = copy();
   t[1].at = new Date(Date.now() - 86400000).toISOString(); // a timestamp moved
   assert.strictEqual(verify(t).ok, false);
+
+  // ---- voice approving a factory job is judged by the job's delivery; lookup failure fails closed ----
+  const jobs = { 'app:0001': { delivery: 'auto_merge' }, 'app:0002': { delivery: 'push_to_main' }, 'app:0003': { delivery: 'pr' }, 'app:0004': {} };
+  const lookup = async (id) => jobs[id] || null;
+  const voice = (tool, job, extra = {}) => ({ tool, action: 'approve', channel: 'voice', subject: 'tu_9', args: job === undefined ? {} : { job }, ...extra });
+  for (const tool of P.JOB_TOOLS) {
+    await assert.rejects(async () => P.enforce(await P.withJobDelivery(voice(tool, 'app:0001'), lookup), { repo }), /voice-never-approves-sensitive/, `${tool} on an auto_merge job`);
+    await assert.rejects(async () => P.enforce(await P.withJobDelivery(voice(tool, 'app:0002'), lookup), { repo }), /voice-never-approves-sensitive/, `${tool} on a push_to_main job`);
+    for (const ok of ['app:0003', 'app:0004']) {
+      assert.strictEqual((await P.enforce(await P.withJobDelivery(voice(tool, ok), lookup), { repo })).decision, 'allow', `${tool} on ${ok}`);
+    }
+    // fail closed: job unknown, no job named, lookup throws
+    for (const [label, req, lk] of [['unknown job', voice(tool, 'app:9999'), lookup], ['no job', voice(tool), lookup], ['lookup error', voice(tool, 'app:0003'), async () => { throw new Error('factory down'); }]]) {
+      const r = await P.withJobDelivery(req, lk);
+      assert.strictEqual(P.evaluate(r).decision, 'deny', `${tool} ${label} is denied for voice`);
+      assert.strictEqual(P.evaluate(r).rule, 'voice-never-approves-sensitive');
+    }
+  }
+  // other channels and tools are not looked up and not blocked by it
+  let looked = 0;
+  const counting = async () => { looked++; return null; };
+  const dash = await P.withJobDelivery({ tool: 'factory_approve', action: 'approve', channel: 'dashboard', args: { job: 'app:0001' } }, counting);
+  assert.strictEqual(P.evaluate(dash).decision, 'allow');
+  await P.withJobDelivery({ tool: 'factory_start', action: 'approve', channel: 'voice', args: {} }, counting);
+  assert.strictEqual(looked, 0);
+  assert.strictEqual(P.evaluate({ tool: 'factory_approve', action: 'approve', channel: 'dashboard', args: { job: 'x', delivery_unknown: true } }).decision, 'allow', 'unverified only bars voice');
+  // a spoofed args.delivery from the request is replaced by the looked-up one
+  const spoof = await P.withJobDelivery(voice('factory_approve', 'app:0001', { args: { job: 'app:0001', delivery: 'pr' } }), lookup);
+  assert.strictEqual(spoof.args.delivery, 'auto_merge');
 
   console.log('policy: ok');
 })().catch((err) => {

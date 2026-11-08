@@ -210,7 +210,7 @@ assert.strictEqual(P.chatAction('mcp__pa-chat__remember'), null);
     say: async (id, text, o) => { typed.push([id, text, o?.submit]); },
     sessionUrl: async (id) => `http://127.0.0.1:7000/#session=${id}`,
   };
-  const feed = createFeed({ home: () => home, root: () => path.join(root, 'projects'), hub: () => hub, ensureSession: async () => ({ sessionId: 's1' }), pollMs: 20, statusMs: 20 });
+  const feed = createFeed({ home: () => home, root: () => path.join(root, 'projects'), hub: () => hub, ensureSession: async () => ({ sessionId: 's1' }), jobLookup: async (id) => ({ 'app:0001': { delivery: 'auto_merge' }, 'app:0003': { delivery: 'pr' } })[id] || null, pollMs: 20, statusMs: 20 });
   const got = [];
   const unsubscribe = feed.subscribe((e) => got.push(e));
   await new Promise((r) => setTimeout(r, 40));
@@ -236,6 +236,28 @@ assert.strictEqual(P.chatAction('mcp__pa-chat__remember'), null);
   assert.deepStrictEqual(r, { ok: true, answer: 'yes', tool: 'factory_start' });
   assert.deepStrictEqual(typed, [['s1', '', true]], 'one Enter, nothing else');
 
+  // Voice never approves a job whose delivery merges (policy, plan 4.3): the dashboard may, and
+  // a job that cannot be looked up is refused for voice. Nothing is typed on a refusal.
+  const approveCall = async (id, job) => {
+    fs.appendFileSync(file, line({ type: 'assistant', uuid: `ap-${id}`, timestamp: at, message: { stop_reason: 'tool_use', content: [{ type: 'tool_use', id, name: 'mcp__pa-chat__factory_approve', input: { job } }] } }));
+    session = { ...session, idleState: 'working', idleReason: 'streaming' };
+    await new Promise((r) => setTimeout(r, 60));
+    session = { ...session, idleState: 'waiting', idleReason: 'blocked' };
+    screen = PROMPT('factory_approve');
+    await new Promise((r) => setTimeout(r, 60));
+  };
+  await approveCall('toolu_ap1', 'app:0001');
+  await assert.rejects(feed.answerPermission({ answer: 'yes', toolUseId: 'toolu_ap1', via: 'voice' }), (err) => err.status === 403 && /voice-never-approves-sensitive/.test(err.message));
+  assert.strictEqual(typed.length, 1, 'voice yes on an auto_merge job typed nothing');
+  await approveCall('toolu_ap2', 'app:ghost');
+  await assert.rejects(feed.answerPermission({ answer: 'yes', toolUseId: 'toolu_ap2', via: 'voice' }), (err) => err.status === 403, 'unknown job: fail closed');
+  assert.strictEqual(typed.length, 1);
+  await approveCall('toolu_ap3', 'app:0003');
+  assert.strictEqual((await feed.answerPermission({ answer: 'yes', toolUseId: 'toolu_ap3', via: 'voice' })).ok, true, 'a pr job is fine by voice');
+  await approveCall('toolu_ap4', 'app:0001');
+  assert.strictEqual((await feed.answerPermission({ answer: 'yes', toolUseId: 'toolu_ap4', via: 'dashboard' })).ok, true, 'the dashboard may approve it');
+  assert.strictEqual(typed.length, 3);
+
   // A prompt for a shell command: offered, but not approvable here.
   fs.appendFileSync(file, line({ type: 'assistant', uuid: 'a2', timestamp: at, message: { stop_reason: 'tool_use', content: [{ type: 'tool_use', id: 'toolu_02', name: 'Bash', input: { command: 'pa do --task x', description: 'start a run' } }] } }));
   session = { ...session, idleState: 'working', idleReason: 'streaming' };
@@ -246,7 +268,7 @@ assert.strictEqual(P.chatAction('mcp__pa-chat__remember'), null);
   const bash = got.filter((e) => e.type === 'permission' && !e.cleared).pop();
   assert.deepStrictEqual([bash.toolUseId, bash.approvable], ['toolu_02', false]);
   await assert.rejects(feed.answerPermission({ answer: 'no', toolUseId: 'toolu_02' }), (err) => err.status === 409 && /termhub/.test(err.message));
-  assert.strictEqual(typed.length, 1);
+  assert.strictEqual(typed.length, 3);
   unsubscribe();
   feed.stop();
   fs.rmSync(root, { recursive: true, force: true });

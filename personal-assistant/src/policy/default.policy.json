@@ -28,6 +28,14 @@
       "reason": "the user answering the prompt for the call it names"
     },
     {
+      "id": "chat-builtin-reads-allow",
+      "tools": ["Read", "Grep", "Glob"],
+      "actions": ["call"],
+      "channels": ["chat"],
+      "decision": "allow",
+      "reason": "the chat's built-in read tools; rules cannot match paths, so the caller (the SDK chat's hook) must keep them inside the chat's home"
+    },
+    {
       "id": "read-surface-allow",
       "tools": [
         "recall", "memory_page", "explain_claim", "remember", "request_secret", "secret_status", "brief_me",

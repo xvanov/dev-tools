@@ -919,9 +919,9 @@ async function cancelJob(jobId) {
  */
 async function approve(jobId, { channel = 'cli' } = {}) {
   if (!F.JOB_ID.test(String(jobId || ''))) throw Object.assign(new Error(`not a factory job id: "${jobId}"`), { status: 400 });
-  // Policy (plan 4.3): audited, and refused for a channel the policy bars (voice never approves a merge).
-  await require('../policy').enforce({ tool: 'factory_approve', action: 'approve', channel, subject: jobId, args: { job: jobId } });
   const job = await snapshotJob(jobId);
+  // Policy (plan 4.3): audited with the job's delivery, and refused for a channel the policy bars (voice never approves a merge).
+  await require('../policy').enforce({ tool: 'factory_approve', action: 'approve', channel, subject: jobId, args: { job: jobId, delivery: job?.delivery || undefined, delivery_unknown: !job } });
   const argv = job ? F.approveArgv(job) : null;
   if (!argv) throw Object.assign(new Error(`job ${jobId} is not waiting on an approval the factory named`), { status: 409 });
   const res = await runCommand(machine(), F.factoryArgv(argv, config.factory.uv), { cwd: config.factory.path, timeoutMs: config.factory.timeoutMs });

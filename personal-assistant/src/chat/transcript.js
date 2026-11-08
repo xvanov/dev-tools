@@ -193,6 +193,13 @@ function entryEvents(entry) {
         const e = { id, type: 'activity', text: describeTool(b.name, b.input), at, tool: String(b.name || ''), toolUseId: String(b.id || '') };
         const ask = askTool(b.name, b.input);
         if (ask) e.ask = ask;
+        // The two fields the policy needs to judge an approval (src/policy): which job, and the delivery asked for.
+        if (ask && b.input && typeof b.input === 'object') {
+          const pa = {};
+          if (typeof b.input.job === 'string') pa.job = b.input.job.slice(0, 80);
+          if (typeof b.input.delivery === 'string') pa.delivery = b.input.delivery.slice(0, 20);
+          if (Object.keys(pa).length) e.policyArgs = pa;
+        }
         out.push(e);
       }
     });

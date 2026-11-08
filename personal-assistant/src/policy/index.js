@@ -103,6 +103,8 @@ function classify(tool, args = {}) {
   const name = String(tool || '');
   const a = args && typeof args === 'object' ? args : {};
   const delivery = String(a.delivery ?? a.delivery_level ?? a.level ?? '').toLowerCase();
+  // A job's delivery could not be looked up: unknown is treated as the worst (the voice lock denies it).
+  if (a.delivery_unknown === true) tags.add('unverified');
   if (delivery === 'auto_merge' || a.merge === true) tags.add('merge');
   if (delivery === 'push_to_main') tags.add('push_main');
   if (/(^|[_.\-:])merge([_.\-:]|$)/i.test(name)) tags.add('merge');
@@ -150,6 +152,34 @@ function evaluate(request, policy = load()) {
     if (matches(r, req, tags)) return { decision: r.decision, rule: r.id, reason: r.reason || '', tags };
   }
   return { decision: policy.default, rule: 'default', reason: 'no rule matches', tags };
+}
+
+// Approvals of an existing factory job: what they do depends on the job's delivery ceiling.
+const JOB_TOOLS = ['factory_approve', 'factory_resume'];
+
+/**
+ * For a voice approval of a factory job, looks up the job's delivery and puts
+ * it in `args` (so an auto_merge or push_to_main job classifies as merge /
+ * push_main and the locked voice rule denies it). Fails closed: when the job
+ * cannot be found or looked up, args.delivery_unknown is set and the voice
+ * lock denies the request. Other channels and tools are returned as they are.
+ * `lookup(jobId)` resolves the job ({delivery}) or null; default: the
+ * factory's snapshot.
+ */
+async function withJobDelivery(request, lookup = null) {
+  if (request.channel !== 'voice' || !JOB_TOOLS.includes(request.tool)) return request;
+  const args = { ...(request.args || {}) };
+  try {
+    const find = lookup || ((id) => require('../dispatch/factory').snapshotJob(id));
+    const job = args.job ? await find(String(args.job)) : null;
+    if (!job) throw new Error('job not found');
+    args.delivery = job.delivery || 'none';
+    delete args.delivery_unknown;
+  } catch {
+    delete args.delivery;
+    args.delivery_unknown = true;
+  }
+  return { ...request, args };
 }
 
 /** The short, never-secret subject an audit row carries: a card/job id or the pa verb, not content. */
@@ -202,4 +232,4 @@ async function enforce(request, opts) {
   return res;
 }
 
-module.exports = { evaluate, classify, merge, load, authorize, enforce, overrideFile, argsHash, DEFAULT_FILE, DECISIONS };
+module.exports = { evaluate, classify, withJobDelivery, JOB_TOOLS, merge, load, authorize, enforce, overrideFile, argsHash, DEFAULT_FILE, DECISIONS };

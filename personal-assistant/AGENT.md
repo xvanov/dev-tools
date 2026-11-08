@@ -190,7 +190,8 @@ The defaults are the allow/ask split above, unchanged (`test/policy.test.js` pin
 server still runs the call. It is applied in the MCP server's `handle` (every tool), in `answerPermission`
 (a chat approval, with the channel it came from: dashboard or voice) and in `factory.approve`. A locked
 rule denies the voice channel anything tagged `merge`, `push_main` or `secret_reveal` and no override
-can loosen it; do not add a path that approves those from voice (passkeys, 7.1, are the later way).
+can loosen it (a voice yes to a factory job's approval looks the job's delivery up and is refused for
+auto_merge / push_to_main, or when the job cannot be looked up); do not add a path that approves those from voice (passkeys, 7.1, are the later way).
 Each decision is a row of `audit_log` (`src/repo/audit.js`), hash-chained; arguments are stored as a
 digest only. `pa audit verify` recomputes the chain, `pa audit tail` lists it, `pa audit check <tool>`
 dry-runs the policy. Adding a tool: add it to the default policy (an unlisted tool asks).
