@@ -12,8 +12,8 @@
 
 const { config } = require('../config.ts');
 const repo = require('../repo');
-const D = require('./deliveryCore');
-const { normSlug } = require('./routeCore');
+const D = require('./deliveryCore.ts');
+const { normSlug } = require('./routeCore.ts');
 
 function key(slug) {
   const s = normSlug(slug);

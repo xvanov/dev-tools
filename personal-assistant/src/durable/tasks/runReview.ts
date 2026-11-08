@@ -6,7 +6,7 @@
 // The run's session ends (dispatch.reconcile emits `run-ended:<id>`). The task
 // reads what the run committed; with nothing committed it says so and ends.
 // Otherwise it carries out the run's DELIVERY — the end state the operator
-// chose (src/dispatch/deliveryCore.js finishPlan), recorded on the run:
+// chose (src/dispatch/deliveryCore.ts finishPlan), recorded on the run:
 //
 //   none          nothing is pushed; I am told the work is in the worktree
 //   branch        the branch is pushed
@@ -36,7 +36,7 @@ const { TimeoutError } = require('absurd-sdk');
 const repo = require('../../repo');
 
 const merger = require('../../dispatch/merge');
-const D = require('../../dispatch/deliveryCore');
+const D = require('../../dispatch/deliveryCore.ts');
 
 const name = 'run_review';
 const WAIT_RUN_DAYS = 14;

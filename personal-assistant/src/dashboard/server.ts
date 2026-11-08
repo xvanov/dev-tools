@@ -269,7 +269,7 @@ const ROUTES: Route[] = [
     method: 'GET',
     path: /^\/api\/commitments\/(\d+)\/delivery$/,
     handle: async ({ res, url, m, send }) => {
-      const D = require('../dispatch/deliveryCore');
+      const D = require('../dispatch/deliveryCore.ts');
       const q = url.searchParams;
       const delivery = q.get('delivery') || null;
       if (delivery && !D.isDelivery(delivery)) return send(res, 400, { error: 'unknown delivery' });
@@ -311,12 +311,12 @@ const ROUTES: Route[] = [
         modes: Object.keys(require('../dispatch/modes.ts').MODES),
         defaultMode: require('../dispatch/modes.ts').mode().name,
         // Where the work goes: a Claude session, the software factory, or let
-        // the routing rule pick (src/dispatch/routeCore.js). Factory only when configured.
+        // the routing rule pick (src/dispatch/routeCore.ts). Factory only when configured.
         routes: require('../dispatch/factory').enabled() ? ['claude', 'factory', 'auto'] : ['claude'],
         defaultRoute: require('../dispatch/factory').enabled() ? config.factory.via : 'claude',
-        // The end states the operator may pick on Do (src/dispatch/deliveryCore.js);
+        // The end states the operator may pick on Do (src/dispatch/deliveryCore.ts);
         // none picked: the repo's default, else PA_DELIVERY_DEFAULT.
-        deliveries: require('../dispatch/deliveryCore').DELIVERIES.map((d: string) => ({ value: d, plain: require('../dispatch/deliveryCore').describe(d) })),
+        deliveries: require('../dispatch/deliveryCore.ts').DELIVERIES.map((d: string) => ({ value: d, plain: require('../dispatch/deliveryCore.ts').describe(d) })),
         // On the factory route: the job's kind and runtime (JOBS-API v1.2).
         ...(require('../dispatch/factory').enabled() ? require('./factory.ts').pickers() : {}),
       }),
@@ -501,7 +501,7 @@ const ROUTES: Route[] = [
       const answer = typeof body.answer === 'string' ? body.answer.slice(0, 200) : null;
       // A dispatch card's end state, picked when accepting: one of the six
       // levels or nothing (the card's own); anything else is refused.
-      const D = require('../dispatch/deliveryCore');
+      const D = require('../dispatch/deliveryCore.ts');
       const delivery = typeof body.delivery === 'string' && body.delivery ? body.delivery : null;
       if (delivery && !D.isDelivery(delivery)) return send(res, 400, { error: `unknown delivery "${delivery.slice(0, 40)}"` });
       if (m?.[2] === 'accept') {
@@ -553,11 +553,11 @@ const ROUTES: Route[] = [
       const { req, res, m, send } = c;
       const body = await c.body();
       const dispatch = require('../dispatch');
-      const D = require('../dispatch/deliveryCore');
+      const D = require('../dispatch/deliveryCore.ts');
       const delivery = typeof body.delivery === 'string' && body.delivery ? body.delivery : null;
       if (delivery && !D.isDelivery(delivery)) return send(res, 400, { error: `unknown delivery "${delivery.slice(0, 40)}"` });
       // JOBS-API v1.2, on the factory route only: what kind of work, who does it.
-      const F = require('../dispatch/factoryCore');
+      const F = require('../dispatch/factoryCore.ts');
       let jobKind = null;
       let runtime = null;
       try {

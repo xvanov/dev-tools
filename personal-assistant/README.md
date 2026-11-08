@@ -881,7 +881,7 @@ each command prints — the contract is the factory's `docs/JOBS-API.md`.
 - **The end state is yours** (operator decision 2026-11-02, no ceiling). Every job carries an
   explicit `--delivery`: `none` (committed in the factory's worktree), `branch`, `draft_pr`, `pr`,
   `auto_merge` (merged when its gates and CI pass), `push_to_main` (fast-forwarded onto main when
-  its gates pass). Where it comes from, first match wins (`src/dispatch/deliveryCore.js`):
+  its gates pass). Where it comes from, first match wins (`src/dispatch/deliveryCore.ts`):
   `--delivery` or the card's pick; an explicit `--mode` (local → none, branch → branch, mr/full →
   draft_pr); your own words in `--task` ("just open a draft", "merge it", "push straight to main",
   "don't push") — never a third party's message; the repo's default (`pa delivery set owner/name
@@ -981,7 +981,7 @@ starts one — and starts a **research or report** job at once only when you ask
 (else `--card`); `pa factory cancel <job>` (a PA run's job is dropped through `pa drop`) and `pa
 factory approve <job>` (only the `factory approve-direction` the job's own warning names).
 
-**The routing rule** (`src/dispatch/routeCore.js`, pure and tested) sends work to the factory only
+**The routing rule** (`src/dispatch/routeCore.ts`, pure and tested) sends work to the factory only
 when all hold: the factory is configured, the mode changes code, the planner judged the ask
 *coding*, its repo is registered with the factory (`factory app list`), and it has done-criteria.
 Anything else — investigate, ambiguous, `plan`, an unknown or unregistered repo, nothing to check

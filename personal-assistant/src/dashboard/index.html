@@ -665,7 +665,7 @@ function commitmentCard(c) {
   const machinePick = picker(MACHINES.machines.map((m) => ({ value: m.name, label: m.label })), '');
   const modePick = picker(MACHINES.modes.map((m) => ({ value: m, label: MODE_HELP[m] || m })), MACHINES.defaultMode);
   const routePick = picker((MACHINES.routes || ['claude']).map((r) => ({ value: r, label: ROUTE_HELP[r] || r })), MACHINES.defaultRoute || 'claude');
-  // The end state (src/dispatch/deliveryCore.js). Unpicked: the repo's default.
+  // The end state (src/dispatch/deliveryCore.ts). Unpicked: the repo's default.
   const deliveryPick = picker([{ value: '', label: 'end state: the repo\'s default' },
     ...(MACHINES.deliveries || []).map((d) => ({ value: d.value, label: `${d.value} — ${d.plain}` }))], '');
   // On the factory route: what kind of work, and who does it (JOBS-API v1.2).

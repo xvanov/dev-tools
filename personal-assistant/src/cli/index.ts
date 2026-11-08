@@ -579,8 +579,8 @@ const commands: Json = {
     // The end state, shown BEFORE anything starts. One that merges or pushes to
     // main with no human step after it starts only on a terminal yes; asked
     // for by the chat (or any non-interactive caller) it becomes a card.
-    const D = require('../dispatch/deliveryCore');
-    const kind = require('../dispatch/factoryCore').jobKind(o.jobKind);
+    const D = require('../dispatch/deliveryCore.ts');
+    const kind = require('../dispatch/factoryCore.ts').jobKind(o.jobKind);
     const pre = kind !== 'code' ? { delivery: 'none', source: 'kind' } : await dispatch.previewDelivery(o);
     if (kind !== 'code') out(`a ${kind} job: the factory writes a report — no code changes, no branch, no PR`);
     out(pre.delivery ? `end state: ${pre.delivery} — ${D.describe(pre.delivery)} (${D.sourceLine(pre.source, pre.phrase)})` : 'end state: none — read-only');
@@ -659,7 +659,7 @@ const commands: Json = {
 
   async delivery(args: any) {
     const store = require('../dispatch/delivery');
-    const D = require('../dispatch/deliveryCore');
+    const D = require('../dispatch/deliveryCore.ts');
     const [sub, repo, level] = args;
     if (!sub || sub === 'list') {
       const list = await store.list();
@@ -682,7 +682,7 @@ const commands: Json = {
 
   async factory(args: any, flags: any, lists: any = {}) {
     const factory = require('../dispatch/factory');
-    const F = require('../dispatch/factoryCore');
+    const F = require('../dispatch/factoryCore.ts');
     const [sub, repo] = args;
     const jobArg = () => {
       if (!F.JOB_ID.test(String(args[1] || ''))) throw new Error(`usage: pa factory ${sub} <app:direction> — a job id from \`pa factory jobs\``);
@@ -793,7 +793,7 @@ const commands: Json = {
   async proposals() {
     const list = await require('../proposals').pending();
     if (!list.length) return out('Nothing waiting on you.');
-    const D = require('../dispatch/deliveryCore');
+    const D = require('../dispatch/deliveryCore.ts');
     for (const p of list) {
       out(`${p.id} · ${p.kind} · ${p.title}`);
       if (p.kind === 'dispatch' && p.payload?.delivery) {
@@ -813,7 +813,7 @@ const commands: Json = {
     if (accept) {
       // Accepting a card that merges or pushes to main is the operator's own
       // act: from a terminal or the dashboard, never from the chat.
-      const D = require('../dispatch/deliveryCore');
+      const D = require('../dispatch/deliveryCore.ts');
       const p = await repository.proposals.kindAndPayload(Number(id));
       const final = delivery ? D.delivery(delivery) : p?.payload?.delivery;
       if (p?.kind === 'dispatch' && D.unattended(final) && (!interactive() || process.env.PA_DISPATCHED_RUN)) {
@@ -1525,9 +1525,9 @@ const commands: Json = {
       mark(Boolean(probe), 'rerank', probe ? config.rerank.deployment : lastRerankError());
     }
 
-    // The end state a run gets when nothing was said (src/dispatch/deliveryCore.js).
+    // The end state a run gets when nothing was said (src/dispatch/deliveryCore.ts).
     {
-      const D = require('../dispatch/deliveryCore');
+      const D = require('../dispatch/deliveryCore.ts');
       const raw = String(config.dispatch.deliveryDefault || '');
       const n = await require('../dispatch/delivery').list().then((l: any) => l.length, () => null);
       if (D.isDelivery(raw)) {

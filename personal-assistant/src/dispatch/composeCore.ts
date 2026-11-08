@@ -21,6 +21,15 @@
 //   checkComposed(raw, inputs) the model's answer held to the rules
 //   fallbackComposed(inputs)   no model: the operator's words, the hints, nothing private
 //   render(composed, meta)     the brief, as markdown
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+/** What compose.js gather() hands over (the ask, the to-do, private context, code hints): loose until it is TS. */
+type Inputs = import('../types.ts').Json;
+type Hint = { path: string; why: string };
+type Composed = { goal: string; done: string[]; constraints: string[]; decisions: string[]; facts: string[]; reuse: Hint[]; conventions: string[]; questions: string[] };
+type Meta = { title?: string | null; app?: string | null; slug?: string | null; delivery?: string | null; deliveryPlain?: string | null; pipeline?: string | null; by?: string | null };
+type Dropped = { field: string; why: string };
 
 const ENGINEERING_RULE =
   'Search the repo for existing implementations before writing new code; extend rather than duplicate; follow existing conventions; add/extend tests.';
@@ -33,7 +42,7 @@ const LIMITS = { goal: 600, item: 300, done: 8, constraints: 8, decisions: 8, fa
 
 // Never cuts a surrogate pair in half (an emoji at the cut would leave a lone
 // surrogate, which JSON and the factory's parser choke on).
-function clip(s, n) {
+function clip(s: unknown, n: number): string {
   const t = String(s ?? '').replace(/\s+/g, ' ').trim();
   if (t.length <= n) return t;
   let cut = n - 1;
@@ -46,15 +55,15 @@ function clip(s, n) {
 
 // Whether a value after "password", "key", "token" … looks like a credential
 // rather than prose ("the key: retries matter").
-function looksSecret(v) {
+function looksSecret(v: string): boolean {
   const t = String(v).replace(/^["']|["']$/g, '');
   if (t.length < 6 || /^\[redacted/.test(t)) return false;
   if (/^[a-z]+$/.test(t) && t.length < 16) return false;
   return /\d/.test(t) || /[^A-Za-z]/.test(t) || t.length >= 16;
 }
 
-function entropy(t) {
-  const f = {};
+function entropy(t: string): number {
+  const f: Record<string, number> = {};
   for (const ch of t) f[ch] = (f[ch] || 0) + 1;
   let h = 0;
   for (const n of Object.values(f)) h -= (n / t.length) * Math.log2(n / t.length);
@@ -63,10 +72,10 @@ function entropy(t) {
 
 // A run of 1–3 newlines inside a token (a key wrapped in a mail or a chat
 // message) is still one token.
-const T = (cls, min) => `(?:${cls}|\\s?\\r?\\n\\s?(?=${cls})){${min},}`;
+const T = (cls: string, min: number) => `(?:${cls}|\\s?\\r?\\n\\s?(?=${cls})){${min},}`;
 const KEYNAME = '(?:api[_-]?key|key|secret|token|access[_-]?token|refresh[_-]?token|id[_-]?token|client[_-]?secret|passw(?:or)?d|passphrase|pwd|credentials?|creds|auth|sig|signature|subscription[_-]?key)';
 
-const SECRET_PATTERNS = [
+const SECRET_PATTERNS: [RegExp, string | ((m: string, ...groups: string[]) => string)][] = [
   [/-----BEGIN [A-Z ]*PRIVATE KEY(?: BLOCK)?-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY(?: BLOCK)?-----|$)/g, '[redacted private key]'],
   [new RegExp(`\\b(?:ghp|gho|ghu|ghs|ghr)_${T('[A-Za-z0-9]', 16)}`, 'g'), '[redacted]'],
   [new RegExp(`\\bgithub_pat_${T('[A-Za-z0-9_]', 20)}`, 'g'), '[redacted]'],
@@ -86,17 +95,17 @@ const SECRET_PATTERNS = [
   [/(\s-u\s+[^\s:]+:)\S+/g, '$1[redacted]'],
   // NAME=value / NAME: value / "name": "value", the name ending in a credential word —
   // AZURE_OPENAI_API_KEY=…, Ocp-Apim-Subscription-Key: …, "access_token": "…".
-  [new RegExp(`((?<![A-Za-z0-9])[A-Za-z0-9_.-]*${KEYNAME}(?![A-Za-z])["']?\\s*[:=]\\s*)("[^"]*"|'[^']*'|[^\\s,;}]+)`, 'gi'), (m, k, v) => (looksSecret(v) ? `${k}[redacted]` : m)],
+  [new RegExp(`((?<![A-Za-z0-9])[A-Za-z0-9_.-]*${KEYNAME}(?![A-Za-z])["']?\\s*[:=]\\s*)("[^"]*"|'[^']*'|[^\\s,;}]+)`, 'gi'), (m, k, v) => (looksSecret(v as string) ? `${k}[redacted]` : m)],
   // "my password is X", "login me password hunter2".
-  [/\b((?:pass(?:word|wd|code|phrase)?|pwd)\s+(?:is\s+|was\s+)?)("[^"]+"|'[^']+'|[^\s.,;]+)/gi, (m, k, v) => (looksSecret(v) ? `${k}[redacted]` : m)],
+  [/\b((?:pass(?:word|wd|code|phrase)?|pwd)\s+(?:is\s+|was\s+)?)("[^"]+"|'[^']+'|[^\s.,;]+)/gi, (m, k, v) => (looksSecret(v as string) ? `${k}[redacted]` : m)],
   // A bare 32+ hex string (an API key) — except a 40/64-char one named as a commit.
-  [/(\b(?:commit|sha|rev|revision)\s*[:#]?\s*)?\b([0-9a-f]{32,})\b/gi, (m, named, hex) => (named && (hex.length === 40 || hex.length === 64) ? m : `${named || ''}[redacted]`)],
+  [/(\b(?:commit|sha|rev|revision)\s*[:#]?\s*)?\b([0-9a-f]{32,})\b/gi, (m, named, hex) => (named && ((hex as string).length === 40 || (hex as string).length === 64) ? m : `${named || ''}[redacted]`)],
 ];
 
 // High-entropy fallback: a long token mixing upper, lower and digits that no
 // pattern above named is most likely a credential. Paths and file names
 // (anything with a dot) are left alone.
-function redactEntropy(t) {
+function redactEntropy(t: string): string {
   return t.replace(/(?<![A-Za-z0-9+/=_.-])[A-Za-z0-9+/=_-]{24,}(?![A-Za-z0-9+/=_.-])/g, (tok) => {
     if (!(/[A-Z]/.test(tok) && /[a-z]/.test(tok) && /\d/.test(tok))) return tok;
     if ((tok.match(/\//g) || []).length > 2) return tok;
@@ -105,10 +114,10 @@ function redactEntropy(t) {
 }
 
 /** Every credential-shaped thing in a text, replaced. Idempotent. */
-function redactSecrets(text) {
+function redactSecrets(text: unknown): string {
   // Zero-width characters split a token so no pattern sees it whole.
   let t = String(text ?? '').replace(/[​-‍⁠﻿]/g, '');
-  for (const [re, sub] of SECRET_PATTERNS) t = t.replace(re, sub);
+  for (const [re, sub] of SECRET_PATTERNS) t = typeof sub === 'string' ? t.replace(re, sub) : t.replace(re, sub);
   return redactEntropy(t);
 }
 
@@ -124,19 +133,19 @@ const STOPWORDS = new Set(('the a an and or but if then than that this these tho
  * Up to `max` search terms from the ask: identifiers first (camelCase,
  * snake_case, dotted, paths), then the longer plain words.
  */
-function keywords(text, max = 8) {
+function keywords(text: string | null | undefined, max = 8): string[] {
   const t = String(text || '');
-  const out = [];
-  const seen = new Set();
-  const push = (w) => {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  const push = (w: string) => {
     const k = w.toLowerCase();
     if (seen.has(k) || STOPWORDS.has(k) || k.length < 4 || /^\d+$/.test(k)) return;
     seen.add(k);
     out.push(w);
   };
-  for (const m of t.matchAll(/`([^`\n]{3,60})`/g)) push(m[1].trim());
+  for (const m of t.matchAll(/`([^`\n]{3,60})`/g)) push((m[1] as string).trim());
   for (const m of t.matchAll(/\b[A-Za-z_][A-Za-z0-9]*(?:[A-Z][a-z0-9]+|_[A-Za-z0-9]+)+\b/g)) push(m[0]);
-  for (const m of t.matchAll(/\b[\w-]+(?:\/[\w.-]+)+\b/g)) push(m[0].split('/').pop());
+  for (const m of t.matchAll(/\b[\w-]+(?:\/[\w.-]+)+\b/g)) push(m[0].split('/').pop() as string);
   const words = [...t.matchAll(/\b[A-Za-z][A-Za-z-]{3,}\b/g)].map((m) => m[0]);
   words.sort((a, b) => b.length - a.length);
   for (const w of words) push(w.replace(/-+$/, ''));
@@ -158,20 +167,21 @@ const CONVENTION_DOCS = /^(CLAUDE|AGENTS?|CONTRIBUTING|ARCHITECTURE|README)\.md$
  * @param {Array<string>} o.keywords
  * @returns {{reuse: Array<{path, why}>, conventions: Array<string>}}
  */
-function rankHints({ files = [], hits = {}, keywords: kws = [], max = LIMITS.reuse }) {
-  const score = new Map();
-  const why = new Map();
-  const note = (f, s, reason) => {
+function rankHints({ files = [], hits = {}, keywords: kws = [], max = LIMITS.reuse }: { files?: string[]; hits?: Record<string, string[]>; keywords?: string[]; max?: number }): { reuse: Hint[]; conventions: string[] } {
+  const score = new Map<string, number>();
+  const why = new Map<string, string[]>();
+  const note = (f: string, s: number, reason: string) => {
     if (JUNK.test(f)) return;
     score.set(f, (score.get(f) || 0) + s);
-    if (!why.has(f)) why.set(f, []);
-    if (why.get(f).length < 3 && !why.get(f).includes(reason)) why.get(f).push(reason);
+    const w = why.get(f) || [];
+    why.set(f, w);
+    if (w.length < 3 && !w.includes(reason)) w.push(reason);
   };
   for (const kw of kws) {
     const k = kw.toLowerCase();
     const stem = k.length <= 5 ? k : /ies$/.test(k) ? k.replace(/ies$/, 'y') : k.replace(/(ing|ers|er|es|s)$/, '');
     for (const f of files) {
-      const base = f.toLowerCase().split('/').pop();
+      const base = f.toLowerCase().split('/').pop() as string;
       if (base.includes(stem)) note(f, 3, `its name matches "${kw}"`);
       else if (f.toLowerCase().includes(`/${stem}`)) note(f, 1, `its folder matches "${kw}"`);
     }
@@ -182,7 +192,7 @@ function rankHints({ files = [], hits = {}, keywords: kws = [], max = LIMITS.reu
     .filter(([f, sc]) => !CONVENTION_DOCS.test(f) && sc >= 2)
     .sort((a, b) => b[1] - a[1] || a[0].length - b[0].length || a[0].localeCompare(b[0]))
     .slice(0, max)
-    .map(([f]) => ({ path: f, why: why.get(f).join('; ') }));
+    .map(([f]) => ({ path: f, why: (why.get(f) || []).join('; ') }));
   const conventions = files.filter((f) => CONVENTION_DOCS.test(f) && !f.includes('/')).sort().slice(0, 5);
   return { reuse, conventions };
 }
@@ -215,9 +225,9 @@ Return ONLY JSON: {"goal": "...", "done": [...], "constraints": [...], "decision
  * it is sent anywhere.
  * @param {object} i  see compose.js gather()
  */
-function buildPrompt(i) {
-  const r = (s, n) => clip(redactSecrets(s), n);
-  const L = [];
+function buildPrompt(i: Inputs): { system: string; prompt: string } {
+  const r = (s: unknown, n: number) => clip(redactSecrets(s), n);
+  const L: string[] = [];
   L.push(`Target: ${i.app ? `factory app \`${i.app}\`` : 'a coding session'}${i.slug ? ` in ${i.slug}` : ''}.`);
   L.push('');
   L.push('## The operator\'s ask (their own words)');
@@ -267,13 +277,13 @@ function buildPrompt(i) {
 
 // --- holding the answer to the rules ---------------------------------------------------
 
-function words(text) {
+function words(text: unknown): string[] {
   return String(text || '').toLowerCase().match(/[a-z0-9']+/g) || [];
 }
 
-function grams(text, n) {
+function grams(text: unknown, n: number): Set<string> {
   const w = words(text);
-  const out = new Set();
+  const out = new Set<string>();
   for (let i = 0; i + n <= w.length; i++) out.add(w.slice(i, i + n).join(' '));
   return out;
 }
@@ -283,21 +293,21 @@ function grams(text, n) {
  * source — except runs the operator wrote themselves (their ask may quote
  * the requester, and that is theirs to send).
  */
-function copiesPrivate(text, privateSources, { n = COPY_WORDS, allowed = [] } = {}) {
-  const ok = new Set();
+function copiesPrivate(text: string, privateSources: string[], { n = COPY_WORDS, allowed = [] }: { n?: number; allowed?: string[] } = {}): boolean {
+  const ok = new Set<string>();
   for (const a of allowed) for (const g of grams(a, n)) ok.add(g);
-  const priv = new Set();
+  const priv = new Set<string>();
   for (const s of privateSources) for (const g of grams(s, n)) if (!ok.has(g)) priv.add(g);
   if (!priv.size) return false;
   for (const g of grams(text, n)) if (priv.has(g)) return true;
   return false;
 }
 
-function privateOf(i) {
+function privateOf(i: Inputs): string[] {
   return [i.message?.body, i.personNote, i.projectNote].filter(Boolean);
 }
 
-function allowedOf(i) {
+function allowedOf(i: Inputs): string[] {
   return [i.operatorAsk, i.title, i.summary, i.detail, ...(i.done || [])].filter(Boolean);
 }
 
@@ -308,11 +318,11 @@ function allowedOf(i) {
  * paths), and the operator's own done-criteria kept first and unchanged.
  * Returns the composed brief plus what was dropped and why (for the log).
  */
-function checkComposed(raw, i) {
-  const dropped = [];
+function checkComposed(raw: Inputs | null | undefined, i: Inputs): { composed: Composed; dropped: Dropped[] } {
+  const dropped: Dropped[] = [];
   const priv = privateOf(i);
   const allowed = allowedOf(i);
-  const clean = (s, n, field) => {
+  const clean = (s: unknown, n: number, field: string): string | null => {
     const t = clip(redactSecrets(s), n);
     if (!t) return null;
     if (copiesPrivate(t, priv, { allowed })) {
@@ -321,22 +331,22 @@ function checkComposed(raw, i) {
     }
     return t;
   };
-  const list = (v, field, max) =>
+  const list = (v: unknown, field: string, max: number): string[] =>
     (Array.isArray(v) ? v : [])
       .map((s) => (typeof s === 'string' ? clean(s, LIMITS.item, field) : null))
-      .filter(Boolean)
+      .filter((s): s is string => Boolean(s))
       .slice(0, max);
 
   const fb = fallbackComposed(i);
   const goal = (typeof raw?.goal === 'string' && clean(raw.goal, LIMITS.goal, 'goal')) || fb.goal;
 
-  const given = (i.done || []).map((d) => clip(redactSecrets(d), LIMITS.item)).filter(Boolean);
+  const given: string[] = (i.done || []).map((d: unknown) => clip(redactSecrets(d), LIMITS.item)).filter(Boolean);
   const proposed = list(raw?.done, 'done', LIMITS.done);
   const seen = new Set(given.map((d) => d.toLowerCase()));
   const done = [...given, ...(given.length ? [] : proposed.filter((d) => !seen.has(d.toLowerCase())))].slice(0, LIMITS.done);
 
-  const known = new Set((i.files || []).concat((i.codeHints || []).map((h) => h.path)));
-  const reuse = [];
+  const known = new Set<string>((i.files || []).concat((i.codeHints || []).map((h: Hint) => h.path)));
+  const reuse: Hint[] = [];
   for (const r of Array.isArray(raw?.reuse) ? raw.reuse : []) {
     const p = String(r?.path || '').trim().replace(/^\.\//, '');
     if (!p) continue;
@@ -370,12 +380,12 @@ function checkComposed(raw, i) {
  * summary and done-criteria, the ranked code hints, and nothing private — no
  * message body, no memory page, no remembered fact. Safe to send as is.
  */
-function fallbackComposed(i) {
+function fallbackComposed(i: Inputs): Composed {
   const goal = clip(redactSecrets(i.operatorAsk || i.summary || i.title), LIMITS.goal);
   const fromDetail = i.detail && !(i.done || []).length ? [clip(redactSecrets(i.detail), LIMITS.item)] : [];
   return {
     goal,
-    done: [...(i.done || []).map((d) => clip(redactSecrets(d), LIMITS.item)), ...fromDetail].filter(Boolean).slice(0, LIMITS.done),
+    done: [...(i.done || []).map((d: unknown) => clip(redactSecrets(d), LIMITS.item)), ...fromDetail].filter(Boolean).slice(0, LIMITS.done),
     constraints: [],
     decisions: [],
     facts: [],
@@ -388,7 +398,7 @@ function fallbackComposed(i) {
 // What each delivery level means, said to the builder (JOBS-API.md). The
 // level is enforced outside the builder (the factory, or the PA's own
 // end-of-run step), not merely requested here.
-const STOP = {
+const STOP: Record<string, string> = {
   none: 'Commit in your own worktree. Push nothing and open no pull request.',
   branch: 'Push the branch. Do not open a pull request.',
   draft_pr: 'Push and open a DRAFT pull request. Never mark it ready and never merge it.',
@@ -403,8 +413,8 @@ const STOP = {
  * @param {object} c  composed (checkComposed / fallbackComposed)
  * @param {object} meta {title, app, slug, delivery, deliveryPlain, pipeline, by}
  */
-function render(c, meta = {}) {
-  const L = [];
+function render(c: Composed, meta: Meta = {}): string {
+  const L: string[] = [];
   L.push(`# ${clip(meta.title || c.goal, 200)}`);
   L.push('');
   const where = [meta.app ? `factory app \`${meta.app}\`` : null, meta.slug ? `\`${meta.slug}\`` : null].filter(Boolean).join(', ');
@@ -461,7 +471,7 @@ function render(c, meta = {}) {
   }
   L.push('## Stop condition');
   L.push('');
-  L.push(STOP[meta.delivery] || `Deliver \`${meta.delivery}\`.`);
+  L.push(STOP[meta.delivery || ''] || `Deliver \`${meta.delivery}\`.`);
   L.push('');
   L.push('> The delivery level is enforced outside this job, not merely requested here. Nothing is ever sent to the requester.');
   L.push('');

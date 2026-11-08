@@ -1,7 +1,7 @@
 'use strict';
 
 // The software factory as a dispatch target: a commitment becomes a factory
-// job instead of a Claude Code session (route `factory`, src/dispatch/routeCore.js).
+// job instead of a Claude Code session (route `factory`, src/dispatch/routeCore.ts).
 //
 // The one interface is the factory's job contract (software-factory
 // docs/JOBS-API.md, v1). This file never imports factory code or reads its
@@ -32,7 +32,7 @@
 // ceiling): every job carries an explicit `--delivery` — what they said
 // (`pa do --delivery`, the card's pick), else their own words, else the repo's
 // default (`pa delivery set`), else PA_DELIVERY_DEFAULT (src/dispatch/
-// deliveryCore.js). A factory job changes code, so the planner never starts one
+// deliveryCore.ts). A factory job changes code, so the planner never starts one
 // on its own: it is always a proposal you say yes to (src/agent/planner.ts).
 //
 // The ask is a COMPOSED brief (src/dispatch/compose.js): the goal, done
@@ -52,8 +52,8 @@ const path = require('path');
 const { config } = require('../config.ts');
 const repository = require('../repo');
 const { mode: resolveMode } = require('./modes.ts');
-const F = require('./factoryCore');
-const D = require('./deliveryCore');
+const F = require('./factoryCore.ts');
+const D = require('./deliveryCore.ts');
 const termhub = require('./termhub');
 const ledger = require('../ledger');
 const { logger } = require('../log.ts');
@@ -429,7 +429,7 @@ async function start({
       goal = c.goal;
     } catch (err) {
       log.warn('brief composition failed; sending the deterministic brief', { run: run.id, message: String(err.message).slice(0, 200) });
-      const C = require('./composeCore');
+      const C = require('./composeCore.ts');
       const fb = C.fallbackComposed({ title: label, operatorAsk: task, summary: target.commitment?.summary, detail: target.commitment?.detail, done: criteria });
       ask = C.render(fb, { title: label, app, slug, delivery: chosen.delivery, deliveryPlain: D.describe(chosen.delivery), pipeline: pipe, by: 'compose:fallback' });
       by = 'compose:fallback';

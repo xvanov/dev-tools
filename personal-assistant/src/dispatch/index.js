@@ -19,7 +19,7 @@ const { config } = require('../config.ts');
 const repository = require('../repo');
 const { mode: resolveMode } = require('./modes.ts');
 const { buildBrief, openingPrompt } = require('./brief');
-const D = require('./deliveryCore');
+const D = require('./deliveryCore.ts');
 const termhub = require('./termhub');
 const ledger = require('../ledger');
 const { logger } = require('../log.ts');
@@ -174,13 +174,13 @@ async function briefFor(target, { modeName, run, task = null, factory = null, de
 }
 
 /**
- * Starts a run. `via` picks the route (src/dispatch/routeCore.js): `claude`
+ * Starts a run. `via` picks the route (src/dispatch/routeCore.ts): `claude`
  * (a Claude Code session, the default unless PA_DISPATCH_VIA says otherwise),
  * `factory` (a software-factory job, src/dispatch/factory.js), or `auto` (the
  * routing rule chooses, and says why). `pipeline`, `models`, `done`, `app`,
  * `brief` and `register` only mean something to the factory.
  *
- * `delivery` is the end state the operator chose (src/dispatch/deliveryCore.js).
+ * `delivery` is the end state the operator chose (src/dispatch/deliveryCore.ts).
  * Not given: an explicit `mode` maps to one, else the operator's own words in
  * `task`, else the repo's default, else PA_DELIVERY_DEFAULT.
  *
@@ -196,8 +196,8 @@ async function start({
   jobKind = null, runtime = null, title = null, branch: onBranch = null, pr: onPr = null,
 }) {
   // A research or report job exists only on the factory (JOBS-API v1.2).
-  const kind = require('./factoryCore').jobKind(jobKind);
-  if (runtime) require('./factoryCore').runtime(runtime);
+  const kind = require('./factoryCore.ts').jobKind(jobKind);
+  if (runtime) require('./factoryCore.ts').runtime(runtime);
   if (kind !== 'code' && via && String(via).toLowerCase() === 'claude') {
     throw new Error(`a ${kind} job is a factory job — drop --via claude (or use --mode plan for a read-only Claude session)`);
   }
@@ -206,7 +206,7 @@ async function start({
   // was made (offer.js `repoVerifiedAt`) and is not re-judged at accept.
   // A research/report job only reads: an owner/name it names need not be a
   // checkout here (the factory reads its own, or the ask just names it).
-  const readOnlySlug = kind !== 'code' && require('./routeCore').normSlug(repoPath);
+  const readOnlySlug = kind !== 'code' && require('./routeCore.ts').normSlug(repoPath);
   if (repoPath && !repoVerified && !readOnlySlug) await knownRepo(repoPath);
   // One live run per commitment. A second Do while the first is still setting
   // up (a remote one takes a minute) started a second agent on the same ask.
@@ -218,7 +218,7 @@ async function start({
     }
   }
   if (delivery) delivery = D.delivery(delivery);
-  const route = require('./routeCore').via(via || require('./routeCore').defaultVia({ configured: config.factory.via, mode: modeName, machine }));
+  const route = require('./routeCore.ts').via(via || require('./routeCore.ts').defaultVia({ configured: config.factory.via, mode: modeName, machine }));
   let routeReason = givenReason || (route === 'claude' && via ? 'you chose a Claude session' : null);
   if (route !== 'claude') {
     const target = await resolveTarget({ commitmentId, repoPath });

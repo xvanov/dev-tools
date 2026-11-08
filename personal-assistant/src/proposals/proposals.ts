@@ -56,7 +56,7 @@ const HANDLERS = {
       });
     }
     if (pl.frozen) {
-      const D = require('../dispatch/deliveryCore');
+      const D = require('../dispatch/deliveryCore.ts');
       const delivery = picked ? D.delivery(picked) : pl.delivery || null;
       const changed = Boolean(picked) && delivery !== pl.delivery;
       if (pl.via === 'factory' && !delivery) throw new Error('a factory offer without a delivery level — decline it and offer it again');
@@ -129,7 +129,7 @@ function describeStart(run: any) {
  *   the card's own level when absent.
  */
 async function decide(id: any, { accept, answer = null, delivery = null }: { accept?: boolean; answer?: string | null; delivery?: string | null }) {
-  if (delivery) delivery = require('../dispatch/deliveryCore').delivery(delivery);
+  if (delivery) delivery = require('../dispatch/deliveryCore.ts').delivery(delivery);
   // "When should I follow up?" takes a fixed answer or a typed time ("2h",
   // "fri 3pm", a date — src/util/when.ts), stored canonical so the chase does
   // exactly what was previewed. One it cannot read is refused, not guessed.

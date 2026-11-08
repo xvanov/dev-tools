@@ -15,7 +15,7 @@
 // second copy of those conventions goes stale and then gets trusted.
 
 const { mode: resolveMode, describe } = require('./modes.ts');
-const { describe: describeDelivery } = require('./deliveryCore');
+const { describe: describeDelivery } = require('./deliveryCore.ts');
 
 function fence(text) {
   const body = String(text || '').trim();
@@ -34,7 +34,7 @@ function fence(text) {
 // persona does not have — are left out.
 //
 // `delivery` (a Claude session) is the end state the operator chose
-// (src/dispatch/deliveryCore.js): the session works within its mode, and what
+// (src/dispatch/deliveryCore.ts): the session works within its mode, and what
 // lies past it — marking the PR ready, merging, pushing to main — the
 // assistant does itself when the session ends.
 function buildBrief({ commitment, item, project, person, modeName, run, related = [], memory = {}, factory = null, delivery = null }) {

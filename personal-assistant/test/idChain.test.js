@@ -22,7 +22,7 @@ process.env.PA_FACTORY_PATH = '/srv/factory-checkout';
 process.env.PA_FACTORY_MACHINE = '';
 process.env.PA_FACTORY_UV = '/home/tester/.local/bin/uv';
 
-const F = require('../src/dispatch/factoryCore');
+const F = require('../src/dispatch/factoryCore.ts');
 const T = require('../src/dispatch/termhub');
 const C = require('../src/mcp/chatTools.ts');
 

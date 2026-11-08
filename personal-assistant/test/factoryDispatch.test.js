@@ -18,13 +18,13 @@ process.env.PA_FACTORY_MACHINE = '';
 process.env.PA_FACTORY_MODELS = 'dev=model-a';
 process.env.PA_WORKTREES_ROOT = tmp;
 
-const F = require('../src/dispatch/factoryCore');
-const R = require('../src/dispatch/routeCore');
+const F = require('../src/dispatch/factoryCore.ts');
+const R = require('../src/dispatch/routeCore.ts');
 
 // --- delivery is the operator's call, sent on every job (deliveryCore) ---------
 
 {
-  const D = require('../src/dispatch/deliveryCore');
+  const D = require('../src/dispatch/deliveryCore.ts');
   assert.deepStrictEqual(F.DELIVERIES, D.DELIVERIES, 'one vocabulary');
   assert.strictEqual(F.deliveryFor, undefined, 'a PA mode no longer decides a job\'s delivery');
   // Every level, including the two with no human step, can be sent.
@@ -250,7 +250,7 @@ async function execLocal() {
   assert.deepStrictEqual([ok.code, JSON.parse(ok.stdout)], [0, { a: 'x="1"; echo $HOME' }], 'argv verbatim, no shell');
   const bad = await runCommand(null, [process.execPath, '-e', 'process.stdout.write("{}"); process.exit(3)']);
   assert.deepStrictEqual([bad.code, bad.stdout], [3, '{}'], 'a non-zero exit is an answer, not a throw');
-  const F = require('../src/dispatch/factoryCore');
+  const F = require('../src/dispatch/factoryCore.ts');
   // A timeout / missing program is a transport failure (plain Error, retried once), not a FactoryError.
   for (const res of [{ code: 124, stdout: '', stderr: '', timedOut: true }, { code: 127, stdout: '', stderr: '' }]) {
     let caught = null;

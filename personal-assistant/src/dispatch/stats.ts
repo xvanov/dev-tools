@@ -8,7 +8,7 @@
 // Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
 
 const repo = require('../repo');
-const { summarize } = require('./routeCore');
+const { summarize } = require('./routeCore.ts');
 
 async function byRoute({ days = 90 }: { days?: number } = {}) {
   const list = await repo.runs.forRouteStats(days);

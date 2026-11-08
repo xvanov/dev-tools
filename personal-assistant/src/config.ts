@@ -451,7 +451,7 @@ const config = {
       .filter(Boolean),
     // The end state a run or factory job gets when the operator did not say
     // and its repo has no default of its own (`pa delivery set`,
-    // src/dispatch/deliveryCore.js): none | branch | draft_pr | pr |
+    // src/dispatch/deliveryCore.ts): none | branch | draft_pr | pr |
     // auto_merge | push_to_main.
     deliveryDefault: env('PA_DELIVERY_DEFAULT', 'draft_pr'),
     // The model that writes a factory job's brief from the ask and what the
@@ -494,7 +494,7 @@ const config = {
     runtime: env('PA_FACTORY_RUNTIME', 'api'),
     // Per-persona model overrides passed with every job: `dev=model,reviewer=model`.
     models: env('PA_FACTORY_MODELS', ''),
-    // How `auto` picks: `rule` (src/dispatch/routeCore.js). The seam for others.
+    // How `auto` picks: `rule` (src/dispatch/routeCore.ts). The seam for others.
     chooser: env('PA_ROUTE_CHOOSER', 'rule'),
     // The worker's factory pass (src/dispatch/factoryPace.js): every
     // pollSeconds when nothing moves, every activePollSeconds while a job is

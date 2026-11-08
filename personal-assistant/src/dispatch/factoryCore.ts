@@ -11,11 +11,24 @@
 // jobs). The PA never imports factory code or reads its
 // sqlite: it runs `uv run factory job …` on the factory's machine and parses
 // the single JSON object each `--json` command prints.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
 
-// Delivery levels are the shared vocabulary in deliveryCore.js. The operator
+/** A job as the factory's `--json` commands print it (JOBS-API.md): read field by field, every v1.2 field optional. */
+type Job = import('../types.ts').Json;
+/** A run row (sql/001) or the PA run a job came from: loose until the run repository's rows are typed. */
+type RunRow = import('../types.ts').Json;
+type ExecResult = { code: number | null; stdout?: string; stderr?: string; timedOut?: boolean };
+type PrLink = { url: string; number: number | null; story_id: number | null; state: string | null; ci_state: string | null; ci_failing: string[] | null };
+type StepLink = { step_id: string; job_id: string | null; story_id: number | null; persona: string | null; runtime: string | null; model: string | null; state: string | null; started_at: string | null; ended_at: string | null; machine: string | null; termhub_session_id: string | null; url: string | null };
+type Notice = { key: string; title: string; body: string; url: string | null };
+type NoticeMemo = Map<string, { state: string; ciFailing: boolean }>;
+type JobView = ReturnType<typeof jobView>;
+
+// Delivery levels are the shared vocabulary in deliveryCore.ts. The operator
 // chooses one per job (operator decision 2026-11-02, no ceiling) and it is
 // sent on every submit; a legacy PA mode no longer decides it.
-const { DELIVERIES } = require('./deliveryCore');
+const { DELIVERIES } = require('./deliveryCore.ts');
 const PIPELINES = ['chain', 'solo', 'auto'];
 const STATES = ['queued', 'triaging', 'in_progress', 'blocked', 'needs_human', 'done', 'failed', 'cancelled'];
 const ACTIVE_STATES = new Set(['queued', 'triaging', 'in_progress', 'blocked', 'needs_human']);
@@ -28,7 +41,7 @@ const MODEL = /^[A-Za-z0-9_.:/@-]+$/;
 // A plain git branch name: no leading '-', no '..', no spaces or shell syntax.
 const BRANCH = /^(?!-)(?!.*\.\.)(?!.*\.lock$)[A-Za-z0-9._/-]{1,200}(?<!\/)$/;
 
-function pipeline(name) {
+function pipeline(name: string | null | undefined): string {
   const p = String(name || 'auto').toLowerCase();
   if (!PIPELINES.includes(p)) throw new Error(`unknown pipeline "${name}" — one of: ${PIPELINES.join(', ')}`);
   return p;
@@ -41,8 +54,8 @@ function pipeline(name) {
  * @param {Array<string>|string} list
  * @returns {Object<string,string>}
  */
-function parseModels(list) {
-  const out = {};
+function parseModels(list: string[] | string | null | undefined): Record<string, string> {
+  const out: Record<string, string> = {};
   const entries = (Array.isArray(list) ? list : [list])
     .flatMap((s) => String(s ?? '').split(','))
     .map((s) => s.trim())
@@ -61,7 +74,7 @@ function parseModels(list) {
  * `uv run factory …` — the factory's CLI, run from its checkout. `uv` is the
  * program to run (PA_FACTORY_UV): termhub's own PATH often lacks ~/.local/bin.
  */
-function factoryArgv(sub, uv = 'uv') {
+function factoryArgv(sub: string[], uv: string | null | undefined = 'uv'): string[] {
   return [uvBinary(uv), 'run', 'factory', ...sub];
 }
 
@@ -69,7 +82,7 @@ function factoryArgv(sub, uv = 'uv') {
 // so it may hold nothing a shell reads. A Windows path (`C:\…\uv.exe`) is
 // allowed: a drive prefix and backslashes, still no spaces or shell syntax.
 const UV = /^(?:[A-Za-z]:)?[A-Za-z0-9_./~\\-]+$/;
-function uvBinary(uv) {
+function uvBinary(uv: string | null | undefined): string {
   const v = String(uv || 'uv').trim();
   if (!UV.test(v)) throw new Error(`PA_FACTORY_UV "${v}" — want a path or a program name`);
   return v;
@@ -85,13 +98,13 @@ const KINDS = ['code', 'research', 'report'];
 // claude_session  Claude Code on the factory machine (the operator's subscription)
 const RUNTIMES = ['api', 'claude_session'];
 
-function jobKind(name) {
+function jobKind(name: string | null | undefined): string {
   const k = String(name || 'code').toLowerCase().trim();
   if (!KINDS.includes(k)) throw new Error(`unknown kind "${name}" — one of: ${KINDS.join(', ')}`);
   return k;
 }
 
-function runtime(name) {
+function runtime(name: string | null | undefined): string {
   const r = String(name || 'api').toLowerCase().trim().replace(/-/g, '_');
   const v = r === 'claude' || r === 'subscription' ? 'claude_session' : r;
   if (!RUNTIMES.includes(v)) throw new Error(`unknown runtime "${name}" — one of: ${RUNTIMES.join(', ')}`);
@@ -103,8 +116,8 @@ function runtime(name) {
  * questions it must answer. No composing model — the ask is short, the user's,
  * and nothing in it is private material gathered by the assistant.
  */
-function researchAsk({ kind, title, ask = null, done = [], repo = null }) {
-  const { redactSecrets } = require('./composeCore');
+function researchAsk({ kind, title, ask = null, done = [], repo = null }: { kind: string; title: string; ask?: string | null; done?: string[] | null; repo?: string | null }): string {
+  const { redactSecrets } = require('./composeCore.ts');
   const k = jobKind(kind);
   if (k === 'code') throw new Error('researchAsk is for research and report jobs');
   const lines = [
@@ -137,7 +150,23 @@ function researchAsk({ kind, title, ask = null, done = [], repo = null }) {
 // `branch` / `pr` continue existing work: the job starts on that branch or
 // that PR's head instead of a fresh one (`job submit --branch|--pr`, a
 // factory newer than v1.2; an older one refuses the flag in its parser).
-function submitArgv({ app, title, ask = null, askFile = null, flowFile = null, done = [], pipeline: pipe = 'auto', delivery, models = {}, externalId, source = 'pa', kind = null, runtime: rt = null, branch = null, pr = null }) {
+function submitArgv({ app, title, ask = null, askFile = null, flowFile = null, done = [], pipeline: pipe = 'auto', delivery, models = {}, externalId, source = 'pa', kind = null, runtime: rt = null, branch = null, pr = null }: {
+  app?: string | null;
+  title: string;
+  ask?: string | null;
+  askFile?: string | null;
+  flowFile?: string | null;
+  done?: string[];
+  pipeline?: string | null;
+  delivery: string;
+  models?: Record<string, string> | null;
+  externalId: string | number | null | undefined;
+  source?: string;
+  kind?: string | null;
+  runtime?: string | null;
+  branch?: string | null;
+  pr?: number | string | null;
+}): string[] {
   const k = kind == null ? 'code' : jobKind(kind);
   if (!app && k === 'code') throw new Error('submit needs a factory app');
   if (!title) throw new Error('submit needs a title');
@@ -153,7 +182,7 @@ function submitArgv({ app, title, ask = null, askFile = null, flowFile = null, d
   // "-" must not be read as an option by the factory's CLI parser.
   // The title and criteria are on the factory's command line (visible in `ps`)
   // and in its direction: redacted like the brief.
-  const { redactSecrets } = require('./composeCore');
+  const { redactSecrets } = require('./composeCore.ts');
   const argv = ['job', 'submit', '--json'];
   if (app) argv.push('--app', String(app));
   argv.push(`--title=${clip(redactSecrets(title), 200)}`);
@@ -199,12 +228,13 @@ const REFUSAL_CODES = new Set([
 const UNKNOWN_OPTION = /\bNo such option\b|\bno such option\b|Got unexpected extra argument/;
 const UNKNOWN_COMMAND = /\bNo such command\b/i;
 
-function isRefusal(err) {
+function isRefusal(err: unknown): boolean {
   return err instanceof FactoryError && REFUSAL_CODES.has(err.code);
 }
 
 class NotSentError extends Error {
-  constructor(message) {
+  code: string;
+  constructor(message: string) {
     super(message);
     this.name = 'NotSentError';
     this.code = 'not_sent';
@@ -212,7 +242,8 @@ class NotSentError extends Error {
 }
 
 class FactoryError extends Error {
-  constructor(code, message) {
+  code: string;
+  constructor(code: string, message?: string) {
     super(message ? `factory ${code}: ${message}` : `factory ${code}`);
     this.name = 'FactoryError';
     this.code = code;
@@ -224,7 +255,7 @@ class FactoryError extends Error {
  * `{"error", "message"}` on stdout. Anything else — no JSON, a JSON array,
  * extra lines — breaks the contract and is reported, never guessed at.
  */
-function parseResult({ code, stdout, stderr, timedOut = false }) {
+function parseResult({ code, stdout, stderr, timedOut = false }: ExecResult): Job {
   // exec.ts answers a timeout (124) and a missing program (127) as results,
   // not throws. Neither is the factory's answer, so they surface as transport
   // failures — plain Errors, which submit() retries once (idempotent on the
@@ -234,7 +265,7 @@ function parseResult({ code, stdout, stderr, timedOut = false }) {
   // was sent, and a submit can be failed outright.
   if (code === 127) throw new NotSentError('could not start the factory command (exit 127) — is uv on that machine\'s PATH, and PA_FACTORY_PATH right?');
   const text = String(stdout || '').trim();
-  let obj = null;
+  let obj: Job | null = null;
   try {
     obj = text ? JSON.parse(text) : null;
   } catch {
@@ -263,12 +294,12 @@ function parseResult({ code, stdout, stderr, timedOut = false }) {
  * check. The factory's direction validator requires a flow (or an API spec);
  * the requester's own words travel in the ask file next to it.
  */
-function flowMarkdown({ title: rawTitle, summary: rawSummary = null, app = null, done: rawDone = [], delivery = null }) {
-  const { redactSecrets } = require('./composeCore');
-  const title = redactSecrets(rawTitle);
-  const summary = rawSummary === null ? null : redactSecrets(rawSummary);
-  const done = (rawDone || []).map((d) => redactSecrets(d));
-  const steps = [];
+function flowMarkdown({ title: rawTitle, summary: rawSummary = null, app = null, done: rawDone = [], delivery = null }: { title: string; summary?: string | null; app?: string | null; done?: string[] | null; delivery?: string | null }): string {
+  const { redactSecrets } = require('./composeCore.ts');
+  const title: string = redactSecrets(rawTitle);
+  const summary: string | null = rawSummary === null ? null : redactSecrets(rawSummary);
+  const done: string[] = (rawDone || []).map((d) => redactSecrets(d));
+  const steps: string[] = [];
   steps.push(`Start from how ${app ? `\`${app}\`` : 'the repository'} behaves today, as the ask (the job's ask file) describes it.`);
   steps.push(`Make the change: ${clip(summary || title, 400)}.`);
   for (const d of done) steps.push(`Check: ${clip(d, 400)}`);
@@ -289,7 +320,7 @@ function flowMarkdown({ title: rawTitle, summary: rawSummary = null, app = null,
  * `--delivery-default` is the app's own default; the PA still sends
  * `--delivery` on every job, so it only matters for jobs submitted elsewhere.
  */
-function appAddArgv({ repo, deliveryDefault = 'draft_pr', path: clonePath = null }) {
+function appAddArgv({ repo, deliveryDefault = 'draft_pr', path: clonePath = null }: { repo: string; deliveryDefault?: string; path?: string | null }): string[] {
   if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(String(repo || ''))) throw new Error(`not a repo: "${repo}" — want owner/name`);
   if (!DELIVERIES.includes(deliveryDefault)) throw new Error(`unknown delivery "${deliveryDefault}"`);
   const argv = ['app', 'add', '--json', '--repo', String(repo), '--delivery-default', deliveryDefault];
@@ -301,9 +332,9 @@ function appAddArgv({ repo, deliveryDefault = 'draft_pr', path: clonePath = null
  * This run's job in a `job list` answer: source pa, external id = the run's
  * key (`<install>-<run>`; a run from before sql/026 used its bare id).
  */
-function jobForRun(jobs, key) {
+function jobForRun(jobs: Job[] | null | undefined, key: string | number): Job | null {
   return (Array.isArray(jobs) ? jobs : []).find(
-    (j) => (j?.source == null || j.source === 'pa') && j?.external_id != null && String(j.external_id) === String(key) && JOB_ID.test(String(j.job_id || ''))
+    (j: Job) => (j?.source == null || j.source === 'pa') && j?.external_id != null && String(j.external_id) === String(key) && JOB_ID.test(String(j.job_id || ''))
   ) || null;
 }
 
@@ -323,7 +354,7 @@ const UNKNOWN_CAP_MS = 24 * 3600_000;
  *           the row waits as `submit_unknown`, and the worker asks again
  * @param {{job?: object|null, asked: boolean, ageMs: number}} o
  */
-function submitVerdict({ job = null, asked, ageMs }) {
+function submitVerdict({ job = null, asked, ageMs }: { job?: Job | null; asked: boolean; ageMs: number }): 'adopt' | 'fail' | 'unknown' {
   if (job) return 'adopt';
   // A day without an answer either way: failed, and said so — never a row
   // waiting forever (the factory's own job, if it ever appears, is then
@@ -334,31 +365,31 @@ function submitVerdict({ job = null, asked, ageMs }) {
 }
 
 /** This install's idempotency key for a run (sql/026). */
-function externalKey(installId, runId) {
+function externalKey(installId: string | null | undefined, runId: number | string): string {
   if (!/^[0-9a-f-]{8,64}$/i.test(String(installId || ''))) throw new Error('no install id');
   return `${installId}-${Number(runId)}`;
 }
 
 /** The command a termhub session runs to "walk into" a job. */
-function followCommand(jobId, uv = 'uv') {
+function followCommand(jobId: string, uv: string | null | undefined = 'uv'): string {
   if (!JOB_ID.test(String(jobId || ''))) throw new Error(`not a factory job id: "${jobId}"`);
   return `${uvBinary(uv)} run factory job follow ${jobId}`;
 }
 
 /** `factory job report <id> --json` (v1.2). */
-function reportArgv(jobId) {
+function reportArgv(jobId: string): string[] {
   if (!JOB_ID.test(String(jobId || ''))) throw new Error(`not a factory job id: "${jobId}"`);
   return ['job', 'report', String(jobId), '--json'];
 }
 
 /** `factory job resume <id> --json`: carry on a job that stopped. */
-function resumeArgv(jobId) {
+function resumeArgv(jobId: string): string[] {
   if (!JOB_ID.test(String(jobId || ''))) throw new Error(`not a factory job id: "${jobId}"`);
   return ['job', 'resume', String(jobId), '--json'];
 }
 
 /** `factory job cancel <id> --json`. */
-function cancelArgv(jobId) {
+function cancelArgv(jobId: string): string[] {
   if (!JOB_ID.test(String(jobId || ''))) throw new Error(`not a factory job id: "${jobId}"`);
   return ['job', 'cancel', String(jobId), '--json'];
 }
@@ -373,32 +404,34 @@ const APPROVE = /factory approve-direction\s+([A-Za-z0-9_.-]+)\s+--app\s+([A-Za-
  * for this job's own app and direction: a `why` cannot point the button at
  * another job.
  */
-function approveArgv(job) {
+function approveArgv(job: Job | null | undefined): string[] | null {
   if (job?.state !== 'needs_human') return null;
   const texts = [...(Array.isArray(job.warnings) ? job.warnings : []), job.why || ''].map(String);
   const [app, dir] = String(job.job_id || '').split(':');
   for (const t of texts) {
     const m = APPROVE.exec(t);
-    if (!m || !NAME.test(m[1]) || !NAME.test(m[2])) continue;
-    if (m[2] !== app || (m[1] !== dir && !m[1].startsWith(`${dir}-`))) continue;
-    return ['approve-direction', m[1], '--app', m[2], '--note=approved from the personal assistant\'s factory page'];
+    if (!m) continue;
+    const [, direction = '', mApp = ''] = m;
+    if (!NAME.test(direction) || !NAME.test(mApp)) continue;
+    if (mApp !== app || (direction !== dir && !direction.startsWith(`${dir}-`))) continue;
+    return ['approve-direction', direction, '--app', mApp, '--note=approved from the personal assistant\'s factory page'];
   }
   return null;
 }
 
 /** Only http(s) links reach a page or a notification. */
-function safeUrl(u) {
+function safeUrl(u: unknown): string | null {
   const s = String(u || '');
   return /^https?:\/\/[^\s"'<>]+$/.test(s) ? s : null;
 }
 
-function num(v) {
+function num(v: unknown): number {
   const n = Number(v);
   return Number.isFinite(n) ? n : 0;
 }
 
 /** Pure. A PR's number: JOBS-API v1.4 `pr_number`, else read off its URL. */
-function prNumber(n, url) {
+function prNumber(n: unknown, url: unknown): number | null {
   const v = Number(n);
   if (Number.isInteger(v) && v > 0) return v;
   const m = /\/pull\/(\d+)(?:[/?#]|$)/.exec(String(url || ''));
@@ -407,7 +440,7 @@ function prNumber(n, url) {
 
 const SESSION_ID = /^[A-Za-z0-9_.:-]{1,128}$/;
 
-function isoOrNull(v) {
+function isoOrNull(v: unknown): string | null {
   if (!v) return null;
   const t = Date.parse(String(v));
   return Number.isFinite(t) ? new Date(t).toISOString() : null;
@@ -420,11 +453,11 @@ function isoOrNull(v) {
  * @returns {{prs: Array<{url, number, story_id, state, ci_state, ci_failing}>,
  *            steps: Array<{step_id, job_id, story_id, persona, runtime, model, state, started_at, ended_at, machine, termhub_session_id, url}>}}
  */
-function chainOf(job) {
-  const jobId = JOB_ID.test(String(job?.job_id || '')) ? String(job.job_id) : null;
-  const intOrNull = (v) => (Number.isInteger(Number(v)) && v !== null && v !== '' ? Number(v) : null);
-  const prs = [];
-  const seen = new Set();
+function chainOf(job: Job | null | undefined): { prs: PrLink[]; steps: StepLink[] } {
+  const jobId = JOB_ID.test(String(job?.job_id || '')) ? String(job?.job_id) : null;
+  const intOrNull = (v: unknown) => (Number.isInteger(Number(v)) && v !== null && v !== '' ? Number(v) : null);
+  const prs: PrLink[] = [];
+  const seen = new Set<string>();
   for (const s of Array.isArray(job?.stories) ? job.stories : []) {
     const url = safeUrl(s?.pr_url);
     if (!url || seen.has(url)) continue;
@@ -436,7 +469,7 @@ function chainOf(job) {
       story_id: intOrNull(s?.id),
       state: ['open', 'merged', 'closed'].includes(s?.pr_state) ? s.pr_state : null,
       ci_state: ci ? String(ci.state || 'none').slice(0, 20) : null,
-      ci_failing: ci && Array.isArray(ci.failing) ? ci.failing.slice(0, 8).map((f) => clip(typeof f === 'string' ? f : f?.name || '?', 80)) : null,
+      ci_failing: ci && Array.isArray(ci.failing) ? ci.failing.slice(0, 8).map((f: any) => clip(typeof f === 'string' ? f : f?.name || '?', 80)) : null,
     });
   }
   for (const u of Array.isArray(job?.pr_urls) ? job.pr_urls : []) {
@@ -446,7 +479,7 @@ function chainOf(job) {
       prs.push({ url, number: prNumber(null, url), story_id: null, state: null, ci_state: null, ci_failing: null });
     }
   }
-  const steps = [];
+  const steps: StepLink[] = [];
   for (const r of (Array.isArray(job?.runs) ? job.runs : []).slice(0, 50)) {
     if (r?.id == null || !SESSION_ID.test(String(r.id))) continue;
     const s = r.session && typeof r.session === 'object' ? r.session : null;
@@ -476,7 +509,7 @@ function chainOf(job) {
  * termhub session (a Claude run's terminal, or a factory run's follow session).
  * A run with no stored PR still shows the one on run.mr_url (a Claude run's PR).
  */
-function runChain(run, stored = null, { sessionUrl = null } = {}) {
+function runChain(run: RunRow | null | undefined, stored: { prs?: PrLink[]; steps?: StepLink[] } | null = null, { sessionUrl = null }: { sessionUrl?: string | null } = {}) {
   const st = stored || {};
   const prs = (Array.isArray(st.prs) ? st.prs : [])
     .map((p) => ({
@@ -501,14 +534,14 @@ function runChain(run, stored = null, { sessionUrl = null } = {}) {
       ? { id: s.termhub_session_id || null, machine: s.machine || null, url: safeUrl(s.url) }
       : null,
   }));
-  const job = JOB_ID.test(String(run?.factory_job_id || '')) ? String(run.factory_job_id) : null;
+  const job = JOB_ID.test(String(run?.factory_job_id || '')) ? String(run?.factory_job_id) : null;
   return {
     card: run?.commitment_id != null ? String(run.commitment_id) : null,
     run: Number(run?.id),
     status: run?.status || null,
     route: run?.route || 'claude',
     job,
-    jobState: job ? run.factory_state || null : null,
+    jobState: job ? run?.factory_state || null : null,
     session: run?.termhub_session_id ? { id: String(run.termhub_session_id), url: safeUrl(sessionUrl) } : null,
     steps,
     prs,
@@ -516,8 +549,8 @@ function runChain(run, stored = null, { sessionUrl = null } = {}) {
 }
 
 /** A job's open PRs with CI failing (JOBS-API: `stories[].ci`, open PRs only). */
-function ciFailing(job) {
-  return (Array.isArray(job?.stories) ? job.stories : []).filter((s) => s?.ci?.state === 'failing');
+function ciFailing(job: Job | null | undefined): Job[] {
+  return (Array.isArray(job?.stories) ? job.stories : []).filter((s: Job) => s?.ci?.state === 'failing');
 }
 
 const GROUPS = ['needs_you', 'running', 'delivered', 'ended'];
@@ -529,7 +562,7 @@ const GROUPS = ['needs_you', 'running', 'delivered', 'ended'];
  *   delivered  done
  *   ended      failed or cancelled
  */
-function groupOf(job) {
+function groupOf(job: Job | null | undefined): string {
   const s = job?.state;
   if (s === 'done') return 'delivered';
   if (s === 'failed' || s === 'cancelled') return 'ended';
@@ -544,12 +577,12 @@ function groupOf(job) {
  * @param {object} job
  * @param {object} [pa]  the PA run that submitted it: {id, url}
  */
-function jobView(job, pa = null) {
-  const kind = KINDS.includes(job?.kind) ? job.kind : 'code';
+function jobView(job: Job | null | undefined, pa: { id: number; url?: string | null; card?: unknown } | null = null) {
+  const kind: string = KINDS.includes(job?.kind) ? job?.kind : 'code';
   const report = job?.report && typeof job.report === 'object'
     ? { title: clip(job.report.title || '', 200), excerpt: clip(job.report.excerpt || '', 800), words: num(job.report.words) || null }
     : null;
-  const runs = (Array.isArray(job?.runs) ? job.runs : []).slice(0, 30).map((r) => ({
+  const runs = (Array.isArray(job?.runs) ? (job?.runs as Job[]) : []).slice(0, 30).map((r) => ({
     id: r?.id ?? null,
     storyId: r?.story_id ?? null,
     persona: r?.persona ? clip(r.persona, 40) : null,
@@ -573,22 +606,22 @@ function jobView(job, pa = null) {
     app: job?.app || null,
     title: clip(job?.title || job?.job_id || '', 200),
     kind,
-    runtime: RUNTIMES.includes(job?.runtime) ? job.runtime : 'api',
-    state: STATES.includes(job?.state) ? job.state : String(job?.state || 'unknown').slice(0, 30),
+    runtime: RUNTIMES.includes(job?.runtime) ? (job?.runtime as string) : 'api',
+    state: STATES.includes(job?.state) ? (job?.state as string) : String(job?.state || 'unknown').slice(0, 30),
     group: groupOf(job),
     why: job?.why ? clip(job.why, 400) : null,
     terminal: Boolean(job?.terminal) || ['done', 'failed', 'cancelled'].includes(job?.state),
     delivery: job?.delivery || null,
     pipeline: job?.pipeline || null,
     source: job?.source || null,
-    stories: (Array.isArray(job?.stories) ? job.stories : []).slice(0, 30).map((s) => ({
+    stories: (Array.isArray(job?.stories) ? (job?.stories as Job[]) : []).slice(0, 30).map((s) => ({
       id: s?.id ?? null,
       state: String(s?.state || '').slice(0, 40),
       prUrl: safeUrl(s?.pr_url),
       prNumber: safeUrl(s?.pr_url) ? prNumber(s?.pr_number, s.pr_url) : null,
       prState: s?.pr_state || null,
       ci: s?.ci && typeof s.ci === 'object'
-        ? { state: String(s.ci.state || 'none'), failing: (Array.isArray(s.ci.failing) ? s.ci.failing : []).slice(0, 8).map((f) => clip(typeof f === 'string' ? f : f?.name || JSON.stringify(f), 80)) }
+        ? { state: String(s.ci.state || 'none'), failing: (Array.isArray(s.ci.failing) ? s.ci.failing : []).slice(0, 8).map((f: any) => clip(typeof f === 'string' ? f : f?.name || JSON.stringify(f), 80)) }
         : null,
     })),
     ciFailing: ciFailing(job).length > 0,
@@ -610,16 +643,16 @@ function jobView(job, pa = null) {
  * first in each group, and the spend line. `paRuns` maps a job id to the PA
  * run that submitted it.
  */
-function board(jobs, { paRuns = new Map(), paSpendToday = null, now = new Date() } = {}) {
+function board(jobs: Job[] | null | undefined, { paRuns = new Map(), paSpendToday = null, now = new Date() }: { paRuns?: Map<string, { id: number; url?: string | null; card?: unknown }>; paSpendToday?: number | null; now?: Date | string | number } = {}) {
   const views = (Array.isArray(jobs) ? jobs : []).filter((j) => JOB_ID.test(String(j?.job_id || ''))).map((j) => jobView(j, paRuns.get(j.job_id) || null));
   views.sort((a, b) => String(b.updatedAt || '').localeCompare(String(a.updatedAt || '')));
-  const groups = Object.fromEntries(GROUPS.map((g) => [g, views.filter((v) => v.group === g)]));
+  const groups: Record<string, JobView[]> = Object.fromEntries(GROUPS.map((g) => [g, views.filter((v) => v.group === g)]));
   const day = new Date(now).toISOString().slice(0, 10);
   const today = views.filter((v) => String(v.updatedAt || '').slice(0, 10) === day);
-  const sum = (list, k) => Math.round(list.reduce((s, v) => s + v[k], 0) * 100) / 100;
+  const sum = (list: JobView[], k: 'costUsd' | 'subscriptionEquivUsd') => Math.round(list.reduce((s, v) => s + v[k], 0) * 100) / 100;
   return {
     groups,
-    counts: Object.fromEntries(GROUPS.map((g) => [g, groups[g].length])),
+    counts: Object.fromEntries(GROUPS.map((g) => [g, (groups[g] || []).length])),
     spend: {
       paToday: paSpendToday == null ? null : Math.round(Number(paSpendToday) * 100) / 100,
       factoryToday: { metered: sum(today, 'costUsd'), subscriptionEquiv: sum(today, 'subscriptionEquivUsd'), jobs: today.length },
@@ -637,9 +670,9 @@ function board(jobs, { paRuns = new Map(), paSpendToday = null, now = new Date()
  * (factory.apply, keyed per run); only their CI is announced here.
  * @returns {Array<{key, title, body, url}>}
  */
-function notices(prev, jobs, { covered = new Set() } = {}) {
+function notices(prev: NoticeMemo | null | undefined, jobs: Job[] | null | undefined, { covered = new Set() }: { covered?: Set<string> } = {}): Notice[] {
   if (!prev) return [];
-  const out = [];
+  const out: Notice[] = [];
   for (const job of Array.isArray(jobs) ? jobs : []) {
     const id = String(job?.job_id || '');
     if (!JOB_ID.test(id)) continue;
@@ -647,7 +680,7 @@ function notices(prev, jobs, { covered = new Set() } = {}) {
     const title = clip(job.title || id, 120);
     const firstPr = (Array.isArray(job.pr_urls) ? job.pr_urls : []).map(safeUrl).find(Boolean) || null;
     if (!covered.has(id) && job.state !== was?.state && ['done', 'needs_human', 'failed'].includes(job.state)) {
-      const what = { done: 'done', needs_human: 'needs you', failed: 'failed' }[job.state];
+      const what = ({ done: 'done', needs_human: 'needs you', failed: 'failed' } as Record<string, string>)[job.state];
       const kind = KINDS.includes(job.kind) && job.kind !== 'code' ? `${job.kind} ` : '';
       out.push({
         key: `factory-job:${id}:${job.state}`,
@@ -658,11 +691,11 @@ function notices(prev, jobs, { covered = new Set() } = {}) {
     }
     const red = ciFailing(job);
     if (red.length && !was?.ciFailing) {
-      const s = red[0];
+      const s = red[0] as Job;
       out.push({
         key: `factory-ci:${id}:${red.map((r) => r.id).join(',')}`,
         title: clip(`Factory job ${id}: CI failing on ${red.length === 1 ? 'its PR' : `${red.length} PRs`}`, 200),
-        body: [title, ...(s.ci.failing || []).slice(0, 4).map((f) => `- ${typeof f === 'string' ? f : f?.name || '?'}`)].join('\n'),
+        body: [title, ...(s.ci.failing || []).slice(0, 4).map((f: any) => `- ${typeof f === 'string' ? f : f?.name || '?'}`)].join('\n'),
         url: safeUrl(s.pr_url) || firstPr,
       });
     }
@@ -671,8 +704,8 @@ function notices(prev, jobs, { covered = new Set() } = {}) {
 }
 
 /** Pure. The per-job memory `notices` compares against next time. */
-function noticeState(jobs) {
-  return new Map((Array.isArray(jobs) ? jobs : []).filter((j) => j?.job_id).map((j) => [String(j.job_id), { state: j.state, ciFailing: ciFailing(j).length > 0 }]));
+function noticeState(jobs: Job[] | null | undefined): NoticeMemo {
+  return new Map((Array.isArray(jobs) ? jobs : []).filter((j) => j?.job_id).map((j): [string, { state: string; ciFailing: boolean }] => [String(j.job_id), { state: j.state, ciFailing: ciFailing(j).length > 0 }]));
 }
 
 /**
@@ -685,9 +718,9 @@ function noticeState(jobs) {
  * `outcome` is the measured result (sql/024): delivered | merged | failed |
  * dropped, or null while it is still going.
  */
-function runUpdate(job) {
-  const state = STATES.includes(job?.state) ? job.state : null;
-  const prs = Array.isArray(job?.pr_urls) ? job.pr_urls.filter((u) => /^https?:\/\//.test(String(u))) : [];
+function runUpdate(job: Job | null | undefined) {
+  const state: string | null = STATES.includes(job?.state) ? job?.state : null;
+  const prs: string[] = Array.isArray(job?.pr_urls) ? job?.pr_urls.filter((u: unknown) => /^https?:\/\//.test(String(u))) : [];
   const cost = Number(job?.cost_usd);
   const equiv = Number(job?.subscription_equiv_usd);
   const base = {
@@ -696,11 +729,11 @@ function runUpdate(job) {
     subscription_equiv_usd: Number.isFinite(equiv) ? equiv : null,
     mr_url: prs[0] || null,
     exit_note: job?.why ? clip(job.why, 500) : null,
-    delivery: DELIVERIES.includes(job?.delivery) ? job.delivery : null,
-    terminal: Boolean(job?.terminal) || ['done', 'failed', 'cancelled'].includes(state),
+    delivery: (DELIVERIES.includes(job?.delivery) ? job?.delivery : null) as string | null,
+    terminal: Boolean(job?.terminal) || ['done', 'failed', 'cancelled'].includes(state as string),
   };
   if (state === 'done') {
-    return { ...base, status: base.delivery === 'none' ? 'done' : 'landed', outcome: job.merged ? 'merged' : 'delivered' };
+    return { ...base, status: base.delivery === 'none' ? 'done' : 'landed', outcome: job?.merged ? 'merged' : 'delivered' };
   }
   if (state === 'failed') return { ...base, status: 'failed', outcome: 'failed' };
   if (state === 'cancelled') return { ...base, status: 'dropped', outcome: 'dropped' };
@@ -720,7 +753,7 @@ function runUpdate(job) {
  *   done, delivery `none`      → left dispatched: the work is in the factory's worktree, nothing pushed
  *   failed / cancelled         → back to open, with why
  */
-function commitmentMove(job) {
+function commitmentMove(job: Job | null | undefined): { to: string; from: string[]; reason: string } | null {
   const id = job?.job_id || '?';
   if (job?.state === 'done') {
     if (job.delivery === 'none') return null;
@@ -737,8 +770,8 @@ function commitmentMove(job) {
   return null;
 }
 
-function clip(s, n) {
-  return require('./composeCore').clip(s, n);
+function clip(s: unknown, n: number): string {
+  return require('./composeCore.ts').clip(s, n);
 }
 
 module.exports = {

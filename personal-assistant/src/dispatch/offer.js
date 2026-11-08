@@ -18,9 +18,9 @@
 // (deterministically, from the same composed content) for the level picked.
 
 const { config } = require('../config.ts');
-const D = require('./deliveryCore');
-const F = require('./factoryCore');
-const C = require('./composeCore');
+const D = require('./deliveryCore.ts');
+const F = require('./factoryCore.ts');
+const C = require('./composeCore.ts');
 const { logger } = require('../log.ts');
 
 const log = logger('offer');
@@ -56,11 +56,11 @@ async function prepare({
   const rt = runtime ? F.runtime(runtime) : null;
   if (jk !== 'code' && via && String(via).toLowerCase() === 'claude') throw new Error(`a ${jk} job is a factory job — drop --via claude`);
   if (jk !== 'code' || rt) via = 'factory';
-  if (repoPath && !(jk !== 'code' && require('./routeCore').normSlug(repoPath))) await dispatch.knownRepo(repoPath);
+  if (repoPath && !(jk !== 'code' && require('./routeCore.ts').normSlug(repoPath))) await dispatch.knownRepo(repoPath);
   const target = await dispatch.resolveTarget({ commitmentId, repoPath });
   const label = title || task || target.commitment?.summary;
   if (!label) throw new Error('nothing to offer — give a commitment id or a --task');
-  const v = require('./routeCore').via(via || require('./routeCore').defaultVia({ configured: config.factory.via, mode }));
+  const v = require('./routeCore.ts').via(via || require('./routeCore.ts').defaultVia({ configured: config.factory.via, mode }));
   const plan = jk === 'code' && mode && String(mode).toLowerCase() === 'plan';
   // The factory as the default route: a repo it does not know yet is
   // registered on accept (the card says so) rather than refused — nothing
@@ -79,7 +79,7 @@ async function prepare({
     } catch (err) {
       const slug = await route.slugFor(target).catch(() => null);
       if (!(register && slug && /not registered/.test(err.message))) throw err;
-      choice = { route: 'factory', reason: `you chose the factory; ${slug} is registered with it on accept`, app: null, done: done || require('./routeCore').doneCriteria(target.commitment), slug, register: true };
+      choice = { route: 'factory', reason: `you chose the factory; ${slug} is registered with it on accept`, app: null, done: done || require('./routeCore.ts').doneCriteria(target.commitment), slug, register: true };
     }
   } else {
     choice = await route.decide({ target, mode: mode || undefined, done, kind });

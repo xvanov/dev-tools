@@ -1,6 +1,6 @@
 'use strict';
 
-// Choosing a route for one piece of work (routeCore.js has the rule and the
+// Choosing a route for one piece of work (routeCore.ts has the rule and the
 // guard). This half gathers the facts the rule reads: the PA mode, the
 // commitment's kind, its repo as owner/name, the factory's registered apps,
 // and the done-criteria.
@@ -18,7 +18,7 @@ const path = require('path');
 
 const { config } = require('../config.ts');
 const { mode: resolveMode } = require('./modes.ts');
-const R = require('./routeCore');
+const R = require('./routeCore.ts');
 const factory = require('./factory');
 const { logger } = require('../log.ts');
 

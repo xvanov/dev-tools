@@ -100,7 +100,7 @@ async function chainsFor(commitmentIds: unknown[], { perCard = 3 }: { perCard?: 
   if (!want.length) return out;
   const runs = await repo.runs.newestPerCommitment(want, perCard);
   if (!runs.length) return out;
-  const F = require('../dispatch/factoryCore');
+  const F = require('../dispatch/factoryCore.ts');
   const stored = await require('../dispatch/factory').chains(runs.map((r: Row) => r.id));
   const termhub = require('../dispatch/termhub');
   for (const r of runs) {

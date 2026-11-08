@@ -407,7 +407,7 @@ function sessionRow(s: Json, { runs = new Map(), base = null }: { runs?: Map<str
 function modelOverrides({ runtime, kind = 'code', model = null }: { runtime?: string | null; kind?: string; model?: string | null }) {
   if (!model) return null;
   const m = String(model).trim();
-  const F = require('../dispatch/factoryCore');
+  const F = require('../dispatch/factoryCore.ts');
   if (runtime === 'claude_session') {
     if (m.includes('/') && !/^(anthropic|cli)\//.test(m)) {
       throw new Error(`"${m}" is an API model — pass runtime "api" with it, or a Claude model name for claude_session`);
@@ -425,7 +425,7 @@ function modelOverrides({ runtime, kind = 'code', model = null }: { runtime?: st
 /** Pure. A branch name the factory may be told to continue: a plain git ref. */
 function branchName(b: unknown) {
   const s = String(b || '').trim();
-  if (!require('../dispatch/factoryCore').BRANCH.test(s)) throw new Error(`"${s}" is not a branch name`);
+  if (!require('../dispatch/factoryCore.ts').BRANCH.test(s)) throw new Error(`"${s}" is not a branch name`);
   return s;
 }
 
@@ -434,7 +434,7 @@ function branchName(b: unknown) {
  * Throws on what cannot be a job.
  */
 function factoryPlan(args: Json = {}, { card = null }: { card?: Json | null } = {}) {
-  const F = require('../dispatch/factoryCore');
+  const F = require('../dispatch/factoryCore.ts');
   const kind = F.jobKind(args.kind || 'code');
   const runtime = F.runtime(args.runtime || DEFAULT_RUNTIME);
   const commitmentId = card ? card.commitment : null;
@@ -553,7 +553,7 @@ async function cardTool({ id }: { id?: number | string | null }) {
         const base = hubBase(r.machine);
         if (base) o.session = `${base}/#session=${encodeURIComponent(r.termhub_session_id)}`;
       }
-      Object.assign(o, chainFields(require('../dispatch/factoryCore').runChain(r, stored.get(String(r.id)))));
+      Object.assign(o, chainFields(require('../dispatch/factoryCore.ts').runChain(r, stored.get(String(r.id)))));
       return o;
     });
   }
@@ -563,7 +563,7 @@ async function cardTool({ id }: { id?: number | string | null }) {
 
 async function factoryJobsTool({ group = 'active', limit = 15 }: { group?: string; limit?: number } = {}) {
   const factory = require('../dispatch/factory');
-  const F = require('../dispatch/factoryCore');
+  const F = require('../dispatch/factoryCore.ts');
   if (!factory.enabled()) return { enabled: false, note: 'the factory is not configured (PA_FACTORY_PATH)' };
   const snap = await factory.snapshot();
   const runs = await repository.runs.factoryJobs().catch(() => []);
@@ -581,7 +581,7 @@ async function factoryJobsTool({ group = 'active', limit = 15 }: { group?: strin
 }
 
 function checkJob(job: unknown) {
-  const F = require('../dispatch/factoryCore');
+  const F = require('../dispatch/factoryCore.ts');
   if (!F.JOB_ID.test(String(job || ''))) throw new Error(`"${job}" is not a factory job id (app:direction) — factory_jobs lists them`);
   return String(job);
 }
@@ -589,7 +589,7 @@ function checkJob(job: unknown) {
 async function factoryJobTool({ job, fresh = false }: { job?: Json | null; fresh?: boolean }) {
   const id = checkJob(job);
   const factory = require('../dispatch/factory');
-  const F = require('../dispatch/factoryCore');
+  const F = require('../dispatch/factoryCore.ts');
   let raw = fresh ? null : await factory.snapshotJob(id);
   let source = 'stored list';
   if (!raw) {
@@ -635,8 +635,8 @@ async function sessionsTool({ machine = null, all = false }: { machine?: string 
 // dashboard or a terminal, exactly as `pa do` does for a non-interactive caller.
 async function startOrCard(o: Json) {
   const dispatch = require('../dispatch');
-  const D = require('../dispatch/deliveryCore');
-  const kind = require('../dispatch/factoryCore').jobKind(o.jobKind);
+  const D = require('../dispatch/deliveryCore.ts');
+  const kind = require('../dispatch/factoryCore.ts').jobKind(o.jobKind);
   const pre = kind !== 'code' ? { delivery: 'none' } : await dispatch.previewDelivery(o);
   if (D.unattended(pre.delivery)) {
     if (o.branch || o.pr) {

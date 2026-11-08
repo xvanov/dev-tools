@@ -27,7 +27,7 @@ process.env.PA_FACTORY_MACHINE = '';
 
 const S = require('../../schemas');
 const { generate, OUT } = require('../../schemas/gen-types');
-const F = require('../src/dispatch/factoryCore');
+const F = require('../src/dispatch/factoryCore.ts');
 const T = require('../src/mcp/chatTools.ts');
 const { createBus } = require('../src/events/bus.ts');
 

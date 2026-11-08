@@ -20,8 +20,8 @@ const { execFile } = require('child_process');
 const { promisify } = require('util');
 
 const { config } = require('../config.ts');
-const C = require('./composeCore');
-const { describe: describeDelivery } = require('./deliveryCore');
+const C = require('./composeCore.ts');
+const { describe: describeDelivery } = require('./deliveryCore.ts');
 const { logger } = require('../log.ts');
 
 const exec = promisify(execFile);

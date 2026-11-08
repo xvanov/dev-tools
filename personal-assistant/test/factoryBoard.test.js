@@ -18,8 +18,8 @@ process.env.PA_WORKTREES_ROOT = tmp;
 delete process.env.PA_DISPATCH_VIA;
 delete process.env.PA_FACTORY_PIPELINE;
 
-const F = require('../src/dispatch/factoryCore');
-const R = require('../src/dispatch/routeCore');
+const F = require('../src/dispatch/factoryCore.ts');
+const R = require('../src/dispatch/routeCore.ts');
 const { config } = require('../src/config.ts');
 
 // --- config: the factory is the default route once configured; solo pipeline ----

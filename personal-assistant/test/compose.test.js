@@ -1,6 +1,6 @@
 'use strict';
 
-// Brief composition (src/dispatch/composeCore.js, compose.js): what a factory
+// Brief composition (src/dispatch/composeCore.ts, compose.js): what a factory
 // job's brief may carry. The model is stubbed; the repo search runs against a
 // throwaway git repo. Names and messages are invented.
 
@@ -10,7 +10,7 @@ const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
 
-const C = require('../src/dispatch/composeCore');
+const C = require('../src/dispatch/composeCore.ts');
 
 // --- secrets never pass ------------------------------------------------------------------
 
@@ -76,7 +76,7 @@ const C = require('../src/dispatch/composeCore');
     assert.strictEqual(C.redactSecrets(t), t, t);
   }
   // Title, criteria and flow are on the factory's command line and in its direction.
-  const F = require('../src/dispatch/factoryCore');
+  const F = require('../src/dispatch/factoryCore.ts');
   const task = 'rotate the key; current one is AZURE_OPENAI_API_KEY=3f2a9c0d1e4b5a6978c0d1e2f3a4b5c6 and ghp_' + 'Z'.repeat(36);
   const argv = F.submitArgv({ app: 'a', title: task, askFile: '/x', done: [task], delivery: 'pr', externalId: 'k-1' });
   assert.ok(!argv.some((a) => /3f2a9c0d|ZZZZZZZZ/.test(a)), 'argv carries no secret');

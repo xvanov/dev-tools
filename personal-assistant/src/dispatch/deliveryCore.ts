@@ -21,13 +21,21 @@
 //                 auto_merge / push_to_main, which need an explicit choice
 //   4. repo       the per-repo default the operator set (`pa delivery set`)
 //   5. fallback   PA_DELIVERY_DEFAULT, else draft_pr
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
 
-const DELIVERIES = ['none', 'branch', 'draft_pr', 'pr', 'auto_merge', 'push_to_main'];
+/** One of DELIVERIES; a string because it arrives as text (CLI, cards, the factory). */
+type Delivery = string;
+type Inferred = { delivery: Delivery; phrase: string };
+type FinishPlan = { push: boolean; pr: 'draft' | null; ready: boolean; merge: boolean; toMain: boolean };
+type ErrorWithCode = import('../types.ts').ErrorWithCode;
+
+const DELIVERIES: Delivery[] = ['none', 'branch', 'draft_pr', 'pr', 'auto_merge', 'push_to_main'];
 const FALLBACK = 'draft_pr';
 
 // A legacy PA mode, typed explicitly, read as a delivery level. `plan` is
 // read-only and delivers nothing (and is never a factory job).
-const DELIVERY_BY_MODE = { plan: null, local: 'none', branch: 'branch', mr: 'draft_pr', full: 'draft_pr' };
+const DELIVERY_BY_MODE: Record<string, Delivery | null> = { plan: null, local: 'none', branch: 'branch', mr: 'draft_pr', full: 'draft_pr' };
 
 // The Claude session's own mode for a delivery level — "mapped to existing
 // modes where possible". The mode is enforced in the worktree (src/dispatch/
@@ -38,11 +46,11 @@ const DELIVERY_BY_MODE = { plan: null, local: 'none', branch: 'branch', mr: 'dra
 // its environment and its push blocked, so main moves only by the PA's
 // fast-forward at the end (against accidents: an agent of the same OS user can
 // restore credentials from disk — AGENT.md, run isolation).
-const MODE_BY_DELIVERY = { none: 'local', branch: 'branch', draft_pr: 'mr', pr: 'mr', auto_merge: 'mr', push_to_main: 'local' };
+const MODE_BY_DELIVERY: Record<Delivery, string> = { none: 'local', branch: 'branch', draft_pr: 'mr', pr: 'mr', auto_merge: 'mr', push_to_main: 'local' };
 
 // Plain words for the card and the CLI. The two that need no human after the
 // yes say so in so many words.
-const PLAIN = {
+const PLAIN: Record<Delivery, string> = {
   none: 'Stays local: commits in its own worktree, nothing is pushed.',
   branch: 'Pushes a branch. Opens no pull request.',
   draft_pr: 'Opens a draft pull request. Never marks it ready, never merges.',
@@ -61,41 +69,41 @@ const PLAIN_SESSION = {
   push_to_main: 'Will push straight to main when the session ends — no pull request, no review, no gates.',
 };
 
-function isDelivery(v) {
-  return DELIVERIES.includes(v);
+function isDelivery(v: unknown): v is Delivery {
+  return DELIVERIES.includes(v as string);
 }
 
 /** A delivery level, normalised (`draft-pr`, `Draft PR` → draft_pr), or an error. */
-function delivery(v) {
+function delivery(v: unknown): Delivery {
   const k = String(v ?? '').trim().toLowerCase().replace(/[\s-]+/g, '_');
-  const alias = { draft: 'draft_pr', local: 'none', ready_pr: 'pr', merge: 'auto_merge', automerge: 'auto_merge', main: 'push_to_main' }[k];
+  const alias = ({ draft: 'draft_pr', local: 'none', ready_pr: 'pr', merge: 'auto_merge', automerge: 'auto_merge', main: 'push_to_main' } as Record<string, string>)[k];
   const d = alias || k;
   if (!isDelivery(d)) throw new Error(`unknown delivery "${v}" — one of: ${DELIVERIES.join(', ')}`);
   return d;
 }
 
-function rank(d) {
-  return DELIVERIES.indexOf(d);
+function rank(d: Delivery | null | undefined): number {
+  return DELIVERIES.indexOf(d as string);
 }
 
 /** Needs no human after the yes. Shown loudly on the card. */
-function unattended(d) {
+function unattended(d: Delivery | null | undefined): boolean {
   return d === 'auto_merge' || d === 'push_to_main';
 }
 
-function describe(d, { route = 'factory' } = {}) {
-  const table = route === 'claude' ? PLAIN_SESSION : PLAIN_FACTORY;
+function describe(d: Delivery, { route = 'factory' }: { route?: string } = {}): string {
+  const table: Record<Delivery, string> = route === 'claude' ? PLAIN_SESSION : PLAIN_FACTORY;
   return table[d] || `Delivers \`${d}\`.`;
 }
 
-function deliveryForMode(modeName) {
+function deliveryForMode(modeName: string | null | undefined): Delivery | null {
   const k = String(modeName || '').toLowerCase();
   if (!Object.prototype.hasOwnProperty.call(DELIVERY_BY_MODE, k)) throw new Error(`unknown mode "${modeName}"`);
-  return DELIVERY_BY_MODE[k];
+  return DELIVERY_BY_MODE[k] ?? null;
 }
 
-function modeFor(d) {
-  return MODE_BY_DELIVERY[delivery(d)];
+function modeFor(d: unknown): string {
+  return MODE_BY_DELIVERY[delivery(d)] as string;
 }
 
 // --- inference from the operator's own words -----------------------------------
@@ -108,19 +116,19 @@ const NEG = /\b(?:don'?t|do\s+not|never|not|no|without|skip)\s+(?:\w+\s+){0,2}$/
 // merge it performs", and a sentence must never be read as an order to merge
 // or to push to main. Those two need an explicit choice (`--delivery`, the
 // card's picker) — UNATTENDED_RULES only produce a hint saying so.
-const RULES = [
+const RULES: [Delivery, RegExp][] = [
   ['none', /\b(?:don'?t|do\s+not|never|no)\s+push(?:ing)?\b/i],
   ['none', /\b(?:keep\s+it\s+local|local\s+only|stay\s+local|nothing\s+pushed|commit\s+locally)\b/i],
   ['draft_pr', /\bdraft\b/i],
   ['branch', /\b(?:just\s+)?push\s+(?:the\s+|a\s+)?branch\b|\bbranch\s+only\b|\bno\s+(?:pr|pull\s+request)\b/i],
   ['pr', /\b(?:ready|real|proper|non-?draft)\s+(?:pr|pull\s+request)\b|\bready\s+for\s+review\b|\bopen\s+(?:a|the)\s+(?:pr|pull\s+request)\b/i],
 ];
-const UNATTENDED_RULES = [
+const UNATTENDED_RULES: [Delivery, RegExp][] = [
   ['push_to_main', /\b(?:push|commit|land|ship)(?:ed|ing)?\s+(?:it\s+|this\s+|that\s+)?(?:straight|directly|right)?\s*(?:to|into|on|onto)\s+(?:main|master)\b/i],
   ['auto_merge', /\b(?:auto[-\s]?merge|merge\s+it\b)/i],
 ];
 
-function firstMatch(rules, t) {
+function firstMatch(rules: [Delivery, RegExp][], t: string): Inferred | null {
   for (const [level, re] of rules) {
     const g = new RegExp(re.source, 'gi');
     let m;
@@ -138,7 +146,7 @@ function firstMatch(rules, t) {
  * Only ever given the operator's words — never a third party's message.
  * @returns {{delivery: string, phrase: string}|null}
  */
-function infer(text) {
+function infer(text: string | null | undefined): Inferred | null {
   const t = String(text || '');
   if (!t.trim()) return null;
   return firstMatch(RULES, t);
@@ -148,7 +156,7 @@ function infer(text) {
  * Words that may mean "merge it" / "push to main" — never acted on; shown so
  * the operator can pass `--delivery` if that is what they meant.
  */
-function unattendedHint(text) {
+function unattendedHint(text: string | null | undefined): Inferred | null {
   const t = String(text || '');
   return t.trim() ? firstMatch(UNATTENDED_RULES, t) : null;
 }
@@ -163,7 +171,7 @@ function unattendedHint(text) {
  * @param {string} [o.fallback]      PA_DELIVERY_DEFAULT
  * @returns {{delivery: string|null, source: string, phrase: string|null}}
  */
-function choose({ explicit = null, mode = null, operatorText = null, repoDefault = null, fallback = null } = {}) {
+function choose({ explicit = null, mode = null, operatorText = null, repoDefault = null, fallback = null }: { explicit?: string | null; mode?: string | null; operatorText?: string | null; repoDefault?: string | null; fallback?: string | null } = {}): { delivery: Delivery | null; source: string; phrase: string | null } {
   if (explicit) return { delivery: delivery(explicit), source: 'explicit', phrase: null };
   if (mode) {
     const d = deliveryForMode(mode);
@@ -183,16 +191,16 @@ function choose({ explicit = null, mode = null, operatorText = null, repoDefault
  * `do`), the dashboard's Do, or a card accepted. Anything else is refused,
  * whatever path it came by.
  */
-function requireConfirmed(d, confirmed) {
+function requireConfirmed(d: Delivery | null | undefined, confirmed: unknown) {
   if (unattended(d) && !confirmed) {
-    const err = new Error(`end state \`${d}\` (${describe(d)}) needs your confirmation — run it from a terminal, or accept it on a card`);
+    const err: ErrorWithCode = new Error(`end state \`${d}\` (${describe(d as Delivery)}) needs your confirmation — run it from a terminal, or accept it on a card`);
     err.code = 'needs_confirmation';
     throw err;
   }
 }
 
 /** One line on where the level came from, for the card. */
-function sourceLine(source, phrase = null, slug = null) {
+function sourceLine(source: string | null | undefined, phrase: string | null = null, slug: string | null = null): string {
   switch (source) {
     case 'explicit': return 'you chose it';
     case 'mode': return 'from the mode you gave';
@@ -208,7 +216,7 @@ function sourceLine(source, phrase = null, slug = null) {
  * (src/durable/tasks/runReview.ts). `null` — a run from before delivery levels
  * — keeps the old behaviour (draft PR; merge only on PA_MERGE_REPOS).
  */
-function finishPlan(d) {
+function finishPlan(d: Delivery | null | undefined): FinishPlan | null {
   switch (d) {
     case 'none': return { push: false, pr: null, ready: false, merge: false, toMain: false };
     case 'branch': return { push: true, pr: null, ready: false, merge: false, toMain: false };

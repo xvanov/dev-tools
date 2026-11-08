@@ -1,6 +1,6 @@
 'use strict';
 
-// The end state of a piece of work (src/dispatch/deliveryCore.js,
+// The end state of a piece of work (src/dispatch/deliveryCore.ts,
 // delivery.js, index.sessionDelivery) and what the PA does with it when a
 // Claude session ends (src/durable/tasks/runReview.ts). Store, git and gh are
 // stubbed; names are invented.
@@ -9,7 +9,7 @@ const assert = require('assert');
 const path = require('path');
 
 process.env.PA_DELIVERY_DEFAULT = 'draft_pr';
-const D = require('../src/dispatch/deliveryCore');
+const D = require('../src/dispatch/deliveryCore.ts');
 
 // --- the vocabulary -----------------------------------------------------------------
 

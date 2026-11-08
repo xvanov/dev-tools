@@ -28,7 +28,7 @@ type Ctx = import('./types.ts').Ctx;
 const fs = require('fs');
 const path = require('path');
 const { config } = require('../config.ts');
-const F = require('../dispatch/factoryCore');
+const F = require('../dispatch/factoryCore.ts');
 
 const PAGE = path.join(__dirname, 'factory.html');
 const CLIENT = path.join(__dirname, 'factory.client.js');
@@ -83,7 +83,7 @@ function newJob(body: Row) {
   if (repo && /[\r\n]/.test(repo)) throw bad('one repo');
   if (kind === 'code' && !repo) throw bad('a code job needs a repo (owner/name)');
   if (kind !== 'code' && repo && !SLUG.test(repo)) throw bad('a research/report job names its repo as owner/name');
-  const D = require('../dispatch/deliveryCore');
+  const D = require('../dispatch/deliveryCore.ts');
   const delivery = str(body?.delivery, 40) || null;
   if (delivery && !D.isDelivery(delivery)) throw bad(`unknown delivery "${delivery}"`);
   if (kind !== 'code' && delivery && delivery !== 'none') throw bad(`a ${kind} job delivers a report — its end state is none`);
@@ -136,7 +136,7 @@ async function boardData() {
     ...F.board(snap.jobs, { paRuns, paSpendToday: spend ? spend.today : null }),
     spendCap: spend ? spend.cap : null,
     ...pickers(),
-    deliveries: require('../dispatch/deliveryCore').DELIVERIES.map((d: string) => ({ value: d, plain: require('../dispatch/deliveryCore').describe(d) })),
+    deliveries: require('../dispatch/deliveryCore.ts').DELIVERIES.map((d: string) => ({ value: d, plain: require('../dispatch/deliveryCore.ts').describe(d) })),
   };
 }
 
@@ -179,7 +179,7 @@ async function route(req: Req, res: Res, url: URL, { send, readJson, issuePageTo
 
   if (url.pathname === '/api/factory/jobs') {
     const o: ReturnType<typeof newJob> & { confirmedUnattended?: boolean } = newJob(body);
-    const D = require('../dispatch/deliveryCore');
+    const D = require('../dispatch/deliveryCore.ts');
     // A code job's end state, as the start will resolve it, confirmed on the
     // page when nothing human follows it — the same rule as a card's Do.
     if (o.jobKind === 'code') {

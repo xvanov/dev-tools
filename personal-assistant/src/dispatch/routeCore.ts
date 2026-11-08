@@ -20,6 +20,15 @@
 // outcomes table): any chooser returns {route, reason}, and `guard` holds its
 // answer to the hard limits below whatever it says. Register it in
 // src/dispatch/route.js; the guard stays here.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+/** A `factory app list` row: JSON from the factory CLI. */
+type FactoryApp = { app: string; repo?: string | null; [k: string]: unknown };
+type Choice = { route: string; reason: string; app: string | null };
+type RouteCtx = { factoryEnabled: boolean; mode: string; kind?: string | null; slug: string | null; apps: FactoryApp[]; done: string[] };
+type StatsRow = { route?: string | null; kind?: string | null; outcome?: string | null; status?: string | null; cost_usd?: unknown };
+type RouteStats = { route: string; kind: string; runs: number; delivered: number; merged: number; failed: number; dropped: number; open: number; successRate: number | null; costUsd: number | null; costPerSuccess: number | null };
 
 const ROUTES = ['claude', 'factory'];
 const VIAS = ['claude', 'factory', 'auto'];
@@ -27,7 +36,7 @@ const OUTCOMES = ['delivered', 'merged', 'failed', 'dropped'];
 
 const SLUG = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 
-function via(name) {
+function via(name: string | null | undefined): string {
   const v = String(name || 'claude').toLowerCase();
   if (!VIAS.includes(v)) throw new Error(`unknown route "${name}" — --via one of: ${VIAS.join(', ')}`);
   return v;
@@ -40,19 +49,19 @@ function via(name) {
  * — a Claude session), or a run pinned to a machine (`--machine` picks where a
  * Claude session runs; the factory runs on its own).
  */
-function defaultVia({ configured = 'claude', mode = null, machine = null } = {}) {
+function defaultVia({ configured = 'claude', mode = null, machine = null }: { configured?: string | null; mode?: string | null; machine?: string | null } = {}): string {
   const v = via(configured || 'claude');
   if (v !== 'claude' && (String(mode || '').toLowerCase() === 'plan' || machine)) return 'claude';
   return v;
 }
 
-function normSlug(s) {
+function normSlug(s: string | null | undefined): string | null {
   const t = String(s || '').trim().replace(/\.git$/i, '').toLowerCase();
   return SLUG.test(t) ? t : null;
 }
 
 /** The registered factory app for a repo slug, or null. */
-function appFor(slug, apps) {
+function appFor(slug: string | null | undefined, apps: FactoryApp[] | null | undefined): FactoryApp | null {
   const s = normSlug(slug);
   if (!s) return null;
   return (apps || []).find((a) => normSlug(a.repo) === s) || null;
@@ -65,7 +74,7 @@ const BULLET = /^\s*(?:[-*•]|\d+[.)]|\[[ xX]?\])\s+/;
  * brief), one criterion per line or bullet. A one-paragraph detail is one
  * criterion. Nothing stated is an empty list, not an invented one.
  */
-function doneCriteria(commitment) {
+function doneCriteria(commitment: { detail?: string | null } | null | undefined): string[] {
   const detail = String(commitment?.detail || '').trim();
   if (!detail) return [];
   return detail
@@ -76,7 +85,7 @@ function doneCriteria(commitment) {
     .slice(0, 8);
 }
 
-const claude = (reason) => ({ route: 'claude', reason, app: null });
+const claude = (reason: string): Choice => ({ route: 'claude', reason, app: null });
 
 /**
  * @param {object} ctx
@@ -88,7 +97,7 @@ const claude = (reason) => ({ route: 'claude', reason, app: null });
  * @param {Array<string>} ctx.done  done-criteria
  * @returns {{route, reason, app}}
  */
-function chooseRoute(ctx) {
+function chooseRoute(ctx: RouteCtx): Choice {
   if (!ctx.factoryEnabled) return claude('the factory is not configured (PA_FACTORY_PATH)');
   if (ctx.mode === 'plan') return claude('plan mode is read-only; the factory only builds');
   if (ctx.kind !== 'coding') {
@@ -110,7 +119,7 @@ function chooseRoute(ctx) {
  * without a configured factory, in plan mode, or for a repo it has not
  * registered. Anything else a chooser decides stands.
  */
-function guard(choice, ctx) {
+function guard(choice: { route?: string; reason?: unknown } | null | undefined, ctx: RouteCtx): Choice {
   const reason = choice?.reason ? String(choice.reason).slice(0, 300) : null;
   if (choice?.route !== 'factory') return claude(reason || 'a Claude session');
   if (!ctx.factoryEnabled) return claude('the factory is not configured (PA_FACTORY_PATH)');
@@ -125,18 +134,19 @@ function guard(choice, ctx) {
  * @param {Array} rows [{route, kind, outcome, status, cost_usd}]
  * @returns {Array<{route, kind, runs, delivered, merged, failed, dropped, open, successRate, costUsd, costPerSuccess}>}
  */
-function summarize(rows) {
-  const groups = new Map();
+function summarize(rows: StatsRow[] | null | undefined): RouteStats[] {
+  type Group = { route: string; kind: string; runs: number; delivered: number; merged: number; failed: number; dropped: number; open: number; costUsd: number; costKnown: number };
+  const groups = new Map<string, Group>();
   for (const r of rows || []) {
-    const route = ROUTES.includes(r.route) ? r.route : 'claude';
+    const route = ROUTES.includes(r.route as string) ? (r.route as string) : 'claude';
     const kind = r.kind || 'unplanned';
     const key = `${route}\u0000${kind}`;
     if (!groups.has(key)) {
       groups.set(key, { route, kind, runs: 0, delivered: 0, merged: 0, failed: 0, dropped: 0, open: 0, costUsd: 0, costKnown: 0 });
     }
-    const g = groups.get(key);
+    const g = groups.get(key) as Group;
     g.runs++;
-    if (OUTCOMES.includes(r.outcome)) g[r.outcome]++;
+    if (OUTCOMES.includes(r.outcome as string)) g[r.outcome as 'delivered' | 'merged' | 'failed' | 'dropped']++;
     else g.open++;
     const cost = Number(r.cost_usd);
     if (r.cost_usd !== null && r.cost_usd !== undefined && Number.isFinite(cost)) {
