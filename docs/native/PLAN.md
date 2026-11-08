@@ -8,7 +8,9 @@ Design rationale: the plan page (proposal, 7 Nov 2026) and the research summary 
 1. Work top to bottom. A phase may start once the phase before it has its **Exit** box ticked,
    except where an item says `parallel-ok`. No Exit box is ticked without a green golden-path
    run (Track E, `e2e`) on both stacks.
-2. Each `- [ ]` item is one unit of work: one or more commits to `main`, tests green, pushed
+2. Each `- [ ]` item is one unit of work: one or more commits to `main`, tests green, pushed.
+   Locally run only the tests relevant to the change (`npm test -- --changed`, or the test
+   files for the touched modules); CI (T6) runs the full suites on every push and must be green
    (see the root `CLAUDE.md`). **Tick the box in the same commit that finishes the item** and
    append the short commit hash: `- [x] … (abc1234)`.
 3. If an item turns out wrong or needs splitting, edit it here in the same commit and say why
