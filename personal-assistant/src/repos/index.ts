@@ -315,7 +315,7 @@ async function sync({ full = false, profile = config.repos.profile }: { full?: b
     }
     const batch = queue.slice(0, config.repos.profilesPerSync);
     if (batch.length) {
-      const budget = require('../budget');
+      const budget = require('../budget.ts');
       if (!(await budget.allow('repo-profile'))) throw new Error('daily model budget reached');
       const results = await require('./profile.ts').profileAll(batch);
       for (const q of batch) {
