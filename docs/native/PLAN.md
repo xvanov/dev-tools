@@ -269,7 +269,9 @@ run mid-step; a job continued on an existing branch (`--branch`).
     13.5 s (about 7 s card context, 3.7 s compose model call on azure/pa, 2.7 s submit through serve and the
     follow session). So the earlier 2-3 min starts came from factory calls before the serve fixes, not
     from compose. PM and SM steps ran with sessions (E5.2 fixed). The dev step (claude_session, story 7)
-    was still dev_in_progress after 50 min, with no job update since 09:20, so I cancelled it at 10:10Z. Defects:
+    was still dev_in_progress after 50 min, with no job update since 09:20, so I cancelled it at 10:10Z.
+    Hops: card 0.2 s → job started +76.9 s → first session output +76.9 s (same poll) → PR not reached.
+    Cleanup killed the pm, sm and dev sessions and dropped the card. Defects:
   - [ ] **E5.6 A headless dev step waits on a notification that never comes.** The `claude -p` dev session
     started the gate suite with run_in_background, said "waiting for completion notification" and ended
     its turn (result success, twice). In -p mode a background task's notification never reaches the
