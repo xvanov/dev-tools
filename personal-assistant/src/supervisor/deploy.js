@@ -231,7 +231,13 @@ async function deploy(argv, { say } = {}) {
   }
   say(`unhealthy (${v.why}) - rolling back`);
   const back = await sup.request(control, { cmd: 'rollback' }).catch((err) => ({ ok: false, error: err.message }));
-  say(back.ok ? `rolled back to generation ${back.generation} (pid ${back.pid}); the checkout stays at ${head.slice(0, 7)}` : `rollback failed: ${back.error}`);
+  if (back.ok) say(`rolled back to generation ${back.generation} (pid ${back.pid}); the checkout stays at ${head.slice(0, 7)}`);
+  else {
+    // The supervisor kept the new generation serving (undrained): say what
+    // answers now rather than leave "rolled back" to be assumed.
+    const now = await probeOnce(port);
+    say(`rollback failed: ${back.error}; serving ${now.commit ? String(now.commit).slice(0, 7) : 'nothing'}${now.ready ? '' : ' (not ready)'} (generation ${back.generation ?? '?'})`);
+  }
   return { code: 1, result: { ...result, verdict: v, rollback: back } };
 }
 

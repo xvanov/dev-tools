@@ -105,7 +105,7 @@ try {
 
   # 0 done (or nothing to do), 1 failed and rolled back, 3 no supervisor, 4 supervisor changed.
   if ($code -eq 0 -and -not $taskChanged) { return }
-  if ($code -eq 1) { Write-Host "stack update: the deploy did not take (see above); the previous generation is serving." -ForegroundColor Yellow; return }
+  if ($code -eq 1) { Write-Host "stack update: the deploy did not take; the lines above say which generation serves." -ForegroundColor Yellow; return }
   if (-not $hasTask) { Say "no pa-worker task on this machine - skipping the restart."; return }
   # 3, 4, or the task was just rewritten to the supervisor (the one-time bootstrap).
   Restart-PaTask $head

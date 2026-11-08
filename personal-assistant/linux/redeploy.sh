@@ -103,7 +103,7 @@ ARGS=(src/supervisor/deploy.js)
 CODE=$?
 
 if [ "$CODE" = 0 ] && [ "$UNIT_CHANGED" = 0 ]; then exit 0; fi
-if [ "$CODE" = 1 ]; then say "the deploy did not take (see above); the previous generation is serving."; exit 0; fi
+if [ "$CODE" = 1 ]; then say "the deploy did not take; the lines above say which generation serves."; exit 0; fi
 if [ "$HAS_UNIT" = 0 ]; then say "no pa-worker unit on this machine - skipping the restart."; exit 0; fi
 if [ "$DRY" = 1 ]; then say "would restart pa-worker and wait for ${HEAD_SHA:0:7}"; exit 0; fi
 
