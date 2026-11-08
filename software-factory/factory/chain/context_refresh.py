@@ -57,6 +57,7 @@ from pathlib import Path
 from typing import Any
 
 from factory.app_config import AppConfig, load_app_config, resolve_app_repo_path
+from factory.chain.branch import COMMIT_TIMEOUT_S
 from factory.chain.event_log import log_story_event
 from factory.context.canonical_paths import context_path
 from factory.state_dir import state_dir
@@ -336,7 +337,7 @@ def _git(
         check=check,
         capture_output=capture_output,
         text=True,
-        timeout=120,
+        timeout=COMMIT_TIMEOUT_S if args[:1] == ("commit",) else 120,
     )
 
 

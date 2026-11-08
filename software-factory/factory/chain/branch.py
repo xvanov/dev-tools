@@ -64,13 +64,19 @@ _GIT_CONFIG: tuple[str, ...] = ("-c", "core.longpaths=true") if os.name == "nt" 
 _GIT_START_ATTEMPTS = 3
 _GIT_START_RETRY_S = 2.0
 
+#: A commit runs the app's pre-commit hook. dev-tools' hook runs the tests the
+#: change reaches and, in a fresh story worktree, first installs the factory's
+#: dev extras (``uv sync --all-extras``, ~10 s): together far over 30 s.
+COMMIT_TIMEOUT_S = 900.0
+
 
 def _run_git(
-    repo_path: Path, *args: str, check: bool = True, timeout: float = 30
+    repo_path: Path, *args: str, check: bool = True, timeout: float | None = None
 ) -> subprocess.CompletedProcess[str]:
     """Run ``git <args>`` in ``repo_path``. Surface stderr on failure.
 
-    ``timeout`` defaults to 30 s; checkout-sized operations (``worktree add``
+    ``timeout`` defaults to 30 s, and to ``COMMIT_TIMEOUT_S`` for ``commit``;
+    checkout-sized operations (``worktree add``
     of a large repo) pass more — on Windows with real-time AV scanning, a
     ~1000-file checkout of the dev-tools monorepo measured well over 30 s.
 
@@ -78,6 +84,8 @@ def _run_git(
     ran, so it is retried, up to 3 attempts in all. Unretried, a ``show-ref``
     probe read the failure as "no such branch" (2026-11-08).
     """
+    if timeout is None:
+        timeout = COMMIT_TIMEOUT_S if args[:1] == ("commit",) else 30
     for attempt in range(_GIT_START_ATTEMPTS):
         proc = subprocess.run(
             ["git", *_GIT_CONFIG, *args],
@@ -98,9 +106,16 @@ def _run_git(
         status = " (STATUS_DLL_INIT_FAILED: git never started)" if failed_to_start(proc.returncode) else ""
         raise RuntimeError(
             f"git {' '.join(args)} failed in {repo_path}: "
-            f"rc={proc.returncode}{status} stderr={proc.stderr.strip()[:300]}"
+            f"rc={proc.returncode}{status} stderr={_head_tail(proc.stderr.strip())}"
         )
     return proc
+
+
+def _head_tail(text: str, head: int = 300, tail: int = 700) -> str:
+    """``text`` cut to its head and tail: a failing hook prints why at the end."""
+    if len(text) <= head + tail:
+        return text
+    return f"{text[:head]} […] {text[-tail:]}"
 
 
 def _is_clean_working_tree(repo_path: Path) -> bool:

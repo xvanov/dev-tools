@@ -54,6 +54,7 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
+from factory.chain.branch import COMMIT_TIMEOUT_S
 from factory.delivery import (
     LEGACY_DEFAULT,
     DeliveryLevel,
@@ -275,6 +276,7 @@ def commit_local_work(worktree: Path, story: Any) -> tuple[str | None, str | Non
                 "commit",
                 "-m",
                 f"factory: story {story.id} ({story.slug}) — delivered locally (delivery: none)",
+                timeout=int(COMMIT_TIMEOUT_S),
             )
             if proc.returncode != 0:
                 return None, f"git commit failed: {(proc.stderr or proc.stdout).strip()[:300]}"

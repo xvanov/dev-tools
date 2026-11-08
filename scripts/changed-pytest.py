@@ -15,6 +15,11 @@ testmon database, no plugins. A test file is selected when
 
 pyproject.toml / uv.lock / pytest config changes select everything. Nothing changed -> nothing runs.
 Exit status is pytest's (0 when nothing was selected).
+
+Tests run in software-factory/.venv. A fresh worktree (a factory story worktree, an agent's) has none,
+or one a bare `uv run` made without the dev extras, so when that venv lacks pytest or pytest-xdist
+this runs `uv sync --all-extras` there first. Without xdist it runs serially; without pytest at all
+it fails and says why (exit 1), never a silent pass.
 """
 from __future__ import annotations
 
@@ -213,18 +218,74 @@ def main(argv: list[str]) -> int:
         rel = [str(t.relative_to(FACTORY)).replace("\\", "/") for t in tests]
         why += f"; capped to a {len(tests)}-file smoke subset, full suite left to CI (--all to override)"
     print(f"changed mode (software-factory): {why}; {len(tests)} test file(s) selected", file=sys.stderr)
-    venv_py = FACTORY / ".venv" / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
-    if venv_py.exists():
-        cmd = [str(venv_py), "-m", "pytest"]
-    elif subprocess.run(["uv", "--version"], capture_output=True).returncode == 0:
-        cmd = ["uv", "run", "pytest"]
-    else:
-        cmd = [sys.executable, "-m", "pytest"]
+    cmd, has_xdist = pytest_command()
+    if cmd is None:
+        print(
+            "changed mode (software-factory): cannot run: no pytest in software-factory/.venv or in "
+            f"{sys.executable}, and `uv sync --all-extras` could not provide one. "
+            "Run `cd software-factory && uv sync --all-extras`.",
+            file=sys.stderr,
+        )
+        return 1
     if len(tests) > 8 and "-n" not in extra:
-        cmd += ["-n", "auto", "--dist", "load"]
+        if has_xdist:
+            cmd += ["-n", "auto", "--dist", "load"]
+        else:
+            print("changed mode (software-factory): pytest-xdist not installed; running serially", file=sys.stderr)
     if "-m" not in extra:  # load-sensitive tests run in CI, not in the local hook
         cmd += ["-m", "not slow and not flaky_under_load"]
     return subprocess.run([*cmd, "-q", *extra, *rel], cwd=FACTORY).returncode
+
+
+VENV_PY = FACTORY / ".venv" / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+_PROBE = "import importlib.util as u; print(int(bool(u.find_spec('pytest'))), int(bool(u.find_spec('xdist'))))"
+
+
+def probe(python: Path | str) -> tuple[bool, bool]:
+    """(pytest importable, xdist importable) for `python`; (False, False) when it does not run."""
+    try:
+        out = subprocess.run([str(python), "-c", _PROBE], capture_output=True, text=True, timeout=60)
+    except (OSError, subprocess.SubprocessError):
+        return False, False
+    parts = out.stdout.split() if out.returncode == 0 else []
+    if len(parts) != 2:
+        return False, False
+    return parts[0] == "1", parts[1] == "1"
+
+
+def uv_sync() -> bool:
+    """`uv sync --all-extras` in software-factory: the environment the suite is written for."""
+    print(
+        "changed mode (software-factory): software-factory/.venv lacks the dev extras (pytest, pytest-xdist); "
+        "running `uv sync --all-extras`",
+        file=sys.stderr,
+    )
+    try:
+        out = subprocess.run(["uv", "sync", "--all-extras"], cwd=FACTORY, capture_output=True, text=True, timeout=600)
+    except (OSError, subprocess.SubprocessError) as exc:
+        print(f"changed mode (software-factory): uv sync failed: {exc}", file=sys.stderr)
+        return False
+    if out.returncode != 0:
+        print(f"changed mode (software-factory): uv sync exited {out.returncode}: {out.stderr.strip()[-800:]}", file=sys.stderr)
+        return False
+    return True
+
+
+def pytest_command() -> tuple[list[str] | None, bool]:
+    """The pytest command for this tree and whether pytest-xdist is available to it.
+
+    None when there is no pytest anywhere. The tree's own .venv comes first, synced with the dev
+    extras when it lacks pytest or xdist; the interpreter running this script is the fallback.
+    """
+    has_pytest, has_xdist = probe(VENV_PY) if VENV_PY.exists() else (False, False)
+    if not has_xdist and uv_sync():
+        has_pytest, has_xdist = probe(VENV_PY) if VENV_PY.exists() else (False, False)
+    if has_pytest:
+        return [str(VENV_PY), "-m", "pytest"], has_xdist
+    has_pytest, has_xdist = probe(sys.executable)
+    if has_pytest:
+        return [sys.executable, "-m", "pytest"], has_xdist
+    return None, False
 
 
 if __name__ == "__main__":

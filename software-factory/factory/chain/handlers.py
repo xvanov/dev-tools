@@ -28,6 +28,7 @@ from sqlmodel import Session, SQLModel, create_engine, select
 
 from factory import diff_paths as _diff_paths
 from factory.app_config import AppConfig
+from factory.chain.branch import COMMIT_TIMEOUT_S
 from factory.chain.delivery_gate import EVENT_DELIVERED as DELIVERY_EVENT_DELIVERED
 from factory.chain.delivery_gate import commit_local_work
 from factory.chain.delivery_gate import story_level as delivery_story_level
@@ -6626,7 +6627,7 @@ def _autoformat_changed_py_before_pr(
                 cwd=str(target_repo),
                 check=False,
                 capture_output=True,
-                timeout=60,
+                timeout=COMMIT_TIMEOUT_S,
             )
     except (subprocess.TimeoutExpired, OSError):
         return
