@@ -597,10 +597,19 @@ run mid-step; a job continued on an existing branch (`--branch`).
   - a 69 s pages query blocking the event loop;
   - the snapshot on the main thread;
   - the live-feed listener opening its own Postgres connection, read-only, to the live store.
-- [ ] **3.6** WSL off on the work laptop (D6); Postgres removed. Also retire the other WSL
+- [x] **3.6** WSL off on the work laptop (D6); Postgres removed. Also retire the other WSL
   leftovers: the old termhub `server.js` in WSL (ports 7100/7110) and its watchdog timer, the
   `pa-wsl-keepalive` scheduled task, the unused WSL factory checkout, and any Docker/Rancher
   dependency of the API runtime (OpenHands workspace runs as a local process; 5.2 isolates it).
+  Done 2026-11-08 after 3.5, per D20: the WSL termhub and its watchdog timer disabled inside
+  WSL, `pa-wsl-keepalive` disabled, a stray test server from an old worktree ended, then
+  `wsl --shutdown`; nothing listens on 5433/7100/7110 and the PA, termhub and factory run
+  without it (Rancher's distros were already stopped; an e2e job's API dev step,
+  dev-tools:013, kept running across the shutdown).
+  Postgres is stopped with the distro, not uninstalled: the distro stays registered so the
+  rollback to Postgres stays possible (`wsl --unregister Ubuntu` is the last step, later).
+  The only code that still reaches WSL is the Postgres backup path (`PA_PG_TOOLS`), unused
+  on SQLite. The architecture map drops the WSL termhub.
 - [ ] **Exit 3:** one SQLite file per stack, search quality ≥ Postgres on the recorded query set.
 
 ## Phase 4: jarvisd

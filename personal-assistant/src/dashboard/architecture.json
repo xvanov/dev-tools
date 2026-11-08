@@ -44,13 +44,13 @@
     {
       "id": "work",
       "name": "Work stack",
-      "machine": "Windows work laptop (plus its WSL Ubuntu)",
+      "machine": "Windows work laptop (no WSL since 3.6, 2026-11-08)",
       "identity": "the work GitHub account",
       "runs": [
         "PA worker + dashboard on 127.0.0.1:7300, Jarvis (/talk, PA chat), voice services",
-        "Postgres 16 + pgvector inside WSL Ubuntu on :5433 (kept alive by the pa-wsl-keepalive logon task)",
+        "the store: one encrypted SQLite file (plan 3.5); the old Postgres in WSL Ubuntu is shut down with the distro, kept registered for the rollback",
         "termhub on Windows (front :7000, sessiond :7010)",
-        "the work factory natively on Windows (no WSL, plan 2.3): software-factory in the dev-tools checkout, ticked by the factory-serve logon task (`factory serve`); its claude_session runs open in the Windows termhub (sessiond :7010); the PA runs its commands locally once its .env says PA_FACTORY_MACHINE=local (switch pending; until then it still calls the WSL factory)"
+        "the work factory natively on Windows (no WSL, plan 2.3): software-factory in the dev-tools checkout, ticked by the factory-serve logon task (`factory serve`); its claude_session runs open in the Windows termhub (sessiond :7010); the PA runs its commands locally (PA_FACTORY_MACHINE=local)"
       ],
       "ingests": "work mail, Teams (connector + local cache), calendar, work GitHub, Jira, recorded meetings"
     },
@@ -1073,7 +1073,7 @@
         "personal": "live"
       },
       "where": {
-        "work": "Inside WSL Ubuntu on :5433, reached over WSL's localhost forwarding. Not the PA's store since the 3.5 cutover (2026-11-08): kept as it was at the cutover for rollback until 3.6",
+        "work": "Inside WSL Ubuntu on :5433. Not the PA's store since the 3.5 cutover (2026-11-08); WSL is shut down since 3.6 (same day), the distro and its data kept registered for the rollback (`wsl -d Ubuntu` starts it, then unset PA_DB)",
         "personal": "System Postgres 16 main cluster on :5432, role pa, database pa_personal (5433 is another app’s there). Not the PA's store since the 3.5 cutover (2026-11-08): kept as it was for rollback"
       },
       "health": "postgres",
@@ -1087,7 +1087,7 @@
         "Secrets": "never here: the OS keychain (Windows Credential Manager resource dev-tools/<stack>, Linux Secret Service service=dev-tools stack=<stack>; stack work on Windows, personal on Linux, PA_STACK overrides; entries from before the label under personal-assistant are still read) or the gitignored .env. `pa secrets migrate --from-env` (dry run by default, names only) moves the values the code reads back (config.secret(); the Anthropic and Azure keys through lazy config getters) and empties their .env lines. The software-factory reads its provider keys from the same keychain when .env leaves them unset (factory/keychain.py)",
         "Backups": "every 24 h, 14 kept (PA_BACKUP_DIR): pg_dump plus the factory state dir (logs and locks left out) plus a manifest of table row counts, in one tar encrypted with AES-256-GCM (src/backupCrypto.ts, pa-<stamp>.pabak). The key is the PA_BACKUP_KEY secret, generated into the OS keychain on the first backup (pa backup key init / export --to <file>); never beside the backups. A machine with no keychain still writes a plain .dump and says so. Restore drill: `pa backup restore --to <scratch db>` restores into a throwaway database, compares row counts with the manifest and drops it (needs CREATEDB and the vector/pg_trgm extensions). Since the 3.5 cutover both stacks back up their SQLite file instead (sqlite-store); its drill passed on both on 2026-11-08",
         "Signed self-update": "deploy.js --pull fetches, checks `git log %G?` on the fetched range against a trusted-signers file outside the repo (PA_ALLOWED_SIGNERS, default <data dir>/allowed_signers), then merges; with --from the same check refuses the roll. Until that file exists an unsigned commit only warns (--require-signed / PA_REQUIRE_SIGNED=1 refuse regardless). docs/native/SIGNED-UPDATES.md says how to enable signing",
-        "WSL caveat": "WSL stops the distro when the last client exits; the pa-wsl-keepalive logon task holds it open",
+        "WSL caveat": "WSL stops the distro when the last client exits; the pa-wsl-keepalive logon task held it open while it was the work store (disabled since 3.6)",
         "Id chain": "plan E1: card -> run -> job -> step -> session -> PR as stored ids. run (commitment_id, factory_job_id, termhub_session_id, mr_url, external_id) plus run_pr (every PR of a run: number, state, CI) and run_step (every factory step: job, story, persona, termhub session id, machine, URL), written by the worker factory pass from job status (sql/033); read by the board (card.chain), the card detail, Build and the card / factory_job / sessions MCP tools"
       },
       "tables": [
@@ -1639,27 +1639,6 @@
       ]
     },
     {
-      "id": "termhub-wsl",
-      "layer": "sessions",
-      "name": "WSL termhub (work factory)",
-      "role": "A second termhub inside WSL Ubuntu that serves the old WSL work factory. Leaves the factory path when the PA switches to the native Windows factory (plan 2.3); goes with WSL in 3.6.",
-      "stacks": {
-        "work": "live"
-      },
-      "where": {
-        "work": "WSL Ubuntu, front 127.0.0.1:7100, sessiond 127.0.0.1:7110 (TERMHUB_PORT / TERMHUB_SESSIOND_PORT)"
-      },
-      "health": "termhub-wsl",
-      "details": {
-        "Why a second one": "the factory used to need Linux; WSL gave the work stack a Linux factory without crossing into the personal box",
-        "After the switch": "nothing dispatches here: the native factory uses the Windows termhub (FACTORY_TERMHUB_URL default :7010) and the PA runs factory commands locally"
-      },
-      "code": [
-        "termhub/server.ts",
-        "termhub/README.md"
-      ]
-    },
-    {
       "id": "watchdog",
       "layer": "sessions",
       "name": "termhub watchdog",
@@ -2001,14 +1980,6 @@
       "from": "dispatcher",
       "to": "termhub",
       "label": "POST /api/sessions {links: card, run, job}"
-    },
-    {
-      "from": "dispatcher",
-      "to": "termhub-wsl",
-      "label": "/api/exec: uv run factory job ... (until PA_FACTORY_MACHINE=local)",
-      "stacks": [
-        "work"
-      ]
     },
     {
       "from": "dispatcher",
@@ -2637,11 +2608,6 @@
       "config": "termhub.url",
       "path": "/api/health",
       "label": "termhub (local)"
-    },
-    "termhub-wsl": {
-      "kind": "http",
-      "url": "http://127.0.0.1:7100/api/health",
-      "label": "WSL termhub"
     },
     "factory-machine": {
       "kind": "machine",
