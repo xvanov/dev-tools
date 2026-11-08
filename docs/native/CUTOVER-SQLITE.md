@@ -222,7 +222,11 @@ changes a result a user would rely on.
   - The fix: the indexes in sql-sqlite/008, id-first reads, and the turn every 50 ms (above).
   - The result on a scratch copy of the work store: the pass reads take 0-170 ms. The
     dashboard's memory stats still take about 350 ms. A worker
-    rehearsal answered every `/healthz` within 0.6 s for its first 2 minutes (before: 24 probes
-    over 1 s, up to 5.7 s).
+    rehearsal answered every `/healthz` within 0.6 s for its first 2 minutes, nightly bundle
+    included (before: 24 probes over 1 s, up to 5.7 s).
+  - The nightly bundle no longer blocks either. Its manifest counted each keyword index by
+    reading every chunk (2.5 s each), and it sealed the file on the event loop (2.5 s). Each
+    index's count now comes from its content table, which gives the same number, and the
+    sealing runs on a thread.
   - The first start on 008 builds its indexes in one migration, holding the write lock for about
     5 s. Writes from the serving generation wait for it (up to `busy_timeout`, 10 s).

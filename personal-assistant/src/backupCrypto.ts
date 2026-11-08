@@ -113,6 +113,24 @@ function encryptFile(src: string, dst: string, key: Buffer) {
 }
 
 /**
+ * encryptFile on a worker thread, for the worker's backup pass: sealing the
+ * work stack's ~470 MB bundle takes ~2.5 s, which on the worker's own thread
+ * is a dashboard that does not answer.
+ */
+function encryptFileOffThread(src: string, dst: string, key: Buffer): Promise<number> {
+  const { Worker } = require('worker_threads');
+  return new Promise((resolve, reject) => {
+    const w = new Worker(
+      "const { workerData: d } = require('worker_threads'); require(d.mod).encryptFile(d.src, d.dst, Buffer.from(d.key));",
+      // The file on disk, not require.resolve: the compiled jarvisd cannot resolve its bundled modules.
+      { eval: true, workerData: { mod: __filename, src, dst, key } }
+    );
+    w.once('error', reject);
+    w.once('exit', (code: number) => (code === 0 ? resolve(fs.statSync(dst).size) : reject(new Error(`the encryption thread exited with ${code}`))));
+  });
+}
+
+/**
  * Decrypts `src` to `dst`. Throws (and leaves no `dst`) on a wrong key, a
  * modified byte, a reordered or truncated file.
  */
@@ -180,4 +198,4 @@ function isEncrypted(file: string) {
   }
 }
 
-module.exports = { generateKey, parseKey, encryptFile, decryptFile, isEncrypted, CHUNK };
+module.exports = { generateKey, parseKey, encryptFile, encryptFileOffThread, decryptFile, isEncrypted, CHUNK };

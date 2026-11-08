@@ -24,6 +24,18 @@ module.exports = {
     }
   },
 
+  'tableCounts: a keyword index over a table counts its rows': async ({ repos, seed, db, assert }) => {
+    if (!isSqlite(repos)) return;
+    await seed.memChunk(await seed.sourceItem(), { content: 'counted once' });
+    const c = await repos.backupDrill.tableCounts();
+    const direct = async (t) => Number((await db.one(`select count(*) as n from ${t}`)).n);
+    for (const [fts, table] of [['chunk_fts', 'chunk'], ['chunk_fts_exact', 'chunk'], ['claim_fts', 'claim'], ['memory_page_fts', 'memory_page']]) {
+      assert.strictEqual(c[fts], await direct(fts), fts);
+      assert.strictEqual(c[fts], c[table], fts);
+    }
+    assert.ok(c.chunk >= 1);
+  },
+
   'createDatabase: creates it once; refuses a bad name': async ({ repos, assert }) => {
     if (isSqlite(repos)) return assert.rejects(() => repos.backupDrill.createDatabase('x'), /not applicable/);
     const n = name();

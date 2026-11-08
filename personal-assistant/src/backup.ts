@@ -268,7 +268,7 @@ async function bundle({ dumpFile, out, key, state = factoryStateDir(), counts, e
     args.push('-C', stage, 'manifest.json', entry);
     if (state) args.push('-C', path.dirname(state), stateEntry as string);
     await runTool({ cmd: tarBin(), args });
-    return { bytes: crypt.encryptFile(tarFile, out, key), manifest };
+    return { bytes: await crypt.encryptFileOffThread(tarFile, out, key), manifest };
   } finally {
     fs.rmSync(stage, { recursive: true, force: true });
   }

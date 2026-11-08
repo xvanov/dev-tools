@@ -17,12 +17,17 @@ function create(db: Db) {
     /** Exact row count of every ordinary table, by name (SQLite's own and FTS shadow tables left out). */
     async tableCounts() {
       const tables = await db.rows(
-        `select name from sqlite_master
+        `select name, sql from sqlite_master
           where type = 'table' and name not like 'sqlite\\_%' escape '\\' order by name`
       );
       const out: Record<string, number> = {};
-      for (const { name } of tables) {
-        const r = await db.one(`select count(*) as n from "${String(name).replace(/"/g, '""')}"`);
+      for (const { name, sql } of tables) {
+        // An FTS5 table over a content table (chunk_fts over chunk) has its rows,
+        // and counting it reads each one whole: the vectors too, 2.5 s on the work
+        // stack, on the event loop. The content table's count is the same number.
+        const over = /\bfts5\s*\(.*\bcontent\s*=\s*'([A-Za-z_][A-Za-z0-9_]*)'/is.exec(String(sql || ''));
+        const from = (over && over[1]) || String(name);
+        const r = await db.one(`select count(*) as n from "${from.replace(/"/g, '""')}"`);
         out[String(name)] = Number(r?.n);
       }
       return out;
