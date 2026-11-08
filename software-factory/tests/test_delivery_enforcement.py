@@ -553,6 +553,32 @@ def test_finding2_disable_auto_merge_command_and_noop() -> None:
     assert delivery_gate.disable_auto_merge(_cfg(L.PR), None, run=run) is None and calls == []
 
 
+def test_cant_disable_is_success_only_when_the_pr_is_verifiably_not_armed() -> None:
+    """GitHub answers "Can't disable auto-merge" when nothing is armed (e.g. a
+    draft PR) — seen live on a cancel. Trusted only after `gh pr view` says no
+    autoMergeRequest; armed or unknown stays an error (fail safe)."""
+    cant = "GraphQL: Can't disable auto-merge for this pull request. (disablePullRequestAutoMerge)"
+
+    def _runner(view_out: str, view_rc: int = 0) -> Any:
+        calls: list[list[str]] = []
+
+        def _run(cmd: list[str], **_k: Any) -> Any:
+            calls.append(cmd)
+            if cmd[:3] == ["gh", "pr", "merge"]:
+                return subprocess.CompletedProcess(cmd, 1, stdout="", stderr=cant)
+            return subprocess.CompletedProcess(cmd, view_rc, stdout=view_out, stderr="")
+
+        return _run, calls
+
+    run, calls = _runner('{"autoMergeRequest": null}')
+    assert delivery_gate.disable_auto_merge(_cfg(L.PR), 7, run=run) is None
+    assert calls[1] == ["gh", "pr", "view", "7", "--json", "autoMergeRequest", "--repo", "o/r"]
+    run, _ = _runner('{"autoMergeRequest": {"mergeMethod": "SQUASH"}}')
+    assert "exit=1" in (delivery_gate.disable_auto_merge(_cfg(L.PR), 7, run=run) or "")
+    run, _ = _runner("", view_rc=1)
+    assert "exit=1" in (delivery_gate.disable_auto_merge(_cfg(L.PR), 7, run=run) or "")
+
+
 def test_legacy_auto_merge_story_still_merges(am_root: Path, gates_green: None) -> None:
     _write_cfg(am_root, None)
     db = am_root / "state" / "factory.db"

@@ -47,6 +47,7 @@ Where each level is enforced (keep in sync with
 from __future__ import annotations
 
 import contextlib
+import json
 import logging
 import subprocess
 from collections.abc import Iterator
@@ -389,7 +390,33 @@ def disable_auto_merge(app_config: Any, pr_number: int | None, *, run: Any = Non
     err = ((proc.stderr or "") + (proc.stdout or "")).strip()
     if any(m in err.lower() for m in _DISABLE_AUTO_NOOP_MARKERS):
         return None
+    if "can't disable auto-merge" in err.lower():
+        # GitHub's GraphQL answer when nothing is armed (e.g. a draft PR, which
+        # cannot be armed at all) — but it is not specific enough to trust on
+        # its own. Fail safe: ask the PR whether an auto-merge request exists.
+        if _auto_merge_armed(runner, pr_number, repo) is False:
+            return None
     return f"gh pr merge --disable-auto exit={proc.returncode}: {err[:240]}"
+
+
+def _auto_merge_armed(runner: Any, pr_number: int, repo: str | None) -> bool | None:
+    """``True``/``False`` per ``gh pr view --json autoMergeRequest``; ``None`` if unknown."""
+    cmd = ["gh", "pr", "view", str(pr_number), "--json", "autoMergeRequest"]
+    if repo:
+        cmd += ["--repo", str(repo)]
+    try:
+        proc = runner(cmd, capture_output=True, text=True, timeout=60, check=False)
+    except (subprocess.SubprocessError, OSError):
+        return None
+    if proc.returncode != 0:
+        return None
+    try:
+        data = json.loads(proc.stdout or "")
+    except ValueError:
+        return None
+    if not isinstance(data, dict) or "autoMergeRequest" not in data:
+        return None
+    return data["autoMergeRequest"] is not None
 
 
 # A check-run conclusion that means "main is NOT green". ``cancelled`` and
