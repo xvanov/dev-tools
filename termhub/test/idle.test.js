@@ -341,7 +341,7 @@ ok('each state change and exit is broadcast as session-state, once', () => {
   ]);
   const app = fs.readFileSync(path.join(__dirname, '..', 'web', 'app.js'), 'utf8');
   assert.match(app, /msg\.type === 'session-state'\) \{\s*(\/\/[^\n]*\s*)*refresh\(\);/, 'the page redraws on it');
-  assert.match(fs.readFileSync(path.join(__dirname, '..', 'sessiond.js'), 'utf8'), /forwardSessionStates\(idle, voice\)/, 'sessiond wires it');
+  assert.match(fs.readFileSync(path.join(__dirname, '..', 'sessiond.ts'), 'utf8'), /forwardSessionStates\(idle, voice\)/, 'sessiond wires it');
 });
 
 console.log(`\n${passed} assertions passed`);

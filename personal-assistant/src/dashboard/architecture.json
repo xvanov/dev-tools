@@ -1556,7 +1556,7 @@
         "Live state (plan E3)": "the idle hub classifies every agent session once a second (working, waiting on you, limited); each change and each exit goes out as a `session-state` message on the page-wide /ws/voice feed, and Run redraws its sidebar on it instead of waiting for its 2 s poll"
       },
       "code": [
-        "termhub/sessiond.js",
+        "termhub/sessiond.ts",
         "termhub/lib/session.ts",
         "termhub/lib/restore.ts",
         "termhub/lib/idleHub.ts"
@@ -1654,7 +1654,7 @@
         "After the switch": "nothing dispatches here: the native factory uses the Windows termhub (FACTORY_TERMHUB_URL default :7010) and the PA runs factory commands locally"
       },
       "code": [
-        "termhub/server.js",
+        "termhub/server.ts",
         "termhub/README.md"
       ]
     },

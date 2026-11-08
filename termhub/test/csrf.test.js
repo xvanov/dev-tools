@@ -26,7 +26,7 @@ delete process.env.TERMHUB_NTFY_TOPIC;     // and never push a notification
 
 const WebSocket = require('ws');
 const { checkRequest, checkUpgrade, setLearnedNames } = require('../lib/requestGuard.ts');
-const { createSessiond } = require('../sessiond');
+const { createSessiond } = require('../sessiond.ts');
 const { createFront } = require('../front.ts');
 const peers = require('../lib/peers.ts');
 
