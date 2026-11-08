@@ -197,6 +197,7 @@ function createSdkFeed({
   const approvals = new Map(); // toolUseId -> pending approval, oldest first
   let status = 'offline';
   let idleSince = 0;
+  let draining = false;
   let q = null;
   let input = null;
   let starting = null;
@@ -558,6 +559,7 @@ function createSdkFeed({
   }
 
   async function ensureStarted() {
+    if (draining) throw httpError(503, 'the PA is restarting — send it again in a moment');
     if (q) return { created: false };
     if (!starting) {
       starting = start().finally(() => {
@@ -576,6 +578,7 @@ function createSdkFeed({
     if (text.length > MAX_TEXT) throw httpError(400, `text is over ${MAX_TEXT} characters`);
     if (!SOURCES.includes(source)) throw httpError(400, `source must be ${SOURCES.join(' or ')}`);
     if (approvals.size) throw httpError(409, 'the PA is waiting for your yes on an action — answer it first');
+    if (draining) throw httpError(503, 'the PA is restarting — send it again in a moment');
     const clean = text.replace(/\r\n?/g, '\n').trim();
     await ensureStarted();
     const event = { id: `u-${crypto.randomUUID()}`, type: 'user', text: clean, at: now(), source };
@@ -629,6 +632,34 @@ function createSdkFeed({
     return { engine: 'sdk', sessionId, created, url: null };
   }
 
+  /**
+   * A Z1 roll moved routing to the next generation: hand the conversation
+   * over. Prompts waiting here can no longer be answered (the page now talks
+   * to the new generation), so they are denied with a reason the model can
+   * repeat; the turn in flight gets up to `waitMs` to finish; then the query
+   * is closed, and the new generation resumes the session by its id on its
+   * first message. undrain() (a rollback) just lets the next message restart it.
+   */
+  async function drain({ waitMs = 20_000 } = {}) {
+    draining = true;
+    for (const p of [...approvals.values()]) {
+      publish({ id: `perm-drain-${p.toolUseId}`, type: 'activity', text: `not done, the PA is restarting: ${p.text.replace(/…$/, '')}`, at: now() });
+      settle(p, { behavior: 'deny', message: 'The PA is restarting, so this was not done. Tell the user to ask again in a moment.' });
+    }
+    const end = Date.now() + waitMs;
+    while (q && status === 'thinking' && Date.now() < end) await new Promise((r) => setTimeout(r, 100));
+    if (q) log.info('closing the SDK chat for the next generation', { session: sessionId, finished: status !== 'thinking' });
+    stop();
+    // The loop's finally marks it offline; wait for it, bounded.
+    const gone = Date.now() + 2000;
+    while (q && Date.now() < gone) await new Promise((r) => setTimeout(r, 20));
+    return { sessionId, closed: !q };
+  }
+
+  function undrain() {
+    draining = false;
+  }
+
   function stop() {
     for (const p of [...approvals.values()]) settle(p, { behavior: 'deny', message: 'the chat is stopping' });
     if (input) input.close();
@@ -639,7 +670,7 @@ function createSdkFeed({
     }
   }
 
-  return { send, history, subscribe, session, open, doorbell, answerPermission, stop, canUseTool, preToolUse, onMessage };
+  return { send, history, subscribe, session, open, doorbell, answerPermission, drain, undrain, stop, canUseTool, preToolUse, onMessage };
 }
 
 module.exports = { createSdkFeed, subscriptionEnv, splitTool, hookDecision, insideHome, genericDetail, genericAsk, genericVoiceOk, createInputQueue, SDK_MODULE, SESSION_FILE };

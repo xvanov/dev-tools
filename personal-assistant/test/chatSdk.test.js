@@ -423,6 +423,56 @@ const sdkMsg = {
       await until(() => sdk.runs[0].closed, 'closed');
     }
 
+    // ------------------------------------------------- a Z1 roll (drain) --
+    {
+      const d = fs.mkdtempSync(path.join(dir, 'z-'));
+      const sdkA = fakeSdk();
+      const genA = makeFeed({ dir: d, sdk: sdkA, policy: fakePolicy() });
+      const gotA = [];
+      genA.subscribe((e) => gotA.push(e));
+      await genA.send({ text: 'start job for card 5' });
+      const runA = sdkA.runs[0];
+      await runA.next();
+      runA.emit(sdkMsg.init('sess-A'));
+      const pending = runA.options.canUseTool('mcp__pa-chat__factory_start', { card: '5' }, { signal: new AbortController().signal, toolUseID: 'tuZ' });
+      await tick();
+      // Routing moves to generation B; A drains while its turn is still running.
+      const drained = genA.drain({ waitMs: 1000 });
+      const res = await pending;
+      assert.strictEqual(res.behavior, 'deny', 'a prompt nobody can answer here any more is not left hanging');
+      assert.match(res.message, /restarting/);
+      assert.ok(gotA.some((e) => e.type === 'activity' && /^not done, the PA is restarting/.test(e.text)));
+      assert.ok(!runA.closed, 'the turn in flight gets its time to finish');
+      runA.emit(sdkMsg.assistant('msg_z', [{ type: 'text', text: 'Not started; ask me again.' }], 'end_turn'));
+      runA.emit(sdkMsg.result());
+      assert.deepStrictEqual(await drained, { sessionId: 'sess-A', closed: true });
+      assert.ok(runA.closed, 'then the query is closed');
+      await assert.rejects(genA.send({ text: 'late' }), (e) => e.status === 503, 'a draining generation starts nothing');
+      assert.strictEqual(genA.doorbell(1, { minIdleMs: 0 }).ok, false);
+
+      // Generation B resumes the same conversation by its id.
+      const sdkB = fakeSdk();
+      const genB = makeFeed({ dir: d, sdk: sdkB, policy: fakePolicy() });
+      await genB.send({ text: 'start job for card 5' });
+      assert.strictEqual(sdkB.runs[0].options.resume, 'sess-A');
+      genB.stop();
+
+      // A rollback (undrain): A takes messages again and resumes too.
+      genA.undrain();
+      await genA.send({ text: 'back on A' });
+      assert.strictEqual(sdkA.runs[1].options.resume, 'sess-A');
+      genA.stop();
+
+      // A drain with a turn that never ends still closes, after waitMs.
+      const sdkC = fakeSdk();
+      const genC = makeFeed({ dir: fs.mkdtempSync(path.join(dir, 'zc-')), sdk: sdkC, policy: fakePolicy() });
+      await genC.send({ text: 'long one' });
+      const t0 = Date.now();
+      assert.strictEqual((await genC.drain({ waitMs: 50 })).closed, true);
+      assert.ok(Date.now() - t0 < 2000);
+      assert.ok(sdkC.runs[0].closed);
+    }
+
     // A failure to start is a 503 with the reason, and the next message tries again.
     {
       let fail = true;

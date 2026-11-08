@@ -389,9 +389,25 @@ function feed() {
   return shared;
 }
 
+/**
+ * The worker's drain / undrain / stop (Z1), for the SDK chat that lives in
+ * this process. A no-op when no chat was started here or the engine is the
+ * terminal one (that session lives in termhub and survives a roll).
+ */
+async function drainChat(opts) {
+  if (shared && typeof shared.drain === 'function') return shared.drain(opts);
+  return null;
+}
+function undrainChat() {
+  if (shared && typeof shared.undrain === 'function') shared.undrain();
+}
+function stopChat() {
+  if (shared && typeof shared.drain === 'function') shared.stop();
+}
+
 /** POST /api/chat/open and `pa chat`: the terminal session, or the SDK session started. */
 function openChat() {
   return engine() === 'sdk' ? feed().open() : require('./index').ensureSession();
 }
 
-module.exports = { waitingText, createFeed, feed, engine, openChat, newestTranscript, SOURCES };
+module.exports = { waitingText, createFeed, feed, engine, openChat, drainChat, undrainChat, stopChat, newestTranscript, SOURCES };

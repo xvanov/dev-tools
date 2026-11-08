@@ -103,6 +103,11 @@ async function shutdown(signal) {
   if (stopping) return;
   stopping = true;
   log.info('stopping', { signal });
+  try {
+    require('./chat/feed').stopChat();
+  } catch {
+    /* no chat here */
+  }
   if (ownership) await Promise.race([ownership.handOver().catch(() => {}), new Promise((r) => setTimeout(r, 2000))]);
   await lease.close();
   // Bounded: a pool with a client still checked out (the lock wait, a pass
@@ -131,9 +136,12 @@ async function main() {
         log.info('draining: routing moved to the next generation — handing the passes over');
         require('./dashboard/server').markDraining();
         if (ownership) ownership.handOver().catch((err) => log.warn('hand-over failed', { message: err.message }));
+        // The SDK chat (PA_CHAT_ENGINE=sdk) lives here: close it so the next generation resumes it.
+        require('./chat/feed').drainChat().catch((err) => log.warn('chat drain failed', { message: err.message }));
       } else if (m && m.type === 'undrain') {
         log.info('undrained: routing moved back here (rollback) — taking the passes back');
         require('./dashboard/server').markDraining(false);
+        require('./chat/feed').undrainChat();
         if (ownership) ownership.takeOver().catch((err) => log.warn('take-over failed', { message: err.message }));
       } else if (m && m.type === 'stop') shutdown('supervisor stop');
     });

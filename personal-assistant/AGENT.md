@@ -200,6 +200,10 @@ that input can be heard whole and the policy does not bar voice (never an edit);
 is a 403. A policy allow for Read/Grep/Glob holds inside pa-home only (`insideHome`). The SDK's environment drops
 `ANTHROPIC_API_KEY`/`ANTHROPIC_AUTH_TOKEN`, so it runs on the machine's Claude login, never the API.
 Tests use a mocked SDK (`test/chatSdk.test.js`); never a real model call in a test.
+The SDK chat lives in the worker, so a Z1 roll moves it: on `drain` (`feed.drainChat`) the old
+generation denies the prompts still waiting (nobody can answer them there any more), gives the turn in
+flight up to 20 s, then closes its query, and refuses new messages with a 503; the new generation
+resumes the session by the id in `pa-home/.pa-chat-sdk-session.json` on its first message.
 
 **Every tool call goes through one policy function** (`src/policy`, plan 4.3): `evaluate` answers
 allow | deny | ask from `src/policy/default.policy.json` plus an untracked per-stack override
