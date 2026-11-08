@@ -17,11 +17,49 @@ const { logger } = require('../log');
 
 const log = logger('projects');
 
+// origin's URL, read from the repo's git config — not `git remote get-url`:
+// one synchronous git process per folder (~0.2 s each on Windows, 50 folders)
+// blocked the worker's event loop for ~10 s every repos sync, long enough for
+// a deploy's health watch to roll a healthy generation back. A linked
+// worktree's `.git` is a file naming its gitdir, whose `commondir` leads to
+// the shared config. Anything unexpected falls back to the git process.
+function readOriginUrl(dir) {
+  const dotGit = path.join(dir, '.git');
+  let gitDir = dotGit;
+  if (fs.statSync(dotGit).isFile()) {
+    const m = /^gitdir:\s*(.+)$/m.exec(fs.readFileSync(dotGit, 'utf8'));
+    if (!m) return undefined;
+    gitDir = path.resolve(dir, m[1].trim());
+    const common = path.join(gitDir, 'commondir');
+    if (fs.existsSync(common)) gitDir = path.resolve(gitDir, fs.readFileSync(common, 'utf8').trim());
+  }
+  const cfg = fs.readFileSync(path.join(gitDir, 'config'), 'utf8');
+  let inOrigin = false;
+  for (const raw of cfg.split(/\r?\n/)) {
+    const line = raw.trim();
+    if (line.startsWith('[')) {
+      if (/^\[include/i.test(line)) return undefined; // includes: let git resolve them
+      inOrigin = /^\[remote\s+"origin"\]$/i.test(line);
+      continue;
+    }
+    const kv = inOrigin && /^url\s*=\s*(.*)$/i.exec(line);
+    if (kv) return kv[1].trim().replace(/^"(.*)"$/, '$1');
+  }
+  return null;
+}
+
 function gitRemote(dir) {
+  try {
+    const url = readOriginUrl(dir);
+    if (url !== undefined) return url;
+  } catch {
+    /* fall through to git */
+  }
   try {
     return execFileSync('git', ['-C', dir, 'remote', 'get-url', 'origin'], {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'ignore'],
+      windowsHide: true,
     }).trim();
   } catch {
     return null;
@@ -397,6 +435,7 @@ async function list() {
 }
 
 module.exports = {
+  gitRemote,
   sync,
   candidates,
   scoringContext,

@@ -40,6 +40,32 @@ const path = require('path');
   vault.useBackend(null);
 }
 
+// ---- a repo's origin without a git process (projects sync ran ~66 of them) ----
+{
+  const { gitRemote } = require('../src/projects');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pa-remote-'));
+  try {
+    const clone = path.join(dir, 'clone');
+    fs.mkdirSync(path.join(clone, '.git'), { recursive: true });
+    fs.writeFileSync(path.join(clone, '.git', 'config'), '[core]\n\tbare = false\n[remote "upstream"]\n\turl = git@x:other/thing.git\n[remote "origin"]\n\turl = git@github-xvanov:xvanov/dev-tools.git\n\tfetch = +refs/heads/*:refs/remotes/origin/*\n');
+    assert.strictEqual(gitRemote(clone), 'git@github-xvanov:xvanov/dev-tools.git');
+    // A linked worktree: .git is a file; the config is the main clone's.
+    const wt = path.join(dir, 'wt');
+    fs.mkdirSync(path.join(clone, '.git', 'worktrees', 'wt'), { recursive: true });
+    fs.writeFileSync(path.join(clone, '.git', 'worktrees', 'wt', 'commondir'), '../..\n');
+    fs.mkdirSync(wt);
+    fs.writeFileSync(path.join(wt, '.git'), `gitdir: ${path.join(clone, '.git', 'worktrees', 'wt')}\n`);
+    assert.strictEqual(gitRemote(wt), 'git@github-xvanov:xvanov/dev-tools.git');
+    // No origin: null, still without git.
+    const bare = path.join(dir, 'none');
+    fs.mkdirSync(path.join(bare, '.git'), { recursive: true });
+    fs.writeFileSync(path.join(bare, '.git', 'config'), '[core]\n\tbare = false\n');
+    assert.strictEqual(gitRemote(bare), null);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 // ---- the stall detector names a blocked loop ----
 async function lag() {
   const { watchLag } = require('../src/util/lagWatch');
@@ -79,6 +105,7 @@ lag()
   .then(() => {
     logFile();
     console.log('stalls ok');
+    process.exit(0); // config's modules may hold handles open; nothing is left to run
   })
   .catch((err) => {
     console.error(err);
