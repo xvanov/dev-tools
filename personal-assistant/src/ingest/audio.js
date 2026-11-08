@@ -15,7 +15,7 @@
 const fs = require('fs');
 const path = require('path');
 const { config } = require('../config');
-const { rows, query, one } = require('../db');
+const repo = require('../repo');
 const { saveItems } = require('./store');
 const { toEpisodes, splitAtEvents, classify, episodeChanged, renderTranscript, isSubstantial } = require('../audio/episodes');
 const { logger } = require('../log');
@@ -45,13 +45,7 @@ function readSidecar(file) {
 }
 
 async function calendarWindow(fromIso, toIso) {
-  return rows(
-    `select external_id, subject, occurred_at, raw from source_item
-      where source = 'graph_event'
-        and occurred_at between $1::timestamptz - interval '2 hours' and $2::timestamptz + interval '2 hours'
-      order by occurred_at`,
-    [fromIso, toIso]
-  );
+  return repo.sources.calendarWindow(fromIso, toIso);
 }
 
 // The stored episode a freshly computed one continues: the same start and
@@ -60,16 +54,7 @@ async function calendarWindow(fromIso, toIso) {
 // meeting boundary now cuts it). Rows already matched in this pass are not
 // matched twice.
 async function existingFor(episode, claimed) {
-  return one(
-    `select e.*, si.external_id as item_external_id from audio_episode e
-       left join source_item si on si.id = e.source_item_id
-      where (e.started_at = $1 or (e.started_at > $1 and e.started_at <= $2))
-        and e.state <> 'superseded'
-        and not (e.id = any($3::bigint[]))
-      order by (e.started_at = $1 and e.stream = $4) desc, (e.started_at = $1) desc, e.speech_seconds desc
-      limit 1`,
-    [episode.started_at, episode.ended_at, [...claimed], episode.streams.join('+')]
-  );
+  return repo.audio.continuing({ startedAt: episode.started_at, endedAt: episode.ended_at, claimed, stream: episode.streams.join('+') });
 }
 
 // Rows that no computed episode continues but that start inside one: the
@@ -80,13 +65,7 @@ async function existingFor(episode, claimed) {
 async function supersedeLeftovers(episodes, claimed) {
   let n = 0;
   for (const e of episodes) {
-    const r = await query(
-      `update audio_episode set state = 'superseded'
-        where started_at >= $1 and started_at <= $2 and state <> 'superseded'
-          and not (id = any($3::bigint[]))`,
-      [e.started_at, e.ended_at, [...claimed]]
-    );
-    n += r.rowCount;
+    n += await repo.audio.supersedeWithin(e.started_at, e.ended_at, claimed);
   }
   if (n) log.info('episodes superseded', { count: n });
   return n;
@@ -155,7 +134,7 @@ async function run() {
         ],
         null
       );
-      itemId = (await one('select id from source_item where source = $1 and external_id = $2', ['audio', externalId]))?.id ?? itemId;
+      itemId = (await repo.sources.idByExternal('audio', externalId))?.id ?? itemId;
       if (itemId && (meta.kind === 'meeting' || meta.kind === 'call')) {
         await require('../distill').markOwnedByDebrief(itemId);
       }
@@ -176,37 +155,25 @@ async function run() {
     if (!existing) {
       // A conflict here is a row this pass marked superseded earlier, or
       // one a previous pass did: the conversation is back, so is the row.
-      const row = await one(
-        `insert into audio_episode
-           (started_at, ended_at, stream, speech_seconds, kind, calendar_event_id,
-            audio_path, transcript_path, state, source_item_id)
-         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
-         on conflict (stream, started_at) do update set
-           ended_at = excluded.ended_at, speech_seconds = excluded.speech_seconds, kind = excluded.kind,
-           calendar_event_id = excluded.calendar_event_id, state = excluded.state,
-           source_item_id = coalesce(excluded.source_item_id, audio_episode.source_item_id)
-         returning id`,
-        values
-      );
+      const row = await repo.audio.upsert(values);
       claimed.add(row.id);
       continue;
     }
     try {
-      await query(
-        `update audio_episode set started_at = $1, ended_at = $2, stream = $3, speech_seconds = $4, kind = $5,
-                calendar_event_id = $6, audio_path = $7, transcript_path = $8, state = $9, source_item_id = $10
-          where id = $11`,
-        [...values, existing.id]
-      );
+      await repo.audio.update([...values, existing.id]);
     } catch (err) {
       // Another row already holds this (stream, start) — a fragment stored
       // before the rest of its conversation arrived. Keep this row's key.
       if (err.code !== '23505') throw err;
-      await query(
-        `update audio_episode set ended_at = $1, speech_seconds = $2, kind = $3, calendar_event_id = $4,
-                state = $5, source_item_id = $6 where id = $7`,
-        [episode.ended_at, episode.speech_seconds, meta.kind, meta.calendarEventId, values[8], itemId, existing.id]
-      );
+      await repo.audio.updateKeepingKey({
+        endedAt: episode.ended_at,
+        speechSeconds: episode.speech_seconds,
+        kind: meta.kind,
+        calendarEventId: meta.calendarEventId,
+        state: values[8],
+        sourceItemId: itemId,
+        id: existing.id,
+      });
     }
     log.info('episode updated', { episode: existing.id, kind: meta.kind, speechSeconds: Math.round(episode.speech_seconds) });
   }

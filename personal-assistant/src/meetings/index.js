@@ -24,7 +24,7 @@
 
 const llm = require('../llm');
 const { config } = require('../config');
-const { rows, one, query } = require('../db');
+const repo = require('../repo');
 const { logger } = require('../log');
 const core = require('./core');
 const P = require('./prompt');
@@ -36,12 +36,10 @@ const DAY = 86400_000;
 // ------------------------------------------------------------ identity ----
 
 async function context() {
-  const me = await one('select id, display_name, primary_email from person where is_me limit 1');
-  const ids = me
-    ? await rows(`select kind, value from person_identity where person_id = $1`, [me.id])
-    : [];
-  const cursor = await one(`select state from sync_cursor where source = 'm365'`).catch(() => null);
-  const gh = await one(`select state from sync_cursor where source = 'github'`).catch(() => null);
+  const me = await repo.people.me();
+  const ids = me ? await repo.people.identitiesOf(me.id) : [];
+  const cursor = await repo.sources.cursorState('m365').catch(() => null);
+  const gh = await repo.sources.cursorState('github').catch(() => null);
   const emails = new Set(
     [me?.primary_email, cursor?.state?.me?.mail, ...ids.filter((i) => i.kind === 'smtp').map((i) => i.value)]
       .filter(Boolean)
@@ -59,15 +57,8 @@ async function context() {
 
 // ------------------------------------------------------------- events -----
 
-const EVENT_COLS = 'id, external_id, subject, body_text, occurred_at, author_identity, raw';
-
 async function eventsBetween(from, to) {
-  const list = await rows(
-    `select ${EVENT_COLS} from source_item
-      where source = 'graph_event' and occurred_at between $1 and $2
-      order by occurred_at`,
-    [new Date(from), new Date(to)]
-  );
+  const list = await repo.sources.eventsBetween(new Date(from), new Date(to));
   return list.map(core.toMeeting);
 }
 
@@ -75,12 +66,7 @@ async function seriesOccurrences(seriesKey) {
   // The subject filter narrows; seriesKey decides (it strips "Canceled:").
   const words = seriesKey.split(' ').filter((w) => w.length > 2).slice(0, 3);
   const like = words.length ? `%${words.join('%')}%` : '%';
-  const list = await rows(
-    `select ${EVENT_COLS} from source_item
-      where source = 'graph_event' and subject ilike $1
-      order by occurred_at`,
-    [like]
-  );
+  const list = await repo.sources.eventsBySubject(like);
   return list.map(core.toMeeting).filter((m) => m.seriesKey === seriesKey);
 }
 
@@ -92,9 +78,7 @@ async function resolveTarget(target, { now = new Date(), ctx } = {}) {
     if (!next) throw new Error('no upcoming meeting that would be briefed in the next 14 days');
     return next;
   }
-  const row = /^\d+$/.test(t)
-    ? await one(`select ${EVENT_COLS} from source_item where source = 'graph_event' and id = $1`, [Number(t)])
-    : await one(`select ${EVENT_COLS} from source_item where source = 'graph_event' and external_id = $1`, [t]);
+  const row = /^\d+$/.test(t) ? await repo.sources.eventById(Number(t)) : await repo.sources.eventByExternalId(t);
   if (!row) throw new Error(`no calendar event "${t}"`);
   return core.toMeeting(row);
 }
@@ -110,22 +94,17 @@ function eligibilityOpts(ctx) {
 // ------------------------------------------------------ classification ----
 
 async function seriesRow(m) {
-  return one('select * from meeting_series where series_key = $1', [m.seriesKey]);
+  return repo.meetings.seriesByKey(m.seriesKey);
 }
 
 async function saveSeries(m, patch) {
-  return one(
-    `insert into meeting_series (series_key, label, kind, kind_source, profile)
-     values ($1, $2, $3, $4, coalesce($5::jsonb, '{}'::jsonb))
-     on conflict (series_key) do update set
-       label = excluded.label,
-       kind = coalesce($3, meeting_series.kind),
-       kind_source = coalesce($4, meeting_series.kind_source),
-       profile = coalesce($5::jsonb, meeting_series.profile),
-       updated_at = now()
-     returning *`,
-    [m.seriesKey, core.seriesLabel(m.subject), patch.kind ?? null, patch.kindSource ?? null, patch.profile ? JSON.stringify(patch.profile) : null]
-  );
+  return repo.meetings.saveSeries({
+    seriesKey: m.seriesKey,
+    label: core.seriesLabel(m.subject),
+    kind: patch.kind ?? null,
+    kindSource: patch.kindSource ?? null,
+    profile: patch.profile ?? null,
+  });
 }
 
 async function classify(m, ctx, { allowModel = true } = {}) {
@@ -162,10 +141,7 @@ async function setKind(seriesOrEvent, kind) {
   const k = core.normaliseKind(kind);
   if (k !== kind) throw new Error(`kind must be one of ${core.KINDS.join(', ')}`);
   const key = core.seriesKey(seriesOrEvent);
-  const row = await one(
-    `update meeting_series set kind = $2, kind_source = 'manual', updated_at = now() where series_key = $1 returning *`,
-    [key, k]
-  );
+  const row = await repo.meetings.setSeriesKind(key, k);
   if (row) return row;
   return saveSeries({ seriesKey: key, subject: String(seriesOrEvent) }, { kind: k, kindSource: 'manual' });
 }
@@ -235,46 +211,21 @@ async function doneSince(ctx, from, to) {
     }
   }
   if (ctx.githubLogin) {
-    const prs = await rows(
-      `select id, subject, occurred_at, raw, left(body_text, 600) as body,
-              body_text ~* $4 as agent from source_item
-        where source = 'github_pr' and author_identity = $1 and occurred_at between $2 and $3
-        order by occurred_at desc limit 6`,
-      [`github:${ctx.githubLogin}`, from, to, 'generated with \\[?claude code|co-authored-by:\\s*claude']
-    );
+    const prs = await repo.sources.prsByAuthorBetween(`github:${ctx.githubLogin}`, from, to, 'generated with \\[?claude code|co-authored-by:\\s*claude');
     for (const p of prs) {
       const whose = p.agent ? 'Agent PR on my account (an AI agent wrote it; not my own work)' : `Activity on my ${p.raw?.draft ? 'draft ' : ''}PR`;
       out.push(item(`gh:${p.raw?.webUrl || p.id}`, `${whose}: ${p.subject}${gist(p.body)}`, { url: p.raw?.webUrl, when: p.occurred_at }));
     }
   }
-  const jira = await rows(
-    `select id, subject, occurred_at, raw from source_item
-      where source = 'jira_issue' and occurred_at between $1 and $2
-        and (lower(raw->>'assignee') = any($3::text[]))
-      order by occurred_at desc limit 6`,
-    [from, to, [ctx.name, ...ctx.myEmails].filter(Boolean).map((s) => s.toLowerCase())]
-  );
+  const jira = await repo.sources.jiraAssignedBetween(from, to, [ctx.name, ...ctx.myEmails].filter(Boolean).map((s) => s.toLowerCase()));
   for (const j of jira) out.push(item(`item:${j.id}`, `Ticket ${j.subject} — now ${j.raw?.status || '?'}`, { url: j.raw?.webUrl, when: j.occurred_at }));
 
-  const closed = await rows(
-    `select id, summary, closed_reason, closed_at from commitment
-      where direction = 'owed_by_me' and status = 'done' and closed_at between $1 and $2
-        -- Only what I closed or did. "PR merged" is someone else's PR landing
-        -- (githubReconcile closing a review ask), not my work to report.
-        and (closed_reason is null or closed_reason in ('you marked it done', 'you reviewed it'))
-      order by closed_at desc limit 6`,
-    [from, to]
-  ).catch(() => []);
+  const closed = await repo.commitments.closedByMeBetween(from, to).catch(() => []);
   for (const c of closed) {
     out.push(item(`commitment:${c.id}`, `Closed: ${c.summary}${c.closed_reason ? ` (${c.closed_reason})` : ''}`, { when: c.closed_at }));
   }
 
-  const sessions = await rows(
-    `select id, subject, occurred_at, raw, left(body_text, 600) as body from source_item
-      where source = 'claude_session' and occurred_at between $1 and $2
-      order by coalesce((raw->>'turns')::int, 0) desc limit 8`,
-    [from, to]
-  );
+  const sessions = await repo.sources.claudeSessionsBetween(from, to);
   for (const s of sessions) {
     const where = [s.raw?.cwd ? String(s.raw.cwd).replace(/[\\/]+$/, '').split(/[\\/]/).pop() : null, s.raw?.gitBranch && s.raw.gitBranch !== 'HEAD' ? s.raw.gitBranch : null]
       .filter(Boolean)
@@ -286,40 +237,16 @@ async function doneSince(ctx, from, to) {
 
 async function todayItems(ctx, now) {
   const out = [];
-  const due = await rows(
-    `select id, summary, due_at from commitment
-      where direction = 'owed_by_me' and status in ('open','dispatched') and superseded_by is null
-        and due_at is not null and due_at < $1::timestamptz + interval '2 days'
-        and due_at > $1::timestamptz - interval '14 days'
-      order by due_at limit 6`,
-    [now]
-  );
+  const due = await repo.commitments.dueSoonOwedByMe(now);
   for (const c of due) out.push(item(`commitment:${c.id}`, `${new Date(c.due_at) < now ? 'Overdue' : 'Due'} ${c.due_at.toISOString().slice(0, 10)}: ${c.summary}`));
-  const fresh = await rows(
-    `select id, summary from commitment
-      where direction = 'owed_by_me' and status = 'open' and superseded_by is null and due_at is null
-        and extracted_at > $1::timestamptz - interval '1 day' and coalesce(confidence, 0) >= 0.6
-      order by extracted_at desc limit 4`,
-    [now]
-  );
+  const fresh = await repo.commitments.freshAsksOwedByMe(now);
   for (const c of fresh) out.push(item(`commitment:${c.id}`, `New ask: ${c.summary}`));
 
-  const jira = await rows(
-    `select id, subject, raw from source_item
-      where source = 'jira_issue' and raw->>'state' = 'opened' and lower(raw->>'assignee') = any($1::text[])
-      order by occurred_at desc limit 5`,
-    [[ctx.name, ...ctx.myEmails].filter(Boolean).map((s) => s.toLowerCase())]
-  );
+  const jira = await repo.sources.openJiraAssigned([ctx.name, ...ctx.myEmails].filter(Boolean).map((s) => s.toLowerCase()), 5);
   for (const j of jira) out.push(item(`item:${j.id}`, `Ticket ${j.subject} (${j.raw?.status || 'open'})`, { url: j.raw?.webUrl }));
 
   if (ctx.githubLogin) {
-    const mine = await rows(
-      `select id, subject, raw, body_text ~* $3 as agent from source_item
-        where source = 'github_pr' and author_identity = $1 and raw->>'state' = 'opened'
-          and occurred_at > $2::timestamptz - interval '14 days'
-        order by occurred_at desc limit 5`,
-      [`github:${ctx.githubLogin}`, now, 'generated with \\[?claude code|co-authored-by:\\s*claude']
-    );
+    const mine = await repo.sources.openPrsRecent(`github:${ctx.githubLogin}`, now, 'generated with \\[?claude code|co-authored-by:\\s*claude');
     for (const p of mine) {
       const whose = p.agent ? 'Agent PR on my account waiting for me to review and merge' : `My open ${p.raw?.draft ? 'draft ' : ''}PR`;
       out.push(item(`gh:${p.raw?.webUrl || p.id}`, `${whose}: ${p.subject}`, { url: p.raw?.webUrl }));
@@ -331,35 +258,17 @@ async function todayItems(ctx, now) {
 }
 
 async function blockerItems(ctx, now) {
-  const claims = await rows(
-    `select id, text, quote from claim
-      where status = 'active' and kind = 'blocker' and subject_kind = 'me'
-        and valid_at > $1::timestamptz - interval '21 days' and invalid_at is null
-      order by valid_at desc limit 3`,
-    [now]
-  ).catch(() => []);
+  const claims = await repo.memory.activeBlockers(now).catch(() => []);
   const out = claims.map((c) => item(`claim:${c.id}`, `${c.text}${c.quote ? ` — "${String(c.quote).slice(0, 120)}"` : ''}`));
   if (ctx.githubLogin) {
-    const blocked = await rows(
-      `select id, subject, raw from source_item
-        where source = 'github_pr' and author_identity = $1 and raw->>'state' = 'opened'
-          and exists (select 1 from jsonb_array_elements_text(coalesce(raw->'labels','[]'::jsonb)) l where l ilike '%block%')
-        limit 3`,
-      [`github:${ctx.githubLogin}`]
-    );
+    const blocked = await repo.sources.blockedPrs(`github:${ctx.githubLogin}`);
     for (const p of blocked) out.push(item(`gh:${p.raw?.webUrl || p.id}`, `Blocked label on ${p.subject}`, { url: p.raw?.webUrl }));
   }
   return out;
 }
 
 async function personFor(email) {
-  return one(
-    `select p.id, p.display_name from person p
-      where not p.is_me and (lower(p.primary_email) = $1
-         or p.id in (select person_id from person_identity where kind = 'smtp' and value = $1))
-      limit 1`,
-    [email]
-  );
+  return repo.people.otherByEmail(email);
 }
 
 async function personPageItem(person) {
@@ -374,41 +283,18 @@ async function oneOnOneSections(m, ctx, now) {
   if (!person) {
     // Not (yet) a person in the store: their own messages by address, and
     // whatever recall finds for the meeting and their name.
-    const threads = otherEmail
-      ? await rows(
-          `select id, source, subject, occurred_at, left(body_text, 220) as snippet from source_item
-            where source in ('graph_chat','graph_mail') and lower(author_identity) = $1
-              and occurred_at > $2::timestamptz - interval '21 days'
-            order by occurred_at desc limit 6`,
-          [otherEmail, now]
-        )
-      : [];
+    const threads = otherEmail ? await repo.sources.threadsFromAddress(otherEmail, now) : [];
     const name = otherEmail ? otherEmail.split('@')[0].replace(/[._-]+/g, ' ') : '';
     return [
       { title: 'Recent threads with them', items: threads.map((t) => item(`item:${t.id}`, `${t.subject || t.source}: ${t.snippet}`, { when: t.occurred_at })) },
       ...(await generalSections({ ...m, subject: `${m.subject} ${name}`.trim() }, ctx)),
     ];
   }
-  const commitments = await rows(
-    `select id, direction, summary, due_at from commitment
-      where counterparty_person_id = $1 and status in ('open','dispatched') and superseded_by is null
-      order by due_at nulls last, extracted_at desc limit 12`,
-    [person.id]
-  );
+  const commitments = await repo.commitments.openWithPerson(person.id);
   const due = (c) => (c.due_at ? ` (due ${c.due_at.toISOString().slice(0, 10)})` : '');
-  const idents = await rows('select value from person_identity where person_id = $1', [person.id]);
-  const threads = await rows(
-    `select id, source, subject, occurred_at, left(body_text, 220) as snippet from source_item
-      where source in ('graph_chat','graph_mail') and author_identity = any($1::text[])
-        and occurred_at > $2::timestamptz - interval '21 days'
-      order by occurred_at desc limit 6`,
-    [idents.map((i) => i.value), now]
-  );
-  const claims = await rows(
-    `select id, text from claim where subject_kind = 'person' and subject_id = $1 and status = 'active'
-      order by valid_at desc limit 5`,
-    [person.id]
-  );
+  const idents = await repo.people.identitiesOf(person.id);
+  const threads = await repo.sources.threadsFromIdentities(idents.map((i) => i.value), now);
+  const claims = await repo.memory.activeForPerson(person.id);
   const page = await personPageItem(person);
   return [
     { title: `I owe ${person.display_name}`, items: commitments.filter((c) => c.direction === 'owed_by_me').map((c) => item(`commitment:${c.id}`, `${c.summary}${due(c)}`)) },
@@ -508,7 +394,7 @@ async function gatherEvidence(m, kind, ctx, { now = new Date() } = {}) {
 // --------------------------------------------------------------- brief ----
 
 async function briefRow(key) {
-  return one('select * from meeting_brief where dedupe_key = $1', [key]);
+  return repo.meetings.briefByKey(key);
 }
 
 async function writeBrief(m, kind, ctx, { now }) {
@@ -546,25 +432,32 @@ async function brief(target, { deliver = false, force = false, now = new Date() 
   if (!fresh || force) {
     try {
       const { rendered, refs } = await writeBrief(m, kind, ctx, { now });
-      row = await one(
-        `insert into meeting_brief (dedupe_key, event_external_id, source_item_id, starts_at, series_key, kind, title,
-                                    headline, body, points, refs, join_url, error, attempts)
-         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,null,1)
-         on conflict (dedupe_key) do update set kind = excluded.kind, title = excluded.title,
-           headline = excluded.headline, body = excluded.body, points = excluded.points, refs = excluded.refs,
-           join_url = excluded.join_url, error = null, attempts = meeting_brief.attempts + 1, updated_at = now()
-         returning *`,
-        [key, m.eventId, m.itemId, m.start, m.seriesKey, kind, m.subject, rendered.headline, rendered.body,
-          JSON.stringify({ points: rendered.points, context: rendered.context }), JSON.stringify(refs), m.joinUrl]
-      );
+      row = await repo.meetings.upsertBrief({
+        key,
+        eventId: m.eventId,
+        itemId: m.itemId,
+        startsAt: m.start,
+        seriesKey: m.seriesKey,
+        kind,
+        title: m.subject,
+        headline: rendered.headline,
+        body: rendered.body,
+        points: { points: rendered.points, context: rendered.context },
+        refs,
+        joinUrl: m.joinUrl,
+      });
       log.info('briefed', { brief: row.id, kind, words: rendered.words, refs: Object.keys(refs).length });
     } catch (err) {
-      await query(
-        `insert into meeting_brief (dedupe_key, event_external_id, source_item_id, starts_at, series_key, kind, title, error, attempts)
-         values ($1,$2,$3,$4,$5,$6,$7,$8,1)
-         on conflict (dedupe_key) do update set error = excluded.error, attempts = meeting_brief.attempts + 1, updated_at = now()`,
-        [key, m.eventId, m.itemId, m.start, m.seriesKey, kind, m.subject, String(err.message).slice(0, 500)]
-      );
+      await repo.meetings.recordBriefError({
+        key,
+        eventId: m.eventId,
+        itemId: m.itemId,
+        startsAt: m.start,
+        seriesKey: m.seriesKey,
+        kind,
+        title: m.subject,
+        error: String(err.message).slice(0, 500),
+      });
       throw err;
     }
   }
@@ -582,7 +475,7 @@ async function brief(target, { deliver = false, force = false, now = new Date() 
       priority: new Date(m.start).getTime() - now.getTime() <= 30 * 60_000 ? 'urgent' : 'normal',
       actions: [{ label: 'Open brief', url: dashboardUrl(`brief-${row.id}`) }, ...(m.joinUrl ? [{ label: 'Join', url: m.joinUrl }] : [])],
     });
-    if (n) row = await one('update meeting_brief set notification_id = $2 where id = $1 returning *', [row.id, n.id]);
+    if (n) row = await repo.meetings.markBriefNotified(row.id, n.id);
   }
   return { meeting: m, kind, kindSource: source, brief: row };
 }
@@ -590,18 +483,7 @@ async function brief(target, { deliver = false, force = false, now = new Date() 
 // ------------------------------------------------------------ learning ----
 
 async function transcriptsFor(m) {
-  return rows(
-    `select si.id, si.body_text, si.occurred_at from source_item si
-      where si.source = 'audio' and length(si.body_text) > 40
-        -- A superseded episode's speech lives in another row (ingest/audio.js).
-        and not exists (select 1 from audio_episode x where x.source_item_id = si.id and x.state = 'superseded')
-        and (
-            si.thread_external_id = $1
-         or si.id in (select source_item_id from audio_episode where calendar_event_id = $1 and source_item_id is not null)
-         or si.occurred_at between $2::timestamptz - interval '10 minutes' and $3::timestamptz)
-      order by si.occurred_at`,
-    [m.eventId, m.start, m.end]
-  );
+  return repo.audio.transcriptsFor(m.eventId, m.start, m.end);
 }
 
 function sourceOf(quote, items, verify) {
@@ -654,12 +536,15 @@ async function learnOccurrence(m, kind, items) {
   const ids = [];
   for (const c of claims) {
     const src = sourceOf(c.quote, items, verifyQuote);
-    const row = await one(
-      `insert into claim (subject_kind, subject_id, subject_label, kind, text, quote, source_item_id, source_kind,
-                          confidence, valid_at, status, origin, extracted_by)
-       values ('topic', null, $1, $2, $3, $4, $5, 'audio', 0.8, $6, 'active', 'distill', $7) returning id`,
-      [label, c.kind, c.text, c.quote, src?.id ?? null, m.start, LEARN_VERSION]
-    );
+    const row = await repo.memory.insertTopicClaim({
+      label,
+      kind: c.kind,
+      text: c.text,
+      quote: c.quote,
+      sourceItemId: src?.id ?? null,
+      validAt: m.start,
+      extractedBy: LEARN_VERSION,
+    });
     ids.push(row.id);
   }
   if (ids.length && config.memory.enabled) {
@@ -742,7 +627,7 @@ function briefView(b) {
 }
 
 async function getBrief(id) {
-  const b = await one('select * from meeting_brief where id = $1', [id]);
+  const b = await repo.meetings.briefById(id);
   return b ? briefView(b) : null;
 }
 
@@ -760,32 +645,10 @@ async function overview({ days = 1, hours = 24, now = new Date() } = {}) {
 
   const upcomingList = await upcoming({ hours, now, limit: 15 });
 
-  const epRows = await rows(
-    `select e.id, e.started_at, e.ended_at, e.stream, e.speech_seconds, e.kind, e.calendar_event_id,
-            e.source_item_id, si.subject as item_subject, left(si.body_text, 24000) as transcript,
-            ev.id as event_item_id, ev.external_id as event_external_id, ev.subject as event_subject,
-            ev.occurred_at as event_occurred_at, ev.author_identity as event_organizer,
-            ev.body_text as event_body, ev.raw as event_raw
-       from audio_episode e
-       join source_item si on si.id = e.source_item_id
-       left join source_item ev on ev.source = 'graph_event' and ev.external_id = e.calendar_event_id
-      where e.kind in ('meeting','call') and e.state <> 'superseded'
-        and e.started_at >= $1
-      order by e.started_at desc
-      limit 60`,
-    [since]
-  );
+  const epRows = await repo.audio.overviewSince(since);
 
   const epIds = epRows.map((r) => r.id);
-  const debriefRows = epIds.length
-    ? await rows(
-        `select distinct on (episode_id) *
-           from meeting_debrief
-          where episode_id = any($1::bigint[])
-          order by episode_id, (error is null) desc, created_at desc`,
-        [epIds]
-      )
-    : [];
+  const debriefRows = epIds.length ? await repo.meetings.bestForEpisodes(epIds) : [];
   const debriefByEp = new Map(debriefRows.map((d) => [String(d.episode_id), debriefMod.view(d)]));
 
   const recordedEventIds = new Set();

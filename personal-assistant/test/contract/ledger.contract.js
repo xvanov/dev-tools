@@ -65,4 +65,20 @@ module.exports = {
     assert.deepStrictEqual([h[1].quote, Number(h[1].source_item_id), Number(h[1].confidence)], ['done, merged', item, 0.9]);
     assert.strictEqual(h[0].quote, null);
   },
+
+  'progressQuotes: the "progresses" quotes of the commitments, newest first': async ({ repos, seed, assert }) => {
+    const a = await seed.commitment();
+    const b = await seed.commitment();
+    const none = await seed.commitment();
+    await seed.evidenceWith(a, { effect: 'progresses', quote: 'first' });
+    await new Promise((r) => setTimeout(r, 5));
+    await seed.evidenceWith(a, { effect: 'progresses', quote: 'second' });
+    await seed.evidenceWith(a, { effect: 'closes', quote: 'closing, not progress' });
+    await seed.evidenceWith(a, { effect: 'progresses', quote: null });
+    await seed.evidenceWith(b, { effect: 'progresses', quote: 'on b' });
+    const got = await repos.ledger.progressQuotes([a, b, none]);
+    assert.deepStrictEqual(got.filter((r) => Number(r.commitment_id) === a).map((r) => r.quote), ['second', 'first']);
+    assert.deepStrictEqual(got.filter((r) => Number(r.commitment_id) === b).map((r) => r.quote), ['on b']);
+    assert.deepStrictEqual(await repos.ledger.progressQuotes([]), []);
+  },
 };

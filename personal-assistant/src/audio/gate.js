@@ -96,13 +96,7 @@ async function currentMicHolders() {
 }
 
 async function upcomingEvents(now) {
-  const { rows } = require('../db');
-  return rows(
-    `select subject, occurred_at, raw from source_item
-      where source = 'graph_event'
-        and occurred_at between $1::timestamptz - interval '12 hours' and $1::timestamptz + interval '1 hour'`,
-    [new Date(now)]
-  );
+  return require('../repo').sources.calendarAroundNow(now);
 }
 
 let wanted = null;

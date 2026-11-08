@@ -9,7 +9,7 @@
 // Formatting is split from fetching so the layout can be tested without a
 // database, and so the MCP server can return the same structure as text.
 
-const { rows } = require('../db');
+const repo = require('../repo');
 
 const DAY = 86400_000;
 
@@ -17,60 +17,23 @@ const DAY = 86400_000;
 // last three weeks: the brief's "open MRs" and the Repos view's "Review
 // requests & board items" (dashboard/repos.js).
 function recentReviews() {
-  return rows(
-    `select subject, source, raw, occurred_at
-       from source_item
-      where source in ('github_pr','github_notification','github_project_item','jira_issue')
-        and occurred_at > now() - interval '21 days'
-      order by occurred_at desc
-      limit 20`
-  );
+  return repo.sources.recentReviews();
 }
 
 async function gather({ horizonDays = 7 } = {}) {
   // What people ask of me, and notes from my own work, kept apart
   // (src/commitments/selfNotes.js): the second is grouped and expires.
-  const { SELF_NOTE, group } = require('../commitments/selfNotes');
-  const select = (selfNote, limit) =>
-    rows(
-      `select c.id, c.summary, c.detail, c.direction, c.due_at, c.status, c.confidence,
-              c.project_confidence, c.repo_path,
-              p.name as project, per.display_name as who, per.is_me as who_is_me, si.source, si.subject,
-              si.occurred_at, si.thread_external_id
-         from commitment c
-         left join project p on p.id = c.project_id
-         left join person per on per.id = c.counterparty_person_id
-         join source_item si on si.id = c.source_item_id
-        where c.status in ('open','dispatched') and c.superseded_by is null
-          and ${selfNote ? '' : 'not '}${SELF_NOTE}
-        order by c.due_at nulls last, c.extracted_at desc
-        limit ${limit}`
-    );
-  const commitments = await select(false, 60);
-  const selfNotes = group(await select(true, 200));
+  const { group } = require('../commitments/selfNotes');
+  const commitments = await repo.commitments.openForBrief(false, 60);
+  const selfNotes = group(await repo.commitments.openForBrief(true, 200));
 
-  const meetings = await rows(
-    `select subject, occurred_at, raw
-       from source_item
-      where source = 'graph_event'
-        and occurred_at between now() - interval '2 hours' and now() + interval '1 day'
-      order by occurred_at
-      limit 20`
-  );
+  const meetings = await repo.sources.calendarToday();
 
   const reviews = await recentReviews();
 
-  const runsActive = await rows(
-    `select id, task, mode, status, repo_path, termhub_session_id, started_at, route, factory_job_id, factory_state
-       from run where status in ('starting','running','waiting')
-      order by started_at desc limit 10`
-  );
+  const runsActive = await repo.runs.activeForBrief();
 
-  const runsReview = await rows(
-    `select id, task, mode, status, exit_note, repo_path, mr_url, ended_at
-       from run where status in ('done', 'blocked')
-      order by ended_at desc nulls last limit 10`
-  );
+  const runsReview = await repo.runs.reviewForBrief();
 
   return { commitments, selfNotes, meetings, reviews, runsActive, runsReview, horizonDays };
 }

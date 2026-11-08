@@ -63,6 +63,92 @@ function postgres(db) {
       if (!(ok[table] || []).includes(column)) throw new Error(`backdate ${table}.${column} is not a seed`);
       await db.query(`update ${table} set ${column} = $2 where id = $1`, [id, when]);
     },
+    /**
+     * A source item with the columns a query may filter on: o.source, o.externalId, o.occurredAt (Date or
+     * ISO), o.raw (object), o.author, o.subject, o.body, o.thread. Returns its id.
+     */
+    async item(o = {}) {
+      n++;
+      const externalId = o.externalId || `seed-item-${process.pid}-${Date.now()}-${n}`;
+      const r = await db.one(
+        `insert into source_item (source, external_id, thread_external_id, occurred_at, author_identity, subject, body_text, raw, content_hash)
+         values ($1, $2, $3, coalesce($4, now()), $5, $6, $7, $8::jsonb, md5($2)) returning id`,
+        [o.source || 'graph_event', externalId, o.thread || null, o.occurredAt || null, o.author || null, o.subject || 'subject', o.body || '', JSON.stringify(o.raw || {})]
+      );
+      return Number(r.id);
+    },
+    /** A person (o.name, o.email, o.isMe); returns its id. */
+    async personWith(o = {}) {
+      n++;
+      const r = await db.one(`insert into person (display_name, primary_email, is_me) values ($1, $2, $3) returning id`, [
+        o.name || `Person ${n}`,
+        o.email === undefined ? `person-${process.pid}-${Date.now()}-${n}@example.test` : o.email,
+        Boolean(o.isMe),
+      ]);
+      return Number(r.id);
+    },
+    /** An identity (kind, value) of a person; returns its id. */
+    async identity(personId, kind, value) {
+      const r = await db.one(`insert into person_identity (person_id, kind, value) values ($1, $2, $3) returning id`, [personId, kind, value]);
+      return Number(r.id);
+    },
+    /** A project (o.name, o.gitlabPath); returns its id. */
+    async project(o = {}) {
+      n++;
+      const r = await db.one(`insert into project (name, gitlab_path) values ($1, $2) returning id`, [o.name || `proj-${process.pid}-${Date.now()}-${n}`, o.gitlabPath || null]);
+      return Number(r.id);
+    },
+    /** Sets columns of a commitment by name (status, due_at, plan, planned_at, project_id, ...). */
+    async commitmentSet(id, cols) {
+      const keys = Object.keys(cols);
+      await db.query(`update commitment set ${keys.map((k, i) => `${k} = $${i + 2}`).join(', ')} where id = $1`, [id, ...keys.map((k) => cols[k])]);
+    },
+    /** A ledger_evidence row for a commitment (o.effect default 'progresses', o.quote, o.decision); returns its id. */
+    async evidenceWith(commitmentId, o = {}) {
+      n++;
+      const r = await db.one(
+        `insert into ledger_evidence (commitment_id, effect, quote, method, extracted_by, decision)
+         values ($1, $2, $3, 'rule', $4, $5) returning id`,
+        [commitmentId, o.effect || 'progresses', o.quote === undefined ? 'a quote' : o.quote, `seed-${n}`, o.decision || null]
+      );
+      return Number(r.id);
+    },
+    /** A run row (o.status, o.commitmentId, o.task); returns its id. */
+    async run(o = {}) {
+      const r = await db.one(
+        `insert into run (commitment_id, mode, task, status, route, ended_at)
+         values ($1, 'plan', $2, $3, 'claude', $4) returning id`,
+        [o.commitmentId || null, o.task || 'a seeded run', o.status || 'running', o.endedAt || null]
+      );
+      return Number(r.id);
+    },
+    /** An audio_episode (o.startedAt, o.endedAt, o.stream, o.kind, o.state, o.eventId, o.itemId, o.speech); returns its id. */
+    async episode(o = {}) {
+      n++;
+      const started = o.startedAt || new Date(Date.now() - 3600_000 - n * 1000);
+      const r = await db.one(
+        `insert into audio_episode (started_at, ended_at, stream, speech_seconds, kind, calendar_event_id, state, source_item_id)
+         values ($1, $2, $3, $4, $5, $6, $7, $8) returning id`,
+        [started, o.endedAt || new Date(new Date(started).getTime() + 1800_000), o.stream || 'mic+loopback', o.speech ?? 600, o.kind || 'meeting', o.eventId || null, o.state || 'transcribed', o.itemId || null]
+      );
+      return Number(r.id);
+    },
+    /** A claim (o.status, o.kind, o.subjectKind, o.subjectId, o.validAt); returns its id. */
+    async claim(o = {}) {
+      const r = await db.one(
+        `insert into claim (subject_kind, subject_id, subject_label, kind, text, status, origin, valid_at)
+         values ($1, $2, $3, $4, $5, $6, 'explicit', coalesce($7, now())) returning id`,
+        [o.subjectKind || 'me', o.subjectId || null, o.label || 'me', o.kind || 'blocker', o.text || 'a seeded claim', o.status || 'active', o.validAt || null]
+      );
+      return Number(r.id);
+    },
+    /** Sets a sync_cursor's state (upserts the row). */
+    async cursor(source, state) {
+      await db.query(
+        `insert into sync_cursor (source, state) values ($1, $2::jsonb) on conflict (source) do update set state = excluded.state`,
+        [source, JSON.stringify(state)]
+      );
+    },
   };
   return seed;
 }

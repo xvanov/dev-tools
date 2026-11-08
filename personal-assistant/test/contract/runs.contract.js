@@ -58,4 +58,32 @@ module.exports = {
     assert.strictEqual(String((await repos.runs.byId(r.id)).id), String(r.id));
     assert.strictEqual(await repos.runs.byId(-1), null);
   },
+
+  'activeForBrief: runs starting, running or waiting, newest first, at most 10': async ({ repos, seed, assert }) => {
+    const tag = `brief-active-${Math.random()}`;
+    const a = await seed.run({ status: 'running', task: tag });
+    const b = await seed.run({ status: 'waiting', task: tag });
+    await seed.run({ status: 'done', task: tag });
+    await seed.run({ status: 'blocked', task: tag });
+    const got = await repos.runs.activeForBrief();
+    assert.ok(got.length <= 10);
+    const mine = got.filter((r) => r.task === tag).map((r) => Number(r.id));
+    assert.ok(mine.every((id) => [a, b].includes(id)), 'only live statuses');
+    assert.ok(['id', 'task', 'mode', 'status', 'repo_path', 'termhub_session_id', 'started_at', 'route', 'factory_job_id', 'factory_state'].every((k) => k in got[0]));
+    const times = got.map((r) => new Date(r.started_at).getTime());
+    assert.deepStrictEqual(times, [...times].sort((x, y) => y - x));
+  },
+
+  'reviewForBrief: runs done or blocked, latest ended first, at most 10': async ({ repos, seed, assert }) => {
+    const tag = `brief-review-${Math.random()}`;
+    const old = await seed.run({ status: 'done', task: tag, endedAt: new Date(Date.now() - 3 * 3600_000) });
+    const recent = await seed.run({ status: 'blocked', task: tag, endedAt: new Date(Date.now() - 3600_000) });
+    await seed.run({ status: 'running', task: tag });
+    const got = await repos.runs.reviewForBrief();
+    assert.ok(got.length <= 10);
+    const mine = got.filter((r) => r.task === tag).map((r) => Number(r.id));
+    assert.ok(mine.every((id) => [old, recent].includes(id)), 'only finished statuses');
+    if (mine.length === 2) assert.deepStrictEqual(mine, [recent, old]);
+    assert.ok(['id', 'task', 'mode', 'status', 'exit_note', 'repo_path', 'mr_url', 'ended_at'].every((k) => k in got[0]));
+  },
 };

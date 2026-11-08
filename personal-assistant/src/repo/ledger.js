@@ -69,6 +69,22 @@ function create(db) {
         [commitmentId]
       );
     },
+
+    // --- for agent/planner.js
+
+    /**
+     * The reconciler's "progresses" quotes for commitments, newest first.
+     * @param {Array<number|string>} commitmentIds
+     * @returns {Promise<{commitment_id: number|string, quote: string}[]>}
+     */
+    async progressQuotes(commitmentIds) {
+      return db.rows(
+        `select commitment_id, quote from ledger_evidence
+        where commitment_id = any($1::bigint[]) and effect = 'progresses' and quote is not null
+        order by created_at desc`,
+        [commitmentIds]
+      );
+    },
   };
 }
 

@@ -90,6 +90,26 @@ function create(db) {
     async byId(id) {
       return db.one('select * from run where id = $1', [id]);
     },
+
+    // --- for brief/index.js
+
+    /** The runs in flight (starting, running, waiting), newest first (10). */
+    async activeForBrief() {
+      return db.rows(
+        `select id, task, mode, status, repo_path, termhub_session_id, started_at, route, factory_job_id, factory_state
+       from run where status in ('starting','running','waiting')
+      order by started_at desc limit 10`
+      );
+    },
+
+    /** Runs finished or blocked and waiting for a look, newest first (10). */
+    async reviewForBrief() {
+      return db.rows(
+        `select id, task, mode, status, exit_note, repo_path, mr_url, ended_at
+       from run where status in ('done', 'blocked')
+      order by ended_at desc nulls last limit 10`
+      );
+    },
   };
 }
 

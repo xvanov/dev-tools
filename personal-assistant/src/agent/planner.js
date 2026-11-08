@@ -24,7 +24,7 @@
 
 const llm = require('../llm');
 const { config } = require('../config');
-const { rows, one, query } = require('../db');
+const repo = require('../repo');
 const { logger } = require('../log');
 const P = require('./plannerCore');
 
@@ -33,34 +33,11 @@ const log = logger('planner');
 const BATCH = 6;
 
 async function due(limit) {
-  const { SELF_NOTE } = require('../commitments/selfNotes');
-  return rows(
-    `select c.id, c.summary, c.detail, c.repo_path, c.project_id, pr.name as project,
-            per.display_name as who, si.source, left(si.body_text, 800) as ask_text
-       from commitment c
-       join source_item si on si.id = c.source_item_id
-       left join person per on per.id = c.counterparty_person_id
-       left join project pr on pr.id = c.project_id and pr.active
-      where c.status = 'open' and c.direction = 'owed_by_me' and c.superseded_by is null
-        and c.planned_at is null
-        -- Probably done already (a "Looks done?" card waits) or already has a run.
-        and not exists (select 1 from ledger_evidence e where e.commitment_id = c.id
-                         and e.effect in ('closes','moot') and e.decision is null)
-        and not exists (select 1 from run r where r.commitment_id = c.id)
-        and si.occurred_at > now() - interval '7 days'
-        and not ${SELF_NOTE}
-      order by si.occurred_at desc
-      limit $1`,
-    [limit]
-  );
+  return repo.commitments.toPlan(limit);
 }
 
 async function researchToday() {
-  const r = await one(
-    `select count(*)::int as n from commitment
-      where plan->>'researchRunId' is not null and planned_at >= date_trunc('day', now())`
-  );
-  return r.n;
+  return repo.commitments.researchStartedToday();
 }
 
 async function act(p) {
@@ -139,7 +116,7 @@ async function act(p) {
       expiresAt: new Date(Date.now() + 5 * 86400_000),
     });
   }
-  await query('update commitment set kind = $2, plan = $3, planned_at = now() where id = $1', [c.id, p.kind, plan]);
+  await repo.commitments.setPlan(c.id, p.kind, plan);
   return plan;
 }
 
@@ -148,24 +125,8 @@ async function act(p) {
 // offered a run to build a button that had merged four days earlier.
 async function background(todos) {
   const ids = todos.map((t) => t.id);
-  const progress = await rows(
-    `select commitment_id, quote from ledger_evidence
-      where commitment_id = any($1::bigint[]) and effect = 'progresses' and quote is not null
-      order by created_at desc`,
-    [ids]
-  );
-  const shipped = await rows(
-    `select c.id as commitment_id, si.subject
-       from commitment c
-       join source_item ask on ask.id = c.source_item_id
-       join project pr on pr.id = c.project_id
-       join source_item si on si.source = 'github_pr'
-        and lower(si.raw->>'project') = lower(pr.gitlab_path)
-        and si.occurred_at > ask.occurred_at - interval '1 day'
-      where c.id = any($1::bigint[])
-      order by si.occurred_at desc`,
-    [ids]
-  );
+  const progress = await repo.ledger.progressQuotes(ids);
+  const shipped = await repo.commitments.shippedSinceAsk(ids);
   const by = (list, field) => {
     const m = new Map();
     for (const r of list) {
@@ -210,7 +171,7 @@ async function pass({ limit = BATCH } = {}) {
   }
   // An ask the model skipped is marked planned too, or it would be asked about forever.
   for (const t of todos) {
-    if (!done.has(String(t.id))) await query(`update commitment set kind = 'other', planned_at = now() where id = $1`, [t.id]);
+    if (!done.has(String(t.id))) await repo.commitments.markPlannedOther(t.id);
   }
   log.info('planned', { todos: todos.length, ...counts });
   return { planned: todos.length, ...counts };
