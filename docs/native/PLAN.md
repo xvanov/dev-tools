@@ -367,8 +367,12 @@ run mid-step; a job continued on an existing branch (`--branch`).
   front; strict TS, module by module.
 - [ ] **4.2** Chat moves to the Agent SDK: approvals become typed callbacks instead of reading
   the terminal screen.
-- [ ] **4.3** Policy engine: every tool call is allow / deny / ask, with an audit log
-  (hash-chained).
+- [x] **4.3** Policy engine: every tool call is allow / deny / ask, with an audit log
+  (hash-chained). (c7ae66b) Declarative policy (`src/policy`, tracked defaults plus an untracked
+  per-stack override); defaults are the old allow/ask split; a locked rule bars voice from merges,
+  pushes to main and secret reveals; `audit_log` (sql/037, `src/repo/audit.js`) and `pa audit verify`.
+  Applied at the MCP server, chat permission answers and factory approve; jarvisd (4.1) makes it the
+  single in-process gate.
 - [ ] **4.4** Supervisor from Z1 becomes jarvisd's own; one executable per OS (T7).
 - [ ] **Exit 4:** one process per machine, typed approvals, Z6 deploy test green.
 
