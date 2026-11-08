@@ -79,11 +79,13 @@ one aggregate with its contract file) per commit.
 The supervisor (`personal-assistant/src/supervisor`, Node builtins only) forks each generation
 with `child_process.fork(worker)` and talks to it over IPC (`ready`, `drain`). For jarvisd it
 forks the jarvisd entry with `execPath` set to Bun and `serialization: 'json'` (Bun's IPC speaks
-Node's JSON protocol), or spawns the compiled `jarvisd` executable; the protocol (`PA_SUPERVISED`,
-`/healthz`, `drain`, lease release) is unchanged, so a roll can move from a Node generation to a
-jarvisd one and back (rollback). That switch is the next commit after parity: `PA_RUNTIME=bun`
-for the supervisor, then a live roll on the work stack. Phase 4.4 later folds the supervisor
-into jarvisd itself.
+Node's JSON protocol; Node generations use JSON too now); the protocol (`PA_SUPERVISED`,
+`/healthz`, `drain`, lease release) is unchanged. `PA_RUNTIME=bun` in the supervisor's
+environment selects it (`runtimeSpec` in `src/supervisor/index.js`; Bun from `PA_BUN`, else
+jarvisd's pinned npm install), and every generation then runs `jarvisd/src/main.ts` under Bun;
+`test/supervisorBun.test.js` starts and rolls Bun generations. The runtime is read when the
+supervisor starts, so switching a stack is a supervisor restart (the bootstrap path), and so is
+switching back. Phase 4.4 later folds the supervisor into jarvisd itself.
 
 ## Build
 
@@ -96,5 +98,6 @@ setup; T7's cargo and Bun caches apply.
 ## Status
 
 - [x] Stage 1: host, Bun parity, compiled build, CI on Windows and Linux.
-- [ ] Supervisor runs a jarvisd generation (`PA_RUNTIME=bun`); live roll on the work stack.
+- [x] Supervisor runs jarvisd generations (`PA_RUNTIME=bun`), tested with the fixture worker.
+- [ ] A live run of the work stack with `PA_RUNTIME=bun`.
 - [ ] Stage 2 onward, as above.

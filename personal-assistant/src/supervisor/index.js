@@ -247,8 +247,26 @@ function probe(port, timeoutMs = 2000) {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+/**
+ * What runs a generation (plan 4.1). PA_RUNTIME=node (default): Node runs
+ * src/worker.js. PA_RUNTIME=bun: Bun runs jarvisd/src/main.ts, which boots the
+ * same worker; Bun from PA_BUN, else the one jarvisd's npm install pinned.
+ * Both speak the same protocol over IPC (JSON serialization: Bun's IPC with a
+ * Node parent), so a roll can move between them and a rollback can move back.
+ * Pure but for one existsSync.
+ */
+function runtimeSpec(runtime = envSetting('PA_RUNTIME', 'node'), { bun = envSetting('PA_BUN', '') } = {}) {
+  if (runtime !== 'bun') return { runtime: 'node', worker: path.join(__dirname, '..', 'worker.js'), execPath: process.execPath };
+  const jarvisd = path.join(__dirname, '..', '..', '..', 'jarvisd');
+  const exe = bun || path.join(jarvisd, 'node_modules', 'bun', 'bin', 'bun.exe');
+  if (!fs.existsSync(exe)) throw new Error(`PA_RUNTIME=bun but no Bun at ${exe} (npm ci in jarvisd/, or set PA_BUN)`);
+  return { runtime: 'bun', worker: path.join(jarvisd, 'src', 'main.ts'), execPath: exe };
+}
+
 function createSupervisor({
-  worker = path.join(__dirname, '..', 'worker.js'),
+  runtime = null,
+  worker = (runtime || runtimeSpec()).worker,
+  execPath = (runtime || runtimeSpec()).execPath,
   port = Number(envSetting('PA_DISPATCH_PORT', DEFAULT_PORT)),
   host = envSetting('PA_DISPATCH_HOST', '127.0.0.1'),
   controlPath,
@@ -276,6 +294,9 @@ function createSupervisor({
     const n = ++seq;
     const child = fork(worker, [], {
       cwd: path.dirname(worker),
+      execPath,
+      // JSON, not Node's default 'advanced': Bun's IPC speaks only JSON to a Node parent.
+      serialization: 'json',
       env: { ...process.env, ...env, PA_SUPERVISED: '1', PA_SUPERVISOR_GENERATION: String(n) },
       // With a log file, a generation's output is relayed into it (relay()).
       stdio: logFile ? ['ignore', 'pipe', 'pipe', 'ipc'] : ['ignore', 'inherit', 'inherit', 'ipc'],
@@ -794,4 +815,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { createSupervisor, request, defaultControlPath, probe, envSetting, sourceHash, cli, createLogFile, defaultLogFile, DEFAULT_PORT };
+module.exports = { createSupervisor, runtimeSpec, request, defaultControlPath, probe, envSetting, sourceHash, cli, createLogFile, defaultLogFile, DEFAULT_PORT };

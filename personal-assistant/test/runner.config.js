@@ -18,6 +18,7 @@ module.exports = {
   // Slow end-to-end tests that import the whole app: in --changed mode only their own area selects them.
   narrow: {
     'supervisor.test.js': ['src/supervisor/', 'test/fixtures/supervisorWorker.js'],
+    'supervisorBun.test.js': ['src/supervisor/', 'test/fixtures/supervisorWorker.js', '../jarvisd/'],
     'deploy.test.js': ['src/supervisor/', 'windows/redeploy.ps1', 'linux/redeploy.sh'],
   },
 };
