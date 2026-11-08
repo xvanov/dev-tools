@@ -234,6 +234,8 @@ const ALLOW_COMMANDS = [
   'factory jobs', 'factory status', 'factory report',
   // Reading the feed.
   'notify list', 'notify weights', 'notify digest',
+  // The commit the worker serves.
+  'version',
 ];
 const ASK_COMMANDS = ['do', 'land', 'drop', 'say', 'done', 'remember', 'forget', 'routine add',
   // Accepting a card starts work; a repo default changes what every later run delivers.

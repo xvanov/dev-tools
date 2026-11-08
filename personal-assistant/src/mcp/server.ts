@@ -256,6 +256,7 @@ const READ_VERBS: Record<string, Spec> = {
   'factory jobs': {},
   'factory status': {},
   'factory report': {},
+  version: {},
 };
 
 // Flags that make a reading verb act, on every verb.
