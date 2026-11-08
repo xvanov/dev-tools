@@ -167,7 +167,8 @@ const JOB_TOOLS = ['factory_approve', 'factory_resume'];
  * factory's snapshot.
  */
 async function withJobDelivery(request, lookup = null) {
-  if (request.channel !== 'voice' || !JOB_TOOLS.includes(request.tool)) return request;
+  // voice is judged by it; the dashboard's approvals are tagged by it (passkey step-up, plan 7.1)
+  if (!['voice', 'dashboard'].includes(request.channel) || !JOB_TOOLS.includes(request.tool)) return request;
   const args = { ...(request.args || {}) };
   try {
     const find = lookup || ((id) => require('../dispatch/factory').snapshotJob(id));

@@ -200,9 +200,14 @@ function memoryRepo() {
   let looked = 0;
   const counting = async () => { looked++; return null; };
   const dash = await P.withJobDelivery({ tool: 'factory_approve', action: 'approve', channel: 'dashboard', args: { job: 'app:0001' } }, counting);
-  assert.strictEqual(P.evaluate(dash).decision, 'allow');
+  assert.strictEqual(P.evaluate(dash).decision, 'allow', 'the dashboard may approve even when the job is not found');
+  assert.strictEqual(looked, 1, 'the dashboard approval is looked up so it is tagged');
+  const dashMerge = await P.withJobDelivery({ tool: 'factory_approve', action: 'approve', channel: 'dashboard', args: { job: 'app:0001' } }, lookup);
+  assert.deepStrictEqual(P.evaluate(dashMerge).tags, ['merge']);
+  assert.strictEqual(P.evaluate(dashMerge).decision, 'allow');
   await P.withJobDelivery({ tool: 'factory_start', action: 'approve', channel: 'voice', args: {} }, counting);
-  assert.strictEqual(looked, 0);
+  await P.withJobDelivery({ tool: 'factory_approve', action: 'approve', channel: 'cli', args: { job: 'x' } }, counting);
+  assert.strictEqual(looked, 1, 'other tools and channels are not looked up');
   assert.strictEqual(P.evaluate({ tool: 'factory_approve', action: 'approve', channel: 'dashboard', args: { job: 'x', delivery_unknown: true } }).decision, 'allow', 'unverified only bars voice');
   // a spoofed args.delivery from the request is replaced by the looked-up one
   const spoof = await P.withJobDelivery(voice('factory_approve', 'app:0001', { args: { job: 'app:0001', delivery: 'pr' } }), lookup);
