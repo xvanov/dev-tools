@@ -11,7 +11,9 @@
 // One dedicated connection LISTENs and republishes each notification on the
 // bus; GET /api/events (src/dashboard/events.js) streams the bus.
 //
-// The listener starts with the first stream, not with the worker: it serves
+// A supervised generation starts the listener before it says ready (so a
+// stream moved to it by a roll can be replayed, bus.js); otherwise it starts
+// with the first stream. Either way it is not under the lease: it serves
 // the dashboard, which a supervised generation brings up before it holds the
 // worker lock, and it is not background work (AGENT.md, "How the worker runs").
 //
@@ -54,12 +56,14 @@ function fromNotify(text) {
  * reopened (with backoff); notifications sent while it was down are lost, so
  * each reconnect calls onReconnect() and the pages refetch once.
  */
-function createListener({ connect, onEvent, onReconnect = () => {}, retryMs = [500, 1000, 2000, 5000, 15000] }) {
+function createListener({ connect, onEvent, onReconnect = () => {}, onListening = async () => {}, retryMs = [500, 1000, 2000, 5000, 15000] }) {
   let current = null;
   let stopped = false;
   let connectedOnce = false;
   let attempt = 0;
   let timer = null;
+  let firstUp;
+  const listening = new Promise((r) => (firstUp = r));
 
   function schedule() {
     if (stopped || timer) return;
@@ -91,11 +95,14 @@ function createListener({ connect, onEvent, onReconnect = () => {}, retryMs = [5
         if (e) onEvent(e);
       });
       await client.query(`listen ${CHANNEL}`);
+      // After LISTEN, not before: see onListening in ensureListening.
+      await Promise.resolve(onListening(client)).catch(() => {});
       if (stopped) return Promise.resolve(client.end?.()).catch(() => {});
       current = client;
       attempt = 0;
       if (connectedOnce) onReconnect();
       connectedOnce = true;
+      firstUp(true);
     } catch (err) {
       log.debug('event feed not connected — retrying', { message: err.message });
       if (client) Promise.resolve(client.end?.()).catch(() => {});
@@ -114,6 +121,8 @@ function createListener({ connect, onEvent, onReconnect = () => {}, retryMs = [5
       return Promise.resolve();
     },
     connected: () => Boolean(current),
+    /** Resolves once the feed first listens (and has its baseline). */
+    listening,
   };
 }
 
@@ -130,7 +139,16 @@ function ensureListening() {
       await c.connect();
       return c;
     },
-    onEvent: (e) => bus().publish(e.topic, e.payload),
+    // seq (sql/035) makes the id global across worker generations (bus.js).
+    onEvent: (e) => bus().publish(e.topic, e.payload, { gid: e.payload && e.payload.seq }),
+    // The sequence's value once LISTEN is in place: any event numbered at or
+    // under it that this process never received was committed before it
+    // began listening (bus.js, "baseline"). No sequence yet (before 035): none.
+    onListening: async (client) => {
+      const { rows } = await client.query('select last_value, is_called from pa_event_seq');
+      const r = rows[0];
+      if (r) bus().setBaseline(String(r.is_called ? r.last_value : BigInt(r.last_value) - 1n));
+    },
     onReconnect: () => bus().publish('resync', { reason: 'the event feed reconnected' }),
   });
   return listening;

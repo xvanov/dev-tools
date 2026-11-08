@@ -592,6 +592,10 @@ function start({ port = config.dispatch.port, host = config.dispatch.host } = {}
       if (!res.headersSent) send(res, err.status || 500, { error: err.message });
     });
   });
+  // Idle keep-alive sockets live 65 s, not Node's 5: the supervisor pools
+  // them, and reusing one this side had just closed failed the request.
+  server.keepAliveTimeout = 65_000;
+  server.headersTimeout = 66_000;
   return new Promise((resolve, reject) => {
     server.once('error', reject);
     server.listen(port, host, () => {

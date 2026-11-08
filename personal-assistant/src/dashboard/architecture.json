@@ -509,7 +509,10 @@
         "Restart fallback": "the scripts restart the task/unit (stop, kill node src/supervisor and src/worker.js, start, wait up to 120 s for the new commit) only when deploy.js exits 3 (no supervisor answers: the bootstrap) or 4 (src/supervisor/index.js changed), or when they just rewrote a task/unit that still named src/worker.js",
         "Bootstrap": "node src/worker.js not started by the supervisor (an older task or unit, which a non-elevated deploy cannot rewrite) becomes the supervisor before loading any worker code; PA_NO_SUPERVISOR=1 runs the bare worker",
         "Log": "<state dir>/logs/supervisor.log (PA_DATA_DIR, else %LOCALAPPDATA%\\personal-assistant or ~/.local/share/personal-assistant; PA_SUPERVISOR_LOG overrides): the supervisor's lines and each generation's stdout/stderr as [gen N], rotated at 5 MB, 3 kept. Workers log 'event loop blocked' for any stall over 1 s",
-        "Readiness": "a generation says ready only at the end of its startup (passes declared, lease requested), not when its port opens: the module loading in between blocked the loop for seconds right after the flip"
+        "Readiness": "a generation says ready only at the end of its startup (passes declared, lease requested), not when its port opens: the module loading in between blocked the loop for seconds right after the flip",
+        "Deploy test (Z6)": "node src/e2e/deployTest.js: during real rolls, 4 loops of GET /api/version, an /api/events stream reconnecting with Last-Event-ID while events are produced, and a termhub terminal printing ticks; passes only with zero failed requests, every event exactly once in order with no resync, and the terminal socket held with no tick missing. Spare mode (a supervisor on a free port, test/fixtures/deployWorker.js, a throwaway termhub) runs in test/deployTest.test.js; --live [--deploy] runs it against the stack (events through pg_notify and pa_event_seq)",
+        "Priority": "the worker runs at Normal; everything it starts is lowered to Below Normal as it spawns (src/util/childPriority.js). A below-normal worker got no CPU while other work filled every core and stalled up to 173 s",
+        "Keep-alive": "the worker dashboard keeps idle sockets 65 s; the supervisor resends a GET that meets ECONNRESET on a reused socket. status and a timed-out drain list what is in flight (method, path, age)"
       },
       "code": [
         "personal-assistant/src/supervisor/index.js",
@@ -524,7 +527,12 @@
         "personal-assistant/test/lease.test.js",
         "personal-assistant/test/deploy.test.js",
         "personal-assistant/src/util/lagWatch.js",
-        "personal-assistant/test/stalls.test.js"
+        "personal-assistant/test/stalls.test.js",
+        "personal-assistant/src/e2e/deployTest.js",
+        "personal-assistant/test/deployTest.test.js",
+        "personal-assistant/test/fixtures/deployWorker.js",
+        "personal-assistant/src/util/childPriority.js",
+        "termhub/test/frontSwap.test.js"
       ]
     },
     {
@@ -559,7 +567,7 @@
         "Send": "never sends: a draft opens, already written, in Teams or Outlook and you press Send",
         "Health": "GET /healthz: 200 {ready: true} once its process has finished starting, 503 while starting or draining (what the supervisor switches on)",
         "Waiting for your yes": "a card at the top of the board, on Build and in Ask's Text mode (permission.client.js) for the PA chat's pending action prompt, with Approve / Deny through POST /api/chat/permission; src/chat/permission.js reads the session's screen before one keystroke (Enter on Yes, or Esc). A factory job parked on an approval (needs_human) says \"waiting for your approval\" on Build and in Plan's Agent runs, each with Approve (POST /api/factory/jobs/<id>/approve); by voice, Jarvis's factory_approve",
-        "Live feed (plan 0.4, E3)": "GET /api/events: one SSE stream per page (events.client.js) of {id, topic, at, payload} with topics board, run, factory, routine and resync. Postgres triggers (sql/034_events_notify.sql) NOTIFY pa_events on every change to commitment, proposal, draft, ledger_evidence, commitment_block, secret_request, notification, run, factory_board (only when its jobs change), routine and routine_run, from any process; one LISTEN connection per worker generation (src/events) feeds an in-memory bus with a 1000-event ring for Last-Event-ID replay. Another generation's id (the supervisor ends streams on drain), a restart or a dropped LISTEN gives a resync and the page refetches once; replay across generations waits for the outbox (1.4). Plan, Build and Routines refetch on it (the 30 s polls are gone; a 5 min fallback poll stays). Measured on the work laptop: row commit to SSE frame 2 ms p50, 11 ms max; Plan sees a change in about 0.5 s (its /api/state takes 0.4 to 0.6 s), Build in about 0.1 s",
+        "Live feed (plan 0.4, E3)": "GET /api/events: one SSE stream per page (events.client.js) of {id, topic, at, payload} with topics board, run, factory, routine and resync. Postgres triggers (sql/034_events_notify.sql) NOTIFY pa_events on every change to commitment, proposal, draft, ledger_evidence, commitment_block, secret_request, notification, run, factory_board (only when its jobs change), routine and routine_run, from any process; one LISTEN connection per worker generation (src/events) feeds an in-memory bus with a 1000-event ring for Last-Event-ID replay. Another generation's id (the supervisor ends streams on drain), a restart or a dropped LISTEN gives a resync and the page refetches once; replay across generations waits for the outbox (1.4). Plan, Build and Routines refetch on it (the 30 s polls are gone; a 5 min fallback poll stays). Measured on the work laptop: row commit to SSE frame 2 ms p50, 11 ms max; Plan sees a change in about 0.5 s (its /api/state takes 0.4 to 0.6 s), Build in about 0.1 s. Across a roll (Z6): sql/035 numbers every NOTIFY from pa_event_seq, so both worker generations call an event g<seq>; a stream the supervisor moves to the next generation resumes from its Last-Event-ID instead of resyncing (src/events/bus.js), because a generation starts listening before it says ready",
         "Factory push": "POST /api/factory/events (X-PA): a factory on this machine pushes {job_id, state, why?, updated_at?} or {jobs: [...]}; merged into factory_board at once (Build shows it in about 25 ms) and the full `job list` follows within PA_FACTORY_ACTIVE_POLL_SECONDS. The factory side of it is not wired yet (planned with the native factory, plan 2.3)"
       },
       "env": [

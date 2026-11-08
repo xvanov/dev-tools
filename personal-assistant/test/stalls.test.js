@@ -66,6 +66,21 @@ const path = require('path');
   }
 }
 
+// ---- children run below normal; the worker itself does not ----
+async function priority() {
+  const { lowerChildren } = require('../src/util/childPriority');
+  const calls = [];
+  lowerChildren({ priority: 10, setPriority: (pid, p) => calls.push([pid, p]) });
+  const { execFile } = require('child_process');
+  const pid = await new Promise((resolve) => {
+    const c = execFile(process.execPath, ['-e', '0'], () => resolve(c.pid));
+  });
+  assert.deepStrictEqual(calls, [[pid, 10]], 'execFile children are lowered');
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'worker.js'), 'utf8');
+  assert.ok(!/os'\)\.setPriority\(/.test(src), 'the worker must not lower itself: it serves the dashboard');
+  assert.ok(/childPriority'\)\.lowerChildren\(\)/.test(src));
+}
+
 // ---- the stall detector names a blocked loop ----
 async function lag() {
   const { watchLag } = require('../src/util/lagWatch');
@@ -101,7 +116,8 @@ function logFile() {
   }
 }
 
-lag()
+priority()
+  .then(lag)
   .then(() => {
     logFile();
     console.log('stalls ok');

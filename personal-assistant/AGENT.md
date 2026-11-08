@@ -492,6 +492,17 @@ Postgres and nowhere else. Tests use invented names; fixtures never hold a real 
   not started by the supervisor becomes the supervisor before loading any worker code
   (`PA_NO_SUPERVISOR=1` runs the bare worker, for debugging).
   A change to `src/supervisor/index.js` therefore costs one restart gap; keep it rare.
+- **The deploy test (Z6).** `node src/e2e/deployTest.js` rolls a supervisor while it hammers
+  `/api/version`, holds an `/api/events` stream (reconnecting with `Last-Event-ID`) and a termhub
+  terminal, and fails on any failed request, lost/duplicated/out-of-order event, `resync`, or
+  dropped terminal. Without flags it runs on a spare port with `test/fixtures/deployWorker.js`
+  (no Postgres; `test/deployTest.test.js`); `--live [--deploy [-- <deploy.js args>]]` runs it
+  against the stack. What makes events survive a roll: every NOTIFY carries `seq` from
+  `pa_event_seq` (sql/035), both generations call it `g<seq>`, and a supervised generation
+  starts LISTENing before it says ready (`src/events/bus.js`). Keep those three true. The
+  worker itself runs at Normal priority and lowers each child it spawns
+  (`src/util/childPriority.js`): a below-normal worker starves whenever other work fills every
+  core, and then its `/healthz` does not answer.
 - **Single-owner background work (Z2).** Two generations overlap during a roll, so every
   timer, watcher and in-process worker in `src/worker.js` is declared on the scheduler
   (`src/util/scheduler.js`: `every(...)` for passes, `sched.service(name, start)` for anything

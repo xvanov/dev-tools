@@ -55,6 +55,35 @@ const tick = (ms = 0) => new Promise((r) => setTimeout(r, ms));
   assert.deepStrictEqual(fresh.since(fresh.lastId()), { gap: false, events: [] });
 }
 
+// ---- across worker generations (Z6): `g<seq>` ids from the database feed ----
+{
+  // Generation A listened from seq 10; B (the next) from seq 12. Both hear
+  // every NOTIFY after that, in the same order.
+  const a = createBus({ epoch: 'aa' });
+  const b = createBus({ epoch: 'bb' });
+  a.setBaseline('10');
+  b.setBaseline('12');
+  assert.strictEqual(b.lastId(), 'g12', 'an empty ring with a baseline names it');
+  const feed = (n) => [a, b].forEach((x, i) => (i === 0 || n > 12) && x.publish('board', { seq: n }, { gid: n }));
+  [11, 12, 13, 15, 14].forEach(feed); // commit order, not sequence order
+  assert.deepStrictEqual(a.since('g13').events.map((e) => e.id), ['g15', 'g14']);
+  // A client that last saw g13 on A reconnects to B: replayed from there.
+  assert.deepStrictEqual(b.since('g13').events.map((e) => e.id), ['g15', 'g14']);
+  // ... and one that last saw g11 (before B listened): all of B's ring.
+  assert.deepStrictEqual(b.since('g11').events.map((e) => e.id), ['g13', 'g15', 'g14']);
+  assert.deepStrictEqual(b.since(a.lastId()), { gap: false, events: [] });
+  // A g-id past the baseline that B never heard is a gap.
+  assert.strictEqual(b.since('g99').gap, true);
+  // Without a baseline (no sequence yet), an unknown g-id is a gap.
+  assert.strictEqual(createBus({ epoch: 'cc' }).since('g1').gap, true);
+  // Once the ring drops events, "everything here is newer" no longer holds.
+  const small = createBus({ epoch: 'dd', capacity: 2 });
+  small.setBaseline('5');
+  [6, 7, 8].forEach((n) => small.publish('board', {}, { gid: n }));
+  assert.strictEqual(small.since('g4').gap, true);
+  assert.deepStrictEqual(small.since('g7').events.map((e) => e.id), ['g8']);
+}
+
 // ---- NOTIFY payloads ---------------------------------------------------------------
 assert.deepStrictEqual(events.fromNotify('{"topic":"run","table":"run","op":"update","id":7,"status":"running"}'),
   { topic: 'run', payload: { table: 'run', op: 'update', id: 7, status: 'running' } });

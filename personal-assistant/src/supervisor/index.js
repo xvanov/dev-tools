@@ -240,11 +240,14 @@ function createSupervisor({
       pid: child.pid,
       port: null,
       inflight: 0,
+      requests: new Set(),
       streams: new Set(),
-      // Pooled sockets idle for 2 s are dropped, well before the worker's
-      // server closes them (Node's keepAliveTimeout, 5 s): reusing one it had
-      // just closed answered ECONNRESET as a 502.
-      agent: new http.Agent({ keepAlive: true, timeout: 2000 }),
+      // Keep-alive to the generation. Reusing a socket its server had just
+      // closed as idle answered ECONNRESET (a 502 before the GET retry
+      // below); the worker's dashboard keeps idle sockets 65 s, so that is
+      // rare. (An agent `timeout` to drop idle sockets early was tried: Node
+      // applies it to sockets in use as well, and requests stalled 2-10 s.)
+      agent: new http.Agent({ keepAlive: true }),
       exited: false,
       startedAt: Date.now(),
       onIdle: null,
@@ -322,7 +325,7 @@ function createSupervisor({
     for (const end of gen.streams) end();
     if (gen.inflight > 0) {
       await Promise.race([new Promise((r) => (gen.onIdle = r)), sleep(drainTimeoutMs)]);
-      if (gen.inflight > 0) say('warn', 'drain timed out', { generation: gen.n, inflight: gen.inflight });
+      if (gen.inflight > 0) say('warn', 'drain timed out', { generation: gen.n, inflight: gen.inflight, requests: inFlight(gen) });
     }
     if (current === gen) return; // rolled back to while it drained
     // A request in flight at the flip may have turned into a stream since.
@@ -411,11 +414,17 @@ function createSupervisor({
       workerPort: current ? current.port : null,
       standby: standby && !standby.exited ? { generation: standby.n, pid: standby.pid } : null,
       rolling: !!rolling,
-      generations: [...gens].map((g) => ({ n: g.n, pid: g.pid, port: g.port, inflight: g.inflight, streams: g.streams.size })),
+      generations: [...gens].map((g) => ({ n: g.n, pid: g.pid, port: g.port, inflight: g.inflight, streams: g.streams.size, requests: inFlight(g) })),
     };
   }
 
   // ---- the proxy ----
+
+  // Method, path (no query: it may carry a token) and age of what is in flight.
+  function inFlight(gen) {
+    const now = Date.now();
+    return [...gen.requests].slice(0, 10).map((r) => ({ method: r.method, path: r.path, ms: now - r.at }));
+  }
 
   function done(gen) {
     gen.inflight--;
@@ -438,17 +447,22 @@ function createSupervisor({
     let state = 'request';
     let endStream = null;
     gen.inflight++;
+    // What is in flight, so a drain that times out can say what held it.
+    const entry = { method: req.method, path: String(req.url).split('?')[0].slice(0, 120), at: Date.now() };
+    gen.requests.add(entry);
+    const finish = () => {
+      gen.requests.delete(entry);
+      done(gen);
+    };
     const release = () => {
-      if (state === 'request') done(gen);
+      if (state === 'request') finish();
       else if (state === 'stream') gen.streams.delete(endStream);
       state = 'done';
     };
     let upstream;
     const forward = (retried) => {
     upstream = http.request(
-      // timeout 0: no idle limit while in use (an event stream may be quiet);
-      // the agent's own timeout applies only to sockets back in its pool.
-      { host: '127.0.0.1', port: gen.port, method: req.method, path: req.url, headers: forwardHeaders(req.headers), agent: gen.agent, timeout: 0 },
+      { host: '127.0.0.1', port: gen.port, method: req.method, path: req.url, headers: forwardHeaders(req.headers), agent: gen.agent },
       (ures) => {
         res.writeHead(ures.statusCode, ures.statusMessage, forwardHeaders(ures.headers));
         res.flushHeaders();
@@ -456,7 +470,7 @@ function createSupervisor({
         // drain: retire() ends it cleanly and the client's reconnect (with
         // Last-Event-ID) lands on the new generation.
         if (state === 'request' && /^text\/event-stream/i.test(String(ures.headers['content-type'] || ''))) {
-          done(gen);
+          finish();
           state = 'stream';
           endStream = () => {
             release();

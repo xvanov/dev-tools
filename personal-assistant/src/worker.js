@@ -112,15 +112,10 @@ async function shutdown(signal) {
 }
 
 async function main() {
-  // Below normal, so everything the worker starts — every headless `claude
-  // -p`, the audio pass — inherits it and yields to whatever you are typing
-  // into. The worker is never in a hurry; a pass a second later costs nothing,
-  // while a model call at Normal priority made a terminal lag by seconds.
-  try {
-    require('os').setPriority(require('os').constants.priority.PRIORITY_BELOW_NORMAL);
-  } catch {
-    /* not permitted here: run at the default */
-  }
+  // Below normal for everything the worker starts, not for the worker: it
+  // serves the dashboard, and a below-normal process gets no CPU at all
+  // while other work fills every core (src/util/childPriority.js).
+  require('./util/childPriority').lowerChildren();
 
   // The supervisor's messages (src/supervisor): `drain` once routing has moved
   // to the next generation — stop the schedulers and release the lease now,
@@ -546,7 +541,17 @@ async function main() {
   // released on `drain`, or the moment the holder dies.
   ownership = require('./util/lease').createOwnership({ lease, scheduler: sched, log });
   const owned = ownership.takeOver();
-  if (supervised) dashboard.markReady();
+  if (supervised) {
+    // The live feed listens before this generation is routed to, so the
+    // streams the supervisor moves here at the flip find every event since
+    // the one they last saw (src/events/bus.js, cross-generation replay).
+    try {
+      await Promise.race([require('./events').ensureListening().listening, new Promise((r) => setTimeout(r, 10_000))]);
+    } catch {
+      /* no feed: streams resync instead */
+    }
+    dashboard.markReady();
+  }
   if (!supervised) {
     await owned;
     startDashboard();
