@@ -10,18 +10,65 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const http = require('http');
+const net = require('net');
 const WebSocket = require('ws');
 const { createSupervisor, request } = require('../src/supervisor');
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const alive = (pid) => {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
+const within = (p, ms, msg) => {
+  let t;
+  const late = new Promise((_, reject) => (t = setTimeout(() => reject(new Error(msg)), ms)));
+  return Promise.race([p, late]).finally(() => clearTimeout(t));
 };
+// Waits for what the next step needs instead of a guessed time: on a loaded machine the guess runs
+// out first. The ceiling says what never happened.
+async function until(cond, what, ms = 20000) {
+  const deadline = Date.now() + ms;
+  while (!cond()) {
+    if (Date.now() > deadline) throw new Error(`waited ${ms / 1000} s for ${what}`);
+    await sleep(10);
+  }
+}
+
+// Each fixture generation holds a socket to this server (SUPERVISOR_TEST_LIFELINE): its close is
+// that process's exit. A pid cannot say it: Windows reuses one within seconds, and a reused pid
+// reads as alive.
+async function lifelines() {
+  const procs = new Map();
+  const entry = (pid) => {
+    if (!procs.has(pid)) {
+      const e = { open: false, closed: false, done: () => {} };
+      e.gone = new Promise((r) => (e.done = r));
+      procs.set(pid, e);
+    }
+    return procs.get(pid);
+  };
+  const server = net.createServer((sock) => {
+    let buf = '';
+    let e = null;
+    sock.setEncoding('utf8');
+    sock.on('data', (c) => {
+      buf += c;
+      const nl = buf.indexOf('\n');
+      if (e || nl < 0) return;
+      e = entry(Number(buf.slice(0, nl)));
+      e.open = true;
+    });
+    sock.on('error', () => {});
+    sock.on('close', () => {
+      if (!e) return;
+      e.closed = true;
+      e.done();
+    });
+  });
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  server.unref();
+  return {
+    port: server.address().port,
+    alive: (pid) => procs.has(pid) && procs.get(pid).open && !procs.get(pid).closed,
+    gone: (pid, what, ms = 20000) => within(entry(pid).gone, ms, `${what} (pid ${pid}) still runs after ${ms / 1000} s`),
+  };
+}
 
 // What the test is doing, so a stall on a loaded machine says where instead of timing out blind.
 let phase = 'start';
@@ -33,6 +80,7 @@ const watchdog = setTimeout(() => {
 watchdog.unref();
 
 async function main() {
+  const life = await lifelines();
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pa-supervisor-'));
   const controlPath = process.platform === 'win32'
     ? `\\\\.\\pipe\\pa-supervisor-test-${process.pid}-${Date.now()}`
@@ -41,7 +89,7 @@ async function main() {
     worker: path.join(__dirname, 'fixtures', 'supervisorWorker.js'),
     port: 0,
     controlPath,
-    env: { DUMMY_DIR: dir },
+    env: { DUMMY_DIR: dir, SUPERVISOR_TEST_LIFELINE: String(life.port) },
     drainTimeoutMs: 30000,
     stopGraceMs: 10000,
     readyTimeoutMs: 60000,
@@ -49,6 +97,9 @@ async function main() {
     silent: true,
   });
 
+  // An open WebSocket keeps sup.close() waiting, so a failed assert would hang the finally below
+  // until the watchdog, which then reports a stall instead of the assert: the clients end first.
+  let stopClients = () => {};
   try {
     const first = await sup.start();
     assert.strictEqual(first.generation, 1);
@@ -94,12 +145,12 @@ async function main() {
 
     // An event stream, reconnecting the way EventSource does: on a clean end,
     // again with Last-Event-ID. An error or a non-200 is a failure.
-    const sse = { gens: new Set(), resumes: [], events: 0, connects: 0, lastId: null };
+    const sse = { gens: new Set(), resumes: [], events: 0, connects: 0, lastId: null, req: null };
     const openStream = () => {
       if (!running) return;
       sse.connects++;
       const headers = sse.lastId ? { 'Last-Event-ID': sse.lastId } : {};
-      const req = http.get({ host: '127.0.0.1', port, path: '/api/stream', headers }, (res) => {
+      const req = (sse.req = http.get({ host: '127.0.0.1', port, path: '/api/stream', headers }, (res) => {
         if (res.statusCode !== 200) failures.push(`stream: HTTP ${res.statusCode}`);
         let buf = '';
         res.setEncoding('utf8');
@@ -123,7 +174,7 @@ async function main() {
         });
         res.on('end', () => setTimeout(openStream, 20));
         res.on('error', (err) => failures.push(`stream: ${err.message}`));
-      });
+      }));
       req.on('error', (err) => failures.push(`stream: ${err.message}`));
     };
     openStream();
@@ -131,9 +182,10 @@ async function main() {
     // A WebSocket through the Upgrade pass-through, reconnecting on close.
     const wsSeen = new Set();
     let wsOpen = 0;
+    let wsNow = null;
     const openWs = () => {
       if (!running) return;
-      const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`);
+      const ws = (wsNow = new WebSocket(`ws://127.0.0.1:${port}/ws`));
       let t;
       ws.on('open', () => {
         wsOpen++;
@@ -147,25 +199,42 @@ async function main() {
       ws.on('error', (err) => failures.push(`ws: ${err.message}`));
     };
     openWs();
+    stopClients = () => {
+      running = false;
+      if (wsNow) wsNow.terminate();
+      if (sse.req) sse.req.destroy();
+      agent.destroy();
+    };
 
-    await sleep(400);
+    // Every client is on generation n before the next roll: a roll that lands mid-reconnect would
+    // test the reconnect's timing, not the roll.
+    const onGeneration = (n) =>
+      until(
+        () => commits.has(`gen-${n}`) && sse.gens.has(String(n)) && wsSeen.has(`gen-${n}`),
+        `requests, the stream and the websocket on generation ${n} (saw ${[...commits]}; stream ${[...sse.gens]}; websocket ${[...wsSeen]})`
+      );
+    phase = 'clients connecting';
+    await onGeneration(1);
 
     // A request in flight at the flip finishes on the generation it started on.
-    const slow = call('GET', '/api/slow?ms=1500');
-    await sleep(50);
+    const slow = call('GET', '/api/slow/held?ms=1500');
+    await until(
+      () => sup.status().generations.some((g) => g.n === 1 && g.requests.some((q) => q.path === '/api/slow/held')),
+      'the held request to reach generation 1'
+    );
 
     phase = 'rolls';
     // ---- three rolls through the control socket ----
-    const pids = [];
     for (let n = 2; n <= 4; n++) {
       const before = sup.status();
-      pids.push(before.pid);
       const r = await request(controlPath, { cmd: 'roll' });
       assert.strictEqual(r.ok, true, JSON.stringify(r));
       assert.strictEqual(r.generation, n);
       assert.notStrictEqual(r.pid, before.pid);
-      assert.ok(!alive(before.pid), `generation ${n - 1} (pid ${before.pid}) still runs after the roll`);
-      await sleep(300);
+      // A roll answers once the generation it replaced has exited.
+      assert.ok(!r.generations.some((g) => g.pid === before.pid), `generation ${n - 1} is still listed after the roll`);
+      await life.gone(before.pid, `generation ${n - 1}, after the roll`);
+      await onGeneration(n);
     }
     assert.strictEqual((await slow).commit, 'gen-1', 'the in-flight request was cut or moved');
 
@@ -183,7 +252,6 @@ async function main() {
     assert.strictEqual(st.generation, 4);
     assert.strictEqual(st.generations.length, 1);
 
-    await sleep(300);
     running = false;
     phase = 'waiting for the clients to finish';
     await Promise.all(hammers);
@@ -201,20 +269,18 @@ async function main() {
     // ---- the serving generation crashes: a new one replaces it ----
     const dead = sup.status().pid;
     process.kill(dead);
-    for (let i = 0; i < 300 && (sup.status().generation === 4 || !sup.status().pid || sup.status().pid === dead); i++) await sleep(100);
-    await sleep(100);
+    await until(() => {
+      const s = sup.status();
+      return s.generation > 4 && s.pid && s.pid !== dead;
+    }, 'a generation to replace the crashed one', 30000);
     assert.strictEqual((await call('GET', '/api/version')).commit, `gen-${sup.status().generation}`);
-    assert.ok(sup.status().generation > 4);
 
-    agent.destroy();
-    // (Each retired pid was checked dead right after its roll. Checking again here is unsound: Windows
-    // reuses pids within seconds, and a reused one reads as "alive".)
-    void pids;
     console.log(`supervisor ok: ${ok} requests, 0 failed, ${sse.events} stream events over ${sse.connects} connections, ${wsOpen} websocket opens`);
   } finally {
+    stopClients();
     const last = sup.status().generations.map((g) => g.pid);
     await sup.close();
-    for (const p of last) assert.ok(!alive(p), `pid ${p} outlived the supervisor`);
+    for (const p of last) await life.gone(p, 'a generation that outlived the supervisor');
     fs.rmSync(dir, { recursive: true, force: true });
   }
 
@@ -229,7 +295,7 @@ async function main() {
       worker: path.join(__dirname, 'fixtures', 'supervisorWorker.js'),
       port: 0,
       controlPath: cp2,
-      env: { DUMMY_DIR: dir2, KEEPALIVE_MS: '300' },
+      env: { DUMMY_DIR: dir2, KEEPALIVE_MS: '300', SUPERVISOR_TEST_LIFELINE: String(life.port) },
       drainTimeoutMs: 10000,
       stopGraceMs: 10000,
       readyTimeoutMs: 60000,
@@ -261,7 +327,7 @@ async function main() {
       const r2 = await request(cp2, { cmd: 'roll' });
       assert.strictEqual(r2.generation, 2);
       assert.deepStrictEqual(r2.standby, { generation: 1, pid: g1pid });
-      assert.ok(alive(g1pid), 'generation 1 is kept for a rollback');
+      assert.ok(life.alive(g1pid), 'generation 1 is kept for a rollback');
       assert.strictEqual(await version(s1.port), 'gen-2');
       const g2pid = r2.pid;
 
@@ -271,27 +337,25 @@ async function main() {
       assert.strictEqual(back.pid, g1pid, 'the same process serves again');
       assert.strictEqual(back.standby, null);
       assert.strictEqual(await version(s1.port), 'gen-1');
-      for (let i = 0; i < 200 && alive(g2pid); i++) await sleep(100);
-      assert.ok(!alive(g2pid), 'the rolled-back generation is stopped');
+      await life.gone(g2pid, 'the rolled-back generation');
 
       // The serving generation dies with a standby kept: the standby serves.
       const r3 = await request(cp2, { cmd: 'roll' });
       assert.strictEqual(r3.standby.pid, g1pid);
       process.kill(r3.pid);
-      for (let i = 0; i < 200 && sup2.status().pid !== g1pid; i++) await sleep(100);
-      assert.strictEqual(sup2.status().pid, g1pid, 'a crash falls back to the standby');
+      await until(() => sup2.status().pid === g1pid, 'the crash to fall back to the standby (generation 1)');
       assert.strictEqual(await version(s1.port), 'gen-1');
 
       // The hold expires: the standby is stopped.
       const r4 = await request(cp2, { cmd: 'roll' });
       assert.ok(r4.standby);
-      // Poll past the hold instead of sleeping a guessed time: stopping it takes longer on a loaded machine.      for (let i = 0; i < 300 && alive(r4.standby.pid); i++) await sleep(100);
-      assert.ok(!alive(r4.standby.pid), 'the standby is stopped once its hold expires');
+      await life.gone(r4.standby.pid, 'the standby, once its 6 s hold expired', 30000);
       assert.strictEqual(sup2.status().standby, null);
       assert.strictEqual((await request(cp2, { cmd: 'rollback' })).ok, false);
       assert.match(sup2.status().source, /^[0-9a-f]{12}$/);
       // The deploy lock: while one deploy holds it, another's roll, rollback
       // or lock is refused with who holds it; its own go through.
+      phase = 'deploy lock';
       const genBefore = sup2.status().generation;
       const held = await request(cp2, { cmd: 'lock', owner: 'deploy A' });
       assert.strictEqual(held.ok, true, JSON.stringify(held));
@@ -308,18 +372,19 @@ async function main() {
       assert.match((ra.ok ? rb : ra).error, /a roll is already in progress/);
       assert.strictEqual((await request(cp2, { cmd: 'unlock', owner: 'deploy A' })).deployLock, null);
       // The lock expires: a deploy that died cannot wedge the supervisor.
-      await request(cp2, { cmd: 'lock', owner: 'dead deploy', ttlMs: 1000 });
-      await sleep(1200);
-      assert.strictEqual(sup2.status().deployLock, null);
+      const dying = await request(cp2, { cmd: 'lock', owner: 'dead deploy', ttlMs: 1000 });
+      assert.strictEqual(dying.deployLock.owner, 'dead deploy');
+      await until(() => sup2.status().deployLock === null, 'the 1 s deploy lock to expire');
     } finally {
       const last = sup2.status().generations.map((g) => g.pid);
       await sup2.close();
-      for (const p of last) assert.ok(!alive(p), `pid ${p} outlived the supervisor`);
+      for (const p of last) await life.gone(p, 'a generation that outlived the supervisor');
       fs.rmSync(dir2, { recursive: true, force: true });
     }
   }
 
   // ---- the real dashboard's /healthz: ready only once marked ----
+  phase = 'dashboard healthz';
   {
     const dash = require('../src/dashboard/server.ts');
     const server = await dash.start({ port: 0 });
