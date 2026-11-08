@@ -59,6 +59,8 @@ surfaces move only once everything under them is typed.
 How a module moves (the pattern is `personal-assistant/src/events/bus.ts`, the first one):
 
 - `git mv x.js x.ts`; callers `require('./x.ts')` (Node resolves no extension to `.ts`).
+  A directory module (`require('../policy')`, many callers) keeps a one-line `index.js`:
+  `module.exports = require('./policy.ts');`, so its callers do not change.
 - **Erasable syntax only** (no enums, namespaces, parameter properties): Node runs `.ts` by
   stripping types (default since Node 22.18), Bun natively. Both run the file unchanged.
 - **Stay CommonJS while any `.js` caller remains**: keep `module.exports`; no `import`/`export`
@@ -140,5 +142,5 @@ setup; T7's cargo and Bun caches apply.
 - [x] Stage 1: host, Bun parity, compiled build, CI on Windows and Linux.
 - [x] Supervisor runs jarvisd generations (`PA_RUNTIME=bun`), tested with the fixture worker.
 - [x] The work stack runs on Bun (`PA_RUNTIME=bun`, 2026-11-08).
-- [x] First module in strict TS: `src/events/bus.ts` (the pattern above).
+- [x] Leaves in strict TS: `events/bus`, `util/{text,exclusive,scheduler,when}`, `policy`.
 - [ ] Stage 2 onward, as above.
