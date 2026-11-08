@@ -249,6 +249,10 @@ run mid-step; a job continued on an existing branch (`--branch`).
   - [ ] **E5.4 Job start is slow and can stall in queued.** factory_start (compose + submit) took 37 s in
     run 1 and 199 s in run 2, and run 2's job never left `queued` in 5 min. Before 2.2 a queued job waited
     for the next 300 s tick.
+    Run 3 on native `factory serve` (2.1/2.2, 9be2b0a, 07:54Z; card #6760, job dev-tools:007): card 0.2 s,
+    factory_start took 2 min 19 s, and the job again stayed `queued` past the 300 s job_started limit.
+    A concurrent smoke job (dev-tools:006) on the same app was live the whole time, so the job may have been
+    serialized behind it (asked factory-native). The live feed delivered 17 run/factory events.
 - [ ] **E6 Gate.** Each phase's Exit box below requires a green E4 run (all variants) on both
   stacks, with the timings recorded in the targets table.
 - [ ] **Exit E:** the user runs the golden path by voice ("start a factory job for …"), watches
