@@ -291,6 +291,11 @@ const C = require('../src/dashboard/talk.core');
   assert.match(page, /fetch\('api\/talk\/turn'/);
   assert.match(page, /if \(await fastTurn\(text\)\) return;\s*await post\('api\/chat'/, 'falls back to api/chat');
   assert.match(page, /function beginUtterance\(\) \{\s*cancelFastTurn\(\);/);
+  // The transcription starts with the smart-turn check and is kept only for that check's "done".
+  assert.match(page, /early\.text = post\('api\/talk\/transcribe'[\s\S]{0,200}fetch\('api\/talk\/endpoint'/);
+  assert.match(page, /finishTurn\(det, Date\.now\(\), 'smart-turn', r\.probability, token\)/);
+  assert.match(page, /endUtterance\(true, token && early\.token === token \? early\.text : null\)/);
+  assert.match(page, /if \(text == null\) \(\{ text \} = await post\('api\/talk\/transcribe'/, 'a failed early transcription is asked again');
 }
 
 // ---- the page wires the face to audio events, and the settings exist ---------------
@@ -608,6 +613,21 @@ const C = require('../src/dashboard/talk.core');
   // Guarded like every POST.
   res = await fetch(`${base}/api/talk/transcribe`, { method: 'POST', body: wav });
   assert.strictEqual(res.status, 403);
+
+  // While the user talks the transcriber is handed silence, until the transcription comes.
+  let pings = 0;
+  const onPing = () => pings++;
+  whisper.on('connection', onPing);
+  talk.keepWhisperWarm(Date.now(), { gapMs: 10, maxMs: 5000 });
+  for (let i = 0; i < 200 && pings < 3; i++) await new Promise((r) => setTimeout(r, 10));
+  assert.ok(pings >= 3, `pinged while the user talks (${pings})`);
+  res = await fetch(`${base}/api/talk/transcribe`, { method: 'POST', headers: { 'X-PA': '1', 'Content-Type': 'audio/wav' }, body: wav });
+  assert.strictEqual((await res.json()).text, 'what is on me today');
+  await new Promise((r) => setTimeout(r, 30));
+  const after = pings;
+  await new Promise((r) => setTimeout(r, 100));
+  assert.strictEqual(pings, after, 'no pings after the transcription');
+  whisper.off('connection', onPing);
 
   // The page and its scripts are served, the page with the termhub URL.
   res = await fetch(`${base}/talk`);

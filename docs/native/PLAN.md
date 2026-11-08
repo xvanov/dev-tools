@@ -900,10 +900,22 @@ not in the Map is not done, and a new one gets added there first.
   - [ ] **8.4.4 whats-on: whisper takes 259 ms (target 250).** Median of 13, range 190-526 ms (the
     request adds about 15 ms). Calls after an idle gap take 400-530 ms. Keep the model warm, and
     check its size, beam and compute type against the target.
-  - [ ] **8.4.5 whats-on: smart-turn alone is over the talk-page budget.** POST /api/talk/endpoint
+    Partly: from POST /api/talk/warm the PA hands whisper silence every 400 ms until the end check
+    (talk.ts `keepWhisperWarm`), and the page warms every utterance (3 s throttle, was 15 s). The
+    laptop GPU clocks down within seconds of idle; a call after 3 s idle took 530-800 ms, 313-458
+    ms with the pings. Measured with the CPU at ~50% from other work: whisper alone is now 480-564 ms
+    (it shares the CPU with smart-turn, 708 ms without the pings), and that is still over 250. The
+    model is already small, float16, beam 1; `without_timestamps` or a VAD filter in
+    voice-dictation's server are untried (they need a transcriber restart).
+  - [x] **8.4.5 whats-on: smart-turn alone is over the talk-page budget.** POST /api/talk/endpoint
     takes 221 ms (median of 10, 96-459 ms). Even after the 96 ms VAD shortcut, end of speech to the
     transcription request is at least ~317 ms (target 150). Make the endpoint faster, or start the
     transcription while smart-turn decides.
+    The page transcribes at the smart-turn check and keeps that text when smart-turn says done, so
+    end of speech to the transcription request is the 96 ms VAD wait plus ~12 ms (was 313-600 ms);
+    the check to the text ready went from 636 to 481 ms (medians of 9, interleaved). Smart-turn
+    itself: the model takes 50-100 ms, but the live voice service adds ~150 ms around it on POSTs
+    (a fresh process of the same server.py adds 14 ms); a restart of pa-voice is the lead.
   - [ ] **8.4.6 whats-on: first audio takes 1.6-1.8 s (target 700).** In the e2e: 1792 ms median
     of 3 (1330-2619 ms), without the talk-page hop. Summing the probe medians gives ~1.6 s. Kokoro's
     first byte alone is 312 ms (median of 13, 247-734 ms). The hop targets already add up to 600 ms

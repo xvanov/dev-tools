@@ -673,11 +673,19 @@
   }
 
   // Is the speaker done? The last 8 s of the utterance, as 16-bit PCM.
+  // The utterance so far is transcribed at the same moment: a "done" is about
+  // exactly this audio (a voice coming back makes it stale), so the turn
+  // keeps that text and whisper's time overlaps smart-turn's instead of
+  // following it. Any other end transcribes afresh.
+  const early = { token: 0, text: null };
   async function askSmartTurn(det, token, now) {
     const all = joinFrames(mic.frames);
     const tail = all.subarray(Math.max(0, all.length - 8 * RATE));
     endCheck.token = token;
     endCheck.at = now;
+    early.token = token;
+    early.text = post('api/talk/transcribe', C.encodeWav(all, RATE), 'audio/wav').then((d) => String(d.text || ''));
+    early.text.catch(() => {});
     let r;
     try {
       const res = await fetch('api/talk/endpoint', { method: 'POST', headers: { 'Content-Type': 'audio/L16; rate=16000', 'X-PA': '1' }, body: C.floatToPcm16(tail) });
@@ -687,21 +695,22 @@
       return;
     }
     if (DEBUG) console.log('[talk] smart-turn', r, `${Date.now() - now} ms`);
-    if (det.verdict(token, !!r.complete) === 'end') finishTurn(det, Date.now(), 'smart-turn', r.probability);
+    if (det.verdict(token, !!r.complete) === 'end') finishTurn(det, Date.now(), 'smart-turn', r.probability, token);
   }
 
-  function finishTurn(det, now, by, p) {
+  function finishTurn(det, now, by, p, token = 0) {
     if (!mic.recording) return;
     latency.begin({ speechEnd: det.lastVoice, vadEnd: now, turnBy: by, turnP: p });
-    endUtterance(true);
+    endUtterance(true, token && early.token === token ? early.text : null);
   }
 
   // While the user is still talking: the GPU voice is clocked up (it idles
-  // at a low clock) and an unloaded transcriber starts loading (the PA does
-  // both: POST api/talk/warm).
+  // at a low clock), and the transcriber is kept busy until the turn's end
+  // check (the PA does both: POST api/talk/warm). Every utterance but a
+  // stutter: the GPU clocks down within seconds.
   let lastWarm = 0;
   function warmVoice() {
-    if (Date.now() - lastWarm < 15000) return;
+    if (Date.now() - lastWarm < 3000) return;
     lastWarm = Date.now();
     fetch('api/talk/warm', { method: 'POST', headers: { 'X-PA': '1', 'Content-Type': 'application/json' }, body: '{}' }).catch(() => {});
   }
@@ -727,12 +736,14 @@
     st.listening = true;
   }
 
-  function endUtterance(keep) {
+  function endUtterance(keep, earlyText = null) {
     if (!mic.recording) return;
     mic.recording = false;
     st.listening = false;
     const frames = mic.frames;
     mic.frames = [];
+    early.token = 0;
+    early.text = null;
     turn.reset();
     vadState.reset();
     if (!keep) return;
@@ -741,7 +752,7 @@
       conv.on('nothing', Date.now());
       return;
     }
-    send(C.encodeWav(all, RATE), mic.utter || {});
+    send(C.encodeWav(all, RATE), mic.utter || {}, earlyText);
   }
 
   async function post(path, body, type = 'application/json') {
@@ -751,10 +762,12 @@
     return data;
   }
 
-  async function send(wav, utter = {}) {
+  async function send(wav, utter = {}, earlyText = null) {
     st.pending++;
     try {
-      let { text } = await post('api/talk/transcribe', wav, 'audio/wav');
+      // The early transcription (askSmartTurn); failed, it is asked again.
+      let text = earlyText ? await earlyText.catch(() => null) : null;
+      if (text == null) ({ text } = await post('api/talk/transcribe', wav, 'audio/wav'));
       latency.set('transcribed');
       if (conv.wake) text = C.stripWakeWord(text);
       // "Jarvis, sleep" / "stop listening" / "go to sleep" (and the other stop

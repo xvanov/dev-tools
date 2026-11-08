@@ -143,12 +143,15 @@ async function askWhisper(file: string, { host = config.audio.transcribeHost, po
   }
 }
 let whisperUsedAt = 0;
+let whisperBusy = 0;
 async function transcribe(audio: Buffer, opts?: WhisperOpts) {
   const file = path.join(os.tmpdir(), `pa-talk-${process.pid}-${crypto.randomBytes(6).toString('hex')}.wav`);
   await fs.promises.writeFile(file, audio);
+  whisperBusy++;
   try {
     return await askWhisper(file, opts);
   } finally {
+    whisperBusy--;
     whisperUsedAt = Date.now();
     fs.promises.unlink(file).catch(() => {});
   }
@@ -159,11 +162,39 @@ async function transcribe(audio: Buffer, opts?: WhisperOpts) {
 // on open): the GPU voice is clocked up, and the transcriber, which unloads
 // its model after half an hour idle and takes ~6 s to load it again, is
 // handed a quarter second of silence. Fire and forget.
+//
+// From an utterance's start (keep), the transcriber is handed that silence
+// every WHISPER_PING_GAP_MS until the end-of-turn check or the transcription
+// arrives (stopWhisperWarm), WHISPER_PING_MAX_MS at most: the laptop GPU
+// clocks down within seconds of idle, and the first transcription after a
+// pause took 530-800 ms against ~230-350 ms with the pings. One ping still
+// running when the real request comes delays it by its remainder (~150 ms
+// at worst; the transcriber takes one request at a time).
 const SILENCE_WAV = Buffer.from(require('./talk.core').encodeWav(new Float32Array(4000), 16000));
-function warmVoicePath(now: number = Date.now()) {
+const WHISPER_PING_GAP_MS = 400;
+const WHISPER_PING_MAX_MS = 10_000;
+const whisperPings = { until: 0, running: false };
+function keepWhisperWarm(now: number = Date.now(), { gapMs = WHISPER_PING_GAP_MS, maxMs = WHISPER_PING_MAX_MS }: { gapMs?: number; maxMs?: number } = {}) {
+  whisperPings.until = now + maxMs;
+  if (whisperPings.running) return;
+  whisperPings.running = true;
+  (async () => {
+    while (Date.now() < whisperPings.until) {
+      if (!whisperBusy) await transcribe(SILENCE_WAV).catch(() => {});
+      if (Date.now() < whisperPings.until) await new Promise((r) => setTimeout(r, gapMs));
+    }
+  })().finally(() => {
+    whisperPings.running = false;
+  });
+}
+function stopWhisperWarm() {
+  whisperPings.until = 0;
+}
+function warmVoicePath(now: number = Date.now(), { keep = false }: { keep?: boolean } = {}) {
   voiceRequest('POST', 'warm', { body: Buffer.from('{}'), headers: { 'Content-Type': 'application/json' }, timeoutMs: 5000 })
     .then((r: IncomingMessage) => r.resume())
     .catch(() => {});
+  if (keep) return keepWhisperWarm(now);
   if (now - whisperUsedAt > 5 * 60_000) {
     whisperUsedAt = now;
     transcribe(SILENCE_WAV).catch(() => {});
@@ -325,6 +356,7 @@ async function route(req: Req, res: Res, url: URL, { send, issuePageToken = null
       send(res, 403, { error: 'missing X-PA header' });
       return true;
     }
+    stopWhisperWarm();
     const audio = await readBody(req);
     if (audio.length < 44) {
       send(res, 400, { error: 'no audio' });
@@ -349,7 +381,7 @@ async function route(req: Req, res: Res, url: URL, { send, issuePageToken = null
       return true;
     }
     req.resume();
-    warmVoicePath();
+    warmVoicePath(Date.now(), { keep: true });
     send(res, 202, { ok: true });
     return true;
   }
@@ -380,6 +412,7 @@ async function route(req: Req, res: Res, url: URL, { send, issuePageToken = null
       return true;
     }
     const [p, limit, type] = voicePost;
+    if (p === 'endpoint') stopWhisperWarm(); // the user has paused: the transcription is next
     await proxyVoice(req, res, p, { send, limit, contentType: type });
     return true;
   }
@@ -453,4 +486,4 @@ async function turn(req: Req, res: Res, { send }: { send: Ctx['send'] }) {
   if (!res.writableEnded) res.end();
 }
 
-module.exports = { route, sanitizeLatency, transcribe, askWhisper, voiceInfo, modelsPresent, MODEL_FILES, MAX_AUDIO_BYTES };
+module.exports = { route, sanitizeLatency, transcribe, askWhisper, keepWhisperWarm, stopWhisperWarm, voiceInfo, modelsPresent, MODEL_FILES, MAX_AUDIO_BYTES };

@@ -1381,8 +1381,10 @@ same through termhub's `/pa/` proxy from a phone.
   hands-free as before (every utterance is a request), or push-to-talk.
 - **End of turn.** Silero VAD (0.9 ms per 32 ms frame in the page) says where speech is. At the first
   200 ms pause (96 ms when every frame of it is confidently silent, Silero under 0.1) the page asks smart-turn (`POST /api/talk/endpoint`, the last 8 s of the utterance)
-  whether you sound finished; yes ends the turn there, ~450 ms after you stopped; no keeps waiting up
-  to **Pause before sending** (650 ms default, 400–1500 in **settings**). Untick **Smart end of
+  whether you sound finished, and sends the utterance so far to `POST /api/talk/transcribe` at the
+  same moment: yes ends the turn there, ~450 ms after you stopped, with that transcription (whisper's
+  time overlaps smart-turn's); no keeps waiting up to **Pause before sending** (650 ms default,
+  400–1500 in **settings**) and transcribes again. Untick **Smart end of
   turn** to use the timer alone. Without the models (not installed) the energy VAD does the job, as
   before. *Why smart-turn is in the service and the wake word and VAD in the page:* termhub's `/pa/`
   proxy passes only plain HTTP, no WebSocket upgrades, so a phone cannot stream audio to the service
@@ -1395,8 +1397,10 @@ same through termhub's `/pa/` proxy from a phone.
   which writes it to a temp file, hands the path to the server, and deletes the file. Whisper's
   stock filler for silence ("Thank you.", "you") is dropped, and so is a leading "Jarvis". The
   server unloads its model after half an hour idle and takes ~6 s to load it, so the PA hands it a
-  quarter second of silence when `/talk` opens and when you start speaking (`POST /api/talk/warm`,
-  which also clocks up the GPU voice). The text then goes to the fast lane (next bullet), which hands
+  quarter second of silence when `/talk` opens. When you start speaking (`POST /api/talk/warm`,
+  which also clocks up the GPU voice) it hands it that silence every 400 ms until the end-of-turn
+  check or the transcription arrives (10 s at most): the laptop GPU clocks down within seconds, and a
+  transcription after a pause took 530–800 ms against ~250–480 ms with the pings. The text then goes to the fast lane (next bullet), which hands
   it to `/api/chat` with `source: "voice"` when the PA chat is needed. While the chat is parked on a
   permission prompt or question, the chat refuses the send (409); the page says once that it is
   waiting on an answer in termhub — naming the action from the last tool call ("waiting for your yes in
@@ -1590,7 +1594,7 @@ The contract (the voice page depends on it):
 | `GET /api/talk/voice` | — | What the local voice offers: `{ tts: { ok, ready, device, error }, turn, voices: [{ id, label, lang }], defaultVoice, models: { vad, wake, ort } }` |
 | `POST /api/talk/tts` | `{ "text", "voice"? , "speed"? }`, header `X-PA: 1` | Kokoro speech, streamed: raw 16-bit little-endian PCM, 24 kHz mono (`audio/L16`), `X-First-Ms`. 503 when the voice service is down |
 | `POST /api/talk/endpoint` | 16 kHz mono 16-bit PCM (`audio/L16`) or a WAV, header `X-PA: 1` | smart-turn: `{ complete, probability, ms }` |
-| `POST /api/talk/warm` | header `X-PA: 1` | 202 at once; clocks the GPU voice up and loads an idle transcriber |
+| `POST /api/talk/warm` | header `X-PA: 1` | 202 at once; clocks the GPU voice up and keeps the transcriber busy until the end-of-turn check (loads it when idle) |
 | `POST /api/talk/latency` | `{ total, silence, transcribe, … }` (ms), header `X-PA: 1` | 202; logs one `voice turn latency` line per spoken turn: end of speech to first audio and its slices, no words |
 | `GET /talk/models/<name>` | — | The page's models (Silero, openWakeWord, onnxruntime-web) from `PA_VOICE_MODELS`, by fixed name only |
 

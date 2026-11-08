@@ -113,12 +113,12 @@
         "Wake word": "openWakeWord hey_jarvis_v0.1.onnx, client-side on onnxruntime-web (WASM, one thread)",
         "Voice activity": "Silero VAD (silero_vad.onnx) in the page",
         "Models served": "/talk/models/ serves a fixed list of file names (MODEL_FILES), never a path",
-        "End of turn": "POST /api/talk/endpoint, proxied to smart-turn in the voice service",
+        "End of turn": "POST /api/talk/endpoint, proxied to smart-turn in the voice service; the utterance is transcribed at the same moment and that text is kept when smart-turn says done",
         "Sends": [
-          "POST /api/talk/transcribe (the utterance only)",
+          "POST /api/talk/transcribe (the utterance only; with the smart-turn check, again only if the turn ends otherwise)",
           "POST /api/talk/turn (fast lane)",
           "POST /api/talk/tts (speech out)",
-          "POST /api/talk/warm when an utterance starts",
+          "POST /api/talk/warm when an utterance starts (at most every 3 s): Kokoro warmed, whisper handed silence every 400 ms until the end-of-turn check",
           "POST /api/talk/latency after each turn (end of speech to first audio, logged by the PA)",
           "POST /api/chat/permission (a spoken yes or no to the chat's action prompt)"
         ],
@@ -2099,11 +2099,11 @@
       "steps": [
         {
           "c": "talk-page",
-          "t": "openWakeWord hears 'hey jarvis' in the browser; Silero VAD cuts the utterance; smart-turn (via /api/talk/endpoint) decides you are done."
+          "t": "openWakeWord hears 'hey jarvis' in the browser; Silero VAD cuts the utterance; smart-turn (via /api/talk/endpoint) decides you are done while the utterance is already being transcribed."
         },
         {
           "c": "whisper",
-          "t": "The WAV goes to /api/talk/transcribe; faster-whisper on :47821 returns the text."
+          "t": "The WAV goes to /api/talk/transcribe at the smart-turn check; faster-whisper on :47821, kept clocked up by silence pings since you began speaking, returns the text."
         },
         {
           "c": "fast-lane",
@@ -2115,7 +2115,7 @@
         },
         {
           "c": "voice",
-          "t": "/api/talk/tts: Kokoro speaks it as bf_isabella, sentence by sentence. Nothing reaches Claude."
+          "t": "/api/talk/tts: Kokoro speaks it as bf_isabella, from the short first sentence (or first clause) while the rest still streams, then sentence by sentence. Nothing reaches Claude."
         }
       ],
       "acceptance": {
