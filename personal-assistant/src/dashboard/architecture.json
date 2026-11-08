@@ -1278,6 +1278,53 @@
       ]
     },
     {
+      "id": "agent-sandbox",
+      "layer": "factory",
+      "name": "Agent sandbox, egress proxy and credential broker",
+      "role": "Native plan 5.2/5.3, behind flags (default off): an agent process runs in an OS sandbox with no GitHub token, SSH key or gh login; egress goes through an allowlist proxy; pushes and draft PRs go through a broker outside the sandbox that holds the credentials and checks the run's ceiling.",
+      "stacks": {
+        "work": "landing",
+        "personal": "landing"
+      },
+      "where": {
+        "work": "Windows: a restricted, Low-integrity token in a job object (factory/sandbox/exec.py); egress is proxy-routed via HTTPS_PROXY but not enforced (a firewall rule or a separate account would be an admin step); proxy and broker on 127.0.0.1, random ports",
+        "personal": "Linux: bubblewrap (new user/pid/net namespaces, host read-only, /home /root /run /tmp empty); proxy and broker on unix sockets, relayed to 127.0.0.1:3128/3129 inside"
+      },
+      "details": {
+        "Applies to": [
+          "FACTORY_SANDBOX=on: claude_session runs (claude starts inside; ceiling none, the factory delivers); the API runtime's terminal on Linux (refused on Windows: OpenHands' PowerShell probe would fall back unsandboxed)",
+          "PA_SANDBOX=on: plan-mode dispatch sessions; code modes are refused while a sandboxed session cannot commit"
+        ],
+        "Ceilings": "none | push_branch | draft_pr, from the delivery level or PA mode; never a protected branch, no force push, one draft PR from a branch the broker pushed; repo fixed by the host",
+        "Broker": "factory/sandbox/broker.py: per-run capability (not a token), per-owner token via gh_auth.token_for_repo, never runs git in the agent's checkout (fetches into its own mirror), audit.jsonl without secrets; `sbx` client in the sandbox",
+        "Egress": "factory/sandbox/proxy.py: CONNECT + plain HTTP, GitHub, the model APIs and package registries by default; names resolving to private addresses refused; egress.jsonl per run",
+        "Keys": "GitHub tokens and SSH sockets never pass; the model credential for Claude Code (CLAUDE_CODE_OAUTH_TOKEN) is the one key passed on purpose; the API runtime's model keys stay in the factory process",
+        "Limits": [
+          "Windows: directories every local user can read stay readable (C:\\repos inherits Users: RX) until `python -m factory.sandbox.exec setup --deny-read <root>` is run as an operator step",
+          "API runtime: the file editor tool runs in the factory process, unsandboxed"
+        ]
+      },
+      "env": [
+        { "name": "FACTORY_SANDBOX", "default": "off" },
+        { "name": "PA_SANDBOX", "default": "off" },
+        { "name": "FACTORY_SANDBOX_PASS_ENV", "default": "CLAUDE_CODE_OAUTH_TOKEN" },
+        { "name": "SANDBOX_EGRESS_ALLOW", "default": null },
+        { "name": "SANDBOX_EGRESS_ALLOW_ONLY", "default": null },
+        { "name": "SANDBOX_READ_PATHS", "default": null },
+        { "name": "FACTORY_GITHUB_API_URL", "default": null }
+      ],
+      "code": [
+        "software-factory/factory/sandbox/__init__.py",
+        "software-factory/factory/sandbox/broker.py",
+        "software-factory/factory/sandbox/proxy.py",
+        "software-factory/factory/sandbox/exec.py",
+        "software-factory/factory/sandbox/host.py",
+        "software-factory/factory/sandbox/policy.py",
+        "software-factory/factory/claude_session/run.py",
+        "personal-assistant/src/dispatch/sandbox.js"
+      ]
+    },
+    {
       "id": "factory-store",
       "layer": "factory",
       "name": "Factory state",
@@ -1619,6 +1666,16 @@
       "from": "you",
       "to": "talk-page",
       "label": "speak (wake word)"
+    },
+    {
+      "from": "runtime-claude",
+      "to": "agent-sandbox",
+      "label": "claude inside the sandbox (FACTORY_SANDBOX=on)"
+    },
+    {
+      "from": "runtime-api",
+      "to": "agent-sandbox",
+      "label": "terminal inside the sandbox (Linux, FACTORY_SANDBOX=on)"
     },
     {
       "from": "you",

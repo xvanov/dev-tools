@@ -92,6 +92,28 @@ to start while any is active.
 - Booted apps get the Windows essentials (`SYSTEMROOT`, `TEMP`, `COMSPEC`, ...) on
   top of their `env_passthrough`.
 
+## Agent sandbox (FACTORY_SANDBOX, default off)
+
+`FACTORY_SANDBOX=on` starts a claude_session run's `claude` under a restricted,
+Low-integrity token in a job object (`factory/sandbox/exec.py`): it cannot read
+`%USERPROFILE%` (SSH keys, gh's login), cannot reach the Credential Vault, and
+writes only its worktree and its own home. What it cannot do on Windows yet:
+
+- Egress is routed through the allowlist proxy (`HTTPS_PROXY`) but not enforced;
+  a raw socket gets out. Enforcing it needs a firewall rule or a separate
+  account (admin steps, not taken).
+- Folders every local user can read stay readable: `C:\repos` inherits
+  `Users: RX` from `C:\`. An operator step closes that:
+  `uv run python -m factory.sandbox.exec setup --deny-read C:\repos`
+  (adds one inherited deny for the sandbox SID; a run's own worktree keeps its
+  protected ACL).
+- The interpreter, the venv and `claude.exe` are granted read once per path to
+  the sandbox SID (`sandbox-granted.json` remembers which).
+- The API runtime's terminal is not sandboxed on Windows: the run is refused
+  while the flag is on, rather than half-applied.
+- Claude Code needs its model credential inside: `CLAUDE_CODE_OAUTH_TOKEN`
+  (`claude setup-token`) is passed by default (`FACTORY_SANDBOX_PASS_ENV`).
+
 ## Tests
 
 `uv run pytest -n auto` runs on Windows. Tests that need POSIX (bash scripts,

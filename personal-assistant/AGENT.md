@@ -47,7 +47,12 @@ the end state is what the PA does, not a limit on what that agent can do. The sa
 no-push run: it is the operator's OS user, so `GH_CONFIG_DIR=$HOME/.config/gh gh …` or `~/.ssh/id_*`
 restores the login. **The real boundary for work that must never exceed its level is a separate OS
 user (or machine) without those credentials — not set up yet; a follow-up.** `pa doctor` says so on
-every run (`run isolation`).
+every run (`run isolation`). `PA_SANDBOX=on` (default off; `src/dispatch/sandbox.js`, native plan
+5.2/5.3) is the first step: the session starts inside the factory's OS sandbox, whose environment
+is an allowlist (no token, no SSH socket, no gh login) and whose filesystem hides the profile, and
+pushes / draft PRs go through a broker capped at the mode's ceiling. It covers `plan` sessions
+only: a sandboxed session cannot write the repo's shared `.git`, so it cannot commit, and a code
+mode is refused while the flag is on rather than run unsandboxed.
 
 **Unattended levels cannot be started from inside a run — by mitigation, not by boundary.** A
 dispatched agent runs as the same user with prompts skipped, so it can reach the dashboard API with

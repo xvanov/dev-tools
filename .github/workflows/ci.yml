@@ -284,6 +284,12 @@ jobs:
           enable-cache: true
           cache-dependency-glob: software-factory/uv.lock
           python-version: "3.12"
+      - name: bubblewrap for the agent sandbox tests (plan 5.2)
+        if: runner.os == 'Linux'
+        # Ubuntu 24.04 blocks unprivileged user namespaces through AppArmor; bwrap needs them.
+        run: |
+          sudo apt-get install -y bubblewrap
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
       - run: uv sync --all-extras
       - run: bash $GITHUB_WORKSPACE/.github/scripts/run.sh uv run pytest -q --tb=short -n auto --dist loadfile
         shell: bash

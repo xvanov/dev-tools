@@ -105,6 +105,37 @@ def job_external_id(root: Path, app: str | None, direction_id: str | None) -> st
     return str(value) if value else None
 
 
+def start_run_sandbox(
+    *, run_id: str, workdir: Path, state_dir: Path, extra_readable: list[str] | None = None
+) -> Any:
+    """A started :class:`factory.sandbox.host.SandboxRun` for one agent run
+    (ceiling ``none``, no broker). Readable: the interpreter and ``factory``
+    package, the agent's binary, its ``--add-dir`` dirs, and the worktree's
+    common git dir (read-only, so ``git status`` / ``git diff`` work).
+
+    ``FACTORY_SANDBOX_PASS_ENV`` (comma list, default
+    ``CLAUDE_CODE_OAUTH_TOKEN``) names the model credential passed in: Claude
+    Code calls the model from inside, so that one key enters; GitHub tokens
+    never do."""
+    import os
+
+    from factory.sandbox.host import SandboxRun, readable_for
+
+    pass_env = [
+        x.strip()
+        for x in os.environ.get("FACTORY_SANDBOX_PASS_ENV", "CLAUDE_CODE_OAUTH_TOKEN").split(",")
+        if x.strip()
+    ]
+    return SandboxRun(
+        run_id=run_id,
+        workdir=workdir,
+        state_dir=state_dir,
+        ceiling="none",
+        readable=readable_for(workdir, extra_readable),
+        pass_env=pass_env,
+    ).start()
+
+
 def run_claude(
     *,
     db_path: Path,
@@ -165,6 +196,33 @@ def run_claude(
             app=app, direction_id=direction_id, story_id=story_id, row_id=row_id, extra=links
         )
 
+    # 5.2: FACTORY_SANDBOX=on starts claude inside an OS sandbox with no
+    # GitHub credential and egress through the allowlist proxy. Ceiling
+    # `none`: a factory agent never pushes; the factory delivers. Fail safe: a
+    # sandbox that cannot start fails the run, it never runs unsandboxed.
+    sandbox: Any = None
+    argv_wrap: Callable[[list[str]], list[str]] | None = None
+    from factory.sandbox import enabled as _sandbox_enabled
+
+    if _sandbox_enabled("FACTORY_SANDBOX"):
+        try:
+            sandbox = start_run_sandbox(
+                run_id=f"{app or 'run'}-{story_id or 0}-{row_id}",
+                workdir=Path(cwd),
+                state_dir=Path(run_dir) / "sandbox",
+                extra_readable=[claude_bin, *(add_dirs or [])],
+            )
+            argv_wrap = sandbox.wrap
+        except Exception as exc:  # noqa: BLE001 - reported on the run row
+            conv = ConversationResult(
+                stop_reason="launch_failed", error=f"FACTORY_SANDBOX=on but the sandbox did not start: {exc}"[:500]
+            )
+            ledger.close_run(
+                db_path, row_id, success=False, error=conv.error, tokens_in=0, tokens_out=0,
+                cached_input_tokens=0, subscription_equiv_usd=0.0, duration_s=0.0, usage_reliable=False,
+            )
+            return ClaudeRunOutcome(conv, row_id, None)
+
     def _on_session(info: Any) -> None:
         ledger.set_session(db_path, row_id, info.as_json())
         try:
@@ -175,22 +233,27 @@ def run_claude(
         except OSError:
             pass
 
-    conv = run_conversation(
-        cwd=Path(cwd),
-        run_dir=Path(run_dir),
-        prompt=prompt,
-        title=title,
-        launcher=launcher,
-        claude_bin=claude_bin,
-        model=model,
-        wall_clock_s=wall_clock_s,
-        gate_check=gate_check,
-        max_gate_rounds=max_gate_rounds,
-        no_progress_abort_s=no_progress_abort_s,
-        cancelled=cancelled or (lambda: False),
-        on_session=_on_session,
-        add_dirs=add_dirs,
-    )
+    try:
+        conv = run_conversation(
+            cwd=Path(cwd),
+            run_dir=Path(run_dir),
+            prompt=prompt,
+            title=title,
+            launcher=launcher,
+            claude_bin=claude_bin,
+            model=model,
+            wall_clock_s=wall_clock_s,
+            gate_check=gate_check,
+            max_gate_rounds=max_gate_rounds,
+            no_progress_abort_s=no_progress_abort_s,
+            cancelled=cancelled or (lambda: False),
+            on_session=_on_session,
+            add_dirs=add_dirs,
+            argv_wrap=argv_wrap,
+        )
+    finally:
+        if sandbox is not None:
+            sandbox.close()
     ok = success(conv) if success is not None else (conv.stop_reason in ("done", "green"))
     error = conv.error
     if not ok and not error:

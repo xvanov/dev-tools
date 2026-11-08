@@ -116,6 +116,7 @@ def run_conversation(
     cancelled: Callable[[], bool] = lambda: False,
     on_session: Callable[[SessionInfo], None] | None = None,
     add_dirs: list[str] | None = None,
+    argv_wrap: Callable[[list[str]], list[str]] | None = None,
     poll_s: float = 2.0,
     clock: Callable[[], float] = time.monotonic,
     sleep: Callable[[float], None] = time.sleep,
@@ -144,6 +145,8 @@ def run_conversation(
             resume=resume,
             add_dirs=add_dirs,
         )
+        if argv_wrap is not None:  # FACTORY_SANDBOX: claude starts inside the run's sandbox
+            argv = argv_wrap(argv)
         plan.script_path.write_text(
             build_round_script(plan, cwd=cwd, claude_argv=argv, title=title), encoding="utf-8"
         )

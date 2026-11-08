@@ -278,6 +278,11 @@ async function start({
   // is created so a bad choice leaves no run row or worktree behind.
   const launch = require('./agent').dispatchCommand({ agent, model, prompt: openingPrompt({}) });
   const m = resolveMode(modeName);
+  // PA_SANDBOX=on (src/dispatch/sandbox.js): refused up front for a mode it
+  // cannot cover yet, so nothing runs unsandboxed and nothing is left behind.
+  const sandbox = require('./sandbox');
+  const sandboxed = sandbox.enabled();
+  if (sandboxed) sandbox.requireSandboxable(m.name);
   const target = await resolveTarget({ commitmentId, repoPath });
 
   const label = task || target.commitment?.summary;
@@ -315,6 +320,7 @@ async function start({
   let briefPath = null;
   let session = null;
   let worktreeMade = false;
+  let sandboxHost = null;
 
   // Everything from here to 'running' is undone on any error: the row is
   // marked failed with the reason, the session killed, the worktree and its
@@ -350,7 +356,24 @@ async function start({
       ]);
     }
 
-    const briefText = await briefFor(target, { modeName: m.name, run: { ...run, worktree_path: worktreePath, branch }, task, delivery: chosen.delivery });
+    let briefText = await briefFor(target, { modeName: m.name, run: { ...run, worktree_path: worktreePath, branch }, task, delivery: chosen.delivery });
+    let command = launch.command;
+    if (sandboxed) {
+      const workdir = worktreePath || path.join(config.worktreesRoot, `run-${run.id}-plan`);
+      fs.mkdirSync(workdir, { recursive: true });
+      const stateDir = path.join(config.worktreesRoot, `run-${run.id}.sbx`);
+      const host = sandboxHost = await sandbox.start({
+        factoryPath: config.factory.path,
+        stateDir,
+        spec: sandbox.hostSpec({
+          runId: run.id, workdir, stateDir, mode: m.name, repoPath: repo, branch,
+          claudeBin: launch.agent === 'claude' ? process.env.PA_SANDBOX_CLAUDE_BIN || null : null,
+          passEnv: process.env.PA_SANDBOX_PASS_ENV || null,
+        }),
+      });
+      command = sandbox.wrapCommand(host.wrap, launch.command, require('../platform').id === 'windows' ? 'windows' : 'posix');
+      briefText = `${briefText.trimEnd()}\n\n${sandbox.BRIEF_NOTE}`;
+    }
 
     briefPath = worktreePath
       ? path.join(worktreePath, 'BRIEF.md')
@@ -370,7 +393,7 @@ async function start({
     }
     const spec = {
       cwd: worktreePath || repo || config.reposRoot,
-      command: launch.command,
+      command,
       title: `pa#${run.id} ${label.slice(0, 40)}`,
       // Marks everything the agent runs: `pa do` / `pa answer` refuse an
       // unattended end state from inside a dispatched run.
@@ -389,6 +412,9 @@ async function start({
       [run.id, session.id, briefPath]
     );
   } catch (err) {
+    if (sandboxHost) {
+      try { process.kill(sandboxHost.pid); } catch { /* already gone */ }
+    }
     await rollbackStart({ run, repo, worktreePath, branch, worktreeMade, session, err });
     throw err;
   }

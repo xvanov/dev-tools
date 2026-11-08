@@ -1101,6 +1101,53 @@ def _persona_llm_overrides(persona: str, model_id: str, difficulty: str) -> dict
         return {}
 
 
+def sandbox_terminal(agent: Any, *, repo_path: Path, state_dir: Path) -> Any:
+    """``agent`` with its terminal started inside the run's OS sandbox (5.2).
+
+    Linux: the terminal is OpenHands' subprocess backend with ``shell_path``
+    a script that starts ``bash`` through ``factory.sandbox.exec``. Ceiling
+    ``none``: the factory delivers, the agent never pushes. Limits: the file
+    editor tool still runs in this process (it reads and writes with the
+    factory's rights), and on Windows the PowerShell backend probes its shell
+    with a 5 s timeout and falls back to an unsandboxed one, so it is refused
+    there rather than half-applied.
+    """
+    import atexit
+    import sys
+
+    if sys.platform == "win32":
+        raise OSError("the API runtime's terminal is not sandboxed on Windows yet")
+    from openhands.sdk import Tool
+    from openhands.tools.terminal import TerminalTool
+
+    from factory.sandbox.exec import wrap_argv
+    from factory.sandbox.host import SandboxRun, readable_for
+
+    sb = SandboxRun(
+        run_id=state_dir.name,
+        workdir=repo_path,
+        state_dir=state_dir,
+        ceiling="none",
+        readable=readable_for(repo_path),
+    ).start()
+    atexit.register(sb.close)
+    import shlex
+
+    shell = state_dir / "sandboxed-bash"
+    argv = wrap_argv(sb.policy_path, ["/bin/bash"])
+    shell.write_text(
+        "#!/bin/sh\nexec " + " ".join(shlex.quote(a) for a in argv) + ' "$@"\n', encoding="utf-8"
+    )
+    shell.chmod(0o755)
+    tools = [
+        Tool(name=t.name, params={**(t.params or {}), "terminal_type": "subprocess", "shell_path": str(shell)})
+        if t.name == TerminalTool.name
+        else t
+        for t in agent.tools
+    ]
+    return agent.model_copy(update={"tools": tools})
+
+
 def _build_agent_for_persona(persona: str, llm: Any, get_default_agent: Any) -> Any:
     """Construct the OpenHands agent, honoring an optional preset override
     from routes.yaml's ``presets`` block (e.g. ``dev: planning``).
@@ -2427,6 +2474,40 @@ async def sandbox_run(
     llm_kwargs.update(_persona_llm_overrides(persona, llm_config.model, difficulty))
     llm = LLM(**llm_kwargs)
     agent = _build_agent_for_persona(persona, llm, get_default_agent)
+    # 5.2: FACTORY_SANDBOX=on runs the agent's terminal inside the OS sandbox
+    # (the model keys stay here, in the factory process). Fail safe: no
+    # sandbox, no run.
+    from factory.sandbox import enabled as _sandbox_enabled
+
+    if _sandbox_enabled("FACTORY_SANDBOX"):
+        try:
+            agent = sandbox_terminal(
+                agent,
+                repo_path=Path(repo_path),
+                state_dir=Path(db_path).parent / "sandbox" / f"{app or 'app'}-{story_id or 0}-{persona}",
+            )
+        except Exception as exc:  # noqa: BLE001 - reported as an infra failure
+            err = f"FACTORY_SANDBOX=on but the sandbox did not start: {exc}"[:500]
+            _record(
+                persona=persona,
+                model=llm_config.model,
+                mode="sandbox",
+                tokens_in=0,
+                tokens_out=0,
+                cost_usd=0.0,
+                success=False,
+                story_path=str(story_path),
+                repo_path=str(repo_path),
+                error=err,
+                db_path=db_path,
+                duration_s=_elapsed(),
+                story_id=story_id,
+                model_tier=difficulty,
+                direction_id=direction_id,
+                app=app,
+                premodel_infra=True,
+            )
+            return RunResult(success=False, error=err, summary=err, premodel_infra=True)
     workspace = LocalWorkspace(working_dir=str(Path(repo_path).resolve()))
 
     # Give the dev/test_impl sandbox a writable MEDIA_DIR so the agent's OWN
