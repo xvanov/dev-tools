@@ -999,14 +999,19 @@
         ],
         "Kinds": "code (direction to stories to PRs), research and report (one agent writes report.md; delivery none)",
         "Continue and resume": "landing: the PA sends job submit --branch / --pr and job resume <id>; a factory without them refuses in its parser and the PA says the factory must be updated (not yet in JOBS-API.md on main)",
-        "Never": "the PA never imports factory code or reads its store"
+        "Never": "the PA never imports factory code or reads its store",
+        "Schemas": "plan 1.1 (D15): one JSON Schema source at the repo root, schemas/*.schema.json: Job (this status object, v1.4), Run (a PA run's id chain), Card, Event (an /api/events frame), Approval (the chat's permission prompt). TS types are generated (schemas/types.d.ts by schemas/gen-types.js); the PA validates with schemas/index.js (dependency-free), the factory with factory/contract_schemas.py (jsonschema). Both sides test their real objects against them"
       },
       "contract": "v1.2",
       "code": [
         "software-factory/docs/JOBS-API.md",
         "software-factory/factory/cli_jobs.py",
         "software-factory/factory/jobs/submit.py",
-        "software-factory/factory/jobs/status.py"
+        "software-factory/factory/jobs/status.py",
+        "schemas/index.js",
+        "schemas/gen-types.js",
+        "schemas/types.d.ts",
+        "software-factory/factory/contract_schemas.py"
       ]
     },
     {
