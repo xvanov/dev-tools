@@ -6,6 +6,8 @@
 // screen both show that very prompt, and only with X-PA and the page token.
 // termhub is faked; names are invented.
 
+// These reach src/db only incidentally (board refresh, brief gather): never the real one.
+require('./_fakeDb').install();
 const assert = require('assert');
 const fs = require('fs');
 const os = require('os');

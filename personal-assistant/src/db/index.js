@@ -12,8 +12,28 @@ const { config } = require('../config');
 
 let pool = null;
 
+// A test process must never reach the operator's real database: a test once wrote its stub's error
+// into the live factory_board row on every run. A process counts as a test when the shared runner
+// set PA_TESTING, or when it was started as `node ...test.js`. It may connect only to a database
+// whose name starts with `pa_test_` (a throwaway DB or one the test created); anything else
+// throws before a connection is attempted. The runner points PA_DATABASE_URL at a blocked name,
+// so a stray query in a test fails loudly instead of reading or writing real rows.
+function isTestProcess() {
+  return Boolean(process.env.PA_TESTING) || /\.test\.js$/i.test(process.argv[1] || '');
+}
+
+function assertSafeForTests(url) {
+  if (!isTestProcess()) return;
+  let dbName = '';
+  try { dbName = decodeURIComponent(new URL(url).pathname.replace(/^\//, '')); } catch { /* unparseable: refused below */ }
+  if (!/^pa_test_/i.test(dbName)) {
+    throw new Error(`refusing to connect a test process to database "${dbName || '?'}": tests may only use a database named pa_test_* (set PA_DATABASE_URL to a throwaway one), and most should stub src/db instead`);
+  }
+}
+
 function getPool() {
   if (!pool) {
+    assertSafeForTests(config.databaseUrl);
     pool = new Pool({
       connectionString: config.databaseUrl,
       // The worker runs a dozen passes concurrently (one every 5 s for the
@@ -86,4 +106,4 @@ async function probe() {
   return r.rows[0];
 }
 
-module.exports = { getPool, query, rows, one, withTx, close, probe };
+module.exports = { assertSafeForTests, getPool, query, rows, one, withTx, close, probe };

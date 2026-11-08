@@ -3,6 +3,8 @@
 // The voice page (/talk): what is read aloud, how answers become sentences,
 // the VAD, the WAV, and the transcribe proxy against a fake whisper server.
 
+// These reach src/db only incidentally (board refresh, brief gather): never the real one.
+require('./_fakeDb').install();
 const assert = require('assert');
 const fs = require('fs');
 const net = require('net');

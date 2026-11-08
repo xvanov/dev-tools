@@ -33,8 +33,10 @@ Per-tool settings live in `<tool>/test/runner.config.js` (every `skip` and `seri
 - Port 0, never a fixed port. Every server a test starts listens on `127.0.0.1:0`.
 - Its own temp dir (`fs.mkdtempSync(path.join(os.tmpdir(), 'x-'))`) for data, SQLite files, worktrees.
   Point the tool's data-dir env var or config at it before requiring product code.
-- No real Postgres. PA's runner config closes the default `PA_DATABASE_URL`; a test that needs
-  rows stubs `src/db`.
+- No real Postgres, ever. `src/db` throws if a test process (`PA_TESTING` set by the runner, or `node x.test.js`)
+  connects to a database not named `pa_test_*`, and the runner points `PA_DATABASE_URL` at a blocked name. A test
+  that only reaches the db incidentally uses `require('./_fakeDb').install()` first; one that needs real rows
+  creates a throwaway `pa_test_*` database. Pinned by `personal-assistant/test/dbGuard.test.js`.
 - A test that starts a PTY (termhub) must kill it and wait for it before removing its temp dir.
   `Session.kill()` does that on Windows (`taskkill /T /F`, then waits); remove dirs with
   `fs.rmSync(dir, { recursive: true, force: true, maxRetries: 30, retryDelay: 100 })`.

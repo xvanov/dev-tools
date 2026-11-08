@@ -6,7 +6,7 @@ module.exports = {
   shards: { 'dispatchStart.test.js': 5, 'remoteExec.test.js': 4 },
   // No test may reach a real Postgres (the work stack's PA database lives on 5433): point the pool
   // at a closed port so a stray query fails at once instead of touching, or waiting on, real data.
-  env: { PA_DATABASE_URL: 'postgres://pa:pa@127.0.0.1:1/pa_tests_must_not_use_a_database' },
+  env: { PA_TESTING: '1', PA_DATABASE_URL: 'postgres://pa:pa@127.0.0.1:1/blocked_in_tests' },
   // Tests that walk a directory rather than name files: changed-files mode cannot see the edge.
   touches: { 'syntax.test.js': ['src/', 'bin/'] },
   // Slow end-to-end tests that import the whole app: in --changed mode only their own area selects them.

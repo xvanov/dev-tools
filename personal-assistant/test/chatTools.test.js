@@ -7,6 +7,8 @@
 // continue/resume contract, and what Talk shows while a prompt waits.
 // The store, dispatch and the factory CLI are stubbed; names are invented.
 
+// These reach src/db only incidentally (board refresh, brief gather): never the real one.
+require('./_fakeDb').install();
 const assert = require('assert');
 const fs = require('fs');
 const os = require('os');
