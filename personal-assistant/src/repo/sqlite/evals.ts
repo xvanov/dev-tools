@@ -18,7 +18,7 @@ type Row = import('../types.ts').Row;
 
 const { BOOSTS } = require('../evals.ts');
 const { NOW } = require('./_sql');
-const { ftsQuery } = require('./search');
+const { ftsQuery } = require('./search.ts');
 
 // The same boosts, in SQLite SQL (named, never caller text).
 const SQLITE_BOOSTS = {

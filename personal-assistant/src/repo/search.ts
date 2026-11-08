@@ -9,13 +9,19 @@
 // method, so phase 3 can reimplement it for SQLite (FTS5 / sqlite-vec) without
 // touching the fusion in src/search. Embeddings travel as the '[0.1,...]'
 // literal callers format. The filters object is {sources, since, until}.
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+type Db = import('./types.ts').Db;
+type Row = import('./types.ts').Row;
+type Filters = { sources?: unknown[] | null; since?: Date | string | number | null; until?: Date | string | number | null };
 
 const ITEM = `si.id, si.source, si.subject, si.occurred_at, si.author_identity,
               si.thread_external_id`;
 
 // Shared WHERE fragment for source and date filters. Appends its parameters
 // to `params` and returns SQL that starts with `and` (or is empty).
-function filterSql({ sources, since, until }, params) {
+function filterSql({ sources, since, until }: Filters, params: unknown[]) {
   const parts = [];
   if (sources?.length) {
     params.push(sources);
@@ -36,11 +42,11 @@ function filterSql({ sources, since, until }, params) {
 // otherwise any of the query's terms. The OR form is built from the lexemes
 // Postgres itself extracts, so stop words drop out and nothing in the user's
 // text is parsed as tsquery syntax.
-function tsqueries(strict) {
+function tsqueries(strict: unknown) {
   if (strict) {
     return `websearch_to_tsquery('english', $1) as e, websearch_to_tsquery('simple', $1) as s`;
   }
-  const anyOf = (cfg) =>
+  const anyOf = (cfg: unknown) =>
     `to_tsquery('simple', array_to_string(array(
        select quote_literal(l) from unnest(tsvector_to_array(to_tsvector('${cfg}', $1))) l), ' | '))`;
   return `${anyOf('english')} as e, ${anyOf('simple')} as s`;
@@ -61,10 +67,10 @@ function tsqueries(strict) {
  * @property {number} rank  leg-specific relevance, only meaningful as an order
  */
 
-function create(db) {
+function create(db: Db) {
   return {
     /** Chunks whose context header predates `contextVersion`, with their item. */
-    async staleChunks(contextVersion, limit) {
+    async staleChunks(contextVersion: unknown, limit: number) {
       return db.rows(
         `select c.id, si.source, si.subject, si.occurred_at, si.author_identity, si.raw
        from chunk c join source_item si on si.id = c.source_item_id
@@ -75,7 +81,7 @@ function create(db) {
     },
 
     /** Re-heads a chunk and clears its embedding so the next backfill redoes it. */
-    async reheadChunk(id, context, contextVersion) {
+    async reheadChunk(id: number | string, context: unknown, contextVersion: unknown) {
       await db.query('update chunk set context = $2, context_v = $3, embedding = null where id = $1', [
         id,
         context,
@@ -84,12 +90,12 @@ function create(db) {
     },
 
     /** Chunks with no embedding, newest first. */
-    async chunksMissingEmbedding(limit) {
+    async chunksMissingEmbedding(limit: number) {
       return db.rows('select id, context, content from chunk where embedding is null order by id desc limit $1', [limit]);
     },
 
     /** Sets a chunk's embedding (a '[...]' literal). */
-    async setChunkEmbedding(id, vector) {
+    async setChunkEmbedding(id: number | string, vector: unknown) {
       await db.query('update chunk set embedding = $2::vector where id = $1', [id, vector]);
     },
 
@@ -99,9 +105,9 @@ function create(db) {
      * @param {boolean} strict  websearch syntax (all terms) when true, any term when false
      * @returns {Promise<LegRow[]>}
      */
-    async lexicalPass(q, limit, filters, strict) {
+    async lexicalPass(q: string, limit: number, filters: Filters | null | undefined, strict: unknown) {
       const params = [q, limit];
-      const where = filterSql(filters, params);
+      const where = filterSql(filters ?? {}, params);
       return db.rows(
         `with q as (select ${tsqueries(strict)})
      select x.*,
@@ -129,9 +135,9 @@ function create(db) {
      * @param {string} vector  the query's '[...]' literal
      * @returns {Promise<LegRow[]>}
      */
-    async vectorPass(vector, limit, filters) {
+    async vectorPass(vector: unknown, limit: number, filters: Filters | null | undefined) {
       const params = [vector, limit, limit * 4];
-      const where = filterSql(filters, params);
+      const where = filterSql(filters ?? {}, params);
       return db.withTx(async (client) => {
         // pgvector 0.6 has no iterative scan: HNSW returns ef_search candidates and
         // a filter applied to them can leave none — "Teams chats about X" in a
@@ -173,9 +179,9 @@ function create(db) {
      * @param {string[]} patterns  ilike patterns over the raw payload
      * @returns {Promise<LegRow[]>}
      */
-    async peopleItems(authors, patterns, limit, filters) {
+    async peopleItems(authors: unknown, patterns: unknown, limit: number, filters: Filters | null | undefined) {
       const params = [authors, patterns, limit];
-      const where = filterSql(filters, params);
+      const where = filterSql(filters ?? {}, params);
       return db.rows(
         `select ${ITEM}, c.id as chunk_id, coalesce(c.context, '') as context,
             left(coalesce(c.content, si.body_text), 2000) as content,
@@ -191,7 +197,7 @@ function create(db) {
     },
 
     /** Items by id, with their first chunk's words (recall: the items behind claims). */
-    async itemsById(ids) {
+    async itemsById(ids: unknown[]) {
       return db.rows(
         `select si.id, si.source, si.subject, si.occurred_at, si.author_identity, si.thread_external_id,
             c.context, left(coalesce(c.content, si.body_text), 2000) as text,
@@ -208,7 +214,7 @@ function create(db) {
      * Counts a hit and returns the cached vector as text ('[...]'), or null.
      * Best effort by contract: callers treat a throw as a miss.
      */
-    async cacheGet(model, dims, norm) {
+    async cacheGet(model: string, dims: unknown, norm: unknown) {
       const r = await db.query(
         `update query_embedding_cache set hits = hits + 1, last_used_at = now()
           where model = $1 and dims = $2 and query_norm = $3 returning embedding::text as embedding`,
@@ -218,7 +224,7 @@ function create(db) {
     },
 
     /** Stores a vector (a '[...]' literal) under the normalized query; a repeat refreshes last_used_at. */
-    async cachePut(model, dims, norm, vector) {
+    async cachePut(model: string, dims: unknown, norm: unknown, vector: unknown) {
       await db.query(
         `insert into query_embedding_cache (model, dims, query_norm, embedding) values ($1, $2, $3, $4::vector)
          on conflict (model, dims, query_norm) do update set last_used_at = now()`,
@@ -227,7 +233,7 @@ function create(db) {
     },
 
     /** Keeps the newest `maxRows` entries by last use. */
-    async cacheTrim(maxRows) {
+    async cacheTrim(maxRows: unknown) {
       await db.query(
         `delete from query_embedding_cache where (model, dims, query_norm) in (
              select model, dims, query_norm from query_embedding_cache order by last_used_at desc offset $1)`,

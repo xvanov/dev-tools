@@ -300,6 +300,6 @@ module.exports = {
   queryEmbedder,
   embeddingInput,
   embeddingsConfigured,
-  filterSql: require('../repo/search').filterSql,
+  filterSql: require('../repo/search.ts').filterSql,
   lastEmbedError: () => lastEmbedError,
 };

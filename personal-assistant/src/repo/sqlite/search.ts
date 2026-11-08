@@ -17,6 +17,12 @@
 //
 // Vector leg: exact scan over float32 BLOBs, vec_distance_cosine = pgvector's
 // <=>. Vectors arrive as the '[0.1,...]' literal callers format (or arrays).
+//
+// Strict TypeScript (plan 4.1): erasable syntax, CommonJS (docs/native/JARVISD.md).
+
+type Db = import('../types.ts').Db;
+type Row = import('../types.ts').Row;
+type Filters = { sources?: unknown[] | null; since?: Date | string | number | null; until?: Date | string | number | null };
 
 const { vectorBlob, signBits, hammingSql } = require('../../db/sqlite');
 
@@ -45,7 +51,7 @@ const STOP = new Set(
 );
 
 /** Source and date filters as SQL starting with `and` (or empty); pushes its parameters. */
-function filterSql({ sources, since, until } = {}, params) {
+function filterSql({ sources, since, until }: Filters = {}, params: unknown[]) {
   const parts = [];
   if (sources?.length) {
     params.push(sources);
@@ -62,14 +68,14 @@ function filterSql({ sources, since, until } = {}, params) {
   return parts.length ? `and ${parts.join(' and ')}` : '';
 }
 
-const words = (s) => String(s || '').toLowerCase().match(/[\p{L}\p{N}_]+/gu) || [];
-const quote = (w) => `"${w.replace(/"/g, '""')}"`;
+const words = (s: unknown): string[] => String(s || '').toLowerCase().match(/[\p{L}\p{N}_]+/gu) || [];
+const quote = (w: string) => `"${w.replace(/"/g, '""')}"`;
 
 /**
  * The FTS5 MATCH expression for `q` and the plain terms it looks for (for the
  * snippet), or null when nothing searchable is left.
  */
-function ftsQuery(q, strict) {
+function ftsQuery(q: string, strict: unknown) {
   const text = String(q || '');
   if (!strict) {
     const terms = [...new Set(words(text))];
@@ -78,25 +84,25 @@ function ftsQuery(q, strict) {
     return use.length ? { match: use.map(quote).join(' OR '), terms: use } : null;
   }
   // websearch_to_tsquery: "a phrase", -excluded, `or` between terms, else AND.
-  const groups = [[]]; // OR of ANDs
-  const not = [];
-  const terms = [];
+  const groups: string[][] = [[]]; // OR of ANDs
+  const not: string[] = [];
+  const terms: string[] = [];
   const re = /(-?)"([^"]*)"|(-?)(\S+)/g;
   let m;
   while ((m = re.exec(text))) {
     const neg = Boolean(m[1] || m[3]);
-    const raw = m[2] !== undefined ? m[2] : m[4];
+    const raw = (m[2] !== undefined ? m[2] : m[4]) ?? '';
     if (m[2] === undefined && raw.toLowerCase() === 'or') {
-      if (groups[groups.length - 1].length) groups.push([]);
+      if (groups[groups.length - 1]?.length) groups.push([]);
       continue;
     }
     // A lone stop word is dropped, as websearch_to_tsquery drops it; a quoted phrase keeps all its words.
     const ws = m[2] !== undefined ? words(raw) : words(raw).filter((w) => !STOP.has(w));
     if (!ws.length) continue;
-    const expr = ws.length > 1 ? quote(ws.join(' ')) : quote(ws[0]);
+    const expr = ws.length > 1 ? quote(ws.join(' ')) : quote(ws[0] ?? '');
     if (neg) not.push(expr);
     else {
-      groups[groups.length - 1].push(expr);
+      groups[groups.length - 1]?.push(expr);
       terms.push(...ws);
     }
   }
@@ -108,7 +114,7 @@ function ftsQuery(q, strict) {
 }
 
 /** ~28 words of `content` around the first word that starts like a term. */
-function snippet(content, terms) {
+function snippet(content: unknown, terms: string[]) {
   const ws = String(content || '').split(/\s+/).filter(Boolean);
   const stems = terms.map((t) => t.slice(0, Math.max(3, t.length - 2)));
   let at = ws.findIndex((w) => {
@@ -121,7 +127,7 @@ function snippet(content, terms) {
 }
 
 /** A float32 as pg's float4 text: the shortest decimal that reads back the same. */
-function f4(x) {
+function f4(x: number) {
   if (!Number.isFinite(x)) return String(x);
   for (let p = 1; p <= 9; p++) {
     const s = Number(x.toPrecision(p));
@@ -131,24 +137,24 @@ function f4(x) {
 }
 
 /** pgvector's text for a vector column value (Float32Array or BLOB). */
-function vectorText(v) {
+function vectorText(v: unknown) {
   if (v == null) return null;
   if (typeof v === 'string') return v;
-  const f = Buffer.isBuffer(v) ? new Float32Array(v.buffer.slice(v.byteOffset, v.byteOffset + v.byteLength)) : v;
+  const f = Buffer.isBuffer(v) ? new Float32Array(v.buffer.slice(v.byteOffset, v.byteOffset + v.byteLength)) : (v as ArrayLike<number>);
   return `[${Array.from(f, f4).join(',')}]`;
 }
 
 /** A vector argument ('[...]' literal, array or Float32Array) as the BLOB a column holds. */
-function blob(v) {
+function blob(v: unknown) {
   if (v == null) return null;
   if (Buffer.isBuffer(v)) return v;
   return vectorBlob(typeof v === 'string' ? JSON.parse(v) : v);
 }
 
-function create(db) {
+function create(db: Db) {
   return {
     /** Chunks whose context header predates `contextVersion`, with their item. */
-    async staleChunks(contextVersion, limit) {
+    async staleChunks(contextVersion: unknown, limit: number) {
       return db.rows(
         `select c.id, si.source, si.subject, si.occurred_at, si.author_identity, si.raw
        from chunk c join source_item si on si.id = c.source_item_id
@@ -159,26 +165,26 @@ function create(db) {
     },
 
     /** Re-heads a chunk and clears its embedding so the next backfill redoes it. */
-    async reheadChunk(id, context, contextVersion) {
+    async reheadChunk(id: number | string, context: unknown, contextVersion: unknown) {
       await db.query('update chunk set context = $2, context_v = $3, embedding = null where id = $1', [id, context, contextVersion]);
     },
 
     /** Chunks with no embedding, newest first. */
-    async chunksMissingEmbedding(limit) {
+    async chunksMissingEmbedding(limit: number) {
       return db.rows('select id, context, content from chunk where embedding is null order by id desc limit $1', [limit]);
     },
 
     /** Sets a chunk's embedding (a '[...]' literal, or an array). */
-    async setChunkEmbedding(id, vector) {
+    async setChunkEmbedding(id: number | string, vector: unknown) {
       await db.query('update chunk set embedding = $2 where id = $1', [id, blob(vector)]);
     },
 
     /** Lexical leg: the best chunk per item for the query (see the header). */
-    async lexicalPass(q, limit, filters, strict) {
+    async lexicalPass(q: string, limit: number, filters: Filters | null | undefined, strict: unknown) {
       const fq = ftsQuery(q, strict);
       if (!fq) return [];
       const params = [fq.match, limit];
-      const where = filterSql(filters, params);
+      const where = filterSql(filters ?? {}, params);
       // Ranks on narrow columns only (chunk id, item, ord), keeps the top
       // `limit` items, and reads text for those rows alone: a common word
       // matches ~20k chunks, and reading each one's content made this ~400 ms
@@ -220,12 +226,12 @@ function create(db) {
     },
 
     /** Vector leg: the nearest chunk per item (cosine), always an exact scan. */
-    async vectorPass(vector, limit, filters) {
+    async vectorPass(vector: unknown, limit: number, filters: Filters | null | undefined) {
       // Two stages (sql-sqlite/007): every chunk ranked by Hamming distance on
       // its sign bits, then the best CANDIDATES re-ranked by exact cosine.
       const q = blob(vector);
       const params = [q, limit, limit * 4];
-      const where = filterSql(filters, params);
+      const where = filterSql(filters ?? {}, params);
       params.push(signBits(q), Math.max(CANDIDATES, limit * 10));
       const bitsAt = params.length - 1;
       const rows = await db.rows(
@@ -260,9 +266,9 @@ function create(db) {
     },
 
     /** People leg: recent items authored by, or mentioning, the named people. */
-    async peopleItems(authors, patterns, limit, filters) {
+    async peopleItems(authors: unknown, patterns: unknown, limit: number, filters: Filters | null | undefined) {
       const params = [authors || [], patterns || [], limit];
-      const where = filterSql(filters, params);
+      const where = filterSql(filters ?? {}, params);
       return db.rows(
         `select ${ITEM}, c.id as chunk_id, coalesce(c.context, '') as context,
             substr(coalesce(c.content, si.body_text), 1, 2000) as content,
@@ -279,7 +285,7 @@ function create(db) {
     },
 
     /** Items by id, with their first chunk's words. */
-    async itemsById(ids) {
+    async itemsById(ids: unknown[]) {
       return db.rows(
         `select si.id, si.source, si.subject, si.occurred_at, si.author_identity, si.thread_external_id,
             c.context, substr(coalesce(c.content, si.body_text), 1, 2000) as text,
@@ -293,7 +299,7 @@ function create(db) {
     // ----------------------------------------- query_embedding_cache
 
     /** Counts a hit and returns the cached vector as text ('[...]'), or null. */
-    async cacheGet(model, dims, norm) {
+    async cacheGet(model: string, dims: unknown, norm: unknown) {
       const r = await db.query(
         `update query_embedding_cache set hits = hits + 1, last_used_at = ${NOW}
           where model = $1 and dims = $2 and query_norm = $3 returning embedding`,
@@ -303,7 +309,7 @@ function create(db) {
     },
 
     /** Stores a vector under the normalized query; a repeat refreshes last_used_at. */
-    async cachePut(model, dims, norm, vector) {
+    async cachePut(model: string, dims: unknown, norm: unknown, vector: unknown) {
       await db.query(
         `insert into query_embedding_cache (model, dims, query_norm, embedding) values ($1, $2, $3, $4)
          on conflict (model, dims, query_norm) do update set last_used_at = ${NOW}`,
@@ -312,7 +318,7 @@ function create(db) {
     },
 
     /** Keeps the newest `maxRows` entries by last use. */
-    async cacheTrim(maxRows) {
+    async cacheTrim(maxRows: unknown) {
       await db.query(
         `delete from query_embedding_cache where rowid in (
              select rowid from query_embedding_cache order by last_used_at desc limit -1 offset $1)`,
