@@ -307,10 +307,25 @@ async function deploy(argv: string[], opts: { say?: Say | null } = {}) {
   }
 }
 
-/** PA_RUNTIME as the stack is set (env, else .env): node (default), bun or jarvisd. */
+const RUNTIMES = ['node', 'bun', 'jarvisd'];
+
+/**
+ * PA_RUNTIME as the stack is set (env, else .env): node (default), bun or jarvisd.
+ * A jarvisd generation labels its own environment `bun <version>`, and a deploy its
+ * children start (the dashboard's Update) inherits that: anything but a runtime name
+ * in the environment is not a setting, so the .env files decide.
+ */
 function wantRuntime() {
-  const v = String(sup.envSetting('PA_RUNTIME', 'node')).trim();
-  return v === 'bun' || v === 'jarvisd' ? v : 'node';
+  const inherited = process.env.PA_RUNTIME;
+  const fromEnv = String(inherited || '').trim();
+  if (RUNTIMES.includes(fromEnv)) return fromEnv;
+  delete process.env.PA_RUNTIME;
+  try {
+    const v = String(sup.envSetting('PA_RUNTIME', 'node')).trim();
+    return RUNTIMES.includes(v) ? v : 'node';
+  } finally {
+    if (inherited !== undefined) process.env.PA_RUNTIME = inherited;
+  }
 }
 
 async function deployUnlocked(argv: string[], { say }: { say?: ((line: string) => void) | null } = {}) {

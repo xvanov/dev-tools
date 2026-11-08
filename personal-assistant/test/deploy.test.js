@@ -88,6 +88,22 @@ const live = { ok: true, generation: 3, pid: 10, source: 'aaaaaaaaaaaa' };
   // A supervisor too old to report its source is rolled (it cannot tell).
   assert.strictEqual(p({ changed: ['personal-assistant/src/x.js'], supervisor: { ok: true } }).action, 'roll');
 
+  // A deploy started from a jarvisd process inherits its `bun <version>` label:
+  // not a setting, so the .env files decide (it once switched a stack to Node).
+  {
+    const { wantRuntime } = require('../src/supervisor/deploy.ts');
+    const saved = process.env.PA_RUNTIME;
+    delete process.env.PA_RUNTIME;
+    const fromFiles = wantRuntime();
+    process.env.PA_RUNTIME = 'bun 1.4.4';
+    assert.strictEqual(wantRuntime(), fromFiles);
+    assert.strictEqual(process.env.PA_RUNTIME, 'bun 1.4.4', 'the environment is left as it was');
+    process.env.PA_RUNTIME = 'jarvisd';
+    assert.strictEqual(wantRuntime(), 'jarvisd');
+    if (saved === undefined) delete process.env.PA_RUNTIME;
+    else process.env.PA_RUNTIME = saved;
+  }
+
   // PA_RUNTIME (want) against what runs: a switch, either way, is a restart
   // (the launcher starts what the setting says); to jarvisd it builds first.
   r = p({ changed: [], supervisor: live, want: 'jarvisd' });

@@ -59,7 +59,6 @@ export function loadSupervisor(): Supervisor {
 }
 
 if (import.meta.main) {
-  process.env.PA_RUNTIME = `bun ${Bun.version}`;
   const args = process.argv.slice(2);
   const fail = (what: string) => (err: unknown) => {
     console.error(`jarvisd ${what} failed:`, err instanceof Error ? err.message : err);
@@ -83,6 +82,8 @@ if (import.meta.main) {
     process.env.PA_RUNTIME = 'jarvisd';
     loadSupervisor().cli(args.slice(1)).catch(fail('supervise'));
   } else if (args[0] === 'front') {
+    // The front's children (/api/exec, terminals) run deploys, and deploy.ts
+    // reads PA_RUNTIME from the environment before .env: never set it here.
     // As `node front.js`: the default ports claim the pid file; ports given
     // (a spare front, an update's second front) do not.
     const port = flag(args, 'port');
@@ -95,6 +96,7 @@ if (import.meta.main) {
       claimPid: !port,
     });
   } else {
+    process.env.PA_RUNTIME = `bun ${Bun.version}`;
     loadWorker().main().catch(fail('generation'));
   }
 }
