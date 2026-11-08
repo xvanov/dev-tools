@@ -13,12 +13,15 @@
 //
 // Stored as `ptyHost` in <dataDir>/settings.json. The modes:
 //
-//   auto (default)  ptyd when a release ptyd binary is on this machine
+//   node-pty (default)  never ptyd: today's behaviour, and the rollback
+//   ptyd            always ptyd (sessions fail loudly if it cannot be started).
+//                   The cutover is setting this, explicitly.
+//   auto            ptyd when a release ptyd binary is on this machine
 //                   (TERMHUB_PTYD_BIN, dist/<os>-<arch>/ from scripts/build.js, or
-//                   ptyd/target/release), else node-pty. Nothing changes on a
-//                   machine until someone builds ptyd there.
-//   ptyd            always ptyd (sessions fail loudly if it cannot be started)
-//   node-pty        never ptyd: the rollback
+//                   ptyd/target/release), else node-pty. Opt-in only: it is NOT
+//                   the default, because then merely building ptyd in a deployed
+//                   checkout (a deploy, a test run) would switch the host at the
+//                   next sessiond restart and end every live terminal.
 //
 // Applied only by the production entrypoints (`node sessiond.js`, `node
 // server.js`: what windows/*.ps1 and the Linux unit run), as TERMHUB_PTYD for
@@ -47,10 +50,12 @@ function readSettings(dir) {
   }
 }
 
-/** The stored mode, or 'auto' when unset or unknown. */
+const DEFAULT_MODE = 'node-pty';
+
+/** The stored mode, or the default (node-pty) when unset or unknown. */
 function readMode(dir) {
   const m = readSettings(dir).ptyHost;
-  return MODES.includes(m) ? m : 'auto';
+  return MODES.includes(m) ? m : DEFAULT_MODE;
 }
 
 function writeMode(mode, dir = dataDir()) {
@@ -81,11 +86,14 @@ function releaseBinary(env = process.env, exists = fs.existsSync) {
 function resolve({ envValue, mode, bin }) {
   if (envValue === '1') return { ptyd: true, mode, bin, reason: 'TERMHUB_PTYD=1 in the environment' };
   if (envValue === '0') return { ptyd: false, mode, bin, reason: 'TERMHUB_PTYD=0 in the environment' };
-  if (mode === 'node-pty') return { ptyd: false, mode, bin, reason: 'setting ptyHost=node-pty' };
   if (mode === 'ptyd') return { ptyd: true, mode, bin, reason: 'setting ptyHost=ptyd' };
-  return bin
-    ? { ptyd: true, mode, bin, reason: `auto: release binary at ${bin}` }
-    : { ptyd: false, mode, bin, reason: 'auto: no release ptyd binary on this machine' };
+  if (mode === 'auto') {
+    return bin
+      ? { ptyd: true, mode, bin, reason: `auto: release binary at ${bin}` }
+      : { ptyd: false, mode, bin, reason: 'auto: no release ptyd binary on this machine' };
+  }
+  // node-pty, unset or anything else: the default never switches by itself.
+  return { ptyd: false, mode, bin, reason: `setting ptyHost=${mode || DEFAULT_MODE} (the default; switch with: node lib/ptyHost.js ptyd)` };
 }
 
 /** For the entrypoints: decide, export TERMHUB_PTYD (+ _BIN), say so. */
@@ -130,7 +138,7 @@ async function main(argv) {
   }
 }
 
-module.exports = { MODES, readMode, writeMode, releaseBinary, resolve, applyToEnv, settingsFile };
+module.exports = { MODES, DEFAULT_MODE, readMode, writeMode, releaseBinary, resolve, applyToEnv, settingsFile };
 
 if (require.main === module) {
   main(process.argv.slice(2)).catch((e) => {

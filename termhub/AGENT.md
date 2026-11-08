@@ -293,9 +293,11 @@ sessiond restart no longer ends terminals. `/api/ping` reports `ptyHost: 'ptyd' 
 `logs/ptyd.out.log`. Build it first: `cd ptyd && cargo build --release`.
 
 Production starts (`node sessiond.js`, `node server.js`) resolve it from the persistent
-`ptyHost` setting (`lib/ptyHost.js`, `<dataDir>/settings.json`): `auto` (default) uses ptyd only
-when a release ptyd binary is on the machine, `ptyd` forces it, `node-pty` is the rollback.
-`node lib/ptyHost.js [auto|ptyd|node-pty]` shows or changes it; `update.ps1` and
+`ptyHost` setting (`lib/ptyHost.js`, `<dataDir>/settings.json`): `node-pty` (default, and the
+rollback), `ptyd` (the cutover, always explicit), or opt-in `auto` (ptyd when a release binary is
+on the machine). `auto` is not the default: building ptyd in a deployed checkout must never
+switch the host by itself, since the next sessiond restart would end every live terminal.
+`node lib/ptyHost.js [node-pty|ptyd|auto]` shows or changes it; `update.ps1` and
 `restart-sessiond.ps1` print it. On Linux ptyd runs as its own user unit
 (`linux/ptyd-unit.sh`, `termhub-ptyd.service`), so the restart every update does no longer
 kills it. Neither stack has switched yet: the steps and the rollback are in

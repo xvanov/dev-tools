@@ -4,7 +4,8 @@
 #
 #   bash linux/ptyd-unit.sh --ensure   install + start the unit when termhub will
 #                                      use ptyd (lib/ptyHost.js says so: a release
-#                                      binary with ptyHost=auto, or ptyHost=ptyd);
+#                                      ptyHost=ptyd, or opt-in ptyHost=auto with a
+#                                      release binary; the default node-pty never);
 #                                      otherwise leave everything as it is
 #   bash linux/ptyd-unit.sh --remove   stop, disable and delete it (after a
 #                                      rollback to node-pty; ends ptyd's terminals)

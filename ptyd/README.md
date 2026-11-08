@@ -89,11 +89,13 @@ PTY host from a persistent setting, `ptyHost` in `<dataDir>/settings.json`
 
 | `ptyHost` | next sessiond start uses |
 |---|---|
-| `auto` (default) | ptyd **if a release binary is on the machine** (`TERMHUB_PTYD_BIN`, `dist/<os>-<arch>/`, `ptyd/target/release/`), else node-pty |
-| `ptyd` | ptyd, always |
-| `node-pty` | node-pty, always: the rollback |
+| `node-pty` (default) | node-pty, always: today's behaviour, and the rollback |
+| `ptyd` | ptyd, always: the cutover |
+| `auto` (opt-in) | ptyd **if a release binary is on the machine** (`TERMHUB_PTYD_BIN`, `dist/<os>-<arch>/`, `ptyd/target/release/`), else node-pty |
 
-So nothing changes on a machine until ptyd is built there. `node lib/ptyHost.js` (in
+The cutover is always an explicit `ptyd` setting. `auto` is deliberately not the default: with
+it, merely building a release ptyd in a deployed checkout (a deploy, a test run) would switch
+the host on the next sessiond restart and end every live terminal. `node lib/ptyHost.js` (in
 `termhub/`) prints the setting, what the next start resolves to, and what the running sessiond
 uses (`ptyHost` in its `/api/ping`); `update.ps1` and `restart-sessiond.ps1` print the same.
 
@@ -101,7 +103,8 @@ uses (`ptyHost` in its `/api/ping`); `update.ps1` and `restart-sessiond.ps1` pri
 
 1. Build ptyd in the deployed checkout: `node scripts/build.js --only ptyd --release`
    (puts it in `dist/<os>-<arch>/`; `cargo` via rustup, MSVC build tools on Windows).
-2. `node termhub/lib/ptyHost.js` should say `next start: ptyd`.
+2. Set the host explicitly: `node termhub/lib/ptyHost.js ptyd`. It should then print
+   `next start: ptyd`.
 3. Restart sessiond once. This ends the live terminals one last time; they come back as
    Restorable.
    - Windows: `.\windows\restart-sessiond.ps1` from a non-termhub window. sessiond starts ptyd
